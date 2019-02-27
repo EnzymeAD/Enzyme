@@ -85,6 +85,8 @@ Function *CloneFunctionWithReturns(Function *F, SmallVector<ReturnInst*, 8>& Ret
  return NewF;
 }
 
+#include "llvm/IR/Constant.h"
+
 Function* CreatePrimalAndGradient(Function* todiff) {
   auto M = todiff->getParent();
   auto& Context = M->getContext();
@@ -116,8 +118,8 @@ Function* CreatePrimalAndGradient(Function* todiff) {
       Value* dif1;
       switch(op->getOpcode()) {
         case Instruction::FMul:
-          dif0 = Builder2.CreateBinOp(op->getOpcode(), differentials[inst], op->getOperand(1));
-          dif1 = Builder2.CreateBinOp(op->getOpcode(), differentials[inst], op->getOperand(0));
+          dif0 = Builder2.CreateBinOp(op->getOpcode(), differentials[inst], op->getOperand(1), "diffe"+op->getOperand(0)->getName());
+          dif1 = Builder2.CreateBinOp(op->getOpcode(), differentials[inst], op->getOperand(0), "diffe"+op->getOperand(1)->getName());
           break;
         case Instruction::FAdd:
           dif0 = differentials[inst];
@@ -128,7 +130,7 @@ Function* CreatePrimalAndGradient(Function* todiff) {
           dif1 = Builder2.CreateFNeg(differentials[inst]);
           break;
         case Instruction::FDiv:
-          dif0 = Builder2.CreateBinOp(Instruction::FDiv, differentials[inst], op->getOperand(1));
+          dif0 = Builder2.CreateBinOp(Instruction::FDiv, differentials[inst], op->getOperand(1), "diffe"+op->getOperand(0)->getName());
           dif1 = Builder2.CreateFNeg(
               Builder2.CreateBinOp(Instruction::FDiv, 
                 Builder2.CreateFMul(differentials[inst], op),
@@ -144,13 +146,13 @@ Function* CreatePrimalAndGradient(Function* todiff) {
 
       auto f0 = differentials.find(op->getOperand(0));
       if (f0 != differentials.end()) {
-        dif0 = Builder2.CreateFAdd(f0->second, dif0);
+        dif0 = Builder2.CreateFAdd(f0->second, dif0, "diffe"+op->getOperand(0)->getName());
       }
       differentials[op->getOperand(0)] = dif0;
 
       auto f1 = differentials.find(op->getOperand(1));
       if (f1 != differentials.end()) {
-        dif1 = Builder2.CreateFAdd(f1->second, dif1);
+        dif1 = Builder2.CreateFAdd(f1->second, dif1, "diffe"+op->getOperand(1)->getName());
       }
 
       differentials[op->getOperand(1)] = dif1;
@@ -268,6 +270,27 @@ Function* CreatePrimalAndGradient(Function* todiff) {
             assert(0 && "unknown non const function");
             exit(1);
         }
+
+    } else if(auto op = dyn_cast_or_null<SelectInst>(inst)) {
+
+      auto dif1 = Builder2.CreateSelect(op->getOperand(0), differentials[op], Constant::getNullValue(op->getOperand(1)->getType()), "diffe"+op->getOperand(1)->getName());
+      auto dif2 = Builder2.CreateSelect(op->getOperand(0), Constant::getNullValue(op->getOperand(2)->getType()), differentials[op], "diffe"+op->getOperand(2)->getName());
+      
+      auto f1 = differentials.find(op->getOperand(1));
+      if (f1 != differentials.end()) {
+        dif1 = Builder2.CreateFAdd(f1->second, dif1, "diffe"+op->getOperand(1)->getName());
+      }
+      differentials[op->getOperand(1)] = dif1;
+
+      auto f2 = differentials.find(op->getOperand(2));
+      if (f2 != differentials.end()) {
+        dif2 = Builder2.CreateFAdd(f2->second, dif2, "diffe"+op->getOperand(2)->getName());
+      }
+
+      differentials[op->getOperand(2)] = dif2;
+
+    } else if(auto op = dyn_cast_or_null<CmpInst>(inst)) {
+        continue;
     } else {
       inst->dump();
       llvm::errs() << "cannot handle above inst\n";
