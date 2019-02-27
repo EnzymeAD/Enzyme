@@ -3671,7 +3671,67 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
       IntrinsicID = Intrinsic::getIntrinsicForMSBuiltin(Prefix.data(), Name);
   }
 
-  if (IntrinsicID != Intrinsic::not_intrinsic) {
+  if (IntrinsicID == Intrinsic::autodiff) {
+    SmallVector<Value*, 16> Args;
+
+    // Find out if any arguments are required to be integer constant
+    // expressions.
+    unsigned ICEArguments = 0;
+    ASTContext::GetBuiltinTypeError Error;
+    getContext().GetBuiltinType(BuiltinID, Error, &ICEArguments);
+    assert(Error == ASTContext::GE_None && "Should not codegen an error");
+
+    SmallVector<llvm::Type*, 16> tys;
+
+    for (unsigned i = 0, e = E->getNumArgs(); i != e; ++i) {
+      Value *ArgValue;
+      // If this is a normal argument, just emit it as a scalar.
+      if ((ICEArguments & (1 << i)) == 0) {
+        ArgValue = EmitScalarExpr(E->getArg(i));
+      } else {
+        // If this is required to be a constant, constant fold it so that we
+        // know that the generated intrinsic gets a ConstantInt.
+        llvm::APSInt Result;
+        bool IsConst = E->getArg(i)->isIntegerConstantExpr(Result,getContext());
+        assert(IsConst && "Constant arg isn't actually constant?");
+        (void)IsConst;
+        ArgValue = llvm::ConstantInt::get(getLLVMContext(), Result);
+      }
+
+      // If the intrinsic arg type is different from the builtin arg type
+      // we need to do a bit cast.
+      tys.push_back(ArgValue->getType());
+      /*
+      llvm::Type *PTy = FTy->getParamType(i);
+      if (PTy != ArgValue->getType()) {
+        assert(PTy->canLosslesslyBitCastTo(FTy->getParamType(i)) &&
+               "Must be able to losslessly bit cast to param");
+        ArgValue = Builder.CreateBitCast(ArgValue, PTy);
+      }
+      */
+
+      Args.push_back(ArgValue);
+    }
+
+    Function *F = CGM.getIntrinsic(IntrinsicID, tys);
+    llvm::FunctionType *FTy = F->getFunctionType();
+
+
+    Value *V = Builder.CreateCall(F, Args);
+    QualType BuiltinRetType = E->getType();
+
+    llvm::Type *RetTy = VoidTy;
+    if (!BuiltinRetType->isVoidType())
+      RetTy = ConvertType(BuiltinRetType);
+
+    if (RetTy != V->getType()) {
+      assert(V->getType()->canLosslesslyBitCastTo(RetTy) &&
+             "Must be able to losslessly bit cast result type");
+      V = Builder.CreateBitCast(V, RetTy);
+    }
+
+    return RValue::get(V);
+  } else if (IntrinsicID != Intrinsic::not_intrinsic) {
     SmallVector<Value*, 16> Args;
 
     // Find out if any arguments are required to be integer constant

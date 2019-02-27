@@ -385,6 +385,8 @@ extern char &InferAddressSpacesID;
 // "block_weights" metadata.
 FunctionPass *createLowerExpectIntrinsicPass();
 
+FunctionPass *createLowerAutodiffIntrinsicPass();
+
 //===----------------------------------------------------------------------===//
 //
 // PartiallyInlineLibCalls - Tries to inline the fast path of library

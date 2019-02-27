@@ -966,6 +966,18 @@ FunctionType *Intrinsic::getType(LLVMContext &Context,
   getIntrinsicInfoTableEntries(id, Table);
 
   ArrayRef<IITDescriptor> TableRef = Table;
+
+  /*
+  llvm::errs() << "tr size:" << TableRef.size() << "\n";
+  for(int i=0; i<TableRef.size(); i++)
+    llvm::errs() << "tr[" << i << "]:" << TableRef[i].getArgumentNumber() << "\n";
+
+  llvm::errs() << "tys size:" << Tys.size() << "\n";
+
+  for(int i=0; i<Tys.size(); i++)
+    llvm::errs() << "Tys[" << i << "]:" << Tys[i] << "\n";
+  */
+
   Type *ResultTy = DecodeFixedType(TableRef, Tys, Context);
 
   SmallVector<Type*, 8> ArgTys;

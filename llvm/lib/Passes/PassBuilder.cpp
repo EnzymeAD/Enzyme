@@ -125,6 +125,7 @@
 #include "llvm/Transforms/Scalar/LoopUnrollAndJamPass.h"
 #include "llvm/Transforms/Scalar/LoopUnrollPass.h"
 #include "llvm/Transforms/Scalar/LowerAtomic.h"
+#include "llvm/Transforms/Scalar/LowerAutodiffIntrinsic.h"
 #include "llvm/Transforms/Scalar/LowerExpectIntrinsic.h"
 #include "llvm/Transforms/Scalar/LowerGuardIntrinsic.h"
 #include "llvm/Transforms/Scalar/MemCpyOptimizer.h"
@@ -574,6 +575,7 @@ PassBuilder::buildModuleSimplificationPipeline(OptimizationLevel Level,
   EarlyFPM.addPass(SimplifyCFGPass());
   EarlyFPM.addPass(SROA());
   EarlyFPM.addPass(EarlyCSEPass());
+  EarlyFPM.addPass(LowerAutodiffIntrinsicPass());
   EarlyFPM.addPass(LowerExpectIntrinsicPass());
   if (Level == O3)
     EarlyFPM.addPass(CallSiteSplittingPass());

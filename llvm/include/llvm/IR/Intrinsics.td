@@ -407,6 +407,10 @@ def int_memset  : Intrinsic<[],
                              llvm_i1_ty],
                             [IntrArgMemOnly, NoCapture<0>, WriteOnly<0>]>;
 
+def int_autodiff   : Intrinsic<[llvm_double_ty],
+                               [llvm_anyptr_ty, llvm_anyfloat_ty]>,
+                               GCCBuiltin<"__builtin_autodiff">;
+
 // FIXME: Add version of these floating point intrinsics which allow non-default
 // rounding modes and FP exception handling.
 

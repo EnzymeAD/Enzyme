@@ -104,6 +104,8 @@
 #endif
 
 // Standard libc/libm functions:
+BUILTIN(__builtin_autodiff , "dv*d"  , "")
+
 BUILTIN(__builtin_atan2 , "ddd"  , "Fne")
 BUILTIN(__builtin_atan2f, "fff"  , "Fne")
 BUILTIN(__builtin_atan2l, "LdLdLd", "Fne")
