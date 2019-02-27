@@ -1,4 +1,12 @@
 ==============================================================================
+Enzyme License
+
+Code in lib/Transforms/Scalar/LowerAutodiffIntrinsic.cpp and related files
+with a header are not bound by the LLVM Release License and remain copyright
+by the author(s) with limitations specified in the files.
+==============================================================================
+
+==============================================================================
 LLVM Release License
 ==============================================================================
 University of Illinois/NCSA
