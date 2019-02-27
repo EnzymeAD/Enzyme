@@ -43,57 +43,67 @@ using namespace llvm;
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/IntrinsicInst.h"
 
-void HandleAutoDiff(CallInst *CI) {
-  LLVMContext &Context = CI->getContext();
+Function *CloneFunctionWithReturns(Function *F, SmallVector<ReturnInst*, 8>& Returns) {
+ std::vector<Type*> RetTypes;
+ RetTypes.push_back(F->getReturnType());
+ std::vector<Type*> ArgTypes;
 
-  Value* fn = CI->getArgOperand(0);
-  Value* arg0 = CI->getArgOperand(1);
+ ValueToValueMapTy VMap;
 
-  while (auto ci = dyn_cast<CastInst>(fn)) {
-    fn = ci->getOperand(0);
-  }
-  while (auto ci = dyn_cast<BitCastInst>(fn)) {
-    fn = ci->getOperand(0);
-  }
-  while (auto ci = dyn_cast<BlockAddress>(fn)) {
-    fn = ci->getFunction();
-  }
-  while (auto ci = dyn_cast<ConstantExpr>(fn)) {
-    fn = ci->getOperand(0);
-  }
-  fn->dump();
-  //llvm::errs() << "fn"<<fn->getValueID()<<"|"<<Value::BlockAddress<<"|"<<Value::ConstantExpr<<"\n";
-  Function* todiff = dyn_cast<Function>(fn);
-  auto M = CI->getParent()->getParent()->getParent();
-  llvm::errs() << todiff << "\n";
+ // The user might be deleting arguments to the function by specifying them in
+ // the VMap.  If so, we need to not add the arguments to the arg ty vector
+ //
+ for (const Argument &I : F->args())
+   if (VMap.count(&I) == 0) // Haven't mapped the argument to anything yet?
+   {
+     ArgTypes.push_back(I.getType());
+     RetTypes.push_back(I.getType());
+   }
+
+ auto RetType = StructType::get(F->getContext(), RetTypes);
+
+ // Create a new function type...
+ FunctionType *FTy = FunctionType::get(RetType,
+                                   ArgTypes, F->getFunctionType()->isVarArg());
+
+ // Create the new function...
+ Function *NewF = Function::Create(FTy, F->getLinkage(), F->getName(), F->getParent());
+
+ // Loop over the arguments, copying the names of the mapped arguments over...
+ Function::arg_iterator DestI = NewF->arg_begin();
+
+
+ for (const Argument & I : F->args())
+   if (VMap.count(&I) == 0) {     // Is this argument preserved?
+     DestI->setName(I.getName()); // Copy the name over...
+     VMap[&I] = &*DestI++;        // Add mapping to VMap
+   }
+
+ CloneFunctionInto(NewF, F, VMap, F->getSubprogram() != nullptr, Returns, "",
+                   nullptr);
+
+ return NewF;
+}
+
+Function* CreatePrimalAndGradient(Function* todiff) {
+  auto M = todiff->getParent();
+  auto& Context = M->getContext();
   todiff->dump();
 
   llvm::errs() << "autodifferentiating " << "\n";
-  CI->dump();
   todiff->dump();
 
-  ValueToValueMapTy VMap;
-  auto newFunc = llvm::CloneFunction(todiff, VMap);
+  SmallVector<ReturnInst*, 8> Returns;
+  auto newFunc = CloneFunctionWithReturns(todiff, Returns);
 
-  llvm::ReturnInst* ret = nullptr;
-  for (inst_iterator I = inst_begin(newFunc), E = inst_end(newFunc); I != E; ++I) {
-    if (auto foundret = dyn_cast<ReturnInst>(&*I)) {
-      if (ret) {
-        llvm::errs() << "two returns found\n";
-        assert(0 && "two returns");
-        exit(1);
-      }
-      ret = foundret;
-    }
-  }
-
+  assert(Returns.size() == 1);
   ValueToValueMapTy differentials;
   {
   auto BB2 = BasicBlock::Create(Context, "invert", newFunc);
-  auto retval = ret->getReturnValue();
-  IRBuilder<> Builder2(ret);
+  auto retval = Returns[0]->getReturnValue();
+  IRBuilder<> Builder2(Returns[0]);
   Builder2.CreateBr(BB2);
-  ret->eraseFromParent();
+  Returns[0]->eraseFromParent();
 
   Builder2.SetInsertPoint(BB2);
   differentials[retval] = ConstantFP::get(retval->getType(), 1.0);
@@ -106,8 +116,8 @@ void HandleAutoDiff(CallInst *CI) {
       Value* dif1;
       switch(op->getOpcode()) {
         case Instruction::FMul:
-          dif0 = Builder2.CreateBinOp(op->getOpcode(), differentials[inst], op->getOperand(0));
-          dif1 = Builder2.CreateBinOp(op->getOpcode(), differentials[inst], op->getOperand(1));
+          dif0 = Builder2.CreateBinOp(op->getOpcode(), differentials[inst], op->getOperand(1));
+          dif1 = Builder2.CreateBinOp(op->getOpcode(), differentials[inst], op->getOperand(0));
           break;
         case Instruction::FAdd:
           dif0 = differentials[inst];
@@ -120,9 +130,9 @@ void HandleAutoDiff(CallInst *CI) {
         case Instruction::FDiv:
           dif0 = Builder2.CreateBinOp(Instruction::FDiv, differentials[inst], op->getOperand(1));
           dif1 = Builder2.CreateFNeg(
-              Builder2.CreateBinOp(Instruction::FDiv, differentials[inst],
-                Builder2.CreateBinOp(Instruction::FMul, op->getOperand(1), op->getOperand(1))
-              )
+              Builder2.CreateBinOp(Instruction::FDiv, 
+                Builder2.CreateFMul(differentials[inst], op),
+                op->getOperand(1))
           );
 
         default:
@@ -234,6 +244,30 @@ void HandleAutoDiff(CallInst *CI) {
         differentials[op->getOperand(1)] = dif1;
       }
 
+    } else if(auto op = dyn_cast_or_null<CallInst>(inst)) {
+        if(auto called = op->getCalledFunction()) {
+              auto newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called));
+              SmallVector<Value*, 8> args;
+              for(unsigned i=0;i<called->getFunctionType()->getNumParams(); i++) {
+                args.push_back(op->getArgOperand(i));
+              }
+              auto diffes = Builder2.CreateCall(newcalled, args);
+              for(unsigned i=0;i<called->getFunctionType()->getNumParams(); i++) {
+                unsigned idxs[] = {i+1};
+                auto diffeadd = Builder2.CreateFMul(differentials[inst], Builder2.CreateExtractValue(diffes, idxs));
+                auto f1 = differentials.find(args[i]);
+                if (f1 != differentials.end()) {
+                    diffeadd = Builder2.CreateFAdd(f1->second, diffeadd);
+                }
+                differentials[args[i]] = diffeadd;
+              }
+        } else {
+            op->dump();
+            M->dump();
+            llvm::errs() << "cannot handle non const function\n";
+            assert(0 && "unknown non const function");
+            exit(1);
+        }
     } else {
       inst->dump();
       llvm::errs() << "cannot handle above inst\n";
@@ -242,28 +276,57 @@ void HandleAutoDiff(CallInst *CI) {
     }
   }
 
-  Value * retargs[CI->getNumArgOperands()-1];
-  assert(CI->getNumArgOperands()-1 == 1);
-
+  Value * retargs[newFunc->getFunctionType()->getNumParams()+1] = {0};
+  retargs[0] = retval;
+  retargs[0]->dump();
   {
-  int i=0;
-  for (auto I = newFunc->arg_begin(), E = newFunc->arg_end(); I != E; I++) {
-    I->dump();
-    retargs[i] = differentials[I];
+  int i=1;
+  for (auto& I: newFunc->args()) {
+    retargs[i] = differentials[(Value*)&I];
+    retargs[i]->dump();
     i++;
   }
   }
 
-  newFunc->dump();
-  retargs[0]->dump();
-  Builder2.CreateRet(retargs[0]);
+  Value* toret = UndefValue::get(newFunc->getReturnType());
+  toret->dump();
+  for(unsigned i=0; i<newFunc->getFunctionType()->getNumParams()+1; i++) {
+    unsigned idx[] = { i };
+    toret = Builder2.CreateInsertValue(toret, retargs[i], idx);
+  }
+  Builder2.CreateRet(toret);
   }
 
+  return newFunc;
+}
+
+void HandleAutoDiff(CallInst *CI) {
+
+  Value* fn = CI->getArgOperand(0);
+  Value* arg0 = CI->getArgOperand(1);
+
+  while (auto ci = dyn_cast<CastInst>(fn)) {
+    fn = ci->getOperand(0);
+  }
+  while (auto ci = dyn_cast<BitCastInst>(fn)) {
+    fn = ci->getOperand(0);
+  }
+  while (auto ci = dyn_cast<BlockAddress>(fn)) {
+    fn = ci->getFunction();
+  }
+  while (auto ci = dyn_cast<ConstantExpr>(fn)) {
+    fn = ci->getOperand(0);
+  }
+  fn->dump();
+
+  auto newFunc = CreatePrimalAndGradient(dyn_cast<Function>(fn));
   newFunc->dump();
 
   IRBuilder<> Builder(CI);
   Value* args[1] = {arg0};
   Value* diffret = Builder.CreateCall(newFunc, args);
+  unsigned idxs[] = {1};
+  diffret = Builder.CreateExtractValue(diffret, idxs);
   CI->replaceAllUsesWith(diffret);
   CI->eraseFromParent();
 }
