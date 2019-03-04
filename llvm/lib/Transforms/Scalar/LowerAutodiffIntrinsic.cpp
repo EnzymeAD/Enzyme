@@ -86,6 +86,8 @@ Function *CloneFunctionWithReturns(Function *F, SmallVector<ReturnInst*, 8>& Ret
 }
 
 #include "llvm/IR/Constant.h"
+#include <deque>
+#include "llvm/IR/CFG.h"
 
 Function* CreatePrimalAndGradient(Function* todiff) {
   auto M = todiff->getParent();
@@ -98,43 +100,109 @@ Function* CreatePrimalAndGradient(Function* todiff) {
   SmallVector<ReturnInst*, 8> Returns;
   auto newFunc = CloneFunctionWithReturns(todiff, Returns);
 
-  assert(Returns.size() == 1);
   ValueToValueMapTy differentials;
-  {
-  auto BB2 = BasicBlock::Create(Context, "invert", newFunc);
-  auto retval = Returns[0]->getReturnValue();
-  IRBuilder<> Builder2(Returns[0]);
-  Builder2.CreateBr(BB2);
-  Returns[0]->eraseFromParent();
 
-  Builder2.SetInsertPoint(BB2);
-  differentials[retval] = ConstantFP::get(retval->getType(), 1.0);
+  std::deque<BasicBlock*> blockstodo;
+  for(auto a:Returns) {
+    blockstodo.push_back(a->getParent());
+  }
 
-  for (inst_iterator I = inst_begin(newFunc), E = --inst_end(newFunc); I != E; ) {
-    --E;
-    Instruction* inst = &*E;
+  llvm::Value* retval = Returns[0]->getReturnValue();
+  assert(Returns.size() == 1);
+
+  SmallVector<BasicBlock*, 12> fnthings;
+  for (BasicBlock &BB : *newFunc) {
+     fnthings.push_back(&BB);
+  }
+  ValueMap<BasicBlock*,BasicBlock*> reverseBlocks;
+  for (BasicBlock *BB : fnthings) {
+    auto BB2 = BasicBlock::Create(Context, "invert" + BB->getName(), newFunc);
+    reverseBlocks[BB] = BB2;
+  }
+
+  IRBuilder<> entryBuilder(&newFunc->getEntryBlock().front());
+
+  ValueToValueMapTy scopeMap;
+
+  while(blockstodo.size() > 0) {
+    auto BB = blockstodo.front();
+    blockstodo.pop_front();
+
+    auto BB2 = reverseBlocks[BB];
+    assert(BB2);
+    BB2->dump();
+    if (BB2->size() != 0) {
+        llvm::errs() << "skipping block" << BB2->getName() << "\n";
+        continue;
+    }
+
+    IRBuilder<> Builder2(BB2);
+    differentials[BB] = BB2;
+
+    auto lookup = [&](Value* val) -> Value* {
+        if (auto inst = dyn_cast<Instruction>(val)) {
+        if (scopeMap.find(val) == scopeMap.end()) {
+            scopeMap[val] = entryBuilder.CreateAlloca(val->getType(), nullptr, val->getName()+"'");
+            IRBuilder <> v(inst);
+            auto st = v.CreateStore(val, scopeMap[val]);
+            st->moveAfter(inst);
+        }
+        return Builder2.CreateLoad(scopeMap[val]);
+        }
+        return val;
+    };
+
+  auto term = BB->getTerminator();
+
+  if(auto op = dyn_cast<ReturnInst>(term)) {
+      auto retval = op->getReturnValue();
+      IRBuilder<> rb(op);
+      rb.CreateBr(BB2);
+      op->eraseFromParent();
+      differentials[retval] = entryBuilder.CreateAlloca(retval->getType(), nullptr, retval->getName()+"'");
+      entryBuilder.CreateStore(ConstantFP::get(retval->getType(), 1.0), differentials[retval]);
+  } else if (isa<BranchInst>(term)) {
+        
+  } else {
+    llvm::errs() << "unknown return instance\n";
+    assert(0 && "unknown return inst");
+  }
+
+  for(auto PB :successors(BB)) {
+    
+    for (auto I = PB->begin(), E = PB->end(); I != E; I++) {
+        if(auto PN = dyn_cast<PHINode>(&*I)) {
+            differentials[PN->getIncomingValueForBlock(BB)] = differentials[PN];
+        } else break;
+    }
+  }
+  
+
+  for (auto I = BB->rbegin(), E = BB->rend(); I != E; I++) {
+    Instruction* inst = &*I;
+    inst->dump();
     if (auto op = dyn_cast<BinaryOperator>(inst)) {
       Value* dif0;
       Value* dif1;
       switch(op->getOpcode()) {
         case Instruction::FMul:
-          dif0 = Builder2.CreateBinOp(op->getOpcode(), differentials[inst], op->getOperand(1), "diffe"+op->getOperand(0)->getName());
-          dif1 = Builder2.CreateBinOp(op->getOpcode(), differentials[inst], op->getOperand(0), "diffe"+op->getOperand(1)->getName());
+          dif0 = Builder2.CreateBinOp(op->getOpcode(), Builder2.CreateLoad(differentials[inst]), lookup(op->getOperand(1)), "diffe"+op->getOperand(0)->getName());
+          dif1 = Builder2.CreateBinOp(op->getOpcode(), Builder2.CreateLoad(differentials[inst]), lookup(op->getOperand(0)), "diffe"+op->getOperand(1)->getName());
           break;
         case Instruction::FAdd:
-          dif0 = differentials[inst];
-          dif1 = differentials[inst];
+          dif0 = Builder2.CreateLoad(differentials[inst]);
+          dif1 = Builder2.CreateLoad(differentials[inst]);
           break;
         case Instruction::FSub:
-          dif0 = differentials[inst];
-          dif1 = Builder2.CreateFNeg(differentials[inst]);
+          dif0 = Builder2.CreateLoad(differentials[inst]);
+          dif1 = Builder2.CreateFNeg(Builder2.CreateLoad(differentials[inst]));
           break;
         case Instruction::FDiv:
-          dif0 = Builder2.CreateBinOp(Instruction::FDiv, differentials[inst], op->getOperand(1), "diffe"+op->getOperand(0)->getName());
+          dif0 = Builder2.CreateBinOp(Instruction::FDiv, Builder2.CreateLoad(differentials[inst]), lookup(op->getOperand(1)), "diffe"+op->getOperand(0)->getName());
           dif1 = Builder2.CreateFNeg(
               Builder2.CreateBinOp(Instruction::FDiv, 
-                Builder2.CreateFMul(differentials[inst], op),
-                op->getOperand(1))
+                Builder2.CreateFMul(Builder2.CreateLoad(differentials[inst]), op),
+                lookup(op->getOperand(1)))
           );
 
         default:
@@ -145,80 +213,89 @@ Function* CreatePrimalAndGradient(Function* todiff) {
       }
 
       auto f0 = differentials.find(op->getOperand(0));
-      if (f0 != differentials.end()) {
-        dif0 = Builder2.CreateFAdd(f0->second, dif0, "diffe"+op->getOperand(0)->getName());
+      if (f0 == differentials.end()) {
+        differentials[op->getOperand(0)] = entryBuilder.CreateAlloca(op->getOperand(0)->getType(), nullptr, op->getOperand(0)->getName()+"'");
+        entryBuilder.CreateStore(Constant::getNullValue(op->getOperand(0)->getType()), differentials[op->getOperand(0)]);
       }
-      differentials[op->getOperand(0)] = dif0;
+      Builder2.CreateStore(Builder2.CreateFAdd(Builder2.CreateLoad(differentials[op->getOperand(0)]), dif0), differentials[op->getOperand(0)]);
 
       auto f1 = differentials.find(op->getOperand(1));
-      if (f1 != differentials.end()) {
-        dif1 = Builder2.CreateFAdd(f1->second, dif1, "diffe"+op->getOperand(1)->getName());
+      if (f1 == differentials.end()) {
+        differentials[op->getOperand(1)] = entryBuilder.CreateAlloca(op->getOperand(1)->getType(), nullptr, op->getOperand(1)->getName()+"'");
+        entryBuilder.CreateStore(Constant::getNullValue(op->getOperand(1)->getType()), differentials[op->getOperand(1)]);
       }
-
-      differentials[op->getOperand(1)] = dif1;
+      Builder2.CreateStore(Builder2.CreateFAdd(Builder2.CreateLoad(differentials[op->getOperand(1)]), dif1), differentials[op->getOperand(1)]);
 
     } else if(auto op = dyn_cast_or_null<IntrinsicInst>(inst)) {
+      op->dump();
       Value* dif0 = nullptr;
       Value* dif1 = nullptr;
       switch(op->getIntrinsicID()) {
         case Intrinsic::sqrt: {
-          dif0 = Builder2.CreateBinOp(Instruction::FDiv, differentials[inst],
-            Builder2.CreateBinOp(Instruction::FMul, ConstantFP::get(op->getType(), 2.0), op)
+          newFunc->dump();
+          differentials[inst]->dump();
+          dif0 = Builder2.CreateBinOp(Instruction::FDiv, Builder2.CreateLoad(differentials[inst]),
+            Builder2.CreateBinOp(Instruction::FMul, ConstantFP::get(op->getType(), 2.0), lookup(op))
           );
           break;
         }
+        case Intrinsic::fabs: {
+          auto cmp = Builder2.CreateFCmpOLT(lookup(op->getOperand(0)), ConstantFP::get(op->getOperand(0)->getType(), 0));
+          dif0 = Builder2.CreateSelect(cmp, ConstantFP::get(op->getOperand(0)->getType(), -1), ConstantFP::get(op->getOperand(0)->getType(), 1));
+          break;
+        }
         case Intrinsic::log: {
-          dif0 = Builder2.CreateBinOp(Instruction::FDiv, differentials[inst], op->getOperand(0));
+          dif0 = Builder2.CreateBinOp(Instruction::FDiv, Builder2.CreateLoad(differentials[inst]), lookup(op->getOperand(0)));
           break;
         }
         case Intrinsic::log2: {
-          dif0 = Builder2.CreateBinOp(Instruction::FDiv, differentials[inst],
-            Builder2.CreateBinOp(Instruction::FMul, ConstantFP::get(op->getType(), 0.6931471805599453), op->getOperand(0))
+          dif0 = Builder2.CreateBinOp(Instruction::FDiv, Builder2.CreateLoad(differentials[inst]),
+            Builder2.CreateBinOp(Instruction::FMul, ConstantFP::get(op->getType(), 0.6931471805599453), lookup(op->getOperand(0)))
           );
           break;
         }
         case Intrinsic::log10: {
-          dif0 = Builder2.CreateBinOp(Instruction::FDiv, differentials[inst],
-            Builder2.CreateBinOp(Instruction::FMul, ConstantFP::get(op->getType(), 2.302585092994046), op->getOperand(0))
+          dif0 = Builder2.CreateBinOp(Instruction::FDiv, Builder2.CreateLoad(differentials[inst]),
+            Builder2.CreateBinOp(Instruction::FMul, ConstantFP::get(op->getType(), 2.302585092994046), lookup(op->getOperand(0)))
           );
           break;
         }
         case Intrinsic::exp: {
-          dif0 = Builder2.CreateBinOp(Instruction::FMul, differentials[inst], op);
+          dif0 = Builder2.CreateBinOp(Instruction::FMul, Builder2.CreateLoad(differentials[inst]), lookup(op));
           break;
         }
         case Intrinsic::exp2: {
           dif0 = Builder2.CreateBinOp(Instruction::FMul,
-            Builder2.CreateBinOp(Instruction::FMul, differentials[inst], op), ConstantFP::get(op->getType(), 0.6931471805599453)
+            Builder2.CreateBinOp(Instruction::FMul, Builder2.CreateLoad(differentials[inst]), lookup(op)), ConstantFP::get(op->getType(), 0.6931471805599453)
           );
           break;
         }
         case Intrinsic::pow: {
           dif0 = Builder2.CreateBinOp(Instruction::FMul,
-            Builder2.CreateBinOp(Instruction::FMul, differentials[inst],
-              Builder2.CreateBinOp(Instruction::FDiv, op, op->getOperand(0))), op->getOperand(1)
+            Builder2.CreateBinOp(Instruction::FMul, Builder2.CreateLoad(differentials[inst]),
+              Builder2.CreateBinOp(Instruction::FDiv, lookup(op), lookup(op->getOperand(0)))), lookup(op->getOperand(1))
           );
 
           Value *args[] = {op->getOperand(1)};
           Type *tys[] = {op->getOperand(1)->getType()};
           dif1 = Builder2.CreateBinOp(Instruction::FMul,
-            Builder2.CreateBinOp(Instruction::FMul, differentials[inst], op),
+            Builder2.CreateBinOp(Instruction::FMul, Builder2.CreateLoad(differentials[inst]), lookup(op)),
             Builder2.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::log, tys), args)
           );
 
           break;
         }
         case Intrinsic::sin: {
-          Value *args[] = {op->getOperand(0)};
+          Value *args[] = {lookup(op->getOperand(0))};
           Type *tys[] = {op->getOperand(0)->getType()};
-          dif0 = Builder2.CreateBinOp(Instruction::FMul, differentials[inst],
+          dif0 = Builder2.CreateBinOp(Instruction::FMul, Builder2.CreateLoad(differentials[inst]),
             Builder2.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::cos, tys), args) );
           break;
         }
         case Intrinsic::cos: {
-          Value *args[] = {op->getOperand(0)};
+          Value *args[] = {lookup(op->getOperand(0))};
           Type *tys[] = {op->getOperand(0)->getType()};
-          dif0 = Builder2.CreateBinOp(Instruction::FMul, differentials[inst],
+          dif0 = Builder2.CreateBinOp(Instruction::FMul, Builder2.CreateLoad(differentials[inst]),
             Builder2.CreateFNeg(
               Builder2.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::cos, tys), args) )
           );
@@ -232,36 +309,39 @@ Function* CreatePrimalAndGradient(Function* todiff) {
       }
 
       auto f0 = differentials.find(op->getOperand(0));
-      if (f0 != differentials.end()) {
-        dif0 = Builder2.CreateFAdd(f0->second, dif0);
+      if (f0 == differentials.end()) {
+        differentials[op->getOperand(0)] = entryBuilder.CreateAlloca(op->getOperand(0)->getType(), nullptr, op->getOperand(0)->getName()+"'");
+        entryBuilder.CreateStore(Constant::getNullValue(op->getOperand(0)->getType()), differentials[op->getOperand(0)]);
       }
+      llvm::errs() << "diffe\n";
+      differentials[op->getOperand(0)]->dump();
+      Builder2.CreateStore(Builder2.CreateFAdd(Builder2.CreateLoad(differentials[op->getOperand(0)]), dif0), differentials[op->getOperand(0)]);
 
-      differentials[op->getOperand(0)] = dif0;
-
-      if (dif1) {
-        auto f1 = differentials.find(op->getOperand(1));
-        if (f1 != differentials.end()) {
-          dif1 = Builder2.CreateFAdd(f1->second, dif1);
-        }
-        differentials[op->getOperand(1)] = dif1;
+      if(dif1) {
+      auto f1 = differentials.find(op->getOperand(1));
+      if (f1 == differentials.end()) {
+        differentials[op->getOperand(1)] = entryBuilder.CreateAlloca(op->getOperand(1)->getType(), nullptr, op->getOperand(1)->getName()+"'");
+        entryBuilder.CreateStore(Constant::getNullValue(op->getOperand(1)->getType()), differentials[op->getOperand(1)]);
       }
-
+      Builder2.CreateStore(Builder2.CreateFAdd(Builder2.CreateLoad(differentials[op->getOperand(1)]), dif1), differentials[op->getOperand(1)]);
+      }
     } else if(auto op = dyn_cast_or_null<CallInst>(inst)) {
         if(auto called = op->getCalledFunction()) {
               auto newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called));
               SmallVector<Value*, 8> args;
               for(unsigned i=0;i<called->getFunctionType()->getNumParams(); i++) {
-                args.push_back(op->getArgOperand(i));
+                args.push_back(lookup(op->getArgOperand(i)));
               }
               auto diffes = Builder2.CreateCall(newcalled, args);
               for(unsigned i=0;i<called->getFunctionType()->getNumParams(); i++) {
                 unsigned idxs[] = {i+1};
-                auto diffeadd = Builder2.CreateFMul(differentials[inst], Builder2.CreateExtractValue(diffes, idxs));
+                auto diffeadd = Builder2.CreateFMul(Builder2.CreateLoad(differentials[inst]), Builder2.CreateExtractValue(diffes, idxs));
                 auto f1 = differentials.find(args[i]);
-                if (f1 != differentials.end()) {
-                    diffeadd = Builder2.CreateFAdd(f1->second, diffeadd);
+                if (f1 == differentials.end()) {
+                  differentials[args[i]] = entryBuilder.CreateAlloca(args[i]->getType());
+                  entryBuilder.CreateStore(Constant::getNullValue(args[i]->getType()), differentials[args[i]]);
                 }
-                differentials[args[i]] = diffeadd;
+                Builder2.CreateStore(Builder2.CreateFAdd(Builder2.CreateLoad(differentials[args[i]]), diffeadd), differentials[args[i]]);
               }
         } else {
             op->dump();
@@ -273,52 +353,94 @@ Function* CreatePrimalAndGradient(Function* todiff) {
 
     } else if(auto op = dyn_cast_or_null<SelectInst>(inst)) {
 
-      auto dif1 = Builder2.CreateSelect(op->getOperand(0), differentials[op], Constant::getNullValue(op->getOperand(1)->getType()), "diffe"+op->getOperand(1)->getName());
-      auto dif2 = Builder2.CreateSelect(op->getOperand(0), Constant::getNullValue(op->getOperand(2)->getType()), differentials[op], "diffe"+op->getOperand(2)->getName());
+      auto dif1 = Builder2.CreateSelect(lookup(op->getOperand(0)), Builder2.CreateLoad(differentials[op]), Constant::getNullValue(op->getOperand(1)->getType()), "diffe"+op->getOperand(1)->getName());
+      auto dif2 = Builder2.CreateSelect(lookup(op->getOperand(0)), Constant::getNullValue(op->getOperand(2)->getType()), Builder2.CreateLoad(differentials[op]), "diffe"+op->getOperand(2)->getName());
       
       auto f1 = differentials.find(op->getOperand(1));
-      if (f1 != differentials.end()) {
-        dif1 = Builder2.CreateFAdd(f1->second, dif1, "diffe"+op->getOperand(1)->getName());
+      if (f1 == differentials.end()) {
+        differentials[op->getOperand(1)] = entryBuilder.CreateAlloca(op->getOperand(1)->getType(), nullptr, op->getOperand(1)->getName()+"'");
+        entryBuilder.CreateStore(Constant::getNullValue(op->getOperand(1)->getType()), differentials[op->getOperand(1)]);
       }
-      differentials[op->getOperand(1)] = dif1;
+      Builder2.CreateStore(Builder2.CreateFAdd(Builder2.CreateLoad(differentials[op->getOperand(1)]), dif1), differentials[op->getOperand(1)]);
 
       auto f2 = differentials.find(op->getOperand(2));
-      if (f2 != differentials.end()) {
-        dif2 = Builder2.CreateFAdd(f2->second, dif2, "diffe"+op->getOperand(2)->getName());
+      if (f2 == differentials.end()) {
+        differentials[op->getOperand(2)] = entryBuilder.CreateAlloca(op->getOperand(2)->getType(), nullptr, op->getOperand(2)->getName()+"'");
+        entryBuilder.CreateStore(differentials[op->getOperand(2)], Constant::getNullValue(op->getOperand(2)->getType()));
       }
+      Builder2.CreateStore(differentials[op->getOperand(2)], Builder2.CreateFAdd(Builder2.CreateLoad(differentials[op->getOperand(2)]), dif2));
 
-      differentials[op->getOperand(2)] = dif2;
-
-    } else if(auto op = dyn_cast_or_null<CmpInst>(inst)) {
+    } else if(isa<CmpInst>(inst) || isa<PHINode>(inst) || isa<BranchInst>(inst) || isa<AllocaInst>(inst) || isa<StoreInst>(inst) ) {
         continue;
     } else {
       inst->dump();
+      inst->getParent()->dump();
+      inst->getParent()->getParent()->dump();
       llvm::errs() << "cannot handle above inst\n";
       assert(0 && "unknown inst");
       exit(1);
     }
   }
 
-  Value * retargs[newFunc->getFunctionType()->getNumParams()+1] = {0};
-  retargs[0] = retval;
-  retargs[0]->dump();
-  {
-  int i=1;
-  for (auto& I: newFunc->args()) {
-    retargs[i] = differentials[(Value*)&I];
-    retargs[i]->dump();
-    i++;
-  }
+  unsigned predcount = 0;
+  for (BasicBlock *Pred : predecessors(BB)) {
+    predcount++;
+    if (Pred->size() != 0)
+      blockstodo.push_back(Pred);
   }
 
-  Value* toret = UndefValue::get(newFunc->getReturnType());
-  toret->dump();
-  for(unsigned i=0; i<newFunc->getFunctionType()->getNumParams()+1; i++) {
-    unsigned idx[] = { i };
-    toret = Builder2.CreateInsertValue(toret, retargs[i], idx);
+  if (predcount == 0) {
+    Value * retargs[newFunc->getFunctionType()->getNumParams()+1] = {0};
+    retargs[0] = retval;
+    llvm::errs() << "retval" << retval << "\n";
+    llvm::errs() << "retval" << *retval << "\n";
+    assert(retargs[0]);
+    retargs[0]->dump();
+    {
+    int i=1;
+    for (auto& I: newFunc->args()) {
+      retargs[i] = Builder2.CreateLoad(differentials[(Value*)&I]);
+      retargs[i]->dump();
+      i++;
+    }
+    }
+    Value* toret = UndefValue::get(newFunc->getReturnType());
+    toret->dump();
+    for(unsigned i=0; i<newFunc->getFunctionType()->getNumParams()+1; i++) {
+      unsigned idx[] = { i };
+      toret = Builder2.CreateInsertValue(toret, retargs[i], idx);
+    }
+    Builder2.CreateRet(toret);
+    continue;
+  } 
+  
+  BasicBlock* preds[predcount] = {0};
+  predcount = 0;
+  for (BasicBlock *Pred : predecessors(BB)) {
+    preds[predcount] = Pred;
+    predcount++;
   }
-  Builder2.CreateRet(toret);
+
+  
+  if (predcount == 1) {
+    Builder2.CreateBr(reverseBlocks[preds[0]]);
+  } else if (predcount == 2) {
+    IRBuilder <> pbuilder(&BB->front());
+    auto phi = pbuilder.CreatePHI(Type::getInt1Ty(Context), 2);
+    phi->addIncoming(ConstantInt::getTrue(phi->getType()), preds[0]);
+    phi->addIncoming(ConstantInt::getFalse(phi->getType()), preds[1]);
+    Builder2.CreateCondBr(phi, reverseBlocks[preds[0]], reverseBlocks[preds[1]]);
+  } else {
+    newFunc->dump();
+    BB->dump();
+    printf("predcount = %d\n", predcount);
+    assert(0 && "Need to determine where came from");
   }
+
+
+  }
+
+  newFunc->dump();
 
   return newFunc;
 }
