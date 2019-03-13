@@ -389,13 +389,29 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     IRBuilder<> Builder2(BB2);
     differentials[BB] = BB2;
 
-    std::function<Value*(Value*,IRBuilder<>)> unwrapM = [&](Value* val, IRBuilder<> BuilderM) -> Value* {
-          if (isa<Argument>(val) || isa<Constant>(val) ) {
+    std::function<Value*(Value*,IRBuilder<>&, const ValueToValueMapTy&)> unwrapM = [&](Value* val, IRBuilder<>& BuilderM, const ValueToValueMapTy& available) -> Value* {
+          if (available.count(val)) {
+            return available.lookup(val);
+          } if (isa<Argument>(val) || isa<Constant>(val) ) {
             return val;
           } else if (auto arg = dyn_cast<CastInst>(val)) {
-            return BuilderM.CreateCast(arg->getOpcode(), unwrapM(arg->getOperand(0), BuilderM), arg->getDestTy(), arg->getName()+"_unwrap");
+            return BuilderM.CreateCast(arg->getOpcode(), unwrapM(arg->getOperand(0), BuilderM, available), arg->getDestTy(), arg->getName()+"_unwrap");
           } else if (auto op = dyn_cast<BinaryOperator>(val)) {
-            return BuilderM.CreateBinOp(op->getOpcode(), unwrapM(op->getOperand(0), BuilderM), unwrapM(op->getOperand(1), BuilderM));
+            return BuilderM.CreateBinOp(op->getOpcode(), unwrapM(op->getOperand(0), BuilderM, available), unwrapM(op->getOperand(1), BuilderM, available));
+          } else if (auto op = dyn_cast<ICmpInst>(val)) {
+            return BuilderM.CreateICmp(op->getPredicate(), unwrapM(op->getOperand(0), BuilderM, available), unwrapM(op->getOperand(1), BuilderM, available));
+          } else if (auto op = dyn_cast<FCmpInst>(val)) {
+            return BuilderM.CreateFCmp(op->getPredicate(), unwrapM(op->getOperand(0), BuilderM, available), unwrapM(op->getOperand(1), BuilderM, available));
+          } else if (auto inst = dyn_cast<GetElementPtrInst>(val)) { 
+              auto ptr = unwrapM(inst->getPointerOperand(), BuilderM, available);
+              SmallVector<Value*,4> ind;
+              for(auto& a : inst->indices()) {
+                ind.push_back(unwrapM(a, BuilderM,available));
+              }
+              return BuilderM.CreateGEP(ptr, ind);
+          } else if (auto load = dyn_cast<LoadInst>(val)) {
+                Value* idx = unwrapM(load->getOperand(0), BuilderM, available);
+                return BuilderM.CreateLoad(idx);
           } else {
             llvm::errs() << "cannot unwrap following\n";
             val->dump();
@@ -403,21 +419,60 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
           }
     };
 
-    std::function<Value*(Value*,IRBuilder<>)> lookupM = [&](Value* val, IRBuilder<> BuilderM) -> Value* {
+    std::function<bool(Value*,const ValueToValueMapTy&)> shouldRecompute = [&](Value* val, const ValueToValueMapTy& available) -> bool {
+          if (available.count(val)) return false;
+          if (isa<Argument>(val) || isa<Constant>(val) ) {
+            return false;
+          } else if (auto op = dyn_cast<CastInst>(val)) {
+            return shouldRecompute(op->getOperand(0), available); 
+          } else if (auto op = dyn_cast<BinaryOperator>(val)) {
+            return shouldRecompute(op->getOperand(0), available) || shouldRecompute(op->getOperand(1), available); 
+          } else if (auto op = dyn_cast<CmpInst>(val)) {
+            return shouldRecompute(op->getOperand(0), available) || shouldRecompute(op->getOperand(1), available); 
+          } else if (auto load = dyn_cast<LoadInst>(val)) {
+                Value* idx = load->getOperand(0);
+                while (!isa<Argument>(idx)) {
+                    if (auto gep = dyn_cast<GetElementPtrInst>(idx)) {
+                        for(auto &a : gep->indices()) {
+                            if (shouldRecompute(a, available)) {
+                                llvm::errs() << "not recomputable: " << *a << "\n";
+                                return true;
+                            }
+                        }
+                        idx = gep->getPointerOperand();
+                    } else {
+                      llvm::errs() << "not a gep" << *idx << "\n";
+                      return true;
+                    }
+                }
+                Argument* arg = cast<Argument>(idx);
+                if (arg->hasAttribute(Attribute::ReadOnly)) {
+                    llvm::errs() << "argument " << *arg << " not marked read only\n";
+                    return false;
+                }
+          }
+          return true;
+    };
+
+    std::function<Value*(Value*,IRBuilder<>&)> lookupM = [&](Value* val, IRBuilder<>& BuilderM) -> Value* {
         if (auto inst = dyn_cast<Instruction>(val)) {
 
-            if (auto cast = dyn_cast<CastInst>(val)) {
-                //if (cast->isIntegerCast()) {
-                    return BuilderM.CreateCast(cast->getOpcode(), lookupM(cast->getOperand(0), BuilderM), cast->getDestTy());
-                //}
-            }
 
             LoopContext lc;
             bool inLoop = getContext(inst->getParent(), lc);
 
-            if (inLoop && inst == loopContext.var) {
-              return loopContext.antivar;
+            ValueToValueMapTy available;
+
+            if (inLoop)
+                available[loopContext.var] = loopContext.antivar;
+
+            if (!shouldRecompute(inst, available)) {
+                return unwrapM(inst, BuilderM, available);
             }
+
+            //if (inLoop && inst == loopContext.var) {
+            //  return loopContext.antivar;
+            //}
 
             if (!inLoop) {
                 if (scopeMap.find(val) == scopeMap.end()) {
@@ -434,7 +489,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             } else {
                 if (scopeMap.find(val) == scopeMap.end()) {
                     //TODO add indexing
-                    scopeMap[val] = entryBuilder.CreateAlloca(val->getType(), unwrapM(lc.limit, entryBuilder), val->getName()+"_arraycache");
+                    ValueToValueMapTy valmap;
+                    scopeMap[val] = entryBuilder.CreateAlloca(val->getType(), unwrapM(lc.limit, entryBuilder, available), val->getName()+"_arraycache");
                     Instruction* putafter = isa<PHINode>(inst) ? (inst->getParent()->getFirstNonPHI() ): inst;
                     IRBuilder <> v(putafter);
                     Value* idxs[] = {lc.var};
@@ -502,7 +558,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
     auto addToDiffe = [&](Value* val, Value* dif) {
       auto old = diffe(val);
-      Builder2.CreateStore(Builder2.CreateFAdd(old, dif), differentials[val]);
+      Builder2.CreateStore(Builder2.CreateFAddFMF(old, dif), differentials[val]);
     };
 
     auto setDiffe = [&](Value* val, Value* toset) {
@@ -523,7 +579,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       for(auto i : idxs)
         sv.push_back(i);
       auto ptr = Builder2.CreateGEP(differentials[val], sv);
-      Builder2.CreateStore(Builder2.CreateFAdd(Builder2.CreateLoad(ptr), dif), ptr);
+      Builder2.CreateStore(Builder2.CreateFAddFMF(Builder2.CreateLoad(ptr), dif), ptr);
     };
 
     std::function<Value*(Value*)> invertPointer = [&](Value* val) -> Value* {
@@ -548,7 +604,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
     auto addToPtrDiffe = [&](Value* val, Value* dif) {
       auto ptr = invertPointer(val);
-      Builder2.CreateStore(Builder2.CreateFAdd(Builder2.CreateLoad(ptr), dif), ptr);
+      Builder2.CreateStore(Builder2.CreateFAddFMF(Builder2.CreateLoad(ptr), dif), ptr);
     };
 
     auto setPtrDiffe = [&](Value* val, Value* toset) {
@@ -578,7 +634,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
   if (inLoop && loopContext.var->getParent()==BB) {
     BB2->getInstList().push_back(loopContext.antivar);
-    loopContext.antivar->addIncoming(lookupM(loopContext.limit, IRBuilder<>(&reverseBlocks[loopContext.exit]->back())), reverseBlocks[loopContext.exit]);
+    IRBuilder<> tbuild(&reverseBlocks[loopContext.exit]->back());
+    loopContext.antivar->addIncoming(lookupM(loopContext.limit, tbuild), reverseBlocks[loopContext.exit]);
     auto sub = Builder2.CreateSub(loopContext.antivar, ConstantInt::get(loopContext.antivar->getType(), 1));
     for(BasicBlock* in: successors(loopContext.var->getParent()) ) {
         if (LI.getLoopFor(in) == LI.getLoopFor(BB)) {
@@ -587,19 +644,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     }
     //TODO consider conditional and latch
   }
-
-  for(auto PB :successors(BB)) {  
-    for (auto I = PB->begin(), E = PB->end(); I != E; I++) {
-        //if (inLoop && &*I == loopContext.var) continue;
-        if(auto PN = dyn_cast<PHINode>(&*I)) {
-            if (!isconstant(PN->getIncomingValueForBlock(BB)) && !isconstant(PN)) {
-              setDiffe(PN->getIncomingValueForBlock(BB), diffe(PN) );
-            }
-        } else break;
-    }
-  }
-  
-
 
   for (auto I = BB->rbegin(), E = BB->rend(); I != E;) {
     Instruction* inst = &*I;
@@ -613,16 +657,18 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       switch(op->getOpcode()) {
         case Instruction::FMul:
           if (!isconstant(op->getOperand(0)))
-            dif0 = Builder2.CreateBinOp(op->getOpcode(), diffe(inst), lookup(op->getOperand(1)), "diffe"+op->getOperand(0)->getName());
+            dif0 = Builder2.CreateFMulFMF(diffe(inst), lookup(op->getOperand(1)), "diffe"+op->getOperand(0)->getName());
           if (!isconstant(op->getOperand(1)))
-            dif1 = Builder2.CreateBinOp(op->getOpcode(), diffe(inst), lookup(op->getOperand(0)), "diffe"+op->getOperand(1)->getName());
+            dif1 = Builder2.CreateFMulFMF(diffe(inst), lookup(op->getOperand(0)), "diffe"+op->getOperand(1)->getName());
           break;
-        case Instruction::FAdd:
+        case Instruction::FAdd:{
+          auto idiff = diffe(inst);
           if (!isconstant(op->getOperand(0)))
-            dif0 = diffe(inst);
+            dif0 = idiff;
           if (!isconstant(op->getOperand(1)))
-            dif1 = diffe(inst);
+            dif1 = idiff;
           break;
+        }
         case Instruction::FSub:
           if (!isconstant(op->getOperand(0)))
             dif0 = diffe(inst);
@@ -631,11 +677,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
           break;
         case Instruction::FDiv:
           if (!isconstant(op->getOperand(0)))
-            dif0 = Builder2.CreateBinOp(Instruction::FDiv, diffe(inst), lookup(op->getOperand(1)), "diffe"+op->getOperand(0)->getName());
+            dif0 = Builder2.CreateFDivFMF(diffe(inst), lookup(op->getOperand(1)), "diffe"+op->getOperand(0)->getName());
           if (!isconstant(op->getOperand(1)))
             dif1 = Builder2.CreateFNeg(
-              Builder2.CreateBinOp(Instruction::FDiv, 
-                Builder2.CreateFMul(diffe(inst), op),
+              Builder2.CreateDivFMF( 
+                Builder2.CreateFMulFMF(diffe(inst), op),
                 lookup(op->getOperand(1)))
             );
 
@@ -684,7 +730,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         case Intrinsic::sqrt: {
           if (!isconstant(op->getOperand(0)))
             dif0 = Builder2.CreateBinOp(Instruction::FDiv, diffe(inst),
-              Builder2.CreateBinOp(Instruction::FMul, ConstantFP::get(op->getType(), 2.0), lookup(op))
+              Builder2.CreateFMulFMF(ConstantFP::get(op->getType(), 2.0), lookup(op))
             );
           break;
         }
@@ -696,48 +742,48 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         }
         case Intrinsic::log: {
           if (!isconstant(op->getOperand(0)))
-            dif0 = Builder2.CreateBinOp(Instruction::FDiv, diffe(inst), lookup(op->getOperand(0)));
+            dif0 = Builder2.CreateFDivFMF(diffe(inst), lookup(op->getOperand(0)));
           break;
         }
         case Intrinsic::log2: {
           if (!isconstant(op->getOperand(0)))
-            dif0 = Builder2.CreateBinOp(Instruction::FDiv, diffe(inst),
-              Builder2.CreateBinOp(Instruction::FMul, ConstantFP::get(op->getType(), 0.6931471805599453), lookup(op->getOperand(0)))
+            dif0 = Builder2.CreateFDivFMF(diffe(inst),
+              Builder2.CreateFMulFMF(ConstantFP::get(op->getType(), 0.6931471805599453), lookup(op->getOperand(0)))
             );
           break;
         }
         case Intrinsic::log10: {
           if (!isconstant(op->getOperand(0)))
-            dif0 = Builder2.CreateBinOp(Instruction::FDiv, diffe(inst),
-              Builder2.CreateBinOp(Instruction::FMul, ConstantFP::get(op->getType(), 2.302585092994046), lookup(op->getOperand(0)))
+            dif0 = Builder2.CreateFDivFMF(diffe(inst),
+              Builder2.CreateFMulFMF(ConstantFP::get(op->getType(), 2.302585092994046), lookup(op->getOperand(0)))
             );
           break;
         }
         case Intrinsic::exp: {
           if (!isconstant(op->getOperand(0)))
-            dif0 = Builder2.CreateBinOp(Instruction::FMul, diffe(inst), lookup(op));
+            dif0 = Builder2.CreateFMulFMF(diffe(inst), lookup(op));
           break;
         }
         case Intrinsic::exp2: {
           if (!isconstant(op->getOperand(0)))
-            dif0 = Builder2.CreateBinOp(Instruction::FMul,
-              Builder2.CreateBinOp(Instruction::FMul, diffe(inst), lookup(op)), ConstantFP::get(op->getType(), 0.6931471805599453)
+            dif0 = Builder2.CreateFMulFMF(
+              Builder2.CreateFMulFMF(diffe(inst), lookup(op)), ConstantFP::get(op->getType(), 0.6931471805599453)
             );
           break;
         }
         case Intrinsic::pow: {
           if (!isconstant(op->getOperand(0)))
-            dif0 = Builder2.CreateBinOp(Instruction::FMul,
-              Builder2.CreateBinOp(Instruction::FMul, diffe(inst),
-                Builder2.CreateBinOp(Instruction::FDiv, lookup(op), lookup(op->getOperand(0)))), lookup(op->getOperand(1))
+            dif0 = Builder2.CreateFMulFMF(
+              Builder2.CreateFMulFMF(diffe(inst),
+                Builder2.CreateFDivFMF(lookup(op), lookup(op->getOperand(0)))), lookup(op->getOperand(1))
             );
 
           Value *args[] = {op->getOperand(1)};
           Type *tys[] = {op->getOperand(1)->getType()};
 
           if (!isconstant(op->getOperand(1)))
-            dif1 = Builder2.CreateBinOp(Instruction::FMul,
-              Builder2.CreateBinOp(Instruction::FMul, diffe(inst), lookup(op)),
+            dif1 = Builder2.CreateFMulFMF(
+              Builder2.CreateFMulFMF(diffe(inst), lookup(op)),
               Builder2.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::log, tys), args)
             );
 
@@ -747,7 +793,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
           Value *args[] = {lookup(op->getOperand(0))};
           Type *tys[] = {op->getOperand(0)->getType()};
           if (!isconstant(op->getOperand(0)))
-            dif0 = Builder2.CreateBinOp(Instruction::FMul, Builder2.CreateLoad(differentials[inst]),
+            dif0 = Builder2.CreateFMulFMF(diffe(inst),
               Builder2.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::cos, tys), args) );
           break;
         }
@@ -755,7 +801,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
           Value *args[] = {lookup(op->getOperand(0))};
           Type *tys[] = {op->getOperand(0)->getType()};
           if (!isconstant(op->getOperand(0)))
-            dif0 = Builder2.CreateBinOp(Instruction::FMul, diffe(inst),
+            dif0 = Builder2.CreateFMulFMF(diffe(inst),
               Builder2.CreateFNeg(
                 Builder2.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::cos, tys), args) )
             );
@@ -813,7 +859,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               for(unsigned i=0;i<called->getFunctionType()->getNumParams(); i++) {
                 if (argsInverted[i]) {
                   unsigned idxs[] = {structidx};
-                  auto diffeadd = Builder2.CreateFMul( diffe(inst), Builder2.CreateExtractValue(diffes, idxs));
+                  auto diffeadd = Builder2.CreateFMulFMF( diffe(inst), Builder2.CreateExtractValue(diffes, idxs));
                   structidx++;
                   addToDiffe(args[i], diffeadd);
                 }
@@ -948,11 +994,31 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
   
   if (predcount == 1) {
     Builder2.CreateBr(reverseBlocks[preds[0]]);
+
+    for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
+        assert(!isa<PHINode>(&*I));
+    }
+
   } else if (predcount == 2) {
     IRBuilder <> pbuilder(&BB->front());
     auto phi = pbuilder.CreatePHI(Type::getInt1Ty(Context), 2);
     phi->addIncoming(ConstantInt::getTrue(phi->getType()), preds[0]);
     phi->addIncoming(ConstantInt::getFalse(phi->getType()), preds[1]);
+
+    for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
+        if(auto PN = dyn_cast<PHINode>(&*I)) {
+            if (!isconstant(PN->getIncomingValueForBlock(preds[0])) && !isconstant(PN)) {
+                auto dif = Builder2.CreateSelect(lookup(phi), diffe(PN), diffe(PN->getIncomingValueForBlock(preds[0])));
+                setDiffe(PN->getIncomingValueForBlock(preds[0]), dif );
+            }
+            if (!isconstant(PN->getIncomingValueForBlock(preds[1])) && !isconstant(PN)) {
+                auto dif = Builder2.CreateSelect(lookup(phi), diffe(PN->getIncomingValueForBlock(preds[1])), diffe(PN));
+                setDiffe(PN->getIncomingValueForBlock(preds[1]), dif);
+            }
+            setDiffe(PN, Constant::getNullValue(PN->getType()));
+        } else break;
+    }
+
     Builder2.CreateCondBr(lookup(phi), reverseBlocks[preds[0]], reverseBlocks[preds[1]]);
   } else {
     newFunc->dump();
