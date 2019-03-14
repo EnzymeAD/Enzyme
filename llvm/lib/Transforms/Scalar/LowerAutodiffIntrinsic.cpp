@@ -538,7 +538,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 entryBuilder.CreateZExtOrTrunc(inst->getArraySize(),Type::getInt64Ty(Context)), 
                     ConstantInt::get(Type::getInt64Ty(Context), M->getDataLayout().getTypeAllocSizeInBits(inst->getAllocatedType())/8 ) ), ConstantInt::getFalse(Context) };
                 Type *tys[] = {args[0]->getType(), args[2]->getType()};
-                entryBuilder.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::memset, tys), args);
+                auto memset = cast<CallInst>(entryBuilder.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::memset, tys), args));
+                memset->addParamAttr(0, Attribute::getWithAlignment(Context, inst->getAlignment()));
+                memset->addParamAttr(0, Attribute::NonNull);
             }
             return std::pair<Value*,Value*>(val, antiallocas[val]);
         } else if (auto inst = dyn_cast<GetElementPtrInst>(val)) {
@@ -591,17 +593,30 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
     std::function<Value*(Value*)> invertPointer = [&](Value* val) -> Value* {
       if (auto arg = dyn_cast<Argument>(val)) {
-        return ptrInputs[arg];
+        return cast<Argument>(ptrInputs[arg]);
       } else if (auto arg = dyn_cast<CastInst>(val)) {
         return Builder2.CreateCast(arg->getOpcode(), invertPointer(arg->getOperand(0)), arg->getDestTy(), arg->getName()+"'ip");
       } else if (auto arg = dyn_cast<GetElementPtrInst>(val)) {
         SmallVector<Value*,4> invertargs;
         for(auto &a: arg->indices()) {
-            invertargs.push_back(lookup(a));
+            auto b = lookup(a);
+            b->dump();
+            invertargs.push_back(b);
         }
         return Builder2.CreateGEP(invertPointer(arg->getPointerOperand()), invertargs, arg->getName()+"'ip");
-      } else if (auto arg = dyn_cast<AllocaInst>(val)) {
-        return antiallocas[arg];
+      } else if (auto inst = dyn_cast<AllocaInst>(val)) {
+        if (antiallocas.find(val) == antiallocas.end()) {
+            antiallocas[val] = entryBuilder.CreateAlloca(inst->getAllocatedType(), inst->getType()->getPointerAddressSpace(), inst->getArraySize(), inst->getName()+"'loa");
+            cast<AllocaInst>(antiallocas[val])->setAlignment(inst->getAlignment()); 
+            Value *args[] = {entryBuilder.CreateBitCast(antiallocas[val],Type::getInt8PtrTy(Context)), ConstantInt::get(Type::getInt8Ty(val->getContext()), 0), entryBuilder.CreateMul(
+            entryBuilder.CreateZExtOrTrunc(inst->getArraySize(),Type::getInt64Ty(Context)), 
+                ConstantInt::get(Type::getInt64Ty(Context), M->getDataLayout().getTypeAllocSizeInBits(inst->getAllocatedType())/8 ) ), ConstantInt::getFalse(Context) };
+            Type *tys[] = {args[0]->getType(), args[2]->getType()};
+            auto memset = cast<CallInst>(entryBuilder.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::memset, tys), args));
+            memset->addParamAttr(0, Attribute::getWithAlignment(Context, inst->getAlignment()));
+            memset->addParamAttr(0, Attribute::NonNull);
+        }
+        return cast<AllocaInst>(antiallocas[inst]);
       } else {
         newFunc->dump();
         val->dump();
@@ -896,7 +911,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     } else if(auto op = dyn_cast<LoadInst>(inst)) {
         auto dif1 = diffe(inst);
         addToPtrDiffe(op->getOperand(0), dif1);
-      setDiffe(inst, Constant::getNullValue(inst->getType()));
+        setDiffe(inst, Constant::getNullValue(inst->getType()));
     } else if(auto op = dyn_cast<StoreInst>(inst)) {
       //TODO const
       if (!isconstant(op->getValueOperand())) {
