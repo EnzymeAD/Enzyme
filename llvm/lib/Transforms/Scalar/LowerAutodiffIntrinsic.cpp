@@ -340,6 +340,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         const SCEV *Limit = SE.getExitCount(L, Latch);
 
         if (SE.getCouldNotCompute() == Limit) {
+          newFunc->dump();
+          L->dump();
+          Latch->dump();
           llvm::errs() << "SE could not compute loop limit.\n";
           exit(1);
         }
@@ -1019,8 +1022,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     }
   }
 
-  llvm::errs() << "BB is " << *BB << "\n";
-
   if (preds.size() == 0) {
     SmallVector<Value *,4> retargs;
 
@@ -1055,7 +1056,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
   } else if (preds.size() == 2) {
     IRBuilder <> pbuilder(&BB->front());
     pbuilder.setFastMathFlags(FastMathFlags::getFast());
-    Value* phi;
+    Value* phi = nullptr;
 
     if (inLoop && preds[0] == loopContext.var->getParent()) {
       //TODO
@@ -1083,15 +1084,16 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             setDiffe(PN, Constant::getNullValue(PN->getType()));
         } else break;
     }
-
-    Builder2.CreateCondBr(phi, reverseBlocks[preds[0]], reverseBlocks[preds[1]]);
+    auto f0 = cast<BasicBlock>(reverseBlocks[preds[0]]);
+    auto f1 = cast<BasicBlock>(reverseBlocks[preds[1]]);
+    Builder2.CreateCondBr(phi, f0, f1);
   } else {
     IRBuilder <> pbuilder(&BB->front());
     pbuilder.setFastMathFlags(FastMathFlags::getFast());
-    Value* phi;
+    Value* phi = nullptr;
 
     if (true) {
-      phi = pbuilder.CreatePHI(Type::getInt1Ty(Context), preds.size());
+      phi = pbuilder.CreatePHI(Type::getInt8Ty(Context), preds.size());
       for(unsigned i=0; i<preds.size(); i++) {
         cast<PHINode>(phi)->addIncoming(ConstantInt::get(phi->getType(), i), preds[i]);
       }
@@ -1114,7 +1116,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
     auto swit = Builder2.CreateSwitch(phi, reverseBlocks[preds.back()], preds.size()-1);
     for(unsigned i=0; i<preds.size()-1; i++) {
-      swit->addCase(ConstantInt::get(cast<IntegerType>(phi->getType()), i), preds[i]);
+      swit->addCase(ConstantInt::get(cast<IntegerType>(phi->getType()), i), reverseBlocks[preds[i]]);
     }
   }
 
