@@ -1090,10 +1090,36 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
     Builder2.CreateCondBr(phi, reverseBlocks[preds[0]], reverseBlocks[preds[1]]);
   } else {
-    newFunc->dump();
-    BB->dump();
-    printf("predcount = %zu\n", preds.size());
-    assert(0 && "Need to determine where came from");
+    IRBuilder <> pbuilder(&BB->front());
+    pbuilder.setFastMathFlags(FastMathFlags::getFast());
+    Value* phi;
+
+    if (true) {
+      phi = pbuilder.CreatePHI(Type::getInt1Ty(Context), preds.size());
+      for(int i=0; i<preds.size(); i++) {
+        cast<PHINode>(phi)->addIncoming(ConstantInt::get(phi->getType(), i), preds[i]);
+      }
+      phi = lookup(phi);
+    }
+
+    for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
+        if(auto PN = dyn_cast<PHINode>(&*I)) {
+          if (isconstant(PN)) continue;
+          for(unsigned i=0; i<preds.size(); i++) {
+            if (!isconstant(PN->getIncomingValueForBlock(preds[i]))) {
+                auto cond = Builder2.CreateICmpEQ(phi, ConstantInt::get(phi->getType(), i));
+                auto dif = Builder2.CreateSelect(cond, diffe(PN), diffe(PN->getIncomingValueForBlock(preds[i])));
+                setDiffe(PN->getIncomingValueForBlock(preds[i]), dif);
+            }
+          }
+          setDiffe(PN, Constant::getNullValue(PN->getType()));
+        } else break;
+    }
+
+    auto swit = Builder2.CreateSwitch(phi, reverseBlocks[preds.back()], preds.size()-1);
+    for(unsigned i=0; i<preds.size()-1; i++) {
+      swit->addCase(ConstantInt::get(cast<IntegerType>(phi->getType()), i), preds[i]);
+    }
   }
 
 
