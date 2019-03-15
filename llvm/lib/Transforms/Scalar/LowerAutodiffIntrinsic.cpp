@@ -50,9 +50,10 @@ using namespace llvm;
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/IntrinsicInst.h"
 
-Function *CloneFunctionWithReturns(Function *F, SmallVector<ReturnInst*, 8>& Returns, ValueToValueMapTy& ptrInputs, const SmallSet<unsigned,4>& constant_args, SmallPtrSetImpl<Value*> &constants) {
+Function *CloneFunctionWithReturns(Function *F, SmallVector<ReturnInst*, 8>& Returns, ValueToValueMapTy& ptrInputs, const SmallSet<unsigned,4>& constant_args, SmallPtrSetImpl<Value*> &constants, bool returnValue) {
  std::vector<Type*> RetTypes;
- RetTypes.push_back(F->getReturnType());
+ if (returnValue)
+   RetTypes.push_back(F->getReturnType());
  std::vector<Type*> ArgTypes;
 
  ValueToValueMapTy VMap;
@@ -203,19 +204,20 @@ Value* canonicalizeLoopLatch(PHINode *IV, Value *Limit, Loop* L, ScalarEvolution
 typedef struct {
 	PHINode* var;
   PHINode* antivar;
+  //limit is last value, iters is number of iters (thus iters = limit + 1)
 	Value* limit;
   Value *cond;
   BasicBlock* exit;
 } LoopContext;
 
-Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& constant_args, TargetLibraryInfo &TLI) {
+Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& constant_args, TargetLibraryInfo &TLI, bool returnValue) {
   auto M = todiff->getParent();
   auto& Context = M->getContext();
 
   SmallVector<ReturnInst*, 8> Returns;
   ValueToValueMapTy ptrInputs;
   SmallPtrSet<Value*,4> constants;
-  auto newFunc = CloneFunctionWithReturns(todiff, Returns, ptrInputs, constant_args, constants);
+  auto newFunc = CloneFunctionWithReturns(todiff, Returns, ptrInputs, constant_args, constants, returnValue);
 
   DominatorTree DT(*newFunc);
   LoopInfo LI(DT);
@@ -496,7 +498,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 if (scopeMap.find(val) == scopeMap.end()) {
                     //TODO add indexing
                     ValueToValueMapTy valmap;
-                    scopeMap[val] = entryBuilder.CreateAlloca(val->getType(), unwrapM(lc.limit, entryBuilder, available), val->getName()+"_arraycache");
+                    scopeMap[val] = entryBuilder.CreateAlloca(val->getType(), entryBuilder.CreateAdd(unwrapM(lc.limit, entryBuilder, available), ConstantInt::get(lc.limit->getType(), 1)), val->getName()+"_arraycache");
                     Instruction* putafter = isa<PHINode>(inst) ? (inst->getParent()->getFirstNonPHI() ): inst;
                     IRBuilder <> v(putafter);
                     v.setFastMathFlags(FastMathFlags::getFast());
@@ -575,7 +577,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         differentials[val] = entryBuilder.CreateAlloca(val->getType(), nullptr, val->getName()+"'ds");
         entryBuilder.CreateStore(Constant::getNullValue(val->getType()), differentials[val]);
       }
-      Builder2.CreateStore(toset, differentials[val]);
+      Builder2.CreateStore(cast<Value>(toset), cast<Value>(differentials[val]));
     };
 
     auto addToDiffeIndexed = [&](Value* val, Value* dif, ArrayRef<Value*> idxs) {
@@ -846,7 +848,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         if(auto called = op->getCalledFunction()) {
             if (called->getName() == "printf" || called->getName() == "puts") {
                 SmallVector<Value*, 4> args;
-                for(int i=0; i<op->getNumArgOperands(); i++) {
+                for(unsigned i=0; i<op->getNumArgOperands(); i++) {
                     args.push_back(lookup(op->getArgOperand(i)));
                 }
                 auto cal = Builder2.CreateCall(called, args);
@@ -874,11 +876,20 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               }
               if (constant_args.size() == args.size()) break;
 
-              auto newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called), constant_args, TLI);//, LI, DT);
+              bool used = false;
+              for (const Use &U : inst->uses()) {
+                const Instruction *I = cast<Instruction>(U.getUser());
+                if (I) used = true;
+              }
+              bool retUsed = false;
+              if (retval == inst && returnValue)
+                retUsed = true;
+
+              auto newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called), constant_args, TLI, used || retUsed);//, LI, DT);
 
               auto diffes = Builder2.CreateCall(newcalled, args);
               diffes->setDebugLoc(inst->getDebugLoc());
-              unsigned structidx = 1;
+              unsigned structidx = used ? 1 : 0;
               for(unsigned i=0;i<called->getFunctionType()->getNumParams(); i++) {
                 if (argsInverted[i]) {
                   unsigned idxs[] = {structidx};
@@ -888,19 +899,15 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 }
               }
 
-              bool used = false;
-              for (const Use &U : inst->uses()) {
-                const Instruction *I = cast<Instruction>(U.getUser());
-                if (I) used = true;
-              }
-
               if (!used) {
-                if (retval == inst) {
+                if (retUsed) {
                   unsigned idxs[] = {0};
+                  diffes->dump();
                   retval = Builder2.CreateExtractValue(diffes, idxs);
                 }
                 inst->eraseFromParent();
-              }
+              } else
+                setDiffe(inst, Constant::getNullValue(inst->getType()));
 
             }
         } else {
@@ -909,7 +916,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             exit(1);
         }
 
-      setDiffe(inst, Constant::getNullValue(inst->getType()));
     } else if(auto op = dyn_cast_or_null<SelectInst>(inst)) {
 
       Value* dif1 = nullptr;
@@ -992,27 +998,24 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
   if (predcount == 0) {
     SmallVector<Value *,4> retargs; //[newFunc->getFunctionType()->getNumParams()+1] = {0};
-    retargs.push_back(retval);
 
     //newFunc->dump();
-    //retargs[0]->dump();
-    assert(retargs[0]);
-    unsigned num_args;
-    {
-    int i=1;
+    if (returnValue) {
+      retargs.push_back(retval);
+      assert(retargs[0]);
+      //retargs[0]->dump();
+    }
+
     for (auto& I: newFunc->args()) {
         if (I.getType()->isPointerTy() || isconstant(&I)) {
             continue;
         }
       retargs.push_back(diffe((Value*)&I));
       //retargs[i]->dump();
-      i++;
-    }
-    num_args = i;
     }
 
     Value* toret = UndefValue::get(newFunc->getReturnType());
-    for(unsigned i=0; i<num_args; i++) {
+    for(unsigned i=0; i<retargs.size(); i++) {
       unsigned idx[] = { i };
       toret = Builder2.CreateInsertValue(toret, retargs[i], idx);
     }
@@ -1038,12 +1041,12 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     pbuilder.setFastMathFlags(FastMathFlags::getFast());
     Value* phi;
 
-    if (inLoop && preds[0] == loopContext.antivar->getParent()) {
-      //TODO
-      phi = Builder2.CreateICmpEQ(loopContext.antivar, Constant::getNullValue(loopContext.antivar->getType()));
-    } else if (inLoop && preds[1] == loopContext.antivar->getParent()) {
+    if (inLoop && preds[0] == loopContext.var->getParent()) {
       //TODO
       phi = Builder2.CreateICmpNE(loopContext.antivar, Constant::getNullValue(loopContext.antivar->getType()));
+    } else if (inLoop && preds[1] == loopContext.var->getParent()) {
+      //TODO
+      phi = Builder2.CreateICmpEQ(loopContext.antivar, Constant::getNullValue(loopContext.antivar->getType()));
     } else {
       phi = pbuilder.CreatePHI(Type::getInt1Ty(Context), 2);
       cast<PHINode>(phi)->addIncoming(ConstantInt::getTrue(phi->getType()), preds[0]);
@@ -1069,7 +1072,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
   } else {
     newFunc->dump();
     BB->dump();
-    printf("predcount = %d\n", preds.size());
+    printf("predcount = %zu\n", preds.size());
     assert(0 && "Need to determine where came from");
   }
 
@@ -1106,13 +1109,13 @@ void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI) {//, LoopInfo& LI, Dom
 
   SmallSet<unsigned,4> constants;
 
-  auto newFunc = CreatePrimalAndGradient(dyn_cast<Function>(fn), constants, TLI);//, LI, DT);
+  auto newFunc = CreatePrimalAndGradient(dyn_cast<Function>(fn), constants, TLI, /*should return*/false);//, LI, DT);
 
   IRBuilder<> Builder(CI);
   Builder.setFastMathFlags(FastMathFlags::getFast());
   Value* args[1] = {arg0};
   Value* diffret = Builder.CreateCall(newFunc, args);
-  unsigned idxs[] = {1};
+  unsigned idxs[] = {0};
   diffret = Builder.CreateExtractValue(diffret, idxs);
   CI->replaceAllUsesWith(diffret);
   CI->eraseFromParent();

@@ -121,7 +121,6 @@ double square(double x) {
   printf("set vector\n");
   double matrix_weights[10*10] = {0};
 
-  /*
     #pragma clang loop vectorize(disable)
     #pragma clang loop unroll(disable)
   for (int idx = 0; idx < 100*100; idx++) {
@@ -129,7 +128,7 @@ double square(double x) {
     int j = idx/100;
     matrix_weights[j*100+i] = 1.0*(j+i) + 1e-20;
   }
-    */
+
   printf("calling foo\n");
   return foo(matrix_weights);//, vector);
 }
