@@ -14,7 +14,8 @@ test2.ll: test.ll
 	../build/bin/opt -sroa testa.ll -S -o testb.ll
 	#./llvm/build/bin/opt -early-cse testb.ll -S -o test2.ll
 	../build/bin/opt -early-cse-memssa testb.ll -S -o testc.ll
-	../build/bin/opt -adce -bdce -aggressive-instcombine -indvars -simplifycfg testc.ll -S -o test2.ll
+	../build/bin/opt -adce -bdce -aggressive-instcombine -indvars -simplifycfg -deadargelim testc.ll -S -o testd.ll
+	../build/bin/opt -deadargelim testd.ll -S -o test2.ll -debug
 
 test.S: test2.ll
 	../build/bin/clang test2.ll -o test.S -S
@@ -23,4 +24,4 @@ test.o: test2.ll
 	../build/bin/clang test2.ll -o test.o -lm -g -ggdb
 
 clean:
-	rm -f test.ll test2.ll test.o testo.ll test.S test1.ll testa.ll testb.ll testc.ll test0.ll
+	rm -f test.ll test2.ll test.o testo.ll test.S test1.ll testa.ll testb.ll testc.ll test0.ll testd.ll
