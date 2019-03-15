@@ -3,7 +3,7 @@
 #include <stdlib.h>
 
 /*
-__attribute__((noinline)) 
+__attribute__((noinline))
 double times2(double x) {
     return 2 * sqrt(x);
 }
@@ -33,16 +33,15 @@ double squarez(double x) {
     }
 }
 
-__attribute__((noinline)) 
+__attribute__((noinline))
 double ptr(double* __restrict x) {
     return (*x) * (*x);
 }
 */
 
 /*
-TODO FIX BELOW
 #define LEN 3
-__attribute__((noinline)) 
+__attribute__((noinline))
 double sumsquare(double* __restrict x ) {
     double sum = 0;
     for(int i=0; i < LEN; i++) {
@@ -56,11 +55,11 @@ double square(double x) {
    double ar[LEN] = {x};
    return sumsquare(ar);
 }
-
 */
 
+
 /*
-__attribute__((noinline)) 
+__attribute__((noinline))
 double times(double x, int y) {
     return x * y;
 }
@@ -71,7 +70,7 @@ double square(double x) {
 */
 
 /*
-__attribute__((noinline)) 
+__attribute__((noinline))
 double sumsquare(double* __restrict x, int n) {
     double sum = 0;
     #pragma clang loop vectorize(disable)
@@ -92,52 +91,91 @@ double square(double x) {
 }
 */
 
-__attribute__((noinline)) 
+/*
+__attribute__((noinline))
 double foo(double* __restrict matrix) {//, double* __restrict vector) {
   printf("begin foo\n");
   double output = 0;//{0};
 
-    #pragma clang loop vectorize(disable)
-    #pragma clang loop unroll(disable)
   for (int idx = 0; idx < 10*10; idx++) {
-    printf("foo idx=%d\n", idx);
+    //printf("foo idx=%d\n", idx);
     int i = idx%10;
     int j = idx/10;
     output += matrix[j*10 + i]//vector[i];//matrix[j*100+i] + vector[i];
     ;
   }
-  printf("ended foo\n");
+  //printf("ended foo\n");
   return output;
 }
 
 double square(double x) {
   printf("starting square\n");
   double vector[10] = {0};
-    #pragma clang loop vectorize(disable)
-    #pragma clang loop unroll(disable)
+    //#pragma clang loop vectorize(disable)
+    //#pragma clang loop unroll(disable)
   for (int i = 0; i < 10; i++) {
     vector[i] = (1.0*i)/10;
+    //printf("vector[%d]\n", i);
   }
-  printf("set vector\n");
+  //printf("set vector\n");
   double matrix_weights[10*10] = {0};
 
-    #pragma clang loop vectorize(disable)
-    #pragma clang loop unroll(disable)
-  for (int idx = 0; idx < 100*100; idx++) {
-    int i = idx%100;
-    int j = idx/100;
-    matrix_weights[j*100+i] = 1.0*(j+i) + 1e-20;
+    //#pragma clang loop vectorize(disable)
+    //#pragma clang loop unroll(disable)
+  for (int idx = 0; idx < 10*10; idx++) {
+    int i = idx%10;
+    int j = idx/10;
+    //printf("matrix[%d]\n", idx);
+    matrix_weights[j*10+i] = 1.0*(j+i) + 1e-20;
   }
 
   printf("calling foo\n");
   return foo(matrix_weights);//, vector);
 }
+*/
+
+__attribute__((noinline))
+double foo(double* __restrict matrix, double* __restrict vector, size_t len) {
+  double output = 0;//{0};
+
+  for (int idx = 0; idx < len*len; idx++) {
+    //printf("foo idx=%d\n", idx);
+    int i = idx%len;
+    int j = idx/len;
+    output += matrix[j*len + i] + vector[i];
+    ;
+  }
+  //printf("ended foo\n");
+  return output;
+}
+
+double square(double x) {
+  #define len 100
+  double vector[len] = {0};
+  for (int i = 0; i < len; i++) {
+    vector[i] = (1.0*i)/len;
+  }
+  double matrix_weights[len*len] = {0};
+
+  for (int idx = 0; idx < len*len; idx++) {
+    int i = idx%len;
+    int j = idx/len;
+    matrix_weights[j*len+i] = 1.0*(j+i) + 1e-20;
+  }
+
+  printf("calling foo\n");
+  return foo(matrix_weights, vector, len);
+}
 
 int main(int argc, char** argv) {
     double f = atof(argv[1]);
-    printf("f(x=%lf) = %lf\n", f, square(f));
+
+    printf("now executing square\n");
+    double res0 = square(f);
+    printf("finished executing square\n");
+    printf("f(x=%lf) = %lf\n", f, res0);
     printf("now executing builtin autodiff\n");
-    double res = __builtin_autodiff(square, f); 
+    double res = __builtin_autodiff(square, f);
     printf("finished executing autodiff\n");
     printf("d/dx f(x=%lf) = %lf\n", f, res);
     //printf("d/dx sqrt(x) | x=%lf  = %lf | eval=%lf\n", f, __builtin_autodiff(ptr, f), ptr(f));

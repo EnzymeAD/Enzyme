@@ -351,14 +351,32 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             exit(1);
         }
 
+        const SCEVAddRecExpr *CanonicalSCEV =
+          cast<const SCEVAddRecExpr>(SE.getSCEV(CanonicalIV));
 
         SCEVExpander Exp(SE, M->getDataLayout(), "ls");
+
+        // Remove Canonicalizable IV's
+        {
+          SmallVector<PHINode*, 8> IVsToRemove;
+          for (BasicBlock::iterator II = Header->begin(); isa<PHINode>(II); ++II) {
+            PHINode *PN = cast<PHINode>(II);
+            if (PN == CanonicalIV) continue;
+            if (!SE.isSCEVable(PN->getType())) continue;
+            const SCEV *S = SE.getSCEV(PN);
+            if (SE.getCouldNotCompute() == S) continue;
+            Value *NewIV = Exp.expandCodeFor(S, S->getType(), CanonicalIV);
+            PN->replaceAllUsesWith(NewIV);
+            IVsToRemove.push_back(PN);
+          }
+          for (PHINode *PN : IVsToRemove)
+            PN->eraseFromParent();
+        }
+
         Value *LimitVar = Exp.expandCodeFor(Limit, CanonicalIV->getType(),
                                             Preheader->getTerminator());
 
         // Canonicalize the loop latch.
-        const SCEVAddRecExpr *CanonicalSCEV =
-          cast<const SCEVAddRecExpr>(SE.getSCEV(CanonicalIV));
         assert(SE.isLoopBackedgeGuardedByCond(L, ICmpInst::ICMP_ULT,
                                               CanonicalSCEV, Limit) &&
                "Loop backedge is not guarded by canonical comparison with limit.");
@@ -471,7 +489,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             ValueToValueMapTy available;
 
             if (inLoop)
-                available[loopContext.var] = loopContext.antivar;
+                available[lc.var] = lc.antivar;
 
             if (!shouldRecompute(inst, available)) {
                 return unwrapM(inst, BuilderM, available);
@@ -498,6 +516,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 if (scopeMap.find(val) == scopeMap.end()) {
                     //TODO add indexing
                     ValueToValueMapTy valmap;
+                    llvm::errs() << "needing to recompute: " << *inst << "\n";
+                    llvm::errs() << "var is " << *lc.var << "\n";
                     scopeMap[val] = entryBuilder.CreateAlloca(val->getType(), entryBuilder.CreateAdd(unwrapM(lc.limit, entryBuilder, available), ConstantInt::get(lc.limit->getType(), 1)), val->getName()+"_arraycache");
                     Instruction* putafter = isa<PHINode>(inst) ? (inst->getParent()->getFirstNonPHI() ): inst;
                     IRBuilder <> v(putafter);
