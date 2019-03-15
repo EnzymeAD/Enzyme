@@ -950,9 +950,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       if (dif2) addToDiffe(op->getOperand(2), dif2);
       setDiffe(inst, Constant::getNullValue(inst->getType()));
     } else if(auto op = dyn_cast<LoadInst>(inst)) {
-        auto dif1 = diffe(inst);
-        addToPtrDiffe(op->getOperand(0), dif1);
-        setDiffe(inst, Constant::getNullValue(inst->getType()));
+      addToPtrDiffe(op->getOperand(0), diffe(inst));
+      setDiffe(inst, Constant::getNullValue(inst->getType()));
     } else if(auto op = dyn_cast<StoreInst>(inst)) {
       //TODO const
       if (!isconstant(op->getValueOperand())) {
@@ -995,7 +994,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
       addToDiffe(op->getOperand(1), Builder2.CreateExtractElement(dif1, lookup(op->getOperand(2))));
       setDiffe(inst, Constant::getNullValue(inst->getType()));
-    } else if(isa<CastInst>(inst)) {
+    } else if(auto op = dyn_cast<CastInst>(inst)) {
+      if (op->getOpcode()==CastInst::CastOps::FPTrunc || op->getOpcode()==CastInst::CastOps::FPExt) {
+        addToDiffe(op->getOperand(0), Builder2.CreateFPCast(diffe(inst), op->getOperand(0)->getType()));
+      }
       setDiffe(inst, Constant::getNullValue(inst->getType()));
     } else if(isa<CmpInst>(inst) || isa<PHINode>(inst) || isa<BranchInst>(inst) || isa<AllocaInst>(inst) || isa<CastInst>(inst) || isa<GetElementPtrInst>(inst)) {
         continue;
@@ -1009,15 +1011,18 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     }
   }
 
-  unsigned predcount = 0;
+  SmallVector<BasicBlock*,4> preds;
   for (BasicBlock *Pred : predecessors(BB)) {
-    predcount++;
-    if (Pred->size() != 0)
+    preds.push_back(Pred);
+    if (finished.count(Pred) == 0) {
       blockstodo.push_back(Pred);
+    }
   }
 
-  if (predcount == 0) {
-    SmallVector<Value *,4> retargs; //[newFunc->getFunctionType()->getNumParams()+1] = {0};
+  llvm::errs() << "BB is " << *BB << "\n";
+
+  if (preds.size() == 0) {
+    SmallVector<Value *,4> retargs;
 
     //newFunc->dump();
     if (returnValue) {
@@ -1040,16 +1045,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       toret = Builder2.CreateInsertValue(toret, retargs[i], idx);
     }
     Builder2.CreateRet(toret);
-    continue;
-  }
-
-  SmallVector<BasicBlock*,4> preds;
-  for (BasicBlock *Pred : predecessors(BB)) {
-    preds.push_back(Pred);
-  }
-
-
-  if (preds.size() == 1) {
+  } else if (preds.size() == 1) {
     Builder2.CreateBr(reverseBlocks[preds[0]]);
 
     for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
@@ -1096,7 +1092,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
     if (true) {
       phi = pbuilder.CreatePHI(Type::getInt1Ty(Context), preds.size());
-      for(int i=0; i<preds.size(); i++) {
+      for(unsigned i=0; i<preds.size(); i++) {
         cast<PHINode>(phi)->addIncoming(ConstantInt::get(phi->getType(), i), preds[i]);
       }
       phi = lookup(phi);
