@@ -335,6 +335,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
         BasicBlock *Header = L->getHeader();
         BasicBlock *Preheader = L->getLoopPreheader();
+        assert(Preheader && "requires preheader");
         BasicBlock *Latch = L->getLoopLatch();
 
         const SCEV *Limit = SE.getExitCount(L, Latch);
@@ -1047,11 +1048,18 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     }
     Builder2.CreateRet(toret);
   } else if (preds.size() == 1) {
-    Builder2.CreateBr(reverseBlocks[preds[0]]);
 
     for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
-        assert(!isa<PHINode>(&*I));
+        if(auto PN = dyn_cast<PHINode>(&*I)) {
+            PN->dump();
+            if (!isconstant(PN->getIncomingValueForBlock(preds[0])) && !isconstant(PN)) {
+                setDiffe(PN->getIncomingValueForBlock(preds[0]), diffe(PN) );
+            }
+            setDiffe(PN, Constant::getNullValue(PN->getType()));
+        } else break;
     }
+    
+    Builder2.CreateBr(reverseBlocks[preds[0]]);
 
   } else if (preds.size() == 2) {
     IRBuilder <> pbuilder(&BB->front());

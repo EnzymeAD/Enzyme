@@ -138,6 +138,7 @@ __attribute__((noinline))
 double foo(double* __restrict matrix, double* __restrict vector, size_t len) {
   double output = 0;//{0};
 
+  #pragma clang loop unroll(disable)
   for (int idx = 0; idx < len*len; idx++) {
     //printf("foo idx=%d\n", idx);
     int i = idx%len;
@@ -153,14 +154,14 @@ double square(double x) {
   #define len 100
   double vector[len] = {0};
   for (int i = 0; i < len; i++) {
-    vector[i] = (1.0*i)/len;
+    vector[i] = (1.0*i)/len * x;
   }
   double matrix_weights[len*len] = {0};
 
   for (int idx = 0; idx < len*len; idx++) {
     int i = idx%len;
     int j = idx/len;
-    matrix_weights[j*len+i] = 1.0*(j+i) + 1e-20;
+    matrix_weights[j*len+i] = x * 1.0*(j+i) + 1e-20;
   }
 
   printf("calling foo\n");
