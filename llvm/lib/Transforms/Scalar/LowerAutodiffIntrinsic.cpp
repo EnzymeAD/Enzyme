@@ -69,7 +69,11 @@ Function *CloneFunctionWithReturns(Function *F, SmallVector<ReturnInst*, 8>& Ret
         continue;
      }
      if (I.getType()->isPointerTy()) {
-       ArgTypes.push_back(I.getType());
+        ArgTypes.push_back(I.getType());
+        if (!I.hasAttribute(Attribute::ReadOnly)) {
+          llvm::errs() << "Cannot take derivative of function " <<F->getName()<< " input argument to function " << I.getName() << " is not marked read-only\n";
+          exit(1);
+        }
      } else {
        RetTypes.push_back(I.getType());
      }
@@ -136,7 +140,8 @@ Function *CloneFunctionWithReturns(Function *F, SmallVector<ReturnInst*, 8>& Ret
     NewF->removeFnAttr(Attribute::ReadOnly);
     }
  }
-
+ NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
+ assert(NewF->hasLocalLinkage());
  return NewF;
 }
 
@@ -204,6 +209,8 @@ Value* canonicalizeLoopLatch(PHINode *IV, Value *Limit, Loop* L, ScalarEvolution
 typedef struct {
 	PHINode* var;
   PHINode* antivar;
+  BasicBlock* latch;
+  BasicBlock* preheader;
   //limit is last value, iters is number of iters (thus iters = limit + 1)
 	Value* limit;
   Value *cond;
@@ -233,11 +240,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         if(isa<AllocaInst>(val)) return false;
 
         if(isa<Constant>(val) || (constants.find(val) != constants.end())) {
-            //llvm::errs() << "CACHED: derived that " << *val << "is constant\n";
             return true;
         }
         if((nonconstant.find(val) != nonconstant.end())) {
-            //llvm::errs() << "CACHED: derived that " << *val << "is NOT constant\n";
             return false;
         }
         if((lookingfor.find(val) != lookingfor.end())) return true;
@@ -246,13 +251,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             for(auto& a: inst->incoming_values()) {
                 if (!isconstant(a)) {
                     nonconstant.insert(val);
-                    //llvm::errs() << "derived that " << *val << "is NOT constant (pn)\n";
                     return false;
                 }
             }
             lookingfor.erase(inst);
             constants.insert(val);
-            //llvm::errs() << "derived that " << *val << "is constant (pn)\n";
             return true;
         }
         if (auto inst = dyn_cast<Instruction>(val)) {
@@ -269,16 +272,13 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             for(auto& a: inst->operands()) {
                 if (!isconstant(a)) {
                     nonconstant.insert(val);
-                    //llvm::errs() << "derived that " << *val << "is NOT constant (i)\n";
                     return false;
                 }
             }
             lookingfor.erase(inst);
             constants.insert(val);
-            //llvm::errs() << "derived that " << *val << "is constant\n";
             return true;
         }
-        //llvm::errs() << "derived that " << *val << "is NOT constant\n";
         nonconstant.insert(val);
         return false;
     };
@@ -391,6 +391,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         loopContext.cond = NewCond;
         loopContext.antivar = PHINode::Create(CanonicalIV->getType(), CanonicalIV->getNumIncomingValues(), CanonicalIV->getName()+"'phi");
         loopContext.exit = ExitBlock;
+        loopContext.latch = Latch;
+        loopContext.preheader = Preheader;
 
         loopContexts[L] = loopContext;
         return true;
@@ -558,10 +560,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     std::function<std::pair<Value*,Value*>(Value*)> lookupOrAllocate = [&](Value* val) -> std::pair<Value*,Value*> {
         if (auto inst = dyn_cast<AllocaInst>(val)) {
             if (antiallocas.find(val) == antiallocas.end()) {
-                antiallocas[val] = entryBuilder.CreateAlloca(inst->getAllocatedType(), inst->getType()->getPointerAddressSpace(), inst->getArraySize(), inst->getName()+"'loa");
+                auto sz = lookupM(inst->getArraySize(), entryBuilder);
+                antiallocas[val] = entryBuilder.CreateAlloca(inst->getAllocatedType(), inst->getType()->getPointerAddressSpace(), sz, inst->getName()+"'loa");
                 cast<AllocaInst>(antiallocas[val])->setAlignment(inst->getAlignment());
                 Value *args[] = {entryBuilder.CreateBitCast(antiallocas[val],Type::getInt8PtrTy(Context)), ConstantInt::get(Type::getInt8Ty(val->getContext()), 0), entryBuilder.CreateMul(
-                entryBuilder.CreateZExtOrTrunc(inst->getArraySize(),Type::getInt64Ty(Context)),
+                entryBuilder.CreateZExtOrTrunc(sz,Type::getInt64Ty(Context)),
                     ConstantInt::get(Type::getInt64Ty(Context), M->getDataLayout().getTypeAllocSizeInBits(inst->getAllocatedType())/8 ) ), ConstantInt::getFalse(Context) };
                 Type *tys[] = {args[0]->getType(), args[2]->getType()};
                 auto memset = cast<CallInst>(entryBuilder.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::memset, tys), args));
@@ -626,16 +629,16 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         SmallVector<Value*,4> invertargs;
         for(auto &a: arg->indices()) {
             auto b = lookup(a);
-            b->dump();
             invertargs.push_back(b);
         }
         return Builder2.CreateGEP(invertPointer(arg->getPointerOperand()), invertargs, arg->getName()+"'ip");
       } else if (auto inst = dyn_cast<AllocaInst>(val)) {
         if (antiallocas.find(val) == antiallocas.end()) {
-            antiallocas[val] = entryBuilder.CreateAlloca(inst->getAllocatedType(), inst->getType()->getPointerAddressSpace(), inst->getArraySize(), inst->getName()+"'loa");
+            auto sz = lookupM(inst->getArraySize(), entryBuilder);
+            antiallocas[val] = entryBuilder.CreateAlloca(inst->getAllocatedType(), inst->getType()->getPointerAddressSpace(), sz, inst->getName()+"'ip");
             cast<AllocaInst>(antiallocas[val])->setAlignment(inst->getAlignment());
             Value *args[] = {entryBuilder.CreateBitCast(antiallocas[val],Type::getInt8PtrTy(Context)), ConstantInt::get(Type::getInt8Ty(val->getContext()), 0), entryBuilder.CreateMul(
-            entryBuilder.CreateZExtOrTrunc(inst->getArraySize(),Type::getInt64Ty(Context)),
+            entryBuilder.CreateZExtOrTrunc(sz,Type::getInt64Ty(Context)),
                 ConstantInt::get(Type::getInt64Ty(Context), M->getDataLayout().getTypeAllocSizeInBits(inst->getAllocatedType())/8 ) ), ConstantInt::getFalse(Context) };
             Type *tys[] = {args[0]->getType(), args[2]->getType()};
             auto memset = cast<CallInst>(entryBuilder.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::memset, tys), args));
@@ -681,13 +684,13 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     assert(0 && "unknown return inst");
   }
 
-  if (inLoop && loopContext.var->getParent()==BB) {
+  if (inLoop && loopContext.latch==BB) {
     BB2->getInstList().push_back(loopContext.antivar);
     IRBuilder<> tbuild(&reverseBlocks[loopContext.exit]->back());
     tbuild.setFastMathFlags(FastMathFlags::getFast());
     loopContext.antivar->addIncoming(lookupM(loopContext.limit, tbuild), reverseBlocks[loopContext.exit]);
     auto sub = Builder2.CreateSub(loopContext.antivar, ConstantInt::get(loopContext.antivar->getType(), 1));
-    for(BasicBlock* in: successors(loopContext.var->getParent()) ) {
+    for(BasicBlock* in: successors(loopContext.latch) ) {
         if (LI.getLoopFor(in) == LI.getLoopFor(BB)) {
             loopContext.antivar->addIncoming(sub, reverseBlocks[in]);
         }
@@ -926,7 +929,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               if (!used) {
                 if (retUsed) {
                   unsigned idxs[] = {0};
-                  diffes->dump();
                   retval = Builder2.CreateExtractValue(diffes, idxs);
                 }
                 inst->eraseFromParent();
@@ -1026,11 +1028,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
   if (preds.size() == 0) {
     SmallVector<Value *,4> retargs;
 
-    //newFunc->dump();
     if (returnValue) {
       retargs.push_back(retval);
       assert(retargs[0]);
-      //retargs[0]->dump();
     }
 
     for (auto& I: newFunc->args()) {
@@ -1038,7 +1038,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             continue;
         }
       retargs.push_back(diffe((Value*)&I));
-      //retargs[i]->dump();
     }
 
     Value* toret = UndefValue::get(newFunc->getReturnType());
@@ -1051,14 +1050,13 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
     for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
         if(auto PN = dyn_cast<PHINode>(&*I)) {
-            PN->dump();
             if (!isconstant(PN->getIncomingValueForBlock(preds[0])) && !isconstant(PN)) {
                 setDiffe(PN->getIncomingValueForBlock(preds[0]), diffe(PN) );
             }
             setDiffe(PN, Constant::getNullValue(PN->getType()));
         } else break;
     }
-    
+
     Builder2.CreateBr(reverseBlocks[preds[0]]);
 
   } else if (preds.size() == 2) {
@@ -1066,17 +1064,75 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     pbuilder.setFastMathFlags(FastMathFlags::getFast());
     Value* phi = nullptr;
 
-    if (inLoop && preds[0] == loopContext.var->getParent()) {
-      //TODO
-      phi = Builder2.CreateICmpNE(loopContext.antivar, Constant::getNullValue(loopContext.antivar->getType()));
-    } else if (inLoop && preds[1] == loopContext.var->getParent()) {
-      //TODO
-      phi = Builder2.CreateICmpEQ(loopContext.antivar, Constant::getNullValue(loopContext.antivar->getType()));
+    if (inLoop && BB2 == reverseBlocks[loopContext.var->getParent()]) {
+      assert(preds[0] == loopContext.latch && preds[1] == loopContext.preheader || preds[1] == loopContext.latch && preds[0] == loopContext.preheader);
+      if (preds[0] == loopContext.latch)
+        phi = Builder2.CreateICmpNE(loopContext.antivar, Constant::getNullValue(loopContext.antivar->getType()));
+      else if(preds[1] == loopContext.latch)
+        phi = Builder2.CreateICmpEQ(loopContext.antivar, Constant::getNullValue(loopContext.antivar->getType()));
+      else {
+        llvm::errs() << "weird behavior for loopContext\n";
+      }
     } else {
+      std::map<BasicBlock*,std::set<unsigned>> seen;
+      std::set<BasicBlock*> done;
+      std::deque<std::pair<BasicBlock*,unsigned>> Q;
+      Q.push_back(std::pair<BasicBlock*,unsigned>(preds[0], 0));
+      Q.push_back(std::pair<BasicBlock*,unsigned>(preds[1], 1));
+      done.insert(BB);
+
+      while(Q.size()) {
+            auto trace = Q.front();
+            auto block = trace.first;
+            auto num = trace.second;
+            Q.pop_front();
+            if (seen[block].count(num)) continue;
+            seen[block].insert(num);
+
+            SmallVector<BasicBlock*,4> succs;
+            bool allDone = true;
+            for (BasicBlock *Succ : successors(block)) {
+                succs.push_back(Succ);
+                if (!done.count(Succ)) {
+                  allDone = false;
+                }
+            }
+
+            if (!allDone) continue;
+            done.insert(block);
+
+            if (seen[block].size() == 1) {
+              for (BasicBlock *Pred : predecessors(block)) {
+                Q.push_back(std::pair<BasicBlock*,unsigned>(Pred, (*seen[block].begin()) ));
+              }
+            }
+
+            if (seen[block].size() == preds.size() && succs.size() == preds.size()) {
+              for(auto a : succs) {
+                if (seen[a].size() != 1) {
+                  break;
+                }
+              }
+              if (auto branch = dyn_cast<BranchInst>(block->getTerminator())) {
+                assert(branch->getCondition());
+                phi = lookup(branch->getCondition());
+                if ( (*seen[branch->getSuccessor(0)].begin()) != 0 ) {
+                  phi = Builder2.CreateNot(phi);
+                }
+                goto endPHI;
+              }
+
+              break;
+            }
+      }
+
       phi = pbuilder.CreatePHI(Type::getInt1Ty(Context), 2);
       cast<PHINode>(phi)->addIncoming(ConstantInt::getTrue(phi->getType()), preds[0]);
       cast<PHINode>(phi)->addIncoming(ConstantInt::getFalse(phi->getType()), preds[1]);
       phi = lookup(phi);
+      goto endPHI;
+
+      endPHI:;
     }
 
     for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
