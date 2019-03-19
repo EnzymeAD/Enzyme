@@ -161,23 +161,6 @@ double foo(double* __restrict matrix, double* __restrict vector, size_t len) {
 }
 */
 
-__attribute__((noinline))
-double foo(double* __restrict matrix, double* __restrict vector, size_t len) {
-  double output = 0;//{0};
-
-  #pragma clang loop unroll(disable)
-  for (int i = 0; i < len; i++) {
-    //printf("foo idx=%d\n", idx);
-  #pragma clang loop unroll(disable)
-  for (int j = 0; j < len; j++) {
-    printf("foo idx=(i=%d,j=%d)\n", i, j);
-    output += matrix[j*len + i] + vector[i];
-    ;
-  }
-  }
-  //printf("ended foo\n");
-  return output;
-}
 
 double square(double x) {
   #define len 100
@@ -201,7 +184,6 @@ double square(double x) {
   return foo(matrix_weights, vector, len);
 }
 
-#endif
 
 __attribute__((noinline))
 double foo(double* __restrict matrix, double* __restrict vector, size_t len) {
@@ -210,10 +192,10 @@ double foo(double* __restrict matrix, double* __restrict vector, size_t len) {
   #pragma clang loop unroll(disable)
   for (int i = 0; i < len*len; i++) {
     //printf("foo(%i) precond\n", i);
-    if (vector[i % len] > 0) {
+    //if (vector[i % len] > 0) {
       output += matrix[i];
       //printf("  foo(%i) incond\n", i);
-    }
+    //}
     //printf("foo(%i) endcond\n", i);
     //else {
     //  output += matrix[i] * matrix[i];
@@ -223,8 +205,28 @@ double foo(double* __restrict matrix, double* __restrict vector, size_t len) {
   return output;
 }
 
+#endif
+
+__attribute__((noinline))
+double foo(double* __restrict matrix, double* __restrict vector, size_t len) {
+  double output = 0;//{0};
+
+  #pragma clang loop unroll(disable)
+  for (int i = 0; i < len; i++) {
+    //printf("foo idx=%d\n", idx);
+  #pragma clang loop unroll(disable)
+  for (int j = 0; j < len; j++) {
+    //printf("foo idx=(i=%d,j=%d)\n", i, j);
+    output += sqrt(matrix[j*len + i] + vector[i]);
+    ;
+  }
+  }
+  //printf("ended foo\n");
+  return output;
+}
+
 double square(double x) {
-  #define len 10
+  #define len 100
   double vector[len] = {0};
   for (int i = 0; i < len; i++) {
     vector[i] = (1.0*i)/len

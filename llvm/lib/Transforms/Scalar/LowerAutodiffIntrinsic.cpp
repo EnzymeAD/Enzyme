@@ -215,6 +215,7 @@ typedef struct {
 	Value* limit;
   Value *cond;
   BasicBlock* exit;
+  Loop* parent;
 } LoopContext;
 
 Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& constant_args, TargetLibraryInfo &TLI, bool returnValue) {
@@ -236,50 +237,102 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
     SmallPtrSet<Value*,20> nonconstant;
     SmallPtrSet<Value*,2> lookingfor;
+    SmallPtrSet<Value*,2> memorylookingfor;
     std::function<bool(Value*)> isconstant = [&](Value* val) -> bool {
-        if(isa<AllocaInst>(val)) return false;
-
-        if(isa<Constant>(val) || (constants.find(val) != constants.end())) {
+        if(isa<Constant>(val) || isa<BasicBlock>(val) || (constants.find(val) != constants.end())) {
             return true;
         }
+
         if((nonconstant.find(val) != nonconstant.end())) {
             return false;
         }
-        if((lookingfor.find(val) != lookingfor.end())) return true;
+
+        if (auto op = dyn_cast<CallInst>(val)) {
+            if(auto called = op->getCalledFunction()) {
+                if (called->getName() == "printf" || called->getName() == "puts") {
+                    nonconstant.insert(val);
+                    return false;
+                }
+                if (called->getIntrinsicID() == Intrinsic::lifetime_start ||
+                    called->getIntrinsicID() == Intrinsic::lifetime_end) {
+                  constants.insert(val);
+                  return true;
+                }
+            }
+        }
+
+        if (val->getType()->isPointerTy()) {
+          if (auto inst = dyn_cast<Instruction>(val)) {
+            if (memorylookingfor.find(val) != memorylookingfor.end()) {
+                  llvm::errs() << "temp acquised to " << *val << "\n";
+                  return true;
+            }
+            memorylookingfor.insert(val);
+            //llvm::errs() << "considering " << *val << "\n";
+            for (const auto &a:inst->users()) {
+              if(auto store = dyn_cast<StoreInst>(a)) {
+                if (!isconstant(store->getValueOperand())) {
+                    nonconstant.insert(val);
+                    memorylookingfor.erase(val);
+                    //llvm::errs() << "VAR memory instruction " << *val << "\n";
+                    return false;
+                }
+              } else if (isa<LoadInst>(a)) continue;
+              else {
+                if (!isconstant(a)) {
+                    nonconstant.insert(val);
+                    memorylookingfor.erase(val);
+                    //llvm::errs() << "VAR memory instruction " << *val << "\n";
+                    return false;
+                }
+              }
+
+            }
+            memorylookingfor.erase(val);
+
+          }
+        }
+
+
+        if((lookingfor.find(val) != lookingfor.end())) {
+          //llvm::errs() << "temp Lconst " << *val << "\n";
+          return true;
+        }
+
         if (auto inst = dyn_cast<PHINode>(val)) {
             lookingfor.insert(inst);
             for(auto& a: inst->incoming_values()) {
                 if (!isconstant(a)) {
                     nonconstant.insert(val);
+                    lookingfor.erase(val);
+                    //llvm::errs() << "VAR instruction " << *val << "\n";
                     return false;
                 }
             }
-            lookingfor.erase(inst);
+            lookingfor.erase(val);
             constants.insert(val);
+            //llvm::errs() << "CONSTANT instruction " << *val << "\n";
             return true;
         }
-        if (auto inst = dyn_cast<Instruction>(val)) {
 
-            if (auto op = dyn_cast<CallInst>(inst)) {
-                if(auto called = op->getCalledFunction()) {
-                    if (called->getName() == "printf" || called->getName() == "puts") {
-                        nonconstant.insert(val);
-                        return false;
-                    }
-                }
-            }
-            lookingfor.insert(inst);
+        if (auto inst = dyn_cast<Instruction>(val)) {
+            lookingfor.insert(val);
             for(auto& a: inst->operands()) {
                 if (!isconstant(a)) {
                     nonconstant.insert(val);
+                    lookingfor.erase(val);
+                    //llvm::errs() << "VAR instruction " << *val << "\n";
                     return false;
                 }
             }
-            lookingfor.erase(inst);
+            lookingfor.erase(val);
             constants.insert(val);
+            //llvm::errs() << "CONSTANT instruction " << *val << "\n";
             return true;
         }
+
         nonconstant.insert(val);
+        //llvm::errs() << "VAR instruction " << *val << "\n";
         return false;
     };
 
@@ -393,6 +446,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         loopContext.exit = ExitBlock;
         loopContext.latch = Latch;
         loopContext.preheader = Preheader;
+        loopContext.parent = L->getParentLoop();
 
         loopContexts[L] = loopContext;
         return true;
@@ -494,8 +548,14 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
             ValueToValueMapTy available;
 
-            if (inLoop)
+            if (inLoop) {
                 available[lc.var] = lc.antivar;
+                LoopContext tmp = lc;
+                while(tmp.parent) {
+                  getContext(tmp.parent->getHeader(), tmp);
+                  available[tmp.var] = tmp.antivar;
+                }
+            }
 
             if (!shouldRecompute(inst, available)) {
                 return unwrapM(inst, BuilderM, available);
@@ -524,7 +584,16 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                     ValueToValueMapTy valmap;
                     llvm::errs() << "needing to recompute: " << *inst << "\n";
                     llvm::errs() << "var is " << *lc.var << "\n";
-                    scopeMap[val] = entryBuilder.CreateAlloca(val->getType(), entryBuilder.CreateAdd(unwrapM(lc.limit, entryBuilder, available), ConstantInt::get(lc.limit->getType(), 1)), val->getName()+"_arraycache");
+                    Value* size = nullptr;
+                    for(LoopContext idx = lc; getContext(idx.parent->getHeader(), idx); ) {
+                      Value* ns = entryBuilder.CreateAdd(unwrapM(idx.limit, entryBuilder, available), ConstantInt::get(idx.limit->getType(), 1));
+                      if (size == nullptr) size = ns;
+                      else size = entryBuilder.CreateMul(size, ns);
+                      if (idx.parent == nullptr) break;
+                    }
+                    while(1) {
+                    }
+                    scopeMap[val] = entryBuilder.CreateAlloca(val->getType(), size, val->getName()+"_arraycache");
                     Instruction* putafter = isa<PHINode>(inst) ? (inst->getParent()->getFirstNonPHI() ): inst;
                     IRBuilder <> v(putafter);
                     v.setFastMathFlags(FastMathFlags::getFast());
@@ -739,6 +808,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             );
 
         default:
+          newFunc->dump();
+          op->dump();
           llvm::errs() << "cannot handle unknown binary operator\n";
           assert(0 && "unknown binary operator");
           exit(1);
@@ -887,15 +958,17 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
               SmallVector<Value*, 8> args;
               SmallVector<bool, 8> argsInverted;
-
+              //llvm::errs() << "creating call inst " << called->getName() << "\n";
               for(unsigned i=0;i<called->getFunctionType()->getNumParams(); i++) {
                 if (isconstant(op->getArgOperand(i))) {
                     constant_args.insert(i);
+                    //llvm::errs() << " arg " << i << " " << *op->getArgOperand(i) << " is constant\n";
                     args.push_back(lookup(op->getArgOperand(i)));
                     argsInverted.push_back(false);
-                    break;
+                    continue;
                 }
 
+                //llvm::errs() << "NOT arg " << i << " " << *op->getArgOperand(i) << " is constant\n";
                 std::pair<Value*, Value*> loa = lookupOrAllocate(op->getArgOperand(i));
                 args.push_back(loa.first);
                 argsInverted.push_back(loa.second == nullptr);
