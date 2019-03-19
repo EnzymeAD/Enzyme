@@ -226,11 +226,11 @@ double foo(double* __restrict matrix, double* __restrict vector, size_t len) {
 }
 
 double square(double x) {
-  #define len 100
+  #define len 2
   double vector[len] = {0};
   for (int i = 0; i < len; i++) {
     vector[i] = (1.0*i)/len
-     - x
+     + x
      ;
   }
   double matrix_weights[len*len] = {0};
@@ -240,7 +240,7 @@ double square(double x) {
     int j = idx/len;
     matrix_weights[j*len+i] =
     x *
-    1.0*(j-i) + 1e-20;
+    1.0*(j+i);
   }
 
   printf("calling foo\n");

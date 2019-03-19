@@ -104,18 +104,23 @@ Function *CloneFunctionWithReturns(Function *F, SmallVector<ReturnInst*, 8>& Ret
        ptrInputs[j] = (j+1);
        NewF->addParamAttr(jj, Attribute::NoCapture);
 
+       j->setName(i->getName());
+       j++;
+       j->setName(i->getName()+"'");
+       j++;
+       jj+=2;
+
        i++;
        ii++;
 
-       j++;
-       j++;
-       jj+=2;
      } else {
        VMap[i] = j;
-       i++;
-       ii++;
+       j->setName(i->getName());
+
        j++;
        jj++;
+       i++;
+       ii++;
      }
  }
 
@@ -470,10 +475,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     }
     finished.insert(BB2);
 
-    IRBuilder<> Builder2(BB2);
-    Builder2.setFastMathFlags(FastMathFlags::getFast());
-    differentials[BB] = BB2;
-
     std::function<Value*(Value*,IRBuilder<>&, const ValueToValueMapTy&)> unwrapM = [&](Value* val, IRBuilder<>& BuilderM, const ValueToValueMapTy& available) -> Value* {
           if (available.count(val)) {
             return available.lookup(val);
@@ -549,11 +550,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             ValueToValueMapTy available;
 
             if (inLoop) {
-                available[lc.var] = lc.antivar;
-                LoopContext tmp = lc;
-                while(tmp.parent) {
-                  getContext(tmp.parent->getHeader(), tmp);
-                  available[tmp.var] = tmp.antivar;
+                for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx)) {
+                  llvm::errs() << "rvar is " << *idx.var << "\n";
+                  available[idx.var] = idx.antivar;
+                  if (idx.parent == nullptr) break;
                 }
             }
 
@@ -583,39 +583,85 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                     //TODO add indexing
                     ValueToValueMapTy valmap;
                     llvm::errs() << "needing to recompute: " << *inst << "\n";
-                    llvm::errs() << "var is " << *lc.var << "\n";
                     Value* size = nullptr;
-                    for(LoopContext idx = lc; getContext(idx.parent->getHeader(), idx); ) {
+                    for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx) ) {
+                      llvm::errs() << "var is " << *idx.var << "\n";
                       Value* ns = entryBuilder.CreateAdd(unwrapM(idx.limit, entryBuilder, available), ConstantInt::get(idx.limit->getType(), 1));
                       if (size == nullptr) size = ns;
                       else size = entryBuilder.CreateMul(size, ns);
                       if (idx.parent == nullptr) break;
                     }
-                    while(1) {
-                    }
                     scopeMap[val] = entryBuilder.CreateAlloca(val->getType(), size, val->getName()+"_arraycache");
-                    Instruction* putafter = isa<PHINode>(inst) ? (inst->getParent()->getFirstNonPHI() ): inst;
+                    Instruction* putafter = isa<PHINode>(inst) ? (inst->getParent()->getFirstNonPHI() ): inst->getNextNonDebugInstruction();
                     IRBuilder <> v(putafter);
                     v.setFastMathFlags(FastMathFlags::getFast());
-                    Value* idxs[] = {lc.var};
-                    auto st0 = cast<Instruction>(v.CreateGEP(scopeMap[val], idxs));
-                    auto st = v.CreateStore(val, st0);
-                    if (!isa<PHINode>(inst)) {
-                        st0->moveAfter(putafter);
-                        st->moveAfter(st0);
+
+                    SmallVector<Value*,3> indices;
+                    SmallVector<Value*,3> limits;
+                    for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx) ) {
+                      indices.push_back(idx.var);
+                      if (idx.parent == nullptr) break;
+
+                      auto lim = v.CreateAdd(unwrapM(idx.limit, v, available), ConstantInt::get(idx.limit->getType(), 1));
+                      if (limits.size() != 0) {
+                        lim = v.CreateMul(lim, limits.back());
+                        addedStores.insert(lim);
+                      }
+                      limits.push_back(lim);
                     }
-                    addedStores.insert(st);
-                    addedStores.insert(st0);
+
+                    Value* idx = nullptr;
+                    for(int i=0; i<indices.size(); i++) {
+                      if (i == 0) {
+                        idx = indices[i];
+                      } else {
+                        auto mul = v.CreateMul(indices[i], limits[i-1]);
+                        addedStores.insert(mul);
+                        idx = v.CreateAdd(idx, mul);
+                        addedStores.insert(idx);
+                      }
+                    }
+
+                    Value* idxs[] = {idx};
+                    auto gep = v.CreateGEP(scopeMap[val], idxs);
+                    addedStores.insert(gep);
+                    addedStores.insert(v.CreateStore(val, gep));
                 }
                 assert(inLoop);
                 assert(lc.antivar == loopContext.antivar);
-                Value* idxs[] = {loopContext.antivar};
+
+                SmallVector<Value*,3> indices;
+                SmallVector<Value*,3> limits;
+                for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx) ) {
+                  indices.push_back(idx.antivar);
+                  if (idx.parent == nullptr) break;
+
+                  auto lim = BuilderM.CreateAdd(unwrapM(idx.limit, BuilderM, available), ConstantInt::get(idx.limit->getType(), 1));
+                  if (limits.size() != 0) {
+                    lim = BuilderM.CreateMul(lim, limits.back());
+                  }
+                  limits.push_back(lim);
+                }
+
+                Value* idx = nullptr;
+                for(int i=0; i<indices.size(); i++) {
+                  if (i == 0) {
+                    idx = indices[i];
+                  } else {
+                    idx = BuilderM.CreateAdd(idx, BuilderM.CreateMul(indices[i], limits[i-1]));
+                  }
+                }
+
+                Value* idxs[] = {idx};
                 return BuilderM.CreateLoad(BuilderM.CreateGEP(scopeMap[val], idxs));
             }
         }
 
         return val;
     };
+
+    IRBuilder<> Builder2(BB2);
+    Builder2.setFastMathFlags(FastMathFlags::getFast());
 
     std::map<Value*,Value*> alreadyLoaded;
 
