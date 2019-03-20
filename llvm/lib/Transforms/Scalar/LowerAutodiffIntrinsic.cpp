@@ -102,8 +102,8 @@ Function *CloneFunctionWithReturns(Function *F, SmallVector<ReturnInst*, 8>& Ret
        VMap[i] = j;
        hasPtrInput = true;
        ptrInputs[j] = (j+1);
-       NewF->addParamAttr(jj, Attribute::NoCapture);
-
+       //NewF->addParamAttr(jj, Attribute::NoCapture);
+       llvm::errs() << "function " << F->getName() << " attr " << i->getName() << "nocapture:" << F->hasParamAttribute(ii, Attribute::NoCapture) << "\n";
        if (F->hasParamAttribute(ii, Attribute::NoCapture)) {
          NewF->addParamAttr(jj, Attribute::NoCapture);
          NewF->addParamAttr(jj+1, Attribute::NoCapture);
@@ -1329,7 +1329,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI) {//, LoopInfo& LI, DominatorTree& DT) {
 
   Value* fn = CI->getArgOperand(0);
-  Value* arg0 = CI->getArgOperand(1);
 
   while (auto ci = dyn_cast<CastInst>(fn)) {
     fn = ci->getOperand(0);
@@ -1346,15 +1345,26 @@ void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI) {//, LoopInfo& LI, Dom
 
   SmallSet<unsigned,4> constants;
 
-  auto newFunc = CreatePrimalAndGradient(dyn_cast<Function>(fn), constants, TLI, /*should return*/false);//, LI, DT);
+  for(unsigned i=1; i<CI->getNumArgOperands(); i++) {
+      if (CI->getArgOperand(i)->getType()->isIntegerTy ())
+        constants.insert(i+1);
+  }
+
+  auto newFunc = CreatePrimalAndGradient(cast<Function>(fn), constants, TLI, /*should return*/false);//, LI, DT);
 
   IRBuilder<> Builder(CI);
   Builder.setFastMathFlags(FastMathFlags::getFast());
-  Value* args[1] = {arg0};
+
+  SmallVector<Value*,2> args;
+
   Value* diffret = Builder.CreateCall(newFunc, args);
-  unsigned idxs[] = {0};
-  diffret = Builder.CreateExtractValue(diffret, idxs);
-  CI->replaceAllUsesWith(diffret);
+  if (cast<StructType>(diffret->getType())->getNumElements()>0) {
+    unsigned idxs[] = {0};
+    diffret = Builder.CreateExtractValue(diffret, idxs);
+    CI->replaceAllUsesWith(diffret);
+  } else {
+    CI->replaceAllUsesWith(UndefValue::get(CI->getType()));
+  }
   CI->eraseFromParent();
 }
 

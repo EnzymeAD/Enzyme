@@ -3683,32 +3683,35 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
 
     SmallVector<llvm::Type*, 16> tys;
 
-    for (unsigned i = 0, e = E->getNumArgs(); i != e; ++i) {
-      Value *ArgValue;
-      // If this is a normal argument, just emit it as a scalar.
-      if ((ICEArguments & (1 << i)) == 0) {
-        ArgValue = EmitScalarExpr(E->getArg(i));
-      } else {
-        // If this is required to be a constant, constant fold it so that we
-        // know that the generated intrinsic gets a ConstantInt.
-        llvm::APSInt Result;
-        bool IsConst = E->getArg(i)->isIntegerConstantExpr(Result,getContext());
-        assert(IsConst && "Constant arg isn't actually constant?");
-        (void)IsConst;
-        ArgValue = llvm::ConstantInt::get(getLLVMContext(), Result);
-      }
+    auto fn = EmitScalarExpr(E->getArg(0));
+    tys.push_back(fn->getType());
+    Args.push_back(fn);
+
+    while (auto ci = dyn_cast<CastInst>(fn)) {
+      fn = ci->getOperand(0);
+    }
+    while (auto ci = dyn_cast<BitCastInst>(fn)) {
+      fn = ci->getOperand(0);
+    }
+    while (auto ci = dyn_cast<BlockAddress>(fn)) {
+      fn = ci->getFunction();
+    }
+    while (auto ci = dyn_cast<ConstantExpr>(fn)) {
+      fn = ci->getOperand(0);
+    }
+    Function* subfn = cast<Function>(fn);
+
+    for (unsigned i = 1, e = E->getNumArgs(); i != e; ++i) {
+      Value *ArgValue = EmitScalarExpr(E->getArg(i));
 
       // If the intrinsic arg type is different from the builtin arg type
       // we need to do a bit cast.
-      tys.push_back(ArgValue->getType());
-      /*
-      llvm::Type *PTy = FTy->getParamType(i);
+      llvm::Type *PTy = subfn->getFunctionType()->getParamType(i-1);
       if (PTy != ArgValue->getType()) {
-        assert(PTy->canLosslesslyBitCastTo(FTy->getParamType(i)) &&
+        assert(PTy->canLosslesslyBitCastTo(subfn->getFunctionType()->getParamType(i-1)) &&
                "Must be able to losslessly bit cast to param");
         ArgValue = Builder.CreateBitCast(ArgValue, PTy);
       }
-      */
 
       Args.push_back(ArgValue);
     }
@@ -3716,8 +3719,8 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
     Function *F = CGM.getIntrinsic(IntrinsicID, tys);
     llvm::FunctionType *FTy = F->getFunctionType();
 
-
     Value *V = Builder.CreateCall(F, Args);
+    cast<Instruction>(V)->setFast(false);
     QualType BuiltinRetType = E->getType();
 
     llvm::Type *RetTy = VoidTy;

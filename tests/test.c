@@ -207,6 +207,7 @@ double foo(double* __restrict matrix, double* __restrict vector, size_t len) {
 
 #endif
 
+#if 0
 __attribute__((noinline))
 double foo(double* __restrict matrix, double* __restrict vector, size_t len) {
   double output = 0;//{0};
@@ -265,9 +266,11 @@ int main(int argc, char** argv) {
     //printf("d/dx sqrt(x) | x=%lf  = %lf | eval=%lf\n", f, __builtin_autodiff(ptr, f), ptr(f));
 }
 
+#endif
+
 #if 0
 
-double f(double x) {
+static double f(double x) {
   for(int i=1; i<5; i++) {
     x = sin(cos(x));
   }
@@ -275,7 +278,7 @@ double f(double x) {
 }
 
 __attribute__((noinline))
-double loop(double x, int n) {
+static double loop(double x, int n) {
   double r = x/x;
 
   #pragma clang loop unroll(disable)
@@ -285,13 +288,8 @@ double loop(double x, int n) {
   return sin(cos(r));
 }
 
-double test(double x) {
+static double test(double x) {
   return loop(x, 3);
-}
-
-
-double max(double x, double y) {
-    return (x > y) ? x : y;
 }
 
 __attribute__((noinline))
@@ -327,6 +325,7 @@ double test2(double x) {
   return logsumexp(rands, 100000);
 }
 
+/*
 int main0(int argc, char** argv) {
 
   {
@@ -349,8 +348,9 @@ int main0(int argc, char** argv) {
   printf("%0.6f res'=%f\n", tdiff(&start, &end), res);
   }
 }
+*/
 
-int main2(int argc, char** argv) {
+int main(int argc, char** argv) {
 
   {
   struct timeval start, end;
@@ -374,3 +374,91 @@ int main2(int argc, char** argv) {
 }
 
 #endif
+
+#if 0
+double add(double a, double b) {
+  return a + b;
+}
+
+int main(int argc, char** argv) {
+
+  {
+  struct timeval start, end;
+  gettimeofday(&start, NULL);
+
+  double res = add(2., 3.);
+
+  gettimeofday(&end, NULL);
+  printf("%0.6f res=%f\n", tdiff(&start, &end), res);
+  }
+
+  {
+  struct timeval start, end;
+  gettimeofday(&start, NULL);
+
+  double res = __builtin_autodiff(add, 2., 3.);
+
+  gettimeofday(&end, NULL);
+  printf("%0.6f res'=%f\n", tdiff(&start, &end), res);
+  }
+}
+
+#endif
+
+
+static double max(double x, double y) {
+    return (x > y) ? x : y;
+}
+
+__attribute__((noinline))
+static double logsumexp(double *__restrict x, size_t n) {
+  double A = x[0];
+  #pragma clang loop unroll(disable)
+  #pragma clang loop vectorize(disable)
+  for(int i=0; i<n; i++) {
+    A = max(A, x[i]);
+  }
+  double ema[n];
+  #pragma clang loop unroll(disable)
+  #pragma clang loop vectorize(disable)
+  for(int i=0; i<n; i++) {
+    ema[i] = exp(x[i] - A);
+  }
+  double sema = 0;
+  #pragma clang loop unroll(disable)
+  #pragma clang loop vectorize(disable)
+  for(int i=0; i<n; i++)
+    sema += ema[i];
+  return log(sema) + A;
+}
+
+int main(int argc, char** argv) {
+
+  size_t size = 100000;
+  double* rands = (double*)malloc(sizeof(double)*size);
+  double* randsp = (double*)malloc(sizeof(double)*size);
+
+  for(int i=0; i<size; i++) {
+    rands[i] = i;
+  }
+
+  {
+  struct timeval start, end;
+  gettimeofday(&start, NULL);
+
+  double res = logsumexp(rands, size);
+
+  gettimeofday(&end, NULL);
+  printf("%0.6f res=%f\n", tdiff(&start, &end), res);
+  }
+
+  {
+  struct timeval start, end;
+  gettimeofday(&start, NULL);
+
+  double res = __builtin_autodiff(logsumexp, rands, randsp, size);
+
+  gettimeofday(&end, NULL);
+  printf("%0.6f res'=%f\n", tdiff(&start, &end), res);
+  }
+}
