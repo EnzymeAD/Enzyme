@@ -405,7 +405,7 @@ int main(int argc, char** argv) {
 
 #endif
 
-
+#if 0
 static double max(double x, double y) {
     return (x > y) ? x : y;
 }
@@ -461,4 +461,65 @@ int main(int argc, char** argv) {
   gettimeofday(&end, NULL);
   printf("%0.6f res'=%f\n", tdiff(&start, &end), res);
   }
+}
+#endif
+
+__attribute__((noinline))
+double foo(double* __restrict matrix, double* __restrict vector, size_t len) {
+  double output[len];//{0};
+
+  #pragma clang loop unroll(disable)
+  for (int i = 0; i < len; i++) {
+    //printf("foo idx=%d\n", idx);
+    output[i] = 0;
+  #pragma clang loop unroll(disable)
+  for (int j = 0; j < len; j++) {
+    double tmp = matrix[i*len + j] * vector[j];
+    output[i] += tmp;
+  }
+  }
+
+  double sum = 0;
+  #pragma clang loop unroll(disable)
+  for(int i=0; i<len; i++) {
+    sum += output[i];
+  }
+  return sum;
+}
+
+double square(double x) {
+  #define len 5
+  double vector[len] = {0};
+  for (int i = 0; i < len; i++) {
+    vector[i] = (1.0*i)/len
+     + x
+     ;
+  }
+  double matrix_weights[len*len] = {0};
+
+  for (int idx = 0; idx < len*len; idx++) {
+    int i = idx%len;
+    int j = idx/len;
+    matrix_weights[i*len+j] =
+    x *
+    1.0*(j+i) + 1e-20;
+    //printf("looking at i=%d j=%d, matrix[i*len+j]=%f\n", i, j,matrix_weights[i*len + j]);
+  }
+
+  //printf("calling foo matrix_weights[3]=%f\n", matrix_weights[3]);
+  return foo(matrix_weights, vector, len);
+}
+
+int main(int argc, char** argv) {
+    double f = atof(argv[1]);
+
+    printf("now executing square\n");
+    double res0 = square(f);
+    printf("finished executing square\n");
+    printf("f(x=%lf) = %lf\n", f, res0);
+    printf("now executing builtin autodiff\n");
+    double res = __builtin_autodiff(square, f);
+    printf("finished executing autodiff\n");
+    printf("d/dx f(x=%lf) = %lf\n", f, res);
+    //printf("d/dx sqrt(x) | x=%lf  = %lf | eval=%lf\n", f, __builtin_autodiff(ptr, f), ptr(f));
 }

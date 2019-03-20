@@ -3701,19 +3701,38 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
     }
     Function* subfn = cast<Function>(fn);
 
-    for (unsigned i = 1, e = E->getNumArgs(); i != e; ++i) {
+    unsigned int j = 0;
+    for (unsigned i = 1, e = E->getNumArgs(); i != e; ++i,++j) {
       Value *ArgValue = EmitScalarExpr(E->getArg(i));
 
       // If the intrinsic arg type is different from the builtin arg type
       // we need to do a bit cast.
-      llvm::Type *PTy = subfn->getFunctionType()->getParamType(i-1);
+      llvm::Type *PTy = subfn->getFunctionType()->getParamType(j);
+
       if (PTy != ArgValue->getType()) {
-        assert(PTy->canLosslesslyBitCastTo(subfn->getFunctionType()->getParamType(i-1)) &&
-               "Must be able to losslessly bit cast to param");
+
+        assert(PTy->canLosslesslyBitCastTo(subfn->getFunctionType()->getParamType(j)) &&
+             "Must be able to losslessly bit cast to param");
         ArgValue = Builder.CreateBitCast(ArgValue, PTy);
       }
 
       Args.push_back(ArgValue);
+
+      if (subfn->getFunctionType()->getParamType(j)->isPointerTy()) {
+        ++i;
+        Value *ArgValue = EmitScalarExpr(E->getArg(i));
+
+      if (PTy != ArgValue->getType()) {
+
+        assert(PTy->canLosslesslyBitCastTo(subfn->getFunctionType()->getParamType(j)) &&
+             "Must be able to losslessly bit cast to param");
+        ArgValue = Builder.CreateBitCast(ArgValue, PTy);
+      }
+
+      Args.push_back(ArgValue);
+
+      }
+
     }
 
     Function *F = CGM.getIntrinsic(IntrinsicID, tys);
@@ -3728,6 +3747,8 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
       RetTy = ConvertType(BuiltinRetType);
 
     if (RetTy != V->getType()) {
+      V->dump();
+      RetTy->dump();
       assert(V->getType()->canLosslesslyBitCastTo(RetTy) &&
              "Must be able to losslessly bit cast result type");
       V = Builder.CreateBitCast(V, RetTy);
