@@ -1356,6 +1356,9 @@ void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI) {//, LoopInfo& LI, Dom
   Builder.setFastMathFlags(FastMathFlags::getFast());
 
   SmallVector<Value*,2> args;
+  for(unsigned i=1; i<CI->getNumArgOperands(); i++) {
+      args.push_back(CI->getArgOperand(i));
+  }
 
   Value* diffret = Builder.CreateCall(newFunc, args);
   if (cast<StructType>(diffret->getType())->getNumElements()>0) {

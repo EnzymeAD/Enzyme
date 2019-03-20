@@ -488,7 +488,7 @@ double foo(double* __restrict matrix, double* __restrict vector, size_t len) {
 }
 
 double square(double x) {
-  #define len 5
+  #define len 100
   double vector[len] = {0};
   for (int i = 0; i < len; i++) {
     vector[i] = (1.0*i)/len
@@ -514,11 +514,33 @@ int main(int argc, char** argv) {
     double f = atof(argv[1]);
 
     printf("now executing square\n");
-    double res0 = square(f);
+    double res0 = 0;
+
+ {
+  struct timeval start, end;
+  gettimeofday(&start, NULL);
+
+  for(int i=0; i<200000; i++)
+    res0 += square(f);
+
+  gettimeofday(&end, NULL);
+  printf("%0.6f res=%f\n", tdiff(&start, &end), res0);
+ }
     printf("finished executing square\n");
     printf("f(x=%lf) = %lf\n", f, res0);
     printf("now executing builtin autodiff\n");
-    double res = __builtin_autodiff(square, f);
+    double res = 0;
+   {
+  struct timeval start, end;
+  gettimeofday(&start, NULL);
+
+
+  for(int i=0; i<200000; i++)
+    res += __builtin_autodiff(square, f);
+
+  gettimeofday(&end, NULL);
+  printf("%0.6f res'=%f\n", tdiff(&start, &end), res);
+  }
     printf("finished executing autodiff\n");
     printf("d/dx f(x=%lf) = %lf\n", f, res);
     //printf("d/dx sqrt(x) | x=%lf  = %lf | eval=%lf\n", f, __builtin_autodiff(ptr, f), ptr(f));
