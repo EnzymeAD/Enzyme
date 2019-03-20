@@ -875,6 +875,18 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       Value* dif0 = nullptr;
       Value* dif1 = nullptr;
       switch(op->getIntrinsicID()) {
+        case Intrinsic::memcpy: {
+            SmallVector<Value*, 4> args;
+            args.push_back(invertPointer(op->getOperand(0)));
+            args.push_back(invertPointer(op->getOperand(1)));
+            args.push_back(op->getOperand(2));
+            args.push_back(op->getOperand(3));
+
+            Type *tys[] = {args[0]->getType(), args[1]->getType(), args[2]->getType()};
+            auto cal = Builder2.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::memcpy, tys), args);
+            cal->setAttributes(op->getAttributes());
+            break;
+        }
         case Intrinsic::memset: {
             if (!isconstant(op->getOperand(1))) {
                 llvm::errs() << "couldn't handle non constant inst in memset to propagate differential to\n";
@@ -1327,7 +1339,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 }
 
 void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI) {//, LoopInfo& LI, DominatorTree& DT) {
-
   Value* fn = CI->getArgOperand(0);
 
   while (auto ci = dyn_cast<CastInst>(fn)) {
@@ -1344,22 +1355,51 @@ void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI) {//, LoopInfo& LI, Dom
   }
 
   SmallSet<unsigned,4> constants;
+  SmallVector<Value*,2> args;
+
+  unsigned truei = 0;
+  IRBuilder<> Builder(CI);
 
   for(unsigned i=1; i<CI->getNumArgOperands(); i++) {
-      if (CI->getArgOperand(i)->getType()->isIntegerTy ())
-        constants.insert(i+1);
+
+      if (CI->getArgOperand(i)->getType()->isIntegerTy())
+        constants.insert(truei);
+
+      Value* res = CI->getArgOperand(i);
+      auto FT = cast<Function>(fn)->getFunctionType();
+
+      if (FT->getParamType(truei) != res->getType()) {
+        assert(res->getType()->canLosslesslyBitCastTo(FT->getParamType(truei)) &&
+             "Must be able to losslessly bit cast to param");
+        res = Builder.CreateBitCast(res, FT->getParamType(truei));
+      }
+
+      args.push_back(res);
+
+      if (CI->getArgOperand(i)->getType()->isPointerTy()) {
+        i++;
+
+        Value* res = CI->getArgOperand(i);
+        if (FT->getParamType(truei) != res->getType()) {
+          assert(res->getType()->canLosslesslyBitCastTo(FT->getParamType(truei)) &&
+             "Must be able to losslessly bit cast to param");
+          res = Builder.CreateBitCast(res, FT->getParamType(truei));
+        }
+        args.push_back(res);
+      }
+
+      truei++;
   }
 
   auto newFunc = CreatePrimalAndGradient(cast<Function>(fn), constants, TLI, /*should return*/false);//, LI, DT);
 
-  IRBuilder<> Builder(CI);
   Builder.setFastMathFlags(FastMathFlags::getFast());
 
-  SmallVector<Value*,2> args;
-  for(unsigned i=1; i<CI->getNumArgOperands(); i++) {
-      args.push_back(CI->getArgOperand(i));
-  }
 
+  newFunc->getFunctionType()->dump();
+  for(auto i : args) {
+    i->dump();
+  }
   Value* diffret = Builder.CreateCall(newFunc, args);
   if (cast<StructType>(diffret->getType())->getNumElements()>0) {
     unsigned idxs[] = {0};

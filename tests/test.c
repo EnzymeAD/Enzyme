@@ -414,19 +414,16 @@ __attribute__((noinline))
 static double logsumexp(double *__restrict x, size_t n) {
   double A = x[0];
   #pragma clang loop unroll(disable)
-  #pragma clang loop vectorize(disable)
   for(int i=0; i<n; i++) {
     A = max(A, x[i]);
   }
   double ema[n];
   #pragma clang loop unroll(disable)
-  #pragma clang loop vectorize(disable)
   for(int i=0; i<n; i++) {
     ema[i] = exp(x[i] - A);
   }
   double sema = 0;
   #pragma clang loop unroll(disable)
-  #pragma clang loop vectorize(disable)
   for(int i=0; i<n; i++)
     sema += ema[i];
   return log(sema) + A;
@@ -463,6 +460,8 @@ int main(int argc, char** argv) {
   }
 }
 #endif
+
+#if 0
 
 __attribute__((noinline))
 double foo(double* __restrict matrix, double* __restrict vector, size_t len) {
@@ -544,4 +543,71 @@ int main(int argc, char** argv) {
     printf("finished executing autodiff\n");
     printf("d/dx f(x=%lf) = %lf\n", f, res);
     //printf("d/dx sqrt(x) | x=%lf  = %lf | eval=%lf\n", f, __builtin_autodiff(ptr, f), ptr(f));
+}
+
+#endif
+
+
+static double conv_layer(size_t IN, size_t OUT, const double* __restrict W, const double* __restrict b, const double* __restrict input, const double* __restrict true_output) {
+  double output[OUT];//{0};
+
+  #pragma clang loop unroll(disable)
+  for (int o = 0; o < OUT; o++) {
+    output[o] = b[o];
+
+    #pragma clang loop unroll(disable)
+    for (int i = 0; i < IN; i++) {
+      output[o] += W[o*IN + i] * input[i];
+    }
+  }
+
+  double sum = 0;
+  #pragma clang loop unroll(disable)
+  for(int o=0; o<OUT; o++) {
+    sum += (output[o] - true_output[o]) * (output[o] - true_output[o]);
+  }
+  return sum;
+}
+
+
+int main(int argc, char** argv) {
+    double f = atof(argv[1]);
+
+    size_t IN = 10, OUT = 10;
+
+    double* W  = (double*)malloc(sizeof(double)*IN*OUT);
+    double* Wp = (double*)malloc(sizeof(double)*IN*OUT);
+
+    double* B  = (double*)malloc(sizeof(double)*OUT);
+    double* Bp = (double*)malloc(sizeof(double)*OUT);
+
+    double* input  = (double*)malloc(sizeof(double)*IN);
+    double* inputp = (double*)malloc(sizeof(double)*IN);
+
+    double* output  = (double*)malloc(sizeof(double)*OUT);
+    double* outputp = (double*)malloc(sizeof(double)*OUT);
+
+    for(int i=0; i<IN; i++) {
+      input[i] = 2.;
+    }
+
+    for(int i=0; i<IN*OUT; i++) {
+      W[i] = (double)rand() / RAND_MAX;
+    }
+
+    for(int i=0; i<OUT; i++) {
+      B[i] = (double)rand() / RAND_MAX;
+    }
+
+    for(int i=0; i<OUT; i++) {
+      output[i] = 3.;
+    }
+
+    while(1) {
+      memset(Wp, 0, sizeof(double) * IN * OUT);
+      memset(Bp, 0, sizeof(double) * OUT);
+      double loss = __builtin_autodiff(conv_layer,IN,OUT,W,Wp,B,Bp,input,inputp,output,outputp);
+      printf("loss = %f\n", loss);
+    }
+
 }
