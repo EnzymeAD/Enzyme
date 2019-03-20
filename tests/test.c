@@ -210,6 +210,7 @@ double foo(double* __restrict matrix, double* __restrict vector, size_t len) {
 __attribute__((noinline))
 double foo(double* __restrict matrix, double* __restrict vector, size_t len) {
   double output = 0;//{0};
+  printf("matrix[3]=%f\n", matrix[3]);
 
   #pragma clang loop unroll(disable)
   for (int i = 0; i < len; i++) {
@@ -217,16 +218,18 @@ double foo(double* __restrict matrix, double* __restrict vector, size_t len) {
   #pragma clang loop unroll(disable)
   for (int j = 0; j < len; j++) {
     //printf("foo idx=(i=%d,j=%d)\n", i, j);
-    output += sqrt(matrix[j*len + i] + vector[i]);
-    ;
+    double tmp = sqrt(matrix[i*len + j]);// + vector[i]);
+    output += tmp;
+    printf("looking at i=%d j=%d, matrix[i*len+j]=%f, sqrt(matrix[i*len+j])=%f\n", i, j,matrix[i*len + j],tmp);
   }
   }
   //printf("ended foo\n");
+  printf("returning output\n");
   return output;
 }
 
 double square(double x) {
-  #define len 2
+  #define len 5
   double vector[len] = {0};
   for (int i = 0; i < len; i++) {
     vector[i] = (1.0*i)/len
@@ -238,12 +241,13 @@ double square(double x) {
   for (int idx = 0; idx < len*len; idx++) {
     int i = idx%len;
     int j = idx/len;
-    matrix_weights[j*len+i] =
+    matrix_weights[i*len+j] =
     x *
-    1.0*(j+i);
+    1.0*(j+i) + 1e-20;
+    //printf("looking at i=%d j=%d, matrix[i*len+j]=%f\n", i, j,matrix_weights[i*len + j]);
   }
 
-  printf("calling foo\n");
+  //printf("calling foo matrix_weights[3]=%f\n", matrix_weights[3]);
   return foo(matrix_weights, vector, len);
 }
 

@@ -104,6 +104,15 @@ Function *CloneFunctionWithReturns(Function *F, SmallVector<ReturnInst*, 8>& Ret
        ptrInputs[j] = (j+1);
        NewF->addParamAttr(jj, Attribute::NoCapture);
 
+       if (F->hasParamAttribute(ii, Attribute::NoCapture)) {
+         NewF->addParamAttr(jj, Attribute::NoCapture);
+         NewF->addParamAttr(jj+1, Attribute::NoCapture);
+       }
+       if (F->hasParamAttribute(ii, Attribute::NoAlias)) {
+         NewF->addParamAttr(jj, Attribute::NoAlias);
+         NewF->addParamAttr(jj+1, Attribute::NoAlias);
+       }
+
        j->setName(i->getName());
        j++;
        j->setName(i->getName()+"'");
@@ -257,11 +266,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 if (called->getName() == "printf" || called->getName() == "puts") {
                     nonconstant.insert(val);
                     return false;
-                }
-                if (called->getIntrinsicID() == Intrinsic::lifetime_start ||
-                    called->getIntrinsicID() == Intrinsic::lifetime_end) {
-                  constants.insert(val);
-                  return true;
                 }
             }
         }
@@ -894,10 +898,16 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         case Intrinsic::dbg_label:
         case Intrinsic::dbg_addr:
             break;
-        case Intrinsic::lifetime_start:
+        case Intrinsic::lifetime_start:{
+            SmallVector<Value*, 2> args = {lookup(op->getOperand(0)), lookup(op->getOperand(1))};
+            Type *tys[] = {args[1]->getType()};
+            auto cal = Builder2.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::lifetime_end, tys), args);
+            cal->setAttributes(op->getAttributes());
+            break;
+        }
         case Intrinsic::lifetime_end:
-          op->eraseFromParent();
-          break;
+            op->eraseFromParent();
+            break;
         case Intrinsic::sqrt: {
           if (!isconstant(op->getOperand(0)))
             dif0 = Builder2.CreateBinOp(Instruction::FDiv, diffe(inst),
