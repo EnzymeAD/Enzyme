@@ -819,7 +819,7 @@ static double conv_layer(size_t IN, size_t OUT, size_t NUM, const double* __rest
   for(int n=0; n<NUM; n++)
   #pragma clang loop unroll(disable)
   for(int o=0; o<OUT; o++) {
-    auto foo = (o == true_output[n]) ? 1.0 : 0.0;
+    double foo = (o == true_output[n]) ? 1.0 : 0.0;
     sum += (output[n*OUT+o] - foo) * (output[n*OUT+o] - foo);
   }
   return sum;

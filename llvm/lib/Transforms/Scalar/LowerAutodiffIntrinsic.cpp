@@ -60,7 +60,7 @@ enum class DIFFE_TYPE {
 
 static inline DIFFE_TYPE whatType(llvm::Type* arg) {
   if (arg->isPointerTy()) {
-    switch(whatType(cast<PointerType>(arg)->getElementType())) {
+    switch(whatType(cast<llvm::PointerType>(arg)->getElementType())) {
       case DIFFE_TYPE::OUT_DIFF:
         return DIFFE_TYPE::DUP_ARG;
       case DIFFE_TYPE::CONSTANT:
@@ -69,9 +69,9 @@ static inline DIFFE_TYPE whatType(llvm::Type* arg) {
         return DIFFE_TYPE::DUP_ARG;
     }
   } else if (arg->isArrayTy()) {
-    return whatType(cast<ArrayType>(arg)->getElementType());
+    return whatType(cast<llvm::ArrayType>(arg)->getElementType());
   } else if (arg->isStructTy()) {
-    auto st = cast<StructType>(arg);
+    auto st = cast<llvm::StructType>(arg);
     if (st->getNumElements() == 0) return DIFFE_TYPE::CONSTANT;
 
     auto ty = whatType(st->getElementType(0));
@@ -81,30 +81,32 @@ static inline DIFFE_TYPE whatType(llvm::Type* arg) {
               switch(ty) {
                 case DIFFE_TYPE::OUT_DIFF:
                 case DIFFE_TYPE::CONSTANT:
-                  return DIFFE_TYPE::OUT_DIFF;
+                  ty = DIFFE_TYPE::OUT_DIFF;
                 case DIFFE_TYPE::DUP_ARG:
-                  return DIFFE_TYPE::DUP_ARG;
+                  ty = DIFFE_TYPE::DUP_ARG;
               }
         case DIFFE_TYPE::CONSTANT:
               switch(ty) {
                 case DIFFE_TYPE::OUT_DIFF:
-                  return DIFFE_TYPE::OUT_DIFF;
+                  ty = DIFFE_TYPE::OUT_DIFF;
                 case DIFFE_TYPE::CONSTANT:
-                  return DIFFE_TYPE::CONSTANT;
+                  ty = DIFFE_TYPE::CONSTANT;
                 case DIFFE_TYPE::DUP_ARG:
-                  return DIFFE_TYPE::DUP_ARG;
+                  ty = DIFFE_TYPE::DUP_ARG;
               }
         case DIFFE_TYPE::DUP_ARG:
               switch(ty) {
                 case DIFFE_TYPE::OUT_DIFF:
-                  return DIFFE_TYPE::DUP_ARG;
+                  ty = DIFFE_TYPE::DUP_ARG;
                 case DIFFE_TYPE::CONSTANT:
-                  return DIFFE_TYPE::DUP_ARG;
+                  ty = DIFFE_TYPE::DUP_ARG;
                 case DIFFE_TYPE::DUP_ARG:
-                  return DIFFE_TYPE::DUP_ARG;
+                  ty = DIFFE_TYPE::DUP_ARG;
               }
       }
     }
+
+    return ty;
   } else if (arg->isIntOrIntVectorTy() || arg->isFunctionTy ()) {
     return DIFFE_TYPE::CONSTANT;
   } else if  (arg->isFPOrFPVectorTy()) {
@@ -1437,32 +1439,36 @@ void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI) {//, LoopInfo& LI, Dom
   IRBuilder<> Builder(CI);
 
   for(unsigned i=1; i<CI->getNumArgOperands(); i++) {
-
     Value* res = CI->getArgOperand(i);
     auto FT = cast<Function>(fn)->getFunctionType();
 
-    auto ty = whatType(CI->getArgOperand(i)->getType());
+    auto PTy = FT->getParamType(truei);
+    auto ty = whatType(PTy);
 
     if (ty == DIFFE_TYPE::CONSTANT)
       constants.insert(truei);
 
-
-    if (FT->getParamType(truei) != res->getType()) {
-      assert(res->getType()->canLosslesslyBitCastTo(FT->getParamType(truei)) &&
-           "Must be able to losslessly bit cast to param");
-      res = Builder.CreateBitCast(res, FT->getParamType(truei));
+    assert(truei < FT->getNumParams());
+    if (PTy != res->getType()) {
+      if (!res->getType()->canLosslesslyBitCastTo(PTy)) {
+        llvm::errs() << "Cannot cast __builtin_autodiff argument " << i << " " << *res << " to argument " << truei << " " << *PTy << "\n" << "orig: " << *FT << "\n";
+        exit(1);
+      }
+      res = Builder.CreateBitCast(res, PTy);
     }
 
     args.push_back(res);
-
+    llvm::errs() << "choosing to duplicate arugment " << (*CI->getOperand(i)) << " " << (ty == DIFFE_TYPE::DUP_ARG) << "\n";
     if (ty == DIFFE_TYPE::DUP_ARG) {
       i++;
 
       Value* res = CI->getArgOperand(i);
-      if (FT->getParamType(truei) != res->getType()) {
-        assert(res->getType()->canLosslesslyBitCastTo(FT->getParamType(truei)) &&
-           "Must be able to losslessly bit cast to param");
-        res = Builder.CreateBitCast(res, FT->getParamType(truei));
+      if (PTy != res->getType()) {
+        if (!res->getType()->canLosslesslyBitCastTo(PTy)) {
+          llvm::errs() << "Cannot cast __builtin_autodiff argument " << i << " " << *res << " to argument " << truei << " " << *PTy << "\n" << "orig: " << *FT << "\n";
+          exit(1);
+        }
+        res = Builder.CreateBitCast(res, PTy);
       }
       args.push_back(res);
     }

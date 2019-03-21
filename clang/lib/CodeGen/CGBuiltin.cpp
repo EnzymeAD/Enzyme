@@ -74,30 +74,32 @@ static inline DIFFE_TYPE whatType(llvm::Type* arg) {
               switch(ty) {
                 case DIFFE_TYPE::OUT_DIFF:
                 case DIFFE_TYPE::CONSTANT:
-                  return DIFFE_TYPE::OUT_DIFF;
+                  ty = DIFFE_TYPE::OUT_DIFF;
                 case DIFFE_TYPE::DUP_ARG:
-                  return DIFFE_TYPE::DUP_ARG;
+                  ty = DIFFE_TYPE::DUP_ARG;
               }
         case DIFFE_TYPE::CONSTANT:
               switch(ty) {
                 case DIFFE_TYPE::OUT_DIFF:
-                  return DIFFE_TYPE::OUT_DIFF;
+                  ty = DIFFE_TYPE::OUT_DIFF;
                 case DIFFE_TYPE::CONSTANT:
-                  return DIFFE_TYPE::CONSTANT;
+                  ty = DIFFE_TYPE::CONSTANT;
                 case DIFFE_TYPE::DUP_ARG:
-                  return DIFFE_TYPE::DUP_ARG;
+                  ty = DIFFE_TYPE::DUP_ARG;
               }
         case DIFFE_TYPE::DUP_ARG:
               switch(ty) {
                 case DIFFE_TYPE::OUT_DIFF:
-                  return DIFFE_TYPE::DUP_ARG;
+                  ty = DIFFE_TYPE::DUP_ARG;
                 case DIFFE_TYPE::CONSTANT:
-                  return DIFFE_TYPE::DUP_ARG;
+                  ty = DIFFE_TYPE::DUP_ARG;
                 case DIFFE_TYPE::DUP_ARG:
-                  return DIFFE_TYPE::DUP_ARG;
+                  ty = DIFFE_TYPE::DUP_ARG;
               }
       }
     }
+
+    return ty;
   } else if (arg->isIntOrIntVectorTy() || arg->isFunctionTy ()) {
     return DIFFE_TYPE::CONSTANT;
   } else if  (arg->isFPOrFPVectorTy()) {
@@ -108,6 +110,7 @@ static inline DIFFE_TYPE whatType(llvm::Type* arg) {
     return DIFFE_TYPE::CONSTANT;
   }
 }
+
 /// getBuiltinLibFunction - Given a builtin id for a function like
 /// "__builtin_fabsf", return a Function* for "fabsf".
 llvm::Constant *CodeGenModule::getBuiltinLibFunction(const FunctionDecl *FD,
