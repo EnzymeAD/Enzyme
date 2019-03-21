@@ -45,6 +45,69 @@ int64_t clamp(int64_t Value, int64_t Low, int64_t High) {
   return std::min(High, std::max(Low, Value));
 }
 
+enum class DIFFE_TYPE {
+  OUT_DIFF, // add differential to output struct
+  DUP_ARG,  // duplicate the argument and store differential inside
+  CONSTANT  // no differential
+};
+
+static inline DIFFE_TYPE whatType(llvm::Type* arg) {
+  if (arg->isPointerTy()) {
+    switch(whatType(cast<llvm::PointerType>(arg)->getElementType())) {
+      case DIFFE_TYPE::OUT_DIFF:
+        return DIFFE_TYPE::DUP_ARG;
+      case DIFFE_TYPE::CONSTANT:
+        return DIFFE_TYPE::CONSTANT;
+      case DIFFE_TYPE::DUP_ARG:
+        return DIFFE_TYPE::DUP_ARG;
+    }
+  } else if (arg->isArrayTy()) {
+    return whatType(cast<llvm::ArrayType>(arg)->getElementType());
+  } else if (arg->isStructTy()) {
+    auto st = cast<llvm::StructType>(arg);
+    if (st->getNumElements() == 0) return DIFFE_TYPE::CONSTANT;
+
+    auto ty = whatType(st->getElementType(0));
+    for(int i=1; i<st->getNumElements(); i++) {
+      switch(whatType(st->getElementType(i))) {
+        case DIFFE_TYPE::OUT_DIFF:
+              switch(ty) {
+                case DIFFE_TYPE::OUT_DIFF:
+                case DIFFE_TYPE::CONSTANT:
+                  return DIFFE_TYPE::OUT_DIFF;
+                case DIFFE_TYPE::DUP_ARG:
+                  return DIFFE_TYPE::DUP_ARG;
+              }
+        case DIFFE_TYPE::CONSTANT:
+              switch(ty) {
+                case DIFFE_TYPE::OUT_DIFF:
+                  return DIFFE_TYPE::OUT_DIFF;
+                case DIFFE_TYPE::CONSTANT:
+                  return DIFFE_TYPE::CONSTANT;
+                case DIFFE_TYPE::DUP_ARG:
+                  return DIFFE_TYPE::DUP_ARG;
+              }
+        case DIFFE_TYPE::DUP_ARG:
+              switch(ty) {
+                case DIFFE_TYPE::OUT_DIFF:
+                  return DIFFE_TYPE::DUP_ARG;
+                case DIFFE_TYPE::CONSTANT:
+                  return DIFFE_TYPE::DUP_ARG;
+                case DIFFE_TYPE::DUP_ARG:
+                  return DIFFE_TYPE::DUP_ARG;
+              }
+      }
+    }
+  } else if (arg->isIntOrIntVectorTy() || arg->isFunctionTy ()) {
+    return DIFFE_TYPE::CONSTANT;
+  } else if  (arg->isFPOrFPVectorTy()) {
+    return DIFFE_TYPE::OUT_DIFF;
+  } else {
+    arg->dump();
+    assert(0 && "Cannot handle type");
+    return DIFFE_TYPE::CONSTANT;
+  }
+}
 /// getBuiltinLibFunction - Given a builtin id for a function like
 /// "__builtin_fabsf", return a Function* for "fabsf".
 llvm::Constant *CodeGenModule::getBuiltinLibFunction(const FunctionDecl *FD,
@@ -3709,6 +3772,8 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
       // we need to do a bit cast.
       llvm::Type *PTy = subfn->getFunctionType()->getParamType(j);
 
+      auto ty = whatType(PTy);
+
       if (PTy != ArgValue->getType()) {
 
         assert(PTy->canLosslesslyBitCastTo(subfn->getFunctionType()->getParamType(j)) &&
@@ -3718,19 +3783,17 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
 
       Args.push_back(ArgValue);
 
-      if (subfn->getFunctionType()->getParamType(j)->isPointerTy()) {
+      if (ty == DIFFE_TYPE::DUP_ARG) {
         ++i;
         Value *ArgValue = EmitScalarExpr(E->getArg(i));
 
-      if (PTy != ArgValue->getType()) {
+        if (PTy != ArgValue->getType()) {
 
-        assert(PTy->canLosslesslyBitCastTo(subfn->getFunctionType()->getParamType(j)) &&
-             "Must be able to losslessly bit cast to param");
-        ArgValue = Builder.CreateBitCast(ArgValue, PTy);
-      }
-
-      Args.push_back(ArgValue);
-
+          assert(PTy->canLosslesslyBitCastTo(subfn->getFunctionType()->getParamType(j)) &&
+               "Must be able to losslessly bit cast to param");
+          ArgValue = Builder.CreateBitCast(ArgValue, PTy);
+        }
+        Args.push_back(ArgValue);
       }
 
     }

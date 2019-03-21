@@ -50,6 +50,72 @@ using namespace llvm;
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/IntrinsicInst.h"
 
+
+
+enum class DIFFE_TYPE {
+  OUT_DIFF, // add differential to output struct
+  DUP_ARG,  // duplicate the argument and store differential inside
+  CONSTANT  // no differential
+};
+
+static inline DIFFE_TYPE whatType(llvm::Type* arg) {
+  if (arg->isPointerTy()) {
+    switch(whatType(cast<PointerType>(arg)->getElementType())) {
+      case DIFFE_TYPE::OUT_DIFF:
+        return DIFFE_TYPE::DUP_ARG;
+      case DIFFE_TYPE::CONSTANT:
+        return DIFFE_TYPE::CONSTANT;
+      case DIFFE_TYPE::DUP_ARG:
+        return DIFFE_TYPE::DUP_ARG;
+    }
+  } else if (arg->isArrayTy()) {
+    return whatType(cast<ArrayType>(arg)->getElementType());
+  } else if (arg->isStructTy()) {
+    auto st = cast<StructType>(arg);
+    if (st->getNumElements() == 0) return DIFFE_TYPE::CONSTANT;
+
+    auto ty = whatType(st->getElementType(0));
+    for(int i=1; i<st->getNumElements(); i++) {
+      switch(whatType(st->getElementType(i))) {
+        case DIFFE_TYPE::OUT_DIFF:
+              switch(ty) {
+                case DIFFE_TYPE::OUT_DIFF:
+                case DIFFE_TYPE::CONSTANT:
+                  return DIFFE_TYPE::OUT_DIFF;
+                case DIFFE_TYPE::DUP_ARG:
+                  return DIFFE_TYPE::DUP_ARG;
+              }
+        case DIFFE_TYPE::CONSTANT:
+              switch(ty) {
+                case DIFFE_TYPE::OUT_DIFF:
+                  return DIFFE_TYPE::OUT_DIFF;
+                case DIFFE_TYPE::CONSTANT:
+                  return DIFFE_TYPE::CONSTANT;
+                case DIFFE_TYPE::DUP_ARG:
+                  return DIFFE_TYPE::DUP_ARG;
+              }
+        case DIFFE_TYPE::DUP_ARG:
+              switch(ty) {
+                case DIFFE_TYPE::OUT_DIFF:
+                  return DIFFE_TYPE::DUP_ARG;
+                case DIFFE_TYPE::CONSTANT:
+                  return DIFFE_TYPE::DUP_ARG;
+                case DIFFE_TYPE::DUP_ARG:
+                  return DIFFE_TYPE::DUP_ARG;
+              }
+      }
+    }
+  } else if (arg->isIntOrIntVectorTy() || arg->isFunctionTy ()) {
+    return DIFFE_TYPE::CONSTANT;
+  } else if  (arg->isFPOrFPVectorTy()) {
+    return DIFFE_TYPE::OUT_DIFF;
+  } else {
+    arg->dump();
+    assert(0 && "Cannot handle type");
+    return DIFFE_TYPE::CONSTANT;
+  }
+}
+
 Function *CloneFunctionWithReturns(Function *F, SmallVector<ReturnInst*, 8>& Returns, ValueToValueMapTy& ptrInputs, const SmallSet<unsigned,4>& constant_args, SmallPtrSetImpl<Value*> &constants, bool returnValue) {
  std::vector<Type*> RetTypes;
  if (returnValue)
@@ -68,13 +134,14 @@ Function *CloneFunctionWithReturns(Function *F, SmallVector<ReturnInst*, 8>& Ret
         argno++;
         continue;
      }
-     if (I.getType()->isPointerTy()) {
+     auto wt = whatType(I.getType());
+     if (wt == DIFFE_TYPE::DUP_ARG) {
         ArgTypes.push_back(I.getType());
-        if (!I.hasAttribute(Attribute::ReadOnly)) {
+        if (I.getType()->isPointerTy() && !I.hasAttribute(Attribute::ReadOnly)) {
           llvm::errs() << "Cannot take derivative of function " <<F->getName()<< " input argument to function " << I.getName() << " is not marked read-only\n";
           exit(1);
         }
-     } else {
+     } else if (wt == DIFFE_TYPE::OUT_DIFF) {
        RetTypes.push_back(I.getType());
      }
      argno++;
@@ -94,43 +161,45 @@ Function *CloneFunctionWithReturns(Function *F, SmallVector<ReturnInst*, 8>& Ret
  unsigned ii = 0, jj = 0;
  for (auto i=F->arg_begin(), j=NewF->arg_begin(); i != F->arg_end(); ) {
 
-     if (constant_args.count(ii)) {
-        constants.insert(j);
+   auto wt = whatType(i->getType());
+
+   bool isconstant = (constant_args.count(ii) > 0) || wt == DIFFE_TYPE::CONSTANT;
+   if (isconstant) {
+      constants.insert(j);
+   }
+
+   if (!isconstant && wt == DIFFE_TYPE::DUP_ARG) {
+     VMap[i] = j;
+     hasPtrInput = true;
+     ptrInputs[j] = (j+1);
+     llvm::errs() << "function " << F->getName() << " attr " << i->getName() << "nocapture:" << F->hasParamAttribute(ii, Attribute::NoCapture) << "\n";
+     if (F->hasParamAttribute(ii, Attribute::NoCapture)) {
+       NewF->addParamAttr(jj, Attribute::NoCapture);
+       NewF->addParamAttr(jj+1, Attribute::NoCapture);
+     }
+     if (F->hasParamAttribute(ii, Attribute::NoAlias)) {
+       NewF->addParamAttr(jj, Attribute::NoAlias);
+       NewF->addParamAttr(jj+1, Attribute::NoAlias);
      }
 
-     if ( (constant_args.count(ii) == 0) && i->getType()->isPointerTy()) {
-       VMap[i] = j;
-       hasPtrInput = true;
-       ptrInputs[j] = (j+1);
-       //NewF->addParamAttr(jj, Attribute::NoCapture);
-       llvm::errs() << "function " << F->getName() << " attr " << i->getName() << "nocapture:" << F->hasParamAttribute(ii, Attribute::NoCapture) << "\n";
-       if (F->hasParamAttribute(ii, Attribute::NoCapture)) {
-         NewF->addParamAttr(jj, Attribute::NoCapture);
-         NewF->addParamAttr(jj+1, Attribute::NoCapture);
-       }
-       if (F->hasParamAttribute(ii, Attribute::NoAlias)) {
-         NewF->addParamAttr(jj, Attribute::NoAlias);
-         NewF->addParamAttr(jj+1, Attribute::NoAlias);
-       }
+     j->setName(i->getName());
+     j++;
+     j->setName(i->getName()+"'");
+     j++;
+     jj+=2;
 
-       j->setName(i->getName());
-       j++;
-       j->setName(i->getName()+"'");
-       j++;
-       jj+=2;
+     i++;
+     ii++;
 
-       i++;
-       ii++;
+   } else {
+     VMap[i] = j;
+     j->setName(i->getName());
 
-     } else {
-       VMap[i] = j;
-       j->setName(i->getName());
-
-       j++;
-       jj++;
-       i++;
-       ii++;
-     }
+     j++;
+     jj++;
+     i++;
+     ii++;
+   }
  }
 
  // Loop over the arguments, copying the names of the mapped arguments over...
@@ -1047,6 +1116,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 std::pair<Value*, Value*> loa = lookupOrAllocate(op->getArgOperand(i));
                 args.push_back(loa.first);
                 argsInverted.push_back(loa.second == nullptr);
+                assert( (loa.second != nullptr) == (whatType(op->getArgOperand(i)->getType()) == DIFFE_TYPE::DUP_ARG) );
                 if(loa.second) args.push_back(loa.second);
               }
               if (constant_args.size() == args.size()) break;
@@ -1182,10 +1252,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     }
 
     for (auto& I: newFunc->args()) {
-        if (I.getType()->isPointerTy() || isconstant(&I)) {
-            continue;
-        }
-      retargs.push_back(diffe((Value*)&I));
+      if (!isconstant(&I) && whatType(I.getType()) == DIFFE_TYPE::OUT_DIFF ) {
+        retargs.push_back(diffe((Value*)&I));
+      }
     }
 
     Value* toret = UndefValue::get(newFunc->getReturnType());
@@ -1369,33 +1438,36 @@ void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI) {//, LoopInfo& LI, Dom
 
   for(unsigned i=1; i<CI->getNumArgOperands(); i++) {
 
-      if (CI->getArgOperand(i)->getType()->isIntOrIntVectorTy())
-        constants.insert(truei);
+    Value* res = CI->getArgOperand(i);
+    auto FT = cast<Function>(fn)->getFunctionType();
+
+    auto ty = whatType(CI->getArgOperand(i)->getType());
+
+    if (ty == DIFFE_TYPE::CONSTANT)
+      constants.insert(truei);
+
+
+    if (FT->getParamType(truei) != res->getType()) {
+      assert(res->getType()->canLosslesslyBitCastTo(FT->getParamType(truei)) &&
+           "Must be able to losslessly bit cast to param");
+      res = Builder.CreateBitCast(res, FT->getParamType(truei));
+    }
+
+    args.push_back(res);
+
+    if (ty == DIFFE_TYPE::DUP_ARG) {
+      i++;
 
       Value* res = CI->getArgOperand(i);
-      auto FT = cast<Function>(fn)->getFunctionType();
-
       if (FT->getParamType(truei) != res->getType()) {
         assert(res->getType()->canLosslesslyBitCastTo(FT->getParamType(truei)) &&
-             "Must be able to losslessly bit cast to param");
+           "Must be able to losslessly bit cast to param");
         res = Builder.CreateBitCast(res, FT->getParamType(truei));
       }
-
       args.push_back(res);
+    }
 
-      if (CI->getArgOperand(i)->getType()->isPointerTy()) {
-        i++;
-
-        Value* res = CI->getArgOperand(i);
-        if (FT->getParamType(truei) != res->getType()) {
-          assert(res->getType()->canLosslesslyBitCastTo(FT->getParamType(truei)) &&
-             "Must be able to losslessly bit cast to param");
-          res = Builder.CreateBitCast(res, FT->getParamType(truei));
-        }
-        args.push_back(res);
-      }
-
-      truei++;
+    truei++;
   }
 
   auto newFunc = CreatePrimalAndGradient(cast<Function>(fn), constants, TLI, /*should return*/false);//, LI, DT);
