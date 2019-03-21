@@ -174,7 +174,6 @@ Function *CloneFunctionWithReturns(Function *F, SmallVector<ReturnInst*, 8>& Ret
      VMap[i] = j;
      hasPtrInput = true;
      ptrInputs[j] = (j+1);
-     llvm::errs() << "function " << F->getName() << " attr " << i->getName() << "nocapture:" << F->hasParamAttribute(ii, Attribute::NoCapture) << "\n";
      if (F->hasParamAttribute(ii, Attribute::NoCapture)) {
        NewF->addParamAttr(jj, Attribute::NoCapture);
        NewF->addParamAttr(jj+1, Attribute::NoCapture);
@@ -311,9 +310,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
   ValueToValueMapTy ptrInputs;
   SmallPtrSet<Value*,4> constants;
   auto newFunc = CloneFunctionWithReturns(todiff, Returns, ptrInputs, constant_args, constants, returnValue);
-  for(auto a : constants) {
-    llvm::errs() << "this is a const " << *a <<"\n";
-  }
 
   DominatorTree DT(*newFunc);
   LoopInfo LI(DT);
@@ -322,6 +318,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
   ValueToValueMapTy differentials;
   ValueToValueMapTy antiallocas;
+  SmallVector<Value*, 4> mallocCalls;
 
     SmallPtrSet<Value*,20> nonconstant;
     SmallPtrSet<Value*,2> lookingfor;
@@ -351,13 +348,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                   return true;
             }
             memorylookingfor.insert(val);
-            //llvm::errs() << "considering " << *val << "\n";
             for (const auto &a:inst->users()) {
               if(auto store = dyn_cast<StoreInst>(a)) {
                 if (!isconstant(store->getValueOperand())) {
                     nonconstant.insert(val);
                     memorylookingfor.erase(val);
-                    //llvm::errs() << "VAR memory instruction " << *val << "\n";
                     return false;
                 }
               } else if (isa<LoadInst>(a)) continue;
@@ -365,7 +360,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 if (!isconstant(a)) {
                     nonconstant.insert(val);
                     memorylookingfor.erase(val);
-                    //llvm::errs() << "VAR memory instruction " << *val << "\n";
                     return false;
                 }
               }
@@ -378,7 +372,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
 
         if((lookingfor.find(val) != lookingfor.end())) {
-          //llvm::errs() << "temp Lconst " << *val << "\n";
           return true;
         }
 
@@ -388,13 +381,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 if (!isconstant(a)) {
                     nonconstant.insert(val);
                     lookingfor.erase(val);
-                    //llvm::errs() << "VAR instruction " << *val << "\n";
                     return false;
                 }
             }
             lookingfor.erase(val);
             constants.insert(val);
-            //llvm::errs() << "CONSTANT instruction " << *val << "\n";
             return true;
         }
 
@@ -404,25 +395,17 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 if (!isconstant(a)) {
                     nonconstant.insert(val);
                     lookingfor.erase(val);
-                    //llvm::errs() << "VAR instruction " << *val << "\n";
                     return false;
                 }
             }
             lookingfor.erase(val);
             constants.insert(val);
-            //llvm::errs() << "CONSTANT instruction " << *val << "\n";
             return true;
         }
 
         nonconstant.insert(val);
-        //llvm::errs() << "VAR instruction " << *val << "\n";
         return false;
     };
-
-  std::deque<BasicBlock*> blockstodo;
-  for(auto a:Returns) {
-    blockstodo.push_back(a->getParent());
-  }
 
   llvm::Value* retval = Returns[0]->getReturnValue();
   assert(Returns.size() == 1);
@@ -437,12 +420,13 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
   auto inversionAllocs = BasicBlock::Create(Context, "allocsForInversion", newFunc);
 
   ValueMap<BasicBlock*,BasicBlock*> reverseBlocks;
+  std::deque<BasicBlock*> blockstodo;
   for (BasicBlock *BB : fnthings) {
     auto BB2 = BasicBlock::Create(Context, "invert" + BB->getName(), newFunc);
     reverseBlocks[BB] = BB2;
+    blockstodo.push_back(BB);//->getParent());
   }
 
-  SmallVector<Value*, 4> mallocCalls;
   IRBuilder<> entryBuilder(inversionAllocs);
   entryBuilder.setFastMathFlags(FastMathFlags::getFast());
 
@@ -537,10 +521,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     return false;
   };
 
-  SmallPtrSet<BasicBlock*,10> finished;
 
   while(blockstodo.size() > 0) {
     auto BB = blockstodo.front();
+    llvm::errs() << "doing " << BB->getName() << "\n";
     blockstodo.pop_front();
 
     LoopContext loopContext;
@@ -548,10 +532,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
     auto BB2 = reverseBlocks[BB];
     assert(BB2);
-    if (finished.count(BB2)) {
-        continue;
-    }
-    finished.insert(BB2);
 
     std::function<Value*(Value*,IRBuilder<>&, const ValueToValueMapTy&)> unwrapM = [&](Value* val, IRBuilder<>& BuilderM, const ValueToValueMapTy& available) -> Value* {
           if (available.count(val)) {
@@ -629,7 +609,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
             if (inLoop) {
                 for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx)) {
-                  llvm::errs() << "rvar is " << *idx.var << "\n";
                   available[idx.var] = idx.antivar;
                   if (idx.parent == nullptr) break;
                 }
@@ -676,6 +655,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                       if (cast<Instruction>(scopeMap[val])->getParent() == nullptr) {
                         entryBuilder.GetInsertBlock()->getInstList().push_back(cast<Instruction>(scopeMap[val]));
                       }
+                      llvm::errs() << "pushing " << *scopeMap[val] << " to malloc calls\n";
                       mallocCalls.push_back(scopeMap[val]);
                     }
 
@@ -1247,11 +1227,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
   }
 
   SmallVector<BasicBlock*,4> preds;
-  for (BasicBlock *Pred : predecessors(BB)) {
-    preds.push_back(Pred);
-    if (finished.count(Pred) == 0) {
-      blockstodo.push_back(Pred);
-    }
+  for(auto B : predecessors(BB)) {
+    preds.push_back(B);
   }
 
   if (preds.size() == 0) {
@@ -1273,8 +1250,13 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       unsigned idx[] = { i };
       toret = Builder2.CreateInsertValue(toret, retargs[i], idx);
     }
+    llvm::errs() << "looking at malloc calls " << "\n";
     for(auto a : mallocCalls) {
-      CallInst::CreateFree(a, Builder2.GetInsertBlock());
+      auto ci = CallInst::CreateFree(a, Builder2.GetInsertBlock());
+      llvm::errs() << "freeing malloc calls " << *ci << "\n";
+      if (ci->getParent()==nullptr) {
+        Builder2.GetInsertBlock()->getInstList().push_back(cast<Instruction>(a));
+      }
     }
     Builder2.CreateRet(toret);
   } else if (preds.size() == 1) {
@@ -1306,36 +1288,43 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       }
     } else {
       std::map<BasicBlock*,std::set<unsigned>> seen;
-      std::set<BasicBlock*> done;
-      std::deque<std::pair<BasicBlock*,unsigned>> Q;
-      Q.push_back(std::pair<BasicBlock*,unsigned>(preds[0], 0));
-      Q.push_back(std::pair<BasicBlock*,unsigned>(preds[1], 1));
-      done.insert(BB);
+      std::map<BasicBlock*,std::set<BasicBlock*>> done;
+      std::deque<std::tuple<BasicBlock*,unsigned,BasicBlock*>> Q; // newblock, prednum, pred
+      Q.push_back(std::tuple<BasicBlock*,unsigned,BasicBlock*>(preds[0], 0, BB));
+      Q.push_back(std::tuple<BasicBlock*,unsigned,BasicBlock*>(preds[1], 1, BB));
+      //done.insert(BB);
 
       while(Q.size()) {
             auto trace = Q.front();
-            auto block = trace.first;
-            auto num = trace.second;
+            auto block = std::get<0>(trace);
+            auto num = std::get<1>(trace);
+            auto predblock = std::get<2>(trace);
             Q.pop_front();
-            if (seen[block].count(num)) continue;
+
+            if (seen[block].count(num) && done[block].count(predblock)) {
+              continue;
+            }
+
             seen[block].insert(num);
+            done[block].insert(predblock);
+
+            if (seen[block].size() == 1) {
+              for (BasicBlock *Pred : predecessors(block)) {
+                Q.push_back(std::tuple<BasicBlock*,unsigned,BasicBlock*>(Pred, (*seen[block].begin()), block ));
+              }
+            }
 
             SmallVector<BasicBlock*,4> succs;
             bool allDone = true;
             for (BasicBlock *Succ : successors(block)) {
                 succs.push_back(Succ);
-                if (!done.count(Succ)) {
+                if (done[block].count(Succ) == 0) {
                   allDone = false;
                 }
             }
 
-            if (!allDone) continue;
-            done.insert(block);
-
-            if (seen[block].size() == 1) {
-              for (BasicBlock *Pred : predecessors(block)) {
-                Q.push_back(std::pair<BasicBlock*,unsigned>(Pred, (*seen[block].begin()) ));
-              }
+            if (!allDone) {
+              continue;
             }
 
             if (seen[block].size() == preds.size() && succs.size() == preds.size()) {
@@ -1417,7 +1406,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
 
   }
-
+  llvm::errs() << "blockstodo.size() == " << blockstodo.size() << "\n";
   newFunc->dump();
   while(inversionAllocs->size() > 0) {
     inversionAllocs->back().moveBefore(&newFunc->getEntryBlock().front());
@@ -1470,7 +1459,6 @@ void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI) {//, LoopInfo& LI, Dom
     }
 
     args.push_back(res);
-    llvm::errs() << "choosing to duplicate arugment " << (*CI->getOperand(i)) << " " << (ty == DIFFE_TYPE::DUP_ARG) << "\n";
     if (ty == DIFFE_TYPE::DUP_ARG) {
       i++;
 
