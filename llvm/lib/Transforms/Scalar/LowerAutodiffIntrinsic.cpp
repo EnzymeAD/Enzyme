@@ -240,6 +240,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
   ValueToValueMapTy ptrInputs;
   SmallPtrSet<Value*,4> constants;
   auto newFunc = CloneFunctionWithReturns(todiff, Returns, ptrInputs, constant_args, constants, returnValue);
+  for(auto a : constants) {
+    llvm::errs() << "this is a const " << *a <<"\n";
+  }
 
   DominatorTree DT(*newFunc);
   LoopInfo LI(DT);
@@ -714,7 +717,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     };
 
     auto addToDiffe = [&](Value* val, Value* dif) {
+      assert(!val->getType()->isIntOrIntVectorTy());
+      assert(!dif->getType()->isIntOrIntVectorTy());
+      assert(val->getType() == dif->getType());
       auto old = diffe(val);
+      assert(val->getType() == old->getType());
       Builder2.CreateStore(Builder2.CreateFAdd(old, dif), differentials[val]);
     };
 
@@ -879,8 +886,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             SmallVector<Value*, 4> args;
             args.push_back(invertPointer(op->getOperand(0)));
             args.push_back(invertPointer(op->getOperand(1)));
-            args.push_back(op->getOperand(2));
-            args.push_back(op->getOperand(3));
+            args.push_back(lookup(op->getOperand(2)));
+            args.push_back(lookup(op->getOperand(3)));
 
             Type *tys[] = {args[0]->getType(), args[1]->getType(), args[2]->getType()};
             auto cal = Builder2.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::memcpy, tys), args);
@@ -1105,8 +1112,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         auto dif1 = Builder2.CreateLoad(invertPointer(op->getPointerOperand()));
         addToDiffe(op->getValueOperand(), dif1);
       }
+      op->getPointerOperand()->dump();
       setPtrDiffe(op->getPointerOperand(), Constant::getNullValue(op->getValueOperand()->getType()));
-
     } else if(auto op = dyn_cast<ExtractValueInst>(inst)) {
       //todo const
       SmallVector<Value*,4> sv;
@@ -1362,7 +1369,7 @@ void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI) {//, LoopInfo& LI, Dom
 
   for(unsigned i=1; i<CI->getNumArgOperands(); i++) {
 
-      if (CI->getArgOperand(i)->getType()->isIntegerTy())
+      if (CI->getArgOperand(i)->getType()->isIntOrIntVectorTy())
         constants.insert(truei);
 
       Value* res = CI->getArgOperand(i);

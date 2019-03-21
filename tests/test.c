@@ -548,23 +548,34 @@ int main(int argc, char** argv) {
 #endif
 
 
-static double conv_layer(size_t IN, size_t OUT, const double* __restrict W, const double* __restrict b, const double* __restrict input, const double* __restrict true_output) {
-  double output[OUT];//{0};
+static double conv_layer(size_t IN, size_t OUT, size_t NUM, const double* __restrict W, const double* __restrict b, const double* __restrict input, const double* __restrict true_output) {
+  double output[NUM*OUT];//{0};
 
   #pragma clang loop unroll(disable)
+  for(int n=0; n<NUM; n++)
+  #pragma clang loop unroll(disable)
   for (int o = 0; o < OUT; o++) {
-    output[o] = b[o];
+    output[n*OUT + o] = b[o];
+  }
+
+  #pragma clang loop unroll(disable)
+  for(int n=0; n<NUM; n++)
+  #pragma clang loop unroll(disable)
+  for (int o = 0; o < OUT; o++) {
+    //output[o] = b[o];
 
     #pragma clang loop unroll(disable)
     for (int i = 0; i < IN; i++) {
-      output[o] += W[o*IN + i] * input[i];
+      output[n*OUT + o] += W[o*IN + i] * input[n*IN + i];
     }
   }
 
   double sum = 0;
   #pragma clang loop unroll(disable)
+  for(int n=0; n<NUM; n++)
+  #pragma clang loop unroll(disable)
   for(int o=0; o<OUT; o++) {
-    sum += (output[o] - true_output[o]) * (output[o] - true_output[o]);
+    sum += (output[n*OUT+o] - true_output[n*OUT+o]) * (output[n*OUT+o] - true_output[n*OUT+o]);
   }
   return sum;
 }
@@ -573,7 +584,7 @@ static double conv_layer(size_t IN, size_t OUT, const double* __restrict W, cons
 int main(int argc, char** argv) {
     double f = atof(argv[1]);
 
-    size_t IN = 10, OUT = 10;
+    size_t IN = 784, OUT = 10, NUM = 3;
 
     double* W  = (double*)malloc(sizeof(double)*IN*OUT);
     double* Wp = (double*)malloc(sizeof(double)*IN*OUT);
@@ -581,13 +592,13 @@ int main(int argc, char** argv) {
     double* B  = (double*)malloc(sizeof(double)*OUT);
     double* Bp = (double*)malloc(sizeof(double)*OUT);
 
-    double* input  = (double*)malloc(sizeof(double)*IN);
-    double* inputp = (double*)malloc(sizeof(double)*IN);
+    double* input  = (double*)malloc(sizeof(double)*IN*NUM);
+    double* inputp = (double*)malloc(sizeof(double)*IN*NUM);
 
-    double* output  = (double*)malloc(sizeof(double)*OUT);
+    double* output  = (double*)malloc(sizeof(double)*OUT*NUM);
     double* outputp = (double*)malloc(sizeof(double)*OUT);
 
-    for(int i=0; i<IN; i++) {
+    for(int i=0; i<IN*NUM; i++) {
       input[i] = 2.;
     }
 
@@ -599,15 +610,23 @@ int main(int argc, char** argv) {
       B[i] = (double)rand() / RAND_MAX;
     }
 
-    for(int i=0; i<OUT; i++) {
+    for(int i=0; i<OUT*NUM; i++) {
       output[i] = 3.;
     }
 
+    double rate = -0.01;
     while(1) {
       memset(Wp, 0, sizeof(double) * IN * OUT);
       memset(Bp, 0, sizeof(double) * OUT);
-      double loss = __builtin_autodiff(conv_layer,IN,OUT,W,Wp,B,Bp,input,inputp,output,outputp);
-      printf("loss = %f\n", loss);
+      double loss = conv_layer(IN,OUT,NUM,W,B,input,output);
+      double dloss = __builtin_autodiff(conv_layer,IN,OUT,NUM,W,Wp,B,Bp,input,inputp,output,outputp);
+      for (int o = 0; o < OUT; o++) {
+        B[o] += rate * Bp[o];
+        for (int i = 0; i < IN; i++) {
+            W[o*IN+i] += rate * Wp[o*IN + i];
+        }
+      }
+      printf("dloss = %f loss=%f\n", dloss, loss);
     }
 
 }
