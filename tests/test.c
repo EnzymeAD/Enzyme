@@ -4,6 +4,8 @@
 #include <sys/time.h>
 #include <stdlib.h>
 #include <math.h>
+#include <inttypes.h>
+#include <string.h>
 
 float tdiff(struct timeval *start, struct timeval *end) {
   return (end->tv_sec-start->tv_sec) + 1e-6*(end->tv_usec-start->tv_usec);
@@ -573,7 +575,7 @@ typedef struct mnist_image_t_ {
 typedef struct mnist_dataset_t_ {
     mnist_image_t * images;
     uint8_t * labels;
-    uint32_t size;
+    size_t size;
 } mnist_dataset_t;
 
 mnist_dataset_t * mnist_get_dataset(const char * image_path, const char * label_path);

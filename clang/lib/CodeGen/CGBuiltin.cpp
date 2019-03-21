@@ -3775,9 +3775,10 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
       auto ty = whatType(PTy);
 
       if (PTy != ArgValue->getType()) {
-
-        assert(PTy->canLosslesslyBitCastTo(subfn->getFunctionType()->getParamType(j)) &&
-             "Must be able to losslessly bit cast to param");
+        if (!ArgValue->getType()->canLosslesslyBitCastTo(PTy)) {
+          llvm::errs() << "Cannot cast __builtin_autodiff argument " << i << " " << *ArgValue << " to argument " << j << " " << *PTy << "\n" << *subfn->getFunctionType() << "\n";
+          exit(1);
+        }
         ArgValue = Builder.CreateBitCast(ArgValue, PTy);
       }
 
@@ -3788,9 +3789,10 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
         Value *ArgValue = EmitScalarExpr(E->getArg(i));
 
         if (PTy != ArgValue->getType()) {
-
-          assert(PTy->canLosslesslyBitCastTo(subfn->getFunctionType()->getParamType(j)) &&
-               "Must be able to losslessly bit cast to param");
+          if (!ArgValue->getType()->canLosslesslyBitCastTo(PTy)) {
+            llvm::errs() << "Cannot cast __builtin_autodiff argument " << i << " " << *ArgValue << " to argument " << j << " " << *PTy << "\n" << *subfn->getFunctionType() << "\n";
+            exit(1);
+          }
           ArgValue = Builder.CreateBitCast(ArgValue, PTy);
         }
         Args.push_back(ArgValue);
