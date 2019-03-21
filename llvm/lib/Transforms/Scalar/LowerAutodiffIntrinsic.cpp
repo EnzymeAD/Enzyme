@@ -674,7 +674,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                     } else {
                       scopeMap[val] = CallInst::CreateMalloc(entryBuilder.GetInsertBlock(), size->getType(), val->getType(), ConstantInt::get(size->getType(), M->getDataLayout().getTypeAllocSizeInBits(val->getType())/8), size, nullptr, val->getName()+"_arraycache");
                       if (cast<Instruction>(scopeMap[val])->getParent() == nullptr) {
-                        cast<Instruction>(scopeMap[val])->moveAfter(&entryBuilder.GetInsertBlock()->back());
+                        entryBuilder.GetInsertBlock()->getInstList().push_back(cast<Instruction>(scopeMap[val]));
                       }
                       mallocCalls.push_back(scopeMap[val]);
                     }
