@@ -878,7 +878,8 @@ int main(int argc, char** argv) {
       memset(Wp, 0, sizeof(double) * IN * OUT);
       memset(Bp, 0, sizeof(double) * OUT);
       double loss = conv_layer(IN,OUT,train_dataset->size,W,B,train_dataset->images,train_dataset->labels);
-      double dloss = __builtin_autodiff(conv_layer,IN,OUT,train_dataset->size,W,Wp,B,Bp,train_dataset->images,train_dataset->labels);
+      //double dloss = __builtin_autodiff(conv_layer,IN,OUT,train_dataset->size,W,Wp,B,Bp,train_dataset->images,train_dataset->labels);
+      double dloss = __builtin_autodiff(conv_layer,IN,OUT,(size_t)3,W,Wp,B,Bp,train_dataset->images,train_dataset->labels);
       for (int o = 0; o < OUT; o++) {
         B[o] += rate * Bp[o];
         for (int i = 0; i < IN; i++) {

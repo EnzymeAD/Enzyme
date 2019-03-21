@@ -75,7 +75,7 @@ static inline DIFFE_TYPE whatType(llvm::Type* arg) {
     if (st->getNumElements() == 0) return DIFFE_TYPE::CONSTANT;
 
     auto ty = whatType(st->getElementType(0));
-    for(int i=1; i<st->getNumElements(); i++) {
+    for(unsigned i=1; i<st->getNumElements(); i++) {
       switch(whatType(st->getElementType(i))) {
         case DIFFE_TYPE::OUT_DIFF:
               switch(ty) {
@@ -442,7 +442,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     reverseBlocks[BB] = BB2;
   }
 
-
+  SmallVector<Value*, 4> mallocCalls;
   IRBuilder<> entryBuilder(inversionAllocs);
   entryBuilder.setFastMathFlags(FastMathFlags::getFast());
 
@@ -669,7 +669,16 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                       else size = entryBuilder.CreateMul(size, ns);
                       if (idx.parent == nullptr) break;
                     }
-                    scopeMap[val] = entryBuilder.CreateAlloca(val->getType(), size, val->getName()+"_arraycache");
+                    if (false) {
+                      scopeMap[val] = entryBuilder.CreateAlloca(val->getType(), size, val->getName()+"_arraycache");
+                    } else {
+                      scopeMap[val] = CallInst::CreateMalloc(entryBuilder.GetInsertBlock(), size->getType(), val->getType(), ConstantInt::get(size->getType(), M->getDataLayout().getTypeAllocSizeInBits(val->getType())/8), size, nullptr, val->getName()+"_arraycache");
+                      if (cast<Instruction>(scopeMap[val])->getParent() == nullptr) {
+                        cast<Instruction>(scopeMap[val])->moveAfter(&entryBuilder.GetInsertBlock()->back());
+                      }
+                      mallocCalls.push_back(scopeMap[val]);
+                    }
+
                     Instruction* putafter = isa<PHINode>(inst) ? (inst->getParent()->getFirstNonPHI() ): inst->getNextNonDebugInstruction();
                     IRBuilder <> v(putafter);
                     v.setFastMathFlags(FastMathFlags::getFast());
@@ -689,7 +698,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                     }
 
                     Value* idx = nullptr;
-                    for(int i=0; i<indices.size(); i++) {
+                    for(unsigned i=0; i<indices.size(); i++) {
                       if (i == 0) {
                         idx = indices[i];
                       } else {
@@ -722,7 +731,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 }
 
                 Value* idx = nullptr;
-                for(int i=0; i<indices.size(); i++) {
+                for(unsigned i=0; i<indices.size(); i++) {
                   if (i == 0) {
                     idx = indices[i];
                   } else {
@@ -1263,6 +1272,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     for(unsigned i=0; i<retargs.size(); i++) {
       unsigned idx[] = { i };
       toret = Builder2.CreateInsertValue(toret, retargs[i], idx);
+    }
+    for(auto a : mallocCalls) {
+      CallInst::CreateFree(a, Builder2.GetInsertBlock());
     }
     Builder2.CreateRet(toret);
   } else if (preds.size() == 1) {

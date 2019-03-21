@@ -68,7 +68,7 @@ static inline DIFFE_TYPE whatType(llvm::Type* arg) {
     if (st->getNumElements() == 0) return DIFFE_TYPE::CONSTANT;
 
     auto ty = whatType(st->getElementType(0));
-    for(int i=1; i<st->getNumElements(); i++) {
+    for(unsigned i=1; i<st->getNumElements(); i++) {
       switch(whatType(st->getElementType(i))) {
         case DIFFE_TYPE::OUT_DIFF:
               switch(ty) {
