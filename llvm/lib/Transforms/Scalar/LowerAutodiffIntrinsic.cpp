@@ -523,9 +523,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
 
   while(blockstodo.size() > 0) {
-    auto BB = blockstodo.front();
+    auto BB = blockstodo.back();
     llvm::errs() << "doing " << BB->getName() << "\n";
-    blockstodo.pop_front();
+    blockstodo.pop_back();
 
     LoopContext loopContext;
     bool inLoop = getContext(BB, loopContext);
@@ -652,9 +652,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                       scopeMap[val] = entryBuilder.CreateAlloca(val->getType(), size, val->getName()+"_arraycache");
                     } else {
                       scopeMap[val] = CallInst::CreateMalloc(entryBuilder.GetInsertBlock(), size->getType(), val->getType(), ConstantInt::get(size->getType(), M->getDataLayout().getTypeAllocSizeInBits(val->getType())/8), size, nullptr, val->getName()+"_arraycache");
-                      if (cast<Instruction>(scopeMap[val])->getParent() == nullptr) {
+                      //if (cast<Instruction>(scopeMap[val])->getParent() == nullptr) {
                         entryBuilder.GetInsertBlock()->getInstList().push_back(cast<Instruction>(scopeMap[val]));
-                      }
+                      //}
                       llvm::errs() << "pushing " << *scopeMap[val] << " to malloc calls\n";
                       mallocCalls.push_back(scopeMap[val]);
                     }
@@ -871,8 +871,15 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
   }
 
   if (inLoop && loopContext.latch==BB) {
-    BB2->getInstList().push_back(loopContext.antivar);
-    IRBuilder<> tbuild(&reverseBlocks[loopContext.exit]->back());
+    BB2->getInstList().push_front(loopContext.antivar);
+
+    IRBuilder<> tbuild(reverseBlocks[loopContext.exit]);
+
+    // ensure we are before the terminator if it exists
+    if (reverseBlocks[loopContext.exit]->size()) {
+      tbuild.SetInsertPoint(&reverseBlocks[loopContext.exit]->back());
+    }
+
     tbuild.setFastMathFlags(FastMathFlags::getFast());
     loopContext.antivar->addIncoming(lookupM(loopContext.limit, tbuild), reverseBlocks[loopContext.exit]);
     auto sub = Builder2.CreateSub(loopContext.antivar, ConstantInt::get(loopContext.antivar->getType(), 1));
@@ -1252,10 +1259,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     }
     llvm::errs() << "looking at malloc calls " << "\n";
     for(auto a : mallocCalls) {
-      auto ci = CallInst::CreateFree(a, Builder2.GetInsertBlock());
-      llvm::errs() << "freeing malloc calls " << *ci << "\n";
+      auto ci = CallInst::CreateFree(Builder2.CreatePointerCast(a, Type::getInt8PtrTy(Context)), Builder2.GetInsertBlock());
       if (ci->getParent()==nullptr) {
-        Builder2.GetInsertBlock()->getInstList().push_back(cast<Instruction>(a));
+        Builder2.GetInsertBlock()->getInstList().push_back(cast<Instruction>(ci));
       }
     }
     Builder2.CreateRet(toret);
