@@ -1,6 +1,6 @@
 
 testo.ll: test.c
-	../build/bin/clang test.c -O0 -S -emit-llvm -o testo.ll -ffast-math
+	../build/bin/clang test.c -O0 -S -emit-llvm -o testo.ll -ffast-math -g -ggdb
 
 test.ll: test.c
 	#./llvm/build/bin/clang test.c -O3 -S -emit-llvm -o test.ll -ffast-math

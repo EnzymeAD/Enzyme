@@ -791,38 +791,49 @@ int mnist_batch(mnist_dataset_t * dataset, mnist_dataset_t * batch, int size, in
     return 1;
 }
 
-__attribute__((noinline))
 static double conv_layer(size_t IN, size_t OUT, size_t NUM, const double* __restrict W, const double* __restrict b, const mnist_image_t* __restrict input, const uint8_t* __restrict true_output) {
-  double output[NUM*OUT];//{0};
+  double* output = (double*)malloc(sizeof(double)*NUM*OUT);//{0};
 
+  
+  /*
   #pragma clang loop unroll(disable)
   for(int n=0; n<NUM; n++)
   #pragma clang loop unroll(disable)
   for (int o = 0; o < OUT; o++) {
     output[n*OUT + o] = b[o];
   }
+  */
 
   #pragma clang loop unroll(disable)
   for(int n=0; n<NUM; n++)
+  
   #pragma clang loop unroll(disable)
-  for (int o = 0; o < OUT; o++) {
-    //output[o] = b[o];
+  for (int o = 0; o < OUT; o++) 
+  {
+    output[n*OUT + o] = b[o];
 
     #pragma clang loop unroll(disable)
     for (int i = 0; i < IN; i++) {
-      output[n*OUT + o] += W[o*IN + i] * (double)(input[n].pixels[i] / 255.);
+      output[n*OUT + o] += W[o*IN+i] * (double)(input[n].pixels[i] / 255.);
     }
+    //printf("end op n:%d o:%d b[o]:%f %f\n",n, o, b[o], output[n*OUT+o]); 
   }
 
+  
   double sum = 0;
   #pragma clang loop unroll(disable)
   for(int n=0; n<NUM; n++)
   #pragma clang loop unroll(disable)
   for(int o=0; o<OUT; o++) {
     double foo = (o == true_output[n]) ? 1.0 : 0.0;
+    //printf("n:%d o:%d foo:%f op:%f\n", n, o, foo, output[n*OUT+o]);
     sum += (output[n*OUT+o] - foo) * (output[n*OUT+o] - foo);
   }
-  return sum;
+
+  //sum = output[0];
+  free(output);
+  return sum / NUM;
+  
 }
 
 
@@ -832,7 +843,7 @@ const char * test_images_file = "data/t10k-images-idx3-ubyte";
 const char * test_labels_file = "data/t10k-labels-idx1-ubyte";
 
 int main(int argc, char** argv) {
-    double f = atof(argv[1]);
+    //double f = atof(argv[1]);
 
     mnist_dataset_t * train_dataset, * test_dataset;
     mnist_dataset_t batch;
@@ -873,21 +884,27 @@ int main(int argc, char** argv) {
       output[i] = 3.;
     }
 
-    double rate = -0.01;
+    double rate = -0.0001;
     printf("train dataset size=%d\n", train_dataset->size);
     while(1) {
       memset(Wp, 0, sizeof(double) * IN * OUT);
       memset(Bp, 0, sizeof(double) * OUT);
-      printf("calling conv_layer\n");
-      double loss = conv_layer(IN,OUT,train_dataset->size,W,B,train_dataset->images,train_dataset->labels);
-      printf("calling diff conv_layer\n");
-      //double dloss = __builtin_autodiff(conv_layer,IN,OUT,train_dataset->size,W,Wp,B,Bp,train_dataset->images,train_dataset->labels);
-      double dloss = __builtin_autodiff(conv_layer,IN,OUT,(size_t)57000,W,Wp,B,Bp,train_dataset->images,train_dataset->labels);
-      printf("doing inv\n");
+
+      size_t size;
+      size = train_dataset->size;
+      //size = 100;
+      double loss =
+      
+      conv_layer(IN,OUT,size,W,B,train_dataset->images,train_dataset->labels);
+      double dloss = 0;
+      
+      dloss = __builtin_autodiff(conv_layer,IN,OUT,size,W,Wp,B,Bp,train_dataset->images,train_dataset->labels);
       for (int o = 0; o < OUT; o++) {
         B[o] += rate * Bp[o];
+        //printf("Bp[%d]=%f\n", o, Bp[o]);
         for (int i = 0; i < IN; i++) {
             W[o*IN+i] += rate * Wp[o*IN + i];
+            //printf("Wp[%d*IN+%d]=%f\n", o, i, Wp[o*IN+i]);
         }
       }
       printf("dloss = %f loss=%f\n", dloss, loss);
