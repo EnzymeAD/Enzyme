@@ -791,7 +791,7 @@ int mnist_batch(mnist_dataset_t * dataset, mnist_dataset_t * batch, int size, in
     return 1;
 }
 
-static double conv_layer(size_t IN, size_t OUT, size_t NUM, const double* __restrict W, const double* __restrict b, const mnist_image_t* __restrict input, const uint8_t* __restrict true_output) {
+static double conv_layer_old(size_t IN, size_t OUT, size_t NUM, const double* __restrict W, const double* __restrict b, const mnist_image_t* __restrict input, const uint8_t* __restrict true_output) {
   double* output = (double*)malloc(sizeof(double)*NUM*OUT);//{0};
 
   
@@ -836,7 +836,30 @@ static double conv_layer(size_t IN, size_t OUT, size_t NUM, const double* __rest
   
 }
 
+static double conv_layer(size_t IN, size_t OUT, size_t NUM, const double* __restrict W, const double* __restrict b, const mnist_image_t* __restrict input, const uint8_t* __restrict true_output) {
+  double* output = (double*)malloc(sizeof(double)*NUM*OUT);//{0};
+  double sum = 0;
 
+  #pragma clang loop unroll(disable)
+  for(int n=0; n<NUM; n++)
+  
+  #pragma clang loop unroll(disable)
+  for (int o = 0; o < OUT; o++) 
+  {
+    output[n*OUT + o] = b[o];
+
+    #pragma clang loop unroll(disable)
+    for (int i = 0; i < IN; i++) {
+      output[n*OUT + o] += W[o*IN+i] * (double)(input[n].pixels[i] / 255.);
+    }
+    double foo = (o == true_output[n]) ? 1.0 : 0.0;
+    sum += (output[n*OUT+o] - foo) * (output[n*OUT+o] - foo);
+  }
+
+  free(output);
+  return sum / NUM;
+  
+}
 const char * train_images_file = "data/train-images-idx3-ubyte";
 const char * train_labels_file = "data/train-labels-idx1-ubyte";
 const char * test_images_file = "data/t10k-images-idx3-ubyte";

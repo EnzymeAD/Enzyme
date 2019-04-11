@@ -527,7 +527,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
   while(blockstodo.size() > 0) {
     auto BB = blockstodo.back();
-    llvm::errs() << "doing " << BB->getName() << "\n";
     blockstodo.pop_back();
 
     LoopContext loopContext;
@@ -585,7 +584,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 llvm::errs() << "need recompute: " << *op->getOperand(1) << "\n";
             }
             return a0 || a1;
-            return shouldRecompute(op->getOperand(0), available) || shouldRecompute(op->getOperand(1), available);
           } else if (auto op = dyn_cast<CmpInst>(val)) {
             return shouldRecompute(op->getOperand(0), available) || shouldRecompute(op->getOperand(1), available);
           } else if (auto op = dyn_cast<SelectInst>(val)) {
@@ -624,7 +622,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 return false;
           } else if (auto phi = dyn_cast<PHINode>(val)) {
             if (phi->getNumIncomingValues () == 1) {
-                return shouldRecompute(phi->getIncomingValue(0) , available);
+                bool b = shouldRecompute(phi->getIncomingValue(0) , available);
+                if (b) {
+                    llvm::errs() << "phi need recompute: " <<*phi->getIncomingValue(0) << "\n";
+                }
+                return b;
             }
 
             llvm::errs() << "phi " << *phi << " not promotable\n";
