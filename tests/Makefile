@@ -26,3 +26,20 @@ test.o: test2.ll
 
 clean:
 	rm -f test.ll test2.ll test.o testo.ll test.S test1.ll testa.ll testb.ll testc.ll test0.ll testd.ll teste.ll
+
+
+eigen.ll: eigen.cpp
+	../build/bin/clang++ eigen.cpp -O3 -fno-vectorize -fno-slp-vectorize -S -emit-llvm -o eigen0.ll -ffast-math -I/usr/local/Cellar/eigen/3.3.7/include/eigen3
+	../build/bin/opt -indvars eigen0.ll -S -o eigen.ll
+
+eigen2.ll: eigen.ll
+	../build/bin/opt -lower-autodiff eigen.ll -S -o eigen1.ll
+	../build/bin/opt -mem2reg eigen1.ll -S -o eigena.ll
+	../build/bin/opt -sroa eigena.ll -S -o eigenb.ll
+	../build/bin/opt -early-cse-memssa eigenb.ll -S -o eigenc.ll
+	../build/bin/opt -adce -bdce -aggressive-instcombine -simplifycfg eigenc.ll -S -o eigend.ll
+	../build/bin/opt -correlated-propagation -deadargelim -adce -bdce -aggressive-instcombine eigend.ll -S -o eigene.ll
+	../build/bin/opt -O3 eigene.ll -S -o eigen2.ll
+
+eigen.o: eigen2.ll
+	../build/bin/clang eigen2.ll -o eigen.o -lm -g -ggdb
