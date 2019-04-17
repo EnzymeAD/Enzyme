@@ -3769,8 +3769,14 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
 
     unsigned int j = 0;
     for (unsigned i = 1, e = E->getNumArgs(); i != e; ++i,++j) {
-      Value *ArgValue = EmitScalarExpr(E->getArg(i));
-
+      Value *ArgValue = nullptr;
+      auto av = EmitAnyExpr(E->getArg(i));
+      if (av.isScalar()) ArgValue = av.getScalarVal();
+      else if (av.isAggregate()) ArgValue = av.getAggregatePointer();
+      else {
+        llvm::errs() << "unknown expr emitted\n";
+        exit(1);
+      }
       // If the intrinsic arg type is different from the builtin arg type
       // we need to do a bit cast.
       llvm::Type *PTy = subfn->getFunctionType()->getParamType(j);
@@ -3789,7 +3795,14 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
 
       if (ty == DIFFE_TYPE::DUP_ARG) {
         ++i;
-        Value *ArgValue = EmitScalarExpr(E->getArg(i));
+      Value *ArgValue = nullptr;
+      auto av = EmitAnyExpr(E->getArg(i));
+      if (av.isScalar()) ArgValue = av.getScalarVal();
+      else if (av.isAggregate()) ArgValue = av.getAggregatePointer();
+      else {
+        llvm::errs() << "unknown expr emitted\n";
+        exit(1);
+      }
 
         if (PTy != ArgValue->getType()) {
           if (!ArgValue->getType()->canLosslesslyBitCastTo(PTy)) {

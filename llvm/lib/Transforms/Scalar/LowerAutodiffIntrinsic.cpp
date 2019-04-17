@@ -249,11 +249,14 @@ PHINode* canonicalizeIVs(Type *Ty, Loop *L, ScalarEvolution &SE, DominatorTree &
 
   SmallVector<WeakTrackingVH, 16> DeadInsts;
   Exp.replaceCongruentIVs(L, &DT, DeadInsts);
+
+  
   for (WeakTrackingVH V : DeadInsts) {
     //DEBUG(dbgs() << "erasing dead inst " << *V << "\n");
     Instruction *I = cast<Instruction>(V);
     I->eraseFromParent();
   }
+  
 
   return CanonicalIV;
 }
@@ -286,9 +289,11 @@ Value* canonicalizeLoopLatch(PHINode *IV, Value *Limit, Loop* L, ScalarEvolution
   // Erase the old conditional branch.
   Value *OldCond = LatchBr->getCondition();
   LatchBr->eraseFromParent();
+  
   if (!OldCond->hasNUsesOrMore(1))
     if (Instruction *OldCondInst = dyn_cast<Instruction>(OldCond))
       OldCondInst->eraseFromParent();
+  
 
   return NewCondition;
 }
@@ -332,6 +337,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         }
 
         if((nonconstant.find(val) != nonconstant.end())) {
+            llvm::errs() << "in nonconstants:" << *val << "\n";
             return false;
         }
 
@@ -346,6 +352,15 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
         if (val->getType()->isPointerTy()) {
           if (auto inst = dyn_cast<Instruction>(val)) {
+            if (cast<PointerType>(val->getType())->getElementType()->isIntegerTy()) {
+            if (auto gep = dyn_cast<GetElementPtrInst>(inst)) {
+                gep->dump();
+                if (isa<Argument>(gep->getOperand(0))) {
+                    return true;
+                }
+            }
+            }
+
             if (memorylookingfor.find(val) != memorylookingfor.end()) {
                   llvm::errs() << "temp acquised to " << *val << "\n";
                   return true;
@@ -384,6 +399,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 if (!isconstant(a)) {
                     nonconstant.insert(val);
                     lookingfor.erase(val);
+            llvm::errs() << "nonconstant phi operand:" << *val << "\n";
                     return false;
                 }
             }
@@ -398,6 +414,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 if (!isconstant(a)) {
                     nonconstant.insert(val);
                     lookingfor.erase(val);
+            llvm::errs() << "nonconstant operand:" << *val << "\n";
                     return false;
                 }
             }
@@ -407,6 +424,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         }
 
         nonconstant.insert(val);
+            llvm::errs() << "couldnt decide nonconstants:" << *val << "\n";
         return false;
     };
 
@@ -449,12 +467,46 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             return true;
         }
 
-        BasicBlock* ExitBlock = L->getExitBlock();
+        SmallVector<BasicBlock *, 8> ExitBlocks;
+        L->getExitBlocks(ExitBlocks);
+        BasicBlock* ExitBlock = nullptr;
+        for(auto a:ExitBlocks) {
+            auto foo = a;
+
+            while(auto bi = dyn_cast<BranchInst>(foo->getTerminator())) {
+                foo = nullptr;
+                for(auto nb : bi->successors()) {
+                    if (L->contains(nb)) continue;
+                    if (foo) {
+                        goto exitblockcheck;
+                    }
+                    foo = nb;
+                }
+            }
+
+            if (foo && isa<UnreachableInst>(foo->getTerminator()))
+                continue;
+            else {
+            }
+            
+            exitblockcheck:
+
+                if (ExitBlock) {
+                    BB->getParent()->dump();
+                    L->dump();
+                    for(auto b:ExitBlocks)
+                        b->dump();
+                    llvm::errs() << "No unique exit block (1)\n";
+                    exit(1);
+                }
+                ExitBlock = a;
+        }
 
         if (!ExitBlock) {
-            llvm::errs() << "No unique exit block\n";
+            llvm::errs() << "No unique exit block (2)\n";
             exit(1);
         }
+        llvm::errs() << "ExitBlock: " << *ExitBlock << "\n";
 
         BasicBlock *Header = L->getHeader();
         BasicBlock *Preheader = L->getLoopPreheader();
@@ -496,8 +548,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             PN->replaceAllUsesWith(NewIV);
             IVsToRemove.push_back(PN);
           }
-          for (PHINode *PN : IVsToRemove)
+          for (PHINode *PN : IVsToRemove) {
+            llvm::errs() << "ERASING: " << *PN << "\n";
             PN->eraseFromParent();
+          }
         }
 
         Value *LimitVar = Exp.expandCodeFor(Limit, CanonicalIV->getType(),
@@ -524,6 +578,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     return false;
   };
 
+  // Force loop canonicalization everywhere
+  for(auto BB:blockstodo) {
+    LoopContext loopContext;
+    getContext(BB, loopContext);
+  }
 
   while(blockstodo.size() > 0) {
     auto BB = blockstodo.back();
@@ -639,19 +698,16 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     std::function<Value*(Value*,IRBuilder<>&)> lookupM = [&](Value* val, IRBuilder<>& BuilderM) -> Value* {
         if (auto inst = dyn_cast<Instruction>(val)) {
 
-
             LoopContext lc;
             bool inLoop = getContext(inst->getParent(), lc);
 
             ValueToValueMapTy available;
-
             if (inLoop) {
                 for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx)) {
                   available[idx.var] = idx.antivar;
                   if (idx.parent == nullptr) break;
                 }
             }
-
             if (!shouldRecompute(inst, available)) {
                 return unwrapM(inst, BuilderM, available);
             }
@@ -805,6 +861,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     };
 
     auto diffe = [&](Value* val) -> Value* {
+      assert(!val->getType()->isPointerTy());
       if (differentials.find(val) == differentials.end()) {
         differentials[val] = entryBuilder.CreateAlloca(val->getType(), nullptr, val->getName()+"'de");
         entryBuilder.CreateStore(Constant::getNullValue(val->getType()), differentials[val]);
@@ -881,6 +938,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         return cast<Argument>(ptrInputs[arg]);
       } else if (auto arg = dyn_cast<CastInst>(val)) {
         return Builder2.CreateCast(arg->getOpcode(), invertPointer(arg->getOperand(0)), arg->getDestTy(), arg->getName()+"'ip");
+      } else if (auto arg = dyn_cast<LoadInst>(val)) {
+        auto li = Builder2.CreateLoad(invertPointer(arg->getOperand(0)), arg->getName()+"'ip");
+        li->setAlignment(arg->getAlignment());
+        return li;
       } else if (auto arg = dyn_cast<GetElementPtrInst>(val)) {
         SmallVector<Value*,4> invertargs;
         for(auto &a: arg->indices()) {
@@ -947,8 +1008,12 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       if (old->getType()->isIntOrIntVectorTy()) {
         res = Builder2.CreateFAdd(Builder2.CreateBitCast(old, IntToFloatTy(old->getType())), Builder2.CreateBitCast(dif, IntToFloatTy(dif->getType())));
         res = Builder2.CreateBitCast(res, old->getType());
-      } else {
+      } else if(old->getType()->isFPOrFPVectorTy()) {
         res = Builder2.CreateFAdd(old, dif);
+      } else {
+        newFunc->dump();
+        llvm::errs() << "cannot handle type " << *old << "\n" << *dif;
+        exit(1);
       }
       Builder2.CreateStore(res, ptr);
     };
@@ -974,7 +1039,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       entryBuilder.CreateStore(ConstantFP::get(retval->getType(), 1.0), differentials[retval]);
   } else if (isa<BranchInst>(term)) {
 
+  } else if (isa<UnreachableInst>(term)) {
+  
   } else {
+    BB->getParent()->dump();
+    term->dump();
     llvm::errs() << "unknown return instance\n";
     assert(0 && "unknown return inst");
   }
@@ -1009,6 +1078,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     if (auto op = dyn_cast<BinaryOperator>(inst)) {
       Value* dif0 = nullptr;
       Value* dif1 = nullptr;
+      if (op->getName() == "add.i.i.i.us.us") {
+            llvm::errs() << "isconst:" << isconstant(op) << "\n";
+            op->dump();
+            exit(1);
+      }
       switch(op->getOpcode()) {
         case Instruction::FMul:
           if (!isconstant(op->getOperand(0)))
@@ -1208,17 +1282,14 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
               SmallVector<Value*, 8> args;
               SmallVector<bool, 8> argsInverted;
-              //llvm::errs() << "creating call inst " << called->getName() << "\n";
               for(unsigned i=0;i<called->getFunctionType()->getNumParams(); i++) {
                 if (isconstant(op->getArgOperand(i))) {
                     constant_args.insert(i);
-                    //llvm::errs() << " arg " << i << " " << *op->getArgOperand(i) << " is constant\n";
                     args.push_back(lookup(op->getArgOperand(i)));
                     argsInverted.push_back(false);
                     continue;
                 }
 
-                //llvm::errs() << "NOT arg " << i << " " << *op->getArgOperand(i) << " is constant\n";
                 std::pair<Value*, Value*> loa = lookupOrAllocate(op->getArgOperand(i));
                 args.push_back(loa.first);
                 argsInverted.push_back(loa.second == nullptr);
@@ -1298,8 +1369,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       if (dif2) addToDiffe(op->getOperand(2), dif2);
       setDiffe(inst, Constant::getNullValue(inst->getType()));
     } else if(auto op = dyn_cast<LoadInst>(inst)) {
-      addToPtrDiffe(op->getOperand(0), diffe(inst));
-      setDiffe(inst, Constant::getNullValue(inst->getType()));
+       //TODO IF OP IS POINTER
+      if (!op->getType()->isPointerTy()) {
+        addToPtrDiffe(op->getOperand(0), diffe(inst));
+        setDiffe(inst, Constant::getNullValue(inst->getType()));
+      }
     } else if(auto op = dyn_cast<StoreInst>(inst)) {
       //TODO const
       if (!isconstant(op->getValueOperand())) {
@@ -1382,7 +1456,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       unsigned idx[] = { i };
       toret = Builder2.CreateInsertValue(toret, retargs[i], idx);
     }
-    llvm::errs() << "looking at malloc calls " << "\n";
     for(auto a : mallocCalls) {
       auto ci = CallInst::CreateFree(Builder2.CreatePointerCast(a, Type::getInt8PtrTy(Context)), Builder2.GetInsertBlock());
       if (ci->getParent()==nullptr) {
@@ -1391,7 +1464,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     }
     Builder2.CreateRet(toret);
   } else if (preds.size() == 1) {
-
+    BB->dump();
+    preds[0]->dump();
     for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
         if(auto PN = dyn_cast<PHINode>(&*I)) {
             if (!isconstant(PN->getIncomingValueForBlock(preds[0])) && !isconstant(PN)) {
@@ -1425,6 +1499,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       Q.push_back(std::tuple<BasicBlock*,unsigned,BasicBlock*>(preds[1], 1, BB));
       //done.insert(BB);
 
+      newFunc->dump();
       while(Q.size()) {
             auto trace = Q.front();
             auto block = std::get<0>(trace);
@@ -1464,7 +1539,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                   break;
                 }
               }
+              block->dump();
               if (auto branch = dyn_cast<BranchInst>(block->getTerminator())) {
+                block->dump();
+                branch->dump();
                 assert(branch->getCondition());
                 phi = lookup(branch->getCondition());
                 if ( (*seen[branch->getSuccessor(0)].begin()) != 0 ) {
@@ -1488,6 +1566,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
     for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
         if(auto PN = dyn_cast<PHINode>(&*I)) {
+            newFunc->dump();
+            BB->dump();
+            preds[0]->dump();
+            preds[1]->dump();
+            PN->dump();
             if (!isconstant(PN->getIncomingValueForBlock(preds[0])) && !isconstant(PN)) {
                 auto dif = Builder2.CreateSelect(phi, diffe(PN), diffe(PN->getIncomingValueForBlock(preds[0])));
                 setDiffe(PN->getIncomingValueForBlock(preds[0]), dif );

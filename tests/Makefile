@@ -26,10 +26,12 @@ test.o: test2.ll
 
 clean:
 	rm -f test.ll test2.ll test.o testo.ll test.S test1.ll testa.ll testb.ll testc.ll test0.ll testd.ll teste.ll
+	rm -f eigen.ll eigen2.ll eigen.o eigeno.ll eigein1.ll eigena.ll eigenb.ll eigenc.ll eigen0.ll eigend.ll eigene.ll
 
 
 eigen.ll: eigen.cpp
-	../build/bin/clang++ eigen.cpp -O3 -fno-vectorize -fno-slp-vectorize -S -emit-llvm -o eigen0.ll -ffast-math -I/usr/local/Cellar/eigen/3.3.7/include/eigen3
+	../build/bin/clang++ eigen.cpp -O3 -fno-exceptions -fno-vectorize -fno-slp-vectorize -S -emit-llvm -o eigen0.ll -ffast-math -Wno-error=non-pod-varargs
+	#../build/bin/clang++ eigen.cpp -O0 -fno-exceptions -fno-vectorize -fno-slp-vectorize -S -emit-llvm -o eigent0.ll -ffast-math -Wno-error=non-pod-varargs
 	../build/bin/opt -indvars eigen0.ll -S -o eigen.ll
 
 eigen2.ll: eigen.ll
@@ -42,4 +44,4 @@ eigen2.ll: eigen.ll
 	../build/bin/opt -O3 eigene.ll -S -o eigen2.ll
 
 eigen.o: eigen2.ll
-	../build/bin/clang eigen2.ll -o eigen.o -lm -g -ggdb
+	../build/bin/clang++ eigen2.ll -o eigen.o -lm -g -ggdb

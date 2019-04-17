@@ -882,6 +882,9 @@ ExprResult Sema::DefaultVariadicArgumentPromotion(Expr *E, VariadicCallType CT,
     return ExprError();
   E = ExprRes.get();
 
+  if (FDecl->getName() == "__builtin_autodiff") {
+    return E;
+  }
   // Diagnostics regarding non-POD argument types are
   // emitted along with format string checking in Sema::CheckFunctionCall().
   if (isValidVarArgType(E->getType()) == VAK_Undefined) {

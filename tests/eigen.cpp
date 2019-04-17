@@ -1,4 +1,4 @@
-#include <Eigen/Dense>
+#include <eigen3/Eigen/Dense>
 
 #include <math.h>
 #include <stdio.h>
@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <inttypes.h>
+#include <stdlib.h>
 #include <string.h>
 
 float tdiff(struct timeval *start, struct timeval *end) {
@@ -100,7 +101,7 @@ uint8_t * get_labels(const char * path, uint32_t * number_of_labels)
 
     *number_of_labels = header.number_of_labels;
 
-    labels = malloc(*number_of_labels * sizeof(uint8_t));
+    labels = (uint8_t*)malloc(*number_of_labels * sizeof(uint8_t));
 
     if (labels == NULL) {
         fprintf(stderr, "Could not allocated memory for %d labels\n", *number_of_labels);
@@ -164,7 +165,7 @@ mnist_image_t * get_images(const char * path, uint32_t * number_of_images)
     }
 
     *number_of_images = header.number_of_images;
-    images = malloc(*number_of_images * sizeof(mnist_image_t));
+    images = (mnist_image_t*)malloc(*number_of_images * sizeof(mnist_image_t));
 
     if (images == NULL) {
         fprintf(stderr, "Could not allocated memory for %d images\n", *number_of_images);
@@ -189,7 +190,7 @@ mnist_dataset_t * mnist_get_dataset(const char * image_path, const char * label_
     mnist_dataset_t * dataset;
     uint32_t number_of_images, number_of_labels;
 
-    dataset = calloc(1, sizeof(mnist_dataset_t));
+    dataset = (mnist_dataset_t*)calloc(1, sizeof(mnist_dataset_t));
 
     if (NULL == dataset) {
         return NULL;
@@ -256,7 +257,9 @@ int mnist_batch(mnist_dataset_t * dataset, mnist_dataset_t * batch, int size, in
 }
 
 using Eigen::MatrixXd;
+using Eigen::VectorXd;
 
+__attribute__((noinline))
 static double conv_layer(size_t IN, size_t OUT, size_t NUM, const MatrixXd& __restrict W,
     const MatrixXd& __restrict b, const mnist_image_t* __restrict input,
     const uint8_t* __restrict true_output) {
@@ -314,8 +317,8 @@ int main(int argc, char** argv) {
     MatrixXd W(OUT, IN);
     MatrixXd Wp(OUT, IN);
 
-    MatrixXd B(OUT);
-    MatrixXd Bp(OUT);
+    VectorXd B(OUT);
+    VectorXd Bp(OUT);
 
     double* input  = (double*)malloc(sizeof(double)*IN*NUM);
     double* inputp = (double*)malloc(sizeof(double)*IN*NUM);
@@ -344,8 +347,10 @@ int main(int argc, char** argv) {
     double rate = -0.0001;
     printf("train dataset size=%d\n", train_dataset->size);
     while(1) {
-      memset(Wp, 0, sizeof(double) * IN * OUT);
-      memset(Bp, 0, sizeof(double) * OUT);
+      Wp = Eigen::MatrixXd::Constant(OUT, IN, 0.0);
+      Bp = Eigen::VectorXd::Constant(OUT, 0.0);
+      //memset(Wp, 0, sizeof(double) * IN * OUT);
+      //memset(Bp, 0, sizeof(double) * OUT);
 
       size_t size;
       size = train_dataset->size;
@@ -355,7 +360,7 @@ int main(int argc, char** argv) {
       conv_layer(IN,OUT,size,W,B,train_dataset->images,train_dataset->labels);
       double dloss = 0;
 
-      dloss = __builtin_autodiff(conv_layer,IN,OUT,size,W,Wp,B,Bp,train_dataset->images,train_dataset->labels);
+      dloss = __builtin_autodiff((void*)conv_layer,IN,OUT,size,W,Wp,B,Bp,train_dataset->images,train_dataset->labels);
       for (int o = 0; o < OUT; o++) {
         B(o) += rate * Bp(o);
         for (int i = 0; i < IN; i++) {
