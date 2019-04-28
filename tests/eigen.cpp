@@ -300,7 +300,7 @@ const char * train_labels_file = "data/train-labels-idx1-ubyte";
 const char * test_images_file = "data/t10k-images-idx3-ubyte";
 const char * test_labels_file = "data/t10k-labels-idx1-ubyte";
 
-int main(int argc, char** argv) {
+int main0(int argc, char** argv) {
     //double f = atof(argv[1]);
 
     mnist_dataset_t * train_dataset, * test_dataset;
@@ -373,5 +373,47 @@ int main(int argc, char** argv) {
 }
 
 
+static double add(const MatrixXd& __restrict W) {
+  double sum = 0;
 
 
+  #pragma clang loop unroll(disable)
+  for (int r = 0; r < W.rows(); r++) {
+
+  #pragma clang loop unroll(disable)
+  for (int c = 0; c < W.cols(); c++) {
+
+      sum += W(r, c);
+
+  }
+  }
+
+  return sum;
+}
+
+int main() {
+
+    size_t ROW = 1, COL = 1;
+
+    MatrixXd W (ROW, COL);
+    MatrixXd Wp(ROW, COL);
+    memset(Wp, 0, sizeof(double) * ROW * COL);
+
+    W(0, 0) = 10;
+
+    printf("total = %f\n", add(W));
+
+    __builtin_autodiff(add,W, Wp);
+
+  #pragma clang loop unroll(disable)
+  for (int r = 0; r < W.rows(); r++) {
+
+  #pragma clang loop unroll(disable)
+  for (int c = 0; c < W.cols(); c++) {
+
+      printf("W'(%d, %d)=%f\n", r, c, Wp(r, c));
+
+  }
+  }
+
+}
