@@ -1370,6 +1370,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       setDiffe(inst, Constant::getNullValue(inst->getType()));
     } else if(auto op = dyn_cast<LoadInst>(inst)) {
        //TODO IF OP IS POINTER
+       NOTE THIS IS AN ERROR
       if (!op->getType()->isPointerTy()) {
         addToPtrDiffe(op->getOperand(0), diffe(inst));
         setDiffe(inst, Constant::getNullValue(inst->getType()));

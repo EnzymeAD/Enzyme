@@ -276,7 +276,7 @@ static double conv_layer(size_t IN, size_t OUT, size_t NUM, const MatrixXd& __re
 
     #pragma clang loop unroll(disable)
     for (int i = 0; i < IN; i++) {
-      output[n*OUT + o] += W(i, o) * (double)(input[n].pixels[i] / 255.);
+      output[n*OUT + o] += W(o, i) * (double)(input[n].pixels[i] / 255.);
     }
   }
 
