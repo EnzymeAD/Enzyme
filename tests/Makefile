@@ -44,4 +44,5 @@ eigen2.ll: eigen.ll
 	../build/bin/opt -O3 eigene.ll -S -o eigen2.ll
 
 eigen.o: eigen2.ll
-	../build/bin/clang++ eigen2.ll -o eigen.o -lm -g -ggdb
+	../build/bin/clang eigen2.ll -o eigen.o -lm 
+#-g -ggdb

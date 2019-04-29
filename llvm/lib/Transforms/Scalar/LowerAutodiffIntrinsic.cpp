@@ -941,6 +941,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       } else if (auto arg = dyn_cast<LoadInst>(val)) {
         auto li = Builder2.CreateLoad(invertPointer(arg->getOperand(0)), arg->getName()+"'ip");
         li->setAlignment(arg->getAlignment());
+        llvm::errs() << "inverting pointer: " << *arg << "\n";
+        llvm::errs() << "inverted to pointer: " << *li << "\n";
         return li;
       } else if (auto arg = dyn_cast<GetElementPtrInst>(val)) {
         SmallVector<Value*,4> invertargs;
@@ -1370,10 +1372,13 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       setDiffe(inst, Constant::getNullValue(inst->getType()));
     } else if(auto op = dyn_cast<LoadInst>(inst)) {
        //TODO IF OP IS POINTER
-       NOTE THIS IS AN ERROR
       if (!op->getType()->isPointerTy()) {
         addToPtrDiffe(op->getOperand(0), diffe(inst));
         setDiffe(inst, Constant::getNullValue(inst->getType()));
+      } else {
+        //Builder2.CreateStore(diffe(inst), invertPointer(op->getOperand(0)));//, op->getName()+"'psweird");
+        //addToNPtrDiffe(op->getOperand(0), diffe(inst));
+        //assert(0 && "cannot handle non const pointer load inversion");
       }
     } else if(auto op = dyn_cast<StoreInst>(inst)) {
       //TODO const

@@ -10,7 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-float tdiff(struct timeval *start, struct timeval *end) {
+static inline float tdiff(struct timeval *start, struct timeval *end) {
   return (end->tv_sec-start->tv_sec) + 1e-6*(end->tv_usec-start->tv_usec);
 }
 
@@ -20,6 +20,11 @@ float tdiff(struct timeval *start, struct timeval *end) {
 #define MNIST_IMAGE_HEIGHT 28
 #define MNIST_IMAGE_SIZE MNIST_IMAGE_WIDTH * MNIST_IMAGE_HEIGHT
 #define MNIST_LABELS 10
+
+using Eigen::MatrixXd;
+using Eigen::VectorXd;
+
+/*
 
 typedef struct mnist_label_file_header_t_ {
     uint32_t magic_number;
@@ -48,10 +53,6 @@ void mnist_free_dataset(mnist_dataset_t * dataset);
 int mnist_batch(mnist_dataset_t * dataset, mnist_dataset_t * batch, int batch_size, int batch_number);
 
 
-/**
- * Convert from the big endian format in the dataset if we're on a little endian
- * machine.
- */
 uint32_t map_uint32(uint32_t in)
 {
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
@@ -66,11 +67,6 @@ uint32_t map_uint32(uint32_t in)
 #endif
 }
 
-/**
- * Read labels from file.
- *
- * File format: http://yann.lecun.com/exdb/mnist/
- */
 uint8_t * get_labels(const char * path, uint32_t * number_of_labels)
 {
     FILE * stream;
@@ -121,11 +117,6 @@ uint8_t * get_labels(const char * path, uint32_t * number_of_labels)
     return labels;
 }
 
-/**
- * Read images from file.
- *
- * File format: http://yann.lecun.com/exdb/mnist/
- */
 mnist_image_t * get_images(const char * path, uint32_t * number_of_images)
 {
     FILE * stream;
@@ -221,10 +212,6 @@ mnist_dataset_t * mnist_get_dataset(const char * image_path, const char * label_
     return dataset;
 }
 
-/**
- * Free all the memory allocated in a dataset. This should not be used on a
- * batched dataset as the memory is allocated to the parent.
- */
 void mnist_free_dataset(mnist_dataset_t * dataset)
 {
     free(dataset->images);
@@ -232,9 +219,6 @@ void mnist_free_dataset(mnist_dataset_t * dataset)
     free(dataset);
 }
 
-/**
- * Fills the batch dataset with a subset of the parent dataset.
- */
 int mnist_batch(mnist_dataset_t * dataset, mnist_dataset_t * batch, int size, int number)
 {
     int start_offset;
@@ -255,9 +239,6 @@ int mnist_batch(mnist_dataset_t * dataset, mnist_dataset_t * batch, int size, in
 
     return 1;
 }
-
-using Eigen::MatrixXd;
-using Eigen::VectorXd;
 
 __attribute__((noinline))
 static double conv_layer(size_t IN, size_t OUT, size_t NUM, const MatrixXd& __restrict W,
@@ -371,9 +352,13 @@ int main0(int argc, char** argv) {
     }
 
 }
+*/
 
-
-static double add(const MatrixXd& __restrict W) {
+static
+__attribute__((noinline))
+double add(const MatrixXd& __restrict W) {
+    return W(0, 0);
+/*
   double sum = 0;
 
 
@@ -389,6 +374,7 @@ static double add(const MatrixXd& __restrict W) {
   }
 
   return sum;
+  */
 }
 
 int main() {
@@ -397,14 +383,17 @@ int main() {
 
     MatrixXd W (ROW, COL);
     MatrixXd Wp(ROW, COL);
-    memset(Wp, 0, sizeof(double) * ROW * COL);
+    Wp = Eigen::MatrixXd::Constant(ROW, COL, 0.0);
 
     W(0, 0) = 10;
 
     printf("total = %f\n", add(W));
 
     __builtin_autodiff(add,W, Wp);
+    //__builtin_autodiff((void*)add,W, Wp);
 
+      printf("W'(%d, %d)=%f\n", 0, 0, Wp(0, 0));
+      /*
   #pragma clang loop unroll(disable)
   for (int r = 0; r < W.rows(); r++) {
 
@@ -415,5 +404,5 @@ int main() {
 
   }
   }
-
+*/
 }

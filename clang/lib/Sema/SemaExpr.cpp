@@ -4894,6 +4894,45 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
   bool Invalid = false;
   size_t ArgIx = 0;
   // Continue to check argument types (even if we have too few/many args).
+
+  //llvm::errs() << "seeing function: " << FDecl->getDeclName().getAsString() << "\n";
+  if (FDecl && FDecl->getDeclName().getAsString() == ("__builtin_autodiff")) {
+  //if (FDecl->getBuiltinID() == Builtin::BI__builtin_autodiff) { //"__builtin_autodiff") {
+  //if (FDecl->getName() == "__builtin_autodiff") {
+    if (Args.size() == 0) {
+        Invalid = true;
+        return Invalid;
+    }
+
+    {
+    Expr* Arg = Args[ArgIx++];
+
+      InitializedEntity Entity =
+          Param ? InitializedEntity::InitializeParameter(Context, Param,
+                                                         ProtoArgType)
+                : InitializedEntity::InitializeParameter(
+                      Context, ProtoArgType, Proto->isParamConsumed(i));
+
+    ExprResult ArgE = PerformCopyInitialization(
+          Entity, SourceLocation(), Arg, IsListInitialization, AllowExplicit);
+    if (ArgE.isInvalid())
+        return true;
+
+    AllArgs.push_back(ArgE.get()); //.get());
+    }
+      
+      for (Expr *A : Args.slice(ArgIx)) {
+        //ExprResult Arg = DefaultVariadicArgumentPromotion(A, CallType, FDecl);
+        //Invalid |= Arg.isInvalid();
+        AllArgs.push_back(A); //.get());
+      }
+
+      return Invalid;
+//        ExprResult Arg = DefaultVariadicArgumentPromotion(A, CallType, FDecl);
+//        Invalid |= Arg.isInvalid();
+//        AllArgs.push_back(Arg.get());
+  }
+
   for (unsigned i = FirstParam; i < NumParams; i++) {
     QualType ProtoArgType = Proto->getParamType(i);
 

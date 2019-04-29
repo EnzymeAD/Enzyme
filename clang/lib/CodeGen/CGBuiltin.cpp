@@ -3749,7 +3749,13 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
 
     SmallVector<llvm::Type*, 16> tys;
 
-    auto fn = EmitScalarExpr(E->getArg(0));
+    auto namedref = cast<DeclRefExpr>(E->getArg(0));
+    auto clangfn = cast<FunctionDecl>(namedref->getDecl());
+
+    clangfn->dump();
+    auto fn = EmitScalarExpr(clangfn);
+    fn->dump();
+
     tys.push_back(fn->getType());
     Args.push_back(fn);
 
@@ -3772,7 +3778,13 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
       Value *ArgValue = nullptr;
       auto av = EmitAnyExpr(E->getArg(i));
       if (av.isScalar()) ArgValue = av.getScalarVal();
-      else if (av.isAggregate()) ArgValue = av.getAggregatePointer();
+      else if (av.isAggregate()) {
+        E->getArg(i)->dumpColor();
+        //llvm::errs() << "av is " << av << "\n";
+        ArgValue = av.getAggregatePointer();
+        llvm::errs() << "avVal is " << *ArgValue << "\n";
+        Builder.GetInsertBlock()->getParent()->dump();
+       }
       else {
         llvm::errs() << "unknown expr emitted\n";
         exit(1);
@@ -3798,7 +3810,12 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
       Value *ArgValue = nullptr;
       auto av = EmitAnyExpr(E->getArg(i));
       if (av.isScalar()) ArgValue = av.getScalarVal();
-      else if (av.isAggregate()) ArgValue = av.getAggregatePointer();
+      else if (av.isAggregate()) {
+        E->getArg(i)->dumpColor();
+        //llvm::errs() << "av is " << av << "\n";
+        ArgValue = av.getAggregatePointer();
+        llvm::errs() << "avVal is " << *ArgValue << "\n";
+      }
       else {
         llvm::errs() << "unknown expr emitted\n";
         exit(1);
@@ -3817,7 +3834,6 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
     }
 
     Function *F = CGM.getIntrinsic(IntrinsicID, tys);
-    llvm::FunctionType *FTy = F->getFunctionType();
 
     Value *V = Builder.CreateCall(F, Args);
     cast<Instruction>(V)->setFast(false);
