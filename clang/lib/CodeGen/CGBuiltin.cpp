@@ -3750,15 +3750,40 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
     SmallVector<llvm::Type*, 16> tys;
 
     auto namedref = cast<DeclRefExpr>(E->getArg(0));
-    auto clangfn = cast<FunctionDecl>(namedref->getDecl());
+    auto FDecl = cast<FunctionDecl>(namedref->getDecl());
+    auto Proto = FDecl->getType()->getAs<FunctionProtoType>();
 
-    clangfn->dump();
-    auto fn = EmitScalarExpr(clangfn);
+    FDecl->dump();
+auto getptr = [&](CodeGenModule &CGM,const FunctionDecl *FD) {
+   if (FD->hasAttr<WeakRefAttr>()) {
+     ConstantAddress aliasee = CGM.GetWeakRefReference(FD);
+     return aliasee.getPointer();
+   }
+ 
+   llvm::Constant *V = CGM.GetAddrOfFunction(FD);
+   if (!FD->hasPrototype()) {
+     if (const FunctionProtoType *Proto =
+             FD->getType()->getAs<FunctionProtoType>()) {
+       // Ugly case: for a K&R-style definition, the type of the definition
+       // isn't the same as the type of a use.  Correct for this with a
+       // bitcast.
+       QualType NoProtoType =
+           CGM.getContext().getFunctionNoProtoType(Proto->getReturnType());
+       NoProtoType = CGM.getContext().getPointerType(NoProtoType);
+       V = llvm::ConstantExpr::getBitCast(V,
+                                       CGM.getTypes().ConvertType(NoProtoType));
+     }
+   }
+   return V;
+ };
+
+    auto fn = getptr(CGM, FDecl);
     fn->dump();
 
     tys.push_back(fn->getType());
     Args.push_back(fn);
 
+    /*
     while (auto ci = dyn_cast<CastInst>(fn)) {
       fn = ci->getOperand(0);
     }
@@ -3771,24 +3796,75 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
     while (auto ci = dyn_cast<ConstantExpr>(fn)) {
       fn = ci->getOperand(0);
     }
+    */
     Function* subfn = cast<Function>(fn);
+    auto propercast = [&](Expr* Arg, size_t i) -> Value*{
+        QualType ProtoArgType = Proto->getParamType(i);
+        const ParmVarDecl * const Param = FDecl ? FDecl->getParamDecl(i) : nullptr;
+
+		/*
+        if (RequireCompleteType(Arg->getLocStart(),
+                              ProtoArgType,
+                              diag::err_call_incomplete_argument, Arg)) {
+            assert(0 && "failed to get complete type");
+        }
+*/
+
+        // Strip the unbridged-cast placeholder expression off, if applicable.
+        bool CFAudited = false;
+        if (Arg->getType() == Context.ARCUnbridgedCastTy &&
+            FDecl && FDecl->hasAttr<CFAuditedTransferAttr>() &&
+            (!Param || !Param->hasAttr<CFConsumedAttr>()))
+          Arg = stripARCUnbridgedCast(Arg);
+        else if (getLangOpts().ObjCAutoRefCount &&
+                FDecl && FDecl->hasAttr<CFAuditedTransferAttr>() &&
+                (!Param || !Param->hasAttr<CFConsumedAttr>()))
+          CFAudited = true;
+
+        if (Proto->getExtParameterInfo(i).isNoEscape())
+          if (auto *BE = dyn_cast<BlockExpr>(Arg->IgnoreParenNoopCasts(Context)))
+            BE->getBlockDecl()->setDoesNotEscape();
+
+        InitializedEntity Entity =
+            Param ? InitializedEntity::InitializeParameter(Context, Param,
+                                                           ProtoArgType)
+                : InitializedEntity::InitializeParameter(
+                        Context, ProtoArgType, Proto->isParamConsumed(i));
+
+        // Remember that parameter belongs to a CF audited API.
+        if (CFAudited)
+          Entity.setParameterCFAudited();
+
+        ExprResult ArgE = PerformCopyInitialization(
+            Entity, SourceLocation(), Arg, IsListInitialization, AllowExplicit);
+        
+        if (ArgE.isInvalid()) {
+            assert(0 && "invalid arg");
+        }
+
+        Arg = ArgE.getAs<Expr>();
+
+        Value* ArgValue = nullptr;
+        auto av = EmitAnyExpr(Arg);
+        if (av.isScalar()) ArgValue = av.getScalarVal();
+        else if (av.isAggregate()) {
+          E->getArg(i)->dumpColor();
+          //llvm::errs() << "av is " << av << "\n";
+          ArgValue = av.getAggregatePointer();
+          llvm::errs() << "avVal is " << *ArgValue << "\n";
+          Builder.GetInsertBlock()->getParent()->dump();
+        }
+        else {
+          llvm::errs() << "unknown expr emitted\n";
+          exit(1);
+        }
+        return ArgValue;
+    };
 
     unsigned int j = 0;
     for (unsigned i = 1, e = E->getNumArgs(); i != e; ++i,++j) {
-      Value *ArgValue = nullptr;
-      auto av = EmitAnyExpr(E->getArg(i));
-      if (av.isScalar()) ArgValue = av.getScalarVal();
-      else if (av.isAggregate()) {
-        E->getArg(i)->dumpColor();
-        //llvm::errs() << "av is " << av << "\n";
-        ArgValue = av.getAggregatePointer();
-        llvm::errs() << "avVal is " << *ArgValue << "\n";
-        Builder.GetInsertBlock()->getParent()->dump();
-       }
-      else {
-        llvm::errs() << "unknown expr emitted\n";
-        exit(1);
-      }
+      Value *ArgValue = propercast(E->getArg(i), j);
+      
       // If the intrinsic arg type is different from the builtin arg type
       // we need to do a bit cast.
       llvm::Type *PTy = subfn->getFunctionType()->getParamType(j);
@@ -3807,19 +3883,7 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
 
       if (ty == DIFFE_TYPE::DUP_ARG) {
         ++i;
-      Value *ArgValue = nullptr;
-      auto av = EmitAnyExpr(E->getArg(i));
-      if (av.isScalar()) ArgValue = av.getScalarVal();
-      else if (av.isAggregate()) {
-        E->getArg(i)->dumpColor();
-        //llvm::errs() << "av is " << av << "\n";
-        ArgValue = av.getAggregatePointer();
-        llvm::errs() << "avVal is " << *ArgValue << "\n";
-      }
-      else {
-        llvm::errs() << "unknown expr emitted\n";
-        exit(1);
-      }
+        Value *ArgValue = propercast(E->getArg(i), j);
 
         if (PTy != ArgValue->getType()) {
           if (!ArgValue->getType()->canLosslesslyBitCastTo(PTy)) {

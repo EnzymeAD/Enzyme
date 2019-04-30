@@ -4906,7 +4906,15 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
 
     {
     Expr* Arg = Args[ArgIx++];
+    if (!isa<DeclRefExpr>(Arg)) return true;
+    if (!isa<FunctionDecl>(cast<DeclRefExpr>(Arg)->getDecl())) return true;
 
+    AllArgs.push_back(Arg); //.get());
+   
+
+
+    //.get());
+    /*
       InitializedEntity Entity =
           Param ? InitializedEntity::InitializeParameter(Context, Param,
                                                          ProtoArgType)
@@ -4919,6 +4927,7 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
         return true;
 
     AllArgs.push_back(ArgE.get()); //.get());
+    */
     }
       
       for (Expr *A : Args.slice(ArgIx)) {
