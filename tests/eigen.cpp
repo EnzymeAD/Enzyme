@@ -379,7 +379,7 @@ double add(const MatrixXd& __restrict W) {
 
 int main() {
 
-    size_t ROW = 1, COL = 1;
+    size_t ROW = 10, COL = 10;
 
     MatrixXd W (ROW, COL);
     MatrixXd Wp(ROW, COL);
@@ -390,10 +390,9 @@ int main() {
     printf("total = %f\n", add(W));
 
     __builtin_autodiff(add,W, Wp);
-    //__builtin_autodiff((void*)add,W, Wp);
 
-      printf("W'(%d, %d)=%f\n", 0, 0, Wp(0, 0));
-      /*
+      //printf("W'(%d, %d)=%f\n", 0, 0, Wp(0, 0));
+      
   #pragma clang loop unroll(disable)
   for (int r = 0; r < W.rows(); r++) {
 
@@ -404,5 +403,5 @@ int main() {
 
   }
   }
-*/
+
 }

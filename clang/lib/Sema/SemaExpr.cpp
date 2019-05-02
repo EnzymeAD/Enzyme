@@ -4904,14 +4904,130 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
         return Invalid;
     }
 
+	FunctionDecl* FDecl;
+    const FunctionProtoType *Proto;
+
     {
     Expr* Arg = Args[ArgIx++];
     if (!isa<DeclRefExpr>(Arg)) return true;
     if (!isa<FunctionDecl>(cast<DeclRefExpr>(Arg)->getDecl())) return true;
+    FDecl = cast<FunctionDecl>(cast<DeclRefExpr>(Arg)->getDecl());
+    Proto = cast<FunctionProtoType>(FDecl->getType()->castAs<FunctionType>());
 
     AllArgs.push_back(Arg); //.get());
-   
+    }
 
+    auto validateArg = [&](Expr *Arg, size_t i, bool& shouldRepeat) {
+    QualType ProtoArgType = Proto->getParamType(i);
+    
+    ParmVarDecl *Param = FDecl ? FDecl->getParamDecl(i) : nullptr;
+    
+      if (RequireCompleteType(Arg->getLocStart(),
+                              ProtoArgType,
+                              diag::err_call_incomplete_argument, Arg))
+        return true;
+
+      // Strip the unbridged-cast placeholder expression off, if applicable.
+      bool CFAudited = false;
+      if (Arg->getType() == Context.ARCUnbridgedCastTy &&
+          FDecl && FDecl->hasAttr<CFAuditedTransferAttr>() &&
+          (!Param || !Param->hasAttr<CFConsumedAttr>()))
+        Arg = stripARCUnbridgedCast(Arg);
+      else if (getLangOpts().ObjCAutoRefCount &&
+               FDecl && FDecl->hasAttr<CFAuditedTransferAttr>() &&
+               (!Param || !Param->hasAttr<CFConsumedAttr>()))
+        CFAudited = true;
+
+      if (Proto->getExtParameterInfo(i).isNoEscape())
+        if (auto *BE = dyn_cast<BlockExpr>(Arg->IgnoreParenNoopCasts(Context)))
+          BE->getBlockDecl()->setDoesNotEscape();
+
+      InitializedEntity Entity =
+          Param ? InitializedEntity::InitializeParameter(Context, Param,
+                                                         ProtoArgType)
+                : InitializedEntity::InitializeParameter(
+                      Context, ProtoArgType, Proto->isParamConsumed(i));
+
+      // Remember that parameter belongs to a CF audited API.
+      if (CFAudited)
+        Entity.setParameterCFAudited();
+
+      ExprResult ArgE = PerformCopyInitialization(
+          Entity, SourceLocation(), Arg, IsListInitialization, AllowExplicit);
+      if (ArgE.isInvalid())
+        return true;
+
+      Arg = ArgE.getAs<Expr>();
+
+    // Check for array bounds violations for each argument to the call. This
+    // check only triggers warnings when the argument isn't a more complex Expr
+    // with its own checking, such as a BinaryOperator.
+    CheckArrayAccess(Arg);
+
+    // Check for violations of C99 static array rules (C99 6.7.5.3p7).
+    CheckStaticArrayArgument(CallLoc, Param, Arg);
+
+    AllArgs.push_back(Arg);
+
+    shouldRepeat = true;
+	if (auto d = dyn_cast<BuiltinType>(ProtoArgType))
+    switch(d->getKind()) {
+     case BuiltinType::Char_S:
+     case BuiltinType::Char_U:
+     case BuiltinType::SChar:
+     case BuiltinType::UChar:
+     case BuiltinType::Short:
+     case BuiltinType::UShort:
+     case BuiltinType::Int:
+     case BuiltinType::UInt:
+     case BuiltinType::Long:
+     case BuiltinType::ULong:
+     case BuiltinType::LongLong:
+     case BuiltinType::ULongLong:
+     case BuiltinType::WChar_S:
+     case BuiltinType::WChar_U:
+     case BuiltinType::Char8:
+     case BuiltinType::Char16:
+     case BuiltinType::Char32:
+     case BuiltinType::ShortAccum:
+     case BuiltinType::Accum:
+     case BuiltinType::LongAccum:
+     case BuiltinType::UShortAccum:
+     case BuiltinType::UAccum:
+     case BuiltinType::ULongAccum:
+     case BuiltinType::ShortFract:
+     case BuiltinType::Fract:
+     case BuiltinType::LongFract:
+     case BuiltinType::UShortFract:
+     case BuiltinType::UFract:
+     case BuiltinType::ULongFract:
+     case BuiltinType::SatShortAccum:
+     case BuiltinType::SatAccum:
+     case BuiltinType::SatLongAccum:
+     case BuiltinType::SatUShortAccum:
+     case BuiltinType::SatUAccum:
+     case BuiltinType::SatULongAccum:
+     case BuiltinType::SatShortFract:
+     case BuiltinType::SatFract:
+     case BuiltinType::SatLongFract:
+     case BuiltinType::SatUShortFract:
+     case BuiltinType::SatUFract:
+     case BuiltinType::SatULongFract:
+case BuiltinType::NullPtr:
+     case BuiltinType::UInt128:
+     case BuiltinType::Int128:
+case Type::Enum:
+case Type::BlockPointer:
+
+		shouldRepeat = false;
+       break;
+	 default:
+       shouldRepeat = true;
+       break;
+    }
+
+    return false;
+    };
 
     //.get());
     /*
@@ -4928,12 +5044,17 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
 
     AllArgs.push_back(ArgE.get()); //.get());
     */
-    }
       
-      for (Expr *A : Args.slice(ArgIx)) {
-        //ExprResult Arg = DefaultVariadicArgumentPromotion(A, CallType, FDecl);
-        //Invalid |= Arg.isInvalid();
-        AllArgs.push_back(A); //.get());
+	  size_t fnarg = 0;
+	  size_t idx = ArgIx;
+      for(size_t idx = ArgIx; idx < Args.size(); idx++) {
+		bool shouldRepeat = false;
+		if(validateArg(Args[idx], fnarg, shouldRepeat)) return true;
+		if (shouldRepeat) {
+			idx++;
+		    if (validateArg(Args[idx], fnarg, shouldRepeat)) return true;
+		}
+        fnarg++;
       }
 
       return Invalid;

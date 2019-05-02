@@ -3798,7 +3798,7 @@ auto getptr = [&](CodeGenModule &CGM,const FunctionDecl *FD) {
     }
     */
     Function* subfn = cast<Function>(fn);
-    auto propercast = [&](Expr* Arg, size_t i) -> Value*{
+    auto propercast = [&](const clang::Expr* Arg, size_t i) -> Value*{
         QualType ProtoArgType = Proto->getParamType(i);
         const ParmVarDecl * const Param = FDecl ? FDecl->getParamDecl(i) : nullptr;
 
@@ -3811,6 +3811,7 @@ auto getptr = [&](CodeGenModule &CGM,const FunctionDecl *FD) {
 */
 
         // Strip the unbridged-cast placeholder expression off, if applicable.
+        /*
         bool CFAudited = false;
         if (Arg->getType() == Context.ARCUnbridgedCastTy &&
             FDecl && FDecl->hasAttr<CFAuditedTransferAttr>() &&
@@ -3843,9 +3844,15 @@ auto getptr = [&](CodeGenModule &CGM,const FunctionDecl *FD) {
         }
 
         Arg = ArgE.getAs<Expr>();
+        */
 
         Value* ArgValue = nullptr;
-        auto av = EmitAnyExpr(Arg);
+		RValue av;
+		if (ProtoArgType->getAs<ReferenceType>()) {
+			av = EmitReferenceBindingToExpr(Arg);
+		} else {
+        	av = EmitAnyExpr(Arg);
+		}
         if (av.isScalar()) ArgValue = av.getScalarVal();
         else if (av.isAggregate()) {
           E->getArg(i)->dumpColor();
