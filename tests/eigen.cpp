@@ -24,8 +24,6 @@ static inline float tdiff(struct timeval *start, struct timeval *end) {
 using Eigen::MatrixXd;
 using Eigen::VectorXd;
 
-/*
-
 typedef struct mnist_label_file_header_t_ {
     uint32_t magic_number;
     uint32_t number_of_labels;
@@ -241,7 +239,7 @@ int mnist_batch(mnist_dataset_t * dataset, mnist_dataset_t * batch, int size, in
 }
 
 __attribute__((noinline))
-static double conv_layer(size_t IN, size_t OUT, size_t NUM, const MatrixXd& __restrict W,
+static double conv_layer_manual(size_t IN, size_t OUT, size_t NUM, const MatrixXd& __restrict W,
     const MatrixXd& __restrict b, const mnist_image_t* __restrict input,
     const uint8_t* __restrict true_output) {
 
@@ -276,12 +274,65 @@ static double conv_layer(size_t IN, size_t OUT, size_t NUM, const MatrixXd& __re
 
 }
 
+__attribute__((noinline))
+static double conv_layer(size_t IN, size_t OUT, size_t NUM, const MatrixXd& __restrict W,
+    const MatrixXd& __restrict b, const mnist_image_t* __restrict input,
+    const uint8_t* __restrict true_out) {
+
+  //double* output = (double*)malloc(sizeof(double)*NUM*OUT);//{0};
+  //NUM = 1;
+  //OUT = 10;
+  IN = 784;
+  MatrixXd out(NUM, OUT);
+
+  #pragma clang loop unroll(disable)
+  for(int n=0; n<NUM; n++)
+
+  #pragma clang loop unroll(disable)
+  for (int o = 0; o < OUT; o++)
+  {
+    out(n, o) = 0;//b(o);
+
+    #pragma clang loop unroll(disable)
+    for (int i = 0; i < IN; i++) {
+      out(n, o) += W(o, i) * (double)(input[n].pixels[i] / 255.);
+    }
+  }
+
+
+  double sum = 0;
+  #pragma clang loop unroll(disable)
+  for(int n=0; n<NUM; n++)
+  #pragma clang loop unroll(disable)
+  for(int o=0; o<OUT; o++) {
+    double foo = (o == true_out[n]) ? 1.0 : 0.0;
+    sum += (out(n,o) - foo) ;//* (out(n,o) - foo);
+  }
+
+  //free(output);
+  return sum / NUM;
+}
+
+
+__attribute__((noinline))
+static double matvec(size_t IN, size_t OUT, size_t NUM, const MatrixXd& __restrict W,
+    const MatrixXd& __restrict b, const mnist_image_t* __restrict input,
+    const uint8_t* __restrict true_out) {
+
+  const MatrixXd foo = b * W ;
+  double sum = 0;
+  for(int i=0; i<IN; i++) {
+    sum += foo(i);
+  }
+  return sum;
+}
+
 const char * train_images_file = "data/train-images-idx3-ubyte";
 const char * train_labels_file = "data/train-labels-idx1-ubyte";
 const char * test_images_file = "data/t10k-images-idx3-ubyte";
 const char * test_labels_file = "data/t10k-labels-idx1-ubyte";
 
-int main0(int argc, char** argv) {
+int main(int argc, char** argv) {
     //double f = atof(argv[1]);
 
     mnist_dataset_t * train_dataset, * test_dataset;
@@ -335,30 +386,55 @@ int main0(int argc, char** argv) {
 
       size_t size;
       size = train_dataset->size;
-      //size = 100;
-      double loss =
+      size = 1;
+      double loss = 0;
 
-      conv_layer(IN,OUT,size,W,B,train_dataset->images,train_dataset->labels);
+  {
+  struct timeval start, end;
+  gettimeofday(&start, NULL);
+
+      loss = conv_layer(IN,OUT,size,W,B,train_dataset->images,train_dataset->labels);
+
+  gettimeofday(&end, NULL);
+  printf("%0.6f res=%f\n", tdiff(&start, &end), loss);
+  }
+
+
       double dloss = 0;
 
-      dloss = __builtin_autodiff((void*)conv_layer,IN,OUT,size,W,Wp,B,Bp,train_dataset->images,train_dataset->labels);
+  {
+  struct timeval start, end;
+  gettimeofday(&start, NULL);
+
+     dloss = __builtin_autodiff(matvec,IN,OUT,size,W,Wp,B,Bp,train_dataset->images,train_dataset->labels);
+
+  gettimeofday(&end, NULL);
+  printf("%0.6f res'=%f\n", tdiff(&start, &end), dloss);
+  }
+      //dloss = __builtin_autodiff(conv_layer,IN,OUT,size,W,Wp,B,Bp,train_dataset->images,train_dataset->labels);
+      B += rate * Bp;
+      W += rate * Wp;
+      
+      /*
       for (int o = 0; o < OUT; o++) {
         B(o) += rate * Bp(o);
         for (int i = 0; i < IN; i++) {
             W(o, i) += rate * Wp(o, i);
         }
       }
+      */
+      
       printf("dloss = %f loss=%f\n", dloss, loss);
     }
 
 }
-*/
 
+
+#if 0
 static
 __attribute__((noinline))
 double add(const MatrixXd& __restrict W) {
-    return W(0, 0);
-/*
+  //  return W(0, 0);
   double sum = 0;
 
 
@@ -374,7 +450,6 @@ double add(const MatrixXd& __restrict W) {
   }
 
   return sum;
-  */
 }
 
 int main() {
@@ -405,3 +480,4 @@ int main() {
   }
 
 }
+#endif

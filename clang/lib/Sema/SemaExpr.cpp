@@ -4970,6 +4970,8 @@ bool Sema::GatherArgumentsForCall(SourceLocation CallLoc, FunctionDecl *FDecl,
     AllArgs.push_back(Arg);
 
     shouldRepeat = true;
+    ProtoArgType = Context.getCanonicalType(ProtoArgType);
+	ProtoArgType->dump();
 	if (auto d = dyn_cast<BuiltinType>(ProtoArgType))
     switch(d->getKind()) {
      case BuiltinType::Char_S:
@@ -5046,10 +5048,11 @@ case Type::BlockPointer:
     */
       
 	  size_t fnarg = 0;
-	  size_t idx = ArgIx;
       for(size_t idx = ArgIx; idx < Args.size(); idx++) {
 		bool shouldRepeat = false;
+		AllArgs.push_back(Args[idx]); continue;
 		if(validateArg(Args[idx], fnarg, shouldRepeat)) return true;
+llvm::errs() << " should repeat: " << shouldRepeat << "\n";
 		if (shouldRepeat) {
 			idx++;
 		    if (validateArg(Args[idx], fnarg, shouldRepeat)) return true;
