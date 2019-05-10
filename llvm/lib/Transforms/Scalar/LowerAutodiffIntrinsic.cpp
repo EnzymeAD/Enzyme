@@ -122,6 +122,8 @@ static inline DIFFE_TYPE whatType(llvm::Type* arg) {
 }
 
 Function *CloneFunctionWithReturns(Function *F, SmallVector<ReturnInst*, 8>& Returns, ValueToValueMapTy& ptrInputs, const SmallSet<unsigned,4>& constant_args, SmallPtrSetImpl<Value*> &constants, bool returnValue) {
+ F->getParent()->dump();
+ F->dump();
  std::vector<Type*> RetTypes;
  if (returnValue)
    RetTypes.push_back(F->getReturnType());
@@ -1692,6 +1694,12 @@ void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI) {//, LoopInfo& LI, Dom
   while (auto ci = dyn_cast<ConstantExpr>(fn)) {
     fn = ci->getOperand(0);
   }
+  if (!isa<Function>(fn)) {
+    CI->getParent()->dump();
+    CI->dump();
+    fn->dump();
+  }
+  auto FT = cast<Function>(fn)->getFunctionType();
 
   SmallSet<unsigned,4> constants;
   SmallVector<Value*,2> args;
@@ -1701,7 +1709,6 @@ void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI) {//, LoopInfo& LI, Dom
 
   for(unsigned i=1; i<CI->getNumArgOperands(); i++) {
     Value* res = CI->getArgOperand(i);
-    auto FT = cast<Function>(fn)->getFunctionType();
 
     auto PTy = FT->getParamType(truei);
     auto ty = whatType(PTy);

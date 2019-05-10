@@ -377,6 +377,27 @@ int main(int argc, char** argv) {
 
 #endif
 
+void matvec(size_t N, size_t M, double* mat, double* vec, double* out) {
+  for(int i=0; i<N; i++) {
+    out[i] = 0;
+    for(int j=0; j<M; j++) {
+        out[i] += mat[i*M+j] * vec[j];
+    }
+  }
+}
+
+int main(int argc, char** argv) {
+  #define N 10ull
+  #define M 4ull
+  double mat[N*M];
+  double matp[N*M];
+  double vec[M];
+  double vecp[M];
+  double out[N];
+  matvec(N, M, mat, vec, out);
+  __builtin_autodiff(matvec, N, M, mat, matp, vec, vecp, out);
+}
+
 #if 0
 double add(double a, double b) {
   return a + b;
@@ -549,6 +570,7 @@ int main(int argc, char** argv) {
 
 #endif
 
+#if 0 
 #define MNIST_LABEL_MAGIC 0x00000801
 #define MNIST_IMAGE_MAGIC 0x00000803
 #define MNIST_IMAGE_WIDTH 28
@@ -934,3 +956,4 @@ int main(int argc, char** argv) {
     }
 
 }
+#endif
