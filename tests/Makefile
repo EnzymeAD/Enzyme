@@ -5,7 +5,7 @@ testo.ll: test.c
 test.ll: test.c
 	#./llvm/build/bin/clang test.c -O3 -S -emit-llvm -o test.ll -ffast-math
 	#./llvm/build/bin/clang test.c -O3 -fno-slp-vectorize -S -emit-llvm -o test.ll -ffast-math
-	../build/bin/clang test.c -O3 -fno-vectorize -fno-slp-vectorize -S -emit-llvm -o test0.ll -ffast-math
+	../build/bin/clang -fno-unroll-loops test.c -O3 -fno-vectorize -fno-slp-vectorize -S -emit-llvm -o test0.ll -ffast-math
 	../build/bin/opt -indvars test0.ll -S -o test.ll
 
 test2.ll: test.ll
@@ -30,7 +30,7 @@ clean:
 
 
 eigen.ll: eigen.cpp
-	../build/bin/clang++ eigen.cpp -O3 -fno-exceptions -fno-vectorize -fno-slp-vectorize -S -emit-llvm -o eigen0.ll -ffast-math -Wno-error=non-pod-varargs
+	../build/bin/clang++ eigen.cpp -fno-unroll-loops -O3 -fno-exceptions -fno-vectorize -fno-slp-vectorize -S -emit-llvm -o eigen0.ll -ffast-math -Wno-error=non-pod-varargs
 	#../build/bin/clang++ eigen.cpp -O0 -fno-exceptions -fno-vectorize -fno-slp-vectorize -S -emit-llvm -o eigent0.ll -ffast-math -Wno-error=non-pod-varargs
 	../build/bin/opt -indvars eigen0.ll -S -o eigen.ll
 

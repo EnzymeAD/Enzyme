@@ -85,7 +85,6 @@ __attribute__((noinline))
 double sumsquare(double* __restrict x, int n) {
     double sum = 0;
     #pragma clang loop vectorize(disable)
-    #pragma clang loop unroll(disable)
     for(int i=0; i < n; i++) {
         //sum += x[i];
         //printf("running iteration %d\n", i);
@@ -122,8 +121,6 @@ double foo(double* __restrict matrix) {//, double* __restrict vector) {
 double square(double x) {
   printf("starting square\n");
   double vector[10] = {0};
-    //#pragma clang loop vectorize(disable)
-    //#pragma clang loop unroll(disable)
   for (int i = 0; i < 10; i++) {
     vector[i] = (1.0*i)/10;
     //printf("vector[%d]\n", i);
@@ -131,8 +128,6 @@ double square(double x) {
   //printf("set vector\n");
   double matrix_weights[10*10] = {0};
 
-    //#pragma clang loop vectorize(disable)
-    //#pragma clang loop unroll(disable)
   for (int idx = 0; idx < 10*10; idx++) {
     int i = idx%10;
     int j = idx/10;
@@ -150,7 +145,6 @@ __attribute__((noinline))
 double foo(double* __restrict matrix, double* __restrict vector, size_t len) {
   double output = 0;//{0};
 
-  #pragma clang loop unroll(disable)
   for (int idx = 0; idx < len*len; idx++) {
     //printf("foo idx=%d\n", idx);
     int i = idx%len;
@@ -191,7 +185,6 @@ __attribute__((noinline))
 double foo(double* __restrict matrix, double* __restrict vector, size_t len) {
   double output = 0;//{0};
 
-  #pragma clang loop unroll(disable)
   for (int i = 0; i < len*len; i++) {
     //printf("foo(%i) precond\n", i);
     //if (vector[i % len] > 0) {
@@ -215,10 +208,8 @@ double foo(double* __restrict matrix, double* __restrict vector, size_t len) {
   double output = 0;//{0};
   printf("matrix[3]=%f\n", matrix[3]);
 
-  #pragma clang loop unroll(disable)
   for (int i = 0; i < len; i++) {
     //printf("foo idx=%d\n", idx);
-  #pragma clang loop unroll(disable)
   for (int j = 0; j < len; j++) {
     //printf("foo idx=(i=%d,j=%d)\n", i, j);
     double tmp = sqrt(matrix[i*len + j]);// + vector[i]);
@@ -283,7 +274,6 @@ __attribute__((noinline))
 static double loop(double x, int n) {
   double r = x/x;
 
-  #pragma clang loop unroll(disable)
   for(int i=1; i<n; i++) {
     r *= f(x);
   }
@@ -297,20 +287,14 @@ static double test(double x) {
 __attribute__((noinline))
 double logsumexp(double *x, int n) {
   double A = x[0];
-  #pragma clang loop unroll(disable)
-  #pragma clang loop vectorize(disable)
   for(int i=0; i<n; i++) {
     A = max(A, x[i]);
   }
   double ema[n];
-  #pragma clang loop unroll(disable)
-  #pragma clang loop vectorize(disable)
   for(int i=0; i<n; i++) {
     ema[i] = exp(x[i] - A);
   }
   double sema = 0;
-  #pragma clang loop unroll(disable)
-  #pragma clang loop vectorize(disable)
   for(int i=0; i<n; i++)
     sema += ema[i];
   return log(sema) + A;
@@ -319,8 +303,6 @@ double logsumexp(double *x, int n) {
 
 double test2(double x) {
   double rands[100000];
-  #pragma clang loop unroll(disable)
-  #pragma clang loop vectorize(disable)
   for(int i=0; i<100000; i++) {
     rands[i] = i * x;
   }
@@ -377,6 +359,7 @@ int main(int argc, char** argv) {
 
 #endif
 
+#if 0
 void matvec(size_t N, size_t M, double* mat, double* vec, double* out) {
   for(int i=0; i<N; i++) {
     out[i] = 0;
@@ -394,9 +377,52 @@ int main(int argc, char** argv) {
   double vec[M];
   double vecp[M];
   double out[N];
+  double outp[N];
   matvec(N, M, mat, vec, out);
-  __builtin_autodiff(matvec, N, M, mat, matp, vec, vecp, out);
+  __builtin_autodiff(matvec, N, M, mat, matp, vec, vecp, out, outp);
 }
+#endif
+
+#if 1
+__attribute__((noinline))
+void zoo(double* x) {
+    *x = *x * *x;
+//    *y = *x * *x;
+}
+
+__attribute__((noinline))
+double foo(double x) {
+    zoo(&x);
+    zoo(&x);
+    return x;
+}
+
+int main(int argc, char** argv) {
+  double f = atof(argv[1]);
+  double q = __builtin_autodiff(foo, f);
+  printf("%f\n", q);
+}
+#endif
+#if 0
+__attribute__((noinline))
+void zoo(double* x, double* y) {
+//    *x = *x * *x;
+    *y = *x * *x;
+}
+
+__attribute__((noinline))
+double foo(double x) {
+    double y;
+    zoo(&x, &y);
+    return y;
+}
+
+int main(int argc, char** argv) {
+  double f = atof(argv[1]);
+  double q = __builtin_autodiff(foo, f);
+  printf("%f\n", q);
+}
+#endif
 
 #if 0
 double add(double a, double b) {
@@ -436,17 +462,14 @@ static double max(double x, double y) {
 __attribute__((noinline))
 static double logsumexp(double *__restrict x, size_t n) {
   double A = x[0];
-  #pragma clang loop unroll(disable)
   for(int i=0; i<n; i++) {
     A = max(A, x[i]);
   }
   double ema[n];
-  #pragma clang loop unroll(disable)
   for(int i=0; i<n; i++) {
     ema[i] = exp(x[i] - A);
   }
   double sema = 0;
-  #pragma clang loop unroll(disable)
   for(int i=0; i<n; i++)
     sema += ema[i];
   return log(sema) + A;
@@ -490,11 +513,9 @@ __attribute__((noinline))
 double foo(double* __restrict matrix, double* __restrict vector, size_t len) {
   double output[len];//{0};
 
-  #pragma clang loop unroll(disable)
   for (int i = 0; i < len; i++) {
     //printf("foo idx=%d\n", idx);
     output[i] = 0;
-  #pragma clang loop unroll(disable)
   for (int j = 0; j < len; j++) {
     double tmp = matrix[i*len + j] * vector[j];
     output[i] += tmp;
@@ -502,7 +523,6 @@ double foo(double* __restrict matrix, double* __restrict vector, size_t len) {
   }
 
   double sum = 0;
-  #pragma clang loop unroll(disable)
   for(int i=0; i<len; i++) {
     sum += output[i];
   }
@@ -818,23 +838,18 @@ static double conv_layer_old(size_t IN, size_t OUT, size_t NUM, const double* __
 
   
   /*
-  #pragma clang loop unroll(disable)
   for(int n=0; n<NUM; n++)
-  #pragma clang loop unroll(disable)
   for (int o = 0; o < OUT; o++) {
     output[n*OUT + o] = b[o];
   }
   */
 
-  #pragma clang loop unroll(disable)
   for(int n=0; n<NUM; n++)
   
-  #pragma clang loop unroll(disable)
   for (int o = 0; o < OUT; o++) 
   {
     output[n*OUT + o] = b[o];
 
-    #pragma clang loop unroll(disable)
     for (int i = 0; i < IN; i++) {
       output[n*OUT + o] += W[o*IN+i] * (double)(input[n].pixels[i] / 255.);
     }
@@ -843,9 +858,7 @@ static double conv_layer_old(size_t IN, size_t OUT, size_t NUM, const double* __
 
   
   double sum = 0;
-  #pragma clang loop unroll(disable)
   for(int n=0; n<NUM; n++)
-  #pragma clang loop unroll(disable)
   for(int o=0; o<OUT; o++) {
     double foo = (o == true_output[n]) ? 1.0 : 0.0;
     //printf("n:%d o:%d foo:%f op:%f\n", n, o, foo, output[n*OUT+o]);
@@ -862,15 +875,12 @@ static double conv_layer(size_t IN, size_t OUT, size_t NUM, const double* __rest
   double* output = (double*)malloc(sizeof(double)*NUM*OUT);//{0};
   double sum = 0;
 
-  #pragma clang loop unroll(disable)
   for(int n=0; n<NUM; n++)
   
-  #pragma clang loop unroll(disable)
   for (int o = 0; o < OUT; o++) 
   {
     output[n*OUT + o] = b[o];
 
-    #pragma clang loop unroll(disable)
     for (int i = 0; i < IN; i++) {
       output[n*OUT + o] += W[o*IN+i] * (double)(input[n].pixels[i] / 255.);
     }

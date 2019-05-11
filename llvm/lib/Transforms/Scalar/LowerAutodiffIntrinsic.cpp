@@ -144,10 +144,12 @@ Function *CloneFunctionWithReturns(Function *F, SmallVector<ReturnInst*, 8>& Ret
      auto wt = whatType(I.getType());
      if (wt == DIFFE_TYPE::DUP_ARG) {
         ArgTypes.push_back(I.getType());
+        /*
         if (I.getType()->isPointerTy() && !(I.hasAttribute(Attribute::ReadOnly) || I.hasAttribute(Attribute::ReadNone) ) ) {
           llvm::errs() << "Cannot take derivative of function " <<F->getName()<< " input argument to function " << I.getName() << " is not marked read-only\n";
           exit(1);
         }
+        */
      } else if (wt == DIFFE_TYPE::OUT_DIFF) {
        RetTypes.push_back(I.getType());
      }
@@ -333,16 +335,16 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     SmallPtrSet<Value*,20> nonconstant;
     SmallPtrSet<Value*,2> lookingfor;
     SmallPtrSet<Value*,2> memorylookingfor;
-    std::function<bool(Value*)> isconstant = [&](Value* val) -> bool {
+
+    std::function<bool(Value*, SmallPtrSetImpl<Value*>&,SmallPtrSetImpl<Value*>&)> isconstantM = [&](Value* val, SmallPtrSetImpl<Value*> &constants, SmallPtrSetImpl<Value*> &nonconstant) -> bool {
         if(isa<Constant>(val) || isa<BasicBlock>(val) || (constants.find(val) != constants.end())) {
             return true;
         }
 
         if((nonconstant.find(val) != nonconstant.end())) {
-            llvm::errs() << "in nonconstants:" << *val << "\n";
             return false;
         }
-
+        llvm::errs() << "checking if is constant " << *val << "\n";
         if (auto op = dyn_cast<CallInst>(val)) {
             if(auto called = op->getCalledFunction()) {
                 if (called->getName() == "printf" || called->getName() == "puts") {
@@ -352,83 +354,127 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             }
         }
 
+        SmallPtrSet<Value*, 20> constants2;
+        constants2.insert(constants.begin(), constants.end());
+        SmallPtrSet<Value*, 20> nonconstant2;
+        nonconstant2.insert(nonconstant.begin(), nonconstant.end());
+        constants2.insert(val);
+
         if (val->getType()->isPointerTy()) {
           if (auto inst = dyn_cast<Instruction>(val)) {
+
+            // If object (such as eigen matrix) is composed of constant (size) and differential (doubles)
+            // make sure the integer portions of the object are treated as constants
             if (cast<PointerType>(val->getType())->getElementType()->isIntegerTy()) {
-            if (auto gep = dyn_cast<GetElementPtrInst>(inst)) {
-                gep->dump();
-                if (isa<Argument>(gep->getOperand(0))) {
+              Value* cur = inst;
+              while(true) {
+                if (auto gep = dyn_cast<GetElementPtrInst>(cur)) {
+                    //TODO perhaps check indices?
+                    cur = gep->getPointerOperand();
+                    continue;
+                } else if (auto li = dyn_cast<LoadInst>(cur)) {
+                    cur = li->getPointerOperand();
+                    continue;
+                } else if (isa<Argument>(cur)) {
                     return true;
+                } else if (isa<AllocaInst>(cur)) {
+                    return true;
+                } else {
+                    break;
                 }
-            }
+              }
             }
 
+            /*
             if (memorylookingfor.find(val) != memorylookingfor.end()) {
                   llvm::errs() << "temp acquised to " << *val << "\n";
                   return true;
             }
+
             memorylookingfor.insert(val);
+            llvm::errs() << "memory added: " << *val << "\n";
+            */
+
             for (const auto &a:inst->users()) {
               if(auto store = dyn_cast<StoreInst>(a)) {
-                if (!isconstant(store->getValueOperand())) {
+                if (!isconstantM(store->getValueOperand(), constants2, nonconstant2)) {
                     nonconstant.insert(val);
-                    memorylookingfor.erase(val);
+                    //llvm::errs() << "memory erase 1: " << *val << "\n";
+                    //memorylookingfor.erase(val);
                     return false;
                 }
               } else if (isa<LoadInst>(a)) continue;
               else {
-                if (!isconstant(a)) {
+                if (!isconstantM(a, constants2, nonconstant2)) {
                     nonconstant.insert(val);
-                    memorylookingfor.erase(val);
+                    //llvm::errs() << "memory erase 2: " << *val << "\n";
+                    //memorylookingfor.erase(val);
                     return false;
                 }
               }
 
             }
-            memorylookingfor.erase(val);
+            //llvm::errs() << "memory erase 3: " << *val << "\n";
+            //memorylookingfor.erase(val);
 
           }
         }
 
 
-        if((lookingfor.find(val) != lookingfor.end())) {
-          return true;
-        }
+        //if((lookingfor.find(val) != lookingfor.end())) {
+        //  return true;
+        //}
 
         if (auto inst = dyn_cast<PHINode>(val)) {
-            lookingfor.insert(inst);
+            //lookingfor.insert(inst);
             for(auto& a: inst->incoming_values()) {
-                if (!isconstant(a)) {
+                if (!isconstantM(a, constants2, nonconstant2)) {
                     nonconstant.insert(val);
-                    lookingfor.erase(val);
-            llvm::errs() << "nonconstant phi operand:" << *val << "\n";
+                    //lookingfor.erase(val);
+                    llvm::errs() << "nonconstant phi operand:" << *val << "\n";
                     return false;
                 }
             }
-            lookingfor.erase(val);
-            constants.insert(val);
+
+            //lookingfor.erase(val);
+            //if (memorylookingfor.size() == 0 && lookingfor.size() == 0) {
+              constants.insert(val);
+              llvm::errs() << "constant phi operand:" << *val << "\n";
+            //} else {
+            //  llvm::errs() << "ns constant phi operand:" << *val << "\n";
+            //}
             return true;
         }
 
         if (auto inst = dyn_cast<Instruction>(val)) {
-            lookingfor.insert(val);
+            //lookingfor.insert(val);
             for(auto& a: inst->operands()) {
-                if (!isconstant(a)) {
+                if (!isconstantM(a, constants2, nonconstant2)) {
                     nonconstant.insert(val);
-                    lookingfor.erase(val);
-            llvm::errs() << "nonconstant operand:" << *val << "\n";
+                    //lookingfor.erase(val);
+                    //llvm::errs() << "nonconstant operand:" << *val << "\n";
                     return false;
                 }
             }
-            lookingfor.erase(val);
-            constants.insert(val);
+
+            //lookingfor.erase(val);
+            //if (memorylookingfor.size() == 0 && lookingfor.size() == 0) {
+              constants.insert(val);
+              llvm::errs() << "constant operand:" << *val << "\n";
+            //} else {
+            //  llvm::errs() << "ns constant operand:" << *val << "\n";
+            //}
             return true;
         }
 
         nonconstant.insert(val);
-            llvm::errs() << "couldnt decide nonconstants:" << *val << "\n";
+        llvm::errs() << "couldnt decide nonconstants:" << *val << "\n";
         return false;
     };
+
+  auto isconstant = [&](Value* val) -> bool {
+    return isconstantM(val, constants, nonconstant);
+  };
 
   llvm::Value* retval = Returns[0]->getReturnValue();
   assert(Returns.size() == 1);
@@ -616,7 +662,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     std::function<Value*(Value*,IRBuilder<>&, const ValueToValueMapTy&)> unwrapM = [&](Value* val, IRBuilder<>& BuilderM, const ValueToValueMapTy& available) -> Value* {
           if (available.count(val)) {
             return available.lookup(val);
-          } if (isa<Argument>(val) || isa<Constant>(val) ) {
+          } if (isa<Argument>(val) || isa<Constant>(val)) {
+            return val;
+          } if (isa<AllocaInst>(val)) {
             return val;
           } else if (auto arg = dyn_cast<CastInst>(val)) {
             return BuilderM.CreateCast(arg->getOpcode(), unwrapM(arg->getOperand(0), BuilderM, available), arg->getDestTy(), arg->getName()+"_unwrap");
@@ -652,6 +700,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             return false;
           } else if (auto op = dyn_cast<CastInst>(val)) {
             return shouldRecompute(op->getOperand(0), available);
+          } else if (auto ai = dyn_cast<AllocaInst>(val)) {
+            return false;
           } else if (auto op = dyn_cast<BinaryOperator>(val)) {
             bool a0 = shouldRecompute(op->getOperand(0), available);
             if (a0) {
@@ -740,6 +790,17 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                     //TODO add indexing
                     scopeMap[val] = entryBuilder.CreateAlloca(val->getType(), nullptr, val->getName()+"_cache");
                     Instruction* putafter = isa<PHINode>(inst) ? (inst->getParent()->getFirstNonPHI() ): inst;
+                    if (cast<Instruction>(scopeMap[val])->getParent() == putafter->getParent()) {
+                        //ensure putafter = later of putafter and scopeMap[val]
+                        for(Instruction& I : *putafter->getParent()) {
+                            if (&I == scopeMap[val]) {
+                                break;
+                            } else if (&I == putafter) {
+                                putafter = cast<Instruction>(scopeMap[val]);
+                                break;
+                            } else {}
+                        }
+                    }
                     IRBuilder <> v(putafter);
                     v.setFastMathFlags(FastMathFlags::getFast());
                     auto st = v.CreateStore(val, scopeMap[val]);
@@ -875,7 +936,30 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
           if (ptr.second)
             ptr.second = Builder2.CreateGEP(ptr.second, ind);
           return ptr;
+        } else if (auto inst = dyn_cast<CastInst>(val)) {
+          auto ptr = lookupOrAllocate(inst->getOperand(0));
+          ptr.first = Builder2.CreateCast(inst->getOpcode(), ptr.first, inst->getDestTy());
+          if (ptr.second)
+            ptr.second = Builder2.CreateCast(inst->getOpcode(), ptr.second, inst->getDestTy());
+          return ptr;
+        } else if (auto arg = dyn_cast<Argument>(val)) {
+          return std::pair<Value*, Value*>(val, ptrInputs[val]);
+        } else if (auto inst = dyn_cast<LoadInst>(val)) {
+          //TODO this really should be looked up earlier 
+          //  in case there was a modification between original
+          //  and here
+          auto ptr = lookupOrAllocate(inst->getOperand(0));
+          ptr.first = Builder2.CreateLoad(ptr.first);
+          if (ptr.second)
+            ptr.second = Builder2.CreateLoad(ptr.second);
+          return ptr;
         }
+
+        if( !val->getType()->isFPOrFPVectorTy()) {
+            val->dump();
+            val->getType()->dump();
+        };
+        assert(val->getType()->isFPOrFPVectorTy());
         return std::pair<Value*,Value*>(lookup(val),nullptr);
     };
 
@@ -1077,8 +1161,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       returnBuilder.SetInsertPoint(&returnMerged->front());
 
       op->eraseFromParent();
-      differentials[retval] = entryBuilder.CreateAlloca(retval->getType(), nullptr, retval->getName()+"'ret");
-      entryBuilder.CreateStore(ConstantFP::get(retval->getType(), 1.0), differentials[retval]);
+
+      if (retval) {
+        differentials[retval] = entryBuilder.CreateAlloca(retval->getType(), nullptr, retval->getName()+"'ret");
+        entryBuilder.CreateStore(ConstantFP::get(retval->getType(), 1.0), differentials[retval]);
+      }
   } else if (isa<BranchInst>(term)) {
 
   } else if (isa<UnreachableInst>(term)) {
@@ -1335,7 +1422,15 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 std::pair<Value*, Value*> loa = lookupOrAllocate(op->getArgOperand(i));
                 args.push_back(loa.first);
                 argsInverted.push_back(loa.second == nullptr);
-                assert( (loa.second != nullptr) == (whatType(op->getArgOperand(i)->getType()) == DIFFE_TYPE::DUP_ARG) );
+                /*
+                if( (loa.second != nullptr) != (whatType(op->getArgOperand(i)->getType()) == DIFFE_TYPE::DUP_ARG) ) {
+                    op->dump();
+                    llvm::errs() << "loa.second: " << loa.second << "\n";
+                    op->getArgOperand(i)->dump();
+                    op->getArgOperand(i)->getType()->dump();
+                }
+                */
+                //assert( (loa.second != nullptr) == (whatType(op->getArgOperand(i)->getType()) == DIFFE_TYPE::DUP_ARG) );
                 if(loa.second) args.push_back(loa.second);
               }
               if (constant_args.size() == args.size()) break;
