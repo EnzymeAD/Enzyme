@@ -249,6 +249,11 @@ PHINode* canonicalizeIVs(Type *Ty, Loop *L, ScalarEvolution &SE, DominatorTree &
   SCEVExpander Exp(SE, DL, "ls");
 
   PHINode *CanonicalIV = Exp.getOrInsertCanonicalInductionVariable(L, Ty);
+  if (!CanonicalIV) {
+    L->dump();
+    Ty->dump();
+  }
+  assert (CanonicalIV && "canonicalizing IV");
   //DEBUG(dbgs() << "Canonical induction variable " << *CanonicalIV << "\n");
 
   SmallVector<WeakTrackingVH, 16> DeadInsts;
@@ -581,9 +586,14 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         const SCEV *Limit = SE.getExitCount(L, Latch);
 
         if (SE.getCouldNotCompute() == Limit) {
+        Limit = SE.getMaxBackedgeTakenCount(L);
+        }
+
+        if (SE.getCouldNotCompute() == Limit) {
           newFunc->dump();
           L->dump();
           Latch->dump();
+          llvm::errs() << "Se has any info: " << SE.getBackedgeTakenInfo(L).hasAnyInfo() << "\n";
           llvm::errs() << "SE could not compute loop limit.\n";
           exit(1);
         }
@@ -917,6 +927,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 auto sz = lookupM(inst->getArraySize(), entryBuilder);
                 antiallocas[val] = entryBuilder.CreateAlloca(inst->getAllocatedType(), inst->getType()->getPointerAddressSpace(), sz, inst->getName()+"'loa");
                 cast<AllocaInst>(antiallocas[val])->setAlignment(inst->getAlignment());
+                entryBuilder.CreateStore(Constant::getNullValue(inst->getAllocatedType()), antiallocas[val]);
+                /*
                 Value *args[] = {entryBuilder.CreateBitCast(antiallocas[val],Type::getInt8PtrTy(Context)), ConstantInt::get(Type::getInt8Ty(val->getContext()), 0), entryBuilder.CreateMul(
                 entryBuilder.CreateZExtOrTrunc(sz,Type::getInt64Ty(Context)),
                     ConstantInt::get(Type::getInt64Ty(Context), M->getDataLayout().getTypeAllocSizeInBits(inst->getAllocatedType())/8 ) ), ConstantInt::getFalse(Context) };
@@ -924,6 +936,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 auto memset = cast<CallInst>(entryBuilder.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::memset, tys), args));
                 memset->addParamAttr(0, Attribute::getWithAlignment(Context, inst->getAlignment()));
                 memset->addParamAttr(0, Attribute::NonNull);
+                */
             }
             return std::pair<Value*,Value*>(val, antiallocas[val]);
         } else if (auto inst = dyn_cast<GetElementPtrInst>(val)) {
@@ -1454,7 +1467,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                   unsigned idxs[] = {structidx};
                   auto diffeadd = Builder2.CreateFMul( diffe(inst), Builder2.CreateExtractValue(diffes, idxs));
                   structidx++;
-                  addToDiffe(args[i], diffeadd);
+                  addToDiffe(op->getArgOperand(i), diffeadd);
                 }
               }
 
@@ -1522,6 +1535,13 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         addToDiffe(op->getValueOperand(), dif1);
       }
       setPtrDiffe(op->getPointerOperand(), Constant::getNullValue(op->getValueOperand()->getType()));
+
+      //necessary if pointer is readwrite
+      /*
+      IRBuilder<> BuilderZ(inst);
+      Builder2.CreateStore(
+        lookup(BuilderZ.CreateLoad(op->getPointerOperand())), lookup(op->getPointerOperand()));
+      */
     } else if(auto op = dyn_cast<ExtractValueInst>(inst)) {
       //todo const
       SmallVector<Value*,4> sv;
