@@ -383,7 +383,7 @@ int main(int argc, char** argv) {
 }
 #endif
 
-#if 1
+#if 0
 __attribute__((noinline))
 void zoo(double* x) {
     *x = *x * *x;
@@ -400,6 +400,42 @@ double foo(double x) {
 int main(int argc, char** argv) {
   double f = atof(argv[1]);
   double q = __builtin_autodiff(foo, f);
+  printf("%f\n", q);
+}
+#endif
+#if 0
+__attribute__((noinline))
+double zoo(double* x) {
+    return *x * *x;
+//    *y = *x * *x;
+}
+
+__attribute__((noinline))
+double foo(double x) {
+    x =zoo(&x);
+    //x = x * x;
+    x =zoo(&x);
+    return x;
+}
+
+__attribute__((noinline))
+double square(double x) {
+    return x * x;
+//    *y = *x * *x;
+}
+
+__attribute__((noinline))
+double goo(double x) {
+    x = square(x);
+    //x = x * x;
+    x = square(x);
+    return x;
+}
+int main(int argc, char** argv) {
+  double f = atof(argv[1]);
+  double q = __builtin_autodiff(foo, f);
+  printf("%f\n", q);
+  q = __builtin_autodiff(goo, f);
   printf("%f\n", q);
 }
 #endif
@@ -967,3 +1003,55 @@ int main(int argc, char** argv) {
 
 }
 #endif
+
+
+static float mat_vec(const float* __restrict W, const float* __restrict v) {
+    float output[100];
+    for(int i=0; i<100; i++) {
+        output[i] = 0.0f;
+        for(int j=0; j<100; j++) {
+            output[i] += W[100*i + j] * v[j];
+        }
+    }
+    float loss = 0;
+    for(int i=0; i<100; i++) {
+        loss += (output[i] - v[i]) * (output[i] - v[i]);
+    }
+    return loss;
+}
+
+int main(int argc, char** argv) {
+    float* W  = (float*)malloc(sizeof(float)*100*100);
+    float* Wp = (float*)malloc(sizeof(float)*100*100);
+    
+    float* B  = (float*)malloc(sizeof(float)*100);
+    float* Bp = (float*)malloc(sizeof(float)*100);
+
+    for(int i=0; i<100; i++) {
+        B[i] = 1.0*i/100.0+1e-20;
+    }
+
+    for(int i=0; i<100; i++) {
+        for(int j=0; j<100; j++) {
+            W[100*i+j] = 1.0*(i+j)/100.0+1e-20;
+        }
+    }
+
+    for(int i=0; i<50000; i++) {
+      memset(Wp, 0, sizeof(float) * 100 * 100);
+      memset(Bp, 0, sizeof(float) * 100);
+
+      __builtin_autodiff(mat_vec, W, Wp, B, Bp);
+
+      for (int o = 0; o < 100*100; o++) {
+        W[o] += ( -0.00001f ) * Wp[o];
+      }
+      if (i % 100 == 0) {
+            float floss  = 0; //= mat_vec(W, B);
+            printf("finished iter %d %f\n", i, floss);
+      }
+    }
+
+    float floss = mat_vec(W, B);
+    printf("final loss = %f\n", floss);
+}

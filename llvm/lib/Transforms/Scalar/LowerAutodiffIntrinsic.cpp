@@ -585,9 +585,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
         const SCEV *Limit = SE.getExitCount(L, Latch);
 
-        if (SE.getCouldNotCompute() == Limit) {
-        Limit = SE.getMaxBackedgeTakenCount(L);
-        }
+        //if (SE.getCouldNotCompute() == Limit) {
+        //Limit = SE.getMaxBackedgeTakenCount(L);
+        //}
 
         if (SE.getCouldNotCompute() == Limit) {
           newFunc->dump();
@@ -710,7 +710,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             return false;
           } else if (auto op = dyn_cast<CastInst>(val)) {
             return shouldRecompute(op->getOperand(0), available);
-          } else if (auto ai = dyn_cast<AllocaInst>(val)) {
+          } else if (isa<AllocaInst>(val)) {
             return false;
           } else if (auto op = dyn_cast<BinaryOperator>(val)) {
             bool a0 = shouldRecompute(op->getOperand(0), available);
@@ -921,7 +921,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       return alreadyLoaded[val] = lookupM(val, Builder2);
     };
 
-    std::function<std::pair<Value*,Value*>(Value*)> lookupOrAllocate = [&](Value* val) -> std::pair<Value*,Value*> {
+    std::function<Value*(Value*,IRBuilder<>&)> lookupOrAllocateM = [&](Value* val,IRBuilder<> &BuilderM) -> Value* {
         if (auto inst = dyn_cast<AllocaInst>(val)) {
             if (antiallocas.find(val) == antiallocas.end()) {
                 auto sz = lookupM(inst->getArraySize(), entryBuilder);
@@ -938,34 +938,34 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 memset->addParamAttr(0, Attribute::NonNull);
                 */
             }
-            return std::pair<Value*,Value*>(val, antiallocas[val]);
+            return antiallocas[val];
         } else if (auto inst = dyn_cast<GetElementPtrInst>(val)) {
-          auto ptr = lookupOrAllocate(inst->getPointerOperand());
+          auto ptr = lookupOrAllocateM(inst->getPointerOperand(),BuilderM);
           SmallVector<Value*,4> ind;
           for(auto& a : inst->indices()) {
             ind.push_back(lookup(a));
           }
-          ptr.first = Builder2.CreateGEP(ptr.first, ind);
-          if (ptr.second)
-            ptr.second = Builder2.CreateGEP(ptr.second, ind);
-          return ptr;
+          return BuilderM.CreateGEP(ptr, ind);
         } else if (auto inst = dyn_cast<CastInst>(val)) {
-          auto ptr = lookupOrAllocate(inst->getOperand(0));
-          ptr.first = Builder2.CreateCast(inst->getOpcode(), ptr.first, inst->getDestTy());
-          if (ptr.second)
-            ptr.second = Builder2.CreateCast(inst->getOpcode(), ptr.second, inst->getDestTy());
-          return ptr;
-        } else if (auto arg = dyn_cast<Argument>(val)) {
-          return std::pair<Value*, Value*>(val, ptrInputs[val]);
+          auto ptr = lookupOrAllocateM(inst->getOperand(0),BuilderM);
+          return BuilderM.CreateCast(inst->getOpcode(), ptr, inst->getDestTy());
+        } else if (isa<Argument>(val)) {
+          return ptrInputs[val];
         } else if (auto inst = dyn_cast<LoadInst>(val)) {
           //TODO this really should be looked up earlier 
           //  in case there was a modification between original
           //  and here
-          auto ptr = lookupOrAllocate(inst->getOperand(0));
-          ptr.first = Builder2.CreateLoad(ptr.first);
-          if (ptr.second)
-            ptr.second = Builder2.CreateLoad(ptr.second);
-          return ptr;
+          auto ptr = lookupOrAllocateM(inst->getOperand(0),BuilderM);
+          return BuilderM.CreateLoad(ptr);
+        } else if (auto phi = dyn_cast<PHINode>(val)) {
+            IRBuilder<> B(phi);
+            PHINode* antiphi = B.CreatePHI(phi->getType(), phi->getNumIncomingValues());
+            for(unsigned i=0; i<phi->getNumIncomingValues(); i++) {
+                IRBuilder<> B2(phi->getIncomingBlock(i));
+                auto val = lookupOrAllocateM(phi->getIncomingValue(i), B2);
+                antiphi->addIncoming(val, phi->getIncomingBlock(i));
+            }
+            return lookupM(antiphi, BuilderM);
         }
 
         if( !val->getType()->isFPOrFPVectorTy()) {
@@ -973,7 +973,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             val->getType()->dump();
         };
         assert(val->getType()->isFPOrFPVectorTy());
-        return std::pair<Value*,Value*>(lookup(val),nullptr);
+        return nullptr;
+    };
+
+    std::function<Value*(Value*)> lookupOrAllocate = [&](Value* val) -> Value* {
+      return lookupOrAllocateM(val, Builder2);
     };
 
     auto diffe = [&](Value* val) -> Value* {
@@ -1396,7 +1400,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
           if (!isconstant(op->getOperand(0)))
             dif0 = Builder2.CreateFMul(diffe(inst),
               Builder2.CreateFNeg(
-                Builder2.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::cos, tys), args) )
+                Builder2.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::sin, tys), args) )
             );
           break;
         }
@@ -1432,7 +1436,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                     continue;
                 }
 
-                std::pair<Value*, Value*> loa = lookupOrAllocate(op->getArgOperand(i));
+                std::pair<Value*, Value*> loa;
+                
+                loa.first = lookup(op->getArgOperand(i));
+                loa.second = lookupOrAllocate(op->getArgOperand(i));
                 args.push_back(loa.first);
                 argsInverted.push_back(loa.second == nullptr);
                 /*
@@ -1457,11 +1464,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               if (retval == inst && returnValue)
                 retUsed = true;
 
-              auto newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called), constant_args, TLI, used || retUsed);//, LI, DT);
+              auto newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called), constant_args, TLI, retUsed);//, LI, DT);
 
               auto diffes = Builder2.CreateCall(newcalled, args);
               diffes->setDebugLoc(inst->getDebugLoc());
-              unsigned structidx = used ? 1 : 0;
+              unsigned structidx = retUsed ? 1 : 0;
               for(unsigned i=0;i<called->getFunctionType()->getNumParams(); i++) {
                 if (argsInverted[i]) {
                   unsigned idxs[] = {structidx};

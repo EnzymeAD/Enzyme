@@ -24,6 +24,47 @@ static inline float tdiff(struct timeval *start, struct timeval *end) {
 using Eigen::MatrixXd;
 using Eigen::VectorXd;
 
+__attribute__((noinline))
+static void matvec(const MatrixXd& __restrict W,
+    const MatrixXd& __restrict b, MatrixXd& __restrict foo) {
+
+  foo = b * W ;
+}
+
+int main(int argc, char** argv) {
+
+    size_t IN = 4, OUT = 3, NUM = 5;
+
+    MatrixXd W(OUT, IN);
+    MatrixXd Wp(OUT, IN);
+
+    VectorXd B(OUT);
+    VectorXd Bp(OUT);
+
+    VectorXd foo(IN);
+    VectorXd foop(IN);
+    
+    W = Eigen::MatrixXd::Constant(OUT, IN, 1.0);
+    B = Eigen::VectorXd::Constant(OUT, 2.0);
+    foo = Eigen::VectorXd::Constant(OUT, 1.0);
+    
+    Wp = Eigen::MatrixXd::Constant(OUT, IN, 0.0);
+    Bp = Eigen::VectorXd::Constant(OUT, 0.0);
+    foop = Eigen::VectorXd::Constant(OUT, 1.0);
+      //memset(Wp, 0, sizeof(double) * IN * OUT);
+      //memset(Bp, 0, sizeof(double) * OUT);
+
+     __builtin_autodiff(matvec, W,Wp,B,Bp,foo,foop);
+
+     for(int o=0; o<OUT; o++)
+        printf("Bp(o=%d)=%f\n", o, Bp(o));
+
+     for(int o=0; o<OUT; o++)
+     for(int i=0; i<IN; i++)
+        printf("Wp(o=%d, i=%d)=%f\n", o, i, Wp(o, i));
+
+}
+#if 0
 typedef struct mnist_label_file_header_t_ {
     uint32_t magic_number;
     uint32_t number_of_labels;
@@ -313,20 +354,6 @@ static double conv_layer(size_t IN, size_t OUT, size_t NUM, const MatrixXd& __re
   return sum / NUM;
 }
 
-
-__attribute__((noinline))
-static double matvec(size_t IN, size_t OUT, size_t NUM, const MatrixXd& __restrict W,
-    const MatrixXd& __restrict b, const mnist_image_t* __restrict input,
-    const uint8_t* __restrict true_out) {
-
-  const MatrixXd foo = b * W ;
-  double sum = 0;
-  for(int i=0; i<IN; i++) {
-    sum += foo(i);
-  }
-  return sum;
-}
-
 const char * train_images_file = "data/train-images-idx3-ubyte";
 const char * train_labels_file = "data/train-labels-idx1-ubyte";
 const char * test_images_file = "data/t10k-images-idx3-ubyte";
@@ -351,6 +378,9 @@ int main(int argc, char** argv) {
 
     VectorXd B(OUT);
     VectorXd Bp(OUT);
+
+    VectorXd foo(IN);
+    VectorXd foop(IN);
 
     double* input  = (double*)malloc(sizeof(double)*IN*NUM);
     double* inputp = (double*)malloc(sizeof(double)*IN*NUM);
@@ -406,7 +436,7 @@ int main(int argc, char** argv) {
   struct timeval start, end;
   gettimeofday(&start, NULL);
 
-     dloss = __builtin_autodiff(matvec,IN,OUT,size,W,Wp,B,Bp,train_dataset->images,train_dataset->labels);
+     dloss = __builtin_autodiff(W,Wp,B,Bp,foo,foop);
 
   gettimeofday(&end, NULL);
   printf("%0.6f res'=%f\n", tdiff(&start, &end), dloss);
@@ -428,7 +458,7 @@ int main(int argc, char** argv) {
     }
 
 }
-
+#endif
 
 #if 0
 static

@@ -1464,6 +1464,7 @@ private:
   /// reference SymName. This is used during PHI resolution.
   void forgetSymbolicName(Instruction *I, const SCEV *SymName);
 
+public:
   /// Return the BackedgeTakenInfo for the given loop, lazily computing new
   /// values if the loop hasn't been analyzed yet. The returned result is
   /// guaranteed not to be predicated.
