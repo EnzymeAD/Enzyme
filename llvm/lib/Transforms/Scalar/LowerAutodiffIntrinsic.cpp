@@ -1019,6 +1019,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     };
 
     auto addToDiffe = [&](Value* val, Value* dif) {
+      assert(!isconstant(val));
       assert(val->getType() == dif->getType());
       auto old = diffe(val);
       assert(val->getType() == old->getType());
@@ -1033,6 +1034,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     };
 
     auto setDiffe = [&](Value* val, Value* toset) {
+      assert(!isconstant(val));
       if (differentials.find(val) == differentials.end()) {
         differentials[val] = entryBuilder.CreateAlloca(val->getType(), nullptr, val->getName()+"'ds");
         entryBuilder.CreateStore(Constant::getNullValue(val->getType()), differentials[val]);
@@ -1041,6 +1043,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     };
 
     auto addToDiffeIndexed = [&](Value* val, Value* dif, ArrayRef<Value*> idxs) {
+      assert(!isconstant(val));
       if (differentials.find(val) == differentials.end()) {
         differentials[val] = entryBuilder.CreateAlloca(val->getType(), nullptr, val->getName()+"'di");
         entryBuilder.CreateStore(Constant::getNullValue(val->getType()), differentials[val]);
@@ -1180,8 +1183,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       op->eraseFromParent();
 
       if (retval) {
-        differentials[retval] = entryBuilder.CreateAlloca(retval->getType(), nullptr, retval->getName()+"'ret");
-        entryBuilder.CreateStore(ConstantFP::get(retval->getType(), 1.0), differentials[retval]);
+        setDiffe(retval, ConstantFP::get(retval->getType(), 1.0));
       }
   } else if (isa<BranchInst>(term)) {
 
@@ -1636,7 +1638,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     preds[0]->dump();
     for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
         if(auto PN = dyn_cast<PHINode>(&*I)) {
-            if (!isconstant(PN->getIncomingValueForBlock(preds[0])) && !isconstant(PN)) {
+            if (isconstant(PN)) continue;
+            if (!isconstant(PN->getIncomingValueForBlock(preds[0]))) {
                 setDiffe(PN->getIncomingValueForBlock(preds[0]), diffe(PN) );
             }
             setDiffe(PN, Constant::getNullValue(PN->getType()));
@@ -1737,12 +1740,12 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
             // POINTER TYPE THINGS
             if (PN->getType()->isPointerTy()) continue;
-            
-            if (!isconstant(PN->getIncomingValueForBlock(preds[0])) && !isconstant(PN)) {
+            if (isconstant(PN)) continue; 
+            if (!isconstant(PN->getIncomingValueForBlock(preds[0]))) {
                 auto dif = Builder2.CreateSelect(phi, diffe(PN), diffe(PN->getIncomingValueForBlock(preds[0])));
                 setDiffe(PN->getIncomingValueForBlock(preds[0]), dif );
             }
-            if (!isconstant(PN->getIncomingValueForBlock(preds[1])) && !isconstant(PN)) {
+            if (!isconstant(PN->getIncomingValueForBlock(preds[1]))) {
                 auto dif = Builder2.CreateSelect(phi, diffe(PN->getIncomingValueForBlock(preds[1])), diffe(PN));
                 setDiffe(PN->getIncomingValueForBlock(preds[1]), dif);
             }
