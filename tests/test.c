@@ -626,7 +626,7 @@ int main(int argc, char** argv) {
 
 #endif
 
-#if 0 
+#if 1
 #define MNIST_LABEL_MAGIC 0x00000801
 #define MNIST_IMAGE_MAGIC 0x00000803
 #define MNIST_IMAGE_WIDTH 28
@@ -907,7 +907,9 @@ static double conv_layer_old(size_t IN, size_t OUT, size_t NUM, const double* __
   
 }
 
-static double conv_layer(size_t IN, size_t OUT, size_t NUM, const double* __restrict W, const double* __restrict b, const mnist_image_t* __restrict input, const uint8_t* __restrict true_output) {
+static
+__attribute__((noinline))
+double conv_layer(size_t IN, size_t OUT, size_t NUM, const double* __restrict W, const double* __restrict b, const mnist_image_t* __restrict input, const uint8_t* __restrict true_output) {
   double* output = (double*)malloc(sizeof(double)*NUM*OUT);//{0};
   double sum = 0;
 
@@ -1004,6 +1006,7 @@ int main(int argc, char** argv) {
 }
 #endif
 
+#if 0
 
 static float mat_vec(const float* __restrict W, const float* __restrict v) {
     float output[100];
@@ -1055,3 +1058,4 @@ int main(int argc, char** argv) {
     float floss = mat_vec(W, B);
     printf("final loss = %f\n", floss);
 }
+#endif

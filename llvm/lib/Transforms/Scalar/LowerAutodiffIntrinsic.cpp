@@ -16,6 +16,14 @@
  */
 
 #include "llvm/Transforms/Scalar/LowerAutodiffIntrinsic.h"
+#include "llvm/Transforms/Utils/PromoteMemToReg.h"
+#include "llvm/Transforms/Scalar/GVN.h"
+#include "llvm/Transforms/Scalar/SROA.h"
+#include "llvm/IR/Dominators.h"
+#include "llvm/Analysis/OptimizationRemarkEmitter.h"
+#include "llvm/Analysis/PhiValues.h"
+
+//#include "llvm/Transforms/Utils/EaryCSE.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/ADT/iterator_range.h"
@@ -121,9 +129,169 @@ static inline DIFFE_TYPE whatType(llvm::Type* arg) {
   }
 }
 
+bool isconstantM(Value* val, SmallPtrSetImpl<Value*> &constants, SmallPtrSetImpl<Value*> &nonconstant) {
+        if(isa<Constant>(val) || isa<BasicBlock>(val) || (constants.find(val) != constants.end())) {
+            return true;
+        }
+
+        if((nonconstant.find(val) != nonconstant.end())) {
+            return false;
+        }
+        //llvm::errs() << "checking if is constant " << *val << "\n";
+        if (auto op = dyn_cast<CallInst>(val)) {
+            if(auto called = op->getCalledFunction()) {
+                if (called->getName() == "printf" || called->getName() == "puts") {
+                    nonconstant.insert(val);
+                    return false;
+                }
+            }
+        }
+
+        SmallPtrSet<Value*, 20> constants2;
+        constants2.insert(constants.begin(), constants.end());
+        SmallPtrSet<Value*, 20> nonconstant2;
+        nonconstant2.insert(nonconstant.begin(), nonconstant.end());
+        constants2.insert(val);
+
+        if (val->getType()->isPointerTy()) {
+          if (auto inst = dyn_cast<Instruction>(val)) {
+
+            // If object (such as eigen matrix) is composed of constant (size) and differential (doubles)
+            // make sure the integer portions of the object are treated as constants
+            if (cast<PointerType>(val->getType())->getElementType()->isIntegerTy()) {
+              Value* cur = inst;
+              while(true) {
+                if (auto gep = dyn_cast<GetElementPtrInst>(cur)) {
+                    //TODO perhaps check indices?
+                    cur = gep->getPointerOperand();
+                    continue;
+                } else if (auto li = dyn_cast<LoadInst>(cur)) {
+                    cur = li->getPointerOperand();
+                    continue;
+                } else if (isa<Argument>(cur)) {
+                    return true;
+                } else if (isa<AllocaInst>(cur)) {
+                    return true;
+                } else {
+                    break;
+                }
+              }
+            }
+
+            /*
+            if (memorylookingfor.find(val) != memorylookingfor.end()) {
+                  llvm::errs() << "temp acquised to " << *val << "\n";
+                  return true;
+            }
+
+            memorylookingfor.insert(val);
+            llvm::errs() << "memory added: " << *val << "\n";
+            */
+
+            for (const auto &a:inst->users()) {
+              if(auto store = dyn_cast<StoreInst>(a)) {
+                if (!isconstantM(store->getValueOperand(), constants2, nonconstant2)) {
+                    nonconstant.insert(val);
+                    //llvm::errs() << "memory erase 1: " << *val << "\n";
+                    //memorylookingfor.erase(val);
+                    return false;
+                }
+              } else if (isa<LoadInst>(a)) continue;
+              else {
+                if (!isconstantM(a, constants2, nonconstant2)) {
+                    nonconstant.insert(val);
+                    //llvm::errs() << "memory erase 2: " << *val << "\n";
+                    //memorylookingfor.erase(val);
+                    return false;
+                }
+              }
+
+            }
+            //llvm::errs() << "memory erase 3: " << *val << "\n";
+            //memorylookingfor.erase(val);
+
+          }
+        }
+
+
+        //if((lookingfor.find(val) != lookingfor.end())) {
+        //  return true;
+        //}
+
+        if (auto inst = dyn_cast<PHINode>(val)) {
+            //lookingfor.insert(inst);
+            for(auto& a: inst->incoming_values()) {
+                if (!isconstantM(a, constants2, nonconstant2)) {
+                    nonconstant.insert(val);
+                    //lookingfor.erase(val);
+                    //llvm::errs() << "nonconstant phi operand:" << *val << "\n";
+                    return false;
+                }
+            }
+
+            //lookingfor.erase(val);
+            //if (memorylookingfor.size() == 0 && lookingfor.size() == 0) {
+              constants.insert(val);
+              //llvm::errs() << "constant phi operand:" << *val << "\n";
+            //} else {
+            //  llvm::errs() << "ns constant phi operand:" << *val << "\n";
+            //}
+            return true;
+        }
+
+        if (auto inst = dyn_cast<Instruction>(val)) {
+            //lookingfor.insert(val);
+            for(auto& a: inst->operands()) {
+                if (!isconstantM(a, constants2, nonconstant2)) {
+                    nonconstant.insert(val);
+                    //lookingfor.erase(val);
+                    //llvm::errs() << "nonconstant operand:" << *val << "\n";
+                    return false;
+                }
+            }
+
+            //lookingfor.erase(val);
+            //if (memorylookingfor.size() == 0 && lookingfor.size() == 0) {
+              constants.insert(val);
+              //llvm::errs() << "constant operand:" << *val << "\n";
+            //} else {
+            //  llvm::errs() << "ns constant operand:" << *val << "\n";
+            //}
+            return true;
+        }
+
+        nonconstant.insert(val);
+        //llvm::errs() << "couldnt decide nonconstants:" << *val << "\n";
+        return false;
+}
+
+
+ static bool promoteMemoryToRegister(Function &F, DominatorTree &DT,
+                                     AssumptionCache &AC) {
+   std::vector<AllocaInst *> Allocas;
+   BasicBlock &BB = F.getEntryBlock(); // Get the entry node for the function
+   bool Changed = false;
+ 
+   while (true) {
+     Allocas.clear();
+ 
+     // Find allocas that are safe to promote, by looking at all instructions in
+     // the entry node
+     for (BasicBlock::iterator I = BB.begin(), E = --BB.end(); I != E; ++I)
+       if (AllocaInst *AI = dyn_cast<AllocaInst>(I)) // Is it an alloca?
+         if (isAllocaPromotable(AI))
+           Allocas.push_back(AI);
+ 
+     if (Allocas.empty())
+       break;
+ 
+     PromoteMemToReg(Allocas, DT, &AC);
+     Changed = true;
+   }
+   return Changed;
+ }
+
 Function *CloneFunctionWithReturns(Function *F, SmallVector<ReturnInst*, 8>& Returns, ValueToValueMapTy& ptrInputs, const SmallSet<unsigned,4>& constant_args, SmallPtrSetImpl<Value*> &constants, bool returnValue) {
- F->getParent()->dump();
- F->dump();
  std::vector<Type*> RetTypes;
  if (returnValue)
    RetTypes.push_back(F->getReturnType());
@@ -233,6 +401,72 @@ Function *CloneFunctionWithReturns(Function *F, SmallVector<ReturnInst*, 8>& Ret
  }
  NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
  assert(NewF->hasLocalLinkage());
+
+ SmallPtrSet<Value*,4> constants2;
+ for (auto a :constants){
+    constants2.insert(a);
+ }
+ SmallPtrSet<Value*,20> nonconstant2;
+ 
+  {
+   remover:
+   for (inst_iterator I = inst_begin(NewF), E = inst_end(NewF); I != E; ++I)
+     if (auto call = dyn_cast<CallInst>(&*I)) {
+        if (isconstantM(call, constants2, nonconstant2)) continue;
+        if (call->getCalledFunction() == nullptr) continue;
+        if (call->getCalledFunction()->empty()) continue;
+        if (call->getCalledFunction()->hasFnAttribute(Attribute::NoInline)) {
+            llvm::errs() << "can't inline noinline " << call->getCalledFunction()->getName() << "\n";
+            continue;
+        }
+        if (call->getCalledFunction()->hasFnAttribute(Attribute::ReturnsTwice)) continue;
+        if (call->getCalledFunction() == F || call->getCalledFunction() == NewF) {
+            llvm::errs() << "can't inline recursive " << call->getCalledFunction()->getName() << "\n";
+            continue;
+        }
+        llvm::errs() << "inlining " << call->getCalledFunction()->getName() << "\n";
+        InlineFunctionInfo IFI;
+        InlineFunction(call, IFI);
+        goto remover;
+     }
+ }
+
+ {
+ DominatorTree DT(*NewF);
+ AssumptionCache AC(*NewF);
+ promoteMemoryToRegister(*NewF, DT, AC);
+
+ GVN gvn;
+
+ FunctionAnalysisManager AM;
+ AM.registerPass([] { return AAManager(); });
+ AM.registerPass([] { return AssumptionAnalysis(); });
+ AM.registerPass([] { return TargetLibraryAnalysis(); });
+ AM.registerPass([] { return DominatorTreeAnalysis(); });
+ AM.registerPass([] { return MemoryDependenceAnalysis(); });
+ AM.registerPass([] { return LoopAnalysis(); });
+ AM.registerPass([] { return OptimizationRemarkEmitterAnalysis(); });
+ AM.registerPass([] { return PhiValuesAnalysis(); });
+ //AM.registerPass([] { return DominatorTreeWrapperPass() });
+ gvn.run(*NewF, AM);
+
+ SROA().run(*NewF, AM);
+ //gvn.run(*NewF, AM);
+
+ //gvn.runImpl(*NewF, AC, DT, TLI, AA);
+ /*
+     auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
+     auto &TTI = getAnalysis<TargetTransformInfoWrapperPass>().getTTI(F);
+     auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
+     auto &AC = getAnalysis<AssumptionCacheTracker>().getAssumptionCache(F);
+     auto *MSSA =
+         UseMemorySSA ? &getAnalysis<MemorySSAWrapperPass>().getMSSA() : nullptr;
+ 
+   EarlyCSE CSE(F.getParent()->getDataLayout(), TLI, TTI, DT, AC, MSSA);
+   CSE.run();
+*/
+ }
+
  return NewF;
 }
 
@@ -308,13 +542,14 @@ Value* canonicalizeLoopLatch(PHINode *IV, Value *Limit, Loop* L, ScalarEvolution
 }
 
 typedef struct {
-	PHINode* var;
+  PHINode* var;
   PHINode* antivar;
   BasicBlock* latch;
+  BasicBlock* header;
   BasicBlock* preheader;
+  bool dynamic;
   //limit is last value, iters is number of iters (thus iters = limit + 1)
-	Value* limit;
-  Value *cond;
+  Value* limit;
   BasicBlock* exit;
   Loop* parent;
 } LoopContext;
@@ -336,146 +571,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
   ValueToValueMapTy differentials;
   ValueToValueMapTy antiallocas;
   SmallVector<Value*, 4> mallocCalls;
+  SmallVector<Value*, 4> dynamicMallocCalls;
 
     SmallPtrSet<Value*,20> nonconstant;
     SmallPtrSet<Value*,2> lookingfor;
     SmallPtrSet<Value*,2> memorylookingfor;
-
-    std::function<bool(Value*, SmallPtrSetImpl<Value*>&,SmallPtrSetImpl<Value*>&)> isconstantM = [&](Value* val, SmallPtrSetImpl<Value*> &constants, SmallPtrSetImpl<Value*> &nonconstant) -> bool {
-        if(isa<Constant>(val) || isa<BasicBlock>(val) || (constants.find(val) != constants.end())) {
-            return true;
-        }
-
-        if((nonconstant.find(val) != nonconstant.end())) {
-            return false;
-        }
-        llvm::errs() << "checking if is constant " << *val << "\n";
-        if (auto op = dyn_cast<CallInst>(val)) {
-            if(auto called = op->getCalledFunction()) {
-                if (called->getName() == "printf" || called->getName() == "puts") {
-                    nonconstant.insert(val);
-                    return false;
-                }
-            }
-        }
-
-        SmallPtrSet<Value*, 20> constants2;
-        constants2.insert(constants.begin(), constants.end());
-        SmallPtrSet<Value*, 20> nonconstant2;
-        nonconstant2.insert(nonconstant.begin(), nonconstant.end());
-        constants2.insert(val);
-
-        if (val->getType()->isPointerTy()) {
-          if (auto inst = dyn_cast<Instruction>(val)) {
-
-            // If object (such as eigen matrix) is composed of constant (size) and differential (doubles)
-            // make sure the integer portions of the object are treated as constants
-            if (cast<PointerType>(val->getType())->getElementType()->isIntegerTy()) {
-              Value* cur = inst;
-              while(true) {
-                if (auto gep = dyn_cast<GetElementPtrInst>(cur)) {
-                    //TODO perhaps check indices?
-                    cur = gep->getPointerOperand();
-                    continue;
-                } else if (auto li = dyn_cast<LoadInst>(cur)) {
-                    cur = li->getPointerOperand();
-                    continue;
-                } else if (isa<Argument>(cur)) {
-                    return true;
-                } else if (isa<AllocaInst>(cur)) {
-                    return true;
-                } else {
-                    break;
-                }
-              }
-            }
-
-            /*
-            if (memorylookingfor.find(val) != memorylookingfor.end()) {
-                  llvm::errs() << "temp acquised to " << *val << "\n";
-                  return true;
-            }
-
-            memorylookingfor.insert(val);
-            llvm::errs() << "memory added: " << *val << "\n";
-            */
-
-            for (const auto &a:inst->users()) {
-              if(auto store = dyn_cast<StoreInst>(a)) {
-                if (!isconstantM(store->getValueOperand(), constants2, nonconstant2)) {
-                    nonconstant.insert(val);
-                    //llvm::errs() << "memory erase 1: " << *val << "\n";
-                    //memorylookingfor.erase(val);
-                    return false;
-                }
-              } else if (isa<LoadInst>(a)) continue;
-              else {
-                if (!isconstantM(a, constants2, nonconstant2)) {
-                    nonconstant.insert(val);
-                    //llvm::errs() << "memory erase 2: " << *val << "\n";
-                    //memorylookingfor.erase(val);
-                    return false;
-                }
-              }
-
-            }
-            //llvm::errs() << "memory erase 3: " << *val << "\n";
-            //memorylookingfor.erase(val);
-
-          }
-        }
-
-
-        //if((lookingfor.find(val) != lookingfor.end())) {
-        //  return true;
-        //}
-
-        if (auto inst = dyn_cast<PHINode>(val)) {
-            //lookingfor.insert(inst);
-            for(auto& a: inst->incoming_values()) {
-                if (!isconstantM(a, constants2, nonconstant2)) {
-                    nonconstant.insert(val);
-                    //lookingfor.erase(val);
-                    llvm::errs() << "nonconstant phi operand:" << *val << "\n";
-                    return false;
-                }
-            }
-
-            //lookingfor.erase(val);
-            //if (memorylookingfor.size() == 0 && lookingfor.size() == 0) {
-              constants.insert(val);
-              llvm::errs() << "constant phi operand:" << *val << "\n";
-            //} else {
-            //  llvm::errs() << "ns constant phi operand:" << *val << "\n";
-            //}
-            return true;
-        }
-
-        if (auto inst = dyn_cast<Instruction>(val)) {
-            //lookingfor.insert(val);
-            for(auto& a: inst->operands()) {
-                if (!isconstantM(a, constants2, nonconstant2)) {
-                    nonconstant.insert(val);
-                    //lookingfor.erase(val);
-                    //llvm::errs() << "nonconstant operand:" << *val << "\n";
-                    return false;
-                }
-            }
-
-            //lookingfor.erase(val);
-            //if (memorylookingfor.size() == 0 && lookingfor.size() == 0) {
-              constants.insert(val);
-              llvm::errs() << "constant operand:" << *val << "\n";
-            //} else {
-            //  llvm::errs() << "ns constant operand:" << *val << "\n";
-            //}
-            return true;
-        }
-
-        nonconstant.insert(val);
-        llvm::errs() << "couldnt decide nonconstants:" << *val << "\n";
-        return false;
-    };
 
   auto isconstant = [&](Value* val) -> bool {
     return isconstantM(val, constants, nonconstant);
@@ -520,10 +620,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             return true;
         }
 
+        SmallVector<BasicBlock *, 8> PotentialExitBlocks;
         SmallVector<BasicBlock *, 8> ExitBlocks;
-        L->getExitBlocks(ExitBlocks);
-        BasicBlock* ExitBlock = nullptr;
-        for(auto a:ExitBlocks) {
+        L->getExitBlocks(PotentialExitBlocks);
+        for(auto a:PotentialExitBlocks) {
 
             SmallVector<BasicBlock*, 4> tocheck;
             SmallPtrSet<BasicBlock*, 4> checked;
@@ -535,7 +635,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 auto foo = tocheck.back();
                 tocheck.pop_back();
                 if (checked.count(foo)) {
-                    llvm::errs() << "looping in: " << *foo << "\n";
+                    //llvm::errs() << "looping in: " << *foo << "\n";
                     isExit = true;
                     goto exitblockcheck;
                 }
@@ -548,7 +648,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 } else if (isa<UnreachableInst>(foo->getTerminator())) {
                     continue;
                 } else {
-                    llvm::errs() << "unknown ending in: " << *foo << "\n";
+                    //llvm::errs() << "unknown ending in: " << *foo << "\n";
                     isExit = true;
                     goto exitblockcheck;
                 }
@@ -557,26 +657,21 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             
             exitblockcheck:
             if (isExit) {
-                if (ExitBlock) {
-                    BB->getParent()->dump();
-                    L->dump();
-                    for(auto b:ExitBlocks)
-                        b->dump();
-                    llvm::errs() << "offending: \n";
-                    a->dump();
-                    ExitBlock->dump();
-                    llvm::errs() << "No unique exit block (1)\n";
-                    exit(1);
-                }
-                ExitBlock = a;
+				ExitBlocks.push_back(a);
             }
         }
 
-        if (!ExitBlock) {
-            llvm::errs() << "No unique exit block (2)\n";
-            exit(1);
+        if (ExitBlocks.size() != 1) {
+			BB->getParent()->dump();
+			L->dump();
+			for(auto b:ExitBlocks)
+				b->dump();
+			llvm::errs() << "offending: \n";
+			llvm::errs() << "No unique exit block (1)\n";
+			exit(1);
         }
-        llvm::errs() << "ExitBlock: " << *ExitBlock << "\n";
+
+        BasicBlock* ExitBlock = ExitBlocks[0];
 
         BasicBlock *Header = L->getHeader();
         BasicBlock *Preheader = L->getLoopPreheader();
@@ -584,67 +679,95 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         BasicBlock *Latch = L->getLoopLatch();
 
         const SCEV *Limit = SE.getExitCount(L, Latch);
+        
+		SCEVExpander Exp(SE, M->getDataLayout(), "ad");
+
+		PHINode *CanonicalIV = nullptr;
+		Value *LimitVar = nullptr;
+		if (SE.getCouldNotCompute() != Limit) {
+
+        	CanonicalIV = canonicalizeIVs(Limit->getType(), L, SE, DT);
+        	if (!CanonicalIV) {
+            	llvm::errs() << "Could not get canonical IV.\n";
+            	exit(1);
+        	}
+        	
+			const SCEVAddRecExpr *CanonicalSCEV = cast<const SCEVAddRecExpr>(SE.getSCEV(CanonicalIV));
+
+        	assert(SE.isLoopBackedgeGuardedByCond(L, ICmpInst::ICMP_ULT,
+                                              CanonicalSCEV, Limit) &&
+               "Loop backedge is not guarded by canonical comparison with limit.");
+        
+			LimitVar = Exp.expandCodeFor(Limit, CanonicalIV->getType(),
+                                            Preheader->getTerminator());
+
+        	// Canonicalize the loop latch.
+        	Value *NewCond = canonicalizeLoopLatch(CanonicalIV, LimitVar, L, SE, ExitBlock);
+
+			loopContext.dynamic = false;
+		} else {
+          llvm::errs() << "Se has any info: " << SE.getBackedgeTakenInfo(L).hasAnyInfo() << "\n";
+          llvm::errs() << "SE could not compute loop limit.\n";
+
+		  IRBuilder <>B(&Header->front());
+		  //TODO replace 2 in below phi with |predecessors(Header)|
+		  CanonicalIV = B.CreatePHI(Type::getInt64Ty(Context), 2);
+		  B.SetInsertPoint(Header->getTerminator());
+		  auto inc = B.CreateAdd(CanonicalIV, ConstantInt::get(CanonicalIV->getType(), 1));
+		  CanonicalIV->addIncoming(inc, Latch);
+		  for (BasicBlock *Pred : predecessors(Header)) {
+			  if (Pred != Latch) {
+				  CanonicalIV->addIncoming(ConstantInt::get(CanonicalIV->getType(), 0), Pred);
+			  }
+		  }
+
+		  B.SetInsertPoint(&ExitBlock->front());
+		  LimitVar = B.CreatePHI(CanonicalIV->getType(), 1);
+
+		  for (BasicBlock *Pred : predecessors(ExitBlock)) {
+    		if (LI.getLoopFor(Pred) == L)
+		    	cast<PHINode>(LimitVar)->addIncoming(CanonicalIV, Pred);
+			else
+				cast<PHINode>(LimitVar)->addIncoming(ConstantInt::get(CanonicalIV->getType(), 0), Pred);
+		  }
+		  loopContext.dynamic = true;
+		}
+	
+		// Remove Canonicalizable IV's
+		{
+		  SmallVector<PHINode*, 8> IVsToRemove;
+		  for (BasicBlock::iterator II = Header->begin(); isa<PHINode>(II); ++II) {
+			PHINode *PN = cast<PHINode>(II);
+			if (PN == CanonicalIV) continue;
+			if (!SE.isSCEVable(PN->getType())) continue;
+			const SCEV *S = SE.getSCEV(PN);
+			if (SE.getCouldNotCompute() == S) continue;
+			Value *NewIV = Exp.expandCodeFor(S, S->getType(), CanonicalIV);
+			if (NewIV == PN) {
+				llvm::errs() << "TODO: odd case need to ensure replacement\n";
+				continue;
+			}
+			PN->replaceAllUsesWith(NewIV);
+			IVsToRemove.push_back(PN);
+		  }
+		  for (PHINode *PN : IVsToRemove) {
+			//llvm::errs() << "ERASING: " << *PN << "\n";
+			PN->eraseFromParent();
+		  }
+		}
 
         //if (SE.getCouldNotCompute() == Limit) {
         //Limit = SE.getMaxBackedgeTakenCount(L);
         //}
-
-        if (SE.getCouldNotCompute() == Limit) {
-          newFunc->dump();
-          L->dump();
-          Latch->dump();
-          llvm::errs() << "Se has any info: " << SE.getBackedgeTakenInfo(L).hasAnyInfo() << "\n";
-          llvm::errs() << "SE could not compute loop limit.\n";
-          exit(1);
-        }
-
-        /// Clean up the loop's induction variables.
-        PHINode *CanonicalIV = canonicalizeIVs(Limit->getType(), L, SE, DT);
-        if (!CanonicalIV) {
-            llvm::errs() << "Could not get canonical IV.\n";
-            exit(1);
-        }
-
-        const SCEVAddRecExpr *CanonicalSCEV =
-          cast<const SCEVAddRecExpr>(SE.getSCEV(CanonicalIV));
-
-        SCEVExpander Exp(SE, M->getDataLayout(), "ls");
-
-        // Remove Canonicalizable IV's
-        {
-          SmallVector<PHINode*, 8> IVsToRemove;
-          for (BasicBlock::iterator II = Header->begin(); isa<PHINode>(II); ++II) {
-            PHINode *PN = cast<PHINode>(II);
-            if (PN == CanonicalIV) continue;
-            if (!SE.isSCEVable(PN->getType())) continue;
-            const SCEV *S = SE.getSCEV(PN);
-            if (SE.getCouldNotCompute() == S) continue;
-            Value *NewIV = Exp.expandCodeFor(S, S->getType(), CanonicalIV);
-            PN->replaceAllUsesWith(NewIV);
-            IVsToRemove.push_back(PN);
-          }
-          for (PHINode *PN : IVsToRemove) {
-            llvm::errs() << "ERASING: " << *PN << "\n";
-            PN->eraseFromParent();
-          }
-        }
-
-        Value *LimitVar = Exp.expandCodeFor(Limit, CanonicalIV->getType(),
-                                            Preheader->getTerminator());
-
-        // Canonicalize the loop latch.
-        assert(SE.isLoopBackedgeGuardedByCond(L, ICmpInst::ICMP_ULT,
-                                              CanonicalSCEV, Limit) &&
-               "Loop backedge is not guarded by canonical comparison with limit.");
-        Value *NewCond = canonicalizeLoopLatch(CanonicalIV, LimitVar, L, SE, ExitBlock);
-
+		assert(CanonicalIV);
+		assert(LimitVar);
         loopContext.var = CanonicalIV;
         loopContext.limit = LimitVar;
-        loopContext.cond = NewCond;
         loopContext.antivar = PHINode::Create(CanonicalIV->getType(), CanonicalIV->getNumIncomingValues(), CanonicalIV->getName()+"'phi");
         loopContext.exit = ExitBlock;
         loopContext.latch = Latch;
         loopContext.preheader = Preheader;
+		loopContext.header = Header;
         loopContext.parent = L->getParentLoop();
 
         loopContexts[L] = loopContext;
@@ -669,6 +792,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     auto BB2 = reverseBlocks[BB];
     assert(BB2);
 
+    std::function<Value*(Value*,IRBuilder<>&)> lookupM;
     std::function<Value*(Value*,IRBuilder<>&, const ValueToValueMapTy&)> unwrapM = [&](Value* val, IRBuilder<>& BuilderM, const ValueToValueMapTy& available) -> Value* {
           if (available.count(val)) {
             return available.lookup(val);
@@ -696,12 +820,28 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
           } else if (auto load = dyn_cast<LoadInst>(val)) {
                 Value* idx = unwrapM(load->getOperand(0), BuilderM, available);
                 return BuilderM.CreateLoad(idx);
-          } else {
-            llvm::errs() << "cannot unwrap following\n";
-            val->dump();
-            assert(0 && "unable to unwrap");
-            exit(1);
+          } else if (auto op = dyn_cast<IntrinsicInst>(val)) {
+            switch(op->getIntrinsicID()) {
+                case Intrinsic::sin: {
+                  Value *args[] = {unwrapM(op->getOperand(0), BuilderM, available)};
+                  Type *tys[] = {op->getOperand(0)->getType()};
+                  return BuilderM.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::sin, tys), args);
+                }
+                case Intrinsic::cos: {
+                  Value *args[] = {unwrapM(op->getOperand(0), BuilderM, available)};
+                  Type *tys[] = {op->getOperand(0)->getType()};
+                  return BuilderM.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::cos, tys), args);
+                }
+                default:;
+
+            }
           }
+          
+            llvm::errs() << "cannot unwrap following " << *val << "\n";
+            return lookupM(val, BuilderM);
+            //val->dump();
+            //assert(0 && "unable to unwrap");
+            //exit(1);
     };
 
     std::function<bool(Value*,const ValueToValueMapTy&)> shouldRecompute = [&](Value* val, const ValueToValueMapTy& available) -> bool {
@@ -715,11 +855,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
           } else if (auto op = dyn_cast<BinaryOperator>(val)) {
             bool a0 = shouldRecompute(op->getOperand(0), available);
             if (a0) {
-                llvm::errs() << "need recompute: " << *op->getOperand(0) << "\n";
+                //llvm::errs() << "need recompute: " << *op->getOperand(0) << "\n";
             }
             bool a1 = shouldRecompute(op->getOperand(1), available);
             if (a1) {
-                llvm::errs() << "need recompute: " << *op->getOperand(1) << "\n";
+                //llvm::errs() << "need recompute: " << *op->getOperand(1) << "\n";
             }
             return a0 || a1;
           } else if (auto op = dyn_cast<CmpInst>(val)) {
@@ -732,7 +872,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                     if (auto gep = dyn_cast<GetElementPtrInst>(idx)) {
                         for(auto &a : gep->indices()) {
                             if (shouldRecompute(a, available)) {
-                                llvm::errs() << "not recomputable: " << *a << "\n";
+                                //llvm::errs() << "not recomputable: " << *a << "\n";
                                 return true;
                             }
                         }
@@ -744,17 +884,17 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                         //    return false;
                         //else
                         {
-                            llvm::errs() << "unknown call " << *call << "\n";
+                            //llvm::errs() << "unknown call " << *call << "\n";
                             return true;
                         }
                     } else {
-                      llvm::errs() << "not a gep " << *idx << "\n";
+                      //llvm::errs() << "not a gep " << *idx << "\n";
                       return true;
                     }
                 }
                 Argument* arg = cast<Argument>(idx);
                 if (! ( arg->hasAttribute(Attribute::ReadOnly) || arg->hasAttribute(Attribute::ReadNone)) ) {
-                    llvm::errs() << "argument " << *arg << " not marked read only\n";
+                    //llvm::errs() << "argument " << *arg << " not marked read only\n";
                     return true;
                 }
                 return false;
@@ -762,19 +902,28 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             if (phi->getNumIncomingValues () == 1) {
                 bool b = shouldRecompute(phi->getIncomingValue(0) , available);
                 if (b) {
-                    llvm::errs() << "phi need recompute: " <<*phi->getIncomingValue(0) << "\n";
+                    //llvm::errs() << "phi need recompute: " <<*phi->getIncomingValue(0) << "\n";
                 }
                 return b;
             }
 
-            llvm::errs() << "phi " << *phi << " not promotable\n";
             return true;
-          }
-          llvm::errs() << "unknown inst " << *val << " unable to recompute\n";
+          } else if (auto op = dyn_cast<IntrinsicInst>(val)) {
+            switch(op->getIntrinsicID()) {
+                case Intrinsic::sin:
+                case Intrinsic::cos:
+                    return false;
+                    return shouldRecompute(op->getOperand(0), available);
+                default:
+                    return true;
+            }
+        }
+
+          //llvm::errs() << "unknown inst " << *val << " unable to recompute\n";
           return true;
     };
 
-    std::function<Value*(Value*,IRBuilder<>&)> lookupM = [&](Value* val, IRBuilder<>& BuilderM) -> Value* {
+    lookupM = [&](Value* val, IRBuilder<>& BuilderM) -> Value* {
         if (auto inst = dyn_cast<Instruction>(val)) {
 
             LoopContext lc;
@@ -821,24 +970,44 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 return BuilderM.CreateLoad(scopeMap[val]);
             } else {
                 if (scopeMap.find(val) == scopeMap.end()) {
-                    //TODO add indexing
+
                     ValueToValueMapTy valmap;
-                    llvm::errs() << "needing to recompute: " << *inst << "\n";
                     Value* size = nullptr;
+					bool dynamic = false;
                     for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx) ) {
-                      llvm::errs() << "var is " << *idx.var << "\n";
-                      Value* ns = entryBuilder.CreateAdd(unwrapM(idx.limit, entryBuilder, available), ConstantInt::get(idx.limit->getType(), 1));
+					  //TODO handle allocations for dynamic loops
+					  if (idx.dynamic && idx.parent != nullptr) {
+          				newFunc->dump();
+         				idx.var->dump();
+         				idx.limit->dump();
+						assert(0 && "cannot handle non-outermost dynamic loop");
+					  }
+                      Value* ns = nullptr;
+					  if (idx.dynamic) {
+						ns = ConstantInt::get(idx.limit->getType(), 1);
+						dynamic = true;
+					  } else {
+						ns = entryBuilder.CreateAdd(unwrapM(idx.limit, entryBuilder, available), ConstantInt::get(idx.limit->getType(), 1));
+					  }
                       if (size == nullptr) size = ns;
                       else size = entryBuilder.CreateMul(size, ns);
                       if (idx.parent == nullptr) break;
                     }
-                    if (false) {
+
+                    if (false && !dynamic) {
                       scopeMap[val] = entryBuilder.CreateAlloca(val->getType(), size, val->getName()+"_arraycache");
                     } else {
-                      scopeMap[val] = CallInst::CreateMalloc(entryBuilder.GetInsertBlock(), size->getType(), val->getType(), ConstantInt::get(size->getType(), M->getDataLayout().getTypeAllocSizeInBits(val->getType())/8), size, nullptr, val->getName()+"_arraycache");
-                      entryBuilder.GetInsertBlock()->getInstList().push_back(cast<Instruction>(scopeMap[val]));
-                      llvm::errs() << "pushing " << *scopeMap[val] << " to malloc calls\n";
-                      mallocCalls.push_back(scopeMap[val]);
+					  auto allocation = CallInst::CreateMalloc(entryBuilder.GetInsertBlock(), size->getType(), val->getType(), ConstantInt::get(size->getType(), M->getDataLayout().getTypeAllocSizeInBits(val->getType())/8), size, nullptr, val->getName()+"_arraycache");
+                      entryBuilder.GetInsertBlock()->getInstList().push_back(cast<Instruction>(allocation));
+
+					  if (dynamic) {
+                      	scopeMap[val] = entryBuilder.CreateAlloca(allocation->getType(), nullptr, val->getName()+"_dyncache");
+					    entryBuilder.CreateStore(allocation, scopeMap[val]);	
+                      	dynamicMallocCalls.push_back(scopeMap[val]);
+					  } else {
+					  	scopeMap[val] = allocation;
+                      	mallocCalls.push_back(allocation);
+                      }
                     }
 
                     Instruction* putafter = isa<PHINode>(inst) ? (inst->getParent()->getFirstNonPHI() ): inst->getNextNonDebugInstruction();
@@ -847,10 +1016,20 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
                     SmallVector<Value*,3> indices;
                     SmallVector<Value*,3> limits;
+					BasicBlock* dynamicHeader = nullptr;
+					PHINode* dynamicPHI = nullptr;
                     for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx) ) {
                       indices.push_back(idx.var);
-                      if (idx.parent == nullptr) break;
 
+					  if (idx.dynamic) {
+						dynamicHeader = idx.header;
+						dynamicPHI = idx.var;
+						llvm::errs() << "saw idx.dynamic:" << *dynamicPHI << "\n";
+						assert(idx.parent == nullptr);
+						break;
+					  }
+
+                      if (idx.parent == nullptr) break;
                       auto lim = v.CreateAdd(unwrapM(idx.limit, v, available), ConstantInt::get(idx.limit->getType(), 1));
                       if (limits.size() != 0) {
                         lim = v.CreateMul(lim, limits.back());
@@ -871,9 +1050,37 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                       }
                     }
 
+					Value* allocation = nullptr;
+					if (dynamicHeader == nullptr) {
+						allocation = scopeMap[val];
+					} else {
+						IRBuilder<> headB(dynamicHeader->getFirstNonPHIOrDbgOrLifetime ());
+						Type *BPTy = Type::getInt8PtrTy(dynamicHeader->getContext());
+						auto realloc = M->getOrInsertFunction("realloc", BPTy, BPTy, size->getType());
+						allocation = headB.CreateLoad(scopeMap[val]);
+						auto foo = headB.CreateAdd(dynamicPHI, ConstantInt::get(dynamicPHI->getType(), 1));
+						foo->dump();
+						Value* idxs[2] = {
+							headB.CreatePointerCast(allocation, BPTy),
+							headB.CreateMul(
+								ConstantInt::get(size->getType(), M->getDataLayout().getTypeAllocSizeInBits(val->getType())/8), 
+								headB.CreateMul(
+									size, foo
+								) 
+							)
+						};
+
+						allocation = headB.CreatePointerCast(headB.CreateCall(realloc, idxs, val->getName()+"_realloccache"), allocation->getType());
+						headB.CreateStore(allocation, scopeMap[val]);
+						cast<Instruction>(foo)->getParent()->getParent()->dump();
+					}
+
                     Value* idxs[] = {idx};
-                    auto gep = v.CreateGEP(scopeMap[val], idxs);
+					allocation->dump();
+                    auto gep = v.CreateGEP(allocation, idxs);
                     addedStores.insert(gep);
+					val->dump();
+					gep->dump();
                     addedStores.insert(v.CreateStore(val, gep));
                 }
                 assert(inLoop);
@@ -881,8 +1088,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
                 SmallVector<Value*,3> indices;
                 SmallVector<Value*,3> limits;
+				bool dynamic = false;
                 for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx) ) {
                   indices.push_back(idx.antivar);
+				  if (idx.dynamic) dynamic = true;
                   if (idx.parent == nullptr) break;
 
                   auto lim = BuilderM.CreateAdd(unwrapM(idx.limit, BuilderM, available), ConstantInt::get(idx.limit->getType(), 1));
@@ -902,7 +1111,12 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 }
 
                 Value* idxs[] = {idx};
-                return BuilderM.CreateLoad(BuilderM.CreateGEP(scopeMap[val], idxs));
+				Value* tolookup = nullptr;
+				if (dynamic)
+					tolookup = BuilderM.CreateLoad(scopeMap[val]);
+				else
+					tolookup = scopeMap[val];
+                return BuilderM.CreateLoad(BuilderM.CreateGEP(tolookup, idxs));
             }
         }
 
@@ -1065,8 +1279,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       } else if (auto arg = dyn_cast<LoadInst>(val)) {
         auto li = Builder2.CreateLoad(invertPointer(arg->getOperand(0)), arg->getName()+"'ip");
         li->setAlignment(arg->getAlignment());
-        llvm::errs() << "inverting pointer: " << *arg << "\n";
-        llvm::errs() << "inverted to pointer: " << *li << "\n";
+        //llvm::errs() << "inverting pointer: " << *arg << "\n";
+        //llvm::errs() << "inverted to pointer: " << *li << "\n";
         return li;
       } else if (auto arg = dyn_cast<GetElementPtrInst>(val)) {
         SmallVector<Value*,4> invertargs;
@@ -1226,11 +1440,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     if (auto op = dyn_cast<BinaryOperator>(inst)) {
       Value* dif0 = nullptr;
       Value* dif1 = nullptr;
-      if (op->getName() == "add.i.i.i.us.us") {
-            llvm::errs() << "isconst:" << isconstant(op) << "\n";
-            op->dump();
-            exit(1);
-      }
       switch(op->getOpcode()) {
         case Instruction::FMul:
           if (!isconstant(op->getOperand(0)))
@@ -1561,7 +1770,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     } else if (auto op = dyn_cast<ShuffleVectorInst>(inst)) {
       //TODO const
       auto loaded = diffe(inst);
-      auto l1 = cast<VectorType>(op->getOperand(0)->getType())->getNumElements();
+      size_t l1 = cast<VectorType>(op->getOperand(0)->getType())->getNumElements();
       uint64_t instidx = 0;
       for( auto idx : op->getShuffleMask()) {
         auto opnum = (idx < l1) ? 0 : 1;
@@ -1626,6 +1835,13 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       unsigned idx[] = { i };
       toret = Builder2.CreateInsertValue(toret, retargs[i], idx);
     }
+    for(auto b : dynamicMallocCalls) {
+	  auto a = Builder2.CreateLoad(b);
+      auto ci = CallInst::CreateFree(Builder2.CreatePointerCast(a, Type::getInt8PtrTy(Context)), Builder2.GetInsertBlock());
+      if (ci->getParent()==nullptr) {
+        Builder2.GetInsertBlock()->getInstList().push_back(cast<Instruction>(ci));
+      }
+    }
     for(auto a : mallocCalls) {
       auto ci = CallInst::CreateFree(Builder2.CreatePointerCast(a, Type::getInt8PtrTy(Context)), Builder2.GetInsertBlock());
       if (ci->getParent()==nullptr) {
@@ -1634,8 +1850,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     }
     Builder2.CreateRet(toret);
   } else if (preds.size() == 1) {
-    BB->dump();
-    preds[0]->dump();
     for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
         if(auto PN = dyn_cast<PHINode>(&*I)) {
             if (isconstant(PN)) continue;
@@ -1661,6 +1875,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         phi = Builder2.CreateICmpEQ(loopContext.antivar, Constant::getNullValue(loopContext.antivar->getType()));
       else {
         llvm::errs() << "weird behavior for loopContext\n";
+        assert(0 && "illegal loopcontext behavior");
       }
     } else {
       std::map<BasicBlock*,std::set<unsigned>> seen;
@@ -1670,7 +1885,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       Q.push_back(std::tuple<BasicBlock*,unsigned,BasicBlock*>(preds[1], 1, BB));
       //done.insert(BB);
 
-      newFunc->dump();
       while(Q.size()) {
             auto trace = Q.front();
             auto block = std::get<0>(trace);
@@ -1705,25 +1919,39 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             }
 
             if (seen[block].size() == preds.size() && succs.size() == preds.size()) {
+			  //TODO below doesnt generalize past 2
+			  bool hasSingle = false;
               for(auto a : succs) {
-                if (seen[a].size() != 1) {
-                  break;
+                if (seen[a].size() == 1) {
+				  hasSingle = true;
                 }
               }
-              block->dump();
+			  if (!hasSingle)
+                  goto continueloop;
               if (auto branch = dyn_cast<BranchInst>(block->getTerminator())) {
-                block->dump();
-                branch->dump();
                 assert(branch->getCondition());
                 phi = lookup(branch->getCondition());
-                if ( (*seen[branch->getSuccessor(0)].begin()) != 0 ) {
-                  phi = Builder2.CreateNot(phi);
-                }
+				//llvm::errs() << "looke dup phi is " << *phi << " p0:" << preds[0]->getName() << " p1:" << preds[1]->getName() <<"\n";
+				for(int i=0; i<preds.size(); i++) {
+					auto s = branch->getSuccessor(i);
+					assert(s == succs[i]);
+					if (seen[s].size() == 1) {
+						if ( (*seen[s].begin()) != i) {
+							//llvm::errs() << "creating not based off of " << i << " " << s->getName() << "\n";
+							phi = Builder2.CreateNot(phi);
+							break;
+						} else {
+							//llvm::errs() << "creating based off of " << i << " " << s->getName() << "\n";
+							break;
+						}
+					}
+				}
                 goto endPHI;
               }
 
               break;
             }
+			continueloop:;
       }
 
       phi = pbuilder.CreatePHI(Type::getInt1Ty(Context), 2);
@@ -1794,7 +2022,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
 
   }
-  newFunc->dump();
   while(inversionAllocs->size() > 0) {
     inversionAllocs->back().moveBefore(&newFunc->getEntryBlock().front());
   }
