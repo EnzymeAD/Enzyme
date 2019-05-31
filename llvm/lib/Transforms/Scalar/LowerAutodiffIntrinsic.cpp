@@ -23,6 +23,8 @@
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"
 #include "llvm/Analysis/PhiValues.h"
 
+
+#include "llvm/IR/InlineAsm.h"
 //#include "llvm/Transforms/Utils/EaryCSE.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
@@ -129,140 +131,191 @@ static inline DIFFE_TYPE whatType(llvm::Type* arg) {
   }
 }
 
+bool isReturned(Instruction *inst) {
+	for (const auto &a:inst->users()) {
+		if(isa<ReturnInst>(a))
+			return true;
+	}
+	return false;
+}
+
+bool isConstantValue(Value* val, SmallPtrSetImpl<Value*> &constants, SmallPtrSetImpl<Value*> &nonconstant) {
+	if(isa<Constant>(val) || isa<BasicBlock>(val) || isa<InlineAsm>(val) || (constants.find(val) != constants.end())) {
+    	return true;
+    }
+	if (val->getType()->isVoidTy()) return true;
+
+
+}
+
+// TODO separate if the instruction is constant (i.e. could change things)
+//    from if the value is constant (the value is something that could be differentiated)
 bool isconstantM(Value* val, SmallPtrSetImpl<Value*> &constants, SmallPtrSetImpl<Value*> &nonconstant) {
-        if(isa<Constant>(val) || isa<BasicBlock>(val) || (constants.find(val) != constants.end())) {
-            return true;
-        }
+	if(isa<Constant>(val) || isa<BasicBlock>(val) || isa<InlineAsm>(val) || (constants.find(val) != constants.end())) {
+    	return true;
+    }
 
-        if((nonconstant.find(val) != nonconstant.end())) {
-            return false;
-        }
-        //llvm::errs() << "checking if is constant " << *val << "\n";
-        if (auto op = dyn_cast<CallInst>(val)) {
-            if(auto called = op->getCalledFunction()) {
-                if (called->getName() == "printf" || called->getName() == "puts") {
-                    nonconstant.insert(val);
-                    return false;
-                }
-            }
-        }
-
-        SmallPtrSet<Value*, 20> constants2;
-        constants2.insert(constants.begin(), constants.end());
-        SmallPtrSet<Value*, 20> nonconstant2;
-        nonconstant2.insert(nonconstant.begin(), nonconstant.end());
-        constants2.insert(val);
-
-        if (val->getType()->isPointerTy()) {
-          if (auto inst = dyn_cast<Instruction>(val)) {
-
-            // If object (such as eigen matrix) is composed of constant (size) and differential (doubles)
-            // make sure the integer portions of the object are treated as constants
-            if (cast<PointerType>(val->getType())->getElementType()->isIntegerTy()) {
-              Value* cur = inst;
-              while(true) {
-                if (auto gep = dyn_cast<GetElementPtrInst>(cur)) {
-                    //TODO perhaps check indices?
-                    cur = gep->getPointerOperand();
-                    continue;
-                } else if (auto li = dyn_cast<LoadInst>(cur)) {
-                    cur = li->getPointerOperand();
-                    continue;
-                } else if (isa<Argument>(cur)) {
-                    return true;
-                } else if (isa<AllocaInst>(cur)) {
-                    return true;
-                } else {
-                    break;
-                }
-              }
-            }
-
-            /*
-            if (memorylookingfor.find(val) != memorylookingfor.end()) {
-                  llvm::errs() << "temp acquised to " << *val << "\n";
-                  return true;
-            }
-
-            memorylookingfor.insert(val);
-            llvm::errs() << "memory added: " << *val << "\n";
-            */
-
-            for (const auto &a:inst->users()) {
-              if(auto store = dyn_cast<StoreInst>(a)) {
-                if (!isconstantM(store->getValueOperand(), constants2, nonconstant2)) {
-                    nonconstant.insert(val);
-                    //llvm::errs() << "memory erase 1: " << *val << "\n";
-                    //memorylookingfor.erase(val);
-                    return false;
-                }
-              } else if (isa<LoadInst>(a)) continue;
-              else {
-                if (!isconstantM(a, constants2, nonconstant2)) {
-                    nonconstant.insert(val);
-                    //llvm::errs() << "memory erase 2: " << *val << "\n";
-                    //memorylookingfor.erase(val);
-                    return false;
-                }
-              }
-
-            }
-            //llvm::errs() << "memory erase 3: " << *val << "\n";
-            //memorylookingfor.erase(val);
-
-          }
-        }
-
-
-        //if((lookingfor.find(val) != lookingfor.end())) {
-        //  return true;
-        //}
-
-        if (auto inst = dyn_cast<PHINode>(val)) {
-            //lookingfor.insert(inst);
-            for(auto& a: inst->incoming_values()) {
-                if (!isconstantM(a, constants2, nonconstant2)) {
-                    nonconstant.insert(val);
-                    //lookingfor.erase(val);
-                    //llvm::errs() << "nonconstant phi operand:" << *val << "\n";
-                    return false;
-                }
-            }
-
-            //lookingfor.erase(val);
-            //if (memorylookingfor.size() == 0 && lookingfor.size() == 0) {
-              constants.insert(val);
-              //llvm::errs() << "constant phi operand:" << *val << "\n";
-            //} else {
-            //  llvm::errs() << "ns constant phi operand:" << *val << "\n";
-            //}
-            return true;
-        }
-
-        if (auto inst = dyn_cast<Instruction>(val)) {
-            //lookingfor.insert(val);
-            for(auto& a: inst->operands()) {
-                if (!isconstantM(a, constants2, nonconstant2)) {
-                    nonconstant.insert(val);
-                    //lookingfor.erase(val);
-                    //llvm::errs() << "nonconstant operand:" << *val << "\n";
-                    return false;
-                }
-            }
-
-            //lookingfor.erase(val);
-            //if (memorylookingfor.size() == 0 && lookingfor.size() == 0) {
-              constants.insert(val);
-              //llvm::errs() << "constant operand:" << *val << "\n";
-            //} else {
-            //  llvm::errs() << "ns constant operand:" << *val << "\n";
-            //}
-            return true;
-        }
-
-        nonconstant.insert(val);
-        //llvm::errs() << "couldnt decide nonconstants:" << *val << "\n";
+    if((nonconstant.find(val) != nonconstant.end())) {
         return false;
+    }
+
+	if (auto op = dyn_cast<CallInst>(val)) {
+		if(auto called = op->getCalledFunction()) {
+			if (called->getName() == "printf" || called->getName() == "puts" || called->getName() == "__assert_fail") {
+				nonconstant.insert(val);
+				return false;
+			}
+		}
+	}
+
+    if (auto op = dyn_cast<IntrinsicInst>(val)) {
+		switch(op->getIntrinsicID()) {
+			case Intrinsic::lifetime_start:
+			case Intrinsic::lifetime_end:
+			case Intrinsic::dbg_addr:
+			case Intrinsic::dbg_declare:
+			case Intrinsic::dbg_value:
+			case Intrinsic::invariant_start:
+			case Intrinsic::invariant_end:
+			case Intrinsic::var_annotation:
+			case Intrinsic::ptr_annotation:
+			case Intrinsic::annotation:
+			case Intrinsic::codeview_annotation:
+			case Intrinsic::expect:
+			case Intrinsic::type_test:
+			case Intrinsic::donothing:
+			//case Intrinsic::is_constant:
+				constants.insert(val);
+				return true;
+			default:
+				break;
+		}
+	}
+
+    llvm::errs() << "checking if is constant " << *val << "\n";
+
+	//Proceed assuming this is constant, can we prove this should be constant otherwise
+	SmallPtrSet<Value*, 20> constants2;
+	constants2.insert(constants.begin(), constants.end());
+	SmallPtrSet<Value*, 20> nonconstant2;
+	nonconstant2.insert(nonconstant.begin(), nonconstant.end());
+	constants2.insert(val);
+
+	if (val->getType()->isPointerTy()) {
+	  if (auto inst = dyn_cast<Instruction>(val)) {
+
+		// If object (such as eigen matrix) is composed of constant (size) and differential (doubles)
+		// make sure the integer portions of the object are treated as constants
+		if (cast<PointerType>(val->getType())->getElementType()->isIntegerTy()) {
+
+		  bool failed = false;
+		  SmallVector<Value*, 4> todo;
+		  SmallPtrSet<Value*, 4> visited;
+		  todo.push_back(inst);
+		  while(!failed && todo.size() > 0) {
+			Value* cur = todo.back();
+			todo.pop_back();
+			if (!visited.insert(cur).second) continue;
+
+			if (auto gep = dyn_cast<GetElementPtrInst>(cur)) {
+				todo.push_back(gep->getPointerOperand());
+				continue;
+			} else if (auto li = dyn_cast<LoadInst>(cur)) {
+				todo.push_back(li->getPointerOperand());
+				continue;
+			} else if (isa<Argument>(cur)) {
+				continue;
+			} else if (isa<AllocaInst>(cur)) {
+				continue;
+			} else if (auto ci = dyn_cast<CastInst>(cur)) {
+				if (auto src = dyn_cast<PointerType>(ci->getSrcTy())) 
+					if (auto dst = dyn_cast<PointerType>(ci->getDestTy())) 
+						if (src->getElementType()->isStructTy() && dst->getElementType()->isStructTy()) {
+							todo.push_back(ci->getOperand(0));
+							continue;
+						}
+				llvm::errs() << "unable to int fix (cast):" << *val << " cur is " << *cur << "\n";
+				failed = true;
+				break;
+			} else if (auto pn = dyn_cast<PHINode>(cur)) {
+				for(unsigned i=0; i<pn->getNumIncomingValues(); i++)
+					todo.push_back(pn->getIncomingValue(i));
+			} else {
+				llvm::errs() << "unable to int fix:" << *val << " cur is " << *cur << "\n";
+				failed = true;
+				break;
+			}
+		  }
+		}
+
+		for (const auto &a:inst->users()) {
+		  if(auto store = dyn_cast<StoreInst>(a)) {
+			if (!isconstantM(store->getValueOperand(), constants2, nonconstant2)) {
+				nonconstant.insert(val);
+				llvm::errs() << "memory erase 1: " << *val << "\n";
+				return false;
+			}
+		  } else if (isa<LoadInst>(a)) continue;
+		  else {
+			if (!isconstantM(a, constants2, nonconstant2)) {
+				nonconstant.insert(val);
+				llvm::errs() << "memory erase 2: " << *val << "\n";
+				return false;
+			}
+		  }
+
+		}
+		//llvm::errs() << "memory erase 3: " << *val << "\n";
+
+	  }
+	}
+
+	if (auto inst = dyn_cast<PHINode>(val)) {
+		//lookingfor.insert(inst);
+		for(auto& a: inst->incoming_values()) {
+			if (!isconstantM(a, constants2, nonconstant2)) {
+				nonconstant.insert(val);
+				//lookingfor.erase(val);
+				llvm::errs() << "nonconstant phi " << *val << " op " << *a << "\n";
+				return false;
+			}
+		}
+		constants.insert(val);
+		llvm::errs() << "constant phi:" << *val << "\n";
+		return true;
+	}
+
+	//assert(!isa<GetElementPtrInst>(val));
+	// Handled uses above
+	if (auto inst = dyn_cast<GetElementPtrInst>(val)) {
+		if (!isconstantM(inst->getPointerOperand(), constants2, nonconstant2)) {
+			nonconstant.insert(val);
+			llvm::errs() << "nonconstant gep " << *val << " op " << *inst->getPointerOperand() << "\n";
+			return false;
+		}
+		constants.insert(val);
+		llvm::errs() << "constant gep:" << *val << "\n";
+		return true;
+	}
+
+	if (auto inst = dyn_cast<Instruction>(val)) {
+		//lookingfor.insert(val);
+		for(auto& a: inst->operands()) {
+			if (!isconstantM(a, constants2, nonconstant2)) {
+				nonconstant.insert(val);
+				llvm::errs() << "nonconstant inst " << *val << " op " << *a << "\n";
+				return false;
+			}
+		}
+
+		constants.insert(val);
+		llvm::errs() << "constant inst:" << *val << "\n";
+		return true;
+	}
+
+	nonconstant.insert(val);
+	llvm::errs() << "couldnt decide nonconstants:" << *val << "\n";
+	return false;
 }
 
 
@@ -291,7 +344,7 @@ bool isconstantM(Value* val, SmallPtrSetImpl<Value*> &constants, SmallPtrSetImpl
    return Changed;
  }
 
-Function *CloneFunctionWithReturns(Function *F, SmallVector<ReturnInst*, 8>& Returns, ValueToValueMapTy& ptrInputs, const SmallSet<unsigned,4>& constant_args, SmallPtrSetImpl<Value*> &constants, bool returnValue) {
+Function *CloneFunctionWithReturns(Function *F, ValueToValueMapTy& ptrInputs, const SmallSet<unsigned,4>& constant_args, SmallPtrSetImpl<Value*> &constants, bool returnValue) {
  std::vector<Type*> RetTypes;
  if (returnValue)
    RetTypes.push_back(F->getReturnType());
@@ -387,7 +440,7 @@ Function *CloneFunctionWithReturns(Function *F, SmallVector<ReturnInst*, 8>& Ret
      DestI->setName(I.getName()); // Copy the name over...
      VMap[&I] = &*DestI++;        // Add mapping to VMap
    }
-
+ SmallVector <ReturnInst*,4> Returns;
  CloneFunctionInto(NewF, F, VMap, F->getSubprogram() != nullptr, Returns, "",
                    nullptr);
 
@@ -407,6 +460,9 @@ Function *CloneFunctionWithReturns(Function *F, SmallVector<ReturnInst*, 8>& Ret
     constants2.insert(a);
  }
  SmallPtrSet<Value*,20> nonconstant2;
+ //for (auto a :nonconstant){
+ //   nonconstant2.insert(a);
+ //}
  
   {
    remover:
@@ -558,10 +614,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
   auto M = todiff->getParent();
   auto& Context = M->getContext();
 
-  SmallVector<ReturnInst*, 8> Returns;
   ValueToValueMapTy ptrInputs;
   SmallPtrSet<Value*,4> constants;
-  auto newFunc = CloneFunctionWithReturns(todiff, Returns, ptrInputs, constant_args, constants, returnValue);
+  auto newFunc = CloneFunctionWithReturns(todiff, ptrInputs, constant_args, constants, returnValue);
 
   DominatorTree DT(*newFunc);
   LoopInfo LI(DT);
@@ -581,8 +636,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     return isconstantM(val, constants, nonconstant);
   };
 
-  llvm::Value* retval = Returns[0]->getReturnValue();
-  assert(Returns.size() == 1);
+  llvm::AllocaInst* retAlloca = nullptr;
+  if (returnValue && !todiff->getReturnType()->isVoidTy()) {
+	retAlloca = IRBuilder<>(&newFunc->getEntryBlock().front()).CreateAlloca(todiff->getReturnType(), nullptr, "toreturn");
+  }
 
   SmallVector<BasicBlock*, 12> fnthings;
   for (BasicBlock &BB : *newFunc) {
@@ -702,7 +759,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                                             Preheader->getTerminator());
 
         	// Canonicalize the loop latch.
-        	Value *NewCond = canonicalizeLoopLatch(CanonicalIV, LimitVar, L, SE, ExitBlock);
+			canonicalizeLoopLatch(CanonicalIV, LimitVar, L, SE, ExitBlock);
 
 			loopContext.dynamic = false;
 		} else {
@@ -880,6 +937,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                     } else if(auto cast = dyn_cast<CastInst>(idx)) {
                         idx = cast->getOperand(0);
                     } else if(auto call = dyn_cast<CallInst>(idx)) {
+						(void*)call;
                         //if (call->getCalledFunction()->getName() == "malloc")
                         //    return false;
                         //else
@@ -1270,14 +1328,20 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       Builder2.CreateStore(Builder2.CreateFAdd(Builder2.CreateLoad(ptr), dif), ptr);
     };
 
-    std::function<Value*(Value*)> invertPointer = [&](Value* val) -> Value* {
+    std::function<Value*(Value*,IRBuilder<>&)> invertPointerM = [&](Value* val, IRBuilder<>& BuilderM) -> Value* {
       assert(val);
+	  if (false && !val->getType()->isPointerTy()) {
+		cast<Instruction>(val)->getParent()->getParent()->dump();
+		cast<Instruction>(val)->getParent()->dump();
+		val->dump();
+        assert(val->getType()->isPointerTy());
+	  }
       if (auto arg = dyn_cast<Argument>(val)) {
         return cast<Argument>(ptrInputs[arg]);
       } else if (auto arg = dyn_cast<CastInst>(val)) {
-        return Builder2.CreateCast(arg->getOpcode(), invertPointer(arg->getOperand(0)), arg->getDestTy(), arg->getName()+"'ip");
+        return BuilderM.CreateCast(arg->getOpcode(), invertPointerM(arg->getOperand(0), BuilderM), arg->getDestTy(), arg->getName()+"'ip");
       } else if (auto arg = dyn_cast<LoadInst>(val)) {
-        auto li = Builder2.CreateLoad(invertPointer(arg->getOperand(0)), arg->getName()+"'ip");
+        auto li = BuilderM.CreateLoad(invertPointerM(arg->getOperand(0), BuilderM), arg->getName()+"'ip");
         li->setAlignment(arg->getAlignment());
         //llvm::errs() << "inverting pointer: " << *arg << "\n";
         //llvm::errs() << "inverted to pointer: " << *li << "\n";
@@ -1285,10 +1349,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       } else if (auto arg = dyn_cast<GetElementPtrInst>(val)) {
         SmallVector<Value*,4> invertargs;
         for(auto &a: arg->indices()) {
-            auto b = lookup(a);
+            auto b = lookupM(a, BuilderM);
             invertargs.push_back(b);
         }
-        return Builder2.CreateGEP(invertPointer(arg->getPointerOperand()), invertargs, arg->getName()+"'ip");
+        return BuilderM.CreateGEP(invertPointerM(arg->getPointerOperand(), BuilderM), invertargs, arg->getName()+"'ip");
       } else if (auto inst = dyn_cast<AllocaInst>(val)) {
         if (antiallocas.find(val) == antiallocas.end()) {
             auto sz = lookupM(inst->getArraySize(), entryBuilder);
@@ -1302,7 +1366,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             memset->addParamAttr(0, Attribute::getWithAlignment(Context, inst->getAlignment()));
             memset->addParamAttr(0, Attribute::NonNull);
         }
-        return lookup(cast<AllocaInst>(antiallocas[inst]));
+        return lookupM(cast<AllocaInst>(antiallocas[inst]), BuilderM);
       } else if (auto call = dyn_cast<CallInst>(val)) {
         if (call->getCalledFunction()->getName() == "malloc") {
             if (antiallocas.find(val) == antiallocas.end()) {
@@ -1330,7 +1394,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 }
 
             }
-            return lookup(antiallocas[val]);
+            return lookupM(antiallocas[val], BuilderM);
         }
       
       } else if (auto phi = dyn_cast<PHINode>(val)) {
@@ -1343,23 +1407,59 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             antiallocas[val] = nphi;
          }
          return antiallocas[val];*/
-         assert(phi->getNumIncomingValues() == 2);
-         
-         IRBuilder <> bb(phi);
-         auto which = bb.CreatePHI(Type::getInt1Ty(Context), 2);
-         which->addIncoming(ConstantInt::getTrue(which->getType()), phi->getIncomingBlock(0));
-         which->addIncoming(ConstantInt::getFalse(which->getType()), phi->getIncomingBlock(1));
-         auto which2 = lookup(which);
-         return Builder2.CreateSelect(which2, invertPointer(phi->getIncomingValue(0)), invertPointer(phi->getIncomingValue(1)));
+
+		 std::map<Value*,std::set<BasicBlock*>> mapped;
+		 for(unsigned int i=0; i<phi->getNumIncomingValues(); i++) {
+			mapped[phi->getIncomingValue(i)].insert(phi->getIncomingBlock(i));
+		 }
+
+		 if (false && mapped.size() == 1) {
+         	return invertPointerM(phi->getIncomingValue(0), BuilderM);
+		 } else if (false && mapped.size() == 2) {
+			 IRBuilder <> bb(phi);
+			 auto which = bb.CreatePHI(Type::getInt1Ty(Context), phi->getNumIncomingValues());
+
+			 int cnt = 0;
+			 Value* vals[2];
+			 for(auto v : mapped) {
+				assert( cnt <= 1 );
+				vals[cnt] = v.first;
+				for (auto b : v.second) {
+					which->addIncoming(ConstantInt::get(which->getType(), cnt), b);
+				}
+				cnt++;
+			 }
+			 
+			 auto which2 = lookupM(which, BuilderM);
+			 return BuilderM.CreateSelect(which2, invertPointerM(vals[1], BuilderM), invertPointerM(vals[0], BuilderM));
+		 } else {
+			 IRBuilder <> bb(phi);
+			 auto which = bb.CreatePHI(phi->getType(), phi->getNumIncomingValues());
+
+			 for(auto v : mapped) {
+				for (auto b : v.second) {
+					IRBuilder <>pre(b->getTerminator());
+					which->addIncoming(invertPointerM(v.first, pre), b);
+				}
+			 }
+			 return lookupM(which, BuilderM);
+
+		 }
       } else if (isa<ConstantPointerNull>(val)) {
          return val;
-      }
+      } else if (auto cint = dyn_cast<ConstantInt>(val)) {
+		 if (cint->isZero()) return cint;
+	  }
 
         newFunc->dump();
         val->dump();
         assert(0 && "cannot find deal with ptr that isnt arg");
       
     };
+
+    std::function<Value*(Value*)> invertPointer = [&](Value* val) -> Value* {
+		return invertPointerM(val, Builder2);
+	};
 
     auto addToPtrDiffe = [&](Value* val, Value* dif) {
       auto ptr = invertPointer(val);
@@ -1389,6 +1489,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       auto retval = op->getReturnValue();
       IRBuilder<> rb(op);
       rb.setFastMathFlags(FastMathFlags::getFast());
+	  if (retAlloca)
+		rb.CreateStore(retval, retAlloca);
+	 
       rb.CreateBr(returnMerged);
 
       returnBuilder.CreateBr(BB2);
@@ -1398,6 +1501,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
       if (retval) {
         setDiffe(retval, ConstantFP::get(retval->getType(), 1.0));
+      } else {
+		assert (retAlloca == nullptr);
       }
   } else if (isa<BranchInst>(term)) {
 
@@ -1666,14 +1771,17 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               }
               if (constant_args.size() == args.size()) break;
 
-              bool used = false;
-              for (const Use &U : inst->uses()) {
-                const Instruction *I = cast<Instruction>(U.getUser());
-                if (I) used = true;
+			  bool retUsed = false;
+              for (const User *U : inst->users()) {
+                if (auto si = dyn_cast<StoreInst>(U)) {
+					if (si->getPointerOperand() == retAlloca && si->getValueOperand() == inst) {
+						retUsed = true;
+						continue;
+					}
+				}
+				retUsed = false;
+				break;
               }
-              bool retUsed = false;
-              if (retval == inst && returnValue)
-                retUsed = true;
 
               auto newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called), constant_args, TLI, retUsed);//, LI, DT);
 
@@ -1689,14 +1797,27 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 }
               }
 
-              if (!used) {
-                if (retUsed) {
-                  unsigned idxs[] = {0};
-                  retval = Builder2.CreateExtractValue(diffes, idxs);
+              if (retUsed) {
+                unsigned idxs[] = {0};
+                auto retval = Builder2.CreateExtractValue(diffes, idxs);
+				Builder2.CreateStore(retval, retAlloca);
+
+				startremove:
+              	for (User *U : inst->users()) {
+                	if (auto si = dyn_cast<StoreInst>(U)) {
+						if (si->getPointerOperand() == retAlloca && si->getValueOperand() == inst) {
+							si->eraseFromParent();
+							goto startremove;
+						}
+					}
                 }
-                inst->eraseFromParent();
-              } else
-                setDiffe(inst, Constant::getNullValue(inst->getType()));
+
+                // Previously this would be done, but really DCE should remove this if it doesn't affect anything
+				// inst->eraseFromParent();
+              }
+
+			  if (inst->getNumUses() != 0)
+              	setDiffe(inst, Constant::getNullValue(inst->getType()));
             }
             else if(called->getName()=="malloc") {
               auto ci = CallInst::CreateFree(Builder2.CreatePointerCast(lookup(inst), Type::getInt8PtrTy(Context)), Builder2.GetInsertBlock());
@@ -1820,7 +1941,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     SmallVector<Value *,4> retargs;
 
     if (returnValue) {
-      retargs.push_back(retval);
+      retargs.push_back(Builder2.CreateLoad(retAlloca));
       assert(retargs[0]);
     }
 
@@ -1932,7 +2053,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 assert(branch->getCondition());
                 phi = lookup(branch->getCondition());
 				//llvm::errs() << "looke dup phi is " << *phi << " p0:" << preds[0]->getName() << " p1:" << preds[1]->getName() <<"\n";
-				for(int i=0; i<preds.size(); i++) {
+				for(unsigned i=0; i<preds.size(); i++) {
 					auto s = branch->getSuccessor(i);
 					assert(s == succs[i]);
 					if (seen[s].size() == 1) {
@@ -2035,9 +2156,6 @@ void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI) {//, LoopInfo& LI, Dom
   Value* fn = CI->getArgOperand(0);
 
   while (auto ci = dyn_cast<CastInst>(fn)) {
-    fn = ci->getOperand(0);
-  }
-  while (auto ci = dyn_cast<BitCastInst>(fn)) {
     fn = ci->getOperand(0);
   }
   while (auto ci = dyn_cast<BlockAddress>(fn)) {
