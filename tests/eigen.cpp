@@ -25,11 +25,37 @@ using Eigen::MatrixXd;
 using Eigen::VectorXd;
 
 __attribute__((noinline))
-static void matvec(const MatrixXd& __restrict W,
+static void matvecclean(const MatrixXd& __restrict W,
     const MatrixXd& __restrict b, MatrixXd& __restrict foo) {
 
   foo = b * W ;
 }
+
+__attribute__((noinline))
+static void matvec(const MatrixXd& __restrict W,
+    const VectorXd& __restrict b, VectorXd& __restrict foo) {
+
+  foo = b * W ;
+}
+
+/*
+__attribute__((noinline))
+static void matvec(const MatrixXd& __restrict W,
+    const MatrixXd& __restrict b, MatrixXd& __restrict foo) {
+
+  for(int n=0; n<NUM; n++)
+
+  for (int o = 0; o < OUT; o++)
+  {
+    output[n*OUT + o] = b(o);
+
+    for (int i = 0; i < IN; i++) {
+      output[n*OUT + o] += W(o, i) * (double)(input[n].pixels[i] / 255.);
+    }
+  }
+
+}
+*/
 
 int main(int argc, char** argv) {
 
