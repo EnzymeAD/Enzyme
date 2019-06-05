@@ -2002,12 +2002,12 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               SmallSet<unsigned,4> constant_args;
 
               SmallVector<Value*, 8> args;
-              SmallVector<bool, 8> argsInverted;
+              SmallVector<DIFFE_TYPE, 8> argsInverted;
               for(unsigned i=0;i<called->getFunctionType()->getNumParams(); i++) {
                 if (isconstant(op->getArgOperand(i))) {
                     constant_args.insert(i);
                     args.push_back(lookup(op->getArgOperand(i)));
-                    argsInverted.push_back(false);
+                    argsInverted.push_back(DIFFE_TYPE::CONSTANT);
                     continue;
                 }
 
@@ -2016,7 +2016,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 				auto argType = op->getArgOperand(i)->getType();
 
 				if (argType->isPointerTy()) {
-					argsInverted.push_back(true);
+					argsInverted.push_back(DIFFE_TYPE::DUP_ARG);
 					args.push_back(invertPointer(op->getArgOperand(i)));
 					
 					//Note sometimes whattype mistakenly says something should be constant [because composed of integer pointers alone]
@@ -2024,7 +2024,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 					//	llvm::errs() << "mismatch in dup detection " << *op->getArgOperand(i) << " t " << *argType << " wt " << (int)whatType(argType) << " dup=" << (int)DIFFE_TYPE::DUP_ARG << "\n";
 					assert(whatType(argType) == DIFFE_TYPE::DUP_ARG || whatType(argType) == DIFFE_TYPE::CONSTANT);
 				} else {
-					argsInverted.push_back(false);
+					argsInverted.push_back(DIFFE_TYPE::OUT_DIFF);
 					assert(whatType(argType) == DIFFE_TYPE::OUT_DIFF || whatType(argType) == DIFFE_TYPE::CONSTANT);
 				}
               }
@@ -2048,7 +2048,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               diffes->setDebugLoc(inst->getDebugLoc());
               unsigned structidx = retUsed ? 1 : 0;
               for(unsigned i=0;i<called->getFunctionType()->getNumParams(); i++) {
-                if (argsInverted[i]) {
+                if (argsInverted[i] == DIFFE_TYPE::OUT_DIFF) {
                   unsigned idxs[] = {structidx};
                   auto diffeadd = Builder2.CreateFMul( diffe(inst), Builder2.CreateExtractValue(diffes, idxs));
                   structidx++;
