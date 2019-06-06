@@ -17,6 +17,7 @@
 
 #include "llvm/Transforms/Scalar/LowerAutodiffIntrinsic.h"
 #include "llvm/Transforms/Utils/PromoteMemToReg.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Scalar/GVN.h"
 #include "llvm/Transforms/Scalar/SROA.h"
 #include "llvm/Transforms/Utils/LoopSimplify.h"
@@ -1042,7 +1043,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 } else if (isa<UnreachableInst>(foo->getTerminator())) {
                     continue;
                 } else {
-                    //llvm::errs() << "unknown ending in: " << *foo << "\n";
                     isExit = true;
                     goto exitblockcheck;
                 }
@@ -1292,13 +1292,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 return op;
             }
 
-            //if (inLoop && inst == loopContext.var) {
-            //  return loopContext.antivar;
-            //}
-
             if (!inLoop) {
                 if (scopeMap.find(val) == scopeMap.end()) {
-                    //TODO add indexing
                     scopeMap[val] = entryBuilder.CreateAlloca(val->getType(), nullptr, val->getName()+"_cache");
 					addedStores.insert(scopeMap[val]);
 					constants.insert(scopeMap[val]);
@@ -2459,6 +2454,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
   }
 
   inversionAllocs->eraseFromParent();
+  for(auto BBs : reverseBlocks) {
+    if (pred_begin(BBs.second) == pred_end(BBs.second))
+        DeleteDeadBlock(BBs.second);
+  }
 
   return newFunc;
 }
