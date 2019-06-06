@@ -19,10 +19,14 @@
 #include "llvm/Transforms/Utils/PromoteMemToReg.h"
 #include "llvm/Transforms/Scalar/GVN.h"
 #include "llvm/Transforms/Scalar/SROA.h"
+#include "llvm/Transforms/Utils/LoopSimplify.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"
 #include "llvm/Analysis/PhiValues.h"
 
+#include "llvm/Transforms/Utils.h"
+
+#include "llvm/InitializePasses.h"
 
 #include "llvm/IR/InlineAsm.h"
 //#include "llvm/Transforms/Utils/EaryCSE.h"
@@ -357,10 +361,13 @@ bool isconstantM(Value* val, SmallPtrSetImpl<Value*> &constants, SmallPtrSetImpl
 				continue;
 			}
 			if (auto call = dyn_cast<CallInst>(a)) {
-                auto fn = call->getCalledFunction()->getName();
-                // todo realloc consider?
-                if (fn == "malloc" || fn == "_Znwm")
-				    continue;
+                auto fnp = call->getCalledFunction();
+                if (fnp) {
+                    auto fn = fnp->getName();
+                    // todo realloc consider?
+                    if (fn == "malloc" || fn == "_Znwm")
+				        continue;
+                }
 			}
 		  	if (!isconstantM(a, constants2, nonconstant2, DOWN)) {
     			if (printconst)
@@ -615,7 +622,22 @@ Function *CloneFunctionWithReturns(Function *F, ValueToValueMapTy& ptrInputs, co
  //for (auto a :nonconstant){
  //   nonconstant2.insert(a);
  //}
- 
+ if (true) {
+    FunctionAnalysisManager AM;
+ AM.registerPass([] { return AAManager(); });
+ AM.registerPass([] { return ScalarEvolutionAnalysis(); });
+ AM.registerPass([] { return AssumptionAnalysis(); });
+ AM.registerPass([] { return TargetLibraryAnalysis(); });
+ AM.registerPass([] { return DominatorTreeAnalysis(); });
+ AM.registerPass([] { return MemoryDependenceAnalysis(); });
+ AM.registerPass([] { return LoopAnalysis(); });
+ AM.registerPass([] { return OptimizationRemarkEmitterAnalysis(); });
+ AM.registerPass([] { return PhiValuesAnalysis(); });
+
+    LoopSimplifyPass().run(*NewF, AM);
+
+ }
+
   if(false) {
    remover:
    for (inst_iterator I = inst_begin(NewF), E = inst_end(NewF); I != E; ++I)
@@ -993,7 +1015,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         }
 
         SmallVector<BasicBlock *, 8> PotentialExitBlocks;
-        SmallVector<BasicBlock *, 8> ExitBlocks;
+        SmallPtrSet<BasicBlock *, 8> ExitBlocks;
         L->getExitBlocks(PotentialExitBlocks);
         for(auto a:PotentialExitBlocks) {
 
@@ -1029,7 +1051,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             
             exitblockcheck:
             if (isExit) {
-				ExitBlocks.push_back(a);
+				ExitBlocks.insert(a);
             }
         }
 
@@ -1043,7 +1065,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 			exit(1);
         }
 
-        BasicBlock* ExitBlock = ExitBlocks[0];
+        BasicBlock* ExitBlock = *ExitBlocks.begin(); //[0];
 
         BasicBlock *Header = L->getHeader();
         BasicBlock *Preheader = L->getLoopPreheader();
@@ -1334,8 +1356,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
                     if (false && !dynamic) {
                       scopeMap[val] = entryBuilder.CreateAlloca(val->getType(), size, val->getName()+"_arraycache");
+                      addedStores.insert(scopeMap[val]);
+                      constants.insert(scopeMap[val]);
                     } else {
-					  auto allocation = CallInst::CreateMalloc(entryBuilder.GetInsertBlock(), size->getType(), val->getType(), ConstantInt::get(size->getType(), M->getDataLayout().getTypeAllocSizeInBits(val->getType())/8), size, nullptr, val->getName()+"_arraycache");
+					  auto allocation = CallInst::CreateMalloc(entryBuilder.GetInsertBlock(), size->getType(), val->getType(), ConstantInt::get(size->getType(), M->getDataLayout().getTypeAllocSizeInBits(val->getType())/8), size, nullptr, val->getName()+"_malloccache");
                       entryBuilder.GetInsertBlock()->getInstList().push_back(cast<Instruction>(allocation));
                       addedStores.insert(allocation);
                       constants.insert(allocation);
@@ -2501,7 +2525,7 @@ void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI) {//, LoopInfo& LI, Dom
   }
 
   auto newFunc = CreatePrimalAndGradient(cast<Function>(fn), constants, TLI, /*should return*/false);//, LI, DT);
-
+  newFunc->dump();
   Builder.setFastMathFlags(FastMathFlags::getFast());
 
   Value* diffret = Builder.CreateCall(newFunc, args);
@@ -2561,6 +2585,7 @@ public:
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<TargetLibraryInfoWrapperPass>();
+    AU.addRequiredID(LoopSimplifyID);
   }
 
   bool runOnFunction(Function &F) override {
@@ -2574,6 +2599,7 @@ char LowerAutodiffIntrinsic::ID = 0;
 INITIALIZE_PASS_BEGIN(LowerAutodiffIntrinsic, "lower-autodiff",
                 "Lower 'autodiff' Intrinsics", false, false)
 
+INITIALIZE_PASS_DEPENDENCY(LoopSimplify)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
