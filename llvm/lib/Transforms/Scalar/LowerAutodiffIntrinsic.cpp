@@ -1261,6 +1261,13 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 return unwrapM(phi->getIncomingValue(0), BuilderM, available, canLookup);
             }
           }
+
+          if (auto inst = dyn_cast<Instruction>(val)) {
+            if (DT.dominates(inst, &*BuilderM.GetInsertPoint())) {
+                return inst;
+            }
+          }
+
             llvm::errs() << "cannot unwrap following " << *val << "\n";
             if (canLookup)
                 return lookupM(val, BuilderM);

@@ -35,39 +35,11 @@ double squa(double x) {
     return relu(min(x, x*x/2));
 }
 
-double squarez(double x) {
-    if (x > 0) {
-        //return cos(x * sin(x));
-        return sqrt(x * sin(x));
-    } else {
-        return 0;
-    }
-}
-
 __attribute__((noinline))
 double ptr(double* __restrict x) {
     return (*x) * (*x);
 }
 */
-
-/*
-#define LEN 3
-__attribute__((noinline))
-double sumsquare(double* __restrict x ) {
-    double sum = 0;
-    for(int i=0; i < LEN; i++) {
-        //sum += x[i];
-        sum += x[i] * x[i];
-    }
-    return sum;
-}
-
-double square(double x) {
-   double ar[LEN] = {x};
-   return sumsquare(ar);
-}
-*/
-
 
 /*
 __attribute__((noinline))
@@ -77,27 +49,6 @@ double times(double x, int y) {
 
 double square(double x) {
     return times(x, 2);
-}
-*/
-
-/*
-__attribute__((noinline))
-double sumsquare(double* __restrict x, int n) {
-    double sum = 0;
-    #pragma clang loop vectorize(disable)
-    for(int i=0; i < n; i++) {
-        //sum += x[i];
-        //printf("running iteration %d\n", i);
-        sum += x[i] * x[i];
-    }
-    //printf("returning sum\n");
-    return sum;
-}
-
-double square(double x) {
-   int n = 6;
-   double ar[6] = {1, x, x*x, x*x*x, x*x*x*x, x*x*x*x*x};//, x*x*x*x*x*x};
-   return sumsquare(ar, n);
 }
 */
 
@@ -262,104 +213,6 @@ int main(int argc, char** argv) {
 #endif
 
 #if 0
-
-static double f(double x) {
-  for(int i=1; i<5; i++) {
-    x = sin(cos(x));
-  }
-  return x;
-}
-
-__attribute__((noinline))
-static double loop(double x, int n) {
-  double r = x/x;
-
-  for(int i=1; i<n; i++) {
-    r *= f(x);
-  }
-  return sin(cos(r));
-}
-
-static double test(double x) {
-  return loop(x, 3);
-}
-
-__attribute__((noinline))
-double logsumexp(double *x, int n) {
-  double A = x[0];
-  for(int i=0; i<n; i++) {
-    A = max(A, x[i]);
-  }
-  double ema[n];
-  for(int i=0; i<n; i++) {
-    ema[i] = exp(x[i] - A);
-  }
-  double sema = 0;
-  for(int i=0; i<n; i++)
-    sema += ema[i];
-  return log(sema) + A;
-}
-
-
-double test2(double x) {
-  double rands[100000];
-  for(int i=0; i<100000; i++) {
-    rands[i] = i * x;
-  }
-  return logsumexp(rands, 100000);
-}
-
-/*
-int main0(int argc, char** argv) {
-
-  {
-  struct timeval start, end;
-  gettimeofday(&start, NULL);
-
-  double res = test(2);
-
-  gettimeofday(&end, NULL);
-  printf("%0.6f res=%f\n", tdiff(&start, &end), res);
-  }
-
-  {
-  struct timeval start, end;
-  gettimeofday(&start, NULL);
-
-  double res = __builtin_autodiff(test, 2);
-
-  gettimeofday(&end, NULL);
-  printf("%0.6f res'=%f\n", tdiff(&start, &end), res);
-  }
-}
-*/
-
-int main(int argc, char** argv) {
-
-  {
-  struct timeval start, end;
-  gettimeofday(&start, NULL);
-
-  double res = test2(2);
-
-  gettimeofday(&end, NULL);
-  printf("%0.6f res=%f\n", tdiff(&start, &end), res);
-  }
-
-  {
-  struct timeval start, end;
-  gettimeofday(&start, NULL);
-
-  double res = __builtin_autodiff(test2, 2);
-
-  gettimeofday(&end, NULL);
-  printf("%0.6f res'=%f\n", tdiff(&start, &end), res);
-  }
-}
-
-#endif
-
-#if 0
 void matvec(size_t N, size_t M, double* mat, double* vec, double* out) {
   for(int i=0; i<N; i++) {
     out[i] = 0;
@@ -460,35 +313,6 @@ int main(int argc, char** argv) {
 }
 #endif
 
-#if 0
-double add(double a, double b) {
-  return a + b;
-}
-
-int main(int argc, char** argv) {
-
-  {
-  struct timeval start, end;
-  gettimeofday(&start, NULL);
-
-  double res = add(2., 3.);
-
-  gettimeofday(&end, NULL);
-  printf("%0.6f res=%f\n", tdiff(&start, &end), res);
-  }
-
-  {
-  struct timeval start, end;
-  gettimeofday(&start, NULL);
-
-  double res = __builtin_autodiff(add, 2., 3.);
-
-  gettimeofday(&end, NULL);
-  printf("%0.6f res'=%f\n", tdiff(&start, &end), res);
-  }
-}
-
-#endif
 
 #if 0
 static double max(double x, double y) {
