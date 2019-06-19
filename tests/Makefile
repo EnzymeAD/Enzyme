@@ -26,7 +26,7 @@ test.o: test2.ll
 
 clean:
 	rm -f test.ll test2.ll test.o testo.ll test.S test1.ll testa.ll testb.ll testc.ll test0.ll testd.ll teste.ll
-	rm -f eigen.ll eigen2.ll eigen.o eigeno.ll eigein1.ll eigena.ll eigenb.ll eigenc.ll eigen0.ll eigend.ll eigene.ll
+	rm -f eigen.ll eigen1.ll eigen2.ll eigen.o eigeno.ll eigein1.ll eigena.ll eigenb.ll eigenc.ll eigen0.ll eigend.ll eigene.ll
 
 
 eigen.ll: eigen.cpp

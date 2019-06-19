@@ -215,6 +215,21 @@ const Instruction* BasicBlock::getFirstNonPHIOrDbgOrLifetime() const {
   return nullptr;
 }
 
+const Instruction* BasicBlock::getFirstNonPHIOrDbgOrLifetimeOrAlloca() const {
+  for (const Instruction &I : *this) {
+    if (isa<PHINode>(I) || isa<DbgInfoIntrinsic>(I) || isa<AllocaInst>(I))
+      continue;
+
+    if (auto *II = dyn_cast<IntrinsicInst>(&I))
+      if (II->getIntrinsicID() == Intrinsic::lifetime_start ||
+          II->getIntrinsicID() == Intrinsic::lifetime_end)
+        continue;
+
+    return &I;
+  }
+  return nullptr;
+}
+
 BasicBlock::const_iterator BasicBlock::getFirstInsertionPt() const {
   const Instruction *FirstNonPHI = getFirstNonPHI();
   if (!FirstNonPHI)
