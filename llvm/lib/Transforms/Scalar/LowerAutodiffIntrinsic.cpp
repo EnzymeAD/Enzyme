@@ -1025,7 +1025,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
   
   SmallPtrSet<Instruction*, 10> originalInstructions;
 
-  SmallVector<Value*, 4> mallocCalls;
   SmallVector<Value*, 4> dynamicMallocCalls;
 
   auto isconstant = [&](Value* val) -> bool {
@@ -1200,7 +1199,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             exit(1);
     };
 
-    lookupM = [&getContext,&scopeMap,&mallocCalls,&reverseBlocks,&unwrapM,&entryBuilder,&dynamicMallocCalls](Value* val, IRBuilder<>& BuilderM) -> Value* {
+    lookupM = [&getContext,&scopeMap,&reverseBlocks,&unwrapM,&entryBuilder,&dynamicMallocCalls](Value* val, IRBuilder<>& BuilderM) -> Value* {
         auto M = BuilderM.GetInsertBlock()->getParent()->getParent();
         if (auto inst = dyn_cast<Instruction>(val)) {
             assert(reverseBlocks.count(BuilderM.GetInsertBlock()) == 0);
@@ -1254,7 +1253,13 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 					bool allocateJustBeforeLoop = false;
                     IRBuilder <> allocationBuilder(entryBuilder);
 
+                    BasicBlock* outermostPreheader = nullptr;
+
                     for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx) ) {
+                        if (idx.parent == nullptr) {
+                            outermostPreheader = idx.preheader;
+                        }
+
 					  //TODO handle allocations for dynamic loops
 					  if (idx.dynamic && idx.parent != nullptr) {
                         llvm::errs() << *idx.var->getParent()->getParent() << "\n"
@@ -1306,8 +1311,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                       	dynamicMallocCalls.push_back(scopeMap[val]);
 					  	scopeMap[val] = allocation;
 
-                      	mallocCalls.push_back(allocation);
-
 					    auto allocation = CallInst::CreateMalloc(entryBuilder.GetInsertBlock(), size->getType(), val->getType(), ConstantInt::get(size->getType(), M->getDataLayout().getTypeAllocSizeInBits(val->getType())/8), size, nullptr, val->getName()+"_malloccache");
                         entryBuilder.GetInsertBlock()->getInstList().push_back(cast<Instruction>(allocation));
 
@@ -1322,7 +1325,23 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 					    auto allocation = CallInst::CreateMalloc(entryBuilder.GetInsertBlock(), size->getType(), val->getType(), ConstantInt::get(size->getType(), entryBuilder.GetInsertBlock()->getParent()->getParent()->getDataLayout().getTypeAllocSizeInBits(val->getType())/8), size, nullptr, val->getName()+"_malloccache");
                         entryBuilder.GetInsertBlock()->getInstList().push_back(cast<Instruction>(allocation));
 					  	scopeMap[val] = allocation;
-                      	mallocCalls.push_back(allocation);
+
+                        IRBuilder<> tbuild(reverseBlocks[outermostPreheader]);
+                        tbuild.setFastMathFlags(FastMathFlags::getFast());
+
+                        // ensure we are before the terminator if it exists
+                        if (tbuild.GetInsertBlock()->size()) {
+                              tbuild.SetInsertPoint(&tbuild.GetInsertBlock()->back());
+                        }
+
+
+                        auto ci = CallInst::CreateFree(tbuild.CreatePointerCast(allocation, Type::getInt8PtrTy(allocation->getContext())), tbuild.GetInsertBlock());
+                        if (ci->getParent()==nullptr) {
+                            tbuild.GetInsertBlock()->getInstList().push_back(cast<Instruction>(ci));
+                        }
+                        if (ci != &tbuild.GetInsertBlock()->back());
+                            ci->moveBefore(&tbuild.GetInsertBlock()->back());
+
                       }
                     }
 
@@ -1678,13 +1697,13 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     BB2->getInstList().push_front(loopContext.antivar);
 
     IRBuilder<> tbuild(reverseBlocks[loopContext.exit]);
+    tbuild.setFastMathFlags(FastMathFlags::getFast());
 
     // ensure we are before the terminator if it exists
     if (reverseBlocks[loopContext.exit]->size()) {
       tbuild.SetInsertPoint(&reverseBlocks[loopContext.exit]->back());
     }
 
-    tbuild.setFastMathFlags(FastMathFlags::getFast());
     loopContext.antivar->addIncoming(lookupM(loopContext.limit, tbuild), reverseBlocks[loopContext.exit]);
     auto sub = Builder2.CreateSub(loopContext.antivar, ConstantInt::get(loopContext.antivar->getType(), 1));
     for(BasicBlock* in: successors(loopContext.latch) ) {
@@ -2150,12 +2169,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     }
     for(auto b : dynamicMallocCalls) {
 	  auto a = Builder2.CreateLoad(b);
-      auto ci = CallInst::CreateFree(Builder2.CreatePointerCast(a, Type::getInt8PtrTy(Context)), Builder2.GetInsertBlock());
-      if (ci->getParent()==nullptr) {
-        Builder2.GetInsertBlock()->getInstList().push_back(cast<Instruction>(ci));
-      }
-    }
-    for(auto a : mallocCalls) {
       auto ci = CallInst::CreateFree(Builder2.CreatePointerCast(a, Type::getInt8PtrTy(Context)), Builder2.GetInsertBlock());
       if (ci->getParent()==nullptr) {
         Builder2.GetInsertBlock()->getInstList().push_back(cast<Instruction>(ci));
