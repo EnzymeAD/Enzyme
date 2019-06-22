@@ -50,14 +50,14 @@ attributes #2 = { nounwind }
 
 ; CHECK: define internal {} @diffeiterA(double* noalias nocapture readonly %x, double* %"x'", i64 %n)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %malloccall = tail call i8* @malloc(i64 %n)
-; CHECK-NEXT:   %cmp.i_malloccache = bitcast i8* %malloccall to i1*
 ; CHECK-NEXT:   %0 = load double, double* %x, align 8, !tbaa !2
 ; CHECK-NEXT:   %exitcond11 = icmp eq i64 %n, 0
 ; CHECK-NEXT:   br i1 %exitcond11, label %invertfor.cond.cleanup, label %for.body.for.body_crit_edge.preheader
 
 ; CHECK: for.body.for.body_crit_edge.preheader:            ; preds = %entry
 ; CHECK-NEXT:   %1 = add i64 %n, -1
+; CHECK-NEXT:   %malloccall = tail call i8* @malloc(i64 %n)
+; CHECK-NEXT:   %cmp.i_malloccache = bitcast i8* %malloccall to i1*
 ; CHECK-NEXT:   br label %for.body.for.body_crit_edge
 
 ; CHECK: for.body.for.body_crit_edge:                      ; preds = %for.body.for.body_crit_edge, %for.body.for.body_crit_edge.preheader
@@ -81,30 +81,32 @@ attributes #2 = { nounwind }
 ; CHECK-NEXT:   ret {} undef
 
 ; CHECK: invertfor.body.for.body_crit_edge.preheader:      ; preds = %invertfor.body.for.body_crit_edge
-; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall)
+; CHECK-NEXT:   %7 = bitcast i1* %cmp.i_mdyncache.0 to i8*
+; CHECK-NEXT:   tail call void @free(i8* %7)
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertfor.cond.cleanup.loopexit:                  ; preds = %invertfor.cond.cleanup
-; CHECK-NEXT:   %7 = add i64 %n, -1
+; CHECK-NEXT:   %8 = add i64 %n, -1
 ; CHECK-NEXT:   br label %invertfor.body.for.body_crit_edge
 
 ; CHECK: invertfor.cond.cleanup:                           ; preds = %for.body.for.body_crit_edge, %entry
-; CHECK-NEXT:   %8 = xor i1 %exitcond11, true
-; CHECK-NEXT:   br i1 %8, label %invertfor.cond.cleanup.loopexit, label %invertentry
+; CHECK-NEXT:   %cmp.i_mdyncache.0 = phi i1* [ undef, %entry ], [ %cmp.i_malloccache, %for.body.for.body_crit_edge ]
+; CHECK-NEXT:   %9 = xor i1 %exitcond11, true
+; CHECK-NEXT:   br i1 %9, label %invertfor.cond.cleanup.loopexit, label %invertentry
 
 ; CHECK: invertfor.body.for.body_crit_edge:                ; preds = %invertfor.cond.cleanup.loopexit, %invertfor.body.for.body_crit_edge
 ; CHECK-NEXT:   %"cond.i'de.0" = phi double [ 1.000000e+00, %invertfor.cond.cleanup.loopexit ], [ %diffecond.i12, %invertfor.body.for.body_crit_edge ]
-; CHECK-NEXT:   %"indvar'phi" = phi i64 [ %7, %invertfor.cond.cleanup.loopexit ], [ %9, %invertfor.body.for.body_crit_edge ]
-; CHECK-NEXT:   %9 = sub i64 %"indvar'phi", 1
-; CHECK-NEXT:   %10 = getelementptr i1, i1* %cmp.i_malloccache, i64 %"indvar'phi"
-; CHECK-NEXT:   %11 = load i1, i1* %10
-; CHECK-NEXT:   %diffecond.i12 = select i1 %11, double %"cond.i'de.0", double 0.000000e+00
-; CHECK-NEXT:   %diffe.pre = select i1 %11, double 0.000000e+00, double %"cond.i'de.0"
-; CHECK-NEXT:   %12 = add i64 %"indvar'phi", 1
-; CHECK-NEXT:   %"arrayidx2.phi.trans.insert'ip" = getelementptr double, double* %"x'", i64 %12
-; CHECK-NEXT:   %13 = load double, double* %"arrayidx2.phi.trans.insert'ip"
-; CHECK-NEXT:   %14 = fadd fast double %13, %diffe.pre
-; CHECK-NEXT:   store double %14, double* %"arrayidx2.phi.trans.insert'ip"
-; CHECK-NEXT:   %15 = icmp ne i64 %"indvar'phi", 0
-; CHECK-NEXT:   br i1 %15, label %invertfor.body.for.body_crit_edge, label %invertfor.body.for.body_crit_edge.preheader
+; CHECK-NEXT:   %"indvar'phi" = phi i64 [ %8, %invertfor.cond.cleanup.loopexit ], [ %10, %invertfor.body.for.body_crit_edge ]
+; CHECK-NEXT:   %10 = sub i64 %"indvar'phi", 1
+; CHECK-NEXT:   %11 = getelementptr i1, i1* %cmp.i_mdyncache.0, i64 %"indvar'phi"
+; CHECK-NEXT:   %12 = load i1, i1* %11
+; CHECK-NEXT:   %diffecond.i12 = select i1 %12, double %"cond.i'de.0", double 0.000000e+00
+; CHECK-NEXT:   %diffe.pre = select i1 %12, double 0.000000e+00, double %"cond.i'de.0"
+; CHECK-NEXT:   %13 = add i64 %"indvar'phi", 1
+; CHECK-NEXT:   %"arrayidx2.phi.trans.insert'ip" = getelementptr double, double* %"x'", i64 %13
+; CHECK-NEXT:   %14 = load double, double* %"arrayidx2.phi.trans.insert'ip"
+; CHECK-NEXT:   %15 = fadd fast double %14, %diffe.pre
+; CHECK-NEXT:   store double %15, double* %"arrayidx2.phi.trans.insert'ip"
+; CHECK-NEXT:   %16 = icmp ne i64 %"indvar'phi", 0
+; CHECK-NEXT:   br i1 %16, label %invertfor.body.for.body_crit_edge, label %invertfor.body.for.body_crit_edge.preheader
 ; CHECK-NEXT: }

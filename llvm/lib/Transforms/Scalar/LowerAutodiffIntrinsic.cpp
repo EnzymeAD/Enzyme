@@ -1249,7 +1249,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                     Value* size = nullptr;
                     bool dynamic = false;
 					bool allocateJustBeforeLoop = false;
-                    IRBuilder <> allocationBuilder(entryBuilder);
 
                     BasicBlock* outermostPreheader = nullptr;
 
@@ -1257,7 +1256,12 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                         if (idx.parent == nullptr) {
                             outermostPreheader = idx.preheader;
                         }
+                        if (idx.parent == nullptr) break;
+                    }
 
+                    IRBuilder <> allocationBuilder(&outermostPreheader->back());
+
+                    for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx) ) {
 					  //TODO handle allocations for dynamic loops
 					  if (idx.dynamic && idx.parent != nullptr) {
                         llvm::errs() << *idx.var->getParent()->getParent() << "\n"
@@ -1273,11 +1277,13 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 					  } else {
                         Value* limitm1;
                         limitm1 = unwrapM(idx.limit, allocationBuilder, emptyMap, /*canLookup*/false);
+#if 0
                         if (limitm1 == nullptr) {
                             allocateJustBeforeLoop = true;
                             allocationBuilder.SetInsertPoint(&lc.preheader->back());
                             limitm1 = unwrapM(idx.limit, allocationBuilder, emptyMap, /*canLookup*/false);
                         }
+#endif
                         assert(limitm1);
 						ns = allocationBuilder.CreateNUWAdd(limitm1, ConstantInt::get(idx.limit->getType(), 1));
 					  }
@@ -1295,8 +1301,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                         entryBuilder.GetInsertBlock()->getInstList().push_back(cast<Instruction>(allocation));
 
                       	scopeMap[val] = entryBuilder.CreateAlloca(allocation->getType(), nullptr, val->getName()+"_dyncache");
-					    auto st = entryBuilder.CreateStore(allocation, scopeMap[val]);	
+					    entryBuilder.CreateStore(allocation, scopeMap[val]);	
                         
+                        IRBuilder<> tbuild(reverseBlocks[outermostPreheader]);
+                        tbuild.setFastMathFlags(FastMathFlags::getFast());
                         // ensure we are before the terminator if it exists
                         if (tbuild.GetInsertBlock()->size()) {
                               tbuild.SetInsertPoint(&tbuild.GetInsertBlock()->back());
@@ -1306,7 +1314,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                         if (ci->getParent()==nullptr) {
                             tbuild.GetInsertBlock()->getInstList().push_back(cast<Instruction>(ci));
                         }
-                        if (ci != &tbuild.GetInsertBlock()->back());
+                        if (ci != &tbuild.GetInsertBlock()->back())
                             ci->moveBefore(&tbuild.GetInsertBlock()->back());
                       } else if (allocateJustBeforeLoop) {
                     #if 0
@@ -1328,9 +1336,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 #endif
                         assert(0 && "allocation just before loop not yet handled");
                       } else {
-					    auto allocation = CallInst::CreateMalloc(entryBuilder.GetInsertBlock(), size->getType(), val->getType(), ConstantInt::get(size->getType(), entryBuilder.GetInsertBlock()->getParent()->getParent()->getDataLayout().getTypeAllocSizeInBits(val->getType())/8), size, nullptr, val->getName()+"_malloccache");
-                        entryBuilder.GetInsertBlock()->getInstList().push_back(cast<Instruction>(allocation));
-					  	scopeMap[val] = allocation;
+					    auto allocation = CallInst::CreateMalloc(&allocationBuilder.GetInsertBlock()->back(), size->getType(), val->getType(), ConstantInt::get(size->getType(), allocationBuilder.GetInsertBlock()->getParent()->getParent()->getDataLayout().getTypeAllocSizeInBits(val->getType())/8), size, nullptr, val->getName()+"_malloccache");
+                        //allocationBuilder.GetInsertBlock()->getInstList().push_back(cast<Instruction>(allocation));
+                        cast<Instruction>(allocation)->moveBefore(allocationBuilder.GetInsertBlock()->getTerminator());
+                        scopeMap[val] = entryBuilder.CreateAlloca(allocation->getType(), nullptr, val->getName()+"_mdyncache");
+					    allocationBuilder.CreateStore(allocation, scopeMap[val]);	
 
                         IRBuilder<> tbuild(reverseBlocks[outermostPreheader]);
                         tbuild.setFastMathFlags(FastMathFlags::getFast());
@@ -1339,12 +1349,13 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                         if (tbuild.GetInsertBlock()->size()) {
                               tbuild.SetInsertPoint(&tbuild.GetInsertBlock()->back());
                         }
+                      	
 
-                        auto ci = CallInst::CreateFree(tbuild.CreatePointerCast(allocation, Type::getInt8PtrTy(allocation->getContext())), tbuild.GetInsertBlock());
+                        auto ci = CallInst::CreateFree(tbuild.CreatePointerCast(tbuild.CreateLoad(scopeMap[val]), Type::getInt8PtrTy(allocation->getContext())), tbuild.GetInsertBlock());
                         if (ci->getParent()==nullptr) {
                             tbuild.GetInsertBlock()->getInstList().push_back(cast<Instruction>(ci));
                         }
-                        if (ci != &tbuild.GetInsertBlock()->back());
+                        if (ci != &tbuild.GetInsertBlock()->back())
                             ci->moveBefore(&tbuild.GetInsertBlock()->back());
 
                       }
@@ -1358,9 +1369,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                     SmallVector<Value*,3> limits;
 					BasicBlock* dynamicHeader = nullptr;
 					PHINode* dynamicPHI = nullptr;
+
                     for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx) ) {
                       indices.push_back(idx.var);
-
+                        
 					  if (idx.dynamic) {
 						dynamicHeader = idx.header;
 						dynamicPHI = idx.var;
@@ -1391,9 +1403,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
 					Value* allocation = nullptr;
 					if (dynamicHeader == nullptr) {
-						allocation = scopeMap[val];
+						//allocation = scopeMap[val];
+						IRBuilder<> outerBuilder(&outermostPreheader->back());
+						allocation = outerBuilder.CreateLoad(scopeMap[val]);
 					} else {
-						IRBuilder<> headB(dynamicHeader->getFirstNonPHIOrDbgOrLifetime ());
+						IRBuilder<> headB(&dynamicHeader->back());
 						Type *BPTy = Type::getInt8PtrTy(dynamicHeader->getContext());
 						auto realloc = M->getOrInsertFunction("realloc", BPTy, BPTy, size->getType());
 						allocation = headB.CreateLoad(scopeMap[val]);
@@ -1447,10 +1461,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
                 Value* idxs[] = {idx};
 				Value* tolookup = nullptr;
-				if (dynamic)
+
+                //if (dynamic)
 					tolookup = BuilderM.CreateLoad(scopeMap[val]);
-				else
-					tolookup = scopeMap[val];
+				//else
+				//	tolookup = scopeMap[val];
                 return BuilderM.CreateLoad(BuilderM.CreateGEP(tolookup, idxs));
             }
         }
@@ -1668,7 +1683,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     };
 
   auto term = BB->getTerminator();
-
+  if (term == nullptr) {
+    BB->dump();
+  }
+  assert(term);
   if(auto op = dyn_cast<ReturnInst>(term)) {
       auto retval = op->getReturnValue();
       IRBuilder<> rb(op);
