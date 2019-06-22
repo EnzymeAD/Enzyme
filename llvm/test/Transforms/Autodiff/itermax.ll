@@ -84,7 +84,7 @@ attributes #2 = { nounwind }
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall)
 ; CHECK-NEXT:   br label %invertentry
 
-; CHECK-NEXT: invertfor.cond.cleanup.loopexit:                  ; preds = %invertfor.cond.cleanup
+; CHECK: invertfor.cond.cleanup.loopexit:                  ; preds = %invertfor.cond.cleanup
 ; CHECK-NEXT:   %7 = add i64 %n, -1
 ; CHECK-NEXT:   br label %invertfor.body.for.body_crit_edge
 
