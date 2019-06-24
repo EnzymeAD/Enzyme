@@ -1,3 +1,5 @@
+#define EIGEN_UNROLLING_LIMIT 0
+
 #include <eigen3/Eigen/Dense>
 
 #include <math.h>

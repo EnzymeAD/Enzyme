@@ -83,6 +83,7 @@ static inline DIFFE_TYPE whatType(llvm::Type* arg) {
       case DIFFE_TYPE::DUP_ARG:
         return DIFFE_TYPE::DUP_ARG;
     }
+    assert(arg);
     llvm::errs() << "arg: " << *arg << "\n";
     assert(0 && "Cannot handle type0");
     return DIFFE_TYPE::CONSTANT;
@@ -130,6 +131,7 @@ static inline DIFFE_TYPE whatType(llvm::Type* arg) {
   } else if  (arg->isFPOrFPVectorTy()) {
     return DIFFE_TYPE::OUT_DIFF;
   } else {
+    assert(arg);
     llvm::errs() << "arg: " << *arg << "\n";
     assert(0 && "Cannot handle type");
     return DIFFE_TYPE::CONSTANT;
@@ -190,6 +192,7 @@ static constexpr bool printconst = false;
 // TODO separate if the instruction is constant (i.e. could change things)
 //    from if the value is constant (the value is something that could be differentiated)
 bool isconstantM(Value* val, SmallPtrSetImpl<Value*> &constants, SmallPtrSetImpl<Value*> &nonconstant, const SmallPtrSetImpl<Instruction*> &originalInstructions, uint8_t directions=3) {
+    assert(val);
 	constexpr uint8_t UP = 1;
 	constexpr uint8_t DOWN = 2;
 	assert(directions >= 0);
@@ -892,10 +895,15 @@ bool getContextM(BasicBlock *BB, LoopContext &loopContext, std::map<Loop*,LoopCo
         }
 
         if (ExitBlocks.size() != 1) {
+            assert(BB);
+            assert(BB->getParent());
+            assert(L);
             llvm::errs() << *BB->getParent() << "\n";
             llvm::errs() << *L << "\n";
-			for(auto b:ExitBlocks)
+			for(auto b:ExitBlocks) {
+                assert(b);
                 llvm::errs() << *b << "\n";
+            }
 			llvm::errs() << "offending: \n";
 			llvm::errs() << "No unique exit block (1)\n";
 			//exit(1);
@@ -1090,7 +1098,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     assert(BB2);
 
     std::function<Value*(Value*,IRBuilder<>&)> lookupM;
-    std::function<Value*(Value*,IRBuilder<>&, const ValueToValueMapTy&,bool)> unwrapM = [&lookupM,&getContext,&DT,&unwrapM,&inversionAllocs](Value* val, IRBuilder<>& BuilderM, const ValueToValueMapTy& available, bool canLookup) -> Value* {
+    std::function<Value*(Value*,IRBuilder<>&, const ValueToValueMapTy&,bool)> unwrapM = [&lookupM,&getContext,&DT,&unwrapM,&inversionAllocs,&reverseBlocks](Value* val, IRBuilder<>& BuilderM, const ValueToValueMapTy& available, bool canLookup) -> Value* {
           assert(val);
           if (available.count(val)) {
             return available.lookup(val);
@@ -1167,13 +1175,14 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             }
           }
 
+            assert(val);
             llvm::errs() << "cannot unwrap following " << *val << "\n";
             if (canLookup)
                 return lookupM(val, BuilderM);
           
           if (auto inst = dyn_cast<Instruction>(val)) {
             LoopContext lc;
-            if (BuilderM.GetInsertBlock() != inversionAllocs && !getContext(inst->getParent(), lc)) {
+            if (BuilderM.GetInsertBlock() != inversionAllocs && !( (reverseBlocks.find(BuilderM.GetInsertBlock()) != reverseBlocks.end())  && /*inLoop*/getContext(inst->getParent(), lc)) ) {
                 if (BuilderM.GetInsertBlock()->size() && BuilderM.GetInsertPoint() != BuilderM.GetInsertBlock()->end()) {
                     //BuilderM.GetInsertBlock()->dump();
                     //BuilderM.GetInsertPoint()->dump();
@@ -1248,7 +1257,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                     ValueToValueMapTy valmap;
                     Value* size = nullptr;
                     bool dynamic = false;
-					bool allocateJustBeforeLoop = false;
 
                     BasicBlock* outermostPreheader = nullptr;
 
@@ -1258,12 +1266,16 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                         }
                         if (idx.parent == nullptr) break;
                     }
+                    assert(outermostPreheader);
 
                     IRBuilder <> allocationBuilder(&outermostPreheader->back());
 
                     for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx) ) {
 					  //TODO handle allocations for dynamic loops
 					  if (idx.dynamic && idx.parent != nullptr) {
+                        assert(idx.var);
+                        assert(idx.var->getParent());
+                        assert(idx.var->getParent()->getParent());
                         llvm::errs() << *idx.var->getParent()->getParent() << "\n"
                             << "idx.var=" <<*idx.var << "\n"
                             << "idx.limit=" <<*idx.limit << "\n";
@@ -1275,7 +1287,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 						ns = ConstantInt::get(idx.limit->getType(), 1);
                         dynamic = true;
 					  } else {
-                        Value* limitm1;
+                        Value* limitm1 = nullptr;
                         limitm1 = unwrapM(idx.limit, allocationBuilder, emptyMap, /*canLookup*/false);
 #if 0
                         if (limitm1 == nullptr) {
@@ -1284,6 +1296,12 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                             limitm1 = unwrapM(idx.limit, allocationBuilder, emptyMap, /*canLookup*/false);
                         }
 #endif
+                        if (limitm1 == nullptr) {
+                            assert(outermostPreheader);
+                            assert(outermostPreheader->getParent());
+                            llvm::errs() << *outermostPreheader->getParent() << "\n";
+                            llvm::errs() << "needed value " << *idx.limit << " at " << allocationBuilder.GetInsertBlock()->getName() << "\n";
+                        }
                         assert(limitm1);
 						ns = allocationBuilder.CreateNUWAdd(limitm1, ConstantInt::get(idx.limit->getType(), 1));
 					  }
@@ -1292,7 +1310,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                       if (idx.parent == nullptr) break;
                     }
 
-                    if (false && !allocateJustBeforeLoop) {
+                    if (false) {
                       scopeMap[val] = entryBuilder.CreateAlloca(val->getType(), size, val->getName()+"_arraycache");
                     } else {
 
@@ -1316,25 +1334,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                         }
                         if (ci != &tbuild.GetInsertBlock()->back())
                             ci->moveBefore(&tbuild.GetInsertBlock()->back());
-                      } else if (allocateJustBeforeLoop) {
-                    #if 0
-                        //TODO redo whole allocation of loops mechanism
-					    auto allocation = CallInst::CreateMalloc(entryBuilder.GetInsertBlock(), size->getType(), val->getType(), ConstantInt::get(size->getType(), M->getDataLayout().getTypeAllocSizeInBits(val->getType())/8), size, nullptr, val->getName()+"_malloccache");
-                        allocationBuilder.GetInsertBlock()->getInstList().push_back(cast<Instruction>(allocation));
-
-                      	scopeMap[val] = entryBuilder.CreateAlloca(allocation->getType(), nullptr, val->getName()+"_dyncache");
-					    auto st = entryBuilder.CreateStore(allocation, scopeMap[val]);	
-					  	scopeMap[val] = allocation;
-
-					    auto allocation = CallInst::CreateMalloc(entryBuilder.GetInsertBlock(), size->getType(), val->getType(), ConstantInt::get(size->getType(), M->getDataLayout().getTypeAllocSizeInBits(val->getType())/8), size, nullptr, val->getName()+"_malloccache");
-                        entryBuilder.GetInsertBlock()->getInstList().push_back(cast<Instruction>(allocation));
-
-                      	scopeMap[val] = entryBuilder.CreateAlloca(allocation->getType(), nullptr, val->getName()+"_dyncache");
-					    auto st = entryBuilder.CreateStore(allocation, scopeMap[val]);	
-
-
-#endif
-                        assert(0 && "allocation just before loop not yet handled");
                       } else {
 					    auto allocation = CallInst::CreateMalloc(&allocationBuilder.GetInsertBlock()->back(), size->getType(), val->getType(), ConstantInt::get(size->getType(), allocationBuilder.GetInsertBlock()->getParent()->getParent()->getDataLayout().getTypeAllocSizeInBits(val->getType())/8), size, nullptr, val->getName()+"_malloccache");
                         //allocationBuilder.GetInsertBlock()->getInstList().push_back(cast<Instruction>(allocation));
@@ -1376,6 +1375,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 					  if (idx.dynamic) {
 						dynamicHeader = idx.header;
 						dynamicPHI = idx.var;
+                        assert(dynamicPHI);
 						llvm::errs() << "saw idx.dynamic:" << *dynamicPHI << "\n";
 						assert(idx.parent == nullptr);
 						break;
@@ -1578,7 +1578,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
         return lookupM(invertedPointers[inst], BuilderM);
       } else if (auto call = dyn_cast<CallInst>(val)) {
-        if (call->getCalledFunction()->getName() == "malloc") {
+        if (call->getCalledFunction() && call->getCalledFunction()->getName() == "malloc") {
                 IRBuilder<> bb(call);
                 {
                 SmallVector<Value*, 8> args;
@@ -1651,9 +1651,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       } else if (auto cint = dyn_cast<ConstantInt>(val)) {
 		 if (cint->isZero()) return cint;
 	  }
-
+        assert(BuilderM.GetInsertBlock());
+        assert(BuilderM.GetInsertBlock()->getParent());
+        assert(val);
         llvm::errs() << "fn:" << *BuilderM.GetInsertBlock()->getParent() << "\nval=" << *val << "\n";
-        assert(0 && "cannot find deal with ptr that isnt arg");
+        report_fatal_error("cannot find deal with ptr that isnt arg");
       
     };
 
@@ -1671,8 +1673,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       } else if(old->getType()->isFPOrFPVectorTy()) {
         res = Builder2.CreateFAdd(old, dif);
       } else {
+        assert(newFunc);
+        assert(old);
+        assert(dif);
         llvm::errs() << *newFunc << "\n" << "cannot handle type " << *old << "\n" << *dif;
-        exit(1);
+        report_fatal_error("cannot handle type");
       }
       Builder2.CreateStore(res, ptr);
     };
@@ -1683,9 +1688,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     };
 
   auto term = BB->getTerminator();
-  if (term == nullptr) {
-    BB->dump();
-  }
   assert(term);
   if(auto op = dyn_cast<ReturnInst>(term)) {
       auto retval = op->getReturnValue();
@@ -1711,6 +1713,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
   } else if (isa<UnreachableInst>(term)) {
   
   } else {
+    assert(BB);
+    assert(BB->getParent());
+    assert(term);
     llvm::errs() << *BB->getParent() << "\n";
     llvm::errs() << "unknown terminator instance " << *term << "\n";
     assert(0 && "unknown terminator inst");
@@ -1740,9 +1745,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
   if (!isa<UnreachableInst>(term))
   for (auto I = BB->rbegin(), E = BB->rend(); I != E;) {
     Instruction* inst = &*I;
+    assert(inst);
     I++;
     if (originalInstructions.find(inst) == originalInstructions.end()) continue;
-    //llvm::errs() << " considering " << *inst << "\n";
     if (isconstant(inst)) continue;
 
     if (auto op = dyn_cast<BinaryOperator>(inst)) {
@@ -1782,6 +1787,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
           break;
 
         default:
+          assert(newFunc);
+          assert(op);
           llvm::errs() << *newFunc << "\n";
           llvm::errs() << "cannot handle unknown binary operator: " << *op << "\n";
           assert(0 && "unknown binary operator");
@@ -1809,6 +1816,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         }
         case Intrinsic::memset: {
             if (!isConstantValue(op->getOperand(1))) {
+                assert(inst);
                 llvm::errs() << "couldn't handle non constant inst in memset to propagate differential to\n" << *inst;
                 exit(1);
             }
@@ -1924,6 +1932,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
           break;
         }
         default:
+          assert(inst);
           llvm::errs() << "cannot handle unknown intrinsic\n" << *inst;
           assert(0 && "unknown intrinsic");
           exit(1);
@@ -2042,12 +2051,14 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 }
                 //TODO HANDLE FREE
             } else {
+              assert(op);
               llvm::errs() << "cannot handle non invertible function\n" << *op << "\n";
               assert(0 && "unknown non invertible function");
               exit(1);
             }
         } else {
-            llvm::errs() << "cannot handle non const function\n";
+            assert(op);
+            llvm::errs() << "cannot handle non const function in" << *op << "\n";
             assert(0 && "unknown non const function");
             exit(1);
         }
@@ -2077,6 +2088,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         //Builder2.CreateStore(diffe(inst), invertPointer(op->getOperand(0)));//, op->getName()+"'psweird");
         //addToNPtrDiffe(op->getOperand(0), diffe(inst));
         //assert(0 && "cannot handle non const pointer load inversion");
+        assert(op);
 		llvm::errs() << "ignoring load bc pointer of " << *op << "\n";
       }
     } else if(auto op = dyn_cast<StoreInst>(inst)) {
@@ -2091,6 +2103,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 		  }
 		  setPtrDiffe(op->getPointerOperand(), Constant::getNullValue(op->getValueOperand()->getType()));
 	  } else {
+        assert(op);
 		llvm::errs() << "ignoring store bc pointer of " << *op << "\n";
 	  }
       //?necessary if pointer is readwrite
@@ -2159,6 +2172,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     } else if(isa<CmpInst>(inst) || isa<PHINode>(inst) || isa<BranchInst>(inst) || isa<AllocaInst>(inst) || isa<CastInst>(inst) || isa<GetElementPtrInst>(inst)) {
         continue;
     } else {
+      assert(inst);
+      assert(inst->getParent());
+      assert(inst->getParent()->getParent());
       llvm::errs() << *inst->getParent()->getParent() << "\n" << *inst->getParent() << "\n";
       llvm::errs() << "cannot handle above inst " << *inst << "\n";
       assert(0 && "unknown inst");
@@ -2273,17 +2289,14 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               if (auto branch = dyn_cast<BranchInst>(block->getTerminator())) {
                 assert(branch->getCondition());
                 phi = lookup(branch->getCondition());
-				//llvm::errs() << "looke dup phi is " << *phi << " p0:" << preds[0]->getName() << " p1:" << preds[1]->getName() <<"\n";
 				for(unsigned i=0; i<preds.size(); i++) {
 					auto s = branch->getSuccessor(i);
 					assert(s == succs[i]);
 					if (seen[s].size() == 1) {
 						if ( (*seen[s].begin()) != i) {
-							//llvm::errs() << "creating not based off of " << i << " " << s->getName() << "\n";
 							phi = Builder2.CreateNot(phi);
 							break;
 						} else {
-							//llvm::errs() << "creating based off of " << i << " " << s->getName() << "\n";
 							break;
 						}
 					}
@@ -2390,6 +2403,7 @@ void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI) {//, LoopInfo& LI, Dom
     fn = ci->getOperand(0);
   }
   auto FT = cast<Function>(fn)->getFunctionType();
+  assert(fn);
   llvm::errs() << "prefn:\n" << *fn << "\n";
 
   SmallSet<unsigned,4> constants;
@@ -2430,6 +2444,9 @@ void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI) {//, LoopInfo& LI, Dom
             if (auto PT = dyn_cast<PointerType>(PTy)) {
                 if (ptr->getAddressSpace() != PT->getAddressSpace()) {
                     res = Builder.CreateAddrSpaceCast(res, PointerType::get(ptr->getElementType(), PT->getAddressSpace()));
+                    assert(res);
+                    assert(PTy);
+                    assert(FT);
                     llvm::errs() << "Warning cast(1) __builtin_autodiff argument " << i << " " << *res <<"|" << *res->getType()<< " to argument " << truei << " " << *PTy << "\n" << "orig: " << *FT << "\n";
                 }
             }
@@ -2451,11 +2468,18 @@ void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI) {//, LoopInfo& LI, Dom
             if (auto PT = dyn_cast<PointerType>(PTy)) {
                 if (ptr->getAddressSpace() != PT->getAddressSpace()) {
                     res = Builder.CreateAddrSpaceCast(res, PointerType::get(ptr->getElementType(), PT->getAddressSpace()));
+                    assert(res);
+                    assert(PTy);
+                    assert(FT);
                     llvm::errs() << "Warning cast(2) __builtin_autodiff argument " << i << " " << *res <<"|" << *res->getType()<< " to argument " << truei << " " << *PTy << "\n" << "orig: " << *FT << "\n";
                 }
             }
         }
         if (!res->getType()->canLosslesslyBitCastTo(PTy)) {
+          assert(res);
+          assert(res->getType());
+          assert(PTy);
+          assert(FT);
           llvm::errs() << "Cannot cast(2) __builtin_autodiff argument " << i << " " << *res <<"|" << *res->getType()<< " to argument " << truei << " " << *PTy << "\n" << "orig: " << *FT << "\n";
           exit(1);
         }
@@ -2468,6 +2492,7 @@ void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI) {//, LoopInfo& LI, Dom
   }
 
   auto newFunc = CreatePrimalAndGradient(cast<Function>(fn), constants, TLI, /*should return*/false);//, LI, DT);
+  assert(newFunc);
   llvm::errs() << "prefn:\n" << *newFunc << "\n";
   Builder.setFastMathFlags(FastMathFlags::getFast());
 
