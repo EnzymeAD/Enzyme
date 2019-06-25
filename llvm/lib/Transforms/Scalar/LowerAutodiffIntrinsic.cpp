@@ -73,6 +73,7 @@ enum class DIFFE_TYPE {
   CONSTANT=2  // no differential
 };
 
+//note this doesn't handle recursive types!
 static inline DIFFE_TYPE whatType(llvm::Type* arg) {
   if (arg->isPointerTy()) {
     switch(whatType(cast<llvm::PointerType>(arg)->getElementType())) {
@@ -93,35 +94,32 @@ static inline DIFFE_TYPE whatType(llvm::Type* arg) {
     auto st = cast<llvm::StructType>(arg);
     if (st->getNumElements() == 0) return DIFFE_TYPE::CONSTANT;
 
-    auto ty = whatType(st->getElementType(0));
-    for(unsigned i=1; i<st->getNumElements(); i++) {
+    auto ty = DIFFE_TYPE::CONSTANT;
+    for(unsigned i=0; i<st->getNumElements(); i++) {
       switch(whatType(st->getElementType(i))) {
         case DIFFE_TYPE::OUT_DIFF:
               switch(ty) {
                 case DIFFE_TYPE::OUT_DIFF:
                 case DIFFE_TYPE::CONSTANT:
                   ty = DIFFE_TYPE::OUT_DIFF;
+                  break;
                 case DIFFE_TYPE::DUP_ARG:
                   ty = DIFFE_TYPE::DUP_ARG;
+                  return ty;
               }
         case DIFFE_TYPE::CONSTANT:
               switch(ty) {
                 case DIFFE_TYPE::OUT_DIFF:
                   ty = DIFFE_TYPE::OUT_DIFF;
+                  break;
                 case DIFFE_TYPE::CONSTANT:
-                  ty = DIFFE_TYPE::CONSTANT;
+                  break;
                 case DIFFE_TYPE::DUP_ARG:
                   ty = DIFFE_TYPE::DUP_ARG;
+                  return ty;
               }
         case DIFFE_TYPE::DUP_ARG:
-              switch(ty) {
-                case DIFFE_TYPE::OUT_DIFF:
-                  ty = DIFFE_TYPE::DUP_ARG;
-                case DIFFE_TYPE::CONSTANT:
-                  ty = DIFFE_TYPE::DUP_ARG;
-                case DIFFE_TYPE::DUP_ARG:
-                  ty = DIFFE_TYPE::DUP_ARG;
-              }
+            return DIFFE_TYPE::DUP_ARG;
       }
     }
 
@@ -1332,36 +1330,19 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                       if (idx.parent == nullptr) break;
                     }
 
-                    if (false) {
-                      scopeMap[val] = entryBuilder.CreateAlloca(val->getType(), size, val->getName()+"_arraycache");
-                    } else {
-
                       if (dynamic) {
 					    auto allocation = CallInst::CreateMalloc(entryBuilder.GetInsertBlock(), size->getType(), val->getType(), ConstantInt::get(size->getType(), entryBuilder.GetInsertBlock()->getParent()->getParent()->getDataLayout().getTypeAllocSizeInBits(val->getType())/8), size, nullptr, val->getName()+"_malloccache");
                         entryBuilder.GetInsertBlock()->getInstList().push_back(cast<Instruction>(allocation));
 
                       	scopeMap[val] = entryBuilder.CreateAlloca(allocation->getType(), nullptr, val->getName()+"_dyncache");
 					    entryBuilder.CreateStore(allocation, scopeMap[val]);	
-                        
-                        IRBuilder<> tbuild(reverseBlocks[outermostPreheader]);
-                        tbuild.setFastMathFlags(FastMathFlags::getFast());
-                        // ensure we are before the terminator if it exists
-                        if (tbuild.GetInsertBlock()->size()) {
-                              tbuild.SetInsertPoint(&tbuild.GetInsertBlock()->back());
-                        }
-
-                        auto ci = CallInst::CreateFree(tbuild.CreatePointerCast(tbuild.CreateLoad(allocation), Type::getInt8PtrTy(allocation->getContext())), tbuild.GetInsertBlock());
-                        if (ci->getParent()==nullptr) {
-                            tbuild.GetInsertBlock()->getInstList().push_back(cast<Instruction>(ci));
-                        }
-                        if (ci != &tbuild.GetInsertBlock()->back())
-                            ci->moveBefore(&tbuild.GetInsertBlock()->back());
                       } else {
 					    auto allocation = CallInst::CreateMalloc(&allocationBuilder.GetInsertBlock()->back(), size->getType(), val->getType(), ConstantInt::get(size->getType(), allocationBuilder.GetInsertBlock()->getParent()->getParent()->getDataLayout().getTypeAllocSizeInBits(val->getType())/8), size, nullptr, val->getName()+"_malloccache");
                         //allocationBuilder.GetInsertBlock()->getInstList().push_back(cast<Instruction>(allocation));
                         cast<Instruction>(allocation)->moveBefore(allocationBuilder.GetInsertBlock()->getTerminator());
                         scopeMap[val] = entryBuilder.CreateAlloca(allocation->getType(), nullptr, val->getName()+"_mdyncache");
 					    allocationBuilder.CreateStore(allocation, scopeMap[val]);	
+                      }
 
                         IRBuilder<> tbuild(reverseBlocks[outermostPreheader]);
                         tbuild.setFastMathFlags(FastMathFlags::getFast());
@@ -1371,16 +1352,12 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                               tbuild.SetInsertPoint(&tbuild.GetInsertBlock()->back());
                         }
                       	
-
-                        auto ci = CallInst::CreateFree(tbuild.CreatePointerCast(tbuild.CreateLoad(scopeMap[val]), Type::getInt8PtrTy(allocation->getContext())), tbuild.GetInsertBlock());
+                        auto ci = CallInst::CreateFree(tbuild.CreatePointerCast(tbuild.CreateLoad(scopeMap[val]), Type::getInt8PtrTy(outermostPreheader->getContext())), tbuild.GetInsertBlock());
                         if (ci->getParent()==nullptr) {
                             tbuild.GetInsertBlock()->getInstList().push_back(cast<Instruction>(ci));
                         }
                         if (ci != &tbuild.GetInsertBlock()->back())
                             ci->moveBefore(&tbuild.GetInsertBlock()->back());
-
-                      }
-                    }
 
                     Instruction* putafter = isa<PHINode>(inst) ? (inst->getParent()->getFirstNonPHI() ): inst->getNextNonDebugInstruction();
                     IRBuilder <> v(putafter);
@@ -1388,14 +1365,12 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
                     SmallVector<Value*,3> indices;
                     SmallVector<Value*,3> limits;
-					BasicBlock* dynamicHeader = nullptr;
 					PHINode* dynamicPHI = nullptr;
 
                     for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx) ) {
                       indices.push_back(idx.var);
                         
 					  if (idx.dynamic) {
-						dynamicHeader = idx.header;
 						dynamicPHI = idx.var;
                         assert(dynamicPHI);
 						llvm::errs() << "saw idx.dynamic:" << *dynamicPHI << "\n";
@@ -1424,29 +1399,28 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                     }
 
 					Value* allocation = nullptr;
-					if (dynamicHeader == nullptr) {
+					if (dynamicPHI == nullptr) {
 						//allocation = scopeMap[val];
 						IRBuilder<> outerBuilder(&outermostPreheader->back());
 						allocation = outerBuilder.CreateLoad(scopeMap[val]);
 					} else {
-						IRBuilder<> headB(&dynamicHeader->back());
-						Type *BPTy = Type::getInt8PtrTy(dynamicHeader->getContext());
+						Type *BPTy = Type::getInt8PtrTy(v.GetInsertBlock()->getContext());
 						auto realloc = M->getOrInsertFunction("realloc", BPTy, BPTy, size->getType());
-						allocation = headB.CreateLoad(scopeMap[val]);
-						auto foo = headB.CreateNUWAdd(dynamicPHI, ConstantInt::get(dynamicPHI->getType(), 1));
+						allocation = v.CreateLoad(scopeMap[val]);
+						auto foo = v.CreateNUWAdd(dynamicPHI, ConstantInt::get(dynamicPHI->getType(), 1));
 						Value* idxs[2] = {
-							headB.CreatePointerCast(allocation, BPTy),
-							headB.CreateNUWMul(
+							v.CreatePointerCast(allocation, BPTy),
+							v.CreateNUWMul(
 								ConstantInt::get(size->getType(), M->getDataLayout().getTypeAllocSizeInBits(val->getType())/8), 
-								headB.CreateNUWMul(
+								v.CreateNUWMul(
 									size, foo
 								) 
 							)
 						};
 
                         Value* realloccall = nullptr;
-						allocation = headB.CreatePointerCast(realloccall = headB.CreateCall(realloc, idxs, val->getName()+"_realloccache"), allocation->getType());
-						headB.CreateStore(allocation, scopeMap[val]);
+						allocation = v.CreatePointerCast(realloccall = v.CreateCall(realloc, idxs, val->getName()+"_realloccache"), allocation->getType());
+						v.CreateStore(allocation, scopeMap[val]);
 					}
 
                     Value* idxs[] = {idx};
@@ -1489,6 +1463,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     };
 
     IRBuilder<> Builder2(BB2);
+    if (BB2->size() > 0) {
+        Builder2.SetInsertPoint(BB2->getFirstNonPHI());
+    }
     Builder2.setFastMathFlags(FastMathFlags::getFast());
 
     std::map<Value*,Value*> alreadyLoaded;
@@ -1618,7 +1595,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             memset->addParamAttr(0, Attribute::NonNull);
                 }
 
-                if (false) {
+                //if (false)
+                {
                     //TODO RESUME FROM HERE TO INSERT FREES
                     IRBuilder<> freeBuilder(reverseBlocks[call->getParent()]);
                     freeBuilder.setFastMathFlags(FastMathFlags::getFast());
@@ -1647,9 +1625,12 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
 		 if (false && mapped.size() == 1) {
          	return invertPointerM(phi->getIncomingValue(0), BuilderM);
-		 } else if (false && mapped.size() == 2) {
+		 }    
+#if 0
+         else if (false && mapped.size() == 2) {
 			 IRBuilder <> bb(phi);
 			 auto which = bb.CreatePHI(Type::getInt1Ty(phi->getContext()), phi->getNumIncomingValues());
+             //TODO this is not recursive
 
 			 int cnt = 0;
 			 Value* vals[2];
@@ -1665,9 +1646,13 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 			 auto which2 = lookupM(which, BuilderM);
 			 auto result = BuilderM.CreateSelect(which2, invertPointerM(vals[1], BuilderM), invertPointerM(vals[0], BuilderM));
              return result;
-		 } else {
+		 } 
+#endif
+         
+         else {
 			 IRBuilder <> bb(phi);
 			 auto which = bb.CreatePHI(phi->getType(), phi->getNumIncomingValues());
+             invertedPointers[val] = which;
 
 			 for(auto v : mapped) {
 				for (auto b : v.second) {
@@ -1675,7 +1660,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 					which->addIncoming(invertPointerM(v.first, pre), b);
 				}
 			 }
-             invertedPointers[val] = which;
 			 return lookupM(which, BuilderM);
 		 }
       } else if (isa<ConstantPointerNull>(val)) {
@@ -2003,9 +1987,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 auto cal = Builder2.CreateCall(called, args);
                 cal->setAttributes(op->getAttributes());
             } else if(called->getName()=="malloc") {
-              auto ci = CallInst::CreateFree(Builder2.CreatePointerCast(lookup(inst), Type::getInt8PtrTy(Context)), Builder2.GetInsertBlock());
-              if (ci->getParent()==nullptr) {
-                Builder2.GetInsertBlock()->getInstList().push_back(cast<Instruction>(ci));
+              if (false) {
+                 auto ci = CallInst::CreateFree(Builder2.CreatePointerCast(lookup(inst), Type::getInt8PtrTy(Context)), Builder2.GetInsertBlock());
+                 if (ci->getParent()==nullptr) {
+                   Builder2.GetInsertBlock()->getInstList().push_back(cast<Instruction>(ci));
+                 }
               }
 
             } else if(called->getName()=="free") {
@@ -2253,11 +2239,14 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       unsigned idx[] = { i };
       toret = Builder2.CreateInsertValue(toret, retargs[i], idx);
     }
+    Builder2.SetInsertPoint(Builder2.GetInsertBlock());
     Builder2.CreateRet(toret);
   } else if (preds.size() == 1) {
     for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
         if(auto PN = dyn_cast<PHINode>(&*I)) {
             if (isConstantValue(PN)) continue;
+            //TODO consider whether indeed we can skip differential phi pointers
+            if (PN->getType()->isPointerTy()) continue;
             if (!isConstantValue(PN->getIncomingValueForBlock(preds[0]))) {
                 setDiffe(PN->getIncomingValueForBlock(preds[0]), diffe(PN) );
             }
@@ -2265,6 +2254,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         } else break;
     }
 
+    Builder2.SetInsertPoint(Builder2.GetInsertBlock());
     Builder2.CreateBr(reverseBlocks[preds[0]]);
 
   } else if (preds.size() == 2) {
@@ -2384,6 +2374,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     }
     auto f0 = cast<BasicBlock>(reverseBlocks[preds[0]]);
     auto f1 = cast<BasicBlock>(reverseBlocks[preds[1]]);
+    Builder2.SetInsertPoint(Builder2.GetInsertBlock());
     Builder2.CreateCondBr(phi, f0, f1);
   } else {
     IRBuilder <> pbuilder(&BB->front());
@@ -2416,6 +2407,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         } else break;
     }
 
+    Builder2.SetInsertPoint(Builder2.GetInsertBlock());
     auto swit = Builder2.CreateSwitch(phi, reverseBlocks[preds.back()], preds.size()-1);
     for(unsigned i=0; i<preds.size()-1; i++) {
       swit->addCase(ConstantInt::get(cast<IntegerType>(phi->getType()), i), reverseBlocks[preds[i]]);
