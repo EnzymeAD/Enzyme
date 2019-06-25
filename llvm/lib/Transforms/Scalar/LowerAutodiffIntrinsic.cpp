@@ -195,7 +195,7 @@ bool isconstantM(Value* val, SmallPtrSetImpl<Value*> &constants, SmallPtrSetImpl
     assert(val);
 	constexpr uint8_t UP = 1;
 	constexpr uint8_t DOWN = 2;
-	assert(directions >= 0);
+	//assert(directions >= 0);
 	assert(directions <= 3);
 
 	if(isa<Constant>(val) || isa<BasicBlock>(val) || isa<UnreachableInst>(val) || isa<BranchInst>(val) || isa<InlineAsm>(val) || (constants.find(val) != constants.end()) || (isa<Instruction>(val) && (originalInstructions.find(cast<Instruction>(val)) == originalInstructions.end()) ) ) {
@@ -762,8 +762,8 @@ bool shouldRecompute(Value* val, const ValueToValueMapTy& available) {
                         idx = gep->getPointerOperand();
                     } else if(auto cast = dyn_cast<CastInst>(idx)) {
                         idx = cast->getOperand(0);
-                    } else if(auto call = dyn_cast<CallInst>(idx)) {
-						(void*)call;
+                    } else if(isa<CallInst>(idx)) {
+                    //} else if(auto call = dyn_cast<CallInst>(idx)) {
                         //if (call->getCalledFunction()->getName() == "malloc")
                         //    return false;
                         //else
@@ -1181,7 +1181,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 return lookupM(val, BuilderM);
           
           if (auto inst = dyn_cast<Instruction>(val)) {
-            LoopContext lc;
+            //LoopContext lc;
             // if (BuilderM.GetInsertBlock() != inversionAllocs && !( (reverseBlocks.find(BuilderM.GetInsertBlock()) != reverseBlocks.end())  && /*inLoop*/getContext(inst->getParent(), lc)) ) {
             if (reverseBlocks.count(BuilderM.GetInsertBlock()) != 0) {
                 if (BuilderM.GetInsertBlock()->size() && BuilderM.GetInsertPoint() != BuilderM.GetInsertBlock()->end()) {
@@ -1222,6 +1222,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 }
             }
 
+            if (reverseBlocks.count(BuilderM.GetInsertBlock()) != 0) {
+                BuilderM.GetInsertBlock()->getParent()->dump();
+                BuilderM.GetInsertBlock()->dump();
+                val->dump();
+            }
             assert(reverseBlocks.count(BuilderM.GetInsertBlock()) == 0);
             LoopContext lc;
             bool inLoop = getContext(inst->getParent(), lc);
@@ -1437,21 +1442,19 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
                         Value* realloccall = nullptr;
 						allocation = headB.CreatePointerCast(realloccall = headB.CreateCall(realloc, idxs, val->getName()+"_realloccache"), allocation->getType());
-						auto st = headB.CreateStore(allocation, scopeMap[val]);
+						headB.CreateStore(allocation, scopeMap[val]);
 					}
 
                     Value* idxs[] = {idx};
                     auto gep = v.CreateGEP(allocation, idxs);
-					auto st = v.CreateStore(val, gep);
+					v.CreateStore(val, gep);
                 }
                 assert(inLoop);
 
                 SmallVector<Value*,3> indices;
                 SmallVector<Value*,3> limits;
-				bool dynamic = false;
                 for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx) ) {
                   indices.push_back(idx.antivar);
-				  if (idx.dynamic) dynamic = true;
                   if (idx.parent == nullptr) break;
 
                   auto limitm1 = unwrapM(idx.limit, BuilderM, available, /*can lookup*/true);
@@ -1473,12 +1476,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 }
 
                 Value* idxs[] = {idx};
-				Value* tolookup = nullptr;
-
-                //if (dynamic)
-					tolookup = BuilderM.CreateLoad(scopeMap[val]);
-				//else
-				//	tolookup = scopeMap[val];
+				Value* tolookup = BuilderM.CreateLoad(scopeMap[val]);
                 return BuilderM.CreateLoad(BuilderM.CreateGEP(tolookup, idxs));
             }
         }
@@ -1498,7 +1496,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       return alreadyLoaded[val] = lookupM(val, Builder2);
     };
 
-    auto diffe = [&,&Builder2,&differentials](Value* val) -> Value* {
+    auto diffe = [&Builder2,&differentials,&entryBuilder](Value* val) -> Value* {
       assert(!val->getType()->isPointerTy());
       assert(!val->getType()->isVoidTy());
       if (differentials.find(val) == differentials.end()) {
@@ -1508,7 +1506,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       return Builder2.CreateLoad(differentials[val]);
     };
 
-    auto addToDiffe = [&,&Builder2,&differentials,&diffe,&isConstantValue](Value* val, Value* dif) {
+    auto addToDiffe = [&Builder2,&differentials,&diffe,&isConstantValue](Value* val, Value* dif) {
       assert(!val->getType()->isPointerTy());
       assert(!isConstantValue(val));
       assert(val->getType() == dif->getType());
@@ -2171,7 +2169,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       auto loaded = diffe(inst);
       size_t l1 = cast<VectorType>(op->getOperand(0)->getType())->getNumElements();
       uint64_t instidx = 0;
-      for( auto idx : op->getShuffleMask()) {
+      for( size_t idx : op->getShuffleMask()) {
         auto opnum = (idx < l1) ? 0 : 1;
         auto opidx = (idx < l1) ? idx : (idx-l1);
         SmallVector<Value*,4> sv;
