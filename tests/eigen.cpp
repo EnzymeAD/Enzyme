@@ -1,5 +1,5 @@
 #define EIGEN_UNROLLING_LIMIT 0
-
+#define EIGEN_DONT_VECTORIZE 1
 #include <eigen3/Eigen/Dense>
 
 #include <math.h>

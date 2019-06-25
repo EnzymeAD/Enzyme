@@ -1182,11 +1182,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
           
           if (auto inst = dyn_cast<Instruction>(val)) {
             LoopContext lc;
-            if (BuilderM.GetInsertBlock() != inversionAllocs && !( (reverseBlocks.find(BuilderM.GetInsertBlock()) != reverseBlocks.end())  && /*inLoop*/getContext(inst->getParent(), lc)) ) {
+            // if (BuilderM.GetInsertBlock() != inversionAllocs && !( (reverseBlocks.find(BuilderM.GetInsertBlock()) != reverseBlocks.end())  && /*inLoop*/getContext(inst->getParent(), lc)) ) {
+            if (reverseBlocks.count(BuilderM.GetInsertBlock()) != 0) {
                 if (BuilderM.GetInsertBlock()->size() && BuilderM.GetInsertPoint() != BuilderM.GetInsertBlock()->end()) {
-                    //BuilderM.GetInsertBlock()->dump();
-                    //BuilderM.GetInsertPoint()->dump();
-                    //if (DT.dominates(inst, BuilderM.GetInsertPoint())) {
                     if (DT.dominates(inst, &*BuilderM.GetInsertPoint())) {
                         //llvm::errs() << "allowed " << *inst << "from domination\n";
                         return inst;
@@ -1206,9 +1204,24 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             exit(1);
     };
 
-    lookupM = [&getContext,&scopeMap,&reverseBlocks,&unwrapM,&entryBuilder](Value* val, IRBuilder<>& BuilderM) -> Value* {
+    lookupM = [&getContext,&scopeMap,&reverseBlocks,&unwrapM,&entryBuilder,&DT](Value* val, IRBuilder<>& BuilderM) -> Value* {
         auto M = BuilderM.GetInsertBlock()->getParent()->getParent();
         if (auto inst = dyn_cast<Instruction>(val)) {
+            
+            if (reverseBlocks.count(BuilderM.GetInsertBlock()) != 0) {
+                if (BuilderM.GetInsertBlock()->size() && BuilderM.GetInsertPoint() != BuilderM.GetInsertBlock()->end()) {
+                    if (DT.dominates(inst, &*BuilderM.GetInsertPoint())) {
+                        //llvm::errs() << "allowed " << *inst << "from domination\n";
+                        return inst;
+                    }
+                } else {
+                    if (DT.dominates(inst, BuilderM.GetInsertBlock())) {
+                        //llvm::errs() << "allowed " << *inst << "from block domination\n";
+                        return inst;
+                    }
+                }
+            }
+
             assert(reverseBlocks.count(BuilderM.GetInsertBlock()) == 0);
             LoopContext lc;
             bool inLoop = getContext(inst->getParent(), lc);
@@ -1534,7 +1547,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       Builder2.CreateStore(Builder2.CreateFAdd(Builder2.CreateLoad(ptr), dif), ptr);
     };
 
-    std::function<Value*(Value*,IRBuilder<>&)> invertPointerM = [&invertedPointers,&lookupM,&invertPointerM,&entryBuilder,&blockstodo](Value* val, IRBuilder<>& BuilderM) -> Value* {
+    std::function<Value*(Value*,IRBuilder<>&)> invertPointerM = [&invertedPointers,&lookupM,&invertPointerM,&entryBuilder,&reverseBlocks](Value* val, IRBuilder<>& BuilderM) -> Value* {
       auto M = BuilderM.GetInsertBlock()->getParent()->getParent();
       assert(val);
 	  if (false && !val->getType()->isPointerTy()) {
@@ -1589,19 +1602,36 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 }
 
                 cast<CallInst>(invertedPointers[val])->setAttributes(call->getAttributes());
-                if ( std::find(blockstodo.begin(), blockstodo.end(), call->getParent()) == blockstodo.end() ) {
-                    assert(0);
-                } else {
-                
-                }
 
                 {
-            Value *nargs[] = {bb.CreateBitCast(invertedPointers[val],Type::getInt8PtrTy(val->getContext())), ConstantInt::get(Type::getInt8Ty(val->getContext()), 0), bb.CreateZExtOrTrunc(call->getArgOperand(0), Type::getInt64Ty(val->getContext())), ConstantInt::getFalse(val->getContext()) };
+            Value *nargs[] = {
+                bb.CreateBitCast(invertedPointers[val],Type::getInt8PtrTy(val->getContext())),
+                ConstantInt::get(Type::getInt8Ty(val->getContext()), 0),
+                bb.CreateZExtOrTrunc(call->getArgOperand(0), Type::getInt64Ty(val->getContext())), ConstantInt::getFalse(val->getContext())
+            };
             Type *tys[] = {nargs[0]->getType(), nargs[2]->getType()};
 
             auto memset = cast<CallInst>(bb.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::memset, tys), nargs));
             //memset->addParamAttr(0, Attribute::getWithAlignment(Context, inst->getAlignment()));
             memset->addParamAttr(0, Attribute::NonNull);
+                }
+
+                if (false) {
+                    //TODO RESUME FROM HERE TO INSERT FREES
+                    IRBuilder<> freeBuilder(reverseBlocks[call->getParent()]);
+                    freeBuilder.setFastMathFlags(FastMathFlags::getFast());
+
+                    // ensure we are before the terminator if it exists
+                    if (freeBuilder.GetInsertBlock()->size()) {
+                        freeBuilder.SetInsertPoint(&freeBuilder.GetInsertBlock()->back());
+                    }
+
+                    auto ci = CallInst::CreateFree(freeBuilder.CreatePointerCast(lookupM(invertedPointers[val], freeBuilder), Type::getInt8PtrTy(call->getContext())), freeBuilder.GetInsertBlock());
+                    if (ci->getParent()==nullptr) {
+                      freeBuilder.GetInsertBlock()->getInstList().push_back(cast<Instruction>(ci));
+                    }
+                    if (ci != &freeBuilder.GetInsertBlock()->back())
+                        ci->moveBefore(&freeBuilder.GetInsertBlock()->back());
                 }
 
             return lookupM(invertedPointers[val], BuilderM);
@@ -1945,7 +1975,21 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 		//TODO REPLACE WITH IF INSTRUCTION CONSTANT
         if (isconstant(op))
 			continue;
-        if(auto called = op->getCalledFunction()) {
+
+        Function *called = op->getCalledFunction();
+        
+        llvm::errs() << "caled fn:" << *op->getCalledValue() << "\n";
+        if (auto castinst = dyn_cast<ConstantExpr>(op->getCalledValue())) {
+            llvm::errs() << "cast fn:" << *castinst->getOperand(0) << "\n";
+            if (castinst->isCast())
+            if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
+                if (fn->getName() == "malloc" || fn->getName() == "free") {
+                    called = fn;
+                }
+            }
+        }
+
+        if(called) {
             if (called->getName() == "printf" || called->getName() == "puts") {
                 SmallVector<Value*, 4> args;
                 for(unsigned i=0; i<op->getNumArgOperands(); i++) {
@@ -1953,6 +1997,19 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 }
                 auto cal = Builder2.CreateCall(called, args);
                 cal->setAttributes(op->getAttributes());
+            } else if(called->getName()=="malloc") {
+              auto ci = CallInst::CreateFree(Builder2.CreatePointerCast(lookup(inst), Type::getInt8PtrTy(Context)), Builder2.GetInsertBlock());
+              if (ci->getParent()==nullptr) {
+                Builder2.GetInsertBlock()->getInstList().push_back(cast<Instruction>(ci));
+              }
+
+            } else if(called->getName()=="free") {
+                if (auto dc = dyn_cast<CallInst>(op->getArgOperand(0))) {
+                    if (dc->getCalledFunction()->getName() == "malloc") {
+                        op->eraseFromParent();
+                    }
+                }
+                //TODO HANDLE FREE
             } else if (!op->getCalledFunction()->empty()) {
               SmallSet<unsigned,4> subconstant_args;
 
@@ -2035,21 +2092,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
 			  if (inst->getNumUses() != 0 && !isConstantValue(inst))
               	setDiffe(inst, Constant::getNullValue(inst->getType()));
-            }
-            else if(called->getName()=="malloc") {
-              auto ci = CallInst::CreateFree(Builder2.CreatePointerCast(lookup(inst), Type::getInt8PtrTy(Context)), Builder2.GetInsertBlock());
-              if (ci->getParent()==nullptr) {
-                Builder2.GetInsertBlock()->getInstList().push_back(cast<Instruction>(ci));
-              }
-
-            }
-            else if(called->getName()=="free") {
-                if (auto dc = dyn_cast<CallInst>(op->getArgOperand(0))) {
-                    if (dc->getCalledFunction()->getName() ==  "malloc") {
-                        op->eraseFromParent();
-                    }
-                }
-                //TODO HANDLE FREE
             } else {
               assert(op);
               llvm::errs() << "cannot handle non invertible function\n" << *op << "\n";
