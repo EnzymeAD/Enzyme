@@ -1204,9 +1204,13 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             exit(1);
     };
 
-    lookupM = [&getContext,&scopeMap,&reverseBlocks,&unwrapM,&entryBuilder,&DT](Value* val, IRBuilder<>& BuilderM) -> Value* {
+    lookupM = [&getContext,&scopeMap,&reverseBlocks,&unwrapM,&entryBuilder,&DT,&inversionAllocs](Value* val, IRBuilder<>& BuilderM) -> Value* {
+        if (isa<Constant>(val)) return val;
         auto M = BuilderM.GetInsertBlock()->getParent()->getParent();
         if (auto inst = dyn_cast<Instruction>(val)) {
+            if (inst->getParent() == inversionAllocs) {
+                return val;
+            }
             
             if (reverseBlocks.count(BuilderM.GetInsertBlock()) != 0) {
                 if (BuilderM.GetInsertBlock()->size() && BuilderM.GetInsertPoint() != BuilderM.GetInsertBlock()->end()) {
@@ -1776,7 +1780,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     assert(inst);
     I++;
     if (originalInstructions.find(inst) == originalInstructions.end()) continue;
-    if (isconstant(inst)) continue;
+    //if (isconstant(inst)) continue;
 
     if (auto op = dyn_cast<BinaryOperator>(inst)) {
       if (isconstant(inst)) continue;
@@ -1831,6 +1835,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       Value* dif1 = nullptr;
       switch(op->getIntrinsicID()) {
         case Intrinsic::memcpy: {
+            if (isconstant(inst)) continue;
             SmallVector<Value*, 4> args;
             args.push_back(invertPointer(op->getOperand(0)));
             args.push_back(invertPointer(op->getOperand(1)));
@@ -1843,6 +1848,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             break;
         }
         case Intrinsic::memset: {
+            if (isconstant(inst)) continue;
             if (!isConstantValue(op->getOperand(1))) {
                 assert(inst);
                 llvm::errs() << "couldn't handle non constant inst in memset to propagate differential to\n" << *inst;
@@ -1866,6 +1872,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         case Intrinsic::dbg_addr:
             break;
         case Intrinsic::lifetime_start:{
+            if (isconstant(inst)) continue;
             SmallVector<Value*, 2> args = {lookup(op->getOperand(0)), lookup(op->getOperand(1))};
             Type *tys[] = {args[1]->getType()};
             auto cal = Builder2.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::lifetime_end, tys), args);

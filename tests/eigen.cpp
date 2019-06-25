@@ -36,7 +36,9 @@ static void matvecclean(const MatrixXd& __restrict W,
 __attribute__((noinline))
 static void matvec(const MatrixXd& __restrict W,
     const VectorXd& __restrict b, VectorXd& __restrict foo) {
-
+    printf("foo.rows()=%ld foo.cols()=%ld\n", foo.rows(), foo.cols());
+    printf("b.rows()=%ld b.cols()=%ld\n", b.rows(), b.cols());
+    printf("W.rows()=%ld W.cols()=%ld\n", W.rows(), W.cols());
   foo = b * W ;
 }
 
