@@ -73,14 +73,14 @@ attributes #2 = { nounwind }
 ; CHECK-NEXT:   %cond.i = select i1 %cmp.i, double %cond.i12, double %.pre
 ; CHECK-NEXT:   br i1 %3, label %for.body.for.body_crit_edge, label %invertfor.cond.cleanup
 
-; CHECK: invertentry:                                      ; preds = %invertfor.body.for.body_crit_edge.preheader, %invertfor.cond.cleanup
+; CHECK: invertentry:       
 ; CHECK-NEXT:   %"'de.0" = phi double [ %diffecond.i12, %invertfor.body.for.body_crit_edge.preheader ], [ 1.000000e+00, %invertfor.cond.cleanup ]
 ; CHECK-NEXT:   %5 = load double, double* %"x'"
 ; CHECK-NEXT:   %6 = fadd fast double %5, %"'de.0"
 ; CHECK-NEXT:   store double %6, double* %"x'"
 ; CHECK-NEXT:   ret {} undef
 
-; CHECK: invertfor.body.for.body_crit_edge.preheader:      ; preds = %invertfor.body.for.body_crit_edge
+; CHECK: invertfor.body.for.body_crit_edge.preheader:  
 ; CHECK-NEXT:   %7 = bitcast i1* %cmp.i_mdyncache.0 to i8*
 ; CHECK-NEXT:   tail call void @free(i8* %7)
 ; CHECK-NEXT:   br label %invertentry
@@ -94,7 +94,7 @@ attributes #2 = { nounwind }
 ; CHECK-NEXT:   %9 = xor i1 %exitcond11, true
 ; CHECK-NEXT:   br i1 %9, label %invertfor.cond.cleanup.loopexit, label %invertentry
 
-; CHECK: invertfor.body.for.body_crit_edge:                ; preds = %invertfor.cond.cleanup.loopexit, %invertfor.body.for.body_crit_edge
+; CHECK: invertfor.body.for.body_crit_edge:    
 ; CHECK-NEXT:   %"cond.i'de.0" = phi double [ 1.000000e+00, %invertfor.cond.cleanup.loopexit ], [ %diffecond.i12, %invertfor.body.for.body_crit_edge ]
 ; CHECK-NEXT:   %"indvar'phi" = phi i64 [ %8, %invertfor.cond.cleanup.loopexit ], [ %10, %invertfor.body.for.body_crit_edge ]
 ; CHECK-NEXT:   %10 = sub i64 %"indvar'phi", 1

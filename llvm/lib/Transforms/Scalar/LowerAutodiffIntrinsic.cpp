@@ -229,6 +229,8 @@ bool isconstantM(Value* val, SmallPtrSetImpl<Value*> &constants, SmallPtrSetImpl
 
     if (auto op = dyn_cast<IntrinsicInst>(val)) {
 		switch(op->getIntrinsicID()) {
+			case Intrinsic::stacksave:
+			case Intrinsic::stackrestore:
 			case Intrinsic::lifetime_start:
 			case Intrinsic::lifetime_end:
 			case Intrinsic::dbg_addr:
@@ -594,18 +596,23 @@ Function *CloneFunctionWithReturns(Function *F, ValueToValueMapTy& ptrInputs, co
 
  }
 
-    #if 0
   if(false) {
    remover:
+     SmallPtrSet<Instruction*, 10> originalInstructions;
+     for (inst_iterator I = inst_begin(NewF), E = inst_end(NewF); I != E; ++I) {
+         originalInstructions.insert(&*I);
+     }
    for (inst_iterator I = inst_begin(NewF), E = inst_end(NewF); I != E; ++I)
      if (auto call = dyn_cast<CallInst>(&*I)) {
-        if (isconstantM(call, constants, nonconstant)) continue;
+        if (isconstantM(call, constants, nonconstant, originalInstructions)) continue;
         if (call->getCalledFunction() == nullptr) continue;
         if (call->getCalledFunction()->empty()) continue;
+        /*
         if (call->getCalledFunction()->hasFnAttribute(Attribute::NoInline)) {
             llvm::errs() << "can't inline noinline " << call->getCalledFunction()->getName() << "\n";
             continue;
         }
+        */
         if (call->getCalledFunction()->hasFnAttribute(Attribute::ReturnsTwice)) continue;
         if (call->getCalledFunction() == F || call->getCalledFunction() == NewF) {
             llvm::errs() << "can't inline recursive " << call->getCalledFunction()->getName() << "\n";
@@ -617,7 +624,6 @@ Function *CloneFunctionWithReturns(Function *F, ValueToValueMapTy& ptrInputs, co
         goto remover;
      }
  }
- #endif
 
  if (false) {
  DominatorTree DT(*NewF);
@@ -1079,15 +1085,15 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     return getContextM(BB, loopContext, loopContexts, LI, SE, DT);
   };
 
+  std::vector<Instruction*> addedFrees;
+
   // Force loop canonicalization everywhere
   for(auto BB:blockstodo) {
     LoopContext loopContext;
     getContext(BB, loopContext);
   }
 
-  while(blockstodo.size() > 0) {
-    auto BB = blockstodo.back();
-    blockstodo.pop_back();
+  for(auto BB:blockstodo) {
 
     LoopContext loopContext;
     bool inLoop = getContext(BB, loopContext);
@@ -1332,7 +1338,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
                       if (dynamic) {
 					    auto allocation = CallInst::CreateMalloc(entryBuilder.GetInsertBlock(), size->getType(), val->getType(), ConstantInt::get(size->getType(), entryBuilder.GetInsertBlock()->getParent()->getParent()->getDataLayout().getTypeAllocSizeInBits(val->getType())/8), size, nullptr, val->getName()+"_malloccache");
-                        entryBuilder.GetInsertBlock()->getInstList().push_back(cast<Instruction>(allocation));
+                        entryBuilder.Insert(cast<Instruction>(allocation));
 
                       	scopeMap[val] = entryBuilder.CreateAlloca(allocation->getType(), nullptr, val->getName()+"_dyncache");
 					    entryBuilder.CreateStore(allocation, scopeMap[val]);	
@@ -1349,15 +1355,13 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
                         // ensure we are before the terminator if it exists
                         if (tbuild.GetInsertBlock()->size()) {
-                              tbuild.SetInsertPoint(&tbuild.GetInsertBlock()->back());
+                              tbuild.SetInsertPoint(tbuild.GetInsertBlock()->getFirstNonPHI());
                         }
                       	
                         auto ci = CallInst::CreateFree(tbuild.CreatePointerCast(tbuild.CreateLoad(scopeMap[val]), Type::getInt8PtrTy(outermostPreheader->getContext())), tbuild.GetInsertBlock());
                         if (ci->getParent()==nullptr) {
-                            tbuild.GetInsertBlock()->getInstList().push_back(cast<Instruction>(ci));
+                            tbuild.Insert(ci);
                         }
-                        if (ci != &tbuild.GetInsertBlock()->back())
-                            ci->moveBefore(&tbuild.GetInsertBlock()->back());
 
                     Instruction* putafter = isa<PHINode>(inst) ? (inst->getParent()->getFirstNonPHI() ): inst->getNextNonDebugInstruction();
                     IRBuilder <> v(putafter);
@@ -1526,7 +1530,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       Builder2.CreateStore(Builder2.CreateFAdd(Builder2.CreateLoad(ptr), dif), ptr);
     };
 
-    std::function<Value*(Value*,IRBuilder<>&)> invertPointerM = [&invertedPointers,&lookupM,&invertPointerM,&entryBuilder,&reverseBlocks](Value* val, IRBuilder<>& BuilderM) -> Value* {
+    std::function<Value*(Value*,IRBuilder<>&)> invertPointerM = [&addedFrees,&invertedPointers,&lookupM,&invertPointerM,&entryBuilder,&reverseBlocks](Value* val, IRBuilder<>& BuilderM) -> Value* {
       auto M = BuilderM.GetInsertBlock()->getParent()->getParent();
       assert(val);
 	  if (false && !val->getType()->isPointerTy()) {
@@ -1600,18 +1604,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                     //TODO RESUME FROM HERE TO INSERT FREES
                     IRBuilder<> freeBuilder(reverseBlocks[call->getParent()]);
                     freeBuilder.setFastMathFlags(FastMathFlags::getFast());
-
-                    // ensure we are before the terminator if it exists
-                    if (freeBuilder.GetInsertBlock()->size()) {
-                        freeBuilder.SetInsertPoint(&freeBuilder.GetInsertBlock()->back());
-                    }
-
                     auto ci = CallInst::CreateFree(freeBuilder.CreatePointerCast(lookupM(invertedPointers[val], freeBuilder), Type::getInt8PtrTy(call->getContext())), freeBuilder.GetInsertBlock());
                     if (ci->getParent()==nullptr) {
-                      freeBuilder.GetInsertBlock()->getInstList().push_back(cast<Instruction>(ci));
+                      freeBuilder.Insert(ci);
                     }
-                    if (ci != &freeBuilder.GetInsertBlock()->back())
-                        ci->moveBefore(&freeBuilder.GetInsertBlock()->back());
+                    addedFrees.push_back(ci);
                 }
 
             return lookupM(invertedPointers[val], BuilderM);
@@ -1850,6 +1847,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             cal->setAttributes(op->getAttributes());
             break;
         }
+        case Intrinsic::stacksave:
+        case Intrinsic::stackrestore:
         case Intrinsic::dbg_declare:
         case Intrinsic::dbg_value:
         case Intrinsic::dbg_label:
@@ -1987,15 +1986,17 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 auto cal = Builder2.CreateCall(called, args);
                 cal->setAttributes(op->getAttributes());
             } else if(called->getName()=="malloc") {
-              if (false) {
+              if (true) {
                  auto ci = CallInst::CreateFree(Builder2.CreatePointerCast(lookup(inst), Type::getInt8PtrTy(Context)), Builder2.GetInsertBlock());
                  if (ci->getParent()==nullptr) {
-                   Builder2.GetInsertBlock()->getInstList().push_back(cast<Instruction>(ci));
+                   Builder2.Insert(ci);
                  }
               }
 
             } else if(called->getName()=="free") {
-                if (auto dc = dyn_cast<CallInst>(op->getArgOperand(0))) {
+                llvm::Value* val = op->getArgOperand(0);
+                while(auto cast = dyn_cast<CastInst>(val)) val = cast->getOperand(0);
+                if (auto dc = dyn_cast<CallInst>(val)) {
                     if (dc->getCalledFunction()->getName() == "malloc") {
                         op->eraseFromParent();
                     }
@@ -2416,6 +2417,17 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
 
   }
+
+  newFunc->dump();
+  for(auto ci:addedFrees) {
+    llvm::errs() << "foo " << ci << "\n";
+    assert(ci);
+    ci->dump();
+    assert(ci->getParent());
+    ci->getParent()->dump();
+    ci->moveBefore(ci->getParent()->getTerminator());
+  }
+
   while(inversionAllocs->size() > 0) {
     inversionAllocs->back().moveBefore(newFunc->getEntryBlock().getFirstNonPHIOrDbgOrLifetimeOrAlloca());
   }
