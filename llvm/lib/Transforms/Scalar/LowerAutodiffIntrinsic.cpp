@@ -1603,6 +1603,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 {
                     //TODO RESUME FROM HERE TO INSERT FREES
                     IRBuilder<> freeBuilder(reverseBlocks[call->getParent()]);
+                    if (auto term = freeBuilder.GetInsertBlock()->getTerminator()) {
+                        freeBuilder.SetInsertPoint(term);
+                    }
                     freeBuilder.setFastMathFlags(FastMathFlags::getFast());
                     auto ci = CallInst::CreateFree(freeBuilder.CreatePointerCast(lookupM(invertedPointers[val], freeBuilder), Type::getInt8PtrTy(call->getContext())), freeBuilder.GetInsertBlock());
                     if (ci->getParent()==nullptr) {
@@ -1960,9 +1963,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       if (dif1) addToDiffe(op->getOperand(1), dif1);
       if (dif0 || dif1) setDiffe(inst, Constant::getNullValue(inst->getType()));
     } else if(auto op = dyn_cast_or_null<CallInst>(inst)) {
-		//TODO REPLACE WITH IF INSTRUCTION CONSTANT
-        if (isconstant(op))
-			continue;
 
         Function *called = op->getCalledFunction();
         
@@ -1999,10 +1999,15 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 if (auto dc = dyn_cast<CallInst>(val)) {
                     if (dc->getCalledFunction()->getName() == "malloc") {
                         op->eraseFromParent();
+                        continue;
                     }
                 }
+                assert(0 && "free not freeing a malloc");
                 //TODO HANDLE FREE
+                //
             } else if (!op->getCalledFunction()->empty()) {
+                if (isconstant(op))
+			        continue;
               SmallSet<unsigned,4> subconstant_args;
 
               SmallVector<Value*, 8> args;
@@ -2085,12 +2090,16 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 			  if (inst->getNumUses() != 0 && !isConstantValue(inst))
               	setDiffe(inst, Constant::getNullValue(inst->getType()));
             } else {
+             if (isconstant(op))
+			    continue;
               assert(op);
               llvm::errs() << "cannot handle non invertible function\n" << *op << "\n";
               assert(0 && "unknown non invertible function");
               exit(1);
             }
         } else {
+            if (isconstant(op))
+			    continue;
             assert(op);
             llvm::errs() << "cannot handle non const function in" << *op << "\n";
             assert(0 && "unknown non const function");
@@ -2242,6 +2251,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     }
     Builder2.SetInsertPoint(Builder2.GetInsertBlock());
     Builder2.CreateRet(toret);
+    Builder2.GetInsertBlock()->dump();
   } else if (preds.size() == 1) {
     for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
         if(auto PN = dyn_cast<PHINode>(&*I)) {

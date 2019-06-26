@@ -3753,7 +3753,6 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
     auto FDecl = cast<FunctionDecl>(namedref->getDecl());
     auto Proto = FDecl->getType()->getAs<FunctionProtoType>();
 
-    FDecl->dump();
 auto getptr = [&](CodeGenModule &CGM,const FunctionDecl *FD) {
    if (FD->hasAttr<WeakRefAttr>()) {
      ConstantAddress aliasee = CGM.GetWeakRefReference(FD);
@@ -3870,6 +3869,14 @@ auto getptr = [&](CodeGenModule &CGM,const FunctionDecl *FD) {
 
     unsigned int j = 0;
     for (unsigned i = 1, e = E->getNumArgs(); i != e; ++i,++j) {
+      bool constant = false;
+      if(auto namedref = cast<DeclRefExpr>(E->getArg(i))) {
+        if(namedref->getDecl()->getName() == "diffe_const") {
+            Args.push_back(MetadataAsValue::get(Builder.getContext(),MDString::get(Builder.getContext(),"diffe_const")));
+            i++;
+            constant = true;
+        }
+      }
       Value *ArgValue = propercast(E->getArg(i), j);
       
       // If the intrinsic arg type is different from the builtin arg type
@@ -3877,7 +3884,9 @@ auto getptr = [&](CodeGenModule &CGM,const FunctionDecl *FD) {
       llvm::Type *PTy = subfn->getFunctionType()->getParamType(j);
 
       auto ty = whatType(PTy);
-
+      if (constant) {
+        ty = DIFFE_TYPE::CONSTANT;
+      }
       if (PTy != ArgValue->getType()) {
         if (!ArgValue->getType()->canLosslesslyBitCastTo(PTy)) {
           llvm::errs() << "Cannot cast __builtin_autodiff argument " << i << " " << *ArgValue << " to argument " << j << " " << *PTy << "\n" << *subfn->getFunctionType() << "\n";
