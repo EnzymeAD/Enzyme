@@ -65,7 +65,17 @@ using namespace llvm;
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/IntrinsicInst.h"
 
+static cl::opt<bool> autodiff_inline(
+            "autodiff_inline", cl::init(false), cl::Hidden,
+                cl::desc("Force inlining of autodiff"));
 
+static cl::opt<bool> printconst(
+            "autodiff_printconst", cl::init(false), cl::Hidden,
+                cl::desc("Print constant detection algorithm"));
+
+static cl::opt<bool> autodiff_print(
+            "autodiff_print", cl::init(false), cl::Hidden,
+                cl::desc("Print before and after fns for autodiff"));
 
 enum class DIFFE_TYPE {
   OUT_DIFF=0, // add differential to output struct
@@ -184,8 +194,6 @@ bool isConstantValue(Value* val, SmallPtrSetImpl<Value*> &constants, SmallPtrSet
 	return true;
 }
 #endif
-
-static constexpr bool printconst = false;
 
 // TODO separate if the instruction is constant (i.e. could change things)
 //    from if the value is constant (the value is something that could be differentiated)
@@ -596,7 +604,7 @@ Function *CloneFunctionWithReturns(Function *F, ValueToValueMapTy& ptrInputs, co
 
  }
 
-  if(false) {
+  if(autodiff_inline) {
    remover:
      SmallPtrSet<Instruction*, 10> originalInstructions;
      for (inst_iterator I = inst_begin(NewF), E = inst_end(NewF); I != E; ++I) {
@@ -625,7 +633,7 @@ Function *CloneFunctionWithReturns(Function *F, ValueToValueMapTy& ptrInputs, co
      }
  }
 
- if (false) {
+ if (autodiff_inline) {
  DominatorTree DT(*NewF);
  AssumptionCache AC(*NewF);
  promoteMemoryToRegister(*NewF, DT, AC);
@@ -2451,7 +2459,9 @@ void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI) {//, LoopInfo& LI, Dom
   }
   auto FT = cast<Function>(fn)->getFunctionType();
   assert(fn);
-  llvm::errs() << "prefn:\n" << *fn << "\n";
+  
+  if (autodiff_print)
+      llvm::errs() << "prefn:\n" << *fn << "\n";
 
   SmallSet<unsigned,4> constants;
   SmallVector<Value*,2> args;
@@ -2467,7 +2477,6 @@ void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI) {//, LoopInfo& LI, Dom
 
     if (auto av = dyn_cast<MetadataAsValue>(res)) {
         auto MS = cast<MDString>(av->getMetadata())->getString();
-        llvm::errs() << "saw metadata\n";
         if (MS == "diffe_dup") {
             ty = DIFFE_TYPE::DUP_ARG;
         } else if(MS == "diffe_out") {
@@ -2540,7 +2549,8 @@ void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI) {//, LoopInfo& LI, Dom
 
   auto newFunc = CreatePrimalAndGradient(cast<Function>(fn), constants, TLI, /*should return*/false);//, LI, DT);
   assert(newFunc);
-  llvm::errs() << "prefn:\n" << *newFunc << "\n";
+  if (autodiff_print)
+    llvm::errs() << "postfn:\n" << *newFunc << "\n";
   Builder.setFastMathFlags(FastMathFlags::getFast());
 
   Value* diffret = Builder.CreateCall(newFunc, args);
