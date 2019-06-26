@@ -605,6 +605,7 @@ Function *CloneFunctionWithReturns(Function *F, ValueToValueMapTy& ptrInputs, co
  }
 
   if(autodiff_inline) {
+      llvm::errs() << "running inlining process\n";
    remover:
      SmallPtrSet<Instruction*, 10> originalInstructions;
      for (inst_iterator I = inst_begin(NewF), E = inst_end(NewF); I != E; ++I) {
@@ -1966,9 +1967,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
         Function *called = op->getCalledFunction();
         
-        llvm::errs() << "caled fn:" << *op->getCalledValue() << "\n";
         if (auto castinst = dyn_cast<ConstantExpr>(op->getCalledValue())) {
-            llvm::errs() << "cast fn:" << *castinst->getOperand(0) << "\n";
             if (castinst->isCast())
             if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
                 if (fn->getName() == "malloc" || fn->getName() == "free") {
@@ -2047,10 +2046,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 				}
 				retUsed = false;
 				break;
-              }
-              llvm::errs() << "printing constantification of args\n";
-              for(auto a : subconstant_args) {
-                llvm::errs() << "constant arg: " << a << "\n";
               }
               auto newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called), subconstant_args, TLI, retUsed);//, LI, DT);
               auto diffes = Builder2.CreateCall(newcalled, args);

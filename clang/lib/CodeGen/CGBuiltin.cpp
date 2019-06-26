@@ -3777,7 +3777,7 @@ auto getptr = [&](CodeGenModule &CGM,const FunctionDecl *FD) {
  };
 
     auto fn = getptr(CGM, FDecl);
-    fn->dump();
+    //fn->dump();
 
     tys.push_back(fn->getType());
     Args.push_back(fn);
@@ -3854,11 +3854,11 @@ auto getptr = [&](CodeGenModule &CGM,const FunctionDecl *FD) {
 		}
         if (av.isScalar()) ArgValue = av.getScalarVal();
         else if (av.isAggregate()) {
-          E->getArg(i)->dumpColor();
+          //E->getArg(i)->dumpColor();
           //llvm::errs() << "av is " << av << "\n";
           ArgValue = av.getAggregatePointer();
-          llvm::errs() << "avVal is " << *ArgValue << "\n";
-          Builder.GetInsertBlock()->getParent()->dump();
+          //llvm::errs() << "avVal is " << *ArgValue << "\n";
+          //Builder.GetInsertBlock()->getParent()->dump();
         }
         else {
           llvm::errs() << "unknown expr emitted\n";
@@ -3924,8 +3924,6 @@ auto getptr = [&](CodeGenModule &CGM,const FunctionDecl *FD) {
       RetTy = ConvertType(BuiltinRetType);
 
     if (RetTy != V->getType()) {
-      V->dump();
-      RetTy->dump();
       assert(V->getType()->canLosslesslyBitCastTo(RetTy) &&
              "Must be able to losslessly bit cast result type");
       V = Builder.CreateBitCast(V, RetTy);
