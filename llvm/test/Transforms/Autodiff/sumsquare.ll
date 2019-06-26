@@ -44,10 +44,10 @@ attributes #2 = { nounwind }
 ; CHECK-NEXT:   %1 = getelementptr double, double* %x, i64 %"indvars.iv'phi.i"
 ; CHECK-NEXT:   %2 = load double, double* %1
 ; CHECK-NEXT:   %3 = fadd fast double %2, %2
-; CHECK-NEXT:   %"arrayidx'ip.i" = getelementptr double, double* %xp, i64 %"indvars.iv'phi.i"
-; CHECK-NEXT:   %4 = load double, double* %"arrayidx'ip.i"
+; CHECK-NEXT:   %"arrayidx'ipg.i" = getelementptr double, double* %xp, i64 %"indvars.iv'phi.i"
+; CHECK-NEXT:   %4 = load double, double* %"arrayidx'ipg.i"
 ; CHECK-NEXT:   %5 = fadd fast double %4, %3
-; CHECK-NEXT:   store double %5, double* %"arrayidx'ip.i"
+; CHECK-NEXT:   store double %5, double* %"arrayidx'ipg.i"
 ; CHECK-NEXT:   %6 = icmp ne i64 %"indvars.iv'phi.i", 0
 ; CHECK-NEXT:   br i1 %6, label %invertfor.body.i, label %diffesumsquare.exit
 ; CHECK: diffesumsquare.exit:                                    ; preds = %invertfor.body.i

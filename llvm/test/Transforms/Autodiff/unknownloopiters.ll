@@ -59,10 +59,10 @@ attributes #2 = { nounwind }
 ; CHECK: invertfor.cond.i:                                 
 ; CHECK-NEXT:   %"'phi.i" = phi i64 [ %2, %invertfor.cond.i ], [ %0, %for.cond.i ]
 ; CHECK-NEXT:   %2 = sub i64 %"'phi.i", 1
-; CHECK-NEXT:   %"arrayidx'ip.i" = getelementptr double, double* %xp, i64 %"'phi.i"
-; CHECK-NEXT:   %3 = load double, double* %"arrayidx'ip.i"
+; CHECK-NEXT:   %"arrayidx'ipg.i" = getelementptr double, double* %xp, i64 %"'phi.i"
+; CHECK-NEXT:   %3 = load double, double* %"arrayidx'ipg.i"
 ; CHECK-NEXT:   %4 = fadd fast double %3, 1.000000e+00
-; CHECK-NEXT:   store double %4, double* %"arrayidx'ip.i"
+; CHECK-NEXT:   store double %4, double* %"arrayidx'ipg.i"
 ; CHECK-NEXT:   %5 = icmp ne i64 %"'phi.i", 0
 ; CHECK-NEXT:   br i1 %5, label %invertfor.cond.i, label %diffeunknowniters.exit
 ; CHECK: diffeunknowniters.exit:                           ; preds = %invertfor.cond.i

@@ -1201,8 +1201,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 }
             }
           }
-            //BuilderM.GetInsertBlock()->getParent()->dump();
-            //val->dump();
             return nullptr;
             assert(0 && "unable to unwrap");
             exit(1);
@@ -1533,22 +1531,16 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     std::function<Value*(Value*,IRBuilder<>&)> invertPointerM = [&addedFrees,&invertedPointers,&lookupM,&invertPointerM,&entryBuilder,&reverseBlocks](Value* val, IRBuilder<>& BuilderM) -> Value* {
       auto M = BuilderM.GetInsertBlock()->getParent()->getParent();
       assert(val);
-	  if (false && !val->getType()->isPointerTy()) {
-		cast<Instruction>(val)->getParent()->getParent()->dump();
-		cast<Instruction>(val)->getParent()->dump();
-		val->dump();
-        assert(val->getType()->isPointerTy());
-	  }
 
       if (invertedPointers.find(val) != invertedPointers.end()) {
         return lookupM(invertedPointers[val], BuilderM);
       }
 
       if (auto arg = dyn_cast<CastInst>(val)) {
-        auto result = BuilderM.CreateCast(arg->getOpcode(), invertPointerM(arg->getOperand(0), BuilderM), arg->getDestTy(), arg->getName()+"'ip");
+        auto result = BuilderM.CreateCast(arg->getOpcode(), invertPointerM(arg->getOperand(0), BuilderM), arg->getDestTy(), arg->getName()+"'ipc");
         return result;
       } else if (auto arg = dyn_cast<LoadInst>(val)) {
-        auto li = BuilderM.CreateLoad(invertPointerM(arg->getOperand(0), BuilderM), arg->getName()+"'ip");
+        auto li = BuilderM.CreateLoad(invertPointerM(arg->getOperand(0), BuilderM), arg->getName()+"'ipl");
         li->setAlignment(arg->getAlignment());
         return li;
       } else if (auto arg = dyn_cast<GetElementPtrInst>(val)) {
@@ -1557,11 +1549,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             auto b = lookupM(a, BuilderM);
             invertargs.push_back(b);
         }
-        auto result = BuilderM.CreateGEP(invertPointerM(arg->getPointerOperand(), BuilderM), invertargs, arg->getName()+"'ip");
+        auto result = BuilderM.CreateGEP(invertPointerM(arg->getPointerOperand(), BuilderM), invertargs, arg->getName()+"'ipg");
         return result;
       } else if (auto inst = dyn_cast<AllocaInst>(val)) {
             auto sz = lookupM(inst->getArraySize(), entryBuilder);
-            AllocaInst* antialloca = entryBuilder.CreateAlloca(inst->getAllocatedType(), inst->getType()->getPointerAddressSpace(), sz, inst->getName()+"'ip");
+            AllocaInst* antialloca = entryBuilder.CreateAlloca(inst->getAllocatedType(), inst->getType()->getPointerAddressSpace(), sz, inst->getName()+"'ipa");
             invertedPointers[val] = antialloca;
             antialloca->setAlignment(inst->getAlignment());
             Value *args[] = {entryBuilder.CreateBitCast(antialloca,Type::getInt8PtrTy(val->getContext())), ConstantInt::get(Type::getInt8Ty(val->getContext()), 0), entryBuilder.CreateNUWMul(
@@ -2146,8 +2138,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 		  }
 		  setPtrDiffe(op->getPointerOperand(), Constant::getNullValue(op->getValueOperand()->getType()));
 	  } else {
-        assert(op);
-		llvm::errs() << "ignoring store bc pointer of " << *op << "\n";
+        IRBuilder <> storeBuilder(op);
+        storeBuilder.CreateStore(invertPointerM(op->getValueOperand(),storeBuilder), invertPointerM(op->getPointerOperand(), storeBuilder) );
+		//llvm::errs() << "ignoring store bc pointer of " << *op << "\n";
 	  }
       //?necessary if pointer is readwrite
       /*
@@ -2251,7 +2244,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     }
     Builder2.SetInsertPoint(Builder2.GetInsertBlock());
     Builder2.CreateRet(toret);
-    Builder2.GetInsertBlock()->dump();
   } else if (preds.size() == 1) {
     for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
         if(auto PN = dyn_cast<PHINode>(&*I)) {
@@ -2428,13 +2420,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
   }
 
-  newFunc->dump();
   for(auto ci:addedFrees) {
-    llvm::errs() << "foo " << ci << "\n";
-    assert(ci);
-    ci->dump();
-    assert(ci->getParent());
-    ci->getParent()->dump();
     ci->moveBefore(ci->getParent()->getTerminator());
   }
 
@@ -2615,6 +2601,7 @@ public:
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<TargetLibraryInfoWrapperPass>();
     AU.addRequiredID(LoopSimplifyID);
+    AU.addRequiredID(LCSSAID);
   }
 
   bool runOnFunction(Function &F) override {
@@ -2629,6 +2616,7 @@ INITIALIZE_PASS_BEGIN(LowerAutodiffIntrinsic, "lower-autodiff",
                 "Lower 'autodiff' Intrinsics", false, false)
 
 INITIALIZE_PASS_DEPENDENCY(LoopSimplify)
+INITIALIZE_PASS_DEPENDENCY(LCSSAWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)

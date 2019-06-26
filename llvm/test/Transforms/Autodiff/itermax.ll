@@ -103,10 +103,10 @@ attributes #2 = { nounwind }
 ; CHECK-NEXT:   %diffecond.i12 = select i1 %12, double %"cond.i'de.0", double 0.000000e+00
 ; CHECK-NEXT:   %diffe.pre = select i1 %12, double 0.000000e+00, double %"cond.i'de.0"
 ; CHECK-NEXT:   %13 = add i64 %"indvar'phi", 1
-; CHECK-NEXT:   %"arrayidx2.phi.trans.insert'ip" = getelementptr double, double* %"x'", i64 %13
-; CHECK-NEXT:   %14 = load double, double* %"arrayidx2.phi.trans.insert'ip"
+; CHECK-NEXT:   %"arrayidx2.phi.trans.insert'ipg" = getelementptr double, double* %"x'", i64 %13
+; CHECK-NEXT:   %14 = load double, double* %"arrayidx2.phi.trans.insert'ipg"
 ; CHECK-NEXT:   %15 = fadd fast double %14, %diffe.pre
-; CHECK-NEXT:   store double %15, double* %"arrayidx2.phi.trans.insert'ip"
+; CHECK-NEXT:   store double %15, double* %"arrayidx2.phi.trans.insert'ipg"
 ; CHECK-NEXT:   %16 = icmp ne i64 %"indvar'phi", 0
 ; CHECK-NEXT:   br i1 %16, label %invertfor.body.for.body_crit_edge, label %invertfor.body.for.body_crit_edge.preheader
 ; CHECK-NEXT: }
