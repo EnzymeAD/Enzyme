@@ -61,7 +61,6 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   store double %x, double* %0, align 8, !tbaa !2
 ; CHECK-NEXT:   %"'ipc.i" = bitcast i8* %"call'mi.i" to double*
 ; CHECK-NEXT:   tail call fastcc void @diffef(double* %"'ipc.i") #6
-; CHECK-NEXT:   store double 0.000000e+00, double* %"'ipc.i", align 8
 ; CHECK-NEXT:   tail call void bitcast (i32 (...)* @free to void (i8*)*)(i8* %call.i) #6
 ; CHECK-NEXT:   tail call void bitcast (i32 (...)* @free to void (i8*)*)(i8* %"call'mi.i") #6
 ; CHECK-NEXT:   ret void

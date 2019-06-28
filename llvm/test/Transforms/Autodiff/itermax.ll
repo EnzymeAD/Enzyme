@@ -89,7 +89,7 @@ attributes #2 = { nounwind }
 ; CHECK-NEXT:   %8 = add i64 %n, -1
 ; CHECK-NEXT:   br label %invertfor.body.for.body_crit_edge
 
-; CHECK: invertfor.cond.cleanup:                           ; preds = %for.body.for.body_crit_edge, %entry
+; CHECK: invertfor.cond.cleanup:         
 ; CHECK-NEXT:   %cmp.i_mdyncache.0 = phi i1* [ undef, %entry ], [ %cmp.i_malloccache, %for.body.for.body_crit_edge ]
 ; CHECK-NEXT:   %9 = xor i1 %exitcond11, true
 ; CHECK-NEXT:   br i1 %9, label %invertfor.cond.cleanup.loopexit, label %invertentry

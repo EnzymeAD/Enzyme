@@ -24,8 +24,8 @@ declare double @llvm.autodiff.p0f_f64f64f64f(double (double, double)*, ...)
 
 ; CHECK: define internal { double, double } @diffetester(double %x, double %y)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = fdiv fast double %x, %y
 ; CHECK-NEXT:   %diffex = fdiv fast double 1.000000e+00, %y
+; CHECK-NEXT:   %0 = fdiv fast double %x, %y
 ; CHECK-NEXT:   %1 = fdiv fast double %0, %y
 ; CHECK-NEXT:   %2 = fsub fast double -0.000000e+00, %1
 ; CHECK-NEXT:   %3 = insertvalue { double, double } undef, double %diffex, 0
