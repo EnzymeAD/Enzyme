@@ -3870,7 +3870,7 @@ auto getptr = [&](CodeGenModule &CGM,const FunctionDecl *FD) {
     unsigned int j = 0;
     for (unsigned i = 1, e = E->getNumArgs(); i != e; ++i,++j) {
       bool constant = false;
-      if(auto namedref = cast<DeclRefExpr>(E->getArg(i))) {
+      if(auto namedref = dyn_cast<DeclRefExpr>(E->getArg(i))) {
         if(namedref->getDecl()->getName() == "diffe_const") {
             Args.push_back(MetadataAsValue::get(Builder.getContext(),MDString::get(Builder.getContext(),"diffe_const")));
             i++;

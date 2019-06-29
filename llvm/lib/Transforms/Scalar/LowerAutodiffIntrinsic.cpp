@@ -1255,10 +1255,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                   builderLoop = builderLoop->getParentLoop();
                 }
                 if (!isChildLoop) {
-                    llvm::errs() << "manually performing lcssa\n";
+                    llvm::errs() << "manually performing lcssa for instruction" << *inst << " in block " << BuilderM.GetInsertBlock()->getName() << "\n";
                     assert(DT.dominates(inst, originalForReverseBlock(BuilderM.GetInsertBlock())));
                     IRBuilder<> lcssa(&lc.exit->front());
-                    auto lcssaPHI = lcssa.CreatePHI(inst->getType(), 1);
+                    auto lcssaPHI = lcssa.CreatePHI(inst->getType(), 1, inst->getName()+"!manual_lcssa");
                     for(auto pred : predecessors(lc.exit))
                         lcssaPHI->addIncoming(inst, pred);
                     return lookupM(lcssaPHI, BuilderM);
@@ -1829,9 +1829,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
           report_fatal_error("unknown binary operator");
       }
 
+      setDiffe(inst, Constant::getNullValue(inst->getType()));
       if (dif0) addToDiffe(op->getOperand(0), dif0);
       if (dif1) addToDiffe(op->getOperand(1), dif1);
-      setDiffe(inst, Constant::getNullValue(inst->getType()));
     } else if(auto op = dyn_cast_or_null<IntrinsicInst>(inst)) {
       Value* dif0 = nullptr;
       Value* dif1 = nullptr;
@@ -1976,9 +1976,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
           report_fatal_error("unknown intrinsic");
       }
 
+      if (dif0 || dif1) setDiffe(inst, Constant::getNullValue(inst->getType()));
       if (dif0) addToDiffe(op->getOperand(0), dif0);
       if (dif1) addToDiffe(op->getOperand(1), dif1);
-      if (dif0 || dif1) setDiffe(inst, Constant::getNullValue(inst->getType()));
     } else if(auto op = dyn_cast_or_null<CallInst>(inst)) {
 
         Function *called = op->getCalledFunction();
@@ -2067,19 +2067,22 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
 
               auto diffes = Builder2.CreateCall(newcalled, args);
+              diffes->setCallingConv(op->getCallingConv());
               diffes->setDebugLoc(inst->getDebugLoc());
               unsigned structidx = retUsed ? 1 : 0;
-              if (!isConstantValue(inst)) {
+
+              //if (!isConstantValue(inst)) {
                   for(unsigned i=0;i<called->getFunctionType()->getNumParams(); i++) {
                     if (argsInverted[i] == DIFFE_TYPE::OUT_DIFF) {
                       unsigned idxs[] = {structidx};
+                      // really it makes more sense to pass in diffe(inst), and to always extract value
                       //TODO THIS FMUL NEEDS THOUGHT
                       auto diffeadd = Builder2.CreateFMul( diffe(inst), Builder2.CreateExtractValue(diffes, idxs));
                       structidx++;
                       addToDiffe(op->getArgOperand(i), diffeadd);
                     }
                   }
-              }
+              //}
 
               if (retUsed) {
                 unsigned idxs[] = {0};
@@ -2100,6 +2103,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 				// inst->eraseFromParent();
               }
 
+              //TODO this shouldn't matter because this can't use itself, but setting null should be done before other sets but after load of diffe
 			  if (inst->getNumUses() != 0 && !isConstantValue(inst))
               	setDiffe(inst, Constant::getNullValue(inst->getType()));
             } else {
@@ -2128,16 +2132,17 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       if (!isConstantValue(op->getOperand(2)))
         dif2 = Builder2.CreateSelect(lookup(op->getOperand(0)), Constant::getNullValue(op->getOperand(2)->getType()), diffe(inst), "diffe"+op->getOperand(2)->getName());
 
+      setDiffe(inst, Constant::getNullValue(inst->getType()));
       if (dif1) addToDiffe(op->getOperand(1), dif1);
       if (dif2) addToDiffe(op->getOperand(2), dif2);
-      setDiffe(inst, Constant::getNullValue(inst->getType()));
     } else if(auto op = dyn_cast<LoadInst>(inst)) {
       if (isconstant(inst)) continue;
 
        //TODO IF OP IS POINTER
       if (!op->getType()->isPointerTy()) {
-        addToPtrDiffe(op->getOperand(0), diffe(inst));
+        auto prediff = diffe(inst);
         setDiffe(inst, Constant::getNullValue(inst->getType()));
+        addToPtrDiffe(op->getOperand(0), prediff);
       } else {
         //Builder2.CreateStore(diffe(inst), invertPointer(op->getOperand(0)));//, op->getName()+"'psweird");
         //addToNPtrDiffe(op->getOperand(0), diffe(inst));
@@ -2169,13 +2174,14 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       */
     } else if(auto op = dyn_cast<ExtractValueInst>(inst)) {
       if (isconstant(inst)) continue;
-      
+     
+      auto prediff = diffe(inst);
       //todo const
       if (!isConstantValue(op->getOperand(0))) {
 		SmallVector<Value*,4> sv;
       	for(auto i : op->getIndices())
         	sv.push_back(ConstantInt::get(Type::getInt32Ty(Context), i));
-        addToDiffeIndexed(op->getOperand(0), diffe(inst), sv);
+        addToDiffeIndexed(op->getOperand(0), prediff, sv);
       }
       setDiffe(inst, Constant::getNullValue(inst->getType()));
     } else if (auto op = dyn_cast<ShuffleVectorInst>(inst)) {
@@ -2224,7 +2230,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         }
       }
       setDiffe(inst, Constant::getNullValue(inst->getType()));
-    } else if(isa<CmpInst>(inst) || isa<PHINode>(inst) || isa<BranchInst>(inst) || isa<AllocaInst>(inst) || isa<CastInst>(inst) || isa<GetElementPtrInst>(inst)) {
+    } else if(isa<CmpInst>(inst) || isa<PHINode>(inst) || isa<BranchInst>(inst) || isa<SwitchInst>(inst) || isa<AllocaInst>(inst) || isa<CastInst>(inst) || isa<GetElementPtrInst>(inst)) {
         continue;
     } else {
       assert(inst);
@@ -2268,10 +2274,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             if (isConstantValue(PN)) continue;
             //TODO consider whether indeed we can skip differential phi pointers
             if (PN->getType()->isPointerTy()) continue;
-            if (!isConstantValue(PN->getIncomingValueForBlock(preds[0]))) {
-                setDiffe(PN->getIncomingValueForBlock(preds[0]), diffe(PN) );
-            }
+            auto prediff = diffe(PN);
             setDiffe(PN, Constant::getNullValue(PN->getType()));
+            if (!isConstantValue(PN->getIncomingValueForBlock(preds[0]))) {
+                addToDiffe(PN->getIncomingValueForBlock(preds[0]), prediff );
+            }
         } else break;
     }
 
@@ -2382,15 +2389,16 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             // POINTER TYPE THINGS
             if (PN->getType()->isPointerTy()) continue;
             if (isConstantValue(PN)) continue; 
+            auto prediff = diffe(PN);
+            setDiffe(PN, Constant::getNullValue(PN->getType()));
             if (!isConstantValue(PN->getIncomingValueForBlock(preds[0]))) {
-                auto dif = Builder2.CreateSelect(phi, diffe(PN), diffe(PN->getIncomingValueForBlock(preds[0])));
-                setDiffe(PN->getIncomingValueForBlock(preds[0]), dif );
+                auto dif = Builder2.CreateSelect(phi, prediff, Constant::getNullValue(prediff->getType()));
+                addToDiffe(PN->getIncomingValueForBlock(preds[0]), dif );
             }
             if (!isConstantValue(PN->getIncomingValueForBlock(preds[1]))) {
-                auto dif = Builder2.CreateSelect(phi, diffe(PN->getIncomingValueForBlock(preds[1])), diffe(PN));
-                setDiffe(PN->getIncomingValueForBlock(preds[1]), dif);
+                auto dif = Builder2.CreateSelect(phi, Constant::getNullValue(prediff->getType()), prediff);
+                addToDiffe(PN->getIncomingValueForBlock(preds[1]), dif);
             }
-            setDiffe(PN, Constant::getNullValue(PN->getType()));
         } else break;
     }
     auto f0 = cast<BasicBlock>(reverseBlocks[preds[0]]);
@@ -2416,15 +2424,15 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
           // POINTER TYPE THINGS
           if (PN->getType()->isPointerTy()) continue;
-
+          auto prediff = diffe(PN);
+          setDiffe(PN, Constant::getNullValue(PN->getType()));
           for(unsigned i=0; i<preds.size(); i++) {
             if (!isConstantValue(PN->getIncomingValueForBlock(preds[i]))) {
                 auto cond = Builder2.CreateICmpEQ(phi, ConstantInt::get(phi->getType(), i));
-                auto dif = Builder2.CreateSelect(cond, diffe(PN), diffe(PN->getIncomingValueForBlock(preds[i])));
-                setDiffe(PN->getIncomingValueForBlock(preds[i]), dif);
+                auto dif = Builder2.CreateSelect(cond, prediff, Constant::getNullValue(prediff->getType()));
+                addToDiffe(PN->getIncomingValueForBlock(preds[i]), dif);
             }
           }
-          setDiffe(PN, Constant::getNullValue(PN->getType()));
         } else break;
     }
 
@@ -2567,11 +2575,13 @@ void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI) {//, LoopInfo& LI, Dom
     llvm::errs() << "postfn:\n" << *newFunc << "\n";
   Builder.setFastMathFlags(FastMathFlags::getFast());
 
-  Value* diffret = Builder.CreateCall(newFunc, args);
+  CallInst* diffret = cast<CallInst>(Builder.CreateCall(newFunc, args));
+  diffret->setCallingConv(CI->getCallingConv());
+  diffret->setDebugLoc(CI->getDebugLoc());
   if (cast<StructType>(diffret->getType())->getNumElements()>0) {
     unsigned idxs[] = {0};
-    diffret = Builder.CreateExtractValue(diffret, idxs);
-    CI->replaceAllUsesWith(diffret);
+    auto diffreti = Builder.CreateExtractValue(diffret, idxs);
+    CI->replaceAllUsesWith(diffreti);
   } else {
     CI->replaceAllUsesWith(UndefValue::get(CI->getType()));
   }
