@@ -2071,13 +2071,16 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               diffes->setDebugLoc(inst->getDebugLoc());
               unsigned structidx = retUsed ? 1 : 0;
 
-              //if (!isConstantValue(inst)) {
+              //TODO THIS IS WRONG AND THE DIFFE SHOULD IN REALITY BE PIPED IN AS ADDITIONAL ARGUMENT
+              //THIS CAN BE VERIFIED THAT THE DIFFERENTIAL OUTPUTS DO NOT ADHERE TO CHAIN RULE
+              //ON SUB FUNCTION CALL
                   for(unsigned i=0;i<called->getFunctionType()->getNumParams(); i++) {
                     if (argsInverted[i] == DIFFE_TYPE::OUT_DIFF) {
                       unsigned idxs[] = {structidx};
-                      // really it makes more sense to pass in diffe(inst), and to always extract value
-                      //TODO THIS FMUL NEEDS THOUGHT
-                      auto diffeadd = Builder2.CreateFMul( diffe(inst), Builder2.CreateExtractValue(diffes, idxs));
+                      Value* diffeadd = Builder2.CreateExtractValue(diffes, idxs);
+                      if (!isConstantValue(inst)) {
+                        diffeadd = Builder2.CreateFMul( diffe(inst), diffeadd);
+                      }
                       structidx++;
                       addToDiffe(op->getArgOperand(i), diffeadd);
                     }
