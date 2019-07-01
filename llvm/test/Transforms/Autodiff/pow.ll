@@ -21,12 +21,13 @@ declare double @llvm.autodiff.p0f_f64f64f64f(double (double, double)*, ...)
 
 ; CHECK: define internal { double, double } @diffetester(double %x, double %y) {
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = tail call fast double @llvm.pow.f64(double %x, double %y)
-; CHECK-NEXT:   %1 = fdiv fast double %0, %x
-; CHECK-NEXT:   %2 = fmul fast double %1, %y
-; CHECK-NEXT:   %3 = call fast double @llvm.log.f64(double %y)
-; CHECK-NEXT:   %4 = fmul fast double %0, %3
-; CHECK-NEXT:   %5 = insertvalue { double, double } undef, double %2, 0
-; CHECK-NEXT:   %6 = insertvalue { double, double } %5, double %4, 1
-; CHECK-NEXT:   ret { double, double } %6
+; CHECK-NEXT:   %[[origpow:.+]] = tail call fast double @llvm.pow.f64(double %x, double %y)
+; CHECK-NEXT:   %[[ym1:.+]] = fsub fast double %y, 1.000000e+00
+; CHECK-NEXT:   %[[newpow:.+]] = call fast double @llvm.pow.f64(double %x, double %[[ym1]])
+; CHECK-NEXT:   %[[dx:.+]] = fmul fast double %[[newpow]], %y
+; CHECK-NEXT:   %[[logy:.+]] = call fast double @llvm.log.f64(double %y)
+; CHECK-NEXT:   %[[dy:.+]] = fmul fast double %[[origpow]], %[[logy]]
+; CHECK-NEXT:   %[[interres:.+]] = insertvalue { double, double } undef, double %[[dx:.+]], 0
+; CHECK-NEXT:   %[[finalres:.+]] = insertvalue { double, double } %[[interres]], double %[[dy:.+]], 1
+; CHECK-NEXT:   ret { double, double } %[[finalres]]
 ; CHECK-NEXT: }

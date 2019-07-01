@@ -656,7 +656,7 @@ Function *CloneFunctionWithReturns(Function *F, ValueToValueMapTy& ptrInputs, co
  gvn.run(*NewF, AM);
 
  SROA().run(*NewF, AM);
- LCSSAPass().run(*NewF, AM);
+ //LCSSAPass().run(*NewF, AM);
  //gvn.run(*NewF, AM);
 
  //gvn.runImpl(*NewF, AC, DT, TLI, AA);
@@ -1932,11 +1932,23 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
           break;
         }
         case Intrinsic::pow: {
-          if (!isconstant(op) && !isConstantValue(op->getOperand(0)))
+          if (!isconstant(op) && !isConstantValue(op->getOperand(0))) {
+
+            /*
             dif0 = Builder2.CreateFMul(
               Builder2.CreateFMul(diffe(inst),
                 Builder2.CreateFDiv(lookup(op), lookup(op->getOperand(0)))), lookup(op->getOperand(1))
             );
+            */
+            SmallVector<Value*, 2> args = {lookup(op->getOperand(0)), Builder2.CreateFSub(lookup(op->getOperand(1)), ConstantFP::get(op->getType(), 1.0))};
+            Type *tys[] = {args[1]->getType()};
+            auto cal = Builder2.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::pow, tys), args);
+            cal->setAttributes(op->getAttributes());
+            dif0 = Builder2.CreateFMul(
+              Builder2.CreateFMul(diffe(inst), cal)
+              , lookup(op->getOperand(1))
+            );
+          }
 
           if (!isconstant(op) && !isConstantValue(op->getOperand(1))) {
             Value *args[] = {lookup(op->getOperand(1))};
