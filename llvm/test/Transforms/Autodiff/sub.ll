@@ -22,7 +22,10 @@ declare double @llvm.sin.f64(double)
 ; Function Attrs: nounwind
 declare double @llvm.autodiff.p0f_f64f64f64f(double (double, double)*, ...)
 
-; CHECK: define internal { double, double } @diffetester(double %x, double %y)
+; CHECK: define internal { double, double } @diffetester(double %x, double %y, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   ret { double, double } { double 1.000000e+00, double -1.000000e+00 }
+; CHECK-NEXT:   %0 = fsub fast double -0.000000e+00, %differeturn
+; CHECK-NEXT:   %1 = insertvalue { double, double } undef, double %differeturn, 0
+; CHECK-NEXT:   %2 = insertvalue { double, double } %1, double %0, 1
+; CHECK-NEXT:   ret { double, double } %2
 ; CHECK-NEXT: }

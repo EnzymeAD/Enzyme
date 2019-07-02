@@ -1,4 +1,4 @@
-; RUN: opt < %s -lower-autodiff -inline -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s
+; RUN: opt < %s -lower-autodiff -inline -ipconstprop -deadargelim -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s
 
 @.str = private unnamed_addr constant [25 x i8] c"xs[%d] = %f xp[%d] = %f\0A\00", align 1
 @.str.1 = private unnamed_addr constant [7 x i8] c"n != 0\00", align 1
@@ -137,7 +137,7 @@ attributes #6 = { noreturn nounwind }
 !5 = !{!"Simple C/C++ TBAA"}
 
 
-; CHECK: define internal {} @diffesummer(double* noalias nocapture readonly %x, double* %"x'", i64 %n) #0 {
+; CHECK: define internal void @diffesummer(double* noalias nocapture readonly %x, double* %"x'", i64 %n) #0 {
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %cmp = icmp eq i64 %n, 0
 ; CHECK-NEXT:   br i1 %cmp, label %cond.false, label %cond.end
@@ -184,7 +184,7 @@ attributes #6 = { noreturn nounwind }
 ; CHECK-NEXT:   %8 = fadd fast double %7, %20
 ; CHECK-NEXT:   store double %8, double* %"x'"
 ; CHECK-NEXT:   %9 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([19 x i8], [19 x i8]* @.str.3, i64 0, i64 0), double 0.000000e+00)
-; CHECK-NEXT:   ret {} undef
+; CHECK-NEXT:   ret
 
 ; CHECK: invertfor.cond.cleanup:                           ; preds = %for.body.for.body_crit_edge
 ; CHECK-NEXT:   %10 = add i64 %n, -2

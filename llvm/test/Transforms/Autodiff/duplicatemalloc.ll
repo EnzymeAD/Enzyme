@@ -59,17 +59,19 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %call.i = tail call i8* @malloc(i64 %mul.i) #6
 ; CHECK-NEXT:   %0 = bitcast i8* %call.i to double*
 ; CHECK-NEXT:   store double %x, double* %0, align 8, !tbaa !2
+; CHECK-NEXT:   %[[fresult:.+]] = tail call fast double @f(double* %0) #6
+; CHECK-NEXT:   %factor = fmul fast double %[[fresult]], 2.000000e+00
 ; CHECK-NEXT:   %"'ipc.i" = bitcast i8* %"call'mi.i" to double*
-; CHECK-NEXT:   tail call fastcc void @diffef(double* %"'ipc.i") #6
+; CHECK-NEXT:   tail call fastcc void @diffef(double* %"'ipc.i", double %factor) #6
 ; CHECK-NEXT:   tail call void bitcast (i32 (...)* @free to void (i8*)*)(i8* %call.i) #6
 ; CHECK-NEXT:   tail call void bitcast (i32 (...)* @free to void (i8*)*)(i8* %"call'mi.i") #6
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
-; CHECK: define internal fastcc void @diffef(double* nocapture %"x'")
+; CHECK: define internal fastcc void @diffef(double* nocapture %"x'", double %differeturn)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = load double, double* %"x'", align 8
-; CHECK-NEXT:   %1 = fadd fast double %0, 1.000000e+00
+; CHECK-NEXT:   %1 = fadd fast double %0, %differeturn
 ; CHECK-NEXT:   store double %1, double* %"x'", align 8
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

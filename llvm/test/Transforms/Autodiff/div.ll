@@ -22,13 +22,14 @@ declare double @llvm.sin.f64(double)
 ; Function Attrs: nounwind
 declare double @llvm.autodiff.p0f_f64f64f64f(double (double, double)*, ...)
 
-; CHECK: define internal { double, double } @diffetester(double %x, double %y)
+; CHECK: define internal { double, double } @diffetester(double %x, double %y, double %[[differet:.+]])
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %diffex = fdiv fast double 1.000000e+00, %y
-; CHECK-NEXT:   %0 = fdiv fast double %x, %y
-; CHECK-NEXT:   %1 = fdiv fast double %0, %y
-; CHECK-NEXT:   %2 = fsub fast double -0.000000e+00, %1
-; CHECK-NEXT:   %3 = insertvalue { double, double } undef, double %diffex, 0
-; CHECK-NEXT:   %4 = insertvalue { double, double } %3, double %2, 1
-; CHECK-NEXT:   ret { double, double } %4
+; CHECK-NEXT:   %diffex = fdiv fast double %[[differet]], %y
+; CHECK-NEXT:   %[[xdivy:.+]] = fdiv fast double %x, %y
+; CHECK-NEXT:   %[[xdivydret:.+]] = fmul fast double %[[differet]], %[[xdivy]]
+; CHECK-NEXT:   %[[xdivy2:.+]] = fdiv fast double %[[xdivydret]], %y
+; CHECK-NEXT:   %[[mxdivy2:.+]] = fsub fast double -0.000000e+00, %[[xdivy2]]
+; CHECK-NEXT:   %[[res1:.+]] = insertvalue { double, double } undef, double %diffex, 0
+; CHECK-NEXT:   %[[res2:.+]] = insertvalue { double, double } %[[res1:.+]], double %[[mxdivy2]], 1
+; CHECK-NEXT:   ret { double, double } %[[res2]]
 ; CHECK-NEXT: }

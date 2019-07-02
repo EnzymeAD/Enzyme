@@ -21,11 +21,11 @@ declare double @llvm.pow.f64(double, double)
 ; Function Attrs: nounwind
 declare double @llvm.autodiff.p0f_f64f64f64f(double (double, double)*, ...)
 
-; CHECK: define internal { double, double } @diffemax(double %x, double %y) {
+; CHECK: define internal { double, double } @diffemax(double %x, double %y, double %[[differet:.+]]) {
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[cmp:.+]] = fcmp fast ogt double %x, %y
-; CHECK-NEXT:   %diffex = select i1 %[[cmp]], double 1.000000e+00, double 0.000000e+00
-; CHECK-NEXT:   %diffey = select i1 %[[cmp]], double 0.000000e+00, double 1.000000e+00
+; CHECK-NEXT:   %diffex = select i1 %[[cmp]], double %[[differet]], double 0.000000e+00
+; CHECK-NEXT:   %diffey = select i1 %[[cmp]], double 0.000000e+00, double %[[differet]]
 ; CHECK-NEXT:   %[[insert1:.+]] = insertvalue { double, double } undef, double %diffex, 0
 ; CHECK-NEXT:   %[[result:.+]] = insertvalue { double, double } %[[insert1]], double %diffey, 1
 ; CHECK-NEXT:   ret { double, double } %[[result]]

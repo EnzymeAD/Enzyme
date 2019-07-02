@@ -35,15 +35,16 @@ attributes #1 = { nounwind readnone noinline }
 ; CHECK-NEXT:   %cmp.i = fcmp fast ogt double %x, 0.000000e+00
 ; CHECK-NEXT:   br i1 %cmp.i, label %invertcond.true.i, label %differelu.exit
 ; CHECK: invertcond.true.i:                                ; preds = %entry
-; CHECK-NEXT:   %0 = call { double } @diffef(double %x)
-; CHECK-NEXT:   %1 = extractvalue { double } %0, 0
+; CHECK-NEXT:   %[[diffef:.+]] = call { double } @diffef(double %x, double 1.000000e+00)
+; CHECK-NEXT:   %[[result:.+]] = extractvalue { double } %[[diffef]], 0
 ; CHECK-NEXT:   br label %differelu.exit
 ; CHECK: differelu.exit:                                   ; preds = %entry, %invertcond.true.i
-; CHECK-NEXT:   %"x'de.0.i" = phi double [ %1, %invertcond.true.i ], [ 0.000000e+00, %entry ]
+; CHECK-NEXT:   %"x'de.0.i" = phi double [ %[[result]], %invertcond.true.i ], [ 0.000000e+00, %entry ]
 ; CHECK-NEXT:   ret double %"x'de.0.i"
 ; CHECK-NEXT: }
 
-; CHECK: define internal { double } @diffef(double %x)
+; CHECK: define internal { double } @diffef(double %x, double %[[differet:.+]])
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   ret { double } { double 1.000000e+00 }
+; CHECK-NEXT:   %[[result:.+]] = insertvalue { double } undef, double %[[differet]], 0
+; CHECK-NEXT:   ret { double } %[[result]]
 ; CHECK-NEXT: }

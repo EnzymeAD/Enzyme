@@ -118,33 +118,33 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:  br i1 %2, label %for.body.i, label %invertfor.cond.cleanup.i
 
 ; CHECK:invertfor.cond.cleanup.i:                         ; preds = %for.body.i
-; CHECK-NEXT:  %7 = call {} @diffesum_list(%struct.n* %5, %struct.n* %[[dstructncast]]) #4
+; CHECK-NEXT:  %[[foo:.+]] = call {} @diffesum_list(%struct.n* %5, %struct.n* %[[dstructncast]], double 1.000000e+00) #4
 ; CHECK-NEXT:  br label %invertfor.body.i
 
 ; CHECK:invertfor.body.i:                                 ; preds = %invertfor.body.i, %invertfor.cond.cleanup.i
-; CHECK-NEXT:  %"x'de.0.i" = phi double [ 0.000000e+00, %invertfor.cond.cleanup.i ], [ %12, %invertfor.body.i ]
-; CHECK-NEXT:  %"indvars.iv'phi.i" = phi i64 [ %n, %invertfor.cond.cleanup.i ], [ %8, %invertfor.body.i ]
-; CHECK-NEXT:  %8 = sub i64 %"indvars.iv'phi.i", 1
-; CHECK-NEXT:  %9 = getelementptr i8*, i8** %"call'mi_malloccache.i", i64 %"indvars.iv'phi.i"
-; CHECK-NEXT:  %10 = load i8*, i8** %9
-; CHECK-NEXT:  %"value'ipc.i" = bitcast i8* %10 to double*
-; CHECK-NEXT:  %11 = load double, double* %"value'ipc.i"
-; CHECK-NEXT:  %12 = fadd fast double %"x'de.0.i", %11
-; CHECK-NEXT:  %13 = getelementptr i8*, i8** %call_malloccache.i, i64 %"indvars.iv'phi.i"
-; CHECK-NEXT:  %14 = load i8*, i8** %13
-; CHECK-NEXT:  call void @free(i8* %14) #4
-; CHECK-NEXT:  %15 = icmp ne i64 %"indvars.iv'phi.i", 0
-; CHECK-NEXT:  %16 = load i8*, i8** %9
-; CHECK-NEXT:  call void @free(i8* %16) #4
-; CHECK-NEXT:  br i1 %15, label %invertfor.body.i, label %diffelist_creator.exit
+; CHECK-NEXT:  %"x'de.0.i" = phi double [ 0.000000e+00, %invertfor.cond.cleanup.i ], [ %[[add:.+]], %invertfor.body.i ]
+; CHECK-NEXT:  %"indvars.iv'phi.i" = phi i64 [ %n, %invertfor.cond.cleanup.i ], [ %[[sub:.+]], %invertfor.body.i ]
+; CHECK-NEXT:  %[[sub]] = sub i64 %"indvars.iv'phi.i", 1
+; CHECK-NEXT:  %[[gep:.+]] = getelementptr i8*, i8** %"call'mi_malloccache.i", i64 %"indvars.iv'phi.i"
+; CHECK-NEXT:  %[[loadcache:.+]] = load i8*, i8** %[[gep]]
+; CHECK-NEXT:  %"value'ipc.i" = bitcast i8* %[[loadcache]] to double*
+; CHECK-NEXT:  %[[load:.+]] = load double, double* %"value'ipc.i"
+; CHECK-NEXT:  %[[add]] = fadd fast double %"x'de.0.i", %[[load]]
+; CHECK-NEXT:  %[[gepcall:.+]] = getelementptr i8*, i8** %call_malloccache.i, i64 %"indvars.iv'phi.i"
+; CHECK-NEXT:  %[[loadprefree:.+]] = load i8*, i8** %[[gepcall]]
+; CHECK-NEXT:  call void @free(i8* %[[loadprefree]]) #4
+; CHECK-NEXT:  %[[cmp:.+]] = icmp ne i64 %"indvars.iv'phi.i", 0
+; CHECK-NEXT:  %[[prefree2:.+]] = load i8*, i8** %[[gep]]
+; CHECK-NEXT:  call void @free(i8* %[[prefree2]]) #4
+; CHECK-NEXT:  br i1 %[[cmp:.+]], label %invertfor.body.i, label %diffelist_creator.exit
 
 ; CHECK:diffelist_creator.exit:                           ; preds = %invertfor.body.i
 ; CHECK-NEXT:  call void @free(i8* nonnull %[[malloc1]]) #4
 ; CHECK-NEXT:  call void @free(i8* nonnull %malloccall.i) #4
-; CHECK-NEXT:  ret double %12
+; CHECK-NEXT:  ret double %[[add]]
 
 
-; CHECK: define internal {} @diffesum_list(%struct.n* noalias readonly %node, %struct.n* %"node'") #6 {
+; CHECK: define internal {} @diffesum_list(%struct.n* noalias readonly %node, %struct.n* %"node'", double %[[differet:.+]]) #6 {
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %malloccall = tail call i8* @malloc(i64 8)
 ; CHECK-NEXT:   %0 = bitcast i8* %malloccall to %struct.n**
@@ -191,7 +191,7 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %13 = load %struct.n*, %struct.n** %12
 ; CHECK-NEXT:   %"value'ipg" = getelementptr %struct.n, %struct.n* %13, i64 0, i32 0
 ; CHECK-NEXT:   %14 = load double, double* %"value'ipg"
-; CHECK-NEXT:   %15 = fadd fast double %14, 1.000000e+00
+; CHECK-NEXT:   %15 = fadd fast double %14, %[[differet]]
 ; CHECK-NEXT:   store double %15, double* %"value'ipg"
 ; CHECK-NEXT:   %16 = icmp ne i64 %"'phi", 0
 ; CHECK-NEXT:   br i1 %16, label %invertfor.body, label %invertfor.body.preheader

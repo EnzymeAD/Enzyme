@@ -1,4 +1,4 @@
-; RUN: opt < %s -lower-autodiff -inline -mem2reg -adce -aggressive-instcombine -instsimplify -early-cse-memssa -simplifycfg -correlated-propagation -adce -S | FileCheck %s
+; RUN: opt < %s -lower-autodiff -inline -mem2reg -adce -aggressive-instcombine -instsimplify -early-cse-memssa -simplifycfg -correlated-propagation -adce -ipconstprop -deadargelim -S | FileCheck %s
 
 ; Function Attrs: nounwind uwtable
 define dso_local void @dsincos(double* noalias %x, double* noalias %xp, i64 %n) local_unnamed_addr #0 {
@@ -48,7 +48,7 @@ attributes #2 = { nounwind }
 !5 = !{!"Simple C/C++ TBAA"}
 
 
-; CHECK: define internal {} @diffeiterA(double* noalias nocapture readonly %x, double* %"x'", i64 %n)
+; CHECK: define internal void @diffeiterA(double* noalias nocapture readonly %x, double* %"x'", i64 %n)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = load double, double* %x, align 8, !tbaa !2
 ; CHECK-NEXT:   %exitcond11 = icmp eq i64 %n, 0
@@ -78,7 +78,7 @@ attributes #2 = { nounwind }
 ; CHECK-NEXT:   %5 = load double, double* %"x'"
 ; CHECK-NEXT:   %6 = fadd fast double %5, %"'de.0"
 ; CHECK-NEXT:   store double %6, double* %"x'"
-; CHECK-NEXT:   ret {} undef
+; CHECK-NEXT:   ret
 
 ; CHECK: invertfor.body.for.body_crit_edge.preheader:  
 ; CHECK-NEXT:   %7 = bitcast i1* %cmp.i_mdyncache.0 to i8*

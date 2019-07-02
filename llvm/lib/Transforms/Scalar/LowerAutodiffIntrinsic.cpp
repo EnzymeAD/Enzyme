@@ -465,7 +465,7 @@ bool isconstantM(Value* val, SmallPtrSetImpl<Value*> &constants, SmallPtrSetImpl
    return Changed;
  }
 
-Function *CloneFunctionWithReturns(Function *F, ValueToValueMapTy& ptrInputs, const SmallSet<unsigned,4>& constant_args, SmallPtrSetImpl<Value*> &constants, SmallPtrSetImpl<Value*> &nonconstant, bool returnValue) {
+Function *CloneFunctionWithReturns(Function *F, ValueToValueMapTy& ptrInputs, const SmallSet<unsigned,4>& constant_args, SmallPtrSetImpl<Value*> &constants, SmallPtrSetImpl<Value*> &nonconstant, bool returnValue, bool differentialReturn) {
  assert(!F->empty());
  std::vector<Type*> RetTypes;
  if (returnValue)
@@ -497,7 +497,10 @@ Function *CloneFunctionWithReturns(Function *F, ValueToValueMapTy& ptrInputs, co
      }
      argno++;
   }
-
+ if (differentialReturn) {
+    assert(!F->getReturnType()->isVoidTy());
+    ArgTypes.push_back(F->getReturnType());
+ }
  auto RetType = StructType::get(F->getContext(), RetTypes);
 
  // Create a new function type...
@@ -506,7 +509,11 @@ Function *CloneFunctionWithReturns(Function *F, ValueToValueMapTy& ptrInputs, co
 
  // Create the new function...
  Function *NewF = Function::Create(FTy, F->getLinkage(), "diffe"+F->getName(), F->getParent());
-
+ if (differentialReturn) {
+    auto I = NewF->arg_end();
+    I--;
+    I->setName("differeturn");
+ }
  bool hasPtrInput = false;
 
  unsigned ii = 0, jj = 0;
@@ -1033,7 +1040,7 @@ bool getContextM(BasicBlock *BB, LoopContext &loopContext, std::map<Loop*,LoopCo
     return false;
   }
   
-Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& constant_args, TargetLibraryInfo &TLI, bool returnValue) {
+Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& constant_args, TargetLibraryInfo &TLI, bool returnValue, bool differentialReturn) {
   assert(!todiff->empty());
   auto M = todiff->getParent();
   auto& Context = M->getContext();
@@ -1041,7 +1048,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
   ValueToValueMapTy invertedPointers;
   SmallPtrSet<Value*,4> constants;
   SmallPtrSet<Value*,20> nonconstant;
-  auto newFunc = CloneFunctionWithReturns(todiff, invertedPointers, constant_args, constants, nonconstant, returnValue);
+  auto newFunc = CloneFunctionWithReturns(todiff, invertedPointers, constant_args, constants, nonconstant, returnValue, differentialReturn);
 
   DominatorTree DT(*newFunc);
   LoopInfo LI(DT);
@@ -1062,7 +1069,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
   };
 
   llvm::AllocaInst* retAlloca = nullptr;
-  if (returnValue && !todiff->getReturnType()->isVoidTy()) {
+  if (returnValue && differentialReturn) {
 	retAlloca = IRBuilder<>(&newFunc->getEntryBlock().front()).CreateAlloca(todiff->getReturnType(), nullptr, "toreturn");
   }
 
@@ -1738,8 +1745,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
       op->eraseFromParent();
 
-      if (retval) {
-        setDiffe(retval, ConstantFP::get(retval->getType(), 1.0));
+      if (differentialReturn) {
+        //setDiffe(retval, ConstantFP::get(retval->getType(), 1.0));
+        auto endarg = newFunc->arg_end();
+        endarg--;
+        setDiffe(retval, endarg);
       } else {
 		assert (retAlloca == nullptr);
       }
@@ -2075,8 +2085,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 				retUsed = false;
 				break;
               }
-              auto newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called), subconstant_args, TLI, retUsed);//, LI, DT);
+              auto newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called), subconstant_args, TLI, retUsed, !isConstantValue(inst));//, LI, DT);
 
+              if (!isConstantValue(inst)) {
+                args.push_back(diffe(inst));
+              }
 
               auto diffes = Builder2.CreateCall(newcalled, args);
               diffes->setCallingConv(op->getCallingConv());
@@ -2090,9 +2103,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                     if (argsInverted[i] == DIFFE_TYPE::OUT_DIFF) {
                       unsigned idxs[] = {structidx};
                       Value* diffeadd = Builder2.CreateExtractValue(diffes, idxs);
-                      if (!isConstantValue(inst)) {
-                        diffeadd = Builder2.CreateFMul( diffe(inst), diffeadd);
-                      }
+                      //if (!isConstantValue(inst)) {
+                      //  diffeadd = Builder2.CreateFMul( diffe(inst), diffeadd);
+                      //}
                       structidx++;
                       addToDiffe(op->getArgOperand(i), diffeadd);
                     }
@@ -2271,6 +2284,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     }
 
     for (auto& I: newFunc->args()) {
+      // the differential return input value should be ignored
+      auto idx = newFunc->arg_end();
+      idx--;
+      if (differentialReturn && &I == idx) continue;
       if (!isConstantValue(&I) && whatType(I.getType()) == DIFFE_TYPE::OUT_DIFF ) {
         retargs.push_back(diffe((Value*)&I));
       }
@@ -2584,7 +2601,13 @@ void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI) {//, LoopInfo& LI, Dom
     truei++;
   }
 
-  auto newFunc = CreatePrimalAndGradient(cast<Function>(fn), constants, TLI, /*should return*/false);//, LI, DT);
+  bool differentialReturn = cast<Function>(fn)->getReturnType()->isFPOrFPVectorTy();
+  auto newFunc = CreatePrimalAndGradient(cast<Function>(fn), constants, TLI, /*should return*/false, differentialReturn);//, LI, DT);
+  llvm::errs() << "return type: " << *cast<Function>(fn)->getReturnType() << "\n";
+  llvm::errs() << "newFunc type: " << *cast<Function>(fn)->getFunctionType() << "\n";
+  
+  if (differentialReturn)
+    args.push_back(ConstantFP::get(cast<Function>(fn)->getReturnType(), 1.0));
   assert(newFunc);
   if (autodiff_print)
     llvm::errs() << "postfn:\n" << *newFunc << "\n";
