@@ -1,5 +1,31 @@
 ; RUN: opt < %s -lower-autodiff -inline -O3 -S | FileCheck %s
 
+; #include <stdlib.h>
+; #include <stdio.h>
+; 
+; __attribute__((noinline))
+; double f(double* x) {
+;     return x[0];
+; }
+; 
+; double malloced(double x, unsigned long n) {
+;     double *array = malloc(sizeof(double)*n);
+;     array[0] = x;
+;     double res = f(array);
+;     free(array);
+;     return res * res;
+; }
+; 
+; double derivative(double x, unsigned long n) {
+;     return __builtin_autodiff(malloced, x, n);
+; }
+; 
+; int main(int argc, char** argv) {
+;     double x = atof(argv[1]);
+;     int n = atoi(argv[2]);
+;     printf("original =%f derivative=%f\n", malloced(x, n), derivative(x, n));
+; }
+
 ; Function Attrs: noinline norecurse nounwind readonly uwtable
 define dso_local double @f(double* nocapture readonly %x) local_unnamed_addr #0 {
 entry:

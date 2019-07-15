@@ -1,5 +1,18 @@
 ; RUN: opt < %s -lower-autodiff -mem2reg -inline -early-cse -instcombine -simplifycfg -S | FileCheck %s
 
+; __attribute__((noinline))
+; double f(double x) {
+;     return x;
+; }
+; 
+; double relu(double x) {
+;     return (x > 0) ? f(x) : 0;
+; }
+; 
+; double drelu(double x) {
+;     return __builtin_autodiff(relu, x);
+; }
+
 define dso_local double @f(double %x) #1 {
 entry:
   ret double %x

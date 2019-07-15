@@ -1,5 +1,25 @@
 ; RUN: opt < %s -lower-autodiff -inline -mem2reg -adce -aggressive-instcombine -instsimplify -early-cse-memssa -simplifycfg -correlated-propagation -adce -ipconstprop -deadargelim -S | FileCheck %s
 
+; #include <math.h>
+; #include <stdio.h>
+; 
+; static double max(double x, double y) {
+;     return (x > y) ? x : y;
+; }
+; 
+; __attribute__((noinline))
+; static double iterA(double *__restrict x, size_t n) {
+;   double A = x[0];
+;   for(int i=0; i<=n; i++) {
+;     A = max(A, x[i]);
+;   }
+;   return A;
+; }
+; 
+; void dsincos(double *__restrict x, double *__restrict xp, size_t n) {
+;     __builtin_autodiff(iterA, x, xp, n);
+; }
+
 ; Function Attrs: nounwind uwtable
 define dso_local void @dsincos(double* noalias %x, double* noalias %xp, i64 %n) local_unnamed_addr #0 {
 entry:

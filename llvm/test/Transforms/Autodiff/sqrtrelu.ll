@@ -1,5 +1,15 @@
 ; RUN: opt < %s -lower-autodiff -inline -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s
 
+; #include <math.h>
+; 
+; double sqrelu(double x) {
+;     return (x > 0) ? sqrt(x * sin(x)) : 0;
+; }
+; 
+; double dsqrelu(double x) {
+;     return __builtin_autodiff(sqrelu, x);
+; }
+
 ; Function Attrs: nounwind readnone uwtable
 define dso_local double @sqrelu(double %x) #0 {
 entry:

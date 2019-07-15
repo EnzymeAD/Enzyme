@@ -1745,7 +1745,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
       op->eraseFromParent();
 
-      if (differentialReturn) {
+      if (differentialReturn && !isConstantValue(retval)) {
         //setDiffe(retval, ConstantFP::get(retval->getType(), 1.0));
         auto endarg = newFunc->arg_end();
         endarg--;
@@ -2085,6 +2085,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 				retUsed = false;
 				break;
               }
+              //TODO create augmented primal
               auto newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called), subconstant_args, TLI, retUsed, !isConstantValue(inst));//, LI, DT);
 
               if (!isConstantValue(inst)) {

@@ -1,5 +1,14 @@
 ; RUN: opt < %s -lower-autodiff -O3 -S | FileCheck %s
 
+; source code
+; double square(double x) {
+;     return x * x;
+; }
+; 
+; double dsquare(double x) {
+;     return __builtin_autodiff(square, x);
+; }
+
 define double @square(double %x) {
 entry:
   %mul = fmul fast double %x, %x

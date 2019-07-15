@@ -1,5 +1,19 @@
 ; RUN: opt < %s -lower-autodiff -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
 
+; __attribute__((noinline))
+; double add2(double x) {
+;     return 2 + x;
+; }
+; 
+; __attribute__((noinline))
+; double add4(double x) {
+;     return add2(x) + 2;
+; }
+; 
+; double dadd4(double x) {
+;     return __builtin_autodiff(add4, x);
+; }
+
 define dso_local double @add2(double %x) {
 entry:
   %add = fadd fast double %x, 2.000000e+00
