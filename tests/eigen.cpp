@@ -30,7 +30,7 @@ __attribute__((noinline))
 static void matvecclean(const MatrixXd& __restrict W,
     const MatrixXd& __restrict b, MatrixXd& __restrict foo) {
 
-  foo = b * W ;
+  foo = W * b;
 }
 
 __attribute__((noinline))
@@ -39,7 +39,8 @@ static void matvec(const MatrixXd& __restrict W,
     printf("foo.rows()=%ld foo.cols()=%ld\n", foo.rows(), foo.cols());
     printf("b.rows()=%ld b.cols()=%ld\n", b.rows(), b.cols());
     printf("W.rows()=%ld W.cols()=%ld\n", W.rows(), W.cols());
-  foo = b * W ;
+  foo = W * b;
+    printf("ran forward\n");
 }
 
 /*
@@ -65,8 +66,8 @@ int main(int argc, char** argv) {
 
     size_t IN = 4, OUT = 3, NUM = 5;
 
-    MatrixXd W(OUT, IN);
-    MatrixXd Wp(OUT, IN);
+    MatrixXd W(IN, OUT);
+    MatrixXd Wp(IN, OUT);
 
     VectorXd B(OUT);
     VectorXd Bp(OUT);
@@ -74,16 +75,19 @@ int main(int argc, char** argv) {
     VectorXd foo(IN);
     VectorXd foop(IN);
     
-    W = Eigen::MatrixXd::Constant(OUT, IN, 1.0);
+    W = Eigen::MatrixXd::Constant(IN, OUT, 1.0);
     B = Eigen::VectorXd::Constant(OUT, 2.0);
     foo = Eigen::VectorXd::Constant(OUT, 1.0);
     
-    Wp = Eigen::MatrixXd::Constant(OUT, IN, 0.0);
+    Wp = Eigen::MatrixXd::Constant(IN, OUT, 0.0);
     Bp = Eigen::VectorXd::Constant(OUT, 0.0);
     foop = Eigen::VectorXd::Constant(OUT, 1.0);
       //memset(Wp, 0, sizeof(double) * IN * OUT);
       //memset(Bp, 0, sizeof(double) * OUT);
 
+    printf("running regular\n");
+    matvec(W, B, foo);
+    printf("end running regular\n");
      __builtin_autodiff(matvec, W,Wp,B,Bp,foo,foop);
 
      for(int o=0; o<OUT; o++)
