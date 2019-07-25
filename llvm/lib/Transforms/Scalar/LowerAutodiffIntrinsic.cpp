@@ -1088,6 +1088,7 @@ public:
     for(auto v: originalToNewFn) {
         if (v.second == newinst) return const_cast<Value*>(v.first);
     }
+    assert(0 && "could not invert new inst");
     report_fatal_error("could not invert new inst");
   }
 
@@ -1095,10 +1096,9 @@ public:
     for(auto v: originalToNewFn) {
         if (invertedPointers[v.second] == newinst) return const_cast<Value*>(v.first);
     }
-    report_fatal_error("could not invert new inst");
+    assert(0 && "could not invert new pointer inst");
+    report_fatal_error("could not invert new pointer inst");
   }
-
-  ValueToValueMapTy mallocToOrig;
 
 private:
   SmallVector<Instruction*, 4> addedMallocs;
@@ -1112,7 +1112,7 @@ public:
     assert(addedMallocs.size() == 0);
     tape = newtape;
   }
-  Instruction* addMallocAndMemset(IRBuilder <> &BuilderQ, Value* original, Instruction* malloc, Instruction* memset) {
+  Instruction* addMallocAndMemset(IRBuilder <> &BuilderQ, Instruction* malloc, Instruction* memset) {
     assert(malloc);
     assert(memset);
     if (tape) {
@@ -1124,13 +1124,11 @@ public:
         return ret;
     } else {
       addedMallocs.push_back(malloc);
-      assert(originalToNewFn.find(original) != originalToNewFn.end());
-      mallocToOrig[malloc] = original;
       return malloc;
     }
   }
 
-  Instruction* addMalloc(IRBuilder<> &BuilderQ, Value* original, Instruction* malloc) {
+  Instruction* addMalloc(IRBuilder<> &BuilderQ, Instruction* malloc) {
     if (tape) {
         Instruction* ret = cast<Instruction>(BuilderQ.CreateExtractValue(tape, {tapeidx}));
         if (malloc) {
@@ -1142,8 +1140,6 @@ public:
     } else {
       assert(malloc);
       addedMallocs.push_back(malloc);
-      assert(originalToNewFn.find(original) != originalToNewFn.end());
-      mallocToOrig[malloc] = original;
       return malloc;
     }
   }
@@ -1668,7 +1664,7 @@ public:
             auto memset = cast<CallInst>(bb.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::memset, tys), nargs));
             //memset->addParamAttr(0, Attribute::getWithAlignment(Context, inst->getAlignment()));
             memset->addParamAttr(0, Attribute::NonNull);
-            invertedPointers[val] = addMallocAndMemset(bb, getOriginal(call), cast<Instruction>(invertedPointers[val]), cast<Instruction>(memset));
+            invertedPointers[val] = addMallocAndMemset(bb, cast<Instruction>(invertedPointers[val]), cast<Instruction>(memset));
                 }
 
                 if (reverseBlocks.size()) {
@@ -1997,7 +1993,7 @@ Function* CreateAugmentedPrimal(Function* todiff, const SmallSet<unsigned,4>& co
                       op->replaceAllUsesWith(rv);
                       idx++;
                     }
-                    gutils->addMalloc(BuilderZ, gutils->getOriginal(op), cast<Instruction>(BuilderZ.CreateExtractValue(diffes, {idx})));
+                    gutils->addMalloc(BuilderZ, cast<Instruction>(BuilderZ.CreateExtractValue(diffes, {idx})));
                     op->eraseFromParent();
                   }
                 } else {
@@ -2518,6 +2514,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                         continue;
                     }
                 }
+                if (isa<ConstantPointerNull>(val)) {
+                    op->eraseFromParent();
+                    llvm::errs() << "removing free of null pointer\n";
+                    continue;
+                }
                 llvm::errs() << "freeing without malloc " << *val << "\n";
                 op->eraseFromParent();
                 continue;
@@ -2623,7 +2624,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                   assert(additionalValue);
                 }
                 IRBuilder<> builder(op);
-                tape = gutils->addMalloc(builder, gutils->getOriginal(op), tape);
+                tape = gutils->addMalloc(builder, tape);
                 tapetype = tape->getType();
                 assert(tapetype == tape->getType());
               }

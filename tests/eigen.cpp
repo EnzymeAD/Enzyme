@@ -98,7 +98,7 @@ int main(int argc, char** argv) {
 
      for(int o=0; o<OUT; o++)
      for(int i=0; i<IN; i++)
-        printf("Wp(o=%d, i=%d)=%f\n", o, i, Wp(o, i));
+        printf("Wp(o=%d, i=%d)=%f\n", i, o, Wp(i, o));
 
 }
 #if 0
