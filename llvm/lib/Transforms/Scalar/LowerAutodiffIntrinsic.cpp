@@ -229,14 +229,13 @@ bool isconstantM(Value* val, SmallPtrSetImpl<Value*> &constants, SmallPtrSetImpl
 	
     if (auto op = dyn_cast<CallInst>(val)) {
 		if(auto called = op->getCalledFunction()) {
-			if (called->getName() == "__assert_fail" || called->getName() == "free" || called->getName() == "_ZdlPv") {
-			//if (called->getName() == "__assert_fail" || called->getName() == "malloc" || called->getName() == "free" || called->getName() =="_Znwm" || called->getName() == "_ZdlPv") {
+			if (called->getName() == "__assert_fail" || called->getName() == "free" || called->getName() == "_ZdlPv" || called->getName() == "_ZdlPvm") {
 				constants.insert(val);
 				return true;
 			}
 		}
 	}
-
+	
     if (auto op = dyn_cast<IntrinsicInst>(val)) {
 		switch(op->getIntrinsicID()) {
 			case Intrinsic::stacksave:
@@ -286,11 +285,18 @@ bool isconstantM(Value* val, SmallPtrSetImpl<Value*> &constants, SmallPtrSetImpl
 
 		for (const auto &a:inst->users()) {
 		  if(auto store = dyn_cast<StoreInst>(a)) {
-			if (!isconstantM(store->getValueOperand(), constants2, nonconstant2, originalInstructions, directions)) {
+			if (inst == store->getPointerOperand() && !isconstantM(store->getValueOperand(), constants2, nonconstant2, originalInstructions, directions)) {
 				if (directions == 3)
 				  nonconstant.insert(val);
     			if (printconst)
 				  llvm::errs() << "memory erase 1: " << *val << "\n";
+				return false;
+			}
+			if (inst == store->getValueOperand() && !isconstantM(store->getPointerOperand(), constants2, nonconstant2, originalInstructions, directions)) {
+				if (directions == 3)
+				  nonconstant.insert(val);
+    			if (printconst)
+				  llvm::errs() << "memory erase 2: " << *val << "\n";
 				return false;
 			}
 		  } else if (isa<LoadInst>(a)) continue;
@@ -299,7 +305,7 @@ bool isconstantM(Value* val, SmallPtrSetImpl<Value*> &constants, SmallPtrSetImpl
 				if (directions == 3)
 				  nonconstant.insert(val);
     			if (printconst)
-				  llvm::errs() << "memory erase 2: " << *val << " op " << *a << "\n";
+				  llvm::errs() << "memory erase 3: " << *val << " op " << *a << "\n";
 				return false;
 			}
 		  }
@@ -1361,6 +1367,12 @@ public:
                 }
                 if (!isChildLoop) {
                     llvm::errs() << "manually performing lcssa for instruction" << *inst << " in block " << BuilderM.GetInsertBlock()->getName() << "\n";
+                    if (!DT.dominates(inst, originalForReverseBlock(*BuilderM.GetInsertBlock()))) {
+                        this->newFunc->dump();
+                        originalForReverseBlock(*BuilderM.GetInsertBlock())->dump();
+                        BuilderM.GetInsertBlock()->dump();
+                        inst->dump();
+                    }
                     assert(DT.dominates(inst, originalForReverseBlock(*BuilderM.GetInsertBlock())));
                     IRBuilder<> lcssa(&lc.exit->front());
                     auto lcssaPHI = lcssa.CreatePHI(inst->getType(), 1, inst->getName()+"!manual_lcssa");
@@ -1633,7 +1645,7 @@ public:
             memset->addParamAttr(0, Attribute::NonNull);
             return lookupM(invertedPointers[inst], BuilderM);
       } else if (auto call = dyn_cast<CallInst>(val)) {
-        if (call->getCalledFunction() && call->getCalledFunction()->getName() == "malloc") {
+        if (call->getCalledFunction() && (call->getCalledFunction()->getName() == "malloc" || call->getCalledFunction()->getName() == "_Znwm") ) {
                 IRBuilder<> bb(call);
                 {
                 SmallVector<Value*, 8> args;
@@ -1665,7 +1677,19 @@ public:
                         freeBuilder.SetInsertPoint(term);
                     }
                     freeBuilder.setFastMathFlags(FastMathFlags::getFast());
-                    auto ci = CallInst::CreateFree(freeBuilder.CreatePointerCast(lookupM(invertedPointers[val], freeBuilder), Type::getInt8PtrTy(call->getContext())), freeBuilder.GetInsertBlock());
+                    Instruction* ci;
+                    if (call->getCalledFunction()->getName() == "malloc")
+                      ci = CallInst::CreateFree(freeBuilder.CreatePointerCast(lookupM(invertedPointers[val], freeBuilder), Type::getInt8PtrTy(call->getContext())), freeBuilder.GetInsertBlock());
+                    else {
+                      Type *VoidTy = Type::getVoidTy(M->getContext());
+                      Type *IntPtrTy = Type::getInt8PtrTy(M->getContext());
+                      // or should do _ZdlPv vs _ZdlPvm
+                      auto FreeFunc = M->getOrInsertFunction("_ZdlPv", VoidTy, IntPtrTy);
+                      ci = CallInst::Create(FreeFunc, {freeBuilder.CreatePointerCast(lookupM(invertedPointers[val], freeBuilder), Type::getInt8PtrTy(call->getContext()))}, "", freeBuilder.GetInsertBlock());
+                      cast<CallInst>(ci)->setTailCall();
+                      if (Function *F = dyn_cast<Function>(FreeFunc))
+                        cast<CallInst>(ci)->setCallingConv(F->getCallingConv());
+                    }
                     if (ci->getParent()==nullptr) {
                       freeBuilder.Insert(ci);
                     }
@@ -1910,7 +1934,7 @@ Function* CreateAugmentedPrimal(Function* todiff, const SmallSet<unsigned,4>& co
             if (auto castinst = dyn_cast<ConstantExpr>(op->getCalledValue())) {
                 if (castinst->isCast())
                 if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-                    if (fn->getName() == "malloc" || fn->getName() == "free") {
+                    if (fn->getName() == "malloc" || fn->getName() == "free" || fn->getName() == "_Znwm" || fn->getName() == "_ZdlPv" || fn->getName() == "_ZdlPvm") {
                         called = fn;
                     }
                 }
@@ -1920,6 +1944,9 @@ Function* CreateAugmentedPrimal(Function* todiff, const SmallSet<unsigned,4>& co
                 if (called->getName() == "printf" || called->getName() == "puts") {
                 } else if(called->getName()=="malloc") {
                 } else if(called->getName()=="free") {
+                } else if(called->getName()=="_Znwm") {
+                } else if(called->getName()=="_ZdlPv") {
+                } else if(called->getName()=="_ZdlPvm") {
                 } else if (!op->getCalledFunction()->empty()) {
                     if (gutils->isConstantInstruction(op))
                         continue;
@@ -2191,6 +2218,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
   } else if (isa<UnreachableInst>(term)) {
     unreachableTerminator = true;
+    continue;
   } else {
     assert(BB);
     assert(BB->getParent());
@@ -2443,7 +2471,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         if (auto castinst = dyn_cast<ConstantExpr>(op->getCalledValue())) {
             if (castinst->isCast())
             if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-                if (fn->getName() == "malloc" || fn->getName() == "free") {
+                if (fn->getName() == "malloc" || fn->getName() == "free" || fn->getName() == "_Znwm" || fn->getName() == "_ZdlPv" || fn->getName() == "_ZdlPvm") {
                     called = fn;
                 }
             }
@@ -2465,6 +2493,22 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                  }
               }
 
+            } else if(called->getName()=="_Znwm") {
+              if (true) {
+                  Type *VoidTy = Type::getVoidTy(M->getContext());
+                  Type *IntPtrTy = Type::getInt8PtrTy(M->getContext());
+                  //TODO _ZdlPv or _ZdlPvm
+                  auto FreeFunc = M->getOrInsertFunction("_ZdlPv", VoidTy, IntPtrTy);
+                  auto ci = CallInst::Create(FreeFunc, {Builder2.CreatePointerCast(lookup(inst), Type::getInt8PtrTy(Context))}, "", Builder2.GetInsertBlock());
+                  cast<CallInst>(ci)->setTailCall();
+                  if (Function *F = dyn_cast<Function>(FreeFunc))
+                    cast<CallInst>(ci)->setCallingConv(F->getCallingConv());
+
+                  if (ci->getParent()==nullptr) {
+                    Builder2.Insert(ci);
+                  }
+              }
+
             } else if(called->getName()=="free") {
                 llvm::Value* val = op->getArgOperand(0);
                 while(auto cast = dyn_cast<CastInst>(val)) val = cast->getOperand(0);
@@ -2480,6 +2524,22 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 //assert(0 && "free not freeing a malloc");
                 //TODO HANDLE FREE
                 //
+            } else if(called->getName()=="_ZdlPv" || called->getName()=="_ZdlPvm") {
+                llvm::Value* val = op->getArgOperand(0);
+                while(auto cast = dyn_cast<CastInst>(val)) val = cast->getOperand(0);
+                if (auto dc = dyn_cast<CallInst>(val)) {
+                    if (dc->getCalledFunction()->getName() == "_Znwm") {
+                        op->eraseFromParent();
+                        continue;
+                    }
+                }
+                llvm::errs() << "deleting without new " << *val << "\n";
+                op->eraseFromParent();
+                continue;
+                //assert(0 && "free not freeing a malloc");
+                //TODO HANDLE FREE/DELETE
+                //
+
             } else if (!op->getCalledFunction()->empty()) {
                 if (gutils->isConstantInstruction(op)) {
                   if (!topLevel && op->getNumUses() == 0) op->eraseFromParent();
@@ -2537,6 +2597,17 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 				break;
               }
 
+              bool replaceFunction = false;
+
+              if (topLevel && BB->getSingleSuccessor() == BB2) {
+                  auto iter = BB->rbegin();
+                  iter++;
+                  if (&*iter == op) {
+                      replaceFunction = true;
+                      modifyPrimal = false;
+                  }
+              }
+
               Instruction* tape = nullptr;
               Type* tapetype = nullptr;
               GradientUtils *augmentedutils = nullptr;
@@ -2557,7 +2628,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 assert(tapetype == tape->getType());
               }
               GradientUtils *subcallutils = nullptr;
-              auto newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called), subconstant_args, TLI, retUsed, !gutils->isConstantValue(inst), /*topLevel*/false, &subcallutils, tapetype);//, LI, DT);
+              auto newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called), subconstant_args, TLI, retUsed, !gutils->isConstantValue(inst), /*topLevel*/replaceFunction, &subcallutils, tapetype);//, LI, DT);
 
               if (!gutils->isConstantValue(inst)) {
                 args.push_back(diffe(inst));
@@ -2580,8 +2651,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               }
 
               if (retUsed) {
-                unsigned idxs[] = {0};
-                auto retval = Builder2.CreateExtractValue(diffes, idxs);
+                auto retval = Builder2.CreateExtractValue(diffes, {0U});
 				Builder2.CreateStore(retval, retAlloca);
 
 				startremove:
@@ -2593,9 +2663,14 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 						}
 					}
                 }
+              }
 
-                // Previously this would be done, but really DCE should remove this if it doesn't affect anything
-				// inst->eraseFromParent();
+              if (replaceFunction) {
+                if (op->getNumUses() != 0) {
+                  auto retval = Builder2.CreateExtractValue(diffes, {0U});
+                  op->replaceAllUsesWith(retval);
+                }
+                op->eraseFromParent();
               }
 
               //TODO this shouldn't matter because this can't use itself, but setting null should be done before other sets but after load of diffe
@@ -2684,7 +2759,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 		  }
 	  } else if (topLevel) {
         IRBuilder <> storeBuilder(op);
-        storeBuilder.CreateStore(gutils->invertPointerM(op->getValueOperand(),storeBuilder), gutils->invertPointerM(op->getPointerOperand(), storeBuilder) );
+        llvm::errs() << "op value: " << *op->getValueOperand() << "\n";
+        Value* valueop = gutils->invertPointerM(op->getValueOperand(), storeBuilder);
+        llvm::errs() << "op pointer: " << *op->getPointerOperand() << "\n";
+        Value* pointerop = gutils->invertPointerM(op->getPointerOperand(), storeBuilder);
+        storeBuilder.CreateStore(valueop, pointerop);
 		//llvm::errs() << "ignoring store bc pointer of " << *op << "\n";
 	  }
       if (!topLevel && op->getNumUses() == 0) op->eraseFromParent();
