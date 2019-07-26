@@ -2200,6 +2200,15 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     gutils->getContext(BB, loopContext);
   }
 
+
+  // Force calls to augmented
+  for(BasicBlock* BB: gutils->originalBlocks) {
+    LoopContext loopContext;
+    gutils->getContext(BB, loopContext);
+  }
+
+
+
   for(BasicBlock* BB: gutils->originalBlocks) {
 
     LoopContext loopContext;
@@ -2660,6 +2669,18 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               if (topLevel && BB->getSingleSuccessor() == BB2) {
                   auto iter = BB->rbegin();
                   iter++;
+                  while(iter != BB->rbegin() && &*iter != op) {
+                    if (auto ci = dyn_cast<CastInst>(&*iter)) {
+                        iter++;
+                        bool usesInst = false;
+                        for(auto &operand : ci->operands()) {
+                            if (operand.get() == op) { usesInst = true; break; }
+                        }
+                        if (!usesInst)
+                          continue;
+                    }
+                    break;
+                  }
                   if (&*iter == op) {
                       replaceFunction = true;
                       modifyPrimal = false;
@@ -2691,9 +2712,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 assert(tapetype == tape->getType());
               }
               GradientUtils *subcallutils = nullptr;
-              auto newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called), subconstant_args, TLI, retUsed, !gutils->isConstantValue(inst), /*topLevel*/replaceFunction, &subcallutils, tapetype);//, LI, DT);
+              auto newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called), subconstant_args, TLI, retUsed, !gutils->isConstantValue(inst) && !inst->getType()->isPointerTy(), /*topLevel*/replaceFunction, &subcallutils, tapetype);//, LI, DT);
 
-              if (!gutils->isConstantValue(inst)) {
+              if (!gutils->isConstantValue(inst) && !inst->getType()->isPointerTy()) {
                 args.push_back(diffe(inst));
               }
 
@@ -3141,6 +3162,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
   for (Argument &Arg : gutils->newFunc->args()) {
       if (Arg.hasAttribute(Attribute::Returned))
           Arg.removeAttr(Attribute::Returned);
+  }
+  if (auto bytes = gutils->newFunc->getDereferenceableBytes(llvm::AttributeList::ReturnIndex)) {
+    AttrBuilder ab;
+    ab.addDereferenceableAttr(bytes);
+    gutils->newFunc->removeAttributes(llvm::AttributeList::ReturnIndex, ab);
   }
 
   if (llvm::verifyFunction(*gutils->newFunc, &llvm::errs())) {
