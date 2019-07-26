@@ -1226,59 +1226,59 @@ public:
             return val;
           } else if (auto op = dyn_cast<CastInst>(val)) {
             auto op0 = unwrapM(op->getOperand(0), BuilderM, available, lookupIfAble);
-            if (op0 == nullptr) return nullptr;
+            if (op0 == nullptr) goto endCheck;
             return BuilderM.CreateCast(op->getOpcode(), op0, op->getDestTy(), op->getName()+"_unwrap");
           } else if (auto op = dyn_cast<BinaryOperator>(val)) {
             auto op0 = unwrapM(op->getOperand(0), BuilderM, available, lookupIfAble);
-            if (op0 == nullptr) return nullptr;
+            if (op0 == nullptr) goto endCheck;
             auto op1 = unwrapM(op->getOperand(1), BuilderM, available, lookupIfAble);
-            if (op1 == nullptr) return nullptr;
+            if (op1 == nullptr) goto endCheck;
             return BuilderM.CreateBinOp(op->getOpcode(), op0, op1);
           } else if (auto op = dyn_cast<ICmpInst>(val)) {
             auto op0 = unwrapM(op->getOperand(0), BuilderM, available, lookupIfAble);
-            if (op0 == nullptr) return nullptr;
+            if (op0 == nullptr) goto endCheck;
             auto op1 = unwrapM(op->getOperand(1), BuilderM, available, lookupIfAble);
-            if (op1 == nullptr) return nullptr;
+            if (op1 == nullptr) goto endCheck;
             return BuilderM.CreateICmp(op->getPredicate(), op0, op1);
           } else if (auto op = dyn_cast<FCmpInst>(val)) {
             auto op0 = unwrapM(op->getOperand(0), BuilderM, available, lookupIfAble);
-            if (op0 == nullptr) return nullptr;
+            if (op0 == nullptr) goto endCheck;
             auto op1 = unwrapM(op->getOperand(1), BuilderM, available, lookupIfAble);
-            if (op1 == nullptr) return nullptr;
+            if (op1 == nullptr) goto endCheck;
             return BuilderM.CreateFCmp(op->getPredicate(), op0, op1);
           } else if (auto op = dyn_cast<SelectInst>(val)) {
             auto op0 = unwrapM(op->getOperand(0), BuilderM, available, lookupIfAble);
-            if (op0 == nullptr) return nullptr;
+            if (op0 == nullptr) goto endCheck;
             auto op1 = unwrapM(op->getOperand(1), BuilderM, available, lookupIfAble);
-            if (op1 == nullptr) return nullptr;
+            if (op1 == nullptr) goto endCheck;
             auto op2 = unwrapM(op->getOperand(2), BuilderM, available, lookupIfAble);
-            if (op2 == nullptr) return nullptr;
+            if (op2 == nullptr) goto endCheck;
             return BuilderM.CreateSelect(op0, op1, op2);
           } else if (auto inst = dyn_cast<GetElementPtrInst>(val)) {
               auto ptr = unwrapM(inst->getPointerOperand(), BuilderM, available, lookupIfAble);
-              if (ptr == nullptr) return nullptr;
+              if (ptr == nullptr) goto endCheck;
               SmallVector<Value*,4> ind;
               for(auto& a : inst->indices()) {
                 auto op = unwrapM(a, BuilderM,available, lookupIfAble);
-                if (op == nullptr) return nullptr;
+                if (op == nullptr) goto endCheck;
                 ind.push_back(op);
               }
               return BuilderM.CreateGEP(ptr, ind);
           } else if (auto load = dyn_cast<LoadInst>(val)) {
                 Value* idx = unwrapM(load->getOperand(0), BuilderM, available, lookupIfAble);
-                if (idx == nullptr) return nullptr;
+                if (idx == nullptr) goto endCheck;
                 return BuilderM.CreateLoad(idx);
           } else if (auto op = dyn_cast<IntrinsicInst>(val)) {
             switch(op->getIntrinsicID()) {
                 case Intrinsic::sin: {
                   Value *args[] = {unwrapM(op->getOperand(0), BuilderM, available, lookupIfAble)};
-                  if (args[0] == nullptr) return nullptr;
+                  if (args[0] == nullptr) goto endCheck;
                   Type *tys[] = {op->getOperand(0)->getType()};
                   return BuilderM.CreateCall(Intrinsic::getDeclaration(op->getParent()->getParent()->getParent(), Intrinsic::sin, tys), args);
                 }
                 case Intrinsic::cos: {
                   Value *args[] = {unwrapM(op->getOperand(0), BuilderM, available, lookupIfAble)};
-                  if (args[0] == nullptr) return nullptr;
+                  if (args[0] == nullptr) goto endCheck;
                   Type *tys[] = {op->getOperand(0)->getType()};
                   return BuilderM.CreateCall(Intrinsic::getDeclaration(op->getParent()->getParent()->getParent(), Intrinsic::cos, tys), args);
                 }
@@ -1291,6 +1291,8 @@ public:
             }
           }
 
+
+endCheck:
             assert(val);
             llvm::errs() << "cannot unwrap following " << *val << "\n";
             if (lookupIfAble)
@@ -1746,6 +1748,7 @@ public:
         assert(BuilderM.GetInsertBlock()->getParent());
         assert(val);
         llvm::errs() << "fn:" << *BuilderM.GetInsertBlock()->getParent() << "\nval=" << *val << "\n";
+        assert(0 && "cannot find deal with ptr that isnt arg");
         report_fatal_error("cannot find deal with ptr that isnt arg");
       
     };
@@ -1954,6 +1957,7 @@ Function* CreateAugmentedPrimal(Function* todiff, const SmallSet<unsigned,4>& co
                   IRBuilder<> BuilderZ(op);
                   BuilderZ.setFastMathFlags(FastMathFlags::getFast());
 
+                  if (called->getReturnType()->isPointerTy()) modifyPrimal = true;
                   for(unsigned i=0;i<op->getNumArgOperands(); i++) {
                     args.push_back(op->getArgOperand(i));
 
@@ -2040,13 +2044,16 @@ Function* CreateAugmentedPrimal(Function* todiff, const SmallSet<unsigned,4>& co
   auto nf = gutils->newFunc;
 
   std::vector<Type*> RetTypes;
-  if (!nf->getReturnType()->isVoidTy())
-    RetTypes.push_back(nf->getReturnType());
-
 
   std::vector<Type*> MallocTypes;
   for(auto a:gutils->getMallocs()) MallocTypes.push_back(a->getType());
   RetTypes.push_back(StructType::get(nf->getContext(), MallocTypes));
+  
+  if (!nf->getReturnType()->isVoidTy()) {
+    RetTypes.push_back(nf->getReturnType());
+    if (nf->getReturnType()->isPointerTy())
+      RetTypes.push_back(nf->getReturnType());
+  }
 
   Type* RetType = StructType::get(nf->getContext(), RetTypes);
   
@@ -2081,6 +2088,17 @@ Function* CreateAugmentedPrimal(Function* todiff, const SmallSet<unsigned,4>& co
      ii++;
  }
 
+  
+  ValueToValueMapTy invertedRetPs;
+  if (nf->getReturnType()->isPointerTy()) {
+    for (inst_iterator I = inst_begin(nf), E = inst_end(nf); I != E; ++I) {
+      if (ReturnInst* ri = dyn_cast<ReturnInst>(&*I)) {
+        IRBuilder <>builder(ri);
+        invertedRetPs[ri->getReturnValue()] = gutils->invertPointerM(ri->getReturnValue(), builder);
+      }
+    }
+  }
+
   SmallVector <ReturnInst*,4> Returns;
   CloneFunctionInto(NewF, nf, VMap, nf->getSubprogram() != nullptr, Returns, "",
                    nullptr);
@@ -2093,18 +2111,49 @@ Function* CreateAugmentedPrimal(Function* todiff, const SmallSet<unsigned,4>& co
       IRBuilder <>ib(cast<Instruction>(VMap[v])->getNextNode());
       Value *Idxs[] = {
         ib.getInt32(0),
-        ib.getInt32( nf->getReturnType()->isVoidTy() ? 0 : 1),
+        ib.getInt32(0),
         ib.getInt32(i)
       };
       ib.CreateStore(VMap[v], ib.CreateGEP(RetType, ret, Idxs, ""));
       i++;
   }
+
+  for (inst_iterator I = inst_begin(nf), E = inst_end(nf); I != E; ++I) {
+      if (ReturnInst* ri = dyn_cast<ReturnInst>(&*I)) {
+          IRBuilder <>ib(cast<Instruction>(VMap[ri]));
+          if (!nf->getReturnType()->isVoidTy()) {
+            ib.CreateStore(cast<ReturnInst>(VMap[ri])->getReturnValue(), ib.CreateConstGEP2_32(RetType, ret, 0, 1, ""));
+            
+            if (nf->getReturnType()->isPointerTy())
+              ib.CreateStore( VMap[invertedRetPs[ri]], ib.CreateConstGEP2_32(RetType, ret, 0, 2, ""));
+            i++;
+          }
+          ib.CreateRet(ib.CreateLoad(ret));
+          cast<Instruction>(VMap[ri])->eraseFromParent();
+      }
+  }
+  for (Argument &Arg : NewF->args()) {
+      if (Arg.hasAttribute(Attribute::Returned))
+          Arg.removeAttr(Attribute::Returned);
+  }
+#if 0
   for(auto ri : Returns) {
       IRBuilder <>ib(ri);
-      if (!nf->getReturnType()->isVoidTy())
-        ib.CreateStore(ri->getReturnValue(), ib.CreateConstGEP2_32(RetType, ret, 0, 0, ""));
+      if (!nf->getReturnType()->isVoidTy()) {
+        ib.CreateStore(ri->getReturnValue(), ib.CreateConstGEP2_32(RetType, ret, 0, 1, ""));
+        
+        if (nf->getReturnType()->isPointerTy())
+          ib.CreateStore( VMap[invertedRetPs[i]], ib.CreateConstGEP2_32(RetType, ret, 0, 2, ""));
+        i++;
+      }
       ib.CreateRet(ib.CreateLoad(ret));
       ri->eraseFromParent();
+  }
+#endif
+
+  if (llvm::verifyFunction(*NewF, &llvm::errs())) {
+    NewF->dump();
+    report_fatal_error("function failed verification");
   }
 
   gutils->newFunc->eraseFromParent();
@@ -2130,10 +2179,20 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     additionalValue = v;
     gutils->setTape(additionalValue);
   }
+
+  Argument* differetval = nullptr;
+  if (differentialReturn) {
+    auto endarg = gutils->newFunc->arg_end();
+    endarg--;
+    if (additionalArg) endarg--;
+    differetval = endarg;
+  }
+
   llvm::AllocaInst* retAlloca = nullptr;
   if (returnValue && differentialReturn) {
 	retAlloca = IRBuilder<>(&gutils->newFunc->getEntryBlock().front()).CreateAlloca(todiff->getReturnType(), nullptr, "toreturn");
   }
+  
 
   // Force loop canonicalization everywhere
   for(BasicBlock* BB: gutils->originalBlocks) {
@@ -2203,10 +2262,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       op->eraseFromParent();
 
       if (differentialReturn && !gutils->isConstantValue(retval)) {
-        //setDiffe(retval, ConstantFP::get(retval->getType(), 1.0));
-        auto endarg = gutils->newFunc->arg_end();
-        endarg--;
-        setDiffe(retval, endarg);
+        setDiffe(retval, differetval);
       } else {
 		assert (retAlloca == nullptr);
       }
@@ -2555,6 +2611,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               IRBuilder<> BuilderZ(op);
               BuilderZ.setFastMathFlags(FastMathFlags::getFast());
 
+              if (called->getReturnType()->isPointerTy()) modifyPrimal = true;
               for(unsigned i=0;i<op->getNumArgOperands(); i++) {
                 args.push_back(lookup(op->getArgOperand(i)));
                 pre_args.push_back(op->getArgOperand(i));
@@ -2612,14 +2669,19 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               Instruction* tape = nullptr;
               Type* tapetype = nullptr;
               GradientUtils *augmentedutils = nullptr;
+              CallInst* augmentcall = nullptr;
               if (modifyPrimal) {
                 if (topLevel) {
                   auto newcalled = CreateAugmentedPrimal(dyn_cast<Function>(called), subconstant_args, TLI, &augmentedutils);
-                  auto diffes = BuilderZ.CreateCall(newcalled, pre_args);
-                  diffes->setCallingConv(op->getCallingConv());
-                  diffes->setDebugLoc(inst->getDebugLoc());
-                  tape = cast<Instruction>(BuilderZ.CreateExtractValue(diffes, {called->getReturnType()->isVoidTy() ? 0U : 1U}));
+                  augmentcall = BuilderZ.CreateCall(newcalled, pre_args);
+                  augmentcall->setCallingConv(op->getCallingConv());
+                  augmentcall->setDebugLoc(inst->getDebugLoc());
+                  tape = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {0U}));
                   tapetype = tape->getType();
+
+                  if (called->getReturnType()->isPointerTy()) {
+                    gutils->invertedPointers[called] = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {2U}));
+                  }
                 } else {
                   assert(additionalValue);
                 }
@@ -2678,25 +2740,27 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 			  if (inst->getNumUses() != 0 && !gutils->isConstantValue(inst))
               	setDiffe(inst, Constant::getNullValue(inst->getType()));
               
-              if (modifyPrimal) {
-
-                if (topLevel) {
+              if (augmentcall) {
 
                 if (!called->getReturnType()->isVoidTy()) {
-                  auto dcall0 = BuilderZ.CreateExtractValue(diffes, {0});
+                  auto dcall0 = BuilderZ.CreateExtractValue(augmentcall, {1U});
                   auto dcall = cast<Instruction>(dcall0);
                   op->replaceAllUsesWith(dcall);
                   gutils->originalInstructions.insert(dcall);
                   gutils->nonconstant.insert(dcall);
-                  gutils->differentials[dcall] = gutils->differentials[op];
-                  gutils->differentials.erase(op);
+
+                  if (called->getReturnType()->isPointerTy()) {
+                    gutils->invertedPointers[dcall] = gutils->invertedPointers[op];
+                    gutils->invertedPointers.erase(op);
+                  } else {
+                    gutils->differentials[dcall] = gutils->differentials[op];
+                    gutils->differentials.erase(op);
+                  }
                 }
 
                 gutils->originalInstructions.insert(diffes);
                 gutils->nonconstant.insert(diffes);
                 op->eraseFromParent();
-
-                }
               }
 
               if (!topLevel && op->getNumUses() == 0) op->eraseFromParent();
@@ -3072,6 +3136,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
   for(auto BBs : gutils->reverseBlocks) {
     if (pred_begin(BBs.second) == pred_end(BBs.second))
         DeleteDeadBlock(BBs.second);
+  }
+  
+  for (Argument &Arg : gutils->newFunc->args()) {
+      if (Arg.hasAttribute(Attribute::Returned))
+          Arg.removeAttr(Attribute::Returned);
   }
 
   if (llvm::verifyFunction(*gutils->newFunc, &llvm::errs())) {

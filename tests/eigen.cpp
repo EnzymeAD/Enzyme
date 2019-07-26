@@ -1,3 +1,8 @@
+//#define EIGEN_USE_BLAS 0
+//#define EIGEN_USE_LAPACKE 0
+//#define EIGEN_USE_LAPACKE_STRICT 0
+//#define EIGEN_USE_LAPACK 0
+//#define EIGEN_USE_LAPACK_STRICT 0
 #define EIGEN_UNROLLING_LIMIT 0
 #define EIGEN_DONT_VECTORIZE 1
 #include <eigen3/Eigen/Dense>
