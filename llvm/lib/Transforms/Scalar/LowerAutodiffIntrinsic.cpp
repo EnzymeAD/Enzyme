@@ -1123,6 +1123,7 @@ public:
         tapeidx++;
         return ret;
     } else {
+      assert(!isa<PHINode>(malloc));
       addedMallocs.push_back(malloc);
       return malloc;
     }
@@ -1139,6 +1140,7 @@ public:
         return ret;
     } else {
       assert(malloc);
+      assert(!isa<PHINode>(malloc));
       addedMallocs.push_back(malloc);
       return malloc;
     }
@@ -1392,7 +1394,9 @@ endCheck:
             if (!inLoop) {
                 if (scopeMap.find(val) == scopeMap.end()) {
                     scopeMap[val] = entryBuilder.CreateAlloca(val->getType(), nullptr, val->getName()+"_cache");
-                    Instruction* putafter = isa<PHINode>(inst) ? (inst->getParent()->getFirstNonPHI() ): inst;
+                    auto pn = dyn_cast<PHINode>(inst);
+                    Instruction* putafter = ( pn && pn->getNumIncomingValues()>0 )? (inst->getParent()->getFirstNonPHI() ): inst->getNextNonDebugInstruction();
+                    /*
                     if (cast<Instruction>(scopeMap[val])->getParent() == putafter->getParent()) {
                         //ensure putafter = later of putafter and scopeMap[val]
                         for(Instruction& I : *putafter->getParent()) {
@@ -1404,11 +1408,10 @@ endCheck:
                             } else {}
                         }
                     }
+                    */
                     IRBuilder <> v(putafter);
                     v.setFastMathFlags(FastMathFlags::getFast());
                     auto st = v.CreateStore(val, scopeMap[val]);
-                    if (!isa<PHINode>(inst))
-                        st->moveAfter(putafter);
                 }
                 auto result = BuilderM.CreateLoad(scopeMap[val]);
                 return result;
@@ -1748,6 +1751,9 @@ endCheck:
         assert(BuilderM.GetInsertBlock()->getParent());
         assert(val);
         llvm::errs() << "fn:" << *BuilderM.GetInsertBlock()->getParent() << "\nval=" << *val << "\n";
+        for(auto z : invertedPointers) {
+          llvm::errs() << "available inversion for " << *z.first << " of " << *z.second << "\n"; 
+        }
         assert(0 && "cannot find deal with ptr that isnt arg");
         report_fatal_error("cannot find deal with ptr that isnt arg");
       
@@ -2037,16 +2043,30 @@ Function* CreateAugmentedPrimal(Function* todiff, const SmallSet<unsigned,4>& co
 
   assert(gutils->addedFrees.size() == 0);
 
+  auto nf = gutils->newFunc;
+  
+  ValueToValueMapTy invertedRetPs;
+  if (nf->getReturnType()->isPointerTy()) {
+    for (inst_iterator I = inst_begin(nf), E = inst_end(nf); I != E; ++I) {
+      if (ReturnInst* ri = dyn_cast<ReturnInst>(&*I)) {
+        IRBuilder <>builder(ri);
+        invertedRetPs[ri] = gutils->invertPointerM(ri->getReturnValue(), builder);
+        assert(invertedRetPs[ri]);
+      }
+    }
+  }
+
   if (llvm::verifyFunction(*gutils->newFunc, &llvm::errs())) {
     gutils->newFunc->dump();
     report_fatal_error("function failed verification");
   }
-  auto nf = gutils->newFunc;
 
   std::vector<Type*> RetTypes;
 
   std::vector<Type*> MallocTypes;
+
   for(auto a:gutils->getMallocs()) MallocTypes.push_back(a->getType());
+
   RetTypes.push_back(StructType::get(nf->getContext(), MallocTypes));
   
   if (!nf->getReturnType()->isVoidTy()) {
@@ -2088,17 +2108,6 @@ Function* CreateAugmentedPrimal(Function* todiff, const SmallSet<unsigned,4>& co
      ii++;
  }
 
-  
-  ValueToValueMapTy invertedRetPs;
-  if (nf->getReturnType()->isPointerTy()) {
-    for (inst_iterator I = inst_begin(nf), E = inst_end(nf); I != E; ++I) {
-      if (ReturnInst* ri = dyn_cast<ReturnInst>(&*I)) {
-        IRBuilder <>builder(ri);
-        invertedRetPs[ri->getReturnValue()] = gutils->invertPointerM(ri->getReturnValue(), builder);
-      }
-    }
-  }
-
   SmallVector <ReturnInst*,4> Returns;
   CloneFunctionInto(NewF, nf, VMap, nf->getSubprogram() != nullptr, Returns, "",
                    nullptr);
@@ -2114,7 +2123,8 @@ Function* CreateAugmentedPrimal(Function* todiff, const SmallSet<unsigned,4>& co
         ib.getInt32(0),
         ib.getInt32(i)
       };
-      ib.CreateStore(VMap[v], ib.CreateGEP(RetType, ret, Idxs, ""));
+      auto gep = ib.CreateGEP(RetType, ret, Idxs, "");
+      ib.CreateStore(VMap[v], gep);
       i++;
   }
 
@@ -2124,36 +2134,35 @@ Function* CreateAugmentedPrimal(Function* todiff, const SmallSet<unsigned,4>& co
           if (!nf->getReturnType()->isVoidTy()) {
             ib.CreateStore(cast<ReturnInst>(VMap[ri])->getReturnValue(), ib.CreateConstGEP2_32(RetType, ret, 0, 1, ""));
             
-            if (nf->getReturnType()->isPointerTy())
+            if (nf->getReturnType()->isPointerTy()) {
+              assert(invertedRetPs[ri]);
+              assert(VMap[invertedRetPs[ri]]);
               ib.CreateStore( VMap[invertedRetPs[ri]], ib.CreateConstGEP2_32(RetType, ret, 0, 2, ""));
+            }
             i++;
           }
           ib.CreateRet(ib.CreateLoad(ret));
           cast<Instruction>(VMap[ri])->eraseFromParent();
       }
   }
+
   for (Argument &Arg : NewF->args()) {
       if (Arg.hasAttribute(Attribute::Returned))
           Arg.removeAttr(Attribute::Returned);
   }
-#if 0
-  for(auto ri : Returns) {
-      IRBuilder <>ib(ri);
-      if (!nf->getReturnType()->isVoidTy()) {
-        ib.CreateStore(ri->getReturnValue(), ib.CreateConstGEP2_32(RetType, ret, 0, 1, ""));
-        
-        if (nf->getReturnType()->isPointerTy())
-          ib.CreateStore( VMap[invertedRetPs[i]], ib.CreateConstGEP2_32(RetType, ret, 0, 2, ""));
-        i++;
-      }
-      ib.CreateRet(ib.CreateLoad(ret));
-      ri->eraseFromParent();
+  
+  if (auto bytes = NewF->getDereferenceableBytes(llvm::AttributeList::ReturnIndex)) {
+    AttrBuilder ab;
+    ab.addDereferenceableAttr(bytes);
+    NewF->removeAttributes(llvm::AttributeList::ReturnIndex, ab);
   }
-#endif
+  if (NewF->hasAttribute(llvm::AttributeList::ReturnIndex, llvm::Attribute::NoAlias)) {
+    NewF->removeAttribute(llvm::AttributeList::ReturnIndex, llvm::Attribute::NoAlias);
+  }
 
   if (llvm::verifyFunction(*NewF, &llvm::errs())) {
     NewF->dump();
-    report_fatal_error("function failed verification");
+    report_fatal_error("augmented function failed verification");
   }
 
   gutils->newFunc->eraseFromParent();
@@ -2202,9 +2211,43 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
 
   // Force calls to augmented
+  if (topLevel)
   for(BasicBlock* BB: gutils->originalBlocks) {
     LoopContext loopContext;
     gutils->getContext(BB, loopContext);
+    
+    auto BB2 = gutils->reverseBlocks[BB];
+    assert(BB2);
+  
+    auto term = BB->getTerminator();
+    if (isa<UnreachableInst>(term)) continue;
+  
+    for (auto I = BB->begin(), E = BB->end(); I != E;) {
+      Instruction* inst = &*I;
+      assert(inst);
+      I++;
+
+      if (!isa<CallInst>(inst)) continue;
+      CallInst* op = dyn_cast<CallInst>(inst);
+
+      Function *called = op->getCalledFunction();
+
+      if(!called) continue;
+      if (called->empty()) continue;
+      if (gutils->isConstantInstruction(op)) continue;
+
+      if (called->getName() == "printf" || called->getName() == "puts" || called->getName() == "malloc" || called->getName() == "_Znwm" || called->getName() == "_ZdlPv" || called->getName() == "_ZdlPvm" || called->getName() == "free") continue;
+
+      if (!called->getReturnType()->isPointerTy()) continue;
+              
+
+      if (!called->getReturnType()->isPointerTy()) continue;
+              
+      if (gutils->invertedPointers.find(called) != gutils->invertedPointers.end()) continue;
+        IRBuilder<> BuilderZ(op->getNextNonDebugInstruction());
+        BuilderZ.setFastMathFlags(FastMathFlags::getFast());
+        gutils->invertedPointers[op] = BuilderZ.CreatePHI(called->getReturnType(), 1);
+    }
   }
 
 
@@ -2701,7 +2744,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                   tapetype = tape->getType();
 
                   if (called->getReturnType()->isPointerTy()) {
-                    gutils->invertedPointers[called] = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {2U}));
+                    auto newip = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {2U}));
+                    auto placeholder = cast<PHINode>(gutils->invertedPointers[op]);
+                    placeholder->replaceAllUsesWith(newip);
+                    placeholder->eraseFromParent();
+                    gutils->invertedPointers[op] = newip;
                   }
                 } else {
                   assert(additionalValue);
@@ -2711,8 +2758,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 tapetype = tape->getType();
                 assert(tapetype == tape->getType());
               }
-              GradientUtils *subcallutils = nullptr;
-              auto newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called), subconstant_args, TLI, retUsed, !gutils->isConstantValue(inst) && !inst->getType()->isPointerTy(), /*topLevel*/replaceFunction, &subcallutils, tapetype);//, LI, DT);
+              auto newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called), subconstant_args, TLI, retUsed, !gutils->isConstantValue(inst) && !inst->getType()->isPointerTy(), /*topLevel*/replaceFunction, nullptr, tapetype);//, LI, DT);
 
               if (!gutils->isConstantValue(inst) && !inst->getType()->isPointerTy()) {
                 args.push_back(diffe(inst));
@@ -3167,6 +3213,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     AttrBuilder ab;
     ab.addDereferenceableAttr(bytes);
     gutils->newFunc->removeAttributes(llvm::AttributeList::ReturnIndex, ab);
+  }
+  if (gutils->newFunc->hasAttribute(llvm::AttributeList::ReturnIndex, llvm::Attribute::NoAlias)) {
+    gutils->newFunc->removeAttribute(llvm::AttributeList::ReturnIndex, llvm::Attribute::NoAlias);
   }
 
   if (llvm::verifyFunction(*gutils->newFunc, &llvm::errs())) {
