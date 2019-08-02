@@ -30,7 +30,8 @@ clean:
 
 
 eigen.ll: eigen.cpp
-	../build/bin/clang++ eigen.cpp -fno-unroll-loops -O1 -fno-exceptions -fno-vectorize -fno-slp-vectorize -S -emit-llvm -o eigen0.ll -ffast-math -Wno-error=non-pod-varargs 
+	../build/bin/clang++ eigen.cpp -fno-unroll-loops -O3 -fno-exceptions -fno-vectorize -fno-slp-vectorize -S -emit-llvm -o eigen0.ll -ffast-math -Wno-error=non-pod-varargs 
+	#../build/bin/clang++ eigen.cpp -fno-unroll-loops -O1 -fno-exceptions -fno-vectorize -fno-slp-vectorize -S -emit-llvm -o eigen0.ll -ffast-math -Wno-error=non-pod-varargs 
 	#../build/bin/clang++ eigen.cpp -O0 -fno-exceptions -fno-vectorize -fno-slp-vectorize -S -emit-llvm -o eigent0.ll -ffast-math -Wno-error=non-pod-varargs
 	../build/bin/opt -indvars eigen0.ll -S -o eigen.ll
 

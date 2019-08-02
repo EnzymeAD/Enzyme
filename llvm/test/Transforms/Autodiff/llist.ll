@@ -130,6 +130,8 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:  %"value'ipc.i" = bitcast i8* %[[loadcache]] to double*
 ; CHECK-NEXT:  %[[load:.+]] = load double, double* %"value'ipc.i"
 ; CHECK-NEXT:  %[[add]] = fadd fast double %"x'de.0.i", %[[load]]
+; this store is optional and could get removed by DCE
+; CHECK-NEXT:  store double 0.000000e+00, double* %"value'ipc.i"
 ; CHECK-NEXT:  %[[gepcall:.+]] = getelementptr i8*, i8** %call_malloccache.i, i64 %"indvars.iv'phi.i"
 ; CHECK-NEXT:  %[[loadprefree:.+]] = load i8*, i8** %[[gepcall]]
 ; CHECK-NEXT:  call void @free(i8* %[[loadprefree]]) #4

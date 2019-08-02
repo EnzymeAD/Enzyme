@@ -1,4 +1,4 @@
-; RUN: opt < %s -lower-autodiff -inline -O3 -S | FileCheck %s
+; RUN: opt < %s -lower-autodiff -inline -O3 -dse -S | FileCheck %s
 
 ; #include <stdlib.h>
 ; #include <stdio.h>
@@ -89,6 +89,9 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %factor = fmul fast double %[[fresult]], 2.000000e+00
 ; CHECK-NEXT:   %"'ipc.i" = bitcast i8* %"call'mi.i" to double*
 ; CHECK-NEXT:   tail call fastcc void @diffef(double* %"'ipc.i", double %factor) #6
+; NOTE BETTER 03 / dead store elimination can get rid of the next line which is optional
+;   since its being free'd next
+; CHECK-NEXT:   store double 0.000000e+00, double* %"'ipc.i", align 8
 ; CHECK-NEXT:   tail call void bitcast (i32 (...)* @free to void (i8*)*)(i8* %call.i) #6
 ; CHECK-NEXT:   tail call void bitcast (i32 (...)* @free to void (i8*)*)(i8* %"call'mi.i") #6
 ; CHECK-NEXT:   ret void

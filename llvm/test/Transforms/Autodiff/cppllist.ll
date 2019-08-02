@@ -172,8 +172,8 @@ attributes #8 = { builtin nounwind }
 ; CHECK-NEXT:   %mallocsize.i = mul i64 %0, 8
 ; CHECK-NEXT:   %malloccall.i = call i8* @malloc(i64 %mallocsize.i) #5
 ; CHECK-NEXT:   %"call'mi_malloccache.i" = bitcast i8* %malloccall.i to i8**
-; CHECK-NEXT:   %malloccall4.i = call i8* @malloc(i64 %mallocsize.i) #5
-; CHECK-NEXT:   %call_malloccache.i = bitcast i8* %malloccall4.i to i8**
+; CHECK-NEXT:   %[[call_malloc:.+]] = call i8* @malloc(i64 %mallocsize.i) #5
+; CHECK-NEXT:   %call_malloccache.i = bitcast i8* %[[call_malloc]] to i8**
 ; CHECK-NEXT:   br label %for.body.i
 
 ; CHECK: for.body.i:                                       ; preds = %for.body.i, %entry
@@ -210,6 +210,8 @@ attributes #8 = { builtin nounwind }
 ; CHECK-NEXT:   %"value.i'ipc.i" = bitcast i8* %9 to double*
 ; CHECK-NEXT:   %10 = load double, double* %"value.i'ipc.i"
 ; CHECK-NEXT:   %11 = fadd fast double %"x'de.0.i", %10
+; this store is optional and could get removed by DCE
+; CHECK-NEXT:   store double 0.000000e+00, double* %"value.i'ipc.i"
 ; CHECK-NEXT:   %12 = getelementptr i8*, i8** %call_malloccache.i, i64 %"indvars.iv'phi.i"
 ; CHECK-NEXT:   %13 = load i8*, i8** %12
 ; CHECK-NEXT:   call void @_ZdlPv(i8* %13) #5
@@ -222,7 +224,7 @@ attributes #8 = { builtin nounwind }
 ; CHECK-NEXT:   br label %invertfor.body.i
 
 ; CHECK: diffe_Z12list_creatordm.exit:                     ; preds = %invertfor.body.i
-; CHECK-NEXT:   call void @free(i8* nonnull %malloccall4.i) #5
+; CHECK-NEXT:   call void @free(i8* nonnull %[[call_malloc]]) #5
 ; CHECK-NEXT:   call void @free(i8* nonnull %malloccall.i) #5
 ; CHECK-NEXT:   ret double %11
 ; CHECK-NEXT: }
