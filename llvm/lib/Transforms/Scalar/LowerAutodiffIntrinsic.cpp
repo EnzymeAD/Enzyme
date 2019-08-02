@@ -1373,6 +1373,42 @@ public:
     return isconstantM(val, constants, nonconstant, nonconstant_values, originalInstructions);
   }
   
+  void eraseStructuralStoresAndCalls() { 
+      for(BasicBlock* BB: this->originalBlocks) {
+        LoopContext loopContext;
+        this->getContext(BB, loopContext);
+      
+        auto term = BB->getTerminator();
+        if (isa<UnreachableInst>(term)) continue;
+      
+        for (auto I = BB->begin(), E = BB->end(); I != E;) {
+          Instruction* inst = &*I;
+          assert(inst);
+          I++;
+
+          if (originalInstructions.find(inst) == originalInstructions.end()) continue;
+
+          if (!isa<TerminatorInst>(inst) && this->isConstantInstruction(inst)) {
+            if (inst->getNumUses() == 0) {
+                inst->eraseFromParent();
+			    continue;
+            }
+          } else {
+            if (auto inti = dyn_cast<IntrinsicInst>(inst)) {
+                if (inti->getIntrinsicID() == Intrinsic::memcpy || inti->getIntrinsicID() == Intrinsic::memcpy) {
+                    inst->eraseFromParent();
+                    continue;
+                }
+            }
+            if (isa<StoreInst>(inst)) {
+                inst->eraseFromParent();
+                continue;
+            }
+          }
+        }
+      }
+  }
+
   void forceAugmentedReturns() { 
       for(BasicBlock* BB: this->originalBlocks) {
         LoopContext loopContext;
@@ -2427,11 +2463,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     gutils->getContext(BB, loopContext);
   }
 
-
-  // Force calls to augmented
   if (topLevel)
     gutils->forceAugmentedReturns();
-
 
   for(BasicBlock* BB: gutils->originalBlocks) {
 
@@ -2614,7 +2647,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             auto cal = Builder2.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::memcpy, tys), args);
             cal->setAttributes(op->getAttributes());
 
-            if (!topLevel && op->getNumUses() == 0) op->eraseFromParent();
             break;
         }
         case Intrinsic::memset: {
@@ -2635,7 +2667,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             auto cal = Builder2.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::memset, tys), args);
             cal->setAttributes(op->getAttributes());
             
-            if (!topLevel && op->getNumUses() == 0) op->eraseFromParent();
             break;
         }
         case Intrinsic::stacksave:
@@ -2843,10 +2874,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 //
 
             } else if (!op->getCalledFunction()->empty()) {
-                if (gutils->isConstantInstruction(op)) {
-                  if (!topLevel && op->getNumUses() == 0) op->eraseFromParent();
-			      continue;
-                }
+              if (gutils->isConstantInstruction(op)) {
+			    continue;
+              }
               SmallSet<unsigned,4> subconstant_args;
 
               SmallVector<Value*, 8> args;
@@ -2907,23 +2937,34 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               bool replaceFunction = false;
 
               if (topLevel && BB->getSingleSuccessor() == BB2) {
-                  auto iter = BB->rbegin();
-                  iter++;
-                  while(iter != BB->rbegin() && &*iter != op) {
-                    if (auto ci = dyn_cast<CastInst>(&*iter)) {
-                        iter++;
-                        bool usesInst = false;
-                        for(auto &operand : ci->operands()) {
-                            if (operand.get() == op) { usesInst = true; break; }
-                        }
-                        if (!usesInst)
-                          continue;
+                  auto OBB = cast<BasicBlock>(gutils->getOriginal(BB));
+                  auto iter = OBB->rbegin();
+                  while(iter != OBB->rend() && &*iter != gutils->getOriginal(op)) {
+                    if (iter->mayReadOrWriteMemory()) {
+                        llvm::errs() << "     can't replace next fn because use of memory by " << *iter << "\n";
+                        break;
                     }
-                    break;
+                    if (isa<ReturnInst>(&*iter)) {
+                        iter++;
+                        continue;
+                    }
+
+                        bool usesInst = false;
+                        for(auto &operand : iter->operands()) {
+                            if (operand.get() == gutils->getOriginal(op)) { usesInst = true; break; }
+                        }
+                        if (!usesInst) {
+                          iter++;
+                          continue;
+                        }
+                        break;
                   }
-                  if (&*iter == op) {
+                  if (&*iter == gutils->getOriginal(op)) {
+                      llvm::errs() << " choosing to replace function " << called->getName() << " and do both forward/reverse\n";
                       replaceFunction = true;
                       modifyPrimal = false;
+                  } else {
+                      llvm::errs() << " failed to replace function " << called->getName() << " due to " << *iter << "\n";
                   }
               }
 
@@ -3046,7 +3087,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               if (!topLevel && op->getNumUses() == 0) op->eraseFromParent();
             } else {
               if (gutils->isConstantInstruction(op)) {
-                if (!topLevel && op->getNumUses() == 0) op->eraseFromParent();
 			    continue;
               }
               assert(op);
@@ -3055,8 +3095,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             }
         } else {
             if (gutils->isConstantInstruction(op)) {
-              if (!topLevel && op->getNumUses() == 0) op->eraseFromParent();
-			    continue;
+			  continue;
             }
             assert(op);
             llvm::errs() << "cannot handle non const function in" << *op << "\n";
@@ -3112,7 +3151,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         storeBuilder.CreateStore(valueop, pointerop);
 		//llvm::errs() << "ignoring store bc pointer of " << *op << "\n";
 	  }
-      if (!topLevel && op->getNumUses() == 0) op->eraseFromParent();
       //?necessary if pointer is readwrite
       /*
       IRBuilder<> BuilderZ(inst);
@@ -3404,6 +3442,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
 
   }
+  
+  if (!topLevel)
+    gutils->eraseStructuralStoresAndCalls();
 
   for(auto ci:gutils->addedFrees) {
     ci->moveBefore(ci->getParent()->getTerminator());
