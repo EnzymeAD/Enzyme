@@ -1372,7 +1372,8 @@ public:
   bool isConstantInstruction(Instruction* val) {
     return isconstantM(val, constants, nonconstant, nonconstant_values, originalInstructions);
   }
-  
+
+  SmallPtrSet<Instruction*,4> replaceableCalls; 
   void eraseStructuralStoresAndCalls() { 
       for(BasicBlock* BB: this->originalBlocks) {
         LoopContext loopContext;
@@ -1401,6 +1402,10 @@ public:
                 }
             }
             if (isa<StoreInst>(inst)) {
+                inst->eraseFromParent();
+                continue;
+            }
+            if (replaceableCalls.find(inst) != replaceableCalls.end()) {
                 inst->eraseFromParent();
                 continue;
             }
@@ -3084,7 +3089,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 op->eraseFromParent();
               }
 
-              if (!topLevel && op->getNumUses() == 0) op->eraseFromParent();
+              gutils->replaceableCalls.insert(op);
             } else {
               if (gutils->isConstantInstruction(op)) {
 			    continue;
