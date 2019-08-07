@@ -43,8 +43,8 @@ eigen2.ll: eigen.ll
 	../build/bin/opt -early-cse-memssa eigenb.ll -S -o eigenc.ll
 	../build/bin/opt -adce -bdce -aggressive-instcombine -simplifycfg eigenc.ll -S -o eigend.ll
 	../build/bin/opt -correlated-propagation -deadargelim -adce -bdce -aggressive-instcombine eigend.ll -S -o eigene.ll
-	cp eigene.ll eigen2.ll
-	#../build/bin/opt -O3 eigene.ll -S -o eigen2.ll
+	#cp eigene.ll eigen2.ll
+	../build/bin/opt -O3 eigene.ll -S -o eigen2.ll
 
 eigen.o: eigen2.ll
 	../build/bin/clang++ eigen2.ll -o eigen.o -lm -g 

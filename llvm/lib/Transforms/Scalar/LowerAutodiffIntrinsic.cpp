@@ -311,7 +311,7 @@ bool isconstantM(Instruction* inst, SmallPtrSetImpl<Value*> &constants, SmallPtr
 				break;
 			} else {
                if (printconst)
-			   llvm::errs() << "found constant inst use:" << *inst << " user " << *a << "\n";
+			     llvm::errs() << "found constant inst use:" << *inst << " user " << *a << "\n";
 			}
 		}
 		if (!seenuse) {
@@ -460,7 +460,7 @@ bool isconstantValueM(Value* val, SmallPtrSetImpl<Value*> &constants, SmallPtrSe
 				break;
 			} else {
                if (printconst)
-			   llvm::errs() << "Value found constant inst use:" << *val << " user " << *a << "\n";
+			     llvm::errs() << "Value found constant inst use:" << *val << " user " << *a << "\n";
 			}
 		}
 
@@ -475,122 +475,6 @@ bool isconstantValueM(Value* val, SmallPtrSetImpl<Value*> &constants, SmallPtrSe
 	}
 
     return false;
-#if 0
-    //TODO later
-
-    if((nonconstant.find(val) != nonconstant.end())) {
-        return false;
-    }
-
-    //All arguments should be marked constant/nonconstant ahead of time
-    assert(!isa<Argument>(val));
-
-    if (printconst)
-	  llvm::errs() << "checking if is constant " << *val << "\n";
-
-
-
-	if (val->getType()->isPointerTy()) {
-	  if (auto inst = dyn_cast<Instruction>(val)) {
-
-		//Proceed assuming this is constant, can we prove this should be constant otherwise
-		SmallPtrSet<Value*, 20> constants2;
-		constants2.insert(constants.begin(), constants.end());
-		SmallPtrSet<Value*, 20> nonconstant2;
-		nonconstant2.insert(nonconstant.begin(), nonconstant.end());
-		constants2.insert(val);
-
-		if (printconst)
-			llvm::errs() << " < MEMSEARCH" << (int)directions << ">" << *val << "\n";
-
-		for (const auto &a:inst->users()) {
-		  if(auto store = dyn_cast<StoreInst>(a)) {
-			if (inst == store->getPointerOperand() && !isconstantM(store->getValueOperand(), constants2, nonconstant2, originalInstructions, directions)) {
-				if (directions == 3)
-				  nonconstant.insert(val);
-    			if (printconst)
-				  llvm::errs() << "memory erase 1: " << *val << "\n";
-				return false;
-			}
-			if (inst == store->getValueOperand() && !isconstantM(store->getPointerOperand(), constants2, nonconstant2, originalInstructions, directions)) {
-				if (directions == 3)
-				  nonconstant.insert(val);
-    			if (printconst)
-				  llvm::errs() << "memory erase 2: " << *val << "\n";
-				return false;
-			}
-		  } else if (isa<LoadInst>(a)) continue;
-		  else {
-			if (!isconstantM(a, constants2, nonconstant2, originalInstructions, directions)) {
-				if (directions == 3)
-				  nonconstant.insert(val);
-    			if (printconst)
-				  llvm::errs() << "memory erase 3: " << *val << " op " << *a << "\n";
-				return false;
-			}
-		  }
-
-		}
-		
-		if (printconst)
-			llvm::errs() << " </MEMSEARCH" << (int)directions << ">" << *val << "\n";
-	  }
-	}
-
-	SmallPtrSet<Value*, 20> &constants2 = constants;
-	SmallPtrSet<Value*, 20> &nonconstant2 = nonconstant;
-		
-    if (printconst)
-		llvm::errs() << " < PRESEARCH" << (int)directions << ">" << *val << "\n";
-
-	if (directions & UP) {
-        if (auto inst = dyn_cast<GetElementPtrInst>(val)) {
-            // Handled uses above
-            if (!isconstantValueM(inst->getPointerOperand(), constants2, nonconstant2, originalInstructions, UP)) {
-                if (directions == 3)
-                  nonconstant.insert(val);
-                if (printconst)
-                  llvm::errs() << "nonconstant gep " << *val << " op " << *inst->getPointerOperand() << "\n";
-                return false;
-            }
-            constants.insert(val);
-            constants.insert(constants2.begin(), constants2.end());
-            if (directions == 3)
-              nonconstant.insert(nonconstant2.begin(), nonconstant2.end());
-            if (printconst)
-              llvm::errs() << "constant gep:" << *val << "\n";
-            return true;
-        } else if (auto inst = dyn_cast<Instruction>(val)) {
-            for(auto& a: inst->operands()) {
-                if (!isconstantValueM(a, constants2, nonconstant2, originalInstructions, UP)) {
-                    if (directions == 3)
-                      nonconstant.insert(val);
-                    if (printconst)
-                      llvm::errs() << "nonconstant inst " << *val << " op " << *a << "\n";
-                    return false;
-                }
-            }
-
-            constants.insert(val);
-            constants.insert(constants2.begin(), constants2.end());
-            if (directions == 3)
-              nonconstant.insert(nonconstant2.begin(), nonconstant2.end());
-            if (printconst)
-              llvm::errs() << "constant inst:" << *val << "\n";
-            return true;
-        }
-
-	}
-
-    if (printconst)
-		llvm::errs() << " </PRESEARCH" << (int)directions << ">" << *val << "\n";
-
-    if (directions == 3)
-	  nonconstant.insert(val);
-    if (printconst)
-	  llvm::errs() << "couldnt decide nonconstants:" << *val << "\n";
-	return false;
-#endif
 }
 
  static bool promoteMemoryToRegister(Function &F, DominatorTree &DT,
@@ -1302,6 +1186,35 @@ public:
     }
   }
 
+  std::pair<Instruction*,Instruction*> addMallocAndAnti(IRBuilder<> &BuilderQ, Instruction* malloc, Instruction* antiptr) {
+    if (tape) {
+        Instruction* ret = cast<Instruction>(BuilderQ.CreateExtractValue(tape, {tapeidx}));
+        if (malloc) {
+          malloc->replaceAllUsesWith(ret);
+          malloc->eraseFromParent();
+        }
+        tapeidx++;
+
+        Instruction* ret2 = nullptr;
+        if (antiptr) {
+            ret2 = cast<Instruction>(BuilderQ.CreateExtractValue(tape, {tapeidx}));
+            antiptr->replaceAllUsesWith(ret2);
+            antiptr->eraseFromParent();
+            tapeidx++;
+        }
+        return std::pair<Instruction*,Instruction*>(ret, ret2);
+    } else {
+      assert(malloc);
+      assert(!isa<PHINode>(malloc));
+      addedMallocs.push_back(malloc);
+      if (antiptr) {
+        assert(!isa<PHINode>(antiptr));
+        addedMallocs.push_back(antiptr);
+      }
+      return std::pair<Instruction*,Instruction*>(malloc, antiptr);
+    }
+  }
+
   const SmallVectorImpl<Instruction*> & getMallocs() const {
     return addedMallocs;
   }
@@ -1389,6 +1302,27 @@ public:
 
           if (originalInstructions.find(inst) == originalInstructions.end()) continue;
 
+          if (isa<StoreInst>(inst)) {
+            inst->eraseFromParent();
+            continue;
+          }
+        }
+      }
+
+      for(BasicBlock* BB: this->originalBlocks) {
+        LoopContext loopContext;
+        this->getContext(BB, loopContext);
+      
+        auto term = BB->getTerminator();
+        if (isa<UnreachableInst>(term)) continue;
+      
+        for (auto I = BB->begin(), E = BB->end(); I != E;) {
+          Instruction* inst = &*I;
+          assert(inst);
+          I++;
+
+          if (originalInstructions.find(inst) == originalInstructions.end()) continue;
+
           if (!isa<TerminatorInst>(inst) && this->isConstantInstruction(inst)) {
             if (inst->getNumUses() == 0) {
                 inst->eraseFromParent();
@@ -1401,11 +1335,11 @@ public:
                     continue;
                 }
             }
-            if (isa<StoreInst>(inst)) {
-                inst->eraseFromParent();
-                continue;
-            }
             if (replaceableCalls.find(inst) != replaceableCalls.end()) {
+                if (inst->getNumUses() != 0) {
+                    inst->getParent()->getParent()->dump();
+                    inst->dump();
+                }
                 inst->eraseFromParent();
                 continue;
             }
@@ -2197,7 +2131,7 @@ Function* CreateAugmentedPrimal(Function* todiff, const SmallSet<unsigned,4>& co
                   IRBuilder<> BuilderZ(op);
                   BuilderZ.setFastMathFlags(FastMathFlags::getFast());
 
-                  if ( (called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) && gutils->isConstantValue(op) ) {
+                  if ( (called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) && !gutils->isConstantValue(op) ) {
                      modifyPrimal = true;
                      //llvm::errs() << "primal modified " << called->getName() << " modified via return" << "\n";
                   }
@@ -2235,6 +2169,7 @@ Function* CreateAugmentedPrimal(Function* todiff, const SmallSet<unsigned,4>& co
                     auto augmentcall = BuilderZ.CreateCall(newcalled, args);
                     augmentcall->setCallingConv(op->getCallingConv());
                     augmentcall->setDebugLoc(inst->getDebugLoc());
+                    Instruction* antiptr = nullptr;
                     if (!called->getReturnType()->isVoidTy()) {
                       auto rv = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {1}));
                       gutils->originalInstructions.insert(rv);
@@ -2246,14 +2181,17 @@ Function* CreateAugmentedPrimal(Function* todiff, const SmallSet<unsigned,4>& co
                       if ((called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) && !gutils->isConstantValue(op)) {
                         auto newip = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {2}));
                         auto placeholder = cast<PHINode>(gutils->invertedPointers[op]);
-                        if (placeholder == &*I) I++;
+                        if (I != E && placeholder == &*I) I++;
                         gutils->invertedPointers.erase(op);
                         placeholder->replaceAllUsesWith(newip);
                         placeholder->eraseFromParent();
                         gutils->invertedPointers[rv] = newip;
+                        antiptr = newip;
+                        gutils->addMalloc(BuilderZ, antiptr);
                       }
                       op->replaceAllUsesWith(rv);
                     }
+                    //todo consider how to propagate antiptr
                     gutils->addMalloc(BuilderZ, cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {0})));
                     op->eraseFromParent();
                   }
@@ -2468,7 +2406,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     gutils->getContext(BB, loopContext);
   }
 
-  if (topLevel)
+  //if (topLevel)
     gutils->forceAugmentedReturns();
 
   for(BasicBlock* BB: gutils->originalBlocks) {
@@ -2990,13 +2928,22 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                   if( (called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) && !gutils->isConstantValue(op) ) {
                     auto newip = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {2}));
                     auto placeholder = cast<PHINode>(gutils->invertedPointers[op]);
-                    if (placeholder == &*I) I++;
+                    if (I != E && placeholder == &*I) I++;
                     placeholder->replaceAllUsesWith(newip);
                     placeholder->eraseFromParent();
                     gutils->invertedPointers[op] = newip;
                   }
                 } else {
                   assert(additionalValue);
+                  if( (called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) && !gutils->isConstantValue(op) ) {
+                    IRBuilder<> bb(op);
+                    auto newip = gutils->addMalloc(bb, nullptr);
+                    auto placeholder = cast<PHINode>(gutils->invertedPointers[op]);
+                    if (I != E && placeholder == &*I) I++;
+                    placeholder->replaceAllUsesWith(newip);
+                    placeholder->eraseFromParent();
+                    gutils->invertedPointers[op] = newip;
+                  }
                 }
                 IRBuilder<> builder(op);
                 tape = gutils->addMalloc(builder, tape);

@@ -31,6 +31,7 @@ static inline float tdiff(struct timeval *start, struct timeval *end) {
 using Eigen::MatrixXd;
 using Eigen::VectorXd;
 
+#if 1
 __attribute__((noinline))
 static void matvecclean(const MatrixXd& __restrict W,
     const MatrixXd& __restrict b, MatrixXd& __restrict foo) {
@@ -72,7 +73,7 @@ static void matvec(const MatrixXd& __restrict W,
 
 int main(int argc, char** argv) {
 
-    size_t IN = 4, OUT = 3, NUM = 5;
+    size_t IN = 40, OUT = 30, NUM = 50;
 
     MatrixXd W(IN, OUT);
     MatrixXd Wp(IN, OUT);
@@ -93,6 +94,26 @@ int main(int argc, char** argv) {
       //memset(Wp, 0, sizeof(double) * IN * OUT);
       //memset(Bp, 0, sizeof(double) * OUT);
 
+  {
+  struct timeval start, end;
+  gettimeofday(&start, NULL);
+
+  matvec(W, B, foo);
+
+  gettimeofday(&end, NULL);
+  printf("forward %0.6f res=%f\n", tdiff(&start, &end), Bp(0));
+  }
+  {
+  struct timeval start, end;
+  gettimeofday(&start, NULL);
+
+  __builtin_autodiff(matvec, W,Wp,B,Bp,foo,foop);
+
+  gettimeofday(&end, NULL);
+  printf("diff %0.6f res=%f\n", tdiff(&start, &end), Bp(0));
+  }
+
+/*
     printf("running regular\n");
     //matvec(W, B, foo);
     printf("end running regular\n");
@@ -104,8 +125,10 @@ int main(int argc, char** argv) {
      for(int o=0; o<OUT; o++)
      for(int i=0; i<IN; i++)
         printf("Wp(o=%d, i=%d)=%f\n", i, o, Wp(i, o));
-
+*/
 }
+#endif
+
 #if 0
 typedef struct mnist_label_file_header_t_ {
     uint32_t magic_number;
