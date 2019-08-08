@@ -434,8 +434,8 @@ bool isconstantValueM(Value* val, SmallPtrSetImpl<Value*> &constants, SmallPtrSe
 		bool seenuse = false;
 		
         for (const auto &a:val->users()) {
-		  if (printconst)
-			llvm::errs() << "      considering use of " << *val << " - " << *a << "\n";
+		    if (printconst)
+			  llvm::errs() << "      considering use of " << *val << " - " << *a << "\n";
 
 			if (auto gep = dyn_cast<GetElementPtrInst>(a)) {
 				assert(val != gep->getPointerOperand());
@@ -1337,11 +1337,12 @@ public:
             }
             if (replaceableCalls.find(inst) != replaceableCalls.end()) {
                 if (inst->getNumUses() != 0) {
-                    inst->getParent()->getParent()->dump();
-                    inst->dump();
+                    //inst->getParent()->getParent()->dump();
+                    //inst->dump();
+                } else {
+                    inst->eraseFromParent();
+                    continue;
                 }
-                inst->eraseFromParent();
-                continue;
             }
           }
         }
@@ -1758,6 +1759,8 @@ endCheck:
     Value* invertPointerM(Value* val, IRBuilder<>& BuilderM) {
       if (isa<ConstantPointerNull>(val)) {
          return val;
+      } else if (isa<UndefValue>(val)) {
+         return val;
       } else if (auto cint = dyn_cast<ConstantInt>(val)) {
 		 if (cint->isZero()) return cint;
          //this is extra
@@ -1781,6 +1784,16 @@ endCheck:
       if (auto arg = dyn_cast<CastInst>(val)) {
         auto result = BuilderM.CreateCast(arg->getOpcode(), invertPointerM(arg->getOperand(0), BuilderM), arg->getDestTy(), arg->getName()+"'ipc");
         return result;
+      } else if (auto arg = dyn_cast<ExtractValueInst>(val)) {
+        IRBuilder<> bb(arg);
+        auto result = bb.CreateExtractValue(invertPointerM(arg->getOperand(0), bb), arg->getIndices(), arg->getName()+"'ipev");
+        invertedPointers[arg] = result;
+        return lookupM(invertedPointers[arg], BuilderM);
+      } else if (auto arg = dyn_cast<InsertValueInst>(val)) {
+        IRBuilder<> bb(arg);
+        auto result = bb.CreateInsertValue(invertPointerM(arg->getOperand(0), bb), invertPointerM(arg->getOperand(1), bb), arg->getIndices(), arg->getName()+"'ipiv");
+        invertedPointers[arg] = result;
+        return lookupM(invertedPointers[arg], BuilderM);
       } else if (auto arg = dyn_cast<LoadInst>(val)) {
         auto li = BuilderM.CreateLoad(invertPointerM(arg->getOperand(0), BuilderM), arg->getName()+"'ipl");
         li->setAlignment(arg->getAlignment());
@@ -2018,6 +2031,14 @@ public:
 
 Function* CreateAugmentedPrimal(Function* todiff, const SmallSet<unsigned,4>& constant_args, TargetLibraryInfo &TLI, GradientUtils** oututils, bool differentialReturn) {
   assert(!todiff->empty());
+  
+#if 0
+  static std::map<std::tuple<Function*,std::set<unsigned>, bool/*differentialReturn*/>, Function*> cachedfunctions;
+  auto tup = std::make_tuple(todiff, std::set<unsigned>(constant_args.begin(), constant_args.end()),  differentialReturn);
+  if (cachedfunctions.find(tup) != cachedfunctions.end()) {
+    return cachedfunctions[tup];
+  }
+#endif
 
   GradientUtils *gutils = GradientUtils::CreateFromClone(todiff, TLI, constant_args, /*returnValue*/ReturnType::Normal, /*differentialReturn*/differentialReturn);
   llvm::errs() << "function with differential return " << todiff->getName() << " " << differentialReturn << "\n";
@@ -2372,11 +2393,19 @@ Function* CreateAugmentedPrimal(Function* todiff, const SmallSet<unsigned,4>& co
 }
 
 Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& constant_args, TargetLibraryInfo &TLI, bool returnValue, bool differentialReturn, bool topLevel, GradientUtils** oututils, llvm::Type* additionalArg) {
+  static std::map<std::tuple<Function*,std::set<unsigned>, bool/*retval*/, bool/*differentialReturn*/, bool/*topLevel*/, llvm::Type*>, Function*> cachedfunctions;
+  auto tup = std::make_tuple(todiff, std::set<unsigned>(constant_args.begin(), constant_args.end()), returnValue, differentialReturn, topLevel, additionalArg);
+  if (cachedfunctions.find(tup) != cachedfunctions.end()) {
+    if (oututils) *oututils = nullptr;
+    return cachedfunctions[tup];
+  }
+
   assert(!todiff->empty());
   auto M = todiff->getParent();
   auto& Context = M->getContext();
 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(todiff, TLI, constant_args, returnValue ? ReturnType::ArgsWithReturn : ReturnType::Args, differentialReturn, additionalArg);
+  cachedfunctions[tup] = gutils->newFunc;
 
   Argument* additionalValue = nullptr;
   if (additionalArg) {
@@ -2950,7 +2979,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 tapetype = tape->getType();
                 assert(tapetype == tape->getType());
               }
-              auto newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called), subconstant_args, TLI, retUsed, !gutils->isConstantValue(inst) && !inst->getType()->isPointerTy(), /*topLevel*/replaceFunction, nullptr, tapetype);//, LI, DT);
+              auto newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called), subconstant_args, TLI, retUsed, !gutils->isConstantValue(inst) && !inst->getType()->isPointerTy(), /*topLevel*/replaceFunction, tapetype);//, LI, DT);
 
               if (!gutils->isConstantValue(inst) && !inst->getType()->isPointerTy()) {
                 args.push_back(diffe(inst));
@@ -2965,8 +2994,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
               for(unsigned i=0;i<op->getNumArgOperands(); i++) {
                 if (argsInverted[i] == DIFFE_TYPE::OUT_DIFF) {
-                  unsigned idxs[] = {structidx};
-                  Value* diffeadd = Builder2.CreateExtractValue(diffes, idxs);
+                  Value* diffeadd = Builder2.CreateExtractValue(diffes, {structidx});
                   structidx++;
                   addToDiffe(op->getArgOperand(i), diffeadd);
                 }
@@ -3431,11 +3459,15 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     gutils->newFunc->dump();
     report_fatal_error("function failed verification");
   }
+
+  optimizeIntermediate(gutils->newFunc);
+
   auto nf = gutils->newFunc;
   if (oututils)
       *oututils = gutils;
   else
       delete gutils;
+
   return nf;
 }
 

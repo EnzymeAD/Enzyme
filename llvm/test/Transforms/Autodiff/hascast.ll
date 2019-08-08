@@ -1,5 +1,33 @@
 ; RUN: opt < %s -lower-autodiff -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
 
+; __attribute__((noinline))
+; double* cast(double *x) {
+;     return x;
+; }
+; 
+; __attribute__((noinline))
+; void function(double y, double z, double *x) {
+;     double m = y * z;
+;     double* cs = cast(x);
+;     //double* cs = cast(cast(x));
+;     *cs = m;
+; }
+; 
+; __attribute__((noinline))
+; void addOne(double *x) {
+;     *x += 1;
+; }
+; 
+; __attribute__((noinline))
+; void function0(double y, double z, double *x) {
+;     function(y, z, x);
+;     addOne(x);
+; }
+; 
+; double test_derivative(double *x, double *xp, double y, double z) {
+;   return __builtin_autodiff(function0, y, z, x, xp);
+; }
+
 ; Function Attrs: noinline norecurse nounwind readnone uwtable
 define dso_local double* @cast(double* readnone returned %x) local_unnamed_addr #0 {
 entry:
