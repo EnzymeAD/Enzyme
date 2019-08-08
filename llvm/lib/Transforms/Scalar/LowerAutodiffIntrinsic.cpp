@@ -3436,8 +3436,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
   DeleteDeadBlock(gutils->inversionAllocs);
   for(auto BBs : gutils->reverseBlocks) {
-    if (pred_begin(BBs.second) == pred_end(BBs.second))
+    if (pred_begin(BBs.second) == pred_end(BBs.second)) {
+        BBs.second->dump();
         DeleteDeadBlock(BBs.second);
+    }
   }
   
   for (Argument &Arg : gutils->newFunc->args()) {
