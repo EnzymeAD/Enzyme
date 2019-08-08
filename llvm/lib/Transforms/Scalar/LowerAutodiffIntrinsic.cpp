@@ -3460,7 +3460,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     report_fatal_error("function failed verification");
   }
 
-  optimizeIntermediate(gutils->newFunc);
+  //optimizeIntermediate(gutils->newFunc);
 
   auto nf = gutils->newFunc;
   if (oututils)
