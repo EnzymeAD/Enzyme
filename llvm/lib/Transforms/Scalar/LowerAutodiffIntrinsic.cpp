@@ -2979,7 +2979,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 tapetype = tape->getType();
                 assert(tapetype == tape->getType());
               }
-              auto newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called), subconstant_args, TLI, retUsed, !gutils->isConstantValue(inst) && !inst->getType()->isPointerTy(), /*topLevel*/replaceFunction, tapetype);//, LI, DT);
+              auto newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called), subconstant_args, TLI, retUsed, !gutils->isConstantValue(inst) && !inst->getType()->isPointerTy(), /*topLevel*/replaceFunction, nullptr, tapetype);//, LI, DT);
 
               if (!gutils->isConstantValue(inst) && !inst->getType()->isPointerTy()) {
                 args.push_back(diffe(inst));
