@@ -882,7 +882,7 @@ ExprResult Sema::DefaultVariadicArgumentPromotion(Expr *E, VariadicCallType CT,
     return ExprError();
   E = ExprRes.get();
 
-  if (FDecl && FDecl->getName() == "__builtin_autodiff") {
+  if (FDecl && FDecl->getDeclName().isIdentifier() && FDecl->getName() == "__builtin_autodiff") {
     return E;
   }
   // Diagnostics regarding non-POD argument types are
