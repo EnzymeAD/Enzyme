@@ -506,6 +506,64 @@ enum class ReturnType {
     Normal, ArgsWithReturn, Args
 };
 
+#include "llvm/Transforms/Scalar/EarlyCSE.h"
+#include "llvm/Transforms/Scalar/InstSimplifyPass.h"
+#include "llvm/Transforms/Scalar/SimplifyCFG.h"
+#include "llvm/Analysis/TargetTransformInfo.h"
+#include "llvm/Transforms/Scalar/DCE.h"
+#include "llvm/Transforms/Scalar/DeadStoreElimination.h"
+#include "llvm/Analysis/MemorySSA.h"
+#include "llvm/Transforms/Scalar/CorrelatedValuePropagation.h"
+#include "llvm/Transforms/Scalar/LoopDeletion.h"
+#include "llvm/Analysis/LazyValueInfo.h"
+
+static cl::opt<bool> autodiff_optimize(
+            "autodiff_optimize", cl::init(false), cl::Hidden,
+                cl::desc("Force inlining of autodiff"));
+void optimizeIntermediate(Function *F) {
+    if (!autodiff_optimize) return;
+
+    {
+        DominatorTree DT(*F);
+        AssumptionCache AC(*F);
+        promoteMemoryToRegister(*F, DT, AC);
+    }
+
+    FunctionAnalysisManager AM;
+     AM.registerPass([] { return AAManager(); });
+     AM.registerPass([] { return ScalarEvolutionAnalysis(); });
+     AM.registerPass([] { return AssumptionAnalysis(); });
+     AM.registerPass([] { return TargetLibraryAnalysis(); });
+     AM.registerPass([] { return TargetIRAnalysis(); });
+     AM.registerPass([] { return MemorySSAAnalysis(); });
+     AM.registerPass([] { return DominatorTreeAnalysis(); });
+     AM.registerPass([] { return MemoryDependenceAnalysis(); });
+     AM.registerPass([] { return LoopAnalysis(); });
+     AM.registerPass([] { return OptimizationRemarkEmitterAnalysis(); });
+     AM.registerPass([] { return PhiValuesAnalysis(); });
+     AM.registerPass([] { return LazyValueAnalysis(); });
+
+    //LoopSimplifyPass().run(*F, AM);
+
+
+ GVN gvn;
+
+ GVN().run(*F, AM);
+ SROA().run(*F, AM);
+ EarlyCSEPass(/*memoryssa*/true).run(*F, AM);
+ InstSimplifyPass().run(*F, AM);
+ CorrelatedValuePropagationPass().run(*F, AM);
+
+ DCEPass().run(*F, AM);
+ DSEPass().run(*F, AM);
+ //TODO loop deletion?
+ 
+ SimplifyCFGOptions scfgo(/*unsigned BonusThreshold=*/1, /*bool ForwardSwitchCond=*/false, /*bool SwitchToLookup=*/false, /*bool CanonicalLoops=*/true, /*bool SinkCommon=*/true, /*AssumptionCache *AssumpCache=*/nullptr);
+ SimplifyCFGPass(scfgo).run(*F, AM);
+ 
+ //LCSSAPass().run(*NewF, AM);
+}
+
 Function *CloneFunctionWithReturns(Function *F, ValueToValueMapTy& ptrInputs, const SmallSet<unsigned,4>& constant_args, SmallPtrSetImpl<Value*> &constants, SmallPtrSetImpl<Value*> &nonconstant, SmallPtrSetImpl<Value*> &returnvals, ReturnType returnValue, bool differentialReturn, Twine name, ValueToValueMapTy *VMapO, bool diffeReturnArg, llvm::Type* additionalArg = nullptr) {
  assert(!F->empty());
  diffeReturnArg &= differentialReturn;
@@ -3438,7 +3496,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
   DeleteDeadBlock(gutils->inversionAllocs);
   for(auto BBs : gutils->reverseBlocks) {
     if (pred_begin(BBs.second) == pred_end(BBs.second)) {
-        BBs.second->dump();
+        (IRBuilder <>(BBs.second)).CreateUnreachable();
         DeleteDeadBlock(BBs.second);
     }
   }
@@ -3463,7 +3521,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     report_fatal_error("function failed verification");
   }
 
-  //optimizeIntermediate(gutils->newFunc);
+  optimizeIntermediate(gutils->newFunc);
 
   auto nf = gutils->newFunc;
   if (oututils)
