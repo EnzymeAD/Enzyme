@@ -3434,6 +3434,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     gutils->inversionAllocs->back().moveBefore(gutils->newFunc->getEntryBlock().getFirstNonPHIOrDbgOrLifetimeOrAlloca());
   }
 
+  (IRBuilder <>(gutils->inversionAllocs)).CreateUnreachable();
   DeleteDeadBlock(gutils->inversionAllocs);
   for(auto BBs : gutils->reverseBlocks) {
     if (pred_begin(BBs.second) == pred_end(BBs.second)) {
