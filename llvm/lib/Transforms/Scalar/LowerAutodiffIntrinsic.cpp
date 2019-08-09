@@ -3679,12 +3679,13 @@ static bool lowerAutodiffIntrinsic(Function &F, TargetLibraryInfo &TLI) {//, Loo
 }
 
 PreservedAnalyses LowerAutodiffIntrinsicPass::run(Function &F,
-                                                FunctionAnalysisManager &) {
-                                                llvm::errs() << "running via run\n";
-  //if (lowerAutodiffIntrinsic(F, this->getAnalysis<TargetLibraryInfoWrapperPass>().getTargetLibraryInfo()))
+                                                FunctionAnalysisManager &AM) {
+                                                //llvm::errs() << "running via run\n";
+  
+  if (lowerAutodiffIntrinsic(F, AM.getResult<TargetLibraryAnalysis>(F)))
     return PreservedAnalyses::none();
 
-  //return PreservedAnalyses::all();
+  return PreservedAnalyses::all();
 }
 
 namespace {
