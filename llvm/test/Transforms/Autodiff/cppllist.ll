@@ -1,4 +1,4 @@
-; RUN: opt < %s -lower-autodiff -inline -mem2reg -adce -aggressive-instcombine -instsimplify -early-cse-memssa -simplifycfg -correlated-propagation -adce -S | FileCheck %s
+; RUN: opt < %s -lower-autodiff -functionattrs -inline -mem2reg -adce -aggressive-instcombine -instsimplify -early-cse-memssa -simplifycfg -correlated-propagation -adce -S | FileCheck %s
 
 ; #include <stdlib.h>
 ; #include <stdio.h>
@@ -199,17 +199,17 @@ attributes #8 = { builtin nounwind }
 ; CHECK-NEXT:   store %class.node* %list.09.i, %class.node** %6, align 8, !tbaa !8
 ; CHECK-NEXT:   %indvars.iv.next.i = add nuw i64 %indvars.iv.i, 1
 ; CHECK-NEXT:   %"'ipc.i" = bitcast i8* %"call'mi.i" to %class.node*
-; CHECK-NEXT:   br i1 %2, label %for.body.i, label %invertdelete.end.i
+; CHECK-NEXT:   br i1 %2, label %for.body.i, label %[[invertdelete:.+]]
 
-; CHECK: invertfor.body.i:                                 ; preds = %invertdelete.end.i, %invertfor.body.i
-; CHECK-NEXT:   %"x'de.0.i" = phi double [ 0.000000e+00, %invertdelete.end.i ], [ %11, %invertfor.body.i ]
-; CHECK-NEXT:   %"indvars.iv'phi.i" = phi i64 [ %n, %invertdelete.end.i ], [ %7, %invertfor.body.i ]
-; CHECK-NEXT:   %7 = sub i64 %"indvars.iv'phi.i", 1
+; CHECK: invertfor.body.i:                                
+; CHECK-NEXT:   %"x'de.0.i" = phi double [ 0.000000e+00, %[[invertdelete:.+]] ], [ %[[xadd:.+]], %invertfor.body.i ]
+; CHECK-NEXT:   %"indvars.iv'phi.i" = phi i64 [ %n, %[[invertdelete]] ], [ %[[isub:.+]], %invertfor.body.i ]
+; CHECK-NEXT:   %[[isub]] = sub i64 %"indvars.iv'phi.i", 1
 ; CHECK-NEXT:   %8 = getelementptr i8*, i8** %"call'mi_malloccache.i", i64 %"indvars.iv'phi.i"
 ; CHECK-NEXT:   %9 = load i8*, i8** %8
 ; CHECK-NEXT:   %"value.i'ipc.i" = bitcast i8* %9 to double*
 ; CHECK-NEXT:   %10 = load double, double* %"value.i'ipc.i"
-; CHECK-NEXT:   %11 = fadd fast double %"x'de.0.i", %10
+; CHECK-NEXT:   %[[xadd]] = fadd fast double %"x'de.0.i", %10
 ; this store is optional and could get removed by DCE
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"value.i'ipc.i"
 ; CHECK-NEXT:   %12 = getelementptr i8*, i8** %call_malloccache.i, i64 %"indvars.iv'phi.i"
@@ -219,8 +219,8 @@ attributes #8 = { builtin nounwind }
 ; CHECK-NEXT:   call void @_ZdlPv(i8* %9) #5
 ; CHECK-NEXT:   br i1 %14, label %invertfor.body.i, label %diffe_Z12list_creatordm.exit
 
-; CHECK: invertdelete.end.i:                               ; preds = %for.body.i
-; CHECK-NEXT:   %15 = call {} @diffe_Z8sum_listPK4node(%class.node* nonnull %5, %class.node* nonnull %"'ipc.i", double 1.000000e+00) #5
+; CHECK: [[invertdelete]]:                               ; preds = %for.body.i
+; CHECK-NEXT:   %[[dsum:.+]] = call {} @diffe_Z8sum_listPK4node(%class.node* nonnull %5, %class.node* nonnull %"'ipc.i", double 1.000000e+00, {} undef) #5
 ; CHECK-NEXT:   br label %invertfor.body.i
 
 ; CHECK: diffe_Z12list_creatordm.exit:                     ; preds = %invertfor.body.i
@@ -230,7 +230,7 @@ attributes #8 = { builtin nounwind }
 ; CHECK-NEXT: }
 
 
-; CHECK: define internal {} @diffe_Z8sum_listPK4node(%class.node* noalias readonly %node, %class.node* %"node'", double %differeturn) local_unnamed_addr #9 {
+; CHECK: define internal {} @diffe_Z8sum_listPK4node(%class.node* noalias readonly %node, %class.node* %"node'", double %differeturn, {} %tapeArg) local_unnamed_addr #9 {
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %malloccall = tail call i8* @malloc(i64 8)
 ; CHECK-NEXT:   %0 = bitcast i8* %malloccall to %class.node**

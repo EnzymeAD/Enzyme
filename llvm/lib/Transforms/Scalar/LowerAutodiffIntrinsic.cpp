@@ -506,64 +506,6 @@ enum class ReturnType {
     Normal, ArgsWithReturn, Args
 };
 
-#include "llvm/Transforms/Scalar/EarlyCSE.h"
-#include "llvm/Transforms/Scalar/InstSimplifyPass.h"
-#include "llvm/Transforms/Scalar/SimplifyCFG.h"
-#include "llvm/Analysis/TargetTransformInfo.h"
-#include "llvm/Transforms/Scalar/DCE.h"
-#include "llvm/Transforms/Scalar/DeadStoreElimination.h"
-#include "llvm/Analysis/MemorySSA.h"
-#include "llvm/Transforms/Scalar/CorrelatedValuePropagation.h"
-#include "llvm/Transforms/Scalar/LoopDeletion.h"
-#include "llvm/Analysis/LazyValueInfo.h"
-
-static cl::opt<bool> autodiff_optimize(
-            "autodiff_optimize", cl::init(false), cl::Hidden,
-                cl::desc("Force inlining of autodiff"));
-void optimizeIntermediate(Function *F) {
-    if (!autodiff_optimize) return;
-
-    {
-        DominatorTree DT(*F);
-        AssumptionCache AC(*F);
-        promoteMemoryToRegister(*F, DT, AC);
-    }
-
-    FunctionAnalysisManager AM;
-     AM.registerPass([] { return AAManager(); });
-     AM.registerPass([] { return ScalarEvolutionAnalysis(); });
-     AM.registerPass([] { return AssumptionAnalysis(); });
-     AM.registerPass([] { return TargetLibraryAnalysis(); });
-     AM.registerPass([] { return TargetIRAnalysis(); });
-     AM.registerPass([] { return MemorySSAAnalysis(); });
-     AM.registerPass([] { return DominatorTreeAnalysis(); });
-     AM.registerPass([] { return MemoryDependenceAnalysis(); });
-     AM.registerPass([] { return LoopAnalysis(); });
-     AM.registerPass([] { return OptimizationRemarkEmitterAnalysis(); });
-     AM.registerPass([] { return PhiValuesAnalysis(); });
-     AM.registerPass([] { return LazyValueAnalysis(); });
-
-    //LoopSimplifyPass().run(*F, AM);
-
-
- GVN gvn;
-
- GVN().run(*F, AM);
- SROA().run(*F, AM);
- EarlyCSEPass(/*memoryssa*/true).run(*F, AM);
- InstSimplifyPass().run(*F, AM);
- CorrelatedValuePropagationPass().run(*F, AM);
-
- DCEPass().run(*F, AM);
- DSEPass().run(*F, AM);
- //TODO loop deletion?
- 
- SimplifyCFGOptions scfgo(/*unsigned BonusThreshold=*/1, /*bool ForwardSwitchCond=*/false, /*bool SwitchToLookup=*/false, /*bool CanonicalLoops=*/true, /*bool SinkCommon=*/true, /*AssumptionCache *AssumpCache=*/nullptr);
- SimplifyCFGPass(scfgo).run(*F, AM);
- 
- //LCSSAPass().run(*NewF, AM);
-}
-
 Function *CloneFunctionWithReturns(Function *F, ValueToValueMapTy& ptrInputs, const SmallSet<unsigned,4>& constant_args, SmallPtrSetImpl<Value*> &constants, SmallPtrSetImpl<Value*> &nonconstant, SmallPtrSetImpl<Value*> &returnvals, ReturnType returnValue, bool differentialReturn, Twine name, ValueToValueMapTy *VMapO, bool diffeReturnArg, llvm::Type* additionalArg = nullptr) {
  assert(!F->empty());
  diffeReturnArg &= differentialReturn;
@@ -1163,13 +1105,49 @@ bool getContextM(BasicBlock *BB, LoopContext &loopContext, std::map<Loop*,LoopCo
     return false;
   }
 
+bool isCertainMallocOrFree(Function* called) {
+    if (called == nullptr) return false;
+    if (called->getName() == "printf" || called->getName() == "puts" || called->getName() == "malloc" || called->getName() == "_Znwm" || called->getName() == "_ZdlPv" || called->getName() == "_ZdlPvm" || called->getName() == "free") return true;
+    switch(called->getIntrinsicID()) {
+            case Intrinsic::dbg_declare:
+            case Intrinsic::dbg_value:
+            case Intrinsic::dbg_label:
+            case Intrinsic::dbg_addr:
+            case Intrinsic::lifetime_start:
+            case Intrinsic::lifetime_end:
+                return true;
+            default:
+                break;
+    }
+
+    return false;
+}
+
+bool isCertainPrintMallocOrFree(Function* called) {
+    if (called == nullptr) return false;
+    
+    if (called->getName() == "printf" || called->getName() == "puts" || called->getName() == "malloc" || called->getName() == "_Znwm" || called->getName() == "_ZdlPv" || called->getName() == "_ZdlPvm" || called->getName() == "free") return true;
+    switch(called->getIntrinsicID()) {
+            case Intrinsic::dbg_declare:
+            case Intrinsic::dbg_value:
+            case Intrinsic::dbg_label:
+            case Intrinsic::dbg_addr:
+            case Intrinsic::lifetime_start:
+            case Intrinsic::lifetime_end:
+                return true;
+            default:
+                break;
+    }
+    return false;
+}
+
 class GradientUtils {
 public:
   llvm::Function *newFunc;
   ValueToValueMapTy invertedPointers;
+  DominatorTree DT;
   SmallPtrSet<Value*,4> constants;
   SmallPtrSet<Value*,20> nonconstant;
-  DominatorTree DT;
   LoopInfo LI;
   AssumptionCache AC;
   ScalarEvolution SE;
@@ -1182,6 +1160,11 @@ public:
   std::vector<Instruction*> addedFrees;
   ValueToValueMapTy originalToNewFn;
 
+  Value* getNewFromOriginal(Value* originst) {
+    auto m = originalToNewFn[originst];
+    assert(m);
+    return m;
+  }
   Value* getOriginal(Value* newinst) {
     for(auto v: originalToNewFn) {
         if (v.second == newinst) return const_cast<Value*>(v.first);
@@ -1199,7 +1182,7 @@ public:
   }
 
 private:
-  SmallVector<Instruction*, 4> addedMallocs;
+  SmallVector<Value*, 4> addedMallocs;
   unsigned tapeidx;
   Value* tape;
 public:
@@ -1227,14 +1210,17 @@ public:
     }
   }
 
-  Instruction* addMalloc(IRBuilder<> &BuilderQ, Instruction* malloc) {
+  Value* addMalloc(IRBuilder<> &BuilderQ, Value* malloc) {
     if (tape) {
         Instruction* ret = cast<Instruction>(BuilderQ.CreateExtractValue(tape, {tapeidx}));
-        if (malloc) {
-          malloc->replaceAllUsesWith(ret);
-          malloc->eraseFromParent();
+        if (malloc && !isa<UndefValue>(malloc)) {
+          cast<Instruction>(malloc)->replaceAllUsesWith(ret);
+          cast<Instruction>(malloc)->eraseFromParent();
         }
         tapeidx++;
+        if (malloc) {
+            assert(malloc->getType() == ret->getType());
+        }
         return ret;
     } else {
       assert(malloc);
@@ -1273,7 +1259,7 @@ public:
     }
   }
 
-  const SmallVectorImpl<Instruction*> & getMallocs() const {
+  const SmallVectorImpl<Value*> & getMallocs() const {
     return addedMallocs;
   }
   SmallPtrSet<Value*,2> nonconstant_values;
@@ -1346,10 +1332,8 @@ public:
 
   SmallPtrSet<Instruction*,4> replaceableCalls; 
   void eraseStructuralStoresAndCalls() { 
-      for(BasicBlock* BB: this->originalBlocks) {
-        LoopContext loopContext;
-        this->getContext(BB, loopContext);
-      
+
+      for(BasicBlock* BB: this->originalBlocks) { 
         auto term = BB->getTerminator();
         if (isa<UnreachableInst>(term)) continue;
       
@@ -1367,10 +1351,7 @@ public:
         }
       }
 
-      for(BasicBlock* BB: this->originalBlocks) {
-        LoopContext loopContext;
-        this->getContext(BB, loopContext);
-      
+      for(BasicBlock* BB: this->originalBlocks) { 
         auto term = BB->getTerminator();
         if (isa<UnreachableInst>(term)) continue;
       
@@ -1429,7 +1410,7 @@ public:
           if (called->empty()) continue;
           if (this->isConstantValue(op)) continue;
 
-          if (called->getName() == "printf" || called->getName() == "puts" || called->getName() == "malloc" || called->getName() == "_Znwm" || called->getName() == "_ZdlPv" || called->getName() == "_ZdlPvm" || called->getName() == "free") continue;
+          if (isCertainPrintMallocOrFree(called)) continue;
 
           if (!called->getReturnType()->isPointerTy() && !called->getReturnType()->isIntegerTy()) continue;
 
@@ -2087,6 +2068,88 @@ public:
   }
 };
 
+#include "llvm/Transforms/Scalar/EarlyCSE.h"
+#include "llvm/Transforms/Scalar/InstSimplifyPass.h"
+#include "llvm/Transforms/Scalar/SimplifyCFG.h"
+#include "llvm/Analysis/TargetTransformInfo.h"
+#include "llvm/Transforms/Scalar/DCE.h"
+#include "llvm/Transforms/Scalar/DeadStoreElimination.h"
+#include "llvm/Analysis/MemorySSA.h"
+#include "llvm/Transforms/Scalar/CorrelatedValuePropagation.h"
+#include "llvm/Transforms/Scalar/LoopDeletion.h"
+#include "llvm/Analysis/LazyValueInfo.h"
+#include "llvm/Transforms/IPO/FunctionAttrs.h"
+
+static cl::opt<bool> autodiff_optimize(
+            "autodiff_optimize", cl::init(false), cl::Hidden,
+                cl::desc("Force inlining of autodiff"));
+void optimizeIntermediate(GradientUtils* gutils, bool topLevel, Function *F) {
+    if (!autodiff_optimize) return;
+
+    {
+        DominatorTree DT(*F);
+        AssumptionCache AC(*F);
+        promoteMemoryToRegister(*F, DT, AC);
+    }
+
+    FunctionAnalysisManager AM;
+     AM.registerPass([] { return AAManager(); });
+     AM.registerPass([] { return ScalarEvolutionAnalysis(); });
+     AM.registerPass([] { return AssumptionAnalysis(); });
+     AM.registerPass([] { return TargetLibraryAnalysis(); });
+     AM.registerPass([] { return TargetIRAnalysis(); });
+     AM.registerPass([] { return MemorySSAAnalysis(); });
+     AM.registerPass([] { return DominatorTreeAnalysis(); });
+     AM.registerPass([] { return MemoryDependenceAnalysis(); });
+     AM.registerPass([] { return LoopAnalysis(); });
+     AM.registerPass([] { return OptimizationRemarkEmitterAnalysis(); });
+     AM.registerPass([] { return PhiValuesAnalysis(); });
+     AM.registerPass([] { return LazyValueAnalysis(); });
+     LoopAnalysisManager LAM;
+     AM.registerPass([&] { return LoopAnalysisManagerFunctionProxy(LAM); });
+     LAM.registerPass([&] { return FunctionAnalysisManagerLoopProxy(AM); });
+    //LoopSimplifyPass().run(*F, AM);
+
+ //TODO function attributes
+ //PostOrderFunctionAttrsPass().run(*F, AM);
+ GVN().run(*F, AM);
+ SROA().run(*F, AM);
+ EarlyCSEPass(/*memoryssa*/true).run(*F, AM);
+ InstSimplifyPass().run(*F, AM);
+ CorrelatedValuePropagationPass().run(*F, AM);
+
+ DCEPass().run(*F, AM);
+ DSEPass().run(*F, AM);
+
+ createFunctionToLoopPassAdaptor(LoopDeletionPass()).run(*F, AM);
+ 
+ SimplifyCFGOptions scfgo(/*unsigned BonusThreshold=*/1, /*bool ForwardSwitchCond=*/false, /*bool SwitchToLookup=*/false, /*bool CanonicalLoops=*/true, /*bool SinkCommon=*/true, /*AssumptionCache *AssumpCache=*/nullptr);
+ SimplifyCFGPass(scfgo).run(*F, AM);
+    
+ if (!topLevel) {
+ for(BasicBlock& BB: *F) { 
+      
+        for (auto I = BB.begin(), E = BB.end(); I != E;) {
+          Instruction* inst = &*I;
+          assert(inst);
+          I++;
+
+          if (gutils->originalInstructions.find(inst) == gutils->originalInstructions.end()) continue;
+
+          if (gutils->replaceableCalls.find(inst) != gutils->replaceableCalls.end()) {
+            if (inst->getNumUses() != 0 && !cast<CallInst>(inst)->getCalledFunction()->hasFnAttribute(Attribute::ReadNone) ) {
+                llvm::errs() << "found call ripe for replacement " << *inst;
+            } else {
+                    inst->eraseFromParent();
+                    continue;
+            }
+          }
+        }
+      }
+ }
+ //LCSSAPass().run(*NewF, AM);
+}
+
 Function* CreateAugmentedPrimal(Function* todiff, const SmallSet<unsigned,4>& constant_args, TargetLibraryInfo &TLI, GradientUtils** oututils, bool differentialReturn) {
   assert(!todiff->empty());
   
@@ -2172,6 +2235,15 @@ Function* CreateAugmentedPrimal(Function* todiff, const SmallSet<unsigned,4>& co
             case Intrinsic::dbg_addr:
             case Intrinsic::lifetime_start:
             case Intrinsic::lifetime_end:
+        case Intrinsic::fabs:
+        case Intrinsic::log:
+        case Intrinsic::log2:
+        case Intrinsic::log10:
+        case Intrinsic::exp:
+        case Intrinsic::exp2:
+        case Intrinsic::pow:
+        case Intrinsic::sin:
+        case Intrinsic::cos:
                 break;
             default:
               assert(inst);
@@ -2206,7 +2278,7 @@ Function* CreateAugmentedPrimal(Function* todiff, const SmallSet<unsigned,4>& co
 
                   SmallVector<Value*, 8> args;
                   SmallVector<DIFFE_TYPE, 8> argsInverted;
-                  bool modifyPrimal = false;
+                  bool modifyPrimal = !called->hasFnAttribute(Attribute::ReadNone);
                   IRBuilder<> BuilderZ(op);
                   BuilderZ.setFastMathFlags(FastMathFlags::getFast());
 
@@ -2271,7 +2343,13 @@ Function* CreateAugmentedPrimal(Function* todiff, const SmallSet<unsigned,4>& co
                       op->replaceAllUsesWith(rv);
                     }
                     //todo consider how to propagate antiptr
-                    gutils->addMalloc(BuilderZ, cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {0})));
+                    Value* tp = BuilderZ.CreateExtractValue(augmentcall, {0});
+                    if (tp->getType()->isEmptyTy()) {
+                        auto tpt = tp->getType();
+                        cast<Instruction>(tp)->eraseFromParent();
+                        tp = UndefValue::get(tpt);
+                    }
+                    gutils->addMalloc(BuilderZ, tp);
                     op->eraseFromParent();
                   }
                 } else {
@@ -2391,14 +2469,16 @@ Function* CreateAugmentedPrimal(Function* todiff, const SmallSet<unsigned,4>& co
   
   unsigned i=0;
   for (auto v: gutils->getMallocs()) {
-      IRBuilder <>ib(cast<Instruction>(VMap[v])->getNextNode());
-      Value *Idxs[] = {
-        ib.getInt32(0),
-        ib.getInt32(0),
-        ib.getInt32(i)
-      };
-      auto gep = ib.CreateGEP(RetType, ret, Idxs, "");
-      ib.CreateStore(VMap[v], gep);
+      if (!isa<UndefValue>(v)) {
+          IRBuilder <>ib(cast<Instruction>(VMap[v])->getNextNode());
+          Value *Idxs[] = {
+            ib.getInt32(0),
+            ib.getInt32(0),
+            ib.getInt32(i)
+          };
+          auto gep = ib.CreateGEP(RetType, ret, Idxs, "");
+          ib.CreateStore(VMap[v], gep);
+      }
       i++;
   }
 
@@ -2449,8 +2529,225 @@ Function* CreateAugmentedPrimal(Function* todiff, const SmallSet<unsigned,4>& co
       delete gutils;
   return NewF;
 }
+  
+void createInvertedTerminator(DiffeGradientUtils* gutils, BasicBlock *BB, AllocaInst* retAlloca, unsigned extraArgs) { 
+    LoopContext loopContext;
+    bool inLoop = gutils->getContext(BB, loopContext);
+    BasicBlock* BB2 = gutils->reverseBlocks[BB];
+    assert(BB2);
+    IRBuilder<> Builder(BB2);
+    Builder.setFastMathFlags(FastMathFlags::getFast());
 
-Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& constant_args, TargetLibraryInfo &TLI, bool returnValue, bool differentialReturn, bool topLevel, GradientUtils** oututils, llvm::Type* additionalArg) {
+      SmallVector<BasicBlock*,4> preds;
+      for(auto B : predecessors(BB)) {
+        preds.push_back(B);
+      }
+
+      if (preds.size() == 0) {
+        SmallVector<Value *,4> retargs;
+
+        if (retAlloca) {
+          retargs.push_back(Builder.CreateLoad(retAlloca));
+          assert(retargs[0]);
+        }
+
+        auto endidx = gutils->newFunc->arg_end();
+        for(unsigned i=0; i<extraArgs; i++)
+            endidx--;
+
+        for (auto& I: gutils->newFunc->args()) {
+          if (&I == endidx) {
+              break;
+          }
+          if (!gutils->isConstantValue(&I) && whatType(I.getType()) == DIFFE_TYPE::OUT_DIFF ) {
+            retargs.push_back(gutils->diffe((Value*)&I, Builder));
+          }
+        }
+
+        Value* toret = UndefValue::get(gutils->newFunc->getReturnType());
+        for(unsigned i=0; i<retargs.size(); i++) {
+          unsigned idx[] = { i };
+          toret = Builder.CreateInsertValue(toret, retargs[i], idx);
+        }
+        Builder.SetInsertPoint(Builder.GetInsertBlock());
+        Builder.CreateRet(toret);
+      } else if (preds.size() == 1) {
+        for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
+            if(auto PN = dyn_cast<PHINode>(&*I)) {
+                if (gutils->isConstantValue(PN)) continue;
+                //TODO consider whether indeed we can skip differential phi pointers
+                if (PN->getType()->isPointerTy()) continue;
+                auto prediff = gutils->diffe(PN, Builder);
+                gutils->setDiffe(PN, Constant::getNullValue(PN->getType()), Builder);
+                if (!gutils->isConstantValue(PN->getIncomingValueForBlock(preds[0]))) {
+                    gutils->addToDiffe(PN->getIncomingValueForBlock(preds[0]), prediff, Builder);
+                }
+            } else break;
+        }
+
+        Builder.SetInsertPoint(Builder.GetInsertBlock());
+        Builder.CreateBr(gutils->reverseBlocks[preds[0]]);
+
+      } else if (preds.size() == 2) {
+        IRBuilder <> pbuilder(&BB->front());
+        pbuilder.setFastMathFlags(FastMathFlags::getFast());
+        Value* phi = nullptr;
+
+        if (inLoop && BB2 == gutils->reverseBlocks[loopContext.var->getParent()]) {
+          assert( ((preds[0] == loopContext.latch) && (preds[1] == loopContext.preheader)) || ((preds[1] == loopContext.latch) && (preds[0] == loopContext.preheader)) );
+          if (preds[0] == loopContext.latch)
+            phi = Builder.CreateICmpNE(loopContext.antivar, Constant::getNullValue(loopContext.antivar->getType()));
+          else if(preds[1] == loopContext.latch)
+            phi = Builder.CreateICmpEQ(loopContext.antivar, Constant::getNullValue(loopContext.antivar->getType()));
+          else {
+            llvm::errs() << "weird behavior for loopContext\n";
+            assert(0 && "illegal loopcontext behavior");
+          }
+        } else {
+          std::map<BasicBlock*,std::set<unsigned>> seen;
+          std::map<BasicBlock*,std::set<BasicBlock*>> done;
+          std::deque<std::tuple<BasicBlock*,unsigned,BasicBlock*>> Q; // newblock, prednum, pred
+          Q.push_back(std::tuple<BasicBlock*,unsigned,BasicBlock*>(preds[0], 0, BB));
+          Q.push_back(std::tuple<BasicBlock*,unsigned,BasicBlock*>(preds[1], 1, BB));
+          //done.insert(BB);
+
+          while(Q.size()) {
+                auto trace = Q.front();
+                auto block = std::get<0>(trace);
+                auto num = std::get<1>(trace);
+                auto predblock = std::get<2>(trace);
+                Q.pop_front();
+
+                if (seen[block].count(num) && done[block].count(predblock)) {
+                  continue;
+                }
+
+                seen[block].insert(num);
+                done[block].insert(predblock);
+
+                if (seen[block].size() == 1) {
+                  for (BasicBlock *Pred : predecessors(block)) {
+                    Q.push_back(std::tuple<BasicBlock*,unsigned,BasicBlock*>(Pred, (*seen[block].begin()), block ));
+                  }
+                }
+
+                SmallVector<BasicBlock*,4> succs;
+                bool allDone = true;
+                for (BasicBlock *Succ : successors(block)) {
+                    succs.push_back(Succ);
+                    if (done[block].count(Succ) == 0) {
+                      allDone = false;
+                    }
+                }
+
+                if (!allDone) {
+                  continue;
+                }
+
+                if (seen[block].size() == preds.size() && succs.size() == preds.size()) {
+                  //TODO below doesnt generalize past 2
+                  bool hasSingle = false;
+                  for(auto a : succs) {
+                    if (seen[a].size() == 1) {
+                      hasSingle = true;
+                    }
+                  }
+                  if (!hasSingle)
+                      goto continueloop;
+                  if (auto branch = dyn_cast<BranchInst>(block->getTerminator())) {
+                    assert(branch->getCondition());
+                    phi = gutils->lookupM(branch->getCondition(), Builder);
+                    for(unsigned i=0; i<preds.size(); i++) {
+                        auto s = branch->getSuccessor(i);
+                        assert(s == succs[i]);
+                        if (seen[s].size() == 1) {
+                            if ( (*seen[s].begin()) != i) {
+                                phi = Builder.CreateNot(phi);
+                                break;
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    goto endPHI;
+                  }
+
+                  break;
+                }
+                continueloop:;
+          }
+
+          phi = pbuilder.CreatePHI(Type::getInt1Ty(Builder.getContext()), 2);
+          cast<PHINode>(phi)->addIncoming(ConstantInt::getTrue(phi->getType()), preds[0]);
+          cast<PHINode>(phi)->addIncoming(ConstantInt::getFalse(phi->getType()), preds[1]);
+          phi = gutils->lookupM(phi, Builder);
+          goto endPHI;
+
+          endPHI:;
+        }
+
+        for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
+            if(auto PN = dyn_cast<PHINode>(&*I)) {
+
+                // POINTER TYPE THINGS
+                if (PN->getType()->isPointerTy()) continue;
+                if (gutils->isConstantValue(PN)) continue; 
+                auto prediff = gutils->diffe(PN, Builder);
+                gutils->setDiffe(PN, Constant::getNullValue(PN->getType()), Builder);
+                if (!gutils->isConstantValue(PN->getIncomingValueForBlock(preds[0]))) {
+                    auto dif = Builder.CreateSelect(phi, prediff, Constant::getNullValue(prediff->getType()));
+                    gutils->addToDiffe(PN->getIncomingValueForBlock(preds[0]), dif, Builder);
+                }
+                if (!gutils->isConstantValue(PN->getIncomingValueForBlock(preds[1]))) {
+                    auto dif = Builder.CreateSelect(phi, Constant::getNullValue(prediff->getType()), prediff);
+                    gutils->addToDiffe(PN->getIncomingValueForBlock(preds[1]), dif, Builder);
+                }
+            } else break;
+        }
+        auto f0 = cast<BasicBlock>(gutils->reverseBlocks[preds[0]]);
+        auto f1 = cast<BasicBlock>(gutils->reverseBlocks[preds[1]]);
+        Builder.SetInsertPoint(Builder.GetInsertBlock());
+        Builder.CreateCondBr(phi, f0, f1);
+      } else {
+        IRBuilder <> pbuilder(&BB->front());
+        pbuilder.setFastMathFlags(FastMathFlags::getFast());
+        Value* phi = nullptr;
+
+        if (true) {
+          phi = pbuilder.CreatePHI(Type::getInt8Ty(Builder.getContext()), preds.size());
+          for(unsigned i=0; i<preds.size(); i++) {
+            cast<PHINode>(phi)->addIncoming(ConstantInt::get(phi->getType(), i), preds[i]);
+          }
+          phi = gutils->lookupM(phi, Builder);
+        }
+
+        for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
+            if(auto PN = dyn_cast<PHINode>(&*I)) {
+              if (gutils->isConstantValue(PN)) continue;
+
+              // POINTER TYPE THINGS
+              if (PN->getType()->isPointerTy()) continue;
+              auto prediff = gutils->diffe(PN, Builder);
+              gutils->setDiffe(PN, Constant::getNullValue(PN->getType()), Builder);
+              for(unsigned i=0; i<preds.size(); i++) {
+                if (!gutils->isConstantValue(PN->getIncomingValueForBlock(preds[i]))) {
+                    auto cond = Builder.CreateICmpEQ(phi, ConstantInt::get(phi->getType(), i));
+                    auto dif = Builder.CreateSelect(cond, prediff, Constant::getNullValue(prediff->getType()));
+                    gutils->addToDiffe(PN->getIncomingValueForBlock(preds[i]), dif, Builder);
+                }
+              }
+            } else break;
+        }
+
+        Builder.SetInsertPoint(Builder.GetInsertBlock());
+        auto swit = Builder.CreateSwitch(phi, gutils->reverseBlocks[preds.back()], preds.size()-1);
+        for(unsigned i=0; i<preds.size()-1; i++) {
+          swit->addCase(ConstantInt::get(cast<IntegerType>(phi->getType()), i), gutils->reverseBlocks[preds[i]]);
+        }
+      }
+}
+
+Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& constant_args, TargetLibraryInfo &TLI, AAResults &AA, bool returnValue, bool differentialReturn, bool topLevel, GradientUtils** oututils, llvm::Type* additionalArg) {
   static std::map<std::tuple<Function*,std::set<unsigned>, bool/*retval*/, bool/*differentialReturn*/, bool/*topLevel*/, llvm::Type*>, Function*> cachedfunctions;
   auto tup = std::make_tuple(todiff, std::set<unsigned>(constant_args.begin(), constant_args.end()), returnValue, differentialReturn, topLevel, additionalArg);
   if (cachedfunctions.find(tup) != cachedfunctions.end()) {
@@ -2912,8 +3209,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               SmallVector<Value*, 8> args;
               SmallVector<Value*, 8> pre_args;
               SmallVector<DIFFE_TYPE, 8> argsInverted;
-              bool modifyPrimal = false;
+              bool modifyPrimal = !called->hasFnAttribute(Attribute::ReadNone);
               IRBuilder<> BuilderZ(op);
+              std::vector<Instruction*> postCreate;
               BuilderZ.setFastMathFlags(FastMathFlags::getFast());
 
               if ( (called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) && !gutils->isConstantValue(op)) {
@@ -2967,27 +3265,54 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               bool replaceFunction = false;
 
               if (topLevel && BB->getSingleSuccessor() == BB2) {
+                  auto origop = cast<CallInst>(gutils->getOriginal(op));
                   auto OBB = cast<BasicBlock>(gutils->getOriginal(BB));
                   auto iter = OBB->rbegin();
-                  while(iter != OBB->rend() && &*iter != gutils->getOriginal(op)) {
-                    if (iter->mayReadOrWriteMemory()) {
-                        llvm::errs() << "     can't replace next fn because use of memory by " << *iter << "\n";
-                        break;
+                  while(iter != OBB->rend() && &*iter != origop) {
+                    if (auto call = dyn_cast<CallInst>(&*iter)) {
+                        if (isCertainMallocOrFree(call->getCalledFunction())) {
+                            iter++;
+                            continue;
+                        }
                     }
+                    
                     if (isa<ReturnInst>(&*iter)) {
                         iter++;
                         continue;
                     }
-
-                        bool usesInst = false;
-                        for(auto &operand : iter->operands()) {
-                            if (operand.get() == gutils->getOriginal(op)) { usesInst = true; break; }
-                        }
-                        if (!usesInst) {
-                          iter++;
-                          continue;
-                        }
+                        
+                    bool usesInst = false;
+                    for(auto &operand : iter->operands()) {
+                        if (operand.get() == gutils->getOriginal(op)) { usesInst = true; break; }
+                    }
+                    if (usesInst) {
                         break;
+                    }
+
+                    if (!iter->mayReadOrWriteMemory() || isa<BinaryOperator>(&*iter)) {
+                        iter++;
+                        continue;
+                    }
+
+                    llvm::errs() << " considering a" << *iter << "\n";
+                    if (AA.getModRefInfo(&*iter, origop) == ModRefInfo::NoModRef) {
+                        iter++;
+                        continue;
+                    }
+
+                    //load that follows the original
+                    if (auto li = dyn_cast<LoadInst>(&*iter)) {
+                        if (AA.canInstructionRangeModRef(*li, OBB->back(), MemoryLocation::get(li), ModRefInfo::Mod)) {
+                            llvm::errs() << "   found range mod " << *iter << " " << *OBB << "\n";
+                            break;
+                        }
+                        llvm::errs() << "   can do the bb swap down " << *iter << " " << *OBB << "\n";
+                        postCreate.push_back(cast<Instruction>(gutils->getNewFromOriginal(&*iter)));
+                        iter++;
+                        continue;
+                    }
+                    
+                    break;
                   }
                   if (&*iter == gutils->getOriginal(op)) {
                       llvm::errs() << " choosing to replace function " << called->getName() << " and do both forward/reverse\n";
@@ -2998,8 +3323,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                   }
               }
 
-              Instruction* tape = nullptr;
-              Type* tapetype = nullptr;
+              Value* tape = nullptr;
               GradientUtils *augmentedutils = nullptr;
               CallInst* augmentcall = nullptr;
               if (modifyPrimal) {
@@ -3008,8 +3332,12 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                   augmentcall = BuilderZ.CreateCall(newcalled, pre_args);
                   augmentcall->setCallingConv(op->getCallingConv());
                   augmentcall->setDebugLoc(inst->getDebugLoc());
-                  tape = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {0}));
-                  tapetype = tape->getType();
+                  tape = BuilderZ.CreateExtractValue(augmentcall, {0});
+                  if (tape->getType()->isEmptyTy()) {
+                      auto tt = tape->getType();
+                      cast<Instruction>(tape)->eraseFromParent();
+                      tape = UndefValue::get(tt);
+                  }
 
                   llvm::errs() << "primal considering differential ip of " << called->getName() << " " << *called->getReturnType() << " " << gutils->isConstantValue(op) << "\n";
                   if( (called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) && !gutils->isConstantValue(op) ) {
@@ -3034,10 +3362,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 }
                 IRBuilder<> builder(op);
                 tape = gutils->addMalloc(builder, tape);
-                tapetype = tape->getType();
-                assert(tapetype == tape->getType());
+
               }
-              auto newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called), subconstant_args, TLI, retUsed, !gutils->isConstantValue(inst) && !inst->getType()->isPointerTy(), /*topLevel*/replaceFunction, nullptr, tapetype);//, LI, DT);
+              auto newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called), subconstant_args, TLI, AA, retUsed, !gutils->isConstantValue(inst) && !inst->getType()->isPointerTy(), /*topLevel*/replaceFunction, nullptr, tape ? tape->getType() : nullptr);//, LI, DT);
 
               if (!gutils->isConstantValue(inst) && !inst->getType()->isPointerTy()) {
                 args.push_back(diffe(inst));
@@ -3078,6 +3405,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               }
 
               if (replaceFunction) {
+                ValueToValueMapTy mapp;
                 if (op->getNumUses() != 0) {
                   auto retval = cast<Instruction>(Builder2.CreateExtractValue(diffes, {0}));
                   gutils->originalInstructions.insert(retval);
@@ -3085,6 +3413,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                   if (!gutils->isConstantValue(op))
                     gutils->nonconstant_values.insert(retval);
                   op->replaceAllUsesWith(retval);
+                  mapp[op] = retval;
+                }
+                for(auto a : postCreate) {
+                    gutils->unwrapM(a, Builder2, mapp, true);
                 }
                 op->eraseFromParent();
               }
@@ -3120,9 +3452,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 if (!gutils->isConstantValue(op))
                   gutils->nonconstant_values.insert(diffes);
                 op->eraseFromParent();
+                gutils->replaceableCalls.insert(augmentcall);
+              } else {
+                gutils->replaceableCalls.insert(op);
               }
-
-              gutils->replaceableCalls.insert(op);
             } else {
               if (gutils->isConstantInstruction(op)) {
 			    continue;
@@ -3264,220 +3597,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       report_fatal_error("unknown instruction");
     }
   }
-
-  SmallVector<BasicBlock*,4> preds;
-  for(auto B : predecessors(BB)) {
-    preds.push_back(B);
-  }
-
-  if (preds.size() == 0) {
-    SmallVector<Value *,4> retargs;
-
-    if (returnValue) {
-      retargs.push_back(Builder2.CreateLoad(retAlloca));
-      assert(retargs[0]);
-    }
-
-    for (auto& I: gutils->newFunc->args()) {
-      // the differential return input value should be ignored
-      auto idx = gutils->newFunc->arg_end();
-      idx--;
-      auto idxm2 = idx;
-      if (&I == idx) {
-          if (additionalArg) continue;
-          if (differentialReturn) continue;
-      }
-      idxm2--;
-      if (&I == idxm2) {
-        if (additionalArg && differentialReturn) continue;
-      }
-      if (!gutils->isConstantValue(&I) && whatType(I.getType()) == DIFFE_TYPE::OUT_DIFF ) {
-        retargs.push_back(diffe((Value*)&I));
-      }
-    }
-
-    Value* toret = UndefValue::get(gutils->newFunc->getReturnType());
-    for(unsigned i=0; i<retargs.size(); i++) {
-      unsigned idx[] = { i };
-      toret = Builder2.CreateInsertValue(toret, retargs[i], idx);
-    }
-    Builder2.SetInsertPoint(Builder2.GetInsertBlock());
-    Builder2.CreateRet(toret);
-  } else if (preds.size() == 1) {
-    for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
-        if(auto PN = dyn_cast<PHINode>(&*I)) {
-            if (gutils->isConstantValue(PN)) continue;
-            //TODO consider whether indeed we can skip differential phi pointers
-            if (PN->getType()->isPointerTy()) continue;
-            auto prediff = diffe(PN);
-            setDiffe(PN, Constant::getNullValue(PN->getType()));
-            if (!gutils->isConstantValue(PN->getIncomingValueForBlock(preds[0]))) {
-                addToDiffe(PN->getIncomingValueForBlock(preds[0]), prediff );
-            }
-        } else break;
-    }
-
-    Builder2.SetInsertPoint(Builder2.GetInsertBlock());
-    Builder2.CreateBr(gutils->reverseBlocks[preds[0]]);
-
-  } else if (preds.size() == 2) {
-    IRBuilder <> pbuilder(&BB->front());
-    pbuilder.setFastMathFlags(FastMathFlags::getFast());
-    Value* phi = nullptr;
-
-    if (inLoop && BB2 == gutils->reverseBlocks[loopContext.var->getParent()]) {
-      assert( ((preds[0] == loopContext.latch) && (preds[1] == loopContext.preheader)) || ((preds[1] == loopContext.latch) && (preds[0] == loopContext.preheader)) );
-      if (preds[0] == loopContext.latch)
-        phi = Builder2.CreateICmpNE(loopContext.antivar, Constant::getNullValue(loopContext.antivar->getType()));
-      else if(preds[1] == loopContext.latch)
-        phi = Builder2.CreateICmpEQ(loopContext.antivar, Constant::getNullValue(loopContext.antivar->getType()));
-      else {
-        llvm::errs() << "weird behavior for loopContext\n";
-        assert(0 && "illegal loopcontext behavior");
-      }
-    } else {
-      std::map<BasicBlock*,std::set<unsigned>> seen;
-      std::map<BasicBlock*,std::set<BasicBlock*>> done;
-      std::deque<std::tuple<BasicBlock*,unsigned,BasicBlock*>> Q; // newblock, prednum, pred
-      Q.push_back(std::tuple<BasicBlock*,unsigned,BasicBlock*>(preds[0], 0, BB));
-      Q.push_back(std::tuple<BasicBlock*,unsigned,BasicBlock*>(preds[1], 1, BB));
-      //done.insert(BB);
-
-      while(Q.size()) {
-            auto trace = Q.front();
-            auto block = std::get<0>(trace);
-            auto num = std::get<1>(trace);
-            auto predblock = std::get<2>(trace);
-            Q.pop_front();
-
-            if (seen[block].count(num) && done[block].count(predblock)) {
-              continue;
-            }
-
-            seen[block].insert(num);
-            done[block].insert(predblock);
-
-            if (seen[block].size() == 1) {
-              for (BasicBlock *Pred : predecessors(block)) {
-                Q.push_back(std::tuple<BasicBlock*,unsigned,BasicBlock*>(Pred, (*seen[block].begin()), block ));
-              }
-            }
-
-            SmallVector<BasicBlock*,4> succs;
-            bool allDone = true;
-            for (BasicBlock *Succ : successors(block)) {
-                succs.push_back(Succ);
-                if (done[block].count(Succ) == 0) {
-                  allDone = false;
-                }
-            }
-
-            if (!allDone) {
-              continue;
-            }
-
-            if (seen[block].size() == preds.size() && succs.size() == preds.size()) {
-			  //TODO below doesnt generalize past 2
-			  bool hasSingle = false;
-              for(auto a : succs) {
-                if (seen[a].size() == 1) {
-				  hasSingle = true;
-                }
-              }
-			  if (!hasSingle)
-                  goto continueloop;
-              if (auto branch = dyn_cast<BranchInst>(block->getTerminator())) {
-                assert(branch->getCondition());
-                phi = lookup(branch->getCondition());
-				for(unsigned i=0; i<preds.size(); i++) {
-					auto s = branch->getSuccessor(i);
-					assert(s == succs[i]);
-					if (seen[s].size() == 1) {
-						if ( (*seen[s].begin()) != i) {
-							phi = Builder2.CreateNot(phi);
-							break;
-						} else {
-							break;
-						}
-					}
-				}
-                goto endPHI;
-              }
-
-              break;
-            }
-			continueloop:;
-      }
-
-      phi = pbuilder.CreatePHI(Type::getInt1Ty(Context), 2);
-      cast<PHINode>(phi)->addIncoming(ConstantInt::getTrue(phi->getType()), preds[0]);
-      cast<PHINode>(phi)->addIncoming(ConstantInt::getFalse(phi->getType()), preds[1]);
-      phi = lookup(phi);
-      goto endPHI;
-
-      endPHI:;
-    }
-
-    for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
-        if(auto PN = dyn_cast<PHINode>(&*I)) {
-
-            // POINTER TYPE THINGS
-            if (PN->getType()->isPointerTy()) continue;
-            if (gutils->isConstantValue(PN)) continue; 
-            auto prediff = diffe(PN);
-            setDiffe(PN, Constant::getNullValue(PN->getType()));
-            if (!gutils->isConstantValue(PN->getIncomingValueForBlock(preds[0]))) {
-                auto dif = Builder2.CreateSelect(phi, prediff, Constant::getNullValue(prediff->getType()));
-                addToDiffe(PN->getIncomingValueForBlock(preds[0]), dif );
-            }
-            if (!gutils->isConstantValue(PN->getIncomingValueForBlock(preds[1]))) {
-                auto dif = Builder2.CreateSelect(phi, Constant::getNullValue(prediff->getType()), prediff);
-                addToDiffe(PN->getIncomingValueForBlock(preds[1]), dif);
-            }
-        } else break;
-    }
-    auto f0 = cast<BasicBlock>(gutils->reverseBlocks[preds[0]]);
-    auto f1 = cast<BasicBlock>(gutils->reverseBlocks[preds[1]]);
-    Builder2.SetInsertPoint(Builder2.GetInsertBlock());
-    Builder2.CreateCondBr(phi, f0, f1);
-  } else {
-    IRBuilder <> pbuilder(&BB->front());
-    pbuilder.setFastMathFlags(FastMathFlags::getFast());
-    Value* phi = nullptr;
-
-    if (true) {
-      phi = pbuilder.CreatePHI(Type::getInt8Ty(Context), preds.size());
-      for(unsigned i=0; i<preds.size(); i++) {
-        cast<PHINode>(phi)->addIncoming(ConstantInt::get(phi->getType(), i), preds[i]);
-      }
-      phi = lookup(phi);
-    }
-
-    for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
-        if(auto PN = dyn_cast<PHINode>(&*I)) {
-          if (gutils->isConstantValue(PN)) continue;
-
-          // POINTER TYPE THINGS
-          if (PN->getType()->isPointerTy()) continue;
-          auto prediff = diffe(PN);
-          setDiffe(PN, Constant::getNullValue(PN->getType()));
-          for(unsigned i=0; i<preds.size(); i++) {
-            if (!gutils->isConstantValue(PN->getIncomingValueForBlock(preds[i]))) {
-                auto cond = Builder2.CreateICmpEQ(phi, ConstantInt::get(phi->getType(), i));
-                auto dif = Builder2.CreateSelect(cond, prediff, Constant::getNullValue(prediff->getType()));
-                addToDiffe(PN->getIncomingValueForBlock(preds[i]), dif);
-            }
-          }
-        } else break;
-    }
-
-    Builder2.SetInsertPoint(Builder2.GetInsertBlock());
-    auto swit = Builder2.CreateSwitch(phi, gutils->reverseBlocks[preds.back()], preds.size()-1);
-    for(unsigned i=0; i<preds.size()-1; i++) {
-      swit->addCase(ConstantInt::get(cast<IntegerType>(phi->getType()), i), gutils->reverseBlocks[preds[i]]);
-    }
-  }
-
+ 
+    createInvertedTerminator(gutils, BB, retAlloca, 0 + (additionalArg ? 1 : 0) + (differentialReturn ? 1 : 0));
 
   }
   
@@ -3521,7 +3642,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     report_fatal_error("function failed verification");
   }
 
-  optimizeIntermediate(gutils->newFunc);
+  optimizeIntermediate(gutils, topLevel, gutils->newFunc);
 
   auto nf = gutils->newFunc;
   if (oututils)
@@ -3532,7 +3653,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
   return nf;
 }
 
-void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI) {//, LoopInfo& LI, DominatorTree& DT) {
+void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI, AAResults &AA) {//, LoopInfo& LI, DominatorTree& DT) {
   Value* fn = CI->getArgOperand(0);
 
   while (auto ci = dyn_cast<CastInst>(fn)) {
@@ -3635,7 +3756,7 @@ void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI) {//, LoopInfo& LI, Dom
   }
 
   bool differentialReturn = cast<Function>(fn)->getReturnType()->isFPOrFPVectorTy();
-  auto newFunc = CreatePrimalAndGradient(cast<Function>(fn), constants, TLI, /*should return*/false, differentialReturn, /*topLevel*/true, /*outUtils*/nullptr, /*addedType*/nullptr);//, LI, DT);
+  auto newFunc = CreatePrimalAndGradient(cast<Function>(fn), constants, TLI, AA, /*should return*/false, differentialReturn, /*topLevel*/true, /*outUtils*/nullptr, /*addedType*/nullptr);//, LI, DT);
   
   if (differentialReturn)
     args.push_back(ConstantFP::get(cast<Function>(fn)->getReturnType(), 1.0));
@@ -3647,7 +3768,7 @@ void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI) {//, LoopInfo& LI, Dom
   CallInst* diffret = cast<CallInst>(Builder.CreateCall(newFunc, args));
   diffret->setCallingConv(CI->getCallingConv());
   diffret->setDebugLoc(CI->getDebugLoc());
-  if (cast<StructType>(diffret->getType())->getNumElements()>0) {
+  if (!diffret->getType()->isEmptyTy()) {
     unsigned idxs[] = {0};
     auto diffreti = Builder.CreateExtractValue(diffret, idxs);
     CI->replaceAllUsesWith(diffreti);
@@ -3657,7 +3778,7 @@ void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI) {//, LoopInfo& LI, Dom
   CI->eraseFromParent();
 }
 
-static bool lowerAutodiffIntrinsic(Function &F, TargetLibraryInfo &TLI) {//, LoopInfo& LI, DominatorTree& DT) {
+static bool lowerAutodiffIntrinsic(Function &F, TargetLibraryInfo &TLI, AAResults &AA) {//, LoopInfo& LI, DominatorTree& DT) {
   bool Changed = false;
 
   for (BasicBlock &BB : F) {
@@ -3669,7 +3790,7 @@ static bool lowerAutodiffIntrinsic(Function &F, TargetLibraryInfo &TLI) {//, Loo
 
       Function *Fn = CI->getCalledFunction();
       if (Fn && Fn->getIntrinsicID() == Intrinsic::autodiff) {
-        HandleAutoDiff(CI, TLI);//, LI, DT);
+        HandleAutoDiff(CI, TLI, AA);//, LI, DT);
         Changed = true;
       }
     }
@@ -3680,9 +3801,7 @@ static bool lowerAutodiffIntrinsic(Function &F, TargetLibraryInfo &TLI) {//, Loo
 
 PreservedAnalyses LowerAutodiffIntrinsicPass::run(Function &F,
                                                 FunctionAnalysisManager &AM) {
-                                                //llvm::errs() << "running via run\n";
-  
-  if (lowerAutodiffIntrinsic(F, AM.getResult<TargetLibraryAnalysis>(F)))
+  if (lowerAutodiffIntrinsic(F, AM.getResult<TargetLibraryAnalysis>(F), AM.getResult<AAManager>(F)))
     return PreservedAnalyses::none();
 
   return PreservedAnalyses::all();
@@ -3704,13 +3823,16 @@ public:
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<TargetLibraryInfoWrapperPass>();
+    AU.addRequired<AAResultsWrapperPass>();
+    AU.addRequired<GlobalsAAWrapperPass>();
     AU.addRequiredID(LoopSimplifyID);
     AU.addRequiredID(LCSSAID);
   }
 
   bool runOnFunction(Function &F) override {
     auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
-    return lowerAutodiffIntrinsic(F, TLI);
+    auto &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
+    return lowerAutodiffIntrinsic(F, TLI, AA);
   }
 };
 }
@@ -3724,6 +3846,8 @@ INITIALIZE_PASS_DEPENDENCY(LCSSAWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(LoopInfoWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(GlobalsAAWrapperPass)
 INITIALIZE_PASS_END(LowerAutodiffIntrinsic, "lower-autodiff",
                 "Lower 'autodiff' Intrinsics", false, false)
 

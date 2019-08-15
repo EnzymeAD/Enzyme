@@ -135,8 +135,8 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:  %[[gepcall:.+]] = getelementptr i8*, i8** %call_malloccache.i, i64 %"indvars.iv'phi.i"
 ; CHECK-NEXT:  %[[loadprefree:.+]] = load i8*, i8** %[[gepcall]]
 ; CHECK-NEXT:  call void @free(i8* %[[loadprefree]]) #4
-; CHECK-NEXT:  %[[cmp:.+]] = icmp ne i64 %"indvars.iv'phi.i", 0
 ; CHECK-NEXT:  %[[prefree2:.+]] = load i8*, i8** %[[gep]]
+; CHECK-NEXT:  %[[cmp:.+]] = icmp ne i64 %"indvars.iv'phi.i", 0
 ; CHECK-NEXT:  call void @free(i8* %[[prefree2]]) #4
 ; CHECK-NEXT:  br i1 %[[cmp:.+]], label %invertfor.body.i, label %diffelist_creator.exit
 

@@ -85,7 +85,8 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %call.i = tail call i8* @malloc(i64 %mul.i) #6
 ; CHECK-NEXT:   %0 = bitcast i8* %call.i to double*
 ; CHECK-NEXT:   store double %x, double* %0, align 8, !tbaa !2
-; CHECK-NEXT:   %[[fresult:.+]] = tail call fast double @f(double* %0) #6
+; CHECK-NEXT:   %[[fresult:.+]] = tail call fastcc double @augmented_f(double %x)
+;; TODO MAKE NON AUGMENTED:   %[[fresult:.+]] = tail call fast double @f(double* %0) #6
 ; CHECK-NEXT:   %factor = fmul fast double %[[fresult]], 2.000000e+00
 ; CHECK-NEXT:   %"'ipc.i" = bitcast i8* %"call'mi.i" to double*
 ; CHECK-NEXT:   tail call fastcc void @diffef(double* %"'ipc.i", double %factor) #6

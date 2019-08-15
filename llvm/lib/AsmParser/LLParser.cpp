@@ -6356,9 +6356,11 @@ bool LLParser::ParseCall(Instruction *&Inst, PerFunctionState &PFS,
       ParseOptionalOperandBundles(BundleList, PFS))
     return true;
 
-  if (FMF.any() && !RetType->isFPOrFPVectorTy())
+  if (FMF.any() && !RetType->isFPOrFPVectorTy()) {
+    RetType->dump();
     return Error(CallLoc, "fast-math-flags specified for call without "
                           "floating-point scalar or vector return type");
+  }
 
   // If RetType is a non-function pointer type, then this is the short syntax
   // for the call, which means that RetType is just the return type.  Infer the
