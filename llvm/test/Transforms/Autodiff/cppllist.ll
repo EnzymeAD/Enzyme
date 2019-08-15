@@ -220,7 +220,7 @@ attributes #8 = { builtin nounwind }
 ; CHECK-NEXT:   br i1 %14, label %invertfor.body.i, label %diffe_Z12list_creatordm.exit
 
 ; CHECK: [[invertdelete]]:                               ; preds = %for.body.i
-; CHECK-NEXT:   %[[dsum:.+]] = call {} @diffe_Z8sum_listPK4node(%class.node* nonnull %5, %class.node* nonnull %"'ipc.i", double 1.000000e+00, {} undef) #5
+; CHECK-NEXT:   %[[dsum:.+]] = call {} @diffe_Z8sum_listPK4node(%class.node* nonnull %5, %class.node* nonnull %"'ipc.i", double 1.000000e+00)
 ; CHECK-NEXT:   br label %invertfor.body.i
 
 ; CHECK: diffe_Z12list_creatordm.exit:                     ; preds = %invertfor.body.i
@@ -230,7 +230,7 @@ attributes #8 = { builtin nounwind }
 ; CHECK-NEXT: }
 
 
-; CHECK: define internal {} @diffe_Z8sum_listPK4node(%class.node* noalias readonly %node, %class.node* %"node'", double %differeturn, {} %tapeArg) local_unnamed_addr #9 {
+; CHECK: define internal {} @diffe_Z8sum_listPK4node(%class.node* noalias readonly %node, %class.node* %"node'", double %differeturn) local_unnamed_addr #9 {
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %malloccall = tail call i8* @malloc(i64 8)
 ; CHECK-NEXT:   %0 = bitcast i8* %malloccall to %class.node**
