@@ -282,6 +282,5 @@ attributes #8 = { builtin nounwind }
 ; CHECK: invertfor.end:                                    ; preds = %entry, %for.body
 ; CHECK-NEXT:   %_cache.0 = phi i64 [ undef, %entry ], [ %0, %for.body ]
 ; CHECK-NEXT:   %_mdyncache.1 = phi %class.node** [ undef, %entry ], [ %5, %for.body ]
-; CHECK-NEXT:   %15 = xor i1 %cmp6, true
-; CHECK-NEXT:   br i1 %15, label %invertfor.body, label %invertentry
+; CHECK-NEXT:   br i1 %cmp6, label %invertentry, label %invertfor.body
 ; CHECK-NEXT: }

@@ -186,18 +186,17 @@ attributes #4 = { nounwind }
 ; CHECK: invertfor.cond.cleanup: 
 ; CHECK-NEXT:   %_cache.0 = phi i64 [ undef, %entry ], [ %0, %for.body ]
 ; CHECK-NEXT:   %_mdyncache.0 = phi %struct.n** [ undef, %entry ], [ %5, %for.body ]
-; CHECK-NEXT:   %9 = xor i1 %cmp6, true
-; CHECK-NEXT:   br i1 %9, label %invertfor.body, label %invertentry
+; CHECK-NEXT:   br i1 %cmp6, label %invertentry, label %invertfor.body
 
 ; CHECK: invertfor.body:                                   ; preds = %invertfor.cond.cleanup, %invertfor.body
-; CHECK-NEXT:   %"'phi" = phi i64 [ %10, %invertfor.body ], [ %_cache.0, %invertfor.cond.cleanup ]
-; CHECK-NEXT:   %10 = sub i64 %"'phi", 1
-; CHECK-NEXT:   %11 = getelementptr %struct.n*, %struct.n** %_mdyncache.0, i64 %"'phi"
-; CHECK-NEXT:   %12 = load %struct.n*, %struct.n** %11
-; CHECK-NEXT:   %"value'ipg" = getelementptr %struct.n, %struct.n* %12, i64 0, i32 0
-; CHECK-NEXT:   %13 = load double, double* %"value'ipg"
-; CHECK-NEXT:   %14 = fadd fast double %13, %[[differet]]
-; CHECK-NEXT:   store double %14, double* %"value'ipg"
-; CHECK-NEXT:   %15 = icmp ne i64 %"'phi", 0
-; CHECK-NEXT:   br i1 %15, label %invertfor.body, label %invertfor.body.preheader
+; CHECK-NEXT:   %"'phi" = phi i64 [ %[[subidx:.+]], %invertfor.body ], [ %_cache.0, %invertfor.cond.cleanup ]
+; CHECK-NEXT:   %[[subidx]] = sub i64 %"'phi", 1
+; CHECK-NEXT:   %[[structptr:.+]] = getelementptr %struct.n*, %struct.n** %_mdyncache.0, i64 %"'phi"
+; CHECK-NEXT:   %[[struct:.+]] = load %struct.n*, %struct.n** %[[structptr]]
+; CHECK-NEXT:   %"value'ipg" = getelementptr %struct.n, %struct.n* %[[struct]], i64 0, i32 0
+; CHECK-NEXT:   %[[val0:.+]] = load double, double* %"value'ipg"
+; CHECK-NEXT:   %[[addval:.+]] = fadd fast double %[[val0]], %[[differet]]
+; CHECK-NEXT:   store double %[[addval]], double* %"value'ipg"
+; CHECK-NEXT:   %[[cmpne:.+]] = icmp ne i64 %"'phi", 0
+; CHECK-NEXT:   br i1 %[[cmpne]], label %invertfor.body, label %invertfor.body.preheader
 ; CHECK-NEXT: }

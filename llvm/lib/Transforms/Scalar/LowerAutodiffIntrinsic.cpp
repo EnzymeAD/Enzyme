@@ -1613,7 +1613,6 @@ endCheck:
 
                     ValueToValueMapTy valmap;
                     Value* size = nullptr;
-                    bool dynamic = false;
 
                     BasicBlock* outermostPreheader = nullptr;
 
@@ -1642,7 +1641,6 @@ endCheck:
                       Value* ns = nullptr;
 					  if (idx.dynamic) {
 						ns = ConstantInt::get(idx.limit->getType(), 1);
-                        dynamic = true;
 					  } else {
                         Value* limitm1 = nullptr;
                         limitm1 = unwrapM(idx.limit, allocationBuilder, emptyMap, /*lookupIfAble*/false);
@@ -2725,8 +2723,32 @@ void createInvertedTerminator(DiffeGradientUtils* gutils, BasicBlock *BB, Alloca
                 }
             } else break;
         }
-        auto f0 = cast<BasicBlock>(gutils->reverseBlocks[preds[0]]);
-        auto f1 = cast<BasicBlock>(gutils->reverseBlocks[preds[1]]);
+        BasicBlock* f0 = cast<BasicBlock>(gutils->reverseBlocks[preds[0]]);
+        BasicBlock* f1 = cast<BasicBlock>(gutils->reverseBlocks[preds[1]]);
+        while (auto bo = dyn_cast<BinaryOperator>(phi)) {
+            if (bo->getOpcode() == BinaryOperator::Xor) {
+                if (auto ci = dyn_cast<ConstantInt>(bo->getOperand(1))) {
+                    if (ci->isOne()) {
+                        phi = bo->getOperand(0);
+                        auto ft = f0;
+                        f0 = f1;
+                        f1 = ft;
+                        continue;
+                    }
+                }
+
+                if (auto ci = dyn_cast<ConstantInt>(bo->getOperand(0))) {
+                    if (ci->isOne()) {
+                        phi = bo->getOperand(1);
+                        auto ft = f0;
+                        f0 = f1;
+                        f1 = ft;
+                        continue;
+                    }
+                }
+                break;
+            } else break;
+        }
         Builder.SetInsertPoint(Builder.GetInsertBlock());
         Builder.CreateCondBr(phi, f0, f1);
       } else {

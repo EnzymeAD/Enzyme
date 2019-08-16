@@ -308,30 +308,29 @@ attributes #4 = { nounwind }
 ; CHECK: invertfor.cond.cleanup:                           ; preds = %entry, %for.cond.cleanup4
 ; CHECK-NEXT:   %_cache.0 = phi i64 [ undef, %entry ], [ %0, %for.cond.cleanup4 ]
 ; CHECK-NEXT:   %_mdyncache.1 = phi %struct.n** [ undef, %entry ], [ %5, %for.cond.cleanup4 ]
-; CHECK-NEXT:   %11 = xor i1 %cmp18, true
-; CHECK-NEXT:   br i1 %11, label %invertfor.cond.cleanup4, label %invertentry
+; CHECK-NEXT:   br i1 %cmp18, label %invertentry, label %invertfor.cond.cleanup4
 
 ; CHECK: invertfor.cond.cleanup4:                          ; preds = %invertfor.cond.cleanup, %invertfor.cond1.preheader
-; CHECK-NEXT:   %"add.lcssa'de.0" = phi double [ %21, %invertfor.cond1.preheader ], [ %differeturn, %invertfor.cond.cleanup ]
-; CHECK-NEXT:   %"'phi" = phi i64 [ %12, %invertfor.cond1.preheader ], [ %_cache.0, %invertfor.cond.cleanup ]
-; CHECK-NEXT:   %12 = sub i64 %"'phi", 1
-; CHECK-NEXT:   %13 = fadd fast double 0.000000e+00, %"add.lcssa'de.0"
+; CHECK-NEXT:   %"add.lcssa'de.0" = phi double [ %20, %invertfor.cond1.preheader ], [ %differeturn, %invertfor.cond.cleanup ]
+; CHECK-NEXT:   %"'phi" = phi i64 [ %11, %invertfor.cond1.preheader ], [ %_cache.0, %invertfor.cond.cleanup ]
+; CHECK-NEXT:   %11 = sub i64 %"'phi", 1
+; CHECK-NEXT:   %12 = fadd fast double 0.000000e+00, %"add.lcssa'de.0"
 ; CHECK-NEXT:   br label %invertfor.body5
 
 ; CHECK: invertfor.body5:                                  ; preds = %invertfor.body5, %invertfor.cond.cleanup4
-; CHECK-NEXT:   %"sum.019'de.1" = phi double [ 0.000000e+00, %invertfor.cond.cleanup4 ], [ %21, %invertfor.body5 ]
-; CHECK-NEXT:   %"indvars.iv'phi" = phi i64 [ %times, %invertfor.cond.cleanup4 ], [ %14, %invertfor.body5 ]
-; CHECK-NEXT:   %14 = sub i64 %"indvars.iv'phi", 1
-; CHECK-NEXT:   %15 = getelementptr %struct.n*, %struct.n** %_mdyncache.1, i64 %"'phi"
-; CHECK-NEXT:   %16 = load %struct.n*, %struct.n** %15
-; CHECK-NEXT:   %"values'ipg" = getelementptr %struct.n, %struct.n* %16, i64 0, i32 0
+; CHECK-NEXT:   %"sum.019'de.1" = phi double [ 0.000000e+00, %invertfor.cond.cleanup4 ], [ %[[seladd:.+]], %invertfor.body5 ]
+; CHECK-NEXT:   %"indvars.iv'phi" = phi i64 [ %times, %invertfor.cond.cleanup4 ], [ %[[idxsub:.+]], %invertfor.body5 ]
+; CHECK-NEXT:   %[[idxsub]] = sub i64 %"indvars.iv'phi", 1
+; CHECK-NEXT:   %14 = getelementptr %struct.n*, %struct.n** %_mdyncache.1, i64 %"'phi"
+; CHECK-NEXT:   %15 = load %struct.n*, %struct.n** %14
+; CHECK-NEXT:   %"values'ipg" = getelementptr %struct.n, %struct.n* %15, i64 0, i32 0
 ; CHECK-NEXT:   %"'ipl1" = load double*, double** %"values'ipg", align 8
 ; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr double, double* %"'ipl1", i64 %"indvars.iv'phi"
-; CHECK-NEXT:   %17 = load double, double* %"arrayidx'ipg"
-; CHECK-NEXT:   %18 = fadd fast double %17, %13
-; CHECK-NEXT:   store double %18, double* %"arrayidx'ipg"
-; CHECK-NEXT:   %19 = icmp ne i64 %"indvars.iv'phi", 0
-; CHECK-NEXT:   %20 = select i1 %19, double 0.000000e+00, double %13
-; CHECK-NEXT:   %21 = fadd fast double %"sum.019'de.1", %20
-; CHECK-NEXT:   br i1 %19, label %invertfor.body5, label %invertfor.cond1.preheader
+; CHECK-NEXT:   %[[arrayload:.+]] = load double, double* %"arrayidx'ipg"
+; CHECK-NEXT:   %[[arraytostore:.+]] = fadd fast double %[[arrayload]], %12
+; CHECK-NEXT:   store double %[[arraytostore]], double* %"arrayidx'ipg"
+; CHECK-NEXT:   %[[endcond:.+]] = icmp ne i64 %"indvars.iv'phi", 0
+; CHECK-NEXT:   %[[selected:.+]] = select i1 %[[endcond]], double 0.000000e+00, double %12
+; CHECK-NEXT:   %[[seladd]] = fadd fast double %"sum.019'de.1", %[[selected]]
+; CHECK-NEXT:   br i1 %[[endcond]], label %invertfor.body5, label %invertfor.cond1.preheader
 ; CHECK-NEXT: }
