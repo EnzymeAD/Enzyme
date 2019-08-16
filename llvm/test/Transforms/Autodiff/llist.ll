@@ -148,27 +148,30 @@ attributes #4 = { nounwind }
 
 ; CHECK: define internal {} @diffesum_list(%struct.n* noalias readonly %node, %struct.n* %"node'", double %[[differet:.+]]) #6 {
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %malloccall = tail call i8* @malloc(i64 8)
-; CHECK-NEXT:   %0 = bitcast i8* %malloccall to %struct.n**
 ; CHECK-NEXT:   %cmp6 = icmp eq %struct.n* %node, null
 ; CHECK-NEXT:   br i1 %cmp6, label %invertfor.cond.cleanup, label %for.body
 
-; CHECK: for.body:                                         ; preds = %entry, %for.body
-; CHECK-NEXT:   %_dyncache.1 = phi %struct.n** [ %6, %for.body ], [ %0, %entry ]
-; CHECK-NEXT:   %1 = phi i64 [ %3, %for.body ], [ 0, %entry ]
-; CHECK-NEXT:   %2 = phi %struct.n* [ %"'ipl", %for.body ], [ %"node'", %entry ]
-; CHECK-NEXT:   %val.08 = phi %struct.n* [ %8, %for.body ], [ %node, %entry ]
-; CHECK-NEXT:   %3 = add nuw i64 %1, 1
-; CHECK-NEXT:   %4 = bitcast %struct.n** %_dyncache.1 to i8*
-; CHECK-NEXT:   %5 = mul nuw i64 8, %3
-; CHECK-NEXT:   %_realloccache = call i8* @realloc(i8* %4, i64 %5)
-; CHECK-NEXT:   %6 = bitcast i8* %_realloccache to %struct.n**
-; CHECK-NEXT:   %7 = getelementptr %struct.n*, %struct.n** %6, i64 %1
-; CHECK-NEXT:   store %struct.n* %2, %struct.n** %7
+; CHECK: for.body.preheader:
+; CHECK-NEXT:   %malloccall = tail call i8* @malloc(i64 8)
+; CHECK-NEXT:   %[[malloccache:.+]] = bitcast i8* %malloccall to %struct.n**
+; CHECK-NEXT:   br label %for.body
+
+; CHECK: for.body:
+; CHECK-NEXT:   %_mdyncache.1 = phi %struct.n** [ %[[malloccache]], %for.body.preheader ], [ %5, %for.body ]
+; CHECK-NEXT:   %0 = phi i64 [ %2, %for.body ], [ 0, %for.body.preheader ]
+; CHECK-NEXT:   %1 = phi %struct.n* [ %"'ipl", %for.body ], [ %"node'", %for.body.preheader ]
+; CHECK-NEXT:   %val.08 = phi %struct.n* [ %7, %for.body ], [ %node, %for.body.preheader ]
+; CHECK-NEXT:   %2 = add nuw i64 %0, 1
+; CHECK-NEXT:   %3 = bitcast %struct.n** %_mdyncache.1 to i8*
+; CHECK-NEXT:   %4 = mul nuw i64 8, %2
+; CHECK-NEXT:   %_realloccache = call i8* @realloc(i8* %3, i64 %4)
+; CHECK-NEXT:   %5 = bitcast i8* %_realloccache to %struct.n**
+; CHECK-NEXT:   %6 = getelementptr %struct.n*, %struct.n** %5, i64 %0
+; CHECK-NEXT:   store %struct.n* %1, %struct.n** %6
 ; CHECK-NEXT:   %next = getelementptr inbounds %struct.n, %struct.n* %val.08, i64 0, i32 1
-; CHECK-NEXT:   %8 = load %struct.n*, %struct.n** %next, align 8, !tbaa !8
-; CHECK-NEXT:   %cmp = icmp eq %struct.n* %8, null
-; CHECK-NEXT:   %"next'ipg" = getelementptr %struct.n, %struct.n* %2, i64 0, i32 1
+; CHECK-NEXT:   %7 = load %struct.n*, %struct.n** %next, align 8, !tbaa !8
+; CHECK-NEXT:   %cmp = icmp eq %struct.n* %7, null
+; CHECK-NEXT:   %"next'ipg" = getelementptr %struct.n, %struct.n* %1, i64 0, i32 1
 ; CHECK-NEXT:   %"'ipl" = load %struct.n*, %struct.n** %"next'ipg", align 8
 ; CHECK-NEXT:   br i1 %cmp, label %invertfor.cond.cleanup, label %for.body
 
@@ -176,25 +179,25 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   ret {} undef
 
 ; CHECK: invertfor.body.preheader:                         ; preds = %invertfor.body
-; CHECK-NEXT:   %9 = bitcast %struct.n** %_dyncache.0 to i8*
-; CHECK-NEXT:   tail call void @free(i8* %9)
+; CHECK-NEXT:   %8 = bitcast %struct.n** %_mdyncache.0 to i8*
+; CHECK-NEXT:   tail call void @free(i8* %8)
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertfor.cond.cleanup: 
-; CHECK-NEXT:   %_cache.0 = phi i64 [ undef, %entry ], [ %1, %for.body ]
-; CHECK-NEXT:   %_dyncache.0 = phi %struct.n** [ %0, %entry ], [ %6, %for.body ]
-; CHECK-NEXT:   %10 = xor i1 %cmp6, true
-; CHECK-NEXT:   br i1 %10, label %invertfor.body, label %invertentry
+; CHECK-NEXT:   %_cache.0 = phi i64 [ undef, %entry ], [ %0, %for.body ]
+; CHECK-NEXT:   %_mdyncache.0 = phi %struct.n** [ undef, %entry ], [ %5, %for.body ]
+; CHECK-NEXT:   %9 = xor i1 %cmp6, true
+; CHECK-NEXT:   br i1 %9, label %invertfor.body, label %invertentry
 
 ; CHECK: invertfor.body:                                   ; preds = %invertfor.cond.cleanup, %invertfor.body
-; CHECK-NEXT:   %"'phi" = phi i64 [ %11, %invertfor.body ], [ %_cache.0, %invertfor.cond.cleanup ]
-; CHECK-NEXT:   %11 = sub i64 %"'phi", 1
-; CHECK-NEXT:   %12 = getelementptr %struct.n*, %struct.n** %_dyncache.0, i64 %"'phi"
-; CHECK-NEXT:   %13 = load %struct.n*, %struct.n** %12
-; CHECK-NEXT:   %"value'ipg" = getelementptr %struct.n, %struct.n* %13, i64 0, i32 0
-; CHECK-NEXT:   %14 = load double, double* %"value'ipg"
-; CHECK-NEXT:   %15 = fadd fast double %14, %[[differet]]
-; CHECK-NEXT:   store double %15, double* %"value'ipg"
-; CHECK-NEXT:   %16 = icmp ne i64 %"'phi", 0
-; CHECK-NEXT:   br i1 %16, label %invertfor.body, label %invertfor.body.preheader
+; CHECK-NEXT:   %"'phi" = phi i64 [ %10, %invertfor.body ], [ %_cache.0, %invertfor.cond.cleanup ]
+; CHECK-NEXT:   %10 = sub i64 %"'phi", 1
+; CHECK-NEXT:   %11 = getelementptr %struct.n*, %struct.n** %_mdyncache.0, i64 %"'phi"
+; CHECK-NEXT:   %12 = load %struct.n*, %struct.n** %11
+; CHECK-NEXT:   %"value'ipg" = getelementptr %struct.n, %struct.n* %12, i64 0, i32 0
+; CHECK-NEXT:   %13 = load double, double* %"value'ipg"
+; CHECK-NEXT:   %14 = fadd fast double %13, %[[differet]]
+; CHECK-NEXT:   store double %14, double* %"value'ipg"
+; CHECK-NEXT:   %15 = icmp ne i64 %"'phi", 0
+; CHECK-NEXT:   br i1 %15, label %invertfor.body, label %invertfor.body.preheader
 ; CHECK-NEXT: }

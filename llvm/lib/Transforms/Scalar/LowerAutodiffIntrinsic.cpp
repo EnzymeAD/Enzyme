@@ -1660,19 +1660,15 @@ endCheck:
                       if (idx.parent == nullptr) break;
                     }
 
-                      if (dynamic) {
-					    auto allocation = CallInst::CreateMalloc(entryBuilder.GetInsertBlock(), size->getType(), val->getType(), ConstantInt::get(size->getType(), entryBuilder.GetInsertBlock()->getParent()->getParent()->getDataLayout().getTypeAllocSizeInBits(val->getType())/8), size, nullptr, val->getName()+"_malloccache");
-                        entryBuilder.Insert(cast<Instruction>(allocation));
-
-                      	scopeMap[val] = entryBuilder.CreateAlloca(allocation->getType(), nullptr, val->getName()+"_dyncache");
-					    entryBuilder.CreateStore(allocation, scopeMap[val]);	
-                      } else {
-					    auto allocation = CallInst::CreateMalloc(&allocationBuilder.GetInsertBlock()->back(), size->getType(), val->getType(), ConstantInt::get(size->getType(), allocationBuilder.GetInsertBlock()->getParent()->getParent()->getDataLayout().getTypeAllocSizeInBits(val->getType())/8), size, nullptr, val->getName()+"_malloccache");
-                        //allocationBuilder.GetInsertBlock()->getInstList().push_back(cast<Instruction>(allocation));
-                        cast<Instruction>(allocation)->moveBefore(allocationBuilder.GetInsertBlock()->getTerminator());
-                        scopeMap[val] = entryBuilder.CreateAlloca(allocation->getType(), nullptr, val->getName()+"_mdyncache");
-					    allocationBuilder.CreateStore(allocation, scopeMap[val]);	
-                      }
+                    auto firstallocation = CallInst::CreateMalloc(
+                            &allocationBuilder.GetInsertBlock()->back(),
+                            size->getType(),
+                            val->getType(),
+                            ConstantInt::get(size->getType(), allocationBuilder.GetInsertBlock()->getParent()->getParent()->getDataLayout().getTypeAllocSizeInBits(val->getType())/8), size, nullptr, val->getName()+"_malloccache");
+                    //allocationBuilder.GetInsertBlock()->getInstList().push_back(cast<Instruction>(allocation));
+                    cast<Instruction>(firstallocation)->moveBefore(allocationBuilder.GetInsertBlock()->getTerminator());
+                    scopeMap[val] = entryBuilder.CreateAlloca(firstallocation->getType(), nullptr, val->getName()+"_mdyncache");
+                    allocationBuilder.CreateStore(firstallocation, scopeMap[val]);	
 
                       if (reverseBlocks.size() != 0) {
                         IRBuilder<> tbuild(reverseBlocks[outermostPreheader]);
@@ -1950,13 +1946,12 @@ endCheck:
 			 IRBuilder <> bb(phi);
 			 auto which = bb.CreatePHI(phi->getType(), phi->getNumIncomingValues());
              invertedPointers[val] = which;
+		 
+             for(unsigned int i=0; i<phi->getNumIncomingValues(); i++) {
+				IRBuilder <>pre(phi->getIncomingBlock(i)->getTerminator());
+				which->addIncoming(invertPointerM(phi->getIncomingValue(i), pre), phi->getIncomingBlock(i));
+             }
 
-			 for(auto v : mapped) {
-				for (auto b : v.second) {
-					IRBuilder <>pre(b->getTerminator());
-					which->addIncoming(invertPointerM(v.first, pre), b);
-				}
-			 }
 			 return lookupM(which, BuilderM);
 		 }
         }
@@ -2008,12 +2003,28 @@ private:
 
 public:
   Value* diffe(Value* val, IRBuilder<> &BuilderM) {
+      if (val->getType()->isPointerTy()) {
+        newFunc->dump();
+        val->dump();
+      }
+      if (isConstantValue(val)) {
+        newFunc->dump();
+        val->dump();
+      }
       assert(!val->getType()->isPointerTy());
       assert(!val->getType()->isVoidTy());
       return BuilderM.CreateLoad(getDifferential(val));
   }
 
   void addToDiffe(Value* val, Value* dif, IRBuilder<> &BuilderM) {
+      if (val->getType()->isPointerTy()) {
+        newFunc->dump();
+        val->dump();
+      }
+      if (isConstantValue(val)) {
+        newFunc->dump();
+        val->dump();
+      }
       assert(!val->getType()->isPointerTy());
       assert(!isConstantValue(val));
       assert(val->getType() == dif->getType());
@@ -2023,10 +2034,20 @@ public:
       if (val->getType()->isIntOrIntVectorTy()) {
         res = BuilderM.CreateFAdd(BuilderM.CreateBitCast(old, IntToFloatTy(old->getType())), BuilderM.CreateBitCast(dif, IntToFloatTy(dif->getType())));
         res = BuilderM.CreateBitCast(res, val->getType());
-      } else {
+        BuilderM.CreateStore(res, getDifferential(val));
+      } else if (val->getType()->isFPOrFPVectorTy()) {
         res = BuilderM.CreateFAdd(old, dif);
+        BuilderM.CreateStore(res, getDifferential(val));
+      } else if (val->getType()->isStructTy()) {
+        auto st = cast<StructType>(val->getType());
+        for(unsigned i=0; i<st->getNumElements(); i++) {
+            Value* v = ConstantInt::get(Type::getInt32Ty(st->getContext()), i);
+            addToDiffeIndexed(val, BuilderM.CreateExtractValue(dif,{i}), {v}, BuilderM);
+        }
+      } else {
+        assert(0 && "lol");
+        exit(1);
       }
-      BuilderM.CreateStore(res, getDifferential(val));
   }
 
   void setDiffe(Value* val, Value* toset, IRBuilder<> &BuilderM) {
@@ -2821,10 +2842,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     };
 
     auto addToDiffe = [&Builder2,&gutils](Value* val, Value* dif) -> void {
-      if (gutils->isConstantValue(val)) {
-        gutils->newFunc->dump();
-        val->dump();
-      }
       gutils->addToDiffe(val, dif, Builder2);
     };
 
@@ -3294,7 +3311,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                         continue;
                     }
 
-                    llvm::errs() << " considering a" << *iter << "\n";
                     if (AA.getModRefInfo(&*iter, origop) == ModRefInfo::NoModRef) {
                         iter++;
                         continue;
@@ -3302,11 +3318,21 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
                     //load that follows the original
                     if (auto li = dyn_cast<LoadInst>(&*iter)) {
-                        if (AA.canInstructionRangeModRef(*li, OBB->back(), MemoryLocation::get(li), ModRefInfo::Mod)) {
-                            llvm::errs() << "   found range mod " << *iter << " " << *OBB << "\n";
+                        bool modref = false;
+                            for(Instruction* it = li; it != nullptr; it = it->getNextNode()) {
+                                if (auto call = dyn_cast<CallInst>(it)) {
+                                     if (isCertainMallocOrFree(call->getCalledFunction())) {
+                                         continue;
+                                     }
+                                }
+                                if (AA.canInstructionRangeModRef(*it, *it, MemoryLocation::get(li), ModRefInfo::Mod)) {
+                                    modref = true;
+                            llvm::errs() << " inst  found mod " << *iter << " " << *it << "\n";
+                                }
+                            }
+
+                        if (modref)
                             break;
-                        }
-                        llvm::errs() << "   can do the bb swap down " << *iter << " " << *OBB << "\n";
                         postCreate.push_back(cast<Instruction>(gutils->getNewFromOriginal(&*iter)));
                         iter++;
                         continue;
@@ -3474,7 +3500,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         }
 
     } else if(auto op = dyn_cast_or_null<SelectInst>(inst)) {
-      if (gutils->isConstantInstruction(inst)) continue;
+      if (gutils->isConstantValue(inst)) continue;
 
       Value* dif1 = nullptr;
       Value* dif2 = nullptr;
@@ -3488,7 +3514,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       if (dif1) addToDiffe(op->getOperand(1), dif1);
       if (dif2) addToDiffe(op->getOperand(2), dif2);
     } else if(auto op = dyn_cast<LoadInst>(inst)) {
-      if (gutils->isConstantInstruction(inst)) continue;
+      if (gutils->isConstantValue(inst)) continue;
 
        //TODO IF OP IS POINTER
       if (!op->getType()->isPointerTy()) {
@@ -3529,8 +3555,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         lookup(BuilderZ.CreateLoad(op->getPointerOperand())), lookup(op->getPointerOperand()));
       */
     } else if(auto op = dyn_cast<ExtractValueInst>(inst)) {
-      if (gutils->isConstantInstruction(inst)) continue;
-     
+      if (gutils->isConstantValue(inst)) continue;
+      if (op->getType()->isPointerTy()) continue;
+
       auto prediff = diffe(inst);
       //todo const
       if (!gutils->isConstantValue(op->getOperand(0))) {
@@ -3540,8 +3567,32 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         addToDiffeIndexed(op->getOperand(0), prediff, sv);
       }
       setDiffe(inst, Constant::getNullValue(inst->getType()));
+    } else if(auto op = dyn_cast<InsertValueInst>(inst)) {
+      if (gutils->isConstantValue(inst)) continue;
+      auto st = cast<StructType>(op->getType());
+      bool hasNonPointer = false;
+      for(unsigned i=0; i<st->getNumElements(); i++) {
+        if (!st->getElementType(i)->isPointerTy()) {
+           hasNonPointer = true; 
+        }
+      }
+      if (!hasNonPointer) continue;
+
+      if (!gutils->isConstantValue(op->getInsertedValueOperand()) && !op->getInsertedValueOperand()->getType()->isPointerTy()) {
+        auto prediff = gutils->diffe(inst, Builder2);
+        auto dindex = Builder2.CreateExtractValue(prediff, op->getIndices());
+        gutils->addToDiffe(op->getOperand(1), dindex, Builder2);
+      }
+      
+      if (!gutils->isConstantValue(op->getAggregateOperand()) && !op->getAggregateOperand()->getType()->isPointerTy()) {
+        auto prediff = gutils->diffe(inst, Builder2);
+        auto dindex = Builder2.CreateInsertValue(prediff, Constant::getNullValue(op->getInsertedValueOperand()->getType()), op->getIndices());
+        gutils->addToDiffe(op->getAggregateOperand(), dindex, Builder2);
+      }
+
+      gutils->setDiffe(inst, Constant::getNullValue(inst->getType()), Builder2);
     } else if (auto op = dyn_cast<ShuffleVectorInst>(inst)) {
-      if (gutils->isConstantInstruction(inst)) continue;
+      if (gutils->isConstantValue(inst)) continue;
 
       auto loaded = diffe(inst);
       size_t l1 = cast<VectorType>(op->getOperand(0)->getType())->getNumElements();
@@ -3557,7 +3608,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       }
       setDiffe(inst, Constant::getNullValue(inst->getType()));
     } else if(auto op = dyn_cast<ExtractElementInst>(inst)) {
-      if (gutils->isConstantInstruction(inst)) continue;
+      if (gutils->isConstantValue(inst)) continue;
 
 	  if (!gutils->isConstantValue(op->getVectorOperand())) {
         SmallVector<Value*,4> sv;
@@ -3566,7 +3617,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       }
       setDiffe(inst, Constant::getNullValue(inst->getType()));
     } else if(auto op = dyn_cast<InsertElementInst>(inst)) {
-      if (gutils->isConstantInstruction(inst)) continue;
+      if (gutils->isConstantValue(inst)) continue;
 
       auto dif1 = diffe(inst);
 
@@ -3578,7 +3629,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
       setDiffe(inst, Constant::getNullValue(inst->getType()));
     } else if(auto op = dyn_cast<CastInst>(inst)) {
-      if (gutils->isConstantInstruction(inst)) continue;
+      if (gutils->isConstantValue(inst)) continue;
 
 	  if (!gutils->isConstantValue(op->getOperand(0))) {
         if (op->getOpcode()==CastInst::CastOps::FPTrunc || op->getOpcode()==CastInst::CastOps::FPExt) {
