@@ -213,6 +213,10 @@ int analyzeLoadFromClobberingStore(Type *LoadTy, Value *LoadPtr,
     return -1;
 
   Value *StorePtr = DepSI->getPointerOperand();
+  if (!DepSI->getValueOperand()->getType()->isSized()) {
+    DepSI->getValueOperand()->dump();
+    DepSI->getValueOperand()->getType()->dump();
+  }
   uint64_t StoreSize =
       DL.getTypeSizeInBits(DepSI->getValueOperand()->getType());
   return analyzeLoadFromClobberingWrite(LoadTy, LoadPtr, StorePtr, StoreSize,

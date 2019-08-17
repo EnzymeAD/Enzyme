@@ -153,10 +153,10 @@ attributes #5 = { nounwind }
 
 ; CHECK: define internal fastcc void @diffeget(double* nocapture %"x'") unnamed_addr #5 {
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr double, double* %"x'", i64 3
-; CHECK-NEXT:   %0 = load double, double* %"arrayidx'ipg", align 8
+; CHECK-NEXT:   %[[arrayidx:.+]] = getelementptr double, double* %"x'", i64 3
+; CHECK-NEXT:   %0 = load double, double* %[[arrayidx]], align 8
 ; CHECK-NEXT:   %1 = fadd fast double %0, 1.000000e+00
-; CHECK-NEXT:   store double %1, double* %"arrayidx'ipg", align 8
+; CHECK-NEXT:   store double %1, double* %[[arrayidx]], align 8
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
@@ -183,8 +183,8 @@ attributes #5 = { nounwind }
 ; CHECK: define internal fastcc double @diffeallocateAndSet(i32 %n, { i8* } %tapeArg) unnamed_addr #0 {
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = extractvalue { i8* } %tapeArg, 0
-; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr i8, i8* %0, i64 24
-; CHECK-NEXT:   %"'ipc" = bitcast i8* %"arrayidx'ipg" to double*
+; CHECK-NEXT:   %[[arrayidx:.+]] = getelementptr i8, i8* %0, i64 24
+; CHECK-NEXT:   %"'ipc" = bitcast i8* %[[arrayidx]] to double*
 ; CHECK-NEXT:   %1 = load double, double* %"'ipc", align 8
 ; CHECK-NEXT:   %2 = fadd fast double %1, 1.000000e+00
 ; CHECK-NEXT:   tail call void @free(i8* %0)

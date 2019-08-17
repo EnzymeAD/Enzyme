@@ -4145,7 +4145,8 @@ static Value *SimplifyCastInst(unsigned CastOpc, Value *Op,
     Type *SrcTy = Src->getType();
     Type *MidTy = CI->getType();
     Type *DstTy = Ty;
-    if (Src->getType() == Ty) {
+    if (Src->getType() == Ty)
+    {
       auto FirstOp = static_cast<Instruction::CastOps>(CI->getOpcode());
       auto SecondOp = static_cast<Instruction::CastOps>(CastOpc);
       Type *SrcIntPtrTy =

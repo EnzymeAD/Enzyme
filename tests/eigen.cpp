@@ -3,6 +3,9 @@
 //#define EIGEN_USE_LAPACKE_STRICT 0
 //#define EIGEN_USE_LAPACK 0
 //#define EIGEN_USE_LAPACK_STRICT 0
+#define EIGEN_DONT_ALIGN 1
+#define EIGEN_NO_DEBUG 1
+
 #define EIGEN_UNROLLING_LIMIT 0
 #define EIGEN_DONT_VECTORIZE 1
 #include <eigen3/Eigen/Dense>
@@ -33,10 +36,22 @@ using Eigen::VectorXd;
 
 #if 1
 __attribute__((noinline))
-static void matvecclean(const MatrixXd& __restrict W,
+static void matvecclean(const Eigen::MatrixXd& __restrict W,
     const MatrixXd& __restrict b, MatrixXd& __restrict foo) {
-
+  auto r = W.rows();
+  //__builtin_assume(r > 0);
+  //__builtin_assume(r < 1000);
+  printf("starting condition\n");
+  if (r == 0) {
+    printf("zero condition\n");
+    exit(1);
+  }
+  if (r>=1000) {
+    printf("big condition\n");
+    exit(1);
+  }
   foo = W * b;
+  printf("ending condition\n");
 }
 
 __attribute__((noinline))
@@ -45,6 +60,19 @@ static void matvec(const MatrixXd& __restrict W,
     //printf("foo.rows()=%ld foo.cols()=%ld\n", foo.rows(), foo.cols());
     //printf("b.rows()=%ld b.cols()=%ld\n", b.rows(), b.cols());
     //printf("W.rows()=%ld W.cols()=%ld\n", W.rows(), W.cols());
+  auto wr = W.rows();
+  __builtin_assume(wr > 0);
+  __builtin_assume(wr < 1000);
+  auto wc = W.cols();
+  __builtin_assume(wc > 0);
+  auto br = b.rows();
+  __builtin_assume(br > 0);
+  auto bc = b.cols();
+  __builtin_assume(bc > 0);
+  auto fr = foo.rows();
+  __builtin_assume(fr > 0);
+  auto fc = foo.cols();
+  __builtin_assume(fc > 0);
   foo = W * b;
     //printf("r foo.rows()=%ld foo.cols()=%ld\n", foo.rows(), foo.cols());
     //printf("r b.rows()=%ld b.cols()=%ld\n", b.rows(), b.cols());
