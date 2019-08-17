@@ -60,12 +60,12 @@ attributes #3 = { nounwind }
 ; CHECK: invertcond.true.i:                                ; preds = %invertcond.end.i
 ; CHECK-NEXT:   %2 = fmul fast double 2.000000e+00, %_cache.0.i
 ; CHECK-NEXT:   %3 = fdiv fast double %9, %2
-; CHECK-NEXT:   %diffe.i = fmul fast double %3, %x
+; CHECK-NEXT:   %[[dmul0:.+]] = fmul fast double %3, %x
 ; CHECK-NEXT:   %4 = call fast double @llvm.sin.f64(double %x) #3
-; CHECK-NEXT:   %diffex.i = fmul fast double %3, %4
+; CHECK-NEXT:   %[[dmul1:.+]] = fmul fast double %3, %4
 ; CHECK-NEXT:   %5 = call fast double @llvm.cos.f64(double %x) #3
-; CHECK-NEXT:   %6 = fmul fast double %diffe.i, %5
-; CHECK-NEXT:   %7 = fadd fast double %diffex.i, %6
+; CHECK-NEXT:   %6 = fmul fast double %[[dmul0]], %5
+; CHECK-NEXT:   %7 = fadd fast double %[[dmul1]], %6
 ; CHECK-NEXT:   br label %diffesqrelu.exit
 ; CHECK: invertcond.end.i:                                 ; preds = %cond.true.i, %entry
 ; CHECK-NEXT:   %_cache.0.i = phi double [ %1, %cond.true.i ], [ undef, %entry ]

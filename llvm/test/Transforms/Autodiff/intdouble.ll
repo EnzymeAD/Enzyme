@@ -1,4 +1,4 @@
-; RUN: opt < %s -lower-autodiff -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: opt < %s -lower-autodiff -mem2reg -instsimplify -early-cse -simplifycfg -S | FileCheck %s
 
 @.str = private unnamed_addr constant [12 x i8] c"x=%f xp=%f\0A\00", align 1
 
@@ -78,14 +78,15 @@ attributes #5 = { nounwind "correctly-rounded-divide-sqrt-fp-math"="false" "disa
 !7 = !{!"any pointer", !4, i64 0}
 
 
-; CHECK: define internal fastcc void @diffeintcast(i64* nocapture readonly %x, i64* nocapture %"x'")
+; CHECK: define internal {} @diffeintcast(i64* nocapture readonly %x, i64* %"x'", double %differeturn)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %_unwrap = bitcast i64* %x to double*
-; CHECK-NEXT:   %0 = load double, double* %_unwrap, align 8
+; CHECK-NEXT:   %0 = load double, double* %_unwrap
+; CHECK-NEXT:   %m0diffe = fmul fast double %differeturn, %0
+; CHECK-NEXT:   %1 = fadd fast double %m0diffe, %m0diffe
 ; CHECK-NEXT:   %"'ipc" = bitcast i64* %"x'" to double*
-; CHECK-NEXT:   %1 = load double, double* %"'ipc", align 8
-; CHECK-NEXT:   %factor = fmul fast double %0, 2.000000e+00
-; CHECK-NEXT:   %2 = fadd fast double %factor, %1
-; CHECK-NEXT:   store double %2, double* %"'ipc", align 8
-; CHECK-NEXT:   ret void
+; CHECK-NEXT:   %2 = load double, double* %"'ipc"
+; CHECK-NEXT:   %3 = fadd fast double %2, %1
+; CHECK-NEXT:   store double %3, double* %"'ipc"
+; CHECK-NEXT:   ret {} undef
 ; CHECK-NEXT: }

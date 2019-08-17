@@ -3130,12 +3130,14 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       Value* dif0 = nullptr;
       Value* dif1 = nullptr;
       switch(op->getOpcode()) {
-        case Instruction::FMul:
+        case Instruction::FMul:{
+          auto idiff = diffe(inst);
           if (!gutils->isConstantValue(op->getOperand(0)))
-            dif0 = Builder2.CreateFMul(diffe(inst), lookup(op->getOperand(1)), "diffe"+op->getOperand(0)->getName());
+            dif0 = Builder2.CreateFMul(idiff, lookup(op->getOperand(1)), "m0diffe"+op->getOperand(0)->getName());
           if (!gutils->isConstantValue(op->getOperand(1)))
-            dif1 = Builder2.CreateFMul(diffe(inst), lookup(op->getOperand(0)), "diffe"+op->getOperand(1)->getName());
+            dif1 = Builder2.CreateFMul(idiff, lookup(op->getOperand(0)), "m1diffe"+op->getOperand(1)->getName());
           break;
+        }
         case Instruction::FAdd:{
           auto idiff = diffe(inst);
           if (!gutils->isConstantValue(op->getOperand(0)))
@@ -3144,23 +3146,26 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             dif1 = idiff;
           break;
         }
-        case Instruction::FSub:
+        case Instruction::FSub:{
+          auto idiff = diffe(inst);
           if (!gutils->isConstantValue(op->getOperand(0)))
-            dif0 = diffe(inst);
+            dif0 = idiff;
           if (!gutils->isConstantValue(op->getOperand(1)))
-            dif1 = Builder2.CreateFNeg(diffe(inst));
+            dif1 = Builder2.CreateFNeg(idiff);
           break;
-        case Instruction::FDiv:
+        }
+        case Instruction::FDiv:{
+          auto idiff = diffe(inst);
           if (!gutils->isConstantValue(op->getOperand(0)))
-            dif0 = Builder2.CreateFDiv(diffe(inst), lookup(op->getOperand(1)), "diffe"+op->getOperand(0)->getName());
+            dif0 = Builder2.CreateFDiv(idiff, lookup(op->getOperand(1)), "d0diffe"+op->getOperand(0)->getName());
           if (!gutils->isConstantValue(op->getOperand(1)))
             dif1 = Builder2.CreateFNeg(
               Builder2.CreateFDiv(
-                Builder2.CreateFMul(diffe(inst), lookup(op)),
+                Builder2.CreateFMul(idiff, lookup(op)),
                 lookup(op->getOperand(1)))
             );
           break;
-
+        }
         default:
           assert(op);
           llvm::errs() << *gutils->newFunc << "\n";
@@ -3733,8 +3738,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       if (!op->getValueOperand()->getType()->isPointerTy()) {
 		  if (!gutils->isConstantValue(op->getValueOperand())) {
 			auto dif1 = Builder2.CreateLoad(invertPointer(op->getPointerOperand()));
-			addToDiffe(op->getValueOperand(), dif1);
             setPtrDiffe(op->getPointerOperand(), Constant::getNullValue(op->getValueOperand()->getType()));
+			addToDiffe(op->getValueOperand(), dif1);
 		  }
 	  } else if (topLevel) {
         IRBuilder <> storeBuilder(op);

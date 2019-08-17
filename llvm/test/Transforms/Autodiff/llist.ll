@@ -129,9 +129,9 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:  %[[loadcache:.+]] = load i8*, i8** %[[gep]]
 ; CHECK-NEXT:  %"value'ipc.i" = bitcast i8* %[[loadcache]] to double*
 ; CHECK-NEXT:  %[[load:.+]] = load double, double* %"value'ipc.i"
+; CHECK-NEXT:  store double 0.000000e+00, double* %"value'ipc.i"
 ; CHECK-NEXT:  %[[add]] = fadd fast double %"x'de.0.i", %[[load]]
 ; this store is optional and could get removed by DCE
-; CHECK-NEXT:  store double 0.000000e+00, double* %"value'ipc.i"
 ; CHECK-NEXT:  %[[gepcall:.+]] = getelementptr i8*, i8** %call_malloccache.i, i64 %"indvars.iv'phi.i"
 ; CHECK-NEXT:  %[[loadprefree:.+]] = load i8*, i8** %[[gepcall]]
 ; CHECK-NEXT:  call void @free(i8* %[[loadprefree]]) #4
@@ -169,10 +169,10 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %6 = getelementptr %struct.n*, %struct.n** %5, i64 %0
 ; CHECK-NEXT:   store %struct.n* %1, %struct.n** %6
 ; CHECK-NEXT:   %next = getelementptr inbounds %struct.n, %struct.n* %val.08, i64 0, i32 1
-; CHECK-NEXT:   %7 = load %struct.n*, %struct.n** %next, align 8, !tbaa !8
-; CHECK-NEXT:   %cmp = icmp eq %struct.n* %7, null
 ; CHECK-NEXT:   %"next'ipg" = getelementptr %struct.n, %struct.n* %1, i64 0, i32 1
 ; CHECK-NEXT:   %"'ipl" = load %struct.n*, %struct.n** %"next'ipg", align 8
+; CHECK-NEXT:   %7 = load %struct.n*, %struct.n** %next, align 8, !tbaa !8
+; CHECK-NEXT:   %cmp = icmp eq %struct.n* %7, null
 ; CHECK-NEXT:   br i1 %cmp, label %invertfor.cond.cleanup, label %for.body
 
 ; CHECK: invertentry:                                      ; preds = %invertfor.cond.cleanup, %invertfor.body.preheader

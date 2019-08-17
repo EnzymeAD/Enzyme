@@ -209,9 +209,9 @@ attributes #8 = { builtin nounwind }
 ; CHECK-NEXT:   %9 = load i8*, i8** %8
 ; CHECK-NEXT:   %"value.i'ipc.i" = bitcast i8* %9 to double*
 ; CHECK-NEXT:   %10 = load double, double* %"value.i'ipc.i"
+; CHECK-NEXT:   store double 0.000000e+00, double* %"value.i'ipc.i"
 ; CHECK-NEXT:   %[[xadd]] = fadd fast double %"x'de.0.i", %10
 ; this store is optional and could get removed by DCE
-; CHECK-NEXT:   store double 0.000000e+00, double* %"value.i'ipc.i"
 ; CHECK-NEXT:   %12 = getelementptr i8*, i8** %call_malloccache.i, i64 %"indvars.iv'phi.i"
 ; CHECK-NEXT:   %13 = load i8*, i8** %12
 ; CHECK-NEXT:   call void @_ZdlPv(i8* %13) #5
@@ -253,10 +253,10 @@ attributes #8 = { builtin nounwind }
 ; CHECK-NEXT:   %6 = getelementptr %class.node*, %class.node** %5, i64 %0
 ; CHECK-NEXT:   store %class.node* %1, %class.node** %6
 ; CHECK-NEXT:   %next = getelementptr inbounds %class.node, %class.node* %val.08, i64 0, i32 1
-; CHECK-NEXT:   %7 = load %class.node*, %class.node** %next, align 8, !tbaa !8
-; CHECK-NEXT:   %cmp = icmp eq %class.node* %7, null
 ; CHECK-NEXT:   %"next'ipg" = getelementptr %class.node, %class.node* %1, i64 0, i32 1
 ; CHECK-NEXT:   %"'ipl" = load %class.node*, %class.node** %"next'ipg", align 8
+; CHECK-NEXT:   %7 = load %class.node*, %class.node** %next, align 8, !tbaa !8
+; CHECK-NEXT:   %cmp = icmp eq %class.node* %7, null
 ; CHECK-NEXT:   br i1 %cmp, label %invertfor.end, label %for.body
 
 ; CHECK: invertentry:                                      ; preds = %invertfor.end, %invertfor.body.preheader

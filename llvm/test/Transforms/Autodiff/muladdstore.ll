@@ -105,9 +105,9 @@ attributes #2 = { nounwind }
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = load double, double* %"x'"
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"x'"
-; CHECK-NEXT:   %diffez = fmul fast double %0, %y
-; CHECK-NEXT:   %diffey = fmul fast double %0, %z
-; CHECK-NEXT:   %1 = insertvalue { double, double } undef, double %diffey, 0
-; CHECK-NEXT:   %2 = insertvalue { double, double } %1, double %diffez, 1
+; CHECK-NEXT:   %[[m0diffez:.+]] = fmul fast double %0, %y
+; CHECK-NEXT:   %[[m1diffey:.+]] = fmul fast double %0, %z
+; CHECK-NEXT:   %1 = insertvalue { double, double } undef, double %[[m1diffey]], 0
+; CHECK-NEXT:   %2 = insertvalue { double, double } %1, double %[[m0diffez]], 1
 ; CHECK-NEXT:   ret { double, double } %2
 ; CHECK-NEXT: }
