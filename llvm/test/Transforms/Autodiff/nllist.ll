@@ -156,8 +156,8 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %"call2'mi_malloccache.i" = bitcast i8* %malloccall2.i to i8**
 ; CHECK-NEXT:   %malloccall5.i = call i8* @malloc(i64 %mallocsize.i) #4
 ; CHECK-NEXT:   %call2_malloccache.i = bitcast i8* %malloccall5.i to i8**
-; CHECK-NEXT:   %malloccall10.i = call i8* @malloc(i64 %mallocsize.i) #4
-; CHECK-NEXT:   %call_malloccache.i = bitcast i8* %malloccall10.i to i8**
+; CHECK-NEXT:   %[[mcall2:.+]] = call i8* @malloc(i64 %mallocsize.i) #4
+; CHECK-NEXT:   %call_malloccache.i = bitcast i8* %[[mcall2]] to i8**
 ; CHECK-NEXT:   br label %for.body.i
 
 ; CHECK: for.body.i:                                       ; preds = %for.cond.cleanup7.i, %entry
@@ -246,7 +246,7 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   br i1 %26, label %invertfor.body8.i, label %invertfor.body.i
 
 ; CHECK: diffelist_creator.exit:                           ; preds = %invertfor.body.i
-; CHECK-NEXT:   call void @free(i8* nonnull %malloccall10.i) #4
+; CHECK-NEXT:   call void @free(i8* nonnull %[[mcall2]]) #4
 ; CHECK-NEXT:   call void @free(i8* nonnull %malloccall5.i) #4
 ; CHECK-NEXT:   call void @free(i8* nonnull %malloccall2.i) #4
 ; CHECK-NEXT:   call void @free(i8* nonnull %malloccall.i) #4

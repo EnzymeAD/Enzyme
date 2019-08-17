@@ -3173,7 +3173,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
           report_fatal_error("unknown binary operator");
       }
 
-      setDiffe(inst, Constant::getNullValue(inst->getType()));
+      if (dif0 || dif1) setDiffe(inst, Constant::getNullValue(inst->getType()));
       if (dif0) addToDiffe(op->getOperand(0), dif0);
       if (dif1) addToDiffe(op->getOperand(1), dif1);
     } else if(auto op = dyn_cast_or_null<IntrinsicInst>(inst)) {
@@ -3832,10 +3832,17 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       setDiffe(inst, Constant::getNullValue(inst->getType()));
     } else if(auto op = dyn_cast<CastInst>(inst)) {
       if (gutils->isConstantValue(inst)) continue;
+      if (op->getType()->isPointerTy()) continue;
 
 	  if (!gutils->isConstantValue(op->getOperand(0))) {
         if (op->getOpcode()==CastInst::CastOps::FPTrunc || op->getOpcode()==CastInst::CastOps::FPExt) {
           addToDiffe(op->getOperand(0), Builder2.CreateFPCast(diffe(inst), op->getOperand(0)->getType()));
+        } else if (op->getOpcode()==CastInst::CastOps::BitCast) {
+          addToDiffe(op->getOperand(0), Builder2.CreateBitCast(diffe(inst), op->getOperand(0)->getType()));
+        } else {
+            llvm::errs() << *inst->getParent()->getParent() << "\n" << *inst->getParent() << "\n";
+            llvm::errs() << "cannot handle above cast " << *inst << "\n";
+            report_fatal_error("unknown instruction");
         }
       }
       setDiffe(inst, Constant::getNullValue(inst->getType()));
@@ -3941,6 +3948,7 @@ void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI, AAResults &AA) {//, Lo
         if (MS == "diffe_dup") {
             ty = DIFFE_TYPE::DUP_ARG;
         } else if(MS == "diffe_out") {
+            llvm::errs() << "saw metadata for diffe_out\n";
             ty = DIFFE_TYPE::OUT_DIFF;
         } else if (MS == "diffe_const") {
             ty = DIFFE_TYPE::CONSTANT;
