@@ -33,7 +33,7 @@ eigen.ll: eigen.cpp
 	#../build/bin/clang++ eigen.cpp -fno-unroll-loops -O3 -fno-exceptions -fno-vectorize -fno-slp-vectorize -S -emit-llvm -o eigen0.ll -ffast-math -Wno-error=non-pod-varargs 
 	../build/bin/clang++ eigen.cpp -fno-unroll-loops -O1 -fno-exceptions -fno-vectorize -fno-slp-vectorize -S -emit-llvm -o eigen0.ll -ffast-math -Wno-error=non-pod-varargs 
 	#../build/bin/clang++ eigen.cpp -O0 -fno-exceptions -fno-vectorize -fno-slp-vectorize -S -emit-llvm -o eigent0.ll -ffast-math -Wno-error=non-pod-varargs
-	../build/bin/opt -indvars -instcombine eigen0.ll -S -o eigen.ll
+	../build/bin/opt -indvars -instcombine -instnamer eigen0.ll -S -o eigen.ll
 
 eigen2.ll: eigen.ll
 	#../build/bin/opt -always-inline -inline -lower-autodiff eigen.ll -S -o eigen1.ll # -autodiff_printconst

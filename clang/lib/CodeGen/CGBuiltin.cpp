@@ -75,32 +75,40 @@ static inline DIFFE_TYPE whatType(llvm::Type* arg) {
                 case DIFFE_TYPE::OUT_DIFF:
                 case DIFFE_TYPE::CONSTANT:
                   ty = DIFFE_TYPE::OUT_DIFF;
+                  break;
                 case DIFFE_TYPE::DUP_ARG:
                   ty = DIFFE_TYPE::DUP_ARG;
+                  break;
               }
         case DIFFE_TYPE::CONSTANT:
               switch(ty) {
                 case DIFFE_TYPE::OUT_DIFF:
                   ty = DIFFE_TYPE::OUT_DIFF;
+                  break;
                 case DIFFE_TYPE::CONSTANT:
                   ty = DIFFE_TYPE::CONSTANT;
+                  break;
                 case DIFFE_TYPE::DUP_ARG:
                   ty = DIFFE_TYPE::DUP_ARG;
+                  break;
               }
         case DIFFE_TYPE::DUP_ARG:
               switch(ty) {
                 case DIFFE_TYPE::OUT_DIFF:
                   ty = DIFFE_TYPE::DUP_ARG;
+                  break;
                 case DIFFE_TYPE::CONSTANT:
                   ty = DIFFE_TYPE::DUP_ARG;
+                  break;
                 case DIFFE_TYPE::DUP_ARG:
                   ty = DIFFE_TYPE::DUP_ARG;
+                  break;
               }
       }
     }
 
     return ty;
-  } else if (arg->isIntOrIntVectorTy() || arg->isFunctionTy ()) {
+  } else if (arg->isIntOrIntVectorTy() || arg->isFunctionTy()) {
     return DIFFE_TYPE::CONSTANT;
   } else if  (arg->isFPOrFPVectorTy()) {
     return DIFFE_TYPE::OUT_DIFF;
@@ -3752,6 +3760,7 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
     auto namedref = cast<DeclRefExpr>(E->getArg(0));
     auto FDecl = cast<FunctionDecl>(namedref->getDecl());
     auto Proto = FDecl->getType()->getAs<FunctionProtoType>();
+    assert(Proto);
 
 auto getptr = [&](CodeGenModule &CGM,const FunctionDecl *FD) {
    if (FD->hasAttr<WeakRefAttr>()) {
@@ -3797,7 +3806,8 @@ auto getptr = [&](CodeGenModule &CGM,const FunctionDecl *FD) {
     }
     */
     Function* subfn = cast<Function>(fn);
-    auto propercast = [&](const clang::Expr* Arg, size_t i) -> Value*{
+    auto propercast = [&](const clang::Expr* Arg, size_t i) -> Value* {
+        assert(i < Proto->getNumParams()); 
         QualType ProtoArgType = Proto->getParamType(i);
         const ParmVarDecl * const Param = FDecl ? FDecl->getParamDecl(i) : nullptr;
 
@@ -3869,14 +3879,27 @@ auto getptr = [&](CodeGenModule &CGM,const FunctionDecl *FD) {
 
     unsigned int j = 0;
     for (unsigned i = 1, e = E->getNumArgs(); i != e; ++i,++j) {
-      bool constant = false;
+      bool parsed = false;
+      auto ptype = DIFFE_TYPE::CONSTANT;
       if(auto namedref = dyn_cast<DeclRefExpr>(E->getArg(i))) {
         if(namedref->getDecl()->getName() == "diffe_const") {
             Args.push_back(MetadataAsValue::get(Builder.getContext(),MDString::get(Builder.getContext(),"diffe_const")));
             i++;
-            constant = true;
+            parsed = true;
+            ptype = DIFFE_TYPE::CONSTANT;
+        } else if(namedref->getDecl()->getName() == "diffe_dup") {
+            Args.push_back(MetadataAsValue::get(Builder.getContext(),MDString::get(Builder.getContext(),"diffe_dup")));
+            i++;
+            parsed = true;
+            ptype = DIFFE_TYPE::DUP_ARG;
+        } else if(namedref->getDecl()->getName() == "diffe_out") {
+            Args.push_back(MetadataAsValue::get(Builder.getContext(),MDString::get(Builder.getContext(),"diffe_out")));
+            i++;
+            parsed = true;
+            ptype = DIFFE_TYPE::OUT_DIFF;
         }
       }
+
       Value *ArgValue = propercast(E->getArg(i), j);
       
       // If the intrinsic arg type is different from the builtin arg type
@@ -3884,8 +3907,8 @@ auto getptr = [&](CodeGenModule &CGM,const FunctionDecl *FD) {
       llvm::Type *PTy = subfn->getFunctionType()->getParamType(j);
 
       auto ty = whatType(PTy);
-      if (constant) {
-        ty = DIFFE_TYPE::CONSTANT;
+      if (parsed) {
+        ty = ptype;
       }
       if (PTy != ArgValue->getType()) {
         if (!ArgValue->getType()->canLosslesslyBitCastTo(PTy)) {
@@ -3903,12 +3926,14 @@ auto getptr = [&](CodeGenModule &CGM,const FunctionDecl *FD) {
 
         if (PTy != ArgValue->getType()) {
           if (!ArgValue->getType()->canLosslesslyBitCastTo(PTy)) {
-            llvm::errs() << "Cannot cast __builtin_autodiff argument " << i << " " << *ArgValue << " to argument " << j << " " << *PTy << "\n" << *subfn->getFunctionType() << "\n";
+            llvm::errs() << "Cannot cast __builtin_autodiff (dup) argument " << i << " " << *ArgValue << " to argument " << j << " " << *PTy << "\n" << *subfn->getFunctionType() << "\n";
             exit(1);
           }
           ArgValue = Builder.CreateBitCast(ArgValue, PTy);
         }
         Args.push_back(ArgValue);
+      } else if (ty == DIFFE_TYPE::OUT_DIFF) {
+      } else if (ty == DIFFE_TYPE::CONSTANT) {
       }
 
     }

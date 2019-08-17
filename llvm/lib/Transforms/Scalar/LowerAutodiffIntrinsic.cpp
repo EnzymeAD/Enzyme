@@ -1999,9 +1999,10 @@ endCheck:
         invertedPointers[arg] = result;
         return lookupM(invertedPointers[arg], BuilderM);
       } else if (auto arg = dyn_cast<LoadInst>(val)) {
-        auto li = BuilderM.CreateLoad(invertPointerM(arg->getOperand(0), BuilderM), arg->getName()+"'ipl");
+		IRBuilder <> bb(arg);
+        auto li = bb.CreateLoad(invertPointerM(arg->getOperand(0), bb), arg->getName()+"'ipl");
         li->setAlignment(arg->getAlignment());
-        return li;
+		return lookupM(li, BuilderM);
       } else if (auto arg = dyn_cast<GetElementPtrInst>(val)) {
           if (arg->getParent() == &arg->getParent()->getParent()->getEntryBlock()) {
             IRBuilder<> bb(arg);
