@@ -265,7 +265,7 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %_malloccache = bitcast i8* %malloccall to %struct.n**
 ; CHECK-NEXT:   br label %for.cond1.preheader
 
-; CHECK: for.cond1.preheader:                              ; preds = %for.cond.cleanup4, %for.cond1.preheader.preheader
+; CHECK: for.cond1.preheader:
 ; CHECK-NEXT:   %_mdyncache.0 = phi %struct.n** [ %_malloccache, %for.cond1.preheader.preheader ], [ %5, %for.cond.cleanup4 ]
 ; CHECK-NEXT:   %0 = phi i64 [ %2, %for.cond.cleanup4 ], [ 0, %for.cond1.preheader.preheader ]
 ; CHECK-NEXT:   %1 = phi %struct.n* [ %"'ipl", %for.cond.cleanup4 ], [ %"node'", %for.cond1.preheader.preheader ]
@@ -302,8 +302,8 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertfor.cond1.preheader:                        ; preds = %invertfor.body5
-; CHECK-NEXT:   %10 = icmp ne i64 %"'phi", 0
-; CHECK-NEXT:   br i1 %10, label %invertfor.cond.cleanup4, label %invertfor.cond1.preheader.preheader
+; CHECK-NEXT:   %10 = icmp eq i64 %"'phi", 0
+; CHECK-NEXT:   br i1 %10, label %invertfor.cond1.preheader.preheader, label %invertfor.cond.cleanup4
 
 ; CHECK: invertfor.cond.cleanup:                           ; preds = %entry, %for.cond.cleanup4
 ; CHECK-NEXT:   %_cache.0 = phi i64 [ undef, %entry ], [ %0, %for.cond.cleanup4 ]

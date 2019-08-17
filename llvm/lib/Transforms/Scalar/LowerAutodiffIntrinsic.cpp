@@ -16,6 +16,7 @@
  */
 
 #include "llvm/Transforms/Scalar/LowerAutodiffIntrinsic.h"
+
 #include "llvm/Transforms/Utils/PromoteMemToReg.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Scalar/GVN.h"
@@ -66,6 +67,18 @@ using namespace llvm;
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/IntrinsicInst.h"
+
+#include "llvm/Transforms/Scalar/EarlyCSE.h"
+#include "llvm/Transforms/Scalar/InstSimplifyPass.h"
+#include "llvm/Transforms/Scalar/SimplifyCFG.h"
+#include "llvm/Analysis/TargetTransformInfo.h"
+#include "llvm/Transforms/Scalar/DCE.h"
+#include "llvm/Transforms/Scalar/DeadStoreElimination.h"
+#include "llvm/Analysis/MemorySSA.h"
+#include "llvm/Transforms/Scalar/CorrelatedValuePropagation.h"
+#include "llvm/Transforms/Scalar/LoopDeletion.h"
+#include "llvm/Analysis/LazyValueInfo.h"
+#include "llvm/Transforms/IPO/FunctionAttrs.h"
 
 static cl::opt<bool> autodiff_inline(
             "autodiff_inline", cl::init(false), cl::Hidden,
@@ -745,6 +758,23 @@ Function *CloneFunctionWithReturns(Function *F, ValueToValueMapTy& ptrInputs, co
    CSE.run();
 */
  }
+
+    FunctionAnalysisManager AM;
+     AM.registerPass([] { return AAManager(); });
+     AM.registerPass([] { return ScalarEvolutionAnalysis(); });
+     AM.registerPass([] { return AssumptionAnalysis(); });
+     AM.registerPass([] { return TargetLibraryAnalysis(); });
+     AM.registerPass([] { return TargetIRAnalysis(); });
+     AM.registerPass([] { return MemorySSAAnalysis(); });
+     AM.registerPass([] { return DominatorTreeAnalysis(); });
+     AM.registerPass([] { return MemoryDependenceAnalysis(); });
+     AM.registerPass([] { return LoopAnalysis(); });
+     AM.registerPass([] { return OptimizationRemarkEmitterAnalysis(); });
+     AM.registerPass([] { return PhiValuesAnalysis(); });
+     AM.registerPass([] { return LazyValueAnalysis(); });
+ SimplifyCFGOptions scfgo(/*unsigned BonusThreshold=*/1, /*bool ForwardSwitchCond=*/false, /*bool SwitchToLookup=*/false, /*bool CanonicalLoops=*/true, /*bool SinkCommon=*/true, /*AssumptionCache *AssumpCache=*/nullptr);
+ SimplifyCFGPass(scfgo).run(*NewF, AM);
+ LoopSimplifyPass().run(*NewF, AM);
 
  return NewF;
 }
@@ -2086,18 +2116,6 @@ public:
       BuilderM.CreateStore(newval, ptr);
   }
 };
-
-#include "llvm/Transforms/Scalar/EarlyCSE.h"
-#include "llvm/Transforms/Scalar/InstSimplifyPass.h"
-#include "llvm/Transforms/Scalar/SimplifyCFG.h"
-#include "llvm/Analysis/TargetTransformInfo.h"
-#include "llvm/Transforms/Scalar/DCE.h"
-#include "llvm/Transforms/Scalar/DeadStoreElimination.h"
-#include "llvm/Analysis/MemorySSA.h"
-#include "llvm/Transforms/Scalar/CorrelatedValuePropagation.h"
-#include "llvm/Transforms/Scalar/LoopDeletion.h"
-#include "llvm/Analysis/LazyValueInfo.h"
-#include "llvm/Transforms/IPO/FunctionAttrs.h"
 
 static cl::opt<bool> autodiff_optimize(
             "autodiff_optimize", cl::init(false), cl::Hidden,
