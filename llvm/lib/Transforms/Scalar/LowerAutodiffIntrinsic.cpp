@@ -2633,7 +2633,7 @@ Function* CreateAugmentedPrimal(Function* todiff, AAResults &AA, const SmallSet<
       }
 
       if (!isa<UnreachableInst>(term))
-      for (auto I = BB->begin(), E = BB->end(); I != E;) {
+      for (auto I = BB->rbegin(), E = BB->rend(); I != E;) {
         Instruction* inst = &*I;
         assert(inst);
         I++;
