@@ -304,9 +304,8 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertfor.cond1.preheader:                        ; preds = %invertfor.body5
-; CHECK-NEXT:   %10 = icmp eq i64 %"'phi", 0
-; CHECK-NEXT:   br i1 %10, label %invertfor.cond1.preheader.preheader, label %invertfor.cond.cleanup4
-
+; CHECK-NEXT:   %10 = icmp ne i64 %"'phi", 0
+; CHECK-NEXT:   br i1 %10, label %invertfor.cond.cleanup4, label %invertfor.cond1.preheader.preheader
 ; CHECK: invertfor.cond.cleanup:                           ; preds = %entry, %for.cond.cleanup4
 ; CHECK-NEXT:   %_cache.0 = phi i64 [ undef, %entry ], [ %0, %for.cond.cleanup4 ]
 ; CHECK-NEXT:   %[[invertcache]] = phi double** [ undef, %entry ], [ %5, %for.cond.cleanup4 ]

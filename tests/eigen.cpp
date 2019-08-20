@@ -35,6 +35,7 @@ using Eigen::MatrixXd;
 using Eigen::VectorXd;
 
 #if 1
+/*
 __attribute__((noinline))
 static void matvecclean(const Eigen::MatrixXd& __restrict W,
     const MatrixXd& __restrict b, MatrixXd& __restrict foo) {
@@ -53,6 +54,7 @@ static void matvecclean(const Eigen::MatrixXd& __restrict W,
   foo = W * b;
   printf("ending condition\n");
 }
+*/
 
 __attribute__((noinline))
 static void matvec(const MatrixXd& __restrict W,
@@ -62,6 +64,8 @@ static void matvec(const MatrixXd& __restrict W,
     //printf("W.rows()=%ld W.cols()=%ld\n", W.rows(), W.cols());
   auto wr = W.rows();
   __builtin_assume(wr > 0);
+  auto wr8 = wr << 3;
+  __builtin_assume(wr8 != 0);
   __builtin_assume(wr < 1000);
   auto wc = W.cols();
   __builtin_assume(wc > 0);
@@ -73,6 +77,9 @@ static void matvec(const MatrixXd& __restrict W,
   __builtin_assume(fr > 0);
   auto fc = foo.cols();
   __builtin_assume(fc > 0);
+  
+  __builtin_assume(fr == wr);
+  __builtin_assume(wc == br);
   foo = W * b;
     //printf("r foo.rows()=%ld foo.cols()=%ld\n", foo.rows(), foo.cols());
     //printf("r b.rows()=%ld b.cols()=%ld\n", b.rows(), b.cols());
@@ -145,10 +152,10 @@ int main(int argc, char** argv) {
   */
 
 
-    printf("running regular\n");
-    //matvec(W, B, foo);
-    printf("end running regular\n");
+    printf("running regular W=%p, B=%p, foo=%p, Wp=%p, Bp=%p, foop=%p\n", W.data(), B.data(), foo.data(), Wp.data(), Bp.data(), foop.data());
      __builtin_autodiff(matvec, W,Wp,B,Bp,foo,foop);
+    
+     printf("post running W=%p, B=%p, foo=%p, Wp=%p, Bp=%p, foop=%p\n", W.data(), B.data(), foo.data(), Wp.data(), Bp.data(), foop.data());
 
      for(int o=0; o<OUT; o++)
         printf("Bp(o=%d)=%f\n", o, Bp(o));

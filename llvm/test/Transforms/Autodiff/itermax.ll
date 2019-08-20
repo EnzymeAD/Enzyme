@@ -81,7 +81,7 @@ attributes #2 = { nounwind }
 ; CHECK-NEXT:   br label %for.body.for.body_crit_edge
 
 ; CHECK: for.body.for.body_crit_edge:                      ; preds = %for.body.for.body_crit_edge, %for.body.for.body_crit_edge.preheader
-; CHECK-NEXT:   %indvar = phi i64 [ 0, %for.body.for.body_crit_edge.preheader ], [ %2, %for.body.for.body_crit_edge ]
+; CHECK-NEXT:   %indvar = phi i64 [ %2, %for.body.for.body_crit_edge ], [ 0, %for.body.for.body_crit_edge.preheader ] 
 ; CHECK-NEXT:   %cond.i12 = phi double [ %cond.i, %for.body.for.body_crit_edge ], [ %0, %for.body.for.body_crit_edge.preheader ]
 ; CHECK-NEXT:   %2 = add i64 %indvar, 1
 ; CHECK-NEXT:   %3 = icmp ult i64 %indvar, %1

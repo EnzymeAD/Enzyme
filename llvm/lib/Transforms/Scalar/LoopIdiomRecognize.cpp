@@ -321,8 +321,10 @@ bool LoopIdiomRecognize::runOnCountableLoop() {
   // Give up if the loop has instructions may throw.
   LoopSafetyInfo SafetyInfo;
   computeLoopSafetyInfo(&SafetyInfo, CurLoop);
-  if (SafetyInfo.MayThrow)
+  if (SafetyInfo.MayThrow) {
+    LLVM_DEBUG(dbgs() << "loop-idiom failed as may throw\n");
     return MadeChange;
+  }
 
   // Scan all the blocks in the loop that are not in subloops.
   for (auto *BB : CurLoop->getBlocks()) {
@@ -532,8 +534,10 @@ bool LoopIdiomRecognize::runOnLoopBlock(
   // executed in the loop.  For a block to be unconditionally executed, it has
   // to dominate all the exit blocks of the loop.  Verify this now.
   for (unsigned i = 0, e = ExitBlocks.size(); i != e; ++i)
-    if (!DT->dominates(BB, ExitBlocks[i]))
+    if (!DT->dominates(BB, ExitBlocks[i])) {
+      LLVM_DEBUG(dbgs() << "loop-idiom failed as non dominant store\n");
       return false;
+    }
 
   bool MadeChange = false;
   // Look for store instructions, which may be optimized to memset/memcpy.
@@ -585,6 +589,7 @@ bool LoopIdiomRecognize::processLoopStores(SmallVectorImpl<StoreInst *> &SL,
   SmallVector<unsigned, 16> IndexQueue;
   for (unsigned i = 0, e = SL.size(); i < e; ++i) {
     assert(SL[i]->isSimple() && "Expected only non-volatile stores.");
+    LLVM_DEBUG(dbgs() << "loop-idiom considering store " << *SL[i] << "\n");
 
     Value *FirstStoredVal = SL[i]->getValueOperand();
     Value *FirstStorePtr = SL[i]->getPointerOperand();
@@ -790,8 +795,10 @@ mayLoopAccessLocation(Value *Ptr, ModRefInfo Access, Loop *L,
     for (Instruction &I : **BI)
       if (IgnoredStores.count(&I) == 0 &&
           isModOrRefSet(
-              intersectModRef(AA.getModRefInfo(&I, StoreLoc), Access)))
+              intersectModRef(AA.getModRefInfo(&I, StoreLoc), Access))) {
+        LLVM_DEBUG(dbgs() << "  bad instruction is " << I << "\n");
         return true;
+    }
 
   return false;
 }
@@ -968,6 +975,7 @@ bool LoopIdiomRecognize::processLoopStoreOfLoopLoad(StoreInst *SI,
   LoadInst *LI = cast<LoadInst>(SI->getValueOperand());
   assert(LI->isUnordered() && "Expected only non-volatile non-ordered loads.");
 
+  LLVM_DEBUG(dbgs() << "loop-idiom considering store " << *SI << " of load " << *LI << "\n");
   // See if the pointer expression is an AddRec like {base,+,1} on the current
   // loop, which indicates a strided load.  If we have something else, it's a
   // random load we can't handle.
@@ -1005,6 +1013,7 @@ bool LoopIdiomRecognize::processLoopStoreOfLoopLoad(StoreInst *SI,
     Expander.clear();
     // If we generated new code for the base pointer, clean up.
     RecursivelyDeleteTriviallyDeadInstructions(StoreBasePtr, TLI);
+    LLVM_DEBUG(dbgs() << "loop-idiom unable to transform store " << *SI << " of load from alias in loop\n");
     return false;
   }
 
@@ -1026,6 +1035,7 @@ bool LoopIdiomRecognize::processLoopStoreOfLoopLoad(StoreInst *SI,
     // If we generated new code for the base pointer, clean up.
     RecursivelyDeleteTriviallyDeadInstructions(LoadBasePtr, TLI);
     RecursivelyDeleteTriviallyDeadInstructions(StoreBasePtr, TLI);
+    LLVM_DEBUG(dbgs() << "loop-idiom unable to transform store " << *SI << " of load from modifcation of input in loop\n");
     return false;
   }
 

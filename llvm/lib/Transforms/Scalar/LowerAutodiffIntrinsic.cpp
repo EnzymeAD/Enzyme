@@ -54,6 +54,8 @@
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/Dominators.h"
 
+#include "llvm/Analysis/ScopedNoAliasAA.h"
+
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionExpander.h"
 
@@ -78,6 +80,10 @@ using namespace llvm;
 #include "llvm/Analysis/MemorySSA.h"
 #include "llvm/Transforms/Scalar/CorrelatedValuePropagation.h"
 #include "llvm/Transforms/AggressiveInstCombine/AggressiveInstCombine.h"
+#include "llvm/Transforms/Scalar/LoopIdiomRecognize.h"
+
+#include "llvm/Analysis/BasicAliasAnalysis.h"
+#include "llvm/Analysis/GlobalsModRef.h"
 
 #include "llvm/Transforms/Scalar/LoopDeletion.h"
 #include "llvm/Analysis/LazyValueInfo.h"
@@ -86,6 +92,10 @@ using namespace llvm;
 static cl::opt<bool> autodiff_inline(
             "autodiff_inline", cl::init(false), cl::Hidden,
                 cl::desc("Force inlining of autodiff"));
+
+static cl::opt<int> autodiff_inline_count(
+            "autodiff_inline_count", cl::init(10000), cl::Hidden,
+                cl::desc("Limit of number of functions to inline"));
 
 static cl::opt<bool> printconst(
             "autodiff_printconst", cl::init(false), cl::Hidden,
@@ -100,6 +110,20 @@ enum class DIFFE_TYPE {
   DUP_ARG=1,  // duplicate the argument and store differential inside
   CONSTANT=2  // no differential
 };
+
+std::string tostring(DIFFE_TYPE t) {
+    switch(t) {
+      case DIFFE_TYPE::OUT_DIFF:
+        return "OUT_DIFF";
+      case DIFFE_TYPE::CONSTANT:
+        return "CONSTANT";
+      case DIFFE_TYPE::DUP_ARG:
+        return "DUP_ARG";
+      default:
+        assert(0 && "illegal diffetype");
+        return "";
+    }
+}
 
 //note this doesn't handle recursive types!
 static inline DIFFE_TYPE whatType(llvm::Type* arg) {
@@ -171,6 +195,172 @@ bool isReturned(Instruction *inst) {
 	}
 	return false;
 }
+
+bool isIntASecretFloat(Value* val) {
+    assert(val->getType()->isIntegerTy());
+
+    if (isa<UndefValue>(val)) return true;
+      
+    if (auto cint = dyn_cast<ConstantInt>(val)) {
+		if (!cint->isZero()) return false;
+        assert(0 && "unsure if constant or not because constantint");
+		 //if (cint->isOne()) return cint;
+	}
+
+
+    if (auto inst = dyn_cast<Instruction>(val)) {
+        bool floatingUse = false;
+        bool pointerUse = false;
+
+        auto trackPointer = [&](Value* v) {
+            llvm::errs() << " consider val " << *val << " for v " << * v << "\n";
+                do { 
+                    Type* let = cast<PointerType>(v->getType())->getElementType();
+                    if (let->isFloatingPointTy()) {
+                        floatingUse = true;
+                    }
+                    if (auto ci = dyn_cast<CastInst>(v)) {
+                        if (auto cal = dyn_cast<CallInst>(ci->getOperand(0))) {
+                            if (cal->getCalledFunction()->getName() == "malloc")
+                                break;
+                        }
+                        v = ci->getOperand(0);
+                        continue;
+                    } 
+                    if (auto gep = dyn_cast<GetElementPtrInst>(v)) {
+                        v = gep->getOperand(0);
+                        continue;
+                    } 
+                    break;
+                } while(1);
+                    
+                Type* et = cast<PointerType>(v->getType())->getElementType();
+
+                    do {
+                        if (auto st = dyn_cast<CompositeType>(et)) {
+                            et = st->getTypeAtIndex((unsigned int)0);
+                            continue;
+                        } 
+                        break;
+                    } while(1);
+                    llvm::errs() << " for val " << *v  << *et << "\n";
+
+                    if (et->isFloatingPointTy()) {
+                        floatingUse = true;
+                    }
+                    if (et->isPointerTy()) {
+                        pointerUse = true;
+                    }
+        };
+
+        for(auto &use: inst->uses()) {
+            if (auto ci = dyn_cast<BitCastInst>(use)) {
+                if (ci->getDestTy()->isPointerTy()) {
+                    pointerUse = true;
+                    continue;
+                }
+                if (ci->getDestTy()->isFloatingPointTy()) {
+                    floatingUse = true;
+                    continue;
+                }
+            }
+                
+            
+            if (isa<IntToPtrInst>(use)) {
+                pointerUse = true;
+                continue;
+            }
+            
+            if (auto si = dyn_cast<StoreInst>(val)) {
+                assert(inst == si->getValueOperand());
+
+                trackPointer(si->getPointerOperand());
+            }
+        }
+
+        if (auto li = dyn_cast<LoadInst>(inst)) {
+            trackPointer(li->getOperand(0));
+        }
+
+        if (auto ci = dyn_cast<BitCastInst>(inst)) {
+            if (ci->getSrcTy()->isPointerTy()) {
+                pointerUse = true;
+            }
+            if (ci->getSrcTy()->isFloatingPointTy()) {
+                floatingUse = true;
+            }
+        }
+            
+        
+        if (isa<PtrToIntInst>(inst)) {
+            pointerUse = true;
+        }
+
+        if (pointerUse && !floatingUse) return false; 
+        if (!pointerUse && floatingUse) return true;
+        inst->getParent()->getParent()->dump();
+        llvm::errs() << " val:" << *val << " pointer:" << pointerUse << " floating:" << floatingUse << "\n";
+        assert(0 && "ambiguous unsure if constant or not");
+    }
+
+    val->dump();
+    assert(0 && "unsure if constant or not");
+}
+/*
+bool isIntASecretPointer(Value* val, const DataLayout & DL) {
+    assert(val->getType()->isIntegerTy());
+
+    if ( DL.getTypeAllocSizeInBits(val->getType()) != Type::getInt8PtrTy(val->getContext()) )
+        return false;
+
+    if (isa<UndefValue>(val))false;
+      
+    if (auto cint = dyn_cast<ConstantInt>(val)) {
+        assert(0 && "unsure if constant or not because constantint");
+		 //if (cint->isZero()) return cint;
+		 //if (cint->isOne()) return cint;
+	}
+
+    if (auto inst = dyn_cast<Instruction>(val)) {
+        bool floatingUse = false;
+        bool pointerUse = false;
+
+        for(auto &use: inst->uses()) {
+            if (auto ci = dyn_cast<BitCastInst>(val)) {
+                if (ci->getDestTy()->isPointerTy()) {
+                    pointerUse = true;
+                    continue;
+                }
+                if (ci->getDestTy()->isFloatingPointTy()) {
+                    floatingUse = true;
+                    continue;
+                }
+            }
+                
+            
+            if (isa<IntToPtrInst>(use))
+                pointerUse = true;
+                continue;
+            }
+            
+            if (auto si = dyn_cast<StoreInst>(val)) {
+
+                pointerUse = true;
+                continue;
+            }
+        }
+
+    }
+
+    
+    ConstantInt::get(size->getType(), allocationBuilder.GetInsertBlock()->getParent()->getParent()->getDataLayout().getTypeAllocSizeInBits(val->getType())/8), size, nullptr, val->getName()+"_malloccache");
+
+
+    if (isa<Constant>(va
+    for(
+    assert(0 && "unsure if constant or not");
+}
+*/
 
 bool isconstantValueM(Value* val, SmallPtrSetImpl<Value*> &constants, SmallPtrSetImpl<Value*> &nonconstant, const SmallPtrSetImpl<Value*> &retvals, const SmallPtrSetImpl<Instruction*> &originalInstructions, uint8_t directions=3);
 
@@ -321,6 +511,8 @@ bool isconstantM(Instruction* inst, SmallPtrSetImpl<Value*> &constants, SmallPtr
                     if (fn == "malloc" || fn == "_Znwm")
 				        continue;
                     if (fnp->getIntrinsicID() == Intrinsic::memset && call->getArgOperand(0) != inst && call->getArgOperand(1) != inst)
+                        continue;
+                    if (fnp->getIntrinsicID() == Intrinsic::memcpy && call->getArgOperand(0) != inst && call->getArgOperand(1) != inst)
                         continue;
                 }
 			}
@@ -476,6 +668,8 @@ bool isconstantValueM(Value* val, SmallPtrSetImpl<Value*> &constants, SmallPtrSe
 				        continue;
                     if (fnp->getIntrinsicID() == Intrinsic::memset && call->getArgOperand(0) != val && call->getArgOperand(1) != val)
                         continue;
+                    if (fnp->getIntrinsicID() == Intrinsic::memcpy && call->getArgOperand(0) != val && call->getArgOperand(1) != val)
+                        continue;
                 }
 			}
             
@@ -500,6 +694,8 @@ bool isconstantValueM(Value* val, SmallPtrSetImpl<Value*> &constants, SmallPtrSe
 			llvm::errs() << " </Value USESEARCH" << (int)directions << ">" << *val << "\n";
 	}
 
+    if (printconst)
+	   llvm::errs() << " Value nonconstant (couldn't disprove)[" << (int)directions << "]" << *val << "\n";
     return false;
 }
 
@@ -532,8 +728,290 @@ enum class ReturnType {
     Normal, ArgsWithReturn, Args
 };
 
-Function *CloneFunctionWithReturns(Function *F, ValueToValueMapTy& ptrInputs, const SmallSet<unsigned,4>& constant_args, SmallPtrSetImpl<Value*> &constants, SmallPtrSetImpl<Value*> &nonconstant, SmallPtrSetImpl<Value*> &returnvals, ReturnType returnValue, bool differentialReturn, Twine name, ValueToValueMapTy *VMapO, bool diffeReturnArg, llvm::Type* additionalArg = nullptr) {
+Function* preprocessForClone(Function *F, AAResults &AA) {
+ static std::map<Function*,Function*> cache;
+ if (cache.find(F) != cache.end()) return cache[F];
+ // Create the new function...
+ Function *NewF = Function::Create(F->getFunctionType(), F->getLinkage(), "preprocess_" + F->getName(), F->getParent());
+ 
+ ValueToValueMapTy VMap;
+ for (auto i=F->arg_begin(), j=NewF->arg_begin(); i != F->arg_end(); ) {
+     VMap[i] = j;
+     j->setName(i->getName());
+     i++;
+     j++;
+ }
+
+ // Loop over the arguments, copying the names of the mapped arguments over...
+ Function::arg_iterator DestI = NewF->arg_begin();
+
+ SmallVector <ReturnInst*,4> Returns;
+ CloneFunctionInto(NewF, F, VMap, F->getSubprogram() != nullptr, Returns, "",
+                   nullptr);
+ NewF->setAttributes(F->getAttributes());
+
+ if (true) {
+    FunctionAnalysisManager AM;
+ AM.registerPass([] { return AAManager(); });
+ AM.registerPass([] { return ScalarEvolutionAnalysis(); });
+ AM.registerPass([] { return AssumptionAnalysis(); });
+ AM.registerPass([] { return TargetLibraryAnalysis(); });
+ AM.registerPass([] { return DominatorTreeAnalysis(); });
+ AM.registerPass([] { return MemoryDependenceAnalysis(); });
+ AM.registerPass([] { return LoopAnalysis(); });
+ AM.registerPass([] { return OptimizationRemarkEmitterAnalysis(); });
+ AM.registerPass([] { return PhiValuesAnalysis(); });
+
+    LoopSimplifyPass().run(*NewF, AM);
+
+ }
+
+unsigned int count = 0;
+  if(autodiff_inline) {
+      llvm::errs() << "running inlining process\n";
+   remover:
+     SmallPtrSet<Instruction*, 10> originalInstructions;
+     for (inst_iterator I = inst_begin(NewF), E = inst_end(NewF); I != E; ++I) {
+         originalInstructions.insert(&*I);
+     }
+   for (inst_iterator I = inst_begin(NewF), E = inst_end(NewF); I != E; ++I)
+     if (auto call = dyn_cast<CallInst>(&*I)) {
+        //if (isconstantM(call, constants, nonconstant, returnvals, originalInstructions)) continue;
+        if (call->getCalledFunction() == nullptr) continue;
+        if (call->getCalledFunction()->empty()) continue;
+        /*
+        if (call->getCalledFunction()->hasFnAttribute(Attribute::NoInline)) {
+            llvm::errs() << "can't inline noinline " << call->getCalledFunction()->getName() << "\n";
+            continue;
+        }
+        */
+        if (call->getCalledFunction()->hasFnAttribute(Attribute::ReturnsTwice)) continue;
+        if (call->getCalledFunction() == F || call->getCalledFunction() == NewF) {
+            llvm::errs() << "can't inline recursive " << call->getCalledFunction()->getName() << "\n";
+            continue;
+        }
+        llvm::errs() << "inlining " << call->getCalledFunction()->getName() << "\n";
+        InlineFunctionInfo IFI;
+        InlineFunction(call, IFI);
+        count++;
+        if (count >= autodiff_inline_count)
+            break;
+        else
+          goto remover;
+     }
+ }
+
+ if (autodiff_inline) {
+ DominatorTree DT(*NewF);
+ AssumptionCache AC(*NewF);
+ promoteMemoryToRegister(*NewF, DT, AC);
+
+ {
+     FunctionAnalysisManager AM;
+     AM.registerPass([] { return AAManager(); });
+     AM.registerPass([] { return ScalarEvolutionAnalysis(); });
+     AM.registerPass([] { return AssumptionAnalysis(); });
+     AM.registerPass([] { return TargetLibraryAnalysis(); });
+     AM.registerPass([] { return TargetIRAnalysis(); });
+     AM.registerPass([] { return MemorySSAAnalysis(); });
+     AM.registerPass([] { return DominatorTreeAnalysis(); });
+     AM.registerPass([] { return MemoryDependenceAnalysis(); });
+     AM.registerPass([] { return LoopAnalysis(); });
+     AM.registerPass([] { return OptimizationRemarkEmitterAnalysis(); });
+     AM.registerPass([] { return PhiValuesAnalysis(); });
+     AM.registerPass([] { return LazyValueAnalysis(); });
+
+ GVN().run(*NewF, AM);
+
+ SROA().run(*NewF, AM);
+ }
+
+ bool repeat = false;
+ do {
+     repeat = false;
+ for(auto& BB: *NewF) {
+ for(Instruction &I : BB) {
+    if (auto bc = dyn_cast<BitCastInst>(&I)) {
+        if (auto bc2 = dyn_cast<BitCastInst>(bc->getOperand(0))) {
+            if (bc2->getNumUses() == 1) {
+                IRBuilder<> b(bc2);
+                auto c = b.CreateBitCast(bc2->getOperand(0), I.getType());
+                bc->replaceAllUsesWith(c);
+                bc->eraseFromParent();
+                bc2->eraseFromParent();
+                repeat = true;
+                break;
+            }
+        } else if (auto pt = dyn_cast<PointerType>(bc->getOperand(0)->getType())) {
+          if (auto st = dyn_cast<StructType>(pt->getElementType())) {
+          
+          if (auto pt2 = dyn_cast<PointerType>(bc->getType())) {
+            if (st->getNumElements() && st->getElementType(0) == pt2->getElementType()) {
+                IRBuilder<> b(bc);
+                auto c = b.CreateGEP(bc->getOperand(0), {
+                        ConstantInt::get(Type::getInt64Ty(I.getContext()), 0), 
+                        ConstantInt::get(Type::getInt32Ty(I.getContext()), 0),
+                        });
+                bc->replaceAllUsesWith(c);
+                bc->eraseFromParent();
+                repeat = true;
+                break;
+            }}
+          }
+        } else if (auto pt = dyn_cast<ArrayType>(bc->getOperand(0)->getType())) {
+        }
+    }
+ }
+ if (repeat) break;
+ }
+ } while(repeat);
+
+ {
+     FunctionAnalysisManager AM;
+     AM.registerPass([] { return AAManager(); });
+     AM.registerPass([] { return ScalarEvolutionAnalysis(); });
+     AM.registerPass([] { return AssumptionAnalysis(); });
+     AM.registerPass([] { return TargetLibraryAnalysis(); });
+     AM.registerPass([] { return TargetIRAnalysis(); });
+     AM.registerPass([] { return MemorySSAAnalysis(); });
+     AM.registerPass([] { return DominatorTreeAnalysis(); });
+     AM.registerPass([] { return MemoryDependenceAnalysis(); });
+     AM.registerPass([] { return LoopAnalysis(); });
+     AM.registerPass([] { return OptimizationRemarkEmitterAnalysis(); });
+     AM.registerPass([] { return PhiValuesAnalysis(); });
+     AM.registerPass([] { return LazyValueAnalysis(); });
+ AggressiveInstCombinePass().run(*NewF, AM);
+ InstSimplifyPass().run(*NewF, AM);
+ InstCombinePass().run(*NewF, AM);
+ 
+ EarlyCSEPass(/*memoryssa*/true).run(*NewF, AM);
+ 
+ GVN().run(*NewF, AM);
+ SROA().run(*NewF, AM);
+
+ CorrelatedValuePropagationPass().run(*NewF, AM);
+
+ DCEPass().run(*NewF, AM);
+ }
+
+ do {
+     repeat = false;
+ for(Instruction &I : NewF->getEntryBlock()) {
+    if (auto ci = dyn_cast<ICmpInst>(&I)) {
+        for(Instruction &J : *ci->getParent()) {
+            if (&J == &I) break;
+            if (auto ci2 = dyn_cast<ICmpInst>(&J)) {
+                if (  (ci->getPredicate() == ci2->getInversePredicate()) &&
+                        (
+                         ( ci->getOperand(0) == ci2->getOperand(0) && ci->getOperand(1) == ci2->getOperand(1) ) 
+                         || 
+                         ( (ci->isEquality() || ci2->isEquality()) && ci->getOperand(0) == ci2->getOperand(1) && ci->getOperand(1) == ci2->getOperand(0) ) 
+                            ) ) {
+                    IRBuilder<> b(ci);
+                    Value* tonot = ci2;
+                    for(User* a : ci2->users()) {
+                        if (auto ii = dyn_cast<IntrinsicInst>(a)) {
+                            if (ii->getIntrinsicID() == Intrinsic::assume) {
+                                tonot = ConstantInt::getTrue(ii->getContext());
+                                break;
+                            }
+                        }
+                    }
+                    auto c = b.CreateNot(tonot);
+                    
+                    ci->replaceAllUsesWith(c);
+                    ci->eraseFromParent();
+                    repeat = true;
+                    break;
+                }
+            }
+        }
+        if (repeat) break;
+    }
+ }
+ } while(repeat);
+  
+ /*
+ if (llvm::verifyFunction(*NewF, &llvm::errs())) {
+    NewF->dump();
+    report_fatal_error("function failed verification");
+  }*/
+
+ {
+     FunctionAnalysisManager AM;
+     AM.registerPass([] { return AAManager(); });
+     AM.registerPass([] { return ScalarEvolutionAnalysis(); });
+     AM.registerPass([] { return AssumptionAnalysis(); });
+     AM.registerPass([] { return TargetLibraryAnalysis(); });
+     AM.registerPass([] { return TargetIRAnalysis(); });
+     AM.registerPass([] { return MemorySSAAnalysis(); });
+     AM.registerPass([] { return DominatorTreeAnalysis(); });
+     AM.registerPass([] { return MemoryDependenceAnalysis(); });
+     AM.registerPass([] { return LoopAnalysis(); });
+     AM.registerPass([] { return OptimizationRemarkEmitterAnalysis(); });
+     AM.registerPass([] { return PhiValuesAnalysis(); });
+     AM.registerPass([] { return LazyValueAnalysis(); });
+ 
+     DSEPass().run(*NewF, AM);
+ }
+
+ }
+
+    FunctionAnalysisManager AM;
+     AM.registerPass([] { return AAManager(); });
+     AM.registerPass([] { return ScalarEvolutionAnalysis(); });
+     AM.registerPass([] { return AssumptionAnalysis(); });
+     AM.registerPass([] { return TargetLibraryAnalysis(); });
+     AM.registerPass([] { return TargetIRAnalysis(); });
+     AM.registerPass([] { return MemorySSAAnalysis(); });
+     AM.registerPass([] { return DominatorTreeAnalysis(); });
+     AM.registerPass([] { return MemoryDependenceAnalysis(); });
+     AM.registerPass([] { return LoopAnalysis(); });
+     AM.registerPass([] { return OptimizationRemarkEmitterAnalysis(); });
+     AM.registerPass([] { return PhiValuesAnalysis(); });
+     AM.registerPass([] { return LazyValueAnalysis(); });
+    LoopAnalysisManager LAM;
+     AM.registerPass([&] { return LoopAnalysisManagerFunctionProxy(LAM); });
+     LAM.registerPass([&] { return FunctionAnalysisManagerLoopProxy(AM); });
+     
+     ModuleAnalysisManager MAM;
+     AM.registerPass([&] { return ModuleAnalysisManagerFunctionProxy(MAM); });
+     MAM.registerPass([&] { return FunctionAnalysisManagerModuleProxy(AM); });
+
+ SimplifyCFGOptions scfgo(/*unsigned BonusThreshold=*/1, /*bool ForwardSwitchCond=*/false, /*bool SwitchToLookup=*/false, /*bool CanonicalLoops=*/true, /*bool SinkCommon=*/true, /*AssumptionCache *AssumpCache=*/nullptr);
+ SimplifyCFGPass(scfgo).run(*NewF, AM);
+ LoopSimplifyPass().run(*NewF, AM);
+  
+ //AAManager().run(*NewF, AM)
+ BasicAA ba;
+ auto baa = new BasicAAResult(ba.run(*NewF, AM));
+ AA.addAAResult(*baa);
+ 
+ ScopedNoAliasAA sa;
+ auto saa = new ScopedNoAliasAAResult(sa.run(*NewF, AM));
+ AA.addAAResult(*saa);
+ 
+ if (autodiff_inline) {
+     //createModuleToFunctionPassAdaptor(G()).run(*NewF, AM);
+    //NewF->dump();
+     createFunctionToLoopPassAdaptor(LoopIdiomRecognizePass()).run(*NewF, AM);
+ }
+
+  if (autodiff_print)
+      llvm::errs() << "after simplification :\n" << *NewF << "\n";
+
+  
+  if (llvm::verifyFunction(*NewF, &llvm::errs())) {
+    NewF->dump();
+    report_fatal_error("function failed verification");
+  }
+ cache[F] = NewF;
+ return NewF;
+}
+
+Function *CloneFunctionWithReturns(Function *&F, AAResults &AA, ValueToValueMapTy& ptrInputs, const SmallSet<unsigned,4>& constant_args, SmallPtrSetImpl<Value*> &constants, SmallPtrSetImpl<Value*> &nonconstant, SmallPtrSetImpl<Value*> &returnvals, ReturnType returnValue, bool differentialReturn, Twine name, ValueToValueMapTy *VMapO, bool diffeReturnArg, llvm::Type* additionalArg = nullptr) {
  assert(!F->empty());
+ F = preprocessForClone(F, AA);
  diffeReturnArg &= differentialReturn;
  std::vector<Type*> RetTypes;
  if (returnValue == ReturnType::ArgsWithReturn)
@@ -689,233 +1167,7 @@ Function *CloneFunctionWithReturns(Function *F, ValueToValueMapTy& ptrInputs, co
  //for (auto a :nonconstant){
  //   nonconstant2.insert(a);
  //}
- if (true) {
-    FunctionAnalysisManager AM;
- AM.registerPass([] { return AAManager(); });
- AM.registerPass([] { return ScalarEvolutionAnalysis(); });
- AM.registerPass([] { return AssumptionAnalysis(); });
- AM.registerPass([] { return TargetLibraryAnalysis(); });
- AM.registerPass([] { return DominatorTreeAnalysis(); });
- AM.registerPass([] { return MemoryDependenceAnalysis(); });
- AM.registerPass([] { return LoopAnalysis(); });
- AM.registerPass([] { return OptimizationRemarkEmitterAnalysis(); });
- AM.registerPass([] { return PhiValuesAnalysis(); });
-
-    LoopSimplifyPass().run(*NewF, AM);
-
- }
-
-  if(autodiff_inline) {
-      llvm::errs() << "running inlining process\n";
-   remover:
-     SmallPtrSet<Instruction*, 10> originalInstructions;
-     for (inst_iterator I = inst_begin(NewF), E = inst_end(NewF); I != E; ++I) {
-         originalInstructions.insert(&*I);
-     }
-   for (inst_iterator I = inst_begin(NewF), E = inst_end(NewF); I != E; ++I)
-     if (auto call = dyn_cast<CallInst>(&*I)) {
-        if (isconstantM(call, constants, nonconstant, returnvals, originalInstructions)) continue;
-        if (call->getCalledFunction() == nullptr) continue;
-        if (call->getCalledFunction()->empty()) continue;
-        /*
-        if (call->getCalledFunction()->hasFnAttribute(Attribute::NoInline)) {
-            llvm::errs() << "can't inline noinline " << call->getCalledFunction()->getName() << "\n";
-            continue;
-        }
-        */
-        if (call->getCalledFunction()->hasFnAttribute(Attribute::ReturnsTwice)) continue;
-        if (call->getCalledFunction() == F || call->getCalledFunction() == NewF) {
-            llvm::errs() << "can't inline recursive " << call->getCalledFunction()->getName() << "\n";
-            continue;
-        }
-        llvm::errs() << "inlining " << call->getCalledFunction()->getName() << "\n";
-        InlineFunctionInfo IFI;
-        InlineFunction(call, IFI);
-        goto remover;
-     }
- }
-
- if (autodiff_inline) {
- DominatorTree DT(*NewF);
- AssumptionCache AC(*NewF);
- promoteMemoryToRegister(*NewF, DT, AC);
-
- {
-     FunctionAnalysisManager AM;
-     AM.registerPass([] { return AAManager(); });
-     AM.registerPass([] { return ScalarEvolutionAnalysis(); });
-     AM.registerPass([] { return AssumptionAnalysis(); });
-     AM.registerPass([] { return TargetLibraryAnalysis(); });
-     AM.registerPass([] { return TargetIRAnalysis(); });
-     AM.registerPass([] { return MemorySSAAnalysis(); });
-     AM.registerPass([] { return DominatorTreeAnalysis(); });
-     AM.registerPass([] { return MemoryDependenceAnalysis(); });
-     AM.registerPass([] { return LoopAnalysis(); });
-     AM.registerPass([] { return OptimizationRemarkEmitterAnalysis(); });
-     AM.registerPass([] { return PhiValuesAnalysis(); });
-     AM.registerPass([] { return LazyValueAnalysis(); });
-
- GVN().run(*NewF, AM);
-
- SROA().run(*NewF, AM);
- }
-
- bool repeat = false;
- do {
-     repeat = false;
- for(auto& BB: *NewF) {
- for(Instruction &I : BB) {
-     llvm::errs()  << " looking at " << I << " " << *I.getType() << "\n";
-    //if (I.getType()->isPointerTy()) continue;
-    if (auto bc = dyn_cast<BitCastInst>(&I)) {
-        llvm::errs() << "found bitcast1 " << *bc << "\n";
-        if (auto bc2 = dyn_cast<BitCastInst>(bc->getOperand(0))) {
-            llvm::errs() << "found bitcast2 " << *bc2 << "\n";
-            if (bc2->getNumUses() == 1) {
-                llvm::errs() << "doing the swap\n";
-                IRBuilder<> b(bc2);
-                auto c = b.CreateBitCast(bc2->getOperand(0), I.getType());
-                bc->replaceAllUsesWith(c);
-                bc->eraseFromParent();
-                bc2->eraseFromParent();
-                repeat = true;
-                break;
-            }
-        } else if (auto pt = dyn_cast<PointerType>(bc->getOperand(0)->getType())) {
-          llvm::errs() << "doing the pointertype\n";
-          if (auto st = dyn_cast<StructType>(pt->getElementType())) {
-          
-          if (auto pt2 = dyn_cast<PointerType>(bc->getType())) {
-            llvm::errs() << "doing the structtype " << *st->getElementType(0) << "|" << *pt2->getElementType() << " \n";
-            if (st->getNumElements() && st->getElementType(0) == pt2->getElementType()) {
-                IRBuilder<> b(bc);
-                auto c = b.CreateGEP(bc->getOperand(0), {
-                        ConstantInt::get(Type::getInt64Ty(I.getContext()), 0), 
-                        ConstantInt::get(Type::getInt32Ty(I.getContext()), 0),
-                        });
-                bc->replaceAllUsesWith(c);
-                bc->eraseFromParent();
-                llvm::errs() << "doing the gep swap\n";
-                repeat = true;
-                break;
-            }}
-          }
-        } else if (auto pt = dyn_cast<ArrayType>(bc->getOperand(0)->getType())) {
-                llvm::errs() << "doing the array type\n";
-        }
-    }
- }
- if (repeat) break;
- }
- } while(repeat);
-
- {
-     FunctionAnalysisManager AM;
-     AM.registerPass([] { return AAManager(); });
-     AM.registerPass([] { return ScalarEvolutionAnalysis(); });
-     AM.registerPass([] { return AssumptionAnalysis(); });
-     AM.registerPass([] { return TargetLibraryAnalysis(); });
-     AM.registerPass([] { return TargetIRAnalysis(); });
-     AM.registerPass([] { return MemorySSAAnalysis(); });
-     AM.registerPass([] { return DominatorTreeAnalysis(); });
-     AM.registerPass([] { return MemoryDependenceAnalysis(); });
-     AM.registerPass([] { return LoopAnalysis(); });
-     AM.registerPass([] { return OptimizationRemarkEmitterAnalysis(); });
-     AM.registerPass([] { return PhiValuesAnalysis(); });
-     AM.registerPass([] { return LazyValueAnalysis(); });
- AggressiveInstCombinePass().run(*NewF, AM);
- InstSimplifyPass().run(*NewF, AM);
- //InstCombinePass(false).run(*NewF, AM);
  
- EarlyCSEPass(/*memoryssa*/true).run(*NewF, AM);
- 
- GVN().run(*NewF, AM);
- SROA().run(*NewF, AM);
-
- CorrelatedValuePropagationPass().run(*NewF, AM);
-
- DCEPass().run(*NewF, AM);
- }
-
- do {
-     repeat = false;
- for(Instruction &I : NewF->getEntryBlock()) {
-    //if (I.getType()->isPointerTy()) continue;
-    if (auto ci = dyn_cast<ICmpInst>(&I)) {
-                llvm::errs() << "icmp1" << *ci << "\n";
-        for(Instruction &J : *ci->getParent()) {
-            if (&J == &I) break;
-            if (auto ci2 = dyn_cast<ICmpInst>(&J)) {
-                llvm::errs() << "icmp2" << *ci2 << "\n";
-                if (  (ci->getPredicate() == ci2->getInversePredicate()) &&
-                        (
-                         ( ci->getOperand(0) == ci2->getOperand(0) && ci->getOperand(1) == ci2->getOperand(1) ) 
-                         || 
-                         ( (ci->isEquality() || ci2->isEquality()) && ci->getOperand(0) == ci2->getOperand(1) && ci->getOperand(1) == ci2->getOperand(0) ) 
-                            ) ) {
-                    IRBuilder<> b(ci);
-                    Value* tonot = ci2;
-                    for(User* a : ci2->users()) {
-                        if (auto ii = dyn_cast<IntrinsicInst>(a)) {
-                            if (ii->getIntrinsicID() == Intrinsic::assume) {
-                                tonot = ConstantInt::getTrue(ii->getContext());
-                                break;
-                            }
-                        }
-                    }
-                    auto c = b.CreateNot(tonot);
-                    
-                    ci->replaceAllUsesWith(c);
-                    ci->eraseFromParent();
-                    repeat = true;
-                    break;
-                }
-            }
-        }
-        if (repeat) break;
-    }
- }
- } while(repeat);
-
- {
-     FunctionAnalysisManager AM;
-     AM.registerPass([] { return AAManager(); });
-     AM.registerPass([] { return ScalarEvolutionAnalysis(); });
-     AM.registerPass([] { return AssumptionAnalysis(); });
-     AM.registerPass([] { return TargetLibraryAnalysis(); });
-     AM.registerPass([] { return TargetIRAnalysis(); });
-     AM.registerPass([] { return MemorySSAAnalysis(); });
-     AM.registerPass([] { return DominatorTreeAnalysis(); });
-     AM.registerPass([] { return MemoryDependenceAnalysis(); });
-     AM.registerPass([] { return LoopAnalysis(); });
-     AM.registerPass([] { return OptimizationRemarkEmitterAnalysis(); });
-     AM.registerPass([] { return PhiValuesAnalysis(); });
-     AM.registerPass([] { return LazyValueAnalysis(); });
- DSEPass().run(*NewF, AM);
- }
-
- }
-
-    FunctionAnalysisManager AM;
-     AM.registerPass([] { return AAManager(); });
-     AM.registerPass([] { return ScalarEvolutionAnalysis(); });
-     AM.registerPass([] { return AssumptionAnalysis(); });
-     AM.registerPass([] { return TargetLibraryAnalysis(); });
-     AM.registerPass([] { return TargetIRAnalysis(); });
-     AM.registerPass([] { return MemorySSAAnalysis(); });
-     AM.registerPass([] { return DominatorTreeAnalysis(); });
-     AM.registerPass([] { return MemoryDependenceAnalysis(); });
-     AM.registerPass([] { return LoopAnalysis(); });
-     AM.registerPass([] { return OptimizationRemarkEmitterAnalysis(); });
-     AM.registerPass([] { return PhiValuesAnalysis(); });
-     AM.registerPass([] { return LazyValueAnalysis(); });
- SimplifyCFGOptions scfgo(/*unsigned BonusThreshold=*/1, /*bool ForwardSwitchCond=*/false, /*bool SwitchToLookup=*/false, /*bool CanonicalLoops=*/true, /*bool SinkCommon=*/true, /*AssumptionCache *AssumpCache=*/nullptr);
- SimplifyCFGPass(scfgo).run(*NewF, AM);
- LoopSimplifyPass().run(*NewF, AM);
-
-
-  if (autodiff_print)
-      llvm::errs() << "after simplification :\n" << *NewF << "\n";
  return NewF;
 }
 
@@ -1313,6 +1565,7 @@ bool isCertainPrintMallocOrFree(Function* called) {
 
 class GradientUtils {
 public:
+  llvm::Function *oldFunc;
   llvm::Function *newFunc;
   ValueToValueMapTy invertedPointers;
   DominatorTree DT;
@@ -1339,6 +1592,7 @@ public:
     for(auto v: originalToNewFn) {
         if (v.second == newinst) return const_cast<Value*>(v.first);
     }
+    newinst->dump();
     assert(0 && "could not invert new inst");
     report_fatal_error("could not invert new inst");
   }
@@ -1450,15 +1704,17 @@ protected:
     }
 
 public:
-  static GradientUtils* CreateFromClone(Function *todiff, TargetLibraryInfo &TLI, const SmallSet<unsigned,4> & constant_args, ReturnType returnValue, bool differentialReturn, llvm::Type* additionalArg=nullptr) {
+  static GradientUtils* CreateFromClone(Function *todiff, AAResults &AA, TargetLibraryInfo &TLI, const SmallSet<unsigned,4> & constant_args, ReturnType returnValue, bool differentialReturn, llvm::Type* additionalArg=nullptr) {
     assert(!todiff->empty());
     ValueToValueMapTy invertedPointers;
     SmallPtrSet<Value*,4> constants;
     SmallPtrSet<Value*,20> nonconstant;
     SmallPtrSet<Value*,2> returnvals;
     ValueToValueMapTy originalToNew;
-    auto newFunc = CloneFunctionWithReturns(todiff, invertedPointers, constant_args, constants, nonconstant, returnvals, /*returnValue*/returnValue, /*differentialReturn*/differentialReturn, "fakeaugmented_"+todiff->getName(), &originalToNew, /*diffeReturnArg*/false, additionalArg);
-    return new GradientUtils(newFunc, TLI, invertedPointers, constants, nonconstant, returnvals, originalToNew);
+    auto newFunc = CloneFunctionWithReturns(todiff, AA, invertedPointers, constant_args, constants, nonconstant, returnvals, /*returnValue*/returnValue, /*differentialReturn*/differentialReturn, "fakeaugmented_"+todiff->getName(), &originalToNew, /*diffeReturnArg*/false, additionalArg);
+    auto res = new GradientUtils(newFunc, TLI, invertedPointers, constants, nonconstant, returnvals, originalToNew);
+    res->oldFunc = todiff;
+    return res;
   }
 
   void prepareForReverse() {
@@ -1539,7 +1795,7 @@ public:
             }
           } else {
             if (auto inti = dyn_cast<IntrinsicInst>(inst)) {
-                if (inti->getIntrinsicID() == Intrinsic::memcpy || inti->getIntrinsicID() == Intrinsic::memcpy) {
+                if (inti->getIntrinsicID() == Intrinsic::memset || inti->getIntrinsicID() == Intrinsic::memcpy) {
                     inst->eraseFromParent();
                     continue;
                 }
@@ -2012,7 +2268,6 @@ endCheck:
                 invertargs.push_back(b);
             }
             auto result = bb.CreateGEP(invertPointerM(arg->getPointerOperand(), bb), invertargs, arg->getName()+"'ipge");
-            arg->getParent()->dump();
             invertedPointers[arg] = result;
             return lookupM(invertedPointers[arg], BuilderM);
           }
@@ -2160,15 +2415,17 @@ class DiffeGradientUtils : public GradientUtils {
 
 public:
   ValueToValueMapTy differentials;
-  static DiffeGradientUtils* CreateFromClone(Function *todiff, TargetLibraryInfo &TLI, const SmallSet<unsigned,4> & constant_args, ReturnType returnValue, bool differentialReturn, Type* additionalArg) {
+  static DiffeGradientUtils* CreateFromClone(Function *todiff, AAResults &AA, TargetLibraryInfo &TLI, const SmallSet<unsigned,4> & constant_args, ReturnType returnValue, bool differentialReturn, Type* additionalArg) {
     assert(!todiff->empty());
     ValueToValueMapTy invertedPointers;
     SmallPtrSet<Value*,4> constants;
     SmallPtrSet<Value*,20> nonconstant;
     SmallPtrSet<Value*,2> returnvals;
     ValueToValueMapTy originalToNew;
-    auto newFunc = CloneFunctionWithReturns(todiff, invertedPointers, constant_args, constants, nonconstant, returnvals, returnValue, differentialReturn, "diffe"+todiff->getName(), &originalToNew, /*diffeReturnArg*/true, additionalArg);
-    return new DiffeGradientUtils(newFunc, TLI, invertedPointers, constants, nonconstant, returnvals, originalToNew);
+    auto newFunc = CloneFunctionWithReturns(todiff, AA, invertedPointers, constant_args, constants, nonconstant, returnvals, returnValue, differentialReturn, "diffe"+todiff->getName(), &originalToNew, /*diffeReturnArg*/true, additionalArg);
+    auto res = new DiffeGradientUtils(newFunc, TLI, invertedPointers, constants, nonconstant, returnvals, originalToNew);
+    res->oldFunc = todiff;
+    return res;
   }
 
 private:
@@ -2342,7 +2599,7 @@ void optimizeIntermediate(GradientUtils* gutils, bool topLevel, Function *F) {
  //LCSSAPass().run(*NewF, AM);
 }
 
-Function* CreateAugmentedPrimal(Function* todiff, const SmallSet<unsigned,4>& constant_args, TargetLibraryInfo &TLI, GradientUtils** oututils, bool differentialReturn) {
+Function* CreateAugmentedPrimal(Function* todiff, AAResults &AA, const SmallSet<unsigned,4>& constant_args, TargetLibraryInfo &TLI, GradientUtils** oututils, bool differentialReturn) {
   assert(!todiff->empty());
   
 #if 0
@@ -2353,7 +2610,7 @@ Function* CreateAugmentedPrimal(Function* todiff, const SmallSet<unsigned,4>& co
   }
 #endif
 
-  GradientUtils *gutils = GradientUtils::CreateFromClone(todiff, TLI, constant_args, /*returnValue*/ReturnType::Normal, /*differentialReturn*/differentialReturn);
+  GradientUtils *gutils = GradientUtils::CreateFromClone(todiff, AA, TLI, constant_args, /*returnValue*/ReturnType::Normal, /*differentialReturn*/differentialReturn);
   llvm::errs() << "function with differential return " << todiff->getName() << " " << differentialReturn << "\n";
   gutils->forceAugmentedReturns();
 
@@ -2509,7 +2766,7 @@ Function* CreateAugmentedPrimal(Function* todiff, const SmallSet<unsigned,4>& co
 
                   //TODO create augmented primal
                   if (modifyPrimal) {
-                    auto newcalled = CreateAugmentedPrimal(dyn_cast<Function>(called), subconstant_args, TLI, nullptr, /*differentialReturn*/!gutils->isConstantValue(op));
+                    auto newcalled = CreateAugmentedPrimal(dyn_cast<Function>(called), AA, subconstant_args, TLI, nullptr, /*differentialReturn*/!gutils->isConstantValue(op));
                     auto augmentcall = BuilderZ.CreateCall(newcalled, args);
                     augmentcall->setCallingConv(op->getCallingConv());
                     augmentcall->setDebugLoc(inst->getDebugLoc());
@@ -2570,8 +2827,7 @@ Function* CreateAugmentedPrimal(Function* todiff, const SmallSet<unsigned,4>& co
 
           //TODO const
            //TODO IF OP IS POINTER
-          if (!op->getValueOperand()->getType()->isPointerTy()) {
-          } else {
+          if ( op->getValueOperand()->getType()->isPointerTy() || (op->getValueOperand()->getType()->isIntegerTy() && !isIntASecretFloat(op->getValueOperand()) ) ) {
             IRBuilder <> storeBuilder(op);
             llvm::errs() << "a op value: " << *op->getValueOperand() << "\n";
             Value* valueop = gutils->invertPointerM(op->getValueOperand(), storeBuilder);
@@ -2590,11 +2846,9 @@ Function* CreateAugmentedPrimal(Function* todiff, const SmallSet<unsigned,4>& co
   
   ValueToValueMapTy invertedRetPs;
   if ((nf->getReturnType()->isPointerTy() || nf->getReturnType()->isIntegerTy()) && differentialReturn) {
-    nf->dump();
     for (inst_iterator I = inst_begin(nf), E = inst_end(nf); I != E; ++I) {
       if (ReturnInst* ri = dyn_cast<ReturnInst>(&*I)) {
         IRBuilder <>builder(ri);
-        ri->getReturnValue()->dump();
         invertedRetPs[ri] = gutils->invertPointerM(ri->getReturnValue(), builder);
         assert(invertedRetPs[ri]);
       }
@@ -2974,9 +3228,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
   assert(!todiff->empty());
   auto M = todiff->getParent();
+
   auto& Context = M->getContext();
 
-  DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(todiff, TLI, constant_args, returnValue ? ReturnType::ArgsWithReturn : ReturnType::Args, differentialReturn, additionalArg);
+  DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(todiff, AA, TLI, constant_args, returnValue ? ReturnType::ArgsWithReturn : ReturnType::Args, differentialReturn, additionalArg);
   cachedfunctions[tup] = gutils->newFunc;
 
   Argument* additionalValue = nullptr;
@@ -3183,8 +3438,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         case Intrinsic::memcpy: {
             if (gutils->isConstantInstruction(inst)) continue;
             SmallVector<Value*, 4> args;
-            args.push_back(invertPointer(op->getOperand(0)));
+            // source and dest are swapped
             args.push_back(invertPointer(op->getOperand(1)));
+            args.push_back(invertPointer(op->getOperand(0)));
             args.push_back(lookup(op->getOperand(2)));
             args.push_back(lookup(op->getOperand(3)));
 
@@ -3482,7 +3738,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               }
 
               bool replaceFunction = false;
-
               if (topLevel && BB->getSingleSuccessor() == BB2) {
                   auto origop = cast<CallInst>(gutils->getOriginal(op));
                   auto OBB = cast<BasicBlock>(gutils->getOriginal(BB));
@@ -3513,7 +3768,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                         continue;
                     }
 
-                    if (AA.getModRefInfo(&*iter, origop) == ModRefInfo::NoModRef) {
+                    auto mri = AA.getModRefInfo(&*iter, origop);
+
+                    llvm::errs() << "modrefinfo for " << *iter << " " << (unsigned int)mri << "\n";
+                    if (mri == ModRefInfo::NoModRef) {
                         iter++;
                         continue;
                     }
@@ -3540,6 +3798,40 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                         continue;
                     }
                     
+                    //call that follows the original
+                    if (auto li = dyn_cast<IntrinsicInst>(&*iter)) {
+                      if (li->getIntrinsicID() == Intrinsic::memcpy) {
+                       auto mem0 = AA.getModRefInfo(&*iter, li->getOperand(0), MemoryLocation::UnknownSize);
+                       auto mem1 = AA.getModRefInfo(&*iter, li->getOperand(1), MemoryLocation::UnknownSize);
+
+                       llvm::errs() << "modrefinfo for mem0 " << *li->getOperand(0) << " " << (unsigned int)mem0 << "\n";
+                       llvm::errs() << "modrefinfo for mem1 " << *li->getOperand(1) << " " << (unsigned int)mem1 << "\n";
+                        //TODO TEMPORARILY REMOVED THIS TO TEST SOMETHING
+                        // PUT BACK THIS CONDITION!!
+                        //if ( !isModSet(mem0) )
+                        {
+                        bool modref = false;
+                            for(Instruction* it = li; it != nullptr; it = it->getNextNode()) {
+                                if (auto call = dyn_cast<CallInst>(it)) {
+                                     if (isCertainMallocOrFree(call->getCalledFunction())) {
+                                         continue;
+                                     }
+                                }
+                                if (AA.canInstructionRangeModRef(*it, *it, li->getOperand(1), MemoryLocation::UnknownSize, ModRefInfo::Mod)) {
+                                    modref = true;
+                            llvm::errs() << " inst  found mod " << *iter << " " << *it << "\n";
+                                }
+                            }
+
+                        if (modref)
+                            break;
+                        postCreate.push_back(cast<Instruction>(gutils->getNewFromOriginal(&*iter)));
+                        iter++;
+                        continue;
+                        }
+                    }
+                    }
+                    
                     break;
                   }
                   if (&*iter == gutils->getOriginal(op)) {
@@ -3556,7 +3848,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               CallInst* augmentcall = nullptr;
               if (modifyPrimal) {
                 if (topLevel) {
-                  auto newcalled = CreateAugmentedPrimal(dyn_cast<Function>(called), subconstant_args, TLI, &augmentedutils, /*differentialReturns*/!gutils->isConstantValue(op));
+                  auto newcalled = CreateAugmentedPrimal(dyn_cast<Function>(called), AA, subconstant_args, TLI, &augmentedutils, /*differentialReturns*/!gutils->isConstantValue(op));
                   augmentcall = BuilderZ.CreateCall(newcalled, pre_args);
                   augmentcall->setCallingConv(op->getCallingConv());
                   augmentcall->setDebugLoc(inst->getDebugLoc());
@@ -3644,7 +3936,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                   mapp[op] = retval;
                 }
                 for(auto a : postCreate) {
-                    gutils->unwrapM(a, Builder2, mapp, true);
+                    for(unsigned i=0; i<a->getNumOperands(); i++) {
+                        a->setOperand(i, gutils->unwrapM(a->getOperand(i), Builder2, mapp, true));
+                    }
+                    a->moveBefore(*Builder2.GetInsertBlock(), Builder2.GetInsertPoint());
                 }
                 op->eraseFromParent();
               }
@@ -3735,7 +4030,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
       //TODO const
        //TODO IF OP IS POINTER
-      if (!op->getValueOperand()->getType()->isPointerTy()) {
+      if (! ( op->getValueOperand()->getType()->isPointerTy() || (op->getValueOperand()->getType()->isIntegerTy() && !isIntASecretFloat(op->getValueOperand()) ) ) ) {
 		  if (!gutils->isConstantValue(op->getValueOperand())) {
 			auto dif1 = Builder2.CreateLoad(invertPointer(op->getPointerOperand()));
             setPtrDiffe(op->getPointerOperand(), Constant::getNullValue(op->getValueOperand()->getType()));
@@ -3743,9 +4038,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 		  }
 	  } else if (topLevel) {
         IRBuilder <> storeBuilder(op);
-        llvm::errs() << "op value: " << *op->getValueOperand() << "\n";
+        //llvm::errs() << "op value: " << *op->getValueOperand() << "\n";
         Value* valueop = gutils->invertPointerM(op->getValueOperand(), storeBuilder);
-        llvm::errs() << "op pointer: " << *op->getPointerOperand() << "\n";
+        //llvm::errs() << "op pointer: " << *op->getPointerOperand() << "\n";
         Value* pointerop = gutils->invertPointerM(op->getPointerOperand(), storeBuilder);
         storeBuilder.CreateStore(valueop, pointerop);
 		//llvm::errs() << "ignoring store bc pointer of " << *op << "\n";
