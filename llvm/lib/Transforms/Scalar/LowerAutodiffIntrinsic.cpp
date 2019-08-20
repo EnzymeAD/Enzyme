@@ -2686,15 +2686,15 @@ Function* CreateAugmentedPrimal(Function* todiff, AAResults &AA, const SmallSet<
             case Intrinsic::lifetime_start:
             case Intrinsic::lifetime_end:
             case Intrinsic::assume:
-        case Intrinsic::fabs:
-        case Intrinsic::log:
-        case Intrinsic::log2:
-        case Intrinsic::log10:
-        case Intrinsic::exp:
-        case Intrinsic::exp2:
-        case Intrinsic::pow:
-        case Intrinsic::sin:
-        case Intrinsic::cos:
+            case Intrinsic::fabs:
+            case Intrinsic::log:
+            case Intrinsic::log2:
+            case Intrinsic::log10:
+            case Intrinsic::exp:
+            case Intrinsic::exp2:
+            case Intrinsic::pow:
+            case Intrinsic::sin:
+            case Intrinsic::cos:
                 break;
             default:
               assert(inst);
@@ -2715,128 +2715,113 @@ Function* CreateAugmentedPrimal(Function* todiff, AAResults &AA, const SmallSet<
                 }
             }
 
-            if(called) {
-                if (called->getName() == "printf" || called->getName() == "puts") {
-                } else if(called->getName()=="malloc") {
-                } else if(called->getName()=="free") {
-                } else if(called->getName()=="_Znwm") {
-                } else if(called->getName()=="_ZdlPv") {
-                } else if(called->getName()=="_ZdlPvm") {
-                } else if (!op->getCalledFunction()->empty()) {
-                  if (gutils->isConstantInstruction(op)) {
-                      if (op->getNumUses() != 0 && !op->doesNotAccessMemory()) {
-                        IRBuilder<> BuilderZ(op);
-                        gutils->addMalloc(BuilderZ, op);
-                      }
-                     continue;
-                  }
-                  SmallSet<unsigned,4> subconstant_args;
+            if (called && (called->getName() == "printf" || called->getName() == "puts"))
+                continue;
 
-                  SmallVector<Value*, 8> args;
-                  SmallVector<DIFFE_TYPE, 8> argsInverted;
-                  bool modifyPrimal = !called->hasFnAttribute(Attribute::ReadNone);
-                  IRBuilder<> BuilderZ(op);
-                  BuilderZ.setFastMathFlags(FastMathFlags::getFast());
+            if (called && (called->getName()=="malloc" || called->getName()=="free" ||
+                called->getName()=="_Znwm" || called->getName()=="_ZdlPv" ||
+                called->getName()=="_ZdlPvm"))
+                continue;
+            
+            if (op->getNumUses() != 0 && !op->doesNotAccessMemory()) {
+              IRBuilder<> BuilderZ(op);
+              gutils->addMalloc(BuilderZ, op);
+            }
+            
+            if (gutils->isConstantInstruction(op))
+              continue;
 
-                  if ( (called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) && !gutils->isConstantValue(op) ) {
-                     modifyPrimal = true;
-                     //llvm::errs() << "primal modified " << called->getName() << " modified via return" << "\n";
-                  }
-                  for(unsigned i=0;i<op->getNumArgOperands(); i++) {
-                    args.push_back(op->getArgOperand(i));
-
-                    if (gutils->isConstantValue(op->getArgOperand(i))) {
-                        subconstant_args.insert(i);
-                        argsInverted.push_back(DIFFE_TYPE::CONSTANT);
-                        continue;
-                    }
-
-                    auto argType = op->getArgOperand(i)->getType();
-
-                    if (argType->isPointerTy() || argType->isIntegerTy()) {
-                        argsInverted.push_back(DIFFE_TYPE::DUP_ARG);
-                        args.push_back(gutils->invertPointerM(op->getArgOperand(i), BuilderZ));
-
-                        if (! ( called->hasParamAttribute(i, Attribute::ReadOnly) || called->hasParamAttribute(i, Attribute::ReadNone)) ) {
-                            modifyPrimal = true;
-                            //llvm::errs() << "primal modified " << called->getName() << " modified via arg " << i << "\n";
-                        }
-                        //Note sometimes whattype mistakenly says something should be constant [because composed of integer pointers alone]
-                        assert(whatType(argType) == DIFFE_TYPE::DUP_ARG || whatType(argType) == DIFFE_TYPE::CONSTANT);
-                    } else {
-                        argsInverted.push_back(DIFFE_TYPE::OUT_DIFF);
-                        assert(whatType(argType) == DIFFE_TYPE::OUT_DIFF || whatType(argType) == DIFFE_TYPE::CONSTANT);
-                    }
-                  }
-                  if (subconstant_args.size() == args.size()) {
-                      if (op->getNumUses() != 0 && !op->doesNotAccessMemory()) {
-                        gutils->addMalloc(BuilderZ, op);
-                      }
-                      break;
-                  }
-
-                  //TODO create augmented primal
-                  if (modifyPrimal) {
-                    auto newcalled = CreateAugmentedPrimal(dyn_cast<Function>(called), AA, subconstant_args, TLI, nullptr, /*differentialReturn*/!gutils->isConstantValue(op));
-                    auto augmentcall = BuilderZ.CreateCall(newcalled, args);
-                    augmentcall->setCallingConv(op->getCallingConv());
-                    augmentcall->setDebugLoc(inst->getDebugLoc());
-                    Instruction* antiptr = nullptr;
-                    if (!called->getReturnType()->isVoidTy()) {
-                      auto rv = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {1}));
-                      gutils->originalInstructions.insert(rv);
-                      gutils->nonconstant.insert(rv);
-                      if (!gutils->isConstantValue(op)) {
-                        gutils->nonconstant_values.insert(rv);
-                      }
-                      if (op->getNumUses() != 0 && !op->doesNotAccessMemory()) {
-                        gutils->addMalloc(BuilderZ, rv);
-                      }
-                      assert(op->getType() == rv->getType());
-                      llvm::errs() << "augmented considering differential ip of " << called->getName() << " " << *called->getReturnType() << " " << gutils->isConstantValue(op) << "\n";
-                      if ((called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) && !gutils->isConstantValue(op)) {
-                        auto newip = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {2}));
-                        auto placeholder = cast<PHINode>(gutils->invertedPointers[op]);
-                        if (I != E && placeholder == &*I) I++;
-                        gutils->invertedPointers.erase(op);
-                        placeholder->replaceAllUsesWith(newip);
-                        placeholder->eraseFromParent();
-                        gutils->invertedPointers[rv] = newip;
-                        antiptr = newip;
-                        gutils->addMalloc(BuilderZ, antiptr);
-                      }
-                      op->replaceAllUsesWith(rv);
-                    }
-                    //todo consider how to propagate antiptr
-                    Value* tp = BuilderZ.CreateExtractValue(augmentcall, {0});
-                    if (tp->getType()->isEmptyTy()) {
-                        auto tpt = tp->getType();
-                        cast<Instruction>(tp)->eraseFromParent();
-                        tp = UndefValue::get(tpt);
-                    }
-                    gutils->addMalloc(BuilderZ, tp);
-                    op->eraseFromParent();
-                  } else {
-                      if (op->getNumUses() != 0 && !op->doesNotAccessMemory()) {
-                        gutils->addMalloc(BuilderZ, op);
-                      }
-                  }
-                } else {
-                 if (gutils->isConstantInstruction(op))
-                    continue;
-                  assert(op);
-                  llvm::errs() << "cannot handle non invertible function\n" << *op << "\n";
-                  report_fatal_error("unknown noninvertible function");
-                }
-            } else {
-                if (gutils->isConstantInstruction(op))
-                    continue;
-                assert(op);
-                llvm::errs() << "cannot handle non const function in" << *op << "\n";
-                report_fatal_error("unknown non constant function");
+            if (called == nullptr) {
+              assert(op);
+              llvm::errs() << "cannot handle non constant function\n" << *op << "\n";
+              report_fatal_error("unknown non constant function");
             }
 
-        
+            if (called->empty()) {
+              assert(op);
+              llvm::errs() << "cannot handle non invertible function\n" << *op << "\n";
+              report_fatal_error("unknown noninvertible function");
+            }
+            
+              SmallSet<unsigned,4> subconstant_args;
+
+              SmallVector<Value*, 8> args;
+              SmallVector<DIFFE_TYPE, 8> argsInverted;
+              bool modifyPrimal = !called->hasFnAttribute(Attribute::ReadNone);
+              IRBuilder<> BuilderZ(op);
+              BuilderZ.setFastMathFlags(FastMathFlags::getFast());
+
+              if ( (called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) && !gutils->isConstantValue(op) ) {
+                 modifyPrimal = true;
+                 //llvm::errs() << "primal modified " << called->getName() << " modified via return" << "\n";
+              }
+
+              for(unsigned i=0;i<op->getNumArgOperands(); i++) {
+                args.push_back(op->getArgOperand(i));
+
+                if (gutils->isConstantValue(op->getArgOperand(i))) {
+                    subconstant_args.insert(i);
+                    argsInverted.push_back(DIFFE_TYPE::CONSTANT);
+                    continue;
+                }
+
+                auto argType = op->getArgOperand(i)->getType();
+
+                if (argType->isPointerTy() || argType->isIntegerTy()) {
+                    argsInverted.push_back(DIFFE_TYPE::DUP_ARG);
+                    args.push_back(gutils->invertPointerM(op->getArgOperand(i), BuilderZ));
+
+                    if (! ( called->hasParamAttribute(i, Attribute::ReadOnly) || called->hasParamAttribute(i, Attribute::ReadNone)) ) {
+                        modifyPrimal = true;
+                        //llvm::errs() << "primal modified " << called->getName() << " modified via arg " << i << "\n";
+                    }
+                    //Note sometimes whattype mistakenly says something should be constant [because composed of integer pointers alone]
+                    assert(whatType(argType) == DIFFE_TYPE::DUP_ARG || whatType(argType) == DIFFE_TYPE::CONSTANT);
+                } else {
+                    argsInverted.push_back(DIFFE_TYPE::OUT_DIFF);
+                    assert(whatType(argType) == DIFFE_TYPE::OUT_DIFF || whatType(argType) == DIFFE_TYPE::CONSTANT);
+                }
+              }
+
+              //TODO create augmented primal
+              if (modifyPrimal) {
+                auto newcalled = CreateAugmentedPrimal(dyn_cast<Function>(called), AA, subconstant_args, TLI, nullptr, /*differentialReturn*/!gutils->isConstantValue(op));
+                auto augmentcall = BuilderZ.CreateCall(newcalled, args);
+                augmentcall->setCallingConv(op->getCallingConv());
+                augmentcall->setDebugLoc(inst->getDebugLoc());
+                Instruction* antiptr = nullptr;
+                if (!called->getReturnType()->isVoidTy()) {
+                  auto rv = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {1}));
+                  gutils->originalInstructions.insert(rv);
+                  gutils->nonconstant.insert(rv);
+                  if (!gutils->isConstantValue(op)) {
+                    gutils->nonconstant_values.insert(rv);
+                  }
+                  assert(op->getType() == rv->getType());
+                  llvm::errs() << "augmented considering differential ip of " << called->getName() << " " << *called->getReturnType() << " " << gutils->isConstantValue(op) << "\n";
+                  if ((called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) && !gutils->isConstantValue(op)) {
+                    auto newip = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {2}));
+                    auto placeholder = cast<PHINode>(gutils->invertedPointers[op]);
+                    if (I != E && placeholder == &*I) I++;
+                    gutils->invertedPointers.erase(op);
+                    placeholder->replaceAllUsesWith(newip);
+                    placeholder->eraseFromParent();
+                    gutils->invertedPointers[rv] = newip;
+                    antiptr = newip;
+                    gutils->addMalloc(BuilderZ, antiptr);
+                  }
+                  op->replaceAllUsesWith(rv);
+                }
+                //todo consider how to propagate antiptr
+                Value* tp = BuilderZ.CreateExtractValue(augmentcall, {0});
+                if (tp->getType()->isEmptyTy()) {
+                    auto tpt = tp->getType();
+                    cast<Instruction>(tp)->eraseFromParent();
+                    tp = UndefValue::get(tpt);
+                }
+                gutils->addMalloc(BuilderZ, tp);
+                op->eraseFromParent();
+              }
         } else if(isa<LoadInst>(inst)) {
           if (gutils->isConstantInstruction(inst)) continue;
 
@@ -3626,425 +3611,420 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             }
         }
 
-        if(called) {
-            if (called->getName() == "printf" || called->getName() == "puts") {
-                SmallVector<Value*, 4> args;
-                for(unsigned i=0; i<op->getNumArgOperands(); i++) {
-                    args.push_back(lookup(op->getArgOperand(i)));
-                }
-                auto cal = Builder2.CreateCall(called, args);
-                cal->setAttributes(op->getAttributes());
-            } else if(called->getName()=="malloc") {
-              if (true) {
-                 auto ci = CallInst::CreateFree(Builder2.CreatePointerCast(lookup(inst), Type::getInt8PtrTy(Context)), Builder2.GetInsertBlock());
-                 if (ci->getParent()==nullptr) {
-                   Builder2.Insert(ci);
-                 }
-              }
-
-            } else if(called->getName()=="_Znwm") {
-              if (true) {
-                  Type *VoidTy = Type::getVoidTy(M->getContext());
-                  Type *IntPtrTy = Type::getInt8PtrTy(M->getContext());
-                  //TODO _ZdlPv or _ZdlPvm
-                  auto FreeFunc = M->getOrInsertFunction("_ZdlPv", VoidTy, IntPtrTy);
-                  auto ci = CallInst::Create(FreeFunc, {Builder2.CreatePointerCast(lookup(inst), Type::getInt8PtrTy(Context))}, "", Builder2.GetInsertBlock());
-                  cast<CallInst>(ci)->setTailCall();
-                  if (Function *F = dyn_cast<Function>(FreeFunc))
-                    cast<CallInst>(ci)->setCallingConv(F->getCallingConv());
-
-                  if (ci->getParent()==nullptr) {
-                    Builder2.Insert(ci);
-                  }
-              }
-
-            } else if(called->getName()=="free") {
-                llvm::Value* val = op->getArgOperand(0);
-                while(auto cast = dyn_cast<CastInst>(val)) val = cast->getOperand(0);
-                if (auto dc = dyn_cast<CallInst>(val)) {
-                    if (dc->getCalledFunction()->getName() == "malloc") {
-                        op->eraseFromParent();
-                        continue;
-                    }
-                }
-                if (isa<ConstantPointerNull>(val)) {
-                    op->eraseFromParent();
-                    llvm::errs() << "removing free of null pointer\n";
-                    continue;
-                }
-                llvm::errs() << "freeing without malloc " << *val << "\n";
-                op->eraseFromParent();
-                continue;
-                //assert(0 && "free not freeing a malloc");
-                //TODO HANDLE FREE
-                //
-            } else if(called->getName()=="_ZdlPv" || called->getName()=="_ZdlPvm") {
-                llvm::Value* val = op->getArgOperand(0);
-                while(auto cast = dyn_cast<CastInst>(val)) val = cast->getOperand(0);
-                if (auto dc = dyn_cast<CallInst>(val)) {
-                    if (dc->getCalledFunction()->getName() == "_Znwm") {
-                        op->eraseFromParent();
-                        continue;
-                    }
-                }
-                llvm::errs() << "deleting without new " << *val << "\n";
-                op->eraseFromParent();
-                continue;
-                //assert(0 && "free not freeing a malloc");
-                //TODO HANDLE FREE/DELETE
-                //
-
-            } else if (!op->getCalledFunction()->empty()) {
-              if (gutils->isConstantInstruction(op)) {
-                if (!topLevel && op->getNumUses() != 0 && !op->doesNotAccessMemory()) {
-                    IRBuilder<> BuilderZ(op);
-                    auto cached = gutils->addMalloc(BuilderZ, op);
-                    op->replaceAllUsesWith(cached);
-                }
-			    continue;
-              }
-              SmallSet<unsigned,4> subconstant_args;
-
-              SmallVector<Value*, 8> args;
-              SmallVector<Value*, 8> pre_args;
-              SmallVector<DIFFE_TYPE, 8> argsInverted;
-              bool modifyPrimal = !called->hasFnAttribute(Attribute::ReadNone);
-              IRBuilder<> BuilderZ(op);
-              std::vector<Instruction*> postCreate;
-              BuilderZ.setFastMathFlags(FastMathFlags::getFast());
-
-              if ( (called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) && !gutils->isConstantValue(op)) {
-                  //llvm::errs() << "augmented modified " << called->getName() << " modified via return" << "\n";
-                  modifyPrimal = true;
-              }
-
-              for(unsigned i=0;i<op->getNumArgOperands(); i++) {
+        if (called && (called->getName() == "printf" || called->getName() == "puts")) {
+            SmallVector<Value*, 4> args;
+            for(unsigned i=0; i<op->getNumArgOperands(); i++) {
                 args.push_back(lookup(op->getArgOperand(i)));
-                pre_args.push_back(op->getArgOperand(i));
-
-                if (gutils->isConstantValue(op->getArgOperand(i))) {
-                    subconstant_args.insert(i);
-                    argsInverted.push_back(DIFFE_TYPE::CONSTANT);
-                    continue;
-                }
-
-				auto argType = op->getArgOperand(i)->getType();
-
-				if ( (argType->isPointerTy() || argType->isIntegerTy()) && !gutils->isConstantValue(op->getArgOperand(i)) ) {
-					argsInverted.push_back(DIFFE_TYPE::DUP_ARG);
-					args.push_back(invertPointer(op->getArgOperand(i)));
-					pre_args.push_back(gutils->invertPointerM(op->getArgOperand(i), BuilderZ));
-
-                    //TODO this check should consider whether this pointer has allocation/etc modifications and so on
-                    if (! ( called->hasParamAttribute(i, Attribute::ReadOnly) || called->hasParamAttribute(i, Attribute::ReadNone)) ) {
-                        //llvm::errs() << "augmented modified " << called->getName() << " modified via arg " << i << "\n";
-					    modifyPrimal = true;
-                    }
-
-					//Note sometimes whattype mistakenly says something should be constant [because composed of integer pointers alone]
-					assert(whatType(argType) == DIFFE_TYPE::DUP_ARG || whatType(argType) == DIFFE_TYPE::CONSTANT);
-				} else {
-					argsInverted.push_back(DIFFE_TYPE::OUT_DIFF);
-					assert(whatType(argType) == DIFFE_TYPE::OUT_DIFF || whatType(argType) == DIFFE_TYPE::CONSTANT);
-				}
-              }
-              if (subconstant_args.size() == args.size()) {
-                  if (!topLevel && op->getNumUses() != 0 && !op->doesNotAccessMemory()) {
-                        auto cached = gutils->addMalloc(BuilderZ, op);
-                        op->replaceAllUsesWith(cached);
-                  }
-                  break;
-              }
-
-			  bool retUsed = false;
-              for (const User *U : inst->users()) {
-                if (auto si = dyn_cast<StoreInst>(U)) {
-					if (si->getPointerOperand() == retAlloca && si->getValueOperand() == inst) {
-						retUsed = true;
-						continue;
-					}
-				}
-				retUsed = false;
-				break;
-              }
-
-              bool replaceFunction = false;
-              if (topLevel && BB->getSingleSuccessor() == BB2) {
-                  auto origop = cast<CallInst>(gutils->getOriginal(op));
-                  auto OBB = cast<BasicBlock>(gutils->getOriginal(BB));
-                  auto iter = OBB->rbegin();
-                  while(iter != OBB->rend() && &*iter != origop) {
-                    if (auto call = dyn_cast<CallInst>(&*iter)) {
-                        if (isCertainMallocOrFree(call->getCalledFunction())) {
-                            iter++;
-                            continue;
-                        }
-                    }
-                    
-                    if (isa<ReturnInst>(&*iter)) {
-                        iter++;
-                        continue;
-                    }
-                        
-                    bool usesInst = false;
-                    for(auto &operand : iter->operands()) {
-                        if (operand.get() == gutils->getOriginal(op)) { usesInst = true; break; }
-                    }
-                    if (usesInst) {
-                        break;
-                    }
-
-                    if (!iter->mayReadOrWriteMemory() || isa<BinaryOperator>(&*iter)) {
-                        iter++;
-                        continue;
-                    }
-
-                    auto mri = AA.getModRefInfo(&*iter, origop);
-
-                    llvm::errs() << "modrefinfo for " << *iter << " " << (unsigned int)mri << "\n";
-                    if (mri == ModRefInfo::NoModRef) {
-                        iter++;
-                        continue;
-                    }
-
-                    //load that follows the original
-                    if (auto li = dyn_cast<LoadInst>(&*iter)) {
-                        bool modref = false;
-                            for(Instruction* it = li; it != nullptr; it = it->getNextNode()) {
-                                if (auto call = dyn_cast<CallInst>(it)) {
-                                     if (isCertainMallocOrFree(call->getCalledFunction())) {
-                                         continue;
-                                     }
-                                }
-                                if (AA.canInstructionRangeModRef(*it, *it, MemoryLocation::get(li), ModRefInfo::Mod)) {
-                                    modref = true;
-                            llvm::errs() << " inst  found mod " << *iter << " " << *it << "\n";
-                                }
-                            }
-
-                        if (modref)
-                            break;
-                        postCreate.push_back(cast<Instruction>(gutils->getNewFromOriginal(&*iter)));
-                        iter++;
-                        continue;
-                    }
-                    
-                    //call that follows the original
-                    if (auto li = dyn_cast<IntrinsicInst>(&*iter)) {
-                      if (li->getIntrinsicID() == Intrinsic::memcpy) {
-                       auto mem0 = AA.getModRefInfo(&*iter, li->getOperand(0), MemoryLocation::UnknownSize);
-                       auto mem1 = AA.getModRefInfo(&*iter, li->getOperand(1), MemoryLocation::UnknownSize);
-
-                       llvm::errs() << "modrefinfo for mem0 " << *li->getOperand(0) << " " << (unsigned int)mem0 << "\n";
-                       llvm::errs() << "modrefinfo for mem1 " << *li->getOperand(1) << " " << (unsigned int)mem1 << "\n";
-                        //TODO TEMPORARILY REMOVED THIS TO TEST SOMETHING
-                        // PUT BACK THIS CONDITION!!
-                        //if ( !isModSet(mem0) )
-                        {
-                        bool modref = false;
-                            for(Instruction* it = li; it != nullptr; it = it->getNextNode()) {
-                                if (auto call = dyn_cast<CallInst>(it)) {
-                                     if (isCertainMallocOrFree(call->getCalledFunction())) {
-                                         continue;
-                                     }
-                                }
-                                if (AA.canInstructionRangeModRef(*it, *it, li->getOperand(1), MemoryLocation::UnknownSize, ModRefInfo::Mod)) {
-                                    modref = true;
-                            llvm::errs() << " inst  found mod " << *iter << " " << *it << "\n";
-                                }
-                            }
-
-                        if (modref)
-                            break;
-                        postCreate.push_back(cast<Instruction>(gutils->getNewFromOriginal(&*iter)));
-                        iter++;
-                        continue;
-                        }
-                    }
-                    }
-                    
-                    break;
-                  }
-                  if (&*iter == gutils->getOriginal(op)) {
-                      llvm::errs() << " choosing to replace function " << called->getName() << " and do both forward/reverse\n";
-                      replaceFunction = true;
-                      modifyPrimal = false;
-                  } else {
-                      llvm::errs() << " failed to replace function " << called->getName() << " due to " << *iter << "\n";
-                  }
-              }
-
-              Value* tape = nullptr;
-              GradientUtils *augmentedutils = nullptr;
-              CallInst* augmentcall = nullptr;
-              Value* cachereplace = nullptr;
-              if (modifyPrimal) {
-                if (topLevel) {
-                  auto newcalled = CreateAugmentedPrimal(dyn_cast<Function>(called), AA, subconstant_args, TLI, &augmentedutils, /*differentialReturns*/!gutils->isConstantValue(op));
-                  augmentcall = BuilderZ.CreateCall(newcalled, pre_args);
-                  augmentcall->setCallingConv(op->getCallingConv());
-                  augmentcall->setDebugLoc(inst->getDebugLoc());
-                  tape = BuilderZ.CreateExtractValue(augmentcall, {0});
-                  if (tape->getType()->isEmptyTy()) {
-                      auto tt = tape->getType();
-                      cast<Instruction>(tape)->eraseFromParent();
-                      tape = UndefValue::get(tt);
-                  }
-
-                  llvm::errs() << "primal considering differential ip of " << called->getName() << " " << *called->getReturnType() << " " << gutils->isConstantValue(op) << "\n";
-                  if( (called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) && !gutils->isConstantValue(op) ) {
-                    auto newip = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {2}));
-                    auto placeholder = cast<PHINode>(gutils->invertedPointers[op]);
-                    if (I != E && placeholder == &*I) I++;
-                    placeholder->replaceAllUsesWith(newip);
-                    placeholder->eraseFromParent();
-                    gutils->invertedPointers[op] = newip;
-                  }
-                } else {
-                  assert(additionalValue);
-                  if (!topLevel && op->getNumUses() != 0 && !op->doesNotAccessMemory()) {
-                        cachereplace = gutils->addMalloc(BuilderZ, op);
-                  }
-                  if( (called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) && !gutils->isConstantValue(op) ) {
-                    IRBuilder<> bb(op);
-                    auto newip = gutils->addMalloc(bb, nullptr);
-                    auto placeholder = cast<PHINode>(gutils->invertedPointers[op]);
-                    if (I != E && placeholder == &*I) I++;
-                    placeholder->replaceAllUsesWith(newip);
-                    placeholder->eraseFromParent();
-                    gutils->invertedPointers[op] = newip;
-                  }
-                }
-                IRBuilder<> builder(op);
-                tape = gutils->addMalloc(builder, tape);
-
-              } else {
-                  if (!topLevel && op->getNumUses() != 0 && !op->doesNotAccessMemory()) {
-                        cachereplace = gutils->addMalloc(BuilderZ, op);
-                  }
-              }
-              auto newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called), subconstant_args, TLI, AA, retUsed, !gutils->isConstantValue(inst) && !inst->getType()->isPointerTy(), /*topLevel*/replaceFunction, nullptr, tape ? tape->getType() : nullptr);//, LI, DT);
-
-              if (!gutils->isConstantValue(inst) && !inst->getType()->isPointerTy()) {
-                args.push_back(diffe(inst));
-              }
-
-              if (tape) args.push_back(lookup(tape));
-
-              auto diffes = Builder2.CreateCall(newcalled, args);
-              diffes->setCallingConv(op->getCallingConv());
-              diffes->setDebugLoc(inst->getDebugLoc());
-              unsigned structidx = retUsed ? 1 : 0;
-
-              for(unsigned i=0;i<op->getNumArgOperands(); i++) {
-                if (argsInverted[i] == DIFFE_TYPE::OUT_DIFF) {
-                  Value* diffeadd = Builder2.CreateExtractValue(diffes, {structidx});
-                  structidx++;
-                  addToDiffe(op->getArgOperand(i), diffeadd);
-                }
-              }
-
-              if (retUsed) {
-                auto retval = cast<Instruction>(Builder2.CreateExtractValue(diffes, {0}));
-                gutils->originalInstructions.insert(retval);
-                gutils->nonconstant.insert(retval);
-                if (!gutils->isConstantValue(op))
-                  gutils->nonconstant_values.insert(retval);
-				Builder2.CreateStore(retval, retAlloca);
-
-				startremove:
-              	for (User *U : inst->users()) {
-                	if (auto si = dyn_cast<StoreInst>(U)) {
-						if (si->getPointerOperand() == retAlloca && si->getValueOperand() == inst) {
-							si->eraseFromParent();
-							goto startremove;
-						}
-					}
-                }
-              }
-
-              if (replaceFunction) {
-                ValueToValueMapTy mapp;
-                if (op->getNumUses() != 0) {
-                  auto retval = cast<Instruction>(Builder2.CreateExtractValue(diffes, {0}));
-                  gutils->originalInstructions.insert(retval);
-                  gutils->nonconstant.insert(retval);
-                  if (!gutils->isConstantValue(op))
-                    gutils->nonconstant_values.insert(retval);
-                  op->replaceAllUsesWith(retval);
-                  mapp[op] = retval;
-                }
-                for(auto a : postCreate) {
-                    for(unsigned i=0; i<a->getNumOperands(); i++) {
-                        a->setOperand(i, gutils->unwrapM(a->getOperand(i), Builder2, mapp, true));
-                    }
-                    a->moveBefore(*Builder2.GetInsertBlock(), Builder2.GetInsertPoint());
-                }
-                op->eraseFromParent();
-              }
-
-              //TODO this shouldn't matter because this can't use itself, but setting null should be done before other sets but after load of diffe
-			  if (inst->getNumUses() != 0 && !gutils->isConstantValue(inst))
-              	setDiffe(inst, Constant::getNullValue(inst->getType()));
-              
-              if (augmentcall || cachereplace) {
-
-                if (!called->getReturnType()->isVoidTy()) {
-                  Instruction* dcall = nullptr;
-                  if (augmentcall) {
-                    dcall = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {1}));
-                  } 
-                  if (cachereplace) {
-                    assert(dcall == nullptr);
-                    dcall = cast<Instruction>(cachereplace);
-                  }
-
-                  gutils->originalInstructions.insert(dcall);
-                  gutils->nonconstant.insert(dcall);
-                  if (!gutils->isConstantValue(op))
-                    gutils->nonconstant_values.insert(dcall);
-
-                  llvm::errs() << "augmented considering differential ip of " << called->getName() << " " << *called->getReturnType() << " " << gutils->isConstantValue(op) << "\n";
-                  if (!gutils->isConstantValue(op)) {
-                      if (called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) {
-                        gutils->invertedPointers[dcall] = gutils->invertedPointers[op];
-                        gutils->invertedPointers.erase(op);
-                      } else {
-                        gutils->differentials[dcall] = gutils->differentials[op];
-                        gutils->differentials.erase(op);
-                      }
-                  }
-                  op->replaceAllUsesWith(dcall);
-                }
-
-                gutils->originalInstructions.insert(diffes);
-                gutils->nonconstant.insert(diffes);
-                if (!gutils->isConstantValue(op))
-                  gutils->nonconstant_values.insert(diffes);
-                op->eraseFromParent();
-
-                if (augmentcall)
-                    gutils->replaceableCalls.insert(augmentcall);
-              } else {
-                gutils->replaceableCalls.insert(op);
-              }
-            } else {
-              if (gutils->isConstantInstruction(op)) {
-			    continue;
-              }
-              assert(op);
-              llvm::errs() << "cannot handle non invertible function\n" << *op << "\n";
-              report_fatal_error("unknown noninvertible function");
             }
-        } else {
-            if (gutils->isConstantInstruction(op)) {
-			  continue;
-            }
-            assert(op);
-            llvm::errs() << "cannot handle non const function in" << *op << "\n";
-            report_fatal_error("unknown non constant function");
+            auto cal = Builder2.CreateCall(called, args);
+            cal->setAttributes(op->getAttributes());
+            continue;
         }
 
+        if (called && called->getName()=="malloc") {
+          if (true) {
+             auto ci = CallInst::CreateFree(Builder2.CreatePointerCast(lookup(inst), Type::getInt8PtrTy(Context)), Builder2.GetInsertBlock());
+             if (ci->getParent()==nullptr) {
+               Builder2.Insert(ci);
+             }
+          }
+          continue;
+        } 
+        
+        if (called && called->getName()=="_Znwm") {
+          if (true) {
+              Type *VoidTy = Type::getVoidTy(M->getContext());
+              Type *IntPtrTy = Type::getInt8PtrTy(M->getContext());
+              //TODO _ZdlPv or _ZdlPvm
+              auto FreeFunc = M->getOrInsertFunction("_ZdlPv", VoidTy, IntPtrTy);
+              auto ci = CallInst::Create(FreeFunc, {Builder2.CreatePointerCast(lookup(inst), Type::getInt8PtrTy(Context))}, "", Builder2.GetInsertBlock());
+              cast<CallInst>(ci)->setTailCall();
+              if (Function *F = dyn_cast<Function>(FreeFunc))
+                cast<CallInst>(ci)->setCallingConv(F->getCallingConv());
+
+              if (ci->getParent()==nullptr) {
+                Builder2.Insert(ci);
+              }
+          }
+          continue;
+        }
+        
+        if (called && called->getName()=="free") {
+            llvm::Value* val = op->getArgOperand(0);
+            while(auto cast = dyn_cast<CastInst>(val)) val = cast->getOperand(0);
+            if (auto dc = dyn_cast<CallInst>(val)) {
+                if (dc->getCalledFunction()->getName() == "malloc") {
+                    op->eraseFromParent();
+                    continue;
+                }
+            }
+            if (isa<ConstantPointerNull>(val)) {
+                op->eraseFromParent();
+                llvm::errs() << "removing free of null pointer\n";
+                continue;
+            }
+            llvm::errs() << "freeing without malloc " << *val << "\n";
+            op->eraseFromParent();
+            continue;
+            //TODO HANDLE FREE
+        }
+        
+        if (called && called->getName()=="_ZdlPv" || called->getName()=="_ZdlPvm") {
+            llvm::Value* val = op->getArgOperand(0);
+            while(auto cast = dyn_cast<CastInst>(val)) val = cast->getOperand(0);
+            if (auto dc = dyn_cast<CallInst>(val)) {
+                if (dc->getCalledFunction()->getName() == "_Znwm") {
+                    op->eraseFromParent();
+                    continue;
+                }
+            }
+            llvm::errs() << "deleting without new " << *val << "\n";
+            op->eraseFromParent();
+            continue;
+            //TODO HANDLE FREE/DELETE
+        }
+        
+        if (gutils->isConstantInstruction(op)) {
+          if (!topLevel && op->getNumUses() != 0 && !op->doesNotAccessMemory()) {
+            IRBuilder<> BuilderZ(op);
+            gutils->addMalloc(BuilderZ, op);
+          }
+          continue;
+        }
+
+
+        if (called==nullptr) {
+          assert(op);
+          llvm::errs() << "cannot handle non const function in" << *op << "\n";
+          report_fatal_error("unknown non constant function");
+        }
+
+        if (called->empty()) {
+          assert(op);
+          llvm::errs() << "cannot handle non invertible function\n" << *op << "\n";
+          report_fatal_error("unknown noninvertible function");
+        }
+
+
+          SmallSet<unsigned,4> subconstant_args;
+
+          SmallVector<Value*, 8> args;
+          SmallVector<Value*, 8> pre_args;
+          SmallVector<DIFFE_TYPE, 8> argsInverted;
+          bool modifyPrimal = !called->hasFnAttribute(Attribute::ReadNone);
+          IRBuilder<> BuilderZ(op);
+          std::vector<Instruction*> postCreate;
+          BuilderZ.setFastMathFlags(FastMathFlags::getFast());
+
+          if ( (called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) && !gutils->isConstantValue(op)) {
+              //llvm::errs() << "augmented modified " << called->getName() << " modified via return" << "\n";
+              modifyPrimal = true;
+          }
+
+          for(unsigned i=0;i<op->getNumArgOperands(); i++) {
+            args.push_back(lookup(op->getArgOperand(i)));
+            pre_args.push_back(op->getArgOperand(i));
+
+            if (gutils->isConstantValue(op->getArgOperand(i))) {
+                subconstant_args.insert(i);
+                argsInverted.push_back(DIFFE_TYPE::CONSTANT);
+                continue;
+            }
+
+            auto argType = op->getArgOperand(i)->getType();
+
+            if ( (argType->isPointerTy() || argType->isIntegerTy()) && !gutils->isConstantValue(op->getArgOperand(i)) ) {
+                argsInverted.push_back(DIFFE_TYPE::DUP_ARG);
+                args.push_back(invertPointer(op->getArgOperand(i)));
+                pre_args.push_back(gutils->invertPointerM(op->getArgOperand(i), BuilderZ));
+
+                //TODO this check should consider whether this pointer has allocation/etc modifications and so on
+                if (! ( called->hasParamAttribute(i, Attribute::ReadOnly) || called->hasParamAttribute(i, Attribute::ReadNone)) ) {
+                    //llvm::errs() << "augmented modified " << called->getName() << " modified via arg " << i << "\n";
+                    modifyPrimal = true;
+                }
+
+                //Note sometimes whattype mistakenly says something should be constant [because composed of integer pointers alone]
+                assert(whatType(argType) == DIFFE_TYPE::DUP_ARG || whatType(argType) == DIFFE_TYPE::CONSTANT);
+            } else {
+                argsInverted.push_back(DIFFE_TYPE::OUT_DIFF);
+                assert(whatType(argType) == DIFFE_TYPE::OUT_DIFF || whatType(argType) == DIFFE_TYPE::CONSTANT);
+            }
+          }
+
+          bool retUsed = false;
+          for (const User *U : inst->users()) {
+            if (auto si = dyn_cast<StoreInst>(U)) {
+                if (si->getPointerOperand() == retAlloca && si->getValueOperand() == inst) {
+                    retUsed = true;
+                    continue;
+                }
+            }
+            retUsed = false;
+            break;
+          }
+
+          bool replaceFunction = false;
+          if (topLevel && BB->getSingleSuccessor() == BB2) {
+              auto origop = cast<CallInst>(gutils->getOriginal(op));
+              auto OBB = cast<BasicBlock>(gutils->getOriginal(BB));
+              auto iter = OBB->rbegin();
+              while(iter != OBB->rend() && &*iter != origop) {
+                if (auto call = dyn_cast<CallInst>(&*iter)) {
+                    if (isCertainMallocOrFree(call->getCalledFunction())) {
+                        iter++;
+                        continue;
+                    }
+                }
+                
+                if (isa<ReturnInst>(&*iter)) {
+                    iter++;
+                    continue;
+                }
+                    
+                bool usesInst = false;
+                for(auto &operand : iter->operands()) {
+                    if (operand.get() == gutils->getOriginal(op)) { usesInst = true; break; }
+                }
+                if (usesInst) {
+                    break;
+                }
+
+                if (!iter->mayReadOrWriteMemory() || isa<BinaryOperator>(&*iter)) {
+                    iter++;
+                    continue;
+                }
+
+                auto mri = AA.getModRefInfo(&*iter, origop);
+
+                llvm::errs() << "modrefinfo for " << *iter << " " << (unsigned int)mri << "\n";
+                if (mri == ModRefInfo::NoModRef) {
+                    iter++;
+                    continue;
+                }
+
+                //load that follows the original
+                if (auto li = dyn_cast<LoadInst>(&*iter)) {
+                    bool modref = false;
+                        for(Instruction* it = li; it != nullptr; it = it->getNextNode()) {
+                            if (auto call = dyn_cast<CallInst>(it)) {
+                                 if (isCertainMallocOrFree(call->getCalledFunction())) {
+                                     continue;
+                                 }
+                            }
+                            if (AA.canInstructionRangeModRef(*it, *it, MemoryLocation::get(li), ModRefInfo::Mod)) {
+                                modref = true;
+                        llvm::errs() << " inst  found mod " << *iter << " " << *it << "\n";
+                            }
+                        }
+
+                    if (modref)
+                        break;
+                    postCreate.push_back(cast<Instruction>(gutils->getNewFromOriginal(&*iter)));
+                    iter++;
+                    continue;
+                }
+                
+                //call that follows the original
+                if (auto li = dyn_cast<IntrinsicInst>(&*iter)) {
+                  if (li->getIntrinsicID() == Intrinsic::memcpy) {
+                   auto mem0 = AA.getModRefInfo(&*iter, li->getOperand(0), MemoryLocation::UnknownSize);
+                   auto mem1 = AA.getModRefInfo(&*iter, li->getOperand(1), MemoryLocation::UnknownSize);
+
+                   llvm::errs() << "modrefinfo for mem0 " << *li->getOperand(0) << " " << (unsigned int)mem0 << "\n";
+                   llvm::errs() << "modrefinfo for mem1 " << *li->getOperand(1) << " " << (unsigned int)mem1 << "\n";
+                    //TODO TEMPORARILY REMOVED THIS TO TEST SOMETHING
+                    // PUT BACK THIS CONDITION!!
+                    //if ( !isModSet(mem0) )
+                    {
+                    bool modref = false;
+                        for(Instruction* it = li; it != nullptr; it = it->getNextNode()) {
+                            if (auto call = dyn_cast<CallInst>(it)) {
+                                 if (isCertainMallocOrFree(call->getCalledFunction())) {
+                                     continue;
+                                 }
+                            }
+                            if (AA.canInstructionRangeModRef(*it, *it, li->getOperand(1), MemoryLocation::UnknownSize, ModRefInfo::Mod)) {
+                                modref = true;
+                        llvm::errs() << " inst  found mod " << *iter << " " << *it << "\n";
+                            }
+                        }
+
+                    if (modref)
+                        break;
+                    postCreate.push_back(cast<Instruction>(gutils->getNewFromOriginal(&*iter)));
+                    iter++;
+                    continue;
+                    }
+                }
+                }
+                
+                break;
+              }
+              if (&*iter == gutils->getOriginal(op)) {
+                  llvm::errs() << " choosing to replace function " << called->getName() << " and do both forward/reverse\n";
+                  replaceFunction = true;
+                  modifyPrimal = false;
+              } else {
+                  llvm::errs() << " failed to replace function " << called->getName() << " due to " << *iter << "\n";
+              }
+          }
+
+          Value* tape = nullptr;
+          GradientUtils *augmentedutils = nullptr;
+          CallInst* augmentcall = nullptr;
+          Value* cachereplace = nullptr;
+          if (modifyPrimal) {
+            if (topLevel) {
+              auto newcalled = CreateAugmentedPrimal(dyn_cast<Function>(called), AA, subconstant_args, TLI, &augmentedutils, /*differentialReturns*/!gutils->isConstantValue(op));
+              augmentcall = BuilderZ.CreateCall(newcalled, pre_args);
+              augmentcall->setCallingConv(op->getCallingConv());
+              augmentcall->setDebugLoc(inst->getDebugLoc());
+              tape = BuilderZ.CreateExtractValue(augmentcall, {0});
+              if (tape->getType()->isEmptyTy()) {
+                  auto tt = tape->getType();
+                  cast<Instruction>(tape)->eraseFromParent();
+                  tape = UndefValue::get(tt);
+              }
+
+              llvm::errs() << "primal considering differential ip of " << called->getName() << " " << *called->getReturnType() << " " << gutils->isConstantValue(op) << "\n";
+              if( (called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) && !gutils->isConstantValue(op) ) {
+                auto newip = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {2}));
+                auto placeholder = cast<PHINode>(gutils->invertedPointers[op]);
+                if (I != E && placeholder == &*I) I++;
+                placeholder->replaceAllUsesWith(newip);
+                placeholder->eraseFromParent();
+                gutils->invertedPointers[op] = newip;
+              }
+            } else {
+              assert(additionalValue);
+              if (!topLevel && op->getNumUses() != 0 && !op->doesNotAccessMemory()) {
+                    cachereplace = gutils->addMalloc(BuilderZ, nullptr);
+              }
+              if( (called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) && !gutils->isConstantValue(op) ) {
+                IRBuilder<> bb(op);
+                auto newip = gutils->addMalloc(bb, nullptr);
+                auto placeholder = cast<PHINode>(gutils->invertedPointers[op]);
+                if (I != E && placeholder == &*I) I++;
+                placeholder->replaceAllUsesWith(newip);
+                placeholder->eraseFromParent();
+                gutils->invertedPointers[op] = newip;
+              }
+            }
+            IRBuilder<> builder(op);
+            tape = gutils->addMalloc(builder, tape);
+
+          } else {
+              if (!topLevel && op->getNumUses() != 0 && !op->doesNotAccessMemory()) {
+                    cachereplace = gutils->addMalloc(BuilderZ, nullptr);
+              }
+          }
+
+          auto newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called), subconstant_args, TLI, AA, retUsed, !gutils->isConstantValue(inst) && !inst->getType()->isPointerTy(), /*topLevel*/replaceFunction, nullptr, tape ? tape->getType() : nullptr);//, LI, DT);
+
+          if (!gutils->isConstantValue(inst) && !inst->getType()->isPointerTy()) {
+            args.push_back(diffe(inst));
+          }
+
+          if (tape) args.push_back(lookup(tape));
+
+          auto diffes = Builder2.CreateCall(newcalled, args);
+          diffes->setCallingConv(op->getCallingConv());
+          diffes->setDebugLoc(inst->getDebugLoc());
+          unsigned structidx = retUsed ? 1 : 0;
+
+          for(unsigned i=0;i<op->getNumArgOperands(); i++) {
+            if (argsInverted[i] == DIFFE_TYPE::OUT_DIFF) {
+              Value* diffeadd = Builder2.CreateExtractValue(diffes, {structidx});
+              structidx++;
+              addToDiffe(op->getArgOperand(i), diffeadd);
+            }
+          }
+
+          if (retUsed) {
+            auto retval = cast<Instruction>(Builder2.CreateExtractValue(diffes, {0}));
+            gutils->originalInstructions.insert(retval);
+            gutils->nonconstant.insert(retval);
+            if (!gutils->isConstantValue(op))
+              gutils->nonconstant_values.insert(retval);
+            Builder2.CreateStore(retval, retAlloca);
+
+            startremove:
+            for (User *U : inst->users()) {
+                if (auto si = dyn_cast<StoreInst>(U)) {
+                    if (si->getPointerOperand() == retAlloca && si->getValueOperand() == inst) {
+                        si->eraseFromParent();
+                        goto startremove;
+                    }
+                }
+            }
+          }
+
+          if (replaceFunction) {
+            ValueToValueMapTy mapp;
+            if (op->getNumUses() != 0) {
+              auto retval = cast<Instruction>(Builder2.CreateExtractValue(diffes, {0}));
+              gutils->originalInstructions.insert(retval);
+              gutils->nonconstant.insert(retval);
+              if (!gutils->isConstantValue(op))
+                gutils->nonconstant_values.insert(retval);
+              op->replaceAllUsesWith(retval);
+              mapp[op] = retval;
+            }
+            for(auto a : postCreate) {
+                for(unsigned i=0; i<a->getNumOperands(); i++) {
+                    a->setOperand(i, gutils->unwrapM(a->getOperand(i), Builder2, mapp, true));
+                }
+                a->moveBefore(*Builder2.GetInsertBlock(), Builder2.GetInsertPoint());
+            }
+            op->eraseFromParent();
+          }
+
+          //TODO this shouldn't matter because this can't use itself, but setting null should be done before other sets but after load of diffe
+          if (inst->getNumUses() != 0 && !gutils->isConstantValue(inst))
+            setDiffe(inst, Constant::getNullValue(inst->getType()));
+          
+          if (augmentcall || cachereplace) {
+
+            if (!called->getReturnType()->isVoidTy()) {
+              Instruction* dcall = nullptr;
+              if (augmentcall) {
+                dcall = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {1}));
+              } 
+              if (cachereplace) {
+                assert(dcall == nullptr);
+                dcall = cast<Instruction>(cachereplace);
+              }
+
+              gutils->originalInstructions.insert(dcall);
+              gutils->nonconstant.insert(dcall);
+              if (!gutils->isConstantValue(op))
+                gutils->nonconstant_values.insert(dcall);
+
+              llvm::errs() << "augmented considering differential ip of " << called->getName() << " " << *called->getReturnType() << " " << gutils->isConstantValue(op) << "\n";
+              if (!gutils->isConstantValue(op)) {
+                  if (called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) {
+                    gutils->invertedPointers[dcall] = gutils->invertedPointers[op];
+                    gutils->invertedPointers.erase(op);
+                  } else {
+                    gutils->differentials[dcall] = gutils->differentials[op];
+                    gutils->differentials.erase(op);
+                  }
+              }
+              op->replaceAllUsesWith(dcall);
+            }
+
+            gutils->originalInstructions.insert(diffes);
+            gutils->nonconstant.insert(diffes);
+            if (!gutils->isConstantValue(op))
+              gutils->nonconstant_values.insert(diffes);
+            op->eraseFromParent();
+
+            if (augmentcall)
+                gutils->replaceableCalls.insert(augmentcall);
+          } else {
+            gutils->replaceableCalls.insert(op);
+          }
     } else if(auto op = dyn_cast_or_null<SelectInst>(inst)) {
       if (gutils->isConstantValue(inst)) continue;
 
