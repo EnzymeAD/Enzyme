@@ -1649,6 +1649,7 @@ public:
     } else {
       assert(malloc);
       assert(!isa<PHINode>(malloc));
+      llvm::errs() << " added malloc " << *malloc << "\n";
       addedMallocs.push_back(malloc);
       return malloc;
     }
@@ -2722,8 +2723,13 @@ Function* CreateAugmentedPrimal(Function* todiff, AAResults &AA, const SmallSet<
                 } else if(called->getName()=="_ZdlPv") {
                 } else if(called->getName()=="_ZdlPvm") {
                 } else if (!op->getCalledFunction()->empty()) {
-                    if (gutils->isConstantInstruction(op))
-                        continue;
+                  if (gutils->isConstantInstruction(op)) {
+                      if (op->getNumUses() != 0 && !op->doesNotAccessMemory()) {
+                        IRBuilder<> BuilderZ(op);
+                        gutils->addMalloc(BuilderZ, op);
+                      }
+                     continue;
+                  }
                   SmallSet<unsigned,4> subconstant_args;
 
                   SmallVector<Value*, 8> args;
@@ -2762,7 +2768,12 @@ Function* CreateAugmentedPrimal(Function* todiff, AAResults &AA, const SmallSet<
                         assert(whatType(argType) == DIFFE_TYPE::OUT_DIFF || whatType(argType) == DIFFE_TYPE::CONSTANT);
                     }
                   }
-                  if (subconstant_args.size() == args.size()) break;
+                  if (subconstant_args.size() == args.size()) {
+                      if (op->getNumUses() != 0 && !op->doesNotAccessMemory()) {
+                        gutils->addMalloc(BuilderZ, op);
+                      }
+                      break;
+                  }
 
                   //TODO create augmented primal
                   if (modifyPrimal) {
@@ -2775,8 +2786,12 @@ Function* CreateAugmentedPrimal(Function* todiff, AAResults &AA, const SmallSet<
                       auto rv = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {1}));
                       gutils->originalInstructions.insert(rv);
                       gutils->nonconstant.insert(rv);
-                      if (!gutils->isConstantValue(op))
+                      if (!gutils->isConstantValue(op)) {
                         gutils->nonconstant_values.insert(rv);
+                      }
+                      if (op->getNumUses() != 0 && !op->doesNotAccessMemory()) {
+                        gutils->addMalloc(BuilderZ, rv);
+                      }
                       assert(op->getType() == rv->getType());
                       llvm::errs() << "augmented considering differential ip of " << called->getName() << " " << *called->getReturnType() << " " << gutils->isConstantValue(op) << "\n";
                       if ((called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) && !gutils->isConstantValue(op)) {
@@ -2801,6 +2816,10 @@ Function* CreateAugmentedPrimal(Function* todiff, AAResults &AA, const SmallSet<
                     }
                     gutils->addMalloc(BuilderZ, tp);
                     op->eraseFromParent();
+                  } else {
+                      if (op->getNumUses() != 0 && !op->doesNotAccessMemory()) {
+                        gutils->addMalloc(BuilderZ, op);
+                      }
                   }
                 } else {
                  if (gutils->isConstantInstruction(op))
@@ -3677,6 +3696,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
             } else if (!op->getCalledFunction()->empty()) {
               if (gutils->isConstantInstruction(op)) {
+                if (!topLevel && op->getNumUses() != 0 && !op->doesNotAccessMemory()) {
+                    IRBuilder<> BuilderZ(op);
+                    auto cached = gutils->addMalloc(BuilderZ, op);
+                    op->replaceAllUsesWith(cached);
+                }
 			    continue;
               }
               SmallSet<unsigned,4> subconstant_args;
@@ -3693,6 +3717,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                   //llvm::errs() << "augmented modified " << called->getName() << " modified via return" << "\n";
                   modifyPrimal = true;
               }
+
               for(unsigned i=0;i<op->getNumArgOperands(); i++) {
                 args.push_back(lookup(op->getArgOperand(i)));
                 pre_args.push_back(op->getArgOperand(i));
@@ -3723,7 +3748,13 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 					assert(whatType(argType) == DIFFE_TYPE::OUT_DIFF || whatType(argType) == DIFFE_TYPE::CONSTANT);
 				}
               }
-              if (subconstant_args.size() == args.size()) break;
+              if (subconstant_args.size() == args.size()) {
+                  if (!topLevel && op->getNumUses() != 0 && !op->doesNotAccessMemory()) {
+                        auto cached = gutils->addMalloc(BuilderZ, op);
+                        op->replaceAllUsesWith(cached);
+                  }
+                  break;
+              }
 
 			  bool retUsed = false;
               for (const User *U : inst->users()) {
@@ -3846,6 +3877,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               Value* tape = nullptr;
               GradientUtils *augmentedutils = nullptr;
               CallInst* augmentcall = nullptr;
+              Value* cachereplace = nullptr;
               if (modifyPrimal) {
                 if (topLevel) {
                   auto newcalled = CreateAugmentedPrimal(dyn_cast<Function>(called), AA, subconstant_args, TLI, &augmentedutils, /*differentialReturns*/!gutils->isConstantValue(op));
@@ -3870,6 +3902,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                   }
                 } else {
                   assert(additionalValue);
+                  if (!topLevel && op->getNumUses() != 0 && !op->doesNotAccessMemory()) {
+                        cachereplace = gutils->addMalloc(BuilderZ, op);
+                  }
                   if( (called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) && !gutils->isConstantValue(op) ) {
                     IRBuilder<> bb(op);
                     auto newip = gutils->addMalloc(bb, nullptr);
@@ -3883,6 +3918,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 IRBuilder<> builder(op);
                 tape = gutils->addMalloc(builder, tape);
 
+              } else {
+                  if (!topLevel && op->getNumUses() != 0 && !op->doesNotAccessMemory()) {
+                        cachereplace = gutils->addMalloc(BuilderZ, op);
+                  }
               }
               auto newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called), subconstant_args, TLI, AA, retUsed, !gutils->isConstantValue(inst) && !inst->getType()->isPointerTy(), /*topLevel*/replaceFunction, nullptr, tape ? tape->getType() : nullptr);//, LI, DT);
 
@@ -3948,10 +3987,18 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 			  if (inst->getNumUses() != 0 && !gutils->isConstantValue(inst))
               	setDiffe(inst, Constant::getNullValue(inst->getType()));
               
-              if (augmentcall) {
+              if (augmentcall || cachereplace) {
 
                 if (!called->getReturnType()->isVoidTy()) {
-                  auto dcall = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {1}));
+                  Instruction* dcall = nullptr;
+                  if (augmentcall) {
+                    dcall = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {1}));
+                  } 
+                  if (cachereplace) {
+                    assert(dcall == nullptr);
+                    dcall = cast<Instruction>(cachereplace);
+                  }
+
                   gutils->originalInstructions.insert(dcall);
                   gutils->nonconstant.insert(dcall);
                   if (!gutils->isConstantValue(op))
@@ -3975,7 +4022,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 if (!gutils->isConstantValue(op))
                   gutils->nonconstant_values.insert(diffes);
                 op->eraseFromParent();
-                gutils->replaceableCalls.insert(augmentcall);
+
+                if (augmentcall)
+                    gutils->replaceableCalls.insert(augmentcall);
               } else {
                 gutils->replaceableCalls.insert(op);
               }
