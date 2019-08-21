@@ -1598,6 +1598,8 @@ public:
   ValueMap<BasicBlock*,BasicBlock*> reverseBlocks;
   BasicBlock* inversionAllocs;
   ValueToValueMapTy scopeMap;
+  ValueToValueMapTy lastScopeAlloc;
+  ValueToValueMapTy scopeFrees;
   ValueToValueMapTy originalToNewFn;
 
   Value* getNewFromOriginal(Value* originst) {
@@ -1636,7 +1638,7 @@ public:
   }
 
   Instruction* createAntiMalloc(CallInst *call) {
-    PHINode* placeholder = dyn_cast<PHINode>(invertedPointers[call]);
+    PHINode* placeholder = cast<PHINode>(invertedPointers[call]);
 	placeholder->setName("");
     IRBuilder<> bb(placeholder);
 
@@ -1646,7 +1648,22 @@ public:
 	}
     Instruction* anti = bb.CreateCall(call->getCalledFunction(), args, call->getName()+"'mi");
     cast<CallInst>(anti)->setAttributes(call->getAttributes());
-    
+     
+    invertedPointers.erase(call);
+    placeholder->replaceAllUsesWith(anti);
+    if (scopeMap.find(placeholder) != scopeMap.end()) {
+        scopeMap[call] = scopeMap[placeholder];
+        scopeMap.erase(placeholder);
+    }
+    if (scopeFrees.find(placeholder) != scopeFrees.end()) {
+        scopeFrees[call] = scopeFrees[placeholder];
+        scopeFrees.erase(placeholder);
+    }
+    if (lastScopeAlloc.find(placeholder) != lastScopeAlloc.end()) {
+        lastScopeAlloc[call] = lastScopeAlloc[placeholder];
+        lastScopeAlloc.erase(placeholder);
+    }
+
     anti = addMalloc<Instruction>(bb, anti);
      
     if (tape == nullptr) {
@@ -1663,23 +1680,76 @@ public:
         //memset->addParamAttr(0, Attribute::getWithAlignment(Context, inst->getAlignment()));
         memset->addParamAttr(0, Attribute::NonNull);
     }
-    
-    invertedPointers.erase(call);
-    placeholder->replaceAllUsesWith(anti);
+
     placeholder->eraseFromParent();
     invertedPointers[call] = anti;
     return anti;
   }
 
-  template<typename T=Value>
+  template<typename T>
   T* addMalloc(IRBuilder<> &BuilderQ, T* malloc) {
     if (tape) {
         Instruction* ret = cast<Instruction>(BuilderQ.CreateExtractValue(tape, {tapeidx}));
+        tapeidx++;
+
+        if (!ret->getType()->isEmptyTy()) {
+		
+        BasicBlock* parent = BuilderQ.GetInsertBlock();	
+	  	if (Instruction* inst = dyn_cast_or_null<Instruction>(malloc)) {
+			parent = inst->getParent();
+		}
+        	
+		LoopContext lc;
+      	bool inLoop = getContext(parent, lc);
+        if (!inLoop) {
+        } else {
+            PHINode* phi = BuilderQ.CreatePHI(cast<PointerType>(ret->getType())->getElementType(), 1);
+            
+            assert(inversionAllocs && "must be able to allocate inverted caches");
+            IRBuilder<> entryBuilder(inversionAllocs);
+            entryBuilder.setFastMathFlags(FastMathFlags::getFast());
+
+            scopeMap[phi] = entryBuilder.CreateAlloca(ret->getType(), nullptr, phi->getName()+"_mdyncache");
+            entryBuilder.CreateStore(ret, scopeMap[phi]);
+
+            auto v = lookupM(phi, BuilderQ, /*forceLookup*/true);
+            scopeMap.erase(phi);
+            phi->eraseFromParent();
+            scopeMap[v] = ret;
+
+            assert(reverseBlocks.size() > 0);
+
+                BasicBlock* outermostPreheader = nullptr;
+
+                for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx) ) {
+                    if (idx.parent == nullptr) {
+                        outermostPreheader = idx.preheader;
+                    }
+                    if (idx.parent == nullptr) break;
+                }
+                assert(outermostPreheader);
+                    IRBuilder<> tbuild(reverseBlocks[outermostPreheader]);
+                    tbuild.setFastMathFlags(FastMathFlags::getFast());
+
+                    // ensure we are before the terminator if it exists
+                    if (tbuild.GetInsertBlock()->size()) {
+                          tbuild.SetInsertPoint(tbuild.GetInsertBlock()->getFirstNonPHI());
+                    }
+                    
+                    Instruction* ci = CallInst::CreateFree(tbuild.CreatePointerCast(tbuild.CreateLoad(scopeMap[v]), Type::getInt8PtrTy(outermostPreheader->getContext())), tbuild.GetInsertBlock());
+                    if (ci->getParent()==nullptr) {
+                        tbuild.Insert(ci);
+                    }
+
+            ret = cast<Instruction>(v);
+        }
+        }
+
+        finalize:;
         if (malloc && !isa<UndefValue>(malloc)) {
           cast<Instruction>(malloc)->replaceAllUsesWith(ret);
           cast<Instruction>(malloc)->eraseFromParent();
         }
-        tapeidx++;
         if (malloc) {
             assert(malloc->getType() == ret->getType());
 			auto found = invertedPointers.find(malloc);
@@ -1692,8 +1762,30 @@ public:
     } else {
       assert(malloc);
       assert(!isa<PHINode>(malloc));
+      
+      if (isa<UndefValue>(malloc)) {
+        addedMallocs.push_back(malloc);
+        return malloc;
+      }
+
       llvm::errs() << " added malloc " << *malloc << "\n";
-      addedMallocs.push_back(malloc);
+		
+	  BasicBlock* parent = BuilderQ.GetInsertBlock();	
+	  if (Instruction* inst = dyn_cast_or_null<Instruction>(malloc)) {
+			parent = inst->getParent();
+	  }
+	  LoopContext lc;
+      bool inLoop = getContext(parent, lc);
+
+      if (!inLoop) {
+	    addedMallocs.push_back(malloc);
+        return malloc;
+      }
+
+      ensureLookupCached(cast<Instruction>(malloc));
+      assert(scopeMap[malloc]);
+      assert(lastScopeAlloc[malloc]);
+      addedMallocs.push_back(lastScopeAlloc[malloc]);
       return malloc;
     }
   }
@@ -1976,14 +2068,220 @@ endCheck:
             report_fatal_error("unable to unwrap");
     }
 
-    Value* lookupM(Value* val, IRBuilder<>& BuilderM) {
+    void ensureLookupCached(Instruction* inst) {
+        if (scopeMap.find(inst) != scopeMap.end()) return;
+
+        LoopContext lc;
+        bool inLoop = getContext(inst->getParent(), lc);
+            
+        assert(inversionAllocs && "must be able to allocate inverted caches");
+        IRBuilder<> entryBuilder(inversionAllocs);
+        entryBuilder.setFastMathFlags(FastMathFlags::getFast());
+
+        if (!inLoop) {
+            scopeMap[inst] = entryBuilder.CreateAlloca(inst->getType(), nullptr, inst->getName()+"_cache");
+            auto pn = dyn_cast<PHINode>(inst);
+            Instruction* putafter = ( pn && pn->getNumIncomingValues()>0 )? (inst->getParent()->getFirstNonPHI() ): inst->getNextNonDebugInstruction();
+            assert(putafter);
+            IRBuilder <> v(putafter);
+            v.setFastMathFlags(FastMathFlags::getFast());
+            v.CreateStore(inst, scopeMap[inst]);
+        } else {
+
+            ValueToValueMapTy valmap;
+            Value* size = nullptr;
+
+            BasicBlock* outermostPreheader = nullptr;
+
+            for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx) ) {
+                if (idx.parent == nullptr) {
+                    outermostPreheader = idx.preheader;
+                }
+                if (idx.parent == nullptr) break;
+            }
+            assert(outermostPreheader);
+
+            IRBuilder <> allocationBuilder(&outermostPreheader->back());
+
+            for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx) ) {
+              //TODO handle allocations for dynamic loops
+              if (idx.dynamic && idx.parent != nullptr) {
+                assert(idx.var);
+                assert(idx.var->getParent());
+                assert(idx.var->getParent()->getParent());
+                llvm::errs() << *idx.var->getParent()->getParent() << "\n"
+                    << "idx.var=" <<*idx.var << "\n"
+                    << "idx.limit=" <<*idx.limit << "\n";
+                llvm::errs() << "cannot handle non-outermost dynamic loop\n";
+                assert(0 && "cannot handle non-outermost dynamic loop");
+              }
+              Value* ns = nullptr;
+              if (idx.dynamic) {
+                ns = ConstantInt::get(idx.limit->getType(), 1);
+              } else {
+                Value* limitm1 = nullptr;
+                ValueToValueMapTy emptyMap;
+                limitm1 = unwrapM(idx.limit, allocationBuilder, emptyMap, /*lookupIfAble*/false);
+                if (limitm1 == nullptr) {
+                    assert(outermostPreheader);
+                    assert(outermostPreheader->getParent());
+                    llvm::errs() << *outermostPreheader->getParent() << "\n";
+                    llvm::errs() << "needed value " << *idx.limit << " at " << allocationBuilder.GetInsertBlock()->getName() << "\n";
+                }
+                assert(limitm1);
+                ns = allocationBuilder.CreateNUWAdd(limitm1, ConstantInt::get(idx.limit->getType(), 1));
+              }
+              if (size == nullptr) size = ns;
+              else size = allocationBuilder.CreateNUWMul(size, ns);
+              if (idx.parent == nullptr) break;
+            }
+
+            auto firstallocation = CallInst::CreateMalloc(
+                    &allocationBuilder.GetInsertBlock()->back(),
+                    size->getType(),
+                    inst->getType(),
+                    ConstantInt::get(size->getType(), allocationBuilder.GetInsertBlock()->getParent()->getParent()->getDataLayout().getTypeAllocSizeInBits(inst->getType())/8), size, nullptr, inst->getName()+"_malloccache");
+            CallInst* malloccall = dyn_cast<CallInst>(firstallocation);
+            if (malloccall == nullptr) {
+                malloccall = cast<CallInst>(cast<Instruction>(firstallocation)->getOperand(0));
+            }
+            malloccall->addAttribute(AttributeList::ReturnIndex, Attribute::NoAlias);
+            //allocationBuilder.GetInsertBlock()->getInstList().push_back(cast<Instruction>(allocation));
+            cast<Instruction>(firstallocation)->moveBefore(allocationBuilder.GetInsertBlock()->getTerminator());
+            scopeMap[inst] = entryBuilder.CreateAlloca(firstallocation->getType(), nullptr, inst->getName()+"_mdyncache");
+            lastScopeAlloc[inst] = firstallocation;
+            allocationBuilder.CreateStore(firstallocation, scopeMap[inst]);	
+
+                assert(reverseBlocks.size());
+
+                IRBuilder<> tbuild(reverseBlocks[outermostPreheader]);
+                tbuild.setFastMathFlags(FastMathFlags::getFast());
+
+                // ensure we are before the terminator if it exists
+                if (tbuild.GetInsertBlock()->size()) {
+                      tbuild.SetInsertPoint(tbuild.GetInsertBlock()->getFirstNonPHI());
+                }
+                
+                auto ci = CallInst::CreateFree(tbuild.CreatePointerCast(tbuild.CreateLoad(scopeMap[inst]), Type::getInt8PtrTy(outermostPreheader->getContext())), tbuild.GetInsertBlock());
+                scopeFrees[inst] = ci;
+                if (ci->getParent()==nullptr) {
+                    tbuild.Insert(ci);
+                }
+
+            auto pn = dyn_cast<PHINode>(inst);
+            Instruction* putafter = ( pn && pn->getNumIncomingValues()>0 )? (inst->getParent()->getFirstNonPHI() ): inst->getNextNonDebugInstruction();
+            IRBuilder <> v(putafter);
+            v.setFastMathFlags(FastMathFlags::getFast());
+
+            SmallVector<Value*,3> indices;
+            SmallVector<Value*,3> limits;
+            PHINode* dynamicPHI = nullptr;
+
+            for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx) ) {
+              indices.push_back(idx.var);
+                
+              if (idx.dynamic) {
+                dynamicPHI = idx.var;
+                assert(dynamicPHI);
+                llvm::errs() << "saw idx.dynamic:" << *dynamicPHI << "\n";
+                assert(idx.parent == nullptr);
+                break;
+              }
+
+              if (idx.parent == nullptr) break;
+              ValueToValueMapTy emptyMap;
+              auto limitm1 = unwrapM(idx.limit, v, emptyMap, /*lookupIfAble*/false);
+              assert(limitm1);
+              auto lim = v.CreateNUWAdd(limitm1, ConstantInt::get(idx.limit->getType(), 1));
+              if (limits.size() != 0) {
+                lim = v.CreateNUWMul(lim, limits.back());
+              }
+              limits.push_back(lim);
+            }
+
+            Value* idx = nullptr;
+            for(unsigned i=0; i<indices.size(); i++) {
+              if (i == 0) {
+                idx = indices[i];
+              } else {
+                auto mul = v.CreateNUWMul(indices[i], limits[i-1]);
+                idx = v.CreateNUWAdd(idx, mul);
+              }
+            }
+
+            Value* allocation = nullptr;
+            if (dynamicPHI == nullptr) {
+                IRBuilder<> outerBuilder(&outermostPreheader->back());
+                allocation = outerBuilder.CreateLoad(scopeMap[inst]);
+            } else {
+                Type *BPTy = Type::getInt8PtrTy(v.GetInsertBlock()->getContext());
+                auto realloc = newFunc->getParent()->getOrInsertFunction("realloc", BPTy, BPTy, size->getType());
+                allocation = v.CreateLoad(scopeMap[inst]);
+                auto foo = v.CreateNUWAdd(dynamicPHI, ConstantInt::get(dynamicPHI->getType(), 1));
+                Value* idxs[2] = {
+                    v.CreatePointerCast(allocation, BPTy),
+                    v.CreateNUWMul(
+                        ConstantInt::get(size->getType(), newFunc->getParent()->getDataLayout().getTypeAllocSizeInBits(inst->getType())/8), 
+                        v.CreateNUWMul(
+                            size, foo
+                        ) 
+                    )
+                };
+
+                Value* realloccall = nullptr;
+                allocation = v.CreatePointerCast(realloccall = v.CreateCall(realloc, idxs, inst->getName()+"_realloccache"), allocation->getType());
+                lastScopeAlloc[inst] = allocation;
+                v.CreateStore(allocation, scopeMap[inst]);
+            }
+
+            Value* idxs[] = {idx};
+            auto gep = v.CreateGEP(allocation, idxs);
+            v.CreateStore(inst, gep);
+        }
+    }
+
+    Instruction* fixLCSSA(Instruction* inst, const IRBuilder <>& BuilderM) {
+        LoopContext lc;
+        bool inLoop = getContext(inst->getParent(), lc);
+        if (inLoop) {
+            bool isChildLoop = false;
+
+            auto builderLoop = LI.getLoopFor(originalForReverseBlock(*BuilderM.GetInsertBlock()));
+            while (builderLoop) {
+              if (builderLoop->getHeader() == lc.header) {
+                isChildLoop = true;
+                break;
+              }
+              builderLoop = builderLoop->getParentLoop();
+            }
+
+            if (!isChildLoop) {
+                llvm::errs() << "manually performing lcssa for instruction" << *inst << " in block " << BuilderM.GetInsertBlock()->getName() << "\n";
+                if (!DT.dominates(inst, originalForReverseBlock(*BuilderM.GetInsertBlock()))) {
+                    this->newFunc->dump();
+                    originalForReverseBlock(*BuilderM.GetInsertBlock())->dump();
+                    BuilderM.GetInsertBlock()->dump();
+                    inst->dump();
+                }
+                assert(DT.dominates(inst, originalForReverseBlock(*BuilderM.GetInsertBlock())));
+                IRBuilder<> lcssa(&lc.exit->front());
+                auto lcssaPHI = lcssa.CreatePHI(inst->getType(), 1, inst->getName()+"!manual_lcssa");
+                for(auto pred : predecessors(lc.exit))
+                    lcssaPHI->addIncoming(inst, pred);
+                return lcssaPHI;
+            }
+        }
+        return inst;
+    }
+
+    Value* lookupM(Value* val, IRBuilder<>& BuilderM, bool forceLookup=false) {
         if (isa<Constant>(val)) return val;
-        auto M = BuilderM.GetInsertBlock()->getParent()->getParent();
         if (auto inst = dyn_cast<Instruction>(val)) {
             if (this->inversionAllocs && inst->getParent() == this->inversionAllocs) {
                 return val;
             }
             
+            if (!forceLookup) {
             if (this->isOriginalBlock(*BuilderM.GetInsertBlock())) {
                 if (BuilderM.GetInsertBlock()->size() && BuilderM.GetInsertPoint() != BuilderM.GetInsertBlock()->end()) {
                     if (this->DT.dominates(inst, &*BuilderM.GetInsertPoint())) {
@@ -1997,222 +2295,34 @@ endCheck:
                     }
                 }
             }
+            }
+
+            val = inst = fixLCSSA(inst, BuilderM);
 
             assert(!this->isOriginalBlock(*BuilderM.GetInsertBlock()));
             LoopContext lc;
             bool inLoop = getContext(inst->getParent(), lc);
-
-            ValueToValueMapTy emptyMap;
-            
+ 
             ValueToValueMapTy available;
             if (inLoop) {
                 for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx)) {
                   available[idx.var] = idx.antivar;
                   if (idx.parent == nullptr) break;
-                }
-                
-                bool isChildLoop = false;
-
-                auto builderLoop = LI.getLoopFor(originalForReverseBlock(*BuilderM.GetInsertBlock()));
-                while (builderLoop) {
-                  if (builderLoop->getHeader() == lc.header) {
-                    isChildLoop = true;
-                    break;
-                  }
-                  builderLoop = builderLoop->getParentLoop();
-                }
-                if (!isChildLoop) {
-                    llvm::errs() << "manually performing lcssa for instruction" << *inst << " in block " << BuilderM.GetInsertBlock()->getName() << "\n";
-                    if (!DT.dominates(inst, originalForReverseBlock(*BuilderM.GetInsertBlock()))) {
-                        this->newFunc->dump();
-                        originalForReverseBlock(*BuilderM.GetInsertBlock())->dump();
-                        BuilderM.GetInsertBlock()->dump();
-                        inst->dump();
-                    }
-                    assert(DT.dominates(inst, originalForReverseBlock(*BuilderM.GetInsertBlock())));
-                    IRBuilder<> lcssa(&lc.exit->front());
-                    auto lcssaPHI = lcssa.CreatePHI(inst->getType(), 1, inst->getName()+"!manual_lcssa");
-                    for(auto pred : predecessors(lc.exit))
-                        lcssaPHI->addIncoming(inst, pred);
-                    return lookupM(lcssaPHI, BuilderM);
-                }
+                }    
             }
+
             if (!shouldRecompute(inst, available)) {
                 auto op = unwrapM(inst, BuilderM, available, /*lookupIfAble*/true);
                 assert(op);
                 return op;
             }
 
-            assert(inversionAllocs && "must be able to allocate inverted caches");
-            IRBuilder<> entryBuilder(inversionAllocs);
-            entryBuilder.setFastMathFlags(FastMathFlags::getFast());
+            ensureLookupCached(inst);
 
             if (!inLoop) {
-                if (scopeMap.find(val) == scopeMap.end()) {
-                    scopeMap[val] = entryBuilder.CreateAlloca(val->getType(), nullptr, val->getName()+"_cache");
-                    auto pn = dyn_cast<PHINode>(inst);
-                    Instruction* putafter = ( pn && pn->getNumIncomingValues()>0 )? (inst->getParent()->getFirstNonPHI() ): inst->getNextNonDebugInstruction();
-                    assert(putafter);
-                    IRBuilder <> v(putafter);
-                    v.setFastMathFlags(FastMathFlags::getFast());
-                    v.CreateStore(val, scopeMap[val]);
-                }
-                auto result = BuilderM.CreateLoad(scopeMap[val]);
+                auto result = BuilderM.CreateLoad(scopeMap[inst]);
                 return result;
             } else {
-                if (scopeMap.find(val) == scopeMap.end()) {
-
-                    ValueToValueMapTy valmap;
-                    Value* size = nullptr;
-
-                    BasicBlock* outermostPreheader = nullptr;
-
-                    for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx) ) {
-                        if (idx.parent == nullptr) {
-                            outermostPreheader = idx.preheader;
-                        }
-                        if (idx.parent == nullptr) break;
-                    }
-                    assert(outermostPreheader);
-
-                    IRBuilder <> allocationBuilder(&outermostPreheader->back());
-
-                    for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx) ) {
-					  //TODO handle allocations for dynamic loops
-					  if (idx.dynamic && idx.parent != nullptr) {
-                        assert(idx.var);
-                        assert(idx.var->getParent());
-                        assert(idx.var->getParent()->getParent());
-                        llvm::errs() << *idx.var->getParent()->getParent() << "\n"
-                            << "idx.var=" <<*idx.var << "\n"
-                            << "idx.limit=" <<*idx.limit << "\n";
-                        llvm::errs() << "cannot handle non-outermost dynamic loop\n";
-						assert(0 && "cannot handle non-outermost dynamic loop");
-					  }
-                      Value* ns = nullptr;
-					  if (idx.dynamic) {
-						ns = ConstantInt::get(idx.limit->getType(), 1);
-					  } else {
-                        Value* limitm1 = nullptr;
-                        limitm1 = unwrapM(idx.limit, allocationBuilder, emptyMap, /*lookupIfAble*/false);
-                        if (limitm1 == nullptr) {
-                            assert(outermostPreheader);
-                            assert(outermostPreheader->getParent());
-                            llvm::errs() << *outermostPreheader->getParent() << "\n";
-                            llvm::errs() << "needed value " << *idx.limit << " at " << allocationBuilder.GetInsertBlock()->getName() << "\n";
-                        }
-                        assert(limitm1);
-						ns = allocationBuilder.CreateNUWAdd(limitm1, ConstantInt::get(idx.limit->getType(), 1));
-					  }
-                      if (size == nullptr) size = ns;
-                      else size = allocationBuilder.CreateNUWMul(size, ns);
-                      if (idx.parent == nullptr) break;
-                    }
-
-                    auto firstallocation = CallInst::CreateMalloc(
-                            &allocationBuilder.GetInsertBlock()->back(),
-                            size->getType(),
-                            val->getType(),
-                            ConstantInt::get(size->getType(), allocationBuilder.GetInsertBlock()->getParent()->getParent()->getDataLayout().getTypeAllocSizeInBits(val->getType())/8), size, nullptr, val->getName()+"_malloccache");
-					CallInst* malloccall = dyn_cast<CallInst>(firstallocation);
-					if (malloccall == nullptr) {
-						malloccall = cast<CallInst>(cast<Instruction>(firstallocation)->getOperand(0));
-					}
-					malloccall->addAttribute(AttributeList::ReturnIndex, Attribute::NoAlias);
-                    //allocationBuilder.GetInsertBlock()->getInstList().push_back(cast<Instruction>(allocation));
-                    cast<Instruction>(firstallocation)->moveBefore(allocationBuilder.GetInsertBlock()->getTerminator());
-                    scopeMap[val] = entryBuilder.CreateAlloca(firstallocation->getType(), nullptr, val->getName()+"_mdyncache");
-                    allocationBuilder.CreateStore(firstallocation, scopeMap[val]);	
-
-                      if (reverseBlocks.size() != 0) {
-                        IRBuilder<> tbuild(reverseBlocks[outermostPreheader]);
-                        tbuild.setFastMathFlags(FastMathFlags::getFast());
-
-                        // ensure we are before the terminator if it exists
-                        if (tbuild.GetInsertBlock()->size()) {
-                              tbuild.SetInsertPoint(tbuild.GetInsertBlock()->getFirstNonPHI());
-                        }
-                      	
-                        auto ci = CallInst::CreateFree(tbuild.CreatePointerCast(tbuild.CreateLoad(scopeMap[val]), Type::getInt8PtrTy(outermostPreheader->getContext())), tbuild.GetInsertBlock());
-                        if (ci->getParent()==nullptr) {
-                            tbuild.Insert(ci);
-                        }
-                      } else {
-                          llvm::errs() << "warning not freeing lookupM allocation\n";
-                          report_fatal_error("not freeing lookupM allocation");
-                      }
-
-                    auto pn = dyn_cast<PHINode>(inst);
-                    Instruction* putafter = ( pn && pn->getNumIncomingValues()>0 )? (inst->getParent()->getFirstNonPHI() ): inst->getNextNonDebugInstruction();
-                    IRBuilder <> v(putafter);
-                    v.setFastMathFlags(FastMathFlags::getFast());
-
-                    SmallVector<Value*,3> indices;
-                    SmallVector<Value*,3> limits;
-					PHINode* dynamicPHI = nullptr;
-
-                    for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx) ) {
-                      indices.push_back(idx.var);
-                        
-					  if (idx.dynamic) {
-						dynamicPHI = idx.var;
-                        assert(dynamicPHI);
-						llvm::errs() << "saw idx.dynamic:" << *dynamicPHI << "\n";
-						assert(idx.parent == nullptr);
-						break;
-					  }
-
-                      if (idx.parent == nullptr) break;
-                      auto limitm1 = unwrapM(idx.limit, v, emptyMap, /*lookupIfAble*/false);
-                      assert(limitm1);
-                      auto lim = v.CreateNUWAdd(limitm1, ConstantInt::get(idx.limit->getType(), 1));
-                      if (limits.size() != 0) {
-                        lim = v.CreateNUWMul(lim, limits.back());
-                      }
-                      limits.push_back(lim);
-                    }
-
-                    Value* idx = nullptr;
-                    for(unsigned i=0; i<indices.size(); i++) {
-                      if (i == 0) {
-                        idx = indices[i];
-                      } else {
-                        auto mul = v.CreateNUWMul(indices[i], limits[i-1]);
-                        idx = v.CreateNUWAdd(idx, mul);
-                      }
-                    }
-
-					Value* allocation = nullptr;
-					if (dynamicPHI == nullptr) {
-						//allocation = scopeMap[val];
-						IRBuilder<> outerBuilder(&outermostPreheader->back());
-						allocation = outerBuilder.CreateLoad(scopeMap[val]);
-					} else {
-						Type *BPTy = Type::getInt8PtrTy(v.GetInsertBlock()->getContext());
-						auto realloc = M->getOrInsertFunction("realloc", BPTy, BPTy, size->getType());
-						allocation = v.CreateLoad(scopeMap[val]);
-						auto foo = v.CreateNUWAdd(dynamicPHI, ConstantInt::get(dynamicPHI->getType(), 1));
-						Value* idxs[2] = {
-							v.CreatePointerCast(allocation, BPTy),
-							v.CreateNUWMul(
-								ConstantInt::get(size->getType(), M->getDataLayout().getTypeAllocSizeInBits(val->getType())/8), 
-								v.CreateNUWMul(
-									size, foo
-								) 
-							)
-						};
-
-                        Value* realloccall = nullptr;
-						allocation = v.CreatePointerCast(realloccall = v.CreateCall(realloc, idxs, val->getName()+"_realloccache"), allocation->getType());
-						v.CreateStore(allocation, scopeMap[val]);
-					}
-
-                    Value* idxs[] = {idx};
-                    auto gep = v.CreateGEP(allocation, idxs);
-					v.CreateStore(val, gep);
-                }
-                assert(inLoop);
-
                 SmallVector<Value*,3> indices;
                 SmallVector<Value*,3> limits;
                 for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx) ) {
@@ -2238,7 +2348,7 @@ endCheck:
                 }
 
                 Value* idxs[] = {idx};
-				Value* tolookup = BuilderM.CreateLoad(scopeMap[val]);
+				Value* tolookup = BuilderM.CreateLoad(scopeMap[inst]);
                 return BuilderM.CreateLoad(BuilderM.CreateGEP(tolookup, idxs));
             }
         }
@@ -3910,17 +4020,17 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 gutils->invertedPointers[op] = newip;
               }
             } else {
+			  //TODO unknown type for tape phi
               assert(additionalValue);
               if (!topLevel && op->getNumUses() != 0 && !op->doesNotAccessMemory()) {
-                    cachereplace = gutils->addMalloc<Instruction>(BuilderZ, nullptr);
+					cachereplace = IRBuilder<>(op).CreatePHI(op->getType(), 1);
+                    cachereplace = gutils->addMalloc<Instruction>(BuilderZ, cachereplace);
               }
               if( (called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) && !gutils->isConstantValue(op) ) {
                 IRBuilder<> bb(op);
-                auto newip = gutils->addMalloc<Instruction>(bb, nullptr);
                 auto placeholder = cast<PHINode>(gutils->invertedPointers[op]);
                 if (I != E && placeholder == &*I) I++;
-                placeholder->replaceAllUsesWith(newip);
-                placeholder->eraseFromParent();
+                auto newip = gutils->addMalloc<Instruction>(bb, placeholder);
                 gutils->invertedPointers[op] = newip;
               }
             }
@@ -3929,7 +4039,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
           } else {
               if (!topLevel && op->getNumUses() != 0 && !op->doesNotAccessMemory()) {
-                    cachereplace = gutils->addMalloc<Instruction>(BuilderZ, nullptr);
+					cachereplace = IRBuilder<>(op).CreatePHI(op->getType(), 1);
+                    cachereplace = gutils->addMalloc<Instruction>(BuilderZ, cachereplace);
               }
           }
 
