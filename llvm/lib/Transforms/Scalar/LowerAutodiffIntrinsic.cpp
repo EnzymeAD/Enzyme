@@ -1545,6 +1545,24 @@ bool isCertainMallocOrFree(Function* called) {
     return false;
 }
 
+bool isCertainPrintOrFree(Function* called) {
+    if (called == nullptr) return false;
+    
+    if (called->getName() == "printf" || called->getName() == "puts" || called->getName() == "_ZdlPv" || called->getName() == "_ZdlPvm" || called->getName() == "free") return true;
+    switch(called->getIntrinsicID()) {
+            case Intrinsic::dbg_declare:
+            case Intrinsic::dbg_value:
+            case Intrinsic::dbg_label:
+            case Intrinsic::dbg_addr:
+            case Intrinsic::lifetime_start:
+            case Intrinsic::lifetime_end:
+                return true;
+            default:
+                break;
+    }
+    return false;
+}
+
 bool isCertainPrintMallocOrFree(Function* called) {
     if (called == nullptr) return false;
     
@@ -1580,7 +1598,6 @@ public:
   ValueMap<BasicBlock*,BasicBlock*> reverseBlocks;
   BasicBlock* inversionAllocs;
   ValueToValueMapTy scopeMap;
-  std::vector<Instruction*> addedFrees;
   ValueToValueMapTy originalToNewFn;
 
   Value* getNewFromOriginal(Value* originst) {
@@ -1617,24 +1634,45 @@ public:
     assert(addedMallocs.size() == 0);
     tape = newtape;
   }
-  Instruction* addMallocAndMemset(IRBuilder <> &BuilderQ, Instruction* malloc, Instruction* memset) {
-    assert(malloc);
-    assert(memset);
-    if (tape) {
-        Instruction* ret = cast<Instruction>(BuilderQ.CreateExtractValue(tape, {tapeidx}));
-        malloc->replaceAllUsesWith(ret);
-        malloc->eraseFromParent();
-        memset->eraseFromParent();
-        tapeidx++;
-        return ret;
-    } else {
-      assert(!isa<PHINode>(malloc));
-      addedMallocs.push_back(malloc);
-      return malloc;
+
+  Instruction* createAntiMalloc(CallInst *call) {
+    PHINode* placeholder = dyn_cast<PHINode>(invertedPointers[call]);
+	placeholder->setName("");
+    IRBuilder<> bb(placeholder);
+
+	SmallVector<Value*, 8> args;
+	for(unsigned i=0;i < call->getNumArgOperands(); i++) {
+		args.push_back(call->getArgOperand(i));
+	}
+    Instruction* anti = bb.CreateCall(call->getCalledFunction(), args, call->getName()+"'mi");
+    cast<CallInst>(anti)->setAttributes(call->getAttributes());
+    
+    anti = addMalloc<Instruction>(bb, anti);
+     
+    if (tape == nullptr) {
+        Value *nargs[] = {
+            bb.CreateBitCast(anti,Type::getInt8PtrTy(call->getContext())),
+            ConstantInt::get(Type::getInt8Ty(call->getContext()), 0),
+            bb.CreateZExtOrTrunc(call->getArgOperand(0), Type::getInt64Ty(call->getContext())),
+            ConstantInt::getFalse(call->getContext())
+        };
+
+        Type *tys[] = {nargs[0]->getType(), nargs[2]->getType()};
+
+        auto memset = cast<CallInst>(bb.CreateCall(Intrinsic::getDeclaration(newFunc->getParent(), Intrinsic::memset, tys), nargs));
+        //memset->addParamAttr(0, Attribute::getWithAlignment(Context, inst->getAlignment()));
+        memset->addParamAttr(0, Attribute::NonNull);
     }
+    
+    invertedPointers.erase(call);
+    placeholder->replaceAllUsesWith(anti);
+    placeholder->eraseFromParent();
+    invertedPointers[call] = anti;
+    return anti;
   }
 
-  Value* addMalloc(IRBuilder<> &BuilderQ, Value* malloc) {
+  template<typename T=Value>
+  T* addMalloc(IRBuilder<> &BuilderQ, T* malloc) {
     if (tape) {
         Instruction* ret = cast<Instruction>(BuilderQ.CreateExtractValue(tape, {tapeidx}));
         if (malloc && !isa<UndefValue>(malloc)) {
@@ -1644,6 +1682,11 @@ public:
         tapeidx++;
         if (malloc) {
             assert(malloc->getType() == ret->getType());
+			auto found = invertedPointers.find(malloc);
+			if (found != invertedPointers.end()) {
+				invertedPointers.erase(malloc);
+				invertedPointers[ret] = found->second;
+			}
         }
         return ret;
     } else {
@@ -1652,35 +1695,6 @@ public:
       llvm::errs() << " added malloc " << *malloc << "\n";
       addedMallocs.push_back(malloc);
       return malloc;
-    }
-  }
-
-  std::pair<Instruction*,Instruction*> addMallocAndAnti(IRBuilder<> &BuilderQ, Instruction* malloc, Instruction* antiptr) {
-    if (tape) {
-        Instruction* ret = cast<Instruction>(BuilderQ.CreateExtractValue(tape, {tapeidx}));
-        if (malloc) {
-          malloc->replaceAllUsesWith(ret);
-          malloc->eraseFromParent();
-        }
-        tapeidx++;
-
-        Instruction* ret2 = nullptr;
-        if (antiptr) {
-            ret2 = cast<Instruction>(BuilderQ.CreateExtractValue(tape, {tapeidx}));
-            antiptr->replaceAllUsesWith(ret2);
-            antiptr->eraseFromParent();
-            tapeidx++;
-        }
-        return std::pair<Instruction*,Instruction*>(ret, ret2);
-    } else {
-      assert(malloc);
-      assert(!isa<PHINode>(malloc));
-      addedMallocs.push_back(malloc);
-      if (antiptr) {
-        assert(!isa<PHINode>(antiptr));
-        addedMallocs.push_back(antiptr);
-      }
-      return std::pair<Instruction*,Instruction*>(malloc, antiptr);
     }
   }
 
@@ -1750,10 +1764,12 @@ public:
   }
 
   bool isConstantValue(Value* val) {
+	cast<Value>(val);
     return isconstantValueM(val, constants, nonconstant, nonconstant_values, originalInstructions);
   };
  
   bool isConstantInstruction(Instruction* val) {
+	cast<Instruction>(val);
     return isconstantM(val, constants, nonconstant, nonconstant_values, originalInstructions);
   }
 
@@ -1833,18 +1849,24 @@ public:
 
           Function *called = op->getCalledFunction();
 
-          if(!called) continue;
-          if (called->empty()) continue;
           if (this->isConstantValue(op)) continue;
 
-          if (isCertainPrintMallocOrFree(called)) continue;
+          if (isCertainPrintOrFree(called)) continue;
+          
+		  if (!called) continue;
+          if (called->empty() && !(called->getName() == "malloc" || called->getName() == "_Znwm")) continue;
 
           if (!called->getReturnType()->isPointerTy() && !called->getReturnType()->isIntegerTy()) continue;
 
           if (this->invertedPointers.find(called) != this->invertedPointers.end()) continue;
+			//llvm::errs() << " creating placeholder for instruction " << *op << "\n";
             IRBuilder<> BuilderZ(op->getNextNonDebugInstruction());
             BuilderZ.setFastMathFlags(FastMathFlags::getFast());
             this->invertedPointers[op] = BuilderZ.CreatePHI(called->getReturnType(), 1);
+          
+			if (called->getName() == "malloc" || called->getName() == "_Znwm") {
+				this->invertedPointers[op]->setName(op->getName()+"'mi");
+			}
         }
       }
   }
@@ -1953,6 +1975,7 @@ endCheck:
             return nullptr;
             report_fatal_error("unable to unwrap");
     }
+
     Value* lookupM(Value* val, IRBuilder<>& BuilderM) {
         if (isa<Constant>(val)) return val;
         auto M = BuilderM.GetInsertBlock()->getParent()->getParent();
@@ -2091,6 +2114,11 @@ endCheck:
                             size->getType(),
                             val->getType(),
                             ConstantInt::get(size->getType(), allocationBuilder.GetInsertBlock()->getParent()->getParent()->getDataLayout().getTypeAllocSizeInBits(val->getType())/8), size, nullptr, val->getName()+"_malloccache");
+					CallInst* malloccall = dyn_cast<CallInst>(firstallocation);
+					if (malloccall == nullptr) {
+						malloccall = cast<CallInst>(cast<Instruction>(firstallocation)->getOperand(0));
+					}
+					malloccall->addAttribute(AttributeList::ReturnIndex, Attribute::NoAlias);
                     //allocationBuilder.GetInsertBlock()->getInstList().push_back(cast<Instruction>(allocation));
                     cast<Instruction>(firstallocation)->moveBefore(allocationBuilder.GetInsertBlock()->getTerminator());
                     scopeMap[val] = entryBuilder.CreateAlloca(firstallocation->getType(), nullptr, val->getName()+"_mdyncache");
@@ -2114,7 +2142,8 @@ endCheck:
                           report_fatal_error("not freeing lookupM allocation");
                       }
 
-                    Instruction* putafter = isa<PHINode>(inst) ? (inst->getParent()->getFirstNonPHI() ): inst->getNextNonDebugInstruction();
+                    auto pn = dyn_cast<PHINode>(inst);
+                    Instruction* putafter = ( pn && pn->getNumIncomingValues()>0 )? (inst->getParent()->getFirstNonPHI() ): inst->getNextNonDebugInstruction();
                     IRBuilder <> v(putafter);
                     v.setFastMathFlags(FastMathFlags::getFast());
 
@@ -2293,62 +2322,6 @@ endCheck:
             memset->addParamAttr(0, Attribute::getWithAlignment(inst->getContext(), inst->getAlignment()));
             memset->addParamAttr(0, Attribute::NonNull);
             return lookupM(invertedPointers[inst], BuilderM);
-      } else if (auto call = dyn_cast<CallInst>(val)) {
-        if (call->getCalledFunction() && (call->getCalledFunction()->getName() == "malloc" || call->getCalledFunction()->getName() == "_Znwm") ) {
-                IRBuilder<> bb(call);
-                {
-                SmallVector<Value*, 8> args;
-                for(unsigned i=0;i < call->getNumArgOperands(); i++) {
-                    args.push_back(call->getArgOperand(i));
-                }
-                invertedPointers[val] = bb.CreateCall(call->getCalledFunction(), args, call->getName()+"'mi");
-                }
-
-                cast<CallInst>(invertedPointers[val])->setAttributes(call->getAttributes());
-
-                {
-            Value *nargs[] = {
-                bb.CreateBitCast(invertedPointers[val],Type::getInt8PtrTy(val->getContext())),
-                ConstantInt::get(Type::getInt8Ty(val->getContext()), 0),
-                bb.CreateZExtOrTrunc(call->getArgOperand(0), Type::getInt64Ty(val->getContext())), ConstantInt::getFalse(val->getContext())
-            };
-            Type *tys[] = {nargs[0]->getType(), nargs[2]->getType()};
-
-            auto memset = cast<CallInst>(bb.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::memset, tys), nargs));
-            //memset->addParamAttr(0, Attribute::getWithAlignment(Context, inst->getAlignment()));
-            memset->addParamAttr(0, Attribute::NonNull);
-            invertedPointers[val] = addMallocAndMemset(bb, cast<Instruction>(invertedPointers[val]), cast<Instruction>(memset));
-                }
-
-                if (reverseBlocks.size()) {
-                    IRBuilder<> freeBuilder(reverseBlocks[call->getParent()]);
-                    if (auto term = freeBuilder.GetInsertBlock()->getTerminator()) {
-                        freeBuilder.SetInsertPoint(term);
-                    }
-                    freeBuilder.setFastMathFlags(FastMathFlags::getFast());
-                    Instruction* ci;
-                    if (call->getCalledFunction()->getName() == "malloc")
-                      ci = CallInst::CreateFree(freeBuilder.CreatePointerCast(lookupM(invertedPointers[val], freeBuilder), Type::getInt8PtrTy(call->getContext())), freeBuilder.GetInsertBlock());
-                    else {
-                      Type *VoidTy = Type::getVoidTy(M->getContext());
-                      Type *IntPtrTy = Type::getInt8PtrTy(M->getContext());
-                      // or should do _ZdlPv vs _ZdlPvm
-                      auto FreeFunc = M->getOrInsertFunction("_ZdlPv", VoidTy, IntPtrTy);
-                      ci = CallInst::Create(FreeFunc, {freeBuilder.CreatePointerCast(lookupM(invertedPointers[val], freeBuilder), Type::getInt8PtrTy(call->getContext()))}, "", freeBuilder.GetInsertBlock());
-                      cast<CallInst>(ci)->setTailCall();
-                      if (Function *F = dyn_cast<Function>(FreeFunc))
-                        cast<CallInst>(ci)->setCallingConv(F->getCallingConv());
-                    }
-                    if (ci->getParent()==nullptr) {
-                      freeBuilder.Insert(ci);
-                    }
-                    addedFrees.push_back(ci);
-                } else {
-                }
-
-            return lookupM(invertedPointers[val], BuilderM);
-        }
-      
       } else if (auto phi = dyn_cast<PHINode>(val)) {
 		 std::map<Value*,std::set<BasicBlock*>> mapped;
 		 for(unsigned int i=0; i<phi->getNumIncomingValues(); i++) {
@@ -2718,16 +2691,29 @@ Function* CreateAugmentedPrimal(Function* todiff, AAResults &AA, const SmallSet<
             if (called && (called->getName() == "printf" || called->getName() == "puts"))
                 continue;
 
-            if (called && (called->getName()=="malloc" || called->getName()=="free" ||
-                called->getName()=="_Znwm" || called->getName()=="_ZdlPv" ||
-                called->getName()=="_ZdlPvm"))
+            if (called && (called->getName()=="malloc" || called->getName()=="_Znwm")) {
+		  		//TODO enable this if we need to free the memory
+                if (false && op->getNumUses() != 0) {
+                    IRBuilder<> BuilderZ(op);
+                    gutils->addMalloc<Instruction>(BuilderZ, op);
+                }
+                if (!gutils->isConstantValue(op)) {
+                    auto placeholder = cast<PHINode>(gutils->invertedPointers[op]);
+                    gutils->createAntiMalloc(op);
+                    if (I != E && placeholder == &*I) I++;
+                }
                 continue;
-            
+            }
+
+            if (called && (called->getName()=="free" ||
+                called->getName()=="_ZdlPv" || called->getName()=="_ZdlPvm"))
+                continue;
+
             if (op->getNumUses() != 0 && !op->doesNotAccessMemory()) {
               IRBuilder<> BuilderZ(op);
-              gutils->addMalloc(BuilderZ, op);
+              gutils->addMalloc<Instruction>(BuilderZ, op);
             }
-            
+
             if (gutils->isConstantInstruction(op))
               continue;
 
@@ -2799,6 +2785,7 @@ Function* CreateAugmentedPrimal(Function* todiff, AAResults &AA, const SmallSet<
                   }
                   assert(op->getType() == rv->getType());
                   llvm::errs() << "augmented considering differential ip of " << called->getName() << " " << *called->getReturnType() << " " << gutils->isConstantValue(op) << "\n";
+                  
                   if ((called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) && !gutils->isConstantValue(op)) {
                     auto newip = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {2}));
                     auto placeholder = cast<PHINode>(gutils->invertedPointers[op]);
@@ -2808,8 +2795,9 @@ Function* CreateAugmentedPrimal(Function* todiff, AAResults &AA, const SmallSet<
                     placeholder->eraseFromParent();
                     gutils->invertedPointers[rv] = newip;
                     antiptr = newip;
-                    gutils->addMalloc(BuilderZ, antiptr);
+                    gutils->addMalloc<Instruction>(BuilderZ, antiptr);
                   }
+
                   op->replaceAllUsesWith(rv);
                 }
                 //todo consider how to propagate antiptr
@@ -2819,7 +2807,7 @@ Function* CreateAugmentedPrimal(Function* todiff, AAResults &AA, const SmallSet<
                     cast<Instruction>(tp)->eraseFromParent();
                     tp = UndefValue::get(tpt);
                 }
-                gutils->addMalloc(BuilderZ, tp);
+                gutils->addMalloc<Value>(BuilderZ, tp);
                 op->eraseFromParent();
               }
         } else if(isa<LoadInst>(inst)) {
@@ -2843,8 +2831,6 @@ Function* CreateAugmentedPrimal(Function* todiff, AAResults &AA, const SmallSet<
         }
      }
   }
-
-  assert(gutils->addedFrees.size() == 0);
 
   auto nf = gutils->newFunc;
   
@@ -3266,8 +3252,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     gutils->getContext(BB, loopContext);
   }
 
-  //if (topLevel)
-    gutils->forceAugmentedReturns();
+  gutils->forceAugmentedReturns();
 
   for(BasicBlock* BB: gutils->originalBlocks) {
 
@@ -3622,29 +3607,57 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         }
 
         if (called && called->getName()=="malloc") {
-          if (true) {
-             auto ci = CallInst::CreateFree(Builder2.CreatePointerCast(lookup(inst), Type::getInt8PtrTy(Context)), Builder2.GetInsertBlock());
-             if (ci->getParent()==nullptr) {
-               Builder2.Insert(ci);
-             }
+
+          if (!gutils->isConstantValue(inst)) { 
+            auto placeholder = cast<PHINode>(gutils->invertedPointers[op]);
+            auto anti = gutils->createAntiMalloc(op);
+            if (I != E && placeholder == &*I) I++; 
+            auto ci = CallInst::CreateFree(Builder2.CreatePointerCast(lookup(anti), Type::getInt8PtrTy(Context)), Builder2.GetInsertBlock());
+            if (ci->getParent()==nullptr) Builder2.Insert(ci);
           }
+          
+		  //TODO enable this if we need to free the memory
+		  // NOTE THAT TOPLEVEL IS THERE SIMPLY BECAUSE THAT WAS PREVIOUS ATTITUTE TO FREE'ing
+		  if (topLevel) {
+		     if (!topLevel && op->getNumUses() != 0) {
+               IRBuilder<> BuilderZ(op);
+               inst = gutils->addMalloc<Instruction>(BuilderZ, op);
+             }
+             auto ci = CallInst::CreateFree(Builder2.CreatePointerCast(lookup(inst), Type::getInt8PtrTy(Context)), Builder2.GetInsertBlock());
+             if (ci->getParent()==nullptr) Builder2.Insert(ci);
+          }
+
           continue;
         } 
         
         if (called && called->getName()=="_Znwm") {
-          if (true) {
-              Type *VoidTy = Type::getVoidTy(M->getContext());
-              Type *IntPtrTy = Type::getInt8PtrTy(M->getContext());
-              //TODO _ZdlPv or _ZdlPvm
-              auto FreeFunc = M->getOrInsertFunction("_ZdlPv", VoidTy, IntPtrTy);
-              auto ci = CallInst::Create(FreeFunc, {Builder2.CreatePointerCast(lookup(inst), Type::getInt8PtrTy(Context))}, "", Builder2.GetInsertBlock());
-              cast<CallInst>(ci)->setTailCall();
-              if (Function *F = dyn_cast<Function>(FreeFunc))
-                cast<CallInst>(ci)->setCallingConv(F->getCallingConv());
+          //TODO _ZdlPv or _ZdlPvm
+          Type *VoidTy = Type::getVoidTy(Context);
+          Type *IntPtrTy = Type::getInt8PtrTy(Context);
+          auto FreeFunc = M->getOrInsertFunction("_ZdlPv", VoidTy, IntPtrTy);
 
-              if (ci->getParent()==nullptr) {
-                Builder2.Insert(ci);
+          if (!gutils->isConstantValue(op)) { 
+            auto placeholder = cast<PHINode>(gutils->invertedPointers[op]);
+            auto anti = gutils->createAntiMalloc(op);
+            if (I != E && placeholder == &*I) I++;
+              
+            auto ci = cast<CallInst>(CallInst::Create(FreeFunc, {Builder2.CreatePointerCast(lookup(anti), Type::getInt8PtrTy(Context))}, "", Builder2.GetInsertBlock()));
+            ci->setTailCall();
+            if (Function *F = dyn_cast<Function>(FreeFunc)) ci->setCallingConv(F->getCallingConv());
+            if (ci->getParent()==nullptr) Builder2.Insert(ci);
+          }
+          
+		  //TODO enable this if we need to free the memory
+		  // NOTE THAT TOPLEVEL IS THERE SIMPLY BECAUSE THAT WAS PREVIOUS ATTITUTE TO FREE'ing
+          if (topLevel) {
+		      if (!topLevel && op->getNumUses() != 0) {
+                IRBuilder<> BuilderZ(op);
+                inst = gutils->addMalloc<Instruction>(BuilderZ, op);
               }
+              auto ci = cast<CallInst>(CallInst::Create(FreeFunc, {Builder2.CreatePointerCast(lookup(inst), Type::getInt8PtrTy(Context))}, "", Builder2.GetInsertBlock()));
+              ci->setTailCall();
+              if (Function *F = dyn_cast<Function>(FreeFunc)) ci->setCallingConv(F->getCallingConv());
+              if (ci->getParent()==nullptr) Builder2.Insert(ci);
           }
           continue;
         }
@@ -3669,7 +3682,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             //TODO HANDLE FREE
         }
         
-        if (called && called->getName()=="_ZdlPv" || called->getName()=="_ZdlPvm") {
+        if (called && (called->getName()=="_ZdlPv" || called->getName()=="_ZdlPvm")) {
             llvm::Value* val = op->getArgOperand(0);
             while(auto cast = dyn_cast<CastInst>(val)) val = cast->getOperand(0);
             if (auto dc = dyn_cast<CallInst>(val)) {
@@ -3687,7 +3700,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
         if (gutils->isConstantInstruction(op)) {
           if (!topLevel && op->getNumUses() != 0 && !op->doesNotAccessMemory()) {
             IRBuilder<> BuilderZ(op);
-            gutils->addMalloc(BuilderZ, op);
+            gutils->addMalloc<Instruction>(BuilderZ, op);
           }
           continue;
         }
@@ -3735,8 +3748,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
             if ( (argType->isPointerTy() || argType->isIntegerTy()) && !gutils->isConstantValue(op->getArgOperand(i)) ) {
                 argsInverted.push_back(DIFFE_TYPE::DUP_ARG);
-                args.push_back(invertPointer(op->getArgOperand(i)));
-                pre_args.push_back(gutils->invertPointerM(op->getArgOperand(i), BuilderZ));
+                args.push_back(gutils->invertPointerM(op->getArgOperand(i), Builder2));
+				pre_args.push_back(gutils->invertPointerM(op->getArgOperand(i), BuilderZ));
 
                 //TODO this check should consider whether this pointer has allocation/etc modifications and so on
                 if (! ( called->hasParamAttribute(i, Attribute::ReadOnly) || called->hasParamAttribute(i, Attribute::ReadNone)) ) {
@@ -3873,7 +3886,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
           Value* tape = nullptr;
           GradientUtils *augmentedutils = nullptr;
           CallInst* augmentcall = nullptr;
-          Value* cachereplace = nullptr;
+          Instruction* cachereplace = nullptr;
           if (modifyPrimal) {
             if (topLevel) {
               auto newcalled = CreateAugmentedPrimal(dyn_cast<Function>(called), AA, subconstant_args, TLI, &augmentedutils, /*differentialReturns*/!gutils->isConstantValue(op));
@@ -3899,11 +3912,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             } else {
               assert(additionalValue);
               if (!topLevel && op->getNumUses() != 0 && !op->doesNotAccessMemory()) {
-                    cachereplace = gutils->addMalloc(BuilderZ, nullptr);
+                    cachereplace = gutils->addMalloc<Instruction>(BuilderZ, nullptr);
               }
               if( (called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) && !gutils->isConstantValue(op) ) {
                 IRBuilder<> bb(op);
-                auto newip = gutils->addMalloc(bb, nullptr);
+                auto newip = gutils->addMalloc<Instruction>(bb, nullptr);
                 auto placeholder = cast<PHINode>(gutils->invertedPointers[op]);
                 if (I != E && placeholder == &*I) I++;
                 placeholder->replaceAllUsesWith(newip);
@@ -3912,11 +3925,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               }
             }
             IRBuilder<> builder(op);
-            tape = gutils->addMalloc(builder, tape);
+            tape = gutils->addMalloc<Value>(builder, tape);
 
           } else {
               if (!topLevel && op->getNumUses() != 0 && !op->doesNotAccessMemory()) {
-                    cachereplace = gutils->addMalloc(BuilderZ, nullptr);
+                    cachereplace = gutils->addMalloc<Instruction>(BuilderZ, nullptr);
               }
           }
 
@@ -4188,10 +4201,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
   
   if (!topLevel)
     gutils->eraseStructuralStoresAndCalls();
-
-  for(auto ci:gutils->addedFrees) {
-    ci->moveBefore(ci->getParent()->getTerminator());
-  }
 
   while(gutils->inversionAllocs->size() > 0) {
     gutils->inversionAllocs->back().moveBefore(gutils->newFunc->getEntryBlock().getFirstNonPHIOrDbgOrLifetimeOrAlloca());

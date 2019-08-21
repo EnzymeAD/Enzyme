@@ -1,4 +1,4 @@
-; RUN: opt < %s -lower-autodiff -functionattrs -inline -mem2reg -adce -aggressive-instcombine -instsimplify -early-cse-memssa -simplifycfg -correlated-propagation -adce -S | FileCheck %s
+; RUN: opt < %s -lower-autodiff -inline -mem2reg -adce -aggressive-instcombine -instsimplify -early-cse-memssa -simplifycfg -correlated-propagation -adce -S | FileCheck %s
 
 ; #include <stdlib.h>
 ; #include <stdio.h>
@@ -170,9 +170,9 @@ attributes #8 = { builtin nounwind }
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = add nuw i64 %n, 1
 ; CHECK-NEXT:   %mallocsize.i = mul i64 %0, 8
-; CHECK-NEXT:   %malloccall.i = call i8* @malloc(i64 %mallocsize.i) #5
+; CHECK-NEXT:   %malloccall.i = call noalias i8* @malloc(i64 %mallocsize.i) #5
 ; CHECK-NEXT:   %"call'mi_malloccache.i" = bitcast i8* %malloccall.i to i8**
-; CHECK-NEXT:   %[[call_malloc:.+]] = call i8* @malloc(i64 %mallocsize.i) #5
+; CHECK-NEXT:   %[[call_malloc:.+]] = call noalias i8* @malloc(i64 %mallocsize.i) #5
 ; CHECK-NEXT:   %call_malloccache.i = bitcast i8* %[[call_malloc]] to i8**
 ; CHECK-NEXT:   br label %for.body.i
 
@@ -181,13 +181,13 @@ attributes #8 = { builtin nounwind }
 ; CHECK-NEXT:   %1 = phi %class.node* [ null, %entry ], [ %"'ipc.i", %for.body.i ]
 ; CHECK-NEXT:   %list.09.i = phi %class.node* [ null, %entry ], [ %5, %for.body.i ]
 ; CHECK-NEXT:   %2 = icmp ult i64 %indvars.iv.i, %n
-; CHECK-NEXT:   %"call'mi.i" = call i8* @_Znwm(i64 16) #10
-; CHECK-NEXT:   %3 = getelementptr i8*, i8** %"call'mi_malloccache.i", i64 %indvars.iv.i
-; CHECK-NEXT:   store i8* %"call'mi.i", i8** %3
-; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull %"call'mi.i", i8 0, i64 16, i1 false) #5
 ; CHECK-NEXT:   %call.i = call i8* @_Znwm(i64 16) #10
-; CHECK-NEXT:   %4 = getelementptr i8*, i8** %call_malloccache.i, i64 %indvars.iv.i
-; CHECK-NEXT:   store i8* %call.i, i8** %4
+; CHECK-NEXT:   %[[callgep:.+]] = getelementptr i8*, i8** %call_malloccache.i, i64 %indvars.iv.i
+; CHECK-NEXT:   store i8* %call.i, i8** %[[callgep]]
+; CHECK-NEXT:   %"call'mi.i" = call i8* @_Znwm(i64 16) #10
+; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull %"call'mi.i", i8 0, i64 16, i1 false) #5
+; CHECK-NEXT:   %[[callpgep:.+]] = getelementptr i8*, i8** %"call'mi_malloccache.i", i64 %indvars.iv.i
+; CHECK-NEXT:   store i8* %"call'mi.i", i8** %[[callpgep]]
 ; CHECK-NEXT:   %5 = bitcast i8* %call.i to %class.node*
 ; CHECK-NEXT:   %value.i.i = bitcast i8* %call.i to double*
 ; CHECK-NEXT:   store double %x, double* %value.i.i, align 8, !tbaa !2
@@ -206,18 +206,20 @@ attributes #8 = { builtin nounwind }
 ; CHECK-NEXT:   %"indvars.iv'phi.i" = phi i64 [ %n, %[[invertdelete]] ], [ %[[isub:.+]], %invertfor.body.i ]
 ; CHECK-NEXT:   %[[isub]] = sub i64 %"indvars.iv'phi.i", 1
 ; CHECK-NEXT:   %8 = getelementptr i8*, i8** %"call'mi_malloccache.i", i64 %"indvars.iv'phi.i"
-; CHECK-NEXT:   %9 = load i8*, i8** %8
+; CHECK-NEXT:   %[[callpload2free:.+]] = load i8*, i8** %8
 ; CHECK-NEXT:   %"value.i'ipc.i" = bitcast i8* %9 to double*
 ; CHECK-NEXT:   %10 = load double, double* %"value.i'ipc.i"
+; this store is optional and could get removed by DCE
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"value.i'ipc.i"
 ; CHECK-NEXT:   %[[xadd]] = fadd fast double %"x'de.0.i", %10
-; this store is optional and could get removed by DCE
-; CHECK-NEXT:   %12 = getelementptr i8*, i8** %call_malloccache.i, i64 %"indvars.iv'phi.i"
-; CHECK-NEXT:   %13 = load i8*, i8** %12
-; CHECK-NEXT:   call void @_ZdlPv(i8* %13) #5
-; CHECK-NEXT:   %14 = icmp ne i64 %"indvars.iv'phi.i", 0
-; CHECK-NEXT:   call void @_ZdlPv(i8* %9) #5
-; CHECK-NEXT:   br i1 %14, label %invertfor.body.i, label %diffe_Z12list_creatordm.exit
+; this reload really should be eliminated
+; CHECK-NEXT:   %[[recallpload2free:.+]] = load i8*, i8** %8
+; CHECK-NEXT:   call void @_ZdlPv(i8* %[[recallpload2free]]) #5
+; CHECK-NEXT:   %[[heregep:.+]] = getelementptr i8*, i8** %call_malloccache.i, i64 %"indvars.iv'phi.i"
+; CHECK-NEXT:   %[[callload2free:.+]] = load i8*, i8** %[[heregep]]
+; CHECK-NEXT:   call void @_ZdlPv(i8* %[[callload2free]]) #5
+; CHECK-NEXT:   %[[cmpinst:.+]] = icmp ne i64 %"indvars.iv'phi.i", 0
+; CHECK-NEXT:   br i1 %[[cmpinst]], label %invertfor.body.i, label %diffe_Z12list_creatordm.exit
 
 ; CHECK: [[invertdelete]]:                               ; preds = %for.body.i
 ; CHECK-NEXT:   %[[dsum:.+]] = call {} @diffe_Z8sum_listPK4node(%class.node* nonnull %5, %class.node* nonnull %"'ipc.i", double 1.000000e+00)
@@ -236,7 +238,7 @@ attributes #8 = { builtin nounwind }
 ; CHECK-NEXT:   br i1 %cmp6, label %invertfor.end, label %for.body
 
 ; CHECK: for.body.preheader:
-; CHECK-NEXT:   %malloccall = tail call i8* @malloc(i64 8)
+; CHECK-NEXT:   %malloccall = tail call noalias i8* @malloc(i64 8)
 ; CHECK-NEXT:   %_malloccache = bitcast i8* %malloccall to %class.node**
 ; CHECK-NEXT:   br label %for.body
 

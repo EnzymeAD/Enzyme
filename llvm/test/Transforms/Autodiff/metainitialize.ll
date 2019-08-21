@@ -175,9 +175,9 @@ attributes #5 = { nounwind }
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:  %conv = zext i32 %n to i64
 ; CHECK-NEXT:  %mul = shl nuw nsw i64 %conv, 3
+; CHECK-NEXT:  %call = tail call i8* @malloc(i64 %mul)
 ; CHECK-NEXT:  %"call'mi" = tail call i8* @malloc(i64 %mul)
 ; CHECK-NEXT:  tail call void @llvm.memset.p0i8.i64(i8* nonnull align 1 %"call'mi", i8 0, i64 %mul, i1 false)
-; CHECK-NEXT:  %call = tail call i8* @malloc(i64 %mul)
 ; CHECK-NEXT:  %0 = bitcast double** %arrayp to i8**
 ; CHECK-NEXT:  %"'ipc" = bitcast double** %"arrayp'" to i8**
 ; CHECK-NEXT:  store i8* %"call'mi", i8** %"'ipc", align 8
