@@ -742,9 +742,6 @@ Function* preprocessForClone(Function *F, AAResults &AA) {
      j++;
  }
 
- // Loop over the arguments, copying the names of the mapped arguments over...
- Function::arg_iterator DestI = NewF->arg_begin();
-
  SmallVector <ReturnInst*,4> Returns;
  CloneFunctionInto(NewF, F, VMap, F->getSubprogram() != nullptr, Returns, "",
                    nullptr);
@@ -858,7 +855,6 @@ unsigned int count = 0;
                 break;
             }}
           }
-        } else if (auto pt = dyn_cast<ArrayType>(bc->getOperand(0)->getType())) {
         }
     }
  }
@@ -1589,6 +1585,7 @@ public:
   DominatorTree DT;
   SmallPtrSet<Value*,4> constants;
   SmallPtrSet<Value*,20> nonconstant;
+  SmallPtrSet<Value*,2> nonconstant_values;
   LoopInfo LI;
   AssumptionCache AC;
   ScalarEvolution SE;
@@ -1646,21 +1643,21 @@ public:
 	for(unsigned i=0;i < call->getNumArgOperands(); i++) {
 		args.push_back(call->getArgOperand(i));
 	}
-    Instruction* anti = bb.CreateCall(call->getCalledFunction(), args, call->getName()+"'mi");
+    Instruction* anti = bb.CreateCall(call->getCalledFunction(), args, call->getName()+"'ami");
     cast<CallInst>(anti)->setAttributes(call->getAttributes());
      
     invertedPointers.erase(call);
     placeholder->replaceAllUsesWith(anti);
     if (scopeMap.find(placeholder) != scopeMap.end()) {
-        scopeMap[call] = scopeMap[placeholder];
+        scopeMap[anti] = scopeMap[placeholder];
         scopeMap.erase(placeholder);
     }
     if (scopeFrees.find(placeholder) != scopeFrees.end()) {
-        scopeFrees[call] = scopeFrees[placeholder];
+        scopeFrees[anti] = scopeFrees[placeholder];
         scopeFrees.erase(placeholder);
     }
     if (lastScopeAlloc.find(placeholder) != lastScopeAlloc.end()) {
-        lastScopeAlloc[call] = lastScopeAlloc[placeholder];
+        lastScopeAlloc[anti] = lastScopeAlloc[placeholder];
         lastScopeAlloc.erase(placeholder);
     }
 
@@ -1683,6 +1680,7 @@ public:
 
     placeholder->eraseFromParent();
     invertedPointers[call] = anti;
+    anti->dump();
     return anti;
   }
 
@@ -1691,6 +1689,7 @@ public:
     if (tape) {
         Instruction* ret = cast<Instruction>(BuilderQ.CreateExtractValue(tape, {tapeidx}));
         tapeidx++;
+        
 
         if (!ret->getType()->isEmptyTy()) {
 		
@@ -1703,19 +1702,28 @@ public:
       	bool inLoop = getContext(parent, lc);
         if (!inLoop) {
         } else {
-            PHINode* phi = BuilderQ.CreatePHI(cast<PointerType>(ret->getType())->getElementType(), 1);
-            
-            assert(inversionAllocs && "must be able to allocate inverted caches");
+            ret->eraseFromParent();
             IRBuilder<> entryBuilder(inversionAllocs);
             entryBuilder.setFastMathFlags(FastMathFlags::getFast());
+            ret = cast<Instruction>(entryBuilder.CreateExtractValue(tape, {tapeidx-1}));
+
+            PHINode* phi = BuilderQ.CreatePHI(cast<PointerType>(ret->getType())->getElementType(), 1);
+            if (malloc) assert(phi->getType() == malloc->getType());
+            
 
             scopeMap[phi] = entryBuilder.CreateAlloca(ret->getType(), nullptr, phi->getName()+"_mdyncache");
             entryBuilder.CreateStore(ret, scopeMap[phi]);
 
             auto v = lookupM(phi, BuilderQ, /*forceLookup*/true);
+            assert(v != phi);
+            if (malloc) {
+                assert(v->getType() == malloc->getType());
+            }
+            scopeMap[v] = scopeMap[phi];
             scopeMap.erase(phi);
             phi->eraseFromParent();
-            scopeMap[v] = ret;
+
+            scopeMap[v]->dump();
 
             assert(reverseBlocks.size() > 0);
 
@@ -1745,18 +1753,37 @@ public:
         }
         }
 
-        finalize:;
         if (malloc && !isa<UndefValue>(malloc)) {
           cast<Instruction>(malloc)->replaceAllUsesWith(ret);
-          cast<Instruction>(malloc)->eraseFromParent();
-        }
-        if (malloc) {
             assert(malloc->getType() == ret->getType());
 			auto found = invertedPointers.find(malloc);
 			if (found != invertedPointers.end()) {
 				invertedPointers.erase(malloc);
 				invertedPointers[ret] = found->second;
 			}
+            if (scopeMap.find(malloc) != scopeMap.end()) {
+                for( auto u : scopeMap[malloc]->users()) {
+                    if (auto li = dyn_cast<LoadInst>(u)) {
+                        li->setOperand(0, scopeMap[ret]);
+                    } else if (auto si = dyn_cast<StoreInst>(u)) {
+                        si->eraseFromParent();
+                    } else if (auto ci = dyn_cast<CastInst>(u)) {
+                      for( auto u2 : ci->users()) {
+                            auto cali = cast<CallInst>(u2);
+                            assert(cali->getName() == "free" || cali->getName() == "realloc");
+                            cali->eraseFromParent();
+                      }
+                      ci->eraseFromParent();
+                    } else {
+                        assert(0 && "illegal use for scopeMap");
+                    }
+                    //TODO consider realloc/free
+                }
+                scopeMap.erase(malloc);
+            }
+            assert(scopeFrees.find(malloc) == scopeFrees.end());
+            assert(lastScopeAlloc.find(malloc) == lastScopeAlloc.end());
+          cast<Instruction>(malloc)->eraseFromParent();
         }
         return ret;
     } else {
@@ -1782,7 +1809,7 @@ public:
         return malloc;
       }
 
-      ensureLookupCached(cast<Instruction>(malloc));
+      ensureLookupCached(cast<Instruction>(malloc), /*shouldFree=*/false);
       assert(scopeMap[malloc]);
       assert(lastScopeAlloc[malloc]);
       addedMallocs.push_back(lastScopeAlloc[malloc]);
@@ -1793,10 +1820,9 @@ public:
   const SmallVectorImpl<Value*> & getMallocs() const {
     return addedMallocs;
   }
-  SmallPtrSet<Value*,2> nonconstant_values;
 protected:
   GradientUtils(Function* newFunc_, TargetLibraryInfo &TLI, ValueToValueMapTy& invertedPointers_, const SmallPtrSetImpl<Value*> &constants_, const SmallPtrSetImpl<Value*> &nonconstant_, const SmallPtrSetImpl<Value*> &returnvals_, ValueToValueMapTy& originalToNewFn_) :
-      newFunc(newFunc_), invertedPointers(), constants(constants_.begin(), constants_.end()), nonconstant(nonconstant_.begin(), nonconstant_.end()), nonconstant_values(returnvals_.begin(), returnvals_.end()), DT(*newFunc_), LI(DT), AC(*newFunc_), SE(*newFunc_, TLI, AC, DT, LI), inversionAllocs(nullptr) {
+      newFunc(newFunc_), invertedPointers(), DT(*newFunc_), constants(constants_.begin(), constants_.end()), nonconstant(nonconstant_.begin(), nonconstant_.end()), nonconstant_values(returnvals_.begin(), returnvals_.end()), LI(DT), AC(*newFunc_), SE(*newFunc_, TLI, AC, DT, LI), inversionAllocs(nullptr) {
         invertedPointers.insert(invertedPointers_.begin(), invertedPointers_.end());  
         originalToNewFn.insert(originalToNewFn_.begin(), originalToNewFn_.end());  
           for (BasicBlock &BB: *newFunc) {
@@ -1808,6 +1834,7 @@ protected:
         tape = nullptr;
         tapeidx = 0;
         assert(originalBlocks.size() > 0);
+        inversionAllocs = BasicBlock::Create(newFunc_->getContext(), "allocsForInversion", newFunc);
     }
 
 public:
@@ -1841,6 +1868,8 @@ public:
             return BB;
         }
     }
+    newFunc->dump();
+    BB2.dump();
     report_fatal_error("could not find original block for given reverse block");
   }
  
@@ -2068,7 +2097,7 @@ endCheck:
             report_fatal_error("unable to unwrap");
     }
 
-    void ensureLookupCached(Instruction* inst) {
+    void ensureLookupCached(Instruction* inst, bool shouldFree=true) {
         if (scopeMap.find(inst) != scopeMap.end()) return;
 
         LoopContext lc;
@@ -2152,6 +2181,8 @@ endCheck:
             lastScopeAlloc[inst] = firstallocation;
             allocationBuilder.CreateStore(firstallocation, scopeMap[inst]);	
 
+
+            if (shouldFree) {
                 assert(reverseBlocks.size());
 
                 IRBuilder<> tbuild(reverseBlocks[outermostPreheader]);
@@ -2167,6 +2198,7 @@ endCheck:
                 if (ci->getParent()==nullptr) {
                     tbuild.Insert(ci);
                 }
+            }
 
             auto pn = dyn_cast<PHINode>(inst);
             Instruction* putafter = ( pn && pn->getNumIncomingValues()>0 )? (inst->getParent()->getFirstNonPHI() ): inst->getNextNonDebugInstruction();
@@ -2246,7 +2278,12 @@ endCheck:
         if (inLoop) {
             bool isChildLoop = false;
 
-            auto builderLoop = LI.getLoopFor(originalForReverseBlock(*BuilderM.GetInsertBlock()));
+            BasicBlock* forwardBlock = BuilderM.GetInsertBlock();
+            if (!isOriginalBlock(*forwardBlock)) {
+                forwardBlock = originalForReverseBlock(*forwardBlock);
+            }
+
+            auto builderLoop = LI.getLoopFor(forwardBlock);
             while (builderLoop) {
               if (builderLoop->getHeader() == lc.header) {
                 isChildLoop = true;
@@ -2257,13 +2294,13 @@ endCheck:
 
             if (!isChildLoop) {
                 llvm::errs() << "manually performing lcssa for instruction" << *inst << " in block " << BuilderM.GetInsertBlock()->getName() << "\n";
-                if (!DT.dominates(inst, originalForReverseBlock(*BuilderM.GetInsertBlock()))) {
+                if (!DT.dominates(inst, forwardBlock)) {
                     this->newFunc->dump();
-                    originalForReverseBlock(*BuilderM.GetInsertBlock())->dump();
+                    forwardBlock->dump();
                     BuilderM.GetInsertBlock()->dump();
                     inst->dump();
                 }
-                assert(DT.dominates(inst, originalForReverseBlock(*BuilderM.GetInsertBlock())));
+                assert(DT.dominates(inst, forwardBlock));
                 IRBuilder<> lcssa(&lc.exit->front());
                 auto lcssaPHI = lcssa.CreatePHI(inst->getType(), 1, inst->getName()+"!manual_lcssa");
                 for(auto pred : predecessors(lc.exit))
@@ -2275,13 +2312,34 @@ endCheck:
     }
 
     Value* lookupM(Value* val, IRBuilder<>& BuilderM, bool forceLookup=false) {
-        if (isa<Constant>(val)) return val;
-        if (auto inst = dyn_cast<Instruction>(val)) {
-            if (this->inversionAllocs && inst->getParent() == this->inversionAllocs) {
-                return val;
-            }
-            
-            if (!forceLookup) {
+        if (isa<Constant>(val)) {
+            return val;
+        }
+        if (isa<BasicBlock>(val)) {
+            return val;
+        }
+        if (isa<Function>(val)) {
+            return val;
+        }
+        if (isa<UndefValue>(val)) {
+            return val;
+        }
+        if (isa<Argument>(val)) {
+            return val;
+        }
+        if (isa<MetadataAsValue>(val)) {
+            return val;
+        }
+        if (!isa<Instruction>(val)) {
+            val->dump();
+        }
+
+        auto inst = cast<Instruction>(val);
+        if (!forceLookup && inversionAllocs && inst->getParent() == inversionAllocs) {
+            return val;
+        }
+        
+        if (!forceLookup) {
             if (this->isOriginalBlock(*BuilderM.GetInsertBlock())) {
                 if (BuilderM.GetInsertBlock()->size() && BuilderM.GetInsertPoint() != BuilderM.GetInsertBlock()->end()) {
                     if (this->DT.dominates(inst, &*BuilderM.GetInsertPoint())) {
@@ -2295,65 +2353,70 @@ endCheck:
                     }
                 }
             }
-            }
-
             val = inst = fixLCSSA(inst, BuilderM);
+        }
 
-            assert(!this->isOriginalBlock(*BuilderM.GetInsertBlock()));
-            LoopContext lc;
-            bool inLoop = getContext(inst->getParent(), lc);
- 
-            ValueToValueMapTy available;
-            if (inLoop) {
-                for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx)) {
-                  available[idx.var] = idx.antivar;
-                  if (idx.parent == nullptr) break;
-                }    
-            }
+        assert(!this->isOriginalBlock(*BuilderM.GetInsertBlock()) || forceLookup);
+        LoopContext lc;
+        bool inLoop = getContext(inst->getParent(), lc);
 
+        ValueToValueMapTy available;
+        if (inLoop) {
+            for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx)) {
+              if (!isOriginalBlock(*BuilderM.GetInsertBlock())) {
+                available[idx.var] = idx.antivar;
+              } else {
+                available[idx.var] = idx.var;
+              }
+              if (idx.parent == nullptr) break;
+            }    
+        }
+        
+        if (!forceLookup) {
             if (!shouldRecompute(inst, available)) {
                 auto op = unwrapM(inst, BuilderM, available, /*lookupIfAble*/true);
                 assert(op);
                 return op;
             }
-
-            ensureLookupCached(inst);
-
-            if (!inLoop) {
-                auto result = BuilderM.CreateLoad(scopeMap[inst]);
-                return result;
-            } else {
-                SmallVector<Value*,3> indices;
-                SmallVector<Value*,3> limits;
-                for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx) ) {
-                  indices.push_back(idx.antivar);
-                  if (idx.parent == nullptr) break;
-
-                  auto limitm1 = unwrapM(idx.limit, BuilderM, available, /*lookupIfAble*/true);
-                  assert(limitm1);
-                  auto lim = BuilderM.CreateNUWAdd(limitm1, ConstantInt::get(idx.limit->getType(), 1));
-                  if (limits.size() != 0) {
-                    lim = BuilderM.CreateNUWMul(lim, limits.back());
-                  }
-                  limits.push_back(lim);
-                }
-
-                Value* idx = nullptr;
-                for(unsigned i=0; i<indices.size(); i++) {
-                  if (i == 0) {
-                    idx = indices[i];
-                  } else {
-                    idx = BuilderM.CreateNUWAdd(idx, BuilderM.CreateNUWMul(indices[i], limits[i-1]));
-                  }
-                }
-
-                Value* idxs[] = {idx};
-				Value* tolookup = BuilderM.CreateLoad(scopeMap[inst]);
-                return BuilderM.CreateLoad(BuilderM.CreateGEP(tolookup, idxs));
-            }
         }
 
-        return val;
+        ensureLookupCached(inst);
+
+        if (!inLoop) {
+            auto result = BuilderM.CreateLoad(scopeMap[inst]);
+            assert(result->getType() == inst->getType());
+            return result;
+        } else {
+            SmallVector<Value*,3> indices;
+            SmallVector<Value*,3> limits;
+            for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx) ) {
+              indices.push_back(unwrapM(idx.var, BuilderM, available, /*lookupIfAble*/false));
+              if (idx.parent == nullptr) break;
+
+              auto limitm1 = unwrapM(idx.limit, BuilderM, available, /*lookupIfAble*/true);
+              assert(limitm1);
+              auto lim = BuilderM.CreateNUWAdd(limitm1, ConstantInt::get(idx.limit->getType(), 1));
+              if (limits.size() != 0) {
+                lim = BuilderM.CreateNUWMul(lim, limits.back());
+              }
+              limits.push_back(lim);
+            }
+
+            Value* idx = nullptr;
+            for(unsigned i=0; i<indices.size(); i++) {
+              if (i == 0) {
+                idx = indices[i];
+              } else {
+                idx = BuilderM.CreateNUWAdd(idx, BuilderM.CreateNUWMul(indices[i], limits[i-1]));
+              }
+            }
+
+            Value* idxs[] = {idx};
+            Value* tolookup = BuilderM.CreateLoad(scopeMap[inst]);
+            auto result = BuilderM.CreateLoad(BuilderM.CreateGEP(tolookup, idxs));
+            assert(result->getType() == inst->getType());
+            return result;
+        }
     };
     
     Value* invertPointerM(Value* val, IRBuilder<>& BuilderM) {
@@ -2494,7 +2557,6 @@ class DiffeGradientUtils : public GradientUtils {
   DiffeGradientUtils(Function* newFunc_, TargetLibraryInfo &TLI, ValueToValueMapTy& invertedPointers_, const SmallPtrSetImpl<Value*> &constants_, const SmallPtrSetImpl<Value*> &nonconstant_, const SmallPtrSetImpl<Value*> &returnvals_, ValueToValueMapTy &origToNew_)
       : GradientUtils(newFunc_, TLI, invertedPointers_, constants_, nonconstant_, returnvals_, origToNew_) {
         prepareForReverse();
-        inversionAllocs = BasicBlock::Create(newFunc_->getContext(), "allocsForInversion", newFunc);
     }
 
 public:
@@ -2954,6 +3016,13 @@ Function* CreateAugmentedPrimal(Function* todiff, AAResults &AA, const SmallSet<
       }
     }
   }
+  
+  while(gutils->inversionAllocs->size() > 0) {
+    gutils->inversionAllocs->back().moveBefore(gutils->newFunc->getEntryBlock().getFirstNonPHIOrDbgOrLifetimeOrAlloca());
+  }
+
+  (IRBuilder <>(gutils->inversionAllocs)).CreateUnreachable();
+  DeleteDeadBlock(gutils->inversionAllocs);
 
   if (llvm::verifyFunction(*gutils->newFunc, &llvm::errs())) {
     gutils->newFunc->dump();
@@ -3722,7 +3791,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             auto placeholder = cast<PHINode>(gutils->invertedPointers[op]);
             auto anti = gutils->createAntiMalloc(op);
             if (I != E && placeholder == &*I) I++; 
-            auto ci = CallInst::CreateFree(Builder2.CreatePointerCast(lookup(anti), Type::getInt8PtrTy(Context)), Builder2.GetInsertBlock());
+            auto lu = lookup(anti);
+            auto ci = CallInst::CreateFree(Builder2.CreatePointerCast(lu, Type::getInt8PtrTy(Context)), Builder2.GetInsertBlock());
             if (ci->getParent()==nullptr) Builder2.Insert(ci);
           }
           
