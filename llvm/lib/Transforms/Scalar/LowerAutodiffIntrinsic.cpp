@@ -214,8 +214,11 @@ bool isIntASecretFloat(Value* val) {
     if (auto inst = dyn_cast<Instruction>(val)) {
         bool floatingUse = false;
         bool pointerUse = false;
+        SmallPtrSet<Value*, 4> seen;
 
-        auto trackPointer = [&](Value* v) {
+        std::function<void(Value*)> trackPointer = [&](Value* v) {
+            if (seen.find(v) != seen.end()) return;
+            seen.insert(v);
             llvm::errs() << " consider val " << *val << " for v " << * v << "\n";
                 do { 
                     Type* let = cast<PointerType>(v->getType())->getElementType();
@@ -234,6 +237,12 @@ bool isIntASecretFloat(Value* val) {
                         v = gep->getOperand(0);
                         continue;
                     } 
+                    if (auto phi = dyn_cast<PHINode>(v)) {
+                        for(auto &a : phi->incoming_values()) {
+                            trackPointer(a.get());
+                        }
+                        return;
+                    }
                     break;
                 } while(1);
                     
@@ -256,7 +265,7 @@ bool isIntASecretFloat(Value* val) {
                     }
         };
 
-        for(auto &use: inst->uses()) {
+        for(User* use: inst->users()) {
             if (auto ci = dyn_cast<BitCastInst>(use)) {
                 if (ci->getDestTy()->isPointerTy()) {
                     pointerUse = true;
@@ -274,7 +283,7 @@ bool isIntASecretFloat(Value* val) {
                 continue;
             }
             
-            if (auto si = dyn_cast<StoreInst>(val)) {
+            if (auto si = dyn_cast<StoreInst>(use)) {
                 assert(inst == si->getValueOperand());
 
                 trackPointer(si->getPointerOperand());
