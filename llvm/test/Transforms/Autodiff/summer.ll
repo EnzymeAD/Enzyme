@@ -160,7 +160,7 @@ attributes #6 = { noreturn nounwind }
 ; CHECK-NEXT:   %1 = add i64 %n, -2
 ; CHECK-NEXT:   %2 = add i64 %n, -2
 ; CHECK-NEXT:   %3 = add nuw i64 %2, 1
-; CHECK-NEXT:   %malloccall = tail call noalias i8* @malloc(i64 %3)
+; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i64 %3)
 ; CHECK-NEXT:   %cmp.i_malloccache = bitcast i8* %malloccall to i1*
 ; CHECK-NEXT:   br label %for.body.for.body_crit_edge
 

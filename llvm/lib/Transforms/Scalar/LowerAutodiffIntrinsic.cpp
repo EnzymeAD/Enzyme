@@ -60,9 +60,6 @@
 #include "llvm/Analysis/ScalarEvolutionExpander.h"
 
 #include "llvm/ADT/SmallSet.h"
-using namespace llvm;
-
-#define DEBUG_TYPE "lower-autodiff-intrinsic"
 
 #include <utility>
 #include "llvm/Analysis/TargetLibraryInfo.h"
@@ -88,6 +85,12 @@ using namespace llvm;
 #include "llvm/Transforms/Scalar/LoopDeletion.h"
 #include "llvm/Analysis/LazyValueInfo.h"
 #include "llvm/Transforms/IPO/FunctionAttrs.h"
+
+using namespace llvm;
+#ifdef DEBUG_TYPE
+#undef DEBUG_TYPE
+#endif
+#define DEBUG_TYPE "lower-autodiff-intrinsic"
 
 static cl::opt<bool> autodiff_inline(
             "autodiff_inline", cl::init(false), cl::Hidden,
@@ -607,7 +610,7 @@ bool isconstantM(Instruction* inst, SmallPtrSetImpl<Value*> &constants, SmallPtr
 //    from if the value is constant (the value is something that could be differentiated)
 bool isconstantValueM(Value* val, SmallPtrSetImpl<Value*> &constants, SmallPtrSetImpl<Value*> &nonconstant, const SmallPtrSetImpl<Value*> &retvals, const SmallPtrSetImpl<Instruction*> &originalInstructions, uint8_t directions) {
     assert(val);
-	constexpr uint8_t UP = 1;
+	//constexpr uint8_t UP = 1;
 	constexpr uint8_t DOWN = 2;
 	//assert(directions >= 0);
 	assert(directions <= 3);
@@ -763,7 +766,7 @@ Function* preprocessForClone(Function *F, AAResults &AA) {
 
  }
 
-unsigned int count = 0;
+  int count = 0;
   if(autodiff_inline) {
       llvm::errs() << "running inlining process\n";
    remover:
@@ -1634,8 +1637,19 @@ public:
     tape = newtape;
   }
 
+  void dumpScope() {
+    llvm::errs() << "scope:\n";
+    for(auto a : scopeMap) {
+        llvm::errs() << "   scopeMap[" << *a.first << "] = " << *a.second << "\n";
+    }
+    llvm::errs() << "endscope\n";
+  }
+
   Instruction* createAntiMalloc(CallInst *call) {
+    assert(call->getParent()->getParent() == newFunc);
     PHINode* placeholder = cast<PHINode>(invertedPointers[call]);
+
+    assert(placeholder->getParent()->getParent() == newFunc);
 	placeholder->setName("");
     IRBuilder<> bb(placeholder);
 
@@ -1643,11 +1657,10 @@ public:
 	for(unsigned i=0;i < call->getNumArgOperands(); i++) {
 		args.push_back(call->getArgOperand(i));
 	}
-    Instruction* anti = bb.CreateCall(call->getCalledFunction(), args, call->getName()+"'ami");
+    Instruction* anti = bb.CreateCall(call->getCalledFunction(), args, call->getName()+"'mi");
     cast<CallInst>(anti)->setAttributes(call->getAttributes());
      
-    invertedPointers.erase(call);
-    placeholder->replaceAllUsesWith(anti);
+    invertedPointers[call] = anti;
     if (scopeMap.find(placeholder) != scopeMap.end()) {
         scopeMap[anti] = scopeMap[placeholder];
         scopeMap.erase(placeholder);
@@ -1660,8 +1673,13 @@ public:
         lastScopeAlloc[anti] = lastScopeAlloc[placeholder];
         lastScopeAlloc.erase(placeholder);
     }
+    assert(placeholder != anti);
+    bb.SetInsertPoint(placeholder->getNextNode());
+    placeholder->replaceAllUsesWith(anti);
+    placeholder->eraseFromParent();
 
-    anti = addMalloc<Instruction>(bb, anti);
+    anti = addMalloc<Instruction>(bb, anti); 
+    invertedPointers[call] = anti;
      
     if (tape == nullptr) {
         Value *nargs[] = {
@@ -1678,9 +1696,6 @@ public:
         memset->addParamAttr(0, Attribute::NonNull);
     }
 
-    placeholder->eraseFromParent();
-    invertedPointers[call] = anti;
-    anti->dump();
     return anti;
   }
 
@@ -1691,7 +1706,16 @@ public:
         tapeidx++;
         
 
-        if (!ret->getType()->isEmptyTy()) {
+        if (ret->getType()->isEmptyTy()) {
+            /*
+            if (auto inst = dyn_cast<Instruction>(malloc)) {
+                inst->replaceAllUsesWith(UndefValue::get(ret->getType()));
+                inst->eraseFromParent();
+            }
+            */
+            return ret;
+            //UndefValue::get(ret->getType());
+        }
 		
         BasicBlock* parent = BuilderQ.GetInsertBlock();	
 	  	if (Instruction* inst = dyn_cast_or_null<Instruction>(malloc)) {
@@ -1700,6 +1724,7 @@ public:
         	
 		LoopContext lc;
       	bool inLoop = getContext(parent, lc);
+
         if (!inLoop) {
         } else {
             ret->eraseFromParent();
@@ -1710,8 +1735,8 @@ public:
             PHINode* phi = BuilderQ.CreatePHI(cast<PointerType>(ret->getType())->getElementType(), 1);
             if (malloc) assert(phi->getType() == malloc->getType());
             
-
-            scopeMap[phi] = entryBuilder.CreateAlloca(ret->getType(), nullptr, phi->getName()+"_mdyncache");
+            assert(scopeMap.find(phi) == scopeMap.end());
+            scopeMap[phi] = entryBuilder.CreateAlloca(ret->getType(), nullptr, phi->getName()+"_mdyncache_fromtape");
             entryBuilder.CreateStore(ret, scopeMap[phi]);
 
             auto v = lookupM(phi, BuilderQ, /*forceLookup*/true);
@@ -1723,67 +1748,157 @@ public:
             scopeMap.erase(phi);
             phi->eraseFromParent();
 
-            scopeMap[v]->dump();
-
             assert(reverseBlocks.size() > 0);
 
-                BasicBlock* outermostPreheader = nullptr;
+            BasicBlock* outermostPreheader = nullptr;
 
-                for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx) ) {
-                    if (idx.parent == nullptr) {
-                        outermostPreheader = idx.preheader;
-                    }
-                    if (idx.parent == nullptr) break;
+            for(LoopContext idx = lc; ; getContext(idx.parent->getHeader(), idx) ) {
+                if (idx.parent == nullptr) {
+                    outermostPreheader = idx.preheader;
                 }
-                assert(outermostPreheader);
-                    IRBuilder<> tbuild(reverseBlocks[outermostPreheader]);
-                    tbuild.setFastMathFlags(FastMathFlags::getFast());
+                if (idx.parent == nullptr) break;
+            }
+            assert(outermostPreheader);
+                IRBuilder<> tbuild(reverseBlocks[outermostPreheader]);
+                tbuild.setFastMathFlags(FastMathFlags::getFast());
 
-                    // ensure we are before the terminator if it exists
-                    if (tbuild.GetInsertBlock()->size()) {
-                          tbuild.SetInsertPoint(tbuild.GetInsertBlock()->getFirstNonPHI());
-                    }
-                    
-                    Instruction* ci = CallInst::CreateFree(tbuild.CreatePointerCast(tbuild.CreateLoad(scopeMap[v]), Type::getInt8PtrTy(outermostPreheader->getContext())), tbuild.GetInsertBlock());
-                    if (ci->getParent()==nullptr) {
-                        tbuild.Insert(ci);
-                    }
+                // ensure we are before the terminator if it exists
+                if (tbuild.GetInsertBlock()->size()) {
+                      tbuild.SetInsertPoint(tbuild.GetInsertBlock()->getFirstNonPHI());
+                }
+                
+                CallInst* ci = cast<CallInst>(CallInst::CreateFree(tbuild.CreatePointerCast(tbuild.CreateLoad(scopeMap[v]), Type::getInt8PtrTy(outermostPreheader->getContext())), tbuild.GetInsertBlock()));
+                ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+                if (ci->getParent()==nullptr) {
+                    tbuild.Insert(ci);
+                }
 
             ret = cast<Instruction>(v);
         }
-        }
 
         if (malloc && !isa<UndefValue>(malloc)) {
-          cast<Instruction>(malloc)->replaceAllUsesWith(ret);
             assert(malloc->getType() == ret->getType());
-			auto found = invertedPointers.find(malloc);
-			if (found != invertedPointers.end()) {
+			
+            if (invertedPointers.find(malloc) != invertedPointers.end()) {
+				invertedPointers[ret] = invertedPointers[malloc];
 				invertedPointers.erase(malloc);
-				invertedPointers[ret] = found->second;
 			}
+            
             if (scopeMap.find(malloc) != scopeMap.end()) {
-                for( auto u : scopeMap[malloc]->users()) {
-                    if (auto li = dyn_cast<LoadInst>(u)) {
-                        li->setOperand(0, scopeMap[ret]);
-                    } else if (auto si = dyn_cast<StoreInst>(u)) {
-                        si->eraseFromParent();
-                    } else if (auto ci = dyn_cast<CastInst>(u)) {
-                      for( auto u2 : ci->users()) {
-                            auto cali = cast<CallInst>(u2);
-                            assert(cali->getName() == "free" || cali->getName() == "realloc");
-                            cali->eraseFromParent();
-                      }
-                      ci->eraseFromParent();
-                    } else {
-                        assert(0 && "illegal use for scopeMap");
+
+                if (!inLoop) {
+                    std::vector<User*> users;
+                    for( auto u : scopeMap[malloc]->users()) {
+                        users.push_back(u);
                     }
-                    //TODO consider realloc/free
+                    for( auto u : users) {
+                        if (auto li = dyn_cast<LoadInst>(u)) {
+                            li->replaceAllUsesWith(ret);
+                            li->eraseFromParent();
+                        } else if (auto si = dyn_cast<StoreInst>(u)) {
+                            si->eraseFromParent();
+                        } else {
+                            assert(0 && "illegal use for out of loop scopeMap");
+                        }
+                    }
+                    cast<Instruction>(scopeMap[malloc])->eraseFromParent();
+                    scopeMap.erase(malloc);
+                } else {
+                    std::vector<User*> users;
+                    for( auto u : scopeMap[malloc]->users()) {
+                        users.push_back(u);
+                    }
+                    Instruction* op0 = nullptr;
+                    if (auto ci = dyn_cast<CastInst>(scopeMap[malloc])) {
+                        op0 = cast<Instruction>(ci->getOperand(0));
+                        for( auto u : op0->users()) {
+                            if (u != malloc)
+                                users.push_back(u);
+                        }
+                    }
+                    
+                    for( auto u : users) {
+                        if (auto li = dyn_cast<LoadInst>(u)) {
+                            for( auto u0 : li->users()) {
+                                Instruction* u2 = dyn_cast<Instruction>(u0);
+                                if (u2 == nullptr) continue;
+                                if (auto ci = dyn_cast<CastInst>(u2)) {
+                                    if (ci->hasOneUse() == 1)
+                                        u2 = cast<Instruction>(*ci->user_begin());
+                                }
+                                llvm::errs() << " found use in " << *u2 << "\n";
+                                if (auto cali = dyn_cast<CallInst>(u2)) {
+                                    auto called = cali->getCalledFunction();
+                                    if (called == nullptr) continue;
+                                    if (!(called->getName() == "free" || called->getName() == "realloc")) continue;
+                                    if (scopeFrees.find(malloc) != scopeFrees.end() && scopeFrees[malloc] == cali)
+                                        scopeFrees.erase(malloc);
+                                    if (lastScopeAlloc.find(malloc) != lastScopeAlloc.end() && lastScopeAlloc[malloc] == cali)
+                                        lastScopeAlloc.erase(malloc);
+                                    cali->eraseFromParent();
+                                }
+                                if (u0->getNumUses() == 0 && u2 != u0) cast<Instruction>(u0)->eraseFromParent();
+                            }
+
+                            li->setOperand(0, scopeMap[ret]);
+                            if (li->getNumUses() == 0) li->eraseFromParent();
+                        } else if (auto si = dyn_cast<StoreInst>(u)) {
+                            Instruction* u2 = cast<Instruction>(si->getValueOperand());
+                            if (auto ci = dyn_cast<CastInst>(u2)) {
+                                u2 = cast<Instruction>(ci->getOperand(0));
+                            }
+                            if (auto cali = dyn_cast<CallInst>(u2)) {
+                                auto called = cali->getCalledFunction();
+                                if (called == nullptr) continue;
+                                if (!(called->getName() == "malloc" || called->getName() == "realloc")) continue;
+                                if (lastScopeAlloc.find(malloc) != lastScopeAlloc.end() && (lastScopeAlloc[malloc] == cali || lastScopeAlloc[malloc] == si->getValueOperand()))
+                                    lastScopeAlloc.erase(malloc);
+                                Value* vak = si->getValueOperand();
+                                si->eraseFromParent();
+                                if (auto ci = dyn_cast<CastInst>(vak)) {
+                                    ci->eraseFromParent();
+                                }
+                                if (cali != vak)
+                                    cali->eraseFromParent();
+                                continue;
+                            }
+                            si->eraseFromParent();
+                        } else if (auto cali = dyn_cast<CallInst>(u)) {
+                            auto called = cali->getCalledFunction();
+                            if (called == nullptr) continue;
+                            if (!(called->getName() == "free" || called->getName() == "realloc")) continue;
+                            if (scopeFrees.find(malloc) != scopeFrees.end() && scopeFrees[malloc] == cali)
+                                scopeFrees.erase(malloc);
+                            if (lastScopeAlloc.find(malloc) != lastScopeAlloc.end() && lastScopeAlloc[malloc] == cali)
+                                lastScopeAlloc.erase(malloc);
+                            cali->eraseFromParent();
+                        } else {
+                            assert(0 && "illegal use for scopeMap");
+                        }
+                        //TODO consider realloc/free
+                    }
+                    
+                    cast<Instruction>(scopeMap[malloc])->eraseFromParent();
+                    
+                    if (op0) {
+                        if (lastScopeAlloc.find(malloc) != lastScopeAlloc.end() && lastScopeAlloc[malloc] == op0)
+                            lastScopeAlloc.erase(malloc);
+                        op0->eraseFromParent();
+                    }
+
+                    scopeMap.erase(malloc);
                 }
-                scopeMap.erase(malloc);
             }
+            if (scopeFrees.find(malloc) != scopeFrees.end())
+                scopeFrees[malloc]->dump();
             assert(scopeFrees.find(malloc) == scopeFrees.end());
+            if (lastScopeAlloc.find(malloc) != lastScopeAlloc.end())
+                lastScopeAlloc[malloc]->dump();
             assert(lastScopeAlloc.find(malloc) == lastScopeAlloc.end());
-          cast<Instruction>(malloc)->eraseFromParent();
+            cast<Instruction>(malloc)->replaceAllUsesWith(ret);
+            auto n = malloc->getName();
+            cast<Instruction>(malloc)->eraseFromParent();
+            ret->setName(n);
         }
         return ret;
     } else {
@@ -1809,7 +1924,7 @@ public:
         return malloc;
       }
 
-      ensureLookupCached(cast<Instruction>(malloc), /*shouldFree=*/false);
+      ensureLookupCached(cast<Instruction>(malloc), /*shouldFree=*/reverseBlocks.size() > 0);
       assert(scopeMap[malloc]);
       assert(lastScopeAlloc[malloc]);
       addedMallocs.push_back(lastScopeAlloc[malloc]);
@@ -2175,6 +2290,7 @@ endCheck:
                 malloccall = cast<CallInst>(cast<Instruction>(firstallocation)->getOperand(0));
             }
             malloccall->addAttribute(AttributeList::ReturnIndex, Attribute::NoAlias);
+            malloccall->addAttribute(AttributeList::ReturnIndex, Attribute::NonNull);
             //allocationBuilder.GetInsertBlock()->getInstList().push_back(cast<Instruction>(allocation));
             cast<Instruction>(firstallocation)->moveBefore(allocationBuilder.GetInsertBlock()->getTerminator());
             scopeMap[inst] = entryBuilder.CreateAlloca(firstallocation->getType(), nullptr, inst->getName()+"_mdyncache");
@@ -2193,7 +2309,8 @@ endCheck:
                       tbuild.SetInsertPoint(tbuild.GetInsertBlock()->getFirstNonPHI());
                 }
                 
-                auto ci = CallInst::CreateFree(tbuild.CreatePointerCast(tbuild.CreateLoad(scopeMap[inst]), Type::getInt8PtrTy(outermostPreheader->getContext())), tbuild.GetInsertBlock());
+                auto ci = cast<CallInst>(CallInst::CreateFree(tbuild.CreatePointerCast(tbuild.CreateLoad(scopeMap[inst]), Type::getInt8PtrTy(outermostPreheader->getContext())), tbuild.GetInsertBlock()));
+                ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
                 scopeFrees[inst] = ci;
                 if (ci->getParent()==nullptr) {
                     tbuild.Insert(ci);
@@ -3792,7 +3909,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             auto anti = gutils->createAntiMalloc(op);
             if (I != E && placeholder == &*I) I++; 
             auto lu = lookup(anti);
-            auto ci = CallInst::CreateFree(Builder2.CreatePointerCast(lu, Type::getInt8PtrTy(Context)), Builder2.GetInsertBlock());
+            auto ci = cast<CallInst>(CallInst::CreateFree(Builder2.CreatePointerCast(lu, Type::getInt8PtrTy(Context)), Builder2.GetInsertBlock()));
+            ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
             if (ci->getParent()==nullptr) Builder2.Insert(ci);
           }
           
@@ -3822,7 +3940,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             if (I != E && placeholder == &*I) I++;
               
             auto ci = cast<CallInst>(CallInst::Create(FreeFunc, {Builder2.CreatePointerCast(lookup(anti), Type::getInt8PtrTy(Context))}, "", Builder2.GetInsertBlock()));
-            ci->setTailCall();
+            //ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+            //ci->setTailCall();
             if (Function *F = dyn_cast<Function>(FreeFunc)) ci->setCallingConv(F->getCallingConv());
             if (ci->getParent()==nullptr) Builder2.Insert(ci);
           }
@@ -4154,6 +4273,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             }
           }
 
+          //TODO this shouldn't matter because this can't use itself, but setting null should be done before other sets but after load of diffe
+          if (inst->getNumUses() != 0 && !gutils->isConstantValue(inst))
+            setDiffe(inst, Constant::getNullValue(inst->getType()));
+
           if (replaceFunction) {
             ValueToValueMapTy mapp;
             if (op->getNumUses() != 0) {
@@ -4172,12 +4295,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 a->moveBefore(*Builder2.GetInsertBlock(), Builder2.GetInsertPoint());
             }
             op->eraseFromParent();
+            continue;
           }
 
-          //TODO this shouldn't matter because this can't use itself, but setting null should be done before other sets but after load of diffe
-          if (inst->getNumUses() != 0 && !gutils->isConstantValue(inst))
-            setDiffe(inst, Constant::getNullValue(inst->getType()));
-          
           if (augmentcall || cachereplace) {
 
             if (!called->getReturnType()->isVoidTy()) {
@@ -4215,7 +4335,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             op->eraseFromParent();
 
             if (augmentcall)
-                gutils->replaceableCalls.insert(augmentcall);
+               gutils->replaceableCalls.insert(augmentcall);
           } else {
             gutils->replaceableCalls.insert(op);
           }

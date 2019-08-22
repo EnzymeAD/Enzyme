@@ -93,7 +93,7 @@ attributes #4 = { nounwind }
 ; NOTE BETTER 03 / dead store elimination can get rid of the next line which is optional
 ;   since its being free'd next
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"'ipc.i", align 8
-; CHECK-NEXT:   tail call void bitcast (i32 (...)* @free to void (i8*)*)(i8* %"call'mi.i") #6
+; CHECK-NEXT:   tail call void bitcast (i32 (...)* @free to void (i8*)*)(i8* nonnull %"call'mi.i") #6
 ; CHECK-NEXT:   tail call void bitcast (i32 (...)* @free to void (i8*)*)(i8* %call.i) #6
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

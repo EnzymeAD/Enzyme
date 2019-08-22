@@ -182,7 +182,7 @@ attributes #5 = { nounwind }
 ; CHECK-NEXT:   %[[arrayidx:.+]] = getelementptr i8, i8* %[[pointer]], i64 24
 ; CHECK-NEXT:   %"'ipc" = bitcast i8* %[[arrayidx]] to double*
 ; CHECK-NEXT:   %[[result:.+]] = load double, double* %"'ipc", align 8
-; CHECK-NEXT:   tail call void @free(i8* %[[pointer]])
+; CHECK-NEXT:   tail call void @free(i8* nonnull %[[pointer]])
 ; CHECK-NEXT:   ret double %[[result]]
 ; CHECK-NEXT: }
 

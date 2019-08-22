@@ -204,10 +204,10 @@ attributes #5 = { nounwind }
 
 ; CHECK: define internal fastcc double @diffeallocateAndSet(i32 %n, { i8* } %tapeArg) unnamed_addr #0 {
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = extractvalue { i8* } %tapeArg, 0
-; CHECK-NEXT:   %[[arrayidx:.+]] = getelementptr i8, i8* %0, i64 24
+; CHECK-NEXT:   %[[callp:.+]] = extractvalue { i8* } %tapeArg, 0
+; CHECK-NEXT:   %[[arrayidx:.+]] = getelementptr i8, i8* %[[callp]], i64 24
 ; CHECK-NEXT:   %"'ipc" = bitcast i8* %[[arrayidx:.+]] to double*
-; CHECK-NEXT:   %1 = load double, double* %"'ipc", align 8
-; CHECK-NEXT:   tail call void @free(i8* %0)
-; CHECK-NEXT:   ret double %1
+; CHECK-NEXT:   %[[toreturn:.+]] = load double, double* %"'ipc", align 8
+; CHECK-NEXT:   tail call void @free(i8* nonnull %[[callp]])
+; CHECK-NEXT:   ret double %[[toreturn]]
 ; CHECK-NEXT: }

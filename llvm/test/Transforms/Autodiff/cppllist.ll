@@ -170,9 +170,9 @@ attributes #8 = { builtin nounwind }
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = add nuw i64 %n, 1
 ; CHECK-NEXT:   %mallocsize.i = mul i64 %0, 8
-; CHECK-NEXT:   %malloccall.i = call noalias i8* @malloc(i64 %mallocsize.i) #5
+; CHECK-NEXT:   %malloccall.i = call noalias nonnull i8* @malloc(i64 %mallocsize.i) #5
 ; CHECK-NEXT:   %"call'mi_malloccache.i" = bitcast i8* %malloccall.i to i8**
-; CHECK-NEXT:   %[[call_malloc:.+]] = call noalias i8* @malloc(i64 %mallocsize.i) #5
+; CHECK-NEXT:   %[[call_malloc:.+]] = call noalias nonnull i8* @malloc(i64 %mallocsize.i) #5
 ; CHECK-NEXT:   %call_malloccache.i = bitcast i8* %[[call_malloc]] to i8**
 ; CHECK-NEXT:   br label %for.body.i
 
@@ -238,7 +238,7 @@ attributes #8 = { builtin nounwind }
 ; CHECK-NEXT:   br i1 %cmp6, label %invertfor.end, label %for.body
 
 ; CHECK: for.body.preheader:
-; CHECK-NEXT:   %malloccall = tail call noalias i8* @malloc(i64 8)
+; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i64 8)
 ; CHECK-NEXT:   %_malloccache = bitcast i8* %malloccall to %class.node**
 ; CHECK-NEXT:   br label %for.body
 
@@ -266,7 +266,7 @@ attributes #8 = { builtin nounwind }
 
 ; CHECK: invertfor.body.preheader:                         ; preds = %invertfor.body
 ; CHECK-NEXT:   %8 = bitcast %class.node** %_mdyncache.1 to i8*
-; CHECK-NEXT:   tail call void @free(i8* %8)
+; CHECK-NEXT:   tail call void @free(i8* nonnull %8)
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertfor.body:                                   ; preds = %invertfor.end, %invertfor.body

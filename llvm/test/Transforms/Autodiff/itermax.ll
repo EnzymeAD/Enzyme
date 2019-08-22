@@ -76,7 +76,7 @@ attributes #2 = { nounwind }
 
 ; CHECK: for.body.for.body_crit_edge.preheader:            ; preds = %entry
 ; CHECK-NEXT:   %1 = add i64 %n, -1
-; CHECK-NEXT:   %malloccall = tail call noalias i8* @malloc(i64 %n)
+; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i64 %n)
 ; CHECK-NEXT:   %cmp.i_malloccache = bitcast i8* %malloccall to i1*
 ; CHECK-NEXT:   br label %for.body.for.body_crit_edge
 
@@ -102,7 +102,7 @@ attributes #2 = { nounwind }
 
 ; CHECK: invertfor.body.for.body_crit_edge.preheader:  
 ; CHECK-NEXT:   %7 = bitcast i1* %cmp.i_mdyncache.0 to i8*
-; CHECK-NEXT:   tail call void @free(i8* %7)
+; CHECK-NEXT:   tail call void @free(i8* nonnull %7)
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertfor.cond.cleanup.loopexit:                  ; preds = %invertfor.cond.cleanup

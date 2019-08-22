@@ -86,9 +86,9 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:  %0 = add nuw i64 %n, 1
 ; CHECK-NEXT:  %mallocsize.i = mul i64 %0, 8
-; CHECK-NEXT:  %[[mallocp:.+]] = call noalias i8* @malloc(i64 %mallocsize.i) #4
+; CHECK-NEXT:  %[[mallocp:.+]] = call noalias nonnull i8* @malloc(i64 %mallocsize.i) #4
 ; CHECK-NEXT:  %[[callpcache:.+]] = bitcast i8* %[[mallocp]] to i8**
-; CHECK-NEXT:  %[[malloc1:.+]] = call noalias i8* @malloc(i64 %mallocsize.i) #4
+; CHECK-NEXT:  %[[malloc1:.+]] = call noalias nonnull i8* @malloc(i64 %mallocsize.i) #4
 ; CHECK-NEXT:  %call_malloccache.i = bitcast i8* %[[malloc1:.+]] to i8**
 ; CHECK-NEXT:  br label %for.body.i
 
@@ -133,7 +133,7 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:  store double 0.000000e+00, double* %"value'ipc.i"
 ; CHECK-NEXT:  %[[add]] = fadd fast double %"x'de.0.i", %[[load]]
 ; CHECK-NEXT:  %[[prefree2:.+]] = load i8*, i8** %[[gep]]
-; CHECK-NEXT:  call void @free(i8* %[[prefree2]]) #4
+; CHECK-NEXT:  call void @free(i8* nonnull %[[prefree2]]) #4
 ; CHECK-NEXT:  %[[gepcall:.+]] = getelementptr i8*, i8** %call_malloccache.i, i64 %"indvars.iv'phi.i"
 ; CHECK-NEXT:  %[[loadprefree:.+]] = load i8*, i8** %[[gepcall]]
 ; CHECK-NEXT:  call void @free(i8* %[[loadprefree]]) #4
@@ -152,7 +152,7 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   br i1 %cmp6, label %invertfor.cond.cleanup, label %for.body
 
 ; CHECK: for.body.preheader:
-; CHECK-NEXT:   %malloccall = tail call noalias i8* @malloc(i64 8)
+; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i64 8)
 ; CHECK-NEXT:   %[[malloccache:.+]] = bitcast i8* %malloccall to %struct.n**
 ; CHECK-NEXT:   br label %for.body
 
@@ -180,7 +180,7 @@ attributes #4 = { nounwind }
 
 ; CHECK: invertfor.body.preheader:                         ; preds = %invertfor.body
 ; CHECK-NEXT:   %8 = bitcast %struct.n** %_mdyncache.0 to i8*
-; CHECK-NEXT:   tail call void @free(i8* %8)
+; CHECK-NEXT:   tail call void @free(i8* nonnull %8)
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertfor.cond.cleanup: 
