@@ -26,7 +26,7 @@
 #include "llvm/IR/Dominators.h"
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"
 #include "llvm/Analysis/PhiValues.h"
-
+#include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/Transforms/Utils.h"
 
 #include "llvm/InitializePasses.h"
@@ -562,10 +562,9 @@ bool isconstantM(Instruction* inst, SmallPtrSetImpl<Value*> &constants, SmallPtr
 	nonconstant2.insert(nonconstant.begin(), nonconstant.end());
 	constants2.insert(inst);
 		
-    if (printconst)
-		llvm::errs() << " < PRESEARCH" << (int)directions << ">" << *inst << "\n";
-
 	if (directions & UP) {
+        if (printconst)
+		    llvm::errs() << " < UPSEARCH" << (int)directions << ">" << *inst << "\n";
         if (auto gep = dyn_cast<GetElementPtrInst>(inst)) {
             // Handled uses above
             if (!isconstantValueM(gep->getPointerOperand(), constants2, nonconstant2, retvals, originalInstructions, UP)) {
@@ -603,10 +602,10 @@ bool isconstantM(Instruction* inst, SmallPtrSetImpl<Value*> &constants, SmallPtr
               llvm::errs() << "constant(" << (int)directions << ")  inst:" << *inst << "\n";
             return true;
         }
+        if (printconst)
+		    llvm::errs() << " </UPSEARCH" << (int)directions << ">" << *inst << "\n";
 	}
 
-    if (printconst)
-		llvm::errs() << " </PRESEARCH" << (int)directions << ">" << *inst << "\n";
 
     if (directions == 3)
 	  nonconstant.insert(inst);
@@ -626,7 +625,7 @@ bool isconstantValueM(Value* val, SmallPtrSetImpl<Value*> &constants, SmallPtrSe
     
     if (val->getType()->isVoidTy()) return true;
 	
-    if (isa<Constant>(val)) return true;
+    if (isa<ConstantData>(val) || isa<ConstantAggregate>(val) || isa<Function>(val)) return true;
 	if (isa<BasicBlock>(val)) return true;
     assert(!isa<InlineAsm>(val));
 
@@ -2593,7 +2592,25 @@ endCheck:
         return lookupM(invertedPointers[val], BuilderM);
       }
 
-      if (auto arg = dyn_cast<CastInst>(val)) {
+      if (auto arg = dyn_cast<GlobalVariable>(val)) {
+          if (!arg->hasMetadata("enzyme_shadow")) {
+              arg->dump();
+              report_fatal_error("cannot compute with global variable that doesn't have marked shadow global");
+          }
+          auto md = arg->getMetadata("enzyme_shadow");
+          md->dump();
+          if (!isa<MDTuple>(md)) {
+              arg->dump();
+              md->dump();
+              report_fatal_error("cannot compute with global variable that doesn't have marked shadow global (metadata incorrect type)");
+          }
+          auto md2 = cast<MDTuple>(md);
+          assert(md2->getNumOperands() == 1);
+          auto gvemd = cast<ConstantAsMetadata>(md2->getOperand(0));
+          auto cs = gvemd->getValue();
+          cs->dump();
+          return cs;
+      } if (auto arg = dyn_cast<CastInst>(val)) {
         auto result = BuilderM.CreateCast(arg->getOpcode(), invertPointerM(arg->getOperand(0), BuilderM), arg->getDestTy(), arg->getName()+"'ipc");
         return result;
       } else if (auto arg = dyn_cast<ExtractValueInst>(val)) {

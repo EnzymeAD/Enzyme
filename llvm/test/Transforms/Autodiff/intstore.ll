@@ -1,5 +1,20 @@
 ; RUN: opt < %s -lower-autodiff -mem2reg -instsimplify -simplifycfg -early-cse -S | FileCheck %s
 
+; #include <math.h>
+; #include <stdio.h>
+; 
+; __attribute__((noinline))
+; void store(double *x, double *y) {
+;   unsigned long long *xl = (unsigned long long*)x;
+;   unsigned long long *yl = (unsigned long long*)y;
+;   *yl = *xl;
+; }
+; 
+; 
+; void test_derivative(double* x, double *xp, double* y, double* yp) {
+;   __builtin_autodiff(store, x, xp, y, yp);
+; }
+
 ; Function Attrs: noinline norecurse nounwind uwtable
 define dso_local void @store(double* nocapture readonly %x, double* nocapture %y) #0 {
 entry:

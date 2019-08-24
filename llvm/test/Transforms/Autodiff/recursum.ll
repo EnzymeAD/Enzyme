@@ -1,5 +1,18 @@
 ; RUN: opt < %s -lower-autodiff -inline -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s
 
+; #include <stdio.h>
+; #include <stdlib.h>
+; 
+; double recsum(double* x, unsigned n) {
+;     if (n == 0) return 0;
+;     if (n == 1) return x[0];
+;     return recsum(x, n/2) + recsum(x + n/2, n - n/2);
+; }
+; 
+; void dsum(double* x, double* xp, unsigned n) {
+;     __builtin_autodiff(recsum, x, xp, n);
+; }
+
 ; Function Attrs: nounwind readonly uwtable
 define dso_local double @recsum(double* %x, i32 %n) #0 {
 entry:
