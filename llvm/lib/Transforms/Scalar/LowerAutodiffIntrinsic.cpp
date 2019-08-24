@@ -737,7 +737,7 @@ bool isconstantValueM(Value* val, SmallPtrSetImpl<Value*> &constants, SmallPtrSe
  }
 
 enum class ReturnType {
-    Normal, ArgsWithReturn, Args
+    ArgsWithReturn, Args, TapeAndReturns
 };
 
 Function* preprocessForClone(Function *F, AAResults &AA) {
@@ -1060,8 +1060,16 @@ Function *CloneFunctionWithReturns(Function *&F, AAResults &AA, ValueToValueMapT
     ArgTypes.push_back(additionalArg);
  }
  Type* RetType = StructType::get(F->getContext(), RetTypes);
- if (returnValue == ReturnType::Normal)
-     RetType = F->getReturnType();
+ if (returnValue == ReturnType::TapeAndReturns) {
+     RetTypes.clear();
+     RetTypes.push_back(Type::getInt8PtrTy(F->getContext()));
+  if (!F->getReturnType()->isVoidTy()) {
+    RetTypes.push_back(F->getReturnType());
+    if (F->getReturnType()->isPointerTy() || F->getReturnType()->isIntegerTy())
+      RetTypes.push_back(F->getReturnType());
+  }
+    RetType = StructType::get(F->getContext(), RetTypes);
+ }
 
  // Create a new function type...
  FunctionType *FTy = FunctionType::get(RetType,
@@ -1638,6 +1646,28 @@ private:
   unsigned tapeidx;
   Value* tape;
 public:
+  void replaceAWithB(Value* A, Value* B) {
+      for(unsigned i=0; i<addedMallocs.size(); i++) {
+        if (addedMallocs[i] == A) {
+            addedMallocs[i] = B;
+        }   
+      }
+    
+    if (scopeMap.find(A) != scopeMap.end()) {
+        scopeMap[B] = scopeMap[A];
+        scopeMap.erase(A);
+    }
+    if (scopeFrees.find(A) != scopeFrees.end()) {
+        scopeFrees[B] = scopeFrees[A];
+        scopeFrees.erase(A);
+    }
+    if (lastScopeAlloc.find(A) != lastScopeAlloc.end()) {
+        lastScopeAlloc[B] = lastScopeAlloc[A];
+        lastScopeAlloc.erase(A);
+    }
+
+    A->replaceAllUsesWith(B);
+  }
   void setTape(Value* newtape) {
     assert(tape == nullptr);
     assert(newtape != nullptr);
@@ -1670,21 +1700,9 @@ public:
     cast<CallInst>(anti)->setAttributes(call->getAttributes());
      
     invertedPointers[call] = anti;
-    if (scopeMap.find(placeholder) != scopeMap.end()) {
-        scopeMap[anti] = scopeMap[placeholder];
-        scopeMap.erase(placeholder);
-    }
-    if (scopeFrees.find(placeholder) != scopeFrees.end()) {
-        scopeFrees[anti] = scopeFrees[placeholder];
-        scopeFrees.erase(placeholder);
-    }
-    if (lastScopeAlloc.find(placeholder) != lastScopeAlloc.end()) {
-        lastScopeAlloc[anti] = lastScopeAlloc[placeholder];
-        lastScopeAlloc.erase(placeholder);
-    }
     assert(placeholder != anti);
     bb.SetInsertPoint(placeholder->getNextNode());
-    placeholder->replaceAllUsesWith(anti);
+    replaceAWithB(placeholder, anti);
     placeholder->eraseFromParent();
 
     anti = addMalloc<Instruction>(bb, anti); 
@@ -1713,7 +1731,6 @@ public:
     if (tape) {
         Instruction* ret = cast<Instruction>(BuilderQ.CreateExtractValue(tape, {tapeidx}));
         tapeidx++;
-        
 
         if (ret->getType()->isEmptyTy()) {
             /*
@@ -1786,6 +1803,12 @@ public:
         }
 
         if (malloc && !isa<UndefValue>(malloc)) {
+            if (malloc->getType() != ret->getType()) {
+                oldFunc->dump();
+                newFunc->dump();
+                malloc->dump();
+                ret->dump();
+            }
             assert(malloc->getType() == ret->getType());
 			
             if (invertedPointers.find(malloc) != invertedPointers.end()) {
@@ -2871,25 +2894,77 @@ void optimizeIntermediate(GradientUtils* gutils, bool topLevel, Function *F) {
  //LCSSAPass().run(*NewF, AM);
 }
 
-Function* CreateAugmentedPrimal(Function* todiff, AAResults &AA, const SmallSet<unsigned,4>& constant_args, TargetLibraryInfo &TLI, GradientUtils** oututils, bool differentialReturn) {
+/*
+bool isNotActiveRecurse(Function* f, GradientUtils &gutils) {
+  if (f->hasFnAttribute(Attribute::NoRecurse)) return true;
+  for (auto inst : gutils.originalInstructions) {
+    if (gutils.isConstantInstruction(inst)) continue;
+    if(auto op = dyn_cast_or_null<CallInst>(inst)) {
+
+            Function *called = op->getCalledFunction();
+            
+            if (auto castinst = dyn_cast<ConstantExpr>(op->getCalledValue())) {
+                if (castinst->isCast())
+                if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
+                    if (fn->getName() == "malloc" || fn->getName() == "free" || fn->getName() == "_Znwm" || fn->getName() == "_ZdlPv" || fn->getName() == "_ZdlPvm") {
+                        called = fn;
+                    }
+                }
+            }
+
+            if (called && (called->getName() == "printf" || called->getName() == "puts"))
+                continue;
+
+            if (called && (called->getName()=="malloc" || called->getName()=="_Znwm")) 
+                continue;
+            
+            if (called && (called->getName()=="free" ||
+                called->getName()=="_ZdlPv" || called->getName()=="_ZdlPvm"))
+                continue;
+            
+            if (gutils.isConstantInstruction(op))
+              continue;
+
+            if (called == nullptr)
+              continue;
+
+            if (called->hasFnAttribute(Attribute::NoRecurse)) return true;
+
+            return false;
+  }
+}
+}
+*/
+
+//! return structtype if recursive function
+std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResults &AA, const SmallSet<unsigned,4>& constant_args, TargetLibraryInfo &TLI, bool differentialReturn) {
   assert(!todiff->empty());
-  
-#if 0
-  static std::map<std::tuple<Function*,std::set<unsigned>, bool/*differentialReturn*/>, Function*> cachedfunctions;
+   
+  static std::map<std::tuple<Function*,std::set<unsigned>, bool/*differentialReturn*/>, std::pair<Function*,StructType*>> cachedfunctions;
+  static std::map<std::tuple<Function*,std::set<unsigned>, bool/*differentialReturn*/>, bool> cachedfinished;
   auto tup = std::make_tuple(todiff, std::set<unsigned>(constant_args.begin(), constant_args.end()),  differentialReturn);
   if (cachedfunctions.find(tup) != cachedfunctions.end()) {
     return cachedfunctions[tup];
   }
-#endif
 
-  GradientUtils *gutils = GradientUtils::CreateFromClone(todiff, AA, TLI, constant_args, /*returnValue*/ReturnType::Normal, /*differentialReturn*/differentialReturn);
+  GradientUtils *gutils = GradientUtils::CreateFromClone(todiff, AA, TLI, constant_args, /*returnValue*/ReturnType::TapeAndReturns, /*differentialReturn*/differentialReturn);
+  cachedfunctions[tup] = std::pair<Function*,StructType*>(gutils->newFunc, nullptr);
+  cachedfinished[tup] = false;
   llvm::errs() << "function with differential return " << todiff->getName() << " " << differentialReturn << "\n";
+
   gutils->forceAugmentedReturns();
 
   for(BasicBlock* BB: gutils->originalBlocks) {
       auto term = BB->getTerminator();
       assert(term);
-      if(isa<ReturnInst>(term)) {
+      if(auto ri = dyn_cast<ReturnInst>(term)) {
+        auto oldval = ri->getReturnValue();
+        Value* rt = UndefValue::get(gutils->newFunc->getReturnType());
+        IRBuilder <>ib(ri);
+        if (oldval)
+            rt = ib.CreateInsertValue(rt, oldval, {1});
+        term = ib.CreateRet(rt);
+        ri->eraseFromParent();
       } else if (isa<BranchInst>(term) || isa<SwitchInst>(term)) {
 
       } else if (isa<UnreachableInst>(term)) {
@@ -3008,12 +3083,13 @@ Function* CreateAugmentedPrimal(Function* todiff, AAResults &AA, const SmallSet<
                 continue;
 
             if (op->getNumUses() != 0 && !op->doesNotAccessMemory()) {
-              IRBuilder<> BuilderZ(op);
-              gutils->addMalloc<Instruction>(BuilderZ, op);
+                IRBuilder<> BuilderZ(op);
+                gutils->addMalloc<Instruction>(BuilderZ, op);
             }
 
-            if (gutils->isConstantInstruction(op))
-              continue;
+            if (gutils->isConstantInstruction(op)) {
+                continue;
+            }
 
             if (called == nullptr) {
               assert(op);
@@ -3069,11 +3145,11 @@ Function* CreateAugmentedPrimal(Function* todiff, AAResults &AA, const SmallSet<
 
               //TODO create augmented primal
               if (modifyPrimal) {
-                auto newcalled = CreateAugmentedPrimal(dyn_cast<Function>(called), AA, subconstant_args, TLI, nullptr, /*differentialReturn*/!gutils->isConstantValue(op));
+                auto newcalled = CreateAugmentedPrimal(dyn_cast<Function>(called), AA, subconstant_args, TLI, /*differentialReturn*/!gutils->isConstantValue(op)).first;
                 auto augmentcall = BuilderZ.CreateCall(newcalled, args);
                 augmentcall->setCallingConv(op->getCallingConv());
                 augmentcall->setDebugLoc(inst->getDebugLoc());
-                Instruction* antiptr = nullptr;
+                 
                 if (!called->getReturnType()->isVoidTy()) {
                   auto rv = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {1}));
                   gutils->originalInstructions.insert(rv);
@@ -3085,20 +3161,19 @@ Function* CreateAugmentedPrimal(Function* todiff, AAResults &AA, const SmallSet<
                   llvm::errs() << "augmented considering differential ip of " << called->getName() << " " << *called->getReturnType() << " " << gutils->isConstantValue(op) << "\n";
                   
                   if ((called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) && !gutils->isConstantValue(op)) {
-                    auto newip = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {2}));
+                    auto antiptr = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {2}));
                     auto placeholder = cast<PHINode>(gutils->invertedPointers[op]);
                     if (I != E && placeholder == &*I) I++;
                     gutils->invertedPointers.erase(op);
-                    placeholder->replaceAllUsesWith(newip);
+                    placeholder->replaceAllUsesWith(antiptr);
                     placeholder->eraseFromParent();
-                    gutils->invertedPointers[rv] = newip;
-                    antiptr = newip;
+                    gutils->invertedPointers[rv] = antiptr;
                     gutils->addMalloc<Instruction>(BuilderZ, antiptr);
                   }
 
-                  op->replaceAllUsesWith(rv);
+                  gutils->replaceAWithB(op,rv);
                 }
-                //todo consider how to propagate antiptr
+
                 Value* tp = BuilderZ.CreateExtractValue(augmentcall, {0});
                 if (tp->getType()->isEmptyTy()) {
                     auto tpt = tp->getType();
@@ -3133,11 +3208,11 @@ Function* CreateAugmentedPrimal(Function* todiff, AAResults &AA, const SmallSet<
   auto nf = gutils->newFunc;
   
   ValueToValueMapTy invertedRetPs;
-  if ((nf->getReturnType()->isPointerTy() || nf->getReturnType()->isIntegerTy()) && differentialReturn) {
+  if ((gutils->oldFunc->getReturnType()->isPointerTy() || gutils->oldFunc->getReturnType()->isIntegerTy()) && differentialReturn) {
     for (inst_iterator I = inst_begin(nf), E = inst_end(nf); I != E; ++I) {
       if (ReturnInst* ri = dyn_cast<ReturnInst>(&*I)) {
         IRBuilder <>builder(ri);
-        invertedRetPs[ri] = gutils->invertPointerM(ri->getReturnValue(), builder);
+        invertedRetPs[ri] = gutils->invertPointerM(cast<InsertValueInst>(ri->getReturnValue())->getInsertedValueOperand(), builder);
         assert(invertedRetPs[ri]);
       }
     }
@@ -3149,6 +3224,13 @@ Function* CreateAugmentedPrimal(Function* todiff, AAResults &AA, const SmallSet<
 
   (IRBuilder <>(gutils->inversionAllocs)).CreateUnreachable();
   DeleteDeadBlock(gutils->inversionAllocs);
+  
+  for (Argument &Arg : gutils->newFunc->args()) {
+      if (Arg.hasAttribute(Attribute::Returned))
+          Arg.removeAttr(Attribute::Returned);
+      if (Arg.hasAttribute(Attribute::StructRet))
+          Arg.removeAttr(Attribute::StructRet);
+  }
 
   if (llvm::verifyFunction(*gutils->newFunc, &llvm::errs())) {
     gutils->newFunc->dump();
@@ -3159,14 +3241,24 @@ Function* CreateAugmentedPrimal(Function* todiff, AAResults &AA, const SmallSet<
 
   std::vector<Type*> MallocTypes;
 
-  for(auto a:gutils->getMallocs()) MallocTypes.push_back(a->getType());
+  for(auto a:gutils->getMallocs()) { 
+      MallocTypes.push_back(a->getType());
+  }
 
-  RetTypes.push_back(StructType::get(nf->getContext(), MallocTypes));
-  
-  if (!nf->getReturnType()->isVoidTy()) {
-    RetTypes.push_back(nf->getReturnType());
-    if (nf->getReturnType()->isPointerTy() || nf->getReturnType()->isIntegerTy())
-      RetTypes.push_back(nf->getReturnType());
+  StructType* tapeType = StructType::get(nf->getContext(), MallocTypes);
+
+  bool recursive = cachedfunctions[tup].first->getNumUses() > 0;
+
+  if (recursive) {
+    RetTypes.push_back(Type::getInt8PtrTy(nf->getContext()));
+  } else {
+    RetTypes.push_back(tapeType);
+  }
+
+  if (!gutils->oldFunc->getReturnType()->isVoidTy()) {
+    RetTypes.push_back(gutils->oldFunc->getReturnType());
+    if (gutils->oldFunc->getReturnType()->isPointerTy() || gutils->oldFunc->getReturnType()->isIntegerTy())
+      RetTypes.push_back(gutils->oldFunc->getReturnType());
   }
 
   Type* RetType = StructType::get(nf->getContext(), RetTypes);
@@ -3207,7 +3299,38 @@ Function* CreateAugmentedPrimal(Function* todiff, AAResults &AA, const SmallSet<
                    nullptr);
 
   IRBuilder<> ib(NewF->getEntryBlock().getFirstNonPHI());
-  auto ret = ib.CreateAlloca(RetType);
+
+  Value* ret = ib.CreateAlloca(RetType);
+
+  Value* tapeMemory;
+  if (recursive) {
+      auto i64 = Type::getInt64Ty(NewF->getContext());
+      tapeMemory = CallInst::CreateMalloc(NewF->getEntryBlock().getFirstNonPHI(),
+                    i64,
+                    tapeType,
+                    ConstantInt::get(i64, NewF->getParent()->getDataLayout().getTypeAllocSizeInBits(tapeType)/8),
+                    nullptr,
+                    nullptr,
+                    "tapemem"
+                    );
+            CallInst* malloccall = dyn_cast<CallInst>(tapeMemory);
+            if (malloccall == nullptr) {
+                malloccall = cast<CallInst>(cast<Instruction>(tapeMemory)->getOperand(0));
+            }
+            malloccall->addAttribute(AttributeList::ReturnIndex, Attribute::NoAlias);
+            malloccall->addAttribute(AttributeList::ReturnIndex, Attribute::NonNull);
+    Value *Idxs[] = {
+        ib.getInt32(0),
+        ib.getInt32(0),
+    };
+    ib.CreateStore(malloccall, ib.CreateGEP(ret, Idxs, ""));
+  } else {
+    Value *Idxs[] = {
+        ib.getInt32(0),
+        ib.getInt32(0),
+    };
+    tapeMemory = ib.CreateGEP(ret, Idxs, "");
+  }
   
   unsigned i=0;
   for (auto v: gutils->getMallocs()) {
@@ -3215,10 +3338,9 @@ Function* CreateAugmentedPrimal(Function* todiff, AAResults &AA, const SmallSet<
           IRBuilder <>ib(cast<Instruction>(VMap[v])->getNextNode());
           Value *Idxs[] = {
             ib.getInt32(0),
-            ib.getInt32(0),
             ib.getInt32(i)
           };
-          auto gep = ib.CreateGEP(RetType, ret, Idxs, "");
+          auto gep = ib.CreateGEP(tapeMemory, Idxs, "");
           ib.CreateStore(VMap[v], gep);
       }
       i++;
@@ -3226,11 +3348,14 @@ Function* CreateAugmentedPrimal(Function* todiff, AAResults &AA, const SmallSet<
 
   for (inst_iterator I = inst_begin(nf), E = inst_end(nf); I != E; ++I) {
       if (ReturnInst* ri = dyn_cast<ReturnInst>(&*I)) {
-          IRBuilder <>ib(cast<Instruction>(VMap[ri]));
-          if (!nf->getReturnType()->isVoidTy()) {
-            ib.CreateStore(cast<ReturnInst>(VMap[ri])->getReturnValue(), ib.CreateConstGEP2_32(RetType, ret, 0, 1, ""));
+          ReturnInst* rim = cast<ReturnInst>(VMap[ri]);
+          Value* rv = rim->getReturnValue();
+          Type* oldretTy = gutils->oldFunc->getReturnType();
+          IRBuilder <>ib(rim);
+          if (!oldretTy->isVoidTy()) {
+            ib.CreateStore(cast<InsertValueInst>(rv)->getInsertedValueOperand(), ib.CreateConstGEP2_32(RetType, ret, 0, 1, ""));
             
-            if ((nf->getReturnType()->isPointerTy() || nf->getReturnType()->isIntegerTy()) && differentialReturn) {
+            if ((oldretTy->isPointerTy() || oldretTy->isIntegerTy()) && differentialReturn) {
               assert(invertedRetPs[ri]);
               assert(VMap[invertedRetPs[ri]]);
               ib.CreateStore( VMap[invertedRetPs[ri]], ib.CreateConstGEP2_32(RetType, ret, 0, 2, ""));
@@ -3263,13 +3388,24 @@ Function* CreateAugmentedPrimal(Function* todiff, AAResults &AA, const SmallSet<
     report_fatal_error("augmented function failed verification");
   }
 
-  gutils->newFunc->eraseFromParent();
+  SmallVector<User*,4> fnusers;
+  for(auto user : cachedfunctions[tup].first->users()) {
+    fnusers.push_back(user);
+  }
+  for(auto user : fnusers) {
+    cast<CallInst>(user)->setCalledFunction(NewF);
+  }
+  cachedfunctions[tup].first = NewF;
+  if (recursive)
+      cachedfunctions[tup].second = tapeType;
+  cachedfinished[tup] = true;
   
-  if (oututils)
-      *oututils = gutils;
-  else
-      delete gutils;
-  return NewF;
+  gutils->newFunc->eraseFromParent();
+
+  delete gutils;
+  if (autodiff_print)
+    NewF->dump();
+  return std::pair<Function*,StructType*>(NewF, recursive ? tapeType : nullptr);
 }
   
 void createInvertedTerminator(DiffeGradientUtils* gutils, BasicBlock *BB, AllocaInst* retAlloca, unsigned extraArgs) { 
@@ -3513,11 +3649,10 @@ void createInvertedTerminator(DiffeGradientUtils* gutils, BasicBlock *BB, Alloca
       }
 }
 
-Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& constant_args, TargetLibraryInfo &TLI, AAResults &AA, bool returnValue, bool differentialReturn, bool topLevel, GradientUtils** oututils, llvm::Type* additionalArg) {
+Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& constant_args, TargetLibraryInfo &TLI, AAResults &AA, bool returnValue, bool differentialReturn, bool topLevel, llvm::Type* additionalArg) {
   static std::map<std::tuple<Function*,std::set<unsigned>, bool/*retval*/, bool/*differentialReturn*/, bool/*topLevel*/, llvm::Type*>, Function*> cachedfunctions;
   auto tup = std::make_tuple(todiff, std::set<unsigned>(constant_args.begin(), constant_args.end()), returnValue, differentialReturn, topLevel, additionalArg);
   if (cachedfunctions.find(tup) != cachedfunctions.end()) {
-    if (oututils) *oututils = nullptr;
     return cachedfunctions[tup];
   }
 
@@ -4192,20 +4327,20 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
           }
 
           Value* tape = nullptr;
-          GradientUtils *augmentedutils = nullptr;
           CallInst* augmentcall = nullptr;
           Instruction* cachereplace = nullptr;
           if (modifyPrimal) {
+            auto fnandtapetype = CreateAugmentedPrimal(dyn_cast<Function>(called), AA, subconstant_args, TLI, /*differentialReturns*/!gutils->isConstantValue(op));
             if (topLevel) {
-              auto newcalled = CreateAugmentedPrimal(dyn_cast<Function>(called), AA, subconstant_args, TLI, &augmentedutils, /*differentialReturns*/!gutils->isConstantValue(op));
+              Function* newcalled = fnandtapetype.first;
               augmentcall = BuilderZ.CreateCall(newcalled, pre_args);
               augmentcall->setCallingConv(op->getCallingConv());
               augmentcall->setDebugLoc(inst->getDebugLoc());
               tape = BuilderZ.CreateExtractValue(augmentcall, {0});
               if (tape->getType()->isEmptyTy()) {
-                  auto tt = tape->getType();
-                  cast<Instruction>(tape)->eraseFromParent();
-                  tape = UndefValue::get(tt);
+                auto tt = tape->getType();
+                cast<Instruction>(tape)->eraseFromParent();
+                tape = UndefValue::get(tt);
               }
 
               llvm::errs() << "primal considering differential ip of " << called->getName() << " " << *called->getReturnType() << " " << gutils->isConstantValue(op) << "\n";
@@ -4232,8 +4367,17 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 gutils->invertedPointers[op] = newip;
               }
             }
+
             IRBuilder<> builder(op);
             tape = gutils->addMalloc<Value>(builder, tape);
+            if (fnandtapetype.second) {
+              auto tapep = BuilderZ.CreatePointerCast(tape, PointerType::getUnqual(fnandtapetype.second));
+              auto truetape = BuilderZ.CreateLoad(tapep);
+                
+              CallInst* ci = cast<CallInst>(CallInst::CreateFree(tape, &*BuilderZ.GetInsertPoint()));
+              ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+              tape = truetape;
+            }
 
           } else {
               if (!topLevel && op->getNumUses() != 0 && !op->doesNotAccessMemory()) {
@@ -4242,7 +4386,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               }
           }
 
-          auto newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called), subconstant_args, TLI, AA, retUsed, !gutils->isConstantValue(inst) && !inst->getType()->isPointerTy(), /*topLevel*/replaceFunction, nullptr, tape ? tape->getType() : nullptr);//, LI, DT);
+          auto newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called), subconstant_args, TLI, AA, retUsed, !gutils->isConstantValue(inst) && !inst->getType()->isPointerTy(), /*topLevel*/replaceFunction, tape ? tape->getType() : nullptr);//, LI, DT);
 
           if (!gutils->isConstantValue(inst) && !inst->getType()->isPointerTy()) {
             args.push_back(diffe(inst));
@@ -4548,10 +4692,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
   optimizeIntermediate(gutils, topLevel, gutils->newFunc);
 
   auto nf = gutils->newFunc;
-  if (oututils)
-      *oututils = gutils;
-  else
-      delete gutils;
+  delete gutils;
 
   return nf;
 }
@@ -4660,7 +4801,7 @@ void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI, AAResults &AA) {//, Lo
   }
 
   bool differentialReturn = cast<Function>(fn)->getReturnType()->isFPOrFPVectorTy();
-  auto newFunc = CreatePrimalAndGradient(cast<Function>(fn), constants, TLI, AA, /*should return*/false, differentialReturn, /*topLevel*/true, /*outUtils*/nullptr, /*addedType*/nullptr);//, LI, DT);
+  auto newFunc = CreatePrimalAndGradient(cast<Function>(fn), constants, TLI, AA, /*should return*/false, differentialReturn, /*topLevel*/true, /*addedType*/nullptr);//, LI, DT);
   
   if (differentialReturn)
     args.push_back(ConstantFP::get(cast<Function>(fn)->getReturnType(), 1.0));
