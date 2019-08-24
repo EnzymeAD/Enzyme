@@ -2126,32 +2126,23 @@ public:
           CallInst* op = dyn_cast<CallInst>(inst);
 
           if (this->isConstantValue(op)) {
-              //llvm::errs() << " not augmenting return as constant " << *op << "\n";
               continue;
           }
 
           Function *called = op->getCalledFunction();
 
           if (called && isCertainPrintOrFree(called)) {
-              //llvm::errs() << " not augmenting return as certain print or free " << *op << "\n";
               continue;
-          }
-          
-         // if (called && (called->getName() == "malloc" || called->getName() == "_Znwm")) {
-          //    continue;
-          //}
+          }   
 
           if (!op->getType()->isPointerTy() && !op->getType()->isIntegerTy()) {
-              //llvm::errs() << " not augmenting return as non pointer return " << *op << "\n";
               continue;
           }
 
           if (this->invertedPointers.find(op) != this->invertedPointers.end()) {
-              //llvm::errs() << " not augmenting return as already done? " << *op << "\n";
               continue;
           }
             
-			//llvm::errs() << " creating placeholder for instruction " << *op << "\n";
             IRBuilder<> BuilderZ(op->getNextNonDebugInstruction());
             BuilderZ.setFastMathFlags(FastMathFlags::getFast());
             this->invertedPointers[op] = BuilderZ.CreatePHI(op->getType(), 1);
@@ -4278,18 +4269,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             }
           }
 
-          bool retUsed = false;
-          for (const User *U : inst->users()) {
-            if (auto si = dyn_cast<StoreInst>(U)) {
-                if (si->getPointerOperand() == retAlloca && si->getValueOperand() == inst) {
-                    retUsed = true;
-                    continue;
-                }
-            }
-            retUsed = false;
-            break;
-          }
-
           bool replaceFunction = false;
           if (topLevel && BB->getSingleSuccessor() == BB2 && foundcalled == nullptr) {
               auto origop = cast<CallInst>(gutils->getOriginal(op));
@@ -4457,7 +4436,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
           }
 
           Function* newcalled;
-          
+         
+          bool retUsed = replaceFunction && (op->getNumUses() > 0);
+
           if (foundcalled) {
               newcalled = foundcalled;
               assert(!retUsed);
@@ -4482,25 +4463,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               Value* diffeadd = Builder2.CreateExtractValue(diffes, {structidx});
               structidx++;
               addToDiffe(op->getArgOperand(i), diffeadd);
-            }
-          }
-
-          if (retUsed) {
-            auto retval = cast<Instruction>(Builder2.CreateExtractValue(diffes, {0}));
-            gutils->originalInstructions.insert(retval);
-            gutils->nonconstant.insert(retval);
-            if (!gutils->isConstantValue(op))
-              gutils->nonconstant_values.insert(retval);
-            Builder2.CreateStore(retval, retAlloca);
-
-            startremove:
-            for (User *U : inst->users()) {
-                if (auto si = dyn_cast<StoreInst>(U)) {
-                    if (si->getPointerOperand() == retAlloca && si->getValueOperand() == inst) {
-                        si->eraseFromParent();
-                        goto startremove;
-                    }
-                }
             }
           }
 
