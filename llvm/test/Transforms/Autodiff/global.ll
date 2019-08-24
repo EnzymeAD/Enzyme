@@ -1,5 +1,26 @@
 ; RUN: opt < %s -lower-autodiff -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
 
+; #include <stdlib.h>
+; 
+; extern double global;
+; 
+; __attribute__((noinline))
+; double mulglobal(double x) {
+;     return x * global;
+; }
+; 
+; __attribute__((noinline))
+; double derivative(double x) {
+;     return __builtin_autodiff(mulglobal, x);
+; }
+; 
+; void main(int argc, char** argv) {
+;     double x = atof(argv[1]);
+;     printf("x=%f\n", x);
+;     double xp = derivative(x);
+;     printf("xp=%f\n", xp);
+; }
+
 @global = external dso_local local_unnamed_addr global double, align 8, !enzyme_shadow !{double* @dglobal}
 @dglobal = external dso_local local_unnamed_addr global double, align 8
 

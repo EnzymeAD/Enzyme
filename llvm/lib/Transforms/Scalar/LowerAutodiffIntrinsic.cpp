@@ -1675,12 +1675,20 @@ public:
     tape = newtape;
   }
 
+  void dumpPointers() {
+    llvm::errs() << "invertedPointers:\n";
+    for(auto a : invertedPointers) {
+        llvm::errs() << "   invertedPointers[" << *a.first << "] = " << *a.second << "\n";
+    }
+    llvm::errs() << "end invertedPointers\n";
+  }
+
   void dumpScope() {
     llvm::errs() << "scope:\n";
     for(auto a : scopeMap) {
         llvm::errs() << "   scopeMap[" << *a.first << "] = " << *a.second << "\n";
     }
-    llvm::errs() << "endscope\n";
+    llvm::errs() << "end scope\n";
   }
 
   Instruction* createAntiMalloc(CallInst *call) {
@@ -2111,27 +2119,44 @@ public:
           assert(inst);
           I++;
 
-          if (!isa<CallInst>(inst)) continue;
+          if (!isa<CallInst>(inst)) {
+              continue;
+          }
+
           CallInst* op = dyn_cast<CallInst>(inst);
+
+          if (this->isConstantValue(op)) {
+              //llvm::errs() << " not augmenting return as constant " << *op << "\n";
+              continue;
+          }
 
           Function *called = op->getCalledFunction();
 
-          if (this->isConstantValue(op)) continue;
-
-          if (isCertainPrintOrFree(called)) continue;
+          if (called && isCertainPrintOrFree(called)) {
+              //llvm::errs() << " not augmenting return as certain print or free " << *op << "\n";
+              continue;
+          }
           
-		  if (!called) continue;
-          if (called->empty() && !(called->getName() == "malloc" || called->getName() == "_Znwm")) continue;
+         // if (called && (called->getName() == "malloc" || called->getName() == "_Znwm")) {
+          //    continue;
+          //}
 
-          if (!called->getReturnType()->isPointerTy() && !called->getReturnType()->isIntegerTy()) continue;
+          if (!op->getType()->isPointerTy() && !op->getType()->isIntegerTy()) {
+              //llvm::errs() << " not augmenting return as non pointer return " << *op << "\n";
+              continue;
+          }
 
-          if (this->invertedPointers.find(called) != this->invertedPointers.end()) continue;
+          if (this->invertedPointers.find(op) != this->invertedPointers.end()) {
+              //llvm::errs() << " not augmenting return as already done? " << *op << "\n";
+              continue;
+          }
+            
 			//llvm::errs() << " creating placeholder for instruction " << *op << "\n";
             IRBuilder<> BuilderZ(op->getNextNonDebugInstruction());
             BuilderZ.setFastMathFlags(FastMathFlags::getFast());
-            this->invertedPointers[op] = BuilderZ.CreatePHI(called->getReturnType(), 1);
+            this->invertedPointers[op] = BuilderZ.CreatePHI(op->getType(), 1);
           
-			if (called->getName() == "malloc" || called->getName() == "_Znwm") {
+			if ( called && (called->getName() == "malloc" || called->getName() == "_Znwm")) {
 				this->invertedPointers[op]->setName(op->getName()+"'mi");
 			}
         }
@@ -2598,7 +2623,6 @@ endCheck:
               report_fatal_error("cannot compute with global variable that doesn't have marked shadow global");
           }
           auto md = arg->getMetadata("enzyme_shadow");
-          md->dump();
           if (!isa<MDTuple>(md)) {
               arg->dump();
               md->dump();
@@ -2608,7 +2632,6 @@ endCheck:
           assert(md2->getNumOperands() == 1);
           auto gvemd = cast<ConstantAsMetadata>(md2->getOperand(0));
           auto cs = gvemd->getValue();
-          cs->dump();
           return cs;
       } if (auto arg = dyn_cast<CastInst>(val)) {
         auto result = BuilderM.CreateCast(arg->getOpcode(), invertPointerM(arg->getOperand(0), BuilderM), arg->getDestTy(), arg->getName()+"'ipc");
@@ -2955,6 +2978,25 @@ bool isNotActiveRecurse(Function* f, GradientUtils &gutils) {
 
 //! return structtype if recursive function
 std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResults &AA, const SmallSet<unsigned,4>& constant_args, TargetLibraryInfo &TLI, bool differentialReturn) {
+    if (todiff->empty()) {
+      if (!todiff->hasMetadata("enzyme_augment")) {
+          todiff->dump();
+          report_fatal_error("unknown augmentat for noninvertible function -- no metadata");
+      }
+      auto md = todiff->getMetadata("enzyme_augment");
+      if (!isa<MDTuple>(md)) {
+          todiff->dump();
+          md->dump();
+          report_fatal_error("unknown augment for noninvertible function -- metadata incorrect");
+      }
+      auto md2 = cast<MDTuple>(md);
+      assert(md2->getNumOperands() == 1);
+      auto gvemd = cast<ConstantAsMetadata>(md2->getOperand(0));
+      auto foundcalled = cast<Function>(gvemd->getValue());
+      auto st = cast<StructType>(foundcalled->getReturnType());
+      assert(st->getNumElements() > 0);
+      return std::pair<Function*,StructType*>(foundcalled, nullptr); //dyn_cast<StructType>(st->getElementType(0)));
+    }
   assert(!todiff->empty());
    
   static std::map<std::tuple<Function*,std::set<unsigned>, bool/*differentialReturn*/>, std::pair<Function*,StructType*>> cachedfunctions;
@@ -3006,6 +3048,7 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
           switch(op->getIntrinsicID()) {
             case Intrinsic::memcpy: {
                 if (gutils->isConstantInstruction(inst)) continue;
+                assert(0 && "TODO: memcpy has bug that needs fixing (per int double vs ptr)");
                 /*
                 SmallVector<Value*, 4> args;
                 args.push_back(invertPointer(op->getOperand(0)));
@@ -3110,14 +3153,8 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
 
             if (called == nullptr) {
               assert(op);
-              llvm::errs() << "cannot handle non constant function\n" << *op << "\n";
-              report_fatal_error("unknown non constant function");
-            }
-
-            if (called->empty()) {
-              assert(op);
-              llvm::errs() << "cannot handle non invertible function\n" << *op << "\n";
-              report_fatal_error("unknown noninvertible function");
+              llvm::errs() << "cannot handle augment non constant function\n" << *op << "\n";
+              report_fatal_error("unknown augment non constant function");
             }
             
               SmallSet<unsigned,4> subconstant_args;
@@ -3128,15 +3165,17 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
               IRBuilder<> BuilderZ(op);
               BuilderZ.setFastMathFlags(FastMathFlags::getFast());
 
-              if ( (called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) && !gutils->isConstantValue(op) ) {
+              if ( (op->getType()->isPointerTy() || op->getType()->isIntegerTy()) && !gutils->isConstantValue(op) ) {
                  modifyPrimal = true;
                  //llvm::errs() << "primal modified " << called->getName() << " modified via return" << "\n";
               }
 
+              if (called->empty()) modifyPrimal = true;
+
               for(unsigned i=0;i<op->getNumArgOperands(); i++) {
                 args.push_back(op->getArgOperand(i));
 
-                if (gutils->isConstantValue(op->getArgOperand(i))) {
+                if (gutils->isConstantValue(op->getArgOperand(i)) && !called->empty()) {
                     subconstant_args.insert(i);
                     argsInverted.push_back(DIFFE_TYPE::CONSTANT);
                     continue;
@@ -3167,7 +3206,7 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
                 augmentcall->setCallingConv(op->getCallingConv());
                 augmentcall->setDebugLoc(inst->getDebugLoc());
                  
-                if (!called->getReturnType()->isVoidTy()) {
+                if (!op->getType()->isVoidTy()) {
                   auto rv = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {1}));
                   gutils->originalInstructions.insert(rv);
                   gutils->nonconstant.insert(rv);
@@ -3175,9 +3214,9 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
                     gutils->nonconstant_values.insert(rv);
                   }
                   assert(op->getType() == rv->getType());
-                  llvm::errs() << "augmented considering differential ip of " << called->getName() << " " << *called->getReturnType() << " " << gutils->isConstantValue(op) << "\n";
+                  llvm::errs() << "augmented considering differential ip of " << called->getName() << " " << *op->getType() << " " << gutils->isConstantValue(op) << "\n";
                   
-                  if ((called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) && !gutils->isConstantValue(op)) {
+                  if ((op->getType()->isPointerTy() || op->getType()->isIntegerTy()) && !gutils->isConstantValue(op)) {
                     auto antiptr = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {2}));
                     auto placeholder = cast<PHINode>(gutils->invertedPointers[op]);
                     if (I != E && placeholder == &*I) I++;
@@ -3883,6 +3922,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       switch(op->getIntrinsicID()) {
         case Intrinsic::memcpy: {
             if (gutils->isConstantInstruction(inst)) continue;
+            assert(0 && "TODO: memcpy has bug that needs fixing (per int double vs ptr)");
             SmallVector<Value*, 4> args;
             // source and dest are swapped
             args.push_back(invertPointer(op->getOperand(1)));
@@ -4172,24 +4212,37 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
           report_fatal_error("unknown non constant function");
         }
 
-        if (called->empty()) {
-          assert(op);
-          llvm::errs() << "cannot handle non invertible function\n" << *op << "\n";
-          report_fatal_error("unknown noninvertible function");
-        }
+        bool modifyPrimal = !called->hasFnAttribute(Attribute::ReadNone);
 
+        Function *foundcalled = nullptr;
+        if (called->empty()) {
+          if (!called->hasMetadata("enzyme_gradient")) {
+              called->dump();
+              report_fatal_error("unknown gradient for noninvertible function -- no metadata");
+          }
+          auto md = called->getMetadata("enzyme_gradient");
+          if (!isa<MDTuple>(md)) {
+              called->dump();
+              md->dump();
+              report_fatal_error("unknown gradient for noninvertible function -- metadata incorrect");
+          }
+          auto md2 = cast<MDTuple>(md);
+          assert(md2->getNumOperands() == 1);
+          auto gvemd = cast<ConstantAsMetadata>(md2->getOperand(0));
+          foundcalled = cast<Function>(gvemd->getValue());
+          modifyPrimal = true;
+        }
 
           SmallSet<unsigned,4> subconstant_args;
 
           SmallVector<Value*, 8> args;
           SmallVector<Value*, 8> pre_args;
           SmallVector<DIFFE_TYPE, 8> argsInverted;
-          bool modifyPrimal = !called->hasFnAttribute(Attribute::ReadNone);
           IRBuilder<> BuilderZ(op);
           std::vector<Instruction*> postCreate;
           BuilderZ.setFastMathFlags(FastMathFlags::getFast());
 
-          if ( (called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) && !gutils->isConstantValue(op)) {
+          if ( (op->getType()->isPointerTy() || op->getType()->isIntegerTy()) && !gutils->isConstantValue(op)) {
               //llvm::errs() << "augmented modified " << called->getName() << " modified via return" << "\n";
               modifyPrimal = true;
           }
@@ -4198,7 +4251,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             args.push_back(lookup(op->getArgOperand(i)));
             pre_args.push_back(op->getArgOperand(i));
 
-            if (gutils->isConstantValue(op->getArgOperand(i))) {
+            if (gutils->isConstantValue(op->getArgOperand(i)) && foundcalled == nullptr) {
                 subconstant_args.insert(i);
                 argsInverted.push_back(DIFFE_TYPE::CONSTANT);
                 continue;
@@ -4238,7 +4291,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
           }
 
           bool replaceFunction = false;
-          if (topLevel && BB->getSingleSuccessor() == BB2) {
+          if (topLevel && BB->getSingleSuccessor() == BB2 && foundcalled == nullptr) {
               auto origop = cast<CallInst>(gutils->getOriginal(op));
               auto OBB = cast<BasicBlock>(gutils->getOriginal(BB));
               auto iter = OBB->rbegin();
@@ -4360,8 +4413,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 tape = UndefValue::get(tt);
               }
 
-              llvm::errs() << "primal considering differential ip of " << called->getName() << " " << *called->getReturnType() << " " << gutils->isConstantValue(op) << "\n";
-              if( (called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) && !gutils->isConstantValue(op) ) {
+              llvm::errs() << "primal considering differential ip of " << called->getName() << " " << *op->getType() << " " << gutils->isConstantValue(op) << "\n";
+              if( (op->getType()->isPointerTy() || op->getType()->isIntegerTy()) && !gutils->isConstantValue(op) ) {
                 auto newip = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {2}));
                 auto placeholder = cast<PHINode>(gutils->invertedPointers[op]);
                 if (I != E && placeholder == &*I) I++;
@@ -4376,7 +4429,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 					cachereplace = IRBuilder<>(op).CreatePHI(op->getType(), 1);
                     cachereplace = gutils->addMalloc<Instruction>(BuilderZ, cachereplace);
               }
-              if( (called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) && !gutils->isConstantValue(op) ) {
+              if( (op->getType()->isPointerTy() || op->getType()->isIntegerTy()) && !gutils->isConstantValue(op) ) {
                 IRBuilder<> bb(op);
                 auto placeholder = cast<PHINode>(gutils->invertedPointers[op]);
                 if (I != E && placeholder == &*I) I++;
@@ -4403,7 +4456,15 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               }
           }
 
-          auto newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called), subconstant_args, TLI, AA, retUsed, !gutils->isConstantValue(inst) && !inst->getType()->isPointerTy(), /*topLevel*/replaceFunction, tape ? tape->getType() : nullptr);//, LI, DT);
+          Function* newcalled;
+          
+          if (foundcalled) {
+              newcalled = foundcalled;
+              assert(!retUsed);
+          } else {
+              //TODO remove retused
+              newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called), subconstant_args, TLI, AA, retUsed, !gutils->isConstantValue(inst) && !inst->getType()->isPointerTy(), /*topLevel*/replaceFunction, tape ? tape->getType() : nullptr);//, LI, DT);
+          }
 
           if (!gutils->isConstantValue(inst) && !inst->getType()->isPointerTy()) {
             args.push_back(diffe(inst));
@@ -4470,7 +4531,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 
           if (augmentcall || cachereplace) {
 
-            if (!called->getReturnType()->isVoidTy()) {
+            if (!op->getType()->isVoidTy()) {
               Instruction* dcall = nullptr;
               if (augmentcall) {
                 dcall = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {1}));
@@ -4485,9 +4546,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               if (!gutils->isConstantValue(op))
                 gutils->nonconstant_values.insert(dcall);
 
-              llvm::errs() << "augmented considering differential ip of " << called->getName() << " " << *called->getReturnType() << " " << gutils->isConstantValue(op) << "\n";
+              llvm::errs() << "augmented considering differential ip of " << called->getName() << " " << *op->getType() << " " << gutils->isConstantValue(op) << "\n";
               if (!gutils->isConstantValue(op)) {
-                  if (called->getReturnType()->isPointerTy() || called->getReturnType()->isIntegerTy()) {
+                  if (op->getType()->isPointerTy() || op->getType()->isIntegerTy()) {
                     gutils->invertedPointers[dcall] = gutils->invertedPointers[op];
                     gutils->invertedPointers.erase(op);
                   } else {
