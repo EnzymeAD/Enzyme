@@ -806,6 +806,8 @@ static llvm::Constant *getPrologueSignature(CodeGenModule &CGM,
   return CGM.getTargetCodeGenInfo().getUBSanFunctionSignature(CGM);
 }
 
+#include "llvm/IR/Metadata.h"
+
 void CodeGenFunction::StartFunction(GlobalDecl GD,
                                     QualType RetTy,
                                     llvm::Function *Fn,
@@ -900,6 +902,20 @@ void CodeGenFunction::StartFunction(GlobalDecl GD,
   if (D && SanOpts.has(SanitizerKind::CFIUnrelatedCast)) {
     if (matchesStlAllocatorFn(D, getContext()))
       SanOpts.Mask &= ~SanitizerKind::CFIUnrelatedCast;
+  }
+
+  if (D) {
+    for(auto Attr: D->attrs()) {
+        if (auto ea = dyn_cast<EnzymeAttr>(Attr)) {
+            llvm::errs() << " adding enzyme attribute " << ea->getAttrName() << " to " << Fn->getName() << "\n";
+            auto val = ea->getValue();
+            auto namedref = cast<DeclRefExpr>(val);
+            auto fdecl = cast<FunctionDecl>(namedref->getDecl());
+            auto lval = CGM.GetAddrOfFunction(fdecl);
+            auto N = llvm::MDTuple::get(Fn->getContext(), {llvm::ValueAsMetadata::get(lval)});
+            Fn->setMetadata(("enzyme_" + ea->getAttrName()).str(), N);
+        }
+    }
   }
 
   // Apply xray attributes to the function (as a string, for now)

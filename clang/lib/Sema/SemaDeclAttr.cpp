@@ -1785,6 +1785,24 @@ static void handleIFuncAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
                                          AL.getAttributeSpellingListIndex()));
 }
 
+static void handleEnzymeAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
+  if (AL.getNumArgs() != 2) {
+    S.Diag(AL.getLoc(), diag::err_attribute_wrong_number_arguments);
+    return;
+  }
+
+  StringRef Str;
+  if (!S.checkStringLiteralArgumentAttr(AL, 0, Str))
+    return;
+  
+  Expr *E = AL.getArgAsExpr(1);
+
+  // FIXME: check if target symbol exists in current file
+
+  D->addAttr(::new (S.Context) EnzymeAttr(AL.getRange(), S.Context, Str, E,
+                                         AL.getAttributeSpellingListIndex()));
+}
+
 static void handleAliasAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
   StringRef Str;
   if (!S.checkStringLiteralArgumentAttr(AL, 0, Str))
@@ -6039,6 +6057,9 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
     break;
   case ParsedAttr::AT_IFunc:
     handleIFuncAttr(S, D, AL);
+    break;
+  case ParsedAttr::AT_Enzyme:
+    handleEnzymeAttr(S, D, AL);
     break;
   case ParsedAttr::AT_Alias:
     handleAliasAttr(S, D, AL);

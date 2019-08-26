@@ -1556,6 +1556,14 @@ def NoThrow : InheritableAttr {
   let Documentation = [NoThrowDocs];
 }
 
+def Enzyme : InheritableAttr {
+  let Spellings = [Clang<"enzyme">];
+  let Args = [StringArgument<"AttrName">, ExprArgument<"Value">];
+  let Subjects = SubjectList<[Function, GlobalVar], ErrorDiag>;
+  let Documentation = [Undocumented];
+  let InheritEvenIfAlreadyPresent = 1;
+}
+
 def NvWeak : IgnoredAttr {
   // No Declspec spelling of this attribute; the CUDA headers use
   // __attribute__((nv_weak)) unconditionally. Does not receive an [[]]

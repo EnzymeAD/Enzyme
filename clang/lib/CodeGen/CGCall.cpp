@@ -4212,6 +4212,19 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
   };
   CalleePtr = simplifyVariadicCallee(CalleePtr);
 
+  if (auto D = Callee.getAbstractInfo().getCalleeDecl()) {
+    for(auto Attr: D->attrs()) {
+        if (auto ea = dyn_cast<EnzymeAttr>(Attr)) {
+            auto val = ea->getValue();
+            auto namedref = cast<DeclRefExpr>(val);
+            auto fdecl = cast<FunctionDecl>(namedref->getDecl());
+            auto lval = CGM.GetAddrOfFunction(fdecl);
+            auto N = llvm::MDTuple::get(CalleePtr->getContext(), {llvm::ValueAsMetadata::get(lval)});
+            if (auto F = dyn_cast<llvm::Function>(CalleePtr))
+                F->setMetadata(("enzyme_" + ea->getAttrName()).str(), N);
+        }
+    }
+  }
   // 3. Perform the actual call.
 
   // Deactivate any cleanups that we're supposed to do immediately before
