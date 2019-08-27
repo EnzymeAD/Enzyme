@@ -7,6 +7,7 @@
 ; Any invalidation that shows up here is a bug, unless we started modifying
 ; the IR, in which case we need to make it immutable harder.
 ;
+; UNSUPPORTED: linux
 ; Prelink pipelines:
 ; RUN: opt -disable-verify -debug-pass-manager \
 ; RUN:     -passes='thinlto-pre-link<O1>,name-anon-globals' -S %s 2>&1 \
@@ -73,6 +74,7 @@
 ; CHECK-O-NEXT: Running pass: EarlyCSEPass
 ; CHECK-O-NEXT: Running analysis: TargetLibraryAnalysis
 ; CHECK-O-NEXT: Running pass: LowerAutodiffIntrinsicPass
+; CHECK-O-NEXT: Running analysis: AAManager on foo
 ; CHECK-O-NEXT: Running pass: LowerExpectIntrinsicPass
 ; CHECK-O3-NEXT: Running pass: CallSiteSplittingPass
 ; CHECK-O-NEXT: Finished llvm::Function pass manager run.

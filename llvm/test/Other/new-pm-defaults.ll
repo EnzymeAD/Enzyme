@@ -1,3 +1,4 @@
+; UNSUPPORTED: linux
 ; The IR below was crafted so as:
 ; 1) To have a loop, so we create a loop pass manager
 ; 2) To be "immutable" in the sense that no pass in the standard
