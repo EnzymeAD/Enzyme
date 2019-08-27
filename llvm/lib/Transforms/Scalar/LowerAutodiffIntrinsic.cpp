@@ -3014,8 +3014,16 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
         FunctionType *FTy = FunctionType::get(StructType::get(todiff->getContext(), {StructType::get(todiff->getContext(), {}), foundcalled->getReturnType()}),
                                    foundcalled->getFunctionType()->params(), foundcalled->getFunctionType()->isVarArg());
         Function *NewF = Function::Create(FTy, Function::LinkageTypes::InternalLinkage, "fixaugmented_"+todiff->getName(), todiff->getParent());
-         for (auto i=foundcalled->arg_begin(), j=NewF->arg_begin(); i != foundcalled->arg_end(); ) {
+        NewF->setAttributes(foundcalled->getAttributes());
+        if (NewF->hasFnAttribute(Attribute::NoInline)) {
+            NewF->removeFnAttr(Attribute::NoInline);
+        }
+        for (auto i=foundcalled->arg_begin(), j=NewF->arg_begin(); i != foundcalled->arg_end(); ) {
              j->setName(i->getName());
+             if (j->hasAttribute(Attribute::Returned))
+                 j->removeAttr(Attribute::Returned);
+             if (j->hasAttribute(Attribute::StructRet))
+                 j->removeAttr(Attribute::StructRet);
              i++;
              j++;
          }
@@ -3801,6 +3809,16 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       if (wrongRet || !hasTape) {
         FunctionType *FTy = FunctionType::get(StructType::get(todiff->getContext(), {res.second}), res.first, todiff->getFunctionType()->isVarArg());
         Function *NewF = Function::Create(FTy, Function::LinkageTypes::InternalLinkage, "fixgradient_"+todiff->getName(), todiff->getParent());
+        NewF->setAttributes(foundcalled->getAttributes());
+        if (NewF->hasFnAttribute(Attribute::NoInline)) {
+            NewF->removeFnAttr(Attribute::NoInline);
+        }
+          for (Argument &Arg : NewF->args()) {
+              if (Arg.hasAttribute(Attribute::Returned))
+                  Arg.removeAttr(Attribute::Returned);
+              if (Arg.hasAttribute(Attribute::StructRet))
+                  Arg.removeAttr(Attribute::StructRet);
+          }
 
         BasicBlock *BB = BasicBlock::Create(NewF->getContext(), "entry", NewF);
         IRBuilder <>bb(BB);
