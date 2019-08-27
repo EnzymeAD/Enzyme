@@ -644,7 +644,11 @@ bool isconstantValueM(Value* val, SmallPtrSetImpl<Value*> &constants, SmallPtrSe
     
     if (val->getType()->isVoidTy()) return true;
 
-    assert(!isa<Function>(val));
+    //! False so we can replace function with augmentation
+    if (isa<Function>(val)) {
+        return false;
+    }
+
     if (isa<ConstantData>(val) || isa<ConstantAggregate>(val) || isa<Function>(val)) return true;
 	if (isa<BasicBlock>(val)) return true;
     assert(!isa<InlineAsm>(val));
@@ -1616,6 +1620,8 @@ bool isCertainPrintMallocOrFree(Function* called) {
     return false;
 }
 
+Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& constant_args, TargetLibraryInfo &TLI, AAResults &AA, bool returnValue, bool differentialReturn, bool topLevel, llvm::Type* additionalArg);
+
 class GradientUtils {
 public:
   llvm::Function *oldFunc;
@@ -1997,8 +2003,10 @@ public:
     return addedMallocs;
   }
 protected:
-  GradientUtils(Function* newFunc_, TargetLibraryInfo &TLI, ValueToValueMapTy& invertedPointers_, const SmallPtrSetImpl<Value*> &constants_, const SmallPtrSetImpl<Value*> &nonconstant_, const SmallPtrSetImpl<Value*> &returnvals_, ValueToValueMapTy& originalToNewFn_) :
-      newFunc(newFunc_), invertedPointers(), DT(*newFunc_), constants(constants_.begin(), constants_.end()), nonconstant(nonconstant_.begin(), nonconstant_.end()), nonconstant_values(returnvals_.begin(), returnvals_.end()), LI(DT), AC(*newFunc_), SE(*newFunc_, TLI, AC, DT, LI), inversionAllocs(nullptr) {
+  AAResults &AA;
+  TargetLibraryInfo &TLI;
+  GradientUtils(Function* newFunc_, AAResults &AA_, TargetLibraryInfo &TLI_, ValueToValueMapTy& invertedPointers_, const SmallPtrSetImpl<Value*> &constants_, const SmallPtrSetImpl<Value*> &nonconstant_, const SmallPtrSetImpl<Value*> &returnvals_, ValueToValueMapTy& originalToNewFn_) :
+      newFunc(newFunc_), invertedPointers(), DT(*newFunc_), constants(constants_.begin(), constants_.end()), nonconstant(nonconstant_.begin(), nonconstant_.end()), nonconstant_values(returnvals_.begin(), returnvals_.end()), LI(DT), AC(*newFunc_), SE(*newFunc_, TLI_, AC, DT, LI), inversionAllocs(nullptr), AA(AA_), TLI(TLI_) {
         invertedPointers.insert(invertedPointers_.begin(), invertedPointers_.end());  
         originalToNewFn.insert(originalToNewFn_.begin(), originalToNewFn_.end());  
           for (BasicBlock &BB: *newFunc) {
@@ -2022,7 +2030,7 @@ public:
     SmallPtrSet<Value*,2> returnvals;
     ValueToValueMapTy originalToNew;
     auto newFunc = CloneFunctionWithReturns(todiff, AA, invertedPointers, constant_args, constants, nonconstant, returnvals, /*returnValue*/returnValue, /*differentialReturn*/differentialReturn, "fakeaugmented_"+todiff->getName(), &originalToNew, /*diffeReturnArg*/false, additionalArg);
-    auto res = new GradientUtils(newFunc, TLI, invertedPointers, constants, nonconstant, returnvals, originalToNew);
+    auto res = new GradientUtils(newFunc, AA, TLI, invertedPointers, constants, nonconstant, returnvals, originalToNew);
     res->oldFunc = todiff;
     return res;
   }
@@ -2645,8 +2653,12 @@ endCheck:
           assert(md2->getNumOperands() == 1);
           auto gvemd = cast<ConstantAsMetadata>(md2->getOperand(0));
           auto cs = gvemd->getValue();
-          return cs;
-      } if (auto arg = dyn_cast<CastInst>(val)) {
+          return invertedPointers[val] = cs;
+      } else if (auto fn = dyn_cast<Function>(val)) {
+          //! Todo allow tape propagation
+          auto newf = CreatePrimalAndGradient(fn, /*constant_args*/{}, TLI, AA, /*returnValue*/false, /*differentialReturn*/true, /*topLevel*/false, /*additionalArg*/nullptr);
+          return BuilderM.CreatePointerCast(newf, fn->getType());
+      } else if (auto arg = dyn_cast<CastInst>(val)) {
         auto result = BuilderM.CreateCast(arg->getOpcode(), invertPointerM(arg->getOperand(0), BuilderM), arg->getDestTy(), arg->getName()+"'ipc");
         return result;
       } else if (auto arg = dyn_cast<ExtractValueInst>(val)) {
@@ -2756,8 +2768,8 @@ endCheck:
 };
   
 class DiffeGradientUtils : public GradientUtils {
-  DiffeGradientUtils(Function* newFunc_, TargetLibraryInfo &TLI, ValueToValueMapTy& invertedPointers_, const SmallPtrSetImpl<Value*> &constants_, const SmallPtrSetImpl<Value*> &nonconstant_, const SmallPtrSetImpl<Value*> &returnvals_, ValueToValueMapTy &origToNew_)
-      : GradientUtils(newFunc_, TLI, invertedPointers_, constants_, nonconstant_, returnvals_, origToNew_) {
+  DiffeGradientUtils(Function* newFunc_, AAResults &AA, TargetLibraryInfo &TLI, ValueToValueMapTy& invertedPointers_, const SmallPtrSetImpl<Value*> &constants_, const SmallPtrSetImpl<Value*> &nonconstant_, const SmallPtrSetImpl<Value*> &returnvals_, ValueToValueMapTy &origToNew_)
+      : GradientUtils(newFunc_, AA, TLI, invertedPointers_, constants_, nonconstant_, returnvals_, origToNew_) {
         prepareForReverse();
     }
 
@@ -2771,7 +2783,7 @@ public:
     SmallPtrSet<Value*,2> returnvals;
     ValueToValueMapTy originalToNew;
     auto newFunc = CloneFunctionWithReturns(todiff, AA, invertedPointers, constant_args, constants, nonconstant, returnvals, returnValue, differentialReturn, "diffe"+todiff->getName(), &originalToNew, /*diffeReturnArg*/true, additionalArg);
-    auto res = new DiffeGradientUtils(newFunc, TLI, invertedPointers, constants, nonconstant, returnvals, originalToNew);
+    auto res = new DiffeGradientUtils(newFunc, AA, TLI, invertedPointers, constants, nonconstant, returnvals, originalToNew);
     res->oldFunc = todiff;
     return res;
   }
@@ -2946,48 +2958,6 @@ void optimizeIntermediate(GradientUtils* gutils, bool topLevel, Function *F) {
  }
  //LCSSAPass().run(*NewF, AM);
 }
-
-/*
-bool isNotActiveRecurse(Function* f, GradientUtils &gutils) {
-  if (f->hasFnAttribute(Attribute::NoRecurse)) return true;
-  for (auto inst : gutils.originalInstructions) {
-    if (gutils.isConstantInstruction(inst)) continue;
-    if(auto op = dyn_cast_or_null<CallInst>(inst)) {
-
-            Function *called = op->getCalledFunction();
-            
-            if (auto castinst = dyn_cast<ConstantExpr>(op->getCalledValue())) {
-                if (castinst->isCast())
-                if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-                    if (fn->getName() == "malloc" || fn->getName() == "free" || fn->getName() == "_Znwm" || fn->getName() == "_ZdlPv" || fn->getName() == "_ZdlPvm") {
-                        called = fn;
-                    }
-                }
-            }
-
-            if (called && (called->getName() == "printf" || called->getName() == "puts"))
-                continue;
-
-            if (called && (called->getName()=="malloc" || called->getName()=="_Znwm")) 
-                continue;
-            
-            if (called && (called->getName()=="free" ||
-                called->getName()=="_ZdlPv" || called->getName()=="_ZdlPvm"))
-                continue;
-            
-            if (gutils.isConstantInstruction(op))
-              continue;
-
-            if (called == nullptr)
-              continue;
-
-            if (called->hasFnAttribute(Attribute::NoRecurse)) return true;
-
-            return false;
-  }
-}
-}
-*/
 
 //! return structtype if recursive function
 std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResults &AA, const SmallSet<unsigned,4>& constant_args, TargetLibraryInfo &TLI, bool differentialReturn) {
@@ -3744,11 +3714,10 @@ void createInvertedTerminator(DiffeGradientUtils* gutils, BasicBlock *BB, Alloca
 }
 
 //! assuming not top level
-std::pair<SmallVector<Type*,4>,SmallVector<Type*,4>> getDefaultFunctionTypeForGradient(Function* called, bool differentialReturn) {
+std::pair<SmallVector<Type*,4>,SmallVector<Type*,4>> getDefaultFunctionTypeForGradient(FunctionType* called, bool differentialReturn) {
     SmallVector<Type*, 4> args;
     SmallVector<Type*, 4> outs;
-    for(auto &arg : called->args()) {
-        auto argType = arg.getType();
+    for(auto &argType : called->params()) {
         args.push_back(argType);
 
         if ( argType->isPointerTy() || argType->isIntegerTy() ) {
@@ -3788,7 +3757,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       auto gvemd = cast<ConstantAsMetadata>(md2->getOperand(0));
       auto foundcalled = cast<Function>(gvemd->getValue());
             
-      auto res = getDefaultFunctionTypeForGradient(todiff, differentialReturn);
+      auto res = getDefaultFunctionTypeForGradient(todiff->getFunctionType(), differentialReturn);
 
       bool hasTape = false;
 
@@ -4342,18 +4311,14 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
           continue;
         }
 
-
-        if (called==nullptr) {
-          assert(op);
-          llvm::errs() << "cannot handle non const function in" << *op << "\n";
-          report_fatal_error("unknown non constant function");
-        }
-
-        bool modifyPrimal = !called->hasFnAttribute(Attribute::ReadNone);
-
+        bool modifyPrimal = false;
         bool foreignFunction = false;
 
-        if (called->empty()) {
+        if (called && !called->hasFnAttribute(Attribute::ReadNone)) {
+            modifyPrimal = true;
+        }
+
+        if (called == nullptr || called->empty()) {
             foreignFunction = true;
             modifyPrimal = true;
         }
@@ -4390,7 +4355,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 				pre_args.push_back(gutils->invertPointerM(op->getArgOperand(i), BuilderZ));
 
                 //TODO this check should consider whether this pointer has allocation/etc modifications and so on
-                if (! ( called->hasParamAttribute(i, Attribute::ReadOnly) || called->hasParamAttribute(i, Attribute::ReadNone)) ) {
+                if (called && ! ( called->hasParamAttribute(i, Attribute::ReadOnly) || called->hasParamAttribute(i, Attribute::ReadNone)) ) {
                     //llvm::errs() << "augmented modified " << called->getName() << " modified via arg " << i << "\n";
                     modifyPrimal = true;
                 }
@@ -4501,19 +4466,26 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 break;
               }
               if (&*iter == gutils->getOriginal(op)) {
-                  llvm::errs() << " choosing to replace function " << called->getName() << " and do both forward/reverse\n";
+                  if (called)
+                    llvm::errs() << " choosing to replace function " << (called->getName()) << " and do both forward/reverse\n";
+                  else
+                      llvm::errs() << " choosing to replace function " << (*op->getCalledValue()) << " and do both forward/reverse\n";
                   replaceFunction = true;
                   modifyPrimal = false;
               } else {
-                  llvm::errs() << " failed to replace function " << called->getName() << " due to " << *iter << "\n";
+                  if (called)
+                      llvm::errs() << " failed to replace function " << (called->getName()) << " due to " << *iter << "\n";
+                  else 
+                      llvm::errs() << " failed to replace function " << (*op->getCalledValue()) << " due to " << *iter << "\n";
               }
           }
 
           Value* tape = nullptr;
           CallInst* augmentcall = nullptr;
           Instruction* cachereplace = nullptr;
-          if (modifyPrimal) {
-            auto fnandtapetype = CreateAugmentedPrimal(dyn_cast<Function>(called), AA, subconstant_args, TLI, /*differentialReturns*/!gutils->isConstantValue(op));
+          //TODO consider what to do if called == nullptr for augmentation
+          if (modifyPrimal && called) {
+            auto fnandtapetype = CreateAugmentedPrimal(cast<Function>(called), AA, subconstant_args, TLI, /*differentialReturns*/!gutils->isConstantValue(op));
             if (topLevel) {
               Function* newcalled = fnandtapetype.first;
               augmentcall = BuilderZ.CreateCall(newcalled, pre_args);
@@ -4526,7 +4498,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 tape = UndefValue::get(tt);
               }
 
-              llvm::errs() << "primal considering differential ip of " << called->getName() << " " << *op->getType() << " " << gutils->isConstantValue(op) << "\n";
               if( (op->getType()->isPointerTy() || op->getType()->isIntegerTy()) && !gutils->isConstantValue(op) ) {
                 auto newip = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {2}));
                 auto placeholder = cast<PHINode>(gutils->invertedPointers[op]);
@@ -4568,12 +4539,21 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                     cachereplace = gutils->addMalloc<Instruction>(BuilderZ, cachereplace);
               }
           }
-
-          Function* newcalled;
-         
+ 
           bool retUsed = replaceFunction && (op->getNumUses() > 0);
 
-          newcalled = CreatePrimalAndGradient(dyn_cast<Function>(called), subconstant_args, TLI, AA, retUsed, !gutils->isConstantValue(inst) && !inst->getType()->isPointerTy(), /*topLevel*/replaceFunction, tape ? tape->getType() : nullptr);//, LI, DT);
+          Value* newcalled = nullptr;
+          
+          if (called) {
+            newcalled = CreatePrimalAndGradient(cast<Function>(called), subconstant_args, TLI, AA, retUsed, !gutils->isConstantValue(inst) && !inst->getType()->isPointerTy(), /*topLevel*/replaceFunction, tape ? tape->getType() : nullptr);//, LI, DT);
+          } else {
+            newcalled = gutils->invertPointerM(op->getCalledValue(), Builder2);
+            auto ft = cast<FunctionType>(cast<PointerType>(op->getCalledValue()->getType())->getElementType());
+            auto res = getDefaultFunctionTypeForGradient(ft, differentialReturn);
+            //TODO Note there is empty tape added here, replace with generic
+            //res.first.push_back(StructType::get(newcalled->getContext(), {}));
+            newcalled = Builder2.CreatePointerCast(newcalled, PointerType::getUnqual(FunctionType::get(StructType::get(newcalled->getContext(), res.second), res.first, ft->isVarArg())));
+          }
 
           if (!gutils->isConstantValue(inst) && !inst->getType()->isPointerTy()) {
             args.push_back(diffe(inst));
@@ -4583,6 +4563,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               args.push_back(lookup(tape));
           }
 
+          newcalled->dump();
+          for(auto a : args) {
+            a->dump();
+          }
           CallInst* diffes = Builder2.CreateCall(newcalled, args);
           diffes->setCallingConv(op->getCallingConv());
           diffes->setDebugLoc(inst->getDebugLoc());
@@ -4644,7 +4628,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               if (!gutils->isConstantValue(op))
                 gutils->nonconstant_values.insert(dcall);
 
-              llvm::errs() << "augmented considering differential ip of " << called->getName() << " " << *op->getType() << " " << gutils->isConstantValue(op) << "\n";
+              if (called)
+                 llvm::errs() << "augmented considering differential ip of " << (called->getName()) << " " << *op->getType() << " " << gutils->isConstantValue(op) << "\n";
+              else
+                  llvm::errs() << "augmented considering differential ip of " << (*op->getCalledValue()) << " " << *op->getType() << " " << gutils->isConstantValue(op) << "\n";
               if (!gutils->isConstantValue(op)) {
                   if (op->getType()->isPointerTy() || op->getType()->isIntegerTy()) {
                     gutils->invertedPointers[dcall] = gutils->invertedPointers[op];
