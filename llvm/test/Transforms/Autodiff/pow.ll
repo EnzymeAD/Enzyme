@@ -23,7 +23,7 @@ declare double @llvm.autodiff.p0f_f64f64f64f(double (double, double)*, ...)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[origpow:.+]] = tail call fast double @llvm.pow.f64(double %x, double %y)
 ; CHECK-NEXT:   %[[ym1:.+]] = fsub fast double %y, 1.000000e+00
-; CHECK-NEXT:   %[[newpow:.+]] = call fast double @llvm.pow.f64(double %x, double %[[ym1]])
+; CHECK-NEXT:   %[[newpow:.+]] = tail call fast double @llvm.pow.f64(double %x, double %[[ym1]])
 ; CHECK-NEXT:   %[[newpowdret:.+]] = fmul fast double %differeturn, %[[newpow]]
 ; CHECK-NEXT:   %[[dx:.+]] = fmul fast double %[[newpowdret]], %y
 ; CHECK-NEXT:   %[[logy:.+]] = call fast double @llvm.log.f64(double %y)

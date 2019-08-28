@@ -1,4 +1,4 @@
-; RUN: opt < %s -lower-autodiff -inline -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s
+; RUN: opt < %s -lower-autodiff -inline -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -ipconstprop -deadargelim -S -early-cse -instcombine | FileCheck %s
 
 ; #include <stdio.h>
 ; #include <stdlib.h>
@@ -64,5 +64,40 @@ attributes #2 = { nounwind }
 !4 = !{!"omnipotent char", !5, i64 0}
 !5 = !{!"Simple C/C++ TBAA"}
 
-; TODO ADD MORE CHECKS
-; CHECK: define internal {} @differecsum.1(double* %x, double* %"x'", i32 %n, double %differeturn, { double, i8*, double, i8* } %tapeArg)
+; CHECK: define internal double @differecsum.1(double* %x, double* %"x'", i32 %n)
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   switch i32 %n, label %if.end3 [
+; CHECK-NEXT:     i32 0, label %invertreturn
+; CHECK-NEXT:     i32 1, label %if.then2
+; CHECK-NEXT:   ]
+
+; CHECK: if.then2:                                         ; preds = %entry
+; CHECK-NEXT:   %0 = load double, double* %x, align 8, !tbaa !2
+; CHECK-NEXT:   br label %invertreturn
+
+; CHECK: if.end3:                                          ; preds = %entry
+; CHECK-NEXT:   %div = lshr i32 %n, 1
+; CHECK-NEXT:   %idx.ext = zext i32 %div to i64
+; CHECK-NEXT:   %add.ptr = getelementptr inbounds double, double* %x, i64 %idx.ext
+; CHECK-NEXT:   %"add.ptr'ipg" = getelementptr double, double* %"x'", i64 %idx.ext
+; CHECK-NEXT:   %1 = sub i32 %n, %div
+; CHECK-NEXT:   %2 = call double @differecsum.1(double* %add.ptr, double* %"add.ptr'ipg", i32 %1)
+; CHECK-NEXT:   %3 = call double @differecsum.1(double* %x, double* %"x'", i32 %div)
+; CHECK-NEXT:   %add = fadd fast double %2, %3
+; CHECK-NEXT:   br label %invertentry
+
+; CHECK: invertentry:                                      ; preds = %invertreturn, %if.end3, %invertif.then2
+; CHECK-NEXT:   %toreturn.0 = phi double [ %add, %if.end3 ], [ %retval.0, %invertif.then2 ], [ %retval.0, %invertreturn ]
+; CHECK-NEXT:   ret double %toreturn.0
+
+; CHECK: invertif.then2:                                   ; preds = %invertreturn
+; CHECK-NEXT:   %4 = load double, double* %"x'", align 8
+; CHECK-NEXT:   %5 = fadd fast double %4, 1.000000e+00
+; CHECK-NEXT:   store double %5, double* %"x'", align 8
+; CHECK-NEXT:   br label %invertentry
+
+; CHECK: invertreturn:                                     ; preds = %entry, %if.then2
+; CHECK-NEXT:   %6 = phi i1 [ true, %if.then2 ], [ false, %entry ]
+; CHECK-NEXT:   %retval.0 = phi double [ %0, %if.then2 ], [ 0.000000e+00, %entry ]
+; CHECK-NEXT:   br i1 %6, label %invertif.then2, label %invertentry
+; CHECK-NEXT: }

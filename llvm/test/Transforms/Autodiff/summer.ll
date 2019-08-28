@@ -183,7 +183,7 @@ attributes #6 = { noreturn nounwind }
 ; CHECK-NEXT:   %7 = load double, double* %"x'"
 ; CHECK-NEXT:   %8 = fadd fast double %7, %20
 ; CHECK-NEXT:   store double %8, double* %"x'"
-; CHECK-NEXT:   %9 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([19 x i8], [19 x i8]* @.str.3, i64 0, i64 0), double 0.000000e+00)
+; CHECK-NEXT:   %9 = tail call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([19 x i8], [19 x i8]* @.str.3, i64 0, i64 0), double 0.000000e+00)
 ; CHECK-NEXT:   ret
 
 ; CHECK: invertfor.cond.cleanup:                           ; preds = %for.body.for.body_crit_edge

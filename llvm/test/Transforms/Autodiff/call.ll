@@ -39,13 +39,16 @@ declare double @llvm.autodiff.p0f_f64f64f(double (double)*, ...)
 
 ; CHECK: define internal { double } @diffeadd4(double %x, double %[[differet:.+]])
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %call = tail call fast double @add2(double %x)
-; CHECK-NEXT:   %0 = call { double } @diffeadd2(double %x, double %[[differet]])
-; CHECK-NEXT:   ret { double } %0
+; CHECK-NEXT:   %0 = call { double, double } @diffeadd2(double %x, double %[[differet]])
+; CHECK-NEXT:   %1 = extractvalue { double, double } %0, 1
+; CHECK-NEXT:   %2 = insertvalue { double } undef, double %1, 0
+; CHECK-NEXT:   ret { double } %2
 ; CHECK-NEXT: }
 
-; CHECK: define internal { double } @diffeadd2(double %x, double %[[differet:.+]])
+; CHECK: define internal { double, double } @diffeadd2(double %x, double %[[differet:.+]])
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[result:.+]] = insertvalue { double } undef, double %[[differet]], 0
-; CHECK-NEXT:   ret { double } %[[result]]
+; CHECK-NEXT:   %add = fadd fast double %x, 2.000000e+00
+; CHECK-NEXT:   %[[result:.+]] = insertvalue { double, double } undef, double %add, 0
+; CHECK-NEXT:   %[[result2:.+]] = insertvalue { double, double } %[[result]], double %[[differet]], 1
+; CHECK-NEXT:   ret { double, double } %[[result2]]
 ; CHECK-NEXT: }

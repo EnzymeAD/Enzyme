@@ -962,11 +962,6 @@ Function* preprocessForClone(Function *F, AAResults &AA) {
  }
  } while(repeat);
   
- /*
- if (llvm::verifyFunction(*NewF, &llvm::errs())) {
-    NewF->dump();
-    report_fatal_error("function failed verification");
-  }*/
 
  {
      FunctionAnalysisManager AM;
@@ -1023,8 +1018,6 @@ Function* preprocessForClone(Function *F, AAResults &AA) {
  AA.addAAResult(*saa);
  
  if (autodiff_inline) {
-     //createModuleToFunctionPassAdaptor(G()).run(*NewF, AM);
-    //NewF->dump();
      createFunctionToLoopPassAdaptor(LoopIdiomRecognizePass()).run(*NewF, AM);
  }
 
@@ -1645,9 +1638,19 @@ public:
   ValueToValueMapTy originalToNewFn;
 
   Value* getNewFromOriginal(Value* originst) {
-    auto m = originalToNewFn[originst];
-    assert(m);
-    return m;
+    assert(originst);
+    auto f = originalToNewFn.find(originst);
+    if (f == originalToNewFn.end()) {
+        originst->dump();
+    }
+    assert(f != originalToNewFn.end());
+    if (f->second == nullptr) {
+        oldFunc->dump();
+        newFunc->dump();
+        originst->dump();
+    }
+    assert(f->second);
+    return f->second;
   }
   Value* getOriginal(Value* newinst) {
     for(auto v: originalToNewFn) {
@@ -1732,6 +1735,7 @@ public:
     Instruction* anti = bb.CreateCall(call->getCalledFunction(), args, call->getName()+"'mi");
     cast<CallInst>(anti)->setAttributes(call->getAttributes());
     cast<CallInst>(anti)->setCallingConv(call->getCallingConv());
+    cast<CallInst>(anti)->setTailCallKind(call->getTailCallKind());
     cast<CallInst>(anti)->setDebugLoc(call->getDebugLoc());
      
     invertedPointers[call] = anti;
@@ -2124,8 +2128,6 @@ public:
             }
             if (replaceableCalls.find(inst) != replaceableCalls.end()) {
                 if (inst->getNumUses() != 0) {
-                    //inst->getParent()->getParent()->dump();
-                    //inst->dump();
                 } else {
                     inst->eraseFromParent();
                     continue;
@@ -2198,6 +2200,10 @@ public:
             auto op0 = unwrapM(op->getOperand(0), BuilderM, available, lookupIfAble);
             if (op0 == nullptr) goto endCheck;
             return BuilderM.CreateCast(op->getOpcode(), op0, op->getDestTy(), op->getName()+"_unwrap");
+          } else if (auto op = dyn_cast<ExtractValueInst>(val)) {
+            auto op0 = unwrapM(op->getAggregateOperand(), BuilderM, available, lookupIfAble);
+            if (op0 == nullptr) goto endCheck;
+            return BuilderM.CreateExtractValue(op0, op->getIndices(), op->getName()+"_unwrap");
           } else if (auto op = dyn_cast<BinaryOperator>(val)) {
             auto op0 = unwrapM(op->getOperand(0), BuilderM, available, lookupIfAble);
             if (op0 == nullptr) goto endCheck;
@@ -2572,6 +2578,12 @@ endCheck:
                 assert(op);
                 return op;
             }
+            /*
+            if (!inLoop) {
+                if (!isOriginalBlock(*BuilderM.GetInsertBlock()) && inst->getParent() == BuilderM.GetInsertBlock());
+                todo here/re
+            }
+            */
         }
 
         ensureLookupCached(inst);
@@ -3854,6 +3866,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
     gutils->getContext(BB, loopContext);
   }
 
+  std::map<ReturnInst*,StoreInst*> replacedReturns;
+
   gutils->forceAugmentedReturns();
 
   for(BasicBlock* BB: gutils->originalBlocks) {
@@ -3918,8 +3932,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
       auto retval = op->getReturnValue();
       IRBuilder<> rb(op);
       rb.setFastMathFlags(FastMathFlags::getFast());
-	  if (retAlloca)
-		rb.CreateStore(retval, retAlloca);
+	  if (retAlloca) {
+		auto si = rb.CreateStore(retval, retAlloca);
+        replacedReturns[cast<ReturnInst>(gutils->getOriginal(op))] = si;
+      }
 	 
       rb.CreateBr(BB2);
 
@@ -4039,6 +4055,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             Type *tys[] = {args[0]->getType(), args[1]->getType(), args[2]->getType()};
             auto cal = Builder2.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::memcpy, tys), args);
             cal->setAttributes(op->getAttributes());
+            cal->setCallingConv(op->getCallingConv());
+            cal->setTailCallKind(op->getTailCallKind());
 
             break;
         }
@@ -4059,6 +4077,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             Type *tys[] = {args[0]->getType(), args[2]->getType()};
             auto cal = Builder2.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::memset, tys), args);
             cal->setAttributes(op->getAttributes());
+            cal->setCallingConv(op->getCallingConv());
+            cal->setTailCallKind(op->getTailCallKind());
             
             break;
         }
@@ -4076,6 +4096,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             Type *tys[] = {args[1]->getType()};
             auto cal = Builder2.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::lifetime_end, tys), args);
             cal->setAttributes(op->getAttributes());
+            cal->setCallingConv(op->getCallingConv());
+            cal->setTailCallKind(op->getTailCallKind());
             break;
         }
         case Intrinsic::lifetime_end:
@@ -4139,6 +4161,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             Type *tys[] = {args[1]->getType()};
             auto cal = Builder2.CreateCall(Intrinsic::getDeclaration(M, Intrinsic::pow, tys), args);
             cal->setAttributes(op->getAttributes());
+            cal->setCallingConv(op->getCallingConv());
+            cal->setTailCallKind(op->getTailCallKind());
             dif0 = Builder2.CreateFMul(
               Builder2.CreateFMul(diffe(inst), cal)
               , lookup(op->getOperand(1))
@@ -4206,6 +4230,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             }
             auto cal = Builder2.CreateCall(called, args);
             cal->setAttributes(op->getAttributes());
+            cal->setCallingConv(op->getCallingConv());
+            cal->setTailCallKind(op->getTailCallKind());
             continue;
         }
 
@@ -4372,7 +4398,26 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
           if (topLevel && BB->getSingleSuccessor() == BB2 && !foreignFunction) {
               auto origop = cast<CallInst>(gutils->getOriginal(op));
               auto OBB = cast<BasicBlock>(gutils->getOriginal(BB));
+              //TODO fix this to be more accurate
               auto iter = OBB->rbegin();
+              SmallPtrSet<Instruction*,4> usetree;
+              usetree.insert(origop);
+              for(auto uinst = origop->getNextNode(); uinst != nullptr; uinst = uinst->getNextNode()) {
+                bool usesInst = false;
+                for(auto &operand : uinst->operands()) {
+                    if (auto usedinst = dyn_cast<Instruction>(operand.get())) {
+                        if (usetree.find(usedinst) != usetree.end()) {
+                            usesInst = true;
+                            break;
+                        }
+                    }
+                }
+                if (usesInst) {
+                    usetree.insert(uinst);
+                }
+
+              }
+
               while(iter != OBB->rend() && &*iter != origop) {
                 if (auto call = dyn_cast<CallInst>(&*iter)) {
                     if (isCertainMallocOrFree(call->getCalledFunction())) {
@@ -4381,28 +4426,37 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                     }
                 }
                 
-                if (isa<ReturnInst>(&*iter)) {
+                if (auto ri = dyn_cast<ReturnInst>(&*iter)) {
+                    auto fd = replacedReturns.find(ri);
+                    if (fd != replacedReturns.end()) {
+                        auto si = fd->second;
+                        if (usetree.find(dyn_cast<Instruction>(gutils->getOriginal(si->getValueOperand()))) != usetree.end()) {
+                            postCreate.push_back(si);
+                        }
+                    }
                     iter++;
                     continue;
                 }
-                    
-                bool usesInst = false;
-                for(auto &operand : iter->operands()) {
-                    if (operand.get() == gutils->getOriginal(op)) { usesInst = true; break; }
-                }
-                if (usesInst) {
-                    break;
-                }
+                
+                //TODO usesInst has created a bug here
+                // if it is used by the reverse pass before this call creates it
+                // and thus it loads an undef from cache
+                bool usesInst = usetree.find(&*iter) != usetree.end();
 
-                if (!iter->mayReadOrWriteMemory() || isa<BinaryOperator>(&*iter)) {
+                //TODO remove this upon start of more accurate)
+                //if (usesInst) break;
+
+                if (!usesInst && (!iter->mayReadOrWriteMemory() || isa<BinaryOperator>(&*iter))) {
                     iter++;
                     continue;
                 }
 
-                auto mri = AA.getModRefInfo(&*iter, origop);
+                ModRefInfo mri = ModRefInfo::NoModRef;
+                if (iter->mayReadOrWriteMemory()) {
+                    mri = AA.getModRefInfo(&*iter, origop);
+                }
 
-                llvm::errs() << "modrefinfo for " << *iter << " " << (unsigned int)mri << "\n";
-                if (mri == ModRefInfo::NoModRef) {
+                if (mri == ModRefInfo::NoModRef && !usesInst) {
                     iter++;
                     continue;
                 }
@@ -4461,6 +4515,33 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                     continue;
                     }
                 }
+                }
+                
+                if (usesInst) {
+                    bool modref = false;
+                    auto start = &*iter;
+                    if (mri != ModRefInfo::NoModRef) {
+                        modref = true;
+                        /*
+                        for(Instruction* it = start; it != nullptr; it = it->getNextNode()) {
+                            if (auto call = dyn_cast<CallInst>(it)) {
+                                 if (isCertainMallocOrFree(call->getCalledFunction())) {
+                                     continue;
+                                 }
+                            }
+                            if ( (isa<StoreInst>(start) || isa<CallInst>(start)) && AA.canInstructionRangeModRef(*it, *it, MemoryLocation::get(start), ModRefInfo::Mod)) {
+                                modref = true;
+                        llvm::errs() << " inst  found mod " << *iter << " " << *it << "\n";
+                            }
+                        }
+                        */
+                    }
+
+                    if (modref)
+                        break;
+                    postCreate.push_back(cast<Instruction>(gutils->getNewFromOriginal(&*iter)));
+                    iter++;
+                    continue;
                 }
                 
                 break;
@@ -4563,10 +4644,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               args.push_back(lookup(tape));
           }
 
-          newcalled->dump();
-          for(auto a : args) {
-            a->dump();
-          }
           CallInst* diffes = Builder2.CreateCall(newcalled, args);
           diffes->setCallingConv(op->getCallingConv());
           diffes->setDebugLoc(inst->getDebugLoc());
@@ -4601,6 +4678,15 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               op->replaceAllUsesWith(retval);
               mapp[op] = retval;
             }
+            for (auto &a : *BB) {
+              if (&a != op) {
+                mapp[&a] = &a;
+              }
+            }
+            for (auto &a : *BB2) {
+                mapp[&a] = &a;
+            }
+            std::reverse(postCreate.begin(), postCreate.end());
             for(auto a : postCreate) {
                 for(unsigned i=0; i<a->getNumOperands(); i++) {
                     a->setOperand(i, gutils->unwrapM(a->getOperand(i), Builder2, mapp, true));

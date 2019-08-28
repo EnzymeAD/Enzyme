@@ -1,4 +1,4 @@
-; RUN: opt < %s -lower-autodiff -inline -mem2reg -ipconstprop -deadargelim -O3 -S | FileCheck %s
+; RUN: opt < %s -lower-autodiff -inline -mem2reg -ipconstprop -deadargelim -sroa -early-cse -adce -deadargelim -instcombine -adce -deadargelim -adce -simplifycfg -S -instcombine -dse | FileCheck %s
 
 ; #include <math.h>
 ; 
@@ -137,21 +137,21 @@ attributes #5 = { nounwind }
 ; CHECK-NEXT:   %"array'ipa.i" = alloca double*, align 8
 ; CHECK-NEXT:   %array.i = alloca double*, align 8
 ; CHECK-NEXT:   %0 = bitcast double** %"array'ipa.i" to i8*
-; CHECK-NEXT:   call void @llvm.lifetime.start.p0i8(i64 8, i8* nonnull %0)
+; CHECK-NEXT:   call void @llvm.lifetime.start.p0i8(i64 8, i8* %0)
 ; CHECK-NEXT:   %1 = bitcast double** %"array'ipa.i" to i64*
 ; CHECK-NEXT:   store i64 0, i64* %1, align 8
 ; CHECK-NEXT:   %2 = bitcast double** %array.i to i8*
-; CHECK-NEXT:   call void @llvm.lifetime.start.p0i8(i64 8, i8* nonnull %2) #6
-; CHECK-NEXT:   %3 = call fastcc { { i8* }, double } @augmented_allocateAndSet(double** nonnull %array.i, double** nonnull %"array'ipa.i", double %x, i32 %n)
-; CHECK-NEXT:   %[[unpack:.+]] = extractvalue { { i8* }, double } %3, 0
+; CHECK-NEXT:   call void @llvm.lifetime.start.p0i8(i64 8, i8* nonnull %2)
+; CHECK-NEXT:   %3 = call i8* @augmented_allocateAndSet(double** nonnull %array.i, double** nonnull %"array'ipa.i", double %x, i32 %n)
+; CHECK-NEXT:   %oldret = insertvalue { i8* } undef, i8* %3, 0
 ; CHECK-NEXT:   %"'ipl.i" = load double*, double** %"array'ipa.i", align 8
-; CHECK-NEXT:   tail call fastcc void @diffeget(double* %"'ipl.i") #6
-; CHECK-NEXT:   %[[result:.+]] = tail call fastcc double @diffeallocateAndSet(i32 %n, { i8* } %[[unpack]])
-; CHECK-NEXT:   call void @llvm.lifetime.end.p0i8(i64 8, i8* nonnull %0)
+; CHECK-NEXT:   call void @diffeget(double* %"'ipl.i")
+; CHECK-NEXT:   %[[result:.+]] = call double @diffeallocateAndSet({ i8* } %oldret)
+; CHECK-NEXT:   call void @llvm.lifetime.end.p0i8(i64 8, i8* %0)
 ; CHECK-NEXT:   ret double %[[result]]
 ; CHECK-NEXT: }
 
-; CHECK: define internal fastcc void @diffeget(double* nocapture %"x'") unnamed_addr #5 {
+; CHECK: define internal void @diffeget(double* %"x'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[arrayidx:.+]] = getelementptr double, double* %"x'", i64 3
 ; CHECK-NEXT:   %0 = load double, double* %[[arrayidx]], align 8
@@ -160,13 +160,13 @@ attributes #5 = { nounwind }
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
-; CHECK: define internal fastcc { { i8* }, double } @augmented_allocateAndSet(double** nocapture %arrayp, double** nocapture %"arrayp'", double %x, i32 %n) unnamed_addr #0 {
+; CHECK: define internal i8* @augmented_allocateAndSet(double** nocapture %arrayp, double** %"arrayp'", double %x, i32 %n)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %conv = zext i32 %n to i64
 ; CHECK-NEXT:   %mul = shl nuw nsw i64 %conv, 3
 ; CHECK-NEXT:   %call = tail call i8* @malloc(i64 %mul)
 ; CHECK-NEXT:   %"call'mi" = tail call i8* @malloc(i64 %mul)
-; CHECK-NEXT:   tail call void @llvm.memset.p0i8.i64(i8* nonnull align 1 %"call'mi", i8 0, i64 %mul, i1 false)
+; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull align 1 %"call'mi", i8 0, i64 %mul, i1 false)
 ; CHECK-NEXT:   %0 = bitcast double** %arrayp to i8**
 ; CHECK-NEXT:   %"'ipc" = bitcast double** %"arrayp'" to i8**
 ; CHECK-NEXT:   store i8* %"call'mi", i8** %"'ipc", align 8
@@ -174,13 +174,10 @@ attributes #5 = { nounwind }
 ; CHECK-NEXT:   %arrayidx = getelementptr inbounds i8, i8* %call, i64 24
 ; CHECK-NEXT:   %1 = bitcast i8* %arrayidx to double*
 ; CHECK-NEXT:   store double %x, double* %1, align 8, !tbaa !6
-; CHECK-NEXT:   %.unpack3 = insertvalue { i8* } undef, i8* %"call'mi", 0
-; CHECK-NEXT:   %2 = insertvalue { { i8* }, double } undef, { i8* } %.unpack3, 0
-; CHECK-NEXT:   %3 = insertvalue { { i8* }, double } %2, double %x, 1
-; CHECK-NEXT:   ret { { i8* }, double } %3
+; CHECK-NEXT:   ret i8* %"call'mi"
 ; CHECK-NEXT: }
 
-; CHECK: define internal fastcc double @diffeallocateAndSet(i32 %n, { i8* } %tapeArg) unnamed_addr #0 {
+; CHECK: define internal double @diffeallocateAndSet({ i8* } %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[callp:.+]] = extractvalue { i8* } %tapeArg, 0
 ; CHECK-NEXT:   %[[arrayidx:.+]] = getelementptr i8, i8* %[[callp]], i64 24
