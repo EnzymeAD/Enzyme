@@ -1,4 +1,4 @@
-; RUN: opt < %s -lower-autodiff -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: opt < %s -load=%llvmshlibdir/LLVMEnzyme%shlibext -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
 
 ; Function Attrs: noinline nounwind readnone uwtable
 define double @tester(double %x, double %y) {

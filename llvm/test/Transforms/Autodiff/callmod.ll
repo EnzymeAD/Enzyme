@@ -1,4 +1,4 @@
-; RUN: opt < %s -lower-autodiff -mem2reg -sroa -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: opt < %s -load=%llvmshlibdir/LLVMEnzyme%shlibext -enzyme -mem2reg -sroa -instsimplify -simplifycfg -S | FileCheck %s
 
 ; extern double read();
 ; 

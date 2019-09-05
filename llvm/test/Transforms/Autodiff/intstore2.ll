@@ -1,4 +1,4 @@
-; RUN: opt < %s -lower-autodiff -mem2reg -instsimplify -simplifycfg -early-cse -adce -S | FileCheck %s
+; RUN: opt < %s -load=%llvmshlibdir/LLVMEnzyme%shlibext -enzyme -mem2reg -instsimplify -simplifycfg -early-cse -adce -S | FileCheck %s
 
 ; #include <math.h>
 ; #include <stdio.h>

@@ -1,4 +1,4 @@
-; RUN: opt < %s -lower-autodiff -inline -mem2reg -ipconstprop -deadargelim -O3 -S | FileCheck %s
+; RUN: opt < %s -load=%llvmshlibdir/LLVMEnzyme%shlibext -enzyme -inline -mem2reg -ipconstprop -deadargelim -O3 -S | FileCheck %s
 
 ; #include <math.h>
 ; 

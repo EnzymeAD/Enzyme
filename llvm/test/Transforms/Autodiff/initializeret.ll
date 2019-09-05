@@ -1,4 +1,4 @@
-; RUN: opt < %s -lower-autodiff -inline -mem2reg -ipconstprop -deadargelim -sroa -early-cse -adce -deadargelim -instcombine -adce -deadargelim -adce -simplifycfg -S -instcombine -dse | FileCheck %s
+; RUN: opt < %s -load=%llvmshlibdir/LLVMEnzyme%shlibext -enzyme -inline -mem2reg -ipconstprop -deadargelim -sroa -early-cse -adce -deadargelim -instcombine -adce -deadargelim -adce -simplifycfg -S -instcombine -dse | FileCheck %s
 
 ; #include <math.h>
 ; 

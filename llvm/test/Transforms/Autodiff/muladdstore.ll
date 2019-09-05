@@ -1,4 +1,4 @@
-; RUN: opt < %s -lower-autodiff -mem2reg -instsimplify -simplifycfg -S -gvn -dse -dse | FileCheck %s
+; RUN: opt < %s -load=%llvmshlibdir/LLVMEnzyme%shlibext -enzyme -mem2reg -instsimplify -simplifycfg -S -gvn -dse -dse | FileCheck %s
 
 ; __attribute__((noinline))
 ; void function(double y, double z, double *x) {

@@ -1,4 +1,4 @@
-; RUN: opt < %s -lower-autodiff -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: opt < %s -load=%llvmshlibdir/LLVMEnzyme%shlibext -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
 
 ; __attribute__((noinline))
 ; double add2(double x) {

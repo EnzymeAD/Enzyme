@@ -1,4 +1,4 @@
-; RUN: opt < %s -lower-autodiff -mem2reg -simplifycfg -adce -constprop -deadargelim -instsimplify -inline -S | FileCheck %s
+; RUN: opt < %s -load=%llvmshlibdir/LLVMEnzyme%shlibext -enzyme -mem2reg -simplifycfg -adce -constprop -deadargelim -instsimplify -inline -S | FileCheck %s
 
 define double @tester(double %x) {
 entry:

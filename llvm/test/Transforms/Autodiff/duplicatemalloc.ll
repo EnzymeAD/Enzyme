@@ -1,4 +1,4 @@
-; RUN: opt < %s -lower-autodiff -inline -O3 -dse -S | FileCheck %s
+; RUN: opt < %s -load=%llvmshlibdir/LLVMEnzyme%shlibext -enzyme -inline -O3 -dse -S | FileCheck %s
 
 ; #include <stdlib.h>
 ; #include <stdio.h>
