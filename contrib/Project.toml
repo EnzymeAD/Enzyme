@@ -1,0 +1,3 @@
+[deps]
+BinaryBuilder = "12aac903-9f7c-5d81-afc2-d9565ea332ae"
+BinaryProvider = "b99e7846-7c00-51b0-8f62-c81ae34c0232"
