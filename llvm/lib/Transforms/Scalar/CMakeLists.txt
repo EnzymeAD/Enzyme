@@ -43,7 +43,6 @@ add_llvm_library(LLVMScalarOpts
   LoopUnswitch.cpp
   LoopVersioningLICM.cpp
   LowerAtomic.cpp
-  LowerAutodiffIntrinsic.cpp
   LowerExpectIntrinsic.cpp
   LowerGuardIntrinsic.cpp
   MemCpyOptimizer.cpp

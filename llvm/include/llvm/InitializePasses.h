@@ -233,7 +233,6 @@ void initializeLoopVersioningLICMPass(PassRegistry&);
 void initializeLoopVersioningPassPass(PassRegistry&);
 void initializeLowerAtomicLegacyPassPass(PassRegistry&);
 void initializeLowerEmuTLSPass(PassRegistry&);
-void initializeLowerAutodiffIntrinsicPass(PassRegistry&);
 void initializeLowerExpectIntrinsicPass(PassRegistry&);
 void initializeLowerGuardIntrinsicLegacyPassPass(PassRegistry&);
 void initializeLowerIntrinsicsPass(PassRegistry&);

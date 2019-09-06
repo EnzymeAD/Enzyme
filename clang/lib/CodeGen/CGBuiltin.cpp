@@ -939,6 +939,58 @@ Value *CodeGenFunction::EmitMSVCBuiltinExpr(MSVCIntrin BuiltinID,
   llvm_unreachable("Incorrect MSVC intrinsic!");
 }
 
+namespace llvm {
+ std::string getMangledTypeStr(Type* Ty) {
+   std::string Result;
+   if (PointerType* PTyp = dyn_cast<PointerType>(Ty)) {
+     Result += "p" + utostr(PTyp->getAddressSpace()) +
+       getMangledTypeStr(PTyp->getElementType());
+   } else if (ArrayType* ATyp = dyn_cast<ArrayType>(Ty)) {
+     Result += "a" + utostr(ATyp->getNumElements()) +
+       getMangledTypeStr(ATyp->getElementType());
+   } else if (StructType *STyp = dyn_cast<StructType>(Ty)) {
+     if (!STyp->isLiteral()) {
+       Result += "s_";
+       Result += STyp->getName();
+     } else {
+       Result += "sl_";
+       for (auto Elem : STyp->elements())
+         Result += getMangledTypeStr(Elem);
+     }
+     // Ensure nested structs are distinguishable.
+     Result += "s";
+   } else if (FunctionType *FT = dyn_cast<FunctionType>(Ty)) {
+     Result += "f_" + getMangledTypeStr(FT->getReturnType());
+     for (size_t i = 0; i < FT->getNumParams(); i++)
+       Result += getMangledTypeStr(FT->getParamType(i));
+     if (FT->isVarArg())
+       Result += "vararg";
+     // Ensure nested function types are distinguishable.
+     Result += "f";
+   } else if (VectorType* VTy = dyn_cast<VectorType>(Ty)) {
+     Result += "v" + utostr(VTy->getVectorNumElements()) +
+       getMangledTypeStr(VTy->getVectorElementType());
+   } else if (Ty) {
+     switch (Ty->getTypeID()) {
+     default: llvm_unreachable("Unhandled type");
+     case Type::VoidTyID:      Result += "isVoid";   break;
+     case Type::MetadataTyID:  Result += "Metadata"; break;
+     case Type::HalfTyID:      Result += "f16";      break;
+     case Type::FloatTyID:     Result += "f32";      break;
+     case Type::DoubleTyID:    Result += "f64";      break;
+     case Type::X86_FP80TyID:  Result += "f80";      break;
+     case Type::FP128TyID:     Result += "f128";     break;
+     case Type::PPC_FP128TyID: Result += "ppcf128";  break;
+     case Type::X86_MMXTyID:   Result += "x86mmx";   break;
+     case Type::IntegerTyID:
+       Result += "i" + utostr(cast<IntegerType>(Ty)->getBitWidth());
+       break;
+     }
+   }
+   return Result;
+ }
+}
+
 namespace {
 // ARC cleanup for __builtin_os_log_format
 struct CallObjCArcUse final : EHScopeStack::Cleanup {
@@ -3938,15 +3990,15 @@ auto getptr = [&](CodeGenModule &CGM,const FunctionDecl *FD) {
 
     }
 
-    Function *F = CGM.getIntrinsic(IntrinsicID, tys);
-
-    Value *V = Builder.CreateCall(F, Args);
-    cast<Instruction>(V)->setFast(false);
     QualType BuiltinRetType = E->getType();
-
     llvm::Type *RetTy = VoidTy;
     if (!BuiltinRetType->isVoidType())
       RetTy = ConvertType(BuiltinRetType);
+
+    llvm::Value *F = CGM.getModule().getOrInsertFunction("__enzyme_autodiff." + llvm::getMangledTypeStr(RetTy), llvm::FunctionType::get(RetTy, true));
+
+    Value *V = Builder.CreateCall(F, Args);
+    cast<Instruction>(V)->setFast(false);
 
     if (RetTy != V->getType()) {
       assert(V->getType()->canLosslesslyBitCastTo(RetTy) &&
