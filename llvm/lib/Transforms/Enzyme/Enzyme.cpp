@@ -15,8 +15,6 @@
     note = {commit xxxxxxx}
  */
 
-#include "llvm/Transforms/Scalar/LowerAutodiffIntrinsic.h"
-
 #include "llvm/Transforms/Utils/PromoteMemToReg.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Scalar/GVN.h"
@@ -28,8 +26,6 @@
 #include "llvm/Analysis/PhiValues.h"
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/Transforms/Utils.h"
-
-#include "llvm/InitializePasses.h"
 
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Verifier.h"
@@ -373,6 +369,12 @@ bool isIntASecretPointer(Value* val, const DataLayout & DL) {
     assert(0 && "unsure if constant or not");
 }
 */
+
+void dumpSet(const SmallPtrSetImpl<Instruction*> &o) {
+    llvm::errs() << "<begin dump>\n";
+    for(auto a : o) llvm::errs() << *a << "\n";
+    llvm::errs() << "</end dump>\n";
+}
 
 bool isconstantValueM(Value* val, SmallPtrSetImpl<Value*> &constants, SmallPtrSetImpl<Value*> &nonconstant, const SmallPtrSetImpl<Value*> &retvals, const SmallPtrSetImpl<Instruction*> &originalInstructions, uint8_t directions=3);
 
@@ -1207,7 +1209,7 @@ Function *CloneFunctionWithReturns(Function *&F, AAResults &AA, ValueToValueMapT
 #include <deque>
 #include "llvm/IR/CFG.h"
 
-PHINode* canonicalizeIVs(Type *Ty, Loop *L, ScalarEvolution &SE, DominatorTree &DT) {
+PHINode* canonicalizeIVs(Type *Ty, Loop *L, ScalarEvolution &SE, DominatorTree &DT, SmallPtrSetImpl<Instruction*> &originalInstructions) {
 
   BasicBlock* Header = L->getHeader();
   Module* M = Header->getParent()->getParent();
@@ -1226,9 +1228,9 @@ PHINode* canonicalizeIVs(Type *Ty, Loop *L, ScalarEvolution &SE, DominatorTree &
   for (WeakTrackingVH V : DeadInsts) {
     //DEBUG(dbgs() << "erasing dead inst " << *V << "\n");
     Instruction *I = cast<Instruction>(V);
+    originalInstructions.erase(I);
     I->eraseFromParent();
-  }
-  
+  } 
 
   return CanonicalIV;
 }
@@ -1237,7 +1239,7 @@ PHINode* canonicalizeIVs(Type *Ty, Loop *L, ScalarEvolution &SE, DominatorTree &
 /// equal to the limit.
 ///
 /// This method assumes that the loop has a single loop latch.
-Value* canonicalizeLoopLatch(PHINode *IV, Value *Limit, Loop* L, ScalarEvolution &SE, BasicBlock* ExitBlock) {
+Value* canonicalizeLoopLatch(PHINode *IV, Value *Limit, Loop* L, ScalarEvolution &SE, BasicBlock* ExitBlock, SmallPtrSetImpl<Instruction*> &originalInstructions) {
   Value *NewCondition;
   BasicBlock *Header = L->getHeader();
   BasicBlock *Latch = L->getLoopLatch();
@@ -1260,11 +1262,14 @@ Value* canonicalizeLoopLatch(PHINode *IV, Value *Limit, Loop* L, ScalarEvolution
 
   // Erase the old conditional branch.
   Value *OldCond = LatchBr->getCondition();
+  originalInstructions.erase(LatchBr);
   LatchBr->eraseFromParent();
   
   if (!OldCond->hasNUsesOrMore(1))
-    if (Instruction *OldCondInst = dyn_cast<Instruction>(OldCond))
+    if (Instruction *OldCondInst = dyn_cast<Instruction>(OldCond)) {
+      originalInstructions.erase(OldCondInst);
       OldCondInst->eraseFromParent();
+    }
   
 
   return NewCondition;
@@ -1395,7 +1400,7 @@ bool operator==(const LoopContext& lhs, const LoopContext &rhs) {
     return lhs.parent == rhs.parent;
 }
 
-bool getContextM(BasicBlock *BB, LoopContext &loopContext, std::map<Loop*,LoopContext> &loopContexts, LoopInfo &LI,ScalarEvolution &SE,DominatorTree &DT) {
+bool getContextM(BasicBlock *BB, LoopContext &loopContext, std::map<Loop*,LoopContext> &loopContexts, LoopInfo &LI,ScalarEvolution &SE,DominatorTree &DT, SmallPtrSetImpl<Instruction*> &originalInstructions) {
     if (auto L = LI.getLoopFor(BB)) {
         if (loopContexts.find(L) != loopContexts.end()) {
             loopContext = loopContexts.find(L)->second;
@@ -1470,7 +1475,7 @@ bool getContextM(BasicBlock *BB, LoopContext &loopContext, std::map<Loop*,LoopCo
 		Value *LimitVar = nullptr;
 		if (SE.getCouldNotCompute() != Limit) {
 
-        	CanonicalIV = canonicalizeIVs(Limit->getType(), L, SE, DT);
+        	CanonicalIV = canonicalizeIVs(Limit->getType(), L, SE, DT, originalInstructions);
         	if (!CanonicalIV) {
                 report_fatal_error("Couldn't get canonical IV.");
         	}
@@ -1485,7 +1490,7 @@ bool getContextM(BasicBlock *BB, LoopContext &loopContext, std::map<Loop*,LoopCo
                                             Preheader->getTerminator());
 
         	// Canonicalize the loop latch.
-			canonicalizeLoopLatch(CanonicalIV, LimitVar, L, SE, ExitBlock);
+			canonicalizeLoopLatch(CanonicalIV, LimitVar, L, SE, ExitBlock, originalInstructions);
 
 			loopContext.dynamic = false;
 		} else {
@@ -1535,6 +1540,7 @@ bool getContextM(BasicBlock *BB, LoopContext &loopContext, std::map<Loop*,LoopCo
 		  }
 		  for (PHINode *PN : IVsToRemove) {
 			//llvm::errs() << "ERASING: " << *PN << "\n";
+            originalInstructions.erase(PN);
 			PN->eraseFromParent();
 		  }
 		}
@@ -1968,6 +1974,7 @@ public:
             assert(lastScopeAlloc.find(malloc) == lastScopeAlloc.end());
             cast<Instruction>(malloc)->replaceAllUsesWith(ret);
             auto n = malloc->getName();
+            originalInstructions.erase(cast<Instruction>(malloc));
             cast<Instruction>(malloc)->eraseFromParent();
             ret->setName(n);
         }
@@ -2062,7 +2069,7 @@ public:
   }
  
   bool getContext(BasicBlock* BB, LoopContext& loopContext) {
-    return getContextM(BB, loopContext, this->loopContexts, this->LI, this->SE, this->DT);
+    return getContextM(BB, loopContext, this->loopContexts, this->LI, this->SE, this->DT, this->originalInstructions);
   }
 
   bool isOriginalBlock(const BasicBlock &BB) const {
@@ -2097,6 +2104,7 @@ public:
           if (originalInstructions.find(inst) == originalInstructions.end()) continue;
 
           if (isa<StoreInst>(inst)) {
+            originalInstructions.erase(inst);
             inst->eraseFromParent();
             continue;
           }
@@ -2116,12 +2124,14 @@ public:
 
           if (!isa<TerminatorInst>(inst) && this->isConstantInstruction(inst)) {
             if (inst->getNumUses() == 0) {
+                originalInstructions.erase(inst);
                 inst->eraseFromParent();
 			    continue;
             }
           } else {
             if (auto inti = dyn_cast<IntrinsicInst>(inst)) {
                 if (inti->getIntrinsicID() == Intrinsic::memset || inti->getIntrinsicID() == Intrinsic::memcpy) {
+                    originalInstructions.erase(inst);
                     inst->eraseFromParent();
                     continue;
                 }
@@ -2129,6 +2139,7 @@ public:
             if (replaceableCalls.find(inst) != replaceableCalls.end()) {
                 if (inst->getNumUses() != 0) {
                 } else {
+                    originalInstructions.erase(inst);
                     inst->eraseFromParent();
                     continue;
                 }
@@ -2313,6 +2324,7 @@ endCheck:
             IRBuilder <> v(putafter);
             v.setFastMathFlags(FastMathFlags::getFast());
             v.CreateStore(inst, scopeMap[inst]);
+                  llvm::errs() << " place foo\n"; dumpSet(originalInstructions);
         } else {
 
             ValueToValueMapTy valmap;
@@ -2637,6 +2649,7 @@ endCheck:
 	  }
 
       if(isConstantValue(val)) {
+        dumpSet(this->originalInstructions);
         if (auto arg = dyn_cast<Instruction>(val)) {
             arg->getParent()->getParent()->dump();
         }
@@ -3043,6 +3056,7 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
         if (oldval)
             rt = ib.CreateInsertValue(rt, oldval, {1});
         term = ib.CreateRet(rt);
+        gutils->originalInstructions.erase(ri);
         ri->eraseFromParent();
       } else if (isa<BranchInst>(term) || isa<SwitchInst>(term)) {
 
@@ -3242,6 +3256,7 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
                     if (I != E && placeholder == &*I) I++;
                     gutils->invertedPointers.erase(op);
                     placeholder->replaceAllUsesWith(antiptr);
+                    gutils->originalInstructions.erase(placeholder);
                     placeholder->eraseFromParent();
                     gutils->invertedPointers[rv] = antiptr;
                     gutils->addMalloc<Instruction>(BuilderZ, antiptr);
@@ -3253,10 +3268,12 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
                 Value* tp = BuilderZ.CreateExtractValue(augmentcall, {0});
                 if (tp->getType()->isEmptyTy()) {
                     auto tpt = tp->getType();
+                    gutils->originalInstructions.erase(cast<Instruction>(tp));
                     cast<Instruction>(tp)->eraseFromParent();
                     tp = UndefValue::get(tpt);
                 }
                 gutils->addMalloc<Value>(BuilderZ, tp);
+                gutils->originalInstructions.erase(op);
                 op->eraseFromParent();
               }
         } else if(isa<LoadInst>(inst)) {
@@ -3939,6 +3956,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
 	 
       rb.CreateBr(BB2);
 
+      gutils->originalInstructions.erase(op);
       op->eraseFromParent();
 
       if (differentialReturn && !gutils->isConstantValue(retval)) {
@@ -4101,6 +4119,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             break;
         }
         case Intrinsic::lifetime_end:
+            gutils->originalInstructions.erase(op);
             op->eraseFromParent();
             break;
         case Intrinsic::sqrt: {
@@ -4299,16 +4318,20 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             while(auto cast = dyn_cast<CastInst>(val)) val = cast->getOperand(0);
             if (auto dc = dyn_cast<CallInst>(val)) {
                 if (dc->getCalledFunction()->getName() == "malloc") {
+                    gutils->originalInstructions.erase(op);
                     op->eraseFromParent();
+                    llvm::errs() << " place free\n"; dumpSet(gutils->originalInstructions);
                     continue;
                 }
             }
             if (isa<ConstantPointerNull>(val)) {
+                gutils->originalInstructions.erase(op);
                 op->eraseFromParent();
                 llvm::errs() << "removing free of null pointer\n";
                 continue;
             }
             llvm::errs() << "freeing without malloc " << *val << "\n";
+            gutils->originalInstructions.erase(op);
             op->eraseFromParent();
             continue;
             //TODO HANDLE FREE
@@ -4319,11 +4342,13 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
             while(auto cast = dyn_cast<CastInst>(val)) val = cast->getOperand(0);
             if (auto dc = dyn_cast<CallInst>(val)) {
                 if (dc->getCalledFunction()->getName() == "_Znwm") {
+                    gutils->originalInstructions.erase(op);
                     op->eraseFromParent();
                     continue;
                 }
             }
             llvm::errs() << "deleting without new " << *val << "\n";
+            gutils->originalInstructions.erase(op);
             op->eraseFromParent();
             continue;
             //TODO HANDLE FREE/DELETE
@@ -4693,6 +4718,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
                 }
                 a->moveBefore(*Builder2.GetInsertBlock(), Builder2.GetInsertPoint());
             }
+            gutils->originalInstructions.erase(op);
             op->eraseFromParent();
             continue;
           }
@@ -4730,6 +4756,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const SmallSet<unsigned,4>& 
               op->replaceAllUsesWith(dcall);
             }
 
+            gutils->originalInstructions.erase(op);
             op->eraseFromParent();
 
             if (augmentcall)
@@ -5079,7 +5106,7 @@ static bool lowerAutodiffIntrinsic(Function &F, TargetLibraryInfo &TLI, AAResult
       if (!CI) continue;
 
       Function *Fn = CI->getCalledFunction();
-      if (Fn && Fn->getIntrinsicID() == Intrinsic::autodiff) {
+      if (Fn && (Fn->getIntrinsicID() == Intrinsic::autodiff || Fn->getName() == "__enzyme_autodiff")) {
         HandleAutoDiff(CI, TLI, AA);//, LI, DT);
         Changed = true;
       }
