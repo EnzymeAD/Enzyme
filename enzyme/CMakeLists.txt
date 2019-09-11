@@ -21,6 +21,8 @@ include(AddLLVM)
 
 add_definitions(${LLVM_DEFINITIONS})
 include_directories(${LLVM_INCLUDE_DIRS})
+message("found llvm include directory here " ${LLVM_INCLUDE_DIRS})
+message("found llvm definitions " ${LLVM_DEFINITIONS})
 
 add_subdirectory(Enzyme)
 add_subdirectory(test)
