@@ -3,7 +3,7 @@
 #endif()
 
 if (${LLVM_VERSION_MAJOR} LESS 8)
-add_llvm_loadable_module( LLVMEnzyme
+    add_llvm_loadable_module( LLVMEnzyme-${LLVM_VERSION_MAJOR}
     Enzyme.cpp
     DEPENDS
     intrinsics_gen
