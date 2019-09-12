@@ -10,22 +10,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llvm: ["6.0", "7", "8", "9"]
+        llvm: ["8.0.0", "7.0.1"] #, "6.0.1"]
         build: ["Release", "RelWithDebInfo", "Debug"]
         os: [ubuntu-18.04]
     
     steps:
     - name: add llvm 
-      run: sudo add-apt-repository 'deb http://apt.llvm.org/bionic/ llvm-toolchain-bionic-${{ matrix.llvm }} main'
-    - name: update ubuntu
-      run: sudo apt-get update -y && sudo apt-get remove -y llvm* libllvm* libgl* php* mono* msbuild* libmono*
-    - name: install llvm
-      run: sudo apt-get install -y --no-install-recommends build-essential llvm-${{ matrix.llvm }}-tools llvm-${{ matrix.llvm }}-dev cmake
+      run: |
+          mkdir llvm
+          curl -s http://releases.llvm.org/${{matrix.llvm}}/clang+llvm-${{matrix.llvm}}-x86_64-linux-gnu-${{matrix.os}}.tar.xz | tar -xJf - -C llvm --strip 1
+    - name: add lit
+      run: |
+          python -m pip install lit
+          which lit
     - uses: actions/checkout@v1
     - name: mkdir
       run: cd enzyme && mkdir build
     - name: cmake
-      run: cd enzyme/build && cmake .. -DLLVM_EXTERNAL_LIT=/usr/lib/llvm-${{ matrix.llvm }}/build/utils/lit/lit.py -DCMAKE_BUILD_TYPE=${{ matrix.build }}
+      run: cd enzyme/build && cmake .. -DLLVM_EXTERNAL_LIT=`which lit` -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=../../llvm/lib/cmake/llvm
     - name: make
       run: cd enzyme/build && make
     - name: make check-enzyme
