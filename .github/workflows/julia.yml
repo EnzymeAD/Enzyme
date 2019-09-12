@@ -49,7 +49,7 @@ jobs:
       - name: "Julia tests"
         run: |
             cd ../Enzyme.jl
-            julia --project=. -e 'using Pkg; pkg"instantiate"'
+            julia --project=. -e 'using Pkg; pkg"instantiate"; pkg"add ReverseDiff"'
             julia --project=. test/runtests.jl 
         env:
             ENZYME_PATH: "../Enzyme/build/Enzyme"
