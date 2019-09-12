@@ -25,6 +25,8 @@ jobs:
           sudo python -m pip install lit
           which lit
     - uses: actions/checkout@v1
+      with:
+          fetch-depth: 1
     - name: mkdir
       run: cd enzyme && mkdir build
     - name: cmake
