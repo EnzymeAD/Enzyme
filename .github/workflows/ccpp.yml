@@ -15,9 +15,8 @@ jobs:
         os: [ubuntu-18.04]
     
     steps:
-        - name: add llvm 
-          run: |
-          sudo apt-install -y llvm-${{ matrix.llvm }}-dev
+    - name: add llvm 
+      run: sudo apt-install -y llvm-${{ matrix.llvm }}-dev
     - name: add lit
       run: |
           sudo python -m pip install wheel
