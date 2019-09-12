@@ -48,6 +48,10 @@ jobs:
           make -j
       - name: "Julia tests"
         run: |
+            echo "ls .."
+            ls ..
+            echo "ls"
+            ls
             cd Enzyme.jl
             julia --project=. -e 'using Pkg; pkg"instantiate"'
             julia --project=. test/runtests.jl 
