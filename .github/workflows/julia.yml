@@ -46,10 +46,6 @@ jobs:
           cd build
           cmake -DLLVM_DIR=../contrib/usr/lib/cmake/llvm -DLLVM_EXTERNAL_LIT=../contrib/usr/tools/lit/lit.py ../enzyme
           make -j
-      - name: "Check Enzyme"
-        run: |
-            cd build
-            make check-enzyme
       - name: "Julia tests"
         run: |
             cd Enzyme.jl
@@ -57,3 +53,7 @@ jobs:
             julia --project=. test/runtests.jl 
         env:
             ENZYME_PATH: "build/Enzyme"
+      - name: "Check Enzyme"
+        run: |
+            cd build
+            make check-enzyme
