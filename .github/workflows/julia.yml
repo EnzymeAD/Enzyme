@@ -52,7 +52,7 @@ jobs:
             julia --project=. -e 'using Pkg; pkg"instantiate"'
             julia --project=. test/runtests.jl 
         env:
-            ENZYME_PATH: "${{ workspace }}/build/Enzyme"
+            ENZYME_PATH: "../Enzyme/build/Enzyme"
       - name: "Check Enzyme"
         run: |
             cd build
