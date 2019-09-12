@@ -33,7 +33,6 @@ jobs:
     - name: cmake
       run: |
           cd enzyme/build 
-          ls ../../llvm/lib/cmake/llvm/
           cmake .. -DLLVM_EXTERNAL_LIT=`which lit` -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/llvm/lib/cmake/llvm
     - name: make
       run: cd enzyme/build && make
