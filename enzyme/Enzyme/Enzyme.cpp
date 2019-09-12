@@ -827,7 +827,17 @@ void forceRecursiveInlining(Function *NewF, const Function* F) {
      }
 }
 
-Function* preprocessForClone(Function *F, AAResults &AA) {
+class GradientUtils;
+
+PHINode* canonicalizeIVs(Type *Ty, Loop *L, ScalarEvolution &SE, DominatorTree &DT, GradientUtils *gutils);
+
+/// \brief Replace the latch of the loop to check that IV is always less than or
+/// equal to the limit.
+///
+/// This method assumes that the loop has a single loop latch.
+Value* canonicalizeLoopLatch(PHINode *IV, Value *Limit, Loop* L, ScalarEvolution &SE, BasicBlock* ExitBlock, GradientUtils *gutils);
+
+Function* preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI) {
  static std::map<Function*,Function*> cache;
  if (cache.find(F) != cache.end()) return cache[F];
 
@@ -1073,6 +1083,45 @@ Function* preprocessForClone(Function *F, AAResults &AA) {
 
  }
  
+  DominatorTree DT(*NewF);
+  LoopInfo LI(DT);
+  AssumptionCache AC(*NewF);
+  ScalarEvolution SE(*NewF, TLI, AC, DT, LI);
+
+  for (auto L : LI.getLoopsInPreorder()) {
+        BasicBlock *Header = L->getHeader();
+        BasicBlock *Preheader = L->getLoopPreheader();
+        assert(Preheader && "requires preheader");
+        BasicBlock *Latch = L->getLoopLatch();
+
+        const SCEV *Limit = SE.getExitCount(L, Latch);
+		SmallVector<PHINode*, 8> IVsToRemove;
+        
+		PHINode *CanonicalIV = nullptr;
+		Value *LimitVar = nullptr;
+
+		if (SE.getCouldNotCompute() != Limit) {
+
+        	CanonicalIV = canonicalizeIVs(Limit->getType(), L, SE, DT, nullptr);
+        	if (!CanonicalIV) {
+                report_fatal_error("Couldn't get canonical IV.");
+        	}
+        	
+			const SCEVAddRecExpr *CanonicalSCEV = cast<const SCEVAddRecExpr>(SE.getSCEV(CanonicalIV));
+
+        	assert(SE.isLoopBackedgeGuardedByCond(L, ICmpInst::ICMP_ULT,
+                                              CanonicalSCEV, Limit) &&
+               "Loop backedge is not guarded by canonical comparison with limit.");
+        
+		    SCEVExpander Exp(SE, Preheader->getParent()->getParent()->getDataLayout(), "ad");
+			LimitVar = Exp.expandCodeFor(Limit, CanonicalIV->getType(),
+                                            Preheader->getTerminator());
+
+        	// Canonicalize the loop latch.
+			//canonicalizeLoopLatch(CanonicalIV, LimitVar, L, SE, ExitBlock, nullptr);
+        }
+  }
+ 
   if (autodiff_print)
       llvm::errs() << "after simplification :\n" << *NewF << "\n";
   
@@ -1084,9 +1133,9 @@ Function* preprocessForClone(Function *F, AAResults &AA) {
   return NewF;
 }
 
-Function *CloneFunctionWithReturns(Function *&F, AAResults &AA, ValueToValueMapTy& ptrInputs, const std::set<unsigned>& constant_args, SmallPtrSetImpl<Value*> &constants, SmallPtrSetImpl<Value*> &nonconstant, SmallPtrSetImpl<Value*> &returnvals, ReturnType returnValue, bool differentialReturn, Twine name, ValueToValueMapTy *VMapO, bool diffeReturnArg, llvm::Type* additionalArg = nullptr) {
+Function *CloneFunctionWithReturns(Function *&F, AAResults &AA, TargetLibraryInfo &TLI, ValueToValueMapTy& ptrInputs, const std::set<unsigned>& constant_args, SmallPtrSetImpl<Value*> &constants, SmallPtrSetImpl<Value*> &nonconstant, SmallPtrSetImpl<Value*> &returnvals, ReturnType returnValue, bool differentialReturn, Twine name, ValueToValueMapTy *VMapO, bool diffeReturnArg, llvm::Type* additionalArg = nullptr) {
  assert(!F->empty());
- F = preprocessForClone(F, AA);
+ F = preprocessForClone(F, AA, TLI);
  diffeReturnArg &= differentialReturn;
  std::vector<Type*> RetTypes;
  if (returnValue == ReturnType::ArgsWithReturn)
@@ -1257,15 +1306,6 @@ Function *CloneFunctionWithReturns(Function *&F, AAResults &AA, ValueToValueMapT
 #include "llvm/IR/Constant.h"
 #include <deque>
 #include "llvm/IR/CFG.h"
-class GradientUtils;
-
-PHINode* canonicalizeIVs(Type *Ty, Loop *L, ScalarEvolution &SE, DominatorTree &DT, GradientUtils *gutils);
-
-/// \brief Replace the latch of the loop to check that IV is always less than or
-/// equal to the limit.
-///
-/// This method assumes that the loop has a single loop latch.
-Value* canonicalizeLoopLatch(PHINode *IV, Value *Limit, Loop* L, ScalarEvolution &SE, BasicBlock* ExitBlock, GradientUtils *gutils);
 
 bool shouldRecompute(Value* val, const ValueToValueMapTy& available) {
           if (available.count(val)) return false;
@@ -1943,7 +1983,7 @@ public:
     SmallPtrSet<Value*,20> nonconstant;
     SmallPtrSet<Value*,2> returnvals;
     ValueToValueMapTy originalToNew;
-    auto newFunc = CloneFunctionWithReturns(todiff, AA, invertedPointers, constant_args, constants, nonconstant, returnvals, /*returnValue*/returnValue, /*differentialReturn*/differentialReturn, "fakeaugmented_"+todiff->getName(), &originalToNew, /*diffeReturnArg*/false, additionalArg);
+    auto newFunc = CloneFunctionWithReturns(todiff, AA, TLI, invertedPointers, constant_args, constants, nonconstant, returnvals, /*returnValue*/returnValue, /*differentialReturn*/differentialReturn, "fakeaugmented_"+todiff->getName(), &originalToNew, /*diffeReturnArg*/false, additionalArg);
     auto res = new GradientUtils(newFunc, AA, TLI, invertedPointers, constants, nonconstant, returnvals, originalToNew);
     res->oldFunc = todiff;
     return res;
@@ -2722,7 +2762,7 @@ public:
     SmallPtrSet<Value*,20> nonconstant;
     SmallPtrSet<Value*,2> returnvals;
     ValueToValueMapTy originalToNew;
-    auto newFunc = CloneFunctionWithReturns(todiff, AA, invertedPointers, constant_args, constants, nonconstant, returnvals, returnValue, differentialReturn, "diffe"+todiff->getName(), &originalToNew, /*diffeReturnArg*/true, additionalArg);
+    auto newFunc = CloneFunctionWithReturns(todiff, AA, TLI, invertedPointers, constant_args, constants, nonconstant, returnvals, returnValue, differentialReturn, "diffe"+todiff->getName(), &originalToNew, /*diffeReturnArg*/true, additionalArg);
     auto res = new DiffeGradientUtils(newFunc, AA, TLI, invertedPointers, constants, nonconstant, returnvals, originalToNew);
     res->oldFunc = todiff;
     return res;
@@ -5098,6 +5138,7 @@ PHINode* canonicalizeIVs(Type *Ty, Loop *L, ScalarEvolution &SE, DominatorTree &
   
   for (Instruction* I : DeadInsts) {
     if (gutils) gutils->erase(I);
+    else I->eraseFromParent();
   } 
 
   return CanonicalIV;
@@ -5127,14 +5168,16 @@ Value* canonicalizeLoopLatch(PHINode *IV, Value *Limit, Loop* L, ScalarEvolution
 
   // Erase the old conditional branch.
   Value *OldCond = LatchBr->getCondition();
+  
   if (gutils) gutils->erase(LatchBr);
+  else LatchBr->eraseFromParent();
   
   if (!OldCond->hasNUsesOrMore(1))
     if (Instruction *OldCondInst = dyn_cast<Instruction>(OldCond)) {
       if (gutils) gutils->erase(OldCondInst);
+      else OldCondInst->eraseFromParent();
     }
   
-
   return NewCondition;
 }
 
@@ -5215,7 +5258,7 @@ bool getContextM(BasicBlock *BB, LoopContext &loopContext, std::map<Loop*,LoopCo
 
 		if (SE.getCouldNotCompute() != Limit) {
 
-        	CanonicalIV = canonicalizeIVs(Limit->getType(), L, SE, DT, &gutils);
+        	CanonicalIV = L->getCanonicalInductionVariable(); //canonicalizeIVs(Limit->getType(), L, SE, DT, &gutils);
         	if (!CanonicalIV) {
                 report_fatal_error("Couldn't get canonical IV.");
         	}
@@ -5231,7 +5274,7 @@ bool getContextM(BasicBlock *BB, LoopContext &loopContext, std::map<Loop*,LoopCo
                                             Preheader->getTerminator());
 
         	// Canonicalize the loop latch.
-			canonicalizeLoopLatch(CanonicalIV, LimitVar, L, SE, ExitBlock, &gutils);
+			//canonicalizeLoopLatch(CanonicalIV, LimitVar, L, SE, ExitBlock, &gutils);
 
 			loopContext.dynamic = false;
 		} else {
