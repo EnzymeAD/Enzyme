@@ -5056,6 +5056,7 @@ PHINode* canonicalizeIVs(Type *Ty, Loop *L, ScalarEvolution &SE, DominatorTree &
     
   PHINode *CanonicalIV;
 
+/*
     {
        SCEVExpander e(SE, L->getHeader()->getParent()->getParent()->getDataLayout(), "ad");
 
@@ -5069,15 +5070,10 @@ PHINode* canonicalizeIVs(Type *Ty, Loop *L, ScalarEvolution &SE, DominatorTree &
 	   // Emit code for it.
 	   e.setInsertPoint(&L->getHeader()->front());
    	   Value *V = e.expand(H);
-/*
-   if (Ty) {
-     assert(SE.getTypeSizeInBits(Ty) == SE.getTypeSizeInBits(SH->getType()) &&
-            "non-trivial casts should be done with the SCEVs directly!");
-     V = InsertNoopCastOfTo(V, Ty);
-*/
 
 	   CanonicalIV = cast<PHINode>(V); //e.expandCodeFor(H, nullptr));
    }
+*/
 
   BasicBlock* Header = L->getHeader();
   Module* M = Header->getParent()->getParent();
@@ -5086,7 +5082,7 @@ PHINode* canonicalizeIVs(Type *Ty, Loop *L, ScalarEvolution &SE, DominatorTree &
 
   {
   SCEVExpander Exp(SE, DL, "ad");
-  /*
+  
   CanonicalIV = Exp.getOrInsertCanonicalInductionVariable(L, Ty);
   
   assert (CanonicalIV && "canonicalizing IV");
@@ -5097,7 +5093,7 @@ PHINode* canonicalizeIVs(Type *Ty, Loop *L, ScalarEvolution &SE, DominatorTree &
   for (WeakTrackingVH V : DeadInst0) {
       //DeadInsts.push_back(cast<Instruction>(V));
   }
-  */
+  
   }
   
   for (Instruction* I : DeadInsts) {

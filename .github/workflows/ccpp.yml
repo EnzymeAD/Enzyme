@@ -19,6 +19,8 @@ jobs:
       run: |
           mkdir llvm
           curl -s http://releases.llvm.org/${{matrix.llvm}}/clang+llvm-${{matrix.llvm}}-x86_64-linux-gnu-${{matrix.os}}.tar.xz | tar -xJf - -C llvm --strip 1
+          ls llvm/lib/cmake/llvm
+          pwd llvm/lib/cmake/llvm
     - name: add lit
       run: |
           sudo python -m pip install wheel
