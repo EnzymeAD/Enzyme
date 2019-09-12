@@ -19,7 +19,7 @@ jobs:
       run: |
           #sudo mkdir /llvm
           #curl -s http://releases.llvm.org/${{matrix.llvm}}/clang+llvm-${{matrix.llvm}}-x86_64-linux-gnu-${{matrix.os}}.tar.xz | sudo tar -xJf - -C /llvm --strip 1
-          sudo apt-install -y llvm-${{matrix.llvm}}-dev
+          sudo apt-install -y llvm-${{ matrix.llvm }}-dev
           #ls /llvm/lib/cmake/llvm
     - name: add lit
       run: |
@@ -34,7 +34,7 @@ jobs:
     - name: cmake
       run: |
           cd enzyme/build 
-          cmake .. -DLLVM_EXTERNAL_LIT=`which lit` -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{matrix.llvm}}/lib/cmake/llvm
+          cmake .. -DLLVM_EXTERNAL_LIT=`which lit` -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm
     - name: make
       run: cd enzyme/build && make
     - name: make check-enzyme
