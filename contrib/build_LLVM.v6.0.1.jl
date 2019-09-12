@@ -66,5 +66,8 @@ if unsatisfied || !isinstalled(dl_info...; prefix=prefix)
     install(dl_info...; prefix=prefix, force=true, verbose=verbose)
 end
 
-# Write out a deps.jl file that will contain mappings for our products
-write_deps_file(joinpath(@__DIR__, "deps.jl"), products, verbose=verbose)
+# HACK
+if !haskey(ENV, "NO_DEPS")
+    # Write out a deps.jl file that will contain mappings for our products
+    write_deps_file(joinpath(@__DIR__, "deps.jl"), products, verbose=verbose)
+end
