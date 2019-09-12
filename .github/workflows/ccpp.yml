@@ -16,10 +16,10 @@ jobs:
     
     steps:
         - name: add llvm 
-      run: |
+          run: |
+          sudo apt-install -y llvm-${{ matrix.llvm }}-dev
           #sudo mkdir /llvm
           #curl -s http://releases.llvm.org/${{matrix.llvm}}/clang+llvm-${{matrix.llvm}}-x86_64-linux-gnu-${{matrix.os}}.tar.xz | sudo tar -xJf - -C /llvm --strip 1
-          sudo apt-install -y llvm-${{ matrix.llvm }}-dev
           #ls /llvm/lib/cmake/llvm
     - name: add lit
       run: |
