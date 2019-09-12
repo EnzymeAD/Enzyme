@@ -35,6 +35,8 @@ jobs:
           julia --project=contrib contrib/build_LLVM.v6.0.1.jl
           sudo mkdir -p /workspace
           sudo ln -s `pwd`/contrib/usr /workspace/destdir
+          sudo ln -s `pwd`/contrib/usr/tools/opt `pwd`/contrib/usr/bin/opt
+          sudo ln -s `pwd`/contrib/usr/tools/FileCheck `pwd`/contrib/usr/bin/FileCheck
         env:
             NO_DEPS: true
       - name: "Build Enzyme"
