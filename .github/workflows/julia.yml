@@ -37,6 +37,7 @@ jobs:
           sudo ln -s `pwd`/contrib/usr /workspace/destdir
           sudo ln -s `pwd`/contrib/usr/tools/opt `pwd`/contrib/usr/bin/opt
           sudo ln -s `pwd`/contrib/usr/tools/FileCheck `pwd`/contrib/usr/bin/FileCheck
+          sudo ln -s `pwd`/contrib/usr/tools/llvm-config `pwd`/contrib/usr/bin/llvm-config
         env:
             NO_DEPS: true
       - name: "Build Enzyme"
