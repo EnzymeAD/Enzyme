@@ -6,9 +6,6 @@ const prefix = Prefix(get([a for a in ARGS if a != "--verbose"], 1, joinpath(@__
 products = [
     LibraryProduct(prefix, ["libLLVM"], :libLLVM),
     LibraryProduct(prefix, ["libLTO"], :libLTO),
-    LibraryProduct(prefix, ["libclang"], :libclang),
-    ExecutableProduct(prefix, "llvm-tblgen", :llvm_tblgen),
-    ExecutableProduct(prefix, "clang-tblgen", :clang_tblgen),
     ExecutableProduct(prefix, "llvm-config", :llvm_config),
 ]
 
@@ -66,5 +63,8 @@ if unsatisfied || !isinstalled(dl_info...; prefix=prefix)
     install(dl_info...; prefix=prefix, force=true, verbose=verbose)
 end
 
-# Write out a deps.jl file that will contain mappings for our products
-write_deps_file(joinpath(@__DIR__, "deps.jl"), products, verbose=verbose)
+# HACK
+if !haskey(ENV, "NO_DEPS")
+    # Write out a deps.jl file that will contain mappings for our products
+    write_deps_file(joinpath(@__DIR__, "deps.jl"), products, verbose=verbose)
+end
