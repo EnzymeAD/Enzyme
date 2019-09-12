@@ -10,16 +10,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llvm: ["8.0.0", "7.0.1"] #, "6.0.1"]
+        llvm: ["8", "7", "6.0"] #, "6.0.1"]
         build: ["Release", "RelWithDebInfo", "Debug"]
         os: [ubuntu-18.04]
     
     steps:
-    - name: add llvm 
+        - name: add llvm 
       run: |
-          sudo mkdir /llvm
-          curl -s http://releases.llvm.org/${{matrix.llvm}}/clang+llvm-${{matrix.llvm}}-x86_64-linux-gnu-${{matrix.os}}.tar.xz | sudo tar -xJf - -C /llvm --strip 1
-          ls /llvm/lib/cmake/llvm
+          #sudo mkdir /llvm
+          #curl -s http://releases.llvm.org/${{matrix.llvm}}/clang+llvm-${{matrix.llvm}}-x86_64-linux-gnu-${{matrix.os}}.tar.xz | sudo tar -xJf - -C /llvm --strip 1
+          sudo apt-install -y llvm-${{matrix.llvm}}-dev
+          #ls /llvm/lib/cmake/llvm
     - name: add lit
       run: |
           sudo python -m pip install wheel
@@ -33,7 +34,7 @@ jobs:
     - name: cmake
       run: |
           cd enzyme/build 
-          cmake .. -DLLVM_EXTERNAL_LIT=`which lit` -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/llvm/lib/cmake/llvm
+          cmake .. -DLLVM_EXTERNAL_LIT=`which lit` -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{matrix.llvm}}/lib/cmake/llvm
     - name: make
       run: cd enzyme/build && make
     - name: make check-enzyme
