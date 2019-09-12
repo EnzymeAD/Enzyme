@@ -17,10 +17,9 @@ jobs:
     steps:
     - name: add llvm 
       run: |
-          mkdir llvm
-          curl -s http://releases.llvm.org/${{matrix.llvm}}/clang+llvm-${{matrix.llvm}}-x86_64-linux-gnu-${{matrix.os}}.tar.xz | tar -xJf - -C llvm --strip 1
-          ls llvm/lib/cmake/llvm
-          pwd llvm/lib/cmake/llvm
+          sudo mkdir /llvm
+          curl -s http://releases.llvm.org/${{matrix.llvm}}/clang+llvm-${{matrix.llvm}}-x86_64-linux-gnu-${{matrix.os}}.tar.xz | sudo tar -xJf - -C /llvm --strip 1
+          ls /llvm/lib/cmake/llvm
     - name: add lit
       run: |
           sudo python -m pip install wheel
@@ -32,7 +31,10 @@ jobs:
     - name: mkdir
       run: cd enzyme && mkdir build
     - name: cmake
-      run: cd enzyme/build && cmake .. -DLLVM_EXTERNAL_LIT=`which lit` -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=../../llvm/lib/cmake/llvm
+      run: |
+          cd enzyme/build 
+          ls ../../llvm/lib/cmake/llvm/
+          cmake .. -DLLVM_EXTERNAL_LIT=`which lit` -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/llvm/lib/cmake/llvm
     - name: make
       run: cd enzyme/build && make
     - name: make check-enzyme
