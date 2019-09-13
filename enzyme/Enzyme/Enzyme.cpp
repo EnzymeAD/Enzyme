@@ -4049,18 +4049,18 @@ Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& co
         case Intrinsic::fabs: {
           if (!gutils->isConstantInstruction(op) && !gutils->isConstantValue(op->getOperand(0))) {
             auto cmp = Builder2.CreateFCmpOLT(lookup(op->getOperand(0)), ConstantFP::get(op->getOperand(0)->getType(), 0));
-            dif0 = Builder2.CreateSelect(cmp, ConstantFP::get(op->getOperand(0)->getType(), -1), ConstantFP::get(op->getOperand(0)->getType(), 1));
+            dif0 = Builder2.CreateFMul(Builder2.CreateSelect(cmp, ConstantFP::get(op->getOperand(0)->getType(), -1), ConstantFP::get(op->getOperand(0)->getType(), 1)), diffe(inst));
           }
           break;
         }
         case Intrinsic::maxnum: {
           if (!gutils->isConstantInstruction(op) && !gutils->isConstantValue(op->getOperand(0))) {
             auto cmp = Builder2.CreateFCmpOLT(lookup(op->getOperand(0)), lookup(op->getOperand(1)));
-            dif0 = Builder2.CreateSelect(cmp, ConstantFP::get(op->getOperand(0)->getType(), 0), ConstantFP::get(op->getOperand(0)->getType(), 1));
+            dif0 = Builder2.CreateSelect(cmp, ConstantFP::get(op->getOperand(0)->getType(), 0), diffe(inst));
           }
           if (!gutils->isConstantInstruction(op) && !gutils->isConstantValue(op->getOperand(1))) {
             auto cmp = Builder2.CreateFCmpOLT(lookup(op->getOperand(0)), lookup(op->getOperand(1)));
-            dif1 = Builder2.CreateSelect(cmp, ConstantFP::get(op->getOperand(0)->getType(), 1), ConstantFP::get(op->getOperand(0)->getType(), 0));
+            dif1 = Builder2.CreateSelect(cmp, diffe(inst), ConstantFP::get(op->getOperand(0)->getType(), 0));
           }
           break;
         }
