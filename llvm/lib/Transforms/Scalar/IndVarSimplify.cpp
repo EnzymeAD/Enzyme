@@ -2431,8 +2431,12 @@ bool IndVarSimplify::run(Loop *L) {
   //    and we're in trouble if we can't find the induction variable even when
   //    we've manually inserted one.
   //  - LFTR relies on having a single backedge.
-  if (!L->isLoopSimplifyForm())
+  if (!L->isLoopSimplifyForm()) {
+    llvm::errs() << "didn't run on loop as not in loop simplify form\n";
     return false;
+  }
+
+  llvm::errs() << "running on loop " << *L << "\n";
 
   // If there are any floating-point recurrences, attempt to
   // transform them to use integer recurrences.
@@ -2545,6 +2549,7 @@ PreservedAnalyses IndVarSimplifyPass::run(Loop &L, LoopAnalysisManager &AM,
   const DataLayout &DL = F->getParent()->getDataLayout();
 
   IndVarSimplify IVS(&AR.LI, &AR.SE, &AR.DT, DL, &AR.TLI, &AR.TTI);
+  llvm::errs() << " fancy run on " << L << "\n";
   if (!IVS.run(&L))
     return PreservedAnalyses::all();
 
@@ -2576,6 +2581,7 @@ struct IndVarSimplifyLegacyPass : public LoopPass {
     const DataLayout &DL = L->getHeader()->getModule()->getDataLayout();
 
     IndVarSimplify IVS(LI, SE, DT, DL, TLI, TTI);
+    llvm::errs() << " casual run on " << *L << "\n";
     return IVS.run(L);
   }
 

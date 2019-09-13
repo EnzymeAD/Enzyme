@@ -6357,7 +6357,7 @@ bool LLParser::ParseCall(Instruction *&Inst, PerFunctionState &PFS,
     return true;
 
   if (FMF.any() && !RetType->isFPOrFPVectorTy()) {
-    RetType->dump();
+      llvm::errs() << *RetType << "\n";
     return Error(CallLoc, "fast-math-flags specified for call without "
                           "floating-point scalar or vector return type");
   }
