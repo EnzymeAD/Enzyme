@@ -3059,6 +3059,7 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
             case Intrinsic::cos:
                 break;
             default:
+              if (gutils->isConstantInstruction(inst)) continue;
               assert(inst);
               llvm::errs() << "cannot handle (augmented) unknown intrinsic\n" << *inst;
               report_fatal_error("(augmented) unknown intrinsic");
@@ -4132,6 +4133,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& co
           break;
         }
         default:
+          if (gutils->isConstantInstruction(inst)) continue;
           assert(inst);
           llvm::errs() << "cannot handle unknown intrinsic\n" << *inst;
           report_fatal_error("unknown intrinsic");
