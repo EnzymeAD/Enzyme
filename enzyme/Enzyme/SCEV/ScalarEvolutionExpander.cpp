@@ -1679,7 +1679,7 @@ Value *fake::SCEVExpander::visitUMaxExpr(const SCEVUMaxExpr *S) {
 }
 
 #if LLVM_VERSION_MAJOR == 6
-Value *SCEVExpander::visitSMinExpr(const SCEVSMinExpr *S) {
+Value *fake::SCEVExpander::visitSMinExpr(const SCEVSMinExpr *S) {
   Value *LHS = expand(S->getOperand(S->getNumOperands() - 1));
   Type *Ty = LHS->getType();
   for (int i = S->getNumOperands() - 2; i >= 0; --i) {
@@ -1704,7 +1704,7 @@ Value *SCEVExpander::visitSMinExpr(const SCEVSMinExpr *S) {
   return LHS;
 }
 
-Value *SCEVExpander::visitUMinExpr(const SCEVUMinExpr *S) {
+Value *fake::SCEVExpander::visitUMinExpr(const SCEVUMinExpr *S) {
   Value *LHS = expand(S->getOperand(S->getNumOperands() - 1));
   Type *Ty = LHS->getType();
   for (int i = S->getNumOperands() - 2; i >= 0; --i) {
