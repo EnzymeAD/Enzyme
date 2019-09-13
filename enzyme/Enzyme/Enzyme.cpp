@@ -2227,7 +2227,6 @@ endCheck:
             IRBuilder <> v(putafter);
             v.setFastMathFlags(getFast());
             v.CreateStore(inst, scopeMap[inst]);
-                  llvm::errs() << " place foo\n"; dumpSet(originalInstructions);
         } else {
 
             ValueToValueMapTy valmap;
@@ -4232,7 +4231,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& co
             if (auto dc = dyn_cast<CallInst>(val)) {
                 if (dc->getCalledFunction()->getName() == "malloc") {
                     gutils->erase(op);
-                    llvm::errs() << " place free\n"; dumpSet(gutils->originalInstructions);
                     continue;
                 }
             }

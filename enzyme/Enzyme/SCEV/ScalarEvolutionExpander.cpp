@@ -1830,12 +1830,6 @@ Value *fake::SCEVExpander::expand(const SCEV *S) {
       break;
     }
 
-    for(auto a : InsertedValues) {
-        llvm::errs() << "(4)insertedvalues: " << a << "\n";
-    }
-    for(auto a : InsertedValues) {
-        llvm::errs() << "(4)insertedvalueso: " << *a << "\n";
-    }
   // Check to see if we already expanded this here.
   auto I = InsertedExpressions.find(std::make_pair(S, InsertPt));
   if (I != InsertedExpressions.end())
@@ -1889,13 +1883,6 @@ void fake::SCEVExpander::rememberInstruction(Value *I) {
     InsertedPostIncValues.insert(I);
   else {
     InsertedValues.insert(I);
-    llvm::errs() << "added to ivs(2) " << *I << " (" << I << ") " <<  "\n";
-    for(auto a : InsertedValues) {
-        llvm::errs() << "insertedvalues: " << a << "\n";
-    }
-    for(auto a : InsertedValues) {
-        llvm::errs() << "insertedvalueso: " << *a << "\n";
-    }
   }
 }
 
