@@ -18,6 +18,8 @@
 
 #include <llvm/Config/llvm-config.h>
 
+#include "SCEV/ScalarEvolutionExpander.h"
+
 #include "llvm/Transforms/Utils/PromoteMemToReg.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Scalar/GVN.h"
@@ -829,13 +831,7 @@ void forceRecursiveInlining(Function *NewF, const Function* F) {
 
 class GradientUtils;
 
-PHINode* canonicalizeIVs(Type *Ty, Loop *L, ScalarEvolution &SE, DominatorTree &DT, GradientUtils *gutils);
-
-/// \brief Replace the latch of the loop to check that IV is always less than or
-/// equal to the limit.
-///
-/// This method assumes that the loop has a single loop latch.
-Value* canonicalizeLoopLatch(PHINode *IV, Value *Limit, Loop* L, ScalarEvolution &SE, BasicBlock* ExitBlock, GradientUtils *gutils);
+PHINode* canonicalizeIVs(Type *Ty, Loop *L, ScalarEvolution &SE, DominatorTree &DT, GradientUtils* gutils);
 
 Function* preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI) {
  static std::map<Function*,Function*> cache;
@@ -1081,46 +1077,7 @@ Function* preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI)
  DSEPass().run(*NewF, AM);   
  LoopSimplifyPass().run(*NewF, AM);
 
- }
- 
-  DominatorTree DT(*NewF);
-  LoopInfo LI(DT);
-  AssumptionCache AC(*NewF);
-  ScalarEvolution SE(*NewF, TLI, AC, DT, LI);
-
-  for (auto L : LI.getLoopsInPreorder()) {
-        BasicBlock *Header = L->getHeader();
-        BasicBlock *Preheader = L->getLoopPreheader();
-        assert(Preheader && "requires preheader");
-        BasicBlock *Latch = L->getLoopLatch();
-
-        const SCEV *Limit = SE.getExitCount(L, Latch);
-		SmallVector<PHINode*, 8> IVsToRemove;
-        
-		PHINode *CanonicalIV = nullptr;
-		Value *LimitVar = nullptr;
-
-		if (SE.getCouldNotCompute() != Limit) {
-
-        	CanonicalIV = canonicalizeIVs(Limit->getType(), L, SE, DT, nullptr);
-        	if (!CanonicalIV) {
-                report_fatal_error("Couldn't get canonical IV.");
-        	}
-        	
-			const SCEVAddRecExpr *CanonicalSCEV = cast<const SCEVAddRecExpr>(SE.getSCEV(CanonicalIV));
-
-        	assert(SE.isLoopBackedgeGuardedByCond(L, ICmpInst::ICMP_ULT,
-                                              CanonicalSCEV, Limit) &&
-               "Loop backedge is not guarded by canonical comparison with limit.");
-        
-		    SCEVExpander Exp(SE, Preheader->getParent()->getParent()->getDataLayout(), "ad");
-			LimitVar = Exp.expandCodeFor(Limit, CanonicalIV->getType(),
-                                            Preheader->getTerminator());
-
-        	// Canonicalize the loop latch.
-			//canonicalizeLoopLatch(CanonicalIV, LimitVar, L, SE, ExitBlock, nullptr);
-        }
-  }
+ } 
  
   if (autodiff_print)
       llvm::errs() << "after simplification :\n" << *NewF << "\n";
@@ -3730,7 +3687,7 @@ std::pair<SmallVector<Type*,4>,SmallVector<Type*,4>> getDefaultFunctionTypeForGr
     return std::pair<SmallVector<Type*,4>,SmallVector<Type*,4>>(args, outs);
 }
 
-Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& constant_args, TargetLibraryInfo &TLI, AAResults &AA, bool returnValue, bool differentialReturn, bool topLevel, llvm::Type* additionalArg) {
+Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& constant_args, TargetLibraryInfo &TLI, AAResults &AA, bool returnValue, bool differentialReturn, bool topLevel, llvm::Type* additionalArg) { 
   static std::map<std::tuple<Function*,std::set<unsigned>, bool/*retval*/, bool/*differentialReturn*/, bool/*topLevel*/, llvm::Type*>, Function*> cachedfunctions;
   auto tup = std::make_tuple(todiff, std::set<unsigned>(constant_args.begin(), constant_args.end()), returnValue, differentialReturn, topLevel, additionalArg);
   if (cachedfunctions.find(tup) != cachedfunctions.end()) {
@@ -3818,10 +3775,10 @@ Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& co
 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(todiff, AA, TLI, constant_args, returnValue ? ReturnType::ArgsWithReturn : ReturnType::Args, differentialReturn, additionalArg);
   cachedfunctions[tup] = gutils->newFunc;
-
+  
   gutils->forceContexts(); 
   gutils->forceAugmentedReturns();
-
+  
   Argument* additionalValue = nullptr;
   if (additionalArg) {
     auto v = gutils->newFunc->arg_end();
@@ -3844,7 +3801,6 @@ Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& co
   }
 
   std::map<ReturnInst*,StoreInst*> replacedReturns;
-
 
   for(BasicBlock* BB: gutils->originalBlocks) {
 
@@ -4935,6 +4891,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& co
 }
 
 void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI, AAResults &AA) {//, LoopInfo& LI, DominatorTree& DT) {
+  
+
   Value* fn = CI->getArgOperand(0);
 
   while (auto ci = dyn_cast<CastInst>(fn)) {
@@ -4948,7 +4906,7 @@ void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI, AAResults &AA) {//, Lo
   }
   auto FT = cast<Function>(fn)->getFunctionType();
   assert(fn);
-  
+   
   if (autodiff_print)
       llvm::errs() << "prefn:\n" << *fn << "\n";
 
@@ -5038,6 +4996,7 @@ void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI, AAResults &AA) {//, Lo
   }
 
   bool differentialReturn = cast<Function>(fn)->getReturnType()->isFPOrFPVectorTy();
+  
   auto newFunc = CreatePrimalAndGradient(cast<Function>(fn), constants, TLI, AA, /*should return*/false, differentialReturn, /*topLevel*/true, /*addedType*/nullptr);//, LI, DT);
   
   if (differentialReturn)
@@ -5061,13 +5020,14 @@ void HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI, AAResults &AA) {//, Lo
 }
 
 static bool lowerAutodiffIntrinsic(Function &F, TargetLibraryInfo &TLI, AAResults &AA) {//, LoopInfo& LI, DominatorTree& DT) {
+
   bool Changed = false;
 
+reset:
   for (BasicBlock &BB : F) {
 
-    for (auto BI = BB.rbegin(), BE = BB.rend(); BI != BE;) {
-      Instruction *Inst = &*BI++;
-      CallInst *CI = dyn_cast_or_null<CallInst>(Inst);
+    for (auto BI = BB.rbegin(), BE = BB.rend(); BI != BE; BI++) {
+      CallInst *CI = dyn_cast<CallInst>(&*BI);
       if (!CI) continue;
 
       Function *Fn = CI->getCalledFunction();
@@ -5081,6 +5041,7 @@ static bool lowerAutodiffIntrinsic(Function &F, TargetLibraryInfo &TLI, AAResult
       if (Fn && ( Fn->getName() == "__enzyme_autodiff" || Fn->getName().startswith("__enzyme_autodiff")) ) {
         HandleAutoDiff(CI, TLI, AA);//, LI, DT);
         Changed = true;
+        goto reset;
       }
     }
   }
@@ -5088,97 +5049,23 @@ static bool lowerAutodiffIntrinsic(Function &F, TargetLibraryInfo &TLI, AAResult
   return Changed;
 }
 
-PHINode* canonicalizeIVs(Type *Ty, Loop *L, ScalarEvolution &SE, DominatorTree &DT, GradientUtils *gutils) {
-    //PHINode* pn = L->getCanonicalInductionVariable();
-    //assert( pn && "canonical IV");
-    //return pn;
-
+PHINode* canonicalizeIVs(Type *Ty, Loop *L, ScalarEvolution &SE, DominatorTree &DT, GradientUtils* gutils) {
     
-  PHINode *CanonicalIV;
-
-/*
-    {
-       SCEVExpander e(SE, L->getHeader()->getParent()->getParent()->getDataLayout(), "ad");
-
-	   assert(Ty->isIntegerTy() && "Can only insert integer induction variables!");
-	 
-	   // Build a SCEV for {0,+,1}<L>.
-	   // Conservatively use FlagAnyWrap for now.
-	   const SCEV *H = SE.getAddRecExpr(SE.getConstant(Ty, 0),
-										SE.getConstant(Ty, 1), L, SCEV::FlagAnyWrap);
-	 
-	   // Emit code for it.
-	   e.setInsertPoint(&L->getHeader()->front());
-   	   Value *V = e.expand(H);
-
-	   CanonicalIV = cast<PHINode>(V); //e.expandCodeFor(H, nullptr));
-   }
-*/
-
-  BasicBlock* Header = L->getHeader();
-  Module* M = Header->getParent()->getParent();
-  const DataLayout &DL = M->getDataLayout();
-  SmallVector<Instruction*, 16> DeadInsts;
-
-  {
-  SCEVExpander Exp(SE, DL, "ad");
+    fake::SCEVExpander e(SE, L->getHeader()->getParent()->getParent()->getDataLayout(), "ad");
+    
+    PHINode *CanonicalIV = e.getOrInsertCanonicalInductionVariable(L, Ty);
+    
+    assert (CanonicalIV && "canonicalizing IV");
   
-  CanonicalIV = Exp.getOrInsertCanonicalInductionVariable(L, Ty);
-  
-  assert (CanonicalIV && "canonicalizing IV");
-  //DEBUG(dbgs() << "Canonical induction variable " << *CanonicalIV << "\n");
-
   SmallVector<WeakTrackingVH, 16> DeadInst0;
-  Exp.replaceCongruentIVs(L, &DT, DeadInst0);
+  e.replaceCongruentIVs(L, &DT, DeadInst0);
   for (WeakTrackingVH V : DeadInst0) {
-      //DeadInsts.push_back(cast<Instruction>(V));
+    gutils->erase(cast<Instruction>(V)); //->eraseFromParent();
   }
   
-  }
-  
-  for (Instruction* I : DeadInsts) {
-    if (gutils) gutils->erase(I);
-    else I->eraseFromParent();
-  } 
 
   return CanonicalIV;
   
-}
-
-Value* canonicalizeLoopLatch(PHINode *IV, Value *Limit, Loop* L, ScalarEvolution &SE, BasicBlock* ExitBlock, GradientUtils *gutils) {
-  Value *NewCondition;
-  BasicBlock *Header = L->getHeader();
-  BasicBlock *Latch = L->getLoopLatch();
-  assert(Latch && "No single loop latch found for loop.");
-
-  IRBuilder<> Builder(&*Latch->getFirstInsertionPt());
-  Builder.setFastMathFlags(getFast());
-
-  // This process assumes that IV's increment is in Latch.
-
-  // Create comparison between IV and Limit at top of Latch.
-  NewCondition = Builder.CreateICmpULT(IV, Limit);
-
-  // Replace the conditional branch at the end of Latch.
-  BranchInst *LatchBr = dyn_cast_or_null<BranchInst>(Latch->getTerminator());
-  assert(LatchBr && LatchBr->isConditional() &&
-         "Latch does not terminate with a conditional branch.");
-  Builder.SetInsertPoint(Latch->getTerminator());
-  Builder.CreateCondBr(NewCondition, Header, ExitBlock);
-
-  // Erase the old conditional branch.
-  Value *OldCond = LatchBr->getCondition();
-  
-  if (gutils) gutils->erase(LatchBr);
-  else LatchBr->eraseFromParent();
-  
-  if (!OldCond->hasNUsesOrMore(1))
-    if (Instruction *OldCondInst = dyn_cast<Instruction>(OldCond)) {
-      if (gutils) gutils->erase(OldCondInst);
-      else OldCondInst->eraseFromParent();
-    }
-  
-  return NewCondition;
 }
 
 bool getContextM(BasicBlock *BB, LoopContext &loopContext, std::map<Loop*,LoopContext> &loopContexts, LoopInfo &LI,ScalarEvolution &SE,DominatorTree &DT, GradientUtils &gutils) {
@@ -5258,7 +5145,7 @@ bool getContextM(BasicBlock *BB, LoopContext &loopContext, std::map<Loop*,LoopCo
 
 		if (SE.getCouldNotCompute() != Limit) {
 
-        	CanonicalIV = L->getCanonicalInductionVariable(); //canonicalizeIVs(Limit->getType(), L, SE, DT, &gutils);
+        	CanonicalIV = canonicalizeIVs(Limit->getType(), L, SE, DT, &gutils);
         	if (!CanonicalIV) {
                 report_fatal_error("Couldn't get canonical IV.");
         	}
@@ -5269,12 +5156,9 @@ bool getContextM(BasicBlock *BB, LoopContext &loopContext, std::map<Loop*,LoopCo
                                               CanonicalSCEV, Limit) &&
                "Loop backedge is not guarded by canonical comparison with limit.");
         
-		    SCEVExpander Exp(SE, Preheader->getParent()->getParent()->getDataLayout(), "ad");
+            fake::SCEVExpander Exp(SE, Preheader->getParent()->getParent()->getDataLayout(), "ad");
 			LimitVar = Exp.expandCodeFor(Limit, CanonicalIV->getType(),
                                             Preheader->getTerminator());
-
-        	// Canonicalize the loop latch.
-			//canonicalizeLoopLatch(CanonicalIV, LimitVar, L, SE, ExitBlock, &gutils);
 
 			loopContext.dynamic = false;
 		} else {
@@ -5308,7 +5192,7 @@ bool getContextM(BasicBlock *BB, LoopContext &loopContext, std::map<Loop*,LoopCo
 	
 		// Remove Canonicalizable IV's
 		{
-		  SCEVExpander Exp(SE, Preheader->getParent()->getParent()->getDataLayout(), "ad");
+            fake::SCEVExpander Exp(SE, Preheader->getParent()->getParent()->getDataLayout(), "ad");
 		  for (BasicBlock::iterator II = Header->begin(); isa<PHINode>(II); ++II) {
 			PHINode *PN = cast<PHINode>(II);
 			if (PN == CanonicalIV) continue;
@@ -5371,12 +5255,24 @@ public:
     AU.addRequired<AAResultsWrapperPass>();
     AU.addRequired<GlobalsAAWrapperPass>();
     AU.addRequiredID(LoopSimplifyID);
-    AU.addRequiredID(LCSSAID);
+    //AU.addRequiredID(LCSSAID);
+    
+    AU.addRequired<LoopInfoWrapperPass>();
+    AU.addRequired<DominatorTreeWrapperPass>();
+    AU.addRequired<ScalarEvolutionWrapperPass>();
   }
 
   bool runOnFunction(Function &F) override {
     auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
     auto &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
+    
+    /*
+    auto &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
+    auto &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
+    auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
+    */
+  
+
     return lowerAutodiffIntrinsic(F, TLI, AA);
   }
 };

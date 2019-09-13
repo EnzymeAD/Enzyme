@@ -11,8 +11,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_ANALYSIS_SCALAREVOLUTIONEXPANDER_H
-#define LLVM_ANALYSIS_SCALAREVOLUTIONEXPANDER_H
+#ifndef FAKELLVM_ANALYSIS_SCALAREVOLUTIONEXPANDER_H
+#define FAKELLVM_ANALYSIS_SCALAREVOLUTIONEXPANDER_H
+
+#include "./ScalarEvolution.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -20,31 +22,14 @@
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/Analysis/ScalarEvolutionNormalization.h"
 #include "llvm/Analysis/TargetFolder.h"
+#include "llvm/Analysis/TargetTransformInfo.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/ValueHandle.h"
 
 namespace llvm {
-  class TargetTransformInfo;
-
-  /// Return true if the given expression is safe to expand in the sense that
-  /// all materialized values are safe to speculate anywhere their operands are
-  /// defined.
-  bool isSafeToExpand(const SCEV *S, ScalarEvolution &SE);
-
-  /// Return true if the given expression is safe to expand in the sense that
-  /// all materialized values are defined and safe to speculate at the specified
-  /// location and their operands are defined at this location.
-  bool isSafeToExpandAt(const SCEV *S, const Instruction *InsertionPoint,
-                        ScalarEvolution &SE);
-
-  /// This class uses information about analyze scalars to rewrite expressions
-  /// in canonical form.
-  ///
-  /// Clients should create an instance of this class when rewriting is needed,
-  /// and destroy it when finished to allow the release of the associated
-  /// memory.
+  namespace fake {
   class SCEVExpander : public SCEVVisitor<SCEVExpander, Value*> {
-    ScalarEvolution &SE;
+    llvm::ScalarEvolution &SE;
     const DataLayout &DL;
       public:
 
@@ -140,7 +125,7 @@ namespace llvm {
 
   public:
     /// Construct a SCEVExpander in "canonical" mode.
-    explicit SCEVExpander(ScalarEvolution &se, const DataLayout &DL,
+    explicit SCEVExpander(llvm::ScalarEvolution &se, const DataLayout &DL,
                           const char *name)
         : SE(se), DL(DL), IVName(name), IVIncInsertLoop(nullptr),
           IVIncInsertPos(nullptr), CanonicalMode(true), LSRMode(false),
@@ -305,10 +290,9 @@ namespace llvm {
     /// Note that this function does not perform an exhaustive search. I.e if it
     /// didn't find any value it does not mean that there is no such value.
     ///
-    Optional<ScalarEvolution::ValueOffsetPair>
+    Optional<llvm::ScalarEvolution::ValueOffsetPair>
     getRelatedExistingExpansion(const SCEV *S, const Instruction *At, Loop *L);
 
-  private:
     LLVMContext &getContext() const { return SE.getContext(); }
 
     /// Recursive helper function for isHighCostExpansion.
@@ -339,7 +323,7 @@ namespace llvm {
     Value *expandAddToGEP(const SCEV *Op, PointerType *PTy, Type *Ty, Value *V);
 
     /// Find a previous Value in ExprValueMap for expand.
-    ScalarEvolution::ValueOffsetPair
+    llvm::ScalarEvolution::ValueOffsetPair
     FindValueInExprValueMap(const SCEV *S, const Instruction *InsertPt);
 
   public:
@@ -395,6 +379,7 @@ namespace llvm {
 
     void fixupInsertPoints(Instruction *I);
   };
+}
 }
 
 #endif

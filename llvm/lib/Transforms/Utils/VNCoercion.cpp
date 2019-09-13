@@ -214,8 +214,8 @@ int analyzeLoadFromClobberingStore(Type *LoadTy, Value *LoadPtr,
 
   Value *StorePtr = DepSI->getPointerOperand();
   if (!DepSI->getValueOperand()->getType()->isSized()) {
-    DepSI->getValueOperand()->dump();
-    DepSI->getValueOperand()->getType()->dump();
+    //DepSI->getValueOperand()->dump();
+    //DepSI->getValueOperand()->getType()->dump();
   }
   uint64_t StoreSize =
       DL.getTypeSizeInBits(DepSI->getValueOperand()->getType());

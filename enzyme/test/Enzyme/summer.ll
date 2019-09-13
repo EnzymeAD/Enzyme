@@ -123,7 +123,7 @@ attributes #6 = { noreturn nounwind }
 ; CHECK-NEXT:   %[[gepz:.+]] = getelementptr i1, i1* %cmp.i_malloccache, i64 %indvar
 ; CHECK-NEXT:   store i1 %cmp.i, i1* %[[gepz]]
 ; CHECK-NEXT:   %cond.i = select i1 %cmp.i, double %cond.i28, double %.pre
-; CHECK-NEXT:   %indvars.iv.next = add nuw i64 %3, 1
+; CHECK-NEXT:   %indvars.iv.next = add nuw i64 %[[idxadd]], 1
 ; CHECK-NEXT:   %[[pcond:.+]] = icmp eq i64 %indvars.iv.next, %n
 ; CHECK-NEXT:   %indvar.next = add i64 %indvar, 1
 ; CHECK-NEXT:   br i1 %[[pcond]], label %invertfor.cond.cleanup, label %for.body.for.body_crit_edge
