@@ -1678,6 +1678,58 @@ Value *fake::SCEVExpander::visitUMaxExpr(const SCEVUMaxExpr *S) {
   return LHS;
 }
 
+#if LLVM_VERSION_MAJOR == 6
+Value *SCEVExpander::visitSMinExpr(const SCEVSMinExpr *S) {
+  Value *LHS = expand(S->getOperand(S->getNumOperands() - 1));
+  Type *Ty = LHS->getType();
+  for (int i = S->getNumOperands() - 2; i >= 0; --i) {
+    // In the case of mixed integer and pointer types, do the
+    // rest of the comparisons as integer.
+    Type *OpTy = S->getOperand(i)->getType();
+    if (OpTy->isIntegerTy() != Ty->isIntegerTy()) {
+      Ty = SE.getEffectiveSCEVType(Ty);
+      LHS = InsertNoopCastOfTo(LHS, Ty);
+    }
+    Value *RHS = expandCodeFor(S->getOperand(i), Ty);
+    Value *ICmp = Builder.CreateICmpSLT(LHS, RHS);
+    rememberInstruction(ICmp);
+    Value *Sel = Builder.CreateSelect(ICmp, LHS, RHS, "smin");
+    rememberInstruction(Sel);
+    LHS = Sel;
+  }
+  // In the case of mixed integer and pointer types, cast the
+  // final result back to the pointer type.
+  if (LHS->getType() != S->getType())
+    LHS = InsertNoopCastOfTo(LHS, S->getType());
+  return LHS;
+}
+
+Value *SCEVExpander::visitUMinExpr(const SCEVUMinExpr *S) {
+  Value *LHS = expand(S->getOperand(S->getNumOperands() - 1));
+  Type *Ty = LHS->getType();
+  for (int i = S->getNumOperands() - 2; i >= 0; --i) {
+    // In the case of mixed integer and pointer types, do the
+    // rest of the comparisons as integer.
+    Type *OpTy = S->getOperand(i)->getType();
+    if (OpTy->isIntegerTy() != Ty->isIntegerTy()) {
+      Ty = SE.getEffectiveSCEVType(Ty);
+      LHS = InsertNoopCastOfTo(LHS, Ty);
+    }
+    Value *RHS = expandCodeFor(S->getOperand(i), Ty);
+    Value *ICmp = Builder.CreateICmpULT(LHS, RHS);
+    rememberInstruction(ICmp);
+    Value *Sel = Builder.CreateSelect(ICmp, LHS, RHS, "umin");
+    rememberInstruction(Sel);
+    LHS = Sel;
+  }
+  // In the case of mixed integer and pointer types, cast the
+  // final result back to the pointer type.
+  if (LHS->getType() != S->getType())
+    LHS = InsertNoopCastOfTo(LHS, S->getType());
+  return LHS;
+}
+#endif
+
 Value *fake::SCEVExpander::expandCodeFor(const SCEV *SH, Type *Ty,
                                    Instruction *IP) {
   setInsertPoint(IP);
@@ -1885,7 +1937,7 @@ fake::SCEVExpander::replaceCongruentIVs(Loop *L, const DominatorTree *DT,
     Phis.push_back(&PN);
 
   if (TTI)
-    llvm::sort(Phis.begin(), Phis.end(), [](Value *LHS, Value *RHS) {
+    std::sort(Phis.begin(), Phis.end(), [](Value *LHS, Value *RHS) {
       // Put pointers at the back and make sure pointer < pointer = false.
       if (!LHS->getType()->isIntegerTy() || !RHS->getType()->isIntegerTy())
         return RHS->getType()->isIntegerTy() && !LHS->getType()->isIntegerTy();

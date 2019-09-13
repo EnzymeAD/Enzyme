@@ -354,6 +354,12 @@ namespace llvm {
 
     Value *visitUMaxExpr(const SCEVUMaxExpr *S);
 
+#if LLVM_VERSION_MAJOR == 6
+    Value *visitSMinExpr(const SCEVSMinExpr *S);
+
+    Value *visitUMinExpr(const SCEVUMinExpr *S);
+#endif
+
     Value *visitUnknown(const SCEVUnknown *S) {
       return S->getValue();
     }
