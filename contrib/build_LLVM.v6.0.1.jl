@@ -6,7 +6,7 @@ const prefix = Prefix(get([a for a in ARGS if a != "--verbose"], 1, joinpath(@__
 products = [
     LibraryProduct(prefix, ["libLLVM"], :libLLVM),
     LibraryProduct(prefix, ["libLTO"], :libLTO),
-    ExecutableProduct(prefix, "llvm-config", :llvm_config),
+    ExecutableProduct(joinpath(prefix, "tools", "llvm-config"), :llvm_config),
 ]
 
 # Download binaries from hosted location
