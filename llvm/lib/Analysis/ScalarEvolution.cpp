@@ -7293,6 +7293,7 @@ ScalarEvolution::computeExitLimitFromICmp(const Loop *L,
                                           bool ExitIfTrue,
                                           bool ControlsExit,
                                           bool AllowPredicates) {
+    llvm::errs() << " exit limit form icmp\n";
   // If the condition was exit on true, convert the condition to exit on false
   ICmpInst::Predicate Pred;
   if (!ExitIfTrue)
@@ -7344,12 +7345,14 @@ ScalarEvolution::computeExitLimitFromICmp(const Loop *L,
   switch (Pred) {
   case ICmpInst::ICMP_NE: {                     // while (X != Y)
     // Convert to: while (X-Y != 0)
+    llvm::errs() << " considering ne than\n";
     ExitLimit EL = howFarToZero(getMinusSCEV(LHS, RHS), L, ControlsExit,
                                 AllowPredicates);
     if (EL.hasAnyInfo()) return EL;
     break;
   }
   case ICmpInst::ICMP_EQ: {                     // while (X == Y)
+    llvm::errs() << " considering eq than\n";
     // Convert to: while (X-Y == 0)
     ExitLimit EL = howFarToNonZero(getMinusSCEV(LHS, RHS), L);
     if (EL.hasAnyInfo()) return EL;
@@ -7357,6 +7360,7 @@ ScalarEvolution::computeExitLimitFromICmp(const Loop *L,
   }
   case ICmpInst::ICMP_SLT:
   case ICmpInst::ICMP_ULT: {                    // while (X < Y)
+    llvm::errs() << " considering greater less than\n";
     bool IsSigned = Pred == ICmpInst::ICMP_SLT;
     ExitLimit EL = howManyLessThans(LHS, RHS, L, IsSigned, ControlsExit,
                                     AllowPredicates);
@@ -7365,6 +7369,7 @@ ScalarEvolution::computeExitLimitFromICmp(const Loop *L,
   }
   case ICmpInst::ICMP_SGT:
   case ICmpInst::ICMP_UGT: {                    // while (X > Y)
+    llvm::errs() << " considering greater than\n";
     bool IsSigned = Pred == ICmpInst::ICMP_SGT;
     ExitLimit EL =
         howManyGreaterThans(LHS, RHS, L, IsSigned, ControlsExit,
@@ -7372,7 +7377,16 @@ ScalarEvolution::computeExitLimitFromICmp(const Loop *L,
     if (EL.hasAnyInfo()) return EL;
     break;
   }
+  case ICmpInst::ICMP_SGE:
+  case ICmpInst::ICMP_UGE:
+    llvm::errs() << " considering greater equal than\n";
+    break;
+  case ICmpInst::ICMP_SLE:
+  case ICmpInst::ICMP_ULE:
+    llvm::errs() << " considering less equal than\n";
+    break;
   default:
+    llvm::errs() << " considering other than\n";
     break;
   }
 
