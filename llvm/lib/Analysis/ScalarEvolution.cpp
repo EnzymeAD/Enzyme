@@ -7019,6 +7019,11 @@ ScalarEvolution::computeBackedgeTakenCount(const Loop *L,
   for (unsigned i = 0, e = ExitingBlocks.size(); i != e; ++i) {
     BasicBlock *ExitBB = ExitingBlocks[i];
     ExitLimit EL = computeExitLimit(L, ExitBB, AllowPredicates);
+    llvm::errs() << "exit limit for " << ExitBB->getName() << " is ";
+    if (EL.ExactNotTaken) llvm::errs() << *EL.ExactNotTaken;
+    llvm::errs() << " max";
+    if (EL.MaxNotTaken) llvm::errs() << *EL.MaxNotTaken;
+    llvm::errs() << "\n";
 
     assert((AllowPredicates || EL.Predicates.empty()) &&
            "Predicated exit limit when predicates are not allowed!");
