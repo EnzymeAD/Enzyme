@@ -2436,8 +2436,6 @@ bool IndVarSimplify::run(Loop *L) {
     return false;
   }
 
-  llvm::errs() << "running on loop " << *L << "\n";
-
   // If there are any floating-point recurrences, attempt to
   // transform them to use integer recurrences.
   rewriteNonIntegerIVs(L);
@@ -2581,7 +2579,6 @@ struct IndVarSimplifyLegacyPass : public LoopPass {
     const DataLayout &DL = L->getHeader()->getModule()->getDataLayout();
 
     IndVarSimplify IVS(LI, SE, DT, DL, TLI, TTI);
-    llvm::errs() << " casual run on " << *L << "\n";
     return IVS.run(L);
   }
 
