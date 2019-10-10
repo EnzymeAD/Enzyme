@@ -1,0 +1,12 @@
+#!/bin/bash
+
+#NOTE(TFK): You'll need this if you use GCC.
+
+#export TAPIR_PREFIX=./../../llvm/build
+export ENZYME_PLUGIN=./../build/Enzyme/LLVMEnzyme-7.so
+
+export PATH=$TAPIR_PREFIX/bin:$PATH
+export CXX=clang++
+export ENZYME_PLUGIN=$ENZYME_PLUGIN
+mkdir -p build
+$@

@@ -1,0 +1,3 @@
+loops.c (at -O0)
+quicksort_sum.c (at all optimization levels)
+insertsort_sum.c (at all optimization levels)
