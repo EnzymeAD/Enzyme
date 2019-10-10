@@ -25,7 +25,7 @@ all: $(patsubst %.c,build/%-enzyme0,$(OBJ)) $(patsubst %.c,build/%-enzyme1,$(OBJ
 
 #ENZYME_PLUGIN = $(ENZYME_PLUGIN)
 
-EXTRA_FLAGS = -indvars -loop-simplify -loop-rotate
+#EXTRA_FLAGS = -indvars -loop-simplify -loop-rotate
 
 # NOTE(TFK): Optimization level 0 is broken right now.
 build/%-enzyme0: %.c

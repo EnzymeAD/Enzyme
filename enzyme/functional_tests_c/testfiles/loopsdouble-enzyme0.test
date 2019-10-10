@@ -1,4 +1,4 @@
 ; RUN: cd %desired_wd
 ; RUN: make clean-loopsdouble-enzyme0 ENZYME_PLUGIN=%loadEnzyme
-; RUN: make build/loopsdouble-enzyme0 ENZYME_PLUGIN=%loadEnzyme CLANG_BIN_PATH=/EBS/mount/tfk/Enzyme/llvm/build/bin
+; RUN: make build/loopsdouble-enzyme0 ENZYME_PLUGIN=%loadEnzyme CLANG_BIN_PATH=%clangBinPath
 ; RUN: build/loopsdouble-enzyme0

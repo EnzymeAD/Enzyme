@@ -3,15 +3,6 @@
 #include <math.h>
 #include <assert.h>
 extern "C" {
-  //float man_max(float* a, float* b) {
-  //  if (*a > *b) {
-  //    return *a;
-  //  } else {
-  //    return *b;
-  //  }
-  //}
-
-
   // size of array
   float* unsorted_array_init(int N) {
     float* arr = (float*) malloc(sizeof(float) * N);
@@ -69,8 +60,8 @@ int main(int argc, char** argv) {
 
 
 
-  float da = 0;//(float*) malloc(sizeof(float));
-  float db = 0;//(float*) malloc(sizeof(float));
+  float da = 0;
+  float db = 0;
 
 
   float ret = 0;
