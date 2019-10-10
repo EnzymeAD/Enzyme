@@ -30,3 +30,5 @@ jobs:
       run: cd enzyme/build && make
     - name: make check-enzyme
       run: cd enzyme/build && make check-enzyme
+    - name: make check-enzyme-c
+      run: cd enzyme/build && make check-enzyme-c
