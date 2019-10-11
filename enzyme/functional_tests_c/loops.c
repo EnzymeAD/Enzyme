@@ -2,6 +2,9 @@
 #include <math.h>
 #include <assert.h>
 extern "C" {
+  //void __builtin_autodiff(...);
+
+
   //float man_max(float* a, float* b) {
   //  if (*a > *b) {
   //    return *a;

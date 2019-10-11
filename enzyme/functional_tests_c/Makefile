@@ -6,13 +6,13 @@ OBJ := $(wildcard *.c)
 #ENZYME_PLUGIN := ./../build/Enzyme/LLVMEnzyme-7.so
 #export PATH = "$(PATH):$(LLVM_DIR)"
 
-ifeq ($(CLANG_BIN_PATH),)
-CLANG_BIN_PATH=${CLANG_BIN_PATH}
-endif
-
-ifeq ($(ENZYME_PLUGIN),)
-ENZYME_PLUGIN=${ENZYME_PLUGIN}
-endif
+#ifeq ($(CLANG_BIN_PATH),)
+#CLANG_BIN_PATH=${CLANG_BIN_PATH}
+#endif
+#
+#ifeq ($(ENZYME_PLUGIN),)
+#ENZYME_PLUGIN=${ENZYME_PLUGIN}
+#endif
 
 all: $(patsubst %.c,build/%-enzyme0,$(OBJ)) $(patsubst %.c,build/%-enzyme1,$(OBJ)) $(patsubst %.c,build/%-enzyme2,$(OBJ)) $(patsubst %.c,build/%-enzyme3,$(OBJ))
 
@@ -29,28 +29,28 @@ all: $(patsubst %.c,build/%-enzyme0,$(OBJ)) $(patsubst %.c,build/%-enzyme1,$(OBJ
 
 # NOTE(TFK): Optimization level 0 is broken right now.
 build/%-enzyme0: %.c
-	@./setup.sh clang++ -O1 $(patsubst %.c,%,$<).c -S -emit-llvm -o $@.ll
+	@./setup.sh $(CLANG_BIN_PATH)/clang++ -O1 $(patsubst %.c,%,$<).c -S -emit-llvm -o $@.ll
 	@./setup.sh $(CLANG_BIN_PATH)/opt $@.ll $(EXTRA_FLAGS) -load=$(ENZYME_PLUGIN) -enzyme -o $@.bc
-	@./setup.sh clang++ $@.bc -S -emit-llvm -o $@-final.ll
-	@./setup.sh clang++ $@.bc -o $@
+	@./setup.sh $(CLANG_BIN_PATH)/clang++ $@.bc -S -emit-llvm -o $@-final.ll
+	@./setup.sh $(CLANG_BIN_PATH)/clang++ $@.bc -o $@
 
 build/%-enzyme1: %.c
-	@./setup.sh clang++ -O1 $(patsubst %.c,%,$<).c -S -emit-llvm -o $@.ll
+	@./setup.sh $(CLANG_BIN_PATH)/clang++ -O1 $(patsubst %.c,%,$<).c -S -emit-llvm -o $@.ll
 	@./setup.sh $(CLANG_BIN_PATH)/opt $@.ll $(EXTRA_FLAGS) -load=$(ENZYME_PLUGIN) -enzyme -o $@.bc
-	@./setup.sh clang++ $@.bc -S -emit-llvm -o $@-final.ll
-	@./setup.sh clang++ $@.bc -o $@
+	@./setup.sh $(CLANG_BIN_PATH)/clang++ $@.bc -S -emit-llvm -o $@-final.ll
+	@./setup.sh $(CLANG_BIN_PATH)/clang++ $@.bc -o $@
 
 build/%-enzyme2: %.c
-	@./setup.sh clang++ -O2 $(patsubst %.c,%,$<).c -S -emit-llvm -o $@.ll
+	@./setup.sh $(CLANG_BIN_PATH)/clang++ -O2 $(patsubst %.c,%,$<).c -S -emit-llvm -o $@.ll
 	@./setup.sh $(CLANG_BIN_PATH)/opt $@.ll $(EXTRA_FLAGS) -load=$(ENZYME_PLUGIN) -enzyme -o $@.bc
-	@./setup.sh clang++ $@.bc -S -emit-llvm -o $@-final.ll
-	@./setup.sh clang++ $@.bc -o $@
+	@./setup.sh $(CLANG_BIN_PATH)/clang++ $@.bc -S -emit-llvm -o $@-final.ll
+	@./setup.sh $(CLANG_BIN_PATH)/clang++ $@.bc -o $@
 
 build/%-enzyme3: %.c
-	@./setup.sh clang++ -O3 $(patsubst %.c,%,$<).c -S -emit-llvm -o $@.ll
+	@./setup.sh $(CLANG_BIN_PATH)/clang++ -O3 $(patsubst %.c,%,$<).c -S -emit-llvm -o $@.ll
 	@./setup.sh $(CLANG_BIN_PATH)/opt $@.ll $(EXTRA_FLAGS) -load=$(ENZYME_PLUGIN) -enzyme -o $@.bc
-	@./setup.sh clang++ $@.bc -S -emit-llvm -o $@-final.ll
-	@./setup.sh clang++ $@.bc -o $@
+	@./setup.sh $(CLANG_BIN_PATH)/clang++ $@.bc -S -emit-llvm -o $@-final.ll
+	@./setup.sh $(CLANG_BIN_PATH)/clang++ $@.bc -o $@
 
 
 %-enzyme-test0: build/%-enzyme0
