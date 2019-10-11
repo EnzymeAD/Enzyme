@@ -33,28 +33,28 @@ POST_ENZYME_FLAGS := -mem2reg -sroa -adce -simplifycfg
 
 # NOTE(TFK): Optimization level 0 is broken right now.
 build/%-enzyme0: %.c
-	@./setup.sh $(CLANG_BIN_PATH)/clang++ -O1 $(patsubst %.c,%,$<).c -S -emit-llvm -o $@.ll
+	@./setup.sh $(CLANG_BIN_PATH)/clang -O1 $(patsubst %.c,%,$<).c -S -emit-llvm -o $@.ll
 	@./setup.sh $(CLANG_BIN_PATH)/opt $@.ll $(EXTRA_FLAGS) -load=$(ENZYME_PLUGIN) -enzyme -o $@.bc
-	@./setup.sh $(CLANG_BIN_PATH)/clang++ $@.bc -S -emit-llvm -o $@-final.ll
-	@./setup.sh $(CLANG_BIN_PATH)/clang++ $@.bc -o $@
+	@./setup.sh $(CLANG_BIN_PATH)/clang $@.bc -S -emit-llvm -o $@-final.ll
+	@./setup.sh $(CLANG_BIN_PATH)/clang $@.bc -o $@
 
 build/%-enzyme1: %.c
-	@./setup.sh $(CLANG_BIN_PATH)/clang++ -O1 $(patsubst %.c,%,$<).c -S -emit-llvm -o $@.ll
+	@./setup.sh $(CLANG_BIN_PATH)/clang -O1 $(patsubst %.c,%,$<).c -S -emit-llvm -o $@.ll
 	@./setup.sh $(CLANG_BIN_PATH)/opt $@.ll $(EXTRA_FLAGS) -load=$(ENZYME_PLUGIN) -enzyme -o $@.bc
-	@./setup.sh $(CLANG_BIN_PATH)/clang++ $@.bc -S -emit-llvm -o $@-final.ll
-	@./setup.sh $(CLANG_BIN_PATH)/clang++ $@.bc -o $@
+	@./setup.sh $(CLANG_BIN_PATH)/clang $@.bc -S -emit-llvm -o $@-final.ll
+	@./setup.sh $(CLANG_BIN_PATH)/clang $@.bc -o $@
 
 build/%-enzyme2: %.c
-	@./setup.sh $(CLANG_BIN_PATH)/clang++ -O2 $(patsubst %.c,%,$<).c -S -emit-llvm -o $@.ll
+	@./setup.sh $(CLANG_BIN_PATH)/clang -O2 $(patsubst %.c,%,$<).c -S -emit-llvm -o $@.ll
 	@./setup.sh $(CLANG_BIN_PATH)/opt $@.ll $(EXTRA_FLAGS) -load=$(ENZYME_PLUGIN) -enzyme -o $@.bc
-	@./setup.sh $(CLANG_BIN_PATH)/clang++ $@.bc -S -emit-llvm -o $@-final.ll
-	@./setup.sh $(CLANG_BIN_PATH)/clang++ $@.bc -o $@
+	@./setup.sh $(CLANG_BIN_PATH)/clang $@.bc -S -emit-llvm -o $@-final.ll
+	@./setup.sh $(CLANG_BIN_PATH)/clang $@.bc -o $@
 
 build/%-enzyme3: %.c
-	@./setup.sh $(CLANG_BIN_PATH)/clang++ -O3 $(patsubst %.c,%,$<).c -S -emit-llvm -o $@.ll
+	@./setup.sh $(CLANG_BIN_PATH)/clang -O3 $(patsubst %.c,%,$<).c -S -emit-llvm -o $@.ll
 	@./setup.sh $(CLANG_BIN_PATH)/opt $@.ll $(EXTRA_FLAGS) -load=$(ENZYME_PLUGIN) -enzyme $(POST_ENZYME_FLAGS) -o $@.bc
-	@./setup.sh $(CLANG_BIN_PATH)/clang++ $@.bc -S -emit-llvm -o $@-final.ll
-	@./setup.sh $(CLANG_BIN_PATH)/clang++ $@.bc -o $@
+	@./setup.sh $(CLANG_BIN_PATH)/clang $@.bc -S -emit-llvm -o $@-final.ll
+	@./setup.sh $(CLANG_BIN_PATH)/clang $@.bc -o $@
 
 
 %-enzyme-test0: build/%-enzyme0
@@ -73,6 +73,7 @@ test: $(patsubst %.c,%-enzyme-test0,$(OBJ)) $(patsubst %.c,%-enzyme-test1,$(OBJ)
 #test: $(patsubst %.c,%-enzyme-test1,$(OBJ)) $(patsubst %.c,%-enzyme-test2,$(OBJ)) $(patsubst %.c,%-enzyme-test3,$(OBJ))
 
 generate-testfiles:
+	rm testfiles/*
 	python gentests.py $(patsubst %.c,%-enzyme0,$(OBJ))
 	python gentests.py $(patsubst %.c,%-enzyme1,$(OBJ))
 	python gentests.py $(patsubst %.c,%-enzyme2,$(OBJ))

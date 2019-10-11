@@ -4,9 +4,7 @@
 #include <assert.h>
 
 #define __builtin_autodiff __enzyme_autodiff
-
 extern "C" {
-  
   double __enzyme_autodiff(...);
   //float man_max(float* a, float* b) {
   //  if (*a > *b) {
@@ -26,24 +24,8 @@ extern "C" {
     return arr;
   }
 
-  int cmp (const void* _a, const void* _b) {
-    const float* a = (const float*) _a;
-    const float* b = (const float*) _b;
-    if (*a > *b) {
-      return -1;
-    } else if (*a < *b) {
-      return 1;
-    } else {
-      return 0;
-    }
-  }
-
-  // sums the first half of a sorted array.
-  void quicksort_sum (float* array, int N, float* ret) {
-    float sum = 0;
-    //qsort(array, N, sizeof(float), cmp);
-
-    for (int i = 1; i < N; i++) {
+  __attribute__((noinline))
+  void insertion_sort_inner(float* array, int i) {
       int j = i;
       while (j > 0 && array[j-1] > array[j]) {
         float tmp = array[j];
@@ -51,6 +33,15 @@ extern "C" {
         array[j-1] = tmp;
         j -= 1;
       }
+  }
+
+  // sums the first half of a sorted array.
+  void insertsort_sum (float* array, int N, float* ret) {
+    float sum = 0;
+    //qsort(array, N, sizeof(float), cmp);
+
+    for (int i = 1; i < N; i++) {
+      insertion_sort_inner(array, i);
     }
 
 
@@ -89,11 +80,9 @@ int main(int argc, char** argv) {
     d_array[i] = 0.0;
   }
 
-  //quicksort_sum(array, N, &ret);
   printf("The total sum is %f\n", ret);
-  //compute_loops(&a, &b, &ret);
 
-  __builtin_autodiff(quicksort_sum, array, d_array, N, &ret, &dret);
+  __builtin_autodiff(insertsort_sum, array, d_array, N, &ret, &dret);
 
   for (int i = 0; i < N; i++) {
     printf("Diffe for index %d is %f\n", i, d_array[i]);
@@ -103,9 +92,6 @@ int main(int argc, char** argv) {
       assert(d_array[i] == 1.0);
     }
   }
-
-  //__builtin_autodiff(compute_loops, &a, &da, &b, &db, &ret, &dret);
-
 
   //assert(da == 100*1.0f);
   //assert(db == 100*1.0f);

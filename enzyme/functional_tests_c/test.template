@@ -2,3 +2,4 @@
 ; RUN: make clean-@NAME@ ENZYME_PLUGIN=%loadEnzyme
 ; RUN: make build/@NAME@ ENZYME_PLUGIN=%loadEnzyme CLANG_BIN_PATH=%clangBinPath
 ; RUN: build/@NAME@
+@EXPECTFAIL@

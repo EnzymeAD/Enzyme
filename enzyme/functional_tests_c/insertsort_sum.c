@@ -73,7 +73,7 @@ int main(int argc, char** argv) {
     printf("%d:%f\n", i, array[i]); 
   }
 
-  insertsort_sum(array, N, &ret);
+  //insertsort_sum(array, N, &ret);
 
   printf("Array after sorting:\n");
   for (int i = 0; i < N; i++) {
