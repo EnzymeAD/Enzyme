@@ -36,7 +36,8 @@ static inline llvm::FastMathFlags getFast() {
     return f;
 }
 
-static inline void dumpSet(const llvm::SmallPtrSetImpl<llvm::Instruction*> &o) {
+template<typename T>
+static inline void dumpSet(const llvm::SmallPtrSetImpl<T*> &o) {
     llvm::errs() << "<begin dump>\n";
     for(auto a : o) llvm::errs() << *a << "\n";
     llvm::errs() << "</end dump>\n";
@@ -46,6 +47,10 @@ static inline llvm::Instruction *getNextNonDebugInstruction(llvm::Instruction* Z
    for (llvm::Instruction *I = Z->getNextNode(); I; I = I->getNextNode())
      if (!llvm::isa<llvm::DbgInfoIntrinsic>(I))
        return I;
+   llvm::errs() << *Z->getParent() << "\n";
+   llvm::errs() << *Z << "\n";
+   llvm_unreachable("No valid subsequent non debug instruction");
+   exit(1);
    return nullptr;
 }
 

@@ -62,6 +62,7 @@
 #include "llvm/Transforms/Scalar/LoopIdiomRecognize.h"
 #include "llvm/Transforms/Scalar/IndVarSimplify.h"
 
+#include "llvm/Transforms/Scalar/LoopRotation.h"
 #include "llvm/Transforms/Scalar/LoopDeletion.h"
 #include "llvm/Transforms/IPO/FunctionAttrs.h"
 
@@ -142,11 +143,18 @@ PHINode* canonicalizeIVs(fake::SCEVExpander &e, Type *Ty, Loop *L, DominatorTree
     PHINode *CanonicalIV = e.getOrInsertCanonicalInductionVariable(L, Ty);
     assert (CanonicalIV && "canonicalizing IV");
 
-    llvm::errs() << " after inserting var \n" << *CanonicalIV->getParent()->getParent() << "\n";
+    // This ensures that SE knows that the canonical IV doesn't wrap around
+    // This is permissible as Enzyme may assume that your program doesn't have an infinite loop (and thus will never end)
+    for(auto& a : CanonicalIV->incoming_values()) {
+        if (auto add = dyn_cast<BinaryOperator>(a.getUser())) {
+            add->setHasNoUnsignedWrap(true);
+            add->setHasNoSignedWrap(true);
+        }
+    }
 
     SmallVector<WeakTrackingVH, 16> DeadInst0;
     e.replaceCongruentIVs(L, &DT, DeadInst0);
-    llvm::errs() << " after inserting var \n" << *CanonicalIV->getParent()->getParent() << "\n";
+
     for (WeakTrackingVH V : DeadInst0) {
         gutils->erase(cast<Instruction>(V)); //->eraseFromParent();
     }
@@ -391,6 +399,40 @@ Function* preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI)
  }
  }
 
+ //! Loop rotation now necessary to ensure that the condition of a loop is at the end
+ {
+    FunctionAnalysisManager AM;
+     AM.registerPass([] { return AAManager(); });
+     AM.registerPass([] { return ScalarEvolutionAnalysis(); });
+     AM.registerPass([] { return AssumptionAnalysis(); });
+     AM.registerPass([] { return TargetLibraryAnalysis(); });
+     AM.registerPass([] { return TargetIRAnalysis(); });
+     AM.registerPass([] { return LoopAnalysis(); });
+     AM.registerPass([] { return MemorySSAAnalysis(); });
+     AM.registerPass([] { return DominatorTreeAnalysis(); });
+     AM.registerPass([] { return MemoryDependenceAnalysis(); });
+     #if LLVM_VERSION_MAJOR > 6
+     AM.registerPass([] { return PhiValuesAnalysis(); });
+     #endif
+     #if LLVM_VERSION_MAJOR >= 8
+     AM.registerPass([] { return PassInstrumentationAnalysis(); });
+     #endif
+
+     {
+
+     LoopAnalysisManager LAM;
+     AM.registerPass([&] { return LoopAnalysisManagerFunctionProxy(LAM); });
+     LAM.registerPass([&] { return FunctionAnalysisManagerLoopProxy(AM); });
+ 
+        {
+        //Loop rotation is necessary to ensure we are of the form body then conditional
+        createFunctionToLoopPassAdaptor(LoopRotatePass()).run(*NewF, AM); 
+        }
+    LAM.clear();
+    }
+    AM.clear();
+  }
+
  {
     FunctionAnalysisManager AM;
      AM.registerPass([] { return AAManager(); });
@@ -413,6 +455,7 @@ Function* preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI)
      AM.registerPass([&] { return ModuleAnalysisManagerFunctionProxy(MAM); });
      MAM.registerPass([&] { return FunctionAnalysisManagerModuleProxy(AM); });
 
+ //Alias analysis is necessary to ensure can query whether we can move a forward pass function
  BasicAA ba;
  auto baa = new BasicAAResult(ba.run(*NewF, AM));
  AA.addAAResult(*baa);
@@ -585,10 +628,7 @@ Function *CloneFunctionWithReturns(Function *&F, AAResults &AA, TargetLibraryInf
  if (differentialReturn) {
    for(auto& r : Returns) {
      if (auto a = r->getReturnValue()) {
-       nonconstant.insert(a);
        returnvals.insert(a);
-       if (printconst)
-         llvm::errs() << "in new function " << NewF->getName() << " nonconstant retval " << *a << "\n";
      }
    }
  }

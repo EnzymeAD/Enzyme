@@ -17,6 +17,7 @@
 #include "./ScalarEvolution.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
@@ -154,8 +155,8 @@ namespace llvm {
       ChainedPhis.clear();
     }
 
-    BasicBlock *getExitBlock(const Loop *L) const;
-    BasicBlock *getLatch(const Loop *L, BasicBlock* ExitBlock = nullptr) const;
+    static void getExitBlocks(const Loop *L, SmallPtrSetImpl<BasicBlock*>& ExitBlocks);
+    static SmallVector<BasicBlock*, 3> getLatches(const Loop *L, const SmallPtrSetImpl<BasicBlock*>& ExitBlocks);
 
     /// Return true for expressions that may incur non-trivial cost to evaluate
     /// at runtime.

@@ -398,6 +398,19 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
   if (gutils->newFunc->hasFnAttribute(Attribute::OptimizeNone))
     gutils->newFunc->removeFnAttr(Attribute::OptimizeNone);
 
+  if (auto bytes = gutils->newFunc->getDereferenceableBytes(llvm::AttributeList::ReturnIndex)) {
+    AttrBuilder ab;
+    ab.addDereferenceableAttr(bytes);
+    gutils->newFunc->removeAttributes(llvm::AttributeList::ReturnIndex, ab);
+  }
+
+  if (gutils->newFunc->hasAttribute(llvm::AttributeList::ReturnIndex, llvm::Attribute::NoAlias)) {
+    gutils->newFunc->removeAttribute(llvm::AttributeList::ReturnIndex, llvm::Attribute::NoAlias);
+  }
+  if (gutils->newFunc->hasAttribute(llvm::AttributeList::ReturnIndex, llvm::Attribute::ZExt)) {
+    gutils->newFunc->removeAttribute(llvm::AttributeList::ReturnIndex, llvm::Attribute::ZExt);
+  }
+
   if (llvm::verifyFunction(*gutils->newFunc, &llvm::errs())) {
       llvm::errs() << *gutils->oldFunc << "\n";
       llvm::errs() << *gutils->newFunc << "\n";
@@ -590,17 +603,19 @@ void createInvertedTerminator(DiffeGradientUtils* gutils, BasicBlock *BB, Alloca
     IRBuilder<> Builder(BB2);
     Builder.setFastMathFlags(getFast());
 
-      SmallVector<BasicBlock*,4> preds;
-      for(auto B : predecessors(BB)) {
-        preds.push_back(B);
-      }
+    std::map<BasicBlock*, std::vector<BasicBlock*>> targetToPreds;
+    for(auto pred : predecessors(BB)) {
+        targetToPreds[gutils->getReverseOrLatchMerge(pred, BB)].emplace_back(pred);
+    }
 
-      if (preds.size() == 0) {
+    if (targetToPreds.size() == 0) {
         SmallVector<Value *,4> retargs;
 
         if (retAlloca) {
-          retargs.push_back(Builder.CreateLoad(retAlloca));
-          assert(retargs[0]);
+          auto result = Builder.CreateLoad(retAlloca, "retreload");
+          result->setMetadata(LLVMContext::MD_invariant_load, MDNode::get(retAlloca->getContext(), {}));
+          assert(gutils->isConstantInstruction(result));
+          retargs.push_back(result);
         }
 
         auto endidx = gutils->newFunc->arg_end();
@@ -621,206 +636,123 @@ void createInvertedTerminator(DiffeGradientUtils* gutils, BasicBlock *BB, Alloca
           unsigned idx[] = { i };
           toret = Builder.CreateInsertValue(toret, retargs[i], idx);
         }
-        Builder.SetInsertPoint(Builder.GetInsertBlock());
         Builder.CreateRet(toret);
-      } else if (preds.size() == 1) {
-        for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
-            if(auto PN = dyn_cast<PHINode>(&*I)) {
-                if (gutils->isConstantValue(PN)) continue;
-                //TODO consider whether indeed we can skip differential phi pointers
-                if (PN->getType()->isPointerTy()) continue;
-                auto prediff = gutils->diffe(PN, Builder);
-                gutils->setDiffe(PN, Constant::getNullValue(PN->getType()), Builder);
-                if (!gutils->isConstantValue(PN->getIncomingValueForBlock(preds[0]))) {
-                    gutils->addToDiffe(PN->getIncomingValueForBlock(preds[0]), prediff, Builder);
-                }
-            } else break;
-        }
+        return;
+    }
 
-        Builder.SetInsertPoint(Builder.GetInsertBlock());
-        Builder.CreateBr(gutils->reverseBlocks[preds[0]]);
+    //PHINodes to replace that will contain true iff the predecessor was given basicblock
+    std::map<BasicBlock*, PHINode*> replacePHIs;
+    std::vector<SelectInst*> selects;
 
-      } else if (preds.size() == 2) {
-        IRBuilder <> pbuilder(&BB->front());
-        pbuilder.setFastMathFlags(getFast());
-        Value* phi = nullptr;
+    IRBuilder <>phibuilder(BB2);
+    bool setphi = false;
 
-        if (inLoop && BB2 == gutils->reverseBlocks[loopContext.var->getParent()]) {
-          assert( ((preds[0] == loopContext.preheader) || (preds[1] == loopContext.preheader)) );
-          if (preds[1] == loopContext.preheader)
-            phi = Builder.CreateICmpNE(loopContext.antivar, Constant::getNullValue(loopContext.antivar->getType()));
-          else if(preds[0] == loopContext.preheader)
-            phi = Builder.CreateICmpEQ(loopContext.antivar, Constant::getNullValue(loopContext.antivar->getType()));
-          else {
-            llvm::errs() << "weird behavior for loopContext\n";
-            assert(0 && "illegal loopcontext behavior");
-          }
-        } else {
-          std::map<BasicBlock*,std::set<unsigned>> seen;
-          std::map<BasicBlock*,std::set<BasicBlock*>> done;
-          std::deque<std::tuple<BasicBlock*,unsigned,BasicBlock*>> Q; // newblock, prednum, pred
-          Q.push_back(std::tuple<BasicBlock*,unsigned,BasicBlock*>(preds[0], 0, BB));
-          Q.push_back(std::tuple<BasicBlock*,unsigned,BasicBlock*>(preds[1], 1, BB));
-          //done.insert(BB);
+    // Ensure phi values have their derivatives propagated
+    for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
+        if(PHINode* PN = dyn_cast<PHINode>(&*I)) {
+            if (gutils->isConstantValue(PN)) continue;
+            if (PN->getType()->isPointerTy() || PN->getType()->isIntegerTy()) continue;
 
-          while(Q.size()) {
-                auto trace = Q.front();
-                auto block = std::get<0>(trace);
-                auto num = std::get<1>(trace);
-                auto predblock = std::get<2>(trace);
-                Q.pop_front();
+            auto prediff = gutils->diffe(PN, Builder);
+            gutils->setDiffe(PN, Constant::getNullValue(PN->getType()), Builder);
+            
+            for (BasicBlock* pred : predecessors(BB)) {
+                if (gutils->isConstantValue(PN->getIncomingValueForBlock(pred))) continue;
 
-                if (seen[block].count(num) && done[block].count(predblock)) {
-                  continue;
-                }
-
-                seen[block].insert(num);
-                done[block].insert(predblock);
-
-                if (seen[block].size() == 1) {
-                  for (BasicBlock *Pred : predecessors(block)) {
-                    Q.push_back(std::tuple<BasicBlock*,unsigned,BasicBlock*>(Pred, (*seen[block].begin()), block ));
-                  }
-                }
-
-                SmallVector<BasicBlock*,4> succs;
-                bool allDone = true;
-                for (BasicBlock *Succ : successors(block)) {
-                    succs.push_back(Succ);
-                    if (done[block].count(Succ) == 0) {
-                      allDone = false;
-                    }
-                }
-
-                if (!allDone) {
-                  continue;
-                }
-
-                if (seen[block].size() == preds.size() && succs.size() == preds.size()) {
-                  //TODO below doesnt generalize past 2
-                  bool hasSingle = false;
-                  for(auto a : succs) {
-                    if (seen[a].size() == 1) {
-                      hasSingle = true;
-                    }
-                  }
-                  if (!hasSingle)
-                      goto continueloop;
-                  if (auto branch = dyn_cast<BranchInst>(block->getTerminator())) {
-                    assert(branch->getCondition());
-                    phi = gutils->lookupM(branch->getCondition(), Builder);
-                    for(unsigned i=0; i<preds.size(); i++) {
-                        auto s = branch->getSuccessor(i);
-                        assert(s == succs[i]);
-                        if (seen[s].size() == 1) {
-                            if ( (*seen[s].begin()) != i) {
-                                phi = Builder.CreateNot(phi);
-                                break;
-                            } else {
-                                break;
-                            }
+                if (PN->getNumIncomingValues() == 1) {
+                    gutils->addToDiffe(PN->getIncomingValueForBlock(pred), prediff, Builder);
+                } else {
+                    if (replacePHIs.find(pred) == replacePHIs.end()) {
+                        replacePHIs[pred] = Builder.CreatePHI(Type::getInt1Ty(pred->getContext()), 1);   
+                        if (!setphi) {
+                            phibuilder.SetInsertPoint(replacePHIs[pred]);
+                            setphi = true;
                         }
-                    }
-                    goto endPHI;
-                  }
-
-                  break;
+                    } 
+                    Instruction* dif = cast<Instruction>(Builder.CreateSelect(replacePHIs[pred], prediff, Constant::getNullValue(prediff->getType())));
+                    auto addedSelects = gutils->addToDiffe(PN->getIncomingValueForBlock(pred), dif, Builder);
+                    assert(dif->getNumUses() == 0);
+                    dif->eraseFromParent();
+                    for (auto select : addedSelects)
+                        selects.emplace_back(select);
                 }
-                continueloop:;
-          }
-
-          phi = pbuilder.CreatePHI(Type::getInt1Ty(Builder.getContext()), 2);
-          cast<PHINode>(phi)->addIncoming(ConstantInt::getTrue(phi->getType()), preds[0]);
-          cast<PHINode>(phi)->addIncoming(ConstantInt::getFalse(phi->getType()), preds[1]);
-          phi = gutils->lookupM(phi, Builder);
-          goto endPHI;
-
-          endPHI:;
+            }
+        } else break;
+    }
+    if (!setphi) {
+        phibuilder.SetInsertPoint(Builder.GetInsertBlock(), Builder.GetInsertPoint());
+    }
+    
+    if (inLoop && BB == loopContext.header) {
+        std::map<BasicBlock*, std::vector<BasicBlock*>> targetToPreds;
+        for(auto pred : predecessors(BB)) {
+            if (pred == loopContext.preheader) continue;
+            targetToPreds[gutils->getReverseOrLatchMerge(pred, BB)].emplace_back(pred);
         }
 
-        for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
-            if(auto PN = dyn_cast<PHINode>(&*I)) {
+        assert(targetToPreds.size() && "only loops with one backedge are presently supported");
 
-                // POINTER TYPE THINGS
-                if (PN->getType()->isPointerTy()) continue;
-                if (gutils->isConstantValue(PN)) continue;
-                auto prediff = gutils->diffe(PN, Builder);
-                gutils->setDiffe(PN, Constant::getNullValue(PN->getType()), Builder);
-                if (!gutils->isConstantValue(PN->getIncomingValueForBlock(preds[0]))) {
-                    auto dif = Builder.CreateSelect(phi, prediff, Constant::getNullValue(prediff->getType()));
-                    gutils->addToDiffe(PN->getIncomingValueForBlock(preds[0]), dif, Builder);
-                }
-                if (!gutils->isConstantValue(PN->getIncomingValueForBlock(preds[1]))) {
-                    auto dif = Builder.CreateSelect(phi, Constant::getNullValue(prediff->getType()), prediff);
-                    gutils->addToDiffe(PN->getIncomingValueForBlock(preds[1]), dif, Builder);
-                }
-            } else break;
+        Value* phi = phibuilder.CreateICmpEQ(loopContext.antivar, Constant::getNullValue(loopContext.antivar->getType()));
+
+        for (auto pair : replacePHIs) {
+            Value* replaceWith = nullptr;
+
+            if (pair.first == loopContext.preheader) {
+                replaceWith = phi;
+            } else {
+                replaceWith = phibuilder.CreateNot(phi);
+            }
+
+            pair.second->replaceAllUsesWith(replaceWith);
+            pair.second->eraseFromParent();
         }
-        BasicBlock* f0 = cast<BasicBlock>(gutils->reverseBlocks[preds[0]]);
-        BasicBlock* f1 = cast<BasicBlock>(gutils->reverseBlocks[preds[1]]);
-        while (auto bo = dyn_cast<BinaryOperator>(phi)) {
+
+        Builder.SetInsertPoint(BB2);
+        
+        Builder.CreateCondBr(phi, gutils->getReverseOrLatchMerge(loopContext.preheader, BB), targetToPreds.begin()->first);
+
+    } else {
+        std::map<BasicBlock*, std::vector< std::pair<BasicBlock*, BasicBlock*> >> phiTargetToPreds;
+        for (auto pair : replacePHIs) {
+            phiTargetToPreds[pair.first].emplace_back(std::make_pair(pair.first, BB));
+        }
+        BasicBlock* fakeTarget = nullptr;
+        for (auto pred : predecessors(BB)) {
+            if (phiTargetToPreds.find(pred) != phiTargetToPreds.end()) continue;
+            if (fakeTarget == nullptr) fakeTarget = pred;
+            phiTargetToPreds[fakeTarget].emplace_back(std::make_pair(pred, BB));
+        }
+        gutils->branchToCorrespondingTarget(BB, phibuilder, phiTargetToPreds, &replacePHIs);
+
+        std::map<BasicBlock*, std::vector< std::pair<BasicBlock*, BasicBlock*> >> targetToPreds;
+        for(auto pred : predecessors(BB)) {
+            targetToPreds[gutils->getReverseOrLatchMerge(pred, BB)].emplace_back(std::make_pair(pred, BB));
+        }
+        Builder.SetInsertPoint(BB2);
+        gutils->branchToCorrespondingTarget(BB, Builder, targetToPreds);
+    }
+
+    // Optimize select of not to just be a select with operands switched
+    for (SelectInst* select : selects) {
+        if (BinaryOperator* bo = dyn_cast<BinaryOperator>(select->getCondition())) {
             if (bo->getOpcode() == BinaryOperator::Xor) {
-                if (auto ci = dyn_cast<ConstantInt>(bo->getOperand(1))) {
-                    if (ci->isOne()) {
-                        phi = bo->getOperand(0);
-                        auto ft = f0;
-                        f0 = f1;
-                        f1 = ft;
-                        continue;
-                    }
+                llvm::errs() << " considering " << *select << " " << *bo << "\n";
+                if (isa<ConstantInt>(bo->getOperand(0)) && cast<ConstantInt>(bo->getOperand(0))->isOne()) {
+                    select->setCondition(bo->getOperand(1));
+                    auto tmp = select->getTrueValue();
+                    select->setTrueValue(select->getFalseValue());
+                    select->setFalseValue(tmp);
+                    if (bo->getNumUses() == 0) bo->eraseFromParent();
+                } else if (isa<ConstantInt>(bo->getOperand(1)) && cast<ConstantInt>(bo->getOperand(1))->isOne()) {
+                    select->setCondition(bo->getOperand(0));
+                    auto tmp = select->getTrueValue();
+                    select->setTrueValue(select->getFalseValue());
+                    select->setFalseValue(tmp);
+                    if (bo->getNumUses() == 0) bo->eraseFromParent();
                 }
-
-                if (auto ci = dyn_cast<ConstantInt>(bo->getOperand(0))) {
-                    if (ci->isOne()) {
-                        phi = bo->getOperand(1);
-                        auto ft = f0;
-                        f0 = f1;
-                        f1 = ft;
-                        continue;
-                    }
-                }
-                break;
-            } else break;
+            }
         }
-        Builder.SetInsertPoint(Builder.GetInsertBlock());
-        Builder.CreateCondBr(phi, f0, f1);
-      } else {
-        IRBuilder <> pbuilder(&BB->front());
-        pbuilder.setFastMathFlags(getFast());
-        Value* phi = nullptr;
-
-        if (true) {
-          phi = pbuilder.CreatePHI(Type::getInt8Ty(Builder.getContext()), preds.size());
-          for(unsigned i=0; i<preds.size(); i++) {
-            cast<PHINode>(phi)->addIncoming(ConstantInt::get(phi->getType(), i), preds[i]);
-          }
-          phi = gutils->lookupM(phi, Builder);
-        }
-
-        for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
-            if(auto PN = dyn_cast<PHINode>(&*I)) {
-              if (gutils->isConstantValue(PN)) continue;
-
-              // POINTER TYPE THINGS
-              if (PN->getType()->isPointerTy()) continue;
-              auto prediff = gutils->diffe(PN, Builder);
-              gutils->setDiffe(PN, Constant::getNullValue(PN->getType()), Builder);
-              for(unsigned i=0; i<preds.size(); i++) {
-                if (!gutils->isConstantValue(PN->getIncomingValueForBlock(preds[i]))) {
-                    auto cond = Builder.CreateICmpEQ(phi, ConstantInt::get(phi->getType(), i));
-                    auto dif = Builder.CreateSelect(cond, prediff, Constant::getNullValue(prediff->getType()));
-                    gutils->addToDiffe(PN->getIncomingValueForBlock(preds[i]), dif, Builder);
-                }
-              }
-            } else break;
-        }
-
-        Builder.SetInsertPoint(Builder.GetInsertBlock());
-        auto swit = Builder.CreateSwitch(phi, gutils->reverseBlocks[preds.back()], preds.size()-1);
-        for(unsigned i=0; i<preds.size()-1; i++) {
-          swit->addCase(ConstantInt::get(cast<IntegerType>(phi->getType()), i), gutils->reverseBlocks[preds[i]]);
-        }
-      }
+    }
 }
 
 //! assuming not top level
@@ -936,7 +868,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& co
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(todiff, AA, TLI, constant_args, returnValue ? ReturnType::ArgsWithReturn : ReturnType::Args, differentialReturn, additionalArg);
   cachedfunctions[tup] = gutils->newFunc;
 
-  gutils->forceContexts();
+  gutils->forceContexts(true);
   gutils->forceAugmentedReturns();
 
   Argument* additionalValue = nullptr;
@@ -1048,25 +980,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& co
     assert(0 && "unknown terminator inst");
   }
 
-  if (inLoop && loopContext.latch==BB) {
-    BB2->getInstList().push_front(loopContext.antivar);
-
-    IRBuilder<> tbuild(gutils->reverseBlocks[loopContext.exit]);
-    tbuild.setFastMathFlags(getFast());
-
-    // ensure we are before the terminator if it exists
-    if (gutils->reverseBlocks[loopContext.exit]->size()) {
-      tbuild.SetInsertPoint(&gutils->reverseBlocks[loopContext.exit]->back());
-    }
-
-    auto sub = Builder2.CreateSub(loopContext.antivar, ConstantInt::get(loopContext.antivar->getType(), 1));
-    for(BasicBlock* in: successors(loopContext.latch) ) {
-        if (loopContext.exit == in) {
-            loopContext.antivar->addIncoming(gutils->lookupM(loopContext.limit, tbuild), gutils->reverseBlocks[in]);
-        } else if (gutils->LI.getLoopFor(in) == gutils->LI.getLoopFor(BB)) {
-            loopContext.antivar->addIncoming(sub, gutils->reverseBlocks[in]);
-        }
-    }
+  if (inLoop) {
   }
 
   if (!unreachableTerminator)
@@ -1210,8 +1124,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& co
             break;
         case Intrinsic::sqrt: {
           if (!gutils->isConstantInstruction(op) && !gutils->isConstantValue(op->getOperand(0)))
-            dif0 = Builder2.CreateBinOp(Instruction::FDiv, diffe(inst),
-              Builder2.CreateFMul(ConstantFP::get(op->getType(), 2.0), lookup(op))
+            dif0 = Builder2.CreateBinOp(Instruction::FDiv,
+              Builder2.CreateFMul(ConstantFP::get(op->getType(), 0.5), diffe(inst)),
+              lookup(op)
             );
           break;
         }

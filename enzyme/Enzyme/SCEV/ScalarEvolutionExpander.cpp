@@ -31,9 +31,8 @@
 using namespace llvm;
 using namespace PatternMatch;
 
-BasicBlock *fake::SCEVExpander::getExitBlock(const Loop *L) const {
+void fake::SCEVExpander::getExitBlocks(const Loop *L, SmallPtrSetImpl<BasicBlock*>& ExitBlocks) {
     SmallVector<BasicBlock *, 8> PotentialExitBlocks;
-    SmallPtrSet<BasicBlock *, 8> ExitBlocks;
     L->getExitBlocks(PotentialExitBlocks);
     for(auto a:PotentialExitBlocks) {
 
@@ -64,44 +63,34 @@ BasicBlock *fake::SCEVExpander::getExitBlock(const Loop *L) const {
             }
         }
 
-        
+
         exitblockcheck:
         if (isExit) {
             ExitBlocks.insert(a);
         }
     }
-
-    if (ExitBlocks.size() != 1) {
-        assert(L);
-        llvm::errs() << *L << "\n";
-        for(auto b:ExitBlocks) {
-            assert(b);
-            llvm::errs() << *b << "\n";
-        }
-        llvm::errs() << "offending: \n";
-        llvm::errs() << "No unique exit block (1)\n";
-    }
-
-    BasicBlock* ExitBlock = *ExitBlocks.begin(); //[0];
-    return ExitBlock;
 }
 
-BasicBlock* fake::SCEVExpander::getLatch(const Loop *L, BasicBlock* ExitBlock) const {
-    if (ExitBlock == nullptr) ExitBlock = getExitBlock(L);
-    
+SmallVector<BasicBlock*, 3> fake::SCEVExpander::getLatches(const Loop *L, const SmallPtrSetImpl<BasicBlock*>& ExitBlocks ) {
     BasicBlock *Preheader = L->getLoopPreheader();
+    if (!Preheader) {
+        llvm::errs() << *L->getHeader()->getParent() << "\n";
+        llvm::errs() << *L->getHeader() << "\n";
+        llvm::errs() << *L << "\n";
+    }
     assert(Preheader && "requires preheader");
 
-    // Find latch, defined as the unique block in loop that branches to exit block
-    BasicBlock* Latch = nullptr;
-    for (BasicBlock* pred : predecessors(ExitBlock)) {
-        if (L->contains(pred)) {
-            assert(Latch == nullptr);
-            Latch = pred;
+    // Find latch, defined as a (perhaps unique) block in loop that branches to exit block
+    SmallVector<BasicBlock *, 3> Latches;
+    for (BasicBlock* ExitBlock : ExitBlocks) {
+        for (BasicBlock* pred : predecessors(ExitBlock)) {
+            if (L->contains(pred)) {
+                if (std::find(Latches.begin(), Latches.end(), pred) != Latches.end()) continue;
+                Latches.push_back(pred);
+            }
         }
     }
-
-    return Latch;
+    return Latches;
 }
 
 /// ReuseOrCreateCast - Arrange for there to be a cast of V to Ty at IP,
@@ -1145,39 +1134,6 @@ void fake::SCEVExpander::hoistBeforePos(DominatorTree *DT, Instruction *InstToHo
   } while (InstToHoist != LoopPhi);
 }
 
-/// Check whether we can cheaply express the requested SCEV in terms of
-/// the available PHI SCEV by truncation and/or inversion of the step.
-static bool canBeCheaplyTransformed(llvm::ScalarEvolution &SE,
-                                    const SCEVAddRecExpr *Phi,
-                                    const SCEVAddRecExpr *Requested,
-                                    bool &InvertStep) {
-  Type *PhiTy = SE.getEffectiveSCEVType(Phi->getType());
-  Type *RequestedTy = SE.getEffectiveSCEVType(Requested->getType());
-
-  if (RequestedTy->getIntegerBitWidth() > PhiTy->getIntegerBitWidth())
-    return false;
-
-  // Try truncate it if necessary.
-  Phi = dyn_cast<SCEVAddRecExpr>(SE.getTruncateOrNoop(Phi, RequestedTy));
-  if (!Phi)
-    return false;
-
-  // Check whether truncation will help.
-  if (Phi == Requested) {
-    InvertStep = false;
-    return true;
-  }
-
-  // Check whether inverting will help: {R,+,-1} == R - {0,+,1}.
-  if (SE.getAddExpr(Requested->getStart(),
-                    SE.getNegativeSCEV(Requested)) == Phi) {
-    InvertStep = true;
-    return true;
-  }
-
-  return false;
-}
-
 Value *fake::SCEVExpander::visitAddRecExpr(const SCEVAddRecExpr *S) {
   assert(CanonicalMode);
 
@@ -1579,7 +1535,7 @@ Value *fake::SCEVExpander::expand(const SCEV *S) {
       V = Builder.CreateSub(V, VO.second);
     }
   }
-    
+
   // Remember the expanded value for this SCEV at this location.
   //
   // This is independent of PostIncLoops. The mapped value simply materializes
@@ -1587,7 +1543,7 @@ Value *fake::SCEVExpander::expand(const SCEV *S) {
   // a postinc expansion, it could be reused by a non-postinc user, but only if
   // its insertion point was already at the head of the loop.
   InsertedExpressions[std::make_pair(S, InsertPt)] = V;
-    
+
   return V;
 }
 
@@ -1609,9 +1565,10 @@ fake::SCEVExpander::getOrInsertCanonicalInductionVariable(const Loop *L,
   assert(Ty->isIntegerTy() && "Can only insert integer induction variables!");
 
   // Build a SCEV for {0,+,1}<L>.
-  // Conservatively use FlagAnyWrap for now.
+  // Use flag NoWrapMask and for Enzyme assume we don't have infinite loops to
+  //   differentiate
   const SCEV *H = SE.getAddRecExpr(SE.getConstant(Ty, 0),
-                                   SE.getConstant(Ty, 1), L, SCEV::FlagAnyWrap);
+                                   SE.getConstant(Ty, 1), L, SCEV::NoWrapMask);
 
   // Emit code for it.
   SCEVInsertPointGuard Guard(Builder, this);
