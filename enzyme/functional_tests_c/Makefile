@@ -14,6 +14,8 @@ OBJ := $(wildcard *.c)
 #ENZYME_PLUGIN=${ENZYME_PLUGIN}
 #endif
 
+CLANG_BIN_PATH := 
+
 all: $(patsubst %.c,build/%-enzyme0,$(OBJ)) $(patsubst %.c,build/%-enzyme1,$(OBJ)) $(patsubst %.c,build/%-enzyme2,$(OBJ)) $(patsubst %.c,build/%-enzyme3,$(OBJ))
 
 #all: $(patsubst %.c,build/%-enzyme1,$(OBJ)) $(patsubst %.c,build/%-enzyme2,$(OBJ)) $(patsubst %.c,build/%-enzyme3,$(OBJ))
