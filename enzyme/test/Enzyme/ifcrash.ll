@@ -53,3 +53,4 @@ attributes #1 = { uwtable }
 !5 = !{!"Simple C++ TBAA"}
 
 ; CHECK: define internal { float } @diffeinsertsort_sum(float* nocapture %array
+; XFAIL: *
