@@ -5,42 +5,40 @@
 
 #define __builtin_autodiff __enzyme_autodiff
 
-extern "C" {
-  double __enzyme_autodiff(...);
+double __enzyme_autodiff(void*, ...);
 
-  // size of array
-  float* unsorted_array_init(int N) {
-    float* arr = (float*) malloc(sizeof(float) * N);
-    for (int i = 0; i < N; i++) {
-      arr[i] = 1.0*(i%2);
-    }
-    return arr;
+// size of array
+float* unsorted_array_init(int N) {
+  float* arr = (float*) malloc(sizeof(float) * N);
+  for (int i = 0; i < N; i++) {
+    arr[i] = 1.0*(i%2);
   }
-
-  // sums the first half of a sorted array.
-  void insertsort_sum (float* array, int N, float* ret) {
-    float sum = 0;
-    //qsort(array, N, sizeof(float), cmp);
-
-    for (int i = 1; i < N; i++) {
-      int j = i;
-      while (j > 0 && array[j-1] < array[j]) {
-        float tmp = array[j];
-        array[j] = array[j-1];
-        array[j-1] = tmp;
-        j -= 1;
-      }
-    }
-
-
-    for (int i = 0; i < N/2; i++) {
-      printf("Val: %f\n", array[i]);
-      sum += array[i];
-    }
-    *ret = sum;
-  }
-
+  return arr;
 }
+
+// sums the first half of a sorted array.
+void insertsort_sum (float* array, int N, float* ret) {
+  float sum = 0;
+  //qsort(array, N, sizeof(float), cmp);
+
+  for (int i = 1; i < N; i++) {
+    int j = i;
+    while (j > 0 && array[j-1] < array[j]) {
+      float tmp = array[j];
+      array[j] = array[j-1];
+      array[j-1] = tmp;
+      j -= 1;
+    }
+  }
+
+
+  for (int i = 0; i < N/2; i++) {
+    printf("Val: %f\n", array[i]);
+    sum += array[i];
+  }
+  *ret = sum;
+}
+
 
 
 
@@ -88,9 +86,9 @@ int main(int argc, char** argv) {
   for (int i = 0; i < N; i++) {
     printf("Diffe for index %d is %f\n", i, d_array[i]);
     if (i%2 == 0) {
-      //assert(d_array[i] == 0.0);
+      assert(d_array[i] == 0.0);
     } else {
-      //assert(d_array[i] == 1.0);
+      assert(d_array[i] == 1.0);
     }
   }
 

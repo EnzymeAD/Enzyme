@@ -2,30 +2,28 @@
 #include <math.h>
 #include <assert.h>
 #define __builtin_autodiff __enzyme_autodiff
-extern "C" {
-  double __enzyme_autodiff(...);
-  //float man_max(float* a, float* b) {
-  //  if (*a > *b) {
-  //    return *a;
-  //  } else {
-  //    return *b;
-  //  }
-  //}
-  void compute_loops(float* a, float* b, float* ret) {
-    double sum0 = 0.0;
-    for (int i = 0; i < 100; i++) {
-      double sum1 = 0.0;
-      for (int j = 0; j < 100; j++) {
-        //double sum2 = 0.0;
-        //for (int k = 0; k < 100; k++) {
-        //  sum2 += *a+*b;
-        //}
-        sum1 += *a+*b;
-      }
-      sum0 += sum1;
+double __enzyme_autodiff(void*, ...);
+//float man_max(float* a, float* b) {
+//  if (*a > *b) {
+//    return *a;
+//  } else {
+//    return *b;
+//  }
+//}
+void compute_loops(float* a, float* b, float* ret) {
+  double sum0 = 0.0;
+  for (int i = 0; i < 100; i++) {
+    double sum1 = 0.0;
+    for (int j = 0; j < 100; j++) {
+      //double sum2 = 0.0;
+      //for (int k = 0; k < 100; k++) {
+      //  sum2 += *a+*b;
+      //}
+      sum1 += *a+*b;
     }
-    *ret = sum0;
+    sum0 += sum1;
   }
+  *ret = sum0;
 }
 
 

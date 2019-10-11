@@ -2,18 +2,16 @@
 #include <math.h>
 #include <assert.h>
 #define __builtin_autodiff __enzyme_autodiff
-extern "C" {
-  double __enzyme_autodiff(...);
-  int counter = 0;
-  double recurse_max_helper(float* a, float* b, int N) {
-    if (N <= 0) {
-      return *a + *b;
-    }
-    return recurse_max_helper(a,b,N-1) + recurse_max_helper(a,b,N-2);
+double __enzyme_autodiff(void*, ...);
+int counter = 0;
+double recurse_max_helper(float* a, float* b, int N) {
+  if (N <= 0) {
+    return *a + *b;
   }
-  void recurse_max(float* a, float* b, float* ret, int N) {
-    *ret = recurse_max_helper(a,b,N);
-  }
+  return recurse_max_helper(a,b,N-1) + recurse_max_helper(a,b,N-2);
+}
+void recurse_max(float* a, float* b, float* ret, int N) {
+  *ret = recurse_max_helper(a,b,N);
 }
 
 
