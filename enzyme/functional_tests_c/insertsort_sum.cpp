@@ -2,7 +2,12 @@
 #include <stdlib.h>
 #include <math.h>
 #include <assert.h>
+
+#define __builtin_autodiff __enzyme_autodiff
+
 extern "C" {
+  
+  double __enzyme_autodiff(...);
   //float man_max(float* a, float* b) {
   //  if (*a > *b) {
   //    return *a;

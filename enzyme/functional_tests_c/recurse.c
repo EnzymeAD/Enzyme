@@ -1,7 +1,9 @@
 #include <stdio.h>
 #include <math.h>
 #include <assert.h>
+#define __builtin_autodiff __enzyme_autodiff
 extern "C" {
+  double __enzyme_autodiff(...);
   int counter = 0;
   double recurse_max_helper(float* a, float* b, int N) {
     if (N <= 0) {

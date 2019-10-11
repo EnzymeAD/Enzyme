@@ -14,9 +14,11 @@ OBJ := $(wildcard *.c)
 #ENZYME_PLUGIN=${ENZYME_PLUGIN}
 #endif
 
-CLANG_BIN_PATH := 
+#CLANG_BIN_PATH := 
 
 all: $(patsubst %.c,build/%-enzyme0,$(OBJ)) $(patsubst %.c,build/%-enzyme1,$(OBJ)) $(patsubst %.c,build/%-enzyme2,$(OBJ)) $(patsubst %.c,build/%-enzyme3,$(OBJ))
+
+POST_ENZYME_FLAGS := -mem2reg -sroa -adce -simplifycfg
 
 #all: $(patsubst %.c,build/%-enzyme1,$(OBJ)) $(patsubst %.c,build/%-enzyme2,$(OBJ)) $(patsubst %.c,build/%-enzyme3,$(OBJ))
 #clean:
@@ -50,7 +52,7 @@ build/%-enzyme2: %.c
 
 build/%-enzyme3: %.c
 	@./setup.sh $(CLANG_BIN_PATH)/clang++ -O3 $(patsubst %.c,%,$<).c -S -emit-llvm -o $@.ll
-	@./setup.sh $(CLANG_BIN_PATH)/opt $@.ll $(EXTRA_FLAGS) -load=$(ENZYME_PLUGIN) -enzyme -o $@.bc
+	@./setup.sh $(CLANG_BIN_PATH)/opt $@.ll $(EXTRA_FLAGS) -load=$(ENZYME_PLUGIN) -enzyme $(POST_ENZYME_FLAGS) -o $@.bc
 	@./setup.sh $(CLANG_BIN_PATH)/clang++ $@.bc -S -emit-llvm -o $@-final.ll
 	@./setup.sh $(CLANG_BIN_PATH)/clang++ $@.bc -o $@
 
