@@ -685,6 +685,9 @@ public:
   /// Runs the analysis if a cached result is not available.
   template <typename PassT>
   typename PassT::Result &getResult(IRUnitT &IR, ExtraArgTs... ExtraArgs) {
+    if(0==AnalysisPasses.count(PassT::ID())) {
+        llvm::errs() << "could not find " << PassT::name() << "\n";
+    }
     assert(AnalysisPasses.count(PassT::ID()) &&
            "This analysis pass was not registered prior to being queried");
     ResultConceptT &ResultConcept =
@@ -704,6 +707,9 @@ public:
   /// \returns null if there is no cached result.
   template <typename PassT>
   typename PassT::Result *getCachedResult(IRUnitT &IR) const {
+    if(0==AnalysisPasses.count(PassT::ID())) {
+        llvm::errs() << "could not find " << PassT::name() << "\n";
+    }
     assert(AnalysisPasses.count(PassT::ID()) &&
            "This analysis pass was not registered prior to being queried");
 
