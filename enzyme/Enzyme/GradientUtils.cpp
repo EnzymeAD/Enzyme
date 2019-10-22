@@ -410,7 +410,7 @@ Value* GradientUtils::invertPointerM(Value* val, IRBuilder<>& BuilderM) {
 
         auto dst_arg = bb.CreateBitCast(antialloca,Type::getInt8PtrTy(val->getContext()));
         auto val_arg = ConstantInt::get(Type::getInt8Ty(val->getContext()), 0);
-        auto len_arg = bb.CreateNUWMul(bb.CreateZExtOrTrunc(inst->getArraySize(),Type::getInt64Ty(val->getContext())), ConstantInt::get(Type::getInt64Ty(val->getContext()), M->getDataLayout().getTypeAllocSizeInBits(inst->getAllocatedType())/8 ) );
+        auto len_arg = bb.CreateNUWMul(bb.CreateZExtOrTrunc(inst->getArraySize(),Type::getInt64Ty(val->getContext())), ConstantInt::get(Type::getInt64Ty(val->getContext()), M->getDataLayout().getTypeAllocSizeInBits(inst->getAllocatedType())/8) );
         auto volatile_arg = ConstantInt::getFalse(val->getContext());
 
 #if LLVM_VERSION_MAJOR == 6
@@ -480,7 +480,7 @@ Value* GradientUtils::invertPointerM(Value* val, IRBuilder<>& BuilderM) {
     report_fatal_error("cannot find deal with ptr that isnt arg");
 }
 
-std::pair<PHINode*,Value*> insertNewCanonicalIV(Loop* L, Type* Ty) {
+std::pair<PHINode*,Instruction*> insertNewCanonicalIV(Loop* L, Type* Ty) {
     assert(L);
     assert(Ty);
 
@@ -490,8 +490,7 @@ std::pair<PHINode*,Value*> insertNewCanonicalIV(Loop* L, Type* Ty) {
     PHINode *CanonicalIV = B.CreatePHI(Ty, 1, "iv");
 
     B.SetInsertPoint(Header->getFirstNonPHIOrDbg());
-    auto inc = B.CreateNUWAdd(CanonicalIV, ConstantInt::get(CanonicalIV->getType(), 1), "iv.next");
-
+    Instruction* inc = cast<Instruction>(B.CreateNUWAdd(CanonicalIV, ConstantInt::get(CanonicalIV->getType(), 1), "iv.next"));
 
     for (BasicBlock *Pred : predecessors(Header)) {
         assert(Pred);
@@ -501,10 +500,10 @@ std::pair<PHINode*,Value*> insertNewCanonicalIV(Loop* L, Type* Ty) {
             CanonicalIV->addIncoming(ConstantInt::get(CanonicalIV->getType(), 0), Pred);
         }
     }
-    return std::pair<PHINode*,Value*>(CanonicalIV,inc);
+    return std::pair<PHINode*,Instruction*>(CanonicalIV,inc);
 }
 
-void removeRedundantIVs(const Loop* L, BasicBlock* Header, BasicBlock* Preheader, PHINode* CanonicalIV, ScalarEvolution &SE, GradientUtils &gutils, Value* increment, const SmallVectorImpl<BasicBlock*>&& latches) {
+void removeRedundantIVs(const Loop* L, BasicBlock* Header, BasicBlock* Preheader, PHINode* CanonicalIV, ScalarEvolution &SE, GradientUtils &gutils, Instruction* increment, const SmallVectorImpl<BasicBlock*>&& latches) {
     assert(Header);
     assert(CanonicalIV);
 
@@ -535,6 +534,7 @@ void removeRedundantIVs(const Loop* L, BasicBlock* Header, BasicBlock* Preheader
       gutils.erase(PN);
     }
 
+    #if 1
     if (latches.size() == 1 && isa<BranchInst>(latches[0]->getTerminator()) && cast<BranchInst>(latches[0]->getTerminator())->isConditional())
     for (auto use : CanonicalIV->users()) {
       if (auto cmp = dyn_cast<ICmpInst>(use)) {
@@ -595,6 +595,7 @@ void removeRedundantIVs(const Loop* L, BasicBlock* Header, BasicBlock* Preheader
 
     // Replace previous increment usage with new increment value
     if (increment) {
+      increment->moveAfter(CanonicalIV->getParent()->getFirstNonPHI());
       std::vector<Instruction*> toerase;
       for(auto use : CanonicalIV->users()) {
         auto bo = dyn_cast<BinaryOperator>(use);
@@ -670,6 +671,7 @@ void removeRedundantIVs(const Loop* L, BasicBlock* Header, BasicBlock* Preheader
       }
 
     }
+    #endif
 }
 
 bool getContextM(BasicBlock *BB, LoopContext &loopContext, std::map<Loop*,LoopContext> &loopContexts, LoopInfo &LI,ScalarEvolution &SE,DominatorTree &DT, GradientUtils &gutils) {
