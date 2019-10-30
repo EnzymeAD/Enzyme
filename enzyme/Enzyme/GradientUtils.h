@@ -507,7 +507,7 @@ public:
             }
             assert(lastScopeAlloc.find(malloc) == lastScopeAlloc.end());
             cast<Instruction>(malloc)->replaceAllUsesWith(ret);
-            auto n = malloc->getName();
+            std::string n = malloc->getName().str();
             erase(cast<Instruction>(malloc));
             ret->setName(n);
         }

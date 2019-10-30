@@ -439,7 +439,7 @@ Function* preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI)
     FunctionAnalysisManager AM;
      AM.registerPass([] { return AAManager(); });
      AM.registerPass([] { return ScalarEvolutionAnalysis(); });
-     AM.registerPass([] { return AssumptionAnalysis(); });
+     //AM.registerPass([] { return AssumptionAnalysis(); });
      AM.registerPass([] { return TargetLibraryAnalysis(); });
      AM.registerPass([] { return TargetIRAnalysis(); });
      AM.registerPass([] { return LoopAnalysis(); });
@@ -458,14 +458,23 @@ Function* preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI)
      MAM.registerPass([&] { return FunctionAnalysisManagerModuleProxy(AM); });
 
  //Alias analysis is necessary to ensure can query whether we can move a forward pass function
- BasicAA ba;
- auto baa = new BasicAAResult(ba.run(*NewF, AM));
+ //BasicAA ba;
+ //auto baa = new BasicAAResult(ba.run(*NewF, AM));
+ AssumptionCache* AC = new AssumptionCache(*NewF);
+ auto baa = new BasicAAResult(NewF->getParent()->getDataLayout(),
+                        *NewF,
+                        AM.getResult<TargetLibraryAnalysis>(*NewF),
+                        *AC,
+                        &AM.getResult<DominatorTreeAnalysis>(*NewF),
+                        AM.getCachedResult<LoopAnalysis>(*NewF),
+                        AM.getCachedResult<PhiValuesAnalysis>(*NewF));
  AA.addAAResult(*baa);
 
- ScopedNoAliasAA sa;
- auto saa = new ScopedNoAliasAAResult(sa.run(*NewF, AM));
- AA.addAAResult(*saa);
+ //ScopedNoAliasAA sa;
+ //auto saa = new ScopedNoAliasAAResult(sa.run(*NewF, AM));
+ //AA.addAAResult(*saa);
 
+ llvm::errs() << "ran alias analysis on function " << NewF->getName() << "\n";
  }
 
   if (enzyme_print)
