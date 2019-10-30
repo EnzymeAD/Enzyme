@@ -55,11 +55,20 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
   static std::map<std::tuple<Function*,std::set<unsigned>, bool/*differentialReturn*/, bool/*returnUsed*/>, std::pair<Function*,StructType*>> cachedfunctions;
   static std::map<std::tuple<Function*,std::set<unsigned>, bool/*differentialReturn*/, bool/*returnUsed*/>, bool> cachedfinished;
   auto tup = std::make_tuple(todiff, std::set<unsigned>(constant_args.begin(), constant_args.end()),  differentialReturn, returnUsed);
-  llvm::errs() << "TFKDEBUG: called CreateAugmentedPrimal\n";
+  llvm::errs() << "TFKDEBUG: called CreateAugmentedPrimal " << todiff->getName() << "\n";
+  llvm::errs() << "TFKDEBUG: called CreateAugmentedPrimal content: " << *todiff << "\n";
   if (cachedfunctions.find(tup) != cachedfunctions.end()) {
     return cachedfunctions[tup];
   }
   if (differentialReturn) assert(returnUsed);
+
+
+
+
+
+
+
+
 
     if (constant_args.size() == 0 && hasMetadata(todiff, "enzyme_augment")) {
       auto md = todiff->getMetadata("enzyme_augment");
@@ -105,6 +114,11 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
       //assert(st->getNumElements() > 0);
       return cachedfunctions[tup] = std::pair<Function*,StructType*>(foundcalled, nullptr); //dyn_cast<StructType>(st->getElementType(0)));
     }
+
+
+
+
+
   if (todiff->empty()) {
     llvm::errs() << *todiff << "\n";
   }
@@ -113,6 +127,45 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
   GradientUtils *gutils = GradientUtils::CreateFromClone(todiff, AA, TLI, constant_args, /*returnValue*/returnUsed ? ReturnType::TapeAndReturns : ReturnType::Tape, /*differentialReturn*/differentialReturn);
   cachedfunctions[tup] = std::pair<Function*,StructType*>(gutils->newFunc, nullptr);
   cachedfinished[tup] = false;
+
+  llvm::errs() << "Old func: " << *gutils->oldFunc << "\n";
+  llvm::errs() << "New func: " << *gutils->newFunc << "\n";
+
+  std::map<Instruction*, bool> can_modref_map;
+  if (true) { //!additionalArg && !topLevel) {
+    for(BasicBlock* BB: gutils->originalBlocks) {
+      llvm::errs() << "BB: " << *BB << "\n";
+      //for (BasicBlock::reverse_iterator I = BB->rbegin(), E = BB->rend(); I != E;) {
+      for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
+        Instruction* inst = &*I;
+        if (auto op = dyn_cast<LoadInst>(inst)) {
+          if (gutils->isConstantValue(inst) || gutils->isConstantInstruction(inst)) {
+            //I++;
+            continue;
+          }
+          auto op_operand = op->getPointerOperand();
+          auto op_type = op->getType();
+          bool can_modref = false;
+          llvm::errs() << "TFKDEBUG: looking at modref status of inst<"<<*inst << ">\n";
+          for (int k = 0; k < gutils->originalBlocks.size(); k++) {
+            llvm::errs() << "TFKDEBUG: in BB: <"<<*(gutils->originalBlocks[k]) << ">\n";
+            if (AA.canBasicBlockModify(*(gutils->originalBlocks[k]), MemoryLocation::get(op))) {
+              can_modref = true;
+              break;
+            }
+          }
+          llvm::errs() << "TFKDEBUG: modref status of inst<"<<*inst << "> is: " << can_modref << "\n";
+          can_modref_map[inst] = can_modref;
+        }
+        //I++;
+      }
+    }
+  }
+
+
+
+
+
 
   gutils->forceContexts();
   gutils->forceAugmentedReturns();
@@ -427,8 +480,8 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
 
                 gutils->erase(op);
         } else if(LoadInst* li = dyn_cast<LoadInst>(inst)) {
-          if (/*gutils->isConstantInstruction(inst) ||*/ gutils->isConstantValue(inst)) continue;
-          if (cachereads) {
+          //if (/*gutils->isConstantInstruction(inst) ||*/ gutils->isConstantValue(inst)) continue;
+          if (true || (cachereads && can_modref_map[inst])) {
             llvm::errs() << "Forcibly caching reads " << *li << "\n"; 
             IRBuilder<> BuilderZ(li);
             gutils->addMalloc(BuilderZ, li);
@@ -1541,7 +1594,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& co
 
 
   std::map<Instruction*, bool> can_modref_map;
-  if (!additionalArg && !topLevel) {
+  if (/*!additionalArg && */!topLevel) {
     for(BasicBlock* BB: gutils->originalBlocks) {
       for (BasicBlock::reverse_iterator I = BB->rbegin(), E = BB->rend(); I != E;) {
         Instruction* inst = &*I;
@@ -1990,9 +2043,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& co
       if (dif1) addToDiffe(op->getOperand(1), dif1);
       if (dif2) addToDiffe(op->getOperand(2), dif2);
     } else if(auto op = dyn_cast<LoadInst>(inst)) {
-      if (gutils->isConstantValue(inst)) continue;
+      //if (gutils->isConstantValue(inst)) continue;
 
-
+      llvm::errs() << "TFKDEBUG Saw load instruction: " << *inst << "\n";
 
       auto op_operand = op->getPointerOperand();
       auto op_type = op->getType();
@@ -2001,9 +2054,11 @@ Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& co
 
         bool can_modref = can_modref_map[inst];
         //can_modref = true;
-        if (can_modref || additionalArg) { llvm::errs() << "Forcibly loading cached reads " << *op << "\n";
+        if ( (!topLevel) || can_modref /*|| additionalArg*/) { llvm::errs() << "Forcibly loading cached reads " << *op << "\n";
           IRBuilder<> BuilderZ(op->getNextNode());
           inst = cast<Instruction>(gutils->addMalloc(BuilderZ, inst));
+          llvm::errs() << "Instruction after force load cache reads: " << *inst << "\n";
+          llvm::errs() << "Parent after force load cache reads: " << *(inst->getFunction()) << "\n";
           if (inst != op) {
             // Set to nullptr since op should never be used after invalidated through addMalloc.
             op = nullptr;
