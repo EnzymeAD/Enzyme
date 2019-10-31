@@ -51,6 +51,183 @@ cl::opt<bool> cachereads(
             "enzyme_cachereads", cl::init(true), cl::Hidden,
             cl::desc("Force caching of all reads"));
 
+
+std::map<Instruction*, bool> compute_volatile_load_map(GradientUtils* gutils, AAResults& AA,
+    std::set<unsigned> volatile_args) {
+  std::map<Instruction*, bool> can_modref_map;
+  // NOTE(TFK): Want to construct a test case where this causes an issue.
+  for(BasicBlock* BB: gutils->originalBlocks) {
+    for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
+      Instruction* inst = &*I;
+      if (auto op = dyn_cast<LoadInst>(inst)) {
+        if (gutils->isConstantValue(inst) || gutils->isConstantInstruction(inst)) {
+          continue;
+        }
+        auto op_operand = op->getPointerOperand();
+        auto op_type = op->getType();
+        bool can_modref = false;
+
+        auto obj = GetUnderlyingObject(op->getPointerOperand(), BB->getModule()->getDataLayout(), 100);
+        if (auto arg = dyn_cast<Argument>(obj)) {
+          if (volatile_args.find(arg->getArgNo()) != volatile_args.end()) {
+            can_modref = true;
+          }
+        }
+
+        for (int k = 0; k < gutils->originalBlocks.size(); k++) {
+          if (AA.canBasicBlockModify(*(gutils->originalBlocks[k]), MemoryLocation::get(op))) {
+            can_modref = true;
+            break;
+          }
+        }
+        can_modref_map[inst] = can_modref;
+      }
+    }
+  }
+  return can_modref_map;
+}
+
+
+std::set<unsigned> compute_volatile_args_for_one_callsite(Instruction* callsite_inst, DominatorTree &DT,
+    TargetLibraryInfo &TLI, AAResults& AA, GradientUtils* gutils, std::set<unsigned> parent_volatile_args) {
+  CallInst* callsite_op = dyn_cast<CallInst>(callsite_inst);
+  assert(callsite_op != nullptr);
+
+  std::set<unsigned> volatile_args;
+  std::vector<Value*> args;
+  std::vector<bool> args_safe;
+
+  // First, we need to propagate the volatile status from the parent function to the callee.
+  //   because memory location x modified after parent returns => x modified after callee returns.
+  for (int i = 0; i < callsite_op->getNumArgOperands(); i++) {
+      args.push_back(callsite_op->getArgOperand(i));
+      bool init_safe = true;
+
+      // If the UnderlyingObject is from one of this function's arguments, then we need to propagate the volatility.
+      Value* obj = GetUnderlyingObject(callsite_op->getArgOperand(i),
+                                       callsite_inst->getParent()->getModule()->getDataLayout(),
+                                       100);
+      // If underlying object is an Argument, check parent volatility status.
+      if (auto arg = dyn_cast<Argument>(obj)) {
+        if (parent_volatile_args.find(arg->getArgNo()) != parent_volatile_args.end()) {
+          init_safe = false;
+        }
+      }
+      // TODO(TFK): Also need to check whether underlying object is traced to load / non-allocating-call instruction.
+      args_safe.push_back(init_safe);
+  }
+
+  // Second, we check for memory modifications that can occur in the continuation of the
+  //   callee inside the parent function.
+  for(BasicBlock* BB: gutils->originalBlocks) {
+    for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
+      Instruction* inst = &*I;
+      if (inst == callsite_inst) continue;
+
+      // If the "inst" does not dominate "callsite_inst" then we cannot prove that
+      //   "inst" happens before "callsite_inst". If "inst" modifies an argument of the call,
+      //   then that call needs to consider the argument volatile.
+      if (!gutils->DT.dominates(inst, callsite_inst)) {
+        // Consider Store Instructions.
+        if (auto op = dyn_cast<StoreInst>(inst)) {
+          for (int i = 0; i < args.size(); i++) {
+            // If the modification flag is set, then this instruction may modify the $i$th argument of the call.
+            if (!llvm::isModSet(AA.getModRefInfo(op, MemoryLocation::getForArgument(callsite_op, i, TLI)))) {
+              //llvm::errs() << "Instruction " << *op << " is NoModRef with call argument " << *args[i] << "\n";
+            } else {
+              //llvm::errs() << "Instruction " << *op << " is maybe ModRef with call argument " << *args[i] << "\n";
+              args_safe[i] = false;
+            }
+          }
+        }
+
+        // Consider Call Instructions.
+        if (auto op = dyn_cast<CallInst>(inst)) {
+          // Ignore memory allocation functions.
+          Function* called = op->getCalledFunction();
+          if (auto castinst = dyn_cast<ConstantExpr>(op->getCalledValue())) {
+            if (castinst->isCast()) {
+              if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
+                if (isAllocationFunction(*fn, TLI) || isDeallocationFunction(*fn, TLI)) {
+                  called = fn;
+                }
+              }
+            }
+          }
+          if (isCertainMallocOrFree(called)) {
+            continue;
+          }
+
+          // For all the arguments, perform same check as for Stores, but ignore non-pointer arguments.
+          for (int i = 0; i < args.size(); i++) {
+            if (!args[i]->getType()->isPointerTy()) continue;  // Ignore non-pointer arguments.
+            if (!llvm::isModSet(AA.getModRefInfo(op, MemoryLocation::getForArgument(callsite_op, i, TLI)))) {
+              //llvm::errs() << "Instruction " << *op << " is NoModRef with call argument " << *args[i] << "\n";
+            } else {
+              //llvm::errs() << "Instruction " << *op << " is maybe ModRef with call argument " << *args[i] << "\n";
+              args_safe[i] = false;
+            }
+          }
+        }
+      } 
+    }
+  }
+
+  //llvm::errs() << "CallInst: " << *callsite_op<< "CALL ARGUMENT INFO: \n";
+  for (int i = 0; i < args.size(); i++) {
+    if (!args_safe[i]) {
+      volatile_args.insert(i);
+    }
+    //llvm::errs() << "Arg: " << *args[i] << " STATUS: " << args_safe[i] << "\n";
+  }
+  return volatile_args;
+}
+
+// Given a function and the arguments passed to it by its caller that are volatile (_volatile_args) compute
+//   the set of volatile arguments for each callsite inside the function. A pointer argument is volatile at
+//   a callsite if the memory pointed to might be modified after that callsite.
+std::map<CallInst*, std::set<unsigned> > compute_volatile_args_for_callsites(
+    Function* F, DominatorTree &DT, TargetLibraryInfo &TLI, AAResults& AA, GradientUtils* gutils,
+    std::set<unsigned> const volatile_args) {
+  std::map<CallInst*, std::set<unsigned> > volatile_args_map;
+  for(BasicBlock* BB: gutils->originalBlocks) {
+    for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
+      Instruction* inst = &*I;
+      if (auto op = dyn_cast<CallInst>(inst)) {
+
+        // We do not need volatile args for intrinsic functions. So skip such callsites.
+        if(auto intrinsic = dyn_cast<IntrinsicInst>(inst)) {
+          continue;
+        }
+
+        // We do not need volatile args for memory allocation functions. So skip such callsites. 
+        Function* called = op->getCalledFunction();
+        if (auto castinst = dyn_cast<ConstantExpr>(op->getCalledValue())) {
+          if (castinst->isCast()) {
+            if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
+              if (isAllocationFunction(*fn, TLI) || isDeallocationFunction(*fn, TLI)) {
+                called = fn;
+              }
+            }
+          }
+        }
+        if (isCertainMallocOrFree(called)) {
+          continue;
+        }
+
+        // For all other calls, we compute the volatile args for this callsite.
+        volatile_args_map[op] = compute_volatile_args_for_one_callsite(inst,
+            DT, TLI, AA, gutils, volatile_args);
+      }
+    }
+  }
+  return volatile_args_map;
+}
+
+
+
+
+
 //! return structtype if recursive function
 std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResults &AA, const std::set<unsigned>& constant_args, TargetLibraryInfo &TLI, bool differentialReturn, bool returnUsed, const std::set<unsigned> _volatile_args) {
   static std::map<std::tuple<Function*,std::set<unsigned>, std::set<unsigned>, bool/*differentialReturn*/, bool/*returnUsed*/>, std::pair<Function*,StructType*>> cachedfunctions;
@@ -143,174 +320,14 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
     llvm::errs() << "arg " << count++ << " is " << *i << " volatile: " << is_volatile << "\n";
   }
 
-  std::map<CallInst*, std::set<unsigned> > volatile_args_map;
-  //DominatorTree DT(*gutils->oldFunc);
+  std::map<CallInst*, std::set<unsigned> > volatile_args_map =
+      compute_volatile_args_for_callsites(gutils->oldFunc, gutils->DT, TLI, AA, gutils, _volatile_args);
 
   llvm::errs() << "Old function content is " << *gutils->oldFunc << "\n";
 
-  for(BasicBlock* _BB: gutils->originalBlocks) {
-    for (auto _I = _BB->begin(), _E = _BB->end(); _I != _E; _I++) {
-      Instruction* _inst = &*_I;
-      if (auto _op = dyn_cast<CallInst>(_inst)) {
-        if(auto intrinsic = dyn_cast<IntrinsicInst>(_inst)) {
-          continue;
-        }
-        Function* called = _op->getCalledFunction();
-        if (auto castinst = dyn_cast<ConstantExpr>(_op->getCalledValue())) {
-          if (castinst->isCast()) {
-            if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-              if (isAllocationFunction(*fn, TLI) || isDeallocationFunction(*fn, TLI)) {
-                called = fn;
-              }
-            }
-          }
-        }
 
-
-        //if (_op->getCalledFunction()->getName()=="free") {
-        if (isCertainMallocOrFree(called)) {
-          continue;
-        }
-        std::set<unsigned> volatile_args;
-        std::vector<Value*> args;
-        llvm::errs() << "args are: ";
-        std::vector<bool> args_safe;
-        for (int i = 0; i < _op->getNumArgOperands(); i++) {
-          //if (_op->getArgOperand(i)->getType()->isPointerTy()) {
-            args.push_back(_op->getArgOperand(i));
-            bool init_safe = true;
-            // If the UnderlyingObject is from one of this function's arguments, then we need to propagate the volatility.
-            Value* obj = GetUnderlyingObject(_op->getArgOperand(i),_BB->getModule()->getDataLayout(),100); 
-            if (auto arg = dyn_cast<Argument>(obj)) {
-              if (_volatile_args.find(arg->getArgNo()) != _volatile_args.end()) {
-                init_safe = false;
-              }
-            }
-
-            args_safe.push_back(init_safe);
-            llvm::errs() << " "<< *_op->getArgOperand(i) <<" ";
-          //}
-        }
-        llvm::errs() << "\n";
-
-        for(BasicBlock* BB: gutils->originalBlocks) {
-          for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
-            Instruction* inst = &*I;
-            if (inst == _inst) continue;
-
-            if (gutils->DT.dominates(inst, _inst)) {
-              llvm::errs() << inst->getParent() << "\n";
-              llvm::errs() << _inst->getParent() << "\n";
-              llvm::errs() << "callinst: " << *_op <<"DOES dominate " << *I << "\n";
-            } else {
-              llvm::errs() << "callinst: " << *_op <<"does not dominate " << *I << "\n";
-              // In this case "inst" may occur after the call instruction (_inst). If "inst" is a store, it might necessitate caching a load inside the call.
-
-              if (auto op = dyn_cast<StoreInst>(inst)) {
-                for (int i = 0; i < args.size(); i++) {
-                  if (!llvm::isModSet(AA.getModRefInfo(op, MemoryLocation::getForArgument(_op, i, TLI)/*, MemoryLocation::UnknownSize)*/))) {
-                    llvm::errs() << "Instruction " << *op << " is NoModRef with call argument " << *args[i] << "\n";
-                  } else {
-                    llvm::errs() << "Instruction " << *op << " is maybe ModRef with call argument " << *args[i] << "\n";
-                    args_safe[i] = false;
-                  }
-                }
-              }
-              if (auto op = dyn_cast<CallInst>(inst)) {
-
-
-        Function* called = op->getCalledFunction();
-        if (auto castinst = dyn_cast<ConstantExpr>(op->getCalledValue())) {
-          if (castinst->isCast()) {
-            if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-              if (isAllocationFunction(*fn, TLI) || isDeallocationFunction(*fn, TLI)) {
-                called = fn;
-              }
-            }
-          }
-        }
-
-                if (op->getCalledFunction()) {
-                  llvm::errs() << "Called Function name is " << op->getCalledFunction()->getName() << "\n";
-                } else {
-                  llvm::errs() << "Called Function is null \n";// << op->getCalledFunction()->getName() << "\n";
-                }
-                if (isCertainMallocOrFree(called)) {
-                  continue;
-                }
-                for (int i = 0; i < args.size(); i++) {
-                  if (!llvm::isModSet(AA.getModRefInfo(op, MemoryLocation::getForArgument(_op, i, TLI)))) {
-                    llvm::errs() << "Instruction " << *op << " is NoModRef with call argument " << *args[i] << "\n";
-                  } else {
-                    llvm::errs() << "Instruction " << *op << " is maybe ModRef with call argument " << *args[i] << "\n";
-                    args_safe[i] = false;
-                  }
-                }
-              }
-
-
-            } 
-          }
-        }
-        llvm::errs() << "CallInst: " << *_op<< "CALL ARGUMENT INFO: \n";
-        for (int i = 0; i < args.size(); i++) {
-          if (!args_safe[i]) {
-            volatile_args.insert(i);
-          }
-          llvm::errs() << "Arg: " << *args[i] << " STATUS: " << args_safe[i] << "\n";
-        }
-        volatile_args_map[_op] = volatile_args; 
-      }
-    }
-  }
-
-
-
-  std::map<Instruction*, bool> can_modref_map;
+  std::map<Instruction*, bool> can_modref_map = compute_volatile_load_map(gutils, AA, _volatile_args);
   gutils->can_modref_map = &can_modref_map;
-  if (true) { //!additionalArg && !topLevel) {
-    for(BasicBlock* BB: gutils->originalBlocks) {
-      llvm::errs() << "BB: " << *BB << "\n";
-      //for (BasicBlock::reverse_iterator I = BB->rbegin(), E = BB->rend(); I != E;) {
-      for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
-        Instruction* inst = &*I;
-        if (auto op = dyn_cast<LoadInst>(inst)) {
-          if (gutils->isConstantValue(inst) || gutils->isConstantInstruction(inst)) {
-            //I++;
-            continue;
-          }
-          auto op_operand = op->getPointerOperand();
-          auto op_type = op->getType();
-          bool can_modref = false;
-
-          auto obj = GetUnderlyingObject(op->getPointerOperand(), BB->getModule()->getDataLayout(), 100);
-          if (auto arg = dyn_cast<Argument>(obj)) {
-            if (_volatile_args.find(arg->getArgNo()) != _volatile_args.end()) {
-              can_modref = true;
-            }
-          }
-
-
-          llvm::errs() << "TFKDEBUG: looking at modref status of inst<"<<*inst << ">\n";
-          for (int k = 0; k < gutils->originalBlocks.size(); k++) {
-            llvm::errs() << "TFKDEBUG: in BB: <"<<*(gutils->originalBlocks[k]) << ">\n";
-            if (AA.canBasicBlockModify(*(gutils->originalBlocks[k]), MemoryLocation::get(op))) {
-              can_modref = true;
-              break;
-            }
-          }
-          llvm::errs() << "TFKDEBUG: modref status of inst<"<<*inst << "> is: " << can_modref << "\n";
-          can_modref_map[inst] = can_modref;
-        }
-        //I++;
-      }
-    }
-  }
-
-
-
-
-
 
   gutils->forceContexts();
   gutils->forceAugmentedReturns();
@@ -1733,186 +1750,19 @@ Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& co
   cachedfunctions[tup] = gutils->newFunc;
 
 
-
-
-  std::set<Value*> finalized_underlying_objects;
-  std::set<Value*> distinct_underlying_objects;
-
-
-  std::map<CallInst*, std::set<unsigned> > volatile_args_map;
-  //DominatorTree DT(*gutils->oldFunc);
+  std::map<CallInst*, std::set<unsigned> > volatile_args_map =
+      compute_volatile_args_for_callsites(gutils->oldFunc, gutils->DT, TLI, AA, gutils, _volatile_args);
 
   llvm::errs() << "Old function content is " << *gutils->oldFunc << "\n";
 
-  for(BasicBlock* _BB: gutils->originalBlocks) {
-    for (auto _I = _BB->begin(), _E = _BB->end(); _I != _E; _I++) {
-      Instruction* _inst = &*_I;
-      if (auto _op = dyn_cast<CallInst>(_inst)) {
-        if(auto intrinsic = dyn_cast<IntrinsicInst>(_inst)) {
-          continue;
-        }
-
-        Function* called = _op->getCalledFunction();
-        if (auto castinst = dyn_cast<ConstantExpr>(_op->getCalledValue())) {
-          if (castinst->isCast()) {
-            if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-              if (isAllocationFunction(*fn, TLI) || isDeallocationFunction(*fn, TLI)) {
-                called = fn;
-              }
-            }
-          }
-        }
-
-
-        //if (_op->getCalledFunction()) {
-        //if (_op->getCalledFunction()->getName()=="free") {
-        if (isCertainMallocOrFree(called)) {
-          continue;
-        }
-        //}
-        std::set<unsigned> volatile_args;
-        std::vector<Value*> args;
-        llvm::errs() << "args are: ";
-        std::vector<bool> args_safe;
-        for (int i = 0; i < _op->getNumArgOperands(); i++) {
-          //if (_op->getArgOperand(i)->getType()->isPointerTy()) {
-            args.push_back(_op->getArgOperand(i));
-            bool init_safe = true;
-            // If the UnderlyingObject is from one of this function's arguments, then we need to propagate the volatility.
-            Value* obj = GetUnderlyingObject(_op->getArgOperand(i),_BB->getModule()->getDataLayout(),100); 
-            if (auto arg = dyn_cast<Argument>(obj)) {
-              if (_volatile_args.find(arg->getArgNo()) != _volatile_args.end()) {
-                init_safe = false;
-              }
-            }
-
-            args_safe.push_back(init_safe);
-            llvm::errs() << " "<< *_op->getArgOperand(i) <<" ";
-          //}
-        }
-        llvm::errs() << "\n";
-
-        for(BasicBlock* BB: gutils->originalBlocks) {
-          for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
-            Instruction* inst = &*I;
-            if (inst == _inst) continue;
-
-            if (gutils->DT.dominates(inst, _inst)) {
-              llvm::errs() << inst->getParent() << "\n";
-              llvm::errs() << _inst->getParent() << "\n";
-              llvm::errs() << "callinst: " << *_op <<"DOES dominate " << *I << "\n";
-            } else {
-              llvm::errs() << "callinst: " << *_op <<"does not dominate " << *I << "\n";
-              // In this case "inst" may occur after the call instruction (_inst). If "inst" is a store, it might necessitate caching a load inside the call.
-
-              if (auto op = dyn_cast<StoreInst>(inst)) {
-                for (int i = 0; i < args.size(); i++) {
-                  if (!llvm::isModSet(AA.getModRefInfo(op, MemoryLocation::getForArgument(_op, i, TLI)/*, MemoryLocation::UnknownSize)*/))) {
-                    llvm::errs() << "Instruction " << *op << " is NoModRef with call argument " << *args[i] << "\n";
-                  } else {
-                    llvm::errs() << "Instruction " << *op << " is maybe ModRef with call argument " << *args[i] << "\n";
-                    args_safe[i] = false;
-                  }
-                }
-              }
-              if (auto op = dyn_cast<CallInst>(inst)) {
-
-                Function* called = op->getCalledFunction();
-                if (auto castinst = dyn_cast<ConstantExpr>(op->getCalledValue())) {
-                  if (castinst->isCast()) {
-                    if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-                      if (isAllocationFunction(*fn, TLI) || isDeallocationFunction(*fn, TLI)) {
-                        called = fn;
-                      }
-                    }
-                  }
-                }
-
-                if (op->getCalledFunction()) {
-                  llvm::errs() << "Called Function name is " << op->getCalledFunction()->getName() << "\n";
-                } else {
-                  llvm::errs() << "Called Function is null \n";// << op->getCalledFunction()->getName() << "\n";
-                }
-
-                if (isCertainMallocOrFree(called)) {
-                  continue;
-                }
-
-                for (int i = 0; i < args.size(); i++) {
-                  if (!args[i]->getType()->isPointerTy()) continue;
-                  llvm::errs() << "TFKDEBUG: " << *args[i] << "\n";
-                  if (!llvm::isModSet(AA.getModRefInfo(op, MemoryLocation::getForArgument(_op, i, TLI)))) {
-                    llvm::errs() << "Instruction " << *op << " is NoModRef with call argument " << *args[i] << "\n";
-                  } else {
-                    llvm::errs() << "Instruction " << *op << " is maybe ModRef with call argument " << *args[i] << "\n";
-                    args_safe[i] = false;
-                  }
-                }
-              }
-
-
-            } 
-          }
-        }
-        llvm::errs() << "CallInst: " << *_op<< "CALL ARGUMENT INFO: \n";
-        for (int i = 0; i < args.size(); i++) {
-          if (!args_safe[i]) {
-            volatile_args.insert(i);
-          }
-          llvm::errs() << "Arg: " << *args[i] << " STATUS: " << args_safe[i] << "\n";
-        }
-        volatile_args_map[_op] = volatile_args; 
-      }
-    }
-  }
-
-
-
-
-
-
-
-
 
   std::map<Instruction*, bool> can_modref_map;
-  gutils->can_modref_map = &can_modref_map;
-  if (/*!additionalArg && */!topLevel) {
-    for(BasicBlock* BB: gutils->originalBlocks) {
-      for (BasicBlock::reverse_iterator I = BB->rbegin(), E = BB->rend(); I != E;) {
-        Instruction* inst = &*I;
-        if (auto op = dyn_cast<LoadInst>(inst)) {
-          if (gutils->isConstantValue(inst)) {
-            I++;
-            continue;
-          }
-          auto op_operand = op->getPointerOperand();
-          auto op_type = op->getType();
-          bool can_modref = false;
-          llvm::errs() << "TFKDEBUG: looking at modref status of inst<"<<*inst << ">\n";
-
-          auto obj = GetUnderlyingObject(op->getPointerOperand(), BB->getModule()->getDataLayout(), 100);
-          if (auto arg = dyn_cast<Argument>(obj)) {
-            if (_volatile_args.find(arg->getArgNo()) != _volatile_args.end()) {
-              can_modref = true;
-            }
-          }
-
-
-          for (int k = 0; k < gutils->originalBlocks.size(); k++) {
-            if (AA.canBasicBlockModify(*(gutils->originalBlocks[k]), MemoryLocation::get(op))) {
-              can_modref = true;
-              break;
-            }
-          }
-          llvm::errs() << "TFKDEBUG: modref status of inst<"<<*inst << "> is: " << can_modref << "\n";
-          can_modref_map[inst] = can_modref;
-        }
-        I++;
-      }
-    }
+  // NOTE(TFK): Sanity check this decision.
+  //   Is it always possibly to recompute the result of loads at top level?
+  if (!topLevel) {
+    can_modref_map = compute_volatile_load_map(gutils, AA, _volatile_args);
   }
-
-
+  gutils->can_modref_map = &can_modref_map;
 
   gutils->forceContexts(true);
   gutils->forceAugmentedReturns();
