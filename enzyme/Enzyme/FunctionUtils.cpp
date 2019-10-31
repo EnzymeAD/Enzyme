@@ -461,9 +461,10 @@ Function* preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI)
  //BasicAA ba;
  //auto baa = new BasicAAResult(ba.run(*NewF, AM));
  AssumptionCache* AC = new AssumptionCache(*NewF);
+ TargetLibraryInfo* TLI = new TargetLibraryInfo(AM.getResult<TargetLibraryAnalysis>(*NewF));
  auto baa = new BasicAAResult(NewF->getParent()->getDataLayout(),
                         *NewF,
-                        AM.getResult<TargetLibraryAnalysis>(*NewF),
+                        *TLI,
                         *AC,
                         &AM.getResult<DominatorTreeAnalysis>(*NewF),
                         AM.getCachedResult<LoopAnalysis>(*NewF),
