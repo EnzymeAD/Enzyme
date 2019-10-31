@@ -48,7 +48,7 @@ llvm::cl::opt<bool> enzyme_print("enzyme_print", cl::init(false), cl::Hidden,
                 cl::desc("Print before and after fns for autodiff"));
 
 cl::opt<bool> cachereads(
-            "enzyme_cachereads", cl::init(true), cl::Hidden,
+            "enzyme_cachereads", cl::init(false), cl::Hidden,
             cl::desc("Force caching of all reads"));
 
 //! return structtype if recursive function
@@ -152,6 +152,9 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
     for (auto _I = _BB->begin(), _E = _BB->end(); _I != _E; _I++) {
       Instruction* _inst = &*_I;
       if (auto _op = dyn_cast<CallInst>(_inst)) {
+        if(auto intrinsic = dyn_cast<IntrinsicInst>(_inst)) {
+          continue;
+        }
         std::set<unsigned> volatile_args;
         std::vector<Value*> args;
         llvm::errs() << "args are: ";
@@ -583,7 +586,7 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
 
                 gutils->erase(op);
         } else if(LoadInst* li = dyn_cast<LoadInst>(inst)) {
-          //if (/*gutils->isConstantInstruction(inst) ||*/ gutils->isConstantValue(inst)) continue;
+          if (/*gutils->isConstantInstruction(inst) ||*/ gutils->isConstantValue(inst)) continue;
           if (/*true || */(cachereads && can_modref_map[inst])) {
             llvm::errs() << "Forcibly caching reads " << *li << "\n"; 
             IRBuilder<> BuilderZ(li);
@@ -1706,6 +1709,9 @@ Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& co
     for (auto _I = _BB->begin(), _E = _BB->end(); _I != _E; _I++) {
       Instruction* _inst = &*_I;
       if (auto _op = dyn_cast<CallInst>(_inst)) {
+        if(auto intrinsic = dyn_cast<IntrinsicInst>(_inst)) {
+          continue;
+        }
         std::set<unsigned> volatile_args;
         std::vector<Value*> args;
         llvm::errs() << "args are: ";
@@ -2246,7 +2252,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& co
       if (dif1) addToDiffe(op->getOperand(1), dif1);
       if (dif2) addToDiffe(op->getOperand(2), dif2);
     } else if(auto op = dyn_cast<LoadInst>(inst)) {
-      //if (gutils->isConstantValue(inst)) continue;
+      if (gutils->isConstantValue(inst)) continue;
 
       llvm::errs() << "TFKDEBUG Saw load instruction: " << *inst << "\n";
 

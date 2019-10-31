@@ -345,8 +345,8 @@ Value* GradientUtils::invertPointerM(Value* val, IRBuilder<>& BuilderM) {
       auto cs = gvemd->getValue();
       return invertedPointers[val] = cs;
     } else if (auto fn = dyn_cast<Function>(val)) {
-      llvm::errs() << "Note(TFK): Need to disable function pointer casts for now.\n";
-      assert(false);
+      //llvm::errs() << "Note(TFK): Need to disable function pointer casts for now.\n";
+      //assert(false);
       //! Todo allow tape propagation
       std::set<unsigned> volatile_args;
       auto newf = CreatePrimalAndGradient(fn, /*constant_args*/{}, TLI, AA, /*returnValue*/false, /*differentialReturn*/fn->getReturnType()->isFPOrFPVectorTy(), /*topLevel*/false, /*additionalArg*/nullptr, volatile_args);
