@@ -89,6 +89,9 @@ public:
   ValueToValueMapTy scopeFrees;
   ValueToValueMapTy originalToNewFn;
 
+  std::map<Instruction*, bool>* can_modref_map;  
+
+
   Value* getNewFromOriginal(Value* originst) {
     assert(originst);
     auto f = originalToNewFn.find(originst);

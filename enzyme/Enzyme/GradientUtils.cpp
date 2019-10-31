@@ -223,7 +223,7 @@ bool shouldRecompute(Value* val, const ValueToValueMapTy& available) {
   } else if (auto op = dyn_cast<SelectInst>(val)) {
     return shouldRecompute(op->getOperand(0), available) || shouldRecompute(op->getOperand(1), available) || shouldRecompute(op->getOperand(2), available);
   } else if (auto load = dyn_cast<LoadInst>(val)) {
-    return true; // NOTE(TFK): Remove this.
+    //return true; // NOTE(TFK): Remove this.
     Value* idx = load->getOperand(0);
     while (!isa<Argument>(idx)) {
       if (auto gep = dyn_cast<GetElementPtrInst>(idx)) {
@@ -828,10 +828,12 @@ Value* GradientUtils::lookupM(Value* val, IRBuilder<>& BuilderM) {
         }
     }
 
-    if (!shouldRecompute(inst, available)) {
-        auto op = unwrapM(inst, BuilderM, available, /*lookupIfAble*/true);
-        assert(op);
-        return op;
+    if (!(*(this->can_modref_map))[inst]) {
+      if (!shouldRecompute(inst, available)) {
+          auto op = unwrapM(inst, BuilderM, available, /*lookupIfAble*/true);
+          assert(op);
+          return op;
+      }
     }
     /*
     if (!inLoop) {
