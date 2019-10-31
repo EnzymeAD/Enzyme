@@ -63,8 +63,6 @@ std::map<Instruction*, bool> compute_volatile_load_map(GradientUtils* gutils, AA
         if (gutils->isConstantValue(inst) || gutils->isConstantInstruction(inst)) {
           continue;
         }
-        auto op_operand = op->getPointerOperand();
-        auto op_type = op->getType();
         bool can_modref = false;
 
         auto obj = GetUnderlyingObject(op->getPointerOperand(), BB->getModule()->getDataLayout(), 100);
@@ -74,7 +72,7 @@ std::map<Instruction*, bool> compute_volatile_load_map(GradientUtils* gutils, AA
           }
         }
 
-        for (int k = 0; k < gutils->originalBlocks.size(); k++) {
+        for (unsigned k = 0; k < gutils->originalBlocks.size(); k++) {
           if (AA.canBasicBlockModify(*(gutils->originalBlocks[k]), MemoryLocation::get(op))) {
             can_modref = true;
             break;
@@ -99,7 +97,7 @@ std::set<unsigned> compute_volatile_args_for_one_callsite(Instruction* callsite_
 
   // First, we need to propagate the volatile status from the parent function to the callee.
   //   because memory location x modified after parent returns => x modified after callee returns.
-  for (int i = 0; i < callsite_op->getNumArgOperands(); i++) {
+  for (unsigned i = 0; i < callsite_op->getNumArgOperands(); i++) {
       args.push_back(callsite_op->getArgOperand(i));
       bool init_safe = true;
 
@@ -130,7 +128,7 @@ std::set<unsigned> compute_volatile_args_for_one_callsite(Instruction* callsite_
       if (!gutils->DT.dominates(inst, callsite_inst)) {
         // Consider Store Instructions.
         if (auto op = dyn_cast<StoreInst>(inst)) {
-          for (int i = 0; i < args.size(); i++) {
+          for (unsigned i = 0; i < args.size(); i++) {
             // If the modification flag is set, then this instruction may modify the $i$th argument of the call.
             if (!llvm::isModSet(AA.getModRefInfo(op, MemoryLocation::getForArgument(callsite_op, i, TLI)))) {
               //llvm::errs() << "Instruction " << *op << " is NoModRef with call argument " << *args[i] << "\n";
@@ -159,7 +157,7 @@ std::set<unsigned> compute_volatile_args_for_one_callsite(Instruction* callsite_
           }
 
           // For all the arguments, perform same check as for Stores, but ignore non-pointer arguments.
-          for (int i = 0; i < args.size(); i++) {
+          for (unsigned i = 0; i < args.size(); i++) {
             if (!args[i]->getType()->isPointerTy()) continue;  // Ignore non-pointer arguments.
             if (!llvm::isModSet(AA.getModRefInfo(op, MemoryLocation::getForArgument(callsite_op, i, TLI)))) {
               //llvm::errs() << "Instruction " << *op << " is NoModRef with call argument " << *args[i] << "\n";
@@ -174,7 +172,7 @@ std::set<unsigned> compute_volatile_args_for_one_callsite(Instruction* callsite_
   }
 
   //llvm::errs() << "CallInst: " << *callsite_op<< "CALL ARGUMENT INFO: \n";
-  for (int i = 0; i < args.size(); i++) {
+  for (unsigned i = 0; i < args.size(); i++) {
     if (!args_safe[i]) {
       volatile_args.insert(i);
     }
@@ -196,7 +194,7 @@ std::map<CallInst*, std::set<unsigned> > compute_volatile_args_for_callsites(
       if (auto op = dyn_cast<CallInst>(inst)) {
 
         // We do not need volatile args for intrinsic functions. So skip such callsites.
-        if(auto intrinsic = dyn_cast<IntrinsicInst>(inst)) {
+        if(isa<IntrinsicInst>(inst)) { 
           continue;
         }
 
