@@ -224,29 +224,15 @@ std::map<CallInst*, std::set<unsigned> > compute_volatile_args_for_callsites(
   return volatile_args_map;
 }
 
-
-
-
-
 //! return structtype if recursive function
 std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResults &AA, const std::set<unsigned>& constant_args, TargetLibraryInfo &TLI, bool differentialReturn, bool returnUsed, const std::set<unsigned> _volatile_args) {
   static std::map<std::tuple<Function*,std::set<unsigned>, std::set<unsigned>, bool/*differentialReturn*/, bool/*returnUsed*/>, std::pair<Function*,StructType*>> cachedfunctions;
   static std::map<std::tuple<Function*,std::set<unsigned>, std::set<unsigned>, bool/*differentialReturn*/, bool/*returnUsed*/>, bool> cachedfinished;
   auto tup = std::make_tuple(todiff, std::set<unsigned>(constant_args.begin(), constant_args.end()), std::set<unsigned>(_volatile_args.begin(), _volatile_args.end()), differentialReturn, returnUsed);
-  llvm::errs() << "TFKDEBUG: called CreateAugmentedPrimal " << todiff->getName() << "\n";
-  llvm::errs() << "TFKDEBUG: called CreateAugmentedPrimal content: " << *todiff << "\n";
   if (cachedfunctions.find(tup) != cachedfunctions.end()) {
     return cachedfunctions[tup];
   }
   if (differentialReturn) assert(returnUsed);
-
-
-
-
-
-
-
-
 
     if (constant_args.size() == 0 && hasMetadata(todiff, "enzyme_augment")) {
       auto md = todiff->getMetadata("enzyme_augment");
@@ -306,25 +292,8 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
   cachedfunctions[tup] = std::pair<Function*,StructType*>(gutils->newFunc, nullptr);
   cachedfinished[tup] = false;
 
-  llvm::errs() << "Old func: " << *gutils->oldFunc << "\n";
-  llvm::errs() << "New func: " << *gutils->newFunc << "\n";
-
-
-
-  llvm::errs() << "TFKDEBUG Testing original to new for function:" << *gutils->oldFunc << "\n";
-  llvm::errs() << "Arg size is " << gutils->oldFunc->arg_size() << "\n";
- int count = 0;
- for (auto i=gutils->oldFunc->arg_begin(); i != gutils->oldFunc->arg_end(); i++) {
-    bool is_volatile = false;
-    if (_volatile_args.find(count) != _volatile_args.end()) is_volatile = true;
-    llvm::errs() << "arg " << count++ << " is " << *i << " volatile: " << is_volatile << "\n";
-  }
-
   std::map<CallInst*, std::set<unsigned> > volatile_args_map =
       compute_volatile_args_for_callsites(gutils->oldFunc, gutils->DT, TLI, AA, gutils, _volatile_args);
-
-  llvm::errs() << "Old function content is " << *gutils->oldFunc << "\n";
-
 
   std::map<Instruction*, bool> can_modref_map = compute_volatile_load_map(gutils, AA, _volatile_args);
   gutils->can_modref_map = &can_modref_map;
@@ -1749,12 +1718,8 @@ Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& co
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(todiff, AA, TLI, constant_args, returnValue ? ReturnType::ArgsWithReturn : ReturnType::Args, differentialReturn, additionalArg);
   cachedfunctions[tup] = gutils->newFunc;
 
-
   std::map<CallInst*, std::set<unsigned> > volatile_args_map =
       compute_volatile_args_for_callsites(gutils->oldFunc, gutils->DT, TLI, AA, gutils, _volatile_args);
-
-  llvm::errs() << "Old function content is " << *gutils->oldFunc << "\n";
-
 
   std::map<Instruction*, bool> can_modref_map;
   // NOTE(TFK): Sanity check this decision.
@@ -2186,20 +2151,13 @@ Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& co
     } else if(auto op = dyn_cast<LoadInst>(inst)) {
       if (gutils->isConstantValue(inst) || gutils->isConstantInstruction(inst)) continue;
 
-      llvm::errs() << "TFKDEBUG Saw load instruction: " << *inst << "\n";
-
       auto op_operand = op->getPointerOperand();
       auto op_type = op->getType();
 
       if (cachereads) {
-
-        bool can_modref = can_modref_map[inst];
-        //can_modref = true;
-        if ( /*(!topLevel) ||*/ can_modref /*|| additionalArg*/) { llvm::errs() << "Forcibly loading cached reads " << *op << "\n";
+        if (can_modref_map[inst]) {
           IRBuilder<> BuilderZ(op->getNextNode());
           inst = cast<Instruction>(gutils->addMalloc(BuilderZ, inst));
-          llvm::errs() << "Instruction after force load cache reads: " << *inst << "\n";
-          llvm::errs() << "Parent after force load cache reads: " << *(inst->getFunction()) << "\n";
           if (inst != op) {
             // Set to nullptr since op should never be used after invalidated through addMalloc.
             op = nullptr;
