@@ -17,6 +17,10 @@ float* unsorted_array_init(int N) {
 }
 
 // sums the first half of a sorted array.
+<<<<<<< HEAD
+=======
+//__attribute__((noinline))
+>>>>>>> add missing files and fix minor bugs
 void insertsort_sum (float* array, int N, float* ret) {
   float sum = 0;
   //qsort(array, N, sizeof(float), cmp);
@@ -39,7 +43,13 @@ void insertsort_sum (float* array, int N, float* ret) {
   *ret = sum;
 }
 
+<<<<<<< HEAD
 
+=======
+//void insertsort_sum (float* array, int N, float* ret) {
+//  insertsort_sum_subcall(array, N, ret);
+//}
+>>>>>>> add missing files and fix minor bugs
 
 
 int main(int argc, char** argv) {
