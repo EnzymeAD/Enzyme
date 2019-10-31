@@ -48,7 +48,7 @@ llvm::cl::opt<bool> enzyme_print("enzyme_print", cl::init(false), cl::Hidden,
                 cl::desc("Print before and after fns for autodiff"));
 
 cl::opt<bool> cachereads(
-            "enzyme_cachereads", cl::init(false), cl::Hidden,
+            "enzyme_cachereads", cl::init(true), cl::Hidden,
             cl::desc("Force caching of all reads"));
 
 //! return structtype if recursive function
@@ -155,6 +155,22 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
         if(auto intrinsic = dyn_cast<IntrinsicInst>(_inst)) {
           continue;
         }
+        Function* called = _op->getCalledFunction();
+        if (auto castinst = dyn_cast<ConstantExpr>(_op->getCalledValue())) {
+          if (castinst->isCast()) {
+            if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
+              if (isAllocationFunction(*fn, TLI) || isDeallocationFunction(*fn, TLI)) {
+                called = fn;
+              }
+            }
+          }
+        }
+
+
+        //if (_op->getCalledFunction()->getName()=="free") {
+        if (isCertainMallocOrFree(called)) {
+          continue;
+        }
         std::set<unsigned> volatile_args;
         std::vector<Value*> args;
         llvm::errs() << "args are: ";
@@ -181,6 +197,7 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
           for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
             Instruction* inst = &*I;
             if (inst == _inst) continue;
+
             if (gutils->DT.dominates(inst, _inst)) {
               llvm::errs() << inst->getParent() << "\n";
               llvm::errs() << _inst->getParent() << "\n";
@@ -200,6 +217,27 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
                 }
               }
               if (auto op = dyn_cast<CallInst>(inst)) {
+
+
+        Function* called = op->getCalledFunction();
+        if (auto castinst = dyn_cast<ConstantExpr>(op->getCalledValue())) {
+          if (castinst->isCast()) {
+            if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
+              if (isAllocationFunction(*fn, TLI) || isDeallocationFunction(*fn, TLI)) {
+                called = fn;
+              }
+            }
+          }
+        }
+
+                if (op->getCalledFunction()) {
+                  llvm::errs() << "Called Function name is " << op->getCalledFunction()->getName() << "\n";
+                } else {
+                  llvm::errs() << "Called Function is null \n";// << op->getCalledFunction()->getName() << "\n";
+                }
+                if (isCertainMallocOrFree(called)) {
+                  continue;
+                }
                 for (int i = 0; i < args.size(); i++) {
                   if (!llvm::isModSet(AA.getModRefInfo(op, MemoryLocation::getForArgument(_op, i, TLI)))) {
                     llvm::errs() << "Instruction " << *op << " is NoModRef with call argument " << *args[i] << "\n";
@@ -229,6 +267,7 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
 
 
   std::map<Instruction*, bool> can_modref_map;
+  gutils->can_modref_map = &can_modref_map;
   if (true) { //!additionalArg && !topLevel) {
     for(BasicBlock* BB: gutils->originalBlocks) {
       llvm::errs() << "BB: " << *BB << "\n";
@@ -586,7 +625,7 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
 
                 gutils->erase(op);
         } else if(LoadInst* li = dyn_cast<LoadInst>(inst)) {
-          if (/*gutils->isConstantInstruction(inst) ||*/ gutils->isConstantValue(inst)) continue;
+          if (gutils->isConstantInstruction(inst) || gutils->isConstantValue(inst)) continue;
           if (/*true || */(cachereads && can_modref_map[inst])) {
             llvm::errs() << "Forcibly caching reads " << *li << "\n"; 
             IRBuilder<> BuilderZ(li);
@@ -1712,6 +1751,25 @@ Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& co
         if(auto intrinsic = dyn_cast<IntrinsicInst>(_inst)) {
           continue;
         }
+
+        Function* called = _op->getCalledFunction();
+        if (auto castinst = dyn_cast<ConstantExpr>(_op->getCalledValue())) {
+          if (castinst->isCast()) {
+            if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
+              if (isAllocationFunction(*fn, TLI) || isDeallocationFunction(*fn, TLI)) {
+                called = fn;
+              }
+            }
+          }
+        }
+
+
+        //if (_op->getCalledFunction()) {
+        //if (_op->getCalledFunction()->getName()=="free") {
+        if (isCertainMallocOrFree(called)) {
+          continue;
+        }
+        //}
         std::set<unsigned> volatile_args;
         std::vector<Value*> args;
         llvm::errs() << "args are: ";
@@ -1738,6 +1796,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& co
           for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
             Instruction* inst = &*I;
             if (inst == _inst) continue;
+
             if (gutils->DT.dominates(inst, _inst)) {
               llvm::errs() << inst->getParent() << "\n";
               llvm::errs() << _inst->getParent() << "\n";
@@ -1757,6 +1816,28 @@ Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& co
                 }
               }
               if (auto op = dyn_cast<CallInst>(inst)) {
+
+                Function* called = op->getCalledFunction();
+                if (auto castinst = dyn_cast<ConstantExpr>(op->getCalledValue())) {
+                  if (castinst->isCast()) {
+                    if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
+                      if (isAllocationFunction(*fn, TLI) || isDeallocationFunction(*fn, TLI)) {
+                        called = fn;
+                      }
+                    }
+                  }
+                }
+
+                if (op->getCalledFunction()) {
+                  llvm::errs() << "Called Function name is " << op->getCalledFunction()->getName() << "\n";
+                } else {
+                  llvm::errs() << "Called Function is null \n";// << op->getCalledFunction()->getName() << "\n";
+                }
+
+                if (isCertainMallocOrFree(called)) {
+                  continue;
+                }
+
                 for (int i = 0; i < args.size(); i++) {
                   if (!args[i]->getType()->isPointerTy()) continue;
                   llvm::errs() << "TFKDEBUG: " << *args[i] << "\n";
@@ -1794,6 +1875,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& co
 
 
   std::map<Instruction*, bool> can_modref_map;
+  gutils->can_modref_map = &can_modref_map;
   if (/*!additionalArg && */!topLevel) {
     for(BasicBlock* BB: gutils->originalBlocks) {
       for (BasicBlock::reverse_iterator I = BB->rbegin(), E = BB->rend(); I != E;) {
@@ -2252,7 +2334,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& co
       if (dif1) addToDiffe(op->getOperand(1), dif1);
       if (dif2) addToDiffe(op->getOperand(2), dif2);
     } else if(auto op = dyn_cast<LoadInst>(inst)) {
-      if (gutils->isConstantValue(inst)) continue;
+      if (gutils->isConstantValue(inst) || gutils->isConstantInstruction(inst)) continue;
 
       llvm::errs() << "TFKDEBUG Saw load instruction: " << *inst << "\n";
 
