@@ -475,7 +475,6 @@ Function* preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI)
  //auto saa = new ScopedNoAliasAAResult(sa.run(*NewF, AM));
  //AA.addAAResult(*saa);
 
- llvm::errs() << "ran alias analysis on function " << NewF->getName() << "\n";
  }
 
   if (enzyme_print)

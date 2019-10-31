@@ -223,7 +223,6 @@ bool shouldRecompute(Value* val, const ValueToValueMapTy& available) {
   } else if (auto op = dyn_cast<SelectInst>(val)) {
     return shouldRecompute(op->getOperand(0), available) || shouldRecompute(op->getOperand(1), available) || shouldRecompute(op->getOperand(2), available);
   } else if (auto load = dyn_cast<LoadInst>(val)) {
-    //return true; // NOTE(TFK): Remove this.
     Value* idx = load->getOperand(0);
     while (!isa<Argument>(idx)) {
       if (auto gep = dyn_cast<GetElementPtrInst>(idx)) {
@@ -351,8 +350,6 @@ Value* GradientUtils::invertPointerM(Value* val, IRBuilder<>& BuilderM) {
       auto cs = gvemd->getValue();
       return invertedPointers[val] = cs;
     } else if (auto fn = dyn_cast<Function>(val)) {
-      //llvm::errs() << "Note(TFK): Need to disable function pointer casts for now.\n";
-      //assert(false);
       //! Todo allow tape propagation
       std::set<unsigned> volatile_args;
       auto newf = CreatePrimalAndGradient(fn, /*constant_args*/{}, TLI, AA, /*returnValue*/false, /*differentialReturn*/fn->getReturnType()->isFPOrFPVectorTy(), /*topLevel*/false, /*additionalArg*/nullptr, volatile_args);
