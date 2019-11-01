@@ -51,7 +51,6 @@ cl::opt<bool> cachereads(
             "enzyme_cachereads", cl::init(true), cl::Hidden,
             cl::desc("Force caching of all reads"));
 
-
 std::map<Instruction*, bool> compute_volatile_load_map(GradientUtils* gutils, AAResults& AA,
     std::set<unsigned> volatile_args) {
   std::map<Instruction*, bool> can_modref_map;
@@ -63,21 +62,33 @@ std::map<Instruction*, bool> compute_volatile_load_map(GradientUtils* gutils, AA
         if (gutils->isConstantValue(inst) || gutils->isConstantInstruction(inst)) {
           continue;
         }
-        bool can_modref = false;
 
+        bool can_modref = false;
         auto obj = GetUnderlyingObject(op->getPointerOperand(), BB->getModule()->getDataLayout(), 100);
         if (auto arg = dyn_cast<Argument>(obj)) {
           if (volatile_args.find(arg->getArgNo()) != volatile_args.end()) {
             can_modref = true;
           }
         }
-
-        for (unsigned k = 0; k < gutils->originalBlocks.size(); k++) {
-          if (AA.canBasicBlockModify(*(gutils->originalBlocks[k]), MemoryLocation::get(op))) {
-            can_modref = true;
-            break;
+        for (BasicBlock* BB2 : gutils->originalBlocks) {
+          for (auto I2 = BB2->begin(), E2 = BB2->end(); I2 != E2; I2++) {
+            Instruction* inst2 = &*I2;
+            if (inst == inst2) continue;
+            if (!gutils->DT.dominates(inst2, inst)) {
+              if (llvm::isModSet(AA.getModRefInfo(inst2, MemoryLocation::get(op)))) {
+                can_modref = true;
+                break;
+              }
+            }
           }
         }
+        // NOTE(TFK): I need a testcase where this logic below fails to test correctness of logic above.
+        //for (unsigned k = 0; k < gutils->originalBlocks.size(); k++) {
+        //  if (AA.canBasicBlockModify(*(gutils->originalBlocks[k]), MemoryLocation::get(op))) {
+        //    can_modref = true;
+        //    break;
+        //  }
+        //}
         can_modref_map[inst] = can_modref;
       }
     }

@@ -40,11 +40,6 @@ void insertsort_sum (float* array, int N, float* ret) {
   *ret = sum;
 }
 
-//void insertsort_sum (float* array, int N, float* ret) {
-//  insertsort_sum_subcall(array, N, ret);
-//}
-
-
 int main(int argc, char** argv) {
 
 
