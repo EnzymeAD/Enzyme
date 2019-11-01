@@ -44,6 +44,7 @@ void insertsort_sum (float* array, int N, float* ret) {
 }
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 
 =======
 //void insertsort_sum (float* array, int N, float* ret) {
@@ -52,6 +53,8 @@ void insertsort_sum (float* array, int N, float* ret) {
 >>>>>>> add missing files and fix minor bugs
 
 
+=======
+>>>>>>> put in the more strict/correct logic for ordering instructions in single function when checking for modrefs
 int main(int argc, char** argv) {
 
 
