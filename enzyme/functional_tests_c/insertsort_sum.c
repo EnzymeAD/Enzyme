@@ -20,8 +20,12 @@ float* unsorted_array_init(int N) {
 <<<<<<< HEAD
 =======
 //__attribute__((noinline))
+<<<<<<< HEAD
 >>>>>>> add missing files and fix minor bugs
 void insertsort_sum (float* array, int N, float* ret) {
+=======
+void insertsort_sum (float*__restrict array, int N, float*__restrict ret) {
+>>>>>>> bugfix. still unsure if the logic used at topLevel for detecting when we can avoid caching loads is correct though
   float sum = 0;
   //qsort(array, N, sizeof(float), cmp);
 
@@ -35,11 +39,11 @@ void insertsort_sum (float* array, int N, float* ret) {
     }
   }
 
-
   for (int i = 0; i < N/2; i++) {
-    printf("Val: %f\n", array[i]);
+    //printf("Val: %f\n", array[i]);
     sum += array[i];
   }
+
   *ret = sum;
 }
 

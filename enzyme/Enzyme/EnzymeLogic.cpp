@@ -77,6 +77,7 @@ std::map<Instruction*, bool> compute_volatile_load_map(GradientUtils* gutils, AA
             if (!gutils->DT.dominates(inst2, inst)) {
               if (llvm::isModSet(AA.getModRefInfo(inst2, MemoryLocation::get(op)))) {
                 can_modref = true;
+                //llvm::errs() << *inst << " needs to be cached due to: " << *inst2 << "\n";
                 break;
               }
             }
@@ -244,8 +245,9 @@ bool is_load_needed_in_reverse(GradientUtils* gutils, AAResults& AA, Instruction
   while (true) {
     bool new_user_added = false;
     for (unsigned i = 0; i < uses_list.size(); i++) {
-      for (auto use = uses_list[i]->use_begin(); use != uses_list[i]->use_end(); use++) {
+      for (auto use = uses_list[i]->user_begin(), end = uses_list[i]->user_end(); use != end; ++use) {
         Value* v = (*use);
+        //llvm::errs() << "Use list: " << *v << "\n";
         if (uses_set.find(v) == uses_set.end()) {
           uses_set.insert(v);
           uses_list.push_back(v);
@@ -255,27 +257,31 @@ bool is_load_needed_in_reverse(GradientUtils* gutils, AAResults& AA, Instruction
     }
     if (!new_user_added) break;
   }
-  
+  //llvm::errs() << "Analysis for load " << *inst << " which has nuses: " << inst->getNumUses() << "\n"; 
   for (unsigned i = 0; i < uses_list.size(); i++) {
+    //llvm::errs() << "Considering use " << *uses_list[i] << "\n";
     if (uses_list[i] == dyn_cast<Value>(inst)) continue;
+
+    if (isa<CmpInst>(uses_list[i]) || isa<BranchInst>(uses_list[i]) || isa<BitCastInst>(uses_list[i]) || isa<PHINode>(uses_list[i]) || isa<ReturnInst>(uses_list[i]) ||
+        isa<LoadInst>(uses_list[i]) || isa<StoreInst>(uses_list[i])){
+      continue;
+    }
+
     if (auto op = dyn_cast<BinaryOperator>(uses_list[i])) {
       if (op->getOpcode() == Instruction::FAdd || op->getOpcode() == Instruction::FSub) {
         continue;
       } else {
-        llvm::errs() << "Need value of " << *inst << "\n" << "\t Due to " << *op << "\n";
+        //llvm::errs() << "Need value of " << *inst << "\n" << "\t Due to " << *op << "\n";
         return true;
       }
     }
 
-    if (auto op = dyn_cast<LoadInst>(uses_list[i])) {
-      llvm::errs() << "Need value of " << *inst << "\n" << "\t Due to " << *op << "\n";
-      return true;
-    }
+    //if (auto op = dyn_cast<CallInst>(uses_list[i])) {
+    //  //llvm::errs() << "Need value of " << *inst << "\n" << "\t Due to " << *op << "\n";
+    //  return true;
+    //}
 
-    if (auto op = dyn_cast<CallInst>(uses_list[i])) {
-      llvm::errs() << "Need value of " << *inst << "\n" << "\t Due to " << *op << "\n";
-      return true;
-    }
+    //llvm::errs() << "Need value of " << *inst << "\n" << "\t Due to " << *uses_list[i] << "\n";
     return true;
   }
   return false;
