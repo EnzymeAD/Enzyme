@@ -18,7 +18,7 @@ float* unsorted_array_init(int N) {
 
 // sums the first half of a sorted array.
 //__attribute__((noinline))
-void insertsort_sum (float* array, int N, float* ret) {
+void insertsort_sum (float*__restrict array, int N, float*__restrict ret) {
   float sum = 0;
   //qsort(array, N, sizeof(float), cmp);
 
@@ -32,11 +32,11 @@ void insertsort_sum (float* array, int N, float* ret) {
     }
   }
 
-
   for (int i = 0; i < N/2; i++) {
-    printf("Val: %f\n", array[i]);
+    //printf("Val: %f\n", array[i]);
     sum += array[i];
   }
+
   *ret = sum;
 }
 
