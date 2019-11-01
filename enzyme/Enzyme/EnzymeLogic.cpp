@@ -233,6 +233,55 @@ std::map<CallInst*, std::set<unsigned> > compute_volatile_args_for_callsites(
   return volatile_args_map;
 }
 
+// Determine if a load is needed in the reverse pass. We only use this logic in the top level function right now.
+bool is_load_needed_in_reverse(GradientUtils* gutils, AAResults& AA, Instruction* inst) {
+
+  std::vector<Value*> uses_list;
+  std::set<Value*> uses_set;
+  uses_list.push_back(inst);
+  uses_set.insert(inst);
+
+  while (true) {
+    bool new_user_added = false;
+    for (unsigned i = 0; i < uses_list.size(); i++) {
+      for (auto use = uses_list[i]->use_begin(); use != uses_list[i]->use_end(); use++) {
+        Value* v = (*use);
+        if (uses_set.find(v) == uses_set.end()) {
+          uses_set.insert(v);
+          uses_list.push_back(v);
+          new_user_added = true;
+        }
+      }
+    }
+    if (!new_user_added) break;
+  }
+  
+  for (unsigned i = 0; i < uses_list.size(); i++) {
+    if (uses_list[i] == dyn_cast<Value>(inst)) continue;
+    if (auto op = dyn_cast<BinaryOperator>(uses_list[i])) {
+      if (op->getOpcode() == Instruction::FAdd || op->getOpcode() == Instruction::FSub) {
+        continue;
+      } else {
+        llvm::errs() << "Need value of " << *inst << "\n" << "\t Due to " << *op << "\n";
+        return true;
+      }
+    }
+
+    if (auto op = dyn_cast<LoadInst>(uses_list[i])) {
+      llvm::errs() << "Need value of " << *inst << "\n" << "\t Due to " << *op << "\n";
+      return true;
+    }
+
+    if (auto op = dyn_cast<CallInst>(uses_list[i])) {
+      llvm::errs() << "Need value of " << *inst << "\n" << "\t Due to " << *op << "\n";
+      return true;
+    }
+    return true;
+  }
+  return false;
+}
+
+
 //! return structtype if recursive function
 std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResults &AA, const std::set<unsigned>& constant_args, TargetLibraryInfo &TLI, bool differentialReturn, bool returnUsed, const std::set<unsigned> _volatile_args) {
   static std::map<std::tuple<Function*,std::set<unsigned>, std::set<unsigned>, bool/*differentialReturn*/, bool/*returnUsed*/>, std::pair<Function*,StructType*>> cachedfunctions;
@@ -1733,8 +1782,14 @@ Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& co
   std::map<Instruction*, bool> can_modref_map;
   // NOTE(TFK): Sanity check this decision.
   //   Is it always possibly to recompute the result of loads at top level?
-  if (!topLevel) {
     can_modref_map = compute_volatile_load_map(gutils, AA, _volatile_args);
+  if (topLevel) {
+    for (auto iter = can_modref_map.begin(); iter != can_modref_map.end(); iter++) {
+      if (iter->second) {
+        bool is_needed = is_load_needed_in_reverse(gutils, AA, iter->first);
+        can_modref_map[iter->first] = is_needed;
+      }
+    }
   }
   gutils->can_modref_map = &can_modref_map;
 
