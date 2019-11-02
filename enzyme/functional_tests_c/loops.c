@@ -4,7 +4,6 @@
 
 #define __builtin_autodiff __enzyme_autodiff
 
-
 double __enzyme_autodiff(void*, ...);
 
 //float man_max(float* a, float* b) {

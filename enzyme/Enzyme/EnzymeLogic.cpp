@@ -58,6 +58,7 @@ std::map<Instruction*, bool> compute_volatile_load_map(GradientUtils* gutils, AA
   for(BasicBlock* BB: gutils->originalBlocks) {
     for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
       Instruction* inst = &*I;
+      llvm::errs() << "considering instruction " << *inst << "\n";
       if (auto op = dyn_cast<LoadInst>(inst)) {
         if (gutils->isConstantValue(inst) || gutils->isConstantInstruction(inst)) {
           continue;
@@ -71,17 +72,47 @@ std::map<Instruction*, bool> compute_volatile_load_map(GradientUtils* gutils, AA
           }
         }
         for (BasicBlock* BB2 : gutils->originalBlocks) {
-          for (auto I2 = BB2->begin(), E2 = BB2->end(); I2 != E2; I2++) {
-            Instruction* inst2 = &*I2;
-            if (inst == inst2) continue;
-            if (!gutils->DT.dominates(inst2, inst)) {
-              if (llvm::isModSet(AA.getModRefInfo(inst2, MemoryLocation::get(op)))) {
+          llvm::errs() << "looking at basic block " << *BB2 << "\n";
+          if (can_modref) break;
+          llvm::errs() << "A1\n";
+          if (BB == BB2) {
+          llvm::errs() << "A2\n";
+            for (auto I2 = BB2->begin(), E2 = BB2->end(); I2 != E2; I2++) {
+              Instruction* inst2 = &*I2;
+              llvm::errs() << "looking at basic block instruction " << *inst2 << "\n";
+              if (inst == inst2) continue;
+          llvm::errs() << "A3\n";
+              if (!gutils->DT.dominates(inst2, inst)) {
+          llvm::errs() << "A4\n";
+                //if (llvm::isModSet(AA.getModRefInfo(inst2, MemoryLocation::get(op)))) {
+                if (AA.canInstructionRangeModRef (*inst2, *inst2, MemoryLocation::get(op), ModRefInfo::Mod)) {
+          llvm::errs() << "A5\n";
+                  can_modref = true;
+                }
+                //if (llvm::isModSet(AA.getModRefInfo(inst2, MemoryLocation::get(op)))) {
+                //  can_modref = true;
+                //  //llvm::errs() << *inst << " needs to be cached due to: " << *inst2 << "\n";
+                //  break;
+                //}
+          llvm::errs() << "A6\n";
+              }
+          llvm::errs() << "A7\n";
+            }
+          llvm::errs() << "A8\n";
+          } else {
+          llvm::errs() << "A9\n";
+            if (!gutils->DT.dominates(BB2, BB)) {
+          llvm::errs() << "A10\n";
+              if (AA.canBasicBlockModify(*BB2, MemoryLocation::get(op))) {
+          llvm::errs() << "A11\n";
                 can_modref = true;
-                //llvm::errs() << *inst << " needs to be cached due to: " << *inst2 << "\n";
                 break;
               }
+          llvm::errs() << "A12\n";
             }
+          llvm::errs() << "A13\n";
           }
+          llvm::errs() << "A14\n";
         }
         // NOTE(TFK): I need a testcase where this logic below fails to test correctness of logic above.
         //for (unsigned k = 0; k < gutils->originalBlocks.size(); k++) {
@@ -91,6 +122,7 @@ std::map<Instruction*, bool> compute_volatile_load_map(GradientUtils* gutils, AA
         //  }
         //}
         can_modref_map[inst] = can_modref;
+        //can_modref_map[inst] = true;
       }
     }
   }
@@ -106,7 +138,7 @@ std::set<unsigned> compute_volatile_args_for_one_callsite(Instruction* callsite_
   std::set<unsigned> volatile_args;
   std::vector<Value*> args;
   std::vector<bool> args_safe;
-
+  llvm::errs() << "computing volatile args for callsite " << *callsite_inst << "\n";
   // First, we need to propagate the volatile status from the parent function to the callee.
   //   because memory location x modified after parent returns => x modified after callee returns.
   for (unsigned i = 0; i < callsite_op->getNumArgOperands(); i++) {
@@ -289,7 +321,7 @@ bool is_load_needed_in_reverse(GradientUtils* gutils, AAResults& AA, Instruction
 
 
 //! return structtype if recursive function
-std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResults &AA, const std::set<unsigned>& constant_args, TargetLibraryInfo &TLI, bool differentialReturn, bool returnUsed, const std::set<unsigned> _volatile_args) {
+std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResults &_AA, const std::set<unsigned>& constant_args, TargetLibraryInfo &TLI, bool differentialReturn, bool returnUsed, const std::set<unsigned> _volatile_args) {
   static std::map<std::tuple<Function*,std::set<unsigned>, std::set<unsigned>, bool/*differentialReturn*/, bool/*returnUsed*/>, std::pair<Function*,StructType*>> cachedfunctions;
   static std::map<std::tuple<Function*,std::set<unsigned>, std::set<unsigned>, bool/*differentialReturn*/, bool/*returnUsed*/>, bool> cachedfinished;
   auto tup = std::make_tuple(todiff, std::set<unsigned>(constant_args.begin(), constant_args.end()), std::set<unsigned>(_volatile_args.begin(), _volatile_args.end()), differentialReturn, returnUsed);
@@ -351,13 +383,13 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
     llvm::errs() << *todiff << "\n";
   }
   assert(!todiff->empty());
-
+  AAResults AA(TLI); 
   GradientUtils *gutils = GradientUtils::CreateFromClone(todiff, AA, TLI, constant_args, /*returnValue*/returnUsed ? ReturnType::TapeAndReturns : ReturnType::Tape, /*differentialReturn*/differentialReturn);
   cachedfunctions[tup] = std::pair<Function*,StructType*>(gutils->newFunc, nullptr);
   cachedfinished[tup] = false;
 
-  std::map<CallInst*, std::set<unsigned> > volatile_args_map =
-      compute_volatile_args_for_callsites(gutils->oldFunc, gutils->DT, TLI, AA, gutils, _volatile_args);
+  std::map<CallInst*, std::set<unsigned> > volatile_args_map;/* =
+      compute_volatile_args_for_callsites(gutils->oldFunc, gutils->DT, TLI, AA, gutils, _volatile_args);*/
 
   std::map<Instruction*, bool> can_modref_map = compute_volatile_load_map(gutils, AA, _volatile_args);
   gutils->can_modref_map = &can_modref_map;
@@ -419,6 +451,7 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
         if (gutils->originalInstructions.find(inst) == gutils->originalInstructions.end()) continue;
     
         if(auto op = dyn_cast_or_null<IntrinsicInst>(inst)) {
+          llvm::errs() << "TFKDEBUG OP " << *op << " WITH INTRINSIC ID " << op->getIntrinsicID() << "\n";
           switch(op->getIntrinsicID()) {
             case Intrinsic::memcpy: {
                 if (gutils->isConstantInstruction(inst)) continue;
@@ -579,6 +612,7 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
                 auto argType = op->getArgOperand(i)->getType();
 
                 if (argType->isPointerTy() || argType->isIntegerTy()) {
+                    llvm::errs() << "TFKDEBUG " << *op << "\n";
                     argsInverted.push_back(DIFFE_TYPE::DUP_ARG);
                     args.push_back(gutils->invertPointerM(op->getArgOperand(i), BuilderZ));
 
@@ -644,20 +678,21 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
                     gutils->addMalloc(BuilderZ, rv);
                   }
 
-                  if ((op->getType()->isPointerTy() || op->getType()->isIntegerTy()) && subdifferentialreturn) {
+                  if ((op->getType()->isPointerTy() || op->getType()->isIntegerTy()) && gutils->invertedPointers.count(op) != 0) {
                     auto placeholder = cast<PHINode>(gutils->invertedPointers[op]);
                     if (I != E && placeholder == &*I) I++;
                     gutils->invertedPointers.erase(op);
                     
-                    assert(cast<StructType>(augmentcall->getType())->getNumElements() == 3);
-                    auto antiptr = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {2}, "antiptr_" + op->getName() ));
-                    gutils->invertedPointers[rv] = antiptr;
-                    placeholder->replaceAllUsesWith(antiptr);
+                    if (subdifferentialreturn) {
+                      assert(cast<StructType>(augmentcall->getType())->getNumElements() == 3);
+                      auto antiptr = cast<Instruction>(BuilderZ.CreateExtractValue(augmentcall, {2}, "antiptr_" + op->getName() ));
+                      gutils->invertedPointers[rv] = antiptr;
+                      placeholder->replaceAllUsesWith(antiptr);
 
-                    if (shouldCache) {
-                        gutils->addMalloc(BuilderZ, antiptr);
+                      if (shouldCache) {
+                          gutils->addMalloc(BuilderZ, antiptr);
+                      }
                     }
-
                     gutils->erase(placeholder);
                   } else {
                     if (cast<StructType>(augmentcall->getType())->getNumElements() != 2) {
@@ -671,6 +706,13 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
                   }
 
                   gutils->replaceAWithB(op,rv);
+                } else {
+                  if ((op->getType()->isPointerTy() || op->getType()->isIntegerTy()) && gutils->invertedPointers.count(op) != 0) {
+                    auto placeholder = cast<PHINode>(gutils->invertedPointers[op]);
+                    if (I != E && placeholder == &*I) I++;
+                    gutils->invertedPointers.erase(op);
+                    gutils->erase(placeholder);
+                  }
                 }
 
                 gutils->erase(op);
@@ -1673,7 +1715,7 @@ void handleGradientCallInst(BasicBlock::reverse_iterator &I, const BasicBlock::r
   }
 }
 
-Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& constant_args, TargetLibraryInfo &TLI, AAResults &AA, bool returnValue, bool differentialReturn, bool topLevel, llvm::Type* additionalArg, std::set<unsigned> _volatile_args) {
+Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& constant_args, TargetLibraryInfo &TLI, AAResults &_AA, bool returnValue, bool differentialReturn, bool topLevel, llvm::Type* additionalArg, std::set<unsigned> _volatile_args) {
   if (differentialReturn) {
       if(!todiff->getReturnType()->isFPOrFPVectorTy()) {
          llvm::errs() << *todiff << "\n";
@@ -1779,16 +1821,16 @@ Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& co
 
   auto& Context = M->getContext();
 
+  AAResults AA(TLI); 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(todiff, AA, TLI, constant_args, returnValue ? ReturnType::ArgsWithReturn : ReturnType::Args, differentialReturn, additionalArg);
   cachedfunctions[tup] = gutils->newFunc;
 
   std::map<CallInst*, std::set<unsigned> > volatile_args_map =
       compute_volatile_args_for_callsites(gutils->oldFunc, gutils->DT, TLI, AA, gutils, _volatile_args);
 
-  std::map<Instruction*, bool> can_modref_map;
+  std::map<Instruction*, bool> can_modref_map = compute_volatile_load_map(gutils, AA, _volatile_args);
   // NOTE(TFK): Sanity check this decision.
   //   Is it always possibly to recompute the result of loads at top level?
-    can_modref_map = compute_volatile_load_map(gutils, AA, _volatile_args);
   if (topLevel) {
     for (auto iter = can_modref_map.begin(); iter != can_modref_map.end(); iter++) {
       if (iter->second) {
@@ -1966,8 +2008,12 @@ Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& co
           break;
         }
         default:
+          //continue;
           assert(op);
-          llvm::errs() << *gutils->newFunc << "\n";
+          llvm::errs() << "OLDFUNC:\n" << *gutils->oldFunc << "\n";
+          llvm::errs() << "NEWFUNC:\n" << *gutils->newFunc << "\n";
+
+
           llvm::errs() << "cannot handle unknown binary operator: " << *op << "\n";
           report_fatal_error("unknown binary operator");
       }

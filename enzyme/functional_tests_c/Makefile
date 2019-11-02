@@ -20,6 +20,10 @@ all: $(patsubst %.c,build/%-enzyme0,$(OBJ)) $(patsubst %.c,build/%-enzyme1,$(OBJ
 
 POST_ENZYME_FLAGS := -mem2reg -sroa -adce -simplifycfg -enzyme_cachereads=true -enzyme_print=true
 
+#CC := clang
+#CSTD := -std=c11
+CC := clang
+CSTD := -std=c11
 #all: $(patsubst %.c,build/%-enzyme1,$(OBJ)) $(patsubst %.c,build/%-enzyme2,$(OBJ)) $(patsubst %.c,build/%-enzyme3,$(OBJ))
 #clean:
 #	rm -f main main-* main.ll
@@ -33,28 +37,28 @@ POST_ENZYME_FLAGS := -mem2reg -sroa -adce -simplifycfg -enzyme_cachereads=true -
 
 # /efs/home/tfk/valgrind-3.12.0/vg-in-place
 build/%-enzyme0: %.c
-	@./setup.sh $(CLANG_BIN_PATH)/clang -std=c11 -O1 $(patsubst %.c,%,$<).c -S -emit-llvm -o $@.ll
+	@./setup.sh $(CLANG_BIN_PATH)/$(CC) $(CSTD) -O1 $(patsubst %.c,%,$<).c -S -emit-llvm -o $@.ll
 	@./setup.sh $(CLANG_BIN_PATH)/opt $@.ll $(EXTRA_FLAGS) -load=$(ENZYME_PLUGIN) -enzyme $(POST_ENZYME_FLAGS) -o $@.bc
-	@./setup.sh $(CLANG_BIN_PATH)/clang -std=c11 $@.bc -S -emit-llvm -o $@-final.ll
-	@./setup.sh $(CLANG_BIN_PATH)/clang -std=c11 $@.bc -o $@
+	@./setup.sh $(CLANG_BIN_PATH)/$(CC) $(CSTD) $@.bc -S -emit-llvm -o $@-final.ll
+	@./setup.sh $(CLANG_BIN_PATH)/$(CC) $(CSTD) $@.bc -o $@
 
 build/%-enzyme1: %.c
-	@./setup.sh $(CLANG_BIN_PATH)/clang -std=c11 -O1 $(patsubst %.c,%,$<).c -S -emit-llvm -o $@.ll
+	@./setup.sh $(CLANG_BIN_PATH)/$(CC) $(CSTD) -O1 $(patsubst %.c,%,$<).c -S -emit-llvm -o $@.ll
 	@./setup.sh $(CLANG_BIN_PATH)/opt $@.ll $(EXTRA_FLAGS) -load=$(ENZYME_PLUGIN) -enzyme $(POST_ENZYME_FLAGS) -o $@.bc
-	@./setup.sh $(CLANG_BIN_PATH)/clang -std=c11 $@.bc -S -emit-llvm -o $@-final.ll
-	@./setup.sh $(CLANG_BIN_PATH)/clang -std=c11 $@.bc -o $@
+	@./setup.sh $(CLANG_BIN_PATH)/$(CC) $(CSTD) $@.bc -S -emit-llvm -o $@-final.ll
+	@./setup.sh $(CLANG_BIN_PATH)/$(CC) $(CSTD) $@.bc -o $@
 
 build/%-enzyme2: %.c
-	@./setup.sh $(CLANG_BIN_PATH)/clang -std=c11 -O2 $(patsubst %.c,%,$<).c -S -emit-llvm -o $@.ll
+	@./setup.sh $(CLANG_BIN_PATH)/$(CC) $(CSTD) -O2 $(patsubst %.c,%,$<).c -S -emit-llvm -o $@.ll
 	@./setup.sh $(CLANG_BIN_PATH)/opt $@.ll $(EXTRA_FLAGS) -load=$(ENZYME_PLUGIN) -enzyme $(POST_ENZYME_FLAGS) -o $@.bc
-	@./setup.sh $(CLANG_BIN_PATH)/clang -std=c11 $@.bc -S -emit-llvm -o $@-final.ll
-	@./setup.sh $(CLANG_BIN_PATH)/clang -std=c11 $@.bc -o $@
+	@./setup.sh $(CLANG_BIN_PATH)/$(CC) $(CSTD) $@.bc -S -emit-llvm -o $@-final.ll
+	@./setup.sh $(CLANG_BIN_PATH)/$(CC) $(CSTD) $@.bc -o $@
 
 build/%-enzyme3: %.c
-	@./setup.sh $(CLANG_BIN_PATH)/clang -std=c11 -O3 $(patsubst %.c,%,$<).c -S -emit-llvm -o $@.ll
+	@./setup.sh $(CLANG_BIN_PATH)/$(CC) $(CSTD) -O3 $(patsubst %.c,%,$<).c -S -emit-llvm -o $@.ll
 	@./setup.sh $(CLANG_BIN_PATH)/opt $@.ll $(EXTRA_FLAGS) -load=$(ENZYME_PLUGIN) -enzyme $(POST_ENZYME_FLAGS) -o $@.bc
-	@./setup.sh $(CLANG_BIN_PATH)/clang -std=c11 $@.bc -S -emit-llvm -o $@-final.ll
-	@./setup.sh $(CLANG_BIN_PATH)/clang -std=c11 $@.bc -o $@
+	@./setup.sh $(CLANG_BIN_PATH)/$(CC) $(CSTD) $@.bc -S -emit-llvm -o $@-final.ll
+	@./setup.sh $(CLANG_BIN_PATH)/$(CC) $(CSTD) $@.bc -o $@
 
 
 %-enzyme-test0: build/%-enzyme0

@@ -55,6 +55,7 @@ bool isIntASecretFloat(Value* val) {
     if (auto inst = dyn_cast<Instruction>(val)) {
         bool floatingUse = false;
         bool pointerUse = false;
+        bool intUse = false;
         SmallPtrSet<Value*, 4> seen;
 
         std::function<void(Value*)> trackPointer = [&](Value* v) {
@@ -126,12 +127,50 @@ bool isIntASecretFloat(Value* val) {
             if (auto si = dyn_cast<StoreInst>(use)) {
                 assert(inst == si->getValueOperand());
 
+                if (MDNode* md = si->getMetadata(LLVMContext::MD_tbaa)) {
+                  llvm::errs() << "TFKDEBUG MDNode " << *md << " Inst is " << *inst << " " << *si <<"\n";
+                  if (md->getNumOperands() == 3) {
+                    const MDOperand& accessType = md->getOperand(1);
+                    Metadata* metadata = accessType.get();
+                    if (auto mda = dyn_cast<MDNode>(metadata)) {
+                      if (mda->getNumOperands() > 0) {
+                        const MDOperand& underlyingType = mda->getOperand(0);
+                        Metadata* metadata2 = underlyingType.get();
+                        if (auto typeName = dyn_cast<MDString>(metadata2)) {
+                          auto typeNameStringRef = typeName->getString();
+                          if (typeNameStringRef == "long") {
+                            intUse = true; 
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
                 trackPointer(si->getPointerOperand());
             }
         }
 
         if (auto li = dyn_cast<LoadInst>(inst)) {
-            trackPointer(li->getOperand(0));
+          if (MDNode* md = li->getMetadata(LLVMContext::MD_tbaa)) {
+            llvm::errs() << "TFKDEBUG MDNode " << *md << " Inst is " << *inst << " " << *li <<"\n";
+            if (md->getNumOperands() == 3) {
+              const MDOperand& accessType = md->getOperand(1);
+              Metadata* metadata = accessType.get();
+              if (auto mda = dyn_cast<MDNode>(metadata)) {
+                if (mda->getNumOperands() > 0) {
+                  const MDOperand& underlyingType = mda->getOperand(0);
+                  Metadata* metadata2 = underlyingType.get();
+                  if (auto typeName = dyn_cast<MDString>(metadata2)) {
+                    auto typeNameStringRef = typeName->getString();
+                    if (typeNameStringRef == "long") {
+                      intUse = true; 
+                    }
+                  }
+                }
+              }
+            }
+          }
+          trackPointer(li->getOperand(0));
         }
 
         if (auto ci = dyn_cast<BitCastInst>(inst)) {
@@ -147,11 +186,11 @@ bool isIntASecretFloat(Value* val) {
         if (isa<PtrToIntInst>(inst)) {
             pointerUse = true;
         }
-
-        if (pointerUse && !floatingUse) return false; 
-        if (!pointerUse && floatingUse) return true;
+        if (intUse && !pointerUse && !floatingUse) return false;
+        if (!intUse && pointerUse && !floatingUse) return false; 
+        if (!intUse && !pointerUse && floatingUse) return true;
         llvm::errs() << *inst->getParent()->getParent() << "\n";
-        llvm::errs() << " val:" << *val << " pointer:" << pointerUse << " floating:" << floatingUse << "\n";
+        llvm::errs() << " val:" << *val << " pointer:" << pointerUse << " floating:" << floatingUse << " intuse: " << intUse << "\n";
         assert(0 && "ambiguous unsure if constant or not");
     }
 
@@ -296,6 +335,17 @@ bool isconstantM(Instruction* inst, SmallPtrSetImpl<Value*> &constants, SmallPtr
 			}
 		}
 	}
+
+    if (auto op = dyn_cast<BinaryOperator>(inst)) {
+      switch(op->getOpcode()) {
+        //case BinaryOperator::Add:
+        case BinaryOperator::Mul:
+          constants.insert(inst);
+          return true;
+        default:
+          break;
+      }
+    }
 	
     if (auto op = dyn_cast<IntrinsicInst>(inst)) {
 		switch(op->getIntrinsicID()) {
