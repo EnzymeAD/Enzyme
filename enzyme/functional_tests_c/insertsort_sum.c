@@ -16,18 +16,8 @@ float* unsorted_array_init(int N) {
   return arr;
 }
 
-// sums the first half of a sorted array.
-<<<<<<< HEAD
-=======
-//__attribute__((noinline))
-<<<<<<< HEAD
->>>>>>> add missing files and fix minor bugs
-void insertsort_sum (float* array, int N, float* ret) {
-=======
 void insertsort_sum (float*__restrict array, int N, float*__restrict ret) {
->>>>>>> bugfix. still unsure if the logic used at topLevel for detecting when we can avoid caching loads is correct though
   float sum = 0;
-  //qsort(array, N, sizeof(float), cmp);
 
   for (int i = 1; i < N; i++) {
     int j = i;
@@ -47,31 +37,8 @@ void insertsort_sum (float*__restrict array, int N, float*__restrict ret) {
   *ret = sum;
 }
 
-<<<<<<< HEAD
-<<<<<<< HEAD
 
-=======
-//void insertsort_sum (float* array, int N, float* ret) {
-//  insertsort_sum_subcall(array, N, ret);
-//}
->>>>>>> add missing files and fix minor bugs
-
-
-=======
->>>>>>> put in the more strict/correct logic for ordering instructions in single function when checking for modrefs
 int main(int argc, char** argv) {
-
-
-
-  float a = 2.0;
-  float b = 3.0;
-
-
-
-  float da = 0;
-  float db = 0;
-
-
   float ret = 0;
   float dret = 1.0;
 
@@ -88,17 +55,14 @@ int main(int argc, char** argv) {
     printf("%d:%f\n", i, array[i]); 
   }
 
-  //insertsort_sum(array, N, &ret);
+  __builtin_autodiff(insertsort_sum, array, d_array, N, &ret, &dret);
+
+  printf("The total sum is %f\n", ret);
 
   printf("Array after sorting:\n");
   for (int i = 0; i < N; i++) {
     printf("%d:%f\n", i, array[i]); 
   }
-
-
-  printf("The total sum is %f\n", ret);
-
-  __builtin_autodiff(insertsort_sum, array, d_array, N, &ret, &dret);
 
   for (int i = 0; i < N; i++) {
     printf("Diffe for index %d is %f\n", i, d_array[i]);
@@ -108,13 +72,5 @@ int main(int argc, char** argv) {
       assert(d_array[i] == 1.0);
     }
   }
-
-  //__builtin_autodiff(compute_loops, &a, &da, &b, &db, &ret, &dret);
-
-
-  //assert(da == 100*1.0f);
-  //assert(db == 100*1.0f);
-
-  //printf("hello! %f, res2 %f, da: %f, db: %f\n", ret, ret, da,db);
   return 0;
 }
