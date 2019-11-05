@@ -306,7 +306,7 @@ DiffeGradientUtils* DiffeGradientUtils::CreateFromClone(Function *todiff, AAResu
 }
 
 Value* GradientUtils::invertPointerM(Value* val, IRBuilder<>& BuilderM) {
-    if (isa<Constant>(val)) return val;
+    //if (isa<Constant>(val)) return val;
     if (isa<ConstantPointerNull>(val)) {
         return val;
     } else if (isa<UndefValue>(val)) {

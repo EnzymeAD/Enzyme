@@ -51,25 +51,69 @@ cl::opt<bool> cachereads(
             "enzyme_cachereads", cl::init(true), cl::Hidden,
             cl::desc("Force caching of all reads"));
 
-std::map<Instruction*, bool> compute_volatile_load_map(GradientUtils* gutils, AAResults& AA,
+
+
+
+
+
+// Computes a map of LoadInst -> boolean for a function indicating whether that load is "volatile".
+//   A load is considered "volatile" if the data at the loaded memory location can be modified after
+//   the load instruction.
+std::map<Instruction*, bool> compute_volatile_load_map(GradientUtils* gutils, AAResults& AA, TargetLibraryInfo& TLI,
     std::set<unsigned> volatile_args) {
   std::map<Instruction*, bool> can_modref_map;
-  // NOTE(TFK): Want to construct a test case where this causes an issue.
   for(BasicBlock* BB: gutils->originalBlocks) {
     for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
       Instruction* inst = &*I;
+      // For each load instruction, determine if it is volatile.
       if (auto op = dyn_cast<LoadInst>(inst)) {
+        // NOTE(TFK): The reasoning behind skipping ConstantValues and ConstantInstructions needs to be fleshed out.
         if (gutils->isConstantValue(inst) || gutils->isConstantInstruction(inst)) {
           continue;
         }
 
         bool can_modref = false;
+        // Find the underlying object for the pointer operand of the load instruction.
         auto obj = GetUnderlyingObject(op->getPointerOperand(), BB->getModule()->getDataLayout(), 100);
+        // If the pointer operand is from an argument to the function, we need to check if the argument
+        //   received from the caller is volatile.
         if (auto arg = dyn_cast<Argument>(obj)) {
           if (volatile_args.find(arg->getArgNo()) != volatile_args.end()) {
             can_modref = true;
           }
+        } else {
+          // NOTE(TFK): In the case where the underlying object for the pointer operand is from a Load or Call we need
+          //  to check if we need to cache. Likely, we need to play it safe in this case and cache.
+          // NOTE(TFK): The logic below is an attempt at a conservative handling of the case mentioned above, but it
+          //   needs to be verified.
+
+          // Pointer operands originating from call instructions that are not malloc/free are conservatively considered volatile.
+          if (auto obj_op = dyn_cast<CallInst>(obj)) {
+            Function* called = obj_op->getCalledFunction();
+            if (auto castinst = dyn_cast<ConstantExpr>(obj_op->getCalledValue())) {
+              if (castinst->isCast()) {
+                if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
+                  if (isAllocationFunction(*fn, TLI) || isDeallocationFunction(*fn, TLI)) {
+                    called = fn;
+                  }
+                }
+              }
+            }
+            if (isCertainMallocOrFree(called)) {
+              llvm::errs() << "OP is certain malloc or free: " << *op << "\n";
+            } else {
+              llvm::errs() << "OP is a non malloc/free call so we need to cache " << *op << "\n";
+              can_modref = true;
+            }
+          } else if (auto obj_op = dyn_cast<LoadInst>(obj)) {
+            // If obj is from a load instruction conservatively consider it volatile.
+            can_modref = true;
+          } else {
+            // In absence of more information, assume that the underlying object for pointer operand is volatile in caller.
+            can_modref = true;
+          }
         }
+
         for (BasicBlock* BB2 : gutils->originalBlocks) {
           for (auto I2 = BB2->begin(), E2 = BB2->end(); I2 != E2; I2++) {
             Instruction* inst2 = &*I2;
@@ -77,26 +121,18 @@ std::map<Instruction*, bool> compute_volatile_load_map(GradientUtils* gutils, AA
             if (!gutils->DT.dominates(inst2, inst)) {
               if (llvm::isModSet(AA.getModRefInfo(inst2, MemoryLocation::get(op)))) {
                 can_modref = true;
-                llvm::errs() << *inst << " needs to be cached due to: " << *inst2 << "\n";
+                //llvm::errs() << *inst << " needs to be cached due to: " << *inst2 << "\n";
                 break;
               }
             }
           }
         }
-        // NOTE(TFK): I need a testcase where this logic below fails to test correctness of logic above.
-        //for (unsigned k = 0; k < gutils->originalBlocks.size(); k++) {
-        //  if (AA.canBasicBlockModify(*(gutils->originalBlocks[k]), MemoryLocation::get(op))) {
-        //    can_modref = true;
-        //    break;
-        //  }
-        //}
         can_modref_map[inst] = can_modref;
       }
     }
   }
   return can_modref_map;
 }
-
 
 std::set<unsigned> compute_volatile_args_for_one_callsite(Instruction* callsite_inst, DominatorTree &DT,
     TargetLibraryInfo &TLI, AAResults& AA, GradientUtils* gutils, std::set<unsigned> parent_volatile_args) {
@@ -120,6 +156,32 @@ std::set<unsigned> compute_volatile_args_for_one_callsite(Instruction* callsite_
       // If underlying object is an Argument, check parent volatility status.
       if (auto arg = dyn_cast<Argument>(obj)) {
         if (parent_volatile_args.find(arg->getArgNo()) != parent_volatile_args.end()) {
+          init_safe = false;
+        }
+      } else {
+        // Pointer operands originating from call instructions that are not malloc/free are conservatively considered volatile.
+        if (auto obj_op = dyn_cast<CallInst>(obj)) {
+          Function* called = obj_op->getCalledFunction();
+          if (auto castinst = dyn_cast<ConstantExpr>(obj_op->getCalledValue())) {
+            if (castinst->isCast()) {
+              if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
+                if (isAllocationFunction(*fn, TLI) || isDeallocationFunction(*fn, TLI)) {
+                  called = fn;
+                }
+              }
+            }
+          }
+          if (isCertainMallocOrFree(called)) {
+            //llvm::errs() << "OP is certain malloc or free: " << *op << "\n";
+          } else {
+            //llvm::errs() << "OP is a non malloc/free call so we need to cache " << *op << "\n";
+            init_safe = false;
+          }
+        } else if (auto obj_op = dyn_cast<LoadInst>(obj)) {
+          // If obj is from a load instruction conservatively consider it volatile.
+          init_safe = false;
+        } else {
+          // In absence of more information, assume that the underlying object for pointer operand is volatile in caller.
           init_safe = false;
         }
       }
@@ -262,13 +324,13 @@ bool is_load_needed_in_reverse(GradientUtils* gutils, AAResults& AA, Instruction
     }
     if (!new_user_added) break;
   }
-  //llvm::errs() << "Analysis for load " << *inst << " which has nuses: " << inst->getNumUses() << "\n"; 
+  llvm::errs() << "Analysis for load " << *inst << " which has nuses: " << inst->getNumUses() << "\n"; 
   for (unsigned i = 0; i < uses_list.size(); i++) {
-    //llvm::errs() << "Considering use " << *uses_list[i] << "\n";
+    llvm::errs() << "Considering use " << *uses_list[i] << "\n";
     if (uses_list[i] == dyn_cast<Value>(inst)) continue;
 
-    if (isa<CmpInst>(uses_list[i]) || isa<BranchInst>(uses_list[i]) || isa<BitCastInst>(uses_list[i]) || isa<PHINode>(uses_list[i]) || isa<ReturnInst>(uses_list[i]) ||
-        isa<LoadInst>(uses_list[i]) || isa<StoreInst>(uses_list[i])){
+    if (isa<CmpInst>(uses_list[i]) || isa<BranchInst>(uses_list[i]) || isa<BitCastInst>(uses_list[i]) || isa<PHINode>(uses_list[i]) || isa<ReturnInst>(uses_list[i]) || isa<FPExtInst>(uses_list[i]) ||
+        isa<LoadInst>(uses_list[i]) /*|| isa<StoreInst>(uses_list[i])*/){
       continue;
     }
 
@@ -276,18 +338,18 @@ bool is_load_needed_in_reverse(GradientUtils* gutils, AAResults& AA, Instruction
       if (op->getOpcode() == Instruction::FAdd || op->getOpcode() == Instruction::FSub) {
         continue;
       } else {
-        //llvm::errs() << "Need value of " << *inst << "\n" << "\t Due to " << *op << "\n";
+        llvm::errs() << "Need value of " << *inst << "\n" << "\t Due to " << *op << "\n";
         return true;
       }
     }
 
     //if (auto op = dyn_cast<CallInst>(uses_list[i])) {
-    //  //llvm::errs() << "Need value of " << *inst << "\n" << "\t Due to " << *op << "\n";
+    //  llvm::errs() << "Need value of " << *inst << "\n" << "\t Due to " << *op << "\n";
     //  return true;
     //}
 
     //llvm::errs() << "Need value of " << *inst << "\n" << "\t Due to " << *uses_list[i] << "\n";
-    return true;
+    //return true;
   }
   return false;
 }
@@ -365,15 +427,15 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
   std::map<CallInst*, std::set<unsigned> > volatile_args_map =
       compute_volatile_args_for_callsites(gutils->oldFunc, gutils->DT, TLI, AA, gutils, _volatile_args);
 
-  std::map<Instruction*, bool> can_modref_map = compute_volatile_load_map(gutils, AA, _volatile_args);
+  std::map<Instruction*, bool> can_modref_map = compute_volatile_load_map(gutils, AA, TLI, _volatile_args);
   gutils->can_modref_map = &can_modref_map;
 
-    for (auto iter = can_modref_map.begin(); iter != can_modref_map.end(); iter++) {
-      if (iter->second) {
-        bool is_needed = is_load_needed_in_reverse(gutils, AA, iter->first);
-        //can_modref_map[iter->first] = is_needed;
-      }
-    }
+    //for (auto iter = can_modref_map.begin(); iter != can_modref_map.end(); iter++) {
+    //  if (iter->second) {
+    //    bool is_needed = is_load_needed_in_reverse(gutils, AA, iter->first);
+    //    can_modref_map[iter->first] = is_needed;
+    //  }
+    //}
 
 
   gutils->forceContexts();
@@ -1815,7 +1877,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& co
   std::map<Instruction*, bool> can_modref_map;
   // NOTE(TFK): Sanity check this decision.
   //   Is it always possibly to recompute the result of loads at top level?
-    can_modref_map = compute_volatile_load_map(gutils, AA, _volatile_args);
+    can_modref_map = compute_volatile_load_map(gutils, AA, TLI, _volatile_args);
   if (topLevel) {
     for (auto iter = can_modref_map.begin(); iter != can_modref_map.end(); iter++) {
       if (iter->second) {
@@ -1993,7 +2055,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& co
           break;
         }
         default:
-          continue; // NOTE(TFK) added this.
+          //continue; // NOTE(TFK) added this.
           assert(op);
           llvm::errs() << *gutils->newFunc << "\n";
           llvm::errs() << "cannot handle unknown binary operator: " << *op << "\n";
