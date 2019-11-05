@@ -152,7 +152,8 @@ bool isIntASecretFloat(Value* val) {
         if (!pointerUse && floatingUse) return true;
         llvm::errs() << *inst->getParent()->getParent() << "\n";
         llvm::errs() << " val:" << *val << " pointer:" << pointerUse << " floating:" << floatingUse << "\n";
-        assert(0 && "ambiguous unsure if constant or not");
+        //assert(0 && "ambiguous unsure if constant or not");
+        return false; // NOTE(TFK): Return false instead of asset.
     }
 
     llvm::errs() << *val << "\n";

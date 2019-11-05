@@ -164,8 +164,13 @@ PHINode* canonicalizeIVs(fake::SCEVExpander &e, Type *Ty, Loop *L, DominatorTree
 
 Function* preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI) {
  static std::map<Function*,Function*> cache;
- if (cache.find(F) != cache.end()) return cache[F];
-
+ static std::map<Function*, BasicAAResult*> cache_AA;
+ llvm::errs() << "Before cache lookup for " << F->getName() << "\n";
+ if (cache.find(F) != cache.end()) {
+   AA.addAAResult(*(cache_AA[F]));
+   return cache[F];
+ }
+ llvm::errs() << "Did not do cache lookup for " << F->getName() << "\n";
  Function *NewF = Function::Create(F->getFunctionType(), F->getLinkage(), "preprocess_" + F->getName(), F->getParent());
 
  ValueToValueMapTy VMap;
@@ -469,8 +474,8 @@ Function* preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI)
                         &AM.getResult<DominatorTreeAnalysis>(*NewF),
                         AM.getCachedResult<LoopAnalysis>(*NewF),
                         AM.getCachedResult<PhiValuesAnalysis>(*NewF));
+ cache_AA[F] = baa;
  AA.addAAResult(*baa);
-
  //ScopedNoAliasAA sa;
  //auto saa = new ScopedNoAliasAAResult(sa.run(*NewF, AM));
  //AA.addAAResult(*saa);
