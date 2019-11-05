@@ -18,7 +18,7 @@ OBJ := $(wildcard *.c)
 
 all: $(patsubst %.c,build/%-enzyme0,$(OBJ)) $(patsubst %.c,build/%-enzyme1,$(OBJ)) $(patsubst %.c,build/%-enzyme2,$(OBJ)) $(patsubst %.c,build/%-enzyme3,$(OBJ))
 
-POST_ENZYME_FLAGS := -mem2reg -sroa -adce -simplifycfg -enzyme_print=true
+POST_ENZYME_FLAGS := -mem2reg -sroa -adce -simplifycfg
 
 #all: $(patsubst %.c,build/%-enzyme1,$(OBJ)) $(patsubst %.c,build/%-enzyme2,$(OBJ)) $(patsubst %.c,build/%-enzyme3,$(OBJ))
 #clean:
