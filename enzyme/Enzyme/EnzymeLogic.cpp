@@ -49,11 +49,11 @@ llvm::cl::opt<bool> enzyme_print("enzyme_print", cl::init(false), cl::Hidden,
 
 cl::opt<bool> cache_reads_always(
             "enzyme_always_cache_reads", cl::init(false), cl::Hidden,
-            cl::desc("Force caching of all reads"));
+            cl::desc("Force always caching of all reads"));
 
 cl::opt<bool> cache_reads_never(
             "enzyme_never_cache_reads", cl::init(false), cl::Hidden,
-            cl::desc("Force caching of all reads"));
+            cl::desc("Force never caching of all reads"));
 
 
 
@@ -69,9 +69,9 @@ std::map<Instruction*, bool> compute_uncacheable_load_map(GradientUtils* gutils,
       // For each load instruction, determine if it is uncacheable.
       if (auto op = dyn_cast<LoadInst>(inst)) {
         // NOTE(TFK): The reasoning behind skipping ConstantValues and ConstantInstructions needs to be fleshed out.
-        if (gutils->isConstantValue(inst) || gutils->isConstantInstruction(inst)) {
-          continue;
-        }
+        //if (gutils->isConstantValue(inst) || gutils->isConstantInstruction(inst)) {
+        //  continue;
+        //}
 
         bool can_modref = false;
         // Find the underlying object for the pointer operand of the load instruction.
