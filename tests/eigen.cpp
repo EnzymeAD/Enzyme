@@ -62,6 +62,8 @@ static void matvec(const MatrixXd& __restrict W,
     //printf("foo.rows()=%ld foo.cols()=%ld\n", foo.rows(), foo.cols());
     //printf("b.rows()=%ld b.cols()=%ld\n", b.rows(), b.cols());
     //printf("W.rows()=%ld W.cols()=%ld\n", W.rows(), W.cols());
+    
+  /*
   auto wr = W.rows();
   __builtin_assume(wr > 0);
   auto wr8 = wr << 3;
@@ -80,6 +82,7 @@ static void matvec(const MatrixXd& __restrict W,
   
   __builtin_assume(fr == wr);
   __builtin_assume(wc == br);
+  */
   foo = W * b;
     //printf("r foo.rows()=%ld foo.cols()=%ld\n", foo.rows(), foo.cols());
     //printf("r b.rows()=%ld b.cols()=%ld\n", b.rows(), b.cols());
