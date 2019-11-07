@@ -357,7 +357,7 @@ bool is_load_needed_in_reverse(GradientUtils* gutils, AAResults& AA, Instruction
 
 
 //! return structtype if recursive function
-std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResults &_AA, const std::set<unsigned>& constant_args, TargetLibraryInfo &TLI, bool differentialReturn, bool returnUsed, const std::set<unsigned> _uncacheable_args) {
+std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResults &global_AA, const std::set<unsigned>& constant_args, TargetLibraryInfo &TLI, bool differentialReturn, bool returnUsed, const std::set<unsigned> _uncacheable_args) {
   static std::map<std::tuple<Function*,std::set<unsigned>/*constant_args*/, std::set<unsigned>/*uncacheable_args*/, bool/*differentialReturn*/, bool/*returnUsed*/>, std::pair<Function*,StructType*>> cachedfunctions;
   static std::map<std::tuple<Function*,std::set<unsigned>/*constant_args*/, std::set<unsigned>/*uncacheable_args*/, bool/*differentialReturn*/, bool/*returnUsed*/>, bool> cachedfinished;
   auto tup = std::make_tuple(todiff, std::set<unsigned>(constant_args.begin(), constant_args.end()), std::set<unsigned>(_uncacheable_args.begin(), _uncacheable_args.end()), differentialReturn, returnUsed);
@@ -699,7 +699,7 @@ std::pair<Function*,StructType*> CreateAugmentedPrimal(Function* todiff, AAResul
                     }
                 }
 
-                auto newcalled = CreateAugmentedPrimal(dyn_cast<Function>(called), _AA, subconstant_args, TLI, /*differentialReturn*/subdifferentialreturn, /*return is used*/subretused, uncacheable_args_map[op]).first;
+                auto newcalled = CreateAugmentedPrimal(dyn_cast<Function>(called), global_AA, subconstant_args, TLI, /*differentialReturn*/subdifferentialreturn, /*return is used*/subretused, uncacheable_args_map[op]).first;
                 auto augmentcall = BuilderZ.CreateCall(newcalled, args);
                 assert(augmentcall->getType()->isStructTy());
                 augmentcall->setCallingConv(op->getCallingConv());
@@ -1244,7 +1244,7 @@ std::pair<SmallVector<Type*,4>,SmallVector<Type*,4>> getDefaultFunctionTypeForGr
     return std::pair<SmallVector<Type*,4>,SmallVector<Type*,4>>(args, outs);
 }
 
-void handleGradientCallInst(BasicBlock::reverse_iterator &I, const BasicBlock::reverse_iterator &E, IRBuilder <>& Builder2, CallInst* op, DiffeGradientUtils* const gutils, TargetLibraryInfo &TLI, AAResults &AA, AAResults & _AA, const bool topLevel, const std::map<ReturnInst*,StoreInst*> &replacedReturns, std::set<unsigned> uncacheable_args) {
+void handleGradientCallInst(BasicBlock::reverse_iterator &I, const BasicBlock::reverse_iterator &E, IRBuilder <>& Builder2, CallInst* op, DiffeGradientUtils* const gutils, TargetLibraryInfo &TLI, AAResults &AA, AAResults & global_AA, const bool topLevel, const std::map<ReturnInst*,StoreInst*> &replacedReturns, std::set<unsigned> uncacheable_args) {
   llvm::errs() << "HandleGradientCall " << *op << "\n";
   Function *called = op->getCalledFunction();
 
@@ -1457,7 +1457,7 @@ void handleGradientCallInst(BasicBlock::reverse_iterator &I, const BasicBlock::r
         if (iter->mayReadOrWriteMemory()) {
           llvm::errs() << "Iter is at " << *iter << "\n";
           llvm::errs() << "origop is at " << *origop << "\n";
-          mri = _AA.getModRefInfo(&*iter, origop);
+          mri = AA.getModRefInfo(&*iter, origop);
         }
 
         if (mri == ModRefInfo::NoModRef && !usesInst) {
@@ -1588,7 +1588,7 @@ void handleGradientCallInst(BasicBlock::reverse_iterator &I, const BasicBlock::r
   if (modifyPrimal && called) {
     bool subretused = op->getNumUses() != 0;
     bool subdifferentialreturn = (!gutils->isConstantValue(op)) && subretused;
-    auto fnandtapetype = CreateAugmentedPrimal(cast<Function>(called), _AA, subconstant_args, TLI, /*differentialReturns*/subdifferentialreturn, /*return is used*/subretused, uncacheable_args);
+    auto fnandtapetype = CreateAugmentedPrimal(cast<Function>(called), global_AA, subconstant_args, TLI, /*differentialReturns*/subdifferentialreturn, /*return is used*/subretused, uncacheable_args);
     if (topLevel) {
       Function* newcalled = fnandtapetype.first;
       augmentcall = BuilderZ.CreateCall(newcalled, pre_args);
@@ -1660,7 +1660,7 @@ void handleGradientCallInst(BasicBlock::reverse_iterator &I, const BasicBlock::r
   bool subdiffereturn = (!gutils->isConstantValue(op)) && !( op->getType()->isPointerTy() || op->getType()->isIntegerTy() || op->getType()->isEmptyTy() );
   llvm::errs() << "subdifferet:" << subdiffereturn << " " << *op << "\n";
   if (called) {
-    newcalled = CreatePrimalAndGradient(cast<Function>(called), subconstant_args, TLI, _AA, /*returnValue*/retUsed, /*subdiffereturn*/subdiffereturn, /*topLevel*/replaceFunction, tape ? tape->getType() : nullptr, uncacheable_args);//, LI, DT);
+    newcalled = CreatePrimalAndGradient(cast<Function>(called), subconstant_args, TLI, global_AA, /*returnValue*/retUsed, /*subdiffereturn*/subdiffereturn, /*topLevel*/replaceFunction, tape ? tape->getType() : nullptr, uncacheable_args);//, LI, DT);
   } else {
     newcalled = gutils->invertPointerM(op->getCalledValue(), Builder2);
     auto ft = cast<FunctionType>(cast<PointerType>(op->getCalledValue()->getType())->getElementType());
@@ -1770,7 +1770,7 @@ void handleGradientCallInst(BasicBlock::reverse_iterator &I, const BasicBlock::r
   }
 }
 
-Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& constant_args, TargetLibraryInfo &TLI, AAResults &_AA, bool returnValue, bool differentialReturn, bool topLevel, llvm::Type* additionalArg, std::set<unsigned> _uncacheable_args) {
+Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& constant_args, TargetLibraryInfo &TLI, AAResults &global_AA, bool returnValue, bool differentialReturn, bool topLevel, llvm::Type* additionalArg, std::set<unsigned> _uncacheable_args) {
   if (differentialReturn) {
       if(!todiff->getReturnType()->isFPOrFPVectorTy()) {
          llvm::errs() << *todiff << "\n";
@@ -2310,7 +2310,7 @@ Function* CreatePrimalAndGradient(Function* todiff, const std::set<unsigned>& co
       if (dif0) addToDiffe(op->getOperand(0), dif0);
       if (dif1) addToDiffe(op->getOperand(1), dif1);
     } else if(auto op = dyn_cast_or_null<CallInst>(inst)) {
-      handleGradientCallInst(I, E, Builder2, op, gutils, TLI, _AA, _AA, topLevel, replacedReturns, uncacheable_args_map[op]);
+      handleGradientCallInst(I, E, Builder2, op, gutils, TLI, global_AA, global_AA, topLevel, replacedReturns, uncacheable_args_map[op]);
     } else if(auto op = dyn_cast_or_null<SelectInst>(inst)) {
       if (gutils->isConstantValue(inst)) continue;
       if (op->getType()->isPointerTy()) continue;
