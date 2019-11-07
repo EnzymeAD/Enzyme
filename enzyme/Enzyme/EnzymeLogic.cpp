@@ -195,12 +195,12 @@ std::set<unsigned> compute_uncacheable_args_for_one_callsite(Instruction* callsi
   for(BasicBlock* BB: gutils->originalBlocks) {
     for (auto I = BB->begin(), E = BB->end(); I != E; I++) {
       Instruction* inst = &*I;
-      //if (inst == callsite_inst) continue;
-
+     
       // If the "inst" does not dominate "callsite_inst" then we cannot prove that
       //   "inst" happens before "callsite_inst". If "inst" modifies an argument of the call,
       //   then that call needs to consider the argument uncacheable.
-      if (!gutils->DT.dominates(inst, callsite_inst)) {
+      // To correctly handle case where inst == callsite_inst, we need to look at next instruction after callsite_inst.
+      if (!gutils->DT.dominates(inst, callsite_inst->getNextNonDebugInstruction())) {
         //llvm::errs() << "Instruction " << *inst << " DOES NOT dominates " << *callsite_inst << "\n";
         // Consider Store Instructions.
         if (auto op = dyn_cast<StoreInst>(inst)) {
