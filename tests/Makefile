@@ -36,7 +36,7 @@ eigen.ll: eigen.cpp
 	../build/bin/opt -indvars -instcombine -functionattrs -instnamer eigen0.ll -S -o eigen.ll
 
 eigen2.ll: eigen.ll
-	../build/bin/opt -always-inline -inline -lower-autodiff eigen.ll -S -o eigen1.ll
+	../build/bin/opt -always-inline -inline -load=../enzyme/build/Enzyme/LLVMEnzyme-7.so -enzyme eigen.ll -S -o eigen1.ll
 	#../build/bin/opt -always-inline -inline -lower-autodiff eigen.ll -S -o eigen1.ll -autodiff_inline
 	../build/bin/opt -mem2reg eigen1.ll -S -o eigena.ll
 	../build/bin/opt -sroa eigena.ll -S -o eigenb.ll
