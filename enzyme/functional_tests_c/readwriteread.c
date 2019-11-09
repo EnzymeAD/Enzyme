@@ -2,6 +2,9 @@
 #include <stdlib.h>
 #include <math.h>
 #include <assert.h>
+
+#include "test_utils.h"
+
 #define __builtin_autodiff __enzyme_autodiff
 double __enzyme_autodiff(void*, ...);
 
@@ -38,9 +41,8 @@ int main(int argc, char** argv) {
   *dx = 0.0;
 
   __builtin_autodiff(readwriteread, x, dx, &ret, &dret);
-
   
   printf("dx is %f ret is %f\n", *dx, ret);
-  assert(*dx == 3*2.0*2.0);
+  assert(approx_fp_equality_double(*dx, 3*2.0*2.0, 1e-10));
   return 0;
 }
