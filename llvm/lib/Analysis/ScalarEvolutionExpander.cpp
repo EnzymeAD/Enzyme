@@ -1736,10 +1736,10 @@ Value *SCEVExpander::expand(const SCEV *S) {
   // Compute an insertion point for this SCEV object. Hoist the instructions
   // as far out in the loop nest as possible.
   for(auto a : InsertedValues) {
-        llvm::errs() << "(1)insertedvalues: " << a << "\n";
+        //llvm::errs() << "(1)insertedvalues: " << a << "\n";
   }
   for(auto a : InsertedValues) {
-        llvm::errs() << "(1)insertedvalueso: " << *a << "\n";
+        //llvm::errs() << "(1)insertedvalueso: " << *a << "\n";
   }
   Instruction *InsertPt = &*Builder.GetInsertPoint();
   for (Loop *L = SE.LI.getLoopFor(Builder.GetInsertBlock());;
@@ -1787,10 +1787,10 @@ Value *SCEVExpander::expand(const SCEV *S) {
     }
 
     for(auto a : InsertedValues) {
-        llvm::errs() << "(4)insertedvalues: " << a << "\n";
+        //llvm::errs() << "(4)insertedvalues: " << a << "\n";
     }
     for(auto a : InsertedValues) {
-        llvm::errs() << "(4)insertedvalueso: " << *a << "\n";
+        //llvm::errs() << "(4)insertedvalueso: " << *a << "\n";
     }
   // Check to see if we already expanded this here.
   auto I = InsertedExpressions.find(std::make_pair(S, InsertPt));
@@ -1830,10 +1830,10 @@ Value *SCEVExpander::expand(const SCEV *S) {
   }
     
   for(auto a : InsertedValues) {
-        llvm::errs() << "(3)insertedvalues: " << a << "\n";
+        //llvm::errs() << "(3)insertedvalues: " << a << "\n";
     }
     for(auto a : InsertedValues) {
-        llvm::errs() << "(3)insertedvalueso: " << *a << "\n";
+        //llvm::errs() << "(3)insertedvalueso: " << *a << "\n";
     }
   // Remember the expanded value for this SCEV at this location.
   //
@@ -1844,18 +1844,18 @@ Value *SCEVExpander::expand(const SCEV *S) {
   InsertedExpressions[std::make_pair(S, InsertPt)] = V;
     
   for(auto a : InsertedValues) {
-        llvm::errs() << "(2)insertedvalues: " << a << "\n";
+        //llvm::errs() << "(2)insertedvalues: " << a << "\n";
     }
     for(auto a : InsertedValues) {
-        llvm::errs() << "(2)insertedvalueso: " << *a << "\n";
+        //llvm::errs() << "(2)insertedvalueso: " << *a << "\n";
     }
     V0 = V;
   }
   for(auto a : InsertedValues) {
-        llvm::errs() << "(5)insertedvalues: " << a << "\n";
+        //llvm::errs() << "(5)insertedvalues: " << a << "\n";
     }
     for(auto a : InsertedValues) {
-        llvm::errs() << "(5)insertedvalueso: " << *a << "\n";
+        //llvm::errs() << "(5)insertedvalueso: " << *a << "\n";
     }
   return V0;
 }
@@ -1865,12 +1865,12 @@ void SCEVExpander::rememberInstruction(Value *I) {
     InsertedPostIncValues.insert(I);
   else {
     InsertedValues.insert(I);
-    llvm::errs() << "added to ivs(2) " << *I << " (" << I << ") " <<  "\n";
+    //llvm::errs() << "added to ivs(2) " << *I << " (" << I << ") " <<  "\n";
     for(auto a : InsertedValues) {
-        llvm::errs() << "insertedvalues: " << a << "\n";
+        //llvm::errs() << "insertedvalues: " << a << "\n";
     }
     for(auto a : InsertedValues) {
-        llvm::errs() << "insertedvalueso: " << *a << "\n";
+        //llvm::errs() << "insertedvalueso: " << *a << "\n";
     }
   }
 }
