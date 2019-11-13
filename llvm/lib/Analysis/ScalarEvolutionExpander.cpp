@@ -1221,7 +1221,7 @@ SCEVExpander::getAddRecExprPHILiterally(const SCEVAddRecExpr *Normalized,
       // Ok, the add recurrence looks usable.
       // Remember this PHI, even in post-inc mode.
       InsertedValues.insert(AddRecPhiMatch);
-      llvm::errs() << "added to ivs(3) " << *AddRecPhiMatch << "\n";
+      //llvm::errs() << "added to ivs(3) " << *AddRecPhiMatch << "\n";
       // Remember the increment.
       rememberInstruction(IncV);
       return AddRecPhiMatch;
@@ -1312,7 +1312,7 @@ SCEVExpander::getAddRecExprPHILiterally(const SCEVAddRecExpr *Normalized,
 
   // Remember this PHI, even in post-inc mode.
   InsertedValues.insert(PN);
-  llvm::errs() << "added to ivs(1) " << *PN << " (" << PN << ") " <<  "\n";
+  //llvm::errs() << "added to ivs(1) " << *PN << " (" << PN << ") " <<  "\n";
 
   return PN;
 }
