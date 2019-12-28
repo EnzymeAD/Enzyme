@@ -717,6 +717,7 @@ public:
   }
 
 private:
+public:
   class Concept;
 
   template <typename T> class Model;
@@ -797,6 +798,7 @@ public:
   virtual ModRefInfo getModRefInfo(ImmutableCallSite CS1,
                                    ImmutableCallSite CS2) = 0;
 
+  virtual std::string getName() { return "unknownconcept"; };
   /// @}
 };
 
@@ -848,6 +850,8 @@ public:
                            ImmutableCallSite CS2) override {
     return Result.getModRefInfo(CS1, CS2);
   }
+  
+  std::string getName() override { return "aaresultsmodel"; }
 };
 
 /// A CRTP-driven "mixin" base class to help implement the function alias
@@ -943,6 +947,7 @@ protected:
   AAResultsProxy getBestAAResults() { return AAResultsProxy(AAR, derived()); }
 
 public:
+
   AliasResult alias(const MemoryLocation &LocA, const MemoryLocation &LocB) {
     return MayAlias;
   }
