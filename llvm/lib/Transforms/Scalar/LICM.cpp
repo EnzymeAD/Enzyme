@@ -1095,7 +1095,7 @@ static bool isSafeToExecuteUnconditionally(Instruction &Inst,
                << "failed to hoist load with loop-invariant address "
                   "because load is conditionally executed";
       });
-    llvm::errs() << "failed to hoist " << Inst << "\n";
+    //llvm::errs() << "failed to hoist " << Inst << "\n";
   }
 
   return GuaranteedToExecute;
