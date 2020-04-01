@@ -16,6 +16,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(ENZYME_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(ENZYME_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR})
+list(APPEND CMAKE_MODULE_PATH "${ENZYME_SOURCE_DIR}/cmake/modules")
 
 set(LLVM_SHLIBEXT "${CMAKE_SHARED_MODULE_SUFFIX}")
 message( LLVM_SHLIBEXT = ${LLVM_SHLIBEXT} )
@@ -46,7 +47,8 @@ include(AddLLVM)
 
 add_definitions(${LLVM_DEFINITIONS})
 include_directories(${LLVM_INCLUDE_DIRS})
-message("found llvm include directory here: " "${LLVM_INCLUDE_DIRS}")
+message("LLVM_INSTALL_PREFIX: ${LLVM_INSTALL_PREFIX}")
+message("LLVM_INCLUDE_DIRS: ${LLVM_INCLUDE_DIRS}")
 message("found llvm definitions " ${LLVM_DEFINITIONS})
 message("found llvm version " ${LLVM_VERSION_MAJOR})
 
@@ -64,10 +66,22 @@ string(REPLACE "class SCEVExpander" "namespace fake {\n  class SCEVExpander" INP
 string(REPLACE "};\n}" "};\n}}" INPUT_TEXT "${INPUT_TEXT}")
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/include/SCEV/ScalarEvolutionExpander.h" "${INPUT_TEXT}")
 
-
-
 include_directories("${CMAKE_CURRENT_BINARY_DIR}/include")
 
+# Look for Julia
+include(FindJulia)
+find_package(Julia)
+
+if(Julia_FOUND)
+    if(${Julia_LLVM_VERSION} MATCHES "^v([0-9]*)\.[0-9]*\.[0-9]")
+        set(Julia_LLVM_VERSION_MAJOR ${CMAKE_MATCH_1})
+        message("julia LLVM_VERSION_MAJOR: ${Julia_LLVM_VERSION_MAJOR}")
+        if(${Julia_LLVM_VERSION_MAJOR} VERSION_EQUAL  ${LLVM_VERSION_MAJOR})
+        else()
+            message(WARNING "Julia and Enzyme use different LLVM versions")
+        endif()
+    endif()
+endif()
 
 add_subdirectory(Enzyme)
 add_subdirectory(test)
