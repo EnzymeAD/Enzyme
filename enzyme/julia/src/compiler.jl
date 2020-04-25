@@ -71,6 +71,8 @@ Base.@kwdef struct EnzymeJob <: AbstractCompilerJob
     source::FunctionSpec
 end
 
+GPUCompiler.check_invocation(job::EnzymeJob, entry::LLVM.Function) = nothing
+
 import GPUCompiler: target, source
 target(job::EnzymeJob) = job.target
 source(job::EnzymeJob) = job.source
