@@ -126,13 +126,27 @@ cl::opt<bool> printtype(
             cl::desc("Print type detection algorithm"));
 
 DataType parseTBAA(Instruction* inst) {
-    auto typeNameStringRef = getAccessNameTBAA(inst, {"long long", "long", "int", "bool", "any pointer", "vtable pointer", "float", "double"});
-    if (typeNameStringRef == "long long" || typeNameStringRef == "long" || typeNameStringRef == "int" || typeNameStringRef == "bool") {// || typeNameStringRef == "omnipotent char") {
+    auto typeNameStringRef = getAccessNameTBAA(inst, {"long long", "long", "int", "bool", "any pointer", "vtable pointer", "float", "double",
+        "jtbaa_arraysize", "jtbaa_arraylen", "jtbaa_arrayptr", "jtbaa_arraybuf"});
+    
+    if (typeNameStringRef == "jtbaa_arraybuf") {
+        if (isa<LoadInst>(inst)) {
+            if (inst->getType()->isFPOrFPVectorTy()) {
+                return inst->getType()->getScalarType();
+            }
+            if (inst->getType()->isIntOrIntVectorTy()) {
+                return inst->getType()->getScalarType();
+            }
+        }
+    }
+
+    if (typeNameStringRef == "long long" || typeNameStringRef == "long" || typeNameStringRef == "int" || typeNameStringRef == "bool"
+        || typeNameStringRef == "jtbaa_arraysize" || typeNameStringRef == "jtbaa_arraylen") {// || typeNameStringRef == "omnipotent char") {
         if (printtype) {
             llvm::errs() << "known tbaa " << *inst << " " << typeNameStringRef << "\n";
         }
         return DataType(IntType::Integer);
-    } else if (typeNameStringRef == "any pointer" || typeNameStringRef == "vtable pointer") {// || typeNameStringRef == "omnipotent char") {
+    } else if (typeNameStringRef == "any pointer" || typeNameStringRef == "vtable pointer" || typeNameStringRef == "jtbaa_arrayptr") {// || typeNameStringRef == "omnipotent char") {
         if (printtype) {
             llvm::errs() << "known tbaa " << *inst << " " << typeNameStringRef << "\n";
         }
@@ -1841,6 +1855,7 @@ DataType TypeAnalysis::intType(Value* val, const NewFnTypeInfo& fn, bool errIfNo
     //dump();
     if (errIfNotFound && (!dt.isKnown() || dt.typeEnum == IntType::Anything) ) {
 		if (auto inst = dyn_cast<Instruction>(val)) {
+			llvm::errs() << *inst->getParent()->getParent()->getParent() << "\n";
 			llvm::errs() << *inst->getParent()->getParent() << "\n";
 			for(auto &pair : analyzedFunctions.find(fn)->second.analysis) {
 				llvm::errs() << "val: " << *pair.first << " - " << pair.second.str() << "\n";

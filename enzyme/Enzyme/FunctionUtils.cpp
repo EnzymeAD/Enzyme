@@ -50,6 +50,8 @@
 
 #include "llvm/Transforms/IPO/FunctionAttrs.h"
 
+#include "llvm/Transforms/Utils.h"
+
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/PromoteMemToReg.h"
 
@@ -363,6 +365,8 @@ if (enzyme_preopt) {
     #endif
     LoopSimplifyPass().run(*NewF, AM);
  }
+ 
+ createInstructionNamerPass()->runOnFunction(*NewF);
 
  {
    //llvm::errs() << "alias analysis run\n";
@@ -399,6 +403,8 @@ if (enzyme_preopt) {
  //AA.addAAResult(*saa);
 
  }
+
+
 
  std::vector<AllocaInst*> toconvert;
 

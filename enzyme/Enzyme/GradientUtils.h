@@ -2002,6 +2002,12 @@ public:
       assert(val->getType() == old->getType());
       Value* res = nullptr;
       if (val->getType()->isIntOrIntVectorTy()) {
+        if (!addingType) {
+          llvm::errs() << "module: " << *oldFunc->getParent() << "\n";
+          llvm::errs() << "oldFunc: " << *oldFunc << "\n";
+          llvm::errs() << "newFunc: " << *newFunc << "\n";
+          llvm::errs() << "val: " << *val << "\n";
+        }
         assert(addingType);
         assert(addingType->isFPOrFPVectorTy());
 
