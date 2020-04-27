@@ -1000,6 +1000,8 @@ public:
         goto err;
     }
 
+    if (isa<InlineAsm>(val)) return true;
+
     //TODO allow gv/inline asm
     //if (isa<GlobalValue>(val) || isa<InlineAsm>(val)) return isConstantValueInternal(val);
     if (isa<Constant>(val) || isa<UndefValue>(val) || isa<MetadataAsValue>(val)) return true;

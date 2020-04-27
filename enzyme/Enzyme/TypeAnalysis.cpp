@@ -127,7 +127,7 @@ cl::opt<bool> printtype(
 
 DataType parseTBAA(Instruction* inst) {
     auto typeNameStringRef = getAccessNameTBAA(inst, {"long long", "long", "int", "bool", "any pointer", "vtable pointer", "float", "double",
-        "jtbaa_arraysize", "jtbaa_arraylen", "jtbaa_arrayptr", "jtbaa_arraybuf"});
+        "jtbaa_arraysize", "jtbaa_arraylen", "jtbaa_arrayptr", "jtbaa_arraybuf", "jtbaa_tag"});
     
     if (typeNameStringRef == "jtbaa_arraybuf") {
         if (isa<LoadInst>(inst)) {
@@ -146,7 +146,7 @@ DataType parseTBAA(Instruction* inst) {
             llvm::errs() << "known tbaa " << *inst << " " << typeNameStringRef << "\n";
         }
         return DataType(IntType::Integer);
-    } else if (typeNameStringRef == "any pointer" || typeNameStringRef == "vtable pointer" || typeNameStringRef == "jtbaa_arrayptr") {// || typeNameStringRef == "omnipotent char") {
+    } else if (typeNameStringRef == "any pointer" || typeNameStringRef == "vtable pointer" || typeNameStringRef == "jtbaa_arrayptr" || typeNameStringRef == "jtbaa_tag") {// || typeNameStringRef == "omnipotent char") {
         if (printtype) {
             llvm::errs() << "known tbaa " << *inst << " " << typeNameStringRef << "\n";
         }
