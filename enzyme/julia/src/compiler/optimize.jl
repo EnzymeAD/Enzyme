@@ -2,14 +2,16 @@ function enzyme!(pm)
     ccall((:AddEnzymePass, libenzyme), Nothing, (LLVM.API.LLVMPassManagerRef,), LLVM.ref(pm))
 end
 
-import GPUCompiler: optimize!
-function optimize!(job::EnzymeJob, mod::LLVM.Module, entry::LLVM.Function)
-    tm = GPUCompiler.llvm_machine(target(job))
+function optimize!(mod::LLVM.Module, entry::LLVM.Function; run_enzyme=true)
+    triple = LLVM.triple(mod)
+    target = Target(triple)
+    tm = TargetMachine(target, triple)
+    LLVM.asm_verbosity!(tm, true)
 
     # everying except unroll, slpvec, loop-vec
     # then finish Julia GC
     ModulePassManager() do pm
-        add_library_info!(pm, triple(mod))
+        add_library_info!(pm, triple)
         add_transform_info!(pm, tm)
 
         propagate_julia_addrsp!(pm)
@@ -74,9 +76,11 @@ function optimize!(job::EnzymeJob, mod::LLVM.Module, entry::LLVM.Function)
         instruction_combining!(pm) # Extra for Enzyme
         # CombineMulAddPass will run on second pass
 
-        # Enzyme pass
-        barrier_noop!(pm)
-        enzyme!(pm)
+        if run_enzyme
+            # Enzyme pass
+            barrier_noop!(pm)
+            enzyme!(pm)
+        end
     
         run!(pm, mod)
     end

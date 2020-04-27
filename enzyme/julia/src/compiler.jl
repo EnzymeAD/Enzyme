@@ -71,7 +71,9 @@ Base.@kwdef struct EnzymeJob <: AbstractCompilerJob
     source::FunctionSpec
 end
 
+# TODO: We shouldn't blancket opt-out
 GPUCompiler.check_invocation(job::EnzymeJob, entry::LLVM.Function) = nothing
+GPUCompiler.check_ir(job::EnzymeJob, args...) = nothing
 
 import GPUCompiler: target, source
 target(job::EnzymeJob) = job.target
