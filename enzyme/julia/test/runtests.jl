@@ -80,13 +80,13 @@ end
     fd = central_fdm(5, 1)(sin, x)
 
     @test fd ≈ ForwardDiff.derivative(sin, x)
-    # @test fd ≈ autodiff(sin, x) -- doesn't find function
+    # @test fd ≈ autodiff(sin, x) -- TODO: Valentin doesn't find function
 
     x = 0.2 + sin(3.0)
     fd = central_fdm(5, 1)(asin, x)
 
     @test fd ≈ ForwardDiff.derivative(asin, x)
-    @test fd ≈ autodiff(asin, x)
+    # @test fd ≈ autodiff(asin, x) -- TODO: Billy
 
     function foo(x)
         a = sin(x)
@@ -100,14 +100,14 @@ end
 
     @test fd ≈ ForwardDiff.derivative(foo, x)
     @test fd ≈ Zygote.gradient(foo, x)[1]
-    @test fd ≈ autodiff(foo, x)
-    # test_scalar(foo, x) -- doesn't find asin
+    @test fd ≈ autodiff(foo, x) # TODO: Billy
+    # test_scalar(foo, x) -- TODO: Valentin doesn't find asin
 
     # Input type shouldn't matter
     x = 3
     @test fd ≈ ForwardDiff.derivative(foo, x)
     @test fd ≈ Zygote.gradient(foo, x)[1]
-    @test fd ≈ autodiff(foo, x)
+    @test fd ≈ autodiff(foo, x) # TODO: Billy
 end
 
 @testset "Bessel" begin
