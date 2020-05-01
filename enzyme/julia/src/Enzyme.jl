@@ -25,16 +25,20 @@ end
 
 Base.eltype(::Type{<:Annotation{T}}) where T = T
 
-struct LLVMThunk
+struct LLVMThunk{RT}
     mod::LLVM.Module
     entry::LLVM.Function
 
-    function LLVMThunk(f, rt, tt; optimize=true, run_enzyme=true)
+    function LLVMThunk(f, tt; optimize=true, run_enzyme=true)
         primal_tt = map(eltype, tt) 
 
         # CTX, f are ghosts
+        overdub_tt = Tuple{typeof(Compiler.CTX), typeof(f), primal_tt...}
+        rt = Core.Compiler.return_type(Cassette.overdub, overdub_tt)
+        @assert rt<:AbstractFloat
+
         name   = String(nameof(f))
-        source = Compiler.FunctionSpec(Cassette.overdub, Tuple{typeof(Compiler.CTX), typeof(f), primal_tt...}, #=kernel=# false, #=name=# name)
+        source = Compiler.FunctionSpec(Cassette.overdub, overdub_tt, #=kernel=# false, #=name=# name)
         target = Compiler.EnzymeTarget()
         job    = Compiler.EnzymeJob(target, source)
 
@@ -102,13 +106,14 @@ struct LLVMThunk
             Compiler.optimize!(mod, llvmf, run_enzyme=run_enzyme)
         end
 
-        new(mod, llvmf)
+        new{rt}(mod, llvmf)
     end
 end
+return_type(::LLVMThunk{RT}) where RT = RT
 
 struct Thunk{Ptr, RT, TT}
-    function Thunk(f, rt, tt)
-        thunk = LLVMThunk(f, rt, tt)
+    function Thunk(f, tt)
+        thunk = LLVMThunk(f, tt)
         triple = LLVM.triple()
         target = LLVM.Target(triple)
         objfile = tempname()
@@ -121,7 +126,7 @@ struct Thunk{Ptr, RT, TT}
         libptr = Libdl.dlopen(libfile, Libdl.RTLD_LOCAL)
         ptr = Libdl.dlsym(libptr, :enzyme_entry)
 
-        return new{ptr, rt, Tuple{tt...}}()
+        return new{ptr, return_type(thunk), Tuple{tt...}}()
     end
 end
 
@@ -143,7 +148,7 @@ end
 function enzyme_code_llvm(io::IO, @nospecialize(func), @nospecialize(types); 
                    optimize::Bool=true, run_enzyme::Bool=true, raw::Bool=false,
                    debuginfo::Symbol=:default, dump_module::Bool=false)
-    thunk = LLVMThunk(func, Float64, types, optimize=optimize, run_enzyme=run_enzyme)
+    thunk = LLVMThunk(func, types, optimize=optimize, run_enzyme=run_enzyme)
 
     str = ccall(:jl_dump_function_ir, Ref{String},
                 (Ptr{Cvoid}, Bool, Bool, Ptr{UInt8}),
@@ -162,7 +167,7 @@ prepare_cc(arg::Annotation, args...) = (arg.val, prepare_cc(args...)...)
 
 function autodiff(f, args...)
     args′ =  annotate(args...)
-    thunk = Thunk(f, Float64, map(Core.Typeof, args′))
+    thunk = Thunk(f, map(Core.Typeof, args′))
     thunk(prepare_cc(args′...)...)
 end
 
