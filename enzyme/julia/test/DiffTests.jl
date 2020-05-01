@@ -26,7 +26,7 @@ names, one should not expect these functions to be "correct" for their original 
 num2num_1(x) = sin(x)^2 / cos(x)^2
 num2num_2(x) = 2*x + sqrt(x*x*x)
 num2num_3(x) = 10.31^(x + x) - x
-num2num_4(x) = 1
+num2num_4(x) = 1.0
 num2num_5(x) = 1. / (1. + exp(-x))
 
 const NUMBER_TO_NUMBER_FUNCS = (num2num_1, num2num_2, num2num_3,

@@ -13,8 +13,8 @@ end
 
 @testset "Internal tests" begin
     f(x) = 1.0 + x
-    thunk = Enzyme.Thunk(f, Float64, (Active{Float64},))
-    thunk = Enzyme.Thunk(f, Float64, (Const{Float64},))
+    thunk = Enzyme.Thunk(f, (Active{Float64},))
+    thunk = Enzyme.Thunk(f, (Const{Float64},))
 end
 
 @testset "Simple tests" begin
