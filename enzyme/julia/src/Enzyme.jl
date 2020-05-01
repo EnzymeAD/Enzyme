@@ -96,11 +96,11 @@ struct LLVMThunk
             ret!(builder, val)
         end
 
+        LLVM.strip_debuginfo!(mod)
         if optimize
             # Run pipeline and Enzyme pass
             Compiler.optimize!(mod, llvmf, run_enzyme=run_enzyme)
         end
-        strip_debuginfo!(mod)
 
         new(mod, llvmf)
     end
