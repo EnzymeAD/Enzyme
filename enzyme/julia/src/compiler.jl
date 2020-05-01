@@ -91,5 +91,6 @@ end
 GPUCompiler.runtime_slug(job::EnzymeJob) = "enzyme" 
 
 include("compiler/optimize.jl")
+include("compiler/cassette.jl")
 
 end
