@@ -5,6 +5,8 @@ export Const, Active, Duplicated
 
 using LLVM
 using LLVM.Interop
+using Libdl
+using Cassette
 
 include("utils.jl")
 include("compiler.jl")
@@ -23,17 +25,16 @@ end
 
 Base.eltype(::Type{<:Annotation{T}}) where T = T
 
-struct Thunk{F, RT, TT, LLVMF}
+struct LLVMThunk
     mod::LLVM.Module
     entry::LLVM.Function
 
-    function Thunk(f, rt, tt; optimize=true)
+    function LLVMThunk(f, rt, tt; optimize=true)
         primal_tt = map(eltype, tt) 
 
-        @show primal_tt
-        @show typeof(primal_tt)
-
-        source = Compiler.FunctionSpec(f, Tuple{primal_tt...}, #=kernel=# false)
+        # CTX, f are ghosts
+        name   = String(nameof(f))
+        source = Compiler.FunctionSpec(Cassette.overdub, Tuple{typeof(Compiler.CTX), typeof(f), primal_tt...}, #=kernel=# false, #=name=# name)
         target = Compiler.EnzymeTarget()
         job    = Compiler.EnzymeJob(target, source)
 
@@ -101,7 +102,26 @@ struct Thunk{F, RT, TT, LLVMF}
         end
         strip_debuginfo!(mod)
 
-        new{typeof(f), rt, Tuple{tt...}, llvmf}(mod, llvmf)
+        new(mod, llvmf)
+    end
+end
+
+struct Thunk{Ptr, RT, TT}
+    function Thunk(f, rt, tt)
+        thunk = LLVMThunk(f, rt, tt)
+        triple = LLVM.triple()
+        target = LLVM.Target(triple)
+        objfile = tempname()
+        libfile = tempname()
+        TargetMachine(target, triple, "", "", LLVM.API.LLVMCodeGenLevelDefault, LLVM.API.LLVMRelocPIC) do tm
+            LLVM.emit(tm, thunk.mod, LLVM.API.LLVMObjectFile, objfile)
+        end
+
+        run(`ld -shared $objfile -o $libfile`)
+        libptr = Libdl.dlopen(libfile, Libdl.RTLD_LOCAL)
+        ptr = Libdl.dlsym(libptr, :enzyme_entry)
+
+        return new{ptr, rt, Tuple{tt...}}()
     end
 end
 
@@ -127,9 +147,17 @@ end
 # This is rather wonky... we should instead integrate with the ORCJIT C-API
 # https://github.com/JuliaGPU/GPUCompiler.jl/issues/3
 # We are also re-running Julia's optimization pipeline again
-@generated function (thunk::Thunk{F, RT, TT, LLVMF})(args...) where {F, RT, TT, LLVMF}
+# @generated function (thunk::Thunk{F, RT, TT, LLVMF})(args...) where {F, RT, TT, LLVMF}
+#     _args = (:(args[$i]) for i in 1:length(args))
+#     call_function(LLVMF, Float64, Tuple{args...}, Expr(:tuple, _args...))
+# end
+
+# Now this is just getting worse...
+@generated function (thunk::Thunk{Ptr, RT})(args...) where {Ptr, RT}
     _args = (:(args[$i]) for i in 1:length(args))
-    call_function(LLVMF, Float64, Tuple{args...}, Expr(:tuple, _args...))
+    quote
+        ccall($Ptr, $RT, ($(args...),), $(_args...))
+    end
 end
 
 function autodiff(f, args...)
@@ -152,5 +180,21 @@ function autodiff(f, args...)
 
     thunk(thunk_args...)
 end
-  
+
+import .Compiler: EnzymeCtx
+# Ops that have intrinsics
+for op in (sin, cos, exp)
+    for (T, suffix) in ((Float32, "f32"), (Float64, "f64"))
+        llvmf = "llvm.$(nameof(op)).$suffix"
+        @eval begin
+            @inline function Cassette.overdub(::EnzymeCtx, ::typeof($op), x::$T)
+                ccall($llvmf, llvmcall, $T, ($T,), x)
+            end
+        end
+    end
+end
+
+# WIP
+# @inline Cassette.overdub(::EnzymeCtx, ::typeof(asin), x::Float64) = ccall(:asin, Float64, (Float64,), x)
+# @inline Cassette.overdub(::EnzymeCtx, ::typeof(asin), x::Float32) = ccall(:asin, Float32, (Float32,), x)
 end # module
