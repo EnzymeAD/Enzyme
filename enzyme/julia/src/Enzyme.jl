@@ -29,7 +29,7 @@ struct LLVMThunk
     mod::LLVM.Module
     entry::LLVM.Function
 
-    function LLVMThunk(f, rt, tt; optimize=true)
+    function LLVMThunk(f, rt, tt; optimize=true, run_enzyme=true)
         primal_tt = map(eltype, tt) 
 
         # CTX, f are ghosts
@@ -98,7 +98,7 @@ struct LLVMThunk
 
         if optimize
             # Run pipeline and Enzyme pass
-            Compiler.optimize!(mod, llvmf)
+            Compiler.optimize!(mod, llvmf, run_enzyme=run_enzyme)
         end
         strip_debuginfo!(mod)
 
@@ -125,26 +125,6 @@ struct Thunk{Ptr, RT, TT}
     end
 end
 
-# for method in (:code_typed, :code_warntype, :code_llvm, :code_native)
-#     # only code_typed doesn't take a io argument
-#     args = method == :code_typed ? (:job,) : (:io, :job)
-#     native_method = Symbol("native_$(method)")
-
-#     @eval begin
-#         function $native_method(io::IO, @nospecialize(func), @nospecialize(types);
-#                              kernel::Bool=false, minthreads=nothing, maxthreads=nothing,
-#                              blocks_per_sm=nothing, maxregs=nothing, kwargs...)
-#             source = FunctionSpec(func, Base.to_tuple_type(types), kernel)
-#             target = NativeCompilerTarget()
-#             job = NativeCompilerJob(target=target, source=source)
-#             GPUCompiler.$method($(args...); kwargs...)
-#         end
-#         $native_method(@nospecialize(func), @nospecialize(types); kwargs...) =
-#             $native_method(stdout, func, types; kwargs...)
-#     end
-# end
-
-# This is rather wonky... we should instead integrate with the ORCJIT C-API
 # https://github.com/JuliaGPU/GPUCompiler.jl/issues/3
 # We are also re-running Julia's optimization pipeline again
 # @generated function (thunk::Thunk{F, RT, TT, LLVMF})(args...) where {F, RT, TT, LLVMF}
@@ -160,25 +140,30 @@ end
     end
 end
 
-function autodiff(f, args...)
-    # TODO: turn into recursive tuple function
-    annotated_args = map(args) do arg
-        if !(arg isa Annotation)
-            return Const(arg)
-        else
-            return arg
-        end
-    end
-    thunk = Thunk(f, Float64, map(Core.Typeof, annotated_args))
-    thunk_args = []
-    for arg in annotated_args
-        push!(thunk_args, arg.val)
-        if arg isa Duplicated
-            push!(thunk_args, arg.dval)
-        end
-    end
+function enzyme_code_llvm(io::IO, @nospecialize(func), @nospecialize(types); 
+                   optimize::Bool=true, run_enzyme::Bool=true, raw::Bool=false,
+                   debuginfo::Symbol=:default, dump_module::Bool=false)
+    thunk = LLVMThunk(func, Float64, types, optimize=optimize, run_enzyme=run_enzyme)
 
-    thunk(thunk_args...)
+    str = ccall(:jl_dump_function_ir, Ref{String},
+                (Ptr{Cvoid}, Bool, Bool, Ptr{UInt8}),
+                LLVM.ref(thunk.entry), !raw, dump_module, debuginfo)
+    print(io, str)
+end
+enzyme_code_llvm(@nospecialize(func), @nospecialize(types); kwargs...) = enzyme_code_llvm(stdout, func, types; kwargs...)
+
+annotate() = ()
+annotate(arg::Annotation, args...) = (arg, annotate(args...)...)
+annotate(arg, args...) = (Const(arg), annotate(args...)...)
+
+prepare_cc() = ()
+prepare_cc(arg::Duplicated, args...) = (arg.val, arg.dval, prepare_cc(args...)...)
+prepare_cc(arg::Annotation, args...) = (arg.val, prepare_cc(args...)...)
+
+function autodiff(f, args...)
+    args′ =  annotate(args...)
+    thunk = Thunk(f, Float64, map(Core.Typeof, args′))
+    thunk(prepare_cc(args′...)...)
 end
 
 import .Compiler: EnzymeCtx
