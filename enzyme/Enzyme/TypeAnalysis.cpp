@@ -1572,6 +1572,61 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
 		}
 	}
 
+     if (auto ii = dyn_cast<IntrinsicInst>(&call)) {
+        switch(ii->getIntrinsicID()) {
+            case Intrinsic::umul_with_overflow: 
+            case Intrinsic::smul_with_overflow: 
+            case Intrinsic::ssub_with_overflow: 
+            case Intrinsic::usub_with_overflow: 
+            case Intrinsic::sadd_with_overflow:
+            case Intrinsic::uadd_with_overflow: {
+
+                auto analysis = getAnalysis(&call);
+
+                BinaryOperator::BinaryOps opcode;
+                
+                switch(ii->getIntrinsicID()) {
+                    case Intrinsic::ssub_with_overflow: 
+                    case Intrinsic::usub_with_overflow: {
+                        //TODO propagate this info
+                        // ptr - ptr => int and int - int => int; thus int = a - b says only that these are equal
+                        // ptr - int => ptr and int - ptr => ptr; thus
+                        analysis = DataType(IntType::Unknown);
+                        opcode = BinaryOperator::Sub;
+                        break;
+                    }
+
+                    case Intrinsic::smul_with_overflow:
+                    case Intrinsic::umul_with_overflow: {
+                        opcode = BinaryOperator::Mul;
+                        // if a + b or a * b == int, then a and b must be ints
+                        analysis = analysis.JustInt();
+                        break;
+                    }
+                    case Intrinsic::sadd_with_overflow: 
+                    case Intrinsic::uadd_with_overflow: {
+                        opcode = BinaryOperator::Add;
+                        // if a + b or a * b == int, then a and b must be ints
+                        analysis = analysis.JustInt();
+                        break;
+                    }
+                    default:
+                        llvm_unreachable("unknown binary operator");
+                }
+
+                updateAnalysis(ii->getOperand(0), analysis, &call);
+                updateAnalysis(ii->getOperand(1), analysis, &call);
+
+                ValueData vd = getAnalysis(ii->getOperand(0));
+                vd.pointerIntMerge(getAnalysis(ii->getOperand(1)), opcode);
+
+                updateAnalysis(&call, vd, &call);
+                return;
+            }
+            default: break;
+        }
+    }
+
 	if (Function* ci = call.getCalledFunction()) {
 
         #define CONSIDER(fn)\
