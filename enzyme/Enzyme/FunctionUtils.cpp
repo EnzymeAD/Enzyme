@@ -364,8 +364,6 @@ if (enzyme_preopt) {
     LoopSimplifyPass().run(*NewF, AM);
  }
  
- createInstructionNamerPass()->runOnFunction(*NewF);
-
  {
    //llvm::errs() << "alias analysis run\n";
  //Alias analysis is necessary to ensure can query whether we can move a forward pass function
