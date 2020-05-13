@@ -1715,6 +1715,7 @@ public:
         case Intrinsic::nearbyint:
         case Intrinsic::round:
         case Intrinsic::sqrt:
+        case Intrinsic::sadd_with_overflow:
           return;
         default:
           if (gutils->isConstantInstruction(&II)) return;
@@ -1969,7 +1970,16 @@ public:
           }
           return;
         }
-
+        case Intrinsic::sadd_with_overflow: {
+          Value* idiff = diffe(&II, Builder2);
+          if (!gutils->isConstantValue(orig_ops[0])) {
+            addToDiffe(orig_ops[0], idiff, Builder2, II.getType());
+          }
+          if (!gutils->isConstantValue(orig_ops[1])) {
+            addToDiffe(orig_ops[0], idiff, Builder2, II.getType());
+          }
+          return;
+        }
         default:
           if (gutils->isConstantInstruction(&II)) return;
           llvm::errs() << *gutils->oldFunc << "\n";
