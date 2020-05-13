@@ -22,6 +22,10 @@ struct Duplicated{T} <: Annotation{T}
     val::T
     dval::T
 end
+struct DuplicatedNoNeed{T} <: Annotation{T}
+    val::T
+    dval::T
+end
 
 Base.eltype(::Type{<:Annotation{T}}) where T = T
 
@@ -79,6 +83,10 @@ struct LLVMThunk{RT}
                 push!(params, MDString("diffe_out"))
             elseif T <: Duplicated
                 push!(params, MDString("diffe_dup"))
+                push!(params, llvm_params[i])
+                i += 1
+            elseif T <: DuplicatedNoNeed
+                push!(params, MDString("diffe_dupnoneed"))
                 push!(params, llvm_params[i])
                 i += 1
             else
@@ -163,6 +171,7 @@ annotate(arg, args...) = (Const(arg), annotate(args...)...)
 
 prepare_cc() = ()
 prepare_cc(arg::Duplicated, args...) = (arg.val, arg.dval, prepare_cc(args...)...)
+prepare_cc(arg::DuplicatedNoNeed, args...) = (arg.val, arg.dval, prepare_cc(args...)...)
 prepare_cc(arg::Annotation, args...) = (arg.val, prepare_cc(args...)...)
 
 function autodiff(f, args...)
