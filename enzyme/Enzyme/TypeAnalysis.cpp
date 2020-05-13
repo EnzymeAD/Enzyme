@@ -1385,6 +1385,7 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
             updateAnalysis(I.getOperand(0), ValueData(DataType(I.getOperand(0)->getType()->getScalarType())).Only(-1), &I);
             updateAnalysis(I.getOperand(1), ValueData(DataType(I.getOperand(1)->getType()->getScalarType())).Only(-1), &I);
             return;
+
         default: return;
     }
 }
