@@ -1598,48 +1598,6 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
             updateAnalysis(&call, DataType(Type::getDoubleTy(call.getContext())), &call);
         }
 
-        /*
-		if (ci->getName() == "malloc") {
-			updateAnalysis(call.getArgOperand(0), IntType::Integer, &call);
-		}
-
-
-
-        if (ci->getName() == "frexp") {
-            updateAnalysis(call.getArgOperand(0), DataType(Type::getDoubleTy(call.getContext())), &call);
-            updateAnalysis(call.getArgOperand(1), ValueData(IntType::Integer).Only({0}), &call);
-            updateAnalysis(&call, DataType(Type::getDoubleTy(call.getContext())), &call);
-        }
-
-        if (ci->getName() == "ldexp") {
-            updateAnalysis(call.getArgOperand(0), DataType(Type::getDoubleTy(call.getContext())), &call);
-            updateAnalysis(call.getArgOperand(1), ValueData(IntType::Integer), &call);
-            updateAnalysis(&call, DataType(Type::getDoubleTy(call.getContext())), &call);
-        }
-
-        if (ci->getName() == "modf") {
-            updateAnalysis(call.getArgOperand(0), DataType(Type::getDoubleTy(call.getContext())), &call);
-            updateAnalysis(call.getArgOperand(1), ValueData(Type::getDoubleTy(call.getContext())).Only({0}), &call);
-            updateAnalysis(&call, DataType(Type::getDoubleTy(call.getContext())), &call);
-        }
-
-        if (ci->getName() == "sin")
-            analyzeFuncTypes(sin, call, *this);
-
-        const std::vector<std::string> doubleCmath = {
-                                                        "cos", "sin", "tan", "acos", "asin", "atan", "atan2",
-                                                        "cosh", "sinh", "tanh", "acosh", "asinh", "atanh",
-                                                        "exp", "log", "log10", "exp2", "expm1"
-                                                    };
-        const std::vector<std::string> floatCMath = {"acoshf", "asinhf", "atanhf", "exp2f", "expm1f"};
-        const std::vector<std::string> longDoubleCMath = {"acoshl", "asinhl", "atanhl", "exp2l", "expm1l"};
-
-        if (std::find(doubleCmath.begin(), doubleCmath.end(), ci->getName().str()) != doubleCmath.end()) {
-            for(unsigned i=0; i<call.getNumArgOperands(); i++)
-                updateAnalysis(call.getArgOperand(i), DataType(Type::getDoubleTy(call.getContext())), &call);
-            updateAnalysis(&call, DataType(Type::getDoubleTy(call.getContext())), &call);
-        }*/
-
 		//TODO we should handle calls interprocedurally, allowing better propagation of type information
 		if (!ci->empty()) {
 			visitIPOCall(call, *ci);
