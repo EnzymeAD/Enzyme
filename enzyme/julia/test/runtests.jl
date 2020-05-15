@@ -101,14 +101,14 @@ end
 
     @test fd ≈ ForwardDiff.derivative(foo, x)
     @test fd ≈ Zygote.gradient(foo, x)[1]
-    # @test fd ≈ autodiff(foo, Active(x))
-    # test_scalar(foo, x)
+    @test fd ≈ autodiff(foo, Active(x))
+    test_scalar(foo, x)
 
     # Input type shouldn't matter
     x = 3
     @test fd ≈ ForwardDiff.derivative(foo, x)
     @test fd ≈ Zygote.gradient(foo, x)[1]
-    # @test fd ≈ autodiff(foo, Active(x))
+    @test fd ≈ autodiff(foo, Active(x))
 end
 
 @testset "Bessel" begin
