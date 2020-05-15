@@ -81,6 +81,7 @@ if(Julia_FOUND)
             message(WARNING "Julia and Enzyme use different LLVM versions")
         endif()
     endif()
+    set(LLVM_TOOLS_BINARY_DIR "${LLVM_INSTALL_PREFIX}/${LLVM_TOOLS_INSTALL_DIR}")
 endif()
 
 add_subdirectory(Enzyme)
