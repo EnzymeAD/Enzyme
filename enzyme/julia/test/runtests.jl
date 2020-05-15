@@ -86,7 +86,8 @@ end
     fd = central_fdm(5, 1)(asin, x)
 
     @test fd ≈ ForwardDiff.derivative(asin, x)
-    # @test fd ≈ autodiff(asin, Active(x))
+    @test fd ≈ autodiff(asin, Active(x))
+    test_scalar(asin, x)
 
     function foo(x)
         a = sin(x)

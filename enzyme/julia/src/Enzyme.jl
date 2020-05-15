@@ -193,6 +193,21 @@ for op in (sin, cos, exp)
     end
 end
 
+for op in (asin,)
+    for (T, llvm_t) in ((Float32, "float"), (Float64, "double"))
+        decl = "declare double @$(nameof(op))($llvm_t)"
+        func = """
+               %val = call $llvm_t @asin($llvm_t %0)
+               ret $llvm_t %val
+               """
+       @eval begin
+            @inline function Cassette.overdub(::EnzymeCtx, ::typeof($op), x::$T)
+                Base.llvmcall(($decl,$func), $T, Tuple{$T}, x)
+            end
+        end
+    end
+end
+
 # WIP
 # @inline Cassette.overdub(::EnzymeCtx, ::typeof(asin), x::Float64) = ccall(:asin, Float64, (Float64,), x)
 # @inline Cassette.overdub(::EnzymeCtx, ::typeof(asin), x::Float32) = ccall(:asin, Float32, (Float32,), x)
