@@ -180,28 +180,29 @@ function check_ir!(job::EnzymeJob, errors::Vector{IRError}, inst::LLVM.CallInst)
         # let's assume it's valid ASM
 
     elseif isa(dest, ConstantExpr)
-        # detect calls to literal pointers
-        if occursin("inttoptr", string(dest))
-            # extract the literal pointer
-            ptr_arg = first(operands(dest))
-            GPUCompiler.@compiler_assert isa(ptr_arg, ConstantInt) job
-            ptr_val = convert(Int, ptr_arg)
-            ptr = Ptr{Cvoid}(ptr_val)
+        # Enzyme should be able to handle these
+    #     # detect calls to literal pointers
+    #     if occursin("inttoptr", string(dest))
+    #         # extract the literal pointer
+    #         ptr_arg = first(operands(dest))
+    #         GPUCompiler.@compiler_assert isa(ptr_arg, ConstantInt) job
+    #         ptr_val = convert(Int, ptr_arg)
+    #         ptr = Ptr{Cvoid}(ptr_val)
 
-            # look it up in the Julia JIT cache
-            frames = ccall(:jl_lookup_code_address, Any, (Ptr{Cvoid}, Cint,), ptr, 0)
-            if length(frames) >= 1
-                GPUCompiler.@compiler_assert length(frames) == 1 job frames=frames
-                if VERSION >= v"1.4.0-DEV.123"
-                    fn, file, line, linfo, fromC, inlined = last(frames)
-                else
-                    fn, file, line, linfo, fromC, inlined, ip = last(frames)
-                end
-                push!(errors, (POINTER_FUNCTION, bt, fn))
-            else
-                push!(errors, (POINTER_FUNCTION, bt, nothing))
-            end
-        end
+    #         # look it up in the Julia JIT cache
+    #         frames = ccall(:jl_lookup_code_address, Any, (Ptr{Cvoid}, Cint,), ptr, 0)
+    #         if length(frames) >= 1
+    #             GPUCompiler.@compiler_assert length(frames) == 1 job frames=frames
+    #             if VERSION >= v"1.4.0-DEV.123"
+    #                 fn, file, line, linfo, fromC, inlined = last(frames)
+    #             else
+    #                 fn, file, line, linfo, fromC, inlined, ip = last(frames)
+    #             end
+    #             push!(errors, (POINTER_FUNCTION, bt, fn))
+    #         else
+    #             push!(errors, (POINTER_FUNCTION, bt, nothing))
+    #         end
+    #     end
     end
 
     return errors
