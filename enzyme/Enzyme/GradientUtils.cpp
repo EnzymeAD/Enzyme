@@ -1389,6 +1389,11 @@ Value* GradientUtils::lookupM(Value* val, IRBuilder<>& BuilderM, const ValueToVa
     if (isa<MetadataAsValue>(val)) {
         return val;
     }
+    if (isa<InlineAsm>(val)) {
+        return val;
+    }
+
+
     if (!isa<Instruction>(val)) {
         llvm::errs() << *val << "\n";
     }
