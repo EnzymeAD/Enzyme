@@ -15,9 +15,10 @@ abstract type Annotation{T} end
 struct Const{T} <: Annotation{T}
     val::T
 end
-struct Active{T} <: Annotation{T}
+struct Active{T<:AbstractFloat} <: Annotation{T}
     val::T
 end
+Active(i::Integer) = Active(float(i))
 struct Duplicated{T} <: Annotation{T}
     val::T
     dval::T
