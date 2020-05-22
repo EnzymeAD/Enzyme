@@ -48,7 +48,10 @@ struct LLVMThunk{RT}
         job    = Compiler.EnzymeJob(target, source)
 
         # Codegen the primal function and all its dependency in one module
-        mod, primalf = Compiler.codegen(:llvm, job, optimize=false)
+        mod, primalf = Compiler.codegen(:llvm, job, optimize=false, strict=false)
+
+        # Do our own validation 
+        Compiler.check_ir(job, mod)        
 
         # Now build the actual wrapper function
         ctx     = context(mod)
