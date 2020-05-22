@@ -40,7 +40,8 @@ struct LLVMThunk{RT}
         # CTX, f are ghosts
         overdub_tt = Tuple{typeof(Compiler.CTX), typeof(f), primal_tt...}
         rt = Core.Compiler.return_type(Cassette.overdub, overdub_tt)
-        @assert rt<:AbstractFloat
+        # can't return array since that's complicated.
+        @assert rt<:Union{AbstractFloat, Nothing}
 
         name   = String(nameof(f))
         source = Compiler.FunctionSpec(Cassette.overdub, overdub_tt, #=kernel=# false, #=name=# name)
