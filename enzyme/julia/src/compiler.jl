@@ -96,7 +96,7 @@ const libjulia = Ref{Ptr{Cvoid}}(C_NULL)
 
 # GPUCompiler.check_ir(job::EnzymeJob, args...) = nothing
 import GPUCompiler: IRError, DYNAMIC_CALL, DELAYED_BINDING, RUNTIME_FUNCTION, UNKNOWN_FUNCTION, POINTER_FUNCTION
-function check_ir!(job::EnzymeJob, errors::Vector{IRError}, inst::LLVM.CallInst)
+function GPUCompiler.check_ir!(job::EnzymeJob, errors::Vector{IRError}, inst::LLVM.CallInst)
     bt = GPUCompiler.backtrace(inst)
     dest = called_value(inst)
     if isa(dest, LLVM.Function)
