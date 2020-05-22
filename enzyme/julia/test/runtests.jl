@@ -196,3 +196,38 @@ end
     # end
 
 end
+
+@testset "hmlstm" begin 
+    sigm(x)  = @fastmath 1 / (1 + exp(-x))
+    @fastmath function hmlstm_update_c_scalar(z, zb, c, f, i, g)
+        if z == 1.0f0 # FLUSH
+            return sigm(i) * tanh(g)
+        elseif zb == 0.0f0 # COPY
+            return c
+        else # UPDATE
+            return sigm(f) * c + sigm(i) * tanh(g)
+        end
+    end
+
+    N = 64
+    Z = round.(rand(Float32, N))
+    Zb = round.(rand(Float32, N))
+    C = rand(Float32, N, N)
+    F = rand(Float32, N, N)
+    I = rand(Float32, N, N)
+    G = rand(Float32, N, N)
+
+    function broadcast_hmlstm(out, Z, Zb, C, F, I, G)
+        out .= hmlstm_update_c_scalar.(Z, Zb, C, F, I, G)
+        return nothing
+    end
+
+    ∇C = zeros(Float32, N, N)
+    ∇F = zeros(Float32, N, N)
+    ∇I = zeros(Float32, N, N)
+    ∇G = zeros(Float32, N, N)
+
+    autodiff(broadcast_hmlstm, 
+             Const(zeros(Float32, N, N)), Const(Z), Const(Zb), 
+             Duplicated(C, ∇C), Duplicated(F, ∇F), Duplicated(I, ∇I), Duplicated(G, ∇G))
+end
