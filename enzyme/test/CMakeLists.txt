@@ -18,4 +18,12 @@ if(Julia_FOUND)
       LLVMEnzyme-${LLVM_VERSION_MAJOR}
       VERBATIM
   )
+
+  set(JLRUN "${ENZYME_BINARY_DIR}/jl.sh")
+  file( WRITE  ${JLRUN} "#!/bin/bash\n")
+  file( APPEND ${JLRUN} "export ENZYME_PATH=${ENZYME_BINARY_DIR}/Enzyme\n")
+  file( APPEND ${JLRUN} "export JULIA_PROJECT=${ENZYME_SOURCE_DIR}/julia\n")
+  file( APPEND ${JLRUN} "${Julia_EXECUTABLE}\n")
+  execute_process( COMMAND chmod +x ${JLRUN})
+
 endif()
