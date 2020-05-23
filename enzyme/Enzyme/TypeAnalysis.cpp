@@ -1195,10 +1195,6 @@ void TypeAnalyzer::visitBinaryOperator(BinaryOperator &I) {
 		ValueData vd = getAnalysis(I.getOperand(0));
         vd.pointerIntMerge(getAnalysis(I.getOperand(1)), I.getOpcode());
 
-
-		ValueData vd = getAnalysis(I.getOperand(0));
-        vd.pointerIntMerge(getAnalysis(I.getOperand(1)), I.getOpcode());
-
         if (I.getOpcode() == BinaryOperator::And) {
             for(int i=0; i<2; i++) {
                 for(auto andval : fntypeinfo.isConstantInt(I.getOperand(i), DT, intseen)) {
