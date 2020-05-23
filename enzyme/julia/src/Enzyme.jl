@@ -213,6 +213,43 @@ for op in (asin,)
     end
 end
 
+@inline function pack(args...)
+    ntuple(Val(length(args))) do i
+        Base.@_inline_meta
+        arg = args[i]
+        @assert arg isa AbstractFloat
+        return Duplicated(Ref(args[i]), Ref(zero(args[i])))
+    end
+end
+
+@inline unpack() = ()
+@inline unpack(arg) = (arg[],)
+@inline unpack(arg, args...) = (arg[], unpack(args...)...)
+
+@inline ∇unpack() = ()
+@inline ∇unpack(arg::Duplicated) = (arg.dval[],)
+@inline ∇unpack(arg::Duplicated, args...) = (arg.dval[], ∇unpack(args...)...)
+
+function gradient(f, args...)
+    ∇args = pack(args...)
+    f′ = function (args...)
+        Base.@_inline_meta
+        f(unpack(args...)...)
+    end
+    autodiff(f′, ∇args...)
+    return ∇unpack(∇args...)
+end
+
+function pullback(f, args...)
+    return (c) -> begin
+        ∇vals = gradient(f, args...)
+        return ntuple(Val(length(∇vals))) do i
+            Base.@_inline_meta
+            return c*∇vals[i]
+        end
+    end
+end
+
 # WIP
 # @inline Cassette.overdub(::EnzymeCtx, ::typeof(asin), x::Float64) = ccall(:asin, Float64, (Float64,), x)
 # @inline Cassette.overdub(::EnzymeCtx, ::typeof(asin), x::Float32) = ccall(:asin, Float32, (Float32,), x)
