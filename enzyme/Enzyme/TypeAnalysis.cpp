@@ -151,9 +151,8 @@ DataType getTypeFromTBAAString(std::string typeNameStringRef, Instruction* inst)
                 return inst->getType()->getScalarType();
             }
         }
-    } else {
-        return DataType(IntType::Unknown);
     }
+    return DataType(IntType::Unknown);
 }
 
 static inline ValueData parseTBAA(TBAAStructTypeNode AccessType, Instruction* inst, const llvm::DataLayout& dl) {
