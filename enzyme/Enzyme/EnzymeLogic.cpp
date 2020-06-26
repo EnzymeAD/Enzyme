@@ -2121,7 +2121,7 @@ public:
     if (called) {
       auto n = called->getName();
 
-      if (called && (called->getName() == "asin")) {
+      if (called && (called->getName() == "asin" || called->getName() == "asinf" || called->getName() == "asinl")) {
         if (gutils->isConstantValue(orig)) return;
         
         IRBuilder<> Builder2 = getReverseBuilder(call.getParent());
@@ -2153,7 +2153,7 @@ public:
       }
 
       if (n == "lgamma" || n == "lgammaf" || n == "lgammal" || n == "lgamma_r" || n == "lgammaf_r" || n == "lgammal_r"
-        || n == "__lgamma_r_finite" || n == "__lgammaf_r_finite" || n == "__lgammal_r_finite" || n == "asin" || n == "acos" || n == "atan") {
+        || n == "__lgamma_r_finite" || n == "__lgammaf_r_finite" || n == "__lgammal_r_finite" || n == "acos" || n == "atan") {
         if (mode == DerivativeMode::Forward || gutils->isConstantValue(orig)) {
           return;
         }
