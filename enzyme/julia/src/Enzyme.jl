@@ -46,10 +46,11 @@ struct LLVMThunk{RT}
         name   = String(nameof(f))
         source = Compiler.FunctionSpec(Cassette.overdub, overdub_tt, #=kernel=# false, #=name=# name)
         target = Compiler.EnzymeTarget()
-        job    = Compiler.EnzymeJob(target, source)
+        params = Compiler.EnzymeCompilerParams()
+        job    = Compiler.CompilerJob(target, source, params)
 
         # Codegen the primal function and all its dependency in one module
-        mod, primalf = Compiler.codegen(:llvm, job, optimize=false, strict=false)
+        mod, primalf = Compiler.codegen(:llvm, job, optimize=false, validate=false)
 
         # Do our own validation 
         Compiler.check_ir(job, mod)        

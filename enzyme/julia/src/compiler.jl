@@ -4,7 +4,7 @@ using GPUCompiler
 using LLVM
 using LLVM.Interop
 
-import GPUCompiler: FunctionSpec, codegen
+import GPUCompiler: CompilerJob, FunctionSpec, codegen
 
 import Libdl
 llvmver = LLVM.version().major
@@ -28,23 +28,19 @@ function __init__()
     LLVM.clopts("-enzyme_preopt=0")
 end
 
-# Define EnzymeTarget & EnzymeJob
-using LLVM: triple, Target, TargetMachine
-import GPUCompiler: llvm_triple
+# Define EnzymeTarget
+using LLVM: Target, TargetMachine
 
 Base.@kwdef struct EnzymeTarget <: AbstractCompilerTarget
 end
-
-GPUCompiler.isintrinsic(::EnzymeTarget, fn::String) = true
-GPUCompiler.can_throw(::EnzymeTarget) = true
-
-llvm_triple(::EnzymeTarget) = triple()
+GPUCompiler.llvm_triple(::EnzymeTarget) = Sys.MACHINE
 
 # GPUCompiler.llvm_datalayout(::EnzymeTarget) =  nothing
 
 function GPUCompiler.llvm_machine(target::EnzymeTarget)
-    t = Target(llvm_triple(target))
-    tm = TargetMachine(t, llvm_triple(target))
+    triple = GPUCompiler.llvm_triple(target)
+    t = Target(; triple = triple)
+    tm = TargetMachine(t, triple)
     LLVM.asm_verbosity!(tm, true)
 
     return tm
@@ -62,32 +58,19 @@ end
 
 GPUCompiler.runtime_module(target::EnzymeTarget) = Runtime
 
+struct EnzymeCompilerParams <: AbstractCompilerParams end
+
 ## job
 
-export EnzymeJob
-
-Base.@kwdef struct EnzymeJob <: AbstractCompilerJob
-    target::EnzymeTarget
-    source::FunctionSpec
-end
-
 # TODO: We shouldn't blancket opt-out
-GPUCompiler.check_invocation(job::EnzymeJob, entry::LLVM.Function) = nothing
+GPUCompiler.check_invocation(job::CompilerJob{EnzymeTarget}, entry::LLVM.Function) = nothing
 
-import GPUCompiler: target, source
-target(job::EnzymeJob) = job.target
-source(job::EnzymeJob) = job.source
-
-Base.similar(job::EnzymeJob, source::FunctionSpec) =
-    EnzymeJob(target=job.target, source=source)
-
-function Base.show(io::IO, job::EnzymeJob)
-    print(io, "Enzyme CompilerJob of ", GPUCompiler.source(job))
-end
+GPUCompiler.isintrinsic(::CompilerJob{EnzymeTarget}, fn::String) = true
+GPUCompiler.can_throw(::CompilerJob{EnzymeTarget}) = true
 
 # TODO: encode debug build or not in the compiler job
 #       https://github.com/JuliaGPU/CUDAnative.jl/issues/368
-GPUCompiler.runtime_slug(job::EnzymeJob) = "enzyme" 
+GPUCompiler.runtime_slug(job::CompilerJob{EnzymeTarget}) = "enzyme" 
 
 include("compiler/optimize.jl")
 include("compiler/cassette.jl")
