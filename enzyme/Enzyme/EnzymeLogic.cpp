@@ -2121,6 +2121,22 @@ public:
     if (called) {
       auto n = called->getName();
 
+      if (called && (called->getName() == "asin")) {
+        if (gutils->isConstantValue(orig)) return;
+        
+        IRBuilder<> Builder2 = getReverseBuilder(call.getParent());
+        Value* x  = lookup(gutils->getNewFromOriginal(orig->getArgOperand(0)), Builder2);
+        Value* oneMx2 = Builder2.CreateFSub(ConstantFP::get(x->getType(), 1.0), Builder2.CreateFMul(x, x));
+
+        SmallVector<Value*, 1> args = { oneMx2 };
+        Type *tys[] = {x->getType()};
+        auto cal = cast<CallInst>(Builder2.CreateCall(Intrinsic::getDeclaration(called->getParent(), Intrinsic::sqrt, tys), args));
+
+        Value* dif0 = Builder2.CreateFDiv(diffe(orig, Builder2), cal);
+        addToDiffe(orig->getArgOperand(0), dif0, Builder2, x->getType());
+        return;
+      }
+
       if (called && (called->getName() == "tanhf" || called->getName() == "tanh")) {
         if (mode == DerivativeMode::Forward || gutils->isConstantValue(orig)) return;
 
@@ -2137,7 +2153,7 @@ public:
       }
 
       if (n == "lgamma" || n == "lgammaf" || n == "lgammal" || n == "lgamma_r" || n == "lgammaf_r" || n == "lgammal_r"
-        || n == "__lgamma_r_finite" || n == "__lgammaf_r_finite" || n == "__lgammal_r_finite") {
+        || n == "__lgamma_r_finite" || n == "__lgammaf_r_finite" || n == "__lgammal_r_finite" || n == "asin" || n == "acos" || n == "atan") {
         if (mode == DerivativeMode::Forward || gutils->isConstantValue(orig)) {
           return;
         }
@@ -2262,57 +2278,6 @@ public:
         IRBuilder<> Builder2 = getReverseBuilder(call.getParent());
         args.push_back(lookup(argi, Builder2));
       }
-  }
-
-  if (called && (called->getName() == "printf" || called->getName() == "puts"))
-      return;
-
-  // Handle lgamma, safe to recompute so no store/change to forward
-  if (called) {
-    auto n = called->getName();
-    if (n == "lgamma" || n == "lgammaf" || n == "lgammal" || n == "lgamma_r" || n == "lgammaf_r" || n == "lgammal_r"
-      || n == "__lgamma_r_finite" || n == "__lgammaf_r_finite" || n == "__lgammal_r_finite"
-      || n == "tanh" || n == "tanhf" || n == "asin" || n == "acos" || n == "atan") {
-      return;
-    }
-  }
-
-  if (called && isAllocationFunction(*called, gutils->TLI)) {
-      if (is_value_needed_in_reverse(TR, gutils, orig, /*topLevel*/false)) {
-          IRBuilder<> BuilderZ(op);
-          gutils->addMalloc(BuilderZ, op, getIndex(orig, CacheType::Self) );
-      }
-      if (!gutils->isConstantValue(orig)) {
-          gutils->createAntiMalloc(op, getIndex(orig, CacheType::Shadow));
-      }
-      return;
-  }
-
-  //Remove free's in forward pass so the memory can be used in the reverse pass
-  if (called && isDeallocationFunction(*called, gutils->TLI)) {
-    eraseIfUnused(*orig, /*erase*/true, /*check*/false);
-    return;
-  }
-
-  bool subretused = unnecessaryValues.find(orig) == unnecessaryValues.end();
-
-  if (gutils->isConstantInstruction(orig)) {
-
-      // If we need this value and it is illegal to recompute it (it writes or may load uncacheable data)
-      //    Store and reload it
-      if (/*!topLevel*/true && subretused && !op->doesNotAccessMemory()) {
-        IRBuilder<> BuilderZ(op);
-        gutils->addMalloc(BuilderZ, op, getIndex(orig, CacheType::Self));
-        return;
-      }
-      return;
-  }
-  //llvm::errs() << "creating augmented func call for " << *op << "\n";
-
-
-  SmallVector<Value*, 8> args;
-  std::vector<DIFFE_TYPE> argsInverted;
-  const bool modifyPrimal = shouldAugmentCall(orig, gutils, TR);
 
 
       if (gutils->isConstantValue(orig->getArgOperand(i)) && !foreignFunction) {
@@ -2383,48 +2348,6 @@ public:
           argnum++;
         }
         nextTypeInfo.second = TR.query(orig);
-      }
-    }
-  }
-
-
-  if (called && (called->getName() == "asin")) {
-    if (gutils->isConstantValue(orig)) return;
-
-    Value* x  = lookup(gutils->getNewFromOriginal(orig->getArgOperand(0)), Builder2);
-    Value* oneMx2 = Builder2.CreateFSub(ConstantFP::get(x->getType(), 1.0), Builder2.CreateFMul(x, x));
-
-    SmallVector<Value*, 1> args = { oneMx2 };
-    Type *tys[] = {x->getType()};
-    auto cal = cast<CallInst>(Builder2.CreateCall(Intrinsic::getDeclaration(called->getParent(), Intrinsic::sqrt, tys), args));
-
-    Value* dif0 = Builder2.CreateFDiv(diffe(orig, Builder2), cal);
-    addToDiffe(orig->getArgOperand(0), dif0, Builder2, x->getType());
-    return;
-  }
-
-  bool subretused = unnecessaryValues.find(orig) == unnecessaryValues.end();
-  if (visitCommonCallInst(call)) return;
-
-  bool modifyPrimal = shouldAugmentCall(orig, gutils, TR);
-
-  bool foreignFunction = called == nullptr || called->empty();
-
-  SmallVector<Value*, 8> args;
-  SmallVector<Value*, 8> pre_args;
-  std::vector<DIFFE_TYPE> argsInverted;
-  IRBuilder<> BuilderZ(op);
-  std::vector<Instruction*> postCreate;
-  std::vector<Instruction*> userReplace;
-  BuilderZ.setFastMathFlags(getFast());
-
-  for(unsigned i=0;i<op->getNumArgOperands(); i++) {
-    args.push_back(gutils->lookupM(argops[i], Builder2));
-    pre_args.push_back(argops[i]);
-
-    if (gutils->isConstantValue(orig->getArgOperand(i)) && !foreignFunction) {
-      argsInverted.push_back(DIFFE_TYPE::CONSTANT);
-      continue;
     }
 
     //llvm::Optional<std::map<std::pair<Instruction*, std::string>, unsigned>> sub_index_map;
