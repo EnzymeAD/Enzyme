@@ -56,7 +56,6 @@ module Runtime
     report_exception_frame(idx, func, file, line) = return
 end
 
-GPUCompiler.runtime_module(target::EnzymeTarget) = Runtime
 
 struct EnzymeCompilerParams <: AbstractCompilerParams end
 
@@ -65,6 +64,7 @@ struct EnzymeCompilerParams <: AbstractCompilerParams end
 # TODO: We shouldn't blancket opt-out
 GPUCompiler.check_invocation(job::CompilerJob{EnzymeTarget}, entry::LLVM.Function) = nothing
 
+GPUCompiler.runtime_module(target::CompilerJob{EnzymeTarget}) = Runtime
 GPUCompiler.isintrinsic(::CompilerJob{EnzymeTarget}, fn::String) = true
 GPUCompiler.can_throw(::CompilerJob{EnzymeTarget}) = true
 
