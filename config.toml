@@ -1,4 +1,4 @@
-# baseURL = "https://mlir.llvm.org/"
+baseURL = "https://enzyme.mit.edu/"
 languageCode = "en-us"
 title = "Enzyme AD"
 theme = "mlir"
@@ -18,7 +18,7 @@ disablePathToLower = true
 [Params]
 
     # Souce Code repository section
-    description = "Enzyme AD Compiler Framework"
+    description = "Enzyme Automatic Differentiation Framework"
     github_repository = "https://github.com/wsmoses/Enzyme"
     version = ""
 
