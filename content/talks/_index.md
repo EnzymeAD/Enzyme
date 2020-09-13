@@ -11,8 +11,6 @@ weight: 1
 
 * LLVM Oct Dev Meeting 2020 [Enzyme: High-Performance Automatic Differentiation of LLVM](https://llvm.org/devmtg/2020-09/program/); William S. Moses, Valentin Churavy
 
-The schedule for the open design meetings and upcoming presentations can be found on the Agenda document of the [SIG](https://github.com/tensorflow/community/blob/master/sigs/mlir/CHARTER.md). Additional talks or conferences of interest will be added below.
-
 ### About Enzyme
 
 * [Preprint](/Enzyme.pdf) ; William S. Moses, Valentin Churavy

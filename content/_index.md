@@ -9,7 +9,7 @@ publishdate: 2018-11-23T15:26:15Z
 The Enzyme project is a ...
 
 To cite Enzyme, please use [this
-publication](https://arxiv.org/abs/2002.11054).
+publication](/enzymepreprint.pdf).
 
 *   Docs docs docs docs
 
