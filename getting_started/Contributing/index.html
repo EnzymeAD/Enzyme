@@ -1,0 +1,53 @@
+<!doctype html><html lang=en-us><head><meta charset=utf-8><meta http-equiv=x-ua-compatible content="IE=edge"><meta name=viewport content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><title>How to Contribute - Enzyme AD</title><meta name=description content="Enzyme AD Compiler framework"><meta name=generator content="Hugo 0.74.3"><link href=index.xml rel=alternate type=application/rss+xml><link rel=canonical href=/getting_started/Contributing/><link rel=stylesheet href=css/theme.css><script src=https://use.fontawesome.com/releases/v5.0.6/js/all.js></script><link rel=stylesheet href=css/chroma.min.css><script src=https://cdn.jsdelivr.net/npm/jquery@3.3.1/dist/jquery.min.js></script><script src=https://cdn.jsdelivr.net/npm/jquery.easing@1.4.1/jquery.easing.min.js></script><script src=js/bundle.js></script><style>:root{}</style></head><body><div class=container><header><h1><div><img src=/mlir-logo.png width=40px align=absmiddle>
+Enzyme AD</div></h1><p class=description>Enzyme AD Compiler framework</p></header><div class=global-menu><nav><ul><li class=parent><a href>Community<i class="fas fa-angle-right"></i></a><ul class=sub-menu><li class=child><a href=https://groups.google.com/d/forum/enzyme-dev>Discussion List</a></li></ul></li><li><a href=/getting_started/Debugging/>Debugging</a></li><li><a href=/getting_started/Faq/>FAQ</a></li><li class=parent><a href=https://github.com/wsmoses/Enzyme>Source<i class="fas fa-angle-right"></i></a><ul class=sub-menu><li class=child><a href=/doxygen/>Doxygen</a></li><li class=child><a href=https://github.com/wsmoses/Enzyme>GitHub</a></li></ul></li><li><a href=https://github.com/wsmoses/Enzyme/issues>Bugs</a></li></ul></nav></div><div class=content-container><main><h1>How to Contribute</h1><p>Everyone is welcome to contribute to MLIR. There are several ways of getting
+involved and contributing including reporting bugs, improving documentation and
+tutorials.</p><h2 id=community-guidelines>Community Guidelines&nbsp;<a class=headline-hash href=#community-guidelines>¶</a></h2><p>Please be mindful of the
+<a href=https://llvm.org/docs/CodeOfConduct.html>LLVM Code of Conduct</a>
+,
+which pledges to foster an open and welcoming environment.</p><h3 id=contributing-code>Contributing code&nbsp;<a class=headline-hash href=#contributing-code>¶</a></h3><p>We don&rsquo;t accept pull-request on GitHub, instead we use
+<a href=https://llvm.org/docs/Phabricator.html>Phabricator</a>
+.
+At the moment you need to also join this
+<a href=https://reviews.llvm.org/project/members/78/>group</a>
+to enable build and test of your Phabricator revisions.</p><p>Once a patch is approved on Phabricator and pass continuous integration checks,
+it can be pushed directly to the master branch of the repository.</p><h4 id=using-arcanist>Using Arcanist&nbsp;<a class=headline-hash href=#using-arcanist>¶</a></h4><p>Use
+<a href=https://llvm.org/docs/Phabricator.html#requesting-a-review-via-the-command-line>Arcanist</a>
+to send your patches for review. This triggers the continuous build system and
+preserves the authorship information in case somebody else commits the patch on
+your behalf.</p><p>You can also setup a check as a git hook to prevent accidentally pushing
+unformatted commits with:
+<code>ln -sf ../../llvm/utils/git/pre-push.py .git/hooks/pre-push</code></p><h4 id=first-time-contributors>First-time contributors&nbsp;<a class=headline-hash href=#first-time-contributors>¶</a></h4><p>LLVM follows a
+<a href=https://llvm.org/docs/DeveloperPolicy.html#obtaining-commit-access>policy</a>
+of granting established contributors direct commit access to the repository.
+If you make your first contributions to the LLVM infrastructure, you are unlikely
+to have commit access. In this case, ask the reviewers to commit the change
+for you after it has been accepted. Once you have demonstrated the ability to
+write high-quality patches, follow the
+<a href=https://llvm.org/docs/DeveloperPolicy.html#obtaining-commit-access>policy</a>
+to
+obtain commit access for yourself.</p><p><em>Note:</em> if you haven&rsquo;t used Arcanist to send your patch for review, committers
+don&rsquo;t have access to your preferred identity for commit messages. Make sure
+to communicate it to them through available channels or use the git sign-off
+functionality to make your identity visible in the commit message.</p><h4 id=commit-messages>Commit messages&nbsp;<a class=headline-hash href=#commit-messages>¶</a></h4><p>Follow the git conventions for writing a commit message, in particular the
+first line is the short title of the commit. The title should be followed by an
+empty line and a longer description. Prefer describing <em>why</em> the change is
+implemented rather than what it does. The latter can be inferred from the code.
+This
+<a href=https://chris.beams.io/posts/git-commit/>post</a>
+give examples and more
+details.</p><h3 id=issue-tracking>Issue tracking&nbsp;<a class=headline-hash href=#issue-tracking>¶</a></h3><p>To report a bug, use the
+<a href="https://bugs.llvm.org/enter_bug.cgi?product=MLIR">MLIR product on the LLVM bug
+tracker</a>
+, try to pick a
+suitable component for the bug, or leave it in the default.</p><p>If you want to contribute, start working through the MLIR codebase, navigate to
+<a href="https://bugs.llvm.org/buglist.cgi?keywords=beginner%2C%20&keywords_type=allwords&list_id=176893&product=MLIR&query_format=advanced&resolution=---">the &ldquo;beginner&rdquo; issues</a>
+and start looking through interesting issues. If you decide to start on an
+issue, assign it to yourself and leave a comment so that other people know that
+you&rsquo;re working on it. If you want to help out, but not alone, use the issue
+comment thread to coordinate.</p><h3 id=contribution-guidelines-and-standards>Contribution guidelines and standards&nbsp;<a class=headline-hash href=#contribution-guidelines-and-standards>¶</a></h3><ul><li>Read the
+<a href=/getting_started/DeveloperGuide/ title=here>developer guide</a>
+.</li><li>Ensure that you use the correct license. Examples are provided below.</li><li>Include tests when you contribute new features, as they help to a)
+prove that your code works correctly, and b) guard against future breaking
+changes to lower the maintenance cost.</li><li>Bug fixes also generally require tests, because the presence of bugs
+usually indicates insufficient test coverage.</li></ul><h4 id=license>License&nbsp;<a class=headline-hash href=#license>¶</a></h4><p>Include a license at the top of new files.</p><ul><li><a href=https://github.com/llvm/llvm-project/blob/master/mlir/examples/toy/Ch1/toyc.cpp>C/C++ license example</a></li></ul><div class=edit-meta><br></div><nav class=pagination><a class="nav nav-prev" href=/getting_started/Faq/ title=FAQ><i class="fas fa-arrow-left" aria-hidden=true></i>Prev - FAQ</a>
+<a class="nav nav-next" href=/getting_started/DeveloperGuide/ title="Developer Guide">Next - Developer Guide <i class="fas fa-arrow-right" aria-hidden=true></i></a></nav><footer><p class=powered>Powered by <a href=https://gohugo.io>Hugo</a>. Theme by <a href=https://themes.gohugo.io/hugo-theme-techdoc/>TechDoc</a>. Designed by <a href=https://github.com/thingsym/hugo-theme-techdoc>Thingsym</a>.</p></footer></main><div class=sidebar><nav class=slide-menu><ul><li><a href>Home</a></li><li><a href=/talks/>Talks and Related Publications</a></li><li><a href=/users/>Users of MLIR</a></li><li class="parent has-sub-menu"><a href=/getting_started/>Getting Started<span class="mark opened">-</span></a><ul class=sub-menu><li><a href=/getting_started/Debugging/>Debugging</a></li><li><a href=/getting_started/Faq/>FAQ</a></li><li class=active><a href=/getting_started/Contributing/>How to Contribute</a></li><li><a href=/getting_started/DeveloperGuide/>Developer Guide</a></li><li><a href=/getting_started/openprojects/>Open Projects</a></li><li><a href=/getting_started/Glossary/>Glossary</a></li><li><a href=/getting_started/TestingGuide/>Testing Guide</a></li></ul></li></ul></nav><div class=sidebar-footer></div></div></div><a href=# id=backtothetop-fixed class=backtothetop data-backtothetop-duration=600 data-backtothetop-easing=easeOutQuart data-backtothetop-fixed-fadein=1000 data-backtothetop-fixed-fadeout=1000 data-backtothetop-fixed-bottom=10 data-backtothetop-fixed-right=20><span class="fa-layers fa-fw"><i class="fas fa-circle"></i><i class="fas fa-arrow-circle-up"></i></span></a></div></body></html>
