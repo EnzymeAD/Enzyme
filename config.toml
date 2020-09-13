@@ -18,7 +18,7 @@ disablePathToLower = true
 [Params]
 
     # Souce Code repository section
-    description = "Enzyme AD Compiler framework"
+    description = "Enzyme AD Compiler Framework"
     github_repository = "https://github.com/wsmoses/Enzyme"
     version = ""
 
