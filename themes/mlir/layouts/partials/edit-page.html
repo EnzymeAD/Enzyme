@@ -1,0 +1,7 @@
+{{- with .Site.Params.github_doc_repository -}}
+{{ $file := $.File.Path }}
+{{- if hasPrefix $file "docs/" }}
+{{ else -}}
+<a href="{{ . }}/edit/master/website/content/{{ $.File.Path }}" class="edit-page"><i class="fas fa-pen-square"></i> Edit on GitHub</a>
+{{ end -}}
+{{- end -}}

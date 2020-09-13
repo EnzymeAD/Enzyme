@@ -1,0 +1,41 @@
+$default-layout-width: 1024px;
+$default-layout-margin: 2%;
+
+$default-font-size: 100%;
+$default-font-color: #000;
+$default-font-family: -apple-system, BlinkMacSystemFont, "游ゴシック体", YuGothic, "メイリオ", Meiryo, "Helvetica Neue", HelveticaNeue, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+
+$default-line-height: 1.8;
+$default-margin: 2rem;
+$default-padding: 1.2rem;
+$default-stack: 1.8rem;
+
+// color
+$default-background-color: #fafafa;
+
+$sidebar-background-color: #f9f9f9;
+$sidebar-hover-color: #eee;
+$sidebar-active-color: #eee;
+
+$default-link-text-color: #2e7eb3;
+$default-link-hover-text-color: #38a0e4;
+
+$default-border-color: #f0f0f0;
+
+// code
+$code-font-size: .95rem;
+$code-font-family: Consolas,"Liberation Mono",Menlo,Courier,monospace;
+$code-block-background-color: #f4f6f8;
+$code-border-color: #f0f0f0;
+$code-inline-background-color: #f0f0f0;
+
+// breakpoint
+$default-breakpoints: (
+	xl: 1280px,
+	lg: 1024px,
+	md: 896px,
+	sm: 768px,
+	xs: 480px
+);
+
+$flexbox-grid-mixins-box-sizing: null;

@@ -1,0 +1,94 @@
+# baseURL = "https://mlir.llvm.org/"
+languageCode = "en-us"
+title = "Enzyme AD"
+theme = "mlir"
+
+hasCJKLanguage = true
+metaDataFormat = "yaml"
+
+pygmentsCodeFences = true
+pygmentsUseClasses = true
+
+defaultContentLanguage = "en"
+defaultContentLanguageInSubdir= false
+enableMissingTranslationPlaceholders = false
+
+disablePathToLower = true
+
+[Params]
+
+    # Souce Code repository section
+    description = "Enzyme AD Compiler framework"
+    github_repository = "https://github.com/wsmoses/Enzyme"
+    version = ""
+
+    # Documentation repository section
+    # documentation repository (set edit link to documentation repository)
+    # github_doc_repository = "https://github.com/llvm/mlir-www/"
+
+    # Analytic section
+    google_analytics_id = "" # Your Google Analytics tracking id
+    tag_manager_container_id = "" # Your Google Tag Manager container id
+    google_site_verification = "" # Your Google Site Verification for Search Console
+
+    # Theme settings section
+    # Theme color
+    custom_font_color = ""
+    custom_background_color = ""
+
+    # Documentation Menu section
+    # Menu style settings
+    menu_style = "slide-menu" # "open-menu" or "slide-menu"
+
+    # Date format
+    dateformat = "" # default "2 Jan 2006"
+    # See the format reference https://gohugo.io/functions/format/#hugo-date-and-time-templating-reference
+
+    # path name excluded from documentation menu
+    menu_exclusion = [
+        "archives",
+        "archive",
+        "blog",
+        "entry",
+        "post",
+        "posts"
+    ]
+
+# Global menu section
+[[menu.main]]
+    name = "Community"
+    weight = 3
+
+[[menu.main]]
+    name = "Discussion List"
+    parent = "Community"
+    url = "https://groups.google.com/d/forum/enzyme-dev"
+    weight = 2
+
+[[menu.main]]
+    name = "Source"
+    weight = 10
+    url = "https://github.com/wsmoses/Enzyme"
+
+[[menu.main]]
+    name = "GitHub"
+    parent = "Source"
+    weight = 2
+    url = "https://github.com/wsmoses/Enzyme"
+
+[[menu.main]]
+    name = "Doxygen"
+    parent = "Source"
+    weight = 1
+    url = "/doxygen/"
+
+[[menu.main]]
+    name = "Bugs"
+    weight = 20
+    url = "https://github.com/wsmoses/Enzyme/issues"
+
+[markup]
+  [markup.goldmark]
+    [markup.goldmark.renderer]
+      hardWraps = false
+      unsafe = true

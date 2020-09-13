@@ -1,0 +1,12 @@
+<header>
+  <h1><div>
+    <img src="{{ .Site.BaseURL }}/mlir-logo.png" width=40px align="absmiddle" />
+{{ .Site.Title }}
+  </div></h1>
+{{ with .Site.Params.version }}
+ <span class="version">Version {{ . }}</span>
+{{end}}
+{{ with .Site.Params.description }}
+<p class="description">{{ . }}</p>
+{{end}}
+</header>

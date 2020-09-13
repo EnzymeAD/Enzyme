@@ -1,0 +1,94 @@
+{
+  "name": "hugo-theme-techdoc",
+  "version": "0.4.0",
+  "description": "The Techdoc is a Hugo Theme for technical documentation.",
+  "main": "gulpfile.js",
+  "author": "Thingsym",
+  "license": "MIT",
+  "devDependencies": {
+    "autoprefixer": "^9.6.2",
+    "babel-core": "^6.26.3",
+    "babel-eslint": "^8.2.6",
+    "babel-loader": "^7.1.5",
+    "babel-plugin-transform-runtime": "^6.23.0",
+    "babel-preset-env": "^1.6.1",
+    "browser-sync": "~2.23.1",
+    "chokidar-cli": "^2.0.0",
+    "cross-env": "^6.0.3",
+    "es6-promise": "~4.2.2",
+    "eslint": "^4.13.1",
+    "flexbox-grid-mixins": "~0.1.3",
+    "gulp": "^3.9.1",
+    "gulp-autoprefixer": "~4.1.0",
+    "gulp-cssnano": "~2.1.2",
+    "gulp-eslint": "^6.0.0",
+    "gulp-jshint": "~2.1.0",
+    "gulp-load-plugins": "~1.5.0",
+    "gulp-plumber": "~1.1.0",
+    "gulp-rename": "~1.2.0",
+    "gulp-sass": "~3.1.0",
+    "gulp-stylelint": "^8.0.0",
+    "gulp-util": "~3.0.4",
+    "gulp-watch": "~4.3.11",
+    "jshint": "~2.9.4",
+    "jshint-stylish": "~2.2.1",
+    "node-sass": "^4.12.0",
+    "npm-run-all": "^4.1.5",
+    "postcss-cli": "^6.1.3",
+    "run-sequence": "~2.2.0",
+    "stylelint": "^9.9.0",
+    "stylelint-config-recommended": "^2.1.0",
+    "stylelint-config-recommended-scss": "^3.2.0",
+    "stylelint-scss": "^3.4.0",
+    "webpack": "^4.41.0",
+    "webpack-cli": "^3.3.9",
+    "webpack-stream": "^5.2.1"
+  },
+  "stylelint": {
+    "extends": [
+      "stylelint-config-recommended",
+      "stylelint-scss",
+      "stylelint-config-recommended-scss"
+    ]
+  },
+  "eslintConfig": {
+    "env": {
+      "browser": true,
+      "es6": true
+    },
+    "extends": "eslint:recommended",
+    "globals": {
+      "Atomics": "readonly",
+      "SharedArrayBuffer": "readonly",
+      "jQuery": true,
+      "$": false,
+      "wp": true
+    },
+    "parserOptions": {
+      "ecmaVersion": 2018
+    },
+    "rules": {}
+  },
+  "scripts": {
+    "default": "gulp",
+    "gulp": "gulp",
+    "gulp:lint": "gulp lint",
+    "gulp:watch": "gulp watch",
+    "build": "run-p \"build:*\"",
+    "build:js": "npm-run-all -p webpack",
+    "build:css": "run-p \"sass:**\"",
+    "webpack": "cross-env BABEL_ENV=default NODE_ENV=production webpack",
+    "sass:style": "node-sass src/scss/theme.scss static/css/theme.css --output-style expanded && postcss --use autoprefixer --no-map -r static/css/theme.css",
+    "sass:style:minify": "node-sass src/scss/theme.scss static/css/theme.min.css --output-style compressed && postcss --use autoprefixer --no-map -r static/css/theme.min.css",
+    "sass:chroma": "node-sass src/scss/chroma.scss static/css/chroma.css --output-style expanded && postcss --use autoprefixer --no-map -r static/css/chroma.css",
+    "sass:chroma:minify": "node-sass src/scss/chroma.scss static/css/chroma.min.css --output-style compressed && postcss --use autoprefixer --no-map -r static/css/chroma.min.css",
+    "lint:all": "run-p \"lint:*\"",
+    "lint:es": "eslint static/js/bundle.js",
+    "lint:es:fix": "eslint static/js/bundle.js --fix",
+    "lint:css": "stylelint \"static/css/*.css\" \"css/**/*.css\"",
+    "lint:scss": "stylelint \"src/scss/*.scss\" \"src/scss/**/*.scss\"",
+    "watch": "run-p \"watch:*\"",
+    "watch:css": "chokidar \"src/scss/*.scss\" \"src/scss/**/*.scss\" -c \"npm run build:css\" --initial --polling",
+    "watch:js": "chokidar \"src/js/*.js\" \"src/js/**/*.js\" -c \"npm run build:js\" --initial --polling"
+  }
+}

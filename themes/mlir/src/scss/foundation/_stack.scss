@@ -1,0 +1,49 @@
+/*-----------------------*
+		stack
+*-----------------------*/
+.stack-base {
+	margin-top: 0;
+	margin-bottom: 0;
+}
+
+.stack {
+	margin-top: $default-stack;
+}
+
+.no-stack {
+	margin-top: 0;
+}
+.unset-stack {
+	margin-top: unset;
+	margin-bottom: unset;
+}
+
+main * {
+	@extend .stack-base;
+}
+
+main {
+	* {
+		+ h1, + h2, + h3, + h4, + h5, + h6,
+		+ p,
+		+ hr,
+		+ table,
+		+ ul,
+		+ ol,
+		+ dl,
+		+ blockquote,
+		+ pre,
+		+ figure {
+			@extend .stack;
+		}
+	}
+
+	li > ul,
+	li > ol {
+		@extend .unset-stack;
+	}
+}
+
+figure > figcaption {
+	@extend .no-stack;
+}
