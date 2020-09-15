@@ -1,4 +1,5 @@
 *.swp
 *.swo
 build
+.DS_Store
 .vscode

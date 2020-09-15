@@ -1,4 +1,4 @@
-baseURL = "https://enzyme.mit.edu/"
+baseURL = "//enzyme.mit.edu/"
 languageCode = "en-us"
 title = "Enzyme AD"
 theme = "mlir"
