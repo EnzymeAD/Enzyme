@@ -6,16 +6,35 @@ publishdate: 2018-11-23T15:26:15Z
 
 # Enzyme Overview
 
-The Enzyme project is a ...
+The Enzyme project is a tool for performing reverse-mode automatic differentiation (AD) of statically-analyzable LLVM IR. This allows developers to use Enzyme to automatically create gradients of their source code without much additional work.
 
-To cite Enzyme, please use [this
-publication](/enzymepreprint.pdf).
+```c
+double foo(double);
 
-*   Docs docs docs docs
+double grad_foo(double x) {
+    return __enzyme_autodiff(foo, x);
+}
+```
+
+By differentiating code after optimization, Enzyme is able to create substantially faster derivatives than existing tools that differentiate programs before optimization.
+
+## Components
+
+Enzyme is composed of four pieces:
+
+*   An optional preprocessing phase which performs minor transformations that tend to be helpful for AD.
+*   A new interprocedural type analysis that deduces the underlying types of memory locations
+*   An activity analaysis that determines what instructions or values can impact the derivative computation (common in existing AD systems).
+*   An optimization pass which creates any required derivative functions, replacing calls to `__enzyme_autodiff` with the generated functions.
 
 ## More resources
 
 For more information on Enzyme, please see:
 
+*   The Enzyme [getting started guide](/getting_started/)
 *   The Enzyme [mailing list](https://groups.google.com/d/forum/enzyme-dev) for any questions.
-*   Previous [talks](talks/).
+*   Previous [talks](/talks/).
+
+## Citing Enzyme
+
+To cite Enzyme, please use [this publication](/enzymepreprint.pdf).

@@ -2,8 +2,10 @@
 title: "How to Contribute"
 date: 2019-11-29T15:26:15Z
 draft: false
-weight: 15
+weight: 60
 ---
+
+TODO
 
 Everyone is welcome to contribute to MLIR. There are several ways of getting
 involved and contributing including reporting bugs, improving documentation and

@@ -1,0 +1,75 @@
+---
+title: "Installation"
+date: 2019-11-29T15:26:15Z
+draft: false
+weight: 10
+---
+
+## Downloading Enzyme
+To start you should download Enzyme's code [Github](https://github.com/wsmoses/Enzyme).
+
+```sh
+git clone https://github.com/wsmoses/Enzyme
+cd Enzyme
+```
+
+
+## Building LLVM
+
+Enzyme is a plugin for LLVM and consequently needs an existing build of LLVM to function. You can either build the fork of LLVM-7 available inside of Enzyme's repository (this allows you to use custom C/C++  syntactic sugar for calling Enzyme), or your choice of an existing build of LLVM.
+
+Enzyme is designed to work with a wide range of LLVM versions and is currently tested against LLVM 6, 7, and 8. LLVM's plugin infrastructure can sometimes be flakey or not built by default. If loading Enzyme into an existing LLVM installation results in segfaults, we recommend building LLVM from source.
+
+Details on building LLVM can be found in for building LLVM can be found in the [LLVM Getting Started](https://llvm.org/docs/GettingStarted.html). A simple build command is shown below:
+
+```sh
+cd /path/to/llvm/source/or/Enzyme
+mkdir build && cd build
+cmake -G Ninja ../llvm -DLLVM_TARGETS_TO_BUILD="X86" -DLLVM_ENABLE_PROJECTS="clang"
+ninja
+```
+
+## Building Enzyme
+
+First enter the enzyme project directory inside the monorepo and create a build directory.
+
+```sh
+cd /path/to/Enzyme/enzyme
+mkdir build && cd build
+```
+
+From here, we can configure Enzyme via cmake, then build.
+
+```sh
+cmake -G Ninja .. -DLLVM_DIR=/path/to/llvm/lib/cmake/llvm
+ninja
+```
+
+This should create a file `Enzyme/LLVMEnzyme-<VERSION>.so` inside the build directory, which contains the LLVM analysis and optimization passes that implement Enzyme.
+
+
+
+## Verifying installation
+
+We can run Enzyme's unit tests by running the following command. They should run in less than a minute and verify that your build of Enzyme and LLVM interoperate properly.
+
+```sh
+ninja check-enzyme
+```
+
+We can also run Enzyme's C/C++ integration tests. These tests require an existing installation of the Adept AD Engine (to compare against) and Eigen. Running these tests will take a moderate amount of time (about 6 minutes on a recent multicore).
+
+```sh
+ninja check-enzyme-integration
+```
+
+Finally, we can also run Enzyme's benchmarking suite, which is composed of the reverse mode tests from Microsoft's [ADBench suite](https://github.com/microsoft/ADBench) and other interesting cases. Running these tests will potentially take a long time (about an hour on a recent multicore).
+
+```sh
+ninja bench-enzyme
+````
+
+If you run Enzyme tests and get an error like `/bin/sh: 1: ../../: Permission denied` or ` ../../ not found`, it's likely that cmake wasn't able to find your version of llvm-lit, LLVM's unit tester. This often happens if you use the default Ubuntu install of LLVM as they stopped including it in their packaging. To remedy, find lit.py or lit or llvm-lit on your system and add the following flag to cmake:
+```sh
+cmake .. -DLLVM_EXTERNAL_LIT=/path/to/lit/lit.py
+```

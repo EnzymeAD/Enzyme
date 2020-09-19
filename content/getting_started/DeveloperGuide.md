@@ -2,8 +2,10 @@
 title: "Developer Guide"
 date: 2019-11-29T15:26:15Z
 draft: false
-weight: 20
+weight: 50
 ---
+
+TODO
 
 This document attempts to describe a few developer policies used in MLIR (such
 as coding standards used) as well as development approach (such as, testing
