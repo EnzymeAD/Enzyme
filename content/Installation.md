@@ -18,7 +18,7 @@ cd Enzyme
 
 Enzyme is a plugin for LLVM and consequently needs an existing build of LLVM to function. You can either build the fork of LLVM-7 available inside of Enzyme's repository (this allows you to use custom C/C++  syntactic sugar for calling Enzyme), or your choice of an existing build of LLVM.
 
-Enzyme is designed to work with a wide range of LLVM versions and is currently tested against LLVM 6, 7, and 8. LLVM's plugin infrastructure can sometimes be flakey or not built by default. If loading Enzyme into an existing LLVM installation results in segfaults, we recommend building LLVM from source.
+Enzyme is designed to work with a wide range of LLVM versions and is currently tested against LLVM 6, 7, 8 and 9. LLVM's plugin infrastructure can sometimes be flakey or not built by default. If loading Enzyme into an existing LLVM installation results in segfaults, we recommend building LLVM from source.
 
 Details on building LLVM can be found in for building LLVM can be found in the [LLVM Getting Started](https://llvm.org/docs/GettingStarted.html). A simple build command is shown below:
 

@@ -71,18 +71,6 @@ disablePathToLower = true
     url = "https://github.com/wsmoses/Enzyme"
 
 [[menu.main]]
-    name = "GitHub"
-    parent = "Source"
-    weight = 2
-    url = "https://github.com/wsmoses/Enzyme"
-
-[[menu.main]]
-    name = "Doxygen"
-    parent = "Source"
-    weight = 1
-    url = "/doxygen/"
-
-[[menu.main]]
     name = "Bugs"
     weight = 20
     url = "https://github.com/wsmoses/Enzyme/issues"

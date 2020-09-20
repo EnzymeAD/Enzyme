@@ -7,7 +7,7 @@ weight: 20
 
 ## Generating LLVM
 
-To begin, let's create a simple code `test.c` we want to differentiate. Enzyme will replace any calls to functions whose names start as "\_\_enzyme\_autodiff" with calls to the corresponding For now, let's ignore the details of Enzyme's calling convention/ABI which are described in detail [here](/getting_started/calling_convention)
+To begin, let's create a simple code `test.c` we want to differentiate. Enzyme will replace any calls to functions whose names contain "\_\_enzyme\_autodiff" with calls to the corresponding For now, let's ignore the details of Enzyme's calling convention/ABI which are described in detail [here](/getting_started/CallingConvention)
 
 ```c
 // test.c
@@ -36,13 +36,13 @@ The generated LLVM IR should look something like the following
 ```llvm
 ; input.ll
 ...
-define dso_local double @square(double %x) #0 {
+define double @square(double %x) #0 {
 entry:
   %mul = fmul double %x, %x
   ret double %mul
 }
 
-define dso_local double @dsquare(double %x) local_unnamed_addr #1 {
+define double @dsquare(double %x) local_unnamed_addr #1 {
 entry:
   %call = tail call double @__enzyme_autodiff(i8* bitcast (double (double)* @square to i8*), double %x) #4
   ret double %call
@@ -51,7 +51,7 @@ entry:
 ```
 
 ## Performing AD Enzyme
-We can now run Enzyme to differentiate our LLVM IR. The following command will load Enzyme and run the differentiation transformation pass. Note that `opt` should be the path to whatever opt was creating by the LLVM you built Enzyme against. If you see a segfault when trying to run opt, this is likely an issue in LLVM's plugin infrasture. Please see [the installation guide](/getting_started/installation) for more information on how to resolve this.
+We can now run Enzyme to differentiate our LLVM IR. The following command will load Enzyme and run the differentiation transformation pass. Note that `opt` should be the path to whatever opt was creating by the LLVM you built Enzyme against. If you see a segfault when trying to run opt, this is likely an issue in LLVM's plugin infrasture. Please see [the installation guide](/getting_started/Installation) for more information on how to resolve this.
 
 ```sh
 opt input.ll -load=/path/to/Enzyme/enzyme/build/Enzyme/LLVMEnzyme-<VERSION>.so -enzyme -o output.ll -S
@@ -86,7 +86,7 @@ invertentry:                                      ; preds = %entry
   ret { double } %6
 }
 
-define dso_local double @dsquare(double %x) local_unnamed_addr #1 {
+define double @dsquare(double %x) local_unnamed_addr #1 {
 entry:
   %0 = call { double } @diffesquare(double %x, double 1.000000e+00)
   %1 = extractvalue { double } %0, 0
@@ -105,7 +105,7 @@ Taking a look at `output_opt.ll`, we see the following:
 
 ```llvm
 ; output_opt.ll
-define dso_local double @dsquare(double %x) local_unnamed_addr #0 {
+define double @dsquare(double %x) local_unnamed_addr #0 {
 entry:
   %factor.i = fmul fast double %x, 2.000000e+00
   ret double %factor.i
@@ -198,7 +198,7 @@ $ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme_print
 prefn:
 
 ; Function Attrs: norecurse nounwind readnone uwtable
-define dso_local double @square(double %x) #0 {
+define double @square(double %x) #0 {
 entry:
   %mul = fmul double %x, %x
   ret double %mul
