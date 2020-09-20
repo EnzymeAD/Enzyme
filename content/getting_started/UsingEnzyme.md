@@ -193,7 +193,7 @@ $ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme_always_cache_reads
 
 This option prints out functions being differentiated before preprocessing optimizations, after preprocessing optimizations, and after being synthesized by Enzyme. It is mostly use to debug the AD process.
 
-```
+```sh
 $ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme_print
 prefn:
 
@@ -209,7 +209,7 @@ entry:
 
 This option prints out the results of activity analysis as they are being derived. The output is somewaht specific to the analysis pass and is only intended for developers.
 
-```
+```sh
 $ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme_printconst
 in new function diffesquare nonconstant arg double %0
  VALUE nonconst from arg nonconst double %x
@@ -226,7 +226,7 @@ couldnt decide nonconstants(3):  %mul = fmul double %x, %x
 
 This option prints out the results of type analysis as they are being derived. The output is somewaht specific to the analysis pass and is only intended for developers.
 
-```
+```sh
 $ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme_printtype
 analyzing function square
  + knowndata: double %x : {[-1]:Float@double} - {}
