@@ -177,8 +177,8 @@ MyClass d_compute(MyClass& in) {
 All global variables that are active must have their shadow explicitly specified in LLVM. This is done by attaching metadata that specifies what the shadow of that global is
 
 ```llvm
-@global = external dso_local local_unnamed_addr global double, align 8, !enzyme_shadow !{double* @dglobal}
-@dglobal = external dso_local local_unnamed_addr global double, align
+@global = external local_unnamed_addr global double, align 8, !enzyme_shadow !{double* @dglobal}
+@dglobal = external local_unnamed_addr global double, align
 ```
 
 ## Custom gradients
