@@ -7,7 +7,7 @@ Enzyme AD</a></div></h1><p class=description>Enzyme Automatic Differentiation Fr
 <a href=https://llvm.org/docs/GettingStarted.html>LLVM Getting Started</a>
 . A simple build command is shown below:</p><div class=highlight><pre class=chroma><code class=language-sh data-lang=sh><span class=nb>cd</span> /path/to/llvm/source/or/Enzyme
 mkdir build <span class=o>&amp;&amp;</span> <span class=nb>cd</span> build
-cmake -G Ninja ../llvm -DLLVM_TARGETS_TO_BUILD<span class=o>=</span><span class=s2>&#34;X86&#34;</span> -DLLVM_ENABLE_PROJECTS<span class=o>=</span><span class=s2>&#34;clang&#34;</span>
+cmake -G Ninja ../llvm -DLLVM_TARGETS_TO_BUILD<span class=o>=</span><span class=s2>&#34;host&#34;</span> -DLLVM_ENABLE_PROJECTS<span class=o>=</span><span class=s2>&#34;clang&#34;</span> -DLLVM_ENABLE_PLUGINS<span class=o>=</span>ON -DLLVM_EXPORT_SYMBOLS_FOR_PLUGINS<span class=o>=</span>ON -DCMAKE_BUILD_TYPE<span class=o>=</span>Release -DLLVM_ENABLE_ASSERTIONS<span class=o>=</span>ON
 ninja
 </code></pre></div><h2 id=building-enzyme>Building Enzyme</h2><p>First enter the enzyme project directory inside the monorepo and create a build directory.</p><div class=highlight><pre class=chroma><code class=language-sh data-lang=sh><span class=nb>cd</span> /path/to/Enzyme/enzyme
 mkdir build <span class=o>&amp;&amp;</span> <span class=nb>cd</span> build
