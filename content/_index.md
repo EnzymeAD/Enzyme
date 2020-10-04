@@ -18,6 +18,8 @@ double grad_foo(double x) {
 
 By differentiating code after optimization, Enzyme is able to create substantially faster derivatives than existing tools that differentiate programs before optimization.
 
+<img src="/all_top.svg" width="500" align=center>
+
 ## Components
 
 Enzyme is composed of four pieces:
