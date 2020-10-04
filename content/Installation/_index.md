@@ -20,7 +20,7 @@ Enzyme is a plugin for LLVM and consequently needs an existing build of LLVM to 
 
 Enzyme is designed to work with a wide range of LLVM versions and is currently tested against LLVM 6, 7, 8 and 9. LLVM's plugin infrastructure can sometimes be flakey or not built by default. If loading Enzyme into an existing LLVM installation results in segfaults, we recommend building LLVM from source.
 
-Details on building LLVM can be found in for building LLVM can be found in the [LLVM Getting Started](https://llvm.org/docs/GettingStarted.html). A simple build command is shown below:
+Details on building LLVM can be found in for building LLVM can be found in the [LLVM Getting Started](https://llvm.org/docs/GettingStarted.html). A simple build command using Ninja is shown below:
 
 ```sh
 cd /path/to/llvm/source/or/Enzyme
@@ -38,7 +38,7 @@ cd /path/to/Enzyme/enzyme
 mkdir build && cd build
 ```
 
-From here, we can configure Enzyme via cmake, then build.
+From here, we can configure Enzyme via cmake, then build. Again, for ease we use Ninja (requiring the ninja build to to be installed). One can use make by omitting `-G Ninja` and running make instead of ninja.
 
 ```sh
 cmake -G Ninja .. -DLLVM_DIR=/path/to/llvm/lib/cmake/llvm

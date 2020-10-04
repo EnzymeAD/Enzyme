@@ -64,25 +64,25 @@ double d_mul = __enzyme_autodiff(sumAndMul,
 
 Enzyme will automatically attempt to deduce the classification of argument types. Generally, these rules assume that integer types are inactive arguments, floating-point types are output arguments, and pointer-types are duplicated arguments. A user, however, can explicitly specify the desired classification by using LLVM metadata.
 
-Inactive arguments are given `diffe_const` metadata; output arguments are given `diffe_out` metadata; and duplicated arguments are given `diffe_dup`.
+Inactive arguments are given `enzyme_const` metadata; output arguments are given `enzyme_out` metadata; and duplicated arguments are given `enzyme_dup`.
 
 ```llvm
-%d_mul = tail call double @__enzyme_autodiff(double (double*, i64, double)* @sumAndMul, metadata !"diffe_dup", double* %array, double* %d_array, metadata !"diffe_const", i64 %size, metadata !"diffe_out", double %mul)
+%d_mul = tail call double @__enzyme_autodiff(double (double*, i64, double)* @sumAndMul, metadata !"enzyme_dup", double* %array, double* %d_array, metadata !"enzyme_const", i64 %size, metadata !"enzyme_out", double %mul)
 ```
 
 To ease the process of writing frontends, Enzyme also will consider loads to global values with specific names as a mechanism to specify argument classification.
 
 ```c
 
-int diffe_dup;
-int diffe_out;
-int diffe_const;
+int enzyme_dup;
+int enzyme_out;
+int enzyme_const;
 
 int main() {
   double d_mul = __enzyme_autodiff(sumAndMul,
-                       diffe_dup  , array, d_array,
-                       diffe_const, size,
-                       diffe_out  , mul);
+                       enzyme_dup  , array, d_array,
+                       enzyme_const, size,
+                       enzyme_out  , mul);
 }
 ```
 
@@ -96,7 +96,7 @@ double   array[10] = { ... };
 double d_array[10] = { 0.0 };
 
 __enzyme_autodiff(sumSquare,
-                  diffe_dup, array, d_array);
+                  enzyme_dup, array, d_array);
 
 printf("d(output)/darray[0] = %f\n", d_array[0]);
 ```
@@ -127,7 +127,7 @@ __enzyme_autodiff(sumList, list, d_list);
 
 Enzyme also supports a special version of duplicated argument where users only need the computed gradient of the argument and not the value computed in the forward pass. For example, consider the function below that computes a loss function. All the user needs is the gradient of the inputs with respect to the loss and not the loss itself.
 
-We can instead use the value `diffe_dupnoneed` to specify this property to Enzyme. This allows Enzyme to do additional optimization.
+We can instead use the value `enzyme_dupnoneed` to specify this property to Enzyme. This allows Enzyme to do additional optimization.
 
 ```cpp
 void neuralNet(double* loss, double* W, double* b, double* input);
@@ -137,10 +137,10 @@ void main() {
   double loss;
   double d_loss = 1.0;
   __enzyme_autodiff(neuralNet,
-                    diffe_dupnoneed, loss, d_loss,
-                    diffe_dup,       W, d_W,
-                    diffe_dup,       b, d_b,
-                    diffe_const,     input);
+                    enzyme_dupnoneed, loss, d_loss,
+                    enzyme_dup,       W, d_W,
+                    enzyme_dup,       b, d_b,
+                    enzyme_const,     input);
   // This value is undefined behavior if using diffe_dupnoneed, otherwise
   // it is the same as it would be from calling neuralNet normally.
   printf("loss=%f\n", loss);

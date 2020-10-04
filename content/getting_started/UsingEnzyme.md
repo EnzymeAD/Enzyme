@@ -122,79 +122,79 @@ Enzyme has several advanced options that may be of interest.
 
 #### Disabling Preprocessing
 
-The `enzyme_preopt` option disables the preprocessing optimizations run by the Enzyme pass, except for the absolute minimum neccessary.
+The `enzyme-preopt` option disables the preprocessing optimizations run by the Enzyme pass, except for the absolute minimum neccessary.
 
 ```sh
-$ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme_preopt=1
-$ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme_preopt=0
+$ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme-preopt=1
+$ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme-preopt=0
 ```
 
 #### Forced Inlining
 
-The `enzyme_inline` option forcibly inlines all subfunction calls. The `enzyme_inline_count` option limits the number of calls inlined by this utility.
+The `enzyme-inline` option forcibly inlines all subfunction calls. The `enzyme-inline-count` option limits the number of calls inlined by this utility.
 
 ```sh
-$ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme_inline=1
-$ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme_inline=1 -enzyme_inline_count=100
+$ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme-inline=1
+$ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme-inline=1 -enzyme-inline-count=100
 ```
 
 #### Compressed Bool Cache
 
-The `enzyme_smallbool` option allows Enzyme's cache to store 8 boolean (i1) values inside a single byte rather than one value per byte.
+The `enzyme-smallbool` option allows Enzyme's cache to store 8 boolean (i1) values inside a single byte rather than one value per byte.
 
 ```sh
-$ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme_smallbool=1
+$ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme-smallbool=1
 ```
 
 ### Semantic options
 
 #### Loose type analysis
 
-The `enzyme_loosetypes` option tells Enzyme to make an educated guess about the type of a value it cannot prove, rather than emit a compile-time error and fail. This can be helpful for starting to bootstrap code with Enzyme but shouldn't be used in production as Enzyme may make an incorrect guess and create an incorrect gradient.
+The `enzyme-loose-types` option tells Enzyme to make an educated guess about the type of a value it cannot prove, rather than emit a compile-time error and fail. This can be helpful for starting to bootstrap code with Enzyme but shouldn't be used in production as Enzyme may make an incorrect guess and create an incorrect gradient.
 
 ```sh
-$ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme_loosetypes=1
+$ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme-loose-types=1
 ```
 
 
 #### Assume inactivity of undefined functions
 
-The `enzyme_emptyfnconst` option tells activity analysis to assume that all calls to functions whose definitions aren't available and aren't explicitly given a custom gradient via metadata are assumed to be inactive. This can be useful for assuming printing functions don't impact derivative computations and provide a performance benefit, as well as getting around a compile-time error where the derivative of a foreign function is not known. However, this option should be used carefully as it may result in incorrect behavior if it is used to incorrectly assume a call to a foreign function doesn't impact  the derivative computation. As a result, the recommended way to remedy this is to mark the function as inactive explicitly, or provide a custom gradient via metadata.
+The `enzyme-emptyfn-inactive` option tells activity analysis to assume that all calls to functions whose definitions aren't available and aren't explicitly given a custom gradient via metadata are assumed to be inactive. This can be useful for assuming printing functions don't impact derivative computations and provide a performance benefit, as well as getting around a compile-time error where the derivative of a foreign function is not known. However, this option should be used carefully as it may result in incorrect behavior if it is used to incorrectly assume a call to a foreign function doesn't impact  the derivative computation. As a result, the recommended way to remedy this is to mark the function as inactive explicitly, or provide a custom gradient via metadata.
 
 ```sh
-$ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme_emptyfnconst=1
+$ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme-emptyfn-inactive=1
 ```
 
 #### Assume inactivity of unmarked globals
 
-The `enzyme_nonmarkedglobals_inactive` option tells activity analysis to assume that global variables without an explicitly defined shadow global are assumed to be inactive. Like `enzyme_emptyfnconst`, this option should be used carefully as it may result in incorrect behavior if it is used to incorrectly assume that a global variable doesn't contain data used in a derivative computation.
+The `enzyme-globals-default-inactive` option tells activity analysis to assume that global variables without an explicitly defined shadow global are assumed to be inactive. Like `enzyme_emptyfnconst`, this option should be used carefully as it may result in incorrect behavior if it is used to incorrectly assume that a global variable doesn't contain data used in a derivative computation.
 
 ```sh
-$ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme_nonmarkedglobals_inactive=1
+$ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme-globals-default-inactive=1
 ```
 
 #### Cache behavior
 
-The `enzyme_never_cache_reads` option tells the cache to recompute all load values, even if alias analysis isn't able to prove the legality of such a recomputation. This may improve performance but is likely to result in incorrect derivatives being produced as this is not generally true.
+The `enzyme-cache-never` option tells the cache to recompute all load values, even if alias analysis isn't able to prove the legality of such a recomputation. This may improve performance but is likely to result in incorrect derivatives being produced as this is not generally true.
 
 ```sh
-$ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme_never_cache_reads=1
+$ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme-cache-never=1
 ```
 
-In contrast, the `enzyme_always_cache_reads` option tells the cache to still cache values that alias analysis and differential use analysis say are not needed to be cached (perhaps being legal to recompute instead). This will usually decrease performance and is intended for developers in order to catch caching bugs.
+In contrast, the `enzyme-cache-always` option tells the cache to still cache values that alias analysis and differential use analysis say are not needed to be cached (perhaps being legal to recompute instead). This will usually decrease performance and is intended for developers in order to catch caching bugs.
 
 ```sh
-$ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme_always_cache_reads=1
+$ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme-cache-always=1
 ```
 
 ### Debugging options for developers
 
-#### enzyme_print
+#### enzyme-print
 
 This option prints out functions being differentiated before preprocessing optimizations, after preprocessing optimizations, and after being synthesized by Enzyme. It is mostly use to debug the AD process.
 
 ```sh
-$ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme_print
+$ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme-print
 prefn:
 
 ; Function Attrs: norecurse nounwind readnone uwtable
@@ -205,12 +205,12 @@ entry:
 }
 ```
 
-#### enzyme_printconst
+#### enzyme-print-activity
 
 This option prints out the results of activity analysis as they are being derived. The output is somewaht specific to the analysis pass and is only intended for developers.
 
 ```sh
-$ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme_printconst
+$ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme-print-activity
 in new function diffesquare nonconstant arg double %0
  VALUE nonconst from arg nonconst double %x
 checking if is constant[3]   %mul = fmul double %x, %x
@@ -222,12 +222,12 @@ couldnt decide nonconstants(3):  %mul = fmul double %x, %x
  Value nonconstant (couldn't disprove)[3]  %mul = fmul double %x, %x
 ```
 
-#### enzyme_printtype
+#### enzyme-print-type
 
 This option prints out the results of type analysis as they are being derived. The output is somewaht specific to the analysis pass and is only intended for developers.
 
 ```sh
-$ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme_printtype
+$ opt input.ll -load=./Enzyme/LLVMEnzyme-7.so -enzyme -enzyme-print-type
 analyzing function square
  + knowndata: double %x : {[-1]:Float@double} - {}
  + retdata: {}

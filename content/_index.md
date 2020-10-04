@@ -38,3 +38,12 @@ For more information on Enzyme, please see:
 ## Citing Enzyme
 
 To cite Enzyme, please use [this publication](/enzymepreprint.pdf).
+```
+@incollection{enzymeNeurips,
+title = {Instead of Rewriting Foreign Code for Machine Learning, Automatically Synthesize Fast Gradients},
+author = {Moses, William S. and Churavy, Valentin},
+booktitle = {Advances in Neural Information Processing Systems 33},
+year = {2020},
+note = {To appear in},
+}
+```
