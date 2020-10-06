@@ -13,7 +13,9 @@ weight: 100
 
 ### About Enzyme
 
-* [Preprint](/Enzyme.pdf) ; William S. Moses, Valentin Churavy
+* NeurIPS 2020, to appear Instead of Rewriting Foreign Code for Machine Learning, Automatically Synthesize Fast Gradients ; William S. Moses, Valentin Churavy
+
+* arXiv Preprint [Instead of Rewriting Foreign Code for Machine Learning, Automatically Synthesize Fast Gradients](https://arxiv.org/pdf/2010.01709.pdf) ; William S. Moses, Valentin Churavy
 
 * EuroAD 2020 [Post-Optimization Automatic
 Differentiation by Synthesizing LLVM](http://www.autodiff.org/Docs/euroad/23rd%20EuroAd%20Workshop%20-%20William%20Moses%20-%20Post-Optimization%20Automatic%20Differentiation%20by%20Synthesizing%20LLVM.pdf) ; William S. Moses, Valentin Churavy

@@ -41,7 +41,7 @@ For more information on Enzyme, please see:
 
 ## Citing Enzyme
 
-To cite Enzyme, please use [this publication](/enzymepreprint.pdf).
+To cite Enzyme, please cite the following:
 ```
 @incollection{enzymeNeurips,
 title = {Instead of Rewriting Foreign Code for Machine Learning, Automatically Synthesize Fast Gradients},
@@ -51,3 +51,5 @@ year = {2020},
 note = {To appear in},
 }
 ```
+
+The original Enzyme is also avaiable as a preprint on [arXiv](https://arxiv.org/pdf/2010.01709.pdf).
