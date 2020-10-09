@@ -99,7 +99,7 @@ Enzyme has created a new gradient function and replaced the corresponding call t
 
 For example, suppose we run `-O2` after Enzyme as shown below:
 ```sh
-opt input.ll -load=/path/to/Enzyme/enzyme/build/Enzyme/LLVMEnzyme-<VERSION>.so -enzyme -o output_opt.ll -S
+opt output.ll -O2 -o output_opt.ll -S
 ```
 
 Taking a look at `output_opt.ll`, we see the following:
