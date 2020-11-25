@@ -1,0 +1,133 @@
+//===- CApi.h - Enzyme API exported to C for external use      -----------===//
+//
+//                             Enzyme Project
+//
+// Part of the Enzyme Project, under the Apache License v2.0 with LLVM
+// Exceptions. See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+// If using this code in an academic setting, please cite the following:
+// @incollection{enzymeNeurips,
+// title = {Instead of Rewriting Foreign Code for Machine Learning,
+//          Automatically Synthesize Fast Gradients},
+// author = {Moses, William S. and Churavy, Valentin},
+// booktitle = {Advances in Neural Information Processing Systems 33},
+// year = {2020},
+// note = {To appear in},
+// }
+//
+//===----------------------------------------------------------------------===//
+//
+// This file declares various utility functions of Enzyme for access via C
+//
+//===----------------------------------------------------------------------===//
+#ifndef ENZYME_CAPI_H
+#define ENZYME_CAPI_H
+
+#include "llvm-c/Core.h"
+#include "llvm-c/DataTypes.h"
+#include "llvm-c/Initialization.h"
+#include "llvm-c/Target.h"
+#include <stdbool.h>
+#include <stddef.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+struct EnzymeOpaqueAAResults;
+typedef struct {
+  struct EnzymeOpaqueAAResults *AA;
+  void *AM;
+  void *FAM;
+} EnzymeAAResultsRef;
+
+struct EnzymeOpaqueTypeAnalysis;
+typedef struct EnzymeOpaqueTypeAnalysis *EnzymeTypeAnalysisRef;
+
+struct EnzymeOpaqueAugmentedReturn;
+typedef struct EnzymeOpaqueAugmentedReturn *EnzymeAugmentedReturnPtr;
+
+struct IntList {
+  int64_t *data;
+  size_t size;
+};
+
+enum CConcreteType {
+  DT_Anything = 0,
+  DT_Integer = 1,
+  DT_Pointer = 2,
+  DT_Half = 3,
+  DT_Float = 4,
+  DT_Double = 5,
+  DT_Unknown = 6,
+};
+
+struct CDataPair {
+  struct IntList offsets;
+  CConcreteType datatype;
+};
+
+struct CTypeTree {
+  struct CDataPair *data;
+  size_t size;
+};
+
+struct CFnTypeInfo {
+  /// Types of arguments, assumed of size len(Arguments)
+  struct CTypeTree *Arguments;
+
+  /// Type of return
+  struct CTypeTree Return;
+
+  /// The specific constant(s) known to represented by an argument, if constant
+  // map is [arg number] => list
+  struct IntList *KnownValues;
+};
+
+enum CDIFFE_TYPE {
+  DFT_OUT_DIFF = 0,  // add differential to an output struct
+  DFT_DUP_ARG = 1,   // duplicate the argument and store differential inside
+  DFT_CONSTANT = 2,  // no differential
+  DFT_DUP_NONEED = 3 // duplicate this argument and store differential inside,
+                     // but don't need the forward
+};
+
+EnzymeAAResultsRef EnzymeGetGlobalAA(LLVMModuleRef);
+void EnzymeFreeGlobalAA(EnzymeAAResultsRef);
+
+LLVMValueRef EnzymeCreatePrimalAndGradient(
+    LLVMValueRef todiff, CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
+    size_t constant_args_size, EnzymeTypeAnalysisRef TA,
+    EnzymeAAResultsRef global_AA, bool returnValue, bool dretUsed,
+    bool topLevel, LLVMTypeRef additionalArg, struct CFnTypeInfo typeInfo,
+    bool *_uncacheable_args, size_t uncacheable_args_size,
+    EnzymeAugmentedReturnPtr augmented, bool AtomicAdd, bool PostOpt);
+
+EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
+    LLVMValueRef todiff, CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
+    size_t constant_args_size, EnzymeTypeAnalysisRef TA,
+    EnzymeAAResultsRef global_AA, bool returnUsed, struct CFnTypeInfo typeInfo,
+    bool *_uncacheable_args, size_t uncacheable_args_size,
+    bool forceAnonymousTape, bool AtomicAdd, bool PostOpt);
+
+typedef bool (*CustomRuleType)(int /*direction*/, CTypeTree * /*return*/,
+                               CTypeTree * /*args*/, size_t /*numArgs*/,
+                               LLVMValueRef);
+EnzymeTypeAnalysisRef CreateTypeAnalysis(char *Triple, char **customRuleNames,
+                                         CustomRuleType *customRules,
+                                         size_t numRules);
+void FreeTypeAnalysis(EnzymeTypeAnalysisRef);
+
+void EnzymeExtractReturnInfo(EnzymeAugmentedReturnPtr ret, int64_t *data,
+                             bool *existed, size_t len);
+
+LLVMValueRef
+EnzymeExtractFunctionFromAugmentation(EnzymeAugmentedReturnPtr ret);
+LLVMTypeRef EnzymeExtractTapeTypeFromAugmentation(EnzymeAugmentedReturnPtr ret);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif

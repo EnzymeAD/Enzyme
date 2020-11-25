@@ -52,6 +52,7 @@
 #include "GradientUtils.h"
 #include "Utils.h"
 
+#include "CApi.h"
 using namespace llvm;
 #ifdef DEBUG_TYPE
 #undef DEBUG_TYPE
