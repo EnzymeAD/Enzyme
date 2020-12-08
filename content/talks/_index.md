@@ -9,11 +9,13 @@ weight: 100
 
 ## Upcoming talks or presentations
 
-* LLVM Oct Dev Meeting 2020 [Enzyme: High-Performance Automatic Differentiation of LLVM](https://llvm.org/devmtg/2020-09/program/); William S. Moses, Valentin Churavy
+* NeurIPS 2020, [Instead of Rewriting Foreign Code for Machine Learning, Automatically Synthesize Fast Gradients](https://neurips.cc/virtual/2020/public/poster_9332c513ef44b682e9347822c2e457ac.html) ; William S. Moses, Valentin Churavy; *SpotLight Presentation*
 
 ### About Enzyme
 
-* NeurIPS 2020, to appear Instead of Rewriting Foreign Code for Machine Learning, Automatically Synthesize Fast Gradients ; William S. Moses, Valentin Churavy
+* NeurIPS 2020, [Instead of Rewriting Foreign Code for Machine Learning, Automatically Synthesize Fast Gradients](https://papers.nips.cc/paper/2020/file/9332c513ef44b682e9347822c2e457ac-Paper.pdf) ; William S. Moses, Valentin Churavy; *SpotLight Presentation*
+
+* LLVM Oct Dev Meeting 2020 [Enzyme: High-Performance Automatic Differentiation of LLVM](https://llvm.org/devmtg/2020-09/program/); William S. Moses, Valentin Churavy; [video](https://www.youtube.com/watch?v=auQNFDlaXdM); [poster](https://c.wsmoses.com/posters/Enzyme-llvmdev.pdf)
 
 * arXiv Preprint [Instead of Rewriting Foreign Code for Machine Learning, Automatically Synthesize Fast Gradients](https://arxiv.org/pdf/2010.01709.pdf) ; William S. Moses, Valentin Churavy
 
