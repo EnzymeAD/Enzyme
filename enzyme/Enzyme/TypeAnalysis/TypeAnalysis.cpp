@@ -2075,10 +2075,14 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
     if (customrule != interprocedural.CustomRules.end()) {
       auto returnAnalysis = getAnalysis(&call);
       std::vector<TypeTree> args;
+      std::vector<std::set<int64_t>> knownValues;
       for (auto &arg : call.arg_operands()) {
         args.push_back(getAnalysis(arg));
+        knownValues.push_back(
+            fntypeinfo.knownIntegralValues((Value *)arg, DT, intseen));
       }
-      bool err = customrule->second(direction, returnAnalysis, args, &call);
+      bool err = customrule->second(direction, returnAnalysis, args,
+                                    knownValues, &call);
       if (err) {
         Invalid = true;
         return;

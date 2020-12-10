@@ -82,23 +82,7 @@ std::set<int64_t> eunwrap64(IntList IL) {
   }
   return v;
 }
-TypeTree eunwrap(CTypeTree CTT, llvm::LLVMContext &ctx) {
-  TypeTree res;
-  for (size_t i = 0; i < CTT.size; i++) {
-    res.insert(eunwrap(CTT.data[i].offsets),
-               eunwrap(CTT.data[i].datatype, ctx));
-  }
-  return res;
-}
-
-TypeTree eunwrapAndFree(CTypeTree CTT, llvm::LLVMContext &ctx) {
-  TypeTree res = eunwrap(CTT, ctx);
-  for (size_t i = 0; i < CTT.size; i++) {
-    free(CTT.data[i].offsets.data);
-  }
-  free(CTT.data);
-  return res;
-}
+TypeTree eunwrap(CTypeTreeRef CTT) { return *(TypeTree *)CTT; }
 
 CConcreteType ewrap(const ConcreteType &CT) {
   if (auto flt = CT.isFloat()) {
@@ -135,28 +119,18 @@ IntList ewrap(const std::vector<int> &offsets) {
   return IL;
 }
 
-CTypeTree ewrap(const TypeTree &TT) {
-  CTypeTree CTT;
-  auto &mapping = TT.getMapping();
-  CTT.size = mapping.size();
-  CTT.data = (CDataPair *)malloc(CTT.size * sizeof(*CTT.data));
-  size_t i = 0;
-  for (auto &pair : mapping) {
-    CTT.data[i].offsets = ewrap(pair.first);
-    CTT.data[i].datatype = ewrap(pair.second);
-    i++;
-  }
-  return CTT;
+CTypeTreeRef ewrap(const TypeTree &TT) {
+  return (CTypeTreeRef)(new TypeTree(TT));
 }
 
 FnTypeInfo eunwrap(CFnTypeInfo CTI, llvm::Function *F) {
   FnTypeInfo FTI(F);
-  auto &ctx = F->getContext();
-  FTI.Return = eunwrap(CTI.Return, ctx);
+  // auto &ctx = F->getContext();
+  FTI.Return = eunwrap(CTI.Return);
 
   size_t argnum = 0;
   for (auto &arg : F->args()) {
-    FTI.Arguments[&arg] = eunwrap(CTI.Arguments[argnum], ctx);
+    FTI.Arguments[&arg] = eunwrap(CTI.Arguments[argnum]);
     FTI.KnownValues[&arg] = eunwrap64(CTI.KnownValues[argnum]);
     argnum++;
   }
@@ -175,19 +149,29 @@ EnzymeTypeAnalysisRef CreateTypeAnalysis(char *TripleStr,
     CustomRuleType rule = customRules[i];
     TA->CustomRules[customRuleNames[i]] =
         [=](int direction, TypeTree &returnTree,
-            std::vector<TypeTree> &argTrees, CallInst *call) -> bool {
-      CTypeTree creturnTree = ewrap(returnTree);
-      CTypeTree *cargs = new CTypeTree[argTrees.size()];
+            std::vector<TypeTree> &argTrees,
+            std::vector<std::set<int64_t>> &knownValues,
+            CallInst *call) -> bool {
+      CTypeTreeRef creturnTree = (CTypeTreeRef)(&returnTree);
+      CTypeTreeRef *cargs = new CTypeTreeRef[argTrees.size()];
+      IntList *kvs = new IntList[argTrees.size()];
       for (size_t i = 0; i < argTrees.size(); ++i) {
-        cargs[i] = ewrap(argTrees[i]);
+        cargs[i] = (CTypeTreeRef)(&(argTrees[i]));
+        kvs[i].size = knownValues[i].size();
+        kvs[i].data = (int64_t *)malloc(kvs[i].size * sizeof(*kvs[i].data));
+        size_t j = 0;
+        for (auto val : knownValues[i]) {
+          kvs[i].data[j] = val;
+          j++;
+        }
       }
       bool result =
-          rule(direction, &creturnTree, cargs, argTrees.size(), wrap(call));
-      returnTree = eunwrapAndFree(creturnTree, call->getContext());
-      for (size_t i = 0; i < argTrees.size(); ++i) {
-        argTrees[i] = eunwrapAndFree(cargs[i], call->getContext());
-      }
+          rule(direction, creturnTree, cargs, kvs, argTrees.size(), wrap(call));
       delete[] cargs;
+      for (size_t i = 0; i < argTrees.size(); ++i) {
+        free(kvs[i].data);
+      }
+      delete[] kvs;
       return result;
     };
   }
@@ -298,12 +282,13 @@ EnzymeExtractTapeTypeFromAugmentation(EnzymeAugmentedReturnPtr ret) {
   auto AR = (AugmentedReturn *)ret;
   auto found = AR->returns.find(AugmentedStruct::Tape);
   if (found == AR->returns.end()) {
-    return wrap((Type*)nullptr);
+    return wrap((Type *)nullptr);
   }
   if (found->second == -1) {
     return wrap(AR->fn->getReturnType());
   }
-  return wrap(cast<StructType>(AR->fn->getReturnType())->getTypeAtIndex(found->second));
+  return wrap(
+      cast<StructType>(AR->fn->getReturnType())->getTypeAtIndex(found->second));
 }
 
 void EnzymeExtractReturnInfo(EnzymeAugmentedReturnPtr ret, int64_t *data,
@@ -321,5 +306,27 @@ void EnzymeExtractReturnInfo(EnzymeAugmentedReturnPtr ret, int64_t *data,
       existed[i] = false;
     }
   }
+}
+
+CTypeTreeRef EnzymeNewTypeTree() { return (CTypeTreeRef)(new TypeTree()); }
+CTypeTreeRef EnzymeNewTypeTreeCT(CConcreteType CT, LLVMContextRef ctx) {
+  return (CTypeTreeRef)(new TypeTree(eunwrap(CT, *unwrap(ctx))));
+}
+CTypeTreeRef EnzymeNewTypeTreeTR(CTypeTreeRef CTR) {
+  return (CTypeTreeRef)(new TypeTree(*(TypeTree *)(CTR)));
+}
+void EnzymeFreeTypeTree(CTypeTreeRef CTT) { delete (TypeTree *)CTT; }
+void EnzymeSetTypeTree(CTypeTreeRef dst, CTypeTreeRef src) {
+  *(TypeTree *)dst = *(TypeTree *)src;
+}
+void EnzymeTypeTreeOnlyEq(CTypeTreeRef CTT, int64_t x) {
+  *(TypeTree *)CTT = ((TypeTree *)CTT)->Only(x);
+}
+void EnzymeTypeTreeShiftIndiciesEq(CTypeTreeRef CTT, const char *datalayout,
+                                   int64_t offset, int64_t maxSize,
+                                   uint64_t addOffset) {
+  DataLayout DL(datalayout);
+  *(TypeTree *)CTT =
+      ((TypeTree *)CTT)->ShiftIndices(DL, offset, maxSize, addOffset);
 }
 }

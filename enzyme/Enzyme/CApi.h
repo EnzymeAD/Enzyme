@@ -68,17 +68,31 @@ struct CDataPair {
   CConcreteType datatype;
 };
 
+/*
 struct CTypeTree {
   struct CDataPair *data;
   size_t size;
 };
+*/
+
+struct EnzymeTypeTree;
+typedef struct EnzymeTypeTree *CTypeTreeRef;
+CTypeTreeRef EnzymeNewTypeTree();
+CTypeTreeRef EnzymeNewTypeTreeCT(CConcreteType, LLVMContextRef ctx);
+CTypeTreeRef EnzymeNewTypeTreeTR(CTypeTreeRef);
+void EnzymeFreeTypeTree(CTypeTreeRef CTT);
+void EnzymeSetTypeTree(CTypeTreeRef dst, CTypeTreeRef src);
+void EnzymeTypeTreeOnlyEq(CTypeTreeRef dst, int64_t x);
+void EnzymeTypeTreeShiftIndiciesEq(CTypeTreeRef dst, const char *datalayout,
+                                   int64_t offset, int64_t maxSize,
+                                   uint64_t addOffset);
 
 struct CFnTypeInfo {
   /// Types of arguments, assumed of size len(Arguments)
-  struct CTypeTree *Arguments;
+  CTypeTreeRef *Arguments;
 
   /// Type of return
-  struct CTypeTree Return;
+  CTypeTreeRef Return;
 
   /// The specific constant(s) known to represented by an argument, if constant
   // map is [arg number] => list
@@ -111,8 +125,9 @@ EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
     bool *_uncacheable_args, size_t uncacheable_args_size,
     bool forceAnonymousTape, bool AtomicAdd, bool PostOpt);
 
-typedef bool (*CustomRuleType)(int /*direction*/, CTypeTree * /*return*/,
-                               CTypeTree * /*args*/, size_t /*numArgs*/,
+typedef bool (*CustomRuleType)(int /*direction*/, CTypeTreeRef /*return*/,
+                               CTypeTreeRef * /*args*/,
+                               IntList * /*knownValues*/, size_t /*numArgs*/,
                                LLVMValueRef);
 EnzymeTypeAnalysisRef CreateTypeAnalysis(char *Triple, char **customRuleNames,
                                          CustomRuleType *customRules,

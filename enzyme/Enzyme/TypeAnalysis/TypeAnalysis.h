@@ -272,6 +272,7 @@ public:
   std::map<std::string,
            std::function<bool(int /*direction*/, TypeTree & /*returnTree*/,
                               std::vector<TypeTree> & /*argTrees*/,
+                              std::vector<std::set<int64_t>> & /*knownValues*/,
                               llvm::CallInst * /*call*/)>>
       CustomRules;
 
