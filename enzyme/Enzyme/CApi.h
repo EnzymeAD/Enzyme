@@ -28,7 +28,6 @@
 #include "llvm-c/DataTypes.h"
 #include "llvm-c/Initialization.h"
 #include "llvm-c/Target.h"
-#include <stdbool.h>
 #include <stddef.h>
 
 #ifdef __cplusplus

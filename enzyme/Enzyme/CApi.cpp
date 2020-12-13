@@ -151,7 +151,7 @@ EnzymeTypeAnalysisRef CreateTypeAnalysis(char *TripleStr,
         [=](int direction, TypeTree &returnTree,
             std::vector<TypeTree> &argTrees,
             std::vector<std::set<int64_t>> &knownValues,
-            CallInst *call) -> bool {
+            CallInst *call) -> uint8_t {
       CTypeTreeRef creturnTree = (CTypeTreeRef)(&returnTree);
       CTypeTreeRef *cargs = new CTypeTreeRef[argTrees.size()];
       IntList *kvs = new IntList[argTrees.size()];
@@ -165,7 +165,7 @@ EnzymeTypeAnalysisRef CreateTypeAnalysis(char *TripleStr,
           j++;
         }
       }
-      bool result =
+      uint8_t result =
           rule(direction, creturnTree, cargs, kvs, argTrees.size(), wrap(call));
       delete[] cargs;
       for (size_t i = 0; i < argTrees.size(); ++i) {
@@ -187,14 +187,14 @@ void FreeTypeAnalysis(EnzymeTypeAnalysisRef TAR) {
 LLVMValueRef EnzymeCreatePrimalAndGradient(
     LLVMValueRef todiff, CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
     size_t constant_args_size, EnzymeTypeAnalysisRef TA,
-    EnzymeAAResultsRef global_AA, bool returnValue, bool dretUsed,
-    bool topLevel, LLVMTypeRef additionalArg, CFnTypeInfo typeInfo,
-    bool *_uncacheable_args, size_t uncacheable_args_size,
-    EnzymeAugmentedReturnPtr augmented, bool AtomicAdd, bool PostOpt) {
+    EnzymeAAResultsRef global_AA, uint8_t returnValue, uint8_t dretUsed,
+    uint8_t topLevel, LLVMTypeRef additionalArg, CFnTypeInfo typeInfo,
+    uint8_t *_uncacheable_args, size_t uncacheable_args_size,
+    EnzymeAugmentedReturnPtr augmented, uint8_t AtomicAdd, uint8_t PostOpt) {
   std::vector<DIFFE_TYPE> nconstant_args((DIFFE_TYPE *)constant_args,
                                          (DIFFE_TYPE *)constant_args +
                                              constant_args_size);
-  std::map<llvm::Argument *, bool> uncacheable_args;
+  std::map<llvm::Argument *, uint8_t> uncacheable_args;
   size_t argnum = 0;
   for (auto &arg : cast<Function>(unwrap(todiff))->args()) {
     assert(argnum < uncacheable_args_size);
@@ -211,14 +211,14 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
 EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
     LLVMValueRef todiff, CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
     size_t constant_args_size, EnzymeTypeAnalysisRef TA,
-    EnzymeAAResultsRef global_AA, bool returnUsed, CFnTypeInfo typeInfo,
-    bool *_uncacheable_args, size_t uncacheable_args_size,
-    bool forceAnonymousTape, bool AtomicAdd, bool PostOpt) {
+    EnzymeAAResultsRef global_AA, uint8_t returnUsed, CFnTypeInfo typeInfo,
+    uint8_t *_uncacheable_args, size_t uncacheable_args_size,
+    uint8_t forceAnonymousTape, uint8_t AtomicAdd, uint8_t PostOpt) {
 
   std::vector<DIFFE_TYPE> nconstant_args((DIFFE_TYPE *)constant_args,
                                          (DIFFE_TYPE *)constant_args +
                                              constant_args_size);
-  std::map<llvm::Argument *, bool> uncacheable_args;
+  std::map<llvm::Argument *, uint8_t> uncacheable_args;
   size_t argnum = 0;
   for (auto &arg : cast<Function>(unwrap(todiff))->args()) {
     assert(argnum < uncacheable_args_size);
