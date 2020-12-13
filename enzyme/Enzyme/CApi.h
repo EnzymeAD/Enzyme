@@ -52,7 +52,7 @@ struct IntList {
   size_t size;
 };
 
-enum CConcreteType {
+typedef enum {
   DT_Anything = 0,
   DT_Integer = 1,
   DT_Pointer = 2,
@@ -60,7 +60,7 @@ enum CConcreteType {
   DT_Float = 4,
   DT_Double = 5,
   DT_Unknown = 6,
-};
+} CConcreteType;
 
 struct CDataPair {
   struct IntList offsets;
@@ -99,13 +99,13 @@ struct CFnTypeInfo {
   struct IntList *KnownValues;
 };
 
-enum CDIFFE_TYPE {
+typedef enum {
   DFT_OUT_DIFF = 0,  // add differential to an output struct
   DFT_DUP_ARG = 1,   // duplicate the argument and store differential inside
   DFT_CONSTANT = 2,  // no differential
   DFT_DUP_NONEED = 3 // duplicate this argument and store differential inside,
                      // but don't need the forward
-};
+} CDIFFE_TYPE;
 
 EnzymeAAResultsRef EnzymeGetGlobalAA(LLVMModuleRef);
 void EnzymeFreeGlobalAA(EnzymeAAResultsRef);
@@ -128,8 +128,8 @@ EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
 
 typedef uint8_t (*CustomRuleType)(int /*direction*/, CTypeTreeRef /*return*/,
                                   CTypeTreeRef * /*args*/,
-                                  IntList * /*knownValues*/, size_t /*numArgs*/,
-                                  LLVMValueRef);
+                                  struct IntList * /*knownValues*/,
+                                  size_t /*numArgs*/, LLVMValueRef);
 EnzymeTypeAnalysisRef CreateTypeAnalysis(char *Triple, char **customRuleNames,
                                          CustomRuleType *customRules,
                                          size_t numRules);
