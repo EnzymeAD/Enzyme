@@ -114,19 +114,19 @@ void EnzymeFreeGlobalAA(EnzymeAAResultsRef);
 LLVMValueRef EnzymeCreatePrimalAndGradient(
     LLVMValueRef todiff, CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
     size_t constant_args_size, EnzymeTypeAnalysisRef TA,
-    EnzymeAAResultsRef global_AA, bool returnValue, bool dretUsed,
-    bool topLevel, LLVMTypeRef additionalArg, struct CFnTypeInfo typeInfo,
-    bool *_uncacheable_args, size_t uncacheable_args_size,
-    EnzymeAugmentedReturnPtr augmented, bool AtomicAdd, bool PostOpt);
+    EnzymeAAResultsRef global_AA, uint8_t returnValue, uint8_t dretUsed,
+    uint8_t topLevel, LLVMTypeRef additionalArg, struct CFnTypeInfo typeInfo,
+    uint8_t *_uncacheable_args, size_t uncacheable_args_size,
+    EnzymeAugmentedReturnPtr augmented, uint8_t AtomicAdd, uint8_t PostOpt);
 
 EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
     LLVMValueRef todiff, CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
     size_t constant_args_size, EnzymeTypeAnalysisRef TA,
-    EnzymeAAResultsRef global_AA, bool returnUsed, struct CFnTypeInfo typeInfo,
-    bool *_uncacheable_args, size_t uncacheable_args_size,
-    bool forceAnonymousTape, bool AtomicAdd, bool PostOpt);
+    EnzymeAAResultsRef global_AA, uint8_t returnUsed, struct CFnTypeInfo typeInfo,
+    uint8_t *_uncacheable_args, size_t uncacheable_args_size,
+    uint8_t forceAnonymousTape, uint8_t AtomicAdd, uint8_t PostOpt);
 
-typedef bool (*CustomRuleType)(int /*direction*/, CTypeTreeRef /*return*/,
+typedef uint8_t (*CustomRuleType)(int /*direction*/, CTypeTreeRef /*return*/,
                                CTypeTreeRef * /*args*/,
                                IntList * /*knownValues*/, size_t /*numArgs*/,
                                LLVMValueRef);
