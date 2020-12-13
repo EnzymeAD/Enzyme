@@ -82,6 +82,7 @@ CTypeTreeRef EnzymeNewTypeTreeCT(CConcreteType, LLVMContextRef ctx);
 CTypeTreeRef EnzymeNewTypeTreeTR(CTypeTreeRef);
 void EnzymeFreeTypeTree(CTypeTreeRef CTT);
 void EnzymeSetTypeTree(CTypeTreeRef dst, CTypeTreeRef src);
+void EnzymeMergeTypeTree(CTypeTreeRef dst, CTypeTreeRef src);
 void EnzymeTypeTreeOnlyEq(CTypeTreeRef dst, int64_t x);
 void EnzymeTypeTreeShiftIndiciesEq(CTypeTreeRef dst, const char *datalayout,
                                    int64_t offset, int64_t maxSize,

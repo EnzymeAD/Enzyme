@@ -319,6 +319,10 @@ void EnzymeFreeTypeTree(CTypeTreeRef CTT) { delete (TypeTree *)CTT; }
 void EnzymeSetTypeTree(CTypeTreeRef dst, CTypeTreeRef src) {
   *(TypeTree *)dst = *(TypeTree *)src;
 }
+void EnzymeMergeTypeTree(CTypeTreeRef dst, CTypeTreeRef src) {
+  ((TypeTree *)dst)->orIn(*(TypeTree *)src, /*PointerIntSame*/false);
+}
+
 void EnzymeTypeTreeOnlyEq(CTypeTreeRef CTT, int64_t x) {
   *(TypeTree *)CTT = ((TypeTree *)CTT)->Only(x);
 }
