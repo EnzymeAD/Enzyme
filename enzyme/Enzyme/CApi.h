@@ -136,7 +136,7 @@ EnzymeTypeAnalysisRef CreateTypeAnalysis(char *Triple, char **customRuleNames,
 void FreeTypeAnalysis(EnzymeTypeAnalysisRef);
 
 void EnzymeExtractReturnInfo(EnzymeAugmentedReturnPtr ret, int64_t *data,
-                             bool *existed, size_t len);
+                             uint8_t *existed, size_t len);
 
 LLVMValueRef
 EnzymeExtractFunctionFromAugmentation(EnzymeAugmentedReturnPtr ret);

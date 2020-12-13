@@ -292,7 +292,7 @@ EnzymeExtractTapeTypeFromAugmentation(EnzymeAugmentedReturnPtr ret) {
 }
 
 void EnzymeExtractReturnInfo(EnzymeAugmentedReturnPtr ret, int64_t *data,
-                             bool *existed, size_t len) {
+                             uint8_t *existed, size_t len) {
   assert(len == 3);
   auto AR = (AugmentedReturn *)ret;
   AugmentedStruct todo[] = {AugmentedStruct::Tape, AugmentedStruct::Return,
