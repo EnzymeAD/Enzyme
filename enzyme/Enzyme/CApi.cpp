@@ -320,7 +320,7 @@ void EnzymeSetTypeTree(CTypeTreeRef dst, CTypeTreeRef src) {
   *(TypeTree *)dst = *(TypeTree *)src;
 }
 void EnzymeMergeTypeTree(CTypeTreeRef dst, CTypeTreeRef src) {
-  ((TypeTree *)dst)->orIn(*(TypeTree *)src, /*PointerIntSame*/false);
+  ((TypeTree *)dst)->orIn(*(TypeTree *)src, /*PointerIntSame*/ false);
 }
 
 void EnzymeTypeTreeOnlyEq(CTypeTreeRef CTT, int64_t x) {

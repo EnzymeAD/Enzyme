@@ -121,14 +121,15 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
 EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
     LLVMValueRef todiff, CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
     size_t constant_args_size, EnzymeTypeAnalysisRef TA,
-    EnzymeAAResultsRef global_AA, uint8_t returnUsed, struct CFnTypeInfo typeInfo,
-    uint8_t *_uncacheable_args, size_t uncacheable_args_size,
-    uint8_t forceAnonymousTape, uint8_t AtomicAdd, uint8_t PostOpt);
+    EnzymeAAResultsRef global_AA, uint8_t returnUsed,
+    struct CFnTypeInfo typeInfo, uint8_t *_uncacheable_args,
+    size_t uncacheable_args_size, uint8_t forceAnonymousTape, uint8_t AtomicAdd,
+    uint8_t PostOpt);
 
 typedef uint8_t (*CustomRuleType)(int /*direction*/, CTypeTreeRef /*return*/,
-                               CTypeTreeRef * /*args*/,
-                               IntList * /*knownValues*/, size_t /*numArgs*/,
-                               LLVMValueRef);
+                                  CTypeTreeRef * /*args*/,
+                                  IntList * /*knownValues*/, size_t /*numArgs*/,
+                                  LLVMValueRef);
 EnzymeTypeAnalysisRef CreateTypeAnalysis(char *Triple, char **customRuleNames,
                                          CustomRuleType *customRules,
                                          size_t numRules);
