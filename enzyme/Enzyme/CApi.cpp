@@ -194,7 +194,7 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
   std::vector<DIFFE_TYPE> nconstant_args((DIFFE_TYPE *)constant_args,
                                          (DIFFE_TYPE *)constant_args +
                                              constant_args_size);
-  std::map<llvm::Argument *, uint8_t> uncacheable_args;
+  std::map<llvm::Argument *, bool> uncacheable_args;
   size_t argnum = 0;
   for (auto &arg : cast<Function>(unwrap(todiff))->args()) {
     assert(argnum < uncacheable_args_size);
@@ -218,7 +218,7 @@ EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
   std::vector<DIFFE_TYPE> nconstant_args((DIFFE_TYPE *)constant_args,
                                          (DIFFE_TYPE *)constant_args +
                                              constant_args_size);
-  std::map<llvm::Argument *, uint8_t> uncacheable_args;
+  std::map<llvm::Argument *, bool> uncacheable_args;
   size_t argnum = 0;
   for (auto &arg : cast<Function>(unwrap(todiff))->args()) {
     assert(argnum < uncacheable_args_size);
