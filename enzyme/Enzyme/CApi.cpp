@@ -340,5 +340,5 @@ const char *EnzymeTypeTreeToString(CTypeTreeRef src) {
 
   return cstr;
 }
-}
 void EnzymeTypeTreeToStringFree(const char *cstr) { delete[] cstr; }
+}
