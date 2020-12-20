@@ -71,6 +71,13 @@ else()
     #Analysis
     #ScalarOpts
     )
+    add_llvm_library(LLVMEnzyme-${LLVM_VERSION_MAJOR}-static
+            ${ENZYME_SRC}
+            STATIC
+            DEPENDS
+            intrinsics_gen
+            opt
+            )
     add_llvm_library( ClangEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC} Clang/EnzymeClang.cpp
         MODULE
