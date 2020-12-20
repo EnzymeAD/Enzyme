@@ -98,7 +98,8 @@ public:
 
 public:
   TypeResults(TypeAnalysis &analysis, const FnTypeInfo &fn);
-  ConcreteType intType(llvm::Value *val, bool errIfNotFound = true);
+  ConcreteType intType(size_t num, llvm::Value *val, bool errIfNotFound = true,
+                       bool pointerIntSame = false);
 
   /// Returns whether in the first num bytes there is pointer, int, float, or
   /// none If pointerIntSame is set to true, then consider either as the same
@@ -130,6 +131,7 @@ public:
   std::deque<llvm::Value *> workList;
 
 private:
+  llvm::SmallPtrSet<llvm::BasicBlock *, 4> notForAnalysis;
   /// Tell TypeAnalyzer to reanalyze this value
   void addToWorkList(llvm::Value *val);
 
@@ -245,6 +247,7 @@ public:
 
   void visitIPOCall(llvm::CallInst &call, llvm::Function &fn);
 
+  void visitInvokeInst(llvm::InvokeInst &call);
   void visitCallInst(llvm::CallInst &call);
 
   void visitMemTransferInst(llvm::MemTransferInst &MTI);
@@ -265,6 +268,14 @@ class TypeAnalysis {
 public:
   llvm::TargetLibraryInfo &TLI;
   TypeAnalysis(llvm::TargetLibraryInfo &TLI) : TLI(TLI) {}
+  /// Map of custom function call handlers
+  std::map<std::string,
+           std::function<bool(int /*direction*/, TypeTree & /*returnTree*/,
+                              std::vector<TypeTree> & /*argTrees*/,
+                              std::vector<std::set<int64_t>> & /*knownValues*/,
+                              llvm::CallInst * /*call*/)>>
+      CustomRules;
+
   /// Map of possible query states to TypeAnalyzer intermediate results
   std::map<FnTypeInfo, TypeAnalyzer> analyzedFunctions;
 
@@ -276,8 +287,8 @@ public:
 
   /// Get the underlying data type of value val given a particular context
   /// If the type is not known err if errIfNotFound
-  ConcreteType intType(llvm::Value *val, const FnTypeInfo &fn,
-                       bool errIfNotFound = true);
+  ConcreteType intType(size_t num, llvm::Value *val, const FnTypeInfo &fn,
+                       bool errIfNotFound = true, bool pointerIntSame = false);
 
   /// Get the underlying data type of first num bytes of val given a particular
   /// context If the type is not known err if errIfNotFound. Consider ints and

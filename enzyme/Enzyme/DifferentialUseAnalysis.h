@@ -84,7 +84,10 @@ bool is_value_needed_in_reverse(
 
       if (auto CI = dyn_cast<CallInst>(use)) {
         if (auto F = CI->getCalledFunction()) {
-          if (F->getName() == "__kmpc_for_static_init_4") {
+          if (F->getName() == "__kmpc_for_static_init_4" ||
+              F->getName() == "__kmpc_for_static_init_4u" ||
+              F->getName() == "__kmpc_for_static_init_8" ||
+              F->getName() == "__kmpc_for_static_init_8u") {
             return seen[idx] = true;
           }
         }
@@ -168,6 +171,17 @@ bool is_value_needed_in_reverse(
           II->getIntrinsicID() == Intrinsic::stacksave ||
           II->getIntrinsicID() == Intrinsic::stackrestore) {
         continue;
+      }
+      if (II->getIntrinsicID() == Intrinsic::fma) {
+        bool needed = false;
+        if (II->getArgOperand(0) == inst &&
+            !gutils->isConstantValue(II->getArgOperand(1)))
+          needed = true;
+        if (II->getArgOperand(1) == inst &&
+            !gutils->isConstantValue(II->getArgOperand(0)))
+          needed = true;
+        if (!needed)
+          continue;
       }
     }
 

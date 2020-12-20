@@ -272,6 +272,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     toreturn->setVolatile(load->isVolatile());
     toreturn->setOrdering(load->getOrdering());
     toreturn->setSyncScopeID(load->getSyncScopeID());
+    toreturn->setDebugLoc(getNewFromOriginal(load->getDebugLoc()));
     toreturn->setMetadata(LLVMContext::MD_tbaa,
                           load->getMetadata(LLVMContext::MD_tbaa));
     toreturn->setMetadata("enzyme_unwrapped",
@@ -316,7 +317,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     toreturn->setAttributes(op->getAttributes());
     toreturn->setCallingConv(op->getCallingConv());
     toreturn->setTailCallKind(op->getTailCallKind());
-    toreturn->setDebugLoc(op->getDebugLoc());
+    toreturn->setDebugLoc(getNewFromOriginal(op->getDebugLoc()));
     return toreturn;
   } else if (auto phi = dyn_cast<PHINode>(val)) {
     if (phi->getNumIncomingValues() == 1) {
@@ -370,6 +371,7 @@ endCheck:
 
 Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
                                       int idx) {
+  assert(malloc);
   assert(BuilderQ.GetInsertBlock()->getParent() == newFunc);
 
   if (tape) {
@@ -701,12 +703,17 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
     assert(found2 != scopeMap.end());
     assert(found2->second.first);
 
-    Instruction *toadd = scopeAllocs[found2->second.first][0];
+    Value *toadd;
+    // if (ompOffset) {
+    //  toadd = UndefValue::get(found2->second.first->getAllocatedType());
+    //} else {
+    toadd = scopeAllocs[found2->second.first][0];
     for (auto u : toadd->users()) {
       if (auto ci = dyn_cast<CastInst>(u)) {
         toadd = ci;
       }
     }
+    //}
 
     // llvm::errs() << " malloc: " << *malloc << "\n";
     // llvm::errs() << " toadd: " << *toadd << "\n";
@@ -1114,7 +1121,6 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
       constant_values, nonconstant_values, returnvals, returnValue,
       "diffe" + todiff->getName(), &originalToNew,
       /*diffeReturnArg*/ diffeReturnArg, additionalArg);
-
   auto res = new DiffeGradientUtils(
       newFunc, todiff, TLI, TA, AA, invertedPointers, constant_values,
       nonconstant_values, /*ActiveValues*/ retType != DIFFE_TYPE::CONSTANT,
@@ -1157,6 +1163,25 @@ Value *GradientUtils::invertPointerM(Value *oval, IRBuilder<> &BuilderM) {
 
   if (auto arg = dyn_cast<GlobalVariable>(oval)) {
     if (!hasMetadata(arg, "enzyme_shadow")) {
+      if ((llvm::Triple(newFunc->getParent()->getTargetTriple()).getArch() ==
+               Triple::nvptx ||
+           llvm::Triple(newFunc->getParent()->getTargetTriple()).getArch() ==
+               Triple::nvptx64) &&
+          cast<PointerType>(arg->getType())->getAddressSpace() == 3) {
+        llvm::errs() << "warning found shared memory\n";
+#if LLVM_VERSION_MAJOR >= 11
+        Type *type = cast<PointerType>(arg->getType())->getElementType();
+        auto shadow = new GlobalVariable(
+            *arg->getParent(), type, arg->isConstant(), arg->getLinkage(),
+            Constant::getNullValue(type), arg->getName() + "_shadow", arg,
+            arg->getThreadLocalMode(), arg->getAddressSpace(),
+            arg->isExternallyInitialized());
+        return invertedPointers[oval] = shadow;
+#endif
+      }
+
+      llvm::errs() << *oldFunc << "\n";
+      llvm::errs() << *newFunc << "\n";
       llvm::errs() << *arg << "\n";
       assert(0 && "cannot compute with global variable that doesn't have "
                   "marked shadow global");
@@ -1225,7 +1250,8 @@ Value *GradientUtils::invertPointerM(Value *oval, IRBuilder<> &BuilderM) {
         fn, retType, /*constant_args*/ types, TLI, TA, AA,
         /*returnUsed*/ !fn->getReturnType()->isEmptyTy() &&
             !fn->getReturnType()->isVoidTy(),
-        type_args, uncacheable_args, /*forceAnonymousTape*/ true, AtomicAdd);
+        type_args, uncacheable_args, /*forceAnonymousTape*/ true, AtomicAdd,
+        /*PostOpt*/ false);
     Constant *newf = CreatePrimalAndGradient(
         fn, retType, /*constant_args*/ types, TLI, TA, AA,
         /*returnValue*/ false, /*dretPtr*/ false, /*topLevel*/ false,
@@ -1261,10 +1287,13 @@ Value *GradientUtils::invertPointerM(Value *oval, IRBuilder<> &BuilderM) {
           cast<Constant>(invertPointerM(arg->getOperand(0), BuilderM)),
           arg->getType());
       return result;
-    } else if (arg->isGEPWithNoNotionalOverIndexing()) {
+    } else if (arg->getOpcode() == Instruction::GetElementPtr) {
       auto result = arg->getWithOperandReplaced(
           0, cast<Constant>(invertPointerM(arg->getOperand(0), BuilderM)));
       return result;
+    } else {
+      llvm::errs() << *arg << "\n";
+      assert(0 && "unhandled");
     }
     goto end;
   } else if (auto arg = dyn_cast<ExtractValueInst>(oval)) {
@@ -1297,6 +1326,21 @@ Value *GradientUtils::invertPointerM(Value *oval, IRBuilder<> &BuilderM) {
     auto result = bb.CreateInsertElement(
         invertPointerM(op0, bb), invertPointerM(op1, bb),
         getNewFromOriginal(op2), arg->getName() + "'ipie");
+    invertedPointers[arg] = result;
+    return lookupM(invertedPointers[arg], BuilderM);
+  } else if (auto arg = dyn_cast<ShuffleVectorInst>(oval)) {
+    IRBuilder<> bb(getNewFromOriginal(arg));
+    Value *op0 = arg->getOperand(0);
+    Value *op1 = arg->getOperand(1);
+#if LLVM_VERSION_MAJOR >= 11
+    auto result = bb.CreateShuffleVector(
+        invertPointerM(op0, bb), invertPointerM(op1, bb),
+        arg->getShuffleMaskForBitcode(), arg->getName() + "'ipsv");
+#else
+    auto result =
+        bb.CreateShuffleVector(invertPointerM(op0, bb), invertPointerM(op1, bb),
+                               arg->getOperand(2), arg->getName() + "'ipsv");
+#endif
     invertedPointers[arg] = result;
     return lookupM(invertedPointers[arg], BuilderM);
   } else if (auto arg = dyn_cast<SelectInst>(oval)) {
@@ -1375,6 +1419,8 @@ Value *GradientUtils::invertPointerM(Value *oval, IRBuilder<> &BuilderM) {
 #endif
         }
         return lookupM(invertedPointers[inst], BuilderM);
+      } else {
+        // TODO handle alloca of size > 1
       }
     }
 
@@ -1493,7 +1539,8 @@ end:;
 }
 
 Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
-                              const ValueToValueMapTy &incoming_available) {
+                              const ValueToValueMapTy &incoming_available,
+                              bool tryLegalRecomputeCheck) {
   assert(val->getName() != "<badref>");
   if (isa<Constant>(val)) {
     return val;
@@ -1648,7 +1695,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
     return available[inst];
 
   // TODO consider call as part of
-  if (legalRecompute(prelcssaInst, available)) {
+  if (tryLegalRecomputeCheck && legalRecompute(prelcssaInst, available)) {
     if (shouldRecompute(prelcssaInst, available)) {
       auto op = unwrapM(prelcssaInst, BuilderM, available,
                         UnwrapMode::AttemptSingleUnwrap);
@@ -1819,7 +1866,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                 start = unwrapM(start0, v,
                                 /*available*/ ValueToValueMapTy(),
                                 UnwrapMode::AttemptFullUnwrapWithLookup);
-                l1.header->dump();
+                llvm::errs() << *l1.header << "\n";
                 std::set<Value *> todo = {start0};
                 while (todo.size()) {
                   Value *now = *todo.begin();
@@ -1910,7 +1957,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 
                 auto memcpyF = Intrinsic::getDeclaration(
                     newFunc->getParent(), Intrinsic::memcpy, tys);
-                memcpyF->dump();
+                llvm::errs() << *memcpyF << "\n";
 
                 auto mem = cast<CallInst>(v.CreateCall(memcpyF, nargs));
                 // memset->addParamAttr(0, Attribute::getWithAlignment(Context,

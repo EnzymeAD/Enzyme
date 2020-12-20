@@ -104,40 +104,50 @@ static inline bool couldFunctionArgumentCapture(CallInst *CI, Value *val) {
   return false;
 }
 
-const char *KnownInactiveFunctions[] = {
-    "__assert_fail",
-    "__cxa_guard_acquire",
-    "__cxa_guard_release",
-    "__cxa_guard_abort",
-    "printf",
-    "puts",
-    "__enzyme_float",
-    "__enzyme_double",
-    "__enzyme_integer",
-    "__enzyme_pointer",
-    "__kmpc_for_static_init_4",
-    "__kmpc_for_static_init_4u",
-    "__kmpc_for_static_init_8",
-    "__kmpc_for_static_init_8u",
-    "__kmpc_for_static_fini",
-    "__kmpc_dispatch_init_4",
-    "__kmpc_dispatch_init_4u",
-    "__kmpc_dispatch_init_8",
-    "__kmpc_dispatch_init_8u",
-    "__kmpc_dispatch_next_4",
-    "__kmpc_dispatch_next_4u",
-    "__kmpc_dispatch_next_8",
-    "__kmpc_dispatch_next_8u",
-    "__kmpc_dispatch_fini_4",
-    "__kmpc_dispatch_fini_4u",
-    "__kmpc_dispatch_fini_8",
-    "__kmpc_dispatch_fini_8u",
-};
+const char *KnownInactiveFunctionsStartingWith[] = {"_ZN4core3fmt",
+                                                    "_ZN3std2io5stdio6_print"};
+
+const char *KnownInactiveFunctions[] = {"__assert_fail",
+                                        "__cxa_guard_acquire",
+                                        "__cxa_guard_release",
+                                        "__cxa_guard_abort",
+                                        "posix_memalign",
+                                        "printf",
+                                        "puts",
+                                        "__enzyme_float",
+                                        "__enzyme_double",
+                                        "__enzyme_integer",
+                                        "__enzyme_pointer",
+                                        "__kmpc_for_static_init_4",
+                                        "__kmpc_for_static_init_4u",
+                                        "__kmpc_for_static_init_8",
+                                        "__kmpc_for_static_init_8u",
+                                        "__kmpc_for_static_fini",
+                                        "__kmpc_dispatch_init_4",
+                                        "__kmpc_dispatch_init_4u",
+                                        "__kmpc_dispatch_init_8",
+                                        "__kmpc_dispatch_init_8u",
+                                        "__kmpc_dispatch_next_4",
+                                        "__kmpc_dispatch_next_4u",
+                                        "__kmpc_dispatch_next_8",
+                                        "__kmpc_dispatch_next_8u",
+                                        "__kmpc_dispatch_fini_4",
+                                        "__kmpc_dispatch_fini_4u",
+                                        "__kmpc_dispatch_fini_8",
+                                        "__kmpc_dispatch_fini_8u",
+                                        "malloc_usable_size",
+                                        "malloc_size",
+                                        "_msize"};
 
 /// Is the use of value val as an argument of call CI known to be inactive
 /// This tool can only be used when in DOWN mode
 bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
   assert(directions & DOWN);
+
+  if (CI->hasFnAttr("enzyme_inactive")) {
+    return true;
+  }
+
   Function *F = CI->getCalledFunction();
 
   // Indirect function calls may actively use the argument
@@ -150,9 +160,23 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
   // of arguments
   if (isAllocationFunction(*F, TLI) || isDeallocationFunction(*F, TLI))
     return true;
+
+  for (auto FuncName : KnownInactiveFunctionsStartingWith) {
+    if (Name.startswith(FuncName)) {
+      return true;
+    }
+  }
   for (auto FuncName : KnownInactiveFunctions) {
     if (Name == FuncName)
       return true;
+  }
+  if (F->getIntrinsicID() == Intrinsic::trap)
+    return true;
+
+  /// Only the first argument (magnitude) of copysign is active
+  if (F->getIntrinsicID() == Intrinsic::copysign &&
+      CI->getArgOperand(0) != val) {
+    return true;
   }
 
   /// Use of the value as a non-src/dst in memset/memcpy/memmove is an inactive
@@ -311,7 +335,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults &TR, Instruction *I) {
     // Even if returning a pointer, this instruction is considered inactive
     // since the instruction doesn't prop gradients. Thus, so long as we don't
     // return an object containing a float, this instruction is inactive
-    if (!TR.intType(I, /*errifNotFound*/ false).isPossibleFloat()) {
+    if (!TR.intType(1, I, /*errifNotFound*/ false).isPossibleFloat()) {
       if (printconst)
         llvm::errs()
             << " constant instruction from known non-float non-writing "
@@ -344,9 +368,8 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults &TR, Instruction *I) {
       if (directions == DOWN && !isa<PHINode>(I)) {
         if (isValueInactiveFromUsers(TR, I)) {
           if (printconst)
-            llvm::errs() << " constant instruction from users "
-                            "instruction "
-                         << *I << "\n";
+            llvm::errs() << " constant instruction[" << directions
+                         << "] from users instruction " << *I << "\n";
           ConstantInstructions.insert(I);
           return true;
         }
@@ -356,9 +379,8 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults &TR, Instruction *I) {
         DownHypothesis->ConstantInstructions.insert(I);
         if (DownHypothesis->isValueInactiveFromUsers(TR, I)) {
           if (printconst)
-            llvm::errs() << " constant instruction from users "
-                            "instruction "
-                         << *I << "\n";
+            llvm::errs() << " constant instruction[" << directions
+                         << "] from users instruction " << *I << "\n";
           ConstantInstructions.insert(I);
           insertConstantsFrom(*DownHypothesis);
           return true;
@@ -479,11 +501,11 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
 
   // This value is certainly an integer (and only and integer, not a pointer or
   // float). Therefore its value is constant
-  if (TR.intType(Val, /*errIfNotFound*/ false).isIntegral()) {
+  if (TR.intType(1, Val, /*errIfNotFound*/ false).isIntegral()) {
     if (printconst)
       llvm::errs() << " Value const as integral " << (int)directions << " "
                    << *Val << " "
-                   << TR.intType(Val, /*errIfNotFound*/ false).str() << "\n";
+                   << TR.intType(1, Val, /*errIfNotFound*/ false).str() << "\n";
     ConstantValues.insert(Val);
     return true;
   }
@@ -622,7 +644,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
   bool containsPointer = true;
   if (Val->getType()->isFPOrFPVectorTy())
     containsPointer = false;
-  if (!TR.intType(Val, /*errIfNotFound*/ false).isPossiblePointer())
+  if (!TR.intType(1, Val, /*errIfNotFound*/ false).isPossiblePointer())
     containsPointer = false;
 
   if (containsPointer) {
@@ -746,7 +768,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
             }
             if (F->getName() == "__cxa_guard_acquire" ||
                 F->getName() == "__cxa_guard_release" ||
-                F->getName() == "__cxa_guard_abort") {
+                F->getName() == "__cxa_guard_abort" ||
+                F->getName() == "posix_memalign") {
               continue;
             }
 
@@ -1074,7 +1097,7 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults &TR,
 #else
     if (auto iasm = dyn_cast<InlineAsm>(call->getCalledValue())) {
 #endif
-      if (iasm->getAsmString() == "cpuid") {
+      if (StringRef(iasm->getAsmString()).contains("cpuid")) {
         if (printconst)
           llvm::errs() << " constant instruction from known cpuid instruction "
                        << *inst << "\n";
@@ -1115,16 +1138,27 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults &TR,
 
   // Calls to print/assert/cxa guard are definitionally inactive
   if (auto op = dyn_cast<CallInst>(inst)) {
+    if (op->hasFnAttr("enzyme_inactive")) {
+      return true;
+    }
     if (auto called = op->getCalledFunction()) {
       if (called->getName() == "free" || called->getName() == "_ZdlPv" ||
-          called->getName() == "_ZdlPvm") {
+          called->getName() == "_ZdlPvm" || called->getName() == "munmap") {
         return true;
       }
 
+      for (auto FuncName : KnownInactiveFunctionsStartingWith) {
+        if (called->getName().startswith(FuncName)) {
+          return true;
+        }
+      }
       for (auto FuncName : KnownInactiveFunctions) {
         if (called->getName() == FuncName)
           return true;
       }
+
+      if (called->getIntrinsicID() == Intrinsic::trap)
+        return true;
 
       // If requesting emptty unknown functions to be considered inactive, abide
       // by those rules
@@ -1240,8 +1274,10 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults &TR,
 /// Is the value free of any active uses
 bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults &TR,
                                                 llvm::Value *val) {
-  // Must be an analyzer only searching down
-  assert(directions == DOWN);
+  assert(directions & DOWN);
+  // Must be an analyzer only searching down, unless used outside
+  // assert(directions == DOWN);
+
   // To ensure we can call down
 
   if (printconst)
@@ -1249,19 +1285,20 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults &TR,
                  << "\n";
 
   bool seenuse = false;
-
-  std::deque<User *> todo;
+  // user, predecessor
+  std::deque<std::pair<User *, Value *>> todo;
   for (const auto a : val->users()) {
-    todo.push_back(a);
+    todo.push_back(std::make_pair(a, val));
   }
-  std::set<Value *> done = {val};
+  std::set<std::pair<User *, Value *>> done = {};
 
   while (todo.size()) {
-    User *a = todo.front();
+    auto pair = todo.front();
     todo.pop_front();
-    if (done.count(a))
+    if (done.count(pair))
       continue;
-    done.insert(a);
+    done.insert(pair);
+    User *a = pair.first;
 
     if (printconst)
       llvm::errs() << "      considering use of " << *val << " - " << *a
@@ -1308,7 +1345,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults &TR,
     }
 
     if (auto call = dyn_cast<CallInst>(a)) {
-      bool ConstantArg = isFunctionArgumentConstant(call, val);
+      bool ConstantArg = isFunctionArgumentConstant(call, pair.second);
       if (ConstantArg) {
         if (printconst) {
           llvm::errs() << "Value found constant callinst use:" << *val
@@ -1323,11 +1360,11 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults &TR,
     // the list of users to analyze
     if (auto I = dyn_cast<Instruction>(a)) {
       if (!I->mayWriteToMemory()) {
-        if (TR.intType(I, /*errIfNotFound*/ false).isIntegral()) {
+        if (TR.intType(1, I, /*errIfNotFound*/ false).isIntegral()) {
           continue;
         }
         for (auto u : I->users()) {
-          todo.push_back(u);
+          todo.push_back(std::make_pair(u, (Value *)I));
         }
         continue;
       }

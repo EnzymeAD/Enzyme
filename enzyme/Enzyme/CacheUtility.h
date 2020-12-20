@@ -116,7 +116,8 @@ public:
 protected:
   CacheUtility(llvm::TargetLibraryInfo &TLI, llvm::Function *newFunc)
       : newFunc(newFunc), TLI(TLI), DT(*newFunc), LI(DT), AC(*newFunc),
-        SE(*newFunc, TLI, AC, DT, LI) {
+        SE(*newFunc, TLI, AC, DT, LI), ompOffset(nullptr),
+        ompTrueLimit(nullptr) {
     inversionAllocs = llvm::BasicBlock::Create(newFunc->getContext(),
                                                "allocsForInversion", newFunc);
   }
@@ -171,6 +172,9 @@ public:
         : Block(Block), ForceSingleIteration(ForceSingleIteration) {}
   };
 
+  llvm::Value *ompOffset;
+  llvm::Value *ompTrueLimit;
+
   /// Given a LimitContext ctx, representing a location inside a loop nest,
   /// break each of the loops up into chunks of loops where each chunk's number
   /// of iterations can be computed at the chunk preheader. Every dynamic loop
@@ -206,7 +210,8 @@ private:
   /// the IRBuilder<>
   llvm::Value *computeIndexOfChunk(
       bool inForwardPass, llvm::IRBuilder<> &v,
-      const std::vector<std::pair<LoopContext, llvm::Value *>> &containedloops);
+      const std::vector<std::pair<LoopContext, llvm::Value *>> &containedloops,
+      llvm::Value *outerOffset);
 
 private:
   /// Given a cache allocation and an index denoting how many Chunks deep the
@@ -271,7 +276,8 @@ public:
   virtual llvm::Value *
   lookupM(llvm::Value *val, llvm::IRBuilder<> &BuilderM,
           const llvm::ValueToValueMapTy &incoming_availalble =
-              llvm::ValueToValueMapTy()) = 0;
+              llvm::ValueToValueMapTy(),
+          bool tryLegalityCheck = true) = 0;
 
   /// If an allocation is requested to be freed, this subclass will be called to
   /// chose how and where to free it. It is by default not implemented, falling
@@ -318,4 +324,14 @@ protected:
   llvm::SmallPtrSet<llvm::LoadInst *, 10> CacheLookups;
 };
 
+// Create a new canonical induction variable of Type Ty for Loop L
+// Return the variable and the increment instruction
+std::pair<llvm::PHINode *, llvm::Instruction *>
+InsertNewCanonicalIV(llvm::Loop *L, llvm::Type *Ty, std::string name = "iv");
+
+// Attempt to rewrite all phinode's in the loop in terms of the
+// induction variable
+void RemoveRedundantIVs(llvm::BasicBlock *Header, llvm::PHINode *CanonicalIV,
+                        MustExitScalarEvolution &SE,
+                        std::function<void(llvm::Instruction *)> eraser);
 #endif

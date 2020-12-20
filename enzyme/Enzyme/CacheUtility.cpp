@@ -105,6 +105,7 @@ void CacheUtility::erase(Instruction *I) {
   SE.eraseValueFromMap(I);
 
   if (!I->use_empty()) {
+    llvm::errs() << *newFunc->getParent() << "\n";
     llvm::errs() << *newFunc << "\n";
     llvm::errs() << *I << "\n";
   }
@@ -114,20 +115,20 @@ void CacheUtility::erase(Instruction *I) {
 
 // Create a new canonical induction variable of Type Ty for Loop L
 // Return the variable and the increment instruction
-static std::pair<PHINode *, Instruction *> InsertNewCanonicalIV(Loop *L,
-                                                                Type *Ty) {
+std::pair<PHINode *, Instruction *> InsertNewCanonicalIV(Loop *L, Type *Ty,
+                                                         std::string name) {
   assert(L);
   assert(Ty);
 
   BasicBlock *Header = L->getHeader();
   assert(Header);
   IRBuilder<> B(&Header->front());
-  PHINode *CanonicalIV = B.CreatePHI(Ty, 1, "iv");
+  PHINode *CanonicalIV = B.CreatePHI(Ty, 1, name);
 
   B.SetInsertPoint(Header->getFirstNonPHIOrDbg());
-  Instruction *Inc =
-      cast<Instruction>(B.CreateAdd(CanonicalIV, ConstantInt::get(Ty, 1),
-                                    "iv.next", /*NUW*/ true, /*NSW*/ true));
+  Instruction *Inc = cast<Instruction>(
+      B.CreateAdd(CanonicalIV, ConstantInt::get(Ty, 1), name + ".next",
+                  /*NUW*/ true, /*NSW*/ true));
 
   for (BasicBlock *Pred : predecessors(Header)) {
     assert(Pred);
@@ -143,7 +144,8 @@ static std::pair<PHINode *, Instruction *> InsertNewCanonicalIV(Loop *L,
 // Attempt to rewrite all phinode's in the loop in terms of the
 // induction variable
 void RemoveRedundantIVs(BasicBlock *Header, PHINode *CanonicalIV,
-                        MustExitScalarEvolution &SE, CacheUtility &gutils) {
+                        MustExitScalarEvolution &SE,
+                        std::function<void(Instruction *)> eraser) {
   assert(Header);
   assert(CanonicalIV);
   SmallVector<Instruction *, 8> IVsToRemove;
@@ -170,7 +172,8 @@ void RemoveRedundantIVs(BasicBlock *Header, PHINode *CanonicalIV,
       // We place that at first non phi as it may produce a non-phi instruction
       // and must thus be expanded after all phi's
       Value *NewIV =
-          Exp.expandCodeFor(S, S->getType(), Header->getFirstNonPHI());
+          Exp.expandCodeFor(S, PN->getType(), Header->getFirstNonPHI());
+      assert(NewIV->getType() == PN->getType());
       if (NewIV == PN) {
         continue;
       }
@@ -197,7 +200,7 @@ void RemoveRedundantIVs(BasicBlock *Header, PHINode *CanonicalIV,
   }
 
   for (Instruction *PN : IVsToRemove) {
-    gutils.erase(PN);
+    eraser(PN);
   }
 }
 
@@ -410,7 +413,8 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext) {
   assert(CanonicalIV);
   loopContexts[L].var = CanonicalIV;
   loopContexts[L].incvar = pair.second;
-  RemoveRedundantIVs(loopContexts[L].header, CanonicalIV, SE, *this);
+  RemoveRedundantIVs(loopContexts[L].header, CanonicalIV, SE,
+                     [&](Instruction *I) { erase(I); });
   CanonicalizeLatches(L, loopContexts[L].header, loopContexts[L].preheader,
                       CanonicalIV, SE, *this, pair.second,
                       getLatches(L, loopContexts[L].exitBlocks));
@@ -578,6 +582,7 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
         newFunc->getParent()->getDataLayout().getTypeAllocSizeInBits(myType) /
             8);
 
+    // if (i != sublimits.size() -1 || !ompOffset)
     // Allocate and store the required memory
     if (allocateInternal) {
 
@@ -709,25 +714,28 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
     }
 
     // Free the memory, if requested
-    if (shouldFree) {
-      if (CachePointerInvariantGroups.find(std::make_pair((Value *)alloc, i)) ==
-          CachePointerInvariantGroups.end()) {
-        MDNode *invgroup = MDNode::getDistinct(alloc->getContext(), {});
-        CachePointerInvariantGroups[std::make_pair((Value *)alloc, i)] =
-            invgroup;
+    if (i != sublimits.size() - 1 || !ompOffset)
+      if (shouldFree) {
+        if (CachePointerInvariantGroups.find(std::make_pair(
+                (Value *)alloc, i)) == CachePointerInvariantGroups.end()) {
+          MDNode *invgroup = MDNode::getDistinct(alloc->getContext(), {});
+          CachePointerInvariantGroups[std::make_pair((Value *)alloc, i)] =
+              invgroup;
+        }
+        freeCache(
+            containedloops.back().first.preheader, sublimits, i, alloc,
+            byteSizeOfType, storeInto,
+            CachePointerInvariantGroups[std::make_pair((Value *)alloc, i)]);
       }
-      freeCache(containedloops.back().first.preheader, sublimits, i, alloc,
-                byteSizeOfType, storeInto,
-                CachePointerInvariantGroups[std::make_pair((Value *)alloc, i)]);
-    }
 
     // If we are not the final iteration, lookup the next pointer by indexing
     // into the relevant location of the current chunk allocation
     if (i != 0) {
       IRBuilder<> v(&sublimits[i - 1].second.back().first.preheader->back());
 
-      Value *idx =
-          computeIndexOfChunk(/*inForwardPass*/ true, v, containedloops);
+      Value *idx = computeIndexOfChunk(
+          /*inForwardPass*/ true, v, containedloops,
+          (i == sublimits.size() - 1) ? ompOffset : nullptr);
 
       storeInto = v.CreateGEP(v.CreateLoad(storeInto), idx);
       cast<GetElementPtrInst>(storeInto)->setIsInBounds(true);
@@ -738,7 +746,8 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
 
 Value *CacheUtility::computeIndexOfChunk(
     bool inForwardPass, IRBuilder<> &v,
-    const std::vector<std::pair<LoopContext, llvm::Value *>> &containedloops) {
+    const std::vector<std::pair<LoopContext, llvm::Value *>> &containedloops,
+    Value *outerOffset) {
   // List of loop indices in chunk from innermost to outermost
   SmallVector<Value *, 3> indices;
   // List of cumulative indices in chunk from innermost to outermost
@@ -750,7 +759,9 @@ Value *CacheUtility::computeIndexOfChunk(
   ValueToValueMapTy available;
 
   // Iterate from innermost loop to outermost loop within a chunk
-  for (const auto &pair : containedloops) {
+  for (size_t i = 0; i < containedloops.size(); ++i) {
+    const auto &pair = containedloops[i];
+
     const auto &idx = pair.first;
     Value *var = idx.var;
 
@@ -764,6 +775,10 @@ Value *CacheUtility::computeIndexOfChunk(
     } else {
       var = idx.var;
       available[idx.var] = var;
+    }
+    if (i == containedloops.size() - 1 && outerOffset) {
+      var = v.CreateAdd(var, lookupM(outerOffset, v), "", /*NUW*/ true,
+                        /*NSW*/ true);
     }
 
     indices.push_back(var);
@@ -835,6 +850,9 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(LimitContext ctx) {
     }
     contexts.emplace_back(idx);
     blk = idx.preheader;
+  }
+  if (ompTrueLimit && contexts.size()) {
+    contexts.back().limit = ompTrueLimit;
   }
 
   // Legal preheaders for loop i (indexed from inner => outer)
@@ -1160,7 +1178,9 @@ Value *CacheUtility::getCachePointer(bool inForwardPass, IRBuilder<> &BuilderM,
     const auto &containedloops = sublimits[i].second;
 
     if (containedloops.size() > 0) {
-      Value *idx = computeIndexOfChunk(inForwardPass, BuilderM, containedloops);
+      Value *idx = computeIndexOfChunk(inForwardPass, BuilderM, containedloops,
+                                       (i == sublimits.size() - 1) ? ompOffset
+                                                                   : nullptr);
       if (EfficientBoolCache && isi1 && i == 0)
         idx = BuilderM.CreateLShr(
             idx, ConstantInt::get(Type::getInt64Ty(newFunc->getContext()), 3));

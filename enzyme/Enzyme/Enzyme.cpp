@@ -52,6 +52,7 @@
 #include "GradientUtils.h"
 #include "Utils.h"
 
+#include "CApi.h"
 using namespace llvm;
 #ifdef DEBUG_TYPE
 #undef DEBUG_TYPE
@@ -222,7 +223,9 @@ bool HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI, AAResults &AA,
       if (i >= CI->getNumArgOperands()) {
         EmitFailure("MissingArgShadow", CI->getDebugLoc(), CI,
                     "__enzyme_autodiff missing argument shadow at index ", i,
-                    ", need shadow of type ", *PTy, " to shadow primal argument ", *args.back(), " at call ", *CI);
+                    ", need shadow of type ", *PTy,
+                    " to shadow primal argument ", *args.back(), " at call ",
+                    *CI);
         return false;
       }
       Value *res = CI->getArgOperand(i);
@@ -319,6 +322,7 @@ bool HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI, AAResults &AA,
   CallInst *diffret = cast<CallInst>(Builder.CreateCall(newFunc, args));
   diffret->setCallingConv(CI->getCallingConv());
   diffret->setDebugLoc(CI->getDebugLoc());
+
   if (!diffret->getType()->isEmptyTy() && !diffret->getType()->isVoidTy()) {
     unsigned idxs[] = {0};
     auto diffreti = Builder.CreateExtractValue(diffret, idxs);
@@ -337,45 +341,6 @@ bool HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI, AAResults &AA,
   }
   CI->eraseFromParent();
   return true;
-}
-
-static bool lowerEnzymeCalls(Function &F, TargetLibraryInfo &TLI, AAResults &AA,
-                             bool PostOpt, bool &successful) {
-
-  bool Changed = false;
-
-reset:
-  for (BasicBlock &BB : F) {
-
-    for (auto BI = BB.rbegin(), BE = BB.rend(); BI != BE; ++BI) {
-      CallInst *CI = dyn_cast<CallInst>(&*BI);
-      if (!CI)
-        continue;
-
-      Function *Fn = CI->getCalledFunction();
-
-#if LLVM_VERSION_MAJOR >= 11
-      if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand())) {
-#else
-      if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledValue())) {
-#endif
-        if (castinst->isCast())
-          if (auto fn = dyn_cast<Function>(castinst->getOperand(0)))
-            Fn = fn;
-      }
-
-      if (Fn && (Fn->getName() == "__enzyme_autodiff" ||
-                 Fn->getName().startswith("__enzyme_autodiff") ||
-                 Fn->getName().contains("__enzyme_autodiff"))) {
-        successful &= HandleAutoDiff(CI, TLI, AA, PostOpt);
-        Changed = true;
-        if (successful)
-          goto reset;
-      }
-    }
-  }
-
-  return Changed;
 }
 
 namespace {
@@ -403,9 +368,84 @@ public:
     // AU.addRequiredID(llvm::LoopSimplifyID);//<LoopSimplifyWrapperPass>();
   }
 
+  bool lowerEnzymeCalls(Function &F, bool PostOpt, bool &successful,
+                        std::set<Function *> &done) {
+    if (done.count(&F))
+      return false;
+    done.insert(&F);
+
+    if (F.empty())
+      return false;
+
+#if LLVM_VERSION_MAJOR >= 10
+    auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
+#else
+    auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
+#endif
+
+    AAResults AA(TLI);
+    // auto &B_AA = getAnalysis<BasicAAWrapperPass>().getResult();
+    // AA.addAAResult(B_AA);
+
+    auto &G_AA = getAnalysis<GlobalsAAWrapperPass>().getResult();
+    AA.addAAResult(G_AA);
+
+    bool Changed = false;
+
+    std::vector<CallInst *> toLower;
+    for (BasicBlock &BB : F) {
+      for (Instruction &I : BB) {
+        CallInst *CI = dyn_cast<CallInst>(&I);
+        if (!CI)
+          continue;
+
+        Function *Fn = CI->getCalledFunction();
+
+#if LLVM_VERSION_MAJOR >= 11
+        if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand()))
+#else
+        if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledValue()))
+#endif
+        {
+          if (castinst->isCast())
+            if (auto fn = dyn_cast<Function>(castinst->getOperand(0)))
+              Fn = fn;
+        }
+
+        if (Fn && (Fn->getName() == "__enzyme_autodiff" ||
+                   Fn->getName().startswith("__enzyme_autodiff") ||
+                   Fn->getName().contains("__enzyme_autodiff"))) {
+          toLower.push_back(CI);
+
+          Value *fn = CI->getArgOperand(0);
+          while (auto ci = dyn_cast<CastInst>(fn)) {
+            fn = ci->getOperand(0);
+          }
+          while (auto ci = dyn_cast<BlockAddress>(fn)) {
+            fn = ci->getFunction();
+          }
+          while (auto ci = dyn_cast<ConstantExpr>(fn)) {
+            fn = ci->getOperand(0);
+          }
+          if (auto dc = dyn_cast<Function>(fn))
+            Changed |=
+                lowerEnzymeCalls(*dc, /*PostOpt*/ true, successful, done);
+        }
+      }
+    }
+
+    for (auto CI : toLower) {
+      successful &= HandleAutoDiff(CI, TLI, AA, PostOpt);
+      Changed = true;
+      if (!successful)
+        break;
+    }
+
+    return Changed;
+  }
+
   bool runOnModule(Module &M) override {
     // auto &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
-    auto &G_AA = getAnalysis<GlobalsAAWrapperPass>().getResult();
 
     // llvm::errs() << "G_AA: " << &G_AA << "\n";
     // AAResults AA(TLI);
@@ -418,26 +458,16 @@ public:
     auto &DT = getAnalysis<DominatorTreeWrapperPass>().getDomTree();
     */
     bool changed = false;
+    std::set<Function *> done;
     for (Function &F : M) {
       if (F.empty())
         continue;
-
-#if LLVM_VERSION_MAJOR >= 10
-      auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
-#else
-      auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
-#endif
-
-      AAResults AA(TLI);
-      // auto &B_AA = getAnalysis<BasicAAWrapperPass>().getResult();
-      // AA.addAAResult(B_AA);
-      AA.addAAResult(G_AA);
 
       // auto &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
       // auto &LI = getAnalysis<LoopInfoWrapperPass>(F).getLoopInfo();
 
       bool successful = true;
-      changed |= lowerEnzymeCalls(F, TLI, AA, PostOpt, successful);
+      changed |= lowerEnzymeCalls(F, PostOpt, successful, done);
 
       if (!successful) {
         M.getContext().diagnose(
@@ -482,3 +512,12 @@ char Enzyme::ID = 0;
 static RegisterPass<Enzyme> X("enzyme", "Enzyme Pass");
 
 ModulePass *createEnzymePass(bool PostOpt) { return new Enzyme(PostOpt); }
+
+#include <llvm-c/Core.h>
+#include <llvm-c/Types.h>
+
+#include "llvm/IR/LegacyPassManager.h"
+
+extern "C" void AddEnzymePass(LLVMPassManagerRef PM) {
+  unwrap(PM)->add(createEnzymePass(/*PostOpt*/ false));
+}

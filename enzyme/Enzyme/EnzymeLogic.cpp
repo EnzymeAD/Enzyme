@@ -1016,14 +1016,13 @@ bool legalCombinedForwardReverse(
 }
 
 //! return structtype if recursive function
-const AugmentedReturn &
-CreateAugmentedPrimal(Function *todiff, DIFFE_TYPE retType,
-                      const std::vector<DIFFE_TYPE> &constant_args,
-                      TargetLibraryInfo &TLI, TypeAnalysis &TA,
-                      AAResults &global_AA, bool returnUsed,
-                      const FnTypeInfo &oldTypeInfo_,
-                      const std::map<Argument *, bool> _uncacheable_args,
-                      bool forceAnonymousTape, bool AtomicAdd, bool PostOpt) {
+const AugmentedReturn &CreateAugmentedPrimal(
+    Function *todiff, DIFFE_TYPE retType,
+    const std::vector<DIFFE_TYPE> &constant_args, TargetLibraryInfo &TLI,
+    TypeAnalysis &TA, AAResults &global_AA, bool returnUsed,
+    const FnTypeInfo &oldTypeInfo_,
+    const std::map<Argument *, bool> _uncacheable_args, bool forceAnonymousTape,
+    bool AtomicAdd, bool PostOpt, bool omp) {
   if (returnUsed)
     assert(!todiff->getReturnType()->isEmptyTy() &&
            !todiff->getReturnType()->isVoidTy());
@@ -1055,17 +1054,18 @@ CreateAugmentedPrimal(Function *todiff, DIFFE_TYPE retType,
     }
   }
   assert(constant_args.size() == todiff->getFunctionType()->getNumParams());
-  using CacheKey = std::tuple<Function *, DIFFE_TYPE /*retType*/,
-                              std::vector<DIFFE_TYPE> /*constant_args*/,
-                              std::map<Argument *, bool> /*uncacheable_args*/,
-                              bool /*returnUsed*/, const FnTypeInfo>;
+  using CacheKey =
+      std::tuple<Function *, DIFFE_TYPE /*retType*/,
+                 std::vector<DIFFE_TYPE> /*constant_args*/,
+                 std::map<Argument *, bool> /*uncacheable_args*/,
+                 bool /*returnUsed*/, const FnTypeInfo, bool, bool, bool, bool>;
   static std::map<CacheKey, AugmentedReturn> cachedfunctions;
   static std::map<CacheKey, bool> cachedfinished;
-  CacheKey tup =
-      std::make_tuple(todiff, retType, constant_args,
-                      std::map<Argument *, bool>(_uncacheable_args.begin(),
-                                                 _uncacheable_args.end()),
-                      returnUsed, oldTypeInfo);
+  CacheKey tup = std::make_tuple(
+      todiff, retType, constant_args,
+      std::map<Argument *, bool>(_uncacheable_args.begin(),
+                                 _uncacheable_args.end()),
+      returnUsed, oldTypeInfo, forceAnonymousTape, AtomicAdd, PostOpt, omp);
   auto found = cachedfunctions.find(tup);
   if (found != cachedfunctions.end()) {
     return found->second;
@@ -1158,6 +1158,8 @@ CreateAugmentedPrimal(Function *todiff, DIFFE_TYPE retType,
   GradientUtils *gutils = GradientUtils::CreateFromClone(
       todiff, TLI, TA, AA, retType, constant_args, /*returnUsed*/ returnUsed,
       returnMapping);
+  if (omp)
+    gutils->setupOMPFor();
   gutils->AtomicAdd = AtomicAdd;
   const SmallPtrSet<BasicBlock *, 4> guaranteedUnreachable =
       getGuaranteedUnreachable(gutils->oldFunc);
@@ -1382,7 +1384,6 @@ CreateAugmentedPrimal(Function *todiff, DIFFE_TYPE retType,
   }
 
   gutils->eraseFictiousPHIs();
-
   if (llvm::verifyFunction(*gutils->newFunc, &llvm::errs())) {
     llvm::errs() << *gutils->oldFunc << "\n";
     llvm::errs() << *gutils->newFunc << "\n";
@@ -1418,10 +1419,12 @@ CreateAugmentedPrimal(Function *todiff, DIFFE_TYPE retType,
     oldretIdx = returnMapping[AugmentedStruct::Return];
   }
 
-  if (noTape) {
+  if (noTape || omp) {
     auto tidx = returnMapping.find(AugmentedStruct::Tape)->second;
-    returnMapping.erase(AugmentedStruct::Tape);
-    cachedfunctions.find(tup)->second.returns.erase(AugmentedStruct::Tape);
+    if (noTape)
+      returnMapping.erase(AugmentedStruct::Tape);
+    if (noTape)
+      cachedfunctions.find(tup)->second.returns.erase(AugmentedStruct::Tape);
     if (returnMapping.find(AugmentedStruct::Return) != returnMapping.end()) {
       cachedfunctions.find(tup)->second.returns[AugmentedStruct::Return] -=
           (returnMapping[AugmentedStruct::Return] > tidx) ? 1 : 0;
@@ -1449,7 +1452,7 @@ CreateAugmentedPrimal(Function *todiff, DIFFE_TYPE retType,
   if (noReturn)
     RetType = Type::getVoidTy(RetType->getContext());
   if (noReturn)
-    assert(noTape);
+    assert(noTape || omp);
 
   bool removeStruct = RetTypes.size() == 1;
 
@@ -1469,6 +1472,12 @@ CreateAugmentedPrimal(Function *todiff, DIFFE_TYPE retType,
     ArgTypes.push_back(I.getType());
   }
 
+  if (omp && !noTape) {
+    // see lack of struct type for openmp
+    ArgTypes.push_back(PointerType::getUnqual(tapeType));
+    // ArgTypes.push_back(tapeType);
+  }
+
   // Create a new function type...
   FunctionType *FTy =
       FunctionType::get(RetType, ArgTypes, nf->getFunctionType()->isVarArg());
@@ -1478,7 +1487,8 @@ CreateAugmentedPrimal(Function *todiff, DIFFE_TYPE retType,
       FTy, nf->getLinkage(), "augmented_" + todiff->getName(), nf->getParent());
 
   unsigned ii = 0, jj = 0;
-  for (auto i = nf->arg_begin(), j = NewF->arg_begin(); i != nf->arg_end();) {
+  auto i = nf->arg_begin(), j = NewF->arg_begin();
+  for (; i != nf->arg_end();) {
     VMap[i] = j;
     if (nf->hasParamAttribute(ii, Attribute::NoCapture)) {
       NewF->addParamAttr(jj, Attribute::NoCapture);
@@ -1504,7 +1514,7 @@ CreateAugmentedPrimal(Function *todiff, DIFFE_TYPE retType,
 
   if (!noTape) {
     Value *tapeMemory;
-    if (recursive) {
+    if (recursive && !omp) {
       auto i64 = Type::getInt64Ty(NewF->getContext());
       ConstantInt *size;
       tapeMemory = CallInst::CreateMalloc(
@@ -1537,6 +1547,13 @@ CreateAugmentedPrimal(Function *todiff, DIFFE_TYPE retType,
         cast<GetElementPtrInst>(gep)->setIsInBounds(true);
       }
       ib.CreateStore(malloccall, gep);
+    } else if (omp) {
+      j->setName("tape");
+      tapeMemory = j;
+      // if structs were supported by openmp we could do this, but alas, no
+      // IRBuilder<> B(NewF->getEntryBlock().getFirstNonPHI());
+      // tapeMemory = B.CreateAlloca(j->getType());
+      // B.CreateStore(j, tapeMemory);
     } else {
       std::vector<Value *> Idxs = {
           ib.getInt32(0),
@@ -1670,7 +1687,7 @@ CreateAugmentedPrimal(Function *todiff, DIFFE_TYPE retType,
       rep->setAttributes(user->getAttributes());
       rep->setCallingConv(user->getCallingConv());
       rep->setTailCallKind(user->getTailCallKind());
-      rep->setDebugLoc(user->getDebugLoc());
+      rep->setDebugLoc(gutils->getNewFromOriginal(user->getDebugLoc()));
       assert(user);
       std::vector<ExtractValueInst *> torep;
       for (auto u : user->users()) {
@@ -1692,7 +1709,7 @@ CreateAugmentedPrimal(Function *todiff, DIFFE_TYPE retType,
     optimizeIntermediate(gutils, /*topLevel*/ false, NewF);
 
   cachedfunctions.find(tup)->second.fn = NewF;
-  if (recursive)
+  if (recursive || (omp && !noTape))
     cachedfunctions.find(tup)->second.tapeType = tapeType;
   insert_or_assign(cachedfinished, tup, true);
 
@@ -1773,9 +1790,17 @@ void createInvertedTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
   // Ensure phi values have their derivatives propagated
   for (auto I = oBB->begin(), E = oBB->end(); I != E; ++I) {
     if (PHINode *orig = dyn_cast<PHINode>(&*I)) {
-      if (gutils->isConstantValue(orig))
+      if (gutils->isConstantInstruction(orig))
         continue;
-      auto PNtype = TR.intType(orig, /*necessary*/ false);
+
+      size_t size = 1;
+      if (orig->getType()->isSized())
+        size = (gutils->newFunc->getParent()->getDataLayout().getTypeSizeInBits(
+                    orig->getType()) +
+                7) /
+               8;
+
+      auto PNtype = TR.intType(size, orig, /*necessary*/ false);
 
       // TODO remove explicit type check and only use PNtype
       if (PNtype == BaseType::Pointer || orig->getType()->isPointerTy())
@@ -1787,9 +1812,11 @@ void createInvertedTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
       Type *PNfloatType = PNtype.isFloat();
       if (!PNfloatType)
         llvm::errs() << " for orig " << *orig << " saw "
-                     << TR.intType(orig, /*necessary*/ false).str() << "\n";
+                     << TR.intType(size, orig, /*necessary*/ false).str()
+                     << " - "
+                     << "\n";
       assert(PNfloatType);
-      TR.intType(orig, /*necessary*/ true);
+      TR.intType(size, orig, /*necessary*/ true);
 
       for (BasicBlock *opred : predecessors(oBB)) {
         auto oval = orig->getIncomingValueForBlock(opred);
@@ -1923,7 +1950,8 @@ Function *CreatePrimalAndGradient(
     TypeAnalysis &TA, AAResults &global_AA, bool returnUsed, bool dretPtr,
     bool topLevel, llvm::Type *additionalArg, const FnTypeInfo &oldTypeInfo_,
     const std::map<Argument *, bool> _uncacheable_args,
-    const AugmentedReturn *augmenteddata, bool AtomicAdd, bool PostOpt) {
+    const AugmentedReturn *augmenteddata, bool AtomicAdd, bool PostOpt,
+    bool omp) {
 
   FnTypeInfo oldTypeInfo = oldTypeInfo_;
   for (auto &pair : oldTypeInfo.KnownValues) {
@@ -2089,6 +2117,8 @@ Function *CreatePrimalAndGradient(
                              : ReturnType::ArgsWithReturn)
                   : (dretPtr ? ReturnType::ArgsWithReturn : ReturnType::Args),
       additionalArg);
+  if (omp)
+    gutils->setupOMPFor();
   gutils->AtomicAdd = AtomicAdd;
   insert_or_assign2<CacheKey, Function *>(cachedfunctions, tup,
                                           gutils->newFunc);
@@ -2231,14 +2261,16 @@ Function *CreatePrimalAndGradient(
       // additionalValue->getType()); auto tapep = additionalValue;
       auto tapep = BuilderZ.CreatePointerCast(
           additionalValue, PointerType::getUnqual(augmenteddata->tapeType));
-      LoadInst *truetape = BuilderZ.CreateLoad(tapep);
+      LoadInst *truetape = BuilderZ.CreateLoad(tapep, "truetape");
       truetape->setMetadata("enzyme_mustcache",
                             MDNode::get(truetape->getContext(), {}));
 
-      CallInst *ci = cast<CallInst>(CallInst::CreateFree(
-          additionalValue, truetape)); //&*BuilderZ.GetInsertPoint()));
-      ci->moveAfter(truetape);
-      ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+      if (!omp) {
+        CallInst *ci = cast<CallInst>(CallInst::CreateFree(
+            additionalValue, truetape)); //&*BuilderZ.GetInsertPoint()));
+        ci->moveAfter(truetape);
+        ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+      }
       additionalValue = truetape;
     }
 
@@ -2322,10 +2354,16 @@ Function *CreatePrimalAndGradient(
     if (guaranteedUnreachable.find(&oBB) != guaranteedUnreachable.end()) {
       auto newBB = cast<BasicBlock>(gutils->getNewFromOriginal(&oBB));
       std::vector<BasicBlock *> toRemove;
-      for (auto next : successors(&oBB)) {
-        auto sucBB = cast<BasicBlock>(gutils->getNewFromOriginal(next));
-        toRemove.push_back(sucBB);
+      if (auto II = dyn_cast<InvokeInst>(oBB.getTerminator())) {
+        toRemove.push_back(
+            cast<BasicBlock>(gutils->getNewFromOriginal(II->getNormalDest())));
+      } else {
+        for (auto next : successors(&oBB)) {
+          auto sucBB = cast<BasicBlock>(gutils->getNewFromOriginal(next));
+          toRemove.push_back(sucBB);
+        }
       }
+
       for (auto sucBB : toRemove) {
         sucBB->removePredecessor(newBB);
       }
@@ -2359,6 +2397,7 @@ Function *CreatePrimalAndGradient(
       maker.visit(&*I);
       assert(oBB.rend() == E);
     }
+
     createInvertedTerminator(TR, gutils, constant_args, &oBB, retAlloca,
                              dretAlloca,
                              0 + (additionalArg ? 1 : 0) +
