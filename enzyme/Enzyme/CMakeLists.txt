@@ -15,7 +15,7 @@ list(APPEND ENZYME_SRC  TypeAnalysis/TypeTree.cpp TypeAnalysis/TypeAnalysis.cpp 
 message("found enzyme sources " ${ENZYME_SRC})
 
 if (${LLVM_VERSION_MAJOR} LESS 8)
-    add_llvm_loadable_module( LLVMEnzyme-${LLVM_VERSION_MAJOR}
+    add_llvm_loadable_module(LLVMEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC}
         DEPENDS
         intrinsics_gen
@@ -26,6 +26,17 @@ if (${LLVM_VERSION_MAJOR} LESS 8)
     #Analysis
     #ScalarOpts
     )
+    add_llvm_loadable_module(LLVMEnzyme-${LLVM_VERSION_MAJOR}-static
+            ${ENZYME_SRC}
+            STATIC
+            DEPENDS
+            intrinsics_gen
+            opt
+            #LINK_COMPONENTS
+            #Core
+            #Analysis
+            #ScalarOpts
+            )
     add_llvm_loadable_module( ClangEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC} Clang/EnzymeClang.cpp
         DEPENDS
@@ -48,6 +59,14 @@ if ((WIN32 OR CYGWIN) AND LLVM_LINK_LLVM_DYLIB)
 	LINK_COMPONENTS
 	LLVM
     )
+    add_llvm_library(LLVMEnzyme-${LLVM_VERSION_MAJOR}-static
+            ${ENZYME_SRC}
+            STATIC
+            DEPENDS
+            intrinsics_gen
+            LINK_COMPONENTS
+            LLVM
+            )
     add_llvm_library( ClangEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC} Clang/EnzymeClang.cpp
         MODULE
