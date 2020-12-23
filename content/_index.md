@@ -48,7 +48,6 @@ title = {Instead of Rewriting Foreign Code for Machine Learning, Automatically S
 author = {Moses, William S. and Churavy, Valentin},
 booktitle = {Advances in Neural Information Processing Systems 33},
 year = {2020},
-note = {To appear in},
 }
 ```
 

@@ -115,6 +115,16 @@ entry:
 
 The generated gradient has been inlined and entirely simplified to return the input times two.
 
+We can then compile this to a final binary as follows:
+```sh
+clang output_opt.ll -o a.exe
+```
+
+For ease, we could combine the final optimization and bianry execution into one command as follows.
+```sh
+clang output.ll -O3 -o a.exe
+```
+
 ## Advanced options
 
 Enzyme has several advanced options that may be of interest.
