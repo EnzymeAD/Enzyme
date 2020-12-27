@@ -8,6 +8,7 @@ weight: 100
 ## Tech talks
 
 ## Upcoming talks or presentations
+LAFI 2021 (colocated with POPL), [Enzyme: High-Performance Automatic Differentiation of LLVM](https://popl21.sigplan.org/details/lafi-2021-papers/4/Enzyme-High-Performance-Automatic-Differentiation-of-LLVM); William S. Moses, Valentin Churavy
 
 ### About Enzyme
 
@@ -19,7 +20,6 @@ weight: 100
 
 * EuroAD 2020 [Post-Optimization Automatic
 Differentiation by Synthesizing LLVM](http://www.autodiff.org/Docs/euroad/23rd%20EuroAd%20Workshop%20-%20William%20Moses%20-%20Post-Optimization%20Automatic%20Differentiation%20by%20Synthesizing%20LLVM.pdf) ; William S. Moses, Valentin Churavy
-
 
 * LANS Semniar at Argonne National Labs [Post-Optimization Automatic
 Differentiation by Synthesizing LLVM](https://www.anl.gov/event/postoptimization-automatic-differentiation-by-synthesizing-llvm) ; William S. Moses
