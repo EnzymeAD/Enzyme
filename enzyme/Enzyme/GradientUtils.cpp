@@ -1196,6 +1196,21 @@ Value *GradientUtils::invertPointerM(Value *oval, IRBuilder<> &BuilderM) {
           for (Instruction &I : BB) {
             if (auto CI = dyn_cast<CallInst>(&I)) {
               if (!isConstantInstruction(CI)) {
+                Function* F = CI->getCalledFunction();
+                #if LLVM_VERSION_MAJOR >= 11
+                  if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand()))
+                #else
+                  if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledValue()))
+                #endif
+                  {
+                    if (castinst->isCast())
+                      if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
+                          F = fn;
+                      }
+                  }
+                if (F && (isMemFreeLibMFunction(F->getName()) || F->getName() == "__fd_sincos_1")) {
+                  continue;
+                }
                 if (llvm::isModOrRefSet(AA.getModRefInfo(CI, Loc))) {
                   seen = true;
                   llvm::errs() << " cannot handle global " << *oval << " due to " << *CI << "\n";

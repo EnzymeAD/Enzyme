@@ -121,7 +121,7 @@ TypeAnalyzer::TypeAnalyzer(const FnTypeInfo &fn, TypeAnalysis &TA,
                            uint8_t direction)
     : notForAnalysis(getGuaranteedUnreachable(fn.Function)), intseen(),
       fntypeinfo(fn), interprocedural(TA), direction(direction), Invalid(false),
-      DT(*fn.Function) {
+      DT(std::make_shared<DominatorTree>(*fn.Function)) {
 
   assert(fntypeinfo.KnownValues.size() ==
          fntypeinfo.Function->getFunctionType()->getNumParams());
@@ -145,10 +145,19 @@ TypeAnalyzer::TypeAnalyzer(const FnTypeInfo &fn, TypeAnalysis &TA,
   }
 }
 
+TypeAnalyzer::TypeAnalyzer(const FnTypeInfo &fn, TypeAnalysis &TA,
+                           const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &notForAnalysis, std::shared_ptr<llvm::DominatorTree> DT,
+                           uint8_t direction)
+    : notForAnalysis(notForAnalysis.begin(), notForAnalysis.end()), intseen(),
+      fntypeinfo(fn), interprocedural(TA), direction(direction), Invalid(false),
+      DT(DT) {
+  assert(fntypeinfo.KnownValues.size() ==
+         fntypeinfo.Function->getFunctionType()->getNumParams());
+}
+
 /// Given a constant value, deduce any type information applicable
-TypeTree getConstantAnalysis(Constant *Val, const FnTypeInfo &nfti,
-                             TypeAnalysis &TA) {
-  auto &DL = nfti.Function->getParent()->getDataLayout();
+TypeTree getConstantAnalysis(Constant *Val, TypeAnalyzer &TA) {
+  auto &DL = TA.fntypeinfo.Function->getParent()->getDataLayout();
   // Undefined value is an anything everywhere
   if (isa<UndefValue>(Val) || isa<ConstantAggregateZero>(Val)) {
     return TypeTree(BaseType::Anything).Only(-1);
@@ -171,11 +180,11 @@ TypeTree getConstantAnalysis(Constant *Val, const FnTypeInfo &nfti,
   if (auto CA = dyn_cast<ConstantAggregate>(Val)) {
     TypeTree Result;
     for (unsigned i = 0, size = CA->getNumOperands(); i < size; ++i) {
-      assert(nfti.Function);
+      assert(TA.fntypeinfo.Function);
       auto Op = CA->getOperand(i);
       // TODO check this for i1 constant aggregates packing/etc
       auto ObjSize =
-          (nfti.Function->getParent()->getDataLayout().getTypeSizeInBits(
+          (TA.fntypeinfo.Function->getParent()->getDataLayout().getTypeSizeInBits(
                Op->getType()) +
            7) /
           8;
@@ -199,7 +208,7 @@ TypeTree getConstantAnalysis(Constant *Val, const FnTypeInfo &nfti,
 
       int Off = (int)ai.getLimitedValue();
 
-      Result |= getConstantAnalysis(Op, nfti, TA)
+      Result |= getConstantAnalysis(Op, TA)
                     .ShiftIndices(DL, /*init offset*/ 0, /*maxSize*/ ObjSize,
                                   /*addOffset*/ Off);
       Off += ObjSize;
@@ -213,11 +222,11 @@ TypeTree getConstantAnalysis(Constant *Val, const FnTypeInfo &nfti,
     TypeTree Result;
 
     for (unsigned i = 0, size = CD->getNumElements(); i < size; ++i) {
-      assert(nfti.Function);
+      assert(TA.fntypeinfo.Function);
       auto Op = CD->getElementAsConstant(i);
       // TODO check this for i1 constant aggregates packing/etc
       auto ObjSize =
-          (nfti.Function->getParent()->getDataLayout().getTypeSizeInBits(
+          (TA.fntypeinfo.Function->getParent()->getDataLayout().getTypeSizeInBits(
                Op->getType()) +
            7) /
           8;
@@ -241,7 +250,7 @@ TypeTree getConstantAnalysis(Constant *Val, const FnTypeInfo &nfti,
 
       int Off = (int)ai.getLimitedValue();
 
-      Result |= getConstantAnalysis(Op, nfti, TA)
+      Result |= getConstantAnalysis(Op, TA)
                     .ShiftIndices(DL, /*init offset*/ 0, /*maxSize*/ ObjSize,
                                   /*addOffset*/ Off);
     }
@@ -287,12 +296,12 @@ TypeTree getConstantAnalysis(Constant *Val, const FnTypeInfo &nfti,
     TypeTree Result;
 
     auto I = CE->getAsInstruction();
-    I->insertBefore(nfti.Function->getEntryBlock().getTerminator());
+    I->insertBefore(TA.fntypeinfo.Function->getEntryBlock().getTerminator());
 
     // Just analyze this new "instruction" and none of the others
     {
-      TypeAnalyzer tmpAnalysis(nfti, TA);
-      tmpAnalysis.workList.clear();
+      TypeAnalyzer tmpAnalysis(TA.fntypeinfo, TA.interprocedural, TA.notForAnalysis, TA.DT);
+      //tmpAnalysis.workList.clear();
       tmpAnalysis.visit(*I);
       Result = tmpAnalysis.getAnalysis(I);
     }
@@ -305,7 +314,7 @@ TypeTree getConstantAnalysis(Constant *Val, const FnTypeInfo &nfti,
     // A fixed constant global is a pointer to its initializer
     if (GV->isConstant() && GV->hasInitializer()) {
       TypeTree Result = ConcreteType(BaseType::Pointer);
-      Result |= getConstantAnalysis(GV->getInitializer(), nfti, TA);
+      Result |= getConstantAnalysis(GV->getInitializer(), TA);
       return Result.Only(-1);
     }
     if (GV->getName() == "__cxa_thread_atexit_impl") {
@@ -338,7 +347,7 @@ TypeTree TypeAnalyzer::getAnalysis(Value *Val) {
       cast<IntegerType>(Val->getType())->getBitWidth() < 16)
     return TypeTree(ConcreteType(BaseType::Integer)).Only(-1);
   if (auto C = dyn_cast<Constant>(Val)) {
-    TypeTree result = getConstantAnalysis(C, fntypeinfo, interprocedural);
+    TypeTree result = getConstantAnalysis(C, *this);
     if (auto found = findInMap(analysis, Val)) {
       result |= *found;
       *found = result;
@@ -391,8 +400,8 @@ void TypeAnalyzer::addToWorkList(Value *Val) {
     return;
 
   // Don't add this value to list twice
-  if (workList.count(Val)) //std::find(workList.begin(), workList.end(), Val) != workList.end())
-    return;
+  //if (workList.count(Val)) //std::find(workList.begin(), workList.end(), Val) != workList.end())
+  //  return;
 
   // Verify this value comes from the function being analyzed
   if (auto I = dyn_cast<Instruction>(Val)) {
@@ -612,7 +621,7 @@ void TypeAnalyzer::considerTBAA() {
                  Intrinsic::memmove)) {
           int64_t copySize = 1;
           for (auto val : fntypeinfo.knownIntegralValues(call->getOperand(2),
-                                                         DT, intseen)) {
+                                                         *DT, intseen)) {
             copySize = max(copySize, val);
           }
           TypeTree update =
@@ -678,8 +687,7 @@ void TypeAnalyzer::runPHIHypotheses() {
             // Assume that this is an integer, does that mean we can prove that
             // the incoming operands are integral
 
-            TypeAnalyzer tmpAnalysis(fntypeinfo, interprocedural, DOWN);
-            tmpAnalysis.workList.clear();
+            TypeAnalyzer tmpAnalysis(fntypeinfo, interprocedural, notForAnalysis, DT, DOWN);
             tmpAnalysis.intseen = intseen;
             tmpAnalysis.analysis = analysis;
             tmpAnalysis.analysis[phi] = TypeTree(BaseType::Integer).Only(-1);
@@ -709,8 +717,7 @@ void TypeAnalyzer::runPHIHypotheses() {
               !getAnalysis(phi).isKnown()) {
             // Assume that this is an integer, does that mean we can prove that
             // the incoming operands are integral
-            TypeAnalyzer tmpAnalysis(fntypeinfo, interprocedural, DOWN);
-            tmpAnalysis.workList.clear();
+            TypeAnalyzer tmpAnalysis(fntypeinfo, interprocedural, notForAnalysis, DT, DOWN);
             tmpAnalysis.intseen = intseen;
             tmpAnalysis.analysis = analysis;
             tmpAnalysis.analysis[phi] =
@@ -986,7 +993,7 @@ void TypeAnalyzer::visitGetElementPtrInst(GetElementPtrInst &gep) {
   }
 
   for (auto &a : gep.indices()) {
-    auto iset = fntypeinfo.knownIntegralValues(a, DT, intseen);
+    auto iset = fntypeinfo.knownIntegralValues(a, *DT, intseen);
     std::set<Value *> vset;
     for (auto i : iset) {
       // Don't consider negative indices of gep
@@ -1662,7 +1669,7 @@ void TypeAnalyzer::visitBinaryOperator(BinaryOperator &I) {
     if (I.getOpcode() == BinaryOperator::And) {
       for (int i = 0; i < 2; ++i) {
         for (auto andval :
-             fntypeinfo.knownIntegralValues(I.getOperand(i), DT, intseen)) {
+             fntypeinfo.knownIntegralValues(I.getOperand(i), *DT, intseen)) {
           if (andval <= 16 && andval >= 0) {
             Result = TypeTree(BaseType::Integer);
           } else if (andval < 0 && andval >= -64) {
@@ -1720,7 +1727,7 @@ void TypeAnalyzer::visitMemTransferInst(llvm::MemTransferInst &MTI) {
   // to dst up to the length and vice versa
   size_t sz = 1;
   for (auto val :
-       fntypeinfo.knownIntegralValues(MTI.getArgOperand(2), DT, intseen)) {
+       fntypeinfo.knownIntegralValues(MTI.getArgOperand(2), *DT, intseen)) {
     assert(val >= 0);
     sz = max(sz, (size_t)val);
   }
@@ -2226,7 +2233,7 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
       for (auto &arg : call.arg_operands()) {
         args.push_back(getAnalysis(arg));
         knownValues.push_back(
-            fntypeinfo.knownIntegralValues((Value *)arg, DT, intseen));
+            fntypeinfo.knownIntegralValues((Value *)arg, *DT, intseen));
       }
       bool err = customrule->second(direction, returnAnalysis, args,
                                     knownValues, &call);
@@ -3006,7 +3013,7 @@ FnTypeInfo TypeAnalyzer::getCallInfo(CallInst &call, Function &fn) {
     }
     typeInfo.Arguments.insert(std::pair<Argument *, TypeTree>(&arg, dt));
     typeInfo.KnownValues.insert(std::pair<Argument *, std::set<int64_t>>(
-        &arg, fntypeinfo.knownIntegralValues(call.getArgOperand(argnum), DT,
+        &arg, fntypeinfo.knownIntegralValues(call.getArgOperand(argnum), *DT,
                                              intseen)));
     ++argnum;
   }
@@ -3313,5 +3320,5 @@ std::set<int64_t> TypeResults::knownIntegralValues(Value *val) const {
 }
 
 std::set<int64_t> TypeAnalyzer::knownIntegralValues(Value *val) {
-  return fntypeinfo.knownIntegralValues(val, DT, intseen);
+  return fntypeinfo.knownIntegralValues(val, *DT, intseen);
 }
