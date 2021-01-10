@@ -249,6 +249,7 @@ bool HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI, AAResults &AA,
     } else
       ty = whatType(PTy);
 
+    llvm::errs() << "arg = " << *res << "\n";
     constants.push_back(ty);
 
     assert(truei < FT->getNumParams());
