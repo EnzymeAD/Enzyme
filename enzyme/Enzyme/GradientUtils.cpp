@@ -1192,31 +1192,28 @@ Value *GradientUtils::invertPointerM(Value *oval, IRBuilder<> &BuilderM) {
 #else
         Loc = MemoryLocation(oval, MemoryLocation::UnknownSize);
 #endif
-        for (BasicBlock &BB : *oldFunc) {
-          for (Instruction &I : BB) {
-            if (auto CI = dyn_cast<CallInst>(&I)) {
-              if (!isConstantInstruction(CI)) {
-                Function* F = CI->getCalledFunction();
-                #if LLVM_VERSION_MAJOR >= 11
-                  if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand()))
-                #else
-                  if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledValue()))
-                #endif
-                  {
-                    if (castinst->isCast())
-                      if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-                          F = fn;
-                      }
+        for (CallInst* CI : originalCalls) {
+          if (isa<IntrinsicInst>(CI)) continue;
+          if (!isConstantInstruction(CI)) {
+            Function* F = CI->getCalledFunction();
+            #if LLVM_VERSION_MAJOR >= 11
+              if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand()))
+            #else
+              if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledValue()))
+            #endif
+              {
+                if (castinst->isCast())
+                  if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
+                      F = fn;
                   }
-                if (F && (isMemFreeLibMFunction(F->getName()) || F->getName() == "__fd_sincos_1")) {
-                  continue;
-                }
-                if (llvm::isModOrRefSet(AA.getModRefInfo(CI, Loc))) {
-                  seen = true;
-                  llvm::errs() << " cannot handle global " << *oval << " due to " << *CI << "\n";
-                  goto endCheck;
-                }
               }
+            if (F && (isMemFreeLibMFunction(F->getName()) || F->getName() == "__fd_sincos_1")) {
+              continue;
+            }
+            if (llvm::isModOrRefSet(AA.getModRefInfo(CI, Loc))) {
+              seen = true;
+              llvm::errs() << " cannot handle global " << *oval << " due to " << *CI << "\n";
+              goto endCheck;
             }
           }
         }
@@ -1224,7 +1221,7 @@ Value *GradientUtils::invertPointerM(Value *oval, IRBuilder<> &BuilderM) {
         if (!seen) {
           IRBuilder<> bb(inversionAllocs);
           AllocaInst *antialloca = bb.CreateAlloca(arg->getValueType(),
-            arg->getValueType()->getPointerAddressSpace(), nullptr, arg->getName() + "'ipa");
+            arg->getType()->getPointerAddressSpace(), nullptr, arg->getName() + "'ipa");
           invertedPointers[arg] = antialloca;
 
           if (arg->getAlignment()) {
@@ -1237,13 +1234,14 @@ Value *GradientUtils::invertPointerM(Value *oval, IRBuilder<> &BuilderM) {
 
           auto st = bb.CreateStore(
               Constant::getNullValue(arg->getValueType()), antialloca);
-          if (st->getAlignment()) {
+          if (arg->getAlignment()) {
   #if LLVM_VERSION_MAJOR >= 10
             st->setAlignment(Align(arg->getAlignment()));
   #else
             st->setAlignment(arg->getAlignment());
   #endif
           }
+          assert(invertedPointers[arg]->getType() == arg->getType());
           return lookupM(invertedPointers[arg], BuilderM);
         }
       }
@@ -1373,16 +1371,35 @@ Value *GradientUtils::invertPointerM(Value *oval, IRBuilder<> &BuilderM) {
                       arg->getDestTy(), arg->getName() + "'ipc");
     return lookupM(invertedPointers[arg], BuilderM);
   } else if (auto arg = dyn_cast<ConstantExpr>(oval)) {
+    IRBuilder<> bb(inversionAllocs);
+    auto ip = invertPointerM(arg->getOperand(0), bb);
     if (arg->isCast()) {
-      auto result = ConstantExpr::getCast(
-          arg->getOpcode(),
-          cast<Constant>(invertPointerM(arg->getOperand(0), BuilderM)),
+      if (auto C = dyn_cast<Constant>(ip))
+        return ConstantExpr::getCast(
+          arg->getOpcode(), C,
           arg->getType());
-      return result;
+      else {
+        invertedPointers[arg] =
+            bb.CreateCast((Instruction::CastOps)arg->getOpcode(), ip,
+                          arg->getType(), arg->getName() + "'ipc");
+        return lookupM(invertedPointers[arg], BuilderM);
+      }
     } else if (arg->getOpcode() == Instruction::GetElementPtr) {
-      auto result = arg->getWithOperandReplaced(
-          0, cast<Constant>(invertPointerM(arg->getOperand(0), BuilderM)));
-      return result;
+      if (auto C = dyn_cast<Constant>(ip))
+        return arg->getWithOperandReplaced(0, C);
+      else {
+        SmallVector<Value *, 4> invertargs;
+        for (unsigned i = 0; i < arg->getNumOperands() - 1; ++i) {
+          Value *b = getNewFromOriginal(arg->getOperand(1 + i));
+          invertargs.push_back(b);
+        }
+        auto result = bb.CreateGEP(ip,
+                                  invertargs, arg->getName() + "'ipg");
+        //if (auto gep = dyn_cast<GetElementPtrInst>(result))
+        //  gep->setIsInBounds(arg->isInBounds());
+        invertedPointers[arg] = result;
+        return lookupM(invertedPointers[arg], BuilderM);
+      }
     } else {
       llvm::errs() << *arg << "\n";
       assert(0 && "unhandled");
@@ -1795,7 +1812,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
   bool lrc = false, src = false;
   if (tryLegalRecomputeCheck &&
       (lrc = legalRecompute(prelcssaInst, available))) {
-    if (src = shouldRecompute(prelcssaInst, available)) {
+    if ((src = shouldRecompute(prelcssaInst, available))) {
       auto op = unwrapM(prelcssaInst, BuilderM, available,
                         UnwrapMode::AttemptSingleUnwrap);
       if (op) {
