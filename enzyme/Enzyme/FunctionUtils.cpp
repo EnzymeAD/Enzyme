@@ -738,7 +738,12 @@ Function *preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI,
           if (F && (isMemFreeLibMFunction(F->getName()) || F->getName() == "__fd_sincos_1")) {
             continue;
           }
+          if (F && (F->getName().startswith("f90io") || F->getName() == "ftnio_fmt_write64" ||
+                    F->getName() == "__mth_i_ipowi" || F->getName() == "f90_pausea")) {
+            continue;
+          }
           if (llvm::isModOrRefSet(AA2.getModRefInfo(CI, Loc))) {
+            llvm::errs() << " failed to inline global: " << g << " due to " << *CI << "\n";
             seen = true;
             goto endCheck;
           }
