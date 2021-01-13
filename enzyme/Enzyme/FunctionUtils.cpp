@@ -742,7 +742,8 @@ Function *preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI,
                     F->getName() == "__mth_i_ipowi" || F->getName() == "f90_pausea")) {
             continue;
           }
-          if (llvm::isModOrRefSet(AA2.getModRefInfo(CI, Loc))) {
+          AAQueryInfo AAQIP;
+          if (llvm::isModOrRefSet(AA2.getModRefInfo(CI, Loc, AAQIP))) {
             llvm::errs() << " failed to inline global: " << g << " due to " << *CI << "\n";
             seen = true;
             goto endCheck;
