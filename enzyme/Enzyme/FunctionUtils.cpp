@@ -742,12 +742,20 @@ Function *preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI,
                     F->getName() == "__mth_i_ipowi" || F->getName() == "f90_pausea")) {
             continue;
           }
+          #if LLVM_VERSION_MAJOR >= 12
           AAQueryInfo AAQIP;
           if (llvm::isModOrRefSet(AA2.getModRefInfo(CI, Loc, AAQIP))) {
             llvm::errs() << " failed to inline global: " << g << " due to " << *CI << "\n";
             seen = true;
             goto endCheck;
           }
+          #else
+          if (llvm::isModOrRefSet(AA2.getModRefInfo(CI, Loc))) {
+            llvm::errs() << " failed to inline global: " << g << " due to " << *CI << "\n";
+            seen = true;
+            goto endCheck;
+          }
+          #endif
         }
         endCheck:;
         if (!seen) {
@@ -801,29 +809,54 @@ Function *preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI,
             }
           }
 
-          auto ld = bb.CreateLoad(&g);
-          auto st = bb.CreateStore(ld, antialloca);
+
+          SmallVector<Value *, 4> args;
+          args.push_back(bb.CreateBitCast(antialloca, Type::getInt8PtrTy(g.getContext())));
+          args.push_back(bb.CreateBitCast(&g, Type::getInt8PtrTy(g.getContext())));
+          args.push_back(ConstantInt::get(Type::getInt64Ty(g.getContext()),
+                              g.getParent()->getDataLayout().getTypeAllocSizeInBits(
+                                  g.getValueType()) /
+                                  8));
+          args.push_back(ConstantInt::getFalse(g.getContext()));
+
+          Type *tys[] = {args[0]->getType(), args[1]->getType(), args[2]->getType()};
+          auto intr = Intrinsic::getDeclaration(
+              g.getParent(), Intrinsic::memcpy, tys);
+          {
+
+          auto cal = bb.CreateCall(intr, args);
           if (g.getAlignment()) {
-  #if LLVM_VERSION_MAJOR >= 10
-            st->setAlignment(Align(g.getAlignment()));
-            ld->setAlignment(Align(g.getAlignment()));
-  #else
-            st->setAlignment(g.getAlignment());
-            ld->setAlignment(g.getAlignment());
-  #endif
+#if LLVM_VERSION_MAJOR >= 10
+            cal->addParamAttr(0, Attribute::getWithAlignment(
+                                     g.getContext(), Align(g.getAlignment())));
+            cal->addParamAttr(1, Attribute::getWithAlignment(
+                                     g.getContext(), Align(g.getAlignment())));
+#else
+            cal->addParamAttr(
+                0, Attribute::getWithAlignment(g.getContext(), g.getAlignment()));
+            cal->addParamAttr(
+                1, Attribute::getWithAlignment(g.getContext(), g.getAlignment()));
+#endif
           }
+          }
+
+          std::swap(args[0], args[1]);
+          
           for (ReturnInst* RI : Returns) {
             IRBuilder<> IB(RI);
-            auto ld = IB.CreateLoad(antialloca);
-            auto st = IB.CreateStore(ld, &g);
+            auto cal = IB.CreateCall(intr, args);
             if (g.getAlignment()) {
-    #if LLVM_VERSION_MAJOR >= 10
-              st->setAlignment(Align(g.getAlignment()));
-              ld->setAlignment(Align(g.getAlignment()));
-    #else
-              st->setAlignment(g.getAlignment());
-              ld->setAlignment(g.getAlignment());
-    #endif
+  #if LLVM_VERSION_MAJOR >= 10
+              cal->addParamAttr(0, Attribute::getWithAlignment(
+                                      g.getContext(), Align(g.getAlignment())));
+              cal->addParamAttr(1, Attribute::getWithAlignment(
+                                      g.getContext(), Align(g.getAlignment())));
+  #else
+              cal->addParamAttr(
+                  0, Attribute::getWithAlignment(g.getContext(), g.getAlignment()));
+              cal->addParamAttr(
+                  1, Attribute::getWithAlignment(g.getContext(), g.getAlignment()));
+  #endif
             }
           }
         }
