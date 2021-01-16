@@ -1297,10 +1297,6 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults &TR,
           llvm::errs() << "constant(" << (int)directions << ") up-emptyconst "
                        << *inst << "\n";
         return true;
-      }
-    }
-  }
-
   // Intrinsics known always to be inactive
   if (auto II = dyn_cast<IntrinsicInst>(inst)) {
     switch (II->getIntrinsicID()) {
