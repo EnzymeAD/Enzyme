@@ -508,6 +508,27 @@ public:
             if (auto fn = dyn_cast<Function>(castinst->getOperand(0)))
               Fn = fn;
         }
+        /*
+
+        if (Fn && Fn->getName() == "__fd_sincos_1") {
+          Fn->addFnAttr(Attribute::ReadNone);
+        }
+        if (Fn && Fn->getName() == "f90io_fmtw_end") {
+          Fn->addFnAttr(Attribute::InaccessibleMemOnly);
+        }
+        if (Fn && (Fn->getName() == "f90io_sc_d_fmt_write" || Fn->getName() == "f90io_sc_i_fmt_write" || Fn->getName() == "ftnio_fmt_write64")) {
+          Fn->addFnAttr(Attribute::InaccessibleMemOnly);
+          for(size_t i=0; i<CI->getNumArgOperands(); ++i) {
+            if (CI->getArgOperand(i)->getType()->isPointerTy()) {
+              CI->addParamAttr(i, Attribute::ReadOnly);
+              CI->addParamAttr(i, Attribute::NoCapture);
+            }
+          }
+        }
+        if (Fn && (Fn->getName() == "f90io_fmtw_inita" || Fn->getName() == "f90io_src_info03a")) {
+          Fn->addFnAttr(Attribute::InaccessibleOrArgMemOnly);
+        }
+        */
 
         if (Fn && (Fn->getName() == "__enzyme_autodiff" ||
                    Fn->getName() == "enzyme_autodiff_" ||
