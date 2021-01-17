@@ -773,6 +773,11 @@ Function *preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI,
 #endif
 
         for (CallInst* CI : Calls) {
+          if (isa<DbgInfoIntrinsic>(CI))
+            continue;
+          if (auto II = dyn_cast<IntrinsicInst>(CI))
+            if (II->getIntrinsicID() == Intrinsic::lifetime_start || II->getIntrinsicID() == Intrinsic::lifetime_end)
+              continue;
           Function* F = CI->getCalledFunction();
           #if LLVM_VERSION_MAJOR >= 11
             if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand()))
