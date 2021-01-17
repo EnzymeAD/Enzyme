@@ -776,7 +776,9 @@ Function *preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI,
           if (isa<DbgInfoIntrinsic>(CI))
             continue;
           if (auto II = dyn_cast<IntrinsicInst>(CI))
-            if (II->getIntrinsicID() == Intrinsic::lifetime_start || II->getIntrinsicID() == Intrinsic::lifetime_end)
+            //if (II->getIntrinsicID() == Intrinsic::lifetime_start || II->getIntrinsicID() == Intrinsic::lifetime_end ||
+            //    II->getIntrinsicID() == Intrinsic::memcpy || II->getIntrinsicID() == Intrinsic::memmove ||
+            //    II->getIntrinsicID() == Intrinsic::memset )
               continue;
           Function* F = CI->getCalledFunction();
           #if LLVM_VERSION_MAJOR >= 11
@@ -791,6 +793,9 @@ Function *preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI,
                 }
             }
           if (F && (isMemFreeLibMFunction(F->getName()) || F->getName() == "__fd_sincos_1")) {
+            continue;
+          }
+          if (F && F->getName() == "__enzyme_integer") {
             continue;
           }
           if (F && (F->getName().startswith("f90io") || F->getName() == "ftnio_fmt_write64" ||
@@ -840,6 +845,9 @@ Function *preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI,
                     }
                 }
               if (F && (isMemFreeLibMFunction(F->getName()) || F->getName() == "__fd_sincos_1")) {
+                continue;
+              }
+              if (F && F->getName() == "__enzyme_integer") {
                 continue;
               }
               if (F && (F->getName().startswith("f90io") || F->getName() == "ftnio_fmt_write64" ||
