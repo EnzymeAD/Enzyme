@@ -291,13 +291,8 @@ public:
     for (auto Off : Seq) {
       if (i < best.size()) {
         if (Off < best[i].first) {
-<<<<<<< HEAD
           if (best[i].first > MaxTypeOffset)
             for (auto v : best[i].second) {
-=======
-          if (best[i].first > 500)
-            for(auto v : best[i].second) {
->>>>>>> Fix extended analysis rule
               mapping.erase(v);
               changed = true;
             }
