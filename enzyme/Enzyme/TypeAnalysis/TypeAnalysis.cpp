@@ -3051,9 +3051,14 @@ FnTypeInfo TypeAnalyzer::getCallInfo(CallInst &call, Function &fn) {
       }
     }
     typeInfo.Arguments.insert(std::pair<Argument *, TypeTree>(&arg, dt));
+    std::set<int64_t> bounded;
+    for(auto v :fntypeinfo.knownIntegralValues(call.getArgOperand(argnum), *DT,
+                                             intseen)) {
+      if (abs(v) > 100) continue;
+      bounded.insert(v);
+    }
     typeInfo.KnownValues.insert(std::pair<Argument *, std::set<int64_t>>(
-        &arg, fntypeinfo.knownIntegralValues(call.getArgOperand(argnum), *DT,
-                                             intseen)));
+        &arg, bounded));
     ++argnum;
   }
 
