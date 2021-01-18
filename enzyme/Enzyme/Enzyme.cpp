@@ -508,8 +508,43 @@ public:
             if (auto fn = dyn_cast<Function>(castinst->getOperand(0)))
               Fn = fn;
         }
-        /*
 
+        if (Fn && Fn->getName() == "__enzyme_float") {
+          Fn->addFnAttr(Attribute::ReadNone);
+          for(size_t i=0; i<CI->getNumArgOperands(); ++i) {
+            if (CI->getArgOperand(i)->getType()->isPointerTy()) {
+              CI->addParamAttr(i, Attribute::ReadNone);
+              CI->addParamAttr(i, Attribute::NoCapture);
+            }
+          }
+        }
+        if (Fn && Fn->getName() == "__enzyme_integer") {
+          Fn->addFnAttr(Attribute::ReadNone);
+          for(size_t i=0; i<CI->getNumArgOperands(); ++i) {
+            if (CI->getArgOperand(i)->getType()->isPointerTy()) {
+              CI->addParamAttr(i, Attribute::ReadNone);
+              CI->addParamAttr(i, Attribute::NoCapture);
+            }
+          }
+        }
+        if (Fn && Fn->getName() == "__enzyme_double") {
+          Fn->addFnAttr(Attribute::ReadNone);
+          for(size_t i=0; i<CI->getNumArgOperands(); ++i) {
+            if (CI->getArgOperand(i)->getType()->isPointerTy()) {
+              CI->addParamAttr(i, Attribute::ReadNone);
+              CI->addParamAttr(i, Attribute::NoCapture);
+            }
+          }
+        }
+        if (Fn && Fn->getName() == "__enzyme_pointer") {
+          Fn->addFnAttr(Attribute::ReadNone);
+          for(size_t i=0; i<CI->getNumArgOperands(); ++i) {
+            if (CI->getArgOperand(i)->getType()->isPointerTy()) {
+              CI->addParamAttr(i, Attribute::ReadNone);
+              CI->addParamAttr(i, Attribute::NoCapture);
+            }
+          }
+        }
         if (Fn && Fn->getName() == "__fd_sincos_1") {
           Fn->addFnAttr(Attribute::ReadNone);
         }
@@ -526,9 +561,9 @@ public:
           }
         }
         if (Fn && (Fn->getName() == "f90io_fmtw_inita" || Fn->getName() == "f90io_src_info03a")) {
-          Fn->addFnAttr(Attribute::InaccessibleOrArgMemOnly);
+          //Fn->addFnAttr(Attribute::InaccessibleOrArgMemOnly);
         }
-        */
+        
 
         if (Fn && (Fn->getName() == "__enzyme_autodiff" ||
                    Fn->getName() == "enzyme_autodiff_" ||
