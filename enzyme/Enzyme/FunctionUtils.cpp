@@ -724,7 +724,7 @@ Function *preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI,
   #if LLVM_VERSION_MAJOR > 6
       PhiValues PV(*NewF);
   #endif
-      BasicAAResult AA2(NewF->getParent()->getDataLayout(),
+      BasicAAResult BAA2(NewF->getParent()->getDataLayout(),
   #if LLVM_VERSION_MAJOR > 6
                                   *NewF,
   #endif
@@ -734,7 +734,8 @@ Function *preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI,
                                   &PV
   #endif
       );
-      //AA2.addAAResult(BAA);
+      AAResults AA2(TLI);
+      AA2.addAAResult(BAA2);
       //TypeBasedAAResult TBAAR();
       //AA2.addAAResult(TBAAR);
 
@@ -802,23 +803,14 @@ Function *preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI,
                     F->getName() == "__mth_i_ipowi" || F->getName() == "f90_pausea")) {
             continue;
           }
-          #if LLVM_VERSION_MAJOR >= 12
-          AAQueryInfo AAQIP;
-          if (llvm::isModOrRefSet(AA2.getModRefInfo(CI, Loc, AAQIP))) {
-            llvm::errs() << " failed to inline global: " << g << " due to " << *CI << "\n";
-            activeCall = true;
-            goto endCheck;
-          }
-          #else
           if (llvm::isModOrRefSet(AA2.getModRefInfo(CI, Loc))) {
             llvm::errs() << " failed to inline global: " << g << " due to " << *CI << "\n";
             activeCall = true;
             goto endCheck;
           }
-          #endif
         }
 
-        {
+        if (!activeCall) {
         std::set<Value*> seen;
         std::deque<Value*> todo = { (Value*)&g };
         while(todo.size()) {
@@ -875,9 +867,9 @@ Function *preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI,
             }
             
             else if (auto I = dyn_cast<Instruction>(u)) {
-              if (I->getParent()->getParent() == NewF) {
-                inF = true;
-                goto doneF;
+              if (llvm::isModSet(AA2.getModRefInfo(I, Loc))) {
+                hasWrite = true;
+                goto endCheck;
               }
             }
           }
