@@ -1020,6 +1020,7 @@ bool GradientUtils::shouldRecompute(const Value *val,
 
   // if this has operands that need to be loaded and haven't already been loaded
   // TODO, just cache this
+  if (false)
   for (auto &op : inst->operands()) {
     if (!legalRecompute(op, available)) {
 
