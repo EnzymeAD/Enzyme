@@ -409,7 +409,7 @@ endCheck:
     return toreturn;
   }
 
-  // llvm::errs() << "cannot unwrap following " << *val << "\n";
+  llvm::errs() << "cannot unwrap following " << *val << "\n";
 
   if (auto inst = dyn_cast<Instruction>(val)) {
     // LoopContext lc;
@@ -1082,8 +1082,7 @@ bool GradientUtils::shouldRecompute(const Value *val,
         }
       }
     forceCache:;
-      // llvm::errs() << "shouldn't recompute " << *inst << "because of illegal
-      // redo op: " << *op << "\n";
+      llvm::errs() << "shouldn't recompute " << *inst << "because of illegal redo op: " << *op << "\n";
       return false;
     }
   }
@@ -1927,8 +1926,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
     }
   }
 
-  // llvm::errs() << "forcing cache of " << *inst << "lrc: " << lrc << " src: "
-  // << src << "\n";
+  if (scopeMap.find(inst) == scopeMap.end())
+    llvm::errs() << "forcing cache of " << *inst << "lrc: " << lrc << " src: " << src << "\n";
   if (auto origInst = isOriginal(inst))
     if (auto li = dyn_cast<LoadInst>(inst)) {
 #if LLVM_VERSION_MAJOR >= 12
