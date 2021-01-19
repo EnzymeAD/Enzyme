@@ -209,6 +209,7 @@ bool is_load_uncacheable(
       if (llvm::isModSet(AA.getModRefInfo(inst2, MemoryLocation::get(&li)))) {
         can_modref = true;
         // Early exit
+        llvm::errs() << " must cache load " << li << " due to " << *inst2 << "\n";
         return true;
       }
       return false;
