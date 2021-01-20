@@ -7,6 +7,9 @@ weight: 5
 
 ## Reference C++ example
 
+
+> **WARNING**: CUDA support is highly experimental and in active development.
+
 Suppose we wanted to port the following C++ code to CUDA, with Enzyme autodiff support:
 
 ``` cpp
@@ -124,8 +127,10 @@ int main() {
 }
 ```
 
-The one-liner compilation step is (against sm_70):
+For convenience, a one-liner compilation step is (against sm_70):
 
 ```sh
 clang test3.cu -Xclang -load -Xclang /path/to/ClangEnzyme-11.so -O2 -fno-vectorize -fno-unroll-loops -fPIC --cuda-gpu-arch=sm_70 -lcudart -L/usr/local/cuda-10.1/lib64
 ```
+
+Note that this procedure (using ClangEnzyme as opposed to LLVMEnzyme manually) may not properly nest Enzyme between optimization passes and may impact performance in unintended ways.
