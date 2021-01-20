@@ -120,9 +120,15 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         mode == UnwrapMode::AttemptFullUnwrap ||                               \
         mode == UnwrapMode::AttemptFullUnwrapWithLookup) {                     \
       ___res = unwrapM(v, BuilderM, available, mode);                          \
+      if (___res) assert(___res->getType() == v->getType() && "uw");                     \
     } else {                                                                   \
       assert(mode == UnwrapMode::AttemptSingleUnwrap);                         \
       ___res = lookupM(v, BuilderM, available);                                \
+      if (___res && ___res->getType( )!= v->getType()) {                       \
+        llvm::errs() << *newFunc << "\n";                                      \
+        llvm::errs() << " v = " << *v << " res = " << *___res << "\n";         \
+      }                                                                       \
+      if (___res) assert(___res->getType() == v->getType() && "lu");                     \
     }                                                                          \
     ___res;                                                                    \
   })
@@ -1870,11 +1876,14 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
     auto result = lookup_cache[idx];
     assert(result);
     assert(result->getType());
+    result = BuilderM.CreateBitCast(result, val->getType());
+    assert(result->getType() == inst->getType());
     return result;
   }
 
   ValueToValueMapTy available;
   for (auto pair : incoming_available) {
+    assert(pair.first->getType() == pair.second->getType());
     available[pair.first] = pair.second;
   }
 
@@ -1899,8 +1908,10 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
     }
   }
 
-  if (available.count(inst))
+  if (available.count(inst)) {
+    assert(available[inst]->getType() == inst->getType());
     return available[inst];
+  }
 
   // TODO consider call as part of
   bool lrc = false, src = false;
@@ -1923,6 +1934,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
             new_op->setMetadata(LLVMContext::MD_invariant_group, invgroup);
           }
         }
+        assert(op->getType() == inst->getType());
         lookup_cache[idx] = op;
         return op;
       }
@@ -2222,6 +2234,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               Value *result = lookupValueFromCache(
                   /*isForwardPass*/ false, BuilderM, ctx, cache, isi1,
                   /*extraSize*/ lim, available[l1.var]);
+              assert(result->getType() == inst->getType());
               lookup_cache[idx] = result;
               return result;
             }
@@ -2241,6 +2254,10 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
   assert(result->getType() == inst->getType());
   lookup_cache[idx] = result;
   assert(result);
+  if (result->getType() != val->getType()) {
+    result = BuilderM.CreateBitCast(result, val->getType());
+  }
+  assert(result->getType() == val->getType());
   assert(result->getType());
   return result;
 }
