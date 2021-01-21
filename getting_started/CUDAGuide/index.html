@@ -1,0 +1,99 @@
+<!doctype html><html lang=en-us><head><meta charset=utf-8><meta http-equiv=x-ua-compatible content="IE=edge"><meta name=viewport content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><title>CUDA Guide - Enzyme AD</title><meta name=description content="Enzyme Automatic Differentiation Framework"><meta name=generator content="Hugo 0.74.3"><link href=https://enzyme.mit.edu/index.xml rel=alternate type=application/rss+xml><link rel=canonical href=https://enzyme.mit.edu/getting_started/CUDAGuide/><link rel=stylesheet href=https://enzyme.mit.edu/css/theme.css><script src=https://use.fontawesome.com/releases/v5.0.6/js/all.js></script><link rel=stylesheet href=https://enzyme.mit.edu/css/chroma.min.css><script src=https://cdn.jsdelivr.net/npm/jquery@3.3.1/dist/jquery.min.js></script><script src=https://cdn.jsdelivr.net/npm/jquery.easing@1.4.1/jquery.easing.min.js></script><script src=https://enzyme.mit.edu/js/bundle.js></script><link rel=icon href=/favicon.ico type=image/x-icon><style>:root{}</style></head><body><div class=container><header><h1><div><a href=/ style=text-decoration:none;color:#000><img src=https://enzyme.mit.edu//logo.svg width=40px align=absmiddle>
+Enzyme AD</a></div></h1><p class=description>Enzyme Automatic Differentiation Framework</p></header><div class=global-menu><nav><ul><li class=parent><a href>Community<i class="fas fa-angle-right"></i></a><ul class=sub-menu><li class=child><a href=https://groups.google.com/d/forum/enzyme-dev>Discussion List</a></li></ul></li><li><a href=https://github.com/wsmoses/Enzyme>Source</a></li><li><a href=https://github.com/wsmoses/Enzyme/issues>Bugs</a></li><li><a href=/getting_started/Faq/>FAQ</a></li></ul></nav></div><div class=content-container><main><h1>CUDA Guide</h1><h2 id=reference-c-example>Reference C++ example&nbsp;<a class=headline-hash href=#reference-c-example>¶</a></h2><blockquote><p><strong>WARNING</strong>: CUDA support is highly experimental and in active development.</p></blockquote><p>Suppose we wanted to port the following C++ code to CUDA, with Enzyme autodiff support:</p><div class=highlight><pre class=chroma><code class=language-cpp data-lang=cpp><span class=cp>#include</span> <span class=cpf>&lt;stdio.h&gt;</span><span class=cp>
+</span><span class=cp></span>
+<span class=kt>void</span> <span class=nf>foo</span><span class=p>(</span><span class=kt>double</span><span class=o>*</span> <span class=n>x_in</span><span class=p>,</span> <span class=kt>double</span> <span class=o>*</span><span class=n>x_out</span><span class=p>)</span> <span class=p>{</span>
+    <span class=n>x_out</span><span class=p>[</span><span class=mi>0</span><span class=p>]</span> <span class=o>=</span> <span class=n>x_in</span><span class=p>[</span><span class=mi>0</span><span class=p>]</span> <span class=o>*</span> <span class=n>x_in</span><span class=p>[</span><span class=mi>0</span><span class=p>];</span>
+<span class=p>}</span>
+
+
+<span class=kt>int</span> <span class=n>enzyme_dup</span><span class=p>;</span>
+<span class=kt>int</span> <span class=n>enzyme_out</span><span class=p>;</span>
+<span class=kt>int</span> <span class=n>enzyme_const</span><span class=p>;</span>
+
+<span class=k>typedef</span> <span class=nf>void</span> <span class=p>(</span><span class=o>*</span><span class=n>f_ptr</span><span class=p>)(</span><span class=kt>double</span><span class=o>*</span><span class=p>,</span> <span class=kt>double</span><span class=o>*</span><span class=p>);</span>
+
+<span class=k>extern</span> <span class=kt>void</span> <span class=nf>__enzyme_autodiff</span><span class=p>(</span><span class=n>f_ptr</span><span class=p>,</span>
+    <span class=kt>int</span><span class=p>,</span> <span class=kt>double</span><span class=o>*</span><span class=p>,</span> <span class=kt>double</span><span class=o>*</span><span class=p>,</span>
+    <span class=kt>int</span><span class=p>,</span> <span class=kt>double</span><span class=o>*</span><span class=p>,</span> <span class=kt>double</span><span class=o>*</span><span class=p>);</span>
+
+<span class=kt>int</span> <span class=nf>main</span><span class=p>()</span> <span class=p>{</span>
+
+    <span class=kt>double</span> <span class=n>x</span> <span class=o>=</span> <span class=mf>1.4</span><span class=p>;</span>
+    <span class=kt>double</span> <span class=n>d_x</span> <span class=o>=</span> <span class=mf>0.0</span><span class=p>;</span>
+    <span class=kt>double</span> <span class=n>y</span><span class=p>;</span>
+    <span class=kt>double</span> <span class=n>d_y</span> <span class=o>=</span> <span class=mf>1.0</span><span class=p>;</span>
+
+    <span class=n>__enzyme_autodiff</span><span class=p>(</span><span class=n>foo</span><span class=p>,</span>
+        <span class=n>enzyme_dup</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>x</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>d_x</span><span class=p>,</span>
+        <span class=n>enzyme_dup</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>y</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>d_y</span><span class=p>);</span>
+
+    <span class=n>printf</span><span class=p>(</span><span class=s>&#34;%f %f</span><span class=se>\n</span><span class=s>&#34;</span><span class=p>,</span> <span class=n>x</span><span class=p>,</span> <span class=n>y</span><span class=p>);</span>
+    <span class=n>printf</span><span class=p>(</span><span class=s>&#34;%f %f</span><span class=se>\n</span><span class=s>&#34;</span><span class=p>,</span> <span class=n>d_x</span><span class=p>,</span> <span class=n>d_y</span><span class=p>);</span>
+
+<span class=p>}</span>
+</code></pre></div><p>A one-liner compilation of the above using Enzyme:</p><div class=highlight><pre class=chroma><code class=language-sh data-lang=sh>clang test2.cpp -Xclang -load -Xclang /path/to/ClangEnzyme-11.so -O2 -fno-vectorize -fno-unroll-loops
+</code></pre></div><h2 id=cuda-example>CUDA Example&nbsp;<a class=headline-hash href=#cuda-example>¶</a></h2><p>When porting the above code, there are some caveats to be aware of:</p><ol><li>CUDA 10.1 is the latest supported CUDA at the time of writing (Jan/20/2021) for LLVM 11.</li><li><code>__enzyme_autodiff</code> should only be invoked on <code>___device___</code> code, not <code>__global__</code> kernel code. <code>__global__</code> kernels may be supported in the future.</li><li><code>--cuda-gpu-arch=sm_xx</code> is usually needed as the default <code>sm_20</code> is unsupported by modern CUDA versions.</li></ol><div class=highlight><pre class=chroma><code class=language-cpp data-lang=cpp><span class=cp>#include</span> <span class=cpf>&lt;stdio.h&gt;</span><span class=cp>
+</span><span class=cp></span>
+<span class=kt>void</span> <span class=n>__device__</span> <span class=nf>foo_impl</span><span class=p>(</span><span class=kt>double</span><span class=o>*</span> <span class=n>x_in</span><span class=p>,</span> <span class=kt>double</span> <span class=o>*</span><span class=n>x_out</span><span class=p>)</span> <span class=p>{</span>
+    <span class=n>x_out</span><span class=p>[</span><span class=mi>0</span><span class=p>]</span> <span class=o>=</span> <span class=n>x_in</span><span class=p>[</span><span class=mi>0</span><span class=p>]</span> <span class=o>*</span> <span class=n>x_in</span><span class=p>[</span><span class=mi>0</span><span class=p>];</span>    
+<span class=p>}</span>
+
+<span class=k>typedef</span> <span class=nf>void</span> <span class=p>(</span><span class=o>*</span><span class=n>f_ptr</span><span class=p>)(</span><span class=kt>double</span><span class=o>*</span><span class=p>,</span> <span class=kt>double</span><span class=o>*</span><span class=p>);</span>
+
+<span class=k>extern</span> <span class=kt>void</span> <span class=n>__device__</span> <span class=nf>__enzyme_autodiff</span><span class=p>(</span><span class=n>f_ptr</span><span class=p>,</span>
+    <span class=kt>int</span><span class=p>,</span> <span class=kt>double</span><span class=o>*</span><span class=p>,</span> <span class=kt>double</span><span class=o>*</span><span class=p>,</span>
+    <span class=kt>int</span><span class=p>,</span> <span class=kt>double</span><span class=o>*</span><span class=p>,</span> <span class=kt>double</span><span class=o>*</span>
+<span class=p>);</span>
+
+<span class=kt>void</span> <span class=n>__global__</span> <span class=nf>foo</span><span class=p>(</span><span class=kt>double</span><span class=o>*</span> <span class=n>x_in</span><span class=p>,</span> <span class=kt>double</span> <span class=o>*</span><span class=n>x_out</span><span class=p>)</span> <span class=p>{</span>
+    <span class=n>foo_impl</span><span class=p>(</span><span class=n>x_in</span><span class=p>,</span> <span class=n>x_out</span><span class=p>);</span>
+<span class=p>}</span>
+
+<span class=kt>int</span> <span class=n>__device__</span> <span class=n>enzyme_dup</span><span class=p>;</span>
+<span class=kt>int</span> <span class=n>__device__</span> <span class=n>enzyme_out</span><span class=p>;</span>
+<span class=kt>int</span> <span class=n>__device__</span> <span class=n>enzyme_const</span><span class=p>;</span>
+
+<span class=kt>void</span> <span class=n>__global__</span> <span class=nf>foo_grad</span><span class=p>(</span><span class=kt>double</span><span class=o>*</span> <span class=n>x</span><span class=p>,</span> <span class=kt>double</span> <span class=o>*</span><span class=n>d_x</span><span class=p>,</span> <span class=kt>double</span> <span class=o>*</span><span class=n>y</span><span class=p>,</span> <span class=kt>double</span> <span class=o>*</span><span class=n>d_y</span><span class=p>)</span> <span class=p>{</span>
+
+    <span class=n>__enzyme_autodiff</span><span class=p>(</span><span class=n>foo_impl</span><span class=p>,</span>
+        <span class=n>enzyme_dup</span><span class=p>,</span> <span class=n>x</span><span class=p>,</span> <span class=n>d_x</span><span class=p>,</span>
+        <span class=n>enzyme_dup</span><span class=p>,</span> <span class=n>y</span><span class=p>,</span> <span class=n>d_y</span><span class=p>);</span>
+
+<span class=p>}</span>
+
+<span class=kt>int</span> <span class=nf>main</span><span class=p>()</span> <span class=p>{</span>
+
+    <span class=kt>double</span> <span class=o>*</span><span class=n>x</span><span class=p>,</span> <span class=o>*</span><span class=n>d_x</span><span class=p>,</span> <span class=o>*</span><span class=n>y</span><span class=p>,</span> <span class=o>*</span><span class=n>d_y</span><span class=p>;</span> <span class=c1>// device pointers
+</span><span class=c1></span>
+    <span class=n>cudaMalloc</span><span class=p>(</span><span class=o>&amp;</span><span class=n>x</span><span class=p>,</span> <span class=k>sizeof</span><span class=p>(</span><span class=o>*</span><span class=n>x</span><span class=p>));</span>
+    <span class=n>cudaMalloc</span><span class=p>(</span><span class=o>&amp;</span><span class=n>d_x</span><span class=p>,</span> <span class=k>sizeof</span><span class=p>(</span><span class=o>*</span><span class=n>d_x</span><span class=p>));</span>
+    <span class=n>cudaMalloc</span><span class=p>(</span><span class=o>&amp;</span><span class=n>y</span><span class=p>,</span> <span class=k>sizeof</span><span class=p>(</span><span class=o>*</span><span class=n>y</span><span class=p>));</span>
+    <span class=n>cudaMalloc</span><span class=p>(</span><span class=o>&amp;</span><span class=n>d_y</span><span class=p>,</span> <span class=k>sizeof</span><span class=p>(</span><span class=o>*</span><span class=n>d_y</span><span class=p>));</span>
+
+    <span class=kt>double</span> <span class=n>host_x</span> <span class=o>=</span> <span class=mf>1.4</span><span class=p>;</span>
+    <span class=kt>double</span> <span class=n>host_d_x</span> <span class=o>=</span> <span class=mf>0.0</span><span class=p>;</span>
+    <span class=kt>double</span> <span class=n>host_y</span><span class=p>;</span>
+    <span class=kt>double</span> <span class=n>host_d_y</span> <span class=o>=</span> <span class=mf>1.0</span><span class=p>;</span>
+
+    <span class=n>cudaMemcpy</span><span class=p>(</span><span class=n>x</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>host_x</span><span class=p>,</span> <span class=k>sizeof</span><span class=p>(</span><span class=o>*</span><span class=n>x</span><span class=p>),</span> <span class=n>cudaMemcpyHostToDevice</span><span class=p>);</span>
+    <span class=n>cudaMemcpy</span><span class=p>(</span><span class=n>d_x</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>host_d_x</span><span class=p>,</span> <span class=k>sizeof</span><span class=p>(</span><span class=o>*</span><span class=n>d_x</span><span class=p>),</span> <span class=n>cudaMemcpyHostToDevice</span><span class=p>);</span>
+    <span class=n>cudaMemcpy</span><span class=p>(</span><span class=n>y</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>host_y</span><span class=p>,</span> <span class=k>sizeof</span><span class=p>(</span><span class=o>*</span><span class=n>y</span><span class=p>),</span> <span class=n>cudaMemcpyHostToDevice</span><span class=p>);</span>
+    <span class=n>cudaMemcpy</span><span class=p>(</span><span class=n>d_y</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>host_d_y</span><span class=p>,</span> <span class=k>sizeof</span><span class=p>(</span><span class=o>*</span><span class=n>d_y</span><span class=p>),</span> <span class=n>cudaMemcpyHostToDevice</span><span class=p>);</span>
+
+    <span class=c1>// foo&lt;&lt;&lt;1,1&gt;&gt;&gt;(x, y); fwd-pass only
+</span><span class=c1></span>    <span class=n>foo_grad</span><span class=o>&lt;&lt;&lt;</span><span class=mi>1</span><span class=p>,</span><span class=mi>1</span><span class=o>&gt;&gt;&gt;</span><span class=p>(</span><span class=n>x</span><span class=p>,</span> <span class=n>d_x</span><span class=p>,</span> <span class=n>y</span><span class=p>,</span> <span class=n>d_y</span><span class=p>);</span> <span class=c1>// fwd and bkwd pass
+</span><span class=c1></span>
+    <span class=n>cudaDeviceSynchronize</span><span class=p>();</span> <span class=c1>// synchroniz
+</span><span class=c1></span>
+    <span class=n>cudaMemcpy</span><span class=p>(</span><span class=o>&amp;</span><span class=n>host_x</span><span class=p>,</span> <span class=n>x</span><span class=p>,</span> <span class=k>sizeof</span><span class=p>(</span><span class=o>*</span><span class=n>x</span><span class=p>),</span> <span class=n>cudaMemcpyDeviceToHost</span><span class=p>);</span>
+    <span class=n>cudaMemcpy</span><span class=p>(</span><span class=o>&amp;</span><span class=n>host_d_x</span><span class=p>,</span> <span class=n>d_x</span><span class=p>,</span> <span class=k>sizeof</span><span class=p>(</span><span class=o>*</span><span class=n>d_x</span><span class=p>),</span> <span class=n>cudaMemcpyDeviceToHost</span><span class=p>);</span>
+    <span class=n>cudaMemcpy</span><span class=p>(</span><span class=o>&amp;</span><span class=n>host_y</span><span class=p>,</span> <span class=n>y</span><span class=p>,</span> <span class=k>sizeof</span><span class=p>(</span><span class=o>*</span><span class=n>y</span><span class=p>),</span> <span class=n>cudaMemcpyDeviceToHost</span><span class=p>);</span>
+    <span class=n>cudaMemcpy</span><span class=p>(</span><span class=o>&amp;</span><span class=n>host_d_y</span><span class=p>,</span> <span class=n>d_y</span><span class=p>,</span> <span class=k>sizeof</span><span class=p>(</span><span class=o>*</span><span class=n>d_y</span><span class=p>),</span> <span class=n>cudaMemcpyDeviceToHost</span><span class=p>);</span>
+
+    <span class=n>printf</span><span class=p>(</span><span class=s>&#34;%f %f</span><span class=se>\n</span><span class=s>&#34;</span><span class=p>,</span> <span class=n>host_x</span><span class=p>,</span> <span class=n>host_y</span><span class=p>);</span>
+    <span class=n>printf</span><span class=p>(</span><span class=s>&#34;%f %f</span><span class=se>\n</span><span class=s>&#34;</span><span class=p>,</span> <span class=n>host_d_x</span><span class=p>,</span> <span class=n>host_d_y</span><span class=p>);</span>
+
+<span class=p>}</span>
+</code></pre></div><p>For convenience, a one-liner compilation step is (against sm_70):</p><div class=highlight><pre class=chroma><code class=language-sh data-lang=sh>clang test3.cu -Xclang -load -Xclang /path/to/ClangEnzyme-11.so -O2 -fno-vectorize -fno-unroll-loops -fPIC --cuda-gpu-arch<span class=o>=</span>sm_70 -lcudart -L/usr/local/cuda-10.1/lib64
+</code></pre></div><p>Note that this procedure (using ClangEnzyme as opposed to LLVMEnzyme manually) may not properly nest Enzyme between optimization passes and may impact performance in unintended ways.</p><div class=edit-meta><br></div><nav class=pagination><a class="nav nav-prev" href=/getting_started/ title="Getting Started"><i class="fas fa-arrow-left" aria-hidden=true></i>Prev - Getting Started</a>
+<a class="nav nav-next" href=/getting_started/UsingEnzyme/ title="Using Enzyme">Next - Using Enzyme <i class="fas fa-arrow-right" aria-hidden=true></i></a></nav><footer><p class=powered>Powered by <a href=https://gohugo.io>Hugo</a>. Theme by <a href=https://themes.gohugo.io/hugo-theme-techdoc/>TechDoc</a>. Designed by <a href=https://github.com/thingsym/hugo-theme-techdoc>Thingsym</a>.</p></footer></main><div class=sidebar><nav class=slide-menu><ul><li><a href=https://enzyme.mit.edu/>Home</a></li><li><a href=/Installation/>Installation</a></li><li><a href=/charter/>Charter</a></li><li class="parent has-sub-menu"><a href=/getting_started/>Getting Started<span class="mark opened">-</span></a><ul class=sub-menu><li class=active><a href=/getting_started/CUDAGuide/>CUDA Guide</a></li><li><a href=/getting_started/UsingEnzyme/>Using Enzyme</a></li><li><a href=/getting_started/CallingConvention/>Calling Convention</a></li><li><a href=/getting_started/Faq/>FAQ</a></li></ul></li><li><a href=/talks/>Talks and Related Publications</a></li></ul></nav><div class=sidebar-footer></div></div></div><a href=# id=backtothetop-fixed class=backtothetop data-backtothetop-duration=600 data-backtothetop-easing=easeOutQuart data-backtothetop-fixed-fadein=1000 data-backtothetop-fixed-fadeout=1000 data-backtothetop-fixed-bottom=10 data-backtothetop-fixed-right=20><span class="fa-layers fa-fw"><i class="fas fa-circle"></i><i class="fas fa-arrow-circle-up"></i></span></a></div></body></html>
