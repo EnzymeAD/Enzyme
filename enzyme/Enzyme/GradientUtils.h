@@ -400,14 +400,22 @@ private:
 
 public:
   bool legalRecompute(const Value *val,
-                      const ValueToValueMapTy &available) const;
-  bool shouldRecompute(const Value *val, const ValueToValueMapTy &available);
+                      const ValueToValueMapTy &available, IRBuilder<> *BuilderM) const;
+  bool shouldRecompute(const Value *val, const ValueToValueMapTy &available, IRBuilder<> *BuilderM);
 
+  ValueToValueMapTy unwrappedLoads;
   void replaceAWithB(Value *A, Value *B, bool storeInCache = false) override {
     for (unsigned i = 0; i < addedTapeVals.size(); ++i) {
       if (addedTapeVals[i] == A) {
         addedTapeVals[i] = B;
       }
+    }
+    for (auto pair : unwrappedLoads) {
+      if (pair->second == A) pair->second = B;
+    }
+    if (unwrappedLoads.find(A) != unwrappedLoads.end()) {
+      unwrappedLoads[B] = unwrappedLoads[A];
+      unwrappedLoads.erase(A);
     }
 
     if (invertedPointers.find(A) != invertedPointers.end()) {
@@ -425,6 +433,7 @@ public:
     assert(I);
     invertedPointers.erase(I);
     originalToNewFn.erase(I);
+    unwrappedLoads.erase(I);
   eraser:
     for (auto v : originalToNewFn) {
       if (v.second == I) {
@@ -440,6 +449,11 @@ public:
         llvm::errs() << *v.first << "\n";
         llvm::errs() << *I << "\n";
         assert(0 && "erasing something in invertedPointers map");
+      }
+    }
+    for (auto v : unwrappedLoads) {
+      if (v.second == I) {
+        assert(0 && "erasing something in unwrappedLoads map");
       }
     }
 
@@ -617,7 +631,7 @@ public:
   }
 
 public:
-  AAResults &AA;
+  AAResults &OrigAA;
   TypeAnalysis &TA;
   GradientUtils(Function *newFunc_, Function *oldFunc_, TargetLibraryInfo &TLI_,
                 TypeAnalysis &TA_, AAResults &AA_,
@@ -634,7 +648,7 @@ public:
 #endif
         ATA(new ActivityAnalyzer(AA_, TLI_, constantvalues_, activevals_,
                                  ActiveReturn)),
-        OrigLI(OrigDT), AA(AA_), TA(TA_) {
+        OrigLI(OrigDT), OrigAA(AA_), TA(TA_) {
     if (oldFunc_->getSubprogram()) {
       assert(originalToNewFn_.hasMD());
     }
@@ -736,7 +750,7 @@ public:
   std::map<llvm::Value *, bool> internal_isConstantValue;
   std::map<const llvm::Instruction *, bool> internal_isConstantInstruction;
   TypeResults *my_TR;
-  void forceActiveDetection(AAResults &AA, TypeResults &TR) {
+  void forceActiveDetection(TypeResults &TR) {
     my_TR = &TR;
     for (auto &Arg : oldFunc->args()) {
       internal_isConstantValue[&Arg] = ATA->isConstantValue(TR, &Arg);
@@ -1010,13 +1024,13 @@ public:
 
 class DiffeGradientUtils : public GradientUtils {
   DiffeGradientUtils(Function *newFunc_, Function *oldFunc_,
-                     TargetLibraryInfo &TLI, TypeAnalysis &TA, AAResults &AA,
+                     TargetLibraryInfo &TLI, TypeAnalysis &TA, AAResults &OrigAA,
                      ValueToValueMapTy &invertedPointers_,
                      const SmallPtrSetImpl<Value *> &constantvalues_,
                      const SmallPtrSetImpl<Value *> &returnvals_,
                      bool ActiveReturn, ValueToValueMapTy &origToNew_,
                      DerivativeMode mode)
-      : GradientUtils(newFunc_, oldFunc_, TLI, TA, AA, invertedPointers_,
+      : GradientUtils(newFunc_, oldFunc_, TLI, TA, OrigAA, invertedPointers_,
                       constantvalues_, returnvals_, ActiveReturn, origToNew_,
                       mode) {
     assert(reverseBlocks.size() == 0);
