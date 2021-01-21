@@ -693,7 +693,6 @@ Function *preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI,
     ++i;
     ++j;
   }
-  llvm::errs() << *NewF << "\n";
 
   SmallVector<ReturnInst *, 4> Returns;
   // if (auto SP = F->getSubProgram()) {
