@@ -500,12 +500,13 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext) {
 
       ScalarEvolution::ExitLimit EL =
           SE.computeExitLimit(L, ExitingBlock, /*AllowPredicates*/ true);
+      llvm::errs() << " ENT: " << *EL.ExactNotTaken << " exiting:" << ExitingBlock->getName() << "\n";
       if (MayExitMaxBECount != SE.getCouldNotCompute()) {
         if (!MayExitMaxBECount || EL.ExactNotTaken == SE.getCouldNotCompute())
           MayExitMaxBECount = EL.ExactNotTaken;
         else {
           if (MayExitMaxBECount != EL.ExactNotTaken) {
-            llvm::errs() << MayExitMaxBECount << "\n";
+            llvm::errs() << MayExitMaxBECount << " exiting:" << ExitingBlock->getName() << "\n";
             if (EnzymePrintPerf)
               llvm::errs() << "Missed cache optimization opportunity! could "
                               "allocate max!\n";
@@ -526,7 +527,7 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext) {
     Limit = MayExitMaxBECount;
   }
   assert(Limit);
-
+  llvm::errs() << " lim: " << *Limit << " header:" << loopContexts[L].header->getName() << "\n";
   Value *LimitVar = nullptr;
 
   if (SE.getCouldNotCompute() != Limit) {
