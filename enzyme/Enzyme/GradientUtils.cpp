@@ -327,7 +327,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       // location, rather than recomputable anywhere
       legalMove = legalRecompute(load, available, &BuilderM);
     }
-    llvm::errs() << " uwload: " << *load << " legalMove: " << legalMove << " builderM: " << BuilderM.GetInsertBlock()->getName() << '\n';
+    //llvm::errs() << " uwload: " << *load << " legalMove: " << legalMove << " builderM: " << BuilderM.GetInsertBlock()->getName() << '\n';
     if (!legalMove)
       return nullptr;
 
@@ -417,7 +417,7 @@ endCheck:
     return toreturn;
   }
 
-  llvm::errs() << "cannot unwrap following " << *val << "\n";
+  //llvm::errs() << "cannot unwrap following " << *val << "\n";
 
   if (auto inst = dyn_cast<Instruction>(val)) {
     // LoopContext lc;
@@ -1964,7 +1964,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
     }
   }
 
-  llvm::errs() << "forcing cache of " << *inst << "lrc: " << lrc << " src: " << src << " in " << BuilderM.GetInsertBlock()->getName() << "\n";
+  //llvm::errs() << "forcing cache of " << *inst << "lrc: " << lrc << " src: " << src << " in " << BuilderM.GetInsertBlock()->getName() << "\n";
   if (auto origInst = isOriginal(inst))
     if (auto li = dyn_cast<LoadInst>(inst)) {
 #if LLVM_VERSION_MAJOR >= 12

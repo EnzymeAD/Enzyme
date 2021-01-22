@@ -1181,7 +1181,8 @@ Function *preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI,
     AA.addAAResult(*(new TypeBasedAAResult()));
   }
 
-  CanonicalizeLoops(NewF, TLI);
+  if (EnzymePreopt)
+    CanonicalizeLoops(NewF, TLI);
 
   if (EnzymePrint)
     llvm::errs() << "after simplification :\n" << *NewF << "\n";
