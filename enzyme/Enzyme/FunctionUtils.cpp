@@ -687,6 +687,7 @@ Function *preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI,
   ValueToValueMapTy VMap;
   for (auto i = F->arg_begin(), j = NewF->arg_begin(); i != F->arg_end();) {
     VMap[i] = j;
+    j->setName(i->getName());
     if (EnzymeNoAlias && j->getType()->isPointerTy()) {
       j->addAttr(Attribute::NoAlias);
     }
@@ -1190,8 +1191,7 @@ Function *preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI,
     AA.addAAResult(*(new TypeBasedAAResult()));
   }
 
-  if (EnzymePreopt)
-    CanonicalizeLoops(NewF, TLI);
+  CanonicalizeLoops(NewF, TLI);
 
   if (EnzymePrint)
     llvm::errs() << "after simplification :\n" << *NewF << "\n";
