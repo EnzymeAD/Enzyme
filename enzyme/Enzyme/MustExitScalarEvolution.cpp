@@ -517,7 +517,6 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimitFromICmp(
     bool IsSigned = Pred == ICmpInst::ICMP_SGT;
     ExitLimit EL = howManyGreaterThans(LHS, RHS, L, IsSigned, ControlsExit,
                                        AllowPredicates);
-    llvm::errs() << " --- GT LHS: " << *LHS << " RHS: " << *RHS << " Pred: " << Pred << " EL" << *EL.ExactNotTaken << "\n";
     if (EL.hasAnyInfo())
       return EL;
     break;

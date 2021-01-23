@@ -2202,9 +2202,8 @@ void TypeAnalyzer::visitInvokeInst(InvokeInst &call) {
   analysis[&call] = analysis[tmpCall];
   analysis.erase(tmpCall);
 
-  auto found = workList.find(tmpCall);
-  if (found != workList.end()) {
-    workList.erase(found);
+  if (workList.count(tmpCall)) {
+    workList.remove(tmpCall);
     workList.insert(&call);
   }
 
