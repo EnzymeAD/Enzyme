@@ -791,7 +791,7 @@ Function *preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI,
         for (CallInst* CI : Calls) {
           if (isa<DbgInfoIntrinsic>(CI))
             continue;
-          if (auto II = dyn_cast<IntrinsicInst>(CI))
+          if (dyn_cast<IntrinsicInst>(CI))
             //if (II->getIntrinsicID() == Intrinsic::lifetime_start || II->getIntrinsicID() == Intrinsic::lifetime_end ||
             //    II->getIntrinsicID() == Intrinsic::memcpy || II->getIntrinsicID() == Intrinsic::memmove ||
             //    II->getIntrinsicID() == Intrinsic::memset )
@@ -885,18 +885,10 @@ Function *preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI,
                 goto endCheck;
               }
 
-              #if LLVM_VERSION_MAJOR >= 12
-              AAQueryInfo AAQIP;
-              if (llvm::isModSet(AA2.getModRefInfo(CI, Loc, AAQIP))) {
-                hasWrite = true;
-                goto endCheck;
-              }
-              #else
               if (llvm::isModSet(AA2.getModRefInfo(CI, Loc))) {
                 hasWrite = true;
                 goto endCheck;
               }
-              #endif
             }
             
             else if (auto I = dyn_cast<Instruction>(u)) {
