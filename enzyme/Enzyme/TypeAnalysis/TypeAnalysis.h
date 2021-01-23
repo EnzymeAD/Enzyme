@@ -35,9 +35,9 @@
 #include "llvm/ADT/SetVector.h"
 
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/InstVisitor.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
-#include "llvm/IR/InstVisitor.h"
 
 #include "llvm/IR/Dominators.h"
 
@@ -130,7 +130,7 @@ public:
   llvm::Type *addingType(size_t num, llvm::Value *val);
 
   /// Return whether a given block is analyzed
-  bool isBlockAnalyzed(llvm::BasicBlock* BB);
+  bool isBlockAnalyzed(llvm::BasicBlock *BB);
 
   /// Returns whether in the first num bytes there is pointer, int, float, or
   /// none If pointerIntSame is set to true, then consider either as the same
@@ -164,6 +164,7 @@ public:
   llvm::SetVector<llvm::Value *> workList;
 
   const llvm::SmallPtrSet<llvm::BasicBlock *, 4> notForAnalysis;
+
 private:
   /// Tell TypeAnalyzer to reanalyze this value
   void addToWorkList(llvm::Value *val);
@@ -208,7 +209,9 @@ public:
                uint8_t direction = BOTH);
 
   TypeAnalyzer(const FnTypeInfo &fn, TypeAnalysis &TA,
-               const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &notForAnalysis, std::shared_ptr<llvm::DominatorTree> DT, uint8_t direction = BOTH, bool PHIRecur=false);
+               const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &notForAnalysis,
+               std::shared_ptr<llvm::DominatorTree> DT,
+               uint8_t direction = BOTH, bool PHIRecur = false);
 
   /// Get the current results for a given value
   TypeTree getAnalysis(llvm::Value *Val);

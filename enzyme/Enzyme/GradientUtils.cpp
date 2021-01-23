@@ -120,15 +120,17 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         mode == UnwrapMode::AttemptFullUnwrap ||                               \
         mode == UnwrapMode::AttemptFullUnwrapWithLookup) {                     \
       ___res = unwrapM(v, BuilderM, available, mode);                          \
-      if (___res) assert(___res->getType() == v->getType() && "uw");                     \
+      if (___res)                                                              \
+        assert(___res->getType() == v->getType() && "uw");                     \
     } else {                                                                   \
       assert(mode == UnwrapMode::AttemptSingleUnwrap);                         \
       ___res = lookupM(v, BuilderM, available);                                \
-      if (___res && ___res->getType( )!= v->getType()) {                       \
+      if (___res && ___res->getType() != v->getType()) {                       \
         llvm::errs() << *newFunc << "\n";                                      \
         llvm::errs() << " v = " << *v << " res = " << *___res << "\n";         \
-      }                                                                       \
-      if (___res) assert(___res->getType() == v->getType() && "lu");                     \
+      }                                                                        \
+      if (___res)                                                              \
+        assert(___res->getType() == v->getType() && "lu");                     \
     }                                                                          \
     ___res;                                                                    \
   })
@@ -169,7 +171,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     if (op1 == nullptr)
       goto endCheck;
     auto toreturn = BuilderM.CreateInsertValue(op0, op1, op->getIndices(),
-                                                op->getName() + "_unwrap");
+                                               op->getName() + "_unwrap");
     unwrap_cache[cidx] = toreturn;
     if (auto newi = dyn_cast<Instruction>(toreturn))
       newi->copyIRFlags(op);
@@ -182,8 +184,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     auto op1 = getOp(op->getOperand(1));
     if (op1 == nullptr)
       goto endCheck;
-    auto toreturn = BuilderM.CreateExtractElement(op0, op1,
-                                                op->getName() + "_unwrap");
+    auto toreturn =
+        BuilderM.CreateExtractElement(op0, op1, op->getName() + "_unwrap");
     unwrap_cache[cidx] = toreturn;
     if (auto newi = dyn_cast<Instruction>(toreturn))
       newi->copyIRFlags(op);
@@ -199,8 +201,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     auto op2 = getOp(op->getOperand(2));
     if (op2 == nullptr)
       goto endCheck;
-    auto toreturn = BuilderM.CreateInsertElement(op0, op1, op2,
-                                                op->getName() + "_unwrap");
+    auto toreturn =
+        BuilderM.CreateInsertElement(op0, op1, op2, op->getName() + "_unwrap");
     unwrap_cache[cidx] = toreturn;
     if (auto newi = dyn_cast<Instruction>(toreturn))
       newi->copyIRFlags(op);
@@ -215,12 +217,10 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       goto endCheck;
 #if LLVM_VERSION_MAJOR >= 11
     auto toreturn = BuilderM.CreateShuffleVector(
-        op0, op1,
-        op->getShuffleMaskForBitcode(), op->getName() + "'_unwrap");
+        op0, op1, op->getShuffleMaskForBitcode(), op->getName() + "'_unwrap");
 #else
-    auto toreturn =
-        BuilderM.CreateShuffleVector(op0, op1,
-                               op->getOperand(2), op->getName() + "'_unwrap");
+    auto toreturn = BuilderM.CreateShuffleVector(op0, op1, op->getOperand(2),
+                                                 op->getName() + "'_unwrap");
 #endif
     unwrap_cache[cidx] = toreturn;
     if (auto newi = dyn_cast<Instruction>(toreturn))
@@ -235,7 +235,9 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     if (op1 == nullptr)
       goto endCheck;
     if (op0->getType() != op1->getType()) {
-      llvm::errs() << " op: " << *op << " op0: " << *op0 << " op1: " << *op1 << " p0: " << *op->getOperand(0) << "  p1: " << *op->getOperand(1) << "\n";
+      llvm::errs() << " op: " << *op << " op0: " << *op0 << " op1: " << *op1
+                   << " p0: " << *op->getOperand(0)
+                   << "  p1: " << *op->getOperand(1) << "\n";
     }
     assert(op0->getType() == op1->getType());
     auto toreturn = BuilderM.CreateBinOp(op->getOpcode(), op0, op1,
@@ -327,7 +329,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       // location, rather than recomputable anywhere
       legalMove = legalRecompute(load, available, &BuilderM);
     }
-    //llvm::errs() << " uwload: " << *load << " legalMove: " << legalMove << " builderM: " << BuilderM.GetInsertBlock()->getName() << '\n';
+    // llvm::errs() << " uwload: " << *load << " legalMove: " << legalMove << "
+    // builderM: " << BuilderM.GetInsertBlock()->getName() << '\n';
     if (!legalMove)
       return nullptr;
 
@@ -417,7 +420,7 @@ endCheck:
     return toreturn;
   }
 
-  //llvm::errs() << "cannot unwrap following " << *val << "\n";
+  // llvm::errs() << "cannot unwrap following " << *val << "\n";
 
   if (auto inst = dyn_cast<Instruction>(val)) {
     // LoopContext lc;
@@ -884,7 +887,8 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
       Value *lim = nullptr;
       if (lc.dynamic) {
         lim = lookupValueFromCache(/*forwardPass*/ false, tbuild, lc.preheader,
-                                   cast<AllocaInst>(lc.trueLimit), /*isi1*/ false);
+                                   cast<AllocaInst>(lc.trueLimit),
+                                   /*isi1*/ false);
       } else {
         lim = lookupM(lc.trueLimit, tbuild);
       }
@@ -908,7 +912,8 @@ void GradientUtils::forceContexts() {
 }
 
 bool GradientUtils::legalRecompute(const Value *val,
-                                   const ValueToValueMapTy &available, IRBuilder<> *BuilderM) const {
+                                   const ValueToValueMapTy &available,
+                                   IRBuilder<> *BuilderM) const {
   if (available.count(val)) {
     return true;
   }
@@ -916,8 +921,9 @@ bool GradientUtils::legalRecompute(const Value *val,
   if (isa<PHINode>(val)) {
     if (auto dli = dyn_cast_or_null<LoadInst>(hasUninverted(val))) {
       return legalRecompute(
-          dli, available, BuilderM); // TODO ADD && !TR.intType(getOriginal(dli),
-                           // /*mustfind*/false).isPossibleFloat();
+          dli, available,
+          BuilderM); // TODO ADD && !TR.intType(getOriginal(dli),
+                     // /*mustfind*/false).isPossibleFloat();
     }
     // if (SE.isSCEVable(phi->getType())) {
     // auto scev =
@@ -943,7 +949,8 @@ bool GradientUtils::legalRecompute(const Value *val,
 
     // If this is an already unwrapped value, legal to recompute again.
     if (unwrappedLoads.find(li) != unwrappedLoads.end())
-      return legalRecompute(unwrappedLoads.find(li)->second, available, BuilderM);
+      return legalRecompute(unwrappedLoads.find(li)->second, available,
+                            BuilderM);
 
     const Instruction *orig = nullptr;
     if (li->getParent()->getParent() == oldFunc) {
@@ -967,26 +974,36 @@ bool GradientUtils::legalRecompute(const Value *val,
                      << " in fn: " << orig->getParent()->getParent()->getName();
       }
       assert(found != can_modref_map->end());
-      if (!found->second) return true;
+      if (!found->second)
+        return true;
       // if insertion block of this function:
-      if (mode == DerivativeMode::Both && BuilderM && reverseBlocks.find(BuilderM->GetInsertBlock()) != reverseBlocks.end()) {
-        llvm::errs() << BuilderM->GetInsertBlock()->getName() << " " << *li << "\n";
-        Instruction* origEnd = const_cast<Instruction*>((const Instruction*)reverseBlocks.find(BuilderM->GetInsertBlock())->second->getTerminator());
-        if (OrigDT.dominates(const_cast<Instruction*>(orig), origEnd)) {
+      if (mode == DerivativeMode::Both && BuilderM &&
+          reverseBlocks.find(BuilderM->GetInsertBlock()) !=
+              reverseBlocks.end()) {
+        llvm::errs() << BuilderM->GetInsertBlock()->getName() << " " << *li
+                     << "\n";
+        Instruction *origEnd = const_cast<Instruction *>(
+            (const Instruction *)reverseBlocks.find(BuilderM->GetInsertBlock())
+                ->second->getTerminator());
+        if (OrigDT.dominates(const_cast<Instruction *>(orig), origEnd)) {
           bool failed = false;
 
           allInstructionsBetween(
-              const_cast<GradientUtils*>(this)->LI, const_cast<Instruction*>(orig), origEnd, [&](Instruction *I) -> bool {
+              const_cast<GradientUtils *>(this)->LI,
+              const_cast<Instruction *>(orig), origEnd,
+              [&](Instruction *I) -> bool {
                 if (I->mayWriteToMemory() &&
-                    writesToMemoryReadBy(OrigAA, /*maybeReader*/ const_cast<Instruction*>(orig),
-                                          /*maybeWriter*/ I)) {
+                    writesToMemoryReadBy(
+                        OrigAA, /*maybeReader*/ const_cast<Instruction *>(orig),
+                        /*maybeWriter*/ I)) {
                   failed = true;
                   // llvm::errs() << "FAILED: " << *I << "\n";
                   return /*earlyBreak*/ true;
                 }
                 return /*earlyBreak*/ false;
               });
-          if (!failed) return true;
+          if (!failed)
+            return true;
         }
       }
       return false;
@@ -1028,7 +1045,8 @@ bool GradientUtils::legalRecompute(const Value *val,
 //! Given the option to recompute a value or re-use an old one, return true if
 //! it is faster to recompute this value from scratch
 bool GradientUtils::shouldRecompute(const Value *val,
-                                    const ValueToValueMapTy &available, IRBuilder<> *BuilderM) {
+                                    const ValueToValueMapTy &available,
+                                    IRBuilder<> *BuilderM) {
   if (available.count(val))
     return true;
   // TODO: remake such that this returns whether a load to a cache is more
@@ -1051,72 +1069,74 @@ bool GradientUtils::shouldRecompute(const Value *val,
   // if this has operands that need to be loaded and haven't already been loaded
   // TODO, just cache this
   if (false)
-  for (auto &op : inst->operands()) {
-    if (!legalRecompute(op, available, BuilderM)) {
+    for (auto &op : inst->operands()) {
+      if (!legalRecompute(op, available, BuilderM)) {
 
-      // If this is a load from cache already, dont force a cache of this
-      if (isa<LoadInst>(op) && CacheLookups.count(cast<LoadInst>(op)))
-        continue;
+        // If this is a load from cache already, dont force a cache of this
+        if (isa<LoadInst>(op) && CacheLookups.count(cast<LoadInst>(op)))
+          continue;
 
-      // If a previously cached this operand, don't let it trigger the
-      // heuristic for caching this value instead.
-      if (scopeMap.find(op) != scopeMap.end())
-        continue;
+        // If a previously cached this operand, don't let it trigger the
+        // heuristic for caching this value instead.
+        if (scopeMap.find(op) != scopeMap.end())
+          continue;
 
-      // If the actually uncacheable operand is in a different loop scope
-      // don't cache this value instead as it may require more memory
-      LoopContext lc1;
-      LoopContext lc2;
-      bool inLoop1 =
-          getContext(const_cast<Instruction *>(inst)->getParent(), lc1);
-      bool inLoop2 = getContext(cast<Instruction>(op)->getParent(), lc2);
-      if (inLoop1 != inLoop2 || (inLoop1 && (lc1.header != lc2.header))) {
-        continue;
-      }
+        // If the actually uncacheable operand is in a different loop scope
+        // don't cache this value instead as it may require more memory
+        LoopContext lc1;
+        LoopContext lc2;
+        bool inLoop1 =
+            getContext(const_cast<Instruction *>(inst)->getParent(), lc1);
+        bool inLoop2 = getContext(cast<Instruction>(op)->getParent(), lc2);
+        if (inLoop1 != inLoop2 || (inLoop1 && (lc1.header != lc2.header))) {
+          continue;
+        }
 
-      // If a placeholder phi for inversion (and we know from above not
-      // recomputable)
-      if (!isa<PHINode>(op) && dyn_cast_or_null<LoadInst>(hasUninverted(op))) {
-        goto forceCache;
-      }
+        // If a placeholder phi for inversion (and we know from above not
+        // recomputable)
+        if (!isa<PHINode>(op) &&
+            dyn_cast_or_null<LoadInst>(hasUninverted(op))) {
+          goto forceCache;
+        }
 
-      // Even if cannot recompute (say a phi node), don't force a reload if it
-      // is possible to just use this instruction from forward pass without
-      // issue
-      if (auto i2 = dyn_cast<Instruction>(op)) {
-        if (!i2->mayReadOrWriteMemory()) {
-          LoopContext lc;
-          bool inLoop = const_cast<GradientUtils *>(this)->getContext(
-              i2->getParent(), lc);
-          if (!inLoop) {
-            if (i2->getParent() == &newFunc->getEntryBlock()) {
-              continue;
-            }
-            // TODO upgrade this to be all returns that this could enter from
-            bool legal = true;
-            for (auto &BB : *oldFunc) {
-              if (isa<ReturnInst>(BB.getTerminator())) {
-                BasicBlock *returningBlock =
-                    cast<BasicBlock>(getNewFromOriginal(&BB));
-                if (i2->getParent() == returningBlock)
-                  continue;
-                if (!DT.dominates(i2, returningBlock)) {
-                  legal = false;
-                  break;
+        // Even if cannot recompute (say a phi node), don't force a reload if it
+        // is possible to just use this instruction from forward pass without
+        // issue
+        if (auto i2 = dyn_cast<Instruction>(op)) {
+          if (!i2->mayReadOrWriteMemory()) {
+            LoopContext lc;
+            bool inLoop = const_cast<GradientUtils *>(this)->getContext(
+                i2->getParent(), lc);
+            if (!inLoop) {
+              if (i2->getParent() == &newFunc->getEntryBlock()) {
+                continue;
+              }
+              // TODO upgrade this to be all returns that this could enter from
+              bool legal = true;
+              for (auto &BB : *oldFunc) {
+                if (isa<ReturnInst>(BB.getTerminator())) {
+                  BasicBlock *returningBlock =
+                      cast<BasicBlock>(getNewFromOriginal(&BB));
+                  if (i2->getParent() == returningBlock)
+                    continue;
+                  if (!DT.dominates(i2, returningBlock)) {
+                    legal = false;
+                    break;
+                  }
                 }
               }
-            }
-            if (legal) {
-              continue;
+              if (legal) {
+                continue;
+              }
             }
           }
         }
+      forceCache:;
+        llvm::errs() << "shouldn't recompute " << *inst
+                     << "because of illegal redo op: " << *op << "\n";
+        return false;
       }
-    forceCache:;
-      llvm::errs() << "shouldn't recompute " << *inst << "because of illegal redo op: " << *op << "\n";
-      return false;
     }
-  }
 
   if (auto op = dyn_cast<IntrinsicInst>(val)) {
     if (!op->mayReadOrWriteMemory())
@@ -1139,7 +1159,8 @@ bool GradientUtils::shouldRecompute(const Value *val,
           n == "lgamma_r" || n == "lgammaf_r" || n == "lgammal_r" ||
           n == "__lgamma_r_finite" || n == "__lgammaf_r_finite" ||
           n == "__lgammal_r_finite" || n == "tanh" || n == "tanhf" ||
-          n == "__pow_finite" || n == "__fd_sincos_1" || isMemFreeLibMFunction(n)) {
+          n == "__pow_finite" || n == "__fd_sincos_1" ||
+          isMemFreeLibMFunction(n)) {
         return true;
       }
     }
@@ -1278,87 +1299,94 @@ Value *GradientUtils::invertPointerM(Value *oval, IRBuilder<> &BuilderM) {
   if (auto arg = dyn_cast<GlobalVariable>(oval)) {
     if (!hasMetadata(arg, "enzyme_shadow")) {
 
-      if (mode == DerivativeMode::Both && arg->getType()->getPointerAddressSpace() == 0) {
+      if (mode == DerivativeMode::Both &&
+          arg->getType()->getPointerAddressSpace() == 0) {
         bool seen = false;
         MemoryLocation
 #if LLVM_VERSION_MAJOR >= 12
-        Loc = MemoryLocation(oval, LocationSize::beforeOrAfterPointer());
+            Loc = MemoryLocation(oval, LocationSize::beforeOrAfterPointer());
 #elif LLVM_VERSION_MAJOR >= 9
-        Loc = MemoryLocation(oval, LocationSize::unknown());
+            Loc = MemoryLocation(oval, LocationSize::unknown());
 #else
-        Loc = MemoryLocation(oval, MemoryLocation::UnknownSize);
+            Loc = MemoryLocation(oval, MemoryLocation::UnknownSize);
 #endif
-        for (CallInst* CI : originalCalls) {
-          if (isa<IntrinsicInst>(CI)) continue;
+        for (CallInst *CI : originalCalls) {
+          if (isa<IntrinsicInst>(CI))
+            continue;
           if (!isConstantInstruction(CI)) {
-            Function* F = CI->getCalledFunction();
-            #if LLVM_VERSION_MAJOR >= 11
-              if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand()))
-            #else
-              if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledValue()))
-            #endif
-              {
-                if (castinst->isCast())
-                  if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-                      F = fn;
-                  }
-              }
-            if (F && (isMemFreeLibMFunction(F->getName()) || F->getName() == "__fd_sincos_1")) {
+            Function *F = CI->getCalledFunction();
+#if LLVM_VERSION_MAJOR >= 11
+            if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand()))
+#else
+            if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledValue()))
+#endif
+            {
+              if (castinst->isCast())
+                if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
+                  F = fn;
+                }
+            }
+            if (F && (isMemFreeLibMFunction(F->getName()) ||
+                      F->getName() == "__fd_sincos_1")) {
               continue;
             }
             if (llvm::isModOrRefSet(OrigAA.getModRefInfo(CI, Loc))) {
               seen = true;
-              llvm::errs() << " cannot handle global " << *oval << " due to " << *CI << "\n";
+              llvm::errs() << " cannot handle global " << *oval << " due to "
+                           << *CI << "\n";
               goto endCheck;
             }
           }
         }
-        endCheck:;
+      endCheck:;
         if (!seen) {
           IRBuilder<> bb(inversionAllocs);
-          AllocaInst *antialloca = bb.CreateAlloca(arg->getValueType(),
-            arg->getType()->getPointerAddressSpace(), nullptr, arg->getName() + "'ipa");
+          AllocaInst *antialloca = bb.CreateAlloca(
+              arg->getValueType(), arg->getType()->getPointerAddressSpace(),
+              nullptr, arg->getName() + "'ipa");
           invertedPointers[arg] = antialloca;
 
           if (arg->getAlignment()) {
-      #if LLVM_VERSION_MAJOR >= 10
+#if LLVM_VERSION_MAJOR >= 10
             antialloca->setAlignment(Align(arg->getAlignment()));
-      #else
+#else
             antialloca->setAlignment(arg->getAlignment());
-      #endif
+#endif
           }
 
-          auto dst_arg =
-              bb.CreateBitCast(antialloca, Type::getInt8PtrTy(arg->getContext()));
-          auto val_arg = ConstantInt::get(Type::getInt8Ty(arg->getContext()), 0);
-          auto len_arg = ConstantInt::get(Type::getInt64Ty(arg->getContext()),
-                              M->getDataLayout().getTypeAllocSizeInBits(
-                                  arg->getValueType()) /
-                                  8);
+          auto dst_arg = bb.CreateBitCast(
+              antialloca, Type::getInt8PtrTy(arg->getContext()));
+          auto val_arg =
+              ConstantInt::get(Type::getInt8Ty(arg->getContext()), 0);
+          auto len_arg = ConstantInt::get(
+              Type::getInt64Ty(arg->getContext()),
+              M->getDataLayout().getTypeAllocSizeInBits(arg->getValueType()) /
+                  8);
           auto volatile_arg = ConstantInt::getFalse(oval->getContext());
 
-      #if LLVM_VERSION_MAJOR == 6
-          auto align_arg = ConstantInt::get(Type::getInt32Ty(oval->getContext()),
-                                            antialloca->getAlignment());
+#if LLVM_VERSION_MAJOR == 6
+          auto align_arg = ConstantInt::get(
+              Type::getInt32Ty(oval->getContext()), antialloca->getAlignment());
           Value *args[] = {dst_arg, val_arg, len_arg, align_arg, volatile_arg};
-      #else
+#else
           Value *args[] = {dst_arg, val_arg, len_arg, volatile_arg};
-      #endif
+#endif
           Type *tys[] = {dst_arg->getType(), len_arg->getType()};
           auto memset = cast<CallInst>(bb.CreateCall(
               Intrinsic::getDeclaration(M, Intrinsic::memset, tys), args));
-      #if LLVM_VERSION_MAJOR >= 10
+#if LLVM_VERSION_MAJOR >= 10
           if (arg->getAlignment()) {
             memset->addParamAttr(
                 0, Attribute::getWithAlignment(arg->getContext(),
-                                              Align(arg->getAlignment())));
+                                               Align(arg->getAlignment())));
           }
-      #else
+#else
           if (arg->getAlignment() != 0) {
-            memset->addParamAttr(0, Attribute::getWithAlignment(
-                                        arg->getContext(), arg->getAlignment()));
+            memset->addParamAttr(
+                0, Attribute::getWithAlignment(arg->getContext(),
+                                               arg->getAlignment()));
           }
-      #endif
+#endif
           memset->addParamAttr(0, Attribute::NonNull);
           assert(invertedPointers[arg]->getType() == arg->getType());
           return lookupM(invertedPointers[arg], BuilderM);
@@ -1494,9 +1522,7 @@ Value *GradientUtils::invertPointerM(Value *oval, IRBuilder<> &BuilderM) {
     auto ip = invertPointerM(arg->getOperand(0), bb);
     if (arg->isCast()) {
       if (auto C = dyn_cast<Constant>(ip))
-        return ConstantExpr::getCast(
-          arg->getOpcode(), C,
-          arg->getType());
+        return ConstantExpr::getCast(arg->getOpcode(), C, arg->getType());
       else {
         invertedPointers[arg] =
             bb.CreateCast((Instruction::CastOps)arg->getOpcode(), ip,
@@ -1512,9 +1538,8 @@ Value *GradientUtils::invertPointerM(Value *oval, IRBuilder<> &BuilderM) {
           Value *b = getNewFromOriginal(arg->getOperand(1 + i));
           invertargs.push_back(b);
         }
-        auto result = bb.CreateGEP(ip,
-                                  invertargs, arg->getName() + "'ipg");
-        //if (auto gep = dyn_cast<GetElementPtrInst>(result))
+        auto result = bb.CreateGEP(ip, invertargs, arg->getName() + "'ipg");
+        // if (auto gep = dyn_cast<GetElementPtrInst>(result))
         //  gep->setIsInBounds(arg->isInBounds());
         invertedPointers[arg] = result;
         return lookupM(invertedPointers[arg], BuilderM);
@@ -1964,7 +1989,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
     }
   }
 
-  //llvm::errs() << "forcing cache of " << *inst << "lrc: " << lrc << " src: " << src << " in " << BuilderM.GetInsertBlock()->getName() << "\n";
+  // llvm::errs() << "forcing cache of " << *inst << "lrc: " << lrc << " src: "
+  // << src << " in " << BuilderM.GetInsertBlock()->getName() << "\n";
   if (auto origInst = isOriginal(inst))
     if (auto li = dyn_cast<LoadInst>(inst)) {
 #if LLVM_VERSION_MAJOR >= 12

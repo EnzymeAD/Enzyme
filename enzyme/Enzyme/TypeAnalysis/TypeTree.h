@@ -262,10 +262,10 @@ public:
       return changed;
     }
 
-    std::vector<std::pair<int,std::set<std::vector<int>>>> best;
+    std::vector<std::pair<int, std::set<std::vector<int>>>> best;
     for (const auto &pair : mapping) {
-      size_t i=0;
-      for(int val : pair.first) {
+      size_t i = 0;
+      for (int val : pair.first) {
         if (best.size() <= i) {
           best.emplace_back(val, std::set<std::vector<int>>());
         }
@@ -282,14 +282,14 @@ public:
         i++;
       }
     }
-    size_t i=0;
+    size_t i = 0;
     bool keep = false;
     bool considerErase = false;
     for (auto Off : Seq) {
       if (i < best.size()) {
         if (Off < best[i].first) {
           if (best[i].first > 500)
-            for(auto v : best[i].second) {
+            for (auto v : best[i].second) {
               mapping.erase(v);
               changed = true;
             }
@@ -304,7 +304,8 @@ public:
       }
       i++;
     }
-    if (considerErase && !keep) return changed;
+    if (considerErase && !keep)
+      return changed;
     mapping.insert(std::pair<const std::vector<int>, ConcreteType>(Seq, CT));
     return true;
   }
