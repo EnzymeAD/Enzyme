@@ -512,7 +512,7 @@ public:
         if (Fn && Fn->getName() == "__enzyme_float") {
           Fn->addFnAttr(Attribute::ReadNone);
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
-          for(size_t i=0; i<CI->getNumArgOperands(); ++i) {
+          for (size_t i = 0; i < CI->getNumArgOperands(); ++i) {
             if (CI->getArgOperand(i)->getType()->isPointerTy()) {
               CI->addParamAttr(i, Attribute::ReadNone);
               CI->addParamAttr(i, Attribute::NoCapture);
@@ -522,7 +522,7 @@ public:
         if (Fn && Fn->getName() == "__enzyme_integer") {
           Fn->addFnAttr(Attribute::ReadNone);
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
-          for(size_t i=0; i<CI->getNumArgOperands(); ++i) {
+          for (size_t i = 0; i < CI->getNumArgOperands(); ++i) {
             if (CI->getArgOperand(i)->getType()->isPointerTy()) {
               CI->addParamAttr(i, Attribute::ReadNone);
               CI->addParamAttr(i, Attribute::NoCapture);
@@ -532,7 +532,7 @@ public:
         if (Fn && Fn->getName() == "__enzyme_double") {
           Fn->addFnAttr(Attribute::ReadNone);
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
-          for(size_t i=0; i<CI->getNumArgOperands(); ++i) {
+          for (size_t i = 0; i < CI->getNumArgOperands(); ++i) {
             if (CI->getArgOperand(i)->getType()->isPointerTy()) {
               CI->addParamAttr(i, Attribute::ReadNone);
               CI->addParamAttr(i, Attribute::NoCapture);
@@ -542,67 +542,83 @@ public:
         if (Fn && Fn->getName() == "__enzyme_pointer") {
           Fn->addFnAttr(Attribute::ReadNone);
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
-          for(size_t i=0; i<CI->getNumArgOperands(); ++i) {
+          for (size_t i = 0; i < CI->getNumArgOperands(); ++i) {
             if (CI->getArgOperand(i)->getType()->isPointerTy()) {
               CI->addParamAttr(i, Attribute::ReadNone);
               CI->addParamAttr(i, Attribute::NoCapture);
             }
           }
         }
-        if (Fn && (Fn->getName() == "__fd_sincos_1" || Fn->getName() == "__fd_cos_1" || Fn->getName() == "__mth_i_ipowi")) {
+        if (Fn && (Fn->getName() == "__fd_sincos_1" ||
+                   Fn->getName() == "__fd_cos_1" ||
+                   Fn->getName() == "__mth_i_ipowi")) {
           Fn->addFnAttr(Attribute::ReadNone);
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
         }
-        if (Fn && (Fn->getName() == "f90io_fmtw_end" || Fn->getName() == "f90io_unf_end")) {
+        if (Fn && (Fn->getName() == "f90io_fmtw_end" ||
+                   Fn->getName() == "f90io_unf_end")) {
           Fn->addFnAttr(Attribute::InaccessibleMemOnly);
-          CI->addAttribute(AttributeList::FunctionIndex, Attribute::InaccessibleMemOnly);
+          CI->addAttribute(AttributeList::FunctionIndex,
+                           Attribute::InaccessibleMemOnly);
         }
-        if (Fn && (Fn->getName() == "f90_pausea" || Fn->getName() == "ftnio_fmt_write64" || Fn->getName() == "f90io_fmt_write64_aa" || Fn->getName() == "f90io_fmt_writea" || Fn->getName() == "f90io_unf_writea")) {
+        if (Fn && (Fn->getName() == "f90_pausea" ||
+                   Fn->getName() == "ftnio_fmt_write64" ||
+                   Fn->getName() == "f90io_fmt_write64_aa" ||
+                   Fn->getName() == "f90io_fmt_writea" ||
+                   Fn->getName() == "f90io_unf_writea")) {
           Fn->addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
-          CI->addAttribute(AttributeList::FunctionIndex, Attribute::InaccessibleMemOrArgMemOnly);
-          for(size_t i=0; i<CI->getNumArgOperands(); ++i) {
+          CI->addAttribute(AttributeList::FunctionIndex,
+                           Attribute::InaccessibleMemOrArgMemOnly);
+          for (size_t i = 0; i < CI->getNumArgOperands(); ++i) {
             if (CI->getArgOperand(i)->getType()->isPointerTy()) {
               CI->addParamAttr(i, Attribute::ReadOnly);
               CI->addParamAttr(i, Attribute::NoCapture);
             }
           }
         }
-        if (Fn && (Fn->getName() == "f90io_sc_d_fmt_write" || Fn->getName() == "f90io_sc_i_fmt_write")) {
+        if (Fn && (Fn->getName() == "f90io_sc_d_fmt_write" ||
+                   Fn->getName() == "f90io_sc_i_fmt_write")) {
           Fn->addFnAttr(Attribute::InaccessibleMemOnly);
-          CI->addAttribute(AttributeList::FunctionIndex, Attribute::InaccessibleMemOnly);
+          CI->addAttribute(AttributeList::FunctionIndex,
+                           Attribute::InaccessibleMemOnly);
         }
 
         if (Fn && (Fn->getName() == "f90io_open2003a")) {
           Fn->addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
-          CI->addAttribute(AttributeList::FunctionIndex, Attribute::InaccessibleMemOrArgMemOnly);
-          for(size_t i : {0, 1, 2, 3, 4, 5, 6, 7, /*8, */ 9, 10, 11, 12, 13}) {
-            if (i < CI->getNumArgOperands() && CI->getArgOperand(i)->getType()->isPointerTy()) {
+          CI->addAttribute(AttributeList::FunctionIndex,
+                           Attribute::InaccessibleMemOrArgMemOnly);
+          for (size_t i : {0, 1, 2, 3, 4, 5, 6, 7, /*8, */ 9, 10, 11, 12, 13}) {
+            if (i < CI->getNumArgOperands() &&
+                CI->getArgOperand(i)->getType()->isPointerTy()) {
               CI->addParamAttr(i, Attribute::ReadOnly);
             }
           }
 
           // todo more
-          for(size_t i : {0, 1}) {
-            if (i < CI->getNumArgOperands() && CI->getArgOperand(i)->getType()->isPointerTy()) {
+          for (size_t i : {0, 1}) {
+            if (i < CI->getNumArgOperands() &&
+                CI->getArgOperand(i)->getType()->isPointerTy()) {
               CI->addParamAttr(i, Attribute::NoCapture);
             }
           }
         }
 
-
         if (Fn && (Fn->getName() == "f90io_fmtw_inita")) {
           Fn->addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
-          CI->addAttribute(AttributeList::FunctionIndex, Attribute::InaccessibleMemOrArgMemOnly);
+          CI->addAttribute(AttributeList::FunctionIndex,
+                           Attribute::InaccessibleMemOrArgMemOnly);
           // todo more
-          for(size_t i : {0, 2}) {
-            if (i < CI->getNumArgOperands() && CI->getArgOperand(i)->getType()->isPointerTy()) {
+          for (size_t i : {0, 2}) {
+            if (i < CI->getNumArgOperands() &&
+                CI->getArgOperand(i)->getType()->isPointerTy()) {
               CI->addParamAttr(i, Attribute::ReadOnly);
             }
           }
 
           // todo more
-          for(size_t i : {0, 2}) {
-            if (i < CI->getNumArgOperands() && CI->getArgOperand(i)->getType()->isPointerTy()) {
+          for (size_t i : {0, 2}) {
+            if (i < CI->getNumArgOperands() &&
+                CI->getArgOperand(i)->getType()->isPointerTy()) {
               CI->addParamAttr(i, Attribute::NoCapture);
             }
           }
@@ -610,17 +626,20 @@ public:
 
         if (Fn && (Fn->getName() == "f90io_unf_init")) {
           Fn->addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
-          CI->addAttribute(AttributeList::FunctionIndex, Attribute::InaccessibleMemOrArgMemOnly);
+          CI->addAttribute(AttributeList::FunctionIndex,
+                           Attribute::InaccessibleMemOrArgMemOnly);
           // todo more
-          for(size_t i : {0, 1, 2, 3}) {
-            if (i < CI->getNumArgOperands() && CI->getArgOperand(i)->getType()->isPointerTy()) {
+          for (size_t i : {0, 1, 2, 3}) {
+            if (i < CI->getNumArgOperands() &&
+                CI->getArgOperand(i)->getType()->isPointerTy()) {
               CI->addParamAttr(i, Attribute::ReadOnly);
             }
           }
 
           // todo more
-          for(size_t i : {0, 1, 2, 3}) {
-            if (i < CI->getNumArgOperands() && CI->getArgOperand(i)->getType()->isPointerTy()) {
+          for (size_t i : {0, 1, 2, 3}) {
+            if (i < CI->getNumArgOperands() &&
+                CI->getArgOperand(i)->getType()->isPointerTy()) {
               CI->addParamAttr(i, Attribute::NoCapture);
             }
           }
@@ -628,22 +647,24 @@ public:
 
         if (Fn && (Fn->getName() == "f90io_src_info03a")) {
           Fn->addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
-          CI->addAttribute(AttributeList::FunctionIndex, Attribute::InaccessibleMemOrArgMemOnly);
+          CI->addAttribute(AttributeList::FunctionIndex,
+                           Attribute::InaccessibleMemOrArgMemOnly);
           // todo more
-          for(size_t i : {0}) {
-            if (i < CI->getNumArgOperands() && CI->getArgOperand(i)->getType()->isPointerTy()) {
+          for (size_t i : {0}) {
+            if (i < CI->getNumArgOperands() &&
+                CI->getArgOperand(i)->getType()->isPointerTy()) {
               CI->addParamAttr(i, Attribute::ReadOnly);
             }
           }
 
           // todo more
-          for(size_t i : {0}) {
-            if (i < CI->getNumArgOperands() && CI->getArgOperand(i)->getType()->isPointerTy()) {
+          for (size_t i : {0}) {
+            if (i < CI->getNumArgOperands() &&
+                CI->getArgOperand(i)->getType()->isPointerTy()) {
               CI->addParamAttr(i, Attribute::NoCapture);
             }
           }
         }
-        
 
         if (Fn && Fn->getName() == "__enzyme_float") {
           Fn->addFnAttr(Attribute::ReadNone);

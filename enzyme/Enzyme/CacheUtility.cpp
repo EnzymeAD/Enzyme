@@ -38,9 +38,10 @@ llvm::cl::opt<bool>
     EnzymePrintPerf("enzyme-print-perf", cl::init(false), cl::Hidden,
                     cl::desc("Enable Enzyme to print performance info"));
 
-llvm::cl::opt<bool>
-    EfficientMaxCache("enzyme-max-cache", cl::init(false), cl::Hidden,
-                       cl::desc("Avoid reallocs when possible by potentially overallocating cache"));
+llvm::cl::opt<bool> EfficientMaxCache(
+    "enzyme-max-cache", cl::init(false), cl::Hidden,
+    cl::desc(
+        "Avoid reallocs when possible by potentially overallocating cache"));
 
 CacheUtility::~CacheUtility() {}
 
@@ -509,15 +510,16 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext) {
       ScalarEvolution::ExitLimit EL =
           SE.computeExitLimit(L, ExitingBlock, /*AllowPredicates*/ true);
 
-
       bool seenHeaders = false;
-      SmallPtrSet<BasicBlock*, 4> Seen;
-      std::deque<BasicBlock*> Todo = { ExitingBlock };
+      SmallPtrSet<BasicBlock *, 4> Seen;
+      std::deque<BasicBlock *> Todo = {ExitingBlock};
       while (Todo.size()) {
         auto cur = Todo.front();
         Todo.pop_front();
-        if (Seen.count(cur)) continue;
-        if (!L->contains(cur)) continue;
+        if (Seen.count(cur))
+          continue;
+        if (!L->contains(cur))
+          continue;
         if (cur == loopContexts[L].header) {
           seenHeaders = true;
           break;
@@ -526,30 +528,38 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext) {
           Todo.push_back(S);
         }
       }
-      //llvm::errs() << " ENT: " << *EL.ExactNotTaken << " ML: " << *EL.MaxNotTaken << "exiting:" << ExitingBlock->getName() << " his: " << seenHeaders << "\n";
+      // llvm::errs() << " ENT: " << *EL.ExactNotTaken << " ML: " <<
+      // *EL.MaxNotTaken << "exiting:" << ExitingBlock->getName() << " his: " <<
+      // seenHeaders << "\n";
       if (seenHeaders) {
-        if (MaxIterations == nullptr || MaxIterations == SE.getCouldNotCompute()) {
+        if (MaxIterations == nullptr ||
+            MaxIterations == SE.getCouldNotCompute()) {
           MaxIterations = EL.ExactNotTaken;
-           // llvm::errs() << " SMI " << *MaxIterations << " elm: " << *EL.ExactNotTaken << "\n";
+          // llvm::errs() << " SMI " << *MaxIterations << " elm: " <<
+          // *EL.ExactNotTaken << "\n";
         }
         if (MaxIterations != SE.getCouldNotCompute()) {
-          // a block can either branch to exit, the header, or another piece of the loop
-          // if it branches either to an exit or another part of the loop, the number
-          // of iterations is therefore bounded by the successors it exits into
-          
+          // a block can either branch to exit, the header, or another piece of
+          // the loop if it branches either to an exit or another part of the
+          // loop, the number of iterations is therefore bounded by the
+          // successors it exits into
+
           if (EL.ExactNotTaken != SE.getCouldNotCompute()) {
-            //llvm::errs() << " @@@ " << *MaxIterations << " elm: " << *EL.ExactNotTaken << "\n";
-            MaxIterations = SE.getUMaxFromMismatchedTypes(MaxIterations,
-                                                          EL.ExactNotTaken);
+            // llvm::errs() << " @@@ " << *MaxIterations << " elm: " <<
+            // *EL.ExactNotTaken << "\n";
+            MaxIterations =
+                SE.getUMaxFromMismatchedTypes(MaxIterations, EL.ExactNotTaken);
           }
         }
       }
 
-      if (MayExitMaxBECount == nullptr || EL.ExactNotTaken == SE.getCouldNotCompute())
+      if (MayExitMaxBECount == nullptr ||
+          EL.ExactNotTaken == SE.getCouldNotCompute())
         MayExitMaxBECount = EL.ExactNotTaken;
 
       if (EL.ExactNotTaken != MayExitMaxBECount) {
-        //llvm::errs() << " ^^^ " << *MayExitMaxBECount << " ent: " << *EL.ExactNotTaken << "\n";
+        // llvm::errs() << " ^^^ " << *MayExitMaxBECount << " ent: " <<
+        // *EL.ExactNotTaken << "\n";
         MayExitMaxBECount = SE.getCouldNotCompute();
       }
     }
@@ -560,7 +570,8 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext) {
     Limit = MayExitMaxBECount;
   }
   assert(Limit);
-  //llvm::errs() << " lim: " << *Limit << " maxiters: " << *MaxIterations << " header:" << loopContexts[L].header->getName() << "\n";
+  // llvm::errs() << " lim: " << *Limit << " maxiters: " << *MaxIterations << "
+  // header:" << loopContexts[L].header->getName() << "\n";
   Value *LimitVar = nullptr;
 
   if (SE.getCouldNotCompute() != Limit) {
@@ -612,9 +623,11 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext) {
     loopContexts[L].maxLimit = nullptr;
   }
   loopContexts[L].trueLimit = LimitVar;
-  if (EfficientMaxCache && loopContexts[L].dynamic && SE.getCouldNotCompute() != MaxIterations) {
+  if (EfficientMaxCache && loopContexts[L].dynamic &&
+      SE.getCouldNotCompute() != MaxIterations) {
     if (MaxIterations->getType() != CanonicalIV->getType())
-      MaxIterations = SE.getZeroExtendExpr(MaxIterations, CanonicalIV->getType());
+      MaxIterations =
+          SE.getZeroExtendExpr(MaxIterations, CanonicalIV->getType());
 
 #if LLVM_VERSION_MAJOR >= 12
     SCEVExpander Exp(SE, BB->getParent()->getParent()->getDataLayout(),
@@ -624,8 +637,9 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext) {
                            "enzyme");
 #endif
 
-    loopContexts[L].maxLimit = Exp.expandCodeFor(MaxIterations, CanonicalIV->getType(),
-                                 loopContexts[L].preheader->getTerminator());
+    loopContexts[L].maxLimit =
+        Exp.expandCodeFor(MaxIterations, CanonicalIV->getType(),
+                          loopContexts[L].preheader->getTerminator());
   }
 
   loopContext = loopContexts.find(L)->second;

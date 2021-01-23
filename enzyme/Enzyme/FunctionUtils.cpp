@@ -106,8 +106,9 @@ static cl::opt<bool>
 static cl::opt<bool> EnzymeInline("enzyme-inline", cl::init(false), cl::Hidden,
                                   cl::desc("Force inlining of autodiff"));
 
-static cl::opt<bool> EnzymeNoAlias("enzyme-noalias", cl::init(false), cl::Hidden,
-                                  cl::desc("Force noalias of autodiff"));
+static cl::opt<bool> EnzymeNoAlias("enzyme-noalias", cl::init(false),
+                                   cl::Hidden,
+                                   cl::desc("Force noalias of autodiff"));
 
 static cl::opt<bool> EnzymeLowerGlobals(
     "enzyme-lower-globals", cl::init(false), cl::Hidden,
@@ -705,11 +706,11 @@ Function *preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI,
                     Returns, "", nullptr);
   NewF->setAttributes(F->getAttributes());
   if (EnzymeNoAlias)
-  for (auto j = NewF->arg_begin(); j != NewF->arg_end(); j++) {
-    if (j->getType()->isPointerTy()) {
-      j->addAttr(Attribute::NoAlias);
+    for (auto j = NewF->arg_begin(); j != NewF->arg_end(); j++) {
+      if (j->getType()->isPointerTy()) {
+        j->addAttr(Attribute::NoAlias);
+      }
     }
-  }
 
   if (EnzymePreopt) {
     if (EnzymeInline) {
@@ -808,13 +809,6 @@ Function *preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI,
                     F->getName() == "__fd_sincos_1")) {
             continue;
           }
-
-          if (F && (F->getName().startswith("f90io") ||
-                    F->getName() == "ftnio_fmt_write64" ||
-                    F->getName() == "__mth_i_ipowi" ||
-                    F->getName() == "f90_pausea")) {
-            continue;
-          }
           if (F && F->getName() == "__enzyme_integer") {
             continue;
           }
@@ -827,11 +821,17 @@ Function *preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI,
           if (F && F->getName() == "__enzyme_double") {
             continue;
           }
-
+          if (F && (F->getName().startswith("f90io") ||
+                    F->getName() == "ftnio_fmt_write64" ||
+                    F->getName() == "__mth_i_ipowi" ||
+                    F->getName() == "f90_pausea")) {
+            continue;
+          }
           if (llvm::isModOrRefSet(AA2.getModRefInfo(CI, Loc))) {
             llvm::errs() << " failed to inline global: " << g << " due to "
                          << *CI << "\n";
             activeCall = true;
+            break;
           }
         }
 

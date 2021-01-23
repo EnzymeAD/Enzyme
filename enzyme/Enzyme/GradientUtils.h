@@ -399,9 +399,10 @@ private:
   std::map<std::pair<Value *, BasicBlock *>, Value *> lookup_cache;
 
 public:
-  bool legalRecompute(const Value *val,
-                      const ValueToValueMapTy &available, IRBuilder<> *BuilderM) const;
-  bool shouldRecompute(const Value *val, const ValueToValueMapTy &available, IRBuilder<> *BuilderM);
+  bool legalRecompute(const Value *val, const ValueToValueMapTy &available,
+                      IRBuilder<> *BuilderM) const;
+  bool shouldRecompute(const Value *val, const ValueToValueMapTy &available,
+                       IRBuilder<> *BuilderM);
 
   ValueToValueMapTy unwrappedLoads;
   void replaceAWithB(Value *A, Value *B, bool storeInCache = false) override {
@@ -411,7 +412,8 @@ public:
       }
     }
     for (auto pair : unwrappedLoads) {
-      if (pair->second == A) pair->second = B;
+      if (pair->second == A)
+        pair->second = B;
     }
     if (unwrappedLoads.find(A) != unwrappedLoads.end()) {
       unwrappedLoads[B] = unwrappedLoads[A];
@@ -951,8 +953,10 @@ public:
         builderLoop = builderLoop->getParentLoop();
       }
 
-      //llvm::errs() << " fb: " << forwardBlock->getName() << " fblf: " << LI.getLoopFor(forwardBlock)->getHeader()->getName()
-      //  << " lch: " << lc.header->getName() << " icl=" << isChildLoop << " inst: " << *inst << "\n";
+      // llvm::errs() << " fb: " << forwardBlock->getName() << " fblf: " <<
+      // LI.getLoopFor(forwardBlock)->getHeader()->getName()
+      //  << " lch: " << lc.header->getName() << " icl=" << isChildLoop << "
+      //  inst: " << *inst << "\n";
 
       if (!isChildLoop) {
         // llvm::errs() << "manually performing lcssa for instruction" << *inst
@@ -1027,8 +1031,8 @@ public:
 
 class DiffeGradientUtils : public GradientUtils {
   DiffeGradientUtils(Function *newFunc_, Function *oldFunc_,
-                     TargetLibraryInfo &TLI, TypeAnalysis &TA, AAResults &OrigAA,
-                     ValueToValueMapTy &invertedPointers_,
+                     TargetLibraryInfo &TLI, TypeAnalysis &TA,
+                     AAResults &OrigAA, ValueToValueMapTy &invertedPointers_,
                      const SmallPtrSetImpl<Value *> &constantvalues_,
                      const SmallPtrSetImpl<Value *> &returnvals_,
                      bool ActiveReturn, ValueToValueMapTy &origToNew_,
