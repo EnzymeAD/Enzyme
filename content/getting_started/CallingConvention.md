@@ -137,7 +137,7 @@ void main() {
   double loss;
   double d_loss = 1.0;
   __enzyme_autodiff(neuralNet,
-                    enzyme_dupnoneed, loss, d_loss,
+                    enzyme_dupnoneed, &loss, &d_loss,
                     enzyme_dup,       W, d_W,
                     enzyme_dup,       b, d_b,
                     enzyme_const,     input);
