@@ -1334,7 +1334,8 @@ Function *CloneFunctionWithReturns(
   unsigned ii = 0, jj = 0;
   for (auto i = F->arg_begin(), j = NewF->arg_begin(); i != F->arg_end();) {
     if (constant_args[ii] == DIFFE_TYPE::CONSTANT) {
-      constants.insert(i);
+      if (!i->hasByValAttr())
+        constants.insert(i);
       if (printconst)
         llvm::errs() << "in new function " << NewF->getName()
                      << " constant arg " << *j << "\n";
