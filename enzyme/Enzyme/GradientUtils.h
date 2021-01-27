@@ -63,7 +63,7 @@
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
 #include "llvm/Support/ErrorHandling.h"
-
+#include "llvm/IR/DebugInfoMetadata.h"
 #include "ActivityAnalysis.h"
 #include "CacheUtility.h"
 #include "EnzymeLogic.h"
@@ -1347,7 +1347,7 @@ public:
     return addedSelect;
   }
 
-  virtual void
+  void
   freeCache(llvm::BasicBlock *forwardPreheader, const SubLimitType &sublimits,
             int i, llvm::AllocaInst *alloc, llvm::ConstantInt *byteSizeOfType,
             llvm::Value *storeInto, llvm::MDNode *InvariantMD) override {
@@ -1394,6 +1394,8 @@ public:
         tbuild.CreatePointerCast(forfree,
                                  Type::getInt8PtrTy(newFunc->getContext())),
         tbuild.GetInsertBlock()));
+    if (newFunc->getSubprogram())
+    ci->setDebugLoc(DILocation::get(newFunc->getContext(), 0, 0, newFunc->getSubprogram(), 0));
     ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
     if (ci->getParent() == nullptr) {
       tbuild.Insert(ci);

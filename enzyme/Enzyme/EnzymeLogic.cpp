@@ -190,14 +190,11 @@ bool is_load_uncacheable(
 #endif
           if (castinst->isCast()) {
             if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-              if (isAllocationFunction(*fn, TLI) ||
-                  isDeallocationFunction(*fn, TLI)) {
-                called = fn;
-              }
+              called = fn;
             }
           }
         }
-        if (called && isCertainMallocOrFree(called)) {
+        if (called && (isCertainMallocOrFree(called) || isMemFreeLibMFunction(called->getName()))) {
           return false;
         }
       }
@@ -209,8 +206,8 @@ bool is_load_uncacheable(
       if (llvm::isModSet(AA.getModRefInfo(inst2, MemoryLocation::get(&li)))) {
         can_modref = true;
         // Early exit
-        // llvm::errs() << " must cache load " << li << " due to " << *inst2 <<
-        // "\n";
+        EmitWarning("Uncacheable", li.getDebugLoc(), gutils->oldFunc, li.getParent(),
+                    "Must cache load ", li, " due to ",  *inst2);
         return true;
       }
       return false;
