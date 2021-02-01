@@ -462,6 +462,7 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimitFromICmp(
   LHS = getSCEVAtScope(LHS, L);
   RHS = getSCEVAtScope(RHS, L);
 
+
   // At this point, we would like to compute how many iterations of the
   // loop the predicate will return true for these inputs.
   if (isLoopInvariant(LHS, L) && !isLoopInvariant(RHS, L)) {
@@ -504,21 +505,41 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimitFromICmp(
     break;
   }
   case ICmpInst::ICMP_SLT:
-  case ICmpInst::ICMP_ULT: { // while (X < Y)
+  case ICmpInst::ICMP_ULT:
+  case ICmpInst::ICMP_SLE: 
+  case ICmpInst::ICMP_ULE:  { // while (X < Y)
     bool IsSigned = Pred == ICmpInst::ICMP_SLT;
     ExitLimit EL =
         howManyLessThans(LHS, RHS, L, IsSigned, ControlsExit, AllowPredicates);
-    if (EL.hasAnyInfo())
+    if (EL.hasAnyInfo()) {
+      if (Pred == ICmpInst::ICMP_SLE || Pred == ICmpInst::ICMP_ULE) {
+        EL.MaxOrZero = false;
+        SmallVector<const SCEV*, 2> sv = {EL.ExactNotTaken, getConstant(ConstantInt::get(cast<IntegerType>(EL.ExactNotTaken->getType()), 1))};
+        EL.ExactNotTaken = getAddExpr(sv);
+        SmallVector<const SCEV*, 2> sv2 = {EL.MaxNotTaken, getConstant(ConstantInt::get(cast<IntegerType>(EL.MaxNotTaken->getType()), 1))};
+        EL.MaxNotTaken = getAddExpr(sv2);
+      }
       return EL;
+    }
     break;
   }
   case ICmpInst::ICMP_SGT:
-  case ICmpInst::ICMP_UGT: { // while (X > Y)
+  case ICmpInst::ICMP_UGT:
+  case ICmpInst::ICMP_SGE: 
+  case ICmpInst::ICMP_UGE:  { // while (X > Y)
     bool IsSigned = Pred == ICmpInst::ICMP_SGT;
     ExitLimit EL = howManyGreaterThans(LHS, RHS, L, IsSigned, ControlsExit,
                                        AllowPredicates);
-    if (EL.hasAnyInfo())
+    if (EL.hasAnyInfo()) {
+      if (Pred == ICmpInst::ICMP_SGE || Pred == ICmpInst::ICMP_UGE) {
+        EL.MaxOrZero = false;
+        SmallVector<const SCEV*, 2> sv = {EL.ExactNotTaken, getConstant(ConstantInt::get(cast<IntegerType>(EL.ExactNotTaken->getType()), 1))};
+        EL.ExactNotTaken = getAddExpr(sv);
+        SmallVector<const SCEV*, 2> sv2 = {EL.MaxNotTaken, getConstant(ConstantInt::get(cast<IntegerType>(EL.MaxNotTaken->getType()), 1))};
+        EL.MaxNotTaken = getAddExpr(sv2);
+      }
       return EL;
+    }
     break;
   }
   default:
@@ -639,6 +660,7 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(
     bool ControlsExit, bool AllowPredicates) {
   SmallPtrSet<const SCEVPredicate *, 4> Predicates;
 
+  llvm::errs() << "LHS: " << *LHS << " RHS: " << *RHS <<" IsSigned: " << IsSigned << "\n";
   const SCEVAddRecExpr *IV = dyn_cast<SCEVAddRecExpr>(LHS);
 
   if (!IV && AllowPredicates) {
