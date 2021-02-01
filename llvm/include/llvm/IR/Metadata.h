@@ -673,6 +673,12 @@ struct AAMDNodes {
     Result.NoAlias = Other.NoAlias == NoAlias ? NoAlias : nullptr;
     return Result;
   }
+
+  /// Create a new AAMDNode that describes this AAMDNode after applying a
+  /// constant offset to the start of the pointer
+  AAMDNodes shift(size_t Off) {
+
+  }
 };
 
 // Specialize DenseMapInfo for AAMDNodes.
