@@ -663,7 +663,7 @@ public:
               Value *inc = lookup(lc.incvar, Builder2);
               if (VectorType *VTy =
                       dyn_cast<VectorType>(SI.getOperand(0)->getType())) {
-                #if LLVM_VERSION_MAJOR >= 11
+                #if LLVM_VERSION_MAJOR >= 12
                 inc = Builder2.CreateVectorSplat(VTy->getElementCount(), inc);
                 #else
                 inc = Builder2.CreateVectorSplat(VTy->getNumElements(), inc);
@@ -773,10 +773,14 @@ public:
     getReverseBuilder(Builder2);
 
     auto loaded = diffe(&SVI, Builder2);
-    #if LLVM_VERSION_MAJOR >= 11
-    auto count = cast<VectorType>(SVI.getOperand(0)->getType())->getElementCount();
+    #if LLVM_VERSION_MAJOR >= 13
+    ElementCount count = cast<VectorType>(SVI.getOperand(0)->getType())->getElementCount();
     assert(!count.isScalable());
-    size_t l1 = count.getKnownMinValue();
+    size_t l1 = count.getValue();
+    #elif LLVM_VERSION_MAJOR >= 11
+    ElementCount count = cast<VectorType>(SVI.getOperand(0)->getType())->getElementCount();
+    assert(!count.Scalable);
+    size_t l1 = count.Min;
     #else
     size_t l1 =
         cast<VectorType>(SVI.getOperand(0)->getType())->getNumElements();

@@ -233,7 +233,7 @@ public:
     lbuilder.SetInsertPoint(lc.incvar->getNextNode());
     Value *red = lc.incvar;
     if (VectorType *VTy = dyn_cast<VectorType>(val->getType())) {
-      #if LLVM_VERSION_MAJOR >= 11
+      #if LLVM_VERSION_MAJOR >= 12
       red = lbuilder.CreateVectorSplat(VTy->getElementCount(), red);
       #else
       red = lbuilder.CreateVectorSplat(VTy->getNumElements(), red);
