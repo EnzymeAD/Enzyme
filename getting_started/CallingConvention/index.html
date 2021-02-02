@@ -72,7 +72,7 @@ Enzyme AD</a></div></h1><p class=description>Enzyme Automatic Differentiation Fr
   <span class=kt>double</span> <span class=n>loss</span><span class=p>;</span>
   <span class=kt>double</span> <span class=n>d_loss</span> <span class=o>=</span> <span class=mf>1.0</span><span class=p>;</span>
   <span class=n>__enzyme_autodiff</span><span class=p>(</span><span class=n>neuralNet</span><span class=p>,</span>
-                    <span class=n>enzyme_dupnoneed</span><span class=p>,</span> <span class=n>loss</span><span class=p>,</span> <span class=n>d_loss</span><span class=p>,</span>
+                    <span class=n>enzyme_dupnoneed</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>loss</span><span class=p>,</span> <span class=o>&amp;</span><span class=n>d_loss</span><span class=p>,</span>
                     <span class=n>enzyme_dup</span><span class=p>,</span>       <span class=n>W</span><span class=p>,</span> <span class=n>d_W</span><span class=p>,</span>
                     <span class=n>enzyme_dup</span><span class=p>,</span>       <span class=n>b</span><span class=p>,</span> <span class=n>d_b</span><span class=p>,</span>
                     <span class=n>enzyme_const</span><span class=p>,</span>     <span class=n>input</span><span class=p>);</span>
