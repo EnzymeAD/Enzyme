@@ -98,4 +98,4 @@ include_directories("${CMAKE_CURRENT_BINARY_DIR}/include")
 
 add_subdirectory(Enzyme)
 add_subdirectory(test)
-add_subdirectory(benchmarks)
+#add_subdirectory(benchmarks)
