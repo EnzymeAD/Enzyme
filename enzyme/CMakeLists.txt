@@ -96,4 +96,9 @@ include_directories("${CMAKE_CURRENT_BINARY_DIR}/include")
 
 add_subdirectory(Enzyme)
 add_subdirectory(test)
-#add_subdirectory(benchmarks)
+
+# The benchmarks data are not in git-exported source archives to minimize size.
+# Only add the benchmarks if the directory exists.
+if (EXISTS benchmarks)
+    add_subdirectory(benchmarks)
+endif()
