@@ -83,6 +83,7 @@ void EnzymeFreeTypeTree(CTypeTreeRef CTT);
 uint8_t EnzymeSetTypeTree(CTypeTreeRef dst, CTypeTreeRef src);
 uint8_t EnzymeMergeTypeTree(CTypeTreeRef dst, CTypeTreeRef src);
 void EnzymeTypeTreeOnlyEq(CTypeTreeRef dst, int64_t x);
+void EnzymeTypeTreeData0Eq(CTypeTreeRef dst);
 void EnzymeTypeTreeShiftIndiciesEq(CTypeTreeRef dst, const char *datalayout,
                                    int64_t offset, int64_t maxSize,
                                    uint64_t addOffset);
@@ -143,6 +144,14 @@ void EnzymeExtractReturnInfo(EnzymeAugmentedReturnPtr ret, int64_t *data,
 LLVMValueRef
 EnzymeExtractFunctionFromAugmentation(EnzymeAugmentedReturnPtr ret);
 LLVMTypeRef EnzymeExtractTapeTypeFromAugmentation(EnzymeAugmentedReturnPtr ret);
+
+typedef LLVMValueRef (*CustomShadowAlloc)(LLVMBuilderRef, LLVMValueRef,
+                                          size_t /*numArgs*/, LLVMValueRef *);
+typedef LLVMValueRef (*CustomShadowFree)(LLVMBuilderRef, LLVMValueRef,
+                                         LLVMValueRef);
+
+void EnzymeRegisterAllocationHandler(char *Name, CustomShadowAlloc AHandle,
+                                     CustomShadowFree FHandle);
 
 #ifdef __cplusplus
 }

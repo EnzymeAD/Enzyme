@@ -23,6 +23,7 @@
 //===----------------------------------------------------------------------===//
 #include "CApi.h"
 #include "EnzymeLogic.h"
+#include "LibraryFuncs.h"
 #include "SCEV/TargetLibraryInfo.h"
 
 #include "llvm/ADT/Triple.h"
@@ -184,6 +185,23 @@ void FreeTypeAnalysis(EnzymeTypeAnalysisRef TAR) {
   delete TA;
 }
 
+void EnzymeRegisterAllocationHandler(char *Name, CustomShadowAlloc AHandle,
+                                     CustomShadowFree FHandle) {
+  shadowHandlers[std::string(Name)] =
+      [=](IRBuilder<> &B, CallInst *CI,
+          ArrayRef<Value *> Args) -> llvm::Value * {
+    SmallVector<LLVMValueRef, 3> refs;
+    for (auto a : Args)
+      refs.push_back(wrap(a));
+    return unwrap(AHandle(wrap(&B), wrap(CI), Args.size(), refs.data()));
+  };
+  shadowErasers[std::string(Name)] = [=](IRBuilder<> &B, Value *ToFree,
+                                         Function *AllocF) -> llvm::CallInst * {
+    return cast_or_null<CallInst>(
+        unwrap(FHandle(wrap(&B), wrap(ToFree), wrap(AllocF))));
+  };
+}
+
 LLVMValueRef EnzymeCreatePrimalAndGradient(
     LLVMValueRef todiff, CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
     size_t constant_args_size, EnzymeTypeAnalysisRef TA,
@@ -325,6 +343,9 @@ uint8_t EnzymeMergeTypeTree(CTypeTreeRef dst, CTypeTreeRef src) {
 
 void EnzymeTypeTreeOnlyEq(CTypeTreeRef CTT, int64_t x) {
   *(TypeTree *)CTT = ((TypeTree *)CTT)->Only(x);
+}
+void EnzymeTypeTreeData0Eq(CTypeTreeRef CTT) {
+  *(TypeTree *)CTT = ((TypeTree *)CTT)->Data0();
 }
 void EnzymeTypeTreeShiftIndiciesEq(CTypeTreeRef CTT, const char *datalayout,
                                    int64_t offset, int64_t maxSize,
