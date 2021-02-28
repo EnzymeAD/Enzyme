@@ -194,6 +194,56 @@ public:
     return B.CreateLoad(alloc);
   }
 
+  // To be double-checked against the functionality needed and the respective implementation in Adjoint-MPI
+  llvm::Value *MPI_COMM_RANK(llvm::Value *COMM, IRBuilder<> &B) {
+    Type *intType = Type::getIntNTy(COMM->getContext(), sizeof(int) * 8);
+    Type *pargs[] = {Type::getInt8PtrTy(COMM->getContext()),
+                     PointerType::getUnqual(intType)};
+    auto FT = FunctionType::get(intType, pargs, false);
+    auto alloc = IRBuilder<>(gutils->inversionAllocs).CreateAlloca(intType);
+    llvm::Value *args[] = {COMM, alloc};
+    if (DT->getType() != pargs[0])
+      args[0] = B.CreateBitCast(args[0], pargs[0]);
+    AttributeList AL;
+    AL = AL.addParamAttribute(DT->getContext(), 0,
+                              Attribute::AttrKind::ReadOnly);
+    AL = AL.addParamAttribute(DT->getContext(), 0,
+                              Attribute::AttrKind::NoCapture);
+    AL =
+        AL.addParamAttribute(DT->getContext(), 0, Attribute::AttrKind::NoAlias);
+    AL =
+        AL.addParamAttribute(DT->getContext(), 0, Attribute::AttrKind::NonNull);
+    AL = AL.addParamAttribute(DT->getContext(), 1,
+                              Attribute::AttrKind::WriteOnly);
+    AL = AL.addParamAttribute(DT->getContext(), 1,
+                              Attribute::AttrKind::NoCapture);
+    AL =
+        AL.addParamAttribute(DT->getContext(), 1, Attribute::AttrKind::NoAlias);
+    AL =
+        AL.addParamAttribute(DT->getContext(), 1, Attribute::AttrKind::NonNull);
+    AL = AL.addAttribute(DT->getContext(), AttributeList::FunctionIndex,
+                         Attribute::AttrKind::ArgMemOnly);
+    AL = AL.addAttribute(DT->getContext(), AttributeList::FunctionIndex,
+                         Attribute::AttrKind::NoUnwind);
+#if LLVM_VERSION_MAJOR >= 9
+    AL = AL.addAttribute(DT->getContext(), AttributeList::FunctionIndex,
+                         Attribute::AttrKind::NoFree);
+#endif
+#if LLVM_VERSION_MAJOR >= 9
+    AL = AL.addAttribute(DT->getContext(), AttributeList::FunctionIndex,
+                         Attribute::AttrKind::NoSync);
+#endif
+#if LLVM_VERSION_MAJOR >= 9
+    AL = AL.addAttribute(DT->getContext(), AttributeList::FunctionIndex,
+                         Attribute::AttrKind::WillReturn);
+#endif
+    B.CreateCall(
+        B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
+            "MPI_Type_size", FT, AL),
+        args);
+    return B.CreateLoad(alloc);
+  }
+
   void visitInstruction(llvm::Instruction &inst) {
     // TODO explicitly handle all instructions rather than using the catch all
     // below
@@ -3380,7 +3430,7 @@ public:
         #endif
 
         Value *shadow = gutils->invertPointerM(call.getOperand(0), Builder2);
-        Value *MAGIC;
+        Value *MAGIC 
         Value *args[] = {
             /*sbuf*/ shadow,
             /*buf*/ NULL,
@@ -3405,48 +3455,6 @@ public:
                                Builder2.CreateZExtOrTrunc(
                                    tysize, Type::getInt64Ty(call.getContext())),
                                "", true, true);
-
-        Value *firstallocation = CallInst::CreateMalloc(
-            Builder2.GetInsertBlock(), len_arg->getType(),
-            cast<PointerType>(shadow->getType())->getElementType(),
-            ConstantInt::get(Type::getInt64Ty(len_arg->getContext()), 1),
-            len_arg, nullptr, "mpirecv_malloccache");
-        if (cast<Instruction>(firstallocation)->getParent() == nullptr) {
-          Builder2.Insert(cast<Instruction>(firstallocation));
-        }
-        args[1] = firstallocation;
-
-        /// todo create function if not declared
-        Builder2.SetInsertPoint(Builder2.GetInsertBlock());
-        auto fcall = Builder2.CreateCall(
-            called->getParent()->getFunction("MPI_Reduce"), args);
-        fcall->setCallingConv(call.getCallingConv());
-
-        DifferentiableMemCopyFloats(call, call.getOperand(0), firstallocation, shadow, len_arg, Builder2);
-
-        auto ci = cast<CallInst>(
-            CallInst::CreateFree(firstallocation, Builder2.GetInsertBlock()));
-        ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
-        if (ci->getParent() == nullptr) {
-          Builder2.Insert(ci);
-        }
-
-        //MPI_Comm_rank(comm,&rank);
-        Value *rank;
-
-        auto newSize = Builder2.CreateSelect(Builder2.CreateICmpEQ(/*root*/args[6], rank), ConstantInt::get(len_arg->getType(), 0), len_arg);
-        auto dst_arg = Builder2.CreateBitCast(shadow, Type::getInt8PtrTy(call.getContext()));
-        Type *tys[] = {dst_arg->getType(), newSize->getType()};
-
-        auto val_arg =
-          ConstantInt::get(Type::getInt8Ty(call.getContext()), 0);
-        auto volatile_arg = ConstantInt::getFalse(call.getContext());
-
-        #if LLVM_VERSION_MAJOR == 6
-        auto align_arg =
-          ConstantInt::get(Type::getInt32Ty(call.getContext()), 1);
-        Value *nargs[] = {dst_arg, val_arg, len_arg, align_arg, volatile_arg};
-        #else
         Value *nargs[] = {dst_arg, val_arg, len_arg, volatile_arg};
         #endif
 

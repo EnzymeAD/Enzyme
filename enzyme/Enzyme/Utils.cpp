@@ -269,3 +269,28 @@ llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
   }
   return F;
 }
+
+llvm::Value *getOrInsertOpFloatSum(llvm::Module &M,
+                                   llvm::Type* OpPtr,
+                                   ConcreteType CT) {
+  std::string name = "__enzyme_mpi_sum" + CT.str();
+  assert(CT.isFloat());
+  auto FT = CT.isFloat();
+  return M.getOrInsertGlobal(name, cast<PointerType>(OpPtr)->getElementType(), [&](GlobalVariable* GV) {
+    std::vector<llvm::Type *> types = {
+                                        PointerType::getUnqual(FT),
+                                        PointerType::getUnqual(FT),
+                                        PointerType::getUnqual(Type::getInt32Ty(M.getContext())),
+                                        OpPtr
+                                        };
+    FunctionType *FT =
+          FunctionType::get(Type::getVoidTy(M.getContext()), types, false);
+
+    #if LLVM_VERSION_MAJOR >= 9
+      Function *F = cast<Function>(M.getOrInsertFunction(name+"_run", FT).getCallee());
+    #else
+      Function *F = cast<Function>(M.getOrInsertFunction(name+"_run", FT));
+    #endif
+    // TODO finish initializing mpi sum https://www.mpich.org/static/docs/v3.2/www3/MPI_Op_create.html
+  });
+}
