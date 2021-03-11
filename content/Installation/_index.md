@@ -5,6 +5,16 @@ draft: false
 weight: 5
 ---
 
+You can install Enzyme using [Homebrew](https://brew.sh), or build it manually from source. To install using Homebrew, run
+
+```
+brew install enzyme
+```
+
+Currently, Homebrew has a pre-built binary (bottle) on macOS, but will build from source on Linux. To request a bottle for Linux, [file an issue](https://github.com/Homebrew/linuxbrew-core/issues) at Homebrew.
+
+The rest of these instructions explain how to build Enzyme from source.
+
 ## Downloading Enzyme
 To start you should download Enzyme's code [Github](https://github.com/wsmoses/Enzyme).
 
