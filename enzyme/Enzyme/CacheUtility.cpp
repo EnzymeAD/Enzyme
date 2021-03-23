@@ -183,6 +183,7 @@ std::pair<PHINode *, Instruction *> InsertNewCanonicalIV(Loop *L, Type *Ty,
 // induction variable
 void RemoveRedundantIVs(BasicBlock *Header, PHINode *CanonicalIV,
                         MustExitScalarEvolution &SE,
+                        std::function<void(Instruction *, Value *)> replacer,
                         std::function<void(Instruction *)> eraser) {
   assert(Header);
   assert(CanonicalIV);
@@ -237,7 +238,7 @@ void RemoveRedundantIVs(BasicBlock *Header, PHINode *CanonicalIV,
         }
       }
 
-      PN->replaceAllUsesWith(NewIV);
+      replacer(PN, NewIV);
       IVsToRemove.push_back(PN);
     }
   }
@@ -424,7 +425,8 @@ void CanonicalizeLatches(const Loop *L, BasicBlock *Header,
   }
 }
 
-bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext) {
+bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
+                              bool ReverseLimit) {
   Loop *L = LI.getLoopFor(BB);
 
   // Not inside a loop
@@ -456,8 +458,10 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext) {
   assert(CanonicalIV);
   loopContexts[L].var = CanonicalIV;
   loopContexts[L].incvar = pair.second;
-  RemoveRedundantIVs(loopContexts[L].header, CanonicalIV, SE,
-                     [&](Instruction *I) { erase(I); });
+  RemoveRedundantIVs(
+      loopContexts[L].header, CanonicalIV, SE,
+      [&](Instruction *I, Value *V) { replaceAWithB(I, V); },
+      [&](Instruction *I) { erase(I); });
   CanonicalizeLatches(L, loopContexts[L].header, loopContexts[L].preheader,
                       CanonicalIV, SE, *this, pair.second,
                       getLatches(L, loopContexts[L].exitBlocks));
@@ -580,6 +584,10 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext) {
                                  loopContexts[L].preheader->getTerminator());
     loopContexts[L].dynamic = false;
     loopContexts[L].maxLimit = LimitVar;
+  } else if (assumeDynamicLoopOfSizeOne(L)) {
+    loopContexts[L].dynamic = false;
+    loopContexts[L].maxLimit = LimitVar =
+        ConstantInt::get(CanonicalIV->getType(), 0);
   } else {
     DebugLoc loc = L->getHeader()->begin()->getDebugLoc();
     for (auto &I : *L->getHeader()) {
@@ -593,9 +601,10 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext) {
                 L->getHeader()->getParent()->getName(), "lim: ", *Limit,
                 " maxlim: ", *MaxIterations);
 
-    LimitVar = createCacheForScope(LimitContext(loopContexts[L].preheader),
-                                   CanonicalIV->getType(), "loopLimit",
-                                   /*shouldfree*/ false);
+    LimitContext lctx(ReverseLimit, ReverseLimit ? loopContexts[L].preheader
+                                                 : &newFunc->getEntryBlock());
+    LimitVar = createCacheForScope(lctx, CanonicalIV->getType(), "loopLimit",
+                                   /*shouldfree*/ true);
 
     for (auto ExitBlock : loopContexts[L].exitBlocks) {
       IRBuilder<> B(&ExitBlock->front());
@@ -609,8 +618,7 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext) {
         }
       }
 
-      storeInstructionInCache(loopContexts[L].preheader, Limit,
-                              cast<AllocaInst>(LimitVar));
+      storeInstructionInCache(lctx, Limit, cast<AllocaInst>(LimitVar));
     }
     loopContexts[L].dynamic = true;
     loopContexts[L].maxLimit = nullptr;
@@ -634,7 +642,6 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext) {
         Exp.expandCodeFor(MaxIterations, CanonicalIV->getType(),
                           loopContexts[L].preheader->getTerminator());
   }
-
   loopContext = loopContexts.find(L)->second;
   return true;
 }
@@ -967,7 +974,7 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
   std::vector<LoopContext> contexts;
   for (BasicBlock *blk = ctx.Block; blk != nullptr;) {
     LoopContext idx;
-    if (!getContext(blk, idx)) {
+    if (!getContext(blk, idx, ctx.ReverseLimit)) {
       break;
     }
     contexts.emplace_back(idx);
@@ -1363,23 +1370,11 @@ Value *CacheUtility::getCachePointer(bool inForwardPass, IRBuilder<> &BuilderM,
   return next;
 }
 
-/// Given an allocation specified by the LimitContext ctx and cache, lookup the
-/// underlying cached value.
-Value *CacheUtility::lookupValueFromCache(bool inForwardPass,
-                                          IRBuilder<> &BuilderM,
-                                          LimitContext ctx, Value *cache,
-                                          bool isi1, Value *extraSize,
-                                          Value *extraOffset) {
-  // Get the underlying cache pointer
-  auto cptr = getCachePointer(inForwardPass, BuilderM, ctx, cache, isi1,
-                              /*storeInInstructionsMap*/ false, extraSize);
-
-  // Optionally apply the additional offset
-  if (extraOffset) {
-    cptr = BuilderM.CreateGEP(cptr, {extraOffset});
-    cast<GetElementPtrInst>(cptr)->setIsInBounds(true);
-  }
-
+/// Perform the final load from the cache, applying requisite invariant
+/// group and alignment
+llvm::Value *CacheUtility::loadFromCachePointer(llvm::IRBuilder<> &BuilderM,
+                                                llvm::Value *cptr,
+                                                llvm::Value *cache) {
   // Retrieve the actual result
   auto result = BuilderM.CreateLoad(cptr);
 
@@ -1404,6 +1399,28 @@ Value *CacheUtility::lookupValueFromCache(bool inForwardPass,
     result->setAlignment(bsize);
 #endif
   }
+
+  return result;
+}
+
+/// Given an allocation specified by the LimitContext ctx and cache, lookup the
+/// underlying cached value.
+Value *CacheUtility::lookupValueFromCache(bool inForwardPass,
+                                          IRBuilder<> &BuilderM,
+                                          LimitContext ctx, Value *cache,
+                                          bool isi1, Value *extraSize,
+                                          Value *extraOffset) {
+  // Get the underlying cache pointer
+  auto cptr = getCachePointer(inForwardPass, BuilderM, ctx, cache, isi1,
+                              /*storeInInstructionsMap*/ false, extraSize);
+
+  // Optionally apply the additional offset
+  if (extraOffset) {
+    cptr = BuilderM.CreateGEP(cptr, {extraOffset});
+    cast<GetElementPtrInst>(cptr)->setIsInBounds(true);
+  }
+
+  Value *result = loadFromCachePointer(BuilderM, cptr, cache);
 
   // If using the efficient bool cache, do the corresponding
   // mask and shift to retrieve the actual value

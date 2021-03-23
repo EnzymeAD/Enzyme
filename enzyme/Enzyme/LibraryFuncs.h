@@ -279,8 +279,13 @@ freeKnownAllocation(llvm::IRBuilder<> &builder, llvm::Value *tofree,
   default:
     llvm_unreachable("unknown allocation function");
   }
-
   llvm::StringRef freename = TLI.getName(freefunc);
+  if (freefunc == LibFunc_free) {
+    freename = "free";
+    assert(freename == "free");
+    if (freename != "free")
+      llvm_unreachable("illegal free");
+  }
 
   Type *VoidTy = Type::getVoidTy(tofree->getContext());
   Type *IntPtrTy = Type::getInt8PtrTy(tofree->getContext());
@@ -293,7 +298,6 @@ freeKnownAllocation(llvm::IRBuilder<> &builder, llvm::Value *tofree,
   Value *freevalue =
       allocationfn.getParent()->getOrInsertFunction(freename, FT);
 #endif
-
   CallInst *freecall = cast<CallInst>(
 #if LLVM_VERSION_MAJOR >= 8
       CallInst::Create(FT, freevalue,
@@ -319,6 +323,8 @@ freeKnownAllocation(llvm::IRBuilder<> &builder, llvm::Value *tofree,
 static inline bool writesToMemoryReadBy(llvm::AAResults &AA,
                                         llvm::Instruction *maybeReader,
                                         llvm::Instruction *maybeWriter) {
+  assert(maybeReader->getParent()->getParent() ==
+         maybeWriter->getParent()->getParent());
   using namespace llvm;
   if (auto call = dyn_cast<CallInst>(maybeWriter)) {
     Function *called = call->getCalledFunction();
@@ -334,17 +340,23 @@ static inline bool writesToMemoryReadBy(llvm::AAResults &AA,
         }
       }
     }
-    if (called && isCertainMallocOrFree(called)) {
+    if (called && isCertainPrintMallocOrFree(called)) {
       return false;
     }
     if (called && isMemFreeLibMFunction(called->getName())) {
       return false;
     }
+    if (called && called->getName() == "jl_array_copy")
+      return false;
     if (auto II = dyn_cast<IntrinsicInst>(call)) {
       if (II->getIntrinsicID() == Intrinsic::stacksave)
         return false;
       if (II->getIntrinsicID() == Intrinsic::stackrestore)
         return false;
+#if LLVM_VERSION_MAJOR >= 13
+      if (II->getIntrinsicID() == Intrinsic::experimental_noalias_scope_decl)
+        return false;
+#endif
     }
   }
   if (auto call = dyn_cast<CallInst>(maybeReader)) {
@@ -372,6 +384,10 @@ static inline bool writesToMemoryReadBy(llvm::AAResults &AA,
         return false;
       if (II->getIntrinsicID() == Intrinsic::stackrestore)
         return false;
+#if LLVM_VERSION_MAJOR >= 13
+      if (II->getIntrinsicID() == Intrinsic::experimental_noalias_scope_decl)
+        return false;
+#endif
     }
   }
   if (auto call = dyn_cast<InvokeInst>(maybeWriter)) {
@@ -394,6 +410,8 @@ static inline bool writesToMemoryReadBy(llvm::AAResults &AA,
     if (called && isMemFreeLibMFunction(called->getName())) {
       return false;
     }
+    if (called && called->getName() == "jl_array_copy")
+      return false;
   }
   if (auto call = dyn_cast<InvokeInst>(maybeReader)) {
     Function *called = call->getCalledFunction();

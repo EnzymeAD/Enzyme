@@ -224,6 +224,10 @@ TypeTree getConstantAnalysis(Constant *Val, TypeAnalyzer &TA) {
                                                          /*addOffset*/ Off);
       Off += ObjSize;
     }
+    if (TA.fntypeinfo.Function->getParent()->getDataLayout().getTypeSizeInBits(
+            CA->getType()) >= 16) {
+      Result.ReplaceIntWithAnything();
+    }
     return Result;
   }
 
@@ -264,6 +268,10 @@ TypeTree getConstantAnalysis(Constant *Val, TypeAnalyzer &TA) {
       Result |= getConstantAnalysis(Op, TA).ShiftIndices(DL, /*init offset*/ 0,
                                                          /*maxSize*/ ObjSize,
                                                          /*addOffset*/ Off);
+    }
+    if (TA.fntypeinfo.Function->getParent()->getDataLayout().getTypeSizeInBits(
+            CD->getType()) >= 16) {
+      Result.ReplaceIntWithAnything();
     }
     return Result;
   }
@@ -1238,10 +1246,22 @@ void TypeAnalyzer::visitPHINode(PHINode &phi) {
 }
 
 void TypeAnalyzer::visitTruncInst(TruncInst &I) {
+  auto &DL = fntypeinfo.Function->getParent()->getDataLayout();
+  size_t inSize = (DL.getTypeSizeInBits(I.getOperand(0)->getType()) + 7) / 8;
+  size_t outSize = (DL.getTypeSizeInBits(I.getType()) + 7) / 8;
   if (direction & DOWN)
-    updateAnalysis(&I, getAnalysis(I.getOperand(0)), &I);
+    updateAnalysis(&I,
+                   getAnalysis(I.getOperand(0))
+                       .ShiftIndices(DL, /*off*/ 0, inSize, /*addOffset*/ 0)
+                       .ShiftIndices(DL, /*off*/ 0, outSize, /*addOffset*/ 0)
+                       .CanonicalizeValue(outSize, DL),
+                   &I);
   if (direction & UP)
-    updateAnalysis(I.getOperand(0), getAnalysis(&I), &I);
+    updateAnalysis(I.getOperand(0),
+                   getAnalysis(&I)
+                       .ShiftIndices(DL, /*off*/ 0, outSize, /*addOffset*/ 0)
+                       .CanonicalizeValue(inSize, DL),
+                   &I);
 }
 
 void TypeAnalyzer::visitZExtInst(ZExtInst &I) {
@@ -1457,10 +1477,20 @@ void TypeAnalyzer::visitExtractElementInst(ExtractElementInst &I) {
 }
 
 void TypeAnalyzer::visitInsertElementInst(InsertElementInst &I) {
-  updateAnalysis(I.getOperand(2), BaseType::Integer, &I);
+  updateAnalysis(I.getOperand(2), TypeTree(BaseType::Integer).Only(-1), &I);
 
   auto &dl = fntypeinfo.Function->getParent()->getDataLayout();
   VectorType *vecType = cast<VectorType>(I.getOperand(0)->getType());
+  if (vecType->getElementType()->isIntegerTy(1)) {
+    if (direction & UP) {
+      updateAnalysis(I.getOperand(0), TypeTree(BaseType::Integer).Only(-1), &I);
+      updateAnalysis(I.getOperand(1), TypeTree(BaseType::Integer).Only(-1), &I);
+    }
+    if (direction & DOWN) {
+      updateAnalysis(&I, TypeTree(BaseType::Integer).Only(-1), &I);
+    }
+    return;
+  }
 #if LLVM_VERSION_MAJOR >= 13
   assert(!vecType->getElementCount().isScalable());
   size_t numElems = vecType->getElementCount().getKnownMinValue();
@@ -1532,6 +1562,30 @@ void TypeAnalyzer::visitShuffleVectorInst(ShuffleVectorInst &I) {
 
   TypeTree result; //  = getAnalysis(&I);
   for (size_t i = 0; i < mask.size(); ++i) {
+    int newOff;
+    {
+      Value *vec[2] = {ConstantInt::get(Type::getInt64Ty(I.getContext()), 0),
+                       ConstantInt::get(Type::getInt64Ty(I.getContext()), i)};
+      auto ud =
+          UndefValue::get(PointerType::getUnqual(I.getOperand(0)->getType()));
+      auto g2 = GetElementPtrInst::Create(nullptr, ud, vec);
+#if LLVM_VERSION_MAJOR > 6
+      APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
+#else
+      APInt ai(dl.getPointerSize(g2->getPointerAddressSpace()) * 8, 0);
+#endif
+      g2->accumulateConstantOffset(dl, ai);
+      // Using destructor rather than eraseFromParent
+      //   as g2 has no parent
+      delete g2;
+      newOff = (int)ai.getLimitedValue();
+      // there is a bug in LLVM, this is the correct offset
+      if (cast<VectorType>(I.getOperand(lhs)->getType())
+              ->getElementType()
+              ->isIntegerTy(1)) {
+        newOff = i / 8;
+      }
+    }
 #if LLVM_VERSION_MAJOR >= 12
     if (mask[i] == UndefMaskElem)
 #else
@@ -1545,27 +1599,68 @@ void TypeAnalyzer::visitShuffleVectorInst(ShuffleVectorInst &I) {
       }
     } else {
       if ((size_t)mask[i] < numFirst) {
+        Value *vec[2] = {
+            ConstantInt::get(Type::getInt64Ty(I.getContext()), 0),
+            ConstantInt::get(Type::getInt64Ty(I.getContext()), mask[i])};
+        auto ud =
+            UndefValue::get(PointerType::getUnqual(I.getOperand(0)->getType()));
+        auto g2 = GetElementPtrInst::Create(nullptr, ud, vec);
+#if LLVM_VERSION_MAJOR > 6
+        APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
+#else
+        APInt ai(dl.getPointerSize(g2->getPointerAddressSpace()) * 8, 0);
+#endif
+        g2->accumulateConstantOffset(dl, ai);
+        // Using destructor rather than eraseFromParent
+        //   as g2 has no parent
+        int oldOff = (int)ai.getLimitedValue();
+        // there is a bug in LLVM, this is the correct offset
+        if (cast<VectorType>(I.getOperand(lhs)->getType())
+                ->getElementType()
+                ->isIntegerTy(1)) {
+          oldOff = mask[i] / 8;
+        }
+        delete g2;
         if (direction & UP) {
-          updateAnalysis(
-              I.getOperand(lhs),
-              getAnalysis(&I).ShiftIndices(dl, size * i, size, size * mask[i]),
-              &I);
+          updateAnalysis(I.getOperand(lhs),
+                         getAnalysis(&I).ShiftIndices(dl, newOff, size, oldOff),
+                         &I);
         }
         if (direction & DOWN) {
           result |= getAnalysis(I.getOperand(lhs))
-                        .ShiftIndices(dl, size * mask[i], size, size * i);
+                        .ShiftIndices(dl, oldOff, size, newOff);
         }
       } else {
+        Value *vec[2] = {ConstantInt::get(Type::getInt64Ty(I.getContext()), 0),
+                         ConstantInt::get(Type::getInt64Ty(I.getContext()),
+                                          mask[i] - numFirst)};
+        auto ud =
+            UndefValue::get(PointerType::getUnqual(I.getOperand(0)->getType()));
+        auto g2 = GetElementPtrInst::Create(nullptr, ud, vec);
+#if LLVM_VERSION_MAJOR > 6
+        APInt ai(dl.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
+#else
+        APInt ai(dl.getPointerSize(g2->getPointerAddressSpace()) * 8, 0);
+#endif
+        g2->accumulateConstantOffset(dl, ai);
+        // Using destructor rather than eraseFromParent
+        //   as g2 has no parent
+        int oldOff = (int)ai.getLimitedValue();
+        // there is a bug in LLVM, this is the correct offset
+        if (cast<VectorType>(I.getOperand(lhs)->getType())
+                ->getElementType()
+                ->isIntegerTy(1)) {
+          oldOff = (mask[i] - numFirst) / 8;
+        }
+        delete g2;
         if (direction & UP) {
           updateAnalysis(I.getOperand(rhs),
-                         getAnalysis(&I).ShiftIndices(
-                             dl, size * i, size, size * (mask[i] - numFirst)),
+                         getAnalysis(&I).ShiftIndices(dl, newOff, size, oldOff),
                          &I);
         }
         if (direction & DOWN) {
           result |= getAnalysis(I.getOperand(rhs))
-                        .ShiftIndices(dl, size * (mask[i] - numFirst), size,
-                                      size * i);
+                        .ShiftIndices(dl, oldOff, size, newOff);
         }
       }
     }
@@ -2005,6 +2100,9 @@ void TypeAnalyzer::visitBinaryOperator(BinaryOperator &I) {
 }
 
 void TypeAnalyzer::visitMemTransferInst(llvm::MemTransferInst &MTI) {
+  if (!(direction & UP))
+    return;
+
   // If memcpy / memmove of pointer, we can propagate type information from src
   // to dst up to the length and vice versa
   size_t sz = 1;
@@ -2021,15 +2119,26 @@ void TypeAnalyzer::visitMemTransferInst(llvm::MemTransferInst &MTI) {
 
   TypeTree res = getAnalysis(MTI.getArgOperand(0)).AtMost(sz).PurgeAnything();
   TypeTree res2 = getAnalysis(MTI.getArgOperand(1)).AtMost(sz).PurgeAnything();
-  res |= res2;
 
-  if (direction & UP) {
-    updateAnalysis(MTI.getArgOperand(0), res, &MTI);
-    updateAnalysis(MTI.getArgOperand(1), res, &MTI);
-    for (unsigned i = 2; i < MTI.getNumArgOperands(); ++i) {
-      updateAnalysis(MTI.getArgOperand(i), TypeTree(BaseType::Integer).Only(-1),
-                     &MTI);
-    }
+  bool Legal = true;
+  res.checkedOrIn(res2, /*PointerIntSame*/ false, Legal);
+  if (!Legal) {
+    dump();
+    llvm::errs() << MTI << "\n";
+    llvm::errs() << "Illegal orIn: " << res.str() << " right: " << res2.str()
+                 << "\n";
+    llvm::errs() << *MTI.getArgOperand(0) << " "
+                 << getAnalysis(MTI.getArgOperand(0)).str() << "\n";
+    llvm::errs() << *MTI.getArgOperand(1) << " "
+                 << getAnalysis(MTI.getArgOperand(1)).str() << "\n";
+    assert(0 && "Performed illegal visitMemTransferInst::orIn");
+    llvm_unreachable("Performed illegal visitMemTransferInst::orIn");
+  }
+  updateAnalysis(MTI.getArgOperand(0), res, &MTI);
+  updateAnalysis(MTI.getArgOperand(1), res, &MTI);
+  for (unsigned i = 2; i < MTI.getNumArgOperands(); ++i) {
+    updateAnalysis(MTI.getArgOperand(i), TypeTree(BaseType::Integer).Only(-1),
+                   &MTI);
   }
 }
 
@@ -3089,6 +3198,10 @@ std::set<int64_t> FnTypeInfo::knownIntegralValues(
     return {constant->getSExtValue()};
   }
 
+  if (auto IP = dyn_cast<ConstantPointerNull>(val)) {
+    return {0};
+  }
+
   assert(KnownValues.size() == Function->getFunctionType()->getNumParams());
 
   if (auto arg = dyn_cast<llvm::Argument>(val)) {
@@ -3231,6 +3344,16 @@ std::set<int64_t> FnTypeInfo::knownIntegralValues(
         for (auto val0 : inset0) {
           for (auto val1 : inset1) {
             insert(val0 - val1);
+          }
+        }
+      }
+    }
+
+    if (bo->getOpcode() == BinaryOperator::SDiv) {
+      if (inset0.size() == 1 || inset1.size() == 1) {
+        for (auto val0 : inset0) {
+          for (auto val1 : inset1) {
+            insert(val0 / val1);
           }
         }
       }
@@ -3555,6 +3678,7 @@ ConcreteType TypeAnalysis::firstPointer(size_t num, Value *val,
   if (errIfNotFound && (!dt.isKnown() || dt == BaseType::Anything)) {
     auto &res = analyzedFunctions.find(fn)->second;
     if (auto inst = dyn_cast<Instruction>(val)) {
+      llvm::errs() << *inst->getParent()->getParent()->getParent() << "\n";
       llvm::errs() << *inst->getParent()->getParent() << "\n";
       for (auto &pair : res.analysis) {
         if (auto in = dyn_cast<Instruction>(pair.first)) {
@@ -3682,3 +3806,5 @@ std::set<int64_t> TypeResults::knownIntegralValues(Value *val) const {
 std::set<int64_t> TypeAnalyzer::knownIntegralValues(Value *val) {
   return fntypeinfo.knownIntegralValues(val, *DT, intseen);
 }
+
+void TypeAnalysis::clear() { analyzedFunctions.clear(); }

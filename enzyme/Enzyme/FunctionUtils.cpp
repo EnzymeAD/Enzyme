@@ -47,7 +47,11 @@
 #include "llvm/Analysis/MemorySSA.h"
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"
 
+#include "llvm/CodeGen/UnreachableBlockElim.h"
+
 #include "llvm/Analysis/TypeBasedAliasAnalysis.h"
+
+#include "llvm/Analysis/CFLSteensAliasAnalysis.h"
 
 #if LLVM_VERSION_MAJOR > 6
 #include "llvm/Analysis/PhiValues.h"
@@ -57,13 +61,13 @@
 #include "llvm/Analysis/TargetTransformInfo.h"
 
 #include "llvm/Transforms/IPO/FunctionAttrs.h"
+#include "llvm/Transforms/Utils/Mem2Reg.h"
 
 #if LLVM_VERSION_MAJOR > 6
 #include "llvm/Transforms/Utils.h"
 #endif
 
 #include "llvm/Transforms/Utils/Cloning.h"
-#include "llvm/Transforms/Utils/PromoteMemToReg.h"
 
 #if LLVM_VERSION_MAJOR > 6
 #include "llvm/Transforms/Scalar/InstSimplifyPass.h"
@@ -119,6 +123,12 @@ static cl::opt<int>
     EnzymeInlineCount("enzyme-inline-count", cl::init(10000), cl::Hidden,
                       cl::desc("Limit of number of functions to inline"));
 
+#if LLVM_VERSION_MAJOR >= 8
+static cl::opt<bool> EnzymePHIRestructure(
+    "enzyme-phi-restructure", cl::init(false), cl::Hidden,
+    cl::desc("Whether to restructure phi's to have better unwrap behavior"));
+#endif
+
 /// Is the use of value val as an argument of call CI potentially captured
 bool couldFunctionArgumentCapture(llvm::CallInst *CI, llvm::Value *val) {
   Function *F = CI->getCalledFunction();
@@ -167,42 +177,15 @@ bool couldFunctionArgumentCapture(llvm::CallInst *CI, llvm::Value *val) {
   return false;
 }
 
-// Locally run mem2reg on F, if ASsumptionCache AC is given it will
-// be updated
-static bool PromoteMemoryToRegister(Function &F, DominatorTree &DT,
-                                    AssumptionCache *AC = nullptr) {
-  std::vector<AllocaInst *> Allocas;
-  BasicBlock &BB = F.getEntryBlock(); // Get the entry node for the function
-  bool Changed = false;
-
-  while (true) {
-    Allocas.clear();
-
-    // Find allocas that are safe to promote, by looking at all instructions in
-    // the entry node
-    for (BasicBlock::iterator I = BB.begin(), E = --BB.end(); I != E; ++I)
-      if (AllocaInst *AI = dyn_cast<AllocaInst>(I)) // Is it an alloca?
-        if (isAllocaPromotable(AI))
-          Allocas.push_back(AI);
-
-    if (Allocas.empty())
-      break;
-
-    PromoteMemToReg(Allocas, DT, AC);
-    Changed = true;
-  }
-  return Changed;
-}
-
+enum RecurType {
+  MaybeRecursive = 1,
+  NotRecursive = 2,
+  DefinitelyRecursive = 3,
+};
 /// Return whether this function eventually calls itself
-static bool IsFunctionRecursive(Function *F) {
-  enum RecurType {
-    MaybeRecursive = 1,
-    NotRecursive = 2,
-    DefinitelyRecursive = 3,
-  };
-
-  static std::map<const Function *, RecurType> Results;
+static bool
+IsFunctionRecursive(Function *F,
+                    std::map<const Function *, RecurType> &Results) {
 
   // If we haven't seen this function before, look at all callers
   // and mark this as potentially recursive. If we see this function
@@ -218,14 +201,14 @@ static bool IsFunctionRecursive(Function *F) {
             continue;
           if (call->getCalledFunction()->empty())
             continue;
-          IsFunctionRecursive(call->getCalledFunction());
+          IsFunctionRecursive(call->getCalledFunction(), Results);
         }
         if (auto call = dyn_cast<InvokeInst>(&I)) {
           if (call->getCalledFunction() == nullptr)
             continue;
           if (call->getCalledFunction()->empty())
             continue;
-          IsFunctionRecursive(call->getCalledFunction());
+          IsFunctionRecursive(call->getCalledFunction(), Results);
         }
       }
     }
@@ -302,6 +285,10 @@ static inline void UpgradeAllocasToMallocs(Function *NewF, bool topLevel) {
                      8),
         IRBuilder<>(insertBefore).CreateZExtOrTrunc(AI->getArraySize(), i64),
         nullptr, nam);
+    CallInst *CI = dyn_cast<CallInst>(rep);
+    if (auto C = dyn_cast<CastInst>(rep))
+      CI = cast<CallInst>(C->getOperand(0));
+    CI->setMetadata("enzyme_fromstack", MDNode::get(CI->getContext(), {}));
     assert(rep->getType() == AI->getType());
     AI->replaceAllUsesWith(rep);
     AI->eraseFromParent();
@@ -432,8 +419,6 @@ OldAllocationSize(Value *Ptr, CallInst *Loc, Function *NewF, IntegerType *T,
         continue;
     }
 
-    // llvm::errs() << *NewF->getParent() << "\n";
-    // llvm::errs() << *NewF << "\n";
     EmitFailure("DynamicReallocSize", Loc->getDebugLoc(), Loc,
                 "could not statically determine size of realloc ", *Loc,
                 " - because of - ", *next.first);
@@ -487,10 +472,10 @@ OldAllocationSize(Value *Ptr, CallInst *Loc, Function *NewF, IntegerType *T,
 }
 
 /// Calls to realloc with an appropriate implementation
-void ReplaceReallocs(Function *NewF, bool mem2reg) {
+void PreProcessCache::ReplaceReallocs(Function *NewF, bool mem2reg) {
   if (mem2reg) {
-    DominatorTree DT(*NewF);
-    PromoteMemoryToRegister(*NewF, DT);
+    auto PA = PromotePass().run(*NewF, FAM);
+    FAM.invalidate(*NewF, PA);
   }
 
   std::vector<CallInst *> ToConvert;
@@ -589,12 +574,16 @@ void ReplaceReallocs(Function *NewF, bool mem2reg) {
     CI->eraseFromParent();
   }
 
-  DominatorTree DT(*NewF);
-  PromoteMemToReg(memoryLocations, DT, /*AC*/ nullptr);
+  PreservedAnalyses PA;
+  FAM.invalidate(*NewF, PA);
+
+  PA = PromotePass().run(*NewF, FAM);
+  FAM.invalidate(*NewF, PA);
 }
 
 /// Perform recursive inlinining on NewF up to the given limit
 static void ForceRecursiveInlining(Function *NewF, size_t Limit) {
+  std::map<const Function *, RecurType> RecurResults;
   for (size_t count = 0; count < Limit; count++) {
     for (auto &BB : *NewF) {
       for (auto &I : BB) {
@@ -612,7 +601,7 @@ static void ForceRecursiveInlining(Function *NewF, size_t Limit) {
                   Attribute::ReturnsTwice) ||
               CI->getCalledFunction()->hasFnAttribute(Attribute::NoInline))
             continue;
-          if (IsFunctionRecursive(CI->getCalledFunction())) {
+          if (IsFunctionRecursive(CI->getCalledFunction(), RecurResults)) {
             LLVM_DEBUG(llvm::dbgs()
                        << "not inlining recursive "
                        << CI->getCalledFunction()->getName() << "\n");
@@ -636,48 +625,95 @@ static void ForceRecursiveInlining(Function *NewF, size_t Limit) {
   }
 }
 
-void CanonicalizeLoops(Function *F, TargetLibraryInfo &TLI) {
+void CanonicalizeLoops(Function *F, FunctionAnalysisManager &FAM) {
 
-  DominatorTree DT(*F);
-  LoopInfo LI(DT);
-  AssumptionCache AC(*F);
+  DominatorTree &DT = FAM.getResult<DominatorTreeAnalysis>(*F);
+  LoopInfo &LI = FAM.getResult<LoopAnalysis>(*F);
+  AssumptionCache &AC = FAM.getResult<AssumptionAnalysis>(*F);
+  TargetLibraryInfo &TLI = FAM.getResult<TargetLibraryAnalysis>(*F);
   MustExitScalarEvolution SE(*F, TLI, AC, DT, LI);
-  for (auto &L : LI) {
+  for (Loop *L : LI) {
     auto pair =
         InsertNewCanonicalIV(L, Type::getInt64Ty(F->getContext()), "tiv");
     PHINode *CanonicalIV = pair.first;
     assert(CanonicalIV);
-    RemoveRedundantIVs(L->getHeader(), CanonicalIV, SE,
-                       [&](Instruction *I) { I->eraseFromParent(); });
+    RemoveRedundantIVs(
+        L->getHeader(), CanonicalIV, SE,
+        [&](Instruction *I, Value *V) { I->replaceAllUsesWith(V); },
+        [&](Instruction *I) { I->eraseFromParent(); });
   }
+  PreservedAnalyses PA;
+  PA.preserve<AssumptionAnalysis>();
+  PA.preserve<TargetLibraryAnalysis>();
+  PA.preserve<LoopAnalysis>();
+  PA.preserve<DominatorTreeAnalysis>();
+  PA.preserve<PostDominatorTreeAnalysis>();
+  PA.preserve<TypeBasedAA>();
+  PA.preserve<BasicAA>();
+  FAM.invalidate(*F, PA);
 }
 
-Function *preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI,
-                             bool topLevel) {
-  static std::map<std::pair<Function *, bool>, Function *> cache;
+PreProcessCache::PreProcessCache() {
+  MAM.registerPass([&] { return FunctionAnalysisManagerModuleProxy(FAM); });
+  FAM.registerPass([&] { return ModuleAnalysisManagerFunctionProxy(MAM); });
+  FAM.registerPass([] { return AssumptionAnalysis(); });
+  FAM.registerPass([] { return TargetLibraryAnalysis(); });
+  FAM.registerPass([] { return LoopAnalysis(); });
+  FAM.registerPass([] { return DominatorTreeAnalysis(); });
+#if LLVM_VERSION_MAJOR > 6
+  FAM.registerPass([] { return PhiValuesAnalysis(); });
+#endif
+
+  // Explicitly chose AA passes that are stateless
+  // and will not be invalidated
+  FAM.registerPass([] { return TypeBasedAA(); });
+  FAM.registerPass([] { return BasicAA(); });
+  MAM.registerPass([] { return GlobalsAA(); });
+  // SCEVAA causes some breakage/segfaults
+  // disable for now, consider enabling in future
+  // FAM.registerPass([] { return SCEVAA(); });
+
+  // FAM.registerPass([] { return CFLSteensAA(); });
+
+  FAM.registerPass([] {
+    auto AM = AAManager();
+    AM.registerFunctionAnalysis<BasicAA>();
+    AM.registerFunctionAnalysis<TypeBasedAA>();
+    AM.registerModuleAnalysis<GlobalsAA>();
+
+    // broken for different reasons
+    // AM.registerFunctionAnalysis<SCEVAA>();
+    // AM.registerFunctionAnalysis<CFLSteensAA>();
+    return AM;
+  });
+
+  // used in optimizeintermediate
+  FAM.registerPass([] { return ScalarEvolutionAnalysis(); });
+
+  FAM.registerPass([] { return TargetIRAnalysis(); });
+  FAM.registerPass([] { return MemorySSAAnalysis(); });
+  FAM.registerPass([] { return MemoryDependenceAnalysis(); });
+  FAM.registerPass([] { return OptimizationRemarkEmitterAnalysis(); });
+  FAM.registerPass([] { return LazyValueAnalysis(); });
+#if LLVM_VERSION_MAJOR >= 8
+  FAM.registerPass([] { return PassInstrumentationAnalysis(); });
+#endif
+
+  // Used by GradientUtils
+  FAM.registerPass([] { return PostDominatorTreeAnalysis(); });
+}
+
+llvm::AAResults &
+PreProcessCache::getAAResultsFromFunction(llvm::Function *NewF) {
+  return FAM.getResult<AAManager>(*NewF);
+}
+
+Function *PreProcessCache::preprocessForClone(Function *F, bool topLevel) {
 
   // If we've already processed this, return the previous version
   // and derive aliasing information
   if (cache.find(std::make_pair(F, topLevel)) != cache.end()) {
     Function *NewF = cache[std::make_pair(F, topLevel)];
-    AssumptionCache *AC = new AssumptionCache(*NewF);
-    DominatorTree *DT = new DominatorTree(*NewF);
-    LoopInfo *LI = new LoopInfo(*DT);
-#if LLVM_VERSION_MAJOR > 6
-    PhiValues *PV = new PhiValues(*NewF);
-#endif
-    auto BAA = new BasicAAResult(NewF->getParent()->getDataLayout(),
-#if LLVM_VERSION_MAJOR > 6
-                                 *NewF,
-#endif
-                                 TLI, *AC, DT, LI
-#if LLVM_VERSION_MAJOR > 6
-                                 ,
-                                 PV
-#endif
-    );
-    AA.addAAResult(*BAA);
-    AA.addAAResult(*(new TypeBasedAAResult()));
     return NewF;
   }
 
@@ -698,9 +734,16 @@ Function *preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI,
 
   SmallVector<ReturnInst *, 4> Returns;
 
+#if LLVM_VERSION_MAJOR >= 13
+  CloneFunctionInto(
+      NewF, F, VMap,
+      /*ModuleLevelChanges*/ CloneFunctionChangeType::LocalChangesOnly, Returns,
+      "", nullptr);
+#else
   CloneFunctionInto(NewF, F, VMap,
                     /*ModuleLevelChanges*/ F->getSubprogram() != nullptr,
                     Returns, "", nullptr);
+#endif
   NewF->setAttributes(F->getAttributes());
   if (EnzymeNoAlias)
     for (auto j = NewF->arg_begin(); j != NewF->arg_end(); j++) {
@@ -712,6 +755,8 @@ Function *preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI,
   if (EnzymePreopt) {
     if (EnzymeInline) {
       ForceRecursiveInlining(NewF, /*Limit*/ EnzymeInlineCount);
+      PreservedAnalyses PA;
+      FAM.invalidate(*NewF, PA);
     }
   }
 
@@ -731,26 +776,9 @@ Function *preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI,
 
     // TODO consider using TBAA and globals as well
     // instead of just BasicAA
-    AssumptionCache AC(*NewF);
-    DominatorTree DT(*NewF);
-    LoopInfo LI(DT);
-#if LLVM_VERSION_MAJOR > 6
-    PhiValues PV(*NewF);
-#endif
-    BasicAAResult BAA(NewF->getParent()->getDataLayout(),
-#if LLVM_VERSION_MAJOR > 6
-                      *NewF,
-#endif
-                      TLI, AC, &DT, &LI
-#if LLVM_VERSION_MAJOR > 6
-                      ,
-                      &PV
-#endif
-    );
-    AAResults AA2(TLI);
-    AA2.addAAResult(BAA);
-    // TypeBasedAAResult TBAA();
-    // AA2.addAAResult(TBAA);
+    AAResults AA2(FAM.getResult<TargetLibraryAnalysis>(*NewF));
+    AA2.addAAResult(FAM.getResult<BasicAA>(*NewF));
+    AA2.addAAResult(FAM.getResult<TypeBasedAA>(*NewF));
 
     for (auto &g : NewF->getParent()->globals()) {
       bool inF = false;
@@ -1026,6 +1054,10 @@ Function *preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI,
     legacy::FunctionPassManager PM(NewF->getParent());
     Builder.populateFunctionPassManager(PM);
     PM.run(*NewF);
+    {
+      PreservedAnalyses PA;
+      FAM.invalidate(*NewF, PA);
+    }
   }
 
   {
@@ -1044,14 +1076,17 @@ Function *preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI,
           {
             if (castinst->isCast()) {
               if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-                if (isDeallocationFunction(*fn, TLI)) {
+                if (isDeallocationFunction(
+                        *fn, FAM.getResult<TargetLibraryAnalysis>(*NewF))) {
                   called = fn;
                 }
               }
             }
           }
 
-          if (called && isDeallocationFunction(*called, TLI)) {
+          if (called &&
+              isDeallocationFunction(
+                  *called, FAM.getResult<TargetLibraryAnalysis>(*NewF))) {
             FreesToErase.push_back(CI);
           }
         }
@@ -1062,133 +1097,236 @@ Function *preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI,
     for (auto Free : FreesToErase) {
       Free->eraseFromParent();
     }
+    PreservedAnalyses PA;
+    PA.preserve<AssumptionAnalysis>();
+    PA.preserve<TargetLibraryAnalysis>();
+    PA.preserve<LoopAnalysis>();
+    PA.preserve<DominatorTreeAnalysis>();
+    PA.preserve<PostDominatorTreeAnalysis>();
+    PA.preserve<TypeBasedAA>();
+    PA.preserve<BasicAA>();
+    PA.preserve<ScalarEvolutionAnalysis>();
+#if LLVM_VERSION_MAJOR > 6
+    PA.preserve<PhiValuesAnalysis>();
+#endif
+    FAM.invalidate(*NewF, PA);
   }
 
   if (EnzymePreopt) {
     {
-      FunctionAnalysisManager AM;
-      AM.registerPass([] { return TargetLibraryAnalysis(); });
-      LowerInvokePass().run(*NewF, AM);
-#if LLVM_VERSION_MAJOR >= 9
-      llvm::EliminateUnreachableBlocks(*NewF);
-#else
-      removeUnreachableBlocks(*NewF);
-#endif
+      auto PA = LowerInvokePass().run(*NewF, FAM);
+      FAM.invalidate(*NewF, PA);
+    }
+    {
+      auto PA = UnreachableBlockElimPass().run(*NewF, FAM);
+      FAM.invalidate(*NewF, PA);
     }
 
     {
-      DominatorTree DT(*NewF);
-      PromoteMemoryToRegister(*NewF, DT);
+      auto PA = PromotePass().run(*NewF, FAM);
+      FAM.invalidate(*NewF, PA);
     }
 
     {
-      FunctionAnalysisManager AM;
-      AM.registerPass([] { return AAManager(); });
-      AM.registerPass([] { return ScalarEvolutionAnalysis(); });
-      AM.registerPass([] { return AssumptionAnalysis(); });
-      AM.registerPass([] { return TargetLibraryAnalysis(); });
-      AM.registerPass([] { return TargetIRAnalysis(); });
-      AM.registerPass([] { return MemorySSAAnalysis(); });
-      AM.registerPass([] { return DominatorTreeAnalysis(); });
-      AM.registerPass([] { return MemoryDependenceAnalysis(); });
-      AM.registerPass([] { return LoopAnalysis(); });
-      AM.registerPass([] { return OptimizationRemarkEmitterAnalysis(); });
-#if LLVM_VERSION_MAJOR > 6
-      AM.registerPass([] { return PhiValuesAnalysis(); });
-#endif
-      AM.registerPass([] { return LazyValueAnalysis(); });
-#if LLVM_VERSION_MAJOR >= 8
-      AM.registerPass([] { return PassInstrumentationAnalysis(); });
-#endif
 #if LLVM_VERSION_MAJOR <= 7
-      GVN().run(*NewF, AM);
+      auto PA = GVN().run(*NewF, FAM);
+      FAM.invalidate(*NewF, PA);
 #endif
-      SROA().run(*NewF, AM);
+    }
+
+    {
+      auto PA = SROA().run(*NewF, FAM);
+      FAM.invalidate(*NewF, PA);
     }
 
     ReplaceReallocs(NewF);
 
     {
-      FunctionAnalysisManager AM;
-      AM.registerPass([] { return AAManager(); });
-      AM.registerPass([] { return ScalarEvolutionAnalysis(); });
-      AM.registerPass([] { return AssumptionAnalysis(); });
-      AM.registerPass([] { return TargetLibraryAnalysis(); });
-      AM.registerPass([] { return TargetIRAnalysis(); });
-      AM.registerPass([] { return MemorySSAAnalysis(); });
-      AM.registerPass([] { return DominatorTreeAnalysis(); });
-      AM.registerPass([] { return MemoryDependenceAnalysis(); });
-      AM.registerPass([] { return LoopAnalysis(); });
-      AM.registerPass([] { return OptimizationRemarkEmitterAnalysis(); });
-#if LLVM_VERSION_MAJOR > 6
-      AM.registerPass([] { return PhiValuesAnalysis(); });
-#endif
-#if LLVM_VERSION_MAJOR >= 8
-      AM.registerPass([] { return PassInstrumentationAnalysis(); });
-#endif
-      AM.registerPass([] { return LazyValueAnalysis(); });
-      SROA().run(*NewF, AM);
+      auto PA = SROA().run(*NewF, FAM);
+      FAM.invalidate(*NewF, PA);
+    }
 
 #if LLVM_VERSION_MAJOR >= 12
-      SimplifyCFGOptions scfgo;
+    SimplifyCFGOptions scfgo;
 #else
-      SimplifyCFGOptions scfgo(
-          /*unsigned BonusThreshold=*/1, /*bool ForwardSwitchCond=*/false,
-          /*bool SwitchToLookup=*/false, /*bool CanonicalLoops=*/true,
-          /*bool SinkCommon=*/true, /*AssumptionCache *AssumpCache=*/nullptr);
+    SimplifyCFGOptions scfgo(
+        /*unsigned BonusThreshold=*/1, /*bool ForwardSwitchCond=*/false,
+        /*bool SwitchToLookup=*/false, /*bool CanonicalLoops=*/true,
+        /*bool SinkCommon=*/true, /*AssumptionCache *AssumpCache=*/nullptr);
 #endif
-      SimplifyCFGPass(scfgo).run(*NewF, AM);
+    {
+      auto PA = SimplifyCFGPass(scfgo).run(*NewF, FAM);
+      FAM.invalidate(*NewF, PA);
     }
   }
 
   ReplaceReallocs(NewF);
 
   // Run LoopSimplifyPass to ensure preheaders exist on all loops
-  {
-    FunctionAnalysisManager AM;
-    AM.registerPass([] { return LoopAnalysis(); });
-    AM.registerPass([] { return DominatorTreeAnalysis(); });
-    AM.registerPass([] { return ScalarEvolutionAnalysis(); });
-    AM.registerPass([] { return AssumptionAnalysis(); });
-#if LLVM_VERSION_MAJOR >= 8
-    AM.registerPass([] { return PassInstrumentationAnalysis(); });
-#endif
-#if LLVM_VERSION_MAJOR >= 8
-    AM.registerPass([] { return MemorySSAAnalysis(); });
-#endif
-    LoopSimplifyPass().run(*NewF, AM);
-  }
+  auto PA = LoopSimplifyPass().run(*NewF, FAM);
+  FAM.invalidate(*NewF, PA);
 
   // For subfunction calls upgrade stack allocations to mallocs
   // to ensure availability in the reverse pass
-  // TODO we should ensure these are kept to avoid accidentially creating
-  // a memory leak
   UpgradeAllocasToMallocs(NewF, topLevel);
 
+  CanonicalizeLoops(NewF, FAM);
+
   {
-    // Alias analysis is necessary to ensure can query whether we can move a
-    // forward pass function
-    AssumptionCache *AC = new AssumptionCache(*NewF);
-    DominatorTree *DT = new DominatorTree(*NewF);
-    LoopInfo *LI = new LoopInfo(*DT);
+    std::vector<Instruction *> ToErase;
+    for (auto &BB : *NewF) {
+      for (auto &I : BB) {
+        if (auto MTI = dyn_cast<MemTransferInst>(&I)) {
+
+          if (auto CI = dyn_cast<ConstantInt>(MTI->getOperand(2))) {
+            if (CI->getValue() == 0) {
+              ToErase.push_back(MTI);
+            }
+          }
+        }
+      }
+    }
+    for (auto E : ToErase) {
+      E->eraseFromParent();
+    }
+    PreservedAnalyses PA;
+    PA.preserve<AssumptionAnalysis>();
+    PA.preserve<TargetLibraryAnalysis>();
+    PA.preserve<LoopAnalysis>();
+    PA.preserve<DominatorTreeAnalysis>();
+    PA.preserve<PostDominatorTreeAnalysis>();
+    PA.preserve<TypeBasedAA>();
+    PA.preserve<BasicAA>();
+    PA.preserve<ScalarEvolutionAnalysis>();
 #if LLVM_VERSION_MAJOR > 6
-    PhiValues *PV = new PhiValues(*NewF);
+    PA.preserve<PhiValuesAnalysis>();
 #endif
-    auto BAA = new BasicAAResult(NewF->getParent()->getDataLayout(),
-#if LLVM_VERSION_MAJOR > 6
-                                 *NewF,
-#endif
-                                 TLI, *AC, DT, LI
-#if LLVM_VERSION_MAJOR > 6
-                                 ,
-                                 PV
-#endif
-    );
-    AA.addAAResult(*BAA);
-    AA.addAAResult(*(new TypeBasedAAResult()));
+    FAM.invalidate(*NewF, PA);
   }
 
-  CanonicalizeLoops(NewF, TLI);
+#if LLVM_VERSION_MAJOR >= 8
+  if (EnzymePHIRestructure) {
+    if (false) {
+    reset:;
+      PreservedAnalyses PA;
+      FAM.invalidate(*NewF, PA);
+    }
+
+    SmallVector<BasicBlock *, 4> MultiBlocks;
+    for (auto &B : *NewF) {
+      if (B.hasNPredecessorsOrMore(3))
+        MultiBlocks.push_back(&B);
+    }
+
+    LoopInfo &LI = FAM.getResult<LoopAnalysis>(*NewF);
+    for (BasicBlock *B : MultiBlocks) {
+
+      // Map of function edges to list of values possible
+      std::map<std::pair</*pred*/ BasicBlock *, /*successor*/ BasicBlock *>,
+               std::set<BasicBlock *>>
+          done;
+      {
+        std::deque<std::tuple<
+            std::pair</*pred*/ BasicBlock *, /*successor*/ BasicBlock *>,
+            BasicBlock *>>
+            Q; // newblock, target
+
+        for (auto P : predecessors(B)) {
+          Q.emplace_back(std::make_pair(P, B), P);
+        }
+
+        for (std::tuple<
+                 std::pair</*pred*/ BasicBlock *, /*successor*/ BasicBlock *>,
+                 BasicBlock *>
+                 trace;
+             Q.size() > 0;) {
+          trace = Q.front();
+          Q.pop_front();
+          auto edge = std::get<0>(trace);
+          auto block = edge.first;
+          auto target = std::get<1>(trace);
+
+          if (done[edge].count(target))
+            continue;
+          done[edge].insert(target);
+
+          Loop *blockLoop = LI.getLoopFor(block);
+
+          for (BasicBlock *Pred : predecessors(block)) {
+            // Don't go up the backedge as we can use the last value if desired
+            // via lcssa
+            if (blockLoop && blockLoop->getHeader() == block &&
+                blockLoop == LI.getLoopFor(Pred))
+              continue;
+
+            Q.push_back(
+                std::tuple<std::pair<BasicBlock *, BasicBlock *>, BasicBlock *>(
+                    std::make_pair(Pred, block), target));
+          }
+        }
+      }
+
+      SmallPtrSet<BasicBlock *, 4> Preds;
+      for (auto &pair : done) {
+        Preds.insert(pair.first.first);
+      }
+
+      for (auto BB : Preds) {
+        bool illegal = false;
+        SmallPtrSet<BasicBlock *, 2> UnionSet;
+        size_t numSuc = 0;
+        for (BasicBlock *sucI : successors(BB)) {
+          numSuc++;
+          const auto &SI = done[std::make_pair(BB, sucI)];
+          if (SI.size() == 0) {
+            // sucI->getName();
+            illegal = true;
+            break;
+          }
+          for (auto si : SI) {
+            UnionSet.insert(si);
+
+            for (BasicBlock *sucJ : successors(BB)) {
+              if (sucI == sucJ)
+                continue;
+              if (done[std::make_pair(BB, sucJ)].count(si)) {
+                illegal = true;
+                goto endIllegal;
+              }
+            }
+          }
+        }
+      endIllegal:;
+
+        if (!illegal && numSuc > 1 && !B->hasNPredecessors(UnionSet.size())) {
+          BasicBlock *Ins =
+              BasicBlock::Create(BB->getContext(), "tmpblk", BB->getParent());
+          IRBuilder<> Builder(Ins);
+          for (auto &phi : B->phis()) {
+            auto nphi = Builder.CreatePHI(phi.getType(), 2);
+            SmallVector<BasicBlock *, 4> Blocks;
+
+            for (auto blk : UnionSet) {
+              nphi->addIncoming(phi.getIncomingValueForBlock(blk), blk);
+              phi.removeIncomingValue(blk, /*deleteifempty*/ false);
+            }
+
+            phi.addIncoming(nphi, Ins);
+          }
+          Builder.CreateBr(B);
+          for (auto blk : UnionSet) {
+            auto term = blk->getTerminator();
+            for (unsigned Idx = 0, NumSuccessors = term->getNumSuccessors();
+                 Idx != NumSuccessors; ++Idx)
+              if (term->getSuccessor(Idx) == B)
+                term->setSuccessor(Idx, Ins);
+          }
+          goto reset;
+        }
+      }
+    }
+  }
+#endif
 
   if (EnzymePrint)
     llvm::errs() << "after simplification :\n" << *NewF << "\n";
@@ -1201,14 +1339,14 @@ Function *preprocessForClone(Function *F, AAResults &AA, TargetLibraryInfo &TLI,
   return NewF;
 }
 
-Function *CloneFunctionWithReturns(
-    bool topLevel, Function *&F, AAResults &AA, TargetLibraryInfo &TLI,
-    ValueToValueMapTy &ptrInputs, const std::vector<DIFFE_TYPE> &constant_args,
+Function *PreProcessCache::CloneFunctionWithReturns(
+    bool topLevel, Function *&F, ValueToValueMapTy &ptrInputs,
+    const std::vector<DIFFE_TYPE> &constant_args,
     SmallPtrSetImpl<Value *> &constants, SmallPtrSetImpl<Value *> &nonconstant,
     SmallPtrSetImpl<Value *> &returnvals, ReturnType returnValue, Twine name,
     ValueToValueMapTy *VMapO, bool diffeReturnArg, llvm::Type *additionalArg) {
   assert(!F->empty());
-  F = preprocessForClone(F, AA, TLI, topLevel);
+  F = preprocessForClone(F, topLevel);
   std::vector<Type *> RetTypes;
   if (returnValue == ReturnType::ArgsWithReturn ||
       returnValue == ReturnType::ArgsWithTwoReturns)
@@ -1311,8 +1449,13 @@ Function *CloneFunctionWithReturns(
       VMap[&I] = &*DestI++;        // Add mapping to VMap
     }
   SmallVector<ReturnInst *, 4> Returns;
+#if LLVM_VERSION_MAJOR >= 13
+  CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
+                    Returns, "", nullptr);
+#else
   CloneFunctionInto(NewF, F, VMap, F->getSubprogram() != nullptr, Returns, "",
                     nullptr);
+#endif
   if (VMapO) {
     VMapO->insert(VMap.begin(), VMap.end());
     VMapO->getMDMap() = VMap.getMDMap();
@@ -1374,42 +1517,63 @@ Function *CloneFunctionWithReturns(
   return NewF;
 }
 
-void optimizeIntermediate(GradientUtils *gutils, bool topLevel, Function *F) {
-  {
-    DominatorTree DT(*F);
-    PromoteMemoryToRegister(*F, DT);
-  }
-
-  FunctionAnalysisManager AM;
-  AM.registerPass([] { return AAManager(); });
-  AM.registerPass([] { return ScalarEvolutionAnalysis(); });
-  AM.registerPass([] { return AssumptionAnalysis(); });
-  AM.registerPass([] { return TargetLibraryAnalysis(); });
-  AM.registerPass([] { return TargetIRAnalysis(); });
-  AM.registerPass([] { return MemorySSAAnalysis(); });
-  AM.registerPass([] { return DominatorTreeAnalysis(); });
-  AM.registerPass([] { return MemoryDependenceAnalysis(); });
-  AM.registerPass([] { return LoopAnalysis(); });
-  AM.registerPass([] { return OptimizationRemarkEmitterAnalysis(); });
-#if LLVM_VERSION_MAJOR > 6
-  AM.registerPass([] { return PhiValuesAnalysis(); });
-#endif
-  AM.registerPass([] { return LazyValueAnalysis(); });
-  LoopAnalysisManager LAM;
-  AM.registerPass([&] { return LoopAnalysisManagerFunctionProxy(LAM); });
-  LAM.registerPass([&] { return FunctionAnalysisManagerLoopProxy(AM); });
-
+void PreProcessCache::optimizeIntermediate(Function *F) {
+  PromotePass().run(*F, FAM);
 #if LLVM_VERSION_MAJOR <= 7
-  GVN().run(*F, AM);
-  SROA().run(*F, AM);
-  EarlyCSEPass(/*memoryssa*/ true).run(*F, AM);
+  GVN().run(*F, FAM);
+  SROA().run(*F, FAM);
+  EarlyCSEPass(/*memoryssa*/ true).run(*F, FAM);
 #endif
+
+  for (Function &Impl : *F->getParent()) {
+    if (!Impl.hasFnAttribute("implements"))
+      continue;
+    const Attribute &A = Impl.getFnAttribute("implements");
+
+    const StringRef SpecificationName = A.getValueAsString();
+    Function *Specification = F->getParent()->getFunction(SpecificationName);
+    if (!Specification) {
+      LLVM_DEBUG(dbgs() << "Found implementation '" << Impl.getName()
+                        << "' but no matching specification with name '"
+                        << SpecificationName
+                        << "', potentially inlined and/or eliminated.\n");
+      continue;
+    }
+    LLVM_DEBUG(dbgs() << "Replace specification '" << Specification->getName()
+                      << "' with implementation '" << Impl.getName() << "'\n");
+
+    for (auto I = Specification->use_begin(), UE = Specification->use_end();
+         I != UE;) {
+      auto &use = *I;
+      ++I;
+      auto cext = ConstantExpr::getBitCast(&Impl, Specification->getType());
+      use.set(cext);
+      if (auto CI = dyn_cast<CallInst>(use.getUser())) {
+#if LLVM_VERSION_MAJOR >= 11
+        if (CI->getCalledOperand() == cext || CI->getCalledFunction() == &Impl)
+#else
+        if (CI->getCalledValue() == cext || CI->getCalledFunction() == &Impl)
+#endif
+        {
+          CI->setCallingConv(Impl.getCallingConv());
+        }
+      }
+    }
+  }
 
   PassManagerBuilder Builder;
   Builder.OptLevel = 2;
   legacy::FunctionPassManager PM(F->getParent());
   Builder.populateFunctionPassManager(PM);
   PM.run(*F);
-
+  {
+    PreservedAnalyses PA;
+    FAM.invalidate(*F, PA);
+  }
   // DCEPass().run(*F, AM);
+}
+
+void PreProcessCache::clear() {
+  FAM.clear();
+  cache.clear();
 }

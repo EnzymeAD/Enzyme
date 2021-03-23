@@ -47,11 +47,17 @@
 #include "llvm/IR/IntrinsicsNVPTX.h"
 #endif
 
+#include <map>
 #include <set>
 
 #include "llvm/IR/DiagnosticInfo.h"
 
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"
+
+extern std::map<std::string, std::function<llvm::Value *(
+                                 llvm::IRBuilder<> &, llvm::CallInst *,
+                                 llvm::ArrayRef<llvm::Value *>)>>
+    shadowHandlers;
 
 /// Print additional debug info relevant to performance
 extern llvm::cl::opt<bool> EnzymePrintPerf;
@@ -385,11 +391,10 @@ static inline bool isCertainMallocOrFree(llvm::Function *called) {
   if (called == nullptr)
     return false;
   if (called->getName() == "printf" || called->getName() == "puts" ||
-      called->getName().startswith("_ZN3std2io5stdio6_print") ||
-      called->getName().startswith("_ZN4core3fmt") ||
       called->getName() == "malloc" || called->getName() == "_Znwm" ||
       called->getName() == "_ZdlPv" || called->getName() == "_ZdlPvm" ||
-      called->getName() == "free")
+      called->getName() == "free" ||
+      shadowHandlers.find(called->getName().str()) != shadowHandlers.end())
     return true;
   switch (called->getIntrinsicID()) {
   case llvm::Intrinsic::dbg_declare:
@@ -418,8 +423,8 @@ static inline bool isCertainPrintOrFree(llvm::Function *called) {
   if (called->getName() == "printf" || called->getName() == "puts" ||
       called->getName().startswith("_ZN3std2io5stdio6_print") ||
       called->getName().startswith("_ZN4core3fmt") ||
-      called->getName() == "_ZdlPv" || called->getName() == "_ZdlPvm" ||
-      called->getName() == "free")
+      called->getName() == "vprintf" || called->getName() == "_ZdlPv" ||
+      called->getName() == "_ZdlPvm" || called->getName() == "free")
     return true;
   switch (called->getIntrinsicID()) {
   case llvm::Intrinsic::dbg_declare:
@@ -447,9 +452,10 @@ static inline bool isCertainPrintMallocOrFree(llvm::Function *called) {
   if (called->getName() == "printf" || called->getName() == "puts" ||
       called->getName().startswith("_ZN3std2io5stdio6_print") ||
       called->getName().startswith("_ZN4core3fmt") ||
-      called->getName() == "malloc" || called->getName() == "_Znwm" ||
-      called->getName() == "_ZdlPv" || called->getName() == "_ZdlPvm" ||
-      called->getName() == "free")
+      called->getName() == "vprintf" || called->getName() == "malloc" ||
+      called->getName() == "_Znwm" || called->getName() == "_ZdlPv" ||
+      called->getName() == "_ZdlPvm" || called->getName() == "free" ||
+      shadowHandlers.find(called->getName().str()) != shadowHandlers.end())
     return true;
   switch (called->getIntrinsicID()) {
   case llvm::Intrinsic::dbg_declare:
@@ -601,6 +607,7 @@ static inline void
 allInstructionsBetween(llvm::LoopInfo &LI, llvm::Instruction *inst1,
                        llvm::Instruction *inst2,
                        std::function<bool(llvm::Instruction *)> f) {
+  assert(inst1->getParent()->getParent() == inst2->getParent()->getParent());
   for (auto uinst = inst1->getNextNode(); uinst != nullptr;
        uinst = uinst->getNextNode()) {
     if (f(uinst))

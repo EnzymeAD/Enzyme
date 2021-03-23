@@ -108,14 +108,14 @@ public:
     bool used =
         unnecessaryInstructions.find(&I) == unnecessaryInstructions.end();
 
-    auto iload = gutils->getNewFromOriginal(&I);
+    auto iload = gutils->getNewFromOriginal((Value *)&I);
 
     if (used && check)
       return;
 
     PHINode *pn = nullptr;
-    if (!I.getType()->isVoidTy()) {
-      IRBuilder<> BuilderZ(iload);
+    if (!I.getType()->isVoidTy() && isa<Instruction>(iload)) {
+      IRBuilder<> BuilderZ(cast<Instruction>(iload));
       pn = BuilderZ.CreatePHI(I.getType(), 1,
                               (I.getName() + "_replacementA").str());
       gutils->fictiousPHIs.push_back(pn);
@@ -125,20 +125,25 @@ public:
           continue;
         if (erased.count(inst_orig))
           continue;
-        auto inst = gutils->getNewFromOriginal(inst_orig);
-        for (unsigned i = 0; i < inst->getNumOperands(); ++i) {
-          if (inst->getOperand(i) == iload) {
-            inst->setOperand(i, pn);
+        auto val = gutils->getNewFromOriginal(cast<Value>(inst_orig));
+        if (auto inst = dyn_cast<Instruction>(val)) {
+          for (unsigned i = 0; i < inst->getNumOperands(); ++i) {
+            if (inst->getOperand(i) == iload) {
+              inst->setOperand(i, pn);
+            }
           }
-        }
+        } else
+          assert(isa<Argument>(val));
       }
     }
 
     erased.insert(&I);
     if (erase) {
-      if (pn)
-        gutils->replaceAWithB(iload, pn);
-      gutils->erase(iload);
+      if (auto inst = dyn_cast<Instruction>(iload)) {
+        if (pn)
+          gutils->replaceAWithB(iload, pn);
+        gutils->erase(inst);
+      }
     }
   }
 
@@ -343,6 +348,8 @@ public:
     Value *inst = newi;
 
     //! Store loads that need to be cached for use in reverse pass
+    assert(gutils->can_modref_map);
+    assert(gutils->can_modref_map->find(&LI) != gutils->can_modref_map->end());
     if (cache_reads_always ||
         (!cache_reads_never && gutils->can_modref_map->find(&LI)->second &&
          is_value_needed_in_reverse<Primal>(
@@ -350,7 +357,6 @@ public:
              oldUnreachable))) {
       IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&LI)->getNextNode());
       // auto tbaa = inst->getMetadata(LLVMContext::MD_tbaa);
-
       inst = gutils->cacheForReverse(BuilderZ, newi,
                                      getIndex(&LI, CacheType::Self));
       assert(inst->getType() == type);
@@ -1584,7 +1590,10 @@ public:
 
     // llvm::errs() << *gutils->oldFunc << "\n";
     // TR.dump();
-
+    if (size == 0) {
+      llvm::errs() << MTI << "\n";
+    }
+    assert(size != 0);
     auto vd = TR.query(orig_op0).Data0().AtMost(size);
     vd |= TR.query(orig_op1).Data0().AtMost(size);
 
@@ -2396,9 +2405,9 @@ public:
 
     if (Mode == DerivativeMode::Forward || Mode == DerivativeMode::Both) {
       if (called) {
-        subdata = &CreateAugmentedPrimal(
+        subdata = &gutils->Logic.CreateAugmentedPrimal(
             cast<Function>(called), subretType, argsInverted, gutils->TLI,
-            TR.analysis, gutils->OrigAA, /*return is used*/ false, nextTypeInfo,
+            TR.analysis, /*return is used*/ false, nextTypeInfo,
             uncacheable_args, false, /*AtomicAdd*/ true, /*PostOpt*/ false,
             /*OpenMP*/ true);
         if (Mode == DerivativeMode::Forward) {
@@ -2561,9 +2570,9 @@ public:
           args.push_back(alloc);
         }
 
-        newcalled = CreatePrimalAndGradient(
+        newcalled = gutils->Logic.CreatePrimalAndGradient(
             cast<Function>(called), subretType, argsInverted, gutils->TLI,
-            TR.analysis, gutils->OrigAA, /*returnValue*/ false,
+            TR.analysis, /*returnValue*/ false,
             /*subdretptr*/ false, /*topLevel*/ false,
             tape ? PointerType::getUnqual(tape->getType()) : nullptr,
             nextTypeInfo, uncacheable_args, subdata, /*AtomicAdd*/ true,
@@ -3438,10 +3447,18 @@ public:
       if (Mode != DerivativeMode::Both) {
         if (is_value_needed_in_reverse<Primal>(
                 TR, gutils, orig, /*topLevel*/ Mode == DerivativeMode::Both,
-                oldUnreachable)) {
+                oldUnreachable) ||
+            hasMetadata(orig, "enzyme_fromstack")) {
 
-          gutils->cacheForReverse(BuilderZ, op,
-                                  getIndex(orig, CacheType::Self));
+          Value *nop = gutils->cacheForReverse(BuilderZ, op,
+                                               getIndex(orig, CacheType::Self));
+          if (Mode == DerivativeMode::Reverse &&
+              hasMetadata(orig, "enzyme_fromstack")) {
+            IRBuilder<> Builder2(call.getParent());
+            getReverseBuilder(Builder2);
+            freeKnownAllocation(Builder2, lookup(nop, Builder2), *called,
+                                gutils->TLI);
+          }
         } else if (Mode != DerivativeMode::Forward) {
           // Note that here we cannot simply replace with null as users who try
           // to find the shadow pointer will use the shadow of null rather than
@@ -3459,6 +3476,26 @@ public:
                             gutils->TLI);
       }
 
+      return;
+    }
+
+    if (called && called->getName() == "julia.pointer_from_objref") {
+      eraseIfUnused(*orig);
+      if (gutils->isConstantValue(orig))
+        return;
+
+      IRBuilder<> Builder2(gutils->getNewFromOriginal(orig));
+      Value *ptrshadow =
+          gutils->invertPointerM(call.getArgOperand(0), Builder2);
+      Value *val =
+          Builder2.CreateCall(called, std::vector<Value *>({ptrshadow}));
+      assert(gutils->invertedPointers.count(orig));
+
+      auto placeholder = cast<PHINode>(gutils->invertedPointers[orig]);
+      gutils->invertedPointers.erase(orig);
+      gutils->invertedPointers[orig] = val;
+      gutils->replaceAWithB(placeholder, val);
+      gutils->erase(placeholder);
       return;
     }
 
@@ -3803,10 +3840,10 @@ public:
 
       } else {
         if (Mode == DerivativeMode::Forward || Mode == DerivativeMode::Both) {
-          subdata = &CreateAugmentedPrimal(
+          subdata = &gutils->Logic.CreateAugmentedPrimal(
               cast<Function>(called), subretType, argsInverted, gutils->TLI,
-              TR.analysis, gutils->OrigAA, /*return is used*/ subretused,
-              nextTypeInfo, uncacheable_args, false, gutils->AtomicAdd,
+              TR.analysis, /*return is used*/ subretused, nextTypeInfo,
+              uncacheable_args, false, gutils->AtomicAdd,
               /*PostOpt*/ false);
           if (Mode == DerivativeMode::Forward) {
             assert(augmentedReturn);
@@ -4099,9 +4136,9 @@ public:
                       replaceFunction && (call.getNumUses() != 0);
     bool subtopLevel = replaceFunction || !modifyPrimal;
     if (called) {
-      newcalled = CreatePrimalAndGradient(
+      newcalled = gutils->Logic.CreatePrimalAndGradient(
           cast<Function>(called), subretType, argsInverted, gutils->TLI,
-          TR.analysis, gutils->OrigAA, /*returnValue*/ retUsed,
+          TR.analysis, /*returnValue*/ retUsed,
           /*subdretptr*/ subdretptr, /*topLevel*/ subtopLevel,
           tape ? tape->getType() : nullptr, nextTypeInfo, uncacheable_args,
           subdata, gutils->AtomicAdd); //, LI, DT);

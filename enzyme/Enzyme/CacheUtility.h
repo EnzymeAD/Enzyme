@@ -151,7 +151,8 @@ private:
 public:
   /// Given a BasicBlock BB in newFunc, set loopContext to the relevant
   /// contained loop and return true. If BB is not in a loop, return false
-  bool getContext(llvm::BasicBlock *BB, LoopContext &loopContext);
+  bool getContext(llvm::BasicBlock *BB, LoopContext &loopContext,
+                  bool ReverseLimit);
   /// Return whether the given instruction is used as necessary as part of a
   /// loop context This includes as the canonical induction variable or
   /// increment
@@ -185,13 +186,18 @@ public:
 
   // Context information to request calculation of loop limit information
   struct LimitContext {
+    // Whether the limit needs to be accessible for a reverse pass
+    bool ReverseLimit;
+
     // A block inside of the loop, defining the location
     llvm::BasicBlock *Block;
     // Instead of getting the actual limits, return a limit of one
     bool ForceSingleIteration;
 
-    LimitContext(llvm::BasicBlock *Block, bool ForceSingleIteration = false)
-        : Block(Block), ForceSingleIteration(ForceSingleIteration) {}
+    LimitContext(bool ReverseLimit, llvm::BasicBlock *Block,
+                 bool ForceSingleIteration = false)
+        : ReverseLimit(ReverseLimit), Block(Block),
+          ForceSingleIteration(ForceSingleIteration) {}
   };
 
   llvm::Value *ompOffset;
@@ -267,6 +273,11 @@ protected:
   /// part of the cache
   std::map<llvm::AllocaInst *, std::vector<llvm::CallInst *>> scopeAllocs;
 
+  /// Perform the final load from the cache, applying requisite invariant
+  /// group and alignment
+  llvm::Value *loadFromCachePointer(llvm::IRBuilder<> &BuilderM,
+                                    llvm::Value *cptr, llvm::Value *cache);
+
 public:
   /// Create a cache of Type T at the given LimitContext. If allocateInternal is
   /// set this will allocate the requesite memory. If extraSize is set,
@@ -301,6 +312,8 @@ public:
           const llvm::ValueToValueMapTy &incoming_availalble =
               llvm::ValueToValueMapTy(),
           bool tryLegalityCheck = true) = 0;
+
+  virtual bool assumeDynamicLoopOfSizeOne(llvm::Loop *L) const = 0;
 
   /// If an allocation is requested to be freed, this subclass will be called to
   /// chose how and where to free it. It is by default not implemented, falling
@@ -354,7 +367,9 @@ InsertNewCanonicalIV(llvm::Loop *L, llvm::Type *Ty, std::string name = "iv");
 
 // Attempt to rewrite all phinode's in the loop in terms of the
 // induction variable
-void RemoveRedundantIVs(llvm::BasicBlock *Header, llvm::PHINode *CanonicalIV,
-                        MustExitScalarEvolution &SE,
-                        std::function<void(llvm::Instruction *)> eraser);
+void RemoveRedundantIVs(
+    llvm::BasicBlock *Header, llvm::PHINode *CanonicalIV,
+    MustExitScalarEvolution &SE,
+    std::function<void(llvm::Instruction *, llvm::Value *)> replacer,
+    std::function<void(llvm::Instruction *)> eraser);
 #endif
