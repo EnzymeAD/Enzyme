@@ -2808,7 +2808,6 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                   if (II->getIntrinsicID() == Intrinsic::nvvm_barrier0) {
                     interveningSync = DT.dominates(SI, II) && DT.dominates(II, origInst);
                     allUnsyncdPredecessorsOf(II, [&](Instruction *mid) {
-                      llvm::errs() << " seen: " << *mid << "\n";
                       if (!mid->mayWriteToMemory())
                         return false;
 
@@ -2817,7 +2816,6 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                       if (!writesToMemoryReadBy(OrigAA, origInst, potentialAlias)) {
                         return false;
                       }
-                      llvm::errs() << " store from: " << *mid << " via " << *potentialAlias << "\n";
                       lastStore = false;
                       return true;
                     }, [&]() {
@@ -2901,9 +2899,13 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                         if (cast<IntegerType>(ss->getType())->getBitWidth() < cast<IntegerType>(ls->getType())->getBitWidth()) {
                           ls = OrigSE.getTruncateExpr(ls, ss->getType());
                         }
+                        if (ls != ss) {
                         llvm::errs() << " ls: " << *ls << " ss: " << *ss << "\n";
-                        if (ls != ss)
                           llvm::errs() << *OrigSE.getEqualPredicate(ls, ss) << "\n";
+                          //if (auto II = dyn_cast<IntrinsicInst>(ss)) {
+
+                          //}
+                        }
                       }
                     }
                   }
