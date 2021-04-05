@@ -2516,21 +2516,28 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
   assert(BuilderM.GetInsertBlock()->getParent() == newFunc);
 
   bool reduceRegister = false;
-  if (auto II = dyn_cast<IntrinsicInst>())
+  if (auto II = dyn_cast<IntrinsicInst>(inst)) {
+    switch (II->getIntrinsicID()) {
+      case Intrinsic::nvvm_ldu_global_i:
+      case Intrinsic::nvvm_ldu_global_p:
+      case Intrinsic::nvvm_ldu_global_f:
+      case Intrinsic::nvvm_ldg_global_i:
+      case Intrinsic::nvvm_ldg_global_p:
+      case Intrinsic::nvvm_ldg_global_f:
+        reduceRegister = true;
+        break;
+      default: break;
+    }
+  }
+  if (auto LI = dyn_cast<LoadInst>(inst)) {
+    if (cast<PointerType>(LI->getPointerOperand()->getType())->getAddressSpace() == 3) {
+      reduceRegister |= tryLegalRecomputeCheck &&
+                        legalRecompute(LI, {}, &BuilderM) &&
+                        shouldRecompute(LI, {}, &BuilderM);
+    }
+  }
 
-  if (!(isa<IntrinsicInst>(inst) &&
-                 (cast<IntrinsicInst>(inst)->getIntrinsicID() ==
-                      Intrinsic::nvvm_ldu_global_i ||
-                  cast<IntrinsicInst>(inst)->getIntrinsicID() ==
-                      Intrinsic::nvvm_ldu_global_p ||
-                  cast<IntrinsicInst>(inst)->getIntrinsicID() ==
-                      Intrinsic::nvvm_ldu_global_f ||
-                  cast<IntrinsicInst>(inst)->getIntrinsicID() ==
-                      Intrinsic::nvvm_ldg_global_i ||
-                  cast<IntrinsicInst>(inst)->getIntrinsicID() ==
-                      Intrinsic::nvvm_ldg_global_p ||
-                  cast<IntrinsicInst>(inst)->getIntrinsicID() ==
-                      Intrinsic::nvvm_ldg_global_f))) {
+  if (!reduceRegister) {
   if (isOriginalBlock(*BuilderM.GetInsertBlock())) {
     if (BuilderM.GetInsertBlock()->size() &&
         BuilderM.GetInsertPoint() != BuilderM.GetInsertBlock()->end()) {
