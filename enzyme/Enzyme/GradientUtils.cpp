@@ -2515,6 +2515,9 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
   assert(inst->getParent()->getParent() == newFunc);
   assert(BuilderM.GetInsertBlock()->getParent() == newFunc);
 
+  bool reduceRegister = false;
+  if (auto II = dyn_cast<IntrinsicInst>())
+
   if (!(isa<IntrinsicInst>(inst) &&
                  (cast<IntrinsicInst>(inst)->getIntrinsicID() ==
                       Intrinsic::nvvm_ldu_global_i ||
