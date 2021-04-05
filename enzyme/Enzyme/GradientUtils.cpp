@@ -2515,6 +2515,19 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
   assert(inst->getParent()->getParent() == newFunc);
   assert(BuilderM.GetInsertBlock()->getParent() == newFunc);
 
+  if (!(isa<IntrinsicInst>(inst) &&
+                 (cast<IntrinsicInst>(inst)->getIntrinsicID() ==
+                      Intrinsic::nvvm_ldu_global_i ||
+                  cast<IntrinsicInst>(inst)->getIntrinsicID() ==
+                      Intrinsic::nvvm_ldu_global_p ||
+                  cast<IntrinsicInst>(inst)->getIntrinsicID() ==
+                      Intrinsic::nvvm_ldu_global_f ||
+                  cast<IntrinsicInst>(inst)->getIntrinsicID() ==
+                      Intrinsic::nvvm_ldg_global_i ||
+                  cast<IntrinsicInst>(inst)->getIntrinsicID() ==
+                      Intrinsic::nvvm_ldg_global_p ||
+                  cast<IntrinsicInst>(inst)->getIntrinsicID() ==
+                      Intrinsic::nvvm_ldg_global_f))) {
   if (isOriginalBlock(*BuilderM.GetInsertBlock())) {
     if (BuilderM.GetInsertBlock()->size() &&
         BuilderM.GetInsertPoint() != BuilderM.GetInsertBlock()->end()) {
@@ -2590,6 +2603,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
       }
     }
   }
+                              }
 
   auto idx = std::make_pair(val, BuilderM.GetInsertBlock());
   if (lookup_cache.find(idx) != lookup_cache.end()) {
