@@ -2737,7 +2737,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
           }
         }
         assert(op->getType() == inst->getType());
-        lookup_cache[idx] = op;
+        if (!reduceRegister)
+          lookup_cache[idx] = op;
         return op;
       }
     } else {
