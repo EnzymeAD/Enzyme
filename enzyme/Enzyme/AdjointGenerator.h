@@ -28,6 +28,8 @@
 #include "llvm/IR/Value.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
+#include "llvm/IR/IntrinsicsAMDGPU.h"
+
 #include "DifferentialUseAnalysis.h"
 #include "EnzymeLogic.h"
 #include "GradientUtils.h"
@@ -1763,6 +1765,7 @@ public:
       case Intrinsic::nvvm_membar_cta:
       case Intrinsic::nvvm_membar_gl:
       case Intrinsic::nvvm_membar_sys:
+      case Intrinsic::amdgcn_s_barrier:
 
       case Intrinsic::prefetch:
       case Intrinsic::dbg_declare:
@@ -1849,6 +1852,7 @@ public:
       }
 
       case Intrinsic::nvvm_barrier0:
+      case Intrinsic::amdgcn_s_barrier:
       case Intrinsic::nvvm_membar_cta:
       case Intrinsic::nvvm_membar_gl:
       case Intrinsic::nvvm_membar_sys: {

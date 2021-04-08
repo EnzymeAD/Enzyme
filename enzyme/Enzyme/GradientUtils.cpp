@@ -41,6 +41,7 @@
 
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/InstrTypes.h"
+#include "llvm/Support/AMDGPUMetadata.h"
 #include "llvm/Transforms/Utils/SimplifyIndVar.h"
 
 std::map<std::string, std::function<llvm::Value *(IRBuilder<> &, CallInst *,
@@ -2045,11 +2046,16 @@ Value *GradientUtils::invertPointerM(Value *oval, IRBuilder<> &BuilderM) {
         }
       }
 
-      if ((llvm::Triple(newFunc->getParent()->getTargetTriple()).getArch() ==
-               Triple::nvptx ||
-           llvm::Triple(newFunc->getParent()->getTargetTriple()).getArch() ==
-               Triple::nvptx64) &&
-          cast<PointerType>(arg->getType())->getAddressSpace() == 3) {
+      auto Arch =
+          llvm::Triple(newFunc->getParent()->getTargetTriple()).getArch();
+      int SharedAddrSpace =
+          Arch == Triple::amdgcn
+              ? (int)AMDGPU::HSAMD::AddressSpaceQualifier::Local
+              : 3;
+      int AddrSpace = cast<PointerType>(arg->getType())->getAddressSpace();
+      if ((Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
+           Arch == Triple::amdgcn) &&
+          AddrSpace == SharedAddrSpace) {
         llvm::errs() << "warning found shared memory\n";
         //#if LLVM_VERSION_MAJOR >= 11
         Type *type = cast<PointerType>(arg->getType())->getElementType();
@@ -2882,7 +2888,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                       return false;
 
                     if (auto II = dyn_cast<IntrinsicInst>(potentialAlias)) {
-                      if (II->getIntrinsicID() == Intrinsic::nvvm_barrier0) {
+                      if (II->getIntrinsicID() == Intrinsic::nvvm_barrier0 ||
+                          II->getIntrinsicID() == Intrinsic::amdgcn_s_barrier) {
                         interveningSync =
                             DT.dominates(SI, II) && DT.dominates(II, origInst);
                         allUnsyncdPredecessorsOf(

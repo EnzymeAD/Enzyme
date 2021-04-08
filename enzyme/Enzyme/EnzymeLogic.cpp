@@ -53,6 +53,8 @@
 #include "llvm/Analysis/BasicAliasAnalysis.h"
 #include "llvm/Analysis/GlobalsModRef.h"
 
+#include "llvm/Support/AMDGPUMetadata.h"
+
 #include "FunctionUtils.h"
 #include "GradientUtils.h"
 #include "LibraryFuncs.h"
@@ -244,7 +246,8 @@ struct CacheAnalysis {
           return false;
         }
         if (auto II = dyn_cast<IntrinsicInst>(inst2)) {
-          if (II->getIntrinsicID() == Intrinsic::nvvm_barrier0) {
+          if (II->getIntrinsicID() == Intrinsic::nvvm_barrier0 ||
+              II->getIntrinsicID() == Intrinsic::amdgcn_s_barrier) {
             allUnsyncdPredecessorsOf(
                 II,
                 [&](Instruction *mid) {
@@ -1843,10 +1846,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       user->setCalledFunction(NewF);
     }
   }
-  if (llvm::Triple(NewF->getParent()->getTargetTriple()).getArch() ==
-          Triple::nvptx ||
-      llvm::Triple(NewF->getParent()->getTargetTriple()).getArch() ==
-          Triple::nvptx64)
+  auto Arch = llvm::Triple(NewF->getParent()->getTargetTriple()).getArch();
+  if (Arch == Triple::nvptx || Arch == Triple::nvptx64)
     PPC.ReplaceReallocs(NewF, /*mem2reg*/ true);
   if (PostOpt)
     PPC.optimizeIntermediate(NewF);
@@ -2688,6 +2689,12 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
   BasicBlock *entry = &gutils->newFunc->getEntryBlock();
 
+  auto Arch =
+      llvm::Triple(gutils->newFunc->getParent()->getTargetTriple()).getArch();
+  int SharedAddrSpace = Arch == Triple::amdgcn
+                            ? (int)AMDGPU::HSAMD::AddressSpaceQualifier::Local
+                            : 3;
+
   if (topLevel) {
     BasicBlock *sharedBlock = nullptr;
     for (auto &g : gutils->newFunc->getParent()->globals()) {
@@ -2695,7 +2702,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         IRBuilder<> entryBuilder(gutils->inversionAllocs,
                                  gutils->inversionAllocs->begin());
 
-        if (g.getType()->getAddressSpace() == 3) {
+        if ((Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
+             Arch == Triple::amdgcn) &&
+            g.getType()->getAddressSpace() == SharedAddrSpace) {
           if (sharedBlock == nullptr)
             sharedBlock = BasicBlock::Create(entry->getContext(), "shblock",
                                              gutils->newFunc);
@@ -2718,14 +2727,24 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       entry->getTerminator()->eraseFromParent();
       IRBuilder<> ebuilder(entry);
 
-      Value *tx = ebuilder.CreateCall(Intrinsic::getDeclaration(
-          gutils->newFunc->getParent(), Intrinsic::nvvm_read_ptx_sreg_tid_x));
+      Value *tx, *ty, *tz;
+      if (Arch == Triple::nvptx || Arch == Triple::nvptx64) {
+        tx = ebuilder.CreateCall(Intrinsic::getDeclaration(
+            gutils->newFunc->getParent(), Intrinsic::nvvm_read_ptx_sreg_tid_x));
+        ty = ebuilder.CreateCall(Intrinsic::getDeclaration(
+            gutils->newFunc->getParent(), Intrinsic::nvvm_read_ptx_sreg_tid_y));
+        tz = ebuilder.CreateCall(Intrinsic::getDeclaration(
+            gutils->newFunc->getParent(), Intrinsic::nvvm_read_ptx_sreg_tid_z));
+      } else if (Arch == Triple::amdgcn) {
+        tx = ebuilder.CreateCall(Intrinsic::getDeclaration(
+            gutils->newFunc->getParent(), Intrinsic::amdgcn_workitem_id_x));
+        ty = ebuilder.CreateCall(Intrinsic::getDeclaration(
+            gutils->newFunc->getParent(), Intrinsic::amdgcn_workitem_id_y));
+        tz = ebuilder.CreateCall(Intrinsic::getDeclaration(
+            gutils->newFunc->getParent(), Intrinsic::amdgcn_workitem_id_z));
+      }
       tx = ebuilder.CreateICmpEQ(tx, ConstantInt::get(tx->getType(), 0));
-      Value *ty = ebuilder.CreateCall(Intrinsic::getDeclaration(
-          gutils->newFunc->getParent(), Intrinsic::nvvm_read_ptx_sreg_tid_y));
       ty = ebuilder.CreateICmpEQ(ty, ConstantInt::get(ty->getType(), 0));
-      Value *tz = ebuilder.CreateCall(Intrinsic::getDeclaration(
-          gutils->newFunc->getParent(), Intrinsic::nvvm_read_ptx_sreg_tid_z));
       tz = ebuilder.CreateICmpEQ(tz, ConstantInt::get(tz->getType(), 0));
 
       ebuilder.CreateCondBr(ebuilder.CreateAnd(ebuilder.CreateAnd(tx, ty), tz),
@@ -2733,9 +2752,10 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
       IRBuilder<> instbuilder(OldEntryInsts, OldEntryInsts->begin());
 
+      auto BarrierInst = Arch == Triple::amdgcn ? Intrinsic::amdgcn_s_barrier
+                                                : Intrinsic::nvvm_barrier0;
       cast<CallInst>(instbuilder.CreateCall(
-          Intrinsic::getDeclaration(gutils->newFunc->getParent(),
-                                    Intrinsic::nvvm_barrier0),
+          Intrinsic::getDeclaration(gutils->newFunc->getParent(), BarrierInst),
           {}));
       OldEntryInsts->moveAfter(entry);
       sharedBlock->moveAfter(entry);
@@ -2816,10 +2836,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     PreservedAnalyses PA;
     PPC.FAM.invalidate(*gutils->newFunc, PA);
   }
-  if (llvm::Triple(gutils->newFunc->getParent()->getTargetTriple()).getArch() ==
-          Triple::nvptx ||
-      llvm::Triple(gutils->newFunc->getParent()->getTargetTriple()).getArch() ==
-          Triple::nvptx64)
+  if (Arch == Triple::nvptx || Arch == Triple::nvptx64)
     PPC.ReplaceReallocs(gutils->newFunc, /*mem2reg*/ true);
   if (PostOpt)
     PPC.optimizeIntermediate(gutils->newFunc);
