@@ -221,6 +221,11 @@ struct CacheAnalysis {
   bool is_load_uncacheable(LoadInst &li) {
     assert(li.getParent()->getParent() == oldFunc);
 
+    auto Arch = llvm::Triple(oldFunc->getParent()->getTargetTriple()).getArch();
+    if (Arch == Triple::amdgcn && cast<PointerType>(li.getPointerOperand()->getType())->getAddressSpace() == 4) {
+      return false;
+    }
+
     // Find the underlying object for the pointer operand of the load
     // instruction.
     auto obj =
