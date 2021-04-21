@@ -70,6 +70,10 @@ llvm::cl::opt<bool> EnzymeInactiveDynamic(
 llvm::cl::opt<bool>
     EnzymeSharedForward("enzyme-shared-forward", cl::init(false), cl::Hidden,
                         cl::desc("Forward Shared Memory from definitions"));
+
+llvm::cl::opt<bool>
+    EnzymeRegisterReduce("enzyme-register-reduce", cl::init(false), cl::Hidden,
+                         cl::desc("Reduce the amount of register reduce"));
 }
 
 bool isPotentialLastLoopValue(Value *val, const BasicBlock *loc,
@@ -2518,102 +2522,104 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
   bool reduceRegister = false;
   if (auto II = dyn_cast<IntrinsicInst>(inst)) {
     switch (II->getIntrinsicID()) {
-      case Intrinsic::nvvm_ldu_global_i:
-      case Intrinsic::nvvm_ldu_global_p:
-      case Intrinsic::nvvm_ldu_global_f:
-      case Intrinsic::nvvm_ldg_global_i:
-      case Intrinsic::nvvm_ldg_global_p:
-      case Intrinsic::nvvm_ldg_global_f:
-        reduceRegister = true;
-        break;
-      default: break;
+    case Intrinsic::nvvm_ldu_global_i:
+    case Intrinsic::nvvm_ldu_global_p:
+    case Intrinsic::nvvm_ldu_global_f:
+    case Intrinsic::nvvm_ldg_global_i:
+    case Intrinsic::nvvm_ldg_global_p:
+    case Intrinsic::nvvm_ldg_global_f:
+      reduceRegister = true;
+      break;
+    default:
+      break;
     }
   }
   if (auto LI = dyn_cast<LoadInst>(inst)) {
-    if (cast<PointerType>(LI->getPointerOperand()->getType())->getAddressSpace() == 3) {
+    if (cast<PointerType>(LI->getPointerOperand()->getType())
+            ->getAddressSpace() == 3) {
       reduceRegister |= tryLegalRecomputeCheck &&
                         legalRecompute(LI, {}, &BuilderM) &&
                         shouldRecompute(LI, {}, &BuilderM);
     }
   }
 
-  if (!reduceRegister) {
-  if (isOriginalBlock(*BuilderM.GetInsertBlock())) {
-    if (BuilderM.GetInsertBlock()->size() &&
-        BuilderM.GetInsertPoint() != BuilderM.GetInsertBlock()->end()) {
-      Instruction *use = &*BuilderM.GetInsertPoint();
-      while (isa<PHINode>(use))
-        use = use->getNextNode();
-      if (DT.dominates(inst, use)) {
-        return inst;
+  if (!reduceRegister && !EnzymeRegisterReduce) {
+    if (isOriginalBlock(*BuilderM.GetInsertBlock())) {
+      if (BuilderM.GetInsertBlock()->size() &&
+          BuilderM.GetInsertPoint() != BuilderM.GetInsertBlock()->end()) {
+        Instruction *use = &*BuilderM.GetInsertPoint();
+        while (isa<PHINode>(use))
+          use = use->getNextNode();
+        if (DT.dominates(inst, use)) {
+          return inst;
+        } else {
+          llvm::errs() << *BuilderM.GetInsertBlock()->getParent() << "\n";
+          llvm::errs() << "didnt dominate inst: " << *inst
+                       << "  point: " << *BuilderM.GetInsertPoint()
+                       << "\nbb: " << *BuilderM.GetInsertBlock() << "\n";
+        }
       } else {
-        llvm::errs() << *BuilderM.GetInsertBlock()->getParent() << "\n";
-        llvm::errs() << "didnt dominate inst: " << *inst
-                     << "  point: " << *BuilderM.GetInsertPoint()
-                     << "\nbb: " << *BuilderM.GetInsertBlock() << "\n";
-      }
-    } else {
-      if (inst->getParent() == BuilderM.GetInsertBlock() ||
-          DT.dominates(inst, BuilderM.GetInsertBlock())) {
-        // allowed from block domination
-        return inst;
-      } else {
-        llvm::errs() << *BuilderM.GetInsertBlock()->getParent() << "\n";
-        llvm::errs() << "didnt dominate inst: " << *inst
-                     << "\nbb: " << *BuilderM.GetInsertBlock() << "\n";
-      }
-    }
-    // This is a reverse block
-  } else if (BuilderM.GetInsertBlock() != inversionAllocs) {
-    // Something in the entry (or anything that dominates all returns, doesn't
-    // need caching)
-
-    BasicBlock *forwardBlock =
-        originalForReverseBlock(*BuilderM.GetInsertBlock());
-
-    // Don't allow this if we're not definitely using the last iteration of this
-    // value
-    //   + either because the value isn't in a loop
-    //   + or because the forward of the block usage location isn't in a loop
-    //   (thus last iteration)
-    //   + or because the loop nests share no ancestry
-
-    bool loopLegal = true;
-    for (Loop *idx = LI.getLoopFor(inst->getParent()); idx != nullptr;
-         idx = idx->getParentLoop()) {
-      for (Loop *fdx = LI.getLoopFor(forwardBlock); fdx != nullptr;
-           fdx = fdx->getParentLoop()) {
-        if (idx == fdx) {
-          loopLegal = false;
-          break;
+        if (inst->getParent() == BuilderM.GetInsertBlock() ||
+            DT.dominates(inst, BuilderM.GetInsertBlock())) {
+          // allowed from block domination
+          return inst;
+        } else {
+          llvm::errs() << *BuilderM.GetInsertBlock()->getParent() << "\n";
+          llvm::errs() << "didnt dominate inst: " << *inst
+                       << "\nbb: " << *BuilderM.GetInsertBlock() << "\n";
         }
       }
-    }
+      // This is a reverse block
+    } else if (BuilderM.GetInsertBlock() != inversionAllocs) {
+      // Something in the entry (or anything that dominates all returns, doesn't
+      // need caching)
 
-    if (loopLegal) {
-      if (inst->getParent() == &newFunc->getEntryBlock()) {
-        return inst;
-      }
-      // TODO upgrade this to be all returns that this could enter from
-      bool legal = true;
-      for (auto &BB : *oldFunc) {
-        if (isa<ReturnInst>(BB.getTerminator())) {
-          BasicBlock *returningBlock =
-              cast<BasicBlock>(getNewFromOriginal(&BB));
-          if (inst->getParent() == returningBlock)
-            continue;
-          if (!DT.dominates(inst, returningBlock)) {
-            legal = false;
+      BasicBlock *forwardBlock =
+          originalForReverseBlock(*BuilderM.GetInsertBlock());
+
+      // Don't allow this if we're not definitely using the last iteration of
+      // this value
+      //   + either because the value isn't in a loop
+      //   + or because the forward of the block usage location isn't in a loop
+      //   (thus last iteration)
+      //   + or because the loop nests share no ancestry
+
+      bool loopLegal = true;
+      for (Loop *idx = LI.getLoopFor(inst->getParent()); idx != nullptr;
+           idx = idx->getParentLoop()) {
+        for (Loop *fdx = LI.getLoopFor(forwardBlock); fdx != nullptr;
+             fdx = fdx->getParentLoop()) {
+          if (idx == fdx) {
+            loopLegal = false;
             break;
           }
         }
       }
-      if (legal) {
-        return inst;
+
+      if (loopLegal) {
+        if (inst->getParent() == &newFunc->getEntryBlock()) {
+          return inst;
+        }
+        // TODO upgrade this to be all returns that this could enter from
+        bool legal = true;
+        for (auto &BB : *oldFunc) {
+          if (isa<ReturnInst>(BB.getTerminator())) {
+            BasicBlock *returningBlock =
+                cast<BasicBlock>(getNewFromOriginal(&BB));
+            if (inst->getParent() == returningBlock)
+              continue;
+            if (!DT.dominates(inst, returningBlock)) {
+              legal = false;
+              break;
+            }
+          }
+        }
+        if (legal) {
+          return inst;
+        }
       }
     }
   }
-                              }
 
   auto idx = std::make_pair(val, BuilderM.GetInsertBlock());
   if (lookup_cache.find(idx) != lookup_cache.end()) {
