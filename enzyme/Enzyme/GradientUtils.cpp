@@ -2565,7 +2565,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
           return inst;
         } else {
           llvm::errs() << *BuilderM.GetInsertBlock()->getParent() << "\n";
-          llvm::errs() << "didnt dominate inst: " << *inst
+          llvm::errs() << "didn't dominate inst: " << *inst
                        << "\nbb: " << *BuilderM.GetInsertBlock() << "\n";
         }
       }
