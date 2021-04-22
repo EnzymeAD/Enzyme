@@ -2520,30 +2520,33 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
   assert(BuilderM.GetInsertBlock()->getParent() == newFunc);
 
   bool reduceRegister = false;
-  if (auto II = dyn_cast<IntrinsicInst>(inst)) {
-    switch (II->getIntrinsicID()) {
-    case Intrinsic::nvvm_ldu_global_i:
-    case Intrinsic::nvvm_ldu_global_p:
-    case Intrinsic::nvvm_ldu_global_f:
-    case Intrinsic::nvvm_ldg_global_i:
-    case Intrinsic::nvvm_ldg_global_p:
-    case Intrinsic::nvvm_ldg_global_f:
-      reduceRegister = true;
-      break;
-    default:
-      break;
+
+  if (EnzymeRegisterReduce) {
+    if (auto II = dyn_cast<IntrinsicInst>(inst)) {
+      switch (II->getIntrinsicID()) {
+      case Intrinsic::nvvm_ldu_global_i:
+      case Intrinsic::nvvm_ldu_global_p:
+      case Intrinsic::nvvm_ldu_global_f:
+      case Intrinsic::nvvm_ldg_global_i:
+      case Intrinsic::nvvm_ldg_global_p:
+      case Intrinsic::nvvm_ldg_global_f:
+        reduceRegister = true;
+        break;
+      default:
+        break;
+      }
     }
-  }
-  if (auto LI = dyn_cast<LoadInst>(inst)) {
-    if (cast<PointerType>(LI->getPointerOperand()->getType())
-            ->getAddressSpace() == 3) {
-      reduceRegister |= tryLegalRecomputeCheck &&
-                        legalRecompute(LI, {}, &BuilderM) &&
-                        shouldRecompute(LI, {}, &BuilderM);
+    if (auto LI = dyn_cast<LoadInst>(inst)) {
+      if (cast<PointerType>(LI->getPointerOperand()->getType())
+              ->getAddressSpace() == 3) {
+        reduceRegister |= tryLegalRecomputeCheck &&
+                          legalRecompute(LI, incoming_available, &BuilderM) &&
+                          shouldRecompute(LI, incoming_available, &BuilderM);
+      }
     }
   }
 
-  if (!reduceRegister && !EnzymeRegisterReduce) {
+  if (!reduceRegister) {
     if (isOriginalBlock(*BuilderM.GetInsertBlock())) {
       if (BuilderM.GetInsertBlock()->size() &&
           BuilderM.GetInsertPoint() != BuilderM.GetInsertBlock()->end()) {
@@ -2554,7 +2557,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
           return inst;
         } else {
           llvm::errs() << *BuilderM.GetInsertBlock()->getParent() << "\n";
-          llvm::errs() << "didnt dominate inst: " << *inst
+          llvm::errs() << "didn't dominate inst: " << *inst
                        << "  point: " << *BuilderM.GetInsertPoint()
                        << "\nbb: " << *BuilderM.GetInsertBlock() << "\n";
         }
@@ -2979,7 +2982,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                       }
                       ValueToValueMapTy ThreadLookup;
                       bool legal = true;
-                      for (int i = 0; i < svals.size(); i++) {
+                      for (size_t i = 0; i < svals.size(); i++) {
                         auto ss = OrigSE.getSCEV(svals[i]);
                         auto ls = OrigSE.getSCEV(lvals[i]);
                         if (cast<IntegerType>(ss->getType())->getBitWidth() >
@@ -3973,10 +3976,10 @@ void GradientUtils::computeMinCache(
                 if (auto BO = dyn_cast<BinaryOperator>(
                         PN->getIncomingValueForBlock(B))) {
                   if (BO->getOpcode() == BinaryOperator::Add) {
-                    if (BO->getOperand(0) == PN &&
-                            invariant(BO->getOperand(1)) ||
-                        BO->getOperand(1) == PN &&
-                            invariant(BO->getOperand(0))) {
+                    if ((BO->getOperand(0) == PN &&
+                         invariant(BO->getOperand(1))) ||
+                        (BO->getOperand(1) == PN &&
+                         invariant(BO->getOperand(0)))) {
                       Increment.insert(BO);
                     } else {
                       legal = false;
