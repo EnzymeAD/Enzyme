@@ -45,9 +45,8 @@
 
 #include "llvm/IR/Dominators.h"
 
-#include "llvm/IR/IntrinsicsAMDGPU.h"
-
 #if LLVM_VERSION_MAJOR >= 10
+#include "llvm/IR/IntrinsicsAMDGPU.h"
 #include "llvm/IR/IntrinsicsNVPTX.h"
 #endif
 

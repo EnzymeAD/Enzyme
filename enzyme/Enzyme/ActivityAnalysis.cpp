@@ -36,7 +36,6 @@
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
-#include "llvm/IR/IntrinsicsAMDGPU.h"
 
 #include "llvm/IR/InstIterator.h"
 

@@ -222,7 +222,9 @@ struct CacheAnalysis {
     assert(li.getParent()->getParent() == oldFunc);
 
     auto Arch = llvm::Triple(oldFunc->getParent()->getTargetTriple()).getArch();
-    if (Arch == Triple::amdgcn && cast<PointerType>(li.getPointerOperand()->getType())->getAddressSpace() == 4) {
+    if (Arch == Triple::amdgcn &&
+        cast<PointerType>(li.getPointerOperand()->getType())
+                ->getAddressSpace() == 4) {
       return false;
     }
 
@@ -2748,12 +2750,11 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         tz = ebuilder.CreateCall(Intrinsic::getDeclaration(
             gutils->newFunc->getParent(), Intrinsic::amdgcn_workitem_id_z));
       }
-      tx = ebuilder.CreateICmpEQ(tx, ConstantInt::get(tx->getType(), 0));
-      ty = ebuilder.CreateICmpEQ(ty, ConstantInt::get(ty->getType(), 0));
-      tz = ebuilder.CreateICmpEQ(tz, ConstantInt::get(tz->getType(), 0));
+      Value *AndVal = ebuilder.CreateAnd(ebuilder.CreateAnd(tx, ty), tz);
 
-      ebuilder.CreateCondBr(ebuilder.CreateAnd(ebuilder.CreateAnd(tx, ty), tz),
-                            sharedBlock, OldEntryInsts);
+      ebuilder.CreateCondBr(
+          ebuilder.CreateICmpEQ(AndVal, ConstantInt::get(AndVal->getType(), 0)),
+          sharedBlock, OldEntryInsts);
 
       IRBuilder<> instbuilder(OldEntryInsts, OldEntryInsts->begin());
 

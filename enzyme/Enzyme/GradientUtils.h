@@ -1557,19 +1557,20 @@ public:
 
     // No need to do atomic on local memory for CUDA since it can't be raced
     // upon
-    if (isa<AllocaInst>(TmpOrig) && 
-        (Arch == Triple::nvptx || Arch == Triple::nvptx64 || Arch == Triple::amdgcn)) {
+    if (isa<AllocaInst>(TmpOrig) &&
+        (Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
+         Arch == Triple::amdgcn)) {
       Atomic = false;
     }
 
     if (Atomic) {
-      // For amdgcn constant AS is 4 and if the primal is in it we need to cast the
-      // derivative value to AS 1
+      // For amdgcn constant AS is 4 and if the primal is in it we need to cast
+      // the derivative value to AS 1
       auto AS = cast<PointerType>(ptr->getType())->getAddressSpace();
       if (Arch == Triple::amdgcn && AS == 4) {
         ptr = BuilderM.CreateAddrSpaceCast(
-            ptr,
-            PointerType::get(cast<PointerType>(ptr->getType())->getElementType(), 1));
+            ptr, PointerType::get(
+                     cast<PointerType>(ptr->getType())->getElementType(), 1));
       }
 
       /*

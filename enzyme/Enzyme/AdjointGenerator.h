@@ -28,8 +28,6 @@
 #include "llvm/IR/Value.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
-#include "llvm/IR/IntrinsicsAMDGPU.h"
-
 #include "DifferentialUseAnalysis.h"
 #include "EnzymeLogic.h"
 #include "GradientUtils.h"
