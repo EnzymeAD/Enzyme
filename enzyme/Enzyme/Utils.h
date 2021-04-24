@@ -218,6 +218,8 @@ enum class ReturnType {
   TapeAndTwoReturns,
   /// Return is a tape type
   Tape,
+  TwoReturns,
+  Return,
 };
 
 /// Potential differentiable argument classifications

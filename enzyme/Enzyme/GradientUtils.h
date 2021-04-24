@@ -1161,6 +1161,7 @@ public:
   static DiffeGradientUtils *
   CreateFromClone(EnzymeLogic &Logic, bool topLevel, Function *todiff,
                   TargetLibraryInfo &TLI, TypeAnalysis &TA, DIFFE_TYPE retType,
+                  bool diffeReturnArg,
                   const std::vector<DIFFE_TYPE> &constant_args,
                   ReturnType returnValue, Type *additionalArg);
 

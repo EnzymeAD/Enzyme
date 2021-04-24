@@ -2570,12 +2570,17 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
   assert(!todiff->empty());
 
-  DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
-      *this, topLevel, todiff, TLI, TA, retType, constant_args,
+  ReturnType retVal =
       returnValue ? (dretPtr ? ReturnType::ArgsWithTwoReturns
                              : ReturnType::ArgsWithReturn)
-                  : (dretPtr ? ReturnType::ArgsWithReturn : ReturnType::Args),
-      additionalArg);
+                  : (dretPtr ? ReturnType::ArgsWithReturn : ReturnType::Args);
+
+  bool diffeReturnArg = fwdMode ? false : retType == DIFFE_TYPE::OUT_DIFF;
+
+  DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
+      *this, topLevel, todiff, TLI, TA, retType, diffeReturnArg, constant_args,
+      fwdMode ? ReturnType::Return : retVal, additionalArg);
+
   if (omp)
     gutils->setupOMPFor();
   gutils->AtomicAdd = AtomicAdd;

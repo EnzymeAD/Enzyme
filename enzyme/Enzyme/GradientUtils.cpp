@@ -1958,7 +1958,7 @@ GradientUtils *GradientUtils::CreateFromClone(
 
 DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
     EnzymeLogic &Logic, bool topLevel, Function *todiff, TargetLibraryInfo &TLI,
-    TypeAnalysis &TA, DIFFE_TYPE retType,
+    TypeAnalysis &TA, DIFFE_TYPE retType, bool diffeReturnArg,
     const std::vector<DIFFE_TYPE> &constant_args, ReturnType returnValue,
     Type *additionalArg) {
   assert(!todiff->empty());
@@ -1971,7 +1971,6 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
   SmallPtrSet<Value *, 4> constant_values;
   SmallPtrSet<Value *, 4> nonconstant_values;
 
-  bool diffeReturnArg = retType == DIFFE_TYPE::OUT_DIFF;
   auto newFunc = Logic.PPC.CloneFunctionWithReturns(
       topLevel, todiff, invertedPointers, constant_args, constant_values,
       nonconstant_values, returnvals, returnValue, "diffe" + todiff->getName(),
