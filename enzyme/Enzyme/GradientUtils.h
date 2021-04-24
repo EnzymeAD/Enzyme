@@ -71,7 +71,7 @@
 
 using namespace llvm;
 
-enum class DerivativeMode { Forward, Reverse, Both };
+enum class DerivativeMode { AugmentedForward, Forward, Reverse, Both };
 
 #include "llvm-c/Core.h"
 
@@ -85,6 +85,8 @@ extern llvm::cl::opt<bool> EnzymeInactiveDynamic;
 
 static inline std::string to_string(DerivativeMode mode) {
   switch (mode) {
+  case DerivativeMode::AugmentedForward:
+    return "AugmentedForwardMode";
   case DerivativeMode::Forward:
     return "Forward";
   case DerivativeMode::Reverse:
