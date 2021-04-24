@@ -187,7 +187,7 @@ public:
       const FnTypeInfo &typeInfo,
       const std::map<llvm::Argument *, bool> _uncacheable_args,
       const AugmentedReturn *augmented, bool AtomicAdd, bool PostOpt = false,
-      bool omp = false);
+      bool fwdMode = false, bool omp = false);
 
   void clear();
 };
