@@ -102,7 +102,8 @@ public:
 
   /// Return whether successful
   template <typename T>
-  bool HandleAutoDiff(T *CI, TargetLibraryInfo &TLI, bool PostOpt) {
+  bool HandleAutoDiff(T *CI, TargetLibraryInfo &TLI, bool PostOpt,
+                      bool fwdMode) {
 
     Value *fn = CI->getArgOperand(0);
 
@@ -574,7 +575,8 @@ public:
 
     bool Changed = false;
 
-    std::set<CallInst *> toLower;
+    std::set<CallInst *> toLowerAuto;
+    std::set<CallInst *> toLowerFwd;
     std::set<InvokeInst *> toLowerI;
     std::set<CallInst *> InactiveCalls;
   retry:;
@@ -750,11 +752,22 @@ public:
           }
         }
 
-        if (Fn && (Fn->getName() == "__enzyme_autodiff" ||
-                   Fn->getName() == "enzyme_autodiff_" ||
-                   Fn->getName().startswith("__enzyme_autodiff") ||
-                   Fn->getName().contains("__enzyme_autodiff"))) {
-          toLower.insert(CI);
+        bool autoDiff = Fn && (Fn->getName() == "__enzyme_autodiff" ||
+                               Fn->getName() == "enzyme_autodiff_" ||
+                               Fn->getName().startswith("__enzyme_autodiff") ||
+                               Fn->getName().contains("__enzyme_autodiff"));
+
+        bool fwdDiff = Fn && (Fn->getName() == "__enzyme_fwddiff" ||
+                              Fn->getName() == "enzyme_fwddiff_" ||
+                              Fn->getName().startswith("__enzyme_fwddiff") ||
+                              Fn->getName().contains("__enzyme_fwddiff"));
+
+        if (autoDiff || fwdDiff) {
+          if (autoDiff) {
+            toLowerAuto.insert(CI);
+          } else if (fwdDiff) {
+            toLowerFwd.insert(CI);
+          }
 
           Value *fn = CI->getArgOperand(0);
           while (auto ci = dyn_cast<CastInst>(fn)) {
@@ -818,14 +831,22 @@ public:
       CI->eraseFromParent();
       Changed = true;
     }
-    for (auto CI : toLower) {
-      successful &= HandleAutoDiff(CI, TLI, PostOpt);
+    for (auto CI : toLowerAuto) {
+      successful &= HandleAutoDiff(CI, TLI, PostOpt, /*fwdMode*/ false);
       Changed = true;
       if (!successful)
         break;
     }
+
+    for (auto CI : toLowerFwd) {
+      successful &= HandleAutoDiff(CI, TLI, PostOpt, /*fwdMode*/ true);
+      Changed = true;
+      if (!successful)
+        break;
+    }
+
     for (auto CI : toLowerI) {
-      successful &= HandleAutoDiff(CI, TLI, PostOpt);
+      successful &= HandleAutoDiff(CI, TLI, PostOpt, /*fwdMode*/ false);
       Changed = true;
       if (!successful)
         break;
