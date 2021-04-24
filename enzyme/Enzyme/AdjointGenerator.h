@@ -208,8 +208,6 @@ public:
         eraseIfUnused(inst);
         if (gutils->isConstantInstruction(&inst))
           return;
-        if (Mode != DerivativeMode::Reverse && Mode != DerivativeMode::Both)
-          return;
 
         Value *orig_op1 = FPMO->getOperand(0);
         bool constantval1 = gutils->isConstantValue(orig_op1);
@@ -954,12 +952,14 @@ public:
   }
 
   Value *diffe(Value *val, IRBuilder<> &Builder) {
-    assert(Mode == DerivativeMode::Reverse || Mode == DerivativeMode::Both);
+    assert(Mode == DerivativeMode::Reverse || Mode == DerivativeMode::Both ||
+           Mode == DerivativeMode::AugmentedForward);
     return ((DiffeGradientUtils *)gutils)->diffe(val, Builder);
   }
 
   void setDiffe(Value *val, Value *dif, IRBuilder<> &Builder) {
-    assert(Mode == DerivativeMode::Reverse || Mode == DerivativeMode::Both);
+    assert(Mode == DerivativeMode::Reverse || Mode == DerivativeMode::Both ||
+           Mode == DerivativeMode::AugmentedForward);
     ((DiffeGradientUtils *)gutils)->setDiffe(val, dif, Builder);
   }
 
@@ -969,7 +969,8 @@ public:
 
   std::vector<SelectInst *> addToDiffe(Value *val, Value *dif,
                                        IRBuilder<> &Builder, Type *T) {
-    assert(Mode == DerivativeMode::Reverse || Mode == DerivativeMode::Both);
+    assert(Mode == DerivativeMode::Reverse || Mode == DerivativeMode::Both ||
+           Mode == DerivativeMode::AugmentedForward);
     return ((DiffeGradientUtils *)gutils)->addToDiffe(val, dif, Builder, T);
   }
 
@@ -981,13 +982,6 @@ public:
     eraseIfUnused(BO);
     if (gutils->isConstantInstruction(&BO))
       return;
-    if (Mode != DerivativeMode::Reverse && Mode != DerivativeMode::Both)
-      return;
-
-    Value *orig_op0 = BO.getOperand(0);
-    Value *orig_op1 = BO.getOperand(1);
-    bool constantval0 = gutils->isConstantValue(orig_op0);
-    bool constantval1 = gutils->isConstantValue(orig_op1);
 
     size_t size = 1;
     if (BO.getType()->isSized())
@@ -1001,8 +995,27 @@ public:
       return;
     }
 
+    switch (Mode) {
+    case DerivativeMode::Reverse:
+    case DerivativeMode::Both:
+      createBinaryOperatorAdjoint(BO);
+      break;
+    case DerivativeMode::AugmentedForward:
+      createBinaryOperatorDual(BO);
+      break;
+    case DerivativeMode::Forward:
+      return;
+    }
+  }
+
+  void createBinaryOperatorAdjoint(llvm::BinaryOperator &BO) {
     IRBuilder<> Builder2(BO.getParent());
     getReverseBuilder(Builder2);
+
+    Value *orig_op0 = BO.getOperand(0);
+    Value *orig_op1 = BO.getOperand(1);
+    bool constantval0 = gutils->isConstantValue(orig_op0);
+    bool constantval1 = gutils->isConstantValue(orig_op1);
 
     Value *dif0 = nullptr;
     Value *dif1 = nullptr;
@@ -1346,6 +1359,102 @@ public:
       addToDiffe(orig_op0, dif0, Builder2, addingType);
     if (dif1)
       addToDiffe(orig_op1, dif1, Builder2, addingType);
+  }
+
+  void createBinaryOperatorDual(llvm::BinaryOperator &BO) {
+    IRBuilder<> Builder2(&BO);
+
+    Instruction *nBO = gutils->getNewFromOriginal(&BO);
+
+    assert(nBO);
+    assert(nBO->getNextNode());
+
+    if (nBO->getNextNode()) {
+      Builder2.SetInsertPoint(nBO->getNextNode());
+    }
+
+    Builder2.SetCurrentDebugLocation(
+        gutils->getNewFromOriginal(Builder2.getCurrentDebugLocation()));
+    Builder2.setFastMathFlags(getFast());
+
+    Value *orig_op0 = BO.getOperand(0);
+    Value *orig_op1 = BO.getOperand(1);
+
+    bool constantval0 = gutils->isConstantValue(orig_op0);
+    bool constantval1 = gutils->isConstantValue(orig_op1);
+
+    Value *dif0 = constantval0 ? nullptr : diffe(orig_op0, Builder2);
+    Value *dif1 = constantval1 ? nullptr : diffe(orig_op1, Builder2);
+
+    Type *addingType = BO.getType();
+
+    switch (BO.getOpcode()) {
+    case Instruction::FMul: {
+      if (!constantval0) {
+        Value *idiff0 =
+            Builder2.CreateFMul(dif0, gutils->getNewFromOriginal(orig_op1));
+        setDiffe(&BO, idiff0, Builder2);
+      }
+
+      if (!constantval1) {
+        Value *idiff1 =
+            Builder2.CreateFMul(dif1, gutils->getNewFromOriginal(orig_op0));
+        addToDiffe(&BO, idiff1, Builder2, addingType);
+      }
+      break;
+    }
+    case Instruction::FAdd: {
+      if (!constantval0) {
+        addToDiffe(&BO, dif0, Builder2, addingType);
+      }
+
+      if (!constantval1) {
+        addToDiffe(&BO, dif1, Builder2, addingType);
+      }
+      break;
+    }
+    case Instruction::FSub: {
+      if (!constantval0) {
+        addToDiffe(&BO, dif0, Builder2, addingType);
+      }
+
+      if (!constantval1) {
+        addToDiffe(&BO, Builder2.CreateFNeg(dif1), Builder2, addingType);
+      }
+      break;
+    }
+    case Instruction::FDiv: {
+      Value *idiff1;
+      if (!constantval0) {
+        idiff1 =
+            Builder2.CreateFMul(dif0, gutils->getNewFromOriginal(orig_op1));
+      } else {
+        idiff1 = ConstantFP::get(addingType, 0.0);
+      }
+
+      Value *idiff2;
+      if (!constantval1) {
+        idiff2 =
+            Builder2.CreateFMul(gutils->getNewFromOriginal(orig_op0), dif1);
+      } else {
+        idiff2 = ConstantFP::get(addingType, 0.0);
+      }
+
+      Value *idiff3 = Builder2.CreateFSub(idiff1, idiff2);
+      Value *idiff4 = Builder2.CreateFMul(gutils->getNewFromOriginal(orig_op1),
+                                          gutils->getNewFromOriginal(orig_op1));
+      Value *idiff5 = Builder2.CreateFDiv(idiff3, idiff4);
+      setDiffe(&BO, idiff5, Builder2);
+
+      break;
+    }
+    case Instruction::LShr:
+    case Instruction::Xor:
+    case Instruction::Or:
+    case Instruction::Add:
+    default:
+      break;
+    }
   }
 
   void visitMemSetInst(llvm::MemSetInst &MS) {
