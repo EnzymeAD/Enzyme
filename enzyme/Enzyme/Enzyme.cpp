@@ -200,7 +200,7 @@ public:
           ++i;
           res = CI->getArgOperand(i);
         } else {
-          ty = whatType(PTy);
+          ty = whatType(PTy, fwdMode);
         }
       } else if (isa<LoadInst>(res) &&
                  isa<ConstantExpr>(cast<LoadInst>(res)->getOperand(0)) &&
@@ -230,7 +230,7 @@ public:
           ++i;
           res = CI->getArgOperand(i);
         } else {
-          ty = whatType(PTy);
+          ty = whatType(PTy, fwdMode);
         }
       } else if (isa<GlobalVariable>(res)) {
         auto gv = cast<GlobalVariable>(res);
@@ -252,7 +252,7 @@ public:
           ++i;
           res = CI->getArgOperand(i);
         } else {
-          ty = whatType(PTy);
+          ty = whatType(PTy, fwdMode);
         }
       } else if (isa<ConstantExpr>(res) && cast<ConstantExpr>(res)->isCast() &&
                  isa<GlobalVariable>(cast<ConstantExpr>(res)->getOperand(0))) {
@@ -275,7 +275,7 @@ public:
           ++i;
           res = CI->getArgOperand(i);
         } else {
-          ty = whatType(PTy);
+          ty = whatType(PTy, fwdMode);
         }
       } else if (isa<CastInst>(res) && cast<CastInst>(res) &&
                  isa<AllocaInst>(cast<CastInst>(res)->getOperand(0))) {
@@ -298,7 +298,7 @@ public:
           ++i;
           res = CI->getArgOperand(i);
         } else {
-          ty = whatType(PTy);
+          ty = whatType(PTy, fwdMode);
         }
       } else if (isa<AllocaInst>(res)) {
         auto gv = cast<AllocaInst>(res);
@@ -320,10 +320,10 @@ public:
           ++i;
           res = CI->getArgOperand(i);
         } else {
-          ty = whatType(PTy);
+          ty = whatType(PTy, fwdMode);
         }
       } else
-        ty = whatType(PTy);
+        ty = whatType(PTy, fwdMode);
 
       constants.push_back(ty);
 
@@ -413,9 +413,9 @@ public:
     }
 
     bool differentialReturn =
-        cast<Function>(fn)->getReturnType()->isFPOrFPVectorTy();
+        !fwdMode && cast<Function>(fn)->getReturnType()->isFPOrFPVectorTy();
 
-    DIFFE_TYPE retType = whatType(cast<Function>(fn)->getReturnType());
+    DIFFE_TYPE retType = whatType(cast<Function>(fn)->getReturnType(), fwdMode);
 
     std::map<Argument *, bool> volatile_args;
     FnTypeInfo type_args(cast<Function>(fn));

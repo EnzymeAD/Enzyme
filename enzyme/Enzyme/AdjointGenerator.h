@@ -2442,6 +2442,7 @@ public:
       }
 
       auto argType = argi->getType();
+      bool fwdMode = Mode == DerivativeMode::AugmentedForward;
 
       if (!argType->isFPOrFPVectorTy() &&
           TR.query(call.getArgOperand(i)).Inner0().isPossiblePointer()) {
@@ -2473,13 +2474,13 @@ public:
 
         // Note sometimes whattype mistakenly says something should be constant
         // [because composed of integer pointers alone]
-        assert(whatType(argType) == DIFFE_TYPE::DUP_ARG ||
-               whatType(argType) == DIFFE_TYPE::CONSTANT);
+        assert(whatType(argType, fwdMode) == DIFFE_TYPE::DUP_ARG ||
+               whatType(argType, fwdMode) == DIFFE_TYPE::CONSTANT);
       } else {
         assert(0 && "out for omp not handled");
         argsInverted.push_back(DIFFE_TYPE::OUT_DIFF);
-        assert(whatType(argType) == DIFFE_TYPE::OUT_DIFF ||
-               whatType(argType) == DIFFE_TYPE::CONSTANT);
+        assert(whatType(argType, fwdMode) == DIFFE_TYPE::OUT_DIFF ||
+               whatType(argType, fwdMode) == DIFFE_TYPE::CONSTANT);
       }
     }
 
@@ -3832,6 +3833,7 @@ public:
       }
 
       auto argType = argi->getType();
+      bool fwdMode = Mode == DerivativeMode::AugmentedForward;
 
       if (!argType->isFPOrFPVectorTy() &&
           (TR.query(orig->getArgOperand(i)).Inner0().isPossiblePointer() ||
@@ -3864,14 +3866,14 @@ public:
 
         // Note sometimes whattype mistakenly says something should be constant
         // [because composed of integer pointers alone]
-        assert(whatType(argType) == DIFFE_TYPE::DUP_ARG ||
-               whatType(argType) == DIFFE_TYPE::CONSTANT);
+        assert(whatType(argType, fwdMode) == DIFFE_TYPE::DUP_ARG ||
+               whatType(argType, fwdMode) == DIFFE_TYPE::CONSTANT);
       } else {
         if (foreignFunction)
           assert(!argType->isIntOrIntVectorTy());
         argsInverted.push_back(DIFFE_TYPE::OUT_DIFF);
-        assert(whatType(argType) == DIFFE_TYPE::OUT_DIFF ||
-               whatType(argType) == DIFFE_TYPE::CONSTANT);
+        assert(whatType(argType, fwdMode) == DIFFE_TYPE::OUT_DIFF ||
+               whatType(argType, fwdMode) == DIFFE_TYPE::CONSTANT);
       }
     }
     if (called) {
