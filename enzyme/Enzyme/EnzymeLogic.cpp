@@ -594,7 +594,8 @@ void calculateUnusedValuesInFunction(
       func, unnecessaryValues, unnecessaryInstructions, returnValue,
       [&](const Value *val) {
         return is_value_needed_in_reverse<ValueType::Primal>(
-            TR, gutils, val, /*topLevel*/ mode == DerivativeMode::Both,
+            TR, gutils, val,
+            /*topLevel*/ mode == DerivativeMode::ReverseModeCombined,
             PrimalSeen, oldUnreachable);
       },
       [&](const Instruction *inst) {
@@ -618,7 +619,7 @@ void calculateUnusedValuesInFunction(
               num++;
             }
           }
-          if (num > 1 || mode != DerivativeMode::Reverse)
+          if (num > 1 || mode != DerivativeMode::ReverseModeGradient)
             return true;
         }
 
@@ -746,17 +747,19 @@ void calculateUnusedValuesInFunction(
             }
           }
         }
-        if ((mode == DerivativeMode::Forward || mode == DerivativeMode::Both) &&
+        if ((mode == DerivativeMode::ReverseModePrimal ||
+             mode == DerivativeMode::ReverseModeCombined) &&
             inst->mayWriteToMemory())
           return true;
-        if (isa<MemTransferInst>(inst) && mode == DerivativeMode::Reverse)
+        if (isa<MemTransferInst>(inst) &&
+            mode == DerivativeMode::ReverseModeGradient)
           return false;
         if (isa<CallInst>(inst) && !gutils->isConstantInstruction(inst))
           return true;
         return is_value_needed_in_reverse<ValueType::Primal>(
             TR, gutils, inst,
-            /*topLevel*/ mode == DerivativeMode::Both, PrimalSeen,
-            oldUnreachable);
+            /*topLevel*/ mode == DerivativeMode::ReverseModeCombined,
+            PrimalSeen, oldUnreachable);
       });
 #if 0
   llvm::errs() << "unnecessaryValues of " << func.getName() << ":\n";
@@ -1474,8 +1477,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   SmallPtrSet<const Instruction *, 4> unnecessaryInstructions;
   calculateUnusedValuesInFunction(*gutils->oldFunc, unnecessaryValues,
                                   unnecessaryInstructions, returnUsed,
-                                  DerivativeMode::Forward, TR, gutils, TLI,
-                                  constant_args, guaranteedUnreachable);
+                                  DerivativeMode::ReverseModePrimal, TR, gutils,
+                                  TLI, constant_args, guaranteedUnreachable);
 
   SmallPtrSet<const Instruction *, 4> unnecessaryStores;
   calculateUnusedStoresInFunction(*gutils->oldFunc, unnecessaryStores,
@@ -1526,8 +1529,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   gutils->computeMinCache(TR, guaranteedUnreachable);
 
   AdjointGenerator<AugmentedReturn *> maker(
-      DerivativeMode::Forward, gutils, constant_args, retType, TR, getIndex,
-      uncacheable_args_map, &returnuses,
+      DerivativeMode::ReverseModePrimal, gutils, constant_args, retType, TR,
+      getIndex, uncacheable_args_map, &returnuses,
       &AugmentedCachedFunctions.find(tup)->second, nullptr, unnecessaryValues,
       unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
       nullptr);
@@ -2666,8 +2669,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   SmallPtrSet<const Instruction *, 4> unnecessaryInstructions;
   calculateUnusedValuesInFunction(
       *gutils->oldFunc, unnecessaryValues, unnecessaryInstructions, returnValue,
-      topLevel ? DerivativeMode::Both : DerivativeMode::Reverse, TR, gutils,
-      TLI, constant_args, guaranteedUnreachable);
+      topLevel ? DerivativeMode::ReverseModeCombined
+               : DerivativeMode::ReverseModeGradient,
+      TR, gutils, TLI, constant_args, guaranteedUnreachable);
 
   SmallPtrSet<const Instruction *, 4> unnecessaryStores;
   calculateUnusedStoresInFunction(*gutils->oldFunc, unnecessaryStores,
@@ -2793,9 +2797,10 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     }
   }
 
-  DerivativeMode mode =
-      fwdMode ? DerivativeMode::AugmentedForward
-              : (topLevel ? DerivativeMode::Both : DerivativeMode::Reverse);
+  DerivativeMode mode = fwdMode
+                            ? DerivativeMode::ForwardMode
+                            : (topLevel ? DerivativeMode::ReverseModeCombined
+                                        : DerivativeMode::ReverseModeGradient);
 
   AdjointGenerator<const AugmentedReturn *> maker(
       mode, gutils, constant_args, retType, TR, getIndex, uncacheable_args_map,

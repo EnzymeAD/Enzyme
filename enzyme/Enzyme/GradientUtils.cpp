@@ -1025,7 +1025,7 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
                                       int idx) {
   assert(malloc);
   assert(BuilderQ.GetInsertBlock()->getParent() == newFunc);
-  if (mode == DerivativeMode::Both) {
+  if (mode == DerivativeMode::ReverseModeCombined) {
     assert(!tape);
     return malloc;
   }
@@ -1630,7 +1630,7 @@ bool GradientUtils::legalRecompute(const Value *val,
           fwdBlockIfReverse =
               cast_or_null<BasicBlock>(isOriginal(fwdBlockIfReverse));
       }
-      if (mode == DerivativeMode::Both && fwdBlockIfReverse) {
+      if (mode == DerivativeMode::ReverseModeCombined && fwdBlockIfReverse) {
         if (reverse) {
           bool failed = false;
           allFollowersOf(
@@ -1952,7 +1952,7 @@ GradientUtils *GradientUtils::CreateFromClone(
       new GradientUtils(Logic, newFunc, todiff, TLI, TA, invertedPointers,
                         constant_values, nonconstant_values,
                         /*ActiveValues*/ retType != DIFFE_TYPE::CONSTANT,
-                        originalToNew, DerivativeMode::Forward);
+                        originalToNew, DerivativeMode::ReverseModePrimal);
   return res;
 }
 
@@ -1979,7 +1979,9 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
   auto res = new DiffeGradientUtils(
       Logic, newFunc, todiff, TLI, TA, invertedPointers, constant_values,
       nonconstant_values, /*ActiveValues*/ retType != DIFFE_TYPE::CONSTANT,
-      originalToNew, topLevel ? DerivativeMode::Both : DerivativeMode::Reverse);
+      originalToNew,
+      topLevel ? DerivativeMode::ReverseModeCombined
+               : DerivativeMode::ReverseModeGradient);
   return res;
 }
 
@@ -2045,7 +2047,7 @@ Value *GradientUtils::invertPointerM(Value *oval, IRBuilder<> &BuilderM) {
   } else if (auto arg = dyn_cast<GlobalVariable>(oval)) {
     if (!hasMetadata(arg, "enzyme_shadow")) {
 
-      if (mode == DerivativeMode::Both &&
+      if (mode == DerivativeMode::ReverseModeCombined &&
           arg->getType()->getPointerAddressSpace() == 0) {
         bool seen = false;
         MemoryLocation
@@ -3016,7 +3018,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                             },
                             [&]() {
                               // if gone past entry
-                              if (mode != DerivativeMode::Both) {
+                              if (mode != DerivativeMode::ReverseModeCombined) {
                                 lastStore = false;
                               }
                             });
@@ -3175,7 +3177,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                       8;
 
       // this is guarded because havent told cacheForReverse how to move
-      if (mode == DerivativeMode::Both)
+      if (mode == DerivativeMode::ReverseModeCombined)
         if (!li->isVolatile() && EnzymeLoopInvariantCache) {
           if (auto AI = dyn_cast<AllocaInst>(liobj)) {
             assert(isa<AllocaInst>(orig_liobj));
@@ -4151,12 +4153,14 @@ void GradientUtils::computeMinCache(
       for (Instruction &I : BB) {
         if (!legalRecompute(&I, Available, nullptr)) {
           if (is_value_needed_in_reverse<ValueType::Primal>(
-                  TR, this, &I, /*topLevel*/ mode == DerivativeMode::Both,
+                  TR, this, &I,
+                  /*topLevel*/ mode == DerivativeMode::ReverseModeCombined,
                   FullSeen, guaranteedUnreachable)) {
             // llvm::errs() << " not legal recompute: " << I << "\n";
             bool oneneed = is_value_needed_in_reverse<ValueType::Primal,
                                                       /*OneLevel*/ true>(
-                TR, this, &I, /*topLevel*/ mode == DerivativeMode::Both,
+                TR, this, &I,
+                /*topLevel*/ mode == DerivativeMode::ReverseModeCombined,
                 OneLevelSeen, guaranteedUnreachable);
             if (oneneed)
               knownRecomputeHeuristic[&I] = true;
@@ -4180,8 +4184,9 @@ void GradientUtils::computeMinCache(
       if (Intermediates.count(V))
         continue;
       if (!is_value_needed_in_reverse<ValueType::Primal>(
-              TR, this, V, /*topLevel*/ mode == DerivativeMode::Both, FullSeen,
-              guaranteedUnreachable)) {
+              TR, this, V,
+              /*topLevel*/ mode == DerivativeMode::ReverseModeCombined,
+              FullSeen, guaranteedUnreachable)) {
         continue;
       }
       if (!Recomputes.count(V) && !legalRecompute(V, Available, nullptr)) {
@@ -4191,7 +4196,8 @@ void GradientUtils::computeMinCache(
       }
       Intermediates.insert(V);
       if (is_value_needed_in_reverse<ValueType::Primal, /*OneLevel*/ true>(
-              TR, this, V, /*topLevel*/ mode == DerivativeMode::Both,
+              TR, this, V,
+              /*topLevel*/ mode == DerivativeMode::ReverseModeCombined,
               OneLevelSeen, guaranteedUnreachable)) {
         Required.insert(V);
       } else {
