@@ -1996,6 +1996,56 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   return AugmentedCachedFunctions.find(tup)->second;
 }
 
+void createTerminator(DiffeGradientUtils *gutils,
+                      const std::vector<DIFFE_TYPE> &argTypes, BasicBlock *oBB,
+                      AllocaInst *retAlloca, AllocaInst *dretAlloca,
+                      DIFFE_TYPE retType) {
+
+  BasicBlock *nBB = cast<BasicBlock>(gutils->getNewFromOriginal(oBB));
+  BasicBlock *rBB = gutils->reverseBlocks[nBB].back();
+  assert(rBB);
+  IRBuilder<> nBuilder(nBB);
+  IRBuilder<> rBuilder(rBB);
+  rBuilder.setFastMathFlags(getFast());
+
+  if (ReturnInst *inst = dyn_cast_or_null<ReturnInst>(oBB->getTerminator())) {
+    SmallVector<Value *, 4> retargs;
+
+    if (retAlloca) {
+      auto result = rBuilder.CreateLoad(retAlloca, "retreload");
+      // TODO reintroduce invariant load/group
+      // result->setMetadata(LLVMContext::MD_invariant_load,
+      // MDNode::get(retAlloca->getContext(), {}));
+      retargs.push_back(result);
+    }
+
+    if (dretAlloca) {
+      auto result = rBuilder.CreateLoad(dretAlloca, "dretreload");
+      // TODO reintroduce invariant load/group
+      // result->setMetadata(LLVMContext::MD_invariant_load,
+      // MDNode::get(dretAlloca->getContext(), {}));
+      retargs.push_back(result);
+    }
+
+    if (gutils->newFunc->getReturnType()->isVoidTy()) {
+      assert(retargs.size() == 0);
+      rBuilder.CreateRetVoid();
+      return;
+    }
+
+    retargs.push_back(gutils->diffe(inst->getOperand(0), rBuilder));
+
+    Value *toret = UndefValue::get(gutils->newFunc->getReturnType());
+    for (unsigned i = 0; i < retargs.size(); ++i) {
+      unsigned idx[] = {i};
+      toret = rBuilder.CreateInsertValue(toret, retargs[i], idx);
+    }
+    rBuilder.CreateRet(toret);
+
+    return;
+  }
+}
+
 void createInvertedTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
                               const std::vector<DIFFE_TYPE> &argTypes,
                               BasicBlock *oBB, AllocaInst *retAlloca,
@@ -2718,9 +2768,32 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
   gutils->computeMinCache(TR, guaranteedUnreachable);
 
+  if (fwdMode) {
+    // set derivative of function arguments
+    auto newArgs = gutils->newFunc->arg_begin();
+
+    for (int i = 0; i < constant_args.size(); ++i) {
+      auto arg = constant_args[i];
+      if (arg == DIFFE_TYPE::DUP_ARG) {
+        newArgs += 1;
+        auto pri = gutils->oldFunc->arg_begin() + i;
+        auto dif = newArgs;
+
+        BasicBlock &BB = gutils->newFunc->getEntryBlock();
+        IRBuilder<> Builder(&BB.front());
+
+        gutils->setDiffe(pri, dif, Builder);
+      }
+      newArgs += 1;
+    }
+  }
+
+  DerivativeMode mode =
+      fwdMode ? DerivativeMode::AugmentedForward
+              : (topLevel ? DerivativeMode::Both : DerivativeMode::Reverse);
+
   AdjointGenerator<const AugmentedReturn *> maker(
-      topLevel ? DerivativeMode::Both : DerivativeMode::Reverse, gutils,
-      constant_args, retType, TR, getIndex, uncacheable_args_map,
+      mode, gutils, constant_args, retType, TR, getIndex, uncacheable_args_map,
       /*returnuses*/ nullptr, augmenteddata, &replacedReturns,
       unnecessaryValues, unnecessaryInstructions, unnecessaryStores,
       guaranteedUnreachable, dretAlloca);
@@ -2767,21 +2840,32 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       assert(0 && "unknown terminator inst");
     }
 
-    BasicBlock::reverse_iterator I = oBB.rbegin(), E = oBB.rend();
-    ++I;
-    for (; I != E; ++I) {
-      maker.visit(&*I);
-      assert(oBB.rend() == E);
-    }
+    if (!fwdMode) {
+      BasicBlock::reverse_iterator I = oBB.rbegin(), E = oBB.rend();
+      ++I;
+      for (; I != E; ++I) {
+        maker.visit(&*I);
+        assert(oBB.rend() == E);
+      }
 
-    createInvertedTerminator(TR, gutils, constant_args, &oBB, retAlloca,
-                             dretAlloca,
-                             0 + (additionalArg ? 1 : 0) +
-                                 ((retType == DIFFE_TYPE::DUP_ARG ||
-                                   retType == DIFFE_TYPE::DUP_NONEED)
-                                      ? 1
-                                      : 0),
-                             retType);
+      createInvertedTerminator(TR, gutils, constant_args, &oBB, retAlloca,
+                               dretAlloca,
+                               0 + (additionalArg ? 1 : 0) +
+                                   ((retType == DIFFE_TYPE::DUP_ARG ||
+                                     retType == DIFFE_TYPE::DUP_NONEED)
+                                        ? 1
+                                        : 0),
+                               retType);
+    } else {
+      auto first = oBB.begin();
+      auto last = oBB.empty() ? oBB.end() : std::prev(oBB.end());
+      for (auto it = first; it != last; ++it) {
+        maker.visit(&*it);
+      }
+
+      createTerminator(gutils, constant_args, &oBB, retAlloca, dretAlloca,
+                       retType);
+    }
   }
 
   if (!topLevel) {
