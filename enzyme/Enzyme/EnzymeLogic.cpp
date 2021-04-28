@@ -2370,8 +2370,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     TypeAnalysis &TA, bool returnUsed, bool dretPtr, bool topLevel,
     llvm::Type *additionalArg, const FnTypeInfo &oldTypeInfo_,
     const std::map<Argument *, bool> _uncacheable_args,
-    const AugmentedReturn *augmenteddata, bool AtomicAdd, bool PostOpt,
-    bool omp) {
+    const AugmentedReturn *augmenteddata, bool AtomicAdd, bool fwdMode,
+    bool PostOpt, bool omp) {
 
   FnTypeInfo oldTypeInfo = oldTypeInfo_;
   for (auto &pair : oldTypeInfo.KnownValues) {
@@ -2652,7 +2652,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   }
 
   Argument *differetval = nullptr;
-  if (retType == DIFFE_TYPE::OUT_DIFF) {
+  if (retType == DIFFE_TYPE::OUT_DIFF && !fwdMode) {
     auto endarg = gutils->newFunc->arg_end();
     endarg--;
     if (additionalArg)
@@ -2700,14 +2700,14 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                        dretAlloca);
       }
 
-      if (retType == DIFFE_TYPE::OUT_DIFF) {
+      if (retType == DIFFE_TYPE::OUT_DIFF && !fwdMode) {
         assert(orig->getReturnValue());
         assert(differetval);
         if (!gutils->isConstantValue(orig->getReturnValue())) {
           IRBuilder<> reverseB(gutils->reverseBlocks[BB].back());
           gutils->setDiffe(orig->getReturnValue(), differetval, reverseB);
         }
-      } else {
+      } else if (!fwdMode) {
         assert(retAlloca == nullptr);
       }
 

@@ -2271,7 +2271,7 @@ Value *GradientUtils::invertPointerM(Value *oval, IRBuilder<> &BuilderM) {
         /*returnValue*/ false, /*dretPtr*/ false, /*topLevel*/ false,
         /*additionalArg*/ Type::getInt8PtrTy(fn->getContext()), type_args,
         uncacheable_args,
-        /*map*/ &augdata, AtomicAdd);
+        /*map*/ &augdata, AtomicAdd, /*fwdMode*/ false);
     if (!newf)
       newf = UndefValue::get(fn->getType());
     auto cdata = ConstantStruct::get(

@@ -2600,6 +2600,7 @@ public:
             /*subdretptr*/ false, /*topLevel*/ false,
             tape ? PointerType::getUnqual(tape->getType()) : nullptr,
             nextTypeInfo, uncacheable_args, subdata, /*AtomicAdd*/ true,
+            /*fwdMode*/ false,
             /*postopt*/ false, /*omp*/ true);
 
         auto numargs = ConstantInt::get(Type::getInt32Ty(call.getContext()),
@@ -4164,7 +4165,7 @@ public:
           TR.analysis, /*returnValue*/ retUsed,
           /*subdretptr*/ subdretptr, /*topLevel*/ subtopLevel,
           tape ? tape->getType() : nullptr, nextTypeInfo, uncacheable_args,
-          subdata, gutils->AtomicAdd); //, LI, DT);
+          subdata, gutils->AtomicAdd, /*fwdMode*/ false); //, LI, DT);
       if (!newcalled)
         return;
     } else {

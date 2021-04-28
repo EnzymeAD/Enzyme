@@ -449,7 +449,7 @@ public:
         cast<Function>(fn), retType, constants, TLI, TA,
         /*should return*/ false, /*dretPtr*/ false, /*topLevel*/ true,
         /*addedType*/ nullptr, type_args, volatile_args,
-        /*index mapping*/ nullptr, AtomicAdd, PostOpt);
+        /*index mapping*/ nullptr, AtomicAdd, fwdMode, PostOpt);
 
     if (!newFunc)
       return false;
