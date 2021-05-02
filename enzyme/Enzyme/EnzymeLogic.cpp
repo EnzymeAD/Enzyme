@@ -2036,7 +2036,13 @@ void createTerminator(DiffeGradientUtils *gutils,
       return;
     }
 
-    retargs.push_back(gutils->diffe(inst->getOperand(0), rBuilder));
+    auto retVal = inst->getOperand(0);
+
+    if (gutils->isConstantValue(retVal)) {
+      retargs.push_back(ConstantFP::get(retVal->getType(), 0.0));
+    } else {
+      retargs.push_back(gutils->diffe(retVal, rBuilder));
+    }
 
     Value *toret = UndefValue::get(gutils->newFunc->getReturnType());
     for (unsigned i = 0; i < retargs.size(); ++i) {
