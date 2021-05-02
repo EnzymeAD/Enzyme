@@ -9,6 +9,7 @@ set(ENZYME_TEST_DEPS LLVMEnzyme-${LLVM_VERSION_MAJOR})
 
 add_subdirectory(ActivityAnalysis)
 add_subdirectory(TypeAnalysis)
-add_subdirectory(Enzyme)
+add_subdirectory(Enzyme/ReverseMode)
+add_subdirectory(Enzyme/ForwardMode)
 add_subdirectory(Integration)
 
