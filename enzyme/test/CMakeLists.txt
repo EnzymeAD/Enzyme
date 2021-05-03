@@ -13,3 +13,4 @@ add_subdirectory(Enzyme/ReverseMode)
 add_subdirectory(Enzyme/ForwardMode)
 add_subdirectory(Integration)
 
+add_custom_target(check-enzyme DEPENDS check-enzyme-reverse check-enzyme-forward)
