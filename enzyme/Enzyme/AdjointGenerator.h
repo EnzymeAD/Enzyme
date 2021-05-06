@@ -955,6 +955,22 @@ public:
     Builder2.setFastMathFlags(getFast());
   }
 
+  inline void getForwardBuilder(IRBuilder<> &Builder2) {
+    Instruction *insert = &*Builder2.GetInsertPoint();
+    Instruction *nInsert = gutils->getNewFromOriginal(insert);
+
+    assert(nInsert);
+    assert(nInsert->getNextNode());
+
+    if (nInsert->getNextNode()) {
+      Builder2.SetInsertPoint(nInsert->getNextNode());
+    }
+
+    Builder2.SetCurrentDebugLocation(
+        gutils->getNewFromOriginal(Builder2.getCurrentDebugLocation()));
+    Builder2.setFastMathFlags(getFast());
+  }
+
   Value *diffe(Value *val, IRBuilder<> &Builder) {
     assert(Mode == DerivativeMode::ReverseModeGradient ||
            Mode == DerivativeMode::ReverseModeCombined ||
@@ -1397,19 +1413,7 @@ public:
 
   void createBinaryOperatorDual(llvm::BinaryOperator &BO) {
     IRBuilder<> Builder2(&BO);
-
-    Instruction *nBO = gutils->getNewFromOriginal(&BO);
-
-    assert(nBO);
-    assert(nBO->getNextNode());
-
-    if (nBO->getNextNode()) {
-      Builder2.SetInsertPoint(nBO->getNextNode());
-    }
-
-    Builder2.SetCurrentDebugLocation(
-        gutils->getNewFromOriginal(Builder2.getCurrentDebugLocation()));
-    Builder2.setFastMathFlags(getFast());
+    getForwardBuilder(Builder2);
 
     Value *orig_op0 = BO.getOperand(0);
     Value *orig_op1 = BO.getOperand(1);
