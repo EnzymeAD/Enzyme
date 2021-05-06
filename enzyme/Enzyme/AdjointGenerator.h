@@ -493,8 +493,9 @@ public:
 
     if (FT) {
       //! Only need to update the reverse function
-      if (Mode == DerivativeMode::ReverseModeGradient ||
-          Mode == DerivativeMode::ReverseModeCombined) {
+      switch (Mode) {
+      case DerivativeMode::ReverseModeGradient:
+      case DerivativeMode::ReverseModeCombined: {
         IRBuilder<> Builder2(SI.getParent());
         getReverseBuilder(Builder2);
 
@@ -511,6 +512,21 @@ public:
           ts = setPtrDiffe(orig_ptr, Constant::getNullValue(valType), Builder2);
           addToDiffe(orig_val, dif1, Builder2, FT);
         }
+        break;
+      }
+      case DerivativeMode::ForwardMode: {
+        IRBuilder<> Builder2(&SI);
+        getForwardBuilder(Builder2);
+
+        if (constantval) {
+          ts = setPtrDiffe(orig_ptr, Constant::getNullValue(valType), Builder2);
+        } else {
+          auto diff = diffe(orig_val, Builder2);
+
+          ts = setPtrDiffe(orig_ptr, diff, Builder2);
+        }
+        break;
+      }
       }
 
       //! Storing an integer or pointer
