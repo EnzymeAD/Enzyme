@@ -2118,9 +2118,9 @@ void createTerminator(DiffeGradientUtils *gutils,
 
     auto retVal = inst->getOperand(0);
 
-    if (gutils->isConstantValue(retVal)) {
+    if (gutils->isConstantValue(retVal) && retType != DIFFE_TYPE::CONSTANT) {
       retargs.push_back(ConstantFP::get(retVal->getType(), 0.0));
-    } else {
+    } else if (retType != DIFFE_TYPE::CONSTANT) {
       retargs.push_back(gutils->diffe(retVal, rBuilder));
     }
 
@@ -2660,15 +2660,16 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   assert(!todiff->empty());
 
   ReturnType retVal =
-      returnValue ? (dretPtr ? ReturnType::ArgsWithTwoReturns
-                             : ReturnType::ArgsWithReturn)
-                  : (dretPtr ? ReturnType::ArgsWithReturn : ReturnType::Args);
+      fwdMode       ? ReturnType::Return
+      : returnValue ? (dretPtr ? ReturnType::ArgsWithTwoReturns
+                               : ReturnType::ArgsWithReturn)
+                    : (dretPtr ? ReturnType::ArgsWithReturn : ReturnType::Args);
 
   bool diffeReturnArg = fwdMode ? false : retType == DIFFE_TYPE::OUT_DIFF;
 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
       *this, topLevel, todiff, TLI, TA, retType, diffeReturnArg, constant_args,
-      fwdMode ? ReturnType::Return : retVal, additionalArg);
+      retVal, additionalArg);
 
   if (omp)
     gutils->setupOMPFor();
@@ -2869,7 +2870,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
     for (size_t i = 0; i < constant_args.size(); ++i) {
       auto arg = constant_args[i];
-      if (arg == DIFFE_TYPE::DUP_ARG) {
+      auto argTypeInfo = oldTypeInfo.Function->args().begin() + i;
+      if (arg == DIFFE_TYPE::DUP_ARG &&
+          !argTypeInfo->getType()->isPointerTy()) {
         newArgs += 1;
         auto pri = gutils->oldFunc->arg_begin() + i;
         auto dif = newArgs;
