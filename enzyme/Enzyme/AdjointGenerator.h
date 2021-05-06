@@ -270,10 +270,13 @@ public:
         IRBuilder<> BuilderZ(newi);
         Value *newip = nullptr;
 
-        bool needShadow = is_value_needed_in_reverse<ValueType::ShadowPtr>(
-            TR, gutils, &I,
-            /*toplevel*/ Mode == DerivativeMode::ReverseModeCombined,
-            oldUnreachable);
+        bool needShadow =
+            Mode == DerivativeMode::ForwardMode
+                ? false
+                : is_value_needed_in_reverse<ValueType::ShadowPtr>(
+                      TR, gutils, &I,
+                      /*toplevel*/ Mode == DerivativeMode::ReverseModeCombined,
+                      oldUnreachable);
 
         switch (Mode) {
 
@@ -292,8 +295,8 @@ public:
           gutils->invertedPointers[&I] = newip;
           break;
         }
-
-        case DerivativeMode::ReverseModeGradient: {
+        case DerivativeMode::ReverseModeGradient:
+        case DerivativeMode::ForwardMode: {
           // only make shadow where caching needed
           if (can_modref && needShadow) {
             newip = gutils->cacheForReverse(BuilderZ, placeholder,
@@ -323,13 +326,16 @@ public:
 
     Value *inst = newi;
 
+    bool primalNeededInReverse =
+        Mode == DerivativeMode::ForwardMode
+            ? false
+            : is_value_needed_in_reverse<ValueType::Primal>(
+                  TR, gutils, &I,
+                  /*toplevel*/ Mode == DerivativeMode::ReverseModeCombined,
+                  oldUnreachable);
     //! Store loads that need to be cached for use in reverse pass
     if (cache_reads_always ||
-        (!cache_reads_never && can_modref &&
-         is_value_needed_in_reverse<ValueType::Primal>(
-             TR, gutils, &I,
-             /*toplevel*/ Mode == DerivativeMode::ReverseModeCombined,
-             oldUnreachable))) {
+        (!cache_reads_never && can_modref && primalNeededInReverse)) {
       IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&I)->getNextNode());
       // auto tbaa = inst->getMetadata(LLVMContext::MD_tbaa);
       inst = gutils->cacheForReverse(BuilderZ, newi,
@@ -378,15 +384,37 @@ public:
     }
 
     if (isfloat) {
-      IRBuilder<> Builder2(parent);
-      getReverseBuilder(Builder2);
-      auto prediff = diffe(&I, Builder2);
-      setDiffe(&I, Constant::getNullValue(type), Builder2);
 
-      if (!gutils->isConstantValue(I.getOperand(0))) {
-        ((DiffeGradientUtils *)gutils)
-            ->addToInvertedPtrDiffe(I.getOperand(0), prediff, Builder2,
-                                    alignment, OrigOffset);
+      switch (Mode) {
+      case DerivativeMode::ForwardMode: {
+        IRBuilder<> Builder2(&I);
+        getForwardBuilder(Builder2);
+
+        auto diff = Builder2.CreateLoad(
+            gutils->invertPointerM(I.getOperand(0), Builder2));
+
+        if (!gutils->isConstantValue(&I)) {
+          setDiffe(&I, diff, Builder2);
+        }
+        break;
+      }
+      case DerivativeMode::ReverseModeGradient:
+      case DerivativeMode::ReverseModeCombined: {
+        IRBuilder<> Builder2(parent);
+        getReverseBuilder(Builder2);
+
+        auto prediff = diffe(&I, Builder2);
+        setDiffe(&I, Constant::getNullValue(type), Builder2);
+
+        if (!gutils->isConstantValue(I.getOperand(0))) {
+          ((DiffeGradientUtils *)gutils)
+              ->addToInvertedPtrDiffe(I.getOperand(0), prediff, Builder2,
+                                      alignment, OrigOffset);
+        }
+        break;
+      }
+      case DerivativeMode::ReverseModePrimal:
+        break;
       }
     }
   }
