@@ -566,7 +566,8 @@ public:
     } else {
       //! Only need to update the forward function
       if (Mode == DerivativeMode::ReverseModePrimal ||
-          Mode == DerivativeMode::ReverseModeCombined) {
+          Mode == DerivativeMode::ReverseModeCombined ||
+          Mode == DerivativeMode::ForwardMode) {
         IRBuilder<> storeBuilder(gutils->getNewFromOriginal(&SI));
 
         Value *valueop = nullptr;
