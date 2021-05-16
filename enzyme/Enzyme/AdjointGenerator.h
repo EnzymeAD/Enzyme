@@ -273,10 +273,10 @@ public:
         bool needShadow =
             Mode == DerivativeMode::ForwardMode
                 ? false
-                : is_value_needed_in_reverse<ValueType::ShadowPtr>(
+                : (is_value_needed_in_reverse<ValueType::ShadowPtr>(
                       TR, gutils, &I,
                       /*toplevel*/ Mode == DerivativeMode::ReverseModeCombined,
-                      oldUnreachable);
+                      oldUnreachable));
 
         switch (Mode) {
 
@@ -329,10 +329,10 @@ public:
     bool primalNeededInReverse =
         Mode == DerivativeMode::ForwardMode
             ? false
-            : is_value_needed_in_reverse<ValueType::Primal>(
+            : (is_value_needed_in_reverse<ValueType::Primal>(
                   TR, gutils, &I,
                   /*toplevel*/ Mode == DerivativeMode::ReverseModeCombined,
-                  oldUnreachable);
+                  oldUnreachable));
     //! Store loads that need to be cached for use in reverse pass
     if (cache_reads_always ||
         (!cache_reads_never && can_modref && primalNeededInReverse)) {

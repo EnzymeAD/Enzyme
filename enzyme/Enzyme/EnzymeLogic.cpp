@@ -2611,10 +2611,12 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   assert(!todiff->empty());
 
   ReturnType retVal =
-      fwdMode       ? ReturnType::Return
-      : returnValue ? (dretPtr ? ReturnType::ArgsWithTwoReturns
-                               : ReturnType::ArgsWithReturn)
-                    : (dretPtr ? ReturnType::ArgsWithReturn : ReturnType::Args);
+      fwdMode
+          ? ReturnType::Return
+          : (returnValue
+                 ? (dretPtr ? ReturnType::ArgsWithTwoReturns
+                            : ReturnType::ArgsWithReturn)
+                 : (dretPtr ? ReturnType::ArgsWithReturn : ReturnType::Args));
 
   bool diffeReturnArg = fwdMode ? false : retType == DIFFE_TYPE::OUT_DIFF;
 
