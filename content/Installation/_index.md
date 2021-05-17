@@ -26,14 +26,14 @@ cd Enzyme
 
 ## Building LLVM
 
-Enzyme is a plugin for LLVM and consequently needs an existing build of LLVM to function. You can either build the fork of LLVM-7 available inside of Enzyme's repository (this allows you to use custom C/C++  syntactic sugar for calling Enzyme), or your choice of an existing build of LLVM.
+Enzyme is a plugin for LLVM and consequently needs an existing build of LLVM to function.
 
-Enzyme is designed to work with a wide range of LLVM versions and is currently tested against LLVM 7, 8, 9, 10, and 11. LLVM's plugin infrastructure can sometimes be flakey or not built by default. If loading Enzyme into an existing LLVM installation results in segfaults, we recommend building LLVM from source.
+Enzyme is designed to work with a wide range of LLVM versions and is currently tested against LLVM 7, 8, 9, 10, 11, 12, and mainline. LLVM's plugin infrastructure can sometimes be flakey or not built by default. If loading Enzyme into an existing LLVM installation results in segfaults, we recommend building LLVM from source.
 
 Details on building LLVM can be found in for building LLVM can be found in the [LLVM Getting Started](https://llvm.org/docs/GettingStarted.html). A simple build command using Ninja is shown below:
 
 ```sh
-cd /path/to/llvm/source/or/Enzyme
+cd /path/to/llvm/source/
 mkdir build && cd build
 cmake -G Ninja ../llvm -DLLVM_TARGETS_TO_BUILD="host" -DLLVM_ENABLE_PROJECTS="clang" -DLLVM_ENABLE_PLUGINS=ON -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_ASSERTIONS=ON
 ninja
