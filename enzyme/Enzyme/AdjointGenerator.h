@@ -593,7 +593,56 @@ public:
     eraseIfUnused(gep);
   }
 
-  void visitPHINode(llvm::PHINode &phi) { eraseIfUnused(phi); }
+  void visitPHINode(llvm::PHINode &phi) {
+    eraseIfUnused(phi);
+    if (gutils->isConstantInstruction(&phi))
+      return;
+
+    switch (Mode) {
+    case DerivativeMode::ReverseModePrimal:
+    case DerivativeMode::ReverseModeGradient:
+    case DerivativeMode::ReverseModeCombined: {
+      return;
+    }
+    case DerivativeMode::ForwardMode: {
+      break;
+    }
+    }
+
+    size_t size = 1;
+    if (phi.getType()->isSized())
+      size = (gutils->newFunc->getParent()->getDataLayout().getTypeSizeInBits(
+                  phi.getType()) +
+              7) /
+             8;
+
+    if (phi.getType()->isIntOrIntVectorTy() &&
+        TR.intType(size, &phi, /*errifnotfound*/ false) == BaseType::Pointer) {
+      return;
+    }
+
+    IRBuilder<> Builder2(&phi);
+    getForwardBuilder(Builder2);
+
+    auto newPhi = Builder2.CreatePHI(phi.getType(), 1, phi.getName() + "'");
+    for (unsigned int i = 0; i < phi.getNumIncomingValues(); ++i) {
+      auto val = phi.getIncomingValue(i);
+      auto block = phi.getIncomingBlock(i);
+
+      auto newBlock = gutils->getNewFromOriginal(block);
+      IRBuilder<> pBuilder(newBlock->getTerminator());
+      pBuilder.setFastMathFlags(getFast());
+
+      if (gutils->isConstantValue(val)) {
+        newPhi->addIncoming(Constant::getNullValue(val->getType()), newBlock);
+      } else {
+        auto diff = diffe(val, pBuilder);
+        newPhi->addIncoming(diff, newBlock);
+      }
+    }
+
+    setDiffe(&phi, newPhi, Builder2);
+  }
 
   void visitCastInst(llvm::CastInst &I) {
     eraseIfUnused(I);
@@ -1511,6 +1560,10 @@ public:
     Value *dif1 = constantval1 ? nullptr : diffe(orig_op1, Builder2);
 
     Type *addingType = BO.getType();
+
+    if (!constantval0 || constantval1) {
+      setDiffe(&BO, Constant::getNullValue(BO.getType()), Builder2);
+    }
 
     switch (BO.getOpcode()) {
     case Instruction::FMul: {
