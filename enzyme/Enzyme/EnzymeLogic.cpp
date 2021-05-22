@@ -2118,9 +2118,9 @@ void createTerminator(DiffeGradientUtils *gutils,
 
     auto retVal = inst->getOperand(0);
 
-    if (gutils->isConstantValue(retVal) && retType != DIFFE_TYPE::CONSTANT) {
+    if (gutils->isConstantValue(retVal)) {
       retargs.push_back(ConstantFP::get(retVal->getType(), 0.0));
-    } else if (retType != DIFFE_TYPE::CONSTANT) {
+    } else {
       retargs.push_back(gutils->diffe(retVal, rBuilder));
     }
 
@@ -2659,11 +2659,20 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
   assert(!todiff->empty());
 
-  ReturnType retVal =
-      fwdMode       ? ReturnType::Return
-      : returnValue ? (dretPtr ? ReturnType::ArgsWithTwoReturns
-                               : ReturnType::ArgsWithReturn)
-                    : (dretPtr ? ReturnType::ArgsWithReturn : ReturnType::Args);
+  ReturnType retVal;
+  if (fwdMode) {
+    auto TR = TA.analyzeFunction(oldTypeInfo);
+    bool retActive = TR.getReturnAnalysis().Inner0().isFloat();
+
+    retVal = returnValue
+                 ? (retActive ? ReturnType::TwoReturns : ReturnType::Return)
+                 : (retActive ? ReturnType::Return : ReturnType::Void);
+  } else {
+    retVal = returnValue
+                 ? (dretPtr ? ReturnType::ArgsWithTwoReturns
+                            : ReturnType::ArgsWithReturn)
+                 : (dretPtr ? ReturnType::ArgsWithReturn : ReturnType::Args);
+  }
 
   bool diffeReturnArg = fwdMode ? false : retType == DIFFE_TYPE::OUT_DIFF;
 
@@ -2870,9 +2879,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
     for (size_t i = 0; i < constant_args.size(); ++i) {
       auto arg = constant_args[i];
-      auto argTypeInfo = oldTypeInfo.Function->args().begin() + i;
-      if (arg == DIFFE_TYPE::DUP_ARG &&
-          !argTypeInfo->getType()->isPointerTy()) {
+      if (arg == DIFFE_TYPE::DUP_ARG) {
         newArgs += 1;
         auto pri = gutils->oldFunc->arg_begin() + i;
         auto dif = newArgs;
