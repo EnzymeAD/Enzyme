@@ -395,10 +395,9 @@ public:
         IRBuilder<> Builder2(&I);
         getForwardBuilder(Builder2);
 
-        auto diff = Builder2.CreateLoad(
-            gutils->invertPointerM(I.getOperand(0), Builder2));
-
         if (!gutils->isConstantValue(&I)) {
+          auto diff = Builder2.CreateLoad(
+              gutils->invertPointerM(I.getOperand(0), Builder2));
           setDiffe(&I, diff, Builder2);
         }
         break;
