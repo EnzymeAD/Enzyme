@@ -983,41 +983,12 @@ public:
     setDiffe(&IVI, Constant::getNullValue(IVI.getType()), Builder2);
   }
 
-  inline void getReverseBuilder(IRBuilder<> &Builder2, bool original = true) {
-    BasicBlock *BB = Builder2.GetInsertBlock();
-    if (original)
-      BB = gutils->getNewFromOriginal(BB);
-    BasicBlock *BB2 = gutils->reverseBlocks[BB].back();
-    if (!BB2) {
-      llvm::errs() << "oldFunc: " << *gutils->oldFunc << "\n";
-      llvm::errs() << "newFunc: " << *gutils->newFunc << "\n";
-      llvm::errs() << "could not invert " << *BB;
-    }
-    assert(BB2);
-
-    if (BB2->getTerminator())
-      Builder2.SetInsertPoint(BB2->getTerminator());
-    else
-      Builder2.SetInsertPoint(BB2);
-    Builder2.SetCurrentDebugLocation(
-        gutils->getNewFromOriginal(Builder2.getCurrentDebugLocation()));
-    Builder2.setFastMathFlags(getFast());
+  void getReverseBuilder(IRBuilder<> &Builder2, bool original = true) {
+    ((GradientUtils *)gutils)->getReverseBuilder(Builder2, original);
   }
 
-  inline void getForwardBuilder(IRBuilder<> &Builder2) {
-    Instruction *insert = &*Builder2.GetInsertPoint();
-    Instruction *nInsert = gutils->getNewFromOriginal(insert);
-
-    assert(nInsert);
-    assert(nInsert->getNextNode());
-
-    if (nInsert->getNextNode()) {
-      Builder2.SetInsertPoint(nInsert->getNextNode());
-    }
-
-    Builder2.SetCurrentDebugLocation(
-        gutils->getNewFromOriginal(Builder2.getCurrentDebugLocation()));
-    Builder2.setFastMathFlags(getFast());
+  void getForwardBuilder(IRBuilder<> &Builder2) {
+    ((GradientUtils *)gutils)->getForwardBuilder(Builder2);
   }
 
   Value *diffe(Value *val, IRBuilder<> &Builder) {
