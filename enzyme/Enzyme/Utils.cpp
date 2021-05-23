@@ -30,6 +30,10 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
+#include "llvm/IRReader/IRReader.h"
+#include "llvm/Linker/Linker.h"
+
+#include "llvm/Support/CommandLine.h"
 
 using namespace llvm;
 
@@ -44,6 +48,12 @@ llvm::DiagnosticKind EnzymeFailure::ID() {
   static auto id = llvm::getNextAvailablePluginDiagnosticKind();
   return (llvm::DiagnosticKind)id;
 }
+
+extern "C" {
+llvm::cl::opt<std::string>
+    EnzymeBCPath("enzyme-bc-path", cl::init(""), cl::Hidden,
+                 cl::desc("Path to Enzyme BC definitions"));
+};
 
 /// \see DiagnosticInfoOptimizationBase::isEnabled.
 bool EnzymeFailure::isEnabled() const { return true; }
@@ -268,4 +278,66 @@ llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
     B.CreateRetVoid();
   }
   return F;
+}
+
+// Create function for type that is equivalent to memcpy but adds to
+/// destination rather than a direct copy; dst, src, numelems
+Function *getOrInsertDifferentialReduce(Module &M, PointerType *T) {
+  Type *elementType = T->getElementType();
+  assert(elementType->isFloatingPointTy());
+  std::string name = "__enzyme_dreduce_" + tofltstr(elementType) + "_" +
+                     std::to_string(T->getAddressSpace());
+  FunctionType *FT = FunctionType::get(Type::getVoidTy(M.getContext()),
+                                       {T, elementType}, false);
+
+#if LLVM_VERSION_MAJOR >= 9
+  Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
+#else
+  Function *F = cast<Function>(M.getOrInsertFunction(name, FT));
+#endif
+
+  if (F->empty() && elementType->isDoubleTy()) {
+    SMDiagnostic Err;
+#if LLVM_VERSION_MAJOR <= 10
+    auto BC = llvm::parseIRFile(EnzymeBCPath + "/nvdoublered3.bc", Err,
+                                M.getContext(), true,
+                                M.getDataLayout().getStringRepresentation());
+#else
+    auto BC = llvm::parseIRFile(
+        EnzymeBCPath + "/nvdoublered3.bc", Err, M.getContext(), [&](StringRef) {
+          return Optional<std::string>(
+              M.getDataLayout().getStringRepresentation());
+        });
+#endif
+    if (!BC)
+      Err.print("enzyme", llvm::errs());
+    assert(BC);
+    Linker L(M);
+    L.linkInModule(std::move(BC));
+  }
+  if (F->empty() && elementType->isFloatTy()) {
+    SMDiagnostic Err;
+#if LLVM_VERSION_MAJOR <= 10
+    auto BC =
+        llvm::parseIRFile(EnzymeBCPath + "/nvfloatred3.bc", Err, M.getContext(),
+                          false, M.getDataLayout().getStringRepresentation());
+#else
+    auto BC = llvm::parseIRFile(
+        EnzymeBCPath + "/nvfloatred3.bc", Err, M.getContext(), [&](StringRef) {
+          return Optional<std::string>(
+              M.getDataLayout().getStringRepresentation());
+        });
+#endif
+    if (!BC)
+      Err.print("enzyme", llvm::errs());
+    assert(BC);
+    Linker L(M);
+    L.linkInModule(std::move(BC));
+  }
+#if LLVM_VERSION_MAJOR >= 9
+  auto F2 = M.getOrInsertFunction(name, FT).getCallee();
+#else
+  auto F2 = M.getOrInsertFunction(name, FT);
+#endif
+  return cast<Function>(F2);
 }
