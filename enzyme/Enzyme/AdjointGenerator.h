@@ -195,7 +195,7 @@ public:
   }
 
   // To be double-checked against the functionality needed and the respective implementation in Adjoint-MPI
-  llvm::Value *MPI_COMM_RANK(llvm::Value *COMM, IRBuilder<> &B) {
+  llvm::Value *MPI_COMM_RANK(llvm::Value *COMM, IRBuilder<> &B, Value *DT) {
     Type *intType = Type::getIntNTy(COMM->getContext(), sizeof(int) * 8);
     Type *pargs[] = {Type::getInt8PtrTy(COMM->getContext()),
                      PointerType::getUnqual(intType)};
@@ -3429,8 +3429,9 @@ public:
         }
         #endif
 
+        #if 0
         Value *shadow = gutils->invertPointerM(call.getOperand(0), Builder2);
-        Value *MAGIC 
+        Value *MAGIC;
         Value *args[] = {
             /*sbuf*/ shadow,
             /*buf*/ NULL,
@@ -3456,13 +3457,16 @@ public:
                                    tysize, Type::getInt64Ty(call.getContext())),
                                "", true, true);
         Value *nargs[] = {dst_arg, val_arg, len_arg, volatile_arg};
-        #endif
 
         auto memset = cast<CallInst>(Builder2.CreateCall(
           Intrinsic::getDeclaration(gutils->newFunc->getParent(),
                                     Intrinsic::memset, tys),
           nargs));
+        #endif
       }
+    llvm::errs() << call << "\n";
+    llvm::errs() << called << "\n";
+    llvm_unreachable("Unhandled MPI FUNCTION");
       return;
     }
 

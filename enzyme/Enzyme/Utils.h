@@ -57,6 +57,8 @@
 
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"
 
+#include "TypeAnalysis/ConcreteType.h"
+
 extern "C" {
 /// Print additional debug info relevant to performance
 extern llvm::cl::opt<bool> EnzymePrintPerf;
