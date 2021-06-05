@@ -274,9 +274,9 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M,
                                    llvm::Type* OpPtr,
                                    ConcreteType CT) {
   std::string name = "__enzyme_mpi_sum" + CT.str();
-  assert(CT.isFloat());
+  assert(CT.isFloat()); 
   auto FT = CT.isFloat();
-  return M.getOrInsertGlobal(name, cast<PointerType>(OpPtr)->getElementType(), [&](GlobalVariable* GV) {
+  return M.getOrInsertGlobal(name, cast<PointerType>(OpPtr)->getElementType(), [&]() -> GlobalVariable* {
     std::vector<llvm::Type *> types = {
                                         PointerType::getUnqual(FT),
                                         PointerType::getUnqual(FT),
@@ -292,5 +292,8 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M,
       Function *F = cast<Function>(M.getOrInsertFunction(name+"_run", FT));
     #endif
     // TODO finish initializing mpi sum https://www.mpich.org/static/docs/v3.2/www3/MPI_Op_create.html
+
+      GlobalVariable* GV;
+      return GV;
   });
 }
