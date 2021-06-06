@@ -669,20 +669,6 @@ public:
       if (!gutils->isConstantValue(orig_op0)) {
         Value *dif = diffe(orig_op0, Builder2);
 
-        size_t size = 1;
-        if (orig_op0->getType()->isSized())
-          size =
-              (gutils->newFunc->getParent()->getDataLayout().getTypeSizeInBits(
-                   orig_op0->getType()) +
-               7) /
-              8;
-        Type *FT = TR.addingType(size, orig_op0);
-        if (!FT) {
-          llvm::errs() << " " << *gutils->oldFunc << "\n";
-          TR.dump();
-          llvm::errs() << " " << *orig_op0 << "\n";
-        }
-        assert(FT);
         if (I.getOpcode() == CastInst::CastOps::FPTrunc ||
             I.getOpcode() == CastInst::CastOps::FPExt) {
           setDiffe(&I, Builder2.CreateFPCast(dif, I.getType()), Builder2);
