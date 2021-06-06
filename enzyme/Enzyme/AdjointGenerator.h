@@ -668,23 +668,8 @@ public:
 
       if (!gutils->isConstantValue(orig_op0)) {
         Value *dif = diffe(orig_op0, Builder2);
-
-        if (I.getOpcode() == CastInst::CastOps::FPTrunc ||
-            I.getOpcode() == CastInst::CastOps::FPExt) {
-          setDiffe(&I, Builder2.CreateFPCast(dif, I.getType()), Builder2);
-        } else if (I.getOpcode() == CastInst::CastOps::BitCast) {
-          setDiffe(&I, Builder2.CreateBitCast(dif, I.getType()), Builder2);
-        } else if (I.getOpcode() == CastInst::CastOps::Trunc) {
-          // TODO CHECK THIS
-          auto trunced = Builder2.CreateZExt(dif, I.getType());
-          setDiffe(&I, trunced, Builder2);
-        } else {
-          TR.dump();
-          llvm::errs() << *I.getParent()->getParent() << "\n"
-                       << *I.getParent() << "\n";
-          llvm::errs() << "cannot handle above cast " << I << "\n";
-          report_fatal_error("unknown instruction");
-        }
+        setDiffe(&I, Builder2.CreateCast(I.getOpcode(), dif, I.getType()),
+                 Builder2);
       } else {
         setDiffe(&I, Constant::getNullValue(I.getType()), Builder2);
       }
