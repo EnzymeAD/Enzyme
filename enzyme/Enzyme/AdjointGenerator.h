@@ -395,6 +395,8 @@ public:
           auto diff = Builder2.CreateLoad(
               gutils->invertPointerM(I.getOperand(0), Builder2));
           setDiffe(&I, diff, Builder2);
+        } else {
+          setDiffe(&I, Constant::getNullValue(I.getType()), Builder2);
         }
         break;
       }
@@ -1561,9 +1563,7 @@ public:
 
     Type *addingType = BO.getType();
 
-    if (!constantval0 || constantval1) {
-      setDiffe(&BO, Constant::getNullValue(BO.getType()), Builder2);
-    }
+    setDiffe(&BO, Constant::getNullValue(BO.getType()), Builder2);
 
     switch (BO.getOpcode()) {
     case Instruction::FMul: {
@@ -1582,7 +1582,7 @@ public:
     }
     case Instruction::FAdd: {
       if (!constantval0) {
-        addToDiffe(&BO, dif0, Builder2, addingType);
+        setDiffe(&BO, dif0, Builder2);
       }
 
       if (!constantval1) {
@@ -1592,7 +1592,7 @@ public:
     }
     case Instruction::FSub: {
       if (!constantval0) {
-        addToDiffe(&BO, dif0, Builder2, addingType);
+        setDiffe(&BO, dif0, Builder2);
       }
 
       if (!constantval1) {

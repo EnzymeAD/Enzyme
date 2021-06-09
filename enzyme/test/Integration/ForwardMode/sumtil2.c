@@ -13,7 +13,7 @@
 
 #include "test_utils.h"
 
-extern void __enzyme_fwddiff(void*, double*, double*, int);
+extern double __enzyme_fwddiff(void*, double*, double*, int);
 
 double sumtil(double* vec, int size) {
   double ret = 0.0;
@@ -27,17 +27,11 @@ double sumtil(double* vec, int size) {
 
 int main() {
     double vec[] = {1, 2., 3., 4., 5.};
-    double d_vec[] = {0., 0., 0., 0., 0.};
-    __enzyme_fwddiff(sumtil, vec, d_vec, 5);
-
-    for(int i=0; i<5; i++) {
-      printf("d_reduce_max(%i)=%f\n", i, d_vec[i]);
-    }
-    fflush(0);
-    double ans[] = {2, 2, 2, 1, 0};
-    for(int i=0; i<5; i++) {
-      printf("i=%d d_vec=%f ans=%f\n", i, d_vec[i], ans[i]);
-      APPROX_EQ(d_vec[i], ans[i], 1e-7);
-    }
+    double d_vec[] = {2., 0., 1., 9., 8.};
+    double d_start = __enzyme_fwddiff(sumtil, vec, d_vec, 5);
+          
+    printf("d_start=%f\n", d_start);
+    APPROX_EQ(d_start, 15.0 , 1e-10);
+    
     printf("done\n");
 }

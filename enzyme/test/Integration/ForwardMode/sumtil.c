@@ -13,7 +13,7 @@
 
 #include "test_utils.h"
 
-extern void __enzyme_fwddiff(void*, double*, double*, int);
+extern double __enzyme_fwddiff(void*, double*, double*, int);
 
 double sumtil(double* vec, int size) {
   double ret = 0.0;
@@ -31,11 +31,8 @@ int main() {
     double d_vec[] = {2., 0., 1., 9., 8.};
     double d_ret = __enzyme_fwddiff((void*)sumtil, vec, d_vec, 5);
 
-    double expected = 92.0;
-
-    printf("d_ret=%f expected=%f \n", d_ret, expected);
-
-    APPROX_EQ(d_ret, expected, 1e-7);
+    printf("d_ret=%f\n", d_ret);
+    APPROX_EQ(d_ret, 92.0, 1e-7);
 
     double args[] = {0, 0, 0, 9, 8};
     for(int i=0; i<5; i++) {
