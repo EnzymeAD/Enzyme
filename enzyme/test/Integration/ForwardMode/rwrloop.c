@@ -38,21 +38,17 @@ int main(int argc, char** argv) {
   }
 
   double d_a[N][N];
-  memset((void*)d_a, 0, sizeof(d_a));
-  
-  double dstart = __enzyme_fwddiff((void*)alldiv, (double*)a, (double*)d_a, &N);
-  N = 10;
-
   for(int i=0; i<N; i++) {
       for(int j=0; j<N; j++) {
-          printf("d_a[%d][%d]=%f\n", i, j, d_a[i][j]);
-      }
-  }
-  fflush(0);
-  for(int i=0; i<N; i++) {
-      for(int j=0; j<N; j++) {
-        APPROX_EQ(d_a[i][j], 2. * (i*100+j), 1e-8 );
+      d_a[i][j] = 1;
     }
   }
+  
+  double d_start = __enzyme_fwddiff((void*)alldiv, (double*)a, (double*)d_a, &N);
+  N = 10;
+
+  printf("d_start=%f\n", d_start);
+  APPROX_EQ(d_start, 90900.0, 1e-10 );
+
   return 0;
 }
