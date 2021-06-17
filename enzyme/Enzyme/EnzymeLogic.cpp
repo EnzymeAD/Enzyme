@@ -800,7 +800,8 @@ void calculateUnusedValuesInFunction(
           }
         }
         if ((mode == DerivativeMode::ReverseModePrimal ||
-             mode == DerivativeMode::ReverseModeCombined) &&
+             mode == DerivativeMode::ReverseModeCombined ||
+             mode == DerivativeMode::ForwardMode) &&
             inst->mayWriteToMemory() && !isLibMFn) {
           return UseReq::Need;
         }
@@ -2767,11 +2768,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   SmallPtrSet<const Instruction *, 4> unnecessaryInstructions;
   calculateUnusedValuesInFunction(
       *gutils->oldFunc, unnecessaryValues, unnecessaryInstructions, returnValue,
-      (mode == DerivativeMode::ReverseModeCombined ||
-       mode == DerivativeMode::ForwardMode)
-          ? DerivativeMode::ReverseModeCombined
-          : DerivativeMode::ReverseModeGradient,
-      TR, gutils, TLI, constant_args, guaranteedUnreachable);
+      mode, TR, gutils, TLI, constant_args, guaranteedUnreachable);
 
   SmallPtrSet<const Instruction *, 4> unnecessaryStores;
   calculateUnusedStoresInFunction(*gutils->oldFunc, unnecessaryStores,
