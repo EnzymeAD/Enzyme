@@ -635,9 +635,7 @@ void calculateUnusedValuesInFunction(
       func, unnecessaryValues, unnecessaryInstructions, returnValue,
       [&](const Value *val) {
         bool ivn = is_value_needed_in_reverse<ValueType::Primal>(
-            TR, gutils, val,
-            /*topLevel*/ mode == DerivativeMode::ReverseModeCombined,
-            PrimalSeen, oldUnreachable);
+            TR, gutils, val, mode, PrimalSeen, oldUnreachable);
         return ivn;
       },
       [&](const Instruction *inst) {
@@ -810,9 +808,7 @@ void calculateUnusedValuesInFunction(
             mode == DerivativeMode::ReverseModeGradient)
           return UseReq::Recur;
         bool ivn = is_value_needed_in_reverse<ValueType::Primal>(
-            TR, gutils, inst,
-            /*topLevel*/ mode == DerivativeMode::ReverseModeCombined,
-            PrimalSeen, oldUnreachable);
+            TR, gutils, inst, mode, PrimalSeen, oldUnreachable);
         if (ivn) {
           return UseReq::Need;
         }
@@ -1158,7 +1154,8 @@ bool legalCombinedForwardReverse(
       return;
     }
     if (is_value_needed_in_reverse<ValueType::Primal>(
-            TR, gutils, I, /*topLevel*/ true, oldUnreachable)) {
+            TR, gutils, I, DerivativeMode::ReverseModeCombined,
+            oldUnreachable)) {
       legal = false;
       if (EnzymePrintPerf) {
         if (called)

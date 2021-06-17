@@ -275,9 +275,7 @@ public:
             Mode == DerivativeMode::ForwardMode
                 ? false
                 : is_value_needed_in_reverse<ValueType::ShadowPtr>(
-                      TR, gutils, &I,
-                      /*toplevel*/ Mode == DerivativeMode::ReverseModeCombined,
-                      oldUnreachable);
+                      TR, gutils, &I, Mode, oldUnreachable);
 
         switch (Mode) {
 
@@ -333,9 +331,7 @@ public:
         Mode == DerivativeMode::ForwardMode
             ? false
             : is_value_needed_in_reverse<ValueType::Primal>(
-                  TR, gutils, &I,
-                  /*toplevel*/ Mode == DerivativeMode::ReverseModeCombined,
-                  oldUnreachable);
+                  TR, gutils, &I, Mode, oldUnreachable);
     //! Store loads that need to be cached for use in reverse pass
     if (cache_reads_always ||
         (!cache_reads_never && can_modref && primalNeededInReverse)) {
@@ -4011,9 +4007,7 @@ public:
       // TO FREE'ing
       if (Mode != DerivativeMode::ReverseModeCombined) {
         if ((is_value_needed_in_reverse<ValueType::Primal>(
-                 TR, gutils, orig,
-                 /*topLevel*/ Mode == DerivativeMode::ReverseModeCombined,
-                 oldUnreachable) &&
+                 TR, gutils, orig, Mode, oldUnreachable) &&
              !gutils->unnecessaryIntermediates.count(orig)) ||
             hasMetadata(orig, "enzyme_fromstack")) {
           Value *nop = gutils->cacheForReverse(BuilderZ, op,
@@ -4585,9 +4579,7 @@ public:
 
           if (Mode == DerivativeMode::ReverseModePrimal &&
               is_value_needed_in_reverse<ValueType::Primal>(
-                  TR, gutils, orig,
-                  /*topLevel*/ Mode == DerivativeMode::ReverseModeCombined,
-                  oldUnreachable) &&
+                  TR, gutils, orig, Mode, oldUnreachable) &&
               !gutils->unnecessaryIntermediates.count(orig)) {
             gutils->cacheForReverse(BuilderZ, dcall,
                                     getIndex(orig, CacheType::Self));
@@ -4620,8 +4612,7 @@ public:
 
         if (subretused) {
           if (is_value_needed_in_reverse<ValueType::Primal>(
-                  TR, gutils, orig, Mode == DerivativeMode::ReverseModeCombined,
-                  oldUnreachable) &&
+                  TR, gutils, orig, Mode, oldUnreachable) &&
               !gutils->unnecessaryIntermediates.count(orig)) {
             cachereplace = BuilderZ.CreatePHI(orig->getType(), 1,
                                               orig->getName() + "_tmpcacheB");
@@ -4713,8 +4704,7 @@ public:
       if (/*!topLevel*/ Mode != DerivativeMode::ReverseModeCombined &&
           subretused && !orig->doesNotAccessMemory()) {
         if (is_value_needed_in_reverse<ValueType::Primal>(
-                TR, gutils, orig, Mode == DerivativeMode::ReverseModeCombined,
-                oldUnreachable) &&
+                TR, gutils, orig, Mode, oldUnreachable) &&
             !gutils->unnecessaryIntermediates.count(orig)) {
           assert(!replaceFunction);
           cachereplace = BuilderZ.CreatePHI(orig->getType(), 1,
