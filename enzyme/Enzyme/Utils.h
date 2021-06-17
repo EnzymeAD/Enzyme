@@ -232,6 +232,27 @@ enum class DIFFE_TYPE {
                  // don't need the forward
 };
 
+enum class DerivativeMode {
+  ForwardMode = 0,
+  ReverseModePrimal = 1,
+  ReverseModeGradient = 2,
+  ReverseModeCombined = 3,
+};
+
+static inline std::string to_string(DerivativeMode mode) {
+  switch (mode) {
+  case DerivativeMode::ForwardMode:
+    return "ForwardMode";
+  case DerivativeMode::ReverseModePrimal:
+    return "ReverseModePrimal";
+  case DerivativeMode::ReverseModeGradient:
+    return "ReverseModeGradient";
+  case DerivativeMode::ReverseModeCombined:
+    return "ReverseModeCombined";
+  }
+  llvm_unreachable("illegal derivative mode");
+}
+
 /// Convert DIFFE_TYPE to a string
 static inline std::string to_string(DIFFE_TYPE t) {
   switch (t) {

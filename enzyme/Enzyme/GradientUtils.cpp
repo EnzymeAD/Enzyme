@@ -2411,10 +2411,11 @@ Value *GradientUtils::invertPointerM(Value *oval, IRBuilder<> &BuilderM) {
         /*PostOpt*/ false);
     Constant *newf = Logic.CreatePrimalAndGradient(
         fn, retType, /*constant_args*/ types, TLI, TA,
-        /*returnValue*/ false, /*dretPtr*/ false, /*topLevel*/ false,
+        /*returnValue*/ false, /*dretPtr*/ false,
+        DerivativeMode::ReverseModeGradient,
         /*additionalArg*/ Type::getInt8PtrTy(fn->getContext()), type_args,
         uncacheable_args,
-        /*map*/ &augdata, AtomicAdd, /*fwdMode*/ false);
+        /*map*/ &augdata, AtomicAdd);
     if (!newf)
       newf = UndefValue::get(fn->getType());
     auto cdata = ConstantStruct::get(

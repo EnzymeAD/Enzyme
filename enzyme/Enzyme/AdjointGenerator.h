@@ -2802,10 +2802,9 @@ public:
         newcalled = gutils->Logic.CreatePrimalAndGradient(
             cast<Function>(called), subretType, argsInverted, gutils->TLI,
             TR.analysis, /*returnValue*/ false,
-            /*subdretptr*/ false, /*topLevel*/ false,
+            /*subdretptr*/ false, DerivativeMode::ReverseModeGradient,
             tape ? PointerType::getUnqual(tape->getType()) : nullptr,
             nextTypeInfo, uncacheable_args, subdata, /*AtomicAdd*/ true,
-            /*fwdMode*/ false,
             /*postopt*/ false, /*omp*/ true);
 
         auto numargs = ConstantInt::get(Type::getInt32Ty(call.getContext()),
@@ -4751,19 +4750,21 @@ public:
     bool subdretptr = (subretType == DIFFE_TYPE::DUP_ARG ||
                        subretType == DIFFE_TYPE::DUP_NONEED) &&
                       replaceFunction && (call.getNumUses() != 0);
-    bool subtopLevel = replaceFunction || !modifyPrimal;
+    DerivativeMode subMode = (replaceFunction || !modifyPrimal)
+                                 ? DerivativeMode::ReverseModeCombined
+                                 : DerivativeMode::ReverseModeGradient;
     if (called) {
       newcalled = gutils->Logic.CreatePrimalAndGradient(
           cast<Function>(called), subretType, argsInverted, gutils->TLI,
           TR.analysis, /*returnValue*/ retUsed,
-          /*subdretptr*/ subdretptr, /*topLevel*/ subtopLevel,
-          tape ? tape->getType() : nullptr, nextTypeInfo, uncacheable_args,
-          subdata, gutils->AtomicAdd, /*fwdMode*/ false); //, LI, DT);
+          /*subdretptr*/ subdretptr, subMode, tape ? tape->getType() : nullptr,
+          nextTypeInfo, uncacheable_args, subdata,
+          gutils->AtomicAdd); //, LI, DT);
       if (!newcalled)
         return;
     } else {
 
-      assert(!subtopLevel);
+      assert(subMode != DerivativeMode::ReverseModeCombined);
 
 #if LLVM_VERSION_MAJOR >= 11
       auto callval = orig->getCalledOperand();

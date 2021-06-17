@@ -478,10 +478,9 @@ public:
     case DerivativeMode::ReverseModeCombined:
       newFunc = Logic.CreatePrimalAndGradient(
           cast<Function>(fn), retType, constants, TLI, TA,
-          /*should return*/ false, /*dretPtr*/ false, /*topLevel*/ true,
+          /*should return*/ false, /*dretPtr*/ false, mode,
           /*addedType*/ nullptr, type_args, volatile_args,
-          /*index mapping*/ nullptr, AtomicAdd,
-          mode == DerivativeMode::ForwardMode, PostOpt);
+          /*index mapping*/ nullptr, AtomicAdd, PostOpt);
       break;
     case DerivativeMode::ReverseModePrimal:
     case DerivativeMode::ReverseModeGradient: {
@@ -515,9 +514,8 @@ public:
       else
         newFunc = Logic.CreatePrimalAndGradient(
             cast<Function>(fn), retType, constants, TLI, TA,
-            /*should return*/ false, /*dretPtr*/ false, /*topLevel*/ false,
-            tapeType, type_args, volatile_args, &aug, AtomicAdd,
-            /*fwdMode*/ false, PostOpt);
+            /*should return*/ false, /*dretPtr*/ false, mode, tapeType,
+            type_args, volatile_args, &aug, AtomicAdd, PostOpt);
     }
     }
 
