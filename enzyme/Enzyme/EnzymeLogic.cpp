@@ -2680,11 +2680,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                             : retType == DIFFE_TYPE::OUT_DIFF;
 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
-      *this,
-      mode == DerivativeMode::ReverseModeCombined ||
-          mode == DerivativeMode::ForwardMode,
-      todiff, TLI, TA, retType, diffeReturnArg, constant_args, retVal,
-      additionalArg);
+      *this, mode, todiff, TLI, TA, retType, diffeReturnArg, constant_args,
+      retVal, additionalArg);
 
   if (omp)
     gutils->setupOMPFor();

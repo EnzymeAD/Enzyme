@@ -2099,10 +2099,10 @@ GradientUtils *GradientUtils::CreateFromClone(
 }
 
 DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
-    EnzymeLogic &Logic, bool topLevel, Function *todiff, TargetLibraryInfo &TLI,
-    TypeAnalysis &TA, DIFFE_TYPE retType, bool diffeReturnArg,
-    const std::vector<DIFFE_TYPE> &constant_args, ReturnType returnValue,
-    Type *additionalArg) {
+    EnzymeLogic &Logic, DerivativeMode mode, Function *todiff,
+    TargetLibraryInfo &TLI, TypeAnalysis &TA, DIFFE_TYPE retType,
+    bool diffeReturnArg, const std::vector<DIFFE_TYPE> &constant_args,
+    ReturnType returnValue, Type *additionalArg) {
   assert(!todiff->empty());
   ValueToValueMapTy invertedPointers;
   SmallPtrSet<Instruction *, 4> constants;
@@ -2114,16 +2114,14 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
   SmallPtrSet<Value *, 4> nonconstant_values;
 
   auto newFunc = Logic.PPC.CloneFunctionWithReturns(
-      topLevel, todiff, invertedPointers, constant_args, constant_values,
-      nonconstant_values, returnvals, returnValue, "diffe" + todiff->getName(),
-      &originalToNew,
+      mode == DerivativeMode::ReverseModeCombined, todiff, invertedPointers,
+      constant_args, constant_values, nonconstant_values, returnvals,
+      returnValue, "diffe" + todiff->getName(), &originalToNew,
       /*diffeReturnArg*/ diffeReturnArg, additionalArg);
   auto res = new DiffeGradientUtils(
       Logic, newFunc, todiff, TLI, TA, invertedPointers, constant_values,
       nonconstant_values, /*ActiveValues*/ retType != DIFFE_TYPE::CONSTANT,
-      originalToNew,
-      topLevel ? DerivativeMode::ReverseModeCombined
-               : DerivativeMode::ReverseModeGradient);
+      originalToNew, mode);
   return res;
 }
 
@@ -2189,7 +2187,8 @@ Value *GradientUtils::invertPointerM(Value *oval, IRBuilder<> &BuilderM) {
   } else if (auto arg = dyn_cast<GlobalVariable>(oval)) {
     if (!hasMetadata(arg, "enzyme_shadow")) {
 
-      if (mode == DerivativeMode::ReverseModeCombined &&
+      if ((mode == DerivativeMode::ReverseModeCombined ||
+           mode == DerivativeMode::ForwardMode) &&
           arg->getType()->getPointerAddressSpace() == 0) {
         bool seen = false;
         MemoryLocation
