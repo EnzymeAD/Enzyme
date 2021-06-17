@@ -2538,12 +2538,11 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   if (retType != DIFFE_TYPE::CONSTANT)
     assert(!todiff->getReturnType()->isVoidTy());
 
-  ReverseCacheKey tup = std::make_tuple(
-      todiff, retType, constant_args,
-      std::map<Argument *, bool>(_uncacheable_args.begin(),
-                                 _uncacheable_args.end()),
-      returnUsed, dretPtr, mode == DerivativeMode::ReverseModeCombined,
-      additionalArg, oldTypeInfo);
+  ReverseCacheKey tup =
+      std::make_tuple(todiff, retType, constant_args,
+                      std::map<Argument *, bool>(_uncacheable_args.begin(),
+                                                 _uncacheable_args.end()),
+                      returnUsed, dretPtr, mode, additionalArg, oldTypeInfo);
   if (ReverseCachedFunctions.find(tup) != ReverseCachedFunctions.end()) {
     return ReverseCachedFunctions.find(tup)->second;
   }

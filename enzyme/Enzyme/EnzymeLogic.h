@@ -161,7 +161,7 @@ public:
       std::tuple<llvm::Function *, DIFFE_TYPE /*retType*/,
                  std::vector<DIFFE_TYPE> /*constant_args*/,
                  std::map<llvm::Argument *, bool> /*uncacheable_args*/,
-                 bool /*retval*/, bool /*dretPtr*/, bool /*topLevel*/,
+                 bool /*retval*/, bool /*dretPtr*/, DerivativeMode,
                  llvm::Type *, const FnTypeInfo>;
   std::map<ReverseCacheKey, llvm::Function *> ReverseCachedFunctions;
 

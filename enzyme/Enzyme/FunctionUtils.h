@@ -55,7 +55,7 @@ public:
   std::map<std::pair<llvm::Function *, bool>, llvm::Function *> cache;
   std::map<llvm::Function *, llvm::Function *> CloneOrigin;
 
-  llvm::Function *preprocessForClone(llvm::Function *F, bool topLevel);
+  llvm::Function *preprocessForClone(llvm::Function *F, DerivativeMode mode);
 
   llvm::AAResults &getAAResultsFromFunction(llvm::Function *NewF);
 
