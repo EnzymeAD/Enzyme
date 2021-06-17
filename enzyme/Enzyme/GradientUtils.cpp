@@ -2037,7 +2037,7 @@ bool GradientUtils::shouldRecompute(const Value *val,
 
 GradientUtils *GradientUtils::CreateFromClone(
     EnzymeLogic &Logic, Function *todiff, TargetLibraryInfo &TLI,
-    TypeAnalysis &TA, DerivativeMode mode, DIFFE_TYPE retType,
+    TypeAnalysis &TA, DIFFE_TYPE retType,
     const std::vector<DIFFE_TYPE> &constant_args, bool returnUsed,
     std::map<AugmentedStruct, int> &returnMapping) {
   assert(!todiff->empty());
@@ -2084,8 +2084,8 @@ GradientUtils *GradientUtils::CreateFromClone(
   SmallPtrSet<Value *, 4> nonconstant_values;
 
   auto newFunc = Logic.PPC.CloneFunctionWithReturns(
-      mode, todiff, invertedPointers, constant_args, constant_values,
-      nonconstant_values, returnvals,
+      DerivativeMode::ReverseModePrimal, todiff, invertedPointers,
+      constant_args, constant_values, nonconstant_values, returnvals,
       /*returnValue*/ returnValue, "fakeaugmented_" + todiff->getName(),
       &originalToNew,
       /*diffeReturnArg*/ false, /*additionalArg*/ nullptr);
@@ -2104,6 +2104,9 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
     bool diffeReturnArg, const std::vector<DIFFE_TYPE> &constant_args,
     ReturnType returnValue, Type *additionalArg) {
   assert(!todiff->empty());
+  assert(mode == DerivativeMode::ReverseModeGradient ||
+         mode == DerivativeMode::ReverseModeCombined ||
+         mode == DerivativeMode::ForwardMode);
   ValueToValueMapTy invertedPointers;
   SmallPtrSet<Instruction *, 4> constants;
   SmallPtrSet<Instruction *, 20> nonconstant;

@@ -22,7 +22,7 @@
 // CreateAugmentedPrimal. CreatePrimalAndGradient takes a function, known
 // TypeResults of the calling context, known activity analysis of the
 // arguments. It creates a corresponding gradient
-// function, computing the primal as well.
+// function, computing the primal as well if requested.
 // CreateAugmentedPrimal takes similar arguments and creates an augmented
 // primal pass.
 //
@@ -1460,8 +1460,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   std::map<AugmentedStruct, int> returnMapping;
 
   GradientUtils *gutils = GradientUtils::CreateFromClone(
-      *this, todiff, TLI, TA, DerivativeMode::ReverseModePrimal, retType,
-      constant_args,
+      *this, todiff, TLI, TA, retType, constant_args,
       /*returnUsed*/ returnUsed, returnMapping);
   if (omp)
     gutils->setupOMPFor();
@@ -2510,6 +2509,10 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     const std::map<Argument *, bool> _uncacheable_args,
     const AugmentedReturn *augmenteddata, bool AtomicAdd, bool PostOpt,
     bool omp) {
+
+  assert(mode == DerivativeMode::ReverseModeCombined ||
+         mode == DerivativeMode::ReverseModeGradient ||
+         mode == DerivativeMode::ForwardMode);
 
   FnTypeInfo oldTypeInfo = oldTypeInfo_;
   for (auto &pair : oldTypeInfo.KnownValues) {

@@ -763,7 +763,7 @@ public:
 public:
   static GradientUtils *
   CreateFromClone(EnzymeLogic &Logic, Function *todiff, TargetLibraryInfo &TLI,
-                  TypeAnalysis &TA, DerivativeMode mode, DIFFE_TYPE retType,
+                  TypeAnalysis &TA, DIFFE_TYPE retType,
                   const std::vector<DIFFE_TYPE> &constant_args, bool returnUsed,
                   std::map<AugmentedStruct, int> &returnMapping);
 
