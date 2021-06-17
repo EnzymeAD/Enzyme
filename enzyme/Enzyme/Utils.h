@@ -274,7 +274,7 @@ static inline std::string to_string(DIFFE_TYPE t) {
 
 /// Attempt to automatically detect the differentiable
 /// classification based off of a given type
-static inline DIFFE_TYPE whatType(llvm::Type *arg, bool fwdMode,
+static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode,
                                   std::set<llvm::Type *> seen = {}) {
   assert(arg);
   if (seen.find(arg) != seen.end())
@@ -286,8 +286,8 @@ static inline DIFFE_TYPE whatType(llvm::Type *arg, bool fwdMode,
   }
 
   if (arg->isPointerTy()) {
-    switch (whatType(llvm::cast<llvm::PointerType>(arg)->getElementType(),
-                     fwdMode, seen)) {
+    switch (whatType(llvm::cast<llvm::PointerType>(arg)->getElementType(), mode,
+                     seen)) {
     case DIFFE_TYPE::OUT_DIFF:
       return DIFFE_TYPE::DUP_ARG;
     case DIFFE_TYPE::CONSTANT:
@@ -302,7 +302,7 @@ static inline DIFFE_TYPE whatType(llvm::Type *arg, bool fwdMode,
     assert(0 && "Cannot handle type0");
     return DIFFE_TYPE::CONSTANT;
   } else if (arg->isArrayTy()) {
-    return whatType(llvm::cast<llvm::ArrayType>(arg)->getElementType(), fwdMode,
+    return whatType(llvm::cast<llvm::ArrayType>(arg)->getElementType(), mode,
                     seen);
   } else if (arg->isStructTy()) {
     auto st = llvm::cast<llvm::StructType>(arg);
@@ -311,7 +311,7 @@ static inline DIFFE_TYPE whatType(llvm::Type *arg, bool fwdMode,
 
     auto ty = DIFFE_TYPE::CONSTANT;
     for (unsigned i = 0; i < st->getNumElements(); ++i) {
-      switch (whatType(st->getElementType(i), fwdMode, seen)) {
+      switch (whatType(st->getElementType(i), mode, seen)) {
       case DIFFE_TYPE::OUT_DIFF:
         switch (ty) {
         case DIFFE_TYPE::OUT_DIFF:
@@ -348,7 +348,8 @@ static inline DIFFE_TYPE whatType(llvm::Type *arg, bool fwdMode,
   } else if (arg->isIntOrIntVectorTy() || arg->isFunctionTy()) {
     return DIFFE_TYPE::CONSTANT;
   } else if (arg->isFPOrFPVectorTy()) {
-    return fwdMode ? DIFFE_TYPE::DUP_ARG : DIFFE_TYPE::OUT_DIFF;
+    return mode == DerivativeMode::ForwardMode ? DIFFE_TYPE::DUP_ARG
+                                               : DIFFE_TYPE::OUT_DIFF;
   } else {
     assert(arg);
     llvm::errs() << "arg: " << *arg << "\n";
