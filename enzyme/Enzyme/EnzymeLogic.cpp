@@ -1462,7 +1462,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   std::map<AugmentedStruct, int> returnMapping;
 
   GradientUtils *gutils = GradientUtils::CreateFromClone(
-      *this, todiff, TLI, TA, retType, constant_args,
+      *this, todiff, TLI, TA, DerivativeMode::ReverseModePrimal, retType,
+      constant_args,
       /*returnUsed*/ returnUsed, returnMapping);
   if (omp)
     gutils->setupOMPFor();

@@ -1378,13 +1378,13 @@ Function *PreProcessCache::preprocessForClone(Function *F, bool topLevel) {
 }
 
 Function *PreProcessCache::CloneFunctionWithReturns(
-    bool topLevel, Function *&F, ValueToValueMapTy &ptrInputs,
+    DerivativeMode mode, Function *&F, ValueToValueMapTy &ptrInputs,
     const std::vector<DIFFE_TYPE> &constant_args,
     SmallPtrSetImpl<Value *> &constants, SmallPtrSetImpl<Value *> &nonconstant,
     SmallPtrSetImpl<Value *> &returnvals, ReturnType returnValue, Twine name,
     ValueToValueMapTy *VMapO, bool diffeReturnArg, llvm::Type *additionalArg) {
   assert(!F->empty());
-  F = preprocessForClone(F, topLevel);
+  F = preprocessForClone(F, mode == DerivativeMode::ReverseModeCombined);
   std::vector<Type *> RetTypes;
   if (returnValue == ReturnType::ArgsWithReturn ||
       returnValue == ReturnType::ArgsWithTwoReturns ||
