@@ -21,10 +21,10 @@
 // This file defines two functions CreatePrimalAndGradient and
 // CreateAugmentedPrimal. CreatePrimalAndGradient takes a function, known
 // TypeResults of the calling context, known activity analysis of the
-// arguments and a bool `topLevel`. It creates a corresponding gradient
-// function, computing the forward pass as well if at `topLevel`.
+// arguments. It creates a corresponding gradient
+// function, computing the primal as well.
 // CreateAugmentedPrimal takes similar arguments and creates an augmented
-// forward pass.
+// primal pass.
 //
 //===----------------------------------------------------------------------===//
 #include "AdjointGenerator.h"
@@ -88,7 +88,7 @@ cl::opt<bool> nonmarkedglobals_inactiveloads(
 bool is_load_uncacheable(
     LoadInst &li, AAResults &AA, Function *oldFunc, TargetLibraryInfo &TLI,
     const SmallPtrSetImpl<const Instruction *> &unnecessaryInstructions,
-    const std::map<Argument *, bool> &uncacheable_args, bool topLevel);
+    const std::map<Argument *, bool> &uncacheable_args, DerivativeMode mode);
 
 struct CacheAnalysis {
   AAResults &AA;
@@ -99,16 +99,16 @@ struct CacheAnalysis {
   TargetLibraryInfo &TLI;
   const SmallPtrSetImpl<const Instruction *> &unnecessaryInstructions;
   const std::map<Argument *, bool> &uncacheable_args;
-  bool topLevel;
+  DerivativeMode mode;
   std::map<Value *, bool> seen;
   CacheAnalysis(
       AAResults &AA, Function *oldFunc, ScalarEvolution &SE, LoopInfo &OrigLI,
       DominatorTree &OrigDT, TargetLibraryInfo &TLI,
       const SmallPtrSetImpl<const Instruction *> &unnecessaryInstructions,
-      const std::map<Argument *, bool> &uncacheable_args, bool topLevel)
+      const std::map<Argument *, bool> &uncacheable_args, DerivativeMode mode)
       : AA(AA), oldFunc(oldFunc), SE(SE), OrigLI(OrigLI), DT(OrigDT), TLI(TLI),
         unnecessaryInstructions(unnecessaryInstructions),
-        uncacheable_args(uncacheable_args), topLevel(topLevel) {}
+        uncacheable_args(uncacheable_args), mode(mode) {}
 
   bool is_value_mustcache_from_origin(Value *obj) {
     if (seen.find(obj) != seen.end())
@@ -194,7 +194,7 @@ struct CacheAnalysis {
       } else if (auto GV = dyn_cast<GlobalVariable>(obj)) {
         // In the absense of more fine-grained global info, assume object is
         // written to in a subseqent call unless this is "topLevel";
-        if (!topLevel && !GV->isConstant()) {
+        if (mode != DerivativeMode::ReverseModeCombined && !GV->isConstant()) {
           mustcache = true;
         }
       } else if (auto sli = dyn_cast<LoadInst>(obj)) {
@@ -430,7 +430,7 @@ struct CacheAnalysis {
                 },
                 [&]() {
                   // if gone past entry
-                  if (!topLevel) {
+                  if (mode != DerivativeMode::ReverseModeCombined) {
                     EmitWarning("Uncacheable", li.getDebugLoc(), oldFunc,
                                 li.getParent(), "Load may need caching ", li,
                                 " due to entry via ", *II);
@@ -1494,7 +1494,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                    PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
                    gutils->OrigLI, gutils->OrigDT, TLI,
                    unnecessaryInstructionsTmp, _uncacheable_argsPP,
-                   /*topLevel*/ false);
+                   DerivativeMode::ReverseModePrimal);
   const std::map<CallInst *, const std::map<Argument *, bool>>
       uncacheable_args_map = CA.compute_uncacheable_args_for_callsites();
 
@@ -2717,8 +2717,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   CacheAnalysis CA(gutils->OrigAA, gutils->oldFunc,
                    PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
                    gutils->OrigLI, gutils->OrigDT, TLI,
-                   unnecessaryInstructionsTmp, _uncacheable_argsPP,
-                   mode == DerivativeMode::ReverseModeCombined);
+                   unnecessaryInstructionsTmp, _uncacheable_argsPP, mode);
   const std::map<CallInst *, const std::map<Argument *, bool>>
       uncacheable_args_map =
           (augmenteddata) ? augmenteddata->uncacheable_args_map
