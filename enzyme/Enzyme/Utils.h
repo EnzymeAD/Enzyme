@@ -504,6 +504,10 @@ static inline bool isCertainPrintMallocOrFree(llvm::Function *called) {
   return false;
 }
 
+extern "C" {
+extern llvm::cl::opt<std::string> EnzymeBCPath;
+};
+
 /// Create function for type that performs the derivative memcpy on floating
 /// point memory
 llvm::Function *getOrInsertDifferentialFloatMemcpy(llvm::Module &M,
@@ -522,6 +526,11 @@ llvm::Function *getOrInsertDifferentialFloatMemmove(llvm::Module &M,
 llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
                                                 llvm::ArrayRef<llvm::Type *> T,
                                                 llvm::Type *reqType);
+
+/// Create function for type that performs the derivative memcpy on floating
+/// point memory
+llvm::Function *getOrInsertDifferentialReduce(llvm::Module &M,
+                                              llvm::PointerType *T);
 
 /// Create function to computer nearest power of two
 llvm::Value *nextPowerOfTwo(llvm::IRBuilder<> &B, llvm::Value *V);

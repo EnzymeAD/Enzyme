@@ -132,7 +132,7 @@ cl::opt<bool> EnzymeCoalese("enzyme-coalese", cl::init(false), cl::Hidden,
                             cl::desc("Whether to coalese memory allocations"));
 
 #if LLVM_VERSION_MAJOR >= 8
-static cl::opt<bool> EnzymePHIRestructure(
+cl::opt<bool> EnzymePHIRestructure(
     "enzyme-phi-restructure", cl::init(false), cl::Hidden,
     cl::desc("Whether to restructure phi's to have better unwrap behavior"));
 #endif
