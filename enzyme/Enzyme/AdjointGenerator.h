@@ -611,22 +611,16 @@ public:
     }
     }
 
-    size_t size = 1;
-    if (phi.getType()->isSized())
-      size = (gutils->newFunc->getParent()->getDataLayout().getTypeSizeInBits(
-                  phi.getType()) +
-              7) /
-             8;
+    BasicBlock *oBB = phi.getParent();
+    BasicBlock *nBB = gutils->getNewFromOriginal(oBB);
 
-    if (phi.getType()->isIntOrIntVectorTy() &&
-        TR.intType(size, &phi, /*errifnotfound*/ false) == BaseType::Pointer) {
-      return;
-    }
+    IRBuilder<> diffeBuilder(nBB->getFirstNonPHI());
+    diffeBuilder.setFastMathFlags(getFast());
 
-    IRBuilder<> Builder2(&phi);
-    getForwardBuilder(Builder2);
+    IRBuilder<> phiBuilder(&phi);
+    getForwardBuilder(phiBuilder);
 
-    auto newPhi = Builder2.CreatePHI(phi.getType(), 1, phi.getName() + "'");
+    auto newPhi = phiBuilder.CreatePHI(phi.getType(), 1, phi.getName() + "'");
     for (unsigned int i = 0; i < phi.getNumIncomingValues(); ++i) {
       auto val = phi.getIncomingValue(i);
       auto block = phi.getIncomingBlock(i);
@@ -643,7 +637,7 @@ public:
       }
     }
 
-    setDiffe(&phi, newPhi, Builder2);
+    setDiffe(&phi, newPhi, diffeBuilder);
   }
 
   void visitCastInst(llvm::CastInst &I) {
