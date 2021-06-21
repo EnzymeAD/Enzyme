@@ -2,7 +2,7 @@
 title: "Calling Convention"
 date: 2019-11-29T15:26:15Z
 draft: false
-weight: 30
+weight: 20
 ---
 
 Enzyme is invoked by calling a function `__enzyme_autodiff` with the function being differentiated, followed by the corresponding primal and shadow arguments. This will result in the original function being run with the corresponding derivative values being computed.

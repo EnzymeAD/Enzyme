@@ -2,7 +2,7 @@
 title: "Using Enzyme"
 date: 2019-11-29T15:26:15Z
 draft: false
-weight: 20
+weight: 10
 ---
 
 ## Generating LLVM

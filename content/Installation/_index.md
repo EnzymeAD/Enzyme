@@ -41,7 +41,7 @@ ninja
 
 ## Building Enzyme
 
-First enter the enzyme project directory inside the monorepo and create a build directory. Note that the source is inside a subdirectory of the repo called enzyme. If you get a CMakeLists.txt not found error, make sure you're in the enzyme subdirectory.
+First enter the enzyme project directory inside the monorepo and create a build directory. Note that the source is inside a subdirectory of the repo called enzyme. If you get a CMakeLists.txt not found error, make sure you're pointing at the enzyme subdirectory.
 
 ```sh
 cd /path/to/Enzyme/enzyme
