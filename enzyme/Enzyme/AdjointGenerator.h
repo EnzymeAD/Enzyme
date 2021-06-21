@@ -395,8 +395,6 @@ public:
           auto diff = Builder2.CreateLoad(
               gutils->invertPointerM(I.getOperand(0), Builder2));
           setDiffe(&I, diff, Builder2);
-        } else {
-          setDiffe(&I, Constant::getNullValue(I.getType()), Builder2);
         }
         break;
       }
