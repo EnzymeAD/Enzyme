@@ -1121,8 +1121,7 @@ public:
   std::vector<SelectInst *> addToDiffe(Value *val, Value *dif,
                                        IRBuilder<> &Builder, Type *T) {
     assert(Mode == DerivativeMode::ReverseModeGradient ||
-           Mode == DerivativeMode::ReverseModeCombined ||
-           Mode == DerivativeMode::ForwardMode);
+           Mode == DerivativeMode::ReverseModeCombined);
     return ((DiffeGradientUtils *)gutils)->addToDiffe(val, dif, Builder, T);
   }
 
@@ -1553,63 +1552,66 @@ public:
     Value *dif0 = constantval0 ? nullptr : diffe(orig_op0, Builder2);
     Value *dif1 = constantval1 ? nullptr : diffe(orig_op1, Builder2);
 
-    Type *addingType = BO.getType();
-
-    setDiffe(&BO, Constant::getNullValue(BO.getType()), Builder2);
-
     switch (BO.getOpcode()) {
     case Instruction::FMul: {
-      if (!constantval0) {
+      if (!constantval0 && !constantval1) {
+        Value *idiff0 =
+            Builder2.CreateFMul(dif0, gutils->getNewFromOriginal(orig_op1));
+        Value *idiff1 =
+            Builder2.CreateFMul(dif1, gutils->getNewFromOriginal(orig_op0));
+        Value *diff = Builder2.CreateFAdd(idiff0, idiff1);
+        setDiffe(&BO, diff, Builder2);
+      } else if (!constantval0) {
         Value *idiff0 =
             Builder2.CreateFMul(dif0, gutils->getNewFromOriginal(orig_op1));
         setDiffe(&BO, idiff0, Builder2);
-      }
-
-      if (!constantval1) {
+      } else if (!constantval1) {
         Value *idiff1 =
             Builder2.CreateFMul(dif1, gutils->getNewFromOriginal(orig_op0));
-        addToDiffe(&BO, idiff1, Builder2, addingType);
+        setDiffe(&BO, idiff1, Builder2);
       }
       break;
     }
     case Instruction::FAdd: {
-      if (!constantval0) {
+      if (!constantval0 && !constantval1) {
+        Value *diff = Builder2.CreateFAdd(dif0, dif1);
+        setDiffe(&BO, diff, Builder2);
+      } else if (!constantval0) {
         setDiffe(&BO, dif0, Builder2);
-      }
-
-      if (!constantval1) {
-        addToDiffe(&BO, dif1, Builder2, addingType);
+      } else if (!constantval1) {
+        setDiffe(&BO, dif1, Builder2);
       }
       break;
     }
     case Instruction::FSub: {
-      if (!constantval0) {
+      if (!constantval0 && !constantval1) {
+        Value *diff = Builder2.CreateFAdd(dif0, Builder2.CreateFNeg(dif1));
+        setDiffe(&BO, diff, Builder2);
+      } else if (!constantval0) {
         setDiffe(&BO, dif0, Builder2);
-      }
-
-      if (!constantval1) {
-        addToDiffe(&BO, Builder2.CreateFNeg(dif1), Builder2, addingType);
+      } else if (!constantval1) {
+        setDiffe(&BO, Builder2.CreateFNeg(dif1), Builder2);
       }
       break;
     }
     case Instruction::FDiv: {
-      Value *idiff1;
-      if (!constantval0) {
-        idiff1 =
+      Value *idiff3 = nullptr;
+      if (!constantval0 && !constantval1) {
+        Value *idiff1 =
             Builder2.CreateFMul(dif0, gutils->getNewFromOriginal(orig_op1));
-      } else {
-        idiff1 = ConstantFP::get(addingType, 0.0);
-      }
-
-      Value *idiff2;
-      if (!constantval1) {
-        idiff2 =
+        Value *idiff2 =
             Builder2.CreateFMul(gutils->getNewFromOriginal(orig_op0), dif1);
-      } else {
-        idiff2 = ConstantFP::get(addingType, 0.0);
+        idiff3 = Builder2.CreateFSub(idiff1, idiff2);
+      } else if (!constantval0) {
+        Value *idiff1 =
+            Builder2.CreateFMul(dif0, gutils->getNewFromOriginal(orig_op1));
+        idiff3 = idiff1;
+      } else if (!constantval1) {
+        Value *idiff2 =
+            Builder2.CreateFMul(gutils->getNewFromOriginal(orig_op0), dif1);
+        idiff3 = Builder2.CreateFNeg(idiff2);
       }
 
-      Value *idiff3 = Builder2.CreateFSub(idiff1, idiff2);
       Value *idiff4 = Builder2.CreateFMul(gutils->getNewFromOriginal(orig_op1),
                                           gutils->getNewFromOriginal(orig_op1));
       Value *idiff5 = Builder2.CreateFDiv(idiff3, idiff4);
