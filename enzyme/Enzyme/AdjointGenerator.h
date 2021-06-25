@@ -3419,6 +3419,7 @@ public:
 
     if (funcName == "MPI_Bcast") {
       if (Mode == DerivativeMode::ReverseModeGradient || Mode == DerivativeMode::ReverseModeCombined) {
+        /*Pseudo-code for the algo which we are implementing*/
         #if 0
         rbuf = malloc(count * MPI_TYPE_SIZE(object));
         MPI_Reduce(shadow(buf), rbuf, lookup(count), lookup(datatype), /*magic constant???MPI_SUM*/, lookup(root), lookup(comm));
@@ -3431,7 +3432,7 @@ public:
 
         #if 0
         Value *shadow = gutils->invertPointerM(call.getOperand(0), Builder2);
-        Value *MAGIC;
+        Value *MAGIC; // for the var coming from MPI_SUM
         Value *args[] = {
             /*sbuf*/ shadow,
             /*buf*/ NULL,
@@ -3439,13 +3440,12 @@ public:
             lookup(gutils->getNewFromOriginal(call.getOperand(1)), Builder2),
             /*datatype*/
             lookup(gutils->getNewFromOriginal(call.getOperand(2)), Builder2),
-            /*MPI_SUM*/ (llvm::Value*)MAGIC,
+            /*MPI_SUM*/ (llvm::Value*)MAGIC, // temporary "Magic here" -> see above
             /*int root*/
             lookup(gutils->getNewFromOriginal(call.getOperand(3)), Builder2),
             /*comm*/
             lookup(gutils->getNewFromOriginal(call.getOperand(5)), Builder2),
         };
-        ///
 
         Value *tysize = MPI_TYPE_SIZE(args[3], Builder2);
 
@@ -3456,12 +3456,43 @@ public:
                                Builder2.CreateZExtOrTrunc(
                                    tysize, Type::getInt64Ty(call.getContext())),
                                "", true, true);
-        Value *nargs[] = {dst_arg, val_arg, len_arg, volatile_arg};
+        Value *nargs[] = {dst_arg, val_arg, len_arg, volatile_arg}; // memset uses nargs below  -> Do I really need it though?! I want to memset the shadow not anything else
+        
+        // alloc buffer -> cannot assume data to be doubles or floats here -> Where the createOps from utils.cpp comes in -> Comes in with `Magic`-Variable
+        buf = CallInst::CreateMalloc( // below taken from a different CreateMalloc most certainly not right off the bat
+          &*Builder2.GetInsertPoint(), len_arg->getType(),
+          Type::getInt8Ty(call.getContext()), // Is int8 correct here?
+          ConstantInt::get(Type::getInt64Ty(len_arg->getContext()), 1), // same as above for Int64
+          len_arg, nullptr, "mpireduce_malloccache");
+        if (cast<Instruction>(buf)->getParent() == nullptr) {
+          Builder2.Insert(cast<Instruction>(buf));
+        }
+        args[1] = buf;
 
+        auto fcall = Builder2.CreateCall(
+            called->getParent()->getFunction("MPI_Reduce"), args);
+        fcall->setCallingConv(call.getCallingConv());
+
+        // exchange between buf and shadow -> What types does DiffMemCopy handle?
+        DifferentiableMemCopyFloats(call, call.getOperand(0), buf, args[0], len_arg, Builder2);
+
+        // Free up the memory of the buffer
+        auto ci = cast<CallInst>(
+            CallInst::CreateFree(buf, Builder2.GetInsertBlock()));
+        ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+        if (ci->getParent() == nullptr) {
+          Builder2.Insert(ci);
+        }
+
+        // Set the shadow back to 0 (if not root)
+        // -> Not using the root property right now, i.e. no appropriate "if" statement right now!
+        // if (not root) not entirely straightforward to implement, need to either create a new utils function or create multiple reverse blocks
         auto memset = cast<CallInst>(Builder2.CreateCall(
           Intrinsic::getDeclaration(gutils->newFunc->getParent(),
-                                    Intrinsic::memset, tys),
-          nargs));
+                                    Intrinsic::memset, tysize),
+          args[0]));
+        memset->addParamAttr(0, Attribute::NonNull);
+
         #endif
       }
     llvm::errs() << call << "\n";
