@@ -272,7 +272,8 @@ llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
 
 llvm::Value *getOrInsertOpFloatSum(llvm::Module &M,
                                    llvm::Type* OpPtr,
-                                   ConcreteType CT) {
+                                   ConcreteType CT,
+                                   llvm::Type* intType) {
   std::string name = "__enzyme_mpi_sum" + CT.str();
   assert(CT.isFloat()); 
   auto FT = CT.isFloat();
@@ -280,7 +281,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M,
     std::vector<llvm::Type *> types = {
                                         PointerType::getUnqual(FT),
                                         PointerType::getUnqual(FT),
-                                        PointerType::getUnqual(Type::getInt32Ty(M.getContext())),
+                                        PointerType::getUnqual(intType),
                                         OpPtr
                                         };
     FunctionType *FT =
@@ -291,9 +292,139 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M,
     #else
       Function *F = cast<Function>(M.getOrInsertFunction(name+"_run", FT));
     #endif
-    // TODO finish initializing mpi sum https://www.mpich.org/static/docs/v3.2/www3/MPI_Op_create.html
 
-      GlobalVariable* GV;
+      F->setLinkage(Function::LinkageTypes::InternalLinkage);
+      F->addFnAttr(Attribute::ArgMemOnly);
+      F->addFnAttr(Attribute::NoUnwind);
+      F->addParamAttr(0, Attribute::NoCapture);
+      F->addParamAttr(0, Attribute::ReadOnly);
+      F->addParamAttr(1, Attribute::NoCapture);
+      F->addParamAttr(2, Attribute::NoCapture);
+      F->addParamAttr(2, Attribute::ReadOnly);
+      F->addParamAttr(3, Attribute::NoCapture);
+      F->addParamAttr(3, Attribute::ReadNone);
+
+      BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
+      BasicBlock *body = BasicBlock::Create(M.getContext(), "for.body", F);
+      BasicBlock *end = BasicBlock::Create(M.getContext(), "for.end", F);
+
+      auto src = F->arg_begin();
+      src->setName("src");
+      auto dst = src + 1;
+      dst->setName("dst");
+      auto lenp = src + 1;
+      lenp->setName("lenp");
+      Value *len;
+      // TODO consider using datatype arg and asserting same size as assumed by type analysis
+
+      {
+        IRBuilder<> B(entry);
+        len = B.CreateLoad(lenp);
+        B.CreateCondBr(B.CreateICmpEQ(len, ConstantInt::get(len->getType(), 0)),
+                        end, body);
+      }
+
+      {
+        IRBuilder<> B(body);
+        B.setFastMathFlags(getFast());
+        PHINode *idx = B.CreatePHI(len->getType(), 2, "idx");
+        idx->addIncoming(ConstantInt::get(len->getType(), 0), entry);
+
+        Value *dsti = B.CreateGEP(dst, idx, "dst.i");
+        LoadInst *dstl = B.CreateLoad(dsti, "dst.i.l");
+
+        Value *srci = B.CreateGEP(src, idx, "src.i");
+        LoadInst *srcl = B.CreateLoad(srci, "src.i.l");
+
+        B.CreateStore(B.CreateFAdd(srcl, dstl), dsti);
+
+        Value *next =
+            B.CreateNUWAdd(idx, ConstantInt::get(len->getType(), 1), "idx.next");
+        idx->addIncoming(next, body);
+        B.CreateCondBr(B.CreateICmpEQ(len, next), end, body);
+      }
+
+      {
+        IRBuilder<> B(end);
+        B.CreateRetVoid();
+      }
+
+
+    std::vector<llvm::Type *> rtypes = {
+                                        Type::getInt8PtrTy(M.getContext()),
+                                        intType,
+                                        OpPtr
+                                        };
+    FunctionType *RFT =
+          FunctionType::get(intType, rtypes, false);
+
+    #if LLVM_VERSION_MAJOR >= 9
+      Function *RF = cast<Function>(M.getOrInsertFunction("MPI_Op_create", RFT).getCallee());
+    #else
+      Function *RF = cast<Function>(M.getOrInsertFunction("MPI_Op_create", RFT));
+    #endif
+
+      GlobalVariable* GV = new GlobalVariable(M, cast<PointerType>(OpPtr)->getElementType(), false, GlobalVariable::InternalLinkage,
+                               nullptr, name);
+                               
+
+
+    // Finish initializing mpi sum https://www.mpich.org/static/docs/v3.2/www3/MPI_Op_create.html
+    FunctionType *IFT =
+          FunctionType::get(Type::getVoidTy(M.getContext()), ArrayRef<Type*>(), false);
+
+    #if LLVM_VERSION_MAJOR >= 9
+      Function *initializerFunction = cast<Function>(M.getOrInsertFunction("MPI_Sum_initializer", IFT).getCallee());
+    #else
+      Function *initializerFunction = cast<Function>(M.getOrInsertFunction("MPI_Sum_initializer", IFT));
+    #endif
+    
+    initializerFunction->setLinkage(Function::LinkageTypes::InternalLinkage);
+    initializerFunction->addFnAttr(Attribute::NoUnwind);
+
+    {
+    BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", initializerFunction);
+    IRBuilder <> B(entry);
+    Value *args[] = { ConstantExpr::getPointerCast(F, rtypes[0]), ConstantInt::get(rtypes[1], 1, false), ConstantExpr::getPointerCast(GV, rtypes[2])};
+    B.CreateCall(RF, args);
+    B.CreateRetVoid();
+    }
+
+    // https://llvm.org/docs/LangRef.html#the-llvm-global-ctors-global-variable
+      GlobalVariable *ctors = M.getGlobalVariable("llvm.global_ctors");
+      
+      SmallVector<Constant *, 10> CAList;
+      if (ctors) {
+        ConstantArray *OldCA = cast<ConstantArray>(ctors->getInitializer());
+        for (unsigned I = 0, E = OldCA->getNumOperands(); I < E; ++I)
+          CAList.push_back(OldCA->getOperand(I));
+      }
+      Constant* newConstructor[] = {ConstantInt::get(Type::getInt32Ty(M.getContext()), 65535, false), initializerFunction, ConstantExpr::getPointerCast(GV, Type::getInt8PtrTy(M.getContext()))};
+      CAList.push_back(ConstantStruct::getAnon(M.getContext(), newConstructor));
+      ArrayType *ATy = ArrayType::get(CAList[0]->getType(), CAList.size());
+      Constant *CA = ConstantArray::get(ATy, CAList);
+      
+      {
+        // Create the new global and insert it next to the existing list.
+        bool isConstant = ctors ? ctors->isConstant() : true;
+        auto linkage = ctors ? ctors->getLinkage() : GlobalVariable::AppendingLinkage;
+
+        GlobalVariable *NGV =
+            new GlobalVariable(M, CA->getType(), isConstant, linkage, CA, "");
+
+        if (ctors)
+          NGV->takeName(ctors);
+        else
+          NGV->setName("llvm.global_ctors");
+        
+        // Nuke the old list, replacing any uses with the new one.
+        if (ctors && !ctors->use_empty()) {
+          Constant *V = ConstantExpr::getBitCast(NGV, ctors->getType());
+          ctors->replaceAllUsesWith(V);
+        }
+        ctors->eraseFromParent();
+      }
+
       return GV;
   });
 }

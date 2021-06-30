@@ -795,5 +795,6 @@ enum class MPI_CallType {
 
 llvm::Value *getOrInsertOpFloatSum(llvm::Module &M,
                                    llvm::Type* OpPtr,
-                                   ConcreteType CT);
+                                   ConcreteType CT,
+                                   llvm::Type* intType);
 #endif

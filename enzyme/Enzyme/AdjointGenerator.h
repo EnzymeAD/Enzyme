@@ -195,51 +195,47 @@ public:
   }
 
   // To be double-checked against the functionality needed and the respective implementation in Adjoint-MPI
-  llvm::Value *MPI_COMM_RANK(llvm::Value *COMM, IRBuilder<> &B, Value *DT) {
-    Type *intType = Type::getIntNTy(COMM->getContext(), sizeof(int) * 8);
-    Type *pargs[] = {Type::getInt8PtrTy(COMM->getContext()),
-                     PointerType::getUnqual(intType)};
-    auto FT = FunctionType::get(intType, pargs, false);
-    auto alloc = IRBuilder<>(gutils->inversionAllocs).CreateAlloca(intType);
-    llvm::Value *args[] = {COMM, alloc};
-    if (DT->getType() != pargs[0])
-      args[0] = B.CreateBitCast(args[0], pargs[0]);
+  llvm::Value *MPI_COMM_RANK(llvm::Value *comm, IRBuilder<> &B, Type *rankTy) {
+    Type *pargs[] = {comm->getType(),
+                     PointerType::getUnqual(rankTy)};
+    auto FT = FunctionType::get(rankTy, pargs, false);
+    auto &context = comm->getContext();
+    auto alloc = IRBuilder<>(gutils->inversionAllocs).CreateAlloca(rankTy);
     AttributeList AL;
-    AL = AL.addParamAttribute(DT->getContext(), 0,
+    AL = AL.addParamAttribute(context, 0,
                               Attribute::AttrKind::ReadOnly);
-    AL = AL.addParamAttribute(DT->getContext(), 0,
+    AL = AL.addParamAttribute(context, 0,
                               Attribute::AttrKind::NoCapture);
     AL =
-        AL.addParamAttribute(DT->getContext(), 0, Attribute::AttrKind::NoAlias);
+        AL.addParamAttribute(context, 0, Attribute::AttrKind::NoAlias);
     AL =
-        AL.addParamAttribute(DT->getContext(), 0, Attribute::AttrKind::NonNull);
-    AL = AL.addParamAttribute(DT->getContext(), 1,
+        AL.addParamAttribute(context, 0, Attribute::AttrKind::NonNull);
+    AL = AL.addParamAttribute(context, 1,
                               Attribute::AttrKind::WriteOnly);
-    AL = AL.addParamAttribute(DT->getContext(), 1,
+    AL = AL.addParamAttribute(context, 1,
                               Attribute::AttrKind::NoCapture);
     AL =
-        AL.addParamAttribute(DT->getContext(), 1, Attribute::AttrKind::NoAlias);
+        AL.addParamAttribute(context, 1, Attribute::AttrKind::NoAlias);
     AL =
-        AL.addParamAttribute(DT->getContext(), 1, Attribute::AttrKind::NonNull);
-    AL = AL.addAttribute(DT->getContext(), AttributeList::FunctionIndex,
-                         Attribute::AttrKind::ArgMemOnly);
-    AL = AL.addAttribute(DT->getContext(), AttributeList::FunctionIndex,
+        AL.addParamAttribute(context, 1, Attribute::AttrKind::NonNull);
+    AL = AL.addAttribute(context, AttributeList::FunctionIndex,
                          Attribute::AttrKind::NoUnwind);
 #if LLVM_VERSION_MAJOR >= 9
-    AL = AL.addAttribute(DT->getContext(), AttributeList::FunctionIndex,
+    AL = AL.addAttribute(context, AttributeList::FunctionIndex,
                          Attribute::AttrKind::NoFree);
 #endif
 #if LLVM_VERSION_MAJOR >= 9
-    AL = AL.addAttribute(DT->getContext(), AttributeList::FunctionIndex,
+    AL = AL.addAttribute(context, AttributeList::FunctionIndex,
                          Attribute::AttrKind::NoSync);
 #endif
 #if LLVM_VERSION_MAJOR >= 9
-    AL = AL.addAttribute(DT->getContext(), AttributeList::FunctionIndex,
+    AL = AL.addAttribute(context, AttributeList::FunctionIndex,
                          Attribute::AttrKind::WillReturn);
 #endif
+    llvm::Value *args[] = {comm, alloc};
     B.CreateCall(
         B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
-            "MPI_Type_size", FT, AL),
+            "MPI_Comm_rank", FT, AL),
         args);
     return B.CreateLoad(alloc);
   }
@@ -3430,51 +3426,51 @@ public:
         }
         #endif
 
-        #if 0
         Value *shadow = gutils->invertPointerM(call.getOperand(0), Builder2);
-        Value *MAGIC; // for the var coming from MPI_SUM
-        Value *args[] = {
-            /*sbuf*/ shadow,
-            /*buf*/ NULL,
-            /*count*/
-            lookup(gutils->getNewFromOriginal(call.getOperand(1)), Builder2),
-            /*datatype*/
-            lookup(gutils->getNewFromOriginal(call.getOperand(2)), Builder2),
-            /*MPI_SUM*/ (llvm::Value*)MAGIC, // temporary "Magic here" -> see above
-            /*int root*/
-            lookup(gutils->getNewFromOriginal(call.getOperand(3)), Builder2),
-            /*comm*/
-            lookup(gutils->getNewFromOriginal(call.getOperand(5)), Builder2),
-        };
 
-        Value *tysize = MPI_TYPE_SIZE(args[3], Builder2);
+        ConcreteType CT = TR.firstPointer(1, call.getOperand(0));
+        Type* MPI_OP_Ptr_type = PointerType::getUnqual(Type::getInt8PtrTy(call.getContext()));
 
-        auto len_arg = Builder2.CreateZExtOrTrunc(
-            args[2], Type::getInt64Ty(call.getContext()));
+        Value *datatype = lookup(gutils->getNewFromOriginal(call.getOperand(2)), Builder2);
+        Value *count = lookup(gutils->getNewFromOriginal(call.getOperand(1)), Builder2);
+        Value *root = lookup(gutils->getNewFromOriginal(call.getOperand(3)), Builder2);
+
+        Value *tysize = MPI_TYPE_SIZE(datatype, Builder2);
+
+        auto len_arg = Builder2.CreateZExtOrTrunc(count, Type::getInt64Ty(call.getContext()));
         len_arg =
             Builder2.CreateMul(len_arg,
                                Builder2.CreateZExtOrTrunc(
                                    tysize, Type::getInt64Ty(call.getContext())),
                                "", true, true);
-        Value *nargs[] = {dst_arg, val_arg, len_arg, volatile_arg}; // memset uses nargs below  -> Do I really need it though?! I want to memset the shadow not anything else
         
-        // alloc buffer -> cannot assume data to be doubles or floats here -> Where the createOps from utils.cpp comes in -> Comes in with `Magic`-Variable
-        buf = CallInst::CreateMalloc( // below taken from a different CreateMalloc most certainly not right off the bat
+        // alloc buffer
+        Value *buf = CallInst::CreateMalloc(
           &*Builder2.GetInsertPoint(), len_arg->getType(),
-          Type::getInt8Ty(call.getContext()), // Is int8 correct here?
-          ConstantInt::get(Type::getInt64Ty(len_arg->getContext()), 1), // same as above for Int64
+          Type::getInt8Ty(call.getContext()),
+          ConstantInt::get(Type::getInt64Ty(len_arg->getContext()), 1),
           len_arg, nullptr, "mpireduce_malloccache");
         if (cast<Instruction>(buf)->getParent() == nullptr) {
           Builder2.Insert(cast<Instruction>(buf));
         }
-        args[1] = buf;
 
-        auto fcall = Builder2.CreateCall(
-            called->getParent()->getFunction("MPI_Reduce"), args);
-        fcall->setCallingConv(call.getCallingConv());
+        Value *comm = lookup(gutils->getNewFromOriginal(call.getOperand(5)), Builder2);
 
-        // exchange between buf and shadow -> What types does DiffMemCopy handle?
-        DifferentiableMemCopyFloats(call, call.getOperand(0), buf, args[0], len_arg, Builder2);
+        {
+        Value *args[] = {
+            /*sbuf*/ shadow,
+            /*buf*/ buf,
+            /*count*/count,
+            /*datatype*/datatype,
+            /*MPI_SUM*/ getOrInsertOpFloatSum(*gutils->newFunc->getParent(), MPI_OP_Ptr_type, CT, root->getType()),
+            /*int root*/root,
+            /*comm*/comm,
+        };
+        Builder2.CreateCall(called->getParent()->getFunction("MPI_Reduce"), args);
+        }
+
+        // exchange between buf and shadow
+        DifferentiableMemCopyFloats(call, call.getOperand(0), buf, shadow, len_arg, Builder2);
 
         // Free up the memory of the buffer
         auto ci = cast<CallInst>(
@@ -3484,20 +3480,29 @@ public:
           Builder2.Insert(ci);
         }
 
-        // Set the shadow back to 0 (if not root)
-        // -> Not using the root property right now, i.e. no appropriate "if" statement right now!
-        // if (not root) not entirely straightforward to implement, need to either create a new utils function or create multiple reverse blocks
+        Value* rank = MPI_COMM_RANK(comm, Builder2, root->getType());
+
+        BasicBlock *currentBlock = Builder2.GetInsertBlock();
+        BasicBlock *zeroBlock = gutils->addReverseBlock(currentBlock, currentBlock->getName() + "_zero", gutils->newFunc);
+        BasicBlock *mergeBlock = gutils->addReverseBlock(zeroBlock, currentBlock->getName() + "_postzero", gutils->newFunc);
+
+        Builder2.CreateCondBr(Builder2.CreateICmpEQ(rank, root), mergeBlock, zeroBlock);
+
+        Builder2.SetInsertPoint(zeroBlock);
+
+        auto val_arg =
+            ConstantInt::get(Type::getInt8Ty(call.getContext()), 0);
+        auto volatile_arg = ConstantInt::getFalse(call.getContext());
+        Value *args[] = {shadow, val_arg, len_arg, volatile_arg};
+        Type *tys[] = {args[0]->getType(), args[2]->getType()};
         auto memset = cast<CallInst>(Builder2.CreateCall(
           Intrinsic::getDeclaration(gutils->newFunc->getParent(),
-                                    Intrinsic::memset, tysize),
-          args[0]));
+                                    Intrinsic::memset, tys), args));
         memset->addParamAttr(0, Attribute::NonNull);
+        Builder2.CreateBr(mergeBlock);
 
-        #endif
+        Builder2.SetInsertPoint(mergeBlock);     
       }
-    llvm::errs() << call << "\n";
-    llvm::errs() << called << "\n";
-    llvm_unreachable("Unhandled MPI FUNCTION");
       return;
     }
 
