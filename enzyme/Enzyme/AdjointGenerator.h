@@ -3463,7 +3463,7 @@ public:
             /*buf*/ buf,
             /*count*/count,
             /*datatype*/datatype,
-            /*MPI_SUM*/ getOrInsertOpFloatSum(*gutils->newFunc->getParent(), MPI_OP_Ptr_type, CT, root->getType()),
+            /*MPI_SUM*/ getOrInsertOpFloatSum(*gutils->newFunc->getParent(), MPI_OP_Ptr_type, CT, root->getType(), Builder2),
             /*int root*/root,
             /*comm*/comm,
         };

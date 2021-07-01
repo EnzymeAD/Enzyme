@@ -39,6 +39,8 @@ void mpi_bcast_test(double *a, double b, int n) {
     }
     MPI_Bcast(buf,n,MPI_DOUBLE,1,MPI_COMM_WORLD);
   }
+  printf("end rang %d\n", rank);
+  fflush(0);
 }
 
 int main(int argc, char** argv) {
@@ -67,7 +69,8 @@ int main(int argc, char** argv) {
   double a_saved[N];
   for(int i=0;i<N;i++) a_saved[i]=a[i];
   
-  printf("Ran mpi_bcast");
+  printf("Ran mpi_bcast\n");
+  fflush(0);
   __enzyme_autodiff((void*)mpi_bcast_test, a, d_a, b, N);
   
 }
