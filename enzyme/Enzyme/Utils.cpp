@@ -360,11 +360,16 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M,
     FunctionType *RFT =
           FunctionType::get(intType, rtypes, false);
 
+    Constant *RF = M.getNamedValue("MPI_Op_create");
+    if (!RF) {
     #if LLVM_VERSION_MAJOR >= 9
-      Function *RF = cast<Function>(M.getOrInsertFunction("MPI_Op_create", RFT).getCallee());
+      RF = cast<Function>(M.getOrInsertFunction("MPI_Op_create", RFT).getCallee());
     #else
-      Function *RF = cast<Function>(M.getOrInsertFunction("MPI_Op_create", RFT));
+      RF = cast<Function>(M.getOrInsertFunction("MPI_Op_create", RFT));
     #endif
+    } else {
+      RF = ConstantExpr::getBitCast(RF, PointerType::getUnqual(RFT));
+    }
 
       GlobalVariable* GV = new GlobalVariable(M, cast<PointerType>(OpPtr)->getElementType(), false, GlobalVariable::InternalLinkage,
                                UndefValue::get(cast<PointerType>(OpPtr)->getElementType()), name);
@@ -396,7 +401,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M,
 
     B.SetInsertPoint(run);
     Value *args[] = { ConstantExpr::getPointerCast(F, rtypes[0]), ConstantInt::get(rtypes[1], 1, false), ConstantExpr::getPointerCast(GV, rtypes[2])};
-    B.CreateCall(RF, args);
+    B.CreateCall(RFT, RF, args);
     B.CreateStore(ConstantInt::getTrue(M.getContext()), initD);
     B.CreateBr(end);
     B.SetInsertPoint(end);

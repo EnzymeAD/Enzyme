@@ -15,32 +15,45 @@
 
 #include <mpi.h>
 
+// XFAIL: *
+
 double __enzyme_autodiff(void*, ...);
 
-void mpi_bcast_test(double *a, double b, int n) {
-  int rank;
-  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  double buf[n];
-  double y=0;
+double mpi_bcast_test(double b, int n, int rank, int numprocs) {
+  #define n 1 
+  
+  //double a[n];
+  //for (int i=0; i<n; i++) a[i] = b;
+  double a = b;
+  
+  //memcpy(buf, a, sizeof(double)*n);
+  MPI_Bcast(&a,n,MPI_DOUBLE,0,MPI_COMM_WORLD);
 
-  if(rank==0) {
-    for(int i=0;1<n;i++) a[i]=a[i]*a[i];
-    MPI_Bcast(a,n,MPI_DOUBLE,0,MPI_COMM_WORLD);
-    MPI_Bcast(buf,n,MPI_DOUBLE,1,MPI_COMM_WORLD);
-    for(int i=0;i<n;i++) {
-      y+=buf[i];
-    }
-  }
+  //double sum = 0;
 
-  if(rank==1) {
-    MPI_Bcast(buf,n,MPI_DOUBLE,0,MPI_COMM_WORLD);
-    for(int i=0;i<n;i++) {
-      buf[i]=sin(buf[i]);
-    }
-    MPI_Bcast(buf,n,MPI_DOUBLE,1,MPI_COMM_WORLD);
-  }
-  printf("end rang %d\n", rank);
+  //for(int i=0;i<n;i++)
+  //    sum += pow(a[i], rank+1);
+
+  //sum = a[0];
+  
+  printf("end ran %f %d/%d\n", a, rank, numprocs);
   fflush(0);
+  return a;
+}
+
+MPI_Op op = MPI_SUM;
+
+MPI_Op operation;
+
+void my_sum_function(void* inputBuffer, void* outputBuffer, int* len, MPI_Datatype* datatype)
+{
+    int* input = (int*)inputBuffer;
+    int* output = (int*)outputBuffer;
+
+    for(int i = 0; i < *len; i++)
+    {
+        output[i] += input[i];
+    }
 }
 
 int main(int argc, char** argv) {
@@ -53,25 +66,24 @@ int main(int argc, char** argv) {
   }
   int numprocs;
   MPI_Comm_size(MPI_COMM_WORLD,&numprocs);
-  if(numprocs!=2) {
-    printf("Must be run with number of processes set to 2.");
-    MPI_Finalize();
-    return 0;
-  }
-  int N=10;//atoi(argv[1]);
-  double a[N];
-  double d_a[N];
-  for(int i=0; i<N; i++)
-    d_a[i] = 1.0f; 
+  int N=10;
+  
+  int rank;
+  MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-  double b=0;
-  for(int i=0;i<N;i++) a[i]=(double) i;
-  double a_saved[N];
-  for(int i=0;i<N;i++) a_saved[i]=a[i];
-  
-  printf("Ran mpi_bcast\n");
+  MPI_Op_create(&my_sum_function, 1, &operation);
+
+  float local_sum = 0;
+
+// Reduce all of the local sums into the global sum
+float global_sum;
+MPI_Reduce(&local_sum, &global_sum, 1, MPI_FLOAT, operation, 0,
+           MPI_COMM_WORLD);
+
+
+  double res = __enzyme_autodiff((void*)mpi_bcast_test, 10.0+rank, N, rank, numprocs);
+  printf("res=%f rank=%d\n", res, rank);
   fflush(0);
-  __enzyme_autodiff((void*)mpi_bcast_test, a, d_a, b, N);
-  
+  MPI_Finalize();
 }
 

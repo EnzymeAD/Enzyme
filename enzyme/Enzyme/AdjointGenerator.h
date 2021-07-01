@@ -3074,11 +3074,11 @@ public:
   }
   
   void handleMPI(llvm::CallInst &call, Function *called, StringRef funcName) {
+    assert(Mode != DerivativeMode::ForwardMode);
+    assert(called);
+
     IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
     BuilderZ.setFastMathFlags(getFast());
-    IRBuilder<> Builder2(call.getParent());
-    getReverseBuilder(Builder2);
-    assert(called);
 
     // MPI send / recv can only send float/integers
     if (funcName == "MPI_Isend" || funcName == "MPI_Irecv") {
@@ -3306,6 +3306,8 @@ public:
     if (funcName == "MPI_Send" || funcName == "MPI_Ssend") {
       if (Mode == DerivativeMode::ReverseModeGradient ||
           Mode == DerivativeMode::ReverseModeCombined) {
+        IRBuilder<> Builder2(call.getParent());
+        getReverseBuilder(Builder2);
         Value *shadow = gutils->invertPointerM(call.getOperand(0), Builder2);
         auto statusArg =
             called->getParent()->getFunction("MPI_Recv")->arg_end();
@@ -3415,16 +3417,8 @@ public:
 
     if (funcName == "MPI_Bcast") {
       if (Mode == DerivativeMode::ReverseModeGradient || Mode == DerivativeMode::ReverseModeCombined) {
-        /*Pseudo-code for the algo which we are implementing*/
-        #if 0
-        rbuf = malloc(count * MPI_TYPE_SIZE(object));
-        MPI_Reduce(shadow(buf), rbuf, lookup(count), lookup(datatype), /*magic constant???MPI_SUM*/, lookup(root), lookup(comm));
-        dmemcpy(rbuf, shadow(buf));
-        free(rbuf);
-        if (not root) {
-            memset(shadow(buf), 0, size);
-        }
-        #endif
+        IRBuilder<> Builder2(call.getParent());
+        getReverseBuilder(Builder2);
 
         Value *shadow = gutils->invertPointerM(call.getOperand(0), Builder2);
 
@@ -3455,7 +3449,7 @@ public:
         }
         Builder2.SetInsertPoint(Builder2.GetInsertBlock());
 
-        Value *comm = lookup(gutils->getNewFromOriginal(call.getOperand(5)), Builder2);
+        Value *comm = lookup(gutils->getNewFromOriginal(call.getOperand(4)), Builder2);
 
         {
         Value *args[] = {
@@ -3463,7 +3457,7 @@ public:
             /*buf*/ buf,
             /*count*/count,
             /*datatype*/datatype,
-            /*MPI_SUM*/ getOrInsertOpFloatSum(*gutils->newFunc->getParent(), MPI_OP_Ptr_type, CT, root->getType(), Builder2),
+            /*MPI_SUM*/ Builder2.CreateLoad(getOrInsertOpFloatSum(*gutils->newFunc->getParent(), MPI_OP_Ptr_type, CT, root->getType(), Builder2)),
             /*int root*/root,
             /*comm*/comm,
         };
@@ -3475,26 +3469,34 @@ public:
         Builder2.CreateCall(called->getParent()->getOrInsertFunction("MPI_Reduce", FT), args);
         }
 
-        // exchange between buf and shadow
-        DifferentiableMemCopyFloats(call, call.getOperand(0), buf, shadow, len_arg, Builder2);
-
-        // Free up the memory of the buffer
-        auto ci = cast<CallInst>(
-            CallInst::CreateFree(buf, Builder2.GetInsertBlock()));
-        ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
-        if (ci->getParent() == nullptr) {
-          Builder2.Insert(ci);
-        }
-
         Value* rank = MPI_COMM_RANK(comm, Builder2, root->getType());
 
         BasicBlock *currentBlock = Builder2.GetInsertBlock();
-        BasicBlock *zeroBlock = gutils->addReverseBlock(currentBlock, currentBlock->getName() + "_zero", gutils->newFunc);
-        BasicBlock *mergeBlock = gutils->addReverseBlock(zeroBlock, currentBlock->getName() + "_postzero", gutils->newFunc);
+        BasicBlock *rootBlock = gutils->addReverseBlock(currentBlock, currentBlock->getName() + "_root", gutils->newFunc);
+        BasicBlock *nonrootBlock = gutils->addReverseBlock(rootBlock, currentBlock->getName() + "_nonroot", gutils->newFunc);
+        BasicBlock *mergeBlock = gutils->addReverseBlock(nonrootBlock, currentBlock->getName() + "_post", gutils->newFunc);
 
-        Builder2.CreateCondBr(Builder2.CreateICmpEQ(rank, root), mergeBlock, zeroBlock);
+        Builder2.CreateCondBr(Builder2.CreateICmpEQ(rank, root), rootBlock, nonrootBlock);
 
-        Builder2.SetInsertPoint(zeroBlock);
+
+        Builder2.SetInsertPoint(rootBlock);
+
+        {
+        auto volatile_arg = ConstantInt::getFalse(call.getContext());
+        Value *nargs[] = {shadow, buf, len_arg, volatile_arg};
+
+        Type *tys[] = {shadow->getType(), buf->getType(), len_arg->getType()};
+
+        auto memcpyF =
+            Intrinsic::getDeclaration(gutils->newFunc->getParent(), Intrinsic::memcpy, tys);
+
+        auto mem = cast<CallInst>(Builder2.CreateCall(memcpyF, nargs));
+        mem->setCallingConv(memcpyF->getCallingConv());
+        }
+
+        Builder2.CreateBr(mergeBlock);
+        
+        Builder2.SetInsertPoint(nonrootBlock);
 
         auto val_arg =
             ConstantInt::get(Type::getInt8Ty(call.getContext()), 0);
@@ -3508,6 +3510,14 @@ public:
         Builder2.CreateBr(mergeBlock);
 
         Builder2.SetInsertPoint(mergeBlock);     
+        
+        // Free up the memory of the buffer
+        auto ci = cast<CallInst>(
+            CallInst::CreateFree(buf, Builder2.GetInsertBlock()));
+        ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+        if (ci->getParent() == nullptr) {
+          Builder2.Insert(ci);
+        }
       }
       return;
     }
