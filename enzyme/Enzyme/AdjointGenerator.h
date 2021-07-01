@@ -3446,13 +3446,14 @@ public:
         
         // alloc buffer
         Value *buf = CallInst::CreateMalloc(
-          &*Builder2.GetInsertPoint(), len_arg->getType(),
+          Builder2.GetInsertBlock(), len_arg->getType(),
           Type::getInt8Ty(call.getContext()),
           ConstantInt::get(Type::getInt64Ty(len_arg->getContext()), 1),
           len_arg, nullptr, "mpireduce_malloccache");
         if (cast<Instruction>(buf)->getParent() == nullptr) {
           Builder2.Insert(cast<Instruction>(buf));
         }
+        Builder2.SetInsertPoint(Builder2.GetInsertBlock());
 
         Value *comm = lookup(gutils->getNewFromOriginal(call.getOperand(5)), Builder2);
 
@@ -3466,7 +3467,12 @@ public:
             /*int root*/root,
             /*comm*/comm,
         };
-        Builder2.CreateCall(called->getParent()->getFunction("MPI_Reduce"), args);
+        Type* types[7];
+        for (int i=0; i<7; i++)
+            types[i] = args[i]->getType();
+
+        FunctionType* FT = FunctionType::get(root->getType(), types);
+        Builder2.CreateCall(called->getParent()->getOrInsertFunction("MPI_Reduce", FT), args);
         }
 
         // exchange between buf and shadow
@@ -3697,7 +3703,7 @@ public:
       }
     }    
 
-    if (funcName.startswith("MPI_")) {
+    if (funcName.startswith("MPI_") && !gutils->isConstantInstruction(&call)) {
       handleMPI(call, called, funcName);
       return;
     }

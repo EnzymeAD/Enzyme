@@ -312,7 +312,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M,
       src->setName("src");
       auto dst = src + 1;
       dst->setName("dst");
-      auto lenp = src + 1;
+      auto lenp = dst + 1;
       lenp->setName("lenp");
       Value *len;
       // TODO consider using datatype arg and asserting same size as assumed by type analysis
@@ -365,7 +365,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M,
     #endif
 
       GlobalVariable* GV = new GlobalVariable(M, cast<PointerType>(OpPtr)->getElementType(), false, GlobalVariable::InternalLinkage,
-                               nullptr, name);
+                               UndefValue::get(cast<PointerType>(OpPtr)->getElementType()), name);
                                
 
 
@@ -421,8 +421,8 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M,
         if (ctors && !ctors->use_empty()) {
           Constant *V = ConstantExpr::getBitCast(NGV, ctors->getType());
           ctors->replaceAllUsesWith(V);
-        }
-        ctors->eraseFromParent();
+        } else if (ctors)
+          ctors->eraseFromParent();
       }
 
       return GV;
