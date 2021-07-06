@@ -194,30 +194,22 @@ public:
     return B.CreateLoad(alloc);
   }
 
-  // To be double-checked against the functionality needed and the respective implementation in Adjoint-MPI
+  // To be double-checked against the functionality needed and the respective
+  // implementation in Adjoint-MPI
   llvm::Value *MPI_COMM_RANK(llvm::Value *comm, IRBuilder<> &B, Type *rankTy) {
-    Type *pargs[] = {comm->getType(),
-                     PointerType::getUnqual(rankTy)};
+    Type *pargs[] = {comm->getType(), PointerType::getUnqual(rankTy)};
     auto FT = FunctionType::get(rankTy, pargs, false);
     auto &context = comm->getContext();
     auto alloc = IRBuilder<>(gutils->inversionAllocs).CreateAlloca(rankTy);
     AttributeList AL;
-    AL = AL.addParamAttribute(context, 0,
-                              Attribute::AttrKind::ReadOnly);
-    AL = AL.addParamAttribute(context, 0,
-                              Attribute::AttrKind::NoCapture);
-    AL =
-        AL.addParamAttribute(context, 0, Attribute::AttrKind::NoAlias);
-    AL =
-        AL.addParamAttribute(context, 0, Attribute::AttrKind::NonNull);
-    AL = AL.addParamAttribute(context, 1,
-                              Attribute::AttrKind::WriteOnly);
-    AL = AL.addParamAttribute(context, 1,
-                              Attribute::AttrKind::NoCapture);
-    AL =
-        AL.addParamAttribute(context, 1, Attribute::AttrKind::NoAlias);
-    AL =
-        AL.addParamAttribute(context, 1, Attribute::AttrKind::NonNull);
+    AL = AL.addParamAttribute(context, 0, Attribute::AttrKind::ReadOnly);
+    AL = AL.addParamAttribute(context, 0, Attribute::AttrKind::NoCapture);
+    AL = AL.addParamAttribute(context, 0, Attribute::AttrKind::NoAlias);
+    AL = AL.addParamAttribute(context, 0, Attribute::AttrKind::NonNull);
+    AL = AL.addParamAttribute(context, 1, Attribute::AttrKind::WriteOnly);
+    AL = AL.addParamAttribute(context, 1, Attribute::AttrKind::NoCapture);
+    AL = AL.addParamAttribute(context, 1, Attribute::AttrKind::NoAlias);
+    AL = AL.addParamAttribute(context, 1, Attribute::AttrKind::NonNull);
     AL = AL.addAttribute(context, AttributeList::FunctionIndex,
                          Attribute::AttrKind::NoUnwind);
 #if LLVM_VERSION_MAJOR >= 9
@@ -2981,98 +2973,98 @@ public:
     }
   }
 
-  void DifferentiableMemCopyFloats(CallInst &call, Value* origArg, Value *dsto, Value *srco, Value *len_arg, IRBuilder <>& Builder2) {
-      size_t size = 1;
-      if (auto ci = dyn_cast<ConstantInt>(len_arg)) {
-        size = ci->getLimitedValue();
+  void DifferentiableMemCopyFloats(CallInst &call, Value *origArg, Value *dsto,
+                                   Value *srco, Value *len_arg,
+                                   IRBuilder<> &Builder2) {
+    size_t size = 1;
+    if (auto ci = dyn_cast<ConstantInt>(len_arg)) {
+      size = ci->getLimitedValue();
+    }
+    auto vd = TR.query(origArg).Data0().AtMost(size);
+    if (!vd.isKnownPastPointer()) {
+      if (looseTypeAnalysis) {
+        if (isa<CastInst>(origArg) &&
+            cast<CastInst>(origArg)->getSrcTy()->isPointerTy() &&
+            cast<PointerType>(cast<CastInst>(origArg)->getSrcTy())
+                ->getElementType()
+                ->isFPOrFPVectorTy()) {
+          vd = TypeTree(ConcreteType(cast<PointerType>(
+                                         cast<CastInst>(origArg)->getSrcTy())
+                                         ->getElementType()
+                                         ->getScalarType()))
+                   .Only(0);
+          goto knownF;
+        }
       }
-      auto vd = TR.query(origArg).Data0().AtMost(size);
-      if (!vd.isKnownPastPointer()) {
-        if (looseTypeAnalysis) {
-          if (isa<CastInst>(origArg) &&
-              cast<CastInst>(origArg)->getSrcTy()->isPointerTy() &&
-              cast<PointerType>(
-                  cast<CastInst>(origArg)->getSrcTy())
-                  ->getElementType()
-                  ->isFPOrFPVectorTy()) {
-            vd = TypeTree(
-                      ConcreteType(
-                          cast<PointerType>(
-                              cast<CastInst>(origArg)->getSrcTy())
-                              ->getElementType()
-                              ->getScalarType()))
-                      .Only(0);
-            goto knownF;
-          }
-        }
-        EmitFailure("CannotDeduceType", call.getDebugLoc(), &call,
-                    "failed to deduce type of copy ", call);
+      EmitFailure("CannotDeduceType", call.getDebugLoc(), &call,
+                  "failed to deduce type of copy ", call);
 
-        TR.firstPointer(size, origArg, /*errifnotfound*/ true,
-                        /*pointerIntSame*/ true);
-        llvm_unreachable("bad mti");
-      }
-    knownF:;
-      unsigned start = 0;
-      while (1) {
-        unsigned nextStart = size;
+      TR.firstPointer(size, origArg, /*errifnotfound*/ true,
+                      /*pointerIntSame*/ true);
+      llvm_unreachable("bad mti");
+    }
+  knownF:;
+    unsigned start = 0;
+    while (1) {
+      unsigned nextStart = size;
 
-        auto dt = vd[{-1}];
-        for (size_t i = start; i < size; ++i) {
-          bool Legal = true;
-          dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
-          if (!Legal) {
-            nextStart = i;
-            break;
-          }
-        }
-        if (!dt.isKnown()) {
-          TR.dump();
-          llvm::errs() << " vd:" << vd.str() << " start:" << start
-                       << " size: " << size << " dt:" << dt.str() << "\n";
-        }
-        assert(dt.isKnown());
-
-        Value *length = len_arg;
-        if (nextStart != size) {
-          length = ConstantInt::get(len_arg->getType(), nextStart);
-        }
-        if (start != 0)
-          length = Builder2.CreateSub(
-              length, ConstantInt::get(len_arg->getType(), start));
-
-        if (auto secretty = dt.isFloat()) {
-          auto offset = start;
-          SmallVector<Value *, 4> args;
-          auto secretpt = PointerType::getUnqual(secretty);
-          if (offset != 0)
-            dsto = Builder2.CreateConstInBoundsGEP1_64(dsto, offset);
-          args.push_back(Builder2.CreatePointerCast(dsto, secretpt));
-          if (offset != 0)
-            srco = Builder2.CreateConstInBoundsGEP1_64(srco, offset);
-          args.push_back(Builder2.CreatePointerCast(srco, secretpt));
-          args.push_back(Builder2.CreateUDiv(length,
-
-              ConstantInt::get(length->getType(),
-                               Builder2.GetInsertBlock()
-                                      ->getParent()
-                                      ->getParent()
-                                      ->getDataLayout()
-                                      .getTypeAllocSizeInBits(secretty) /
-                                  8)));
-
-          auto dmemcpy = getOrInsertDifferentialFloatMemcpy(
-              *Builder2.GetInsertBlock()->getParent()->getParent(),
-              secretpt, /*dstalign*/ 1, /*srcalign*/ 1);
-          Builder2.CreateCall(dmemcpy, args);
-        }
-
-        if (nextStart == size)
+      auto dt = vd[{-1}];
+      for (size_t i = start; i < size; ++i) {
+        bool Legal = true;
+        dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
+        if (!Legal) {
+          nextStart = i;
           break;
-        start = nextStart;
+        }
       }
+      if (!dt.isKnown()) {
+        TR.dump();
+        llvm::errs() << " vd:" << vd.str() << " start:" << start
+                     << " size: " << size << " dt:" << dt.str() << "\n";
+      }
+      assert(dt.isKnown());
+
+      Value *length = len_arg;
+      if (nextStart != size) {
+        length = ConstantInt::get(len_arg->getType(), nextStart);
+      }
+      if (start != 0)
+        length = Builder2.CreateSub(
+            length, ConstantInt::get(len_arg->getType(), start));
+
+      if (auto secretty = dt.isFloat()) {
+        auto offset = start;
+        SmallVector<Value *, 4> args;
+        auto secretpt = PointerType::getUnqual(secretty);
+        if (offset != 0)
+          dsto = Builder2.CreateConstInBoundsGEP1_64(dsto, offset);
+        args.push_back(Builder2.CreatePointerCast(dsto, secretpt));
+        if (offset != 0)
+          srco = Builder2.CreateConstInBoundsGEP1_64(srco, offset);
+        args.push_back(Builder2.CreatePointerCast(srco, secretpt));
+        args.push_back(Builder2.CreateUDiv(
+            length,
+
+            ConstantInt::get(length->getType(),
+                             Builder2.GetInsertBlock()
+                                     ->getParent()
+                                     ->getParent()
+                                     ->getDataLayout()
+                                     .getTypeAllocSizeInBits(secretty) /
+                                 8)));
+
+        auto dmemcpy = getOrInsertDifferentialFloatMemcpy(
+            *Builder2.GetInsertBlock()->getParent()->getParent(), secretpt,
+            /*dstalign*/ 1, /*srcalign*/ 1);
+        Builder2.CreateCall(dmemcpy, args);
+      }
+
+      if (nextStart == size)
+        break;
+      start = nextStart;
+    }
   }
-  
+
   void handleMPI(llvm::CallInst &call, Function *called, StringRef funcName) {
     assert(Mode != DerivativeMode::ForwardMode);
     assert(called);
@@ -3219,13 +3211,13 @@ public:
               ConstantInt::get(Type::getInt8Ty(Builder2.getContext()), 0);
           auto volatile_arg = ConstantInt::getFalse(Builder2.getContext());
           auto dbuf = gutils->invertPointerM(call.getOperand(0), Builder2);
-    #if LLVM_VERSION_MAJOR == 6
+#if LLVM_VERSION_MAJOR == 6
           auto align_arg =
               ConstantInt::get(Type::getInt32Ty(B.getContext()), 1);
           Value *nargs[] = {dbuf, val_arg, len_arg, align_arg, volatile_arg};
-    #else
+#else
           Value *nargs[] = {dbuf, val_arg, len_arg, volatile_arg};
-    #endif
+#endif
 
           Type *tys[] = {dbuf->getType(), len_arg->getType()};
 
@@ -3242,7 +3234,8 @@ public:
             firstallocation = gutils->cacheForReverse(
                 Builder2, firstallocation, getIndex(&call, CacheType::Tape));
 
-          DifferentiableMemCopyFloats(call, call.getOperand(0), firstallocation, shadow, len_arg, Builder2);
+          DifferentiableMemCopyFloats(call, call.getOperand(0), firstallocation,
+                                      shadow, len_arg, Builder2);
 
           auto ci = cast<CallInst>(
               CallInst::CreateFree(firstallocation, Builder2.GetInsertBlock()));
@@ -3354,7 +3347,8 @@ public:
             called->getParent()->getFunction("MPI_Recv"), args);
         fcall->setCallingConv(call.getCallingConv());
 
-        DifferentiableMemCopyFloats(call, call.getOperand(0), firstallocation, shadow, len_arg, Builder2);
+        DifferentiableMemCopyFloats(call, call.getOperand(0), firstallocation,
+                                    shadow, len_arg, Builder2);
 
         auto ci = cast<CallInst>(
             CallInst::CreateFree(firstallocation, Builder2.GetInsertBlock()));
@@ -3416,101 +3410,115 @@ public:
     }
 
     if (funcName == "MPI_Bcast") {
-      if (Mode == DerivativeMode::ReverseModeGradient || Mode == DerivativeMode::ReverseModeCombined) {
+      if (Mode == DerivativeMode::ReverseModeGradient ||
+          Mode == DerivativeMode::ReverseModeCombined) {
         IRBuilder<> Builder2(call.getParent());
         getReverseBuilder(Builder2);
 
         Value *shadow = gutils->invertPointerM(call.getOperand(0), Builder2);
 
         ConcreteType CT = TR.firstPointer(1, call.getOperand(0));
-        Type* MPI_OP_Ptr_type = PointerType::getUnqual(Type::getInt8PtrTy(call.getContext()));
+        Type *MPI_OP_Ptr_type =
+            PointerType::getUnqual(Type::getInt8PtrTy(call.getContext()));
 
-        Value *datatype = lookup(gutils->getNewFromOriginal(call.getOperand(2)), Builder2);
-        Value *count = lookup(gutils->getNewFromOriginal(call.getOperand(1)), Builder2);
-        Value *root = lookup(gutils->getNewFromOriginal(call.getOperand(3)), Builder2);
+        Value *datatype =
+            lookup(gutils->getNewFromOriginal(call.getOperand(2)), Builder2);
+        Value *count =
+            lookup(gutils->getNewFromOriginal(call.getOperand(1)), Builder2);
+        Value *root =
+            lookup(gutils->getNewFromOriginal(call.getOperand(3)), Builder2);
 
         Value *tysize = MPI_TYPE_SIZE(datatype, Builder2);
 
-        auto len_arg = Builder2.CreateZExtOrTrunc(count, Type::getInt64Ty(call.getContext()));
+        auto len_arg = Builder2.CreateZExtOrTrunc(
+            count, Type::getInt64Ty(call.getContext()));
         len_arg =
             Builder2.CreateMul(len_arg,
                                Builder2.CreateZExtOrTrunc(
                                    tysize, Type::getInt64Ty(call.getContext())),
                                "", true, true);
-        
+
         // alloc buffer
         Value *buf = CallInst::CreateMalloc(
-          Builder2.GetInsertBlock(), len_arg->getType(),
-          Type::getInt8Ty(call.getContext()),
-          ConstantInt::get(Type::getInt64Ty(len_arg->getContext()), 1),
-          len_arg, nullptr, "mpireduce_malloccache");
+            Builder2.GetInsertBlock(), len_arg->getType(),
+            Type::getInt8Ty(call.getContext()),
+            ConstantInt::get(Type::getInt64Ty(len_arg->getContext()), 1),
+            len_arg, nullptr, "mpireduce_malloccache");
         if (cast<Instruction>(buf)->getParent() == nullptr) {
           Builder2.Insert(cast<Instruction>(buf));
         }
         Builder2.SetInsertPoint(Builder2.GetInsertBlock());
 
-        Value *comm = lookup(gutils->getNewFromOriginal(call.getOperand(4)), Builder2);
+        Value *comm =
+            lookup(gutils->getNewFromOriginal(call.getOperand(4)), Builder2);
 
         {
-        Value *args[] = {
-            /*sbuf*/ shadow,
-            /*buf*/ buf,
-            /*count*/count,
-            /*datatype*/datatype,
-            /*MPI_SUM*/ Builder2.CreateLoad(getOrInsertOpFloatSum(*gutils->newFunc->getParent(), MPI_OP_Ptr_type, CT, root->getType(), Builder2)),
-            /*int root*/root,
-            /*comm*/comm,
-        };
-        Type* types[7];
-        for (int i=0; i<7; i++)
+          Value *args[] = {
+              /*sbuf*/ shadow,
+              /*buf*/ buf,
+              /*count*/ count,
+              /*datatype*/ datatype,
+              /*MPI_SUM*/
+              Builder2.CreateLoad(getOrInsertOpFloatSum(
+                  *gutils->newFunc->getParent(), MPI_OP_Ptr_type, CT,
+                  root->getType(), Builder2)),
+              /*int root*/ root,
+              /*comm*/ comm,
+          };
+          Type *types[7];
+          for (int i = 0; i < 7; i++)
             types[i] = args[i]->getType();
 
-        FunctionType* FT = FunctionType::get(root->getType(), types);
-        Builder2.CreateCall(called->getParent()->getOrInsertFunction("MPI_Reduce", FT), args);
+          FunctionType *FT = FunctionType::get(root->getType(), types);
+          Builder2.CreateCall(
+              called->getParent()->getOrInsertFunction("MPI_Reduce", FT), args);
         }
 
-        Value* rank = MPI_COMM_RANK(comm, Builder2, root->getType());
+        Value *rank = MPI_COMM_RANK(comm, Builder2, root->getType());
 
         BasicBlock *currentBlock = Builder2.GetInsertBlock();
-        BasicBlock *rootBlock = gutils->addReverseBlock(currentBlock, currentBlock->getName() + "_root", gutils->newFunc);
-        BasicBlock *nonrootBlock = gutils->addReverseBlock(rootBlock, currentBlock->getName() + "_nonroot", gutils->newFunc);
-        BasicBlock *mergeBlock = gutils->addReverseBlock(nonrootBlock, currentBlock->getName() + "_post", gutils->newFunc);
+        BasicBlock *rootBlock = gutils->addReverseBlock(
+            currentBlock, currentBlock->getName() + "_root", gutils->newFunc);
+        BasicBlock *nonrootBlock = gutils->addReverseBlock(
+            rootBlock, currentBlock->getName() + "_nonroot", gutils->newFunc);
+        BasicBlock *mergeBlock = gutils->addReverseBlock(
+            nonrootBlock, currentBlock->getName() + "_post", gutils->newFunc);
 
-        Builder2.CreateCondBr(Builder2.CreateICmpEQ(rank, root), rootBlock, nonrootBlock);
-
+        Builder2.CreateCondBr(Builder2.CreateICmpEQ(rank, root), rootBlock,
+                              nonrootBlock);
 
         Builder2.SetInsertPoint(rootBlock);
 
         {
-        auto volatile_arg = ConstantInt::getFalse(call.getContext());
-        Value *nargs[] = {shadow, buf, len_arg, volatile_arg};
+          auto volatile_arg = ConstantInt::getFalse(call.getContext());
+          Value *nargs[] = {shadow, buf, len_arg, volatile_arg};
 
-        Type *tys[] = {shadow->getType(), buf->getType(), len_arg->getType()};
+          Type *tys[] = {shadow->getType(), buf->getType(), len_arg->getType()};
 
-        auto memcpyF =
-            Intrinsic::getDeclaration(gutils->newFunc->getParent(), Intrinsic::memcpy, tys);
+          auto memcpyF = Intrinsic::getDeclaration(gutils->newFunc->getParent(),
+                                                   Intrinsic::memcpy, tys);
 
-        auto mem = cast<CallInst>(Builder2.CreateCall(memcpyF, nargs));
-        mem->setCallingConv(memcpyF->getCallingConv());
+          auto mem = cast<CallInst>(Builder2.CreateCall(memcpyF, nargs));
+          mem->setCallingConv(memcpyF->getCallingConv());
         }
 
         Builder2.CreateBr(mergeBlock);
-        
+
         Builder2.SetInsertPoint(nonrootBlock);
 
-        auto val_arg =
-            ConstantInt::get(Type::getInt8Ty(call.getContext()), 0);
+        auto val_arg = ConstantInt::get(Type::getInt8Ty(call.getContext()), 0);
         auto volatile_arg = ConstantInt::getFalse(call.getContext());
         Value *args[] = {shadow, val_arg, len_arg, volatile_arg};
         Type *tys[] = {args[0]->getType(), args[2]->getType()};
         auto memset = cast<CallInst>(Builder2.CreateCall(
-          Intrinsic::getDeclaration(gutils->newFunc->getParent(),
-                                    Intrinsic::memset, tys), args));
+            Intrinsic::getDeclaration(gutils->newFunc->getParent(),
+                                      Intrinsic::memset, tys),
+            args));
         memset->addParamAttr(0, Attribute::NonNull);
         Builder2.CreateBr(mergeBlock);
 
-        Builder2.SetInsertPoint(mergeBlock);     
-        
+        Builder2.SetInsertPoint(mergeBlock);
+
         // Free up the memory of the buffer
         auto ci = cast<CallInst>(
             CallInst::CreateFree(buf, Builder2.GetInsertBlock()));
@@ -3526,7 +3534,6 @@ public:
     llvm::errs() << called << "\n";
     llvm_unreachable("Unhandled MPI FUNCTION");
   }
-
 
   // Return
   void visitCallInst(llvm::CallInst &call) {
@@ -3549,7 +3556,6 @@ public:
 
     Function *called = orig->getCalledFunction();
 
-
 #if LLVM_VERSION_MAJOR >= 11
     if (auto castinst = dyn_cast<ConstantExpr>(orig->getCalledOperand()))
 #else
@@ -3562,7 +3568,7 @@ public:
             called = fn;
           }
         }
-    }
+      }
 
     StringRef funcName = "";
     if (called) {
@@ -3711,7 +3717,7 @@ public:
         fcall->setCallingConv(fini->getCallingConv());
         return;
       }
-    }    
+    }
 
     if (funcName.startswith("MPI_") && !gutils->isConstantInstruction(&call)) {
       handleMPI(call, called, funcName);

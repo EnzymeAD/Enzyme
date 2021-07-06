@@ -438,7 +438,8 @@ private:
   std::map<BasicBlock *, std::map<Value *, Value *>> lookup_cache;
 
 public:
-  BasicBlock* addReverseBlock(BasicBlock* currentBlock, Twine name, bool forkCache=true) {
+  BasicBlock* addReverseBlock(BasicBlock* currentBlock, Twine name,
+                              bool forkCache=true) {
     assert(reverseBlocks.size());
 
     // todo speed this up
@@ -446,7 +447,8 @@ public:
       std::vector<BasicBlock *> &vec = pair.second;
       if (vec.back() == currentBlock) {
         
-        BasicBlock *rev = BasicBlock::Create(currentBlock->getContext(), name, newFunc);
+        BasicBlock *rev =
+            BasicBlock::Create(currentBlock->getContext(), name, newFunc);
         rev->moveAfter(currentBlock);
         vec.push_back(rev);
         if (forkCache) {
