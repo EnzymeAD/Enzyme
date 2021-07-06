@@ -74,7 +74,7 @@ declare double @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   ret { double } %15
 ; CHECK-NEXT: }
 
-; CHECK: define internal void @"__enzyme_mpi_sumFloat@doubleinitializer"() #2 {
+; CHECK: define internal void @"__enzyme_mpi_sumFloat@doubleinitializer"()
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = load i1, i1* @"__enzyme_mpi_sumFloat@double_initd"
 ; CHECK-NEXT:   br i1 %0, label %end, label %run
