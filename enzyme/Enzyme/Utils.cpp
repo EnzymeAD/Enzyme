@@ -275,22 +275,22 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
                                    IRBuilder<> &B2) {
   std::string name = "__enzyme_mpi_sum" + CT.str();
   assert(CT.isFloat());
-  auto FT = CT.isFloat();
+  auto FlT = CT.isFloat();
 
-  auto Glob = M.getOrInsertGlobal(
-      name, cast<PointerType>(OpPtr)->getElementType(),
-      [&]() -> GlobalVariable * {
+  if (auto Glob = M.getGlobalVariable(name))
+    return Glob;
+
         std::vector<llvm::Type *> types = {
-            PointerType::getUnqual(FT), PointerType::getUnqual(FT),
+            PointerType::getUnqual(FlT), PointerType::getUnqual(FlT),
             PointerType::getUnqual(intType), OpPtr};
-        FunctionType *FT =
+        FunctionType *FuT =
             FunctionType::get(Type::getVoidTy(M.getContext()), types, false);
 
 #if LLVM_VERSION_MAJOR >= 9
         Function *F = cast<Function>(
-            M.getOrInsertFunction(name + "_run", FT).getCallee());
+            M.getOrInsertFunction(name + "_run", FuT).getCallee());
 #else
-        Function *F = cast<Function>(M.getOrInsertFunction(name + "_run", FT));
+        Function *F = cast<Function>(M.getOrInsertFunction(name + "_run", FuT));
 #endif
 
         F->setLinkage(Function::LinkageTypes::InternalLinkage);
@@ -394,7 +394,6 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
             Function::LinkageTypes::InternalLinkage);
         initializerFunction->addFnAttr(Attribute::NoUnwind);
 
-        {
           BasicBlock *entry =
               BasicBlock::Create(M.getContext(), "entry", initializerFunction);
           BasicBlock *run =
@@ -413,11 +412,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
           B.CreateBr(end);
           B.SetInsertPoint(end);
           B.CreateRetVoid();
-        }
-
-        return GV;
-      });
 
   B2.CreateCall(M.getFunction(name + "initializer"));
-  return Glob;
+  return GV;
 }
