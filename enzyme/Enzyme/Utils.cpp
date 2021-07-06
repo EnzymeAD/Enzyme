@@ -270,16 +270,16 @@ llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
   return F;
 }
 
-llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type* OpPtr,
-                                   ConcreteType CT, llvm::Type* intType,
-                                   IRBuilder <> &B2) {
+llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
+                                   ConcreteType CT, llvm::Type *intType,
+                                   IRBuilder<> &B2) {
   std::string name = "__enzyme_mpi_sum" + CT.str();
-  assert(CT.isFloat()); 
+  assert(CT.isFloat());
   auto FT = CT.isFloat();
-  
+
   auto Glob = M.getOrInsertGlobal(
       name, cast<PointerType>(OpPtr)->getElementType(),
-      [&]() -> GlobalVariable* {
+      [&]() -> GlobalVariable * {
         std::vector<llvm::Type *> types = {
             PointerType::getUnqual(FT), PointerType::getUnqual(FT),
             PointerType::getUnqual(intType), OpPtr};
@@ -288,9 +288,9 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type* OpPtr,
 
 #if LLVM_VERSION_MAJOR >= 9
         Function *F = cast<Function>(
-            M.getOrInsertFunction(name+"_run", FT).getCallee());
+            M.getOrInsertFunction(name + "_run", FT).getCallee());
 #else
-        Function *F = cast<Function>(M.getOrInsertFunction(name+"_run", FT));
+        Function *F = cast<Function>(M.getOrInsertFunction(name + "_run", FT));
 #endif
 
         F->setLinkage(Function::LinkageTypes::InternalLinkage);
@@ -367,21 +367,20 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type* OpPtr,
           RF = ConstantExpr::getBitCast(RF, PointerType::getUnqual(RFT));
         }
 
-        GlobalVariable* GV = new GlobalVariable(
+        GlobalVariable *GV = new GlobalVariable(
             M, cast<PointerType>(OpPtr)->getElementType(), false,
             GlobalVariable::InternalLinkage,
             UndefValue::get(cast<PointerType>(OpPtr)->getElementType()), name);
-                               
+
         Type *i1Ty = Type::getInt1Ty(M.getContext());
-        GlobalVariable* initD = new GlobalVariable(
+        GlobalVariable *initD = new GlobalVariable(
             M, i1Ty, false, GlobalVariable::InternalLinkage,
             ConstantInt::getFalse(M.getContext()), name + "_initd");
-
 
         // Finish initializing mpi sum
         // https://www.mpich.org/static/docs/v3.2/www3/MPI_Op_create.html
         FunctionType *IFT = FunctionType::get(Type::getVoidTy(M.getContext()),
-                                              ArrayRef<Type*>(), false);
+                                              ArrayRef<Type *>(), false);
 
 #if LLVM_VERSION_MAJOR >= 9
         Function *initializerFunction = cast<Function>(
@@ -390,7 +389,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type* OpPtr,
         Function *initializerFunction =
             cast<Function>(M.getOrInsertFunction(name + "initializer", IFT));
 #endif
-    
+
         initializerFunction->setLinkage(
             Function::LinkageTypes::InternalLinkage);
         initializerFunction->addFnAttr(Attribute::NoUnwind);
@@ -402,7 +401,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type* OpPtr,
               BasicBlock::Create(M.getContext(), "run", initializerFunction);
           BasicBlock *end =
               BasicBlock::Create(M.getContext(), "end", initializerFunction);
-          IRBuilder <> B(entry);
+          IRBuilder<> B(entry);
           B.CreateCondBr(B.CreateLoad(initD), end, run);
 
           B.SetInsertPoint(run);

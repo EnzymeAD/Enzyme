@@ -76,12 +76,12 @@ declare double @__enzyme_autodiff(i8*, ...)
 
 ; CHECK: define internal void @"__enzyme_mpi_sumFloat@doubleinitializer"() #2 {
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = load i1, i1* @"__enzyme_mpi_sumFloat@double_initd", align 1
+; CHECK-NEXT:   %0 = load i1, i1* @"__enzyme_mpi_sumFloat@double_initd"
 ; CHECK-NEXT:   br i1 %0, label %end, label %run
 
 ; CHECK: run:                                              ; preds = %entry
 ; CHECK-NEXT:   %1 = call i32 @MPI_Op_create(i8* bitcast (void (double*, double*, i32*, i8**)* @"__enzyme_mpi_sumFloat@double_run" to i8*), i32 1, i8** @"__enzyme_mpi_sumFloat@double")
-; CHECK-NEXT:   store i1 true, i1* @"__enzyme_mpi_sumFloat@double_initd", align 1
+; CHECK-NEXT:   store i1 true, i1* @"__enzyme_mpi_sumFloat@double_initd"
 ; CHECK-NEXT:   br label %end
 
 ; CHECK: end:                                              ; preds = %run, %entry
