@@ -922,16 +922,16 @@ public:
     if (!gutils->isConstantValue(orig_vec)) {
       SmallVector<Value *, 4> sv;
       sv.push_back(gutils->getNewFromOriginal(EEI.getIndexOperand()));
-      
+
       size_t size = 1;
       if (EEI.getType()->isSized())
-        size = (gutils->newFunc->getParent()
-                        ->getDataLayout()
-                        .getTypeSizeInBits(EEI.getType()) +
-                    7) /
-                   8;
+        size = (gutils->newFunc->getParent()->getDataLayout().getTypeSizeInBits(
+                    EEI.getType()) +
+                7) /
+               8;
       ((DiffeGradientUtils *)gutils)
-          ->addToDiffe(orig_vec, diffe(&EEI, Builder2), Builder2, TR.addingType(size, &EEI), sv);
+          ->addToDiffe(orig_vec, diffe(&EEI, Builder2), Builder2,
+                       TR.addingType(size, &EEI), sv);
     }
     setDiffe(&EEI, Constant::getNullValue(EEI.getType()), Builder2);
   }
@@ -1011,14 +1011,16 @@ public:
       if (!gutils->isConstantValue(SVI.getOperand(opnum))) {
         size_t size = 1;
         if (SVI.getOperand(opnum)->getType()->isSized())
-            size = (gutils->newFunc->getParent()
-                        ->getDataLayout()
-                        .getTypeSizeInBits(SVI.getOperand(opnum)->getType()) +
-                    7) / 8;
+          size =
+              (gutils->newFunc->getParent()->getDataLayout().getTypeSizeInBits(
+                   SVI.getOperand(opnum)->getType()) +
+               7) /
+              8;
         ((DiffeGradientUtils *)gutils)
             ->addToDiffe(SVI.getOperand(opnum),
-                                Builder2.CreateExtractElement(loaded, instidx),
-                                Builder2, TR.addingType(size, SVI.getOperand(opnum)), sv);
+                         Builder2.CreateExtractElement(loaded, instidx),
+                         Builder2, TR.addingType(size, SVI.getOperand(opnum)),
+                         sv);
       }
       ++instidx;
     }
@@ -1048,14 +1050,14 @@ public:
       for (auto i : EVI.getIndices())
         sv.push_back(ConstantInt::get(Type::getInt32Ty(EVI.getContext()), i));
       size_t size = 1;
-          if (EVI->getType()->isSized())
-            size = (gutils->newFunc->getParent()
-                        ->getDataLayout()
-                        .getTypeSizeInBits(EVI->getType()) +
-                    7) /
-                   8;
+      if (EVI.getType()->isSized())
+        size = (gutils->newFunc->getParent()->getDataLayout().getTypeSizeInBits(
+                    EVI.getType()) +
+                7) /
+               8;
       ((DiffeGradientUtils *)gutils)
-          ->addToDiffe(orig_op0, prediff, Builder2, TR.addingType(size, &EVI), sv);
+          ->addToDiffe(orig_op0, prediff, Builder2, TR.addingType(size, &EVI),
+                       sv);
     }
 
     setDiffe(&EVI, Constant::getNullValue(EVI.getType()), Builder2);

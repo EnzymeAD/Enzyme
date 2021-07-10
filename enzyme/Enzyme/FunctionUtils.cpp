@@ -813,11 +813,10 @@ Function *PreProcessCache::preprocessForClone(Function *F,
         }
       }
     }
-    // TODO we should ensure these are kept to avoid accidentially creating
-    // a memory leak
     for (auto Call : ItersToErase) {
-      IRBuilder <>B(Call);
-      Call->setArgOperand(0, B.CreateAdd(Call->getArgOperand(0), Call->getArgOperand(1)));
+      IRBuilder<> B(Call);
+      Call->setArgOperand(
+          0, B.CreateAdd(Call->getArgOperand(0), Call->getArgOperand(1)));
     }
   }
 

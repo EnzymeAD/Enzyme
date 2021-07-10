@@ -1321,8 +1321,9 @@ public:
   }
 
   // Returns created select instructions, if any
-  std::vector<SelectInst *>
-  addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM, Type *addingType, ArrayRef<Value*> idxs={}) {
+  std::vector<SelectInst *> addToDiffe(Value *val, Value *dif,
+                                       IRBuilder<> &BuilderM, Type *addingType,
+                                       ArrayRef<Value *> idxs = {}) {
     if (auto arg = dyn_cast<Argument>(val))
       assert(arg->getParent() == oldFunc);
     if (auto inst = dyn_cast<Instruction>(val))
@@ -1407,27 +1408,27 @@ public:
     }
     assert(!val->getType()->isPointerTy());
     assert(!isConstantValue(val));
-     
+
     Value *ptr = getDifferential(val);
-    
+
     if (idxs.size() != 0) {
-        SmallVector<Value *, 4> sv;
-        sv.push_back(ConstantInt::get(Type::getInt32Ty(val->getContext()), 0));
-        for (auto i : idxs)
-          sv.push_back(i);
-        ptr = BuilderM.CreateGEP(ptr, sv);
-        cast<GetElementPtrInst>(ptr)->setIsInBounds(true);
+      SmallVector<Value *, 4> sv;
+      sv.push_back(ConstantInt::get(Type::getInt32Ty(val->getContext()), 0));
+      for (auto i : idxs)
+        sv.push_back(i);
+      ptr = BuilderM.CreateGEP(ptr, sv);
+      cast<GetElementPtrInst>(ptr)->setIsInBounds(true);
     }
     Value *old = BuilderM.CreateLoad(ptr);
 
-    assert(val->getType() == old->getType());
+    assert(dif->getType() == old->getType());
     Value *res = nullptr;
-    if (val->getType()->isIntOrIntVectorTy()) {
+    if (old->getType()->isIntOrIntVectorTy()) {
       if (!addingType) {
         llvm::errs() << "module: " << *oldFunc->getParent() << "\n";
         llvm::errs() << "oldFunc: " << *oldFunc << "\n";
         llvm::errs() << "newFunc: " << *newFunc << "\n";
-        llvm::errs() << "val: " << *val << "\n";
+        llvm::errs() << "val: " << *val << " old: " << old << "\n";
       }
       assert(addingType);
       assert(addingType->isFPOrFPVectorTy());
@@ -1456,32 +1457,32 @@ public:
         addedSelects.erase(addedSelects.end() - 1);
         res = BuilderM.CreateSelect(
             select->getCondition(),
-            BuilderM.CreateBitCast(select->getTrueValue(), val->getType()),
-            BuilderM.CreateBitCast(select->getFalseValue(), val->getType()));
+            BuilderM.CreateBitCast(select->getTrueValue(), old->getType()),
+            BuilderM.CreateBitCast(select->getFalseValue(), old->getType()));
         assert(select->getNumUses() == 0);
       } else {
-        res = BuilderM.CreateBitCast(res, val->getType());
+        res = BuilderM.CreateBitCast(res, old->getType());
       }
       BuilderM.CreateStore(res, ptr);
       // store->setAlignment(align);
       return addedSelects;
-    } else if (val->getType()->isFPOrFPVectorTy()) {
+    } else if (old->getType()->isFPOrFPVectorTy()) {
       // TODO consider adding type
       res = faddForSelect(old, dif);
 
       BuilderM.CreateStore(res, ptr);
       // store->setAlignment(align);
       return addedSelects;
-    } else if (val->getType()->isStructTy()) {
-      auto st = cast<StructType>(val->getType());
+    } else if (auto st = dyn_cast<StructType>(old->getType())) {
       for (unsigned i = 0; i < st->getNumElements(); ++i) {
         // TODO pass in full type tree here and recurse into tree.
-        if (st->getElementType()->isPointerTy()) continue;
+        if (st->getElementType(i)->isPointerTy())
+          continue;
         Value *v = ConstantInt::get(Type::getInt32Ty(st->getContext()), i);
-        SmallVector<Value*> idx2(idx.begin(), idx.end());
+        SmallVector<Value *, 2> idx2(idxs.begin(), idxs.end());
         idx2.push_back(v);
-        auto selects = addToDiffe(
-            val, BuilderM.CreateExtractValue(dif, {i}), BuilderM, nullptr, idx2);
+        auto selects = addToDiffe(val, BuilderM.CreateExtractValue(dif, {i}),
+                                  BuilderM, nullptr, idx2);
         for (auto select : selects) {
           addedSelects.push_back(select);
         }
