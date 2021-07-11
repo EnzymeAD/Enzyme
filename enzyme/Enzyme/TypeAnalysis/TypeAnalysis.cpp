@@ -3319,6 +3319,8 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
     }
 
     /// MPI
+    if (funcName.startswith("PMPI_"))
+        funcName = funcName.substr(1);
     if (funcName == "MPI_Init") {
       TypeTree ptrint;
       ptrint.insert({-1}, BaseType::Pointer);
