@@ -34,6 +34,7 @@
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
+#include "llvm/IR/DebugInfo.h"
 
 #include "llvm/IR/InstIterator.h"
 
@@ -49,6 +50,7 @@
 #include "../LibraryFuncs.h"
 
 #include "TBAA.h"
+#include "RustDebugInfo.h"
 
 extern "C" {
 /// Maximum offset for type trees to keep
@@ -4051,6 +4053,7 @@ TypeResults TypeAnalysis::analyzeFunction(const FnTypeInfo &fn) {
   }
 
   analysis.prepareArgs();
+  analysis.considerRustDebugInfo();
   analysis.considerTBAA();
   analysis.run();
 
@@ -4213,6 +4216,36 @@ ConcreteType TypeAnalysis::firstPointer(size_t num, Value *val,
     assert(0 && "could not deduce type of integer");
   }
   return dt;
+}
+
+void TypeAnalyzer::considerRustDebugInfo() {
+    std::map<Value*, TypeTree> Types;
+
+    for (BasicBlock &BB: *fntypeinfo.Function) {
+      for (Instruction &I: BB) {
+        if (DbgDeclareInst* DDI = dyn_cast<DbgDeclareInst>(&I)) {
+          Value* addr = DDI->getAddress();
+          Types.emplace(addr, parseDIType(*DDI));
+        }
+      }
+    }
+
+    for (BasicBlock &BB: *fntypeinfo.Function) {
+      for (Instruction &I: BB) {
+        if (StoreInst *SI = dyn_cast<StoreInst>(&I)) {
+          Value* pointer = SI->getPointerOperand();
+          if (Types.count(pointer)) {
+            updateAnalysis(SI, Types.at(pointer), pointer);
+          }
+        }
+        if (LoadInst *LI = dyn_cast<LoadInst>(&I)) {
+          Value* pointer = LI->getPointerOperand();
+          if (Types.count(pointer)) {
+            updateAnalysis(LI, Types.at(pointer), pointer);
+          }
+        }
+      }
+    }
 }
 
 TypeResults::TypeResults(TypeAnalysis &analysis, const FnTypeInfo &fn)
