@@ -1,5 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
-
+; RUN: if [ %llvmver -ge 10 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
 
 ; extern double __enzyme_fwddiff(void*, double, double);
 ;
@@ -17,9 +16,9 @@ define double @fneg(double %x) {
   ret double %fneg
 }
 
-define dso_local double @_Z5dfnegd(double %0) {
-  %2 = call double @__enzyme_fwddiff(double (double)* @fneg, double %0, double 1.0)
-  ret double %2
+define double @dfneg(double %x) {
+  %1 = call double @__enzyme_fwddiff(double (double)* @fneg, double %x, double 1.0)
+  ret double %1
 }
 
 declare double @__enzyme_fwddiff(double (double)*, double, double)
