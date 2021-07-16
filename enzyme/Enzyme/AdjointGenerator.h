@@ -246,6 +246,10 @@ public:
         Value *orig_op1 = FPMO->getOperand(0);
         bool constantval1 = gutils->isConstantValue(orig_op1);
 
+        if (constantval1) {
+          return;
+        }
+
         switch (Mode) {
         case DerivativeMode::ReverseModeCombined:
         case DerivativeMode::ReverseModeGradient: {
@@ -253,26 +257,19 @@ public:
           getReverseBuilder(Builder2);
 
           Value *idiff = diffe(FPMO, Builder2);
-
-          if (!constantval1) {
-            Value *dif1 = Builder2.CreateFNeg(idiff);
-            setDiffe(FPMO, Constant::getNullValue(FPMO->getType()), Builder2);
-            addToDiffe(orig_op1, dif1, Builder2,
-                       dif1->getType()->getScalarType());
-          }
-
+          Value *dif1 = Builder2.CreateFNeg(idiff);
+          setDiffe(FPMO, Constant::getNullValue(FPMO->getType()), Builder2);
+          addToDiffe(orig_op1, dif1, Builder2,
+                     dif1->getType()->getScalarType());
           break;
         }
         case DerivativeMode::ForwardMode: {
           IRBuilder<> Builder2(&inst);
           getForwardBuilder(Builder2);
 
-          if (!constantval1) {
-            Value *idiff = diffe(orig_op1, Builder2);
-            Value *dif1 = Builder2.CreateFNeg(idiff);
-            setDiffe(FPMO, dif1, Builder2);
-          }
-
+          Value *idiff = diffe(orig_op1, Builder2);
+          Value *dif1 = Builder2.CreateFNeg(idiff);
+          setDiffe(FPMO, dif1, Builder2);
           break;
         }
         case DerivativeMode::ReverseModePrimal:
