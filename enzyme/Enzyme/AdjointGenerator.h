@@ -1780,7 +1780,7 @@ public:
         IRBuilder<> Builder2(parent);
         getReverseBuilder(Builder2);
 
-        // If the src is context simply zero d_dst and don't propagate to d_src
+        // If the src is constant simply zero d_dst and don't propagate to d_src
         // (which thus == src and may be illegal)
         if (gutils->isConstantValue(orig_src)) {
           SmallVector<Value *, 4> args;
