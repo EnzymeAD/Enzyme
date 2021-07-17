@@ -1928,7 +1928,7 @@ public:
 
     Value *orig_dst = MTI.getOperand(0);
     Value *orig_src = MTI.getOperand(1);
-    Value *op2 = gutils->getNewFromOriginal(MTI.getOperand(2));
+    Value *new_size = gutils->getNewFromOriginal(MTI.getOperand(2));
 #if LLVM_VERSION_MAJOR >= 7
     Value *isVolatile = gutils->getNewFromOriginal(MTI.getOperand(3));
 #else
@@ -1942,21 +1942,6 @@ public:
       eraseIfUnused(MTI);
       return;
     }
-
-    size_t size = 1;
-    if (auto ci = dyn_cast<ConstantInt>(op2)) {
-      size = ci->getLimitedValue();
-    }
-
-    // TODO note that we only handle memcpy/etc of ONE type (aka memcpy of {int,
-    // double} not allowed)
-
-    // llvm::errs() << *gutils->oldFunc << "\n";
-    // TR.dump();
-    if (size == 0) {
-      llvm::errs() << MTI << "\n";
-    }
-    assert(size != 0);
 
     if (Mode == DerivativeMode::ForwardMode) {
       IRBuilder<> Builder2(&MTI);
@@ -1972,12 +1957,28 @@ public:
       auto dstAlign = MTI.getDestAlignment();
 #endif
 
-      auto call = Builder2.CreateMemCpy(ddst, dstAlign, dsrc, srcAlign, size);
+      auto call =
+          Builder2.CreateMemCpy(ddst, dstAlign, dsrc, srcAlign, new_size);
       call->setAttributes(MTI.getAttributes());
       call->setTailCallKind(MTI.getTailCallKind());
 
       return;
     }
+
+    size_t size = 1;
+    if (auto ci = dyn_cast<ConstantInt>(new_size)) {
+      size = ci->getLimitedValue();
+    }
+
+    // TODO note that we only handle memcpy/etc of ONE type (aka memcpy of {int,
+    // double} not allowed)
+
+    // llvm::errs() << *gutils->oldFunc << "\n";
+    // TR.dump();
+    if (size == 0) {
+      llvm::errs() << MTI << "\n";
+    }
+    assert(size != 0);
 
     auto vd = TR.query(orig_dst).Data0().AtMost(size);
     vd |= TR.query(orig_src).Data0().AtMost(size);
@@ -2060,13 +2061,13 @@ public:
       }
       assert(dt.isKnown());
 
-      Value *length = op2;
+      Value *length = new_size;
       if (nextStart != size) {
-        length = ConstantInt::get(op2->getType(), nextStart);
+        length = ConstantInt::get(new_size->getType(), nextStart);
       }
       if (start != 0)
-        length =
-            BuilderZ.CreateSub(length, ConstantInt::get(op2->getType(), start));
+        length = BuilderZ.CreateSub(
+            length, ConstantInt::get(new_size->getType(), start));
 
       unsigned subdstalign = dstalign;
       // todo make better alignment calculation

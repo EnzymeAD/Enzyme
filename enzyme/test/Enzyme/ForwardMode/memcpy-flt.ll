@@ -34,7 +34,6 @@ attributes #2 = { noinline nounwind uwtable }
 ; CHECK-NEXT:   %"'ipc1" = bitcast double* %"src'" to i8*
 ; CHECK-NEXT:   %1 = bitcast double* %src to i8*
 ; CHECK-NEXT:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %0, i8* align 1 %1, i64 %num, i1 false)
-; CHECK-NEXT:   %2 = load i8, i8* %"'ipc1", align 1
-; CHECK-NEXT:   store i8 %2, i8* %"'ipc", align 1
+; CHECK-NEXT:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %"'ipc", i8* align 1 %"'ipc1", i64 %num, i1 false)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
