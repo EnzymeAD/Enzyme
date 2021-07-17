@@ -1926,8 +1926,8 @@ public:
       return;
     }
 
-    Value *orig_op0 = MTI.getOperand(0);
-    Value *orig_op1 = MTI.getOperand(1);
+    Value *orig_dst = MTI.getOperand(0);
+    Value *orig_src = MTI.getOperand(1);
     Value *op2 = gutils->getNewFromOriginal(MTI.getOperand(2));
 #if LLVM_VERSION_MAJOR >= 7
     Value *isVolatile = gutils->getNewFromOriginal(MTI.getOperand(3));
@@ -1937,8 +1937,8 @@ public:
 
     // copying into nullptr is invalid (not sure why it exists here), but we
     // shouldn't do it in reverse pass or shadow
-    if (isa<ConstantPointerNull>(orig_op0) ||
-        TR.query(orig_op0).Inner0() == BaseType::Anything) {
+    if (isa<ConstantPointerNull>(orig_dst) ||
+        TR.query(orig_dst).Inner0() == BaseType::Anything) {
       eraseIfUnused(MTI);
       return;
     }
@@ -1958,12 +1958,11 @@ public:
     }
     assert(size != 0);
 
-
     if (Mode == DerivativeMode::ForwardMode) {
       IRBuilder<> Builder2(&MTI);
       getForwardBuilder(Builder2);
-      auto ddst = gutils->invertPointerM(orig_op0, Builder2);
-      auto dsrc = gutils->invertPointerM(orig_op1, Builder2);
+      auto ddst = gutils->invertPointerM(orig_dst, Builder2);
+      auto dsrc = gutils->invertPointerM(orig_src, Builder2);
 
 #if LLVM_VERSION_MAJOR >= 10
       auto srcAlign = MTI.getSourceAlign();
@@ -1980,15 +1979,15 @@ public:
       return;
     }
 
-    auto vd = TR.query(orig_op0).Data0().AtMost(size);
-    vd |= TR.query(orig_op1).Data0().AtMost(size);
+    auto vd = TR.query(orig_dst).Data0().AtMost(size);
+    vd |= TR.query(orig_src).Data0().AtMost(size);
 
     // llvm::errs() << "MIT: " << MTI << "|size: " << size << " vd: " <<
     // vd.str() << "\n";
 
     if (!vd.isKnownPastPointer()) {
       if (looseTypeAnalysis) {
-        if (auto CI = dyn_cast<CastInst>(orig_op0)) {
+        if (auto CI = dyn_cast<CastInst>(orig_dst)) {
           if (auto PT = dyn_cast<PointerType>(CI->getSrcTy())) {
             if (PT->getElementType()->isFPOrFPVectorTy()) {
               vd = TypeTree(ConcreteType(PT->getElementType()->getScalarType()))
@@ -2011,7 +2010,7 @@ public:
             }
           }
         }
-        if (auto gep = dyn_cast<GetElementPtrInst>(orig_op0)) {
+        if (auto gep = dyn_cast<GetElementPtrInst>(orig_dst)) {
           if (auto AT = dyn_cast<ArrayType>(gep->getSourceElementType())) {
             if (AT->getElementType()->isIntegerTy()) {
               vd = TypeTree(BaseType::Integer).Only(0);
@@ -2023,7 +2022,7 @@ public:
       EmitFailure("CannotDeduceType", MTI.getDebugLoc(), &MTI,
                   "failed to deduce type of copy ", MTI);
 
-      TR.firstPointer(size, orig_op0, /*errifnotfound*/ true,
+      TR.firstPointer(size, orig_dst, /*errifnotfound*/ true,
                       /*pointerIntSame*/ true);
       llvm_unreachable("bad mti");
     }
@@ -2084,8 +2083,8 @@ public:
         }
       }
       subTransferHelper(dt.isFloat(), MTI.getParent(), MTI.getIntrinsicID(),
-                        subdstalign, subsrcalign, /*offset*/ start, orig_op0,
-                        orig_op1, /*length*/ length, /*volatile*/ isVolatile,
+                        subdstalign, subsrcalign, /*offset*/ start, orig_dst,
+                        orig_src, /*length*/ length, /*volatile*/ isVolatile,
                         &MTI);
 
       if (nextStart == size)
