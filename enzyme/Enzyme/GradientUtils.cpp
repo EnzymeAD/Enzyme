@@ -834,17 +834,10 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
             if (BuilderM.GetInsertPoint() != oldB->end())
               goto endCheck;
 
-            // todo speed this up
-            BasicBlock *fwd = nullptr;
-            for (const auto &pair : reverseBlocks) {
-              const std::vector<BasicBlock *> &vec = pair.second;
-              if (std::find(vec.begin(), vec.end(), oldB) != vec.end()) {
-                fwd = pair.first;
-                break;
-              }
-            }
-            if (!fwd)
+            auto found = reverseBlockToPrimal.find(oldB);
+            if (found == reverseBlockToPrimal.end())
               goto endCheck;
+            BasicBlock *fwd = found->second;
 
             SmallVector<BasicBlock *, 2> predBlocks;
             predBlocks.push_back(bi2->getSuccessor(0));
@@ -876,6 +869,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
               blocks[i]->moveAfter(last);
               last = blocks[i];
               reverseBlocks[fwd].push_back(blocks[i]);
+              reverseBlockToPrimal[blocks[i]] = fwd;
               IRBuilder<> B(blocks[i]);
 
               unwrap_cache[blocks[i]] = unwrap_cache[oldB];
@@ -884,7 +878,17 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
 
               if (auto inst = dyn_cast<Instruction>(
                       phi->getIncomingValueForBlock(PB))) {
-                if (inst->mayReadFromMemory() || !EnzymeSpeculatePHIs)
+                // Recompute the phi computation with the conditional if:
+                // 1) the instruction may reat from memory AND does not
+                // dominaite
+                //    the current insertion point (thereby potentially making
+                //    such recomputation without the condition illegal)
+                // 2) the value is a call or load and option is set to not
+                //    speculatively recompute values within a phi
+                if ((inst->mayReadFromMemory() &&
+                     !DT.dominates(inst->getParent(), phi->getParent())) ||
+                    (!EnzymeSpeculatePHIs &&
+                     (isa<CallInst>(inst) || isa<LoadInst>(inst))))
                   vals.push_back(
                       getOpFull(B, phi->getIncomingValueForBlock(PB), PB));
                 else
@@ -895,10 +899,11 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                     getOpFull(BuilderM, phi->getIncomingValueForBlock(PB), PB));
 
               if (!vals[i]) {
-                for (size_t j = 0; j < i; i++) {
+                for (size_t j = 0; j < i; j++) {
                   reverseBlocks[fwd].erase(std::find(reverseBlocks[fwd].begin(),
                                                      reverseBlocks[fwd].end(),
                                                      blocks[j]));
+                  reverseBlockToPrimal.erase(blocks[j]);
                   unwrap_cache.erase(blocks[j]);
                   lookup_cache.erase(blocks[j]);
                   SmallVector<Instruction *, 4> toErase;
@@ -910,7 +915,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                   }
                 }
                 bret->eraseFromParent();
-                for (size_t j = 0; j < i; i++) {
+                for (size_t j = 0; j < i; j++) {
                   blocks[j]->eraseFromParent();
                 };
                 goto endCheck;
@@ -939,6 +944,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
 
             BuilderM.SetInsertPoint(bret);
             reverseBlocks[fwd].push_back(bret);
+            reverseBlockToPrimal[bret] = fwd;
             auto toret = BuilderM.CreatePHI(val->getType(), vals.size());
             for (size_t i = 0; i < vals.size(); i++)
               toret->addIncoming(vals[i], endingBlocks[i]);
@@ -992,17 +998,10 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       if (BuilderM.GetInsertPoint() != oldB->end())
         goto endCheck;
 
-      // todo speed this up
-      BasicBlock *fwd = nullptr;
-      for (const auto &pair : reverseBlocks) {
-        const std::vector<BasicBlock *> &vec = pair.second;
-        if (std::find(vec.begin(), vec.end(), oldB) != vec.end()) {
-          fwd = pair.first;
-          break;
-        }
-      }
-      if (!fwd)
+      auto found = reverseBlockToPrimal.find(oldB);
+      if (found == reverseBlockToPrimal.end())
         goto endCheck;
+      BasicBlock *fwd = found->second;
 
       SmallVector<BasicBlock *, 2> predBlocks;
       Value *cond = nullptr;
@@ -1046,6 +1045,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         blocks[i]->moveAfter(last);
         last = blocks[i];
         reverseBlocks[fwd].push_back(blocks[i]);
+        reverseBlockToPrimal[blocks[i]] = fwd;
         IRBuilder<> B(blocks[i]);
 
         unwrap_cache[blocks[i]] = unwrap_cache[oldB];
@@ -1053,7 +1053,16 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
 
         if (auto inst =
                 dyn_cast<Instruction>(phi->getIncomingValueForBlock(PB))) {
-          if (inst->mayReadFromMemory() || !EnzymeSpeculatePHIs)
+          // Recompute the phi computation with the conditional if:
+          // 1) the instruction may reat from memory AND does not dominaite
+          //    the current insertion point (thereby potentially making such
+          //    recomputation without the condition illegal)
+          // 2) the value is a call or load and option is set to not
+          //    speculatively recompute values within a phi
+          if ((inst->mayReadFromMemory() &&
+               !DT.dominates(inst->getParent(), phi->getParent())) ||
+              (!EnzymeSpeculatePHIs &&
+               (isa<CallInst>(inst) || isa<LoadInst>(inst))))
             vals.push_back(getOpFull(B, phi->getIncomingValueForBlock(PB), PB));
           else
             vals.push_back(
@@ -1063,10 +1072,11 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
               getOpFull(BuilderM, phi->getIncomingValueForBlock(PB), PB));
 
         if (!vals[i]) {
-          for (size_t j = 0; j < i; i++) {
+          for (size_t j = 0; j < i; j++) {
             reverseBlocks[fwd].erase(std::find(reverseBlocks[fwd].begin(),
                                                reverseBlocks[fwd].end(),
                                                blocks[j]));
+            reverseBlockToPrimal.erase(blocks[j]);
             unwrap_cache.erase(blocks[j]);
             lookup_cache.erase(blocks[j]);
             SmallVector<Instruction *, 4> toErase;
@@ -1078,7 +1088,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
             }
           }
           bret->eraseFromParent();
-          for (size_t j = 0; j < i; i++) {
+          for (size_t j = 0; j < i; j++) {
             blocks[j]->eraseFromParent();
           };
           goto endCheck;
@@ -1086,6 +1096,38 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         assert(val->getType() == vals[i]->getType());
         B.CreateBr(bret);
         endingBlocks.push_back(B.GetInsertBlock());
+      }
+
+      // Fast path to not make a split block if no additional instructions
+      // were made in the two blocks
+      if (isa<BranchInst>(equivalentTerminator) && blocks[0]->size() == 1 &&
+          blocks[1]->size() == 1) {
+        for (size_t j = 0; j < blocks.size(); j++) {
+          reverseBlocks[fwd].erase(std::find(
+              reverseBlocks[fwd].begin(), reverseBlocks[fwd].end(), blocks[j]));
+          reverseBlockToPrimal.erase(blocks[j]);
+          unwrap_cache.erase(blocks[j]);
+          lookup_cache.erase(blocks[j]);
+          SmallVector<Instruction *, 4> toErase;
+          for (auto &I : *blocks[j]) {
+            toErase.push_back(&I);
+          }
+          for (auto I : toErase) {
+            erase(I);
+          }
+        }
+        bret->eraseFromParent();
+        for (size_t j = 0; j < blocks.size(); j++) {
+          blocks[j]->eraseFromParent();
+        };
+        Value *toret = BuilderM.CreateSelect(cond, vals[0], vals[1],
+                                             phi->getName() + "_unwrap");
+        if (permitCache) {
+          unwrap_cache[BuilderM.GetInsertBlock()][idx] = toret;
+        }
+        if (auto instRet = dyn_cast<Instruction>(toret))
+          unwrappedLoads[instRet] = val;
+        return toret;
       }
 
       bret->moveAfter(last);
@@ -1102,6 +1144,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       }
       BuilderM.SetInsertPoint(bret);
       reverseBlocks[fwd].push_back(bret);
+      reverseBlockToPrimal[bret] = fwd;
       auto toret = BuilderM.CreatePHI(val->getType(), vals.size());
       for (size_t i = 0; i < vals.size(); i++)
         toret->addIncoming(vals[i], endingBlocks[i]);
@@ -1768,13 +1811,10 @@ bool GradientUtils::legalRecompute(const Value *val,
       if (BuilderM) {
         fwdBlockIfReverse = BuilderM->GetInsertBlock();
         if (!reverse) {
-          for (auto pair : reverseBlocks) {
-            if (std::find(pair.second.begin(), pair.second.end(),
-                          BuilderM->GetInsertBlock()) != pair.second.end()) {
-              fwdBlockIfReverse = pair.first;
-              reverse = true;
-              break;
-            }
+          auto found = reverseBlockToPrimal.find(BuilderM->GetInsertBlock());
+          if (found != reverseBlockToPrimal.end()) {
+            fwdBlockIfReverse = found->second;
+            reverse = true;
           }
         }
         if (fwdBlockIfReverse->getParent() != oldFunc)
