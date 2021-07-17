@@ -361,8 +361,13 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     auto toreturn = BuilderM.CreateBinOp(op->getOpcode(), op0, op1,
                                          op->getName() + "_unwrap");
     unwrappedLoads[toreturn] = val;
-    if (auto newi = dyn_cast<Instruction>(toreturn))
+    if (auto newi = dyn_cast<Instruction>(toreturn)) {
       newi->copyIRFlags(op);
+      if (auto i0 = dyn_cast<Instruction>(op0))
+          assert(DT.dominates(i0, newi));
+      if (auto i1 = dyn_cast<Instruction>(op1))
+          assert(DT.dominates(i1, newi));
+    }
     if (permitCache)
       unwrap_cache[BuilderM.GetInsertBlock()][idx] = toreturn;
     assert(val->getType() == toreturn->getType());
