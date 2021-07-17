@@ -1957,6 +1957,29 @@ public:
       llvm::errs() << MTI << "\n";
     }
     assert(size != 0);
+
+
+    if (Mode == DerivativeMode::ForwardMode) {
+      IRBuilder<> Builder2(&MTI);
+      getForwardBuilder(Builder2);
+      auto ddst = gutils->invertPointerM(orig_op0, Builder2);
+      auto dsrc = gutils->invertPointerM(orig_op1, Builder2);
+
+#if LLVM_VERSION_MAJOR >= 10
+      auto srcAlign = MTI.getSourceAlign();
+      auto dstAlign = MTI.getDestAlign();
+#else
+      auto srcAlign = MTI.getSourceAlignment();
+      auto dstAlign = MTI.getDestAlignment();
+#endif
+
+      auto call = Builder2.CreateMemCpy(ddst, dstAlign, dsrc, srcAlign, size);
+      call->setAttributes(MTI.getAttributes());
+      call->setTailCallKind(MTI.getTailCallKind());
+
+      return;
+    }
+
     auto vd = TR.query(orig_op0).Data0().AtMost(size);
     vd |= TR.query(orig_op1).Data0().AtMost(size);
 
