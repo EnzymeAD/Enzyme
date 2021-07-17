@@ -176,15 +176,13 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
   // assert(!val->getName().startswith("$tapeload"));
   if (permitCache && unwrap_cache[BuilderM.GetInsertBlock()].find(idx) !=
                          unwrap_cache[BuilderM.GetInsertBlock()].end()) {
-    if (unwrap_cache[BuilderM.GetInsertBlock()][idx]->getType() !=
-        val->getType()) {
+    auto cachedValue = unwrap_cache[BuilderM.GetInsertBlock()][idx];
+    if (cachedValue->getType() != val->getType()) {
       llvm::errs() << "val: " << *val << "\n";
-      llvm::errs() << "unwrap_cache[cidx]: "
-                   << *unwrap_cache[BuilderM.GetInsertBlock()][idx] << "\n";
+      llvm::errs() << "unwrap_cache[cidx]: " << *cachedValue << "\n";
     }
-    assert(unwrap_cache[BuilderM.GetInsertBlock()][idx]->getType() ==
-           val->getType());
-    return unwrap_cache[BuilderM.GetInsertBlock()][idx];
+    assert(cachedValue->getType() == val->getType());
+    return cachedValue;
   }
 
 #define getOpFullest(Builder, vtmp, frominst, check)                           \
@@ -363,10 +361,6 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     unwrappedLoads[toreturn] = val;
     if (auto newi = dyn_cast<Instruction>(toreturn)) {
       newi->copyIRFlags(op);
-      if (auto i0 = dyn_cast<Instruction>(op0))
-          assert(DT.dominates(i0, newi));
-      if (auto i1 = dyn_cast<Instruction>(op1))
-          assert(DT.dominates(i1, newi));
     }
     if (permitCache)
       unwrap_cache[BuilderM.GetInsertBlock()][idx] = toreturn;
@@ -885,9 +879,9 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                       phi->getIncomingValueForBlock(PB))) {
                 // Recompute the phi computation with the conditional if:
                 // 1) the instruction may reat from memory AND does not
-                // dominaite
-                //    the current insertion point (thereby potentially making
-                //    such recomputation without the condition illegal)
+                //    dominate the current insertion point (thereby
+                //    potentially making such recomputation without the
+                //    condition illegal)
                 // 2) the value is a call or load and option is set to not
                 //    speculatively recompute values within a phi
                 if ((inst->mayReadFromMemory() &&
@@ -1059,7 +1053,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         if (auto inst =
                 dyn_cast<Instruction>(phi->getIncomingValueForBlock(PB))) {
           // Recompute the phi computation with the conditional if:
-          // 1) the instruction may reat from memory AND does not dominaite
+          // 1) the instruction may reat from memory AND does not dominate
           //    the current insertion point (thereby potentially making such
           //    recomputation without the condition illegal)
           // 2) the value is a call or load and option is set to not
@@ -1376,9 +1370,10 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
           for (auto u : users) {
             if (auto li = dyn_cast<LoadInst>(u)) {
               IRBuilder<> lb(li);
-              ValueToValueMapTy empty;
-              li->replaceAllUsesWith(
-                  unwrapM(ret, lb, empty, UnwrapMode::LegalFullUnwrap));
+              auto replacewith =
+                  (idx < 0) ? tape
+                            : lb.CreateExtractValue(tape, {(unsigned)idx});
+              li->replaceAllUsesWith(replacewith);
               erase(li);
             } else {
               llvm::errs() << "newFunc: " << *newFunc << "\n";
