@@ -659,7 +659,8 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
   assert(ctx.Block);
   assert(T);
 
-  auto sublimits = getSubLimits(/*inForwardPass*/ true, nullptr, ctx, extraSize);
+  auto sublimits =
+      getSubLimits(/*inForwardPass*/ true, nullptr, ctx, extraSize);
 
   // List of types stored in the cache for each Loop-Chunk
   // This is stored from innner-most chunk to outermost
@@ -1056,15 +1057,15 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
         allocationBuilder.SetInsertPoint(&allocationPreheaders[i]->back());
         limitMinus1 = unwrapM(contexts[i].maxLimit, allocationBuilder, prevMap,
                               UnwrapMode::AttemptFullUnwrap);
-      } else if (i == 0 && extraSize && unwrapM(extraSize, allocationBuilder, prevMap, UnwrapMode::AttemptFullUnwrap) == nullptr) {
-        EmitWarning("NoOuterLimit",
-                    cast<Instruction>(extraSize)->getDebugLoc(),
-                    newFunc,
-                    cast<Instruction>(extraSize)->getParent(),
-                    "Could not compute outermost loop limit by moving extraSize value ",
-                    *extraSize, " computed at block",
-                    contexts[i].header->getName(), " function ",
-                    contexts[i].header->getParent()->getName());
+      } else if (i == 0 && extraSize &&
+                 unwrapM(extraSize, allocationBuilder, prevMap,
+                         UnwrapMode::AttemptFullUnwrap) == nullptr) {
+        EmitWarning(
+            "NoOuterLimit", cast<Instruction>(extraSize)->getDebugLoc(),
+            newFunc, cast<Instruction>(extraSize)->getParent(),
+            "Could not compute outermost loop limit by moving extraSize value ",
+            *extraSize, " computed at block", contexts[i].header->getName(),
+            " function ", contexts[i].header->getParent()->getName());
         allocationPreheaders[i] = contexts[i].preheader;
         allocationBuilder.SetInsertPoint(&allocationPreheaders[i]->back());
       }

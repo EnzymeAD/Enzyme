@@ -77,7 +77,7 @@ attributes #2 = { nounwind }
 ; CHECK: for.body5.preheader:                              ; preds = %for.cond.cleanup4, %entry
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %for.cond.cleanup4 ], [ 0, %entry ]
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
-; CHECK-NEXT:   %call = tail call i64 @getSize() #2
+; CHECK-NEXT:   %call = tail call i64 @getSize()
 ; CHECK-NEXT:   %0 = add i64 %call, -1
 ; CHECK-NEXT:   %1 = getelementptr inbounds i64, i64* %_malloccache, i64 %iv
 ; CHECK-NEXT:   store i64 %0, i64* %1, align 8, !invariant.group !6
@@ -154,7 +154,7 @@ attributes #2 = { nounwind }
 ; CHECK-NEXT:   %21 = fadd fast double %20, %19
 ; CHECK-NEXT:   store double %21, double* %"arrayidx'ipg_unwrap", align 8
 ; CHECK-NEXT:   %22 = icmp eq i64 %"iv1'ac.0", 0
-; CHECK-NEXT:   %23 = select i1 %22, double 0.000000e+00, double %"add'de.1"
+; CHECK-NEXT:   %23 = select{{( fast)?}} i1 %22, double 0.000000e+00, double %"add'de.1"
 ; CHECK-NEXT:   br i1 %22, label %invertfor.body5.preheader, label %incinvertfor.body5
 
 ; CHECK: incinvertfor.body5:                               ; preds = %invertfor.body5

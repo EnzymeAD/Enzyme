@@ -457,11 +457,6 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     auto toreturn = BuilderM.CreateGEP(ptr, ind, inst->getName() + "_unwrap");
     if (isa<GetElementPtrInst>(toreturn))
       cast<GetElementPtrInst>(toreturn)->setIsInBounds(inst->isInBounds());
-    else {
-      // llvm::errs() << "gep tr: " << *toreturn << " inst: " << *inst << "
-      // ptr: " << *ptr << "\n"; llvm::errs() << "safe: " << *SAFE(inst,
-      // getPointerOperand()) << "\n"; assert(0 && "illegal");
-    }
     if (auto newi = dyn_cast<Instruction>(toreturn))
       newi->copyIRFlags(inst);
     if (permitCache)
@@ -636,7 +631,9 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     if (!isOriginalBlock(*ivctx)) {
       ivctx = originalForReverseBlock(*ivctx);
     }
-    if (ivctx == phi->getParent() || DT.dominates(phi, ivctx)) {
+    if ((ivctx == phi->getParent() || DT.dominates(phi, ivctx)) &&
+        (!isOriginalBlock(*BuilderM.GetInsertBlock()) ||
+         DT.dominates(phi, &*BuilderM.GetInsertPoint()))) {
       LoopContext lc;
       bool loopVar = false;
       if (getContext(phi->getParent(), lc) && lc.var == phi) {
@@ -1172,12 +1169,12 @@ endCheck:
       mode == UnwrapMode::AttemptFullUnwrapWithLookup) {
     assert(val->getName() != "<badref>");
     Value *nval = val;
-    if (auto opinst = dyn_cast<Instruction>(nval)) 
+    if (auto opinst = dyn_cast<Instruction>(nval))
       if (isOriginalBlock(*BuilderM.GetInsertBlock())) {
-          if (!DT.dominates(opinst, &*BuilderM.GetInsertPoint())) {
-            assert(mode == UnwrapMode::AttemptFullUnwrapWithLookup);
-            return nullptr;
-          }
+        if (!DT.dominates(opinst, &*BuilderM.GetInsertPoint())) {
+          assert(mode == UnwrapMode::AttemptFullUnwrapWithLookup);
+          return nullptr;
+        }
       }
     if (scope)
       if (auto opinst = dyn_cast<Instruction>(nval)) {
@@ -3717,9 +3714,10 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
             if (!getContext(ctx, tmp)) {
               forceSingleIter = true;
             } else if (auto inst = dyn_cast<Instruction>(lim)) {
-                if (inst->getParent() == ctx || !DT.dominates(inst->getParent(), ctx)) {
-                    forceSingleIter = true;
-                }
+              if (inst->getParent() == ctx ||
+                  !DT.dominates(inst->getParent(), ctx)) {
+                forceSingleIter = true;
+              }
             }
             LimitContext lctx(/*ReverseLimit*/ reverseBlocks.size() > 0, ctx,
                               forceSingleIter);
