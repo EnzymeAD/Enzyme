@@ -199,12 +199,19 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         ___res =                                                               \
             unwrapM(v, Builder, available, mode, origParent, permitCache);     \
       if (!___res && mode == UnwrapMode::AttemptFullUnwrapWithLookup) {        \
+        bool noLookup = false;                                                 \
+        if (auto opinst = dyn_cast<Instruction>(v))                            \
+          if (isOriginalBlock(*Builder.GetInsertBlock())) {                    \
+            if (!DT.dominates(opinst, &*Builder.GetInsertPoint()))             \
+              noLookup = true;                                                 \
+          }                                                                    \
         if (origParent)                                                        \
           if (auto opinst = dyn_cast<Instruction>(v)) {                        \
             v = fixLCSSA(opinst, origParent, /*mergeIfTrue*/ false,            \
                          /*guaranteedVisible*/ false);                         \
           }                                                                    \
-        ___res = lookupM(v, Builder, available, v != val);                     \
+        if (!noLookup)                                                         \
+          ___res = lookupM(v, Builder, available, v != val);                   \
       }                                                                        \
       if (___res)                                                              \
         assert(___res->getType() == v->getType() && "uw");                     \
@@ -1165,6 +1172,13 @@ endCheck:
       mode == UnwrapMode::AttemptFullUnwrapWithLookup) {
     assert(val->getName() != "<badref>");
     Value *nval = val;
+    if (auto opinst = dyn_cast<Instruction>(nval)) 
+      if (isOriginalBlock(*BuilderM.GetInsertBlock())) {
+          if (!DT.dominates(opinst, &*BuilderM.GetInsertPoint())) {
+            assert(mode == UnwrapMode::AttemptFullUnwrapWithLookup);
+            return nullptr;
+          }
+      }
     if (scope)
       if (auto opinst = dyn_cast<Instruction>(nval)) {
         nval = fixLCSSA(opinst, scope, /*mergeIfTrue*/ false,
@@ -3653,6 +3667,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
           }
 
           if (ctx && lim && start && offset) {
+            Value *firstLim = lim;
+            Value *firstStart = start;
             while (Loop *L = LI.getLoopFor(ctx)) {
               BasicBlock *nctx = L->getLoopPreheader();
               assert(nctx);
@@ -3676,12 +3692,12 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               if (failed)
                 break;
               IRBuilder<> nv(nctx->getTerminator());
-              Value *nlim = unwrapM(lim, nv,
+              Value *nlim = unwrapM(firstLim, nv,
                                     /*available*/ ValueToValueMapTy(),
                                     UnwrapMode::AttemptFullUnwrapWithLookup);
               if (!nlim)
                 break;
-              Value *nstart = unwrapM(start, nv,
+              Value *nstart = unwrapM(firstStart, nv,
                                       /*available*/ ValueToValueMapTy(),
                                       UnwrapMode::AttemptFullUnwrapWithLookup);
               if (!nstart)
@@ -3700,6 +3716,10 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
             bool forceSingleIter = false;
             if (!getContext(ctx, tmp)) {
               forceSingleIter = true;
+            } else if (auto inst = dyn_cast<Instruction>(lim)) {
+                if (inst->getParent() == ctx || !DT.dominates(inst->getParent(), ctx)) {
+                    forceSingleIter = true;
+                }
             }
             LimitContext lctx(/*ReverseLimit*/ reverseBlocks.size() > 0, ctx,
                               forceSingleIter);
