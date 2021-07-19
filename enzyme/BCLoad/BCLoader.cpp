@@ -24,7 +24,8 @@ public:
   bool runOnModule(Module &M) override {
     std::map<std::string, std::string> bcmap = {
         {"cblas_ddot", "cblas_ddot_double.bc"},
-        {"cblas_daxpy", "cblas_daxpy_void.bc"}};
+        {"cblas_daxpy", "cblas_daxpy_void.bc"},
+        {"cblas_sdot", "cblas_sdot_float.bc"}};
     std::set<std::string> funcnames;
     for (auto &it : bcmap) {
       funcnames.insert(it.first);
