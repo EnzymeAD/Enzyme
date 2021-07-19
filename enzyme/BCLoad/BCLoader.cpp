@@ -6,6 +6,7 @@
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <map>
 #include <set>
 #include <string>
 
@@ -21,28 +22,37 @@ public:
   BCLoader() : ModulePass(ID) {}
 
   bool runOnModule(Module &M) override {
-    std::set<std::string> bcfuncs = {"cblas_ddot"};
-    for (std::string name : bcfuncs) {
-      if (name == "cblas_ddot") {
-        SMDiagnostic Err;
+    std::map<std::string, std::string> bcmap = {
+        {"cblas_ddot", "cblas_ddot_double.bc"},
+        {"cblas_daxpy", "cblas_daxpy_void.bc"}};
+    std::set<std::string> funcnames;
+    for (auto &it : bcmap) {
+      funcnames.insert(it.first);
+    }
+    std::set<std::string> funcspresent;
+    for (Function &f : M) {
+      if (funcnames.find(f.getName().str()) != funcnames.end())
+        funcspresent.insert(f.getName().str());
+    }
+    for (auto &f : funcspresent) {
+      SMDiagnostic Err;
 #if LLVM_VERSION_MAJOR <= 10
-        auto BC = llvm::parseIRFile(
-            BCPath + "/cblas_ddot_double.bc", Err, M.getContext(), true,
-            M.getDataLayout().getStringRepresentation());
+      auto BC = llvm::parseIRFile(BCPath + "/" + bcmap.find(f)->second, Err,
+                                  M.getContext(), true,
+                                  M.getDataLayout().getStringRepresentation());
 #else
-        auto BC = llvm::parseIRFile(
-            BCPath + "/cblas_ddot_double.bc", Err, M.getContext(),
-            [&](StringRef) {
-              return Optional<std::string>(
-                  M.getDataLayout().getStringRepresentation());
-            });
+      auto BC =
+          llvm::parseIRFile(BCPath + "/" + bcmap.find(f)->second, Err,
+                            M.getContext(), [&](StringRef) {
+                              return Optional<std::string>(
+                                  M.getDataLayout().getStringRepresentation());
+                            });
 #endif
         if (!BC)
           Err.print("bcloader", llvm::errs());
         assert(BC);
         Linker L(M);
         L.linkInModule(std::move(BC));
-      }
     }
     return true;
   }
