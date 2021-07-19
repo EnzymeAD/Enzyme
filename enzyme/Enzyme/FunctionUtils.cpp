@@ -307,6 +307,7 @@ static inline void UpgradeAllocasToMallocs(Function *NewF,
     if (auto C = dyn_cast<CastInst>(rep))
       CI = cast<CallInst>(C->getOperand(0));
     CI->setMetadata("enzyme_fromstack", MDNode::get(CI->getContext(), {}));
+    CI->addAttribute(AttributeList::ReturnIndex, Attribute::NoAlias);
     assert(rep->getType() == AI->getType());
     AI->replaceAllUsesWith(rep);
     AI->eraseFromParent();
