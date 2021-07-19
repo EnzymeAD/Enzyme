@@ -4159,9 +4159,9 @@ ConcreteType TypeAnalysis::firstPointer(size_t num, Value *val,
   assert(val->getType());
   auto q = query(val, fn).Data0();
   if (!(val->getType()->isPointerTy() || q[{}] == BaseType::Pointer)) {
-      llvm::errs() << *fn.Function << "\n";
-      analyzedFunctions.find(fn)->second.dump();
-      llvm::errs() << "val: " << *val << "\n";
+    llvm::errs() << *fn.Function << "\n";
+    analyzedFunctions.find(fn)->second.dump();
+    llvm::errs() << "val: " << *val << "\n";
   }
   assert(val->getType()->isPointerTy() || q[{}] == BaseType::Pointer);
 

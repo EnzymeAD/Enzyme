@@ -334,30 +334,30 @@ public:
           break;
         }
         case DerivativeMode::ForwardMode: {
-            newip = gutils->invertPointerM(&I, BuilderZ);
-            assert(newip->getType() == type);
-            placeholder->replaceAllUsesWith(newip);
-            gutils->erase(placeholder);
-            gutils->invertedPointers[&I] = newip;
-            break;
+          newip = gutils->invertPointerM(&I, BuilderZ);
+          assert(newip->getType() == type);
+          placeholder->replaceAllUsesWith(newip);
+          gutils->erase(placeholder);
+          gutils->invertedPointers[&I] = newip;
+          break;
         }
-        case DerivativeMode::ReverseModeGradient:{
+        case DerivativeMode::ReverseModeGradient: {
           if (!needShadow) {
-              gutils->erase(placeholder);
+            gutils->erase(placeholder);
           } else {
-              // only make shadow where caching needed
-              if (can_modref) {
-                newip = gutils->cacheForReverse(BuilderZ, placeholder,
-                                                getIndex(&I, CacheType::Shadow));
-                assert(newip->getType() == type);
-                gutils->invertedPointers[&I] = newip;
-              } else {
-                newip = gutils->invertPointerM(&I, BuilderZ);
-                assert(newip->getType() == type);
-                placeholder->replaceAllUsesWith(newip);
-                gutils->erase(placeholder);
-                gutils->invertedPointers[&I] = newip;
-              }
+            // only make shadow where caching needed
+            if (can_modref) {
+              newip = gutils->cacheForReverse(BuilderZ, placeholder,
+                                              getIndex(&I, CacheType::Shadow));
+              assert(newip->getType() == type);
+              gutils->invertedPointers[&I] = newip;
+            } else {
+              newip = gutils->invertPointerM(&I, BuilderZ);
+              assert(newip->getType() == type);
+              placeholder->replaceAllUsesWith(newip);
+              gutils->erase(placeholder);
+              gutils->invertedPointers[&I] = newip;
+            }
           }
           break;
         }
@@ -390,17 +390,17 @@ public:
         // Otherwise caching will be done inside EnzymeLogic.cpp at
         // the end of the function jointly.
         if (gutils->knownRecomputeHeuristic.count(&I) == 0) {
-            IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&I));
-            // auto tbaa = inst->getMetadata(LLVMContext::MD_tbaa);
-            inst = gutils->cacheForReverse(BuilderZ, newi,
-                                           getIndex(&I, CacheType::Self));
-            assert(inst->getType() == type);
+          IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&I));
+          // auto tbaa = inst->getMetadata(LLVMContext::MD_tbaa);
+          inst = gutils->cacheForReverse(BuilderZ, newi,
+                                         getIndex(&I, CacheType::Self));
+          assert(inst->getType() == type);
 
-            if (Mode == DerivativeMode::ReverseModeGradient) {
-              assert(inst != newi);
-            } else {
-              assert(inst == newi);
-            }
+          if (Mode == DerivativeMode::ReverseModeGradient) {
+            assert(inst != newi);
+          } else {
+            assert(inst == newi);
+          }
         }
       }
     }
@@ -4398,7 +4398,6 @@ public:
         }
       }
 
-      CallInst *const op = newCall;
       // TODO enable this if we need to free the memory
       // NOTE THAT TOPLEVEL IS THERE SIMPLY BECAUSE THAT WAS PREVIOUS ATTITUTE
       // TO FREE'ing
@@ -4407,7 +4406,7 @@ public:
                  TR, gutils, orig, Mode, oldUnreachable) &&
              !gutils->unnecessaryIntermediates.count(orig)) ||
             hasMetadata(orig, "enzyme_fromstack")) {
-          Value *nop = gutils->cacheForReverse(BuilderZ, op,
+          Value *nop = gutils->cacheForReverse(BuilderZ, newCall,
                                                getIndex(orig, CacheType::Self));
           if (Mode == DerivativeMode::ReverseModeGradient &&
               hasMetadata(orig, "enzyme_fromstack")) {
@@ -4423,13 +4422,13 @@ public:
           auto pn = BuilderZ.CreatePHI(
               orig->getType(), 1, (orig->getName() + "_replacementB").str());
           gutils->fictiousPHIs[pn] = orig;
-          gutils->replaceAWithB(op, pn);
-          gutils->erase(op);
+          gutils->replaceAWithB(newCall, pn);
+          gutils->erase(newCall);
         }
       } else {
         IRBuilder<> Builder2(call.getParent());
         getReverseBuilder(Builder2);
-        freeKnownAllocation(Builder2, lookup(op, Builder2), *called,
+        freeKnownAllocation(Builder2, lookup(newCall, Builder2), *called,
                             gutils->TLI);
       }
 
@@ -4534,7 +4533,7 @@ public:
         //        TR, gutils, orig, /*topLevel*/ Mode == DerivativeMode::Both))
         //        {
 
-        //  gutils->cacheForReverse(BuilderZ, op,
+        //  gutils->cacheForReverse(BuilderZ, newCall,
         //                          getIndex(orig, CacheType::Self));
         //} else if (Mode != DerivativeMode::Forward) {
         // Note that here we cannot simply replace with null as users who try

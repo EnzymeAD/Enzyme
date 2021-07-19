@@ -140,7 +140,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     // if (inst->getParent() == &newFunc->getEntryBlock()) {
     //  return inst;
     //}
-    if (inst->getParent()->getParent() == newFunc && isOriginalBlock(*BuilderM.GetInsertBlock())) {
+    if (inst->getParent()->getParent() == newFunc &&
+        isOriginalBlock(*BuilderM.GetInsertBlock())) {
       if (BuilderM.GetInsertBlock()->size() &&
           BuilderM.GetInsertPoint() != BuilderM.GetInsertBlock()->end()) {
         if (DT.dominates(inst, &*BuilderM.GetInsertPoint())) {
@@ -172,70 +173,80 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
   }
 
   if (this->mode == DerivativeMode::ReverseModeGradient)
-  if (auto inst = dyn_cast<Instruction>(val)) {
-    if (mode == UnwrapMode::LegalFullUnwrap) {
+    if (auto inst = dyn_cast<Instruction>(val)) {
+      if (mode == UnwrapMode::LegalFullUnwrap) {
         // TODO this isOriginal is a bottleneck, the new mapping of
         // knownRecompute should be precomputed and maintained to lookup instead
         Instruction *orig = isOriginal(inst);
-            // If a given value has been chosen to be cached, do not compute the operands to unwrap it, instead simply
-            // emit a placeholder to be replaced by the cache load later. This placeholder should only be returned when
-            // the original value would be recomputed (e.g. this function would not return null). Since this case
-            // assumes everything can be recomputed, simply return the placeholder.
-        if (orig &&
-            knownRecomputeHeuristic.find(orig) != knownRecomputeHeuristic.end()) {
-                if (!knownRecomputeHeuristic[orig]) {
-                  assert(inst->getParent()->getParent() == newFunc);
-                  auto placeholder = BuilderM.CreatePHI(val->getType(), 0, val->getName() + "_krcLFUreplacement");
-                  assert(permitCache);
-                  unwrappedLoads[placeholder] = inst;
-                  return unwrap_cache[BuilderM.GetInsertBlock()][idx] = placeholder;
-                }
+        // If a given value has been chosen to be cached, do not compute the
+        // operands to unwrap it, instead simply emit a placeholder to be
+        // replaced by the cache load later. This placeholder should only be
+        // returned when the original value would be recomputed (e.g. this
+        // function would not return null). Since this case assumes everything
+        // can be recomputed, simply return the placeholder.
+        if (orig && knownRecomputeHeuristic.find(orig) !=
+                        knownRecomputeHeuristic.end()) {
+          if (!knownRecomputeHeuristic[orig]) {
+            assert(inst->getParent()->getParent() == newFunc);
+            auto placeholder = BuilderM.CreatePHI(
+                val->getType(), 0, val->getName() + "_krcLFUreplacement");
+            assert(permitCache);
+            unwrappedLoads[placeholder] = inst;
+            return unwrap_cache[BuilderM.GetInsertBlock()][idx] = placeholder;
+          }
         }
-    } else if (mode == UnwrapMode::AttemptFullUnwrapWithLookup) {
-            // TODO this isOriginal is a bottleneck, the new mapping of
-            // knownRecompute should be precomputed and maintained to lookup instead
-            Instruction *orig = isOriginal(inst);
-            // If a given value has been chosen to be cached, do not compute the operands to unwrap it, instead simply
-            // emit a placeholder to be replaced by the cache load later. This placeholder should only be returned when
-            // the original value would be recomputed (e.g. this function would not return null). See note below about
-            // the condition as applied to this case.
-            if (orig &&
-                knownRecomputeHeuristic.find(orig) != knownRecomputeHeuristic.end()) {
-                    if (!knownRecomputeHeuristic[orig]) {
-                        // Note that this logic (original load must dominate or alternatively be in the reverse block)
-                        // is only valid iff when applicable (here if in split mode), an uncacheable load cannot be hoisted
-                        // outside of a loop to be used as a loop limit. This optimization is currently done in the combined 
-                        // mode (e.g. if a load isn't modified between a prior insertion point and the actual load, it is
-                        // legal to recompute).
-                        if (!isOriginalBlock(*BuilderM.GetInsertBlock()) || DT.dominates(inst, &*BuilderM.GetInsertPoint())) {
-                            assert(inst->getParent()->getParent() == newFunc);
-                            auto placeholder = BuilderM.CreatePHI(val->getType(), 0, val->getName() + "_krcAFUWLreplacement");
-                            assert(permitCache);
-                            unwrappedLoads[placeholder] = inst;
-                            return unwrap_cache[BuilderM.GetInsertBlock()][idx] = placeholder;
-                        }
-                    }
+      } else if (mode == UnwrapMode::AttemptFullUnwrapWithLookup) {
+        // TODO this isOriginal is a bottleneck, the new mapping of
+        // knownRecompute should be precomputed and maintained to lookup instead
+        Instruction *orig = isOriginal(inst);
+        // If a given value has been chosen to be cached, do not compute the
+        // operands to unwrap it, instead simply emit a placeholder to be
+        // replaced by the cache load later. This placeholder should only be
+        // returned when the original value would be recomputed (e.g. this
+        // function would not return null). See note below about the condition
+        // as applied to this case.
+        if (orig && knownRecomputeHeuristic.find(orig) !=
+                        knownRecomputeHeuristic.end()) {
+          if (!knownRecomputeHeuristic[orig]) {
+            // Note that this logic (original load must dominate or
+            // alternatively be in the reverse block) is only valid iff when
+            // applicable (here if in split mode), an uncacheable load cannot be
+            // hoisted outside of a loop to be used as a loop limit. This
+            // optimization is currently done in the combined mode (e.g. if a
+            // load isn't modified between a prior insertion point and the
+            // actual load, it is legal to recompute).
+            if (!isOriginalBlock(*BuilderM.GetInsertBlock()) ||
+                DT.dominates(inst, &*BuilderM.GetInsertPoint())) {
+              assert(inst->getParent()->getParent() == newFunc);
+              auto placeholder = BuilderM.CreatePHI(
+                  val->getType(), 0, val->getName() + "_krcAFUWLreplacement");
+              assert(permitCache);
+              unwrappedLoads[placeholder] = inst;
+              return unwrap_cache[BuilderM.GetInsertBlock()][idx] = placeholder;
             }
-    } else if (mode != UnwrapMode::LegalFullUnwrapNoTapeReplace) {
+          }
+        }
+      } else if (mode != UnwrapMode::LegalFullUnwrapNoTapeReplace) {
         // TODO this isOriginal is a bottleneck, the new mapping of
         // knownRecompute should be precomputed and maintained to lookup instead
 
-        // If a given value has been chosen to be cached, do not compute the operands to unwrap it if it is not legal to do so.
-        // This prevents the creation of unused versions of the instruction's operand, which may be assumed to never be used and thus
-        // cause an error when they are inadvertantly cached.
+        // If a given value has been chosen to be cached, do not compute the
+        // operands to unwrap it if it is not legal to do so. This prevents the
+        // creation of unused versions of the instruction's operand, which may
+        // be assumed to never be used and thus cause an error when they are
+        // inadvertantly cached.
         Value *orig = isOriginal(val);
-        if (orig &&
-            knownRecomputeHeuristic.find(orig) != knownRecomputeHeuristic.end()) {
+        if (orig && knownRecomputeHeuristic.find(orig) !=
+                        knownRecomputeHeuristic.end()) {
           if (!knownRecomputeHeuristic[orig]) {
-              if (!legalRecompute(orig, available, &BuilderM))
-                return nullptr;
+            if (!legalRecompute(orig, available, &BuilderM))
+              return nullptr;
 
-              assert(isa<LoadInst>(orig) == isa<LoadInst>(val));
+            assert(isa<LoadInst>(orig) == isa<LoadInst>(val));
           }
         }
+      }
     }
-  }
-
 
 #define getOpFullest(Builder, vtmp, frominst, check)                           \
   ({                                                                           \
@@ -476,7 +487,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     auto toreturn = BuilderM.CreateFNeg(op0, op->getName() + "_unwrap");
     if (auto newi = dyn_cast<Instruction>(toreturn)) {
       newi->copyIRFlags(op);
-      unwrappedLoads[toreturn] = val;
+      unwrappedLoads[newi] = val;
     }
     if (permitCache)
       unwrap_cache[BuilderM.GetInsertBlock()][idx] = toreturn;
@@ -532,7 +543,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     if (load->getMetadata("enzyme_noneedunwrap"))
       return load;
 
-    bool legalMove = mode == UnwrapMode::LegalFullUnwrap || mode == UnwrapMode::LegalFullUnwrapNoTapeReplace;
+    bool legalMove = mode == UnwrapMode::LegalFullUnwrap ||
+                     mode == UnwrapMode::LegalFullUnwrapNoTapeReplace;
     if (mode != UnwrapMode::LegalFullUnwrap) {
       BasicBlock *parent = nullptr;
       if (isOriginalBlock(*BuilderM.GetInsertBlock()))
@@ -551,7 +563,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                   load->getParent()->getParent(), load->getParent(),
                   "Load cannot be unwrapped ", *load, " in ",
                   BuilderM.GetInsertBlock()->getName(), " - ",
-                  BuilderM.GetInsertBlock()->getParent()->getName(), " mode ", mode);
+                  BuilderM.GetInsertBlock()->getParent()->getName(), " mode ",
+                  mode);
       return nullptr;
     }
 
@@ -589,7 +602,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     return toreturn;
   } else if (auto op = dyn_cast<CallInst>(val)) {
 
-    bool legalMove = mode == UnwrapMode::LegalFullUnwrap || mode == UnwrapMode::LegalFullUnwrapNoTapeReplace;
+    bool legalMove = mode == UnwrapMode::LegalFullUnwrap ||
+                     mode == UnwrapMode::LegalFullUnwrapNoTapeReplace;
     if (mode != UnwrapMode::LegalFullUnwrap) {
       legalMove = legalRecompute(op, available, &BuilderM);
     }
@@ -633,7 +647,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         if (dli->getMetadata("enzyme_noneedunwrap"))
           return dli;
 
-        bool legalMove = mode == UnwrapMode::LegalFullUnwrap || mode == UnwrapMode::LegalFullUnwrapNoTapeReplace;
+        bool legalMove = mode == UnwrapMode::LegalFullUnwrap ||
+                         mode == UnwrapMode::LegalFullUnwrapNoTapeReplace;
         if (mode != UnwrapMode::LegalFullUnwrap) {
           // TODO actually consider whether this is legal to move to the new
           // location, rather than recomputable anywhere
@@ -1301,28 +1316,29 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
     }
     assert(idx < 0 ||
            (unsigned)idx < cast<StructType>(tape->getType())->getNumElements());
-    Value *ret = (idx < 0) ? tape : BuilderQ.CreateExtractValue(tape, {(unsigned)idx});
+    Value *ret =
+        (idx < 0) ? tape : BuilderQ.CreateExtractValue(tape, {(unsigned)idx});
 
     if (ret->getType()->isEmptyTy()) {
       if (auto inst = dyn_cast_or_null<Instruction>(malloc)) {
         if (!ignoreType) {
-            if (inst->getType() != ret->getType()) {
-              llvm::errs() << "oldFunc: " << *oldFunc << "\n";
-              llvm::errs() << "newFunc: " << *newFunc << "\n";
-              llvm::errs() << "inst==malloc: " << *inst << "\n";
-              llvm::errs() << "ret: " << *ret << "\n";
-            }
-            assert(inst->getType() == ret->getType());
-            if (replace)
-                inst->replaceAllUsesWith(UndefValue::get(ret->getType()));
+          if (inst->getType() != ret->getType()) {
+            llvm::errs() << "oldFunc: " << *oldFunc << "\n";
+            llvm::errs() << "newFunc: " << *newFunc << "\n";
+            llvm::errs() << "inst==malloc: " << *inst << "\n";
+            llvm::errs() << "ret: " << *ret << "\n";
+          }
+          assert(inst->getType() == ret->getType());
+          if (replace)
+            inst->replaceAllUsesWith(UndefValue::get(ret->getType()));
         }
         if (replace)
-            erase(inst);
+          erase(inst);
       }
       Type *retType = ret->getType();
       if (replace)
-          if (auto ri = dyn_cast<Instruction>(ret))
-            erase(ri);
+        if (auto ri = dyn_cast<Instruction>(ret))
+          erase(ri);
       return UndefValue::get(retType);
     }
 
@@ -1352,8 +1368,8 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
         erase(ri);
       IRBuilder<> entryBuilder(inversionAllocs);
       entryBuilder.setFastMathFlags(getFast());
-      ret = (idx < 0) ? tape : entryBuilder.CreateExtractValue(
-                            tape, {(unsigned)idx});
+      ret = (idx < 0) ? tape
+                      : entryBuilder.CreateExtractValue(tape, {(unsigned)idx});
 
       Type *innerType = ret->getType();
       for (size_t i = 0,
@@ -1385,22 +1401,22 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
 
       assert(malloc);
       if (!ignoreType) {
-          if (EfficientBoolCache && malloc->getType()->isIntegerTy() &&
-              cast<IntegerType>(malloc->getType())->getBitWidth() == 1 &&
-              innerType != ret->getType()) {
-            assert(innerType == Type::getInt8Ty(malloc->getContext()));
-          } else {
-            if (innerType != malloc->getType()) {
-              llvm::errs() << *oldFunc << "\n";
-              llvm::errs() << *newFunc << "\n";
-              llvm::errs() << "innerType: " << *innerType << "\n";
-              llvm::errs() << "malloc->getType(): " << *malloc->getType() << "\n";
-              llvm::errs() << "ret: " << *ret << " - " << *ret->getType() << "\n";
-              llvm::errs() << "malloc: " << *malloc << "\n";
-              assert(0 && "illegal loop cache type");
-              llvm_unreachable("illegal loop cache type");
-            }
+        if (EfficientBoolCache && malloc->getType()->isIntegerTy() &&
+            cast<IntegerType>(malloc->getType())->getBitWidth() == 1 &&
+            innerType != ret->getType()) {
+          assert(innerType == Type::getInt8Ty(malloc->getContext()));
+        } else {
+          if (innerType != malloc->getType()) {
+            llvm::errs() << *oldFunc << "\n";
+            llvm::errs() << *newFunc << "\n";
+            llvm::errs() << "innerType: " << *innerType << "\n";
+            llvm::errs() << "malloc->getType(): " << *malloc->getType() << "\n";
+            llvm::errs() << "ret: " << *ret << " - " << *ret->getType() << "\n";
+            llvm::errs() << "malloc: " << *malloc << "\n";
+            assert(0 && "illegal loop cache type");
+            llvm_unreachable("illegal loop cache type");
           }
+        }
       }
 
       LimitContext lctx(/*ReverseLimit*/ reverseBlocks.size() > 0,
@@ -1423,18 +1439,18 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
 
     if (malloc && !isa<UndefValue>(malloc)) {
       if (!ignoreType) {
-          if (malloc->getType() != ret->getType()) {
-            llvm::errs() << *oldFunc << "\n";
-            llvm::errs() << *newFunc << "\n";
-            llvm::errs() << *malloc << "\n";
-            llvm::errs() << *ret << "\n";
-          }
-          assert(malloc->getType() == ret->getType());
+        if (malloc->getType() != ret->getType()) {
+          llvm::errs() << *oldFunc << "\n";
+          llvm::errs() << *newFunc << "\n";
+          llvm::errs() << *malloc << "\n";
+          llvm::errs() << *ret << "\n";
+        }
+        assert(malloc->getType() == ret->getType());
       }
 
       if (replace)
-          if (auto orig = isOriginal(malloc))
-            originalToNewFn[orig] = ret;
+        if (auto orig = isOriginal(malloc))
+          originalToNewFn[orig] = ret;
 
       if (auto found = findInMap(scopeMap, malloc)) {
         // There already exists an alloaction for this, we should fully remove
@@ -1445,7 +1461,6 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
           auto stores = scopeInstructions[found->first];
           scopeInstructions.erase(found->first);
           for (int i = stores.size() - 1; i >= 0; i--) {
-            llvm::errs() << " erasing store: " << *stores[i] << "\n";
             erase(stores[i]);
           }
 
@@ -1457,14 +1472,15 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
             if (auto li = dyn_cast<LoadInst>(u)) {
               IRBuilder<> lb(li);
               if (replace) {
-                  auto replacewith =
-                      (idx < 0) ? tape
-                                : lb.CreateExtractValue(tape, {(unsigned)idx});
-                  li->replaceAllUsesWith(replacewith);
+                auto replacewith =
+                    (idx < 0) ? tape
+                              : lb.CreateExtractValue(tape, {(unsigned)idx});
+                li->replaceAllUsesWith(replacewith);
               } else {
-                  auto phi = lb.CreatePHI(li->getType(), 0, li->getName()+"_cfrphi");
-                  unwrappedLoads[phi] = malloc;
-                  li->replaceAllUsesWith(phi);
+                auto phi =
+                    lb.CreatePHI(li->getType(), 0, li->getName() + "_cfrphi");
+                unwrappedLoads[phi] = malloc;
+                li->replaceAllUsesWith(phi);
               }
               erase(li);
             } else {
@@ -1472,7 +1488,7 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
               llvm::errs() << "malloc: " << *malloc << "\n";
               llvm::errs() << "scopeMap[malloc]: " << *found->first << "\n";
               llvm::errs() << "u: " << *u << "\n";
-              assert(0 && "illegal use for out of loop scopeMap");
+              assert(0 && "illegal use for out of loop scopeMap1");
             }
           }
 
@@ -1573,7 +1589,7 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
               llvm::errs() << "malloc: " << *malloc << "\n";
               llvm::errs() << "scopeMap[malloc]: " << *found->first << "\n";
               llvm::errs() << "u: " << *u << "\n";
-              assert(0 && "illegal use for out of loop scopeMap");
+              assert(0 && "illegal use for out of loop scopeMap2");
             }
           }
 
@@ -2023,7 +2039,8 @@ bool GradientUtils::shouldRecompute(const Value *val,
 
   const Instruction *inst = cast<Instruction>(val);
 
-  if (TapesToPreventRecomputation.count(inst)) return false;
+  if (TapesToPreventRecomputation.count(inst))
+    return false;
 
   if (knownRecomputeHeuristic.find(inst) != knownRecomputeHeuristic.end()) {
     return knownRecomputeHeuristic[inst];

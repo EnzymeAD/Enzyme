@@ -9,6 +9,8 @@
 // RUN: if [ %llvmver -ge 9 ]; then %clang -fopenmp -std=c11 -fno-vectorize -fno-unroll-loops -O2 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -enzyme-inline=1 -S | %clang -fopenmp -x ir - -o %s.out && %s.out ; fi
 // RUN: if [ %llvmver -ge 9 ]; then %clang -fopenmp -std=c11 -fno-vectorize -fno-unroll-loops -O3 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -enzyme-inline=1 -S | %clang -fopenmp -x ir - -o %s.out && %s.out ; fi
 
+// XFAIL: *
+
 #include <stdio.h>
 #include <math.h>
 #include <assert.h>
@@ -29,6 +31,8 @@ void omp(float& a, int N) {
   (&a)[0] = 0;
 }
 */
+
+
 void omp(float* a, int N, int M) {
   #pragma omp parallel for
   #pragma nounroll

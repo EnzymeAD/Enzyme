@@ -528,7 +528,7 @@ void PreProcessCache::ReplaceReallocs(Function *NewF, bool mem2reg) {
 
   std::vector<CallInst *> ToConvert;
   std::map<CallInst *, Value *> reallocSizes;
-  IntegerType *T;
+  IntegerType *T = nullptr;
 
   for (auto &BB : *NewF) {
     for (auto &I : BB) {
@@ -548,6 +548,7 @@ void PreProcessCache::ReplaceReallocs(Function *NewF, bool mem2reg) {
   std::vector<AllocaInst *> memoryLocations;
 
   for (auto CI : ToConvert) {
+    assert(T);
     AllocaInst *AI =
         OldAllocationSize(CI->getArgOperand(0), CI, NewF, T, reallocSizes);
 

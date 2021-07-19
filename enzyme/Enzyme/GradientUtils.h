@@ -492,11 +492,11 @@ public:
         pair->second = B;
     }
     if (auto iA = dyn_cast<Instruction>(A)) {
-        auto iB = cast<Instruction>(B);
-        if (unwrappedLoads.find(iA) != unwrappedLoads.end()) {
-          unwrappedLoads[iB] = unwrappedLoads[iA];
-          unwrappedLoads.erase(iA);
-        }
+      auto iB = cast<Instruction>(B);
+      if (unwrappedLoads.find(iA) != unwrappedLoads.end()) {
+        unwrappedLoads[iB] = unwrappedLoads[iA];
+        unwrappedLoads.erase(iA);
+      }
     }
 
     if (invertedPointers.find(A) != invertedPointers.end()) {
@@ -874,9 +874,9 @@ public:
   }
 
   void eraseFictiousPHIs() {
-    std::vector<std::pair<PHINode*, Value*>> phis;
+    std::vector<std::pair<PHINode *, Value *>> phis;
     for (auto pair : fictiousPHIs)
-        phis.emplace_back(pair.first, pair.second);
+      phis.emplace_back(pair.first, pair.second);
     fictiousPHIs.clear();
 
     for (auto pair : phis) {
@@ -1495,8 +1495,9 @@ public:
         Value *v = ConstantInt::get(Type::getInt32Ty(st->getContext()), i);
         SmallVector<Value *, 2> idx2(idxs.begin(), idxs.end());
         idx2.push_back(v);
-        auto selects = addToDiffe(val, BuilderM.CreateExtractValue(dif, {i}),
-                                  BuilderM, nullptr, idx2);
+        auto selects = addToDiffe(
+            val, BuilderM.CreateExtractValue(dif, ArrayRef<unsigned>(i)),
+            BuilderM, nullptr, idx2);
         for (auto select : selects) {
           addedSelects.push_back(select);
         }
@@ -1561,8 +1562,9 @@ public:
     forfree->setMetadata(LLVMContext::MD_invariant_group, InvariantMD);
     forfree->setMetadata(
         LLVMContext::MD_dereferenceable,
-        MDNode::get(forfree->getContext(),
-                    {ConstantAsMetadata::get(byteSizeOfType)}));
+        MDNode::get(
+            forfree->getContext(),
+            ArrayRef<Metadata *>(ConstantAsMetadata::get(byteSizeOfType))));
     forfree->setName("forfree");
     unsigned bsize = (unsigned)byteSizeOfType->getZExtValue();
     if ((bsize & (bsize - 1)) == 0) {
