@@ -4501,9 +4501,9 @@ void GradientUtils::computeMinCache(
             bool oneneed = is_value_needed_in_reverse<ValueType::Primal,
                                                       /*OneLevel*/ true>(
                 TR, this, &I, mode, OneLevelSeen, guaranteedUnreachable);
-            if (oneneed)
+            if (oneneed) {
               knownRecomputeHeuristic[&I] = false;
-            else
+            } else
               Recomputes.insert(&I);
           }
         }

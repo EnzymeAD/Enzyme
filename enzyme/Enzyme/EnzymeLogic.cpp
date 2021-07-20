@@ -3003,7 +3003,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     std::vector<std::pair<Instruction *, Value *>> newIToNextI;
 
     for (const auto &m : mapping) {
-      if (m.first.second == CacheType::Self && !isa<CallInst>(m.first.first)) {
+      if (m.first.second == CacheType::Self && !isa<CallInst>(m.first.first) &&
+          gutils->knownRecomputeHeuristic.count(m.first.first)) {
+        assert(gutils->knownRecomputeHeuristic.count(m.first.first));
         auto newi = gutils->getNewFromOriginal(m.first.first);
         if (auto PN = dyn_cast<PHINode>(newi))
           if (gutils->fictiousPHIs.count(PN)) {

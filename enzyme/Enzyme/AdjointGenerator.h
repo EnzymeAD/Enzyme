@@ -375,32 +375,35 @@ public:
 
     Value *inst = newi;
 
-    // TODO: In the case of fwd mode this should be true if the loaded value
-    // itself is used as a pointer.
-    bool primalNeededInReverse =
-        Mode == DerivativeMode::ForwardMode
-            ? false
-            : is_value_needed_in_reverse<ValueType::Primal>(
-                  TR, gutils, &I, Mode, oldUnreachable);
     //! Store loads that need to be cached for use in reverse pass
-    if (cache_reads_always ||
-        (!cache_reads_never && can_modref && primalNeededInReverse)) {
-      if (!gutils->unnecessaryIntermediates.count(&I)) {
-        // Only cache value here if caching decision isn't precomputed.
-        // Otherwise caching will be done inside EnzymeLogic.cpp at
-        // the end of the function jointly.
-        if (gutils->knownRecomputeHeuristic.count(&I) == 0) {
-          IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&I));
-          // auto tbaa = inst->getMetadata(LLVMContext::MD_tbaa);
-          inst = gutils->cacheForReverse(BuilderZ, newi,
-                                         getIndex(&I, CacheType::Self));
-          assert(inst->getType() == type);
 
-          if (Mode == DerivativeMode::ReverseModeGradient) {
-            assert(inst != newi);
-          } else {
-            assert(inst == newi);
-          }
+    // Only cache value here if caching decision isn't precomputed.
+    // Otherwise caching will be done inside EnzymeLogic.cpp at
+    // the end of the function jointly.
+    if ((Mode != DerivativeMode::ForwardMode &&
+         gutils->knownRecomputeHeuristic.count(&I) == 0 &&
+         !gutils->unnecessaryIntermediates.count(&I) && can_modref &&
+         !cache_reads_never) ||
+        cache_reads_always) {
+      // we can pre initialize all the knownRecomputeHeuristic values to false
+      // (not needing) as we may assume that minCutCache already preserves
+      // everything it requires.
+      std::map<UsageKey, bool> Seen;
+      for (auto pair : gutils->knownRecomputeHeuristic)
+        Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+      bool primalNeededInReverse =
+          is_value_needed_in_reverse<ValueType::Primal>(TR, gutils, &I, Mode,
+                                                        Seen, oldUnreachable);
+      if (primalNeededInReverse) {
+        IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&I));
+        inst = gutils->cacheForReverse(BuilderZ, newi,
+                                       getIndex(&I, CacheType::Self));
+        assert(inst->getType() == type);
+
+        if (Mode == DerivativeMode::ReverseModeGradient) {
+          assert(inst != newi);
+        } else {
+          assert(inst == newi);
         }
       }
     }
