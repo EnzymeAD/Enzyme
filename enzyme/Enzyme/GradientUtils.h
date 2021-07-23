@@ -773,12 +773,14 @@ public:
 public:
   AAResults &OrigAA;
   TypeAnalysis &TA;
+  bool omp;
   GradientUtils(EnzymeLogic &Logic, Function *newFunc_, Function *oldFunc_,
                 TargetLibraryInfo &TLI_, TypeAnalysis &TA_,
                 ValueToValueMapTy &invertedPointers_,
                 const SmallPtrSetImpl<Value *> &constantvalues_,
                 const SmallPtrSetImpl<Value *> &activevals_, bool ActiveReturn,
-                ValueToValueMapTy &originalToNewFn_, DerivativeMode mode)
+                ValueToValueMapTy &originalToNewFn_, DerivativeMode mode,
+                bool omp)
       : CacheUtility(TLI_, newFunc_), Logic(Logic), mode(mode),
         oldFunc(oldFunc_), invertedPointers(),
         OrigDT(Logic.PPC.FAM.getResult<llvm::DominatorTreeAnalysis>(*oldFunc_)),
@@ -790,7 +792,8 @@ public:
         ATA(new ActivityAnalyzer(
             Logic.PPC, Logic.PPC.getAAResultsFromFunction(oldFunc_), TLI_,
             constantvalues_, activevals_, ActiveReturn)),
-        OrigAA(Logic.PPC.getAAResultsFromFunction(oldFunc_)), TA(TA_) {
+        OrigAA(Logic.PPC.getAAResultsFromFunction(oldFunc_)), TA(TA_),
+        omp(omp) {
     if (oldFunc_->getSubprogram()) {
       assert(originalToNewFn_.hasMD());
     }
@@ -819,6 +822,8 @@ public:
     tape = nullptr;
     tapeidx = 0;
     assert(originalBlocks.size() > 0);
+    if (omp)
+      setupOMPFor();
   }
 
 public:
@@ -826,7 +831,7 @@ public:
   CreateFromClone(EnzymeLogic &Logic, Function *todiff, TargetLibraryInfo &TLI,
                   TypeAnalysis &TA, DIFFE_TYPE retType,
                   const std::vector<DIFFE_TYPE> &constant_args, bool returnUsed,
-                  std::map<AugmentedStruct, int> &returnMapping);
+                  std::map<AugmentedStruct, int> &returnMapping, bool omp);
 
   StoreInst *setPtrDiffe(Value *ptr, Value *newval, IRBuilder<> &BuilderM) {
     if (auto inst = dyn_cast<Instruction>(ptr)) {
@@ -1265,10 +1270,10 @@ class DiffeGradientUtils : public GradientUtils {
                      const SmallPtrSetImpl<Value *> &constantvalues_,
                      const SmallPtrSetImpl<Value *> &returnvals_,
                      bool ActiveReturn, ValueToValueMapTy &origToNew_,
-                     DerivativeMode mode)
+                     DerivativeMode mode, bool omp)
       : GradientUtils(Logic, newFunc_, oldFunc_, TLI, TA, invertedPointers_,
                       constantvalues_, returnvals_, ActiveReturn, origToNew_,
-                      mode) {
+                      mode, omp) {
     assert(reverseBlocks.size() == 0);
     if (mode == DerivativeMode::ForwardMode) {
       return;
@@ -1291,7 +1296,7 @@ public:
                   TargetLibraryInfo &TLI, TypeAnalysis &TA, DIFFE_TYPE retType,
                   bool diffeReturnArg,
                   const std::vector<DIFFE_TYPE> &constant_args,
-                  ReturnType returnValue, Type *additionalArg);
+                  ReturnType returnValue, Type *additionalArg, bool omp);
 
 private:
   Value *getDifferential(Value *val) {
