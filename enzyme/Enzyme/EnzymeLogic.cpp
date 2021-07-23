@@ -1457,9 +1457,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
   GradientUtils *gutils = GradientUtils::CreateFromClone(
       *this, todiff, TLI, TA, retType, constant_args,
-      /*returnUsed*/ returnUsed, returnMapping);
-  if (omp)
-    gutils->setupOMPFor();
+      /*returnUsed*/ returnUsed, returnMapping, omp);
   gutils->AtomicAdd = AtomicAdd;
   const SmallPtrSet<BasicBlock *, 4> guaranteedUnreachable =
       getGuaranteedUnreachable(gutils->oldFunc);
@@ -2700,10 +2698,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
       *this, mode, todiff, TLI, TA, retType, diffeReturnArg, constant_args,
-      retVal, additionalArg);
+      retVal, additionalArg, omp);
 
-  if (omp)
-    gutils->setupOMPFor();
   gutils->AtomicAdd = AtomicAdd;
   insert_or_assign2<ReverseCacheKey, Function *>(ReverseCachedFunctions, tup,
                                                  gutils->newFunc);
