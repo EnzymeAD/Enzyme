@@ -3952,7 +3952,9 @@ public:
         normalReturn = gutils->cacheForReverse(BuilderZ, normalReturn,
                                                getIndex(orig, CacheType::Self));
       } else {
-        eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
+        if (!orig->mayWriteToMemory() ||
+            Mode == DerivativeMode::ReverseModeGradient)
+          eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
       }
       return;
     }
@@ -4434,7 +4436,7 @@ public:
         }
 
         if (funcName == "julia.write_barrier") {
-          if (Mode == DerivativeMode::ReverseModeGradient) {
+          if (Mode == DerivativeMode::ReverseModePrimal) {
             eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
             return;
           }
