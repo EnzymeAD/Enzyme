@@ -97,7 +97,7 @@ attributes #2 = { nounwind }
 ; CHECK-NEXT:   %5 = fadd fast double %4, %3
 ; CHECK-NEXT:   store double %5, double* %"arrayidx'ipg_unwrap", align 8
 ; CHECK-NEXT:   %6 = icmp eq i64 %"iv'ac.0", 0
-; CHECK-NEXT:   %7 = select i1 %6, double 0.000000e+00, double %3
+; CHECK-NEXT:   %7 = select{{( fast)?}} i1 %6, double 0.000000e+00, double %3
 ; CHECK-NEXT:   br i1 %6, label %invertentry, label %incinvertfor.body
 
 ; CHECK: incinvertfor.body:                                ; preds = %invertfor.body

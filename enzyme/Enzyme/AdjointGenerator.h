@@ -110,6 +110,11 @@ public:
                      bool check = true) {
     bool used =
         unnecessaryInstructions.find(&I) == unnecessaryInstructions.end();
+    if (!used) {
+      auto found = gutils->knownRecomputeHeuristic.find(&I);
+      if (found != gutils->knownRecomputeHeuristic.end() && !gutils->unnecessaryIntermediates.count(&I))
+        used = true;
+    }
     auto iload = gutils->getNewFromOriginal((Value *)&I);
     if (used && check)
       return;
@@ -4904,10 +4909,10 @@ public:
         }
       }
       if (!primalNeededInReverse && hasPDFree) {
-        if (hasMetadata(orig, "enzyme_fromstack")) {
-          if (Mode == DerivativeMode::ReverseModeGradient) {
-            eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
-          } else {
+        if (Mode == DerivativeMode::ReverseModeGradient) {
+          eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
+        } else {
+          if (hasMetadata(orig, "enzyme_fromstack")) {
             IRBuilder<> B(newCall);
             if (auto CI = dyn_cast<ConstantInt>(orig->getArgOperand(0))) {
               B.SetInsertPoint(gutils->inversionAllocs);
