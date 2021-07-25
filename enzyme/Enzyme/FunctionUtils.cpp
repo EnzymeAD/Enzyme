@@ -1242,59 +1242,6 @@ Function *PreProcessCache::preprocessForClone(Function *F,
     }
   }
 
-  {
-    std::vector<Instruction *> FreesToErase;
-    for (auto &BB : *NewF) {
-      for (auto &I : BB) {
-
-        if (auto CI = dyn_cast<CallInst>(&I)) {
-
-          Function *called = CI->getCalledFunction();
-#if LLVM_VERSION_MAJOR >= 11
-          if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand()))
-#else
-          if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledValue()))
-#endif
-          {
-            if (castinst->isCast()) {
-              if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-                if (isDeallocationFunction(
-                        *fn, FAM.getResult<TargetLibraryAnalysis>(*NewF))) {
-                  called = fn;
-                }
-              }
-            }
-          }
-
-          if (called &&
-              isDeallocationFunction(
-                  *called, FAM.getResult<TargetLibraryAnalysis>(*NewF))) {
-            FreesToErase.push_back(CI);
-          }
-        }
-      }
-    }
-    // TODO we should ensure these are kept to avoid accidentially creating
-    // a memory leak
-    for (auto Free : FreesToErase) {
-      Free->eraseFromParent();
-    }
-    PreservedAnalyses PA;
-    PA.preserve<AssumptionAnalysis>();
-    PA.preserve<TargetLibraryAnalysis>();
-    PA.preserve<LoopAnalysis>();
-    PA.preserve<DominatorTreeAnalysis>();
-    PA.preserve<PostDominatorTreeAnalysis>();
-    PA.preserve<TypeBasedAA>();
-    PA.preserve<BasicAA>();
-    PA.preserve<ScopedNoAliasAA>();
-    PA.preserve<ScalarEvolutionAnalysis>();
-#if LLVM_VERSION_MAJOR > 6
-    PA.preserve<PhiValuesAnalysis>();
-#endif
-    FAM.invalidate(*NewF, PA);
-  }
-
 #if LLVM_VERSION_MAJOR >= 12
   ScalarizeMaskedMemIntrinPass().run(*NewF, FAM);
 #endif

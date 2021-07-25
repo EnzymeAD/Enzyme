@@ -4880,18 +4880,58 @@ public:
         }
       }
 
+      std::map<UsageKey, bool> Seen;
+      for (auto pair : gutils->knownRecomputeHeuristic)
+        Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+      bool primalNeededInReverse =
+          is_value_needed_in_reverse<ValueType::Primal>(TR, gutils, orig, Mode,
+                                                        Seen, oldUnreachable);
+      bool hasPDFree = hasMetadata(orig, "enzyme_fromstack");
+      if (!hasPDFree) {
+        for (auto origU : orig->users()) {
+          if (auto CI = dyn_cast<CallInst>(origU)) {
+            if (auto F = CI->getCalledFunction()) {
+              if (isDeallocationFunction(*F, gutils->TLI)) {
+                if (orig->getParent() == CI->getParent() ||
+                    gutils->OrigPDT.dominates(CI->getParent(),
+                                              orig->getParent())) {
+                  hasPDFree = true;
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+      if (!primalNeededInReverse && hasPDFree) {
+        if (hasMetadata(orig, "enzyme_fromstack")) {
+          if (Mode == DerivativeMode::ReverseModeGradient) {
+            eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
+          } else {
+            IRBuilder<> B(newCall);
+            if (auto CI = dyn_cast<ConstantInt>(orig->getArgOperand(0))) {
+              B.SetInsertPoint(gutils->inversionAllocs);
+            }
+            auto replacement = B.CreateAlloca(
+                Type::getInt8Ty(orig->getContext()),
+                gutils->getNewFromOriginal(orig->getArgOperand(0)));
+            gutils->replaceAWithB(newCall, replacement);
+            gutils->erase(newCall);
+          }
+        }
+        return;
+      }
+
       // TODO enable this if we need to free the memory
       // NOTE THAT TOPLEVEL IS THERE SIMPLY BECAUSE THAT WAS PREVIOUS ATTITUTE
       // TO FREE'ing
       if (Mode != DerivativeMode::ReverseModeCombined) {
-        if ((is_value_needed_in_reverse<ValueType::Primal>(
-                 TR, gutils, orig, Mode, oldUnreachable) &&
+        if ((primalNeededInReverse &&
              !gutils->unnecessaryIntermediates.count(orig)) ||
-            hasMetadata(orig, "enzyme_fromstack")) {
+            hasPDFree) {
           Value *nop = gutils->cacheForReverse(BuilderZ, newCall,
                                                getIndex(orig, CacheType::Self));
-          if (Mode == DerivativeMode::ReverseModeGradient &&
-              hasMetadata(orig, "enzyme_fromstack")) {
+          if (Mode == DerivativeMode::ReverseModeGradient && hasPDFree) {
             IRBuilder<> Builder2(call.getParent());
             getReverseBuilder(Builder2);
             freeKnownAllocation(Builder2, lookup(nop, Builder2), *called,
@@ -5056,9 +5096,31 @@ public:
       if (auto dc = dyn_cast<CallInst>(val)) {
         if (dc->getCalledFunction() &&
             isAllocationFunction(*dc->getCalledFunction(), gutils->TLI)) {
-          // llvm::errs() << "erasing free(orig): " << *orig << "\n";
-          eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
-          return;
+
+          std::map<UsageKey, bool> Seen;
+          for (auto pair : gutils->knownRecomputeHeuristic)
+            Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+          bool primalNeededInReverse =
+              is_value_needed_in_reverse<ValueType::Primal>(
+                  TR, gutils, val, Mode, Seen, oldUnreachable);
+          bool hasPDFree = hasMetadata(orig, "enzyme_fromstack");
+          if (!hasPDFree) {
+            if (dc->getParent() == orig->getParent() ||
+                gutils->OrigPDT.dominates(orig->getParent(), dc->getParent())) {
+              hasPDFree = true;
+            }
+          }
+
+          if (!primalNeededInReverse && hasPDFree) {
+            if (Mode == DerivativeMode::ReverseModeGradient) {
+              eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
+            }
+            return;
+          } else {
+            // llvm::errs() << "erasing free(orig): " << *orig << "\n";
+            eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
+            return;
+          }
         }
       }
 
