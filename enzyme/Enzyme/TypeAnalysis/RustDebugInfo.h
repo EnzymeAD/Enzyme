@@ -5,32 +5,37 @@
 #ifndef ENZYME_RUSTDEBUGINFO_H
 #define ENZYME_RUSTDEBUGINFO_H 1
 
-static inline Optional<ConcreteType> getConcreteTypeFromDITypeString(std::string TypeName, Instruction& I) {
+static inline ConcreteType getConcreteTypeFromDITypeString(std::string TypeName, Instruction& I) {
   if (TypeName == "f64") {
-    return Optional<ConcreteType>(Type::getDoubleTy(I.getContext()));
+    return Type::getDoubleTy(I.getContext());
   }
   else if (TypeName == "f32") {
-    return Optional<ConcreteType>(Type::getFloatTy(I.getContext()));
+    return Type::getFloatTy(I.getContext());
   }
   else if (TypeName == "i8" || TypeName == "i16" ||TypeName == "i32" || TypeName == "i64" || TypeName == "isize" ||
            TypeName == "u8" || TypeName == "u16" ||TypeName == "u32" || TypeName == "u64" || TypeName == "usize") {
-    return Optional<ConcreteType>(ConcreteType(BaseType::Integer));
+    return ConcreteType(BaseType::Integer);
+  }
+  else if (TypeName[0] == '&'){
+    return ConcreteType(BaseType::Pointer);
   }
   else {
-    // TODO[Chen] Consider pointers
-    return Optional<ConcreteType>(ConcreteType(BaseType::Unknown));
+    return ConcreteType(BaseType::Unknown);
   }
 }
 
 static inline TypeTree parseDIType(DbgDeclareInst& I) {
   DIType* type = I.getVariable()->getType();
-  Optional<ConcreteType> CT = getConcreteTypeFromDITypeString(type->getName().str(), I);
-  if (CT) {
-    return TypeTree(CT.getValue()).Only(0);
+  auto CT = getConcreteTypeFromDITypeString(type->getName().str(), I);
+  if (!CT.isPossiblePointer()) {
+    return TypeTree(CT).Only(-1);
   }
   else {
-    // TODO[Chen] Consider non-concrete types
-    assert(false);
+//    TypeTree Result(BaseType::Pointer);
+//    Result.Only(-1);
+//    Result |= TypeTree(Type::getDoubleTy(I.getContext())).Only(-1);
+//    return Result.Only(-1);
+    return TypeTree(BaseType::Unknown).Only(-1);
   }
 }
 

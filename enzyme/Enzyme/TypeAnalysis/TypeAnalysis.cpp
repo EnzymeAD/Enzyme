@@ -4219,30 +4219,12 @@ ConcreteType TypeAnalysis::firstPointer(size_t num, Value *val,
 }
 
 void TypeAnalyzer::considerRustDebugInfo() {
-    std::map<Value*, TypeTree> Types;
-
     for (BasicBlock &BB: *fntypeinfo.Function) {
       for (Instruction &I: BB) {
         if (DbgDeclareInst* DDI = dyn_cast<DbgDeclareInst>(&I)) {
-          Value* addr = DDI->getAddress();
-          Types.emplace(addr, parseDIType(*DDI));
-        }
-      }
-    }
-
-    for (BasicBlock &BB: *fntypeinfo.Function) {
-      for (Instruction &I: BB) {
-        if (StoreInst *SI = dyn_cast<StoreInst>(&I)) {
-          Value* pointer = SI->getPointerOperand();
-          if (Types.count(pointer)) {
-            updateAnalysis(SI, Types.at(pointer), pointer);
-          }
-        }
-        if (LoadInst *LI = dyn_cast<LoadInst>(&I)) {
-          Value* pointer = LI->getPointerOperand();
-          if (Types.count(pointer)) {
-            updateAnalysis(LI, Types.at(pointer), pointer);
-          }
+          TypeTree TT = parseDIType(*DDI);
+          TT |= TypeTree(BaseType::Pointer);
+          updateAnalysis(DDI->getAddress(), TT.Only(-1), DDI);
         }
       }
     }
