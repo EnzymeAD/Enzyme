@@ -112,7 +112,8 @@ public:
         unnecessaryInstructions.find(&I) == unnecessaryInstructions.end();
     if (!used) {
       auto found = gutils->knownRecomputeHeuristic.find(&I);
-      if (found != gutils->knownRecomputeHeuristic.end() && !gutils->unnecessaryIntermediates.count(&I))
+      if (found != gutils->knownRecomputeHeuristic.end() &&
+          !gutils->unnecessaryIntermediates.count(&I))
         used = true;
     }
     auto iload = gutils->getNewFromOriginal((Value *)&I);

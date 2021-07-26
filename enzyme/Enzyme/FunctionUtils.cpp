@@ -50,7 +50,6 @@
 #include "llvm/Analysis/DependenceAnalysis.h"
 #include "llvm/Analysis/TypeBasedAliasAnalysis.h"
 #include "llvm/CodeGen/UnreachableBlockElim.h"
-
 #include "llvm/Analysis/CFLSteensAliasAnalysis.h"
 
 #if LLVM_VERSION_MAJOR > 6
@@ -97,6 +96,7 @@
 #include "llvm/Transforms/Scalar/LoopRotation.h"
 
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
+#include "llvm/Transforms/Utils/Local.h"
 
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
@@ -933,6 +933,43 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       Call->setArgOperand(
           0, B.CreateAdd(Call->getArgOperand(0), Call->getArgOperand(1)));
     }
+  }
+
+  // Assume allocations do not return null
+  {
+    TargetLibraryInfo &TLI = FAM.getResult<TargetLibraryAnalysis>(*F);
+    SmallVector<Instruction *, 0> CmpsToErase;
+    SmallVector<BasicBlock *, 0> BranchesToErase;
+    for (auto &BB : *NewF) {
+      for (auto &I : BB) {
+        if (auto IC = dyn_cast<ICmpInst>(&I)) {
+          if (!IC->isEquality())
+            continue;
+          for (int i = 0; i < 2; i++) {
+            if (isa<ConstantPointerNull>(IC->getOperand(1 - i)))
+              if (auto CI = dyn_cast<CallInst>(IC->getOperand(i))) {
+                if (CI->getCalledFunction() &&
+                    isAllocationFunction(*CI->getCalledFunction(), TLI)) {
+                  for (auto U : IC->users()) {
+                    if (auto BI = dyn_cast<BranchInst>(U))
+                      BranchesToErase.push_back(BI->getParent());
+                  }
+                  IC->replaceAllUsesWith(
+                      IC->getPredicate() == ICmpInst::ICMP_NE
+                          ? ConstantInt::getTrue(I.getContext())
+                          : ConstantInt::getFalse(I.getContext()));
+                  CmpsToErase.push_back(&I);
+                  break;
+                }
+              }
+          }
+        }
+      }
+    }
+    for (auto I : CmpsToErase)
+      I->eraseFromParent();
+    for (auto BE : BranchesToErase)
+      ConstantFoldTerminator(BE);
   }
 
   {
