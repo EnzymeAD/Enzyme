@@ -83,3 +83,7 @@ If you run Enzyme tests and get an error like `/bin/sh: 1: ../../: Permission de
 ```sh
 cmake .. -DLLVM_EXTERNAL_LIT=/path/to/lit/lit.py
 ```
+
+## Developing inside a Container
+
+For debugging and testing purposes we have created [Docker images](https://github.com/tgymnich/enzyme-dev-docker), which closely resemble all of our CI environments. If you are using Visual Studio Code you can build and test Enzyme inside of a [Dev Container](https://code.visualstudio.com/docs/remote/containers). To change either the Ubuntu or the LLVM version in Visual Studio Code just edit the file at `.devcontainer/devcontainer.json` accordingly.
