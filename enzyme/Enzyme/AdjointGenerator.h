@@ -4041,7 +4041,8 @@ public:
       } else {
         std::map<UsageKey, bool> Seen;
         for (auto pair : gutils->knownRecomputeHeuristic)
-          Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+          if (!pair.second)
+            Seen[UsageKey(pair.first, ValueType::Primal)] = false;
         primalNeededInReverse = is_value_needed_in_reverse<ValueType::Primal>(
             TR, gutils, orig, Mode, Seen, oldUnreachable);
       }
@@ -4888,27 +4889,12 @@ public:
 
       std::map<UsageKey, bool> Seen;
       for (auto pair : gutils->knownRecomputeHeuristic)
-        Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+        if (!pair.second)
+          Seen[UsageKey(pair.first, ValueType::Primal)] = false;
       bool primalNeededInReverse =
           is_value_needed_in_reverse<ValueType::Primal>(TR, gutils, orig, Mode,
                                                         Seen, oldUnreachable);
-      bool hasPDFree = hasMetadata(orig, "enzyme_fromstack");
-      if (!hasPDFree) {
-        for (auto origU : orig->users()) {
-          if (auto CI = dyn_cast<CallInst>(origU)) {
-            if (auto F = CI->getCalledFunction()) {
-              if (isDeallocationFunction(*F, gutils->TLI)) {
-                if (orig->getParent() == CI->getParent() ||
-                    gutils->OrigPDT.dominates(CI->getParent(),
-                                              orig->getParent())) {
-                  hasPDFree = true;
-                  break;
-                }
-              }
-            }
-          }
-        }
-      }
+      bool hasPDFree = gutils->allocationsWithGuaranteedFree.count(orig);
       if (!primalNeededInReverse && hasPDFree) {
         if (Mode == DerivativeMode::ReverseModeGradient) {
           eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
@@ -5095,41 +5081,16 @@ public:
         gutils->erase(placeholder);
       }
 
+      if (gutils->forwardDeallocations.count(orig)) {
+        if (Mode == DerivativeMode::ReverseModeGradient) {
+          eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
+        }
+        return;
+      }
+
       llvm::Value *val = orig->getArgOperand(0);
       while (auto cast = dyn_cast<CastInst>(val))
         val = cast->getOperand(0);
-
-      if (auto dc = dyn_cast<CallInst>(val)) {
-        if (dc->getCalledFunction() &&
-            isAllocationFunction(*dc->getCalledFunction(), gutils->TLI)) {
-
-          std::map<UsageKey, bool> Seen;
-          for (auto pair : gutils->knownRecomputeHeuristic)
-            Seen[UsageKey(pair.first, ValueType::Primal)] = false;
-          bool primalNeededInReverse =
-              is_value_needed_in_reverse<ValueType::Primal>(
-                  TR, gutils, val, Mode, Seen, oldUnreachable);
-          bool hasPDFree = hasMetadata(orig, "enzyme_fromstack");
-          if (!hasPDFree) {
-            if (dc->getParent() == orig->getParent() ||
-                gutils->OrigPDT.dominates(orig->getParent(), dc->getParent())) {
-              hasPDFree = true;
-            }
-          }
-
-          if (!primalNeededInReverse && hasPDFree) {
-            if (Mode == DerivativeMode::ReverseModeGradient) {
-              eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
-            }
-            return;
-          } else {
-            // llvm::errs() << "erasing free(orig): " << *orig << "\n";
-            eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
-            return;
-          }
-        }
-      }
-
       if (isa<ConstantPointerNull>(val)) {
         llvm::errs() << "removing free of null pointer\n";
         eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);

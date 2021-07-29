@@ -47,10 +47,10 @@
 #include "llvm/Analysis/MemorySSA.h"
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"
 
+#include "llvm/Analysis/CFLSteensAliasAnalysis.h"
 #include "llvm/Analysis/DependenceAnalysis.h"
 #include "llvm/Analysis/TypeBasedAliasAnalysis.h"
 #include "llvm/CodeGen/UnreachableBlockElim.h"
-#include "llvm/Analysis/CFLSteensAliasAnalysis.h"
 
 #if LLVM_VERSION_MAJOR > 6
 #include "llvm/Analysis/PhiValues.h"
