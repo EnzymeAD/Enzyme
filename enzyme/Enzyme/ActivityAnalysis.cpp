@@ -566,12 +566,12 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
   if (isa<Function>(Val) || isa<InlineAsm>(Val)) {
     return false;
   }
-  
+
   /// If we've already shown this value to be inactive
   if (ConstantValues.find(Val) != ConstantValues.end()) {
     return true;
   }
-  
+
   /// If we've already shown this value to be active
   if (ActiveValues.find(Val) != ActiveValues.end()) {
     return false;
@@ -580,7 +580,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
   if (auto CD = dyn_cast<ConstantDataSequential>(Val)) {
     // inductively assume inactive
     ConstantValues.insert(CD);
-    for (size_t i=0, len=CD->getNumElements(); i<len; i++) {
+    for (size_t i = 0, len = CD->getNumElements(); i < len; i++) {
       if (!isConstantValue(TR, CD->getElementAsConstant(i))) {
         ConstantValues.erase(CD);
         ActiveValues.insert(CD);
@@ -592,7 +592,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
   if (auto CD = dyn_cast<ConstantAggregate>(Val)) {
     // inductively assume inactive
     ConstantValues.insert(CD);
-    for (size_t i=0, len=CD->getNumOperands(); i<len; i++) {
+    for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
       if (!isConstantValue(TR, CD->getOperand(i))) {
         ConstantValues.erase(CD);
         ActiveValues.insert(CD);
@@ -601,7 +601,6 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
     }
     return true;
   }
-
 
   // Undef, metadata, non-global constants, and blocks are inactive
   if (isa<UndefValue>(Val) || isa<MetadataAsValue>(Val) ||
@@ -699,7 +698,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
     if (GI->isConstant() && isConstantValue(TR, GI->getInitializer())) {
       InsertConstantValue(TR, Val);
       if (EnzymePrintActivity)
-        llvm::errs() << " VALUE const global " << *Val << " init: " << *GI->getInitializer() << "\n";
+        llvm::errs() << " VALUE const global " << *Val
+                     << " init: " << *GI->getInitializer() << "\n";
       return true;
     }
 
