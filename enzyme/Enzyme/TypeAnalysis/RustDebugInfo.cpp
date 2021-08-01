@@ -35,22 +35,9 @@ TypeTree parseDIType(DIBasicType& Type, Instruction& I, DataLayout& DL) {
   return Result;
 }
 
-//static TypeTree getTypeTreeFromDITypeString(std::string TypeName, Instruction& I) {
-//  if (TypeName[0] == '&') {
-//    TypeTree TT = getTypeTreeFromDITypeString(TypeName.substr(1), I);
-//    TypeTree Result(BaseType::Pointer);
-//    Result |= TT;
-//    return Result.Only(-1);
-//  }
-//  else {
-//    ConcreteType CT = getConcreteTypeFromDITypeString(TypeName, I);
-//    return TypeTree(CT).Only(-1);
-//  }
-//}
-
 TypeTree parseDIType(DICompositeType& Type, Instruction& I, DataLayout& DL) {
   TypeTree Result;
-  if (Type.getTag() & dwarf::DW_TAG_array_type) {
+  if (Type.getTag() == dwarf::DW_TAG_array_type) {
     DIType* SubType = Type.getBaseType();
     TypeTree SubTT = parseDIType(*SubType, I, DL);
     size_t Align = Type.getAlignInBytes();
@@ -74,19 +61,33 @@ TypeTree parseDIType(DICompositeType& Type, Instruction& I, DataLayout& DL) {
     }
     return Result;
   }
+  else if (Type.getTag() == dwarf::DW_TAG_structure_type) {
+    DINodeArray Elements = Type.getElements();
+    for (auto e: Elements) {
+      DIType *SubType = dyn_cast<DIType>(e);
+      TypeTree SubTT = parseDIType(*SubType, I, DL);
+      Result |= SubTT;
+    }
+    return Result;
+  }
   else {
-    assert(0 && "Composite types other than array are not supported by Rust debug info parser");
+    assert(0 && "Composite types other than array and struct are not supported by Rust debug info parser");
   }
 }
 
 TypeTree parseDIType(DIDerivedType& Type, Instruction& I, DataLayout& DL) {
-  if (Type.getTag() & dwarf::DW_TAG_pointer_type) {
+  if (Type.getTag() == dwarf::DW_TAG_pointer_type) {
     TypeTree Result(BaseType::Pointer);
     Result |= parseDIType(*Type.getBaseType(), I, DL);
     return Result.Only(-1);
   }
+  else if (Type.getTag() == dwarf::DW_TAG_member) {
+    size_t Offset = Type.getOffsetInBits() / 8;
+    DIType* SubType = Type.getBaseType();
+    return parseDIType(*SubType, I, DL).ShiftIndices(DL, 0, -1, Offset);
+  }
   else {
-    assert(0 && "Derived types other than reference are not supported by Rust debug info parser");
+    assert(0 && "Derived types other than pointer and member are not supported by Rust debug info parser");
   }
 }
 
