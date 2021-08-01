@@ -34,7 +34,6 @@
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
-#include "llvm/IR/DebugInfo.h"
 
 #include "llvm/IR/InstIterator.h"
 
@@ -4219,10 +4218,11 @@ ConcreteType TypeAnalysis::firstPointer(size_t num, Value *val,
 }
 
 void TypeAnalyzer::considerRustDebugInfo() {
+    DataLayout DL = fntypeinfo.Function->getParent()->getDataLayout();
     for (BasicBlock &BB: *fntypeinfo.Function) {
       for (Instruction &I: BB) {
         if (DbgDeclareInst* DDI = dyn_cast<DbgDeclareInst>(&I)) {
-          TypeTree TT = parseDIType(*DDI);
+          TypeTree TT = parseDIType(*DDI, DL);
           TT |= TypeTree(BaseType::Pointer);
           updateAnalysis(DDI->getAddress(), TT.Only(-1), DDI);
         }
