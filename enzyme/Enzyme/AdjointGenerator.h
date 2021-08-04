@@ -5980,6 +5980,456 @@ public:
     llvm_unreachable("Unhandled MPI FUNCTION");
   }
 
+  void handleBlas(llvm::CallInst &call, Function *called, StringRef funcName,
+                  CallInst *newCall,
+                  std::map<Argument *, bool> uncacheable_args) {
+    IRBuilder<> BuilderZ(newCall);
+    BuilderZ.setFastMathFlags(getFast());
+    CallInst *orig = &call;
+    if (funcName == "cblas_ddot" || funcName == "cblas_sdot") {
+      Type *innerType;
+      std::string dfuncName;
+      if (funcName == "cblas_ddot") {
+        innerType = Type::getDoubleTy(call.getContext());
+        dfuncName = "cblas_daxpy";
+      } else if (funcName == "cblas_sdot") {
+        innerType = Type::getFloatTy(call.getContext());
+        dfuncName = "cblas_saxpy";
+      } else {
+        assert(false && "Unreachable");
+      }
+      Type *castvals[2] = {call.getArgOperand(1)->getType(),
+                           call.getArgOperand(3)->getType()};
+      auto *cachetype = StructType::get(call.getContext(), ArrayRef(castvals));
+      Value *undefinit = UndefValue::get(cachetype);
+      Value *cacheval;
+      auto in_arg = call.getCalledFunction()->arg_begin();
+      in_arg++;
+      Argument *xfuncarg = in_arg;
+      in_arg++;
+      in_arg++;
+      Argument *yfuncarg = in_arg;
+      bool xcache = !gutils->isConstantValue(call.getArgOperand(3)) &&
+                    uncacheable_args.find(xfuncarg)->second;
+      bool ycache = !gutils->isConstantValue(call.getArgOperand(1)) &&
+                    uncacheable_args.find(yfuncarg)->second;
+      if ((Mode == DerivativeMode::ReverseModeCombined ||
+           Mode == DerivativeMode::ReverseModePrimal) &&
+          (xcache || ycache)) {
+        Value *arg1, *arg2;
+        auto size = ConstantExpr::getSizeOf(innerType);
+        if (xcache) {
+          auto dmemcpy =
+              getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(),
+                                       PointerType::getUnqual(innerType), 0, 0);
+          auto malins = CallInst::CreateMalloc(
+              gutils->getNewFromOriginal(&call), size->getType(), innerType,
+              size, call.getArgOperand(0), nullptr, "");
+          arg1 =
+              BuilderZ.CreateBitCast(malins, call.getArgOperand(1)->getType());
+          SmallVector<Value *, 4> args;
+          args.push_back(arg1);
+          args.push_back(gutils->getNewFromOriginal(call.getArgOperand(1)));
+          args.push_back(call.getArgOperand(0));
+          args.push_back(call.getArgOperand(2));
+          BuilderZ.CreateCall(dmemcpy, args);
+        }
+        if (ycache) {
+          auto dmemcpy =
+              getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(),
+                                       PointerType::getUnqual(innerType), 0, 0);
+          auto malins = CallInst::CreateMalloc(
+              gutils->getNewFromOriginal(&call), size->getType(), innerType,
+              size, call.getArgOperand(0), nullptr, "");
+          arg2 =
+              BuilderZ.CreateBitCast(malins, call.getArgOperand(3)->getType());
+          SmallVector<Value *, 4> args;
+          args.push_back(arg2);
+          args.push_back(gutils->getNewFromOriginal(call.getArgOperand(3)));
+          args.push_back(call.getArgOperand(0));
+          args.push_back(call.getArgOperand(4));
+          BuilderZ.CreateCall(dmemcpy, args);
+        }
+        if (xcache && ycache) {
+          auto valins1 = BuilderZ.CreateInsertValue(undefinit, arg1, 0);
+          cacheval = BuilderZ.CreateInsertValue(valins1, arg2, 1);
+        } else if (xcache)
+          cacheval = arg1;
+        else if (ycache)
+          cacheval = arg2;
+        gutils->cacheForReverse(BuilderZ, cacheval,
+                                getIndex(&call, CacheType::Tape));
+      }
+      if (Mode == DerivativeMode::ReverseModeCombined ||
+          Mode == DerivativeMode::ReverseModeGradient) {
+        IRBuilder<> Builder2(call.getParent());
+        getReverseBuilder(Builder2);
+        auto derivcall = gutils->oldFunc->getParent()->getOrInsertFunction(
+            dfuncName, Builder2.getVoidTy(), Builder2.getInt32Ty(), innerType,
+            call.getArgOperand(1)->getType(), Builder2.getInt32Ty(),
+            call.getArgOperand(3)->getType(), Builder2.getInt32Ty());
+        Value *structarg1;
+        Value *structarg2;
+        if (xcache || ycache) {
+          if (Mode == DerivativeMode::ReverseModeGradient &&
+              (!gutils->isConstantValue(call.getArgOperand(1)) ||
+               !gutils->isConstantValue(call.getArgOperand(3)))) {
+            cacheval = BuilderZ.CreatePHI(cachetype, 0);
+          }
+          cacheval =
+              lookup(gutils->cacheForReverse(BuilderZ, cacheval,
+                                             getIndex(&call, CacheType::Tape)),
+                     Builder2);
+          if (xcache && ycache) {
+            structarg1 = BuilderZ.CreateExtractValue(cacheval, 0);
+            structarg2 = BuilderZ.CreateExtractValue(cacheval, 1);
+          } else if (xcache)
+            structarg1 = cacheval;
+          else if (ycache)
+            structarg2 = cacheval;
+        }
+        if (!xcache)
+          structarg1 = lookup(
+              gutils->getNewFromOriginal(orig->getArgOperand(1)), Builder2);
+        if (!ycache)
+          structarg2 = lookup(
+              gutils->getNewFromOriginal(orig->getArgOperand(3)), Builder2);
+        CallInst *firstdcall, *seconddcall;
+        if (!gutils->isConstantValue(call.getArgOperand(3))) {
+          Value *estride;
+          if (xcache)
+            estride = Builder2.getInt32(1);
+          else
+            estride = lookup(gutils->getNewFromOriginal(orig->getArgOperand(2)),
+                             Builder2);
+          SmallVector<Value *, 6> args1 = {
+              lookup(gutils->getNewFromOriginal(orig->getArgOperand(0)),
+                     Builder2),
+              diffe(orig, Builder2),
+              structarg1,
+              estride,
+              gutils->invertPointerM(orig->getArgOperand(3), Builder2),
+              lookup(gutils->getNewFromOriginal(orig->getArgOperand(4)),
+                     Builder2)};
+          firstdcall = Builder2.CreateCall(derivcall, args1);
+        }
+        if (!gutils->isConstantValue(call.getArgOperand(1))) {
+          Value *estride;
+          if (ycache)
+            estride = Builder2.getInt32(1);
+          else
+            estride = lookup(gutils->getNewFromOriginal(orig->getArgOperand(4)),
+                             Builder2);
+          SmallVector<Value *, 6> args2 = {
+              lookup(gutils->getNewFromOriginal(orig->getArgOperand(0)),
+                     Builder2),
+              diffe(orig, Builder2),
+              structarg2,
+              estride,
+              gutils->invertPointerM(orig->getArgOperand(1), Builder2),
+              lookup(gutils->getNewFromOriginal(orig->getArgOperand(2)),
+                     Builder2)};
+          seconddcall = Builder2.CreateCall(derivcall, args2);
+        }
+        setDiffe(orig, Constant::getNullValue(orig->getType()), Builder2);
+        if (xcache)
+          CallInst::CreateFree(structarg1, firstdcall->getNextNode());
+        if (ycache)
+          CallInst::CreateFree(structarg2, seconddcall->getNextNode());
+      }
+
+      if (gutils->knownRecomputeHeuristic.find(orig) !=
+          gutils->knownRecomputeHeuristic.end()) {
+        if (!gutils->knownRecomputeHeuristic[orig]) {
+          gutils->cacheForReverse(BuilderZ, newCall,
+                                  getIndex(orig, CacheType::Self));
+        }
+      }
+
+      if (Mode == DerivativeMode::ReverseModeGradient) {
+        eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
+      } else {
+        eraseIfUnused(*orig);
+      }
+      return;
+    }
+
+    if (funcName == "cblas_dgemm" || funcName == "cblas_sgemm") {
+      Type *innerType;
+      std::string scfuncname;
+      if (funcName == "cblas_dgemm") {
+        innerType = Type::getDoubleTy(call.getContext());
+        scfuncname = "cblas_dscal";
+      } else if (funcName == "cblas_sgemm") {
+        innerType = Type::getFloatTy(call.getContext());
+        scfuncname = "cblas_sscal";
+      } else
+        assert(false && "Unreachable");
+      auto in_arg = call.getCalledFunction()->arg_begin();
+      in_arg++;
+      in_arg++;
+      in_arg++;
+      in_arg++;
+      in_arg++;
+      in_arg++;
+      in_arg++;
+      Argument *Aarg = in_arg;
+      in_arg++;
+      in_arg++;
+      Argument *Barg = in_arg;
+      auto aactive = !gutils->isConstantValue(call.getArgOperand(7));
+      auto bactive = !gutils->isConstantValue(call.getArgOperand(9));
+      assert(uncacheable_args.find(Aarg) != uncacheable_args.end());
+      assert(uncacheable_args.find(Barg) != uncacheable_args.end());
+      auto Acache = bactive && uncacheable_args.find(Aarg)->second;
+      auto Bcache = aactive && uncacheable_args.find(Barg)->second;
+      Type *castvals[2] = {call.getArgOperand(7)->getType(),
+                           call.getArgOperand(9)->getType()};
+      auto *cachetype = StructType::get(call.getContext(), ArrayRef(castvals));
+      Value *undefinit = UndefValue::get(cachetype);
+      Value *cacheval;
+      if ((Mode == DerivativeMode::ReverseModeCombined ||
+           Mode == DerivativeMode::ReverseModePrimal) &&
+          (Acache || Bcache)) {
+        Value *arg1, *arg2;
+        auto size = ConstantExpr::getSizeOf(innerType);
+        if (Acache) {
+          auto Asize =
+              BuilderZ.CreateMul(call.getArgOperand(3), call.getArgOperand(5));
+          auto malins = CallInst::CreateMalloc(
+              gutils->getNewFromOriginal(&call), size->getType(), innerType,
+              size, Asize, nullptr, "");
+          arg1 =
+              BuilderZ.CreateBitCast(malins, call.getArgOperand(7)->getType());
+#if LLVM_VERSION_MAJOR >= 10
+          BuilderZ.CreateMemCpy(
+              arg1, MaybeAlign(),
+              gutils->getNewFromOriginal(call.getArgOperand(7)), MaybeAlign(),
+              Asize);
+#else
+          BuilderZ.CreateMemCpy(
+              arg1, 0, gutils->getNewFromOriginal(call.getArgOperand(7)), 0,
+              Asize);
+#endif
+        }
+        if (Bcache) {
+          auto Bsize =
+              BuilderZ.CreateMul(call.getArgOperand(4), call.getArgOperand(5));
+          auto malins = CallInst::CreateMalloc(
+              gutils->getNewFromOriginal(&call), size->getType(), innerType,
+              size, Bsize, nullptr, "");
+          arg2 =
+              BuilderZ.CreateBitCast(malins, call.getArgOperand(9)->getType());
+#if LLVM_VERSION_MAJOR >= 10
+          BuilderZ.CreateMemCpy(
+              arg2, MaybeAlign(),
+              gutils->getNewFromOriginal(call.getArgOperand(9)), MaybeAlign(),
+              Bsize);
+#else
+          BuilderZ.CreateMemCpy(
+              arg2, 0, gutils->getNewFromOriginal(call.getArgOperand(9)), 0,
+              Bsize);
+#endif
+        }
+        if (Acache && Bcache) {
+          auto valins1 = BuilderZ.CreateInsertValue(undefinit, arg1, 0);
+          cacheval = BuilderZ.CreateInsertValue(valins1, arg2, 1);
+        } else if (Acache)
+          cacheval = arg1;
+        else if (Bcache)
+          cacheval = arg2;
+        gutils->cacheForReverse(BuilderZ, cacheval,
+                                getIndex(&call, CacheType::Tape));
+      }
+      if (Mode == DerivativeMode::ReverseModeCombined ||
+          Mode == DerivativeMode::ReverseModeGradient) {
+        IRBuilder<> Builder2(call.getParent());
+        getReverseBuilder(Builder2);
+        auto dfunc = gutils->oldFunc->getParent()->getOrInsertFunction(
+            funcName, Builder2.getVoidTy(), Builder2.getInt32Ty(),
+            Builder2.getInt32Ty(), Builder2.getInt32Ty(), Builder2.getInt32Ty(),
+            Builder2.getInt32Ty(), Builder2.getInt32Ty(),
+            call.getArgOperand(6)->getType(), call.getArgOperand(7)->getType(),
+            Builder2.getInt32Ty(), call.getArgOperand(7)->getType(),
+            Builder2.getInt32Ty(), call.getArgOperand(6)->getType(),
+            call.getArgOperand(7)->getType(), Builder2.getInt32Ty());
+        auto oneval = Builder2.getInt32(1);
+        auto doneval = Builder2.CreateSIToFP(oneval, innerType);
+        Value *sabtrans, *saldb, *sbatrans, *sblda, *saldc, *salda, *sbldb,
+            *sbldc;
+        Value *structarg1, *structarg2;
+        if (Acache || Bcache) {
+          if (Mode == DerivativeMode::ReverseModeGradient &&
+              (aactive || bactive)) {
+            cacheval = BuilderZ.CreatePHI(cachetype, 0);
+          }
+          cacheval =
+              lookup(gutils->cacheForReverse(BuilderZ, cacheval,
+                                             getIndex(&call, CacheType::Tape)),
+                     Builder2);
+          if (Acache && Bcache) {
+            structarg1 = BuilderZ.CreateExtractValue(cacheval, 0);
+            structarg2 = BuilderZ.CreateExtractValue(cacheval, 1);
+          } else if (Acache)
+            structarg1 = cacheval;
+          else if (Bcache)
+            structarg2 = cacheval;
+        }
+        if (!Acache)
+          structarg1 = lookup(gutils->getNewFromOriginal(call.getArgOperand(7)),
+                              Builder2);
+        if (!Bcache)
+          structarg2 = lookup(gutils->getNewFromOriginal(call.getArgOperand(9)),
+                              Builder2);
+        if (cast<ConstantInt>(call.getArgOperand(0))->getValue() == 102) {
+          if (aactive) {
+            salda = lookup(gutils->getNewFromOriginal(call.getArgOperand(3)),
+                           Builder2);
+            saldc = lookup(gutils->getNewFromOriginal(call.getArgOperand(3)),
+                           Builder2);
+          }
+          if (bactive) {
+            sbldb = lookup(gutils->getNewFromOriginal(call.getArgOperand(3)),
+                           Builder2);
+            sbldc = lookup(gutils->getNewFromOriginal(call.getArgOperand(5)),
+                           Builder2);
+          }
+        } else if (cast<ConstantInt>(call.getArgOperand(0))->getValue() ==
+                   101) {
+          if (aactive) {
+            salda = lookup(gutils->getNewFromOriginal(call.getArgOperand(4)),
+                           Builder2);
+            saldc = lookup(gutils->getNewFromOriginal(call.getArgOperand(5)),
+                           Builder2);
+          }
+          if (bactive) {
+            sbldb = lookup(gutils->getNewFromOriginal(call.getArgOperand(4)),
+                           Builder2);
+            sbldc = lookup(gutils->getNewFromOriginal(call.getArgOperand(4)),
+                           Builder2);
+          }
+        } else
+          assert(false && "Wrong value");
+        CallInst *safunccall, *sbfunccall;
+        if (aactive) {
+          if (cast<ConstantInt>(call.getArgOperand(2))->getValue() == 112 ||
+              cast<ConstantInt>(call.getArgOperand(2))->getValue() == 113) {
+            sabtrans = Builder2.getInt32(111);
+            if (cast<ConstantInt>(call.getArgOperand(0))->getValue() == 102)
+              saldb = lookup(gutils->getNewFromOriginal(call.getArgOperand(4)),
+                             Builder2);
+            else
+              saldb = lookup(gutils->getNewFromOriginal(call.getArgOperand(5)),
+                             Builder2);
+          } else if (cast<ConstantInt>(call.getArgOperand(2))->getValue() ==
+                     111) {
+            sabtrans = Builder2.getInt32(112);
+            saldb = lookup(gutils->getNewFromOriginal(call.getArgOperand(4)),
+                           Builder2);
+          } else
+            assert(false && "Wrong value");
+          SmallVector<Value *, 13> safuncargs = {
+              lookup(gutils->getNewFromOriginal(call.getArgOperand(0)),
+                     Builder2),
+              Builder2.getInt32(111),
+              sabtrans,
+              lookup(gutils->getNewFromOriginal(call.getArgOperand(3)),
+                     Builder2),
+              lookup(gutils->getNewFromOriginal(call.getArgOperand(5)),
+                     Builder2),
+              lookup(gutils->getNewFromOriginal(call.getArgOperand(4)),
+                     Builder2),
+              lookup(gutils->getNewFromOriginal(call.getArgOperand(6)),
+                     Builder2),
+              gutils->invertPointerM(call.getArgOperand(12), Builder2),
+              salda,
+              structarg2,
+              saldb,
+              doneval,
+              gutils->invertPointerM(call.getArgOperand(7), Builder2),
+              saldc};
+          safunccall = Builder2.CreateCall(dfunc, safuncargs);
+        }
+        if (bactive) {
+          if (cast<ConstantInt>(call.getArgOperand(1))->getValue() == 112 ||
+              cast<ConstantInt>(call.getArgOperand(1))->getValue() == 113) {
+            sbatrans = Builder2.getInt32(111);
+            if (cast<ConstantInt>(call.getArgOperand(0))->getValue() == 102)
+              sblda = lookup(gutils->getNewFromOriginal(call.getArgOperand(5)),
+                             Builder2);
+            else
+              sblda = lookup(gutils->getNewFromOriginal(call.getArgOperand(3)),
+                             Builder2);
+          } else if (cast<ConstantInt>(call.getArgOperand(1))->getValue() ==
+                     111) {
+            sbatrans = Builder2.getInt32(112);
+            if (cast<ConstantInt>(call.getArgOperand(0))->getValue() == 102)
+              sblda = lookup(gutils->getNewFromOriginal(call.getArgOperand(3)),
+                             Builder2);
+            else
+              sblda = lookup(gutils->getNewFromOriginal(call.getArgOperand(5)),
+                             Builder2);
+          } else
+            assert(false && "Wrong value");
+          SmallVector<Value *, 13> sbfuncargs = {
+              lookup(gutils->getNewFromOriginal(call.getArgOperand(0)),
+                     Builder2),
+              sbatrans,
+              Builder2.getInt32(111),
+              lookup(gutils->getNewFromOriginal(call.getArgOperand(5)),
+                     Builder2),
+              lookup(gutils->getNewFromOriginal(call.getArgOperand(4)),
+                     Builder2),
+              lookup(gutils->getNewFromOriginal(call.getArgOperand(3)),
+                     Builder2),
+              lookup(gutils->getNewFromOriginal(call.getArgOperand(6)),
+                     Builder2),
+              structarg1,
+              sblda,
+              gutils->invertPointerM(call.getArgOperand(12), Builder2),
+              sbldb,
+              doneval,
+              gutils->invertPointerM(call.getArgOperand(9), Builder2),
+              sbldc};
+          sbfunccall = Builder2.CreateCall(dfunc, sbfuncargs);
+        }
+        auto scfunc = gutils->oldFunc->getParent()->getOrInsertFunction(
+            scfuncname, Builder2.getVoidTy(), Builder2.getInt32Ty(),
+            call.getArgOperand(6)->getType(), call.getArgOperand(7)->getType(),
+            Builder2.getInt32Ty());
+        auto clen = Builder2.CreateMul(
+            gutils->getNewFromOriginal(call.getArgOperand(3)),
+            gutils->getNewFromOriginal(call.getArgOperand(4)));
+        SmallVector<Value *, 4> scfuncargs = {
+            clen,
+            lookup(gutils->getNewFromOriginal(call.getArgOperand(11)),
+                   Builder2),
+            gutils->invertPointerM(call.getArgOperand(12), Builder2),
+            Builder2.getInt32(1)};
+        auto scfunccall = Builder2.CreateCall(scfunc, scfuncargs);
+        if (Acache)
+          CallInst::CreateFree(structarg1, safunccall->getNextNode());
+        if (Bcache)
+          CallInst::CreateFree(structarg2, sbfunccall->getNextNode());
+      }
+
+      if (gutils->knownRecomputeHeuristic.find(orig) !=
+          gutils->knownRecomputeHeuristic.end()) {
+        if (!gutils->knownRecomputeHeuristic[orig]) {
+          gutils->cacheForReverse(BuilderZ, newCall,
+                                  getIndex(orig, CacheType::Self));
+        }
+      }
+
+      if (Mode == DerivativeMode::ReverseModeGradient) {
+        eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
+      } else {
+        eraseIfUnused(*orig);
+      }
+      return;
+    }
+  }
+
   // Return
   void visitCallInst(llvm::CallInst &call) {
     CallInst *const newCall = cast<CallInst>(gutils->getNewFromOriginal(&call));
@@ -6176,179 +6626,9 @@ public:
       return;
     }
 
-    if ((funcName == "cblas_ddot" || funcName == "cblas_sdot") &&
-        called->isDeclaration()) {
-      Type *innerType;
-      std::string dfuncName;
-      if (funcName == "cblas_ddot") {
-        innerType = Type::getDoubleTy(call.getContext());
-        dfuncName = "cblas_daxpy";
-      } else if (funcName == "cblas_sdot") {
-        innerType = Type::getFloatTy(call.getContext());
-        dfuncName = "cblas_saxpy";
-      } else {
-        assert(false && "Unreachable");
-      }
-      Type *castvals[2] = {call.getArgOperand(1)->getType(),
-                           call.getArgOperand(3)->getType()};
-      auto *cachetype =
-          StructType::get(call.getContext(), ArrayRef<Type *>(castvals));
-      Value *undefinit = UndefValue::get(cachetype);
-      Value *cacheval;
-      auto in_arg = call.getCalledFunction()->arg_begin();
-      in_arg++;
-      Argument *xfuncarg = in_arg;
-      in_arg++;
-      in_arg++;
-      Argument *yfuncarg = in_arg;
-      bool xcache = !gutils->isConstantValue(call.getArgOperand(3)) &&
-                    uncacheable_args.find(xfuncarg)->second;
-      bool ycache = !gutils->isConstantValue(call.getArgOperand(1)) &&
-                    uncacheable_args.find(yfuncarg)->second;
-      if ((Mode == DerivativeMode::ReverseModeCombined ||
-           Mode == DerivativeMode::ReverseModePrimal) &&
-          (xcache || ycache)) {
-        Value *arg1, *arg2;
-        auto size = ConstantExpr::getSizeOf(innerType);
-        if (xcache) {
-          auto dmemcpy =
-              getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(),
-                                       PointerType::getUnqual(innerType), 0, 0);
-          auto malins = CallInst::CreateMalloc(
-              gutils->getNewFromOriginal(&call), size->getType(), innerType,
-              size, call.getArgOperand(0), nullptr, "");
-          arg1 =
-              BuilderZ.CreateBitCast(malins, call.getArgOperand(1)->getType());
-          SmallVector<Value *, 4> args;
-          args.push_back(arg1);
-          args.push_back(gutils->getNewFromOriginal(call.getArgOperand(1)));
-          args.push_back(call.getArgOperand(0));
-          args.push_back(call.getArgOperand(2));
-          BuilderZ.CreateCall(dmemcpy, args);
-        }
-        if (ycache) {
-          auto dmemcpy =
-              getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(),
-                                       PointerType::getUnqual(innerType), 0, 0);
-          auto malins = CallInst::CreateMalloc(
-              gutils->getNewFromOriginal(&call), size->getType(), innerType,
-              size, call.getArgOperand(0), nullptr, "");
-          arg2 =
-              BuilderZ.CreateBitCast(malins, call.getArgOperand(3)->getType());
-          SmallVector<Value *, 4> args;
-          args.push_back(arg2);
-          args.push_back(gutils->getNewFromOriginal(call.getArgOperand(3)));
-          args.push_back(call.getArgOperand(0));
-          args.push_back(call.getArgOperand(4));
-          BuilderZ.CreateCall(dmemcpy, args);
-        }
-        if (xcache && ycache) {
-          auto valins1 = BuilderZ.CreateInsertValue(undefinit, arg1, 0);
-          cacheval = BuilderZ.CreateInsertValue(valins1, arg2, 1);
-        } else if (xcache)
-          cacheval = arg1;
-        else {
-          assert(ycache);
-          cacheval = arg2;
-        }
-        gutils->cacheForReverse(BuilderZ, cacheval,
-                                getIndex(&call, CacheType::Tape));
-      }
-      if (Mode == DerivativeMode::ReverseModeCombined ||
-          Mode == DerivativeMode::ReverseModeGradient) {
-        IRBuilder<> Builder2(call.getParent());
-        getReverseBuilder(Builder2);
-        auto derivcall = gutils->oldFunc->getParent()->getOrInsertFunction(
-            dfuncName, Builder2.getVoidTy(), Builder2.getInt32Ty(), innerType,
-            call.getArgOperand(1)->getType(), Builder2.getInt32Ty(),
-            call.getArgOperand(3)->getType(), Builder2.getInt32Ty());
-        Value *structarg1;
-        Value *structarg2;
-        if (xcache || ycache) {
-          if (Mode == DerivativeMode::ReverseModeGradient &&
-              (!gutils->isConstantValue(call.getArgOperand(1)) ||
-               !gutils->isConstantValue(call.getArgOperand(3)))) {
-            cacheval = BuilderZ.CreatePHI(cachetype, 0);
-          }
-          cacheval =
-              lookup(gutils->cacheForReverse(BuilderZ, cacheval,
-                                             getIndex(&call, CacheType::Tape)),
-                     Builder2);
-          if (xcache && ycache) {
-            structarg1 = BuilderZ.CreateExtractValue(cacheval, 0);
-            structarg2 = BuilderZ.CreateExtractValue(cacheval, 1);
-          } else if (xcache)
-            structarg1 = cacheval;
-          else if (ycache)
-            structarg2 = cacheval;
-        }
-        if (!xcache)
-          structarg1 = lookup(
-              gutils->getNewFromOriginal(orig->getArgOperand(1)), Builder2);
-        if (!ycache)
-          structarg2 = lookup(
-              gutils->getNewFromOriginal(orig->getArgOperand(3)), Builder2);
-        CallInst *firstdcall, *seconddcall;
-        if (!gutils->isConstantValue(call.getArgOperand(3))) {
-          Value *estride;
-          if (xcache)
-            estride = Builder2.getInt32(1);
-          else
-            estride = lookup(gutils->getNewFromOriginal(orig->getArgOperand(2)),
-                             Builder2);
-          SmallVector<Value *, 6> args1 = {
-              lookup(gutils->getNewFromOriginal(orig->getArgOperand(0)),
-                     Builder2),
-              diffe(orig, Builder2),
-              structarg1,
-              estride,
-              lookup(gutils->invertPointerM(orig->getArgOperand(3), Builder2),
-                     Builder2),
-              lookup(gutils->getNewFromOriginal(orig->getArgOperand(4)),
-                     Builder2)};
-          firstdcall = Builder2.CreateCall(derivcall, args1);
-        }
-        if (!gutils->isConstantValue(call.getArgOperand(1))) {
-          Value *estride;
-          if (ycache)
-            estride = Builder2.getInt32(1);
-          else
-            estride = lookup(gutils->getNewFromOriginal(orig->getArgOperand(4)),
-                             Builder2);
-          SmallVector<Value *, 6> args2 = {
-              lookup(gutils->getNewFromOriginal(orig->getArgOperand(0)),
-                     Builder2),
-              diffe(orig, Builder2),
-              structarg2,
-              estride,
-              lookup(gutils->invertPointerM(orig->getArgOperand(1), Builder2),
-                     Builder2),
-              lookup(gutils->getNewFromOriginal(orig->getArgOperand(2)),
-                     Builder2)};
-          seconddcall = Builder2.CreateCall(derivcall, args2);
-        }
-        setDiffe(orig, Constant::getNullValue(orig->getType()), Builder2);
-        if (shouldFree()) {
-          if (xcache)
-            CallInst::CreateFree(structarg1, firstdcall->getNextNode());
-          if (ycache)
-            CallInst::CreateFree(structarg2, seconddcall->getNextNode());
-        }
-      }
-
-      if (gutils->knownRecomputeHeuristic.find(orig) !=
-          gutils->knownRecomputeHeuristic.end()) {
-        if (!gutils->knownRecomputeHeuristic[orig]) {
-          gutils->cacheForReverse(BuilderZ, newCall,
-                                  getIndex(orig, CacheType::Self));
-        }
-      }
-
-      if (Mode == DerivativeMode::ReverseModeGradient) {
-        eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
-      } else {
-        eraseIfUnused(*orig);
-      }
+    if (funcName.startswith("cblas_") &&
+        !gutils->isConstantInstruction(&call) && called->isDeclaration()) {
+      handleBlas(call, called, funcName, newCall, uncacheable_args);
       return;
     }
 

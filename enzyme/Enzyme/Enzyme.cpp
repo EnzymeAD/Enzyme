@@ -1150,6 +1150,14 @@ public:
           CI->addParamAttr(3, Attribute::ReadOnly);
           CI->addParamAttr(3, Attribute::NoCapture);
         }
+        if ((Fn->getName() == "cblas_dgemm" ||
+             Fn->getName() == "cblas_sgemm") &&
+            Fn->isDeclaration()) {
+          CI->addParamAttr(7, Attribute::ReadOnly);
+          CI->addParamAttr(7, Attribute::NoCapture);
+          CI->addParamAttr(9, Attribute::ReadOnly);
+          CI->addParamAttr(9, Attribute::NoCapture);
+        }
         if (Fn->getName() == "frexp" || Fn->getName() == "frexpf" ||
             Fn->getName() == "frexpl") {
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ArgMemOnly);
