@@ -41,6 +41,8 @@ TypeTree parseDIType(DICompositeType& Type, Instruction& I, DataLayout& DL) {
     DIType* SubType = Type.getBaseType();
     TypeTree SubTT = parseDIType(*SubType, I, DL);
     size_t Align = Type.getAlignInBytes();
+    size_t SubSize = SubType->getSizeInBits() / 8;
+    size_t Size = Type.getSizeInBits() / 8;
     DINodeArray Subranges = Type.getElements();
     size_t pos = 0;
     for (auto r: Subranges) {
@@ -51,8 +53,14 @@ TypeTree parseDIType(DICompositeType& Type, Instruction& I, DataLayout& DL) {
           break;
         }
         for (int64_t i = 0; i < count; i++) {
-          Result |= SubTT.ShiftIndices(DL, 0, -1, pos);
-          pos += Align;
+          Result |= SubTT.ShiftIndices(DL, 0, Size, pos);
+          size_t tmp = pos + SubSize;
+          if (tmp % Align != 0) {
+            pos = (tmp / Align + 1) * Align;
+          }
+          else {
+            pos = tmp;
+          }
         }
       }
       else {
@@ -63,9 +71,13 @@ TypeTree parseDIType(DICompositeType& Type, Instruction& I, DataLayout& DL) {
   }
   else if (Type.getTag() == dwarf::DW_TAG_structure_type) {
     DINodeArray Elements = Type.getElements();
+    size_t Size = Type.getSizeInBits() / 8;
     for (auto e: Elements) {
-      DIType *SubType = dyn_cast<DIType>(e);
+      DIType *SubType = dyn_cast<DIDerivedType>(e);
+      assert(SubType->getTag() == dwarf::DW_TAG_member);
       TypeTree SubTT = parseDIType(*SubType, I, DL);
+      size_t Offset = SubType->getOffsetInBits() / 8;
+      SubTT = SubTT.ShiftIndices(DL, 0, Size, Offset);
       Result |= SubTT;
     }
     return Result;
@@ -78,13 +90,15 @@ TypeTree parseDIType(DICompositeType& Type, Instruction& I, DataLayout& DL) {
 TypeTree parseDIType(DIDerivedType& Type, Instruction& I, DataLayout& DL) {
   if (Type.getTag() == dwarf::DW_TAG_pointer_type) {
     TypeTree Result(BaseType::Pointer);
-    Result |= parseDIType(*Type.getBaseType(), I, DL);
-    return Result.Only(-1);
+    DIType* SubType = Type.getBaseType();
+    TypeTree SubTT = parseDIType(*SubType, I, DL);
+    Result |= SubTT;
+    return Result.Only(0);
   }
   else if (Type.getTag() == dwarf::DW_TAG_member) {
-    size_t Offset = Type.getOffsetInBits() / 8;
     DIType* SubType = Type.getBaseType();
-    return parseDIType(*SubType, I, DL).ShiftIndices(DL, 0, -1, Offset);
+    TypeTree Result = parseDIType(*SubType, I, DL);
+    return Result;
   }
   else {
     assert(0 && "Derived types other than pointer and member are not supported by Rust debug info parser");
@@ -92,6 +106,10 @@ TypeTree parseDIType(DIDerivedType& Type, Instruction& I, DataLayout& DL) {
 }
 
 TypeTree parseDIType(DIType& Type, Instruction& I, DataLayout& DL) {
+  if (Type.getSizeInBits() == 0) {
+    return TypeTree();
+  }
+
   if (auto BT = dyn_cast<DIBasicType>(&Type)) {
     return parseDIType(*BT, I, DL);
   }
@@ -108,5 +126,9 @@ TypeTree parseDIType(DIType& Type, Instruction& I, DataLayout& DL) {
 
 TypeTree parseDIType(DbgDeclareInst& I, DataLayout& DL) {
   DIType* type = I.getVariable()->getType();
-  return parseDIType(*type, I, DL);
+  TypeTree Result = parseDIType(*type, I, DL);
+//  TypeTree Debug = TypeTree(BaseType::Pointer);
+//  Debug |= TypeTree(BaseType::Integer).Only(0);
+//  Debug = Debug.Only(0);
+  return Result;
 }
