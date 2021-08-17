@@ -7120,7 +7120,7 @@ public:
           gradByVal[args.size()] = orig->getParamByValType(i);
         }
 #endif
-        args.push_back(lookup(argi, Builder2));
+        args.push_back(argi);
 
         if (gutils->isConstantValue(orig->getArgOperand(i)) &&
             !foreignFunction) {
