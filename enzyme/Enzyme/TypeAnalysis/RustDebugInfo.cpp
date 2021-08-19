@@ -18,7 +18,6 @@ TypeTree parseDIType(DIType& Type, Instruction& I, DataLayout& DL);
 TypeTree parseDIType(DIBasicType& Type, Instruction& I, DataLayout& DL) {
   std::string TypeName = Type.getName().str();
   TypeTree Result;
-  size_t Size = Type.getSizeInBits() / 8;
   if (TypeName == "f64") {
     Result = TypeTree(Type::getDoubleTy(I.getContext())).Only(0);
   }
@@ -26,7 +25,8 @@ TypeTree parseDIType(DIBasicType& Type, Instruction& I, DataLayout& DL) {
     Result = TypeTree(Type::getFloatTy(I.getContext())).Only(0);
   }
   else if (TypeName == "i8" || TypeName == "i16" ||TypeName == "i32" || TypeName == "i64" || TypeName == "isize" ||
-           TypeName == "u8" || TypeName == "u16" ||TypeName == "u32" || TypeName == "u64" || TypeName == "usize") {
+           TypeName == "u8" || TypeName == "u16" ||TypeName == "u32" || TypeName == "u64" || TypeName == "usize" ||
+           TypeName == "i128" || TypeName == "u128") {
     Result = TypeTree(ConcreteType(BaseType::Integer)).Only(0);
   }
   else {
@@ -83,7 +83,7 @@ TypeTree parseDIType(DICompositeType& Type, Instruction& I, DataLayout& DL) {
     return Result;
   }
   else {
-    assert(0 && "Composite types other than array and struct are not supported by Rust debug info parser");
+    assert(0 && "Composite types other than arrays and structs are not supported by Rust debug info parser");
   }
 }
 
@@ -92,7 +92,12 @@ TypeTree parseDIType(DIDerivedType& Type, Instruction& I, DataLayout& DL) {
     TypeTree Result(BaseType::Pointer);
     DIType* SubType = Type.getBaseType();
     TypeTree SubTT = parseDIType(*SubType, I, DL);
-    Result |= SubTT;
+    if (isa<DIBasicType>(SubType)) {
+      Result |= SubTT.ShiftIndices(DL, 0, 1, -1);
+    }
+    else {
+      Result |= SubTT;
+    }
     return Result.Only(0);
   }
   else if (Type.getTag() == dwarf::DW_TAG_member) {
@@ -101,7 +106,7 @@ TypeTree parseDIType(DIDerivedType& Type, Instruction& I, DataLayout& DL) {
     return Result;
   }
   else {
-    assert(0 && "Derived types other than pointer and member are not supported by Rust debug info parser");
+    assert(0 && "Derived types other than pointers and members are not supported by Rust debug info parser");
   }
 }
 
@@ -120,15 +125,29 @@ TypeTree parseDIType(DIType& Type, Instruction& I, DataLayout& DL) {
     return parseDIType(*DT, I, DL);
   }
   else {
-    assert(0 && "Types other than floating-points, integers, arrays, and pointers are not supported by debug info parser");
+    assert(0 && "Types other than floating-points, integers, arrays, pointers, slices, and structs are not supported by debug info parser");
   }
+}
+
+bool isU8PointerType(DIType& type) {
+  if (type.getTag() == dwarf::DW_TAG_pointer_type) {
+    auto PTy = dyn_cast<DIDerivedType>(&type);
+    DIType* SubType = PTy->getBaseType();
+    if (auto BTy = dyn_cast<DIBasicType>(SubType)) {
+      std::string name = BTy->getName().str();
+      if (name == "u8") {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 TypeTree parseDIType(DbgDeclareInst& I, DataLayout& DL) {
   DIType* type = I.getVariable()->getType();
+  if (isU8PointerType(*type)) {
+    return TypeTree();
+  }
   TypeTree Result = parseDIType(*type, I, DL);
-//  TypeTree Debug = TypeTree(BaseType::Pointer);
-//  Debug |= TypeTree(BaseType::Integer).Only(0);
-//  Debug = Debug.Only(0);
   return Result;
 }

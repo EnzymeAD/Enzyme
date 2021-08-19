@@ -1527,6 +1527,11 @@ void TypeAnalyzer::visitBitCastInst(BitCastInst &I) {
     Type *et1 = cast<PointerType>(I.getType())->getElementType();
     Type *et2 = cast<PointerType>(I.getOperand(0)->getType())->getElementType();
 
+
+    TypeTree Debug = getAnalysis(I.getOperand(0)).Data0();
+    DataLayout DL = fntypeinfo.Function->getParent()->getDataLayout();
+    TypeTree Debug1 = Debug.KeepForCast(DL, et2, et1);
+
     if (direction & DOWN)
       updateAnalysis(
           &I,
@@ -4054,6 +4059,7 @@ TypeResults TypeAnalysis::analyzeFunction(const FnTypeInfo &fn) {
   analysis.prepareArgs();
   analysis.considerRustDebugInfo();
   analysis.considerTBAA();
+  auto fnName = fn.Function->getName();
   analysis.run();
 
   if (analysis.fntypeinfo.Function != fn.Function) {
@@ -4223,6 +4229,9 @@ void TypeAnalyzer::considerRustDebugInfo() {
       for (Instruction &I: BB) {
         if (DbgDeclareInst* DDI = dyn_cast<DbgDeclareInst>(&I)) {
           TypeTree TT = parseDIType(*DDI, DL);
+          if (!TT.isKnown()) {
+            continue;
+          }
           TT |= TypeTree(BaseType::Pointer);
           updateAnalysis(DDI->getAddress(), TT.Only(-1), DDI);
         }
