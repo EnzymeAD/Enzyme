@@ -7187,9 +7187,11 @@ public:
       }
 #endif
 
-      unsigned structidx = retUsed ? 1 : 0;
-      Value *diffe = Builder2.CreateExtractValue(diffes, {structidx});
-      setDiffe(&call, diffe, Builder2);
+      if (!diffes->getType()->isVoidTy()) {
+        unsigned structidx = retUsed ? 1 : 0;
+        Value *diffe = Builder2.CreateExtractValue(diffes, {structidx});
+        setDiffe(&call, diffe, Builder2);
+      }
 
       if (!subretused) {
         eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
