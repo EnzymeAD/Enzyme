@@ -1459,6 +1459,9 @@ public:
   std::vector<SelectInst *> addToDiffe(Value *val, Value *dif,
                                        IRBuilder<> &BuilderM, Type *addingType,
                                        ArrayRef<Value *> idxs = {}) {
+    assert(mode == DerivativeMode::ReverseModeGradient ||
+           mode == DerivativeMode::ReverseModeCombined);
+
     if (auto arg = dyn_cast<Argument>(val))
       assert(arg->getParent() == oldFunc);
     if (auto inst = dyn_cast<Instruction>(val))

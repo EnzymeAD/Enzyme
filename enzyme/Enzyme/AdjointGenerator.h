@@ -1340,8 +1340,6 @@ public:
 
   std::vector<SelectInst *> addToDiffe(Value *val, Value *dif,
                                        IRBuilder<> &Builder, Type *T) {
-    assert(Mode == DerivativeMode::ReverseModeGradient ||
-           Mode == DerivativeMode::ReverseModeCombined);
     return ((DiffeGradientUtils *)gutils)->addToDiffe(val, dif, Builder, T);
   }
 

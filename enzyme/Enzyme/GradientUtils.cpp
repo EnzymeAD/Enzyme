@@ -3271,6 +3271,11 @@ end:;
 Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                               const ValueToValueMapTy &incoming_available,
                               bool tryLegalRecomputeCheck) {
+
+  assert(mode == DerivativeMode::ReverseModePrimal ||
+         mode == DerivativeMode::ReverseModeGradient ||
+         mode == DerivativeMode::ReverseModeCombined);
+
   assert(val->getName() != "<badref>");
   if (isa<Constant>(val)) {
     return val;
