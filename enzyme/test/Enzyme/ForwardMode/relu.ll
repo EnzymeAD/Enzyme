@@ -52,7 +52,7 @@ attributes #1 = { nounwind readnone noinline }
 ; CHECK-NEXT:   %1 = extractvalue { double } %0, 0
 ; CHECK-NEXT:   br label %differelu.exit
 ; CHECK: differelu.exit:                                   ; preds = %entry, %cond.true.i
-; CHECK-NEXT:   %"cond'.i" = phi fast double [ %1, %cond.true.i ], [ 0.000000e+00, %entry ]
+; CHECK-NEXT:   %"cond'.i" = phi{{( fast)?}} double [ %1, %cond.true.i ], [ 0.000000e+00, %entry ]
 ; CHECK-NEXT:   ret double %"cond'.i"
 ; CHECK-NEXT: }
 

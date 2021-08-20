@@ -55,7 +55,7 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK: define internal {{(dso_local )?}}void @diffesubf(double* nocapture %x, double* nocapture %"x'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = load double, double* %x, align 8
-; CHECK-NEXT:   %1 = load double, double* %"x'", align 8
+; CHECK-NEXT:   %1 = load double, double* %"x'"
 ; CHECK-NEXT:   %mul = fmul fast double %0, 2.000000e+00
 ; CHECK-NEXT:   %2 = fmul fast double %1, 2.000000e+00
 ; CHECK-NEXT:   store double %mul, double* %x, align 8
