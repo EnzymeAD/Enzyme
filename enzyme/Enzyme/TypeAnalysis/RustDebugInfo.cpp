@@ -1,17 +1,34 @@
+//===- RustDebugInfo.cpp - Implementaion of Rust Debug Info Parser   -----------===//
 //
-// Created by Chuyang Chen on 30/7/2021.
+//                             Enzyme Project
 //
-#include <tuple>
-
+// Part of the Enzyme Project, under the Apache License v2.0 with LLVM
+// Exceptions. See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+// If using this code in an academic setting, please cite the following:
+// @incollection{enzymeNeurips,
+// title = {Instead of Rewriting Foreign Code for Machine Learning,
+//          Automatically Synthesize Fast Gradients},
+// author = {Moses, William S. and Churavy, Valentin},
+// booktitle = {Advances in Neural Information Processing Systems 33},
+// year = {2020},
+// note = {To appear in},
+// }
+//
+//===----------------------------------------------------------------------===//
+//
+// This file implement the Rust debug info parsing function. It will get the
+// description of types from debug info of an instruction and pass it to
+// concrete functions according to the kind of a description and construct
+// the type tree recursively.
+//
+//===----------------------------------------------------------------------===//
 #include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/Support/CommandLine.h"
 
 #include "RustDebugInfo.h"
-
-using std::tuple;
-using std::get;
-using std::make_tuple;
 
 TypeTree parseDIType(DIType& Type, Instruction& I, DataLayout& DL);
 
@@ -145,6 +162,9 @@ bool isU8PointerType(DIType& type) {
 
 TypeTree parseDIType(DbgDeclareInst& I, DataLayout& DL) {
   DIType* type = I.getVariable()->getType();
+
+  // If the type is *u8, do nothing, since the underlying type of data pointed by a *u8
+  // can be anything
   if (isU8PointerType(*type)) {
     return TypeTree();
   }
