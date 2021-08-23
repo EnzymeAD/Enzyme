@@ -6476,8 +6476,7 @@ public:
         }
 
         if (funcName == "julia.write_barrier") {
-          if (Mode == DerivativeMode::ReverseModeGradient ||
-              Mode == DerivativeMode::ForwardMode) {
+          if (Mode == DerivativeMode::ReverseModeGradient) {
             eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
             return;
           }
@@ -6828,7 +6827,7 @@ public:
             freeKnownAllocation(Builder2, lookup(nop, Builder2), *called,
                                 dbgLoc, gutils->TLI);
           }
-        } else if (Mode != DerivativeMode::ReverseModePrimal) {
+        } else {
           // Note that here we cannot simply replace with null as users who
           // try to find the shadow pointer will use the shadow of null rather
           // than the true shadow of this
