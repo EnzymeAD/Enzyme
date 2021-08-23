@@ -5987,8 +5987,7 @@ public:
       // needs to be run on shadow in primal
       if (funcName == "_ZSt29_Rb_tree_insert_and_rebalancebPSt18_Rb_tree_"
                       "node_baseS0_RS_") {
-        if (Mode == DerivativeMode::ReverseModeGradient ||
-            Mode == DerivativeMode::ForwardMode) {
+        if (Mode == DerivativeMode::ReverseModeGradient) {
           eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
           return;
         }
