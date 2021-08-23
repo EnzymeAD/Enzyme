@@ -250,6 +250,17 @@ static inline bool is_value_needed_in_reverse(
           continue;
       }
 
+      if (auto CI = dyn_cast<CallInst>(user)) {
+        if (auto F = CI->getCalledFunction()) {
+          // Use in a write barrier requires the shadow in the forward, even
+          // though the instruction is active.
+          if (mode != DerivativeMode::ReverseModeGradient &&
+              F->getName() == "julia.write_barrier") {
+            return seen[idx] = true;
+          }
+        }
+      }
+
       if (isa<ReturnInst>(user)) {
         if (gutils->ATA->ActiveReturns == DIFFE_TYPE::DUP_ARG ||
             gutils->ATA->ActiveReturns == DIFFE_TYPE::DUP_NONEED)
