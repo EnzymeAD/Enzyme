@@ -6028,7 +6028,8 @@ public:
           if (subretType == DIFFE_TYPE::DUP_ARG) {
             Value *shadow = placeholder;
             if (lrc || Mode == DerivativeMode::ReverseModePrimal ||
-                Mode == DerivativeMode::ReverseModeCombined) {
+                Mode == DerivativeMode::ReverseModeCombined ||
+                Mode == DerivativeMode::ForwardMode) {
               if (gutils->isConstantValue(orig->getArgOperand(0)))
                 shadow = gutils->getNewFromOriginal(orig);
               else {
@@ -6064,6 +6065,12 @@ public:
           } else {
             gutils->erase(placeholder);
           }
+        }
+
+        if (Mode == DerivativeMode::ForwardMode) {
+          eraseIfUnused(*orig);
+          assert(gutils->isConstantInstruction(orig));
+          return;
         }
 
         if (!shouldCache && !lrc) {
