@@ -4057,9 +4057,10 @@ TypeResults TypeAnalysis::analyzeFunction(const FnTypeInfo &fn) {
   }
 
   analysis.prepareArgs();
-  analysis.considerRustDebugInfo();
+  if (RustTypeRules) {
+    analysis.considerRustDebugInfo();
+  }
   analysis.considerTBAA();
-  auto fnName = fn.Function->getName();
   analysis.run();
 
   if (analysis.fntypeinfo.Function != fn.Function) {
