@@ -505,12 +505,7 @@ struct CacheAnalysis {
 
   std::map<Argument *, bool>
   compute_uncacheable_args_for_one_callsite(CallInst *callsite_op) {
-    Function *Fn = callsite_op->getCalledFunction();
-
-#if LLVM_VERSION_MAJOR >= 11
-    if (auto alias = dyn_cast<GlobalAlias>(callsite_op->getCalledOperand()))
-      Fn = dyn_cast<Function>(alias->getAliasee());
-#endif
+    Function *Fn = getFunctionFromCall(callsite_op);
 
     if (!Fn)
       return {};
@@ -575,19 +570,7 @@ struct CacheAnalysis {
     allFollowersOf(callsite_op, [&](Instruction *inst2) {
       // Don't consider modref from malloc/free as a need to cache
       if (auto obj_op = dyn_cast<CallInst>(inst2)) {
-        Function *called = obj_op->getCalledFunction();
-#if LLVM_VERSION_MAJOR >= 11
-        if (auto castinst = dyn_cast<ConstantExpr>(obj_op->getCalledOperand()))
-#else
-        if (auto castinst = dyn_cast<ConstantExpr>(obj_op->getCalledValue()))
-#endif
-        {
-          if (castinst->isCast()) {
-            if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-              called = fn;
-            }
-          }
-        }
+        Function *called = getFunctionFromCall(obj_op);
         if (called && isCertainPrintMallocOrFree(called)) {
           return false;
         }
@@ -802,20 +785,7 @@ void calculateUnusedValuesInFunction(
 
         bool isLibMFn = false;
         if (auto obj_op = dyn_cast<CallInst>(inst)) {
-          Function *called = obj_op->getCalledFunction();
-#if LLVM_VERSION_MAJOR >= 11
-          if (auto castinst =
-                  dyn_cast<ConstantExpr>(obj_op->getCalledOperand())) {
-#else
-          if (auto castinst =
-                  dyn_cast<ConstantExpr>(obj_op->getCalledValue())) {
-#endif
-            if (castinst->isCast()) {
-              if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-                called = fn;
-              }
-            }
-          }
+          Function *called = getFunctionFromCall((CallInst *)obj_op);
           if (called && isDeallocationFunction(*called, TLI)) {
             if ((mode == DerivativeMode::ReverseModePrimal ||
                  mode == DerivativeMode::ReverseModeCombined) &&
@@ -1196,7 +1166,7 @@ bool legalCombinedForwardReverse(
           llvm::errs() << " [bi] failed to replace function "
                        << (called->getName()) << " due to " << *I << "\n";
         else
-          llvm::errs() << " [bi] ailed to replace function " << (*calledValue)
+          llvm::errs() << " [bi] failed to replace function " << (*calledValue)
                        << " due to " << *I << "\n";
       }
       return;
@@ -1213,19 +1183,9 @@ bool legalCombinedForwardReverse(
     }
 
     if (auto op = dyn_cast<CallInst>(I)) {
-      Function *called = op->getCalledFunction();
-
-      if (auto castinst = dyn_cast<ConstantExpr>(calledValue)) {
-        if (castinst->isCast()) {
-          if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-            if (isAllocationFunction(*fn, gutils->TLI) ||
-                isDeallocationFunction(*fn, gutils->TLI)) {
-              return;
-            }
-          }
-        }
-      }
-      if (called && isDeallocationFunction(*called, gutils->TLI))
+      Function *called = getFunctionFromCall(op);
+      if (called && (isAllocationFunction(*called, gutils->TLI) ||
+                     isDeallocationFunction(*called, gutils->TLI)))
         return;
     }
 
@@ -1241,7 +1201,7 @@ bool legalCombinedForwardReverse(
           llvm::errs() << " [phi] failed to replace function "
                        << (called->getName()) << " due to " << *I << "\n";
         else
-          llvm::errs() << " [phi] ailed to replace function " << (*calledValue)
+          llvm::errs() << " [phi] failed to replace function " << (*calledValue)
                        << " due to " << *I << "\n";
       }
       return;
@@ -1255,7 +1215,7 @@ bool legalCombinedForwardReverse(
           llvm::errs() << " [nv] failed to replace function "
                        << (called->getName()) << " due to " << *I << "\n";
         else
-          llvm::errs() << " [nv] ailed to replace function " << (*calledValue)
+          llvm::errs() << " [nv] failed to replace function " << (*calledValue)
                        << " due to " << *I << "\n";
       }
       return;
@@ -1267,7 +1227,7 @@ bool legalCombinedForwardReverse(
           llvm::errs() << " [ci] failed to replace function "
                        << (called->getName()) << " due to " << *I << "\n";
         else
-          llvm::errs() << " [ci] ailed to replace function " << (*calledValue)
+          llvm::errs() << " [ci] failed to replace function " << (*calledValue)
                        << " due to " << *I << "\n";
       }
       return;
@@ -1284,8 +1244,8 @@ bool legalCombinedForwardReverse(
             llvm::errs() << " [am] failed to replace function "
                          << (called->getName()) << " due to " << *I << "\n";
           else
-            llvm::errs() << " [am] ailed to replace function " << (*calledValue)
-                         << " due to " << *I << "\n";
+            llvm::errs() << " [am] failed to replace function "
+                         << (*calledValue) << " due to " << *I << "\n";
         }
         return;
       }
@@ -1377,7 +1337,7 @@ bool legalCombinedForwardReverse(
             llvm::errs() << " [nonspec] failed to replace function "
                          << (called->getName()) << " due to " << *inst << "\n";
           else
-            llvm::errs() << " [nonspec] ailed to replace function "
+            llvm::errs() << " [nonspec] failed to replace function "
                          << (*calledValue) << " due to " << *inst << "\n";
         }
         legal = false;
@@ -1393,7 +1353,7 @@ bool legalCombinedForwardReverse(
           llvm::errs() << " [premove] failed to replace function "
                        << (called->getName()) << " due to " << *inst << "\n";
         else
-          llvm::errs() << " [premove] ailed to replace function "
+          llvm::errs() << " [premove] failed to replace function "
                        << (*calledValue) << " due to " << *inst << "\n";
       }
       // Early exit
@@ -1565,6 +1525,10 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     auto in_arg = todiff->arg_begin();
     auto pp_arg = gutils->oldFunc->arg_begin();
     for (; pp_arg != gutils->oldFunc->arg_end();) {
+      if (_uncacheable_args.find(in_arg) == _uncacheable_args.end()) {
+        llvm::errs() << " todiff: " << *todiff << "\n";
+        llvm::errs() << " inargs: " << *in_arg << "\n";
+      }
       assert(_uncacheable_args.find(in_arg) != _uncacheable_args.end());
       _uncacheable_argsPP[pp_arg] = _uncacheable_args.find(in_arg)->second;
       ++pp_arg;
