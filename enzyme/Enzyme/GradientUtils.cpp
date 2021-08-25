@@ -2509,12 +2509,12 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       Vals.push_back(cast<Constant>(
           invertPointerM(CD->getElementAsConstant(i), BuilderM)));
     }
-    return ConstantDataArray::get(CD->getContext(), Vals);
+    return ConstantArray::get(CD->getType(), Vals);
   } else if (auto CD = dyn_cast<ConstantArray>(oval)) {
     SmallVector<Constant *, 1> Vals;
     for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
-      Vals.push_back(
-          cast<Constant>(invertPointerM(CD->getOperand(i), BuilderM)));
+      Value *val = invertPointerM(CD->getOperand(i), BuilderM);
+      Vals.push_back(cast<Constant>(val));
     }
     return ConstantArray::get(CD->getType(), Vals);
   } else if (auto CD = dyn_cast<ConstantStruct>(oval)) {
@@ -2607,19 +2607,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             if (isa<IntrinsicInst>(CI))
               continue;
             if (!isConstantInstruction(CI)) {
-              Function *F = CI->getCalledFunction();
-#if LLVM_VERSION_MAJOR >= 11
-              if (auto castinst =
-                      dyn_cast<ConstantExpr>(CI->getCalledOperand()))
-#else
-              if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledValue()))
-#endif
-              {
-                if (castinst->isCast())
-                  if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-                    F = fn;
-                  }
-              }
+              Function *F = getFunctionFromCall(CI);
               if (F && (isMemFreeLibMFunction(F->getName()) ||
                         F->getName() == "__fd_sincos_1")) {
                 continue;
@@ -2965,6 +2953,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     IRBuilder<> bb(getNewFromOriginal(arg));
     Value *op0 = arg->getOperand(0);
     auto li = bb.CreateLoad(invertPointerM(op0, bb), arg->getName() + "'ipl");
+    li->copyIRFlags(arg);
 #if LLVM_VERSION_MAJOR >= 10
     li->setAlignment(arg->getAlign());
 #else
@@ -3151,10 +3140,9 @@ end:;
   assert(BuilderM.GetInsertBlock()->getParent());
   assert(oval);
 
-  llvm::errs() << *BuilderM.GetInsertBlock()->getParent()->getParent() << "\n";
-  llvm::errs() << "fn:" << *BuilderM.GetInsertBlock()->getParent()
-               << "\noval=" << *oval << " icv=" << isConstantValue(oval)
-               << "\n";
+  llvm::errs() << *newFunc->getParent() << "\n";
+  llvm::errs() << "fn:" << *newFunc << "\noval=" << *oval
+               << " icv=" << isConstantValue(oval) << "\n";
   for (auto z : invertedPointers) {
     llvm::errs() << "available inversion for " << *z.first << " of "
                  << *z.second << "\n";
@@ -4769,20 +4757,7 @@ void GradientUtils::computeMinCache(
             }
           }
         } else if (auto CI = dyn_cast<CallInst>(&I)) {
-          Function *F = CI->getCalledFunction();
-
-#if LLVM_VERSION_MAJOR >= 11
-          if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand()))
-#else
-          if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledValue()))
-#endif
-          {
-            if (castinst->isCast())
-              if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-                F = fn;
-              }
-          }
-
+          Function *F = getFunctionFromCall(CI);
           if (F && isAllocationFunction(*F, TLI))
             Available[CI] = CI;
         }

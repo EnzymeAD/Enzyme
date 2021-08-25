@@ -173,6 +173,11 @@ static inline bool is_use_directly_needed_in_reverse(
       // we still need even if instruction is inactive
       if (F->getName() == "__kmpc_barrier" || F->getName() == "MPI_Barrier")
         return true;
+
+      // Since adjoint of GC preserve is another preserve in reverse
+      // we still need even if instruction is inactive
+      if (F->getName() == "llvm.julia.gc_preserve_begin")
+        return true;
     }
   }
 
@@ -243,6 +248,17 @@ static inline bool is_value_needed_in_reverse(
           return seen[idx] = true;
         else
           continue;
+      }
+
+      if (auto CI = dyn_cast<CallInst>(user)) {
+        if (auto F = CI->getCalledFunction()) {
+          // Use in a write barrier requires the shadow in the forward, even
+          // though the instruction is active.
+          if (mode != DerivativeMode::ReverseModeGradient &&
+              F->getName() == "julia.write_barrier") {
+            return seen[idx] = true;
+          }
+        }
       }
 
       if (isa<ReturnInst>(user)) {
