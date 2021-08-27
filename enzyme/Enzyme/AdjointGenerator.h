@@ -6353,7 +6353,9 @@ public:
           auto dbgLoc = gutils->getNewFromOriginal(orig)->getDebugLoc();
           auto CI = freeKnownAllocation(Builder2, tofree, *called, dbgLoc,
                                         gutils->TLI);
-          CI->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+          if (CI) {
+            CI->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+          }
         }
       }
 
