@@ -6745,24 +6745,37 @@ public:
       bool constval = gutils->isConstantValue(orig);
 
       if (!constval) {
-        auto anti =
-            gutils->createAntiMalloc(orig, getIndex(orig, CacheType::Shadow));
         if (Mode == DerivativeMode::ReverseModeCombined ||
-            Mode == DerivativeMode::ReverseModeGradient) {
-          IRBuilder<> Builder2(call.getParent());
-          getReverseBuilder(Builder2);
-          Value *tofree = lookup(anti, Builder2);
-          assert(tofree);
-          assert(tofree->getType());
-          assert(Type::getInt8Ty(tofree->getContext()));
-          assert(PointerType::getUnqual(Type::getInt8Ty(tofree->getContext())));
-          assert(Type::getInt8PtrTy(tofree->getContext()));
-          auto dbgLoc = gutils->getNewFromOriginal(orig)->getDebugLoc();
-          auto CI = freeKnownAllocation(Builder2, tofree, *called, dbgLoc,
-                                        gutils->TLI);
-          if (CI) {
-            CI->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+            Mode == DerivativeMode::ReverseModeGradient ||
+            Mode == DerivativeMode::ReverseModePrimal) {
+          auto anti =
+              gutils->createAntiMalloc(orig, getIndex(orig, CacheType::Shadow));
+          if (Mode == DerivativeMode::ReverseModeCombined ||
+              Mode == DerivativeMode::ReverseModeGradient) {
+            IRBuilder<> Builder2(call.getParent());
+            getReverseBuilder(Builder2);
+            Value *tofree = lookup(anti, Builder2);
+            assert(tofree);
+            assert(tofree->getType());
+            assert(Type::getInt8Ty(tofree->getContext()));
+            assert(
+                PointerType::getUnqual(Type::getInt8Ty(tofree->getContext())));
+            assert(Type::getInt8PtrTy(tofree->getContext()));
+            auto dbgLoc = gutils->getNewFromOriginal(orig)->getDebugLoc();
+            auto CI = freeKnownAllocation(Builder2, tofree, *called, dbgLoc,
+                                          gutils->TLI);
+            if (CI)
+              CI->addAttribute(AttributeList::FirstArgIndex,
+                               Attribute::NonNull);
           }
+        } else if (Mode == DerivativeMode::ForwardMode) {
+          IRBuilder<> Builder2(&call);
+          getForwardBuilder(Builder2);
+          SmallVector<Value *, 2> args = {orig->getArgOperand(0)};
+          CallInst *CI = Builder2.CreateCall(orig->getFunctionType(),
+                                             orig->getCalledFunction(), args);
+          CI->setAttributes(orig->getAttributes());
+          return;
         }
       }
 
@@ -6991,6 +7004,16 @@ public:
     if (called && isDeallocationFunction(*called, gutils->TLI)) {
       assert(gutils->invertedPointers.find(orig) ==
              gutils->invertedPointers.end());
+
+      if (Mode == DerivativeMode::ForwardMode) {
+        IRBuilder<> Builder2(&call);
+        getForwardBuilder(Builder2);
+        SmallVector<Value *, 2> args = {orig->getArgOperand(0)};
+        CallInst *CI = Builder2.CreateCall(orig->getFunctionType(),
+                                           orig->getCalledFunction(), args);
+        CI->setAttributes(orig->getAttributes());
+        return;
+      }
 
       if (gutils->forwardDeallocations.count(orig)) {
         if (Mode == DerivativeMode::ReverseModeGradient) {
