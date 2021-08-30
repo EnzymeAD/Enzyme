@@ -7007,12 +7007,18 @@ public:
              gutils->invertedPointers.end());
 
       if (Mode == DerivativeMode::ForwardMode) {
-        IRBuilder<> Builder2(&call);
-        getForwardBuilder(Builder2);
-        SmallVector<Value *, 2> args = {orig->getArgOperand(0)};
-        CallInst *CI = Builder2.CreateCall(orig->getFunctionType(),
-                                           orig->getCalledFunction(), args);
-        CI->setAttributes(orig->getAttributes());
+        if (!gutils->isConstantValue(orig->getArgOperand(0))) {
+          IRBuilder<> Builder2(&call);
+          getForwardBuilder(Builder2);
+          auto origfree = orig->getArgOperand(0);
+          auto tofree = gutils->invertPointerM(origfree, Builder2);
+          if (tofree != origfree) {
+            SmallVector<Value *, 2> args = {tofree};
+            CallInst *CI = Builder2.CreateCall(orig->getFunctionType(),
+                                               orig->getCalledFunction(), args);
+            CI->setAttributes(orig->getAttributes());
+          }
+        }
         return;
       }
 
