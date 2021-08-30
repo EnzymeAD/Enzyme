@@ -6907,7 +6907,8 @@ public:
       if (!constval) {
         Value *val;
         if (Mode == DerivativeMode::ReverseModePrimal ||
-            Mode == DerivativeMode::ReverseModeCombined) {
+            Mode == DerivativeMode::ReverseModeCombined ||
+            Mode == DerivativeMode::ForwardMode) {
           Value *ptrshadow =
               gutils->invertPointerM(call.getArgOperand(0), BuilderZ);
           BuilderZ.CreateCall(
