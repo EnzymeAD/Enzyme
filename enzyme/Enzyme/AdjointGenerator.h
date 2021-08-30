@@ -6846,7 +6846,8 @@ public:
             freeKnownAllocation(Builder2, lookup(nop, Builder2), *called,
                                 dbgLoc, gutils->TLI);
           }
-        } else {
+        } else if (Mode == DerivativeMode::ReverseModeGradient ||
+                   Mode == DerivativeMode::ReverseModeCombined) {
           // Note that here we cannot simply replace with null as users who
           // try to find the shadow pointer will use the shadow of null rather
           // than the true shadow of this
