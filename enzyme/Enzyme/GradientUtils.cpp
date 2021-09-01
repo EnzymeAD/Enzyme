@@ -2726,7 +2726,17 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   if (isConstantValue(oval)) {
     // NOTE, this is legal and the correct resolution, however, our activity
     // analysis honeypot no longer exists
-    return lookupM(getNewFromOriginal(oval), BuilderM);
+
+    switch (mode) {
+    case DerivativeMode::ReverseModePrimal:
+    case DerivativeMode::ReverseModeGradient:
+    case DerivativeMode::ReverseModeCombined: {
+      return lookupM(getNewFromOriginal(oval), BuilderM);
+    }
+    case DerivativeMode::ForwardMode: {
+      return getNewFromOriginal(oval);
+    }
+    }
   }
   assert(!isConstantValue(oval));
 
@@ -2736,7 +2746,16 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   {
     auto ifound = invertedPointers.find(oval);
     if (ifound != invertedPointers.end()) {
-      return lookupM(&*ifound->second, BuilderM);
+      switch (mode) {
+      case DerivativeMode::ReverseModePrimal:
+      case DerivativeMode::ReverseModeGradient:
+      case DerivativeMode::ReverseModeCombined: {
+        return lookupM(&*ifound->second, BuilderM);
+      }
+      case DerivativeMode::ForwardMode: {
+        return &*ifound->second;
+      }
+      }
     }
   }
 
@@ -2862,7 +2881,17 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 #endif
             memset->addParamAttr(0, Attribute::NonNull);
             assert(antialloca->getType() == arg->getType());
-            return lookupM(antialloca, BuilderM);
+
+            switch (mode) {
+            case DerivativeMode::ReverseModePrimal:
+            case DerivativeMode::ReverseModeGradient:
+            case DerivativeMode::ReverseModeCombined: {
+              return lookupM(antialloca, BuilderM);
+            }
+            case DerivativeMode::ForwardMode: {
+              return antialloca;
+            }
+            }
           }
         }
       }
@@ -2964,7 +2993,17 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                                   arg->getName() + "'ipc");
     invertedPointers.insert(
         std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
-    return lookupM(shadow, BuilderM);
+
+    switch (mode) {
+    case DerivativeMode::ReverseModePrimal:
+    case DerivativeMode::ReverseModeGradient:
+    case DerivativeMode::ReverseModeCombined: {
+      return lookupM(shadow, BuilderM);
+    }
+    case DerivativeMode::ForwardMode: {
+      return shadow;
+    }
+    }
   } else if (auto arg = dyn_cast<ConstantExpr>(oval)) {
     IRBuilder<> bb(inversionAllocs);
     auto ip = invertPointerM(arg->getOperand(0), bb);
@@ -2983,7 +3022,16 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                           arg->getType(), arg->getName() + "'ipc");
         invertedPointers.insert(std::make_pair(
             (const Value *)oval, InvertedPointerVH(this, shadow)));
-        return lookupM(shadow, BuilderM);
+        switch (mode) {
+        case DerivativeMode::ReverseModePrimal:
+        case DerivativeMode::ReverseModeGradient:
+        case DerivativeMode::ReverseModeCombined: {
+          return lookupM(shadow, BuilderM);
+        }
+        case DerivativeMode::ForwardMode: {
+          return shadow;
+        }
+        }
       }
     } else if (arg->getOpcode() == Instruction::GetElementPtr) {
       if (auto C = dyn_cast<Constant>(ip))
@@ -2998,7 +3046,16 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         Value *shadow = bb.CreateGEP(ip, invertargs, arg->getName() + "'ipg");
         invertedPointers.insert(std::make_pair(
             (const Value *)oval, InvertedPointerVH(this, shadow)));
-        return lookupM(shadow, BuilderM);
+        switch (mode) {
+        case DerivativeMode::ReverseModePrimal:
+        case DerivativeMode::ReverseModeGradient:
+        case DerivativeMode::ReverseModeCombined: {
+          return lookupM(shadow, BuilderM);
+        }
+        case DerivativeMode::ForwardMode: {
+          return shadow;
+        }
+        }
       }
     } else {
       llvm::errs() << *arg << "\n";
@@ -3012,7 +3069,16 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                               arg->getIndices(), arg->getName() + "'ipev");
     invertedPointers.insert(
         std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
-    return lookupM(shadow, BuilderM);
+    switch (mode) {
+    case DerivativeMode::ReverseModePrimal:
+    case DerivativeMode::ReverseModeGradient:
+    case DerivativeMode::ReverseModeCombined: {
+      return lookupM(shadow, BuilderM);
+    }
+    case DerivativeMode::ForwardMode: {
+      return shadow;
+    }
+    }
   } else if (auto arg = dyn_cast<InsertValueInst>(oval)) {
     IRBuilder<> bb(getNewFromOriginal(arg));
     Value *shadow =
@@ -3021,7 +3087,16 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                              arg->getIndices(), arg->getName() + "'ipiv");
     invertedPointers.insert(
         std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
-    return lookupM(shadow, BuilderM);
+    switch (mode) {
+    case DerivativeMode::ReverseModePrimal:
+    case DerivativeMode::ReverseModeGradient:
+    case DerivativeMode::ReverseModeCombined: {
+      return lookupM(shadow, BuilderM);
+    }
+    case DerivativeMode::ForwardMode: {
+      return shadow;
+    }
+    }
   } else if (auto arg = dyn_cast<ExtractElementInst>(oval)) {
     IRBuilder<> bb(getNewFromOriginal(arg));
     Value *shadow = bb.CreateExtractElement(
@@ -3029,7 +3104,16 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         getNewFromOriginal(arg->getIndexOperand()), arg->getName() + "'ipee");
     invertedPointers.insert(
         std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
-    return lookupM(shadow, BuilderM);
+    switch (mode) {
+    case DerivativeMode::ReverseModePrimal:
+    case DerivativeMode::ReverseModeGradient:
+    case DerivativeMode::ReverseModeCombined: {
+      return lookupM(shadow, BuilderM);
+    }
+    case DerivativeMode::ForwardMode: {
+      return shadow;
+    }
+    }
   } else if (auto arg = dyn_cast<InsertElementInst>(oval)) {
     IRBuilder<> bb(getNewFromOriginal(arg));
     Value *op0 = arg->getOperand(0);
@@ -3040,7 +3124,16 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         getNewFromOriginal(op2), arg->getName() + "'ipie");
     invertedPointers.insert(
         std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
-    return lookupM(shadow, BuilderM);
+    switch (mode) {
+    case DerivativeMode::ReverseModePrimal:
+    case DerivativeMode::ReverseModeGradient:
+    case DerivativeMode::ReverseModeCombined: {
+      return lookupM(shadow, BuilderM);
+    }
+    case DerivativeMode::ForwardMode: {
+      return shadow;
+    }
+    }
   } else if (auto arg = dyn_cast<ShuffleVectorInst>(oval)) {
     IRBuilder<> bb(getNewFromOriginal(arg));
     Value *op0 = arg->getOperand(0);
@@ -3056,7 +3149,16 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 #endif
     invertedPointers.insert(
         std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
-    return lookupM(shadow, BuilderM);
+    switch (mode) {
+    case DerivativeMode::ReverseModePrimal:
+    case DerivativeMode::ReverseModeGradient:
+    case DerivativeMode::ReverseModeCombined: {
+      return lookupM(shadow, BuilderM);
+    }
+    case DerivativeMode::ForwardMode: {
+      return shadow;
+    }
+    }
   } else if (auto arg = dyn_cast<SelectInst>(oval)) {
     IRBuilder<> bb(getNewFromOriginal(arg));
     Value *shadow = bb.CreateSelect(getNewFromOriginal(arg->getCondition()),
@@ -3065,7 +3167,16 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                                     arg->getName() + "'ipse");
     invertedPointers.insert(
         std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
-    return lookupM(shadow, BuilderM);
+    switch (mode) {
+    case DerivativeMode::ReverseModePrimal:
+    case DerivativeMode::ReverseModeGradient:
+    case DerivativeMode::ReverseModeCombined: {
+      return lookupM(shadow, BuilderM);
+    }
+    case DerivativeMode::ForwardMode: {
+      return shadow;
+    }
+    }
   } else if (auto arg = dyn_cast<LoadInst>(oval)) {
     IRBuilder<> bb(getNewFromOriginal(arg));
     Value *op0 = arg->getOperand(0);
@@ -3082,10 +3193,28 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     li->setSyncScopeID(arg->getSyncScopeID());
     invertedPointers.insert(
         std::make_pair((const Value *)oval, InvertedPointerVH(this, li)));
-    return lookupM(li, BuilderM);
+    switch (mode) {
+    case DerivativeMode::ReverseModePrimal:
+    case DerivativeMode::ReverseModeGradient:
+    case DerivativeMode::ReverseModeCombined: {
+      return lookupM(li, BuilderM);
+    }
+    case DerivativeMode::ForwardMode: {
+      return li;
+    }
+    }
   } else if (auto arg = dyn_cast<BinaryOperator>(oval)) {
     if (arg->getOpcode() == Instruction::FAdd)
-      return lookupM(getNewFromOriginal(arg), BuilderM);
+      switch (mode) {
+      case DerivativeMode::ReverseModePrimal:
+      case DerivativeMode::ReverseModeGradient:
+      case DerivativeMode::ReverseModeCombined: {
+        return lookupM(getNewFromOriginal(arg), BuilderM);
+      }
+      case DerivativeMode::ForwardMode: {
+        return getNewFromOriginal(arg);
+      }
+      }
 
     if (!arg->getType()->isIntOrIntVectorTy()) {
       llvm::errs() << *oval << "\n";
@@ -3103,7 +3232,16 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       BI->copyIRFlags(arg);
     invertedPointers.insert(
         std::make_pair((const Value *)oval, InvertedPointerVH(this, li)));
-    return lookupM(li, BuilderM);
+    switch (mode) {
+    case DerivativeMode::ReverseModePrimal:
+    case DerivativeMode::ReverseModeGradient:
+    case DerivativeMode::ReverseModeCombined: {
+      return lookupM(li, BuilderM);
+    }
+    case DerivativeMode::ForwardMode: {
+      return li;
+    }
+    }
   } else if (auto arg = dyn_cast<GetElementPtrInst>(oval)) {
     IRBuilder<> bb(getNewFromOriginal(arg));
     SmallVector<Value *, 4> invertargs;
@@ -3117,7 +3255,16 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       gep->setIsInBounds(arg->isInBounds());
     invertedPointers.insert(
         std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
-    return lookupM(shadow, BuilderM);
+    switch (mode) {
+    case DerivativeMode::ReverseModePrimal:
+    case DerivativeMode::ReverseModeGradient:
+    case DerivativeMode::ReverseModeCombined: {
+      return lookupM(shadow, BuilderM);
+    }
+    case DerivativeMode::ForwardMode: {
+      return shadow;
+    }
+    }
   } else if (auto inst = dyn_cast<AllocaInst>(oval)) {
     IRBuilder<> bb(getNewFromOriginal(inst));
     Value *asize = getNewFromOriginal(inst->getArraySize());
@@ -3145,7 +3292,16 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           st->setAlignment(inst->getAlignment());
 #endif
         }
-        return lookupM(antialloca, BuilderM);
+        switch (mode) {
+        case DerivativeMode::ReverseModePrimal:
+        case DerivativeMode::ReverseModeGradient:
+        case DerivativeMode::ReverseModeCombined: {
+          return lookupM(antialloca, BuilderM);
+        }
+        case DerivativeMode::ForwardMode: {
+          return antialloca;
+        }
+        }
       } else {
         // TODO handle alloca of size > 1
       }
@@ -3186,7 +3342,16 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     }
 #endif
     memset->addParamAttr(0, Attribute::NonNull);
-    return lookupM(antialloca, BuilderM);
+    switch (mode) {
+    case DerivativeMode::ReverseModePrimal:
+    case DerivativeMode::ReverseModeGradient:
+    case DerivativeMode::ReverseModeCombined: {
+      return lookupM(antialloca, BuilderM);
+    }
+    case DerivativeMode::ForwardMode: {
+      return antialloca;
+    }
+    }
   } else if (auto phi = dyn_cast<PHINode>(oval)) {
 
     if (phi->getNumIncomingValues() == 0) {
@@ -3218,9 +3383,22 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             ++cnt;
          }
 
-         auto which2 = lookupM(which, BuilderM);
-         auto result = BuilderM.CreateSelect(which2, invertPointerM(vals[1], BuilderM), invertPointerM(vals[0], BuilderM));
-         return result;
+        switch (mode) {
+         case DerivativeMode::ReverseModePrimal:
+         case DerivativeMode::ReverseModeGradient:
+         case DerivativeMode::ReverseModeCombined: {
+           auto which2 = lookupM(which, BuilderM);
+           auto result = BuilderM.CreateSelect(which2, invertPointerM(vals[1], BuilderM), invertPointerM(vals[0], BuilderM));
+           auto result = BuilderM.CreateSelect(which2, invertPointerM(vals[1], BuilderM), invertPointerM(vals[0], BuilderM));
+           return result;
+         }
+         case DerivativeMode::ForwardMode: {
+           auto which2 = which;
+           auto result = BuilderM.CreateSelect(which2, invertPointerM(vals[1], BuilderM), invertPointerM(vals[0], BuilderM));
+           auto result = BuilderM.CreateSelect(which2, invertPointerM(vals[1], BuilderM), invertPointerM(vals[0], BuilderM));
+           return result;
+         }
+       }
      }
 #endif
 
@@ -3248,7 +3426,16 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         which->addIncoming(val, cast<BasicBlock>(getNewFromOriginal(
                                     phi->getIncomingBlock(i))));
       }
-      return lookupM(which, BuilderM);
+      switch (mode) {
+      case DerivativeMode::ReverseModePrimal:
+      case DerivativeMode::ReverseModeGradient:
+      case DerivativeMode::ReverseModeCombined: {
+        return lookupM(which, BuilderM);
+      }
+      case DerivativeMode::ForwardMode: {
+        return which;
+      }
+      }
     }
   }
 
