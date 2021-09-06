@@ -2869,6 +2869,10 @@ public:
         if (gutils->isConstantInstruction(&I))
           return;
 
+        auto dif0 = gutils->isConstantValue(orig_ops[0])
+                        ? 0
+                        : diffe(orig_ops[1], Builder2);
+
         if (!gutils->isConstantValue(orig_ops[1])) {
           auto und = UndefValue::get(orig_ops[1]->getType());
           auto mask = ConstantAggregateZero::get(VectorType::get(
@@ -2879,10 +2883,14 @@ public:
               cast<VectorType>(und->getType())->getNumElements()));
 #endif
 
-          auto vecdiff = diffe(orig_ops[1], Builder2);
-          auto diff = Builder2.CreateShuffleVector(und, vecdiff, mask);
+          auto vecdif = diffe(orig_ops[1], Builder2);
+          auto dif1 = Builder2.CreateShuffleVector(und, vecdif, mask);
 
-          setDiffe(&I, diff, Builder2);
+          auto dif = Builder2.CreateFAdd(dif0, dif1);
+
+          setDiffe(&I, dif, Builder2);
+        } else if (!gutils->isConstantValue(orig_ops[0])) {
+          setDiffe(&I, dif0, Builder2);
         }
         return;
       }
