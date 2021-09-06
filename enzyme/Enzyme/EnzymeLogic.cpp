@@ -2113,38 +2113,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     }
   }
 
-  for (Argument &Arg : NewF->args()) {
-    if (Arg.hasAttribute(Attribute::Returned))
-      Arg.removeAttr(Attribute::Returned);
-    if (Arg.hasAttribute(Attribute::StructRet))
-      Arg.removeAttr(Attribute::StructRet);
-  }
-  if (NewF->hasFnAttribute(Attribute::OptimizeNone))
-    NewF->removeFnAttr(Attribute::OptimizeNone);
-
-  if (auto bytes =
-          NewF->getDereferenceableBytes(llvm::AttributeList::ReturnIndex)) {
-    AttrBuilder ab;
-    ab.addDereferenceableAttr(bytes);
-    NewF->removeAttributes(llvm::AttributeList::ReturnIndex, ab);
-  }
-  if (NewF->hasAttribute(llvm::AttributeList::ReturnIndex,
-                         llvm::Attribute::NoAlias)) {
-    NewF->removeAttribute(llvm::AttributeList::ReturnIndex,
-                          llvm::Attribute::NoAlias);
-  }
-#if LLVM_VERSION_MAJOR >= 11
-  if (NewF->hasAttribute(llvm::AttributeList::ReturnIndex,
-                         llvm::Attribute::NoUndef)) {
-    NewF->removeAttribute(llvm::AttributeList::ReturnIndex,
-                          llvm::Attribute::NoUndef);
-  }
-#endif
-  if (NewF->hasAttribute(llvm::AttributeList::ReturnIndex,
-                         llvm::Attribute::ZExt)) {
-    NewF->removeAttribute(llvm::AttributeList::ReturnIndex,
-                          llvm::Attribute::ZExt);
-  }
+  clearFunctionAttributes(NewF);
 
   if (llvm::verifyFunction(*NewF, &llvm::errs())) {
     llvm::errs() << *gutils->oldFunc << "\n";
