@@ -2887,8 +2887,6 @@ public:
         return;
       }
 #endif
-
-      case Intrinsic::lifetime_start:
       case Intrinsic::nvvm_sqrt_rn_d:
       case Intrinsic::sqrt: {
         Value *op = diffe(orig_ops[0], Builder2);
