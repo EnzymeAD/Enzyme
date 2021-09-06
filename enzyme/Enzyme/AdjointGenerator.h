@@ -2834,31 +2834,6 @@ public:
       getForwardBuilder(Builder2);
 
       switch (ID) {
-      case Intrinsic::nvvm_barrier0_popc:
-      case Intrinsic::nvvm_barrier0_and:
-      case Intrinsic::nvvm_barrier0_or:
-      case Intrinsic::nvvm_barrier0:
-      case Intrinsic::amdgcn_s_barrier:
-      case Intrinsic::nvvm_membar_cta:
-      case Intrinsic::nvvm_membar_gl:
-      case Intrinsic::nvvm_membar_sys:
-      case Intrinsic::assume:
-      case Intrinsic::prefetch:
-      case Intrinsic::dbg_declare:
-      case Intrinsic::dbg_value:
-#if LLVM_VERSION_MAJOR > 6
-      case Intrinsic::dbg_label:
-#endif
-      case Intrinsic::dbg_addr:
-      case Intrinsic::floor:
-      case Intrinsic::ceil:
-      case Intrinsic::trunc:
-      case Intrinsic::rint:
-      case Intrinsic::nearbyint:
-      case Intrinsic::round:
-        // Derivative of these is zero and requires no modification
-        return;
-
 #if LLVM_VERSION_MAJOR >= 9
 #if LLVM_VERSION_MAJOR >= 12
       case Intrinsic::vector_reduce_fadd:
