@@ -1387,6 +1387,51 @@ bool legalCombinedForwardReverse(
   return true;
 }
 
+void clearFunctionAttributes(Function *f) {
+  for (Argument &Arg : f->args()) {
+    if (Arg.hasAttribute(Attribute::Returned))
+      Arg.removeAttr(Attribute::Returned);
+    if (Arg.hasAttribute(Attribute::StructRet))
+      Arg.removeAttr(Attribute::StructRet);
+  }
+  if (f->hasFnAttribute(Attribute::OptimizeNone))
+    f->removeFnAttr(Attribute::OptimizeNone);
+
+  if (auto bytes =
+          f->getDereferenceableBytes(llvm::AttributeList::ReturnIndex)) {
+    AttrBuilder ab;
+    ab.addDereferenceableAttr(bytes);
+    f->removeAttributes(llvm::AttributeList::ReturnIndex, ab);
+  }
+
+  if (f->getAttributes().getRetAlignment()) {
+    AttrBuilder ab;
+    ab.addAlignmentAttr(f->getAttributes().getRetAlignment());
+    f->removeAttributes(llvm::AttributeList::ReturnIndex, ab);
+  }
+  if (f->hasAttribute(llvm::AttributeList::ReturnIndex,
+                      llvm::Attribute::NoAlias)) {
+    f->removeAttribute(llvm::AttributeList::ReturnIndex,
+                       llvm::Attribute::NoAlias);
+  }
+#if LLVM_VERSION_MAJOR >= 11
+  if (f->hasAttribute(llvm::AttributeList::ReturnIndex,
+                      llvm::Attribute::NoUndef)) {
+    f->removeAttribute(llvm::AttributeList::ReturnIndex,
+                       llvm::Attribute::NoUndef);
+  }
+#endif
+  if (f->hasAttribute(llvm::AttributeList::ReturnIndex,
+                      llvm::Attribute::NonNull)) {
+    f->removeAttribute(llvm::AttributeList::ReturnIndex,
+                       llvm::Attribute::NonNull);
+  }
+  if (f->hasAttribute(llvm::AttributeList::ReturnIndex,
+                      llvm::Attribute::ZExt)) {
+    f->removeAttribute(llvm::AttributeList::ReturnIndex, llvm::Attribute::ZExt);
+  }
+}
+
 //! return structtype if recursive function
 const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     Function *todiff, DIFFE_TYPE retType,
@@ -3327,49 +3372,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     }
   }
 
-  for (Argument &Arg : gutils->newFunc->args()) {
-    if (Arg.hasAttribute(Attribute::Returned))
-      Arg.removeAttr(Attribute::Returned);
-    if (Arg.hasAttribute(Attribute::StructRet))
-      Arg.removeAttr(Attribute::StructRet);
-  }
-  if (gutils->newFunc->hasFnAttribute(Attribute::OptimizeNone))
-    gutils->newFunc->removeFnAttr(Attribute::OptimizeNone);
-
-  if (auto bytes = gutils->newFunc->getDereferenceableBytes(
-          llvm::AttributeList::ReturnIndex)) {
-    AttrBuilder ab;
-    ab.addDereferenceableAttr(bytes);
-    gutils->newFunc->removeAttributes(llvm::AttributeList::ReturnIndex, ab);
-  }
-
-  if (gutils->newFunc->getAttributes().getRetAlignment()) {
-    AttrBuilder ab;
-    ab.addAlignmentAttr(gutils->newFunc->getAttributes().getRetAlignment());
-    gutils->newFunc->removeAttributes(llvm::AttributeList::ReturnIndex, ab);
-  }
-  if (gutils->newFunc->hasAttribute(llvm::AttributeList::ReturnIndex,
-                                    llvm::Attribute::NoAlias)) {
-    gutils->newFunc->removeAttribute(llvm::AttributeList::ReturnIndex,
-                                     llvm::Attribute::NoAlias);
-  }
-#if LLVM_VERSION_MAJOR >= 11
-  if (gutils->newFunc->hasAttribute(llvm::AttributeList::ReturnIndex,
-                                    llvm::Attribute::NoUndef)) {
-    gutils->newFunc->removeAttribute(llvm::AttributeList::ReturnIndex,
-                                     llvm::Attribute::NoUndef);
-  }
-#endif
-  if (gutils->newFunc->hasAttribute(llvm::AttributeList::ReturnIndex,
-                                    llvm::Attribute::NonNull)) {
-    gutils->newFunc->removeAttribute(llvm::AttributeList::ReturnIndex,
-                                     llvm::Attribute::NonNull);
-  }
-  if (gutils->newFunc->hasAttribute(llvm::AttributeList::ReturnIndex,
-                                    llvm::Attribute::ZExt)) {
-    gutils->newFunc->removeAttribute(llvm::AttributeList::ReturnIndex,
-                                     llvm::Attribute::ZExt);
-  }
+  clearFunctionAttributes(gutils->newFunc);
 
   if (llvm::verifyFunction(*gutils->newFunc, &llvm::errs())) {
     llvm::errs() << *gutils->oldFunc << "\n";
@@ -3670,49 +3673,7 @@ Function *EnzymeLogic::CreateForwardDiff(
     }
   }
 
-  for (Argument &Arg : gutils->newFunc->args()) {
-    if (Arg.hasAttribute(Attribute::Returned))
-      Arg.removeAttr(Attribute::Returned);
-    if (Arg.hasAttribute(Attribute::StructRet))
-      Arg.removeAttr(Attribute::StructRet);
-  }
-  if (gutils->newFunc->hasFnAttribute(Attribute::OptimizeNone))
-    gutils->newFunc->removeFnAttr(Attribute::OptimizeNone);
-
-  if (auto bytes = gutils->newFunc->getDereferenceableBytes(
-          llvm::AttributeList::ReturnIndex)) {
-    AttrBuilder ab;
-    ab.addDereferenceableAttr(bytes);
-    gutils->newFunc->removeAttributes(llvm::AttributeList::ReturnIndex, ab);
-  }
-
-  if (gutils->newFunc->getAttributes().getRetAlignment()) {
-    AttrBuilder ab;
-    ab.addAlignmentAttr(gutils->newFunc->getAttributes().getRetAlignment());
-    gutils->newFunc->removeAttributes(llvm::AttributeList::ReturnIndex, ab);
-  }
-  if (gutils->newFunc->hasAttribute(llvm::AttributeList::ReturnIndex,
-                                    llvm::Attribute::NoAlias)) {
-    gutils->newFunc->removeAttribute(llvm::AttributeList::ReturnIndex,
-                                     llvm::Attribute::NoAlias);
-  }
-#if LLVM_VERSION_MAJOR >= 11
-  if (gutils->newFunc->hasAttribute(llvm::AttributeList::ReturnIndex,
-                                    llvm::Attribute::NoUndef)) {
-    gutils->newFunc->removeAttribute(llvm::AttributeList::ReturnIndex,
-                                     llvm::Attribute::NoUndef);
-  }
-#endif
-  if (gutils->newFunc->hasAttribute(llvm::AttributeList::ReturnIndex,
-                                    llvm::Attribute::NonNull)) {
-    gutils->newFunc->removeAttribute(llvm::AttributeList::ReturnIndex,
-                                     llvm::Attribute::NonNull);
-  }
-  if (gutils->newFunc->hasAttribute(llvm::AttributeList::ReturnIndex,
-                                    llvm::Attribute::ZExt)) {
-    gutils->newFunc->removeAttribute(llvm::AttributeList::ReturnIndex,
-                                     llvm::Attribute::ZExt);
-  }
+  clearFunctionAttributes(gutils->newFunc);
 
   if (llvm::verifyFunction(*gutils->newFunc, &llvm::errs())) {
     llvm::errs() << *gutils->oldFunc << "\n";
