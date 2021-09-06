@@ -482,7 +482,7 @@ public:
     Type *tapeType = nullptr;
     switch (mode) {
     case DerivativeMode::ForwardMode:
-      newFunc = Logic.CreateDual(
+      newFunc = Logic.CreateForwardDiff(
           cast<Function>(fn), retType, constants, TLI, TA,
           /*should return*/ false, /*dretPtr*/ false, mode,
           /*addedType*/ nullptr, type_args, volatile_args, AtomicAdd, PostOpt);

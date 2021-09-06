@@ -3396,7 +3396,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   return nf;
 }
 
-Function *EnzymeLogic::CreateDual(
+Function *EnzymeLogic::CreateForwardDiff(
     Function *todiff, DIFFE_TYPE retType,
     const std::vector<DIFFE_TYPE> &constant_args, TargetLibraryInfo &TLI,
     TypeAnalysis &TA, bool returnUsed, bool dretPtr, DerivativeMode mode,
