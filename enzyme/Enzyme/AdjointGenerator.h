@@ -7187,7 +7187,7 @@ public:
       }
 #endif
 
-      if (!diffes->getType()->isVoidTy()) {
+      if (!gutils->isConstantValue(&call)) {
         unsigned structidx = retUsed ? 1 : 0;
         Value *diffe = Builder2.CreateExtractValue(diffes, {structidx});
         setDiffe(&call, diffe, Builder2);
