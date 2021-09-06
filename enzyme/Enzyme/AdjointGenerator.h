@@ -2878,10 +2878,10 @@ public:
 #else
               cast<VectorType>(und->getType())->getNumElements()));
 #endif
-          auto accdiff = diffe(orig_ops[0], Builder2);
-          auto diff = Builder2.CreateShuffleVector(
-              Builder2.CreateInsertElement(und, accdiff, (uint64_t)0), und,
-              mask);
+
+          auto vecdiff = diffe(orig_ops[1], Builder2);
+          auto diff = Builder2.CreateShuffleVector(und, vecdiff, mask);
+
           setDiffe(&I, diff, Builder2);
         }
         return;
