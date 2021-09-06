@@ -2986,34 +2986,26 @@ public:
       }
 
       case Intrinsic::fma: {
-        Value *dif = nullptr;
-
-        auto op1 = gutils->getNewFromOriginal(orig_ops[1]);
-        auto op2 = gutils->getNewFromOriginal(orig_ops[2]);
-
-        if (!gutils->isConstantValue(orig_ops[0])) {
-          dif = diffe(orig_ops[0], Builder2);
-        }
-
-        if (!gutils->isConstantValue(orig_ops[1]) &&
+        if (!gutils->isConstantValue(orig_ops[0]) ||
+            !gutils->isConstantValue(orig_ops[1]) ||
             !gutils->isConstantValue(orig_ops[2])) {
-          Value *dif1 = Builder2.CreateFAdd(
-              Builder2.CreateFMul(op1, diffe(orig_ops[2], Builder2)),
-              Builder2.CreateFMul(diffe(orig_ops[1], Builder2), op2));
+          Value *op1 = gutils->getNewFromOriginal(orig_ops[1]);
+          Value *op2 = gutils->getNewFromOriginal(orig_ops[2]);
 
-          dif = dif ? Builder2.CreateFAdd(dif, dif1) : dif1;
-        } else if (!gutils->isConstantValue(orig_ops[1]) &&
-                   gutils->isConstantValue(orig_ops[2])) {
-          Value *dif1 = Builder2.CreateFMul(diffe(orig_ops[1], Builder2), op2);
-          dif = Builder2.CreateFAdd(dif, dif1);
+          Value *dif0 = gutils->isConstantValue(orig_ops[0])
+                            ? 0
+                            : diffe(orig_ops[0], Builder2);
+          Value *dif1 = gutils->isConstantValue(orig_ops[1])
+                            ? 0
+                            : diffe(orig_ops[1], Builder2);
+          Value *dif2 = gutils->isConstantValue(orig_ops[2])
+                            ? 0
+                            : diffe(orig_ops[2], Builder2);
 
-        } else if (gutils->isConstantValue(orig_ops[1]) &&
-                   !gutils->isConstantValue(orig_ops[2])) {
-          Value *dif1 = Builder2.CreateFMul(diffe(orig_ops[2], Builder2), op1);
-          dif = dif ? Builder2.CreateFAdd(dif, dif1) : dif1;
-        }
+          Value *dif = Builder2.CreateFAdd(Builder2.CreateFMul(op1, dif2),
+                                           Builder2.CreateFMul(dif1, op2));
 
-        if (dif) {
+          dif = Builder2.CreateFAdd(dif, dif0);
           setDiffe(&I, dif, Builder2);
         }
 
