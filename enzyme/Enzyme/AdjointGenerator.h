@@ -2940,24 +2940,20 @@ public:
       case Intrinsic::x86_sse_max_ps:
 #endif
       case Intrinsic::maxnum: {
-        auto op0 = gutils->getNewFromOriginal(orig_ops[0]);
-        auto op1 = gutils->getNewFromOriginal(orig_ops[1]);
-        Value *cmp = Builder2.CreateFCmpOLT(op0, op1);
-
-        if (!gutils->isConstantValue(orig_ops[0]) &&
+        if (!gutils->isConstantValue(orig_ops[0]) ||
             !gutils->isConstantValue(orig_ops[1])) {
-          Value *dif = Builder2.CreateSelect(cmp, diffe(orig_ops[0], Builder2),
-                                             diffe(orig_ops[1], Builder2));
-          setDiffe(&I, dif, Builder2);
-        } else if (!gutils->isConstantValue(orig_ops[0])) {
-          Value *dif = Builder2.CreateSelect(
-              cmp, ConstantFP::get(orig_ops[0]->getType(), 0),
-              diffe(orig_ops[0], Builder2));
-          setDiffe(&I, dif, Builder2);
-        } else if (!gutils->isConstantValue(orig_ops[1])) {
-          Value *dif =
-              Builder2.CreateSelect(cmp, diffe(orig_ops[1], Builder2),
-                                    ConstantFP::get(orig_ops[0]->getType(), 0));
+          Value *op0 = gutils->getNewFromOriginal(orig_ops[0]);
+          Value *op1 = gutils->getNewFromOriginal(orig_ops[1]);
+          Value *cmp = Builder2.CreateFCmpOLT(op0, op1);
+
+          Value *diffe0 = gutils->isConstantValue(orig_ops[0])
+                              ? 0
+                              : diffe(orig_ops[0], Builder2);
+          Value *diffe1 = gutils->isConstantValue(orig_ops[1])
+                              ? 0
+                              : diffe(orig_ops[1], Builder2);
+
+          Value *dif = Builder2.CreateSelect(cmp, diffe0, diffe1);
           setDiffe(&I, dif, Builder2);
         }
 
@@ -2969,24 +2965,20 @@ public:
       case Intrinsic::x86_sse_min_ps:
 #endif
       case Intrinsic::minnum: {
-        auto op0 = gutils->getNewFromOriginal(orig_ops[0]);
-        auto op1 = gutils->getNewFromOriginal(orig_ops[1]);
-        Value *cmp = Builder2.CreateFCmpOLT(op0, op1);
-
-        if (!gutils->isConstantValue(orig_ops[0]) &&
+        if (!gutils->isConstantValue(orig_ops[0]) ||
             !gutils->isConstantValue(orig_ops[1])) {
-          Value *dif = Builder2.CreateSelect(cmp, diffe(orig_ops[0], Builder2),
-                                             diffe(orig_ops[1], Builder2));
-          setDiffe(&I, dif, Builder2);
-        } else if (!gutils->isConstantValue(orig_ops[0])) {
-          Value *dif =
-              Builder2.CreateSelect(cmp, diffe(orig_ops[0], Builder2),
-                                    ConstantFP::get(orig_ops[0]->getType(), 0));
-          setDiffe(&I, dif, Builder2);
-        } else if (!gutils->isConstantValue(orig_ops[1])) {
-          Value *dif = Builder2.CreateSelect(
-              cmp, ConstantFP::get(orig_ops[0]->getType(), 0),
-              diffe(orig_ops[1], Builder2));
+          Value *op0 = gutils->getNewFromOriginal(orig_ops[0]);
+          Value *op1 = gutils->getNewFromOriginal(orig_ops[1]);
+          Value *cmp = Builder2.CreateFCmpOLT(op0, op1);
+
+          Value *diffe0 = gutils->isConstantValue(orig_ops[0])
+                              ? 0
+                              : diffe(orig_ops[0], Builder2);
+          Value *diffe1 = gutils->isConstantValue(orig_ops[1])
+                              ? 0
+                              : diffe(orig_ops[1], Builder2);
+
+          Value *dif = Builder2.CreateSelect(cmp, diffe0, diffe1);
           setDiffe(&I, dif, Builder2);
         }
 
