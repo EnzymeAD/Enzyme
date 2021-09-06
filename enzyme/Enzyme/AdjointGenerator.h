@@ -2845,8 +2845,8 @@ public:
           return;
 
         auto dif0 = gutils->isConstantValue(orig_ops[0])
-                        ? 0
-                        : diffe(orig_ops[1], Builder2);
+                        ? ConstantFP::get(orig_ops[0]->getType(), 0)
+                        : diffe(orig_ops[0], Builder2);
 
         if (!gutils->isConstantValue(orig_ops[1])) {
           auto und = UndefValue::get(orig_ops[1]->getType());
@@ -2930,10 +2930,10 @@ public:
           Value *cmp = Builder2.CreateFCmpOLT(op0, op1);
 
           Value *diffe0 = gutils->isConstantValue(orig_ops[0])
-                              ? 0
+                              ? ConstantFP::get(orig_ops[0]->getType(), 0)
                               : diffe(orig_ops[0], Builder2);
           Value *diffe1 = gutils->isConstantValue(orig_ops[1])
-                              ? 0
+                              ? ConstantFP::get(orig_ops[1]->getType(), 0)
                               : diffe(orig_ops[1], Builder2);
 
           Value *dif = Builder2.CreateSelect(cmp, diffe0, diffe1);
@@ -2955,10 +2955,10 @@ public:
           Value *cmp = Builder2.CreateFCmpOLT(op0, op1);
 
           Value *diffe0 = gutils->isConstantValue(orig_ops[0])
-                              ? 0
+                              ? ConstantFP::get(orig_ops[0]->getType(), 0)
                               : diffe(orig_ops[0], Builder2);
           Value *diffe1 = gutils->isConstantValue(orig_ops[1])
-                              ? 0
+                              ? ConstantFP::get(orig_ops[1]->getType(), 0)
                               : diffe(orig_ops[1], Builder2);
 
           Value *dif = Builder2.CreateSelect(cmp, diffe0, diffe1);
@@ -2976,13 +2976,13 @@ public:
           Value *op2 = gutils->getNewFromOriginal(orig_ops[2]);
 
           Value *dif0 = gutils->isConstantValue(orig_ops[0])
-                            ? 0
+                            ? ConstantFP::get(orig_ops[0]->getType(), 0)
                             : diffe(orig_ops[0], Builder2);
           Value *dif1 = gutils->isConstantValue(orig_ops[1])
-                            ? 0
+                            ? ConstantFP::get(orig_ops[1]->getType(), 0)
                             : diffe(orig_ops[1], Builder2);
           Value *dif2 = gutils->isConstantValue(orig_ops[2])
-                            ? 0
+                            ? ConstantFP::get(orig_ops[2]->getType(), 0)
                             : diffe(orig_ops[2], Builder2);
 
           Value *dif = Builder2.CreateFAdd(Builder2.CreateFMul(op1, dif2),
