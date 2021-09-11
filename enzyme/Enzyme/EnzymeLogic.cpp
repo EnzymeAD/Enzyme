@@ -3531,17 +3531,6 @@ Function *EnzymeLogic::CreateForwardDiff(
   calculateUnusedStoresInFunction(*gutils->oldFunc, unnecessaryStores,
                                   unnecessaryInstructions, gutils);
 
-  // Explicitly handle all returns first to ensure that return instructions know
-  // if they are used or not before
-  //   processessing instructions
-  std::map<ReturnInst *, StoreInst *> replacedReturns;
-  llvm::AllocaInst *retAlloca = nullptr;
-  llvm::AllocaInst *dretAlloca = nullptr;
-  if (returnValue) {
-    retAlloca = IRBuilder<>(&gutils->newFunc->getEntryBlock().front())
-                    .CreateAlloca(todiff->getReturnType(), nullptr, "toreturn");
-  }
-
   // set derivative of function arguments
   auto newArgs = gutils->newFunc->arg_begin();
 
@@ -3562,9 +3551,9 @@ Function *EnzymeLogic::CreateForwardDiff(
 
   AdjointGenerator<const AugmentedReturn *> maker(
       mode, gutils, constant_args, retType, TR, getIndex, uncacheable_args_map,
-      /*returnuses*/ nullptr, nullptr, &replacedReturns, unnecessaryValues,
+      /*returnuses*/ nullptr, nullptr, nullptr, unnecessaryValues,
       unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
-      dretAlloca);
+      nullptr);
 
   for (BasicBlock &oBB : *gutils->oldFunc) {
     // Don't create derivatives for code that results in termination
@@ -3614,8 +3603,7 @@ Function *EnzymeLogic::CreateForwardDiff(
       maker.visit(&*it);
     }
 
-    createTerminator(gutils, constant_args, &oBB, retAlloca, dretAlloca,
-                     retType);
+    createTerminator(gutils, constant_args, &oBB, nullptr, nullptr, retType);
   }
 
   gutils->eraseFictiousPHIs();
