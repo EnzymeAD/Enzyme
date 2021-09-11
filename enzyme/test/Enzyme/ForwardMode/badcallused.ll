@@ -44,9 +44,9 @@ attributes #1 = { noinline nounwind uwtable }
 
 ; CHECK: define internal {{(dso_local )?}}void @diffef(double* nocapture %x, double* nocapture %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %call = tail call zeroext i1 @subf(double* %x)
-; CHECK-NEXT:   call void @diffesubf(double* %x, double* %"x'")
-; CHECK-NEXT:   %sel = select i1 %call, double 2.000000e+00, double 3.000000e+00
+; CHECK-NEXT:   %0 = call { i1 } @diffesubf(double* %x, double* %"x'")
+; CHECK-NEXT:   %1 = extractvalue { i1 } %0, 0
+; CHECK-NEXT:   %sel = select i1 %1, double 2.000000e+00, double 3.000000e+00
 ; CHECK-NEXT:   store double %sel, double* %x, align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"x'", align 8
 ; CHECK-NEXT:   ret void
@@ -60,8 +60,8 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK-NEXT:   %2 = fmul fast double %1, 2.000000e+00
 ; CHECK-NEXT:   store double %mul, double* %x, align 8
 ; CHECK-NEXT:   store double %2, double* %"x'", align 8
-; CHECK-NEXT:   call void @diffemetasubf(double* %x, double* %"x'")
-; CHECK-NEXT:   ret void
+; CHECK-NEXT:   %3 = call { i1 } @diffemetasubf(double* %x, double* %"x'")
+; CHECK-NEXT:   ret { i1 } %3
 ; CHECK-NEXT: }
 
 ; CHECK: define internal {{(dso_local )?}}{ i1 } @diffemetasubf(double* nocapture %x, double* nocapture %"x'")
