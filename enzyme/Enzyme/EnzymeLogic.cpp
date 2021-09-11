@@ -2179,27 +2179,36 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
   nBuilder.setFastMathFlags(getFast());
 
   if (ReturnInst *inst = dyn_cast_or_null<ReturnInst>(oBB->getTerminator())) {
-    SmallVector<Value *, 4> retargs;
+    SmallVector<Value *, 2> retargs;
 
-    if (gutils->newFunc->getReturnType()->isVoidTy()) {
-      assert(retargs.size() == 0);
+    switch (retVal) {
+    case ReturnType::Return: {
+      auto ret = inst->getOperand(0);
+      if (retType == DIFFE_TYPE::CONSTANT) {
+        retargs.push_back(gutils->getNewFromOriginal(ret));
+      } else {
+        retargs.push_back(gutils->diffe(ret, nBuilder));
+      }
+      break;
+    }
+    case ReturnType::TwoReturns: {
+      if (retType == DIFFE_TYPE::CONSTANT)
+        assert(false && "Invalid return type");
+      auto ret = inst->getOperand(0);
+      retargs.push_back(gutils->getNewFromOriginal(ret));
+      retargs.push_back(gutils->diffe(ret, nBuilder));
+      break;
+    }
+    case ReturnType::Void: {
       gutils->erase(gutils->getNewFromOriginal(inst));
       nBuilder.CreateRetVoid();
       return;
     }
-
-    auto ret = inst->getOperand(0);
-
-    if (retVal == ReturnType::TwoReturns) {
-      retargs.push_back(gutils->getNewFromOriginal(ret));
+    default: {
+      llvm::errs() << "[the error]\n";
+      assert(false && "Invalid return type");
+      return;
     }
-
-    if (retVal == ReturnType::Return || retVal == ReturnType::TwoReturns) {
-      if (gutils->isConstantValue(ret)) {
-        retargs.push_back(ConstantFP::get(ret->getType(), 0.0));
-      } else {
-        retargs.push_back(gutils->diffe(ret, nBuilder));
-      }
     }
 
     Value *toret = UndefValue::get(gutils->newFunc->getReturnType());
