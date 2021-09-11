@@ -1432,6 +1432,25 @@ void clearFunctionAttributes(Function *f) {
   }
 }
 
+void cleanupInversionAllocs(DiffeGradientUtils *gutils, BasicBlock *entry) {
+  while (gutils->inversionAllocs->size() > 0) {
+    Instruction *inst = &gutils->inversionAllocs->back();
+    if (isa<AllocaInst>(inst))
+      inst->moveBefore(&gutils->newFunc->getEntryBlock().front());
+    else
+      inst->moveBefore(entry->getFirstNonPHIOrDbgOrLifetime());
+  }
+
+  (IRBuilder<>(gutils->inversionAllocs)).CreateUnreachable();
+  DeleteDeadBlock(gutils->inversionAllocs);
+  for (auto BBs : gutils->reverseBlocks) {
+    if (pred_begin(BBs.second.front()) == pred_end(BBs.second.front())) {
+      (IRBuilder<>(BBs.second.front())).CreateUnreachable();
+      DeleteDeadBlock(BBs.second.front());
+    }
+  }
+}
+
 //! return structtype if recursive function
 const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     Function *todiff, DIFFE_TYPE retType,
@@ -3324,23 +3343,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     }
   }
 
-  while (gutils->inversionAllocs->size() > 0) {
-    Instruction *inst = &gutils->inversionAllocs->back();
-    if (isa<AllocaInst>(inst))
-      inst->moveBefore(&gutils->newFunc->getEntryBlock().front());
-    else
-      inst->moveBefore(entry->getFirstNonPHIOrDbgOrLifetime());
-  }
-
-  (IRBuilder<>(gutils->inversionAllocs)).CreateUnreachable();
-  DeleteDeadBlock(gutils->inversionAllocs);
-  for (auto BBs : gutils->reverseBlocks) {
-    if (pred_begin(BBs.second.front()) == pred_end(BBs.second.front())) {
-      (IRBuilder<>(BBs.second.front())).CreateUnreachable();
-      DeleteDeadBlock(BBs.second.front());
-    }
-  }
-
+  cleanupInversionAllocs(gutils, entry);
   clearFunctionAttributes(gutils->newFunc);
 
   if (llvm::verifyFunction(*gutils->newFunc, &llvm::errs())) {
@@ -3613,23 +3616,7 @@ Function *EnzymeLogic::CreateForwardDiff(
   auto Arch =
       llvm::Triple(gutils->newFunc->getParent()->getTargetTriple()).getArch();
 
-  while (gutils->inversionAllocs->size() > 0) {
-    Instruction *inst = &gutils->inversionAllocs->back();
-    if (isa<AllocaInst>(inst))
-      inst->moveBefore(&gutils->newFunc->getEntryBlock().front());
-    else
-      inst->moveBefore(entry->getFirstNonPHIOrDbgOrLifetime());
-  }
-
-  (IRBuilder<>(gutils->inversionAllocs)).CreateUnreachable();
-  DeleteDeadBlock(gutils->inversionAllocs);
-  for (auto BBs : gutils->reverseBlocks) {
-    if (pred_begin(BBs.second.front()) == pred_end(BBs.second.front())) {
-      (IRBuilder<>(BBs.second.front())).CreateUnreachable();
-      DeleteDeadBlock(BBs.second.front());
-    }
-  }
-
+  cleanupInversionAllocs(gutils, entry);
   clearFunctionAttributes(gutils->newFunc);
 
   if (llvm::verifyFunction(*gutils->newFunc, &llvm::errs())) {
