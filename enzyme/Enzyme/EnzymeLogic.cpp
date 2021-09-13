@@ -2205,8 +2205,10 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
       return;
     }
     default: {
-      llvm::errs() << "[the error]\n";
-      assert(false && "Invalid return type");
+      llvm::errs() << "Invalid return type: " << to_string(retVal)
+                   << "for function: \n"
+                   << gutils->newFunc << "\n";
+      assert(false && "Invalid return type for function");
       return;
     }
     }
