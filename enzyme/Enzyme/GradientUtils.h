@@ -1159,7 +1159,7 @@ public:
   /// if full unwrap, don't just unwrap this instruction, but also its operands,
   /// etc
   Value *unwrapM(Value *const val, IRBuilder<> &BuilderM,
-                 const ValueToValueMapTy &available, UnwrapMode mode,
+                 const ValueToValueMapTy &available, UnwrapMode unwrapMode,
                  BasicBlock *scope = nullptr,
                  bool permitCache = true) override final;
 

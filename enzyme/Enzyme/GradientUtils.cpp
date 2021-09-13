@@ -110,7 +110,7 @@ bool isPotentialLastLoopValue(Value *val, const BasicBlock *loc,
 
 Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                               const ValueToValueMapTy &available,
-                              UnwrapMode mode, BasicBlock *scope,
+                              UnwrapMode unwrapMode, BasicBlock *scope,
                               bool permitCache) {
   assert(val);
   assert(val->getName() != "<badref>");
@@ -194,7 +194,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
 
   if (this->mode == DerivativeMode::ReverseModeGradient)
     if (auto inst = dyn_cast<Instruction>(val)) {
-      if (mode == UnwrapMode::LegalFullUnwrap) {
+      if (unwrapMode == UnwrapMode::LegalFullUnwrap) {
         // TODO this isOriginal is a bottleneck, the new mapping of
         // knownRecompute should be precomputed and maintained to lookup instead
         Instruction *orig = isOriginal(inst);
@@ -216,7 +216,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                                [idx.second] = placeholder;
           }
         }
-      } else if (mode == UnwrapMode::AttemptFullUnwrapWithLookup) {
+      } else if (unwrapMode == UnwrapMode::AttemptFullUnwrapWithLookup) {
         // TODO this isOriginal is a bottleneck, the new mapping of
         // knownRecompute should be precomputed and maintained to lookup instead
         Instruction *orig = isOriginal(inst);
@@ -248,7 +248,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
             }
           }
         }
-      } else if (mode != UnwrapMode::LegalFullUnwrapNoTapeReplace) {
+      } else if (unwrapMode != UnwrapMode::LegalFullUnwrapNoTapeReplace) {
         // TODO this isOriginal is a bottleneck, the new mapping of
         // knownRecompute should be precomputed and maintained to lookup instead
 
@@ -275,16 +275,16 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     Value *v = vtmp;                                                           \
     BasicBlock *origParent = frominst;                                         \
     Value *___res;                                                             \
-    if (mode == UnwrapMode::LegalFullUnwrap ||                                 \
-        mode == UnwrapMode::LegalFullUnwrapNoTapeReplace ||                    \
-        mode == UnwrapMode::AttemptFullUnwrap ||                               \
-        mode == UnwrapMode::AttemptFullUnwrapWithLookup) {                     \
+    if (unwrapMode == UnwrapMode::LegalFullUnwrap ||                           \
+        unwrapMode == UnwrapMode::LegalFullUnwrapNoTapeReplace ||              \
+        unwrapMode == UnwrapMode::AttemptFullUnwrap ||                         \
+        unwrapMode == UnwrapMode::AttemptFullUnwrapWithLookup) {               \
       if (v == val)                                                            \
         ___res = nullptr;                                                      \
       else                                                                     \
-        ___res =                                                               \
-            unwrapM(v, Builder, available, mode, origParent, permitCache);     \
-      if (!___res && mode == UnwrapMode::AttemptFullUnwrapWithLookup) {        \
+        ___res = unwrapM(v, Builder, available, unwrapMode, origParent,        \
+                         permitCache);                                         \
+      if (!___res && unwrapMode == UnwrapMode::AttemptFullUnwrapWithLookup) {  \
         bool noLookup = false;                                                 \
         if (auto opinst = dyn_cast<Instruction>(v))                            \
           if (isOriginalBlock(*Builder.GetInsertBlock())) {                    \
@@ -307,7 +307,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           v = fixLCSSA(opinst, origParent, /*mergeIfTrue*/ false,              \
                        /*guaranteedVisible*/ false);                           \
         }                                                                      \
-      assert(mode == UnwrapMode::AttemptSingleUnwrap);                         \
+      assert(unwrapMode == UnwrapMode::AttemptSingleUnwrap);                   \
       ___res = lookupM(v, Builder, available, v != val);                       \
       if (___res && ___res->getType() != v->getType()) {                       \
         llvm::errs() << *newFunc << "\n";                                      \
@@ -604,8 +604,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     if (load->getMetadata("enzyme_noneedunwrap"))
       return load;
 
-    bool legalMove = mode == UnwrapMode::LegalFullUnwrap ||
-                     mode == UnwrapMode::LegalFullUnwrapNoTapeReplace;
+    bool legalMove = unwrapMode == UnwrapMode::LegalFullUnwrap ||
+                     unwrapMode == UnwrapMode::LegalFullUnwrapNoTapeReplace;
     if (!legalMove) {
       BasicBlock *parent = nullptr;
       if (isOriginalBlock(*BuilderM.GetInsertBlock()))
@@ -628,7 +628,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                     "Load cannot be unwrapped ", *load, " in ",
                     BuilderM.GetInsertBlock()->getName(), " - ",
                     BuilderM.GetInsertBlock()->getParent()->getName(), " mode ",
-                    mode);
+                    unwrapMode);
         warnMap.insert(BuilderM.GetInsertBlock());
       }
       goto endCheck;
@@ -644,7 +644,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       llvm::errs() << "load: " << *load << "\n";
       llvm::errs() << "load->getOperand(0): " << *load->getOperand(0) << "\n";
       llvm::errs() << "idx: " << *pidx << " unwrapping: " << *val
-                   << " mode=" << mode << "\n";
+                   << " mode=" << unwrapMode << "\n";
     }
     assert(pidx->getType() == load->getOperand(0)->getType());
 
@@ -678,8 +678,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     return toreturn;
   } else if (auto op = dyn_cast<CallInst>(val)) {
 
-    bool legalMove = mode == UnwrapMode::LegalFullUnwrap ||
-                     mode == UnwrapMode::LegalFullUnwrapNoTapeReplace;
+    bool legalMove = unwrapMode == UnwrapMode::LegalFullUnwrap ||
+                     unwrapMode == UnwrapMode::LegalFullUnwrapNoTapeReplace;
     if (!legalMove) {
       legalMove = legalRecompute(op, available, &BuilderM);
     }
@@ -726,8 +726,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         if (dli->getMetadata("enzyme_noneedunwrap"))
           return dli;
 
-        bool legalMove = mode == UnwrapMode::LegalFullUnwrap ||
-                         mode == UnwrapMode::LegalFullUnwrapNoTapeReplace;
+        bool legalMove = unwrapMode == UnwrapMode::LegalFullUnwrap ||
+                         unwrapMode == UnwrapMode::LegalFullUnwrapNoTapeReplace;
         if (!legalMove) {
           // TODO actually consider whether this is legal to move to the new
           // location, rather than recomputable anywhere
@@ -739,13 +739,27 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
             EmitWarning("UncacheableUnwrap", dli->getDebugLoc(),
                         dli->getParent()->getParent(), dli->getParent(),
                         "Differential Load cannot be unwrapped ", *dli, " in ",
-                        BuilderM.GetInsertBlock()->getName(), " mode ", mode);
+                        BuilderM.GetInsertBlock()->getName(), " mode ",
+                        unwrapMode);
             warnMap.insert(BuilderM.GetInsertBlock());
           }
           return nullptr;
         }
 
-        Value *pidx = invertPointerM(dli->getOperand(0), BuilderM);
+        Value *pidx;
+
+        switch (mode) {
+        case DerivativeMode::ForwardMode:
+          pidx = invertPointerM(dli->getOperand(0), BuilderM);
+          break;
+        case DerivativeMode::ReverseModePrimal:
+        case DerivativeMode::ReverseModeGradient:
+        case DerivativeMode::ReverseModeCombined:
+          pidx =
+              lookupM(invertPointerM(dli->getOperand(0), BuilderM), BuilderM);
+          break;
+        }
+
         if (pidx == nullptr)
           goto endCheck;
 
@@ -830,7 +844,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                 lim;
             return lim;
           }
-        } else if (mode == UnwrapMode::AttemptFullUnwrapWithLookup &&
+        } else if (unwrapMode == UnwrapMode::AttemptFullUnwrapWithLookup &&
                    reverseBlocks.size() > 0) {
           // Must be in a reverse pass fashion for a lookup to index bound to be
           // legal
@@ -853,12 +867,12 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     // circumstances
     auto &LLI = Logic.PPC.FAM.getResult<LoopAnalysis>(*parent->getParent());
     if (LLI.isLoopHeader(parent)) {
-      assert(mode != UnwrapMode::LegalFullUnwrap);
+      assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
       goto endCheck;
     }
     for (auto &val : phi->incoming_values()) {
       if (isPotentialLastLoopValue(val, parent, LLI)) {
-        assert(mode != UnwrapMode::LegalFullUnwrap);
+        assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
         goto endCheck;
       }
     }
@@ -867,7 +881,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       assert(phi->getIncomingValue(0) != phi);
       auto toreturn = getOpUnchecked(phi->getIncomingValue(0));
       if (toreturn == nullptr || toreturn == phi) {
-        assert(mode != UnwrapMode::LegalFullUnwrap);
+        assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
         goto endCheck;
       }
       assert(val->getType() == toreturn->getType());
@@ -992,25 +1006,25 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
 
             auto cond1 = getOp(bi1->getCondition());
             if (cond1 == nullptr) {
-              assert(mode != UnwrapMode::LegalFullUnwrap);
+              assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
               goto endCheck;
             }
             auto bi2 = cast<BranchInst>(subblock->getTerminator());
             auto cond2 = getOp(bi2->getCondition());
             if (cond2 == nullptr) {
-              assert(mode != UnwrapMode::LegalFullUnwrap);
+              assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
               goto endCheck;
             }
 
             BasicBlock *oldB = BuilderM.GetInsertBlock();
             if (BuilderM.GetInsertPoint() != oldB->end()) {
-              assert(mode != UnwrapMode::LegalFullUnwrap);
+              assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
               goto endCheck;
             }
 
             auto found = reverseBlockToPrimal.find(oldB);
             if (found == reverseBlockToPrimal.end()) {
-              assert(mode != UnwrapMode::LegalFullUnwrap);
+              assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
               goto endCheck;
             }
             BasicBlock *fwd = found->second;
@@ -1094,7 +1108,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                 for (size_t j = 0; j <= i; j++) {
                   blocks[j]->eraseFromParent();
                 };
-                assert(mode != UnwrapMode::LegalFullUnwrap);
+                assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
                 goto endCheck;
               }
               assert(val->getType() == vals[i]->getType());
@@ -1177,7 +1191,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       if (!isOriginalBlock(*fwd)) {
         auto found = reverseBlockToPrimal.find(oldB);
         if (found == reverseBlockToPrimal.end()) {
-          assert(mode != UnwrapMode::LegalFullUnwrap);
+          assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
           goto endCheck;
         }
         fwd = found->second;
@@ -1199,7 +1213,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       }
 
       if (cond == nullptr) {
-        assert(mode != UnwrapMode::LegalFullUnwrap);
+        assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
         goto endCheck;
       }
 
@@ -1277,7 +1291,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           for (size_t j = 0; j <= i; j++) {
             blocks[j]->eraseFromParent();
           };
-          assert(mode != UnwrapMode::LegalFullUnwrap);
+          assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
           goto endCheck;
         }
         assert(val->getType() == vals[i]->getType());
@@ -1343,7 +1357,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         for (size_t j = 0; j < blocks.size(); j++) {
           blocks[j]->eraseFromParent();
         };
-        assert(mode != UnwrapMode::LegalFullUnwrap);
+        assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
         goto endCheck;
       }
 
@@ -1374,21 +1388,21 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       unwrappedLoads[toret] = val;
       return toret;
     }
-    assert(mode != UnwrapMode::LegalFullUnwrap);
+    assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
     goto endCheck;
   }
 
 endCheck:
   assert(val);
-  if (mode == UnwrapMode::LegalFullUnwrap ||
-      mode == UnwrapMode::LegalFullUnwrapNoTapeReplace ||
-      mode == UnwrapMode::AttemptFullUnwrapWithLookup) {
+  if (unwrapMode == UnwrapMode::LegalFullUnwrap ||
+      unwrapMode == UnwrapMode::LegalFullUnwrapNoTapeReplace ||
+      unwrapMode == UnwrapMode::AttemptFullUnwrapWithLookup) {
     assert(val->getName() != "<badref>");
     Value *nval = val;
     if (auto opinst = dyn_cast<Instruction>(nval))
       if (isOriginalBlock(*BuilderM.GetInsertBlock())) {
         if (!DT.dominates(opinst, &*BuilderM.GetInsertPoint())) {
-          assert(mode == UnwrapMode::AttemptFullUnwrapWithLookup);
+          assert(unwrapMode == UnwrapMode::AttemptFullUnwrapWithLookup);
           return nullptr;
         }
       }
