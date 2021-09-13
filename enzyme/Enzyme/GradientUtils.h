@@ -934,7 +934,16 @@ public:
     if (auto arg = dyn_cast<Argument>(ptr)) {
       assert(arg->getParent() == oldFunc);
     }
-    ptr = invertPointerM(ptr, BuilderM);
+    switch (mode) {
+    case DerivativeMode::ForwardMode:
+      ptr = invertPointerM(ptr, BuilderM);
+      break;
+    case DerivativeMode::ReverseModePrimal:
+    case DerivativeMode::ReverseModeGradient:
+    case DerivativeMode::ReverseModeCombined:
+      ptr = lookupM(invertPointerM(ptr, BuilderM), BuilderM);
+      break;
+    }
     return BuilderM.CreateStore(newval, ptr);
   }
 
@@ -1741,7 +1750,19 @@ public:
     // if (SE.getCouldNotCompute() == S)
     //  continue;
 
-    Value *ptr = invertPointerM(origptr, BuilderM);
+    Value *ptr;
+
+    switch (mode) {
+    case DerivativeMode::ForwardMode:
+      ptr = invertPointerM(origptr, BuilderM);
+      break;
+    case DerivativeMode::ReverseModePrimal:
+    case DerivativeMode::ReverseModeGradient:
+    case DerivativeMode::ReverseModeCombined:
+      ptr = lookupM(invertPointerM(origptr, BuilderM), BuilderM);
+      break;
+    }
+
     assert(ptr);
     if (OrigOffset) {
       ptr = BuilderM.CreateGEP(
