@@ -1757,6 +1757,8 @@ public:
       ptr = invertPointerM(origptr, BuilderM);
       break;
     case DerivativeMode::ReverseModePrimal:
+      assert(false && "Invalid derivative mode (ReverseModePrimal)");
+      break;
     case DerivativeMode::ReverseModeGradient:
     case DerivativeMode::ReverseModeCombined:
       ptr = lookupM(invertPointerM(origptr, BuilderM), BuilderM);
