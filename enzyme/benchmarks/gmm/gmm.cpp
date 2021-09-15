@@ -282,6 +282,13 @@ void dgmm_objective(int d, int k, int n, const double *alphas, double *
             enzyme_dupnoneed, err, errb);
 }
 
+void gmm_objective_nodiff(int d, int k, int n, const double *alphas, double *
+        alphasb, const double *means, double *meansb, const double *icf,
+        double *icfb, const double *x, Wishart wishart, double *err, double *
+        errb) {
+    gmm_objective(d, k, n, alphas, means, icf, x, wishart, err);
+}
+
 }
 
 

@@ -72,6 +72,46 @@ struct HandObjectiveData
 };
 
 extern "C" {
+    void hand_objective_nodiff(
+        double const* theta,
+        double* dtheta,
+        int bone_count,
+        const char** bone_names,
+        const int* parents,
+        Matrix* base_relatives,
+        Matrix* inverse_base_absolutes,
+        Matrix* base_positions,
+        Matrix* weights,
+        const Triangle* triangles,
+        int is_mirrored,
+        int corresp_count,
+        const int* correspondences,
+        Matrix* points,
+        double* err,
+        double* derr
+    );
+
+    void hand_objective_complicated_nodiff(
+        double const* theta,
+        double* dtheta,
+        double const* us,
+        double* dus,
+        int bone_count,
+        const char** bone_names,
+        const int* parents,
+        Matrix* base_relatives,
+        Matrix* inverse_base_absolutes,
+        Matrix* base_positions,
+        Matrix* weights,
+        const Triangle* triangles,
+        int is_mirrored,
+        int corresp_count,
+        const int* correspondences,
+        Matrix* points,
+        double* err,
+        double* derr
+    );
+
     void dhand_objective(
         double const* theta,
         double* dtheta,
@@ -550,6 +590,55 @@ int main(const int argc, const char* argv[]) {
 
     for (auto path : paths) {
         printf("starting path %s\n", path.c_str());
+
+    {
+
+    struct HandInput input;
+
+    const auto model_dir = filepath_to_dirname("data/" + path) + "model/";
+    // Read instance
+    if (params.is_complicated) {
+        read_hand_instance(model_dir, "data/" + path, &input.theta, &input.data, &input.us);
+    }
+    else {
+        read_hand_instance(model_dir, "data/" + path, &input.theta, &input.data);
+    }
+
+    //assert( (input.us.size() > 0) == params.is_complicated );
+
+    auto objective_input = convert_to_hand_objective_data(input);
+
+    int err_size = 3 * input.data.correspondences.size();
+    int ncols = input.theta.size();
+    if (params.is_complicated)
+    {
+        ncols += 2;
+    }
+
+    struct HandOutput result = {
+        std::vector<double>(err_size),
+        ncols,
+        err_size,
+        std::vector<double>(err_size * ncols)
+    };
+
+    auto theta_d = std::vector<double>(input.theta.size());
+    auto us_d = std::vector<double>(input.us.size());
+    auto us_jacobian_column = std::vector<double>(err_size);
+
+    {
+      struct timeval start, end;
+      gettimeofday(&start, NULL);
+      calculate_jacobian<hand_objective_nodiff, hand_objective_complicated_nodiff>(objective_input, input, result, params.is_complicated, theta_d, us_d, us_jacobian_column);
+      gettimeofday(&end, NULL);
+      printf("Enzyme real %0.6f\n", tdiff(&start, &end));
+      for(unsigned i=0; i<5; i++) {
+        printf("%f ", result.jacobian[i]);
+      }
+      printf("\n");
+    }
+
+    }
 
     {
 

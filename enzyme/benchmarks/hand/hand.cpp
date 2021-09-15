@@ -726,6 +726,78 @@ void dhand_objective_complicated(
     );
 }
 
+void hand_objective_nodiff(
+    double const* theta,
+    double* dtheta,
+    int bone_count,
+    const char** bone_names,
+    const int* parents,
+    Matrix* base_relatives,
+    Matrix* inverse_base_absolutes,
+    Matrix* base_positions,
+    Matrix* weights,
+    const Triangle* triangles,
+    int is_mirrored,
+    int corresp_count,
+    const int* correspondences,
+    Matrix* points,
+    double* err,
+    double* derr
+)
+{
+    hand_objective(theta,
+            bone_count,
+            bone_names, 
+            parents,
+            base_relatives,
+            inverse_base_absolutes,
+            base_positions,
+            weights,
+            triangles,
+            is_mirrored,
+            corresp_count,
+            correspondences,
+            points,
+            err);
+}
+
+void hand_objective_complicated_nodiff(
+    double const* theta,
+    double* dtheta,
+    double const* us,
+    double* dus,
+    int bone_count,
+    const char** bone_names,
+    const int* parents,
+    Matrix* base_relatives,
+    Matrix* inverse_base_absolutes,
+    Matrix* base_positions,
+    Matrix* weights,
+    const Triangle* triangles,
+    int is_mirrored,
+    int corresp_count,
+    const int* correspondences,
+    Matrix* points,
+    double* err,
+    double* derr
+) {
+    hand_objective_complicated(theta,
+            us,
+            bone_count,
+            bone_names,
+            parents,
+            base_relatives,
+            inverse_base_absolutes,
+            base_positions,
+            weights,
+            triangles,
+            is_mirrored,
+            corresp_count,
+            correspondences,
+            points,
+            err);
+}
+
 }
 
 #if 0

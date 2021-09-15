@@ -260,6 +260,25 @@ void dcompute_zach_weight_error(double const* w, double* dw, double* err, double
             enzyme_dupnoneed, err, derr);
 }
 
+void compute_reproj_error_nodiff(
+    double const* cam,
+    double * dcam,
+    double const* X,
+    double * dX,
+    double const* w,
+    double * wb,
+    double const* feat,
+    double *err,
+    double *derr
+)
+{
+    compute_reproj_error(cam, X, w, feat, err);
+}
+
+void compute_zach_weight_error_nodiff(double const* w, double* dw, double* err, double* derr) {
+    compute_zach_weight_error(w, err);
+}
+
 }
 
 

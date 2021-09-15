@@ -125,6 +125,20 @@ extern "C" {
         double* w_err
     );
 
+    void compute_reproj_error_nodiff(
+        double const* cam,
+        double * dcam,
+        double const* X,
+        double * dX,
+        double const* w,
+        double * wb,
+        double const* feat,
+        double *err,
+        double *derr
+    );
+
+    void compute_zach_weight_error_nodiff(double const* w, double* dw, double* err, double* derr);
+    
     void dcompute_reproj_error(
         double const* cam,
         double * dcam,
@@ -338,6 +352,52 @@ int main(const int argc, const char* argv[]) {
         "ba13_n245_m198739_p1091386.txt",  "ba17_n1778_m993923_p5001946.txt",  "ba20_n13682_m4456117_p2987644.txt",  "ba5_n257_m65132_p225911.txt",  "ba9_n810_m88814_p393775.txt",
     };
     for (auto path : paths) {
+
+    {
+
+    struct BAInput input;
+    read_ba_instance("data/" + path, input.n, input.m, input.p, input.cams, input.X, input.w, input.obs, input.feats);
+
+    struct BAOutput result = {
+        std::vector<double>(2 * input.p),
+        std::vector<double>(input.p),
+        BASparseMat(input.n, input.m, input.p)
+    };
+
+    //BASparseMat(this->input.n, this->input.m, this->input.p)
+
+    /*
+    ba_objective(
+        input.n,
+        input.m,
+        input.p,
+        input.cams.data(),
+        input.X.data(),
+        input.w.data(),
+        input.obs.data(),
+        input.feats.data(),
+        result.reproj_err.data(),
+        result.w_err.data()
+    );
+
+    for(unsigned i=0; i<input.p; i++) {
+        //printf("w_err[%d]=%f reproj_err[%d]=%f, reproj_err[%d]=%f\n", i, result.w_err[i], 2*i, result.reproj_err[2*i], 2*i+1, result.reproj_err[2*i+1]);
+    }
+    */
+
+    {
+      struct timeval start, end;
+      gettimeofday(&start, NULL);
+      calculate_jacobian<compute_reproj_error_nodiff, compute_zach_weight_error_nodiff>(input, result);
+      gettimeofday(&end, NULL);
+      printf("Enzyme real %0.6f\n", tdiff(&start, &end));
+      for(unsigned i=0; i<5; i++) {
+        printf("%f ", result.J.vals[i]);
+      }
+      printf("\n");
+    }
+
+    }
 
     {
 

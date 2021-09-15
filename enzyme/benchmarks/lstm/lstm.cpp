@@ -203,6 +203,23 @@ void dlstm_objective(
     );
 }
 
+void lstm_objective_nodiff(
+    int l,
+    int c,
+    int b,
+    double const* main_params,
+    double* dmain_params,
+    double const* extra_params,
+    double* dextra_params,
+    double* state,
+    double const* sequence,
+    double* loss,
+    double* dloss
+)
+{
+    lstm_objective(l, c, b, main_params, extra_params, state, sequence, loss);
+}
+
 }
 
 

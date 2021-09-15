@@ -31,6 +31,19 @@ struct LSTMOutput {
 };
 
 extern "C" {
+    void lstm_objective_nodiff(
+        int l,
+        int c,
+        int b,
+        double const* main_params,
+        double* dmain_params,
+        double const* extra_params,
+        double* dextra_params,
+        double* state,
+        double const* sequence,
+        double* loss,
+        double* dloss
+    );
     void dlstm_objective(
         int l,
         int c,
@@ -181,6 +194,36 @@ int main(const int argc, const char* argv[]) {
 
     for (auto path : paths) {
         printf("starting path %s\n", path.c_str());
+
+    {
+
+    struct LSTMInput input;
+
+    // Read instance
+    read_lstm_instance("data/" + path, &input.l, &input.c, &input.b, input.main_params, input.extra_params, input.state,
+                       input.sequence);
+
+    for(unsigned i=0; i<5; i++) {
+      printf("%f ", input.state[i]);
+    }
+    printf("\n");
+
+    int Jcols = 8 * input.l * input.b + 3 * input.b;
+    struct LSTMOutput result = { 0, std::vector<double>(Jcols) };
+
+    {
+      struct timeval start, end;
+      gettimeofday(&start, NULL);
+      calculate_jacobian<lstm_objective_nodiff>(input, result);
+      gettimeofday(&end, NULL);
+      printf("Enzyme real %0.6f\n", tdiff(&start, &end));
+      for(unsigned i=result.gradient.size()-5; i<result.gradient.size(); i++) {
+        printf("%f ", result.gradient[i]);
+      }
+      printf("\n");
+    }
+
+    }
 
     {
 
