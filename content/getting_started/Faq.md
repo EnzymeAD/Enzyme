@@ -15,15 +15,12 @@ LLVM's plugin infrastructure is broken in many versions. Empirically LLVM 8 and 
 
 ### Illegal TypeAnalysis on LLVM 10+
 
-There is a [known bug](https://bugs.llvm.org/show_bug.cgi?id=47612) in an existing LLVM optimization pass (SROA) that will incorrectly generate type information rom a memcpy. This bug has been fixed in LLVM 13
+There is a [known bug](https://bugs.llvm.org/show_bug.cgi?id=47612) in an existing LLVM optimization pass (SROA) that will incorrectly generate type information from a memcpy. This bug has been fixed in LLVM 13
 
 
 ### UNREACHABLE executed (GVN error)
 
 Until June 2020, LLVM's exisitng GVN pass had a bug handling invariant.load's that would cause it to crash. These tend to be generated a lot by Enzyme for better optimization. This was reported [here](https://bugs.llvm.org/show_bug.cgi?id=46054) and resolved in master. Options for resolving include updating to later verison of LLVM with the fix, or disabling creation of invariant.load's.
-
-
-There is a [known bug](https://bugs.llvm.org/show_bug.cgi?id=47612) in an existing LLVM optimization pass (SROA) that will incorrectly generate type information rom a memcpy. This bug hasn't been fixed in LLVM 13.
 
 ## Other
 
