@@ -28,4 +28,4 @@ Testing Time: 0.63s
 - A: Sorry. Please open an issue with relevant information (OS, error message) or ping me on the rust-ml Zulip.  
 &nbsp;
 - Q: How often do I have to run this? It takes quite a while..
-- A: We are aware of this and working on offering pre-build versions. In the meantime you have to build it once per rust Version. So we will publish an update once 1.55 hits stable.
+- A: We are aware of this and working on offering pre-build versions. In the meantime you have to build it once per rust Version. So we will publish an update once 1.56 hits stable.

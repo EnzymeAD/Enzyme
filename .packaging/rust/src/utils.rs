@@ -27,14 +27,14 @@ pub fn get_local_enzyme_base_path() -> PathBuf {
   enzyme_base_path
 }
 pub fn get_local_capi_path() -> PathBuf {
-  get_local_enzyme_base_path().join("Enzyme-0.0.16").join("enzyme").join("Enzyme").join("CApi.h")
+  get_local_enzyme_base_path().join("Enzyme-0.0.18").join("enzyme").join("Enzyme").join("CApi.h")
 }
 pub fn get_local_bindings_string() -> String {
   let path = get_local_enzyme_base_path().join("enzyme.rs");
   path.to_str().unwrap().to_owned()
 }
 pub fn get_local_enzyme_build_path() -> PathBuf {
-  let enzyme_path = get_local_enzyme_base_path().join("Enzyme-0.0.16").join("enzyme").join("build");
+  let enzyme_path = get_local_enzyme_base_path().join("Enzyme-0.0.18").join("enzyme").join("build");
   assert_existence(enzyme_path.clone());
   enzyme_path
 }
@@ -44,7 +44,7 @@ pub fn get_local_download_dir() -> PathBuf {
   enzyme_download_path
 }
 pub fn get_local_rustc_path() -> PathBuf {
-  let rustc_path = get_local_enzyme_base_path().join("rustc-1.54.0-src");
+  let rustc_path = get_local_enzyme_base_path().join("rustc-1.55.0-src");
   assert_existence(rustc_path.clone());
   rustc_path
 }
@@ -61,9 +61,9 @@ pub fn get_local_llvm_build_path() -> PathBuf {
 
 pub fn get_remote_enzyme_tarball_path() -> PathBuf {
   let path = PathBuf::new();
-  path.join("https://github.com/wsmoses/Enzyme/archive/refs/tags/v0.0.16.tar.gz")
+  path.join("https://github.com/wsmoses/Enzyme/archive/refs/tags/v0.0.18.tar.gz")
 }
 pub fn get_remote_rustc_tarball_path() -> PathBuf {
   let path = PathBuf::new();
-  path.join("https://static.rust-lang.org/dist/rustc-1.54.0-src.tar.gz")
+  path.join("https://static.rust-lang.org/dist/rustc-1.55.0-src.tar.gz")
 }
