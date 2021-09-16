@@ -2844,29 +2844,22 @@ public:
         if (gutils->isConstantInstruction(&I))
           return;
 
-        auto dif0 = gutils->isConstantValue(orig_ops[0])
-                        ? ConstantFP::get(orig_ops[0]->getType(), 0)
-                        : diffe(orig_ops[0], Builder2);
+        auto accdif = gutils->isConstantValue(orig_ops[0])
+                          ? ConstantFP::get(orig_ops[0]->getType(), 0)
+                          : diffe(orig_ops[0], Builder2);
 
         if (!gutils->isConstantValue(orig_ops[1])) {
-          auto und = UndefValue::get(orig_ops[1]->getType());
-          auto mask = ConstantAggregateZero::get(VectorType::get(
-              Type::getInt32Ty(und->getContext()),
-#if LLVM_VERSION_MAJOR >= 11
-              cast<VectorType>(und->getType())->getElementCount()));
-#else
-              cast<VectorType>(und->getType())->getNumElements()));
-#endif
-
           auto vecdif = diffe(orig_ops[1], Builder2);
-          auto dif1 = Builder2.CreateShuffleVector(und, vecdif, mask);
 
-          auto dif = Builder2.CreateFAdd(dif0, dif1);
+          Type *tys[] = {orig_ops[1]->getType()};
+          auto vfra = Intrinsic::getDeclaration(M, ID, tys);
+          auto cal = Builder2.CreateCall(vfra, {accdif, vecdif});
+          cal->setCallingConv(vfra->getCallingConv());
+          cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
 
-          setDiffe(&I, dif, Builder2);
-        } else if (!gutils->isConstantValue(orig_ops[0])) {
-          setDiffe(&I, dif0, Builder2);
+          setDiffe(&I, cal, Builder2);
         }
+
         return;
       }
 #endif
