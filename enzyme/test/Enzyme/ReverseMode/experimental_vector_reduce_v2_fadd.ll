@@ -1,8 +1,8 @@
-; RUN: if [ %llvmver -ge 12 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 9 ] &&  [ %llvmver -le 11 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
 
 define float @tester(float %start_value, <4 x float> %input) {
 entry:
-  %ord = call float @llvm.vector.reduce.fadd.v4f32(float %start_value, <4 x float> %input)
+  %ord = call float @llvm.experimental.vector.reduce.v2.fadd.f32.v4f32(float %start_value, <4 x float> %input)
   ret float %ord
 }
 
@@ -12,7 +12,7 @@ entry:
   ret float %0
 }
 
-declare float @llvm.vector.reduce.fadd.v4f32(float, <4 x float>)
+declare float @llvm.experimental.vector.reduce.v2.fadd.f32.v4f32(float, <4 x float>)
 
 ; Function Attrs: nounwind
 declare float @__enzyme_autodiff(float (float, <4 x float>)*, ...)

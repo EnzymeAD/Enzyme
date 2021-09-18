@@ -2851,8 +2851,13 @@ public:
         if (!gutils->isConstantValue(orig_ops[1])) {
           auto vecdif = diffe(orig_ops[1], Builder2);
 
-          Type *tys[] = {orig_ops[1]->getType()};
-          auto vfra = Intrinsic::getDeclaration(M, ID, tys);
+#if LLVM_VERSION_MAJOR < 12
+          auto vfra = Intrinsic::getDeclaration(
+              M, ID, {orig_ops[0]->getType(), orig_ops[1]->getType()});
+#else
+          auto vfra =
+              Intrinsic::getDeclaration(M, ID, {orig_ops[1]->getType()});
+#endif
           auto cal = Builder2.CreateCall(vfra, {accdif, vecdif});
           cal->setCallingConv(vfra->getCallingConv());
           cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
