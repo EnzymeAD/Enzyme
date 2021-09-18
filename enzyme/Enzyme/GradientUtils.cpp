@@ -746,18 +746,13 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           return nullptr;
         }
 
-        Value *pidx;
+        Value *pidx = nullptr;
 
-        switch (mode) {
-        case DerivativeMode::ForwardMode:
+        if (isOriginalBlock(*BuilderM.GetInsertBlock())) {
           pidx = invertPointerM(dli->getOperand(0), BuilderM);
-          break;
-        case DerivativeMode::ReverseModePrimal:
-        case DerivativeMode::ReverseModeGradient:
-        case DerivativeMode::ReverseModeCombined:
+        } else {
           pidx =
               lookupM(invertPointerM(dli->getOperand(0), BuilderM), BuilderM);
-          break;
         }
 
         if (pidx == nullptr)

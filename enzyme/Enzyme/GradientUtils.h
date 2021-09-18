@@ -934,16 +934,13 @@ public:
     if (auto arg = dyn_cast<Argument>(ptr)) {
       assert(arg->getParent() == oldFunc);
     }
-    switch (mode) {
-    case DerivativeMode::ForwardMode:
+
+    if (isOriginalBlock(*BuilderM.GetInsertBlock())) {
       ptr = invertPointerM(ptr, BuilderM);
-      break;
-    case DerivativeMode::ReverseModePrimal:
-    case DerivativeMode::ReverseModeGradient:
-    case DerivativeMode::ReverseModeCombined:
+    } else {
       ptr = lookupM(invertPointerM(ptr, BuilderM), BuilderM);
-      break;
     }
+
     return BuilderM.CreateStore(newval, ptr);
   }
 
