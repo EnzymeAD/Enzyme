@@ -2848,22 +2848,21 @@ public:
                           ? ConstantFP::get(orig_ops[0]->getType(), 0)
                           : diffe(orig_ops[0], Builder2);
 
-        if (!gutils->isConstantValue(orig_ops[1])) {
-          auto vecdif = diffe(orig_ops[1], Builder2);
+        auto vecdif = gutils->isConstantValue(orig_ops[1])
+                          ? ConstantVector::getNullValue(orig_ops[1]->getType())
+                          : diffe(orig_ops[1], Builder2);
 
 #if LLVM_VERSION_MAJOR < 12
-          auto vfra = Intrinsic::getDeclaration(
-              M, ID, {orig_ops[0]->getType(), orig_ops[1]->getType()});
+        auto vfra = Intrinsic::getDeclaration(
+            M, ID, {orig_ops[0]->getType(), orig_ops[1]->getType()});
 #else
-          auto vfra =
-              Intrinsic::getDeclaration(M, ID, {orig_ops[1]->getType()});
+        auto vfra = Intrinsic::getDeclaration(M, ID, {orig_ops[1]->getType()});
 #endif
-          auto cal = Builder2.CreateCall(vfra, {accdif, vecdif});
-          cal->setCallingConv(vfra->getCallingConv());
-          cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
+        auto cal = Builder2.CreateCall(vfra, {accdif, vecdif});
+        cal->setCallingConv(vfra->getCallingConv());
+        cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
 
-          setDiffe(&I, cal, Builder2);
-        }
+        setDiffe(&I, cal, Builder2);
 
         return;
       }
