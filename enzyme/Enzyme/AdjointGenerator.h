@@ -2873,7 +2873,7 @@ public:
 
         if (op && !gutils->isConstantValue(orig_ops[0])) {
           SmallVector<Value *, 2> args = {
-              lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2)};
+              gutils->getNewFromOriginal(orig_ops[0])};
           Type *tys[] = {orig_ops[0]->getType()};
           Function *SqrtF;
           if (ID == Intrinsic::sqrt)
@@ -2903,7 +2903,7 @@ public:
 
         if (op && !gutils->isConstantValue(orig_ops[0])) {
           Value *cmp = Builder2.CreateFCmpOLT(
-              lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2),
+              gutils->getNewFromOriginal(orig_ops[0]),
               ConstantFP::get(orig_ops[0]->getType(), 0));
           Value *dif0 = Builder2.CreateFMul(
               Builder2.CreateSelect(cmp,
@@ -2996,8 +2996,8 @@ public:
         Value *op = diffe(orig_ops[0], Builder2);
 
         if (op && !gutils->isConstantValue(orig_ops[0])) {
-          Value *dif0 = Builder2.CreateFDiv(
-              op, lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2));
+          Value *dif0 =
+              Builder2.CreateFDiv(op, gutils->getNewFromOriginal(orig_ops[0]));
           setDiffe(&I, dif0, Builder2);
         }
         return;
@@ -3008,10 +3008,9 @@ public:
 
         if (op && !gutils->isConstantValue(orig_ops[0])) {
           Value *dif0 = Builder2.CreateFDiv(
-              op,
-              Builder2.CreateFMul(
-                  ConstantFP::get(I.getType(), 0.6931471805599453),
-                  lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2)));
+              op, Builder2.CreateFMul(
+                      ConstantFP::get(I.getType(), 0.6931471805599453),
+                      gutils->getNewFromOriginal(orig_ops[0])));
           setDiffe(&I, dif0, Builder2);
         }
         return;
@@ -3021,10 +3020,9 @@ public:
 
         if (op && !gutils->isConstantValue(orig_ops[0])) {
           Value *dif0 = Builder2.CreateFDiv(
-              op,
-              Builder2.CreateFMul(
-                  ConstantFP::get(I.getType(), 2.302585092994046),
-                  lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2)));
+              op, Builder2.CreateFMul(
+                      ConstantFP::get(I.getType(), 2.302585092994046),
+                      gutils->getNewFromOriginal(orig_ops[0])));
           setDiffe(&I, dif0, Builder2);
         }
         return;
@@ -3039,7 +3037,7 @@ public:
 
         if (op && !gutils->isConstantValue(orig_ops[0])) {
           SmallVector<Value *, 2> args = {
-              lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2)};
+              gutils->getNewFromOriginal(orig_ops[0])};
           SmallVector<Type *, 1> tys;
           if (ID == Intrinsic::exp || ID == Intrinsic::exp2)
             tys.push_back(orig_ops[0]->getType());
@@ -3068,7 +3066,7 @@ public:
           {
             SmallVector<Value *, 2> args = {
                 ConstantFP::get(tys[0], 1.0),
-                lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2)};
+                gutils->getNewFromOriginal(orig_ops[0])};
 
             auto cal = cast<CallInst>(Builder2.CreateCall(CopyF, args));
             cal->setCallingConv(CopyF->getCallingConv());
@@ -3080,7 +3078,7 @@ public:
           {
             SmallVector<Value *, 2> args = {
                 ConstantFP::get(tys[0], 1.0),
-                lookup(gutils->getNewFromOriginal(orig_ops[1]), Builder2)};
+                gutils->getNewFromOriginal(orig_ops[1])};
 
             auto cal = cast<CallInst>(Builder2.CreateCall(CopyF, args));
             cal->setCallingConv(CopyF->getCallingConv());
@@ -3100,9 +3098,8 @@ public:
           Value *op0 = gutils->getNewFromOriginal(orig_ops[0]);
           Value *op1 = gutils->getNewFromOriginal(orig_ops[1]);
           SmallVector<Value *, 2> args = {
-              lookup(op0, Builder2),
-              Builder2.CreateSub(lookup(op1, Builder2),
-                                 ConstantInt::get(op1->getType(), 1))};
+              op0,
+              Builder2.CreateSub(op1, ConstantInt::get(op1->getType(), 1))};
           Type *tys[] = {orig_ops[0]->getType()};
           Function *PowF = Intrinsic::getDeclaration(M, Intrinsic::powi, tys);
           auto cal = cast<CallInst>(Builder2.CreateCall(PowF, args));
@@ -3175,8 +3172,7 @@ public:
         Value *op = diffe(orig_ops[0], Builder2);
 
         if (op && !gutils->isConstantValue(orig_ops[0])) {
-          Value *args[] = {
-              lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2)};
+          Value *args[] = {gutils->getNewFromOriginal(orig_ops[0])};
           Type *tys[] = {orig_ops[0]->getType()};
           CallInst *cal = cast<CallInst>(Builder2.CreateCall(
               Intrinsic::getDeclaration(M, Intrinsic::cos, tys), args));
@@ -3189,8 +3185,7 @@ public:
         Value *op = diffe(orig_ops[0], Builder2);
 
         if (op && !gutils->isConstantValue(orig_ops[0])) {
-          Value *args[] = {
-              lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2)};
+          Value *args[] = {gutils->getNewFromOriginal(orig_ops[0])};
           Type *tys[] = {orig_ops[0]->getType()};
           CallInst *cal = cast<CallInst>(Builder2.CreateCall(
               Intrinsic::getDeclaration(M, Intrinsic::sin, tys), args));
