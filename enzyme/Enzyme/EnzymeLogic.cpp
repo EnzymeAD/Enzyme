@@ -3606,7 +3606,7 @@ Function *EnzymeLogic::CreateForwardDiff(
       maker.visit(&*it);
     }
 
-    createTerminator(gutils, constant_args, &oBB, nullptr, nullptr, retType);
+    createTerminator(gutils, &oBB, retType, retVal);
   }
 
   gutils->eraseFictiousPHIs();
