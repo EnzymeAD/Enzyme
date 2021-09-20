@@ -3419,7 +3419,7 @@ Function *EnzymeLogic::CreateForwardDiff(
   }
 
   // Whether we shuold actually return the value
-  bool returnValue = false;
+  bool returnValue = returnUsed;
 
   // TODO change this to go by default function type assumptions
   bool hasconstant = false;
