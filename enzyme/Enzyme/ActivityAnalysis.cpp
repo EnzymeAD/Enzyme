@@ -82,6 +82,10 @@ const char *KnownInactiveFunctionsStartingWith[] = {
     "_ZN4core3fmt", "_ZN3std2io5stdio6_print", "f90io", "$ss5print",
     "_ZNSt7__cxx1112basic_string"};
 
+const char *KnownInactiveFunctionsContains[] = {
+    "__enzyme_float", "__enzyme_double", "__enzyme_integer",
+    "__enzyme_pointer"};
+
 const std::set<std::string> InactiveGlobals = {
     "ompi_request_null",
     "ompi_mpi_double",
@@ -118,10 +122,6 @@ const std::set<std::string> KnownInactiveFunctions = {
     "vprintf",
     "puts",
     "fflush",
-    "__enzyme_float",
-    "__enzyme_double",
-    "__enzyme_integer",
-    "__enzyme_pointer",
     "__kmpc_for_static_init_4",
     "__kmpc_for_static_init_4u",
     "__kmpc_for_static_init_8",
@@ -205,6 +205,11 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
 
   for (auto FuncName : KnownInactiveFunctionsStartingWith) {
     if (Name.startswith(FuncName)) {
+      return true;
+    }
+  }
+  for (auto FuncName : KnownInactiveFunctionsContains) {
+    if (Name.contains(FuncName)) {
       return true;
     }
   }
@@ -1000,6 +1005,13 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
               return true;
             }
           }
+          for (auto FuncName : KnownInactiveFunctionsContains) {
+            if (called->getName().contains(FuncName)) {
+              InsertConstantValue(TR, Val);
+              insertConstantsFrom(TR, *UpHypothesis);
+              return true;
+            }
+          }
 
           if (KnownInactiveFunctions.count(called->getName().str()) ||
               MPIInactiveCommAllocators.find(called->getName().str()) !=
@@ -1170,6 +1182,11 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
             }
             for (auto FuncName : KnownInactiveFunctionsStartingWith) {
               if (F->getName().startswith(FuncName)) {
+                continue;
+              }
+            }
+            for (auto FuncName : KnownInactiveFunctionsContains) {
+              if (F->getName().contains(FuncName)) {
                 continue;
               }
             }
@@ -1625,6 +1642,11 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults &TR,
 
       for (auto FuncName : KnownInactiveFunctionsStartingWith) {
         if (called->getName().startswith(FuncName)) {
+          return true;
+        }
+      }
+      for (auto FuncName : KnownInactiveFunctionsContains) {
+        if (called->getName().contains(FuncName)) {
           return true;
         }
       }
