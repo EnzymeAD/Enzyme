@@ -86,7 +86,7 @@ TypeTree parseDIType(DICompositeType& Type, Instruction& I, DataLayout& DL) {
     }
     return Result;
   }
-  else if (Type.getTag() == dwarf::DW_TAG_structure_type) {
+  else if (Type.getTag() == dwarf::DW_TAG_structure_type || Type.getTag() == dwarf::DW_TAG_union_type) {
     DINodeArray Elements = Type.getElements();
     size_t Size = Type.getSizeInBits() / 8;
     for (auto e: Elements) {
@@ -100,7 +100,7 @@ TypeTree parseDIType(DICompositeType& Type, Instruction& I, DataLayout& DL) {
     return Result;
   }
   else {
-    assert(0 && "Composite types other than arrays and structs are not supported by Rust debug info parser");
+    assert(0 && "Composite types other than arrays, structs and unions are not supported by Rust debug info parser");
   }
 }
 
