@@ -370,9 +370,14 @@ public:
       fnsret = true;
 
       const DataLayout &DL = CI->getParent()->getModule()->getDataLayout();
-      auto Ty = fnsrety->getPointerElementType();
+      Type *Ty = fnsrety->getPointerElementType();
+#if LLVM_VERSION_MAJOR >= 11
       AllocaInst *primal = new AllocaInst(Ty, DL.getAllocaAddrSpace(), nullptr,
                                           DL.getPrefTypeAlign(Ty));
+#else
+      AllocaInst *primal = new AllocaInst(Ty, DL.getAllocaAddrSpace(), nullptr);
+#endif
+
       primal->insertBefore(CI);
       auto shadow = CI->getArgOperand(0);
 
