@@ -72,7 +72,6 @@ message("found llvm version " ${LLVM_VERSION_MAJOR})
 
 
 # Offer the user the choice of overriding the installation directories
-set(INSTALL_LIB_DIR lib CACHE PATH "Installation directory for libraries")
 set(INSTALL_INCLUDE_DIR include CACHE PATH "Installation directory for header files")
 if(WIN32 AND NOT CYGWIN)
   set(DEF_INSTALL_CMAKE_DIR CMake)
@@ -138,20 +137,17 @@ export(TARGETS LLVMEnzyme-${LLVM_VERSION_MAJOR} ClangEnzyme-${LLVM_VERSION_MAJOR
 
 export(PACKAGE Enzyme)
 
-file(RELATIVE_PATH REL_INCLUDE_DIR "${INSTALL_CMAKE_DIR}"
-   "${INSTALL_INCLUDE_DIR}")
-
 set(CONF_LLVM_VERSION_MAJOR ${LLVM_VERSION_MAJOR})
 set(CONF_LLVM_VERSION_MINOR ${LLVM_VERSION_MINOR})
 set(CONF_LLVM_VERSION_PATCH ${LLVM_VERSION_PATCH})
 set(CONF_LLVM_DIR ${LLVM_DIR})
 set(CONF_LLVM_BINARY_DIR ${LLVM_BINARY_DIR})
 
-set(CONF_INCLUDE_DIRS "${PROJECT_SOURCE_DIR}" "${PROJECT_BINARY_DIR}")
+set(CONF_INCLUDE_DIRS lib)
 configure_file(cmake/EnzymeConfig.cmake.in
      "${PROJECT_BINARY_DIR}/EnzymeConfig.cmake" @ONLY)
    
-set(CONF_INCLUDE_DIRS "\${ENZYME_CMAKE_DIR}/${REL_INCLUDE_DIR}")
+set(CONF_INCLUDE_DIRS lib)
 configure_file(cmake/EnzymeConfig.cmake.in
      "${PROJECT_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/EnzymeConfig.cmake" @ONLY)
 
