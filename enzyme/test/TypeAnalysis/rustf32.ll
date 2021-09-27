@@ -3,13 +3,10 @@
 
 declare void @llvm.dbg.declare(metadata, metadata, metadata) #4
 
-define internal float @callee(float %x) unnamed_addr #1 !dbg !163 {
+define internal void @callee(i8* %x) unnamed_addr #1 !dbg !163 {
 start:
-  %x.dbg.spill = alloca float, align 4
-  store float %x, float* %x.dbg.spill, align 4
+  %x.dbg.spill = bitcast i8* to float*
   call void @llvm.dbg.declare(metadata float* %x.dbg.spill, metadata !170, metadata !DIExpression()), !dbg !171
-  %0 = fmul float %x, %x, !dbg !172
-  ret float %0, !dbg !173
 }
 
 !llvm.module.flags = !{!14, !15, !16, !17}
