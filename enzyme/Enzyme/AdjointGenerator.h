@@ -1283,17 +1283,13 @@ public:
                                  ? ConstantFP::get(orig_inserted->getType(), 0)
                                  : diffe(orig_inserted, Builder2);
 
-      if (!gutils->isConstantValue(orig_agg)) {
-        auto prediff = diffe(orig_agg, Builder2);
-        auto dindex = Builder2.CreateInsertValue(prediff, diff_inserted,
-                                                 IVI.getIndices());
-        setDiffe(&IVI, dindex, Builder2);
-      } else {
-        auto dindex =
-            Builder2.CreateInsertValue(UndefValue::get(orig_agg->getType()),
-                                       diff_inserted, IVI.getIndices());
-        setDiffe(&IVI, dindex, Builder2);
-      }
+      Value *prediff =
+          gutils->isConstantValue(orig_agg)
+              ? diffe(orig_agg, Builder2)
+              : ConstantAggregate::getNullValue(orig_agg->getType());
+      auto dindex =
+          Builder2.CreateInsertValue(prediff, diff_inserted, IVI.getIndices());
+      setDiffe(&IVI, dindex, Builder2);
 
       return;
     }

@@ -19,7 +19,7 @@ declare { double, double } @__enzyme_fwddiff(i8*, ...)
 
 
 
-; CHECK: define internal {{(dso_local )?}}{ { double, double } } @diffesquared(double %x, double %"x'")
+; CHECK: define internal {{(dso_local )?}}{ double, double } @fwddiffesquared(double %x, double %"x'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %mul = fmul double %x, %x
 ; CHECK-NEXT:   %0 = fmul fast double %"x'", %x
@@ -27,8 +27,6 @@ declare { double, double } @__enzyme_fwddiff(i8*, ...)
 ; CHECK-NEXT:   %2 = fmul fast double %1, %x
 ; CHECK-NEXT:   %3 = fmul fast double %"x'", %mul
 ; CHECK-NEXT:   %4 = fadd fast double %2, %3
-; CHECK-NEXT:   %5 = insertvalue { double, double } undef, double %1, 0
-; CHECK-NEXT:   %6 = insertvalue { double, double } %5, double %4, 1
-; CHECK-NEXT:   %7 = insertvalue { { double, double } } undef, { double, double } %6, 0
-; CHECK-NEXT:   ret { { double, double } } %7
+; CHECK-NEXT:   %5 = insertvalue { double, double } zeroinitializer, double %4, 1
+; CHECK-NEXT:   ret { double, double } %5
 ; CHECK-NEXT: }
