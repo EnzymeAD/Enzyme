@@ -355,19 +355,19 @@ public:
 
     IRBuilder<> Builder(CI);
 
-    bool fnsret = false;
+    unsigned truei = 0;
     if (cast<Function>(fn)->hasParamAttribute(0, Attribute::StructRet)) {
       Type *fnsrety = cast<PointerType>(FT->getParamType(0));
       Type *cisrety = cast<PointerType>(CI->getArgOperand(0)->getType());
 
-      if (fnsret == cisret) {
-        llvm::errs() << "Struct return types of __ezyme_autodiff and function "
+      if (fnsrety != cisrety) {
+        llvm::errs() << "Struct return types of __enzyme_autodiff and function "
                         "to differentiate do not match:\n";
-        llvm::errs() << fnsret << " != " << cisret << "\n";
+        llvm::errs() << fnsrety << " != " << cisrety << "\n";
       }
       assert(fnsrety == cisrety);
 
-      fnsret = true;
+      truei = 1;
 
       const DataLayout &DL = CI->getParent()->getModule()->getDataLayout();
       Type *Ty = fnsrety->getPointerElementType();
@@ -387,8 +387,6 @@ public:
 
       Builder.SetInsertPoint(CI);
     }
-
-    unsigned truei = fnsret;
 
     if (EnzymePrint)
       llvm::errs() << "prefn:\n" << *fn << "\n";
@@ -1093,7 +1091,9 @@ public:
     }
 
     if (!diffret->getType()->isEmptyTy() && !diffret->getType()->isVoidTy() &&
-        !CI->getType()->isEmptyTy() && !CI->getType()->isVoidTy()) {
+        !CI->getType()->isEmptyTy() &&
+        (!CI->getType()->isVoidTy() ||
+         CI->paramHasAttr(0, Attribute::StructRet))) {
       if (diffret->getType() == CI->getType()) {
         CI->replaceAllUsesWith(diffret);
       } else if (mode == DerivativeMode::ReverseModePrimal) {
