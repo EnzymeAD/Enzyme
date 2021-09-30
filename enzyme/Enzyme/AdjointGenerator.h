@@ -588,9 +588,8 @@ public:
                   Type::getInt32Ty(mask->getContext()), alignment);
 #endif
               Value *args[] = {
-                  lookup(gutils->invertPointerM(I.getOperand(0), Builder2),
-                         Builder2),
-                  alignv, mask, diffe(orig_maskInit, Builder2)};
+                  gutils->invertPointerM(I.getOperand(0), Builder2), alignv,
+                  mask, diffe(orig_maskInit, Builder2)};
               diff = Builder2.CreateCall(F, args);
             }
             setDiffe(&I, diff, Builder2);
@@ -669,6 +668,20 @@ public:
   }
 
   void visitStoreInst(llvm::StoreInst &SI) {
+    // If a store of an omp init argument, don't delete in reverse
+    // and don't do any adjoint propagation (assumed integral)
+    for (auto U : SI.getPointerOperand()->users()) {
+      if (auto CI = dyn_cast<CallInst>(U)) {
+        if (auto F = CI->getCalledFunction()) {
+          if (F->getName() == "__kmpc_for_static_init_4" ||
+              F->getName() == "__kmpc_for_static_init_4u" ||
+              F->getName() == "__kmpc_for_static_init_8" ||
+              F->getName() == "__kmpc_for_static_init_8u") {
+            return;
+          }
+        }
+      }
+    }
 #if LLVM_VERSION_MAJOR >= 10
     auto align = SI.getAlign();
 #else
@@ -696,20 +709,6 @@ public:
     Type *valType = orig_val->getType();
 
     auto &DL = gutils->newFunc->getParent()->getDataLayout();
-    // If a store of an omp init argument, don't delete in reverse
-    // and don't do any adjoint propagation (assumed integral)
-    for (auto U : orig_ptr->users()) {
-      if (auto CI = dyn_cast<CallInst>(U)) {
-        if (auto F = CI->getCalledFunction()) {
-          if (F->getName() == "__kmpc_for_static_init_4" ||
-              F->getName() == "__kmpc_for_static_init_4u" ||
-              F->getName() == "__kmpc_for_static_init_8" ||
-              F->getName() == "__kmpc_for_static_init_8u") {
-            return;
-          }
-        }
-      }
-    }
 
     if (unnecessaryStores.count(&I)) {
       return;
