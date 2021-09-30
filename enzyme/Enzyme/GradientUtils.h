@@ -964,8 +964,9 @@ public:
         mask = lookupM(mask, BuilderM);
       Type *tys[] = {newval->getType(), ptr->getType()};
       auto F = Intrinsic::getDeclaration(oldFunc->getParent(), Intrinsic::masked_store, tys);
+      assert(align);
 #if LLVM_VERSION_MAJOR >= 10
-      Value *alignv = ConstantInt::get(Type::getInt32Ty(ptr->getContext()), align ? align->value() : 0);
+      Value *alignv = ConstantInt::get(Type::getInt32Ty(ptr->getContext()), align->value());
 #else
       Value *alignv = ConstantInt::get(Type::getInt32Ty(ptr->getContext()), align);
 #endif
@@ -1442,7 +1443,7 @@ class DiffeGradientUtils : public GradientUtils {
   }
 
 public:
-  ValueToValueMapTy differentials;
+  ValueMap<const Value*, TrackingVH<AllocaInst>> differentials;
   static DiffeGradientUtils *
   CreateFromClone(EnzymeLogic &Logic, DerivativeMode mode, Function *todiff,
                   TargetLibraryInfo &TLI, TypeAnalysis &TA, DIFFE_TYPE retType,
@@ -1451,7 +1452,7 @@ public:
                   ReturnType returnValue, Type *additionalArg, bool omp);
 
 private:
-  Value *getDifferential(Value *val) {
+  AllocaInst *getDifferential(Value *val) {
     assert(val);
     if (auto arg = dyn_cast<Argument>(val))
       assert(arg->getParent() == oldFunc);
@@ -1644,7 +1645,7 @@ public:
       } else {
         Type *tys[] = {res->getType(), ptr->getType()};
         auto F = Intrinsic::getDeclaration(oldFunc->getParent(), Intrinsic::masked_store, tys);
-        Value *alignv = ConstantInt::get(Type::getInt32Ty(mask->getContext()), 0);
+        Value *alignv = ConstantInt::get(Type::getInt32Ty(mask->getContext()), cast<AllocaInst>(ptr)->getAlignment());
         Value *args[] = {res, ptr, alignv, mask};
         BuilderM.CreateCall(F, args);
       }
@@ -1659,7 +1660,7 @@ public:
       } else {
         Type *tys[] = {res->getType(), ptr->getType()};
         auto F = Intrinsic::getDeclaration(oldFunc->getParent(), Intrinsic::masked_store, tys);
-        Value *alignv = ConstantInt::get(Type::getInt32Ty(mask->getContext()), 0);
+        Value *alignv = ConstantInt::get(Type::getInt32Ty(mask->getContext()), cast<AllocaInst>(ptr)->getAlignment());
         Value *args[] = {res, ptr, alignv, mask};
         BuilderM.CreateCall(F, args);
       }
@@ -1770,10 +1771,12 @@ public:
 //! align is the alignment that should be specified for load/store to pointer
 #if LLVM_VERSION_MAJOR >= 10
   void addToInvertedPtrDiffe(Value *origptr, Value *dif, IRBuilder<> &BuilderM,
-                             MaybeAlign align, Value *OrigOffset = nullptr)
+                             MaybeAlign align, Value *OrigOffset = nullptr,
+                             Value *mask = nullptr)
 #else
   void addToInvertedPtrDiffe(Value *origptr, Value *dif, IRBuilder<> &BuilderM,
-                             unsigned align, Value *OrigOffset = nullptr)
+                             unsigned align, Value *OrigOffset = nullptr,
+                             Value *mask = nullptr)
 #endif
   {
     if (!(origptr->getType()->isPointerTy()) ||
@@ -1847,6 +1850,13 @@ public:
                      cast<PointerType>(ptr->getType())->getElementType(), 1));
       }
 
+      assert(!mask);
+      if (mask) {
+        llvm::errs() << "unhandled masked atomic fadd on llvm version " << *ptr << " "
+                   << *dif << " mask: " << *mask << "\n";
+        llvm_unreachable("unhandled masked atomic fadd");
+      }
+
       /*
       while (auto ASC = dyn_cast<AddrSpaceCastInst>(ptr)) {
         ptr = ASC->getOperand(0);
@@ -1917,13 +1927,28 @@ public:
     }
 
     Value *res;
-    LoadInst *old = BuilderM.CreateLoad(ptr);
+    Value *old;
+
+    if (!mask) {
+      auto LI = BuilderM.CreateLoad(ptr);
+      if (align)
 #if LLVM_VERSION_MAJOR >= 10
-    if (align)
-      old->setAlignment(align.getValue());
+        LI->setAlignment(*align);
 #else
-    old->setAlignment(align);
+        LI->setAlignment(align);
 #endif
+      old = LI;
+    } else {
+      Type *tys[] = {dif->getType(), origptr->getType()};
+      auto F = Intrinsic::getDeclaration(oldFunc->getParent(), Intrinsic::masked_load, tys);
+#if LLVM_VERSION_MAJOR >= 10
+      Value *alignv = ConstantInt::get(Type::getInt32Ty(mask->getContext()), align ? align->value() : 0);
+#else
+      Value *alignv = ConstantInt::get(Type::getInt32Ty(mask->getContext()), align);
+#endif
+      Value *args[] = {lookupM(invertPointerM(origptr, BuilderM), BuilderM), alignv, mask, Constant::getNullValue(dif->getType())};
+      old = BuilderM.CreateCall(F, args);
+    }
 
     if (old->getType()->isIntOrIntVectorTy()) {
       res = BuilderM.CreateFAdd(
@@ -1941,13 +1966,26 @@ public:
       assert(0 && "cannot handle type");
       report_fatal_error("cannot handle type");
     }
-    StoreInst *st = BuilderM.CreateStore(res, ptr);
+
+    if (!mask) {
+      StoreInst *st = BuilderM.CreateStore(res, ptr);
+      if (align)
 #if LLVM_VERSION_MAJOR >= 10
-    if (align)
-      st->setAlignment(align.getValue());
+          st->setAlignment(*align);
 #else
-    st->setAlignment(align);
+          st->setAlignment(align);
 #endif
+    } else {
+        Type *tys[] = {dif->getType(), origptr->getType()};
+        auto F = Intrinsic::getDeclaration(oldFunc->getParent(), Intrinsic::masked_store, tys);
+#if LLVM_VERSION_MAJOR >= 10
+        Value *alignv = ConstantInt::get(Type::getInt32Ty(mask->getContext()), align ? align->value() : 0);
+#else
+        Value *alignv = ConstantInt::get(Type::getInt32Ty(mask->getContext()), align);
+#endif
+        Value *args[] = {res, ptr, alignv, mask};
+        BuilderM.CreateCall(F, args);
+    }
   }
 };
 #endif

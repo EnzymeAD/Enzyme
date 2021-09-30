@@ -238,12 +238,12 @@ struct CacheAnalysis {
     return seen[obj] = mustcache;
   }
 
-  bool is_load_uncacheable(LoadInst &li) {
+  bool is_load_uncacheable(Instruction &li) {
     assert(li.getParent()->getParent() == oldFunc);
 
     auto Arch = llvm::Triple(oldFunc->getParent()->getTargetTriple()).getArch();
     if (Arch == Triple::amdgcn &&
-        cast<PointerType>(li.getPointerOperand()->getType())
+        cast<PointerType>(li.getOperand(0)->getType())
                 ->getAddressSpace() == 4) {
       return false;
     }
@@ -257,9 +257,9 @@ struct CacheAnalysis {
     // instruction.
     auto obj =
 #if LLVM_VERSION_MAJOR >= 12
-        getUnderlyingObject(li.getPointerOperand(), 100);
+        getUnderlyingObject(li.getOperand(0), 100);
 #else
-        GetUnderlyingObject(li.getPointerOperand(),
+        GetUnderlyingObject(li.getOperand(0),
                             oldFunc->getParent()->getDataLayout(), 100);
 #endif
 
@@ -298,9 +298,10 @@ struct CacheAnalysis {
           }
         }
 
+        if (auto LI = dyn_cast<LoadInst>(&li))
         if (auto SI = dyn_cast<StoreInst>(inst2)) {
 
-          const SCEV *LS = SE.getSCEV(li.getPointerOperand());
+          const SCEV *LS = SE.getSCEV(LI->getPointerOperand());
           const SCEV *SS = SE.getSCEV(SI->getPointerOperand());
           if (SS != SE.getCouldNotCompute()) {
 
@@ -507,6 +508,21 @@ struct CacheAnalysis {
       // For each load instruction, determine if it is uncacheable.
       if (auto op = dyn_cast<LoadInst>(inst)) {
         can_modref_map[inst] = is_load_uncacheable(*op);
+      }
+      if (auto II = dyn_cast<IntrinsicInst>(inst)) {
+        switch (II->getIntrinsicID()) {
+            case Intrinsic::nvvm_ldu_global_i:
+            case Intrinsic::nvvm_ldu_global_p:
+            case Intrinsic::nvvm_ldu_global_f:
+            case Intrinsic::nvvm_ldg_global_i:
+            case Intrinsic::nvvm_ldg_global_p:
+            case Intrinsic::nvvm_ldg_global_f:
+            case Intrinsic::masked_load:
+                can_modref_map[inst] = is_load_uncacheable(*II);
+                break;
+            default:
+                break;
+        }
       }
     }
     return can_modref_map;

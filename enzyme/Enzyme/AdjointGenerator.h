@@ -376,14 +376,18 @@ public:
 
 #if LLVM_VERSION_MAJOR >= 10
   void visitLoadLike(llvm::Instruction &I, MaybeAlign alignment,
-                     bool constantval, bool can_modref,
-                     Value *OrigOffset = nullptr)
+                     bool constantval,
+                     Value *OrigOffset = nullptr,
 #else
   void visitLoadLike(llvm::Instruction &I, unsigned alignment, bool constantval,
-                     bool can_modref, Value *OrigOffset = nullptr)
+                     Value *OrigOffset = nullptr,
 #endif
-  {
+                     Value *mask = nullptr, Value *orig_maskInit = nullptr) {
     auto &DL = gutils->newFunc->getParent()->getDataLayout();
+
+    assert(gutils->can_modref_map);
+    assert(gutils->can_modref_map->find(&I) != gutils->can_modref_map->end());
+    bool can_modref = gutils->can_modref_map->find(&I)->second;
 
     constantval |= gutils->isConstantValue(&I);
 
@@ -560,8 +564,28 @@ public:
           getForwardBuilder(Builder2);
 
           if (!gutils->isConstantValue(&I)) {
-            auto diff = Builder2.CreateLoad(
-                gutils->invertPointerM(I.getOperand(0), Builder2));
+            Value *diff;
+            if (!mask) {
+                auto LI = Builder2.CreateLoad(
+                    gutils->invertPointerM(I.getOperand(0), Builder2));
+                if (alignment)
+#if LLVM_VERSION_MAJOR >= 10
+                    LI->setAlignment(*alignment);
+#else
+                    LI->setAlignment(alignment);
+#endif
+                diff = LI;
+            } else {
+              Type *tys[] = {I.getType(), I.getOperand(0)->getType()};
+              auto F = Intrinsic::getDeclaration(gutils->oldFunc->getParent(), Intrinsic::masked_load, tys);
+#if LLVM_VERSION_MAJOR >= 10
+              Value *alignv = ConstantInt::get(Type::getInt32Ty(mask->getContext()), alignment ? alignment->value() : 0);
+#else
+              Value *alignv = ConstantInt::get(Type::getInt32Ty(mask->getContext()), alignment);
+#endif
+              Value *args[] = {lookup(gutils->invertPointerM(I.getOperand(0), Builder2), Builder2), alignv, mask, diffe(orig_maskInit, Builder2)};
+              diff = Builder2.CreateCall(F, args);
+            }
             setDiffe(&I, diff, Builder2);
           }
           break;
@@ -577,7 +601,7 @@ public:
           if (!gutils->isConstantValue(I.getOperand(0))) {
             ((DiffeGradientUtils *)gutils)
                 ->addToInvertedPtrDiffe(I.getOperand(0), prediff, Builder2,
-                                        alignment, OrigOffset);
+                                        alignment, OrigOffset, mask ? lookup(mask, Builder2) : nullptr);
           }
           break;
         }
@@ -614,10 +638,7 @@ public:
     auto &DL = gutils->newFunc->getParent()->getDataLayout();
 
     bool constantval = parseTBAA(LI, DL).Inner0().isIntegral();
-    assert(gutils->can_modref_map);
-    assert(gutils->can_modref_map->find(&LI) != gutils->can_modref_map->end());
-    bool can_modref = gutils->can_modref_map->find(&LI)->second;
-    visitLoadLike(LI, alignment, constantval, can_modref);
+    visitLoadLike(LI, alignment, constantval);
     eraseIfUnused(LI);
   }
 
@@ -642,6 +663,7 @@ public:
     auto align = SI.getAlignment();
 #endif
     visitCommonStore(SI, SI.getPointerOperand(), SI.getValueOperand(), align, SI.isVolatile(), SI.getOrdering(), SI.getSyncScopeID(), /*mask=*/nullptr);
+    eraseIfUnused(SI);
   }
 
 #if LLVM_VERSION_MAJOR >= 10
@@ -670,12 +692,10 @@ public:
     }
 
     if (unnecessaryStores.count(&I)) {
-      eraseIfUnused(I);
       return;
     }
 
     if (gutils->isConstantValue(orig_ptr)) {
-      eraseIfUnused(I);
       return;
     }
 
@@ -784,8 +804,6 @@ public:
         gutils->setPtrDiffe(orig_ptr, valueop, storeBuilder, align, isVolatile, ordering, syncScope, mask);
       }
     }
-
-    eraseIfUnused(I);
   }
 
   void visitGetElementPtrInst(llvm::GetElementPtrInst &gep) {
@@ -2360,11 +2378,9 @@ public:
       auto CI = cast<ConstantInt>(I.getOperand(1));
 #if LLVM_VERSION_MAJOR >= 10
       visitLoadLike(I, /*Align*/ MaybeAlign(CI->getZExtValue()),
-                    /*constantval*/ false,
-                    /*can_modref*/ false);
+                    /*constantval*/ false);
 #else
-      visitLoadLike(I, /*Align*/ CI->getZExtValue(), /*constantval*/ false,
-                    /*can_modref*/ false);
+      visitLoadLike(I, /*Align*/ CI->getZExtValue(), /*constantval*/ false);
 #endif
       return;
     }
@@ -2380,6 +2396,18 @@ public:
         auto align = align0;
 #endif
         visitCommonStore(I, /*orig_ptr*/I.getOperand(1), /*orig_val*/I.getOperand(0), align, /*isVolatile*/false, llvm::AtomicOrdering::NotAtomic, SyncScope::SingleThread, /*mask*/gutils->getNewFromOriginal(I.getOperand(3)));
+        return;
+    }
+    if (ID == Intrinsic::masked_load) {
+        auto align0 = cast<ConstantInt>(I.getOperand(1))->getZExtValue();
+#if LLVM_VERSION_MAJOR >= 10
+        auto align = MaybeAlign(align0);
+#else
+        auto align = align0;
+#endif
+        auto &DL = gutils->newFunc->getParent()->getDataLayout();
+        bool constantval = parseTBAA(I, DL).Inner0().isIntegral();
+        visitLoadLike(I, align, constantval, /*OrigOffset*/nullptr, /*mask*/gutils->getNewFromOriginal(I.getOperand(2)), /*orig_maskInit*/I.getOperand(3));
         return;
     }
 
