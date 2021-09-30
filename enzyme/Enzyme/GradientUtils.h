@@ -1464,6 +1464,8 @@ private:
       entryBuilder.setFastMathFlags(getFast());
       differentials[val] = entryBuilder.CreateAlloca(val->getType(), nullptr,
                                                      val->getName() + "'de");
+      auto Alignment = oldFunc->getParent()->getDataLayout().getPrefTypeAlignment(val->getType());
+      differentials[val]->setAlignment(Align(Alignment));
       entryBuilder.CreateStore(Constant::getNullValue(val->getType()),
                                differentials[val]);
     }
@@ -1645,7 +1647,9 @@ public:
       } else {
         Type *tys[] = {res->getType(), ptr->getType()};
         auto F = Intrinsic::getDeclaration(oldFunc->getParent(), Intrinsic::masked_store, tys);
-        Value *alignv = ConstantInt::get(Type::getInt32Ty(mask->getContext()), cast<AllocaInst>(ptr)->getAlignment());
+        auto align = cast<AllocaInst>(ptr)->getAlignment();
+        assert(align);
+        Value *alignv = ConstantInt::get(Type::getInt32Ty(mask->getContext()), align);
         Value *args[] = {res, ptr, alignv, mask};
         BuilderM.CreateCall(F, args);
       }
@@ -1660,7 +1664,9 @@ public:
       } else {
         Type *tys[] = {res->getType(), ptr->getType()};
         auto F = Intrinsic::getDeclaration(oldFunc->getParent(), Intrinsic::masked_store, tys);
-        Value *alignv = ConstantInt::get(Type::getInt32Ty(mask->getContext()), cast<AllocaInst>(ptr)->getAlignment());
+        auto align = cast<AllocaInst>(ptr)->getAlignment();
+        //assert(align);
+        Value *alignv = ConstantInt::get(Type::getInt32Ty(mask->getContext()), align);
         Value *args[] = {res, ptr, alignv, mask};
         BuilderM.CreateCall(F, args);
       }
@@ -1978,8 +1984,9 @@ public:
     } else {
         Type *tys[] = {dif->getType(), origptr->getType()};
         auto F = Intrinsic::getDeclaration(oldFunc->getParent(), Intrinsic::masked_store, tys);
+        assert(align);
 #if LLVM_VERSION_MAJOR >= 10
-        Value *alignv = ConstantInt::get(Type::getInt32Ty(mask->getContext()), align ? align->value() : 0);
+        Value *alignv = ConstantInt::get(Type::getInt32Ty(mask->getContext()), align->value());
 #else
         Value *alignv = ConstantInt::get(Type::getInt32Ty(mask->getContext()), align);
 #endif

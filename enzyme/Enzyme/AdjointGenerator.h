@@ -540,7 +540,7 @@ public:
     // the instruction if the value is a potential pointer. This may not be
     // caught by type analysis is the result does not have a known type.
     if (!gutils->isConstantInstruction(&I)) {
-      bool isfloat = type->isFPOrFPVectorTy();
+      Type* isfloat = type->isFPOrFPVectorTy() ? type->getScalarType() : nullptr;
       if (!isfloat && type->isIntOrIntVectorTy()) {
         auto LoadSize = DL.getTypeSizeInBits(type) / 8;
         ConcreteType vd = BaseType::Unknown;
@@ -602,6 +602,9 @@ public:
             ((DiffeGradientUtils *)gutils)
                 ->addToInvertedPtrDiffe(I.getOperand(0), prediff, Builder2,
                                         alignment, OrigOffset, mask ? lookup(mask, Builder2) : nullptr);
+          }
+          if (mask && !gutils->isConstantValue(orig_maskInit)) {
+            addToDiffe(orig_maskInit, prediff, Builder2, isfloat, Builder2.CreateNot(mask));
           }
           break;
         }
