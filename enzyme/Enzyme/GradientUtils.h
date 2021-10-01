@@ -1681,7 +1681,7 @@ public:
         auto F = Intrinsic::getDeclaration(oldFunc->getParent(),
                                            Intrinsic::masked_store, tys);
         auto align = cast<AllocaInst>(ptr)->getAlignment();
-        // assert(align);
+        assert(align);
         Value *alignv =
             ConstantInt::get(Type::getInt32Ty(mask->getContext()), align);
         Value *args[] = {res, ptr, alignv, mask};

@@ -349,7 +349,7 @@ struct CacheAnalysis {
                       auto bd =
                           SE.getSymbolicMaxBackedgeTakenCount(arL->getLoop());
 #else
-                    auto bd = SE.getBackedgeTakenCount(arL->getLoop());
+                      auto bd = SE.getBackedgeTakenCount(arL->getLoop());
 #endif
                       if (bd == SE.getCouldNotCompute())
                         break;
@@ -366,7 +366,7 @@ struct CacheAnalysis {
                     auto bd =
                         SE.getSymbolicMaxBackedgeTakenCount(arL->getLoop());
 #else
-                  auto bd = SE.getBackedgeTakenCount(arL->getLoop());
+                    auto bd = SE.getBackedgeTakenCount(arL->getLoop());
 #endif
                     if (bd == SE.getCouldNotCompute())
                       break;
