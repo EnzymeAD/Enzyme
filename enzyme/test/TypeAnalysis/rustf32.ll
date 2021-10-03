@@ -3,10 +3,11 @@
 
 declare void @llvm.dbg.declare(metadata, metadata, metadata) #4
 
-define internal void @callee(i8* %x) unnamed_addr #1 !dbg !163 {
+define internal void @callee(i8* %x) {
 start:
-  %x.dbg.spill = bitcast i8* to float*
+  %x.dbg.spill = bitcast i8* %x to float*
   call void @llvm.dbg.declare(metadata float* %x.dbg.spill, metadata !170, metadata !DIExpression()), !dbg !171
+  ret void
 }
 
 !llvm.module.flags = !{!14, !15, !16, !17}
@@ -42,15 +43,10 @@ start:
 !169 = !{!170}
 !170 = !DILocalVariable(name: "x", arg: 1, scope: !163, file: !164, line: 1, type: !168)
 !171 = !DILocation(line: 1, column: 11, scope: !163)
-!172 = !DILocation(line: 2, column: 12, scope: !163)
-!173 = !DILocation(line: 3, column: 2, scope: !163)
 
-
-; CHECK: callee - {[-1]:Float@float} |{[-1]:Float@float}:{} 
-; CHECK-NEXT: float %x: {[-1]:Float@float}
+; CHECK: callee - {} |{}:{}
+; CHECK-NEXT: i8* %x: {[-1]:Pointer, [-1,0]:Float@float}
 ; CHECK-NEXT: start
-; CHECK-NEXT:   %x.dbg.spill = alloca float, align 4: {[-1]:Pointer, [-1,0]:Float@float}
-; CHECK-NEXT:   store float %x, float* %x.dbg.spill, align 4: {}
-; CHECK-NEXT:   call void @llvm.dbg.declare(metadata float* %x.dbg.spill, metadata !28, metadata !DIExpression()), !dbg !29: {}
-; CHECK-NEXT:   %0 = fmul float %x, %x, !dbg !30: {[-1]:Float@float}
-; CHECK-NEXT:   ret float %0, !dbg !31: {}
+; CHECK-NEXT:   %x.dbg.spill = bitcast i8* %x to float*: {[-1]:Pointer, [-1,0]:Float@float}
+; CHECK-NEXT:   call void @llvm.dbg.declare(metadata float* %x.dbg.spill, metadata !21, metadata !DIExpression()), !dbg !29: {}
+; CHECK-NEXT:   ret void: {}
