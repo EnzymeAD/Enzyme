@@ -38,7 +38,7 @@ For more information on Enzyme, please see:
 *   The Enzyme [getting started guide](/getting_started/)
 *   The Enzyme [mailing list](https://groups.google.com/d/forum/enzyme-dev) for any questions.
 *   Previous [talks](/talks/).
-*   You can try out Enzyme on our [Compiler Explorer instance](https://enzyme.gymni.ch).
+*   You can try out Enzyme on our [Compiler Explorer instance](/explorer).
 
 ## Citing Enzyme
 

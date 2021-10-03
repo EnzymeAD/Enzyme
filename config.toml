@@ -75,6 +75,11 @@ disablePathToLower = true
     weight = 20
     url = "https://github.com/wsmoses/Enzyme/issues"
 
+[[menu.main]]
+    name = "Try Online"
+    weight = 30
+    url = "/explorer"
+
 [markup]
   [markup.goldmark]
     [markup.goldmark.renderer]
