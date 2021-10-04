@@ -1579,6 +1579,55 @@ public:
     ((GradientUtils *)gutils)->getForwardBuilder(Builder2);
   }
 
+  Value *getNewOrNewSplatFromOriginal(Value *orig, IRBuilder<> &Builder) {
+    if (gutils->getWidth() == 1) {
+      return gutils->getNewFromOriginal(orig);
+    }
+
+    if (auto vty = dyn_cast<VectorType>(orig->getType())) {
+#if LLVM_VERSION_MAJOR >= 12
+      unsigned int count = vty->getElementCount().getKnownMinValue();
+#else
+      unsigned int count = vty->getNumElements();
+#endif
+#if LLVM_VERSION_MAJOR >= 11
+      SmallVector<int, 6> mask;
+#else
+      SmallVector<uint32_t, 6> mask;
+#endif
+      for (unsigned i = 0; i < gutils->getWidth() * count; i++) {
+        mask.push_back(i % count);
+      }
+      // concatenate vector form getNewFromOriginal width times.
+      return Builder.CreateShuffleVector(
+          gutils->getNewFromOriginal(orig),
+          UndefValue::get(gutils->getNewFromOriginal(orig)->getType()), mask);
+    } else {
+      return Builder.CreateVectorSplat(gutils->getWidth(),
+                                       gutils->getNewFromOriginal(orig));
+    }
+  }
+
+#if LLVM_VERSION_MAJOR >= 12
+  ElementCount getElementCountForVectorMode(Type *type) {
+    assert(gutils->getWidth() > 1);
+    ElementCount ec = ElementCount::get(gutils->getWidth(), false);
+    if (auto vty = dyn_cast<VectorType>(type)) {
+      ec = vty->getElementCount() * gutils->getWidth();
+    }
+    return ec;
+  }
+#else
+  unsigned getElementCountForVectorMode(Type *type) {
+    assert(gutils->getWidth() > 1);
+    unsigned ec = gutils->getWidth();
+    if (auto vty = dyn_cast<VectorType>(type)) {
+      ec = vty->getNumElements() * gutils->getWidth();
+    }
+    return ec;
+  }
+#endif
+
   Value *diffe(Value *val, IRBuilder<> &Builder) {
     assert(Mode != DerivativeMode::ReverseModePrimal);
     return ((DiffeGradientUtils *)gutils)->diffe(val, Builder);
@@ -2023,6 +2072,7 @@ public:
   }
 
   void createBinaryOperatorDual(llvm::BinaryOperator &BO) {
+    bool vectorMode = gutils->getWidth() > 1;
     IRBuilder<> Builder2(&BO);
     getForwardBuilder(Builder2);
 
@@ -2032,73 +2082,86 @@ public:
     bool constantval0 = gutils->isConstantValue(orig_op0);
     bool constantval1 = gutils->isConstantValue(orig_op1);
 
-    Value *dif[2] = {constantval0 ? nullptr : diffe(orig_op0, Builder2),
-                     constantval1 ? nullptr : diffe(orig_op1, Builder2)};
+    Value *dif[2] = {
+        constantval0 ? nullptr
+        : vectorMode ? unwrapToVector(diffe(orig_op0, Builder2), Builder2)
+                     : diffe(orig_op0, Builder2),
+        constantval1 ? nullptr
+        : vectorMode ? unwrapToVector(diffe(orig_op1, Builder2), Builder2)
+                     : diffe(orig_op1, Builder2)};
 
     switch (BO.getOpcode()) {
     case Instruction::FMul: {
       if (!constantval0 && !constantval1) {
-        Value *idiff0 =
-            Builder2.CreateFMul(dif[0], gutils->getNewFromOriginal(orig_op1));
-        Value *idiff1 =
-            Builder2.CreateFMul(dif[1], gutils->getNewFromOriginal(orig_op0));
+        Value *idiff0 = Builder2.CreateFMul(
+            dif[0], getNewOrNewSplatFromOriginal(orig_op1, Builder2));
+        Value *idiff1 = Builder2.CreateFMul(
+            dif[1], getNewOrNewSplatFromOriginal(orig_op0, Builder2));
         Value *diff = Builder2.CreateFAdd(idiff0, idiff1);
-        setDiffe(&BO, diff, Builder2);
+        setDiffe(&BO, vectorMode ? wrapVector(diff, Builder2) : diff, Builder2);
       } else if (!constantval0) {
-        Value *idiff0 =
-            Builder2.CreateFMul(dif[0], gutils->getNewFromOriginal(orig_op1));
-        setDiffe(&BO, idiff0, Builder2);
+        Value *idiff0 = Builder2.CreateFMul(
+            dif[0], getNewOrNewSplatFromOriginal(orig_op1, Builder2));
+        setDiffe(&BO, vectorMode ? wrapVector(idiff0, Builder2) : idiff0,
+                 Builder2);
       } else if (!constantval1) {
-        Value *idiff1 =
-            Builder2.CreateFMul(dif[1], gutils->getNewFromOriginal(orig_op0));
-        setDiffe(&BO, idiff1, Builder2);
+        Value *idiff1 = Builder2.CreateFMul(
+            dif[1], getNewOrNewSplatFromOriginal(orig_op0, Builder2));
+        setDiffe(&BO, vectorMode ? wrapVector(idiff1, Builder2) : idiff1,
+                 Builder2);
       }
       break;
     }
     case Instruction::FAdd: {
       if (!constantval0 && !constantval1) {
         Value *diff = Builder2.CreateFAdd(dif[0], dif[1]);
-        setDiffe(&BO, diff, Builder2);
+        setDiffe(&BO, vectorMode ? wrapVector(diff, Builder2) : diff, Builder2);
       } else if (!constantval0) {
-        setDiffe(&BO, dif[0], Builder2);
+        setDiffe(&BO, vectorMode ? wrapVector(dif[0], Builder2) : dif[0],
+                 Builder2);
       } else if (!constantval1) {
-        setDiffe(&BO, dif[1], Builder2);
+        setDiffe(&BO, vectorMode ? wrapVector(dif[1], Builder2) : dif[1],
+                 Builder2);
       }
       break;
     }
     case Instruction::FSub: {
       if (!constantval0 && !constantval1) {
         Value *diff = Builder2.CreateFAdd(dif[0], Builder2.CreateFNeg(dif[1]));
-        setDiffe(&BO, diff, Builder2);
+        setDiffe(&BO, vectorMode ? wrapVector(diff, Builder2) : diff, Builder2);
       } else if (!constantval0) {
-        setDiffe(&BO, dif[0], Builder2);
+        setDiffe(&BO, vectorMode ? wrapVector(dif[0], Builder2) : dif[0],
+                 Builder2);
       } else if (!constantval1) {
-        setDiffe(&BO, Builder2.CreateFNeg(dif[1]), Builder2);
+        Value *diff = Builder2.CreateFNeg(dif[1]);
+        setDiffe(&BO, vectorMode ? wrapVector(diff, Builder2) : diff, Builder2);
       }
       break;
     }
     case Instruction::FDiv: {
       Value *idiff3 = nullptr;
       if (!constantval0 && !constantval1) {
-        Value *idiff1 =
-            Builder2.CreateFMul(dif[0], gutils->getNewFromOriginal(orig_op1));
-        Value *idiff2 =
-            Builder2.CreateFMul(gutils->getNewFromOriginal(orig_op0), dif[1]);
+        Value *idiff1 = Builder2.CreateFMul(
+            dif[0], getNewOrNewSplatFromOriginal(orig_op1, Builder2));
+        Value *idiff2 = Builder2.CreateFMul(
+            getNewOrNewSplatFromOriginal(orig_op0, Builder2), dif[1]);
         idiff3 = Builder2.CreateFSub(idiff1, idiff2);
       } else if (!constantval0) {
-        Value *idiff1 =
-            Builder2.CreateFMul(dif[0], gutils->getNewFromOriginal(orig_op1));
+        Value *idiff1 = Builder2.CreateFMul(
+            dif[0], getNewOrNewSplatFromOriginal(orig_op1, Builder2));
         idiff3 = idiff1;
       } else if (!constantval1) {
-        Value *idiff2 =
-            Builder2.CreateFMul(gutils->getNewFromOriginal(orig_op0), dif[1]);
+        Value *idiff2 = Builder2.CreateFMul(
+            getNewOrNewSplatFromOriginal(orig_op0, Builder2), dif[1]);
         idiff3 = Builder2.CreateFNeg(idiff2);
       }
 
-      Value *idiff4 = Builder2.CreateFMul(gutils->getNewFromOriginal(orig_op1),
-                                          gutils->getNewFromOriginal(orig_op1));
+      Value *idiff4 =
+          Builder2.CreateFMul(getNewOrNewSplatFromOriginal(orig_op1, Builder2),
+                              getNewOrNewSplatFromOriginal(orig_op1, Builder2));
       Value *idiff5 = Builder2.CreateFDiv(idiff3, idiff4);
-      setDiffe(&BO, idiff5, Builder2);
+      setDiffe(&BO, vectorMode ? wrapVector(idiff5, Builder2) : idiff5,
+               Builder2);
 
       break;
     }
@@ -2106,6 +2169,8 @@ public:
       // If & against 0b10000000000 and a float the result is 0
       auto &dl = gutils->oldFunc->getParent()->getDataLayout();
       auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
+      Type *diffTy = vectorMode ? gutils->getTypeForVectorMode(BO.getType())
+                                : BO.getType();
 
       auto FT = TR.query(&BO).IsAllFloat(size);
       auto eFT = FT;
@@ -2115,12 +2180,12 @@ public:
           if (CI && dl.getTypeSizeInBits(eFT) ==
                         dl.getTypeSizeInBits(CI->getType())) {
             if (CI->isNegative() && CI->isMinValue(/*signed*/ true)) {
-              setDiffe(&BO, Constant::getNullValue(BO.getType()), Builder2);
+              setDiffe(&BO, Constant::getNullValue(diffTy), Builder2);
               // Derivative is zero, no update
               return;
             }
             if (eFT->isDoubleTy() && CI->getValue() == -134217728) {
-              setDiffe(&BO, Constant::getNullValue(BO.getType()), Builder2);
+              setDiffe(&BO, Constant::getNullValue(diffTy), Builder2);
               // Derivative is zero (equivalent to rounding as just chopping off
               // bits of mantissa), no update
               return;
@@ -2132,6 +2197,9 @@ public:
     case Instruction::Xor: {
       auto &dl = gutils->oldFunc->getParent()->getDataLayout();
       auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
+
+      Value *dif[2] = {constantval0 ? nullptr : diffe(orig_op0, Builder2),
+                       constantval1 ? nullptr : diffe(orig_op1, Builder2)};
 
       auto FT = TR.query(&BO).IsAllFloat(size);
       auto eFT = FT;
@@ -2159,10 +2227,20 @@ public:
                         dl.getTypeSizeInBits(CI->getType())) {
             if (CI->isNegative() && CI->isMinValue(/*signed*/ true)) {
               assert(dif[1 - i]);
-              auto neg =
-                  Builder2.CreateFNeg(Builder2.CreateBitCast(dif[1 - i], FT));
-              auto bc = Builder2.CreateBitCast(neg, BO.getType());
-              setDiffe(&BO, bc, Builder2);
+              auto rule = [&](Value *difi) {
+                auto neg =
+                    Builder2.CreateFNeg(Builder2.CreateBitCast(difi, FT));
+                return Builder2.CreateBitCast(neg, BO.getType());
+              };
+
+              if (gutils->getWidth() > 1) {
+                auto diffe =
+                    unwrapAndApply(BO.getType(), dif[1 - i], Builder2, rule);
+                setDiffe(&BO, diffe, Builder2);
+              } else {
+                auto diffe = rule(dif[1 - i]);
+                setDiffe(&BO, diffe, Builder2);
+              }
               return;
             }
           }
@@ -2179,23 +2257,34 @@ public:
               }
             }
             if (validXor) {
-              Value *V = UndefValue::get(CV->getType());
-              for (size_t j = 0, end = CV->getNumOperands(); j < end; ++j) {
-                auto CI = dyn_cast<ConstantInt>(CV->getOperand(j))->getValue();
-                if (CI.isNullValue())
-                  V = Builder2.CreateInsertElement(
-                      V, Builder2.CreateExtractElement(dif[1 - i], j), j);
-                if (CI.isMinSignedValue())
-                  V = Builder2.CreateInsertElement(
-                      V,
-                      Builder2.CreateBitCast(
-                          Builder2.CreateFNeg(Builder2.CreateBitCast(
-                              Builder2.CreateExtractElement(dif[1 - i], j),
-                              eFT)),
-                          CV->getOperand(j)->getType()),
-                      j);
+              auto rule = [&](Value *difi) {
+                Value *V = UndefValue::get(CV->getType());
+                for (size_t j = 0, end = CV->getNumOperands(); j < end; ++j) {
+                  auto CI =
+                      dyn_cast<ConstantInt>(CV->getOperand(j))->getValue();
+                  if (CI.isNullValue())
+                    V = Builder2.CreateInsertElement(
+                        V, Builder2.CreateExtractElement(difi, j), j);
+                  if (CI.isMinSignedValue())
+                    V = Builder2.CreateInsertElement(
+                        V,
+                        Builder2.CreateBitCast(
+                            Builder2.CreateFNeg(Builder2.CreateBitCast(
+                                Builder2.CreateExtractElement(difi, j), eFT)),
+                            CV->getOperand(j)->getType()),
+                        j);
+                }
+                return V;
+              };
+
+              if (gutils->getWidth() > 1) {
+                auto diffe =
+                    unwrapAndApply(BO.getType(), dif[1 - i], Builder2, rule);
+                setDiffe(&BO, diffe, Builder2);
+              } else {
+                auto diffe = rule(dif[1 - i]);
+                setDiffe(&BO, diffe, Builder2);
               }
-              setDiffe(&BO, V, Builder2);
               return;
             }
           } else if (auto CV = dyn_cast<ConstantDataVector>(BO.getOperand(i))) {
@@ -2210,23 +2299,33 @@ public:
               }
             }
             if (validXor) {
-              Value *V = UndefValue::get(CV->getType());
-              for (size_t j = 0, end = CV->getNumElements(); j < end; ++j) {
-                auto CI = CV->getElementAsAPInt(j);
-                if (CI.isNullValue())
-                  V = Builder2.CreateInsertElement(
-                      V, Builder2.CreateExtractElement(dif[1 - i], j), j);
-                if (CI.isMinSignedValue())
-                  V = Builder2.CreateInsertElement(
-                      V,
-                      Builder2.CreateBitCast(
-                          Builder2.CreateFNeg(Builder2.CreateBitCast(
-                              Builder2.CreateExtractElement(dif[1 - i], j),
-                              eFT)),
-                          CV->getElementType()),
-                      j);
+              auto rule = [&](Value *difi) {
+                Value *V = UndefValue::get(CV->getType());
+                for (size_t j = 0, end = CV->getNumElements(); j < end; ++j) {
+                  auto CI = CV->getElementAsAPInt(j);
+                  if (CI.isNullValue())
+                    V = Builder2.CreateInsertElement(
+                        V, Builder2.CreateExtractElement(difi, j), j);
+                  if (CI.isMinSignedValue())
+                    V = Builder2.CreateInsertElement(
+                        V,
+                        Builder2.CreateBitCast(
+                            Builder2.CreateFNeg(Builder2.CreateBitCast(
+                                Builder2.CreateExtractElement(difi, j), eFT)),
+                            CV->getElementType()),
+                        j);
+                }
+                return V;
+              };
+
+              if (gutils->getWidth() > 1) {
+                auto diffe =
+                    unwrapAndApply(BO.getType(), dif[1 - i], Builder2, rule);
+                setDiffe(&BO, diffe, Builder2);
+              } else {
+                auto diffe = rule(dif[1 - i]);
+                setDiffe(&BO, diffe, Builder2);
               }
-              setDiffe(&BO, V, Builder2);
               return;
             }
           }
@@ -2236,6 +2335,9 @@ public:
     case Instruction::Or: {
       auto &dl = gutils->oldFunc->getParent()->getDataLayout();
       auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
+
+      Value *dif[2] = {constantval0 ? nullptr : diffe(orig_op0, Builder2),
+                       constantval1 ? nullptr : diffe(orig_op1, Builder2)};
 
       auto FT = TR.query(&BO).IsAllFloat(size);
       auto eFT = FT;
@@ -2277,25 +2379,37 @@ public:
               validXor = true;
             }
             if (validXor) {
-              auto arg = gutils->getNewFromOriginal(BO.getOperand(1 - i));
-              auto prev = Builder2.CreateOr(arg, BO.getOperand(i));
-              prev = Builder2.CreateSub(prev, arg, "", /*NUW*/ true,
-                                        /*NSW*/ false);
-              uint64_t num = 0;
-              if (FT->isFloatTy()) {
-                num = 127ULL << 23;
+              auto rule = [&](Value *difi) {
+                auto arg = gutils->getNewFromOriginal(BO.getOperand(1 - i));
+                auto prev = Builder2.CreateOr(arg, BO.getOperand(i));
+                prev = Builder2.CreateSub(prev, arg, "", /*NUW*/ true,
+                                          /*NSW*/ false);
+                uint64_t num = 0;
+                if (FT->isFloatTy()) {
+                  num = 127ULL << 23;
+                } else {
+                  assert(FT->isDoubleTy());
+                  num = 1023ULL << 52;
+                }
+                prev = Builder2.CreateAdd(
+                    prev, ConstantInt::get(prev->getType(), num, false), "",
+                    /*NUW*/ true, /*NSW*/ true);
+                prev = Builder2.CreateBitCast(
+                    Builder2.CreateFMul(Builder2.CreateBitCast(difi, FT),
+                                        Builder2.CreateBitCast(prev, FT)),
+                    prev->getType());
+
+                return prev;
+              };
+
+              if (gutils->getWidth() > 1) {
+                auto diffe =
+                    unwrapAndApply(BO.getType(), dif[1 - i], Builder2, rule);
+                setDiffe(&BO, diffe, Builder2);
               } else {
-                assert(FT->isDoubleTy());
-                num = 1023ULL << 52;
+                auto diffe = rule(dif[1 - i]);
+                setDiffe(&BO, diffe, Builder2);
               }
-              prev = Builder2.CreateAdd(
-                  prev, ConstantInt::get(prev->getType(), num, false), "",
-                  /*NUW*/ true, /*NSW*/ true);
-              prev = Builder2.CreateBitCast(
-                  Builder2.CreateFMul(Builder2.CreateBitCast(dif[1 - i], FT),
-                                      Builder2.CreateBitCast(prev, FT)),
-                  prev->getType());
-              setDiffe(&BO, prev, Builder2);
               return;
             }
           }
@@ -3516,13 +3630,21 @@ public:
       case Intrinsic::sin: {
         if (gutils->isConstantInstruction(&I))
           return;
-        Value *op = diffe(orig_ops[0], Builder2);
-
+        Value *op = vectorMode
+                        ? unwrapToVector(diffe(orig_ops[0], Builder2), Builder2)
+                        : diffe(orig_ops[0], Builder2);
         Value *args[] = {gutils->getNewFromOriginal(orig_ops[0])};
         Type *tys[] = {orig_ops[0]->getType()};
-        CallInst *cal = cast<CallInst>(Builder2.CreateCall(
-            Intrinsic::getDeclaration(M, Intrinsic::cos, tys), args));
+        Value *cal = Builder2.CreateCall(
+            Intrinsic::getDeclaration(M, Intrinsic::cos, tys), args);
+
+        if (vectorMode)
+          cal = Builder2.CreateVectorSplat(
+              getElementCountForVectorMode(I.getType()), cal);
+
         Value *dif0 = Builder2.CreateFMul(op, cal);
+        if (vectorMode)
+          dif0 = wrapVector(dif0, Builder2);
         setDiffe(&I, dif0, Builder2);
         return;
       }
