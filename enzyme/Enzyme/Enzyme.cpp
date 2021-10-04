@@ -80,79 +80,21 @@ llvm::cl::opt<bool>
 namespace {
 
 static void
-handleCustomGradient(llvm::Module &M, llvm::GlobalVariable &g,
-                     std::vector<GlobalVariable *> &globalsToErase) {
-  if (g.hasInitializer()) {
-    if (auto CA = dyn_cast<ConstantAggregate>(g.getInitializer())) {
-      if (CA->getNumOperands() != 3) {
-        llvm::errs() << M << "\n";
-        llvm::errs() << "Use of __enzyme_register_gradient must be a "
-                        "constant of size 3 "
-                     << g << "\n";
-        llvm_unreachable("__enzyme_register_gradient");
-      } else {
-        Function *Fs[3];
-        for (size_t i = 0; i < 3; i++) {
-          Value *V = CA->getOperand(i);
-          while (auto CE = dyn_cast<ConstantExpr>(V)) {
-            V = CE->getOperand(0);
-          }
-          if (auto CA = dyn_cast<ConstantAggregate>(V))
-            V = CA->getOperand(0);
-          while (auto CE = dyn_cast<ConstantExpr>(V)) {
-            V = CE->getOperand(0);
-          }
-          if (auto F = dyn_cast<Function>(V)) {
-            Fs[i] = F;
-          } else {
-            llvm::errs() << M << "\n";
-            llvm::errs() << "Param of __enzyme_register_gradient must be a "
-                            "function"
-                         << g << "\n"
-                         << *V << "\n";
-            llvm_unreachable("__enzyme_register_gradient");
-          }
-        }
-        Fs[0]->setMetadata(
-            "enzyme_augment",
-            llvm::MDTuple::get(Fs[0]->getContext(),
-                               {llvm::ValueAsMetadata::get(Fs[1])}));
-        Fs[0]->setMetadata(
-            "enzyme_gradient",
-            llvm::MDTuple::get(Fs[0]->getContext(),
-                               {llvm::ValueAsMetadata::get(Fs[2])}));
-      }
-    } else {
-      llvm::errs() << M << "\n";
-      llvm::errs() << "Use of __enzyme_register_gradient must be a "
-                      "constant aggregate "
-                   << g << "\n";
-      llvm_unreachable("__enzyme_register_gradient");
-    }
-  } else {
-    llvm::errs() << M << "\n";
-    llvm::errs() << "Use of __enzyme_register_gradient must be a "
-                    "constant array of size 3 "
-                 << g << "\n";
-    llvm_unreachable("__enzyme_register_gradient");
-  }
-  globalsToErase.push_back(&g);
-}
-
-static void
-handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
+handleCustomDerivative(StringRef handlername, int numargs, llvm::Module &M,
+                       llvm::GlobalVariable &g,
                        std::vector<GlobalVariable *> &globalsToErase) {
   if (g.hasInitializer()) {
     if (auto CA = dyn_cast<ConstantAggregate>(g.getInitializer())) {
-      if (CA->getNumOperands() != 2) {
+      if (CA->getNumOperands() != numargs) {
         llvm::errs() << M << "\n";
-        llvm::errs() << "Use of __enzyme_register_derivative must be a "
-                        "constant of size 2 "
-                     << g << "\n";
-        llvm_unreachable("__enzyme_register_derivative");
+        llvm::errs() << "Use of " << handlername
+                     << " must be a "
+                        "constant of size "
+                     << numargs << " " << g << "\n";
+        llvm_unreachable(handlername.str().c_str());
       } else {
-        Function *Fs[2];
-        for (size_t i = 0; i < 2; i++) {
+        Function *Fs[numargs];
+        for (size_t i = 0; i < numargs; i++) {
           Value *V = CA->getOperand(i);
           while (auto CE = dyn_cast<ConstantExpr>(V)) {
             V = CE->getOperand(0);
@@ -166,31 +108,46 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
             Fs[i] = F;
           } else {
             llvm::errs() << M << "\n";
-            llvm::errs() << "Param of __enzyme_register_derivative must be a "
+            llvm::errs() << "Param of " << handlername
+                         << " must be a "
                             "function"
                          << g << "\n"
                          << *V << "\n";
-            llvm_unreachable("__enzyme_register_derivative");
+            llvm_unreachable(handlername.str().c_str());
           }
         }
-        Fs[0]->setMetadata(
-            "enzyme_derivative",
-            llvm::MDTuple::get(Fs[0]->getContext(),
-                               {llvm::ValueAsMetadata::get(Fs[1])}));
+
+        if (numargs == 3) {
+          Fs[0]->setMetadata(
+              "enzyme_augment",
+              llvm::MDTuple::get(Fs[0]->getContext(),
+                                 {llvm::ValueAsMetadata::get(Fs[1])}));
+          Fs[0]->setMetadata(
+              "enzyme_gradient",
+              llvm::MDTuple::get(Fs[0]->getContext(),
+                                 {llvm::ValueAsMetadata::get(Fs[2])}));
+        } else if (numargs == 2) {
+          Fs[0]->setMetadata(
+              "enzyme_derivative",
+              llvm::MDTuple::get(Fs[0]->getContext(),
+                                 {llvm::ValueAsMetadata::get(Fs[1])}));
+        }
       }
     } else {
       llvm::errs() << M << "\n";
-      llvm::errs() << "Use of __enzyme_register_derivative must be a "
+      llvm::errs() << "Use of " << handlername
+                   << " must be a "
                       "constant aggregate "
                    << g << "\n";
-      llvm_unreachable("__enzyme_register_derivative");
+      llvm_unreachable(handlername.str().c_str());
     }
   } else {
     llvm::errs() << M << "\n";
-    llvm::errs() << "Use of __enzyme_register_derivative must be a "
-                    "constant array of size 2 "
-                 << g << "\n";
-    llvm_unreachable("__enzyme_register_derivative");
+    llvm::errs() << "Use of " << handlername
+                 << " must be a "
+                    "constant array of size "
+                 << numargs << " " << g << "\n";
+    llvm_unreachable(handlername.str().c_str());
   }
   globalsToErase.push_back(&g);
 }
@@ -1679,9 +1636,11 @@ public:
     std::vector<GlobalVariable *> globalsToErase;
     for (GlobalVariable &g : M.globals()) {
       if (g.getName().contains("__enzyme_register_gradient")) {
-        handleCustomGradient(M, g, globalsToErase);
+        handleCustomDerivative("__enzyme_register_gradient", 3, M, g,
+                               globalsToErase);
       } else if (g.getName().contains("__enzyme_register_derivative")) {
-        handleCustomDerivative(M, g, globalsToErase);
+        handleCustomDerivative("__enzyme_register_derivative", 2, M, g,
+                               globalsToErase);
       } else if (g.getName().contains("__enzyme_inactivefn")) {
         handleInactiveFunction(M, g, globalsToErase);
       }
