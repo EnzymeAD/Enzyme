@@ -79,9 +79,9 @@ llvm::cl::opt<bool>
 
 namespace {
 
+template <const char *handlername, int numargs>
 static void
-handleCustomDerivative(StringRef handlername, int numargs, llvm::Module &M,
-                       llvm::GlobalVariable &g,
+handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
                        std::vector<GlobalVariable *> &globalsToErase) {
   if (g.hasInitializer()) {
     if (auto CA = dyn_cast<ConstantAggregate>(g.getInitializer())) {
@@ -91,7 +91,7 @@ handleCustomDerivative(StringRef handlername, int numargs, llvm::Module &M,
                      << " must be a "
                         "constant of size "
                      << numargs << " " << g << "\n";
-        llvm_unreachable(handlername.str().c_str());
+        llvm_unreachable(handlername);
       } else {
         Function *Fs[numargs];
         for (size_t i = 0; i < numargs; i++) {
@@ -113,7 +113,7 @@ handleCustomDerivative(StringRef handlername, int numargs, llvm::Module &M,
                             "function"
                          << g << "\n"
                          << *V << "\n";
-            llvm_unreachable(handlername.str().c_str());
+            llvm_unreachable(handlername);
           }
         }
 
@@ -139,7 +139,7 @@ handleCustomDerivative(StringRef handlername, int numargs, llvm::Module &M,
                    << " must be a "
                       "constant aggregate "
                    << g << "\n";
-      llvm_unreachable(handlername.str().c_str());
+      llvm_unreachable(handlername);
     }
   } else {
     llvm::errs() << M << "\n";
@@ -147,7 +147,7 @@ handleCustomDerivative(StringRef handlername, int numargs, llvm::Module &M,
                  << " must be a "
                     "constant array of size "
                  << numargs << " " << g << "\n";
-    llvm_unreachable(handlername.str().c_str());
+    llvm_unreachable(handlername);
   }
   globalsToErase.push_back(&g);
 }
@@ -1630,17 +1630,21 @@ public:
   }
 
   bool runOnModule(Module &M) override {
+    constexpr static const char gradient_handler_name[] =
+        "__enzyme_register_gradient";
+    constexpr static const char derivative_handler_name[] =
+        "__enzyme_register_derivative";
+
     Logic.clear();
 
     bool changed = false;
     std::vector<GlobalVariable *> globalsToErase;
     for (GlobalVariable &g : M.globals()) {
-      if (g.getName().contains("__enzyme_register_gradient")) {
-        handleCustomDerivative("__enzyme_register_gradient", 3, M, g,
-                               globalsToErase);
-      } else if (g.getName().contains("__enzyme_register_derivative")) {
-        handleCustomDerivative("__enzyme_register_derivative", 2, M, g,
-                               globalsToErase);
+      if (g.getName().contains(gradient_handler_name)) {
+        handleCustomDerivative<gradient_handler_name, 3>(M, g, globalsToErase);
+      } else if (g.getName().contains(derivative_handler_name)) {
+        handleCustomDerivative<derivative_handler_name, 2>(M, g,
+                                                           globalsToErase);
       } else if (g.getName().contains("__enzyme_inactivefn")) {
         handleInactiveFunction(M, g, globalsToErase);
       }
