@@ -8140,8 +8140,8 @@ public:
       if (called) {
         newcalled = gutils->Logic.CreateForwardDiff(
             cast<Function>(called), subretType, argsInverted, gutils->TLI,
-            TR.analyzer.interprocedural, /*returnValue*/ subretused,
-            DerivativeMode::ForwardMode, nullptr, nextTypeInfo, {});
+            TR.analyzer.interprocedural, /*returnValue*/ subretused, Mode,
+            gutils->getWidth(), nullptr, nextTypeInfo, {});
       } else {
 #if LLVM_VERSION_MAJOR >= 11
         auto callval = orig->getCalledOperand();
@@ -8159,8 +8159,9 @@ public:
                 ? (retActive ? ReturnType::TwoReturns : ReturnType::Return)
                 : (retActive ? ReturnType::Return : ReturnType::Void);
 
-        FunctionType *FTy = getFunctionTypeForClone(ft, nullptr, argsInverted,
-                                                    false, subretVal);
+        FunctionType *FTy =
+            getFunctionTypeForClone(ft, Mode, gutils->getWidth(), nullptr,
+                                    argsInverted, false, subretVal, subretType);
         PointerType *fptype = PointerType::getUnqual(FTy);
         newcalled = BuilderZ.CreatePointerCast(newcalled,
                                                PointerType::getUnqual(fptype));
