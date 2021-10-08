@@ -319,14 +319,12 @@ public:
                       DerivativeMode mode, bool sizeOnly) {
 
     Value *fn = CI->getArgOperand(0);
-    bool cisret = false;
 
     std::vector<DIFFE_TYPE> constants;
     SmallVector<Value *, 2> args;
 
     if (CI->paramHasAttr(0, Attribute::StructRet)) {
       fn = CI->getArgOperand(1);
-      cisret = true;
     }
 
     while (auto ci = dyn_cast<CastInst>(fn)) {
@@ -353,19 +351,14 @@ public:
     auto FT = cast<Function>(fn)->getFunctionType();
     assert(fn);
 
+    bool sret = CI->paramHasAttr(0, Attribute::StructRet) ||
+                cast<Function>(fn)->hasParamAttribute(0, Attribute::StructRet);
+
     IRBuilder<> Builder(CI);
 
     unsigned truei = 0;
     if (cast<Function>(fn)->hasParamAttribute(0, Attribute::StructRet)) {
       Type *fnsrety = cast<PointerType>(FT->getParamType(0));
-      Type *cisrety = cast<PointerType>(CI->getArgOperand(0)->getType());
-
-      if (fnsrety != cisrety) {
-        llvm::errs() << "Struct return types of __enzyme_autodiff and function "
-                        "to differentiate do not match:\n";
-        llvm::errs() << fnsrety << " != " << cisrety << "\n";
-      }
-      assert(fnsrety == cisrety);
 
       truei = 1;
 
@@ -379,13 +372,18 @@ public:
 #endif
 
       primal->insertBefore(CI);
-      auto shadow = CI->getArgOperand(0);
+
+      Value *shadow;
+      if (mode == DerivativeMode::ForwardMode) {
+        shadow = CI->getArgOperand(0);
+      } else {
+        shadow = CI->getArgOperand(1);
+        sret = true;
+      }
 
       args.push_back(primal);
       args.push_back(shadow);
       constants.push_back(DIFFE_TYPE::DUP_ARG);
-
-      Builder.SetInsertPoint(CI);
     }
 
     if (EnzymePrint)
@@ -409,7 +407,7 @@ public:
     llvm::Value *tape = nullptr;
     bool tapeIsPointer = false;
     int allocatedTapeSize = -1;
-    for (unsigned i = 1 + cisret; i < CI->getNumArgOperands(); ++i) {
+    for (unsigned i = 1 + sret; i < CI->getNumArgOperands(); ++i) {
       Value *res = CI->getArgOperand(i);
 
       if (truei >= FT->getNumParams()) {
