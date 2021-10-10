@@ -2341,8 +2341,14 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
 
       toret =
           nBuilder.CreateInsertValue(toret, gutils->getNewFromOriginal(ret), 0);
-      toret =
-          nBuilder.CreateInsertValue(toret, gutils->diffe(ret, nBuilder), 1);
+
+      if (ret->getType()->isPointerTy()) {
+        toret = nBuilder.CreateInsertValue(
+            toret, gutils->invertPointerM(ret, nBuilder), 1);
+      } else {
+        toret =
+            nBuilder.CreateInsertValue(toret, gutils->diffe(ret, nBuilder), 1);
+      }
       break;
     }
     case ReturnType::Void: {
@@ -3662,7 +3668,8 @@ Function *EnzymeLogic::CreateForwardDiff(
   }
 
   auto TRo = TA.analyzeFunction(oldTypeInfo);
-  bool retActive = TRo.getReturnAnalysis().Inner0().isPossibleFloat() &&
+  bool retActive = (TRo.getReturnAnalysis().Inner0().isPossibleFloat() ||
+                    TRo.getReturnAnalysis().Inner0().isPossiblePointer()) &&
                    !todiff->getReturnType()->isVoidTy();
 
   ReturnType retVal =
