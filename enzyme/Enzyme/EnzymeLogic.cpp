@@ -3668,9 +3668,7 @@ Function *EnzymeLogic::CreateForwardDiff(
   }
 
   auto TRo = TA.analyzeFunction(oldTypeInfo);
-  bool retActive = (TRo.getReturnAnalysis().Inner0().isPossibleFloat() ||
-                    TRo.getReturnAnalysis().Inner0().isPossiblePointer()) &&
-                   !todiff->getReturnType()->isVoidTy();
+  bool retActive = retType != DIFFE_TYPE::CONSTANT;
 
   ReturnType retVal =
       returnValue ? (retActive ? ReturnType::TwoReturns : ReturnType::Return)
