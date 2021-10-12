@@ -2314,8 +2314,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   return AugmentedCachedFunctions.find(tup)->second;
 }
 
-void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
-                      DIFFE_TYPE retType, ReturnType retVal) {
+void createTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
+                      BasicBlock *oBB, DIFFE_TYPE retType, ReturnType retVal) {
 
   BasicBlock *nBB = cast<BasicBlock>(gutils->getNewFromOriginal(oBB));
   assert(nBB);
@@ -2342,7 +2342,7 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
       toret =
           nBuilder.CreateInsertValue(toret, gutils->getNewFromOriginal(ret), 0);
 
-      if (ret->getType()->isPointerTy()) {
+      if (TR.getReturnAnalysis().Inner0().isPossiblePointer()) {
         toret = nBuilder.CreateInsertValue(
             toret, gutils->invertPointerM(ret, nBuilder), 1);
       } else {
@@ -3852,7 +3852,7 @@ Function *EnzymeLogic::CreateForwardDiff(
       maker->visit(&*it);
     }
 
-    createTerminator(gutils, &oBB, retType, retVal);
+    createTerminator(TR, gutils, &oBB, retType, retVal);
   }
 
   gutils->eraseFictiousPHIs();
