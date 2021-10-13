@@ -1191,91 +1191,153 @@ public:
     eraseIfUnused(IEI);
     if (gutils->isConstantInstruction(&IEI))
       return;
-    if (Mode == DerivativeMode::ReverseModePrimal)
+
+    switch (Mode) {
+    case DerivativeMode::ForwardMode: {
+      IRBuilder<> Builder2(&IEI);
+      getForwardBuilder(Builder2);
+
+      Value *orig_vector = IEI.getOperand(0);
+      Value *orig_inserted = IEI.getOperand(1);
+      Value *orig_index = IEI.getOperand(2);
+
+      Value *diff_inserted = gutils->isConstantValue(orig_inserted)
+                                 ? ConstantFP::get(orig_inserted->getType(), 0)
+                                 : diffe(orig_inserted, Builder2);
+
+      Value *prediff =
+          gutils->isConstantValue(orig_vector)
+              ? diffe(orig_vector, Builder2)
+              : ConstantVector::getNullValue(orig_vector->getType());
+      auto dindex = Builder2.CreateInsertElement(
+          prediff, diff_inserted, gutils->getNewFromOriginal(orig_index));
+      setDiffe(&IEI, dindex, Builder2);
+
       return;
+    }
+    case DerivativeMode::ReverseModeGradient:
+    case DerivativeMode::ReverseModeCombined: {
+      IRBuilder<> Builder2(IEI.getParent());
+      getReverseBuilder(Builder2);
 
-    IRBuilder<> Builder2(IEI.getParent());
-    getReverseBuilder(Builder2);
+      Value *dif1 = diffe(&IEI, Builder2);
 
-    Value *dif1 = diffe(&IEI, Builder2);
+      Value *orig_op0 = IEI.getOperand(0);
+      Value *orig_op1 = IEI.getOperand(1);
+      Value *op1 = gutils->getNewFromOriginal(orig_op1);
+      Value *op2 = gutils->getNewFromOriginal(IEI.getOperand(2));
 
-    Value *orig_op0 = IEI.getOperand(0);
-    Value *orig_op1 = IEI.getOperand(1);
-    Value *op1 = gutils->getNewFromOriginal(orig_op1);
-    Value *op2 = gutils->getNewFromOriginal(IEI.getOperand(2));
+      size_t size0 = 1;
+      if (orig_op0->getType()->isSized())
+        size0 =
+            (gutils->newFunc->getParent()->getDataLayout().getTypeSizeInBits(
+                 orig_op0->getType()) +
+             7) /
+            8;
+      size_t size1 = 1;
+      if (orig_op1->getType()->isSized())
+        size1 =
+            (gutils->newFunc->getParent()->getDataLayout().getTypeSizeInBits(
+                 orig_op1->getType()) +
+             7) /
+            8;
 
-    size_t size0 = 1;
-    if (orig_op0->getType()->isSized())
-      size0 = (gutils->newFunc->getParent()->getDataLayout().getTypeSizeInBits(
-                   orig_op0->getType()) +
-               7) /
-              8;
-    size_t size1 = 1;
-    if (orig_op1->getType()->isSized())
-      size1 = (gutils->newFunc->getParent()->getDataLayout().getTypeSizeInBits(
-                   orig_op1->getType()) +
-               7) /
-              8;
+      if (!gutils->isConstantValue(orig_op0))
+        addToDiffe(orig_op0,
+                   Builder2.CreateInsertElement(
+                       dif1, Constant::getNullValue(op1->getType()),
+                       lookup(op2, Builder2)),
+                   Builder2, TR.addingType(size0, orig_op0));
 
-    if (!gutils->isConstantValue(orig_op0))
-      addToDiffe(orig_op0,
-                 Builder2.CreateInsertElement(
-                     dif1, Constant::getNullValue(op1->getType()),
-                     lookup(op2, Builder2)),
-                 Builder2, TR.addingType(size0, orig_op0));
+      if (!gutils->isConstantValue(orig_op1))
+        addToDiffe(orig_op1,
+                   Builder2.CreateExtractElement(dif1, lookup(op2, Builder2)),
+                   Builder2, TR.addingType(size1, orig_op1));
 
-    if (!gutils->isConstantValue(orig_op1))
-      addToDiffe(orig_op1,
-                 Builder2.CreateExtractElement(dif1, lookup(op2, Builder2)),
-                 Builder2, TR.addingType(size1, orig_op1));
-
-    setDiffe(&IEI, Constant::getNullValue(IEI.getType()), Builder2);
+      setDiffe(&IEI, Constant::getNullValue(IEI.getType()), Builder2);
+      return;
+    }
+    case DerivativeMode::ReverseModePrimal: {
+      return;
+    }
+    }
   }
 
   void visitShuffleVectorInst(llvm::ShuffleVectorInst &SVI) {
     eraseIfUnused(SVI);
     if (gutils->isConstantInstruction(&SVI))
       return;
-    if (Mode == DerivativeMode::ReverseModePrimal)
+
+    switch (Mode) {
+    case DerivativeMode::ForwardMode: {
+      IRBuilder<> Builder2(&SVI);
+      getForwardBuilder(Builder2);
+
+      Value *orig_vector1 = SVI.getOperand(0);
+      Value *orig_vector2 = SVI.getOperand(1);
+      Value *orig_mask = SVI.getOperand(0);
+
+      auto diffe_vector1 =
+          gutils->isConstantValue(orig_vector1)
+              ? ConstantVector::getNullValue(orig_vector1->getType())
+              : diffe(orig_vector1, Builder2);
+      auto diffe_vector2 =
+          gutils->isConstantValue(orig_vector2)
+              ? ConstantVector::getNullValue(orig_vector2->getType())
+              : diffe(orig_vector2, Builder2);
+
+      auto diffe = Builder2.CreateShuffleVector(
+          diffe_vector1, diffe_vector2, gutils->getNewFromOriginal(orig_mask));
+
+      setDiffe(&SVI, diffe, Builder2);
       return;
-
-    IRBuilder<> Builder2(SVI.getParent());
-    getReverseBuilder(Builder2);
-
-    auto loaded = diffe(&SVI, Builder2);
-#if LLVM_VERSION_MAJOR >= 12
-    auto count =
-        cast<VectorType>(SVI.getOperand(0)->getType())->getElementCount();
-    assert(!count.isScalable());
-    size_t l1 = count.getKnownMinValue();
-#else
-    size_t l1 =
-        cast<VectorType>(SVI.getOperand(0)->getType())->getNumElements();
-#endif
-    uint64_t instidx = 0;
-
-    for (size_t idx : SVI.getShuffleMask()) {
-      auto opnum = (idx < l1) ? 0 : 1;
-      auto opidx = (idx < l1) ? idx : (idx - l1);
-      SmallVector<Value *, 4> sv;
-      sv.push_back(ConstantInt::get(Type::getInt32Ty(SVI.getContext()), opidx));
-      if (!gutils->isConstantValue(SVI.getOperand(opnum))) {
-        size_t size = 1;
-        if (SVI.getOperand(opnum)->getType()->isSized())
-          size =
-              (gutils->newFunc->getParent()->getDataLayout().getTypeSizeInBits(
-                   SVI.getOperand(opnum)->getType()) +
-               7) /
-              8;
-        ((DiffeGradientUtils *)gutils)
-            ->addToDiffe(SVI.getOperand(opnum),
-                         Builder2.CreateExtractElement(loaded, instidx),
-                         Builder2, TR.addingType(size, SVI.getOperand(opnum)),
-                         sv);
-      }
-      ++instidx;
     }
-    setDiffe(&SVI, Constant::getNullValue(SVI.getType()), Builder2);
+    case DerivativeMode::ReverseModeGradient:
+    case DerivativeMode::ReverseModeCombined: {
+      IRBuilder<> Builder2(SVI.getParent());
+      getReverseBuilder(Builder2);
+
+      auto loaded = diffe(&SVI, Builder2);
+#if LLVM_VERSION_MAJOR >= 12
+      auto count =
+          cast<VectorType>(SVI.getOperand(0)->getType())->getElementCount();
+      assert(!count.isScalable());
+      size_t l1 = count.getKnownMinValue();
+#else
+      size_t l1 =
+          cast<VectorType>(SVI.getOperand(0)->getType())->getNumElements();
+#endif
+      uint64_t instidx = 0;
+
+      for (size_t idx : SVI.getShuffleMask()) {
+        auto opnum = (idx < l1) ? 0 : 1;
+        auto opidx = (idx < l1) ? idx : (idx - l1);
+        SmallVector<Value *, 4> sv;
+        sv.push_back(
+            ConstantInt::get(Type::getInt32Ty(SVI.getContext()), opidx));
+        if (!gutils->isConstantValue(SVI.getOperand(opnum))) {
+          size_t size = 1;
+          if (SVI.getOperand(opnum)->getType()->isSized())
+            size = (gutils->newFunc->getParent()
+                        ->getDataLayout()
+                        .getTypeSizeInBits(SVI.getOperand(opnum)->getType()) +
+                    7) /
+                   8;
+          ((DiffeGradientUtils *)gutils)
+              ->addToDiffe(SVI.getOperand(opnum),
+                           Builder2.CreateExtractElement(loaded, instidx),
+                           Builder2, TR.addingType(size, SVI.getOperand(opnum)),
+                           sv);
+        }
+        ++instidx;
+      }
+      setDiffe(&SVI, Constant::getNullValue(SVI.getType()), Builder2);
+      return;
+    }
+    case DerivativeMode::ReverseModePrimal: {
+      return;
+    }
+    }
   }
 
   void visitExtractValueInst(llvm::ExtractValueInst &EVI) {
@@ -1285,33 +1347,56 @@ public:
     if (EVI.getType()->isPointerTy())
       return;
 
-    if (Mode == DerivativeMode::ReverseModePrimal)
+    switch (Mode) {
+    case DerivativeMode::ForwardMode: {
+      IRBuilder<> Builder2(&EVI);
+      getForwardBuilder(Builder2);
+
+      Value *orig_aggregate = EVI.getAggregateOperand();
+
+      Value *diffe_aggregate =
+          gutils->isConstantValue(orig_aggregate)
+              ? ConstantAggregate::getNullValue(orig_aggregate->getType())
+              : diffe(orig_aggregate, Builder2);
+      Value *diffe =
+          Builder2.CreateExtractValue(diffe_aggregate, EVI.getIndices());
+
+      setDiffe(&EVI, diffe, Builder2);
       return;
-
-    Value *orig_op0 = EVI.getOperand(0);
-
-    IRBuilder<> Builder2(EVI.getParent());
-    getReverseBuilder(Builder2);
-
-    auto prediff = diffe(&EVI, Builder2);
-
-    // todo const
-    if (!gutils->isConstantValue(orig_op0)) {
-      SmallVector<Value *, 4> sv;
-      for (auto i : EVI.getIndices())
-        sv.push_back(ConstantInt::get(Type::getInt32Ty(EVI.getContext()), i));
-      size_t size = 1;
-      if (EVI.getType()->isSized())
-        size = (gutils->newFunc->getParent()->getDataLayout().getTypeSizeInBits(
-                    EVI.getType()) +
-                7) /
-               8;
-      ((DiffeGradientUtils *)gutils)
-          ->addToDiffe(orig_op0, prediff, Builder2, TR.addingType(size, &EVI),
-                       sv);
     }
+    case DerivativeMode::ReverseModeGradient:
+    case DerivativeMode::ReverseModeCombined: {
+      IRBuilder<> Builder2(EVI.getParent());
+      getReverseBuilder(Builder2);
 
-    setDiffe(&EVI, Constant::getNullValue(EVI.getType()), Builder2);
+      Value *orig_op0 = EVI.getOperand(0);
+
+      auto prediff = diffe(&EVI, Builder2);
+
+      // todo const
+      if (!gutils->isConstantValue(orig_op0)) {
+        SmallVector<Value *, 4> sv;
+        for (auto i : EVI.getIndices())
+          sv.push_back(ConstantInt::get(Type::getInt32Ty(EVI.getContext()), i));
+        size_t size = 1;
+        if (EVI.getType()->isSized())
+          size =
+              (gutils->newFunc->getParent()->getDataLayout().getTypeSizeInBits(
+                   EVI.getType()) +
+               7) /
+              8;
+        ((DiffeGradientUtils *)gutils)
+            ->addToDiffe(orig_op0, prediff, Builder2, TR.addingType(size, &EVI),
+                         sv);
+      }
+
+      setDiffe(&EVI, Constant::getNullValue(EVI.getType()), Builder2);
+      return;
+    }
+    case DerivativeMode::ReverseModePrimal: {
+      return;
+    }
+    }
   }
 
   void visitInsertValueInst(llvm::InsertValueInst &IVI) {
@@ -7782,10 +7867,19 @@ public:
         } else {
           diffe = diffes;
         }
-        gutils->replaceAWithB(newcall, diffe);
-        gutils->erase(newcall);
-        if (!gutils->isConstantValue(&call))
-          setDiffe(&call, diffe, Builder2);
+
+        auto ifound = gutils->invertedPointers.find(orig);
+        if (ifound != gutils->invertedPointers.end()) {
+          auto placeholder = cast<PHINode>(&*ifound->second);
+          gutils->replaceAWithB(placeholder, diffe);
+          gutils->erase(placeholder);
+        } else {
+          gutils->replaceAWithB(newcall, diffe);
+          gutils->erase(newcall);
+          if (!gutils->isConstantValue(&call)) {
+            setDiffe(&call, diffe, Builder2);
+          }
+        }
       } else {
         eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
       }
