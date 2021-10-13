@@ -1169,8 +1169,8 @@ public:
 
     switch (Mode) {
     case DerivativeMode::ForwardMode: {
-      IRBuilder<> Builder2(IEI.getParent());
-      getReverseBuilder(Builder2);
+      IRBuilder<> Builder2(&IEI);
+      getForwardBuilder(Builder2);
 
       Value *orig_vector = IEI.getOperand(0);
       Value *orig_inserted = IEI.getOperand(1);
