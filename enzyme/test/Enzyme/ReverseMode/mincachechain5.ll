@@ -82,7 +82,7 @@ attributes #0 = { readnone speculatable }
 ; CHECK-NEXT:   %iv1 = phi i64 [ %iv.next2, %for.body59 ], [ 0, %for.body ]
 ; CHECK-NEXT:   %[[a3:.+]] = mul i64 {{(%iv1, %step|%step, %iv1)}}
 ; CHECK-NEXT:   %iv.next2 = add nuw nsw i64 %iv1, 1
-; CHECK-NEXT:   %add61 = add nsw i64 %[[a3]], %step
+; CHECK-NEXT:   %add61 = add nuw nsw i64 %[[a3]], %step
 ; CHECK-NEXT:   %_augmented = call fast double @augmented_inner(double* %x, double* %"x'")
 ; CHECK-NEXT:   %[[a5:.+]] = mul nuw nsw i64 %iv, %[[a0]]
 ; CHECK-NEXT:   %[[a6:.+]] = add nuw nsw i64 %iv1, %[[a5]]
@@ -118,7 +118,7 @@ attributes #0 = { readnone speculatable }
 ; CHECK-NEXT:   %iv1 = phi i64 [ %iv.next2, %for.body59 ], [ 0, %for.body ]
 ; CHECK-NEXT:   %[[a4:.+]] = mul i64 {{(%iv1, %step|%step, %iv1)}}
 ; CHECK-NEXT:   %iv.next2 = add nuw nsw i64 %iv1, 1
-; CHECK-NEXT:   %add61 = add nsw i64 %[[a4]], %step
+; CHECK-NEXT:   %add61 = add nuw nsw i64 %[[a4]], %step
 ; CHECK-NEXT:   %cmp57 = icmp slt i64 %add61, 100
 ; CHECK-NEXT:   br i1 %cmp57, label %for.body59, label %for.cond.loopexit
 

@@ -172,7 +172,7 @@ attributes #8 = { noreturn nounwind }
 ; CHECK-NEXT:   store double 0.000000e+00, double* %arrayidx, align 8, !tbaa !2
 ; CHECK-NEXT:   %8 = getelementptr inbounds double, double* %_malloccache, i64 %iv
 ; CHECK-NEXT:   store double %7, double* %8, align 8, !invariant.group ![[igroup:[0-9]+]]
-; CHECK-NEXT:   %indvars.iv.next = add nuw i64 %6, %0
+; CHECK-NEXT:   %indvars.iv.next = add nuw nsw i64 %6, %0
 ; CHECK-NEXT:   %9 = trunc i64 %indvars.iv.next to i32
 ; CHECK-NEXT:   %cmp1 = icmp sgt i32 %mul, %9
 ; CHECK-NEXT:   br i1 %cmp1, label %for.body, label %invertfor.cond.cleanup

@@ -88,7 +88,7 @@ public:
                            bool ControlsExit, bool AllowPredicates = false);
 #endif
 
-  bool loopIsFiniteByAssumption(const llvm::Loop* L);
+  bool loopIsFiniteByAssumption(const llvm::Loop *L);
 
   ScalarEvolution::ExitLimit howManyLessThans(const llvm::SCEV *LHS,
                                               const llvm::SCEV *RHS,
