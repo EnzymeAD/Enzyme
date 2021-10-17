@@ -74,8 +74,12 @@ using namespace llvm;
 #define DEBUG_TYPE "lower-enzyme-intrinsic"
 
 llvm::cl::opt<bool>
-    EnzymePostOpt("enzmye-postopt", cl::init(false), cl::Hidden,
+    EnzymePostOpt("enzyme-postopt", cl::init(false), cl::Hidden,
                   cl::desc("Run enzymepostprocessing optimizations"));
+
+llvm::cl::opt<bool>
+    EnzymeAttributor("enzyme-attributor", cl::init(true), cl::Hidden,
+                  cl::desc("Run attributor post Enzyme"));
 
 namespace {
 
@@ -1624,7 +1628,7 @@ public:
       Changed = true;
     }
 
-    if (Changed) {
+    if (Changed && EnzymeAttributor) {
       // TODO consider enabling when attributor does not delete
       // dead internal functions, which invalidates Enzyme's cache
       // code left here to re-enable upon Attributor patch

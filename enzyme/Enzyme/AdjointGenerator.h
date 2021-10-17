@@ -2958,7 +2958,13 @@ public:
               lookup(op0, Builder2),
               Builder2.CreateSub(lookup(op1, Builder2),
                                  ConstantInt::get(op1->getType(), 1))};
-          Type *tys[] = {orig_ops[0]->getType()};
+          Type *tys[] = {
+            orig_ops[0]->getType()
+#if LLVM_VERSION_MAJOR >= 13
+                ,
+            orig_ops[1]->getType()
+#endif
+          };
           Function *PowF = Intrinsic::getDeclaration(M, Intrinsic::powi, tys);
           auto cal = cast<CallInst>(Builder2.CreateCall(PowF, args));
           cal->setCallingConv(PowF->getCallingConv());
@@ -3343,7 +3349,13 @@ public:
           SmallVector<Value *, 2> args = {
               op0,
               Builder2.CreateSub(op1, ConstantInt::get(op1->getType(), 1))};
-          Type *tys[] = {orig_ops[0]->getType()};
+          Type *tys[] = {
+            orig_ops[0]->getType()
+#if LLVM_VERSION_MAJOR >= 13
+                ,
+            orig_ops[1]->getType()
+#endif
+          };
           Function *PowF = Intrinsic::getDeclaration(M, Intrinsic::powi, tys);
           auto cal = cast<CallInst>(Builder2.CreateCall(PowF, args));
           cal->setCallingConv(PowF->getCallingConv());
