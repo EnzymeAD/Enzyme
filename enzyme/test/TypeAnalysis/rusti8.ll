@@ -1,7 +1,7 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme-rust-type -print-type-analysis -type-analysis-func=callee -o /dev/null | FileCheck %s
 
 
-declare void @llvm.dbg.declare(metadata, metadata, metadata) #4
+declare void @llvm.dbg.declare(metadata, metadata, metadata)
 
 define internal void @callee(i32* %x) {
 start:
