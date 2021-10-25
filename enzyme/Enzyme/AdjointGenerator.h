@@ -8439,6 +8439,47 @@ public:
       }
     }
 
+    if ((funcName == "cblas_sscal" || funcName == "cblas_dscal") &&
+        called->isDeclaration()) {
+      // sscal(int n, float sa, float *sx, int incx)
+      Type *innerType;
+      std::string dfuncName;
+      if (funcName == "cblas_dscal") {
+        innerType = Type::getDoubleTy(call.getContext());
+        dfuncName = "cblas_dscal";
+      } else if (funcName == "cblas_sscal") {
+        innerType = Type::getFloatTy(call.getContext());
+        dfuncName = "cblas_sscal";
+      } else {
+        assert(false && "Unreachable");
+      }
+      if (Mode == DerivativeMode::ReverseModeCombined ||
+          Mode == DerivativeMode::ReverseModeGradient) {
+        IRBuilder<> Builder2(call.getParent());
+        getReverseBuilder(Builder2);
+        auto derivcall = gutils->oldFunc->getParent()->getOrInsertFunction(
+            dfuncName, Builder2.getVoidTy(), Builder2.getInt32Ty(), innerType,
+            call.getArgOperand(2)->getType(), Builder2.getInt32Ty());
+        SmallVector<Value *, 4> args1 = {
+            lookup(gutils->getNewFromOriginal(orig->getArgOperand(0)),
+                   Builder2), // n
+            lookup(gutils->getNewFromOriginal(orig->getArgOperand(1)),
+                   Builder2), // sa
+            lookup(gutils->invertPointerM(orig->getArgOperand(2), Builder2),
+                   Builder2), // [x]
+            lookup(gutils->getNewFromOriginal(orig->getArgOperand(3)),
+                   Builder2)}; // incx
+        Builder2.CreateCall(derivcall, args1);
+      }
+
+      if (Mode == DerivativeMode::ReverseModeGradient) {
+        eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
+      } else {
+        eraseIfUnused(*orig);
+      }
+      return;
+    }
+
     if (funcName == "printf" || funcName == "puts" ||
         funcName.startswith("_ZN3std2io5stdio6_print") ||
         funcName.startswith("_ZN4core3fmt")) {
