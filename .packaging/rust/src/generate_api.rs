@@ -2,6 +2,7 @@ use bindgen;
 use super::utils;
 
 use std::fs;
+use std::path::Path;
 
 pub fn generate_bindings() -> Result<(), String> {
     let header_path = utils::get_local_capi_path(); 
@@ -34,6 +35,10 @@ pub fn generate_bindings() -> Result<(), String> {
         .allowlist_function("EnzymeTypeTreeToString")  
         .allowlist_function("EnzymeTypeTreeToStringFree")  
 
+        // Next two are for debugging / printning type information
+        .allowlist_function("EnzymeSetCLBool")  
+        .allowlist_function("EnzymeSetCLInteger")  
+
         .allowlist_function("CreateTypeAnalysis")
         .allowlist_function("ClearTypeAnalysis")
         .allowlist_function("FreeTypeAnalysis")
@@ -61,6 +66,10 @@ pub fn generate_bindings() -> Result<(), String> {
     // Write the bindings to the $OUT_DIR/bindings.rs file.
     //let out_path = PathBuf::from(env::var("OUT_DIR").unwrap()); // can't be used outside of build.rs
     let out_file = utils::get_local_enzyme_base_path().join("enzyme.rs");
+    if out_file.exists() {
+        fs::remove_file(out_file.clone()).unwrap();
+    }
+
     let result = bindings.write_to_file(out_file.clone());
 
     match result {
