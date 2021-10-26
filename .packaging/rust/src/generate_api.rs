@@ -2,7 +2,7 @@ use super::utils;
 use bindgen;
 
 use std::fs;
-use std::path::Path;
+
 
 pub fn generate_bindings() -> Result<(), String> {
     let header_path = utils::get_local_capi_path();

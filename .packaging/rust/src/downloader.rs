@@ -4,7 +4,7 @@ use flate2::bufread::GzDecoder;
 use std::fs::{File, OpenOptions};
 use std::io::prelude::*;
 use std::io::BufReader;
-use std::path::{Path, PathBuf};
+use std::path::{PathBuf};
 use tar::Archive;
 
 fn unpack(tar_gz_file: &str, dst: &str) -> Result<(), std::io::Error> {
@@ -38,7 +38,7 @@ pub fn download_tarball(repo: PathBuf, download_filename: PathBuf) -> Result<(),
         .create(true)
         .open(&download_filename)
     {
-        Ok(fileHandler) => fileHandler,
+        Ok(file_handler) => file_handler,
         Err(why) => panic!("couldn't create {}", why),
     };
     dbg!("downloading {}", repo.display());

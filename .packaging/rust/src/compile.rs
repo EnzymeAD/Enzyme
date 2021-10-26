@@ -59,7 +59,7 @@ fn build_enzyme() {
             "-G",
             "Ninja",
             "..",
-            &build_type,
+            build_type,
             &llvm_external_lib,
             &llvm_dir,
             &llvm_external_lit,
@@ -89,7 +89,7 @@ fn build_rustc() {
     let toolchain_path = get_local_rustc_build_path().join(&platform).join("stage2");
 
     cargo
-        .args(&["install", "--path", &x_path.to_str().unwrap()])
+        .args(&["install", "--path", x_path.to_str().unwrap()])
         .current_dir(&build_path.to_str().unwrap());
 
     configure
@@ -113,7 +113,7 @@ fn build_rustc() {
             "toolchain",
             "link",
             "enzyme",
-            &toolchain_path.to_str().unwrap(),
+            toolchain_path.to_str().unwrap(),
         ])
         .current_dir(&build_path.to_str().unwrap());
 

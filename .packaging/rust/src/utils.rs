@@ -13,14 +13,14 @@ pub fn clean_directory(path: PathBuf) {
     let is_empty = path_reader.next().is_none();
     if !is_empty {
         fs::remove_dir_all(path.clone()).unwrap();
-        fs::create_dir(path.clone()).unwrap();
+        fs::create_dir(path).unwrap();
     }
 }
 
 fn assert_existence(path: PathBuf) {
     if !path.is_dir() {
         std::fs::create_dir_all(path.clone())
-            .expect(&format!("Couldn't create: {}", path.display()));
+            .unwrap_or_else(|_| panic!("Couldn't create: {}", path.display()));
     }
 }
 pub fn get_local_enzyme_base_path() -> PathBuf {
@@ -38,8 +38,8 @@ fn get_local_enzyme_subdir_path() -> PathBuf {
 }
 
 pub fn get_local_capi_path() -> PathBuf {
-    let path = get_local_enzyme_subdir_path().join("Enzyme").join("CApi.h");
-    path
+    
+    get_local_enzyme_subdir_path().join("Enzyme").join("CApi.h")
 }
 pub fn get_local_bindings_string() -> String {
     let path = get_local_enzyme_base_path().join("enzyme.rs");
@@ -67,11 +67,11 @@ pub fn get_local_rustc_build_path() -> PathBuf {
 }
 pub fn get_local_llvm_build_path() -> PathBuf {
     let platform = std::env::var("TARGET").unwrap();
-    let llvm_path = get_local_rustc_build_path()
+    
+    get_local_rustc_build_path()
         .join(&platform)
         .join("llvm")
-        .join("build");
-    llvm_path
+        .join("build")
 }
 
 pub fn get_remote_enzyme_tarball_path() -> PathBuf {
