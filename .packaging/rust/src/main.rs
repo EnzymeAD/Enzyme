@@ -1,10 +1,9 @@
 fn main() {
     match get_enzyme() {
-        Ok(()) => {},
+        Ok(()) => {}
         Err(e) => panic!("building failed: {}", e),
     }
 }
-
 
 fn get_enzyme() -> Result<(), String> {
     enzyme_build::download("rustc")?;
