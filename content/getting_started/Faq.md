@@ -17,6 +17,16 @@ LLVM's plugin infrastructure is broken in many versions. Empirically LLVM 8 and 
 
 There is a [known bug](https://bugs.llvm.org/show_bug.cgi?id=47612) in an existing LLVM optimization pass (SROA) that will incorrectly generate type information from a memcpy. This bug has been fixed in LLVM 13
 
+### opt can't find -enzyme option
+
+When you use opt command like below:
+`
+opt input.ll -load=/path/to/LLVMEnzyme-VERSION.so -enzyme -o output.ll -S
+`
+opt reports a error:`opt: unknown pass name 'enzyme'`
+
+it is beacause LLVM 13 and newer have switched to the new pass manager pipeline and we haven't yet turned that on within enzyme.
+For now you can just tell llvm to use the old pass manager by adding this flag to opt --enable-new-pm=0 or this flag to clang -fno-experimental-new-pass-manager
 
 ### UNREACHABLE executed (GVN error)
 
