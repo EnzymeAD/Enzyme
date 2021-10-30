@@ -885,6 +885,9 @@ public:
     case DerivativeMode::ReverseModeCombined: {
       return;
     }
+    case DerivativeMode::ForwardModeVector:
+      assert("vector forward not yet implemented");
+    case DerivativeMode::ForwardModeSplit:
     case DerivativeMode::ForwardMode: {
       break;
     }
@@ -1482,6 +1485,9 @@ public:
     // TODO type analysis handle structs
 
     switch (Mode) {
+    case DerivativeMode::ForwardModeVector:
+      assert("vector forward not yet implemented");
+    case DerivativeMode::ForwardModeSplit:
     case DerivativeMode::ForwardMode: {
       IRBuilder<> Builder2(&IVI);
       getForwardBuilder(Builder2);
@@ -1609,7 +1615,10 @@ public:
     case DerivativeMode::ReverseModeCombined:
       createBinaryOperatorAdjoint(BO);
       break;
+    case DerivativeMode::ForwardModeVector:
+      assert("vector forward not yet implemented");
     case DerivativeMode::ForwardMode:
+    case DerivativeMode::ForwardModeSplit:
       createBinaryOperatorDual(BO);
       break;
     case DerivativeMode::ReverseModePrimal:
@@ -3903,12 +3912,12 @@ public:
                               .shadowReturnUsed = false,
                               .mode = DerivativeMode::ReverseModeGradient,
                               .freeMemory = true,
+                              .AtomicAdd = true,
                               .additionalType =
                                   tape ? PointerType::getUnqual(tape->getType())
                                        : nullptr,
                               .typeInfo = nextTypeInfo},
             gutils->TLI, TR.analyzer.interprocedural, subdata,
-            /*AtomicAdd*/ true,
             /*postopt*/ false, /*omp*/ true);
 
         if (subdata->returns.find(AugmentedStruct::Tape) !=
@@ -8542,9 +8551,10 @@ public:
                             .shadowReturnUsed = subdretptr,
                             .mode = subMode,
                             .freeMemory = true,
+                            .AtomicAdd = gutils->AtomicAdd,
                             .additionalType = tape ? tape->getType() : nullptr,
                             .typeInfo = nextTypeInfo},
-          gutils->TLI, TR.analyzer.interprocedural, subdata, gutils->AtomicAdd);
+          gutils->TLI, TR.analyzer.interprocedural, subdata);
       if (!newcalled)
         return;
     } else {

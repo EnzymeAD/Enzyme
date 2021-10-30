@@ -2492,6 +2492,8 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
 
   switch (mode) {
   case DerivativeMode::ForwardMode:
+  case DerivativeMode::ForwardModeSplit:
+  case DerivativeMode::ForwardModeVector:
     prefix = "fwddiffe";
     break;
   case DerivativeMode::ReverseModeCombined:
@@ -2687,10 +2689,11 @@ Constant *GradientUtils::GetOrCreateShadowFunction(EnzymeLogic &Logic,
                         .shadowReturnUsed = false,
                         .mode = DerivativeMode::ReverseModeGradient,
                         .freeMemory = true,
+                        .AtomicAdd = AtomicAdd,
                         .additionalType = Type::getInt8PtrTy(fn->getContext()),
                         .typeInfo = type_args},
       TLI, TA,
-      /*map*/ &augdata, AtomicAdd);
+      /*map*/ &augdata);
   if (!newf)
     newf = UndefValue::get(fn->getType());
   auto cdata = ConstantStruct::get(

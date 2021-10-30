@@ -2798,11 +2798,9 @@ void createInvertedTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
   }
 }
 
-Function *
-EnzymeLogic::CreatePrimalAndGradient(const ReverseCacheKey &&key,
-                                     TargetLibraryInfo &TLI, TypeAnalysis &TA,
-                                     const AugmentedReturn *augmenteddata,
-                                     bool AtomicAdd, bool PostOpt, bool omp) {
+Function *EnzymeLogic::CreatePrimalAndGradient(
+    const ReverseCacheKey &&key, TargetLibraryInfo &TLI, TypeAnalysis &TA,
+    const AugmentedReturn *augmenteddata, bool PostOpt, bool omp) {
 
   assert(key.mode == DerivativeMode::ReverseModeCombined ||
          key.mode == DerivativeMode::ReverseModeGradient);
@@ -2815,9 +2813,8 @@ EnzymeLogic::CreatePrimalAndGradient(const ReverseCacheKey &&key,
     return ReverseCachedFunctions.find(key)->second;
   }
 
-  // Whether we shuold actually return the value
-  bool returnValue =
-      key.returnUsed && (key.mode == DerivativeMode::ReverseModeCombined);
+  if (key.returnUsed)
+    assert(key.mode == DerivativeMode::ReverseModeCombined);
 
   // TODO change this to go by default function type assumptions
   bool hasconstant = false;
@@ -2861,7 +2858,7 @@ EnzymeLogic::CreatePrimalAndGradient(const ReverseCacheKey &&key,
       auto &aug = CreateAugmentedPrimal(
           key.todiff, key.retType, key.constant_args, TLI, TA, key.returnUsed,
           key.typeInfo, key.uncacheable_args, /*forceAnonymousTape*/ false,
-          AtomicAdd, PostOpt, omp);
+          key.AtomicAdd, PostOpt, omp);
 
       SmallVector<Value *, 4> fwdargs;
       for (auto &a : NewF->args())
@@ -2901,9 +2898,10 @@ EnzymeLogic::CreatePrimalAndGradient(const ReverseCacheKey &&key,
                             .shadowReturnUsed = false,
                             .mode = DerivativeMode::ReverseModeGradient,
                             .freeMemory = key.freeMemory,
+                            .AtomicAdd = key.AtomicAdd,
                             .additionalType = tape ? tape->getType() : nullptr,
                             .typeInfo = key.typeInfo},
-          TLI, TA, &aug, AtomicAdd, PostOpt, omp);
+          TLI, TA, &aug, PostOpt, omp);
 
       SmallVector<Value *, 4> revargs;
       for (auto &a : NewF->args()) {
@@ -2980,9 +2978,10 @@ EnzymeLogic::CreatePrimalAndGradient(const ReverseCacheKey &&key,
                             .shadowReturnUsed = false,
                             .mode = DerivativeMode::ReverseModeGradient,
                             .freeMemory = key.freeMemory,
+                            .AtomicAdd = key.AtomicAdd,
                             .additionalType = nullptr,
                             .typeInfo = key.typeInfo},
-          TLI, TA, augmenteddata, AtomicAdd, PostOpt, omp);
+          TLI, TA, augmenteddata, PostOpt, omp);
 
       {
         auto arg = revfn->arg_begin();
@@ -3147,7 +3146,7 @@ EnzymeLogic::CreatePrimalAndGradient(const ReverseCacheKey &&key,
       *this, key.mode, key.todiff, TLI, TA, key.retType, diffeReturnArg,
       key.constant_args, retVal, key.additionalType, omp);
 
-  gutils->AtomicAdd = AtomicAdd;
+  gutils->AtomicAdd = key.AtomicAdd;
   gutils->FreeCacheInReverse = key.freeMemory;
   insert_or_assign2<ReverseCacheKey, Function *>(ReverseCachedFunctions, key,
                                                  gutils->newFunc);
@@ -3708,9 +3707,6 @@ Function *EnzymeLogic::CreateForwardDiff(
     return ForwardCachedFunctions.find(tup)->second;
   }
 
-  // Whether we shuold actually return the value
-  bool returnValue = returnUsed;
-
   // TODO change this to go by default function type assumptions
   bool hasconstant = false;
   for (auto v : constant_args) {
@@ -3722,7 +3718,7 @@ Function *EnzymeLogic::CreateForwardDiff(
 
   assert(!todiff->empty());
 
-  if (hasMetadata(todiff, "enzyme_derivative")) {
+  if (hasMetadata(todiff, "enzyme_derivative") && !hasconstant) {
     auto md = todiff->getMetadata("enzyme_derivative");
     if (!isa<MDTuple>(md)) {
       llvm::errs() << *todiff << "\n";
@@ -3741,8 +3737,8 @@ Function *EnzymeLogic::CreateForwardDiff(
   bool retActive = retType != DIFFE_TYPE::CONSTANT;
 
   ReturnType retVal =
-      returnValue ? (retActive ? ReturnType::TwoReturns : ReturnType::Return)
-                  : (retActive ? ReturnType::Return : ReturnType::Void);
+      returnUsed ? (retActive ? ReturnType::TwoReturns : ReturnType::Return)
+                 : (retActive ? ReturnType::Return : ReturnType::Void);
 
   bool diffeReturnArg = false;
 
@@ -3799,7 +3795,7 @@ Function *EnzymeLogic::CreateForwardDiff(
   SmallPtrSet<const Value *, 4> unnecessaryValues;
   SmallPtrSet<const Instruction *, 4> unnecessaryInstructions;
   calculateUnusedValuesInFunction(
-      *gutils->oldFunc, unnecessaryValues, unnecessaryInstructions, returnValue,
+      *gutils->oldFunc, unnecessaryValues, unnecessaryInstructions, returnUsed,
       mode, TR, gutils, TLI, constant_args, guaranteedUnreachable);
 
   SmallPtrSet<const Instruction *, 4> unnecessaryStores;

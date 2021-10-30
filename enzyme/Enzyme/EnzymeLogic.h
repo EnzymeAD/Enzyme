@@ -135,6 +135,7 @@ struct ReverseCacheKey {
   bool shadowReturnUsed;
   DerivativeMode mode;
   bool freeMemory;
+  bool AtomicAdd;
   llvm::Type *additionalType;
   const FnTypeInfo typeInfo;
 
@@ -148,6 +149,7 @@ struct ReverseCacheKey {
              shadowReturnUsed == rhs.shadowReturnUsed &&
              mode == rhs.mode &&
              freeMemory == rhs.freeMemory &&
+             AtomicAdd == rhs.AtomicAdd &&
              additionalType == rhs.additionalType &&
              typeInfo == rhs.typeInfo;
   }
@@ -198,6 +200,11 @@ struct ReverseCacheKey {
     if (freeMemory < rhs.freeMemory)
       return true;
     if (rhs.freeMemory < freeMemory)
+      return false;
+
+    if (AtomicAdd < rhs.AtomicAdd)
+      return true;
+    if (rhs.AtomicAdd < AtomicAdd)
       return false;
 
     if (additionalType < rhs.additionalType)
@@ -273,7 +280,7 @@ public:
                                           llvm::TargetLibraryInfo &TLI,
                                           TypeAnalysis &TA,
                                           const AugmentedReturn *augmented,
-                                          bool AtomicAdd, bool PostOpt = false,
+                                          bool PostOpt = false,
                                           bool omp = false);
 
   llvm::Function *

@@ -699,9 +699,10 @@ public:
                             .shadowReturnUsed = false,
                             .mode = mode,
                             .freeMemory = freeMemory,
+                            .AtomicAdd = AtomicAdd,
                             .additionalType = nullptr,
                             .typeInfo = type_args},
-          TLI, TA, /*augmented*/ nullptr, AtomicAdd, PostOpt);
+          TLI, TA, /*augmented*/ nullptr, PostOpt);
       break;
     case DerivativeMode::ReverseModePrimal:
     case DerivativeMode::ReverseModeGradient: {
@@ -756,9 +757,10 @@ public:
                               .shadowReturnUsed = false,
                               .mode = mode,
                               .freeMemory = freeMemory,
+                              .AtomicAdd = AtomicAdd,
                               .additionalType = tapeType,
                               .typeInfo = type_args},
-            TLI, TA, aug, AtomicAdd, PostOpt);
+            TLI, TA, aug, PostOpt);
     }
     }
 

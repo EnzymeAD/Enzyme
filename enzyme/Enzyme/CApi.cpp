@@ -380,10 +380,11 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
           .shadowReturnUsed = dretUsed,
           .mode = (DerivativeMode)mode,
           .freeMemory = true,
+          .AtomicAdd = AtomicAdd,
           .additionalType = unwrap(additionalArg),
           .typeInfo = eunwrap(typeInfo, cast<Function>(unwrap(todiff))),
       },
-      eunwrap(TA).TLI, eunwrap(TA), eunwrap(augmented), AtomicAdd, PostOpt));
+      eunwrap(TA).TLI, eunwrap(TA), eunwrap(augmented), PostOpt));
 }
 EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
     EnzymeLogicRef Logic, LLVMValueRef todiff, CDIFFE_TYPE retType,
