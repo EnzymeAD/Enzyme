@@ -2798,12 +2798,11 @@ void createInvertedTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
   }
 }
 
-Function *EnzymeLogic::CreatePrimalAndGradient(
-    const ReverseCacheKey&& key,
-    TargetLibraryInfo &TLI,
-    TypeAnalysis &TA, 
-    const AugmentedReturn *augmenteddata, bool AtomicAdd, bool PostOpt,
-    bool omp) {
+Function *
+EnzymeLogic::CreatePrimalAndGradient(const ReverseCacheKey &&key,
+                                     TargetLibraryInfo &TLI, TypeAnalysis &TA,
+                                     const AugmentedReturn *augmenteddata,
+                                     bool AtomicAdd, bool PostOpt, bool omp) {
 
   assert(key.mode == DerivativeMode::ReverseModeCombined ||
          key.mode == DerivativeMode::ReverseModeGradient);
@@ -2844,9 +2843,10 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
     if (key.mode == DerivativeMode::ReverseModeCombined) {
 
-      Type *FRetTy = res.second.empty()
-                         ? Type::getVoidTy(key.todiff->getContext())
-                         : StructType::get(key.todiff->getContext(), {res.second});
+      Type *FRetTy =
+          res.second.empty()
+              ? Type::getVoidTy(key.todiff->getContext())
+              : StructType::get(key.todiff->getContext(), {res.second});
 
       FunctionType *FTy = FunctionType::get(
           FRetTy, res.first, key.todiff->getFunctionType()->isVarArg());
@@ -2859,9 +2859,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       IRBuilder<> bb(BB);
 
       auto &aug = CreateAugmentedPrimal(
-          key.todiff, key.retType, key.constant_args, TLI, TA, key.returnUsed, key.typeInfo,
-          key.uncacheable_args, /*forceAnonymousTape*/ false, AtomicAdd, PostOpt,
-          omp);
+          key.todiff, key.retType, key.constant_args, TLI, TA, key.returnUsed,
+          key.typeInfo, key.uncacheable_args, /*forceAnonymousTape*/ false,
+          AtomicAdd, PostOpt, omp);
 
       SmallVector<Value *, 4> fwdargs;
       for (auto &a : NewF->args())
@@ -2893,20 +2893,17 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       }
 
       auto revfn = CreatePrimalAndGradient(
-          (ReverseCacheKey){
-            .todiff=key.todiff,
-            .retType=key.retType,
-            .constant_args=key.constant_args,
-            .uncacheable_args=key.uncacheable_args,
-            .returnUsed=false,
-            .shadowReturnUsed=false,
-            .mode=DerivativeMode::ReverseModeGradient,
-            .freeMemory=key.freeMemory,
-            .additionalType=tape ? tape->getType() : nullptr,
-            .typeInfo=key.typeInfo
-          },
-          TLI, TA,
-          &aug, AtomicAdd, PostOpt, omp);
+          (ReverseCacheKey){.todiff = key.todiff,
+                            .retType = key.retType,
+                            .constant_args = key.constant_args,
+                            .uncacheable_args = key.uncacheable_args,
+                            .returnUsed = false,
+                            .shadowReturnUsed = false,
+                            .mode = DerivativeMode::ReverseModeGradient,
+                            .freeMemory = key.freeMemory,
+                            .additionalType = tape ? tape->getType() : nullptr,
+                            .typeInfo = key.typeInfo},
+          TLI, TA, &aug, AtomicAdd, PostOpt, omp);
 
       SmallVector<Value *, 4> revargs;
       for (auto &a : NewF->args()) {
@@ -2945,14 +2942,16 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     auto foundcalled = cast<Function>(gvemd->getValue());
 
     if (hasconstant) {
-      EmitWarning("NoCustom", key.todiff->getEntryBlock().begin()->getDebugLoc(),
+      EmitWarning("NoCustom",
+                  key.todiff->getEntryBlock().begin()->getDebugLoc(),
                   key.todiff, &key.todiff->getEntryBlock(),
                   "Massaging provided custom reverse pass");
       SmallVector<Type *, 3> dupargs;
       std::vector<DIFFE_TYPE> next_constant_args(key.constant_args);
       {
         auto OFT = key.todiff->getFunctionType();
-        for (size_t act_idx = 0; act_idx < key.constant_args.size(); act_idx++) {
+        for (size_t act_idx = 0; act_idx < key.constant_args.size();
+             act_idx++) {
           dupargs.push_back(OFT->getParamType(act_idx));
           switch (key.constant_args[act_idx]) {
           case DIFFE_TYPE::OUT_DIFF:
@@ -2973,20 +2972,17 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       }
 
       auto revfn = CreatePrimalAndGradient(
-          (ReverseCacheKey){
-            .todiff=key.todiff,
-            .retType=key.retType,
-            .constant_args=next_constant_args,
-            .uncacheable_args=key.uncacheable_args,
-            .returnUsed=key.returnUsed,
-            .shadowReturnUsed=false,
-            .mode=DerivativeMode::ReverseModeGradient,
-            .freeMemory=key.freeMemory,
-            .additionalType=nullptr,
-            .typeInfo=key.typeInfo
-          },
-          TLI, TA,
-          augmenteddata, AtomicAdd, PostOpt, omp);
+          (ReverseCacheKey){.todiff = key.todiff,
+                            .retType = key.retType,
+                            .constant_args = next_constant_args,
+                            .uncacheable_args = key.uncacheable_args,
+                            .returnUsed = key.returnUsed,
+                            .shadowReturnUsed = false,
+                            .mode = DerivativeMode::ReverseModeGradient,
+                            .freeMemory = key.freeMemory,
+                            .additionalType = nullptr,
+                            .typeInfo = key.typeInfo},
+          TLI, TA, augmenteddata, AtomicAdd, PostOpt, omp);
 
       {
         auto arg = revfn->arg_begin();
@@ -3051,8 +3047,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           ->second;
     }
 
-    if (!key.returnUsed) {
-
+    if (!key.returnUsed && key.freeMemory) {
       assert(augmenteddata);
       if (foundcalled->arg_size() == res.first.size() + 1 /*tape*/) {
         auto lastarg = foundcalled->arg_end();
@@ -3142,16 +3137,18 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
   ReturnType retVal =
       key.returnUsed ? (key.shadowReturnUsed ? ReturnType::ArgsWithTwoReturns
-                             : ReturnType::ArgsWithReturn)
-                  : (key.shadowReturnUsed ? ReturnType::ArgsWithReturn : ReturnType::Args);
+                                             : ReturnType::ArgsWithReturn)
+                     : (key.shadowReturnUsed ? ReturnType::ArgsWithReturn
+                                             : ReturnType::Args);
 
   bool diffeReturnArg = key.retType == DIFFE_TYPE::OUT_DIFF;
 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
-      *this, key.mode, key.todiff, TLI, TA,key. retType, diffeReturnArg, key.constant_args,
-      retVal, key.additionalType, omp);
+      *this, key.mode, key.todiff, TLI, TA, key.retType, diffeReturnArg,
+      key.constant_args, retVal, key.additionalType, omp);
 
   gutils->AtomicAdd = AtomicAdd;
+  gutils->FreeCacheInReverse = key.freeMemory;
   insert_or_assign2<ReverseCacheKey, Function *>(ReverseCachedFunctions, key,
                                                  gutils->newFunc);
 
@@ -3213,7 +3210,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                    gutils->oldFunc,
                    PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
                    gutils->OrigLI, gutils->OrigDT, TLI,
-                   unnecessaryInstructionsTmp, _uncacheable_argsPP, key.mode, omp);
+                   unnecessaryInstructionsTmp, _uncacheable_argsPP, key.mode,
+                   omp);
   const std::map<CallInst *, const std::map<Argument *, bool>>
       uncacheable_args_map =
           (augmenteddata) ? augmenteddata->uncacheable_args_map
@@ -3236,9 +3234,10 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
   SmallPtrSet<const Value *, 4> unnecessaryValues;
   SmallPtrSet<const Instruction *, 4> unnecessaryInstructions;
-  calculateUnusedValuesInFunction(
-      *gutils->oldFunc, unnecessaryValues, unnecessaryInstructions, key.returnUsed,
-      key.mode, TR, gutils, TLI, key.constant_args, guaranteedUnreachable);
+  calculateUnusedValuesInFunction(*gutils->oldFunc, unnecessaryValues,
+                                  unnecessaryInstructions, key.returnUsed,
+                                  key.mode, TR, gutils, TLI, key.constant_args,
+                                  guaranteedUnreachable);
 
   SmallPtrSet<const Instruction *, 4> unnecessaryStores;
   calculateUnusedStoresInFunction(*gutils->oldFunc, unnecessaryStores,
@@ -3304,11 +3303,13 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   llvm::AllocaInst *retAlloca = nullptr;
   llvm::AllocaInst *dretAlloca = nullptr;
   if (key.returnUsed) {
-    retAlloca = IRBuilder<>(&gutils->newFunc->getEntryBlock().front())
-                    .CreateAlloca(key.todiff->getReturnType(), nullptr, "toreturn");
+    retAlloca =
+        IRBuilder<>(&gutils->newFunc->getEntryBlock().front())
+            .CreateAlloca(key.todiff->getReturnType(), nullptr, "toreturn");
   }
   if (key.shadowReturnUsed) {
-    assert(key.retType == DIFFE_TYPE::DUP_ARG || key.retType == DIFFE_TYPE::DUP_NONEED);
+    assert(key.retType == DIFFE_TYPE::DUP_ARG ||
+           key.retType == DIFFE_TYPE::DUP_NONEED);
     assert(key.mode == DerivativeMode::ReverseModeCombined);
     dretAlloca =
         IRBuilder<>(&gutils->newFunc->getEntryBlock().front())
@@ -3352,7 +3353,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   }
 
   AdjointGenerator<const AugmentedReturn *> maker(
-      key.mode, gutils, key.constant_args, key.retType, TR, getIndex, uncacheable_args_map,
+      key.mode, gutils, key.constant_args, key.retType, TR, getIndex,
+      uncacheable_args_map,
       /*returnuses*/ nullptr, augmenteddata, &replacedReturns,
       unnecessaryValues, unnecessaryInstructions, unnecessaryStores,
       guaranteedUnreachable, dretAlloca);

@@ -2679,18 +2679,16 @@ Constant *GradientUtils::GetOrCreateShadowFunction(EnzymeLogic &Logic,
       type_args, uncacheable_args, /*forceAnonymousTape*/ true, AtomicAdd,
       PostOpt);
   Constant *newf = Logic.CreatePrimalAndGradient(
-      (ReverseCacheKey){
-            .todiff=fn,
-            .retType=retType,
-            .constant_args=types,
-            .uncacheable_args=uncacheable_args,
-            .returnUsed=false,
-            .shadowReturnUsed=false,
-            .mode=DerivativeMode::ReverseModeGradient,
-            .freeMemory=true,
-            .additionalType=Type::getInt8PtrTy(fn->getContext()),
-            .typeInfo=type_args
-      },
+      (ReverseCacheKey){.todiff = fn,
+                        .retType = retType,
+                        .constant_args = types,
+                        .uncacheable_args = uncacheable_args,
+                        .returnUsed = false,
+                        .shadowReturnUsed = false,
+                        .mode = DerivativeMode::ReverseModeGradient,
+                        .freeMemory = true,
+                        .additionalType = Type::getInt8PtrTy(fn->getContext()),
+                        .typeInfo = type_args},
       TLI, TA,
       /*map*/ &augdata, AtomicAdd);
   if (!newf)
