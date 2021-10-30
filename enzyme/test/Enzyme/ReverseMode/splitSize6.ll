@@ -40,9 +40,9 @@ declare void @__enzyme_reverse(void (double*, double*)*, ...)
 ; CHECK-NEXT:   %cache = alloca i8, i64 8, align 1
 ; CHECK-NEXT:   %0 = call double* @augmented_tester(double* %x, double* %dx, double* %y, double* %dy)
 ; CHECK-NEXT:   %1 = bitcast i8* %cache to double**
-; CHECK-NEXT:   store double* %0, double** %1, align 8
+; CHECK-NEXT:   store double* %0, double** %1
 ; CHECK-NEXT:   %2 = bitcast i8* %cache to double**
-; CHECK-NEXT:   %3 = load double*, double** %2, align 8
+; CHECK-NEXT:   %3 = load double*, double** %2
 ; CHECK-NEXT:   call void @diffetester(double* %x, double* %dx, double* %y, double* %dy, double* %3)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

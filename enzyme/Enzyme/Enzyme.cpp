@@ -955,10 +955,19 @@ public:
       break;
     case DerivativeMode::ReverseModeCombined:
       newFunc = Logic.CreatePrimalAndGradient(
-          cast<Function>(fn), retType, constants, TLI, TA,
-          /*should return*/ false, /*dretPtr*/ false, mode,
-          /*addedType*/ nullptr, type_args, volatile_args,
-          /*index mapping*/ nullptr, AtomicAdd, PostOpt);
+          (ReverseCacheKey){
+            .todiff=cast<Function>(fn),
+            .retType=retType,
+            .constant_args=constants,
+            .uncacheable_args=volatile_args,
+            .returnUsed=false,
+            .shadowReturnUsed=false,
+            .mode=mode,
+            .freeMemory=true,
+            .additionalType=nullptr,
+            .typeInfo=type_args
+          },
+          TLI, TA, /*augmented*/nullptr, AtomicAdd, PostOpt);
       break;
     case DerivativeMode::ReverseModePrimal:
     case DerivativeMode::ReverseModeGradient: {
@@ -1005,9 +1014,19 @@ public:
         newFunc = aug->fn;
       else
         newFunc = Logic.CreatePrimalAndGradient(
-            cast<Function>(fn), retType, constants, TLI, TA,
-            /*should return*/ false, /*dretPtr*/ false, mode, tapeType,
-            type_args, volatile_args, aug, AtomicAdd, PostOpt);
+          (ReverseCacheKey){
+            .todiff=cast<Function>(fn),
+            .retType=retType,
+            .constant_args=constants,
+            .uncacheable_args=volatile_args,
+            .returnUsed=false,
+            .shadowReturnUsed=false,
+            .mode=mode,
+            .freeMemory=true,
+            .additionalType=tapeType,
+            .typeInfo=type_args
+          },
+          TLI, TA, aug, AtomicAdd, PostOpt);
     }
     }
 

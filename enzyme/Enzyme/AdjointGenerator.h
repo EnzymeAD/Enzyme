@@ -3895,11 +3895,21 @@ public:
         }
 
         newcalled = gutils->Logic.CreatePrimalAndGradient(
-            cast<Function>(called), subretType, argsInverted, gutils->TLI,
-            TR.analyzer.interprocedural, /*returnValue*/ false,
-            /*subdretptr*/ false, DerivativeMode::ReverseModeGradient,
-            tape ? PointerType::getUnqual(tape->getType()) : nullptr,
-            nextTypeInfo, uncacheable_args, subdata, /*AtomicAdd*/ true,
+          (ReverseCacheKey){
+            .todiff=cast<Function>(called),
+            .retType=subretType,
+            .constant_args=argsInverted,
+            .uncacheable_args=uncacheable_args,
+            .returnUsed=false,
+            .shadowReturnUsed=false,
+            .mode=DerivativeMode::ReverseModeGradient,
+            .freeMemory=true,
+            .additionalType=tape ? PointerType::getUnqual(tape->getType()) : nullptr,
+            .typeInfo=nextTypeInfo
+          },
+            gutils->TLI,
+            TR.analyzer.interprocedural, 
+            subdata, /*AtomicAdd*/ true,
             /*postopt*/ false, /*omp*/ true);
 
         if (subdata->returns.find(AugmentedStruct::Tape) !=
@@ -8525,11 +8535,22 @@ public:
                                  : DerivativeMode::ReverseModeGradient;
     if (called) {
       newcalled = gutils->Logic.CreatePrimalAndGradient(
-          cast<Function>(called), subretType, argsInverted, gutils->TLI,
-          TR.analyzer.interprocedural, /*returnValue*/ retUsed,
-          /*subdretptr*/ subdretptr, subMode, tape ? tape->getType() : nullptr,
-          nextTypeInfo, uncacheable_args, subdata,
-          gutils->AtomicAdd); //, LI, DT);
+          (ReverseCacheKey){
+            .todiff=cast<Function>(called),
+            .retType=subretType,
+            .constant_args=argsInverted,
+            .uncacheable_args=uncacheable_args,
+            .returnUsed=retUsed,
+            .shadowReturnUsed=subdretptr,
+            .mode=subMode,
+            .freeMemory=true,
+            .additionalType=tape ? tape->getType() : nullptr,
+            .typeInfo=nextTypeInfo
+          },
+          gutils->TLI,
+          TR.analyzer.interprocedural, 
+          subdata,
+          gutils->AtomicAdd);
       if (!newcalled)
         return;
     } else {
