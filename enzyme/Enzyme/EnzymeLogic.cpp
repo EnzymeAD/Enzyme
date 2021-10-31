@@ -2883,9 +2883,11 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         truetape->setMetadata("enzyme_mustcache",
                               MDNode::get(truetape->getContext(), {}));
 
-        CallInst *ci = cast<CallInst>(CallInst::CreateFree(tape, BB));
-        bb.Insert(ci);
-        ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+        if (key.freeMemory) {
+          CallInst *ci = cast<CallInst>(CallInst::CreateFree(tape, BB));
+          bb.Insert(ci);
+          ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+        }
         tape = truetape;
       }
 
@@ -3147,7 +3149,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       key.constant_args, retVal, key.additionalType, omp);
 
   gutils->AtomicAdd = key.AtomicAdd;
-  gutils->FreeCacheInReverse = key.freeMemory;
+  gutils->FreeMemory = key.freeMemory;
   insert_or_assign2<ReverseCacheKey, Function *>(ReverseCachedFunctions, key,
                                                  gutils->newFunc);
 
@@ -3261,18 +3263,20 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         truetape->setMetadata("enzyme_mustcache",
                               MDNode::get(truetape->getContext(), {}));
 
-        if (!omp) {
-          CallInst *ci = cast<CallInst>(CallInst::CreateFree(
-              additionalValue, truetape)); //&*BuilderZ.GetInsertPoint()));
+        if (!omp && gutils->FreeMemory) {
+          CallInst *ci =
+              cast<CallInst>(CallInst::CreateFree(additionalValue, truetape));
           ci->moveAfter(truetape);
           ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
         }
         additionalValue = truetape;
       } else {
-        CallInst *ci = cast<CallInst>(
-            CallInst::CreateFree(additionalValue, gutils->inversionAllocs));
-        ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
-        BuilderZ.Insert(ci);
+        if (gutils->FreeMemory) {
+          CallInst *ci = cast<CallInst>(
+              CallInst::CreateFree(additionalValue, gutils->inversionAllocs));
+          ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+          BuilderZ.Insert(ci);
+        }
         additionalValue = UndefValue::get(augmenteddata->tapeType);
       }
     }

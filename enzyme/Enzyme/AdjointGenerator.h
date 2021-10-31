@@ -1569,17 +1569,20 @@ public:
   }
 
   Value *diffe(Value *val, IRBuilder<> &Builder) {
-    assert(Mode == DerivativeMode::ReverseModeGradient ||
-           Mode == DerivativeMode::ReverseModeCombined ||
-           Mode == DerivativeMode::ForwardMode);
+    assert(Mode != DerivativeMode::ReverseModePrimal);
     return ((DiffeGradientUtils *)gutils)->diffe(val, Builder);
   }
 
   void setDiffe(Value *val, Value *dif, IRBuilder<> &Builder) {
-    assert(Mode == DerivativeMode::ReverseModeGradient ||
-           Mode == DerivativeMode::ReverseModeCombined ||
-           Mode == DerivativeMode::ForwardMode);
+    assert(Mode != DerivativeMode::ReverseModePrimal);
     ((DiffeGradientUtils *)gutils)->setDiffe(val, dif, Builder);
+  }
+
+  bool shouldFree() {
+    assert(Mode == DerivativeMode::ReverseModeCombined ||
+           Mode == DerivativeMode::ReverseModeGradient ||
+           Mode == DerivativeMode::ForwardModeSplit);
+    return ((DiffeGradientUtils *)gutils)->FreeMemory;
   }
 
   std::vector<SelectInst *> addToDiffe(Value *val, Value *dif,
@@ -4134,7 +4137,7 @@ public:
                            Builder2, TR.addingType(size, OutTypes[i]));
         }
 
-        if (tape) {
+        if (tape && shouldFree()) {
           for (auto idx : subdata->tapeIndiciesToFree) {
             auto ci = cast<CallInst>(CallInst::CreateFree(
                 Builder2.CreatePointerCast(
@@ -4516,16 +4519,19 @@ public:
                                         firstallocation, shadow, len_arg,
                                         Builder2);
 
-            auto ci = cast<CallInst>(CallInst::CreateFree(
-                firstallocation, Builder2.GetInsertBlock()));
+            if (shouldFree()) {
+              auto ci = cast<CallInst>(CallInst::CreateFree(
+                  firstallocation, Builder2.GetInsertBlock()));
 #if LLVM_VERSION_MAJOR >= 14
-            ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                    Attribute::NonNull);
+              ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
+                                      Attribute::NonNull);
 #else
-            ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+              ci->addAttribute(AttributeList::FirstArgIndex,
+                               Attribute::NonNull);
 #endif
-            if (ci->getParent() == nullptr) {
-              Builder2.Insert(ci);
+              if (ci->getParent() == nullptr) {
+                Builder2.Insert(ci);
+              }
             }
           } else
             assert(0 && "illegal mpi");
@@ -4583,17 +4589,19 @@ public:
         Builder2.SetInsertPoint(nonnullBlock);
 
         Value *cache = Builder2.CreateLoad(d_reqp);
-        CallInst *freecall = cast<CallInst>(
-            CallInst::CreateFree(d_reqp, Builder2.GetInsertBlock()));
+        if (shouldFree()) {
+          CallInst *freecall = cast<CallInst>(
+              CallInst::CreateFree(d_reqp, Builder2.GetInsertBlock()));
 #if LLVM_VERSION_MAJOR >= 14
-        freecall->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                      Attribute::NonNull);
+          freecall->addAttributeAtIndex(AttributeList::FirstArgIndex,
+                                        Attribute::NonNull);
 #else
-        freecall->addAttribute(AttributeList::FirstArgIndex,
-                               Attribute::NonNull);
+          freecall->addAttribute(AttributeList::FirstArgIndex,
+                                 Attribute::NonNull);
 #endif
-        if (freecall->getParent() == nullptr) {
-          Builder2.Insert(freecall);
+          if (freecall->getParent() == nullptr) {
+            Builder2.Insert(freecall);
+          }
         }
 
         Function *dwait = getOrInsertDifferentialMPI_Wait(
@@ -4688,17 +4696,19 @@ public:
         Builder2.SetInsertPoint(nonnullBlock);
 
         Value *cache = Builder2.CreateLoad(d_reqp);
-        CallInst *freecall = cast<CallInst>(
-            CallInst::CreateFree(d_reqp, Builder2.GetInsertBlock()));
+        if (shouldFree()) {
+          CallInst *freecall = cast<CallInst>(
+              CallInst::CreateFree(d_reqp, Builder2.GetInsertBlock()));
 #if LLVM_VERSION_MAJOR >= 14
-        freecall->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                      Attribute::NonNull);
+          freecall->addAttributeAtIndex(AttributeList::FirstArgIndex,
+                                        Attribute::NonNull);
 #else
-        freecall->addAttribute(AttributeList::FirstArgIndex,
-                               Attribute::NonNull);
+          freecall->addAttribute(AttributeList::FirstArgIndex,
+                                 Attribute::NonNull);
 #endif
-        if (freecall->getParent() == nullptr) {
-          Builder2.Insert(freecall);
+          if (freecall->getParent() == nullptr) {
+            Builder2.Insert(freecall);
+          }
         }
 
         Function *dwait = getOrInsertDifferentialMPI_Wait(
@@ -4802,16 +4812,18 @@ public:
         DifferentiableMemCopyFloats(call, call.getOperand(0), firstallocation,
                                     shadow, len_arg, Builder2);
 
-        auto ci = cast<CallInst>(
-            CallInst::CreateFree(firstallocation, Builder2.GetInsertBlock()));
+        if (shouldFree()) {
+          auto ci = cast<CallInst>(
+              CallInst::CreateFree(firstallocation, Builder2.GetInsertBlock()));
 #if LLVM_VERSION_MAJOR >= 14
-        ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                Attribute::NonNull);
+          ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
+                                  Attribute::NonNull);
 #else
-        ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+          ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
 #endif
-        if (ci->getParent() == nullptr) {
-          Builder2.Insert(ci);
+          if (ci->getParent() == nullptr) {
+            Builder2.Insert(ci);
+          }
         }
       }
       if (Mode == DerivativeMode::ReverseModeGradient)
@@ -5012,16 +5024,18 @@ public:
           mem->setCallingConv(memcpyF->getCallingConv());
 
           // Free up the memory of the buffer
-          auto ci = cast<CallInst>(
-              CallInst::CreateFree(buf, Builder2.GetInsertBlock()));
+          if (shouldFree()) {
+            auto ci = cast<CallInst>(
+                CallInst::CreateFree(buf, Builder2.GetInsertBlock()));
 #if LLVM_VERSION_MAJOR >= 14
-          ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                  Attribute::NonNull);
+            ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
+                                    Attribute::NonNull);
 #else
-          ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+            ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
 #endif
-          if (ci->getParent() == nullptr) {
-            Builder2.Insert(ci);
+            if (ci->getParent() == nullptr) {
+              Builder2.Insert(ci);
+            }
           }
         }
 
@@ -5228,16 +5242,18 @@ public:
                                     len_arg, Builder2);
 
         // Free up intermediate buffer
-        auto ci = cast<CallInst>(
-            CallInst::CreateFree(buf, Builder2.GetInsertBlock()));
+        if (shouldFree()) {
+          auto ci = cast<CallInst>(
+              CallInst::CreateFree(buf, Builder2.GetInsertBlock()));
 #if LLVM_VERSION_MAJOR >= 14
-        ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                Attribute::NonNull);
+          ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
+                                  Attribute::NonNull);
 #else
-        ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+          ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
 #endif
-        if (ci->getParent() == nullptr) {
-          Builder2.Insert(ci);
+          if (ci->getParent() == nullptr) {
+            Builder2.Insert(ci);
+          }
         }
       }
       if (Mode == DerivativeMode::ReverseModeGradient)
@@ -5373,16 +5389,18 @@ public:
                                     len_arg, Builder2);
 
         // Free up intermediate buffer
-        auto ci = cast<CallInst>(
-            CallInst::CreateFree(buf, Builder2.GetInsertBlock()));
+        if (shouldFree()) {
+          auto ci = cast<CallInst>(
+              CallInst::CreateFree(buf, Builder2.GetInsertBlock()));
 #if LLVM_VERSION_MAJOR >= 14
-        ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                Attribute::NonNull);
+          ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
+                                  Attribute::NonNull);
 #else
-        ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+          ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
 #endif
-        if (ci->getParent() == nullptr) {
-          Builder2.Insert(ci);
+          if (ci->getParent() == nullptr) {
+            Builder2.Insert(ci);
+          }
         }
       }
       if (Mode == DerivativeMode::ReverseModeGradient)
@@ -5535,16 +5553,18 @@ public:
                                     sendlen_arg, Builder2);
 
         // Free up intermediate buffer
-        auto ci = cast<CallInst>(
-            CallInst::CreateFree(buf, Builder2.GetInsertBlock()));
+        if (shouldFree()) {
+          auto ci = cast<CallInst>(
+              CallInst::CreateFree(buf, Builder2.GetInsertBlock()));
 #if LLVM_VERSION_MAJOR >= 14
-        ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                Attribute::NonNull);
+          ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
+                                  Attribute::NonNull);
 #else
-        ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+          ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
 #endif
-        if (ci->getParent() == nullptr) {
-          Builder2.Insert(ci);
+          if (ci->getParent() == nullptr) {
+            Builder2.Insert(ci);
+          }
         }
       }
       if (Mode == DerivativeMode::ReverseModeGradient)
@@ -5726,16 +5746,18 @@ public:
                                       sendlen_phi, Builder2);
 
           // Free up intermediate buffer
-          auto ci = cast<CallInst>(
-              CallInst::CreateFree(buf, Builder2.GetInsertBlock()));
+          if (shouldFree()) {
+            auto ci = cast<CallInst>(
+                CallInst::CreateFree(buf, Builder2.GetInsertBlock()));
 #if LLVM_VERSION_MAJOR >= 14
-          ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                  Attribute::NonNull);
+            ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
+                                    Attribute::NonNull);
 #else
-          ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+            ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
 #endif
-          if (ci->getParent() == nullptr) {
-            Builder2.Insert(ci);
+            if (ci->getParent() == nullptr) {
+              Builder2.Insert(ci);
+            }
           }
 
           Builder2.CreateBr(mergeBlock);
@@ -5881,16 +5903,18 @@ public:
                                     sendlen_arg, Builder2);
 
         // Free up intermediate buffer
-        auto ci = cast<CallInst>(
-            CallInst::CreateFree(buf, Builder2.GetInsertBlock()));
+        if (shouldFree()) {
+          auto ci = cast<CallInst>(
+              CallInst::CreateFree(buf, Builder2.GetInsertBlock()));
 #if LLVM_VERSION_MAJOR >= 14
-        ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                Attribute::NonNull);
+          ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
+                                  Attribute::NonNull);
 #else
-        ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+          ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
 #endif
-        if (ci->getParent() == nullptr) {
-          Builder2.Insert(ci);
+          if (ci->getParent() == nullptr) {
+            Builder2.Insert(ci);
+          }
         }
       }
       if (Mode == DerivativeMode::ReverseModeGradient)
@@ -6304,10 +6328,12 @@ public:
           seconddcall = Builder2.CreateCall(derivcall, args2);
         }
         setDiffe(orig, Constant::getNullValue(orig->getType()), Builder2);
-        if (xcache)
-          CallInst::CreateFree(structarg1, firstdcall->getNextNode());
-        if (ycache)
-          CallInst::CreateFree(structarg2, seconddcall->getNextNode());
+        if (shouldFree()) {
+          if (xcache)
+            CallInst::CreateFree(structarg1, firstdcall->getNextNode());
+          if (ycache)
+            CallInst::CreateFree(structarg2, seconddcall->getNextNode());
+        }
       }
 
       if (gutils->knownRecomputeHeuristic.find(orig) !=
@@ -7547,8 +7573,10 @@ public:
             Mode == DerivativeMode::ReverseModePrimal) {
           auto anti =
               gutils->createAntiMalloc(orig, getIndex(orig, CacheType::Shadow));
-          if (Mode == DerivativeMode::ReverseModeCombined ||
-              Mode == DerivativeMode::ReverseModeGradient) {
+          if ((Mode == DerivativeMode::ReverseModeCombined ||
+               Mode == DerivativeMode::ReverseModeGradient ||
+               Mode == DerivativeMode::ForwardModeSplit) &&
+              shouldFree()) {
             IRBuilder<> Builder2(call.getParent());
             getReverseBuilder(Builder2);
             Value *tofree = lookup(anti, Builder2);
@@ -7653,7 +7681,8 @@ public:
             hasPDFree) {
           Value *nop = gutils->cacheForReverse(BuilderZ, newCall,
                                                getIndex(orig, CacheType::Self));
-          if (Mode == DerivativeMode::ReverseModeGradient && hasPDFree) {
+          if (Mode == DerivativeMode::ReverseModeGradient && hasPDFree &&
+              shouldFree()) {
             IRBuilder<> Builder2(call.getParent());
             getReverseBuilder(Builder2);
             auto dbgLoc = gutils->getNewFromOriginal(orig)->getDebugLoc();
@@ -7671,7 +7700,7 @@ public:
           gutils->replaceAWithB(newCall, pn);
           gutils->erase(newCall);
         }
-      } else if (Mode == DerivativeMode::ReverseModeCombined) {
+      } else if (Mode == DerivativeMode::ReverseModeCombined && shouldFree()) {
         IRBuilder<> Builder2(call.getParent());
         getReverseBuilder(Builder2);
         auto dbgLoc = gutils->getNewFromOriginal(orig)->getDebugLoc();
@@ -7771,13 +7800,15 @@ public:
 
         if (Mode == DerivativeMode::ReverseModeCombined ||
             Mode == DerivativeMode::ReverseModeGradient) {
-          IRBuilder<> Builder2(call.getParent());
-          getReverseBuilder(Builder2);
-          Value *tofree = gutils->lookupM(val, Builder2, ValueToValueMapTy(),
-                                          /*tryLegalRecompute*/ false);
-          auto freeCall = cast<CallInst>(
-              CallInst::CreateFree(tofree, Builder2.GetInsertBlock()));
-          Builder2.GetInsertBlock()->getInstList().push_back(freeCall);
+          if (shouldFree()) {
+            IRBuilder<> Builder2(call.getParent());
+            getReverseBuilder(Builder2);
+            Value *tofree = gutils->lookupM(val, Builder2, ValueToValueMapTy(),
+                                            /*tryLegalRecompute*/ false);
+            auto freeCall = cast<CallInst>(
+                CallInst::CreateFree(tofree, Builder2.GetInsertBlock()));
+            Builder2.GetInsertBlock()->getInstList().push_back(freeCall);
+          }
         }
       }
 
@@ -7799,7 +7830,7 @@ public:
         // to find the shadow pointer will use the shadow of null rather than
         // the true shadow of this
         //}
-      } else if (Mode == DerivativeMode::ReverseModeCombined) {
+      } else if (Mode == DerivativeMode::ReverseModeCombined && shouldFree()) {
         IRBuilder<> Builder2(newCall->getNextNode());
         auto load = Builder2.CreateLoad(
             gutils->getNewFromOriginal(call.getOperand(0)), "posix_preread");
@@ -8477,7 +8508,10 @@ public:
       }
 
       if (fnandtapetype && fnandtapetype->tapeType &&
-          Mode != DerivativeMode::ReverseModePrimal) {
+          (Mode == DerivativeMode::ReverseModeCombined ||
+           Mode == DerivativeMode::ReverseModeGradient ||
+           Mode == DerivativeMode::ForwardModeSplit) &&
+          shouldFree()) {
         assert(tape);
         auto tapep = BuilderZ.CreatePointerCast(
             tape, PointerType::getUnqual(fnandtapetype->tapeType));

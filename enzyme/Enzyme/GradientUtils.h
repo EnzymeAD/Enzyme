@@ -1496,7 +1496,8 @@ class DiffeGradientUtils : public GradientUtils {
   }
 
 public:
-  bool FreeCacheInReverse;
+  // Whether to free memory in reverse pass or split forward.
+  bool FreeMemory;
   ValueMap<const Value *, TrackingVH<AllocaInst>> differentials;
   static DiffeGradientUtils *
   CreateFromClone(EnzymeLogic &Logic, DerivativeMode mode, Function *todiff,
@@ -1785,7 +1786,7 @@ public:
                  const SubLimitType &sublimits, int i, llvm::AllocaInst *alloc,
                  llvm::ConstantInt *byteSizeOfType, llvm::Value *storeInto,
                  llvm::MDNode *InvariantMD) override {
-    if (!FreeCacheInReverse)
+    if (!FreeMemory)
       return;
     assert(reverseBlocks.find(forwardPreheader) != reverseBlocks.end());
     assert(reverseBlocks[forwardPreheader].size());
