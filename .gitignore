@@ -1,6 +1,4 @@
 *.swp
 *.swo
-*build*
+build
 .vscode
-.idea
-*.out
