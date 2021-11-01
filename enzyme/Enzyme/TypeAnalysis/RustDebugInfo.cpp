@@ -89,13 +89,27 @@ TypeTree parseDIType(DICompositeType& Type, Instruction& I, DataLayout& DL) {
   else if (Type.getTag() == dwarf::DW_TAG_structure_type || Type.getTag() == dwarf::DW_TAG_union_type) {
     DINodeArray Elements = Type.getElements();
     size_t Size = Type.getSizeInBits() / 8;
+    bool firstSubTT = true;
     for (auto e: Elements) {
       DIType *SubType = dyn_cast<DIDerivedType>(e);
       assert(SubType->getTag() == dwarf::DW_TAG_member);
       TypeTree SubTT = parseDIType(*SubType, I, DL);
       size_t Offset = SubType->getOffsetInBits() / 8;
       SubTT = SubTT.ShiftIndices(DL, 0, Size, Offset);
-      Result |= SubTT;
+      if (Type.getTag() == dwarf::DW_TAG_structure_type) {
+        Result |= SubTT;
+      }
+      else {
+        if (firstSubTT) {
+          Result = SubTT;
+        }
+        else {
+          Result &= SubTT;
+        }
+      }
+      if (firstSubTT) {
+        firstSubTT = !firstSubTT;
+      }
     }
     return Result;
   }
