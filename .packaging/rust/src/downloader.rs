@@ -4,7 +4,7 @@ use flate2::bufread::GzDecoder;
 use std::fs::{File, OpenOptions};
 use std::io::prelude::*;
 use std::io::BufReader;
-use std::path::{PathBuf};
+use std::path::PathBuf;
 use tar::Archive;
 
 fn unpack(tar_gz_file: &str, dst: &str) -> Result<(), std::io::Error> {
@@ -80,7 +80,7 @@ pub fn download(to_download: &str) -> Result<(), String> {
     // We would need to peek check if the new version would differ from the old one.
     // Thus deactivating caching for now
     let download_filename =
-        utils::get_local_download_dir().join(to_download.to_owned() + ".tar.gz");
+        utils::get_download_dir().join(to_download.to_owned() + ".tar.gz");
     download_tarball(repo, download_filename.clone())?;
     /*
     if !Path::new(&download_filename).exists() { // We didn't cache this repo yet
@@ -88,11 +88,7 @@ pub fn download(to_download: &str) -> Result<(), String> {
     }
     */
 
-    let enzyme_dir = utils::get_local_enzyme_base_path();
-    let dst_dir = match to_download {
-        "enzyme" | "rustc" => enzyme_dir,
-        _ => unreachable!("already returned earlier"),
-    };
+    let dst_dir = utils::get_enzyme_base_path();
 
     dbg!("unpacking to {}", dst_dir.to_str().unwrap());
     match unpack(

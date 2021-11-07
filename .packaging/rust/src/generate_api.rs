@@ -5,7 +5,7 @@ use std::fs;
 
 
 pub fn generate_bindings() -> Result<(), String> {
-    let header_path = utils::get_local_capi_path();
+    let header_path = utils::get_capi_path();
 
     // tell cargo to re-run the builder if the header has changed
     println!("cargo:rerun-if-changed={}", header_path.display());
@@ -64,7 +64,7 @@ pub fn generate_bindings() -> Result<(), String> {
 
     // Write the bindings to the $OUT_DIR/bindings.rs file.
     //let out_path = PathBuf::from(env::var("OUT_DIR").unwrap()); // can't be used outside of build.rs
-    let out_file = utils::get_local_enzyme_base_path().join("enzyme.rs");
+    let out_file = utils::get_bindings_string();
     if out_file.exists() {
         fs::remove_file(out_file.clone()).unwrap();
     }
