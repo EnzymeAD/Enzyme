@@ -25,8 +25,10 @@ fn assert_existence(path: PathBuf) {
 }
 pub fn get_enzyme_base_path() -> PathBuf {
     let cfg_dir = dirs::config_dir().expect("Enzyme needs access to your cfg dir.");
+    dbg!(&cfg_dir);
     let enzyme_base_path = cfg_dir.join("enzyme");
     assert_existence(enzyme_base_path.clone());
+    dbg!(&enzyme_base_path);
     enzyme_base_path
 }
 fn get_enzyme_subdir_path() -> PathBuf {
@@ -64,22 +66,16 @@ pub fn get_rustc_build_path() -> PathBuf {
 }
 fn get_rustc_platform_path() -> PathBuf {
     let platform = std::env::var("TARGET").unwrap();
-    get_rustc_build_path()
-        .join(&platform)
+    get_rustc_build_path().join(&platform)
 }
 pub fn get_rustc_stage2_path() -> PathBuf {
-    get_rustc_platform_path()
-        .join("stage2")
+    get_rustc_platform_path().join("stage2")
 }
 pub fn get_rustc_binary_path() -> PathBuf {
-    get_rustc_stage2_path()
-        .join("bin")
-        .join("rustc")
+    get_rustc_stage2_path().join("bin").join("rustc")
 }
 pub fn get_llvm_build_path() -> PathBuf {
-    get_rustc_platform_path()
-        .join("llvm")
-        .join("build")
+    get_rustc_platform_path().join("llvm").join("build")
 }
 
 pub fn get_remote_enzyme_tarball_path() -> PathBuf {

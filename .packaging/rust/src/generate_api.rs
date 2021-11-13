@@ -3,7 +3,6 @@ use bindgen;
 
 use std::fs;
 
-
 pub fn generate_bindings() -> Result<(), String> {
     let header_path = utils::get_capi_path();
 
