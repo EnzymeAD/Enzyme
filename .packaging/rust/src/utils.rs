@@ -78,13 +78,15 @@ pub fn get_llvm_build_path() -> PathBuf {
     get_rustc_platform_path().join("llvm").join("build")
 }
 
-pub fn get_remote_enzyme_tarball_path() -> PathBuf {
-    let path = PathBuf::new();
-    path.join(
-        "https://github.com/wsmoses/Enzyme/archive/refs/tags/v".to_owned() + ENZYME_VER + ".tar.gz",
+pub fn get_remote_enzyme_tarball_path() -> String {
+    format!(
+        "https://github.com/wsmoses/Enzyme/archive/refs/tags/v{}.tar.gz",
+        ENZYME_VER
     )
 }
-pub fn get_remote_rustc_tarball_path() -> PathBuf {
-    let path = PathBuf::new();
-    path.join("https://static.rust-lang.org/dist/rustc-".to_owned() + RUSTC_VER + "-src.tar.gz")
+pub fn get_remote_rustc_tarball_path() -> String {
+    format!(
+        "https://static.rust-lang.org/dist/rustc-{}-src.tar.gz",
+        RUSTC_VER
+    )
 }
