@@ -32,10 +32,7 @@ pub fn build(to_build: &str) -> Result<(), String> {
 }
 
 fn build_enzyme() {
-    let llvm_dir = get_llvm_build_path()
-        .join("lib")
-        .join("cmake")
-        .join("llvm");
+    let llvm_dir = get_llvm_build_path().join("lib").join("cmake").join("llvm");
     let llvm_dir = "-DLLVM_DIR=".to_owned() + llvm_dir.to_str().unwrap();
     let llvm_external_lit = get_rustc_repo_path()
         .join("src")
@@ -80,11 +77,13 @@ fn build_rustc() {
     let mut x = Command::new("x");
     let mut rustup = Command::new("rustup");
 
-    let build_path = get_rustc_build_path();
+    let build_path = get_rustc_repo_path();
+
     if !std::path::Path::new(&build_path).exists() {
         std::fs::create_dir(&build_path).unwrap();
     }
     let x_path = std::path::Path::new("src").join("tools").join("x");
+
     let toolchain_path = get_rustc_stage2_path();
 
     cargo
