@@ -77,7 +77,9 @@ pub fn get_rustc_binary_path() -> PathBuf {
 pub fn get_llvm_build_path() -> PathBuf {
     get_rustc_platform_path().join("llvm").join("build")
 }
-
+pub fn get_llvm_header_path() -> PathBuf {
+    get_rustc_platform_path().join("llvm").join("include")
+}
 pub fn get_remote_enzyme_tarball_path() -> String {
     format!(
         "https://github.com/wsmoses/Enzyme/archive/refs/tags/v{}.tar.gz",

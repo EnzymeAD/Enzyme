@@ -1,17 +1,26 @@
-# Goal
+# Enzyme build helper
+
+## Goal
+
 This repository will build enzyme/llvm/clang/rustc in the right configuration such that you can use it in combination with [oxide-enzyme](https://github.com/rust-ml/oxide-enzyme).
 
-# Requirements
-git  
-ninja  
-cmake  
-Rust (rustup)    
-~10GB free storage in $HOME/.config  
+## Requirements
 
-# Usage
-    $ git clone https://github.com/ZuseZ4/enzyme_build  
-    $ cd enzyme_build  
-    $ cargo run --release  
+ - git  
+ - ninja  
+ - cmake  
+ - Rust (rustup)    
+ - ~10GB free storage in $HOME/.cache
+
+## Usage
+
+Build LLVM, the Rust toolchain and Enzyme with
+
+```bash
+$ git clone https://github.com/ZuseZ4/enzyme_build  
+$ cd enzyme_build  
+$ cargo run --release  
+```
 
 Depending on your CPU this might take a few hours.  
 The build process will run enzyme tests, so your last output should look similar to these lines:
@@ -20,8 +29,8 @@ Testing Time: 0.63s
   Passed           : 240  
   Expectedly Failed:   5  
 
-# Extras
-- Q: Can I use some other location to store everyting?
+## Extras
+- Q: Can I use some other location to store everything?
 - A: We will add an option for that later. If it's urgent please open an issue or ping me (Manuel Drehwald) on the rust-ml Zulip.  
 &nbsp;
 - Q: It fails some (all) tests or the build breaks even earlier. Help?
