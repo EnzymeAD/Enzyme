@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 bindgen = { version = "0.58", default-features = false }
 dirs = { version = "3.0", default-features = false }
-curl = { version = "0.4", default-features = false }
+curl = "0.4"
 tar = { version = "0.4", default-features = false }
 flate2 = "1.0"
 
