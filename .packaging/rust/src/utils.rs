@@ -24,9 +24,9 @@ fn assert_existence(path: PathBuf) {
     }
 }
 pub fn get_enzyme_base_path() -> PathBuf {
-    let cfg_dir = dirs::config_dir().expect("Enzyme needs access to your cfg dir.");
-    dbg!(&cfg_dir);
-    let enzyme_base_path = cfg_dir.join("enzyme");
+    let cache_dir = dirs::cache_dir().expect("Enzyme needs access to your cache dir.");
+    dbg!(&cache_dir);
+    let enzyme_base_path = cache_dir.join("enzyme");
     assert_existence(enzyme_base_path.clone());
     dbg!(&enzyme_base_path);
     enzyme_base_path
