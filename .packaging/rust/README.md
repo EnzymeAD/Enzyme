@@ -10,8 +10,7 @@ This repository will build enzyme/llvm/clang/rustc in the right configuration su
  - ninja  
  - cmake  
  - Rust (rustup)    
- - ~10GB free storage in $HOME/.config  
- - LLVM headers installed to `/usr/include/llvm-c-12` and `/usr/include/llvm-12`
+ - ~10GB free storage in $HOME/.cache
 
 ## Usage
 
@@ -31,7 +30,7 @@ Testing Time: 0.63s
   Expectedly Failed:   5  
 
 ## Extras
-- Q: Can I use some other location to store everyting?
+- Q: Can I use some other location to store everything?
 - A: We will add an option for that later. If it's urgent please open an issue or ping me (Manuel Drehwald) on the rust-ml Zulip.  
 &nbsp;
 - Q: It fails some (all) tests or the build breaks even earlier. Help?

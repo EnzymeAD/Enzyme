@@ -13,8 +13,7 @@ pub fn generate_bindings() -> Result<(), String> {
     let bindings = bindgen::Builder::default()
         .header_contents("CApi.hpp", &content) // read it as .hpp so bindgen can ignore the class successfully
         .clang_args(&[
-            "-I/usr/include/llvm-c-12/",
-            "-I/usr/include/llvm-12/",
+            format!("-I{}", utils::get_llvm_header_path().display())
         ])
         //.blacklist_item("CustomFunctionForward")
         //.blacklist_item("DiffeGradientUtils")
