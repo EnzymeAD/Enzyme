@@ -2,7 +2,7 @@ use dirs;
 use std::fs;
 use std::path::PathBuf;
 
-const ENZYME_VER: &str = "0.0.20";
+const ENZYME_VER: &str = "0.0.21-rust";
 const RUSTC_VER: &str = "1.56.0";
 
 pub fn clean_directory(path: PathBuf) {

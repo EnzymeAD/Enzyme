@@ -5,6 +5,7 @@ use std::fs;
 
 pub fn generate_bindings() -> Result<(), String> {
     let header_path = utils::get_capi_path();
+    dbg!(&header_path);
 
     // tell cargo to re-run the builder if the header has changed
     println!("cargo:rerun-if-changed={}", header_path.display());
