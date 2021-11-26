@@ -50,54 +50,6 @@ CacheUtility::~CacheUtility() {}
 /// Erase this instruction both from LLVM modules and any local data-structures
 void CacheUtility::erase(Instruction *I) {
   assert(I);
-  for (auto &lim : LimitCache) {
-    assert(I != lim.first.first);
-    assert(I != lim.second);
-  }
-  for (auto &ctx : loopContexts) {
-    assert(ctx.second.var != I);
-    assert(ctx.second.incvar != I);
-    assert(ctx.second.antivaralloc != I);
-    assert(ctx.second.trueLimit != I);
-    assert(ctx.second.maxLimit != I);
-  }
-  for (const auto &pair : scopeMap) {
-    if (pair.second.first == I) {
-      llvm::errs() << *newFunc << "\n";
-      dumpScope();
-      llvm::errs() << *pair.first << "\n";
-      llvm::errs() << *I << "\n";
-      assert(0 && "erasing something in scope map");
-    }
-  }
-  if (auto CI = dyn_cast<CallInst>(I)) {
-    for (const auto &pair : scopeFrees) {
-      if (pair.second.count(CI)) {
-        llvm::errs() << *newFunc << "\n";
-        llvm::errs() << *pair.first << "\n";
-        llvm::errs() << *I << "\n";
-        assert(0 && "erasing something in scopeFrees map");
-      }
-    }
-    for (const auto &pair : scopeAllocs) {
-      if (std::find(pair.second.begin(), pair.second.end(), CI) !=
-          pair.second.end()) {
-        llvm::errs() << *newFunc << "\n";
-        llvm::errs() << *pair.first << "\n";
-        llvm::errs() << *I << "\n";
-        assert(0 && "erasing something in scopeAllocs map");
-      }
-    }
-  }
-  for (const auto &pair : scopeInstructions) {
-    if (std::find(pair.second.begin(), pair.second.end(), I) !=
-        pair.second.end()) {
-      llvm::errs() << *newFunc << "\n";
-      llvm::errs() << *pair.first << "\n";
-      llvm::errs() << *I << "\n";
-      assert(0 && "erasing something in scopeInstructions map");
-    }
-  }
 
   if (auto found = findInMap(scopeMap, (Value *)I)) {
     scopeFrees.erase(found->first);
@@ -123,15 +75,6 @@ void CacheUtility::erase(Instruction *I) {
 
 /// Replace this instruction both in LLVM modules and any local data-structures
 void CacheUtility::replaceAWithB(Value *A, Value *B, bool storeInCache) {
-  for (auto &ctx : loopContexts) {
-    if (ctx.second.maxLimit == A) {
-      ctx.second.maxLimit = B;
-    }
-    if (ctx.second.trueLimit == A) {
-      ctx.second.trueLimit = B;
-    }
-  }
-
   auto found = scopeMap.find(A);
   if (found != scopeMap.end()) {
     insert_or_assign2(scopeMap, B, found->second);
@@ -139,10 +82,13 @@ void CacheUtility::replaceAWithB(Value *A, Value *B, bool storeInCache) {
     llvm::AllocaInst *cache = found->second.first;
     if (storeInCache) {
       assert(isa<Instruction>(B));
-      if (scopeInstructions.find(cache) != scopeInstructions.end()) {
-        for (auto st : scopeInstructions[cache])
-          cast<StoreInst>(st)->eraseFromParent();
-        scopeInstructions.erase(cache);
+      auto stfound = scopeInstructions.find(cache);
+      if (stfound != scopeInstructions.end()) {
+        SmallVector<Instruction *, 3> tmpInstructions(stfound->second.begin(),
+                                                      stfound->second.end());
+        scopeInstructions.erase(stfound);
+        for (auto st : tmpInstructions)
+          cast<StoreInst>(&*st)->eraseFromParent();
         storeInstructionInCache(found->second.second, cast<Instruction>(B),
                                 cache);
       }
@@ -418,7 +364,7 @@ llvm::AllocaInst *CacheUtility::getDynamicLoopLimit(llvm::Loop *L,
   auto &found = loopContexts[L];
   assert(found.dynamic);
   if (found.trueLimit)
-    return cast<AllocaInst>(found.trueLimit);
+    return cast<AllocaInst>(&*found.trueLimit);
 
   LimitContext lctx(ReverseLimit,
                     ReverseLimit ? found.preheader : &newFunc->getEntryBlock());
@@ -659,7 +605,8 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
   assert(ctx.Block);
   assert(T);
 
-  auto sublimits = getSubLimits(/*inForwardPass*/ true, nullptr, ctx);
+  auto sublimits =
+      getSubLimits(/*inForwardPass*/ true, nullptr, ctx, extraSize);
 
   // List of types stored in the cache for each Loop-Chunk
   // This is stored from innner-most chunk to outermost
@@ -695,8 +642,6 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
   }
 
   Type *BPTy = Type::getInt8PtrTy(T->getContext());
-  auto realloc = newFunc->getParent()->getOrInsertFunction(
-      "realloc", BPTy, BPTy, Type::getInt64Ty(T->getContext()));
 
   Value *storeInto = alloc;
 
@@ -713,7 +658,6 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
         newFunc->getParent()->getDataLayout().getTypeAllocSizeInBits(myType) /
             8);
 
-    // if (i != sublimits.size() -1 || !ompOffset)
     // Allocate and store the required memory
     if (allocateInternal) {
 
@@ -729,8 +673,14 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
             ConstantInt::get(Type::getInt64Ty(T->getContext()), 3));
       }
       if (extraSize && i == 0) {
-        Value *es = unwrapM(extraSize, allocationBuilder,
-                            /*available*/ ValueToValueMapTy(),
+        ValueToValueMapTy available;
+        for (auto &sl : sublimits) {
+          for (auto &cl : sl.second) {
+            if (cl.first.var)
+              available[cl.first.var] = cl.first.var;
+          }
+        }
+        Value *es = unwrapM(extraSize, allocationBuilder, available,
                             UnwrapMode::AttemptFullUnwrapWithLookup);
         assert(es);
         size = allocationBuilder.CreateMul(size, es, "", /*NUW*/ true,
@@ -760,19 +710,37 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
         }
 
         if (auto ci = dyn_cast<ConstantInt>(size)) {
+#if LLVM_VERSION_MAJOR >= 14
+          malloccall->addDereferenceableRetAttr(
+              ci->getLimitedValue() * byteSizeOfType->getLimitedValue());
+          AttrBuilder B;
+          B.addDereferenceableOrNullAttr(ci->getLimitedValue() *
+                                         byteSizeOfType->getLimitedValue());
+          malloccall->setAttributes(
+              malloccall->getAttributes().addRetAttributes(
+                  malloccall->getContext(), B));
+#else
           malloccall->addDereferenceableAttr(
               llvm::AttributeList::ReturnIndex,
               ci->getLimitedValue() * byteSizeOfType->getLimitedValue());
           malloccall->addDereferenceableOrNullAttr(
               llvm::AttributeList::ReturnIndex,
               ci->getLimitedValue() * byteSizeOfType->getLimitedValue());
+#endif
           // malloccall->removeAttribute(llvm::AttributeList::ReturnIndex,
           // Attribute::DereferenceableOrNull);
         }
+#if LLVM_VERSION_MAJOR >= 14
+        malloccall->addAttributeAtIndex(AttributeList::ReturnIndex,
+                                        Attribute::NoAlias);
+        malloccall->addAttributeAtIndex(AttributeList::ReturnIndex,
+                                        Attribute::NonNull);
+#else
         malloccall->addAttribute(AttributeList::ReturnIndex,
                                  Attribute::NoAlias);
         malloccall->addAttribute(AttributeList::ReturnIndex,
                                  Attribute::NonNull);
+#endif
 
         storealloc = allocationBuilder.CreateStore(firstallocation, storeInto);
 
@@ -799,32 +767,31 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
 
         IRBuilder<> build(containedloops.back().first.incvar->getNextNode());
         Value *allocation = build.CreateLoad(storeInto);
-        Value *realloc_size = nullptr;
-        if (isa<ConstantInt>(sublimits[i].first) &&
-            cast<ConstantInt>(sublimits[i].first)->isOne()) {
-          realloc_size = containedloops.back().first.incvar;
-        } else {
-          realloc_size = build.CreateMul(containedloops.back().first.incvar,
-                                         sublimits[i].first, "", /*NUW*/ true,
-                                         /*NSW*/ true);
-        }
 
-        Value *idxs[2] = {
+        Value *tsize = ConstantInt::get(
+            size->getType(),
+            newFunc->getParent()->getDataLayout().getTypeAllocSizeInBits(
+                myType) /
+                8);
+
+        Value *idxs[] = {
+            /*ptr*/
             build.CreatePointerCast(allocation, BPTy),
-            build.CreateMul(
-                ConstantInt::get(size->getType(),
-                                 newFunc->getParent()
-                                         ->getDataLayout()
-                                         .getTypeAllocSizeInBits(myType) /
-                                     8),
-                realloc_size, "", /*NUW*/ true, /*NSW*/ true)};
+            /*incrementing value to increase when it goes past a power of two*/
+            containedloops.back().first.incvar,
+            /*buffer size (element x subloops)*/
+            build.CreateMul(tsize, sublimits[i].first, "", /*NUW*/ true,
+                            /*NSW*/ true)};
 
+        assert(cast<PointerType>(allocation->getType())->getElementType() ==
+               myType);
         Value *realloccall = nullptr;
-        allocation = build.CreatePointerCast(
-            realloccall =
-                build.CreateCall(realloc, idxs, name + "_realloccache"),
-            allocation->getType(), name + "_realloccast");
+
+        realloccall = build.CreateCall(
+            getOrInsertExponentialAllocator(*newFunc->getParent()), idxs,
+            name + "_realloccache");
         scopeAllocs[alloc].push_back(cast<CallInst>(realloccall));
+        allocation = build.CreateBitCast(realloccall, allocation->getType());
         storealloc = build.CreateStore(allocation, storeInto);
         // Unlike the static case we can not mark the memory as invariant
         // since we are reloading/storing based off the number of loop
@@ -845,19 +812,17 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
     }
 
     // Free the memory, if requested
-    if ((unsigned)i != sublimits.size() - 1 || !ompOffset)
-      if (shouldFree) {
-        if (CachePointerInvariantGroups.find(std::make_pair(
-                (Value *)alloc, i)) == CachePointerInvariantGroups.end()) {
-          MDNode *invgroup = MDNode::getDistinct(alloc->getContext(), {});
-          CachePointerInvariantGroups[std::make_pair((Value *)alloc, i)] =
-              invgroup;
-        }
-        freeCache(
-            containedloops.back().first.preheader, sublimits, i, alloc,
-            byteSizeOfType, storeInto,
-            CachePointerInvariantGroups[std::make_pair((Value *)alloc, i)]);
+    if (shouldFree) {
+      if (CachePointerInvariantGroups.find(std::make_pair((Value *)alloc, i)) ==
+          CachePointerInvariantGroups.end()) {
+        MDNode *invgroup = MDNode::getDistinct(alloc->getContext(), {});
+        CachePointerInvariantGroups[std::make_pair((Value *)alloc, i)] =
+            invgroup;
       }
+      freeCache(containedloops.back().first.preheader, sublimits, i, alloc,
+                byteSizeOfType, storeInto,
+                CachePointerInvariantGroups[std::make_pair((Value *)alloc, i)]);
+    }
 
     // If we are not the final iteration, lookup the next pointer by indexing
     // into the relevant location of the current chunk allocation
@@ -947,7 +912,11 @@ Value *CacheUtility::computeIndexOfChunk(
 /// innermost loop to outermost loop.
 CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
                                                       IRBuilder<> *RB,
-                                                      LimitContext ctx) {
+                                                      LimitContext ctx,
+                                                      Value *extraSize) {
+  // Store the LoopContext's in InnerMost => Outermost order
+  std::vector<LoopContext> contexts;
+
   // Given a ``SingleIteration'' Limit Context, return a chunking of
   // one loop with size 1, and header/preheader of the BasicBlock
   // This is done to create a context for a block outside a loop
@@ -957,7 +926,6 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
     LoopContext idx;
     auto subctx = ctx.Block;
     auto zero = ConstantInt::get(Type::getInt64Ty(newFunc->getContext()), 0);
-    auto one = ConstantInt::get(Type::getInt64Ty(newFunc->getContext()), 1);
     // The iteration count is always zero so we can set it as such
     idx.var = nullptr; // = zero;
     idx.incvar = nullptr;
@@ -969,13 +937,9 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
     idx.dynamic = false;
     idx.parent = nullptr;
     idx.exitBlocks = {};
-    SubLimitType sublimits;
-    sublimits.push_back({one, {{idx, one}}});
-    return sublimits;
+    contexts.push_back(idx);
   }
 
-  // Store the LoopContext's in InnerMost => Outermost order
-  std::vector<LoopContext> contexts;
   for (BasicBlock *blk = ctx.Block; blk != nullptr;) {
     LoopContext idx;
     if (!getContext(blk, idx, ctx.ReverseLimit)) {
@@ -1049,9 +1013,9 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
       // loop and create a new chunk.
       if (limitMinus1 == nullptr) {
         EmitWarning("NoOuterLimit",
-                    cast<Instruction>(contexts[i].maxLimit)->getDebugLoc(),
+                    cast<Instruction>(&*contexts[i].maxLimit)->getDebugLoc(),
                     newFunc,
-                    cast<Instruction>(contexts[i].maxLimit)->getParent(),
+                    cast<Instruction>(&*contexts[i].maxLimit)->getParent(),
                     "Could not compute outermost loop limit by moving value ",
                     *contexts[i].maxLimit, " computed at block",
                     contexts[i].header->getName(), " function ",
@@ -1060,6 +1024,17 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
         allocationBuilder.SetInsertPoint(&allocationPreheaders[i]->back());
         limitMinus1 = unwrapM(contexts[i].maxLimit, allocationBuilder, prevMap,
                               UnwrapMode::AttemptFullUnwrap);
+      } else if (i == 0 && extraSize &&
+                 unwrapM(extraSize, allocationBuilder, prevMap,
+                         UnwrapMode::AttemptFullUnwrap) == nullptr) {
+        EmitWarning(
+            "NoOuterLimit", cast<Instruction>(extraSize)->getDebugLoc(),
+            newFunc, cast<Instruction>(extraSize)->getParent(),
+            "Could not compute outermost loop limit by moving extraSize value ",
+            *extraSize, " computed at block", contexts[i].header->getName(),
+            " function ", contexts[i].header->getParent()->getName());
+        allocationPreheaders[i] = contexts[i].preheader;
+        allocationBuilder.SetInsertPoint(&allocationPreheaders[i]->back());
       }
       assert(limitMinus1 != nullptr);
 
@@ -1082,17 +1057,21 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
       }
 
       // We now need to compute the actual limit as opposed to the limit
-      // minus one. For efficiency, avoid doing this multiple times for
-      // the same <limitMinus1, Block requested at> pair by caching inside
-      // of LimitCache.
-      auto cidx = std::make_pair(limitMinus1, allocationPreheaders[i]);
-      if (LimitCache.find(cidx) == LimitCache.end()) {
-        LimitCache[cidx] = allocationBuilder.CreateNUWAdd(
-            limitMinus1, ConstantInt::get(limitMinus1->getType(), 1));
-      }
-      if (inForwardPass)
-        limits[i] = LimitCache[cidx];
-      else {
+      // minus one.
+      if (inForwardPass) {
+        // For efficiency, avoid doing this multiple times for
+        // the same <limitMinus1, Block requested at> pair by caching inside
+        // of LimitCache.
+        auto &map = LimitCache[limitMinus1];
+        auto found = map.find(allocationPreheaders[i]);
+        if (found != map.end() && found->second != nullptr) {
+          limits[i] = found->second;
+        } else {
+          limits[i] = map[allocationPreheaders[i]] =
+              allocationBuilder.CreateNUWAdd(
+                  limitMinus1, ConstantInt::get(limitMinus1->getType(), 1));
+        }
+      } else {
         Value *lim = unwrapM(contexts[i].maxLimit, *RB, reverseMap,
                              UnwrapMode::AttemptFullUnwrapWithLookup);
         if (!lim) {
@@ -1298,7 +1277,7 @@ Value *CacheUtility::getCachePointer(bool inForwardPass, IRBuilder<> &BuilderM,
   assert(ctx.Block);
   assert(cache);
 
-  auto sublimits = getSubLimits(inForwardPass, &BuilderM, ctx);
+  auto sublimits = getSubLimits(inForwardPass, &BuilderM, ctx, extraSize);
 
   ValueToValueMapTy available;
 
@@ -1338,8 +1317,9 @@ Value *CacheUtility::getCachePointer(bool inForwardPass, IRBuilder<> &BuilderM,
             8);
     cast<LoadInst>(next)->setMetadata(
         LLVMContext::MD_dereferenceable,
-        MDNode::get(cache->getContext(),
-                    {ConstantAsMetadata::get(byteSizeOfType)}));
+        MDNode::get(
+            cache->getContext(),
+            ArrayRef<Metadata *>(ConstantAsMetadata::get(byteSizeOfType))));
     unsigned bsize = (unsigned)byteSizeOfType->getZExtValue();
     if ((bsize & (bsize - 1)) == 0) {
 #if LLVM_VERSION_MAJOR >= 10

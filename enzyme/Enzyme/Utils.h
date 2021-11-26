@@ -57,6 +57,8 @@
 
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"
 
+#include "TypeAnalysis/ConcreteType.h"
+
 extern "C" {
 /// Print additional debug info relevant to performance
 extern llvm::cl::opt<bool> EnzymePrintPerf;
@@ -237,12 +239,18 @@ enum class DerivativeMode {
   ReverseModePrimal = 1,
   ReverseModeGradient = 2,
   ReverseModeCombined = 3,
+  ForwardModeVector = 4,
+  ForwardModeSplit = 5,
 };
 
 static inline std::string to_string(DerivativeMode mode) {
   switch (mode) {
   case DerivativeMode::ForwardMode:
     return "ForwardMode";
+  case DerivativeMode::ForwardModeVector:
+    return "ForwardModeVector";
+  case DerivativeMode::ForwardModeSplit:
+    return "ForwardModeSplit";
   case DerivativeMode::ReverseModePrimal:
     return "ReverseModePrimal";
   case DerivativeMode::ReverseModeGradient:
@@ -268,6 +276,31 @@ static inline std::string to_string(DIFFE_TYPE t) {
     assert(0 && "illegal diffetype");
     return "";
   }
+}
+
+/// Convert ReturnType to a string
+static inline std::string to_string(ReturnType t) {
+  switch (t) {
+  case ReturnType::ArgsWithReturn:
+    return "ArgsWithReturn";
+  case ReturnType::ArgsWithTwoReturns:
+    return "ArgsWithTwoReturns";
+  case ReturnType::Args:
+    return "Args";
+  case ReturnType::TapeAndReturn:
+    return "TapeAndReturn";
+  case ReturnType::TapeAndTwoReturns:
+    return "TapeAndTwoReturns";
+  case ReturnType::Tape:
+    return "Tape";
+  case ReturnType::TwoReturns:
+    return "TwoReturns";
+  case ReturnType::Return:
+    return "Return";
+  case ReturnType::Void:
+    return "Void";
+  }
+  llvm_unreachable("illegal ReturnType");
 }
 
 #include <set>
@@ -453,6 +486,7 @@ static inline bool isCertainPrintOrFree(llvm::Function *called) {
     return false;
 
   if (called->getName() == "printf" || called->getName() == "puts" ||
+      called->getName() == "fprintf" ||
       called->getName().startswith("_ZN3std2io5stdio6_print") ||
       called->getName().startswith("_ZN4core3fmt") ||
       called->getName() == "vprintf" || called->getName() == "_ZdlPv" ||
@@ -483,6 +517,7 @@ static inline bool isCertainPrintMallocOrFree(llvm::Function *called) {
     return false;
 
   if (called->getName() == "printf" || called->getName() == "puts" ||
+      called->getName() == "fprintf" ||
       called->getName().startswith("_ZN3std2io5stdio6_print") ||
       called->getName().startswith("_ZN4core3fmt") ||
       called->getName() == "vprintf" || called->getName() == "malloc" ||
@@ -510,17 +545,21 @@ static inline bool isCertainPrintMallocOrFree(llvm::Function *called) {
 
 /// Create function for type that performs the derivative memcpy on floating
 /// point memory
-llvm::Function *getOrInsertDifferentialFloatMemcpy(llvm::Module &M,
-                                                   llvm::PointerType *T,
-                                                   unsigned dstalign,
-                                                   unsigned srcalign);
+llvm::Function *
+getOrInsertDifferentialFloatMemcpy(llvm::Module &M, llvm::Type *T,
+                                   unsigned dstalign, unsigned srcalign,
+                                   unsigned dstaddr, unsigned srcaddr);
+
+/// Create function for type that performs memcpy with a stride
+llvm::Function *getOrInsertMemcpyStrided(llvm::Module &M, llvm::PointerType *T,
+                                         unsigned dstalign, unsigned srcalign);
 
 /// Create function for type that performs the derivative memmove on floating
 /// point memory
-llvm::Function *getOrInsertDifferentialFloatMemmove(llvm::Module &M,
-                                                    llvm::PointerType *T,
-                                                    unsigned dstalign,
-                                                    unsigned srcalign);
+llvm::Function *
+getOrInsertDifferentialFloatMemmove(llvm::Module &M, llvm::Type *T,
+                                    unsigned dstalign, unsigned srcalign,
+                                    unsigned dstaddr, unsigned srcaddr);
 
 /// Create function for type that performs the derivative MPI_Wait
 llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
@@ -791,4 +830,56 @@ enum class MPI_CallType {
   IRECV = 2,
 };
 
+llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
+                                   ConcreteType CT, llvm::Type *intType,
+                                   llvm::IRBuilder<> &B2);
+llvm::Function *getOrInsertExponentialAllocator(llvm::Module &M);
+
+class AssertingReplacingVH : public llvm::CallbackVH {
+public:
+  AssertingReplacingVH() = default;
+
+  AssertingReplacingVH(llvm::Value *new_value) { setValPtr(new_value); }
+
+  void deleted() override final {
+    assert(0 && "attempted to delete value with remaining handle use");
+    llvm_unreachable("attempted to delete value with remaining handle use");
+  }
+
+  void allUsesReplacedWith(llvm::Value *new_value) override final {
+    setValPtr(new_value);
+  }
+  virtual ~AssertingReplacingVH() {}
+};
+
+template <typename T> static inline llvm::Function *getFunctionFromCall(T *op) {
+  llvm::Function *called = nullptr;
+  using namespace llvm;
+  llvm::Value *callVal;
+#if LLVM_VERSION_MAJOR >= 11
+  callVal = op->getCalledOperand();
+#else
+  callVal = op->getCalledValue();
+#endif
+
+  while (!called) {
+    if (auto castinst = dyn_cast<ConstantExpr>(callVal))
+      if (castinst->isCast()) {
+        callVal = castinst->getOperand(0);
+        continue;
+      }
+    if (auto fn = dyn_cast<Function>(callVal)) {
+      called = fn;
+      break;
+    }
+#if LLVM_VERSION_MAJOR >= 11
+    if (auto alias = dyn_cast<GlobalAlias>(callVal)) {
+      callVal = dyn_cast<Function>(alias->getAliasee());
+      continue;
+    }
+#endif
+    break;
+  }
+  return called;
+}
 #endif

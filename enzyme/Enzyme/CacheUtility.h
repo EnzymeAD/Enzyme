@@ -48,13 +48,13 @@ extern llvm::cl::opt<bool> EfficientBoolCache;
 /// Container for all loop information to synthesize gradients
 struct LoopContext {
   /// Canonical induction variable of the loop
-  llvm::PHINode *var;
+  llvm::AssertingVH<llvm::PHINode> var;
 
   /// Increment of the induction
-  llvm::Instruction *incvar;
+  llvm::AssertingVH<llvm::Instruction> incvar;
 
   /// Allocation of induction variable of reverse pass
-  llvm::AllocaInst *antivaralloc;
+  llvm::AssertingVH<llvm::AllocaInst> antivaralloc;
 
   /// Header of this loop
   llvm::BasicBlock *header;
@@ -67,9 +67,9 @@ struct LoopContext {
 
   /// limit is last value of a canonical induction variable
   /// iters is number of times loop is run (thus iters = limit + 1)
-  llvm::Value *maxLimit;
+  AssertingReplacingVH maxLimit;
 
-  llvm::Value *trueLimit;
+  AssertingReplacingVH trueLimit;
 
   /// All blocks this loop exits too
   llvm::SmallPtrSet<llvm::BasicBlock *, 8> exitBlocks;
@@ -85,8 +85,11 @@ static inline bool operator==(const LoopContext &lhs, const LoopContext &rhs) {
 enum class UnwrapMode {
   // It is already known that it is legal to fully unwrap
   // this instruction. This means unwrap this instruction,
-  // its operands, etc
+  // its operands, etc. However, this will stop at known
+  // cached available from a tape.
   LegalFullUnwrap,
+  // Unlike LegalFullUnwrap, this will unwrap through a tape
+  LegalFullUnwrapNoTapeReplace,
   // Attempt to fully unwrap this, looking up whenever it
   // is not legal to unwrap
   AttemptFullUnwrapWithLookup,
@@ -101,6 +104,9 @@ static inline llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
   switch (mode) {
   case UnwrapMode::LegalFullUnwrap:
     os << "LegalFullUnwrap";
+    break;
+  case UnwrapMode::LegalFullUnwrapNoTapeReplace:
+    os << "LegalFullUnwrapNoTapeReplace";
     break;
   case UnwrapMode::AttemptFullUnwrapWithLookup:
     os << "AttemptFullUnwrapWithLookup";
@@ -146,7 +152,7 @@ protected:
 public:
   virtual ~CacheUtility();
 
-private:
+protected:
   /// Map of Loop to requisite loop information needed for AD (forward/reverse
   /// induction/etc)
   std::map<llvm::Loop *, LoopContext> loopContexts;
@@ -223,14 +229,15 @@ public:
       /*loop limits*/ std::vector<std::pair<LoopContext, llvm::Value *>>>>
       SubLimitType;
   SubLimitType getSubLimits(bool inForwardPass, llvm::IRBuilder<> *RB,
-                            LimitContext ctx);
+                            LimitContext ctx, llvm::Value *extraSize = nullptr);
 
 private:
   /// Internal data structure used by getSubLimit to avoid computing the same
   /// loop limit multiple times if possible. Map's a desired limitMinus1 (see
   /// getSubLimits) and the block the true limit requested to the value of the
   /// limit accessible at that block
-  std::map<std::pair<llvm::Value *, llvm::BasicBlock *>, llvm::Value *>
+  llvm::ValueMap<llvm::Value *,
+                 std::map<llvm::BasicBlock *, llvm::WeakTrackingVH>>
       LimitCache;
   /// Internal data structure used by getSubLimit to avoid computing the
   /// cumulative loop limit multiple times if possible. Map's a desired pair of
@@ -262,22 +269,27 @@ private:
 
 protected:
   /// A map of values being cached to their underlying allocation/limit context
-  std::map<llvm::Value *, std::pair<llvm::AllocaInst *, LimitContext>> scopeMap;
+  std::map<llvm::Value *,
+           std::pair<llvm::AssertingVH<llvm::AllocaInst>, LimitContext>>
+      scopeMap;
 
   /// A map of allocations to a vector of instruction used to create by the
   /// allocation Keeping track of these values is useful for deallocation. This
   /// is stored as a vector explicitly to order theses instructions in such a
   /// way that they can be erased by iterating in reverse order.
-  std::map<llvm::AllocaInst *, std::vector<llvm::Instruction *>>
+  std::map<llvm::AllocaInst *,
+           std::vector<llvm::AssertingVH<llvm::Instruction>>>
       scopeInstructions;
 
   /// A map of allocations to a set of instructions which free memory as part of
   /// the cache.
-  std::map<llvm::AllocaInst *, std::set<llvm::CallInst *>> scopeFrees;
+  std::map<llvm::AllocaInst *, std::set<llvm::AssertingVH<llvm::CallInst>>>
+      scopeFrees;
 
   /// A map of allocations to a set of instructions which allocate memory as
   /// part of the cache
-  std::map<llvm::AllocaInst *, std::vector<llvm::CallInst *>> scopeAllocs;
+  std::map<llvm::AllocaInst *, std::vector<llvm::AssertingVH<llvm::CallInst>>>
+      scopeAllocs;
 
   /// Perform the final load from the cache, applying requisite invariant
   /// group and alignment

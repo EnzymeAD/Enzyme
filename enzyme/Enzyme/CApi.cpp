@@ -22,7 +22,11 @@
 //
 //===----------------------------------------------------------------------===//
 #include "CApi.h"
+#include "SCEV/ScalarEvolution.h"
+#include "SCEV/ScalarEvolutionExpander.h"
+
 #include "EnzymeLogic.h"
+#include "GradientUtils.h"
 #include "LibraryFuncs.h"
 #include "SCEV/TargetLibraryInfo.h"
 
@@ -117,7 +121,7 @@ CConcreteType ewrap(const ConcreteType &CT) {
 IntList ewrap(const std::vector<int> &offsets) {
   IntList IL;
   IL.size = offsets.size();
-  IL.data = (int64_t *)malloc(IL.size * sizeof(*IL.data));
+  IL.data = new int64_t[IL.size];
   for (size_t i = 0; i < offsets.size(); i++) {
     IL.data[i] = offsets[i];
   }
@@ -191,7 +195,7 @@ EnzymeTypeAnalysisRef CreateTypeAnalysis(char *TripleStr,
       for (size_t i = 0; i < argTrees.size(); ++i) {
         cargs[i] = (CTypeTreeRef)(&(argTrees[i]));
         kvs[i].size = knownValues[i].size();
-        kvs[i].data = (int64_t *)malloc(kvs[i].size * sizeof(*kvs[i].data));
+        kvs[i].data = new int64_t[kvs[i].size];
         size_t j = 0;
         for (auto val : knownValues[i]) {
           kvs[i].data[j] = val;
@@ -202,7 +206,7 @@ EnzymeTypeAnalysisRef CreateTypeAnalysis(char *TripleStr,
           rule(direction, creturnTree, cargs, kvs, argTrees.size(), wrap(call));
       delete[] cargs;
       for (size_t i = 0; i < argTrees.size(); ++i) {
-        free(kvs[i].data);
+        delete[] kvs[i].data;
       }
       delete[] kvs;
       return result;
@@ -237,6 +241,118 @@ void EnzymeRegisterAllocationHandler(char *Name, CustomShadowAlloc AHandle,
   };
 }
 
+void EnzymeRegisterFunctionHandler(char *Name, CustomShadowAlloc AHandle,
+                                   CustomShadowFree FHandle) {
+  shadowHandlers[std::string(Name)] =
+      [=](IRBuilder<> &B, CallInst *CI,
+          ArrayRef<Value *> Args) -> llvm::Value * {
+    SmallVector<LLVMValueRef, 3> refs;
+    for (auto a : Args)
+      refs.push_back(wrap(a));
+    return unwrap(AHandle(wrap(&B), wrap(CI), Args.size(), refs.data()));
+  };
+  shadowErasers[std::string(Name)] = [=](IRBuilder<> &B, Value *ToFree,
+                                         Function *AllocF) -> llvm::CallInst * {
+    return cast_or_null<CallInst>(
+        unwrap(FHandle(wrap(&B), wrap(ToFree), wrap(AllocF))));
+  };
+}
+
+void EnzymeRegisterCallHandler(char *Name, CustomFunctionForward FwdHandle,
+                               CustomFunctionReverse RevHandle) {
+  auto &pair = customCallHandlers[std::string(Name)];
+  pair.first = [=](IRBuilder<> &B, CallInst *CI, GradientUtils &gutils,
+                   Value *&normalReturn, Value *&shadowReturn, Value *&tape) {
+    LLVMValueRef normalR = wrap(normalReturn);
+    LLVMValueRef shadowR = wrap(shadowReturn);
+    LLVMValueRef tapeR = wrap(tape);
+    FwdHandle(wrap(&B), wrap(CI), &gutils, &normalR, &shadowR, &tapeR);
+    normalReturn = unwrap(normalR);
+    shadowReturn = unwrap(shadowR);
+    tape = unwrap(tapeR);
+  };
+  pair.second = [=](IRBuilder<> &B, CallInst *CI, DiffeGradientUtils &gutils,
+                    Value *tape) {
+    RevHandle(wrap(&B), wrap(CI), &gutils, wrap(tape));
+  };
+}
+
+LLVMValueRef EnzymeGradientUtilsNewFromOriginal(GradientUtils *gutils,
+                                                LLVMValueRef val) {
+  return wrap(gutils->getNewFromOriginal(unwrap(val)));
+}
+
+void EnzymeGradientUtilsSetDebugLocFromOriginal(GradientUtils *gutils,
+                                                LLVMValueRef val,
+                                                LLVMValueRef orig) {
+  return cast<Instruction>(unwrap(val))
+      ->setDebugLoc(gutils->getNewFromOriginal(
+          cast<Instruction>(unwrap(orig))->getDebugLoc()));
+}
+
+LLVMValueRef EnzymeGradientUtilsLookup(GradientUtils *gutils, LLVMValueRef val,
+                                       LLVMBuilderRef B) {
+  return wrap(gutils->lookupM(unwrap(val), *unwrap(B)));
+}
+
+LLVMValueRef EnzymeGradientUtilsInvertPointer(GradientUtils *gutils,
+                                              LLVMValueRef val,
+                                              LLVMBuilderRef B) {
+  return wrap(gutils->invertPointerM(unwrap(val), *unwrap(B)));
+}
+
+LLVMValueRef EnzymeGradientUtilsDiffe(DiffeGradientUtils *gutils,
+                                      LLVMValueRef val, LLVMBuilderRef B) {
+  return wrap(gutils->diffe(unwrap(val), *unwrap(B)));
+}
+
+void EnzymeGradientUtilsAddToDiffe(DiffeGradientUtils *gutils, LLVMValueRef val,
+                                   LLVMValueRef diffe, LLVMBuilderRef B,
+                                   LLVMTypeRef T) {
+  gutils->addToDiffe(unwrap(val), unwrap(diffe), *unwrap(B), unwrap(T));
+}
+
+void EnzymeGradientUtilsSetDiffe(DiffeGradientUtils *gutils, LLVMValueRef val,
+                                 LLVMValueRef diffe, LLVMBuilderRef B) {
+  gutils->setDiffe(unwrap(val), unwrap(diffe), *unwrap(B));
+}
+
+uint8_t EnzymeGradientUtilsIsConstantValue(GradientUtils *gutils,
+                                           LLVMValueRef val) {
+  return gutils->isConstantValue(unwrap(val));
+}
+
+uint8_t EnzymeGradientUtilsIsConstantInstruction(GradientUtils *gutils,
+                                                 LLVMValueRef val) {
+  return gutils->isConstantInstruction(cast<Instruction>(unwrap(val)));
+}
+
+LLVMBasicBlockRef EnzymeGradientUtilsAllocationBlock(GradientUtils *gutils) {
+  return wrap(gutils->inversionAllocs);
+}
+
+LLVMValueRef EnzymeCreateForwardDiff(
+    EnzymeLogicRef Logic, LLVMValueRef todiff, CDIFFE_TYPE retType,
+    CDIFFE_TYPE *constant_args, size_t constant_args_size,
+    EnzymeTypeAnalysisRef TA, uint8_t returnValue, uint8_t dretUsed,
+    CDerivativeMode mode, LLVMTypeRef additionalArg, CFnTypeInfo typeInfo,
+    uint8_t *_uncacheable_args, size_t uncacheable_args_size, uint8_t PostOpt) {
+  std::vector<DIFFE_TYPE> nconstant_args((DIFFE_TYPE *)constant_args,
+                                         (DIFFE_TYPE *)constant_args +
+                                             constant_args_size);
+  std::map<llvm::Argument *, bool> uncacheable_args;
+  size_t argnum = 0;
+  for (auto &arg : cast<Function>(unwrap(todiff))->args()) {
+    assert(argnum < uncacheable_args_size);
+    uncacheable_args[&arg] = _uncacheable_args[argnum];
+    argnum++;
+  }
+  return wrap(eunwrap(Logic).CreateForwardDiff(
+      cast<Function>(unwrap(todiff)), (DIFFE_TYPE)retType, nconstant_args,
+      eunwrap(TA).TLI, eunwrap(TA), returnValue, dretUsed, (DerivativeMode)mode,
+      unwrap(additionalArg), eunwrap(typeInfo, cast<Function>(unwrap(todiff))),
+      uncacheable_args, PostOpt));
+}
 LLVMValueRef EnzymeCreatePrimalAndGradient(
     EnzymeLogicRef Logic, LLVMValueRef todiff, CDIFFE_TYPE retType,
     CDIFFE_TYPE *constant_args, size_t constant_args_size,
@@ -255,10 +371,20 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
     argnum++;
   }
   return wrap(eunwrap(Logic).CreatePrimalAndGradient(
-      cast<Function>(unwrap(todiff)), (DIFFE_TYPE)retType, nconstant_args,
-      eunwrap(TA).TLI, eunwrap(TA), returnValue, dretUsed, (DerivativeMode)mode,
-      unwrap(additionalArg), eunwrap(typeInfo, cast<Function>(unwrap(todiff))),
-      uncacheable_args, eunwrap(augmented), AtomicAdd, PostOpt));
+      (ReverseCacheKey){
+          .todiff = cast<Function>(unwrap(todiff)),
+          .retType = (DIFFE_TYPE)retType,
+          .constant_args = nconstant_args,
+          .uncacheable_args = uncacheable_args,
+          .returnUsed = (bool)returnValue,
+          .shadowReturnUsed = (bool)dretUsed,
+          .mode = (DerivativeMode)mode,
+          .freeMemory = true,
+          .AtomicAdd = (bool)AtomicAdd,
+          .additionalType = unwrap(additionalArg),
+          .typeInfo = eunwrap(typeInfo, cast<Function>(unwrap(todiff))),
+      },
+      eunwrap(TA).TLI, eunwrap(TA), eunwrap(augmented), PostOpt));
 }
 EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
     EnzymeLogicRef Logic, LLVMValueRef todiff, CDIFFE_TYPE retType,
@@ -303,7 +429,6 @@ EnzymeExtractTapeTypeFromAugmentation(EnzymeAugmentedReturnPtr ret) {
   return wrap(
       cast<StructType>(AR->fn->getReturnType())->getTypeAtIndex(found->second));
 }
-
 void EnzymeExtractReturnInfo(EnzymeAugmentedReturnPtr ret, int64_t *data,
                              uint8_t *existed, size_t len) {
   assert(len == 3);
@@ -357,6 +482,18 @@ const char *EnzymeTypeTreeToString(CTypeTreeRef src) {
   return cstr;
 }
 void EnzymeTypeTreeToStringFree(const char *cstr) { delete[] cstr; }
+
+void EnzymeMoveBefore(LLVMValueRef inst1, LLVMValueRef inst2) {
+  Instruction *I1 = cast<Instruction>(unwrap(inst1));
+  Instruction *I2 = cast<Instruction>(unwrap(inst2));
+  if (I1 != I2)
+    I1->moveBefore(I2);
+}
+
+void EnzymeSetMustCache(LLVMValueRef inst1) {
+  Instruction *I1 = cast<Instruction>(unwrap(inst1));
+  I1->setMetadata("enzyme_mustcache", MDNode::get(I1->getContext(), {}));
+}
 
 #if LLVM_VERSION_MAJOR >= 9
 void EnzymeAddAttributorLegacyPass(LLVMPassManagerRef PM) {

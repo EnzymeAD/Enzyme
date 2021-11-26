@@ -18,10 +18,6 @@ if (${LLVM_VERSION_MAJOR} LESS 8)
         intrinsics_gen
         PLUGIN_TOOL
         opt
-    #LINK_COMPONENTS
-    #Core
-    #Analysis
-    #ScalarOpts
     )
     add_llvm_loadable_module( ClangEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC} Clang/EnzymeClang.cpp
@@ -29,10 +25,6 @@ if (${LLVM_VERSION_MAJOR} LESS 8)
         intrinsics_gen
         PLUGIN_TOOL
         opt
-    #LINK_COMPONENTS
-    #Core
-    #Analysis
-    #ScalarOpts
     )
 else()
 # on windows `PLUGIN_TOOL` doesn't link against LLVM.dll
@@ -54,32 +46,21 @@ if ((WIN32 OR CYGWIN) AND LLVM_LINK_LLVM_DYLIB)
 	LLVM
     )
 else()
-    #set(LLVM_LINK_COMPONENTS Core Analysis ScalarOpts)
     add_llvm_library( LLVMEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC}
         MODULE
         DEPENDS
         intrinsics_gen
-        #LLVMCore
         PLUGIN_TOOL
         opt
-    #LINK_COMPONENTS
-    #Core
-    #Analysis
-    #ScalarOpts
     )
     add_llvm_library( ClangEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC} Clang/EnzymeClang.cpp
         MODULE
         DEPENDS
         intrinsics_gen
-        #LLVMCore
         PLUGIN_TOOL
         opt
-    #LINK_COMPONENTS
-    #Core
-    #Analysis
-    #ScalarOpts
     )
 endif()
 endif()
@@ -90,7 +71,11 @@ if (${ENZYME_EXTERNAL_SHARED_LIB})
         ${ENZYME_SRC}
     )
     target_link_libraries(Enzyme-${LLVM_VERSION_MAJOR} LLVM)
-    install(TARGETS Enzyme-${LLVM_VERSION_MAJOR} DESTINATION lib)
+    install(TARGETS Enzyme-${LLVM_VERSION_MAJOR}
+        EXPORT EnzymeTargets
+        LIBRARY DESTINATION lib COMPONENT shlib
+        PUBLIC_HEADER DESTINATION "${INSTALL_INCLUDE_DIR}/Enzyme"
+        COMPONENT dev)
 endif()
 
 if (APPLE)
@@ -100,3 +85,9 @@ set_target_properties(LLVMEnzyme-${LLVM_VERSION_MAJOR} PROPERTIES
 set_target_properties(ClangEnzyme-${LLVM_VERSION_MAJOR} PROPERTIES
         LINK_FLAGS "-Wl,-flat_namespace -Wl,-undefined -Wl,suppress")
 endif()
+
+install(TARGETS LLVMEnzyme-${LLVM_VERSION_MAJOR} ClangEnzyme-${LLVM_VERSION_MAJOR}
+    EXPORT EnzymeTargets
+    LIBRARY DESTINATION lib COMPONENT shlib
+    PUBLIC_HEADER DESTINATION "${INSTALL_INCLUDE_DIR}/Enzyme"
+    COMPONENT dev)

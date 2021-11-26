@@ -1,8 +1,17 @@
+cmake_minimum_required(VERSION 3.9)
 project(Enzyme)
 
-cmake_minimum_required(VERSION 3.9)
+include(CMakePackageConfigHelpers)
 
-SET(CMAKE_CXX_FLAGS "-Wall -fPIC -fno-rtti")
+
+set(ENZYME_MAJOR_VERSION 0)
+set(ENZYME_MINOR_VERSION 0)
+set(ENZYME_PATCH_VERSION 21)
+set(ENZYME_VERSION
+  ${ENZYME_MAJOR_VERSION}.${ENZYME_MINOR_VERSION}.${ENZYME_PATCH_VERSION})
+
+
+SET(CMAKE_CXX_FLAGS "-Wall -fPIC -fno-rtti ${CMAKE_CXX_FLAGS}")
 SET(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g -ggdb")
 SET(CMAKE_CXX_FLAGS_RELEASE "-O2")
 
@@ -57,6 +66,18 @@ message("LLVM_INCLUDE_DIRS: ${LLVM_INCLUDE_DIRS}")
 message("found llvm definitions " ${LLVM_DEFINITIONS})
 message("found llvm version " ${LLVM_VERSION_MAJOR})
 
+
+# Offer the user the choice of overriding the installation directories
+set(INSTALL_INCLUDE_DIR include CACHE PATH "Installation directory for header files")
+if(WIN32 AND NOT CYGWIN)
+  set(DEF_INSTALL_CMAKE_DIR CMake)
+else()
+  set(DEF_INSTALL_CMAKE_DIR lib/CMake/Enzyme)
+endif()
+set(INSTALL_CMAKE_DIR ${DEF_INSTALL_CMAKE_DIR} CACHE PATH
+  "Installation directory for CMake files")
+
+
 list(GET LLVM_INCLUDE_DIRS 0 LLVM_IDIR)
 message("first llvm include directory" ${LLVM_IDIR})
 
@@ -89,6 +110,7 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/include/SCEV/ScalarEvolutionExpander.h" 
 include_directories("${CMAKE_CURRENT_BINARY_DIR}/include")
 
 add_subdirectory(Enzyme)
+add_subdirectory(BCLoad)
 add_subdirectory(test)
 
 # The benchmarks data are not in git-exported source archives to minimize size.
@@ -96,3 +118,43 @@ add_subdirectory(test)
 if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks")
     add_subdirectory(benchmarks)
 endif()
+
+
+# Make relative paths absolute (needed later on)
+foreach(p LIB BIN INCLUDE CMAKE)
+set(var INSTALL_${p}_DIR)
+if(NOT IS_ABSOLUTE "${${var}}")
+  set(${var} "${CMAKE_INSTALL_PREFIX}/${${var}}")
+endif()
+endforeach()
+
+export(TARGETS LLVMEnzyme-${LLVM_VERSION_MAJOR} ClangEnzyme-${LLVM_VERSION_MAJOR}
+  FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
+
+export(PACKAGE Enzyme)
+
+set(CONF_LLVM_VERSION_MAJOR ${LLVM_VERSION_MAJOR})
+set(CONF_LLVM_VERSION_MINOR ${LLVM_VERSION_MINOR})
+set(CONF_LLVM_VERSION_PATCH ${LLVM_VERSION_PATCH})
+set(CONF_LLVM_DIR ${LLVM_DIR})
+set(CONF_LLVM_BINARY_DIR ${LLVM_BINARY_DIR})
+
+set(CONF_INCLUDE_DIRS lib)
+configure_file(cmake/EnzymeConfig.cmake.in
+     "${PROJECT_BINARY_DIR}/EnzymeConfig.cmake" @ONLY)
+   
+set(CONF_INCLUDE_DIRS lib)
+configure_file(cmake/EnzymeConfig.cmake.in
+     "${PROJECT_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/EnzymeConfig.cmake" @ONLY)
+
+configure_file(cmake/EnzymeConfigVersion.cmake.in
+     "${PROJECT_BINARY_DIR}/EnzymeConfigVersion.cmake" @ONLY)
+   
+install(FILES
+     "${PROJECT_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/EnzymeConfig.cmake"
+     "${PROJECT_BINARY_DIR}/EnzymeConfigVersion.cmake"
+     DESTINATION "${INSTALL_CMAKE_DIR}" COMPONENT dev)
+   
+install(EXPORT EnzymeTargets DESTINATION
+    "${INSTALL_CMAKE_DIR}" COMPONENT dev NAMESPACE Enzyme::)
+   

@@ -202,6 +202,7 @@ static inline bool isDeallocationFunction(const llvm::Function &F,
 static inline llvm::CallInst *
 freeKnownAllocation(llvm::IRBuilder<> &builder, llvm::Value *tofree,
                     llvm::Function &allocationfn,
+                    const llvm::DebugLoc &debuglocation,
                     const llvm::TargetLibraryInfo &TLI) {
   using namespace llvm;
   assert(isAllocationFunction(allocationfn, TLI));
@@ -217,7 +218,7 @@ freeKnownAllocation(llvm::IRBuilder<> &builder, llvm::Value *tofree,
     Type *VoidTy = Type::getVoidTy(tofree->getContext());
     Type *IntPtrTy = Type::getInt8PtrTy(tofree->getContext());
 
-    auto FT = FunctionType::get(VoidTy, {IntPtrTy}, false);
+    auto FT = FunctionType::get(VoidTy, ArrayRef<Type *>(IntPtrTy), false);
 #if LLVM_VERSION_MAJOR >= 9
     Value *freevalue = allocationfn.getParent()
                            ->getOrInsertFunction("swift_release", FT)
@@ -228,18 +229,32 @@ freeKnownAllocation(llvm::IRBuilder<> &builder, llvm::Value *tofree,
 #endif
     CallInst *freecall = cast<CallInst>(
 #if LLVM_VERSION_MAJOR >= 8
-        CallInst::Create(FT, freevalue,
-                         {builder.CreatePointerCast(tofree, IntPtrTy)},
+        CallInst::Create(
+            FT, freevalue,
+            ArrayRef<Value *>(builder.CreatePointerCast(tofree, IntPtrTy)),
 #else
-        CallInst::Create(freevalue,
-                         {builder.CreatePointerCast(tofree, IntPtrTy)},
+        CallInst::Create(
+            freevalue,
+            ArrayRef<Value *>(builder.CreatePointerCast(tofree, IntPtrTy)),
 #endif
-                         "", builder.GetInsertBlock()));
+            "", builder.GetInsertBlock()));
+    freecall->setDebugLoc(debuglocation);
     freecall->setTailCall();
     if (isa<CallInst>(tofree) &&
+#if LLVM_VERSION_MAJOR >= 14
+        cast<CallInst>(tofree)->getAttributes().hasAttributeAtIndex(
+            AttributeList::ReturnIndex, Attribute::NonNull)
+#else
         cast<CallInst>(tofree)->getAttributes().hasAttribute(
-            AttributeList::ReturnIndex, Attribute::NonNull)) {
+            AttributeList::ReturnIndex, Attribute::NonNull)
+#endif
+    ) {
+#if LLVM_VERSION_MAJOR >= 14
+      freecall->addAttributeAtIndex(AttributeList::FirstArgIndex,
+                                    Attribute::NonNull);
+#else
       freecall->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+#endif
     }
     if (Function *F = dyn_cast<Function>(freevalue))
       freecall->setCallingConv(F->getCallingConv());
@@ -347,10 +362,22 @@ freeKnownAllocation(llvm::IRBuilder<> &builder, llvm::Value *tofree,
 #endif
                        "", builder.GetInsertBlock()));
   freecall->setTailCall();
+  freecall->setDebugLoc(debuglocation);
   if (isa<CallInst>(tofree) &&
+#if LLVM_VERSION_MAJOR >= 14
+      cast<CallInst>(tofree)->getAttributes().hasAttributeAtIndex(
+          AttributeList::ReturnIndex, Attribute::NonNull)
+#else
       cast<CallInst>(tofree)->getAttributes().hasAttribute(
-          AttributeList::ReturnIndex, Attribute::NonNull)) {
+          AttributeList::ReturnIndex, Attribute::NonNull)
+#endif
+  ) {
+#if LLVM_VERSION_MAJOR >= 14
+    freecall->addAttributeAtIndex(AttributeList::FirstArgIndex,
+                                  Attribute::NonNull);
+#else
     freecall->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+#endif
   }
   if (Function *F = dyn_cast<Function>(freevalue))
     freecall->setCallingConv(F->getCallingConv());
@@ -367,19 +394,7 @@ static inline bool writesToMemoryReadBy(llvm::AAResults &AA,
          maybeWriter->getParent()->getParent());
   using namespace llvm;
   if (auto call = dyn_cast<CallInst>(maybeWriter)) {
-    Function *called = call->getCalledFunction();
-#if LLVM_VERSION_MAJOR >= 11
-    if (auto castinst = dyn_cast<ConstantExpr>(call->getCalledOperand()))
-#else
-    if (auto castinst = dyn_cast<ConstantExpr>(call->getCalledValue()))
-#endif
-    {
-      if (castinst->isCast()) {
-        if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-          called = fn;
-        }
-      }
-    }
+    Function *called = getFunctionFromCall(call);
     if (called && isCertainPrintMallocOrFree(called)) {
       return false;
     }
@@ -412,19 +427,7 @@ static inline bool writesToMemoryReadBy(llvm::AAResults &AA,
     }
   }
   if (auto call = dyn_cast<CallInst>(maybeReader)) {
-    Function *called = call->getCalledFunction();
-#if LLVM_VERSION_MAJOR >= 11
-    if (auto castinst = dyn_cast<ConstantExpr>(call->getCalledOperand()))
-#else
-    if (auto castinst = dyn_cast<ConstantExpr>(call->getCalledValue()))
-#endif
-    {
-      if (castinst->isCast()) {
-        if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-          called = fn;
-        }
-      }
-    }
+    Function *called = getFunctionFromCall(call);
     if (called && isCertainMallocOrFree(called)) {
       return false;
     }
@@ -445,19 +448,7 @@ static inline bool writesToMemoryReadBy(llvm::AAResults &AA,
     }
   }
   if (auto call = dyn_cast<InvokeInst>(maybeWriter)) {
-    Function *called = call->getCalledFunction();
-#if LLVM_VERSION_MAJOR >= 11
-    if (auto castinst = dyn_cast<ConstantExpr>(call->getCalledOperand()))
-#else
-    if (auto castinst = dyn_cast<ConstantExpr>(call->getCalledValue()))
-#endif
-    {
-      if (castinst->isCast()) {
-        if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-          called = fn;
-        }
-      }
-    }
+    Function *called = getFunctionFromCall(call);
     if (called && isCertainMallocOrFree(called)) {
       return false;
     }
@@ -478,19 +469,7 @@ static inline bool writesToMemoryReadBy(llvm::AAResults &AA,
     }
   }
   if (auto call = dyn_cast<InvokeInst>(maybeReader)) {
-    Function *called = call->getCalledFunction();
-#if LLVM_VERSION_MAJOR >= 11
-    if (auto castinst = dyn_cast<ConstantExpr>(call->getCalledOperand()))
-#else
-    if (auto castinst = dyn_cast<ConstantExpr>(call->getCalledValue()))
-#endif
-    {
-      if (castinst->isCast()) {
-        if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-          called = fn;
-        }
-      }
-    }
+    Function *called = getFunctionFromCall(call);
     if (called && isCertainMallocOrFree(called)) {
       return false;
     }

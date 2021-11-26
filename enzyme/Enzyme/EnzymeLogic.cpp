@@ -61,6 +61,11 @@
 #include "LibraryFuncs.h"
 #include "Utils.h"
 
+#if LLVM_VERSION_MAJOR >= 14
+#define addAttribute addAttributeAtIndex
+#define removeAttribute removeAttributeAtIndex
+#endif
+
 using namespace llvm;
 
 extern "C" {
@@ -83,32 +88,64 @@ cl::opt<bool> cache_reads_never("enzyme-cache-never", cl::init(false),
 cl::opt<bool> nonmarkedglobals_inactiveloads(
     "enzyme_nonmarkedglobals_inactiveloads", cl::init(true), cl::Hidden,
     cl::desc("Consider loads of nonmarked globals to be inactive"));
+
+cl::opt<bool> EnzymeJuliaAddrLoad(
+    "enzyme-julia-addr-load", cl::init(false), cl::Hidden,
+    cl::desc("Mark all loads resulting in an addr(13)* to be legal to redo"));
 }
 
-bool is_load_uncacheable(
-    LoadInst &li, AAResults &AA, Function *oldFunc, TargetLibraryInfo &TLI,
-    const SmallPtrSetImpl<const Instruction *> &unnecessaryInstructions,
-    const std::map<Argument *, bool> &uncacheable_args, DerivativeMode mode);
-
 struct CacheAnalysis {
+
+  const ValueMap<const CallInst *, SmallPtrSet<const CallInst *, 1>>
+      &allocationsWithGuaranteedFree;
+  TypeResults &TR;
   AAResults &AA;
   Function *oldFunc;
   ScalarEvolution &SE;
   LoopInfo &OrigLI;
-  DominatorTree &DT;
+  DominatorTree &OrigDT;
   TargetLibraryInfo &TLI;
   const SmallPtrSetImpl<const Instruction *> &unnecessaryInstructions;
   const std::map<Argument *, bool> &uncacheable_args;
   DerivativeMode mode;
   std::map<Value *, bool> seen;
+  bool omp;
+  SmallVector<CallInst *, 0> kmpcCall;
   CacheAnalysis(
-      AAResults &AA, Function *oldFunc, ScalarEvolution &SE, LoopInfo &OrigLI,
-      DominatorTree &OrigDT, TargetLibraryInfo &TLI,
+      const ValueMap<const CallInst *, SmallPtrSet<const CallInst *, 1>>
+          &allocationsWithGuaranteedFree,
+      TypeResults &TR, AAResults &AA, Function *oldFunc, ScalarEvolution &SE,
+      LoopInfo &OrigLI, DominatorTree &OrigDT, TargetLibraryInfo &TLI,
       const SmallPtrSetImpl<const Instruction *> &unnecessaryInstructions,
-      const std::map<Argument *, bool> &uncacheable_args, DerivativeMode mode)
-      : AA(AA), oldFunc(oldFunc), SE(SE), OrigLI(OrigLI), DT(OrigDT), TLI(TLI),
-        unnecessaryInstructions(unnecessaryInstructions),
-        uncacheable_args(uncacheable_args), mode(mode) {}
+      const std::map<Argument *, bool> &uncacheable_args, DerivativeMode mode,
+      bool omp)
+      : allocationsWithGuaranteedFree(allocationsWithGuaranteedFree), TR(TR),
+        AA(AA), oldFunc(oldFunc), SE(SE), OrigLI(OrigLI), OrigDT(OrigDT),
+        TLI(TLI), unnecessaryInstructions(unnecessaryInstructions),
+        uncacheable_args(uncacheable_args), mode(mode), omp(omp) {
+
+    for (auto &BB : *oldFunc)
+      for (auto &I : BB)
+        if (auto CI = dyn_cast<CallInst>(&I)) {
+          if (auto F = CI->getCalledFunction()) {
+            if (F->getName() == "__kmpc_for_static_init_4" ||
+                F->getName() == "__kmpc_for_static_init_4u" ||
+                F->getName() == "__kmpc_for_static_init_8" ||
+                F->getName() == "__kmpc_for_static_init_8u") {
+              kmpcCall.push_back(CI);
+            }
+          }
+        }
+    if (kmpcCall.size() > 1) {
+      for (auto call : kmpcCall) {
+        EmitFailure("MultiOMPForInParallel", call->getDebugLoc(), call,
+                    " multiple OpenMP for loops within a single parallel not "
+                    "yet handled",
+                    *call);
+      }
+      llvm_unreachable("Unhandled OpenMP input");
+    }
+  }
 
   bool is_value_mustcache_from_origin(Value *obj) {
     if (seen.find(obj) != seen.end())
@@ -167,20 +204,13 @@ struct CacheAnalysis {
       // Pointer operands originating from call instructions that are not
       // malloc/free are conservatively considered uncacheable.
       if (auto obj_op = dyn_cast<CallInst>(obj)) {
-        Function *called = obj_op->getCalledFunction();
-#if LLVM_VERSION_MAJOR >= 11
-        if (auto castinst = dyn_cast<ConstantExpr>(obj_op->getCalledOperand()))
-#else
-        if (auto castinst = dyn_cast<ConstantExpr>(obj_op->getCalledValue()))
-#endif
-        {
-          if (castinst->isCast()) {
-            if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-              called = fn;
-            }
-          }
-        }
-        if (called && isCertainMallocOrFree(called)) {
+        // If this is a known allocation which is not captured or returned,
+        // a caller function cannot overwrite this (since it cannot access).
+        // Since we don't currently perform this check, we can instead check
+        // if the pointer has a guaranteed free (which is a weaker form of
+        // the required property).
+        if (allocationsWithGuaranteedFree.find(obj_op) !=
+            allocationsWithGuaranteedFree.end()) {
 
         } else {
           // OP is a non malloc/free call so we need to cache
@@ -190,28 +220,13 @@ struct CacheAnalysis {
                       *obj_op);
         }
       } else if (isa<AllocaInst>(obj)) {
-        // No change to modref if alloca
+        // No change to modref if alloca since the memory only exists in
+        // this function.
       } else if (auto GV = dyn_cast<GlobalVariable>(obj)) {
         // In the absense of more fine-grained global info, assume object is
-        // written to in a subseqent call unless this is "topLevel";
-        if (mode != DerivativeMode::ReverseModeCombined && !GV->isConstant()) {
+        // written to in a subseqent call unless this is known to be constant
+        if (!GV->isConstant()) {
           mustcache = true;
-        }
-      } else if (auto sli = dyn_cast<LoadInst>(obj)) {
-        // If obj is from a load instruction conservatively consider it
-        // uncacheable if that load itself cannot be cached
-        mustcache = is_load_uncacheable(*sli);
-        if (mustcache) {
-          EmitWarning("UncacheableOrigin", sli->getDebugLoc(), oldFunc,
-                      sli->getParent(), "origin load may need caching ", *sli);
-        }
-      } else if (auto EI = dyn_cast<ExtractValueInst>(obj)) {
-        if (is_value_mustcache_from_origin(EI->getAggregateOperand())) {
-          mustcache = true;
-          EmitWarning("UncacheableOrigin",
-                      cast<Instruction>(obj)->getDebugLoc(), oldFunc,
-                      cast<Instruction>(obj)->getParent(),
-                      "unknown EVI origin may need caching ", *obj);
         }
       } else {
         // In absence of more information, assume that the underlying object for
@@ -228,27 +243,45 @@ struct CacheAnalysis {
     return seen[obj] = mustcache;
   }
 
-  bool is_load_uncacheable(LoadInst &li) {
+  bool is_load_uncacheable(Instruction &li) {
     assert(li.getParent()->getParent() == oldFunc);
 
     auto Arch = llvm::Triple(oldFunc->getParent()->getTargetTriple()).getArch();
     if (Arch == Triple::amdgcn &&
-        cast<PointerType>(li.getPointerOperand()->getType())
-                ->getAddressSpace() == 4) {
+        cast<PointerType>(li.getOperand(0)->getType())->getAddressSpace() ==
+            4) {
       return false;
     }
+
+    if (EnzymeJuliaAddrLoad)
+      if (auto PT = dyn_cast<PointerType>(li.getType()))
+        if (PT->getAddressSpace() == 13)
+          return false;
 
     // Find the underlying object for the pointer operand of the load
     // instruction.
     auto obj =
 #if LLVM_VERSION_MAJOR >= 12
-        getUnderlyingObject(li.getPointerOperand(), 100);
+        getUnderlyingObject(li.getOperand(0), 100);
 #else
-        GetUnderlyingObject(li.getPointerOperand(),
+        GetUnderlyingObject(li.getOperand(0),
                             oldFunc->getParent()->getDataLayout(), 100);
 #endif
 
-    bool can_modref = is_value_mustcache_from_origin(obj);
+    // Openmp bound and local thread id are unchanging
+    // definitionally cacheable.
+    if (omp)
+      if (auto arg = dyn_cast<Argument>(obj)) {
+        if (arg->getArgNo() < 2) {
+          return false;
+        }
+      }
+
+    // If not running combined, check if pointer operand is overwritten
+    // by a subsequent call (i.e. not this function).
+    bool can_modref = false;
+    if (mode != DerivativeMode::ReverseModeCombined)
+      can_modref = is_value_mustcache_from_origin(obj);
 
     if (!can_modref) {
       allFollowersOf(&li, [&](Instruction *inst2) {
@@ -262,108 +295,77 @@ struct CacheAnalysis {
         if (!writesToMemoryReadBy(AA, &li, inst2)) {
           return false;
         }
+        if (auto CI = dyn_cast<CallInst>(inst2)) {
+          if (auto F = CI->getCalledFunction()) {
+            if (F->getName() == "__kmpc_for_static_fini") {
+              return false;
+            }
+          }
+        }
 
-        if (auto SI = dyn_cast<StoreInst>(inst2)) {
+        if (auto LI = dyn_cast<LoadInst>(&li))
+          if (auto SI = dyn_cast<StoreInst>(inst2)) {
 
-          const SCEV *LS = SE.getSCEV(li.getPointerOperand());
-          const SCEV *SS = SE.getSCEV(SI->getPointerOperand());
-          if (SS != SE.getCouldNotCompute()) {
+            const SCEV *LS = SE.getSCEV(LI->getPointerOperand());
+            const SCEV *SS = SE.getSCEV(SI->getPointerOperand());
+            if (SS != SE.getCouldNotCompute()) {
 
-            // llvm::errs() << *inst2 << " - " << li << "\n";
-            // llvm::errs() << *SS << " - " << *LS << "\n";
-            const auto &DL = li.getModule()->getDataLayout();
+              // llvm::errs() << *inst2 << " - " << li << "\n";
+              // llvm::errs() << *SS << " - " << *LS << "\n";
+              const auto &DL = li.getModule()->getDataLayout();
 
 #if LLVM_VERSION_MAJOR >= 10
-            auto TS = SE.getConstant(
-                APInt(64, DL.getTypeStoreSize(li.getType()).getFixedSize()));
+              auto TS = SE.getConstant(
+                  APInt(64, DL.getTypeStoreSize(li.getType()).getFixedSize()));
 #else
             auto TS = SE.getConstant(
                 APInt(64, DL.getTypeStoreSize(li.getType())));
 #endif
-            for (auto lim = LS; lim != SE.getCouldNotCompute();) {
-              // [start load, L+Size] [S, S+Size]
-              for (auto slim = SS; slim != SE.getCouldNotCompute();) {
-                bool check = true;
-                if (auto SExpr = dyn_cast<SCEVAddRecExpr>(slim)) {
-                  auto SH = SExpr->getLoop()->getHeader();
-                  if (auto LExpr = dyn_cast<SCEVAddRecExpr>(lim)) {
-                    auto LH = LExpr->getLoop()->getHeader();
-                    if (SH != LH && !DT.dominates(SH, LH) &&
-                        !DT.dominates(LH, SH)) {
-                      check = false;
+              for (auto lim = LS; lim != SE.getCouldNotCompute();) {
+                // [start load, L+Size] [S, S+Size]
+                for (auto slim = SS; slim != SE.getCouldNotCompute();) {
+                  bool check = true;
+                  if (auto SExpr = dyn_cast<SCEVAddRecExpr>(slim)) {
+                    auto SH = SExpr->getLoop()->getHeader();
+                    if (auto LExpr = dyn_cast<SCEVAddRecExpr>(lim)) {
+                      auto LH = LExpr->getLoop()->getHeader();
+                      if (SH != LH && !OrigDT.dominates(SH, LH) &&
+                          !OrigDT.dominates(LH, SH)) {
+                        check = false;
+                      }
                     }
                   }
-                }
 
-                if (check) {
-                  auto lsub = SE.getMinusSCEV(slim, SE.getAddExpr(lim, TS));
-                  if (SE.isKnownNonNegative(lsub)) {
-                    return false;
-                  }
-                }
-
-                if (auto arL = dyn_cast<SCEVAddRecExpr>(slim)) {
-                  if (SE.isKnownNonNegative(arL->getStepRecurrence(SE))) {
-                    slim = arL->getStart();
-                    continue;
-                  } else if (SE.isKnownNonPositive(
-                                 arL->getStepRecurrence(SE))) {
-#if LLVM_VERSION_MAJOR >= 12
-                    auto bd =
-                        SE.getSymbolicMaxBackedgeTakenCount(arL->getLoop());
-#else
-                    auto bd = SE.getBackedgeTakenCount(arL->getLoop());
-#endif
-                    if (bd == SE.getCouldNotCompute())
-                      break;
-                    slim = arL->evaluateAtIteration(bd, SE);
-                    continue;
-                  }
-                }
-                break;
-              }
-
-              if (auto arL = dyn_cast<SCEVAddRecExpr>(lim)) {
-                if (SE.isKnownNonNegative(arL->getStepRecurrence(SE))) {
-#if LLVM_VERSION_MAJOR >= 12
-                  auto bd = SE.getSymbolicMaxBackedgeTakenCount(arL->getLoop());
-#else
-                  auto bd = SE.getBackedgeTakenCount(arL->getLoop());
-#endif
-                  if (bd == SE.getCouldNotCompute())
-                    break;
-                  lim = arL->evaluateAtIteration(bd, SE);
-                  continue;
-                } else if (SE.isKnownNonPositive(arL->getStepRecurrence(SE))) {
-                  lim = arL->getStart();
-                  continue;
-                }
-              }
-              break;
-            }
-            for (auto lim = LS; lim != SE.getCouldNotCompute();) {
-              // [S, S+Size][start load, L+Size]
-              for (auto slim = SS; slim != SE.getCouldNotCompute();) {
-                bool check = true;
-                if (auto SExpr = dyn_cast<SCEVAddRecExpr>(slim)) {
-                  auto SH = SExpr->getLoop()->getHeader();
-                  if (auto LExpr = dyn_cast<SCEVAddRecExpr>(lim)) {
-                    auto LH = LExpr->getLoop()->getHeader();
-                    if (SH != LH && !DT.dominates(SH, LH) &&
-                        !DT.dominates(LH, SH)) {
-                      check = false;
+                  if (check) {
+                    auto lsub = SE.getMinusSCEV(slim, SE.getAddExpr(lim, TS));
+                    if (lsub != SE.getCouldNotCompute() &&
+                        SE.isKnownNonNegative(lsub)) {
+                      return false;
                     }
                   }
-                }
 
-                if (check) {
-                  auto lsub = SE.getMinusSCEV(lim, SE.getAddExpr(slim, TS));
-                  if (SE.isKnownNonNegative(lsub)) {
-                    return false;
+                  if (auto arL = dyn_cast<SCEVAddRecExpr>(slim)) {
+                    if (SE.isKnownNonNegative(arL->getStepRecurrence(SE))) {
+                      slim = arL->getStart();
+                      continue;
+                    } else if (SE.isKnownNonPositive(
+                                   arL->getStepRecurrence(SE))) {
+#if LLVM_VERSION_MAJOR >= 12
+                      auto bd =
+                          SE.getSymbolicMaxBackedgeTakenCount(arL->getLoop());
+#else
+                      auto bd = SE.getBackedgeTakenCount(arL->getLoop());
+#endif
+                      if (bd == SE.getCouldNotCompute())
+                        break;
+                      slim = arL->evaluateAtIteration(bd, SE);
+                      continue;
+                    }
                   }
+                  break;
                 }
 
-                if (auto arL = dyn_cast<SCEVAddRecExpr>(slim)) {
+                if (auto arL = dyn_cast<SCEVAddRecExpr>(lim)) {
                   if (SE.isKnownNonNegative(arL->getStepRecurrence(SE))) {
 #if LLVM_VERSION_MAJOR >= 12
                     auto bd =
@@ -373,37 +375,82 @@ struct CacheAnalysis {
 #endif
                     if (bd == SE.getCouldNotCompute())
                       break;
-                    slim = arL->evaluateAtIteration(bd, SE);
+                    lim = arL->evaluateAtIteration(bd, SE);
                     continue;
                   } else if (SE.isKnownNonPositive(
                                  arL->getStepRecurrence(SE))) {
-                    slim = arL->getStart();
+                    lim = arL->getStart();
                     continue;
                   }
                 }
                 break;
               }
+              for (auto lim = LS; lim != SE.getCouldNotCompute();) {
+                // [S, S+Size][start load, L+Size]
+                for (auto slim = SS; slim != SE.getCouldNotCompute();) {
+                  bool check = true;
+                  if (auto SExpr = dyn_cast<SCEVAddRecExpr>(slim)) {
+                    auto SH = SExpr->getLoop()->getHeader();
+                    if (auto LExpr = dyn_cast<SCEVAddRecExpr>(lim)) {
+                      auto LH = LExpr->getLoop()->getHeader();
+                      if (SH != LH && !OrigDT.dominates(SH, LH) &&
+                          !OrigDT.dominates(LH, SH)) {
+                        check = false;
+                      }
+                    }
+                  }
 
-              if (auto arL = dyn_cast<SCEVAddRecExpr>(lim)) {
-                if (SE.isKnownNonNegative(arL->getStepRecurrence(SE))) {
-                  lim = arL->getStart();
-                  continue;
-                } else if (SE.isKnownNonPositive(arL->getStepRecurrence(SE))) {
+                  if (check) {
+                    auto lsub = SE.getMinusSCEV(lim, SE.getAddExpr(slim, TS));
+                    if (lsub != SE.getCouldNotCompute() &&
+                        SE.isKnownNonNegative(lsub)) {
+                      return false;
+                    }
+                  }
+
+                  if (auto arL = dyn_cast<SCEVAddRecExpr>(slim)) {
+                    if (SE.isKnownNonNegative(arL->getStepRecurrence(SE))) {
 #if LLVM_VERSION_MAJOR >= 12
-                  auto bd = SE.getSymbolicMaxBackedgeTakenCount(arL->getLoop());
+                      auto bd =
+                          SE.getSymbolicMaxBackedgeTakenCount(arL->getLoop());
+#else
+                    auto bd = SE.getBackedgeTakenCount(arL->getLoop());
+#endif
+                      if (bd == SE.getCouldNotCompute())
+                        break;
+                      slim = arL->evaluateAtIteration(bd, SE);
+                      continue;
+                    } else if (SE.isKnownNonPositive(
+                                   arL->getStepRecurrence(SE))) {
+                      slim = arL->getStart();
+                      continue;
+                    }
+                  }
+                  break;
+                }
+
+                if (auto arL = dyn_cast<SCEVAddRecExpr>(lim)) {
+                  if (SE.isKnownNonNegative(arL->getStepRecurrence(SE))) {
+                    lim = arL->getStart();
+                    continue;
+                  } else if (SE.isKnownNonPositive(
+                                 arL->getStepRecurrence(SE))) {
+#if LLVM_VERSION_MAJOR >= 12
+                    auto bd =
+                        SE.getSymbolicMaxBackedgeTakenCount(arL->getLoop());
 #else
                   auto bd = SE.getBackedgeTakenCount(arL->getLoop());
 #endif
-                  if (bd == SE.getCouldNotCompute())
-                    break;
-                  lim = arL->evaluateAtIteration(bd, SE);
-                  continue;
+                    if (bd == SE.getCouldNotCompute())
+                      break;
+                    lim = arL->evaluateAtIteration(bd, SE);
+                    continue;
+                  }
                 }
+                break;
               }
-              break;
             }
           }
-        }
 
         if (auto II = dyn_cast<IntrinsicInst>(inst2)) {
           if (II->getIntrinsicID() == Intrinsic::nvvm_barrier0 ||
@@ -471,23 +518,53 @@ struct CacheAnalysis {
       if (auto op = dyn_cast<LoadInst>(inst)) {
         can_modref_map[inst] = is_load_uncacheable(*op);
       }
+      if (auto II = dyn_cast<IntrinsicInst>(inst)) {
+        switch (II->getIntrinsicID()) {
+        case Intrinsic::nvvm_ldu_global_i:
+        case Intrinsic::nvvm_ldu_global_p:
+        case Intrinsic::nvvm_ldu_global_f:
+        case Intrinsic::nvvm_ldg_global_i:
+        case Intrinsic::nvvm_ldg_global_p:
+        case Intrinsic::nvvm_ldg_global_f:
+          can_modref_map[inst] = false;
+          break;
+        case Intrinsic::masked_load:
+          can_modref_map[inst] = is_load_uncacheable(*II);
+          break;
+        default:
+          break;
+        }
+      }
     }
     return can_modref_map;
   }
 
   std::map<Argument *, bool>
   compute_uncacheable_args_for_one_callsite(CallInst *callsite_op) {
+    Function *Fn = getFunctionFromCall(callsite_op);
 
-    if (!callsite_op->getCalledFunction())
+    if (!Fn)
       return {};
 
-    if (isMemFreeLibMFunction(callsite_op->getCalledFunction()->getName())) {
+    if (isMemFreeLibMFunction(Fn->getName())) {
+      return {};
+    }
+
+    if (isCertainPrintMallocOrFree(Fn)) {
       return {};
     }
 
-    if (isCertainMallocOrFree(callsite_op->getCalledFunction())) {
+    if (Fn->getName().startswith("MPI_") ||
+        Fn->getName().startswith("enzyme_wrapmpi$$"))
+      return {};
+
+    if (Fn->getName() == "__kmpc_for_static_init_4" ||
+        Fn->getName() == "__kmpc_for_static_init_4u" ||
+        Fn->getName() == "__kmpc_for_static_init_8" ||
+        Fn->getName() == "__kmpc_for_static_init_8u") {
       return {};
     }
+
     std::vector<Value *> args;
     std::vector<bool> args_safe;
 
@@ -495,7 +572,12 @@ struct CacheAnalysis {
     // function to the callee.
     //   because memory location x modified after parent returns => x modified
     //   after callee returns.
-    for (unsigned i = 0; i < callsite_op->getNumArgOperands(); ++i) {
+#if LLVM_VERSION_MAJOR >= 14
+    for (unsigned i = 0; i < callsite_op->arg_size(); ++i)
+#else
+    for (unsigned i = 0; i < callsite_op->getNumArgOperands(); ++i)
+#endif
+    {
       args.push_back(callsite_op->getArgOperand(i));
 
 // If the UnderlyingObject is from one of this function's arguments, then we
@@ -510,6 +592,11 @@ struct CacheAnalysis {
 
       bool init_safe = !is_value_mustcache_from_origin(obj);
       if (!init_safe) {
+        auto CD = TR.query(obj)[{-1}];
+        if (CD == BaseType::Integer || CD.isFloat())
+          init_safe = true;
+      }
+      if (!init_safe && !isa<ConstantInt>(obj) && !isa<Function>(obj)) {
         EmitWarning("UncacheableOrigin", callsite_op->getDebugLoc(), oldFunc,
                     callsite_op->getParent(), "Callsite ", *callsite_op,
                     " arg ", i, " ", *callsite_op->getArgOperand(i),
@@ -524,23 +611,14 @@ struct CacheAnalysis {
     allFollowersOf(callsite_op, [&](Instruction *inst2) {
       // Don't consider modref from malloc/free as a need to cache
       if (auto obj_op = dyn_cast<CallInst>(inst2)) {
-        Function *called = obj_op->getCalledFunction();
-#if LLVM_VERSION_MAJOR >= 11
-        if (auto castinst = dyn_cast<ConstantExpr>(obj_op->getCalledOperand()))
-#else
-        if (auto castinst = dyn_cast<ConstantExpr>(obj_op->getCalledValue()))
-#endif
-        {
-          if (castinst->isCast()) {
-            if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-              called = fn;
-            }
-          }
-        }
-        if (called && isCertainMallocOrFree(called)) {
+        Function *called = getFunctionFromCall(obj_op);
+        if (called && isCertainPrintMallocOrFree(called)) {
           return false;
         }
         if (called && isMemFreeLibMFunction(called->getName())) {
+          return false;
+        }
+        if (called && called->getName() == "__kmpc_for_static_fini") {
           return false;
         }
 
@@ -562,12 +640,19 @@ struct CacheAnalysis {
         return false;
 
       for (unsigned i = 0; i < args.size(); ++i) {
+        if (!args_safe[i])
+          continue;
+        auto CD = TR.query(args[i])[{-1}];
+        if (CD == BaseType::Integer || CD.isFloat())
+          continue;
+
         if (llvm::isModSet(AA.getModRefInfo(
                 inst2, MemoryLocation::getForArgument(callsite_op, i, TLI)))) {
-          EmitWarning("UncacheableArg", callsite_op->getDebugLoc(), oldFunc,
-                      callsite_op->getParent(), "Callsite ", *callsite_op,
-                      " arg ", i, " ", *callsite_op->getArgOperand(i),
-                      " uncacheable due to ", *inst2);
+          if (!isa<ConstantInt>(callsite_op->getArgOperand(i)))
+            EmitWarning("UncacheableArg", callsite_op->getDebugLoc(), oldFunc,
+                        callsite_op->getParent(), "Callsite ", *callsite_op,
+                        " arg ", i, " ", *callsite_op->getArgOperand(i),
+                        " uncacheable due to ", *inst2);
           args_safe[i] = false;
         }
       }
@@ -576,11 +661,11 @@ struct CacheAnalysis {
 
     std::map<Argument *, bool> uncacheable_args;
 
-    auto arg = callsite_op->getCalledFunction()->arg_begin();
+    auto arg = Fn->arg_begin();
     for (unsigned i = 0; i < args.size(); ++i) {
       uncacheable_args[arg] = !args_safe[i];
       ++arg;
-      if (arg == callsite_op->getCalledFunction()->arg_end()) {
+      if (arg == Fn->arg_end()) {
         break;
       }
     }
@@ -604,8 +689,9 @@ struct CacheAnalysis {
 
         // We do not need uncacheable args for intrinsic functions. So skip such
         // callsites.
-        if (isa<IntrinsicInst>(&inst)) {
-          continue;
+        if (auto II = dyn_cast<IntrinsicInst>(&inst)) {
+          if (!II->getCalledFunction()->getName().startswith("llvm.julia"))
+            continue;
         }
 
         // For all other calls, we compute the uncacheable args for this
@@ -627,10 +713,28 @@ void calculateUnusedValuesInFunction(
     const std::vector<DIFFE_TYPE> &constant_args,
     const llvm::SmallPtrSetImpl<BasicBlock *> &oldUnreachable) {
   std::map<UsageKey, bool> PrimalSeen;
-  if (mode == DerivativeMode::ReverseModeGradient)
-    for (auto I : gutils->unnecessaryIntermediates) {
-      PrimalSeen[UsageKey(I, ValueType::Primal)] = false;
+  if (mode == DerivativeMode::ReverseModeGradient) {
+    for (auto pair : gutils->knownRecomputeHeuristic) {
+      if (!pair.second)
+        PrimalSeen[UsageKey(pair.first, ValueType::Primal)] = false;
     }
+  }
+
+  for (const auto &pair : gutils->allocationsWithGuaranteedFree) {
+    if (pair.second.size() == 0)
+      continue;
+
+    bool primalNeededInReverse = is_value_needed_in_reverse<ValueType::Primal>(
+        TR, gutils, pair.first, mode, PrimalSeen, oldUnreachable);
+
+    for (auto freeCall : pair.second) {
+      if (!primalNeededInReverse)
+        gutils->forwardDeallocations.insert(freeCall);
+      else
+        gutils->postDominatingFrees.insert(freeCall);
+    }
+  }
+
   calculateUnusedValues(
       func, unnecessaryValues, unnecessaryInstructions, returnValue,
       [&](const Value *val) {
@@ -722,21 +826,12 @@ void calculateUnusedValuesInFunction(
 
         bool isLibMFn = false;
         if (auto obj_op = dyn_cast<CallInst>(inst)) {
-          Function *called = obj_op->getCalledFunction();
-#if LLVM_VERSION_MAJOR >= 11
-          if (auto castinst =
-                  dyn_cast<ConstantExpr>(obj_op->getCalledOperand())) {
-#else
-          if (auto castinst =
-                  dyn_cast<ConstantExpr>(obj_op->getCalledValue())) {
-#endif
-            if (castinst->isCast()) {
-              if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-                called = fn;
-              }
-            }
-          }
+          Function *called = getFunctionFromCall((CallInst *)obj_op);
           if (called && isDeallocationFunction(*called, TLI)) {
+            if ((mode == DerivativeMode::ReverseModePrimal ||
+                 mode == DerivativeMode::ReverseModeCombined) &&
+                gutils->forwardDeallocations.count(obj_op))
+              return UseReq::Need;
             return UseReq::Recur;
           }
           Intrinsic::ID ID = Intrinsic::not_intrinsic;
@@ -816,7 +911,7 @@ void calculateUnusedValuesInFunction(
         return UseReq::Recur;
       });
 #if 0
-  llvm::errs() << "unnecessaryValues of " << func.getName() << ":\n";
+  llvm::errs() << "unnecessaryValues of " << func.getName() << ": mode=" << to_string(mode) << "\n";
   for (auto a : unnecessaryValues) {
     llvm::errs() << *a << "\n";
   }
@@ -983,7 +1078,12 @@ bool shouldAugmentCall(CallInst *op, const GradientUtils *gutils,
   if (!called || called->empty())
     modifyPrimal = true;
 
-  for (unsigned i = 0; i < op->getNumArgOperands(); ++i) {
+#if LLVM_VERSION_MAJOR >= 14
+  for (unsigned i = 0; i < op->arg_size(); ++i)
+#else
+  for (unsigned i = 0; i < op->getNumArgOperands(); ++i)
+#endif
+  {
     if (gutils->isConstantValue(op->getArgOperand(i)) && called &&
         !called->empty()) {
       continue;
@@ -1058,18 +1158,26 @@ bool legalCombinedForwardReverse(
   Value *calledValue = origop->getCalledValue();
 #endif
 
-  if (origop->getNumUses() != 0 && isa<PointerType>(origop->getType())) {
-    if (EnzymePrintPerf) {
-      if (called)
-        llvm::errs()
-            << " [not implemented] pointer return for combined forward/reverse "
-            << called->getName() << "\n";
-      else
-        llvm::errs()
-            << " [not implemented] pointer return for combined forward/reverse "
-            << *calledValue << "\n";
+  if (isa<PointerType>(origop->getType())) {
+    bool sret = subretused;
+    if (!sret && !gutils->isConstantValue(origop)) {
+      sret = is_value_needed_in_reverse<ValueType::ShadowPtr>(
+          TR, gutils, origop, gutils->mode, oldUnreachable);
     }
-    return false;
+
+    if (sret) {
+      if (EnzymePrintPerf) {
+        if (called)
+          llvm::errs() << " [not implemented] pointer return for combined "
+                          "forward/reverse "
+                       << called->getName() << "\n";
+        else
+          llvm::errs() << " [not implemented] pointer return for combined "
+                          "forward/reverse "
+                       << *calledValue << "\n";
+      }
+      return false;
+    }
   }
 
   // Check any users of the returned value and determine all values that would
@@ -1087,7 +1195,7 @@ bool legalCombinedForwardReverse(
     // (unless this is the original function)
     if (usetree.count(I))
       return;
-    if (!TR.isBlockAnalyzed(I->getParent()))
+    if (gutils->notForAnalysis.count(I->getParent()))
       return;
     if (auto ri = dyn_cast<ReturnInst>(I)) {
       auto find = replacedReturns.find(ri);
@@ -1104,7 +1212,7 @@ bool legalCombinedForwardReverse(
           llvm::errs() << " [bi] failed to replace function "
                        << (called->getName()) << " due to " << *I << "\n";
         else
-          llvm::errs() << " [bi] ailed to replace function " << (*calledValue)
+          llvm::errs() << " [bi] failed to replace function " << (*calledValue)
                        << " due to " << *I << "\n";
       }
       return;
@@ -1121,19 +1229,9 @@ bool legalCombinedForwardReverse(
     }
 
     if (auto op = dyn_cast<CallInst>(I)) {
-      Function *called = op->getCalledFunction();
-
-      if (auto castinst = dyn_cast<ConstantExpr>(calledValue)) {
-        if (castinst->isCast()) {
-          if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-            if (isAllocationFunction(*fn, gutils->TLI) ||
-                isDeallocationFunction(*fn, gutils->TLI)) {
-              return;
-            }
-          }
-        }
-      }
-      if (called && isDeallocationFunction(*called, gutils->TLI))
+      Function *called = getFunctionFromCall(op);
+      if (called && (isAllocationFunction(*called, gutils->TLI) ||
+                     isDeallocationFunction(*called, gutils->TLI)))
         return;
     }
 
@@ -1149,7 +1247,7 @@ bool legalCombinedForwardReverse(
           llvm::errs() << " [phi] failed to replace function "
                        << (called->getName()) << " due to " << *I << "\n";
         else
-          llvm::errs() << " [phi] ailed to replace function " << (*calledValue)
+          llvm::errs() << " [phi] failed to replace function " << (*calledValue)
                        << " due to " << *I << "\n";
       }
       return;
@@ -1163,7 +1261,7 @@ bool legalCombinedForwardReverse(
           llvm::errs() << " [nv] failed to replace function "
                        << (called->getName()) << " due to " << *I << "\n";
         else
-          llvm::errs() << " [nv] ailed to replace function " << (*calledValue)
+          llvm::errs() << " [nv] failed to replace function " << (*calledValue)
                        << " due to " << *I << "\n";
       }
       return;
@@ -1175,7 +1273,7 @@ bool legalCombinedForwardReverse(
           llvm::errs() << " [ci] failed to replace function "
                        << (called->getName()) << " due to " << *I << "\n";
         else
-          llvm::errs() << " [ci] ailed to replace function " << (*calledValue)
+          llvm::errs() << " [ci] failed to replace function " << (*calledValue)
                        << " due to " << *I << "\n";
       }
       return;
@@ -1192,8 +1290,8 @@ bool legalCombinedForwardReverse(
             llvm::errs() << " [am] failed to replace function "
                          << (called->getName()) << " due to " << *I << "\n";
           else
-            llvm::errs() << " [am] ailed to replace function " << (*calledValue)
-                         << " due to " << *I << "\n";
+            llvm::errs() << " [am] failed to replace function "
+                         << (*calledValue) << " due to " << *I << "\n";
         }
         return;
       }
@@ -1285,7 +1383,7 @@ bool legalCombinedForwardReverse(
             llvm::errs() << " [nonspec] failed to replace function "
                          << (called->getName()) << " due to " << *inst << "\n";
           else
-            llvm::errs() << " [nonspec] ailed to replace function "
+            llvm::errs() << " [nonspec] failed to replace function "
                          << (*calledValue) << " due to " << *inst << "\n";
         }
         legal = false;
@@ -1301,7 +1399,7 @@ bool legalCombinedForwardReverse(
           llvm::errs() << " [premove] failed to replace function "
                        << (called->getName()) << " due to " << *inst << "\n";
         else
-          llvm::errs() << " [premove] ailed to replace function "
+          llvm::errs() << " [premove] failed to replace function "
                        << (*calledValue) << " due to " << *inst << "\n";
       }
       // Early exit
@@ -1326,20 +1424,82 @@ bool legalCombinedForwardReverse(
   return true;
 }
 
-//! return structtype if recursive function
-const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
-    Function *todiff, DIFFE_TYPE retType,
-    const std::vector<DIFFE_TYPE> &constant_args, TargetLibraryInfo &TLI,
-    TypeAnalysis &TA, bool returnUsed, const FnTypeInfo &oldTypeInfo_,
-    const std::map<Argument *, bool> _uncacheable_args, bool forceAnonymousTape,
-    bool AtomicAdd, bool PostOpt, bool omp) {
-  if (returnUsed)
-    assert(!todiff->getReturnType()->isEmptyTy() &&
-           !todiff->getReturnType()->isVoidTy());
-  if (retType != DIFFE_TYPE::CONSTANT)
-    assert(!todiff->getReturnType()->isEmptyTy() &&
-           !todiff->getReturnType()->isVoidTy());
+void clearFunctionAttributes(Function *f) {
+  for (Argument &Arg : f->args()) {
+    if (Arg.hasAttribute(Attribute::Returned))
+      Arg.removeAttr(Attribute::Returned);
+    if (Arg.hasAttribute(Attribute::StructRet))
+      Arg.removeAttr(Attribute::StructRet);
+  }
+  if (f->hasFnAttribute(Attribute::OptimizeNone))
+    f->removeFnAttr(Attribute::OptimizeNone);
 
+#if LLVM_VERSION_MAJOR >= 14
+  if (auto bytes = f->getAttributes().getRetDereferenceableBytes())
+#else
+  if (auto bytes = f->getDereferenceableBytes(llvm::AttributeList::ReturnIndex))
+#endif
+  {
+    AttrBuilder ab;
+    ab.addDereferenceableAttr(bytes);
+#if LLVM_VERSION_MAJOR >= 14
+    f->removeRetAttrs(ab);
+#else
+    f->removeAttributes(llvm::AttributeList::ReturnIndex, ab);
+#endif
+  }
+
+  if (f->getAttributes().getRetAlignment()) {
+    AttrBuilder ab;
+    ab.addAlignmentAttr(f->getAttributes().getRetAlignment());
+#if LLVM_VERSION_MAJOR >= 14
+    f->removeRetAttrs(ab);
+#else
+    f->removeAttributes(llvm::AttributeList::ReturnIndex, ab);
+#endif
+  }
+  Attribute::AttrKind attrs[] = {
+#if LLVM_VERSION_MAJOR >= 11
+    Attribute::NoUndef,
+#endif
+    Attribute::NonNull,
+    Attribute::ZExt,
+    Attribute::NoAlias
+  };
+  for (auto attr : attrs) {
+#if LLVM_VERSION_MAJOR >= 14
+    if (f->hasRetAttribute(attr)) {
+      f->removeRetAttr(attr);
+    }
+#else
+    if (f->hasAttribute(llvm::AttributeList::ReturnIndex, attr)) {
+      f->removeAttribute(llvm::AttributeList::ReturnIndex, attr);
+    }
+#endif
+  }
+}
+
+void cleanupInversionAllocs(DiffeGradientUtils *gutils, BasicBlock *entry) {
+  while (gutils->inversionAllocs->size() > 0) {
+    Instruction *inst = &gutils->inversionAllocs->back();
+    if (isa<AllocaInst>(inst))
+      inst->moveBefore(&gutils->newFunc->getEntryBlock().front());
+    else
+      inst->moveBefore(entry->getFirstNonPHIOrDbgOrLifetime());
+  }
+
+  (IRBuilder<>(gutils->inversionAllocs)).CreateUnreachable();
+  DeleteDeadBlock(gutils->inversionAllocs);
+  for (auto BBs : gutils->reverseBlocks) {
+    if (pred_begin(BBs.second.front()) == pred_end(BBs.second.front())) {
+      (IRBuilder<>(BBs.second.front())).CreateUnreachable();
+      DeleteDeadBlock(BBs.second.front());
+    }
+  }
+}
+
+static FnTypeInfo preventTypeAnalysisLoops(const FnTypeInfo &oldTypeInfo_,
+                                           llvm::Function *todiff) {
   FnTypeInfo oldTypeInfo = oldTypeInfo_;
   for (auto &pair : oldTypeInfo.KnownValues) {
     if (pair.second.size() != 0) {
@@ -1359,10 +1519,30 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         if (recursiveUse)
           break;
       }
-      if (recursiveUse)
+      if (recursiveUse) {
         pair.second.clear();
+      }
     }
   }
+  return oldTypeInfo;
+}
+
+//! return structtype if recursive function
+const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
+    Function *todiff, DIFFE_TYPE retType,
+    const std::vector<DIFFE_TYPE> &constant_args, TargetLibraryInfo &TLI,
+    TypeAnalysis &TA, bool returnUsed, const FnTypeInfo &oldTypeInfo_,
+    const std::map<Argument *, bool> _uncacheable_args, bool forceAnonymousTape,
+    bool AtomicAdd, bool PostOpt, bool omp) {
+  if (returnUsed)
+    assert(!todiff->getReturnType()->isEmptyTy() &&
+           !todiff->getReturnType()->isVoidTy());
+  if (retType != DIFFE_TYPE::CONSTANT)
+    assert(!todiff->getReturnType()->isEmptyTy() &&
+           !todiff->getReturnType()->isVoidTy());
+
+  FnTypeInfo oldTypeInfo = preventTypeAnalysisLoops(oldTypeInfo_, todiff);
+
   assert(constant_args.size() == todiff->getFunctionType()->getNumParams());
   AugmentedCacheKey tup = std::make_tuple(
       todiff, retType, constant_args,
@@ -1375,15 +1555,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   }
 
   // TODO make default typing (not just constant)
-  bool hasconstant = false;
-  for (auto v : constant_args) {
-    if (v == DIFFE_TYPE::CONSTANT) {
-      hasconstant = true;
-      break;
-    }
-  }
 
-  if (!hasconstant && hasMetadata(todiff, "enzyme_augment")) {
+  if (hasMetadata(todiff, "enzyme_augment")) {
     auto md = todiff->getMetadata("enzyme_augment");
     if (!isa<MDTuple>(md)) {
       llvm::errs() << *todiff << "\n";
@@ -1391,11 +1564,99 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       report_fatal_error(
           "unknown augment for noninvertible function -- metadata incorrect");
     }
-
     auto md2 = cast<MDTuple>(md);
     assert(md2->getNumOperands() == 1);
     auto gvemd = cast<ConstantAsMetadata>(md2->getOperand(0));
     auto foundcalled = cast<Function>(gvemd->getValue());
+
+    bool hasconstant = false;
+    for (auto v : constant_args) {
+      if (v == DIFFE_TYPE::CONSTANT) {
+        hasconstant = true;
+        break;
+      }
+    }
+
+    if (hasconstant) {
+      EmitWarning("NoCustom", todiff->getEntryBlock().begin()->getDebugLoc(),
+                  todiff, &todiff->getEntryBlock(),
+                  "Massaging provided custom augmented forward pass to handle "
+                  "constant argumented");
+      SmallVector<Type *, 3> dupargs;
+      std::vector<DIFFE_TYPE> next_constant_args(constant_args);
+      {
+        auto OFT = todiff->getFunctionType();
+        for (size_t act_idx = 0; act_idx < constant_args.size(); act_idx++) {
+          dupargs.push_back(OFT->getParamType(act_idx));
+          switch (constant_args[act_idx]) {
+          case DIFFE_TYPE::OUT_DIFF:
+            break;
+          case DIFFE_TYPE::DUP_ARG:
+          case DIFFE_TYPE::DUP_NONEED:
+            dupargs.push_back(OFT->getParamType(act_idx));
+            break;
+          case DIFFE_TYPE::CONSTANT:
+            if (!OFT->getParamType(act_idx)->isFPOrFPVectorTy()) {
+              next_constant_args[act_idx] = DIFFE_TYPE::DUP_ARG;
+            } else {
+              next_constant_args[act_idx] = DIFFE_TYPE::OUT_DIFF;
+            }
+            break;
+          }
+        }
+      }
+      FunctionType *FTy =
+          FunctionType::get(foundcalled->getReturnType(), dupargs,
+                            todiff->getFunctionType()->isVarArg());
+      Function *NewF = Function::Create(
+          FTy, Function::LinkageTypes::InternalLinkage,
+          "fixaugment_" + todiff->getName(), todiff->getParent());
+
+      BasicBlock *BB = BasicBlock::Create(NewF->getContext(), "entry", NewF);
+      IRBuilder<> bb(BB);
+      auto arg = NewF->arg_begin();
+      SmallVector<Value *, 3> fwdargs;
+      int act_idx = 0;
+      while (arg != NewF->arg_end()) {
+        fwdargs.push_back(arg);
+        switch (constant_args[act_idx]) {
+        case DIFFE_TYPE::OUT_DIFF:
+          break;
+        case DIFFE_TYPE::DUP_ARG:
+        case DIFFE_TYPE::DUP_NONEED:
+          arg++;
+          fwdargs.push_back(arg);
+          break;
+        case DIFFE_TYPE::CONSTANT:
+          if (next_constant_args[act_idx] != DIFFE_TYPE::OUT_DIFF) {
+            fwdargs.push_back(arg);
+          }
+          break;
+        }
+        arg++;
+        act_idx++;
+      }
+      auto &aug =
+          CreateAugmentedPrimal(todiff, retType, next_constant_args, TLI, TA,
+                                returnUsed, oldTypeInfo_, _uncacheable_args,
+                                forceAnonymousTape, AtomicAdd, PostOpt, omp);
+      auto cal = bb.CreateCall(aug.fn, fwdargs);
+      cal->setCallingConv(aug.fn->getCallingConv());
+
+      if (NewF->getReturnType()->isEmptyTy())
+        bb.CreateRet(UndefValue::get(NewF->getReturnType()));
+      else if (NewF->getReturnType()->isVoidTy())
+        bb.CreateRetVoid();
+      else
+        bb.CreateRet(cal);
+
+      return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
+                 AugmentedCachedFunctions, tup,
+                 AugmentedReturn(NewF, aug.tapeType, aug.tapeIndices,
+                                 aug.returns, aug.uncacheable_args_map,
+                                 aug.can_modref_map))
+          ->second;
+    }
 
     if (foundcalled->getReturnType() == todiff->getReturnType()) {
       std::map<AugmentedStruct, int> returnMapping;
@@ -1461,9 +1722,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
   GradientUtils *gutils = GradientUtils::CreateFromClone(
       *this, todiff, TLI, TA, retType, constant_args,
-      /*returnUsed*/ returnUsed, returnMapping);
-  if (omp)
-    gutils->setupOMPFor();
+      /*returnUsed*/ returnUsed, returnMapping, omp);
   gutils->AtomicAdd = AtomicAdd;
   const SmallPtrSet<BasicBlock *, 4> guaranteedUnreachable =
       getGuaranteedUnreachable(gutils->oldFunc);
@@ -1475,32 +1734,16 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     auto in_arg = todiff->arg_begin();
     auto pp_arg = gutils->oldFunc->arg_begin();
     for (; pp_arg != gutils->oldFunc->arg_end();) {
+      if (_uncacheable_args.find(in_arg) == _uncacheable_args.end()) {
+        llvm::errs() << " todiff: " << *todiff << "\n";
+        llvm::errs() << " inargs: " << *in_arg << "\n";
+      }
       assert(_uncacheable_args.find(in_arg) != _uncacheable_args.end());
       _uncacheable_argsPP[pp_arg] = _uncacheable_args.find(in_arg)->second;
       ++pp_arg;
       ++in_arg;
     }
   }
-  // TODO actually populate unnecessaryInstructions with what can be
-  // derived without activity info
-  SmallPtrSet<const Instruction *, 4> unnecessaryInstructionsTmp;
-  for (auto BB : guaranteedUnreachable) {
-    for (auto &I : *BB)
-      unnecessaryInstructionsTmp.insert(&I);
-  }
-  CacheAnalysis CA(gutils->OrigAA, gutils->oldFunc,
-                   PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
-                   gutils->OrigLI, gutils->OrigDT, TLI,
-                   unnecessaryInstructionsTmp, _uncacheable_argsPP,
-                   DerivativeMode::ReverseModePrimal);
-  const std::map<CallInst *, const std::map<Argument *, bool>>
-      uncacheable_args_map = CA.compute_uncacheable_args_for_callsites();
-
-  const std::map<Instruction *, bool> can_modref_map =
-      CA.compute_uncacheable_load_map();
-  gutils->can_modref_map = &can_modref_map;
-
-  // gutils->forceContexts();
 
   FnTypeInfo typeInfo(gutils->oldFunc);
   {
@@ -1525,10 +1768,33 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     typeInfo.Return = oldTypeInfo.Return;
   }
   TypeResults TR = TA.analyzeFunction(typeInfo);
-  assert(TR.info.Function == gutils->oldFunc);
+  assert(TR.getFunction() == gutils->oldFunc);
+
   gutils->forceActiveDetection(TR);
 
   gutils->forceAugmentedReturns(TR, guaranteedUnreachable);
+
+  // TODO actually populate unnecessaryInstructions with what can be
+  // derived without activity info
+  SmallPtrSet<const Instruction *, 4> unnecessaryInstructionsTmp;
+  for (auto BB : guaranteedUnreachable) {
+    for (auto &I : *BB)
+      unnecessaryInstructionsTmp.insert(&I);
+  }
+  gutils->computeGuaranteedFrees(guaranteedUnreachable);
+
+  CacheAnalysis CA(gutils->allocationsWithGuaranteedFree, TR, gutils->OrigAA,
+                   gutils->oldFunc,
+                   PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
+                   gutils->OrigLI, gutils->OrigDT, TLI,
+                   unnecessaryInstructionsTmp, _uncacheable_argsPP,
+                   DerivativeMode::ReverseModePrimal, omp);
+  const std::map<CallInst *, const std::map<Argument *, bool>>
+      uncacheable_args_map = CA.compute_uncacheable_args_for_callsites();
+
+  const std::map<Instruction *, bool> can_modref_map =
+      CA.compute_uncacheable_load_map();
+  gutils->can_modref_map = &can_modref_map;
 
   gutils->computeMinCache(TR, guaranteedUnreachable);
 
@@ -1581,6 +1847,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
       auto newri = ib.CreateRet(rt);
       gutils->originalToNewFn[orig_ri] = newri;
+      gutils->newToOriginalFn.erase(ri);
+      gutils->newToOriginalFn[newri] = orig_ri;
       gutils->erase(ri);
     }
   }
@@ -1635,20 +1903,28 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     }
   }
 
-  for (const auto &m : gutils->knownRecomputeHeuristic) {
-    if (!m.second && !isa<LoadInst>(m.first) && !isa<CallInst>(m.first)) {
-      auto newi = gutils->getNewFromOriginal(m.first);
-      IRBuilder<> BuilderZ(cast<Instruction>(newi)->getNextNode());
-      if (isa<PHINode>(newi)) {
-        BuilderZ.SetInsertPoint(
-            cast<Instruction>(newi)->getParent()->getFirstNonPHI());
+  if (gutils->knownRecomputeHeuristic.size()) {
+    // Even though we could simply iterate through the heuristic map,
+    // we explicity iterate in order of the instructions to maintain
+    // a deterministic cache ordering.
+    for (auto &BB : *gutils->oldFunc)
+      for (auto &I : BB) {
+        auto found = gutils->knownRecomputeHeuristic.find(&I);
+        if (found != gutils->knownRecomputeHeuristic.end()) {
+          if (!found->second && !isa<CallInst>(&I)) {
+            auto newi = gutils->getNewFromOriginal(&I);
+            IRBuilder<> BuilderZ(cast<Instruction>(newi)->getNextNode());
+            if (isa<PHINode>(newi)) {
+              BuilderZ.SetInsertPoint(
+                  cast<Instruction>(newi)->getParent()->getFirstNonPHI());
+            }
+            gutils->cacheForReverse(BuilderZ, newi,
+                                    getIndex(&I, CacheType::Self));
+          }
+        }
       }
-      gutils->cacheForReverse(
-          BuilderZ, newi,
-          getIndex(cast<Instruction>(const_cast<Value *>(m.first)),
-                   CacheType::Self));
-    }
   }
+
   auto nf = gutils->newFunc;
 
   while (gutils->inversionAllocs->size() > 0) {
@@ -1669,33 +1945,52 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   if (gutils->newFunc->hasFnAttribute(Attribute::OptimizeNone))
     gutils->newFunc->removeFnAttr(Attribute::OptimizeNone);
 
+#if LLVM_VERSION_MAJOR >= 14
+  if (auto bytes =
+          gutils->newFunc->getAttributes().getRetDereferenceableBytes())
+#else
   if (auto bytes = gutils->newFunc->getDereferenceableBytes(
-          llvm::AttributeList::ReturnIndex)) {
+          llvm::AttributeList::ReturnIndex))
+#endif
+  {
     AttrBuilder ab;
     ab.addDereferenceableAttr(bytes);
+#if LLVM_VERSION_MAJOR >= 14
+    gutils->newFunc->removeRetAttrs(ab);
+#else
     gutils->newFunc->removeAttributes(llvm::AttributeList::ReturnIndex, ab);
+#endif
   }
 
   // TODO could keep nonnull if returning value -1
   if (gutils->newFunc->getAttributes().getRetAlignment()) {
     AttrBuilder ab;
     ab.addAlignmentAttr(gutils->newFunc->getAttributes().getRetAlignment());
+#if LLVM_VERSION_MAJOR >= 14
+    gutils->newFunc->removeRetAttrs(ab);
+#else
     gutils->newFunc->removeAttributes(llvm::AttributeList::ReturnIndex, ab);
+#endif
   }
-  if (gutils->newFunc->hasAttribute(llvm::AttributeList::ReturnIndex,
-                                    llvm::Attribute::NoAlias)) {
-    gutils->newFunc->removeAttribute(llvm::AttributeList::ReturnIndex,
-                                     llvm::Attribute::NoAlias);
-  }
-  if (gutils->newFunc->hasAttribute(llvm::AttributeList::ReturnIndex,
-                                    llvm::Attribute::NonNull)) {
-    gutils->newFunc->removeAttribute(llvm::AttributeList::ReturnIndex,
-                                     llvm::Attribute::NonNull);
-  }
-  if (gutils->newFunc->hasAttribute(llvm::AttributeList::ReturnIndex,
-                                    llvm::Attribute::ZExt)) {
-    gutils->newFunc->removeAttribute(llvm::AttributeList::ReturnIndex,
-                                     llvm::Attribute::ZExt);
+
+  llvm::Attribute::AttrKind attrs[] = {
+    llvm::Attribute::NoAlias,
+#if LLVM_VERSION_MAJOR >= 11
+    llvm::Attribute::NoUndef,
+#endif
+    llvm::Attribute::NonNull,
+    llvm::Attribute::ZExt,
+  };
+  for (auto attr : attrs) {
+#if LLVM_VERSION_MAJOR >= 14
+    if (gutils->newFunc->hasRetAttribute(attr)) {
+      gutils->newFunc->removeRetAttr(attr);
+    }
+#else
+    if (gutils->newFunc->hasAttribute(llvm::AttributeList::ReturnIndex, attr)) {
+      gutils->newFunc->removeAttribute(llvm::AttributeList::ReturnIndex, attr);
+    }
+#endif
   }
 
   //! Keep track of inverted pointers we may need to return
@@ -1867,12 +2162,25 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         malloccall =
             cast<CallInst>(cast<Instruction>(tapeMemory)->getOperand(0));
       }
-      malloccall->addAttribute(AttributeList::ReturnIndex, Attribute::NoAlias);
-      malloccall->addAttribute(AttributeList::ReturnIndex, Attribute::NonNull);
+      for (auto attr : {Attribute::NoAlias, Attribute::NonNull}) {
+#if LLVM_VERSION_MAJOR >= 14
+        malloccall->addRetAttr(attr);
+#else
+        malloccall->addAttribute(AttributeList::ReturnIndex, attr);
+#endif
+      }
+#if LLVM_VERSION_MAJOR >= 14
+      malloccall->addDereferenceableRetAttr(size->getLimitedValue());
+      AttrBuilder B;
+      B.addDereferenceableOrNullAttr(size->getLimitedValue());
+      malloccall->setAttributes(malloccall->getAttributes().addRetAttributes(
+          malloccall->getContext(), B));
+#else
       malloccall->addDereferenceableAttr(llvm::AttributeList::ReturnIndex,
                                          size->getLimitedValue());
       malloccall->addDereferenceableOrNullAttr(llvm::AttributeList::ReturnIndex,
                                                size->getLimitedValue());
+#endif
       std::vector<Value *> Idxs = {
           ib.getInt32(0),
           ib.getInt32(returnMapping.find(AugmentedStruct::Tape)->second),
@@ -1981,35 +2289,11 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         ib.CreateRetVoid();
       else
         ib.CreateRet(ib.CreateLoad(ret));
-      gutils->erase(cast<Instruction>(VMap[ri]));
+      cast<Instruction>(VMap[ri])->eraseFromParent();
     }
   }
 
-  for (Argument &Arg : NewF->args()) {
-    if (Arg.hasAttribute(Attribute::Returned))
-      Arg.removeAttr(Attribute::Returned);
-    if (Arg.hasAttribute(Attribute::StructRet))
-      Arg.removeAttr(Attribute::StructRet);
-  }
-  if (NewF->hasFnAttribute(Attribute::OptimizeNone))
-    NewF->removeFnAttr(Attribute::OptimizeNone);
-
-  if (auto bytes =
-          NewF->getDereferenceableBytes(llvm::AttributeList::ReturnIndex)) {
-    AttrBuilder ab;
-    ab.addDereferenceableAttr(bytes);
-    NewF->removeAttributes(llvm::AttributeList::ReturnIndex, ab);
-  }
-  if (NewF->hasAttribute(llvm::AttributeList::ReturnIndex,
-                         llvm::Attribute::NoAlias)) {
-    NewF->removeAttribute(llvm::AttributeList::ReturnIndex,
-                          llvm::Attribute::NoAlias);
-  }
-  if (NewF->hasAttribute(llvm::AttributeList::ReturnIndex,
-                         llvm::Attribute::ZExt)) {
-    NewF->removeAttribute(llvm::AttributeList::ReturnIndex,
-                          llvm::Attribute::ZExt);
-  }
+  clearFunctionAttributes(NewF);
 
   if (llvm::verifyFunction(*NewF, &llvm::errs())) {
     llvm::errs() << *gutils->oldFunc << "\n";
@@ -2054,11 +2338,10 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       user->setCalledFunction(NewF);
     }
   }
+  PPC.AlwaysInline(NewF);
   auto Arch = llvm::Triple(NewF->getParent()->getTargetTriple()).getArch();
   if (Arch == Triple::nvptx || Arch == Triple::nvptx64)
     PPC.ReplaceReallocs(NewF, /*mem2reg*/ true);
-  if (PostOpt)
-    PPC.optimizeIntermediate(NewF);
 
   AugmentedCachedFunctions.find(tup)->second.fn = NewF;
   if (recursive || (omp && !noTape))
@@ -2069,18 +2352,20 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     PreservedAnalyses PA;
     PPC.FAM.invalidate(*gutils->newFunc, PA);
   }
-  gutils->newFunc->eraseFromParent();
 
+  Function *tempFunc = gutils->newFunc;
   delete gutils;
+  tempFunc->eraseFromParent();
+
+  if (PostOpt)
+    PPC.optimizeIntermediate(NewF);
   if (EnzymePrint)
     llvm::errs() << *NewF << "\n";
   return AugmentedCachedFunctions.find(tup)->second;
 }
 
-void createTerminator(DiffeGradientUtils *gutils,
-                      const std::vector<DIFFE_TYPE> &argTypes, BasicBlock *oBB,
-                      AllocaInst *retAlloca, AllocaInst *dretAlloca,
-                      DIFFE_TYPE retType) {
+void createTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
+                      BasicBlock *oBB, DIFFE_TYPE retType, ReturnType retVal) {
 
   BasicBlock *nBB = cast<BasicBlock>(gutils->getNewFromOriginal(oBB));
   assert(nBB);
@@ -2088,41 +2373,60 @@ void createTerminator(DiffeGradientUtils *gutils,
   nBuilder.setFastMathFlags(getFast());
 
   if (ReturnInst *inst = dyn_cast_or_null<ReturnInst>(oBB->getTerminator())) {
-    SmallVector<Value *, 4> retargs;
-
-    if (retAlloca) {
-      auto result = nBuilder.CreateLoad(retAlloca, "retreload");
-      // TODO reintroduce invariant load/group
-      // result->setMetadata(LLVMContext::MD_invariant_load,
-      // MDNode::get(retAlloca->getContext(), {}));
-      retargs.push_back(result);
-    }
-
-    if (dretAlloca) {
-      auto result = nBuilder.CreateLoad(dretAlloca, "dretreload");
-      // TODO reintroduce invariant load/group
-      // result->setMetadata(LLVMContext::MD_invariant_load,
-      // MDNode::get(dretAlloca->getContext(), {}));
-      retargs.push_back(result);
-    }
-
-    if (gutils->newFunc->getReturnType()->isVoidTy()) {
-      assert(retargs.size() == 0);
-      return;
-    }
-
-    auto retVal = inst->getOperand(0);
-
-    if (gutils->isConstantValue(retVal)) {
-      retargs.push_back(ConstantFP::get(retVal->getType(), 0.0));
-    } else {
-      retargs.push_back(gutils->diffe(retVal, nBuilder));
-    }
+    SmallVector<Value *, 2> retargs;
 
     Value *toret = UndefValue::get(gutils->newFunc->getReturnType());
-    for (unsigned i = 0; i < retargs.size(); ++i) {
-      unsigned idx[] = {i};
-      toret = nBuilder.CreateInsertValue(toret, retargs[i], idx);
+
+    switch (retVal) {
+    case ReturnType::Return: {
+      auto ret = inst->getOperand(0);
+
+      if (retType == DIFFE_TYPE::CONSTANT) {
+        toret = gutils->getNewFromOriginal(ret);
+      } else if (!ret->getType()->isFPOrFPVectorTy() &&
+                 TR.getReturnAnalysis().Inner0().isPossiblePointer()) {
+        toret = gutils->invertPointerM(ret, nBuilder);
+      } else if (!gutils->isConstantValue(ret)) {
+        toret = gutils->diffe(ret, nBuilder);
+      } else {
+        toret = Constant::getNullValue(ret->getType());
+      }
+
+      break;
+    }
+    case ReturnType::TwoReturns: {
+      if (retType == DIFFE_TYPE::CONSTANT)
+        assert(false && "Invalid return type");
+      auto ret = inst->getOperand(0);
+
+      toret =
+          nBuilder.CreateInsertValue(toret, gutils->getNewFromOriginal(ret), 0);
+
+      if (!ret->getType()->isFPOrFPVectorTy() &&
+          TR.getReturnAnalysis().Inner0().isPossiblePointer()) {
+        toret = nBuilder.CreateInsertValue(
+            toret, gutils->invertPointerM(ret, nBuilder), 1);
+      } else if (!gutils->isConstantValue(ret)) {
+        toret =
+            nBuilder.CreateInsertValue(toret, gutils->diffe(ret, nBuilder), 1);
+      } else {
+        toret = nBuilder.CreateInsertValue(
+            toret, Constant::getNullValue(ret->getType()), 1);
+      }
+      break;
+    }
+    case ReturnType::Void: {
+      gutils->erase(gutils->getNewFromOriginal(inst));
+      nBuilder.CreateRetVoid();
+      return;
+    }
+    default: {
+      llvm::errs() << "Invalid return type: " << to_string(retVal)
+                   << "for function: \n"
+                   << gutils->newFunc << "\n";
+      assert(false && "Invalid return type for function");
+      return;
+    }
     }
 
     gutils->erase(gutils->getNewFromOriginal(inst));
@@ -2500,73 +2804,139 @@ void createInvertedTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
 }
 
 Function *EnzymeLogic::CreatePrimalAndGradient(
-    Function *todiff, DIFFE_TYPE retType,
-    const std::vector<DIFFE_TYPE> &constant_args, TargetLibraryInfo &TLI,
-    TypeAnalysis &TA, bool returnUsed, bool dretPtr, DerivativeMode mode,
-    llvm::Type *additionalArg, const FnTypeInfo &oldTypeInfo_,
-    const std::map<Argument *, bool> _uncacheable_args,
-    const AugmentedReturn *augmenteddata, bool AtomicAdd, bool PostOpt,
-    bool omp) {
+    const ReverseCacheKey &&key, TargetLibraryInfo &TLI, TypeAnalysis &TA,
+    const AugmentedReturn *augmenteddata, bool PostOpt, bool omp) {
 
-  assert(mode == DerivativeMode::ReverseModeCombined ||
-         mode == DerivativeMode::ReverseModeGradient ||
-         mode == DerivativeMode::ForwardMode);
+  assert(key.mode == DerivativeMode::ReverseModeCombined ||
+         key.mode == DerivativeMode::ReverseModeGradient);
 
-  FnTypeInfo oldTypeInfo = oldTypeInfo_;
-  for (auto &pair : oldTypeInfo.KnownValues) {
-    if (pair.second.size() != 0) {
-      bool recursiveUse = false;
-      for (auto user : pair.first->users()) {
-        if (auto bi = dyn_cast<BinaryOperator>(user)) {
-          for (auto biuser : bi->users()) {
-            if (auto ci = dyn_cast<CallInst>(biuser)) {
-              if (ci->getCalledFunction() == todiff &&
-                  ci->getArgOperand(pair.first->getArgNo()) == bi) {
-                recursiveUse = true;
-                break;
-              }
-            }
-          }
-        }
-        if (recursiveUse)
-          break;
-      }
-      if (recursiveUse) {
-        pair.second.clear();
-      }
-    }
+  FnTypeInfo oldTypeInfo = preventTypeAnalysisLoops(key.typeInfo, key.todiff);
+
+  if (key.retType != DIFFE_TYPE::CONSTANT)
+    assert(!key.todiff->getReturnType()->isVoidTy());
+  if (ReverseCachedFunctions.find(key) != ReverseCachedFunctions.end()) {
+    return ReverseCachedFunctions.find(key)->second;
   }
 
-  if (retType != DIFFE_TYPE::CONSTANT)
-    assert(!todiff->getReturnType()->isVoidTy());
-
-  ReverseCacheKey tup =
-      std::make_tuple(todiff, retType, constant_args,
-                      std::map<Argument *, bool>(_uncacheable_args.begin(),
-                                                 _uncacheable_args.end()),
-                      returnUsed, dretPtr, mode, additionalArg, oldTypeInfo);
-  if (ReverseCachedFunctions.find(tup) != ReverseCachedFunctions.end()) {
-    return ReverseCachedFunctions.find(tup)->second;
-  }
-
-  // Whether we shuold actually return the value
-  bool returnValue = returnUsed && mode == DerivativeMode::ReverseModeCombined;
+  if (key.returnUsed)
+    assert(key.mode == DerivativeMode::ReverseModeCombined);
 
   // TODO change this to go by default function type assumptions
   bool hasconstant = false;
-  for (auto v : constant_args) {
+  for (auto v : key.constant_args) {
     if (v == DIFFE_TYPE::CONSTANT) {
       hasconstant = true;
       break;
     }
   }
 
-  if (!hasconstant && mode != DerivativeMode::ReverseModeCombined &&
-      !returnValue && hasMetadata(todiff, "enzyme_gradient")) {
+  if (hasMetadata(key.todiff, "enzyme_gradient")) {
 
-    auto md = todiff->getMetadata("enzyme_gradient");
+    DIFFE_TYPE subretType = key.todiff->getReturnType()->isFPOrFPVectorTy()
+                                ? DIFFE_TYPE::OUT_DIFF
+                                : DIFFE_TYPE::DUP_ARG;
+    if (key.todiff->getReturnType()->isVoidTy() ||
+        key.todiff->getReturnType()->isEmptyTy())
+      subretType = DIFFE_TYPE::CONSTANT;
+    assert(subretType == key.retType);
+
+    auto res = getDefaultFunctionTypeForGradient(key.todiff->getFunctionType(),
+                                                 /*retType*/ key.retType);
+
+    if (key.mode == DerivativeMode::ReverseModeCombined) {
+
+      Type *FRetTy =
+          res.second.empty()
+              ? Type::getVoidTy(key.todiff->getContext())
+              : StructType::get(key.todiff->getContext(), {res.second});
+
+      FunctionType *FTy = FunctionType::get(
+          FRetTy, res.first, key.todiff->getFunctionType()->isVarArg());
+
+      Function *NewF = Function::Create(
+          FTy, Function::LinkageTypes::InternalLinkage,
+          "fixgradient_" + key.todiff->getName(), key.todiff->getParent());
+
+      BasicBlock *BB = BasicBlock::Create(NewF->getContext(), "entry", NewF);
+      IRBuilder<> bb(BB);
+
+      auto &aug = CreateAugmentedPrimal(
+          key.todiff, key.retType, key.constant_args, TLI, TA, key.returnUsed,
+          key.typeInfo, key.uncacheable_args, /*forceAnonymousTape*/ false,
+          key.AtomicAdd, PostOpt, omp);
+
+      SmallVector<Value *, 4> fwdargs;
+      for (auto &a : NewF->args())
+        fwdargs.push_back(&a);
+      if (key.retType == DIFFE_TYPE::OUT_DIFF)
+        fwdargs.pop_back();
+      auto cal = bb.CreateCall(aug.fn, fwdargs);
+      cal->setCallingConv(aug.fn->getCallingConv());
+
+      llvm::Value *tape = nullptr;
+
+      if (aug.returns.find(AugmentedStruct::Tape) != aug.returns.end()) {
+        auto tapeIdx = aug.returns.find(AugmentedStruct::Tape)->second;
+        tape = (tapeIdx == -1) ? cal : bb.CreateExtractValue(cal, tapeIdx);
+      }
+
+      if (aug.tapeType) {
+        assert(tape);
+        auto tapep =
+            bb.CreatePointerCast(tape, PointerType::getUnqual(aug.tapeType));
+        auto truetape = bb.CreateLoad(tapep, "tapeld");
+        truetape->setMetadata("enzyme_mustcache",
+                              MDNode::get(truetape->getContext(), {}));
+
+        if (key.freeMemory) {
+          CallInst *ci = cast<CallInst>(CallInst::CreateFree(tape, BB));
+          bb.Insert(ci);
+          ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+        }
+        tape = truetape;
+      }
+
+      auto revfn = CreatePrimalAndGradient(
+          (ReverseCacheKey){.todiff = key.todiff,
+                            .retType = key.retType,
+                            .constant_args = key.constant_args,
+                            .uncacheable_args = key.uncacheable_args,
+                            .returnUsed = false,
+                            .shadowReturnUsed = false,
+                            .mode = DerivativeMode::ReverseModeGradient,
+                            .freeMemory = key.freeMemory,
+                            .AtomicAdd = key.AtomicAdd,
+                            .additionalType = tape ? tape->getType() : nullptr,
+                            .typeInfo = key.typeInfo},
+          TLI, TA, &aug, PostOpt, omp);
+
+      SmallVector<Value *, 4> revargs;
+      for (auto &a : NewF->args()) {
+        revargs.push_back(&a);
+      }
+      if (tape) {
+        revargs.push_back(tape);
+      }
+      auto revcal = bb.CreateCall(revfn, revargs);
+      revcal->setCallingConv(revfn->getCallingConv());
+
+      if (NewF->getReturnType()->isEmptyTy()) {
+        bb.CreateRet(UndefValue::get(NewF->getReturnType()));
+      } else if (NewF->getReturnType()->isVoidTy()) {
+        bb.CreateRetVoid();
+      } else {
+        bb.CreateRet(revcal);
+      }
+      assert(!key.returnUsed);
+
+      return insert_or_assign2<ReverseCacheKey, Function *>(
+                 ReverseCachedFunctions, key, NewF)
+          ->second;
+    }
+
+    auto md = key.todiff->getMetadata("enzyme_gradient");
     if (!isa<MDTuple>(md)) {
-      llvm::errs() << *todiff << "\n";
+      llvm::errs() << *key.todiff << "\n";
       llvm::errs() << *md << "\n";
       report_fatal_error(
           "unknown gradient for noninvertible function -- metadata incorrect");
@@ -2576,116 +2946,216 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     auto gvemd = cast<ConstantAsMetadata>(md2->getOperand(0));
     auto foundcalled = cast<Function>(gvemd->getValue());
 
-    DIFFE_TYPE subretType = todiff->getReturnType()->isFPOrFPVectorTy()
-                                ? DIFFE_TYPE::OUT_DIFF
-                                : DIFFE_TYPE::DUP_ARG;
-    if (todiff->getReturnType()->isVoidTy() ||
-        todiff->getReturnType()->isEmptyTy())
-      subretType = DIFFE_TYPE::CONSTANT;
-    auto res = getDefaultFunctionTypeForGradient(todiff->getFunctionType(),
-                                                 /*retType*/ subretType);
-    assert(augmenteddata);
-    if (foundcalled->arg_size() == res.first.size() + 1 /*tape*/) {
-      auto lastarg = foundcalled->arg_end();
-      lastarg--;
-      res.first.push_back(lastarg->getType());
-    } else if (foundcalled->arg_size() == res.first.size()) {
-      // res.first.push_back(StructType::get(todiff->getContext(), {}));
-    } else {
-      llvm::errs() << "expected args: [";
-      for (auto a : res.first) {
-        llvm::errs() << *a << " ";
+    if (hasconstant) {
+      EmitWarning("NoCustom",
+                  key.todiff->getEntryBlock().begin()->getDebugLoc(),
+                  key.todiff, &key.todiff->getEntryBlock(),
+                  "Massaging provided custom reverse pass");
+      SmallVector<Type *, 3> dupargs;
+      std::vector<DIFFE_TYPE> next_constant_args(key.constant_args);
+      {
+        auto OFT = key.todiff->getFunctionType();
+        for (size_t act_idx = 0; act_idx < key.constant_args.size();
+             act_idx++) {
+          dupargs.push_back(OFT->getParamType(act_idx));
+          switch (key.constant_args[act_idx]) {
+          case DIFFE_TYPE::OUT_DIFF:
+            break;
+          case DIFFE_TYPE::DUP_ARG:
+          case DIFFE_TYPE::DUP_NONEED:
+            dupargs.push_back(OFT->getParamType(act_idx));
+            break;
+          case DIFFE_TYPE::CONSTANT:
+            if (!OFT->getParamType(act_idx)->isFPOrFPVectorTy()) {
+              next_constant_args[act_idx] = DIFFE_TYPE::DUP_ARG;
+            } else {
+              next_constant_args[act_idx] = DIFFE_TYPE::OUT_DIFF;
+            }
+            break;
+          }
+        }
       }
-      llvm::errs() << "]\n";
-      llvm::errs() << *foundcalled << "\n";
-      assert(0 && "bad type for custom gradient");
-      llvm_unreachable("bad type for custom gradient");
-    }
 
-    auto st = dyn_cast<StructType>(foundcalled->getReturnType());
-    bool wrongRet = st == nullptr && !foundcalled->getReturnType()->isVoidTy();
-    if (wrongRet) {
-      // if (wrongRet || !hasTape) {
+      auto revfn = CreatePrimalAndGradient(
+          (ReverseCacheKey){.todiff = key.todiff,
+                            .retType = key.retType,
+                            .constant_args = next_constant_args,
+                            .uncacheable_args = key.uncacheable_args,
+                            .returnUsed = key.returnUsed,
+                            .shadowReturnUsed = false,
+                            .mode = DerivativeMode::ReverseModeGradient,
+                            .freeMemory = key.freeMemory,
+                            .AtomicAdd = key.AtomicAdd,
+                            .additionalType = nullptr,
+                            .typeInfo = key.typeInfo},
+          TLI, TA, augmenteddata, PostOpt, omp);
+
+      {
+        auto arg = revfn->arg_begin();
+        for (auto cidx : next_constant_args) {
+          arg++;
+          if (cidx == DIFFE_TYPE::DUP_ARG || cidx == DIFFE_TYPE::DUP_NONEED)
+            arg++;
+        }
+        while (arg != revfn->arg_end()) {
+          dupargs.push_back(arg->getType());
+          arg++;
+        }
+      }
+
       FunctionType *FTy =
-          FunctionType::get(StructType::get(todiff->getContext(), {res.second}),
-                            res.first, todiff->getFunctionType()->isVarArg());
+          FunctionType::get(revfn->getReturnType(), dupargs,
+                            revfn->getFunctionType()->isVarArg());
       Function *NewF = Function::Create(
           FTy, Function::LinkageTypes::InternalLinkage,
-          "fixgradient_" + todiff->getName(), todiff->getParent());
-      NewF->setAttributes(foundcalled->getAttributes());
-      if (NewF->hasFnAttribute(Attribute::NoInline)) {
-        NewF->removeFnAttr(Attribute::NoInline);
-      }
-      size_t argnum = 0;
-      for (Argument &Arg : NewF->args()) {
-        if (Arg.hasAttribute(Attribute::Returned))
-          Arg.removeAttr(Attribute::Returned);
-        if (Arg.hasAttribute(Attribute::StructRet))
-          Arg.removeAttr(Attribute::StructRet);
-        Arg.setName("arg" + std::to_string(argnum));
-        ++argnum;
-      }
+          "fixgradient_" + key.todiff->getName(), key.todiff->getParent());
 
       BasicBlock *BB = BasicBlock::Create(NewF->getContext(), "entry", NewF);
       IRBuilder<> bb(BB);
-      SmallVector<Value *, 4> args;
-      for (auto &a : NewF->args())
-        args.push_back(&a);
-      // if (!hasTape) {
-      //  args.pop_back();
-      //}
-      auto cal = bb.CreateCall(foundcalled, args);
-      cal->setCallingConv(foundcalled->getCallingConv());
-      Value *val = cal;
-      if (wrongRet) {
-        auto ut = UndefValue::get(NewF->getReturnType());
-        if (val->getType()->isEmptyTy() && res.second.size() == 0) {
-          val = ut;
-        } else if (res.second.size() == 1 && res.second[0] == val->getType()) {
-          val = bb.CreateInsertValue(ut, cal, {0u});
-        } else {
-          llvm::errs() << *foundcalled << "\n";
-          assert(0 && "illegal type for reverse");
-          llvm_unreachable("illegal type for reverse");
+      auto arg = NewF->arg_begin();
+      SmallVector<Value *, 3> revargs;
+      size_t act_idx = 0;
+      while (act_idx != key.constant_args.size()) {
+        revargs.push_back(arg);
+        switch (key.constant_args[act_idx]) {
+        case DIFFE_TYPE::OUT_DIFF:
+          break;
+        case DIFFE_TYPE::DUP_ARG:
+        case DIFFE_TYPE::DUP_NONEED:
+          arg++;
+          revargs.push_back(arg);
+          break;
+        case DIFFE_TYPE::CONSTANT:
+          if (next_constant_args[act_idx] != DIFFE_TYPE::OUT_DIFF) {
+            revargs.push_back(arg);
+          }
+          break;
         }
+        arg++;
+        act_idx++;
       }
-      bb.CreateRet(val);
-      foundcalled = NewF;
+      while (arg != NewF->arg_end()) {
+        revargs.push_back(arg);
+        arg++;
+      }
+      auto cal = bb.CreateCall(revfn, revargs);
+      cal->setCallingConv(revfn->getCallingConv());
+
+      if (NewF->getReturnType()->isEmptyTy())
+        bb.CreateRet(UndefValue::get(NewF->getReturnType()));
+      else if (NewF->getReturnType()->isVoidTy())
+        bb.CreateRetVoid();
+      else
+        bb.CreateRet(cal);
+
+      return insert_or_assign2<ReverseCacheKey, Function *>(
+                 ReverseCachedFunctions, key, NewF)
+          ->second;
     }
-    return insert_or_assign2<ReverseCacheKey, Function *>(
-               ReverseCachedFunctions, tup, foundcalled)
-        ->second;
+
+    if (!key.returnUsed && key.freeMemory) {
+      assert(augmenteddata);
+      if (foundcalled->arg_size() == res.first.size() + 1 /*tape*/) {
+        auto lastarg = foundcalled->arg_end();
+        lastarg--;
+        res.first.push_back(lastarg->getType());
+      } else if (foundcalled->arg_size() == res.first.size()) {
+        // res.first.push_back(StructType::get(todiff->getContext(), {}));
+      } else {
+        llvm::errs() << "expected args: [";
+        for (auto a : res.first) {
+          llvm::errs() << *a << " ";
+        }
+        llvm::errs() << "]\n";
+        llvm::errs() << *foundcalled << "\n";
+        assert(0 && "bad type for custom gradient");
+        llvm_unreachable("bad type for custom gradient");
+      }
+
+      auto st = dyn_cast<StructType>(foundcalled->getReturnType());
+      bool wrongRet =
+          st == nullptr && !foundcalled->getReturnType()->isVoidTy();
+      if (wrongRet) {
+        // if (wrongRet || !hasTape) {
+        Type *FRetTy =
+            res.second.empty()
+                ? Type::getVoidTy(key.todiff->getContext())
+                : StructType::get(key.todiff->getContext(), {res.second});
+
+        FunctionType *FTy = FunctionType::get(
+            FRetTy, res.first, key.todiff->getFunctionType()->isVarArg());
+        Function *NewF = Function::Create(
+            FTy, Function::LinkageTypes::InternalLinkage,
+            "fixgradient_" + key.todiff->getName(), key.todiff->getParent());
+        NewF->setAttributes(foundcalled->getAttributes());
+        if (NewF->hasFnAttribute(Attribute::NoInline)) {
+          NewF->removeFnAttr(Attribute::NoInline);
+        }
+        size_t argnum = 0;
+        for (Argument &Arg : NewF->args()) {
+          if (Arg.hasAttribute(Attribute::Returned))
+            Arg.removeAttr(Attribute::Returned);
+          if (Arg.hasAttribute(Attribute::StructRet))
+            Arg.removeAttr(Attribute::StructRet);
+          Arg.setName("arg" + std::to_string(argnum));
+          ++argnum;
+        }
+
+        BasicBlock *BB = BasicBlock::Create(NewF->getContext(), "entry", NewF);
+        IRBuilder<> bb(BB);
+        SmallVector<Value *, 4> args;
+        for (auto &a : NewF->args())
+          args.push_back(&a);
+        // if (!hasTape) {
+        //  args.pop_back();
+        //}
+        auto cal = bb.CreateCall(foundcalled, args);
+        cal->setCallingConv(foundcalled->getCallingConv());
+        Value *val = cal;
+        if (wrongRet) {
+          auto ut = UndefValue::get(NewF->getReturnType());
+          if (val->getType()->isEmptyTy() && res.second.size() == 0) {
+            val = ut;
+          } else if (res.second.size() == 1 &&
+                     res.second[0] == val->getType()) {
+            val = bb.CreateInsertValue(ut, cal, {0u});
+          } else {
+            llvm::errs() << *foundcalled << "\n";
+            assert(0 && "illegal type for reverse");
+            llvm_unreachable("illegal type for reverse");
+          }
+        }
+        bb.CreateRet(val);
+        foundcalled = NewF;
+      }
+      return insert_or_assign2<ReverseCacheKey, Function *>(
+                 ReverseCachedFunctions, key, foundcalled)
+          ->second;
+    }
+
+    EmitWarning("NoCustom", key.todiff->getEntryBlock().begin()->getDebugLoc(),
+                key.todiff, &key.todiff->getEntryBlock(),
+                "Not using provided custom reverse pass as require either "
+                "return or non-constant");
   }
 
-  assert(!todiff->empty());
+  assert(!key.todiff->empty());
 
-  ReturnType retVal;
-  if (mode == DerivativeMode::ForwardMode) {
-    auto TR = TA.analyzeFunction(oldTypeInfo);
-    bool retActive = TR.getReturnAnalysis().Inner0().isFloat();
+  ReturnType retVal =
+      key.returnUsed ? (key.shadowReturnUsed ? ReturnType::ArgsWithTwoReturns
+                                             : ReturnType::ArgsWithReturn)
+                     : (key.shadowReturnUsed ? ReturnType::ArgsWithReturn
+                                             : ReturnType::Args);
 
-    retVal = returnValue
-                 ? (retActive ? ReturnType::TwoReturns : ReturnType::Return)
-                 : (retActive ? ReturnType::Return : ReturnType::Void);
-  } else {
-    retVal = returnValue
-                 ? (dretPtr ? ReturnType::ArgsWithTwoReturns
-                            : ReturnType::ArgsWithReturn)
-                 : (dretPtr ? ReturnType::ArgsWithReturn : ReturnType::Args);
-  }
-
-  bool diffeReturnArg = mode == DerivativeMode::ForwardMode
-                            ? false
-                            : retType == DIFFE_TYPE::OUT_DIFF;
+  bool diffeReturnArg = key.retType == DIFFE_TYPE::OUT_DIFF;
 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
-      *this, mode, todiff, TLI, TA, retType, diffeReturnArg, constant_args,
-      retVal, additionalArg);
+      *this, key.mode, key.todiff, TLI, TA, key.retType, diffeReturnArg,
+      key.constant_args, retVal, key.additionalType, omp);
 
-  if (omp)
-    gutils->setupOMPFor();
-  gutils->AtomicAdd = AtomicAdd;
-  insert_or_assign2<ReverseCacheKey, Function *>(ReverseCachedFunctions, tup,
+  gutils->AtomicAdd = key.AtomicAdd;
+  gutils->FreeMemory = key.freeMemory;
+  insert_or_assign2<ReverseCacheKey, Function *>(ReverseCachedFunctions, key,
                                                  gutils->newFunc);
 
   const SmallPtrSet<BasicBlock *, 4> guaranteedUnreachable =
@@ -2695,42 +3165,20 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   // function
   std::map<Argument *, bool> _uncacheable_argsPP;
   {
-    auto in_arg = todiff->arg_begin();
+    auto in_arg = key.todiff->arg_begin();
     auto pp_arg = gutils->oldFunc->arg_begin();
     for (; pp_arg != gutils->oldFunc->arg_end();) {
-      _uncacheable_argsPP[pp_arg] = _uncacheable_args.find(in_arg)->second;
+      _uncacheable_argsPP[pp_arg] = key.uncacheable_args.find(in_arg)->second;
       ++pp_arg;
       ++in_arg;
     }
   }
-  // TODO populate with actual unnecessaryInstructions once the dependency
-  // cycle with activity analysis is removed
-  SmallPtrSet<const Instruction *, 4> unnecessaryInstructionsTmp;
-  for (auto BB : guaranteedUnreachable) {
-    for (auto &I : *BB)
-      unnecessaryInstructionsTmp.insert(&I);
-  }
-  CacheAnalysis CA(gutils->OrigAA, gutils->oldFunc,
-                   PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
-                   gutils->OrigLI, gutils->OrigDT, TLI,
-                   unnecessaryInstructionsTmp, _uncacheable_argsPP, mode);
-  const std::map<CallInst *, const std::map<Argument *, bool>>
-      uncacheable_args_map =
-          (augmenteddata) ? augmenteddata->uncacheable_args_map
-                          : CA.compute_uncacheable_args_for_callsites();
-
-  const std::map<Instruction *, bool> can_modref_map =
-      augmenteddata ? augmenteddata->can_modref_map
-                    : CA.compute_uncacheable_load_map();
-  gutils->can_modref_map = &can_modref_map;
-
-  // gutils->forceContexts();
 
   FnTypeInfo typeInfo(gutils->oldFunc);
   {
-    auto toarg = todiff->arg_begin();
+    auto toarg = key.todiff->arg_begin();
     auto olarg = gutils->oldFunc->arg_begin();
-    for (; toarg != todiff->arg_end(); ++toarg, ++olarg) {
+    for (; toarg != key.todiff->arg_end(); ++toarg, ++olarg) {
 
       {
         auto fd = oldTypeInfo.Arguments.find(toarg);
@@ -2750,10 +3198,35 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   }
 
   TypeResults TR = TA.analyzeFunction(typeInfo);
-  assert(TR.info.Function == gutils->oldFunc);
+  assert(TR.getFunction() == gutils->oldFunc);
 
   gutils->forceActiveDetection(TR);
   gutils->forceAugmentedReturns(TR, guaranteedUnreachable);
+
+  gutils->computeGuaranteedFrees(guaranteedUnreachable);
+
+  // TODO populate with actual unnecessaryInstructions once the dependency
+  // cycle with activity analysis is removed
+  SmallPtrSet<const Instruction *, 4> unnecessaryInstructionsTmp;
+  for (auto BB : guaranteedUnreachable) {
+    for (auto &I : *BB)
+      unnecessaryInstructionsTmp.insert(&I);
+  }
+  CacheAnalysis CA(gutils->allocationsWithGuaranteedFree, TR, gutils->OrigAA,
+                   gutils->oldFunc,
+                   PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
+                   gutils->OrigLI, gutils->OrigDT, TLI,
+                   unnecessaryInstructionsTmp, _uncacheable_argsPP, key.mode,
+                   omp);
+  const std::map<CallInst *, const std::map<Argument *, bool>>
+      uncacheable_args_map =
+          (augmenteddata) ? augmenteddata->uncacheable_args_map
+                          : CA.compute_uncacheable_args_for_callsites();
+
+  const std::map<Instruction *, bool> can_modref_map =
+      augmenteddata ? augmenteddata->can_modref_map
+                    : CA.compute_uncacheable_load_map();
+  gutils->can_modref_map = &can_modref_map;
 
   std::map<std::pair<Instruction *, CacheType>, int> mapping;
   if (augmenteddata)
@@ -2767,41 +3240,50 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
   SmallPtrSet<const Value *, 4> unnecessaryValues;
   SmallPtrSet<const Instruction *, 4> unnecessaryInstructions;
-  calculateUnusedValuesInFunction(
-      *gutils->oldFunc, unnecessaryValues, unnecessaryInstructions, returnValue,
-      mode, TR, gutils, TLI, constant_args, guaranteedUnreachable);
+  calculateUnusedValuesInFunction(*gutils->oldFunc, unnecessaryValues,
+                                  unnecessaryInstructions, key.returnUsed,
+                                  key.mode, TR, gutils, TLI, key.constant_args,
+                                  guaranteedUnreachable);
 
   SmallPtrSet<const Instruction *, 4> unnecessaryStores;
   calculateUnusedStoresInFunction(*gutils->oldFunc, unnecessaryStores,
                                   unnecessaryInstructions, gutils);
 
   Value *additionalValue = nullptr;
-  if (additionalArg) {
+  if (key.additionalType) {
     auto v = gutils->newFunc->arg_end();
     v--;
     additionalValue = v;
-    assert(mode != DerivativeMode::ReverseModeCombined);
+    assert(key.mode != DerivativeMode::ReverseModeCombined);
     assert(augmenteddata);
 
     // TODO VERIFY THIS
     if (augmenteddata->tapeType &&
         augmenteddata->tapeType != additionalValue->getType()) {
       IRBuilder<> BuilderZ(gutils->inversionAllocs);
-      // assert(PointerType::getUnqual(augmenteddata->tapeType) ==
-      // additionalValue->getType()); auto tapep = additionalValue;
-      auto tapep = BuilderZ.CreatePointerCast(
-          additionalValue, PointerType::getUnqual(augmenteddata->tapeType));
-      LoadInst *truetape = BuilderZ.CreateLoad(tapep, "truetape");
-      truetape->setMetadata("enzyme_mustcache",
-                            MDNode::get(truetape->getContext(), {}));
+      if (!augmenteddata->tapeType->isEmptyTy()) {
+        auto tapep = BuilderZ.CreatePointerCast(
+            additionalValue, PointerType::getUnqual(augmenteddata->tapeType));
+        LoadInst *truetape = BuilderZ.CreateLoad(tapep, "truetape");
+        truetape->setMetadata("enzyme_mustcache",
+                              MDNode::get(truetape->getContext(), {}));
 
-      if (!omp) {
-        CallInst *ci = cast<CallInst>(CallInst::CreateFree(
-            additionalValue, truetape)); //&*BuilderZ.GetInsertPoint()));
-        ci->moveAfter(truetape);
-        ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+        if (!omp && gutils->FreeMemory) {
+          CallInst *ci =
+              cast<CallInst>(CallInst::CreateFree(additionalValue, truetape));
+          ci->moveAfter(truetape);
+          ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+        }
+        additionalValue = truetape;
+      } else {
+        if (gutils->FreeMemory) {
+          CallInst *ci = cast<CallInst>(
+              CallInst::CreateFree(additionalValue, gutils->inversionAllocs));
+          ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+          BuilderZ.Insert(ci);
+        }
+        additionalValue = UndefValue::get(augmenteddata->tapeType);
       }
-      additionalValue = truetape;
     }
 
     // TODO here finish up making recursive structs simply pass in i8*
@@ -2809,17 +3291,17 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   }
 
   Argument *differetval = nullptr;
-  if (retType == DIFFE_TYPE::OUT_DIFF && mode != DerivativeMode::ForwardMode) {
+  if (key.retType == DIFFE_TYPE::OUT_DIFF) {
     auto endarg = gutils->newFunc->arg_end();
     endarg--;
-    if (additionalArg)
+    if (key.additionalType)
       endarg--;
     differetval = endarg;
-    if (differetval->getType() != todiff->getReturnType()) {
+    if (differetval->getType() != key.todiff->getReturnType()) {
       llvm::errs() << *gutils->oldFunc << "\n";
       llvm::errs() << *gutils->newFunc << "\n";
     }
-    assert(differetval->getType() == todiff->getReturnType());
+    assert(differetval->getType() == key.todiff->getReturnType());
   }
 
   // Explicitly handle all returns first to ensure that return instructions know
@@ -2828,19 +3310,21 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   std::map<ReturnInst *, StoreInst *> replacedReturns;
   llvm::AllocaInst *retAlloca = nullptr;
   llvm::AllocaInst *dretAlloca = nullptr;
-  if (returnValue) {
-    retAlloca = IRBuilder<>(&gutils->newFunc->getEntryBlock().front())
-                    .CreateAlloca(todiff->getReturnType(), nullptr, "toreturn");
+  if (key.returnUsed) {
+    retAlloca =
+        IRBuilder<>(&gutils->newFunc->getEntryBlock().front())
+            .CreateAlloca(key.todiff->getReturnType(), nullptr, "toreturn");
   }
-  if (dretPtr) {
-    assert(retType == DIFFE_TYPE::DUP_ARG || retType == DIFFE_TYPE::DUP_NONEED);
-    assert(mode == DerivativeMode::ReverseModeCombined);
+  if (key.shadowReturnUsed) {
+    assert(key.retType == DIFFE_TYPE::DUP_ARG ||
+           key.retType == DIFFE_TYPE::DUP_NONEED);
+    assert(key.mode == DerivativeMode::ReverseModeCombined);
     dretAlloca =
         IRBuilder<>(&gutils->newFunc->getEntryBlock().front())
-            .CreateAlloca(todiff->getReturnType(), nullptr, "dtoreturn");
+            .CreateAlloca(key.todiff->getReturnType(), nullptr, "dtoreturn");
   }
-  if (mode == DerivativeMode::ReverseModeCombined ||
-      mode == DerivativeMode::ReverseModeGradient) {
+  if (key.mode == DerivativeMode::ReverseModeCombined ||
+      key.mode == DerivativeMode::ReverseModeGradient) {
     for (BasicBlock &oBB : *gutils->oldFunc) {
       if (ReturnInst *orig = dyn_cast<ReturnInst>(oBB.getTerminator())) {
         ReturnInst *op = cast<ReturnInst>(gutils->getNewFromOriginal(orig));
@@ -2859,7 +3343,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                          dretAlloca);
         }
 
-        if (retType == DIFFE_TYPE::OUT_DIFF) {
+        if (key.retType == DIFFE_TYPE::OUT_DIFF) {
           assert(orig->getReturnValue());
           assert(differetval);
           if (!gutils->isConstantValue(orig->getReturnValue())) {
@@ -2876,28 +3360,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     }
   }
 
-  if (mode == DerivativeMode::ForwardMode) {
-    // set derivative of function arguments
-    auto newArgs = gutils->newFunc->arg_begin();
-
-    for (size_t i = 0; i < constant_args.size(); ++i) {
-      auto arg = constant_args[i];
-      if (arg == DIFFE_TYPE::DUP_ARG) {
-        newArgs += 1;
-        auto pri = gutils->oldFunc->arg_begin() + i;
-        auto dif = newArgs;
-
-        BasicBlock &BB = gutils->newFunc->getEntryBlock();
-        IRBuilder<> Builder(&BB.front());
-
-        gutils->setDiffe(pri, dif, Builder);
-      }
-      newArgs += 1;
-    }
-  }
-
   AdjointGenerator<const AugmentedReturn *> maker(
-      mode, gutils, constant_args, retType, TR, getIndex, uncacheable_args_map,
+      key.mode, gutils, key.constant_args, key.retType, TR, getIndex,
+      uncacheable_args_map,
       /*returnuses*/ nullptr, augmenteddata, &replacedReturns,
       unnecessaryValues, unnecessaryInstructions, unnecessaryStores,
       guaranteedUnreachable, dretAlloca);
@@ -2927,9 +3392,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       }
       for (auto I : toerase) {
         maker.eraseIfUnused(*I, /*erase*/ true,
-                            /*check*/ mode ==
-                                    DerivativeMode::ReverseModeCombined ||
-                                mode == DerivativeMode::ForwardMode);
+                            /*check*/ key.mode ==
+                                DerivativeMode::ReverseModeCombined);
       }
       if (newBB->getTerminator())
         newBB->getTerminator()->eraseFromParent();
@@ -2947,60 +3411,99 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       assert(0 && "unknown terminator inst");
     }
 
-    if (mode != DerivativeMode::ForwardMode) {
-      BasicBlock::reverse_iterator I = oBB.rbegin(), E = oBB.rend();
-      ++I;
-      for (; I != E; ++I) {
-        maker.visit(&*I);
-        assert(oBB.rend() == E);
-      }
-
-      createInvertedTerminator(TR, gutils, constant_args, &oBB, retAlloca,
-                               dretAlloca,
-                               0 + (additionalArg ? 1 : 0) +
-                                   ((retType == DIFFE_TYPE::DUP_ARG ||
-                                     retType == DIFFE_TYPE::DUP_NONEED)
-                                        ? 1
-                                        : 0),
-                               retType);
-    } else {
-      auto first = oBB.begin();
-      auto last = oBB.empty() ? oBB.end() : std::prev(oBB.end());
-      for (auto it = first; it != last; ++it) {
-        maker.visit(&*it);
-      }
-
-      createTerminator(gutils, constant_args, &oBB, retAlloca, dretAlloca,
-                       retType);
+    BasicBlock::reverse_iterator I = oBB.rbegin(), E = oBB.rend();
+    ++I;
+    for (; I != E; ++I) {
+      maker.visit(&*I);
+      assert(oBB.rend() == E);
     }
+
+    createInvertedTerminator(TR, gutils, key.constant_args, &oBB, retAlloca,
+                             dretAlloca,
+                             0 + (key.additionalType ? 1 : 0) +
+                                 ((key.retType == DIFFE_TYPE::DUP_ARG ||
+                                   key.retType == DIFFE_TYPE::DUP_NONEED)
+                                      ? 1
+                                      : 0),
+                             key.retType);
   }
 
-  if (mode != DerivativeMode::ReverseModeCombined &&
-      mode != DerivativeMode::ForwardMode) {
-    std::map<Value *, std::vector<Value *>> unwrapToOrig;
-    for (auto pair : gutils->unwrappedLoads)
-      unwrapToOrig[pair.second].push_back(const_cast<Value *>(pair.first));
-    std::map<Value *, Value *> newIToNextI;
+  if (key.mode != DerivativeMode::ReverseModeCombined) {
+    // One must use this temporary map to first create all the replacements
+    // prior to actually replacing to ensure that getSubLimits has the same
+    // behavior and unwrap behavior for all replacements.
+    std::vector<std::pair<Value *, Value *>> newIToNextI;
+
     for (const auto &m : mapping) {
-      if (m.first.second == CacheType::Self && !isa<LoadInst>(m.first.first) &&
-          !isa<CallInst>(m.first.first)) {
-        auto newi = gutils->getNewFromOriginal(m.first.first);
-        if (auto PN = dyn_cast<PHINode>(newi))
-          if (gutils->fictiousPHIs.count(PN))
-            gutils->fictiousPHIs.erase(PN);
-        IRBuilder<> BuilderZ(newi->getNextNode());
-        if (isa<PHINode>(m.first.first)) {
-          BuilderZ.SetInsertPoint(
-              cast<Instruction>(newi)->getParent()->getFirstNonPHI());
+      if (m.first.second == CacheType::Self &&
+          gutils->knownRecomputeHeuristic.count(m.first.first)) {
+        assert(gutils->knownRecomputeHeuristic.count(m.first.first));
+        if (!isa<CallInst>(m.first.first)) {
+          auto newi = gutils->getNewFromOriginal(m.first.first);
+          if (auto PN = dyn_cast<PHINode>(newi))
+            if (gutils->fictiousPHIs.count(PN)) {
+              assert(gutils->fictiousPHIs[PN] == m.first.first);
+              gutils->fictiousPHIs.erase(PN);
+            }
+          IRBuilder<> BuilderZ(newi->getNextNode());
+          if (isa<PHINode>(m.first.first)) {
+            BuilderZ.SetInsertPoint(
+                cast<Instruction>(newi)->getParent()->getFirstNonPHI());
+          }
+          Value *nexti =
+              gutils->cacheForReverse(BuilderZ, newi, m.second,
+                                      /*ignoreType*/ false, /*replace*/ false);
+          newIToNextI.emplace_back(newi, nexti);
+        } else {
+          auto newi = gutils->getNewFromOriginal((Value *)m.first.first);
+          newIToNextI.emplace_back(newi, newi);
         }
-        Value *nexti = gutils->cacheForReverse(BuilderZ, newi, m.second);
-        for (auto V : unwrapToOrig[newi]) {
-          ValueToValueMapTy empty;
-          IRBuilder<> lb(cast<Instruction>(V));
-          V->replaceAllUsesWith(
-              gutils->unwrapM(nexti, lb, empty, UnwrapMode::LegalFullUnwrap));
-          cast<Instruction>(V)->eraseFromParent();
-        }
+      }
+    }
+
+    std::map<Value *, std::vector<Instruction *>> unwrapToOrig;
+    for (auto pair : gutils->unwrappedLoads)
+      unwrapToOrig[pair.second].push_back(
+          const_cast<Instruction *>(pair.first));
+    gutils->unwrappedLoads.clear();
+
+    for (auto pair : newIToNextI) {
+      auto newi = pair.first;
+      auto nexti = pair.second;
+      if (newi != nexti) {
+        gutils->replaceAWithB(newi, nexti);
+      }
+    }
+
+    // This most occur after all the replacements have been made
+    // in the previous loop, lest a loop bound being unwrapped use
+    // a value being replaced.
+    for (auto pair : newIToNextI) {
+      auto newi = pair.first;
+      auto nexti = pair.second;
+      for (auto V : unwrapToOrig[newi]) {
+        ValueToValueMapTy empty;
+        IRBuilder<> lb(V);
+        // This must disallow caching here as otherwise performing the loop in
+        // the wrong order may result in first replacing the later unwrapped
+        // value, caching it, then attempting to reuse it for an earlier
+        // replacement.
+        Value *nval = gutils->unwrapM(nexti, lb, empty,
+                                      UnwrapMode::LegalFullUnwrapNoTapeReplace,
+                                      /*scope*/ nullptr, /*permitCache*/ false);
+        assert(nval);
+        V->replaceAllUsesWith(nval);
+        V->eraseFromParent();
+      }
+    }
+
+    // Erasure happens after to not erase the key of unwrapToOrig
+    for (auto pair : newIToNextI) {
+      auto newi = pair.first;
+      auto nexti = pair.second;
+      if (newi != nexti) {
+        if (auto inst = dyn_cast<Instruction>(newi))
+          gutils->erase(inst);
       }
     }
 
@@ -3023,15 +3526,50 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
       if (auto bi = dyn_cast<BranchInst>(BB.getTerminator())) {
 
-        Value *vals[1] = {gutils->getNewFromOriginal(bi->getCondition())};
-        if (bi->getSuccessor(0) == unreachables[0]) {
-          gutils->replaceAWithB(vals[0],
-                                ConstantInt::getFalse(vals[0]->getContext()));
-        } else {
-          gutils->replaceAWithB(vals[0],
-                                ConstantInt::getTrue(vals[0]->getContext()));
+        Value *condition = gutils->getNewFromOriginal(bi->getCondition());
+
+        Constant *repVal = (bi->getSuccessor(0) == unreachables[0])
+                               ? ConstantInt::getFalse(condition->getContext())
+                               : ConstantInt::getTrue(condition->getContext());
+
+        for (auto UI = condition->use_begin(), E = condition->use_end();
+             UI != E;) {
+          Use &U = *UI;
+          ++UI;
+          U.set(repVal);
         }
       }
+      if (reachables.size() == 1)
+        if (auto si = dyn_cast<SwitchInst>(BB.getTerminator())) {
+          Value *condition = gutils->getNewFromOriginal(si->getCondition());
+
+          Constant *repVal = nullptr;
+          if (si->getDefaultDest() == reachables[0]) {
+            std::set<int64_t> cases;
+            for (auto c : si->cases()) {
+              // TODO this doesnt work with unsigned 64 bit ints or higher
+              // integer widths
+              cases.insert(cast<ConstantInt>(c.getCaseValue())->getSExtValue());
+            }
+            int64_t legalNot = 0;
+            while (cases.count(legalNot))
+              legalNot++;
+            repVal = ConstantInt::getSigned(condition->getType(), legalNot);
+          } else {
+            for (auto c : si->cases()) {
+              if (c.getCaseSuccessor() == reachables[0]) {
+                repVal = c.getCaseValue();
+              }
+            }
+          }
+          assert(repVal);
+          for (auto UI = condition->use_begin(), E = condition->use_end();
+               UI != E;) {
+            Use &U = *UI;
+            ++UI;
+            U.set(repVal);
+          }
+        }
     }
   }
 
@@ -3045,7 +3583,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       Arch == Triple::amdgcn ? (int)AMDGPU::HSAMD::AddressSpaceQualifier::Local
                              : 3;
 
-  if (mode == DerivativeMode::ReverseModeCombined) {
+  if (key.mode == DerivativeMode::ReverseModeCombined) {
     BasicBlock *sharedBlock = nullptr;
     for (auto &g : gutils->newFunc->getParent()->globals()) {
       if (hasMetadata(&g, "enzyme_internalshadowglobal")) {
@@ -3124,59 +3662,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     }
   }
 
-  while (gutils->inversionAllocs->size() > 0) {
-    Instruction *inst = &gutils->inversionAllocs->back();
-    if (isa<AllocaInst>(inst))
-      inst->moveBefore(&gutils->newFunc->getEntryBlock().front());
-    else
-      inst->moveBefore(entry->getFirstNonPHIOrDbgOrLifetime());
-  }
-
-  (IRBuilder<>(gutils->inversionAllocs)).CreateUnreachable();
-  DeleteDeadBlock(gutils->inversionAllocs);
-  for (auto BBs : gutils->reverseBlocks) {
-    if (pred_begin(BBs.second.front()) == pred_end(BBs.second.front())) {
-      (IRBuilder<>(BBs.second.front())).CreateUnreachable();
-      DeleteDeadBlock(BBs.second.front());
-    }
-  }
-
-  for (Argument &Arg : gutils->newFunc->args()) {
-    if (Arg.hasAttribute(Attribute::Returned))
-      Arg.removeAttr(Attribute::Returned);
-    if (Arg.hasAttribute(Attribute::StructRet))
-      Arg.removeAttr(Attribute::StructRet);
-  }
-  if (gutils->newFunc->hasFnAttribute(Attribute::OptimizeNone))
-    gutils->newFunc->removeFnAttr(Attribute::OptimizeNone);
-
-  if (auto bytes = gutils->newFunc->getDereferenceableBytes(
-          llvm::AttributeList::ReturnIndex)) {
-    AttrBuilder ab;
-    ab.addDereferenceableAttr(bytes);
-    gutils->newFunc->removeAttributes(llvm::AttributeList::ReturnIndex, ab);
-  }
-
-  if (gutils->newFunc->getAttributes().getRetAlignment()) {
-    AttrBuilder ab;
-    ab.addAlignmentAttr(gutils->newFunc->getAttributes().getRetAlignment());
-    gutils->newFunc->removeAttributes(llvm::AttributeList::ReturnIndex, ab);
-  }
-  if (gutils->newFunc->hasAttribute(llvm::AttributeList::ReturnIndex,
-                                    llvm::Attribute::NoAlias)) {
-    gutils->newFunc->removeAttribute(llvm::AttributeList::ReturnIndex,
-                                     llvm::Attribute::NoAlias);
-  }
-  if (gutils->newFunc->hasAttribute(llvm::AttributeList::ReturnIndex,
-                                    llvm::Attribute::NonNull)) {
-    gutils->newFunc->removeAttribute(llvm::AttributeList::ReturnIndex,
-                                     llvm::Attribute::NonNull);
-  }
-  if (gutils->newFunc->hasAttribute(llvm::AttributeList::ReturnIndex,
-                                    llvm::Attribute::ZExt)) {
-    gutils->newFunc->removeAttribute(llvm::AttributeList::ReturnIndex,
-                                     llvm::Attribute::ZExt);
-  }
+  cleanupInversionAllocs(gutils, entry);
+  clearFunctionAttributes(gutils->newFunc);
 
   if (llvm::verifyFunction(*gutils->newFunc, &llvm::errs())) {
     llvm::errs() << *gutils->oldFunc << "\n";
@@ -3184,17 +3671,295 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     report_fatal_error("function failed verification (4)");
   }
 
+  auto nf = gutils->newFunc;
+  delete gutils;
+
   {
     PreservedAnalyses PA;
-    PPC.FAM.invalidate(*gutils->newFunc, PA);
+    PPC.FAM.invalidate(*nf, PA);
   }
+  PPC.AlwaysInline(nf);
   if (Arch == Triple::nvptx || Arch == Triple::nvptx64)
-    PPC.ReplaceReallocs(gutils->newFunc, /*mem2reg*/ true);
+    PPC.ReplaceReallocs(nf, /*mem2reg*/ true);
+
   if (PostOpt)
-    PPC.optimizeIntermediate(gutils->newFunc);
+    PPC.optimizeIntermediate(nf);
+  if (EnzymePrint) {
+    llvm::errs() << *nf << "\n";
+  }
+  return nf;
+}
+
+Function *EnzymeLogic::CreateForwardDiff(
+    Function *todiff, DIFFE_TYPE retType,
+    const std::vector<DIFFE_TYPE> &constant_args, TargetLibraryInfo &TLI,
+    TypeAnalysis &TA, bool returnUsed, bool dretPtr, DerivativeMode mode,
+    llvm::Type *additionalArg, const FnTypeInfo &oldTypeInfo_,
+    const std::map<Argument *, bool> _uncacheable_args, bool PostOpt,
+    bool omp) {
+
+  assert(mode == DerivativeMode::ForwardMode ||
+         mode == DerivativeMode::ForwardModeVector ||
+         mode == DerivativeMode::ForwardModeSplit);
+
+  FnTypeInfo oldTypeInfo = preventTypeAnalysisLoops(oldTypeInfo_, todiff);
+
+  if (retType != DIFFE_TYPE::CONSTANT)
+    assert(!todiff->getReturnType()->isVoidTy());
+
+  ForwardCacheKey tup =
+      std::make_tuple(todiff, retType, constant_args,
+                      std::map<Argument *, bool>(_uncacheable_args.begin(),
+                                                 _uncacheable_args.end()),
+                      returnUsed, dretPtr, mode, additionalArg, oldTypeInfo);
+  if (ForwardCachedFunctions.find(tup) != ForwardCachedFunctions.end()) {
+    return ForwardCachedFunctions.find(tup)->second;
+  }
+
+  // TODO change this to go by default function type assumptions
+  bool hasconstant = false;
+  for (auto v : constant_args) {
+    if (v == DIFFE_TYPE::CONSTANT) {
+      hasconstant = true;
+      break;
+    }
+  }
+
+  assert(!todiff->empty());
+
+  if (hasMetadata(todiff, "enzyme_derivative") && !hasconstant) {
+    auto md = todiff->getMetadata("enzyme_derivative");
+    if (!isa<MDTuple>(md)) {
+      llvm::errs() << *todiff << "\n";
+      llvm::errs() << *md << "\n";
+      report_fatal_error(
+          "unknown derivative for function -- metadata incorrect");
+    }
+    auto md2 = cast<MDTuple>(md);
+    assert(md2->getNumOperands() == 1);
+    auto gvemd = cast<ConstantAsMetadata>(md2->getOperand(0));
+    auto foundcalled = cast<Function>(gvemd->getValue());
+
+    return foundcalled;
+  }
+
+  bool retActive = retType != DIFFE_TYPE::CONSTANT;
+
+  ReturnType retVal =
+      returnUsed ? (retActive ? ReturnType::TwoReturns : ReturnType::Return)
+                 : (retActive ? ReturnType::Return : ReturnType::Void);
+
+  bool diffeReturnArg = false;
+
+  DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
+      *this, mode, todiff, TLI, TA, retType, diffeReturnArg, constant_args,
+      retVal, additionalArg, omp);
+
+  insert_or_assign2<ForwardCacheKey, Function *>(ForwardCachedFunctions, tup,
+                                                 gutils->newFunc);
+
+  const SmallPtrSet<BasicBlock *, 4> guaranteedUnreachable =
+      getGuaranteedUnreachable(gutils->oldFunc);
+
+  // Convert uncacheable args from the input function to the preprocessed
+  // function
+
+  FnTypeInfo typeInfo(gutils->oldFunc);
+  {
+    auto toarg = todiff->arg_begin();
+    auto olarg = gutils->oldFunc->arg_begin();
+    for (; toarg != todiff->arg_end(); ++toarg, ++olarg) {
+
+      {
+        auto fd = oldTypeInfo.Arguments.find(toarg);
+        assert(fd != oldTypeInfo.Arguments.end());
+        typeInfo.Arguments.insert(
+            std::pair<Argument *, TypeTree>(olarg, fd->second));
+      }
+
+      {
+        auto cfd = oldTypeInfo.KnownValues.find(toarg);
+        assert(cfd != oldTypeInfo.KnownValues.end());
+        typeInfo.KnownValues.insert(
+            std::pair<Argument *, std::set<int64_t>>(olarg, cfd->second));
+      }
+    }
+    typeInfo.Return = oldTypeInfo.Return;
+  }
+
+  TypeResults TR = TA.analyzeFunction(typeInfo);
+  assert(TR.getFunction() == gutils->oldFunc);
+
+  gutils->forceActiveDetection(TR);
+  gutils->forceAugmentedReturns(TR, guaranteedUnreachable);
+
+  // TODO populate with actual unnecessaryInstructions once the dependency
+  // cycle with activity analysis is removed
+  SmallPtrSet<const Instruction *, 4> unnecessaryInstructionsTmp;
+  for (auto BB : guaranteedUnreachable) {
+    for (auto &I : *BB)
+      unnecessaryInstructionsTmp.insert(&I);
+  }
+
+  SmallPtrSet<const Value *, 4> unnecessaryValues;
+  SmallPtrSet<const Instruction *, 4> unnecessaryInstructions;
+  calculateUnusedValuesInFunction(
+      *gutils->oldFunc, unnecessaryValues, unnecessaryInstructions, returnUsed,
+      mode, TR, gutils, TLI, constant_args, guaranteedUnreachable);
+
+  SmallPtrSet<const Instruction *, 4> unnecessaryStores;
+  calculateUnusedStoresInFunction(*gutils->oldFunc, unnecessaryStores,
+                                  unnecessaryInstructions, gutils);
+
+  // set derivative of function arguments
+  auto newArgs = gutils->newFunc->arg_begin();
+
+  for (size_t i = 0; i < constant_args.size(); ++i) {
+    auto arg = constant_args[i];
+    if (arg == DIFFE_TYPE::DUP_ARG) {
+      newArgs += 1;
+      auto pri = gutils->oldFunc->arg_begin() + i;
+      auto dif = newArgs;
+
+      BasicBlock &BB = gutils->newFunc->getEntryBlock();
+      IRBuilder<> Builder(&BB.front());
+
+      gutils->setDiffe(pri, dif, Builder);
+    }
+    newArgs += 1;
+  }
+
+  AdjointGenerator<const AugmentedReturn *> *maker;
+  if (mode == DerivativeMode::ForwardModeSplit) {
+
+    std::map<Argument *, bool> _uncacheable_argsPP;
+    {
+      auto in_arg = todiff->arg_begin();
+      auto pp_arg = gutils->oldFunc->arg_begin();
+      for (; pp_arg != gutils->oldFunc->arg_end();) {
+        _uncacheable_argsPP[pp_arg] = _uncacheable_args.find(in_arg)->second;
+        ++pp_arg;
+        ++in_arg;
+      }
+    }
+
+    CacheAnalysis CA(
+        gutils->allocationsWithGuaranteedFree, TR, gutils->OrigAA,
+        gutils->oldFunc,
+        PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
+        gutils->OrigLI, gutils->OrigDT, TLI, unnecessaryInstructionsTmp,
+        _uncacheable_argsPP, mode, omp);
+    const std::map<CallInst *, const std::map<Argument *, bool>>
+        uncacheable_args_map = CA.compute_uncacheable_args_for_callsites();
+
+    const std::map<Instruction *, bool> can_modref_map =
+        CA.compute_uncacheable_load_map();
+    gutils->can_modref_map = &can_modref_map;
+
+    std::map<std::pair<Instruction *, CacheType>, int> mapping;
+
+    auto getIndex = [&](Instruction *I, CacheType u) -> unsigned {
+      return gutils->getIndex(std::make_pair(I, u), mapping);
+    };
+
+    gutils->computeMinCache(TR, guaranteedUnreachable);
+
+    maker = new AdjointGenerator<const AugmentedReturn *>(
+        mode, gutils, constant_args, retType, TR, getIndex,
+        uncacheable_args_map,
+        /*returnuses*/ nullptr, nullptr, nullptr, unnecessaryValues,
+        unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
+        nullptr);
+  } else {
+
+    maker = new AdjointGenerator<const AugmentedReturn *>(
+        mode, gutils, constant_args, retType, TR, nullptr, {},
+        /*returnuses*/ nullptr, nullptr, nullptr, unnecessaryValues,
+        unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
+        nullptr);
+  }
+
+  for (BasicBlock &oBB : *gutils->oldFunc) {
+    // Don't create derivatives for code that results in termination
+    if (guaranteedUnreachable.find(&oBB) != guaranteedUnreachable.end()) {
+      auto newBB = cast<BasicBlock>(gutils->getNewFromOriginal(&oBB));
+      std::vector<BasicBlock *> toRemove;
+      if (auto II = dyn_cast<InvokeInst>(oBB.getTerminator())) {
+        toRemove.push_back(
+            cast<BasicBlock>(gutils->getNewFromOriginal(II->getNormalDest())));
+      } else {
+        for (auto next : successors(&oBB)) {
+          auto sucBB = cast<BasicBlock>(gutils->getNewFromOriginal(next));
+          toRemove.push_back(sucBB);
+        }
+      }
+
+      for (auto sucBB : toRemove) {
+        sucBB->removePredecessor(newBB);
+      }
+
+      std::vector<Instruction *> toerase;
+      for (auto &I : oBB) {
+        toerase.push_back(&I);
+      }
+      for (auto I : toerase) {
+        maker->eraseIfUnused(*I, /*erase*/ true, /*check*/ true);
+      }
+      if (newBB->getTerminator())
+        newBB->getTerminator()->eraseFromParent();
+      IRBuilder<> builder(newBB);
+      builder.CreateUnreachable();
+      continue;
+    }
+
+    auto term = oBB.getTerminator();
+    assert(term);
+    if (!isa<ReturnInst>(term) && !isa<BranchInst>(term) &&
+        !isa<SwitchInst>(term)) {
+      llvm::errs() << *oBB.getParent() << "\n";
+      llvm::errs() << "unknown terminator instance " << *term << "\n";
+      assert(0 && "unknown terminator inst");
+    }
+
+    auto first = oBB.begin();
+    auto last = oBB.empty() ? oBB.end() : std::prev(oBB.end());
+    for (auto it = first; it != last; ++it) {
+      maker->visit(&*it);
+    }
+
+    createTerminator(TR, gutils, &oBB, retType, retVal);
+  }
+
+  gutils->eraseFictiousPHIs();
+
+  BasicBlock *entry = &gutils->newFunc->getEntryBlock();
+
+  auto Arch =
+      llvm::Triple(gutils->newFunc->getParent()->getTargetTriple()).getArch();
+
+  cleanupInversionAllocs(gutils, entry);
+  clearFunctionAttributes(gutils->newFunc);
+
+  if (llvm::verifyFunction(*gutils->newFunc, &llvm::errs())) {
+    llvm::errs() << *gutils->oldFunc << "\n";
+    llvm::errs() << *gutils->newFunc << "\n";
+    report_fatal_error("function failed verification (4)");
+  }
 
   auto nf = gutils->newFunc;
   delete gutils;
+  delete maker;
+
+  {
+    PreservedAnalyses PA;
+    PPC.FAM.invalidate(*nf, PA);
+  }
+  PPC.AlwaysInline(nf);
+  if (Arch == Triple::nvptx || Arch == Triple::nvptx64)
+    PPC.ReplaceReallocs(nf, /*mem2reg*/ true);
+
+  if (PostOpt)
+    PPC.optimizeIntermediate(nf);
   if (EnzymePrint) {
     llvm::errs() << *nf << "\n";
   }

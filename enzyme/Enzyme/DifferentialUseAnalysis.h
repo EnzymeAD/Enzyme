@@ -54,7 +54,24 @@ static inline bool is_use_directly_needed_in_reverse(
 
   // We don't need any of the input operands to compute the adjoint of a store
   // instance
-  if (isa<StoreInst>(user)) {
+  if (auto SI = dyn_cast<StoreInst>(user)) {
+    // The one exception to this is stores to the loop bounds.
+    if (SI->getValueOperand() == val) {
+      for (auto U : SI->getPointerOperand()->users()) {
+        if (auto CI = dyn_cast<CallInst>(U)) {
+          if (auto F = CI->getCalledFunction()) {
+            if (F->getName() == "__kmpc_for_static_init_4" ||
+                F->getName() == "__kmpc_for_static_init_4u" ||
+                F->getName() == "__kmpc_for_static_init_8" ||
+                F->getName() == "__kmpc_for_static_init_8u") {
+              if (CI->getArgOperand(4) == val || CI->getArgOperand(5) == val ||
+                  CI->getArgOperand(6))
+                return true;
+            }
+          }
+        }
+      }
+    }
     return false;
   }
 
@@ -70,6 +87,9 @@ static inline bool is_use_directly_needed_in_reverse(
        cast<InsertElementInst>(user)->getOperand(2) != val) ||
       (isa<ExtractElementInst>(user) &&
        cast<ExtractElementInst>(user)->getIndexOperand() != val)
+#if LLVM_VERSION_MAJOR >= 10
+      || isa<FreezeInst>(user)
+#endif
       // isa<ExtractElement>(use) ||
       // isa<InsertElementInst>(use) || isa<ShuffleVectorInst>(use) ||
       // isa<ExtractValueInst>(use) || isa<AllocaInst>(use)
@@ -134,6 +154,33 @@ static inline bool is_use_directly_needed_in_reverse(
     return !gutils->isConstantValue(const_cast<SelectInst *>(si));
   }
 
+  if (auto CI = dyn_cast<CallInst>(user)) {
+    if (auto F = CI->getCalledFunction()) {
+      // Only need primal length and datatype for reverse
+      if (F->getName() == "MPI_Isend" || F->getName() == "MPI_Irecv") {
+        if (val != CI->getArgOperand(1) && val != CI->getArgOperand(2)) {
+          return false;
+        }
+      }
+      // Don't need any primal arguments for mpi_wait
+      if (F->getName() == "MPI_Wait")
+        return false;
+      // Only need element count for reverse of waitall
+      if (F->getName() == "MPI_Waitall")
+        if (val != CI->getArgOperand(0))
+          return false;
+      // Since adjoint of barrier is another barrier in reverse
+      // we still need even if instruction is inactive
+      if (F->getName() == "__kmpc_barrier" || F->getName() == "MPI_Barrier")
+        return true;
+
+      // Since adjoint of GC preserve is another preserve in reverse
+      // we still need even if instruction is inactive
+      if (F->getName() == "llvm.julia.gc_preserve_begin")
+        return true;
+    }
+  }
+
   return !gutils->isConstantInstruction(user) ||
          !gutils->isConstantValue(const_cast<Instruction *>(user));
 }
@@ -181,7 +228,8 @@ static inline bool is_value_needed_in_reverse(
         // storing an active pointer into a location
         // doesn't require the shadow pointer for the
         // reverse pass
-        if (SI->getPointerOperand() != inst)
+        if (SI->getPointerOperand() != inst &&
+            mode == DerivativeMode::ReverseModeGradient)
           continue;
 
         if (!gutils->isConstantValue(
@@ -202,16 +250,34 @@ static inline bool is_value_needed_in_reverse(
           continue;
       }
 
+      if (auto CI = dyn_cast<CallInst>(user)) {
+        if (auto F = CI->getCalledFunction()) {
+          // Use in a write barrier requires the shadow in the forward, even
+          // though the instruction is active.
+          if (mode != DerivativeMode::ReverseModeGradient &&
+              F->getName() == "julia.write_barrier") {
+            return seen[idx] = true;
+          }
+        }
+      }
+
       if (isa<ReturnInst>(user)) {
-        if (gutils->ATA->ActiveReturns)
+        if (gutils->ATA->ActiveReturns == DIFFE_TYPE::DUP_ARG ||
+            gutils->ATA->ActiveReturns == DIFFE_TYPE::DUP_NONEED)
           return seen[idx] = true;
         else
           continue;
       }
 
-      if (!gutils->isConstantInstruction(const_cast<Instruction *>(user)))
+      // Assume active instructions require the operand.
+      if (!gutils->isConstantInstruction(const_cast<Instruction *>(user))) {
         return seen[idx] = true;
+      }
 
+      // Now the remaining instructions are inactive, however note that
+      // a constant instruction may still require the use of the shadow
+      // in the forward pass, for example double* x = load double** y
+      // is a constant instruction, but needed in the forward
       if (user->getType()->isVoidTy())
         continue;
 
@@ -238,11 +304,12 @@ static inline bool is_value_needed_in_reverse(
     // One may need to this value in the computation of loop
     // bounds/comparisons/etc (which even though not active -- will be used for
     // the reverse pass)
-    //   We only need this if we're not doing the combined forward/reverse since
+    //   We could potentially optimize this to avoid caching if in combined mode
+    //   and the instruction dominates all returns
     //   otherwise it will use the local cache (rather than save for a separate
     //   backwards cache)
     //   We also don't need this if looking at the shadow rather than primal
-    if (mode != DerivativeMode::ReverseModeCombined) {
+    {
       // Proving that none of the uses (or uses' uses) are used in control flow
       // allows us to safely not do this load
 
@@ -305,6 +372,11 @@ static inline bool is_value_needed_in_reverse(
                                                     oldUnreachable);
     if (!direct)
       continue;
+
+    if (inst->getType()->isTokenTy()) {
+      llvm::errs() << " need " << *inst << " via " << *user << "\n";
+    }
+    assert(!inst->getType()->isTokenTy());
 
     return seen[idx] = true;
   }
@@ -480,6 +552,11 @@ static inline void minCut(const DataLayout &DL, LoopInfo &OrigLI,
         continue;
       if (moreOuterLoop == -1)
         continue;
+      if (auto ASC = dyn_cast<AddrSpaceCastInst>((*found->second.begin()).V)) {
+        if (ASC->getDestAddressSpace() == 11 ||
+            ASC->getDestAddressSpace() == 13)
+          continue;
+      }
       if (moreOuterLoop == 1 ||
           (moreOuterLoop == 0 &&
            DL.getTypeSizeInBits(V->getType()) >=

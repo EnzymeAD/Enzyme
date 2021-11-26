@@ -143,9 +143,12 @@ public:
     }
 
     PreProcessCache PPC;
-    bool ActiveReturns = F.getReturnType()->isFPOrFPVectorTy();
-    ActivityAnalyzer ATA(PPC, PPC.FAM.getResult<AAManager>(F), TLI,
-                         ConstantValues, ActiveValues, ActiveReturns);
+    DIFFE_TYPE ActiveReturns = F.getReturnType()->isFPOrFPVectorTy()
+                                   ? DIFFE_TYPE::OUT_DIFF
+                                   : DIFFE_TYPE::CONSTANT;
+    SmallPtrSet<BasicBlock *, 4> notForAnalysis(getGuaranteedUnreachable(&F));
+    ActivityAnalyzer ATA(PPC, PPC.FAM.getResult<AAManager>(F), notForAnalysis,
+                         TLI, ConstantValues, ActiveValues, ActiveReturns);
 
     for (auto &a : F.args()) {
       ATA.isConstantValue(TR, &a);

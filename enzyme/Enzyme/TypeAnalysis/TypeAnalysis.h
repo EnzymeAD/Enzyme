@@ -40,6 +40,7 @@
 #include "llvm/IR/Value.h"
 
 #include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/PostDominators.h"
 #include "llvm/IR/Dominators.h"
 
 #include "TypeTree.h"
@@ -104,15 +105,36 @@ static inline bool operator<(const FnTypeInfo &lhs, const FnTypeInfo &rhs) {
   if (rhs.Function < lhs.Function)
     return false;
 
-  if (lhs.Arguments < rhs.Arguments)
-    return true;
-  if (rhs.Arguments < lhs.Arguments)
-    return false;
   if (lhs.Return < rhs.Return)
     return true;
   if (rhs.Return < lhs.Return)
     return false;
-  return lhs.KnownValues < rhs.KnownValues;
+
+  for (auto &arg : lhs.Function->args()) {
+    {
+      auto foundLHS = lhs.Arguments.find(&arg);
+      assert(foundLHS != lhs.Arguments.end());
+      auto foundRHS = rhs.Arguments.find(&arg);
+      assert(foundRHS != rhs.Arguments.end());
+      if (foundLHS->second < foundRHS->second)
+        return true;
+      if (foundRHS->second < foundLHS->second)
+        return false;
+    }
+
+    {
+      auto foundLHS = lhs.KnownValues.find(&arg);
+      assert(foundLHS != lhs.KnownValues.end());
+      auto foundRHS = rhs.KnownValues.find(&arg);
+      assert(foundRHS != rhs.KnownValues.end());
+      if (foundLHS->second < foundRHS->second)
+        return true;
+      if (foundRHS->second < foundLHS->second)
+        return false;
+    }
+  }
+  // equal;
+  return false;
 }
 
 class TypeAnalyzer;
@@ -122,17 +144,13 @@ class TypeAnalysis;
 /// on a given function
 class TypeResults {
 public:
-  TypeAnalysis &analysis;
-  const FnTypeInfo info;
+  TypeAnalyzer &analyzer;
 
 public:
-  TypeResults(TypeAnalysis &analysis, const FnTypeInfo &fn);
+  TypeResults(TypeAnalyzer &analyzer);
   ConcreteType intType(size_t num, llvm::Value *val, bool errIfNotFound = true,
                        bool pointerIntSame = false);
   llvm::Type *addingType(size_t num, llvm::Value *val);
-
-  /// Return whether a given block is analyzed
-  bool isBlockAnalyzed(llvm::BasicBlock *BB);
 
   /// Returns whether in the first num bytes there is pointer, int, float, or
   /// none If pointerIntSame is set to true, then consider either as the same
@@ -157,6 +175,8 @@ public:
   std::set<int64_t> knownIntegralValues(llvm::Value *val) const;
 
   FnTypeInfo getCallInfo(llvm::CallInst &CI, llvm::Function &fn);
+
+  llvm::Function *getFunction() const;
 };
 
 /// Helper class that computes the fixed-point type results of a given function
@@ -204,6 +224,7 @@ public:
   std::map<llvm::Value *, TypeTree> analysis;
 
   std::shared_ptr<llvm::DominatorTree> DT;
+  std::shared_ptr<llvm::PostDominatorTree> PDT;
 
   std::shared_ptr<llvm::LoopInfo> LI;
 
@@ -215,6 +236,7 @@ public:
   TypeAnalyzer(const FnTypeInfo &fn, TypeAnalysis &TA,
                const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &notForAnalysis,
                std::shared_ptr<llvm::DominatorTree> DT,
+               std::shared_ptr<llvm::PostDominatorTree> PDT,
                std::shared_ptr<llvm::LoopInfo> LI, uint8_t direction = BOTH,
                bool PHIRecur = false);
 
@@ -285,6 +307,10 @@ public:
 
   void visitBitCastInst(llvm::BitCastInst &I);
 
+#if LLVM_VERSION_MAJOR >= 10
+  void visitFreezeInst(llvm::FreezeInst &I);
+#endif
+
   void visitSelectInst(llvm::SelectInst &I);
 
   void visitExtractElementInst(llvm::ExtractElementInst &I);
@@ -297,7 +323,12 @@ public:
 
   void visitInsertValueInst(llvm::InsertValueInst &I);
 
+  void visitAtomicRMWInst(llvm::AtomicRMWInst &I);
+
   void visitBinaryOperator(llvm::BinaryOperator &I);
+  void visitBinaryOperation(const llvm::DataLayout &DL, llvm::Type *T,
+                            llvm::Instruction::BinaryOps, llvm::Value *Args[2],
+                            TypeTree &Ret, TypeTree &LHS, TypeTree &RHS);
 
   void visitIPOCall(llvm::CallInst &call, llvm::Function &fn);
 
@@ -305,6 +336,7 @@ public:
   void visitCallInst(llvm::CallInst &call);
 
   void visitMemTransferInst(llvm::MemTransferInst &MTI);
+  void visitMemTransferCommon(llvm::CallInst &MTI);
 
   void visitIntrinsicInst(llvm::IntrinsicInst &II);
 
@@ -331,35 +363,10 @@ public:
       CustomRules;
 
   /// Map of possible query states to TypeAnalyzer intermediate results
-  std::map<FnTypeInfo, TypeAnalyzer> analyzedFunctions;
+  std::map<FnTypeInfo, std::shared_ptr<TypeAnalyzer>> analyzedFunctions;
 
   /// Analyze a particular function, returning the results
   TypeResults analyzeFunction(const FnTypeInfo &fn);
-
-  /// Get the TypeTree of a given value from a given function context
-  TypeTree query(llvm::Value *val, const FnTypeInfo &fn);
-
-  /// Get the underlying data type of value val given a particular context
-  /// If the type is not known err if errIfNotFound
-  ConcreteType intType(size_t num, llvm::Value *val, const FnTypeInfo &fn,
-                       bool errIfNotFound = true, bool pointerIntSame = false);
-
-  /// Get the underlying data type of value val, purging anything
-  // given a particular context. Return the underlying float type, if any
-  llvm::Type *addingType(size_t num, llvm::Value *val, const FnTypeInfo &fn);
-
-  /// Get the underlying data type of first num bytes of val given a particular
-  /// context If the type is not known err if errIfNotFound. Consider ints and
-  /// pointers the same if pointerIntSame.
-  ConcreteType firstPointer(size_t num, llvm::Value *val, const FnTypeInfo &fn,
-                            bool errIfNotFound = true,
-                            bool pointerIntSame = false);
-
-  /// Get the TyeTree of the returned value of a given function and context
-  inline TypeTree getReturnAnalysis(const FnTypeInfo &fn) {
-    analyzeFunction(fn);
-    return analyzedFunctions.find(fn)->second.getReturnAnalysis();
-  }
 
   /// Clear existing analyses
   void clear();

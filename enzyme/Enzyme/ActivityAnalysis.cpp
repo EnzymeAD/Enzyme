@@ -79,20 +79,49 @@ cl::opt<bool>
 #include <unordered_map>
 
 const char *KnownInactiveFunctionsStartingWith[] = {
-    "_ZN4core3fmt", "_ZN3std2io5stdio6_print", "f90io", "$ss5print"};
+    "_ZN4core3fmt", "_ZN3std2io5stdio6_print", "f90io", "$ss5print",
+    "_ZNSt7__cxx1112basic_string"};
 
-std::set<std::string> KnownInactiveFunctions = {
+const char *KnownInactiveFunctionsContains[] = {
+    "__enzyme_float", "__enzyme_double", "__enzyme_integer",
+    "__enzyme_pointer"};
+
+const std::set<std::string> InactiveGlobals = {
+    "ompi_request_null",
+    "ompi_mpi_double",
+    "ompi_mpi_comm_world",
+    "stderr",
+    "stdout",
+    "stdin",
+};
+
+const std::map<std::string, size_t> MPIInactiveCommAllocators = {
+    {"MPI_Graph_create", 5},
+    {"MPI_Comm_split", 2},
+    {"MPI_Intercomm_create", 6},
+    {"MPI_Comm_spawn", 6},
+    {"MPI_Comm_spawn_multiple", 7},
+    {"MPI_Comm_accept", 4},
+    {"MPI_Comm_connect", 4},
+    {"MPI_Comm_create", 2},
+    {"MPI_Comm_create_group", 3},
+    {"MPI_Comm_dup", 1},
+    {"MPI_Comm_dup", 2},
+    {"MPI_Comm_idup", 1},
+    {"MPI_Comm_join", 1},
+};
+
+const std::set<std::string> KnownInactiveFunctions = {
     "__assert_fail",
     "__cxa_guard_acquire",
     "__cxa_guard_release",
     "__cxa_guard_abort",
     "printf",
+    "putchar",
+    "fprintf",
     "vprintf",
     "puts",
-    "__enzyme_float",
-    "__enzyme_double",
-    "__enzyme_integer",
-    "__enzyme_pointer",
+    "fflush",
     "__kmpc_for_static_init_4",
     "__kmpc_for_static_init_4u",
     "__kmpc_for_static_init_8",
@@ -110,13 +139,38 @@ std::set<std::string> KnownInactiveFunctions = {
     "__kmpc_dispatch_fini_4u",
     "__kmpc_dispatch_fini_8",
     "__kmpc_dispatch_fini_8u",
+    "__kmpc_barrier",
+    "__kmpc_barrier_master",
+    "__kmpc_barrier_master_nowait",
+    "__kmpc_barrier_end_barrier_master",
+    "__kmpc_global_thread_num",
+    "omp_get_max_threads",
     "malloc_usable_size",
     "malloc_size",
     "MPI_Init",
     "MPI_Comm_size",
+    "PMPI_Comm_size",
     "MPI_Comm_rank",
+    "PMPI_Comm_rank",
     "MPI_Get_processor_name",
     "MPI_Finalize",
+    "MPI_Test",
+    "MPI_Probe", // double check potential syncronization
+    "MPI_Barrier",
+    "MPI_Abort",
+    "MPI_Get_count",
+    "MPI_Comm_free",
+    "MPI_Comm_get_parent",
+    "MPI_Comm_get_name",
+    "MPI_Comm_get_info",
+    "MPI_Comm_remote_size",
+    "MPI_Comm_set_info",
+    "MPI_Comm_set_name",
+    "MPI_Comm_compare",
+    "MPI_Comm_call_errhandler",
+    "MPI_Comm_create_errhandler",
+    "MPI_Comm_disconnect",
+    "MPI_Wtime",
     "_msize",
     "ftnio_fmt_write64",
     "f90_strcmp_klen",
@@ -127,28 +181,18 @@ std::set<std::string> KnownInactiveFunctions = {
 /// This tool can only be used when in DOWN mode
 bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
   assert(directions & DOWN);
-
-  if (CI->hasFnAttr("enzyme_inactive")) {
+  if (CI->hasFnAttr("enzyme_inactive"))
     return true;
-  }
 
-  Function *F = CI->getCalledFunction();
-
-#if LLVM_VERSION_MAJOR >= 11
-  if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand()))
-#else
-  if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledValue()))
-#endif
-  {
-    if (castinst->isCast())
-      if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-        F = fn;
-      }
-  }
+  Function *F = getFunctionFromCall(CI);
 
   // Indirect function calls may actively use the argument
   if (F == nullptr)
     return false;
+
+  if (F->hasFnAttribute("enzyme_inactive")) {
+    return true;
+  }
 
   auto Name = F->getName();
 
@@ -164,7 +208,16 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
       return true;
     }
   }
+  for (auto FuncName : KnownInactiveFunctionsContains) {
+    if (Name.contains(FuncName)) {
+      return true;
+    }
+  }
   if (KnownInactiveFunctions.count(Name.str())) {
+    return true;
+  }
+  if (MPIInactiveCommAllocators.find(Name.str()) !=
+      MPIInactiveCommAllocators.end()) {
     return true;
   }
   if (F->getIntrinsicID() == Intrinsic::trap)
@@ -192,6 +245,23 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
   if (Name == "frexp" || Name == "frexpf" || Name == "frexpl") {
     return val != CI->getOperand(0);
   }
+
+  // only the buffer is active for mpi send/recv
+  if (Name == "MPI_Recv" || Name == "PMPI_Recv" || Name == "MPI_Send" ||
+      Name == "PMPI_Send") {
+    return val != CI->getOperand(0);
+  }
+  // only the recv buffer and request is active for mpi isend/irecv
+  if (Name == "MPI_Irecv" || Name == "MPI_Isend") {
+    return val != CI->getOperand(0) && val != CI->getOperand(6);
+  }
+
+  // only request is active
+  if (Name == "MPI_Wait" || Name == "PMPI_Wait")
+    return val != CI->getOperand(0);
+
+  if (Name == "MPI_Waitall" || Name == "PMPI_Waitall")
+    return val != CI->getOperand(1);
 
   // TODO interprocedural detection
   // Before potential introprocedural detection, any function without definition
@@ -251,7 +321,12 @@ static inline void propagateArgumentInformation(
 
   // For other calls, check all operands of the instruction
   // as conservatively they may impact the activity of the call
-  for (auto &a : CI.arg_operands()) {
+#if LLVM_VERSION_MAJOR >= 14
+  for (auto &a : CI.args())
+#else
+  for (auto &a : CI.arg_operands())
+#endif
+  {
     if (propagateFromOperand(a))
       break;
   }
@@ -264,7 +339,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults &TR, Instruction *I) {
   // This analysis may only be called by instructions corresponding to
   // the function analyzed by TypeInfo
   assert(I);
-  assert(TR.info.Function == I->getParent()->getParent());
+  assert(TR.getFunction() == I->getParent()->getParent());
 
   // The return instruction doesn't impact activity (handled specifically
   // during adjoint generation)
@@ -280,6 +355,14 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults &TR, Instruction *I) {
   /// Previously computed inactives remain inactive
   if ((ActiveInstructions.find(I) != ActiveInstructions.end())) {
     return false;
+  }
+
+  if (notForAnalysis.count(I->getParent())) {
+    if (EnzymePrintActivity)
+      llvm::errs() << " constant instruction as dominates unreachable " << *I
+                   << "\n";
+    InsertConstantInstruction(TR, I);
+    return true;
   }
 
   /// A store into all integral memory is inactive
@@ -298,6 +381,38 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults &TR, Instruction *I) {
       auto dt = q[{i}];
       if (dt.isIntegral() || dt == BaseType::Anything) {
         SeenInteger = true;
+        if (i == -1)
+          break;
+      } else if (dt.isKnown()) {
+        AllIntegral = false;
+        break;
+      }
+    }
+
+    if (AllIntegral && SeenInteger) {
+      if (EnzymePrintActivity)
+        llvm::errs() << " constant instruction from TA " << *I << "\n";
+      InsertConstantInstruction(TR, I);
+      return true;
+    }
+  }
+  if (auto SI = dyn_cast<AtomicRMWInst>(I)) {
+    auto StoreSize = SI->getParent()
+                         ->getParent()
+                         ->getParent()
+                         ->getDataLayout()
+                         .getTypeSizeInBits(I->getType()) /
+                     8;
+
+    bool AllIntegral = true;
+    bool SeenInteger = false;
+    auto q = TR.query(SI->getOperand(0)).Data0();
+    for (int i = -1; i < (int)StoreSize; ++i) {
+      auto dt = q[{i}];
+      if (dt.isIntegral() || dt == BaseType::Anything) {
+        SeenInteger = true;
+        if (i == -1)
+          break;
       } else if (dt.isKnown()) {
         AllIntegral = false;
         break;
@@ -428,7 +543,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults &TR, Instruction *I) {
       if (directions == DOWN && !isa<PHINode>(I)) {
         if (isValueInactiveFromUsers(TR, I, UseActivity::None)) {
           if (EnzymePrintActivity)
-            llvm::errs() << " constant instruction[" << directions
+            llvm::errs() << " constant instruction[" << (int)directions
                          << "] from users instruction " << *I << "\n";
           InsertConstantInstruction(TR, I);
           return true;
@@ -440,7 +555,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults &TR, Instruction *I) {
         if (DownHypothesis->isValueInactiveFromUsers(TR, I,
                                                      UseActivity::None)) {
           if (EnzymePrintActivity)
-            llvm::errs() << " constant instruction[" << directions
+            llvm::errs() << " constant instruction[" << (int)directions
                          << "] from users instruction " << *I << "\n";
           InsertConstantInstruction(TR, I);
           insertConstantsFrom(TR, *DownHypothesis);
@@ -500,14 +615,14 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
   // was created outside a function (e.g. global, constant), that is allowed
   assert(Val);
   if (auto I = dyn_cast<Instruction>(Val)) {
-    if (TR.info.Function != I->getParent()->getParent()) {
-      llvm::errs() << *TR.info.Function << "\n";
+    if (TR.getFunction() != I->getParent()->getParent()) {
+      llvm::errs() << *TR.getFunction() << "\n";
       llvm::errs() << *I << "\n";
     }
-    assert(TR.info.Function == I->getParent()->getParent());
+    assert(TR.getFunction() == I->getParent()->getParent());
   }
   if (auto Arg = dyn_cast<Argument>(Val)) {
-    assert(TR.info.Function == Arg->getParent());
+    assert(TR.getFunction() == Arg->getParent());
   }
 
   // Void values are definitionally inactive
@@ -516,22 +631,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
 
   // All function pointers are considered active in case an augmented primal
   // or reverse is needed
-  if (isa<Function>(Val)) {
+  if (isa<Function>(Val) || isa<InlineAsm>(Val)) {
     return false;
   }
-
-  // Undef, metadata, non-global constants, and blocks are inactive
-  if (isa<UndefValue>(Val) || isa<MetadataAsValue>(Val) ||
-      isa<ConstantData>(Val) || isa<ConstantAggregate>(Val) ||
-      isa<BasicBlock>(Val)) {
-    return true;
-  }
-  if (isa<InlineAsm>(Val)) {
-    return false;
-    llvm::errs() << *TR.info.Function << "\n";
-    llvm::errs() << *Val << "\n";
-  }
-  assert(!isa<InlineAsm>(Val));
 
   /// If we've already shown this value to be inactive
   if (ConstantValues.find(Val) != ConstantValues.end()) {
@@ -541,6 +643,38 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
   /// If we've already shown this value to be active
   if (ActiveValues.find(Val) != ActiveValues.end()) {
     return false;
+  }
+
+  if (auto CD = dyn_cast<ConstantDataSequential>(Val)) {
+    // inductively assume inactive
+    ConstantValues.insert(CD);
+    for (size_t i = 0, len = CD->getNumElements(); i < len; i++) {
+      if (!isConstantValue(TR, CD->getElementAsConstant(i))) {
+        ConstantValues.erase(CD);
+        ActiveValues.insert(CD);
+        return false;
+      }
+    }
+    return true;
+  }
+  if (auto CD = dyn_cast<ConstantAggregate>(Val)) {
+    // inductively assume inactive
+    ConstantValues.insert(CD);
+    for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
+      if (!isConstantValue(TR, CD->getOperand(i))) {
+        ConstantValues.erase(CD);
+        ActiveValues.insert(CD);
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // Undef, metadata, non-global constants, and blocks are inactive
+  if (isa<UndefValue>(Val) || isa<MetadataAsValue>(Val) ||
+      isa<ConstantData>(Val) || isa<ConstantAggregate>(Val) ||
+      isa<BasicBlock>(Val)) {
+    return true;
   }
 
   if (auto II = dyn_cast<IntrinsicInst>(Val)) {
@@ -622,7 +756,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
       return true;
     }
 
-    if (GI->getName().contains("enzyme_const")) {
+    if (GI->getName().contains("enzyme_const") ||
+        InactiveGlobals.count(GI->getName().str())) {
       InsertConstantValue(TR, Val);
       return true;
     }
@@ -632,7 +767,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
     if (GI->isConstant() && isConstantValue(TR, GI->getInitializer())) {
       InsertConstantValue(TR, Val);
       if (EnzymePrintActivity)
-        llvm::errs() << " VALUE const global " << *Val << "\n";
+        llvm::errs() << " VALUE const global " << *Val
+                     << " init: " << *GI->getInitializer() << "\n";
       return true;
     }
 
@@ -658,7 +794,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
     if (EnzymePrintActivity)
       llvm::errs() << "pre attempting(" << (int)directions
                    << ") just used in module for: " << *GI << " dir"
-                   << (char)directions << " justusedin:" << usedJustInThisModule
+                   << (int)directions << " justusedin:" << usedJustInThisModule
                    << "\n";
 
     if (directions == 3 && usedJustInThisModule) {
@@ -779,7 +915,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
 #if LLVM_VERSION_MAJOR >= 12
         getUnderlyingObject(Val, 100);
 #else
-        GetUnderlyingObject(Val, TR.info.Function->getParent()->getDataLayout(),
+        GetUnderlyingObject(Val, TR.getFunction()->getParent()->getDataLayout(),
                             100);
 #endif
 
@@ -852,21 +988,14 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
           insertConstantsFrom(TR, *UpHypothesis);
           return true;
         }
+        Function *called = getFunctionFromCall(op);
 
-        Function *called = op->getCalledFunction();
-
-#if LLVM_VERSION_MAJOR >= 11
-        if (auto castinst = dyn_cast<ConstantExpr>(op->getCalledOperand()))
-#else
-        if (auto castinst = dyn_cast<ConstantExpr>(op->getCalledValue()))
-#endif
-        {
-          if (castinst->isCast())
-            if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-              called = fn;
-            }
-        }
         if (called) {
+          if (called->hasFnAttribute("enzyme_inactive")) {
+            InsertConstantValue(TR, Val);
+            insertConstantsFrom(TR, *UpHypothesis);
+            return true;
+          }
           if (called->getName() == "free" || called->getName() == "_ZdlPv" ||
               called->getName() == "_ZdlPvm" || called->getName() == "munmap") {
             InsertConstantValue(TR, Val);
@@ -881,8 +1010,17 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
               return true;
             }
           }
+          for (auto FuncName : KnownInactiveFunctionsContains) {
+            if (called->getName().contains(FuncName)) {
+              InsertConstantValue(TR, Val);
+              insertConstantsFrom(TR, *UpHypothesis);
+              return true;
+            }
+          }
 
-          if (KnownInactiveFunctions.count(called->getName().str())) {
+          if (KnownInactiveFunctions.count(called->getName().str()) ||
+              MPIInactiveCommAllocators.find(called->getName().str()) !=
+                  MPIInactiveCommAllocators.end()) {
             InsertConstantValue(TR, Val);
             insertConstantsFrom(TR, *UpHypothesis);
             return true;
@@ -898,6 +1036,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
           // abide by those rules
           if (!isCertainPrintMallocOrFree(called) && called->empty() &&
               !hasMetadata(called, "enzyme_gradient") &&
+              !hasMetadata(called, "enzyme_derivative") &&
               !isa<IntrinsicInst>(op) && EnzymeEmptyFnInactive) {
             InsertConstantValue(TR, Val);
             insertConstantsFrom(TR, *UpHypothesis);
@@ -1003,10 +1142,10 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
 
     // Search through all the instructions in this function
     // for potential loads / stores of this value
-    for (BasicBlock &BB : *TR.info.Function) {
+    for (BasicBlock &BB : *TR.getFunction()) {
       if (potentialStore && potentiallyActiveLoad)
         goto activeLoadAndStore;
-      if (!TR.isBlockAnalyzed(&BB))
+      if (notForAnalysis.count(&BB))
         continue;
       for (Instruction &I : BB) {
         if (potentialStore && potentiallyActiveLoad)
@@ -1014,6 +1153,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
 
         // If this is a malloc or free, this doesn't impact the activity
         if (auto CI = dyn_cast<CallInst>(&I)) {
+          if (CI->hasFnAttr("enzyme_inactive"))
+            continue;
 
 #if LLVM_VERSION_MAJOR >= 11
           if (auto iasm = dyn_cast<InlineAsm>(CI->getCalledOperand()))
@@ -1026,27 +1167,34 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
               continue;
           }
 
-          Function *F = CI->getCalledFunction();
-#if LLVM_VERSION_MAJOR >= 11
-          if (auto Cst = dyn_cast<CastInst>(CI->getCalledOperand()))
-#else
-          if (auto Cst = dyn_cast<CastInst>(CI->getCalledValue()))
-#endif
-          {
-            F = dyn_cast<Function>(Cst->getOperand(0));
-          }
+          Function *F = getFunctionFromCall(CI);
 
           if (F) {
+            if (F->hasFnAttribute("enzyme_inactive")) {
+              continue;
+            }
             if (isAllocationFunction(*F, TLI) ||
                 isDeallocationFunction(*F, TLI)) {
               continue;
             }
-            if (KnownInactiveFunctions.count(F->getName().str())) {
+            if (KnownInactiveFunctions.count(F->getName().str()) ||
+                MPIInactiveCommAllocators.find(F->getName().str()) !=
+                    MPIInactiveCommAllocators.end()) {
               continue;
             }
             if (isMemFreeLibMFunction(F->getName()) ||
                 F->getName() == "__fd_sincos_1") {
               continue;
+            }
+            for (auto FuncName : KnownInactiveFunctionsStartingWith) {
+              if (F->getName().startswith(FuncName)) {
+                continue;
+              }
+            }
+            for (auto FuncName : KnownInactiveFunctionsContains) {
+              if (F->getName().contains(FuncName)) {
+                continue;
+              }
             }
 
             if (F->getName() == "__cxa_guard_acquire" ||
@@ -1478,24 +1626,21 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults &TR,
     }
   }
 
-  // Calls to print/assert/cxa guard are definitionally inactive
   if (auto op = dyn_cast<CallInst>(inst)) {
     if (op->hasFnAttr("enzyme_inactive")) {
       return true;
     }
-    Function *called = op->getCalledFunction();
+    // Calls to print/assert/cxa guard are definitionally inactive
+    llvm::Value *callVal;
 #if LLVM_VERSION_MAJOR >= 11
-    if (auto castinst = dyn_cast<ConstantExpr>(op->getCalledOperand()))
+    callVal = op->getCalledOperand();
 #else
-    if (auto castinst = dyn_cast<ConstantExpr>(op->getCalledValue()))
+    callVal = op->getCalledValue();
 #endif
-    {
-      if (castinst->isCast())
-        if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-          called = fn;
-        }
-    }
-    if (called) {
+    if (Function *called = getFunctionFromCall(op)) {
+      if (called->hasFnAttribute("enzyme_inactive")) {
+        return true;
+      }
       if (called->getName() == "free" || called->getName() == "_ZdlPv" ||
           called->getName() == "_ZdlPvm" || called->getName() == "munmap") {
         return true;
@@ -1506,8 +1651,15 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults &TR,
           return true;
         }
       }
+      for (auto FuncName : KnownInactiveFunctionsContains) {
+        if (called->getName().contains(FuncName)) {
+          return true;
+        }
+      }
 
-      if (KnownInactiveFunctions.count(called->getName().str())) {
+      if (KnownInactiveFunctions.count(called->getName().str()) ||
+          MPIInactiveCommAllocators.find(called->getName().str()) !=
+              MPIInactiveCommAllocators.end()) {
         if (EnzymePrintActivity)
           llvm::errs() << "constant(" << (int)directions
                        << ") up-knowninactivecall " << *inst << "\n";
@@ -1520,13 +1672,19 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults &TR,
       // If requesting empty unknown functions to be considered inactive, abide
       // by those rules
       if (!isCertainPrintMallocOrFree(called) && called->empty() &&
-          !hasMetadata(called, "enzyme_gradient") && !isa<IntrinsicInst>(op) &&
-          EnzymeEmptyFnInactive) {
+          !hasMetadata(called, "enzyme_gradient") &&
+          !hasMetadata(called, "enzyme_derivative") &&
+          !isa<IntrinsicInst>(op) && EnzymeEmptyFnInactive) {
         if (EnzymePrintActivity)
           llvm::errs() << "constant(" << (int)directions << ") up-emptyconst "
                        << *inst << "\n";
         return true;
       }
+    } else if (!isa<Constant>(callVal) && isConstantValue(TR, callVal)) {
+      if (EnzymePrintActivity)
+        llvm::errs() << "constant(" << (int)directions << ") up-constfn "
+                     << *inst << " - " << *callVal << "\n";
+      return true;
     }
   }
   // Intrinsics known always to be inactive
@@ -1595,18 +1753,7 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults &TR,
     if (EnzymeGlobalActivity) {
       if (!ci->onlyAccessesArgMemory() && !ci->doesNotAccessMemory()) {
 
-        Function *called = ci->getCalledFunction();
-#if LLVM_VERSION_MAJOR >= 11
-        if (auto castinst = dyn_cast<ConstantExpr>(ci->getCalledOperand()))
-#else
-        if (auto castinst = dyn_cast<ConstantExpr>(ci->getCalledValue()))
-#endif
-        {
-          if (castinst->isCast())
-            if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-              called = fn;
-            }
-        }
+        Function *called = getFunctionFromCall(ci);
         if (!called || (!isCertainPrintMallocOrFree(called) &&
                         !isMemFreeLibMFunction(called->getName()))) {
           if (EnzymePrintActivity)
@@ -1717,7 +1864,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults &TR,
             getUnderlyingObject(SI->getPointerOperand(), 100);
 #else
             GetUnderlyingObject(SI->getPointerOperand(),
-                                TR.info.Function->getParent()->getDataLayout(),
+                                TR.getFunction()->getParent()->getDataLayout(),
                                 100);
 #endif
         if (TmpOrig == val) {
@@ -1768,7 +1915,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults &TR,
     while (PPC.CloneOrigin.find(InstF) != PPC.CloneOrigin.end())
       InstF = PPC.CloneOrigin[InstF];
 
-    Function *F = TR.info.Function;
+    Function *F = TR.getFunction();
     while (PPC.CloneOrigin.find(F) != PPC.CloneOrigin.end())
       F = PPC.CloneOrigin[F];
 
@@ -1780,12 +1927,16 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults &TR,
                      << " self: " << F->getName() << "@" << F << "\n";
       return false;
     }
-    if (cast<Instruction>(a)->getParent()->getParent() != TR.info.Function)
+    if (cast<Instruction>(a)->getParent()->getParent() != TR.getFunction())
       continue;
 
     // This use is only active if specified
     if (isa<ReturnInst>(a)) {
-      return !ActiveReturns;
+      if (ActiveReturns == DIFFE_TYPE::CONSTANT) {
+        continue;
+      } else {
+        return false;
+      }
     }
 
     if (auto call = dyn_cast<CallInst>(a)) {
@@ -1803,6 +1954,13 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults &TR,
     // if its return is used in an active way, therefore add this to
     // the list of users to analyze
     if (auto I = dyn_cast<Instruction>(a)) {
+      if (notForAnalysis.count(I->getParent())) {
+        if (EnzymePrintActivity) {
+          llvm::errs() << "Value found constant unreachable inst use:" << *val
+                       << " user " << *I << "\n";
+        }
+        continue;
+      }
       if (ConstantInstructions.count(I) &&
           (I->getType()->isVoidTy() || ConstantValues.count(I))) {
         if (EnzymePrintActivity) {
@@ -1872,7 +2030,7 @@ bool ActivityAnalyzer::isValueActivelyStoredOrReturned(TypeResults &TR,
     }
 
     if (isa<ReturnInst>(a)) {
-      if (!ActiveReturns)
+      if (ActiveReturns == DIFFE_TYPE::CONSTANT)
         continue;
 
       if (EnzymePrintActivity)
@@ -1913,7 +2071,7 @@ bool ActivityAnalyzer::isValueActivelyStoredOrReturned(TypeResults &TR,
           (isa<CallInst>(inst) && AA.onlyReadsMemory(cast<CallInst>(inst)))) {
         // if not written to memory and returning a known constant, this
         // cannot be actively returned/stored
-        if (inst->getParent()->getParent() == TR.info.Function &&
+        if (inst->getParent()->getParent() == TR.getFunction() &&
             isConstantValue(TR, a)) {
           continue;
         }

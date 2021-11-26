@@ -116,6 +116,15 @@ typedef enum {
   DEM_ReverseModeCombined = 3,
 } CDerivativeMode;
 
+LLVMValueRef
+EnzymeCreateForwardDiff(EnzymeLogicRef, LLVMValueRef todiff,
+                        CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
+                        size_t constant_args_size, EnzymeTypeAnalysisRef TA,
+                        uint8_t returnValue, uint8_t dretUsed,
+                        CDerivativeMode mode, LLVMTypeRef additionalArg,
+                        struct CFnTypeInfo typeInfo, uint8_t *_uncacheable_args,
+                        size_t uncacheable_args_size, uint8_t PostOpt);
+
 LLVMValueRef EnzymeCreatePrimalAndGradient(
     EnzymeLogicRef, LLVMValueRef todiff, CDIFFE_TYPE retType,
     CDIFFE_TYPE *constant_args, size_t constant_args_size,
@@ -160,6 +169,16 @@ typedef LLVMValueRef (*CustomShadowFree)(LLVMBuilderRef, LLVMValueRef,
 
 void EnzymeRegisterAllocationHandler(char *Name, CustomShadowAlloc AHandle,
                                      CustomShadowFree FHandle);
+
+class GradientUtils;
+class DiffeGradientUtils;
+
+typedef void (*CustomFunctionForward)(LLVMBuilderRef, LLVMValueRef,
+                                      GradientUtils *, LLVMValueRef *,
+                                      LLVMValueRef *, LLVMValueRef *);
+
+typedef void (*CustomFunctionReverse)(LLVMBuilderRef, LLVMValueRef,
+                                      DiffeGradientUtils *, LLVMValueRef);
 
 #ifdef __cplusplus
 }

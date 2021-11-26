@@ -42,6 +42,7 @@
 #include "llvm/IR/InstVisitor.h"
 
 #include "TypeAnalysis/TypeAnalysis.h"
+#include "Utils.h"
 
 extern "C" {
 extern llvm::cl::opt<bool> EnzymePrintActivity;
@@ -50,18 +51,26 @@ extern llvm::cl::opt<bool> EnzymeNonmarkedGlobalsInactive;
 
 class PreProcessCache;
 
+// A map of MPI comm allocators (otherwise inactive) to the
+// argument of the Comm* they allocate into.
+extern const std::map<std::string, size_t> MPIInactiveCommAllocators;
+
 /// Helper class to analyze the differential activity
 class ActivityAnalyzer {
   PreProcessCache &PPC;
 
   /// Aliasing Information
   llvm::AAResults &AA;
+
+  // Blocks not to be analyzed
+  const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &notForAnalysis;
+
   /// Library Information
   llvm::TargetLibraryInfo &TLI;
 
 public:
   /// Whether the returns of the function being analyzed are active
-  const bool ActiveReturns;
+  const DIFFE_TYPE ActiveReturns;
 
 private:
   /// Direction of current analysis
@@ -91,13 +100,15 @@ public:
   /// values and whether returns are active. The all arguments of the functions
   /// being analyzed must be in the set of constant and active values, lest an
   /// error occur during analysis
-  ActivityAnalyzer(PreProcessCache &PPC, llvm::AAResults &AA_,
-                   llvm::TargetLibraryInfo &TLI_,
-                   const llvm::SmallPtrSetImpl<llvm::Value *> &ConstantValues,
-                   const llvm::SmallPtrSetImpl<llvm::Value *> &ActiveValues,
-                   bool ActiveReturns)
-      : PPC(PPC), AA(AA_), TLI(TLI_), ActiveReturns(ActiveReturns),
-        directions(UP | DOWN),
+  ActivityAnalyzer(
+      PreProcessCache &PPC, llvm::AAResults &AA_,
+      const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &notForAnalysis_,
+      llvm::TargetLibraryInfo &TLI_,
+      const llvm::SmallPtrSetImpl<llvm::Value *> &ConstantValues,
+      const llvm::SmallPtrSetImpl<llvm::Value *> &ActiveValues,
+      DIFFE_TYPE ActiveReturns)
+      : PPC(PPC), AA(AA_), notForAnalysis(notForAnalysis_), TLI(TLI_),
+        ActiveReturns(ActiveReturns), directions(UP | DOWN),
         ConstantValues(ConstantValues.begin(), ConstantValues.end()),
         ActiveValues(ActiveValues.begin(), ActiveValues.end()) {}
 
@@ -125,8 +136,9 @@ private:
   /// Create a new analyzer starting from an existing Analyzer
   /// This is used to perform inductive assumptions
   ActivityAnalyzer(ActivityAnalyzer &Other, uint8_t directions)
-      : PPC(Other.PPC), AA(Other.AA), TLI(Other.TLI),
-        ActiveReturns(Other.ActiveReturns), directions(directions),
+      : PPC(Other.PPC), AA(Other.AA), notForAnalysis(Other.notForAnalysis),
+        TLI(Other.TLI), ActiveReturns(Other.ActiveReturns),
+        directions(directions),
         ConstantInstructions(Other.ConstantInstructions),
         ActiveInstructions(Other.ActiveInstructions),
         ConstantValues(Other.ConstantValues), ActiveValues(Other.ActiveValues) {

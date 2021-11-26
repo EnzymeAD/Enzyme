@@ -47,11 +47,10 @@
 #include "llvm/Analysis/MemorySSA.h"
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"
 
+#include "llvm/Analysis/CFLSteensAliasAnalysis.h"
 #include "llvm/Analysis/DependenceAnalysis.h"
 #include "llvm/Analysis/TypeBasedAliasAnalysis.h"
 #include "llvm/CodeGen/UnreachableBlockElim.h"
-
-#include "llvm/Analysis/CFLSteensAliasAnalysis.h"
 
 #if LLVM_VERSION_MAJOR > 6
 #include "llvm/Analysis/PhiValues.h"
@@ -94,6 +93,7 @@
 #include "llvm/Transforms/Scalar/LoopRotation.h"
 
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
+#include "llvm/Transforms/Utils/Local.h"
 
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
@@ -176,7 +176,12 @@ bool couldFunctionArgumentCapture(llvm::CallInst *CI, llvm::Value *val) {
     return false;
 
   auto arg = F->arg_begin();
-  for (size_t i = 0, size = CI->getNumArgOperands(); i < size; i++) {
+#if LLVM_VERSION_MAJOR >= 14
+  for (size_t i = 0, size = CI->arg_size(); i < size; i++)
+#else
+  for (size_t i = 0, size = CI->getNumArgOperands(); i < size; i++)
+#endif
+  {
     if (val == CI->getArgOperand(i)) {
       // This is a vararg, assume captured
       if (arg == F->arg_end()) {
@@ -307,6 +312,11 @@ static inline void UpgradeAllocasToMallocs(Function *NewF,
     if (auto C = dyn_cast<CastInst>(rep))
       CI = cast<CallInst>(C->getOperand(0));
     CI->setMetadata("enzyme_fromstack", MDNode::get(CI->getContext(), {}));
+#if LLVM_VERSION_MAJOR >= 14
+    CI->addRetAttr(Attribute::NoAlias);
+#else
+    CI->addAttribute(AttributeList::ReturnIndex, Attribute::NoAlias);
+#endif
     assert(rep->getType() == AI->getType());
     AI->replaceAllUsesWith(rep);
     AI->eraseFromParent();
@@ -468,8 +478,12 @@ OldAllocationSize(Value *Ptr, CallInst *Loc, Function *NewF, IntegerType *T,
     }
 
     AttributeList list;
+#if LLVM_VERSION_MAJOR >= 14
+    list = list.addFnAttribute(NewF->getContext(), Attribute::ReadOnly);
+#else
     list = list.addAttribute(NewF->getContext(), AttributeList::FunctionIndex,
                              Attribute::ReadOnly);
+#endif
     list = list.addParamAttribute(NewF->getContext(), 0, Attribute::ReadNone);
     list = list.addParamAttribute(NewF->getContext(), 0, Attribute::NoCapture);
     auto allocSize = NewF->getParent()->getOrInsertFunction(
@@ -489,6 +503,35 @@ OldAllocationSize(Value *Ptr, CallInst *Loc, Function *NewF, IntegerType *T,
   return AI;
 }
 
+void PreProcessCache::AlwaysInline(Function *NewF) {
+  PreservedAnalyses PA;
+  PA.preserve<AssumptionAnalysis>();
+  PA.preserve<TargetLibraryAnalysis>();
+  FAM.invalidate(*NewF, PA);
+  SmallVector<CallInst *, 2> ToInline;
+  // TODO this logic should be combined with the dynamic loop emission
+  // to minimize the number of branches if the realloc is used for multiple
+  // values with the same bound.
+  for (auto &BB : *NewF) {
+    for (auto &I : BB) {
+      if (auto CI = dyn_cast<CallInst>(&I)) {
+        if (!CI->getCalledFunction())
+          continue;
+        if (CI->getCalledFunction()->hasFnAttribute(Attribute::AlwaysInline))
+          ToInline.push_back(CI);
+      }
+    }
+  }
+  for (auto CI : ToInline) {
+    InlineFunctionInfo IFI;
+#if LLVM_VERSION_MAJOR >= 11
+    InlineFunction(*CI, IFI);
+#else
+    InlineFunction(CI, IFI);
+#endif
+  }
+}
+
 /// Calls to realloc with an appropriate implementation
 void PreProcessCache::ReplaceReallocs(Function *NewF, bool mem2reg) {
   if (mem2reg) {
@@ -498,7 +541,7 @@ void PreProcessCache::ReplaceReallocs(Function *NewF, bool mem2reg) {
 
   std::vector<CallInst *> ToConvert;
   std::map<CallInst *, Value *> reallocSizes;
-  IntegerType *T;
+  IntegerType *T = nullptr;
 
   for (auto &BB : *NewF) {
     for (auto &I : BB) {
@@ -518,6 +561,7 @@ void PreProcessCache::ReplaceReallocs(Function *NewF, bool mem2reg) {
   std::vector<AllocaInst *> memoryLocations;
 
   for (auto CI : ToConvert) {
+    assert(T);
     AllocaInst *AI =
         OldAllocationSize(CI->getArgOperand(0), CI, NewF, T, reallocSizes);
 
@@ -599,6 +643,95 @@ void PreProcessCache::ReplaceReallocs(Function *NewF, bool mem2reg) {
   FAM.invalidate(*NewF, PA);
 }
 
+Function *CreateMPIWrapper(Function *F) {
+  std::string name = ("enzyme_wrapmpi$$" + F->getName() + "#").str();
+  if (auto W = F->getParent()->getFunction(name))
+    return W;
+  Type *types = {F->getFunctionType()->getParamType(0)};
+  auto FT = FunctionType::get(F->getReturnType(), types, false);
+  Function *W = Function::Create(FT, GlobalVariable::InternalLinkage, name,
+                                 F->getParent());
+  llvm::Attribute::AttrKind attrs[] = {
+    Attribute::ReadOnly,
+    Attribute::Speculatable,
+    Attribute::NoUnwind,
+    Attribute::AlwaysInline,
+#if LLVM_VERSION_MAJOR >= 10
+    Attribute::NoFree,
+    Attribute::NoSync,
+#endif
+    Attribute::InaccessibleMemOnly
+  };
+  for (auto attr : attrs) {
+#if LLVM_VERSION_MAJOR >= 14
+    W->addFnAttr(attr);
+#else
+    W->addAttribute(AttributeList::FunctionIndex, attr);
+#endif
+  }
+#if LLVM_VERSION_MAJOR >= 14
+  W->addFnAttr(Attribute::get(F->getContext(), "enzyme_inactive"));
+#else
+  W->addAttribute(AttributeList::FunctionIndex,
+                  Attribute::get(F->getContext(), "enzyme_inactive"));
+#endif
+  BasicBlock *entry = BasicBlock::Create(W->getContext(), "entry", W);
+  IRBuilder<> B(entry);
+  auto alloc = B.CreateAlloca(F->getReturnType());
+  Value *args[] = {W->arg_begin(), alloc};
+  B.CreateCall(F, args);
+  B.CreateRet(B.CreateLoad(alloc));
+  return W;
+}
+static void SimplifyMPIQueries(Function &NewF) {
+  SmallVector<CallInst *, 4> Todo;
+  SmallVector<CallInst *, 0> OMPBounds;
+  for (auto &BB : NewF) {
+    for (auto &I : BB) {
+      if (auto CI = dyn_cast<CallInst>(&I)) {
+        Function *Fn = CI->getCalledFunction();
+        if (Fn == nullptr)
+          continue;
+        if (Fn->getName() == "MPI_Comm_rank" ||
+            Fn->getName() == "PMPI_Comm_rank" ||
+            Fn->getName() == "MPI_Comm_size") {
+          if (!CI->use_empty()) {
+            continue;
+          }
+          Todo.push_back(CI);
+        }
+        if (Fn->getName() == "__kmpc_for_static_init_4" ||
+            Fn->getName() == "__kmpc_for_static_init_4u" ||
+            Fn->getName() == "__kmpc_for_static_init_8" ||
+            Fn->getName() == "__kmpc_for_static_init_8u") {
+          OMPBounds.push_back(CI);
+        }
+      }
+    }
+  }
+  for (auto CI : Todo) {
+    IRBuilder<> B(CI);
+    Value *arg[] = {CI->getArgOperand(0)};
+    auto res = B.CreateCall(CreateMPIWrapper(CI->getCalledFunction()), arg);
+    B.CreateStore(res, CI->getArgOperand(1));
+    CI->eraseFromParent();
+  }
+  for (auto Bound : OMPBounds) {
+    for (int i = 4; i <= 6; i++) {
+      auto AI = cast<AllocaInst>(Bound->getArgOperand(i));
+      IRBuilder<> B(AI);
+      auto AI2 = B.CreateAlloca(AI->getAllocatedType(), nullptr,
+                                AI->getName() + "_smpl");
+      B.SetInsertPoint(Bound);
+      B.CreateStore(B.CreateLoad(AI), AI2);
+      Bound->setArgOperand(i, AI2);
+      B.SetInsertPoint(Bound->getNextNode());
+      B.CreateStore(B.CreateLoad(AI2), AI);
+      Bound->addParamAttr(i, Attribute::NoCapture);
+    }
+  }
+}
+
 /// Perform recursive inlinining on NewF up to the given limit
 static void ForceRecursiveInlining(Function *NewF, size_t Limit) {
   std::map<const Function *, RecurType> RecurResults;
@@ -614,6 +747,8 @@ static void ForceRecursiveInlining(Function *NewF, size_t Limit) {
                   "_ZN3std2io5stdio6_print"))
             continue;
           if (CI->getCalledFunction()->getName().startswith("_ZN4core3fmt"))
+            continue;
+          if (CI->getCalledFunction()->getName().startswith("enzyme_wrapmpi$$"))
             continue;
           if (CI->getCalledFunction()->hasFnAttribute(
                   Attribute::ReturnsTwice) ||
@@ -668,6 +803,7 @@ void CanonicalizeLoops(Function *F, FunctionAnalysisManager &FAM) {
   PA.preserve<PostDominatorTreeAnalysis>();
   PA.preserve<TypeBasedAA>();
   PA.preserve<BasicAA>();
+  PA.preserve<ScopedNoAliasAA>();
   FAM.invalidate(*F, PA);
 }
 
@@ -690,6 +826,8 @@ PreProcessCache::PreProcessCache() {
   FAM.registerPass([] { return BasicAA(); });
   MAM.registerPass([] { return GlobalsAA(); });
 
+  FAM.registerPass([] { return ScopedNoAliasAA(); });
+
   // SCEVAA causes some breakage/segfaults
   // disable for now, consider enabling in future
   // FAM.registerPass([] { return SCEVAA(); });
@@ -702,6 +840,7 @@ PreProcessCache::PreProcessCache() {
     AM.registerFunctionAnalysis<BasicAA>();
     AM.registerFunctionAnalysis<TypeBasedAA>();
     AM.registerModuleAnalysis<GlobalsAA>();
+    AM.registerFunctionAnalysis<ScopedNoAliasAA>();
 
     // broken for different reasons
     // AM.registerFunctionAnalysis<SCEVAA>();
@@ -787,6 +926,82 @@ Function *PreProcessCache::preprocessForClone(Function *F,
     }
   }
 
+  {
+    std::vector<CallInst *> ItersToErase;
+    for (auto &BB : *NewF) {
+      for (auto &I : BB) {
+
+        if (auto CI = dyn_cast<CallInst>(&I)) {
+
+          Function *called = CI->getCalledFunction();
+#if LLVM_VERSION_MAJOR >= 11
+          if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand()))
+#else
+          if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledValue()))
+#endif
+          {
+            if (castinst->isCast()) {
+              if (auto fn = dyn_cast<Function>(castinst->getOperand(0)))
+                called = fn;
+            }
+          }
+
+          if (called && called->getName() == "__enzyme_iter") {
+            ItersToErase.push_back(CI);
+          }
+        }
+      }
+    }
+    for (auto Call : ItersToErase) {
+      IRBuilder<> B(Call);
+      Call->setArgOperand(
+          0, B.CreateAdd(Call->getArgOperand(0), Call->getArgOperand(1)));
+    }
+  }
+
+  // Assume allocations do not return null
+  {
+    TargetLibraryInfo &TLI = FAM.getResult<TargetLibraryAnalysis>(*F);
+    SmallVector<Instruction *, 0> CmpsToErase;
+    SmallVector<BasicBlock *, 0> BranchesToErase;
+    for (auto &BB : *NewF) {
+      for (auto &I : BB) {
+        if (auto IC = dyn_cast<ICmpInst>(&I)) {
+          if (!IC->isEquality())
+            continue;
+          for (int i = 0; i < 2; i++) {
+            if (isa<ConstantPointerNull>(IC->getOperand(1 - i)))
+              if (auto CI = dyn_cast<CallInst>(IC->getOperand(i))) {
+                if (CI->getCalledFunction() &&
+                    isAllocationFunction(*CI->getCalledFunction(), TLI)) {
+                  for (auto U : IC->users()) {
+                    if (auto BI = dyn_cast<BranchInst>(U))
+                      BranchesToErase.push_back(BI->getParent());
+                  }
+                  IC->replaceAllUsesWith(
+                      IC->getPredicate() == ICmpInst::ICMP_NE
+                          ? ConstantInt::getTrue(I.getContext())
+                          : ConstantInt::getFalse(I.getContext()));
+                  CmpsToErase.push_back(&I);
+                  break;
+                }
+              }
+          }
+        }
+      }
+    }
+    for (auto I : CmpsToErase)
+      I->eraseFromParent();
+    for (auto BE : BranchesToErase)
+      ConstantFoldTerminator(BE);
+  }
+
+  {
+    SimplifyMPIQueries(*NewF);
+    PreservedAnalyses PA;
+    FAM.invalidate(*NewF, PA);
+  }
+
   if (EnzymeLowerGlobals) {
     std::vector<CallInst *> Calls;
     std::vector<ReturnInst *> Returns;
@@ -806,6 +1021,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
     AAResults AA2(FAM.getResult<TargetLibraryAnalysis>(*NewF));
     AA2.addAAResult(FAM.getResult<BasicAA>(*NewF));
     AA2.addAAResult(FAM.getResult<TypeBasedAA>(*NewF));
+    AA2.addAAResult(FAM.getResult<ScopedNoAliasAA>(*NewF));
 
     for (auto &g : NewF->getParent()->globals()) {
       bool inF = false;
@@ -861,16 +1077,16 @@ Function *PreProcessCache::preprocessForClone(Function *F,
                     F->getName() == "__fd_sincos_1")) {
             continue;
           }
-          if (F && F->getName() == "__enzyme_integer") {
+          if (F && F->getName().contains("__enzyme_integer")) {
             continue;
           }
-          if (F && F->getName() == "__enzyme_pointer") {
+          if (F && F->getName().contains("__enzyme_pointer")) {
             continue;
           }
-          if (F && F->getName() == "__enzyme_float") {
+          if (F && F->getName().contains("__enzyme_float")) {
             continue;
           }
-          if (F && F->getName() == "__enzyme_double") {
+          if (F && F->getName().contains("__enzyme_double")) {
             continue;
           }
           if (F && (F->getName().startswith("f90io") ||
@@ -921,16 +1137,16 @@ Function *PreProcessCache::preprocessForClone(Function *F,
                           F->getName() == "__fd_sincos_1")) {
                   continue;
                 }
-                if (F && F->getName() == "__enzyme_integer") {
+                if (F && F->getName().contains("__enzyme_integer")) {
                   continue;
                 }
-                if (F && F->getName() == "__enzyme_pointer") {
+                if (F && F->getName().contains("__enzyme_pointer")) {
                   continue;
                 }
-                if (F && F->getName() == "__enzyme_float") {
+                if (F && F->getName().contains("__enzyme_float")) {
                   continue;
                 }
-                if (F && F->getName() == "__enzyme_double") {
+                if (F && F->getName().contains("__enzyme_double")) {
                   continue;
                 }
                 if (F && (F->getName().startswith("f90io") ||
@@ -1087,58 +1303,6 @@ Function *PreProcessCache::preprocessForClone(Function *F,
     }
   }
 
-  {
-    std::vector<Instruction *> FreesToErase;
-    for (auto &BB : *NewF) {
-      for (auto &I : BB) {
-
-        if (auto CI = dyn_cast<CallInst>(&I)) {
-
-          Function *called = CI->getCalledFunction();
-#if LLVM_VERSION_MAJOR >= 11
-          if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand()))
-#else
-          if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledValue()))
-#endif
-          {
-            if (castinst->isCast()) {
-              if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-                if (isDeallocationFunction(
-                        *fn, FAM.getResult<TargetLibraryAnalysis>(*NewF))) {
-                  called = fn;
-                }
-              }
-            }
-          }
-
-          if (called &&
-              isDeallocationFunction(
-                  *called, FAM.getResult<TargetLibraryAnalysis>(*NewF))) {
-            FreesToErase.push_back(CI);
-          }
-        }
-      }
-    }
-    // TODO we should ensure these are kept to avoid accidentially creating
-    // a memory leak
-    for (auto Free : FreesToErase) {
-      Free->eraseFromParent();
-    }
-    PreservedAnalyses PA;
-    PA.preserve<AssumptionAnalysis>();
-    PA.preserve<TargetLibraryAnalysis>();
-    PA.preserve<LoopAnalysis>();
-    PA.preserve<DominatorTreeAnalysis>();
-    PA.preserve<PostDominatorTreeAnalysis>();
-    PA.preserve<TypeBasedAA>();
-    PA.preserve<BasicAA>();
-    PA.preserve<ScalarEvolutionAnalysis>();
-#if LLVM_VERSION_MAJOR > 6
-    PA.preserve<PhiValuesAnalysis>();
-#endif
-    FAM.invalidate(*NewF, PA);
-  }
-
   if (EnzymePreopt) {
     {
       auto PA = LowerInvokePass().run(*NewF, FAM);
@@ -1193,9 +1357,13 @@ Function *PreProcessCache::preprocessForClone(Function *F,
   auto PA = LoopSimplifyPass().run(*NewF, FAM);
   FAM.invalidate(*NewF, PA);
 
-  // For subfunction calls upgrade stack allocations to mallocs
-  // to ensure availability in the reverse pass
-  UpgradeAllocasToMallocs(NewF, mode);
+  if (mode == DerivativeMode::ReverseModePrimal ||
+      mode == DerivativeMode::ReverseModeGradient ||
+      mode == DerivativeMode::ReverseModeCombined) {
+    // For subfunction calls upgrade stack allocations to mallocs
+    // to ensure availability in the reverse pass
+    UpgradeAllocasToMallocs(NewF, mode);
+  }
 
   CanonicalizeLoops(NewF, FAM);
 
@@ -1224,6 +1392,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
     PA.preserve<PostDominatorTreeAnalysis>();
     PA.preserve<TypeBasedAA>();
     PA.preserve<BasicAA>();
+    PA.preserve<ScopedNoAliasAA>();
     PA.preserve<ScalarEvolutionAnalysis>();
 #if LLVM_VERSION_MAJOR > 6
     PA.preserve<PhiValuesAnalysis>();
@@ -1446,6 +1615,11 @@ Function *PreProcessCache::CloneFunctionWithReturns(
       RetTypes.push_back(F->getReturnType());
     }
     RetType = StructType::get(F->getContext(), RetTypes);
+  } else if (returnValue == ReturnType::Return) {
+    assert(RetTypes.size() == 1);
+    RetType = RetTypes[0];
+  } else if (returnValue == ReturnType::TwoReturns) {
+    assert(RetTypes.size() == 2);
   }
 
   bool noReturn = RetTypes.size() == 0;
