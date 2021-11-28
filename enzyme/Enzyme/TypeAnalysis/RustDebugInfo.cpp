@@ -55,7 +55,11 @@ TypeTree parseDIType(DIBasicType& Type, Instruction& I, DataLayout& DL) {
 TypeTree parseDIType(DICompositeType& Type, Instruction& I, DataLayout& DL) {
   TypeTree Result;
   if (Type.getTag() == dwarf::DW_TAG_array_type) {
+#if LLVM_VERSION_MAJOR >= 9
     DIType* SubType = Type.getBaseType();
+#else
+    DIType* SubType = Type.getBaseType().resolve();
+#endif
     TypeTree SubTT = parseDIType(*SubType, I, DL);
     size_t Align = Type.getAlignInBytes();
     size_t SubSize = SubType->getSizeInBits() / 8;
@@ -121,7 +125,11 @@ TypeTree parseDIType(DICompositeType& Type, Instruction& I, DataLayout& DL) {
 TypeTree parseDIType(DIDerivedType& Type, Instruction& I, DataLayout& DL) {
   if (Type.getTag() == dwarf::DW_TAG_pointer_type) {
     TypeTree Result(BaseType::Pointer);
+#if LLVM_VERSION_MAJOR >= 9
     DIType* SubType = Type.getBaseType();
+#else
+    DIType* SubType = Type.getBaseType().resolve();
+#endif
     TypeTree SubTT = parseDIType(*SubType, I, DL);
     if (isa<DIBasicType>(SubType)) {
       Result |= SubTT.ShiftIndices(DL, 0, 1, -1);
@@ -132,7 +140,11 @@ TypeTree parseDIType(DIDerivedType& Type, Instruction& I, DataLayout& DL) {
     return Result.Only(0);
   }
   else if (Type.getTag() == dwarf::DW_TAG_member) {
+#if LLVM_VERSION_MAJOR >= 9
     DIType* SubType = Type.getBaseType();
+#else
+    DIType* SubType = Type.getBaseType().resolve();
+#endif
     TypeTree Result = parseDIType(*SubType, I, DL);
     return Result;
   }
@@ -163,7 +175,11 @@ TypeTree parseDIType(DIType& Type, Instruction& I, DataLayout& DL) {
 bool isU8PointerType(DIType& type) {
   if (type.getTag() == dwarf::DW_TAG_pointer_type) {
     auto PTy = dyn_cast<DIDerivedType>(&type);
+#if LLVM_VERSION_MAJOR >= 9
     DIType* SubType = PTy->getBaseType();
+#else
+    DIType* SubType = PTy->getBaseType().resolve();
+#endif
     if (auto BTy = dyn_cast<DIBasicType>(SubType)) {
       std::string name = BTy->getName().str();
       if (name == "u8") {
@@ -175,7 +191,11 @@ bool isU8PointerType(DIType& type) {
 }
 
 TypeTree parseDIType(DbgDeclareInst& I, DataLayout& DL) {
+#if LLVM_VERSION_MAJOR >= 9
   DIType* type = I.getVariable()->getType();
+#else
+  DIType* type = I.getVariable()->getType().resolve();
+#endif
 
   // If the type is *u8, do nothing, since the underlying type of data pointed by a *u8
   // can be anything
