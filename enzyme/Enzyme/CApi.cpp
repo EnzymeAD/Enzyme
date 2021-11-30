@@ -500,6 +500,7 @@ void EnzymeTypeTreeData0Eq(CTypeTreeRef CTT) {
 void EnzymeTypeTreeLookupEq(CTypeTreeRef CTT, int64_t size, const char *dl) {
   *(TypeTree *)CTT = ((TypeTree *)CTT)->Lookup(size, DataLayout(dl));
 }
+
 CConcreteType EnzymeTypeTreeInner0(CTypeTreeRef CTT) {
   return ewrap(((TypeTree *)CTT)->Inner0());
 }
