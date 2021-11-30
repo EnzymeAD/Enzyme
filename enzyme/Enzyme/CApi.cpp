@@ -334,6 +334,7 @@ uint8_t EnzymeGradientUtilsIsConstantInstruction(GradientUtils *gutils,
 LLVMBasicBlockRef EnzymeGradientUtilsAllocationBlock(GradientUtils *gutils) {
   return wrap(gutils->inversionAllocs);
 }
+
 CTypeTreeRef EnzymeGradientUtilsAllocAndGetTypeTree(GradientUtils *gutils,
                                                     LLVMValueRef val) {
   auto v = unwrap(val);
