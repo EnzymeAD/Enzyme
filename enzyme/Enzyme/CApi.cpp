@@ -496,6 +496,7 @@ void EnzymeTypeTreeOnlyEq(CTypeTreeRef CTT, int64_t x) {
 void EnzymeTypeTreeData0Eq(CTypeTreeRef CTT) {
   *(TypeTree *)CTT = ((TypeTree *)CTT)->Data0();
 }
+
 void EnzymeTypeTreeLookupEq(CTypeTreeRef CTT, int64_t size, const char *dl) {
   *(TypeTree *)CTT = ((TypeTree *)CTT)->Lookup(size, DataLayout(dl));
 }
