@@ -2180,21 +2180,20 @@ public:
     auto dstAlign = MTI.getDestAlignment();
 #endif
     visitMemTransferCommon(MTI.getIntrinsicID(), srcAlign, dstAlign, MTI,
-                           MTI.getOperand(0), MTI.getOperand(1), gutils->getNewFromOriginal(MTI.getOperand(2)),
+                           MTI.getOperand(0), MTI.getOperand(1),
+                           gutils->getNewFromOriginal(MTI.getOperand(2)),
                            isVolatile);
   }
 
 #if LLVM_VERSION_MAJOR >= 10
   void visitMemTransferCommon(Intrinsic::ID ID, MaybeAlign srcAlign,
                               MaybeAlign dstAlign, llvm::CallInst &MTI,
-                              Value *orig_dst, Value *orig_src,
-                              Value *new_size,
+                              Value *orig_dst, Value *orig_src, Value *new_size,
                               Value *isVolatile)
 #else
   void visitMemTransferCommon(Intrinsic::ID ID, unsigned srcAlign,
                               unsigned dstAlign, llvm::CallInst &MTI,
-                              Value *orig_dst, Value *orig_src,
-                              Value *new_size,
+                              Value *orig_dst, Value *orig_src, Value *new_size,
                               Value *isVolatile)
 #endif
   {
@@ -2358,11 +2357,17 @@ public:
           srcalign = 1;
         }
       }
-      IRBuilder <>BuilderZ(gutils->getNewFromOriginal(&MTI));
-      Value *shadow_dst = gutils->isConstantValue(orig_dst) ? nullptr : gutils->invertPointerM(orig_dst, BuilderZ);
-      Value *shadow_src = gutils->isConstantValue(orig_src) ? nullptr : gutils->invertPointerM(orig_src, BuilderZ);
+      IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&MTI));
+      Value *shadow_dst = gutils->isConstantValue(orig_dst)
+                              ? gutils->getNewFromOriginal(orig_dst)
+                              : gutils->invertPointerM(orig_dst, BuilderZ);
+      Value *shadow_src = gutils->isConstantValue(orig_src)
+                              ? gutils->getNewFromOriginal(orig_src)
+                              : gutils->invertPointerM(orig_src, BuilderZ);
       SubTransferHelper(gutils, Mode, dt.isFloat(), ID, subdstalign,
-                        subsrcalign, /*offset*/ start, shadow_dst, shadow_src,
+                        subsrcalign, /*offset*/ start,
+                        gutils->isConstantValue(orig_dst), shadow_dst,
+                        gutils->isConstantValue(orig_src), shadow_src,
                         /*length*/ length, /*volatile*/ isVolatile, &MTI);
 
       if (nextStart == size)
@@ -7578,8 +7583,8 @@ public:
                              ConstantInt::getFalse(orig->getContext()));
 #else
       visitMemTransferCommon(ID, /*srcAlign*/ 1,
-                             /*dstAlign*/ 1, *orig,
-                             orig->getArgOperand(0), orig->getArgOperand(1),
+                             /*dstAlign*/ 1, *orig, orig->getArgOperand(0),
+                             orig->getArgOperand(1),
                              gutils->getNewFromOriginal(orig->getArgOperand(2)),
                              ConstantInt::getFalse(orig->getContext()));
 #endif
