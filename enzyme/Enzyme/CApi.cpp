@@ -281,6 +281,7 @@ LLVMValueRef EnzymeGradientUtilsNewFromOriginal(GradientUtils *gutils,
                                                 LLVMValueRef val) {
   return wrap(gutils->getNewFromOriginal(unwrap(val)));
 }
+
 CDerivativeMode EnzymeGradientUtilsGetMode(GradientUtils *gutils) {
   return (CDerivativeMode)gutils->mode;
 }
