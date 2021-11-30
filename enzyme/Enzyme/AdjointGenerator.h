@@ -2358,8 +2358,11 @@ public:
           srcalign = 1;
         }
       }
+      IRBuilder <>BuilderZ(gutils->getNewFromOriginal(&MTI));
+      Value *shadow_dst = gutils->isConstantValue(orig_dst) ? nullptr : gutils->invertPointerM(orig_dst, BuilderZ);
+      Value *shadow_src = gutils->isConstantValue(orig_src) ? nullptr : gutils->invertPointerM(orig_src, BuilderZ);
       SubTransferHelper(gutils, Mode, dt.isFloat(), ID, subdstalign,
-                        subsrcalign, /*offset*/ start, orig_dst, orig_src,
+                        subsrcalign, /*offset*/ start, shadow_dst, shadow_src,
                         /*length*/ length, /*volatile*/ isVolatile, &MTI);
 
       if (nextStart == size)

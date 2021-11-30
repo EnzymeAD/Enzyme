@@ -5079,8 +5079,10 @@ void SubTransferHelper(
                         DerivativeMode mode,
                          Type *secretty, 
                          Intrinsic::ID intrinsic, unsigned dstalign,
-                         unsigned srcalign, unsigned offset, Value *orig_dst,
-                         Value *orig_src, Value *length, Value *isVolatile,
+                         unsigned srcalign, unsigned offset, 
+                         Value *shadow_dst,
+                         Value *shadow_src,
+                         Value *length, Value *isVolatile,
                          llvm::CallInst *MTI, bool allowForward) {
     // TODO offset
     if (secretty) {
@@ -5092,10 +5094,10 @@ void SubTransferHelper(
 
         // If the src is constant simply zero d_dst and don't propagate to d_src
         // (which thus == src and may be illegal)
-        if (gutils->isConstantValue(orig_src)) {
+        if (!shadow_src) {
           SmallVector<Value *, 4> args;
           args.push_back(
-              gutils->lookupM(gutils->invertPointerM(orig_dst, Builder2), Builder2));
+              gutils->lookupM(shadow_dst, Builder2));
           if (args[0]->getType()->isIntegerTy())
             args[0] = Builder2.CreateIntToPtr(
                 args[0], Type::getInt8PtrTy(MTI->getContext()));
@@ -5126,7 +5128,7 @@ void SubTransferHelper(
         } else {
           SmallVector<Value *, 4> args;
           auto dsto =
-              gutils->lookupM(gutils->invertPointerM(orig_dst, Builder2), Builder2);
+              gutils->lookupM(shadow_dst, Builder2);
           if (dsto->getType()->isIntegerTy())
             dsto = Builder2.CreateIntToPtr(
                 dsto, Type::getInt8PtrTy(dsto->getContext()));
@@ -5137,7 +5139,7 @@ void SubTransferHelper(
             dsto = Builder2.CreateConstInBoundsGEP1_64(dsto, offset);
           args.push_back(Builder2.CreatePointerCast(dsto, secretpt));
           auto srco =
-              gutils->lookupM(gutils->invertPointerM(orig_src, Builder2), Builder2);
+              gutils->lookupM(shadow_src, Builder2);
           if (srco->getType()->isIntegerTy())
             srco = Builder2.CreateIntToPtr(
                 srco, Type::getInt8PtrTy(srco->getContext()));
@@ -5175,7 +5177,7 @@ void SubTransferHelper(
 
         // It is questionable how the following case would even occur, but if
         // the dst is constant, we shouldn't do anything extra
-        if (gutils->isConstantValue(orig_dst)) {
+        if (!shadow_dst) {
           return;
         }
 
@@ -5191,14 +5193,14 @@ void SubTransferHelper(
         //  Optimization (not implemented): If dst can never escape Enzyme code,
         //  we may omit this copy.
         // no need to update pointers, even if dst is active
-        auto dsto = gutils->invertPointerM(orig_dst, BuilderZ);
+        auto dsto = shadow_dst;
         if (dsto->getType()->isIntegerTy())
           dsto = BuilderZ.CreateIntToPtr(dsto,
                                          Type::getInt8PtrTy(MTI->getContext()));
         if (offset != 0)
           dsto = BuilderZ.CreateConstInBoundsGEP1_64(dsto, offset);
         args.push_back(dsto);
-        auto srco = gutils->invertPointerM(orig_src, BuilderZ);
+        auto srco = shadow_src;
         if (srco->getType()->isIntegerTy())
           srco = BuilderZ.CreateIntToPtr(srco,
                                          Type::getInt8PtrTy(MTI->getContext()));

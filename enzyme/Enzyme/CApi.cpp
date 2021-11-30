@@ -349,7 +349,7 @@ void EnzymeGradientUtilsSubTransferHelper(
         uint64_t dstAlign,
         uint64_t srcAlign, 
         uint64_t offset,
-        LLVMValueRef origdst, LLVMValueRef origsrc,
+        LLVMValueRef shadow_dst, LLVMValueRef shadow_src,
         LLVMValueRef length, LLVMValueRef isVolatile,
         LLVMValueRef MTI, uint8_t allowForward) {
     auto orig = unwrap(MTI);
@@ -362,8 +362,8 @@ void EnzymeGradientUtilsSubTransferHelper(
             (unsigned)dstAlign,
             (unsigned)srcAlign,
             (unsigned)offset,
-            unwrap(origdst),
-            unwrap(origsrc),
+            unwrap(shadow_dst),
+            unwrap(shadow_src),
             unwrap(length),
             unwrap(isVolatile),
             cast<CallInst>(orig),
