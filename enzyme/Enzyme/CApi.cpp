@@ -504,6 +504,7 @@ void EnzymeTypeTreeLookupEq(CTypeTreeRef CTT, int64_t size, const char *dl) {
 CConcreteType EnzymeTypeTreeInner0(CTypeTreeRef CTT) {
   return ewrap(((TypeTree *)CTT)->Inner0());
 }
+
 void EnzymeTypeTreeShiftIndiciesEq(CTypeTreeRef CTT, const char *datalayout,
                                    int64_t offset, int64_t maxSize,
                                    uint64_t addOffset) {
