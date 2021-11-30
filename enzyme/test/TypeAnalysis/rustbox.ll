@@ -34,14 +34,14 @@ start:
 !18 = distinct !DICompileUnit(language: DW_LANG_Rust, file: !19, producer: "clang LLVM (rustc version 1.56.0 (09c42c458 2021-10-18))", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug, enums: !20, globals: !37)
 !19 = !DIFile(filename: "rustbox.rs", directory: "/home/nomanous/Space/Tmp/Enzyme")
 !20 = !{!21, !28}
-!21 = !DICompositeType(tag: DW_TAG_enumeration_type, name: "Result", scope: !22, file: !2, baseType: !24, size: 8, align: 8, flags: DIFlagEnumClass, elements: !25)
+!21 = !DICompositeType(tag: DW_TAG_enumeration_type, name: "Result", scope: !22, file: !2, baseType: !24, size: 8, align: 8, elements: !25)
 !22 = !DINamespace(name: "result", scope: !23)
 !23 = !DINamespace(name: "core", scope: null)
 !24 = !DIBasicType(name: "u8", size: 8, encoding: DW_ATE_unsigned)
 !25 = !{!26, !27}
 !26 = !DIEnumerator(name: "Ok", value: 0)
 !27 = !DIEnumerator(name: "Err", value: 1)
-!28 = !DICompositeType(tag: DW_TAG_enumeration_type, name: "Alignment", scope: !29, file: !2, baseType: !24, size: 8, align: 8, flags: DIFlagEnumClass, elements: !32)
+!28 = !DICompositeType(tag: DW_TAG_enumeration_type, name: "Alignment", scope: !29, file: !2, baseType: !24, size: 8, align: 8, elements: !32)
 !29 = !DINamespace(name: "v1", scope: !30)
 !30 = !DINamespace(name: "rt", scope: !31)
 !31 = !DINamespace(name: "fmt", scope: !23)
@@ -53,7 +53,7 @@ start:
 !37 = !{!0}
 !241 = !DIBasicType(name: "f32", size: 32, encoding: DW_ATE_float)
 !419 = !DIDerivedType(tag: DW_TAG_pointer_type, name: "Box<f32, alloc::alloc::Global>", baseType: !241, size: 64, align: 64, dwarfAddressSpace: 0)
-!984 = distinct !DISubprogram(name: "callee", linkageName: "callee", scope: !986, file: !985, line: 1, type: !987, scopeLine: 1, flags: DIFlagPrototyped, spFlags: DISPFlagLocalToUnit | DISPFlagDefinition, unit: !18, templateParams: !4, retainedNodes: !989)
+!984 = distinct !DISubprogram(name: "callee", linkageName: "callee", scope: !986, file: !985, line: 1, type: !987, scopeLine: 1, flags: DIFlagPrototyped, unit: !18, templateParams: !4, retainedNodes: !989)
 !985 = !DIFile(filename: "rustbox.rs", directory: "/home/nomanous/Space/Tmp/Enzyme", checksumkind: CSK_MD5, checksum: "f57b7820a82c3ba69c9c835e79b397a7")
 !986 = !DINamespace(name: "rustbox", scope: null)
 !987 = !DISubroutineType(types: !988)

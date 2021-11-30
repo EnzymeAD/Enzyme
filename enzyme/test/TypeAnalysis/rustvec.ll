@@ -36,14 +36,14 @@ start:
 !18 = distinct !DICompileUnit(language: DW_LANG_Rust, file: !19, producer: "clang LLVM (rustc version 1.56.0 (09c42c458 2021-10-18))", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug, enums: !20, globals: !37)
 !19 = !DIFile(filename: "rustvec.rs", directory: "/home/nomanous/Space/Tmp/Enzyme")
 !20 = !{!21, !28}
-!21 = !DICompositeType(tag: DW_TAG_enumeration_type, name: "Result", scope: !22, file: !2, baseType: !24, size: 8, align: 8, flags: DIFlagEnumClass, elements: !25)
+!21 = !DICompositeType(tag: DW_TAG_enumeration_type, name: "Result", scope: !22, file: !2, baseType: !24, size: 8, align: 8, elements: !25)
 !22 = !DINamespace(name: "result", scope: !23)
 !23 = !DINamespace(name: "core", scope: null)
 !24 = !DIBasicType(name: "u8", size: 8, encoding: DW_ATE_unsigned)
 !25 = !{!26, !27}
 !26 = !DIEnumerator(name: "Ok", value: 0)
 !27 = !DIEnumerator(name: "Err", value: 1)
-!28 = !DICompositeType(tag: DW_TAG_enumeration_type, name: "Alignment", scope: !29, file: !2, baseType: !24, size: 8, align: 8, flags: DIFlagEnumClass, elements: !32)
+!28 = !DICompositeType(tag: DW_TAG_enumeration_type, name: "Alignment", scope: !29, file: !2, baseType: !24, size: 8, align: 8, elements: !32)
 !29 = !DINamespace(name: "v1", scope: !30)
 !30 = !DINamespace(name: "rt", scope: !31)
 !31 = !DINamespace(name: "fmt", scope: !23)
@@ -82,7 +82,7 @@ start:
 !478 = !{!249, !479}
 !479 = !DITemplateTypeParameter(name: "A", type: !476)
 !480 = !DIDerivedType(tag: DW_TAG_member, name: "len", scope: !460, file: !2, baseType: !84, size: 64, align: 64, offset: 128)
-!1562 = distinct !DISubprogram(name: "callee", linkageName: "_ZN7rustvec6callee17ha569ab73a448e015E", scope: !1564, file: !1563, line: 1, type: !1565, scopeLine: 1, flags: DIFlagPrototyped, spFlags: DISPFlagLocalToUnit | DISPFlagDefinition, unit: !18, templateParams: !4, retainedNodes: !1567)
+!1562 = distinct !DISubprogram(name: "callee", linkageName: "_ZN7rustvec6callee17ha569ab73a448e015E", scope: !1564, file: !1563, line: 1, type: !1565, scopeLine: 1, flags: DIFlagPrototyped, unit: !18, templateParams: !4, retainedNodes: !1567)
 !1563 = !DIFile(filename: "rustvec.rs", directory: "/home/nomanous/Space/Tmp/Enzyme", checksumkind: CSK_MD5, checksum: "cea41987509dc75ba27672e273ebd3a3")
 !1564 = !DINamespace(name: "rustvec", scope: null)
 !1565 = !DISubroutineType(types: !1566)

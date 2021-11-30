@@ -35,7 +35,7 @@ start:
 !19 = !DIFile(filename: "rustu8.rs", directory: "/home/nomanous/Space/Tmp/EnzymeTest")
 !20 = !{!0}
 !49 = !DIBasicType(name: "u8", size: 8, encoding: DW_ATE_unsigned)
-!163 = distinct !DISubprogram(name: "callee", linkageName: "callee", scope: !165, file: !164, line: 1, type: !166, scopeLine: 1, flags: DIFlagPrototyped, spFlags: DISPFlagLocalToUnit | DISPFlagDefinition, unit: !18, templateParams: !4, retainedNodes: !169)
+!163 = distinct !DISubprogram(name: "callee", linkageName: "callee", scope: !165, file: !164, line: 1, type: !166, scopeLine: 1, flags: DIFlagPrototyped, unit: !18, templateParams: !4, retainedNodes: !169)
 !164 = !DIFile(filename: "rustu8.rs", directory: "/home/nomanous/Space/Tmp/EnzymeTest", checksumkind: CSK_MD5, checksum: "ea6dd6ddfe604ad626bae2b54f9bdc5c")
 !165 = !DINamespace(name: "rustu8", scope: null)
 !166 = !DISubroutineType(types: !167)

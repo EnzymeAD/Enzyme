@@ -34,7 +34,7 @@ start:
 !18 = distinct !DICompileUnit(language: DW_LANG_Rust, file: !19, producer: "clang LLVM (rustc version 1.54.0 (a178d0322 2021-07-26))", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug, enums: !4, globals: !20)
 !19 = !DIFile(filename: "rustusize.rs", directory: "/home/nomanous/Space/Tmp/EnzymeTest")
 !20 = !{!0}
-!163 = distinct !DISubprogram(name: "callee", linkageName: "callee", scope: !165, file: !164, line: 1, type: !166, scopeLine: 1, flags: DIFlagPrototyped, spFlags: DISPFlagLocalToUnit | DISPFlagDefinition, unit: !18, templateParams: !4, retainedNodes: !170)
+!163 = distinct !DISubprogram(name: "callee", linkageName: "callee", scope: !165, file: !164, line: 1, type: !166, scopeLine: 1, flags: DIFlagPrototyped, unit: !18, templateParams: !4, retainedNodes: !170)
 !164 = !DIFile(filename: "rustusize.rs", directory: "/home/nomanous/Space/Tmp/EnzymeTest", checksumkind: CSK_MD5, checksum: "4b454f8a910be80e6bfa2f4b94376c41")
 !165 = !DINamespace(name: "rustusize", scope: null)
 !166 = !DISubroutineType(types: !167)
