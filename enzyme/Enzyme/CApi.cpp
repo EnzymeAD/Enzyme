@@ -281,6 +281,9 @@ LLVMValueRef EnzymeGradientUtilsNewFromOriginal(GradientUtils *gutils,
                                                 LLVMValueRef val) {
   return wrap(gutils->getNewFromOriginal(unwrap(val)));
 }
+CDerivativeMode EnzymeGradientUtilsGetMode(GradientUtils *gutils) {
+  return (CDerivativeMode)gutils->mode;
+}
 
 void EnzymeGradientUtilsSetDebugLocFromOriginal(GradientUtils *gutils,
                                                 LLVMValueRef val,
@@ -329,6 +332,43 @@ uint8_t EnzymeGradientUtilsIsConstantInstruction(GradientUtils *gutils,
 
 LLVMBasicBlockRef EnzymeGradientUtilsAllocationBlock(GradientUtils *gutils) {
   return wrap(gutils->inversionAllocs);
+}
+CTypeTreeRef EnzymeGradientUtilsAllocAndGetTypeTree(GradientUtils *gutils, LLVMValueRef val) {
+    auto v = unwrap(val);
+    assert(gutils->my_TR);
+    TypeTree TT = gutils->my_TR->query(v);
+    TypeTree *pTT = new TypeTree(TT);
+    return (CTypeTreeRef)pTT;
+}
+
+void EnzymeGradientUtilsSubTransferHelper(
+        GradientUtils* gutils,
+        CDerivativeMode mode,
+        LLVMTypeRef secretty,
+        uint64_t intrinsic,
+        uint64_t dstAlign,
+        uint64_t srcAlign, 
+        uint64_t offset,
+        LLVMValueRef origdst, LLVMValueRef origsrc,
+        LLVMValueRef length, LLVMValueRef isVolatile,
+        LLVMValueRef MTI, uint8_t allowForward) {
+    auto orig = unwrap(MTI);
+    assert(orig);
+    SubTransferHelper(
+            gutils,
+            (DerivativeMode)mode,
+            unwrap(secretty),
+            (Intrinsic::ID)intrinsic,
+            (unsigned)dstAlign,
+            (unsigned)srcAlign,
+            (unsigned)offset,
+            unwrap(origdst),
+            unwrap(origsrc),
+            unwrap(length),
+            unwrap(isVolatile),
+            cast<CallInst>(orig),
+            (bool)allowForward
+            );
 }
 
 LLVMValueRef EnzymeCreateForwardDiff(
@@ -466,6 +506,12 @@ void EnzymeTypeTreeOnlyEq(CTypeTreeRef CTT, int64_t x) {
 }
 void EnzymeTypeTreeData0Eq(CTypeTreeRef CTT) {
   *(TypeTree *)CTT = ((TypeTree *)CTT)->Data0();
+}
+void EnzymeTypeTreeLookupEq(CTypeTreeRef CTT, int64_t size, const char* dl) {
+  *(TypeTree *)CTT = ((TypeTree *)CTT)->Lookup(size, DataLayout(dl));
+}
+CConcreteType EnzymeTypeTreeInner0(CTypeTreeRef CTT) {
+  return ewrap(((TypeTree *)CTT)->Inner0());
 }
 void EnzymeTypeTreeShiftIndiciesEq(CTypeTreeRef CTT, const char *datalayout,
                                    int64_t offset, int64_t maxSize,

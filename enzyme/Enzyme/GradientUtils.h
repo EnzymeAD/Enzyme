@@ -2097,4 +2097,12 @@ public:
     }
   }
 };
+  
+void SubTransferHelper(GradientUtils *gutils,
+                        DerivativeMode Mode,
+                         Type *secretty,
+                         Intrinsic::ID intrinsic, unsigned dstalign,
+                         unsigned srcalign, unsigned offset, Value *orig_dst,
+                         Value *orig_src, Value *length, Value *isVolatile,
+                         llvm::CallInst *MTI, bool allowForward = true);
 #endif
