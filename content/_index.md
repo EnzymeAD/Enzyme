@@ -9,14 +9,17 @@ publishdate: 2018-11-23T15:26:15Z
 The Enzyme project is a tool that takes arbitrary existing code as LLVM IR and computes the derivative (and gradient) of that function. This allows developers to use Enzyme to automatically create gradients of their source code without much additional work. By working at the LLVM level Enzyme is able to differentiate programs in a variety of languages (C, C++, Swift, Julia, Rust, Fortran, TensorFlow, etc) in a single tool and achieve high performance by integrating with LLVM's optimization pipeline.
 
 ```c
+#include <stdio.h>
+
 double square(double x) {
-    return x * x
+    return x * x;
 }
 
+double __enzyme_autodiff(void*, double);
 int main() {
     double x = 3.14;
     // Evaluates to 2 * x = 6.28
-    double grad_x = __enzyme_autodiff(square, x);
+    double grad_x = __enzyme_autodiff((void*)square, x);
     printf("square'(%f) = %f\n", x,  grad_x);
 }
 ```

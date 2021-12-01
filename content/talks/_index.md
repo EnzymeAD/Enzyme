@@ -21,7 +21,7 @@ weight: 100
 
 * SC 21, [Reverse-Mode Automatic Differentiation and Optimization of GPU Kernels via Enzyme](https://dl.acm.org/doi/abs/10.1145/3458817.3476165); William S. Moses, Valentin Churavy, Ludger Paehler, Jan Hückelheim, Sri Hari Krishna Narayanan, Michel Schanen, and Johannes Doerfert; video; slides
 
-LAFI 2021 (colocated with POPL), [Enzyme: High-Performance Automatic Differentiation of LLVM](https://popl21.sigplan.org/details/lafi-2021-papers/4/Enzyme-High-Performance-Automatic-Differentiation-of-LLVM); William S. Moses, Valentin Churavy
+* LAFI 2021 (colocated with POPL), [Enzyme: High-Performance Automatic Differentiation of LLVM](https://popl21.sigplan.org/details/lafi-2021-papers/4/Enzyme-High-Performance-Automatic-Differentiation-of-LLVM); William S. Moses, Valentin Churavy
 
 
 * LLVM Oct Dev Meeting 2020 [Enzyme: High-Performance Automatic Differentiation of LLVM](https://llvm.org/devmtg/2020-09/program/); William S. Moses, Valentin Churavy; [video](https://www.youtube.com/watch?v=auQNFDlaXdM); [poster](https://c.wsmoses.com/posters/Enzyme-llvmdev.pdf)
