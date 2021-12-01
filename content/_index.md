@@ -6,13 +6,18 @@ publishdate: 2018-11-23T15:26:15Z
 
 # Enzyme Overview
 
-The Enzyme project is a tool for performing reverse-mode automatic differentiation (AD) of statically-analyzable LLVM IR. This allows developers to use Enzyme to automatically create gradients of their source code without much additional work.
+The Enzyme project is a tool that takes arbitrary existing code as LLVM IR and computes the derivative (and gradient) of that function. This allows developers to use Enzyme to automatically create gradients of their source code without much additional work. By working at the LLVM level Enzyme is able to differentiate programs in a variety of languages (C, C++, Swift, Julia, Rust, Fortran, TensorFlow, etc) in a single tool and achieve high performance by integrating with LLVM's optimization pipeline.
 
 ```c
-double foo(double);
+double square(double x) {
+    return x * x
+}
 
-double grad_foo(double x) {
-    return __enzyme_autodiff(foo, x);
+int main() {
+    double x = 3.14;
+    // Evaluates to 2 * x = 6.28
+    double grad_x = __enzyme_autodiff(square, x);
+    printf("square'(%f) = %f\n", x,  grad_x);
 }
 ```
 
@@ -42,7 +47,7 @@ For more information on Enzyme, please see:
 
 ## Citing Enzyme
 
-To cite Enzyme, please cite the following:
+To cite Enzyme, please cite the following two papers (first for Enzyme as a whole, then for GPU+optimizations):
 ```
 @inproceedings{NEURIPS2020_9332c513,
  author = {Moses, William and Churavy, Valentin},
@@ -55,6 +60,23 @@ To cite Enzyme, please cite the following:
  volume = {33},
  year = {2020}
 }
+@inproceedings{10.1145/3458817.3476165,
+author = {Moses, William S. and Churavy, Valentin and Paehler, Ludger and H\"{u}ckelheim, Jan and Narayanan, Sri Hari Krishna and Schanen, Michel and Doerfert, Johannes},
+title = {Reverse-Mode Automatic Differentiation and Optimization of GPU Kernels via Enzyme},
+year = {2021},
+isbn = {9781450384421},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/3458817.3476165},
+doi = {10.1145/3458817.3476165},
+booktitle = {Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis},
+articleno = {61},
+numpages = {16},
+keywords = {CUDA, LLVM, ROCm, HPC, AD, GPU, automatic differentiation},
+location = {St. Louis, Missouri},
+series = {SC '21}
+}
+
 ```
 
 The original Enzyme is also avaiable as a preprint on [arXiv](https://arxiv.org/pdf/2010.01709.pdf).
