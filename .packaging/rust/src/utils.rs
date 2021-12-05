@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 
 const ENZYME_VER: &str = "0.0.23";
-const RUSTC_VER: &str = "1.56.0";
+const RUSTC_VER: &str = "1.57.0";
 
 pub fn clean_directory(path: PathBuf) {
     let mut path_reader = match path.read_dir() {
