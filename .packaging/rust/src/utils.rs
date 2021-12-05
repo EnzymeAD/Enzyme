@@ -2,7 +2,7 @@ use dirs;
 use std::fs;
 use std::path::PathBuf;
 
-const ENZYME_VER: &str = "0.0.20";
+const ENZYME_VER: &str = "0.0.23";
 const RUSTC_VER: &str = "1.56.0";
 
 pub fn clean_directory(path: PathBuf) {
@@ -31,9 +31,14 @@ pub fn get_enzyme_base_path() -> PathBuf {
     dbg!(&enzyme_base_path);
     enzyme_base_path
 }
-fn get_enzyme_subdir_path() -> PathBuf {
+pub fn get_enzyme_repo_path() -> PathBuf {
     let path = get_enzyme_base_path()
-        .join("Enzyme-".to_owned() + ENZYME_VER)
+        .join("Enzyme-".to_owned() + ENZYME_VER);
+    assert_existence(path.clone());
+    path
+}
+fn get_enzyme_subdir_path() -> PathBuf {
+    let path = get_enzyme_repo_path()
         .join("enzyme");
     assert_existence(path.clone());
     path
