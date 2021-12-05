@@ -2144,6 +2144,9 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   IRBuilder<> ib(NewF->getEntryBlock().getFirstNonPHI());
 
   Value *ret = noReturn ? nullptr : ib.CreateAlloca(RetType);
+  if (!noReturn) {
+    ib.CreateStore(ConstantAggregateZero::get(RetType), ret);
+  }
 
   if (!noTape) {
     Value *tapeMemory;
