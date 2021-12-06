@@ -38,3 +38,14 @@ Testing Time: 0.63s
 &nbsp;
 - Q: How often do I have to run this? It takes quite a while..
 - A: We are aware of this and working on offering pre-build versions. In the meantime you have to build it once per rust Version. So we will publish an update once 1.57 hits stable.
+
+License
+=======
+
+Dual-licensed to be compatible with the Rust project.
+
+Licensed under the Apache License, Version 2.0
+http://www.apache.org/licenses/LICENSE-2.0 or the MIT license
+http://opensource.org/licenses/MIT, at your
+option. This file may not be copied, modified, or distributed
+except according to those terms.
