@@ -645,8 +645,8 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
     }
   }
   if (EnzymeZeroCache && sublimits.size() == 0)
-    scopeInstructions[alloc].push_back(entryBuilder.CreateStore(
-        ConstantAggregateZero::get(types.back()), alloc));
+    scopeInstructions[alloc].push_back(
+        entryBuilder.CreateStore(Constant::getNullValue(types.back()), alloc));
 
   Type *BPTy = Type::getInt8PtrTy(T->getContext());
 
