@@ -7,21 +7,6 @@ use std::io::BufReader;
 use std::path::PathBuf;
 use tar::Archive;
 use curl::easy::Easy;
-use std::process::Command;
-
-fn run_and_printerror(command: &mut Command) {
-    println!("Running: `{:?}`", command);
-    match command.status() {
-        Ok(status) => {
-            if !status.success() {
-                panic!("Failed: `{:?}` ({})", command, status);
-            }
-        }
-        Err(error) => {
-            panic!("Failed: `{:?}` ({})", command, error);
-        }
-    }
-}
 
 fn unpack(tar_gz_file: &str, dst: &str) -> Result<(), std::io::Error> {
     let path = tar_gz_file;
@@ -91,13 +76,6 @@ pub fn download_tarball(repo_url: &str, download_filename: PathBuf) -> Result<()
 }
 
 pub fn download(to_download: &str) -> Result<(), String> {
-    if to_download == "enzyme" {
-        let mut git = Command::new("git");
-        let dst_dir = utils::get_enzyme_repo_path();
-        git.args(&["clone", "https://github.com/wsmoses/Enzyme", dst_dir.to_str().unwrap()]);
-        run_and_printerror(&mut git);
-        return Ok(());
-    }
     let repo = match to_download {
         "enzyme" => utils::get_remote_enzyme_tarball_path(),
         "rustc" => utils::get_remote_rustc_tarball_path(),
