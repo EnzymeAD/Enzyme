@@ -17,8 +17,7 @@ fn run_and_printerror(command: &mut Command) {
 
 fn main() {
 
-    let target_platform = std::env::var("TARGET").expect("The target triple was set in build.rs, but it isn't available. 
-                                                         This is a bug, please report it at https://github.com/rust-ml/enzyme_build.");
+    let target_platform = env!("TARGET");
 
     let build_args = vec![
     "+enzyme", 
