@@ -1,21 +1,9 @@
 use dirs;
-use std::fs;
 use std::path::PathBuf;
 
 const ENZYME_VER: &str = "0.0.24";
 const RUSTC_VER: &str = "1.57.0";
 
-pub fn clean_directory(path: PathBuf) {
-    let mut path_reader = match path.read_dir() {
-        Ok(r) => r,
-        Err(e) => panic!("Can't read the directory: {}. {}", path.display(), e),
-    };
-    let is_empty = path_reader.next().is_none();
-    if !is_empty {
-        fs::remove_dir_all(path.clone()).unwrap();
-        fs::create_dir(path).unwrap();
-    }
-}
 
 fn assert_existence(path: PathBuf) {
     if !path.is_dir() {
@@ -75,9 +63,6 @@ fn get_rustc_platform_path() -> PathBuf {
 }
 pub fn get_rustc_stage2_path() -> PathBuf {
     get_rustc_platform_path().join("stage2")
-}
-pub fn get_rustc_binary_path() -> PathBuf {
-    get_rustc_stage2_path().join("bin").join("rustc")
 }
 pub fn get_llvm_build_path() -> PathBuf {
     get_rustc_platform_path().join("llvm").join("build")

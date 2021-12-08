@@ -1,17 +1,17 @@
 [package]
 name = "enzyme_build"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-# [[bin]]
-# name = "enzyme-install"
-# path = "src/main.rs"
+[[bin]]
+name = "enzyme-install"
+path = "src/bin/main.rs"
 
 [[bin]]
 name = "cargo-enzyme"
-path = "src/run.rs"
+path = "src/bin/run.rs"
 
 [dependencies]
 bindgen = { version = "0.58", default-features = false }
@@ -19,5 +19,3 @@ dirs = { version = "3.0", default-features = false }
 curl = "0.4"
 tar = { version = "0.4", default-features = false }
 flate2 = "1.0"
-
-

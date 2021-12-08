@@ -17,12 +17,15 @@ fn run_and_printerror(command: &mut Command) {
 
 fn main() {
 
+    let target_platform = std::env::var("TARGET").expect("The target triple was set in build.rs, but it isn't available. 
+                                                         This is a bug, please report it at https://github.com/rust-ml/enzyme_build.");
+
     let build_args = vec![
     "+enzyme", 
     "-Zbuild-std",
     "rustc",
     "--target", 
-    "x86_64-unknown-linux-gnu", 
+    &target_platform, 
     "--", 
     "--emit=llvm-bc",
     "-g", 

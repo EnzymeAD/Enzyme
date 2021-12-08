@@ -1,4 +1,4 @@
-use crate::utils;
+use super::utils;
 use flate2;
 use flate2::bufread::GzDecoder;
 use std::fs::{File, OpenOptions};
@@ -20,7 +20,7 @@ fn unpack(tar_gz_file: &str, dst: &str) -> Result<(), std::io::Error> {
     Ok(())
 }
 
-pub fn download_tarball(repo_url: &str, download_filename: PathBuf) -> Result<(), String> {
+fn download_tarball(repo_url: &str, download_filename: PathBuf) -> Result<(), String> {
     if std::path::Path::new(&download_filename).exists() {
         match std::fs::remove_file(&download_filename) {
             Ok(()) => {}

@@ -1,6 +1,5 @@
 use super::utils;
 use bindgen;
-
 use std::fs;
 
 pub fn generate_bindings() -> Result<(), String> {

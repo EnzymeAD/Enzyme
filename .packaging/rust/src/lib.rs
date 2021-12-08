@@ -1,8 +1,5 @@
-pub mod compile;
-pub mod downloader;
-pub mod generate_api;
-pub mod utils;
+mod code;
 
-pub use compile::build;
-pub use downloader::download;
-pub use generate_api::generate_bindings;
+pub use code::compile::build as build;
+pub use code::downloader::download as download;
+pub use code::generate_api::generate_bindings as generate_bindings;
