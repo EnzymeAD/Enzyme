@@ -17,9 +17,8 @@ This repository will build enzyme/llvm/clang/rustc in the right configuration su
 Build LLVM, the Rust toolchain and Enzyme with
 
 ```bash
-$ git clone https://github.com/ZuseZ4/enzyme_build  
-$ cd enzyme_build  
-$ cargo run --release  
+$ cargo install --git https://github.com/rust-ml/enzyme_build
+$ enzyme-install
 ```
 
 Depending on your CPU this might take a few hours.  
@@ -30,9 +29,6 @@ Testing Time: 0.63s
   Expectedly Failed:   5  
 
 ## Extras
-- Q: Can I use some other location to store everything?
-- A: We will add an option for that later. If it's urgent please open an issue or ping me (Manuel Drehwald) on the rust-ml Zulip.  
-&nbsp;
 - Q: It fails some (all) tests or the build breaks even earlier. Help?
 - A: Sorry. Please open an issue with relevant information (OS, error message) or ping me on the rust-ml Zulip.  
 &nbsp;
