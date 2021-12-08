@@ -2,6 +2,19 @@
 name = "enzyme_build"
 version = "0.0.1"
 edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = [
+	"Manuel Drehwald",
+	"Lorenz Schmidt"
+]
+repository = "https://github.com/rust-ml/enzyme_build"
+keywords = ["enzyme", "auto-diff", "llvm", "ad", "machine-learning", "scientific-computing"]
+categories = ["development-tools::cargo-plugins", "mathematics", "science", "simulation"]
+readme = "README.md"
+documentation = "https://docs.rs/enzyme/"
+homepage = "https://github.com/rust-ml/enzyme_build"
+description = "A helper crate to simplify experimenting with Enzyme."
+
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
