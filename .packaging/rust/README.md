@@ -17,7 +17,7 @@ This repository will build enzyme/llvm/clang/rustc in the right configuration su
 Build LLVM, the Rust toolchain and Enzyme with
 
 ```bash
-$ cargo install --git https://github.com/rust-ml/enzyme_build
+$ cargo install enzyme
 $ enzyme-install
 ```
 
