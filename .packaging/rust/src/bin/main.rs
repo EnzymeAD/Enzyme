@@ -1,3 +1,4 @@
+use enzyme_build::Repo::*;
 fn main() {
     match get_enzyme() {
         Ok(()) => {}
@@ -6,10 +7,10 @@ fn main() {
 }
 
 fn get_enzyme() -> Result<(), String> {
-    enzyme_build::download("rustc")?;
-    enzyme_build::download("enzyme")?;
-    enzyme_build::build("rustc")?;
+    enzyme_build::download(Rust)?;
+    enzyme_build::download(Enzyme)?;
+    enzyme_build::build(Rust)?;
     enzyme_build::generate_bindings()?;
-    enzyme_build::build("enzyme")?;
+    enzyme_build::build(Enzyme)?;
     Ok(())
 }
