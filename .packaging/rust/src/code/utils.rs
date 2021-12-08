@@ -65,7 +65,7 @@ pub fn get_rustc_build_path() -> PathBuf {
     rustc_path
 }
 fn get_rustc_platform_path() -> PathBuf {
-    let platform = std::env::var("TARGET").unwrap();
+    let platform = env!("TARGET");
     get_rustc_build_path().join(&platform)
 }
 pub fn get_rustc_stage2_path() -> PathBuf {
