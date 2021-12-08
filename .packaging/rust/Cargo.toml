@@ -10,7 +10,7 @@ edition = "2021"
 # path = "src/main.rs"
 
 [[bin]]
-name = "enzyme"
+name = "cargo-enzyme"
 path = "src/run.rs"
 
 [dependencies]
