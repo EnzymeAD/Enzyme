@@ -5,6 +5,14 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+# [[bin]]
+# name = "enzyme-install"
+# path = "src/main.rs"
+
+[[bin]]
+name = "enzyme"
+path = "src/run.rs"
+
 [dependencies]
 bindgen = { version = "0.58", default-features = false }
 dirs = { version = "3.0", default-features = false }
