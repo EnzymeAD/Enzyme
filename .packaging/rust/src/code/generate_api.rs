@@ -2,6 +2,7 @@ use super::utils;
 use bindgen;
 use std::fs;
 
+/// This function can be used to generate Rust wrappers around Enzyme's [C API](https://github.com/wsmoses/Enzyme/blob/main/enzyme/Enzyme/CApi.h).
 pub fn generate_bindings() -> Result<(), String> {
     let header_path = utils::get_capi_path();
     dbg!(&header_path);

@@ -22,11 +22,15 @@ fn print_llvm_version() {
     run_and_printerror(&mut cmake);
 }
 
-pub fn build(to_build: &str) -> Result<(), String> {
+/// A support function to build Enzyme and Rust such that they can be used together.
+///
+/// The Rust repository must be build first.
+/// It will build a nightly version of Rust, together with LLVM and Clang.
+/// Building the Enzyme repository will always run tests to verify that it is working correctly.
+pub fn build(to_build: Repo) -> Result<(), String> {
     let _repo = match to_build {
-        "enzyme" => build_enzyme(),
-        "rustc" => build_rustc(),
-        _ => return Err("Unknown argument. Try enzyme or rustc.".to_owned()),
+        Repo::Enzyme => build_enzyme(),
+        Repo::Rust => build_rustc(),
     };
     Ok(())
 }

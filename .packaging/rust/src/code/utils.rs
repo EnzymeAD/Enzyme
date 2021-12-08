@@ -4,6 +4,13 @@ use std::path::PathBuf;
 const ENZYME_VER: &str = "0.0.24";
 const RUSTC_VER: &str = "1.57.0";
 
+/// We offer support for downloading and compiling these two repositories.
+pub enum Repo {
+    /// For handling the Enzyme repository.
+    Enzyme,
+    /// For handling the Rust repository.
+    Rust,
+}
 
 fn assert_existence(path: PathBuf) {
     if !path.is_dir() {

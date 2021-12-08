@@ -1,4 +1,5 @@
 use super::utils;
+use super::utils::Repo;
 use flate2;
 use flate2::bufread::GzDecoder;
 use std::fs::{File, OpenOptions};
@@ -75,28 +76,21 @@ fn download_tarball(repo_url: &str, download_filename: PathBuf) -> Result<(), St
     Ok(())
 }
 
-pub fn download(to_download: &str) -> Result<(), String> {
-    let repo = match to_download {
-        "enzyme" => utils::get_remote_enzyme_tarball_path(),
-        "rustc" => utils::get_remote_rustc_tarball_path(),
-        _ => {
-            return Err(
-                "Unknown download argument. Try enzyme xor rustc (includes llvm and others)."
-                    .to_owned(),
-            )
-        }
+
+/// This function can be used to download and unpack release tarballs.
+///
+/// Only the official [Enzyme](https://github.com/wsmoses/Enzyme) and
+/// [Rust](https://github.com/rust-lang/rust) repositories are supported.
+/// Data will be processed in `~/.cache/enzyme`.
+pub fn download(to_download: Repo) -> Result<(), String> {
+    let (repo, name) = match to_download {
+        Repo::Enzyme => (utils::get_remote_enzyme_tarball_path(), "enzyme"),
+        Repo::Rust => (utils::get_remote_rustc_tarball_path(), "rustc"),
     };
 
-    // Caching fails if we have a new rustc / enzyme version
-    // We would need to peek check if the new version would differ from the old one.
-    // Thus deactivating caching for now
-    let download_filename = utils::get_download_dir().join(to_download.to_owned() + ".tar.gz");
+    // Location to store our tarball, before unpacking
+    let download_filename = utils::get_download_dir().join(name.to_owned() + ".tar.gz");
     download_tarball(&repo, download_filename.clone())?;
-    /*
-    if !Path::new(&download_filename).exists() { // We didn't cache this repo yet
-        download_repo(repo, download_filename.clone())?;
-    }
-    */
 
     let dest_dir = utils::get_enzyme_base_path();
 
