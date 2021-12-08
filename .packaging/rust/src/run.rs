@@ -18,8 +18,6 @@ fn run_and_printerror(command: &mut Command) {
 fn main() {
 
     let build_args = vec![
-    "RUSTFLAGS=--emit=llvm-bc",
-    "cargo", 
     "+enzyme", 
     "-Zbuild-std",
     "rustc",
@@ -30,8 +28,9 @@ fn main() {
     "-g", 
     "-Copt-level=3"];
 
-    let mut run1 = Command::new("");
+    let mut run1 = Command::new("cargo");
     run1.args(&build_args);
+    run1.env("RUSTFLAGS","--emit=llvm-bc");
     run1.arg("-Zno-link");
     run_and_printerror(&mut run1);
 
@@ -39,7 +38,8 @@ fn main() {
     info_run.arg("First Compilation done, re-compiling now!");
     run_and_printerror(&mut info_run);
 
-    let mut run2 = Command::new("");
+    let mut run2 = Command::new("cargo");
     run2.args(&build_args);
+    run2.env("RUSTFLAGS","-emit=llvm-bc");
     run_and_printerror(&mut run2);
 }
