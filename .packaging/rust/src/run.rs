@@ -40,6 +40,6 @@ fn main() {
 
     let mut run2 = Command::new("cargo");
     run2.args(&build_args);
-    run2.env("RUSTFLAGS","-emit=llvm-bc");
+    run2.env("RUSTFLAGS","--emit=llvm-bc");
     run_and_printerror(&mut run2);
 }
