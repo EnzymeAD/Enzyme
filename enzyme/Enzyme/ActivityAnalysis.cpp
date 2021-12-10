@@ -1156,11 +1156,6 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
         if (potentialStore && potentiallyActiveLoad)
           goto activeLoadAndStore;
 
-        if (IVal && IVal->getParent() == &BB &&
-            (IVal == &I || TR.analyzer.DT->dominates(&I, IVal))) {
-          continue;
-        }
-
         // If this is a malloc or free, this doesn't impact the activity
         if (auto CI = dyn_cast<CallInst>(&I)) {
           if (CI->hasFnAttr("enzyme_inactive"))
