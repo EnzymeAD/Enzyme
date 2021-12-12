@@ -9,6 +9,8 @@ This repository will build enzyme/llvm/clang/rustc in the right configuration su
  - git  
  - ninja  
  - cmake  
+ - libssl-dev
+ - libclang-dev
  - Rust (rustup)    
  - ~10GB free storage in $HOME/.cache
 
@@ -25,7 +27,7 @@ Depending on your CPU this might take a few hours.
 The build process will run enzyme tests, so your last output should look similar to these lines:
 
 Testing Time: 0.63s  
-  Passed           : 240  
+  Passed           : 299  
   Expectedly Failed:   5  
 
 ## Extras
