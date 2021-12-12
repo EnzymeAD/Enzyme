@@ -8,7 +8,7 @@ authors = [
 	"Lorenz Schmidt"
 ]
 repository = "https://github.com/rust-ml/enzyme_build"
-keywords = ["enzyme", "auto-diff", "llvm", "ad", "machine-learning", "scientific-computing"]
+keywords = ["enzyme", "auto-diff", "llvm", "machine-learning", "scientific-computing"]
 categories = ["development-tools::cargo-plugins", "mathematics", "science", "simulation"]
 readme = "README.md"
 documentation = "https://docs.rs/enzyme/"
