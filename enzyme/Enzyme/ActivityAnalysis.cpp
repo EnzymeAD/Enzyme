@@ -117,6 +117,8 @@ const std::set<std::string> KnownInactiveFunctions = {
     "__cxa_guard_acquire",
     "__cxa_guard_release",
     "__cxa_guard_abort",
+    "snprintf",
+    "sprintf",
     "printf",
     "putchar",
     "fprintf",
