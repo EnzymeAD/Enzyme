@@ -11,7 +11,7 @@ This repository will build enzyme/llvm/clang/rustc in the right configuration su
  - cmake  
  - libssl-dev
  - libclang-dev
- - Rust (rustup)    
+ - Rust (rustup) with an installed nightly toolchain   
  - ~10GB free storage in $HOME/.cache
 
 ## Usage
