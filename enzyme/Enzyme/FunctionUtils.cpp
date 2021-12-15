@@ -879,6 +879,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
           F, mode == DerivativeMode::ReverseModeCombined)) != cache.end()) {
     Function *NewF =
         cache[std::make_pair(F, mode == DerivativeMode::ReverseModeCombined)];
+    if (EnzymePrint)
+      llvm::errs() << "after cached simplification :\n" << *NewF << "\n";
     return NewF;
   }
 
