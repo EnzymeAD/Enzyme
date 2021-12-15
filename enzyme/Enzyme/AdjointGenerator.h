@@ -7456,7 +7456,8 @@ public:
           getForwardBuilder(Builder2);
 
           SmallVector<Value *, 2> args;
-          for (auto &arg : orig->args()) {
+          for (unsigned i = 0; i < orig->getNumArgOperands(); ++i) {
+            auto arg = orig->getArgOperand(i);
             args.push_back(gutils->getNewFromOriginal(arg));
           }
           CallInst *CI = Builder2.CreateCall(orig->getFunctionType(),
