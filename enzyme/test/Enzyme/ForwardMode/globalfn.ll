@@ -72,8 +72,8 @@ attributes #4 = { nounwind "correctly-rounded-divide-sqrt-fp-math"="false" "disa
 !7 = !{!"any pointer", !4, i64 0}
 
 
-; CHECK: @global_shadow = private unnamed_addr constant [1 x void (double*)*] [void (double*)* bitcast (void (double*, double*)** @"_enzyme_ipmul'" to void (double*)*)]
-; CHECK:@"_enzyme_ipmul'" = internal constant void (double*, double*)* @fwddiffeipmul
+; CHECK: @global_shadow = private unnamed_addr constant [1 x void (double*)*] [void (double*)* bitcast (void (double*, double*)** @"_enzyme_forward_ipmul'" to void (double*)*)]
+; CHECK:@"_enzyme_forward_ipmul'" = internal constant void (double*, double*)* @fwddiffeipmul
 
 ; CHECK: define internal double @fwddiffemulglobal(double %x, double %"x'", i64 %idx)
 ; CHECK-NEXT: entry:

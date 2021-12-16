@@ -92,8 +92,8 @@ attributes #4 = { nounwind "correctly-rounded-divide-sqrt-fp-math"="false" "disa
 !6 = !{!7, !7, i64 0}
 !7 = !{!"any pointer", !4, i64 0}
 
-; CHECK: @global_shadow = private unnamed_addr constant [1 x void (double*)*] [void (double*)* bitcast ({ i8* (double*, double*)*, void (double*, double*, i8*)* }* @"_enzyme_ipmul'" to void (double*)*)]
-; CHECK: @"_enzyme_ipmul'" = internal constant { i8* (double*, double*)*, void (double*, double*, i8*)* } { i8* (double*, double*)* @augmented_ipmul, void (double*, double*, i8*)* @diffeipmul }
+; CHECK: @global_shadow = private unnamed_addr constant [1 x void (double*)*] [void (double*)* bitcast ({ i8* (double*, double*)*, void (double*, double*, i8*)* }* @"_enzyme_reverse_ipmul'" to void (double*)*)]
+; CHECK: @"_enzyme_reverse_ipmul'" = internal constant { i8* (double*, double*)*, void (double*, double*, i8*)* } { i8* (double*, double*)* @augmented_ipmul, void (double*, double*, i8*)* @diffeipmul }
 
 ; CHECK: define internal { double } @diffemulglobal(double %x, i64 %idx, double %differeturn)
 ; CHECK-NEXT: entry:

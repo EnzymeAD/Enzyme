@@ -2724,7 +2724,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
     if (!newf)
       newf = UndefValue::get(fn->getType());
 
-    std::string globalname = ("_enzyme_" + fn->getName() + "'").str();
+    std::string globalname = ("_enzyme_forward_" + fn->getName() + "'").str();
     auto GV = fn->getParent()->getNamedValue(globalname);
 
     if (GV == nullptr) {
@@ -2767,7 +2767,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
         StructType::get(newf->getContext(),
                         {augdata.fn->getType(), newf->getType()}),
         {augdata.fn, newf});
-    std::string globalname = ("_enzyme_" + fn->getName() + "'").str();
+    std::string globalname = ("_enzyme_reverse_" + fn->getName() + "'").str();
     auto GV = fn->getParent()->getNamedValue(globalname);
 
     if (GV == nullptr) {
