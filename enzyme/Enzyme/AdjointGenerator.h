@@ -6822,7 +6822,7 @@ public:
       }
 
       if (called) {
-        if (funcName == "erf") {
+        if (funcName == "erf" || funcName == "erfi" || funcName == "erfc") {
           if (gutils->knownRecomputeHeuristic.find(orig) !=
               gutils->knownRecomputeHeuristic.end()) {
             if (!gutils->knownRecomputeHeuristic[orig]) {
@@ -6835,152 +6835,24 @@ public:
             return;
 
           switch (Mode) {
-          case DerivativeMode::ForwardMode: {
-            IRBuilder<> Builder2(&call);
-            getForwardBuilder(Builder2);
-            Value *x = gutils->getNewFromOriginal(orig->getArgOperand(0));
-
-            Value *sq = Builder2.CreateFNeg(Builder2.CreateFMul(x, x));
-            Type *tys[] = {sq->getType()};
-            Function *ExpF = Intrinsic::getDeclaration(
-                gutils->oldFunc->getParent(), Intrinsic::exp, tys);
-            Value *cal = Builder2.CreateCall(ExpF, std::vector<Value *>({sq}));
-
-            cal = Builder2.CreateFMul(
-                cal, ConstantFP::get(
-                         sq->getType(),
-                         1.1283791670955125738961589031215451716881012586580));
-            cal = Builder2.CreateFMul(cal,
-                                      diffe(orig->getArgOperand(0), Builder2));
-            setDiffe(orig, cal, Builder2);
-            return;
-          }
-          case DerivativeMode::ReverseModeGradient:
-          case DerivativeMode::ReverseModeCombined: {
-            IRBuilder<> Builder2(call.getParent());
-            getReverseBuilder(Builder2);
-            Value *x = lookup(
-                gutils->getNewFromOriginal(orig->getArgOperand(0)), Builder2);
-
-            Value *sq = Builder2.CreateFNeg(Builder2.CreateFMul(x, x));
-            Type *tys[] = {sq->getType()};
-            Function *ExpF = Intrinsic::getDeclaration(
-                gutils->oldFunc->getParent(), Intrinsic::exp, tys);
-            Value *cal = Builder2.CreateCall(ExpF, std::vector<Value *>({sq}));
-
-            cal = Builder2.CreateFMul(
-                cal, ConstantFP::get(
-                         sq->getType(),
-                         1.1283791670955125738961589031215451716881012586580));
-            cal = Builder2.CreateFMul(cal, diffe(orig, Builder2));
-            setDiffe(orig, Constant::getNullValue(orig->getType()), Builder2);
-            addToDiffe(orig->getArgOperand(0), cal, Builder2, x->getType());
-            return;
-          }
-          case DerivativeMode::ReverseModePrimal: {
-            return;
-          }
-          }
-        }
-        if (funcName == "erfi") {
-          if (gutils->knownRecomputeHeuristic.find(orig) !=
-              gutils->knownRecomputeHeuristic.end()) {
-            if (!gutils->knownRecomputeHeuristic[orig]) {
-              gutils->cacheForReverse(BuilderZ, newCall,
-                                      getIndex(orig, CacheType::Self));
-            }
-          }
-          eraseIfUnused(*orig);
-          if (gutils->isConstantInstruction(orig))
-            return;
-
-          switch (Mode) {
-          case DerivativeMode::ForwardMode: {
-            IRBuilder<> Builder2(&call);
-            getForwardBuilder(Builder2);
-            Value *x = gutils->getNewFromOriginal(orig->getArgOperand(0));
-
-            Value *sq = Builder2.CreateFMul(x, x);
-            Type *tys[] = {sq->getType()};
-            Function *ExpF = Intrinsic::getDeclaration(
-                gutils->oldFunc->getParent(), Intrinsic::exp, tys);
-            Value *cal = Builder2.CreateCall(ExpF, std::vector<Value *>({sq}));
-
-            cal = Builder2.CreateFMul(
-                cal, ConstantFP::get(
-                         sq->getType(),
-                         1.1283791670955125738961589031215451716881012586580));
-            cal = Builder2.CreateFMul(cal,
-                                      diffe(orig->getArgOperand(0), Builder2));
-            setDiffe(orig, cal, Builder2);
-            return;
-          }
-          case DerivativeMode::ReverseModeGradient:
-          case DerivativeMode::ReverseModeCombined: {
-            IRBuilder<> Builder2(call.getParent());
-            getReverseBuilder(Builder2);
-            Value *x = lookup(
-                gutils->getNewFromOriginal(orig->getArgOperand(0)), Builder2);
-
-            Value *sq = Builder2.CreateFMul(x, x);
-            Type *tys[] = {sq->getType()};
-            Function *ExpF = Intrinsic::getDeclaration(
-                gutils->oldFunc->getParent(), Intrinsic::exp, tys);
-            Value *cal = Builder2.CreateCall(ExpF, std::vector<Value *>({sq}));
-
-            cal = Builder2.CreateFMul(
-                cal, ConstantFP::get(
-                         sq->getType(),
-                         1.1283791670955125738961589031215451716881012586580));
-            cal = Builder2.CreateFMul(cal, diffe(orig, Builder2));
-            setDiffe(orig, Constant::getNullValue(orig->getType()), Builder2);
-            addToDiffe(orig->getArgOperand(0), cal, Builder2, x->getType());
-            return;
-          }
           case DerivativeMode::ReverseModePrimal:
             return;
-          }
-        }
-        if (funcName == "erfc") {
-          if (gutils->knownRecomputeHeuristic.find(orig) !=
-              gutils->knownRecomputeHeuristic.end()) {
-            if (!gutils->knownRecomputeHeuristic[orig]) {
-              gutils->cacheForReverse(BuilderZ, newCall,
-                                      getIndex(orig, CacheType::Self));
-            }
-          }
-          eraseIfUnused(*orig);
-          if (gutils->isConstantInstruction(orig))
-            return;
-
-          switch (Mode) {
-          case DerivativeMode::ForwardMode: {
-            IRBuilder<> Builder2(&call);
-            getForwardBuilder(Builder2);
-            Value *x = gutils->getNewFromOriginal(orig->getArgOperand(0));
-            Value *sq = Builder2.CreateFNeg(Builder2.CreateFMul(x, x));
-            Type *tys[] = {sq->getType()};
-            Function *ExpF = Intrinsic::getDeclaration(
-                gutils->oldFunc->getParent(), Intrinsic::exp, tys);
-            Value *cal = Builder2.CreateCall(ExpF, std::vector<Value *>({sq}));
-
-            cal = Builder2.CreateFMul(
-                cal, ConstantFP::get(
-                         sq->getType(),
-                         -1.1283791670955125738961589031215451716881012586580));
-            cal = Builder2.CreateFMul(cal,
-                                      diffe(orig->getArgOperand(0), Builder2));
-            setDiffe(orig, cal, Builder2);
-            return;
-          }
+          case DerivativeMode::ForwardMode: 
           case DerivativeMode::ReverseModeGradient:
           case DerivativeMode::ReverseModeCombined: {
-            IRBuilder<> Builder2(call.getParent());
-            getReverseBuilder(Builder2);
-            Value *x = lookup(
-                gutils->getNewFromOriginal(orig->getArgOperand(0)), Builder2);
+            IRBuilder<> Builder2(&call);
+            if (Mode == DerivativeMode::ForwardMode)
+              getForwardBuilder(Builder2);
+            else
+              getReverseBuilder(Builder2);
 
-            Value *sq = Builder2.CreateFNeg(Builder2.CreateFMul(x, x));
+            Value *x = gutils->getNewFromOriginal(orig->getArgOperand(0));
+            if (Mode != DerivativeMode::ForwardMode)
+                x = lookup(x, Builder2);
+
+            Value *sq = Builder2.CreateFMul(x, x);
+            if (funcName == "erf" || funcName == "erfc")
+                sq = Builder2.CreateFNeg(sq);
             Type *tys[] = {sq->getType()};
             Function *ExpF = Intrinsic::getDeclaration(
                 gutils->oldFunc->getParent(), Intrinsic::exp, tys);
@@ -6989,12 +6861,20 @@ public:
             cal = Builder2.CreateFMul(
                 cal, ConstantFP::get(
                          sq->getType(),
-                         -1.1283791670955125738961589031215451716881012586580));
-            cal = Builder2.CreateFMul(cal, diffe(orig, Builder2));
-            setDiffe(orig, Constant::getNullValue(orig->getType()), Builder2);
-            addToDiffe(orig->getArgOperand(0), cal, Builder2, x->getType());
-          }
-          case DerivativeMode::ReverseModePrimal: {
+                         (funcName == "erfc") ?
+                         -1.1283791670955125738961589031215451716881012586580
+                         :
+                         1.1283791670955125738961589031215451716881012586580
+                    ));
+
+            if (Mode == DerivativeMode::ForwardMode) {
+                cal = Builder2.CreateFMul(cal, diffe(orig->getArgOperand(0), Builder2));
+                setDiffe(orig, cal, Builder2);
+            } else {
+                cal = Builder2.CreateFMul(cal, diffe(orig, Builder2));
+                setDiffe(orig, Constant::getNullValue(orig->getType()), Builder2);
+                addToDiffe(orig->getArgOperand(0), cal, Builder2, x->getType());
+            }
             return;
           }
           }
