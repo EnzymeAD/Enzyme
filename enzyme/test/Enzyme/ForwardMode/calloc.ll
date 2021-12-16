@@ -5,20 +5,11 @@
 
 define dso_local double @f(double %x) {
 entry:
-  %x.addr = alloca double, align 8
-  %data = alloca double*, align 8
-  store double %x, double* %x.addr, align 8
   %call = call noalias i8* @calloc(i64 8, i64 1)
   %0 = bitcast i8* %call to double*
-  store double* %0, double** %data, align 8
-  %1 = load double, double* %x.addr, align 8
-  %2 = load double*, double** %data, align 8
-  %arrayidx = getelementptr inbounds double, double* %2, i64 0
-  store double %1, double* %arrayidx, align 8
-  %3 = load double*, double** %data, align 8
-  %arrayidx1 = getelementptr inbounds double, double* %3, i64 0
-  %4 = load double, double* %arrayidx1, align 8
-  ret double %4
+  store double %x, double* %0, align 8
+  %1 = load double, double* %0, align 8
+  ret double %1
 }
 
 declare dso_local noalias i8* @calloc(i64, i64)
