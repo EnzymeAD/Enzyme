@@ -1,5 +1,7 @@
 use super::utils;
 use super::utils::Repo;
+use super::version_manager::*;
+
 use flate2;
 use flate2::bufread::GzDecoder;
 use std::fs::{File, OpenOptions};
@@ -83,6 +85,12 @@ fn download_tarball(repo_url: &str, download_filename: PathBuf) -> Result<(), St
 /// [Rust](https://github.com/rust-lang/rust) repositories are supported.
 /// Data will be processed in `~/.cache/enzyme`.
 pub fn download(to_download: Repo) -> Result<(), String> {
+
+    // If we have alrady downloaded it in the past, there's nothing left to do.
+    if check_downloaded(&to_download) {
+        return Ok(());
+    }
+
     let (repo, name) = match to_download {
         Repo::Enzyme => (utils::get_remote_enzyme_tarball_path(), "enzyme"),
         Repo::Rust => (utils::get_remote_rustc_tarball_path(), "rustc"),
@@ -102,6 +110,9 @@ pub fn download(to_download: Repo) -> Result<(), String> {
         Ok(_) => {}
         Err(e) => return Err(format!("failed unpacking: {}", e)),
     };
+
+    // Mark it as downloaded, so we can skip the download step next time.
+    set_downloaded(&to_download);
 
     Ok(())
 }

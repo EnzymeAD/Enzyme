@@ -24,7 +24,7 @@ fn main() {
     "-Zbuild-std",
     "rustc",
     "--target", 
-    &target_platform, 
+    target_platform, 
     "--", 
     "--emit=llvm-bc",
     "-g", 

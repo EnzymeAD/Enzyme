@@ -1,8 +1,7 @@
 use dirs;
 use std::path::PathBuf;
 
-const ENZYME_VER: &str = "0.0.25";
-const RUSTC_VER: &str = "1.57.0";
+use super::version_manager::{RUSTC_VER, ENZYME_VER};
 
 /// We offer support for downloading and compiling these two repositories.
 pub enum Repo {

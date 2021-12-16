@@ -2,6 +2,7 @@ pub mod compile;
 pub mod downloader;
 pub mod generate_api;
 pub mod utils;
+pub mod version_manager;
 
 pub use utils::Repo;
 pub use compile::build;

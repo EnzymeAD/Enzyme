@@ -1,4 +1,4 @@
-use super::utils::*;
+use super::{utils::*, version_manager::{check_compiled, set_compiled}};
 use std::process::Command;
 
 fn run_and_printerror(command: &mut Command) {
@@ -28,10 +28,21 @@ fn print_llvm_version() {
 /// It will build a nightly version of Rust, together with LLVM and Clang.
 /// Building the Enzyme repository will always run tests to verify that it is working correctly.
 pub fn build(to_build: Repo) -> Result<(), String> {
+
+    // If we have compiled that rustc or enzyme version in the past, we have nothing to do.
+    if check_compiled(&to_build) {
+        return Ok(());
+    }
+
     let _repo = match to_build {
         Repo::Enzyme => build_enzyme(),
         Repo::Rust => build_rustc(),
     };
+
+    // Compiling is expensive, so add a note that this compilation run was successfull and that 
+    // we shouldn't repeat it. 
+    set_compiled(&to_build);
+
     Ok(())
 }
 
