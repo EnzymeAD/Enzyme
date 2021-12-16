@@ -2231,7 +2231,13 @@ public:
       IRBuilder<> Builder2(&MTI);
       getForwardBuilder(Builder2);
       auto ddst = gutils->invertPointerM(orig_dst, Builder2);
+      if (ddst->getType()->isIntegerTy())
+        ddst = Builder2.CreateIntToPtr(ddst,
+                                       Type::getInt8PtrTy(ddst->getContext()));
       auto dsrc = gutils->invertPointerM(orig_src, Builder2);
+      if (dsrc->getType()->isIntegerTy())
+        dsrc = Builder2.CreateIntToPtr(dsrc,
+                                       Type::getInt8PtrTy(dsrc->getContext()));
 
       auto call =
           Builder2.CreateMemCpy(ddst, dstAlign, dsrc, srcAlign, new_size);
@@ -6088,11 +6094,13 @@ public:
             assert(invertedReturn->getType() == orig->getType());
             placeholder->replaceAllUsesWith(invertedReturn);
             gutils->erase(placeholder);
-          } else
-            invertedReturn = placeholder;
-
-          gutils->invertedPointers.insert(std::make_pair(
-              (const Value *)orig, InvertedPointerVH(gutils, invertedReturn)));
+            gutils->invertedPointers.insert(
+                std::make_pair((const Value *)orig,
+                               InvertedPointerVH(gutils, invertedReturn)));
+          } else {
+            gutils->invertedPointers.erase(orig);
+            gutils->erase(placeholder);
+          }
         }
 
         if (normalReturn && normalReturn != newCall) {
@@ -7928,6 +7936,9 @@ public:
           argsInverted.push_back(DIFFE_TYPE::DUP_ARG);
         }
       }
+      if (!called)
+        llvm::errs() << *called << "\n";
+      assert(called);
 
       auto newcalled = gutils->Logic.CreateForwardDiff(
           cast<Function>(called), subretType, argsInverted, gutils->TLI,
