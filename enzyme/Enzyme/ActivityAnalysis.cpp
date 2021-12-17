@@ -248,12 +248,14 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
   if (Name == "frexp" || Name == "frexpf" || Name == "frexpl") {
     return val != CI->getOperand(0);
   }
-  
-  // The relerr argument is inactive 
-  if (Name == "Faddeeva_erf" || Name == "Faddeeva_erfc" || Name == "Faddeeva_erfcx" || Name == "Faddeeva_erfi" || Name == "Faddeeva_dawson") {
-    for (size_t i=0; i<CI->getNumArgOperands()-1; i++) {
-        if (val == CI->getOperand(i))
-            return false;
+
+  // The relerr argument is inactive
+  if (Name == "Faddeeva_erf" || Name == "Faddeeva_erfc" ||
+      Name == "Faddeeva_erfcx" || Name == "Faddeeva_erfi" ||
+      Name == "Faddeeva_dawson") {
+    for (size_t i = 0; i < CI->getNumArgOperands() - 1; i++) {
+      if (val == CI->getOperand(i))
+        return false;
     }
     return true;
   }
@@ -329,11 +331,13 @@ static inline void propagateArgumentInformation(
       propagateFromOperand(CI.getOperand(0));
       return;
     }
-    if (Name == "Faddeeva_erf" || Name == "Faddeeva_erfc" || Name == "Faddeeva_erfcx" || Name == "Faddeeva_erfi" || Name == "Faddeeva_dawson") {
-        for (size_t i=0; i<CI.getNumArgOperands()-1; i++) {
-            propagateFromOperand(CI.getOperand(i));
-        }
-        return;
+    if (Name == "Faddeeva_erf" || Name == "Faddeeva_erfc" ||
+        Name == "Faddeeva_erfcx" || Name == "Faddeeva_erfi" ||
+        Name == "Faddeeva_dawson") {
+      for (size_t i = 0; i < CI.getNumArgOperands() - 1; i++) {
+        propagateFromOperand(CI.getOperand(i));
+      }
+      return;
     }
   }
 

@@ -96,7 +96,7 @@ const std::map<std::string, llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"sqrt", Intrinsic::sqrt},
     {"cbrt", Intrinsic::not_intrinsic},
     {"hypot", Intrinsic::not_intrinsic},
-    
+
     {"Faddeeva_erf", Intrinsic::not_intrinsic},
     {"Faddeeva_erfc", Intrinsic::not_intrinsic},
     {"Faddeeva_erfcx", Intrinsic::not_intrinsic},
@@ -4017,24 +4017,24 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
           updateAnalysis(call.getArgOperand(i),
                          TypeTree(BaseType::Integer).Only(-1), &call);
         } else if (auto ST = dyn_cast<StructType>(T)) {
-            assert(ST->getNumElements() >= 1);
-            for (size_t i=1; i<ST->getNumElements(); ++i) {
-                assert(ST->getTypeAtIndex((unsigned)0) == ST->getTypeAtIndex(i));
-            }
-            if (ST->getTypeAtIndex((unsigned)0)->isFloatingPointTy())
-                updateAnalysis(
-                  call.getArgOperand(i),
-                  TypeTree(ConcreteType(
-                               ST->getTypeAtIndex((unsigned)0)->getScalarType()))
-                      .Only(-1),
-                  &call);
-            else if (ST->getTypeAtIndex((unsigned)0)->isIntegerTy()) {
-                updateAnalysis(call.getArgOperand(i),
-                         TypeTree(BaseType::Integer).Only(-1), &call);
-            } else {
-                llvm::errs() << *T << " - " << call << "\n";
-                llvm_unreachable("Unknown type for libm");
-            }
+          assert(ST->getNumElements() >= 1);
+          for (size_t i = 1; i < ST->getNumElements(); ++i) {
+            assert(ST->getTypeAtIndex((unsigned)0) == ST->getTypeAtIndex(i));
+          }
+          if (ST->getTypeAtIndex((unsigned)0)->isFloatingPointTy())
+            updateAnalysis(
+                call.getArgOperand(i),
+                TypeTree(ConcreteType(
+                             ST->getTypeAtIndex((unsigned)0)->getScalarType()))
+                    .Only(-1),
+                &call);
+          else if (ST->getTypeAtIndex((unsigned)0)->isIntegerTy()) {
+            updateAnalysis(call.getArgOperand(i),
+                           TypeTree(BaseType::Integer).Only(-1), &call);
+          } else {
+            llvm::errs() << *T << " - " << call << "\n";
+            llvm_unreachable("Unknown type for libm");
+          }
 
         } else {
           llvm::errs() << *T << " - " << call << "\n";
@@ -4051,24 +4051,23 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
         updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1), &call);
       } else if (T->isVoidTy()) {
       } else if (auto ST = dyn_cast<StructType>(T)) {
-            assert(ST->getNumElements() >= 1);
-            for (size_t i=1; i<ST->getNumElements(); ++i) {
-                assert(ST->getTypeAtIndex((unsigned)0) == ST->getTypeAtIndex(i));
-            }
-            if (ST->getTypeAtIndex((unsigned)0)->isFloatingPointTy())
-                updateAnalysis(
-                  &call,
-                  TypeTree(ConcreteType(
-                               ST->getTypeAtIndex((unsigned)0)->getScalarType()))
-                      .Only(-1),
-                  &call);
-            else if (ST->getTypeAtIndex((unsigned)0)->isIntegerTy()) {
-                updateAnalysis(&call,
-                         TypeTree(BaseType::Integer).Only(-1), &call);
-            } else {
-                llvm::errs() << *T << " - " << call << "\n";
-                llvm_unreachable("Unknown type for libm");
-            }
+        assert(ST->getNumElements() >= 1);
+        for (size_t i = 1; i < ST->getNumElements(); ++i) {
+          assert(ST->getTypeAtIndex((unsigned)0) == ST->getTypeAtIndex(i));
+        }
+        if (ST->getTypeAtIndex((unsigned)0)->isFloatingPointTy())
+          updateAnalysis(
+              &call,
+              TypeTree(ConcreteType(
+                           ST->getTypeAtIndex((unsigned)0)->getScalarType()))
+                  .Only(-1),
+              &call);
+        else if (ST->getTypeAtIndex((unsigned)0)->isIntegerTy()) {
+          updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1), &call);
+        } else {
+          llvm::errs() << *T << " - " << call << "\n";
+          llvm_unreachable("Unknown type for libm");
+        }
 
       } else {
         llvm::errs() << *T << " - " << call << "\n";
