@@ -542,6 +542,8 @@ void TypeAnalyzer::addToWorkList(Value *Val) {
 }
 
 void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
+  if (Val->getType()->isVoidTy())
+    return;
   // ConstantData's and Functions don't have analysis updated
   // We don't do "Constant" as globals are "Constant" types
   if (isa<ConstantData>(Val) || isa<Function>(Val)) {
