@@ -299,18 +299,23 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
       int Off = (int)ai.getLimitedValue();
 
       getConstantAnalysis(Op, TA, analysis);
-      auto mid = analysis[Op].ShiftIndices(DL, /*init offset*/ 0,
-                                           /*maxSize*/ ObjSize,
-                                           /*addOffset*/ Off);
-
+      auto mid = analysis[Op];
       if (TA.fntypeinfo.Function->getParent()
               ->getDataLayout()
               .getTypeSizeInBits(CA->getType()) >= 16) {
         mid.ReplaceIntWithAnything();
       }
 
-      Result |= mid;
+      Result |= mid.ShiftIndices(DL, /*init offset*/ 0,
+                                 /*maxSize*/ ObjSize,
+                                 /*addOffset*/ Off);
     }
+    Result = Result.CanonicalizeValue(
+        (TA.fntypeinfo.Function->getParent()->getDataLayout().getTypeSizeInBits(
+             CA->getType()) +
+         7) /
+            8,
+        DL);
     return;
   }
 
@@ -318,7 +323,6 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
   // the subtypes
   if (auto CD = dyn_cast<ConstantDataSequential>(Val)) {
     TypeTree &Result = analysis[Val];
-
     for (unsigned i = 0, size = CD->getNumElements(); i < size; ++i) {
       assert(TA.fntypeinfo.Function);
       auto Op = CD->getElementAsConstant(i);
@@ -349,18 +353,24 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
       int Off = (int)ai.getLimitedValue();
 
       getConstantAnalysis(Op, TA, analysis);
-      auto mid = analysis[Op].ShiftIndices(DL, /*init offset*/ 0,
-                                           /*maxSize*/ ObjSize,
-                                           /*addOffset*/ Off);
-
+      auto mid = analysis[Op];
       if (TA.fntypeinfo.Function->getParent()
               ->getDataLayout()
               .getTypeSizeInBits(CD->getType()) >= 16) {
         mid.ReplaceIntWithAnything();
       }
+      Result |= mid.ShiftIndices(DL, /*init offset*/ 0,
+                                 /*maxSize*/ ObjSize,
+                                 /*addOffset*/ Off);
 
       Result |= mid;
     }
+    Result = Result.CanonicalizeValue(
+        (TA.fntypeinfo.Function->getParent()->getDataLayout().getTypeSizeInBits(
+             CD->getType()) +
+         7) /
+            8,
+        DL);
     return;
   }
 

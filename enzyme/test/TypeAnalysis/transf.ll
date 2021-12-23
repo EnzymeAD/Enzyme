@@ -5,7 +5,7 @@ entry:
   %q = alloca [2 x double], align 8
   %gep0 = getelementptr [2 x double], [2 x double]* %q, i32 0, i32 0
   %gep = getelementptr [2 x double], [2 x double]* %q, i32 0, i32 1
-  store double 0.000000e+00, double* %gep, !tbaa !2
+  store double 0.000000e+00, double* %gep, align 8, !tbaa !2
   %o = call double* @max(double* %p, double* %gep0, i1 true)
   ret void
 }
@@ -13,8 +13,8 @@ entry:
 define double* @max(double* %a, double* %b, i1 %cmp) {
 entry:
   %retval = alloca double*, align 8
-  %av = load double, double* %a
-  %bv = load double, double* %b
+  %av = load double, double* %a, align 8
+  %bv = load double, double* %b, align 8
   br i1 %cmp, label %if.then, label %if.end
 
 if.then:
@@ -26,7 +26,7 @@ if.end:
   br label %return
 
 return:
-  %res = load double*, double** %retval
+  %res = load double*, double** %retval, align 8
   ret double* %res
 }
 
