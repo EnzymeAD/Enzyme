@@ -598,8 +598,8 @@ public:
     for (auto &pair : staging) {
       auto &pnext = pair.first;
       for (auto &pair2 : pair.second) {
-        auto &dt = pair2.first;
-        auto &set = pair2.second;
+        auto dt = pair2.first;
+        const auto &set = pair2.second;
 
         // llvm::errs() << " - set: {";
         // for(auto s : set) llvm::errs() << s << ", ";
@@ -610,19 +610,23 @@ public:
         // See if we can canonicalize the outermost index into a -1
         if (!legalCombine) {
           size_t chunk = 1;
-          if (auto flt = dt.isFloat()) {
-            if (flt->isFloatTy()) {
-              chunk = 4;
-            } else if (flt->isDoubleTy()) {
-              chunk = 8;
-            } else if (flt->isHalfTy()) {
-              chunk = 2;
-            } else {
-              llvm::errs() << *flt << "\n";
-              assert(0 && "unhandled float type");
-            }
-          } else if (dt == BaseType::Pointer) {
+          if (set.size() > 0) {
             chunk = dl.getPointerSizeInBits() / 8;
+          } else {
+            if (auto flt = dt.isFloat()) {
+              if (flt->isFloatTy()) {
+                chunk = 4;
+              } else if (flt->isDoubleTy()) {
+                chunk = 8;
+              } else if (flt->isHalfTy()) {
+                chunk = 2;
+              } else {
+                llvm::errs() << *flt << "\n";
+                assert(0 && "unhandled float type");
+              }
+            } else if (dt == BaseType::Pointer) {
+              chunk = dl.getPointerSizeInBits() / 8;
+            }
           }
 
           legalCombine = true;
@@ -825,19 +829,6 @@ public:
       if (pair.second != ConcreteType(BaseType::Anything))
         continue;
       dat.insert(pair.first, pair.second);
-    }
-    return dat;
-  }
-
-  /// Select mappings in range [0, max), preserving -1's
-  TypeTree AtMost(size_t max) const {
-    assert(max > 0);
-    TypeTree dat;
-    for (const auto &pair : mapping) {
-      if (pair.first.size() == 0 || pair.first[0] == -1 ||
-          (size_t)pair.first[0] < max) {
-        dat.insert(pair.first, pair.second);
-      }
     }
     return dat;
   }
