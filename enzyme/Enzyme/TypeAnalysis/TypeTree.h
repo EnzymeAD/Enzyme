@@ -418,7 +418,20 @@ public:
       }
       assert(pair.first.size() != 0);
 
-      if (pair.first[0] == 0 || pair.first[0] == -1) {
+      if (pair.first[0] == -1) {
+        std::vector<int> next;
+        for (size_t i = 1; i < pair.first.size(); ++i)
+          next.push_back(pair.first[i]);
+        Result.insert(next, pair.second);
+      }
+    }
+    for (const auto &pair : mapping) {
+      if (pair.first.size() == 0) {
+        llvm::errs() << str() << "\n";
+      }
+      assert(pair.first.size() != 0);
+
+      if (pair.first[0] == 0) {
         std::vector<int> next;
         for (size_t i = 1; i < pair.first.size(); ++i)
           next.push_back(pair.first[i]);
