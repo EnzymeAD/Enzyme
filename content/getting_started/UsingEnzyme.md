@@ -5,6 +5,13 @@ draft: false
 weight: 10
 ---
 
+---
+title: "Using Enzyme"
+date: 2019-11-29T15:26:15Z
+draft: false
+weight: 10
+---
+
 ## Generating LLVM
 
 To begin, let's create a simple code `test.c` we want to differentiate. Enzyme will replace any calls to functions whose names contain "\_\_enzyme\_autodiff" with calls to the corresponding For now, let's ignore the details of Enzyme's calling convention/ABI which are described in detail [here](/getting_started/CallingConvention)
@@ -26,7 +33,7 @@ int main() {
 }
 ```
 
-We can generate LLVM from this code by calling clang as follows. Note that `clang` should be the path to whatever clang you built Enzyme against.
+We can break down the individual compilation steps Enzyme takes in conjunction with the compiler by first generating LLVM from this code by calling clang, the C compiler of LLVM, as follows. Note that `clang` should be the path to whatever clang you built Enzyme against.
 ```sh
 clang test.c -S -emit-llvm -o input.ll -O2 -fno-vectorize -fno-slp-vectorize -fno-unroll-loops
 ```
@@ -51,7 +58,7 @@ entry:
 ...
 ```
 
-## Performing AD Enzyme
+## Performing AD with Enzyme
 We can now run Enzyme to differentiate our LLVM IR. The following command will load Enzyme and run the differentiation transformation pass. Note that `opt` should be the path to whatever opt was creating by the LLVM you built Enzyme against. If you see a segfault when trying to run opt, this is likely an issue in LLVM's plugin infrasture. Please see [the installation guide](/getting_started/Installation) for more information on how to resolve this.
 
 ```sh
@@ -120,9 +127,15 @@ We can then compile this to a final binary as follows:
 clang output_opt.ll -o a.exe
 ```
 
-For ease, we could combine the final optimization and bianry execution into one command as follows.
+For ease, we could combine the final optimization and binary execution into one command as follows.
 ```sh
-clang output.ll -O3 -o a.exe
+clang output.ll -O2 -o a.exe
+```
+
+These individual steps can be summarised into a single compilation step, where we load Enzyme as a plugin to our compiler clang, and perform the differentiation on our test code.
+
+```sh
+clang test.c -O2 -Xclang -load -Xclang /path/to/Enzyme/enzyme/build/Enzyme/ClangEnzyme-<VERSION>.so -fno-vectorize -fno-slp-vectorize -fno-unroll-loops -o a.exe
 ```
 
 ## Advanced options
