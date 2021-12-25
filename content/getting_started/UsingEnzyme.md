@@ -5,13 +5,6 @@ draft: false
 weight: 10
 ---
 
----
-title: "Using Enzyme"
-date: 2019-11-29T15:26:15Z
-draft: false
-weight: 10
----
-
 ## Generating LLVM
 
 To begin, let's create a simple code `test.c` we want to differentiate. Enzyme will replace any calls to functions whose names contain "\_\_enzyme\_autodiff" with calls to the corresponding For now, let's ignore the details of Enzyme's calling convention/ABI which are described in detail [here](/getting_started/CallingConvention)
