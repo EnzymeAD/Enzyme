@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::Repo;
 use super::utils;
 
-pub const ENZYME_VER: &str = "0.0.25";
+pub const ENZYME_VER: &str = "0.0.26";
 pub const RUSTC_VER: &str = "1.57.0";
 
 fn rustc_download_finished() -> PathBuf {
