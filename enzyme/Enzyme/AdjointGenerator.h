@@ -4926,6 +4926,552 @@ public:
       }
       return true;
     }
+
+    if ((funcName == "cblas_sswap" || funcName == "cblas_dswap") &&
+        called->isDeclaration()) {
+      // swap(int n, float *sx, int incx, float *sy, int incy)
+      std::string dfuncName;
+      if (funcName == "cblas_dswap") {
+        dfuncName = "cblas_dswap";
+      } else if (funcName == "cblas_sswap") {
+        dfuncName = "cblas_sswap";
+      } else {
+        assert(false && "Unreachable");
+      }
+      if (Mode == DerivativeMode::ReverseModeCombined ||
+          Mode == DerivativeMode::ReverseModeGradient) {
+        IRBuilder<> Builder2(call.getParent());
+        getReverseBuilder(Builder2);
+        auto arg_n = call.getArgOperand(0), \
+          arg_x = call.getArgOperand(1), \
+          arg_incx = call.getArgOperand(2), \
+          arg_y = call.getArgOperand(3), \
+          arg_incy = call.getArgOperand(4);
+        auto derivcall = gutils->oldFunc->getParent()->getOrInsertFunction(
+            dfuncName, Builder2.getVoidTy(), Builder2.getInt32Ty() /* n */, 
+            arg_x->getType() /* x */, Builder2.getInt32Ty() /* incx */,
+            arg_y->getType() /* y */, Builder2.getInt32Ty() /* incy */);
+        SmallVector<Value *, 4> args1 = {
+            lookup(gutils->getNewFromOriginal(arg_n), Builder2), // n
+            lookup(gutils->invertPointerM(arg_x, Builder2), Builder2), // [x]
+            lookup(gutils->getNewFromOriginal(arg_incx), Builder2), // incx
+            lookup(gutils->invertPointerM(arg_y, Builder2), Builder2), // [y]
+            lookup(gutils->getNewFromOriginal(arg_incy), Builder2)}; // incy
+        Builder2.CreateCall(derivcall, args1);
+      }
+
+      if (Mode == DerivativeMode::ReverseModeGradient) {
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+      } else {
+        eraseIfUnused(call);
+      }
+      return true;
+    }
+
+    if ((funcName == "cblas_scopy" || funcName == "cblas_dcopy") &&
+        called->isDeclaration()) {
+      // sscal(int n, float sa, float *sx, int incx)
+      Type *innerType;
+      std::string dfuncName;
+      if (funcName == "cblas_dcopy") {
+        innerType = Type::getDoubleTy(call.getContext());
+        dfuncName = "cblas_daxpy";
+      } else if (funcName == "cblas_scopy") {
+        innerType = Type::getFloatTy(call.getContext());
+        dfuncName = "cblas_saxpy";
+      } else {
+        assert(false && "Unreachable");
+      }
+      if (Mode == DerivativeMode::ReverseModeCombined ||
+          Mode == DerivativeMode::ReverseModeGradient) {
+        IRBuilder<> Builder2(call.getParent());
+        getReverseBuilder(Builder2);
+        auto arg_n = call.getArgOperand(0), \
+          arg_x = call.getArgOperand(1), \
+          arg_incx = call.getArgOperand(2), \
+          arg_y = call.getArgOperand(3), \
+          arg_incy = call.getArgOperand(4);
+        auto derivcall = gutils->oldFunc->getParent()->getOrInsertFunction(
+            dfuncName, Builder2.getVoidTy(), Builder2.getInt32Ty() /* n */, innerType /* 1.0 */,
+            arg_y->getType(), Builder2.getInt32Ty(), arg_x->getType(), Builder2.getInt32Ty());
+        SmallVector<Value *, 4> args1 = {
+            lookup(gutils->getNewFromOriginal(arg_n), Builder2), // n
+            ConstantFP::get(innerType, 1.0), // 1.0
+            lookup(gutils->invertPointerM(arg_y, Builder2), Builder2), // [y]
+            lookup(gutils->getNewFromOriginal(arg_incy), Builder2), // incy
+            lookup(gutils->invertPointerM(arg_x, Builder2), Builder2), // [x]
+            lookup(gutils->getNewFromOriginal(arg_incx), Builder2)}; // incx
+        Builder2.CreateCall(derivcall, args1);
+      }
+
+      if (Mode == DerivativeMode::ReverseModeGradient) {
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+      } else {
+        eraseIfUnused(call);
+      }
+      return true;
+    }
+
+    if ((funcName == "cblas_sscal" || funcName == "cblas_dscal") &&
+        called->isDeclaration()) {
+      // copy(int n, float *sx, int incx, float *sy, int incy)
+      Type *innerType;
+      std::string dfuncName;
+      if (funcName == "cblas_dscal") {
+        innerType = Type::getDoubleTy(call.getContext());
+        dfuncName = "cblas_dscal";
+      } else if (funcName == "cblas_sscal") {
+        innerType = Type::getFloatTy(call.getContext());
+        dfuncName = "cblas_sscal";
+      } else {
+        assert(false && "Unreachable");
+      }
+      if (Mode == DerivativeMode::ReverseModeCombined ||
+          Mode == DerivativeMode::ReverseModeGradient) {
+        IRBuilder<> Builder2(call.getParent());
+        getReverseBuilder(Builder2);
+        auto derivcall = gutils->oldFunc->getParent()->getOrInsertFunction(
+            dfuncName, Builder2.getVoidTy(), Builder2.getInt32Ty(), innerType,
+            call.getArgOperand(2)->getType(), Builder2.getInt32Ty());
+        SmallVector<Value *, 4> args1 = {
+            lookup(gutils->getNewFromOriginal(call.getArgOperand(0)),
+                   Builder2), // n
+            lookup(gutils->getNewFromOriginal(call.getArgOperand(1)),
+                   Builder2), // sa
+            lookup(gutils->invertPointerM(call.getArgOperand(2), Builder2),
+                   Builder2), // [x]
+            lookup(gutils->getNewFromOriginal(call.getArgOperand(3)),
+                   Builder2)}; // incx
+        Builder2.CreateCall(derivcall, args1);
+      }
+
+      if (Mode == DerivativeMode::ReverseModeGradient) {
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+      } else {
+        eraseIfUnused(call);
+      }
+      return true;
+    }
+
+    if ((funcName == "cblas_saxpy" || funcName == "cblas_daxpy") &&
+        called->isDeclaration()) {
+      // axpy(int n, float sa, float *sx, int incx, float *sy, int incy)
+      Type *innerType;
+      std::string dfuncName1, dfuncName2;
+      if (funcName == "cblas_daxpy") {
+        innerType = Type::getDoubleTy(call.getContext());
+        dfuncName1 = "cblas_daxpy";
+        dfuncName2 = "cblas_ddot";
+      } else if (funcName == "cblas_saxpy") {
+        innerType = Type::getFloatTy(call.getContext());
+        dfuncName1 = "cblas_saxpy";
+        dfuncName2 = "cblas_sdot";
+      } else {
+        assert(false && "Unreachable");
+      }
+      auto arg_n = call.getArgOperand(0), \
+        arg_a = call.getArgOperand(1), \
+        arg_x = call.getArgOperand(2), \
+        arg_incx = call.getArgOperand(3), \
+        arg_y = call.getArgOperand(4), \
+        arg_incy = call.getArgOperand(5);
+      Type *castvals[1] = {arg_x->getType()};
+      auto *cachetype =
+          StructType::get(call.getContext(), ArrayRef<Type *>(castvals));
+      Value *cacheval;
+      auto in_arg = call.getCalledFunction()->arg_begin();
+      in_arg++;
+      in_arg++;
+      Argument *xfuncarg = in_arg;
+      bool xcache = !gutils->isConstantValue(arg_a) && uncacheable_args.find(xfuncarg)->second;
+      if ((Mode == DerivativeMode::ReverseModeCombined ||
+           Mode == DerivativeMode::ReverseModePrimal) &&
+          (xcache)) {
+
+        Value *arg1;
+        auto size = ConstantExpr::getSizeOf(innerType);
+        auto dmemcpy =
+            getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(),
+                                      PointerType::getUnqual(innerType), 0, 0);
+        auto malins = CallInst::CreateMalloc(
+            gutils->getNewFromOriginal(&call), size->getType(), innerType,
+            size, arg_n, nullptr, "");
+        arg1 =
+            BuilderZ.CreateBitCast(malins, arg_x->getType());
+        SmallVector<Value *, 4> args = {
+          arg1,
+          gutils->getNewFromOriginal(arg_x),
+          arg_n,
+          arg_incx
+        };
+        BuilderZ.CreateCall(dmemcpy, args);
+        cacheval = arg1;
+        gutils->cacheForReverse(BuilderZ, cacheval,
+                                getIndex(&call, CacheType::Tape));
+      }
+      if (Mode == DerivativeMode::ReverseModeCombined ||
+          Mode == DerivativeMode::ReverseModeGradient) {
+        IRBuilder<> Builder2(call.getParent());
+        getReverseBuilder(Builder2);
+        auto derivcall1 = gutils->oldFunc->getParent()->getOrInsertFunction(
+            dfuncName1, Builder2.getVoidTy(), Builder2.getInt32Ty() /* n */, innerType /* a */,
+            arg_y->getType(), Builder2.getInt32Ty(), arg_x->getType(), Builder2.getInt32Ty());
+        SmallVector<Value *, 4> args1 = {
+            lookup(gutils->getNewFromOriginal(arg_n), Builder2), // n
+            lookup(gutils->getNewFromOriginal(arg_a), Builder2), // a
+            lookup(gutils->invertPointerM(arg_y, Builder2), Builder2), // [y]
+            lookup(gutils->getNewFromOriginal(arg_incy), Builder2), // incy
+            lookup(gutils->invertPointerM(arg_x, Builder2), Builder2), // [x]
+            lookup(gutils->getNewFromOriginal(arg_incx), Builder2)}; // incx
+        Builder2.CreateCall(derivcall1, args1);
+        Value *structarg1;
+        if (xcache) {
+          if (Mode == DerivativeMode::ReverseModeGradient &&
+              !gutils->isConstantValue(arg_a)) {
+            cacheval = BuilderZ.CreatePHI(cachetype, 0);
+          }
+          cacheval =
+              lookup(gutils->cacheForReverse(BuilderZ, cacheval,
+                                             getIndex(&call, CacheType::Tape)),
+                     Builder2);
+          structarg1 = cacheval;
+        } else {
+          structarg1 = lookup(gutils->getNewFromOriginal(arg_x),
+                              Builder2);
+        }
+        auto derivcall2 = gutils->oldFunc->getParent()->getOrInsertFunction(
+            dfuncName1, Builder2.getVoidTy(), Builder2.getInt32Ty() /* n */, 
+            arg_y->getType() /* [y] */, Builder2.getInt32Ty() /* incy */,
+            arg_x->getType() /* x */, Builder2.getInt32Ty() /* incx */);
+        CallInst *lastcall;
+        if (!gutils->isConstantValue(arg_a)) {
+          SmallVector<Value *, 4> args2 = {
+              lookup(gutils->getNewFromOriginal(arg_n), Builder2), // n
+              lookup(gutils->invertPointerM(arg_y, Builder2), Builder2), // [y]
+              lookup(gutils->getNewFromOriginal(arg_incy), Builder2), // incy
+              structarg1, // x
+              lookup(gutils->getNewFromOriginal(arg_incx), Builder2)}; // incx
+          lastcall = Builder2.CreateCall(derivcall2, args2);
+          auto accumulated = Builder2.CreateFAdd(diffe(arg_a, Builder2), lastcall);
+          setDiffe(arg_a, accumulated, Builder2);
+        }
+        if (shouldFree()) {
+          if (xcache)
+            CallInst::CreateFree(structarg1, lastcall->getNextNode());
+        }
+      }
+
+      if (gutils->knownRecomputeHeuristic.find(&call) !=
+          gutils->knownRecomputeHeuristic.end()) {
+        if (!gutils->knownRecomputeHeuristic[&call]) {
+          gutils->cacheForReverse(BuilderZ, newCall,
+                                  getIndex(&call, CacheType::Self));
+        }
+      }
+
+      if (Mode == DerivativeMode::ReverseModeGradient) {
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+      } else {
+        eraseIfUnused(call);
+      }
+      return true;
+    }
+
+    if ((funcName == "cblas_snrm2" || funcName == "cblas_dnrm2") &&
+        called->isDeclaration()) {
+      // nrm2(int n, float *sx, int incx)
+      Type *innerType;
+      std::string dfuncName;
+      if (funcName == "cblas_dnrm2") {
+        innerType = Type::getDoubleTy(call.getContext());
+        dfuncName = "cblas_daxpy";
+      } else if (funcName == "cblas_snrm2") {
+        innerType = Type::getFloatTy(call.getContext());
+        dfuncName = "cblas_saxpy";
+      } else {
+        assert(false && "Unreachable");
+      }
+      if (Mode == DerivativeMode::ReverseModeCombined ||
+          Mode == DerivativeMode::ReverseModeGradient) {
+        IRBuilder<> Builder2(call.getParent());
+        getReverseBuilder(Builder2);
+        auto arg_n = call.getArgOperand(0), \
+          arg_x = call.getArgOperand(1), \
+          arg_incx = call.getArgOperand(2);
+        auto derivcall = gutils->oldFunc->getParent()->getOrInsertFunction(
+            dfuncName, Builder2.getVoidTy(), Builder2.getInt32Ty() /* n */, innerType,
+            arg_x->getType() /* x */, Builder2.getInt32Ty() /* incx */,
+            arg_x->getType() /* [x] */, Builder2.getInt32Ty() /* incx */);
+        auto factor = Builder2.CreateFDiv(diffe(&call, Builder2), &call);
+        SmallVector<Value *, 4> args1 = {
+            lookup(gutils->getNewFromOriginal(arg_n), Builder2), // n
+            factor,
+            lookup(gutils->getNewFromOriginal(arg_x), Builder2), // [x]
+            lookup(gutils->getNewFromOriginal(arg_incx), Builder2), // incx
+            lookup(gutils->invertPointerM(arg_x, Builder2), Builder2), // [x]
+            lookup(gutils->getNewFromOriginal(arg_incx), Builder2)}; // incx
+        Builder2.CreateCall(derivcall, args1);
+      }
+
+      if (Mode == DerivativeMode::ReverseModeGradient) {
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+      } else {
+        eraseIfUnused(call);
+      }
+      return true;
+    }
+
+    if ((funcName == "cblas_sgemv" || funcName == "cblas_dgemv") &&
+        called->isDeclaration()) {
+      // gemv(char c, int m, int n, float sa, float* sA, int lA, float *sx, int incx, float *sb, float *sy, int incy)
+      Type *innerType;
+      std::string dfuncName1, dfuncName2, dfuncName3, dfuncName4;
+      if (funcName == "cblas_dgemv") {
+        innerType = Type::getDoubleTy(call.getContext());
+        dfuncName1 = "cblas_dgemv";
+        dfuncName2 = "cblas_dscal";
+        dfuncName3 = "cblas_dger";
+        dfuncName4 = "cblas_ddot";
+      } else if (funcName == "cblas_sgemv") {
+        innerType = Type::getFloatTy(call.getContext());
+        dfuncName1 = "cblas_sgemv";
+        dfuncName2 = "cblas_sscal";
+        dfuncName3 = "cblas_sger";
+        dfuncName4 = "cblas_sdot";
+      } else {
+        assert(false && "Unreachable");
+      }
+      auto arg_t = call.getArgOperand(0), \
+        arg_m = call.getArgOperand(1), \
+        arg_n = call.getArgOperand(2), \
+        arg_a = call.getArgOperand(3), \
+        arg_A = call.getArgOperand(4), \
+        arg_lA = call.getArgOperand(5), \
+        arg_x = call.getArgOperand(6), \
+        arg_incx = call.getArgOperand(7), \
+        arg_b = call.getArgOperand(8), \
+        arg_y = call.getArgOperand(9), \
+        arg_incy = call.getArgOperand(10);
+      bool has_diff_a = !gutils->isConstantValue(arg_a), \
+        has_diff_b = !gutils->isConstantValue(arg_b), \
+        has_diff_x = !gutils->isConstantValue(arg_x), \
+        has_diff_y = !gutils->isConstantValue(arg_y), \
+        has_diff_A = !gutils->isConstantValue(arg_A);
+      Type *castvals[3] = {arg_A->getType(), arg_x->getType(), arg_y->getType()};
+      auto *cachetype =
+          StructType::get(call.getContext(), ArrayRef<Type *>(castvals));
+      Value *undefinit = UndefValue::get(cachetype);
+      Value *cacheval;
+      auto in_arg = call.getCalledFunction()->arg_begin();
+      in_arg++; in_arg++; in_arg++; in_arg++;
+      Argument *Afuncarg = in_arg;
+      in_arg++; in_arg++;
+      Argument *xfuncarg = in_arg;
+      in_arg++; in_arg++; in_arg++;
+      Argument *yfuncarg = in_arg;
+      bool Acache = (has_diff_a || has_diff_x) &&
+                    uncacheable_args.find(Afuncarg)->second;
+      bool xcache = (has_diff_a || has_diff_A) &&
+                    uncacheable_args.find(xfuncarg)->second;
+      bool ycache = (has_diff_b) &&
+                    uncacheable_args.find(yfuncarg)->second;
+      bool has_any_cache = (Acache || xcache || ycache);
+      if ((Mode == DerivativeMode::ReverseModeCombined ||
+           Mode == DerivativeMode::ReverseModePrimal) &&
+          has_any_cache) {
+
+        Value *arg1, *arg2, *arg3;
+        auto size = ConstantExpr::getSizeOf(innerType);
+        if (xcache) {
+          auto dmemcpy =
+              getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(),
+                                        PointerType::getUnqual(innerType), 0, 0);
+          auto malins = CallInst::CreateMalloc(
+              gutils->getNewFromOriginal(&call), size->getType(), innerType,
+              size, arg_n, nullptr, "");
+          arg1 =
+              BuilderZ.CreateBitCast(malins, arg_x->getType());
+          SmallVector<Value *, 4> args = {arg1, gutils->getNewFromOriginal(arg_x), arg_n, arg_incx};
+          BuilderZ.CreateCall(dmemcpy, args);
+        }
+        if (ycache) {
+          auto dmemcpy =
+              getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(),
+                                        PointerType::getUnqual(innerType), 0, 0);
+          auto malins = CallInst::CreateMalloc(
+              gutils->getNewFromOriginal(&call), size->getType(), innerType,
+              size, arg_n, nullptr, "");
+          arg2 =
+              BuilderZ.CreateBitCast(malins, arg_y->getType());
+          SmallVector<Value *, 4> args = {arg2, gutils->getNewFromOriginal(arg_y), arg_n, arg_incy};
+          BuilderZ.CreateCall(dmemcpy, args);
+        }
+        if (Acache) {
+          auto dmemcpy =
+              getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(),
+                                        PointerType::getUnqual(innerType), 0, 0);
+          auto matrix_size = BuilderZ.CreateMul(arg_lA, arg_n);
+          auto malins = CallInst::CreateMalloc(
+              gutils->getNewFromOriginal(&call), size->getType(), innerType,
+              size, matrix_size, nullptr, "");
+          arg3 =
+              BuilderZ.CreateBitCast(malins, arg_A->getType());
+          SmallVector<Value *, 4> args = {arg3, gutils->getNewFromOriginal(arg_A), matrix_size, BuilderZ.getInt32(1)};
+          BuilderZ.CreateCall(dmemcpy, args);
+        }
+        if (xcache && ycache && Acache) {
+          auto valins1 = BuilderZ.CreateInsertValue(undefinit, arg1, 0);
+          auto valins2 = BuilderZ.CreateInsertValue(valins1, arg2, 1);
+          cacheval = BuilderZ.CreateInsertValue(valins2, arg3, 1);
+        } else if (xcache && ycache) {
+          auto valins1 = BuilderZ.CreateInsertValue(undefinit, arg1, 0);
+          cacheval = BuilderZ.CreateInsertValue(valins1, arg2, 1);
+        } else if (xcache && Acache) {
+          auto valins1 = BuilderZ.CreateInsertValue(undefinit, arg1, 0);
+          cacheval = BuilderZ.CreateInsertValue(valins1, arg3, 1);
+        } else if (ycache && Acache) {
+          auto valins1 = BuilderZ.CreateInsertValue(undefinit, arg2, 0);
+          cacheval = BuilderZ.CreateInsertValue(valins1, arg3, 1);
+        }
+        else if (xcache) cacheval = arg1;
+        else if (ycache) cacheval = arg2;
+        else {
+          assert(Acache);
+          cacheval = arg3;
+        }
+        gutils->cacheForReverse(BuilderZ, cacheval,
+                                getIndex(&call, CacheType::Tape));
+      }
+      if (Mode == DerivativeMode::ReverseModeCombined ||
+          Mode == DerivativeMode::ReverseModeGradient) {
+        IRBuilder<> Builder2(call.getParent());
+        getReverseBuilder(Builder2);
+        // update [y]
+        auto derivcall1 = gutils->oldFunc->getParent()->getOrInsertFunction(
+            dfuncName2, Builder2.getVoidTy(), Builder2.getInt32Ty() /* n */, innerType /* a */,
+            arg_y->getType(), Builder2.getInt32Ty());
+        if (has_diff_y) {
+          SmallVector<Value *, 4> args1 = {
+              lookup(gutils->getNewFromOriginal(arg_n), Builder2), // n
+              lookup(gutils->getNewFromOriginal(arg_b), Builder2), // a
+              lookup(gutils->invertPointerM(arg_y, Builder2), Builder2), // [y]
+              lookup(gutils->getNewFromOriginal(arg_incy), Builder2), // incy
+              };
+          Builder2.CreateCall(derivcall1, args1);
+        }
+        Value *structarg_x, *structarg_y, *structarg_A;
+        if (has_any_cache) {
+          if (Mode == DerivativeMode::ReverseModeGradient &&
+              (has_diff_a || has_diff_b || has_diff_A || has_diff_x || has_diff_y)) {
+            cacheval = BuilderZ.CreatePHI(cachetype, 0);
+          }
+          cacheval =
+              lookup(gutils->cacheForReverse(BuilderZ, cacheval,
+                                             getIndex(&call, CacheType::Tape)),
+                     Builder2);
+          if (xcache && ycache && Acache) {
+            structarg_x = BuilderZ.CreateExtractValue(cacheval, 0);
+            structarg_y = BuilderZ.CreateExtractValue(cacheval, 1);
+            structarg_A = BuilderZ.CreateExtractValue(cacheval, 2);
+          } else if (xcache && ycache) {
+            structarg_x = BuilderZ.CreateExtractValue(cacheval, 0);
+            structarg_y = BuilderZ.CreateExtractValue(cacheval, 1);
+          } else if (xcache && Acache) {
+            structarg_x = BuilderZ.CreateExtractValue(cacheval, 0);
+            structarg_A = BuilderZ.CreateExtractValue(cacheval, 1);
+          } else if (ycache && Acache) {
+            structarg_y = BuilderZ.CreateExtractValue(cacheval, 0);
+            structarg_A = BuilderZ.CreateExtractValue(cacheval, 1);
+          }
+          else if (xcache)
+            structarg_x = cacheval;
+          else if (ycache)
+            structarg_y = cacheval;
+          else
+            structarg_A = cacheval;
+        }
+        if (!xcache)
+          structarg_x = lookup(gutils->getNewFromOriginal(arg_x), Builder2);
+        if (!ycache)
+          structarg_y = lookup(gutils->getNewFromOriginal(arg_y),Builder2);
+        if (!Acache)
+          structarg_A = lookup(gutils->getNewFromOriginal(arg_y),Builder2);
+        // update [x]
+        auto derivcall2 = gutils->oldFunc->getParent()->getOrInsertFunction(
+            dfuncName1, Builder2.getVoidTy(), Builder2.getInt32Ty() /* t */, Builder2.getInt32Ty() /* m */, Builder2.getInt32Ty() /* n */,
+            Builder2.getFloatTy() /* a */, arg_A->getType() /* A */, Builder2.getInt32Ty() /* lA */,
+            arg_y->getType() /* [y] */, Builder2.getInt32Ty() /* incx */,
+            Builder2.getFloatTy(),
+            arg_x->getType() /* [x] */, Builder2.getInt32Ty() /* incx */);
+        Value *arg_t_trans;
+        if (cast<ConstantInt>(arg_t)->getValue() == 111)
+          arg_t_trans = Builder2.getInt32(112);
+        else if (cast<ConstantInt>(arg_t)->getValue() == 112)
+          arg_t_trans = Builder2.getInt32(111);
+        if (has_diff_x) {
+          SmallVector<Value *, 10> args2 = {
+            arg_t_trans,
+            lookup(gutils->getNewFromOriginal(arg_m), Builder2), // m
+            lookup(gutils->getNewFromOriginal(arg_n), Builder2), // n
+            lookup(gutils->getNewFromOriginal(arg_a), Builder2), // n
+            structarg_A,
+            lookup(gutils->getNewFromOriginal(arg_lA), Builder2), // lA
+            lookup(gutils->invertPointerM(arg_y, Builder2), Builder2), // [y]
+            lookup(gutils->getNewFromOriginal(arg_incy), Builder2), // incy
+            ConstantFP::get(innerType, 1.0),
+            lookup(gutils->invertPointerM(arg_x, Builder2), Builder2), // x
+            lookup(gutils->getNewFromOriginal(arg_incx), Builder2)}; // incx
+          Builder2.CreateCall(derivcall2, args2);
+        }
+        // update [A]
+        auto derivcall3 = gutils->oldFunc->getParent()->getOrInsertFunction(
+            dfuncName3, Builder2.getVoidTy(), Builder2.getInt32Ty() /* m */, Builder2.getInt32Ty() /* n */,
+            Builder2.getFloatTy() /* a */, 
+            arg_y->getType() /* [y] */, Builder2.getInt32Ty() /* incy */,
+            arg_x->getType() /* [x] */, Builder2.getInt32Ty() /* incx */,
+            arg_A->getType() /* A */, Builder2.getInt32Ty() /* lA */
+            );
+        if (has_diff_y) {
+          SmallVector<Value *, 10> args3 = {
+            lookup(gutils->getNewFromOriginal(arg_m), Builder2), // m
+            lookup(gutils->getNewFromOriginal(arg_n), Builder2), // n
+            lookup(gutils->invertPointerM(arg_y, Builder2), Builder2), // [y]
+            lookup(gutils->getNewFromOriginal(arg_incy), Builder2), // incy
+            lookup(gutils->invertPointerM(arg_x, Builder2), Builder2), // x
+            lookup(gutils->getNewFromOriginal(arg_incx), Builder2), // incx
+            lookup(gutils->getNewFromOriginal(arg_a), Builder2), // n
+            structarg_A,
+            lookup(gutils->getNewFromOriginal(arg_lA), Builder2), // lA
+          };
+          Builder2.CreateCall(derivcall3, args3);
+        }
+        // update [b]
+        auto derivcall4 = gutils->oldFunc->getParent()->getOrInsertFunction(
+            dfuncName4, Builder2.getVoidTy(), Builder2.getInt32Ty() /* m */, 
+            arg_y->getType() /* [y] */, Builder2.getInt32Ty() /* incy */,
+            arg_y->getType() /* y */, Builder2.getInt32Ty() /* incx */);
+        if (has_diff_b) {
+          SmallVector<Value *, 10> args4 = {
+            lookup(gutils->getNewFromOriginal(arg_m), Builder2), // m
+            lookup(gutils->invertPointerM(arg_y, Builder2), Builder2), // [y]
+            lookup(gutils->getNewFromOriginal(arg_incy), Builder2), // incy
+            structarg_y, // y
+            lookup(gutils->getNewFromOriginal(arg_incy), Builder2), // incy
+          };
+          auto ddotresult = Builder2.CreateCall(derivcall4, args4);
+          auto accumulated = Builder2.CreateFAdd(diffe(arg_b, Builder2), ddotresult);
+          setDiffe(arg_b, accumulated, Builder2);
+        }
+      }
+
+      if (Mode == DerivativeMode::ReverseModeGradient) {
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+      } else {
+        eraseIfUnused(call);
+      }
+      return true;
+    }
+
     return false;
   }
 
@@ -7635,50 +8181,9 @@ public:
       return;
     }
 
-    if ((funcName == "cblas_ddot" || funcName == "cblas_sdot")) {
+    if (funcName.startswith("cblas_")) {
       if (handleBLAS(call, called, funcName, uncacheable_args))
         return;
-    }
-
-    if ((funcName == "cblas_sscal" || funcName == "cblas_dscal") &&
-        called->isDeclaration()) {
-      // sscal(int n, float sa, float *sx, int incx)
-      Type *innerType;
-      std::string dfuncName;
-      if (funcName == "cblas_dscal") {
-        innerType = Type::getDoubleTy(call.getContext());
-        dfuncName = "cblas_dscal";
-      } else if (funcName == "cblas_sscal") {
-        innerType = Type::getFloatTy(call.getContext());
-        dfuncName = "cblas_sscal";
-      } else {
-        assert(false && "Unreachable");
-      }
-      if (Mode == DerivativeMode::ReverseModeCombined ||
-          Mode == DerivativeMode::ReverseModeGradient) {
-        IRBuilder<> Builder2(call.getParent());
-        getReverseBuilder(Builder2);
-        auto derivcall = gutils->oldFunc->getParent()->getOrInsertFunction(
-            dfuncName, Builder2.getVoidTy(), Builder2.getInt32Ty(), innerType,
-            call.getArgOperand(2)->getType(), Builder2.getInt32Ty());
-        SmallVector<Value *, 4> args1 = {
-            lookup(gutils->getNewFromOriginal(orig->getArgOperand(0)),
-                   Builder2), // n
-            lookup(gutils->getNewFromOriginal(orig->getArgOperand(1)),
-                   Builder2), // sa
-            lookup(gutils->invertPointerM(orig->getArgOperand(2), Builder2),
-                   Builder2), // [x]
-            lookup(gutils->getNewFromOriginal(orig->getArgOperand(3)),
-                   Builder2)}; // incx
-        Builder2.CreateCall(derivcall, args1);
-      }
-
-      if (Mode == DerivativeMode::ReverseModeGradient) {
-        eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
-      } else {
-        eraseIfUnused(*orig);
-      }
-      return;
     }
 
     if (funcName == "printf" || funcName == "puts" ||
