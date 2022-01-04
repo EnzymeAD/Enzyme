@@ -48,6 +48,7 @@ class AdjointGenerator
 private:
   // Type of code being generated (forward, reverse, or both)
   const DerivativeMode Mode;
+  const bool splitMode;
 
   GradientUtils *const gutils;
   const std::vector<DIFFE_TYPE> &constant_args;
@@ -68,7 +69,7 @@ private:
 
 public:
   AdjointGenerator(
-      DerivativeMode Mode, GradientUtils *gutils,
+      DerivativeMode Mode, bool splitMode, GradientUtils *gutils,
       const std::vector<DIFFE_TYPE> &constant_args, DIFFE_TYPE retType,
       TypeResults &TR,
       std::function<unsigned(Instruction *, CacheType)> getIndex,
@@ -82,11 +83,11 @@ public:
       const SmallPtrSetImpl<const Instruction *> &unnecessaryStores,
       const SmallPtrSetImpl<BasicBlock *> &oldUnreachable,
       AllocaInst *dretAlloca)
-      : Mode(Mode), gutils(gutils), constant_args(constant_args),
-        retType(retType), TR(TR), getIndex(getIndex),
-        uncacheable_args_map(uncacheable_args_map), returnuses(returnuses),
-        augmentedReturn(augmentedReturn), replacedReturns(replacedReturns),
-        unnecessaryValues(unnecessaryValues),
+      : Mode(Mode), splitMode(splitMode), gutils(gutils),
+        constant_args(constant_args), retType(retType), TR(TR),
+        getIndex(getIndex), uncacheable_args_map(uncacheable_args_map),
+        returnuses(returnuses), augmentedReturn(augmentedReturn),
+        replacedReturns(replacedReturns), unnecessaryValues(unnecessaryValues),
         unnecessaryInstructions(unnecessaryInstructions),
         unnecessaryStores(unnecessaryStores), oldUnreachable(oldUnreachable),
         dretAlloca(dretAlloca) {
@@ -888,7 +889,6 @@ public:
     }
     case DerivativeMode::ForwardModeVector:
       assert("vector forward not yet implemented");
-    case DerivativeMode::ForwardModeSplit:
     case DerivativeMode::ForwardMode: {
       break;
     }
@@ -1493,7 +1493,6 @@ public:
     switch (Mode) {
     case DerivativeMode::ForwardModeVector:
       assert("vector forward not yet implemented");
-    case DerivativeMode::ForwardModeSplit:
     case DerivativeMode::ForwardMode: {
       IRBuilder<> Builder2(&IVI);
       getForwardBuilder(Builder2);
@@ -1598,8 +1597,7 @@ public:
 
   bool shouldFree() {
     assert(Mode == DerivativeMode::ReverseModeCombined ||
-           Mode == DerivativeMode::ReverseModeGradient ||
-           Mode == DerivativeMode::ForwardModeSplit);
+           Mode == DerivativeMode::ReverseModeGradient || splitMode);
     return ((DiffeGradientUtils *)gutils)->FreeMemory;
   }
 
@@ -1639,7 +1637,6 @@ public:
     case DerivativeMode::ForwardModeVector:
       assert("vector forward not yet implemented");
     case DerivativeMode::ForwardMode:
-    case DerivativeMode::ForwardModeSplit:
       createBinaryOperatorDual(BO);
       break;
     case DerivativeMode::ReverseModePrimal:
@@ -6274,7 +6271,6 @@ public:
       subretType = DIFFE_TYPE::CONSTANT;
     } else {
       if (Mode == DerivativeMode::ForwardMode ||
-          Mode == DerivativeMode::ForwardModeSplit ||
           Mode == DerivativeMode::ForwardModeVector) {
         subretType = DIFFE_TYPE::DUP_ARG;
       } else {
@@ -7686,8 +7682,7 @@ public:
           auto anti =
               gutils->createAntiMalloc(orig, getIndex(orig, CacheType::Shadow));
           if ((Mode == DerivativeMode::ReverseModeCombined ||
-               Mode == DerivativeMode::ReverseModeGradient ||
-               Mode == DerivativeMode::ForwardModeSplit) &&
+               Mode == DerivativeMode::ReverseModeGradient || splitMode) &&
               shouldFree()) {
             IRBuilder<> Builder2(call.getParent());
             getReverseBuilder(Builder2);
@@ -8141,7 +8136,7 @@ public:
         newcalled = gutils->Logic.CreateForwardDiff(
             cast<Function>(called), subretType, argsInverted, gutils->TLI,
             TR.analyzer.interprocedural, /*returnValue*/ subretused,
-            DerivativeMode::ForwardMode, nullptr, nextTypeInfo, {});
+            DerivativeMode::ForwardMode, splitMode, nullptr, nextTypeInfo, {});
       } else {
 #if LLVM_VERSION_MAJOR >= 11
         auto callval = orig->getCalledOperand();
@@ -8655,8 +8650,7 @@ public:
 
       if (fnandtapetype && fnandtapetype->tapeType &&
           (Mode == DerivativeMode::ReverseModeCombined ||
-           Mode == DerivativeMode::ReverseModeGradient ||
-           Mode == DerivativeMode::ForwardModeSplit) &&
+           Mode == DerivativeMode::ReverseModeGradient || splitMode) &&
           shouldFree()) {
         assert(tape);
         auto tapep = BuilderZ.CreatePointerCast(

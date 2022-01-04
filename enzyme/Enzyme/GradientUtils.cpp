@@ -2475,7 +2475,7 @@ GradientUtils *GradientUtils::CreateFromClone(
 }
 
 DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
-    EnzymeLogic &Logic, DerivativeMode mode, Function *todiff,
+    EnzymeLogic &Logic, DerivativeMode mode, bool splitMode, Function *todiff,
     TargetLibraryInfo &TLI, TypeAnalysis &TA, DIFFE_TYPE retType,
     bool diffeReturnArg, const std::vector<DIFFE_TYPE> &constant_args,
     ReturnType returnValue, Type *additionalArg, bool omp) {
@@ -2496,7 +2496,6 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
 
   switch (mode) {
   case DerivativeMode::ForwardMode:
-  case DerivativeMode::ForwardModeSplit:
   case DerivativeMode::ForwardModeVector:
     prefix = "fwddiffe";
     break;
@@ -2521,7 +2520,8 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
 
 Constant *GradientUtils::GetOrCreateShadowConstant(
     EnzymeLogic &Logic, TargetLibraryInfo &TLI, TypeAnalysis &TA,
-    Constant *oval, DerivativeMode mode, bool AtomicAdd, bool PostOpt) {
+    Constant *oval, DerivativeMode mode, bool splitMode, bool AtomicAdd,
+    bool PostOpt) {
   if (isa<ConstantPointerNull>(oval)) {
     return oval;
   } else if (isa<UndefValue>(oval)) {
@@ -2558,8 +2558,8 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
     }
     return ConstantVector::get(Vals);
   } else if (auto F = dyn_cast<Function>(oval)) {
-    return GetOrCreateShadowFunction(Logic, TLI, TA, F, mode, AtomicAdd,
-                                     PostOpt);
+    return GetOrCreateShadowFunction(Logic, TLI, TA, F, mode, splitMode,
+                                     AtomicAdd, PostOpt);
   } else if (auto arg = dyn_cast<ConstantExpr>(oval)) {
     auto C = GetOrCreateShadowConstant(Logic, TLI, TA, arg->getOperand(0), mode,
                                        AtomicAdd, PostOpt);
@@ -2634,7 +2634,7 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
 
 Constant *GradientUtils::GetOrCreateShadowFunction(
     EnzymeLogic &Logic, TargetLibraryInfo &TLI, TypeAnalysis &TA, Function *fn,
-    DerivativeMode mode, bool AtomicAdd, bool PostOpt) {
+    DerivativeMode mode, bool splitMode, bool AtomicAdd, bool PostOpt) {
   //! Todo allow tape propagation
   //  Note that specifically this should _not_ be called with topLevel=true
   //  (since it may not be valid to always assume we can recompute the
@@ -2717,9 +2717,9 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
 
   switch (mode) {
   case DerivativeMode::ForwardMode: {
-    Constant *newf =
-        Logic.CreateForwardDiff(fn, retType, types, TLI, TA, false, mode,
-                                nullptr, type_args, uncacheable_args);
+    Constant *newf = Logic.CreateForwardDiff(fn, retType, types, TLI, TA, false,
+                                             mode, splitMode, nullptr,
+                                             type_args, uncacheable_args);
 
     if (!newf)
       newf = UndefValue::get(fn->getType());
@@ -3064,7 +3064,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         std::make_pair((const Value *)oval, InvertedPointerVH(this, cs)));
     return cs;
   } else if (auto fn = dyn_cast<Function>(oval)) {
-    return GetOrCreateShadowFunction(Logic, TLI, TA, fn, mode, AtomicAdd);
+    return GetOrCreateShadowFunction(Logic, TLI, TA, fn, mode, splitMode,
+                                     AtomicAdd);
   } else if (auto arg = dyn_cast<CastInst>(oval)) {
     IRBuilder<> bb(getNewFromOriginal(arg));
     Value *invertOp = invertPointerM(arg->getOperand(0), bb);

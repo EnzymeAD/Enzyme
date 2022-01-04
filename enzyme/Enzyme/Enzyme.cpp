@@ -681,16 +681,18 @@ public:
     TypeAnalysis TA(TLI);
     type_args = TA.analyzeFunction(type_args).getAnalyzedTypeInfo();
 
+    // TODO: implement split mode.
+    bool splitMode = false;
+
     Function *newFunc = nullptr;
     Type *tapeType = nullptr;
     const AugmentedReturn *aug;
     switch (mode) {
     case DerivativeMode::ForwardModeVector:
-    case DerivativeMode::ForwardModeSplit:
     case DerivativeMode::ForwardMode:
       newFunc = Logic.CreateForwardDiff(
           cast<Function>(fn), retType, constants, TLI, TA,
-          /*should return*/ false, mode,
+          /*should return*/ false, mode, splitMode,
           /*addedType*/ nullptr, type_args, volatile_args, PostOpt);
       break;
     case DerivativeMode::ReverseModeCombined:

@@ -126,6 +126,7 @@ public:
   EnzymeLogic &Logic;
   bool AtomicAdd;
   DerivativeMode mode;
+  bool splitMode;
   llvm::Function *oldFunc;
   llvm::ValueMap<const Value *, InvertedPointerVH> invertedPointers;
   DominatorTree &OrigDT;
@@ -1439,12 +1440,14 @@ public:
   static Constant *
   GetOrCreateShadowConstant(EnzymeLogic &Logic, TargetLibraryInfo &TLI,
                             TypeAnalysis &TA, Constant *F, DerivativeMode mode,
-                            bool AtomicAdd = true, bool PostOpt = false);
+                            bool splitMode, bool AtomicAdd = true,
+                            bool PostOpt = false);
 
   static Constant *
   GetOrCreateShadowFunction(EnzymeLogic &Logic, TargetLibraryInfo &TLI,
                             TypeAnalysis &TA, Function *F, DerivativeMode mode,
-                            bool AtomicAdd = true, bool PostOpt = false);
+                            bool splitMode, bool AtomicAdd = true,
+                            bool PostOpt = false);
 
   void branchToCorrespondingTarget(
       BasicBlock *ctx, IRBuilder<> &BuilderM,
@@ -1503,7 +1506,6 @@ class DiffeGradientUtils : public GradientUtils {
                       mode, omp) {
     assert(reverseBlocks.size() == 0);
     if (mode == DerivativeMode::ForwardMode ||
-        mode == DerivativeMode::ForwardModeSplit ||
         mode == DerivativeMode::ForwardModeVector) {
       return;
     }
@@ -1523,9 +1525,9 @@ public:
   bool FreeMemory;
   ValueMap<const Value *, TrackingVH<AllocaInst>> differentials;
   static DiffeGradientUtils *
-  CreateFromClone(EnzymeLogic &Logic, DerivativeMode mode, Function *todiff,
-                  TargetLibraryInfo &TLI, TypeAnalysis &TA, DIFFE_TYPE retType,
-                  bool diffeReturnArg,
+  CreateFromClone(EnzymeLogic &Logic, DerivativeMode mode, bool splitMode,
+                  Function *todiff, TargetLibraryInfo &TLI, TypeAnalysis &TA,
+                  DIFFE_TYPE retType, bool diffeReturnArg,
                   const std::vector<DIFFE_TYPE> &constant_args,
                   ReturnType returnValue, Type *additionalArg, bool omp);
 
@@ -1926,7 +1928,6 @@ public:
     case DerivativeMode::ForwardModeVector:
       assert(false && "Unimplemented derivative mode (ForwardModeVector)");
       break;
-    case DerivativeMode::ForwardModeSplit:
     case DerivativeMode::ForwardMode:
       ptr = invertPointerM(origptr, BuilderM);
       break;

@@ -1870,8 +1870,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   }
 
   AdjointGenerator<AugmentedReturn *> maker(
-      DerivativeMode::ReverseModePrimal, gutils, constant_args, retType, TR,
-      getIndex, uncacheable_args_map, &returnuses,
+      DerivativeMode::ReverseModePrimal, /*splitMode*/ false, gutils,
+      constant_args, retType, TR, getIndex, uncacheable_args_map, &returnuses,
       &AugmentedCachedFunctions.find(tup)->second, nullptr, unnecessaryValues,
       unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
       nullptr);
@@ -3190,8 +3190,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   bool diffeReturnArg = key.retType == DIFFE_TYPE::OUT_DIFF;
 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
-      *this, key.mode, key.todiff, TLI, TA, key.retType, diffeReturnArg,
-      key.constant_args, retVal, key.additionalType, omp);
+      *this, key.mode, /*splitMode*/ false, key.todiff, TLI, TA, key.retType,
+      diffeReturnArg, key.constant_args, retVal, key.additionalType, omp);
 
   gutils->AtomicAdd = key.AtomicAdd;
   gutils->FreeMemory = key.freeMemory;
@@ -3400,8 +3400,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   }
 
   AdjointGenerator<const AugmentedReturn *> maker(
-      key.mode, gutils, key.constant_args, key.retType, TR, getIndex,
-      uncacheable_args_map,
+      key.mode, /*splitMode*/ false, gutils, key.constant_args, key.retType, TR,
+      getIndex, uncacheable_args_map,
       /*returnuses*/ nullptr, augmenteddata, &replacedReturns,
       unnecessaryValues, unnecessaryInstructions, unnecessaryStores,
       guaranteedUnreachable, dretAlloca);
@@ -3732,15 +3732,14 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 Function *EnzymeLogic::CreateForwardDiff(
     Function *todiff, DIFFE_TYPE retType,
     const std::vector<DIFFE_TYPE> &constant_args, TargetLibraryInfo &TLI,
-    TypeAnalysis &TA, bool returnUsed, DerivativeMode mode,
+    TypeAnalysis &TA, bool returnUsed, DerivativeMode mode, bool splitMode,
     llvm::Type *additionalArg, const FnTypeInfo &oldTypeInfo_,
     const std::map<Argument *, bool> _uncacheable_args, bool PostOpt,
     bool omp) {
   assert(retType != DIFFE_TYPE::OUT_DIFF);
 
   assert(mode == DerivativeMode::ForwardMode ||
-         mode == DerivativeMode::ForwardModeVector ||
-         mode == DerivativeMode::ForwardModeSplit);
+         mode == DerivativeMode::ForwardModeVector);
 
   FnTypeInfo oldTypeInfo = preventTypeAnalysisLoops(oldTypeInfo_, todiff);
 
@@ -3915,8 +3914,8 @@ Function *EnzymeLogic::CreateForwardDiff(
   bool diffeReturnArg = false;
 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
-      *this, mode, todiff, TLI, TA, retType, diffeReturnArg, constant_args,
-      retVal, additionalArg, omp);
+      *this, mode, splitMode, todiff, TLI, TA, retType, diffeReturnArg,
+      constant_args, retVal, additionalArg, omp);
 
   insert_or_assign2<ForwardCacheKey, Function *>(ForwardCachedFunctions, tup,
                                                  gutils->newFunc);
@@ -4001,8 +4000,7 @@ Function *EnzymeLogic::CreateForwardDiff(
   }
 
   AdjointGenerator<const AugmentedReturn *> *maker;
-  if (mode == DerivativeMode::ForwardModeSplit) {
-
+  if (splitMode) {
     std::map<Argument *, bool> _uncacheable_argsPP;
     {
       auto in_arg = todiff->arg_begin();
@@ -4036,7 +4034,7 @@ Function *EnzymeLogic::CreateForwardDiff(
     gutils->computeMinCache(TR, guaranteedUnreachable);
 
     maker = new AdjointGenerator<const AugmentedReturn *>(
-        mode, gutils, constant_args, retType, TR, getIndex,
+        mode, splitMode, gutils, constant_args, retType, TR, getIndex,
         uncacheable_args_map,
         /*returnuses*/ nullptr, nullptr, nullptr, unnecessaryValues,
         unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
@@ -4044,7 +4042,7 @@ Function *EnzymeLogic::CreateForwardDiff(
   } else {
 
     maker = new AdjointGenerator<const AugmentedReturn *>(
-        mode, gutils, constant_args, retType, TR, nullptr, {},
+        mode, splitMode, gutils, constant_args, retType, TR, nullptr, {},
         /*returnuses*/ nullptr, nullptr, nullptr, unnecessaryValues,
         unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
         nullptr);
