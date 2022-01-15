@@ -341,7 +341,7 @@ castToDiffeFunctionArgType(IRBuilder<> &Builder, llvm::CallInst *CI,
   return Builder.CreateBitCast(value, destType);
 }
 
-static std::optional<StringRef> getMetadataName(llvm::Value *res) {
+static Optional<StringRef> getMetadataName(llvm::Value *res) {
   if (auto av = dyn_cast<MetadataAsValue>(res)) {
     return cast<MDString>(av->getMetadata())->getString();
   } else if ((isa<LoadInst>(res) || isa<CastInst>(res)) &&
@@ -371,7 +371,7 @@ static std::optional<StringRef> getMetadataName(llvm::Value *res) {
   } else if (auto gv = dyn_cast<AllocaInst>(res)) {
     return gv->getName();
   } else {
-    return std::nullopt;
+    return Optional<StringRef>();
   }
 }
 
@@ -443,7 +443,7 @@ public:
          ++i) {
       Value *arg = CI->getArgOperand(i);
 
-      if (getMetadataName(arg) == "enzyme_width") {
+      if (getMetadataName(arg) && *getMetadataName(arg) == "enzyme_width") {
         assert(mode == DerivativeMode::ForwardMode);
 
         if (found) {
@@ -590,10 +590,10 @@ public:
       assert(truei < FT->getNumParams());
       auto PTy = FT->getParamType(truei);
       DIFFE_TYPE ty = whatType(PTy, mode);
-      std::optional<StringRef> metaString = getMetadataName(res);
+      Optional<StringRef> metaString = getMetadataName(res);
 
       // handle metadata
-      if (metaString && metaString.value().startswith("enzyme_")) {
+      if (metaString && metaString.getValue().startswith("enzyme_")) {
         if (*metaString == "enzyme_dup") {
           ty = DIFFE_TYPE::DUP_ARG;
         } else if (*metaString == "enzyme_dupnoneed") {
