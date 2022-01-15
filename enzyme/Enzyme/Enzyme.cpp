@@ -453,6 +453,13 @@ public:
           return false;
         }
 
+        if (i + 1 >= CI->getNumArgOperands()) {
+          EmitFailure("MissingVectorWidth", CI->getDebugLoc(), CI,
+                      "constant integer followong enzyme_width is missing",
+                      *CI->getArgOperand(i), " in", *CI);
+          return false;
+        }
+
         Value *width_arg = CI->getArgOperand(i + 1);
         if (auto cint = dyn_cast<ConstantInt>(width_arg)) {
           width = cint->getZExtValue();
