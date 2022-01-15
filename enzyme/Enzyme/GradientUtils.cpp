@@ -2476,7 +2476,7 @@ GradientUtils *GradientUtils::CreateFromClone(
 }
 
 DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
-    EnzymeLogic &Logic, DerivativeMode mode, size_t width, Function *todiff,
+    EnzymeLogic &Logic, DerivativeMode mode, unsigned width, Function *todiff,
     TargetLibraryInfo &TLI, TypeAnalysis &TA, DIFFE_TYPE retType,
     bool diffeReturnArg, const std::vector<DIFFE_TYPE> &constant_args,
     ReturnType returnValue, Type *additionalArg, bool omp) {
@@ -2523,7 +2523,7 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
 
 Constant *GradientUtils::GetOrCreateShadowConstant(
     EnzymeLogic &Logic, TargetLibraryInfo &TLI, TypeAnalysis &TA,
-    Constant *oval, DerivativeMode mode, size_t width, bool AtomicAdd,
+    Constant *oval, DerivativeMode mode, unsigned width, bool AtomicAdd,
     bool PostOpt) {
   if (isa<ConstantPointerNull>(oval)) {
     return oval;
@@ -2637,7 +2637,7 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
 
 Constant *GradientUtils::GetOrCreateShadowFunction(
     EnzymeLogic &Logic, TargetLibraryInfo &TLI, TypeAnalysis &TA, Function *fn,
-    DerivativeMode mode, size_t width, bool AtomicAdd, bool PostOpt) {
+    DerivativeMode mode, unsigned width, bool AtomicAdd, bool PostOpt) {
   //! Todo allow tape propagation
   //  Note that specifically this should _not_ be called with topLevel=true
   //  (since it may not be valid to always assume we can recompute the
@@ -2757,6 +2757,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
                           .returnUsed = false,
                           .shadowReturnUsed = false,
                           .mode = DerivativeMode::ReverseModeGradient,
+                          .width = width,
                           .freeMemory = true,
                           .AtomicAdd = AtomicAdd,
                           .additionalType =
@@ -3067,7 +3068,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         std::make_pair((const Value *)oval, InvertedPointerVH(this, cs)));
     return cs;
   } else if (auto fn = dyn_cast<Function>(oval)) {
-    return GetOrCreateShadowFunction(Logic, TLI, TA, fn, mode, AtomicAdd);
+    return GetOrCreateShadowFunction(Logic, TLI, TA, fn, mode, width,
+                                     AtomicAdd);
   } else if (auto arg = dyn_cast<CastInst>(oval)) {
     IRBuilder<> bb(getNewFromOriginal(arg));
     Value *invertOp = invertPointerM(arg->getOperand(0), bb);

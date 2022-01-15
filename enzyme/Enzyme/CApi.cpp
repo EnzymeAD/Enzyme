@@ -377,7 +377,7 @@ LLVMValueRef EnzymeCreateForwardDiff(
     EnzymeLogicRef Logic, LLVMValueRef todiff, CDIFFE_TYPE retType,
     CDIFFE_TYPE *constant_args, size_t constant_args_size,
     EnzymeTypeAnalysisRef TA, uint8_t returnValue, CDerivativeMode mode,
-    size_t width, LLVMTypeRef additionalArg, CFnTypeInfo typeInfo,
+    unsigned width, LLVMTypeRef additionalArg, CFnTypeInfo typeInfo,
     uint8_t *_uncacheable_args, size_t uncacheable_args_size, uint8_t PostOpt) {
   std::vector<DIFFE_TYPE> nconstant_args((DIFFE_TYPE *)constant_args,
                                          (DIFFE_TYPE *)constant_args +
@@ -399,9 +399,10 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
     EnzymeLogicRef Logic, LLVMValueRef todiff, CDIFFE_TYPE retType,
     CDIFFE_TYPE *constant_args, size_t constant_args_size,
     EnzymeTypeAnalysisRef TA, uint8_t returnValue, uint8_t dretUsed,
-    CDerivativeMode mode, LLVMTypeRef additionalArg, CFnTypeInfo typeInfo,
-    uint8_t *_uncacheable_args, size_t uncacheable_args_size,
-    EnzymeAugmentedReturnPtr augmented, uint8_t AtomicAdd, uint8_t PostOpt) {
+    CDerivativeMode mode, unsigned width, LLVMTypeRef additionalArg,
+    CFnTypeInfo typeInfo, uint8_t *_uncacheable_args,
+    size_t uncacheable_args_size, EnzymeAugmentedReturnPtr augmented,
+    uint8_t AtomicAdd, uint8_t PostOpt) {
   std::vector<DIFFE_TYPE> nconstant_args((DIFFE_TYPE *)constant_args,
                                          (DIFFE_TYPE *)constant_args +
                                              constant_args_size);
@@ -421,6 +422,7 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
           .returnUsed = (bool)returnValue,
           .shadowReturnUsed = (bool)dretUsed,
           .mode = (DerivativeMode)mode,
+          .width = width,
           .freeMemory = true,
           .AtomicAdd = (bool)AtomicAdd,
           .additionalType = unwrap(additionalArg),

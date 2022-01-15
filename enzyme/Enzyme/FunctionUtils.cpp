@@ -1556,7 +1556,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
 }
 
 FunctionType *getFunctionTypeForClone(
-    llvm::FunctionType *FTy, DerivativeMode mode, size_t width,
+    llvm::FunctionType *FTy, DerivativeMode mode, unsigned width,
     llvm::Type *additionalArg, const std::vector<DIFFE_TYPE> &constant_args,
     bool diffeReturnArg, ReturnType returnValue, DIFFE_TYPE returnType) {
   std::vector<Type *> RetTypes;
@@ -1621,7 +1621,7 @@ FunctionType *getFunctionTypeForClone(
 }
 
 Function *PreProcessCache::CloneFunctionWithReturns(
-    DerivativeMode mode, size_t width, Function *&F,
+    DerivativeMode mode, unsigned width, Function *&F,
     ValueToValueMapTy &ptrInputs, const std::vector<DIFFE_TYPE> &constant_args,
     SmallPtrSetImpl<Value *> &constants, SmallPtrSetImpl<Value *> &nonconstant,
     SmallPtrSetImpl<Value *> &returnvals, ReturnType returnValue,

@@ -3976,6 +3976,7 @@ public:
                               .returnUsed = false,
                               .shadowReturnUsed = false,
                               .mode = DerivativeMode::ReverseModeGradient,
+                              .width = gutils->getWidth(),
                               .freeMemory = true,
                               .AtomicAdd = true,
                               .additionalType =
@@ -8731,6 +8732,7 @@ public:
                             .returnUsed = retUsed,
                             .shadowReturnUsed = subdretptr,
                             .mode = subMode,
+                            .width = gutils->getWidth(),
                             .freeMemory = true,
                             .AtomicAdd = gutils->AtomicAdd,
                             .additionalType = tape ? tape->getType() : nullptr,

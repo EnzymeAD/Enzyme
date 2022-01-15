@@ -2944,6 +2944,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                             .returnUsed = false,
                             .shadowReturnUsed = false,
                             .mode = DerivativeMode::ReverseModeGradient,
+                            .width = key.width,
                             .freeMemory = key.freeMemory,
                             .AtomicAdd = key.AtomicAdd,
                             .additionalType = tape ? tape->getType() : nullptr,
@@ -3024,6 +3025,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                             .returnUsed = key.returnUsed,
                             .shadowReturnUsed = false,
                             .mode = DerivativeMode::ReverseModeGradient,
+                            .width = key.width,
                             .freeMemory = key.freeMemory,
                             .AtomicAdd = key.AtomicAdd,
                             .additionalType = nullptr,
@@ -3190,7 +3192,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   bool diffeReturnArg = key.retType == DIFFE_TYPE::OUT_DIFF;
 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
-      *this, key.mode, /* width */ 1, key.todiff, TLI, TA, key.retType,
+      *this, key.mode, key.width, key.todiff, TLI, TA, key.retType,
       diffeReturnArg, key.constant_args, retVal, key.additionalType, omp);
 
   gutils->AtomicAdd = key.AtomicAdd;
@@ -3732,7 +3734,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 Function *EnzymeLogic::CreateForwardDiff(
     Function *todiff, DIFFE_TYPE retType,
     const std::vector<DIFFE_TYPE> &constant_args, TargetLibraryInfo &TLI,
-    TypeAnalysis &TA, bool returnUsed, DerivativeMode mode, size_t width,
+    TypeAnalysis &TA, bool returnUsed, DerivativeMode mode, unsigned width,
     llvm::Type *additionalArg, const FnTypeInfo &oldTypeInfo_,
     const std::map<Argument *, bool> _uncacheable_args, bool PostOpt,
     bool omp) {

@@ -60,7 +60,7 @@ public:
   llvm::AAResults &getAAResultsFromFunction(llvm::Function *NewF);
 
   llvm::Function *CloneFunctionWithReturns(
-      DerivativeMode mode, size_t width, llvm::Function *&F,
+      DerivativeMode mode, unsigned width, llvm::Function *&F,
       llvm::ValueToValueMapTy &ptrInputs,
       const std::vector<DIFFE_TYPE> &constant_args,
       llvm::SmallPtrSetImpl<llvm::Value *> &constants,
@@ -351,6 +351,6 @@ bool couldFunctionArgumentCapture(llvm::CallInst *CI, llvm::Value *val);
 #endif
 
 llvm::FunctionType *getFunctionTypeForClone(
-    llvm::FunctionType *FTy, DerivativeMode mode, size_t width,
+    llvm::FunctionType *FTy, DerivativeMode mode, unsigned width,
     llvm::Type *additionalArg, const std::vector<DIFFE_TYPE> &constant_args,
     bool diffeReturnArg, ReturnType returnValue, DIFFE_TYPE returnType);
