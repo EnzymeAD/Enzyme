@@ -435,17 +435,18 @@ public:
     assert(fn);
 
     IRBuilder<> Builder(CI);
-    std::optional<unsigned int> width;
     unsigned truei = 0;
+    unsigned width = 1;
 
     // determine width
-    for (int i = 0; i < CI->getNumArgOperands(); ++i) {
+    for (auto [i, found] = std::tuple{0, false}; i < CI->getNumArgOperands();
+         ++i) {
       Value *arg = CI->getArgOperand(i);
 
       if (getMetadataName(arg) == "enzyme_width") {
         assert(mode == DerivativeMode::ForwardMode);
 
-        if (width) {
+        if (found) {
           EmitFailure("IllegalVectorWidth", CI->getDebugLoc(), CI,
                       "vector width declared more than once",
                       *CI->getArgOperand(i), " in", *CI);
@@ -454,23 +455,22 @@ public:
 
         Value *width_arg = CI->getArgOperand(i + 1);
         if (auto cint = dyn_cast<ConstantInt>(width_arg)) {
-          width = cint->getSExtValue();
+          width = cint->getZExtValue();
+          found = true;
         } else {
-          report_fatal_error(
-              "Could not determine width, becaues it is not a constant.");
+          EmitFailure("IllegalVectorWidth", CI->getDebugLoc(), CI,
+                      "enzyme_width must be a constant integer",
+                      *CI->getArgOperand(i), " in", *CI);
+          return false;
         }
 
-        if (!width) {
+        if (!found) {
           EmitFailure("IllegalVectorWidth", CI->getDebugLoc(), CI,
                       "illegal enzyme vector argument width ",
                       *CI->getArgOperand(i), " in", *CI);
           return false;
         }
       }
-    }
-
-    if (!width) {
-      width = 1;
     }
 
     // handle different argument order for struct return.
@@ -496,14 +496,14 @@ public:
       switch (mode) {
       case DerivativeMode::ForwardMode: {
         Value *sretPt = CI->getArgOperand(0);
-        if (*width > 1) {
+        if (width > 1) {
           PointerType *pty = dyn_cast<PointerType>(sretPt->getType());
           if (auto sty = dyn_cast<StructType>(pty->getElementType())) {
             Value *acc = UndefValue::get(
                 ArrayType::get(PointerType::get(sty->getElementType(0),
                                                 pty->getAddressSpace()),
-                               *width));
-            for (int i = 0; i < *width; ++i) {
+                               width));
+            for (int i = 0; i < width; ++i) {
               Value *elem = Builder.CreateStructGEP(sretPt, i);
               acc = Builder.CreateInsertValue(acc, elem, i);
             }
@@ -512,7 +512,7 @@ public:
             EmitFailure(
                 "IllegalReturnType", CI->getDebugLoc(), CI,
                 "Return type of __enzyme_autodiff has to be a struct with",
-                *width, "elements of the same type.");
+                width, "elements of the same type.");
             return false;
           }
         } else {
@@ -691,7 +691,7 @@ public:
 
         Value *res = nullptr;
 
-        for (unsigned v = 0; v < *width; ++v) {
+        for (unsigned v = 0; v < width; ++v) {
 #if LLVM_VERSION_MAJOR >= 14
           if (i >= CI->arg_size())
 #else
@@ -716,15 +716,14 @@ public:
             }
           }
 
-          assert(width);
-          if (width && *width > 1) {
-            res = res ? Builder.CreateInsertValue(res, element, {v})
-                      : Builder.CreateInsertValue(
-                            UndefValue::get(
-                                ArrayType::get(element->getType(), *width)),
-                            element, {v});
+          if (width > 1) {
+            res =
+                res ? Builder.CreateInsertValue(res, element, {v})
+                    : Builder.CreateInsertValue(UndefValue::get(ArrayType::get(
+                                                    element->getType(), width)),
+                                                element, {v});
 
-            if (v < *width - 1) {
+            if (v < width - 1) {
               ++i;
             }
 
@@ -776,7 +775,7 @@ public:
     case DerivativeMode::ForwardMode:
       newFunc = Logic.CreateForwardDiff(
           cast<Function>(fn), retType, constants, TLI, TA,
-          /*should return*/ false, mode, /* width */ *width,
+          /*should return*/ false, mode, width,
           /*addedType*/ nullptr, type_args, volatile_args, PostOpt);
       break;
     case DerivativeMode::ReverseModeCombined:
@@ -967,7 +966,7 @@ public:
 
     // Adapt the returned vector type to the struct type expected by our calling
     // convention.
-    if (*width > 1 && !diffret->getType()->isEmptyTy() &&
+    if (width > 1 && !diffret->getType()->isEmptyTy() &&
         !diffret->getType()->isVoidTy()) {
 
       /// Actual return type (including struct return)
@@ -980,7 +979,7 @@ public:
       if (StructType *sty = dyn_cast<StructType>(returnType)) {
         Value *agg = ConstantAggregateZero::get(sty);
 
-        for (unsigned int i = 0; i < *width; i++) {
+        for (unsigned int i = 0; i < width; i++) {
           Value *elem = Builder.CreateExtractValue(diffret, {i});
 #if LLVM_VERSION_MAJOR >= 11
           if (auto vty = dyn_cast<FixedVectorType>(elem->getType())) {
@@ -1548,7 +1547,7 @@ public:
                        Arch == Triple::amdgcn;
 
       auto val = GradientUtils::GetOrCreateShadowConstant(
-          Logic, TLI, TA, fn, pair.second, 1, AtomicAdd, PostOpt);
+          Logic, TLI, TA, fn, pair.second, /*width*/ 1, AtomicAdd, PostOpt);
       CI->replaceAllUsesWith(ConstantExpr::getPointerCast(val, CI->getType()));
       CI->eraseFromParent();
       Changed = true;
