@@ -103,9 +103,9 @@ bool isPotentialLastLoopValue(Value *val, const BasicBlock *loc,
     if (InstLoop == nullptr) {
       return false;
     }
-    for (const Loop *L = LI.getLoopFor(loc); L;
-         L = LI.getLoopFor(L->getHeader())) {
-      return false;
+    for (const Loop *L = LI.getLoopFor(loc); L; L = L->getParentLoop()) {
+      if (L == InstLoop)
+        return false;
     }
     return true;
   }
