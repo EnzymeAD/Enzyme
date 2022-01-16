@@ -120,9 +120,9 @@ attributes #9 = { noreturn nounwind }
 ; CHECK-NEXT:   %[[a0:.+]] = load i32, i32* %N, align 4, !tbaa !2
 ; CHECK-NEXT:   %cmp233 = icmp sgt i32 %[[a0]], 0
 ; CHECK-NEXT:   %_unwrap5 = sext i32 %[[a0]] to i64
-; CHECK-NEXT:   %_unwrap6 = icmp sgt i64 %_unwrap5, 1
-; CHECK-NEXT:   %[[smax_unwrap:.+]] = select i1 %_unwrap6, i64 %_unwrap5, i64 1
-; CHECK-NEXT:   %[[a1:.+]] = mul nuw nsw i64 %[[smax_unwrap]], 10
+; TODO-CHECK-NEXT:   %_unwrap6 = icmp sgt i64 %_unwrap5, 1
+; TODO-CHECK-NEXT:   %[[smax_unwrap:.+]] = select i1 %_unwrap6, i64 %_unwrap5, i64 1
+; CHECK:   %[[a1:.+]] = mul nuw nsw i64 %[[smax_unwrap:.+]], 10
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %[[a1]], 8
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
 ; CHECK-NEXT:   %_malloccache = bitcast i8* %malloccall to double*
@@ -214,9 +214,9 @@ attributes #9 = { noreturn nounwind }
 ; CHECK-NEXT:   %[[a25:.+]] = getelementptr inbounds i32, i32* %[[malloccache12]], i64 %"iv'ac.0"
 ; CHECK-NEXT:   %[[a26:.+]] = load i32, i32* %[[a25]], align 4, !invariant.group !8
 ; CHECK-NEXT:   %[[_unwrap17:.+]] = sext i32 %[[a26]] to i64
-; CHECK-NEXT:   %[[_unwrap14:.+]] = icmp sgt i64 %[[_unwrap17]], 1
-; CHECK-NEXT:   %[[smax_unwrap19:.+]] = select i1 %[[_unwrap14]], i64 %[[_unwrap17]], i64 1
-; CHECK-NEXT:   %[[_unwrap20]] = add{{( nsw)?}} i64 %[[smax_unwrap19]], -1
+; TODO-CHECK-NEXT:   %[[_unwrap14:.+]] = icmp sgt i64 %[[_unwrap17]], 1
+; TODO-CHECK-NEXT:   %[[smax_unwrap19:.+]] = select i1 %[[_unwrap14]], i64 %[[_unwrap17]], i64 1
+; CHECK:   %[[_unwrap20]] = add{{( nsw)?}} i64 %[[smax_unwrap19:.+]], -1
 ; CHECK-NEXT:   br label %invertfor.body4
 
 ; CHECK: invertfor.cond.cleanup3:                          ; preds = %for.cond.cleanup, %incinvertfor.cond1.preheader

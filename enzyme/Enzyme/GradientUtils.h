@@ -120,6 +120,22 @@ public:
   virtual ~InvertedPointerVH() {}
 };
 
+static bool isPotentialLastLoopValue(Value *val, const BasicBlock *loc,
+                                     const LoopInfo &LI) {
+  if (Instruction *inst = dyn_cast<Instruction>(val)) {
+    const Loop *InstLoop = LI.getLoopFor(inst->getParent());
+    if (InstLoop == nullptr) {
+      return false;
+    }
+    for (const Loop *L = LI.getLoopFor(loc); L; L = L->getParentLoop()) {
+      if (L == InstLoop)
+        return false;
+    }
+    return true;
+  }
+  return false;
+}
+
 enum class AugmentedStruct;
 class GradientUtils : public CacheUtility {
 public:
@@ -1317,13 +1333,13 @@ public:
   std::map<Instruction *, ValueMap<BasicBlock *, WeakTrackingVH>> lcssaFixes;
   std::map<PHINode *, WeakTrackingVH> lcssaPHIToOrig;
   Value *fixLCSSA(Instruction *inst, BasicBlock *forwardBlock,
-                  bool mergeIfTrue = false, bool guaranteeVisible = true) {
+                  bool legalInBlock = false) {
     assert(inst->getName() != "<badref>");
 
     if (auto lcssaPHI = dyn_cast<PHINode>(inst)) {
-        auto found = lcssaPHIToOrig.find(lcssaPHI);
-        if (found != lcssaPHIToOrig.end())
-            inst = cast<Instruction>(found->second);
+      auto found = lcssaPHIToOrig.find(lcssaPHI);
+      if (found != lcssaPHIToOrig.end())
+        inst = cast<Instruction>(found->second);
     }
 
     if (inst->getParent() == inversionAllocs)
@@ -1333,21 +1349,18 @@ public:
       forwardBlock = originalForReverseBlock(*forwardBlock);
     }
 
-    Loop* inLoop = LI.getLoopFor(inst->getParent());
-    bool inSameOrChildLoop = false;
+    bool containsLastLoopValue =
+        isPotentialLastLoopValue(inst, forwardBlock, LI);
 
-    if (inLoop)
-      if (Loop* builderLoop = LI.getLoopFor(forwardBlock))
-        inSameOrChildLoop = inLoop->contains(builderLoop);
-
-    if ((!guaranteeVisible || forwardBlock == inst->getParent() ||
-         DT.dominates(inst, forwardBlock)) &&
-        (!inLoop || inSameOrChildLoop)) {
-      return inst;
+    // If the instruction cannot represent a loop value, return the original
+    // instruction if it either is guaranteed to be available within the block,
+    // or it is not needed to guaranteed availability.
+    if (!containsLastLoopValue) {
+      if (!legalInBlock)
+        return inst;
+      if (forwardBlock == inst->getParent() || DT.dominates(inst, forwardBlock))
+        return inst;
     }
-
-    if (!inLoop || inSameOrChildLoop)
-      mergeIfTrue = true;
 
     // llvm::errs() << " inst: " << *inst << "\n";
     // llvm::errs() << " seen: " << *inst->getParent() << "\n";
@@ -1393,46 +1406,48 @@ public:
         val = inst;
       }
       if (val == nullptr) {
-        // Todo, this optimization can't be done unless the block is also proven
-        // to never reach inst->getParent() as a successor
-        /*
-        for (const auto &pair : lcssaFixes[inst]) {
-          if (!isa<UndefValue>(pair.second) &&
-              (pred == pair.first || DT.dominates(pair.first, pred))) {
-            val = pair.second;
-            assert(pair.second->getType() == inst->getType());
-            break;
-          }
-        }
-        */
-      }
-      if (val == nullptr) {
-        val = fixLCSSA(inst, pred, /*mergeIfPossible*/ true);
+        val = fixLCSSA(inst, pred, /*legalInBlock*/ true);
         assert(val->getType() == inst->getType());
       }
       assert(val->getType() == inst->getType());
       lcssaPHI->addIncoming(val, pred);
     }
 
-    if (mergeIfTrue) {
-      Value *val = lcssaPHI;
-      for (Value *v : lcssaPHI->incoming_values()) {
+    SmallPtrSet<Value *, 2> vals;
+    SmallVector<Value *, 2> todo(lcssaPHI->incoming_values().begin(),
+                                 lcssaPHI->incoming_values().end());
+    while (todo.size()) {
+      Value *v = todo.back();
+      todo.pop_back();
+      if (v == lcssaPHI)
+        continue;
+      vals.insert(v);
+    }
+    assert(vals.size() > 0);
+
+    if (vals.size() > 1) {
+      todo.append(vals.begin(), vals.end());
+      vals.clear();
+      while (todo.size()) {
+        Value *v = todo.back();
+        todo.pop_back();
+
         if (auto PN = dyn_cast<PHINode>(v))
           if (lcssaPHIToOrig.find(PN) != lcssaPHIToOrig.end()) {
             v = lcssaPHIToOrig[PN];
           }
-        if (v == lcssaPHI)
-          continue;
-        if (val == lcssaPHI)
-          val = v;
-        if (v != val) {
-          val = nullptr;
-          break;
-        }
+        vals.insert(v);
       }
-      if (val && val != lcssaPHI &&
-          (!guaranteeVisible || !isa<Instruction>(val) ||
-           DT.dominates(cast<Instruction>(val), lcssaPHI))) {
+    }
+    assert(vals.size() > 0);
+    Value *val = nullptr;
+    if (vals.size() == 1)
+      val = *vals.begin();
+
+    if (val && (!legalInBlock || !isa<Instruction>(val) ||
+                DT.dominates(cast<Instruction>(val), lcssaPHI))) {
+
+      if (!isPotentialLastLoopValue(val, forwardBlock, LI)) {
         bool nonSelfUse = false;
         for (auto u : lcssaPHI->users()) {
           if (u != lcssaPHI) {

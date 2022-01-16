@@ -1095,7 +1095,8 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
         }
       } else {
         Value *lim = unwrapM(limitMinus1, *RB, reverseMap,
-                             UnwrapMode::AttemptFullUnwrapWithLookup, allocationPreheaders[i]);
+                             UnwrapMode::AttemptFullUnwrapWithLookup,
+                             allocationPreheaders[i]);
         if (!lim) {
           llvm::errs() << *newFunc << "\n";
           llvm::errs() << *limitMinus1 << "\n";
