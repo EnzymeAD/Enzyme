@@ -553,7 +553,7 @@ namespace adeptTest {
 // Sigmoid on scalar
 template<typename T>
 T sigmoid(T x) {
-    return adouble(1) / (adouble(1) + exp(-x));
+    return T(1) / (T(1) + exp(-x));
 }
 
 // log(sum(exp(x), 2))
@@ -562,7 +562,7 @@ T logsumexp(const T* vect, int sz) {
     T sum = 0.0;
     for (int i = 0; i < sz; ++i)
         sum += exp(vect[i]);
-    sum += adouble(2);
+    sum += T(2);
     return log(sum);
 }
 
@@ -591,9 +591,9 @@ void lstm_model(
     // hidden (needed)
     for (i = 0; i < hsize; i++)
     {
-        forget[i] = sigmoid<adouble>(input[i] * weight[i] + bias[i]);
-        ingate[i] = sigmoid<adouble>(hidden[i] * weight[hsize + i] + bias[hsize + i]);
-        outgate[i] = sigmoid<adouble>(input[i] * weight[2 * hsize + i] + bias[2 * hsize + i]);
+        forget[i] = sigmoid<T>(input[i] * weight[i] + bias[i]);
+        ingate[i] = sigmoid<T>(hidden[i] * weight[hsize + i] + bias[hsize + i]);
+        outgate[i] = sigmoid<T>(input[i] * weight[2 * hsize + i] + bias[2 * hsize + i]);
         change[i] = tanh(hidden[i] * weight[3 * hsize + i] + bias[3 * hsize + i]);
     }
 
@@ -684,7 +684,7 @@ void lstm_objective(
         input = ygold;
     }
 
-    *loss = -total / adouble(count);
+    *loss = -total / T(count);
 
     delete[] ypred;
     delete[] ynorm;
@@ -725,6 +725,96 @@ void adept_dlstm_objective(int l, int c, int b, const double *main_params, doubl
 
       adept::get_gradients(amain, main_sz, main_paramsb);
       adept::get_gradients(aextra, extra_sz, extra_paramsb);
+    delete[] amain;
+    delete[] aextra;
+    delete[] astate;
+    delete[] aseq;
+}
 
+#include <aadc/aadc.h>
+
+void matlogica_dlstm_objective(int l, int c, int b, const double *main_params, double *
+        main_paramsb, const double *extra_params, double *extra_paramsb,
+        double *state, const double *sequence, double *loss, double *lossb) {
+    using namespace aadc;
+
+    int main_sz = 2 * l * 4 * b;
+    int extra_sz = 3 * b;
+    int state_sz = 2 * l * b;
+    int seq_sz = c* b;
+
+    typedef __m256d mmType;
+    typedef std::vector<aadc::AADCScalarArgument> VectorArg;
+    aadc::AADCFunctions<mmType> aadc_funcs;
+
+  idouble *amain = new idouble[main_sz];
+  idouble *aextra = new idouble[extra_sz];
+  idouble *astate = new idouble[state_sz];
+  idouble *aseq = new idouble[seq_sz];
+  
+  VectorArg argmain;
+  VectorArg argextra;
+  VectorArg argstate; 
+  VectorArg argseq;
+
+      idouble aloss;
+
+      aadc_funcs.startRecording();
+
+  for(size_t i=0; i<main_sz; i++) {
+      argmain.push_back(amain[i].markAsScalarInput());
+    }
+
+  for(size_t i=0; i<extra_sz; i++) {
+      argextra.push_back(aextra[i].markAsScalarInput());
+    }
+  
+  for(size_t i=0; i<state_sz; i++) {
+      argstate.push_back(astate[i].markAsScalarInput());
+    }
+  
+  for(size_t i=0; i<seq_sz; i++) {
+      argseq.push_back(aseq[i].markAsScalarInput());
+    }
+
+
+      adeptTest::lstm_objective(l, c, b, amain, aextra, astate, aseq, &aloss);
+      
+      aadc::AADCResult res(aloss.markAsOutput());
+
+      aadc_funcs.stopRecording();
+
+      std::shared_ptr<aadc::AADCWorkSpace<mmType>> ws(aadc_funcs.createWorkSpace());
+  
+    for(size_t i=0; i<main_sz; i++) {
+      ws->setVal(argmain[i], main_params[i]);
+    }
+
+    for(size_t i=0; i<extra_sz; i++) {
+      ws->setVal(argextra[i], extra_params[i]);
+    }
+  
+    for(size_t i=0; i<state_sz; i++) {
+      ws->setVal(argstate[i], state[i]);
+    }
+    for(size_t i=0; i<seq_sz; i++) {
+      ws->setVal(argseq[i], sequence[i]);
+    }
+
+    aadc_funcs.forward(*ws);
+
+    ws->setDiff(res, (double)1.0);
+      aadc_funcs.reverse(*ws);
+  
+    for(size_t i=0; i<main_sz; i++) {
+      main_paramsb[i] = ws->diff(argmain[i]);
+    }
+    for(size_t i=0; i<extra_sz; i++) {
+      extra_paramsb[i] = ws->diff(argextra[i]);
+    }
+    delete[] amain;
+    delete[] aextra;
+    delete[] astate;
+    delete[] aseq;
 }
 #endif
