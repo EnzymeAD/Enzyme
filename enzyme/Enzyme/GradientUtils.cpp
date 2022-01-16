@@ -1054,10 +1054,10 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                 val->getContext(), oldB->getName() + "_phimerge", newFunc);
 
             for (size_t i = 0; i < predBlocks.size(); i++) {
-              BasicBlock *parent = (i < 2) ? subblock : block;
-              assert(done.find(std::make_pair(parent, predBlocks[i])) !=
+              BasicBlock *valparent = (i < 2) ? subblock : block;
+              assert(done.find(std::make_pair(valparent, predBlocks[i])) !=
                      done.end());
-              assert(done[std::make_pair(parent, predBlocks[i])].size() == 1);
+              assert(done[std::make_pair(valparent, predBlocks[i])].size() == 1);
               blocks.push_back(BasicBlock::Create(
                   val->getContext(), oldB->getName() + "_phirc", newFunc));
               blocks[i]->moveAfter(last);
@@ -1068,7 +1068,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
 
               unwrap_cache[blocks[i]] = unwrap_cache[oldB];
               lookup_cache[blocks[i]] = lookup_cache[oldB];
-              auto PB = *done[std::make_pair(parent, predBlocks[i])].begin();
+              auto PB = *done[std::make_pair(valparent, predBlocks[i])].begin();
 
               if (auto inst = dyn_cast<Instruction>(
                       phi->getIncomingValueForBlock(PB))) {
@@ -1079,15 +1079,17 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                 //    condition illegal)
                 // 2) the value is a call or load and option is set to not
                 //    speculatively recompute values within a phi
+                BasicBlock* nextScope = PB;
+                //if (inst->getParent() == nextScope) nextScope = phi->getParent();
                 if ((inst->mayReadFromMemory() &&
                      !DT.dominates(inst->getParent(), phi->getParent())) ||
                     (!EnzymeSpeculatePHIs &&
                      (isa<CallInst>(inst) || isa<LoadInst>(inst))))
                   vals.push_back(
-                      getOpFull(B, phi->getIncomingValueForBlock(PB), PB));
+                      getOpFull(B, inst, nextScope));
                 else
                   vals.push_back(getOpFull(
-                      BuilderM, phi->getIncomingValueForBlock(PB), PB));
+                      BuilderM, inst, nextScope));
               } else
                 vals.push_back(
                     getOpFull(BuilderM, phi->getIncomingValueForBlock(PB), PB));
@@ -1231,6 +1233,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       BasicBlock *bret = BasicBlock::Create(
           val->getContext(), oldB->getName() + "_phimerge", newFunc);
 
+      assert(!oldB->getName().contains("phirc_phirc_phirc_phirc_phirc"));
+
       for (size_t i = 0; i < predBlocks.size(); i++) {
         assert(done.find(std::make_pair(equivalentTerminator->getParent(),
                                         predBlocks[i])) != done.end());
@@ -1261,17 +1265,18 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           //    recomputation without the condition illegal)
           // 2) the value is a call or load and option is set to not
           //    speculatively recompute values within a phi
+          BasicBlock* nextScope = PB;
+          //if (inst->getParent() == nextScope) nextScope = phi->getParent();
           if ((inst->mayReadFromMemory() &&
                !DT.dominates(inst->getParent(), phi->getParent())) ||
               (!EnzymeSpeculatePHIs &&
                (isa<CallInst>(inst) || isa<LoadInst>(inst))))
-            vals.push_back(getOpFull(B, phi->getIncomingValueForBlock(PB), PB));
+            vals.push_back(getOpFull(B, inst, nextScope));
           else
             vals.push_back(
-                getOpFull(BuilderM, phi->getIncomingValueForBlock(PB), PB));
+                getOpFull(BuilderM, inst, nextScope));
         } else
-          vals.push_back(
-              getOpFull(BuilderM, phi->getIncomingValueForBlock(PB), PB));
+          vals.push_back(phi->getIncomingValueForBlock(PB));
 
         if (!vals[i]) {
           for (size_t j = 0; j <= i; j++) {

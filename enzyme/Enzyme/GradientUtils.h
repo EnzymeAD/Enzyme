@@ -1319,7 +1319,12 @@ public:
   Value *fixLCSSA(Instruction *inst, BasicBlock *forwardBlock,
                   bool mergeIfTrue = false, bool guaranteeVisible = true) {
     assert(inst->getName() != "<badref>");
-    LoopContext lc;
+
+    if (auto lcssaPHI = dyn_cast<PHINode>(inst)) {
+        auto found = lcssaPHIToOrig.find(lcssaPHI);
+        if (found != lcssaPHIToOrig.end())
+            inst = cast<Instruction>(found->second);
+    }
 
     if (inst->getParent() == inversionAllocs)
       return inst;
@@ -1328,27 +1333,20 @@ public:
       forwardBlock = originalForReverseBlock(*forwardBlock);
     }
 
-    bool inLoop = getContext(inst->getParent(), lc);
-    bool isChildLoop = false;
+    Loop* inLoop = LI.getLoopFor(inst->getParent());
+    bool inSameOrChildLoop = false;
 
-    if (inLoop) {
-      auto builderLoop = LI.getLoopFor(forwardBlock);
-      while (builderLoop) {
-        if (builderLoop->getHeader() == lc.header) {
-          isChildLoop = true;
-          break;
-        }
-        builderLoop = builderLoop->getParentLoop();
-      }
-    }
+    if (inLoop)
+      if (Loop* builderLoop = LI.getLoopFor(forwardBlock))
+        inSameOrChildLoop = inLoop->contains(builderLoop);
 
     if ((!guaranteeVisible || forwardBlock == inst->getParent() ||
          DT.dominates(inst, forwardBlock)) &&
-        (!inLoop || isChildLoop)) {
+        (!inLoop || inSameOrChildLoop)) {
       return inst;
     }
 
-    if (!inLoop || isChildLoop)
+    if (!inLoop || inSameOrChildLoop)
       mergeIfTrue = true;
 
     // llvm::errs() << " inst: " << *inst << "\n";

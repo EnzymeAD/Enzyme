@@ -62,8 +62,8 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; CHECK-NEXT:   %a17_malloccache = bitcast i8* %malloccall to float**
 ; CHECK-NEXT:   %malloccall9 = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* @malloc(i64 80)
 ; CHECK-NEXT:   %cond.lcssa_malloccache = bitcast i8* %malloccall9 to i64*
-; CHECK-NEXT:   %malloccall13 = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* @malloc(i64 80)
-; CHECK-NEXT:   %s.0.lcssa.i_malloccache = bitcast i8* %malloccall13 to i64*
+; CHECK-NEXT:   %[[malloccall15:.+]] = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* @malloc(i64 80)
+; CHECK-NEXT:   %s.0.lcssa.i_malloccache = bitcast i8* %[[malloccall15]] to i64*
 ; CHECK-NEXT:   br label %for.body
 
 ; CHECK: for.body:                                         ; preds = %for.cond.cleanup4, %entry
@@ -125,7 +125,7 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; CHECK: invertentry:                                      ; preds = %invertfor.body
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall)
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall9)
-; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall13)
+; CHECK-NEXT:   tail call void @free(i8* nonnull %[[malloccall15]])
 ; CHECK-NEXT:   ret void
 
 ; CHECK: invertfor.body:                                   ; preds = %invertmerge
