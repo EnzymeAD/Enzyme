@@ -803,15 +803,20 @@ void matlogica_dlstm_objective(int l, int c, int b, const double *main_params, d
 
     aadc_funcs.forward(*ws);
 
+      struct timeval start, end;
+      gettimeofday(&start, NULL);
     ws->setDiff(res, (double)1.0);
       aadc_funcs.reverse(*ws);
   
     for(size_t i=0; i<main_sz; i++) {
-      main_paramsb[i] = ws->diff(argmain[i]);
+      main_paramsb[i] = ws->diff(argmain[i]) / aadc::mmSize<mmType>();
     }
     for(size_t i=0; i<extra_sz; i++) {
-      extra_paramsb[i] = ws->diff(argextra[i]);
+      extra_paramsb[i] = ws->diff(argextra[i]) / aadc::mmSize<mmType>();
     }
+      gettimeofday(&end, NULL);
+      printf("Iter-Matlogica combined %0.6f\n", tdiff(&start, &end));
+
     delete[] amain;
     delete[] aextra;
     delete[] astate;
