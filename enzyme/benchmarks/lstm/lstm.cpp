@@ -742,7 +742,6 @@ void matlogica_dlstm_objective(int l, int c, int b, const double *main_params, d
     int extra_sz = 3 * b;
     int state_sz = 2 * l * b;
     int seq_sz = c* b;
-
     typedef __m256d mmType;
     typedef std::vector<aadc::AADCScalarArgument> VectorArg;
     aadc::AADCFunctions<mmType> aadc_funcs;
@@ -801,6 +800,8 @@ void matlogica_dlstm_objective(int l, int c, int b, const double *main_params, d
       ws->setVal(argseq[i], sequence[i]);
     }
 
+      struct timeval prefwd;
+      gettimeofday(&prefwd, NULL);
     aadc_funcs.forward(*ws);
 
       struct timeval start, end;
@@ -815,7 +816,7 @@ void matlogica_dlstm_objective(int l, int c, int b, const double *main_params, d
       extra_paramsb[i] = ws->diff(argextra[i]) / aadc::mmSize<mmType>();
     }
       gettimeofday(&end, NULL);
-      printf("Iter-Matlogica combined %0.6f\n", tdiff(&start, &end));
+      printf("Iter-Matlogica combined %0.6f rev %0.6f\n", tdiff(&prefwd, &end), tdiff(&start, &end));
 
     delete[] amain;
     delete[] aextra;
