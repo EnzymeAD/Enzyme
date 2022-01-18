@@ -694,6 +694,72 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
                                            /*NSW*/ true);
       }
 
+      // this is hacky and should be generalized as a cache optimization
+      int seenIndex = -1;
+      if (false)
+      if (auto SI = dyn_cast<SwitchInst>(containedloops.back().first.header->getTerminator())) {
+        std::vector<BasicBlock*> blks;
+        for(auto C : SI->cases()) {
+          blks.push_back(C.getCaseSuccessor());
+        }
+        blks.push_back(SI->getDefaultDest());
+
+        for (size_t i=0; i<blks.size(); i++) {
+
+          // Do all instructions from inst1 up to first instance of inst2's start block
+          bool seen = false;
+          {
+            std::deque<llvm::BasicBlock *> todo;
+            todo.push_back(blks[i]);
+            std::set<llvm::BasicBlock *> done;
+            while (todo.size()) {
+              auto BB = todo.front();
+              todo.pop_front();
+              if (done.count(BB))
+                continue;
+              done.insert(BB);
+
+              if (BB == ctx.Block) {
+                seen = true;
+                break;
+              }
+              for (auto suc : llvm::successors(BB)) {
+                if (suc != containedloops.back().first.header) {
+                  todo.push_back(suc);
+                }
+              }
+            }
+          }
+          if (seen) {
+            if (seenIndex == -1) {
+              seenIndex = i;
+            } else {
+              seenIndex = -2;
+            }
+          }
+        }
+
+        if (seenIndex >= 0) {
+          Value *stmt = unwrapM(SI->getCondition(), allocationBuilder,
+                              /*available*/ ValueToValueMapTy(),
+                              UnwrapMode::AttemptFullUnwrapWithLookup);
+          if (stmt) {
+            if (seenIndex < SI->getNumCases()) {
+              size = allocationBuilder.CreateSelect(allocationBuilder.CreateICmpEQ(stmt, SI->findCaseDest(blks[i])), size, ConstantInt::get(size->getType(), 0));
+            } else {
+              Value *cond = nullptr;
+              for(auto C : SI->cases()) {
+                Value *cmp = allocationBuilder.CreateICmpEQ(stmt, C.getCaseValue());
+                if (cond == nullptr) cond = cmp;
+                else cond = allocationBuilder.CreateOr(cond, cmp);
+              }
+              assert(cond);
+              size = allocationBuilder.CreateSelect(cond, ConstantInt::get(size->getType(), 0), size);
+            }
+          }
+        }
+      }
+
       StoreInst *storealloc = nullptr;
       // Statically allocate memory for all iterations if possible
       if (sublimits[i].second.back().first.maxLimit) {

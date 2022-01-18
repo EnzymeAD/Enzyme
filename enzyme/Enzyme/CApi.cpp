@@ -553,4 +553,8 @@ void EnzymeAddAttributorLegacyPass(LLVMPassManagerRef PM) {
   unwrap(PM)->add(createAttributorLegacyPass());
 }
 #endif
+
+void EnzymeRemoveTrivialAtomicIncrements(LLVMValueRef F) {
+  RemoveTrivialAtomicIncrements(*cast<Function>(unwrap(F)));
+}
 }

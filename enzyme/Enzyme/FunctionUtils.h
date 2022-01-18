@@ -348,6 +348,8 @@ static inline void calculateUnusedStores(
 
 /// Is the use of value val as an argument of call CI potentially captured
 bool couldFunctionArgumentCapture(llvm::CallInst *CI, llvm::Value *val);
+
+void RemoveTrivialAtomicIncrements(llvm::Function &F);
 #endif
 
 llvm::FunctionType *getFunctionTypeForClone(

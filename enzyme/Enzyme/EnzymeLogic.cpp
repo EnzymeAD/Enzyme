@@ -19,7 +19,7 @@
 //===----------------------------------------------------------------------===//
 //
 // This file defines two functions CreatePrimalAndGradient and
-// CreateAugmentedPrimal. CreatePrimalAndGradient takes a function, known
+// CreateAugmentedPrimal. ciscreatePrimalAndGradient takes a function, known
 // TypeResults of the calling context, known activity analysis of the
 // arguments. It creates a corresponding gradient
 // function, computing the primal as well if requested.

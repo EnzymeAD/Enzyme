@@ -3434,6 +3434,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
     if (this->isOriginalBlock(*BuilderM.GetInsertBlock()))
       reduceRegister = false;
   }
+  //reduceRegister = false;
+
 
   if (!reduceRegister) {
     if (isOriginalBlock(*BuilderM.GetInsertBlock())) {

@@ -217,6 +217,9 @@ public:
   llvm::Value *ompOffset;
   llvm::Value *ompTrueLimit;
 
+  //std::map<std::tuple<llvm::Type*, LimitContext, SwitchInst*>, std::map<std::pair<Value*, std::set<int>>
+  //  AvailableAllocations;
+
   /// Given a LimitContext ctx, representing a location inside a loop nest,
   /// break each of the loops up into chunks of loops where each chunk's number
   /// of iterations can be computed at the chunk preheader. Every dynamic loop
