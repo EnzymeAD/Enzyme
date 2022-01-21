@@ -72,6 +72,9 @@ struct LoopContext {
   AssertingReplacingVH maxLimit;
 
   AssertingReplacingVH trueLimit;
+  
+  /// An offset to add to the index when getting the cache pointer.
+  AssertingReplacingVH offset;
 
   /// All blocks this loop exits too
   llvm::SmallPtrSet<llvm::BasicBlock *, 8> exitBlocks;
@@ -145,8 +148,7 @@ public:
 protected:
   CacheUtility(llvm::TargetLibraryInfo &TLI, llvm::Function *newFunc)
       : newFunc(newFunc), TLI(TLI), DT(*newFunc), LI(DT), AC(*newFunc),
-        SE(*newFunc, TLI, AC, DT, LI), ompOffset(nullptr),
-        ompTrueLimit(nullptr) {
+        SE(*newFunc, TLI, AC, DT, LI), ompOffset(nullptr) { 
     inversionAllocs = llvm::BasicBlock::Create(newFunc->getContext(),
                                                "allocsForInversion", newFunc);
   }
@@ -215,7 +217,6 @@ public:
   };
 
   llvm::Value *ompOffset;
-  llvm::Value *ompTrueLimit;
 
   /// Given a LimitContext ctx, representing a location inside a loop nest,
   /// break each of the loops up into chunks of loops where each chunk's number
@@ -254,8 +255,7 @@ private:
   /// the IRBuilder<>
   llvm::Value *computeIndexOfChunk(
       bool inForwardPass, llvm::IRBuilder<> &v,
-      const std::vector<std::pair<LoopContext, llvm::Value *>> &containedloops,
-      llvm::Value *outerOffset);
+      const std::vector<std::pair<LoopContext, llvm::Value *>> &containedloops);
 
 private:
   /// Given a cache allocation and an index denoting how many Chunks deep the

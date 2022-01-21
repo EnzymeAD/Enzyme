@@ -422,17 +422,19 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
   assert(loopContexts[L].preheader && "loop must have preheader");
   getExitBlocks(L, loopContexts[L].exitBlocks);
 
+  loopContexts[L].offset = nullptr;
   auto pair = InsertNewCanonicalIV(L, Type::getInt64Ty(BB->getContext()));
   PHINode *CanonicalIV = pair.first;
+  auto incVar = pair.second;
   assert(CanonicalIV);
   loopContexts[L].var = CanonicalIV;
-  loopContexts[L].incvar = pair.second;
+  loopContexts[L].incvar = incVar;
   RemoveRedundantIVs(
       loopContexts[L].header, CanonicalIV, SE,
       [&](Instruction *I, Value *V) { replaceAWithB(I, V); },
       [&](Instruction *I) { erase(I); });
   CanonicalizeLatches(L, loopContexts[L].header, loopContexts[L].preheader,
-                      CanonicalIV, SE, *this, pair.second,
+                      CanonicalIV, SE, *this, incVar,
                       getLatches(L, loopContexts[L].exitBlocks));
   loopContexts[L].antivaralloc =
       IRBuilder<>(inversionAllocs)
@@ -539,6 +541,71 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
       report_fatal_error("Couldn't get canonical IV.");
     }
 
+    LoadInst* omp_lb_post = nullptr;
+    if (auto SA = dyn_cast<SCEVAddExpr>(Limit)) {
+        for (auto op : SA->operands()) {
+            auto SM = dyn_cast<SCEVMulExpr>(op);
+            if (!SM) continue;
+            if (SM->getNumOperands() != 2) continue;
+            if (auto C = dyn_cast<SCEVConstant>(SM->getOperand(0))) {
+                if (C->getAPInt() == -1) {
+                    if (auto V = dyn_cast<SCEVUnknown>(SM->getOperand(1))) {
+                        if (omp_lb_post = dyn_cast<LoadInst>(V->getValue()))
+                            break;
+                    }
+                }
+            }
+            if (auto C = dyn_cast<SCEVConstant>(SM->getOperand(1))) {
+                if (C->getAPInt() == -1) {
+                    if (auto V = dyn_cast<SCEVUnknown>(SM->getOperand(0))) {
+                        if (omp_lb_post = dyn_cast<LoadInst>(V->getValue()))
+                            break;
+                    }
+                }
+            }
+        }
+    }
+    CallInst* initCall = nullptr;
+    if (omp_lb_post) {
+    auto AI = dyn_cast<AllocaInst>(omp_lb_post->getPointerOperand());
+    if (AI) 
+    for (auto u : AI->users()) {
+        CallInst *call = dyn_cast<CallInst>(u);
+        if (!call) continue;
+        Function *F = call->getCalledFunction();
+        if (!F) continue;
+        if (F->getName() == "__kmpc_for_static_init_4" ||
+            F->getName() == "__kmpc_for_static_init_4u" ||
+            F->getName() == "__kmpc_for_static_init_8" ||
+            F->getName() == "__kmpc_for_static_init_8u") {
+            initCall = call;
+        }
+    }
+    }
+    if (initCall) {
+              Value *lb = nullptr;
+              for (auto u : initCall->getArgOperand(4)->users()) {
+                if (auto si = dyn_cast<StoreInst>(u)) {
+                    lb = si->getValueOperand();
+                    break;
+                }
+              }
+              assert(lb);
+              Value *ub = nullptr;
+              for (auto u : initCall->getArgOperand(5)->users()) {
+                if (auto si = dyn_cast<StoreInst>(u)) {
+                    ub = si->getValueOperand();
+                    break;
+                }
+              }
+              assert(ub); 
+              ompOffset = lb;
+        IRBuilder<> post( omp_lb_post->getNextNode());
+        loopContexts[L].maxLimit = LimitVar = post.CreateZExtOrTrunc(post.CreateSub(ub, lb), CanonicalIV->getType());
+        loopContexts[L].offset = post.CreateZExtOrTrunc(post.CreateSub(omp_lb_post, lb, "", true, true), CanonicalIV->getType());
+        loopContexts[L].dynamic = false;
+    } else {
+
     if (Limit->getType() != CanonicalIV->getType())
       Limit = SE.getZeroExtendExpr(Limit, CanonicalIV->getType());
 
@@ -553,6 +620,7 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
                                  loopContexts[L].preheader->getTerminator());
     loopContexts[L].dynamic = false;
     loopContexts[L].maxLimit = LimitVar;
+    }
   } else {
     // TODO if assumeDynamicLoopOfSizeOne(L), only lazily allocate the scope
     // cache
@@ -852,8 +920,7 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
       IRBuilder<> v(&sublimits[i - 1].second.back().first.preheader->back());
 
       Value *idx = computeIndexOfChunk(
-          /*inForwardPass*/ true, v, containedloops,
-          ((unsigned)i == sublimits.size() - 1) ? ompOffset : nullptr);
+          /*inForwardPass*/ true, v, containedloops);
 
       storeInto = v.CreateGEP(v.CreateLoad(storeInto), idx);
       cast<GetElementPtrInst>(storeInto)->setIsInBounds(true);
@@ -864,8 +931,7 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
 
 Value *CacheUtility::computeIndexOfChunk(
     bool inForwardPass, IRBuilder<> &v,
-    const std::vector<std::pair<LoopContext, llvm::Value *>> &containedloops,
-    Value *outerOffset) {
+    const std::vector<std::pair<LoopContext, llvm::Value *>> &containedloops) {
   // List of loop indices in chunk from innermost to outermost
   SmallVector<Value *, 3> indices;
   // List of cumulative indices in chunk from innermost to outermost
@@ -894,8 +960,8 @@ Value *CacheUtility::computeIndexOfChunk(
       var = idx.var;
       available[idx.var] = var;
     }
-    if (i == containedloops.size() - 1 && outerOffset) {
-      var = v.CreateAdd(var, lookupM(outerOffset, v), "", /*NUW*/ true,
+    if (idx.offset) {
+      var = v.CreateAdd(var, lookupM(idx.offset, v), "", /*NUW*/ true,
                         /*NSW*/ true);
     }
 
@@ -970,10 +1036,12 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
     contexts.emplace_back(idx);
     blk = idx.preheader;
   }
+  /*
   if (ompTrueLimit && contexts.size()) {
     contexts.back().trueLimit = ompTrueLimit;
     contexts.back().maxLimit = ompTrueLimit;
   }
+  */
 
   // Legal preheaders for loop i (indexed from inner => outer)
   std::vector<BasicBlock *> allocationPreheaders(contexts.size(), nullptr);
@@ -1046,6 +1114,12 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
         allocationBuilder.SetInsertPoint(&allocationPreheaders[i]->back());
         limitMinus1 = unwrapM(contexts[i].maxLimit, allocationBuilder, prevMap,
                               UnwrapMode::AttemptFullUnwrap);
+        if (limitMinus1 == nullptr) {
+            llvm::errs() << *contexts[i].preheader->getParent() << "\n";
+            llvm::errs() << "block: " << *allocationPreheaders[i] << "\n";
+            llvm::errs() << "contexts[i].maxLimit: " << *contexts[i].maxLimit << "\n";
+        }
+        assert(limitMinus1 != nullptr);
       } else if (i == 0 && extraSize &&
                  unwrapM(extraSize, allocationBuilder, prevMap,
                          UnwrapMode::AttemptFullUnwrap) == nullptr) {
@@ -1356,8 +1430,7 @@ Value *CacheUtility::getCachePointer(bool inForwardPass, IRBuilder<> &BuilderM,
 
     if (containedloops.size() > 0) {
       Value *idx = computeIndexOfChunk(
-          inForwardPass, BuilderM, containedloops,
-          ((unsigned)i == sublimits.size() - 1) ? ompOffset : nullptr);
+          inForwardPass, BuilderM, containedloops);
       if (EfficientBoolCache && isi1 && i == 0)
         idx = BuilderM.CreateLShr(
             idx, ConstantInt::get(Type::getInt64Ty(newFunc->getContext()), 3));

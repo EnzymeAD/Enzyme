@@ -392,6 +392,7 @@ public:
     return true;
   }
 
+  /*
   void setupOMPFor() {
     for (auto &BB : *oldFunc) {
       for (auto &I : BB) {
@@ -440,9 +441,8 @@ public:
     }
     llvm::errs() << *oldFunc << "\n";
     assert(0 && "could not find openmp init");
-    // ompOffset;
-    // ompTrueLimit;
   }
+  */
 
   llvm::DebugLoc getNewFromOriginal(const llvm::DebugLoc L) const {
     if (L.get() == nullptr)
@@ -1016,8 +1016,6 @@ public:
     tape = nullptr;
     tapeidx = 0;
     assert(originalBlocks.size() > 0);
-    if (omp)
-      setupOMPFor();
 
     SmallVector<BasicBlock *, 4> ReturningBlocks;
     for (BasicBlock &BB : *oldFunc) {
