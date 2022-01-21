@@ -75,6 +75,9 @@ struct LoopContext {
   
   /// An offset to add to the index when getting the cache pointer.
   AssertingReplacingVH offset;
+  
+  /// An overriding allocation limit size.
+  AssertingReplacingVH allocLimit;
 
   /// All blocks this loop exits too
   llvm::SmallPtrSet<llvm::BasicBlock *, 8> exitBlocks;
@@ -148,7 +151,7 @@ public:
 protected:
   CacheUtility(llvm::TargetLibraryInfo &TLI, llvm::Function *newFunc)
       : newFunc(newFunc), TLI(TLI), DT(*newFunc), LI(DT), AC(*newFunc),
-        SE(*newFunc, TLI, AC, DT, LI), ompOffset(nullptr) { 
+        SE(*newFunc, TLI, AC, DT, LI) { 
     inversionAllocs = llvm::BasicBlock::Create(newFunc->getContext(),
                                                "allocsForInversion", newFunc);
   }
@@ -215,8 +218,6 @@ public:
         : ReverseLimit(ReverseLimit), Block(Block),
           ForceSingleIteration(ForceSingleIteration) {}
   };
-
-  llvm::Value *ompOffset;
 
   /// Given a LimitContext ctx, representing a location inside a loop nest,
   /// break each of the loops up into chunks of loops where each chunk's number
