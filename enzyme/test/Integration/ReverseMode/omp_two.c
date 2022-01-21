@@ -1,10 +1,10 @@
 //   note not doing O0 below as to ensure we get tbaa
-// RUN: %clang -fopenmp -std=c11 -O1 -fno-vectorize -fno-unroll-loops -disable-llvm-optzns %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -S | %clang -fopenmp -x ir - -o %s.out && %s.out
+// RUN: if [ %llvmver -ge 9 ]; then %clang -fopenmp -std=c11 -O1 -fno-vectorize -fno-unroll-loops -disable-llvm-optzns %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -S | %clang -fopenmp -x ir - -o %s.out && %s.out ; fi
 // RUN: if [ %llvmver -ge 9 ]; then %clang -fopenmp -std=c11 -O1 -fno-vectorize -fno-unroll-loops %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -S | %clang -fopenmp -x ir - -o %s.out && %s.out ; fi
 // RUN: if [ %llvmver -ge 9 ]; then %clang -fopenmp -std=c11 -O2 -fno-vectorize -fno-unroll-loops %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -S | %clang -fopenmp -x ir - -o %s.out && %s.out ; fi
 // RUN: if [ %llvmver -ge 9 ]; then %clang -fopenmp -std=c11 -O3 -fno-vectorize -fno-unroll-loops %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -S | %clang -fopenmp -x ir - -o %s.out && %s.out ; fi
 //   note not doing O0 below as to ensure we get tbaa
-// RUN: %clang -fopenmp -std=c11 -O1 -fno-vectorize -fno-unroll-loops -Xclang -disable-llvm-optzns %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -enzyme-inline=1 -S | %clang -fopenmp -x ir - -o %s.out && %s.out
+// RUN: if [ %llvmver -ge 9 ]; then %clang -fopenmp -std=c11 -O1 -fno-vectorize -fno-unroll-loops -Xclang -disable-llvm-optzns %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -enzyme-inline=1 -S | %clang -fopenmp -x ir - -o %s.out && %s.out ; fi
 // RUN: if [ %llvmver -ge 9 ]; then %clang -fopenmp -std=c11 -O1 -fno-vectorize -fno-unroll-loops %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -enzyme-inline=1 -S | %clang -fopenmp -x ir - -o %s.out && %s.out ; fi
 // RUN: if [ %llvmver -ge 9 ]; then %clang -fopenmp -std=c11 -O2 -fno-vectorize -fno-unroll-loops %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -enzyme-inline=1 -S | %clang -fopenmp -x ir - -o %s.out && %s.out ; fi
 // RUN: if [ %llvmver -ge 9 ]; then %clang -fopenmp -std=c11 -O3 -fno-vectorize -fno-unroll-loops %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -enzyme-inline=1 -S | %clang -fopenmp -x ir - -o %s.out && %s.out ; fi
@@ -15,23 +15,32 @@
 
 #include "test_utils.h"
 
+  int N = 20;
+  static float a[20];
+
+int omp_get_max_threads();
+
 double __enzyme_autodiff(void*, ...);
 
 float omp(float* a, float *b, int N, int M) {
   float res = 0.0;
+  N = 20;
 
   #pragma omp parallel
   {
+  //printf("in=%d\n", omp_get_max_threads());
     
     #pragma omp for
     for (int i=0; i<N; i++) {
-      a[i] *= a[i];
+      a[i] = 0;//a[i];
     }
     
+    /*
     #pragma omp for
     for (int i=0; i<M; i++) {
       b[i] *= b[i];
     }
+    */
 
   }
 
@@ -40,8 +49,6 @@ float omp(float* a, float *b, int N, int M) {
 
 int main(int argc, char** argv) {
 
-  int N = 20;
-  float a[N];
   for(int i=0; i<N; i++) {
     a[i] = i+1;
   }

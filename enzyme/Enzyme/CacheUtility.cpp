@@ -465,7 +465,7 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
       BasicBlock *Exit = nullptr;
       for (auto *SBB : successors(ExitingBlock)) {
         if (!L->contains(SBB)) {
-          if (SE.GuaranteedUnreachable.count(SBB))
+          if (newUnreachable.count(SBB))
             continue;
           Exit = SBB;
           break;
@@ -541,6 +541,8 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
     if (CanonicalIV == nullptr) {
       report_fatal_error("Couldn't get canonical IV.");
     }
+
+    llvm::errs() << " Limit: " << *Limit << "\n";
 
     LoadInst* omp_lb_post = nullptr;
     if (auto SA = dyn_cast<SCEVAddExpr>(Limit)) {
@@ -798,8 +800,8 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
           malloccall =
               cast<CallInst>(cast<Instruction>(firstallocation)->getOperand(0));
         }
-        for (auto &ctx : sublimits[i].second) {
-            if (ctx.first.offset) {
+        for (auto &actx : sublimits[i].second) {
+            if (actx.first.offset) {
               malloccall->setMetadata("enzyme_ompfor", MDNode::get(malloccall->getContext(), {}));
               break;
             }
@@ -1056,6 +1058,8 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
     idx.dynamic = false;
     idx.parent = nullptr;
     idx.exitBlocks = {};
+    idx.offset = nullptr;
+    idx.allocLimit = nullptr;
     contexts.push_back(idx);
   }
 
