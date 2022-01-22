@@ -126,8 +126,7 @@ struct CacheAnalysis {
       : allocationsWithGuaranteedFree(allocationsWithGuaranteedFree), TR(TR),
         AA(AA), oldFunc(oldFunc), SE(SE), OrigLI(OrigLI), OrigDT(OrigDT),
         TLI(TLI), unnecessaryInstructions(unnecessaryInstructions),
-        uncacheable_args(uncacheable_args), mode(mode), omp(omp) {
-  }
+        uncacheable_args(uncacheable_args), mode(mode), omp(omp) {}
 
   bool is_value_mustcache_from_origin(Value *obj) {
     if (seen.find(obj) != seen.end())

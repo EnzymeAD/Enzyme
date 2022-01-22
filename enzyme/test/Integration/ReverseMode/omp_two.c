@@ -15,40 +15,31 @@
 
 #include "test_utils.h"
 
-  int N = 20;
-  static float a[20];
+void __enzyme_autodiff(void*, ...);
 
-int omp_get_max_threads();
-
-double __enzyme_autodiff(void*, ...);
-
-float omp(float* a, float *b, int N, int M) {
-  float res = 0.0;
-  N = 20;
+void omp(float* a, float *b, int N, int M) {
 
   #pragma omp parallel
   {
-  //printf("in=%d\n", omp_get_max_threads());
     
     #pragma omp for
     for (int i=0; i<N; i++) {
-      a[i] = 0;//a[i];
+      a[i] *= a[i];
     }
     
-    /*
     #pragma omp for
     for (int i=0; i<M; i++) {
       b[i] *= b[i];
     }
-    */
 
   }
 
-  return res;
+  return;
 }
 
 int main(int argc, char** argv) {
-
+  int N = 20;
+  float a[N];
   for(int i=0; i<N; i++) {
     a[i] = i+1;
   }

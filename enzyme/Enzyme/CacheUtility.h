@@ -72,10 +72,10 @@ struct LoopContext {
   AssertingReplacingVH maxLimit;
 
   AssertingReplacingVH trueLimit;
-  
+
   /// An offset to add to the index when getting the cache pointer.
   AssertingReplacingVH offset;
-  
+
   /// An overriding allocation limit size.
   AssertingReplacingVH allocLimit;
 
@@ -142,7 +142,6 @@ protected:
   llvm::LoopInfo LI;
   llvm::AssumptionCache AC;
   MustExitScalarEvolution SE;
-  llvm::SmallPtrSet<llvm::BasicBlock *, 4> newUnreachable;
 
 public:
   // Helper basicblock where all new allocations will be added to
@@ -152,7 +151,7 @@ public:
 protected:
   CacheUtility(llvm::TargetLibraryInfo &TLI, llvm::Function *newFunc)
       : newFunc(newFunc), TLI(TLI), DT(*newFunc), LI(DT), AC(*newFunc),
-        SE(*newFunc, TLI, AC, DT, LI), newUnreachable(getGuaranteedUnreachable(newFunc)) { 
+        SE(*newFunc, TLI, AC, DT, LI) {
     inversionAllocs = llvm::BasicBlock::Create(newFunc->getContext(),
                                                "allocsForInversion", newFunc);
   }
