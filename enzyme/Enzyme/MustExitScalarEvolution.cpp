@@ -633,8 +633,22 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimitFromICmp(
     break;
   }
   case ICmpInst::ICMP_SLT:
-  case ICmpInst::ICMP_ULT: { // while (X < Y)
-    bool IsSigned = Pred == ICmpInst::ICMP_SLT;
+  case ICmpInst::ICMP_ULT:
+  case ICmpInst::ICMP_SLE:
+  case ICmpInst::ICMP_ULE: { // while (X < Y)
+    bool IsSigned = Pred == ICmpInst::ICMP_SLT || Pred == ICmpInst::ICMP_SLE;
+
+    if (Pred == ICmpInst::ICMP_SLE || Pred == ICmpInst::ICMP_ULE) {
+      SmallVector<const SCEV *, 2> sv = {
+          RHS,
+          getConstant(ConstantInt::get(cast<IntegerType>(RHS->getType()), 1))};
+      // Since this is not an infinite loop by induction, RHS cannot be
+      // int_max/uint_max Therefore adding 1 does not wrap.
+      if (IsSigned)
+        RHS = getAddExpr(sv, SCEV::FlagNSW);
+      else
+        RHS = getAddExpr(sv, SCEV::FlagNUW);
+    }
     ExitLimit EL =
         howManyLessThans(LHS, RHS, L, IsSigned, ControlsExit, AllowPredicates);
     if (EL.hasAnyInfo())
@@ -642,8 +656,21 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::computeExitLimitFromICmp(
     break;
   }
   case ICmpInst::ICMP_SGT:
-  case ICmpInst::ICMP_UGT: { // while (X > Y)
-    bool IsSigned = Pred == ICmpInst::ICMP_SGT;
+  case ICmpInst::ICMP_UGT:
+  case ICmpInst::ICMP_SGE:
+  case ICmpInst::ICMP_UGE: { // while (X > Y)
+    bool IsSigned = Pred == ICmpInst::ICMP_SGT || Pred == ICmpInst::ICMP_SLE;
+    if (Pred == ICmpInst::ICMP_SGE || Pred == ICmpInst::ICMP_UGE) {
+      SmallVector<const SCEV *, 2> sv = {
+          RHS,
+          getConstant(ConstantInt::get(cast<IntegerType>(RHS->getType()), -1))};
+      // Since this is not an infinite loop by induction, RHS cannot be
+      // int_min/uint_min Therefore subtracting 1 does not wrap.
+      if (IsSigned)
+        RHS = getAddExpr(sv, SCEV::FlagNSW);
+      else
+        RHS = getAddExpr(sv, SCEV::FlagNUW);
+    }
     ExitLimit EL = howManyGreaterThans(LHS, RHS, L, IsSigned, ControlsExit,
                                        AllowPredicates);
     if (EL.hasAnyInfo())

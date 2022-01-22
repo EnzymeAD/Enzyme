@@ -9,32 +9,47 @@
 // RUN: if [ %llvmver -ge 9 ]; then %clang -fopenmp -std=c11 -fno-vectorize -fno-unroll-loops -O2 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -enzyme-inline=1 -S | %clang -fopenmp -x ir - -o %s.out && %s.out ; fi
 // RUN: if [ %llvmver -ge 9 ]; then %clang -fopenmp -std=c11 -fno-vectorize -fno-unroll-loops -O3 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -enzyme-inline=1 -S | %clang -fopenmp -x ir - -o %s.out && %s.out ; fi
 
-# include <stdlib.h>
-# include <stdio.h>
 
+extern int omp_get_max_threads();
+#include <stdio.h>
+#include <math.h>
+#include <assert.h>
 
-void msg(double* in, int *len, unsigned int slen) {
-    if (slen != 0) {
-    #pragma omp parallel for firstprivate(slen)
-    for (unsigned int i=0; i<slen; i++) {
-/*
-        int L = len[i] / 2;
-        __builtin_assume(L > 0);
-        for(int j=0; j<L; j++)
-            in[j*10+i] *= L;
-        len[i] = 0;
-        */
-    }
-    }
+#include "test_utils.h"
+
+double __enzyme_autodiff(void*, ...);
+
+void __enzyme_double(void*);
+
+void omp(double* a, double in, int N) {
+  #pragma omp parallel for firstprivate(in)
+  for (int i=0; i<N; i++) {
+    a[i] = in;
+    in = 0;
+    __enzyme_double(&in);
+  }
 }
-void __enzyme_autodiff(void*, ...);
 
-int main ( int argc, char *argv[] ) {
+int main(int argc, char** argv) {
 
-  double array[200];
-  double darray[200];
-  int len[10] = {20};
-  int slen = 10;
-  __enzyme_autodiff((void*)msg, &array, &darray, &len, slen);
-     return 0;
+  int N = 20;
+  double a[N];
+  double d_a[N];
+
+  for(int i=0; i<N; i++)
+    d_a[i] = 1.0f;
+  
+  //omp(*a, N);
+  printf("ran omp\n");
+  double res = __enzyme_autodiff((void*)omp, a, d_a, (double)1.0f, N);
+
+  for(int i=0; i<N; i++) {
+    printf("a[%d]=%f  d_a[%d]=%f\n", i, a[i], i, d_a[i]);
+  }
+
+  double expected = omp_get_max_threads();
+  if (expected > N) expected = N;
+  
+  APPROX_EQ(res, expected, 1e-10);
+  return 0;
 }

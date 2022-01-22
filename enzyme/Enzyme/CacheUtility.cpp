@@ -545,7 +545,7 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
     LoadInst *omp_lb_post = nullptr;
 
     SmallPtrSet<const SCEV *, 2> PotentialMins;
-    SmallVector<const SCEV *> Todo = {Limit};
+    SmallVector<const SCEV *, 2> Todo = {Limit};
     while (Todo.size()) {
       auto S = Todo.back();
       Todo.pop_back();
@@ -1093,12 +1093,6 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
     contexts.emplace_back(idx);
     blk = idx.preheader;
   }
-  /*
-  if (ompTrueLimit && contexts.size()) {
-    contexts.back().trueLimit = ompTrueLimit;
-    contexts.back().maxLimit = ompTrueLimit;
-  }
-  */
 
   // Legal preheaders for loop i (indexed from inner => outer)
   std::vector<BasicBlock *> allocationPreheaders(contexts.size(), nullptr);
