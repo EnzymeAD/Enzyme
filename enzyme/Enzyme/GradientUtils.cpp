@@ -5217,9 +5217,9 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
         auto secretpt = PointerType::get(secretty, dstaddr);
         if (offset != 0) {
 #if LLVM_VERSION_MAJOR > 7
-          dsto = Builder2.CreateConstInBoundsGEP1_64(dsto, offset);
-#else
           dsto = Builder2.CreateConstInBoundsGEP1_64(cast<PointerType>(dsto->getType())->getElementType(), dsto, offset);
+#else
+          dsto = Builder2.CreateConstInBoundsGEP1_64(dsto, offset);
 #endif
         }
         args.push_back(Builder2.CreatePointerCast(dsto, secretpt));
