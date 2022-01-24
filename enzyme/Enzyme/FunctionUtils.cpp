@@ -578,7 +578,7 @@ void PreProcessCache::ReplaceReallocs(Function *NewF, bool mem2reg) {
 
     Value *p = CI->getArgOperand(0);
     Value *req = CI->getArgOperand(1);
-    Value *old = B.CreateLoad(AI);
+    Value *old = B.CreateLoad(AI->getAllocatedType(), AI);
 
     Value *cmp = B.CreateICmpULE(req, old);
     // if (req < old)
@@ -681,7 +681,7 @@ Function *CreateMPIWrapper(Function *F) {
   auto alloc = B.CreateAlloca(F->getReturnType());
   Value *args[] = {W->arg_begin(), alloc};
   B.CreateCall(F, args);
-  B.CreateRet(B.CreateLoad(alloc));
+  B.CreateRet(B.CreateLoad(F->getReturnType(), alloc));
   return W;
 }
 static void SimplifyMPIQueries(Function &NewF) {
@@ -724,10 +724,10 @@ static void SimplifyMPIQueries(Function &NewF) {
       auto AI2 = B.CreateAlloca(AI->getAllocatedType(), nullptr,
                                 AI->getName() + "_smpl");
       B.SetInsertPoint(Bound);
-      B.CreateStore(B.CreateLoad(AI), AI2);
+      B.CreateStore(B.CreateLoad(AI->getAllocatedType(), AI), AI2);
       Bound->setArgOperand(i, AI2);
       B.SetInsertPoint(Bound->getNextNode());
-      B.CreateStore(B.CreateLoad(AI2), AI);
+      B.CreateStore(B.CreateLoad(AI2->getAllocatedType(), AI2), AI);
       Bound->addParamAttr(i, Attribute::NoCapture);
     }
   }
@@ -1330,14 +1330,22 @@ Function *PreProcessCache::preprocessForClone(Function *F,
     }
 
     {
+#if LLVM_VERSION_MAJOR >= 14
+      auto PA = SROAPass().run(*NewF, FAM);
+#else
       auto PA = SROA().run(*NewF, FAM);
+#endif
       FAM.invalidate(*NewF, PA);
     }
 
     ReplaceReallocs(NewF);
 
     {
+#if LLVM_VERSION_MAJOR >= 14
+      auto PA = SROAPass().run(*NewF, FAM);
+#else
       auto PA = SROA().run(*NewF, FAM);
+#endif
       FAM.invalidate(*NewF, PA);
     }
 
@@ -1799,7 +1807,7 @@ void CoaleseTrivialMallocs(Function &F, DominatorTree &DT) {
           ConstantInt::get(Size->getType(), 1));
       z.second->eraseFromParent();
       IRBuilder<> B2(z.first);
-      z.first->replaceAllUsesWith(B2.CreateInBoundsGEP(First, Size));
+      z.first->replaceAllUsesWith(B2.CreateInBoundsGEP(cast<PointerType>(First->getType())->getElementType(), First, Size));
       Size = B.CreateAdd(Size, z.first->getArgOperand(0));
       z.first->eraseFromParent();
     }
@@ -1838,8 +1846,16 @@ void SelectOptimization(Function *F) {
 }
 void PreProcessCache::optimizeIntermediate(Function *F) {
   PromotePass().run(*F, FAM);
+#if LLVM_VERSION_MAJOR >= 14
+  GVNPass().run(*F, FAM);
+#else
   GVN().run(*F, FAM);
+#endif
+#if LLVM_VERSION_MAJOR >= 14
+  SROAPass().run(*F, FAM);
+#else
   SROA().run(*F, FAM);
+#endif
 
   if (EnzymeSelectOpt) {
 #if LLVM_VERSION_MAJOR >= 12

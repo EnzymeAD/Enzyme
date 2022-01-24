@@ -126,8 +126,8 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
     PHINode *idx = B.CreatePHI(num->getType(), 2, "idx");
     idx->addIncoming(ConstantInt::get(num->getType(), 0), entry);
 
-    Value *dsti = B.CreateGEP(dst, idx, "dst.i");
-    LoadInst *dstl = B.CreateLoad(dsti, "dst.i.l");
+    Value *dsti = B.CreateGEP(cast<PointerType>(dst->getType())->getElementType(), dst, idx, "dst.i");
+    LoadInst *dstl = B.CreateLoad(cast<PointerType>(dsti->getType())->getElementType(), dsti, "dst.i.l");
     StoreInst *dsts = B.CreateStore(Constant::getNullValue(elementType), dsti);
     if (dstalign) {
 #if LLVM_VERSION_MAJOR >= 10
@@ -139,8 +139,8 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
 #endif
     }
 
-    Value *srci = B.CreateGEP(src, idx, "src.i");
-    LoadInst *srcl = B.CreateLoad(srci, "src.i.l");
+    Value *srci = B.CreateGEP(cast<PointerType>(src->getType())->getElementType(), src, idx, "src.i");
+    LoadInst *srcl = B.CreateLoad(cast<PointerType>(srci->getType())->getElementType(), srci, "src.i.l");
     StoreInst *srcs = B.CreateStore(B.CreateFAdd(srcl, dstl), srci);
     if (srcalign) {
 #if LLVM_VERSION_MAJOR >= 10
@@ -221,10 +221,10 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, unsigned dstalign,
     idx->addIncoming(ConstantInt::get(num->getType(), 0), entry);
     sidx->addIncoming(ConstantInt::get(num->getType(), 0), entry);
 
-    Value *dsti = B.CreateGEP(dst, idx, "dst.i");
+    Value *dsti = B.CreateGEP(cast<PointerType>(dst->getType())->getElementType(), dst, idx, "dst.i");
 
-    Value *srci = B.CreateGEP(src, sidx, "src.i");
-    LoadInst *srcl = B.CreateLoad(srci, "src.i.l");
+    Value *srci = B.CreateGEP(cast<PointerType>(src->getType())->getElementType(), src, sidx, "src.i");
+    LoadInst *srcl = B.CreateLoad(cast<PointerType>(srci->getType())->getElementType(), srci, "src.i.l");
 
     StoreInst *dsts = B.CreateStore(srcl, dsti);
 
@@ -391,7 +391,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
   auto FlT = CT.isFloat();
 
   if (auto Glob = M.getGlobalVariable(name)) {
-    return B2.CreateLoad(Glob);
+    return B2.CreateLoad(Glob->getValueType(), Glob);
   }
 
   std::vector<llvm::Type *> types = {PointerType::getUnqual(FlT),
@@ -434,7 +434,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
 
   {
     IRBuilder<> B(entry);
-    len = B.CreateLoad(lenp);
+    len = B.CreateLoad(cast<PointerType>(lenp->getType())->getElementType(), lenp);
     B.CreateCondBr(B.CreateICmpEQ(len, ConstantInt::get(len->getType(), 0)),
                    end, body);
   }
@@ -445,11 +445,11 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
     PHINode *idx = B.CreatePHI(len->getType(), 2, "idx");
     idx->addIncoming(ConstantInt::get(len->getType(), 0), entry);
 
-    Value *dsti = B.CreateGEP(dst, idx, "dst.i");
-    LoadInst *dstl = B.CreateLoad(dsti, "dst.i.l");
+    Value *dsti = B.CreateGEP(cast<PointerType>(dst->getType())->getElementType(), dst, idx, "dst.i");
+    LoadInst *dstl = B.CreateLoad(cast<PointerType>(dsti->getType())->getElementType(), dsti, "dst.i.l");
 
-    Value *srci = B.CreateGEP(src, idx, "src.i");
-    LoadInst *srcl = B.CreateLoad(srci, "src.i.l");
+    Value *srci = B.CreateGEP(cast<PointerType>(src->getType())->getElementType(), src, idx, "src.i");
+    LoadInst *srcl = B.CreateLoad(cast<PointerType>(srci->getType())->getElementType(), srci, "src.i.l");
 
     B.CreateStore(B.CreateFAdd(srcl, dstl), dsti);
 
@@ -514,7 +514,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
     BasicBlock *end =
         BasicBlock::Create(M.getContext(), "end", initializerFunction);
     IRBuilder<> B(entry);
-    B.CreateCondBr(B.CreateLoad(initD), end, run);
+    B.CreateCondBr(B.CreateLoad(cast<PointerType>(initD->getType())->getElementType(), initD), end, run);
 
     B.SetInsertPoint(run);
     Value *args[] = {ConstantExpr::getPointerCast(F, rtypes[0]),
@@ -528,7 +528,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
   }
 
   B2.CreateCall(M.getFunction(name + "initializer"));
-  return B2.CreateLoad(GV);
+  return B2.CreateLoad(GV->getValueType(), GV);
 }
 
 Function *getOrInsertExponentialAllocator(Module &M, bool ZeroInit) {
@@ -604,7 +604,7 @@ Function *getOrInsertExponentialAllocator(Module &M, bool ZeroInit) {
     Value *zeroSize = B.CreateSub(next, prevSize);
 
     Value *margs[] = {
-        B.CreateGEP(gVal, prevSize),
+        B.CreateGEP(cast<PointerType>(gVal->getType())->getElementType(), gVal, prevSize),
         ConstantInt::get(Type::getInt8Ty(args[0]->getContext()), 0), zeroSize,
         ConstantInt::getFalse(args[0]->getContext())};
     Type *tys[] = {margs[0]->getType(), margs[2]->getType()};

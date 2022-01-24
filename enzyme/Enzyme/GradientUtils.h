@@ -745,7 +745,7 @@ public:
 #if LLVM_VERSION_MAJOR >= 14
         cast<CallInst>(anti)->addDereferenceableRetAttr(ci->getLimitedValue());
         cal->addDereferenceableRetAttr(ci->getLimitedValue());
-        AttrBuilder B;
+        AttrBuilder B(Fn->getContext());
         B.addDereferenceableOrNullAttr(ci->getLimitedValue());
         cast<CallInst>(anti)->setAttributes(
             cast<CallInst>(anti)->getAttributes().addRetAttributes(
@@ -1564,7 +1564,7 @@ public:
     }
     assert(!val->getType()->isPointerTy());
     assert(!val->getType()->isVoidTy());
-    return BuilderM.CreateLoad(getDifferential(val));
+    return BuilderM.CreateLoad(val->getType(), getDifferential(val));
   }
 
   // Returns created select instructions, if any
@@ -1667,10 +1667,10 @@ public:
       sv.push_back(ConstantInt::get(Type::getInt32Ty(val->getContext()), 0));
       for (auto i : idxs)
         sv.push_back(i);
-      ptr = BuilderM.CreateGEP(ptr, sv);
+      ptr = BuilderM.CreateGEP(cast<PointerType>(ptr->getType())->getElementType(), ptr, sv);
       cast<GetElementPtrInst>(ptr)->setIsInBounds(true);
     }
-    Value *old = BuilderM.CreateLoad(ptr);
+    Value *old = BuilderM.CreateLoad(cast<PointerType>(ptr->getType())->getElementType(), ptr);
 
     assert(dif->getType() == old->getType());
     Value *res = nullptr;
@@ -1838,12 +1838,12 @@ public:
            riter != rend; ++riter) {
         const auto &idx = riter->first;
         if (idx.var)
-          antimap[idx.var] = tbuild.CreateLoad(idx.antivaralloc);
+          antimap[idx.var] = tbuild.CreateLoad(cast<PointerType>(idx.antivaralloc->getType())->getElementType(), idx.antivaralloc);
       }
     }
 
-    auto forfree = cast<LoadInst>(tbuild.CreateLoad(
-        unwrapM(storeInto, tbuild, antimap, UnwrapMode::LegalFullUnwrap)));
+    Value *metaforfree = unwrapM(storeInto, tbuild, antimap, UnwrapMode::LegalFullUnwrap);
+    LoadInst *forfree = cast<LoadInst>(tbuild.CreateLoad(cast<PointerType>(metaforfree->getType())->getElementType(), metaforfree));
     forfree->setMetadata(LLVMContext::MD_invariant_group, InvariantMD);
     forfree->setMetadata(
         LLVMContext::MD_dereferenceable,
@@ -1859,7 +1859,7 @@ public:
       forfree->setAlignment(bsize);
 #endif
     }
-    auto ci = cast<CallInst>(CallInst::CreateFree(
+    CallInst *ci = cast<CallInst>(CallInst::CreateFree(
         tbuild.CreatePointerCast(forfree,
                                  Type::getInt8PtrTy(newFunc->getContext())),
         tbuild.GetInsertBlock()));
@@ -1926,7 +1926,7 @@ public:
 
     assert(ptr);
     if (OrigOffset) {
-      ptr = BuilderM.CreateGEP(
+      ptr = BuilderM.CreateGEP(cast<PointerType>(ptr->getType())->getElementType(),
           ptr, lookupM(getNewFromOriginal(OrigOffset), BuilderM));
     }
 
@@ -1999,7 +1999,7 @@ public:
           Value *Idxs[] = {
               ConstantInt::get(Type::getInt64Ty(vt->getContext()), 0),
               ConstantInt::get(Type::getInt32Ty(vt->getContext()), i)};
-          auto vptr = BuilderM.CreateGEP(ptr, Idxs);
+          auto vptr = BuilderM.CreateGEP(cast<PointerType>(ptr->getType())->getElementType(), ptr, Idxs);
 #if LLVM_VERSION_MAJOR >= 13
           BuilderM.CreateAtomicRMW(op, vptr, vdif, align,
                                    AtomicOrdering::Monotonic,
@@ -2040,7 +2040,7 @@ public:
     Value *old;
 
     if (!mask) {
-      auto LI = BuilderM.CreateLoad(ptr);
+      auto LI = BuilderM.CreateLoad(cast<PointerType>(ptr->getType())->getElementType(), ptr);
       if (align)
 #if LLVM_VERSION_MAJOR >= 10
         LI->setAlignment(*align);
