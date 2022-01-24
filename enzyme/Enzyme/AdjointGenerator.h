@@ -207,7 +207,11 @@ public:
         B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
             "MPI_Type_size", FT, AL),
         args);
+#if LLVM_VERSION_MAJOR > 7
     return B.CreateLoad(intType, alloc);
+#else
+    return B.CreateLoad(alloc);
+#endif
   }
 
   // To be double-checked against the functionality needed and the respective
@@ -253,7 +257,11 @@ public:
         B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
             "MPI_Comm_rank", FT, AL),
         args);
+#if LLVM_VERSION_MAJOR > 7
     return B.CreateLoad(rankTy, alloc);
+#else
+    return B.CreateLoad(alloc);
+#endif
   }
 
   llvm::Value *MPI_COMM_SIZE(llvm::Value *comm, IRBuilder<> &B, Type *rankTy) {
@@ -297,7 +305,11 @@ public:
         B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
             "MPI_Comm_size", FT, AL),
         args);
+#if LLVM_VERSION_MAJOR > 7
     return B.CreateLoad(rankTy, alloc);
+#else
+    return B.CreateLoad(alloc);
+#endif
   }
 
 #if LLVM_VERSION_MAJOR >= 10

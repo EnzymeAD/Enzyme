@@ -578,7 +578,11 @@ void PreProcessCache::ReplaceReallocs(Function *NewF, bool mem2reg) {
 
     Value *p = CI->getArgOperand(0);
     Value *req = CI->getArgOperand(1);
+#if LLVM_VERSION_MAJOR > 7
     Value *old = B.CreateLoad(AI->getAllocatedType(), AI);
+#else
+    Value *old = B.CreateLoad(AI);
+#endif
 
     Value *cmp = B.CreateICmpULE(req, old);
     // if (req < old)
@@ -681,7 +685,11 @@ Function *CreateMPIWrapper(Function *F) {
   auto alloc = B.CreateAlloca(F->getReturnType());
   Value *args[] = {W->arg_begin(), alloc};
   B.CreateCall(F, args);
+#if LLVM_VERSION_MAJOR > 7
   B.CreateRet(B.CreateLoad(F->getReturnType(), alloc));
+#else
+  B.CreateRet(B.CreateLoad(alloc));
+#endif
   return W;
 }
 static void SimplifyMPIQueries(Function &NewF) {
@@ -724,10 +732,18 @@ static void SimplifyMPIQueries(Function &NewF) {
       auto AI2 = B.CreateAlloca(AI->getAllocatedType(), nullptr,
                                 AI->getName() + "_smpl");
       B.SetInsertPoint(Bound);
+#if LLVM_VERSION_MAJOR > 7
       B.CreateStore(B.CreateLoad(AI->getAllocatedType(), AI), AI2);
+#else
+      B.CreateStore(B.CreateLoad(AI), AI2);
+#endif
       Bound->setArgOperand(i, AI2);
       B.SetInsertPoint(Bound->getNextNode());
+#if LLVM_VERSION_MAJOR > 7
       B.CreateStore(B.CreateLoad(AI2->getAllocatedType(), AI2), AI);
+#else
+      B.CreateStore(B.CreateLoad(AI2), AI);
+#endif
       Bound->addParamAttr(i, Attribute::NoCapture);
     }
   }
@@ -1807,7 +1823,12 @@ void CoaleseTrivialMallocs(Function &F, DominatorTree &DT) {
           ConstantInt::get(Size->getType(), 1));
       z.second->eraseFromParent();
       IRBuilder<> B2(z.first);
-      z.first->replaceAllUsesWith(B2.CreateInBoundsGEP(cast<PointerType>(First->getType())->getElementType(), First, Size));
+#if LLVM_VERSION_MAJOR > 7
+      Value *gepPtr = B2.CreateInBoundsGEP(z.first->getType(), First, Size);
+#else
+      Value *gepPtr = B2.CreateInBoundsGEP(First, Size);
+#endif
+      z.first->replaceAllUsesWith(gepPtr);
       Size = B.CreateAdd(Size, z.first->getArgOperand(0));
       z.first->eraseFromParent();
     }
