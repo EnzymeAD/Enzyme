@@ -608,10 +608,13 @@ public:
             Value *diff;
             if (!mask) {
 #if LLVM_VERSION_MAJOR > 7
-              auto LI = Builder2.CreateLoad(cast<PointerType>(I.getOperand(0)->getType())->getElementType(),
+              auto LI = Builder2.CreateLoad(
+                  cast<PointerType>(I.getOperand(0)->getType())
+                      ->getElementType(),
                   gutils->invertPointerM(I.getOperand(0), Builder2));
 #else
-              auto LI = Builder2.CreateLoad(gutils->invertPointerM(I.getOperand(0), Builder2));
+              auto LI = Builder2.CreateLoad(
+                  gutils->invertPointerM(I.getOperand(0), Builder2));
 #endif
               if (alignment)
 #if LLVM_VERSION_MAJOR >= 10
@@ -814,12 +817,12 @@ public:
         } else {
           Value *diff;
           if (!mask) {
-            Value *dif1Ptr = lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
+            Value *dif1Ptr =
+                lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
 #if LLVM_VERSION_MAJOR > 7
             LoadInst *dif1 = Builder2.CreateLoad(
                 cast<PointerType>(dif1Ptr->getType())->getElementType(),
-                dif1Ptr,
-                isVolatile);
+                dif1Ptr, isVolatile);
 #else
             LoadInst *dif1 = Builder2.CreateLoad(dif1Ptr, isVolatile);
 #endif
@@ -3890,9 +3893,14 @@ public:
                       ConstantInt::get(Type::getInt32Ty(tapeArg->getContext()),
                                        pair.first)};
 #if LLVM_VERSION_MAJOR > 7
-                  op->replaceAllUsesWith(ph.CreateLoad(op->getType(),
-                      pair.first == -1 ? tapeArg
-                                       : ph.CreateInBoundsGEP(cast<PointerType>(tapeArg->getType())->getElementType(), tapeArg, Idxs)));
+                  op->replaceAllUsesWith(ph.CreateLoad(
+                      op->getType(),
+                      pair.first == -1
+                          ? tapeArg
+                          : ph.CreateInBoundsGEP(
+                                cast<PointerType>(tapeArg->getType())
+                                    ->getElementType(),
+                                tapeArg, Idxs)));
 #else
                   op->replaceAllUsesWith(ph.CreateLoad(
                       pair.first == -1 ? tapeArg
@@ -3910,9 +3918,13 @@ public:
                 ConstantInt::get(Type::getInt32Ty(tapeArg->getContext()),
                                  pair.first)};
 #if LLVM_VERSION_MAJOR > 7
-            op->replaceAllUsesWith(ph.CreateLoad(op->getType(),
-                pair.first == -1 ? tapeArg
-                                 : ph.CreateInBoundsGEP(cast<PointerType>(tapeArg->getType())->getElementType(), tapeArg, Idxs)));
+            op->replaceAllUsesWith(ph.CreateLoad(
+                op->getType(),
+                pair.first == -1
+                    ? tapeArg
+                    : ph.CreateInBoundsGEP(cast<PointerType>(tapeArg->getType())
+                                               ->getElementType(),
+                                           tapeArg, Idxs)));
 #else
             op->replaceAllUsesWith(ph.CreateLoad(
                 pair.first == -1 ? tapeArg
@@ -4123,7 +4135,9 @@ public:
                 ConstantInt::get(Type::getInt64Ty(ST->getContext()), 0),
                 ConstantInt::get(Type::getInt32Ty(ST->getContext()), ee)};
 #if LLVM_VERSION_MAJOR > 7
-            Value *ptr = B.CreateInBoundsGEP(cast<PointerType>(cacheArg->getType())->getElementType(), cacheArg, Idxs);
+            Value *ptr = B.CreateInBoundsGEP(
+                cast<PointerType>(cacheArg->getType())->getElementType(),
+                cacheArg, Idxs);
 #else
             Value *ptr = B.CreateInBoundsGEP(cacheArg, Idxs);
 #endif
@@ -4159,7 +4173,9 @@ public:
                     ConstantInt::get(Type::getInt64Ty(vt->getContext()), 0),
                     ConstantInt::get(Type::getInt32Ty(vt->getContext()), i)};
 #if LLVM_VERSION_MAJOR > 7
-                auto vptr = B.CreateGEP(cast<PointerType>(ptr->getType())->getElementType(), ptr, Idxs);
+                auto vptr = B.CreateGEP(
+                    cast<PointerType>(ptr->getType())->getElementType(), ptr,
+                    Idxs);
 #else
                 auto vptr = B.CreateGEP(ptr, Idxs);
 #endif
@@ -4229,7 +4245,8 @@ public:
           ((DiffeGradientUtils *)gutils)
               ->addToDiffe(OutTypes[i],
 #if LLVM_VERSION_MAJOR > 7
-                           Builder2.CreateLoad(OutFPTypes[i],
+                           Builder2.CreateLoad(
+                               OutFPTypes[i],
                                Builder2.CreateInBoundsGEP(ST, OutAlloc, Idxs)),
 #else
                            Builder2.CreateLoad(
@@ -4333,7 +4350,9 @@ public:
         auto secretpt = PointerType::get(secretty, dstaddr);
         if (offset != 0) {
 #if LLVM_VERSION_MAJOR > 7
-          dsto = Builder2.CreateConstInBoundsGEP1_64(cast<PointerType>(dsto->getType())->getElementType(), dsto, offset);
+          dsto = Builder2.CreateConstInBoundsGEP1_64(
+              cast<PointerType>(dsto->getType())->getElementType(), dsto,
+              offset);
 #else
           dsto = Builder2.CreateConstInBoundsGEP1_64(dsto, offset);
 #endif
@@ -4348,7 +4367,9 @@ public:
 
         if (offset != 0) {
 #if LLVM_VERSION_MAJOR > 7
-          srco = Builder2.CreateConstInBoundsGEP1_64(cast<PointerType>(srco->getType())->getElementType(), srco, offset);
+          srco = Builder2.CreateConstInBoundsGEP1_64(
+              cast<PointerType>(srco->getType())->getElementType(), srco,
+              offset);
 #else
           srco = Builder2.CreateConstInBoundsGEP1_64(srco, offset);
 #endif
@@ -4635,13 +4656,14 @@ public:
             BuilderZ.CreateStore(
                 firstallocation,
 #if LLVM_VERSION_MAJOR > 7
-                BuilderZ.CreateInBoundsGEP(cast<PointerType>(impialloc->getType())->getElementType(), impialloc,
-                                           {c0_64, ConstantInt::get(i32, 0)})
+                BuilderZ.CreateInBoundsGEP(
+                    cast<PointerType>(impialloc->getType())->getElementType(),
+                    impialloc, {c0_64, ConstantInt::get(i32, 0)})
 #else
                 BuilderZ.CreateInBoundsGEP(impialloc,
                                            {c0_64, ConstantInt::get(i32, 0)})
 #endif
-                );
+            );
             BuilderZ.SetInsertPoint(gutils->getNewFromOriginal(&call));
 
             firstallocation = gutils->cacheForReverse(
@@ -4653,27 +4675,30 @@ public:
               ibuf = BuilderZ.CreateIntToPtr(
                   ibuf, Type::getInt8PtrTy(call.getContext()));
             BuilderZ.CreateStore(
-                ibuf, 
+                ibuf,
 #if LLVM_VERSION_MAJOR > 7
-                BuilderZ.CreateInBoundsGEP(cast<PointerType>(impialloc->getType())->getElementType(),
-                          impialloc, {c0_64, ConstantInt::get(i32, 0)})
+                BuilderZ.CreateInBoundsGEP(
+                    cast<PointerType>(impialloc->getType())->getElementType(),
+                    impialloc, {c0_64, ConstantInt::get(i32, 0)})
 #else
-                BuilderZ.CreateInBoundsGEP(impialloc, {c0_64, ConstantInt::get(i32, 0)})
+                BuilderZ.CreateInBoundsGEP(impialloc,
+                                           {c0_64, ConstantInt::get(i32, 0)})
 #endif
-                );
+            );
           }
 
           BuilderZ.CreateStore(
               BuilderZ.CreateZExtOrTrunc(
                   gutils->getNewFromOriginal(call.getOperand(1)), types[1]),
 #if LLVM_VERSION_MAJOR > 7
-              BuilderZ.CreateInBoundsGEP(cast<PointerType>(impialloc->getType())->getElementType(), impialloc,
-                                         {c0_64, ConstantInt::get(i32, 1)})
+              BuilderZ.CreateInBoundsGEP(
+                  cast<PointerType>(impialloc->getType())->getElementType(),
+                  impialloc, {c0_64, ConstantInt::get(i32, 1)})
 #else
               BuilderZ.CreateInBoundsGEP(impialloc,
                                          {c0_64, ConstantInt::get(i32, 1)})
 #endif
-              );
+          );
 
           Value *dataType = gutils->getNewFromOriginal(call.getOperand(2));
           if (dataType->getType()->isIntegerTy())
@@ -4682,37 +4707,40 @@ public:
           BuilderZ.CreateStore(
               BuilderZ.CreatePointerCast(dataType, types[2]),
 #if LLVM_VERSION_MAJOR > 7
-              BuilderZ.CreateInBoundsGEP(cast<PointerType>(impialloc->getType())->getElementType(), impialloc,
-                                         {c0_64, ConstantInt::get(i32, 2)})
+              BuilderZ.CreateInBoundsGEP(
+                  cast<PointerType>(impialloc->getType())->getElementType(),
+                  impialloc, {c0_64, ConstantInt::get(i32, 2)})
 #else
               BuilderZ.CreateInBoundsGEP(impialloc,
                                          {c0_64, ConstantInt::get(i32, 2)})
 #endif
-              );
+          );
 
           BuilderZ.CreateStore(
               BuilderZ.CreateZExtOrTrunc(
                   gutils->getNewFromOriginal(call.getOperand(3)), types[3]),
 #if LLVM_VERSION_MAJOR > 7
-              BuilderZ.CreateInBoundsGEP(cast<PointerType>(impialloc->getType())->getElementType(), impialloc,
-                                         {c0_64, ConstantInt::get(i32, 3)})
+              BuilderZ.CreateInBoundsGEP(
+                  cast<PointerType>(impialloc->getType())->getElementType(),
+                  impialloc, {c0_64, ConstantInt::get(i32, 3)})
 #else
               BuilderZ.CreateInBoundsGEP(impialloc,
                                          {c0_64, ConstantInt::get(i32, 3)})
 #endif
-              );
+          );
 
           BuilderZ.CreateStore(
               BuilderZ.CreateZExtOrTrunc(
                   gutils->getNewFromOriginal(call.getOperand(4)), types[4]),
 #if LLVM_VERSION_MAJOR > 7
-              BuilderZ.CreateInBoundsGEP(cast<PointerType>(impialloc->getType())->getElementType(), impialloc,
-                                         {c0_64, ConstantInt::get(i32, 4)})
+              BuilderZ.CreateInBoundsGEP(
+                  cast<PointerType>(impialloc->getType())->getElementType(),
+                  impialloc, {c0_64, ConstantInt::get(i32, 4)})
 #else
               BuilderZ.CreateInBoundsGEP(impialloc,
                                          {c0_64, ConstantInt::get(i32, 4)})
 #endif
-              );
+          );
 
           Value *comm = gutils->getNewFromOriginal(call.getOperand(5));
           if (comm->getType()->isIntegerTy())
@@ -4721,13 +4749,14 @@ public:
           BuilderZ.CreateStore(
               BuilderZ.CreatePointerCast(comm, types[5]),
 #if LLVM_VERSION_MAJOR > 7
-              BuilderZ.CreateInBoundsGEP(cast<PointerType>(impialloc->getType())->getElementType(), impialloc,
-                                         {c0_64, ConstantInt::get(i32, 5)})
+              BuilderZ.CreateInBoundsGEP(
+                  cast<PointerType>(impialloc->getType())->getElementType(),
+                  impialloc, {c0_64, ConstantInt::get(i32, 5)})
 #else
               BuilderZ.CreateInBoundsGEP(impialloc,
                                          {c0_64, ConstantInt::get(i32, 5)})
 #endif
-              );
+          );
 
           BuilderZ.CreateStore(
               ConstantInt::get(
@@ -4736,13 +4765,14 @@ public:
                       ? (int)MPI_CallType::ISEND
                       : (int)MPI_CallType::IRECV),
 #if LLVM_VERSION_MAJOR > 7
-              BuilderZ.CreateInBoundsGEP(cast<PointerType>(impialloc->getType())->getElementType(), impialloc,
-                                         {c0_64, ConstantInt::get(i32, 6)})
+              BuilderZ.CreateInBoundsGEP(
+                  cast<PointerType>(impialloc->getType())->getElementType(),
+                  impialloc, {c0_64, ConstantInt::get(i32, 6)})
 #else
               BuilderZ.CreateInBoundsGEP(impialloc,
                                          {c0_64, ConstantInt::get(i32, 6)})
 #endif
-              );
+          );
         }
         if (Mode == DerivativeMode::ReverseModeGradient ||
             Mode == DerivativeMode::ReverseModeCombined) {
@@ -4914,8 +4944,10 @@ public:
         auto impi = StructType::get(call.getContext(), types, false);
 
 #if LLVM_VERSION_MAJOR > 7
-        Value *d_reqp = Builder2.CreateLoad(PointerType::getUnqual(impi), Builder2.CreatePointerCast(
-            d_req, PointerType::getUnqual(PointerType::getUnqual(impi))));
+        Value *d_reqp = Builder2.CreateLoad(
+            PointerType::getUnqual(impi),
+            Builder2.CreatePointerCast(
+                d_req, PointerType::getUnqual(PointerType::getUnqual(impi))));
 #else
         Value *d_reqp = Builder2.CreateLoad(Builder2.CreatePointerCast(
             d_req, PointerType::getUnqual(PointerType::getUnqual(impi))));
@@ -4939,7 +4971,8 @@ public:
         Builder2.SetInsertPoint(nonnullBlock);
 
 #if LLVM_VERSION_MAJOR > 7
-        Value *cache = Builder2.CreateLoad(cast<PointerType>(d_reqp->getType())->getElementType(), d_reqp);
+        Value *cache = Builder2.CreateLoad(
+            cast<PointerType>(d_reqp->getType())->getElementType(), d_reqp);
 #else
         Value *cache = Builder2.CreateLoad(d_reqp);
 #endif
@@ -5022,7 +5055,9 @@ public:
 
         Value *idxs[] = {idx};
 #if LLVM_VERSION_MAJOR > 7
-        Value *d_req = Builder2.CreateGEP(cast<PointerType>(d_req_orig->getType())->getElementType(), d_req_orig, idxs);
+        Value *d_req = Builder2.CreateGEP(
+            cast<PointerType>(d_req_orig->getType())->getElementType(),
+            d_req_orig, idxs);
 #else
         Value *d_req = Builder2.CreateGEP(d_req_orig, idxs);
 #endif
@@ -5040,8 +5075,10 @@ public:
         auto impi = StructType::get(call.getContext(), types, false);
 
 #if LLVM_VERSION_MAJOR > 7
-        Value *d_reqp = Builder2.CreateLoad(impi, Builder2.CreatePointerCast(
-            d_req, PointerType::getUnqual(PointerType::getUnqual(impi))));
+        Value *d_reqp = Builder2.CreateLoad(
+            impi,
+            Builder2.CreatePointerCast(
+                d_req, PointerType::getUnqual(PointerType::getUnqual(impi))));
 #else
         Value *d_reqp = Builder2.CreateLoad(Builder2.CreatePointerCast(
             d_req, PointerType::getUnqual(PointerType::getUnqual(impi))));
@@ -5059,7 +5096,8 @@ public:
         Builder2.SetInsertPoint(nonnullBlock);
 
 #if LLVM_VERSION_MAJOR > 7
-        Value *cache = Builder2.CreateLoad(cast<PointerType>(d_reqp->getType())->getElementType(), d_reqp);
+        Value *cache = Builder2.CreateLoad(
+            cast<PointerType>(d_reqp->getType())->getElementType(), d_reqp);
 #else
         Value *cache = Builder2.CreateLoad(d_reqp);
 #endif
@@ -8002,7 +8040,9 @@ public:
                   {ptrshadow, gutils->getNewFromOriginal(call.getArgOperand(1)),
                    gutils->getNewFromOriginal(call.getArgOperand(2))}));
 #if LLVM_VERSION_MAJOR > 7
-          val = BuilderZ.CreateLoad(cast<PointerType>(ptrshadow->getType())->getElementType(), ptrshadow);
+          val = BuilderZ.CreateLoad(
+              cast<PointerType>(ptrshadow->getType())->getElementType(),
+              ptrshadow);
 #else
           val = BuilderZ.CreateLoad(ptrshadow);
 #endif
@@ -8079,10 +8119,12 @@ public:
       } else if (Mode == DerivativeMode::ReverseModeCombined && shouldFree()) {
         IRBuilder<> Builder2(newCall->getNextNode());
 #if LLVM_VERSION_MAJOR > 7
-        auto load = Builder2.CreateLoad(cast<PointerType>(call.getOperand(0)->getType())->getElementType(),
+        auto load = Builder2.CreateLoad(
+            cast<PointerType>(call.getOperand(0)->getType())->getElementType(),
             gutils->getNewFromOriginal(call.getOperand(0)), "posix_preread");
 #else
-        auto load = Builder2.CreateLoad(gutils->getNewFromOriginal(call.getOperand(0)), "posix_preread");
+        auto load = Builder2.CreateLoad(
+            gutils->getNewFromOriginal(call.getOperand(0)), "posix_preread");
 #endif
         Builder2.SetInsertPoint(&call);
         getReverseBuilder(Builder2);
@@ -8800,7 +8842,8 @@ public:
         auto tapep = BuilderZ.CreatePointerCast(
             tape, PointerType::getUnqual(fnandtapetype->tapeType));
 #if LLVM_VERSION_MAJOR > 7
-        auto truetape = BuilderZ.CreateLoad(fnandtapetype->tapeType, tapep, "tapeld");
+        auto truetape =
+            BuilderZ.CreateLoad(fnandtapetype->tapeType, tapep, "tapeld");
 #else
         auto truetape = BuilderZ.CreateLoad(tapep, "tapeld");
 #endif
@@ -8915,8 +8958,8 @@ public:
       newcalled =
           Builder2.CreatePointerCast(newcalled, PointerType::getUnqual(fptype));
 #if LLVM_VERSION_MAJOR > 7
-      newcalled =
-          Builder2.CreateLoad(fptype, Builder2.CreateConstGEP1_64(fptype, newcalled, 1));
+      newcalled = Builder2.CreateLoad(
+          fptype, Builder2.CreateConstGEP1_64(fptype, newcalled, 1));
 #else
       newcalled =
           Builder2.CreateLoad(Builder2.CreateConstGEP1_64(newcalled, 1));

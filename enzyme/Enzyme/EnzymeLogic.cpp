@@ -1435,7 +1435,8 @@ void clearFunctionAttributes(Function *f) {
 #if LLVM_VERSION_MAJOR >= 14
     f->removeRetAttr(Attribute::Dereferenceable);
 #else
-    f->removeAttribute(llvm::AttributeList::ReturnIndex, Attribute::Dereferenceable);
+    f->removeAttribute(llvm::AttributeList::ReturnIndex,
+                       Attribute::Dereferenceable);
 #endif
   }
 
@@ -1943,7 +1944,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 #if LLVM_VERSION_MAJOR >= 14
     gutils->newFunc->removeRetAttr(Attribute::Dereferenceable);
 #else
-    gutils->newFunc->removeAttribute(llvm::AttributeList::ReturnIndex, Attribute::Dereferenceable);
+    gutils->newFunc->removeAttribute(llvm::AttributeList::ReturnIndex,
+                                     Attribute::Dereferenceable);
 #endif
   }
 
@@ -1952,7 +1954,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 #if LLVM_VERSION_MAJOR >= 14
     gutils->newFunc->removeRetAttr(Attribute::Alignment);
 #else
-    gutils->newFunc->removeAttribute(llvm::AttributeList::ReturnIndex, Attribute::Alignment);
+    gutils->newFunc->removeAttribute(llvm::AttributeList::ReturnIndex,
+                                     Attribute::Alignment);
 #endif
   }
 
@@ -2189,7 +2192,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       Value *gep = ret;
       if (!removeStruct) {
 #if LLVM_VERSION_MAJOR > 7
-        gep = ib.CreateGEP(cast<PointerType>(ret->getType())->getElementType(), ret, Idxs, "");
+        gep = ib.CreateGEP(cast<PointerType>(ret->getType())->getElementType(),
+                           ret, Idxs, "");
 #else
         gep = ib.CreateGEP(ret, Idxs, "");
 #endif
@@ -2211,7 +2215,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       tapeMemory = ret;
       if (!removeStruct) {
 #if LLVM_VERSION_MAJOR > 7
-        tapeMemory = ib.CreateGEP(cast<PointerType>(ret->getType())->getElementType(), ret, Idxs, "");
+        tapeMemory = ib.CreateGEP(
+            cast<PointerType>(ret->getType())->getElementType(), ret, Idxs, "");
 #else
         tapeMemory = ib.CreateGEP(ret, Idxs, "");
 #endif
@@ -2230,7 +2235,9 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         Value *gep = tapeMemory;
         if (!removeTapeStruct) {
 #if LLVM_VERSION_MAJOR > 7
-          gep = ib.CreateGEP(cast<PointerType>(tapeMemory->getType())->getElementType(), tapeMemory, Idxs, "");
+          gep = ib.CreateGEP(
+              cast<PointerType>(tapeMemory->getType())->getElementType(),
+              tapeMemory, Idxs, "");
 #else
           gep = ib.CreateGEP(tapeMemory, Idxs, "");
 #endif
@@ -2300,7 +2307,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         ib.CreateRetVoid();
       else {
 #if LLVM_VERSION_MAJOR > 7
-        ib.CreateRet(ib.CreateLoad(cast<PointerType>(ret->getType())->getElementType(), ret));
+        ib.CreateRet(ib.CreateLoad(
+            cast<PointerType>(ret->getType())->getElementType(), ret));
 #else
         ib.CreateRet(ib.CreateLoad(ret));
 #endif
@@ -2474,7 +2482,8 @@ void createInvertedTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
 
     if (retAlloca) {
 #if LLVM_VERSION_MAJOR > 7
-      auto result = Builder.CreateLoad(retAlloca->getAllocatedType(), retAlloca, "retreload");
+      auto result = Builder.CreateLoad(retAlloca->getAllocatedType(), retAlloca,
+                                       "retreload");
 #else
       auto result = Builder.CreateLoad(retAlloca, "retreload");
 #endif
@@ -2486,7 +2495,8 @@ void createInvertedTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
 
     if (dretAlloca) {
 #if LLVM_VERSION_MAJOR > 7
-      auto result = Builder.CreateLoad(dretAlloca->getAllocatedType(), dretAlloca, "dretreload");
+      auto result = Builder.CreateLoad(dretAlloca->getAllocatedType(),
+                                       dretAlloca, "dretreload");
 #else
       auto result = Builder.CreateLoad(dretAlloca, "dretreload");
 #endif
@@ -2750,7 +2760,8 @@ void createInvertedTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
            "only loops with one backedge are presently supported");
 
 #if LLVM_VERSION_MAJOR > 7
-    Value *av = phibuilder.CreateLoad(loopContext.var->getType(), loopContext.antivaralloc);
+    Value *av = phibuilder.CreateLoad(loopContext.var->getType(),
+                                      loopContext.antivaralloc);
 #else
     Value *av = phibuilder.CreateLoad(loopContext.antivaralloc);
 #endif
@@ -2918,8 +2929,10 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
       if (aug.tapeType) {
         assert(tape);
-        auto tapep =
-            bb.CreatePointerCast(tape, PointerType::get(aug.tapeType, cast<PointerType>(tape->getType())->getAddressSpace()));
+        auto tapep = bb.CreatePointerCast(
+            tape, PointerType::get(
+                      aug.tapeType,
+                      cast<PointerType>(tape->getType())->getAddressSpace()));
 #if LLVM_VERSION_MAJOR > 7
         auto truetape = bb.CreateLoad(aug.tapeType, tapep, "tapeld");
 #else
@@ -3307,7 +3320,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         auto tapep = BuilderZ.CreatePointerCast(
             additionalValue, PointerType::getUnqual(augmenteddata->tapeType));
 #if LLVM_VERSION_MAJOR > 7
-        LoadInst *truetape = BuilderZ.CreateLoad(augmenteddata->tapeType, tapep, "truetape");
+        LoadInst *truetape =
+            BuilderZ.CreateLoad(augmenteddata->tapeType, tapep, "truetape");
 #else
         LoadInst *truetape = BuilderZ.CreateLoad(tapep, "truetape");
 #endif

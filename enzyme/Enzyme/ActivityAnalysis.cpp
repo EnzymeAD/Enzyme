@@ -919,7 +919,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
         return true;
       }
     }
-    if (ce->getOpcode() == Instruction::GetElementPtr && llvm::all_of(ce->operand_values(), [&](Value *v) { return isConstantValue(TR, v); })) {
+    if (ce->getOpcode() == Instruction::GetElementPtr &&
+        llvm::all_of(ce->operand_values(),
+                     [&](Value *v) { return isConstantValue(TR, v); })) {
       if (isConstantValue(TR, ce->getOperand(0))) {
         if (EnzymePrintActivity)
           llvm::errs() << " VALUE const cast from gep operand " << *Val << "\n";

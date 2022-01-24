@@ -911,7 +911,9 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
 
         IRBuilder<> build(containedloops.back().first.incvar->getNextNode());
 #if LLVM_VERSION_MAJOR > 7
-        Value *allocation = build.CreateLoad(cast<PointerType>(storeInto->getType())->getElementType(), storeInto);
+        Value *allocation = build.CreateLoad(
+            cast<PointerType>(storeInto->getType())->getElementType(),
+            storeInto);
 #else
         Value *allocation = build.CreateLoad(storeInto);
 #endif
@@ -982,8 +984,11 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
           /*inForwardPass*/ true, v, containedloops);
 
 #if LLVM_VERSION_MAJOR > 7
-      storeInto = v.CreateLoad(cast<PointerType>(storeInto->getType())->getElementType(), storeInto);
-      storeInto = v.CreateGEP(cast<PointerType>(storeInto->getType())->getElementType(), storeInto, idx);
+      storeInto = v.CreateLoad(
+          cast<PointerType>(storeInto->getType())->getElementType(), storeInto);
+      storeInto =
+          v.CreateGEP(cast<PointerType>(storeInto->getType())->getElementType(),
+                      storeInto, idx);
 #else
       storeInto = v.CreateLoad(storeInto);
       storeInto = v.CreateGEP(storeInto, idx);
@@ -1211,8 +1216,8 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
         if (allocationPreheaders[i] != contexts[j].preheader) {
           if (!inForwardPass) {
 #if LLVM_VERSION_MAJOR > 7
-            reverseMap[contexts[j].var] =
-                RB->CreateLoad(contexts[j].var->getType(), contexts[j].antivaralloc);
+            reverseMap[contexts[j].var] = RB->CreateLoad(
+                contexts[j].var->getType(), contexts[j].antivaralloc);
 #else
             reverseMap[contexts[j].var] =
                 RB->CreateLoad(contexts[j].antivaralloc);
@@ -1360,7 +1365,8 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
           ConstantInt::get(Type::getInt8Ty(cache->getContext()), 1), subidx));
 
 #if LLVM_VERSION_MAJOR > 7
-      Value *loadChunk = v.CreateLoad(cast<PointerType>(loc->getType())->getElementType(), loc);
+      Value *loadChunk = v.CreateLoad(
+          cast<PointerType>(loc->getType())->getElementType(), loc);
 #else
       Value *loadChunk = v.CreateLoad(loc);
 #endif
@@ -1461,7 +1467,8 @@ Value *CacheUtility::getCachePointer(bool inForwardPass, IRBuilder<> &BuilderM,
   for (int i = sublimits.size() - 1; i >= 0; i--) {
     // Lookup the next allocation pointer
 #if LLVM_VERSION_MAJOR > 7
-    next = BuilderM.CreateLoad(cast<PointerType>(next->getType())->getElementType(), next);
+    next = BuilderM.CreateLoad(
+        cast<PointerType>(next->getType())->getElementType(), next);
 #else
     next = BuilderM.CreateLoad(next);
 #endif
@@ -1519,7 +1526,8 @@ Value *CacheUtility::getCachePointer(bool inForwardPass, IRBuilder<> &BuilderM,
         idx = BuilderM.CreateMul(idx, es, "", /*NUW*/ true, /*NSW*/ true);
       }
 #if LLVM_VERSION_MAJOR > 7
-      next = BuilderM.CreateGEP(cast<PointerType>(next->getType())->getElementType(), next, idx);
+      next = BuilderM.CreateGEP(
+          cast<PointerType>(next->getType())->getElementType(), next, idx);
 #else
       next = BuilderM.CreateGEP(next, idx);
 #endif
@@ -1540,7 +1548,8 @@ llvm::Value *CacheUtility::loadFromCachePointer(llvm::IRBuilder<> &BuilderM,
                                                 llvm::Value *cache) {
   // Retrieve the actual result
 #if LLVM_VERSION_MAJOR > 7
-  auto result = BuilderM.CreateLoad(cast<PointerType>(cptr->getType())->getElementType(), cptr);
+  auto result = BuilderM.CreateLoad(
+      cast<PointerType>(cptr->getType())->getElementType(), cptr);
 #else
   auto result = BuilderM.CreateLoad(cptr);
 #endif
@@ -1584,7 +1593,9 @@ Value *CacheUtility::lookupValueFromCache(bool inForwardPass,
   // Optionally apply the additional offset
   if (extraOffset) {
 #if LLVM_VERSION_MAJOR > 7
-    cptr = BuilderM.CreateGEP(cast<PointerType>(cptr->getType())->getElementType(), cptr, extraOffset);
+    cptr =
+        BuilderM.CreateGEP(cast<PointerType>(cptr->getType())->getElementType(),
+                           cptr, extraOffset);
 #else
     cptr = BuilderM.CreateGEP(cptr, extraOffset);
 #endif

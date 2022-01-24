@@ -440,8 +440,7 @@ public:
 
     // determine width
 #if LLVM_VERSION_MAJOR >= 14
-    for (auto [i, found] = std::tuple{0, false}; i < CI->arg_size();
-         ++i)
+    for (auto [i, found] = std::tuple{0, false}; i < CI->arg_size(); ++i)
 #else
     for (auto [i, found] = std::tuple{0, false}; i < CI->getNumArgOperands();
          ++i)
@@ -523,7 +522,9 @@ public:
                                width));
             for (size_t i = 0; i < width; ++i) {
 #if LLVM_VERSION_MAJOR > 7
-              Value *elem = Builder.CreateStructGEP(cast<PointerType>(sretPt->getType())->getElementType(), sretPt, i);
+              Value *elem = Builder.CreateStructGEP(
+                  cast<PointerType>(sretPt->getType())->getElementType(),
+                  sretPt, i);
 #else
               Value *elem = Builder.CreateStructGEP(sretPt, i);
 #endif
@@ -595,7 +596,9 @@ public:
             differet = res;
             if (CI->paramHasAttr(i, Attribute::ByVal)) {
 #if LLVM_VERSION_MAJOR > 7
-              differet = Builder.CreateLoad(cast<PointerType>(differet->getType())->getElementType(), differet);
+              differet = Builder.CreateLoad(
+                  cast<PointerType>(differet->getType())->getElementType(),
+                  differet);
 #else
               differet = Builder.CreateLoad(differet);
 #endif
@@ -606,7 +609,8 @@ public:
             tape = res;
             if (CI->paramHasAttr(i, Attribute::ByVal)) {
 #if LLVM_VERSION_MAJOR > 7
-              tape = Builder.CreateLoad(cast<PointerType>(tape->getType())->getElementType(), tape);
+              tape = Builder.CreateLoad(
+                  cast<PointerType>(tape->getType())->getElementType(), tape);
 #else
               tape = Builder.CreateLoad(tape);
 #endif
@@ -926,10 +930,12 @@ public:
         auto AL = EB.CreateAlloca(tape->getType());
         Builder.CreateStore(tape, AL);
 #if LLVM_VERSION_MAJOR > 7
-        tape = Builder.CreateLoad(tapeType, 
+        tape = Builder.CreateLoad(
+            tapeType,
             Builder.CreatePointerCast(AL, PointerType::getUnqual(tapeType)));
 #else
-        tape = Builder.CreateLoad(Builder.CreatePointerCast(AL, PointerType::getUnqual(tapeType)));
+        tape = Builder.CreateLoad(
+            Builder.CreatePointerCast(AL, PointerType::getUnqual(tapeType)));
 #endif
       }
       assert(tape->getType() == tapeType);
@@ -1081,7 +1087,8 @@ public:
         if (StructType *st = cast<StructType>(diffret->getType())) {
           for (unsigned int i = 0; i < st->getNumElements(); i++) {
 #if LLVM_VERSION_MAJOR > 7
-            Value *sgep = Builder.CreateStructGEP(cast<PointerType>(sret->getType())->getElementType(), sret, i);
+            Value *sgep = Builder.CreateStructGEP(
+                cast<PointerType>(sret->getType())->getElementType(), sret, i);
 #else
             Value *sgep = Builder.CreateStructGEP(sret, i);
 #endif

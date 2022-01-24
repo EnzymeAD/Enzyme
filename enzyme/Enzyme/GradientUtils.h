@@ -1672,14 +1672,16 @@ public:
       for (auto i : idxs)
         sv.push_back(i);
 #if LLVM_VERSION_MAJOR > 7
-      ptr = BuilderM.CreateGEP(ptr->getType()->getPointerElementType(), ptr, sv);
+      ptr =
+          BuilderM.CreateGEP(ptr->getType()->getPointerElementType(), ptr, sv);
 #else
       ptr = BuilderM.CreateGEP(ptr, sv);
 #endif
       cast<GetElementPtrInst>(ptr)->setIsInBounds(true);
     }
 #if LLVM_VERSION_MAJOR > 7
-    Value *old = BuilderM.CreateLoad(ptr->getType()->getPointerElementType(), ptr);
+    Value *old =
+        BuilderM.CreateLoad(ptr->getType()->getPointerElementType(), ptr);
 #else
     Value *old = BuilderM.CreateLoad(ptr);
 #endif
@@ -1851,7 +1853,9 @@ public:
         const auto &idx = riter->first;
         if (idx.var) {
 #if LLVM_VERSION_MAJOR > 7
-          antimap[idx.var] = tbuild.CreateLoad(cast<PointerType>(idx.antivaralloc->getType())->getElementType(), idx.antivaralloc);
+          antimap[idx.var] = tbuild.CreateLoad(
+              cast<PointerType>(idx.antivaralloc->getType())->getElementType(),
+              idx.antivaralloc);
 #else
           antimap[idx.var] = tbuild.CreateLoad(idx.antivaralloc);
 #endif
@@ -1859,9 +1863,12 @@ public:
       }
     }
 
-    Value *metaforfree = unwrapM(storeInto, tbuild, antimap, UnwrapMode::LegalFullUnwrap);
+    Value *metaforfree =
+        unwrapM(storeInto, tbuild, antimap, UnwrapMode::LegalFullUnwrap);
 #if LLVM_VERSION_MAJOR > 7
-    LoadInst *forfree = cast<LoadInst>(tbuild.CreateLoad(cast<PointerType>(metaforfree->getType())->getElementType(), metaforfree));
+    LoadInst *forfree = cast<LoadInst>(tbuild.CreateLoad(
+        cast<PointerType>(metaforfree->getType())->getElementType(),
+        metaforfree));
 #else
     LoadInst *forfree = cast<LoadInst>(tbuild.CreateLoad(metaforfree));
 #endif
@@ -1948,10 +1955,12 @@ public:
     assert(ptr);
     if (OrigOffset) {
 #if LLVM_VERSION_MAJOR > 7
-      ptr = BuilderM.CreateGEP(cast<PointerType>(ptr->getType())->getElementType(),
-          ptr, lookupM(getNewFromOriginal(OrigOffset), BuilderM));
+      ptr = BuilderM.CreateGEP(
+          cast<PointerType>(ptr->getType())->getElementType(), ptr,
+          lookupM(getNewFromOriginal(OrigOffset), BuilderM));
 #else
-      ptr = BuilderM.CreateGEP(ptr, lookupM(getNewFromOriginal(OrigOffset), BuilderM));
+      ptr = BuilderM.CreateGEP(
+          ptr, lookupM(getNewFromOriginal(OrigOffset), BuilderM));
 #endif
     }
 
@@ -2025,7 +2034,8 @@ public:
               ConstantInt::get(Type::getInt64Ty(vt->getContext()), 0),
               ConstantInt::get(Type::getInt32Ty(vt->getContext()), i)};
 #if LLVM_VERSION_MAJOR > 7
-          auto vptr = BuilderM.CreateGEP(cast<PointerType>(ptr->getType())->getElementType(), ptr, Idxs);
+          auto vptr = BuilderM.CreateGEP(
+              cast<PointerType>(ptr->getType())->getElementType(), ptr, Idxs);
 #else
           auto vptr = BuilderM.CreateGEP(ptr, Idxs);
 #endif
