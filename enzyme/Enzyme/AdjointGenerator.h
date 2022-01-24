@@ -4650,8 +4650,14 @@ public:
                   (funcName == "MPI_Isend" || funcName == "PMPI_Isend")
                       ? (int)MPI_CallType::ISEND
                       : (int)MPI_CallType::IRECV),
+#if LLVM_VERSION_MAJOR > 7
               BuilderZ.CreateInBoundsGEP(cast<PointerType>(impialloc->getType())->getElementType(), impialloc,
-                                         {c0_64, ConstantInt::get(i32, 6)}));
+                                         {c0_64, ConstantInt::get(i32, 6)})
+#else
+              BuilderZ.CreateInBoundsGEP(impialloc,
+                                         {c0_64, ConstantInt::get(i32, 6)})
+#endif
+              );
         }
         if (Mode == DerivativeMode::ReverseModeGradient ||
             Mode == DerivativeMode::ReverseModeCombined) {
@@ -4822,8 +4828,13 @@ public:
         };
         auto impi = StructType::get(call.getContext(), types, false);
 
+#if LLVM_VERSION_MAJOR > 7
         Value *d_reqp = Builder2.CreateLoad(PointerType::getUnqual(impi), Builder2.CreatePointerCast(
             d_req, PointerType::getUnqual(PointerType::getUnqual(impi))));
+#else
+        Value *d_reqp = Builder2.CreateLoad(Builder2.CreatePointerCast(
+            d_req, PointerType::getUnqual(PointerType::getUnqual(impi))));
+#endif
 
         Value *isNull = Builder2.CreateICmpEQ(
             d_reqp, Constant::getNullValue(d_reqp->getType()));
@@ -4842,7 +4853,11 @@ public:
         Builder2.CreateCondBr(isNull, endBlock, nonnullBlock);
         Builder2.SetInsertPoint(nonnullBlock);
 
+#if LLVM_VERSION_MAJOR > 7
         Value *cache = Builder2.CreateLoad(cast<PointerType>(d_reqp->getType())->getElementType(), d_reqp);
+#else
+        Value *cache = Builder2.CreateLoad(d_reqp);
+#endif
         if (shouldFree()) {
           CallInst *freecall = cast<CallInst>(
               CallInst::CreateFree(d_reqp, Builder2.GetInsertBlock()));
@@ -4921,7 +4936,11 @@ public:
         idx->addIncoming(inc, eloopBlock);
 
         Value *idxs[] = {idx};
+#if LLVM_VERSION_MAJOR > 7
         Value *d_req = Builder2.CreateGEP(cast<PointerType>(d_req_orig->getType())->getElementType(), d_req_orig, idxs);
+#else
+        Value *d_req = Builder2.CreateGEP(d_req_orig, idxs);
+#endif
 
         auto i64 = Type::getInt64Ty(call.getContext());
         Type *types[] = {
@@ -4935,8 +4954,13 @@ public:
         };
         auto impi = StructType::get(call.getContext(), types, false);
 
+#if LLVM_VERSION_MAJOR > 7
         Value *d_reqp = Builder2.CreateLoad(impi, Builder2.CreatePointerCast(
             d_req, PointerType::getUnqual(PointerType::getUnqual(impi))));
+#else
+        Value *d_reqp = Builder2.CreateLoad(Builder2.CreatePointerCast(
+            d_req, PointerType::getUnqual(PointerType::getUnqual(impi))));
+#endif
 
         Value *isNull = Builder2.CreateICmpEQ(
             d_reqp, Constant::getNullValue(d_reqp->getType()));
@@ -4949,7 +4973,11 @@ public:
         Builder2.CreateCondBr(isNull, eloopBlock, nonnullBlock);
         Builder2.SetInsertPoint(nonnullBlock);
 
+#if LLVM_VERSION_MAJOR > 7
         Value *cache = Builder2.CreateLoad(cast<PointerType>(d_reqp->getType())->getElementType(), d_reqp);
+#else
+        Value *cache = Builder2.CreateLoad(d_reqp);
+#endif
         if (shouldFree()) {
           CallInst *freecall = cast<CallInst>(
               CallInst::CreateFree(d_reqp, Builder2.GetInsertBlock()));
@@ -7888,7 +7916,11 @@ public:
               std::vector<Value *>(
                   {ptrshadow, gutils->getNewFromOriginal(call.getArgOperand(1)),
                    gutils->getNewFromOriginal(call.getArgOperand(2))}));
+#if LLVM_VERSION_MAJOR > 7
           val = BuilderZ.CreateLoad(cast<PointerType>(ptrshadow->getType())->getElementType(), ptrshadow);
+#else
+          val = BuilderZ.CreateLoad(ptrshadow);
+#endif
           val = gutils->cacheForReverse(BuilderZ, val,
                                         getIndex(orig, CacheType::Shadow));
 
@@ -7961,8 +7993,12 @@ public:
         //}
       } else if (Mode == DerivativeMode::ReverseModeCombined && shouldFree()) {
         IRBuilder<> Builder2(newCall->getNextNode());
+#if LLVM_VERSION_MAJOR > 7
         auto load = Builder2.CreateLoad(cast<PointerType>(call.getOperand(0)->getType())->getElementType(),
             gutils->getNewFromOriginal(call.getOperand(0)), "posix_preread");
+#else
+        auto load = Builder2.CreateLoad(gutils->getNewFromOriginal(call.getOperand(0)), "posix_preread");
+#endif
         Builder2.SetInsertPoint(&call);
         getReverseBuilder(Builder2);
         auto freeCall = cast<CallInst>(CallInst::CreateFree(
@@ -8173,7 +8209,11 @@ public:
         PointerType *fptype = PointerType::getUnqual(FTy);
         newcalled = BuilderZ.CreatePointerCast(newcalled,
                                                PointerType::getUnqual(fptype));
+#if LLVM_VERSION_MAJOR > 7
         newcalled = BuilderZ.CreateLoad(fptype, newcalled);
+#else
+        newcalled = BuilderZ.CreateLoad(newcalled);
+#endif
       }
 
       assert(newcalled);
@@ -8399,7 +8439,11 @@ public:
             ft->isVarArg()));
         newcalled = BuilderZ.CreatePointerCast(newcalled,
                                                PointerType::getUnqual(fptype));
+#if LLVM_VERSION_MAJOR > 7
         newcalled = BuilderZ.CreateLoad(fptype, newcalled);
+#else
+        newcalled = BuilderZ.CreateLoad(newcalled);
+#endif
         tapeIdx = 0;
 
         if (subretType == DIFFE_TYPE::DUP_ARG ||
@@ -8670,7 +8714,11 @@ public:
         assert(tape);
         auto tapep = BuilderZ.CreatePointerCast(
             tape, PointerType::getUnqual(fnandtapetype->tapeType));
+#if LLVM_VERSION_MAJOR > 7
         auto truetape = BuilderZ.CreateLoad(fnandtapetype->tapeType, tapep, "tapeld");
+#else
+        auto truetape = BuilderZ.CreateLoad(tapep, "tapeld");
+#endif
         truetape->setMetadata("enzyme_mustcache",
                               MDNode::get(truetape->getContext(), {}));
 
@@ -8781,8 +8829,13 @@ public:
           ft->isVarArg()));
       newcalled =
           Builder2.CreatePointerCast(newcalled, PointerType::getUnqual(fptype));
+#if LLVM_VERSION_MAJOR > 7
       newcalled =
           Builder2.CreateLoad(fptype, Builder2.CreateConstGEP1_64(fptype, newcalled, 1));
+#else
+      newcalled =
+          Builder2.CreateLoad(Builder2.CreateConstGEP1_64(newcalled, 1));
+#endif
     }
 
     if (subretType == DIFFE_TYPE::OUT_DIFF) {

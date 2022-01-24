@@ -1542,7 +1542,7 @@ llvm::Value *CacheUtility::loadFromCachePointer(llvm::IRBuilder<> &BuilderM,
 #if LLVM_VERSION_MAJOR > 7
   auto result = BuilderM.CreateLoad(cast<PointerType>(cptr->getType())->getElementType(), cptr);
 #else
-  auto result = BuilderM.CreateLoad(ptr);
+  auto result = BuilderM.CreateLoad(cptr);
 #endif
 
   // Apply requisite invariant, alignment, etc
