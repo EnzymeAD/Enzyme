@@ -589,8 +589,16 @@ public:
     // thereby resulting in a conflict.
     {
       auto found = newToOriginalFn.find(A);
-      if (found != newToOriginalFn.end())
-        assert(newToOriginalFn.find(B) == newToOriginalFn.end());
+      if (found != newToOriginalFn.end()) {
+        auto foundB = newToOriginalFn.find(B);
+        if (foundB != newToOriginalFn.end()) {
+            llvm::errs() << "oldFunc: " << *oldFunc << "\n";
+            llvm::errs() << "newFunc: " << *newFunc << "\n";
+            llvm::errs() << "A: " << *A << " origA: " << *found->second << "\n";
+            llvm::errs() << "B: " << *B << " origA: " << *foundB->second << "\n";
+        }
+        assert(foundB == newToOriginalFn.end());
+      }
     }
 
     CacheUtility::replaceAWithB(A, B, storeInCache);

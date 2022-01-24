@@ -61,8 +61,8 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* @malloc(i64 80)
 ; CHECK-NEXT:   %a17_malloccache = bitcast i8* %malloccall to float**
-; CHECK-NEXT:   %malloccall9 = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* @malloc(i64 80)
-; CHECK-NEXT:   %cond.lcssa_malloccache = bitcast i8* %malloccall9 to i64*
+; CHECK-NEXT:   %[[malloccall9:.+]] = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* @malloc(i64 80)
+; CHECK-NEXT:   %cond.lcssa_malloccache = bitcast i8* %[[malloccall9]] to i64*
 ; CHECK-NEXT:   %[[malloccall15:.+]] = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* @malloc(i64 80)
 ; CHECK-NEXT:   %s.0.lcssa.i_malloccache = bitcast i8* %[[malloccall15]] to i64*
 ; CHECK-NEXT:   br label %for.body
@@ -98,18 +98,18 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; CHECK: for.cond6.preheader.preheader:                    ; preds = %_ZNK11OuterStruct4sizeEv.exit
 ; CHECK-NEXT:   %2 = getelementptr inbounds float*, float** %a17_malloccache, i64 %iv
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %cond, 4
-; CHECK-NEXT:   %malloccall5 = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
-; CHECK-NEXT:   %a17_malloccache6 = bitcast i8* %malloccall5 to float*
-; CHECK-NEXT:   store float* %a17_malloccache6, float** %2, align 4, !invariant.group !2
+; CHECK-NEXT:   %[[malloccall5:.+]] = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
+; CHECK-NEXT:   %[[a17_malloccache6:.+]] = bitcast i8* %[[malloccall5]] to float*
+; CHECK-NEXT:   store float* %[[a17_malloccache6]], float** %2, align 4, !invariant.group !2
 ; CHECK-NEXT:   %a17.pre = load float, float* %in, align 8
 ; CHECK-NEXT:   br label %for.cond6.preheader
 
 ; CHECK: for.cond6.preheader:                              ; preds = %for.cond6.preheader, %for.cond6.preheader.preheader
-; CHECK-NEXT:   %iv3 = phi i64 [ %iv.next4, %for.cond6.preheader ], [ 0, %for.cond6.preheader.preheader ]
+; CHECK-NEXT:   %iv3 = phi i64 [ 0, %for.cond6.preheader.preheader ], [ %iv.next4, %for.cond6.preheader ] 
 ; CHECK-NEXT:   %iv.next4 = add nuw nsw i64 %iv3, 1
 ; CHECK-NEXT:   %sq = fmul float %a17.pre, %a17.pre
 ; CHECK-NEXT:   store float %sq, float* %out, align 8
-; CHECK-NEXT:   %3 = getelementptr inbounds float, float* %a17_malloccache6, i64 %iv3
+; CHECK-NEXT:   %3 = getelementptr inbounds float, float* %[[a17_malloccache6]], i64 %iv3
 ; CHECK-NEXT:   store float %a17.pre, float* %3, align 4, !invariant.group !3
 ; CHECK-NEXT:   %cmp3.not = icmp eq i64 %iv.next4, %cond
 ; CHECK-NEXT:   br i1 %cmp3.not, label %for.cond.cleanup4, label %for.cond6.preheader
@@ -125,7 +125,7 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 
 ; CHECK: invertentry:                                      ; preds = %invertfor.body
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall)
-; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall9)
+; CHECK-NEXT:   tail call void @free(i8* nonnull %[[malloccall9]])
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %[[malloccall15]])
 ; CHECK-NEXT:   ret void
 
@@ -159,7 +159,7 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; CHECK: invertfor.cond6.preheader:                        ; preds = %invertfor.cond.cleanup4.loopexit, %incinvertfor.cond6.preheader
 ; CHECK-NEXT:   %"a17'de.1" = phi float [ %"a17'de.2", %invertfor.cond.cleanup4.loopexit ], [ 0.000000e+00, %incinvertfor.cond6.preheader ]
 ; CHECK-NEXT:   %"sq'de.1" = phi float [ %"sq'de.2", %invertfor.cond.cleanup4.loopexit ], [ 0.000000e+00, %incinvertfor.cond6.preheader ]
-; CHECK-NEXT:   %"iv3'ac.0" = phi i64 [ %_unwrap12, %invertfor.cond.cleanup4.loopexit ], [ %18, %incinvertfor.cond6.preheader ]
+; CHECK-NEXT:   %"iv3'ac.0" = phi i64 [ %[[_unwrap12:.+]], %invertfor.cond.cleanup4.loopexit ], [ %18, %incinvertfor.cond6.preheader ]
 ; CHECK-NEXT:   %9 = load float, float* %"out'", align 8
 ; CHECK-NEXT:   store float 0.000000e+00, float* %"out'", align 8
 ; CHECK-NEXT:   %10 = fadd fast float %"sq'de.1", %9
@@ -181,7 +181,7 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; CHECK: invertfor.cond.cleanup4.loopexit:                 ; preds = %invertfor.cond.cleanup4
 ; CHECK-NEXT:   %19 = getelementptr inbounds i64, i64* %cond.lcssa_malloccache, i64 %"iv'ac.0"
 ; CHECK-NEXT:   %20 = load i64, i64* %19, align 8, !invariant.group !0
-; CHECK-NEXT:   %_unwrap12 = add i64 %20, -1
+; CHECK-NEXT:   %[[_unwrap12]] = add i64 %20, -1
 ; CHECK-NEXT:   %.phi.trans.insert = getelementptr inbounds float*, float** %a17_malloccache, i64 %"iv'ac.0"
 ; CHECK-NEXT:   %.pre = load float*, float** %.phi.trans.insert, align 8, !invariant.group !2
 ; CHECK-NEXT:   br label %invertfor.cond6.preheader
@@ -240,9 +240,9 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; BEFORE: for.cond6.preheader.preheader:                    ; preds = %_ZNK11OuterStruct4sizeEv.exit
 ; BEFORE-NEXT:   %2 = getelementptr inbounds float*, float** %a17_malloccache, i64 %iv
 ; BEFORE-NEXT:   %mallocsize = mul nuw nsw i64 %cond, 4
-; BEFORE-NEXT:   %malloccall5 = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
-; BEFORE-NEXT:   %a17_malloccache6 = bitcast i8* %malloccall5 to float*
-; BEFORE-NEXT:   store float* %a17_malloccache6, float** %2, align 4, !invariant.group !2
+; BEFORE-NEXT:   %[[malloccall5:.+]] = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
+; BEFORE-NEXT:   %[[a17_malloccache6:.+]] = bitcast i8* %[[malloccall5]] to float*
+; BEFORE-NEXT:   store float* %[[a17_malloccache6]], float** %2, align 4, !invariant.group !2
 ; BEFORE-NEXT:   %a17.pre = load float, float* %in, align 8
 ; BEFORE-NEXT:   br label %for.cond6.preheader
 
@@ -251,7 +251,7 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; BEFORE-NEXT:   %iv.next4 = add nuw nsw i64 %iv3, 1
 ; BEFORE-NEXT:   %sq = fmul float %a17.pre, %a17.pre
 ; BEFORE-NEXT:   store float %sq, float* %out, align 8
-; BEFORE-NEXT:   %3 = getelementptr inbounds float, float* %a17_malloccache6, i64 %iv3
+; BEFORE-NEXT:   %3 = getelementptr inbounds float, float* %[[a17_malloccache6]], i64 %iv3
 ; BEFORE-NEXT:   store float %a17.pre, float* %3, align 4, !invariant.group !3
 ; BEFORE-NEXT:   %cmp3.not = icmp eq i64 %iv.next4, %cond
 ; BEFORE-NEXT:   br i1 %cmp3.not, label %for.cond.cleanup4.loopexit, label %for.cond6.preheader
@@ -307,7 +307,7 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; BEFORE: invertfor.cond6.preheader:                        ; preds = %invertfor.cond.cleanup4.loopexit, %incinvertfor.cond6.preheader
 ; BEFORE-NEXT:   %"a17'de.1" = phi float [ %"a17'de.2", %invertfor.cond.cleanup4.loopexit ], [ 0.000000e+00, %incinvertfor.cond6.preheader ]
 ; BEFORE-NEXT:   %"sq'de.1" = phi float [ %"sq'de.2", %invertfor.cond.cleanup4.loopexit ], [ 0.000000e+00, %incinvertfor.cond6.preheader ]
-; BEFORE-NEXT:   %"iv3'ac.0" = phi i64 [ %_unwrap19, %invertfor.cond.cleanup4.loopexit ], [ %21, %incinvertfor.cond6.preheader ]
+; BEFORE-NEXT:   %"iv3'ac.0" = phi i64 [ %[[_unwrap19:.+]], %invertfor.cond.cleanup4.loopexit ], [ %21, %incinvertfor.cond6.preheader ]
 ; BEFORE-NEXT:   %10 = load float, float* %"out'", align 8
 ; BEFORE-NEXT:   store float 0.000000e+00, float* %"out'", align 8
 ; BEFORE-NEXT:   %11 = fadd fast float %"sq'de.1", %10
@@ -331,7 +331,7 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; BEFORE: invertfor.cond.cleanup4.loopexit:                 ; preds = %invertfor.cond.cleanup4
 ; BEFORE-NEXT:   %22 = getelementptr inbounds i64, i64* %"cond!manual_lcssa16_malloccache", i64 %"iv'ac.0"
 ; BEFORE-NEXT:   %23 = load i64, i64* %22, align 8, !invariant.group !4
-; BEFORE-NEXT:   %_unwrap19 = add i64 %23, -1
+; BEFORE-NEXT:   %[[_unwrap19]] = add i64 %23, -1
 ; BEFORE-NEXT:   br label %invertfor.cond6.preheader
 
 ; BEFORE: invertfor.cond.cleanup4:                          ; preds = %for.cond.cleanup, %incinvertfor.body

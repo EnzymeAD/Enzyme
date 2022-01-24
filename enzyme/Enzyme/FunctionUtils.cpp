@@ -802,9 +802,9 @@ void CanonicalizeLoops(Function *F, FunctionAnalysisManager &FAM) {
   AssumptionCache &AC = FAM.getResult<AssumptionAnalysis>(*F);
   TargetLibraryInfo &TLI = FAM.getResult<TargetLibraryAnalysis>(*F);
   MustExitScalarEvolution SE(*F, TLI, AC, DT, LI);
-  for (Loop *L : LI) {
+  for (Loop *L : LI.getLoopsInPreorder()) {
     auto pair =
-        InsertNewCanonicalIV(L, Type::getInt64Ty(F->getContext()), "tiv");
+        InsertNewCanonicalIV(L, Type::getInt64Ty(F->getContext()), "iv");
     PHINode *CanonicalIV = pair.first;
     assert(CanonicalIV);
     RemoveRedundantIVs(

@@ -131,6 +131,63 @@ std::pair<PHINode *, Instruction *> InsertNewCanonicalIV(Loop *L, Type *Ty,
   return std::pair<PHINode *, Instruction *>(CanonicalIV, Inc);
 }
 
+// Create a new canonical induction variable of Type Ty for Loop L
+// Return the variable and the increment instruction
+std::pair<PHINode *, Instruction *> FindCanonicalIV(Loop *L, Type *Ty) {
+  assert(L);
+  assert(Ty);
+
+  BasicBlock *Header = L->getHeader();
+  assert(Header);
+  for (BasicBlock::iterator II = Header->begin(); isa<PHINode>(II); ++II) {
+    PHINode *PN = cast<PHINode>(II);
+    if (PN->getType() != Ty)
+      continue;
+
+    Instruction *Inc = nullptr;
+    bool legal = true;
+    for (BasicBlock *Pred : predecessors(Header)) {
+      assert(Pred);
+      if (L->contains(Pred)) {
+        auto Inc2 =
+            dyn_cast<BinaryOperator>(PN->getIncomingValueForBlock(Pred));
+        if (!Inc2 || Inc2->getOpcode() != Instruction::Add ||
+            Inc2->getOperand(0) != PN) {
+          legal = false;
+          break;
+        }
+        auto CI = dyn_cast<ConstantInt>(Inc2->getOperand(1));
+        if (!CI || !CI->isOne()) {
+          legal = false;
+          break;
+        }
+        if (Inc) {
+          if (Inc2 != Inc) {
+            legal = false;
+            break;
+          }
+        } else
+          Inc = Inc2;
+      } else {
+        auto CI = dyn_cast<ConstantInt>(PN->getIncomingValueForBlock(Pred));
+        if (!CI || !CI->isZero()) {
+          legal = false;
+          break;
+        }
+      }
+    }
+    if (!legal)
+      continue;
+    if (!Inc)
+      continue;
+    if (Inc != Header->getFirstNonPHIOrDbg())
+      Inc->moveBefore(Header->getFirstNonPHIOrDbg());
+    return std::make_pair(PN, Inc);
+  }
+  Header->dump();
+  assert(0 && "Could not find canonical IV");
+}
+
 // Attempt to rewrite all phinode's in the loop in terms of the
 // induction variable
 void RemoveRedundantIVs(BasicBlock *Header, PHINode *CanonicalIV,
@@ -424,16 +481,13 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
 
   loopContexts[L].offset = nullptr;
   loopContexts[L].allocLimit = nullptr;
-  auto pair = InsertNewCanonicalIV(L, Type::getInt64Ty(BB->getContext()));
+  // A precisely matching canonical IV shouldve been run during preprocessing.
+  auto pair = FindCanonicalIV(L, Type::getInt64Ty(BB->getContext()));
   PHINode *CanonicalIV = pair.first;
   auto incVar = pair.second;
   assert(CanonicalIV);
   loopContexts[L].var = CanonicalIV;
   loopContexts[L].incvar = incVar;
-  RemoveRedundantIVs(
-      loopContexts[L].header, CanonicalIV, SE,
-      [&](Instruction *I, Value *V) { replaceAWithB(I, V); },
-      [&](Instruction *I) { erase(I); });
   CanonicalizeLatches(L, loopContexts[L].header, loopContexts[L].preheader,
                       CanonicalIV, SE, *this, incVar,
                       getLatches(L, loopContexts[L].exitBlocks));
