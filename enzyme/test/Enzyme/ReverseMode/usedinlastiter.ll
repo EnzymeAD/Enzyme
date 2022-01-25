@@ -200,12 +200,12 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; BEFORE-NEXT: entry:
 ; BEFORE-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* @malloc(i64 80)
 ; BEFORE-NEXT:   %a17_malloccache = bitcast i8* %malloccall to float**
-; BEFORE-NEXT:   %malloccall12 = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* @malloc(i64 80)
-; BEFORE-NEXT:   %"a14!manual_lcssa10_malloccache" = bitcast i8* %malloccall12 to i64*
-; BEFORE-NEXT:   %malloccall17 = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* @malloc(i64 80)
-; BEFORE-NEXT:   %"cond!manual_lcssa16_malloccache" = bitcast i8* %malloccall17 to i64*
-; BEFORE-NEXT:   %malloccall20 = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* @malloc(i64 80)
-; BEFORE-NEXT:   %s.0.lcssa.i_malloccache = bitcast i8* %malloccall20 to i64*
+; BEFORE-NEXT:   %[[malloccall12:.+]] = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* @malloc(i64 80)
+; BEFORE-NEXT:   %[[a14manual_lcssa10_malloccache:.+]] = bitcast i8* %[[malloccall12]] to i64*
+; BEFORE-NEXT:   %[[malloccall17:.+]] = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* @malloc(i64 80)
+; BEFORE-NEXT:   %[[condmanual_lcssa16_malloccache:.+]] = bitcast i8* %[[malloccall17]] to i64*
+; BEFORE-NEXT:   %[[malloccall20:.+]] = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* @malloc(i64 80)
+; BEFORE-NEXT:   %s.0.lcssa.i_malloccache = bitcast i8* %[[malloccall20]] to i64*
 ; BEFORE-NEXT:   br label %for.body
 
 ; BEFORE: for.body:                                         ; preds = %for.cond.cleanup4, %entry
@@ -224,14 +224,14 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; BEFORE-NEXT:   br label %merge
 
 ; BEFORE: merge:                                            ; preds = %cond.false, %for.body2
-; BEFORE-NEXT:   %"a14!manual_lcssa11" = phi i64 [ %a14, %cond.false ], [ undef, %for.body2 ]
+; BEFORE-NEXT:   %[[a14manual_lcssa11:.+]] = phi i64 [ %a14, %cond.false ], [ undef, %for.body2 ]
 ; BEFORE-NEXT:   %cond = phi i64 [ 2, %for.body2 ], [ %a14, %cond.false ]
 ; BEFORE-NEXT:   %cmp = icmp eq i64 %iv.next2, 7
 ; BEFORE-NEXT:   br i1 %cmp, label %_ZNK11OuterStruct4sizeEv.exit, label %for.body2
 
 ; BEFORE: _ZNK11OuterStruct4sizeEv.exit:                    ; preds = %merge
-; BEFORE-NEXT:   %0 = getelementptr inbounds i64, i64* %"a14!manual_lcssa10_malloccache", i64 %iv
-; BEFORE-NEXT:   store i64 %"a14!manual_lcssa11", i64* %0, align 8, !invariant.group !0
+; BEFORE-NEXT:   %0 = getelementptr inbounds i64, i64* %[[a14manual_lcssa10_malloccache]], i64 %iv
+; BEFORE-NEXT:   store i64 %[[a14manual_lcssa11]], i64* %0, align 8, !invariant.group !0
 ; BEFORE-NEXT:   %1 = getelementptr inbounds i64, i64* %s.0.lcssa.i_malloccache, i64 %iv
 ; BEFORE-NEXT:   store i64 %cond, i64* %1, align 8, !invariant.group !1
 ; BEFORE-NEXT:   %cmp3.not233 = icmp eq i64 %cond, 0
@@ -247,7 +247,7 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; BEFORE-NEXT:   br label %for.cond6.preheader
 
 ; BEFORE: for.cond6.preheader:                              ; preds = %for.cond6.preheader, %for.cond6.preheader.preheader
-; BEFORE-NEXT:   %iv3 = phi i64 [ %iv.next4, %for.cond6.preheader ], [ 0, %for.cond6.preheader.preheader ]
+; BEFORE-NEXT:   %iv3 = phi i64 [ 0, %for.cond6.preheader.preheader ], [ %iv.next4, %for.cond6.preheader ] 
 ; BEFORE-NEXT:   %iv.next4 = add nuw nsw i64 %iv3, 1
 ; BEFORE-NEXT:   %sq = fmul float %a17.pre, %a17.pre
 ; BEFORE-NEXT:   store float %sq, float* %out, align 8
@@ -257,7 +257,7 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; BEFORE-NEXT:   br i1 %cmp3.not, label %for.cond.cleanup4.loopexit, label %for.cond6.preheader
 
 ; BEFORE: for.cond.cleanup4.loopexit:                       ; preds = %for.cond6.preheader
-; BEFORE-NEXT:   %4 = getelementptr inbounds i64, i64* %"cond!manual_lcssa16_malloccache", i64 %iv
+; BEFORE-NEXT:   %4 = getelementptr inbounds i64, i64* %[[condmanual_lcssa16_malloccache]], i64 %iv
 ; BEFORE-NEXT:   store i64 %cond, i64* %4, align 8, !invariant.group !4
 ; BEFORE-NEXT:   br label %for.cond.cleanup4
 
@@ -272,9 +272,9 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 
 ; BEFORE: invertentry:                                      ; preds = %invertfor.body
 ; BEFORE-NEXT:   tail call void @free(i8* nonnull %malloccall)
-; BEFORE-NEXT:   tail call void @free(i8* nonnull %malloccall12)
-; BEFORE-NEXT:   tail call void @free(i8* nonnull %malloccall17)
-; BEFORE-NEXT:   tail call void @free(i8* nonnull %malloccall20)
+; BEFORE-NEXT:   tail call void @free(i8* nonnull %[[malloccall12]])
+; BEFORE-NEXT:   tail call void @free(i8* nonnull %[[malloccall17]])
+; BEFORE-NEXT:   tail call void @free(i8* nonnull %[[malloccall20]])
 ; BEFORE-NEXT:   ret void
 
 ; BEFORE: invertfor.body:                                   ; preds = %invertmerge
@@ -329,7 +329,7 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; BEFORE-NEXT:   br label %invertfor.cond6.preheader
 
 ; BEFORE: invertfor.cond.cleanup4.loopexit:                 ; preds = %invertfor.cond.cleanup4
-; BEFORE-NEXT:   %22 = getelementptr inbounds i64, i64* %"cond!manual_lcssa16_malloccache", i64 %"iv'ac.0"
+; BEFORE-NEXT:   %22 = getelementptr inbounds i64, i64* %[[condmanual_lcssa16_malloccache]], i64 %"iv'ac.0"
 ; BEFORE-NEXT:   %23 = load i64, i64* %22, align 8, !invariant.group !4
 ; BEFORE-NEXT:   %[[_unwrap19]] = add i64 %23, -1
 ; BEFORE-NEXT:   br label %invertfor.cond6.preheader

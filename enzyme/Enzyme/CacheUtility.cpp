@@ -128,6 +128,7 @@ std::pair<PHINode *, Instruction *> InsertNewCanonicalIV(Loop *L, Type *Ty,
       CanonicalIV->addIncoming(ConstantInt::get(Ty, 0), Pred);
     }
   }
+  assert(L->getCanonicalInductionVariable() == CanonicalIV);
   return std::pair<PHINode *, Instruction *>(CanonicalIV, Inc);
 }
 
@@ -198,9 +199,38 @@ void RemoveRedundantIVs(BasicBlock *Header, PHINode *CanonicalIV,
   assert(CanonicalIV);
   SmallVector<Instruction *, 8> IVsToRemove;
 
-  // This scope is necessary to ensure scevexpander cleans up before we erase
-  // things
-  {
+  auto CanonicalSCEV = SE.getSCEV(CanonicalIV);
+
+  for (BasicBlock::iterator II = Header->begin(); isa<PHINode>(II);) {
+    PHINode *PN = cast<PHINode>(II);
+    ++II;
+    if (PN == CanonicalIV)
+      continue;
+    if (!SE.isSCEVable(PN->getType()))
+      continue;
+    const SCEV *S = SE.getSCEV(PN);
+    if (SE.getCouldNotCompute() == S || isa<SCEVUnknown>(S))
+      continue;
+    // we may expand code for phi where not legal (computing with
+    // subloop expressions). Check that this isn't the case
+    if (!SE.dominates(S, Header))
+      continue;
+
+    if (S == CanonicalSCEV) {
+      replacer(PN, CanonicalIV);
+      eraser(PN);
+      continue;
+    }
+
+    IRBuilder<> B(PN);
+    auto Tmp = B.CreatePHI(PN->getType(), 0);
+    for (auto Pred : predecessors(Header))
+      Tmp->addIncoming(UndefValue::get(Tmp->getType()), Pred);
+    replacer(PN, Tmp);
+    eraser(PN);
+
+    // This scope is necessary to ensure scevexpander cleans up before we erase
+    // things
 #if LLVM_VERSION_MAJOR >= 12
     SCEVExpander Exp(SE, Header->getParent()->getParent()->getDataLayout(),
                      "enzyme");
@@ -209,35 +239,12 @@ void RemoveRedundantIVs(BasicBlock *Header, PHINode *CanonicalIV,
         SE, Header->getParent()->getParent()->getDataLayout(), "enzyme");
 #endif
 
-    for (BasicBlock::iterator II = Header->begin(); isa<PHINode>(II); ++II) {
-      PHINode *PN = cast<PHINode>(II);
-      if (PN == CanonicalIV)
-        continue;
-      if (!SE.isSCEVable(PN->getType()))
-        continue;
-      const SCEV *S = SE.getSCEV(PN);
-      if (SE.getCouldNotCompute() == S)
-        continue;
-      // we may expand code for phi where not legal (computing with
-      // subloop expressions). Check that this isn't the case
-      if (!SE.dominates(S, Header))
-        continue;
-      // We place that at first non phi as it may produce a non-phi instruction
-      // and must thus be expanded after all phi's
-      Value *NewIV =
-          Exp.expandCodeFor(S, PN->getType(), Header->getFirstNonPHI());
-      assert(NewIV->getType() == PN->getType());
-      if (NewIV == PN) {
-        continue;
-      }
-
-      replacer(PN, NewIV);
-      IVsToRemove.push_back(PN);
-    }
-  }
-
-  for (Instruction *PN : IVsToRemove) {
-    eraser(PN);
+    // We place that at first non phi as it may produce a non-phi instruction
+    // and must thus be expanded after all phi's
+    Value *NewIV =
+        Exp.expandCodeFor(S, Tmp->getType(), Header->getFirstNonPHI());
+    replacer(Tmp, NewIV);
+    eraser(Tmp);
   }
 }
 
