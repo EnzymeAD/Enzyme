@@ -597,17 +597,11 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
   assert(Limit);
   Value *LimitVar = nullptr;
 
-  if (newFunc->getName().contains("outline")) {
-    newFunc->dump();
-    llvm::errs() << "lim: " << *Limit << "\n";
-   }
   if (SE.getCouldNotCompute() != Limit) {
 
     if (CanonicalIV == nullptr) {
       report_fatal_error("Couldn't get canonical IV.");
     }
-
-    LoadInst *omp_lb_post = nullptr;
 
     SmallPtrSet<const SCEV *, 2> PotentialMins;
     SmallVector<const SCEV *, 2> Todo = {Limit};
@@ -626,81 +620,76 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
       } else
         PotentialMins.insert(S);
     }
-    CallInst *initCall = nullptr;
     for (auto op : PotentialMins) {
       auto SM = dyn_cast<SCEVMulExpr>(op);
       if (!SM)
         continue;
       if (SM->getNumOperands() != 2)
         continue;
-      for (int i=0; i<2; i++)
-      if (auto C = dyn_cast<SCEVConstant>(SM->getOperand(i))) {
-        // is minus 1
-        if (C->getAPInt().isAllOnesValue()) {
-          const SCEV *prev = SM->getOperand(1-i);
-          while (true) {
-            if (auto ext = dyn_cast<SCEVZeroExtendExpr>(prev)) {
-              prev = ext->getOperand();
-              continue;
+      for (int i = 0; i < 2; i++)
+        if (auto C = dyn_cast<SCEVConstant>(SM->getOperand(i))) {
+          // is minus 1
+          if (C->getAPInt().isAllOnesValue()) {
+            const SCEV *prev = SM->getOperand(1 - i);
+            while (true) {
+              if (auto ext = dyn_cast<SCEVZeroExtendExpr>(prev)) {
+                prev = ext->getOperand();
+                continue;
+              }
+              if (auto ext = dyn_cast<SCEVSignExtendExpr>(prev)) {
+                prev = ext->getOperand();
+                continue;
+              }
+              break;
             }
-            if (auto ext = dyn_cast<SCEVSignExtendExpr>(prev)) {
-              prev = ext->getOperand();
-              continue;
+            if (auto V = dyn_cast<SCEVUnknown>(prev)) {
+              if (auto omp_lb_post = dyn_cast<LoadInst>(V->getValue())) {
+                auto AI =
+                    dyn_cast<AllocaInst>(omp_lb_post->getPointerOperand());
+                if (AI) {
+                  for (auto u : AI->users()) {
+                    CallInst *call = dyn_cast<CallInst>(u);
+                    if (!call)
+                      continue;
+                    Function *F = call->getCalledFunction();
+                    if (!F)
+                      continue;
+                    if (F->getName() == "__kmpc_for_static_init_4" ||
+                        F->getName() == "__kmpc_for_static_init_4u" ||
+                        F->getName() == "__kmpc_for_static_init_8" ||
+                        F->getName() == "__kmpc_for_static_init_8u") {
+                      Value *lb = nullptr;
+                      for (auto u : call->getArgOperand(4)->users()) {
+                        if (auto si = dyn_cast<StoreInst>(u)) {
+                          lb = si->getValueOperand();
+                          break;
+                        }
+                      }
+                      assert(lb);
+                      Value *ub = nullptr;
+                      for (auto u : call->getArgOperand(5)->users()) {
+                        if (auto si = dyn_cast<StoreInst>(u)) {
+                          ub = si->getValueOperand();
+                          break;
+                        }
+                      }
+                      assert(ub);
+                      IRBuilder<> post(omp_lb_post->getNextNode());
+                      loopContexts[L].allocLimit = post.CreateZExtOrTrunc(
+                          post.CreateSub(ub, lb), CanonicalIV->getType());
+                      loopContexts[L].offset = post.CreateZExtOrTrunc(
+                          post.CreateSub(omp_lb_post, lb, "", true, true),
+                          CanonicalIV->getType());
+                      goto endOMP;
+                    }
+                  }
+                }
+              }
             }
-            break;
-          }
-          if (auto V = dyn_cast<SCEVUnknown>(prev)) {
-            if (auto LI = dyn_cast<LoadInst>(V->getValue())) {
-      auto AI = dyn_cast<AllocaInst>(LI->getPointerOperand());
-      if (AI) {
-        for (auto u : AI->users()) {
-          CallInst *call = dyn_cast<CallInst>(u);
-          if (!call)
-            continue;
-          Function *F = call->getCalledFunction();
-          if (!F)
-            continue;
-          if (F->getName() == "__kmpc_for_static_init_4" ||
-              F->getName() == "__kmpc_for_static_init_4u" ||
-              F->getName() == "__kmpc_for_static_init_8" ||
-              F->getName() == "__kmpc_for_static_init_8u") {
-            initCall = call;
-	    omp_lb_post = LI;
-	    goto icLoc;
           }
         }
-      }
-	    }
-          }
-        }
-      }
     }
-    if (initCall) {
-icLoc:;
-	    llvm::errs() << "ic: " << *initCall << "\n";
-       Value *lb = nullptr;
-      for (auto u : initCall->getArgOperand(4)->users()) {
-        if (auto si = dyn_cast<StoreInst>(u)) {
-          lb = si->getValueOperand();
-          break;
-        }
-      }
-      assert(lb);
-      Value *ub = nullptr;
-      for (auto u : initCall->getArgOperand(5)->users()) {
-        if (auto si = dyn_cast<StoreInst>(u)) {
-          ub = si->getValueOperand();
-          break;
-        }
-      }
-      assert(ub);
-      IRBuilder<> post(omp_lb_post->getNextNode());
-      loopContexts[L].allocLimit = post.CreateZExtOrTrunc(
-          post.CreateSub(ub, lb), CanonicalIV->getType());
-      loopContexts[L].offset = post.CreateZExtOrTrunc(
-          post.CreateSub(omp_lb_post, lb, "", true, true),
-          CanonicalIV->getType());
-    }
+  endOMP:;
 
     if (Limit->getType() != CanonicalIV->getType())
       Limit = SE.getZeroExtendExpr(Limit, CanonicalIV->getType());
