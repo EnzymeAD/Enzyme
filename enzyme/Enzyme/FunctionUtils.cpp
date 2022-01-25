@@ -1441,8 +1441,6 @@ Function *PreProcessCache::preprocessForClone(Function *F,
   {
     auto PA = LoopSimplifyPass().run(*NewF, FAM);
     FAM.invalidate(*NewF, PA);
-    //auto PA2 = LCSSAPass().run(*NewF, FAM);
-    //FAM.invalidate(*NewF, PA2);
   }
 
   {

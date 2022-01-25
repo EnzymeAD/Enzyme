@@ -14,48 +14,34 @@ target triple = "x86_64-unknown-linux-gnu"
 @4 = private unnamed_addr constant %1 { i32 0, i32 514, i32 0, i32 0, i8* getelementptr inbounds ([44 x i8], [44 x i8]* @3, i32 0, i32 0) }, align 8
 @5 = private unnamed_addr constant %1 { i32 0, i32 2, i32 0, i32 0, i8* getelementptr inbounds ([43 x i8], [43 x i8]* @1, i32 0, i32 0) }, align 8
 
-declare dso_local void @_ZNSt8ios_base4InitC1Ev(%0* nonnull align 1 dereferenceable(1)) unnamed_addr #0
+; Function Attrs: nounwind
+declare dso_local void @__kmpc_for_static_init_8(%1*, i32, i32, i64*, i64*, i64*, i64*, i32, i32)
 
 ; Function Attrs: nounwind
-declare dso_local void @_ZNSt8ios_base4InitD1Ev(%0* nonnull align 1 dereferenceable(1)) unnamed_addr #1
-
-; Function Attrs: nofree nounwind
-declare dso_local i32 @__cxa_atexit(void (i8*)*, i8*, i8*) local_unnamed_addr #2
-
-; Function Attrs: argmemonly nofree nosync nounwind willreturn
-declare void @llvm.lifetime.start.p0i8(i64 immarg, i8* nocapture) #3
-
-; Function Attrs: argmemonly nofree nosync nounwind willreturn
-declare void @llvm.lifetime.end.p0i8(i64 immarg, i8* nocapture) #3
+declare void @__kmpc_for_static_fini(%1*, i32)
 
 ; Function Attrs: nounwind
-declare dso_local void @__kmpc_for_static_init_8(%1*, i32, i32, i64*, i64*, i64*, i64*, i32, i32) local_unnamed_addr #4
-
-; Function Attrs: nounwind
-declare void @__kmpc_for_static_fini(%1*, i32) local_unnamed_addr #4
-
-; Function Attrs: nounwind
-declare !callback !5 void @__kmpc_fork_call(%1*, i32, void (i32*, i32*, ...)*, ...) local_unnamed_addr #4
+declare !callback !5 void @__kmpc_fork_call(%1*, i32, void (i32*, i32*, ...)*, ...)
 
 ; Function Attrs: mustprogress nofree nounwind willreturn
-declare dso_local double @sqrt(double) local_unnamed_addr #5
+declare dso_local double @sqrt(double)
 
-define void @caller(i8* %arg, i8* %arg1) local_unnamed_addr {
+define void @caller(i8* %arg, i8* %arg1) {
 bb:
-  call void @_Z17__enzyme_autodiffPvS_S_(i8* bitcast (void (double*, double*)* @6 to i8*), i8* nonnull %arg, i8* nonnull %arg1, i8* nonnull %arg, i8* nonnull %arg1) #4
+  call void @_Z17__enzyme_autodiffPvS_S_(i8* bitcast (void (double*, double*)* @func to i8*), i8* nonnull %arg, i8* nonnull %arg1, i8* nonnull %arg, i8* nonnull %arg1)
   ret void
 }
 
-declare dso_local void @_Z17__enzyme_autodiffPvS_S_(i8*, i8*, i8*, i8*, i8*) local_unnamed_addr #0
+declare dso_local void @_Z17__enzyme_autodiffPvS_S_(i8*, i8*, i8*, i8*, i8*)
 
-define internal void @6(double* %arg, double* %arg1) {
+define internal void @func(double* %arg, double* %arg1) {
 entry:
   call void (%1*, i32, void (i32*, i32*, ...)*, ...) @__kmpc_fork_call(%1* nonnull @5, i32 10, void (i32*, i32*, ...)* bitcast (void (i32*, i32*, double*, double*)* @outlined to void (i32*, i32*, ...)*), double* nonnull %arg, double* nonnull %arg1)
   ret void
 }
 
 ; Function Attrs: alwaysinline norecurse nounwind uwtable
-define internal void @outlined(i32* noalias nocapture readonly %arg, i32* noalias nocapture readnone %arg1, double* nocapture nonnull readonly %arg2, double* nocapture nonnull %arg3) #6 {
+define internal void @outlined(i32* noalias nocapture readonly %arg, i32* noalias nocapture readnone %arg1, double* nocapture nonnull readonly %arg2, double* nocapture nonnull %arg3) {
 entry:
   %omp.lb = alloca i64, align 4
   %omp.ub = alloca i64, align 4
@@ -66,7 +52,7 @@ entry:
   store i64 1, i64* %omp.step, align 4, !tbaa !7
   store i64 0, i64* %omp.last, align 4, !tbaa !7
   %i7 = load i32, i32* %arg, align 4, !tbaa !7
-  call void @__kmpc_for_static_init_8(%1* nonnull @2, i32 %i7, i32 34, i64* nonnull %omp.last, i64* nonnull %omp.lb, i64* nonnull %omp.ub, i64* nonnull %omp.step, i32 1, i32 1) #4
+  call void @__kmpc_for_static_init_8(%1* nonnull @2, i32 %i7, i32 34, i64* nonnull %omp.last, i64* nonnull %omp.lb, i64* nonnull %omp.ub, i64* nonnull %omp.step, i32 1, i32 1)
   %i8 = load i64, i64* %omp.ub, align 4, !tbaa !7
   %i9 = icmp slt i64 %i8, 10
   %i10 = select i1 %i9, i64 %i8, i64 9
@@ -105,14 +91,6 @@ exit:                                             ; preds = %bb23, %bb
   ret void
 }
 
-attributes #0 = { "frame-pointer"="none" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+cx8,+fxsr,+mmx,+sse,+sse2,+x87" "tune-cpu"="generic" }
-attributes #1 = { nounwind "frame-pointer"="none" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+cx8,+fxsr,+mmx,+sse,+sse2,+x87" "tune-cpu"="generic" }
-attributes #2 = { nofree nounwind }
-attributes #3 = { argmemonly nofree nosync nounwind willreturn }
-attributes #4 = { nounwind }
-attributes #5 = { mustprogress nofree nounwind willreturn "frame-pointer"="none" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+cx8,+fxsr,+mmx,+sse,+sse2,+x87" "tune-cpu"="generic" }
-attributes #6 = { alwaysinline norecurse nounwind uwtable "frame-pointer"="none" "min-legal-vector-width"="0" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+cx8,+fxsr,+mmx,+sse,+sse2,+x87" "tune-cpu"="generic" }
-
 !llvm.module.flags = !{!0, !1, !2, !3}
 !llvm.ident = !{!4}
 !nvvm.annotations = !{}
@@ -131,15 +109,15 @@ attributes #6 = { alwaysinline norecurse nounwind uwtable "frame-pointer"="none"
 !11 = !{!12, !12, i64 0}
 !12 = !{!"double", !9, i64 0}
 
-; CHECK: define internal void @diffe(double* %arg, double* %"arg'", double* %arg1, double* %"arg1'") {
+; CHECK: define internal void @diffefunc(double* %arg, double* %"arg'", double* %arg1, double* %"arg1'") {
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[i0:.+]] = alloca double*, align 8
-; CHECK-NEXT:   %[[i1:.+]] = alloca double*, align 8
+; CHECK-NEXT:   %[[i0:.+]] = alloca double*
+; CHECK-NEXT:   %[[i1:.+]] = alloca double*
 ; CHECK-NEXT:   %[[i2:.+]] = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* @malloc(i64 80)
 ; CHECK-NEXT:   %i18_malloccache_unwrap = bitcast i8* %2 to double*
-; CHECK-NEXT:   store double* %i18_malloccache_unwrap, double** %[[i0]], align 8
+; CHECK-NEXT:   store double* %i18_malloccache_unwrap, double** %[[i0]]
 ; CHECK-NEXT:   call void (%1*, i32, void (i32*, i32*, ...)*, ...) @__kmpc_fork_call(%1* @5, i32 5, void (i32*, i32*, ...)* bitcast (void (i32*, i32*, double*, double*, double*, double*, double**)* @augmented_outlined.1 to void (i32*, i32*, ...)*), double* %arg, double* %"arg'", double* %arg1, double* %"arg1'", double** nonnull %[[i0]])
-; CHECK-NEXT:   store double* %i18_malloccache_unwrap, double** %[[i1]], align 8
+; CHECK-NEXT:   store double* %i18_malloccache_unwrap, double** %[[i1]]
 ; CHECK-NEXT:   call void (%1*, i32, void (i32*, i32*, ...)*, ...) @__kmpc_fork_call(%1* @5, i32 5, void (i32*, i32*, ...)* bitcast (void (i32*, i32*, double*, double*, double*, double*, double**)* @diffeoutlined to void (i32*, i32*, ...)*), double* %arg, double* %"arg'", double* %arg1, double* %"arg1'", double** nonnull %[[i1]])
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %[[i2]])
 ; CHECK-NEXT:   ret void
