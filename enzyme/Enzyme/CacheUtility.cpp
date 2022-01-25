@@ -597,6 +597,10 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
   assert(Limit);
   Value *LimitVar = nullptr;
 
+  if (newFunc->getName().contains("outline")) {
+    newFunc->dump();
+    llvm::errs() << "lim: " << *Limit << "\n";
+   }
   if (SE.getCouldNotCompute() != Limit) {
 
     if (CanonicalIV == nullptr) {
@@ -622,16 +626,18 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
       } else
         PotentialMins.insert(S);
     }
+    CallInst *initCall = nullptr;
     for (auto op : PotentialMins) {
       auto SM = dyn_cast<SCEVMulExpr>(op);
       if (!SM)
         continue;
       if (SM->getNumOperands() != 2)
         continue;
-      if (auto C = dyn_cast<SCEVConstant>(SM->getOperand(0))) {
+      for (int i=0; i<2; i++)
+      if (auto C = dyn_cast<SCEVConstant>(SM->getOperand(i))) {
         // is minus 1
         if (C->getAPInt().isAllOnesValue()) {
-          const SCEV *prev = SM->getOperand(1);
+          const SCEV *prev = SM->getOperand(1-i);
           while (true) {
             if (auto ext = dyn_cast<SCEVZeroExtendExpr>(prev)) {
               prev = ext->getOperand();
@@ -644,36 +650,8 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
             break;
           }
           if (auto V = dyn_cast<SCEVUnknown>(prev)) {
-            if (omp_lb_post = dyn_cast<LoadInst>(V->getValue()))
-              break;
-          }
-        }
-      }
-      if (auto C = dyn_cast<SCEVConstant>(SM->getOperand(1))) {
-        // is minus 1
-        if (C->getAPInt().isAllOnesValue()) {
-          const SCEV *prev = SM->getOperand(0);
-          while (true) {
-            if (auto ext = dyn_cast<SCEVZeroExtendExpr>(prev)) {
-              prev = ext->getOperand();
-              continue;
-            }
-            if (auto ext = dyn_cast<SCEVSignExtendExpr>(prev)) {
-              prev = ext->getOperand();
-              continue;
-            }
-            break;
-          }
-          if (auto V = dyn_cast<SCEVUnknown>(prev)) {
-            if (omp_lb_post = dyn_cast<LoadInst>(V->getValue()))
-              break;
-          }
-        }
-      }
-    }
-    CallInst *initCall = nullptr;
-    if (omp_lb_post) {
-      auto AI = dyn_cast<AllocaInst>(omp_lb_post->getPointerOperand());
+            if (auto LI = dyn_cast<LoadInst>(V->getValue())) {
+      auto AI = dyn_cast<AllocaInst>(LI->getPointerOperand());
       if (AI) {
         for (auto u : AI->users()) {
           CallInst *call = dyn_cast<CallInst>(u);
@@ -687,12 +665,20 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
               F->getName() == "__kmpc_for_static_init_8" ||
               F->getName() == "__kmpc_for_static_init_8u") {
             initCall = call;
+	    omp_lb_post = LI;
+	    goto icLoc;
+          }
+        }
+      }
+	    }
           }
         }
       }
     }
     if (initCall) {
-      Value *lb = nullptr;
+icLoc:;
+	    llvm::errs() << "ic: " << *initCall << "\n";
+       Value *lb = nullptr;
       for (auto u : initCall->getArgOperand(4)->users()) {
         if (auto si = dyn_cast<StoreInst>(u)) {
           lb = si->getValueOperand();

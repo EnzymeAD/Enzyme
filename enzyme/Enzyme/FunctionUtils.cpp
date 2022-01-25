@@ -1381,10 +1381,6 @@ Function *PreProcessCache::preprocessForClone(Function *F,
 
   ReplaceReallocs(NewF);
 
-  // Run LoopSimplifyPass to ensure preheaders exist on all loops
-  auto PA = LoopSimplifyPass().run(*NewF, FAM);
-  FAM.invalidate(*NewF, PA);
-
   if (mode == DerivativeMode::ReverseModePrimal ||
       mode == DerivativeMode::ReverseModeGradient ||
       mode == DerivativeMode::ReverseModeCombined) {
@@ -1426,6 +1422,21 @@ Function *PreProcessCache::preprocessForClone(Function *F,
     PA.preserve<PhiValuesAnalysis>();
 #endif
     FAM.invalidate(*NewF, PA);
+#if LLVM_VERSION_MAJOR >= 12
+    SimplifyCFGOptions scfgo;
+#else
+    SimplifyCFGOptions scfgo(
+        /*unsigned BonusThreshold=*/1, /*bool ForwardSwitchCond=*/false,
+        /*bool SwitchToLookup=*/false, /*bool CanonicalLoops=*/true,
+        /*bool SinkCommon=*/true, /*AssumptionCache *AssumpCache=*/nullptr);
+#endif
+    SimplifyCFGPass(scfgo).run(*NewF, FAM);
+    CorrelatedValuePropagationPass().run(*NewF, FAM);
+
+  // Run LoopSimplifyPass to ensure preheaders exist on all loops
+
+   auto PA2 = LoopSimplifyPass().run(*NewF, FAM);
+  FAM.invalidate(*NewF, PA2);
     if (EnzymeNameInstructions) {
       for (auto &Arg : NewF->args()) {
         if (!Arg.hasName())
