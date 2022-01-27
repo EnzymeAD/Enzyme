@@ -2040,6 +2040,7 @@ public:
     }
     default:
     def:;
+      llvm::errs() << *gutils->oldFunc->getParent() << "\n";
       llvm::errs() << *gutils->oldFunc << "\n";
       for (auto &arg : gutils->oldFunc->args()) {
         llvm::errs() << " constantarg[" << arg
@@ -2351,6 +2352,7 @@ public:
     }
     default:
     def:;
+      llvm::errs() << *gutils->oldFunc->getParent() << "\n";
       llvm::errs() << *gutils->oldFunc << "\n";
       for (auto &arg : gutils->oldFunc->args()) {
         llvm::errs() << " constantarg[" << arg
