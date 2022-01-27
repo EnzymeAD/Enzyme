@@ -800,6 +800,18 @@ void TypeAnalyzer::considerTBAA() {
           TT.insert({}, BaseType::Pointer);
           updateAnalysis(call->getOperand(0), TT.Only(-1), call);
         }
+        if (F) {
+          std::set<std::string> JuliaKnownTypes = {
+              "julia.gc_alloc_obj",
+              "jl_alloc_array_1d",
+              "jl_alloc_array_2d",
+              "jl_alloc_array_3d",
+          };
+          if (JuliaKnownTypes.count(F->getName().str())) {
+            visitCallInst(*call);
+            continue;
+          }
+        }
       }
 
       TypeTree vdptr = parseTBAA(I, DL);
@@ -994,13 +1006,64 @@ void TypeAnalyzer::run() {
     while (!Invalid && workList.size()) {
       auto todo = *workList.begin();
       workList.erase(workList.begin());
-      if (auto ci = dyn_cast<CallInst>(todo)) {
-        pendingCalls.push_back(ci);
-        continue;
+      if (auto call = dyn_cast<CallInst>(todo)) {
+
+        Function *ci = call->getCalledFunction();
+
+#if LLVM_VERSION_MAJOR >= 11
+        if (auto castinst = dyn_cast<ConstantExpr>(call->getCalledOperand()))
+#else
+        if (auto castinst = dyn_cast<ConstantExpr>(call->getCalledValue()))
+#endif
+        {
+          if (castinst->isCast())
+            if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
+              ci = fn;
+            }
+        }
+        if (ci && !ci->empty()) {
+
+          StringRef funcName = "";
+          if (ci->hasFnAttribute("enzyme_math"))
+            funcName = ci->getFnAttribute("enzyme_math").getValueAsString();
+          else
+            funcName = ci->getName();
+
+          if (interprocedural.CustomRules.find(funcName.str()) !=
+              interprocedural.CustomRules.end()) {
+            pendingCalls.push_back(call);
+            continue;
+          }
+        }
       }
-      if (auto ci = dyn_cast<InvokeInst>(todo)) {
-        pendingCalls.push_back(ci);
-        continue;
+      if (auto call = dyn_cast<InvokeInst>(todo)) {
+        Function *ci = call->getCalledFunction();
+
+#if LLVM_VERSION_MAJOR >= 11
+        if (auto castinst = dyn_cast<ConstantExpr>(call->getCalledOperand()))
+#else
+        if (auto castinst = dyn_cast<ConstantExpr>(call->getCalledValue()))
+#endif
+        {
+          if (castinst->isCast())
+            if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
+              ci = fn;
+            }
+        }
+        if (ci && !ci->empty()) {
+
+          StringRef funcName = "";
+          if (ci->hasFnAttribute("enzyme_math"))
+            funcName = ci->getFnAttribute("enzyme_math").getValueAsString();
+          else
+            funcName = ci->getName();
+
+          if (interprocedural.CustomRules.find(funcName.str()) !=
+              interprocedural.CustomRules.end()) {
+            pendingCalls.push_back(call);
+            continue;
+          }
+        }
       }
       visitValue(*todo);
     }
