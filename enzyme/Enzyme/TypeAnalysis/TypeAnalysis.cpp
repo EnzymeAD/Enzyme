@@ -1029,7 +1029,7 @@ void TypeAnalyzer::run() {
           else
             funcName = ci->getName();
 
-          if (interprocedural.CustomRules.find(funcName.str()) !=
+          if (interprocedural.CustomRules.find(funcName.str()) ==
               interprocedural.CustomRules.end()) {
             pendingCalls.push_back(call);
             continue;
@@ -1058,7 +1058,7 @@ void TypeAnalyzer::run() {
           else
             funcName = ci->getName();
 
-          if (interprocedural.CustomRules.find(funcName.str()) !=
+          if (interprocedural.CustomRules.find(funcName.str()) ==
               interprocedural.CustomRules.end()) {
             pendingCalls.push_back(call);
             continue;
@@ -1392,11 +1392,12 @@ void TypeAnalyzer::visitGetElementPtrInst(GetElementPtrInst &gep) {
 
   TypeTree gepData0;
   TypeTree pointerData0;
-  if (direction & DOWN)
-    gepData0 = getAnalysis(&gep).Data0();
   if (direction & UP)
+    gepData0 = getAnalysis(&gep).Data0();
+  if (direction & DOWN)
     pointerData0 = pointerAnalysis.Data0();
 
+  bool seenIdx = false;
   for (auto vec : getSet(idnext, idnext.size() - 1)) {
     auto g2 = GetElementPtrInst::Create(gep.getSourceElementType(),
                                         gep.getOperand(0), vec);
@@ -1423,19 +1424,30 @@ void TypeAnalyzer::visitGetElementPtrInst(GetElementPtrInst &gep) {
                 8;
     }
 
-    if (direction & UP)
-      upTree |=
+    if (direction & DOWN) {
+      auto shft =
           pointerData0.ShiftIndices(DL, /*init offset*/ off,
                                     /*max size*/ maxSize, /*newoffset*/ 0);
+      if (seenIdx)
+        downTree &= shft;
+      else
+        downTree = shft;
+    }
 
-    if (direction & DOWN)
-      downTree |= gepData0.ShiftIndices(DL, /*init offset*/ 0, /*max size*/ -1,
+    if (direction & UP) {
+      auto shft = gepData0.ShiftIndices(DL, /*init offset*/ 0, /*max size*/ -1,
                                         /*new offset*/ off);
+      if (seenIdx)
+        upTree |= shft;
+      else
+        upTree = shft;
+    }
+    seenIdx = true;
   }
-  if (direction & UP)
-    updateAnalysis(&gep, upTree.Only(-1), &gep);
   if (direction & DOWN)
-    updateAnalysis(gep.getPointerOperand(), downTree.Only(-1), &gep);
+    updateAnalysis(&gep, downTree.Only(-1), &gep);
+  if (direction & UP)
+    updateAnalysis(gep.getPointerOperand(), upTree.Only(-1), &gep);
 }
 
 void TypeAnalyzer::visitPHINode(PHINode &phi) {
