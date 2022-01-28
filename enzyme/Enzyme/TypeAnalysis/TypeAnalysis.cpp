@@ -310,7 +310,7 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
                                  /*maxSize*/ ObjSize,
                                  /*addOffset*/ Off);
     }
-    Result = Result.CanonicalizeValue(
+    Result.CanonicalizeInPlace(
         (TA.fntypeinfo.Function->getParent()->getDataLayout().getTypeSizeInBits(
              CA->getType()) +
          7) /
@@ -365,7 +365,7 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
 
       Result |= mid;
     }
-    Result = Result.CanonicalizeValue(
+    Result.CanonicalizeInPlace(
         (TA.fntypeinfo.Function->getParent()->getDataLayout().getTypeSizeInBits(
              CD->getType()) +
          7) /
@@ -611,7 +611,7 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
 
   auto &DL = fntypeinfo.Function->getParent()->getDataLayout();
   auto RegSize = (DL.getTypeSizeInBits(Val->getType()) + 7) / 8;
-  Data = Data.CanonicalizeValue(RegSize, DL);
+  Data.CanonicalizeInPlace(RegSize, DL);
   bool Changed =
       analysis[Val].checkedOrIn(Data, /*PointerIntSame*/ false, LegalOr);
 

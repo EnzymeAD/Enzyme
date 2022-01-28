@@ -591,13 +591,22 @@ public:
 
   /// Given that this tree represents something of at most size len,
   /// canonicalize this, creating -1's where possible
-  TypeTree CanonicalizeValue(size_t len, const llvm::DataLayout &dl) const {
+  void CanonicalizeInPlace(size_t len, const llvm::DataLayout &dl) {
+    bool canonicalized = true;
+    for (const auto &pair : mapping) {
+      assert(pair.first.size() != 0);
+      if (pair.first[0] != -1) {
+        canonicalized = false;
+        break;
+      }
+    }
+    if (canonicalized)
+      return;
 
     // Map of indices[1:] => ( End => possible Index[0] )
     std::map<std::vector<int>, std::map<ConcreteType, std::set<int>>> staging;
 
     for (const auto &pair : mapping) {
-      assert(pair.first.size() != 0);
 
       std::vector<int> next;
       for (size_t i = 1; i < pair.first.size(); ++i) {
@@ -613,7 +622,8 @@ public:
       staging[next][pair.second].insert(pair.first[0]);
     }
 
-    TypeTree dat;
+    mapping.clear();
+
     for (auto &pair : staging) {
       auto &pnext = pair.first;
       for (auto &pair2 : pair.second) {
@@ -663,17 +673,15 @@ public:
           next.push_back(v);
 
         if (legalCombine) {
-          dat.insert(next, dt, /*intsAreLegalPointerSub*/ true);
+          insert(next, dt, /*intsAreLegalPointerSub*/ true);
         } else {
           for (auto e : set) {
             next[0] = e;
-            dat.insert(next, dt);
+            insert(next, dt);
           }
         }
       }
     }
-
-    return dat;
   }
 
   /// Keep only pointers (or anything's) to a repeated value (represented by -1)
