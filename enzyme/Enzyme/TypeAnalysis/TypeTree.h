@@ -389,27 +389,16 @@ public:
     return vd;
   }
 
-  // TODO keep type information that is striated
-  // e.g. if you have an i8* [0:Int, 8:Int] => i64* [0:Int, 1:Int]
-  // After a depth len into the index tree, prune any lookups that are not {0}
-  // or {-1}
-  TypeTree KeepForCast(const llvm::DataLayout &dl, llvm::Type *from,
-                       llvm::Type *to) const;
-
-  /// Helper function to prepend an offset
-  static std::vector<int> prependIndex(int Off, const std::vector<int> &Array) {
-    std::vector<int> Result;
-    Result.push_back(Off);
-    for (auto Val : Array)
-      Result.push_back(Val);
-    return Result;
-  }
-
   /// Prepend an offset to all mappings
   TypeTree Only(int Off) const {
     TypeTree Result;
     for (const auto &pair : mapping) {
-      Result.insert(prependIndex(Off, pair.first), pair.second);
+      std::vector<int> Vec;
+      Vec.reserve(pair.first.size() + 1);
+      Vec.push_back(Off);
+      for (auto Val : pair.first)
+        Vec.push_back(Val);
+      Result.insert(Vec, pair.second);
     }
     return Result;
   }
@@ -425,9 +414,7 @@ public:
       assert(pair.first.size() != 0);
 
       if (pair.first[0] == -1) {
-        std::vector<int> next;
-        for (size_t i = 1; i < pair.first.size(); ++i)
-          next.push_back(pair.first[i]);
+        std::vector<int> next(pair.first.begin() + 1, pair.first.end());
         Result.insert(next, pair.second);
       }
     }
@@ -438,9 +425,7 @@ public:
       assert(pair.first.size() != 0);
 
       if (pair.first[0] == 0) {
-        std::vector<int> next;
-        for (size_t i = 1; i < pair.first.size(); ++i)
-          next.push_back(pair.first[i]);
+        std::vector<int> next(pair.first.begin() + 1, pair.first.end());
         // We do insertion like this to force an error
         // on the orIn operation if there is an incompatible
         // merge. The insert operation does not error.
@@ -521,10 +506,7 @@ public:
           continue;
       }
 
-      std::vector<int> next;
-      for (size_t i = 2; i < pair.first.size(); ++i) {
-        next.push_back(pair.first[i]);
-      }
+      std::vector<int> next(pair.first.begin() + 2, pair.first.end());
 
       staging[next][pair.second].insert(pair.first[1]);
     }
@@ -571,6 +553,7 @@ public:
         }
 
         std::vector<int> next;
+        next.reserve(pnext.size() + 1);
         next.push_back(-1);
         for (auto v : pnext)
           next.push_back(v);
@@ -604,14 +587,11 @@ public:
       return;
 
     // Map of indices[1:] => ( End => possible Index[0] )
-    std::map<std::vector<int>, std::map<ConcreteType, std::set<int>>> staging;
+    std::map<const std::vector<int>, std::map<ConcreteType, std::set<int>>> staging;
 
     for (const auto &pair : mapping) {
 
-      std::vector<int> next;
-      for (size_t i = 1; i < pair.first.size(); ++i) {
-        next.push_back(pair.first[i]);
-      }
+      std::vector<int> next(pair.first.begin() + 1, pair.first.end());
       if (pair.first[0] != -1) {
         if ((size_t)pair.first[0] >= len) {
           llvm::errs() << str() << "\n";
@@ -668,6 +648,7 @@ public:
         }
 
         std::vector<int> next;
+        next.reserve(pnext.size() + 1);
         next.push_back(-1);
         for (auto v : pnext)
           next.push_back(v);
