@@ -451,15 +451,17 @@ public:
 
       if (pair.first[0] == -1) {
         std::vector<int> next(pair.first.begin() + 1, pair.first.end());
-        Result.insert(next, pair.second);
+        Result.mapping.insert(
+            std::pair<const std::vector<int>, ConcreteType>(next, pair.second));
+        for (size_t i = 0, Len = next.size(); i < Len; ++i) {
+          if (i == Result.minIndices.size())
+            Result.minIndices.push_back(next[i]);
+          else if (next[i] < Result.minIndices[i])
+            Result.minIndices[i] = next[i];
+        }
       }
     }
     for (const auto &pair : mapping) {
-      if (pair.first.size() == 0) {
-        llvm::errs() << str() << "\n";
-      }
-      assert(pair.first.size() != 0);
-
       if (pair.first[0] == 0) {
         std::vector<int> next(pair.first.begin() + 1, pair.first.end());
         // We do insertion like this to force an error
@@ -849,13 +851,20 @@ public:
 
   /// Keep only mappings where the type is not an `Anything`
   TypeTree PurgeAnything() const {
-    TypeTree dat;
+    TypeTree Result;
+    Result.minIndices.reserve(minIndices.size());
     for (const auto &pair : mapping) {
       if (pair.second == ConcreteType(BaseType::Anything))
         continue;
-      dat.insert(pair.first, pair.second);
+      Result.mapping.insert(pair);
+      for (size_t i = 0, Len = pair.first.size(); i < Len; ++i) {
+        if (i == Result.minIndices.size())
+          Result.minIndices.push_back(pair.first[i]);
+        else if (pair.first[i] < Result.minIndices[i])
+          Result.minIndices[i] = pair.first[i];
+      }
     }
-    return dat;
+    return Result;
   }
 
   /// Replace -1 with 0
@@ -900,10 +909,8 @@ public:
   bool operator=(const TypeTree &RHS) {
     if (*this == RHS)
       return false;
-    mapping.clear();
-    for (const auto &elems : RHS.mapping) {
-      mapping.emplace(elems);
-    }
+    minIndices = RHS.minIndices;
+    mapping = RHS.mapping;
     return true;
   }
 
