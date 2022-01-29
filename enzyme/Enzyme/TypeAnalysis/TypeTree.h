@@ -99,7 +99,6 @@ public:
     todo[0].push_back({});
     int parity = 0;
     for (size_t i = 0, Len = Seq.size(); i < Len - 1; ++i) {
-      std::vector<std::vector<int>> next;
       for (auto prev : todo[parity]) {
         prev.push_back(-1);
         if (mapping.find(prev) != mapping.end())
