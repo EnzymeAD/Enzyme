@@ -88,25 +88,44 @@ public:
   /// Lookup the underlying ConcreteType at a given offset sequence
   /// or Unknown if none exists
   ConcreteType operator[](const std::vector<int> Seq) const {
-    auto Found = mapping.find(Seq);
-    if (Found != mapping.end()) {
-      return Found->second;
-    }
-    for (const auto &pair : mapping) {
-      if (pair.first.size() != Seq.size())
-        continue;
-      bool Match = true;
-      for (unsigned i = 0, size = pair.first.size(); i < size; ++i) {
-        if (pair.first[i] == -1)
-          continue;
-        if (pair.first[i] != Seq[i]) {
-          Match = false;
-          break;
+    auto Found0 = mapping.find(Seq);
+    if (Found0 != mapping.end())
+      return Found0->second;
+    size_t Len = Seq.size();
+    if (Len == 0)
+      return BaseType::Unknown;
+
+    std::vector<std::vector<int>> todo[2];
+    todo[0].push_back({});
+    int parity = 0;
+    for (size_t i = 0, Len = Seq.size(); i < Len - 1; ++i) {
+      std::vector<std::vector<int>> next;
+      for (auto prev : todo[parity]) {
+        prev.push_back(-1);
+        if (mapping.find(prev) != mapping.end())
+          todo[1 - parity].push_back(prev);
+        if (Seq[i] != -1) {
+          prev.back() = Seq[i];
+          if (mapping.find(prev) != mapping.end())
+            todo[1 - parity].push_back(prev);
         }
       }
-      if (!Match)
-        continue;
-      return pair.second;
+      todo[parity].clear();
+      parity = 1 - parity;
+    }
+
+    size_t i = Len - 1;
+    for (auto prev : todo[parity]) {
+      prev.push_back(-1);
+      auto Found = mapping.find(prev);
+      if (Found != mapping.end())
+        return Found->second;
+      if (Seq[i] != -1) {
+        prev.back() = Seq[i];
+        Found = mapping.find(prev);
+        if (Found != mapping.end())
+          return Found->second;
+      }
     }
     return BaseType::Unknown;
   }
