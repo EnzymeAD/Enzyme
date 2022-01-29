@@ -478,7 +478,7 @@ TypeTree TypeAnalyzer::getAnalysis(Value *Val) {
   // must be integral, since it cannot possibly represent a float or pointer
   if (!isa<UndefValue>(Val) && Val->getType()->isIntegerTy() &&
       cast<IntegerType>(Val->getType())->getBitWidth() < 16)
-    return TypeTree(ConcreteType(BaseType::Integer)).Only(-1);
+    return TypeTree(BaseType::Integer).Only(-1);
   if (auto C = dyn_cast<Constant>(Val)) {
     getConstantAnalysis(C, *this, analysis);
     return analysis[Val];
@@ -2217,10 +2217,12 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
     case BinaryOperator::Add:
     case BinaryOperator::Mul:
       // if a + b or a * b == int, then a and b must be ints
-      if (direction & UP)
-        LHS |= TypeTree(AnalysisRet.JustInt()[{}]).Only(-1);
-      if (direction & UP)
-        RHS |= TypeTree(AnalysisRet.JustInt()[{}]).Only(-1);
+      if (direction & UP) {
+        if (AnalysisRet[{}] == BaseType::Integer) {
+          LHS.orIn({-1}, BaseType::Integer);
+          RHS.orIn({-1}, BaseType::Integer);
+        }
+      }
       break;
 
     case BinaryOperator::Xor:

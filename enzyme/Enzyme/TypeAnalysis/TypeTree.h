@@ -78,7 +78,7 @@ public:
   TypeTree() {}
   TypeTree(ConcreteType dat) {
     if (dat != ConcreteType(BaseType::Unknown)) {
-      insert({}, dat);
+      mapping.insert(std::pair<const std::vector<int>, ConcreteType>({}, dat));
     }
   }
 
@@ -1082,6 +1082,22 @@ public:
     bool Result = checkedOrIn(RHS, PointerIntSame, Legal);
     if (!Legal) {
       llvm::errs() << "Illegal orIn: " << str() << " right: " << RHS.str()
+                   << " PointerIntSame=" << PointerIntSame << "\n";
+      assert(0 && "Performed illegal ConcreteType::orIn");
+      llvm_unreachable("Performed illegal ConcreteType::orIn");
+    }
+    return Result;
+  }
+
+  /// Set this to the logical or of itself and RHS, returning whether this value
+  /// changed Setting `PointerIntSame` considers pointers and integers as
+  /// equivalent This function will error if doing an illegal Operation
+  bool orIn(const std::vector<int> Seq, ConcreteType CT, bool PointerIntSame) {
+    bool Legal = true;
+    bool Result = checkedOrIn(Seq, CT, PointerIntSame, Legal);
+    if (!Legal) {
+      llvm::errs() << "Illegal orIn: " << str() << " right: " << to_string(Seq)
+                   << " CT: " << CT.str()
                    << " PointerIntSame=" << PointerIntSame << "\n";
       assert(0 && "Performed illegal ConcreteType::orIn");
       llvm_unreachable("Performed illegal ConcreteType::orIn");
