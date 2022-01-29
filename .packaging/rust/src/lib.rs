@@ -12,7 +12,7 @@
 //! The second command might take a few hours, depending on you cpu.
 //!
 //! Afterwards, you can compile a crate using [oxide-enzyme](https://github.com/rust-ml/oxide-enzyme)
-//! with the command 
+//! with the command
 //! ```Bash
 //! $ cargo enzyme
 //! ```
@@ -24,7 +24,7 @@
 //!
 //! The goal of this crate is to simplify experimenting with Enzyme in Rust.
 //! We are already working on a new iteration which will not require an extra setup step
-//! and will support arbitrary Rust code. 
+//! and will support arbitrary Rust code.
 //! So please feel free to give feedback and raise issues in our Github, but keep in mind
 //! that the will focus on the new oxide-enzyme iteration, rather than fixing all bugs in this one.
 //!
@@ -35,7 +35,8 @@
 
 mod code;
 
-pub use code::compile::build as build;
-pub use code::utils::Repo as Repo;
-pub use code::downloader::download as download;
-pub use code::generate_api::generate_bindings as generate_bindings;
+pub use code::compile::build;
+pub use code::downloader::download;
+pub use code::generate_api::generate_bindings;
+pub use code::generate_api::generate_bindings_with;
+pub use code::utils::Repo;

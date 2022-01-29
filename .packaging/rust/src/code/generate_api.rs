@@ -1,21 +1,25 @@
 use super::utils;
 use bindgen;
-use std::fs;
+use std::{fs, path::PathBuf};
 
 /// This function can be used to generate Rust wrappers around Enzyme's [C API](https://github.com/wsmoses/Enzyme/blob/main/enzyme/Enzyme/CApi.h).
 pub fn generate_bindings() -> Result<(), String> {
-    let header_path = utils::get_capi_path();
-    dbg!(&header_path);
+    let capi_header = utils::get_capi_path();
+    let out_file = utils::get_bindings_string();
+    generate_bindings_with(capi_header, out_file)
+}
+
+/// This function can be used to generate Rust wrappers around Enzyme's [C API](https://github.com/wsmoses/Enzyme/blob/main/enzyme/Enzyme/CApi.h).
+pub fn generate_bindings_with(capi_header: PathBuf, out_file: PathBuf) -> Result<(), String> {
+    dbg!(&capi_header);
 
     // tell cargo to re-run the builder if the header has changed
-    println!("cargo:rerun-if-changed={}", header_path.display());
-    let content: String = fs::read_to_string(header_path.clone()).unwrap();
+    println!("cargo:rerun-if-changed={}", capi_header.display());
+    let content: String = fs::read_to_string(capi_header.clone()).unwrap();
 
     let bindings = bindgen::Builder::default()
         .header_contents("CApi.hpp", &content) // read it as .hpp so bindgen can ignore the class successfully
-        .clang_args(&[
-            format!("-I{}", utils::get_llvm_header_path().display())
-        ])
+        .clang_args(&[format!("-I{}", utils::get_llvm_header_path().display())])
         //.blacklist_item("CustomFunctionForward")
         //.blacklist_item("DiffeGradientUtils")
         .allowlist_type("CConcreteType")
@@ -60,14 +64,13 @@ pub fn generate_bindings() -> Result<(), String> {
         Err(_) => {
             return Err(format!(
                 "Unable to generate bindings from {}.",
-                header_path.display()
+                capi_header.display()
             ))
         }
     };
 
     // Write the bindings to the $OUT_DIR/bindings.rs file.
     //let out_path = PathBuf::from(env::var("OUT_DIR").unwrap()); // can't be used outside of build.rs
-    let out_file = utils::get_bindings_string();
     if out_file.exists() {
         fs::remove_file(out_file.clone()).unwrap();
     }
