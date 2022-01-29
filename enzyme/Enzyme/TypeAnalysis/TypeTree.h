@@ -45,6 +45,7 @@
 extern "C" {
 extern llvm::cl::opt<int> MaxTypeOffset;
 extern llvm::cl::opt<bool> EnzymeTypeWarning;
+constexpr int EnzymeMaxTypeDepth = 6;
 }
 
 /// Helper function to print a vector of ints to a string
@@ -277,11 +278,12 @@ public:
         }
       }
     }
-    if (Seq.size() > 6) {
+    if (Seq.size() > EnzymeMaxTypeDepth) {
       if (EnzymeTypeWarning)
-        llvm::errs() << "not handling more than 6 pointer lookups deep dt:"
-                     << str() << " adding v: " << to_string(Seq) << ": "
-                     << CT.str() << "\n";
+        llvm::errs() << "not handling more than " << EnzymeMaxTypeDepth
+                     << " pointer lookups deep dt:" << str()
+                     << " adding v: " << to_string(Seq) << ": " << CT.str()
+                     << "\n";
       return changed;
     }
 
@@ -392,13 +394,29 @@ public:
   /// Prepend an offset to all mappings
   TypeTree Only(int Off) const {
     TypeTree Result;
+    Result.minIndices.reserve(1 + minIndices.size());
+    Result.minIndices.push_back(Off);
+    for (auto midx : minIndices)
+      Result.minIndices.push_back(midx);
+
+    if (Result.minIndices.size() > EnzymeMaxTypeDepth) {
+      Result.minIndices.pop_back();
+      if (EnzymeTypeWarning)
+        llvm::errs() << "not handling more than " << EnzymeMaxTypeDepth
+                     << " pointer lookups deep dt:" << str() << " only(" << Off
+                     << "): " << str() << "\n";
+    }
+
     for (const auto &pair : mapping) {
+      if (pair.first.size() == EnzymeMaxTypeDepth)
+        continue;
       std::vector<int> Vec;
       Vec.reserve(pair.first.size() + 1);
       Vec.push_back(Off);
       for (auto Val : pair.first)
         Vec.push_back(Val);
-      Result.insert(Vec, pair.second);
+      Result.mapping.insert(
+          std::pair<const std::vector<int>, ConcreteType>(Vec, pair.second));
     }
     return Result;
   }
@@ -587,7 +605,8 @@ public:
       return;
 
     // Map of indices[1:] => ( End => possible Index[0] )
-    std::map<const std::vector<int>, std::map<ConcreteType, std::set<int>>> staging;
+    std::map<const std::vector<int>, std::map<ConcreteType, std::set<int>>>
+        staging;
 
     for (const auto &pair : mapping) {
 
@@ -1049,17 +1068,6 @@ public:
     // TODO detect recursive merge and simplify
 
     bool changed = false;
-
-    if (RHS[{-1}] != BaseType::Unknown) {
-      for (auto &pair : mapping) {
-        if (pair.first.size() == 1 && pair.first[0] != -1) {
-          changed |=
-              pair.second.checkedOrIn(RHS[{-1}], PointerIntSame, LegalOr);
-          // if (pair.second == ) // NOTE DELETE the non -1
-        }
-      }
-    }
-
     for (auto &pair : RHS.mapping) {
       changed |= checkedOrIn(pair.first, pair.second, PointerIntSame, LegalOr);
     }

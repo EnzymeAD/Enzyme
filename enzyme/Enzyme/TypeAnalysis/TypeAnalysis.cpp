@@ -832,11 +832,13 @@ void TypeAnalyzer::considerTBAA() {
             copySize = max(copySize, val);
           }
           TypeTree update =
-              vdptr.ShiftIndices(DL, /*init offset*/ 0,
-                                 /*max size*/ copySize, /*new offset*/ 0);
+              vdptr
+                  .ShiftIndices(DL, /*init offset*/ 0,
+                                /*max size*/ copySize, /*new offset*/ 0)
+                  .Only(-1);
 
-          updateAnalysis(call->getOperand(0), update.Only(-1), call);
-          updateAnalysis(call->getOperand(1), update.Only(-1), call);
+          updateAnalysis(call->getOperand(0), update, call);
+          updateAnalysis(call->getOperand(1), update, call);
           continue;
         } else if (call->getCalledFunction() &&
                    call->getCalledFunction()->getIntrinsicID() ==
