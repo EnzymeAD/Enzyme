@@ -6723,7 +6723,7 @@ public:
             gutils->replaceAWithB(newCall, normalReturn);
             BuilderZ.SetInsertPoint(newCall->getNextNode());
             gutils->erase(newCall);
-          } else if (!orig->mayWriteToMemory() ||
+          } else if (!normalReturn || !orig->mayWriteToMemory() ||
                      Mode == DerivativeMode::ReverseModeGradient)
             eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
         }
