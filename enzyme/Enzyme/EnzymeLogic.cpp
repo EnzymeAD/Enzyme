@@ -3440,7 +3440,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           assert(differetval);
           if (!gutils->isConstantValue(orig->getReturnValue())) {
             IRBuilder<> reverseB(gutils->reverseBlocks[BB].back());
-            gutils->setDiffe(orig->getReturnValue(), Constant::getNullValue(differetval->getType()), reverseB);
+            gutils->setDiffe(orig->getReturnValue(), differetval, reverseB);
           }
         } else {
           assert(dretAlloca == nullptr);
