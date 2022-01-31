@@ -4624,14 +4624,41 @@ void GradientUtils::branchToCorrespondingTarget(
   Instruction *equivalentTerminator = nullptr;
 
   std::set<BasicBlock *> blocks;
+
+  llvm::errs() << "\n\n<DONE>\n";
   for (auto pair : done) {
     const auto &edge = pair.first;
     blocks.insert(edge.first);
+    llvm::errs() << " edge  (" << edge.first->getName() << ", " << edge.second->getName() << ") : [";
+    for (auto s : pair.second)
+      llvm::errs() << s->getName() << ",";
+    llvm::errs() << "]\n";
   }
+  llvm::errs() << "</DONE>\n";
 
   if (targetToPreds.size() == 3) {
+    // Try `block` as a potential first split point.
     for (auto block : blocks) {
+      {
+      // The original split block must not have a parent with an edge
+      // to a block other than to itself, which can reach any targets.
+      for (auto P : predecessors(block)) {
+        for (auto S : successors(P)) {
+          if (S == block) continue;
+          auto edge = std::make_pair(P, S);
+          if (done.find(edge) != done.end() && done[edge].size())
+            goto rnextpair;
+        }
+      }
+
+      // For all successors and thus edges (block, succ):
+      // 1) Ensure that no successors have overlapping potential
+      // destinations (a list of destinations previously seen is in
+      // foundtargets).
+      // 2) The block branches to all 3 destinations (foundTargets==3) 
       std::set<BasicBlock *> foundtargets;
+      // 3) The unique target split off from the others is stored in
+      //   uniqueTarget.
       std::set<BasicBlock *> uniqueTargets;
       for (BasicBlock *succ : successors(block)) {
         auto edge = std::make_pair(block, succ);
@@ -4649,113 +4676,123 @@ void GradientUtils::branchToCorrespondingTarget(
       if (uniqueTargets.size() != 1)
         goto rnextpair;
 
+      // Only handle cases where the split was due to a conditional
+      // branch. This branch, `bi`, splits off uniqueTargets[0] from
+      // the remainder of foundTargets.
+      auto bi1 = dyn_cast<BranchInst>(block->getTerminator());
+      if (!bi1) goto rnextpair;
+
       {
+        // Find a second block `subblock` which splits the two merged
+        // targets from each other.
         BasicBlock *subblock = nullptr;
         for (auto block2 : blocks) {
+          {
+          // The second split block must not have a parent with an edge
+          // to a block other than to itself, which can reach any of its two
+          // targets.
+          for (auto P : predecessors(block)) {
+            for (auto S : successors(P)) {
+              if (S == block) continue;
+              auto edge = std::make_pair(P, S);
+              if (done.find(edge) != done.end()) {
+                for (auto target : done[edge]) {
+                  if (foundtargets.find(target) != foundtargets.end() && uniqueTargets.find(target) == uniqueTargets.end())
+                    goto nextblock;
+                }
+              }
+            }
+          }
+
+          // Again, a successful split must have unique targets.
           std::set<BasicBlock *> seen2;
           for (BasicBlock *succ : successors(block2)) {
             auto edge = std::make_pair(block2, succ);
+            // Since there are only two targets, a successful split condition
+            // has only 1 target per successor of block2.
             if (done[edge].size() != 1) {
-              // llvm::errs() << " -- failed from noonesize\n";
               goto nextblock;
             }
             for (BasicBlock *target : done[edge]) {
+              // block2 has non-unique targets.
               if (seen2.find(target) != seen2.end()) {
-                // llvm::errs() << " -- failed from not uniqueTargets\n";
                 goto nextblock;
               }
               seen2.insert(target);
+              // block2 has a target which is not part of the two needing
+              // to be split. The two needing to be split is equal to
+              //    foundtargets-uniqueTargets.
               if (foundtargets.find(target) == foundtargets.end()) {
-                // llvm::errs() << " -- failed from not unknown target\n";
                 goto nextblock;
               }
               if (uniqueTargets.find(target) != uniqueTargets.end()) {
-                // llvm::errs() << " -- failed from not same target\n";
                 goto nextblock;
               }
             }
           }
+          // If we didn't find two valid successors, continue.
           if (seen2.size() != 2) {
             // llvm::errs() << " -- failed from not 2 seen\n";
             goto nextblock;
           }
           subblock = block2;
           break;
+          }
         nextblock:;
         }
 
+        // If no split block was found, try again.
         if (subblock == nullptr)
           goto rnextpair;
 
-        if (!isa<BranchInst>(block->getTerminator()))
-          goto rnextpair;
+        // This branch, `bi2`, splits off the two blocks in
+        // (foundTargets-uniqueTargets) from each other.
+        auto bi2 = dyn_cast<BranchInst>(subblock->getTerminator());
+        if (!bi2) goto rnextpair;
 
-        if (!isa<BranchInst>(subblock->getTerminator()))
-          goto rnextpair;
+        // Condition cond1 splits off uniqueTargets[0] from
+        // the remainder of foundTargets.
+        auto cond1 = lookupM(bi1->getCondition(), BuilderM);
+        llvm::errs() << " uniqueTarget: "  << (*uniqueTargets.begin())->getName() << "\n";
+        llvm::errs() << " block: " << block->getName() << "\n";
+        llvm::errs() << " bi1: " << *bi1->getCondition() << "\n";
 
-        {
-          if (!isa<BranchInst>(block->getTerminator())) {
-            llvm::errs() << *block << "\n";
-          }
-          auto bi1 = cast<BranchInst>(block->getTerminator());
+        // Condition cond2 splits off the two blocks in
+        // (foundTargets-uniqueTargets) from each other.
+        auto cond2 = lookupM(bi2->getCondition(), BuilderM);
+        llvm::errs() << " subblock: " << subblock->getName() << "\n";
+        llvm::errs() << " bi2: " << *bi2->getCondition() << "\n";
 
-          auto cond1 = lookupM(bi1->getCondition(), BuilderM);
-          auto bi2 = cast<BranchInst>(subblock->getTerminator());
-          auto cond2 = lookupM(bi2->getCondition(), BuilderM);
-
-          if (replacePHIs == nullptr) {
-            BasicBlock *staging =
-                BasicBlock::Create(oldFunc->getContext(), "staging", newFunc);
-            auto stagingIfNeeded = [&](BasicBlock *B) {
-              auto edge = std::make_pair(block, B);
-              if (done[edge].size() == 1) {
-                return *done[edge].begin();
-              } else {
-                return staging;
-              }
-            };
-            BuilderM.CreateCondBr(cond1, stagingIfNeeded(bi1->getSuccessor(0)),
-                                  stagingIfNeeded(bi1->getSuccessor(1)));
-            BuilderM.SetInsertPoint(staging);
-            BuilderM.CreateCondBr(
-                cond2,
-                *done[std::make_pair(subblock, bi2->getSuccessor(0))].begin(),
-                *done[std::make_pair(subblock, bi2->getSuccessor(1))].begin());
-          } else {
-            Value *otherBranch = nullptr;
-            for (unsigned i = 0; i < 2; ++i) {
-              Value *val = cond1;
-              if (i == 1)
-                val = BuilderM.CreateNot(val, "anot1_");
-              auto edge = std::make_pair(block, bi1->getSuccessor(i));
-              if (done[edge].size() == 1) {
-                auto found = replacePHIs->find(*done[edge].begin());
-                if (found == replacePHIs->end())
-                  continue;
-                if (&*BuilderM.GetInsertPoint() == found->second) {
-                  if (found->second->getNextNode())
-                    BuilderM.SetInsertPoint(found->second->getNextNode());
-                  else
-                    BuilderM.SetInsertPoint(found->second->getParent());
-                }
-                found->second->replaceAllUsesWith(val);
-                found->second->eraseFromParent();
-              } else {
-                otherBranch = val;
-              }
+        if (replacePHIs == nullptr) {
+          BasicBlock *staging =
+              BasicBlock::Create(oldFunc->getContext(), "staging", newFunc);
+          auto stagingIfNeeded = [&](BasicBlock *B) {
+            auto edge = std::make_pair(block, B);
+            if (done[edge].size() == 1) {
+              return *done[edge].begin();
+            } else {
+              assert(done[edge].size() == 2);
+              return staging;
             }
-
-            for (unsigned i = 0; i < 2; ++i) {
-              auto edge = std::make_pair(subblock, bi2->getSuccessor(i));
+          };
+          BuilderM.CreateCondBr(cond1, stagingIfNeeded(bi1->getSuccessor(0)),
+                                stagingIfNeeded(bi1->getSuccessor(1)));
+          BuilderM.SetInsertPoint(staging);
+          BuilderM.CreateCondBr(
+              cond2,
+              *done[std::make_pair(subblock, bi2->getSuccessor(0))].begin(),
+              *done[std::make_pair(subblock, bi2->getSuccessor(1))].begin());
+        } else {
+          Value *otherBranch = nullptr;
+          for (unsigned i = 0; i < 2; ++i) {
+            Value *val = cond1;
+            if (i == 1)
+              val = BuilderM.CreateNot(val, "anot1_");
+            auto edge = std::make_pair(block, bi1->getSuccessor(i));
+            if (done[edge].size() == 1) {
               auto found = replacePHIs->find(*done[edge].begin());
               if (found == replacePHIs->end())
                 continue;
-
-              Value *val = cond2;
-              if (i == 1)
-                val = BuilderM.CreateNot(val, "bnot1_");
-              val = BuilderM.CreateAnd(val, otherBranch,
-                                       "andVal" + std::to_string(i));
               if (&*BuilderM.GetInsertPoint() == found->second) {
                 if (found->second->getNextNode())
                   BuilderM.SetInsertPoint(found->second->getNextNode());
@@ -4764,11 +4801,35 @@ void GradientUtils::branchToCorrespondingTarget(
               }
               found->second->replaceAllUsesWith(val);
               found->second->eraseFromParent();
+            } else {
+              otherBranch = val;
             }
           }
 
-          return;
+          for (unsigned i = 0; i < 2; ++i) {
+            auto edge = std::make_pair(subblock, bi2->getSuccessor(i));
+            auto found = replacePHIs->find(*done[edge].begin());
+            if (found == replacePHIs->end())
+              continue;
+
+            Value *val = cond2;
+            if (i == 1)
+              val = BuilderM.CreateNot(val, "bnot1_");
+            val = BuilderM.CreateAnd(val, otherBranch,
+                                      "andVal" + std::to_string(i));
+            if (&*BuilderM.GetInsertPoint() == found->second) {
+              if (found->second->getNextNode())
+                BuilderM.SetInsertPoint(found->second->getNextNode());
+              else
+                BuilderM.SetInsertPoint(found->second->getParent());
+            }
+            found->second->replaceAllUsesWith(val);
+            found->second->eraseFromParent();
+          }
         }
+
+        return;
+      }
       }
     rnextpair:;
     }
@@ -4781,6 +4842,18 @@ void GradientUtils::branchToCorrespondingTarget(
   }
 
   for (auto block : blocks) {
+    {
+    // The original split block must not have a parent with an edge
+    // to a block other than to itself, which can reach any targets.
+    for (auto P : predecessors(block)) {
+      for (auto S : successors(P)) {
+        if (S == block) continue;
+        auto edge = std::make_pair(P, S);
+        if (done.find(edge) != done.end() && done[edge].size())
+          goto nextpair;
+      }
+    }
+
     std::set<BasicBlock *> foundtargets;
     for (BasicBlock *succ : successors(block)) {
       auto edge = std::make_pair(block, succ);
@@ -4801,7 +4874,7 @@ void GradientUtils::branchToCorrespondingTarget(
       equivalentTerminator = block->getTerminator();
       goto fast;
     }
-
+    }
   nextpair:;
   }
   goto nofast;
