@@ -2423,6 +2423,7 @@ void createTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
   nBuilder.setFastMathFlags(getFast());
 
   ReturnInst *inst = dyn_cast_or_null<ReturnInst>(oBB->getTerminator());
+  // In forward mode we only need to update the return value
   if (inst == nullptr) return;
   SmallVector<Value *, 2> retargs;
 
