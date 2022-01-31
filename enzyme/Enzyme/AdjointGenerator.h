@@ -3346,8 +3346,8 @@ public:
         if (gutils->isConstantInstruction(&I))
           return;
 
-        Type *acctype = orig_ops[0]->getType();
-        Type *vectype = orig_ops[1]->getType();
+        Type *acctype = gutils->getShadowType(orig_ops[0]->getType());
+        Type *vectype = gutils->getShadowType(orig_ops[1]->getType());
 
         auto accdif = gutils->isConstantValue(orig_ops[0])
                           ? Constant::getNullValue(acctype)
@@ -3365,7 +3365,7 @@ public:
 #endif
 
         auto rule = [&](Value *accdif, Value *vecdif) {
-          auto *cal = Builder2.CreateCall(vfra, {accdif, vecdif});
+          auto cal = Builder2.CreateCall(vfra, {accdif, vecdif});
           cal->setCallingConv(vfra->getCallingConv());
           cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
           return cal;
@@ -3445,8 +3445,8 @@ public:
         Value *op1 = gutils->getNewFromOriginal(orig_ops[1]);
         Value *cmp = Builder2.CreateFCmpOLT(op0, op1);
 
-        Type *opType0 = orig_ops[0]->getType();
-        Type *opType1 = orig_ops[1]->getType();
+        Type *opType0 = gutils->getShadowType(orig_ops[0]->getType());
+        Type *opType1 = gutils->getShadowType(orig_ops[1]->getType());
 
         Value *diffe0 = gutils->isConstantValue(orig_ops[0])
                             ? Constant::getNullValue(opType0)
@@ -3476,8 +3476,8 @@ public:
         Value *op1 = gutils->getNewFromOriginal(orig_ops[1]);
         Value *cmp = Builder2.CreateFCmpOLT(op0, op1);
 
-        Type *opType0 = orig_ops[0]->getType();
-        Type *opType1 = orig_ops[1]->getType();
+        Type *opType0 = gutils->getShadowType(orig_ops[0]->getType());
+        Type *opType1 = gutils->getShadowType(orig_ops[1]->getType());
 
         Value *diffe0 = gutils->isConstantValue(orig_ops[0])
                             ? Constant::getNullValue(opType0)
@@ -3504,9 +3504,9 @@ public:
         Value *op1 = gutils->getNewFromOriginal(orig_ops[1]);
         Value *op2 = gutils->getNewFromOriginal(orig_ops[2]);
 
-        Type *opType0 = orig_ops[0]->getType();
-        Type *opType1 = orig_ops[1]->getType();
-        Type *opType2 = orig_ops[2]->getType();
+        Type *opType0 = gutils->getShadowType(orig_ops[0]->getType());
+        Type *opType1 = gutils->getShadowType(orig_ops[1]->getType());
+        Type *opType2 = gutils->getShadowType(orig_ops[2]->getType());
 
         Value *dif0 = gutils->isConstantValue(orig_ops[0])
                           ? Constant::getNullValue(opType0)
