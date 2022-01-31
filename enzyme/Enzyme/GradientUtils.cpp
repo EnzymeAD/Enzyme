@@ -927,6 +927,9 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           continue;
         done[edge].insert(target);
 
+        if (DT.dominates(block, phi->getParent()))
+          continue;
+
         Loop *blockLoop = LI.getLoopFor(block);
 
         for (BasicBlock *Pred : predecessors(block)) {
@@ -951,214 +954,248 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
 
     if (targetToPreds.size() == 3) {
       for (auto block : blocks) {
-        std::set<BasicBlock *> foundtargets;
-        std::set<BasicBlock *> uniqueTargets;
-        for (BasicBlock *succ : successors(block)) {
-          auto edge = std::make_pair(block, succ);
-          for (BasicBlock *target : done[edge]) {
-            if (foundtargets.find(target) != foundtargets.end()) {
-              goto rnextpair;
-            }
-            foundtargets.insert(target);
-            if (done[edge].size() == 1)
-              uniqueTargets.insert(target);
-          }
-        }
-        if (foundtargets.size() != 3)
-          goto rnextpair;
-        if (uniqueTargets.size() != 1)
-          goto rnextpair;
-
         {
-          BasicBlock *subblock = nullptr;
-          for (auto block2 : blocks) {
-            std::set<BasicBlock *> seen2;
-            for (BasicBlock *succ : successors(block2)) {
-              auto edge = std::make_pair(block2, succ);
-              if (done[edge].size() != 1) {
-                // llvm::errs() << " -- failed from noonesize\n";
-                goto nextblock;
-              }
-              for (BasicBlock *target : done[edge]) {
-                if (seen2.find(target) != seen2.end()) {
-                  // llvm::errs() << " -- failed from not uniqueTargets\n";
-                  goto nextblock;
-                }
-                seen2.insert(target);
-                if (foundtargets.find(target) == foundtargets.end()) {
-                  // llvm::errs() << " -- failed from not unknown target\n";
-                  goto nextblock;
-                }
-                if (uniqueTargets.find(target) != uniqueTargets.end()) {
-                  // llvm::errs() << " -- failed from not same target\n";
-                  goto nextblock;
-                }
+          if (!DT.dominates(block, phi->getParent()))
+            for (auto P : predecessors(block)) {
+              for (auto S : successors(P)) {
+                if (S == block)
+                  continue;
+                auto edge = std::make_pair(P, S);
+                if (done.find(edge) != done.end() && done[edge].size())
+                  goto rnextpair;
               }
             }
-            if (seen2.size() != 2) {
-              // llvm::errs() << " -- failed from not 2 seen\n";
-              goto nextblock;
+          std::set<BasicBlock *> foundtargets;
+          std::set<BasicBlock *> uniqueTargets;
+          for (BasicBlock *succ : successors(block)) {
+            auto edge = std::make_pair(block, succ);
+            for (BasicBlock *target : done[edge]) {
+              if (foundtargets.find(target) != foundtargets.end()) {
+                goto rnextpair;
+              }
+              foundtargets.insert(target);
+              if (done[edge].size() == 1)
+                uniqueTargets.insert(target);
             }
-            subblock = block2;
-            break;
-          nextblock:;
           }
-
-          if (subblock == nullptr)
+          if (foundtargets.size() != 3)
+            goto rnextpair;
+          if (uniqueTargets.size() != 1)
             goto rnextpair;
 
           {
-            auto bi1 = cast<BranchInst>(block->getTerminator());
-
-            auto cond1 = getOp(bi1->getCondition());
-            if (cond1 == nullptr) {
-              assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
-              goto endCheck;
-            }
-            auto bi2 = cast<BranchInst>(subblock->getTerminator());
-            auto cond2 = getOp(bi2->getCondition());
-            if (cond2 == nullptr) {
-              assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
-              goto endCheck;
-            }
-
-            BasicBlock *oldB = BuilderM.GetInsertBlock();
-            if (BuilderM.GetInsertPoint() != oldB->end()) {
-              assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
-              goto endCheck;
-            }
-
-            auto found = reverseBlockToPrimal.find(oldB);
-            if (found == reverseBlockToPrimal.end()) {
-              assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
-              goto endCheck;
-            }
-            BasicBlock *fwd = found->second;
-
-            SmallVector<BasicBlock *, 2> predBlocks;
-            predBlocks.push_back(bi2->getSuccessor(0));
-            predBlocks.push_back(bi2->getSuccessor(1));
-            for (int i = 0; i < 2; i++) {
-              auto edge = std::make_pair(block, bi1->getSuccessor(i));
-              if (done[edge].size() == 1) {
-                predBlocks.push_back(bi1->getSuccessor(i));
-              }
-            }
-
-            SmallVector<Value *, 2> vals;
-
-            SmallVector<BasicBlock *, 2> blocks;
-            SmallVector<BasicBlock *, 2> endingBlocks;
-
-            BasicBlock *last = oldB;
-
-            BasicBlock *bret = BasicBlock::Create(
-                val->getContext(), oldB->getName() + "_phimerge", newFunc);
-
-            for (size_t i = 0; i < predBlocks.size(); i++) {
-              BasicBlock *valparent = (i < 2) ? subblock : block;
-              assert(done.find(std::make_pair(valparent, predBlocks[i])) !=
-                     done.end());
-              assert(done[std::make_pair(valparent, predBlocks[i])].size() ==
-                     1);
-              blocks.push_back(BasicBlock::Create(
-                  val->getContext(), oldB->getName() + "_phirc", newFunc));
-              blocks[i]->moveAfter(last);
-              last = blocks[i];
-              reverseBlocks[fwd].push_back(blocks[i]);
-              reverseBlockToPrimal[blocks[i]] = fwd;
-              IRBuilder<> B(blocks[i]);
-
-              for (auto pair : unwrap_cache[oldB])
-                unwrap_cache[blocks[i]].insert(pair);
-              for (auto pair : lookup_cache[oldB])
-                lookup_cache[blocks[i]].insert(pair);
-              auto PB = *done[std::make_pair(valparent, predBlocks[i])].begin();
-
-              if (auto inst = dyn_cast<Instruction>(
-                      phi->getIncomingValueForBlock(PB))) {
-                // Recompute the phi computation with the conditional if:
-                // 1) the instruction may reat from memory AND does not
-                //    dominate the current insertion point (thereby
-                //    potentially making such recomputation without the
-                //    condition illegal)
-                // 2) the value is a call or load and option is set to not
-                //    speculatively recompute values within a phi
-                BasicBlock *nextScope = PB;
-                // if (inst->getParent() == nextScope) nextScope =
-                // phi->getParent();
-                if ((inst->mayReadFromMemory() &&
-                     !DT.dominates(inst->getParent(), phi->getParent())) ||
-                    (!EnzymeSpeculatePHIs &&
-                     (isa<CallInst>(inst) || isa<LoadInst>(inst))))
-                  vals.push_back(getOpFull(B, inst, nextScope));
-                else
-                  vals.push_back(getOpFull(BuilderM, inst, nextScope));
-              } else
-                vals.push_back(
-                    getOpFull(BuilderM, phi->getIncomingValueForBlock(PB), PB));
-
-              if (!vals[i]) {
-                for (size_t j = 0; j <= i; j++) {
-                  reverseBlocks[fwd].erase(std::find(reverseBlocks[fwd].begin(),
-                                                     reverseBlocks[fwd].end(),
-                                                     blocks[j]));
-                  reverseBlockToPrimal.erase(blocks[j]);
-                  unwrap_cache.erase(blocks[j]);
-                  lookup_cache.erase(blocks[j]);
-                  SmallVector<Instruction *, 4> toErase;
-                  for (auto &I : *blocks[j]) {
-                    toErase.push_back(&I);
-                  }
-                  for (auto I : toErase) {
-                    erase(I);
+            BasicBlock *subblock = nullptr;
+            for (auto block2 : blocks) {
+              {
+                // The second split block must not have a parent with an edge
+                // to a block other than to itself, which can reach any of its
+                // two targets.
+                for (auto P : predecessors(block2)) {
+                  for (auto S : successors(P)) {
+                    if (S == block2)
+                      continue;
+                    auto edge = std::make_pair(P, S);
+                    if (done.find(edge) != done.end()) {
+                      for (auto target : done[edge]) {
+                        if (foundtargets.find(target) != foundtargets.end() &&
+                            uniqueTargets.find(target) == uniqueTargets.end())
+                          goto nextblock;
+                      }
+                    }
                   }
                 }
-                bret->eraseFromParent();
-                for (size_t j = 0; j <= i; j++) {
-                  blocks[j]->eraseFromParent();
-                };
+                std::set<BasicBlock *> seen2;
+                for (BasicBlock *succ : successors(block2)) {
+                  auto edge = std::make_pair(block2, succ);
+                  if (done[edge].size() != 1) {
+                    // llvm::errs() << " -- failed from noonesize\n";
+                    goto nextblock;
+                  }
+                  for (BasicBlock *target : done[edge]) {
+                    if (seen2.find(target) != seen2.end()) {
+                      // llvm::errs() << " -- failed from not uniqueTargets\n";
+                      goto nextblock;
+                    }
+                    seen2.insert(target);
+                    if (foundtargets.find(target) == foundtargets.end()) {
+                      // llvm::errs() << " -- failed from not unknown target\n";
+                      goto nextblock;
+                    }
+                    if (uniqueTargets.find(target) != uniqueTargets.end()) {
+                      // llvm::errs() << " -- failed from not same target\n";
+                      goto nextblock;
+                    }
+                  }
+                }
+                if (seen2.size() != 2) {
+                  // llvm::errs() << " -- failed from not 2 seen\n";
+                  goto nextblock;
+                }
+                subblock = block2;
+                break;
+              }
+            nextblock:;
+            }
+
+            if (subblock == nullptr)
+              goto rnextpair;
+
+            {
+              auto bi1 = cast<BranchInst>(block->getTerminator());
+
+              auto cond1 = getOp(bi1->getCondition());
+              if (cond1 == nullptr) {
                 assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
                 goto endCheck;
               }
-              assert(val->getType() == vals[i]->getType());
-              B.CreateBr(bret);
-              endingBlocks.push_back(B.GetInsertBlock());
+              auto bi2 = cast<BranchInst>(subblock->getTerminator());
+              auto cond2 = getOp(bi2->getCondition());
+              if (cond2 == nullptr) {
+                assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
+                goto endCheck;
+              }
+
+              BasicBlock *oldB = BuilderM.GetInsertBlock();
+              if (BuilderM.GetInsertPoint() != oldB->end()) {
+                assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
+                goto endCheck;
+              }
+
+              auto found = reverseBlockToPrimal.find(oldB);
+              if (found == reverseBlockToPrimal.end()) {
+                assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
+                goto endCheck;
+              }
+              BasicBlock *fwd = found->second;
+
+              SmallVector<BasicBlock *, 2> predBlocks;
+              predBlocks.push_back(bi2->getSuccessor(0));
+              predBlocks.push_back(bi2->getSuccessor(1));
+              for (int i = 0; i < 2; i++) {
+                auto edge = std::make_pair(block, bi1->getSuccessor(i));
+                if (done[edge].size() == 1) {
+                  predBlocks.push_back(bi1->getSuccessor(i));
+                }
+              }
+
+              SmallVector<Value *, 2> vals;
+
+              SmallVector<BasicBlock *, 2> blocks;
+              SmallVector<BasicBlock *, 2> endingBlocks;
+
+              BasicBlock *last = oldB;
+
+              BasicBlock *bret = BasicBlock::Create(
+                  val->getContext(), oldB->getName() + "_phimerge", newFunc);
+
+              for (size_t i = 0; i < predBlocks.size(); i++) {
+                BasicBlock *valparent = (i < 2) ? subblock : block;
+                assert(done.find(std::make_pair(valparent, predBlocks[i])) !=
+                       done.end());
+                assert(done[std::make_pair(valparent, predBlocks[i])].size() ==
+                       1);
+                blocks.push_back(BasicBlock::Create(
+                    val->getContext(), oldB->getName() + "_phirc", newFunc));
+                blocks[i]->moveAfter(last);
+                last = blocks[i];
+                reverseBlocks[fwd].push_back(blocks[i]);
+                reverseBlockToPrimal[blocks[i]] = fwd;
+                IRBuilder<> B(blocks[i]);
+
+                for (auto pair : unwrap_cache[oldB])
+                  unwrap_cache[blocks[i]].insert(pair);
+                for (auto pair : lookup_cache[oldB])
+                  lookup_cache[blocks[i]].insert(pair);
+                auto PB =
+                    *done[std::make_pair(valparent, predBlocks[i])].begin();
+
+                if (auto inst = dyn_cast<Instruction>(
+                        phi->getIncomingValueForBlock(PB))) {
+                  // Recompute the phi computation with the conditional if:
+                  // 1) the instruction may reat from memory AND does not
+                  //    dominate the current insertion point (thereby
+                  //    potentially making such recomputation without the
+                  //    condition illegal)
+                  // 2) the value is a call or load and option is set to not
+                  //    speculatively recompute values within a phi
+                  BasicBlock *nextScope = PB;
+                  // if (inst->getParent() == nextScope) nextScope =
+                  // phi->getParent();
+                  if ((inst->mayReadFromMemory() &&
+                       !DT.dominates(inst->getParent(), phi->getParent())) ||
+                      (!EnzymeSpeculatePHIs &&
+                       (isa<CallInst>(inst) || isa<LoadInst>(inst))))
+                    vals.push_back(getOpFull(B, inst, nextScope));
+                  else
+                    vals.push_back(getOpFull(BuilderM, inst, nextScope));
+                } else
+                  vals.push_back(getOpFull(
+                      BuilderM, phi->getIncomingValueForBlock(PB), PB));
+
+                if (!vals[i]) {
+                  for (size_t j = 0; j <= i; j++) {
+                    reverseBlocks[fwd].erase(
+                        std::find(reverseBlocks[fwd].begin(),
+                                  reverseBlocks[fwd].end(), blocks[j]));
+                    reverseBlockToPrimal.erase(blocks[j]);
+                    unwrap_cache.erase(blocks[j]);
+                    lookup_cache.erase(blocks[j]);
+                    SmallVector<Instruction *, 4> toErase;
+                    for (auto &I : *blocks[j]) {
+                      toErase.push_back(&I);
+                    }
+                    for (auto I : toErase) {
+                      erase(I);
+                    }
+                  }
+                  bret->eraseFromParent();
+                  for (size_t j = 0; j <= i; j++) {
+                    blocks[j]->eraseFromParent();
+                  };
+                  assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
+                  goto endCheck;
+                }
+                assert(val->getType() == vals[i]->getType());
+                B.CreateBr(bret);
+                endingBlocks.push_back(B.GetInsertBlock());
+              }
+
+              bret->moveAfter(last);
+
+              BasicBlock *bsplit = BasicBlock::Create(
+                  val->getContext(), oldB->getName() + "_phisplt", newFunc);
+              bsplit->moveAfter(oldB);
+              BuilderM.CreateCondBr(
+                  cond1,
+                  (done[std::make_pair(block, bi1->getSuccessor(0))].size() ==
+                   1)
+                      ? blocks[2]
+                      : bsplit,
+                  (done[std::make_pair(block, bi1->getSuccessor(1))].size() ==
+                   1)
+                      ? blocks[2]
+                      : bsplit);
+
+              BuilderM.SetInsertPoint(bsplit);
+              BuilderM.CreateCondBr(cond2, blocks[0], blocks[1]);
+
+              BuilderM.SetInsertPoint(bret);
+              reverseBlocks[fwd].push_back(bret);
+              reverseBlockToPrimal[bret] = fwd;
+              auto toret = BuilderM.CreatePHI(val->getType(), vals.size());
+              for (size_t i = 0; i < vals.size(); i++)
+                toret->addIncoming(vals[i], endingBlocks[i]);
+              assert(val->getType() == toret->getType());
+              if (permitCache) {
+                unwrap_cache[bret][idx.first][idx.second] = toret;
+              }
+              unwrappedLoads[toret] = val;
+              for (auto pair : unwrap_cache[oldB])
+                unwrap_cache[bret].insert(pair);
+              for (auto pair : lookup_cache[oldB])
+                lookup_cache[bret].insert(pair);
+              return toret;
             }
-
-            bret->moveAfter(last);
-
-            BasicBlock *bsplit = BasicBlock::Create(
-                val->getContext(), oldB->getName() + "_phisplt", newFunc);
-            bsplit->moveAfter(oldB);
-            BuilderM.CreateCondBr(
-                cond1,
-                (done[std::make_pair(block, bi1->getSuccessor(0))].size() == 1)
-                    ? blocks[2]
-                    : bsplit,
-                (done[std::make_pair(block, bi1->getSuccessor(1))].size() == 1)
-                    ? blocks[2]
-                    : bsplit);
-
-            BuilderM.SetInsertPoint(bsplit);
-            BuilderM.CreateCondBr(cond2, blocks[0], blocks[1]);
-
-            BuilderM.SetInsertPoint(bret);
-            reverseBlocks[fwd].push_back(bret);
-            reverseBlockToPrimal[bret] = fwd;
-            auto toret = BuilderM.CreatePHI(val->getType(), vals.size());
-            for (size_t i = 0; i < vals.size(); i++)
-              toret->addIncoming(vals[i], endingBlocks[i]);
-            assert(val->getType() == toret->getType());
-            if (permitCache) {
-              unwrap_cache[bret][idx.first][idx.second] = toret;
-            }
-            unwrappedLoads[toret] = val;
-            for (auto pair : unwrap_cache[oldB])
-              unwrap_cache[bret].insert(pair);
-            for (auto pair : lookup_cache[oldB])
-              lookup_cache[bret].insert(pair);
-            return toret;
           }
         }
       rnextpair:;
@@ -1167,27 +1204,38 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
 
     Instruction *equivalentTerminator = nullptr;
     for (auto block : blocks) {
-      std::set<BasicBlock *> foundtargets;
-      for (BasicBlock *succ : successors(block)) {
-        auto edge = std::make_pair(block, succ);
-        if (done[edge].size() != 1) {
+      {
+        if (!DT.dominates(block, phi->getParent()))
+          for (auto P : predecessors(block)) {
+            for (auto S : successors(P)) {
+              if (S == block)
+                continue;
+              auto edge = std::make_pair(P, S);
+              if (done.find(edge) != done.end() && done[edge].size())
+                goto nextpair;
+            }
+          }
+        std::set<BasicBlock *> foundtargets;
+        for (BasicBlock *succ : successors(block)) {
+          auto edge = std::make_pair(block, succ);
+          if (done[edge].size() != 1) {
+            goto nextpair;
+          }
+          BasicBlock *target = *done[edge].begin();
+          if (foundtargets.find(target) != foundtargets.end()) {
+            goto nextpair;
+          }
+          foundtargets.insert(target);
+        }
+        if (foundtargets.size() != targetToPreds.size()) {
           goto nextpair;
         }
-        BasicBlock *target = *done[edge].begin();
-        if (foundtargets.find(target) != foundtargets.end()) {
-          goto nextpair;
+
+        if (block == parent || DT.dominates(block, parent)) {
+          equivalentTerminator = block->getTerminator();
+          goto fast;
         }
-        foundtargets.insert(target);
       }
-      if (foundtargets.size() != targetToPreds.size()) {
-        goto nextpair;
-      }
-
-      if (block == parent || DT.dominates(block, parent)) {
-        equivalentTerminator = block->getTerminator();
-        goto fast;
-      }
-
     nextpair:;
     }
     goto endCheck;
@@ -4601,6 +4649,11 @@ void GradientUtils::branchToCorrespondingTarget(
         continue;
       done[edge].insert(target);
 
+      // If this block dominates the context, don't go back up as any
+      // predecessors won't contain the conditions.
+      if (DT.dominates(block, ctx))
+        continue;
+
       Loop *blockLoop = LI.getLoopFor(block);
 
       for (BasicBlock *Pred : predecessors(block)) {
@@ -4625,174 +4678,207 @@ void GradientUtils::branchToCorrespondingTarget(
 
   std::set<BasicBlock *> blocks;
 
-  llvm::errs() << "\n\n<DONE>\n";
+  // llvm::errs() << "\n\n<DONE = " << ctx->getName() << ">\n";
   for (auto pair : done) {
     const auto &edge = pair.first;
     blocks.insert(edge.first);
-    llvm::errs() << " edge  (" << edge.first->getName() << ", " << edge.second->getName() << ") : [";
-    for (auto s : pair.second)
-      llvm::errs() << s->getName() << ",";
-    llvm::errs() << "]\n";
+    // llvm::errs() << " edge  (" << edge.first->getName() << ", "
+    //             << edge.second->getName() << ") : [";
+    // for (auto s : pair.second)
+    //  llvm::errs() << s->getName() << ",";
+    // llvm::errs() << "]\n";
   }
-  llvm::errs() << "</DONE>\n";
+  // llvm::errs() << "</DONE>\n";
 
   if (targetToPreds.size() == 3) {
     // Try `block` as a potential first split point.
     for (auto block : blocks) {
       {
-      // The original split block must not have a parent with an edge
-      // to a block other than to itself, which can reach any targets.
-      for (auto P : predecessors(block)) {
-        for (auto S : successors(P)) {
-          if (S == block) continue;
-          auto edge = std::make_pair(P, S);
-          if (done.find(edge) != done.end() && done[edge].size())
-            goto rnextpair;
-        }
-      }
-
-      // For all successors and thus edges (block, succ):
-      // 1) Ensure that no successors have overlapping potential
-      // destinations (a list of destinations previously seen is in
-      // foundtargets).
-      // 2) The block branches to all 3 destinations (foundTargets==3) 
-      std::set<BasicBlock *> foundtargets;
-      // 3) The unique target split off from the others is stored in
-      //   uniqueTarget.
-      std::set<BasicBlock *> uniqueTargets;
-      for (BasicBlock *succ : successors(block)) {
-        auto edge = std::make_pair(block, succ);
-        for (BasicBlock *target : done[edge]) {
-          if (foundtargets.find(target) != foundtargets.end()) {
-            goto rnextpair;
-          }
-          foundtargets.insert(target);
-          if (done[edge].size() == 1)
-            uniqueTargets.insert(target);
-        }
-      }
-      if (foundtargets.size() != 3)
-        goto rnextpair;
-      if (uniqueTargets.size() != 1)
-        goto rnextpair;
-
-      // Only handle cases where the split was due to a conditional
-      // branch. This branch, `bi`, splits off uniqueTargets[0] from
-      // the remainder of foundTargets.
-      auto bi1 = dyn_cast<BranchInst>(block->getTerminator());
-      if (!bi1) goto rnextpair;
-
-      {
-        // Find a second block `subblock` which splits the two merged
-        // targets from each other.
-        BasicBlock *subblock = nullptr;
-        for (auto block2 : blocks) {
-          {
-          // The second split block must not have a parent with an edge
-          // to a block other than to itself, which can reach any of its two
-          // targets.
+        // The original split block must not have a parent with an edge
+        // to a block other than to itself, which can reach any targets.
+        if (!DT.dominates(block, ctx))
           for (auto P : predecessors(block)) {
             for (auto S : successors(P)) {
-              if (S == block) continue;
+              if (S == block)
+                continue;
               auto edge = std::make_pair(P, S);
-              if (done.find(edge) != done.end()) {
-                for (auto target : done[edge]) {
-                  if (foundtargets.find(target) != foundtargets.end() && uniqueTargets.find(target) == uniqueTargets.end())
-                    goto nextblock;
-                }
-              }
+              if (done.find(edge) != done.end() && done[edge].size())
+                goto rnextpair;
             }
           }
 
-          // Again, a successful split must have unique targets.
-          std::set<BasicBlock *> seen2;
-          for (BasicBlock *succ : successors(block2)) {
-            auto edge = std::make_pair(block2, succ);
-            // Since there are only two targets, a successful split condition
-            // has only 1 target per successor of block2.
-            if (done[edge].size() != 1) {
-              goto nextblock;
+        // For all successors and thus edges (block, succ):
+        // 1) Ensure that no successors have overlapping potential
+        // destinations (a list of destinations previously seen is in
+        // foundtargets).
+        // 2) The block branches to all 3 destinations (foundTargets==3)
+        std::set<BasicBlock *> foundtargets;
+        // 3) The unique target split off from the others is stored in
+        //   uniqueTarget.
+        std::set<BasicBlock *> uniqueTargets;
+        for (BasicBlock *succ : successors(block)) {
+          auto edge = std::make_pair(block, succ);
+          for (BasicBlock *target : done[edge]) {
+            if (foundtargets.find(target) != foundtargets.end()) {
+              goto rnextpair;
             }
-            for (BasicBlock *target : done[edge]) {
-              // block2 has non-unique targets.
-              if (seen2.find(target) != seen2.end()) {
-                goto nextblock;
-              }
-              seen2.insert(target);
-              // block2 has a target which is not part of the two needing
-              // to be split. The two needing to be split is equal to
-              //    foundtargets-uniqueTargets.
-              if (foundtargets.find(target) == foundtargets.end()) {
-                goto nextblock;
-              }
-              if (uniqueTargets.find(target) != uniqueTargets.end()) {
-                goto nextblock;
-              }
-            }
+            foundtargets.insert(target);
+            if (done[edge].size() == 1)
+              uniqueTargets.insert(target);
           }
-          // If we didn't find two valid successors, continue.
-          if (seen2.size() != 2) {
-            // llvm::errs() << " -- failed from not 2 seen\n";
-            goto nextblock;
-          }
-          subblock = block2;
-          break;
-          }
-        nextblock:;
         }
-
-        // If no split block was found, try again.
-        if (subblock == nullptr)
+        if (foundtargets.size() != 3)
+          goto rnextpair;
+        if (uniqueTargets.size() != 1)
           goto rnextpair;
 
-        // This branch, `bi2`, splits off the two blocks in
-        // (foundTargets-uniqueTargets) from each other.
-        auto bi2 = dyn_cast<BranchInst>(subblock->getTerminator());
-        if (!bi2) goto rnextpair;
-
-        // Condition cond1 splits off uniqueTargets[0] from
+        // Only handle cases where the split was due to a conditional
+        // branch. This branch, `bi`, splits off uniqueTargets[0] from
         // the remainder of foundTargets.
-        auto cond1 = lookupM(bi1->getCondition(), BuilderM);
-        llvm::errs() << " uniqueTarget: "  << (*uniqueTargets.begin())->getName() << "\n";
-        llvm::errs() << " block: " << block->getName() << "\n";
-        llvm::errs() << " bi1: " << *bi1->getCondition() << "\n";
+        auto bi1 = dyn_cast<BranchInst>(block->getTerminator());
+        if (!bi1)
+          goto rnextpair;
 
-        // Condition cond2 splits off the two blocks in
-        // (foundTargets-uniqueTargets) from each other.
-        auto cond2 = lookupM(bi2->getCondition(), BuilderM);
-        llvm::errs() << " subblock: " << subblock->getName() << "\n";
-        llvm::errs() << " bi2: " << *bi2->getCondition() << "\n";
+        {
+          // Find a second block `subblock` which splits the two merged
+          // targets from each other.
+          BasicBlock *subblock = nullptr;
+          for (auto block2 : blocks) {
+            {
+              // The second split block must not have a parent with an edge
+              // to a block other than to itself, which can reach any of its two
+              // targets.
+              for (auto P : predecessors(block2)) {
+                for (auto S : successors(P)) {
+                  if (S == block2)
+                    continue;
+                  auto edge = std::make_pair(P, S);
+                  if (done.find(edge) != done.end()) {
+                    for (auto target : done[edge]) {
+                      if (foundtargets.find(target) != foundtargets.end() &&
+                          uniqueTargets.find(target) == uniqueTargets.end()) {
+                        goto nextblock;
+                      }
+                    }
+                  }
+                }
+              }
 
-        if (replacePHIs == nullptr) {
-          BasicBlock *staging =
-              BasicBlock::Create(oldFunc->getContext(), "staging", newFunc);
-          auto stagingIfNeeded = [&](BasicBlock *B) {
-            auto edge = std::make_pair(block, B);
-            if (done[edge].size() == 1) {
-              return *done[edge].begin();
-            } else {
-              assert(done[edge].size() == 2);
-              return staging;
+              // Again, a successful split must have unique targets.
+              std::set<BasicBlock *> seen2;
+              for (BasicBlock *succ : successors(block2)) {
+                auto edge = std::make_pair(block2, succ);
+                // Since there are only two targets, a successful split
+                // condition has only 1 target per successor of block2.
+                if (done[edge].size() != 1) {
+                  goto nextblock;
+                }
+                for (BasicBlock *target : done[edge]) {
+                  // block2 has non-unique targets.
+                  if (seen2.find(target) != seen2.end()) {
+                    goto nextblock;
+                  }
+                  seen2.insert(target);
+                  // block2 has a target which is not part of the two needing
+                  // to be split. The two needing to be split is equal to
+                  //    foundtargets-uniqueTargets.
+                  if (foundtargets.find(target) == foundtargets.end()) {
+                    goto nextblock;
+                  }
+                  if (uniqueTargets.find(target) != uniqueTargets.end()) {
+                    goto nextblock;
+                  }
+                }
+              }
+              // If we didn't find two valid successors, continue.
+              if (seen2.size() != 2) {
+                // llvm::errs() << " -- failed from not 2 seen\n";
+                goto nextblock;
+              }
+              subblock = block2;
+              break;
             }
-          };
-          BuilderM.CreateCondBr(cond1, stagingIfNeeded(bi1->getSuccessor(0)),
-                                stagingIfNeeded(bi1->getSuccessor(1)));
-          BuilderM.SetInsertPoint(staging);
-          BuilderM.CreateCondBr(
-              cond2,
-              *done[std::make_pair(subblock, bi2->getSuccessor(0))].begin(),
-              *done[std::make_pair(subblock, bi2->getSuccessor(1))].begin());
-        } else {
-          Value *otherBranch = nullptr;
-          for (unsigned i = 0; i < 2; ++i) {
-            Value *val = cond1;
-            if (i == 1)
-              val = BuilderM.CreateNot(val, "anot1_");
-            auto edge = std::make_pair(block, bi1->getSuccessor(i));
-            if (done[edge].size() == 1) {
+          nextblock:;
+          }
+
+          // If no split block was found, try again.
+          if (subblock == nullptr)
+            goto rnextpair;
+
+          // This branch, `bi2`, splits off the two blocks in
+          // (foundTargets-uniqueTargets) from each other.
+          auto bi2 = dyn_cast<BranchInst>(subblock->getTerminator());
+          if (!bi2)
+            goto rnextpair;
+
+          // Condition cond1 splits off uniqueTargets[0] from
+          // the remainder of foundTargets.
+          auto cond1 = lookupM(bi1->getCondition(), BuilderM);
+          llvm::errs() << " uniqueTarget: "
+                       << (*uniqueTargets.begin())->getName() << "\n";
+          llvm::errs() << " block: " << block->getName() << "\n";
+          llvm::errs() << " bi1: " << *bi1->getCondition() << "\n";
+
+          // Condition cond2 splits off the two blocks in
+          // (foundTargets-uniqueTargets) from each other.
+          auto cond2 = lookupM(bi2->getCondition(), BuilderM);
+          llvm::errs() << " subblock: " << subblock->getName() << "\n";
+          llvm::errs() << " bi2: " << *bi2->getCondition() << "\n";
+
+          if (replacePHIs == nullptr) {
+            BasicBlock *staging =
+                BasicBlock::Create(oldFunc->getContext(), "staging", newFunc);
+            auto stagingIfNeeded = [&](BasicBlock *B) {
+              auto edge = std::make_pair(block, B);
+              if (done[edge].size() == 1) {
+                return *done[edge].begin();
+              } else {
+                assert(done[edge].size() == 2);
+                return staging;
+              }
+            };
+            BuilderM.CreateCondBr(cond1, stagingIfNeeded(bi1->getSuccessor(0)),
+                                  stagingIfNeeded(bi1->getSuccessor(1)));
+            BuilderM.SetInsertPoint(staging);
+            BuilderM.CreateCondBr(
+                cond2,
+                *done[std::make_pair(subblock, bi2->getSuccessor(0))].begin(),
+                *done[std::make_pair(subblock, bi2->getSuccessor(1))].begin());
+          } else {
+            Value *otherBranch = nullptr;
+            for (unsigned i = 0; i < 2; ++i) {
+              Value *val = cond1;
+              if (i == 1)
+                val = BuilderM.CreateNot(val, "anot1_");
+              auto edge = std::make_pair(block, bi1->getSuccessor(i));
+              if (done[edge].size() == 1) {
+                auto found = replacePHIs->find(*done[edge].begin());
+                if (found == replacePHIs->end())
+                  continue;
+                if (&*BuilderM.GetInsertPoint() == found->second) {
+                  if (found->second->getNextNode())
+                    BuilderM.SetInsertPoint(found->second->getNextNode());
+                  else
+                    BuilderM.SetInsertPoint(found->second->getParent());
+                }
+                found->second->replaceAllUsesWith(val);
+                found->second->eraseFromParent();
+              } else {
+                otherBranch = val;
+              }
+            }
+
+            for (unsigned i = 0; i < 2; ++i) {
+              auto edge = std::make_pair(subblock, bi2->getSuccessor(i));
               auto found = replacePHIs->find(*done[edge].begin());
               if (found == replacePHIs->end())
                 continue;
+
+              Value *val = cond2;
+              if (i == 1)
+                val = BuilderM.CreateNot(val, "bnot1_");
+              val = BuilderM.CreateAnd(val, otherBranch,
+                                       "andVal" + std::to_string(i));
               if (&*BuilderM.GetInsertPoint() == found->second) {
                 if (found->second->getNextNode())
                   BuilderM.SetInsertPoint(found->second->getNextNode());
@@ -4801,35 +4887,11 @@ void GradientUtils::branchToCorrespondingTarget(
               }
               found->second->replaceAllUsesWith(val);
               found->second->eraseFromParent();
-            } else {
-              otherBranch = val;
             }
           }
 
-          for (unsigned i = 0; i < 2; ++i) {
-            auto edge = std::make_pair(subblock, bi2->getSuccessor(i));
-            auto found = replacePHIs->find(*done[edge].begin());
-            if (found == replacePHIs->end())
-              continue;
-
-            Value *val = cond2;
-            if (i == 1)
-              val = BuilderM.CreateNot(val, "bnot1_");
-            val = BuilderM.CreateAnd(val, otherBranch,
-                                      "andVal" + std::to_string(i));
-            if (&*BuilderM.GetInsertPoint() == found->second) {
-              if (found->second->getNextNode())
-                BuilderM.SetInsertPoint(found->second->getNextNode());
-              else
-                BuilderM.SetInsertPoint(found->second->getParent());
-            }
-            found->second->replaceAllUsesWith(val);
-            found->second->eraseFromParent();
-          }
+          return;
         }
-
-        return;
-      }
       }
     rnextpair:;
     }
@@ -4843,37 +4905,39 @@ void GradientUtils::branchToCorrespondingTarget(
 
   for (auto block : blocks) {
     {
-    // The original split block must not have a parent with an edge
-    // to a block other than to itself, which can reach any targets.
-    for (auto P : predecessors(block)) {
-      for (auto S : successors(P)) {
-        if (S == block) continue;
-        auto edge = std::make_pair(P, S);
-        if (done.find(edge) != done.end() && done[edge].size())
+      // The original split block must not have a parent with an edge
+      // to a block other than to itself, which can reach any targets.
+      if (!DT.dominates(block, ctx))
+        for (auto P : predecessors(block)) {
+          for (auto S : successors(P)) {
+            if (S == block)
+              continue;
+            auto edge = std::make_pair(P, S);
+            if (done.find(edge) != done.end() && done[edge].size())
+              goto nextpair;
+          }
+        }
+
+      std::set<BasicBlock *> foundtargets;
+      for (BasicBlock *succ : successors(block)) {
+        auto edge = std::make_pair(block, succ);
+        if (done[edge].size() != 1) {
           goto nextpair;
+        }
+        BasicBlock *target = *done[edge].begin();
+        if (foundtargets.find(target) != foundtargets.end()) {
+          goto nextpair;
+        }
+        foundtargets.insert(target);
       }
-    }
-
-    std::set<BasicBlock *> foundtargets;
-    for (BasicBlock *succ : successors(block)) {
-      auto edge = std::make_pair(block, succ);
-      if (done[edge].size() != 1) {
+      if (foundtargets.size() != targetToPreds.size()) {
         goto nextpair;
       }
-      BasicBlock *target = *done[edge].begin();
-      if (foundtargets.find(target) != foundtargets.end()) {
-        goto nextpair;
-      }
-      foundtargets.insert(target);
-    }
-    if (foundtargets.size() != targetToPreds.size()) {
-      goto nextpair;
-    }
 
-    if (forwardBlock == block || DT.dominates(block, forwardBlock)) {
-      equivalentTerminator = block->getTerminator();
-      goto fast;
-    }
+      if (forwardBlock == block || DT.dominates(block, forwardBlock)) {
+        equivalentTerminator = block->getTerminator();
+        goto fast;
+      }
     }
   nextpair:;
   }
