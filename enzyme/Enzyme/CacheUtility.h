@@ -344,7 +344,8 @@ public:
                          const SubLimitType &antimap, int i,
                          llvm::AllocaInst *alloc,
                          llvm::ConstantInt *byteSizeOfType,
-                         llvm::Value *storeInto, llvm::MDNode *InvariantMD) {
+                         llvm::Value *storeInto, llvm::MDNode *InvariantMD,
+                         bool staticAllocation) {
     assert(0 && "freeing cache not handled in this scenario");
     llvm_unreachable("freeing cache not handled in this scenario");
   }

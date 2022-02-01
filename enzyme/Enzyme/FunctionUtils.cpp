@@ -1878,6 +1878,75 @@ Function *PreProcessCache::CloneFunctionWithReturns(
   return NewF;
 }
 
+void CoalesceMallocs(Function &F) {
+  F.dump();
+  for (BasicBlock &BB : F) {
+      SmallVector<CallInst*, 0> allocs;
+      SmallVector<CallInst*, 0> reallocs;
+      SmallVector<CallInst*, 0> staticfrees;
+      SmallVector<CallInst*, 0> dynamicfrees;
+    for (Instruction &I : BB) {
+      if (auto CI = dyn_cast<CallInst>(&I)) {
+          if (hasMetadata(CI, "enzyme_staticalloccache"))
+              allocs.push_back(CI);
+          if (hasMetadata(CI, "enzyme_dynamicalloccache"))
+              reallocs.push_back(CI);
+          if (hasMetadata(CI, "enzyme_staticfreecache"))
+              staticfrees.push_back(CI);
+          if (hasMetadata(CI, "enzyme_dynamicfreecache"))
+              dynamicfrees.push_back(CI);
+      }
+    }
+      // Each new allocation pushes to the back of the block.
+      // Thus the 0th allocation will be the first allocation requested.
+      if (allocs.size() > 1) {
+        IRBuilder B(allocs[0]);
+        Value *Size = allocs[0]->getArgOperand(0);
+        for (size_t i=1, Len=allocs.size(); i<Len; ++i) {
+          // Add guaranteed alignment of 16 between subseqeunt allocations 
+          Size = B.CreateAdd(
+              B.CreateOr(B.CreateSub(Size, ConstantInt::get(Size->getType(), 1)),
+                         ConstantInt::get(Size->getType(), 15)),
+              ConstantInt::get(Size->getType(), 1));
+          IRBuilder<> B2(allocs[i]);
+#if LLVM_VERSION_MAJOR > 7
+          Value *gepPtr = B2.CreateInBoundsGEP(cast<PointerType>(allocs[0]->getType())->getElementType(), allocs[0], Size);
+#else
+          Value *gepPtr = B2.CreateInBoundsGEP(allocs[0], Size);
+#endif
+          allocs[i]->replaceAllUsesWith(gepPtr);
+          Size = B.CreateAdd(Size, allocs[i]->getArgOperand(0));
+          allocs[i]->eraseFromParent();
+        }
+        allocs[0]->setArgOperand(0, Size);
+      }
+      // The free is made at the end of the block, thus again the 0th free
+      // will be the 0th free request. In combined mode the two are done simulataneously
+      // so the same malloc/free ordering is done.
+      if (staticfrees.size() > 1) {
+        for (size_t i=1, Len=staticfrees.size(); i<Len; ++i) {
+            staticfrees[i]->eraseFromParent();
+        }
+      }
+      // Each realloc is inserted prior to the inc var. Thus the 0th allocation
+      // will be the first allocation requested.
+      // Memory layout struct of array/array of struct makes not yet valid
+      if (false && reallocs.size() < 1) {
+        IRBuilder B(reallocs[0]);
+        // alloc operands are: oldptr, incvar, buffersize.
+        // Reverse assumes [A0][A1][A2][A3]   [B0][B1][B2][B3]
+        //
+        //   incvar should be the same across all reallocations.
+        
+      }
+      if (false && dynamicfrees.size() > 1) {
+        for (size_t i=1, Len=dynamicfrees.size(); i<Len; ++i) {
+            dynamicfrees[i]->eraseFromParent();
+        }
+      }
+  }
+}
+
 void CoaleseTrivialMallocs(Function &F, DominatorTree &DT) {
   std::map<BasicBlock *, std::vector<std::pair<CallInst *, CallInst *>>>
       LegalMallocs;
@@ -1930,7 +1999,7 @@ void CoaleseTrivialMallocs(Function &F, DominatorTree &DT) {
       z.second->eraseFromParent();
       IRBuilder<> B2(z.first);
 #if LLVM_VERSION_MAJOR > 7
-      Value *gepPtr = B2.CreateInBoundsGEP(z.first->getType(), First, Size);
+      Value *gepPtr = B2.CreateInBoundsGEP(cast<PointerType>(z.first->getType())->getElementType(), First, Size);
 #else
       Value *gepPtr = B2.CreateInBoundsGEP(First, Size);
 #endif

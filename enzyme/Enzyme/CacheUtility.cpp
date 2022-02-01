@@ -817,6 +817,7 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
         newFunc->getParent()->getDataLayout().getTypeAllocSizeInBits(myType) /
             8);
 
+    bool staticAllocation = sublimits[i].second.back().first.maxLimit;
     // Allocate and store the required memory
     if (allocateInternal) {
 
@@ -848,7 +849,7 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
 
       StoreInst *storealloc = nullptr;
       // Statically allocate memory for all iterations if possible
-      if (sublimits[i].second.back().first.maxLimit) {
+      if (staticAllocation) {
         auto firstallocation = CallInst::CreateMalloc(
             &allocationBuilder.GetInsertBlock()->back(), size->getType(),
             myType, byteSizeOfType, size, nullptr, name + "_malloccache");
@@ -857,6 +858,8 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
           malloccall =
               cast<CallInst>(cast<Instruction>(firstallocation)->getOperand(0));
         }
+        malloccall->setMetadata("enzyme_staticalloccache",
+                                    MDNode::get(malloccall->getContext(), {(Metadata*)MDString::get(malloccall->getContext(), "enzyme_cache")}));//, (Metadata*)ValueAsMetadata::get(containedloops.back().first.preheader)}));
         for (auto &actx : sublimits[i].second) {
           if (actx.first.offset) {
             malloccall->setMetadata("enzyme_ompfor",
@@ -975,13 +978,15 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
 
         assert(cast<PointerType>(allocation->getType())->getElementType() ==
                myType);
-        Value *realloccall = nullptr;
-
-        realloccall = build.CreateCall(
+        CallInst *realloccall = build.CreateCall(
             getOrInsertExponentialAllocator(*newFunc->getParent(),
                                             EnzymeZeroCache && i == 0),
             idxs, name + "_realloccache");
-        scopeAllocs[alloc].push_back(cast<CallInst>(realloccall));
+
+        realloccall->setMetadata("enzyme_dynamicalloccache",
+                                    MDNode::get(realloccall->getContext(), {(Metadata*)MDString::get(realloccall->getContext(), "enzyme_cache")}));//, (Metadata*)ValueAsMetadata::get(containedloops.back().first.preheader)}));
+
+        scopeAllocs[alloc].push_back(realloccall);
         allocation = build.CreateBitCast(realloccall, allocation->getType());
         storealloc = build.CreateStore(allocation, storeInto);
         // Unlike the static case we can not mark the memory as invariant
@@ -1012,7 +1017,7 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
       }
       freeCache(containedloops.back().first.preheader, sublimits, i, alloc,
                 byteSizeOfType, storeInto,
-                CachePointerInvariantGroups[std::make_pair((Value *)alloc, i)]);
+                CachePointerInvariantGroups[std::make_pair((Value *)alloc, i)], staticAllocation);
     }
 
     // If we are not the final iteration, lookup the next pointer by indexing

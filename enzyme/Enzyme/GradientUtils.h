@@ -1931,7 +1931,7 @@ public:
   void freeCache(llvm::BasicBlock *forwardPreheader,
                  const SubLimitType &sublimits, int i, llvm::AllocaInst *alloc,
                  llvm::ConstantInt *byteSizeOfType, llvm::Value *storeInto,
-                 llvm::MDNode *InvariantMD) override {
+                 llvm::MDNode *InvariantMD, bool staticAllocation) override {
     if (!FreeMemory)
       return;
     assert(reverseBlocks.find(forwardPreheader) != reverseBlocks.end());
@@ -1992,6 +1992,12 @@ public:
         tbuild.CreatePointerCast(forfree,
                                  Type::getInt8PtrTy(newFunc->getContext())),
         tbuild.GetInsertBlock()));
+    if (staticAllocation)
+      ci->setMetadata("enzyme_staticfreecache",
+                                    MDNode::get(ci->getContext(), {(Metadata*)MDString::get(ci->getContext(), "enzyme_cache")}));//, (Metadata*)ValueAsMetadata::get(forwardPreheader)}));
+    else
+      ci->setMetadata("enzyme_dynamicfreecache",
+                                    MDNode::get(ci->getContext(), {(Metadata*)MDString::get(ci->getContext(), "enzyme_cache")}));//, (Metadata*)ValueAsMetadata::get(forwardPreheader)}));
     if (newFunc->getSubprogram())
       ci->setDebugLoc(DILocation::get(newFunc->getContext(), 0, 0,
                                       newFunc->getSubprogram(), 0));

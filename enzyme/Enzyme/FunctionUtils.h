@@ -75,6 +75,8 @@ public:
 
   void clear();
 };
+  
+void CoalesceMallocs(llvm::Function &NewF);
 
 class GradientUtils;
 

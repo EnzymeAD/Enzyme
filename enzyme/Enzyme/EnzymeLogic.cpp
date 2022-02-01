@@ -2392,6 +2392,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   delete gutils;
   tempFunc->eraseFromParent();
 
+  CoalesceMallocs(*NewF);
   if (PostOpt)
     PPC.optimizeIntermediate(NewF);
   if (EnzymePrint)
@@ -3753,6 +3754,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     PreservedAnalyses PA;
     PPC.FAM.invalidate(*nf, PA);
   }
+  CoalesceMallocs(*nf);
   PPC.AlwaysInline(nf);
   if (Arch == Triple::nvptx || Arch == Triple::nvptx64)
     PPC.ReplaceReallocs(nf, /*mem2reg*/ true);
