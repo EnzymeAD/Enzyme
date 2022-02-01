@@ -2926,7 +2926,10 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   if (isConstantValue(oval)) {
     // NOTE, this is legal and the correct resolution, however, our activity
     // analysis honeypot no longer exists
-    auto rule = [&]() { return getNewFromOriginal(oval); };
+
+    Value *newval = getNewFromOriginal(oval);
+
+    auto rule = [&]() { return newval; };
 
     return applyChainRule(oval->getType(), BuilderM, rule);
   }
