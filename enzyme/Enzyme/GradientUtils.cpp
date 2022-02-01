@@ -3171,9 +3171,21 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     auto gvemd = cast<ConstantAsMetadata>(md2->getOperand(0));
     auto cs = gvemd->getValue();
 
-    invertedPointers.insert(
-        std::make_pair((const Value *)oval, InvertedPointerVH(this, cs)));
-    return cs;
+    if (width > 1) {
+      Value *agg = UndefValue::get(getShadowType(arg->getType()));
+      for (unsigned i = 0; i < width; ++i) {
+        Value *elem = BuilderM.CreateGEP(
+            cs, {BuilderM.getInt32(0), BuilderM.getInt32(i)});
+        agg = BuilderM.CreateInsertValue(agg, elem, {i});
+      }
+      invertedPointers.insert(
+          std::make_pair((const Value *)oval, InvertedPointerVH(this, agg)));
+      return agg;
+    } else {
+      invertedPointers.insert(
+          std::make_pair((const Value *)oval, InvertedPointerVH(this, cs)));
+      return cs;
+    }
   } else if (auto fn = dyn_cast<Function>(oval)) {
     Constant *shadow =
         GetOrCreateShadowFunction(Logic, TLI, TA, fn, mode, width, AtomicAdd);
