@@ -2860,20 +2860,11 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   }
 
   if (isa<ConstantPointerNull>(oval)) {
-    if (width > 1) {
-      return applyChainRule(oval->getType(), BuilderM, [&]() { return oval; });
-    }
-    return oval;
+    return applyChainRule(oval->getType(), BuilderM, [&]() { return oval; });
   } else if (isa<UndefValue>(oval)) {
-    if (width > 1) {
-      return applyChainRule(oval->getType(), BuilderM, [&]() { return oval; });
-    }
-    return oval;
+    return applyChainRule(oval->getType(), BuilderM, [&]() { return oval; });
   } else if (isa<ConstantInt>(oval)) {
-    if (width > 1) {
-      return applyChainRule(oval->getType(), BuilderM, [&]() { return oval; });
-    }
-    return oval;
+    return applyChainRule(oval->getType(), BuilderM, [&]() { return oval; });
   } else if (auto CD = dyn_cast<ConstantDataArray>(oval)) {
     SmallVector<Constant *, 1> Vals;
     for (size_t i = 0, len = CD->getNumElements(); i < len; i++) {
@@ -3125,7 +3116,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       if (arg->hasInternalLinkage() || arg->hasPrivateLinkage() ||
           (arg->hasExternalLinkage() && arg->hasInitializer())) {
         Type *elemTy = cast<PointerType>(arg->getType())->getElementType();
-        Type *type = width > 1 ? ArrayType::get(elemTy, width) : elemTy;
+        Type *type = getShadowType(elemTy);
         IRBuilder<> B(inversionAllocs);
         auto ip = arg->getInitializer() ? invertPointerM(arg->getInitializer(),
                                                          B, /*nullShadow*/ true)
