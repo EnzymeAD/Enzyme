@@ -130,6 +130,9 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
   }
 
   if (auto inst = dyn_cast<Instruction>(val)) {
+    if (inversionAllocs && inst->getParent() == inversionAllocs) {
+      return val;
+    }
     // if (inst->getParent() == &newFunc->getEntryBlock()) {
     //  return inst;
     //}
@@ -323,8 +326,6 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
   })
 
   if (isa<Argument>(val) || isa<Constant>(val)) {
-    return val;
-  } else if (isa<AllocaInst>(val)) {
     return val;
 #if LLVM_VERSION_MAJOR >= 10
   } else if (auto op = dyn_cast<FreezeInst>(val)) {
