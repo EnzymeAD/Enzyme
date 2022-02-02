@@ -574,9 +574,9 @@ public:
             continue;
         }
         auto TT = TR.query(prev)[{-1, -1}];
-        // If it either could capture, or could have a pointer written to it
+        // If it either could capture, or could have a int/pointer written to it
         // it is not promotable
-        if (!CI->doesNotCapture(idx) || (TT.isPossiblePointer() && !CI->onlyReadsMemory(idx))) {
+        if (!CI->doesNotCapture(idx) || (!TT.isFloat() && !CI->onlyReadsMemory(idx))) {
           shadowpromotable = false;
           break;
         }
