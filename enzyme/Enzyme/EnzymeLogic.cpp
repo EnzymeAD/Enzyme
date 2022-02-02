@@ -2277,7 +2277,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
   for (BasicBlock &BB : *nf) {
     auto ri = dyn_cast<ReturnInst>(BB.getTerminator());
-    if (ri == nullptr) continue;
+    if (ri == nullptr)
+      continue;
     ReturnInst *rim = cast<ReturnInst>(VMap[ri]);
     IRBuilder<> ib(rim);
     if (returnUsed) {
@@ -2285,8 +2286,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       assert(rv);
       Value *actualrv = nullptr;
       if (auto iv = dyn_cast<InsertValueInst>(rv)) {
-        if (iv->getNumIndices() == 1 &&
-            (int)iv->getIndices()[0] == oldretIdx) {
+        if (iv->getNumIndices() == 1 && (int)iv->getIndices()[0] == oldretIdx) {
           actualrv = iv->getInsertedValueOperand();
         }
       }
@@ -2424,7 +2424,8 @@ void createTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
 
   ReturnInst *inst = dyn_cast_or_null<ReturnInst>(oBB->getTerminator());
   // In forward mode we only need to update the return value
-  if (inst == nullptr) return;
+  if (inst == nullptr)
+    return;
   SmallVector<Value *, 2> retargs;
 
   Value *toret = UndefValue::get(gutils->newFunc->getReturnType());
@@ -2567,7 +2568,8 @@ void createInvertedTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
   // Ensure phi values have their derivatives propagated
   for (auto I = oBB->begin(), E = oBB->end(); I != E; ++I) {
     PHINode *orig = dyn_cast<PHINode>(&*I);
-    if (orig == nullptr) break;
+    if (orig == nullptr)
+      break;
     if (gutils->isConstantInstruction(orig))
       continue;
 
@@ -2598,8 +2600,7 @@ void createInvertedTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
       llvm::errs() << *gutils->oldFunc->getParent() << "\n";
       llvm::errs() << *gutils->oldFunc << "\n";
       llvm::errs() << " for orig " << *orig << " saw "
-                   << TR.intType(size, orig, /*necessary*/ false).str()
-                   << " - "
+                   << TR.intType(size, orig, /*necessary*/ false).str() << " - "
                    << "\n";
       TR.intType(size, orig, /*necessary*/ true);
     }
@@ -2660,8 +2661,8 @@ void createInvertedTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
                   EB.SetInsertPoint(REB->getTerminator());
 
                 auto index = gutils->getOrInsertConditionalIndex(
-                    gutils->getNewFromOriginal(SI->getOperand(0)),
-                    loopContext, i == 1);
+                    gutils->getNewFromOriginal(SI->getOperand(0)), loopContext,
+                    i == 1);
                 Value *sdif = Builder.CreateSelect(
                     Builder.CreateICmpEQ(
                         gutils->lookupM(index, EB),
@@ -2699,19 +2700,18 @@ void createInvertedTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
             }
 
             auto ddiff = gutils->diffe(BO, Builder);
-            gutils->setDiffe(BO,
-                             Builder.CreateSelect(
-                                 replacePHIs[pred],
-                                 Constant::getNullValue(prediff->getType()),
-                                 ddiff),
-                             Builder);
+            gutils->setDiffe(
+                BO,
+                Builder.CreateSelect(replacePHIs[pred],
+                                     Constant::getNullValue(prediff->getType()),
+                                     ddiff),
+                Builder);
             handled = true;
 
             if (!gutils->isConstantValue(oval)) {
 
               BasicBlock *REB =
-                  gutils->reverseBlocks[*loopContext.exitBlocks.begin()]
-                      .back();
+                  gutils->reverseBlocks[*loopContext.exitBlocks.begin()].back();
               IRBuilder<> EB(REB);
               if (REB->getTerminator())
                 EB.SetInsertPoint(REB->getTerminator());
@@ -2735,8 +2735,7 @@ void createInvertedTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
     }
 
     if (!handled) {
-      gutils->setDiffe(orig, Constant::getNullValue(orig->getType()),
-                       Builder);
+      gutils->setDiffe(orig, Constant::getNullValue(orig->getType()), Builder);
 
       for (BasicBlock *opred : predecessors(oBB)) {
         auto oval = orig->getIncomingValueForBlock(opred);
@@ -2757,9 +2756,9 @@ void createInvertedTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
               setphi = true;
             }
           }
-          SelectInst *dif = cast<SelectInst>(Builder.CreateSelect(
-              replacePHIs[pred], prediff,
-              Constant::getNullValue(prediff->getType())));
+          SelectInst *dif = cast<SelectInst>(
+              Builder.CreateSelect(replacePHIs[pred], prediff,
+                                   Constant::getNullValue(prediff->getType())));
           auto addedSelects =
               gutils->addToDiffe(oval, dif, Builder, PNfloatType);
 
