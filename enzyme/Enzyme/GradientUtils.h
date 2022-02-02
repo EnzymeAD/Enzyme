@@ -573,11 +573,11 @@ public:
             idx++;
             continue;
         }
-        auto TT = TR.query(prev);
-        llvm::errs() << " TT: " << TT.str() << " prev:" << *prev << "\n";
-        if (!CI->doesNotCapture(idx) || !CI->onlyReadsMemory(idx)) {
+        auto TT = TR.query(prev)[{-1, -1}];
+        // If it either could capture, or could have a pointer written to it
+        // it is not promotable
+        if (!CI->doesNotCapture(idx) || (TT.isPossiblePointer() && !CI->onlyReadsMemory(idx))) {
           shadowpromotable = false;
-          llvm::errs() << " shadow: " << *V << " non promotable due to: " << *cur << " idx=" << idx << " nocap: " << (CI->doesNotCapture(idx)) << " readonly:" << CI->onlyReadsMemory(idx) << "\n";
           break;
         }
         idx++;
