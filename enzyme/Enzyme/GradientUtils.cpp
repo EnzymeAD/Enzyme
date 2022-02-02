@@ -4372,7 +4372,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                   LimitContext lctx(/*ReverseLimit*/ reverseBlocks.size() > 0,
                                     ctx, forceSingleIter);
 
-                  if (auto found = findInMap(scopeMap, (Value *)AI)) {
+                  if (auto found = findInMap(scopeMap, (Value *)liobj)) {
                     cache = found->first;
                   } else {
                     // if freeing reverseblocks must exist

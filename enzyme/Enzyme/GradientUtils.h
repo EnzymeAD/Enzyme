@@ -592,10 +592,37 @@ public:
     SmallPtrSet<LoadInst*, 1> rematerializable;
     backwardsOnlyShadows[V] = stores;
 
+    Loop* outer = nullptr;
+    bool set = false;
+    for (auto S : stores) {
+        Loop* L = OrigLI.getLoopFor(S->getParent());
+        if (!set) {
+            outer = L;
+        } else {
+            if (outer == nullptr || L == nullptr) {
+                outer = nullptr;
+            } else {
+                Loop* anc = nullptr;
+                for (Loop* L1 = L; L1; L1 = L1->getParentLoop())
+                for (Loop* L2 = outer; L2; L2 = L2->getParentLoop()) {
+                    if (L1 == L2) {
+                        anc = L1;
+                        goto found;
+                    }
+                }
+                found:;
+                outer = anc;
+            }
+        }
+    }
+
+    // TODO ensure a lifetime.start is between the loop header stand and all stores
+    outer = nullptr;
+
     for (auto LI : loads) {
       // Is there a store which could occur after the load. 
       // In other words 
-      if (mayExecuteAfter(LI, stores)) {
+      if (mayExecuteAfter(LI, stores, outer)) {
           continue;
       }
       rematerializable.insert(LI);
