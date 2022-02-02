@@ -322,13 +322,23 @@ static inline bool is_value_needed_in_reverse(
                                                     seen, oldUnreachable)) {
       return seen[idx] = true;
     }
-    
+
     // Anything we may try to rematerialize requires its store opreands for
     // the reverse pass.
-    if (auto SI = dyn_cast<StoreInst>(user)) {
-      for (auto pair : gutils->rematerializableAllocations) {
-        if (!OneLevel && is_value_needed_in_reverse<VT>(TR, gutils, pair.first, mode, seen, oldUnreachable)) {
-              return seen[idx] = true;
+    if (!OneLevel) {
+      if (auto SI = dyn_cast<StoreInst>(user)) {
+        for (auto pair : gutils->rematerializableAllocations) {
+          // Directly consider all the load uses to avoid an illegal inductive
+          // recurrence. Specifically if we're asking if the alloca is used,
+          // we'll set it to unused, then check the gep, then here we'll
+          // directly say unused by induction instead of checking the final
+          // loads.
+          if (pair.second.second.count(SI))
+            for (LoadInst *L : pair.second.first)
+              if (is_value_needed_in_reverse<VT>(TR, gutils, L, mode, seen,
+                                                 oldUnreachable)) {
+                return seen[idx] = true;
+              }
         }
       }
     }
@@ -494,13 +504,14 @@ static inline int cmpLoopNest(Loop *prev, Loop *next) {
   return -1;
 }
 
-static inline void minCut(const DataLayout &DL, LoopInfo &OrigLI,
-                          const SmallPtrSetImpl<Value *> &Recomputes,
-                          const SmallPtrSetImpl<Value *> &Intermediates,
-                          SmallPtrSetImpl<Value *> &Required,
-                          SmallPtrSetImpl<Value *> &MinReq, 
-                          const ValueMap<Value*, std::pair<SmallPtrSet<LoadInst*,1>,SmallPtrSet<StoreInst*,1>>> &rematerializableAllocations
-                          ) {
+static inline void
+minCut(const DataLayout &DL, LoopInfo &OrigLI,
+       const SmallPtrSetImpl<Value *> &Recomputes,
+       const SmallPtrSetImpl<Value *> &Intermediates,
+       SmallPtrSetImpl<Value *> &Required, SmallPtrSetImpl<Value *> &MinReq,
+       const ValueMap<Value *, std::pair<SmallPtrSet<LoadInst *, 1>,
+                                         SmallPtrSet<StoreInst *, 1>>>
+           &rematerializableAllocations) {
   Graph G;
   for (auto V : Intermediates) {
     G[Node(V, false)].insert(Node(V, true));
@@ -518,7 +529,7 @@ static inline void minCut(const DataLayout &DL, LoopInfo &OrigLI,
   }
   for (auto pair : rematerializableAllocations) {
     if (Intermediates.count(pair.first)) {
-      for (LoadInst* L : pair.second.first) {
+      for (LoadInst *L : pair.second.first) {
         if (Intermediates.count(L)) {
           G[Node(pair.first, true)].insert(Node(L, false));
         }

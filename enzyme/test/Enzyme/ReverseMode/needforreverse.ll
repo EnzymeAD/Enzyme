@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s
+; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false  -S | FileCheck %s
 
 source_filename = "badalloc.c"
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
@@ -99,5 +99,17 @@ attributes #4 = { nounwind }
 !6 = !{!7, !7, i64 0}
 !7 = !{!"int", !4, i64 0}
 
-; CHECK: define internal void @diffeproject(double* noalias nocapture readonly %cam, double* nocapture %"cam'", double* noalias nocapture %proj, double* nocapture %"proj'", { i8*, i8* } %tapeArg)
-; CHECK-NOT: %Xcam = alloca [2 x double]
+; CHECK: define dso_local void @project
+; CHECK: %Xcam = alloca [2 x double], align 16
+
+; CHECK: define internal i8* @augmented_project(double* noalias nocapture readonly %cam, double* nocapture %"cam'", double* noalias nocapture %proj, double* nocapture %"proj'")
+
+; CHECK: define internal void @diffeproject
+; (double* noalias nocapture readonly %cam, double* nocapture %"cam'", double* noalias nocapture %proj, double* nocapture %"proj'", i8* %"malloccall'mi")
+; CHECK: %[[a0:.+]] = alloca i8, i64 16
+; CHECK: %Xcam = bitcast i8* %0 to [2 x double]*
+
+; CHECK-LABEL: for.body
+; CHECK: %arrayidx2 = getelementptr inbounds [2 x double], [2 x double]* %Xcam, i64 0, i64 %iv
+; CHECK: store double %add, double* %arrayidx2, align 8
+

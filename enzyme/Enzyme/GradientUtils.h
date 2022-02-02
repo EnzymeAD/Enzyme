@@ -523,61 +523,79 @@ public:
     return cast_or_null<BasicBlock>(isOriginal((const Value *)newinst));
   }
 
-  ValueMap<Value*, std::pair<SmallPtrSet<LoadInst*,1>,SmallPtrSet<StoreInst*,1>>>
-    rematerializableAllocations;
+  ValueMap<Value *,
+           std::pair<SmallPtrSet<LoadInst *, 1>, SmallPtrSet<StoreInst *, 1>>>
+      rematerializableAllocations;
 
-  void computeForwardingProperties(Value* V) {
-    SmallPtrSet<LoadInst*, 1> loads;
-    SmallPtrSet<StoreInst*, 1> stores;
+  void computeForwardingProperties(Value *V) {
+    SmallPtrSet<LoadInst *, 1> loads;
+    SmallPtrSet<StoreInst *, 1> stores;
     bool promotable = true;
-    SmallPtrSet<Instruction*, 1> seen;
-    SmallVector<Instruction*, 1> todo;
+    std::set<std::pair<Instruction *, Value *>> seen;
+    SmallVector<std::pair<Instruction *, Value *>, 1> todo;
     for (auto U : V->users())
       if (auto I = dyn_cast<Instruction>(U))
-        todo.push_back(I);
+        todo.push_back(std::make_pair(I, V));
     while (todo.size()) {
-      Instruction *cur = todo.back();
+      auto tup = todo.back();
+      Instruction *cur = tup.first;
+      Value *prev = tup.second;
       todo.pop_back();
-      if (seen.count(cur)) continue;
-      seen.insert(cur);
+      if (seen.count(tup))
+        continue;
+      seen.insert(tup);
       if (isa<CastInst>(cur) || isa<GetElementPtrInst>(cur)) {
-        for(auto u : cur->users()) {
+        for (auto u : cur->users()) {
           if (auto I = dyn_cast<Instruction>(u))
-            todo.push_back(I);
+            todo.push_back(std::make_pair(I, (Value *)cur));
         }
       } else if (auto load = dyn_cast<LoadInst>(cur)) {
         loads.insert(load);
       } else if (auto store = dyn_cast<StoreInst>(cur)) {
-        stores.insert(store);
+        if (store->getValueOperand() != prev)
+          stores.insert(store);
+        else
+          promotable = false;
       } else if (auto II = dyn_cast<IntrinsicInst>(cur)) {
         switch (II->getIntrinsicID()) {
-          case Intrinsic::dbg_declare:
-          case Intrinsic::dbg_value:
-    #if LLVM_VERSION_MAJOR > 6
-          case Intrinsic::dbg_label:
-    #endif
-          case Intrinsic::dbg_addr:
-          case Intrinsic::lifetime_start:
-          case Intrinsic::lifetime_end:
-            break;
-          default:
-            promotable = false;
-            llvm::errs() << "failed to promote: " << *V << " due to: " << *cur << "\n";
-            break;
+        case Intrinsic::dbg_declare:
+        case Intrinsic::dbg_value:
+#if LLVM_VERSION_MAJOR > 6
+        case Intrinsic::dbg_label:
+#endif
+        case Intrinsic::dbg_addr:
+        case Intrinsic::lifetime_start:
+        case Intrinsic::lifetime_end:
+          break;
+        default:
+          promotable = false;
+          break;
+        }
+      } else if (auto CI = dyn_cast<CallInst>(cur)) {
+        Function *called = getFunctionFromCall(CI);
+        if (!called) {
+          promotable = false;
+          break;
+        }
+        if (!isDeallocationFunction(*called, TLI)) {
+          promotable = false;
+          break;
         }
       } else {
         promotable = false;
-        llvm::errs() << "failed to promote: " << *V << " due to: " << *cur << "\n";
       }
     }
-    if (!promotable) return;
+    if (!promotable)
+      return;
 
-    SmallPtrSet<LoadInst*, 1> rematerializable;
+    SmallPtrSet<LoadInst *, 1> rematerializable;
 
     for (auto LI : loads) {
-      // Is there a store which could occur after the load. 
-      // In other words 
-      if (mayExecuteAfter(LI, stores)) continue;
+      // Is there a store which could occur after the load.
+      // In other words
+      if (mayExecuteAfter(LI, stores)) {
+        continue;
+      }
       rematerializable.insert(LI);
     }
     if (rematerializable.size() == loads.size()) {
@@ -588,6 +606,7 @@ public:
   void computeGuaranteedFrees(
       const llvm::SmallPtrSetImpl<BasicBlock *> &oldUnreachable,
       TypeResults &TR) {
+    SmallPtrSet<Value *, 2> allocsToPromote;
     for (auto &BB : *oldFunc) {
       if (oldUnreachable.count(&BB))
         continue;
@@ -622,22 +641,30 @@ public:
           }
         }
         if (isAllocationFunction(*called, TLI)) {
+          allocsToPromote.insert(CI);
           if (hasMetadata(CI, "enzyme_fromstack")) {
             allocationsWithGuaranteedFree[CI].insert(CI);
-  
-            // TODO compute if an only load/store (non capture)
-            // allocaion by traversing its users. If so, mark
-            // all of its load/stores, as now the loads can
-            // potentially be rematerialized without a cache
-            // of the allocation, but the operands of all stores.
-            // This info needs to be provided to minCutCache
-            // the derivative of store needs to redo the store,
-            // isValueNeededInReverse needs to know to preserve the
-            // store operands in this case, etc
-            computeForwardingProperties(CI);
+          }
+          auto funcName = called->getName();
+          if (funcName == "jl_alloc_array_1d" ||
+              funcName == "jl_alloc_array_2d" ||
+              funcName == "jl_alloc_array_3d" || funcName == "jl_array_copy" ||
+              funcName == "julia.gc_alloc_obj") {
           }
         }
       }
+    }
+    for (Value *V : allocsToPromote) {
+      // TODO compute if an only load/store (non capture)
+      // allocaion by traversing its users. If so, mark
+      // all of its load/stores, as now the loads can
+      // potentially be rematerialized without a cache
+      // of the allocation, but the operands of all stores.
+      // This info needs to be provided to minCutCache
+      // the derivative of store needs to redo the store,
+      // isValueNeededInReverse needs to know to preserve the
+      // store operands in this case, etc
+      computeForwardingProperties(V);
     }
   }
 

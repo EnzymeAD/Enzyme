@@ -752,17 +752,17 @@ public:
                      SI.isVolatile(), SI.getOrdering(), SI.getSyncScopeID(),
                      /*mask=*/nullptr);
 
-        
     std::map<UsageKey, bool> Seen;
     for (auto pair : gutils->knownRecomputeHeuristic)
       if (!pair.second)
         Seen[UsageKey(pair.first, ValueType::Primal)] = false;
-    
+
     // Don't erase any store that needs to be preserved for a rematerialization
     for (auto pair : gutils->rematerializableAllocations) {
       if (is_value_needed_in_reverse<ValueType::Primal>(
               TR, gutils, pair.first, Mode, Seen, oldUnreachable)) {
-          if (pair.second.second.count(&SI)) return;
+        if (pair.second.second.count(&SI))
+          return;
       }
     }
     eraseIfUnused(SI);
@@ -8342,31 +8342,53 @@ public:
               ? false
               : is_value_needed_in_reverse<ValueType::Primal>(
                     TR, gutils, orig, Mode, Seen, oldUnreachable);
-    
-      // Don't erase any store that needs to be preserved for a rematerialization
-      {
-          auto found = gutils->rematerializableAllocations.find(orig);
-          if (found != gutils->rematerializableAllocations.end()) {
 
-            // if rematerialize, don't ever cache and downgrade to stack
-            // allocation where possible.
-            if (!primalNeededInReverse) {
-              if (hasMetadata(orig, "enzyme_fromstack")) {
-                IRBuilder<> B(newCall);
-                if (auto CI = dyn_cast<ConstantInt>(orig->getArgOperand(0))) {
-                  B.SetInsertPoint(gutils->inversionAllocs);
-                }
-                auto replacement = B.CreateAlloca(
-                    Type::getInt8Ty(orig->getContext()),
-                    gutils->getNewFromOriginal(orig->getArgOperand(0)));
-                gutils->replaceAWithB(newCall, replacement);
-                gutils->erase(newCall);
+      // Don't erase any store that needs to be preserved for a
+      // rematerialization
+      {
+        auto found = gutils->rematerializableAllocations.find(orig);
+        if (found != gutils->rematerializableAllocations.end()) {
+          bool cacheWholeAllocation = false;
+          if (gutils->knownRecomputeHeuristic.count(orig)) {
+            if (!gutils->knownRecomputeHeuristic[orig])
+              cacheWholeAllocation = true;
+          }
+          // if rematerialize, don't ever cache and downgrade to stack
+          // allocation where possible.
+          if (!cacheWholeAllocation) {
+            if (hasMetadata(orig, "enzyme_fromstack")) {
+              IRBuilder<> B(newCall);
+              if (auto CI = dyn_cast<ConstantInt>(orig->getArgOperand(0))) {
+                B.SetInsertPoint(gutils->inversionAllocs);
               }
+              auto replacement = B.CreateAlloca(
+                  Type::getInt8Ty(orig->getContext()),
+                  gutils->getNewFromOriginal(orig->getArgOperand(0)));
+              gutils->replaceAWithB(newCall, replacement);
+              gutils->erase(newCall);
               return;
             }
-            // Otherwise take the fallback and cache the entire alloca
-            // (and free if required).
+
+            // No need to free GC.
+            if (funcName == "jl_alloc_array_1d" ||
+                funcName == "jl_alloc_array_2d" ||
+                funcName == "jl_alloc_array_3d" ||
+                funcName == "jl_array_copy" || funcName == "julia.gc_alloc_obj")
+              return;
+
+            // Otherwise if in reverse only, free the newly created allocation
+            if (Mode == DerivativeMode::ReverseModeGradient) {
+              IRBuilder<> Builder2(call.getParent());
+              getReverseBuilder(Builder2);
+              auto dbgLoc = gutils->getNewFromOriginal(orig->getDebugLoc());
+              freeKnownAllocation(Builder2, lookup(newCall, Builder2), *called,
+                                  dbgLoc, gutils->TLI);
+            }
+            return;
           }
+          // Otherwise take the fallback and cache the entire alloca
+          // (and free if required).
+        }
       }
 
       bool hasPDFree = gutils->allocationsWithGuaranteedFree.count(orig);
@@ -8633,6 +8655,18 @@ public:
                                                orig->getCalledFunction(), args);
             CI->setAttributes(orig->getAttributes());
           }
+        }
+        return;
+      }
+
+      // If a rematerializable allocation. Leave the original
+      // forward pass freeing behavior, however, for the new
+      // reverse-only allocation it should be freed automatically
+      // in the reverse pass, thus erase this only in gradient mode.
+      if (gutils->rematerializableAllocations.count(orig) &&
+          Mode != DerivativeMode::ReverseModeCombined) {
+        if (Mode == DerivativeMode::ReverseModeGradient) {
+          eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
         }
         return;
       }

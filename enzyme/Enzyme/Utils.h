@@ -805,9 +805,12 @@ static inline bool mayExecuteAfter(llvm::Instruction *inst, const llvm::SmallPtr
             /*empty*/;
       // if inst comes first (e.g. before I) in the
       // block, return true
-      if (&*It == inst)
+      if (&*It == inst) {
         return true;
-    } else maybeBlocks.insert(blkI);
+      }
+    } else { 
+        maybeBlocks.insert(blkI);
+    }
   }
   if (maybeBlocks.size() == 0) return false;
 
@@ -820,8 +823,10 @@ static inline bool mayExecuteAfter(llvm::Instruction *inst, const llvm::SmallPtr
     auto cur = todo.back();
     todo.pop_back();
     if (seen.count(cur)) continue;
-    if (maybeBlocks.count(cur)) return true;
-    maybeBlocks.insert(cur);
+    seen.insert(cur);
+    if (maybeBlocks.count(cur)) {
+        return true;
+    }
     for (auto B : successors(cur))
       todo.push_back(B);
   }
