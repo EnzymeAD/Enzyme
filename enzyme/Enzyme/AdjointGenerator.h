@@ -2619,6 +2619,8 @@ public:
         call->setAttributes(MTI.getAttributes());
         call->setMetadata(LLVMContext::MD_tbaa,
                           MTI.getMetadata(LLVMContext::MD_tbaa));
+        call->setMetadata(LLVMContext::MD_tbaa_struct,
+                          MTI.getMetadata(LLVMContext::MD_tbaa_struct));
         call->setMetadata(LLVMContext::MD_invariant_group,
                           MTI.getMetadata(LLVMContext::MD_invariant_group));
         call->setTailCallKind(MTI.getTailCallKind());
