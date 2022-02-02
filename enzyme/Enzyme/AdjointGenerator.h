@@ -5759,10 +5759,10 @@ public:
                                      PointerType::getUnqual(scalarType), 0, 0);
         auto malins = CallInst::CreateMalloc(gutils->getNewFromOriginal(&call),
                                              size->getType(), scalarType, size,
-                                             arg_n, nullptr, "");
+                                             gutils->getNewFromOriginal(arg_n), nullptr, "");
         Value *arg1 = BuilderZ.CreateBitCast(malins, arg_x->getType());
         SmallVector<Value *, 4> args = {arg1, gutils->getNewFromOriginal(arg_x),
-                                        arg_n, arg_incx};
+                                        gutils->getNewFromOriginal(arg_n), gutils->getNewFromOriginal(arg_incx)};
         BuilderZ.CreateCall(dmemcpy, args);
         cacheval = arg1;
         gutils->cacheForReverse(BuilderZ, cacheval,
@@ -5849,10 +5849,10 @@ public:
                                      PointerType::getUnqual(scalarType), 0, 0);
         auto malins = CallInst::CreateMalloc(gutils->getNewFromOriginal(&call),
                                              size->getType(), scalarType, size,
-                                             arg_n, nullptr, "");
+                                             gutils->getNewFromOriginal(arg_n), nullptr, "");
         arg1 = BuilderZ.CreateBitCast(malins, arg_x->getType());
         SmallVector<Value *, 4> args = {arg1, gutils->getNewFromOriginal(arg_x),
-                                        arg_n, arg_incx};
+                                        gutils->getNewFromOriginal(arg_n), gutils->getNewFromOriginal(arg_incx)};
         BuilderZ.CreateCall(dmemcpy, args);
         cacheval = arg1;
         gutils->cacheForReverse(BuilderZ, cacheval,
@@ -5923,15 +5923,53 @@ public:
            arg_incx = call.getArgOperand(2);
       auto type_n = arg_n->getType(), type_x = arg_x->getType(),
            type_incx = arg_incx->getType();
+      Value *cacheval;
       auto has_diff_x = !gutils->isConstantValue(arg_x),
            has_diff_ret = !gutils->isConstantInstruction(&call);
+      auto nfuncarg = call.getCalledFunction()->arg_begin(),
+           xfuncarg = nfuncarg + 1;
+      bool xcache = has_diff_ret && has_diff_x && uncacheable_args.find(xfuncarg)->second;
+      if ((Mode == DerivativeMode::ReverseModeCombined ||
+           Mode == DerivativeMode::ReverseModePrimal) &&
+          (xcache)) {
+
+        Value *arg1;
+        auto size = ConstantExpr::getSizeOf(scalarType);
+        auto dmemcpy =
+            getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(),
+                                     PointerType::getUnqual(scalarType), 0, 0);
+        auto malins = CallInst::CreateMalloc(gutils->getNewFromOriginal(&call),
+                                             size->getType(), scalarType, size,
+                                             gutils->getNewFromOriginal(arg_n), nullptr, "");
+        arg1 = BuilderZ.CreateBitCast(malins, arg_x->getType());
+        SmallVector<Value *, 4> args = {arg1, gutils->getNewFromOriginal(arg_x),
+                                        gutils->getNewFromOriginal(arg_n), gutils->getNewFromOriginal(arg_incx)};
+        BuilderZ.CreateCall(dmemcpy, args);
+        cacheval = arg1;
+        gutils->cacheForReverse(BuilderZ, cacheval,
+                                getIndex(&call, CacheType::Tape));
+      }
       if (Mode == DerivativeMode::ReverseModeCombined ||
           Mode == DerivativeMode::ReverseModeGradient) {
         IRBuilder<> Builder2(call.getParent());
         getReverseBuilder(Builder2);
+        Value *new_x = nullptr, *new_incx = nullptr;
+        if (xcache) {
+          if (Mode == DerivativeMode::ReverseModeGradient && has_diff_x) {
+            cacheval = BuilderZ.CreatePHI(type_x, 0);
+          }
+          cacheval =
+              lookup(gutils->cacheForReverse(BuilderZ, cacheval,
+                                             getIndex(&call, CacheType::Tape)),
+                     Builder2);
+          new_x = cacheval;
+          new_incx = ConstantInt::get(type_incx, 1);
+        }
+        if (!new_x)
+          new_x = lookup(gutils->getNewFromOriginal(arg_x), Builder2);
+        if (!new_incx)
+          new_incx = lookup(gutils->getNewFromOriginal(arg_incx), Builder2);
         auto new_n = lookup(gutils->getNewFromOriginal(arg_n), Builder2),
-             new_incx = lookup(gutils->getNewFromOriginal(arg_incx), Builder2),
-             new_x = lookup(gutils->getNewFromOriginal(arg_x), Builder2),
              new_ret = lookup(gutils->getNewFromOriginal(&call), Builder2);
         if (has_diff_x) {
           auto diff_x =
