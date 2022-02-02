@@ -1536,7 +1536,7 @@ static FnTypeInfo preventTypeAnalysisLoops(const FnTypeInfo &oldTypeInfo_,
 //! return structtype if recursive function
 const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     Function *todiff, DIFFE_TYPE retType,
-    const std::vector<DIFFE_TYPE> &constant_args, TargetLibraryInfo &TLI,
+    const std::vector<DIFFE_TYPE> &constant_args,
     TypeAnalysis &TA, bool returnUsed, const FnTypeInfo &oldTypeInfo_,
     const std::map<Argument *, bool> _uncacheable_args, bool forceAnonymousTape,
     bool AtomicAdd, bool PostOpt, bool omp) {
@@ -1559,6 +1559,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   if (found != AugmentedCachedFunctions.end()) {
     return found->second;
   }
+  TargetLibraryInfo &TLI = PPC.FAM.getResult<TargetLibraryAnalysis>(*todiff);
 
   // TODO make default typing (not just constant)
 
@@ -1643,7 +1644,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         act_idx++;
       }
       auto &aug =
-          CreateAugmentedPrimal(todiff, retType, next_constant_args, TLI, TA,
+          CreateAugmentedPrimal(todiff, retType, next_constant_args, TA,
                                 returnUsed, oldTypeInfo_, _uncacheable_args,
                                 forceAnonymousTape, AtomicAdd, PostOpt, omp);
       auto cal = bb.CreateCall(aug.fn, fwdargs);
@@ -1792,7 +1793,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     for (auto &I : *BB)
       unnecessaryInstructionsTmp.insert(&I);
   }
-  gutils->computeGuaranteedFrees(guaranteedUnreachable);
+  gutils->computeGuaranteedFrees(guaranteedUnreachable, TR);
 
   CacheAnalysis CA(gutils->allocationsWithGuaranteedFree, TR, gutils->OrigAA,
                    gutils->oldFunc,
@@ -2870,7 +2871,7 @@ void createInvertedTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
 }
 
 Function *EnzymeLogic::CreatePrimalAndGradient(
-    const ReverseCacheKey &&key, TargetLibraryInfo &TLI, TypeAnalysis &TA,
+    const ReverseCacheKey &&key, TypeAnalysis &TA,
     const AugmentedReturn *augmenteddata, bool PostOpt, bool omp) {
 
   assert(key.mode == DerivativeMode::ReverseModeCombined ||
@@ -2887,6 +2888,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   if (key.returnUsed)
     assert(key.mode == DerivativeMode::ReverseModeCombined);
 
+  TargetLibraryInfo &TLI = PPC.FAM.getResult<TargetLibraryAnalysis>(*key.todiff);
+  
   // TODO change this to go by default function type assumptions
   bool hasconstant = false;
   for (auto v : key.constant_args) {
@@ -2933,7 +2936,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       IRBuilder<> bb(BB);
 
       auto &aug = CreateAugmentedPrimal(
-          key.todiff, key.retType, key.constant_args, TLI, TA, key.returnUsed,
+          key.todiff, key.retType, key.constant_args, TA, key.returnUsed,
           key.typeInfo, key.uncacheable_args, /*forceAnonymousTape*/ false,
           key.AtomicAdd, PostOpt, omp);
 
@@ -2989,7 +2992,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                             .AtomicAdd = key.AtomicAdd,
                             .additionalType = tape ? tape->getType() : nullptr,
                             .typeInfo = key.typeInfo},
-          TLI, TA, &aug, PostOpt, omp);
+          TA, &aug, PostOpt, omp);
 
       SmallVector<Value *, 4> revargs;
       for (auto &a : NewF->args()) {
@@ -3070,7 +3073,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                             .AtomicAdd = key.AtomicAdd,
                             .additionalType = nullptr,
                             .typeInfo = key.typeInfo},
-          TLI, TA, augmenteddata, PostOpt, omp);
+          TA, augmenteddata, PostOpt, omp);
 
       {
         auto arg = revfn->arg_begin();
@@ -3289,7 +3292,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   gutils->forceActiveDetection(TR);
   gutils->forceAugmentedReturns(TR, guaranteedUnreachable);
 
-  gutils->computeGuaranteedFrees(guaranteedUnreachable);
+  gutils->computeGuaranteedFrees(guaranteedUnreachable, TR);
 
   // TODO populate with actual unnecessaryInstructions once the dependency
   // cycle with activity analysis is removed
@@ -3782,7 +3785,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
 Function *EnzymeLogic::CreateForwardDiff(
     Function *todiff, DIFFE_TYPE retType,
-    const std::vector<DIFFE_TYPE> &constant_args, TargetLibraryInfo &TLI,
+    const std::vector<DIFFE_TYPE> &constant_args,
     TypeAnalysis &TA, bool returnUsed, DerivativeMode mode, unsigned width,
     llvm::Type *additionalArg, const FnTypeInfo &oldTypeInfo_,
     const std::map<Argument *, bool> _uncacheable_args, bool PostOpt,
@@ -3805,6 +3808,8 @@ Function *EnzymeLogic::CreateForwardDiff(
   if (ForwardCachedFunctions.find(tup) != ForwardCachedFunctions.end()) {
     return ForwardCachedFunctions.find(tup)->second;
   }
+  
+  TargetLibraryInfo &TLI = PPC.FAM.getResult<TargetLibraryAnalysis>(*todiff);
 
   // TODO change this to go by default function type assumptions
   bool hasconstant = false;
@@ -4069,6 +4074,7 @@ Function *EnzymeLogic::CreateForwardDiff(
       }
     }
 
+    // TODO gutils->computeGuaranteedFrees(guaranteedUnreachable, TR);
     CacheAnalysis CA(
         gutils->allocationsWithGuaranteedFree, TR, gutils->OrigAA,
         gutils->oldFunc,
