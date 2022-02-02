@@ -8313,8 +8313,10 @@ public:
         if (Mode == DerivativeMode::ReverseModeCombined ||
             Mode == DerivativeMode::ReverseModeGradient ||
             Mode == DerivativeMode::ReverseModePrimal) {
+          bool rematerializable = gutils->backwardsOnlyShadows.find(orig) != gutils->backwardsOnlyShadows.end();
+          unsigned index = rematerializable ? (unsigned)-1 : getIndex(orig, CacheType::Shadow);
           auto anti =
-              gutils->createAntiMalloc(orig, getIndex(orig, CacheType::Shadow));
+              gutils->createAntiMalloc(orig, index);
           if ((Mode == DerivativeMode::ReverseModeCombined ||
                Mode == DerivativeMode::ReverseModeGradient ||
                Mode == DerivativeMode::ForwardModeSplit) &&
@@ -8391,9 +8393,14 @@ public:
             if (!gutils->knownRecomputeHeuristic[orig])
               cacheWholeAllocation = true;
           }
+
+          // Otherwise take the fallback and cache the entire alloca
+          // (and free if required).
+          if (cacheWholeAllocation)
+            primalNeededInReverse = true;
+          else if (primalNeededInReverse) {
           // if rematerialize, don't ever cache and downgrade to stack
           // allocation where possible.
-          if (!cacheWholeAllocation) {
             if (hasMetadata(orig, "enzyme_fromstack")) {
               IRBuilder<> B(newCall);
               if (auto CI = dyn_cast<ConstantInt>(orig->getArgOperand(0))) {
@@ -8424,8 +8431,6 @@ public:
             }
             return;
           }
-          // Otherwise take the fallback and cache the entire alloca
-          // (and free if required).
         }
       }
 
