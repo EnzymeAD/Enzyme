@@ -2609,16 +2609,16 @@ public:
       if (dsrc->getType()->isIntegerTy())
         dsrc = Builder2.CreateIntToPtr(dsrc,
                                        Type::getInt8PtrTy(dsrc->getContext()));
-#if LLVM_VERSION_MAJOR >= 11
-      Value *memFunc = MTI.getCalledOperand();
-#else
-      Value *memFunc = MTI.getCalledValue();
-#endif
 
       auto rule = [&](Value *ddst, Value *dsrc) {
-        CallInst *call = dyn_cast<CallInst>(
-            Builder2.CreateCall(MTI.getFunctionType(), memFunc,
-                                {ddst, dsrc, new_size, isVolatile}));
+        CallInst *call;
+        if (ID == Intrinsic::memmove) {
+          call =
+              Builder2.CreateMemMove(ddst, dstAlign, dsrc, srcAlign, new_size);
+        } else {
+          call =
+              Builder2.CreateMemCpy(ddst, dstAlign, dsrc, srcAlign, new_size);
+        }
         call->setAttributes(MTI.getAttributes());
         call->setMetadata(LLVMContext::MD_tbaa,
                           MTI.getMetadata(LLVMContext::MD_tbaa));
