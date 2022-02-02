@@ -2609,8 +2609,11 @@ public:
       if (dsrc->getType()->isIntegerTy())
         dsrc = Builder2.CreateIntToPtr(dsrc,
                                        Type::getInt8PtrTy(dsrc->getContext()));
-
+#if LLVM_VERSION_MAJOR >= 11
       Value *memFunc = MTI.getCalledOperand();
+#else
+      Value *memFunc = MTI.getCalledValue();
+#endif
 
       auto rule = [&](Value *ddst, Value *dsrc) {
         CallInst *call = dyn_cast<CallInst>(
