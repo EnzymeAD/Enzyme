@@ -2610,10 +2610,17 @@ public:
         dsrc = Builder2.CreateIntToPtr(dsrc,
                                        Type::getInt8PtrTy(dsrc->getContext()));
 
+      Value *memFunc = MTI.getCalledOperand();
+
       auto rule = [&](Value *ddst, Value *dsrc) {
-        auto call =
-            Builder2.CreateMemCpy(ddst, dstAlign, dsrc, srcAlign, new_size);
+        CallInst *call = dyn_cast<CallInst>(
+            Builder2.CreateCall(MTI.getFunctionType(), memFunc,
+                                {ddst, dsrc, new_size, isVolatile}));
         call->setAttributes(MTI.getAttributes());
+        call->setMetadata(LLVMContext::MD_tbaa,
+                          MTI.getMetadata(LLVMContext::MD_tbaa));
+        call->setMetadata(LLVMContext::MD_invariant_group,
+                          MTI.getMetadata(LLVMContext::MD_invariant_group));
         call->setTailCallKind(MTI.getTailCallKind());
       };
 
