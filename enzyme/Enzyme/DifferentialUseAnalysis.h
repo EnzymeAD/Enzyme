@@ -69,6 +69,14 @@ static inline bool is_use_directly_needed_in_reverse(
           }
         }
       }
+
+      // Preserve any non-floating point values that are stored in an active
+      // backwards-only shadow.
+      if (!TR.query(const_cast<Value*>(SI->getValueOperand()))[{-1}].isFloat())
+        for (auto pair : gutils->backwardsOnlyShadows)
+          if (pair.second.count(SI) && !gutils->isConstantValue(pair.first)) {
+              return true;
+          }
     }
     return false;
   }
@@ -77,6 +85,16 @@ static inline bool is_use_directly_needed_in_reverse(
   if (auto MTI = dyn_cast<MemTransferInst>(user)) {
     if (MTI->getArgOperand(2) != val)
       return false;
+  }
+
+  // Preserve the length of memsets of backward only shadows
+  if (auto MS = dyn_cast<MemSetInst>(user)) {
+    if (MS->getArgOperand(2) == val) {
+      for (auto pair : gutils->backwardsOnlyShadows)
+        if (pair.second.count(MS) && !gutils->isConstantValue(pair.first)) {
+            return true;
+        }
+    }
   }
 
   if (isa<CmpInst>(user) || isa<BranchInst>(user) || isa<ReturnInst>(user) ||
