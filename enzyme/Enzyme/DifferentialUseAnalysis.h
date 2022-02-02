@@ -322,6 +322,16 @@ static inline bool is_value_needed_in_reverse(
                                                     seen, oldUnreachable)) {
       return seen[idx] = true;
     }
+    
+    // Anything we may try to rematerialize requires its store opreands for
+    // the reverse pass.
+    if (auto SI = dyn_cast<StoreInst>(user)) {
+      for (auto pair : gutils->rematerializableAllocations) {
+        if (!OneLevel && is_value_needed_in_reverse<VT>(TR, gutils, pair.first, mode, seen, oldUnreachable)) {
+              return seen[idx] = true;
+        }
+      }
+    }
 
     // One may need to this value in the computation of loop
     // bounds/comparisons/etc (which even though not active -- will be used for
@@ -488,13 +498,30 @@ static inline void minCut(const DataLayout &DL, LoopInfo &OrigLI,
                           const SmallPtrSetImpl<Value *> &Recomputes,
                           const SmallPtrSetImpl<Value *> &Intermediates,
                           SmallPtrSetImpl<Value *> &Required,
-                          SmallPtrSetImpl<Value *> &MinReq) {
+                          SmallPtrSetImpl<Value *> &MinReq, 
+                          const ValueMap<Value*, std::pair<SmallPtrSet<LoadInst*,1>,SmallPtrSet<StoreInst*,1>>> &rematerializableAllocations
+                          ) {
   Graph G;
   for (auto V : Intermediates) {
     G[Node(V, false)].insert(Node(V, true));
     for (auto U : V->users()) {
+      if (auto SI = dyn_cast<StoreInst>(U)) {
+        for (auto pair : rematerializableAllocations) {
+          if (Intermediates.count(pair.first) && pair.second.second.count(SI))
+            G[Node(V, true)].insert(Node(pair.first, false));
+        }
+      }
       if (Intermediates.count(U)) {
         G[Node(V, true)].insert(Node(U, false));
+      }
+    }
+  }
+  for (auto pair : rematerializableAllocations) {
+    if (Intermediates.count(pair.first)) {
+      for (LoadInst* L : pair.second.first) {
+        if (Intermediates.count(L)) {
+          G[Node(pair.first, true)].insert(Node(L, false));
+        }
       }
     }
   }

@@ -5474,6 +5474,13 @@ void GradientUtils::computeMinCache(
         Required.insert(V);
       } else {
         for (auto V2 : V->users()) {
+          if (auto SI = dyn_cast<StoreInst>(V2)) {
+            for (auto pair : rematerializableAllocations) {
+              if (pair.second.second.count(SI)) {
+                todo.push_back(pair.first);
+              }
+            }
+          }
           todo.push_back(V2);
         }
       }
@@ -5481,7 +5488,7 @@ void GradientUtils::computeMinCache(
 
     SmallPtrSet<Value *, 5> MinReq;
     minCut(oldFunc->getParent()->getDataLayout(), OrigLI, Recomputes,
-           Intermediates, Required, MinReq);
+           Intermediates, Required, MinReq, rematerializableAllocations);
     SmallPtrSet<Value *, 5> NeedGraph;
     for (Value *V : MinReq)
       NeedGraph.insert(V);
