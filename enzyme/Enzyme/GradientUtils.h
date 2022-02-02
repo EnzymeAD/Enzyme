@@ -486,31 +486,29 @@ public:
     return cast_or_null<BasicBlock>(isOriginal((const Value *)newinst));
   }
 
-  ValueMap<Value *,
-           std::pair<SmallPtrSet<LoadInst *, 1>, SmallPtrSet<StoreInst *, 1>>>
-      rematerializableAllocations;
+  ValueMap<Value*, std::pair<SmallPtrSet<LoadInst*,1>,SmallPtrSet<StoreInst*,1>>>
+    rematerializableAllocations;
 
-  void computeForwardingProperties(Value *V) {
-    SmallPtrSet<LoadInst *, 1> loads;
-    SmallPtrSet<StoreInst *, 1> stores;
+  void computeForwardingProperties(Value* V) {
+    SmallPtrSet<LoadInst*, 1> loads;
+    SmallPtrSet<StoreInst*, 1> stores;
     bool promotable = true;
-    std::set<std::pair<Instruction *, Value *>> seen;
-    SmallVector<std::pair<Instruction *, Value *>, 1> todo;
+    std::set<std::pair<Instruction*, Value*>> seen;
+    SmallVector<std::pair<Instruction*, Value*>, 1> todo;
     for (auto U : V->users())
       if (auto I = dyn_cast<Instruction>(U))
         todo.push_back(std::make_pair(I, V));
     while (todo.size()) {
       auto tup = todo.back();
       Instruction *cur = tup.first;
-      Value *prev = tup.second;
+      Value* prev = tup.second;
       todo.pop_back();
-      if (seen.count(tup))
-        continue;
+      if (seen.count(tup)) continue;
       seen.insert(tup);
       if (isa<CastInst>(cur) || isa<GetElementPtrInst>(cur)) {
-        for (auto u : cur->users()) {
+        for(auto u : cur->users()) {
           if (auto I = dyn_cast<Instruction>(u))
-            todo.push_back(std::make_pair(I, (Value *)cur));
+            todo.push_back(std::make_pair(I, (Value*)cur));
         }
       } else if (auto load = dyn_cast<LoadInst>(cur)) {
         loads.insert(load);
@@ -521,18 +519,18 @@ public:
           promotable = false;
       } else if (auto II = dyn_cast<IntrinsicInst>(cur)) {
         switch (II->getIntrinsicID()) {
-        case Intrinsic::dbg_declare:
-        case Intrinsic::dbg_value:
-#if LLVM_VERSION_MAJOR > 6
-        case Intrinsic::dbg_label:
-#endif
-        case Intrinsic::dbg_addr:
-        case Intrinsic::lifetime_start:
-        case Intrinsic::lifetime_end:
-          break;
-        default:
-          promotable = false;
-          break;
+          case Intrinsic::dbg_declare:
+          case Intrinsic::dbg_value:
+    #if LLVM_VERSION_MAJOR > 6
+          case Intrinsic::dbg_label:
+    #endif
+          case Intrinsic::dbg_addr:
+          case Intrinsic::lifetime_start:
+          case Intrinsic::lifetime_end:
+            break;
+          default:
+            promotable = false;
+            break;
         }
       } else if (auto CI = dyn_cast<CallInst>(cur)) {
         Function *called = getFunctionFromCall(CI);
@@ -548,16 +546,15 @@ public:
         promotable = false;
       }
     }
-    if (!promotable)
-      return;
+    if (!promotable) return;
 
-    SmallPtrSet<LoadInst *, 1> rematerializable;
+    SmallPtrSet<LoadInst*, 1> rematerializable;
 
     for (auto LI : loads) {
-      // Is there a store which could occur after the load.
-      // In other words
+      // Is there a store which could occur after the load. 
+      // In other words 
       if (mayExecuteAfter(LI, stores)) {
-        continue;
+          continue;
       }
       rematerializable.insert(LI);
     }
@@ -609,25 +606,24 @@ public:
             allocationsWithGuaranteedFree[CI].insert(CI);
           }
           auto funcName = called->getName();
-          if (funcName == "jl_alloc_array_1d" ||
-              funcName == "jl_alloc_array_2d" ||
-              funcName == "jl_alloc_array_3d" || funcName == "jl_array_copy" ||
-              funcName == "julia.gc_alloc_obj") {
+          if (funcName == "jl_alloc_array_1d" || funcName == "jl_alloc_array_2d" ||
+          funcName == "jl_alloc_array_3d" || funcName == "jl_array_copy" ||
+          funcName == "julia.gc_alloc_obj") {
           }
         }
       }
     }
-    for (Value *V : allocsToPromote) {
-      // TODO compute if an only load/store (non capture)
-      // allocaion by traversing its users. If so, mark
-      // all of its load/stores, as now the loads can
-      // potentially be rematerialized without a cache
-      // of the allocation, but the operands of all stores.
-      // This info needs to be provided to minCutCache
-      // the derivative of store needs to redo the store,
-      // isValueNeededInReverse needs to know to preserve the
-      // store operands in this case, etc
-      computeForwardingProperties(V);
+    for (Value* V : allocsToPromote) {
+        // TODO compute if an only load/store (non capture)
+        // allocaion by traversing its users. If so, mark
+        // all of its load/stores, as now the loads can
+        // potentially be rematerialized without a cache
+        // of the allocation, but the operands of all stores.
+        // This info needs to be provided to minCutCache
+        // the derivative of store needs to redo the store,
+        // isValueNeededInReverse needs to know to preserve the
+        // store operands in this case, etc
+        computeForwardingProperties(V);
     }
   }
 
@@ -767,6 +763,18 @@ public:
     auto found = invertedPointers.find(orig);
     PHINode *placeholder = cast<PHINode>(&*found->second);
 
+    // If rematerializable allocations and split mode, we can
+    // simply elect to build the entire piece in the reverse
+    // since it should be possible to perform any shadow stores
+    // of pointers (from rematerializable property) and it does
+    // not escape the function scope (lest it not be
+    // rematerializable) so all input derivatives remain zero.
+    bool rematerializable = rematerializableAllocations.find(orig) != rematerializableAllocations.end();
+    if (rematerializable && mode == DerivativeMode::ReverseModePrimal) {
+        invertedPointers.erase(found);
+        erase(placeholder);
+        return placeholder;
+    }
     assert(placeholder->getParent()->getParent() == newFunc);
     placeholder->setName("");
     IRBuilder<> bb(placeholder);
@@ -799,7 +807,7 @@ public:
       bb.SetInsertPoint(placeholder);
       Value *anti = placeholder;
 
-      if (mode != DerivativeMode::ReverseModeGradient) {
+      if (mode != DerivativeMode::ReverseModeGradient || rematerializable) {
         anti = shadowHandlers[Fn->getName().str()](bb, orig, args);
 
         invertedPointers.erase(found);
@@ -812,7 +820,8 @@ public:
       if (auto inst = dyn_cast<Instruction>(anti))
         bb.SetInsertPoint(inst);
 
-      anti = cacheForReverse(bb, anti, idx);
+      if (!rematerializable)
+        anti = cacheForReverse(bb, anti, idx);
       invertedPointers.insert(
           std::make_pair(orig, InvertedPointerVH(this, anti)));
       return anti;
@@ -885,7 +894,8 @@ public:
     replaceAWithB(placeholder, anti);
     erase(placeholder);
 
-    anti = cacheForReverse(bb, anti, idx);
+    if (!rematerializable)
+      anti = cacheForReverse(bb, anti, idx);
     invertedPointers.insert(
         std::make_pair((const Value *)orig, InvertedPointerVH(this, anti)));
 

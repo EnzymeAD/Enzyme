@@ -749,10 +749,8 @@ public:
 #else
     auto align = SI.getAlignment();
 #endif
-    visitCommonStore(SI, SI.getPointerOperand(), SI.getValueOperand(), align,
-                     SI.isVolatile(), SI.getOrdering(), SI.getSyncScopeID(),
-                     /*mask=*/nullptr);
 
+    bool rematerializedStore = false;
     std::map<UsageKey, bool> Seen;
     for (auto pair : gutils->knownRecomputeHeuristic)
       if (!pair.second)
@@ -762,23 +760,31 @@ public:
     for (auto pair : gutils->rematerializableAllocations) {
       if (is_value_needed_in_reverse<ValueType::Primal>(
               TR, gutils, pair.first, Mode, Seen, oldUnreachable)) {
-        if (pair.second.second.count(&SI))
-          return;
+        if (pair.second.second.count(&SI)) {
+          rematerializedStore = true;
+          break;
+        }
       }
     }
-    eraseIfUnused(SI);
+
+    visitCommonStore(SI, SI.getPointerOperand(), SI.getValueOperand(), align,
+                     SI.isVolatile(), SI.getOrdering(), SI.getSyncScopeID(),
+                     /*mask=*/nullptr, rematerializedStore);
+
+    if (!rematerializedStore)
+      eraseIfUnused(SI);
   }
 
 #if LLVM_VERSION_MAJOR >= 10
   void visitCommonStore(llvm::Instruction &I, Value *orig_ptr, Value *orig_val,
                         MaybeAlign align, bool isVolatile,
                         AtomicOrdering ordering, SyncScope::ID syncScope,
-                        Value *mask = nullptr)
+                        Value *mask, bool rematerializedStore)
 #else
   void visitCommonStore(llvm::Instruction &I, Value *orig_ptr, Value *orig_val,
                         unsigned align, bool isVolatile,
                         AtomicOrdering ordering, SyncScope::ID syncScope,
-                        Value *mask = nullptr)
+                        Value *mask, bool rematerializedStore)
 #endif
   {
     Value *val = gutils->getNewFromOriginal(orig_val);
@@ -906,7 +912,9 @@ public:
       //! Storing an integer or pointer
     } else {
       //! Only need to update the forward function
-      if (Mode == DerivativeMode::ReverseModePrimal ||
+      if (
+          (Mode == DerivativeMode::ReverseModePrimal && !rematerializedStore) ||
+          (Mode == DerivativeMode::ReverseModeGradient && rematerializedStore) ||
           Mode == DerivativeMode::ReverseModeCombined ||
           Mode == DerivativeMode::ForwardMode) {
         IRBuilder<> storeBuilder(gutils->getNewFromOriginal(&I));
@@ -2870,7 +2878,7 @@ public:
                        /*orig_val*/ I.getOperand(0), align,
                        /*isVolatile*/ false, llvm::AtomicOrdering::NotAtomic,
                        SyncScope::SingleThread,
-                       /*mask*/ gutils->getNewFromOriginal(I.getOperand(3)));
+                       /*mask*/ gutils->getNewFromOriginal(I.getOperand(3)), /*rematerializable*/false);
       return;
     }
     if (ID == Intrinsic::masked_load) {
@@ -8150,6 +8158,7 @@ public:
               shouldFree()) {
             IRBuilder<> Builder2(call.getParent());
             getReverseBuilder(Builder2);
+            assert(anti);
             Value *tofree = lookup(anti, Builder2);
             assert(tofree);
             assert(tofree->getType());
