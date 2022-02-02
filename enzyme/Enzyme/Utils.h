@@ -775,7 +775,7 @@ allUnsyncdPredecessorsOf(llvm::Instruction *inst,
 
 // Return true if any of the maybe instructions may execute after inst.
 template<typename T>
-static inline bool mayExecuteAfter(llvm::Instruction *inst, const llvm::SmallPtrSetImpl<T> &maybe) {
+static inline bool mayExecuteAfter(llvm::Instruction *inst, const llvm::SmallPtrSetImpl<T> &maybe, const llvm::Loop* region) {
   using namespace llvm;
   llvm::SmallPtrSet<BasicBlock*, 2> maybeBlocks;
   BasicBlock *instBlk = inst->getParent();
@@ -811,8 +811,12 @@ static inline bool mayExecuteAfter(llvm::Instruction *inst, const llvm::SmallPtr
     if (maybeBlocks.count(cur)) {
         return true;
     }
-    for (auto B : successors(cur))
+    for (auto B : successors(cur)) {
+      if (region && region->getHeader() == B) {
+          continue;
+      }
       todo.push_back(B);
+    }
   }
   return false;
 }
