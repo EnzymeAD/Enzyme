@@ -513,10 +513,11 @@ public:
   // Only loaded from and stored to (not captured), mapped to the stores (and memset)
   ValueMap<Value*, SmallPtrSet<Instruction*,1>> backwardsOnlyShadows;
 
-  void computeForwardingProperties(Value* V) {
+  void computeForwardingProperties(Value* V, TypeResults &TR) {
     SmallPtrSet<LoadInst*, 1> loads;
     SmallPtrSet<Instruction*, 1> stores;
     bool promotable = true;
+    bool shadowpromotable = true;
     std::set<std::pair<Instruction*, Value*>> seen;
     SmallVector<std::pair<Instruction*, Value*>, 1> todo;
     for (auto U : V->users())
@@ -541,6 +542,8 @@ public:
           stores.insert(store);
         else {
           promotable = false;
+          shadowpromotable = false;
+          break;
         }
       } else if (auto II = dyn_cast<IntrinsicInst>(cur)) {
         switch (II->getIntrinsicID()) {
@@ -563,7 +566,7 @@ public:
 #endif
     {
         if (first) { first = false; break; }
-        if (arg == prev) { promotable = false; break; }
+        if (arg == prev) { promotable = false; shadowpromotable = false; break; }
         break;
     }
             stores.insert(II);
@@ -571,26 +574,48 @@ public:
             }
           default:
             promotable = false;
+            shadowpromotable = false;
             break;
         }
       } else if (auto CI = dyn_cast<CallInst>(cur)) {
         Function *called = getFunctionFromCall(CI);
-        if (!called) {
-          promotable = false;
+        if (called && isDeallocationFunction(*called, TLI)) {
+          continue;
+        }
+        promotable = false;
+        size_t idx=0;
+#if LLVM_VERSION_MAJOR >= 14
+    for (auto &arg : CI->args())
+#else
+    for (auto &arg : CI->arg_operands())
+#endif
+    {
+        if (arg != prev) {
+            idx++;
+            continue;
+        }
+        auto TT = TR.query(prev);
+        llvm::errs() << " TT: " << TT.str() << " prev:" << *prev << "\n";
+        if (!CI->doesNotCapture(idx) || !CI->onlyReadsMemory(idx)) {
+          shadowpromotable = false;
+          llvm::errs() << " shadow: " << *V << " non promotable due to: " << *cur << " idx=" << idx << " nocap: " << (CI->doesNotCapture(idx)) << " readonly:" << CI->onlyReadsMemory(idx) << "\n";
           break;
         }
-        if (!isDeallocationFunction(*called, TLI)) {
-          promotable = false;
-          break;
-        }
+        idx++;
+    }
+
       } else {
         promotable = false;
+        shadowpromotable = false;
       }
     }
-    if (!promotable) return;
 
-    SmallPtrSet<LoadInst*, 1> rematerializable;
+    if (!shadowpromotable) return;
     backwardsOnlyShadows[V] = stores;
+    
+    if (!promotable) return;
+    
+    SmallPtrSet<LoadInst*, 1> rematerializable;
 
     Loop* outer = nullptr;
     bool set = false;
@@ -692,7 +717,7 @@ public:
         // the derivative of store needs to redo the store,
         // isValueNeededInReverse needs to know to preserve the
         // store operands in this case, etc
-        computeForwardingProperties(V);
+        computeForwardingProperties(V, TR);
     }
   }
 
@@ -840,9 +865,14 @@ public:
     // rematerializable) so all input derivatives remain zero.
     bool rematerializable = backwardsOnlyShadows.find(orig) != backwardsOnlyShadows.end();
     if (rematerializable && mode == DerivativeMode::ReverseModePrimal) {
+        // Needs a stronger replacement check/assertion.
+        Value* replacement = UndefValue::get(placeholder->getType());
+        replaceAWithB(placeholder, replacement);
         invertedPointers.erase(found);
+        invertedPointers.insert(
+          std::make_pair(orig, InvertedPointerVH(this, replacement)));
         erase(placeholder);
-        return placeholder;
+        return replacement;
     }
     assert(placeholder->getParent()->getParent() == newFunc);
     placeholder->setName("");
