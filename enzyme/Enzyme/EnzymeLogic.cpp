@@ -105,6 +105,8 @@ struct CacheAnalysis {
 
   const ValueMap<const CallInst *, SmallPtrSet<const CallInst *, 1>>
       &allocationsWithGuaranteedFree;
+    const ValueMap<Value*, std::pair<SmallPtrSet<LoadInst*,1>,SmallPtrSet<StoreInst*,1>>> &
+        rematerializableAllocations;
   TypeResults &TR;
   AAResults &AA;
   Function *oldFunc;
@@ -120,12 +122,14 @@ struct CacheAnalysis {
   CacheAnalysis(
       const ValueMap<const CallInst *, SmallPtrSet<const CallInst *, 1>>
           &allocationsWithGuaranteedFree,
+      const ValueMap<Value*, std::pair<SmallPtrSet<LoadInst*,1>,SmallPtrSet<StoreInst*,1>>> &
+    rematerializableAllocations,
       TypeResults &TR, AAResults &AA, Function *oldFunc, ScalarEvolution &SE,
       LoopInfo &OrigLI, DominatorTree &OrigDT, TargetLibraryInfo &TLI,
       const SmallPtrSetImpl<const Instruction *> &unnecessaryInstructions,
       const std::map<Argument *, bool> &uncacheable_args, DerivativeMode mode,
       bool omp)
-      : allocationsWithGuaranteedFree(allocationsWithGuaranteedFree), TR(TR),
+      : allocationsWithGuaranteedFree(allocationsWithGuaranteedFree), rematerializableAllocations(rematerializableAllocations), TR(TR),
         AA(AA), oldFunc(oldFunc), SE(SE), OrigLI(OrigLI), OrigDT(OrigDT),
         TLI(TLI), unnecessaryInstructions(unnecessaryInstructions),
         uncacheable_args(uncacheable_args), mode(mode), omp(omp) {}
@@ -139,7 +143,9 @@ struct CacheAnalysis {
     // If the pointer operand is from an argument to the function, we need to
     // check if the argument
     //   received from the caller is uncacheable.
-    if (isa<UndefValue>(obj) || isa<ConstantPointerNull>(obj)) {
+    if (rematerializableAllocations.count(obj)) {
+      return false;
+    } else if (isa<UndefValue>(obj) || isa<ConstantPointerNull>(obj)) {
       return false;
     } else if (auto arg = dyn_cast<Argument>(obj)) {
       auto found = uncacheable_args.find(arg);
@@ -1794,7 +1800,9 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   }
   gutils->computeGuaranteedFrees(guaranteedUnreachable, TR);
 
-  CacheAnalysis CA(gutils->allocationsWithGuaranteedFree, TR, gutils->OrigAA,
+  CacheAnalysis CA(gutils->allocationsWithGuaranteedFree,
+                    gutils->rematerializableAllocations,
+                    TR, gutils->OrigAA,
                    gutils->oldFunc,
                    PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
                    gutils->OrigLI, gutils->OrigDT, TLI,
@@ -3301,8 +3309,10 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     for (auto &I : *BB)
       unnecessaryInstructionsTmp.insert(&I);
   }
-  CacheAnalysis CA(gutils->allocationsWithGuaranteedFree, TR, gutils->OrigAA,
-                   gutils->oldFunc,
+  CacheAnalysis CA(gutils->allocationsWithGuaranteedFree, 
+                   gutils->rematerializableAllocations,
+                    TR, gutils->OrigAA,
+                   gutils->oldFunc, 
                    PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
                    gutils->OrigLI, gutils->OrigDT, TLI,
                    unnecessaryInstructionsTmp, _uncacheable_argsPP, key.mode,
@@ -4078,8 +4088,10 @@ Function *EnzymeLogic::CreateForwardDiff(
 
     // TODO gutils->computeGuaranteedFrees(guaranteedUnreachable, TR);
     CacheAnalysis CA(
-        gutils->allocationsWithGuaranteedFree, TR, gutils->OrigAA,
-        gutils->oldFunc,
+        gutils->allocationsWithGuaranteedFree, 
+        gutils->rematerializableAllocations,
+        TR, gutils->OrigAA,
+        gutils->oldFunc, 
         PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
         gutils->OrigLI, gutils->OrigDT, TLI, unnecessaryInstructionsTmp,
         _uncacheable_argsPP, mode, omp);
