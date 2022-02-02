@@ -3218,9 +3218,22 @@ public:
             orig_ops[1]->getType()
 #endif
           };
-          Function *PowF = Intrinsic::getDeclaration(M, Intrinsic::powi, tys);
-          auto cal = cast<CallInst>(Builder2.CreateCall(PowF, args));
-          cal->setCallingConv(PowF->getCallingConv());
+          auto &CI = cast<CallInst>(I);
+#if LLVM_VERSION_MAJOR >= 11
+          auto *PowF = CI.getCalledOperand();
+#else
+          auto *PowF = CI.getCalledValue();
+#endif
+          if (!PowF)
+            PowF = Intrinsic::getDeclaration(M, Intrinsic::powi, tys);
+
+          auto FT = FunctionType::get(
+              I.getType(), {orig_ops[0]->getType(), orig_ops[1]->getType()},
+              false);
+          auto cal = cast<CallInst>(Builder2.CreateCall(FT, PowF, args));
+          if (auto F = dyn_cast<Function>(PowF))
+            cal->setCallingConv(F->getCallingConv());
+
           cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
           Value *dif0 = Builder2.CreateFMul(
               Builder2.CreateFMul(vdiff, cal),
@@ -3232,7 +3245,19 @@ public:
       }
       case Intrinsic::pow: {
         Type *tys[] = {orig_ops[0]->getType()};
-        Function *PowF = Intrinsic::getDeclaration(M, Intrinsic::pow, tys);
+        auto &CI = cast<CallInst>(I);
+#if LLVM_VERSION_MAJOR >= 11
+        auto *PowF = CI.getCalledOperand();
+#else
+        auto *PowF = CI.getCalledValue();
+#endif
+        if (!PowF)
+          PowF = Intrinsic::getDeclaration(M, Intrinsic::pow, tys);
+
+        auto FT = FunctionType::get(
+            I.getType(), {orig_ops[0]->getType(), orig_ops[1]->getType()},
+            false);
+
         if (vdiff && !gutils->isConstantValue(orig_ops[0])) {
 
           Value *op0 = gutils->getNewFromOriginal(orig_ops[0]);
@@ -3248,8 +3273,10 @@ public:
               lookup(op0, Builder2),
               Builder2.CreateFSub(lookup(op1, Builder2),
                                   ConstantFP::get(I.getType(), 1.0))};
-          auto cal = cast<CallInst>(Builder2.CreateCall(PowF, args));
-          cal->setCallingConv(PowF->getCallingConv());
+          auto cal = cast<CallInst>(Builder2.CreateCall(FT, PowF, args));
+          if (auto F = dyn_cast<Function>(PowF))
+            cal->setCallingConv(F->getCallingConv());
+
           cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
 
           Value *dif0 = Builder2.CreateFMul(Builder2.CreateFMul(vdiff, cal),
@@ -3265,8 +3292,10 @@ public:
                 lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2),
                 lookup(gutils->getNewFromOriginal(orig_ops[1]), Builder2)};
 
-            cal = cast<CallInst>(Builder2.CreateCall(PowF, args));
-            cal->setCallingConv(PowF->getCallingConv());
+            cal = cast<CallInst>(Builder2.CreateCall(FT, PowF, args));
+            if (auto F = dyn_cast<Function>(PowF))
+              cal->setCallingConv(F->getCallingConv());
+
             cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
           }
 
