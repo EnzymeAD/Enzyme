@@ -507,12 +507,15 @@ public:
     return cast_or_null<BasicBlock>(isOriginal((const Value *)newinst));
   }
 
-  ValueMap<Value*, std::pair<SmallPtrSet<LoadInst*,1>,SmallPtrSet<StoreInst*,1>>>
+  ValueMap<Value*, std::pair<SmallPtrSet<LoadInst*,1>,SmallPtrSet<Instruction*,1>>>
     rematerializableAllocations;
+
+  // Only loaded from and stored to (not captured), mapped to the stores (and memset)
+  ValueMap<Value*, SmallPtrSet<Instruction*,1>> backwardsOnlyShadows;
 
   void computeForwardingProperties(Value* V) {
     SmallPtrSet<LoadInst*, 1> loads;
-    SmallPtrSet<StoreInst*, 1> stores;
+    SmallPtrSet<Instruction*, 1> stores;
     bool promotable = true;
     std::set<std::pair<Instruction*, Value*>> seen;
     SmallVector<std::pair<Instruction*, Value*>, 1> todo;
@@ -536,8 +539,9 @@ public:
       } else if (auto store = dyn_cast<StoreInst>(cur)) {
         if (store->getValueOperand() != prev)
           stores.insert(store);
-        else
+        else {
           promotable = false;
+        }
       } else if (auto II = dyn_cast<IntrinsicInst>(cur)) {
         switch (II->getIntrinsicID()) {
           case Intrinsic::dbg_declare:
@@ -549,6 +553,22 @@ public:
           case Intrinsic::lifetime_start:
           case Intrinsic::lifetime_end:
             break;
+          case Intrinsic::memset:
+            {
+                bool first = true;
+#if LLVM_VERSION_MAJOR >= 14
+    for (auto &arg : II->args())
+#else
+    for (auto &arg : II->arg_operands()) 
+#endif
+    {
+        if (first) { first = false; break; }
+        if (arg == prev) { promotable = false; break; }
+        break;
+    }
+            stores.insert(II);
+            break;
+            }
           default:
             promotable = false;
             break;
@@ -570,6 +590,7 @@ public:
     if (!promotable) return;
 
     SmallPtrSet<LoadInst*, 1> rematerializable;
+    backwardsOnlyShadows[V] = stores;
 
     for (auto LI : loads) {
       // Is there a store which could occur after the load. 
@@ -790,7 +811,7 @@ public:
     // of pointers (from rematerializable property) and it does
     // not escape the function scope (lest it not be
     // rematerializable) so all input derivatives remain zero.
-    bool rematerializable = rematerializableAllocations.find(orig) != rematerializableAllocations.end();
+    bool rematerializable = backwardsOnlyShadows.find(orig) != backwardsOnlyShadows.end();
     if (rematerializable && mode == DerivativeMode::ReverseModePrimal) {
         invertedPointers.erase(found);
         erase(placeholder);
@@ -917,6 +938,16 @@ public:
 
     if (!rematerializable)
       anti = cacheForReverse(bb, anti, idx);
+    else {
+            if (hasMetadata(orig, "enzyme_fromstack")) {
+              Value *replacement = bb.CreateAlloca(
+                  Type::getInt8Ty(orig->getContext()),
+                  getNewFromOriginal(orig->getArgOperand(0)));
+              replacement->takeName(anti);
+              erase(cast<Instruction>(anti));
+              anti = replacement;
+            }
+    }
     invertedPointers.insert(
         std::make_pair((const Value *)orig, InvertedPointerVH(this, anti)));
 

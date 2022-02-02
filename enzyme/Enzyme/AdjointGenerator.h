@@ -750,7 +750,17 @@ public:
     auto align = SI.getAlignment();
 #endif
 
-    bool rematerializedStore = false;
+    bool backwardsOnlyShadow = false;
+    for (auto pair : gutils->backwardsOnlyShadows)
+        if (pair.second.count(&SI)) {
+            backwardsOnlyShadow = true;
+            break;
+        }
+
+    visitCommonStore(SI, SI.getPointerOperand(), SI.getValueOperand(), align,
+                     SI.isVolatile(), SI.getOrdering(), SI.getSyncScopeID(),
+                     /*mask=*/nullptr, backwardsOnlyShadow);
+
     std::map<UsageKey, bool> Seen;
     for (auto pair : gutils->knownRecomputeHeuristic)
       if (!pair.second)
@@ -761,30 +771,23 @@ public:
       if (is_value_needed_in_reverse<ValueType::Primal>(
               TR, gutils, pair.first, Mode, Seen, oldUnreachable)) {
         if (pair.second.second.count(&SI)) {
-          rematerializedStore = true;
-          break;
+          return;
         }
       }
     }
-
-    visitCommonStore(SI, SI.getPointerOperand(), SI.getValueOperand(), align,
-                     SI.isVolatile(), SI.getOrdering(), SI.getSyncScopeID(),
-                     /*mask=*/nullptr, rematerializedStore);
-
-    if (!rematerializedStore)
-      eraseIfUnused(SI);
+    eraseIfUnused(SI);
   }
 
 #if LLVM_VERSION_MAJOR >= 10
   void visitCommonStore(llvm::Instruction &I, Value *orig_ptr, Value *orig_val,
                         MaybeAlign align, bool isVolatile,
                         AtomicOrdering ordering, SyncScope::ID syncScope,
-                        Value *mask, bool rematerializedStore)
+                        Value *mask, bool backwardsOnlyShadow)
 #else
   void visitCommonStore(llvm::Instruction &I, Value *orig_ptr, Value *orig_val,
                         unsigned align, bool isVolatile,
                         AtomicOrdering ordering, SyncScope::ID syncScope,
-                        Value *mask, bool rematerializedStore)
+                        Value *mask, bool backwardsOnlyShadow)
 #endif
   {
     Value *val = gutils->getNewFromOriginal(orig_val);
@@ -913,8 +916,8 @@ public:
     } else {
       //! Only need to update the forward function
       if (
-          (Mode == DerivativeMode::ReverseModePrimal && !rematerializedStore) ||
-          (Mode == DerivativeMode::ReverseModeGradient && rematerializedStore) ||
+          (Mode == DerivativeMode::ReverseModePrimal && !backwardsOnlyShadow) ||
+          (Mode == DerivativeMode::ReverseModeGradient && backwardsOnlyShadow) ||
           Mode == DerivativeMode::ReverseModeCombined ||
           Mode == DerivativeMode::ForwardMode) {
         IRBuilder<> storeBuilder(gutils->getNewFromOriginal(&I));
@@ -2513,8 +2516,33 @@ public:
   }
 
   void visitMemSetInst(llvm::MemSetInst &MS) {
-    // Don't duplicate set in reverse pass
-    if (Mode == DerivativeMode::ReverseModeGradient) {
+
+    bool backwardsOnlyShadow = false;
+    for (auto pair : gutils->backwardsOnlyShadows)
+        if (pair.second.count(&MS)) {
+            backwardsOnlyShadow = true;
+            break;
+        }
+    
+    bool rematerialized = false;
+    std::map<UsageKey, bool> Seen;
+    for (auto pair : gutils->knownRecomputeHeuristic)
+      if (!pair.second)
+        Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+
+    // Don't erase any store that needs to be preserved for a rematerialization
+    for (auto pair : gutils->rematerializableAllocations) {
+      if (is_value_needed_in_reverse<ValueType::Primal>(
+              TR, gutils, pair.first, Mode, Seen, oldUnreachable)) {
+        if (pair.second.second.count(&MS)) {
+          rematerialized = true;
+          break;
+        }
+      }
+    }
+
+    // Don't duplicate set in reverse pass unless rematerialized
+    if (Mode == DerivativeMode::ReverseModeGradient && !rematerialized) {
       erased.insert(&MS);
       gutils->erase(gutils->getNewFromOriginal(&MS));
     }
@@ -2538,7 +2566,9 @@ public:
       report_fatal_error("non constant in memset");
     }
 
-    if (Mode == DerivativeMode::ReverseModePrimal ||
+    if (
+        (Mode == DerivativeMode::ReverseModePrimal && !backwardsOnlyShadow) ||
+        (Mode == DerivativeMode::ReverseModeGradient && backwardsOnlyShadow) ||
         Mode == DerivativeMode::ReverseModeCombined) {
       IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&MS));
 
@@ -2555,11 +2585,7 @@ public:
       args.push_back(gutils->lookupM(op2, BuilderZ));
       args.push_back(gutils->lookupM(op3, BuilderZ));
 
-      Type *tys[] = {args[0]->getType(), args[2]->getType()};
-      auto cal = BuilderZ.CreateCall(
-          Intrinsic::getDeclaration(MS.getParent()->getParent()->getParent(),
-                                    Intrinsic::memset, tys),
-          args);
+      auto cal = BuilderZ.CreateCall(MS.getCalledFunction(), args);
       cal->setAttributes(MS.getAttributes());
       cal->setCallingConv(MS.getCallingConv());
       cal->setTailCallKind(MS.getTailCallKind());
@@ -8123,7 +8149,7 @@ public:
           if ((Mode == DerivativeMode::ReverseModeCombined ||
                Mode == DerivativeMode::ReverseModeGradient ||
                Mode == DerivativeMode::ForwardModeSplit) &&
-              shouldFree()) {
+              shouldFree() && !isa<AllocaInst>(anti)) {
             IRBuilder<> Builder2(call.getParent());
             getReverseBuilder(Builder2);
             assert(anti);

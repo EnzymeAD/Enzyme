@@ -240,13 +240,14 @@ static inline bool is_value_needed_in_reverse(
         // storing an active pointer into a location
         // doesn't require the shadow pointer for the
         // reverse pass
-        if (SI->getPointerOperand() != inst &&
+        if (SI->getValueOperand() == inst &&
             mode == DerivativeMode::ReverseModeGradient) {
-           // Unless the store is into a rematerializable allocation, which
-           // would then be performed in the reverse.
+           // Unless the store is into a backwards only store, which would
+           // would then be performed in the reverse if the stored value was
+           // a possible pointer.
           bool rematerialized = false;
-          for (auto pair : gutils->rematerializableAllocations)
-            if (pair.second.second.count(SI)) {
+          for (auto pair : gutils->backwardsOnlyShadows)
+            if (pair.second.count(SI)) {
                 rematerialized = true;
                 break;
             }
@@ -520,15 +521,15 @@ minCut(const DataLayout &DL, LoopInfo &OrigLI,
        const SmallPtrSetImpl<Value *> &Intermediates,
        SmallPtrSetImpl<Value *> &Required, SmallPtrSetImpl<Value *> &MinReq,
        const ValueMap<Value *, std::pair<SmallPtrSet<LoadInst *, 1>,
-                                         SmallPtrSet<StoreInst *, 1>>>
+                                         SmallPtrSet<Instruction *, 1>>>
            &rematerializableAllocations) {
   Graph G;
   for (auto V : Intermediates) {
     G[Node(V, false)].insert(Node(V, true));
     for (auto U : V->users()) {
-      if (auto SI = dyn_cast<StoreInst>(U)) {
+      if (auto I = dyn_cast<Instruction>(U)) {
         for (auto pair : rematerializableAllocations) {
-          if (Intermediates.count(pair.first) && pair.second.second.count(SI))
+          if (Intermediates.count(pair.first) && pair.second.second.count(I))
             G[Node(V, true)].insert(Node(pair.first, false));
         }
       }
