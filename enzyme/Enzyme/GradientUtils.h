@@ -1001,6 +1001,7 @@ public:
                   Type::getInt8Ty(orig->getContext()),
                   getNewFromOriginal(orig->getArgOperand(0)));
               replacement->takeName(anti);
+              replaceAWithB(cast<Instruction>(anti), replacement);
               erase(cast<Instruction>(anti));
               anti = replacement;
             }
