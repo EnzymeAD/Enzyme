@@ -773,6 +773,45 @@ allUnsyncdPredecessorsOf(llvm::Instruction *inst,
 
 #include "llvm/Analysis/LoopInfo.h"
 
+// Return true if any of the maybe instructions may execute after inst.
+template<typename T>
+static inline bool mayExecuteAfter(llvm::Instruction *inst, const llvm::SmallPtrSetImpl<T> &maybe) {
+  using namespace llvm;
+  llvm::SmallPtrSet<BasicBlock*, 2> maybeBlocks;
+  BasicBlock *instBlk = inst->getParent();
+  for (auto I : maybe) {
+    BasicBlock *blkI = I->getParent();
+    if (instBlk == blkI) {
+      // if store doesn't come before, exit.
+
+      BasicBlock::const_iterator It = blkI->begin();
+      for (; &*It != I && &*It != inst; ++It)
+            /*empty*/;
+      // if inst comes first (e.g. before I) in the
+      // block, return true
+      if (&*It == inst)
+        return true;
+    } else maybeBlocks.insert(blkI);
+  }
+  if (maybeBlocks.size() == 0) return false;
+
+  llvm::SmallVector<BasicBlock*, 2> todo;
+  for (auto B : successors(instBlk))
+    todo.push_back(B);
+
+  SmallPtrSet<BasicBlock*, 2> seen;
+  while (todo.size()) {
+    auto cur = todo.back();
+    todo.pop_back();
+    if (seen.count(cur)) continue;
+    if (maybeBlocks.count(cur)) return true;
+    maybeBlocks.insert(cur);
+    for (auto B : successors(cur))
+      todo.push_back(B);
+  }
+  return false;
+}
+
 static inline void
 /// Call the function f for all instructions that happen between inst1 and inst2
 /// If the function returns true, the iteration will early exit

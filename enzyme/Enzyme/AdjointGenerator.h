@@ -752,6 +752,20 @@ public:
     visitCommonStore(SI, SI.getPointerOperand(), SI.getValueOperand(), align,
                      SI.isVolatile(), SI.getOrdering(), SI.getSyncScopeID(),
                      /*mask=*/nullptr);
+
+        
+    std::map<UsageKey, bool> Seen;
+    for (auto pair : gutils->knownRecomputeHeuristic)
+      if (!pair.second)
+        Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+    
+    // Don't erase any store that needs to be preserved for a rematerialization
+    for (auto pair : gutils->rematerializableAllocations) {
+      if (is_value_needed_in_reverse<ValueType::Primal>(
+              TR, gutils, pair.first, Mode, Seen, oldUnreachable)) {
+          if (pair.second.second.count(&SI)) return;
+      }
+    }
     eraseIfUnused(SI);
   }
 
@@ -8162,6 +8176,33 @@ public:
               ? false
               : is_value_needed_in_reverse<ValueType::Primal>(
                     TR, gutils, orig, Mode, Seen, oldUnreachable);
+    
+      // Don't erase any store that needs to be preserved for a rematerialization
+      {
+          auto found = gutils->rematerializableAllocations.find(orig);
+          if (found != gutils->rematerializableAllocations.end()) {
+
+            // if rematerialize, don't ever cache and downgrade to stack
+            // allocation where possible.
+            if (!primalNeededInReverse) {
+              if (hasMetadata(orig, "enzyme_fromstack")) {
+                IRBuilder<> B(newCall);
+                if (auto CI = dyn_cast<ConstantInt>(orig->getArgOperand(0))) {
+                  B.SetInsertPoint(gutils->inversionAllocs);
+                }
+                auto replacement = B.CreateAlloca(
+                    Type::getInt8Ty(orig->getContext()),
+                    gutils->getNewFromOriginal(orig->getArgOperand(0)));
+                gutils->replaceAWithB(newCall, replacement);
+                gutils->erase(newCall);
+              }
+              return;
+            }
+            // Otherwise take the fallback and cache the entire alloca
+            // (and free if required).
+          }
+      }
+
       bool hasPDFree = gutils->allocationsWithGuaranteedFree.count(orig);
       if (!primalNeededInReverse && hasPDFree) {
         if (Mode == DerivativeMode::ReverseModeGradient) {
