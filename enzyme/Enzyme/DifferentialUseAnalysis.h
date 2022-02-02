@@ -240,8 +240,18 @@ static inline bool is_value_needed_in_reverse(
         // doesn't require the shadow pointer for the
         // reverse pass
         if (SI->getPointerOperand() != inst &&
-            mode == DerivativeMode::ReverseModeGradient)
-          continue;
+            mode == DerivativeMode::ReverseModeGradient) {
+           // Unless the store is into a rematerializable allocation, which
+           // would then be performed in the reverse.
+          bool rematerialized = false;
+          for (auto pair : gutils->rematerializableAllocations)
+            if (pair.second.second.count(SI)) {
+                rematerialized = true;
+                break;
+            }
+          if (!rematerialized)
+            continue;
+        }
 
         if (!gutils->isConstantValue(
                 const_cast<Value *>(SI->getPointerOperand())))
