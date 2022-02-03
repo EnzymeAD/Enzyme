@@ -66,7 +66,6 @@
 #include "llvm/Transforms/IPO/Attributor.h"
 #include "llvm/Transforms/IPO/OpenMPOpt.h"
 #endif
-#include "llvm/Transforms/IPO/OpenMPOpt.h"
 
 #include "CApi.h"
 using namespace llvm;
