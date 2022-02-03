@@ -528,9 +528,10 @@ public:
       rematerializableAllocations;
 
   // Only loaded from and stored to (not captured), mapped to the stores (and
-  // memset). Boolean denotes whether the primal initializes the shadow as well (for use)
-  // as a structure which carries data.
-  ValueMap<Value *, std::pair<SmallPtrSet<Instruction *, 1>, bool>> backwardsOnlyShadows;
+  // memset). Boolean denotes whether the primal initializes the shadow as well
+  // (for use) as a structure which carries data.
+  ValueMap<Value *, std::pair<SmallPtrSet<Instruction *, 1>, bool>>
+      backwardsOnlyShadows;
 
   void computeForwardingProperties(CallInst *V, TypeResults &TR) {
     SmallPtrSet<LoadInst *, 1> loads;
@@ -641,20 +642,23 @@ public:
 #if LLVM_VERSION_MAJOR >= 8
             else if (CI->onlyReadsMemory(idx))
 #else
-            else if (CI->dataOperandHasImpliedAttr(idx, Attribute::ReadOnly) || CI->dataOperandHasImpliedAttr(idx, Attribute::ReadNone))
+            else if (CI->dataOperandHasImpliedAttr(idx, Attribute::ReadOnly) ||
+                     CI->dataOperandHasImpliedAttr(idx, Attribute::ReadNone))
 #endif
             {
-              // if only reading memory, ok to duplicate in forward / 
+              // if only reading memory, ok to duplicate in forward /
               // reverse if it is a stack or GC allocation.
               // Said memory will still be shadow initialized.
               Function *originCall = getFunctionFromCall(V);
               StringRef funcName = "";
               if (originCall)
                 funcName = called->getName();
-              if (hasMetadata(V, "enzyme_fromstack") || funcName == "jl_alloc_array_1d" ||
-                funcName == "jl_alloc_array_2d" ||
-                funcName == "jl_alloc_array_3d" ||
-                funcName == "jl_array_copy" || funcName == "julia.gc_alloc_obj") {
+              if (hasMetadata(V, "enzyme_fromstack") ||
+                  funcName == "jl_alloc_array_1d" ||
+                  funcName == "jl_alloc_array_2d" ||
+                  funcName == "jl_alloc_array_3d" ||
+                  funcName == "jl_array_copy" ||
+                  funcName == "julia.gc_alloc_obj") {
                 primalInitializationOfShadow = true;
               } else {
                 shadowpromotable = false;
@@ -677,7 +681,8 @@ public:
 
     if (!shadowpromotable)
       return;
-    backwardsOnlyShadows[V] = std::make_pair(stores, primalInitializationOfShadow);
+    backwardsOnlyShadows[V] =
+        std::make_pair(stores, primalInitializationOfShadow);
 
     if (!promotable)
       return;
@@ -949,7 +954,7 @@ public:
       invertedPointers.erase(found);
       invertedPointers.insert(
           std::make_pair(orig, InvertedPointerVH(this, replacement)));
-       erase(placeholder);
+      erase(placeholder);
       return replacement;
     }
     assert(placeholder->getParent()->getParent() == newFunc);
@@ -984,7 +989,7 @@ public:
       bb.SetInsertPoint(placeholder);
       Value *anti = placeholder;
 
-      if (mode == DerivativeMode::ReverseModeCombined || 
+      if (mode == DerivativeMode::ReverseModeCombined ||
           (mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
           (mode == DerivativeMode::ReverseModeGradient && backwardsShadow)) {
         anti = shadowHandlers[Fn->getName().str()](bb, orig, args);
@@ -1081,7 +1086,10 @@ public:
             bb.CreateAlloca(Type::getInt8Ty(orig->getContext()),
                             getNewFromOriginal(orig->getArgOperand(0)));
         replacement->takeName(anti);
-        auto Alignment = cast<ConstantInt>(cast<ConstantAsMetadata>(MD->getOperand(0))->getValue())->getLimitedValue();
+        auto Alignment =
+            cast<ConstantInt>(
+                cast<ConstantAsMetadata>(MD->getOperand(0))->getValue())
+                ->getLimitedValue();
 #if LLVM_VERSION_MAJOR >= 10
         replacement->setAlignment(Align(Alignment));
 #else
@@ -2392,6 +2400,11 @@ public:
          Arch == Triple::amdgcn)) {
       Atomic = false;
     }
+    // Moreover no need to do atomic on local shadows regardless since they are
+    // not captured/escaping and created in this function. This assumes that
+    // all additional parallelism in this function is outlined.
+    if (backwardsOnlyShadows.find(TmpOrig) != backwardsOnlyShadows.end())
+      Atomic = false;
 
     if (Atomic) {
       // For amdgcn constant AS is 4 and if the primal is in it we need to cast

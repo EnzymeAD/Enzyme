@@ -917,8 +917,7 @@ public:
         }
       }
 
-      if (
-          (Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
+      if ((Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
           (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow) ||
           Mode == DerivativeMode::ReverseModeCombined ||
           Mode == DerivativeMode::ForwardMode) {
@@ -2569,8 +2568,7 @@ public:
       }
     }
 
-    if (
-        (Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
+    if ((Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
         (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow) ||
         Mode == DerivativeMode::ReverseModeCombined) {
       IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&MS));
@@ -8026,9 +8024,15 @@ public:
         }
 
         if (funcName == "julia.write_barrier") {
+          std::map<UsageKey, bool> Seen;
+          for (auto pair : gutils->knownRecomputeHeuristic)
+            if (!pair.second)
+              Seen[UsageKey(pair.first, ValueType::Primal)] = false;
           bool rematerializedPrimal = false;
           for (auto pair : gutils->rematerializableAllocations) {
-            if (pair.second.second.count(orig)) {
+            if (pair.second.second.count(orig) &&
+                is_value_needed_in_reverse<ValueType::Primal>(
+                    TR, gutils, pair.first, Mode, Seen, oldUnreachable)) {
               rematerializedPrimal = true;
             }
           }
@@ -8043,32 +8047,34 @@ public:
             }
           }
 
-          if (Mode == DerivativeMode::ReverseModeGradient && !rematerializedPrimal) {
-            eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
-          }
-
           if (Mode == DerivativeMode::ForwardMode ||
               Mode == DerivativeMode::ReverseModeCombined ||
               (Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
-              (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow)
-              ) {
-          SmallVector<Value *, 1> iargs;
-          IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
+              (Mode == DerivativeMode::ReverseModeGradient &&
+               backwardsShadow)) {
+            SmallVector<Value *, 1> iargs;
+            IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
 #if LLVM_VERSION_MAJOR >= 14
-          for (auto &arg : orig->args())
+            for (auto &arg : orig->args())
 #else
-          for (auto &arg : orig->arg_operands())
+            for (auto &arg : orig->arg_operands())
 #endif
-          {
-            if (!gutils->isConstantValue(arg)) {
-              Value *ptrshadow = gutils->invertPointerM(arg, BuilderZ);
-              iargs.push_back(ptrshadow);
+            {
+              if (!gutils->isConstantValue(arg)) {
+                Value *ptrshadow = gutils->invertPointerM(arg, BuilderZ);
+                iargs.push_back(ptrshadow);
+              }
+            }
+            if (iargs.size()) {
+              BuilderZ.CreateCall(called, iargs);
             }
           }
-          if (iargs.size()) {
-            BuilderZ.CreateCall(called, iargs);
+
+          if (Mode == DerivativeMode::ReverseModeGradient &&
+              !rematerializedPrimal) {
+            eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
           }
-          }
+
           return;
         }
         Intrinsic::ID ID = Intrinsic::not_intrinsic;
@@ -8341,18 +8347,19 @@ public:
             Mode == DerivativeMode::ReverseModeGradient ||
             Mode == DerivativeMode::ReverseModePrimal) {
 
-            bool backwardsShadow = false;
-            bool forwardsShadow = true;
-            {
-              auto found = gutils->backwardsOnlyShadows.find(orig);
-              if (found != gutils->backwardsOnlyShadows.end()) {
-                backwardsShadow = true;
-                forwardsShadow = found->second.second;
-              }
+          bool backwardsShadow = false;
+          bool forwardsShadow = true;
+          {
+            auto found = gutils->backwardsOnlyShadows.find(orig);
+            if (found != gutils->backwardsOnlyShadows.end()) {
+              backwardsShadow = true;
+              forwardsShadow = found->second.second;
             }
+          }
 
           // Only need to cache if not creating a shadow in the backwards
-          unsigned index = backwardsShadow ? (unsigned)-1 : getIndex(orig, CacheType::Shadow);
+          unsigned index = backwardsShadow ? (unsigned)-1
+                                           : getIndex(orig, CacheType::Shadow);
           auto anti = gutils->createAntiMalloc(orig, index);
           if ((Mode == DerivativeMode::ReverseModeCombined ||
                Mode == DerivativeMode::ReverseModeGradient ||
@@ -8436,8 +8443,8 @@ public:
           if (cacheWholeAllocation)
             primalNeededInReverse = true;
           else if (primalNeededInReverse) {
-          // if rematerialize, don't ever cache and downgrade to stack
-          // allocation where possible.
+            // if rematerialize, don't ever cache and downgrade to stack
+            // allocation where possible.
             if (auto MD = hasMetadata(orig, "enzyme_fromstack")) {
               IRBuilder<> B(newCall);
               if (auto CI = dyn_cast<ConstantInt>(orig->getArgOperand(0))) {
@@ -8446,7 +8453,10 @@ public:
               auto replacement = B.CreateAlloca(
                   Type::getInt8Ty(orig->getContext()),
                   gutils->getNewFromOriginal(orig->getArgOperand(0)));
-              auto Alignment = cast<ConstantInt>(cast<ConstantAsMetadata>(MD->getOperand(0))->getValue())->getLimitedValue();
+              auto Alignment =
+                  cast<ConstantInt>(
+                      cast<ConstantAsMetadata>(MD->getOperand(0))->getValue())
+                      ->getLimitedValue();
 #if LLVM_VERSION_MAJOR >= 10
               replacement->setAlignment(Align(Alignment));
 #else
