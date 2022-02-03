@@ -96,10 +96,10 @@ struct FnTypeInfo {
   std::map<llvm::Argument *, std::set<int64_t>> KnownValues;
 
   /// The set of known values val will take
-  std::set<int64_t> knownIntegralValues(
-      llvm::Value *val, const llvm::DominatorTree &DT,
-      std::map<llvm::Value *, std::set<int64_t>> &intseen,
-      llvm::ScalarEvolution &SE) const;
+  std::set<int64_t>
+  knownIntegralValues(llvm::Value *val, const llvm::DominatorTree &DT,
+                      std::map<llvm::Value *, std::set<int64_t>> &intseen,
+                      llvm::ScalarEvolution &SE) const;
 };
 
 static inline bool operator<(const FnTypeInfo &lhs, const FnTypeInfo &rhs) {
@@ -227,12 +227,12 @@ public:
   /// Intermediate conservative, but correct Type analysis results
   std::map<llvm::Value *, TypeTree> analysis;
 
-  llvm::TargetLibraryInfo& TLI;
-  llvm::DominatorTree& DT;
-  llvm::PostDominatorTree& PDT;
+  llvm::TargetLibraryInfo &TLI;
+  llvm::DominatorTree &DT;
+  llvm::PostDominatorTree &PDT;
 
-  llvm::LoopInfo& LI;
-  llvm::ScalarEvolution& SE;
+  llvm::LoopInfo &LI;
+  llvm::ScalarEvolution &SE;
 
   FnTypeInfo getCallInfo(llvm::CallInst &CI, llvm::Function &fn);
 
@@ -241,8 +241,7 @@ public:
 
   TypeAnalyzer(const FnTypeInfo &fn, TypeAnalysis &TA,
                const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &notForAnalysis,
-               const TypeAnalyzer &Prev,
-               uint8_t direction = BOTH,
+               const TypeAnalyzer &Prev, uint8_t direction = BOTH,
                bool PHIRecur = false);
 
   /// Get the current results for a given value

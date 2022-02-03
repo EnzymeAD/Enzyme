@@ -248,9 +248,8 @@ public:
   ///  optimization of the function after synthesis
   const AugmentedReturn &CreateAugmentedPrimal(
       llvm::Function *todiff, DIFFE_TYPE retType,
-      const std::vector<DIFFE_TYPE> &constant_args,
-      TypeAnalysis &TA, bool returnUsed,
-      const FnTypeInfo &typeInfo,
+      const std::vector<DIFFE_TYPE> &constant_args, TypeAnalysis &TA,
+      bool returnUsed, const FnTypeInfo &typeInfo,
       const std::map<llvm::Argument *, bool> _uncacheable_args,
       bool forceAnonymousTape, bool AtomicAdd, bool PostOpt, bool omp = false);
 
@@ -287,9 +286,9 @@ public:
   llvm::Function *
   CreateForwardDiff(llvm::Function *todiff, DIFFE_TYPE retType,
                     const std::vector<DIFFE_TYPE> &constant_args,
-                    TypeAnalysis &TA,
-                    bool returnValue, DerivativeMode mode, unsigned width,
-                    llvm::Type *additionalArg, const FnTypeInfo &typeInfo,
+                    TypeAnalysis &TA, bool returnValue, DerivativeMode mode,
+                    unsigned width, llvm::Type *additionalArg,
+                    const FnTypeInfo &typeInfo,
                     const std::map<llvm::Argument *, bool> _uncacheable_args,
                     bool PostOpt = false, bool omp = false);
 

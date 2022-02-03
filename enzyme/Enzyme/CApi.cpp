@@ -180,7 +180,7 @@ EnzymeTypeAnalysisRef CreateTypeAnalysis(EnzymeLogicRef Log,
                                          char **customRuleNames,
                                          CustomRuleType *customRules,
                                          size_t numRules) {
-  TypeAnalysis *TA = new TypeAnalysis(((EnzymeLogic*)Log)->PPC.FAM);
+  TypeAnalysis *TA = new TypeAnalysis(((EnzymeLogic *)Log)->PPC.FAM);
   for (size_t i = 0; i < numRules; i++) {
     CustomRuleType rule = customRules[i];
     TA->CustomRules[customRuleNames[i]] =

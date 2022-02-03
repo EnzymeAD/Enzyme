@@ -144,7 +144,8 @@ typedef uint8_t (*CustomRuleType)(int /*direction*/, CTypeTreeRef /*return*/,
                                   CTypeTreeRef * /*args*/,
                                   struct IntList * /*knownValues*/,
                                   size_t /*numArgs*/, LLVMValueRef);
-EnzymeTypeAnalysisRef CreateTypeAnalysis(EnzymeLogicRef Log, char **customRuleNames,
+EnzymeTypeAnalysisRef CreateTypeAnalysis(EnzymeLogicRef Log,
+                                         char **customRuleNames,
                                          CustomRuleType *customRules,
                                          size_t numRules);
 void ClearTypeAnalysis(EnzymeTypeAnalysisRef);

@@ -164,8 +164,7 @@ TypeAnalyzer::TypeAnalyzer(const FnTypeInfo &fn, TypeAnalysis &TA,
       DT(TA.FAM.getResult<DominatorTreeAnalysis>(*fn.Function)),
       PDT(TA.FAM.getResult<PostDominatorTreeAnalysis>(*fn.Function)),
       LI(TA.FAM.getResult<LoopAnalysis>(*fn.Function)),
-      SE(TA.FAM.getResult<ScalarEvolutionAnalysis>(*fn.Function))
-    {
+      SE(TA.FAM.getResult<ScalarEvolutionAnalysis>(*fn.Function)) {
 
   assert(fntypeinfo.KnownValues.size() ==
          fntypeinfo.Function->getFunctionType()->getNumParams());
@@ -195,7 +194,8 @@ TypeAnalyzer::TypeAnalyzer(
     const TypeAnalyzer &Prev, uint8_t direction, bool PHIRecur)
     : notForAnalysis(notForAnalysis.begin(), notForAnalysis.end()), intseen(),
       fntypeinfo(fn), interprocedural(TA), direction(direction), Invalid(false),
-      PHIRecur(PHIRecur), TLI(Prev.TLI), DT(Prev.DT), PDT(Prev.PDT), LI(Prev.LI), SE(Prev.SE) {
+      PHIRecur(PHIRecur), TLI(Prev.TLI), DT(Prev.DT), PDT(Prev.PDT),
+      LI(Prev.LI), SE(Prev.SE) {
   assert(fntypeinfo.KnownValues.size() ==
          fntypeinfo.Function->getFunctionType()->getNumParams());
 }
@@ -4231,10 +4231,10 @@ TypeTree TypeAnalyzer::getReturnAnalysis() {
   return vd;
 }
 
-std::set<int64_t> FnTypeInfo::knownIntegralValues(
-    llvm::Value *val, const DominatorTree &DT,
-    std::map<Value *, std::set<int64_t>> &intseen,
-    ScalarEvolution &SE) const {
+std::set<int64_t>
+FnTypeInfo::knownIntegralValues(llvm::Value *val, const DominatorTree &DT,
+                                std::map<Value *, std::set<int64_t>> &intseen,
+                                ScalarEvolution &SE) const {
   if (auto constant = dyn_cast<ConstantInt>(val)) {
     return {constant->getSExtValue()};
   }
@@ -4353,15 +4353,17 @@ std::set<int64_t> FnTypeInfo::knownIntegralValues(
   }
   if (auto pn = dyn_cast<PHINode>(val)) {
     if (auto S = dyn_cast<SCEVAddRecExpr>(SE.getSCEV(pn))) {
-        if (auto Start = dyn_cast<SCEVConstant>(S->getStart())) {
-            auto BE = SE.getBackedgeTakenCount(S->getLoop());
-            if (BE != SE.getCouldNotCompute())
-            if (auto End = dyn_cast<SCEVConstant>(S->evaluateAtIteration(BE, SE))) {
-                for (int64_t i = Start->getAPInt().getSExtValue(); i<= End->getAPInt().getSExtValue(); i++)
-                    insert(i);
-                return intseen[val];
-            }
-        }
+      if (auto Start = dyn_cast<SCEVConstant>(S->getStart())) {
+        auto BE = SE.getBackedgeTakenCount(S->getLoop());
+        if (BE != SE.getCouldNotCompute())
+          if (auto End =
+                  dyn_cast<SCEVConstant>(S->evaluateAtIteration(BE, SE))) {
+            for (int64_t i = Start->getAPInt().getSExtValue();
+                 i <= End->getAPInt().getSExtValue(); i++)
+              insert(i);
+            return intseen[val];
+          }
+      }
     }
 
     for (unsigned i = 0; i < pn->getNumIncomingValues(); ++i) {
@@ -4567,8 +4569,8 @@ FnTypeInfo TypeAnalyzer::getCallInfo(CallInst &call, Function &fn) {
     }
     typeInfo.Arguments.insert(std::pair<Argument *, TypeTree>(&arg, dt));
     std::set<int64_t> bounded;
-    for (auto v : fntypeinfo.knownIntegralValues(call.getArgOperand(argnum),
-                                                 DT, intseen, SE)) {
+    for (auto v : fntypeinfo.knownIntegralValues(call.getArgOperand(argnum), DT,
+                                                 intseen, SE)) {
       if (abs(v) > MaxIntOffset)
         continue;
       bounded.insert(v);

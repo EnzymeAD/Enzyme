@@ -1536,8 +1536,8 @@ static FnTypeInfo preventTypeAnalysisLoops(const FnTypeInfo &oldTypeInfo_,
 //! return structtype if recursive function
 const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     Function *todiff, DIFFE_TYPE retType,
-    const std::vector<DIFFE_TYPE> &constant_args,
-    TypeAnalysis &TA, bool returnUsed, const FnTypeInfo &oldTypeInfo_,
+    const std::vector<DIFFE_TYPE> &constant_args, TypeAnalysis &TA,
+    bool returnUsed, const FnTypeInfo &oldTypeInfo_,
     const std::map<Argument *, bool> _uncacheable_args, bool forceAnonymousTape,
     bool AtomicAdd, bool PostOpt, bool omp) {
   if (returnUsed)
@@ -1643,10 +1643,9 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         arg++;
         act_idx++;
       }
-      auto &aug =
-          CreateAugmentedPrimal(todiff, retType, next_constant_args, TA,
-                                returnUsed, oldTypeInfo_, _uncacheable_args,
-                                forceAnonymousTape, AtomicAdd, PostOpt, omp);
+      auto &aug = CreateAugmentedPrimal(
+          todiff, retType, next_constant_args, TA, returnUsed, oldTypeInfo_,
+          _uncacheable_args, forceAnonymousTape, AtomicAdd, PostOpt, omp);
       auto cal = bb.CreateCall(aug.fn, fwdargs);
       cal->setCallingConv(aug.fn->getCallingConv());
 
@@ -2888,8 +2887,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   if (key.returnUsed)
     assert(key.mode == DerivativeMode::ReverseModeCombined);
 
-  TargetLibraryInfo &TLI = PPC.FAM.getResult<TargetLibraryAnalysis>(*key.todiff);
-  
+  TargetLibraryInfo &TLI =
+      PPC.FAM.getResult<TargetLibraryAnalysis>(*key.todiff);
+
   // TODO change this to go by default function type assumptions
   bool hasconstant = false;
   for (auto v : key.constant_args) {
@@ -3785,8 +3785,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
 Function *EnzymeLogic::CreateForwardDiff(
     Function *todiff, DIFFE_TYPE retType,
-    const std::vector<DIFFE_TYPE> &constant_args,
-    TypeAnalysis &TA, bool returnUsed, DerivativeMode mode, unsigned width,
+    const std::vector<DIFFE_TYPE> &constant_args, TypeAnalysis &TA,
+    bool returnUsed, DerivativeMode mode, unsigned width,
     llvm::Type *additionalArg, const FnTypeInfo &oldTypeInfo_,
     const std::map<Argument *, bool> _uncacheable_args, bool PostOpt,
     bool omp) {
@@ -3808,7 +3808,7 @@ Function *EnzymeLogic::CreateForwardDiff(
   if (ForwardCachedFunctions.find(tup) != ForwardCachedFunctions.end()) {
     return ForwardCachedFunctions.find(tup)->second;
   }
-  
+
   TargetLibraryInfo &TLI = PPC.FAM.getResult<TargetLibraryAnalysis>(*todiff);
 
   // TODO change this to go by default function type assumptions
