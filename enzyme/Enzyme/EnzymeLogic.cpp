@@ -3859,7 +3859,7 @@ Function *EnzymeLogic::CreateForwardDiff(
   if (ForwardCachedFunctions.find(tup) != ForwardCachedFunctions.end()) {
     return ForwardCachedFunctions.find(tup)->second;
   }
-  
+
   TargetLibraryInfo &TLI = PPC.FAM.getResult<TargetLibraryAnalysis>(*todiff);
 
   // TODO change this to go by default function type assumptions
