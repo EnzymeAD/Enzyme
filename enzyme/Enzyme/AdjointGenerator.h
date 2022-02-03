@@ -3969,15 +3969,19 @@ public:
       ++in_arg;
       ++in_arg;
 
+      llvm::errs() << " call: " << call << "\n";
       for (; pp_arg != task->arg_end();) {
         // If var-args then we may still have args even though outermost
         // has no more
+	llvm::errs() << " ppa: " << *pp_arg << "\n";
         if (in_arg == call.getCalledFunction()->arg_end()) {
-          uncacheable_args[pp_arg] = true;
+          assert(0 && "var args???");
+	  uncacheable_args[pp_arg] = true;
         } else {
           assert(uncacheable_argsAbove.find(in_arg) !=
                  uncacheable_argsAbove.end());
           uncacheable_args[pp_arg] = uncacheable_argsAbove.find(in_arg)->second;
+	  llvm::errs() << " pp_arg:" << *pp_arg << " inarg: " << *in_arg << " uc:" << uncacheable_args[pp_arg] << "\n";
           ++in_arg;
         }
         ++pp_arg;
