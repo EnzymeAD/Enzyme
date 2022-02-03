@@ -528,14 +528,16 @@ public:
       rematerializableAllocations;
 
   // Only loaded from and stored to (not captured), mapped to the stores (and
-  // memset)
-  ValueMap<Value *, SmallPtrSet<Instruction *, 1>> backwardsOnlyShadows;
+  // memset). Boolean denotes whether the primal initializes the shadow as well (for use)
+  // as a structure which carries data.
+  ValueMap<Value *, std::pair<SmallPtrSet<Instruction *, 1>, bool>> backwardsOnlyShadows;
 
-  void computeForwardingProperties(Value *V, TypeResults &TR) {
+  void computeForwardingProperties(CallInst *V, TypeResults &TR) {
     SmallPtrSet<LoadInst *, 1> loads;
     SmallPtrSet<Instruction *, 1> stores;
     bool promotable = true;
     bool shadowpromotable = true;
+    bool primalInitializationOfShadow = false;
     std::set<std::pair<Instruction *, Value *>> seen;
     SmallVector<std::pair<Instruction *, Value *>, 1> todo;
     for (auto U : V->users())
@@ -622,10 +624,31 @@ public:
           auto TT = TR.query(prev)[{-1, -1}];
           // If it either could capture, or could have a int/pointer written to
           // it it is not promotable
-          if (!CI->doesNotCapture(idx) ||
-              (!TT.isFloat() && !CI->onlyReadsMemory(idx))) {
-            shadowpromotable = false;
+          if (CI->doesNotCapture(idx)) {
+            if (TT.isFloat()) {
+              // all floats ok
+            } else if (CI->onlyReadsMemory(idx)) {
+              // if only reading memory, ok to duplicate in forward / 
+              // reverse if it is a stack or GC allocation.
+              // Said memory will still be shadow initialized.
+              Function *originCall = getFunctionFromCall(V);
+              StringRef funcName = "";
+              if (originCall)
+                funcName = called->getName();
+              if (hasMetadata(V, "enzyme_fromstack") || funcName == "jl_alloc_array_1d" ||
+                funcName == "jl_alloc_array_2d" ||
+                funcName == "jl_alloc_array_3d" ||
+                funcName == "jl_array_copy" || funcName == "julia.gc_alloc_obj") {
+                primalInitializationOfShadow = true;
+              } else {
+                shadowpromotable = false;
+              }
+            } else {
+              shadowpromotable = false;
+            }
             break;
+          } else {
+            shadowpromotable = false;
           }
           idx++;
         }
@@ -638,7 +661,7 @@ public:
 
     if (!shadowpromotable)
       return;
-    backwardsOnlyShadows[V] = stores;
+    backwardsOnlyShadows[V] = std::make_pair(stores, primalInitializationOfShadow);
 
     if (!promotable)
       return;
@@ -689,7 +712,7 @@ public:
   void computeGuaranteedFrees(
       const llvm::SmallPtrSetImpl<BasicBlock *> &oldUnreachable,
       TypeResults &TR) {
-    SmallPtrSet<Value *, 2> allocsToPromote;
+    SmallPtrSet<CallInst *, 2> allocsToPromote;
     for (auto &BB : *oldFunc) {
       if (oldUnreachable.count(&BB))
         continue;
@@ -737,7 +760,7 @@ public:
         }
       }
     }
-    for (Value *V : allocsToPromote) {
+    for (CallInst *V : allocsToPromote) {
       // TODO compute if an only load/store (non capture)
       // allocaion by traversing its users. If so, mark
       // all of its load/stores, as now the loads can
@@ -893,16 +916,24 @@ public:
     // of pointers (from rematerializable property) and it does
     // not escape the function scope (lest it not be
     // rematerializable) so all input derivatives remain zero.
-    bool rematerializable =
-        backwardsOnlyShadows.find(orig) != backwardsOnlyShadows.end();
-    if (rematerializable && mode == DerivativeMode::ReverseModePrimal) {
+    bool backwardsShadow = false;
+    bool forwardsShadow = true;
+    {
+      auto found = backwardsOnlyShadows.find(orig);
+      if (found != backwardsOnlyShadows.end()) {
+        backwardsShadow = true;
+        forwardsShadow = found->second.second;
+      }
+    }
+
+    if (!forwardsShadow && mode == DerivativeMode::ReverseModePrimal) {
       // Needs a stronger replacement check/assertion.
       Value *replacement = UndefValue::get(placeholder->getType());
       replaceAWithB(placeholder, replacement);
       invertedPointers.erase(found);
       invertedPointers.insert(
           std::make_pair(orig, InvertedPointerVH(this, replacement)));
-      erase(placeholder);
+       erase(placeholder);
       return replacement;
     }
     assert(placeholder->getParent()->getParent() == newFunc);
@@ -937,7 +968,9 @@ public:
       bb.SetInsertPoint(placeholder);
       Value *anti = placeholder;
 
-      if (mode != DerivativeMode::ReverseModeGradient || rematerializable) {
+      if (mode == DerivativeMode::ReverseModeCombined || 
+          (mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
+          (mode == DerivativeMode::ReverseModeGradient && backwardsShadow)) {
         anti = shadowHandlers[Fn->getName().str()](bb, orig, args);
 
         invertedPointers.erase(found);
@@ -950,7 +983,7 @@ public:
       if (auto inst = dyn_cast<Instruction>(anti))
         bb.SetInsertPoint(inst);
 
-      if (!rematerializable)
+      if (!backwardsShadow)
         anti = cacheForReverse(bb, anti, idx);
       invertedPointers.insert(
           std::make_pair(orig, InvertedPointerVH(this, anti)));
@@ -1024,7 +1057,7 @@ public:
     replaceAWithB(placeholder, anti);
     erase(placeholder);
 
-    if (!rematerializable)
+    if (!backwardsShadow)
       anti = cacheForReverse(bb, anti, idx);
     else {
       if (hasMetadata(orig, "enzyme_fromstack")) {
@@ -1041,8 +1074,8 @@ public:
         std::make_pair((const Value *)orig, InvertedPointerVH(this, anti)));
 
     if (mode == DerivativeMode::ReverseModeCombined ||
-        (mode == DerivativeMode::ReverseModePrimal && !rematerializable) ||
-        (mode == DerivativeMode::ReverseModeGradient && rematerializable)) {
+        (mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
+        (mode == DerivativeMode::ReverseModeGradient && backwardsShadow)) {
       if (Fn->getName() == "julia.gc_alloc_obj") {
         Type *tys[] = {
             PointerType::get(StructType::get(orig->getContext()), 10)};

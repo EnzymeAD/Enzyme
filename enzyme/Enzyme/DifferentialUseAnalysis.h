@@ -71,10 +71,10 @@ static inline bool is_use_directly_needed_in_reverse(
       }
 
       // Preserve any non-floating point values that are stored in an active
-      // backwards-only shadow.
+      // backwards creation shadow.
       if (!TR.query(const_cast<Value*>(SI->getValueOperand()))[{-1}].isFloat())
         for (auto pair : gutils->backwardsOnlyShadows)
-          if (pair.second.count(SI) && !gutils->isConstantValue(pair.first)) {
+          if (pair.second.first.count(SI) && !gutils->isConstantValue(pair.first)) {
               return true;
           }
     }
@@ -87,11 +87,11 @@ static inline bool is_use_directly_needed_in_reverse(
       return false;
   }
 
-  // Preserve the length of memsets of backward only shadows
+  // Preserve the length of memsets of backward creation shadows
   if (auto MS = dyn_cast<MemSetInst>(user)) {
     if (MS->getArgOperand(2) == val) {
       for (auto pair : gutils->backwardsOnlyShadows)
-        if (pair.second.count(MS) && !gutils->isConstantValue(pair.first)) {
+        if (pair.second.first.count(MS) && !gutils->isConstantValue(pair.first)) {
             return true;
         }
     }
@@ -259,12 +259,12 @@ static inline bool is_value_needed_in_reverse(
         // reverse pass
         if (SI->getValueOperand() == inst &&
             mode == DerivativeMode::ReverseModeGradient) {
-           // Unless the store is into a backwards only store, which would
+           // Unless the store is into a backwards store, which would
            // would then be performed in the reverse if the stored value was
            // a possible pointer.
           bool rematerialized = false;
           for (auto pair : gutils->backwardsOnlyShadows)
-            if (pair.second.count(SI)) {
+            if (pair.second.first.count(SI)) {
                 rematerialized = true;
                 break;
             }
