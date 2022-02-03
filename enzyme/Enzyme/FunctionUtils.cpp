@@ -172,9 +172,6 @@ bool couldFunctionArgumentCapture(llvm::CallInst *CI, llvm::Value *val) {
   if (F->getIntrinsicID() == Intrinsic::memmove)
     return false;
 
-  if (F->empty())
-    return false;
-
   auto arg = F->arg_begin();
 #if LLVM_VERSION_MAJOR >= 14
   for (size_t i = 0, size = CI->arg_size(); i < size; i++)
