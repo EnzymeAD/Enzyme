@@ -843,7 +843,8 @@ void TypeAnalyzer::considerTBAA() {
           updateAnalysis(call->getOperand(1), update, call);
           continue;
         } else if (call->getCalledFunction() &&
-            (call->getCalledFunction()->getIntrinsicID() == Intrinsic::memset)) {
+                   (call->getCalledFunction()->getIntrinsicID() ==
+                    Intrinsic::memset)) {
           int64_t copySize = 1;
           for (auto val : fntypeinfo.knownIntegralValues(call->getOperand(2),
                                                          DT, intseen, SE)) {
