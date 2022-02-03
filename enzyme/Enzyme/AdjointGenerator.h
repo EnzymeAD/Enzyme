@@ -750,16 +750,9 @@ public:
     auto align = SI.getAlignment();
 #endif
 
-    bool backwardsOnlyShadow = false;
-    for (auto pair : gutils->backwardsOnlyShadows)
-        if (pair.second.count(&SI)) {
-            backwardsOnlyShadow = true;
-            break;
-        }
-
     visitCommonStore(SI, SI.getPointerOperand(), SI.getValueOperand(), align,
                      SI.isVolatile(), SI.getOrdering(), SI.getSyncScopeID(),
-                     /*mask=*/nullptr, backwardsOnlyShadow);
+                     /*mask=*/nullptr);
 
     std::map<UsageKey, bool> Seen;
     for (auto pair : gutils->knownRecomputeHeuristic)
@@ -782,12 +775,12 @@ public:
   void visitCommonStore(llvm::Instruction &I, Value *orig_ptr, Value *orig_val,
                         MaybeAlign align, bool isVolatile,
                         AtomicOrdering ordering, SyncScope::ID syncScope,
-                        Value *mask, bool backwardsOnlyShadow)
+                        Value *mask)
 #else
   void visitCommonStore(llvm::Instruction &I, Value *orig_ptr, Value *orig_val,
                         unsigned align, bool isVolatile,
                         AtomicOrdering ordering, SyncScope::ID syncScope,
-                        Value *mask, bool backwardsOnlyShadow)
+                        Value *mask)
 #endif
   {
     Value *val = gutils->getNewFromOriginal(orig_val);
@@ -915,9 +908,19 @@ public:
       //! Storing an integer or pointer
     } else {
       //! Only need to update the forward function
+
+      bool backwardsShadow = false;
+      bool forwardsShadow = true;
+      for (auto pair : gutils->backwardsOnlyShadows) {
+        if (pair.second.first.count(&I)) {
+          backwardsShadow = true;
+          forwardsShadow = pair.second.second;
+        }
+      }
+
       if (
-          (Mode == DerivativeMode::ReverseModePrimal && !backwardsOnlyShadow) ||
-          (Mode == DerivativeMode::ReverseModeGradient && backwardsOnlyShadow) ||
+          (Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
+          (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow) ||
           Mode == DerivativeMode::ReverseModeCombined ||
           Mode == DerivativeMode::ForwardMode) {
         IRBuilder<> storeBuilder(gutils->getNewFromOriginal(&I));
@@ -2516,14 +2519,6 @@ public:
   }
 
   void visitMemSetInst(llvm::MemSetInst &MS) {
-
-    bool backwardsOnlyShadow = false;
-    for (auto pair : gutils->backwardsOnlyShadows)
-        if (pair.second.count(&MS)) {
-            backwardsOnlyShadow = true;
-            break;
-        }
-    
     bool rematerialized = false;
     std::map<UsageKey, bool> Seen;
     for (auto pair : gutils->knownRecomputeHeuristic)
@@ -2566,9 +2561,18 @@ public:
       report_fatal_error("non constant in memset");
     }
 
+    bool backwardsShadow = false;
+    bool forwardsShadow = true;
+    for (auto pair : gutils->backwardsOnlyShadows) {
+      if (pair.second.first.count(&MS)) {
+        backwardsShadow = true;
+        forwardsShadow = pair.second.second;
+      }
+    }
+
     if (
-        (Mode == DerivativeMode::ReverseModePrimal && !backwardsOnlyShadow) ||
-        (Mode == DerivativeMode::ReverseModeGradient && backwardsOnlyShadow) ||
+        (Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
+        (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow) ||
         Mode == DerivativeMode::ReverseModeCombined) {
       IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&MS));
 
@@ -2904,7 +2908,7 @@ public:
                        /*orig_val*/ I.getOperand(0), align,
                        /*isVolatile*/ false, llvm::AtomicOrdering::NotAtomic,
                        SyncScope::SingleThread,
-                       /*mask*/ gutils->getNewFromOriginal(I.getOperand(3)), /*rematerializable*/false);
+                       /*mask*/ gutils->getNewFromOriginal(I.getOperand(3)));
       return;
     }
     if (ID == Intrinsic::masked_load) {
@@ -8176,10 +8180,20 @@ public:
         if (Mode == DerivativeMode::ReverseModeCombined ||
             Mode == DerivativeMode::ReverseModeGradient ||
             Mode == DerivativeMode::ReverseModePrimal) {
-          bool rematerializable = gutils->backwardsOnlyShadows.find(orig) != gutils->backwardsOnlyShadows.end();
-          unsigned index = rematerializable ? (unsigned)-1 : getIndex(orig, CacheType::Shadow);
-          auto anti =
-              gutils->createAntiMalloc(orig, index);
+
+            bool backwardsShadow = false;
+            bool forwardsShadow = true;
+            {
+              auto found = gutils->backwardsOnlyShadows.find(orig);
+              if (found != gutils->backwardsOnlyShadows.end()) {
+                backwardsShadow = true;
+                forwardsShadow = found->second.second;
+              }
+            }
+
+          // Only need to cache if not creating a shadow in the backwards
+          unsigned index = backwardsShadow ? (unsigned)-1 : getIndex(orig, CacheType::Shadow);
+          auto anti = gutils->createAntiMalloc(orig, index);
           if ((Mode == DerivativeMode::ReverseModeCombined ||
                Mode == DerivativeMode::ReverseModeGradient ||
                Mode == DerivativeMode::ForwardModeSplit) &&
