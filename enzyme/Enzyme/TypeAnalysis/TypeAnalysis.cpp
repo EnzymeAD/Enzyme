@@ -4356,14 +4356,19 @@ FnTypeInfo::knownIntegralValues(llvm::Value *val, const DominatorTree &DT,
       if (auto S = dyn_cast<SCEVAddRecExpr>(SE.getSCEV(pn))) {
         if (auto Start = dyn_cast<SCEVConstant>(S->getStart())) {
           auto BE = SE.getBackedgeTakenCount(S->getLoop());
-          if (BE != SE.getCouldNotCompute())
-            if (auto End =
-                    dyn_cast<SCEVConstant>(S->evaluateAtIteration(BE, SE))) {
-              for (int64_t i = Start->getAPInt().getSExtValue();
-                   i <= End->getAPInt().getSExtValue(); i++)
-                insert(i);
+          if (BE != SE.getCouldNotCompute()) {
+            if (auto Iters = dyn_cast<SCEVConstant>(BE)) {
+              uint64_t ival = Iters->getAPInt().getZExtValue();
+              for (uint64_t i = 0; i <= ival; i++) {
+                if (auto Val = dyn_cast<SCEVConstant>(S->evaluateAtIteration(
+                        SE.getConstant(Iters->getType(), i, /*signed*/ false),
+                        SE))) {
+                  insert(Val->getAPInt().getSExtValue());
+                }
+              }
               return intseen[val];
             }
+          }
         }
       }
 
