@@ -1751,6 +1751,8 @@ public:
 #if LLVM_VERSION_MAJOR >= 13
     if (Logic.PostOpt && EnzymeOMPOpt) {
       OpenMPOptPass().run(M, Logic.PPC.MAM);
+      /// Attributor is run second time for promoted args to get attributes.
+      AttributorPass().run(M, Logic.PPC.MAM);
       changed = true;
     }
 #endif
@@ -1816,6 +1818,8 @@ public:
 #if LLVM_VERSION_MAJOR >= 13
     if (Logic.PostOpt && EnzymeOMPOpt) {
       OpenMPOptPass().run(M, Logic.PPC.MAM);
+      /// Attributor is run second time for promoted args to get attributes.
+      AttributorPass().run(M, Logic.PPC.MAM);
       changed = true;
     }
 #endif
