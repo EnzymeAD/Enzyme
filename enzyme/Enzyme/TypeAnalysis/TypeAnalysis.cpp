@@ -4354,11 +4354,25 @@ FnTypeInfo::knownIntegralValues(llvm::Value *val, const DominatorTree &DT,
   if (auto pn = dyn_cast<PHINode>(val)) {
     if (SE.isSCEVable(pn->getType()))
       if (auto S = dyn_cast<SCEVAddRecExpr>(SE.getSCEV(pn))) {
-        if (auto Start = dyn_cast<SCEVConstant>(S->getStart())) {
-          auto BE = SE.getBackedgeTakenCount(S->getLoop());
+        if (isa<SCEVConstant>(S->getStart())) {
+          auto L = S->getLoop();
+          auto BE = SE.getBackedgeTakenCount(L);
           if (BE != SE.getCouldNotCompute()) {
             if (auto Iters = dyn_cast<SCEVConstant>(BE)) {
               uint64_t ival = Iters->getAPInt().getZExtValue();
+              // If strict aliasing and the loop header does not dominate all
+              // blocks at low optimization levels the last "iteration" will
+              // actually exit leading to one extra backedge that would be wise
+              // to ignore.
+              if (EnzymeStrictAliasing) {
+                bool rotated = false;
+                BasicBlock *Latch = L->getLoopLatch();
+                rotated = Latch && L->isLoopExiting(Latch);
+                if (!rotated) {
+                  if (ival > 0)
+                    ival--;
+                }
+              }
               for (uint64_t i = 0; i <= ival; i++) {
                 if (auto Val = dyn_cast<SCEVConstant>(S->evaluateAtIteration(
                         SE.getConstant(Iters->getType(), i, /*signed*/ false),
