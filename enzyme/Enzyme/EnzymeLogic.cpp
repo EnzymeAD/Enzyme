@@ -589,7 +589,7 @@ struct CacheAnalysis {
         if (CD == BaseType::Integer || CD.isFloat())
           init_safe = true;
       }
-      if (!init_safe && !isa<ConstantInt>(obj) && !isa<Function>(obj)) {
+      if (!init_safe && !isa<UndefValue>(obj) && !isa<ConstantInt>(obj) && !isa<Function>(obj)) {
         EmitWarning("UncacheableOrigin", callsite_op->getDebugLoc(), oldFunc,
                     callsite_op->getParent(), "Callsite ", *callsite_op,
                     " arg ", i, " ", *callsite_op->getArgOperand(i),
@@ -641,7 +641,7 @@ struct CacheAnalysis {
 
         if (llvm::isModSet(AA.getModRefInfo(
                 inst2, MemoryLocation::getForArgument(callsite_op, i, TLI)))) {
-          if (!isa<ConstantInt>(callsite_op->getArgOperand(i)))
+          if (!isa<ConstantInt>(callsite_op->getArgOperand(i)) && !isa<UndefValue>(callsite_op->getArgOperand(i)))
             EmitWarning("UncacheableArg", callsite_op->getDebugLoc(), oldFunc,
                         callsite_op->getParent(), "Callsite ", *callsite_op,
                         " arg ", i, " ", *callsite_op->getArgOperand(i),
