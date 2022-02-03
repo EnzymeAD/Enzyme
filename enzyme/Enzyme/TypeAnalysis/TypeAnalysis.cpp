@@ -4352,19 +4352,20 @@ FnTypeInfo::knownIntegralValues(llvm::Value *val, const DominatorTree &DT,
     }
   }
   if (auto pn = dyn_cast<PHINode>(val)) {
-    if (auto S = dyn_cast<SCEVAddRecExpr>(SE.getSCEV(pn))) {
-      if (auto Start = dyn_cast<SCEVConstant>(S->getStart())) {
-        auto BE = SE.getBackedgeTakenCount(S->getLoop());
-        if (BE != SE.getCouldNotCompute())
-          if (auto End =
-                  dyn_cast<SCEVConstant>(S->evaluateAtIteration(BE, SE))) {
-            for (int64_t i = Start->getAPInt().getSExtValue();
-                 i <= End->getAPInt().getSExtValue(); i++)
-              insert(i);
-            return intseen[val];
-          }
+    if (SE.isSCEVable(pn->getType()))
+      if (auto S = dyn_cast<SCEVAddRecExpr>(SE.getSCEV(pn))) {
+        if (auto Start = dyn_cast<SCEVConstant>(S->getStart())) {
+          auto BE = SE.getBackedgeTakenCount(S->getLoop());
+          if (BE != SE.getCouldNotCompute())
+            if (auto End =
+                    dyn_cast<SCEVConstant>(S->evaluateAtIteration(BE, SE))) {
+              for (int64_t i = Start->getAPInt().getSExtValue();
+                   i <= End->getAPInt().getSExtValue(); i++)
+                insert(i);
+              return intseen[val];
+            }
+        }
       }
-    }
 
     for (unsigned i = 0; i < pn->getNumIncomingValues(); ++i) {
       auto a = pn->getIncomingValue(i);
