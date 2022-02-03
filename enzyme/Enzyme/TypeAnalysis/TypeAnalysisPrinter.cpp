@@ -25,6 +25,9 @@
 //===----------------------------------------------------------------------===//
 #include <llvm/Config/llvm-config.h>
 
+#include "SCEV/ScalarEvolution.h"
+#include "SCEV/ScalarEvolutionExpander.h"
+
 #include "llvm/ADT/SmallVector.h"
 
 #include "llvm/IR/BasicBlock.h"
