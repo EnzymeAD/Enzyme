@@ -613,10 +613,21 @@ public:
           auto TT = TR.query(prev)[{-1, -1}];
           // If it either could capture, or could have a int/pointer written to
           // it it is not promotable
-          if (CI->doesNotCapture(idx)) {
+#if LLVM_VERSION_MAJOR >= 8
+          if (CI->doesNotCapture(idx))
+#else
+          if (CI->dataOperandHasImpliedAttr(idx, Attribute::NoCapture))
+#endif
+          {
             if (TT.isFloat()) {
               // all floats ok
-            } else if (CI->onlyReadsMemory(idx)) {
+            }
+#if LLVM_VERSION_MAJOR >= 8
+            else if (CI->onlyReadsMemory(idx))
+#else
+            else if (CI->dataOperandHasImpliedAttr(idx, Attribute::ReadOnly) || CI->dataOperandHasImpliedAttr(idx, Attribute::ReadNone))
+#endif
+            {
               // if only reading memory, ok to duplicate in forward / 
               // reverse if it is a stack or GC allocation.
               // Said memory will still be shadow initialized.
