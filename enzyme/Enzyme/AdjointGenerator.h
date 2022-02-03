@@ -8438,7 +8438,7 @@ public:
           else if (primalNeededInReverse) {
           // if rematerialize, don't ever cache and downgrade to stack
           // allocation where possible.
-            if (hasMetadata(orig, "enzyme_fromstack")) {
+            if (auto MD = hasMetadata(orig, "enzyme_fromstack")) {
               IRBuilder<> B(newCall);
               if (auto CI = dyn_cast<ConstantInt>(orig->getArgOperand(0))) {
                 B.SetInsertPoint(gutils->inversionAllocs);
@@ -8446,6 +8446,12 @@ public:
               auto replacement = B.CreateAlloca(
                   Type::getInt8Ty(orig->getContext()),
                   gutils->getNewFromOriginal(orig->getArgOperand(0)));
+              auto Alignment = cast<ConstantInt>(cast<ConstantAsMetadata>(MD->getOperand(0))->getValue())->getLimitedValue();
+#if LLVM_VERSION_MAJOR >= 10
+              replacement->setAlignment(Align(Alignment));
+#else
+              replacement->setAlignment(Alignment);
+#endif
               gutils->replaceAWithB(newCall, replacement);
               gutils->erase(newCall);
               return;

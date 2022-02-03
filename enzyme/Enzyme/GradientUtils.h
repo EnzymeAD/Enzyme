@@ -1076,11 +1076,17 @@ public:
     if (!backwardsShadow)
       anti = cacheForReverse(bb, anti, idx);
     else {
-      if (hasMetadata(orig, "enzyme_fromstack")) {
-        Value *replacement =
+      if (auto MD = hasMetadata(orig, "enzyme_fromstack")) {
+        AllocaInst *replacement =
             bb.CreateAlloca(Type::getInt8Ty(orig->getContext()),
                             getNewFromOriginal(orig->getArgOperand(0)));
         replacement->takeName(anti);
+        auto Alignment = cast<ConstantInt>(cast<ConstantAsMetadata>(MD->getOperand(0))->getValue())->getLimitedValue();
+#if LLVM_VERSION_MAJOR >= 10
+        replacement->setAlignment(Align(Alignment));
+#else
+        replacement->setAlignment(Alignment);
+#endif
         replaceAWithB(cast<Instruction>(anti), replacement);
         erase(cast<Instruction>(anti));
         anti = replacement;
