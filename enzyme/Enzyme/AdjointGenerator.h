@@ -7857,10 +7857,32 @@ public:
         }
 
         if (funcName == "julia.write_barrier") {
-          if (Mode == DerivativeMode::ReverseModeGradient) {
-            eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
-            return;
+          bool rematerializedPrimal = false;
+          for (auto pair : gutils->rematerializableAllocations) {
+            if (pair.second.second.count(orig)) {
+              rematerializedPrimal = true;
+            }
           }
+
+          bool backwardsShadow = false;
+          bool forwardsShadow = true;
+          for (auto pair : gutils->backwardsOnlyShadows) {
+            if (pair.second.first.count(orig)) {
+              backwardsShadow = true;
+              forwardsShadow = pair.second.second;
+              break;
+            }
+          }
+
+          if (Mode == DerivativeMode::ReverseModeGradient && !rematerializedPrimal) {
+            eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
+          }
+
+          if (Mode == DerivativeMode::ForwardMode ||
+              Mode == DerivativeMode::ReverseModeCombined ||
+              (Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
+              (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow)
+              ) {
           SmallVector<Value *, 1> iargs;
           IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
 #if LLVM_VERSION_MAJOR >= 14
@@ -7876,6 +7898,7 @@ public:
           }
           if (iargs.size()) {
             BuilderZ.CreateCall(called, iargs);
+          }
           }
           return;
         }

@@ -593,6 +593,11 @@ public:
         if (called && isDeallocationFunction(*called, TLI)) {
           continue;
         }
+        if (called && called->getName() == "julia.write_barrier") {
+          stores.insert(CI);
+          continue;
+        }
+
         promotable = false;
         size_t idx = 0;
 #if LLVM_VERSION_MAJOR >= 14
