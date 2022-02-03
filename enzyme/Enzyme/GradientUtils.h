@@ -486,33 +486,36 @@ public:
     return cast_or_null<BasicBlock>(isOriginal((const Value *)newinst));
   }
 
-  ValueMap<Value*, std::pair<SmallPtrSet<LoadInst*,1>,SmallPtrSet<Instruction*,1>>>
-    rematerializableAllocations;
+  ValueMap<Value *,
+           std::pair<SmallPtrSet<LoadInst *, 1>, SmallPtrSet<Instruction *, 1>>>
+      rematerializableAllocations;
 
-  // Only loaded from and stored to (not captured), mapped to the stores (and memset)
-  ValueMap<Value*, SmallPtrSet<Instruction*,1>> backwardsOnlyShadows;
+  // Only loaded from and stored to (not captured), mapped to the stores (and
+  // memset)
+  ValueMap<Value *, SmallPtrSet<Instruction *, 1>> backwardsOnlyShadows;
 
-  void computeForwardingProperties(Value* V, TypeResults &TR) {
-    SmallPtrSet<LoadInst*, 1> loads;
-    SmallPtrSet<Instruction*, 1> stores;
+  void computeForwardingProperties(Value *V, TypeResults &TR) {
+    SmallPtrSet<LoadInst *, 1> loads;
+    SmallPtrSet<Instruction *, 1> stores;
     bool promotable = true;
     bool shadowpromotable = true;
-    std::set<std::pair<Instruction*, Value*>> seen;
-    SmallVector<std::pair<Instruction*, Value*>, 1> todo;
+    std::set<std::pair<Instruction *, Value *>> seen;
+    SmallVector<std::pair<Instruction *, Value *>, 1> todo;
     for (auto U : V->users())
       if (auto I = dyn_cast<Instruction>(U))
         todo.push_back(std::make_pair(I, V));
     while (todo.size()) {
       auto tup = todo.back();
       Instruction *cur = tup.first;
-      Value* prev = tup.second;
+      Value *prev = tup.second;
       todo.pop_back();
-      if (seen.count(tup)) continue;
+      if (seen.count(tup))
+        continue;
       seen.insert(tup);
       if (isa<CastInst>(cur) || isa<GetElementPtrInst>(cur)) {
-        for(auto u : cur->users()) {
+        for (auto u : cur->users()) {
           if (auto I = dyn_cast<Instruction>(u))
-            todo.push_back(std::make_pair(I, (Value*)cur));
+            todo.push_back(std::make_pair(I, (Value *)cur));
         }
       } else if (auto load = dyn_cast<LoadInst>(cur)) {
         loads.insert(load);
@@ -526,35 +529,41 @@ public:
         }
       } else if (auto II = dyn_cast<IntrinsicInst>(cur)) {
         switch (II->getIntrinsicID()) {
-          case Intrinsic::dbg_declare:
-          case Intrinsic::dbg_value:
-    #if LLVM_VERSION_MAJOR > 6
-          case Intrinsic::dbg_label:
-    #endif
-          case Intrinsic::dbg_addr:
-          case Intrinsic::lifetime_start:
-          case Intrinsic::lifetime_end:
-            break;
-          case Intrinsic::memset:
-            {
-                bool first = true;
-#if LLVM_VERSION_MAJOR >= 14
-    for (auto &arg : II->args())
-#else
-    for (auto &arg : II->arg_operands()) 
+        case Intrinsic::dbg_declare:
+        case Intrinsic::dbg_value:
+#if LLVM_VERSION_MAJOR > 6
+        case Intrinsic::dbg_label:
 #endif
-    {
-        if (first) { first = false; break; }
-        if (arg == prev) { promotable = false; shadowpromotable = false; break; }
-        break;
-    }
-            stores.insert(II);
-            break;
+        case Intrinsic::dbg_addr:
+        case Intrinsic::lifetime_start:
+        case Intrinsic::lifetime_end:
+          break;
+        case Intrinsic::memset: {
+          bool first = true;
+#if LLVM_VERSION_MAJOR >= 14
+          for (auto &arg : II->args())
+#else
+          for (auto &arg : II->arg_operands())
+#endif
+          {
+            if (first) {
+              first = false;
+              break;
             }
-          default:
-            promotable = false;
-            shadowpromotable = false;
+            if (arg == prev) {
+              promotable = false;
+              shadowpromotable = false;
+              break;
+            }
             break;
+          }
+          stores.insert(II);
+          break;
+        }
+        default:
+          promotable = false;
+          shadowpromotable = false;
+          break;
         }
       } else if (auto CI = dyn_cast<CallInst>(cur)) {
         Function *called = getFunctionFromCall(CI);
@@ -562,26 +571,27 @@ public:
           continue;
         }
         promotable = false;
-        size_t idx=0;
+        size_t idx = 0;
 #if LLVM_VERSION_MAJOR >= 14
-    for (auto &arg : CI->args())
+        for (auto &arg : CI->args())
 #else
-    for (auto &arg : CI->arg_operands())
+        for (auto &arg : CI->arg_operands())
 #endif
-    {
-        if (arg != prev) {
+        {
+          if (arg != prev) {
             idx++;
             continue;
+          }
+          auto TT = TR.query(prev)[{-1, -1}];
+          // If it either could capture, or could have a int/pointer written to
+          // it it is not promotable
+          if (!CI->doesNotCapture(idx) ||
+              (!TT.isFloat() && !CI->onlyReadsMemory(idx))) {
+            shadowpromotable = false;
+            break;
+          }
+          idx++;
         }
-        auto TT = TR.query(prev)[{-1, -1}];
-        // If it either could capture, or could have a int/pointer written to it
-        // it is not promotable
-        if (!CI->doesNotCapture(idx) || (!TT.isFloat() && !CI->onlyReadsMemory(idx))) {
-          shadowpromotable = false;
-          break;
-        }
-        idx++;
-    }
 
       } else {
         promotable = false;
@@ -589,45 +599,48 @@ public:
       }
     }
 
-    if (!shadowpromotable) return;
+    if (!shadowpromotable)
+      return;
     backwardsOnlyShadows[V] = stores;
-    
-    if (!promotable) return;
-    
-    SmallPtrSet<LoadInst*, 1> rematerializable;
 
-    Loop* outer = nullptr;
+    if (!promotable)
+      return;
+
+    SmallPtrSet<LoadInst *, 1> rematerializable;
+
+    Loop *outer = nullptr;
     bool set = false;
     for (auto S : stores) {
-        Loop* L = OrigLI.getLoopFor(S->getParent());
-        if (!set) {
-            outer = L;
+      Loop *L = OrigLI.getLoopFor(S->getParent());
+      if (!set) {
+        outer = L;
+      } else {
+        if (outer == nullptr || L == nullptr) {
+          outer = nullptr;
         } else {
-            if (outer == nullptr || L == nullptr) {
-                outer = nullptr;
-            } else {
-                Loop* anc = nullptr;
-                for (Loop* L1 = L; L1; L1 = L1->getParentLoop())
-                for (Loop* L2 = outer; L2; L2 = L2->getParentLoop()) {
-                    if (L1 == L2) {
-                        anc = L1;
-                        goto found;
-                    }
-                }
-                found:;
-                outer = anc;
+          Loop *anc = nullptr;
+          for (Loop *L1 = L; L1; L1 = L1->getParentLoop())
+            for (Loop *L2 = outer; L2; L2 = L2->getParentLoop()) {
+              if (L1 == L2) {
+                anc = L1;
+                goto found;
+              }
             }
+        found:;
+          outer = anc;
         }
+      }
     }
 
-    // TODO ensure a lifetime.start is between the loop header stand and all stores
+    // TODO ensure a lifetime.start is between the loop header stand and all
+    // stores
     outer = nullptr;
 
     for (auto LI : loads) {
-      // Is there a store which could occur after the load. 
-      // In other words 
+      // Is there a store which could occur after the load.
+      // In other words
       if (mayExecuteAfter(LI, stores, outer)) {
-          continue;
+        continue;
       }
       rematerializable.insert(LI);
     }
@@ -679,24 +692,25 @@ public:
             allocationsWithGuaranteedFree[CI].insert(CI);
           }
           auto funcName = called->getName();
-          if (funcName == "jl_alloc_array_1d" || funcName == "jl_alloc_array_2d" ||
-          funcName == "jl_alloc_array_3d" || funcName == "jl_array_copy" ||
-          funcName == "julia.gc_alloc_obj") {
+          if (funcName == "jl_alloc_array_1d" ||
+              funcName == "jl_alloc_array_2d" ||
+              funcName == "jl_alloc_array_3d" || funcName == "jl_array_copy" ||
+              funcName == "julia.gc_alloc_obj") {
           }
         }
       }
     }
-    for (Value* V : allocsToPromote) {
-        // TODO compute if an only load/store (non capture)
-        // allocaion by traversing its users. If so, mark
-        // all of its load/stores, as now the loads can
-        // potentially be rematerialized without a cache
-        // of the allocation, but the operands of all stores.
-        // This info needs to be provided to minCutCache
-        // the derivative of store needs to redo the store,
-        // isValueNeededInReverse needs to know to preserve the
-        // store operands in this case, etc
-        computeForwardingProperties(V, TR);
+    for (Value *V : allocsToPromote) {
+      // TODO compute if an only load/store (non capture)
+      // allocaion by traversing its users. If so, mark
+      // all of its load/stores, as now the loads can
+      // potentially be rematerialized without a cache
+      // of the allocation, but the operands of all stores.
+      // This info needs to be provided to minCutCache
+      // the derivative of store needs to redo the store,
+      // isValueNeededInReverse needs to know to preserve the
+      // store operands in this case, etc
+      computeForwardingProperties(V, TR);
     }
   }
 
@@ -842,16 +856,17 @@ public:
     // of pointers (from rematerializable property) and it does
     // not escape the function scope (lest it not be
     // rematerializable) so all input derivatives remain zero.
-    bool rematerializable = backwardsOnlyShadows.find(orig) != backwardsOnlyShadows.end();
+    bool rematerializable =
+        backwardsOnlyShadows.find(orig) != backwardsOnlyShadows.end();
     if (rematerializable && mode == DerivativeMode::ReverseModePrimal) {
-        // Needs a stronger replacement check/assertion.
-        Value* replacement = UndefValue::get(placeholder->getType());
-        replaceAWithB(placeholder, replacement);
-        invertedPointers.erase(found);
-        invertedPointers.insert(
+      // Needs a stronger replacement check/assertion.
+      Value *replacement = UndefValue::get(placeholder->getType());
+      replaceAWithB(placeholder, replacement);
+      invertedPointers.erase(found);
+      invertedPointers.insert(
           std::make_pair(orig, InvertedPointerVH(this, replacement)));
-        erase(placeholder);
-        return replacement;
+      erase(placeholder);
+      return replacement;
     }
     assert(placeholder->getParent()->getParent() == newFunc);
     placeholder->setName("");
@@ -975,20 +990,22 @@ public:
     if (!rematerializable)
       anti = cacheForReverse(bb, anti, idx);
     else {
-            if (hasMetadata(orig, "enzyme_fromstack")) {
-              Value *replacement = bb.CreateAlloca(
-                  Type::getInt8Ty(orig->getContext()),
-                  getNewFromOriginal(orig->getArgOperand(0)));
-              replacement->takeName(anti);
-              replaceAWithB(cast<Instruction>(anti), replacement);
-              erase(cast<Instruction>(anti));
-              anti = replacement;
-            }
+      if (hasMetadata(orig, "enzyme_fromstack")) {
+        Value *replacement =
+            bb.CreateAlloca(Type::getInt8Ty(orig->getContext()),
+                            getNewFromOriginal(orig->getArgOperand(0)));
+        replacement->takeName(anti);
+        replaceAWithB(cast<Instruction>(anti), replacement);
+        erase(cast<Instruction>(anti));
+        anti = replacement;
+      }
     }
     invertedPointers.insert(
         std::make_pair((const Value *)orig, InvertedPointerVH(this, anti)));
 
-    if (tape == nullptr) {
+    if (mode == DerivativeMode::ReverseModeCombined ||
+        (mode == DerivativeMode::ReverseModePrimal && !rematerializable) ||
+        (mode == DerivativeMode::ReverseModeGradient && rematerializable)) {
       if (Fn->getName() == "julia.gc_alloc_obj") {
         Type *tys[] = {
             PointerType::get(StructType::get(orig->getContext()), 10)};
