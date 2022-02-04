@@ -66,6 +66,7 @@
 #if LLVM_VERSION_MAJOR >= 13
 #include "llvm/Transforms/IPO/Attributor.h"
 #include "llvm/Transforms/IPO/OpenMPOpt.h"
+#include "llvm/Transforms/Utils/Mem2Reg.h"
 #endif
 
 #include "CApi.h"
@@ -1754,6 +1755,9 @@ public:
       OpenMPOptPass().run(M, Logic.PPC.MAM);
       /// Attributor is run second time for promoted args to get attributes.
       AttributorPass().run(M, Logic.PPC.MAM);
+      for (auto &F : M)
+	if (!F.empty())
+          PromotePass().run(F, Logic.PPC.FAM);
       changed = true;
     }
 #endif
@@ -1838,6 +1842,9 @@ public:
         OpenMPOptPass().run(M, MAM);
         /// Attributor is run second time for promoted args to get attributes.
         AttributorPass().run(M, MAM);
+        for (auto &F : M)
+	  if (!F.empty())
+            PromotePass().run(F, Logic.PPC.FAM);
         changed = true;
       }
     }
