@@ -657,6 +657,12 @@ Function *CreateMPIWrapper(Function *F) {
   Function *W = Function::Create(FT, GlobalVariable::InternalLinkage, name,
                                  F->getParent());
   llvm::Attribute::AttrKind attrs[] = {
+    #if LLVM_VERSION_MAJOR >= 9
+    Attribute::WillReturn,
+    #endif
+    #if LLVM_VERSION_MAJOR >= 12
+    Attribute::MustProgress,
+    #endif
     Attribute::ReadOnly,
     Attribute::Speculatable,
     Attribute::NoUnwind,
@@ -684,6 +690,12 @@ Function *CreateMPIWrapper(Function *F) {
   IRBuilder<> B(entry);
   auto alloc = B.CreateAlloca(F->getReturnType());
   Value *args[] = {W->arg_begin(), alloc};
+
+  auto T = F->getFunctionType()->getParamType(1);
+  if (!isa<PointerType>(T)) {
+    assert(isa<IntegerType>(T));
+    args[1] = B.CreatePtrToInt(args[1], T);
+  }
   B.CreateCall(F, args);
 #if LLVM_VERSION_MAJOR > 7
   B.CreateRet(B.CreateLoad(F->getReturnType(), alloc));
@@ -703,10 +715,8 @@ static void SimplifyMPIQueries(Function &NewF) {
           continue;
         if (Fn->getName() == "MPI_Comm_rank" ||
             Fn->getName() == "PMPI_Comm_rank" ||
-            Fn->getName() == "MPI_Comm_size") {
-          if (!CI->use_empty()) {
-            continue;
-          }
+            Fn->getName() == "MPI_Comm_size" ||
+            Fn->getName() == "PMPI_Comm_size") {
           Todo.push_back(CI);
         }
         if (Fn->getName() == "__kmpc_for_static_init_4" ||
@@ -721,8 +731,17 @@ static void SimplifyMPIQueries(Function &NewF) {
   for (auto CI : Todo) {
     IRBuilder<> B(CI);
     Value *arg[] = {CI->getArgOperand(0)};
-    auto res = B.CreateCall(CreateMPIWrapper(CI->getCalledFunction()), arg);
-    B.CreateStore(res, CI->getArgOperand(1));
+    SmallVector<OperandBundleDef, 2> Defs;
+    CI->getOperandBundlesAsDefs(Defs);
+    auto res = B.CreateCall(CreateMPIWrapper(CI->getCalledFunction()), arg, Defs);
+    Value* storePointer = CI->getArgOperand(1);
+    if (!isa<PointerType>(storePointer->getType())) {
+      assert(isa<IntegerType>(storePointer->getType()));
+      storePointer = B.CreateIntToPtr(storePointer, PointerType::getUnqual(res->getType()));
+    }
+    B.CreateStore(res, storePointer);
+    // Comm_rank and Comm_size return Err, assume 0 is success
+    CI->replaceAllUsesWith(ConstantInt::get(CI->getType(), 0));
     CI->eraseFromParent();
   }
   for (auto Bound : OMPBounds) {
