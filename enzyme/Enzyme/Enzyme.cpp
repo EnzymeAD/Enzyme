@@ -1835,16 +1835,17 @@ public:
       LAM.registerPass([&] { return FunctionAnalysisManagerLoopProxy(FAM); });
       MAM.registerPass([&] { return CGSCCAnalysisManagerModuleProxy(CGAM); });
       CGAM.registerPass([&] { return ModuleAnalysisManagerCGSCCProxy(MAM); });
-      auto PM = PB.buildModuleSimplificationPipeline(OptimizationLevel::O2, ThinOrFullLTOPhase::None);
+      auto PM = PB.buildModuleSimplificationPipeline(PassBuilder::OptimizationLevel::O2, ThinOrFullLTOPhase::None);
       PM.run(M, MAM);
 #if LLVM_VERSION_MAJOR >= 13
       if (EnzymeOMPOpt) {
         OpenMPOptPass().run(M, MAM);
         /// Attributor is run second time for promoted args to get attributes.
         AttributorPass().run(M, MAM);
-        for (auto &F : M)
-	  if (!F.empty())
+        for (auto &F : M) {
+          if (!F.empty())
             PromotePass().run(F, Logic.PPC.FAM);
+        }
         changed = true;
       }
     }
