@@ -657,12 +657,12 @@ Function *CreateMPIWrapper(Function *F) {
   Function *W = Function::Create(FT, GlobalVariable::InternalLinkage, name,
                                  F->getParent());
   llvm::Attribute::AttrKind attrs[] = {
-    #if LLVM_VERSION_MAJOR >= 9
+#if LLVM_VERSION_MAJOR >= 9
     Attribute::WillReturn,
-    #endif
-    #if LLVM_VERSION_MAJOR >= 12
+#endif
+#if LLVM_VERSION_MAJOR >= 12
     Attribute::MustProgress,
-    #endif
+#endif
     Attribute::ReadOnly,
     Attribute::Speculatable,
     Attribute::NoUnwind,
@@ -704,7 +704,8 @@ Function *CreateMPIWrapper(Function *F) {
 #endif
   return W;
 }
-static void SimplifyMPIQueries(Function &NewF) {
+static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
+  DominatorTree &DT = FAM.getResult<DominatorTreeAnalysis>(NewF);
   SmallVector<CallInst *, 4> Todo;
   SmallVector<CallInst *, 0> OMPBounds;
   for (auto &BB : NewF) {
@@ -733,16 +734,54 @@ static void SimplifyMPIQueries(Function &NewF) {
     Value *arg[] = {CI->getArgOperand(0)};
     SmallVector<OperandBundleDef, 2> Defs;
     CI->getOperandBundlesAsDefs(Defs);
-    auto res = B.CreateCall(CreateMPIWrapper(CI->getCalledFunction()), arg, Defs);
-    Value* storePointer = CI->getArgOperand(1);
-    if (!isa<PointerType>(storePointer->getType())) {
-      assert(isa<IntegerType>(storePointer->getType()));
-      storePointer = B.CreateIntToPtr(storePointer, PointerType::getUnqual(res->getType()));
-    }
-    B.CreateStore(res, storePointer);
+    auto res =
+        B.CreateCall(CreateMPIWrapper(CI->getCalledFunction()), arg, Defs);
+    Value *storePointer = CI->getArgOperand(1);
+
     // Comm_rank and Comm_size return Err, assume 0 is success
     CI->replaceAllUsesWith(ConstantInt::get(CI->getType(), 0));
     CI->eraseFromParent();
+
+    while (auto Cast = dyn_cast<CastInst>(storePointer)) {
+      storePointer = Cast->getOperand(0);
+      if (Cast->use_empty())
+        Cast->eraseFromParent();
+    }
+
+    B.SetInsertPoint(res);
+
+    if (auto PT = dyn_cast<PointerType>(storePointer->getType())) {
+      if (PT->getElementType() != res->getType())
+        storePointer = B.CreateBitCast(
+            storePointer,
+            PointerType::get(res->getType(), PT->getAddressSpace()));
+    } else {
+      assert(isa<IntegerType>(storePointer->getType()));
+      storePointer = B.CreateIntToPtr(storePointer,
+                                      PointerType::getUnqual(res->getType()));
+    }
+    if (isa<AllocaInst>(storePointer)) {
+      // If this is only loaded from, immedaitely replace
+      // Immediately replace all dominated stores.
+      SmallVector<LoadInst *, 2> LI;
+      bool nonload = false;
+      for (auto &U : storePointer->uses()) {
+        if (auto L = dyn_cast<LoadInst>(U.getUser())) {
+          LI.push_back(L);
+        } else
+          nonload = true;
+      }
+      if (!nonload) {
+        for (auto L : LI) {
+          if (DT.dominates(res, L)) {
+            L->replaceAllUsesWith(res);
+            L->eraseFromParent();
+          }
+        }
+      }
+    }
+    B.SetInsertPoint(res->getNextNode());
+    B.CreateStore(res, storePointer);
   }
   for (auto Bound : OMPBounds) {
     for (int i = 4; i <= 6; i++) {
@@ -766,6 +805,13 @@ static void SimplifyMPIQueries(Function &NewF) {
       Bound->addParamAttr(i, Attribute::NoCapture);
     }
   }
+  PreservedAnalyses PA;
+  PA.preserve<AssumptionAnalysis>();
+  PA.preserve<TargetLibraryAnalysis>();
+  PA.preserve<LoopAnalysis>();
+  PA.preserve<DominatorTreeAnalysis>();
+  PA.preserve<PostDominatorTreeAnalysis>();
+  FAM.invalidate(NewF, PA);
 }
 
 /// Perform recursive inlinining on NewF up to the given limit
@@ -1123,11 +1169,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       ConstantFoldTerminator(BE);
   }
 
-  {
-    SimplifyMPIQueries(*NewF);
-    PreservedAnalyses PA;
-    FAM.invalidate(*NewF, PA);
-  }
+  SimplifyMPIQueries(*NewF, FAM);
 
   if (EnzymeLowerGlobals) {
     std::vector<CallInst *> Calls;
