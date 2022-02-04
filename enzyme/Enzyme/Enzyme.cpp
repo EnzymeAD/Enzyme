@@ -28,6 +28,7 @@
 
 #include <llvm/Config/llvm-config.h>
 
+#include "llvm/Passes/PassBuilder.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
@@ -1819,21 +1820,35 @@ public:
       changed = true;
     }
 
-#if LLVM_VERSION_MAJOR >= 13
     if (Logic.PostOpt) {
+      auto &MAM = Logic.PPC.MAM;
+      auto &FAM = Logic.PPC.FAM;
+      PassBuilder PB;
+      PB.registerModuleAnalyses(MAM);
+      CGSCCAnalysisManager CGAM;
+      LoopAnalysisManager LAM;
+      PB.registerFunctionAnalyses(FAM);
+      PB.registerLoopAnalyses(LAM);
+      PB.registerCGSCCAnalyses(CGAM);
+      FAM.registerPass([&] { return CGSCCAnalysisManagerFunctionProxy(CGAM); });
+      FAM.registerPass([&] { return LoopAnalysisManagerFunctionProxy(LAM); });
+      LAM.registerPass([&] { return FunctionAnalysisManagerLoopProxy(FAM); });
+      MAM.registerPass([&] { return CGSCCAnalysisManagerModuleProxy(CGAM); });
+      CGAM.registerPass([&] { return ModuleAnalysisManagerCGSCCProxy(MAM); });
+      auto PM = PB.buildModuleSimplificationPipeline(OptimizationLevel::O2, ThinOrFullLTOPhase::None);
+      PM.run(M, MAM);
+#if LLVM_VERSION_MAJOR >= 13
       if (EnzymeOMPOpt) {
-        auto &MAM = Logic.PPC.MAM;
-        auto &FAM = Logic.PPC.FAM;
         OpenMPOptPass().run(M, MAM);
         /// Attributor is run second time for promoted args to get attributes.
         AttributorPass().run(M, MAM);
         for (auto &F : M)
           if (!F.empty())
             PromotePass().run(F, FAM);
-        changed = true;
       }
-    }
 #endif
+      changed = true;
+    }
 
     Logic.clear();
     return changed;
