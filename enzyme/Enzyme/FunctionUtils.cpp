@@ -28,6 +28,7 @@
 #include "GradientUtils.h"
 #include "LibraryFuncs.h"
 
+#include "llvm/Passes/PassBuilder.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -2098,23 +2099,15 @@ void PreProcessCache::optimizeIntermediate(Function *F) {
     }
   }
 
-  llvm::errs() << " before intermediate run\n";
-  PassManagerBuilder Builder;
-  Builder.OptLevel = 2;
-  legacy::FunctionPassManager PM(F->getParent());
-  Builder.populateFunctionPassManager(PM);
-  PM.doInitialization();
-  PM.run(*F);
-  PM.doFinalization();
-  {
-    PreservedAnalyses PA;
-    FAM.invalidate(*F, PA);
-  }
-  llvm::errs() << " optimizing intermediate by running O2 from legacy pm\n";
-  llvm::errs() << " post:  " << *F << "\n";
-
   if (EnzymeCoalese)
     CoaleseTrivialMallocs(*F, FAM.getResult<DominatorTreeAnalysis>(*F));
+
+  //PassBuilder PB;
+  //FunctionPassManager FPM;  
+  //FPM.addPass(EarlyCSEPass(true /* Enable mem-ssa. */));
+  // = PB.buildFunctionSimplificationPipeline(OptimizationLevel::O1, ThinOrFullLTOPhase::None);
+  // FunctionPassManager FPM = PB.buildFunctionSimplificationPipeline(OptimizationLevel::O2, ThinOrFullLTOPhase::None);
+  //FPM.run(*F, FAM);
   // DCEPass().run(*F, AM);
 }
 
