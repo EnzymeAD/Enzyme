@@ -1836,7 +1836,7 @@ public:
       LAM.registerPass([&] { return FunctionAnalysisManagerLoopProxy(FAM); });
       MAM.registerPass([&] { return CGSCCAnalysisManagerModuleProxy(CGAM); });
       CGAM.registerPass([&] { return ModuleAnalysisManagerCGSCCProxy(MAM); });
-      auto PM = PB.buildModuleSimplificationPipeline(PassBuilder::OptimizationLevel::O2, ThinOrFullLTOPhase::None);
+      auto PM = PB.buildModuleSimplificationPipeline(OptimizationLevel::O2, ThinOrFullLTOPhase::None);
       PM.run(M, MAM);
       if (EnzymeOMPOpt) {
         OpenMPOptPass().run(M, MAM);
