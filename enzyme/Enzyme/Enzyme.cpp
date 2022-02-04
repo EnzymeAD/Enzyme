@@ -1823,7 +1823,6 @@ public:
       changed = true;
     }
 #endif
-
     Logic.clear();
     return changed;
   }
