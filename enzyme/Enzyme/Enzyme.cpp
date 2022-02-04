@@ -1820,6 +1820,7 @@ public:
       changed = true;
     }
 
+#if LLVM_VERSION_MAJOR >= 13
     if (Logic.PostOpt) {
       PassBuilder PB;
       auto &MAM = Logic.PPC.MAM;
@@ -1837,7 +1838,6 @@ public:
       CGAM.registerPass([&] { return ModuleAnalysisManagerCGSCCProxy(MAM); });
       auto PM = PB.buildModuleSimplificationPipeline(PassBuilder::OptimizationLevel::O2, ThinOrFullLTOPhase::None);
       PM.run(M, MAM);
-#if LLVM_VERSION_MAJOR >= 13
       if (EnzymeOMPOpt) {
         OpenMPOptPass().run(M, MAM);
         /// Attributor is run second time for promoted args to get attributes.
