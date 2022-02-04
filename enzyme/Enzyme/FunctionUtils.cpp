@@ -28,7 +28,6 @@
 #include "GradientUtils.h"
 #include "LibraryFuncs.h"
 
-#include "llvm/Passes/PassBuilder.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -37,6 +36,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/Passes/PassBuilder.h"
 
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/AssumptionCache.h"
@@ -2105,13 +2105,9 @@ void PreProcessCache::optimizeIntermediate(Function *F) {
   if (EnzymeCoalese)
     CoaleseTrivialMallocs(*F, FAM.getResult<DominatorTreeAnalysis>(*F));
 
-  //PassBuilder PB;
-  //FunctionPassManager FPM;  
-  //FPM.addPass(EarlyCSEPass(true /* Enable mem-ssa. */));
-  // = PB.buildFunctionSimplificationPipeline(OptimizationLevel::O1, ThinOrFullLTOPhase::None);
-  // FunctionPassManager FPM = PB.buildFunctionSimplificationPipeline(OptimizationLevel::O2, ThinOrFullLTOPhase::None);
-  //FPM.run(*F, FAM);
-  // DCEPass().run(*F, AM);
+  PreservedAnalyses PA;
+  FAM.invalidate(*F, PA);
+  // TODO actually run post optimizations.
 }
 
 void PreProcessCache::clear() {

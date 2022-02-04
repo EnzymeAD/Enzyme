@@ -28,10 +28,10 @@
 
 #include <llvm/Config/llvm-config.h>
 
-#include "llvm/Passes/PassBuilder.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Passes/PassBuilder.h"
 
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
@@ -1630,7 +1630,6 @@ public:
       // TODO consider enabling when attributor does not delete
       // dead internal functions, which invalidates Enzyme's cache
       // code left here to re-enable upon Attributor patch
-      Logic.PPC.FAM.clear(F, F.getName());
 
 #if LLVM_VERSION_MAJOR >= 13 && !defined(FLANG)
 
@@ -1820,7 +1819,7 @@ public:
       changed = true;
     }
 
-    if (Logic.PostOpt) {
+    if (changed && Logic.PostOpt) {
       auto &MAM = Logic.PPC.MAM;
       auto &FAM = Logic.PPC.FAM;
       PassBuilder PB;
@@ -1835,7 +1834,16 @@ public:
       LAM.registerPass([&] { return FunctionAnalysisManagerLoopProxy(FAM); });
       MAM.registerPass([&] { return CGSCCAnalysisManagerModuleProxy(CGAM); });
       CGAM.registerPass([&] { return ModuleAnalysisManagerCGSCCProxy(MAM); });
-      auto PM = PB.buildModuleSimplificationPipeline(OptimizationLevel::O2, ThinOrFullLTOPhase::None);
+#if LLVM_VERSION_MAJOR >= 14
+      auto PM = PB.buildModuleSimplificationPipeline(OptimizationLevel::O2,
+                                                     ThinOrFullLTOPhase::None);
+#elif LLVM_VERSION_MAJOR >= 12
+      auto PM = PB.buildModuleSimplificationPipeline(
+          PassBuilder::OptimizationLevel::O2, ThinOrFullLTOPhase::None);
+#else
+    auto PM = PB.buildModuleSimplificationPipeline(
+        PassBuilder::OptimizationLevel::O2, PassBuilder::ThinLTOPhase::None);
+#endif
       PM.run(M, MAM);
 #if LLVM_VERSION_MAJOR >= 13
       if (EnzymeOMPOpt) {
@@ -1847,9 +1855,7 @@ public:
             PromotePass().run(F, FAM);
       }
 #endif
-      changed = true;
     }
-
     Logic.clear();
     return changed;
   }
