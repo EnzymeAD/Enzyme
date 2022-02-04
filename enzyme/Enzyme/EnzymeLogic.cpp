@@ -579,7 +579,8 @@ struct CacheAnalysis {
         if (CD == BaseType::Integer || CD.isFloat())
           init_safe = true;
       }
-      if (!init_safe && !isa<ConstantInt>(obj) && !isa<Function>(obj)) {
+      if (!init_safe && !isa<UndefValue>(obj) && !isa<ConstantInt>(obj) &&
+          !isa<Function>(obj)) {
         EmitWarning("UncacheableOrigin", callsite_op->getDebugLoc(), oldFunc,
                     callsite_op->getParent(), "Callsite ", *callsite_op,
                     " arg ", i, " ", *callsite_op->getArgOperand(i),
@@ -631,7 +632,8 @@ struct CacheAnalysis {
 
         if (llvm::isModSet(AA.getModRefInfo(
                 inst2, MemoryLocation::getForArgument(callsite_op, i, TLI)))) {
-          if (!isa<ConstantInt>(callsite_op->getArgOperand(i)))
+          if (!isa<ConstantInt>(callsite_op->getArgOperand(i)) &&
+              !isa<UndefValue>(callsite_op->getArgOperand(i)))
             EmitWarning("UncacheableArg", callsite_op->getDebugLoc(), oldFunc,
                         callsite_op->getParent(), "Callsite ", *callsite_op,
                         " arg ", i, " ", *callsite_op->getArgOperand(i),
@@ -1539,7 +1541,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     const std::vector<DIFFE_TYPE> &constant_args, TypeAnalysis &TA,
     bool returnUsed, const FnTypeInfo &oldTypeInfo_,
     const std::map<Argument *, bool> _uncacheable_args, bool forceAnonymousTape,
-    bool AtomicAdd, bool PostOpt, bool omp) {
+    bool AtomicAdd, bool omp) {
   if (returnUsed)
     assert(!todiff->getReturnType()->isEmptyTy() &&
            !todiff->getReturnType()->isVoidTy());
@@ -1554,7 +1556,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       todiff, retType, constant_args,
       std::map<Argument *, bool>(_uncacheable_args.begin(),
                                  _uncacheable_args.end()),
-      returnUsed, oldTypeInfo, forceAnonymousTape, AtomicAdd, PostOpt, omp);
+      returnUsed, oldTypeInfo, forceAnonymousTape, AtomicAdd, omp);
   auto found = AugmentedCachedFunctions.find(tup);
   if (found != AugmentedCachedFunctions.end()) {
     return found->second;
@@ -1645,7 +1647,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       }
       auto &aug = CreateAugmentedPrimal(
           todiff, retType, next_constant_args, TA, returnUsed, oldTypeInfo_,
-          _uncacheable_args, forceAnonymousTape, AtomicAdd, PostOpt, omp);
+          _uncacheable_args, forceAnonymousTape, AtomicAdd, omp);
       auto cal = bb.CreateCall(aug.fn, fwdargs);
       cal->setCallingConv(aug.fn->getCallingConv());
 
@@ -2407,7 +2409,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   delete gutils;
   tempFunc->eraseFromParent();
 
-  if (PostOpt)
+  if (PostOpt && !omp)
     PPC.optimizeIntermediate(NewF);
   if (EnzymePrint)
     llvm::errs() << *NewF << "\n";
@@ -2871,7 +2873,7 @@ void createInvertedTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
 
 Function *EnzymeLogic::CreatePrimalAndGradient(
     const ReverseCacheKey &&key, TypeAnalysis &TA,
-    const AugmentedReturn *augmenteddata, bool PostOpt, bool omp) {
+    const AugmentedReturn *augmenteddata, bool omp) {
 
   assert(key.mode == DerivativeMode::ReverseModeCombined ||
          key.mode == DerivativeMode::ReverseModeGradient);
@@ -2938,7 +2940,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       auto &aug = CreateAugmentedPrimal(
           key.todiff, key.retType, key.constant_args, TA, key.returnUsed,
           key.typeInfo, key.uncacheable_args, /*forceAnonymousTape*/ false,
-          key.AtomicAdd, PostOpt, omp);
+          key.AtomicAdd, omp);
 
       SmallVector<Value *, 4> fwdargs;
       for (auto &a : NewF->args())
@@ -2992,7 +2994,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                             .AtomicAdd = key.AtomicAdd,
                             .additionalType = tape ? tape->getType() : nullptr,
                             .typeInfo = key.typeInfo},
-          TA, &aug, PostOpt, omp);
+          TA, &aug, omp);
 
       SmallVector<Value *, 4> revargs;
       for (auto &a : NewF->args()) {
@@ -3073,7 +3075,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                             .AtomicAdd = key.AtomicAdd,
                             .additionalType = nullptr,
                             .typeInfo = key.typeInfo},
-          TA, augmenteddata, PostOpt, omp);
+          TA, augmenteddata, omp);
 
       {
         auto arg = revfn->arg_begin();
@@ -3777,7 +3779,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   if (Arch == Triple::nvptx || Arch == Triple::nvptx64)
     PPC.ReplaceReallocs(nf, /*mem2reg*/ true);
 
-  if (PostOpt)
+  if (PostOpt && !omp)
     PPC.optimizeIntermediate(nf);
   if (EnzymePrint) {
     llvm::errs() << *nf << "\n";
@@ -3790,8 +3792,7 @@ Function *EnzymeLogic::CreateForwardDiff(
     const std::vector<DIFFE_TYPE> &constant_args, TypeAnalysis &TA,
     bool returnUsed, DerivativeMode mode, unsigned width,
     llvm::Type *additionalArg, const FnTypeInfo &oldTypeInfo_,
-    const std::map<Argument *, bool> _uncacheable_args, bool PostOpt,
-    bool omp) {
+    const std::map<Argument *, bool> _uncacheable_args, bool omp) {
   assert(retType != DIFFE_TYPE::OUT_DIFF);
 
   assert(mode == DerivativeMode::ForwardMode ||
