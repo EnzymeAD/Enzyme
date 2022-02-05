@@ -188,23 +188,36 @@ public:
 
   const std::map<Instruction *, bool> *can_modref_map;
 
-  SmallVector<OperandBundleDef, 2> getInvertedBundles(CallInst* orig, IRBuilder<> &Builder2, bool lookup) {
+  enum class ArgType {
+    Primal,
+    Shadow,
+    Both,
+    None
+  };
+  // Primal denotes whether we should also include the primal
+  // in the bundle.
+  SmallVector<OperandBundleDef, 2> getInvertedBundles(CallInst* orig, ArrayRef<ArgType> types, IRBuilder<> &Builder2, bool lookup) {
     SmallVector<OperandBundleDef, 2> OrigDefs;
     orig->getOperandBundlesAsDefs(OrigDefs);
     SmallVector<OperandBundleDef, 2> Defs;
-    for (auto bund : OrigDefs) {
+    assert(OrigDefs.size() == types.size());
+    for (auto tup : llvm::zip(OrigDefs, types)) {
       SmallVector<Value*, 2> bunds;
-      for (auto v : bund.inputs()) {
-        Value* newv = getNewFromOriginal(v);
-        if (lookup) newv = lookupM(newv, Builder2);
-        bunds.push_back(newv);
-        if (!isConstantValue(v)) {
-          Value *shadow = invertPointerM(v, Builder2);
-          if (lookup) shadow = lookupM(shadow, Builder2);
-          bunds.push_back(shadow);
+      for (auto v : std::get<0>(tup).inputs()) {
+        if (std::get<1>(tup) == ArgType::Primal || std::get<1>(tup) == ArgType::Both) {
+          Value* newv = getNewFromOriginal(v);
+          if (lookup) newv = lookupM(newv, Builder2);
+          bunds.push_back(newv);
+        }
+        if (std::get<1>(tup) == ArgType::Shadow || std::get<1>(tup) == ArgType::Both) {
+          if (!isConstantValue(v)) {
+            Value *shadow = invertPointerM(v, Builder2);
+            if (lookup) shadow = lookupM(shadow, Builder2);
+            bunds.push_back(shadow);
+          }
         }
       }
-      Defs.push_back(OperandBundleDef(bund.getTag().str(), bunds));
+      Defs.push_back(OperandBundleDef(std::get<1>(tup).getTag().str(), bunds));
     }
     return Defs;
   }

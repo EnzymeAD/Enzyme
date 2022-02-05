@@ -5072,7 +5072,8 @@ public:
             waitFunc = called->getParent()->getOrInsertFunction("MPI_Wait", FT);
           }
           assert(waitFunc);
-          auto fcall = Builder2.CreateCall(waitFunc, args, gutils->getInvertedBundles(&call, Builder2, /*lookup*/true));
+          auto fcall = Builder2.CreateCall(waitFunc, args, gutils->getInvertedBundles(&call,
+          {ArgType::Shadow, ArgType::None},Builder2, /*lookup*/true));
           fcall->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
 #if LLVM_VERSION_MAJOR >= 9
           if (auto F = dyn_cast<Function>(waitFunc.getCallee()))
