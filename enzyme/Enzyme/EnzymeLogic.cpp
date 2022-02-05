@@ -454,7 +454,7 @@ struct CacheAnalysis {
 
                   can_modref = true;
                   EmitWarning("Uncacheable", li.getDebugLoc(), oldFunc,
-                              li.getParent(), "Load may need caching ", li,
+                              li.getParent(), "Load may need caching (4) ", li,
                               " due to ", *mid, " via ", *II);
                   return true;
                 },
@@ -462,7 +462,7 @@ struct CacheAnalysis {
                   // if gone past entry
                   if (mode != DerivativeMode::ReverseModeCombined) {
                     EmitWarning("Uncacheable", li.getDebugLoc(), oldFunc,
-                                li.getParent(), "Load may need caching ", li,
+                                li.getParent(), "Load may need caching (3) ", li,
                                 " due to entry via ", *II);
                     can_modref = true;
                   }
@@ -475,14 +475,14 @@ struct CacheAnalysis {
         }
         can_modref = true;
         EmitWarning("Uncacheable", li.getDebugLoc(), oldFunc, li.getParent(),
-                    "Load may need caching ", li, " due to ", *inst2);
+                    "Load may need caching (2) ", li, " due to ", *inst2);
         // Early exit
         return true;
       });
     } else {
 
       EmitWarning("Uncacheable", li.getDebugLoc(), oldFunc, li.getParent(),
-                  "Load may need caching ", li, " due to origin ", *obj);
+                  "Load may need caching (1) ", li, " due to origin ", *obj);
     }
 
     return can_modref;
@@ -3337,8 +3337,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   // cycle with activity analysis is removed
   SmallPtrSet<const Instruction *, 4> unnecessaryInstructionsTmp;
   for (auto BB : guaranteedUnreachable) {
-    for (auto &I : *BB)
+    for (auto &I : *BB) {
       unnecessaryInstructionsTmp.insert(&I);
+    }
   }
   CacheAnalysis CA(gutils->allocationsWithGuaranteedFree, TR, gutils->OrigAA,
                    gutils->oldFunc,

@@ -5072,7 +5072,7 @@ public:
             waitFunc = called->getParent()->getOrInsertFunction("MPI_Wait", FT);
           }
           assert(waitFunc);
-          auto fcall = Builder2.CreateCall(waitFunc, args);
+          auto fcall = Builder2.CreateCall(waitFunc, args, gutils->getInvertedBundles(&call, Builder2, /*lookup*/true));
           fcall->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
 #if LLVM_VERSION_MAJOR >= 9
           if (auto F = dyn_cast<Function>(waitFunc.getCallee()))
@@ -5244,7 +5244,7 @@ public:
                          Builder2.CreateExtractValue(cache, 5),
                          Builder2.CreateExtractValue(cache, 6),
                          d_req};
-        auto cal = Builder2.CreateCall(dwait, args);
+        auto cal = Builder2.CreateCall(dwait, args, gutils->getInvertedBundles(&call, Builder2, /*lookup*/true));
         cal->setCallingConv(dwait->getCallingConv());
         cal->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
         Builder2.CreateBr(endBlock);
@@ -5369,7 +5369,7 @@ public:
                          Builder2.CreateExtractValue(cache, 5),
                          Builder2.CreateExtractValue(cache, 6),
                          d_req};
-        auto cal = Builder2.CreateCall(dwait, args);
+        auto cal = Builder2.CreateCall(dwait, args, gutils->getInvertedBundles(&call, Builder2, /*lookup*/true));
         cal->setCallingConv(dwait->getCallingConv());
         cal->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
         Builder2.CreateBr(eloopBlock);

@@ -188,6 +188,27 @@ public:
 
   const std::map<Instruction *, bool> *can_modref_map;
 
+  SmallVector<OperandBundleDef, 2> getInvertedBundles(CallInst* orig, IRBuilder<> &Builder2, bool lookup) {
+    SmallVector<OperandBundleDef, 2> OrigDefs;
+    orig->getOperandBundlesAsDefs(OrigDefs);
+    SmallVector<OperandBundleDef, 2> Defs;
+    for (auto bund : OrigDefs) {
+      SmallVector<Value*, 2> bunds;
+      for (auto v : bund.inputs()) {
+        Value* newv = getNewFromOriginal(v);
+        if (lookup) newv = lookupM(newv, Builder2);
+        bunds.push_back(newv);
+        if (!isConstantValue(v)) {
+          Value *shadow = invertPointerM(v, Builder2);
+          if (lookup) shadow = lookupM(shadow, Builder2);
+          bunds.push_back(shadow);
+        }
+      }
+      Defs.push_back(OperandBundleDef(bund.getTag().str(), bunds));
+    }
+    return Defs;
+  }
+
   Value *getNewIfOriginal(Value *originst) const {
     assert(originst);
     auto f = originalToNewFn.find(originst);
