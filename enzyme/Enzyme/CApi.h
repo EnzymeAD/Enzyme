@@ -117,6 +117,20 @@ typedef enum {
   DEM_ForwardModeSplit = 4,
 } CDerivativeMode;
 
+
+/// Generates a new function based on the input, which uses forward-mode AD.
+///
+/// @param mode: DEM_ForwardMode and DEM_ForwardModeSplit
+/// @param retType: DFT_DUP_ARG, DFT_CONSTANT 
+/// @param constant_args: pointing to combinations of DFT_DUP_ARG and DFT_CONSTANT
+/// @param width: integer n >= 1. The generated functions expects n additional inputs
+///      for each input marked as DFT_DUP_ARG.
+/// @param returnValue: Whether to return the primary return value.
+///      dret_used: Not available here / implicitely set to true, as it is 
+///      the only place where we return gradient information.
+/// @param uncacheable_args_size: Should be set to 0, as long as using DEM_ReverseModeCombined.
+///      Otherwise, it should be set to the amount of input params of `todiff`, which might 
+///      change between the forward and the reverse pass.
 LLVMValueRef EnzymeCreateForwardDiff(
     EnzymeLogicRef, LLVMValueRef todiff, CDIFFE_TYPE retType,
     CDIFFE_TYPE *constant_args, size_t constant_args_size,
@@ -124,6 +138,20 @@ LLVMValueRef EnzymeCreateForwardDiff(
     unsigned width, LLVMTypeRef additionalArg, struct CFnTypeInfo typeInfo,
     uint8_t *_uncacheable_args, size_t uncacheable_args_size);
 
+
+/// Generates a new function based on the input, which uses reverse-mode AD.
+///
+/// Based on the 
+/// @param retType: When returning f32/f64 we might use DFT_OUT_DIFF.
+///      When returning anything else, one should use DFT_CONSTANT
+/// @param width: currently only supporting width=1 here
+/// @param mode: Should be any of DEM_ReverseModePrimal, DEM_ReverseModeGradient, DEM_ReverseModeCombined.
+/// @param augmented: Pass a nullptr, in case of TODO
+/// @param AtomicAdd: Enables thread-safe accumulates for being called within
+///      a parallel context.
+/// @param uncacheable_args_size: Should be set to 0, as long as using DEM_ReverseModeCombined.
+///      Otherwise, it should be set to the amount of input params of `todiff`, which might 
+///      change between the forward and the reverse pass.
 LLVMValueRef EnzymeCreatePrimalAndGradient(
     EnzymeLogicRef, LLVMValueRef todiff, CDIFFE_TYPE retType,
     CDIFFE_TYPE *constant_args, size_t constant_args_size,
@@ -133,6 +161,16 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
     size_t uncacheable_args_size, EnzymeAugmentedReturnPtr augmented,
     uint8_t AtomicAdd);
 
+/// Generates an augmented forward function based on the input.
+///
+/// Cached information will be stored on a Tape. 
+/// Will usually be used in combination with EnzymeCreatePrimalAndGradient for 
+/// reverse-mode-split AD.
+/// @param retType: DFT_DUP_ARG, DFT_CONSTANT
+/// @param constant_args: pointing to combinations of DFT_DUP_ARG and DFT_CONSTANT 
+/// @param forceAnonymousTape: TODO
+/// @param AtomicAdd: Enables thread-safe accumulates for being called within
+///      a parallel context.
 EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
     EnzymeLogicRef, LLVMValueRef todiff, CDIFFE_TYPE retType,
     CDIFFE_TYPE *constant_args, size_t constant_args_size,
@@ -144,6 +182,11 @@ typedef uint8_t (*CustomRuleType)(int /*direction*/, CTypeTreeRef /*return*/,
                                   CTypeTreeRef * /*args*/,
                                   struct IntList * /*knownValues*/,
                                   size_t /*numArgs*/, LLVMValueRef);
+
+
+/// Creates a new TypeAnalysis, to be used by the three EnzymeCreate functions.
+///
+/// Usually the TypeAnalysisRef will be reused for a complete compilation process.
 EnzymeTypeAnalysisRef CreateTypeAnalysis(EnzymeLogicRef Log,
                                          char **customRuleNames,
                                          CustomRuleType *customRules,
@@ -151,6 +194,12 @@ EnzymeTypeAnalysisRef CreateTypeAnalysis(EnzymeLogicRef Log,
 void ClearTypeAnalysis(EnzymeTypeAnalysisRef);
 void FreeTypeAnalysis(EnzymeTypeAnalysisRef);
 
+/// This will be used by enzyme to manage some internal settings.
+///
+/// Enzyme requires two optimization runs for best performance, one before AD and one after.
+/// The second one can be applied automatically be setting `PostOpt` to 1.
+/// Usually the LogicRef will be reused for a complete compilation process.
+/// @param PostOpt Should be set to 1, except for debug builds.  
 EnzymeLogicRef CreateEnzymeLogic(uint8_t PostOpt);
 void ClearEnzymeLogic(EnzymeLogicRef);
 void FreeEnzymeLogic(EnzymeLogicRef);
