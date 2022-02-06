@@ -205,7 +205,7 @@ public:
       SmallVector<Value *, 2> bunds;
       // In the future we can reduce the number of roots
       // we preserve by identifying which operands they
-      // corredpond to. For now, fall back and preserve all
+      // correspond to. For now, fall back and preserve all
       // primals and shadows
       // assert(bund.inputs().size() == types.size());
       for (auto inp : bund.inputs()) {
