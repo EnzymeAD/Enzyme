@@ -460,7 +460,7 @@ public:
         bool needShadow =
             Mode == DerivativeMode::ForwardMode
                 ? false
-                : is_value_needed_in_reverse<ValueType::ShadowPtr>(
+                : is_value_needed_in_reverse<ValueType::Shadow>(
                       TR, gutils, &I, Mode, oldUnreachable);
 
         switch (Mode) {
@@ -2534,10 +2534,15 @@ public:
       args.push_back(gutils->lookupM(op3, BuilderZ));
 
       Type *tys[] = {args[0]->getType(), args[2]->getType()};
+
+      auto Defs = gutils->getInvertedBundles(&MS,
+            {ValueType::Shadow, ValueType::Primal, ValueType::Primal, ValueType::Primal}, BuilderZ, /*lookup*/false);
+
       auto cal = BuilderZ.CreateCall(
           Intrinsic::getDeclaration(MS.getParent()->getParent()->getParent(),
                                     Intrinsic::memset, tys),
-          args);
+          args, Defs);
+
       cal->setAttributes(MS.getAttributes());
       cal->setCallingConv(MS.getCallingConv());
       cal->setTailCallKind(MS.getTailCallKind());
@@ -4524,7 +4529,7 @@ public:
 
   void DifferentiableMemCopyFloats(CallInst &call, Value *origArg, Value *dsto,
                                    Value *srco, Value *len_arg,
-                                   IRBuilder<> &Builder2) {
+                                   IRBuilder<> &Builder2, ArrayRef<OperandBundleDef> ReverseDefs) {
     size_t size = 1;
     if (auto ci = dyn_cast<ConstantInt>(len_arg)) {
       size = ci->getLimitedValue();
@@ -4584,7 +4589,6 @@ public:
 
       if (auto secretty = dt.isFloat()) {
         auto offset = start;
-        SmallVector<Value *, 4> args;
         if (dsto->getType()->isIntegerTy())
           dsto = Builder2.CreateIntToPtr(
               dsto, Type::getInt8PtrTy(dsto->getContext()));
@@ -4600,7 +4604,6 @@ public:
           dsto = Builder2.CreateConstInBoundsGEP1_64(dsto, offset);
 #endif
         }
-        args.push_back(Builder2.CreatePointerCast(dsto, secretpt));
         if (srco->getType()->isIntegerTy())
           srco = Builder2.CreateIntToPtr(
               srco, Type::getInt8PtrTy(dsto->getContext()));
@@ -4617,8 +4620,10 @@ public:
           srco = Builder2.CreateConstInBoundsGEP1_64(srco, offset);
 #endif
         }
-        args.push_back(Builder2.CreatePointerCast(srco, secretpt));
-        args.push_back(Builder2.CreateUDiv(
+        Value* args[3] = {
+            Builder2.CreatePointerCast(dsto, secretpt),
+            Builder2.CreatePointerCast(srco, secretpt),
+            Builder2.CreateUDiv(
             length,
 
             ConstantInt::get(length->getType(),
@@ -4627,12 +4632,14 @@ public:
                                      ->getParent()
                                      ->getDataLayout()
                                      .getTypeAllocSizeInBits(secretty) /
-                                 8)));
+                                 8))
+        };
 
         auto dmemcpy = getOrInsertDifferentialFloatMemcpy(
             *Builder2.GetInsertBlock()->getParent()->getParent(), secretty,
             /*dstalign*/ 1, /*srcalign*/ 1, dstaddr, srcaddr);
-        Builder2.CreateCall(dmemcpy, args);
+
+        Builder2.CreateCall(dmemcpy, args, ReverseDefs);
       }
 
       if (nextStart == size)
@@ -4691,12 +4698,13 @@ public:
               size, call.getArgOperand(0), nullptr, "");
           arg1 =
               BuilderZ.CreateBitCast(malins, call.getArgOperand(1)->getType());
-          SmallVector<Value *, 4> args;
-          args.push_back(arg1);
-          args.push_back(gutils->getNewFromOriginal(call.getArgOperand(1)));
-          args.push_back(call.getArgOperand(0));
-          args.push_back(call.getArgOperand(2));
-          BuilderZ.CreateCall(dmemcpy, args);
+          Value * args[4] = {arg1,
+            gutils->getNewFromOriginal(call.getArgOperand(1)),
+            call.getArgOperand(0),
+            call.getArgOperand(2)};
+
+          BuilderZ.CreateCall(dmemcpy, args, gutils->getInvertedBundles(&call,
+            {ValueType::None, ValueType::Shadow, ValueType::None, ValueType::None, ValueType::None}, BuilderZ, /*lookup*/false));
         }
         if (ycache) {
           auto dmemcpy =
@@ -4707,12 +4715,14 @@ public:
               size, call.getArgOperand(0), nullptr, "");
           arg2 =
               BuilderZ.CreateBitCast(malins, call.getArgOperand(3)->getType());
-          SmallVector<Value *, 4> args;
-          args.push_back(arg2);
-          args.push_back(gutils->getNewFromOriginal(call.getArgOperand(3)));
-          args.push_back(call.getArgOperand(0));
-          args.push_back(call.getArgOperand(4));
-          BuilderZ.CreateCall(dmemcpy, args);
+          Value * args[4] = {
+            arg2,
+            gutils->getNewFromOriginal(call.getArgOperand(3)),
+            call.getArgOperand(0),
+            call.getArgOperand(4)
+          };
+          BuilderZ.CreateCall(dmemcpy, args, gutils->getInvertedBundles(&call,
+            {ValueType::None, ValueType::None, ValueType::None, ValueType::Shadow, ValueType::None}, BuilderZ, /*lookup*/false));
         }
         if (xcache && ycache) {
           auto valins1 = BuilderZ.CreateInsertValue(undefinit, arg1, 0);
@@ -4768,7 +4778,7 @@ public:
           else
             estride = lookup(gutils->getNewFromOriginal(call.getArgOperand(2)),
                              Builder2);
-          SmallVector<Value *, 6> args1 = {
+          Value * args1[6] = {
               lookup(gutils->getNewFromOriginal(call.getArgOperand(0)),
                      Builder2),
               diffe(&call, Builder2),
@@ -4778,7 +4788,8 @@ public:
                      Builder2),
               lookup(gutils->getNewFromOriginal(call.getArgOperand(4)),
                      Builder2)};
-          firstdcall = Builder2.CreateCall(derivcall, args1);
+          firstdcall = Builder2.CreateCall(derivcall, args1, gutils->getInvertedBundles(&call,
+            {ValueType::None, xcache ? ValueType::None : ValueType::Primal, ValueType::None, ValueType::Shadow, ValueType::None}, Builder2, /*lookup*/true));
         }
         if (!gutils->isConstantValue(call.getArgOperand(1))) {
           Value *estride;
@@ -4787,7 +4798,7 @@ public:
           else
             estride = lookup(gutils->getNewFromOriginal(call.getArgOperand(4)),
                              Builder2);
-          SmallVector<Value *, 6> args2 = {
+          Value * args2[6] = {
               lookup(gutils->getNewFromOriginal(call.getArgOperand(0)),
                      Builder2),
               diffe(&call, Builder2),
@@ -4797,7 +4808,8 @@ public:
                      Builder2),
               lookup(gutils->getNewFromOriginal(call.getArgOperand(2)),
                      Builder2)};
-          seconddcall = Builder2.CreateCall(derivcall, args2);
+          seconddcall = Builder2.CreateCall(derivcall, args2, gutils->getInvertedBundles(&call,
+            {ValueType::None, ValueType::Shadow, ValueType::None, ycache ? ValueType::None : ValueType::Primal, ValueType::None}, Builder2, /*lookup*/true));
         }
         setDiffe(&call, Constant::getNullValue(call.getType()), Builder2);
         if (shouldFree()) {
@@ -5072,8 +5084,16 @@ public:
             waitFunc = called->getParent()->getOrInsertFunction("MPI_Wait", FT);
           }
           assert(waitFunc);
-          auto fcall = Builder2.CreateCall(waitFunc, args, gutils->getInvertedBundles(&call,
-          {ArgType::Shadow, ArgType::None},Builder2, /*lookup*/true));
+
+          // Need to preserve the shadow Request (operand 6 in isend/irecv), which
+          // becomes operand 0 for iwait.
+          auto ReqDefs = gutils->getInvertedBundles(&call,
+            {ValueType::None, ValueType::None, ValueType::None, ValueType::None, ValueType::None, ValueType::None, ValueType::Shadow}, Builder2, /*lookup*/true);
+
+          auto BufferDefs = gutils->getInvertedBundles(&call,
+            {ValueType::Shadow, ValueType::None, ValueType::None, ValueType::None, ValueType::None, ValueType::None, ValueType::None}, Builder2, /*lookup*/true);
+
+          auto fcall = Builder2.CreateCall(waitFunc, args, ReqDefs);
           fcall->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
 #if LLVM_VERSION_MAJOR >= 9
           if (auto F = dyn_cast<Function>(waitFunc.getCallee()))
@@ -5116,7 +5136,7 @@ public:
             auto memset = cast<CallInst>(Builder2.CreateCall(
                 Intrinsic::getDeclaration(called->getParent(),
                                           Intrinsic::memset, tys),
-                nargs));
+                nargs, BufferDefs));
             memset->addParamAttr(0, Attribute::NonNull);
           } else if (funcName == "MPI_Isend" || funcName == "PMPI_Isend") {
             assert(!gutils->isConstantValue(call.getOperand(0)));
@@ -5134,9 +5154,10 @@ public:
                   Builder2);
             }
 
+            // TODO add operand bundle (unless force inlined?)
             DifferentiableMemCopyFloats(call, call.getOperand(0),
                                         firstallocation, shadow, len_arg,
-                                        Builder2);
+                                        Builder2, BufferDefs);
 
             if (shouldFree()) {
               auto ci = cast<CallInst>(CallInst::CreateFree(
@@ -5245,9 +5266,15 @@ public:
                          Builder2.CreateExtractValue(cache, 5),
                          Builder2.CreateExtractValue(cache, 6),
                          d_req};
-        auto cal = Builder2.CreateCall(dwait, args, gutils->getInvertedBundles(&call, Builder2, /*lookup*/true));
+
+        // Need to preserve the shadow Request (operand 6 in isend/irecv), which
+        // becomes operand 0 for iwait. However, this doesn't end up preserving the underlying
+        // buffers for the adjoint. To rememdy, force inline.
+        auto cal = Builder2.CreateCall(dwait, args, gutils->getInvertedBundles(&call,
+            {ValueType::None, ValueType::None, ValueType::None, ValueType::None, ValueType::None, ValueType::None, ValueType::Shadow}, Builder2, /*lookup*/true));
         cal->setCallingConv(dwait->getCallingConv());
         cal->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
+        cal->addAttribute(AttributeList::FunctionIndex, Attribute::AlwaysInline);
         Builder2.CreateBr(endBlock);
 
         Builder2.SetInsertPoint(endBlock);
@@ -5370,9 +5397,15 @@ public:
                          Builder2.CreateExtractValue(cache, 5),
                          Builder2.CreateExtractValue(cache, 6),
                          d_req};
-        auto cal = Builder2.CreateCall(dwait, args, gutils->getInvertedBundles(&call, Builder2, /*lookup*/true));
+
+        // Need to preserve the shadow Request (operand 6 in isend/irecv), which
+        // becomes operand 0 for iwait. However, this doesn't end up preserving the underlying
+        // buffers for the adjoint. To remedy, force inline the function.
+        auto cal = Builder2.CreateCall(dwait, args, gutils->getInvertedBundles(&call,
+            {ValueType::None, ValueType::None, ValueType::None, ValueType::None, ValueType::None, ValueType::None, ValueType::Shadow}, Builder2, /*lookup*/true));
         cal->setCallingConv(dwait->getCallingConv());
         cal->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
+        cal->addAttribute(AttributeList::FunctionIndex, Attribute::AlwaysInline);
         Builder2.CreateBr(eloopBlock);
 
         Builder2.SetInsertPoint(eloopBlock);
@@ -5454,12 +5487,17 @@ public:
         FunctionType *FT = FunctionType::get(call.getType(), types, false);
 
         Builder2.SetInsertPoint(Builder2.GetInsertBlock());
+
+        auto BufferDefs =
+            gutils->getInvertedBundles(&call,
+            {ValueType::Shadow, ValueType::None, ValueType::None, ValueType::None, ValueType::None, ValueType::None, ValueType::None}, Builder2, /*lookup*/true);
+
         auto fcall = Builder2.CreateCall(
             called->getParent()->getOrInsertFunction("MPI_Recv", FT), args);
         fcall->setCallingConv(call.getCallingConv());
 
         DifferentiableMemCopyFloats(call, call.getOperand(0), firstallocation,
-                                    shadow, len_arg, Builder2);
+                                    shadow, len_arg, Builder2, BufferDefs);
 
         if (shouldFree()) {
           auto ci = cast<CallInst>(
@@ -5507,8 +5545,10 @@ public:
           types[i] = args[i]->getType();
         FunctionType *FT = FunctionType::get(call.getType(), types, false);
 
+        auto Defs = gutils->getInvertedBundles(&call,
+            {ValueType::Shadow, ValueType::Primal, ValueType::Primal, ValueType::Primal, ValueType::Primal, ValueType::Primal, ValueType::None}, Builder2, /*lookup*/true);
         auto fcall = Builder2.CreateCall(
-            called->getParent()->getOrInsertFunction("MPI_Send", FT), args);
+            called->getParent()->getOrInsertFunction("MPI_Send", FT), args, Defs);
         fcall->setCallingConv(call.getCallingConv());
 
         auto dst_arg = Builder2.CreateBitCast(
@@ -5534,6 +5574,8 @@ public:
 
         Type *tys[] = {dst_arg->getType(), len_arg->getType()};
 
+        auto MemsetDefs = gutils->getInvertedBundles(&call,
+            {ValueType::Shadow, ValueType::None, ValueType::None, ValueType::None, ValueType::None, ValueType::None, ValueType::None}, Builder2, /*lookup*/true);
         auto memset = cast<CallInst>(Builder2.CreateCall(
             Intrinsic::getDeclaration(gutils->newFunc->getParent(),
                                       Intrinsic::memset, tys),
@@ -5620,6 +5662,10 @@ public:
           buf->addIncoming(UndefValue::get(buf->getType()), currentBlock);
         }
 
+        // Need to preserve the shadow buffer.
+        auto BufferDefs = gutils->getInvertedBundles(&call,
+            {ValueType::Shadow, ValueType::Primal, ValueType::Primal, ValueType::Primal, ValueType::Primal}, Builder2, /*lookup*/true);
+
         // 2. reduce sum diff(buffer) into intermediate
         {
           // int MPI_Reduce(const void *sendbuf, void *recvbuf, int count,
@@ -5642,8 +5688,9 @@ public:
             types[i] = args[i]->getType();
 
           FunctionType *FT = FunctionType::get(call.getType(), types, false);
+
           Builder2.CreateCall(
-              called->getParent()->getOrInsertFunction("MPI_Reduce", FT), args);
+              called->getParent()->getOrInsertFunction("MPI_Reduce", FT), args, BufferDefs);
         }
 
         // 3. if root, set shadow(buffer) = intermediate [memcpy]
@@ -5669,7 +5716,7 @@ public:
           auto memcpyF = Intrinsic::getDeclaration(gutils->newFunc->getParent(),
                                                    Intrinsic::memcpy, tys);
 
-          auto mem = cast<CallInst>(Builder2.CreateCall(memcpyF, nargs));
+          auto mem = cast<CallInst>(Builder2.CreateCall(memcpyF, nargs, BufferDefs));
           mem->setCallingConv(memcpyF->getCallingConv());
 
           // Free up the memory of the buffer
@@ -5700,7 +5747,7 @@ public:
         auto memset = cast<CallInst>(Builder2.CreateCall(
             Intrinsic::getDeclaration(gutils->newFunc->getParent(),
                                       Intrinsic::memset, tys),
-            args));
+            args, BufferDefs));
         memset->addParamAttr(0, Attribute::NonNull);
         Builder2.CreateBr(mergeBlock);
 
@@ -5776,6 +5823,10 @@ public:
           shadow_sendbuf = Builder2.CreateIntToPtr(
               shadow_sendbuf, Type::getInt8PtrTy(call.getContext()));
 
+        // Need to preserve the shadow send/recv buffers.
+        auto BufferDefs = gutils->getInvertedBundles(&call,
+          {ValueType::Shadow, ValueType::Shadow, ValueType::Primal, ValueType::Primal, ValueType::Primal, ValueType::Primal, ValueType::Primal}, Builder2, /*lookup*/true);
+
         Value *count = lookup(gutils->getNewFromOriginal(orig_count), Builder2);
         Value *datatype =
             lookup(gutils->getNewFromOriginal(orig_datatype), Builder2);
@@ -5829,7 +5880,7 @@ public:
             auto memcpyF = Intrinsic::getDeclaration(
                 gutils->newFunc->getParent(), Intrinsic::memcpy, tys);
 
-            auto mem = cast<CallInst>(Builder2.CreateCall(memcpyF, nargs));
+            auto mem = cast<CallInst>(Builder2.CreateCall(memcpyF, nargs, BufferDefs));
             mem->setCallingConv(memcpyF->getCallingConv());
           }
 
@@ -5855,7 +5906,7 @@ public:
 
           FunctionType *FT = FunctionType::get(call.getType(), types, false);
           Builder2.CreateCall(
-              called->getParent()->getOrInsertFunction("MPI_Bcast", FT), args);
+              called->getParent()->getOrInsertFunction("MPI_Bcast", FT), args, BufferDefs);
         }
 
         // 3. if root, Zero diff(recvbuffer) [memset to 0]
@@ -5879,7 +5930,7 @@ public:
           auto memset = cast<CallInst>(Builder2.CreateCall(
               Intrinsic::getDeclaration(gutils->newFunc->getParent(),
                                         Intrinsic::memset, tys),
-              args));
+              args, BufferDefs));
           memset->addParamAttr(0, Attribute::NonNull);
 
           Builder2.CreateBr(mergeBlock);
@@ -5888,7 +5939,7 @@ public:
 
         // 4. diff(sendbuffer) += intermediate buffer (diffmemcopy)
         DifferentiableMemCopyFloats(call, orig_sendbuf, buf, shadow_sendbuf,
-                                    len_arg, Builder2);
+                                    len_arg, Builder2, BufferDefs);
 
         // Free up intermediate buffer
         if (shouldFree()) {
@@ -5972,6 +6023,10 @@ public:
           shadow_sendbuf = Builder2.CreateIntToPtr(
               shadow_sendbuf, Type::getInt8PtrTy(call.getContext()));
 
+        // Need to preserve the shadow send/recv buffers.
+        auto BufferDefs = gutils->getInvertedBundles(&call,
+          {ValueType::Shadow, ValueType::Shadow, ValueType::Primal, ValueType::Primal, ValueType::Primal, ValueType::Primal}, Builder2, /*lookup*/true);
+
         Value *count = lookup(gutils->getNewFromOriginal(orig_count), Builder2);
         Value *datatype =
             lookup(gutils->getNewFromOriginal(orig_datatype), Builder2);
@@ -6019,7 +6074,7 @@ public:
           FunctionType *FT = FunctionType::get(call.getType(), types, false);
           Builder2.CreateCall(
               called->getParent()->getOrInsertFunction("MPI_Allreduce", FT),
-              args);
+              args, BufferDefs);
         }
 
         // 3. Zero diff(recvbuffer) [memset to 0]
@@ -6030,12 +6085,12 @@ public:
         auto memset = cast<CallInst>(Builder2.CreateCall(
             Intrinsic::getDeclaration(gutils->newFunc->getParent(),
                                       Intrinsic::memset, tys),
-            args));
+            args, BufferDefs));
         memset->addParamAttr(0, Attribute::NonNull);
 
         // 4. diff(sendbuffer) += intermediate buffer (diffmemcopy)
         DifferentiableMemCopyFloats(call, orig_sendbuf, buf, shadow_sendbuf,
-                                    len_arg, Builder2);
+                                    len_arg, Builder2, BufferDefs);
 
         // Free up intermediate buffer
         if (shouldFree()) {
@@ -6119,6 +6174,10 @@ public:
                                    tysize, Type::getInt64Ty(call.getContext())),
                                "", true, true);
 
+        // Need to preserve the shadow send/recv buffers.
+        auto BufferDefs = gutils->getInvertedBundles(&call,
+          {ValueType::Shadow, ValueType::Primal, ValueType::Primal, ValueType::Shadow, ValueType::Primal, ValueType::Primal, ValueType::Primal, ValueType::Primal}, Builder2, /*lookup*/true);
+
         // 1. Alloc intermediate buffer
         Value *buf = CallInst::CreateMalloc(
             Builder2.GetInsertBlock(), sendlen_arg->getType(),
@@ -6128,6 +6187,7 @@ public:
         if (cast<Instruction>(buf)->getParent() == nullptr) {
           Builder2.Insert(cast<Instruction>(buf));
         }
+
 
         // 2. Scatter diff(recvbuffer) to intermediate buffer
         {
@@ -6152,7 +6212,7 @@ public:
           FunctionType *FT = FunctionType::get(call.getType(), types, false);
           Builder2.CreateCall(
               called->getParent()->getOrInsertFunction("MPI_Scatter", FT),
-              args);
+              args, BufferDefs);
         }
 
         // 3. if root, Zero diff(recvbuffer) [memset to 0]
@@ -6190,7 +6250,7 @@ public:
           auto memset = cast<CallInst>(Builder2.CreateCall(
               Intrinsic::getDeclaration(gutils->newFunc->getParent(),
                                         Intrinsic::memset, tys),
-              args));
+              args, BufferDefs));
           memset->addParamAttr(0, Attribute::NonNull);
 
           Builder2.CreateBr(mergeBlock);
@@ -6199,7 +6259,7 @@ public:
 
         // 4. diff(sendbuffer) += intermediate buffer (diffmemcopy)
         DifferentiableMemCopyFloats(call, orig_sendbuf, buf, shadow_sendbuf,
-                                    sendlen_arg, Builder2);
+                                    sendlen_arg, Builder2, BufferDefs);
 
         // Free up intermediate buffer
         if (shouldFree()) {
@@ -6283,6 +6343,10 @@ public:
                                    tysize, Type::getInt64Ty(call.getContext())),
                                "", true, true);
 
+        // Need to preserve the shadow send/recv buffers.
+        auto BufferDefs = gutils->getInvertedBundles(&call,
+          {ValueType::Shadow, ValueType::Primal, ValueType::Primal, ValueType::Shadow, ValueType::Primal, ValueType::Primal, ValueType::Primal, ValueType::Primal}, Builder2, /*lookup*/true);
+
         // 1. if root, malloc intermediate buffer, else undef
         PHINode *buf;
         PHINode *sendlen_phi;
@@ -6358,7 +6422,7 @@ public:
 
           FunctionType *FT = FunctionType::get(call.getType(), types, false);
           Builder2.CreateCall(
-              called->getParent()->getOrInsertFunction("MPI_Gather", FT), args);
+              called->getParent()->getOrInsertFunction("MPI_Gather", FT), args, BufferDefs);
         }
 
         // 3. Zero diff(recvbuffer) [memset to 0]
@@ -6371,7 +6435,7 @@ public:
           auto memset = cast<CallInst>(Builder2.CreateCall(
               Intrinsic::getDeclaration(gutils->newFunc->getParent(),
                                         Intrinsic::memset, tys),
-              args));
+              args, BufferDefs));
           memset->addParamAttr(0, Attribute::NonNull);
         }
 
@@ -6392,7 +6456,7 @@ public:
 
           // 4. diff(sendbuffer) += intermediate buffer (diffmemcopy)
           DifferentiableMemCopyFloats(call, orig_sendbuf, buf, shadow_sendbuf,
-                                      sendlen_phi, Builder2);
+                                      sendlen_phi, Builder2, BufferDefs);
 
           // Free up intermediate buffer
           if (shouldFree()) {
@@ -6476,6 +6540,10 @@ public:
                                    tysize, Type::getInt64Ty(call.getContext())),
                                "", true, true);
 
+        // Need to preserve the shadow send/recv buffers.
+        auto BufferDefs = gutils->getInvertedBundles(&call,
+          {ValueType::Shadow, ValueType::Primal, ValueType::Primal, ValueType::Shadow, ValueType::Primal, ValueType::Primal, ValueType::Primal}, Builder2, /*lookup*/true);
+
         // 1. Alloc intermediate buffer
         Value *buf = CallInst::CreateMalloc(
             Builder2.GetInsertBlock(), sendlen_arg->getType(),
@@ -6517,7 +6585,7 @@ public:
           FunctionType *FT = FunctionType::get(call.getType(), types, false);
           Builder2.CreateCall(called->getParent()->getOrInsertFunction(
                                   "MPI_Reduce_scatter_block", FT),
-                              args);
+                              args, BufferDefs);
         }
 
         // 3. zero diff(recvbuffer) [memset to 0]
@@ -6543,13 +6611,13 @@ public:
           auto memset = cast<CallInst>(Builder2.CreateCall(
               Intrinsic::getDeclaration(gutils->newFunc->getParent(),
                                         Intrinsic::memset, tys),
-              args));
+              args, BufferDefs));
           memset->addParamAttr(0, Attribute::NonNull);
         }
 
         // 4. diff(sendbuffer) += intermediate buffer (diffmemcopy)
         DifferentiableMemCopyFloats(call, orig_sendbuf, buf, shadow_sendbuf,
-                                    sendlen_arg, Builder2);
+                                    sendlen_arg, Builder2, BufferDefs);
 
         // Free up intermediate buffer
         if (shouldFree()) {
@@ -6678,7 +6746,7 @@ public:
       } else {
         if (!orig->getType()->isFPOrFPVectorTy() &&
             TR.query(orig).Inner0().isPossiblePointer()) {
-          if (is_value_needed_in_reverse<ValueType::ShadowPtr>(
+          if (is_value_needed_in_reverse<ValueType::Shadow>(
                   TR, gutils, orig, Mode, oldUnreachable))
             subretType = DIFFE_TYPE::DUP_ARG;
           else
@@ -7861,7 +7929,7 @@ public:
             return;
           }
         }
-        if (funcName == "__fd_sincos_1") {
+        if (funcName == "__fd_sincos_1" || funcName == "sincos") {
           if (gutils->knownRecomputeHeuristic.find(orig) !=
               gutils->knownRecomputeHeuristic.end()) {
             if (!gutils->knownRecomputeHeuristic[orig]) {
@@ -8618,7 +8686,16 @@ public:
       FunctionType *FT = cast<FunctionType>(
           cast<PointerType>(newcalled->getType())->getElementType());
 
-      CallInst *diffes = Builder2.CreateCall(FT, newcalled, args);
+      SmallVector<ValueType, 2> BundleTypes;
+      for (auto A : argsInverted)
+        if (A == DIFFE_TYPE::CONSTANT)
+            BundleTypes.push_back(ValueType::Primal);
+        else
+            BundleTypes.push_back(ValueType::Both);
+
+      auto Defs = gutils->getInvertedBundles(orig, BundleTypes, Builder2, /*lookup*/true);
+
+      CallInst *diffes = Builder2.CreateCall(FT, newcalled, args, Defs);
       diffes->setCallingConv(orig->getCallingConv());
       diffes->setDebugLoc(gutils->getNewFromOriginal(orig->getDebugLoc()));
 #if LLVM_VERSION_MAJOR >= 9
@@ -8761,6 +8838,12 @@ public:
                whatType(argType, Mode) == DIFFE_TYPE::CONSTANT);
       }
     }
+    SmallVector<ValueType, 2> BundleTypes;
+    for (auto A : argsInverted)
+      if (A == DIFFE_TYPE::CONSTANT)
+          BundleTypes.push_back(ValueType::Primal);
+      else
+          BundleTypes.push_back(ValueType::Both);
     if (called) {
 #if LLVM_VERSION_MAJOR >= 14
       if (orig->arg_size() !=
@@ -8937,7 +9020,7 @@ public:
             goto badaugmentedfn;
         }
 
-        augmentcall = BuilderZ.CreateCall(FT, newcalled, pre_args);
+        augmentcall = BuilderZ.CreateCall(FT, newcalled, pre_args, gutils->getInvertedBundles(orig, BundleTypes, BuilderZ, /*lookup*/false));
         augmentcall->setCallingConv(orig->getCallingConv());
         augmentcall->setDebugLoc(
             gutils->getNewFromOriginal(orig->getDebugLoc()));
@@ -9285,7 +9368,7 @@ public:
         goto badfn;
     }
 
-    CallInst *diffes = Builder2.CreateCall(FT, newcalled, args);
+    CallInst *diffes = Builder2.CreateCall(FT, newcalled, args, gutils->getInvertedBundles(orig, BundleTypes, Builder2, /*lookup*/true));
     diffes->setCallingConv(orig->getCallingConv());
     diffes->setDebugLoc(gutils->getNewFromOriginal(orig->getDebugLoc()));
 #if LLVM_VERSION_MAJOR >= 9
