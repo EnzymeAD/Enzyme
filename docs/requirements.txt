@@ -1,0 +1,5 @@
+sphinx==3.5.4
+docutils==0.16
+-e git+https://github.com/ludgerpaehler/enzyme_sphinx_theme.git#egg=enzyme_sphinx_theme
+sphinxcontrib.katex
+matplotlib
