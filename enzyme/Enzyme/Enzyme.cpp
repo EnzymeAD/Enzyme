@@ -64,6 +64,7 @@
 
 #if LLVM_VERSION_MAJOR >= 13
 #include "llvm/Transforms/IPO/Attributor.h"
+#include "llvm/Transforms/IPO/OpenMPOpt.h"
 #endif
 
 #include "CApi.h"
@@ -80,6 +81,10 @@ llvm::cl::opt<bool>
 llvm::cl::opt<bool> EnzymeAttributor("enzyme-attributor", cl::init(false),
                                      cl::Hidden,
                                      cl::desc("Run attributor post Enzyme"));
+
+llvm::cl::opt<bool> EnzymeOMPOpt("enzyme-omp-opt", cl::init(true), cl::Hidden,
+                                 cl::desc("Whether to enable openmp opt"));
+
 #if LLVM_VERSION_MAJOR >= 14
 #define addAttribute addAttributeAtIndex
 #endif
@@ -225,7 +230,8 @@ static void handleKnownFunctions(llvm::Function &F) {
     }
     F.addParamAttr(6, Attribute::WriteOnly);
   }
-  if (F.getName() == "MPI_Comm_rank") {
+  if (F.getName() == "MPI_Comm_rank" || F.getName() == "PMPI_Comm_rank" ||
+      F.getName() == "MPI_Comm_size" || F.getName() == "PMPI_Comm_size") {
     F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
@@ -238,8 +244,10 @@ static void handleKnownFunctions(llvm::Function &F) {
       F.addParamAttr(0, Attribute::NoCapture);
       F.addParamAttr(0, Attribute::ReadOnly);
     }
-    F.addParamAttr(1, Attribute::WriteOnly);
-    F.addParamAttr(1, Attribute::NoCapture);
+    if (F.getFunctionType()->getParamType(1)->isPointerTy()) {
+      F.addParamAttr(1, Attribute::WriteOnly);
+      F.addParamAttr(1, Attribute::NoCapture);
+    }
   }
   if (F.getName() == "MPI_Wait") {
     F.addFnAttr(Attribute::NoUnwind);
@@ -378,10 +386,9 @@ static Optional<StringRef> getMetadataName(llvm::Value *res) {
 class Enzyme : public ModulePass {
 public:
   EnzymeLogic Logic;
-  bool PostOpt;
   static char ID;
-  Enzyme(bool PostOpt = false) : ModulePass(ID), PostOpt(PostOpt) {
-    PostOpt |= EnzymePostOpt;
+  Enzyme(bool PostOpt = false)
+      : ModulePass(ID), Logic(PostOpt | EnzymePostOpt) {
     // initializeLowerAutodiffIntrinsicPass(*PassRegistry::getPassRegistry());
   }
 
@@ -397,8 +404,8 @@ public:
   }
 
   /// Return whether successful
-  bool HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI, bool PostOpt,
-                      DerivativeMode mode, bool sizeOnly) {
+  bool HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI, DerivativeMode mode,
+                      bool sizeOnly) {
 
     Value *fn = CI->getArgOperand(0);
 
@@ -800,7 +807,7 @@ public:
           std::pair<Argument *, std::set<int64_t>>(&a, {}));
     }
 
-    TypeAnalysis TA(TLI);
+    TypeAnalysis TA(Logic.PPC.FAM);
     type_args = TA.analyzeFunction(type_args).getAnalyzedTypeInfo();
 
     // differentiate fn
@@ -811,9 +818,9 @@ public:
     case DerivativeMode::ForwardModeSplit:
     case DerivativeMode::ForwardMode:
       newFunc = Logic.CreateForwardDiff(
-          cast<Function>(fn), retType, constants, TLI, TA,
+          cast<Function>(fn), retType, constants, TA,
           /*should return*/ false, mode, width,
-          /*addedType*/ nullptr, type_args, volatile_args, PostOpt);
+          /*addedType*/ nullptr, type_args, volatile_args);
       break;
     case DerivativeMode::ReverseModeCombined:
       assert(freeMemory);
@@ -830,7 +837,7 @@ public:
                             .AtomicAdd = AtomicAdd,
                             .additionalType = nullptr,
                             .typeInfo = type_args},
-          TLI, TA, /*augmented*/ nullptr, PostOpt);
+          TA, /*augmented*/ nullptr);
       break;
     case DerivativeMode::ReverseModePrimal:
     case DerivativeMode::ReverseModeGradient: {
@@ -838,9 +845,9 @@ public:
       bool returnUsed = !cast<Function>(fn)->getReturnType()->isVoidTy() &&
                         !cast<Function>(fn)->getReturnType()->isEmptyTy();
       aug = &Logic.CreateAugmentedPrimal(
-          cast<Function>(fn), retType, constants, TLI, TA,
+          cast<Function>(fn), retType, constants, TA,
           /*returnUsed*/ returnUsed, type_args, volatile_args,
-          forceAnonymousTape, /*atomicAdd*/ AtomicAdd, /*PostOpt*/ PostOpt);
+          forceAnonymousTape, /*atomicAdd*/ AtomicAdd);
       auto &DL = cast<Function>(fn)->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
         assert(!aug->tapeType);
@@ -889,7 +896,7 @@ public:
                               .AtomicAdd = AtomicAdd,
                               .additionalType = tapeType,
                               .typeInfo = type_args},
-            TLI, TA, aug, PostOpt);
+            TA, aug);
     }
     }
 
@@ -1117,7 +1124,7 @@ public:
     }
     CI->eraseFromParent();
 
-    if (PostOpt) {
+    if (Logic.PostOpt) {
 #if LLVM_VERSION_MAJOR >= 11
       auto Params = llvm::getInlineParams();
 
@@ -1178,7 +1185,7 @@ public:
     return true;
   }
 
-  bool lowerEnzymeCalls(Function &F, bool PostOpt, bool &successful,
+  bool lowerEnzymeCalls(Function &F, bool &successful,
                         std::set<Function *> &done) {
     if (done.count(&F))
       return false;
@@ -1538,8 +1545,12 @@ public:
             toLower[CI] = mode;
 
           if (auto dc = dyn_cast<Function>(fn)) {
-            Changed |=
-                lowerEnzymeCalls(*dc, /*PostOpt*/ true, successful, done);
+            // Force postopt on any inner functions in the nested
+            // AD case.
+            bool tmp = Logic.PostOpt;
+            Logic.PostOpt = true;
+            Changed |= lowerEnzymeCalls(*dc, successful, done);
+            Logic.PostOpt = tmp;
           }
         }
       }
@@ -1573,14 +1584,14 @@ public:
 
     // Perform all the size replacements first to create constants
     for (auto pair : toSize) {
-      successful &= HandleAutoDiff(pair.first, TLI, PostOpt, pair.second,
+      successful &= HandleAutoDiff(pair.first, TLI, pair.second,
                                    /*sizeOnly*/ true);
       Changed = true;
       if (!successful)
         break;
     }
     for (auto pair : toLower) {
-      successful &= HandleAutoDiff(pair.first, TLI, PostOpt, pair.second,
+      successful &= HandleAutoDiff(pair.first, TLI, pair.second,
                                    /*sizeOnly*/ false);
       Changed = true;
       if (!successful)
@@ -1596,7 +1607,7 @@ public:
                     *CI->getArgOperand(0));
         return false;
       }
-      TypeAnalysis TA(TLI);
+      TypeAnalysis TA(Logic.PPC.FAM);
 
       auto Arch =
           llvm::Triple(
@@ -1607,7 +1618,7 @@ public:
                        Arch == Triple::amdgcn;
 
       auto val = GradientUtils::GetOrCreateShadowConstant(
-          Logic, TLI, TA, fn, pair.second, /*width*/ 1, AtomicAdd, PostOpt);
+          Logic, TLI, TA, fn, pair.second, /*width*/ 1, AtomicAdd);
       CI->replaceAllUsesWith(ConstantExpr::getPointerCast(val, CI->getType()));
       CI->eraseFromParent();
       Changed = true;
@@ -1736,13 +1747,21 @@ public:
         I->eraseFromParent();
       }
     }
+
+#if LLVM_VERSION_MAJOR >= 13
+    if (Logic.PostOpt && EnzymeOMPOpt) {
+      OpenMPOptPass().run(M, Logic.PPC.MAM);
+      changed = true;
+    }
+#endif
+
     std::set<Function *> done;
     for (Function &F : M) {
       if (F.empty())
         continue;
 
       bool successful = true;
-      changed |= lowerEnzymeCalls(F, PostOpt, successful, done);
+      changed |= lowerEnzymeCalls(F, successful, done);
 
       if (!successful) {
         M.getContext().diagnose(
@@ -1793,6 +1812,13 @@ public:
       I->eraseFromParent();
       changed = true;
     }
+
+#if LLVM_VERSION_MAJOR >= 13
+    if (Logic.PostOpt && EnzymeOMPOpt) {
+      OpenMPOptPass().run(M, Logic.PPC.MAM);
+      changed = true;
+    }
+#endif
 
     Logic.clear();
     return changed;

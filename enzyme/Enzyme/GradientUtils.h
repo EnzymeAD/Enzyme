@@ -487,7 +487,8 @@ public:
   }
 
   void computeGuaranteedFrees(
-      const llvm::SmallPtrSetImpl<BasicBlock *> &oldUnreachable) {
+      const llvm::SmallPtrSetImpl<BasicBlock *> &oldUnreachable,
+      TypeResults &TR) {
     for (auto &BB : *oldFunc) {
       if (oldUnreachable.count(&BB))
         continue;
@@ -1448,17 +1449,17 @@ public:
   Value *invertPointerM(Value *val, IRBuilder<> &BuilderM,
                         bool nullShadow = false);
 
-  static Constant *
-  GetOrCreateShadowConstant(EnzymeLogic &Logic, TargetLibraryInfo &TLI,
-                            TypeAnalysis &TA, Constant *F, DerivativeMode mode,
-                            unsigned width, bool AtomicAdd = true,
-                            bool PostOpt = false);
+  static Constant *GetOrCreateShadowConstant(EnzymeLogic &Logic,
+                                             TargetLibraryInfo &TLI,
+                                             TypeAnalysis &TA, Constant *F,
+                                             DerivativeMode mode,
+                                             unsigned width, bool AtomicAdd);
 
-  static Constant *
-  GetOrCreateShadowFunction(EnzymeLogic &Logic, TargetLibraryInfo &TLI,
-                            TypeAnalysis &TA, Function *F, DerivativeMode mode,
-                            unsigned width, bool AtomicAdd = true,
-                            bool PostOpt = false);
+  static Constant *GetOrCreateShadowFunction(EnzymeLogic &Logic,
+                                             TargetLibraryInfo &TLI,
+                                             TypeAnalysis &TA, Function *F,
+                                             DerivativeMode mode,
+                                             unsigned width, bool AtomicAdd);
 
   void branchToCorrespondingTarget(
       BasicBlock *ctx, IRBuilder<> &BuilderM,
@@ -1989,14 +1990,13 @@ public:
             forfree->getContext(),
             ArrayRef<Metadata *>(ConstantAsMetadata::get(byteSizeOfType))));
     forfree->setName("forfree");
-    unsigned bsize = (unsigned)byteSizeOfType->getZExtValue();
-    if ((bsize & (bsize - 1)) == 0) {
+    unsigned align =
+        getCacheAlignment((unsigned)byteSizeOfType->getZExtValue());
 #if LLVM_VERSION_MAJOR >= 10
-      forfree->setAlignment(Align(bsize));
+    forfree->setAlignment(Align(align));
 #else
-      forfree->setAlignment(bsize);
+    forfree->setAlignment(align);
 #endif
-    }
     CallInst *ci = cast<CallInst>(CallInst::CreateFree(
         tbuild.CreatePointerCast(forfree,
                                  Type::getInt8PtrTy(newFunc->getContext())),
