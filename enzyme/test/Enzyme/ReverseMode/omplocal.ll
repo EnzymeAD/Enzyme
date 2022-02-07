@@ -87,6 +87,6 @@ attributes #1 = { argmemonly }
 ; CHECK-NEXT:   store double %2, double* %"m'ipc", align 8
 ; CHECK-NEXT:   %3 = load double, double* %"m'ipc", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"m'ipc", align 8
-; CHECK-NEXT:   %4 = atomicrmw fadd double* %"x'", double %3 monotonic, align 8
+; CHECK-NEXT:   %4 = atomicrmw fadd double* %"x'", double %3 monotonic
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

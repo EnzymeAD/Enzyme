@@ -3855,7 +3855,8 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
       if (auto CI = dyn_cast<ConstantInt>(call.getOperand(0))) {
         auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
         auto LoadSize = CI->getZExtValue();
-        // Only propagate mappings in range that aren't "Anything" into the pointer
+        // Only propagate mappings in range that aren't "Anything" into the
+        // pointer
         ptr |= getAnalysis(&call).Lookup(LoadSize, DL);
       }
       updateAnalysis(&call, ptr.Only(-1), &call);

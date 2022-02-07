@@ -52,7 +52,6 @@
 #include "../FunctionUtils.h"
 #include "../Utils.h"
 #include "TypeAnalysis.h"
-#include "../FunctionUtils.h"
 
 using namespace llvm;
 #ifdef DEBUG_TYPE

@@ -72,10 +72,11 @@ static inline bool is_use_directly_needed_in_reverse(
 
       // Preserve any non-floating point values that are stored in an active
       // backwards creation shadow.
-      if (!TR.query(const_cast<Value*>(SI->getValueOperand()))[{-1}].isFloat())
+      if (!TR.query(const_cast<Value *>(SI->getValueOperand()))[{-1}].isFloat())
         for (auto pair : gutils->backwardsOnlyShadows)
-          if (pair.second.first.count(SI) && !gutils->isConstantValue(pair.first)) {
-              return true;
+          if (pair.second.first.count(SI) &&
+              !gutils->isConstantValue(pair.first)) {
+            return true;
           }
     }
     return false;
@@ -91,8 +92,9 @@ static inline bool is_use_directly_needed_in_reverse(
   if (auto MS = dyn_cast<MemSetInst>(user)) {
     if (MS->getArgOperand(2) == val) {
       for (auto pair : gutils->backwardsOnlyShadows)
-        if (pair.second.first.count(MS) && !gutils->isConstantValue(pair.first)) {
-            return true;
+        if (pair.second.first.count(MS) &&
+            !gutils->isConstantValue(pair.first)) {
+          return true;
         }
     }
   }
@@ -259,14 +261,14 @@ static inline bool is_value_needed_in_reverse(
         // reverse pass
         if (SI->getValueOperand() == inst &&
             mode == DerivativeMode::ReverseModeGradient) {
-           // Unless the store is into a backwards store, which would
-           // would then be performed in the reverse if the stored value was
-           // a possible pointer.
+          // Unless the store is into a backwards store, which would
+          // would then be performed in the reverse if the stored value was
+          // a possible pointer.
           bool rematerialized = false;
           for (auto pair : gutils->backwardsOnlyShadows)
             if (pair.second.first.count(SI)) {
-                rematerialized = true;
-                break;
+              rematerialized = true;
+              break;
             }
           if (!rematerialized)
             continue;

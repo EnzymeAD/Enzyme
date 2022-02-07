@@ -85,7 +85,7 @@ attributes #4 = { nounwind }
 ; TODO fix realignment
 ; CHECK-NEXT:   %"malloccall'mi4" = alloca [20 x double], align 16
 ; CHECK-NEXT:   %"malloccall'mi4.sub" = bitcast [20 x double]* %"malloccall'mi4" to i8*
-; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull align 16 dereferenceable(160) dereferenceable_or_null(160) %"malloccall'mi4.sub", i8 0, i64 160, i1 false)
+; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* {{(noundef )?}}nonnull align 16 dereferenceable(160) dereferenceable_or_null(160) %"malloccall'mi4.sub", i8 0, i64 160, i1 false)
 ; CHECK-NEXT:   br label %for.body
 
 ; CHECK: for.body:                                         ; preds = %for.body, %entry

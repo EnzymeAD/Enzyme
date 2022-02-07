@@ -847,7 +847,7 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
         size = allocationBuilder.CreateMul(size, es, "", /*NUW*/ true,
                                            /*NSW*/ true);
       }
-      
+
       StoreInst *storealloc = nullptr;
       // Statically allocate memory for all iterations if possible
       if (sublimits[i].second.back().first.maxLimit) {
