@@ -1,5 +1,5 @@
 use dirs;
-use std::{path::PathBuf, process::Command};
+use std::{path::PathBuf, process::Command, str::FromStr};
 
 use super::version_manager::{ENZYME_VER, RUSTC_VER};
 
@@ -18,6 +18,7 @@ pub(crate) fn run_and_printerror(command: &mut Command) {
 }
 
 /// We offer support for downloading and compiling these two repositories.
+#[derive(Clone, Debug)]
 pub enum Repo {
     /// For handling the Enzyme repository (latest release).
     Enzyme,
@@ -25,6 +26,22 @@ pub enum Repo {
     EnzymeHEAD,
     /// For handling the Rust repository.
     Rust,
+}
+impl FromStr for Repo {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let lower_s = s.to_lowercase();
+        match lower_s.as_str() {
+            "rust" => Ok(Repo::Rust),
+            "enzyme" => Ok(Repo::Enzyme),
+            "enzyme-head" => Ok(Repo::EnzymeHEAD),
+            _ => Err(
+                "The only supported parameters are \"rust\", \"enzyme\", or \"enzyme-head\""
+                    .to_string(),
+            ),
+        }
+    }
 }
 
 fn assert_existence(path: PathBuf) {

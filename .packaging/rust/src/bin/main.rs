@@ -1,4 +1,4 @@
-use enzyme::Repo::*;
+use enzyme::Repo::{self, *};
 fn main() {
     match get_enzyme() {
         Ok(()) => {}
@@ -12,31 +12,19 @@ fn get_enzyme() -> Result<(), String> {
         let arg = cmd_line
             .nth(1)
             .expect("failed reading")
-            .parse::<String>()
-            .expect("failed reading");
-        return match arg.to_lowercase().as_str() {
-            "rust" => {
-                enzyme::download(Rust)?;
-                enzyme::build(Rust)?;
-                Ok(())
-            }
-            "enzyme" => {
-                enzyme::download(Enzyme)?;
-                enzyme::generate_bindings_from_release()?;
-                enzyme::build(Enzyme)?;
-                Ok(())
-            }
-            "enzyme-head" => {
-                enzyme::download(EnzymeHEAD)?;
-                enzyme::generate_bindings_from_head()?;
-                enzyme::build(EnzymeHEAD)?;
-                Ok(())
-            }
-            _ => return Err(format!(
-                "unknown input given {:?} \nPlease try \"rust\", \"enzyme\", or \"enzyme-head\"",
-                &arg
-            )),
+            .parse::<Repo>()
+            .expect("failed reading first argument!");
+
+        enzyme::download(arg.clone())?;
+        enzyme::build(arg.clone())?;
+
+        if let Repo::Enzyme = arg {
+            enzyme::generate_bindings_from_release()?;
+        } else if let Repo::EnzymeHEAD = arg {
+            enzyme::generate_bindings_from_head()?;
         };
+
+        Ok(())
     } else if cmd_line.len() == 1 {
         // Default
         enzyme::download(Rust)?;
