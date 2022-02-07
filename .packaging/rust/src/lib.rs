@@ -37,6 +37,5 @@ mod code;
 
 pub use code::compile::build;
 pub use code::downloader::download;
-pub use code::generate_api::generate_bindings;
-pub use code::generate_api::generate_bindings_with;
+pub use code::generate_api::*;
 pub use code::utils::Repo;

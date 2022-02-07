@@ -1,12 +1,28 @@
 use dirs;
-use std::path::PathBuf;
+use std::{path::PathBuf, process::Command};
 
-use super::version_manager::{RUSTC_VER, ENZYME_VER};
+use super::version_manager::{ENZYME_VER, RUSTC_VER};
+
+pub(crate) fn run_and_printerror(command: &mut Command) {
+    println!("Running: `{:?}`", command);
+    match command.status() {
+        Ok(status) => {
+            if !status.success() {
+                panic!("Failed: `{:?}` ({})", command, status);
+            }
+        }
+        Err(error) => {
+            panic!("Failed: `{:?}` ({})", command, error);
+        }
+    }
+}
 
 /// We offer support for downloading and compiling these two repositories.
 pub enum Repo {
-    /// For handling the Enzyme repository.
+    /// For handling the Enzyme repository (latest release).
     Enzyme,
+    /// For handling the Enzyme repository (main branch).
+    EnzymeHEAD,
     /// For handling the Rust repository.
     Rust,
 }
@@ -26,14 +42,12 @@ pub fn get_enzyme_base_path() -> PathBuf {
     enzyme_base_path
 }
 pub fn get_enzyme_repo_path() -> PathBuf {
-    let path = get_enzyme_base_path()
-        .join("Enzyme-".to_owned() + ENZYME_VER);
+    let path = get_enzyme_base_path().join("Enzyme-".to_owned() + ENZYME_VER);
     assert_existence(path.clone());
     path
 }
 fn get_enzyme_subdir_path() -> PathBuf {
-    let path = get_enzyme_repo_path()
-        .join("enzyme");
+    let path = get_enzyme_repo_path().join("enzyme");
     assert_existence(path.clone());
     path
 }
@@ -78,7 +92,7 @@ pub fn get_llvm_header_path() -> PathBuf {
 }
 pub fn get_remote_enzyme_tarball_path() -> String {
     format!(
-        "https://github.com/wsmoses/Enzyme/archive/refs/tags/v{}.tar.gz",
+        "https://github.com/EnzymeAD/Enzyme/archive/refs/tags/v{}.tar.gz",
         ENZYME_VER
     )
 }
