@@ -560,13 +560,12 @@ public:
       } else if (auto load = dyn_cast<LoadInst>(cur)) {
         loads.insert(load);
       } else if (auto store = dyn_cast<StoreInst>(cur)) {
-        if (store->getValueOperand() != prev)
-          stores.insert(store);
-        else {
+        if (store->getValueOperand() == prev) {
           promotable = false;
           shadowpromotable = false;
           break;
-        }
+        } else
+          stores.insert(store);
       } else if (auto II = dyn_cast<IntrinsicInst>(cur)) {
         switch (II->getIntrinsicID()) {
         case Intrinsic::dbg_declare:
@@ -608,6 +607,7 @@ public:
       } else if (auto CI = dyn_cast<CallInst>(cur)) {
         Function *called = getFunctionFromCall(CI);
         if (called && isDeallocationFunction(*called, TLI)) {
+          stores.insert(CI);
           continue;
         }
         if (called && called->getName() == "julia.write_barrier") {
@@ -627,13 +627,15 @@ public:
             idx++;
             continue;
           }
+          auto F = CI->getCalledFunction();
           auto TT = TR.query(prev)[{-1, -1}];
           // If it either could capture, or could have a int/pointer written to
           // it it is not promotable
 #if LLVM_VERSION_MAJOR >= 8
           if (CI->doesNotCapture(idx))
 #else
-          if (CI->dataOperandHasImpliedAttr(idx, Attribute::NoCapture))
+          if (CI->dataOperandHasImpliedAttr(idx, Attribute::NoCapture) ||
+              (F && F->hasParamAttribute(idx, Attribute::NoCapture)))
 #endif
           {
             if (TT.isFloat()) {
@@ -643,7 +645,9 @@ public:
             else if (CI->onlyReadsMemory(idx))
 #else
             else if (CI->dataOperandHasImpliedAttr(idx, Attribute::ReadOnly) ||
-                     CI->dataOperandHasImpliedAttr(idx, Attribute::ReadNone))
+                     CI->dataOperandHasImpliedAttr(idx, Attribute::ReadNone) ||
+                     (F && (F->hasParamAttribute(idx, Attribute::ReadOnly) ||
+                            F->hasParamAttribute(idx, Attribute::ReadNone))))
 #endif
             {
               // if only reading memory, ok to duplicate in forward /

@@ -56,8 +56,8 @@ declare void @free(i8*)
 ; CHECK-NEXT:   %i = add i64 14, 1
 ; CHECK-NEXT:   %i1 = add nuw i64 %i, 1
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %i1, 8
-; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i64 %mallocsize) #1
-; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall) #1
+; CHECK-NEXT:   %malloccall = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
+; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall)
 ; CHECK-NEXT:   %0 = insertvalue { i8*, double } undef, double %x, 1
 ; CHECK-NEXT:   %.fca.0.insert = insertvalue { i64, double } undef, i64 14, 0
 ; CHECK-NEXT:   %.fca.1.insert = insertvalue { i64, double } %.fca.0.insert, double %x, 1

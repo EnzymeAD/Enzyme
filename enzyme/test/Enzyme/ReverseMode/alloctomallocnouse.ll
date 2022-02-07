@@ -73,7 +73,6 @@ attributes #2 = { nounwind }
 
 ; CHECK: define internal void @diffesubsum(double* nocapture readonly %x, double* nocapture %"x'", i64 %n, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %m = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   %"m'mi" = call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"m'mi", i8 0, i64 8, i1 false)
 ; CHECK-NEXT:   %"v'ipc" = bitcast i8* %"m'mi" to double*
@@ -84,7 +83,6 @@ attributes #2 = { nounwind }
 
 ; CHECK: invertentry:                                      ; preds = %invertfor.body
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %"m'mi")
-; CHECK-NEXT:   tail call void @free(i8* nonnull %m)
 ; CHECK-NEXT:   ret void
 
 ; CHECK: invertfor.body:                                   ; preds = %incinvertfor.body, %entry

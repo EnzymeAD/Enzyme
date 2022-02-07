@@ -8483,6 +8483,36 @@ public:
                                   dbgLoc, gutils->TLI);
             }
             return;
+          } else {
+            // If not caching allocation and not needed in the reverse, we can
+            // use the original freeing behavior for the function. If in the
+            // reverse pass we should not recreate this allocation.
+            if (Mode == DerivativeMode::ReverseModeGradient)
+              eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
+            else if (auto MD = hasMetadata(orig, "enzyme_fromstack")) {
+              IRBuilder<> B(newCall);
+              if (auto CI = dyn_cast<ConstantInt>(orig->getArgOperand(0))) {
+                B.SetInsertPoint(gutils->inversionAllocs);
+              }
+              auto replacement = B.CreateAlloca(
+                  Type::getInt8Ty(orig->getContext()),
+                  gutils->getNewFromOriginal(orig->getArgOperand(0)));
+              auto Alignment =
+                  cast<ConstantInt>(
+                      cast<ConstantAsMetadata>(MD->getOperand(0))->getValue())
+                      ->getLimitedValue();
+              // Don't set zero alignment
+              if (Alignment) {
+#if LLVM_VERSION_MAJOR >= 10
+                replacement->setAlignment(Align(Alignment));
+#else
+                replacement->setAlignment(Alignment);
+#endif
+              }
+              gutils->replaceAWithB(newCall, replacement);
+              gutils->erase(newCall);
+            }
+            return;
           }
         }
       }
@@ -8755,16 +8785,36 @@ public:
         return;
       }
 
-      // If a rematerializable allocation. Leave the original
-      // forward pass freeing behavior, however, for the new
-      // reverse-only allocation it should be freed automatically
-      // in the reverse pass, thus erase this only in gradient mode.
-      if (gutils->rematerializableAllocations.count(orig) &&
-          Mode != DerivativeMode::ReverseModeCombined) {
-        if (Mode == DerivativeMode::ReverseModeGradient) {
-          eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
+      // If a rematerializable allocation.
+      for (auto rmat : gutils->rematerializableAllocations) {
+        if (rmat.second.second.count(orig)) {
+          // Leave the original free behavior since this won't be used
+          // in the reverse pass in split mode
+          if (Mode == DerivativeMode::ReverseModePrimal) {
+            return;
+          } else if (Mode == DerivativeMode::ReverseModeGradient) {
+            eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
+            return;
+          } else {
+            assert(Mode == DerivativeMode::ReverseModeCombined);
+            // In combined mode, if we don't need this allocation
+            // in the reverse, we can use the original deallocation
+            // behavior.
+            std::map<UsageKey, bool> Seen;
+            for (auto pair : gutils->knownRecomputeHeuristic)
+              if (!pair.second)
+                Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+            bool primalNeededInReverse =
+                is_value_needed_in_reverse<ValueType::Primal>(
+                    TR, gutils, orig, Mode, Seen, oldUnreachable);
+            if (gutils->knownRecomputeHeuristic.count(rmat.first)) {
+              if (!gutils->knownRecomputeHeuristic[rmat.first])
+                primalNeededInReverse = true;
+            }
+            if (!primalNeededInReverse)
+              return;
+          }
         }
-        return;
       }
 
       if (gutils->forwardDeallocations.count(orig)) {
