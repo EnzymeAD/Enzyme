@@ -1,19 +1,8 @@
-use super::{utils::*, version_manager::{check_compiled, set_compiled}};
-use std::process::Command;
-
-fn run_and_printerror(command: &mut Command) {
-    println!("Running: `{:?}`", command);
-    match command.status() {
-        Ok(status) => {
-            if !status.success() {
-                panic!("Failed: `{:?}` ({})", command, status);
-            }
-        }
-        Err(error) => {
-            panic!("Failed: `{:?}` ({})", command, error);
-        }
-    }
-}
+use super::{
+    utils::{self, *},
+    version_manager::{check_compiled, set_compiled},
+};
+use std::{path::PathBuf, process::Command};
 
 #[allow(unused)]
 fn print_llvm_version() {
@@ -28,25 +17,43 @@ fn print_llvm_version() {
 /// It will build a nightly version of Rust, together with LLVM and Clang.
 /// Building the Enzyme repository will always run tests to verify that it is working correctly.
 pub fn build(to_build: Repo) -> Result<(), String> {
-
     // If we have compiled that rustc or enzyme version in the past, we have nothing to do.
+    // HEAD will always overwrite older HEAD versions, even if there was no change.
     if check_compiled(&to_build) {
         return Ok(());
     }
 
     let _repo = match to_build {
-        Repo::Enzyme => build_enzyme(),
         Repo::Rust => build_rustc(),
+        Repo::Enzyme => build_enzyme_release(),
+        Repo::EnzymeHEAD => build_enzyme_head(),
     };
 
-    // Compiling is expensive, so add a note that this compilation run was successfull and that 
-    // we shouldn't repeat it. 
+    // Compiling is expensive, so add a note that this compilation run was successfull and that
+    // we shouldn't repeat it.
     set_compiled(&to_build);
 
     Ok(())
 }
 
-fn build_enzyme() {
+fn build_enzyme_head() {
+    let enzyme_head_dir = utils::get_enzyme_base_path()
+        .join("Enzyme-HEAD")
+        .join("enzyme");
+    assert!(
+        enzyme_head_dir.exists(),
+        "Apparently the previous cloning of HEAD failed?"
+    );
+    let build_dir = enzyme_head_dir.join("build");
+    build_enzyme(build_dir);
+}
+
+fn build_enzyme_release() {
+    let build_path = get_enzyme_build_path();
+    build_enzyme(build_path);
+}
+
+fn build_enzyme(build_path: PathBuf) {
     let llvm_dir = get_llvm_build_path().join("lib").join("cmake").join("llvm");
     let llvm_dir = "-DLLVM_DIR=".to_owned() + llvm_dir.to_str().unwrap();
     let llvm_external_lit = get_rustc_repo_path()
@@ -62,7 +69,6 @@ fn build_enzyme() {
     let mut cmake = Command::new("cmake");
     let mut ninja = Command::new("ninja");
     let mut ninja_check = Command::new("ninja");
-    let build_path = get_enzyme_build_path();
     if !std::path::Path::new(&build_path).exists() {
         std::fs::create_dir(&build_path).unwrap();
     }

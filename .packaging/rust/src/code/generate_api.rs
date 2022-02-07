@@ -2,9 +2,22 @@ use super::utils;
 use bindgen;
 use std::{fs, path::PathBuf};
 
-/// This function can be used to generate Rust wrappers around Enzyme's [C API](https://github.com/wsmoses/Enzyme/blob/main/enzyme/Enzyme/CApi.h).
-pub fn generate_bindings() -> Result<(), String> {
+/// This function can be used to generate Rust wrappers around Enzyme's [C API](https://github.com/wsmoses/Enzyme/blob/main/enzyme/Enzyme/CApi.h) based on the latest release.
+pub fn generate_bindings_from_release() -> Result<(), String> {
     let capi_header = utils::get_capi_path();
+    let out_file = utils::get_bindings_string();
+    generate_bindings_with(capi_header, out_file)
+}
+
+/// This function can be used to generate Rust wrappers around Enzyme's [C
+/// API](https://github.com/wsmoses/Enzyme/blob/main/enzyme/Enzyme/CApi.h) based on the latest
+/// HEAD.
+pub fn generate_bindings_from_head() -> Result<(), String> {
+    let capi_header = utils::get_enzyme_base_path()
+        .join("Enzyme-HEAD")
+        .join("enzyme")
+        .join("Enzyme")
+        .join("CApi.h");
     let out_file = utils::get_bindings_string();
     generate_bindings_with(capi_header, out_file)
 }
