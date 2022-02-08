@@ -13,9 +13,9 @@ If you are working with Enzyme, and run into a bug, or require additional featur
 
 If you are interested in contributing code to Enzyme, issues labeled with the [good-first-issue](https://github.com/EnzymeAD/Enzyme/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) keyword in the [GitHub Issues](https://github.com/EnzymeAD/Enzyme/issues) are a good way to get familiar with the code base. If you are interested in fixing a bug please comment on it to let people know you are working on it.
 
-Then try to reproduce and fix the bug with upstream LLVM. Start by building LLVM from source as described in [Installation](https://enzyme.mit.edu/Installation/) and use the built binaries to reproduce the failure described in the bug.
-
 > The easiest way to explore code in Enzyme is by using our [Compiler Explorer](https://enzyme.mit.edu/explorer) instance.
+
+If you are unable to reproduce the bug in Compiler Explorer, try to reproduce and fix the bug with upstream LLVM. Start by building LLVM from source as described in [Installation](https://enzyme.mit.edu/Installation/) and use the built binaries to reproduce the failure described in the bug.
 
 ### Language Integrations
 
