@@ -15,6 +15,8 @@ If you are interested in contributing code to Enzyme, issues labeled with the [g
 
 Then try to reproduce and fix the bug with upstream LLVM. Start by building LLVM from source as described in [Installation](https://enzyme.mit.edu/Installation/) and use the built binaries to reproduce the failure described in the bug.
 
+> The easiest way to explore code in Enzyme is by using our [Compiler Explorer](https://enzyme.mit.edu/explorer) instance.
+
 ### Language Integrations
 
 In case you are interested in integrating Enzyme with a programming language which compiles to the LLVM IR, we encourage you to take a look at the [Language Frontend Guide](), and post on the [Discourse Category](https://discourse.llvm.org/c/projects-that-want-to-become-official-llvm-projects/enzyme/45) to let people know that you are working on it.
