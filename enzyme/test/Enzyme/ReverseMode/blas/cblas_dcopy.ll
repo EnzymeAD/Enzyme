@@ -2,15 +2,15 @@
 
 define void @wrapper(i32 %n, double* %x, i32 %incx, double* %y, i32 %incy) {
 entry:
-  tail call void @cblas_dswap(i32 %n, double* %x, i32 %incx, double* %y, i32 %incy)
+  tail call void @cblas_dcopy(i32 %n, double* %x, i32 %incx, double* %y, i32 %incy)
   ret void
 }
 
-declare void @cblas_dswap(i32, double*, i32, double*, i32)
+declare void @cblas_dcopy(i32, double*, i32, double*, i32)
 
 define void @wrapperMod(i32 %n, double* %x, i32 %incx, double* %y, i32 %incy) {
 entry:
-  tail call void @cblas_dswap(i32 %n, double* %x, i32 %incx, double* %y, i32 %incy)
+  tail call void @cblas_dcopy(i32 %n, double* %x, i32 %incx, double* %y, i32 %incy)
   store double 0.000000e+00, double* %x, align 8
   store double 1.000000e+00, double* %y, align 8
   ret void
@@ -40,18 +40,18 @@ entry:
 
 ;CHECK:define internal void @[[active]](i32 %n, double* %x, double* %"x'", i32 %incx, double* %y, double* %"y'", i32 %incy)
 ;CHECK-NEXT:entry:
-;CHECK-NEXT:  tail call void @cblas_dswap(i32 %n, double* %x, i32 %incx, double* %y, i32 %incy)
-;CHECK-NEXT:  call void @cblas_dswap(i32 %n, double* %"x'", i32 %incx, double* %"y'", i32 %incy)
+;CHECK-NEXT:  tail call void @cblas_dcopy(i32 %n, double* %x, i32 %incx, double* %y, i32 %incy)
+;CHECK-NEXT:  call void @cblas_daxpy(i32 %n, double 1.000000e+00, double* %"y'", i32 %incy, double* %"x'", i32 %incx)
 ;CHECK-NEXT:  ret void
 ;CHECK-NEXT:}
 
 ;CHECK:define internal void @[[activeMod]](i32 %n, double* %x, double* %"x'", i32 %incx, double* %y, double* %"y'", i32 %incy)
 ;CHECK-NEXT:entry:
-;CHECK-NEXT:  tail call void @cblas_dswap(i32 %n, double* %x, i32 %incx, double* %y, i32 %incy)
+;CHECK-NEXT:  tail call void @cblas_dcopy(i32 %n, double* %x, i32 %incx, double* %y, i32 %incy)
 ;CHECK-NEXT:  store double 0.000000e+00, double* %x, align 8
 ;CHECK-NEXT:  store double 1.000000e+00, double* %y, align 8
 ;CHECK-NEXT:  store double 0.000000e+00, double* %"y'", align 8
 ;CHECK-NEXT:  store double 0.000000e+00, double* %"x'", align 8
-;CHECK-NEXT:  call void @cblas_dswap(i32 %n, double* %"x'", i32 %incx, double* %"y'", i32 %incy)
+;CHECK-NEXT:  call void @cblas_daxpy(i32 %n, double 1.000000e+00, double* %"y'", i32 %incy, double* %"x'", i32 %incx)
 ;CHECK-NEXT:  ret void
 ;CHECK-NEXT:}
