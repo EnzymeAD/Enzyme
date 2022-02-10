@@ -5398,8 +5398,12 @@ public:
                                        Builder2, /*lookup*/ true));
         cal->setCallingConv(dwait->getCallingConv());
         cal->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
+#if LLVM_VERSION_MAJOR >= 14
+        cal->addFnAttr(Attribute::AlwaysInline);
+#else
         cal->addAttribute(AttributeList::FunctionIndex,
                           Attribute::AlwaysInline);
+#endif
         Builder2.CreateBr(endBlock);
 
         Builder2.SetInsertPoint(endBlock);
@@ -5536,8 +5540,12 @@ public:
                                        Builder2, /*lookup*/ true));
         cal->setCallingConv(dwait->getCallingConv());
         cal->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
+#if LLVM_VERSION_MAJOR >= 14
+        cal->addFnAttr(Attribute::AlwaysInline);
+#else
         cal->addAttribute(AttributeList::FunctionIndex,
                           Attribute::AlwaysInline);
+#endif
         Builder2.CreateBr(eloopBlock);
 
         Builder2.SetInsertPoint(eloopBlock);

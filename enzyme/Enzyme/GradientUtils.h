@@ -188,11 +188,10 @@ public:
 
   const std::map<Instruction *, bool> *can_modref_map;
 
-  SmallVector<OperandBundleDef, 2> getInvertedBundles(CallInst *orig,
-                                                      ArrayRef<ValueType> types,
-                                                      IRBuilder<> &Builder2,
-                                                      bool lookup,
-                                                      const ValueToValueMapTy &available = ValueToValueMapTy()) {
+  SmallVector<OperandBundleDef, 2>
+  getInvertedBundles(CallInst *orig, ArrayRef<ValueType> types,
+                     IRBuilder<> &Builder2, bool lookup,
+                     const ValueToValueMapTy &available = ValueToValueMapTy()) {
     SmallVector<OperandBundleDef, 2> OrigDefs;
     orig->getOperandBundlesAsDefs(OrigDefs);
     SmallVector<OperandBundleDef, 2> Defs;
@@ -533,12 +532,13 @@ public:
     SmallPtrSet<Instruction *, 1> stores;
 
     // Loop scope (null if not loop scoped).
-    Loop* LI;
+    Loop *LI;
 
     Rematerializer() : loads(), stores(), LI(nullptr) {}
-    Rematerializer(const SmallPtrSetImpl<LoadInst*> &loads,
-                   const SmallPtrSetImpl<Instruction*> &stores,
-                   Loop* LI) : loads(loads.begin(), loads.end()), stores(stores.begin(), stores.end()), LI(LI) {}
+    Rematerializer(const SmallPtrSetImpl<LoadInst *> &loads,
+                   const SmallPtrSetImpl<Instruction *> &stores, Loop *LI)
+        : loads(loads.begin(), loads.end()),
+          stores(stores.begin(), stores.end()), LI(LI) {}
   };
   ValueMap<Value *, Rematerializer> rematerializableAllocations;
 
@@ -736,7 +736,6 @@ public:
         outer = anc;
       }
     }
-
 
     for (auto LI : loads) {
       // Is there a store which could occur after the load.
@@ -1414,7 +1413,7 @@ public:
 
   //! This cache stores a rematerialized forward pass in the loop
   //! specified
-  std::map<llvm::Loop*, llvm::BasicBlock *> rematerializedLoops_cache;
+  std::map<llvm::Loop *, llvm::BasicBlock *> rematerializedLoops_cache;
   BasicBlock *getReverseOrLatchMerge(BasicBlock *BB,
                                      BasicBlock *branchingBlock);
 

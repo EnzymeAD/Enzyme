@@ -267,6 +267,13 @@ struct CacheAnalysis {
         }
       }
 
+    // Any load from a rematerializable allocation is definitionally
+    // reloadable. Notably we don't need to perform the allFollowers
+    // of check as the loop scope caching should allow us to ignore
+    // such stores.
+    if (rematerializableAllocations.count(obj))
+      return false;
+
     // If not running combined, check if pointer operand is overwritten
     // by a subsequent call (i.e. not this function).
     bool can_modref = false;

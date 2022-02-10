@@ -535,13 +535,13 @@ static inline int cmpLoopNest(Loop *prev, Loop *next) {
   return -1;
 }
 
-static inline void
-minCut(const DataLayout &DL, LoopInfo &OrigLI,
-       const SmallPtrSetImpl<Value *> &Recomputes,
-       const SmallPtrSetImpl<Value *> &Intermediates,
-       SmallPtrSetImpl<Value *> &Required, SmallPtrSetImpl<Value *> &MinReq,
-       const ValueMap<Value *, GradientUtils::Rematerializer>
-           &rematerializableAllocations) {
+static inline void minCut(const DataLayout &DL, LoopInfo &OrigLI,
+                          const SmallPtrSetImpl<Value *> &Recomputes,
+                          const SmallPtrSetImpl<Value *> &Intermediates,
+                          SmallPtrSetImpl<Value *> &Required,
+                          SmallPtrSetImpl<Value *> &MinReq,
+                          const ValueMap<Value *, GradientUtils::Rematerializer>
+                              &rematerializableAllocations) {
   Graph G;
   for (auto V : Intermediates) {
     G[Node(V, false)].insert(Node(V, true));
