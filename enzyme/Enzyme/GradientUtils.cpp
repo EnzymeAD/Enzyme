@@ -2039,6 +2039,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
     // rematerialize any loop-scope rematerialization.
     if (incEntering || exitEntering) {
       SmallPtrSet<Instruction *, 1> loopRematerializations;
+      SmallPtrSet<Instruction *, 1> loopReallocations;
       Loop *origLI = nullptr;
       for (auto pair : rematerializableAllocations) {
         if (pair.second.LI &&
@@ -2054,6 +2055,8 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
             rematerialized = true;
           }
           if (rematerialized) {
+            if (auto inst = dyn_cast<Instruction>(pair.first))
+              loopReallocations.insert(inst);
             for (auto I : pair.second.stores)
               loopRematerializations.insert(I);
             origLI = pair.second.LI;
@@ -2079,6 +2082,8 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
             reverseBlockToPrimal[newB] = getNewFromOriginal(B);
           }
 
+          ValueToValueMapTy available;
+
           {
             IRBuilder<> NB(enterB);
             NB.CreateBr(origToNewForward[origLI->getHeader()]);
@@ -2089,8 +2094,6 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
             for (auto EB : origExitBlocks)
               origToNewForward[EB] = exitB;
           }
-
-          ValueToValueMapTy available;
 
           std::function<void(Loop *, bool)> handleLoop = [&](Loop *OL,
                                                              bool subLoop) {
@@ -2201,6 +2204,64 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                   }
                 } else {
                   assert(0 && "unhandlable loop rematerialization instruction");
+                }
+              } else if (loopReallocations.count(&I)) {
+                LimitContext lctx(/*ReverseLimit*/ reverseBlocks.size() > 0,
+                                  &newFunc->getEntryBlock());
+
+                auto inst = getNewFromOriginal((Value *)&I);
+
+                auto found = scopeMap.find(inst);
+                if (found == scopeMap.end()) {
+                  AllocaInst *cache =
+                      createCacheForScope(lctx, inst->getType(),
+                                          inst->getName(), /*shouldFree*/ true);
+                  assert(cache);
+                  found = insert_or_assign(
+                      scopeMap, inst,
+                      std::pair<AssertingVH<AllocaInst>, LimitContext>(cache,
+                                                                       lctx));
+                }
+                auto cache = found->second.first;
+                if (auto MD = hasMetadata(&I, "enzyme_fromstack")) {
+                  auto replacement = NB.CreateAlloca(
+                      Type::getInt8Ty(I.getContext()),
+                      lookupM(getNewFromOriginal(I.getOperand(0)), NB,
+                              available));
+                  auto Alignment = cast<ConstantInt>(cast<ConstantAsMetadata>(
+                                                         MD->getOperand(0))
+                                                         ->getValue())
+                                       ->getLimitedValue();
+#if LLVM_VERSION_MAJOR >= 10
+                  replacement->setAlignment(Align(Alignment));
+#else
+                  replacement->setAlignment(Alignment);
+#endif
+                  storeInstructionInCache(lctx, NB, replacement, cache);
+                } else if (auto CI = dyn_cast<CallInst>(&I)) {
+                  SmallVector<Value *, 2> args;
+#if LLVM_VERSION_MAJOR >= 14
+                  for (auto &arg : CI->args())
+#else
+                  for (auto &arg : CI->arg_operands())
+#endif
+                    args.push_back(
+                        lookupM(getNewFromOriginal(arg), NB, available));
+
+                  SmallVector<ValueType, 2> BundleTypes(args.size(),
+                                                        ValueType::Primal);
+
+                  auto Defs = getInvertedBundles(CI, BundleTypes, NB,
+                                                 /*lookup*/ true, available);
+                  auto cal = NB.CreateCall(CI->getCalledFunction(), args, Defs);
+                  cal->setName("remat_" + CI->getName());
+                  cal->setAttributes(CI->getAttributes());
+                  cal->setCallingConv(CI->getCallingConv());
+                  cal->setTailCallKind(CI->getTailCallKind());
+                  storeInstructionInCache(lctx, NB, cal, cache);
+                } else {
+                  llvm::errs() << " realloc: " << I << "\n";
+                  llvm_unreachable("Unknown loop reallocation");
                 }
               }
             }
@@ -4947,7 +5008,16 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                 "Caching instruction ", *inst, " legalRecompute: ", lrc,
                 " shouldRecompute: ", src,
                 " tryLegalRecomputeCheck: ", tryLegalRecomputeCheck);
-  ensureLookupCached(inst);
+
+  BasicBlock *scope = inst->getParent();
+  if (auto origInst = isOriginal(inst)) {
+    auto found = rematerializableAllocations.find(origInst);
+    if (found != rematerializableAllocations.end())
+      if (found->second.LI)
+        scope = &newFunc->getEntryBlock();
+  }
+
+  ensureLookupCached(inst, /*shouldFree*/ true, scope);
   bool isi1 = inst->getType()->isIntegerTy() &&
               cast<IntegerType>(inst->getType())->getBitWidth() == 1;
   assert(!isOriginalBlock(*BuilderM.GetInsertBlock()));

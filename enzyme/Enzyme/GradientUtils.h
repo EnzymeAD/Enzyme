@@ -531,26 +531,50 @@ public:
     // the value.
     SmallPtrSet<Instruction *, 1> stores;
 
+    // Operations which deallocate the value.
+    SmallPtrSet<Instruction *, 1> frees;
+
     // Loop scope (null if not loop scoped).
     Loop *LI;
 
-    Rematerializer() : loads(), stores(), LI(nullptr) {}
+    Rematerializer() : loads(), stores(), frees(), LI(nullptr) {}
     Rematerializer(const SmallPtrSetImpl<LoadInst *> &loads,
-                   const SmallPtrSetImpl<Instruction *> &stores, Loop *LI)
+                   const SmallPtrSetImpl<Instruction *> &stores,
+                   const SmallPtrSetImpl<Instruction *> &frees, Loop *LI)
         : loads(loads.begin(), loads.end()),
-          stores(stores.begin(), stores.end()), LI(LI) {}
+          stores(stores.begin(), stores.end()),
+          frees(frees.begin(), frees.end()), LI(LI) {}
   };
+
+  struct ShadowRematerializer {
+    // Operations which must be rerun to rematerialize
+    // the original value.
+    SmallPtrSet<Instruction *, 1> stores;
+
+    // Whether the shadow must be initialized in the primal.
+    bool primalInitialize;
+
+    // Loop scope (null if not loop scoped).
+    Loop *LI;
+
+    ShadowRematerializer() : stores(), primalInitialize(), LI(nullptr) {}
+    ShadowRematerializer(const SmallPtrSetImpl<Instruction *> &stores,
+                         bool primalInitialize, Loop *LI)
+        : stores(stores.begin(), stores.end()),
+          primalInitialize(primalInitialize), LI(LI) {}
+  };
+
   ValueMap<Value *, Rematerializer> rematerializableAllocations;
 
   // Only loaded from and stored to (not captured), mapped to the stores (and
   // memset). Boolean denotes whether the primal initializes the shadow as well
   // (for use) as a structure which carries data.
-  ValueMap<Value *, std::pair<SmallPtrSet<Instruction *, 1>, bool>>
-      backwardsOnlyShadows;
+  ValueMap<Value *, ShadowRematerializer> backwardsOnlyShadows;
 
   void computeForwardingProperties(Instruction *V, TypeResults &TR) {
     SmallPtrSet<LoadInst *, 1> loads;
     SmallPtrSet<Instruction *, 1> stores;
+    SmallPtrSet<Instruction *, 1> frees;
     SmallPtrSet<IntrinsicInst *, 1> LifetimeStarts;
     bool promotable = true;
     bool shadowpromotable = true;
@@ -625,7 +649,7 @@ public:
       } else if (auto CI = dyn_cast<CallInst>(cur)) {
         Function *called = getFunctionFromCall(CI);
         if (called && isDeallocationFunction(*called, TLI)) {
-          stores.insert(CI);
+          frees.insert(CI);
           continue;
         }
         if (called && called->getName() == "julia.write_barrier") {
@@ -703,16 +727,6 @@ public:
       }
     }
 
-    if (!shadowpromotable)
-      return;
-    backwardsOnlyShadows[V] =
-        std::make_pair(stores, primalInitializationOfShadow);
-
-    if (!promotable)
-      return;
-
-    SmallPtrSet<LoadInst *, 1> rematerializable;
-
     // Find the outermost loop of all stores, and the allocation/lifetime
     Loop *outer = OrigLI.getLoopFor(V->getParent());
     if (LifetimeStarts.size() == 1) {
@@ -737,6 +751,16 @@ public:
       }
     }
 
+    if (!shadowpromotable)
+      return;
+    backwardsOnlyShadows[V] =
+        ShadowRematerializer(stores, primalInitializationOfShadow, outer);
+
+    if (!promotable)
+      return;
+
+    SmallPtrSet<LoadInst *, 1> rematerializable;
+
     for (auto LI : loads) {
       // Is there a store which could occur after the load.
       // In other words
@@ -746,7 +770,8 @@ public:
       rematerializable.insert(LI);
     }
     if (rematerializable.size() == loads.size()) {
-      rematerializableAllocations[V] = Rematerializer(loads, stores, outer);
+      rematerializableAllocations[V] =
+          Rematerializer(loads, stores, frees, outer);
     }
   }
 
@@ -966,7 +991,7 @@ public:
       auto found = backwardsOnlyShadows.find(orig);
       if (found != backwardsOnlyShadows.end()) {
         backwardsShadow = true;
-        forwardsShadow = found->second.second;
+        forwardsShadow = found->second.primalInitialize;
       }
     }
 
@@ -1617,14 +1642,18 @@ public:
                  BasicBlock *scope = nullptr,
                  bool permitCache = true) override final;
 
-  void ensureLookupCached(Instruction *inst, bool shouldFree = true) {
+  void ensureLookupCached(Instruction *inst, bool shouldFree = true,
+                          BasicBlock *scope = nullptr) {
     assert(inst);
     if (scopeMap.find(inst) != scopeMap.end())
       return;
     if (shouldFree)
       assert(reverseBlocks.size());
-    LimitContext lctx(/*ReverseLimit*/ reverseBlocks.size() > 0,
-                      inst->getParent());
+
+    if (scope == nullptr)
+      scope = inst->getParent();
+
+    LimitContext lctx(/*ReverseLimit*/ reverseBlocks.size() > 0, scope);
 
     AllocaInst *cache =
         createCacheForScope(lctx, inst->getType(), inst->getName(), shouldFree);

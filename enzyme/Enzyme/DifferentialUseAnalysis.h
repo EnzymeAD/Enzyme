@@ -74,7 +74,7 @@ static inline bool is_use_directly_needed_in_reverse(
       // backwards creation shadow.
       if (!TR.query(const_cast<Value *>(SI->getValueOperand()))[{-1}].isFloat())
         for (auto pair : gutils->backwardsOnlyShadows)
-          if (pair.second.first.count(SI) &&
+          if (pair.second.stores.count(SI) &&
               !gutils->isConstantValue(pair.first)) {
             return true;
           }
@@ -92,7 +92,7 @@ static inline bool is_use_directly_needed_in_reverse(
   if (auto MS = dyn_cast<MemSetInst>(user)) {
     if (MS->getArgOperand(2) == val) {
       for (auto pair : gutils->backwardsOnlyShadows)
-        if (pair.second.first.count(MS) &&
+        if (pair.second.stores.count(MS) &&
             !gutils->isConstantValue(pair.first)) {
           return true;
         }
@@ -266,7 +266,7 @@ static inline bool is_value_needed_in_reverse(
           // a possible pointer.
           bool rematerialized = false;
           for (auto pair : gutils->backwardsOnlyShadows)
-            if (pair.second.first.count(SI)) {
+            if (pair.second.stores.count(SI)) {
               rematerialized = true;
               break;
             }
@@ -475,7 +475,12 @@ struct Node {
       return true;
     return !(N.V < V) && outgoing < N.outgoing;
   }
-  void dump() { llvm::errs() << "[" << *V << ", " << (int)outgoing << "]\n"; }
+  void dump() {
+    if (V)
+      llvm::errs() << "[" << *V << ", " << (int)outgoing << "]\n";
+    else
+      llvm::errs() << "[" << V << ", " << (int)outgoing << "]\n";
+  }
 };
 
 typedef std::map<Node, std::set<Node>> Graph;
@@ -596,8 +601,8 @@ static inline void minCut(const DataLayout &DL, LoopInfo &OrigLI,
       Node u = parent.find(v)->second;
       assert(u.V != nullptr);
       assert(G[u].count(v) == 1);
-      G[u].erase(v);
       assert(G[v].count(u) == 0);
+      G[u].erase(v);
       G[v].insert(u);
       if (Recomputes.count(u.V) && u.outgoing == false)
         break;

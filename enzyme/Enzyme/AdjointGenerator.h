@@ -917,9 +917,9 @@ public:
       bool backwardsShadow = false;
       bool forwardsShadow = true;
       for (auto pair : gutils->backwardsOnlyShadows) {
-        if (pair.second.first.count(&I)) {
+        if (pair.second.stores.count(&I)) {
           backwardsShadow = true;
-          forwardsShadow = pair.second.second;
+          forwardsShadow = pair.second.primalInitialize;
         }
       }
 
@@ -2574,9 +2574,9 @@ public:
     bool backwardsShadow = false;
     bool forwardsShadow = true;
     for (auto pair : gutils->backwardsOnlyShadows) {
-      if (pair.second.first.count(&MS)) {
+      if (pair.second.stores.count(&MS)) {
         backwardsShadow = true;
-        forwardsShadow = pair.second.second;
+        forwardsShadow = pair.second.primalInitialize;
       }
     }
 
@@ -8078,9 +8078,9 @@ public:
           bool backwardsShadow = false;
           bool forwardsShadow = true;
           for (auto pair : gutils->backwardsOnlyShadows) {
-            if (pair.second.first.count(orig)) {
+            if (pair.second.stores.count(orig)) {
               backwardsShadow = true;
-              forwardsShadow = pair.second.second;
+              forwardsShadow = pair.second.primalInitialize;
               break;
             }
           }
@@ -8513,15 +8513,19 @@ public:
                 funcName == "jl_array_copy" || funcName == "julia.gc_alloc_obj")
               return;
 
-            // Otherwise if in reverse only, free the newly created allocation
+            // Otherwise if in reverse only, free the newly created allocation.
             if (Mode == DerivativeMode::ReverseModeGradient) {
               IRBuilder<> Builder2(call.getParent());
               getReverseBuilder(Builder2);
               auto dbgLoc = gutils->getNewFromOriginal(orig->getDebugLoc());
               freeKnownAllocation(Builder2, lookup(newCall, Builder2), *called,
                                   dbgLoc, gutils->TLI);
+              return;
             }
-            return;
+            // If in primal, do nothing (keeping the original caching behavior)
+            if (Mode == DerivativeMode::ReverseModePrimal)
+              return;
+            // Otherwise, in combined: use the existing shouldFree heuristics
           } else {
             // If not caching allocation and not needed in the reverse, we can
             // use the original freeing behavior for the function. If in the
@@ -8826,7 +8830,7 @@ public:
 
       // If a rematerializable allocation.
       for (auto rmat : gutils->rematerializableAllocations) {
-        if (rmat.second.stores.count(orig)) {
+        if (rmat.second.frees.count(orig)) {
           // Leave the original free behavior since this won't be used
           // in the reverse pass in split mode
           if (Mode == DerivativeMode::ReverseModePrimal) {
@@ -8836,6 +8840,9 @@ public:
             return;
           } else {
             assert(Mode == DerivativeMode::ReverseModeCombined);
+            // If in a loop context, maintain the same free behavior.
+            if (rmat.second.LI && rmat.second.LI->contains(orig->getParent()))
+              return;
             // In combined mode, if we don't need this allocation
             // in the reverse, we can use the original deallocation
             // behavior.
@@ -8845,7 +8852,7 @@ public:
                 Seen[UsageKey(pair.first, ValueType::Primal)] = false;
             bool primalNeededInReverse =
                 is_value_needed_in_reverse<ValueType::Primal>(
-                    TR, gutils, orig, Mode, Seen, oldUnreachable);
+                    TR, gutils, rmat.first, Mode, Seen, oldUnreachable);
             if (gutils->knownRecomputeHeuristic.count(rmat.first)) {
               if (!gutils->knownRecomputeHeuristic[rmat.first])
                 primalNeededInReverse = true;
