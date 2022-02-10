@@ -953,6 +953,26 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       blocks.insert(edge.first);
     }
 
+    BasicBlock *oldB = BuilderM.GetInsertBlock();
+    if (BuilderM.GetInsertPoint() != oldB->end()) {
+      assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
+      goto endCheck;
+    }
+
+    BasicBlock *fwd = oldB;
+    bool inReverseBlocks = false;
+    if (!isOriginalBlock(*fwd)) {
+      auto found = reverseBlockToPrimal.find(oldB);
+      if (found == reverseBlockToPrimal.end()) {
+        assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
+        goto endCheck;
+      }
+      fwd = found->second;
+      inReverseBlocks =
+          std::find(reverseBlocks[fwd].begin(), reverseBlocks[fwd].end(),
+                    oldB) != reverseBlocks[fwd].end();
+    }
+
     if (targetToPreds.size() == 3) {
       for (auto block : blocks) {
         if (!DT.dominates(block, phi->getParent()))
@@ -1048,19 +1068,6 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
               goto endCheck;
             }
 
-            BasicBlock *oldB = BuilderM.GetInsertBlock();
-            if (BuilderM.GetInsertPoint() != oldB->end()) {
-              assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
-              goto endCheck;
-            }
-
-            auto found = reverseBlockToPrimal.find(oldB);
-            if (found == reverseBlockToPrimal.end()) {
-              assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
-              goto endCheck;
-            }
-            BasicBlock *fwd = found->second;
-
             SmallVector<BasicBlock *, 2> predBlocks;
             predBlocks.push_back(bi2->getSuccessor(0));
             predBlocks.push_back(bi2->getSuccessor(1));
@@ -1091,7 +1098,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                   val->getContext(), oldB->getName() + "_phirc", newFunc));
               blocks[i]->moveAfter(last);
               last = blocks[i];
-              reverseBlocks[fwd].push_back(blocks[i]);
+              if (inReverseBlocks)
+                reverseBlocks[fwd].push_back(blocks[i]);
               reverseBlockToPrimal[blocks[i]] = fwd;
               IRBuilder<> B(blocks[i]);
 
@@ -1126,9 +1134,10 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
 
               if (!vals[i]) {
                 for (size_t j = 0; j <= i; j++) {
-                  reverseBlocks[fwd].erase(std::find(reverseBlocks[fwd].begin(),
-                                                     reverseBlocks[fwd].end(),
-                                                     blocks[j]));
+                  if (inReverseBlocks)
+                    reverseBlocks[fwd].erase(
+                        std::find(reverseBlocks[fwd].begin(),
+                                  reverseBlocks[fwd].end(), blocks[j]));
                   reverseBlockToPrimal.erase(blocks[j]);
                   unwrap_cache.erase(blocks[j]);
                   lookup_cache.erase(blocks[j]);
@@ -1170,7 +1179,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
             BuilderM.CreateCondBr(cond2, blocks[0], blocks[1]);
 
             BuilderM.SetInsertPoint(bret);
-            reverseBlocks[fwd].push_back(bret);
+            if (inReverseBlocks)
+              reverseBlocks[fwd].push_back(bret);
             reverseBlockToPrimal[bret] = fwd;
             auto toret = BuilderM.CreatePHI(val->getType(), vals.size());
             for (size_t i = 0; i < vals.size(); i++)
@@ -1226,16 +1236,6 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         isa<SwitchInst>(equivalentTerminator)) {
       BasicBlock *oldB = BuilderM.GetInsertBlock();
 
-      BasicBlock *fwd = oldB;
-      if (!isOriginalBlock(*fwd)) {
-        auto found = reverseBlockToPrimal.find(oldB);
-        if (found == reverseBlockToPrimal.end()) {
-          assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
-          goto endCheck;
-        }
-        fwd = found->second;
-      }
-
       SmallVector<BasicBlock *, 2> predBlocks;
       Value *cond = nullptr;
       if (auto branch = dyn_cast<BranchInst>(equivalentTerminator)) {
@@ -1280,7 +1280,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         blocks[i]->moveAfter(last);
         last = blocks[i];
         if (reverseBlocks.size() > 0) {
-          reverseBlocks[fwd].push_back(blocks[i]);
+          if (inReverseBlocks)
+            reverseBlocks[fwd].push_back(blocks[i]);
           reverseBlockToPrimal[blocks[i]] = fwd;
         }
         IRBuilder<> B(blocks[i]);
@@ -1313,9 +1314,10 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         if (!vals[i]) {
           for (size_t j = 0; j <= i; j++) {
             if (reverseBlocks.size() > 0) {
-              reverseBlocks[fwd].erase(std::find(reverseBlocks[fwd].begin(),
-                                                 reverseBlocks[fwd].end(),
-                                                 blocks[j]));
+              if (inReverseBlocks)
+                reverseBlocks[fwd].erase(std::find(reverseBlocks[fwd].begin(),
+                                                   reverseBlocks[fwd].end(),
+                                                   blocks[j]));
               reverseBlockToPrimal.erase(blocks[j]);
             }
             unwrap_cache.erase(blocks[j]);
@@ -1346,9 +1348,10 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           blocks[1]->size() == 1) {
         for (size_t j = 0; j < blocks.size(); j++) {
           if (reverseBlocks.size() > 0) {
-            reverseBlocks[fwd].erase(std::find(reverseBlocks[fwd].begin(),
-                                               reverseBlocks[fwd].end(),
-                                               blocks[j]));
+            if (inReverseBlocks)
+              reverseBlocks[fwd].erase(std::find(reverseBlocks[fwd].begin(),
+                                                 reverseBlocks[fwd].end(),
+                                                 blocks[j]));
             reverseBlockToPrimal.erase(blocks[j]);
           }
           unwrap_cache.erase(blocks[j]);
@@ -1379,9 +1382,10 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       if (BuilderM.GetInsertPoint() != oldB->end()) {
         for (size_t j = 0; j < blocks.size(); j++) {
           if (reverseBlocks.size() > 0) {
-            reverseBlocks[fwd].erase(std::find(reverseBlocks[fwd].begin(),
-                                               reverseBlocks[fwd].end(),
-                                               blocks[j]));
+            if (inReverseBlocks)
+              reverseBlocks[fwd].erase(std::find(reverseBlocks[fwd].begin(),
+                                                 reverseBlocks[fwd].end(),
+                                                 blocks[j]));
             reverseBlockToPrimal.erase(blocks[j]);
           }
           unwrap_cache.erase(blocks[j]);
@@ -1415,7 +1419,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         }
       }
       BuilderM.SetInsertPoint(bret);
-      reverseBlocks[fwd].push_back(bret);
+      if (inReverseBlocks)
+        reverseBlocks[fwd].push_back(bret);
       reverseBlockToPrimal[bret] = fwd;
       auto toret = BuilderM.CreatePHI(val->getType(), vals.size());
       for (size_t i = 0; i < vals.size(); i++)
@@ -2068,8 +2073,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
           for (auto B : origLI->getBlocks()) {
             BasicBlock *newB = BasicBlock::Create(
                 B->getContext(),
-                "remat_" + reverseBlocks[lc.header].front()->getName() + "_" +
-                    B->getName(),
+                "remat_" + lc.header->getName() + "_" + B->getName(),
                 BB->getParent());
             origToNewForward[B] = newB;
             reverseBlockToPrimal[newB] = getNewFromOriginal(B);
@@ -2125,8 +2129,6 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
           for (auto B : origLI->getBlocks()) {
             auto newB = origToNewForward[B];
             IRBuilder<> NB(newB);
-            if (!newB->empty())
-              NB.SetInsertPoint(newB->getFirstNonPHI());
 
             // TODO fill available with relevant IV's surrounding and
             // IV's of inner loop phi's
@@ -2202,11 +2204,6 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                 }
               }
             }
-          }
-
-          // Add inverted terminators
-          for (auto B : origLI->getBlocks()) {
-            IRBuilder<> NB(origToNewForward[B]);
 
             // Remap a branch to the header to continue to the block.
             auto remap = [&](BasicBlock *rB) {
@@ -2239,6 +2236,23 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
             } else {
               assert(isa<UnreachableInst>(TI));
               NB.CreateUnreachable();
+            }
+            // Fixup phi nodes that may have their predecessors now changed by
+            // the phi unwrapping
+            if (!notForAnalysis.count(B) &&
+                NB.GetInsertBlock() != origToNewForward[B]) {
+              for (auto S : successors(B)) {
+                S = origToNewForward[S];
+                for (auto I = S->begin(), E = S->end(); I != E; ++I) {
+                  PHINode *orig = dyn_cast<PHINode>(&*I);
+                  if (orig == nullptr)
+                    break;
+                  for (unsigned Op = 0, NumOps = orig->getNumOperands();
+                       Op != NumOps; ++Op)
+                    if (orig->getIncomingBlock(Op) == origToNewForward[B])
+                      orig->setIncomingBlock(Op, NB.GetInsertBlock());
+                }
+              }
             }
           }
           rematerializedLoops_cache[L] = resumeblock = enterB;

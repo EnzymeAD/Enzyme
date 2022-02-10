@@ -548,7 +548,7 @@ public:
   ValueMap<Value *, std::pair<SmallPtrSet<Instruction *, 1>, bool>>
       backwardsOnlyShadows;
 
-  void computeForwardingProperties(CallInst *V, TypeResults &TR) {
+  void computeForwardingProperties(Instruction *V, TypeResults &TR) {
     SmallPtrSet<LoadInst *, 1> loads;
     SmallPtrSet<Instruction *, 1> stores;
     SmallPtrSet<IntrinsicInst *, 1> LifetimeStarts;
@@ -673,11 +673,11 @@ public:
               // if only reading memory, ok to duplicate in forward /
               // reverse if it is a stack or GC allocation.
               // Said memory will still be shadow initialized.
-              Function *originCall = getFunctionFromCall(V);
               StringRef funcName = "";
-              if (originCall)
-                funcName = called->getName();
-              if (hasMetadata(V, "enzyme_fromstack") ||
+              if (auto CI = dyn_cast<CallInst>(V))
+                if (Function *originCall = getFunctionFromCall(CI))
+                  funcName = originCall->getName();
+              if (isa<AllocaInst>(V) || hasMetadata(V, "enzyme_fromstack") ||
                   funcName == "jl_alloc_array_1d" ||
                   funcName == "jl_alloc_array_2d" ||
                   funcName == "jl_alloc_array_3d" ||
@@ -758,6 +758,9 @@ public:
       if (oldUnreachable.count(&BB))
         continue;
       for (auto &I : BB) {
+        if (auto AI = dyn_cast<AllocaInst>(&I))
+          computeForwardingProperties(AI, TR);
+
         auto CI = dyn_cast<CallInst>(&I);
         if (!CI)
           continue;
