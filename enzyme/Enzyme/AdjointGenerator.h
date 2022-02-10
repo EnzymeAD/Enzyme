@@ -8384,42 +8384,9 @@ public:
       bool constval = gutils->isConstantValue(orig);
 
       if (!constval) {
-        if (Mode == DerivativeMode::ReverseModeCombined ||
-            Mode == DerivativeMode::ReverseModeGradient ||
-            Mode == DerivativeMode::ReverseModePrimal) {
-
-          Value *anti = nullptr;
-          {
-            auto found = gutils->invertedPointers.find(orig);
-            PHINode *placeholder = cast<PHINode>(&*found->second);
-
-            // If rematerializable allocations and split mode, we can
-            // simply elect to build the entire piece in the reverse
-            // since it should be possible to perform any shadow stores
-            // of pointers (from rematerializable property) and it does
-            // not escape the function scope (lest it not be
-            // rematerializable) so all input derivatives remain zero.
-            bool backwardsShadow = false;
-            bool forwardsShadow = true;
-            {
-              auto found = gutils->backwardsOnlyShadows.find(orig);
-              if (found != gutils->backwardsOnlyShadows.end()) {
-                backwardsShadow = true;
-                forwardsShadow = found->second.primalInitialize;
-              }
-            }
-
-            if (!forwardsShadow && Mode == DerivativeMode::ReverseModePrimal) {
-              // Needs a stronger replacement check/assertion.
-              Value *replacement = UndefValue::get(placeholder->getType());
-              gutils->replaceAWithB(placeholder, replacement);
-              gutils->invertedPointers.erase(found);
-              gutils->invertedPointers.insert(
-                  std::make_pair(orig, InvertedPointerVH(gutils, replacement)));
-              gutils->erase(placeholder);
-              goto endAnti;
-            }
-            placeholder->setName("");
+        auto dbgLoc = gutils->getNewFromOriginal(orig)->getDebugLoc();
+        auto found = gutils->invertedPointers.find(orig);
+        PHINode *placeholder = cast<PHINode>(&*found->second);
             IRBuilder<> bb(placeholder);
 
             SmallVector<Value *, 8> args;
@@ -8432,10 +8399,49 @@ public:
               args.push_back(gutils->getNewFromOriginal(arg));
             }
 
+
+        if (Mode == DerivativeMode::ReverseModeCombined ||
+            Mode == DerivativeMode::ReverseModeGradient ||
+            Mode == DerivativeMode::ReverseModePrimal) {
+
+          Value *anti = placeholder;
+          // If rematerializable allocations and split mode, we can
+          // simply elect to build the entire piece in the reverse
+          // since it should be possible to perform any shadow stores
+          // of pointers (from rematerializable property) and it does
+          // not escape the function scope (lest it not be
+          // rematerializable) so all input derivatives remain zero.
+          bool backwardsShadow = false;
+          bool forwardsShadow = true;
+		  bool inLoop = false;
+          {
+              auto found = gutils->backwardsOnlyShadows.find(orig);
+              if (found != gutils->backwardsOnlyShadows.end()) {
+                backwardsShadow = true;
+                forwardsShadow = found->second.primalInitialize;
+               // If in a loop context, maintain the same free behavior.
+               if (found->second.LI && found->second.LI->contains(orig->getParent()))
+			     inLoop = true;
+              }
+          }
+          {
+
+            if (!forwardsShadow) {
+			  if  (Mode == DerivativeMode::ReverseModePrimal || inLoop) {
+				  // Needs a stronger replacement check/assertion.
+				  Value *replacement = UndefValue::get(placeholder->getType());
+				  gutils->replaceAWithB(placeholder, replacement);
+				  gutils->invertedPointers.erase(found);
+				  gutils->invertedPointers.insert(
+					  std::make_pair(orig, InvertedPointerVH(gutils, replacement)));
+				  gutils->erase(placeholder);
+				  goto endAnti;
+			  }
+            }
+            placeholder->setName("");
             if (shadowHandlers.find(called->getName().str()) !=
                 shadowHandlers.end()) {
               bb.SetInsertPoint(placeholder);
-              Value *anti = placeholder;
 
               if (Mode == DerivativeMode::ReverseModeCombined ||
                   (Mode == DerivativeMode::ReverseModePrimal &&
@@ -8457,11 +8463,7 @@ public:
               if (!backwardsShadow)
                 anti = gutils->cacheForReverse(
                     bb, anti, getIndex(orig, CacheType::Shadow));
-              gutils->invertedPointers.insert(
-                  std::make_pair(orig, InvertedPointerVH(gutils, anti)));
-              goto endAnti;
-            }
-
+            } else {
 #if LLVM_VERSION_MAJOR >= 11
             anti =
                 bb.CreateCall(orig->getFunctionType(), orig->getCalledOperand(),
@@ -8473,8 +8475,7 @@ public:
             cast<CallInst>(anti)->setAttributes(orig->getAttributes());
             cast<CallInst>(anti)->setCallingConv(orig->getCallingConv());
             cast<CallInst>(anti)->setTailCallKind(orig->getTailCallKind());
-            cast<CallInst>(anti)->setDebugLoc(
-                gutils->getNewFromOriginal(orig->getDebugLoc()));
+            cast<CallInst>(anti)->setDebugLoc(dbgLoc);
 
 #if LLVM_VERSION_MAJOR >= 14
             cast<CallInst>(anti)->addAttributeAtIndex(
@@ -8487,48 +8488,6 @@ public:
             cast<CallInst>(anti)->addAttribute(AttributeList::ReturnIndex,
                                                Attribute::NonNull);
 #endif
-            unsigned derefBytes = 0;
-            if (called->getName() == "malloc" || called->getName() == "_Znwm") {
-              if (auto ci = dyn_cast<ConstantInt>(args[0])) {
-                derefBytes = ci->getLimitedValue();
-                CallInst *cal =
-                    cast<CallInst>(gutils->getNewFromOriginal(orig));
-#if LLVM_VERSION_MAJOR >= 14
-                cast<CallInst>(anti)->addDereferenceableRetAttr(
-                    ci->getLimitedValue());
-                cal->addDereferenceableRetAttr(ci->getLimitedValue());
-#ifndef FLANG
-                AttrBuilder B(Fn->getContext());
-#else
-                AttrBuilder B;
-#endif
-                B.addDereferenceableOrNullAttr(ci->getLimitedValue());
-                cast<CallInst>(anti)->setAttributes(
-                    cast<CallInst>(anti)->getAttributes().addRetAttributes(
-                        orig->getContext(), B));
-                cal->setAttributes(cal->getAttributes().addRetAttributes(
-                    orig->getContext(), B));
-                cal->addAttributeAtIndex(AttributeList::ReturnIndex,
-                                         Attribute::NoAlias);
-                cal->addAttributeAtIndex(AttributeList::ReturnIndex,
-                                         Attribute::NonNull);
-#else
-                cast<CallInst>(anti)->addDereferenceableAttr(
-                    llvm::AttributeList::ReturnIndex, ci->getLimitedValue());
-                cal->addDereferenceableAttr(llvm::AttributeList::ReturnIndex,
-                                            ci->getLimitedValue());
-                cast<CallInst>(anti)->addDereferenceableOrNullAttr(
-                    llvm::AttributeList::ReturnIndex, ci->getLimitedValue());
-                cal->addDereferenceableOrNullAttr(
-                    llvm::AttributeList::ReturnIndex, ci->getLimitedValue());
-                cal->addAttribute(AttributeList::ReturnIndex,
-                                  Attribute::NoAlias);
-                cal->addAttribute(AttributeList::ReturnIndex,
-                                  Attribute::NonNull);
-#endif
-              }
-            }
-
             gutils->invertedPointers.erase(found);
             bb.SetInsertPoint(placeholder->getNextNode());
             gutils->replaceAWithB(placeholder, anti);
@@ -8540,8 +8499,7 @@ public:
             else {
               if (auto MD = hasMetadata(orig, "enzyme_fromstack")) {
                 AllocaInst *replacement = bb.CreateAlloca(
-                    Type::getInt8Ty(orig->getContext()),
-                    gutils->getNewFromOriginal(orig->getArgOperand(0)));
+                    Type::getInt8Ty(orig->getContext()), args[0]);
                 replacement->takeName(anti);
                 auto Alignment =
                     cast<ConstantInt>(
@@ -8557,65 +8515,21 @@ public:
                 anti = replacement;
               }
             }
-            gutils->invertedPointers.insert(std::make_pair(
-                (const Value *)orig, InvertedPointerVH(gutils, anti)));
 
-            if (called->getName() != "calloc" &&
-                (Mode == DerivativeMode::ReverseModeCombined ||
+            if (Mode == DerivativeMode::ReverseModeCombined ||
                  (Mode == DerivativeMode::ReverseModePrimal &&
                   forwardsShadow) ||
                  (Mode == DerivativeMode::ReverseModeGradient &&
-                  backwardsShadow))) {
-              Value *dst_arg = anti;
-
-              dst_arg = bb.CreateBitCast(
-                  dst_arg, Type::getInt8PtrTy(
-                               orig->getContext(),
-                               anti->getType()->getPointerAddressSpace()));
-
-              auto val_arg =
-                  ConstantInt::get(Type::getInt8Ty(orig->getContext()), 0);
-              Value *size = args[0];
-              auto len_arg = bb.CreateZExtOrTrunc(
-                  size, Type::getInt64Ty(orig->getContext()));
-              auto volatile_arg = ConstantInt::getFalse(orig->getContext());
-
-#if LLVM_VERSION_MAJOR == 6
-              auto align_arg =
-                  ConstantInt::get(Type::getInt32Ty(orig->getContext()), 1);
-              Value *nargs[] = {dst_arg, val_arg, len_arg, align_arg,
-                                volatile_arg};
-#else
-              Value *nargs[] = {dst_arg, val_arg, len_arg, volatile_arg};
-#endif
-
-              Type *tys[] = {dst_arg->getType(), len_arg->getType()};
-
-              auto memset = cast<CallInst>(bb.CreateCall(
-                  Intrinsic::getDeclaration(gutils->newFunc->getParent(),
-                                            Intrinsic::memset, tys),
-                  nargs));
-              // memset->addParamAttr(0, Attribute::getWithAlignment(Context,
-              // inst->getAlignment()));
-              memset->addParamAttr(0, Attribute::NonNull);
-              if (derefBytes) {
-#if LLVM_VERSION_MAJOR >= 14
-                memset->addDereferenceableParamAttr(0, derefBytes);
-                memset->setAttributes(
-                    memset->getAttributes().addDereferenceableOrNullParamAttr(
-                        memset->getContext(), 0, derefBytes));
-#else
-                memset->addDereferenceableAttr(
-                    llvm::AttributeList::FirstArgIndex, derefBytes);
-                memset->addDereferenceableOrNullAttr(
-                    llvm::AttributeList::FirstArgIndex, derefBytes);
-#endif
-              }
+                  backwardsShadow)) {
+				zeroKnownAllocation(bb, anti, args, *called, gutils->TLI);
             }
-          }
-
+			}
+              gutils->invertedPointers.insert(
+                  std::make_pair(orig, InvertedPointerVH(gutils, anti)));
+		}
         endAnti:;
           if ((Mode == DerivativeMode::ReverseModeCombined ||
+               (Mode == DerivativeMode::ReverseModePrimal && forwardsShadow && backwardsShadow) ||
                Mode == DerivativeMode::ReverseModeGradient ||
                Mode == DerivativeMode::ForwardModeSplit) &&
               shouldFree() && !isa<AllocaInst>(anti)) {
@@ -8629,7 +8543,6 @@ public:
             assert(
                 PointerType::getUnqual(Type::getInt8Ty(tofree->getContext())));
             assert(Type::getInt8PtrTy(tofree->getContext()));
-            auto dbgLoc = gutils->getNewFromOriginal(orig)->getDebugLoc();
             auto CI = freeKnownAllocation(Builder2, tofree, *called, dbgLoc,
                                           gutils->TLI);
             if (CI)
@@ -8642,34 +8555,23 @@ public:
 #endif
           }
         } else if (Mode == DerivativeMode::ForwardMode) {
-          IRBuilder<> Builder2(&call);
-          getForwardBuilder(Builder2);
-
-          SmallVector<Value *, 2> args;
-#if LLVM_VERSION_MAJOR >= 14
-          for (unsigned i = 0; i < orig->arg_size(); ++i)
-#else
-          for (unsigned i = 0; i < orig->getNumArgOperands(); ++i)
-#endif
-          {
-            auto arg = orig->getArgOperand(i);
-            args.push_back(gutils->getNewFromOriginal(arg));
-          }
-          CallInst *CI = Builder2.CreateCall(orig->getFunctionType(),
+          CallInst *CI = bb.CreateCall(orig->getFunctionType(),
                                              orig->getCalledFunction(), args);
           CI->setAttributes(orig->getAttributes());
-
-          auto found = gutils->invertedPointers.find(orig);
-          PHINode *placeholder = cast<PHINode>(&*found->second);
+          CI->setCallingConv(orig->getCallingConv());
+          CI->setTailCallKind(orig->getTailCallKind());
+          CI->setDebugLoc(dbgLoc);
 
           gutils->invertedPointers.erase(found);
           gutils->replaceAWithB(placeholder, CI);
           gutils->erase(placeholder);
           gutils->invertedPointers.insert(
               std::make_pair(orig, InvertedPointerVH(gutils, CI)));
-          return;
         }
       }
+
+	  // Cache and rematerialization irrelevant for forward mode.
+	  if (Mode == DerivativeMode::ForwardMode) return;
 
       std::map<UsageKey, bool> Seen;
       for (auto pair : gutils->knownRecomputeHeuristic)
