@@ -767,7 +767,7 @@ public:
     for (auto pair : gutils->rematerializableAllocations) {
       if (is_value_needed_in_reverse<ValueType::Primal>(
               TR, gutils, pair.first, Mode, Seen, oldUnreachable)) {
-        if (pair.second.second.count(&SI)) {
+        if (pair.second.stores.count(&SI)) {
           return;
         }
       }
@@ -2539,7 +2539,7 @@ public:
     for (auto pair : gutils->rematerializableAllocations) {
       if (is_value_needed_in_reverse<ValueType::Primal>(
               TR, gutils, pair.first, Mode, Seen, oldUnreachable)) {
-        if (pair.second.second.count(&MS)) {
+        if (pair.second.stores.count(&MS)) {
           rematerialized = true;
           break;
         }
@@ -8060,7 +8060,7 @@ public:
               Seen[UsageKey(pair.first, ValueType::Primal)] = false;
           bool rematerializedPrimal = false;
           for (auto pair : gutils->rematerializableAllocations) {
-            if (pair.second.second.count(orig) &&
+            if (pair.second.stores.count(orig) &&
                 is_value_needed_in_reverse<ValueType::Primal>(
                     TR, gutils, pair.first, Mode, Seen, oldUnreachable)) {
               rematerializedPrimal = true;
@@ -8818,7 +8818,7 @@ public:
 
       // If a rematerializable allocation.
       for (auto rmat : gutils->rematerializableAllocations) {
-        if (rmat.second.second.count(orig)) {
+        if (rmat.second.stores.count(orig)) {
           // Leave the original free behavior since this won't be used
           // in the reverse pass in split mode
           if (Mode == DerivativeMode::ReverseModePrimal) {

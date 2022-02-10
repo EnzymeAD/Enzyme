@@ -191,7 +191,8 @@ public:
   SmallVector<OperandBundleDef, 2> getInvertedBundles(CallInst *orig,
                                                       ArrayRef<ValueType> types,
                                                       IRBuilder<> &Builder2,
-                                                      bool lookup) {
+                                                      bool lookup,
+                                                      const ValueToValueMapTy &available = ValueToValueMapTy()) {
     SmallVector<OperandBundleDef, 2> OrigDefs;
     orig->getOperandBundlesAsDefs(OrigDefs);
     SmallVector<OperandBundleDef, 2> Defs;
@@ -211,7 +212,7 @@ public:
       for (auto inp : bund.inputs()) {
         Value *newv = getNewFromOriginal(inp);
         if (lookup)
-          newv = lookupM(newv, Builder2);
+          newv = lookupM(newv, Builder2, available);
         bunds.push_back(newv);
         if (!isConstantValue(inp)) {
           Value *shadow = invertPointerM(inp, Builder2);
@@ -523,9 +524,23 @@ public:
     return cast_or_null<BasicBlock>(isOriginal((const Value *)newinst));
   }
 
-  ValueMap<Value *,
-           std::pair<SmallPtrSet<LoadInst *, 1>, SmallPtrSet<Instruction *, 1>>>
-      rematerializableAllocations;
+  struct Rematerializer {
+    // Loads which may need to be rematerialized.
+    SmallPtrSet<LoadInst *, 1> loads;
+
+    // Operations which must be rerun to rematerialize
+    // the value.
+    SmallPtrSet<Instruction *, 1> stores;
+
+    // Loop scope (null if not loop scoped).
+    Loop* LI;
+
+    Rematerializer() : loads(), stores(), LI(nullptr) {}
+    Rematerializer(const SmallPtrSetImpl<LoadInst*> &loads,
+                   const SmallPtrSetImpl<Instruction*> &stores,
+                   Loop* LI) : loads(loads.begin(), loads.end()), stores(stores.begin(), stores.end()), LI(LI) {}
+  };
+  ValueMap<Value *, Rematerializer> rematerializableAllocations;
 
   // Only loaded from and stored to (not captured), mapped to the stores (and
   // memset). Boolean denotes whether the primal initializes the shadow as well
@@ -536,6 +551,7 @@ public:
   void computeForwardingProperties(CallInst *V, TypeResults &TR) {
     SmallPtrSet<LoadInst *, 1> loads;
     SmallPtrSet<Instruction *, 1> stores;
+    SmallPtrSet<IntrinsicInst *, 1> LifetimeStarts;
     bool promotable = true;
     bool shadowpromotable = true;
     bool primalInitializationOfShadow = false;
@@ -568,13 +584,15 @@ public:
           stores.insert(store);
       } else if (auto II = dyn_cast<IntrinsicInst>(cur)) {
         switch (II->getIntrinsicID()) {
+        case Intrinsic::lifetime_start:
+          LifetimeStarts.insert(II);
+          break;
         case Intrinsic::dbg_declare:
         case Intrinsic::dbg_value:
 #if LLVM_VERSION_MAJOR > 6
         case Intrinsic::dbg_label:
 #endif
         case Intrinsic::dbg_addr:
-        case Intrinsic::lifetime_start:
         case Intrinsic::lifetime_end:
           break;
         case Intrinsic::memset: {
@@ -695,33 +713,30 @@ public:
 
     SmallPtrSet<LoadInst *, 1> rematerializable;
 
-    Loop *outer = nullptr;
-    bool set = false;
+    // Find the outermost loop of all stores, and the allocation/lifetime
+    Loop *outer = OrigLI.getLoopFor(V->getParent());
+    if (LifetimeStarts.size() == 1) {
+      outer = OrigLI.getLoopFor((*LifetimeStarts.begin())->getParent());
+    }
+
     for (auto S : stores) {
       Loop *L = OrigLI.getLoopFor(S->getParent());
-      if (!set) {
-        outer = L;
+      if (outer == nullptr || L == nullptr) {
+        outer = nullptr;
       } else {
-        if (outer == nullptr || L == nullptr) {
-          outer = nullptr;
-        } else {
-          Loop *anc = nullptr;
-          for (Loop *L1 = L; L1; L1 = L1->getParentLoop())
-            for (Loop *L2 = outer; L2; L2 = L2->getParentLoop()) {
-              if (L1 == L2) {
-                anc = L1;
-                goto found;
-              }
+        Loop *anc = nullptr;
+        for (Loop *L1 = L; L1; L1 = L1->getParentLoop())
+          for (Loop *L2 = outer; L2; L2 = L2->getParentLoop()) {
+            if (L1 == L2) {
+              anc = L1;
+              goto found;
             }
-        found:;
-          outer = anc;
-        }
+          }
+      found:;
+        outer = anc;
       }
     }
 
-    // TODO ensure a lifetime.start is between the loop header stand and all
-    // stores
-    outer = nullptr;
 
     for (auto LI : loads) {
       // Is there a store which could occur after the load.
@@ -732,7 +747,7 @@ public:
       rematerializable.insert(LI);
     }
     if (rematerializable.size() == loads.size()) {
-      rematerializableAllocations[V] = std::make_pair(loads, stores);
+      rematerializableAllocations[V] = Rematerializer(loads, stores, outer);
     }
   }
 
@@ -1396,6 +1411,10 @@ public:
   //  As we don't want to create redundant blocks, we use this convenient cache
   std::map<std::tuple<BasicBlock *, BasicBlock *>, BasicBlock *>
       newBlocksForLoop_cache;
+
+  //! This cache stores a rematerialized forward pass in the loop
+  //! specified
+  std::map<llvm::Loop*, llvm::BasicBlock *> rematerializedLoops_cache;
   BasicBlock *getReverseOrLatchMerge(BasicBlock *BB,
                                      BasicBlock *branchingBlock);
 

@@ -105,8 +105,7 @@ struct CacheAnalysis {
 
   const ValueMap<const CallInst *, SmallPtrSet<const CallInst *, 1>>
       &allocationsWithGuaranteedFree;
-  const ValueMap<Value *, std::pair<SmallPtrSet<LoadInst *, 1>,
-                                    SmallPtrSet<Instruction *, 1>>>
+  const ValueMap<Value *, GradientUtils::Rematerializer>
       &rematerializableAllocations;
   TypeResults &TR;
   AAResults &AA;
@@ -123,8 +122,7 @@ struct CacheAnalysis {
   CacheAnalysis(
       const ValueMap<const CallInst *, SmallPtrSet<const CallInst *, 1>>
           &allocationsWithGuaranteedFree,
-      const ValueMap<Value *, std::pair<SmallPtrSet<LoadInst *, 1>,
-                                        SmallPtrSet<Instruction *, 1>>>
+      const ValueMap<Value *, GradientUtils::Rematerializer>
           &rematerializableAllocations,
       TypeResults &TR, AAResults &AA, Function *oldFunc, ScalarEvolution &SE,
       LoopInfo &OrigLI, DominatorTree &OrigDT, TargetLibraryInfo &TLI,
