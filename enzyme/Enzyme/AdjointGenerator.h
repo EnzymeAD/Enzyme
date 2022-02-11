@@ -5318,13 +5318,20 @@ public:
               /*request*/ request,
           };
 
+          auto Defs = gutils->getInvertedBundles(
+              &call,
+              {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
+               ValueType::Primal, ValueType::Primal, ValueType::Primal,
+               ValueType::Shadow},
+              Builder2, /*lookup*/ false);
+
 #if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
 #else
           auto callval = call.getCalledValue();
 #endif
 
-          Builder2.CreateCall(call.getFunctionType(), callval, args);
+          Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
         }
       }
@@ -5458,6 +5465,10 @@ public:
 
         Value *args[] = {/*request*/ request,
                          /*status*/ status};
+
+        auto ReqDefs = gutils->getInvertedBundles(
+            &call, {ValueType::Shadow, ValueType::Shadow}, Builder2,
+            /*lookup*/ false);
 
         Type *types[sizeof(args) / sizeof(*args)];
         for (size_t i = 0; i < sizeof(args) / sizeof(*args); i++)
@@ -5634,13 +5645,19 @@ public:
             /*array_of_requests*/ array_of_requests,
         };
 
+        auto Defs = gutils->getInvertedBundles(
+            &call,
+            {ValueType::None, ValueType::None, ValueType::None, ValueType::None,
+             ValueType::None, ValueType::None, ValueType::Shadow},
+            Builder2, /*lookup*/ true);
+
 #if LLVM_VERSION_MAJOR >= 11
         auto callval = call.getCalledOperand();
 #else
         auto callval = call.getCalledValue();
 #endif
 
-        Builder2.CreateCall(call.getFunctionType(), callval, args);
+        Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
         return;
       }
       if (Mode == DerivativeMode::ReverseModeGradient)
@@ -5711,13 +5728,20 @@ public:
               /*tag*/ tag,
               /*comm*/ comm,
           };
+
+          auto Defs = gutils->getInvertedBundles(
+              &call,
+              {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
+               ValueType::Primal, ValueType::Primal, ValueType::Primal},
+              Builder2, /*lookup*/ false);
+
 #if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
 #else
           auto callval = call.getCalledValue();
 #endif
 
-          Builder2.CreateCall(call.getFunctionType(), callval, args);
+          Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
         }
 
@@ -5840,7 +5864,7 @@ public:
             {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
              ValueType::Primal, ValueType::Primal, ValueType::Primal,
              ValueType::None},
-            Builder2, /*lookup*/ true);
+            Builder2, /*lookup*/ !forwardMode);
 
         if (forwardMode) {
 #if LLVM_VERSION_MAJOR >= 11
@@ -5849,7 +5873,7 @@ public:
           auto callval = call.getCalledValue();
 #endif
 
-          Builder2.CreateCall(call.getFunctionType(), callval, args);
+          Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
         }
 
@@ -5956,13 +5980,20 @@ public:
               /*root*/ root,
               /*comm*/ comm,
           };
+
+          auto Defs = gutils->getInvertedBundles(
+              &call,
+              {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
+               ValueType::Primal, ValueType::Primal},
+              Builder2, /*lookup*/ false);
+
 #if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
 #else
           auto callval = call.getCalledValue();
 #endif
 
-          Builder2.CreateCall(call.getFunctionType(), callval, args);
+          Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
         }
 
@@ -6227,13 +6258,21 @@ public:
               /*root*/ root,
               /*comm*/ comm,
           };
+
+          auto Defs = gutils->getInvertedBundles(
+              &call,
+              {ValueType::Shadow, ValueType::Shadow, ValueType::Primal,
+               ValueType::Primal, ValueType::Primal, ValueType::Primal,
+               ValueType::Primal},
+              Builder2, /*lookup*/ false);
+
 #if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
 #else
           auto callval = call.getCalledValue();
 #endif
 
-          Builder2.CreateCall(call.getFunctionType(), callval, args);
+          Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
         }
 
@@ -6470,13 +6509,20 @@ public:
               /*op*/ op,
               /*comm*/ comm,
           };
+
+          auto Defs = gutils->getInvertedBundles(
+              &call,
+              {ValueType::Shadow, ValueType::Shadow, ValueType::Primal,
+               ValueType::Primal, ValueType::Primal, ValueType::Primal},
+              Builder2, /*lookup*/ false);
+
 #if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
 #else
           auto callval = call.getCalledValue();
 #endif
 
-          Builder2.CreateCall(call.getFunctionType(), callval, args);
+          Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
         }
 
@@ -6645,13 +6691,20 @@ public:
               /*comm*/ comm,
           };
 
+          auto Defs = gutils->getInvertedBundles(
+              &call,
+              {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
+               ValueType::Shadow, ValueType::Primal, ValueType::Primal,
+               ValueType::Primal, ValueType::Primal},
+              Builder2, /*lookup*/ false);
+
 #if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
 #else
           auto callval = call.getCalledValue();
 #endif
 
-          Builder2.CreateCall(call.getFunctionType(), callval, args);
+          Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
         }
 
@@ -6860,13 +6913,21 @@ public:
               /*root*/ root,
               /*comm*/ comm,
           };
+
+          auto Defs = gutils->getInvertedBundles(
+              &call,
+              {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
+               ValueType::Shadow, ValueType::Primal, ValueType::Primal,
+               ValueType::Primal, ValueType::Primal},
+              Builder2, /*lookup*/ false);
+
 #if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
 #else
           auto callval = call.getCalledValue();
 #endif
 
-          Builder2.CreateCall(call.getFunctionType(), callval, args);
+          Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
         }
         // Get the length for the allocation of the intermediate buffer
@@ -7105,13 +7166,21 @@ public:
               /*recvtype*/ recvtype,
               /*comm*/ comm,
           };
+
+          auto Defs = gutils->getInvertedBundles(
+              &call,
+              {ValueType::Shadow, ValueType::Primal, ValueType::Primal,
+               ValueType::Shadow, ValueType::Primal, ValueType::Primal,
+               ValueType::Primal},
+              Builder2, /*lookup*/ false);
+
 #if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
 #else
           auto callval = call.getCalledValue();
 #endif
 
-          Builder2.CreateCall(call.getFunctionType(), callval, args);
+          Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
           return;
         }
         // Get the length for the allocation of the intermediate buffer
