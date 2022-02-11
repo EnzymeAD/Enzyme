@@ -92,13 +92,32 @@ attributes #4 = { nounwind }
 !4 = !{!"omnipotent char", !5, i64 0}
 !5 = !{!"Simple C/C++ TBAA"}
 
-; CHECK: define internal { double } @diffesquare(double %arg, double %differeturn) 
+; CHECK: define internal { double } @diffesquare(double %arg, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %"i'ipa" = alloca [30 x double], align 16
-; CHECK:        %i = alloca [30 x double], align 16
 ; CHECK-NEXT:   br label %loop
 
+; CHECK: loop:                                             ; preds = %loopExit, %entry
+; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %loopExit ], [ 0, %entry ]
+; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
+; CHECK-NEXT:   %i1 = call i8* @malloc(i64 240)
+; CHECK-NEXT:   %i = bitcast i8* %i1 to [30 x double]* 
+; CHECK-NEXT:   br label %setLoop
+
+; CHECK: setLoop:                                          ; preds = %setLoop, %loop
+; CHECK-NEXT:   %iv1 = phi i64 [ %iv.next2, %setLoop ], [ 0, %loop ]
+; CHECK-NEXT:   %iv.next2 = add nuw nsw i64 %iv1, 1
+; CHECK-NEXT:   %i15 = and i64 %iv1, 1
+; CHECK-NEXT:   %i16 = icmp eq i64 %i15, 0
+; CHECK-NEXT:   %i17 = trunc i64 %iv1 to i32
+; CHECK-NEXT:   %i18 = call fast double @llvm.powi.f64{{(\.i32)?}}(double %arg, i32 %i17) 
+; CHECK-NEXT:   %i19 = select i1 %i16, double %i18, double 0.000000e+00
+; CHECK-NEXT:   %i20 = getelementptr inbounds [30 x double], [30 x double]* %i, i64 0, i64 %iv1
+; CHECK-NEXT:   store double %i19, double* %i20, align 8
+; CHECK-NEXT:   %i22 = icmp eq i64 %iv.next2, 30
+; CHECK-NEXT:   br i1 %i22, label %loopExit, label %setLoop
+
 ; CHECK: loopExit:                                         ; preds = %setLoop
+; CHECK-NEXT:   call void @free(i8* %i1) 
 ; CHECK-NEXT:   %i12 = icmp eq i64 %iv.next, 20
 ; CHECK-NEXT:   br i1 %i12, label %remat_enter, label %loop
 
@@ -107,6 +126,8 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   ret { double } %0
 
 ; CHECK: invertloop:                                       ; preds = %invertsetLoop
+; CHECK-NEXT:   tail call void @free(i8* nonnull %"i1'mi")
+; CHECK-NEXT:   tail call void @free(i8* %remat_i1)
 ; CHECK-NEXT:   %1 = icmp eq i64 %"iv'ac.0", 0
 ; CHECK-NEXT:   %2 = select {{(fast )?}}i1 %1, double 0.000000e+00, double %"i10'de.0"
 ; CHECK-NEXT:   br i1 %1, label %invertentry, label %incinvertloop
@@ -141,7 +162,7 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %"i18'de.1" = phi double [ %"i18'de.2", %remat_loop_loopExit ], [ %"i18'de.0", %incinvertsetLoop ]
 ; CHECK-NEXT:   %"arg'de.1" = phi double [ %"arg'de.2", %remat_loop_loopExit ], [ %"arg'de.0", %incinvertsetLoop ]
 ; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ 29, %remat_loop_loopExit ], [ %5, %incinvertsetLoop ]
-; CHECK-NEXT:   %"i20'ipg_unwrap" = getelementptr inbounds [30 x double], [30 x double]* %"i'ipa", i64 0, i64 %"iv1'ac.0"
+; CHECK-NEXT:   %"i20'ipg_unwrap" = getelementptr inbounds [30 x double], [30 x double]* %"i'ipc_unwrap8", i64 0, i64 %"iv1'ac.0"
 ; CHECK-NEXT:   %14 = load double, double* %"i20'ipg_unwrap", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"i20'ipg_unwrap", align 8
 ; CHECK-NEXT:   %i15_unwrap5 = and i64 %"iv1'ac.0", 1
@@ -155,12 +176,16 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %"arg'de.2" = phi double [ %"arg'de.0", %incinvertloop ], [ 0.000000e+00, %loopExit ]
 ; CHECK-NEXT:   %"i10'de.0" = phi double [ %2, %incinvertloop ], [ %differeturn, %loopExit ]
 ; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %3, %incinvertloop ], [ 19, %loopExit ]
+; CHECK-NEXT:   %remat_i1 = call i8* @malloc(i64 240) 
+; CHECK-NEXT:   %"i1'mi" = call noalias nonnull i8* @malloc(i64 240) 
+; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(240) dereferenceable_or_null(240) %"i1'mi", i8 0, i64 240, i1 false)
 ; CHECK-NEXT:   br label %remat_loop_setLoop
 
 ; CHECK: remat_loop_setLoop:                               ; preds = %remat_loop_setLoop, %remat_enter
 ; CHECK-NEXT:   %fiv = phi i64 [ %17, %remat_loop_setLoop ], [ 0, %remat_enter ]
 ; CHECK-NEXT:   %17 = add i64 %fiv, 1
-; CHECK-NEXT:   %i20_unwrap = getelementptr inbounds [30 x double], [30 x double]* %i, i64 0, i64 %fiv
+; CHECK-NEXT:   %i_unwrap = bitcast i8* %remat_i1 to [30 x double]*
+; CHECK-NEXT:   %i20_unwrap = getelementptr inbounds [30 x double], [30 x double]* %i_unwrap, i64 0, i64 %fiv
 ; CHECK-NEXT:   %i15_unwrap1 = and i64 %fiv, 1
 ; CHECK-NEXT:   %i16_unwrap2 = icmp eq i64 %i15_unwrap1, 0
 ; CHECK-NEXT:   %i17_unwrap = trunc i64 %fiv to i32
@@ -171,11 +196,12 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   br i1 %i22_unwrap, label %remat_loop_loopExit, label %remat_loop_setLoop
 
 ; CHECK: remat_loop_loopExit:                              ; preds = %remat_loop_setLoop
-; CHECK-NEXT:   %i7_unwrap = getelementptr inbounds [30 x double], [30 x double]* %i, i64 0, i64 %"iv'ac.0"
+; CHECK-NEXT:   %i7_unwrap = getelementptr inbounds [30 x double], [30 x double]* %i_unwrap, i64 0, i64 %"iv'ac.0"
 ; CHECK-NEXT:   %i8_unwrap = load double, double* %i7_unwrap, align 8, !tbaa !2, !invariant.group !6
 ; CHECK-NEXT:   %m0diffei8 = fmul fast double %"i10'de.0", %i8_unwrap
 ; CHECK-NEXT:   %20 = fadd fast double %m0diffei8, %m0diffei8
-; CHECK-NEXT:   %"i7'ipg_unwrap" = getelementptr inbounds [30 x double], [30 x double]* %"i'ipa", i64 0, i64 %"iv'ac.0"
+; CHECK-NEXT:   %"i'ipc_unwrap8" = bitcast i8* %"i1'mi" to [30 x double]*
+; CHECK-NEXT:   %"i7'ipg_unwrap" = getelementptr inbounds [30 x double], [30 x double]* %"i'ipc_unwrap8", i64 0, i64 %"iv'ac.0"
 ; CHECK-NEXT:   %21 = load double, double* %"i7'ipg_unwrap", align 8
 ; CHECK-NEXT:   %22 = fadd fast double %21, %20
 ; CHECK-NEXT:   store double %22, double* %"i7'ipg_unwrap", align 8

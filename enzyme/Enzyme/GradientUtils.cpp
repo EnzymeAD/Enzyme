@@ -34,6 +34,7 @@
 #include "FunctionUtils.h"
 #include "GradientUtils.h"
 #include "LibraryFuncs.h"
+#include "TypeAnalysis/TBAA.h"
 
 #include "llvm/IR/GlobalValue.h"
 
@@ -2069,10 +2070,11 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
         if (pair.second.LI &&
             getNewFromOriginal(pair.second.LI->getHeader()) == L->getHeader()) {
           if (!pair.second.primalInitialize) {
-            if (auto inst = dyn_cast<Instruction>(pair.first))
+            if (auto inst = dyn_cast<Instruction>(pair.first)) {
               loopShadowReallocations.insert(inst);
-            for (auto I : pair.second.stores)
-              loopShadowRematerializations.insert(I);
+              for (auto I : pair.second.stores)
+                loopShadowRematerializations.insert(I);
+            }
           }
         }
       }
@@ -2276,15 +2278,148 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                 }
               }
               if (loopShadowRematerializations.count(&I)) {
-                // TODO
-                llvm::errs()
-                    << " warning not shadow rematerializing: " << I << "\n";
+                if (auto SI = dyn_cast<StoreInst>(&I)) {
+                  Value *orig_ptr = SI->getPointerOperand();
+                  Value *orig_val = SI->getValueOperand();
+                  Type *valType = orig_val->getType();
+                  if (!isConstantValue(orig_ptr)) {
+
+                    auto &DL = newFunc->getParent()->getDataLayout();
+
+                    bool constantval = isConstantValue(orig_val) ||
+                                       parseTBAA(I, DL).Inner0().isIntegral();
+
+                    // TODO allow recognition of other types that could contain
+                    // pointers [e.g. {void*, void*} or <2 x i64> ]
+                    auto storeSize = DL.getTypeSizeInBits(valType) / 8;
+
+                    //! Storing a floating point value
+                    Type *FT = nullptr;
+                    if (valType->isFPOrFPVectorTy()) {
+                      FT = valType->getScalarType();
+                    } else if (!valType->isPointerTy()) {
+                      if (looseTypeAnalysis) {
+                        auto fp = my_TR->firstPointer(storeSize, orig_ptr,
+                                                      /*errifnotfound*/ false,
+                                                      /*pointerIntSame*/ true);
+                        if (fp.isKnown()) {
+                          FT = fp.isFloat();
+                        } else if (isa<ConstantInt>(orig_val) ||
+                                   valType->isIntOrIntVectorTy()) {
+                          llvm::errs()
+                              << "assuming type as integral for store: " << I
+                              << "\n";
+                          FT = nullptr;
+                        } else {
+                          my_TR->firstPointer(storeSize, orig_ptr,
+                                              /*errifnotfound*/ true,
+                                              /*pointerIntSame*/ true);
+                          llvm::errs()
+                              << "cannot deduce type of store " << I << "\n";
+                          assert(0 && "cannot deduce");
+                        }
+                      } else {
+                        FT = my_TR
+                                 ->firstPointer(storeSize, orig_ptr,
+                                                /*errifnotfound*/ true,
+                                                /*pointerIntSame*/ true)
+                                 .isFloat();
+                      }
+                    }
+                    if (!FT) {
+                      Value *valueop = nullptr;
+                      if (constantval) {
+                        Value *val = lookupM(getNewFromOriginal(orig_val), NB,
+                                             available);
+                        valueop = val;
+                        if (getWidth() > 1) {
+                          Value *array =
+                              UndefValue::get(getShadowType(val->getType()));
+                          for (unsigned i = 0; i < getWidth(); ++i) {
+                            array = NB.CreateInsertValue(array, val, {i});
+                          }
+                          valueop = array;
+                        }
+                      } else {
+                        valueop = lookupM(invertPointerM(orig_val, NB), NB,
+                                          available);
+                      }
+#if LLVM_VERSION_MAJOR >= 10
+                      auto align = SI->getAlign();
+#else
+                      auto align = SI->getAlignment();
+#endif
+                      setPtrDiffe(orig_ptr, valueop, NB, align,
+                                  SI->isVolatile(), SI->getOrdering(),
+                                  SI->getSyncScopeID(), /*mask*/ nullptr);
+                    }
+                  }
+                } else if (auto MS = dyn_cast<MemSetInst>(&I)) {
+                  if (!isConstantValue(MS->getArgOperand(0))) {
+                    Value *args[4] = {
+                        lookupM(invertPointerM(MS->getArgOperand(0), NB), NB,
+                                available),
+                        lookupM(getNewFromOriginal(MS->getArgOperand(1)), NB,
+                                available),
+                        lookupM(getNewFromOriginal(MS->getArgOperand(2)), NB,
+                                available),
+                        lookupM(getNewFromOriginal(MS->getArgOperand(3)), NB,
+                                available)};
+
+                    ValueType BundleTypes[4] = {
+                        ValueType::Shadow, ValueType::Primal, ValueType::Primal,
+                        ValueType::Primal};
+                    auto Defs = getInvertedBundles(MS, BundleTypes, NB,
+                                                   /*lookup*/ true, available);
+                    auto cal =
+                        NB.CreateCall(MS->getCalledFunction(), args, Defs);
+                    cal->setAttributes(MS->getAttributes());
+                    cal->setCallingConv(MS->getCallingConv());
+                    cal->setTailCallKind(MS->getTailCallKind());
+                  }
+                } else if (auto CI = dyn_cast<CallInst>(&I)) {
+                  Function *called = getFunctionFromCall(CI);
+                  assert(called);
+                  if (called->getName() == "julia.write_barrier") {
+
+                    // TODO
+                    SmallVector<Value *, 2> args;
+#if LLVM_VERSION_MAJOR >= 14
+                    for (auto &arg : CI->args())
+#else
+                    for (auto &arg : CI->arg_operands())
+#endif
+                      if (!isConstantValue(arg))
+                        args.push_back(
+                            lookupM(invertPointerM(arg, NB), NB, available));
+
+                    if (args.size()) {
+                      SmallVector<ValueType, 2> BundleTypes(args.size(),
+                                                            ValueType::Primal);
+
+                      auto Defs =
+                          getInvertedBundles(CI, BundleTypes, NB,
+                                             /*lookup*/ true, available);
+                      auto cal = NB.CreateCall(called, args, Defs);
+                      cal->setAttributes(CI->getAttributes());
+                      cal->setCallingConv(CI->getCallingConv());
+                      cal->setTailCallKind(CI->getTailCallKind());
+                    }
+                  } else {
+                    assert(isDeallocationFunction(*called, TLI));
+                    continue;
+                  }
+                } else {
+                  assert(
+                      0 &&
+                      "unhandlable loop shadow rematerialization instruction");
+                }
               } else if (loopShadowReallocations.count(&I)) {
 
                 LimitContext lctx(/*ReverseLimit*/ reverseBlocks.size() > 0,
                                   &newFunc->getEntryBlock());
-
-                PHINode *placeholder = cast<PHINode>(&*found->second);
+                auto ipfound = invertedPointers.find(&I);
+                PHINode *placeholder = cast<PHINode>(&*ipfound->second);
 
                 auto found = scopeMap.find(placeholder);
                 if (found == scopeMap.end()) {
@@ -2305,8 +2440,6 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                   assert(called);
 
                   auto dbgLoc = getNewFromOriginal(orig)->getDebugLoc();
-                  auto found = invertedPointers.find(orig);
-                  IRBuilder<> bb(placeholder);
 
                   SmallVector<Value *, 8> args;
 #if LLVM_VERSION_MAJOR >= 14
@@ -2321,27 +2454,16 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                   placeholder->setName("");
                   if (shadowHandlers.find(called->getName().str()) !=
                       shadowHandlers.end()) {
-                    bb.SetInsertPoint(placeholder);
 
                     anti =
-                        shadowHandlers[called->getName().str()](bb, orig, args);
-
-                    invertedPointers.erase(found);
-                    bb.SetInsertPoint(placeholder);
-
-                    replaceAWithB(placeholder, anti);
-                    erase(placeholder);
-
-                    if (auto inst = dyn_cast<Instruction>(anti))
-                      bb.SetInsertPoint(inst);
-
+                        shadowHandlers[called->getName().str()](NB, orig, args);
                   } else {
 #if LLVM_VERSION_MAJOR >= 11
-                    anti = bb.CreateCall(orig->getFunctionType(),
+                    anti = NB.CreateCall(orig->getFunctionType(),
                                          orig->getCalledOperand(), args,
                                          orig->getName() + "'mi");
 #else
-                    anti = bb.CreateCall(orig->getCalledValue(), args,
+                    anti = NB.CreateCall(orig->getCalledValue(), args,
                                          orig->getName() + "'mi");
 #endif
                     cast<CallInst>(anti)->setAttributes(orig->getAttributes());
@@ -2362,13 +2484,8 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                     cast<CallInst>(anti)->addAttribute(
                         AttributeList::ReturnIndex, Attribute::NonNull);
 #endif
-                    invertedPointers.erase(found);
-                    bb.SetInsertPoint(placeholder->getNextNode());
-                    replaceAWithB(placeholder, anti);
-                    erase(placeholder);
-
                     if (auto MD = hasMetadata(orig, "enzyme_fromstack")) {
-                      AllocaInst *replacement = bb.CreateAlloca(
+                      AllocaInst *replacement = NB.CreateAlloca(
                           Type::getInt8Ty(orig->getContext()), args[0]);
                       replacement->takeName(anti);
                       auto Alignment =
@@ -2386,11 +2503,8 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                       anti = replacement;
                     }
 
-                    zeroKnownAllocation(bb, anti, args, *called, TLI);
+                    zeroKnownAllocation(NB, anti, args, *called, TLI);
                   }
-                  invertedPointers.insert(
-                      std::make_pair(orig, InvertedPointerVH(this, anti)));
-
                 } else {
                   llvm_unreachable("Unknown shadow rematerialization value");
                 }
@@ -5148,6 +5262,32 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
     if (found != rematerializableAllocations.end())
       if (found->second.LI)
         scope = &newFunc->getEntryBlock();
+  } else {
+    for (auto pair : backwardsOnlyShadows) {
+      if (auto pinst = dyn_cast<Instruction>(pair.first))
+        if (!pair.second.primalInitialize && pair.second.LI &&
+            pair.second.LI->contains(pinst->getParent())) {
+          auto found = invertedPointers.find(pair.first);
+          if (found != invertedPointers.end() && found->second == inst) {
+            scope = &newFunc->getEntryBlock();
+
+            // Prevent the phi node from being stored into the cache by creating
+            // it before the ensureLookupCached.
+            if (scopeMap.find(inst) == scopeMap.end()) {
+              LimitContext lctx(/*ReverseLimit*/ reverseBlocks.size() > 0,
+                                scope);
+
+              AllocaInst *cache = createCacheForScope(
+                  lctx, inst->getType(), inst->getName(), /*shouldFree*/ true);
+              assert(cache);
+              insert_or_assign(scopeMap, (Value *&)inst,
+                               std::pair<AssertingVH<AllocaInst>, LimitContext>(
+                                   cache, lctx));
+            }
+            break;
+          }
+        }
+    }
   }
 
   ensureLookupCached(inst, /*shouldFree*/ true, scope);

@@ -763,7 +763,7 @@ public:
       if (!pair.second)
         Seen[UsageKey(pair.first, ValueType::Primal)] = false;
 
-    // Don't erase any store that needs to be preserved for a rematerialization
+    // Don't erase any store that needs to be preserved for a rematerialization.
     for (auto pair : gutils->rematerializableAllocations) {
       if (is_value_needed_in_reverse<ValueType::Primal>(
               TR, gutils, pair.first, Mode, Seen, oldUnreachable)) {
@@ -920,12 +920,17 @@ public:
         if (pair.second.stores.count(&I)) {
           backwardsShadow = true;
           forwardsShadow = pair.second.primalInitialize;
+          if (auto inst = dyn_cast<Instruction>(pair.first))
+            if (!forwardsShadow && pair.second.LI &&
+                pair.second.LI->contains(inst->getParent()))
+              backwardsShadow = false;
         }
       }
 
       if ((Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
           (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow) ||
-          Mode == DerivativeMode::ReverseModeCombined ||
+          (Mode == DerivativeMode::ReverseModeCombined &&
+           (forwardsShadow || backwardsShadow)) ||
           Mode == DerivativeMode::ForwardMode) {
         IRBuilder<> storeBuilder(gutils->getNewFromOriginal(&I));
 
@@ -2571,29 +2576,31 @@ public:
       report_fatal_error("non constant in memset");
     }
 
+    // If constant destination then no operation needs doing
+    if (gutils->isConstantValue(orig_op0))
+      return;
+
     bool backwardsShadow = false;
     bool forwardsShadow = true;
     for (auto pair : gutils->backwardsOnlyShadows) {
       if (pair.second.stores.count(&MS)) {
         backwardsShadow = true;
         forwardsShadow = pair.second.primalInitialize;
+        if (auto inst = dyn_cast<Instruction>(pair.first))
+          if (!forwardsShadow && pair.second.LI &&
+              pair.second.LI->contains(inst->getParent()))
+            backwardsShadow = false;
       }
     }
 
     if ((Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
         (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow) ||
-        Mode == DerivativeMode::ReverseModeCombined) {
+        (Mode == DerivativeMode::ReverseModeCombined &&
+         (forwardsShadow && backwardsShadow))) {
       IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&MS));
 
       SmallVector<Value *, 4> args;
-      if (!gutils->isConstantValue(orig_op0)) {
-        args.push_back(gutils->invertPointerM(orig_op0, BuilderZ));
-      } else {
-        // If constant destination then no operation needs doing
-        return;
-        // args.push_back(gutils->lookupM(MS.getOperand(0), BuilderZ));
-      }
-
+      args.push_back(gutils->invertPointerM(orig_op0, BuilderZ));
       args.push_back(gutils->lookupM(op1, BuilderZ));
       args.push_back(gutils->lookupM(op2, BuilderZ));
       args.push_back(gutils->lookupM(op3, BuilderZ));
@@ -8081,12 +8088,17 @@ public:
             if (pair.second.stores.count(orig)) {
               backwardsShadow = true;
               forwardsShadow = pair.second.primalInitialize;
+              if (auto inst = dyn_cast<Instruction>(pair.first))
+                if (!forwardsShadow && pair.second.LI &&
+                    pair.second.LI->contains(inst->getParent()))
+                  backwardsShadow = false;
               break;
             }
           }
 
           if (Mode == DerivativeMode::ForwardMode ||
-              Mode == DerivativeMode::ReverseModeCombined ||
+              (Mode == DerivativeMode::ReverseModeCombined &&
+               (forwardsShadow || backwardsShadow)) ||
               (Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
               (Mode == DerivativeMode::ReverseModeGradient &&
                backwardsShadow)) {
@@ -8387,18 +8399,17 @@ public:
         auto dbgLoc = gutils->getNewFromOriginal(orig)->getDebugLoc();
         auto found = gutils->invertedPointers.find(orig);
         PHINode *placeholder = cast<PHINode>(&*found->second);
-            IRBuilder<> bb(placeholder);
+        IRBuilder<> bb(placeholder);
 
-            SmallVector<Value *, 8> args;
+        SmallVector<Value *, 8> args;
 #if LLVM_VERSION_MAJOR >= 14
-            for (auto &arg : orig->args())
+        for (auto &arg : orig->args())
 #else
-            for (auto &arg : orig->arg_operands())
+        for (auto &arg : orig->arg_operands())
 #endif
-            {
-              args.push_back(gutils->getNewFromOriginal(arg));
-            }
-
+        {
+          args.push_back(gutils->getNewFromOriginal(arg));
+        }
 
         if (Mode == DerivativeMode::ReverseModeCombined ||
             Mode == DerivativeMode::ReverseModeGradient ||
@@ -8413,30 +8424,35 @@ public:
           // rematerializable) so all input derivatives remain zero.
           bool backwardsShadow = false;
           bool forwardsShadow = true;
-		  bool inLoop = false;
+          bool inLoop = false;
           {
-              auto found = gutils->backwardsOnlyShadows.find(orig);
-              if (found != gutils->backwardsOnlyShadows.end()) {
-                backwardsShadow = true;
-                forwardsShadow = found->second.primalInitialize;
-               // If in a loop context, maintain the same free behavior.
-               if (found->second.LI && found->second.LI->contains(orig->getParent()))
-			     inLoop = true;
-              }
+            auto found = gutils->backwardsOnlyShadows.find(orig);
+            if (found != gutils->backwardsOnlyShadows.end()) {
+              backwardsShadow = true;
+              forwardsShadow = found->second.primalInitialize;
+              // If in a loop context, maintain the same free behavior.
+              if (!forwardsShadow && found->second.LI &&
+                  found->second.LI->contains(orig->getParent()))
+                inLoop = true;
+            }
           }
           {
 
             if (!forwardsShadow) {
-			  if  (Mode == DerivativeMode::ReverseModePrimal || inLoop) {
-				  // Needs a stronger replacement check/assertion.
-				  Value *replacement = UndefValue::get(placeholder->getType());
-				  gutils->replaceAWithB(placeholder, replacement);
-				  gutils->invertedPointers.erase(found);
-				  gutils->invertedPointers.insert(
-					  std::make_pair(orig, InvertedPointerVH(gutils, replacement)));
-				  gutils->erase(placeholder);
-				  goto endAnti;
-			  }
+              if (Mode == DerivativeMode::ReverseModePrimal) {
+                // Needs a stronger replacement check/assertion.
+                Value *replacement = UndefValue::get(placeholder->getType());
+                gutils->replaceAWithB(placeholder, replacement);
+                gutils->invertedPointers.erase(found);
+                gutils->invertedPointers.insert(std::make_pair(
+                    orig, InvertedPointerVH(gutils, replacement)));
+                gutils->erase(placeholder);
+                anti = nullptr;
+                goto endAnti;
+              } else if (inLoop) {
+                gutils->rematerializedShadowPHIs.push_back(placeholder);
+                goto endAnti;
+              }
             }
             placeholder->setName("");
             if (shadowHandlers.find(called->getName().str()) !=
@@ -8465,71 +8481,72 @@ public:
                     bb, anti, getIndex(orig, CacheType::Shadow));
             } else {
 #if LLVM_VERSION_MAJOR >= 11
-            anti =
-                bb.CreateCall(orig->getFunctionType(), orig->getCalledOperand(),
-                              args, orig->getName() + "'mi");
+              anti = bb.CreateCall(orig->getFunctionType(),
+                                   orig->getCalledOperand(), args,
+                                   orig->getName() + "'mi");
 #else
-            anti = bb.CreateCall(orig->getCalledValue(), args,
-                                 orig->getName() + "'mi");
+              anti = bb.CreateCall(orig->getCalledValue(), args,
+                                   orig->getName() + "'mi");
 #endif
-            cast<CallInst>(anti)->setAttributes(orig->getAttributes());
-            cast<CallInst>(anti)->setCallingConv(orig->getCallingConv());
-            cast<CallInst>(anti)->setTailCallKind(orig->getTailCallKind());
-            cast<CallInst>(anti)->setDebugLoc(dbgLoc);
+              cast<CallInst>(anti)->setAttributes(orig->getAttributes());
+              cast<CallInst>(anti)->setCallingConv(orig->getCallingConv());
+              cast<CallInst>(anti)->setTailCallKind(orig->getTailCallKind());
+              cast<CallInst>(anti)->setDebugLoc(dbgLoc);
 
 #if LLVM_VERSION_MAJOR >= 14
-            cast<CallInst>(anti)->addAttributeAtIndex(
-                AttributeList::ReturnIndex, Attribute::NoAlias);
-            cast<CallInst>(anti)->addAttributeAtIndex(
-                AttributeList::ReturnIndex, Attribute::NonNull);
+              cast<CallInst>(anti)->addAttributeAtIndex(
+                  AttributeList::ReturnIndex, Attribute::NoAlias);
+              cast<CallInst>(anti)->addAttributeAtIndex(
+                  AttributeList::ReturnIndex, Attribute::NonNull);
 #else
-            cast<CallInst>(anti)->addAttribute(AttributeList::ReturnIndex,
-                                               Attribute::NoAlias);
-            cast<CallInst>(anti)->addAttribute(AttributeList::ReturnIndex,
-                                               Attribute::NonNull);
+              cast<CallInst>(anti)->addAttribute(AttributeList::ReturnIndex,
+                                                 Attribute::NoAlias);
+              cast<CallInst>(anti)->addAttribute(AttributeList::ReturnIndex,
+                                                 Attribute::NonNull);
 #endif
-            gutils->invertedPointers.erase(found);
-            bb.SetInsertPoint(placeholder->getNextNode());
-            gutils->replaceAWithB(placeholder, anti);
-            gutils->erase(placeholder);
+              gutils->invertedPointers.erase(found);
+              bb.SetInsertPoint(placeholder->getNextNode());
+              gutils->replaceAWithB(placeholder, anti);
+              gutils->erase(placeholder);
 
-            if (!backwardsShadow)
-              anti = gutils->cacheForReverse(bb, anti,
-                                             getIndex(orig, CacheType::Shadow));
-            else {
-              if (auto MD = hasMetadata(orig, "enzyme_fromstack")) {
-                AllocaInst *replacement = bb.CreateAlloca(
-                    Type::getInt8Ty(orig->getContext()), args[0]);
-                replacement->takeName(anti);
-                auto Alignment =
-                    cast<ConstantInt>(
-                        cast<ConstantAsMetadata>(MD->getOperand(0))->getValue())
-                        ->getLimitedValue();
+              if (!backwardsShadow)
+                anti = gutils->cacheForReverse(
+                    bb, anti, getIndex(orig, CacheType::Shadow));
+              else {
+                if (auto MD = hasMetadata(orig, "enzyme_fromstack")) {
+                  AllocaInst *replacement = bb.CreateAlloca(
+                      Type::getInt8Ty(orig->getContext()), args[0]);
+                  replacement->takeName(anti);
+                  auto Alignment = cast<ConstantInt>(cast<ConstantAsMetadata>(
+                                                         MD->getOperand(0))
+                                                         ->getValue())
+                                       ->getLimitedValue();
 #if LLVM_VERSION_MAJOR >= 10
-                replacement->setAlignment(Align(Alignment));
+                  replacement->setAlignment(Align(Alignment));
 #else
-                replacement->setAlignment(Alignment);
+                  replacement->setAlignment(Alignment);
 #endif
-                gutils->replaceAWithB(cast<Instruction>(anti), replacement);
-                gutils->erase(cast<Instruction>(anti));
-                anti = replacement;
+                  gutils->replaceAWithB(cast<Instruction>(anti), replacement);
+                  gutils->erase(cast<Instruction>(anti));
+                  anti = replacement;
+                }
+              }
+
+              if (Mode == DerivativeMode::ReverseModeCombined ||
+                  (Mode == DerivativeMode::ReverseModePrimal &&
+                   forwardsShadow) ||
+                  (Mode == DerivativeMode::ReverseModeGradient &&
+                   backwardsShadow)) {
+                zeroKnownAllocation(bb, anti, args, *called, gutils->TLI);
               }
             }
-
-            if (Mode == DerivativeMode::ReverseModeCombined ||
-                 (Mode == DerivativeMode::ReverseModePrimal &&
-                  forwardsShadow) ||
-                 (Mode == DerivativeMode::ReverseModeGradient &&
-                  backwardsShadow)) {
-				zeroKnownAllocation(bb, anti, args, *called, gutils->TLI);
-            }
-			}
-              gutils->invertedPointers.insert(
-                  std::make_pair(orig, InvertedPointerVH(gutils, anti)));
-		}
+            gutils->invertedPointers.insert(
+                std::make_pair(orig, InvertedPointerVH(gutils, anti)));
+          }
         endAnti:;
           if ((Mode == DerivativeMode::ReverseModeCombined ||
-               (Mode == DerivativeMode::ReverseModePrimal && forwardsShadow && backwardsShadow) ||
+               (Mode == DerivativeMode::ReverseModePrimal && forwardsShadow &&
+                backwardsShadow) ||
                Mode == DerivativeMode::ReverseModeGradient ||
                Mode == DerivativeMode::ForwardModeSplit) &&
               shouldFree() && !isa<AllocaInst>(anti)) {
@@ -8556,7 +8573,7 @@ public:
           }
         } else if (Mode == DerivativeMode::ForwardMode) {
           CallInst *CI = bb.CreateCall(orig->getFunctionType(),
-                                             orig->getCalledFunction(), args);
+                                       orig->getCalledFunction(), args);
           CI->setAttributes(orig->getAttributes());
           CI->setCallingConv(orig->getCallingConv());
           CI->setTailCallKind(orig->getTailCallKind());
@@ -8570,8 +8587,9 @@ public:
         }
       }
 
-	  // Cache and rematerialization irrelevant for forward mode.
-	  if (Mode == DerivativeMode::ForwardMode) return;
+      // Cache and rematerialization irrelevant for forward mode.
+      if (Mode == DerivativeMode::ForwardMode)
+        return;
 
       std::map<UsageKey, bool> Seen;
       for (auto pair : gutils->knownRecomputeHeuristic)

@@ -1207,7 +1207,30 @@ public:
     return false;
   }
 
+  SmallVector<PHINode *, 1> rematerializedShadowPHIs;
+
   void eraseFictiousPHIs() {
+    {
+      SetVector<Instruction *> seen;
+      SmallVector<Instruction *, 1> todo;
+      for (auto P : rematerializedShadowPHIs)
+        todo.push_back(P);
+      while (todo.size()) {
+        auto P = todo.back();
+        todo.pop_back();
+        if (seen.count(P))
+          continue;
+        seen.insert(P);
+        for (auto U : P->users())
+          if (auto I = dyn_cast<Instruction>(U))
+            todo.push_back(I);
+      }
+      for (auto v : llvm::reverse(seen)) {
+        assert(v->getNumUses() == 0);
+        v->replaceAllUsesWith(UndefValue::get(v->getType()));
+        erase(v);
+      }
+    }
     std::vector<std::pair<PHINode *, Value *>> phis;
     for (auto pair : fictiousPHIs)
       phis.emplace_back(pair.first, pair.second);
@@ -1225,7 +1248,6 @@ public:
       pp->replaceAllUsesWith(UndefValue::get(pp->getType()));
       erase(pp);
     }
-    fictiousPHIs.clear();
   }
 
   TypeResults *my_TR;
