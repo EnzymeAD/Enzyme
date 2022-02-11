@@ -196,74 +196,66 @@ static inline bool isDeallocationFunction(const llvm::Function &F,
   }
 }
 
-static inline void zeroKnownAllocation(llvm::IRBuilder <>& bb, llvm::Value *toZero,
-									   llvm::ArrayRef<llvm::Value*> argValues,
+static inline void zeroKnownAllocation(llvm::IRBuilder<> &bb,
+                                       llvm::Value *toZero,
+                                       llvm::ArrayRef<llvm::Value *> argValues,
                                        llvm::Function &allocatefn,
                                        const llvm::TargetLibraryInfo &TLI) {
-   using namespace llvm;
-   assert(isAllocationFunction(allocatefn, TLI));
-   StringRef funcName = allocatefn.getName();
-   // Don't re-zero an already-zero buffer
-   if (funcName == "calloc" ||
-       funcName == "__rust_alloc_zeroed")
-       return;
+  using namespace llvm;
+  assert(isAllocationFunction(allocatefn, TLI));
+  StringRef funcName = allocatefn.getName();
+  // Don't re-zero an already-zero buffer
+  if (funcName == "calloc" || funcName == "__rust_alloc_zeroed")
+    return;
 
-   Value *allocSize = argValues[0];
-   if (funcName == "julia.gc_alloc_obj") {
-      Type *tys[] = {
-          PointerType::get(StructType::get(toZero->getContext()), 10)};
-      FunctionType *FT =
-          FunctionType::get(Type::getVoidTy(toZero->getContext()), tys, true);
-      bb.CreateCall(allocatefn.getParent()->getOrInsertFunction(
-                        "julia.write_barrier", FT),
-                    toZero);
-     allocSize = argValues[1];
-   }
-              Value *dst_arg = toZero;
+  Value *allocSize = argValues[0];
+  if (funcName == "julia.gc_alloc_obj") {
+    Type *tys[] = {PointerType::get(StructType::get(toZero->getContext()), 10)};
+    FunctionType *FT =
+        FunctionType::get(Type::getVoidTy(toZero->getContext()), tys, true);
+    bb.CreateCall(
+        allocatefn.getParent()->getOrInsertFunction("julia.write_barrier", FT),
+        toZero);
+    allocSize = argValues[1];
+  }
+  Value *dst_arg = toZero;
 
-              dst_arg = bb.CreateBitCast(
-                  dst_arg, Type::getInt8PtrTy(
-                               toZero->getContext(),
-                               toZero->getType()->getPointerAddressSpace()));
+  dst_arg = bb.CreateBitCast(
+      dst_arg, Type::getInt8PtrTy(toZero->getContext(),
+                                  toZero->getType()->getPointerAddressSpace()));
 
-              auto val_arg =
-                  ConstantInt::get(Type::getInt8Ty(toZero->getContext()), 0);
-              auto len_arg = bb.CreateZExtOrTrunc(
-                  allocSize, Type::getInt64Ty(toZero->getContext()));
-              auto volatile_arg = ConstantInt::getFalse(toZero->getContext());
+  auto val_arg = ConstantInt::get(Type::getInt8Ty(toZero->getContext()), 0);
+  auto len_arg =
+      bb.CreateZExtOrTrunc(allocSize, Type::getInt64Ty(toZero->getContext()));
+  auto volatile_arg = ConstantInt::getFalse(toZero->getContext());
 
 #if LLVM_VERSION_MAJOR == 6
-              auto align_arg =
-                  ConstantInt::get(Type::getInt32Ty(toZero->getContext()), 1);
-              Value *nargs[] = {dst_arg, val_arg, len_arg, align_arg,
-                                volatile_arg};
+  auto align_arg = ConstantInt::get(Type::getInt32Ty(toZero->getContext()), 1);
+  Value *nargs[] = {dst_arg, val_arg, len_arg, align_arg, volatile_arg};
 #else
-              Value *nargs[] = {dst_arg, val_arg, len_arg, volatile_arg};
+  Value *nargs[] = {dst_arg, val_arg, len_arg, volatile_arg};
 #endif
 
-              Type *tys[] = {dst_arg->getType(), len_arg->getType()};
+  Type *tys[] = {dst_arg->getType(), len_arg->getType()};
 
-              auto memset = cast<CallInst>(bb.CreateCall(
-                  Intrinsic::getDeclaration(allocatefn.getParent(),
-                                            Intrinsic::memset, tys),
-                  nargs));
-              memset->addParamAttr(0, Attribute::NonNull);
-              if (auto CI = dyn_cast<ConstantInt>(allocSize)) {
-				auto derefBytes = CI->getLimitedValue();
+  auto memset = cast<CallInst>(bb.CreateCall(
+      Intrinsic::getDeclaration(allocatefn.getParent(), Intrinsic::memset, tys),
+      nargs));
+  memset->addParamAttr(0, Attribute::NonNull);
+  if (auto CI = dyn_cast<ConstantInt>(allocSize)) {
+    auto derefBytes = CI->getLimitedValue();
 #if LLVM_VERSION_MAJOR >= 14
-                memset->addDereferenceableParamAttr(0, derefBytes);
-                memset->setAttributes(
-                    memset->getAttributes().addDereferenceableOrNullParamAttr(
-                        memset->getContext(), 0, derefBytes));
+    memset->addDereferenceableParamAttr(0, derefBytes);
+    memset->setAttributes(
+        memset->getAttributes().addDereferenceableOrNullParamAttr(
+            memset->getContext(), 0, derefBytes));
 #else
-                memset->addDereferenceableAttr(
-                    llvm::AttributeList::FirstArgIndex, derefBytes);
-                memset->addDereferenceableOrNullAttr(
-                    llvm::AttributeList::FirstArgIndex, derefBytes);
+    memset->addDereferenceableAttr(llvm::AttributeList::FirstArgIndex,
+                                   derefBytes);
+    memset->addDereferenceableOrNullAttr(llvm::AttributeList::FirstArgIndex,
+                                         derefBytes);
 #endif
-              }
-
-
+  }
 }
 
 /// Perform the corresponding deallocation of tofree, given it was allocated by

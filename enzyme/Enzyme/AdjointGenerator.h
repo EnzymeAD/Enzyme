@@ -8504,6 +8504,49 @@ public:
               cast<CallInst>(anti)->addAttribute(AttributeList::ReturnIndex,
                                                  Attribute::NonNull);
 #endif
+
+              if (called->getName() == "malloc" ||
+                  called->getName() == "_Znwm") {
+                if (auto ci = dyn_cast<ConstantInt>(args[0])) {
+                  unsigned derefBytes = ci->getLimitedValue();
+                  CallInst *cal =
+                      cast<CallInst>(gutils->getNewFromOriginal(orig));
+#if LLVM_VERSION_MAJOR >= 14
+                  cast<CallInst>(anti)->addDereferenceableRetAttr(
+                      ci->getLimitedValue());
+                  cal->addDereferenceableRetAttr(ci->getLimitedValue());
+#ifndef FLANG
+                  AttrBuilder B(Fn->getContext());
+#else
+                  AttrBuilder B;
+#endif
+                  B.addDereferenceableOrNullAttr(ci->getLimitedValue());
+                  cast<CallInst>(anti)->setAttributes(
+                      cast<CallInst>(anti)->getAttributes().addRetAttributes(
+                          orig->getContext(), B));
+                  cal->setAttributes(cal->getAttributes().addRetAttributes(
+                      orig->getContext(), B));
+                  cal->addAttributeAtIndex(AttributeList::ReturnIndex,
+                                           Attribute::NoAlias);
+                  cal->addAttributeAtIndex(AttributeList::ReturnIndex,
+                                           Attribute::NonNull);
+#else
+                  cast<CallInst>(anti)->addDereferenceableAttr(
+                      llvm::AttributeList::ReturnIndex, ci->getLimitedValue());
+                  cal->addDereferenceableAttr(llvm::AttributeList::ReturnIndex,
+                                              ci->getLimitedValue());
+                  cast<CallInst>(anti)->addDereferenceableOrNullAttr(
+                      llvm::AttributeList::ReturnIndex, ci->getLimitedValue());
+                  cal->addDereferenceableOrNullAttr(
+                      llvm::AttributeList::ReturnIndex, ci->getLimitedValue());
+                  cal->addAttribute(AttributeList::ReturnIndex,
+                                    Attribute::NoAlias);
+                  cal->addAttribute(AttributeList::ReturnIndex,
+                                    Attribute::NonNull);
+#endif
+                }
+              }
+
               gutils->invertedPointers.erase(found);
               bb.SetInsertPoint(placeholder->getNextNode());
               gutils->replaceAWithB(placeholder, anti);
@@ -8544,12 +8587,12 @@ public:
                 std::make_pair(orig, InvertedPointerVH(gutils, anti)));
           }
         endAnti:;
-          if ((Mode == DerivativeMode::ReverseModeCombined ||
-               (Mode == DerivativeMode::ReverseModePrimal && forwardsShadow &&
-                backwardsShadow) ||
-               Mode == DerivativeMode::ReverseModeGradient ||
-               Mode == DerivativeMode::ForwardModeSplit) &&
-              shouldFree() && !isa<AllocaInst>(anti)) {
+          if ((Mode == DerivativeMode::ReverseModeCombined && shouldFree()) ||
+              (Mode == DerivativeMode::ReverseModePrimal && forwardsShadow &&
+               backwardsShadow) ||
+              (Mode == DerivativeMode::ReverseModeGradient && shouldFree()) ||
+              (Mode == DerivativeMode::ForwardModeSplit && shouldFree()) &&
+                  !isa<AllocaInst>(anti)) {
             IRBuilder<> Builder2(call.getParent());
             getReverseBuilder(Builder2);
             assert(anti);
