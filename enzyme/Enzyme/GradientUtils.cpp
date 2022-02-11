@@ -2059,7 +2059,9 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
           }
           if (rematerialized) {
             if (auto inst = dyn_cast<Instruction>(pair.first))
-              loopReallocations.insert(inst);
+              if (pair.second.LI->contains(inst->getParent())) {
+                loopReallocations.insert(inst);
+              }
             for (auto I : pair.second.stores)
               loopRematerializations.insert(I);
             origLI = pair.second.LI;
@@ -2071,15 +2073,20 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
             getNewFromOriginal(pair.second.LI->getHeader()) == L->getHeader()) {
           if (!pair.second.primalInitialize) {
             if (auto inst = dyn_cast<Instruction>(pair.first)) {
-              loopShadowReallocations.insert(inst);
-              for (auto I : pair.second.stores)
-                loopShadowRematerializations.insert(I);
+              if (pair.second.LI->contains(inst->getParent())) {
+                loopShadowReallocations.insert(inst);
+                for (auto I : pair.second.stores)
+                  loopShadowRematerializations.insert(I);
+                origLI = pair.second.LI;
+              }
             }
           }
         }
       }
       BasicBlock *resumeblock = reverseBlocks[BB].front();
-      if (loopRematerializations.size() != 0) {
+      if (loopRematerializations.size() != 0 || loopReallocations.size() != 0 ||
+          loopShadowRematerializations.size() != 0 ||
+          loopShadowReallocations.size() != 0) {
         auto found = rematerializedLoops_cache.find(L);
         if (found != rematerializedLoops_cache.end()) {
           resumeblock = found->second;
@@ -2448,7 +2455,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                   for (auto &arg : orig->arg_operands())
 #endif
                   {
-                    args.push_back(getNewFromOriginal(arg));
+                    args.push_back(lookupM(getNewFromOriginal(arg), NB));
                   }
 
                   placeholder->setName("");

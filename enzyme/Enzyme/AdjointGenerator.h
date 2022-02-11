@@ -8588,9 +8588,9 @@ public:
           }
         endAnti:;
           if (((Mode == DerivativeMode::ReverseModeCombined && shouldFree()) ||
-              (Mode == DerivativeMode::ReverseModeGradient && shouldFree()) ||
-              (Mode == DerivativeMode::ForwardModeSplit && shouldFree())) &&
-                  !isa<AllocaInst>(anti)) {
+               (Mode == DerivativeMode::ReverseModeGradient && shouldFree()) ||
+               (Mode == DerivativeMode::ForwardModeSplit && shouldFree())) &&
+              !isa<AllocaInst>(anti)) {
             IRBuilder<> Builder2(call.getParent());
             getReverseBuilder(Builder2);
             assert(anti);
@@ -9019,7 +9019,7 @@ public:
           break;
         }
       }
-      
+
       // If a rematerializable allocation.
       for (auto rmat : gutils->rematerializableAllocations) {
         if (rmat.second.frees.count(orig)) {
