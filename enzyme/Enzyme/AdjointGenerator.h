@@ -6482,7 +6482,7 @@ public:
             &call,
             {ValueType::Shadow, ValueType::Shadow, ValueType::Primal,
              ValueType::Primal, ValueType::Primal, ValueType::Primal},
-            Builder2, /*lookup*/ true);
+            Builder2, /*lookup*/ !forwardMode);
 
         Value *count = gutils->getNewFromOriginal(orig_count);
         if (!forwardMode)
@@ -6510,19 +6510,14 @@ public:
               /*comm*/ comm,
           };
 
-          auto Defs = gutils->getInvertedBundles(
-              &call,
-              {ValueType::Shadow, ValueType::Shadow, ValueType::Primal,
-               ValueType::Primal, ValueType::Primal, ValueType::Primal},
-              Builder2, /*lookup*/ false);
-
 #if LLVM_VERSION_MAJOR >= 11
           auto callval = call.getCalledOperand();
 #else
           auto callval = call.getCalledValue();
 #endif
 
-          Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
+          Builder2.CreateCall(call.getFunctionType(), callval, args,
+                              BufferDefs);
           return;
         }
 
