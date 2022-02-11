@@ -8516,7 +8516,7 @@ public:
                       ci->getLimitedValue());
                   cal->addDereferenceableRetAttr(ci->getLimitedValue());
 #ifndef FLANG
-                  AttrBuilder B(Fn->getContext());
+                  AttrBuilder B(called->getContext());
 #else
                   AttrBuilder B;
 #endif
@@ -8587,11 +8587,9 @@ public:
                 std::make_pair(orig, InvertedPointerVH(gutils, anti)));
           }
         endAnti:;
-          if ((Mode == DerivativeMode::ReverseModeCombined && shouldFree()) ||
-              (Mode == DerivativeMode::ReverseModePrimal && forwardsShadow &&
-               backwardsShadow) ||
+          if (((Mode == DerivativeMode::ReverseModeCombined && shouldFree()) ||
               (Mode == DerivativeMode::ReverseModeGradient && shouldFree()) ||
-              (Mode == DerivativeMode::ForwardModeSplit && shouldFree()) &&
+              (Mode == DerivativeMode::ForwardModeSplit && shouldFree())) &&
                   !isa<AllocaInst>(anti)) {
             IRBuilder<> Builder2(call.getParent());
             getReverseBuilder(Builder2);
@@ -9006,6 +9004,22 @@ public:
         return;
       }
 
+      for (auto rmat : gutils->backwardsOnlyShadows) {
+        if (rmat.second.frees.count(orig) && rmat.second.primalInitialize) {
+          IRBuilder<> Builder2(&call);
+          getForwardBuilder(Builder2);
+          auto origfree = orig->getArgOperand(0);
+          auto tofree = gutils->invertPointerM(origfree, Builder2);
+          if (tofree != origfree) {
+            SmallVector<Value *, 2> args = {tofree};
+            CallInst *CI = Builder2.CreateCall(orig->getFunctionType(),
+                                               orig->getCalledFunction(), args);
+            CI->setAttributes(orig->getAttributes());
+          }
+          break;
+        }
+      }
+      
       // If a rematerializable allocation.
       for (auto rmat : gutils->rematerializableAllocations) {
         if (rmat.second.frees.count(orig)) {

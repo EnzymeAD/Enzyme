@@ -550,6 +550,9 @@ public:
     // Operations which must be rerun to rematerialize
     // the original value.
     SmallPtrSet<Instruction *, 1> stores;
+    
+    // Operations which deallocate the value.
+    SmallPtrSet<Instruction *, 1> frees;
 
     // Whether the shadow must be initialized in the primal.
     bool primalInitialize;
@@ -557,10 +560,13 @@ public:
     // Loop scope (null if not loop scoped).
     Loop *LI;
 
-    ShadowRematerializer() : stores(), primalInitialize(), LI(nullptr) {}
-    ShadowRematerializer(const SmallPtrSetImpl<Instruction *> &stores,
+    ShadowRematerializer() : stores(), frees(), primalInitialize(), LI(nullptr) {}
+    ShadowRematerializer(
+                         const SmallPtrSetImpl<Instruction *> &stores,
+                         const SmallPtrSetImpl<Instruction *> &frees,
                          bool primalInitialize, Loop *LI)
         : stores(stores.begin(), stores.end()),
+          frees(frees.begin(), frees.end()), 
           primalInitialize(primalInitialize), LI(LI) {}
   };
 
@@ -754,7 +760,7 @@ public:
     if (!shadowpromotable)
       return;
     backwardsOnlyShadows[V] =
-        ShadowRematerializer(stores, primalInitializationOfShadow, outer);
+        ShadowRematerializer(stores, frees, primalInitializationOfShadow, outer);
 
     if (!promotable)
       return;
