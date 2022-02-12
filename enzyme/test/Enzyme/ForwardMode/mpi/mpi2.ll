@@ -157,15 +157,15 @@ attributes #4 = { nounwind }
 ; MSG1-NEXT:   %s2 = alloca %struct.ompi_status_public_t, align 8
 ; MSG1-NEXT:   %"'ipc" = bitcast float* %"val1'" to i8*
 ; MSG1-NEXT:   %0 = bitcast float* %val1 to i8*
-; MSG1-NEXT:   %call = call i32 @MPI_Isend(i8* %0, i32 1, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_real to %struct.ompi_datatype_t*), i32 %numprocsuiv, i32 %etiquette, %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*), %struct.ompi_request_t** nonnull %r1) #5
+; MSG1-NEXT:   %call = call i32 @MPI_Isend(i8* %0, i32 1, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_real to %struct.ompi_datatype_t*), i32 %numprocsuiv, i32 %etiquette, %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*), %struct.ompi_request_t** nonnull %r1)
 ; MSG1-NEXT:   %1 = call i32 @MPI_Isend(i8* %"'ipc", i32 1, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_real to %struct.ompi_datatype_t*), i32 %numprocsuiv, i32 %etiquette, %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*), %struct.ompi_request_t** %"r1'ipa")
-; MSG1-NEXT:   %call1 = call i32 @MPI_Wait(%struct.ompi_request_t** nonnull %r1, %struct.ompi_status_public_t* nonnull %s1) #5
+; MSG1-NEXT:   %call1 = call i32 @MPI_Wait(%struct.ompi_request_t** nonnull %r1, %struct.ompi_status_public_t* nonnull %s1)
 ; MSG1-NEXT:   %2 = call i32 @MPI_Wait(%struct.ompi_request_t** %"r1'ipa", %struct.ompi_status_public_t* %s1)
 ; MSG1-NEXT:   %"'ipc3" = bitcast float* %"val2'" to i8*
 ; MSG1-NEXT:   %3 = bitcast float* %val2 to i8*
-; MSG1-NEXT:   %call2 = call i32 @MPI_Irecv(i8* %3, i32 1, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_real to %struct.ompi_datatype_t*), i32 %numprocprec, i32 %etiquette, %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*), %struct.ompi_request_t** nonnull %r2) #5
+; MSG1-NEXT:   %call2 = call i32 @MPI_Irecv(i8* %3, i32 1, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_real to %struct.ompi_datatype_t*), i32 %numprocprec, i32 %etiquette, %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*), %struct.ompi_request_t** nonnull %r2)
 ; MSG1-NEXT:   %4 = call i32 @MPI_Irecv(i8* %"'ipc3", i32 1, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @ompi_mpi_real to %struct.ompi_datatype_t*), i32 %numprocprec, i32 %etiquette, %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*), %struct.ompi_request_t** %"r2'ipa")
-; MSG1-NEXT:   %call3 = call i32 @MPI_Wait(%struct.ompi_request_t** nonnull %r2, %struct.ompi_status_public_t* nonnull %s2) #5
+; MSG1-NEXT:   %call3 = call i32 @MPI_Wait(%struct.ompi_request_t** nonnull %r2, %struct.ompi_status_public_t* nonnull %s2)
 ; MSG1-NEXT:   %5 = call i32 @MPI_Wait(%struct.ompi_request_t** %"r2'ipa", %struct.ompi_status_public_t* %s2)
 ; MSG1-NEXT:   ret void
 ; MSG1-NEXT: }

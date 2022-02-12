@@ -39,7 +39,7 @@ declare double @__enzyme_fwddiff(i8*, ...)
 ; CHECK-NEXT:   store double %"b'", double* %"b.addr'ipa", align 8
 ; CHECK-NEXT:   %"'ipc" = bitcast double* %"b.addr'ipa" to i8*
 ; CHECK-NEXT:   %0 = bitcast double* %b.addr to i8*
-; CHECK-NEXT:   %call = call i32 @MPI_Bcast(i8* nonnull %0, i32 1, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @random_datatype to %struct.ompi_datatype_t*), i32 0, %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*)) #0
+; CHECK-NEXT:   %call = call i32 @MPI_Bcast(i8* nonnull %0, i32 1, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @random_datatype to %struct.ompi_datatype_t*), i32 0, %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*))
 ; CHECK-NEXT:   %1 = call i32 @MPI_Bcast(i8* %"'ipc", i32 1, %struct.ompi_datatype_t* bitcast (%struct.ompi_predefined_datatype_t* @random_datatype to %struct.ompi_datatype_t*), i32 0, %struct.ompi_communicator_t* bitcast (%struct.ompi_predefined_communicator_t* @ompi_mpi_comm_world to %struct.ompi_communicator_t*))
 ; CHECK-NEXT:   %2 = load double, double* %"b.addr'ipa", align 8
 ; CHECK-NEXT:   ret double %2

@@ -5331,7 +5331,11 @@ public:
           auto callval = call.getCalledValue();
 #endif
 
+#if LLVM_VERSION_MAJOR > 7
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
+#else
+          Builder2.CreateCall(callval, args, Defs);
+#endif
           return;
         }
       }
@@ -5479,7 +5483,12 @@ public:
 #else
         auto callval = call.getCalledValue();
 #endif
+
+#if LLVM_VERSION_MAJOR > 7
         Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
+#else
+        Builder2.CreateCall(callval, args, Defs);
+#endif
         return;
       }
       if (Mode == DerivativeMode::ReverseModeGradient)
@@ -5657,7 +5666,11 @@ public:
         auto callval = call.getCalledValue();
 #endif
 
+#if LLVM_VERSION_MAJOR > 7
         Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
+#else
+        Builder2.CreateCall(callval, args, Defs);
+#endif
         return;
       }
       if (Mode == DerivativeMode::ReverseModeGradient)
@@ -5741,7 +5754,11 @@ public:
           auto callval = call.getCalledValue();
 #endif
 
+#if LLVM_VERSION_MAJOR > 7
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
+#else
+          Builder2.CreateCall(callval, args, Defs);
+#endif
           return;
         }
 
@@ -5997,7 +6014,11 @@ public:
           auto callval = call.getCalledValue();
 #endif
 
+#if LLVM_VERSION_MAJOR > 7
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
+#else
+          Builder2.CreateCall(callval, args, Defs);
+#endif
           return;
         }
 
@@ -6276,7 +6297,11 @@ public:
           auto callval = call.getCalledValue();
 #endif
 
+#if LLVM_VERSION_MAJOR > 7
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
+#else
+          Builder2.CreateCall(callval, args, Defs);
+#endif
           return;
         }
 
@@ -6520,8 +6545,13 @@ public:
           auto callval = call.getCalledValue();
 #endif
 
+#if LLVM_VERSION_MAJOR > 7
           Builder2.CreateCall(call.getFunctionType(), callval, args,
                               BufferDefs);
+#else
+          Builder2.CreateCall(callval, args, BufferDefs);
+#endif
+
           return;
         }
 
@@ -6703,7 +6733,12 @@ public:
           auto callval = call.getCalledValue();
 #endif
 
+#if LLVM_VERSION_MAJOR > 7
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
+#else
+          Builder2.CreateCall(callval, args, Defs);
+#endif
+
           return;
         }
 
@@ -6926,7 +6961,12 @@ public:
           auto callval = call.getCalledValue();
 #endif
 
+#if LLVM_VERSION_MAJOR > 7
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
+#else
+          Builder2.CreateCall(callval, args, Defs);
+#endif
+
           return;
         }
         // Get the length for the allocation of the intermediate buffer
@@ -7179,7 +7219,12 @@ public:
           auto callval = call.getCalledValue();
 #endif
 
+#if LLVM_VERSION_MAJOR > 7
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
+#else
+          Builder2.CreateCall(callval, args, Defs);
+#endif
+
           return;
         }
         // Get the length for the allocation of the intermediate buffer
