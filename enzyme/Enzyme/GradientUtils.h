@@ -97,6 +97,7 @@ extern std::map<
 extern "C" {
 extern llvm::cl::opt<bool> EnzymeInactiveDynamic;
 extern llvm::cl::opt<bool> EnzymeFreeInternalAllocations;
+extern llvm::cl::opt<bool> EnzymeRematerialize;
 }
 
 struct InvertedPointerConfig : ValueMapConfig<const llvm::Value *> {
@@ -578,6 +579,8 @@ public:
   ValueMap<Value *, ShadowRematerializer> backwardsOnlyShadows;
 
   void computeForwardingProperties(Instruction *V, TypeResults &TR) {
+    if (!EnzymeRematerialize)
+      return;
     SmallPtrSet<LoadInst *, 1> loads;
     SmallPtrSet<Instruction *, 1> stores;
     SmallPtrSet<Instruction *, 1> frees;

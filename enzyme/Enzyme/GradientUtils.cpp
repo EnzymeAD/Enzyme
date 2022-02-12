@@ -95,6 +95,12 @@ llvm::cl::opt<bool> EnzymeFreeInternalAllocations(
     "enzyme-free-internal-allocations", cl::init(true), cl::Hidden,
     cl::desc("Always free internal allocations (disable if allocation needs "
              "access outside)"));
+
+llvm::cl::opt<bool>
+    EnzymeRematerialize("enzyme-rematerialize", cl::init(true), cl::Hidden,
+                        cl::desc("Rematerialize allocations/shadows in the "
+                                 "reverse rather than caching"));
+
 extern void (*CustomErrorHandler)(const char *);
 }
 

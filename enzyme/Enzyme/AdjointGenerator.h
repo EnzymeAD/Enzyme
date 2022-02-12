@@ -8654,7 +8654,6 @@ public:
       {
         auto found = gutils->rematerializableAllocations.find(orig);
         if (found != gutils->rematerializableAllocations.end()) {
-
           // If rematerializing (e.g. needed in reverse, but not needing
           //  the whole allocation):
           if (primalNeededInReverse && !cacheWholeAllocation) {
@@ -8702,8 +8701,7 @@ public:
             // If in primal, do nothing (keeping the original caching behavior)
             if (Mode == DerivativeMode::ReverseModePrimal)
               return;
-            // Otherwise, in combined: use the existing shouldFree heuristics
-          } else {
+          } else if (!cacheWholeAllocation) {
             // If not caching allocation and not needed in the reverse, we can
             // use the original freeing behavior for the function. If in the
             // reverse pass we should not recreate this allocation.

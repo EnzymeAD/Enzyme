@@ -74,8 +74,7 @@ static inline bool is_use_directly_needed_in_reverse(
       // backwards creation shadow.
       if (!TR.query(const_cast<Value *>(SI->getValueOperand()))[{-1}].isFloat())
         for (auto pair : gutils->backwardsOnlyShadows)
-          if (pair.second.stores.count(SI) &&
-              !gutils->isConstantValue(pair.first)) {
+          if (pair.second.stores.count(SI)) {
             return true;
           }
     }
@@ -84,16 +83,22 @@ static inline bool is_use_directly_needed_in_reverse(
 
   // If memtransfer, only the size may need preservation for the reverse pass
   if (auto MTI = dyn_cast<MemTransferInst>(user)) {
+    // Unless we're storing into a backwards only shadow store
+    if (MTI->getArgOperand(1) == val || MTI->getArgOperand(2) == val) {
+      for (auto pair : gutils->backwardsOnlyShadows)
+        if (pair.second.stores.count(MTI)) {
+          return true;
+        }
+    }
     if (MTI->getArgOperand(2) != val)
       return false;
   }
 
   // Preserve the length of memsets of backward creation shadows
   if (auto MS = dyn_cast<MemSetInst>(user)) {
-    if (MS->getArgOperand(2) == val) {
+    if (MS->getArgOperand(1) == val || MS->getArgOperand(2) == val) {
       for (auto pair : gutils->backwardsOnlyShadows)
-        if (pair.second.stores.count(MS) &&
-            !gutils->isConstantValue(pair.first)) {
+        if (pair.second.stores.count(MS)) {
           return true;
         }
     }
@@ -357,14 +362,14 @@ static inline bool is_value_needed_in_reverse(
     // Anything we may try to rematerialize requires its store opreands for
     // the reverse pass.
     if (!OneLevel) {
-      if (auto SI = dyn_cast<StoreInst>(user)) {
+      if (isa<StoreInst>(user) || isa<MemTransferInst>(user) || isa<MemSetInst>(user)) {
         for (auto pair : gutils->rematerializableAllocations) {
           // Directly consider all the load uses to avoid an illegal inductive
           // recurrence. Specifically if we're asking if the alloca is used,
           // we'll set it to unused, then check the gep, then here we'll
           // directly say unused by induction instead of checking the final
           // loads.
-          if (pair.second.stores.count(SI))
+          if (pair.second.stores.count(user))
             for (LoadInst *L : pair.second.loads)
               if (is_value_needed_in_reverse<VT>(TR, gutils, L, mode, seen,
                                                  oldUnreachable)) {

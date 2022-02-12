@@ -928,7 +928,7 @@ bool overwritesToMemoryReadByLoop(
     // to be legal, lest we have a repetition of the store.
     bool legal = true;
     for (const Loop *L = anc; anc != scope; anc = anc->getParentLoop()) {
-      if (!visitedAncestors.contains(L))
+      if (!visitedAncestors.count(L))
         legal = false;
     }
     if (legal)
