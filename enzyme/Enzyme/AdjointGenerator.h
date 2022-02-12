@@ -5466,7 +5466,7 @@ public:
         Value *args[] = {/*request*/ request,
                          /*status*/ status};
 
-        auto ReqDefs = gutils->getInvertedBundles(
+        auto Defs = gutils->getInvertedBundles(
             &call, {ValueType::Shadow, ValueType::Shadow}, Builder2,
             /*lookup*/ false);
 
@@ -5479,7 +5479,7 @@ public:
 #else
         auto callval = call.getCalledValue();
 #endif
-        Builder2.CreateCall(call.getFunctionType(), callval, args);
+        Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
         return;
       }
       if (Mode == DerivativeMode::ReverseModeGradient)
