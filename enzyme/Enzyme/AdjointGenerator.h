@@ -8512,8 +8512,7 @@ public:
                   CallInst *cal =
                       cast<CallInst>(gutils->getNewFromOriginal(orig));
 #if LLVM_VERSION_MAJOR >= 14
-                  cast<CallInst>(anti)->addDereferenceableRetAttr(
-                      derefBytes);
+                  cast<CallInst>(anti)->addDereferenceableRetAttr(derefBytes);
                   cal->addDereferenceableRetAttr(derefBytes);
 #ifndef FLANG
                   AttrBuilder B(called->getContext());
@@ -8641,7 +8640,7 @@ public:
               ? false
               : is_value_needed_in_reverse<ValueType::Primal>(
                     TR, gutils, orig, Mode, Seen, oldUnreachable);
-    
+
       bool cacheWholeAllocation = false;
       if (gutils->knownRecomputeHeuristic.count(orig)) {
         if (!gutils->knownRecomputeHeuristic[orig]) {
@@ -8793,7 +8792,7 @@ public:
         }
         return;
       }
-      
+
       if (EnzymeFreeInternalAllocations)
         hasPDFree = true;
 
@@ -9041,7 +9040,8 @@ public:
             assert(Mode == DerivativeMode::ReverseModeCombined);
             // If in a loop context, maintain the same free behavior.
             if (auto inst = dyn_cast<Instruction>(rmat.first))
-              if (rmat.second.LI && rmat.second.LI->contains(inst->getParent())) {
+              if (rmat.second.LI &&
+                  rmat.second.LI->contains(inst->getParent())) {
                 return;
               }
             // In combined mode, if we don't need this allocation

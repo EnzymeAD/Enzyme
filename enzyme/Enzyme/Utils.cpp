@@ -32,9 +32,9 @@
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
-#include "llvm/IR/InlineAsm.h"
 
 using namespace llvm;
 
@@ -688,12 +688,12 @@ Function *getOrInsertExponentialAllocator(Module &M, bool ZeroInit) {
   return F;
 }
 
-void mayExecuteAfter(llvm::SmallVectorImpl<llvm::Instruction*> &results,
+void mayExecuteAfter(llvm::SmallVectorImpl<llvm::Instruction *> &results,
                      llvm::Instruction *inst,
-                                   const llvm::SmallPtrSetImpl<Instruction*> &stores,
-                                   const llvm::Loop *region) {
+                     const llvm::SmallPtrSetImpl<Instruction *> &stores,
+                     const llvm::Loop *region) {
   using namespace llvm;
-  std::map<BasicBlock *, SmallVector<Instruction*, 1>> maybeBlocks;
+  std::map<BasicBlock *, SmallVector<Instruction *, 1>> maybeBlocks;
   BasicBlock *instBlk = inst->getParent();
   for (auto store : stores) {
     BasicBlock *storeBlk = store->getParent();
@@ -734,7 +734,7 @@ void mayExecuteAfter(llvm::SmallVectorImpl<llvm::Instruction*> &results,
     auto found = maybeBlocks.find(cur);
     if (found != maybeBlocks.end()) {
       for (auto store : found->second)
-          results.push_back(store);
+        results.push_back(store);
       maybeBlocks.erase(found);
     }
     for (auto B : successors(cur)) {
@@ -746,288 +746,277 @@ void mayExecuteAfter(llvm::SmallVectorImpl<llvm::Instruction*> &results,
   }
 }
 
-bool overwritesToMemoryReadByLoop(llvm::ScalarEvolution &SE,
-                                  llvm::LoopInfo &LI,
-                                  llvm::DominatorTree &DT,
-                                  llvm::Instruction *maybeReader,
-                                  const llvm::SCEV* LoadStart,
-                                  const llvm::SCEV* LoadEnd,
-                                  llvm::Instruction *maybeWriter,
-                                  const llvm::SCEV* StoreStart,
-                                  const llvm::SCEV* StoreEnd,
-                                  llvm::Loop *scope) {
-      // The store may either occur directly after the load in the current loop nest,
-      // or prior to the load in a subsequent iteration of the loop nest
-      // Generally:
-      // L0 -> scope -> L1 -> L2 -> L3 -> load_L4 -> load_L5 ...  Load
-      //                               \-> store_L4 -> store_L5 ... Store
-      // We begin by finding the common ancestor of the two loops, which may
-      // be none.
-        Loop *anc = getAncestor(LI.getLoopFor(maybeReader->getParent()), LI.getLoopFor(maybeWriter->getParent()));
+bool overwritesToMemoryReadByLoop(
+    llvm::ScalarEvolution &SE, llvm::LoopInfo &LI, llvm::DominatorTree &DT,
+    llvm::Instruction *maybeReader, const llvm::SCEV *LoadStart,
+    const llvm::SCEV *LoadEnd, llvm::Instruction *maybeWriter,
+    const llvm::SCEV *StoreStart, const llvm::SCEV *StoreEnd,
+    llvm::Loop *scope) {
+  // The store may either occur directly after the load in the current loop
+  // nest, or prior to the load in a subsequent iteration of the loop nest
+  // Generally:
+  // L0 -> scope -> L1 -> L2 -> L3 -> load_L4 -> load_L5 ...  Load
+  //                               \-> store_L4 -> store_L5 ... Store
+  // We begin by finding the common ancestor of the two loops, which may
+  // be none.
+  Loop *anc = getAncestor(LI.getLoopFor(maybeReader->getParent()),
+                          LI.getLoopFor(maybeWriter->getParent()));
 
-      // The surrounding scope must contain the ancestor
-      if (scope) {
-          assert(anc);
-          assert(scope == anc || scope->contains(anc));
-      }
-      
-      // Consider the case where the load and store don't share any common loops.
-      // That is to say, there's no loops in [scope, ancestor) we need to consider
-      // having a store in a  later iteration overwrite the load of a previous
-      // iteration.
-      //
-      // An example of this overwriting would be a "left shift"
-      //   for (int j = 1; j<N; j++) {
-      //      load A[j]
-      //      store A[j-1]
-      //    }
-      //
-      // Ignoring such ancestors, if we compare the two regions to have no direct
-      // overlap we can return that it doesn't overwrite memory if the regions
-      // don't overlap at any level of region expansion. That is to say, we can
-      // expand the start or end, for any loop to be the worst case scenario
-      // given the loop bounds.
-      //
-      // However, now let us consider the case where there are surrounding loops.
-      // If the storing boundary is represented by an induction variable of one
-      // of these common loops, we must conseratively expand it all the way to the
-      // end. We will also mark the loops we may expand. If we encounter all
-      // intervening loops in this fashion, and it is proven safe in these cases,
-      // the region does not overlap. However, if we don't encounter all surrounding
-      // loops in our induction expansion, we may simply be repeating the write
-      // which we should also ensure we say the region may overlap (due to the
-      // repetition).
-      //
-      // Since we also have a Loop scope, we can ignore any common loops at the
-      // scope level or above
+  // The surrounding scope must contain the ancestor
+  if (scope) {
+    assert(anc);
+    assert(scope == anc || scope->contains(anc));
+  }
 
-      /// We force all ranges for all loops in range ... [scope, anc], .... cur
-      /// to expand the number of iterations
-      
-      SmallPtrSet<const Loop*, 1> visitedAncestors;
-      auto skipLoop = [&](const Loop* L) {
-          assert(L);
-          if (scope && L->contains(scope)) return false;
+  // Consider the case where the load and store don't share any common loops.
+  // That is to say, there's no loops in [scope, ancestor) we need to consider
+  // having a store in a  later iteration overwrite the load of a previous
+  // iteration.
+  //
+  // An example of this overwriting would be a "left shift"
+  //   for (int j = 1; j<N; j++) {
+  //      load A[j]
+  //      store A[j-1]
+  //    }
+  //
+  // Ignoring such ancestors, if we compare the two regions to have no direct
+  // overlap we can return that it doesn't overwrite memory if the regions
+  // don't overlap at any level of region expansion. That is to say, we can
+  // expand the start or end, for any loop to be the worst case scenario
+  // given the loop bounds.
+  //
+  // However, now let us consider the case where there are surrounding loops.
+  // If the storing boundary is represented by an induction variable of one
+  // of these common loops, we must conseratively expand it all the way to the
+  // end. We will also mark the loops we may expand. If we encounter all
+  // intervening loops in this fashion, and it is proven safe in these cases,
+  // the region does not overlap. However, if we don't encounter all surrounding
+  // loops in our induction expansion, we may simply be repeating the write
+  // which we should also ensure we say the region may overlap (due to the
+  // repetition).
+  //
+  // Since we also have a Loop scope, we can ignore any common loops at the
+  // scope level or above
 
-          if (anc && (anc == L || anc->contains(L))) {
-            visitedAncestors.insert(L);
-            return true;
+  /// We force all ranges for all loops in range ... [scope, anc], .... cur
+  /// to expand the number of iterations
+
+  SmallPtrSet<const Loop *, 1> visitedAncestors;
+  auto skipLoop = [&](const Loop *L) {
+    assert(L);
+    if (scope && L->contains(scope))
+      return false;
+
+    if (anc && (anc == L || anc->contains(L))) {
+      visitedAncestors.insert(L);
+      return true;
+    }
+    return false;
+  };
+
+  // Check the boounds  of an [... endprev][startnext ...] for potential
+  // overlaps. The boolean EndIsStore is true of the EndPev represents
+  // the store and should have its loops expanded, or if that should
+  // apply to StartNed.
+  auto hasOverlap = [&](const SCEV *EndPrev, const SCEV *StartNext,
+                        bool EndIsStore) {
+    for (auto slim = StartNext; slim != SE.getCouldNotCompute();) {
+      bool sskip = false;
+      if (!EndIsStore)
+        if (auto startL = dyn_cast<SCEVAddRecExpr>(slim))
+          if (skipLoop(startL->getLoop()) &&
+              SE.isKnownNonPositive(startL->getStepRecurrence(SE))) {
+            sskip = true;
           }
-          return false;
-      };
 
-      // Check the boounds  of an [... endprev][startnext ...] for potential
-      // overlaps. The boolean EndIsStore is true of the EndPev represents
-      // the store and should have its loops expanded, or if that should
-      // apply to StartNed.
-      auto hasOverlap = [&](const SCEV* EndPrev, const SCEV* StartNext, bool EndIsStore) {
-          for (auto slim = StartNext; slim != SE.getCouldNotCompute();) {
-            bool sskip = false;
-            if (!EndIsStore)
-            if (auto startL = dyn_cast<SCEVAddRecExpr>(slim))
-                if (skipLoop(startL->getLoop()) && SE.isKnownNonPositive(
-                    startL->getStepRecurrence(SE))) {
-                    sskip = true;
-            }
+      if (!sskip)
+        for (auto elim = EndPrev; elim != SE.getCouldNotCompute();) {
+          {
 
-            if (!sskip)
-            for (auto elim = EndPrev; elim != SE.getCouldNotCompute();) {
-              {
-                
-                bool eskip = false;
-                if (EndIsStore)
-                if (auto endL = dyn_cast<SCEVAddRecExpr>(elim)) {
-                    if (skipLoop(endL->getLoop()) && SE.isKnownNonNegative(
-                           endL->getStepRecurrence(SE))) {
-                      eskip = true;
-                    } else {
-                    }
-                }
-
-                // Moreover because otherwise SE cannot "groupScevByComplexity"
-                // we need to ensure that if both slim/elim are AddRecv
-                // they must be in the same loop, or one loop must dominate
-                // the other.
-                if (!eskip) {
-                
-                    if (auto endL = dyn_cast<SCEVAddRecExpr>(elim)) {
-                        auto EH = endL->getLoop()->getHeader();
-                    if (auto startL = dyn_cast<SCEVAddRecExpr>(slim)) {
-                        auto SH = startL->getLoop()->getHeader();
-                        if (EH != SH && !DT.dominates(EH, SH) && !DT.dominates(SH, EH))
-                            eskip = true;
-                    }
-                    }
-                }
-              if (!eskip) {
-                auto sub = SE.getMinusSCEV(slim, elim);
-                if (sub != SE.getCouldNotCompute() && SE.isKnownNonNegative(sub))
-                  return false;
+            bool eskip = false;
+            if (EndIsStore)
+              if (auto endL = dyn_cast<SCEVAddRecExpr>(elim)) {
+                if (skipLoop(endL->getLoop()) &&
+                    SE.isKnownNonNegative(endL->getStepRecurrence(SE))) {
+                  eskip = true;
                 }
               }
+
+            // Moreover because otherwise SE cannot "groupScevByComplexity"
+            // we need to ensure that if both slim/elim are AddRecv
+            // they must be in the same loop, or one loop must dominate
+            // the other.
+            if (!eskip) {
 
               if (auto endL = dyn_cast<SCEVAddRecExpr>(elim)) {
-                if (SE.isKnownNonPositive(endL->getStepRecurrence(SE))) {
-                  elim = endL->getStart();
-                  continue;
-                } else if (SE.isKnownNonNegative(
-                           endL->getStepRecurrence(SE))) {
-#if LLVM_VERSION_MAJOR >= 12
-                  auto ebd =
-                    SE.getSymbolicMaxBackedgeTakenCount(endL->getLoop());
-#else
-                  auto ebd = SE.getBackedgeTakenCount(endL->getLoop());
-#endif
-                  if (ebd == SE.getCouldNotCompute())
-                    break;
-                 elim = endL->evaluateAtIteration(ebd, SE);
-                 continue;
+                auto EH = endL->getLoop()->getHeader();
+                if (auto startL = dyn_cast<SCEVAddRecExpr>(slim)) {
+                  auto SH = startL->getLoop()->getHeader();
+                  if (EH != SH && !DT.dominates(EH, SH) &&
+                      !DT.dominates(SH, EH))
+                    eskip = true;
                 }
               }
-              break;
             }
-
-              if (auto startL = dyn_cast<SCEVAddRecExpr>(slim)) {
-                if (SE.isKnownNonNegative(startL->getStepRecurrence(SE))) {
-                  slim = startL->getStart();
-                  continue;
-                } else if (SE.isKnownNonPositive(
-                           startL->getStepRecurrence(SE))) {
-#if LLVM_VERSION_MAJOR >= 12
-                  auto sbd =
-                    SE.getSymbolicMaxBackedgeTakenCount(startL->getLoop());
-#else
-                  auto sbd = SE.getBackedgeTakenCount(startL->getLoop());
-#endif
-                  if (sbd == SE.getCouldNotCompute())
-                    break;
-                 slim = startL->evaluateAtIteration(sbd, SE);
-                 continue;
-                }
-              }
-              break;
-
+            if (!eskip) {
+              auto sub = SE.getMinusSCEV(slim, elim);
+              if (sub != SE.getCouldNotCompute() && SE.isKnownNonNegative(sub))
+                return false;
+            }
           }
-          return true;
-      };
-      
-      // There is no overwrite if either the stores all occur before the loads
-      // [S, S+Size][start load, L+Size]
-      visitedAncestors.clear();
-      if (!hasOverlap(StoreEnd, LoadStart, /*EndIsStore*/true)) {
-        // We must have seen all common loops as induction variables
-        // to be legal, lest we have a repetition of the store.
-        bool legal = true;
-        for (const Loop *L = anc; anc != scope; anc = anc->getParentLoop()) {
-          if (!visitedAncestors.count(L))
-            legal = false;
-        }
-        if (legal) return false;
 
-      }
-
-      // There is no overwrite if either the loads all occur before the stores
-      // [start load, L+Size] [S, S+Size]
-      visitedAncestors.clear();
-      if (!hasOverlap(LoadEnd, StoreStart, /*EndIsStore*/false)) {
-        // We must have seen all common loops as induction variables
-        // to be legal, lest we have a repetition of the store.
-        bool legal = true;
-        for (const Loop *L = anc; anc != scope; anc = anc->getParentLoop()) {
-          if (!visitedAncestors.contains(L))
-            legal = false;
+          if (auto endL = dyn_cast<SCEVAddRecExpr>(elim)) {
+            if (SE.isKnownNonPositive(endL->getStepRecurrence(SE))) {
+              elim = endL->getStart();
+              continue;
+            } else if (SE.isKnownNonNegative(endL->getStepRecurrence(SE))) {
+#if LLVM_VERSION_MAJOR >= 12
+              auto ebd = SE.getSymbolicMaxBackedgeTakenCount(endL->getLoop());
+#else
+              auto ebd = SE.getBackedgeTakenCount(endL->getLoop());
+#endif
+              if (ebd == SE.getCouldNotCompute())
+                break;
+              elim = endL->evaluateAtIteration(ebd, SE);
+              continue;
+            }
+          }
+          break;
         }
-        if (legal) return false;
+
+      if (auto startL = dyn_cast<SCEVAddRecExpr>(slim)) {
+        if (SE.isKnownNonNegative(startL->getStepRecurrence(SE))) {
+          slim = startL->getStart();
+          continue;
+        } else if (SE.isKnownNonPositive(startL->getStepRecurrence(SE))) {
+#if LLVM_VERSION_MAJOR >= 12
+          auto sbd = SE.getSymbolicMaxBackedgeTakenCount(startL->getLoop());
+#else
+          auto sbd = SE.getBackedgeTakenCount(startL->getLoop());
+#endif
+          if (sbd == SE.getCouldNotCompute())
+            break;
+          slim = startL->evaluateAtIteration(sbd, SE);
+          continue;
+        }
       }
-      return true;
+      break;
+    }
+    return true;
+  };
+
+  // There is no overwrite if either the stores all occur before the loads
+  // [S, S+Size][start load, L+Size]
+  visitedAncestors.clear();
+  if (!hasOverlap(StoreEnd, LoadStart, /*EndIsStore*/ true)) {
+    // We must have seen all common loops as induction variables
+    // to be legal, lest we have a repetition of the store.
+    bool legal = true;
+    for (const Loop *L = anc; anc != scope; anc = anc->getParentLoop()) {
+      if (!visitedAncestors.count(L))
+        legal = false;
+    }
+    if (legal)
+      return false;
+  }
+
+  // There is no overwrite if either the loads all occur before the stores
+  // [start load, L+Size] [S, S+Size]
+  visitedAncestors.clear();
+  if (!hasOverlap(LoadEnd, StoreStart, /*EndIsStore*/ false)) {
+    // We must have seen all common loops as induction variables
+    // to be legal, lest we have a repetition of the store.
+    bool legal = true;
+    for (const Loop *L = anc; anc != scope; anc = anc->getParentLoop()) {
+      if (!visitedAncestors.contains(L))
+        legal = false;
+    }
+    if (legal)
+      return false;
+  }
+  return true;
 }
 
-bool overwritesToMemoryReadBy(llvm::AAResults &AA,
-                              ScalarEvolution &SE,
-                              llvm::LoopInfo &LI,
-                              llvm::DominatorTree &DT,
+bool overwritesToMemoryReadBy(llvm::AAResults &AA, ScalarEvolution &SE,
+                              llvm::LoopInfo &LI, llvm::DominatorTree &DT,
                               llvm::Instruction *maybeReader,
                               llvm::Instruction *maybeWriter,
-                              llvm::Loop* scope) {
-    using namespace llvm;
-    if (!writesToMemoryReadBy(AA, maybeReader, maybeWriter))
-        return false;
-    const SCEV* LoadBegin = SE.getCouldNotCompute();
-    const SCEV* LoadEnd = SE.getCouldNotCompute();
-    
-    const SCEV* StoreBegin = SE.getCouldNotCompute();
-    const SCEV* StoreEnd = SE.getCouldNotCompute();
-    
-    if (auto LI = dyn_cast<LoadInst>(maybeReader)) {
-        LoadBegin = SE.getSCEV(LI->getPointerOperand());
-        if (LoadBegin != SE.getCouldNotCompute()) {
-          auto &DL = maybeWriter->getModule()->getDataLayout();
-#if LLVM_VERSION_MAJOR >= 10
-              auto TS = SE.getConstant(
-                  APInt(64, DL.getTypeStoreSize(LI->getType()).getFixedSize()));
-#else
-            auto TS = SE.getConstant(
-                APInt(64, DL.getTypeStoreSize(LI->getType())));
-#endif
-            LoadEnd = SE.getAddExpr(LoadBegin, TS);
-        }
-    }
-    if (auto SI = dyn_cast<StoreInst>(maybeWriter)) {
-        StoreBegin = SE.getSCEV(SI->getPointerOperand());
-        if (StoreBegin != SE.getCouldNotCompute()) {
-          auto &DL = maybeWriter->getModule()->getDataLayout();
-#if LLVM_VERSION_MAJOR >= 10
-              auto TS = SE.getConstant(
-                  APInt(64, DL.getTypeStoreSize(SI->getValueOperand()->getType()).getFixedSize()));
-#else
-            auto TS = SE.getConstant(
-                APInt(64, DL.getTypeStoreSize(SI->getValueOperand()->getType())));
-#endif
-            StoreEnd = SE.getAddExpr(StoreBegin, TS);
-        }
-    }
-    if (auto MS = dyn_cast<MemSetInst>(maybeWriter)) {
-        StoreBegin = SE.getSCEV(MS->getArgOperand(0));
-        if (StoreBegin != SE.getCouldNotCompute()) {
-            if (auto Len = dyn_cast<ConstantInt>(MS->getArgOperand(2))) {
-                auto TS = SE.getConstant(
-                    APInt(64, Len->getValue().getLimitedValue()));
-                StoreEnd = SE.getAddExpr(StoreBegin, TS);
-            }
-        }
-    }
-    if (auto MS = dyn_cast<MemTransferInst>(maybeWriter)) {
-        StoreBegin = SE.getSCEV(MS->getArgOperand(0));
-        if (StoreBegin != SE.getCouldNotCompute()) {
-            if (auto Len = dyn_cast<ConstantInt>(MS->getArgOperand(2))) {
-                auto TS = SE.getConstant(
-                    APInt(64, Len->getValue().getLimitedValue()));
-                StoreEnd = SE.getAddExpr(StoreBegin, TS);
-            }
-        }
-    }
-    if (auto MS = dyn_cast<MemTransferInst>(maybeReader)) {
-        LoadBegin = SE.getSCEV(MS->getArgOperand(1));
-        if (LoadBegin != SE.getCouldNotCompute()) {
-            if (auto Len = dyn_cast<ConstantInt>(MS->getArgOperand(2))) {
-                auto TS = SE.getConstant(
-                    APInt(64, Len->getValue().getLimitedValue()));
-                LoadEnd = SE.getAddExpr(LoadBegin, TS);
-            }
-        }
-    }
+                              llvm::Loop *scope) {
+  using namespace llvm;
+  if (!writesToMemoryReadBy(AA, maybeReader, maybeWriter))
+    return false;
+  const SCEV *LoadBegin = SE.getCouldNotCompute();
+  const SCEV *LoadEnd = SE.getCouldNotCompute();
 
-    if (!overwritesToMemoryReadByLoop(SE, LI, DT, maybeReader, LoadBegin, LoadEnd,
-                                          maybeWriter, StoreBegin, StoreEnd, scope))
-        return false;
+  const SCEV *StoreBegin = SE.getCouldNotCompute();
+  const SCEV *StoreEnd = SE.getCouldNotCompute();
 
-    return true;
+  if (auto LI = dyn_cast<LoadInst>(maybeReader)) {
+    LoadBegin = SE.getSCEV(LI->getPointerOperand());
+    if (LoadBegin != SE.getCouldNotCompute()) {
+      auto &DL = maybeWriter->getModule()->getDataLayout();
+#if LLVM_VERSION_MAJOR >= 10
+      auto TS = SE.getConstant(
+          APInt(64, DL.getTypeStoreSize(LI->getType()).getFixedSize()));
+#else
+      auto TS = SE.getConstant(APInt(64, DL.getTypeStoreSize(LI->getType())));
+#endif
+      LoadEnd = SE.getAddExpr(LoadBegin, TS);
+    }
+  }
+  if (auto SI = dyn_cast<StoreInst>(maybeWriter)) {
+    StoreBegin = SE.getSCEV(SI->getPointerOperand());
+    if (StoreBegin != SE.getCouldNotCompute()) {
+      auto &DL = maybeWriter->getModule()->getDataLayout();
+#if LLVM_VERSION_MAJOR >= 10
+      auto TS = SE.getConstant(
+          APInt(64, DL.getTypeStoreSize(SI->getValueOperand()->getType())
+                        .getFixedSize()));
+#else
+      auto TS = SE.getConstant(
+          APInt(64, DL.getTypeStoreSize(SI->getValueOperand()->getType())));
+#endif
+      StoreEnd = SE.getAddExpr(StoreBegin, TS);
+    }
+  }
+  if (auto MS = dyn_cast<MemSetInst>(maybeWriter)) {
+    StoreBegin = SE.getSCEV(MS->getArgOperand(0));
+    if (StoreBegin != SE.getCouldNotCompute()) {
+      if (auto Len = dyn_cast<ConstantInt>(MS->getArgOperand(2))) {
+        auto TS = SE.getConstant(APInt(64, Len->getValue().getLimitedValue()));
+        StoreEnd = SE.getAddExpr(StoreBegin, TS);
+      }
+    }
+  }
+  if (auto MS = dyn_cast<MemTransferInst>(maybeWriter)) {
+    StoreBegin = SE.getSCEV(MS->getArgOperand(0));
+    if (StoreBegin != SE.getCouldNotCompute()) {
+      if (auto Len = dyn_cast<ConstantInt>(MS->getArgOperand(2))) {
+        auto TS = SE.getConstant(APInt(64, Len->getValue().getLimitedValue()));
+        StoreEnd = SE.getAddExpr(StoreBegin, TS);
+      }
+    }
+  }
+  if (auto MS = dyn_cast<MemTransferInst>(maybeReader)) {
+    LoadBegin = SE.getSCEV(MS->getArgOperand(1));
+    if (LoadBegin != SE.getCouldNotCompute()) {
+      if (auto Len = dyn_cast<ConstantInt>(MS->getArgOperand(2))) {
+        auto TS = SE.getConstant(APInt(64, Len->getValue().getLimitedValue()));
+        LoadEnd = SE.getAddExpr(LoadBegin, TS);
+      }
+    }
+  }
+
+  if (!overwritesToMemoryReadByLoop(SE, LI, DT, maybeReader, LoadBegin, LoadEnd,
+                                    maybeWriter, StoreBegin, StoreEnd, scope))
+    return false;
+
+  return true;
 }
 
 /// Return whether maybeReader can read from memory written to by maybeWriter
-bool writesToMemoryReadBy(llvm::AAResults &AA,
-                                        llvm::Instruction *maybeReader,
-                                        llvm::Instruction *maybeWriter) {
+bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::Instruction *maybeReader,
+                          llvm::Instruction *maybeWriter) {
   assert(maybeReader->getParent()->getParent() ==
          maybeWriter->getParent()->getParent());
   using namespace llvm;

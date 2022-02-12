@@ -608,8 +608,8 @@ public:
       } else if (auto store = dyn_cast<StoreInst>(cur)) {
         if (store->getValueOperand() == prev) {
           EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
-                    cur->getParent(), " Could not promote allocation ",
-                    *V, " due to capturing store ", *cur);
+                      cur->getParent(), " Could not promote allocation ", *V,
+                      " due to capturing store ", *cur);
           promotable = false;
           shadowpromotable = false;
           break;
@@ -643,9 +643,9 @@ public:
             if (arg == prev) {
               promotable = false;
               shadowpromotable = false;
-             EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
-                    cur->getParent(), " Could not promote allocation ",
-                    *V, " due to memset use ", *cur);
+              EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
+                          cur->getParent(), " Could not promote allocation ",
+                          *V, " due to memset use ", *cur);
               break;
             }
             break;
@@ -657,8 +657,8 @@ public:
           promotable = false;
           shadowpromotable = false;
           EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
-                    cur->getParent(), " Could not promote allocation ",
-                    *V, " due to unknown intrinsic ", *cur);
+                      cur->getParent(), " Could not promote allocation ", *V,
+                      " due to unknown intrinsic ", *cur);
           break;
         }
       } else if (auto CI = dyn_cast<CallInst>(cur)) {
@@ -673,10 +673,10 @@ public:
         }
 
         promotable = false;
-        
+
         EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
-                    cur->getParent(), " Could not promote allocation ",
-                    *V, " due to unknown call ", *cur);
+                    cur->getParent(), " Could not promote allocation ", *V,
+                    " due to unknown call ", *cur);
         size_t idx = 0;
 #if LLVM_VERSION_MAJOR >= 14
         for (auto &arg : CI->args())
@@ -744,8 +744,8 @@ public:
         promotable = false;
         shadowpromotable = false;
         EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
-                    cur->getParent(), " Could not promote allocation ",
-                    *V, " due to unknown instruction ", *cur);
+                    cur->getParent(), " Could not promote allocation ", *V,
+                    " due to unknown instruction ", *cur);
       }
     }
 
@@ -779,20 +779,22 @@ public:
     for (auto LI : loads) {
       // Is there a store which could occur after the load.
       // In other words
-      SmallVector<Instruction*, 2> results;
+      SmallVector<Instruction *, 2> results;
       mayExecuteAfter(results, LI, stores, outer);
       for (auto res : results) {
-        if (overwritesToMemoryReadBy(OrigAA, SE, OrigLI, OrigDT, LI, res, outer)) {
+        if (overwritesToMemoryReadBy(OrigAA, SE, OrigLI, OrigDT, LI, res,
+                                     outer)) {
           EmitWarning("NotPromotable", LI->getDebugLoc(), oldFunc,
-                      LI->getParent(), " Could not promote allocation ",
-                      *V, " due to load ", *LI, " which does not postdominates store ");
+                      LI->getParent(), " Could not promote allocation ", *V,
+                      " due to load ", *LI,
+                      " which does not postdominates store ");
           return;
         }
       }
       rematerializable.insert(LI);
     }
     rematerializableAllocations[V] =
-          Rematerializer(loads, stores, frees, outer);
+        Rematerializer(loads, stores, frees, outer);
   }
 
   void computeGuaranteedFrees(

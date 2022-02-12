@@ -61,7 +61,7 @@
 #include "TypeAnalysis/ConcreteType.h"
 
 namespace llvm {
-    class ScalarEvolution;
+class ScalarEvolution;
 }
 
 extern "C" {
@@ -794,28 +794,28 @@ allUnsyncdPredecessorsOf(llvm::Instruction *inst,
 
 #include "llvm/Analysis/LoopInfo.h"
 
-static inline llvm::Loop* getAncestor(llvm::Loop *R1, llvm::Loop *R2) {
-    if (!R1 || !R2) return nullptr;
-    for (llvm::Loop *L1 = R1; L1; L1 = L1->getParentLoop())
-          for (llvm::Loop *L2 = R2; L2; L2 = L2->getParentLoop()) {
-            if (L1 == L2) {
-              return L1;
-            }
-          }
+static inline llvm::Loop *getAncestor(llvm::Loop *R1, llvm::Loop *R2) {
+  if (!R1 || !R2)
     return nullptr;
+  for (llvm::Loop *L1 = R1; L1; L1 = L1->getParentLoop())
+    for (llvm::Loop *L2 = R2; L2; L2 = L2->getParentLoop()) {
+      if (L1 == L2) {
+        return L1;
+      }
+    }
+  return nullptr;
 }
 
 // Add all of the stores which may execute after the instruction `inst`
 // into the resutls vector.
-void mayExecuteAfter(llvm::SmallVectorImpl<llvm::Instruction*> &results,
-                      llvm::Instruction *inst,
-                       const llvm::SmallPtrSetImpl<llvm::Instruction*> &stores,
-                       const llvm::Loop *region);
+void mayExecuteAfter(llvm::SmallVectorImpl<llvm::Instruction *> &results,
+                     llvm::Instruction *inst,
+                     const llvm::SmallPtrSetImpl<llvm::Instruction *> &stores,
+                     const llvm::Loop *region);
 
 /// Return whether maybeReader can read from memory written to by maybeWriter
-bool writesToMemoryReadBy(llvm::AAResults &AA,
-                                        llvm::Instruction *maybeReader,
-                                        llvm::Instruction *maybeWriter);
+bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::Instruction *maybeReader,
+                          llvm::Instruction *maybeWriter);
 
 // A more advanced version of writesToMemoryReadBy, where the writing
 // instruction comes after the reading function. Specifically, even if the two
@@ -828,13 +828,11 @@ bool writesToMemoryReadBy(llvm::AAResults &AA,
 //      load A[i-1]
 //      store A[i] = ...
 //   }
-bool overwritesToMemoryReadBy(llvm::AAResults &AA,
-                              llvm::ScalarEvolution &SE,
-                              llvm::LoopInfo &LI,
-                              llvm::DominatorTree &DT,
+bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::ScalarEvolution &SE,
+                              llvm::LoopInfo &LI, llvm::DominatorTree &DT,
                               llvm::Instruction *maybeReader,
                               llvm::Instruction *maybeWriter,
-                              llvm::Loop *scope=nullptr);
+                              llvm::Loop *scope = nullptr);
 static inline void
 /// Call the function f for all instructions that happen between inst1 and inst2
 /// If the function returns true, the iteration will early exit
