@@ -607,6 +607,9 @@ public:
         loads.insert(load);
       } else if (auto store = dyn_cast<StoreInst>(cur)) {
         if (store->getValueOperand() == prev) {
+          EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
+                    cur->getParent(), " Could not promote allocation ",
+                    *V, " due to capturing store ", *cur);
           promotable = false;
           shadowpromotable = false;
           break;
@@ -640,6 +643,9 @@ public:
             if (arg == prev) {
               promotable = false;
               shadowpromotable = false;
+             EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
+                    cur->getParent(), " Could not promote allocation ",
+                    *V, " due to memset use ", *cur);
               break;
             }
             break;
@@ -650,6 +656,9 @@ public:
         default:
           promotable = false;
           shadowpromotable = false;
+          EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
+                    cur->getParent(), " Could not promote allocation ",
+                    *V, " due to unknown intrinsic ", *cur);
           break;
         }
       } else if (auto CI = dyn_cast<CallInst>(cur)) {
@@ -664,6 +673,10 @@ public:
         }
 
         promotable = false;
+        
+        EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
+                    cur->getParent(), " Could not promote allocation ",
+                    *V, " due to unknown call ", *cur);
         size_t idx = 0;
 #if LLVM_VERSION_MAJOR >= 14
         for (auto &arg : CI->args())
@@ -730,6 +743,9 @@ public:
       } else {
         promotable = false;
         shadowpromotable = false;
+        EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
+                    cur->getParent(), " Could not promote allocation ",
+                    *V, " due to unknown instruction ", *cur);
       }
     }
 
@@ -740,47 +756,45 @@ public:
     }
 
     for (auto S : stores) {
-      Loop *L = OrigLI.getLoopFor(S->getParent());
-      if (outer == nullptr || L == nullptr) {
-        outer = nullptr;
-      } else {
-        Loop *anc = nullptr;
-        for (Loop *L1 = L; L1; L1 = L1->getParentLoop())
-          for (Loop *L2 = outer; L2; L2 = L2->getParentLoop()) {
-            if (L1 == L2) {
-              anc = L1;
-              goto found;
-            }
-          }
-      found:;
-        outer = anc;
-      }
+      outer = getAncestor(outer, OrigLI.getLoopFor(S->getParent()));
     }
 
     if (!shadowpromotable)
       return;
 
-    if (!isConstantValue(V))
+    if (!isConstantValue(V)) {
+      llvm::errs() << " backwards remat: " << *V << "\n";
       backwardsOnlyShadows[V] = ShadowRematerializer(
           stores, frees, primalInitializationOfShadow, outer);
+    }
 
     if (!promotable)
       return;
 
     SmallPtrSet<LoadInst *, 1> rematerializable;
 
+    // We currently require a rematerializable allocation to have
+    // all of its loads be able to be performed again. Thus if
+    // there is an overwriting store after a load in context,
+    // it may no longer be rematerializable.
     for (auto LI : loads) {
       // Is there a store which could occur after the load.
       // In other words
-      if (mayExecuteAfter(LI, stores, outer)) {
-        continue;
+      SmallVector<Instruction*, 2> results;
+      mayExecuteAfter(results, LI, stores, outer);
+      for (auto res : results) {
+        if (overwritesToMemoryReadBy(OrigAA, SE, OrigLI, LI, res, outer)) {
+          EmitWarning("NotPromotable", LI->getDebugLoc(), oldFunc,
+                      LI->getParent(), " Could not promote allocation ",
+                      *V, " due to load ", *LI, " which does not postdominates store ");
+          return;
+        }
       }
       rematerializable.insert(LI);
     }
-    if (rematerializable.size() == loads.size()) {
-      rematerializableAllocations[V] =
+    llvm::errs() << " orig remat: " << *V << "\n";
+    rematerializableAllocations[V] =
           Rematerializer(loads, stores, frees, outer);
-    }
   }
 
   void computeGuaranteedFrees(

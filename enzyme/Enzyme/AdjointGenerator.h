@@ -8513,14 +8513,14 @@ public:
                       cast<CallInst>(gutils->getNewFromOriginal(orig));
 #if LLVM_VERSION_MAJOR >= 14
                   cast<CallInst>(anti)->addDereferenceableRetAttr(
-                      ci->getLimitedValue());
-                  cal->addDereferenceableRetAttr(ci->getLimitedValue());
+                      derefBytes);
+                  cal->addDereferenceableRetAttr(derefBytes);
 #ifndef FLANG
                   AttrBuilder B(called->getContext());
 #else
                   AttrBuilder B;
 #endif
-                  B.addDereferenceableOrNullAttr(ci->getLimitedValue());
+                  B.addDereferenceableOrNullAttr(derefBytes);
                   cast<CallInst>(anti)->setAttributes(
                       cast<CallInst>(anti)->getAttributes().addRetAttributes(
                           orig->getContext(), B));
@@ -8532,13 +8532,13 @@ public:
                                            Attribute::NonNull);
 #else
                   cast<CallInst>(anti)->addDereferenceableAttr(
-                      llvm::AttributeList::ReturnIndex, ci->getLimitedValue());
+                      llvm::AttributeList::ReturnIndex, derefBytes);
                   cal->addDereferenceableAttr(llvm::AttributeList::ReturnIndex,
-                                              ci->getLimitedValue());
+                                              derefBytes);
                   cast<CallInst>(anti)->addDereferenceableOrNullAttr(
-                      llvm::AttributeList::ReturnIndex, ci->getLimitedValue());
+                      llvm::AttributeList::ReturnIndex, derefBytes);
                   cal->addDereferenceableOrNullAttr(
-                      llvm::AttributeList::ReturnIndex, ci->getLimitedValue());
+                      llvm::AttributeList::ReturnIndex, derefBytes);
                   cal->addAttribute(AttributeList::ReturnIndex,
                                     Attribute::NoAlias);
                   cal->addAttribute(AttributeList::ReturnIndex,
@@ -8641,23 +8641,25 @@ public:
               ? false
               : is_value_needed_in_reverse<ValueType::Primal>(
                     TR, gutils, orig, Mode, Seen, oldUnreachable);
+    
+      bool cacheWholeAllocation = false;
+      if (gutils->knownRecomputeHeuristic.count(orig)) {
+        if (!gutils->knownRecomputeHeuristic[orig]) {
+          cacheWholeAllocation = true;
+          primalNeededInReverse = true;
+        }
+      }
+      llvm::errs() << " allocation: " << *orig << " needed: " << primalNeededInReverse << " whole: " << cacheWholeAllocation << "\n";
 
       // Don't erase any store that needs to be preserved for a
       // rematerialization
       {
         auto found = gutils->rematerializableAllocations.find(orig);
         if (found != gutils->rematerializableAllocations.end()) {
-          bool cacheWholeAllocation = false;
-          if (gutils->knownRecomputeHeuristic.count(orig)) {
-            if (!gutils->knownRecomputeHeuristic[orig])
-              cacheWholeAllocation = true;
-          }
 
-          // Otherwise take the fallback and cache the entire alloca
-          // (and free if required).
-          if (cacheWholeAllocation)
-            primalNeededInReverse = true;
-          else if (primalNeededInReverse) {
+          // If rematerializing (e.g. needed in reverse, but not needing
+          //  the whole allocation):
+          if (primalNeededInReverse && !cacheWholeAllocation) {
             // if rematerialize, don't ever cache and downgrade to stack
             // allocation where possible.
             if (auto MD = hasMetadata(orig, "enzyme_fromstack")) {
@@ -8736,6 +8738,10 @@ public:
         }
       }
 
+      // If an allocation is not needed in the reverse, maintain the original
+      // free behavior and do not rematerialize this for the reverse. However,
+      // this is only safe to perform for allocations with a guaranteed free
+      // as can we can only guarantee that we don't erase those frees.
       bool hasPDFree = gutils->allocationsWithGuaranteedFree.count(orig);
       if (!primalNeededInReverse && hasPDFree) {
         if (Mode == DerivativeMode::ReverseModeGradient) {
@@ -8787,7 +8793,7 @@ public:
         }
         return;
       }
-
+      
       if (EnzymeFreeInternalAllocations)
         hasPDFree = true;
 
@@ -9023,6 +9029,8 @@ public:
       // If a rematerializable allocation.
       for (auto rmat : gutils->rematerializableAllocations) {
         if (rmat.second.frees.count(orig)) {
+           llvm::errs() << " rematerializale " << *rmat.first << " for free: " << *orig << "\n";
+
           // Leave the original free behavior since this won't be used
           // in the reverse pass in split mode
           if (Mode == DerivativeMode::ReverseModePrimal) {
@@ -9033,8 +9041,11 @@ public:
           } else {
             assert(Mode == DerivativeMode::ReverseModeCombined);
             // If in a loop context, maintain the same free behavior.
-            if (rmat.second.LI && rmat.second.LI->contains(orig->getParent()))
-              return;
+            if (auto inst = dyn_cast<Instruction>(rmat.first))
+              if (rmat.second.LI && rmat.second.LI->contains(inst->getParent())) {
+                llvm::errs() << " maintaining same free behavior\n";
+                return;
+              }
             // In combined mode, if we don't need this allocation
             // in the reverse, we can use the original deallocation
             // behavior.
