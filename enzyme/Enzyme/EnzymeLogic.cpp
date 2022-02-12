@@ -296,7 +296,7 @@ struct CacheAnalysis {
           }
         }
 
-        if (!overwritesToMemoryReadBy(AA, SE, OrigLI, &li, inst2)) {
+        if (!overwritesToMemoryReadBy(AA, SE, OrigLI, OrigDT, &li, inst2)) {
           return false;
         }
 

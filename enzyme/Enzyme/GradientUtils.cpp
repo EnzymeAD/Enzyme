@@ -2128,16 +2128,11 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
               auto iv = NB.CreatePHI(flc.var->getType(), 2, "fiv");
               auto inc = NB.CreateAdd(iv, ConstantInt::get(iv->getType(), 1));
 
-              SmallVector<BasicBlock *, 8> ExitingBlocks;
-              OL->getExitingBlocks(ExitingBlocks);
-              SmallPtrSet<BasicBlock *, 2> ExitingBlocksSet(
-                  ExitingBlocks.begin(), ExitingBlocks.end());
-
               for (auto PH : predecessors(Header)) {
                 if (notForAnalysis.count(PH))
                   continue;
 
-                if (ExitingBlocksSet.count(PH))
+                if (OL->contains(PH))
                   iv->addIncoming(inc, origToNewForward[PH]);
                 else
                   iv->addIncoming(ConstantInt::get(iv->getType(), 0),

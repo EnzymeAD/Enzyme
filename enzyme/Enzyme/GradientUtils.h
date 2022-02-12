@@ -763,7 +763,6 @@ public:
       return;
 
     if (!isConstantValue(V)) {
-      llvm::errs() << " backwards remat: " << *V << "\n";
       backwardsOnlyShadows[V] = ShadowRematerializer(
           stores, frees, primalInitializationOfShadow, outer);
     }
@@ -783,7 +782,7 @@ public:
       SmallVector<Instruction*, 2> results;
       mayExecuteAfter(results, LI, stores, outer);
       for (auto res : results) {
-        if (overwritesToMemoryReadBy(OrigAA, SE, OrigLI, LI, res, outer)) {
+        if (overwritesToMemoryReadBy(OrigAA, SE, OrigLI, OrigDT, LI, res, outer)) {
           EmitWarning("NotPromotable", LI->getDebugLoc(), oldFunc,
                       LI->getParent(), " Could not promote allocation ",
                       *V, " due to load ", *LI, " which does not postdominates store ");
@@ -792,7 +791,6 @@ public:
       }
       rematerializable.insert(LI);
     }
-    llvm::errs() << " orig remat: " << *V << "\n";
     rematerializableAllocations[V] =
           Rematerializer(loads, stores, frees, outer);
   }

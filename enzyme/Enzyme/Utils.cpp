@@ -748,6 +748,7 @@ void mayExecuteAfter(llvm::SmallVectorImpl<llvm::Instruction*> &results,
 
 bool overwritesToMemoryReadByLoop(llvm::ScalarEvolution &SE,
                                   llvm::LoopInfo &LI,
+                                  llvm::DominatorTree &DT,
                                   llvm::Instruction *maybeReader,
                                   const llvm::SCEV* LoadStart,
                                   const llvm::SCEV* LoadEnd,
@@ -835,12 +836,29 @@ bool overwritesToMemoryReadByLoop(llvm::ScalarEvolution &SE,
                 
                 bool eskip = false;
                 if (EndIsStore)
-                if (auto endL = dyn_cast<SCEVAddRecExpr>(elim))
+                if (auto endL = dyn_cast<SCEVAddRecExpr>(elim)) {
                     if (skipLoop(endL->getLoop()) && SE.isKnownNonNegative(
                            endL->getStepRecurrence(SE))) {
-                    eskip = true;
+                      eskip = true;
+                    } else {
+                    }
                 }
+
+                // Moreover because otherwise SE cannot "groupScevByComplexity"
+                // we need to ensure that if both slim/elim are AddRecv
+                // they must be in the same loop, or one loop must dominate
+                // the other.
+                if (!eskip) {
                 
+                    if (auto endL = dyn_cast<SCEVAddRecExpr>(elim)) {
+                        auto EH = endL->getLoop()->getHeader();
+                    if (auto startL = dyn_cast<SCEVAddRecExpr>(slim)) {
+                        auto SH = startL->getLoop()->getHeader();
+                        if (EH != SH && !DT.dominates(EH, SH) && !DT.dominates(SH, EH))
+                            eskip = true;
+                    }
+                    }
+                }
               if (!eskip) {
                 auto sub = SE.getMinusSCEV(slim, elim);
                 if (sub != SE.getCouldNotCompute() && SE.isKnownNonNegative(sub))
@@ -901,7 +919,7 @@ bool overwritesToMemoryReadByLoop(llvm::ScalarEvolution &SE,
         // to be legal, lest we have a repetition of the store.
         bool legal = true;
         for (const Loop *L = anc; anc != scope; anc = anc->getParentLoop()) {
-          if (!visitedAncestors.contains(L))
+          if (!visitedAncestors.count(L))
             legal = false;
         }
         if (legal) return false;
@@ -927,6 +945,7 @@ bool overwritesToMemoryReadByLoop(llvm::ScalarEvolution &SE,
 bool overwritesToMemoryReadBy(llvm::AAResults &AA,
                               ScalarEvolution &SE,
                               llvm::LoopInfo &LI,
+                              llvm::DominatorTree &DT,
                               llvm::Instruction *maybeReader,
                               llvm::Instruction *maybeWriter,
                               llvm::Loop* scope) {
@@ -998,7 +1017,7 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA,
         }
     }
 
-    if (!overwritesToMemoryReadByLoop(SE, LI, maybeReader, LoadBegin, LoadEnd,
+    if (!overwritesToMemoryReadByLoop(SE, LI, DT, maybeReader, LoadBegin, LoadEnd,
                                           maybeWriter, StoreBegin, StoreEnd, scope))
         return false;
 

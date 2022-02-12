@@ -60,6 +60,10 @@
 
 #include "TypeAnalysis/ConcreteType.h"
 
+namespace llvm {
+    class ScalarEvolution;
+}
+
 extern "C" {
 /// Print additional debug info relevant to performance
 extern llvm::cl::opt<bool> EnzymePrintPerf;
@@ -827,6 +831,7 @@ bool writesToMemoryReadBy(llvm::AAResults &AA,
 bool overwritesToMemoryReadBy(llvm::AAResults &AA,
                               llvm::ScalarEvolution &SE,
                               llvm::LoopInfo &LI,
+                              llvm::DominatorTree &DT,
                               llvm::Instruction *maybeReader,
                               llvm::Instruction *maybeWriter,
                               llvm::Loop *scope=nullptr);

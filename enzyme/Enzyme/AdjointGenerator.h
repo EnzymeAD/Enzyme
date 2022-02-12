@@ -8649,7 +8649,6 @@ public:
           primalNeededInReverse = true;
         }
       }
-      llvm::errs() << " allocation: " << *orig << " needed: " << primalNeededInReverse << " whole: " << cacheWholeAllocation << "\n";
 
       // Don't erase any store that needs to be preserved for a
       // rematerialization
@@ -8691,8 +8690,9 @@ public:
                 funcName == "jl_array_copy" || funcName == "julia.gc_alloc_obj")
               return;
 
-            // Otherwise if in reverse only, free the newly created allocation.
-            if (Mode == DerivativeMode::ReverseModeGradient) {
+            // Otherwise if in reverse pass, free the newly created allocation.
+            if (Mode == DerivativeMode::ReverseModeGradient ||
+                Mode == DerivativeMode::ReverseModeCombined) {
               IRBuilder<> Builder2(call.getParent());
               getReverseBuilder(Builder2);
               auto dbgLoc = gutils->getNewFromOriginal(orig->getDebugLoc());
@@ -9029,7 +9029,6 @@ public:
       // If a rematerializable allocation.
       for (auto rmat : gutils->rematerializableAllocations) {
         if (rmat.second.frees.count(orig)) {
-           llvm::errs() << " rematerializale " << *rmat.first << " for free: " << *orig << "\n";
 
           // Leave the original free behavior since this won't be used
           // in the reverse pass in split mode
@@ -9043,7 +9042,6 @@ public:
             // If in a loop context, maintain the same free behavior.
             if (auto inst = dyn_cast<Instruction>(rmat.first))
               if (rmat.second.LI && rmat.second.LI->contains(inst->getParent())) {
-                llvm::errs() << " maintaining same free behavior\n";
                 return;
               }
             // In combined mode, if we don't need this allocation
