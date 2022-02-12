@@ -2176,29 +2176,11 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                   ts->setVolatile(SI->isVolatile());
                   ts->setOrdering(SI->getOrdering());
                   ts->setSyncScopeID(SI->getSyncScopeID());
-                } else if (auto MS = dyn_cast<MemSetInst>(&I)) {
-                  SmallVector<Value *, 2> args;
-#if LLVM_VERSION_MAJOR >= 14
-                  for (auto &arg : MS->args())
-#else
-                  for (auto &arg : MS->arg_operands())
-#endif
-                    args.push_back(
-                        lookupM(getNewFromOriginal(arg), NB, available));
-
-                  SmallVector<ValueType, 2> BundleTypes(args.size(),
-                                                        ValueType::Primal);
-
-                  auto Defs = getInvertedBundles(MS, BundleTypes, NB,
-                                                 /*lookup*/ true, available);
-                  auto cal = NB.CreateCall(MS->getCalledFunction(), args, Defs);
-                  cal->setAttributes(MS->getAttributes());
-                  cal->setCallingConv(MS->getCallingConv());
-                  cal->setTailCallKind(MS->getTailCallKind());
                 } else if (auto CI = dyn_cast<CallInst>(&I)) {
                   Function *called = getFunctionFromCall(CI);
                   assert(called);
-                  if (called->getName() == "julia.write_barrier") {
+                  if (called->getName() == "julia.write_barrier" ||
+                      isa<MemSetInst>(&I) || isa<MemTransferInst>(&I)) {
 
                     // TODO
                     SmallVector<Value *, 2> args;
@@ -2290,78 +2272,78 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                   Value *orig_ptr = SI->getPointerOperand();
                   Value *orig_val = SI->getValueOperand();
                   Type *valType = orig_val->getType();
-                  if (!isConstantValue(orig_ptr)) {
+                  assert(!isConstantValue(orig_ptr));
 
-                    auto &DL = newFunc->getParent()->getDataLayout();
+                  auto &DL = newFunc->getParent()->getDataLayout();
 
-                    bool constantval = isConstantValue(orig_val) ||
-                                       parseTBAA(I, DL).Inner0().isIntegral();
+                  bool constantval = isConstantValue(orig_val) ||
+                                     parseTBAA(I, DL).Inner0().isIntegral();
 
-                    // TODO allow recognition of other types that could contain
-                    // pointers [e.g. {void*, void*} or <2 x i64> ]
-                    auto storeSize = DL.getTypeSizeInBits(valType) / 8;
+                  // TODO allow recognition of other types that could contain
+                  // pointers [e.g. {void*, void*} or <2 x i64> ]
+                  auto storeSize = DL.getTypeSizeInBits(valType) / 8;
 
-                    //! Storing a floating point value
-                    Type *FT = nullptr;
-                    if (valType->isFPOrFPVectorTy()) {
-                      FT = valType->getScalarType();
-                    } else if (!valType->isPointerTy()) {
-                      if (looseTypeAnalysis) {
-                        auto fp = my_TR->firstPointer(storeSize, orig_ptr,
-                                                      /*errifnotfound*/ false,
-                                                      /*pointerIntSame*/ true);
-                        if (fp.isKnown()) {
-                          FT = fp.isFloat();
-                        } else if (isa<ConstantInt>(orig_val) ||
-                                   valType->isIntOrIntVectorTy()) {
-                          llvm::errs()
-                              << "assuming type as integral for store: " << I
-                              << "\n";
-                          FT = nullptr;
-                        } else {
-                          my_TR->firstPointer(storeSize, orig_ptr,
+                  //! Storing a floating point value
+                  Type *FT = nullptr;
+                  if (valType->isFPOrFPVectorTy()) {
+                    FT = valType->getScalarType();
+                  } else if (!valType->isPointerTy()) {
+                    if (looseTypeAnalysis) {
+                      auto fp = my_TR->firstPointer(storeSize, orig_ptr,
+                                                    /*errifnotfound*/ false,
+                                                    /*pointerIntSame*/ true);
+                      if (fp.isKnown()) {
+                        FT = fp.isFloat();
+                      } else if (isa<ConstantInt>(orig_val) ||
+                                 valType->isIntOrIntVectorTy()) {
+                        llvm::errs()
+                            << "assuming type as integral for store: " << I
+                            << "\n";
+                        FT = nullptr;
+                      } else {
+                        my_TR->firstPointer(storeSize, orig_ptr,
+                                            /*errifnotfound*/ true,
+                                            /*pointerIntSame*/ true);
+                        llvm::errs()
+                            << "cannot deduce type of store " << I << "\n";
+                        assert(0 && "cannot deduce");
+                      }
+                    } else {
+                      FT = my_TR
+                               ->firstPointer(storeSize, orig_ptr,
                                               /*errifnotfound*/ true,
-                                              /*pointerIntSame*/ true);
-                          llvm::errs()
-                              << "cannot deduce type of store " << I << "\n";
-                          assert(0 && "cannot deduce");
-                        }
-                      } else {
-                        FT = my_TR
-                                 ->firstPointer(storeSize, orig_ptr,
-                                                /*errifnotfound*/ true,
-                                                /*pointerIntSame*/ true)
-                                 .isFloat();
-                      }
-                    }
-                    if (!FT) {
-                      Value *valueop = nullptr;
-                      if (constantval) {
-                        Value *val = lookupM(getNewFromOriginal(orig_val), NB,
-                                             available);
-                        valueop = val;
-                        if (getWidth() > 1) {
-                          Value *array =
-                              UndefValue::get(getShadowType(val->getType()));
-                          for (unsigned i = 0; i < getWidth(); ++i) {
-                            array = NB.CreateInsertValue(array, val, {i});
-                          }
-                          valueop = array;
-                        }
-                      } else {
-                        valueop = lookupM(invertPointerM(orig_val, NB), NB,
-                                          available);
-                      }
-#if LLVM_VERSION_MAJOR >= 10
-                      auto align = SI->getAlign();
-#else
-                      auto align = SI->getAlignment();
-#endif
-                      setPtrDiffe(orig_ptr, valueop, NB, align,
-                                  SI->isVolatile(), SI->getOrdering(),
-                                  SI->getSyncScopeID(), /*mask*/ nullptr);
+                                              /*pointerIntSame*/ true)
+                               .isFloat();
                     }
                   }
+                  if (!FT) {
+                    Value *valueop = nullptr;
+                    if (constantval) {
+                      Value *val =
+                          lookupM(getNewFromOriginal(orig_val), NB, available);
+                      valueop = val;
+                      if (getWidth() > 1) {
+                        Value *array =
+                            UndefValue::get(getShadowType(val->getType()));
+                        for (unsigned i = 0; i < getWidth(); ++i) {
+                          array = NB.CreateInsertValue(array, val, {i});
+                        }
+                        valueop = array;
+                      }
+                    } else {
+                      valueop =
+                          lookupM(invertPointerM(orig_val, NB), NB, available);
+                    }
+#if LLVM_VERSION_MAJOR >= 10
+                    auto align = SI->getAlign();
+#else
+                    auto align = SI->getAlignment();
+#endif
+                    setPtrDiffe(orig_ptr, valueop, NB, align, SI->isVolatile(),
+                                SI->getOrdering(), SI->getSyncScopeID(),
+                                /*mask*/ nullptr);
+                  }
+                  // TODO shadow memtransfer
                 } else if (auto MS = dyn_cast<MemSetInst>(&I)) {
                   if (!isConstantValue(MS->getArgOperand(0))) {
                     Value *args[4] = {
@@ -6118,7 +6100,7 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
                        bool dstConstant, Value *shadow_dst, bool srcConstant,
                        Value *shadow_src, Value *length, Value *isVolatile,
                        llvm::CallInst *MTI, bool allowForward,
-                       bool shadowsLookedUp) {
+                       bool shadowsLookedUp, bool backwardsShadow) {
   // TODO offset
   if (secretty) {
     // no change to forward pass if represents floats
@@ -6220,8 +6202,9 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
 
     // if represents pointer or integer type then only need to modify forward
     // pass with the copy
-    if (allowForward && (mode == DerivativeMode::ReverseModePrimal ||
-                         mode == DerivativeMode::ReverseModeCombined)) {
+    if ((allowForward && (mode == DerivativeMode::ReverseModePrimal ||
+                          mode == DerivativeMode::ReverseModeCombined)) ||
+        (backwardsShadow && mode == DerivativeMode::ReverseModeGradient)) {
       assert(!shadowsLookedUp);
 
       // It is questionable how the following case would even occur, but if

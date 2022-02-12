@@ -757,21 +757,6 @@ public:
     visitCommonStore(SI, SI.getPointerOperand(), SI.getValueOperand(), align,
                      SI.isVolatile(), SI.getOrdering(), SI.getSyncScopeID(),
                      /*mask=*/nullptr);
-
-    std::map<UsageKey, bool> Seen;
-    for (auto pair : gutils->knownRecomputeHeuristic)
-      if (!pair.second)
-        Seen[UsageKey(pair.first, ValueType::Primal)] = false;
-
-    // Don't erase any store that needs to be preserved for a rematerialization.
-    for (auto pair : gutils->rematerializableAllocations) {
-      if (is_value_needed_in_reverse<ValueType::Primal>(
-              TR, gutils, pair.first, Mode, Seen, oldUnreachable)) {
-        if (pair.second.stores.count(&SI)) {
-          return;
-        }
-      }
-    }
     eraseIfUnused(SI);
   }
 
@@ -2534,28 +2519,7 @@ public:
   }
 
   void visitMemSetInst(llvm::MemSetInst &MS) {
-    bool rematerialized = false;
-    std::map<UsageKey, bool> Seen;
-    for (auto pair : gutils->knownRecomputeHeuristic)
-      if (!pair.second)
-        Seen[UsageKey(pair.first, ValueType::Primal)] = false;
-
-    // Don't erase any store that needs to be preserved for a rematerialization
-    for (auto pair : gutils->rematerializableAllocations) {
-      if (is_value_needed_in_reverse<ValueType::Primal>(
-              TR, gutils, pair.first, Mode, Seen, oldUnreachable)) {
-        if (pair.second.stores.count(&MS)) {
-          rematerialized = true;
-          break;
-        }
-      }
-    }
-
-    // Don't duplicate set in reverse pass unless rematerialized
-    if (Mode == DerivativeMode::ReverseModeGradient && !rematerialized) {
-      erased.insert(&MS);
-      gutils->erase(gutils->getNewFromOriginal(&MS));
-    }
+    eraseIfUnused(MS);
 
     if (gutils->isConstantInstruction(&MS))
       return;
@@ -2620,11 +2584,6 @@ public:
       cal->setAttributes(MS.getAttributes());
       cal->setCallingConv(MS.getCallingConv());
       cal->setTailCallKind(MS.getTailCallKind());
-    }
-
-    if (Mode == DerivativeMode::ReverseModeGradient ||
-        Mode == DerivativeMode::ReverseModeCombined) {
-      // TODO consider what reverse pass memset should be
     }
   }
 
@@ -2805,6 +2764,19 @@ public:
 
     IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&MTI));
 
+    bool backwardsShadow = false;
+    bool forwardsShadow = true;
+    for (auto pair : gutils->backwardsOnlyShadows) {
+      if (pair.second.stores.count(&MTI)) {
+        backwardsShadow = true;
+        forwardsShadow = pair.second.primalInitialize;
+        if (auto inst = dyn_cast<Instruction>(pair.first))
+          if (!forwardsShadow && pair.second.LI &&
+              pair.second.LI->contains(inst->getParent()))
+            backwardsShadow = false;
+      }
+    }
+
     while (1) {
       unsigned nextStart = size;
 
@@ -2853,11 +2825,13 @@ public:
       Value *shadow_src = gutils->isConstantValue(orig_src)
                               ? gutils->getNewFromOriginal(orig_src)
                               : gutils->invertPointerM(orig_src, BuilderZ);
-      SubTransferHelper(gutils, Mode, dt.isFloat(), ID, subdstalign,
-                        subsrcalign, /*offset*/ start,
-                        gutils->isConstantValue(orig_dst), shadow_dst,
-                        gutils->isConstantValue(orig_src), shadow_src,
-                        /*length*/ length, /*volatile*/ isVolatile, &MTI);
+      SubTransferHelper(
+          gutils, Mode, dt.isFloat(), ID, subdstalign, subsrcalign,
+          /*offset*/ start, gutils->isConstantValue(orig_dst), shadow_dst,
+          gutils->isConstantValue(orig_src), shadow_src,
+          /*length*/ length, /*volatile*/ isVolatile, &MTI,
+          /*allowForward*/ forwardsShadow, /*shadowsLookedup*/ false,
+          /*backwardsShadow*/ backwardsShadow);
 
       if (nextStart == size)
         break;
@@ -8069,19 +8043,6 @@ public:
         }
 
         if (funcName == "julia.write_barrier") {
-          std::map<UsageKey, bool> Seen;
-          for (auto pair : gutils->knownRecomputeHeuristic)
-            if (!pair.second)
-              Seen[UsageKey(pair.first, ValueType::Primal)] = false;
-          bool rematerializedPrimal = false;
-          for (auto pair : gutils->rematerializableAllocations) {
-            if (pair.second.stores.count(orig) &&
-                is_value_needed_in_reverse<ValueType::Primal>(
-                    TR, gutils, pair.first, Mode, Seen, oldUnreachable)) {
-              rematerializedPrimal = true;
-            }
-          }
-
           bool backwardsShadow = false;
           bool forwardsShadow = true;
           for (auto pair : gutils->backwardsOnlyShadows) {
@@ -8120,11 +8081,7 @@ public:
             }
           }
 
-          if (Mode == DerivativeMode::ReverseModeGradient &&
-              !rematerializedPrimal) {
-            eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
-          }
-
+          eraseIfUnused(*orig);
           return;
         }
         Intrinsic::ID ID = Intrinsic::not_intrinsic;

@@ -609,6 +609,7 @@ public:
       } else if (auto load = dyn_cast<LoadInst>(cur)) {
         loads.insert(load);
       } else if (auto store = dyn_cast<StoreInst>(cur)) {
+        // TODO only add store to shadow iff non float type
         if (store->getValueOperand() == prev) {
           EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
                       cur->getParent(), " Could not promote allocation ", *V,
@@ -656,6 +657,9 @@ public:
           stores.insert(II);
           break;
         }
+        // TODO memtransfer(cpy/move)
+        case Intrinsic::memcpy:
+        case Intrinsic::memmove:
         default:
           promotable = false;
           shadowpromotable = false;
@@ -2429,5 +2433,6 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode Mode,
                        bool dstConstant, Value *shadow_dst, bool srcConstant,
                        Value *shadow_src, Value *length, Value *isVolatile,
                        llvm::CallInst *MTI, bool allowForward = true,
-                       bool shadowsLookedUp = false);
+                       bool shadowsLookedUp = false,
+                       bool backwardsShadow = false);
 #endif

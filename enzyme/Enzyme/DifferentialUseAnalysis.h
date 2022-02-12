@@ -362,7 +362,8 @@ static inline bool is_value_needed_in_reverse(
     // Anything we may try to rematerialize requires its store opreands for
     // the reverse pass.
     if (!OneLevel) {
-      if (isa<StoreInst>(user) || isa<MemTransferInst>(user) || isa<MemSetInst>(user)) {
+      if (isa<StoreInst>(user) || isa<MemTransferInst>(user) ||
+          isa<MemSetInst>(user)) {
         for (auto pair : gutils->rematerializableAllocations) {
           // Directly consider all the load uses to avoid an illegal inductive
           // recurrence. Specifically if we're asking if the alloca is used,

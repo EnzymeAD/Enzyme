@@ -796,9 +796,26 @@ void calculateUnusedValuesInFunction(
             inst->mayWriteToMemory() && !isLibMFn) {
           return UseReq::Need;
         }
-        if (isa<MemTransferInst>(inst) &&
-            mode == DerivativeMode::ReverseModeGradient)
-          return UseReq::Recur;
+        // Don't erase any store that needs to be preserved for a
+        // rematerialization. However, if not used in a rematerialization, the
+        // store should be eliminated in the reverse pass
+        if (mode == DerivativeMode::ReverseModeGradient) {
+          auto CI = dyn_cast<CallInst>(const_cast<Instruction *>(inst));
+          Function *CF = CI ? getFunctionFromCall(CI) : nullptr;
+          StringRef funcName = CF ? CF->getName() : "";
+          if (isa<MemTransferInst>(inst) || isa<StoreInst>(inst) ||
+              isa<MemSetInst>(inst) || funcName == "julia.write_barrier") {
+            for (auto pair : gutils->rematerializableAllocations) {
+              if (pair.second.stores.count(inst)) {
+                if (is_value_needed_in_reverse<ValueType::Primal>(
+                        TR, gutils, pair.first, mode, PrimalSeen,
+                        oldUnreachable))
+                  return UseReq::Need;
+              }
+            }
+            return UseReq::Recur;
+          }
+        }
         bool ivn = is_value_needed_in_reverse<ValueType::Primal>(
             TR, gutils, inst, mode, PrimalSeen, oldUnreachable);
         if (ivn) {
