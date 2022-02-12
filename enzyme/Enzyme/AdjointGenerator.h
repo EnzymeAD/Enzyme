@@ -5873,7 +5873,11 @@ public:
           auto callval = call.getCalledValue();
 #endif
 
+#if LLVM_VERSION_MAJOR > 7
           Builder2.CreateCall(call.getFunctionType(), callval, args, Defs);
+#else
+          Builder2.CreateCall(callval, args, Defs);
+#endif
           return;
         }
 
