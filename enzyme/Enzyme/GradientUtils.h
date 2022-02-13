@@ -757,7 +757,7 @@ public:
                     " due to unknown instruction ", *cur);
       }
     }
-
+    
     // Find the outermost loop of all stores, and the allocation/lifetime
     Loop *outer = OrigLI.getLoopFor(V->getParent());
     if (LifetimeStarts.size() == 1) {
@@ -796,7 +796,7 @@ public:
           EmitWarning("NotPromotable", LI->getDebugLoc(), oldFunc,
                       LI->getParent(), " Could not promote allocation ", *V,
                       " due to load ", *LI,
-                      " which does not postdominates store ");
+                      " which does not postdominates store ", *res);
           return;
         }
       }
