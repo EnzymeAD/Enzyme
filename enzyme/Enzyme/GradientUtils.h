@@ -757,7 +757,7 @@ public:
                     " due to unknown instruction ", *cur);
       }
     }
-    
+
     // Find the outermost loop of all stores, and the allocation/lifetime
     Loop *outer = OrigLI.getLoopFor(V->getParent());
     if (LifetimeStarts.size() == 1) {
