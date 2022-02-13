@@ -2213,6 +2213,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                                   &newFunc->getEntryBlock());
 
                 auto inst = getNewFromOriginal((Value *)&I);
+                llvm::errs() << " running loop realloc\n";
 
                 auto found = scopeMap.find(inst);
                 if (found == scopeMap.end()) {
@@ -5250,8 +5251,19 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
   if (auto origInst = isOriginal(inst)) {
     auto found = rematerializableAllocations.find(origInst);
     if (found != rematerializableAllocations.end())
-      if (found->second.LI)
-        scope = &newFunc->getEntryBlock();
+      if (found->second.LI && found->second.LI->contains(origInst)) {
+        bool cacheWholeAllocation = false;
+        if (knownRecomputeHeuristic.count(origInst)) {
+          if (!knownRecomputeHeuristic[origInst]) {
+            cacheWholeAllocation = true;
+          }
+        }
+        // If not caching whole allocation and rematerializing the allocation
+        // within the loop, force an entry-level scope so there is no need
+        // to cache.
+        if (!cacheWholeAllocation)
+          scope = &newFunc->getEntryBlock();
+      }
   } else {
     for (auto pair : backwardsOnlyShadows) {
       if (auto pinst = dyn_cast<Instruction>(pair.first))
