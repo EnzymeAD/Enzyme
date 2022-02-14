@@ -5668,7 +5668,8 @@ public:
       return true;
     }
 
-    if (funcName == "cblas_sswap" || funcName == "cblas_dswap") {
+    if ((funcName == "cblas_sswap" || funcName == "cblas_dswap") &&
+        called->isDeclaration()) {
       // sswap(int n, float *x, int incx, float *y, int incy)
       handled = true;
       auto arg_n = call.getArgOperand(0), arg_x = call.getArgOperand(1),
@@ -5708,7 +5709,8 @@ public:
       }
     }
 
-    if (funcName == "cblas_scopy" || funcName == "cblas_dcopy") {
+    if ((funcName == "cblas_scopy" || funcName == "cblas_dcopy") &&
+        called->isDeclaration()) {
       // void scopy(int n, float *x, int incx, float *y, int incy)
       handled = true;
       std::string axpyName = getBLASName(funcName, "axpy");
@@ -5752,7 +5754,8 @@ public:
       }
     }
 
-    if (funcName == "cblas_sscal" || funcName == "cblas_dscal") {
+    if ((funcName == "cblas_sscal" || funcName == "cblas_dscal") &&
+        called->isDeclaration()) {
       // sscal(int n, float alpha, float *x, int incx)
       handled = true;
       std::string dotName = getBLASName(funcName, "dot"),
@@ -5855,7 +5858,8 @@ public:
       }
     }
 
-    if (funcName == "cblas_saxpy" || funcName == "cblas_daxpy") {
+    if ((funcName == "cblas_saxpy" || funcName == "cblas_daxpy") &&
+        called->isDeclaration()) {
       // saxpy(int n, float alpha, float *x, int incx, float *y, int incy)
       handled = true;
       std::string dotName = getBLASName(funcName, "dot");
@@ -5971,7 +5975,8 @@ public:
       }
     }
 
-    if (funcName == "cblas_snrm2" || funcName == "cblas_dnrm2") {
+    if ((funcName == "cblas_snrm2" || funcName == "cblas_dnrm2") &&
+        called->isDeclaration()) {
       // snrm2(int n, float *x, int incx)
       handled = true;
       std::string axpyName = getBLASName(funcName, "axpy");
