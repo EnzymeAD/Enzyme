@@ -2521,9 +2521,6 @@ public:
   void visitMemSetInst(llvm::MemSetInst &MS) {
     eraseIfUnused(MS);
 
-    if (gutils->isConstantInstruction(&MS))
-      return;
-
     Value *orig_op0 = MS.getOperand(0);
     Value *orig_op1 = MS.getOperand(1);
 
