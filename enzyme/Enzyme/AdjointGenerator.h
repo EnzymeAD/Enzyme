@@ -9024,9 +9024,9 @@ public:
 #endif
                 }
               }
-
               gutils->invertedPointers.erase(found);
-              bb.SetInsertPoint(placeholder->getNextNode());
+              if (&*bb.GetInsertPoint() == placeholder)
+                bb.SetInsertPoint(placeholder->getNextNode());
               gutils->replaceAWithB(placeholder, anti);
               gutils->erase(placeholder);
 
@@ -9058,7 +9058,8 @@ public:
                    forwardsShadow) ||
                   (Mode == DerivativeMode::ReverseModeGradient &&
                    backwardsShadow)) {
-                zeroKnownAllocation(bb, anti, args, *called, gutils->TLI);
+                if (!inLoop)
+                  zeroKnownAllocation(bb, anti, args, *called, gutils->TLI);
               }
             }
             gutils->invertedPointers.insert(
