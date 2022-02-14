@@ -2553,8 +2553,9 @@ public:
 
     if ((Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
         (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow) ||
-        (Mode == DerivativeMode::ReverseModeCombined && (forwardsShadow && backwardsShadow)) ||
-         Mode == DerivativeMode::ForwardMode) {
+        (Mode == DerivativeMode::ReverseModeCombined &&
+         (forwardsShadow && backwardsShadow)) ||
+        Mode == DerivativeMode::ForwardMode) {
       IRBuilder<> BuilderZ(&MS);
       getForwardBuilder(BuilderZ);
 
