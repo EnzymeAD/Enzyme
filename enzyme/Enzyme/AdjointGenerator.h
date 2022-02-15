@@ -2527,16 +2527,22 @@ public:
     // TODO this should 1) assert that the value being meset is constant
     //                 2) duplicate the memset for the inverted pointer
 
+    if (gutils->isConstantInstruction(&MS) &&
+        Mode != DerivativeMode::ForwardMode) {
+      return;
+    }
+
+    // If constant destination then no operation needs doing
+    if (gutils->isConstantValue(orig_op0)) {
+      return;
+    }
+
     if (!gutils->isConstantValue(orig_op1)) {
       llvm::errs() << "couldn't handle non constant inst in memset to "
                       "propagate differential to\n"
                    << MS;
       report_fatal_error("non constant in memset");
     }
-
-    // If constant destination then no operation needs doing
-    if (gutils->isConstantValue(orig_op0))
-      return;
 
     bool backwardsShadow = false;
     bool forwardsShadow = true;
@@ -2560,11 +2566,6 @@ public:
       getForwardBuilder(BuilderZ);
 
       bool forwardMode = Mode == DerivativeMode::ForwardMode;
-      if (gutils->isConstantValue(orig_op0)) {
-        // If constant destination then no operation needs doing
-        return;
-        // args.push_back(gutils->lookupM(MS.getOperand(0), BuilderZ));
-      }
 
       Value *op0 = gutils->invertPointerM(orig_op0, BuilderZ);
       Value *op1 = gutils->getNewFromOriginal(MS.getOperand(1));
