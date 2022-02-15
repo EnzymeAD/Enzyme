@@ -12,7 +12,7 @@ keywords = ["enzyme", "auto-diff", "llvm", "machine-learning", "scientific-compu
 categories = ["development-tools::cargo-plugins", "mathematics", "science", "simulation"]
 readme = "README.md"
 documentation = "https://docs.rs/enzyme/"
-homepage = "https://github.com/rust-ml/enzyme_build"
+homepage = "https://enzyme.mit.edu"
 description = "A helper crate to simplify experimenting with Enzyme."
 
 

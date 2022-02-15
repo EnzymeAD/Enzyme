@@ -31,10 +31,11 @@ Testing Time: 0.63s
 
 ## Extras
 - Q: It fails some (all) tests or the build breaks even earlier. Help?
-- A: Sorry. Please open an issue with relevant information (OS, error message) or ping me on the rust-ml Zulip.  
+- A: Sorry. Please create a github issue with relevant information (OS, error message) [here](https://github.com/EnzymeAD/Enzyme/issues) or open a topic on our [Discourse](https://discourse.llvm.org/c/projects-that-want-to-become-official-llvm-projects/enzyme/45).
+As an alternative you can also ping us on [Discord](https://discord.gg/MGBqckV7Zb).  
 &nbsp;
 - Q: How often do I have to run this? It takes quite a while..
-- A: We are aware of this and working on offering pre-build versions. In the meantime you have to build it once per rust Version. So we will publish an update once 1.58 hits stable.
+- A: We are aware of this and working on offering pre-build versions. In the meantime you have to build it once per rust Version. So we will publish an update once 1.59 hits stable.
 
 License
 =======
