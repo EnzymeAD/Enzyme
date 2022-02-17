@@ -3520,13 +3520,20 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       auto newi = pair.first;
       auto nexti = pair.second;
       for (auto V : unwrapToOrig[newi]) {
-        ValueToValueMapTy empty;
+        ValueToValueMapTy available;
+        if (auto MD = hasMetadata(V, "enzyme_available")) {
+          for (auto &pair : MD->operands()) {
+            auto tup = cast<MDNode>(pair);
+            available[cast<ValueAsMetadata>(tup->getOperand(0))->getValue()] =
+                cast<ValueAsMetadata>(tup->getOperand(1))->getValue();
+          }
+        }
         IRBuilder<> lb(V);
         // This must disallow caching here as otherwise performing the loop in
         // the wrong order may result in first replacing the later unwrapped
         // value, caching it, then attempting to reuse it for an earlier
         // replacement.
-        Value *nval = gutils->unwrapM(nexti, lb, empty,
+        Value *nval = gutils->unwrapM(nexti, lb, available,
                                       UnwrapMode::LegalFullUnwrapNoTapeReplace,
                                       /*scope*/ nullptr, /*permitCache*/ false);
         assert(nval);

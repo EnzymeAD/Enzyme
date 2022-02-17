@@ -211,8 +211,19 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
             assert(inst->getParent()->getParent() == newFunc);
             auto placeholder = BuilderM.CreatePHI(
                 val->getType(), 0, val->getName() + "_krcLFUreplacement");
-            assert(permitCache);
             unwrappedLoads[placeholder] = inst;
+            SmallVector<Metadata *, 1> avail;
+            for (auto pair : available)
+              if (pair.second)
+                avail.push_back(MDNode::get(
+                    placeholder->getContext(),
+                    {ValueAsMetadata::get(const_cast<Value *>(pair.first)),
+                     ValueAsMetadata::get(pair.second)}));
+            placeholder->setMetadata(
+                "enzyme_available",
+                MDNode::get(placeholder->getContext(), avail));
+            if (!permitCache)
+              return placeholder;
             return unwrap_cache[BuilderM.GetInsertBlock()][idx.first]
                                [idx.second] = placeholder;
           }
@@ -242,8 +253,19 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
               assert(inst->getParent()->getParent() == newFunc);
               auto placeholder = BuilderM.CreatePHI(
                   val->getType(), 0, val->getName() + "_krcAFUWLreplacement");
-              assert(permitCache);
               unwrappedLoads[placeholder] = inst;
+              SmallVector<Metadata *, 1> avail;
+              for (auto pair : available)
+                if (pair.second)
+                  avail.push_back(MDNode::get(
+                      placeholder->getContext(),
+                      {ValueAsMetadata::get(const_cast<Value *>(pair.first)),
+                       ValueAsMetadata::get(pair.second)}));
+              placeholder->setMetadata(
+                  "enzyme_available",
+                  MDNode::get(placeholder->getContext(), avail));
+              if (!permitCache)
+                return placeholder;
               return unwrap_cache[BuilderM.GetInsertBlock()][idx.first]
                                  [idx.second] = placeholder;
             }
@@ -1412,8 +1434,9 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
             unwrap_cache[BuilderM.GetInsertBlock()][idx.first][idx.second] =
                 toret;
           }
-          if (auto instRet = dyn_cast<Instruction>(toret))
+          if (auto instRet = dyn_cast<Instruction>(toret)) {
             unwrappedLoads[instRet] = val;
+          }
           return toret;
         }
 
@@ -1621,8 +1644,9 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           unwrap_cache[BuilderM.GetInsertBlock()][idx.first][idx.second] =
               toret;
         }
-        if (auto instRet = dyn_cast<Instruction>(toret))
+        if (auto instRet = dyn_cast<Instruction>(toret)) {
           unwrappedLoads[instRet] = val;
+        }
         return toret;
       }
 
