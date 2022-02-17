@@ -45,6 +45,7 @@ Features and approaches described in this documentation are classified by their 
     :maxdepth:
     :caption: User Manual
 
+    calling_convention
     troubleshooting_and_tips
     faq
     glossary
