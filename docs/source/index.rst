@@ -42,7 +42,19 @@ Features and approaches described in this documentation are classified by their 
 
 .. toctree::
     :glob:
+    :maxdepth:
+    :caption: User Manual
+
+    troubleshooting_and_tips
+    faq
+    glossary
+    examples
+    talks_and_tutorials
+
+.. toctree::
+    :glob:
     :maxdepth: 1
     :caption: Advanced Features
 
     advanced_options
+    cuda_guide
