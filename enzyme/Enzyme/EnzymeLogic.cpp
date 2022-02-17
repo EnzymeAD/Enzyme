@@ -3524,8 +3524,10 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         if (auto MD = hasMetadata(V, "enzyme_available")) {
           for (auto &pair : MD->operands()) {
             auto tup = cast<MDNode>(pair);
+            auto val = cast<ValueAsMetadata>(tup->getOperand(1))->getValue();
+            assert(val);
             available[cast<ValueAsMetadata>(tup->getOperand(0))->getValue()] =
-                cast<ValueAsMetadata>(tup->getOperand(1))->getValue();
+                val;
           }
         }
         IRBuilder<> lb(V);
