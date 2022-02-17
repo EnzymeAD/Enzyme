@@ -4937,7 +4937,6 @@ public:
     // MPI send / recv can only send float/integers
     if (funcName == "PMPI_Isend" || funcName == "MPI_Isend" ||
         funcName == "PMPI_Irecv" || funcName == "MPI_Irecv") {
-      Value *firstallocation = nullptr;
       if (!gutils->isConstantInstruction(&call)) {
         if (Mode == DerivativeMode::ReverseModePrimal ||
             Mode == DerivativeMode::ReverseModeCombined) {
@@ -4951,18 +4950,7 @@ public:
           }
 
           auto i64 = Type::getInt64Ty(call.getContext());
-          auto i32 = Type::getInt32Ty(call.getContext());
-          auto c0_64 = ConstantInt::get(i64, 0);
-          Type *types[] = {
-              /*0 */ Type::getInt8PtrTy(call.getContext()),
-              /*1 */ i64,
-              /*2 */ Type::getInt8PtrTy(call.getContext()),
-              /*3 */ i64,
-              /*4 */ i64,
-              /*5 */ Type::getInt8PtrTy(call.getContext()),
-              /*6 */ Type::getInt8Ty(call.getContext()),
-          };
-          auto impi = StructType::get(call.getContext(), types, false);
+          auto impi = getMPIHelper(call.getContext());
 
           Value *impialloc = CallInst::CreateMalloc(
               gutils->getNewFromOriginal(&call), i64, impi,
@@ -4976,6 +4964,15 @@ public:
 
           d_req = BuilderZ.CreateBitCast(
               d_req, PointerType::getUnqual(impialloc->getType()));
+#if LLVM_VERSION_MAJOR > 7
+          Value *d_req_prev = BuilderZ.CreateLoad(impialloc->getType(), d_req);
+#else
+          Value *d_req_prev = BuilderZ.CreateLoad(d_req);
+#endif
+          BuilderZ.CreateStore(
+              BuilderZ.CreatePointerCast(d_req_prev,
+                                         Type::getInt8PtrTy(call.getContext())),
+              getMPIMemberPtr<MPI_Elem::Old>(BuilderZ, impialloc));
           BuilderZ.CreateStore(impialloc, d_req);
 
           if (funcName == "MPI_Isend" || funcName == "PMPI_Isend") {
@@ -4992,115 +4989,56 @@ public:
                                            Type::getInt64Ty(call.getContext())),
                 "", true, true);
 
-            firstallocation = CallInst::CreateMalloc(
+            Value *firstallocation = CallInst::CreateMalloc(
                 &*BuilderZ.GetInsertPoint(), len_arg->getType(),
                 Type::getInt8Ty(call.getContext()),
                 ConstantInt::get(Type::getInt64Ty(len_arg->getContext()), 1),
                 len_arg, nullptr, "mpirecv_malloccache");
             BuilderZ.CreateStore(
                 firstallocation,
-#if LLVM_VERSION_MAJOR > 7
-                BuilderZ.CreateInBoundsGEP(
-                    impialloc->getType()->getPointerElementType(), impialloc,
-                    {c0_64, ConstantInt::get(i32, 0)})
-#else
-                BuilderZ.CreateInBoundsGEP(impialloc,
-                                           {c0_64, ConstantInt::get(i32, 0)})
-#endif
-            );
+                getMPIMemberPtr<MPI_Elem::Buf>(BuilderZ, impialloc));
             BuilderZ.SetInsertPoint(gutils->getNewFromOriginal(&call));
-
-            firstallocation = gutils->cacheForReverse(
-                BuilderZ, firstallocation, getIndex(&call, CacheType::Tape));
-
           } else {
             Value *ibuf = gutils->invertPointerM(call.getOperand(0), BuilderZ);
             if (ibuf->getType()->isIntegerTy())
               ibuf = BuilderZ.CreateIntToPtr(
                   ibuf, Type::getInt8PtrTy(call.getContext()));
             BuilderZ.CreateStore(
-                ibuf,
-#if LLVM_VERSION_MAJOR > 7
-                BuilderZ.CreateInBoundsGEP(
-                    impialloc->getType()->getPointerElementType(), impialloc,
-                    {c0_64, ConstantInt::get(i32, 0)})
-#else
-                BuilderZ.CreateInBoundsGEP(impialloc,
-                                           {c0_64, ConstantInt::get(i32, 0)})
-#endif
-            );
+                ibuf, getMPIMemberPtr<MPI_Elem::Buf>(BuilderZ, impialloc));
           }
 
           BuilderZ.CreateStore(
               BuilderZ.CreateZExtOrTrunc(
-                  gutils->getNewFromOriginal(call.getOperand(1)), types[1]),
-#if LLVM_VERSION_MAJOR > 7
-              BuilderZ.CreateInBoundsGEP(
-                  impialloc->getType()->getPointerElementType(), impialloc,
-                  {c0_64, ConstantInt::get(i32, 1)})
-#else
-              BuilderZ.CreateInBoundsGEP(impialloc,
-                                         {c0_64, ConstantInt::get(i32, 1)})
-#endif
-          );
+                  gutils->getNewFromOriginal(call.getOperand(1)), i64),
+              getMPIMemberPtr<MPI_Elem::Count>(BuilderZ, impialloc));
 
           Value *dataType = gutils->getNewFromOriginal(call.getOperand(2));
           if (dataType->getType()->isIntegerTy())
             dataType = BuilderZ.CreateIntToPtr(
                 dataType, Type::getInt8PtrTy(dataType->getContext()));
           BuilderZ.CreateStore(
-              BuilderZ.CreatePointerCast(dataType, types[2]),
-#if LLVM_VERSION_MAJOR > 7
-              BuilderZ.CreateInBoundsGEP(
-                  impialloc->getType()->getPointerElementType(), impialloc,
-                  {c0_64, ConstantInt::get(i32, 2)})
-#else
-              BuilderZ.CreateInBoundsGEP(impialloc,
-                                         {c0_64, ConstantInt::get(i32, 2)})
-#endif
-          );
+              BuilderZ.CreatePointerCast(dataType,
+                                         Type::getInt8PtrTy(call.getContext())),
+              getMPIMemberPtr<MPI_Elem::DataType>(BuilderZ, impialloc));
 
           BuilderZ.CreateStore(
               BuilderZ.CreateZExtOrTrunc(
-                  gutils->getNewFromOriginal(call.getOperand(3)), types[3]),
-#if LLVM_VERSION_MAJOR > 7
-              BuilderZ.CreateInBoundsGEP(
-                  impialloc->getType()->getPointerElementType(), impialloc,
-                  {c0_64, ConstantInt::get(i32, 3)})
-#else
-              BuilderZ.CreateInBoundsGEP(impialloc,
-                                         {c0_64, ConstantInt::get(i32, 3)})
-#endif
-          );
+                  gutils->getNewFromOriginal(call.getOperand(3)), i64),
+              getMPIMemberPtr<MPI_Elem::Src>(BuilderZ, impialloc));
 
           BuilderZ.CreateStore(
               BuilderZ.CreateZExtOrTrunc(
-                  gutils->getNewFromOriginal(call.getOperand(4)), types[4]),
-#if LLVM_VERSION_MAJOR > 7
-              BuilderZ.CreateInBoundsGEP(
-                  impialloc->getType()->getPointerElementType(), impialloc,
-                  {c0_64, ConstantInt::get(i32, 4)})
-#else
-              BuilderZ.CreateInBoundsGEP(impialloc,
-                                         {c0_64, ConstantInt::get(i32, 4)})
-#endif
-          );
+                  gutils->getNewFromOriginal(call.getOperand(4)), i64),
+              getMPIMemberPtr<MPI_Elem::Tag>(BuilderZ, impialloc));
 
           Value *comm = gutils->getNewFromOriginal(call.getOperand(5));
           if (comm->getType()->isIntegerTy())
             comm = BuilderZ.CreateIntToPtr(
                 comm, Type::getInt8PtrTy(dataType->getContext()));
           BuilderZ.CreateStore(
-              BuilderZ.CreatePointerCast(comm, types[5]),
-#if LLVM_VERSION_MAJOR > 7
-              BuilderZ.CreateInBoundsGEP(
-                  impialloc->getType()->getPointerElementType(), impialloc,
-                  {c0_64, ConstantInt::get(i32, 5)})
-#else
-              BuilderZ.CreateInBoundsGEP(impialloc,
-                                         {c0_64, ConstantInt::get(i32, 5)})
-#endif
-          );
+              BuilderZ.CreatePointerCast(comm,
+                                         Type::getInt8PtrTy(call.getContext())),
+              getMPIMemberPtr<MPI_Elem::Comm>(BuilderZ, impialloc));
 
           BuilderZ.CreateStore(
               ConstantInt::get(
@@ -5108,15 +5046,8 @@ public:
                   (funcName == "MPI_Isend" || funcName == "PMPI_Isend")
                       ? (int)MPI_CallType::ISEND
                       : (int)MPI_CallType::IRECV),
-#if LLVM_VERSION_MAJOR > 7
-              BuilderZ.CreateInBoundsGEP(
-                  impialloc->getType()->getPointerElementType(), impialloc,
-                  {c0_64, ConstantInt::get(i32, 6)})
-#else
-              BuilderZ.CreateInBoundsGEP(impialloc,
-                                         {c0_64, ConstantInt::get(i32, 6)})
-#endif
-          );
+              getMPIMemberPtr<MPI_Elem::Call>(BuilderZ, impialloc));
+          // TODO old
         }
         if (Mode == DerivativeMode::ReverseModeGradient ||
             Mode == DerivativeMode::ReverseModeCombined) {
@@ -5143,9 +5074,81 @@ public:
             llvm::errs() << " warning could not automatically determine mpi "
                             "status type, assuming [24 x i8]\n";
           }
+          Value *req =
+              lookup(gutils->getNewFromOriginal(call.getOperand(6)), Builder2);
           Value *d_req = lookup(
               gutils->invertPointerM(call.getOperand(6), Builder2), Builder2);
-          Value *args[] = {/*req*/ d_req,
+          if (d_req->getType()->isIntegerTy()) {
+            d_req = Builder2.CreateIntToPtr(
+                d_req, Type::getInt8PtrTy(call.getContext()));
+          }
+          Type *helperTy =
+              llvm::PointerType::getUnqual(getMPIHelper(call.getContext()));
+          Value *helper = Builder2.CreatePointerCast(
+              d_req, PointerType::getUnqual(helperTy));
+#if LLVM_VERSION_MAJOR > 7
+          helper = Builder2.CreateLoad(helperTy, helper);
+#else
+          helper = Builder2.CreateLoad(helper);
+#endif
+
+          auto i64 = Type::getInt64Ty(call.getContext());
+
+          Value *firstallocation;
+#if LLVM_VERSION_MAJOR > 7
+          firstallocation = Builder2.CreateLoad(
+              Type::getInt8PtrTy(call.getContext()),
+              getMPIMemberPtr<MPI_Elem::Buf>(BuilderZ, helper));
+#else
+          firstallocation = Builder2.CreateLoad(
+              getMPIMemberPtr<MPI_Elem::Buf>(BuilderZ, helper));
+#endif
+          Value *len_arg = nullptr;
+          if (auto C = dyn_cast<Constant>(
+                  gutils->getNewFromOriginal(call.getOperand(1)))) {
+            len_arg = Builder2.CreateZExtOrTrunc(C, i64);
+          } else {
+#if LLVM_VERSION_MAJOR > 7
+            len_arg = Builder2.CreateLoad(
+                i64, getMPIMemberPtr<MPI_Elem::Count>(BuilderZ, helper));
+#else
+            len_arg = Builder2.CreateLoad(
+                getMPIMemberPtr<MPI_Elem::Count>(BuilderZ, helper));
+#endif
+          }
+          Value *tysize = nullptr;
+          if (auto C = dyn_cast<Constant>(
+                  gutils->getNewFromOriginal(call.getOperand(2)))) {
+            tysize = C;
+          } else {
+#if LLVM_VERSION_MAJOR > 7
+            len_arg = Builder2.CreateLoad(
+                Type::getInt8PtrTy(call.getContext()),
+                getMPIMemberPtr<MPI_Elem::Count>(BuilderZ, helper));
+#else
+            len_arg = Builder2.CreateLoad(
+                getMPIMemberPtr<MPI_Elem::Count>(BuilderZ, helper));
+#endif
+          }
+
+          Value *prev;
+#if LLVM_VERSION_MAJOR > 7
+          prev = Builder2.CreateLoad(
+              Type::getInt8PtrTy(call.getContext()),
+              getMPIMemberPtr<MPI_Elem::Old>(BuilderZ, helper));
+#else
+          prev = Builder2.CreateLoad(
+              getMPIMemberPtr<MPI_Elem::Old>(BuilderZ, helper));
+#endif
+          Builder2.CreateStore(
+              prev, Builder2.CreatePointerCast(
+                        d_req, PointerType::getUnqual(prev->getType())));
+
+          assert(shouldFree());
+
+          tysize = MPI_TYPE_SIZE(tysize, Builder2, call.getType());
+
+          Value *args[] = {/*req*/ req,
                            /*status*/ IRBuilder<>(gutils->inversionAllocs)
                                .CreateAlloca(statusType)};
 #if LLVM_VERSION_MAJOR >= 9
@@ -5199,12 +5202,6 @@ public:
           if (auto F = dyn_cast<Function>(waitFunc))
             fcall->setCallingConv(F->getCallingConv());
 #endif
-          auto len_arg = Builder2.CreateZExtOrTrunc(
-              lookup(gutils->getNewFromOriginal(call.getOperand(1)), Builder2),
-              Type::getInt64Ty(Builder2.getContext()));
-          auto tysize = MPI_TYPE_SIZE(
-              lookup(gutils->getNewFromOriginal(call.getOperand(2)), Builder2),
-              Builder2, call.getType());
           len_arg = Builder2.CreateMul(
               len_arg,
               Builder2.CreateZExtOrTrunc(
@@ -5215,11 +5212,7 @@ public:
                 ConstantInt::get(Type::getInt8Ty(Builder2.getContext()), 0);
             auto volatile_arg = ConstantInt::getFalse(Builder2.getContext());
             assert(!gutils->isConstantValue(call.getOperand(0)));
-            auto dbuf = lookup(
-                gutils->invertPointerM(call.getOperand(0), Builder2), Builder2);
-            if (dbuf->getType()->isIntegerTy())
-              dbuf = Builder2.CreateIntToPtr(
-                  dbuf, Type::getInt8PtrTy(call.getContext()));
+            auto dbuf = firstallocation;
 #if LLVM_VERSION_MAJOR == 6
             auto align_arg =
                 ConstantInt::get(Type::getInt32Ty(B.getContext()), 1);
@@ -5239,17 +5232,6 @@ public:
             assert(!gutils->isConstantValue(call.getOperand(0)));
             Value *shadow = lookup(
                 gutils->invertPointerM(call.getOperand(0), Builder2), Builder2);
-            if (Mode == DerivativeMode::ReverseModeCombined) {
-              assert(firstallocation);
-              firstallocation = lookup(firstallocation, Builder2);
-            } else {
-              firstallocation =
-                  BuilderZ.CreatePHI(Type::getInt8PtrTy(call.getContext()), 0);
-              firstallocation = gutils->lookupM(
-                  gutils->cacheForReverse(BuilderZ, firstallocation,
-                                          getIndex(&call, CacheType::Tape)),
-                  Builder2);
-            }
 
             // TODO add operand bundle (unless force inlined?)
             DifferentiableMemCopyFloats(call, call.getOperand(0),
@@ -5272,7 +5254,23 @@ public:
             }
           } else
             assert(0 && "illegal mpi");
-        } else if (Mode == DerivativeMode::ForwardMode) {
+
+          CallInst *freecall = cast<CallInst>(CallInst::CreateFree(
+              Builder2.CreatePointerCast(helper,
+                                         Type::getInt8PtrTy(call.getContext())),
+              Builder2.GetInsertBlock()));
+#if LLVM_VERSION_MAJOR >= 14
+          freecall->addAttributeAtIndex(AttributeList::FirstArgIndex,
+                                        Attribute::NonNull);
+#else
+          freecall->addAttribute(AttributeList::FirstArgIndex,
+                                 Attribute::NonNull);
+#endif
+          if (freecall->getParent() == nullptr) {
+            Builder2.Insert(freecall);
+          }
+        }
+        if (Mode == DerivativeMode::ForwardMode) {
           IRBuilder<> Builder2(&call);
           getForwardBuilder(Builder2);
 
@@ -5330,6 +5328,8 @@ public:
         getReverseBuilder(Builder2);
 
         assert(!gutils->isConstantValue(call.getOperand(0)));
+        Value *req =
+            lookup(gutils->getNewFromOriginal(call.getOperand(0)), Builder2);
         Value *d_req = lookup(
             gutils->invertPointerM(call.getOperand(0), Builder2), Builder2);
         if (d_req->getType()->isIntegerTy()) {
@@ -5337,17 +5337,7 @@ public:
               d_req,
               PointerType::getUnqual(Type::getInt8PtrTy(call.getContext())));
         }
-        auto i64 = Type::getInt64Ty(call.getContext());
-        Type *types[] = {
-            /*0 */ Type::getInt8PtrTy(call.getContext()),
-            /*1 */ i64,
-            /*2 */ Type::getInt8PtrTy(call.getContext()),
-            /*3 */ i64,
-            /*4 */ i64,
-            /*5 */ Type::getInt8PtrTy(call.getContext()),
-            /*6 */ Type::getInt8Ty(call.getContext()),
-        };
-        auto impi = StructType::get(call.getContext(), types, false);
+        auto impi = getMPIHelper(call.getContext());
 
 #if LLVM_VERSION_MAJOR > 7
         Value *d_reqp = Builder2.CreateLoad(
@@ -5361,11 +5351,6 @@ public:
 
         Value *isNull = Builder2.CreateICmpEQ(
             d_reqp, Constant::getNullValue(d_reqp->getType()));
-        if (auto GV = gutils->newFunc->getParent()->getNamedValue(
-                "ompi_request_null")) {
-          isNull = Builder2.CreateICmpEQ(
-              d_reqp, Builder2.CreateBitCast(GV, d_reqp->getType()));
-        }
         BasicBlock *currentBlock = Builder2.GetInsertBlock();
         BasicBlock *nonnullBlock = gutils->addReverseBlock(
             currentBlock, currentBlock->getName() + "_nonnull",
@@ -5382,43 +5367,30 @@ public:
 #else
         Value *cache = Builder2.CreateLoad(d_reqp);
 #endif
-        if (shouldFree()) {
-          CallInst *freecall = cast<CallInst>(
-              CallInst::CreateFree(d_reqp, Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 14
-          freecall->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                        Attribute::NonNull);
-#else
-          freecall->addAttribute(AttributeList::FirstArgIndex,
-                                 Attribute::NonNull);
-#endif
-          if (freecall->getParent() == nullptr) {
-            Builder2.Insert(freecall);
-          }
-        }
 
+        Value *args[] = {
+            getMPIMemberPtr<MPI_Elem::Buf, false>(Builder2, cache),
+            getMPIMemberPtr<MPI_Elem::Count, false>(Builder2, cache),
+            getMPIMemberPtr<MPI_Elem::DataType, false>(Builder2, cache),
+            getMPIMemberPtr<MPI_Elem::Src, false>(Builder2, cache),
+            getMPIMemberPtr<MPI_Elem::Tag, false>(Builder2, cache),
+            getMPIMemberPtr<MPI_Elem::Comm, false>(Builder2, cache),
+            getMPIMemberPtr<MPI_Elem::Call, false>(Builder2, cache),
+            req};
+        Type *types[sizeof(args) / sizeof(*args)];
+        for (size_t i = 0; i < sizeof(args) / sizeof(*args); i++)
+          types[i] = args[i]->getType();
         Function *dwait = getOrInsertDifferentialMPI_Wait(
             *called->getParent(), types, d_req->getType());
-        Value *args[] = {Builder2.CreateExtractValue(cache, 0),
-                         Builder2.CreateExtractValue(cache, 1),
-                         Builder2.CreateExtractValue(cache, 2),
-                         Builder2.CreateExtractValue(cache, 3),
-                         Builder2.CreateExtractValue(cache, 4),
-                         Builder2.CreateExtractValue(cache, 5),
-                         Builder2.CreateExtractValue(cache, 6),
-                         d_req};
 
-        // Need to preserve the shadow Request (operand 6 in isend/irecv), which
-        // becomes operand 0 for iwait. However, this doesn't end up preserving
+        // Need to preserve the shadow Request (operand 0 in wait).
+        // However, this doesn't end up preserving
         // the underlying buffers for the adjoint. To rememdy, force inline.
-        auto cal = Builder2.CreateCall(
-            dwait, args,
-            gutils->getInvertedBundles(&call,
-                                       {ValueType::None, ValueType::None,
-                                        ValueType::None, ValueType::None,
-                                        ValueType::None, ValueType::None,
-                                        ValueType::Shadow},
-                                       Builder2, /*lookup*/ true));
+        auto cal =
+            Builder2.CreateCall(dwait, args,
+                                gutils->getInvertedBundles(
+                                    &call, {ValueType::Shadow, ValueType::None},
+                                    Builder2, /*lookup*/ true));
         cal->setCallingConv(dwait->getCallingConv());
         cal->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
 #if LLVM_VERSION_MAJOR >= 14
@@ -5480,6 +5452,8 @@ public:
         assert(!gutils->isConstantValue(call.getOperand(1)));
         Value *count =
             lookup(gutils->getNewFromOriginal(call.getOperand(0)), Builder2);
+        Value *req_orig =
+            lookup(gutils->getNewFromOriginal(call.getOperand(1)), Builder2);
         Value *d_req_orig = lookup(
             gutils->invertPointerM(call.getOperand(1), Builder2), Builder2);
         if (d_req_orig->getType()->isIntegerTy()) {
@@ -5513,23 +5487,16 @@ public:
 
         Value *idxs[] = {idx};
 #if LLVM_VERSION_MAJOR > 7
+        Value *req = Builder2.CreateGEP(
+            d_req_orig->getType()->getPointerElementType(), req_orig, idxs);
         Value *d_req = Builder2.CreateGEP(
             d_req_orig->getType()->getPointerElementType(), d_req_orig, idxs);
 #else
+        Value *req = Builder2.CreateGEP(req_orig, idxs);
         Value *d_req = Builder2.CreateGEP(d_req_orig, idxs);
 #endif
 
-        auto i64 = Type::getInt64Ty(call.getContext());
-        Type *types[] = {
-            /*0 */ Type::getInt8PtrTy(call.getContext()),
-            /*1 */ i64,
-            /*2 */ Type::getInt8PtrTy(call.getContext()),
-            /*3 */ i64,
-            /*4 */ i64,
-            /*5 */ Type::getInt8PtrTy(call.getContext()),
-            /*6 */ Type::getInt8Ty(call.getContext()),
-        };
-        auto impi = StructType::get(call.getContext(), types, false);
+        auto impi = getMPIHelper(call.getContext());
 
 #if LLVM_VERSION_MAJOR > 7
         Value *d_reqp = Builder2.CreateLoad(
@@ -5543,11 +5510,6 @@ public:
 
         Value *isNull = Builder2.CreateICmpEQ(
             d_reqp, Constant::getNullValue(d_reqp->getType()));
-        if (auto GV = gutils->newFunc->getParent()->getNamedValue(
-                "ompi_request_null")) {
-          isNull = Builder2.CreateICmpEQ(
-              d_reqp, Builder2.CreateBitCast(GV, d_reqp->getType()));
-        }
 
         Builder2.CreateCondBr(isNull, eloopBlock, nonnullBlock);
         Builder2.SetInsertPoint(nonnullBlock);
@@ -5558,31 +5520,21 @@ public:
 #else
         Value *cache = Builder2.CreateLoad(d_reqp);
 #endif
-        if (shouldFree()) {
-          CallInst *freecall = cast<CallInst>(
-              CallInst::CreateFree(d_reqp, Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 14
-          freecall->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                        Attribute::NonNull);
-#else
-          freecall->addAttribute(AttributeList::FirstArgIndex,
-                                 Attribute::NonNull);
-#endif
-          if (freecall->getParent() == nullptr) {
-            Builder2.Insert(freecall);
-          }
-        }
 
+        Value *args[] = {
+            getMPIMemberPtr<MPI_Elem::Buf, false>(Builder2, cache),
+            getMPIMemberPtr<MPI_Elem::Count, false>(Builder2, cache),
+            getMPIMemberPtr<MPI_Elem::DataType, false>(Builder2, cache),
+            getMPIMemberPtr<MPI_Elem::Src, false>(Builder2, cache),
+            getMPIMemberPtr<MPI_Elem::Tag, false>(Builder2, cache),
+            getMPIMemberPtr<MPI_Elem::Comm, false>(Builder2, cache),
+            getMPIMemberPtr<MPI_Elem::Call, false>(Builder2, cache),
+            req};
+        Type *types[sizeof(args) / sizeof(*args)];
+        for (size_t i = 0; i < sizeof(args) / sizeof(*args); i++)
+          types[i] = args[i]->getType();
         Function *dwait = getOrInsertDifferentialMPI_Wait(
             *called->getParent(), types, d_req->getType());
-        Value *args[] = {Builder2.CreateExtractValue(cache, 0),
-                         Builder2.CreateExtractValue(cache, 1),
-                         Builder2.CreateExtractValue(cache, 2),
-                         Builder2.CreateExtractValue(cache, 3),
-                         Builder2.CreateExtractValue(cache, 4),
-                         Builder2.CreateExtractValue(cache, 5),
-                         Builder2.CreateExtractValue(cache, 6),
-                         d_req};
         // Need to preserve the shadow Request (operand 6 in isend/irecv), which
         // becomes operand 0 for iwait. However, this doesn't end up preserving
         // the underlying buffers for the adjoint. To remedy, force inline the
