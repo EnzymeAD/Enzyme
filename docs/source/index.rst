@@ -35,6 +35,14 @@ Features and approaches described in this documentation are classified by their 
 .. toctree::
     :glob:
     :maxdepth: 1
+    :caption: Language Bindings
+
+    Julia <https://enzyme.mit.edu/julia/>
+    Rust <https://enzyme.mit.edu/rust/>
+
+.. toctree::
+    :glob:
+    :maxdepth: 1
     :caption: Advanced Features
 
     advanced_options
