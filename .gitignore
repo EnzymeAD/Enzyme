@@ -3,3 +3,7 @@
 *.out
 build
 .vscode
+
+# sphinx 
+docs/cpp/src
+docs/src/**/*
