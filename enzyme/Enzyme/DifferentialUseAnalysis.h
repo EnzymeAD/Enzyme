@@ -190,7 +190,7 @@ static inline bool is_use_directly_needed_in_reverse(
   }
 
   if (auto CI = dyn_cast<CallInst>(user)) {
-    if (auto F = getFunctionFromCall(CI)) {
+    if (auto F = getFunctionFromCall(const_cast<CallInst*>(CI))) {
       auto funcName = F->getName();
       if (F->hasFnAttribute("enzyme_math"))
         funcName = F->getFnAttribute("enzyme_math").getValueAsString();
@@ -306,27 +306,45 @@ static inline bool is_value_needed_in_reverse(
       }
 
       if (auto CI = dyn_cast<CallInst>(user)) {
-        if (auto F = getFunctionFromCall(CI)) {
+        if (auto F = getFunctionFromCall(const_cast<CallInst*>(CI))) {
           StringRef funcName = F->getName();
           if (F->hasFnAttribute("enzyme_math"))
             funcName = F->getFnAttribute("enzyme_math").getValueAsString();
 
           // Only need shadow request for reverse
-          if (funcName == "MPI_Isend" || funcName == "MPI_Irecv" ||
-              funcName == "PMPI_Isend" || funcName == "PMPI_Irecv") {
-            if (!gutils->isConstantInstruction(
-                    const_cast<Instruction *>(user)) &&
-                inst == CI->getArgOperand(6)) {
-              return seen[idx] = true;
-            } else
+          if (funcName == "MPI_Irecv" || funcName == "PMPI_Irecv") {
+            if (gutils->isConstantInstruction(const_cast<Instruction *>(user)))
               continue;
+            // Need shadow request
+            if (inst == CI->getArgOperand(6))
+              return seen[idx] = true;
+            // Need shadow buffer in forward pass
+            if (mode != DerivativeMode::ReverseModeGradient)
+              if (inst == CI->getArgOperand(0))
+                return seen[idx] = true;
+            continue;
+          }
+          if (funcName == "MPI_Isend" || funcName == "PMPI_Isend") {
+            if (gutils->isConstantInstruction(const_cast<Instruction *>(user)))
+              continue;
+            // Need shadow request
+            if (inst == CI->getArgOperand(6))
+              return seen[idx] = true;
+            // Need shadow buffer in reverse pass or forward mode
+            if (mode != DerivativeMode::ReverseModePrimal)
+              if (inst == CI->getArgOperand(0))
+                return seen[idx] = true;
+            continue;
           }
 
           // Only need the shadow request.
           if (funcName == "MPI_Wait" || funcName == "PMPI_Wait") {
-            if (!gutils->isConstantInstruction(
+            if (gutils->isConstantInstruction(
                     const_cast<Instruction *>(user)) &&
                 inst == CI->getArgOperand(0)) {
+              // Need shadow buffer in reverse pass or forward mode
+              if (mode == DerivativeMode::ReverseModePrimal)
+                continue;
               return seen[idx] = true;
             } else
               continue;
@@ -334,9 +352,12 @@ static inline bool is_value_needed_in_reverse(
 
           // Only need element count for reverse of waitall
           if (funcName == "MPI_Waitall" || funcName == "PMPI_Waitall") {
-            if (!gutils->isConstantInstruction(
+            if (gutils->isConstantInstruction(
                     const_cast<Instruction *>(user)) &&
                 inst == CI->getArgOperand(1)) {
+              // Need shadow buffer in reverse pass or forward mode
+              if (mode == DerivativeMode::ReverseModePrimal)
+                continue;
               return seen[idx] = true;
             } else
               continue;
