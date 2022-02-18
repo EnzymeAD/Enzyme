@@ -21,5 +21,5 @@ help:
 	@$(SPHINXBUILD) -M $@ "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
 
 clean:
-	@echo "Removing the build html files under 'build'.."
-	@rm -rf $(BUILDDIR)/html
+	@echo "Removing the built html files and doctree files under 'build'.."
+	@rm -rf $(BUILDDIR)/html $(BUILDDIR)/doctrees
