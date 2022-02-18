@@ -3,12 +3,16 @@
 AD of CUDA
 ==========
 
+.. _reference-cpp-example:
+
 Reference C++ example
 ---------------------
 
     **WARNING**: CUDA support is highly experimental and in active development.
 
-Suppose we wanted to port the following C++ code to CUDA, with Enzyme autodiff support: ::
+Suppose we wanted to port the following C++ code to CUDA, with Enzyme autodiff support:
+
+.. code-block:: cpp
 
     #include <stdio.h>
 
@@ -43,11 +47,16 @@ Suppose we wanted to port the following C++ code to CUDA, with Enzyme autodiff s
 
     }
 
-A one-liner compilation of the above using Enzyme: ::
+A one-liner compilation of the above using Enzyme:
+
+.. code-block:: bash
 
     clang test2.cpp -Xclang -load -Xclang /path/to/ClangEnzyme-11.so -O2 -fno-vectorize -fno-unroll-loops
 
-## CUDA Example
+.. _cuda-example:
+
+CUDA Example
+------------
 
 When porting the above code, there are some caveats to be aware of:
 
@@ -55,7 +64,8 @@ When porting the above code, there are some caveats to be aware of:
 2. ``__enzyme_autodiff`` should only be invoked on ``___device___`` code, not ``__global__`` kernel code. ``__global__`` kernels may be supported in the future.
 3. ``--cuda-gpu-arch=sm_xx`` is usually needed as the default ``sm_20`` is unsupported by modern CUDA versions.
 
-::
+.. code-block:: cpp
+
     #include <stdio.h>
 
     void __device__ foo_impl(double* x_in, double *x_out) {
@@ -119,19 +129,26 @@ When porting the above code, there are some caveats to be aware of:
 
     }
 
-For convenience, a one-liner compilation step is (against sm_70): ::
+For convenience, a one-liner compilation step is (against sm_70):
+
+.. code-block:: bash
+
     clang test3.cu -Xclang -load -Xclang /path/to/ClangEnzyme-11.so -O2 -fno-vectorize -fno-unroll-loops -fPIC --cuda-gpu-arch=sm_70 -lcudart -L/usr/local/cuda-10.1/lib64
 
 Note that this procedure (using ClangEnzyme as opposed to LLVMEnzyme manually) may not properly nest Enzyme between optimization passes and may impact performance in unintended ways.
 
+.. _heterogeneous-ad:
+
 Heterogeneous AD
 ----------------
 
-It is often desirable to take derivatives of programs that run in part on the CPU and in part on the GPU. By placing a call to `__enzyme_autodiff` in a GPU kernel like above, one can successfully take the derivative of GPU programs. Similarly one can use `__enzyme_autodiff` within CPU programs to differentiate programs which run entirely on the CPU. Unfortunately, differentiating functions that call GPU kernels requires a bit of extra work (shown below) -- largely to work around the lack of support within LLVM for modules with multiple architecture targets.
+It is often desirable to take derivatives of programs that run in part on the CPU and in part on the GPU. By placing a call to `__enzyme_autodiff` in a GPU kernel like above, one can successfully take the derivative of GPU programs. Similarly one can use ``__enzyme_autodiff`` within CPU programs to differentiate programs which run entirely on the CPU. Unfortunately, differentiating functions that call GPU kernels requires a bit of extra work (shown below) -- largely to work around the lack of support within LLVM for modules with multiple architecture targets.
 
 To successfully differentiate across devices, we will use Enzyme on the GPU to export the augmented forward pass and reverse pass of the kernel being called, and then use Enzyme's custom derivative support to import that derivative function into the CPU code. This then allows Enzyme to differentiate any CPU code that also calls the kernel.
 
-Suppose we have a heterogeneous program like the following: ::
+Suppose we have a heterogeneous program such as the following:
+
+.. code-block:: cpp
 
     // GPU Kernel
     __global__ 
@@ -155,7 +172,9 @@ Suppose we have a heterogeneous program like the following: ::
         }
     }
 
-We would first try to differentiate the CPU side by calling `__enzyme_autodiff` on `iter` as shown below: ::
+We would first try to differentiate the CPU side by calling ``__enzyme_autodiff`` on ``iter`` as shown below:
+
+.. code-block:: cpp
 
     template <typename... Args>
     void __enzyme_autodiff(Args...);
@@ -164,15 +183,19 @@ We would first try to differentiate the CPU side by calling `__enzyme_autodiff` 
       __enzyme_autodiff(iter, nTimeSteps, src, dsrc, dst, ddst);
     }
 
-Enzyme, however, would return an error saying it cannot differentiate through a CUDA call, which appears like the following: ::
+Enzyme, however, would return an error saying it cannot differentiate through a CUDA call, which appears like the following:
+
+.. code-block:: bash
 
     declare dso_local i32 @__cudaPushCallConfiguration(i64, i32, i64, i32, i64, i8*) local_unnamed_addr #2
 
-    clang-13: /home/wmoses/git/Enzyme/enzyme/Enzyme/EnzymeLogic.cpp:1459: const AugmentedReturn& EnzymeLogic::CreateAugmentedPrimal(llvm::Function*, DIFFE_TYPE, const std::vector<DIFFE_TYPE>&, llvm::TargetLibraryInfo&, TypeAnalysis&, bool, const FnTypeInfo&, std::map<llvm::Argument*, bool>, bool, bool, bool, bool): Assertion `0 && "attempting to differentiate function without definition"' failed.
+    clang-13: /home/wmoses/git/Enzyme/enzyme/Enzyme/EnzymeLogic.cpp:1459: const AugmentedReturn& EnzymeLogic::CreateAugmentedPrimal(llvm::Function*, DIFFE_TYPE, const std::vector<DIFFE_TYPE>&, llvm::TargetLibraryInfo&, TypeAnalysis&, bool, const FnTypeInfo&, std::map<llvm::Argument*, bool>, bool, bool, bool, bool): Assertion '0 && "attempting to differentiate function without definition"' failed.
     PLEASE submit a bug report to https://bugs.llvm.org/ and include the crash backtrace, preprocessed source, and associated run script.
 
 
-To remedy this, we can use Enzyme's custom derivative registration to define a custom forward and reverse pass for the wrapper function `kern` as follows: ::
+To remedy this, we can use Enzyme's custom derivative registration to define a custom forward and reverse pass for the wrapper function `kern` as follows:
+
+.. code-block:: cpp
 
     // We move the body of collide into a separate device function collide_body to allow us
     // to pass collide_body to various differentiation methods. This is necessary as differentiation
@@ -258,9 +281,11 @@ To remedy this, we can use Enzyme's custom derivative registration to define a c
     // Here we register the custom forward pass aug_kern and reverse pass rev_kern
     void* __enzyme_register_gradient_kern[3] = { (void*)kern, (void*)aug_kern, (void*)rev_kern };
 
-Finally, Enzyme has a performance optimization available when creating forward and reverse passes using `__enzyme_augmentfwd` and `__enzyme_reverse`. By default, these methods store all variables inside the differentiated function within a generic pointer type (e.g.  `void*`), thereby allowing Enzyme to store as much memory as it needs without issue. This, of course, requires an extra indirection to get to the underlying memory being stored.
+Finally, Enzyme has a performance optimization available when creating forward and reverse passes using ``__enzyme_augmentfwd`` and ``__enzyme_reverse``. By default, these methods store all variables inside the differentiated function within a generic pointer type (e.g.  ``void*``), thereby allowing Enzyme to store as much memory as it needs without issue. This, of course, requires an extra indirection to get to the underlying memory being stored.
 
-If one knew statically how much memory is required per thread (in this case a single float to store `src[idx]`), one could tell Enzyme to allocate directly into the tape rather than using this extra level of indirect. This is performed as follows: ::
+If one knew statically how much memory is required per thread (in this case a single float to store ``src[idx]``), one could tell Enzyme to allocate directly into the tape rather than using this extra level of indirect. This is performed as follows:
+
+.. code-block:: cpp
 
     // Magic Global used to specify how to call Enzyme. In this case, we specify how much memory
     // is allocated per invocation within the tape to allow the cache to be inlined.
