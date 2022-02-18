@@ -1,5 +1,10 @@
+.. _cuda-guide:
+
+AD of CUDA
+==========
+
 Reference C++ example
-=====================
+---------------------
 
     **WARNING**: CUDA support is highly experimental and in active development.
 

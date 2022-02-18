@@ -13,17 +13,8 @@ Haskell, etc. it computes the derivative and gradient of that function. This all
 automatically create gradients of their source code without much additional work, other than plugging Enzyme into
 their compilation process. Utilizing LLVM's optimization pipeline, Enzyme is able to access and modify the program
 at a variety of levels hence providing an unprecedented amount of flexibility culminating in optimizations not possible
-in other automatic differenation frameworks.
+in other automatic differentiation frameworks.
 
-Features and approaches described in this documentation are classified by their maturity status:
-
-  *Stable:* Features which are at the core of Enzyme and are stably supported.
-
-  *Beta:* Features which have seen active use, but yet remain in active development to e.g.
-          achieve better feature coverage.
-  
-  *Alpha:* Features which are in the early development cycle, and are neither expressly stable,
-           nor have any guarantee of API-continuity.
 
 .. toctree::
     :glob:
@@ -42,7 +33,7 @@ Features and approaches described in this documentation are classified by their 
 
 .. toctree::
     :glob:
-    :maxdepth:
+    :maxdepth: 1
     :caption: User Manual
 
     calling_convention
