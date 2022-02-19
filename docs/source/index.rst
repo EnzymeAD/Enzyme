@@ -28,8 +28,11 @@ in other automatic differentiation frameworks.
     :maxdepth: 1
     :caption: Language Bindings
 
+    C/C++ <https://enzyme.mit.edu/cpp/>
+    Fortran <https://enzyme.mit.edu/fortran/>
     Julia <https://enzyme.mit.edu/julia/>
     Rust <https://enzyme.mit.edu/rust/>
+    Swift <https://enzyme.mit.edu/swift/>
 
 .. toctree::
     :glob:
@@ -48,5 +51,4 @@ in other automatic differentiation frameworks.
     :maxdepth: 1
     :caption: Advanced Features
 
-    advanced_options
-    cuda_guide
+    advanced/*
