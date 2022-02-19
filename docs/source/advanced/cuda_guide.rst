@@ -1,7 +1,7 @@
 .. _cuda-guide:
 
-AD of CUDA
-==========
+CUDA
+====
 
 .. _reference-cpp-example:
 
