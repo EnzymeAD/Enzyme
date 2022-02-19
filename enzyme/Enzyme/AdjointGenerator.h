@@ -4493,10 +4493,10 @@ public:
                     ConstantInt::get(Type::getInt64Ty(vt->getContext()), 0),
                     ConstantInt::get(Type::getInt32Ty(vt->getContext()), i)};
 #if LLVM_VERSION_MAJOR > 7
-                auto vptr = B.CreateGEP(ptr->getType()->getPointerElementType(),
-                                        ptr, Idxs);
+                auto vptr = B.CreateInBoundsGEP(
+                    ptr->getType()->getPointerElementType(), ptr, Idxs);
 #else
-                auto vptr = B.CreateGEP(ptr, Idxs);
+                auto vptr = B.CreateInBoundsGEP(ptr, Idxs);
 #endif
 #if LLVM_VERSION_MAJOR >= 13
                 B.CreateAtomicRMW(op, vptr, vdif, align,
@@ -5376,7 +5376,7 @@ public:
             BuilderZ.CreatePointerCast(
                 d_req, PointerType::getUnqual(PointerType::getUnqual(impi))));
 #else
-        d_reqp = BuilderZ.CreateLoad(Builder2.CreatePointerCast(
+        d_reqp = BuilderZ.CreateLoad(BuilderZ.CreatePointerCast(
             d_req, PointerType::getUnqual(PointerType::getUnqual(impi))));
 #endif
         if (isNull)
@@ -5575,13 +5575,13 @@ public:
 
         Value *idxs[] = {idx};
 #if LLVM_VERSION_MAJOR > 7
-        Value *req = Builder2.CreateGEP(
+        Value *req = Builder2.CreateInBoundsGEP(
             req_orig->getType()->getPointerElementType(), req_orig, idxs);
-        Value *d_req = Builder2.CreateGEP(
+        Value *d_req = Builder2.CreateInBoundsGEP(
             d_reqp->getType()->getPointerElementType(), d_reqp, idxs);
 #else
-        Value *req = Builder2.CreateGEP(req_orig, idxs);
-        Value *d_req = Builder2.CreateGEP(d_reqp, idxs);
+        Value *req = Builder2.CreateInBoundsGEP(req_orig, idxs);
+        Value *d_req = Builder2.CreateInBoundsGEP(d_reqp, idxs);
 #endif
 
 #if LLVM_VERSION_MAJOR > 7

@@ -190,7 +190,7 @@ static inline bool is_use_directly_needed_in_reverse(
   }
 
   if (auto CI = dyn_cast<CallInst>(user)) {
-    if (auto F = getFunctionFromCall(const_cast<CallInst*>(CI))) {
+    if (auto F = getFunctionFromCall(const_cast<CallInst *>(CI))) {
       auto funcName = F->getName();
       if (F->hasFnAttribute("enzyme_math"))
         funcName = F->getFnAttribute("enzyme_math").getValueAsString();
@@ -306,7 +306,7 @@ static inline bool is_value_needed_in_reverse(
       }
 
       if (auto CI = dyn_cast<CallInst>(user)) {
-        if (auto F = getFunctionFromCall(const_cast<CallInst*>(CI))) {
+        if (auto F = getFunctionFromCall(const_cast<CallInst *>(CI))) {
           StringRef funcName = F->getName();
           if (F->hasFnAttribute("enzyme_math"))
             funcName = F->getFnAttribute("enzyme_math").getValueAsString();

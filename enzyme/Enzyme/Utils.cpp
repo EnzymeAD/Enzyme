@@ -133,12 +133,12 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
     idx->addIncoming(ConstantInt::get(num->getType(), 0), entry);
 
 #if LLVM_VERSION_MAJOR > 7
-    Value *dsti =
-        B.CreateGEP(dst->getType()->getPointerElementType(), dst, idx, "dst.i");
+    Value *dsti = B.CreateInBoundsGEP(dst->getType()->getPointerElementType(),
+                                      dst, idx, "dst.i");
     LoadInst *dstl =
         B.CreateLoad(dsti->getType()->getPointerElementType(), dsti, "dst.i.l");
 #else
-    Value *dsti = B.CreateGEP(dst, idx, "dst.i");
+    Value *dsti = B.CreateInBoundsGEP(dst, idx, "dst.i");
     LoadInst *dstl = B.CreateLoad(dsti, "dst.i.l");
 #endif
     StoreInst *dsts = B.CreateStore(Constant::getNullValue(elementType), dsti);
@@ -153,12 +153,12 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
     }
 
 #if LLVM_VERSION_MAJOR > 7
-    Value *srci =
-        B.CreateGEP(src->getType()->getPointerElementType(), src, idx, "src.i");
+    Value *srci = B.CreateInBoundsGEP(src->getType()->getPointerElementType(),
+                                      src, idx, "src.i");
     LoadInst *srcl =
         B.CreateLoad(srci->getType()->getPointerElementType(), srci, "src.i.l");
 #else
-    Value *srci = B.CreateGEP(src, idx, "src.i");
+    Value *srci = B.CreateInBoundsGEP(src, idx, "src.i");
     LoadInst *srcl = B.CreateLoad(srci, "src.i.l");
 #endif
     StoreInst *srcs = B.CreateStore(B.CreateFAdd(srcl, dstl), srci);
@@ -242,15 +242,15 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, unsigned dstalign,
     sidx->addIncoming(ConstantInt::get(num->getType(), 0), entry);
 
 #if LLVM_VERSION_MAJOR > 7
-    Value *dsti =
-        B.CreateGEP(dst->getType()->getPointerElementType(), dst, idx, "dst.i");
-    Value *srci = B.CreateGEP(src->getType()->getPointerElementType(), src,
-                              sidx, "src.i");
+    Value *dsti = B.CreateInBoundsGEP(dst->getType()->getPointerElementType(),
+                                      dst, idx, "dst.i");
+    Value *srci = B.CreateInBoundsGEP(src->getType()->getPointerElementType(),
+                                      src, sidx, "src.i");
     LoadInst *srcl =
         B.CreateLoad(srci->getType()->getPointerElementType(), srci, "src.i.l");
 #else
-    Value *dsti = B.CreateGEP(dst, idx, "dst.i");
-    Value *srci = B.CreateGEP(src, sidx, "src.i");
+    Value *dsti = B.CreateInBoundsGEP(dst, idx, "dst.i");
+    Value *srci = B.CreateInBoundsGEP(src, sidx, "src.i");
     LoadInst *srcl = B.CreateLoad(srci, "src.i.l");
 #endif
 
@@ -364,14 +364,15 @@ llvm::Function *getOrInsertDifferentialWaitallSave(llvm::Module &M,
 
   Value *idxs[] = {idx};
 #if LLVM_VERSION_MAJOR > 7
-  Value *ireq = B.CreateGEP(req->getType()->getPointerElementType(), req, idxs);
+  Value *ireq =
+      B.CreateInBoundsGEP(req->getType()->getPointerElementType(), req, idxs);
   Value *idreq =
-      B.CreateGEP(req->getType()->getPointerElementType(), dreq, idxs);
-  Value *iout = B.CreateGEP(reqType, ret, idxs);
+      B.CreateInBoundsGEP(req->getType()->getPointerElementType(), dreq, idxs);
+  Value *iout = B.CreateInBoundsGEP(reqType, ret, idxs);
 #else
-  Value *ireq = B.CreateGEP(req, idxs);
-  Value *idreq = B.CreateGEP(dreq, idxs);
-  Value *iout = B.CreateGEP(ret, idxs);
+  Value *ireq = B.CreateInBoundsGEP(req, idxs);
+  Value *idreq = B.CreateInBoundsGEP(dreq, idxs);
+  Value *iout = B.CreateInBoundsGEP(ret, idxs);
 #endif
   Value *isNull = nullptr;
   if (auto GV = M.getNamedValue("ompi_request_null")) {
@@ -576,20 +577,20 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
     idx->addIncoming(ConstantInt::get(len->getType(), 0), entry);
 
 #if LLVM_VERSION_MAJOR > 7
-    Value *dsti =
-        B.CreateGEP(dst->getType()->getPointerElementType(), dst, idx, "dst.i");
+    Value *dsti = B.CreateInBoundsGEP(dst->getType()->getPointerElementType(),
+                                      dst, idx, "dst.i");
     LoadInst *dstl =
         B.CreateLoad(dsti->getType()->getPointerElementType(), dsti, "dst.i.l");
 
-    Value *srci =
-        B.CreateGEP(src->getType()->getPointerElementType(), src, idx, "src.i");
+    Value *srci = B.CreateInBoundsGEP(src->getType()->getPointerElementType(),
+                                      src, idx, "src.i");
     LoadInst *srcl =
         B.CreateLoad(srci->getType()->getPointerElementType(), srci, "src.i.l");
 #else
-    Value *dsti = B.CreateGEP(dst, idx, "dst.i");
+    Value *dsti = B.CreateInBoundsGEP(dst, idx, "dst.i");
     LoadInst *dstl = B.CreateLoad(dsti, "dst.i.l");
 
-    Value *srci = B.CreateGEP(src, idx, "src.i");
+    Value *srci = B.CreateInBoundsGEP(src, idx, "src.i");
     LoadInst *srcl = B.CreateLoad(srci, "src.i.l");
 #endif
 
@@ -756,9 +757,10 @@ Function *getOrInsertExponentialAllocator(Module &M, bool ZeroInit) {
 
     Value *margs[] = {
 #if LLVM_VERSION_MAJOR > 7
-      B.CreateGEP(gVal->getType()->getPointerElementType(), gVal, prevSize),
+      B.CreateInBoundsGEP(gVal->getType()->getPointerElementType(), gVal,
+                          prevSize),
 #else
-      B.CreateGEP(gVal, prevSize),
+      B.CreateInBoundsGEP(gVal, prevSize),
 #endif
       ConstantInt::get(Type::getInt8Ty(args[0]->getContext()), 0),
       zeroSize,
@@ -1039,16 +1041,28 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, ScalarEvolution &SE,
     if (Function *called = getFunctionFromCall(call)) {
       // Wait only overwrites memory in the status.
       if (called->getName() == "MPI_Wait" || called->getName() == "PMPI_Wait") {
+#if LLVM_VERSION_MAJOR > 11
         if (!isRefSet(AA.getModRefInfo(maybeReader, call->getArgOperand(1),
                                        LocationSize::afterPointer())))
           return false;
+#else
+        if (!isRefSet(AA.getModRefInfo(maybeReader, call->getArgOperand(1),
+                                       MemoryLocation::UnknownSize)))
+          return false;
+#endif
       }
       // Waitall only overwrites memory in the status.
       if (called->getName() == "MPI_Waitall" ||
           called->getName() == "PMPI_Waitall") {
+#if LLVM_VERSION_MAJOR > 11
         if (!isRefSet(AA.getModRefInfo(maybeReader, call->getArgOperand(2),
                                        LocationSize::afterPointer())))
           return false;
+#else
+        if (!isRefSet(AA.getModRefInfo(maybeReader, call->getArgOperand(2),
+                                       MemoryLocation::UnknownSize)))
+          return false;
+#endif
       }
     }
   }
