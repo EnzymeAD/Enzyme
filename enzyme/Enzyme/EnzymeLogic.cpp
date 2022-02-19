@@ -2165,8 +2165,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       Value *gep = ret;
       if (!removeStruct) {
 #if LLVM_VERSION_MAJOR > 7
-        gep = ib.CreateGEP(cast<PointerType>(ret->getType())->getElementType(),
-                           ret, Idxs, "");
+        gep = ib.CreateGEP(ret->getType()->getPointerElementType(), ret, Idxs,
+                           "");
 #else
         gep = ib.CreateGEP(ret, Idxs, "");
 #endif
@@ -2188,8 +2188,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       tapeMemory = ret;
       if (!removeStruct) {
 #if LLVM_VERSION_MAJOR > 7
-        tapeMemory = ib.CreateGEP(
-            cast<PointerType>(ret->getType())->getElementType(), ret, Idxs, "");
+        tapeMemory = ib.CreateGEP(ret->getType()->getPointerElementType(), ret,
+                                  Idxs, "");
 #else
         tapeMemory = ib.CreateGEP(ret, Idxs, "");
 #endif
@@ -2208,9 +2208,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         Value *gep = tapeMemory;
         if (!removeTapeStruct) {
 #if LLVM_VERSION_MAJOR > 7
-          gep = ib.CreateGEP(
-              cast<PointerType>(tapeMemory->getType())->getElementType(),
-              tapeMemory, Idxs, "");
+          gep = ib.CreateGEP(tapeMemory->getType()->getPointerElementType(),
+                             tapeMemory, Idxs, "");
 #else
           gep = ib.CreateGEP(tapeMemory, Idxs, "");
 #endif
@@ -2281,8 +2280,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       ib.CreateRetVoid();
     else {
 #if LLVM_VERSION_MAJOR > 7
-      ib.CreateRet(ib.CreateLoad(
-          cast<PointerType>(ret->getType())->getElementType(), ret));
+      ib.CreateRet(ib.CreateLoad(ret->getType()->getPointerElementType(), ret));
 #else
       ib.CreateRet(ib.CreateLoad(ret));
 #endif
@@ -3535,13 +3533,22 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       auto newi = pair.first;
       auto nexti = pair.second;
       for (auto V : unwrapToOrig[newi]) {
-        ValueToValueMapTy empty;
+        ValueToValueMapTy available;
+        if (auto MD = hasMetadata(V, "enzyme_available")) {
+          for (auto &pair : MD->operands()) {
+            auto tup = cast<MDNode>(pair);
+            auto val = cast<ValueAsMetadata>(tup->getOperand(1))->getValue();
+            assert(val);
+            available[cast<ValueAsMetadata>(tup->getOperand(0))->getValue()] =
+                val;
+          }
+        }
         IRBuilder<> lb(V);
         // This must disallow caching here as otherwise performing the loop in
         // the wrong order may result in first replacing the later unwrapped
         // value, caching it, then attempting to reuse it for an earlier
         // replacement.
-        Value *nval = gutils->unwrapM(nexti, lb, empty,
+        Value *nval = gutils->unwrapM(nexti, lb, available,
                                       UnwrapMode::LegalFullUnwrapNoTapeReplace,
                                       /*scope*/ nullptr, /*permitCache*/ false);
         assert(nval);
