@@ -1,7 +1,7 @@
-.. _first-derivative:
+.. _compiler-based-automatic-differentiation:
 
-Taking a First Derivative
-=========================
+The Stages of Compiler-based Automatic Differentiation
+======================================================
 
 This tutorial will present an overview of how reverse-mode compiler-based automatic
 differentiation with Enzyme works, how the different stages of compilation are
