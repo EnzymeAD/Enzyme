@@ -337,30 +337,28 @@ static inline bool is_value_needed_in_reverse(
             continue;
           }
 
-          // Only need the shadow request.
+          // Don't need shadow of anything (all via cache for reverse),
+          // but need shadow of request for primal.
           if (funcName == "MPI_Wait" || funcName == "PMPI_Wait") {
-            if (gutils->isConstantInstruction(
-                    const_cast<Instruction *>(user)) &&
-                inst == CI->getArgOperand(0)) {
-              // Need shadow buffer in reverse pass or forward mode
-              if (mode == DerivativeMode::ReverseModePrimal)
-                continue;
-              return seen[idx] = true;
-            } else
+            if (gutils->isConstantInstruction(const_cast<Instruction *>(user)))
               continue;
+            // Need shadow request in forward pass
+            if (mode != DerivativeMode::ReverseModeGradient)
+              if (inst == CI->getArgOperand(0))
+                return seen[idx] = true;
+            continue;
           }
 
-          // Only need element count for reverse of waitall
+          // Don't need shadow of anything (all via cache for reverse),
+          // but need shadow of request for primal.
           if (funcName == "MPI_Waitall" || funcName == "PMPI_Waitall") {
-            if (gutils->isConstantInstruction(
-                    const_cast<Instruction *>(user)) &&
-                inst == CI->getArgOperand(1)) {
-              // Need shadow buffer in reverse pass or forward mode
-              if (mode == DerivativeMode::ReverseModePrimal)
-                continue;
-              return seen[idx] = true;
-            } else
+            if (gutils->isConstantInstruction(const_cast<Instruction *>(user)))
               continue;
+            // Need shadow request in forward pass
+            if (mode != DerivativeMode::ReverseModeGradient)
+              if (inst == CI->getArgOperand(1))
+                return seen[idx] = true;
+            continue;
           }
 
           // Use in a write barrier requires the shadow in the forward, even

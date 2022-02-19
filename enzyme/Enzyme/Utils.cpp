@@ -28,6 +28,7 @@
 #include "SCEV/ScalarEvolution.h"
 #include "SCEV/ScalarEvolutionExpander.h"
 
+#include "TypeAnalysis/TBAA.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
@@ -308,6 +309,100 @@ llvm::Value *nextPowerOfTwo(llvm::IRBuilder<> &B, llvm::Value *V) {
   }
   V = B.CreateAdd(V, ConstantInt::get(T, 1));
   return V;
+}
+
+llvm::Function *getOrInsertDifferentialWaitallSave(llvm::Module &M,
+                                                   ArrayRef<llvm::Type *> T,
+                                                   PointerType *reqType) {
+  std::string name = "__enzyme_differential_waitall_save";
+  FunctionType *FT =
+      FunctionType::get(PointerType::getUnqual(reqType), T, false);
+
+#if LLVM_VERSION_MAJOR >= 9
+  Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
+#else
+  Function *F = cast<Function>(M.getOrInsertFunction(name, FT));
+#endif
+
+  if (!F->empty())
+    return F;
+
+  BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
+
+  auto buff = F->arg_begin();
+  buff->setName("count");
+  Value *count = buff;
+  Value *req = buff + 1;
+  req->setName("req");
+  Value *dreq = buff + 2;
+  dreq->setName("dreq");
+
+  IRBuilder<> B(entry);
+  count = B.CreateZExtOrTrunc(count, Type::getInt64Ty(entry->getContext()));
+
+  Instruction *ret = CallInst::CreateMalloc(
+      entry, count->getType(), reqType,
+      ConstantInt::get(count->getType(),
+                       M.getDataLayout().getTypeAllocSizeInBits(reqType) / 8),
+      count, nullptr, "");
+
+  B.SetInsertPoint(entry);
+  if (!ret->getParent())
+    B.Insert(ret);
+
+  BasicBlock *loopBlock = BasicBlock::Create(M.getContext(), "loop", F);
+  BasicBlock *endBlock = BasicBlock::Create(M.getContext(), "end", F);
+
+  B.CreateCondBr(B.CreateICmpEQ(count, ConstantInt::get(count->getType(), 0)),
+                 endBlock, loopBlock);
+
+  B.SetInsertPoint(loopBlock);
+  auto idx = B.CreatePHI(count->getType(), 2);
+  idx->addIncoming(ConstantInt::get(count->getType(), 0), entry);
+  auto inc = B.CreateAdd(idx, ConstantInt::get(count->getType(), 1));
+  idx->addIncoming(inc, loopBlock);
+
+  Value *idxs[] = {idx};
+#if LLVM_VERSION_MAJOR > 7
+  Value *ireq = B.CreateGEP(req->getType()->getPointerElementType(), req, idxs);
+  Value *idreq =
+      B.CreateGEP(req->getType()->getPointerElementType(), dreq, idxs);
+  Value *iout = B.CreateGEP(reqType, ret, idxs);
+#else
+  Value *ireq = B.CreateGEP(req, idxs);
+  Value *idreq = B.CreateGEP(dreq, idxs);
+  Value *iout = B.CreateGEP(ret, idxs);
+#endif
+  Value *isNull = nullptr;
+  if (auto GV = M.getNamedValue("ompi_request_null")) {
+    Value *reql =
+        B.CreatePointerCast(ireq, PointerType::getUnqual(GV->getType()));
+#if LLVM_VERSION_MAJOR > 7
+    reql = B.CreateLoad(GV->getType(), reql);
+#else
+    reql = B.CreateLoad(reql);
+#endif
+    isNull = B.CreateICmpEQ(reql, GV);
+  }
+
+  idreq = B.CreatePointerCast(idreq, PointerType::getUnqual(reqType));
+#if LLVM_VERSION_MAJOR > 7
+  Value *d_reqp = B.CreateLoad(reqType, idreq);
+#else
+  Value *d_reqp = B.CreateLoad(idreq);
+#endif
+  if (isNull)
+    d_reqp = B.CreateSelect(isNull, Constant::getNullValue(d_reqp->getType()),
+                            d_reqp);
+
+  B.CreateStore(d_reqp, iout);
+
+  B.CreateCondBr(B.CreateICmpEQ(inc, count), endBlock, loopBlock);
+
+  B.SetInsertPoint(endBlock);
+  B.CreateRet(ret);
+  llvm::errs() << *F << "\n";
+  return F;
 }
 
 llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
@@ -940,6 +1035,23 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, ScalarEvolution &SE,
   using namespace llvm;
   if (!writesToMemoryReadBy(AA, maybeReader, maybeWriter))
     return false;
+  if (auto call = dyn_cast<CallInst>(maybeWriter)) {
+    if (Function *called = getFunctionFromCall(call)) {
+      // Wait only overwrites memory in the status.
+      if (called->getName() == "MPI_Wait" || called->getName() == "PMPI_Wait") {
+        if (!isRefSet(AA.getModRefInfo(maybeReader, call->getArgOperand(1),
+                                       LocationSize::afterPointer())))
+          return false;
+      }
+      // Waitall only overwrites memory in the status.
+      if (called->getName() == "MPI_Waitall" ||
+          called->getName() == "PMPI_Waitall") {
+        if (!isRefSet(AA.getModRefInfo(maybeReader, call->getArgOperand(2),
+                                       LocationSize::afterPointer())))
+          return false;
+      }
+    }
+  }
   const SCEV *LoadBegin = SE.getCouldNotCompute();
   const SCEV *LoadEnd = SE.getCouldNotCompute();
 
@@ -1025,6 +1137,31 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::Instruction *maybeReader,
     }
     if (called && called->getName() == "jl_array_copy")
       return false;
+
+    if (called && (called->getName() == "MPI_Irecv" ||
+                   called->getName() == "PMPI_Irecv")) {
+      ConcreteType type(BaseType::Unknown);
+      if (Constant *C = dyn_cast<Constant>(call->getArgOperand(2))) {
+        while (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
+          C = CE->getOperand(0);
+        }
+        if (auto GV = dyn_cast<GlobalVariable>(C)) {
+          if (GV->getName() == "ompi_mpi_double") {
+            type = ConcreteType(Type::getDoubleTy(called->getContext()));
+          } else if (GV->getName() == "ompi_mpi_float") {
+            type = ConcreteType(Type::getFloatTy(called->getContext()));
+          }
+        }
+      }
+      if (type.isKnown()) {
+        auto R = parseTBAA(*maybeReader, maybeReader->getParent()
+                                             ->getParent()
+                                             ->getParent()
+                                             ->getDataLayout())[{-1}];
+        if (R.isKnown() && type != R)
+          return false;
+      }
+    }
     if (auto II = dyn_cast<IntrinsicInst>(call)) {
       if (II->getIntrinsicID() == Intrinsic::stacksave)
         return false;

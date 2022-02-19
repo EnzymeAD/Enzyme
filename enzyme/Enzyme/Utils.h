@@ -989,4 +989,9 @@ template <typename T> static inline llvm::Function *getFunctionFromCall(T *op) {
   }
   return called;
 }
+
+llvm::Function *
+getOrInsertDifferentialWaitallSave(llvm::Module &M,
+                                   llvm::ArrayRef<llvm::Type *> T,
+                                   llvm::PointerType *reqType);
 #endif
