@@ -259,7 +259,6 @@ static void handleKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::NoFree);
     F.addFnAttr(Attribute::NoSync);
 #endif
-    F.addParamAttr(0, Attribute::ReadOnly);
     F.addParamAttr(0, Attribute::NoCapture);
     F.addParamAttr(1, Attribute::WriteOnly);
     F.addParamAttr(1, Attribute::NoCapture);
@@ -272,7 +271,6 @@ static void handleKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::NoFree);
     F.addFnAttr(Attribute::NoSync);
 #endif
-    F.addParamAttr(1, Attribute::ReadOnly);
     F.addParamAttr(1, Attribute::NoCapture);
     F.addParamAttr(2, Attribute::WriteOnly);
     F.addParamAttr(2, Attribute::NoCapture);

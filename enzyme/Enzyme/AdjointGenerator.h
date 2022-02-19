@@ -5382,6 +5382,8 @@ public:
         if (isNull)
           d_reqp = BuilderZ.CreateSelect(
               isNull, Constant::getNullValue(d_reqp->getType()), d_reqp);
+        if (auto I = dyn_cast<Instruction>(d_reqp))
+          gutils->TapesToPreventRecomputation.insert(I);
         d_reqp = gutils->cacheForReverse(BuilderZ, d_reqp,
                                          getIndex(&call, CacheType::Tape));
       }

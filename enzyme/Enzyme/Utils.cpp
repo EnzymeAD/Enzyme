@@ -1037,35 +1037,6 @@ bool overwritesToMemoryReadBy(llvm::AAResults &AA, ScalarEvolution &SE,
   using namespace llvm;
   if (!writesToMemoryReadBy(AA, maybeReader, maybeWriter))
     return false;
-  if (auto call = dyn_cast<CallInst>(maybeWriter)) {
-    if (Function *called = getFunctionFromCall(call)) {
-      // Wait only overwrites memory in the status.
-      if (called->getName() == "MPI_Wait" || called->getName() == "PMPI_Wait") {
-#if LLVM_VERSION_MAJOR > 11
-        if (!isRefSet(AA.getModRefInfo(maybeReader, call->getArgOperand(1),
-                                       LocationSize::afterPointer())))
-          return false;
-#else
-        if (!isRefSet(AA.getModRefInfo(maybeReader, call->getArgOperand(1),
-                                       MemoryLocation::UnknownSize)))
-          return false;
-#endif
-      }
-      // Waitall only overwrites memory in the status.
-      if (called->getName() == "MPI_Waitall" ||
-          called->getName() == "PMPI_Waitall") {
-#if LLVM_VERSION_MAJOR > 11
-        if (!isRefSet(AA.getModRefInfo(maybeReader, call->getArgOperand(2),
-                                       LocationSize::afterPointer())))
-          return false;
-#else
-        if (!isRefSet(AA.getModRefInfo(maybeReader, call->getArgOperand(2),
-                                       MemoryLocation::UnknownSize)))
-          return false;
-#endif
-      }
-    }
-  }
   const SCEV *LoadBegin = SE.getCouldNotCompute();
   const SCEV *LoadEnd = SE.getCouldNotCompute();
 
@@ -1152,8 +1123,71 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::Instruction *maybeReader,
     if (called && called->getName() == "jl_array_copy")
       return false;
 
-    if (called && (called->getName() == "MPI_Irecv" ||
-                   called->getName() == "PMPI_Irecv")) {
+    // Isend only writes to inaccessible mem only
+    if (called &&
+        (called->getName() == "MPI_Send" || called->getName() == "PMPI_Send")) {
+      return false;
+    }
+    if (called) {
+      // Wait only overwrites memory in the status and request.
+      if (called->getName() == "MPI_Wait" || called->getName() == "PMPI_Wait" ||
+          called->getName() == "MPI_Waitall" ||
+          called->getName() == "PMPI_Waitall") {
+#if LLVM_VERSION_MAJOR > 11
+        auto loc = LocationSize::afterPointer();
+#else
+        auto loc = MemoryLocation::UnknownSize;
+#endif
+        size_t off = (called->getName() == "MPI_Wait" ||
+                      called->getName() == "PMPI_Wait")
+                         ? 0
+                         : 1;
+        // No alias with status
+        if (!isRefSet(AA.getModRefInfo(maybeReader,
+                                       call->getArgOperand(off + 1), loc))) {
+          // No alias with request
+          if (!isRefSet(AA.getModRefInfo(maybeReader,
+                                         call->getArgOperand(off + 0), loc)))
+            return false;
+          auto R = parseTBAA(*maybeReader, maybeReader->getParent()
+                                               ->getParent()
+                                               ->getParent()
+                                               ->getDataLayout())[{-1}];
+          // Could still conflict with the mpi_request unless a non pointer
+          // type.
+          if (R != BaseType::Unknown && R != BaseType::Anything &&
+              R != BaseType::Pointer)
+            return false;
+        }
+      }
+    }
+    // Isend only writes to inaccessible mem and request.
+    if (called && (called->getName() == "MPI_Isend" ||
+                   called->getName() == "PMPI_Isend")) {
+      auto R = parseTBAA(*maybeReader, maybeReader->getParent()
+                                           ->getParent()
+                                           ->getParent()
+                                           ->getDataLayout())[{-1}];
+      // Could still conflict with the mpi_request, unless either
+      // synchronous, or a non pointer type.
+      if (R != BaseType::Unknown && R != BaseType::Anything &&
+          R != BaseType::Pointer)
+        return false;
+#if LLVM_VERSION_MAJOR > 11
+      if (!isRefSet(AA.getModRefInfo(maybeReader, call->getArgOperand(6),
+                                     LocationSize::afterPointer())))
+        return false;
+#else
+      if (!isRefSet(AA.getModRefInfo(maybeReader, call->getArgOperand(6),
+                                     MemoryLocation::UnknownSize)))
+        return false;
+#endif
+      return false;
+    }
+    if (called &&
+        (called->getName() == "MPI_Irecv" ||
+         called->getName() == "PMPI_Irecv" || called->getName() == "MPI_Recv" ||
+         called->getName() == "PMPI_Recv")) {
       ConcreteType type(BaseType::Unknown);
       if (Constant *C = dyn_cast<Constant>(call->getArgOperand(2))) {
         while (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
@@ -1172,8 +1206,23 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::Instruction *maybeReader,
                                              ->getParent()
                                              ->getParent()
                                              ->getDataLayout())[{-1}];
-        if (R.isKnown() && type != R)
-          return false;
+        if (R.isKnown() && type != R) {
+          // Could still conflict with the mpi_request, unless either
+          // synchronous, or a non pointer type.
+          if (called->getName() == "MPI_Recv" ||
+              called->getName() == "PMPI_Recv" ||
+              (R != BaseType::Anything && R != BaseType::Pointer))
+            return false;
+#if LLVM_VERSION_MAJOR > 11
+          if (!isRefSet(AA.getModRefInfo(maybeReader, call->getArgOperand(6),
+                                         LocationSize::afterPointer())))
+            return false;
+#else
+          if (!isRefSet(AA.getModRefInfo(maybeReader, call->getArgOperand(6),
+                                         MemoryLocation::UnknownSize)))
+            return false;
+#endif
+        }
       }
     }
     if (auto II = dyn_cast<IntrinsicInst>(call)) {
