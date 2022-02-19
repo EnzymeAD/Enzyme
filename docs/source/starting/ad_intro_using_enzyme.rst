@@ -1,4 +1,4 @@
-.. _ad-intro-using-enzyme:
+.. _ad-intro:
 
-Introduction to Automatic Differentiation using Enzyme
-======================================================
+Introduction to Automatic Differentiation
+=========================================
