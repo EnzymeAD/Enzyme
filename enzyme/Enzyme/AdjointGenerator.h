@@ -5362,12 +5362,12 @@ public:
             tysize = C;
           } else {
 #if LLVM_VERSION_MAJOR > 7
-            len_arg = Builder2.CreateLoad(
+            tysize = Builder2.CreateLoad(
                 Type::getInt8PtrTy(call.getContext()),
-                getMPIMemberPtr<MPI_Elem::Count>(Builder2, helper));
+                getMPIMemberPtr<MPI_Elem::DataType>(Builder2, helper));
 #else
-            len_arg = Builder2.CreateLoad(
-                getMPIMemberPtr<MPI_Elem::Count>(Builder2, helper));
+            tysize = Builder2.CreateLoad(
+                getMPIMemberPtr<MPI_Elem::DataType>(Builder2, helper));
 #endif
           }
 
@@ -5386,6 +5386,7 @@ public:
 
           assert(shouldFree());
 
+          assert(tysize);
           tysize = MPI_TYPE_SIZE(tysize, Builder2, call.getType());
 
           Value *args[] = {/*req*/ req,
