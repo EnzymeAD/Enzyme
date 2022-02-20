@@ -1,5 +1,5 @@
 import sys
-import os
+import subprocess, os
 
 sys.path.append(os.path.abspath('..'))
 sys.path.append(os.path.abspath('./source/'))
@@ -10,6 +10,9 @@ from enzyme_sphinx_theme import __version__
 # add these directories to sys.path here. If the directory is relative to the
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 #sys.path.insert(0, os.path.abspath('.'))
+
+# Call Doxygen
+subprocess.call('doxygen ../doxygen.cfg', shell=True)
 
 # -- General configuration -----------------------------------------------------
 
@@ -23,6 +26,7 @@ extensions = [
     'sphinx.ext.autodoc',
     'sphinx.ext.viewcode',
     'sphinxcontrib.httpdomain',
+    'breathe'
 ]
 
 # Do not warn about external images (status badges in README.rst)
@@ -245,3 +249,11 @@ texinfo_documents = [
 
 # How to display URL addresses: 'footnote', 'no', or 'inline'.
 #texinfo_show_urls = 'footnote'
+
+# -- Breathe configuration --------------------------------------------------
+
+breathe_projects = {
+    "Enzyme": "../build/doxygen/xml/"
+}
+breathe_default_project = "Enzyme"
+#breathe_default_members = ('members', 'undoc-members')

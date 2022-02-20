@@ -58,4 +58,8 @@ in other automatic differentiation frameworks.
     :maxdepth: 2
     :caption: API Documentation
 
-    api/*
+.. doxygenstruct:: AdjointGenerator
+    :project: Enzyme
+    :path: ../build/doxygen
+    :members:
+    :allow-dot-graphs:

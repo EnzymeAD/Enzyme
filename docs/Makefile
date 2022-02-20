@@ -22,4 +22,4 @@ help:
 
 clean:
 	@echo "Removing the built html files and doctree files under 'build'.."
-	@rm -rf $(BUILDDIR)/html $(BUILDDIR)/doctrees
+	@rm -rf $(BUILDDIR)/html $(BUILDDIR)/doctrees $(BUILDDIR)/doxygen
