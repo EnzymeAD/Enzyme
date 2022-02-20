@@ -38,6 +38,10 @@ Fortran
 ^^^^^^^
 
 
+Rust
+^^^^
+
+
 Verification of Installation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
