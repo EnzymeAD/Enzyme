@@ -5634,10 +5634,10 @@ public:
 
         BasicBlock *currentBlock = Builder2.GetInsertBlock();
         BasicBlock *nonnullBlock = gutils->addReverseBlock(
-            currentBlock, currentBlock->getName() + "_nonnull",
-            gutils->newFunc);
+            currentBlock, currentBlock->getName() + "_nonnull");
         BasicBlock *endBlock = gutils->addReverseBlock(
-            nonnullBlock, currentBlock->getName() + "_end", gutils->newFunc);
+            nonnullBlock, currentBlock->getName() + "_end",
+	    /*fork*/true, /*push*/false);
 
         Builder2.CreateCondBr(isNull, endBlock, nonnullBlock);
         Builder2.SetInsertPoint(nonnullBlock);
@@ -5681,7 +5681,13 @@ public:
                           Attribute::AlwaysInline);
 #endif
         Builder2.CreateBr(endBlock);
-
+	{
+          auto found = gutils->reverseBlockToPrimal.find(endBlock);
+          assert(found != gutils->reverseBlockToPrimal.end());
+          std::vector<BasicBlock *> &vec = gutils->reverseBlocks[found->second];
+          assert(vec.size());
+          vec.push_back(endBlock);
+	}
         Builder2.SetInsertPoint(endBlock);
       } else if (Mode == DerivativeMode::ForwardMode) {
         IRBuilder<> Builder2(&call);
@@ -5779,13 +5785,14 @@ public:
 
         BasicBlock *currentBlock = Builder2.GetInsertBlock();
         BasicBlock *loopBlock = gutils->addReverseBlock(
-            currentBlock, currentBlock->getName() + "_loop", gutils->newFunc);
+            currentBlock, currentBlock->getName() + "_loop");
         BasicBlock *nonnullBlock = gutils->addReverseBlock(
-            loopBlock, currentBlock->getName() + "_nonnull", gutils->newFunc);
+            loopBlock, currentBlock->getName() + "_nonnull");
         BasicBlock *eloopBlock = gutils->addReverseBlock(
-            nonnullBlock, currentBlock->getName() + "_eloop", gutils->newFunc);
+            nonnullBlock, currentBlock->getName() + "_eloop");
         BasicBlock *endBlock = gutils->addReverseBlock(
-            eloopBlock, currentBlock->getName() + "_end", gutils->newFunc);
+            eloopBlock, currentBlock->getName() + "_end",
+	    /*fork*/true, /*push*/false);
 
         Builder2.CreateCondBr(
             Builder2.CreateICmpNE(count,
@@ -5873,6 +5880,13 @@ public:
         Builder2.SetInsertPoint(eloopBlock);
         Builder2.CreateCondBr(Builder2.CreateICmpEQ(inc, count), endBlock,
                               loopBlock);
+	{
+          auto found = gutils->reverseBlockToPrimal.find(endBlock);
+          assert(found != gutils->reverseBlockToPrimal.end());
+          std::vector<BasicBlock *> &vec = gutils->reverseBlocks[found->second];
+          assert(vec.size());
+          vec.push_back(endBlock);
+	}
         Builder2.SetInsertPoint(endBlock);
         if (shouldFree()) {
           auto ci = cast<CallInst>(CallInst::CreateFree(

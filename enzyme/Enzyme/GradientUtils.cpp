@@ -6008,6 +6008,11 @@ fast:;
     assert(branch->getCondition()->getType() == T);
 
     if (replacePHIs == nullptr) {
+      if (!(BuilderM.GetInsertBlock()->size() == 0 ||
+             !isa<BranchInst>(BuilderM.GetInsertBlock()->back()))) {
+      	llvm::errs() << "newFunc : " << *newFunc << "\n";
+      	llvm::errs() << "blk : " << *BuilderM.GetInsertBlock() << "\n";
+      }
       assert(BuilderM.GetInsertBlock()->size() == 0 ||
              !isa<BranchInst>(BuilderM.GetInsertBlock()->back()));
       BuilderM.CreateCondBr(
