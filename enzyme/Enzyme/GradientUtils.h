@@ -887,8 +887,7 @@ private:
 
 public:
   BasicBlock *addReverseBlock(BasicBlock *currentBlock, Twine name,
-                              bool forkCache = true,
-			      bool push = true) {
+                              bool forkCache = true, bool push = true) {
     assert(reverseBlocks.size());
     auto found = reverseBlockToPrimal.find(currentBlock);
     assert(found != reverseBlockToPrimal.end());

@@ -2444,7 +2444,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                   ts->setVolatile(SI->isVolatile());
                   ts->setOrdering(SI->getOrdering());
                   ts->setSyncScopeID(SI->getSyncScopeID());
-		  ts->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
+                  ts->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
                 } else if (auto CI = dyn_cast<CallInst>(&I)) {
                   Function *called = getFunctionFromCall(CI);
                   assert(called);
@@ -2470,7 +2470,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                     cal->setAttributes(CI->getAttributes());
                     cal->setCallingConv(CI->getCallingConv());
                     cal->setTailCallKind(CI->getTailCallKind());
-		    cal->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
+                    cal->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
                   } else {
                     assert(isDeallocationFunction(*called, TLI));
                     continue;
@@ -2510,7 +2510,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
 #else
                   replacement->setAlignment(Alignment);
 #endif
-		  replacement->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
+                  replacement->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
                   storeInstructionInCache(lctx, NB, replacement, cache);
                 } else if (auto CI = dyn_cast<CallInst>(&I)) {
                   SmallVector<Value *, 2> args;
@@ -2533,7 +2533,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                   cal->setAttributes(CI->getAttributes());
                   cal->setCallingConv(CI->getCallingConv());
                   cal->setTailCallKind(CI->getTailCallKind());
-		  cal->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
+                  cal->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
                   storeInstructionInCache(lctx, NB, cal, cache);
                 } else {
                   llvm::errs() << " realloc: " << I << "\n";
@@ -2640,7 +2640,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                     cal->setAttributes(MS->getAttributes());
                     cal->setCallingConv(MS->getCallingConv());
                     cal->setTailCallKind(MS->getTailCallKind());
-		    cal->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
+                    cal->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
                   }
                 } else if (auto CI = dyn_cast<CallInst>(&I)) {
                   Function *called = getFunctionFromCall(CI);
@@ -2669,7 +2669,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                       cal->setAttributes(CI->getAttributes());
                       cal->setCallingConv(CI->getCallingConv());
                       cal->setTailCallKind(CI->getTailCallKind());
-		      cal->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
+                      cal->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
                     }
                   } else {
                     assert(isDeallocationFunction(*called, TLI));
@@ -2737,7 +2737,8 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                         orig->getCallingConv());
                     cast<CallInst>(anti)->setTailCallKind(
                         orig->getTailCallKind());
-                    cast<CallInst>(anti)->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
+                    cast<CallInst>(anti)->setDebugLoc(
+                        getNewFromOriginal(I.getDebugLoc()));
 
 #if LLVM_VERSION_MAJOR >= 14
                     cast<CallInst>(anti)->addAttributeAtIndex(
@@ -2764,7 +2765,8 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
 #else
                       replacement->setAlignment(Alignment);
 #endif
-		      replacement->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
+                      replacement->setDebugLoc(
+                          getNewFromOriginal(I.getDebugLoc()));
                       replaceAWithB(cast<Instruction>(anti), replacement);
                       erase(cast<Instruction>(anti));
                       anti = replacement;
@@ -6009,9 +6011,9 @@ fast:;
 
     if (replacePHIs == nullptr) {
       if (!(BuilderM.GetInsertBlock()->size() == 0 ||
-             !isa<BranchInst>(BuilderM.GetInsertBlock()->back()))) {
-      	llvm::errs() << "newFunc : " << *newFunc << "\n";
-      	llvm::errs() << "blk : " << *BuilderM.GetInsertBlock() << "\n";
+            !isa<BranchInst>(BuilderM.GetInsertBlock()->back()))) {
+        llvm::errs() << "newFunc : " << *newFunc << "\n";
+        llvm::errs() << "blk : " << *BuilderM.GetInsertBlock() << "\n";
       }
       assert(BuilderM.GetInsertBlock()->size() == 0 ||
              !isa<BranchInst>(BuilderM.GetInsertBlock()->back()));

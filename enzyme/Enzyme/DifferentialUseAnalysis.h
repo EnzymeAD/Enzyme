@@ -306,16 +306,17 @@ static inline bool is_value_needed_in_reverse(
       }
 
       if (auto CI = dyn_cast<CallInst>(user)) {
-	{
-   SmallVector<OperandBundleDef, 2> OrigDefs;
-    CI->getOperandBundlesAsDefs(OrigDefs);
-    SmallVector<OperandBundleDef, 2> Defs;
-    for (auto bund : OrigDefs) {
-for (auto inp : bund.inputs()) {
-	if (inp == inst) return seen[idx] = true;
-}
-}
-	}
+        {
+          SmallVector<OperandBundleDef, 2> OrigDefs;
+          CI->getOperandBundlesAsDefs(OrigDefs);
+          SmallVector<OperandBundleDef, 2> Defs;
+          for (auto bund : OrigDefs) {
+            for (auto inp : bund.inputs()) {
+              if (inp == inst)
+                return seen[idx] = true;
+            }
+          }
+        }
         if (auto F = getFunctionFromCall(const_cast<CallInst *>(CI))) {
           StringRef funcName = F->getName();
           if (F->hasFnAttribute("enzyme_math"))

@@ -466,15 +466,14 @@ llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
   if (!irecvfn)
     irecvfn = M.getFunction("MPI_Irecv");
   if (!irecvfn) {
-      FunctionType *FuT = isendfn->getFunctionType();
-      std::string name = pmpi ? "PMPI_Irecv" : "MPI_Irecv";
+    FunctionType *FuT = isendfn->getFunctionType();
+    std::string name = pmpi ? "PMPI_Irecv" : "MPI_Irecv";
 #if LLVM_VERSION_MAJOR >= 9
-      irecvfn = cast<Function>(M.getOrInsertFunction(name, FuT).getCallee());
+    irecvfn = cast<Function>(M.getOrInsertFunction(name, FuT).getCallee());
 
 #else
-      irecvfn = cast<Function>(M.getOrInsertFunction(name, FuT));
+    irecvfn = cast<Function>(M.getOrInsertFunction(name, FuT));
 #endif
-  
   }
   assert(irecvfn);
 
