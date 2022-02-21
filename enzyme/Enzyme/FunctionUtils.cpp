@@ -1510,7 +1510,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
     }
 
     {
-#if LLVM_VERSION_MAJOR <= 7
+#if LLVM_VERSION_MAJOR <= 7 || LLVM_VERSION_MAJOR >= 13
       auto PA = GVN().run(*NewF, FAM);
       FAM.invalidate(*NewF, PA);
 #endif

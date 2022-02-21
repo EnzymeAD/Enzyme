@@ -5637,7 +5637,7 @@ public:
             currentBlock, currentBlock->getName() + "_nonnull");
         BasicBlock *endBlock = gutils->addReverseBlock(
             nonnullBlock, currentBlock->getName() + "_end",
-	    /*fork*/true, /*push*/false);
+            /*fork*/ true, /*push*/ false);
 
         Builder2.CreateCondBr(isNull, endBlock, nonnullBlock);
         Builder2.SetInsertPoint(nonnullBlock);
@@ -5681,13 +5681,13 @@ public:
                           Attribute::AlwaysInline);
 #endif
         Builder2.CreateBr(endBlock);
-	{
+        {
           auto found = gutils->reverseBlockToPrimal.find(endBlock);
           assert(found != gutils->reverseBlockToPrimal.end());
           std::vector<BasicBlock *> &vec = gutils->reverseBlocks[found->second];
           assert(vec.size());
           vec.push_back(endBlock);
-	}
+        }
         Builder2.SetInsertPoint(endBlock);
       } else if (Mode == DerivativeMode::ForwardMode) {
         IRBuilder<> Builder2(&call);
@@ -5792,7 +5792,7 @@ public:
             nonnullBlock, currentBlock->getName() + "_eloop");
         BasicBlock *endBlock = gutils->addReverseBlock(
             eloopBlock, currentBlock->getName() + "_end",
-	    /*fork*/true, /*push*/false);
+            /*fork*/ true, /*push*/ false);
 
         Builder2.CreateCondBr(
             Builder2.CreateICmpNE(count,
@@ -5880,13 +5880,13 @@ public:
         Builder2.SetInsertPoint(eloopBlock);
         Builder2.CreateCondBr(Builder2.CreateICmpEQ(inc, count), endBlock,
                               loopBlock);
-	{
+        {
           auto found = gutils->reverseBlockToPrimal.find(endBlock);
           assert(found != gutils->reverseBlockToPrimal.end());
           std::vector<BasicBlock *> &vec = gutils->reverseBlocks[found->second];
           assert(vec.size());
           vec.push_back(endBlock);
-	}
+        }
         Builder2.SetInsertPoint(endBlock);
         if (shouldFree()) {
           auto ci = cast<CallInst>(CallInst::CreateFree(
@@ -9611,15 +9611,28 @@ public:
         return;
       }
 
+      auto ifound = gutils->invertedPointers.find(orig);
+      assert(ifound != gutils->invertedPointers.end());
+
+      auto placeholder = cast<PHINode>(&*ifound->second);
+
+      bool needShadow = (Mode == DerivativeMode::ForwardMode ||
+                         Mode == DerivativeMode::ForwardModeSplit)
+                            ? true
+                            : is_value_needed_in_reverse<ValueType::Shadow>(
+                                  TR, gutils, orig, Mode, oldUnreachable);
+      if (!needShadow) {
+        gutils->invertedPointers.erase(ifound);
+        gutils->erase(placeholder);
+        eraseIfUnused(*orig);
+        return;
+      }
+
       Value *ptrshadow =
           gutils->invertPointerM(call.getArgOperand(0), BuilderZ);
       Value *val =
           BuilderZ.CreateCall(called, std::vector<Value *>({ptrshadow}));
 
-      auto ifound = gutils->invertedPointers.find(orig);
-      assert(ifound != gutils->invertedPointers.end());
-
-      auto placeholder = cast<PHINode>(&*ifound->second);
       gutils->replaceAWithB(placeholder, val);
       gutils->erase(placeholder);
       eraseIfUnused(*orig);

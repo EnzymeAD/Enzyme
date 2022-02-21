@@ -331,9 +331,8 @@ static inline bool is_value_needed_in_reverse(
             if (inst == CI->getArgOperand(6))
               return seen[idx] = true;
             // Need shadow buffer in reverse pass or forward mode
-            if (mode != DerivativeMode::ReverseModePrimal)
-              if (inst == CI->getArgOperand(0))
-                return seen[idx] = true;
+            if (inst == CI->getArgOperand(0))
+              return seen[idx] = true;
             continue;
           }
 
@@ -342,7 +341,7 @@ static inline bool is_value_needed_in_reverse(
           if (funcName == "MPI_Wait" || funcName == "PMPI_Wait") {
             if (gutils->isConstantInstruction(const_cast<Instruction *>(user)))
               continue;
-            // Need shadow request in forward pass
+            // Need shadow request in forward pass only
             if (mode != DerivativeMode::ReverseModeGradient)
               if (inst == CI->getArgOperand(0))
                 return seen[idx] = true;
