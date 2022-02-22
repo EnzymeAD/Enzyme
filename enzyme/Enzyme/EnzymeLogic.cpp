@@ -2367,12 +2367,12 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
 void createTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
                       BasicBlock *oBB, DIFFE_TYPE retType, ReturnType retVal) {
-  ReturnInst *inst = dyn_cast_or_null<ReturnInst>(oBB->getTerminator());
+  ReturnInst *inst = dyn_cast<ReturnInst>(oBB->getTerminator());
   // In forward mode we only need to update the return value
   if (inst == nullptr)
     return;
 
-  ReturnInst *newInst = dyn_cast<ReturnInst>(gutils->getNewFromOriginal(inst));
+  ReturnInst *newInst = cast<ReturnInst>(gutils->getNewFromOriginal(inst));
   BasicBlock *nBB = newInst->getParent();
   assert(nBB);
   IRBuilder<> nBuilder(nBB);
