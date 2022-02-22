@@ -43,9 +43,15 @@ jobs:
       run: |
         julia --project=jl/deps -e 'using Pkg; Pkg.instantiate()'
         julia --project=jl/deps jl/deps/build_local.jl ./enzyme
+      env:
+        JULIA_NUM_THREADS: 2
     - uses: julia-actions/julia-buildpkg@v1
       with:
         project: jl
+      env:
+        JULIA_NUM_THREADS: 2
     - uses: julia-actions/julia-runtest@v1
       with:
         project: jl
+      env:
+        JULIA_NUM_THREADS: 2
