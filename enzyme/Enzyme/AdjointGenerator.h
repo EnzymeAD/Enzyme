@@ -9882,16 +9882,19 @@ public:
           auto newfree = gutils->getNewFromOriginal(orig->getArgOperand(0));
           auto tofree = gutils->invertPointerM(origfree, Builder2);
 
-          gutils->ComparePrimalAndShadow(Builder2, newfree, tofree);
+          Function *free = getOrInsertCheckedFree(
+              *orig->getModule(), orig->getFunctionType(),
+              orig->getCalledFunction(), newfree->getType(),
+              orig->getAttributes(), gutils->getWidth());
 
-          auto rule = [&](Value *tofree) {
-            SmallVector<Value *, 2> args = {tofree};
-            CallInst *CI = Builder2.CreateCall(orig->getFunctionType(),
-                                               orig->getCalledFunction(), args);
-            CI->setAttributes(orig->getAttributes());
-          };
+          SmallVector<Value *, 3> args;
+          args.push_back(newfree);
 
+          auto rule = [&args](Value *tofree) { args.push_back(tofree); };
           applyChainRule(Builder2, rule, tofree);
+
+          Builder2.CreateCall(free->getFunctionType(), free, args);
+
           return;
         }
       }

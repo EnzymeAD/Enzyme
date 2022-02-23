@@ -1754,49 +1754,6 @@ public:
       return rule(diffs);
     }
   }
-
-  void ComparePrimalAndShadow(IRBuilder<> &Builder, Value *primal,
-                              Value *shadow) {
-    // first check primals against shadow
-    Value *checkResult = Builder.getTrue();
-
-    auto checkPrimal = [&](Value *shadow) {
-      Value *isNotEqual = Builder.CreateICmpNE(primal, shadow);
-      checkResult = Builder.CreateAnd(isNotEqual, checkResult);
-    };
-
-    applyChainRule(Builder, checkPrimal, shadow);
-
-    // if vector make sure shadows are pairwise distinct.
-    if (width > 1) {
-      assert(cast<ArrayType>(shadow->getType())->getNumElements() == width);
-
-      for (unsigned int i = 0; i < width - 1; ++i) {
-        Value *lhs = Builder.CreateExtractValue(shadow, i);
-        Value *rhs = Builder.CreateExtractValue(shadow, i + 1);
-        Value *isNotEqual = Builder.CreateICmpNE(lhs, rhs);
-        checkResult = Builder.CreateAnd(isNotEqual, checkResult);
-      }
-    }
-
-    Instruction *splitBefore =
-        dyn_cast<Instruction>(checkResult)->getNextNode();
-    Instruction *ifblock =
-        SplitBlockAndInsertIfThen(checkResult, splitBefore, false);
-
-    BasicBlock *fwd = dyn_cast<Instruction>(primal)->getParent();
-    BasicBlock *rev1 = dyn_cast<Instruction>(shadow)->getParent();
-    BasicBlock *rev2 = ifblock->getParent();
-
-    //    reverseBlocks[fwd].push_back(rev1);
-    //    reverseBlocks[fwd].push_back(rev2);
-    //
-    //    reverseBlockToPrimal[rev1] = fwd;
-    //    reverseBlockToPrimal[rev2] = fwd;
-
-    Builder.SetInsertPoint(ifblock);
-    return;
-  }
 };
 
 class DiffeGradientUtils : public GradientUtils {

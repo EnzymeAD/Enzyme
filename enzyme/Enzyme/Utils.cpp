@@ -298,6 +298,71 @@ Function *getOrInsertDifferentialFloatMemmove(Module &M, Type *T,
                                             srcaddr);
 }
 
+Function *getOrInsertCheckedFree(Module &M, FunctionType *FreeTy,
+                                 Function *Free, Type *Ty,
+                                 AttributeList FreeAttributes, unsigned width) {
+  std::string name = "__enzyme_checked_free_" + std::to_string(width);
+
+  SmallVector<Type *, 3> types;
+  types.push_back(Ty);
+  for (unsigned i = 0; i < width; i++) {
+    types.push_back(Ty);
+  }
+
+  FunctionType *FT =
+      FunctionType::get(Type::getVoidTy(M.getContext()), types, false);
+
+#if LLVM_VERSION_MAJOR >= 9
+  Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
+#else
+  Function *F = cast<Function>(M.getOrInsertFunction(name, FT));
+#endif
+
+  if (!F->empty())
+    return F;
+
+  F->setLinkage(Function::LinkageTypes::InternalLinkage);
+  F->addFnAttr(Attribute::ArgMemOnly);
+  F->addFnAttr(Attribute::NoUnwind);
+
+  BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
+  BasicBlock *body = BasicBlock::Create(M.getContext(), "body", F);
+  BasicBlock *end = BasicBlock::Create(M.getContext(), "end", F);
+
+  IRBuilder<> EntryBuilder(entry);
+  IRBuilder<> BodyBuilder(body);
+  IRBuilder<> EndBuilder(end);
+
+  Value *checkResult = EntryBuilder.getTrue();
+
+  F->addParamAttr(0, Attribute::NoCapture);
+  auto primal = F->arg_begin();
+
+  for (unsigned i = 0; i < width; i++) {
+    F->addParamAttr(i + 1, Attribute::NoCapture);
+    Argument *shadow = F->arg_begin() + i + 1;
+
+    Value *isNotEqual = EntryBuilder.CreateICmpNE(primal, shadow);
+    checkResult = EntryBuilder.CreateAnd(isNotEqual, checkResult);
+
+    if (i < width - 1) {
+      Argument *nextShadow = F->arg_begin() + i + 2;
+      Value *isNotEqual = EntryBuilder.CreateICmpNE(shadow, nextShadow);
+      checkResult = EntryBuilder.CreateAnd(isNotEqual, checkResult);
+    }
+
+    Value *args[] = {shadow};
+    CallInst *CI = BodyBuilder.CreateCall(FreeTy, Free, args);
+    CI->setAttributes(FreeAttributes);
+  }
+
+  EntryBuilder.CreateCondBr(checkResult, end, body);
+  BodyBuilder.CreateBr(end);
+  EndBuilder.CreateRetVoid();
+
+  return F;
+}
+
 /// Create function to computer nearest power of two
 llvm::Value *nextPowerOfTwo(llvm::IRBuilder<> &B, llvm::Value *V) {
   assert(V->getType()->isIntegerTy());

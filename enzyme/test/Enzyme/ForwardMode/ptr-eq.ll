@@ -21,20 +21,26 @@ entry:
 
 ; CHECK: define internal void @fwddiffef(double* %x, double* %"x'", double* %y, double* %"y'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %val = load double, double* %x
-; CHECK-NEXT:   %0 = load double, double* %"x'"
-; CHECK-NEXT:   store double %val, double* %y
-; CHECK-NEXT:   store double %0, double* %"y'"
+; CHECK-NEXT:   %val = load double, double* %x, align 8
+; CHECK-NEXT:   %0 = load double, double* %"x'", align 8
+; CHECK-NEXT:   store double %val, double* %y, align 8
+; CHECK-NEXT:   store double %0, double* %"y'", align 8
 ; CHECK-NEXT:   %"ptr'ipc" = bitcast double* %"x'" to i8*
 ; CHECK-NEXT:   %ptr = bitcast double* %x to i8*
-; CHECK-NEXT:   call void @free(i8* %ptr)
-; CHECK-NEXT:   %1 = icmp ne i8* %ptr, %"ptr'ipc"
-; CHECK-NEXT:   br i1 %1, label %2, label %3
+; CHECK-NEXT:   call void @free(i8* %ptr) #0
+; CHECK-NEXT:   call void @__enzyme_checked_free_1(i8* %ptr, i8* %"ptr'ipc")
+; CHECK-NEXT:   ret void
+; CHECK-NEXT: }
 
-; CHECK: 2:                                                                     ; preds = %entry
-; CHECK-NEXT:   call void @free(i8* %"ptr'ipc")
-; CHECK-NEXT:   br label %3
+; CHECK: define internal void @__enzyme_checked_free_1(i8* nocapture %0, i8* nocapture %1)
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   %2 = icmp ne i8* %0, %1
+; CHECK-NEXT:   br i1 %2, label %end, label %body
 
-; CHECK: 3:                                                                     ; preds = %entry, %2
+; CHECK: body:                                             ; preds = %entry
+; CHECK-NEXT:   call void @free(i8* %1) #0
+; CHECK-NEXT:   br label %end
+
+; CHECK: end:                                              ; preds = %body, %entry
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
