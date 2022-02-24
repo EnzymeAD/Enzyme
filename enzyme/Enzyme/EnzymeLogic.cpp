@@ -1480,6 +1480,164 @@ static FnTypeInfo preventTypeAnalysisLoops(const FnTypeInfo &oldTypeInfo_,
   return oldTypeInfo;
 }
 
+void restoreCache(DiffeGradientUtils *gutils,
+    std::map<std::pair<Instruction *, CacheType>, int> &mapping,
+    const SmallPtrSetImpl<BasicBlock *> &guaranteedUnreachable) {
+  if (key.mode != DerivativeMode::ReverseModeCombined) {
+    // One must use this temporary map to first create all the replacements
+    // prior to actually replacing to ensure that getSubLimits has the same
+    // behavior and unwrap behavior for all replacements.
+    std::vector<std::pair<Value *, Value *>> newIToNextI;
+
+    for (const auto &m : mapping) {
+      if (m.first.second == CacheType::Self &&
+          gutils->knownRecomputeHeuristic.count(m.first.first)) {
+        assert(gutils->knownRecomputeHeuristic.count(m.first.first));
+        if (!isa<CallInst>(m.first.first)) {
+          auto newi = gutils->getNewFromOriginal(m.first.first);
+          if (auto PN = dyn_cast<PHINode>(newi))
+            if (gutils->fictiousPHIs.count(PN)) {
+              assert(gutils->fictiousPHIs[PN] == m.first.first);
+              gutils->fictiousPHIs.erase(PN);
+            }
+          IRBuilder<> BuilderZ(newi->getNextNode());
+          if (isa<PHINode>(m.first.first)) {
+            BuilderZ.SetInsertPoint(
+                cast<Instruction>(newi)->getParent()->getFirstNonPHI());
+          }
+          Value *nexti =
+              gutils->cacheForReverse(BuilderZ, newi, m.second,
+                                      /*ignoreType*/ false, /*replace*/ false);
+          newIToNextI.emplace_back(newi, nexti);
+        } else {
+          auto newi = gutils->getNewFromOriginal((Value *)m.first.first);
+          newIToNextI.emplace_back(newi, newi);
+        }
+      }
+    }
+
+    std::map<Value *, std::vector<Instruction *>> unwrapToOrig;
+    for (auto pair : gutils->unwrappedLoads)
+      unwrapToOrig[pair.second].push_back(
+          const_cast<Instruction *>(pair.first));
+    gutils->unwrappedLoads.clear();
+
+    for (auto pair : newIToNextI) {
+      auto newi = pair.first;
+      auto nexti = pair.second;
+      if (newi != nexti) {
+        gutils->replaceAWithB(newi, nexti);
+      }
+    }
+
+    // This most occur after all the replacements have been made
+    // in the previous loop, lest a loop bound being unwrapped use
+    // a value being replaced.
+    for (auto pair : newIToNextI) {
+      auto newi = pair.first;
+      auto nexti = pair.second;
+      for (auto V : unwrapToOrig[newi]) {
+        ValueToValueMapTy available;
+        if (auto MD = hasMetadata(V, "enzyme_available")) {
+          for (auto &pair : MD->operands()) {
+            auto tup = cast<MDNode>(pair);
+            auto val = cast<ValueAsMetadata>(tup->getOperand(1))->getValue();
+            assert(val);
+            available[cast<ValueAsMetadata>(tup->getOperand(0))->getValue()] =
+                val;
+          }
+        }
+        IRBuilder<> lb(V);
+        // This must disallow caching here as otherwise performing the loop in
+        // the wrong order may result in first replacing the later unwrapped
+        // value, caching it, then attempting to reuse it for an earlier
+        // replacement.
+        Value *nval = gutils->unwrapM(nexti, lb, available,
+                                      UnwrapMode::LegalFullUnwrapNoTapeReplace,
+                                      /*scope*/ nullptr, /*permitCache*/ false);
+        assert(nval);
+        V->replaceAllUsesWith(nval);
+        V->eraseFromParent();
+      }
+    }
+
+    // Erasure happens after to not erase the key of unwrapToOrig
+    for (auto pair : newIToNextI) {
+      auto newi = pair.first;
+      auto nexti = pair.second;
+      if (newi != nexti) {
+        if (auto inst = dyn_cast<Instruction>(newi))
+          gutils->erase(inst);
+      }
+    }
+
+    // TODO also can consider switch instance as well
+    // TODO can also insert to topLevel as well [note this requires putting the
+    // intrinsic at the correct location]
+    for (auto &BB : *gutils->oldFunc) {
+      std::vector<BasicBlock *> unreachables;
+      std::vector<BasicBlock *> reachables;
+      for (auto Succ : successors(&BB)) {
+        if (guaranteedUnreachable.find(Succ) != guaranteedUnreachable.end()) {
+          unreachables.push_back(Succ);
+        } else {
+          reachables.push_back(Succ);
+        }
+      }
+
+      if (unreachables.size() == 0 || reachables.size() == 0)
+        continue;
+
+      if (auto bi = dyn_cast<BranchInst>(BB.getTerminator())) {
+
+        Value *condition = gutils->getNewFromOriginal(bi->getCondition());
+
+        Constant *repVal = (bi->getSuccessor(0) == unreachables[0])
+                               ? ConstantInt::getFalse(condition->getContext())
+                               : ConstantInt::getTrue(condition->getContext());
+
+        for (auto UI = condition->use_begin(), E = condition->use_end();
+             UI != E;) {
+          Use &U = *UI;
+          ++UI;
+          U.set(repVal);
+        }
+      }
+      if (reachables.size() == 1)
+        if (auto si = dyn_cast<SwitchInst>(BB.getTerminator())) {
+          Value *condition = gutils->getNewFromOriginal(si->getCondition());
+
+          Constant *repVal = nullptr;
+          if (si->getDefaultDest() == reachables[0]) {
+            std::set<int64_t> cases;
+            for (auto c : si->cases()) {
+              // TODO this doesnt work with unsigned 64 bit ints or higher
+              // integer widths
+              cases.insert(cast<ConstantInt>(c.getCaseValue())->getSExtValue());
+            }
+            int64_t legalNot = 0;
+            while (cases.count(legalNot))
+              legalNot++;
+            repVal = ConstantInt::getSigned(condition->getType(), legalNot);
+          } else {
+            for (auto c : si->cases()) {
+              if (c.getCaseSuccessor() == reachables[0]) {
+                repVal = c.getCaseValue();
+              }
+            }
+          }
+          assert(repVal);
+          for (auto UI = condition->use_begin(), E = condition->use_end();
+               UI != E;) {
+            Use &U = *UI;
+            ++UI;
+            U.set(repVal);
+          }
+        }
+    }
+  }
+}
+
 //! return structtype if recursive function
 const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     Function *todiff, DIFFE_TYPE retType,
@@ -3481,159 +3639,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                              key.retType);
   }
 
-  if (key.mode != DerivativeMode::ReverseModeCombined) {
-    // One must use this temporary map to first create all the replacements
-    // prior to actually replacing to ensure that getSubLimits has the same
-    // behavior and unwrap behavior for all replacements.
-    std::vector<std::pair<Value *, Value *>> newIToNextI;
-
-    for (const auto &m : mapping) {
-      if (m.first.second == CacheType::Self &&
-          gutils->knownRecomputeHeuristic.count(m.first.first)) {
-        assert(gutils->knownRecomputeHeuristic.count(m.first.first));
-        if (!isa<CallInst>(m.first.first)) {
-          auto newi = gutils->getNewFromOriginal(m.first.first);
-          if (auto PN = dyn_cast<PHINode>(newi))
-            if (gutils->fictiousPHIs.count(PN)) {
-              assert(gutils->fictiousPHIs[PN] == m.first.first);
-              gutils->fictiousPHIs.erase(PN);
-            }
-          IRBuilder<> BuilderZ(newi->getNextNode());
-          if (isa<PHINode>(m.first.first)) {
-            BuilderZ.SetInsertPoint(
-                cast<Instruction>(newi)->getParent()->getFirstNonPHI());
-          }
-          Value *nexti =
-              gutils->cacheForReverse(BuilderZ, newi, m.second,
-                                      /*ignoreType*/ false, /*replace*/ false);
-          newIToNextI.emplace_back(newi, nexti);
-        } else {
-          auto newi = gutils->getNewFromOriginal((Value *)m.first.first);
-          newIToNextI.emplace_back(newi, newi);
-        }
-      }
-    }
-
-    std::map<Value *, std::vector<Instruction *>> unwrapToOrig;
-    for (auto pair : gutils->unwrappedLoads)
-      unwrapToOrig[pair.second].push_back(
-          const_cast<Instruction *>(pair.first));
-    gutils->unwrappedLoads.clear();
-
-    for (auto pair : newIToNextI) {
-      auto newi = pair.first;
-      auto nexti = pair.second;
-      if (newi != nexti) {
-        gutils->replaceAWithB(newi, nexti);
-      }
-    }
-
-    // This most occur after all the replacements have been made
-    // in the previous loop, lest a loop bound being unwrapped use
-    // a value being replaced.
-    for (auto pair : newIToNextI) {
-      auto newi = pair.first;
-      auto nexti = pair.second;
-      for (auto V : unwrapToOrig[newi]) {
-        ValueToValueMapTy available;
-        if (auto MD = hasMetadata(V, "enzyme_available")) {
-          for (auto &pair : MD->operands()) {
-            auto tup = cast<MDNode>(pair);
-            auto val = cast<ValueAsMetadata>(tup->getOperand(1))->getValue();
-            assert(val);
-            available[cast<ValueAsMetadata>(tup->getOperand(0))->getValue()] =
-                val;
-          }
-        }
-        IRBuilder<> lb(V);
-        // This must disallow caching here as otherwise performing the loop in
-        // the wrong order may result in first replacing the later unwrapped
-        // value, caching it, then attempting to reuse it for an earlier
-        // replacement.
-        Value *nval = gutils->unwrapM(nexti, lb, available,
-                                      UnwrapMode::LegalFullUnwrapNoTapeReplace,
-                                      /*scope*/ nullptr, /*permitCache*/ false);
-        assert(nval);
-        V->replaceAllUsesWith(nval);
-        V->eraseFromParent();
-      }
-    }
-
-    // Erasure happens after to not erase the key of unwrapToOrig
-    for (auto pair : newIToNextI) {
-      auto newi = pair.first;
-      auto nexti = pair.second;
-      if (newi != nexti) {
-        if (auto inst = dyn_cast<Instruction>(newi))
-          gutils->erase(inst);
-      }
-    }
-
-    // TODO also can consider switch instance as well
-    // TODO can also insert to topLevel as well [note this requires putting the
-    // intrinsic at the correct location]
-    for (auto &BB : *gutils->oldFunc) {
-      std::vector<BasicBlock *> unreachables;
-      std::vector<BasicBlock *> reachables;
-      for (auto Succ : successors(&BB)) {
-        if (guaranteedUnreachable.find(Succ) != guaranteedUnreachable.end()) {
-          unreachables.push_back(Succ);
-        } else {
-          reachables.push_back(Succ);
-        }
-      }
-
-      if (unreachables.size() == 0 || reachables.size() == 0)
-        continue;
-
-      if (auto bi = dyn_cast<BranchInst>(BB.getTerminator())) {
-
-        Value *condition = gutils->getNewFromOriginal(bi->getCondition());
-
-        Constant *repVal = (bi->getSuccessor(0) == unreachables[0])
-                               ? ConstantInt::getFalse(condition->getContext())
-                               : ConstantInt::getTrue(condition->getContext());
-
-        for (auto UI = condition->use_begin(), E = condition->use_end();
-             UI != E;) {
-          Use &U = *UI;
-          ++UI;
-          U.set(repVal);
-        }
-      }
-      if (reachables.size() == 1)
-        if (auto si = dyn_cast<SwitchInst>(BB.getTerminator())) {
-          Value *condition = gutils->getNewFromOriginal(si->getCondition());
-
-          Constant *repVal = nullptr;
-          if (si->getDefaultDest() == reachables[0]) {
-            std::set<int64_t> cases;
-            for (auto c : si->cases()) {
-              // TODO this doesnt work with unsigned 64 bit ints or higher
-              // integer widths
-              cases.insert(cast<ConstantInt>(c.getCaseValue())->getSExtValue());
-            }
-            int64_t legalNot = 0;
-            while (cases.count(legalNot))
-              legalNot++;
-            repVal = ConstantInt::getSigned(condition->getType(), legalNot);
-          } else {
-            for (auto c : si->cases()) {
-              if (c.getCaseSuccessor() == reachables[0]) {
-                repVal = c.getCaseValue();
-              }
-            }
-          }
-          assert(repVal);
-          for (auto UI = condition->use_begin(), E = condition->use_end();
-               UI != E;) {
-            Use &U = *UI;
-            ++UI;
-            U.set(repVal);
-          }
-        }
-    }
-  }
+  if (key.mode == DerivativeMode::ReverseModeGradient)
+    restoreCache(gutils, mapping, guaranteedUnreachable);
 
   gutils->eraseFictiousPHIs();
 
@@ -3761,7 +3768,9 @@ Function *EnzymeLogic::CreateForwardDiff(
     const std::vector<DIFFE_TYPE> &constant_args, TypeAnalysis &TA,
     bool returnUsed, DerivativeMode mode, unsigned width,
     llvm::Type *additionalArg, const FnTypeInfo &oldTypeInfo_,
-    const std::map<Argument *, bool> _uncacheable_args, bool omp) {
+    const std::map<Argument *, bool> _uncacheable_args,
+    const AugmentedReturn *augmenteddata,
+    bool omp) {
   assert(retType != DIFFE_TYPE::OUT_DIFF);
 
   assert(mode == DerivativeMode::ForwardMode ||
@@ -4035,6 +4044,7 @@ Function *EnzymeLogic::CreateForwardDiff(
   }
 
   AdjointGenerator<const AugmentedReturn *> *maker;
+  std::map<std::pair<Instruction *, CacheType>, int> mapping;
   if (mode == DerivativeMode::ForwardModeSplit) {
 
     std::map<Argument *, bool> _uncacheable_argsPP;
@@ -4048,7 +4058,7 @@ Function *EnzymeLogic::CreateForwardDiff(
       }
     }
 
-    // TODO gutils->computeGuaranteedFrees(guaranteedUnreachable, TR);
+    gutils->computeGuaranteedFrees(guaranteedUnreachable, TR);
     CacheAnalysis CA(
         gutils->allocationsWithGuaranteedFree,
         gutils->rematerializableAllocations, TR, gutils->OrigAA,
@@ -4063,8 +4073,6 @@ Function *EnzymeLogic::CreateForwardDiff(
         CA.compute_uncacheable_load_map();
     gutils->can_modref_map = &can_modref_map;
 
-    std::map<std::pair<Instruction *, CacheType>, int> mapping;
-
     auto getIndex = [&](Instruction *I, CacheType u) -> unsigned {
       return gutils->getIndex(std::make_pair(I, u), mapping);
     };
@@ -4077,6 +4085,50 @@ Function *EnzymeLogic::CreateForwardDiff(
         /*returnuses*/ nullptr, nullptr, nullptr, unnecessaryValues,
         unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
         nullptr);
+
+    if (additionalArg) {
+      auto v = gutils->newFunc->arg_end();
+      v--;
+      Value *additionalValue = v;
+      assert(augmenteddata);
+
+      // TODO VERIFY THIS
+      if (augmenteddata->tapeType &&
+          augmenteddata->tapeType != additionalValue->getType()) {
+        IRBuilder<> BuilderZ(gutils->inversionAllocs);
+        if (!augmenteddata->tapeType->isEmptyTy()) {
+          auto tapep = BuilderZ.CreatePointerCast(
+              additionalValue, PointerType::getUnqual(augmenteddata->tapeType));
+  #if LLVM_VERSION_MAJOR > 7
+          LoadInst *truetape =
+              BuilderZ.CreateLoad(augmenteddata->tapeType, tapep, "truetape");
+  #else
+          LoadInst *truetape = BuilderZ.CreateLoad(tapep, "truetape");
+  #endif
+          truetape->setMetadata("enzyme_mustcache",
+                                MDNode::get(truetape->getContext(), {}));
+
+          if (!omp && gutils->FreeMemory) {
+            CallInst *ci =
+                cast<CallInst>(CallInst::CreateFree(additionalValue, truetape));
+            ci->moveAfter(truetape);
+            ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+          }
+          additionalValue = truetape;
+        } else {
+          if (gutils->FreeMemory) {
+            CallInst *ci = cast<CallInst>(
+                CallInst::CreateFree(additionalValue, gutils->inversionAllocs));
+            ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+            BuilderZ.Insert(ci);
+          }
+          additionalValue = UndefValue::get(augmenteddata->tapeType);
+        }
+      }
+
+      // TODO here finish up making recursive structs simply pass in i8*
+      gutils->setTape(additionalValue);
+    }
   } else {
 
     maker = new AdjointGenerator<const AugmentedReturn *>(
@@ -4136,6 +4188,9 @@ Function *EnzymeLogic::CreateForwardDiff(
 
     createTerminator(TR, gutils, &oBB, retType, retVal);
   }
+
+  if (mode == DerivativeMode::ForwardModeSplit)
+    restoreCache(gutils, mapping, guaranteedUnreachable);
 
   gutils->eraseFictiousPHIs();
 

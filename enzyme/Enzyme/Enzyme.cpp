@@ -579,8 +579,8 @@ public:
 
     DIFFE_TYPE retType = whatType(cast<Function>(fn)->getReturnType(), mode);
 
-    bool differentialReturn = mode != DerivativeMode::ForwardMode &&
-                              mode != DerivativeMode::ReverseModePrimal &&
+    bool differentialReturn = (mode == DerivativeMode::ReverseModeCombined ||
+                              mode == DerivativeMode::ReverseModeGradient) &&
                               (retType == DIFFE_TYPE::OUT_DIFF);
 
     std::map<int, Type *> byVal;
@@ -598,7 +598,8 @@ public:
       Value *res = CI->getArgOperand(i);
 
       if (truei >= FT->getNumParams()) {
-        if (mode == DerivativeMode::ReverseModeGradient) {
+        if (mode == DerivativeMode::ReverseModeGradient ||
+            mode == DerivativeMode::ForwardModeSplit) {
           if (differentialReturn && differet == nullptr) {
             differet = res;
             if (CI->paramHasAttr(i, Attribute::ByVal)) {
@@ -814,13 +815,59 @@ public:
     Type *tapeType = nullptr;
     const AugmentedReturn *aug;
     switch (mode) {
-    case DerivativeMode::ForwardModeSplit:
     case DerivativeMode::ForwardMode:
       newFunc = Logic.CreateForwardDiff(
           cast<Function>(fn), retType, constants, TA,
           /*should return*/ false, mode, width,
-          /*addedType*/ nullptr, type_args, volatile_args);
+          /*addedType*/ nullptr, type_args, volatile_args,
+          /*augmented*/ nullptr);
       break;
+    case DerivativeMode::ForwardModeSplit: {
+      bool forceAnonymousTape = !sizeOnly && allocatedTapeSize == -1;
+      bool returnUsed = !cast<Function>(fn)->getReturnType()->isVoidTy() &&
+                        !cast<Function>(fn)->getReturnType()->isEmptyTy();
+      aug = &Logic.CreateAugmentedPrimal(
+          cast<Function>(fn), retType, constants, TA,
+          /*returnUsed*/ returnUsed, type_args, volatile_args,
+          forceAnonymousTape, /*atomicAdd*/ AtomicAdd);
+      auto &DL = cast<Function>(fn)->getParent()->getDataLayout();
+      if (!forceAnonymousTape) {
+        assert(!aug->tapeType);
+        if (aug->returns.find(AugmentedStruct::Tape) != aug->returns.end()) {
+          auto tapeIdx = aug->returns.find(AugmentedStruct::Tape)->second;
+          tapeType = (tapeIdx == -1)
+                         ? aug->fn->getReturnType()
+                         : cast<StructType>(aug->fn->getReturnType())
+                               ->getElementType(tapeIdx);
+        } else {
+          if (sizeOnly) {
+            CI->replaceAllUsesWith(ConstantInt::get(CI->getType(), 0, false));
+            CI->eraseFromParent();
+            return true;
+          }
+        }
+        if (sizeOnly) {
+          auto size = DL.getTypeSizeInBits(tapeType) / 8;
+          CI->replaceAllUsesWith(ConstantInt::get(CI->getType(), size, false));
+          CI->eraseFromParent();
+          return true;
+        }
+        if (tapeType &&
+            DL.getTypeSizeInBits(tapeType) < 8 * (size_t)allocatedTapeSize) {
+          auto bytes = DL.getTypeSizeInBits(tapeType) / 8;
+          EmitFailure("Insufficient tape allocation size", CI->getDebugLoc(),
+                      CI, "need ", bytes, " bytes have ", allocatedTapeSize,
+                      " bytes");
+        }
+      } else {
+        tapeType = PointerType::getInt8PtrTy(fn->getContext());
+      }
+      newFunc = Logic.CreateForwardDiff(
+          cast<Function>(fn), retType, constants, TA,
+          /*should return*/ false, mode, width,
+          /*addedType*/ tapeType, type_args, volatile_args, aug);
+      break;
+    }
     case DerivativeMode::ReverseModeCombined:
       assert(freeMemory);
       newFunc = Logic.CreatePrimalAndGradient(
@@ -1227,6 +1274,7 @@ public:
               Fn->getName().contains("__enzyme_call_inactive") ||
               Fn->getName().contains("__enzyme_autodiff") ||
               Fn->getName().contains("__enzyme_fwddiff") ||
+              Fn->getName().contains("__enzyme_fwdsplit") ||
               Fn->getName().contains("__enzyme_augmentfwd") ||
               Fn->getName().contains("__enzyme_augmentsize") ||
               Fn->getName().contains("__enzyme_reverse")))
@@ -1484,6 +1532,9 @@ public:
         } else if (Fn->getName().contains("__enzyme_fwddiff")) {
           enableEnzyme = true;
           mode = DerivativeMode::ForwardMode;
+        } else if (Fn->getName().contains("__enzyme_fwdsplit")) {
+          enableEnzyme = true;
+          mode = DerivativeMode::ForwardModeSplit;
         } else if (Fn->getName().contains("__enzyme_augmentfwd")) {
           enableEnzyme = true;
           mode = DerivativeMode::ReverseModePrimal;

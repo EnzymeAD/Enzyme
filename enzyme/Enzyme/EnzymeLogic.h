@@ -294,6 +294,7 @@ public:
                     unsigned width, llvm::Type *additionalArg,
                     const FnTypeInfo &typeInfo,
                     const std::map<llvm::Argument *, bool> _uncacheable_args,
+                    const AugmentedReturn *augmented,
                     bool omp = false);
 
   void clear();

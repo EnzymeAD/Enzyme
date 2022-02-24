@@ -3638,10 +3638,9 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
   case DerivativeMode::ForwardMode: {
     Constant *newf =
         Logic.CreateForwardDiff(fn, retType, types, TA, false, mode, width,
-                                nullptr, type_args, uncacheable_args);
+                                nullptr, type_args, uncacheable_args, /*augmented*/nullptr);
 
-    if (!newf)
-      newf = UndefValue::get(fn->getType());
+    assert (newf);
 
     std::string prefix = "_enzyme_forward";
 
@@ -3655,6 +3654,40 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
     if (GV == nullptr) {
       GV = new GlobalVariable(*fn->getParent(), newf->getType(), true,
                               GlobalValue::LinkageTypes::InternalLinkage, newf,
+                              globalname);
+    }
+
+    return ConstantExpr::getPointerCast(GV, fn->getType());
+  }
+  case DerivativeMode::ForwardModeSplit: {
+    auto &augdata = Logic.CreateAugmentedPrimal(
+        fn, retType, /*constant_args*/ types, TA,
+        /*returnUsed*/ !fn->getReturnType()->isEmptyTy() &&
+            !fn->getReturnType()->isVoidTy(),
+        type_args, uncacheable_args, /*forceAnonymousTape*/ true, AtomicAdd);
+    Constant *newf =
+        Logic.CreateForwardDiff(fn, retType, types, TA, false, mode, width,
+                                nullptr, type_args, uncacheable_args, /*augmented*/&augdata);
+
+    assert (newf);
+
+    std::string prefix = "_enzyme_forwardsplit";
+
+    if (width > 1) {
+      prefix += std::to_string(width);
+    }
+
+    auto cdata = ConstantStruct::get(
+        StructType::get(newf->getContext(),
+                        {augdata.fn->getType(), newf->getType()}),
+        {augdata.fn, newf});
+
+    std::string globalname = (prefix + "_" + fn->getName() + "'").str();
+    auto GV = fn->getParent()->getNamedValue(globalname);
+
+    if (GV == nullptr) {
+      GV = new GlobalVariable(*fn->getParent(), cdata->getType(), true,
+                              GlobalValue::LinkageTypes::InternalLinkage, cdata,
                               globalname);
     }
 
@@ -3686,8 +3719,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
                           .typeInfo = type_args},
         TA,
         /*map*/ &augdata);
-    if (!newf)
-      newf = UndefValue::get(fn->getType());
+    assert (newf);
     auto cdata = ConstantStruct::get(
         StructType::get(newf->getContext(),
                         {augdata.fn->getType(), newf->getType()}),
@@ -3701,9 +3733,6 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
                               globalname);
     }
     return ConstantExpr::getPointerCast(GV, fn->getType());
-  }
-  default: {
-    report_fatal_error("Invalid derivative mode");
   }
   }
 }

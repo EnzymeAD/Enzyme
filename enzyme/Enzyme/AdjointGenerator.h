@@ -489,7 +489,6 @@ public:
           }
           break;
         }
-        case DerivativeMode::ForwardModeSplit:
         case DerivativeMode::ForwardMode: {
           newip = gutils->invertPointerM(&I, BuilderZ);
           assert(newip->getType() == type);
@@ -499,6 +498,7 @@ public:
               (const Value *)&I, InvertedPointerVH(gutils, newip)));
           break;
         }
+        case DerivativeMode::ForwardModeSplit:
         case DerivativeMode::ReverseModeGradient: {
           if (!needShadow) {
             gutils->erase(placeholder);
@@ -10036,6 +10036,18 @@ public:
       nextTypeInfo = TR.getCallInfo(*orig, *called);
     }
 
+    const AugmentedReturn *subdata = nullptr;
+    if (Mode == DerivativeMode::ReverseModeGradient ||
+        Mode == DerivativeMode::ForwardModeSplit) {
+      assert(augmentedReturn);
+      if (augmentedReturn) {
+        auto fd = augmentedReturn->subaugmentations.find(&call);
+        if (fd != augmentedReturn->subaugmentations.end()) {
+          subdata = fd->second;
+        }
+      }
+    }
+
     if (Mode == DerivativeMode::ForwardMode) {
       IRBuilder<> Builder2(&call);
       getForwardBuilder(Builder2);
@@ -10103,13 +10115,39 @@ public:
         }
       }
 
+      Optional<int> tapeIdx;
+      if (subdata) {
+        auto found = subdata->returns.find(AugmentedStruct::Tape);
+        if (found != subdata->returns.end()) {
+          tapeIdx = found->second;
+        }
+      }
+      Value *tape = nullptr;
+        if (tapeIdx.hasValue()) {
+
+          FunctionType *FT = cast<FunctionType>(
+            cast<PointerType>(subdata->fn->getType())->getElementType());
+
+          tape = BuilderZ.CreatePHI(
+            (tapeIdx == -1) ? FT->getReturnType()
+                            : cast<StructType>(FT->getReturnType())
+                                  ->getElementType(tapeIdx.getValue()),
+            1, "tapeArg");
+
+          assert (!tape->getType()->isEmptyTy());
+          gutils->TapesToPreventRecomputation.insert(cast<Instruction>(tape));
+          tape = gutils->cacheForReverse(BuilderZ, tape,
+                                         getIndex(orig, CacheType::Tape));
+          args.push_back(tape);
+        }
+
       Value *newcalled = nullptr;
 
       if (called) {
         newcalled = gutils->Logic.CreateForwardDiff(
             cast<Function>(called), subretType, argsInverted,
             TR.analyzer.interprocedural, /*returnValue*/ subretused, Mode,
-            gutils->getWidth(), nullptr, nextTypeInfo, {});
+            gutils->getWidth(), tape ? tape->getType() : nullptr, nextTypeInfo, {}, /*augmented*/subdata);
       } else {
 #if LLVM_VERSION_MAJOR >= 11
         auto callval = orig->getCalledOperand();
@@ -10132,7 +10170,7 @@ public:
                 : (retActive ? ReturnType::Return : ReturnType::Void);
 
         FunctionType *FTy =
-            getFunctionTypeForClone(ft, Mode, gutils->getWidth(), nullptr,
+            getFunctionTypeForClone(ft, Mode, gutils->getWidth(), tape ? tape->getType() : nullptr,
                                     argsInverted, false, subretVal, subretType);
         PointerType *fptype = PointerType::getUnqual(FTy);
         newcalled = BuilderZ.CreatePointerCast(newcalled,
@@ -10349,17 +10387,6 @@ public:
     Optional<int> tapeIdx;
     Optional<int> returnIdx;
     Optional<int> differetIdx;
-
-    const AugmentedReturn *subdata = nullptr;
-    if (Mode == DerivativeMode::ReverseModeGradient) {
-      assert(augmentedReturn);
-      if (augmentedReturn) {
-        auto fd = augmentedReturn->subaugmentations.find(&call);
-        if (fd != augmentedReturn->subaugmentations.end()) {
-          subdata = fd->second;
-        }
-      }
-    }
 
     if (modifyPrimal) {
 
