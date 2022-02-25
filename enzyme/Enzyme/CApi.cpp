@@ -379,6 +379,7 @@ LLVMValueRef EnzymeCreateForwardDiff(
     EnzymeLogicRef Logic, LLVMValueRef todiff, CDIFFE_TYPE retType,
     CDIFFE_TYPE *constant_args, size_t constant_args_size,
     EnzymeTypeAnalysisRef TA, uint8_t returnValue, CDerivativeMode mode,
+    uint8_t freeMemory,
     unsigned width, LLVMTypeRef additionalArg, CFnTypeInfo typeInfo,
     uint8_t *_uncacheable_args, size_t uncacheable_args_size,
     EnzymeAugmentedReturnPtr augmented) {
@@ -394,7 +395,7 @@ LLVMValueRef EnzymeCreateForwardDiff(
   }
   return wrap(eunwrap(Logic).CreateForwardDiff(
       cast<Function>(unwrap(todiff)), (DIFFE_TYPE)retType, nconstant_args,
-      eunwrap(TA), returnValue, (DerivativeMode)mode, width,
+      eunwrap(TA), returnValue, (DerivativeMode)mode, freeMemory, width,
       unwrap(additionalArg), eunwrap(typeInfo, cast<Function>(unwrap(todiff))),
       uncacheable_args, eunwrap(augmented)));
 }

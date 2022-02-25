@@ -21,7 +21,7 @@ entry:
 ; Function Attrs: nounwind uwtable
 define dso_local void @test_derivative(double* %x, double* %xp) local_unnamed_addr {
 entry:
-  %0 = tail call double (void (double*)*, ...) @__enzyme_fwdsplit(void (double*)* nonnull @addOneMem, double* %x, double* %xp)
+  %0 = tail call double (void (double*)*, ...) @__enzyme_fwdsplit(void (double*)* nonnull @addOneMem, double* %x, double* %xp, i8* null)
   ret void
 }
 

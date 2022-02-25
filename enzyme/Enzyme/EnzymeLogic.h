@@ -294,6 +294,7 @@ public:
   CreateForwardDiff(llvm::Function *todiff, DIFFE_TYPE retType,
                     const std::vector<DIFFE_TYPE> &constant_args,
                     TypeAnalysis &TA, bool returnValue, DerivativeMode mode,
+                    bool freeMemory,
                     unsigned width, llvm::Type *additionalArg,
                     const FnTypeInfo &typeInfo,
                     const std::map<llvm::Argument *, bool> _uncacheable_args,

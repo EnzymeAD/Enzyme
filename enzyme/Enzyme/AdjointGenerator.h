@@ -10153,6 +10153,7 @@ public:
         newcalled = gutils->Logic.CreateForwardDiff(
             cast<Function>(called), subretType, argsInverted,
             TR.analyzer.interprocedural, /*returnValue*/ subretused, Mode,
+            ((DiffeGradientUtils*)gutils)->FreeMemory,
             gutils->getWidth(), tape ? tape->getType() : nullptr, nextTypeInfo, {}, /*augmented*/subdata);
       } else {
 #if LLVM_VERSION_MAJOR >= 11

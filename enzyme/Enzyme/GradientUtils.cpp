@@ -3639,7 +3639,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
   switch (mode) {
   case DerivativeMode::ForwardMode: {
     Constant *newf =
-        Logic.CreateForwardDiff(fn, retType, types, TA, false, mode, width,
+        Logic.CreateForwardDiff(fn, retType, types, TA, false, mode, /*freeMemory*/true, width,
                                 nullptr, type_args, uncacheable_args, /*augmented*/nullptr);
 
     assert (newf);
@@ -3669,7 +3669,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
         /*shadowReturnUsed*/false,
         type_args, uncacheable_args, /*forceAnonymousTape*/ true, AtomicAdd);
     Constant *newf =
-        Logic.CreateForwardDiff(fn, retType, types, TA, false, mode, width,
+        Logic.CreateForwardDiff(fn, retType, types, TA, false, mode, /*freeMemory*/true, width,
                                 nullptr, type_args, uncacheable_args, /*augmented*/&augdata);
 
     assert (newf);

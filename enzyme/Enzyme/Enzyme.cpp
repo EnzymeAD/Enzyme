@@ -458,7 +458,7 @@ public:
       Value *arg = CI->getArgOperand(i);
 
       if (auto MDName = getMetadataName(arg)) {
-        if (MDName == "enzyme_width") {
+        if (*MDName == "enzyme_width") {
           if (found) {
             EmitFailure("IllegalVectorWidth", CI->getDebugLoc(), CI,
                         "vector width declared more than once",
@@ -495,8 +495,6 @@ public:
                         *CI->getArgOperand(i), " in", *CI);
             return false;
           }
-        } else if (MDName == "enzyme_noret") {
-          returnUsed = false;
         }
       }
     }
@@ -649,6 +647,9 @@ public:
           ty = DIFFE_TYPE::OUT_DIFF;
         } else if (*metaString == "enzyme_const") {
           ty = DIFFE_TYPE::CONSTANT;
+        } else if (*metaString == "enzyme_noret") {
+          returnUsed = false;
+          continue;
         } else if (*metaString == "enzyme_allocated") {
           assert(!sizeOnly);
           ++i;
@@ -822,17 +823,15 @@ public:
     case DerivativeMode::ForwardMode:
       newFunc = Logic.CreateForwardDiff(
           cast<Function>(fn), retType, constants, TA,
-          /*should return*/ false, mode, width,
+          /*should return*/ false, mode, freeMemory, width,
           /*addedType*/ nullptr, type_args, volatile_args,
           /*augmented*/ nullptr);
       break;
     case DerivativeMode::ForwardModeSplit: {
       bool forceAnonymousTape = !sizeOnly && allocatedTapeSize == -1;
-      bool returnUsed = !cast<Function>(fn)->getReturnType()->isVoidTy() &&
-                        !cast<Function>(fn)->getReturnType()->isEmptyTy();
       aug = &Logic.CreateAugmentedPrimal(
           cast<Function>(fn), retType, constants, TA,
-          /*returnUsed*/ returnUsed, /*shadowReturnUsed*/false, type_args, volatile_args,
+          /*returnUsed*/ false, /*shadowReturnUsed*/false, type_args, volatile_args,
           forceAnonymousTape, /*atomicAdd*/ AtomicAdd);
       auto &DL = cast<Function>(fn)->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
@@ -868,7 +867,7 @@ public:
       }
       newFunc = Logic.CreateForwardDiff(
           cast<Function>(fn), retType, constants, TA,
-          /*should return*/ false, mode, width,
+          /*should return*/ false, mode, freeMemory, width,
           /*addedType*/ tapeType, type_args, volatile_args, aug);
       break;
     }

@@ -3777,7 +3777,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 Function *EnzymeLogic::CreateForwardDiff(
     Function *todiff, DIFFE_TYPE retType,
     const std::vector<DIFFE_TYPE> &constant_args, TypeAnalysis &TA,
-    bool returnUsed, DerivativeMode mode, unsigned width,
+    bool returnUsed, DerivativeMode mode, bool freeMemory, unsigned width,
     llvm::Type *additionalArg, const FnTypeInfo &oldTypeInfo_,
     const std::map<Argument *, bool> _uncacheable_args,
     const AugmentedReturn *augmenteddata,
@@ -3974,6 +3974,8 @@ Function *EnzymeLogic::CreateForwardDiff(
 
   insert_or_assign2<ForwardCacheKey, Function *>(ForwardCachedFunctions, tup,
                                                  gutils->newFunc);
+
+  gutils->FreeMemory = freeMemory;
 
   const SmallPtrSet<BasicBlock *, 4> guaranteedUnreachable =
       getGuaranteedUnreachable(gutils->oldFunc);
