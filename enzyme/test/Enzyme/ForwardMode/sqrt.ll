@@ -9,7 +9,7 @@ entry:
 
 define double @test_derivative(double %x) {
 entry:
-  %0 = tail call double (double (double)*, ...) @__enzyme_fwdsplit(double (double)* nonnull @tester, double %x, double 1.0)
+  %0 = tail call double (double (double)*, ...) @__enzyme_fwddiff(double (double)* nonnull @tester, double %x, double 1.0)
   ret double %0
 }
 
@@ -17,7 +17,7 @@ entry:
 declare double @llvm.sqrt.f64(double)
 
 ; Function Attrs: nounwind
-declare double @__enzyme_fwdsplit(double (double)*, ...)
+declare double @__enzyme_fwddiff(double (double)*, ...)
 
 ; CHECK: define double @test_derivative(double %x)
 ; CHECK-NEXT: entry:

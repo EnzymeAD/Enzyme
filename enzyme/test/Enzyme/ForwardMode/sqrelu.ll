@@ -36,12 +36,12 @@ declare double @llvm.sqrt.f64(double) #1
 ; Function Attrs: nounwind uwtable
 define dso_local double @dsqrelu(double %x) local_unnamed_addr #2 {
 entry:
-  %0 = tail call double (double (double)*, ...) @__enzyme_fwdsplit(double (double)* nonnull @sqrelu, double %x, double 1.0)
+  %0 = tail call double (double (double)*, ...) @__enzyme_fwddiff(double (double)* nonnull @sqrelu, double %x, double 1.0)
   ret double %0
 }
 
 ; Function Attrs: nounwind
-declare double @__enzyme_fwdsplit(double (double)*, ...) #3
+declare double @__enzyme_fwddiff(double (double)*, ...) #3
 
 attributes #0 = { nounwind readnone uwtable }
 attributes #1 = { nounwind readnone speculatable }

@@ -23,12 +23,12 @@ for.body:                                         ; preds = %entry, %for.body
 ; Function Attrs: nounwind uwtable
 define dso_local double @dsumsquare(double* %x, double* %xp, i64 %n) local_unnamed_addr #1 {
 entry:
-  %0 = tail call double (double (double*, i64)*, ...) @__enzyme_fwdsplit(double (double*, i64)* nonnull @sumsquare, double* %x, double* %xp, i64 %n)
+  %0 = tail call double (double (double*, i64)*, ...) @__enzyme_fwddiff(double (double*, i64)* nonnull @sumsquare, double* %x, double* %xp, i64 %n)
   ret double %0
 }
 
 ; Function Attrs: nounwind
-declare double @__enzyme_fwdsplit(double (double*, i64)*, ...) #2
+declare double @__enzyme_fwddiff(double (double*, i64)*, ...) #2
 
 attributes #0 = { norecurse nounwind readonly uwtable }
 attributes #1 = { nounwind uwtable }

@@ -42,11 +42,11 @@ entry:
 ; Function Attrs: noinline nounwind uwtable
 define dso_local double @dsumsquare(double* %x, double* %xp) local_unnamed_addr #1 {
 entry:
-  %call = tail call fast double @__enzyme_fwdsplit(i8* bitcast (void (double*)* @f to i8*), double* %x, double* %xp)
+  %call = tail call fast double @__enzyme_fwddiff(i8* bitcast (void (double*)* @f to i8*), double* %x, double* %xp)
   ret double %call
 }
 
-declare dso_local double @__enzyme_fwdsplit(i8*, double*, double*) local_unnamed_addr
+declare dso_local double @__enzyme_fwddiff(i8*, double*, double*) local_unnamed_addr
 
 
 ; CHECK: define internal {{(dso_local )?}}void @fwddiffef(double* nocapture %x, double* nocapture %"x'")

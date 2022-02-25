@@ -60,7 +60,7 @@ for.cond.cleanup:                                 ; preds = %for.cond.cleanup3
 
 define void @main(double* %a, double* %da, i32* %N) {
 entry:
-  %call = call double (i8*, ...) @__enzyme_fwdsplit(i8* bitcast (double (double*, i32*)* @alldiv to i8*), double* nonnull %a, double* nonnull %da, i32* nonnull %N)
+  %call = call double (i8*, ...) @__enzyme_fwddiff(i8* bitcast (double (double*, i32*)* @alldiv to i8*), double* nonnull %a, double* nonnull %da, i32* nonnull %N)
   ret void
 }
 
@@ -70,7 +70,7 @@ declare i8* @llvm.stacksave() #3
 ; Function Attrs: argmemonly nounwind
 declare void @llvm.memset.p0i8.i64(i8* nocapture writeonly, i8, i64, i1) #1
 
-declare dso_local double @__enzyme_fwdsplit(i8*, ...) local_unnamed_addr #4
+declare dso_local double @__enzyme_fwddiff(i8*, ...) local_unnamed_addr #4
 
 ; Function Attrs: nounwind
 declare dso_local i32 @printf(i8* nocapture readonly, ...) local_unnamed_addr #5

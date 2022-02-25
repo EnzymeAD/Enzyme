@@ -1,6 +1,6 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -early-cse -instcombine -S | FileCheck %s
 
-declare {float, float, float} @__enzyme_fwdsplit({float, float, float} (<4 x float>)*, <4 x float>, <4 x float>)
+declare {float, float, float} @__enzyme_fwddiff({float, float, float} (<4 x float>)*, <4 x float>, <4 x float>)
 
 define {float, float, float} @square(<4 x float> %x) {
 entry:
@@ -19,7 +19,7 @@ entry:
 
 define {float, float, float} @dsquare(<4 x float> %x) {
 entry:
-  %call = tail call {float, float, float} @__enzyme_fwdsplit({float, float, float} (<4 x float>)* @square, <4 x float> %x, <4 x float> <float 1.0, float 1.0, float 1.0, float 1.0>)
+  %call = tail call {float, float, float} @__enzyme_fwddiff({float, float, float} (<4 x float>)* @square, <4 x float> %x, <4 x float> <float 1.0, float 1.0, float 1.0, float 1.0>)
   ret {float, float, float} %call
 }
 

@@ -28,12 +28,12 @@ entry:
 ; Function Attrs: noinline nounwind uwtable
 define dso_local double @derivative(double %x) local_unnamed_addr #1 {
 entry:
-  %0 = tail call double (double (double, i64)*, ...) @__enzyme_fwdsplit(double (double, i64)* nonnull @mulglobal, double %x, double 1.0, i64 0)
+  %0 = tail call double (double (double, i64)*, ...) @__enzyme_fwddiff(double (double, i64)* nonnull @mulglobal, double %x, double 1.0, i64 0)
   ret double %0
 }
 
 ; Function Attrs: nounwind
-declare double @__enzyme_fwdsplit(double (double, i64)*, ...) #2
+declare double @__enzyme_fwddiff(double (double, i64)*, ...) #2
 
 ; Function Attrs: nounwind uwtable
 define dso_local void @main(i32 %argc, i8** nocapture readonly %argv) local_unnamed_addr #3 {

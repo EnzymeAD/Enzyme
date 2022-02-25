@@ -6,14 +6,14 @@
 
 ; using namespace std;
 
-; extern array<double,3> __enzyme_fwdsplit(void*, ...);
+; extern array<double,3> __enzyme_fwddiff(void*, ...);
 
 ; array<double,3> square(double x) {
 ;     return {x * x, x * x * x, x};
 ; }
 ; array<double,3> dsquare(double x) {
 ;     // This returns the derivative of square or 2 * x
-;     return __enzyme_fwdsplit((void*)square, x, 1.0);
+;     return __enzyme_fwddiff((void*)square, x, 1.0);
 ; }
 ; int main() {
 ;     printf("%f \n", dsquare(3)[0]);
@@ -39,18 +39,18 @@ entry:
 
 define dso_local void @_Z7dsquared(%"struct.std::array"* noalias sret %agg.result, double %x) local_unnamed_addr #1 {
 entry:
-  tail call void (%"struct.std::array"*, i8*, ...) @_Z16__enzyme_fwdsplitPvz(%"struct.std::array"* sret %agg.result, i8* bitcast (void (%"struct.std::array"*, double)* @_Z6squared to i8*), double %x, double 1.000000e+00)
+  tail call void (%"struct.std::array"*, i8*, ...) @_Z16__enzyme_fwddiffPvz(%"struct.std::array"* sret %agg.result, i8* bitcast (void (%"struct.std::array"*, double)* @_Z6squared to i8*), double %x, double 1.000000e+00)
   ret void
 }
 
-declare dso_local void @_Z16__enzyme_fwdsplitPvz(%"struct.std::array"* sret, i8*, ...) local_unnamed_addr #2
+declare dso_local void @_Z16__enzyme_fwddiffPvz(%"struct.std::array"* sret, i8*, ...) local_unnamed_addr #2
 
 define dso_local i32 @main() local_unnamed_addr #3 {
 entry:
   %ref.tmp = alloca %"struct.std::array", align 8
   %0 = bitcast %"struct.std::array"* %ref.tmp to i8*
   call void @llvm.lifetime.start.p0i8(i64 24, i8* nonnull %0) #6
-  call void (%"struct.std::array"*, i8*, ...) @_Z16__enzyme_fwdsplitPvz(%"struct.std::array"* nonnull sret %ref.tmp, i8* bitcast (void (%"struct.std::array"*, double)* @_Z6squared to i8*), double 3.000000e+00, double 1.000000e+00)
+  call void (%"struct.std::array"*, i8*, ...) @_Z16__enzyme_fwddiffPvz(%"struct.std::array"* nonnull sret %ref.tmp, i8* bitcast (void (%"struct.std::array"*, double)* @_Z6squared to i8*), double 3.000000e+00, double 1.000000e+00)
   %arrayidx.i.i = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %ref.tmp, i64 0, i32 0, i64 0
   %1 = load double, double* %arrayidx.i.i, align 8
   %call1 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([5 x i8], [5 x i8]* @.str, i64 0, i64 0), double %1)

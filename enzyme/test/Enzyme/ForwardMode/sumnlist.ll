@@ -61,12 +61,12 @@ declare dso_local noalias i8* @malloc(i64) local_unnamed_addr #2
 ; Function Attrs: noinline nounwind uwtable
 define dso_local double @derivative(%struct.n* %x, %struct.n* %xp, i64 %n) {
 entry:
-  %0 = tail call double (double (%struct.n*, i64)*, ...) @__enzyme_fwdsplit(double (%struct.n*, i64)* nonnull @sum_list, %struct.n* %x, %struct.n* %xp, i64 %n)
+  %0 = tail call double (double (%struct.n*, i64)*, ...) @__enzyme_fwddiff(double (%struct.n*, i64)* nonnull @sum_list, %struct.n* %x, %struct.n* %xp, i64 %n)
   ret double %0
 }
 
 ; Function Attrs: nounwind
-declare double @__enzyme_fwdsplit(double (%struct.n*, i64)*, ...) #4
+declare double @__enzyme_fwddiff(double (%struct.n*, i64)*, ...) #4
 
 
 attributes #0 = { noinline norecurse nounwind readonly uwtable "correctly-rounded-divide-sqrt-fp-math"="false" "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-infs-fp-math"="true" "no-jump-tables"="false" "no-nans-fp-math"="true" "no-signed-zeros-fp-math"="true" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+fxsr,+mmx,+sse,+sse2,+x87" "unsafe-fp-math"="true" "use-soft-float"="false" }

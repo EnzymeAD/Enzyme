@@ -1483,7 +1483,6 @@ static FnTypeInfo preventTypeAnalysisLoops(const FnTypeInfo &oldTypeInfo_,
 void restoreCache(DiffeGradientUtils *gutils,
     std::map<std::pair<Instruction *, CacheType>, int> &mapping,
     const SmallPtrSetImpl<BasicBlock *> &guaranteedUnreachable) {
-  if (key.mode != DerivativeMode::ReverseModeCombined) {
     // One must use this temporary map to first create all the replacements
     // prior to actually replacing to ensure that getSubLimits has the same
     // behavior and unwrap behavior for all replacements.
@@ -1635,7 +1634,6 @@ void restoreCache(DiffeGradientUtils *gutils,
           }
         }
     }
-  }
 }
 
 //! return structtype if recursive function
@@ -4058,6 +4056,8 @@ Function *EnzymeLogic::CreateForwardDiff(
 
   AdjointGenerator<const AugmentedReturn *> *maker;
   std::map<std::pair<Instruction *, CacheType>, int> mapping;
+
+  std::unique_ptr<const std::map<Instruction *, bool>> can_modref_map;
   if (mode == DerivativeMode::ForwardModeSplit) {
 
     std::map<Argument *, bool> _uncacheable_argsPP;
@@ -4081,11 +4081,10 @@ Function *EnzymeLogic::CreateForwardDiff(
         _uncacheable_argsPP, mode, omp);
     const std::map<CallInst *, const std::map<Argument *, bool>>
         uncacheable_args_map = CA.compute_uncacheable_args_for_callsites();
+    can_modref_map = std::make_unique<const std::map<Instruction *, bool>>(CA.compute_uncacheable_load_map());
+    gutils->can_modref_map = can_modref_map.get();
 
-    const std::map<Instruction *, bool> can_modref_map =
-        CA.compute_uncacheable_load_map();
-    gutils->can_modref_map = &can_modref_map;
-
+    mapping = augmenteddata->tapeIndices;
     auto getIndex = [&](Instruction *I, CacheType u) -> unsigned {
       return gutils->getIndex(std::make_pair(I, u), mapping);
     };

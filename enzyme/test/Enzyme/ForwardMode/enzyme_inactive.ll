@@ -9,14 +9,14 @@ entry:
 
 define double @test_derivative(double %x) {
 entry:
-  %0 = tail call double (double (double)*, ...) @__enzyme_fwdsplit(double (double)* nonnull @tester, double %x, double 1.0)
+  %0 = tail call double (double (double)*, ...) @__enzyme_fwddiff(double (double)* nonnull @tester, double %x, double 1.0)
   ret double %0
 }
 
 declare void @myprint(double %x) #0
 
 ; Function Attrs: nounwind
-declare double @__enzyme_fwdsplit(double (double)*, ...)
+declare double @__enzyme_fwddiff(double (double)*, ...)
 
 attributes #0 = { "enzyme_inactive" }
 

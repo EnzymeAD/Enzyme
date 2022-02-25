@@ -11,11 +11,11 @@ entry:
 
 define { double, double } @dsquared(double %x) {
 entry:
-  %call = call { double, double } (i8*, ...) @__enzyme_fwdsplit(i8* bitcast ({ double, double } (double)* @squared to i8*), double %x, double 1.0)
+  %call = call { double, double } (i8*, ...) @__enzyme_fwddiff(i8* bitcast ({ double, double } (double)* @squared to i8*), double %x, double 1.0)
   ret { double, double } %call
 }
 
-declare { double, double } @__enzyme_fwdsplit(i8*, ...)
+declare { double, double } @__enzyme_fwddiff(i8*, ...)
 
 
 

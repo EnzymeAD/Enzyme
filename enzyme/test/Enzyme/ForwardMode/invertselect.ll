@@ -13,11 +13,11 @@ entry:
 
 define void @dman_max(float* %a, float* %da, float* %b, float* %db) {
 entry:
-  call float (...) @__enzyme_fwdsplit.f64(float (float*, float*)* @man_max, float* %a, float* %da, float* %b, float* %db)
+  call float (...) @__enzyme_fwddiff.f64(float (float*, float*)* @man_max, float* %a, float* %da, float* %b, float* %db)
   ret void
 }
 
-declare float @__enzyme_fwdsplit.f64(...)
+declare float @__enzyme_fwddiff.f64(...)
 
 attributes #0 = { noinline }
 

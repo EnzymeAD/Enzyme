@@ -17,11 +17,11 @@ entry:
 
 define double @dsquare(double %x) {
 entry:
-  %0 = tail call double (double (double)*, ...) @__enzyme_fwdsplit(double (double)* nonnull @square, double %x, double 1.0)
+  %0 = tail call double (double (double)*, ...) @__enzyme_fwddiff(double (double)* nonnull @square, double %x, double 1.0)
   ret double %0
 }
 
-declare double @__enzyme_fwdsplit(double (double)*, ...) 
+declare double @__enzyme_fwddiff(double (double)*, ...) 
 
 ; CHECK: define internal {{(dso_local )?}}double @fwddiffesquare(double %x, double %"x'")
 ; CHECK-NEXT: entry:

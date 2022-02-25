@@ -1,6 +1,6 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
 
-; extern double __enzyme_fwdsplit(double (double), double, double);
+; extern double __enzyme_fwddiff(double (double), double, double);
 
 ; __attribute__((noinline))
 ; double add2(double x) {
@@ -13,7 +13,7 @@
 ; }
 
 ; double dadd4(double x) {
-;     return __enzyme_fwdsplit(add4, x, 1.0);
+;     return __enzyme_fwddiff(add4, x, 1.0);
 ; }
 
 
@@ -32,11 +32,11 @@ entry:
 
 define dso_local double @dadd4(double %x) {
 entry:
-  %call = call double @__enzyme_fwdsplit(double (double)* nonnull @add4, double %x, double 1.000000e+00)
+  %call = call double @__enzyme_fwddiff(double (double)* nonnull @add4, double %x, double 1.000000e+00)
   ret double %call
 }
 
-declare dso_local double @__enzyme_fwdsplit(double (double)*, double, double)
+declare dso_local double @__enzyme_fwddiff(double (double)*, double, double)
 
 
 

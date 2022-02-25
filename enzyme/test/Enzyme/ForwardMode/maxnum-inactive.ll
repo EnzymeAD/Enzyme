@@ -9,7 +9,7 @@ entry:
 
 define double @test_derivative(double %x, double %y) {
 entry:
-  %0 = tail call double (double (double, double)*, ...) @__enzyme_fwdsplit(double (double, double)* nonnull @tester, double %x, double 1.0, metadata !"enzyme_const", double %y)
+  %0 = tail call double (double (double, double)*, ...) @__enzyme_fwddiff(double (double, double)* nonnull @tester, double %x, double 1.0, metadata !"enzyme_const", double %y)
   ret double %0
 }
 
@@ -17,7 +17,7 @@ entry:
 declare double @llvm.maxnum.f64(double, double)
 
 ; Function Attrs: nounwind
-declare double @__enzyme_fwdsplit(double (double, double)*, ...)
+declare double @__enzyme_fwddiff(double (double, double)*, ...)
 
 
 ; CHECK: define internal double @fwddiffetester(double %x, double %"x'", double %y)

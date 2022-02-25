@@ -11,12 +11,12 @@ entry:
 
 define <2 x double> @test_derivative(<2 x double> %x, <2 x double> %dx) {
 entry:
-  %0 = tail call <2 x double> (<2 x double> (<2 x double>)*, ...) @__enzyme_fwdsplit(<2 x double> (<2 x double>)* nonnull @tester, <2 x double> %x, <2 x double> %dx)
+  %0 = tail call <2 x double> (<2 x double> (<2 x double>)*, ...) @__enzyme_fwddiff(<2 x double> (<2 x double>)* nonnull @tester, <2 x double> %x, <2 x double> %dx)
   ret <2 x double> %0
 }
 
 ; Function Attrs: nounwind
-declare <2 x double> @__enzyme_fwdsplit(<2 x double> (<2 x double>)*, ...)
+declare <2 x double> @__enzyme_fwddiff(<2 x double> (<2 x double>)*, ...)
 
 ; CHECK: define internal <2 x double> @fwddiffetester(<2 x double> %x, <2 x double> %"x'")
 ; CHECK-NEXT: entry:

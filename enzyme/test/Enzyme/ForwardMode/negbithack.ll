@@ -11,12 +11,12 @@ entry:
 
 define double @test_derivative(double %x, double %dx) {
 entry:
-  %0 = tail call double (double (double)*, ...) @__enzyme_fwdsplit(double (double)* nonnull @tester, double %x, double %dx)
+  %0 = tail call double (double (double)*, ...) @__enzyme_fwddiff(double (double)* nonnull @tester, double %x, double %dx)
   ret double %0
 }
 
 ; Function Attrs: nounwind
-declare double @__enzyme_fwdsplit(double (double)*, ...)
+declare double @__enzyme_fwddiff(double (double)*, ...)
 
 ; CHECK: define internal double @fwddiffetester(double %x, double %"x'")
 ; CHECK-NEXT: entry:

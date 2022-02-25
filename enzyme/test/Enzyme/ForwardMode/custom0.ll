@@ -20,11 +20,11 @@ entry:
 ; Function Attrs: nounwind uwtable
 define double @caller(double %x, double %dx) {
 entry:
-  %call = call double (i8*, ...) @__enzyme_fwdsplit(i8* bitcast (double (double)* @f to i8*), double %x, double %dx)
+  %call = call double (i8*, ...) @__enzyme_fwddiff(i8* bitcast (double (double)* @f to i8*), double %x, double %dx)
   ret double %call
 }
 
-declare dso_local double @__enzyme_fwdsplit(i8*, ...)
+declare dso_local double @__enzyme_fwddiff(i8*, ...)
 
 attributes #0 = { norecurse nounwind readnone }
 

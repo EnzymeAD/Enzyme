@@ -18,7 +18,7 @@ entry:
 ; Function Attrs: nounwind uwtable
 define i32 @main() {
 entry:
-  %call3.4 = tail call double (i8*, ...) @__enzyme_fwdsplit(i8* bitcast (double (double)* @fun2 to i8*), double 2.000000e+00, double 1.0)
+  %call3.4 = tail call double (i8*, ...) @__enzyme_fwddiff(i8* bitcast (double (double)* @fun2 to i8*), double 2.000000e+00, double 1.0)
   %call4.4 = tail call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([20 x i8], [20 x i8]* @.str, i64 0, i64 0), double %call3.4, i32 2)
   ret i32 0
 }
@@ -26,7 +26,7 @@ entry:
 ; Function Attrs: nounwind
 declare dso_local i32 @printf(i8* nocapture readonly, ...)
 
-declare double @__enzyme_fwdsplit(i8*, ...)
+declare double @__enzyme_fwddiff(i8*, ...)
 
 attributes #0 = { norecurse nounwind readnone uwtable "correctly-rounded-divide-sqrt-fp-math"="false" "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-infs-fp-math"="false" "no-jump-tables"="false" "no-nans-fp-math"="false" "no-signed-zeros-fp-math"="false" "no-trapping-math"="false" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+fxsr,+mmx,+sse,+sse2,+x87" "unsafe-fp-math"="false" "use-soft-float"="false" }
 attributes #1 = { nounwind uwtable "correctly-rounded-divide-sqrt-fp-math"="false" "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-infs-fp-math"="false" "no-jump-tables"="false" "no-nans-fp-math"="false" "no-signed-zeros-fp-math"="false" "no-trapping-math"="false" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+fxsr,+mmx,+sse,+sse2,+x87" "unsafe-fp-math"="false" "use-soft-float"="false" }

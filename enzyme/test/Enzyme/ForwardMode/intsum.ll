@@ -25,11 +25,11 @@ do.end:                                           ; preds = %do.body
 ; Function Attrs: nounwind uwtable
 define dso_local void @dsum(float* %x, float* %xp, float* %n, float* %np) local_unnamed_addr #1 {
 entry:
-  %0 = tail call double (void (float*, float*)*, ...) @__enzyme_fwdsplit(void (float*, float*)* nonnull @sum, float* %x, float* %xp, float* %n, float* %np)
+  %0 = tail call double (void (float*, float*)*, ...) @__enzyme_fwddiff(void (float*, float*)* nonnull @sum, float* %x, float* %xp, float* %n, float* %np)
   ret void
 }
 
-declare double @__enzyme_fwdsplit(void (float*, float*)*, ...) #2
+declare double @__enzyme_fwddiff(void (float*, float*)*, ...) #2
 
 
 ; CHECK: define internal void @fwddiffesum(float* %array, float* %"array'", float* %ret, float* %"ret'")

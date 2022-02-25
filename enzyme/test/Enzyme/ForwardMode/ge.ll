@@ -45,11 +45,11 @@ for.body:                                         ; preds = %entry, %for.body
 ; Function Attrs: nounwind uwtable
 define dso_local void @ad(double* %in, double* %din, i32 %N) local_unnamed_addr #1 {
 entry:
-  tail call double (i8*, ...) @__enzyme_fwdsplit(i8* bitcast (double (double*, i32)* @cache to i8*), double* %in, double* %din, i32 %N) #3
+  tail call double (i8*, ...) @__enzyme_fwddiff(i8* bitcast (double (double*, i32)* @cache to i8*), double* %in, double* %din, i32 %N) #3
   ret void
 }
 
-declare dso_local double @__enzyme_fwdsplit(i8*, ...) local_unnamed_addr #2
+declare dso_local double @__enzyme_fwddiff(i8*, ...) local_unnamed_addr #2
 
 attributes #0 = { norecurse nounwind uwtable "correctly-rounded-divide-sqrt-fp-math"="false" "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-infs-fp-math"="false" "no-jump-tables"="false" "no-nans-fp-math"="false" "no-signed-zeros-fp-math"="false" "no-trapping-math"="false" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+fxsr,+mmx,+sse,+sse2,+x87" "unsafe-fp-math"="false" "use-soft-float"="false" }
 attributes #1 = { nounwind uwtable "correctly-rounded-divide-sqrt-fp-math"="false" "disable-tail-calls"="false" "less-precise-fpmad"="false" "no-frame-pointer-elim"="false" "no-infs-fp-math"="false" "no-jump-tables"="false" "no-nans-fp-math"="false" "no-signed-zeros-fp-math"="false" "no-trapping-math"="false" "stack-protector-buffer-size"="8" "target-cpu"="x86-64" "target-features"="+fxsr,+mmx,+sse,+sse2,+x87" "unsafe-fp-math"="false" "use-soft-float"="false" }

@@ -20,11 +20,11 @@ entry:
   store double %x, double* %x.addr, align 8
   %0 = load i32, i32* @enzyme_dupnoneed, align 4
   %1 = load double, double* %x.addr, align 8
-  %call = call double (i8*, ...) @__enzyme_fwdsplit(i8* bitcast (double (double,i64)* @f to i8*), i32 %0, double %1, double 1.000000e+00, i64 1)
+  %call = call double (i8*, ...) @__enzyme_fwddiff(i8* bitcast (double (double,i64)* @f to i8*), i32 %0, double %1, double 1.000000e+00, i64 1)
   ret double %call
 }
 
-declare dso_local double @__enzyme_fwdsplit(i8*, ...)
+declare dso_local double @__enzyme_fwddiff(i8*, ...)
 
 
 ; CHECK: define internal double @fwddiffef(double %x, double %"x'", i64 %arg)

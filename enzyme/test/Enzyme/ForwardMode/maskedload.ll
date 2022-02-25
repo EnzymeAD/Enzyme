@@ -16,11 +16,11 @@ declare void @llvm.memcpy.p0i8.p0i8.i64(i8* nocapture writeonly, i8* nocapture r
 ; Function Attrs: nounwind uwtable
 define <2 x double> @dloader(i8* %ptr, i8* %dptr, <2 x i1> %mask, <2 x double> %other, <2 x double> %dother) {
 entry:
-  %res = tail call <2 x double> (...) @__enzyme_fwdsplit.f64(<2 x double> (<2 x double>*, <2 x i1>, <2 x double>)* @loader, i8* %ptr, i8* %dptr, <2 x i1> %mask, <2 x double> %other, <2 x double> %dother)
+  %res = tail call <2 x double> (...) @__enzyme_fwddiff.f64(<2 x double> (<2 x double>*, <2 x i1>, <2 x double>)* @loader, i8* %ptr, i8* %dptr, <2 x i1> %mask, <2 x double> %other, <2 x double> %dother)
   ret <2 x double> %res
 }
 
-declare <2 x double> @__enzyme_fwdsplit.f64(...) 
+declare <2 x double> @__enzyme_fwddiff.f64(...) 
 
 ; CHECK: define internal <2 x double> @fwddiffeloader(<2 x double>* %ptr, <2 x double>* %"ptr'", <2 x i1> %mask, <2 x double> %other, <2 x double> %"other'")
 ; CHECK-NEXT: entry:

@@ -8,11 +8,11 @@ entry:
 
 define double @test_derivative(float %x) {
 entry:
-  %0 = tail call double (double (float)*, ...) @__enzyme_fwdsplit(double (float)* nonnull @tester, float %x, float 1.0)
+  %0 = tail call double (double (float)*, ...) @__enzyme_fwddiff(double (float)* nonnull @tester, float %x, float 1.0)
   ret double %0
 }
 
-declare double @__enzyme_fwdsplit(double (float)*, ...)
+declare double @__enzyme_fwddiff(double (float)*, ...)
 
 ; CHECK: define internal {{(dso_local )?}}double @fwddiffetester(float %x, float %"x'")
 ; CHECK-NEXT: entry:

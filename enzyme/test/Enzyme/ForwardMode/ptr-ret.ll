@@ -20,11 +20,11 @@ entry:
 
 define dso_local double @_Z7dsquared(double %x) {
 entry:
-  %call = call double (...) @_Z16__enzyme_fwdsplitz(i8* bitcast (double (double)* @_Z6squared to i8*), double %x, double 1.000000e+00)
+  %call = call double (...) @_Z16__enzyme_fwddiffz(i8* bitcast (double (double)* @_Z6squared to i8*), double %x, double 1.000000e+00)
   ret double %call
 }
 
-declare dso_local double @_Z16__enzyme_fwdsplitz(...)
+declare dso_local double @_Z16__enzyme_fwddiffz(...)
 
 
 

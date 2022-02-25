@@ -15,11 +15,11 @@ declare void @llvm.memcpy.p0i8.p0i8.i64(i8* nocapture writeonly, i8* nocapture r
 ; Function Attrs: nounwind uwtable
 define dso_local void @dmemcpy_ptr(double** %dst, double** %dstp, double** %src, double** %srcp, i64 %n) local_unnamed_addr #0 {
 entry:
-  %0 = tail call double (...) @__enzyme_fwdsplit.f64(void (double**, double**, i64)* nonnull @memcpy_ptr, double** %dst, double** %dstp, double** %src, double** %srcp, i64 %n) #3
+  %0 = tail call double (...) @__enzyme_fwddiff.f64(void (double**, double**, i64)* nonnull @memcpy_ptr, double** %dst, double** %dstp, double** %src, double** %srcp, i64 %n) #3
   ret void
 }
 
-declare double @__enzyme_fwdsplit.f64(...) local_unnamed_addr
+declare double @__enzyme_fwddiff.f64(...) local_unnamed_addr
 
 
 attributes #0 = { nounwind uwtable }

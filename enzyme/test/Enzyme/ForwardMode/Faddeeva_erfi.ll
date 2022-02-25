@@ -10,12 +10,12 @@ entry:
 
 define { double, double } @test_derivative({ double, double } %x) {
 entry:
-  %0 = tail call { double, double } ({ double, double } ({ double, double })*, ...) @__enzyme_fwdsplit({ double, double } ({ double, double })* nonnull @tester, { double, double } %x, { double, double } { double 1.0, double 1.0 })
+  %0 = tail call { double, double } ({ double, double } ({ double, double })*, ...) @__enzyme_fwddiff({ double, double } ({ double, double })* nonnull @tester, { double, double } %x, { double, double } { double 1.0, double 1.0 })
   ret { double, double } %0
 }
 
 ; Function Attrs: nounwind
-declare { double, double } @__enzyme_fwdsplit({ double, double } ({ double, double })*, ...)
+declare { double, double } @__enzyme_fwddiff({ double, double } ({ double, double })*, ...)
 
 
 ; CHECK: define internal { double, double } @fwddiffetester({ double, double } %in, { double, double } %"in'")
