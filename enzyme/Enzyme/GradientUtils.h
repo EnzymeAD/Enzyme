@@ -1143,6 +1143,7 @@ public:
   CreateFromClone(EnzymeLogic &Logic, Function *todiff, TargetLibraryInfo &TLI,
                   TypeAnalysis &TA, DIFFE_TYPE retType,
                   const std::vector<DIFFE_TYPE> &constant_args, bool returnUsed,
+                  bool shadowReturnUsed,
                   std::map<AugmentedStruct, int> &returnMapping, bool omp);
 
 #if LLVM_VERSION_MAJOR >= 10

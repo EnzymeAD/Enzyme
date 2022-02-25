@@ -436,7 +436,7 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
 EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
     EnzymeLogicRef Logic, LLVMValueRef todiff, CDIFFE_TYPE retType,
     CDIFFE_TYPE *constant_args, size_t constant_args_size,
-    EnzymeTypeAnalysisRef TA, uint8_t returnUsed, CFnTypeInfo typeInfo,
+    EnzymeTypeAnalysisRef TA, uint8_t returnUsed, uint8_t shadowReturnUsed, CFnTypeInfo typeInfo,
     uint8_t *_uncacheable_args, size_t uncacheable_args_size,
     uint8_t forceAnonymousTape, uint8_t AtomicAdd) {
 
@@ -452,7 +452,7 @@ EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
   }
   return ewrap(eunwrap(Logic).CreateAugmentedPrimal(
       cast<Function>(unwrap(todiff)), (DIFFE_TYPE)retType, nconstant_args,
-      eunwrap(TA), returnUsed,
+      eunwrap(TA), returnUsed, shadowReturnUsed,
       eunwrap(typeInfo, cast<Function>(unwrap(todiff))), uncacheable_args,
       forceAnonymousTape, AtomicAdd));
 }

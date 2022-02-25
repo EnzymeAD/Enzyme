@@ -4134,7 +4134,8 @@ public:
       if (called) {
         subdata = &gutils->Logic.CreateAugmentedPrimal(
             cast<Function>(called), subretType, argsInverted,
-            TR.analyzer.interprocedural, /*return is used*/ false, nextTypeInfo,
+            TR.analyzer.interprocedural, /*return is used*/ false, /*shadowReturnUsed*/ false,
+            nextTypeInfo,
             uncacheable_args, false, /*AtomicAdd*/ true,
             /*OpenMP*/ true);
         if (Mode == DerivativeMode::ReverseModePrimal) {
@@ -7735,6 +7736,7 @@ public:
         subretused = true;
       }
     }
+    bool shadowReturnUsed = false;
 
     DIFFE_TYPE subretType;
     if (gutils->isConstantValue(orig)) {
@@ -7743,13 +7745,15 @@ public:
       if (Mode == DerivativeMode::ForwardMode ||
           Mode == DerivativeMode::ForwardModeSplit) {
         subretType = DIFFE_TYPE::DUP_ARG;
+        shadowReturnUsed = true;
       } else {
         if (!orig->getType()->isFPOrFPVectorTy() &&
             TR.query(orig).Inner0().isPossiblePointer()) {
           if (is_value_needed_in_reverse<ValueType::Shadow>(
-                  TR, gutils, orig, Mode, oldUnreachable))
+                  TR, gutils, orig, Mode, oldUnreachable)) {
             subretType = DIFFE_TYPE::DUP_ARG;
-          else
+            shadowReturnUsed = true;
+          } else
             subretType = DIFFE_TYPE::CONSTANT;
         } else {
           subretType = DIFFE_TYPE::OUT_DIFF;
@@ -9994,6 +9998,7 @@ public:
           return;
         }
       }
+
       // If we need this value and it is illegal to recompute it (it writes or
       // may load uncacheable data)
       //    Store and reload it
@@ -10013,8 +10018,9 @@ public:
       // pass), erase it
       //  Any uses of it should be handled by the case above so it is safe to
       //  RAUW
-      if (orig->mayWriteToMemory() &&
-          Mode == DerivativeMode::ReverseModeGradient) {
+      if (orig->mayWriteToMemory() && (
+          Mode == DerivativeMode::ReverseModeGradient ||
+          Mode == DerivativeMode::ForwardModeSplit)) {
         eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
         return;
       }
@@ -10435,6 +10441,7 @@ public:
           subdata = &gutils->Logic.CreateAugmentedPrimal(
               cast<Function>(called), subretType, argsInverted,
               TR.analyzer.interprocedural, /*return is used*/ subretused,
+              shadowReturnUsed,
               nextTypeInfo, uncacheable_args, false, gutils->AtomicAdd);
           if (Mode == DerivativeMode::ReverseModePrimal) {
             assert(augmentedReturn);
@@ -10756,12 +10763,8 @@ public:
     IRBuilder<> Builder2(call.getParent());
     getReverseBuilder(Builder2);
 
-    bool retUsed = replaceFunction && subretused;
     Value *newcalled = nullptr;
 
-    bool subdretptr = (subretType == DIFFE_TYPE::DUP_ARG ||
-                       subretType == DIFFE_TYPE::DUP_NONEED) &&
-                      replaceFunction; // && (call.getNumUses() != 0);
     DerivativeMode subMode = (replaceFunction || !modifyPrimal)
                                  ? DerivativeMode::ReverseModeCombined
                                  : DerivativeMode::ReverseModeGradient;
@@ -10771,8 +10774,8 @@ public:
                             .retType = subretType,
                             .constant_args = argsInverted,
                             .uncacheable_args = uncacheable_args,
-                            .returnUsed = retUsed,
-                            .shadowReturnUsed = subdretptr,
+                            .returnUsed = replaceFunction && subretused,
+                            .shadowReturnUsed = shadowReturnUsed && replaceFunction,
                             .mode = subMode,
                             .width = gutils->getWidth(),
                             .freeMemory = true,
@@ -10893,9 +10896,11 @@ public:
     }
 #endif
 
-    unsigned structidx = retUsed ? 1 : 0;
-    if (subdretptr)
-      ++structidx;
+    unsigned structidx = 0;
+    if (replaceFunction) {
+        if (subretused) structidx++;
+        if (shadowReturnUsed) structidx++;
+    }
 
 #if LLVM_VERSION_MAJOR >= 14
     for (unsigned i = 0; i < orig->arg_size(); ++i)
@@ -10924,7 +10929,7 @@ public:
       if (structidx != 0) {
         llvm::errs() << *gutils->oldFunc->getParent() << "\n";
         llvm::errs() << "diffes: " << *diffes << " structidx=" << structidx
-                     << " retUsed=" << retUsed << " subretptr=" << subdretptr
+                     << " subretused=" << subretused << " shadowReturnUsed=" << shadowReturnUsed
                      << "\n";
       }
       assert(structidx == 0);
@@ -10944,10 +10949,10 @@ public:
       if (ifound != gutils->invertedPointers.end()) {
         auto placeholder = cast<PHINode>(&*ifound->second);
         gutils->invertedPointers.erase(ifound);
-        if (subdretptr) {
+        if (shadowReturnUsed) {
           dumpMap(gutils->invertedPointers);
           auto dretval =
-              cast<Instruction>(Builder2.CreateExtractValue(diffes, {1}));
+              cast<Instruction>(Builder2.CreateExtractValue(diffes, { subretused ? 1U : 0U}));
           /* todo handle this case later */
           assert(!subretused);
           gutils->invertedPointers.insert(std::make_pair(

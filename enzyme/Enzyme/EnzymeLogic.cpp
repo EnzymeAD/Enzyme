@@ -1642,7 +1642,9 @@ void restoreCache(DiffeGradientUtils *gutils,
 const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     Function *todiff, DIFFE_TYPE retType,
     const std::vector<DIFFE_TYPE> &constant_args, TypeAnalysis &TA,
-    bool returnUsed, const FnTypeInfo &oldTypeInfo_,
+    bool returnUsed,
+    bool shadowReturnUsed,
+    const FnTypeInfo &oldTypeInfo_,
     const std::map<Argument *, bool> _uncacheable_args, bool forceAnonymousTape,
     bool AtomicAdd, bool omp) {
   if (returnUsed)
@@ -1659,7 +1661,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       todiff, retType, constant_args,
       std::map<Argument *, bool>(_uncacheable_args.begin(),
                                  _uncacheable_args.end()),
-      returnUsed, oldTypeInfo, forceAnonymousTape, AtomicAdd, omp);
+      returnUsed, shadowReturnUsed,
+      oldTypeInfo, forceAnonymousTape, AtomicAdd, omp);
   auto found = AugmentedCachedFunctions.find(tup);
   if (found != AugmentedCachedFunctions.end()) {
     return found->second;
@@ -1749,7 +1752,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         act_idx++;
       }
       auto &aug = CreateAugmentedPrimal(
-          todiff, retType, next_constant_args, TA, returnUsed, oldTypeInfo_,
+          todiff, retType, next_constant_args, TA, returnUsed, shadowReturnUsed,
+          oldTypeInfo_,
           _uncacheable_args, forceAnonymousTape, AtomicAdd, omp);
       auto cal = bb.CreateCall(aug.fn, fwdargs);
       cal->setCallingConv(aug.fn->getCallingConv());
@@ -1840,7 +1844,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
   GradientUtils *gutils = GradientUtils::CreateFromClone(
       *this, todiff, TLI, TA, retType, constant_args,
-      /*returnUsed*/ returnUsed, returnMapping, omp);
+      /*returnUsed*/ returnUsed, /*shadowReturnUsed*/ shadowReturnUsed,returnMapping, omp);
   gutils->AtomicAdd = AtomicAdd;
   const SmallPtrSet<BasicBlock *, 4> guaranteedUnreachable =
       getGuaranteedUnreachable(gutils->oldFunc);
@@ -2110,7 +2114,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
   //! Keep track of inverted pointers we may need to return
   ValueToValueMapTy invertedRetPs;
-  if (retType == DIFFE_TYPE::DUP_ARG || retType == DIFFE_TYPE::DUP_NONEED) {
+  if (shadowReturnUsed) {
     for (BasicBlock &BB : *gutils->oldFunc) {
       if (auto ri = dyn_cast<ReturnInst>(BB.getTerminator())) {
         if (Value *orig_oldval = ri->getReturnValue()) {
@@ -2267,14 +2271,16 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     Value *tapeMemory;
     if (recursive && !omp) {
       auto i64 = Type::getInt64Ty(NewF->getContext());
-      ConstantInt *size;
-      tapeMemory = CallInst::CreateMalloc(
-          NewF->getEntryBlock().getFirstNonPHI(), i64, tapeType,
-          size = ConstantInt::get(
+      ConstantInt *size = ConstantInt::get(
               i64, NewF->getParent()->getDataLayout().getTypeAllocSizeInBits(
                        tapeType) /
-                       8),
-          nullptr, nullptr, "tapemem");
+                       8);
+      Value *memory;
+      if (!size->isZero()) {
+        tapeMemory = CallInst::CreateMalloc(
+            NewF->getEntryBlock().getFirstNonPHI(), i64, tapeType,
+            size,
+            nullptr, nullptr, "tapemem");
       CallInst *malloccall = dyn_cast<CallInst>(tapeMemory);
       if (malloccall == nullptr) {
         malloccall =
@@ -2316,11 +2322,15 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       malloccall->addDereferenceableOrNullAttr(llvm::AttributeList::ReturnIndex,
                                                size->getLimitedValue());
 #endif
+      memory = malloccall;
+      } else {
+        memory = ConstantPointerNull::get(Type::getInt8PtrTy(NewF->getContext()));
+      }
       Value *Idxs[] = {
           ib.getInt32(0),
           ib.getInt32(returnMapping.find(AugmentedStruct::Tape)->second),
       };
-      assert(malloccall);
+      assert(memory);
       assert(ret);
       Value *gep = ret;
       if (!removeStruct) {
@@ -2332,7 +2342,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 #endif
         cast<GetElementPtrInst>(gep)->setIsInBounds(true);
       }
-      ib.CreateStore(malloccall, gep);
+      ib.CreateStore(memory, gep);
     } else if (omp) {
       j->setName("tape");
       tapeMemory = j;
@@ -2414,7 +2424,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       ib.CreateStore(actualrv, gep);
     }
 
-    if (retType == DIFFE_TYPE::DUP_ARG || retType == DIFFE_TYPE::DUP_NONEED) {
+    if (shadowReturnUsed) {
       assert(invertedRetPs[ri]);
       if (!isa<UndefValue>(invertedRetPs[ri])) {
         Value *gep =
@@ -3046,6 +3056,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
       auto &aug = CreateAugmentedPrimal(
           key.todiff, key.retType, key.constant_args, TA, key.returnUsed,
+          key.shadowReturnUsed,
           key.typeInfo, key.uncacheable_args, /*forceAnonymousTape*/ false,
           key.AtomicAdd, omp);
 

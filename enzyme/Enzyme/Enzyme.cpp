@@ -444,6 +444,8 @@ public:
     IRBuilder<> Builder(CI);
     unsigned truei = 0;
     unsigned width = 1;
+    bool returnUsed = !cast<Function>(fn)->getReturnType()->isVoidTy() &&
+                      !cast<Function>(fn)->getReturnType()->isEmptyTy();
 
     // determine width
 #if LLVM_VERSION_MAJOR >= 14
@@ -455,44 +457,46 @@ public:
     {
       Value *arg = CI->getArgOperand(i);
 
-      if (getMetadataName(arg) && *getMetadataName(arg) == "enzyme_width") {
-        assert(mode == DerivativeMode::ForwardMode);
+      if (auto MDName = getMetadataName(arg)) {
+        if (MDName == "enzyme_width") {
+          if (found) {
+            EmitFailure("IllegalVectorWidth", CI->getDebugLoc(), CI,
+                        "vector width declared more than once",
+                        *CI->getArgOperand(i), " in", *CI);
+            return false;
+          }
 
-        if (found) {
-          EmitFailure("IllegalVectorWidth", CI->getDebugLoc(), CI,
-                      "vector width declared more than once",
-                      *CI->getArgOperand(i), " in", *CI);
-          return false;
-        }
+  #if LLVM_VERSION_MAJOR >= 14
+          if (i + 1 >= CI->arg_size())
+  #else
+          if (i + 1 >= CI->getNumArgOperands())
+  #endif
+          {
+            EmitFailure("MissingVectorWidth", CI->getDebugLoc(), CI,
+                        "constant integer followong enzyme_width is missing",
+                        *CI->getArgOperand(i), " in", *CI);
+            return false;
+          }
 
-#if LLVM_VERSION_MAJOR >= 14
-        if (i + 1 >= CI->arg_size())
-#else
-        if (i + 1 >= CI->getNumArgOperands())
-#endif
-        {
-          EmitFailure("MissingVectorWidth", CI->getDebugLoc(), CI,
-                      "constant integer followong enzyme_width is missing",
-                      *CI->getArgOperand(i), " in", *CI);
-          return false;
-        }
+          Value *width_arg = CI->getArgOperand(i + 1);
+          if (auto cint = dyn_cast<ConstantInt>(width_arg)) {
+            width = cint->getZExtValue();
+            found = true;
+          } else {
+            EmitFailure("IllegalVectorWidth", CI->getDebugLoc(), CI,
+                        "enzyme_width must be a constant integer",
+                        *CI->getArgOperand(i), " in", *CI);
+            return false;
+          }
 
-        Value *width_arg = CI->getArgOperand(i + 1);
-        if (auto cint = dyn_cast<ConstantInt>(width_arg)) {
-          width = cint->getZExtValue();
-          found = true;
-        } else {
-          EmitFailure("IllegalVectorWidth", CI->getDebugLoc(), CI,
-                      "enzyme_width must be a constant integer",
-                      *CI->getArgOperand(i), " in", *CI);
-          return false;
-        }
-
-        if (!found) {
-          EmitFailure("IllegalVectorWidth", CI->getDebugLoc(), CI,
-                      "illegal enzyme vector argument width ",
-                      *CI->getArgOperand(i), " in", *CI);
-          return false;
+          if (!found) {
+            EmitFailure("IllegalVectorWidth", CI->getDebugLoc(), CI,
+                        "illegal enzyme vector argument width ",
+                        *CI->getArgOperand(i), " in", *CI);
+            return false;
+          }
+        } else if (MDName == "enzyme_noret") {
+          returnUsed = false;
         }
       }
     }
@@ -828,7 +832,7 @@ public:
                         !cast<Function>(fn)->getReturnType()->isEmptyTy();
       aug = &Logic.CreateAugmentedPrimal(
           cast<Function>(fn), retType, constants, TA,
-          /*returnUsed*/ returnUsed, type_args, volatile_args,
+          /*returnUsed*/ returnUsed, /*shadowReturnUsed*/false, type_args, volatile_args,
           forceAnonymousTape, /*atomicAdd*/ AtomicAdd);
       auto &DL = cast<Function>(fn)->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
@@ -888,11 +892,11 @@ public:
     case DerivativeMode::ReverseModePrimal:
     case DerivativeMode::ReverseModeGradient: {
       bool forceAnonymousTape = !sizeOnly && allocatedTapeSize == -1;
-      bool returnUsed = !cast<Function>(fn)->getReturnType()->isVoidTy() &&
-                        !cast<Function>(fn)->getReturnType()->isEmptyTy();
+      bool shadowReturnUsed = returnUsed && (retType == DIFFE_TYPE::DUP_ARG ||
+        retType == DIFFE_TYPE::DUP_NONEED);
       aug = &Logic.CreateAugmentedPrimal(
           cast<Function>(fn), retType, constants, TA,
-          /*returnUsed*/ returnUsed, type_args, volatile_args,
+          returnUsed, shadowReturnUsed, type_args, volatile_args,
           forceAnonymousTape, /*atomicAdd*/ AtomicAdd);
       auto &DL = cast<Function>(fn)->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
@@ -965,7 +969,8 @@ public:
       }
     }
 
-    if (mode == DerivativeMode::ReverseModeGradient && tape && tapeType) {
+    if ((mode == DerivativeMode::ReverseModeGradient ||
+         mode == DerivativeMode::ForwardModeSplit) && tape && tapeType) {
       auto &DL = cast<Function>(fn)->getParent()->getDataLayout();
       if (tapeIsPointer) {
         tape = Builder.CreateBitCast(

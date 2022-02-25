@@ -3335,6 +3335,7 @@ GradientUtils *GradientUtils::CreateFromClone(
     EnzymeLogic &Logic, Function *todiff, TargetLibraryInfo &TLI,
     TypeAnalysis &TA, DIFFE_TYPE retType,
     const std::vector<DIFFE_TYPE> &constant_args, bool returnUsed,
+    bool shadowReturnUsed,
     std::map<AugmentedStruct, int> &returnMapping, bool omp) {
   assert(!todiff->empty());
 
@@ -3352,10 +3353,10 @@ GradientUtils *GradientUtils::CreateFromClone(
 
   // We don't need to differentially return something that we know is not a
   // pointer (or somehow needed for shadow analysis)
-  if (retType == DIFFE_TYPE::DUP_ARG || retType == DIFFE_TYPE::DUP_NONEED) {
+  if (shadowReturnUsed) {
+    assert (retType == DIFFE_TYPE::DUP_ARG || retType == DIFFE_TYPE::DUP_NONEED);
     assert(!todiff->getReturnType()->isEmptyTy());
     assert(!todiff->getReturnType()->isVoidTy());
-    assert(!todiff->getReturnType()->isFPOrFPVectorTy());
     returnMapping[AugmentedStruct::DifferentialReturn] = returnCount + 1;
     ++returnCount;
   }
@@ -3402,7 +3403,8 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
   assert(!todiff->empty());
   assert(mode == DerivativeMode::ReverseModeGradient ||
          mode == DerivativeMode::ReverseModeCombined ||
-         mode == DerivativeMode::ForwardMode);
+         mode == DerivativeMode::ForwardMode ||
+         mode == DerivativeMode::ForwardModeSplit);
   ValueToValueMapTy invertedPointers;
   SmallPtrSet<Instruction *, 4> constants;
   SmallPtrSet<Instruction *, 20> nonconstant;
@@ -3664,6 +3666,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
         fn, retType, /*constant_args*/ types, TA,
         /*returnUsed*/ !fn->getReturnType()->isEmptyTy() &&
             !fn->getReturnType()->isVoidTy(),
+        /*shadowReturnUsed*/false,
         type_args, uncacheable_args, /*forceAnonymousTape*/ true, AtomicAdd);
     Constant *newf =
         Logic.CreateForwardDiff(fn, retType, types, TA, false, mode, width,
@@ -3698,10 +3701,12 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
   case DerivativeMode::ReverseModePrimal: {
     // TODO re atomic add consider forcing it to be atomic always as fallback if
     // used in a parallel context
+    bool returnUsed = !fn->getReturnType()->isEmptyTy() &&
+            !fn->getReturnType()->isVoidTy();
+    bool shadowReturnUsed = returnUsed && (retType == DIFFE_TYPE::DUP_ARG || retType == DIFFE_TYPE::DUP_NONEED);
     auto &augdata = Logic.CreateAugmentedPrimal(
         fn, retType, /*constant_args*/ types, TA,
-        /*returnUsed*/ !fn->getReturnType()->isEmptyTy() &&
-            !fn->getReturnType()->isVoidTy(),
+        returnUsed, shadowReturnUsed,
         type_args, uncacheable_args, /*forceAnonymousTape*/ true, AtomicAdd);
     Constant *newf = Logic.CreatePrimalAndGradient(
         (ReverseCacheKey){.todiff = fn,
