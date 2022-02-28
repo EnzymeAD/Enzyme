@@ -39,12 +39,7 @@ declare double @__enzyme_fwdsplit(void (double*)*, ...)
 !5 = !{!"Simple C/C++ TBAA"}
 
 
-; CHECK: define {{(dso_local )?}}void @test_derivative(double* %x, double* %xp) 
+; CHECK: define {{(dso_local )?}}void @test_derivative(double* %x, double* %xp)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = load double, double* %x, align 8, !tbaa !2
-; CHECK-NEXT:   %1 = load double, double* %xp
-; CHECK-NEXT:   %add.i = fadd fast double %0, 1.000000e+00
-; CHECK-NEXT:   store double %add.i, double* %x, align 8, !tbaa !2
-; CHECK-NEXT:   store double %1, double* %xp, align 8
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

@@ -45,7 +45,7 @@ for.body:                                         ; preds = %entry, %for.body
 ; Function Attrs: nounwind uwtable
 define dso_local void @ad(double* %in, double* %din, i32 %N) local_unnamed_addr #1 {
 entry:
-  tail call double (i8*, ...) @__enzyme_fwdsplit(i8* bitcast (double (double*, i32)* @cache to i8*), double* %in, double* %din, i32 %N) #3
+  tail call double (i8*, ...) @__enzyme_fwdsplit(i8* bitcast (double (double*, i32)* @cache to i8*), double* %in, double* %din, i32 %N, i8* null) #3
   ret void
 }
 

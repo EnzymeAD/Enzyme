@@ -9,7 +9,7 @@ entry:
 
 define double @test_derivative(double %x, double %y) {
 entry:
-  %0 = tail call double (double (double, double)*, ...) @__enzyme_fwdsplit(double (double, double)* nonnull @tester, double %x, double 1.0, metadata !"enzyme_const", double %y)
+  %0 = tail call double (double (double, double)*, ...) @__enzyme_fwdsplit(double (double, double)* nonnull @tester, double %x, double 1.0, metadata !"enzyme_const", double %y, i8* null)
   ret double %0
 }
 
@@ -20,8 +20,9 @@ declare double @llvm.maxnum.f64(double, double)
 declare double @__enzyme_fwdsplit(double (double, double)*, ...)
 
 
-; CHECK: define internal double @fwddiffetester(double %x, double %"x'", double %y)
+; CHECK: define internal double @fwddiffetester(double %x, double %"x'", double %y, i8* %tapeArg)
 ; CHECK-NEXT: entry:
+; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
 ; CHECK-NEXT:   %0 = fcmp fast olt double %x, %y
 ; CHECK-NEXT:   %1 = select {{(fast )?}}i1 %0, double %"x'", double 0.000000e+00
 ; CHECK-NEXT:   ret double %1

@@ -18,7 +18,7 @@ entry:
 ; Function Attrs: noinline nounwind uwtable
 define double @derivative(double %x) {
 entry:
-  %0 = tail call double (double (double)*, ...) @__enzyme_fwdsplit(double (double)* nonnull @mulglobal, double %x, double 1.0)
+  %0 = tail call double (double (double)*, ...) @__enzyme_fwdsplit(double (double)* nonnull @mulglobal, double %x, double 1.0, i8* null)
   ret double %0
 }
 

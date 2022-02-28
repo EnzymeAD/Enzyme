@@ -8,11 +8,11 @@ $_ZNK5Eigen9EigenBaseINS_6MatrixIdLin1ELin1ELi0ELin1ELin1EEEE4colsEv = comdat an
 
 define void @caller(i8* %a, i8* %b, i8* %c) local_unnamed_addr {
 entry:
-  call void @__enzyme_fwdsplit(i8* bitcast (void (double**, i64*)* @_ZL6matvecPKN5Eigen6MatrixIdLin1ELin1ELi0ELin1ELin1EEES3_ to i8*), i8* %a, i8* %b, i8* %c)
+  call void @__enzyme_fwdsplit(i8* bitcast (void (double**, i64*)* @_ZL6matvecPKN5Eigen6MatrixIdLin1ELin1ELi0ELin1ELin1EEES3_ to i8*), i8* %a, i8* %b, i8* %c, i8* null)
   ret void
 }
 
-declare void @__enzyme_fwdsplit(i8*, i8*, i8*, i8*) local_unnamed_addr
+declare void @__enzyme_fwdsplit(i8*, i8*, i8*, i8*, i8*) local_unnamed_addr
 
 ; Function Attrs: noinline nounwind uwtable
 define internal void @_ZL6matvecPKN5Eigen6MatrixIdLin1ELin1ELi0ELin1ELin1EEES3_(double** noalias %m_data.i.i.i, i64* noalias %m_rows) #0 {

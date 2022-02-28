@@ -11,7 +11,7 @@ entry:
 
 define { double, double } @dsquared(double %x) {
 entry:
-  %call = call { double, double } (i8*, ...) @__enzyme_fwdsplit(i8* bitcast ({ double, double } (double)* @squared to i8*), double %x, double 1.0)
+  %call = call { double, double } (i8*, ...) @__enzyme_fwdsplit(i8* bitcast ({ double, double } (double)* @squared to i8*), double %x, double 1.0, i8* null)
   ret { double, double } %call
 }
 
@@ -19,8 +19,9 @@ declare { double, double } @__enzyme_fwdsplit(i8*, ...)
 
 
 
-; CHECK: define internal {{(dso_local )?}}{ double, double } @fwddiffesquared(double %x, double %"x'")
+; CHECK: define internal {{(dso_local )?}}{ double, double } @fwddiffesquared(double %x, double %"x'", i8* %tapeArg)
 ; CHECK-NEXT: entry:
+; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
 ; CHECK-NEXT:   %mul = fmul double %x, %x
 ; CHECK-NEXT:   %0 = fmul fast double %"x'", %x
 ; CHECK-NEXT:   %1 = fadd fast double %0, %0

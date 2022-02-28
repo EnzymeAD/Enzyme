@@ -2695,6 +2695,7 @@ public:
       };
 
       applyChainRule(Builder2, rule, ddst, dsrc);
+      eraseIfUnused(MTI);
       return;
     }
 
@@ -8568,21 +8569,22 @@ public:
             return;
 
           switch (Mode) {
-          default:
-            llvm_unreachable("unhandled mode");
           case DerivativeMode::ReverseModePrimal:
             return;
           case DerivativeMode::ForwardMode:
+          case DerivativeMode::ForwardModeSplit:
           case DerivativeMode::ReverseModeGradient:
           case DerivativeMode::ReverseModeCombined: {
             IRBuilder<> Builder2(&call);
-            if (Mode == DerivativeMode::ForwardMode)
+            if (Mode == DerivativeMode::ForwardMode ||
+                Mode == DerivativeMode::ForwardModeSplit)
               getForwardBuilder(Builder2);
             else
               getReverseBuilder(Builder2);
 
             Value *x = gutils->getNewFromOriginal(orig->getArgOperand(0));
-            if (Mode != DerivativeMode::ForwardMode)
+            if (Mode != DerivativeMode::ForwardMode &&
+                Mode != DerivativeMode::ForwardModeSplit)
               x = lookup(x, Builder2);
 
             Value *sq;
@@ -8661,8 +8663,8 @@ public:
               cal = Builder2.CreateFMul(cal, factor);
             }
 
-            Value *dfactor = Mode == DerivativeMode::ForwardMode ||
-                                     Mode == DerivativeMode::ForwardModeSplit
+            Value *dfactor = (Mode == DerivativeMode::ForwardMode ||
+                              Mode == DerivativeMode::ForwardModeSplit)
                                  ? diffe(orig->getArgOperand(0), Builder2)
                                  : diffe(orig, Builder2);
 
@@ -8698,7 +8700,8 @@ public:
               cal = applyChainRule(call.getType(), Builder2, rule2, dfactor);
             }
 
-            if (Mode == DerivativeMode::ForwardMode) {
+            if (Mode == DerivativeMode::ForwardMode ||
+                Mode == DerivativeMode::ForwardModeSplit) {
               setDiffe(orig, cal, Builder2);
             } else {
               setDiffe(orig, Constant::getNullValue(orig->getType()), Builder2);
@@ -9268,7 +9271,8 @@ public:
 
         if (Mode == DerivativeMode::ReverseModeCombined ||
             Mode == DerivativeMode::ReverseModeGradient ||
-            Mode == DerivativeMode::ReverseModePrimal) {
+            Mode == DerivativeMode::ReverseModePrimal ||
+            Mode == DerivativeMode::ForwardModeSplit) {
 
           Value *anti = placeholder;
           // If rematerializable allocations and split mode, we can
@@ -9433,6 +9437,8 @@ public:
                   (Mode == DerivativeMode::ReverseModePrimal &&
                    forwardsShadow) ||
                   (Mode == DerivativeMode::ReverseModeGradient &&
+                   backwardsShadow) ||
+                  (Mode == DerivativeMode::ForwardModeSplit &&
                    backwardsShadow)) {
                 if (!inLoop)
                   zeroKnownAllocation(bb, anti, args, *called, gutils->TLI);
@@ -9568,7 +9574,8 @@ public:
 
             // Otherwise if in reverse pass, free the newly created allocation.
             if (Mode == DerivativeMode::ReverseModeGradient ||
-                Mode == DerivativeMode::ReverseModeCombined) {
+                Mode == DerivativeMode::ReverseModeCombined ||
+                Mode == DerivativeMode::ForwardModeSplit) {
               IRBuilder<> Builder2(call.getParent());
               getReverseBuilder(Builder2);
               auto dbgLoc = gutils->getNewFromOriginal(orig->getDebugLoc());
@@ -9619,7 +9626,8 @@ public:
       // as can we can only guarantee that we don't erase those frees.
       bool hasPDFree = gutils->allocationsWithGuaranteedFree.count(orig);
       if (!primalNeededInReverse && hasPDFree) {
-        if (Mode == DerivativeMode::ReverseModeGradient) {
+        if (Mode == DerivativeMode::ReverseModeGradient ||
+            Mode == DerivativeMode::ForwardModeSplit) {
           eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
         } else {
           if (auto MD = hasMetadata(orig, "enzyme_fromstack")) {
@@ -9655,7 +9663,8 @@ public:
           funcName == "jl_alloc_array_3d" || funcName == "jl_array_copy" ||
           funcName == "julia.gc_alloc_obj") {
         if (!primalNeededInReverse) {
-          if (Mode == DerivativeMode::ReverseModeGradient) {
+          if (Mode == DerivativeMode::ReverseModeGradient ||
+              Mode == DerivativeMode::ForwardModeSplit) {
             auto pn = BuilderZ.CreatePHI(
                 orig->getType(), 1, (orig->getName() + "_replacementJ").str());
             gutils->fictiousPHIs[pn] = orig;
@@ -9675,15 +9684,16 @@ public:
       // TODO enable this if we need to free the memory
       // NOTE THAT TOPLEVEL IS THERE SIMPLY BECAUSE THAT WAS PREVIOUS ATTITUTE
       // TO FREE'ing
-      if (Mode == DerivativeMode::ReverseModeGradient ||
-          Mode == DerivativeMode::ReverseModePrimal) {
         if ((primalNeededInReverse &&
              !gutils->unnecessaryIntermediates.count(orig)) ||
             hasPDFree) {
           Value *nop = gutils->cacheForReverse(BuilderZ, newCall,
                                                getIndex(orig, CacheType::Self));
-          if (Mode == DerivativeMode::ReverseModeGradient && hasPDFree &&
-              shouldFree()) {
+          if (hasPDFree &&
+                ((Mode == DerivativeMode::ReverseModeGradient && shouldFree()) ||
+                  Mode == DerivativeMode::ReverseModeCombined ||
+                  (Mode == DerivativeMode::ForwardModeSplit && shouldFree())
+                  )) {
             IRBuilder<> Builder2(call.getParent());
             getReverseBuilder(Builder2);
             auto dbgLoc = gutils->getNewFromOriginal(orig->getDebugLoc());
@@ -9691,7 +9701,8 @@ public:
                                 dbgLoc, gutils->TLI);
           }
         } else if (Mode == DerivativeMode::ReverseModeGradient ||
-                   Mode == DerivativeMode::ReverseModeCombined) {
+                   Mode == DerivativeMode::ReverseModeCombined ||
+                   Mode == DerivativeMode::ForwardModeSplit) {
           // Note that here we cannot simply replace with null as users who
           // try to find the shadow pointer will use the shadow of null rather
           // than the true shadow of this
@@ -9701,13 +9712,6 @@ public:
           gutils->replaceAWithB(newCall, pn);
           gutils->erase(newCall);
         }
-      } else if (Mode == DerivativeMode::ReverseModeCombined && shouldFree()) {
-        IRBuilder<> Builder2(call.getParent());
-        getReverseBuilder(Builder2);
-        auto dbgLoc = gutils->getNewFromOriginal(orig)->getDebugLoc();
-        freeKnownAllocation(Builder2, lookup(newCall, Builder2), *called,
-                            dbgLoc, gutils->TLI);
-      }
 
       return;
     }
@@ -10054,7 +10058,8 @@ public:
       }
     }
 
-    if (Mode == DerivativeMode::ForwardMode) {
+    if (Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeSplit) {
       IRBuilder<> Builder2(&call);
       getForwardBuilder(Builder2);
 

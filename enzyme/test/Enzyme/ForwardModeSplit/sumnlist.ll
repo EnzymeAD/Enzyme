@@ -61,7 +61,7 @@ declare dso_local noalias i8* @malloc(i64) local_unnamed_addr #2
 ; Function Attrs: noinline nounwind uwtable
 define dso_local double @derivative(%struct.n* %x, %struct.n* %xp, i64 %n) {
 entry:
-  %0 = tail call double (double (%struct.n*, i64)*, ...) @__enzyme_fwdsplit(double (%struct.n*, i64)* nonnull @sum_list, %struct.n* %x, %struct.n* %xp, i64 %n)
+  %0 = tail call double (double (%struct.n*, i64)*, ...) @__enzyme_fwdsplit(double (%struct.n*, i64)* nonnull @sum_list, %struct.n* %x, %struct.n* %xp, i64 %n, i8* null)
   ret double %0
 }
 

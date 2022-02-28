@@ -34,7 +34,7 @@ cond.end:                                         ; preds = %entry, %cond.true
 
 define dso_local double @drelu(double %x) {
 entry:
-  %0 = tail call double (double (double)*, ...) @__enzyme_fwdsplit(double (double)* nonnull @relu, double %x, double 1.0)
+  %0 = tail call double (double (double)*, ...) @__enzyme_fwdsplit(double (double)* nonnull @relu, double %x, double 1.0, i8* null)
   ret double %0
 }
 

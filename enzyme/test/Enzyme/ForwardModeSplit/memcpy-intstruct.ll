@@ -13,7 +13,7 @@ declare void @llvm.memcpy.p0i8.p0i8.i64(i8* nocapture writeonly, i8* nocapture r
 ; Function Attrs: nounwind uwtable
 define dso_local void @dmemcpy_ptr(i8* %dst, i8* %dstp, i8* %src, i8* %srcp, i64 %n) {
 entry:
-  %0 = tail call double (...) @__enzyme_fwdsplit.f64(void (i8*, i8*, i64)* nonnull @memcpy_ptr, metadata !"enzyme_dup", i8* %dst, i8* %dstp, metadata !"enzyme_dup", i8* %src, i8* %srcp, i64 %n)
+  %0 = tail call double (...) @__enzyme_fwdsplit.f64(void (i8*, i8*, i64)* nonnull @memcpy_ptr, metadata !"enzyme_dup", i8* %dst, i8* %dstp, metadata !"enzyme_dup", i8* %src, i8* %srcp, i64 %n, i8* null)
   ret void
 }
 
@@ -31,9 +31,8 @@ attributes #0 = { argmemonly nounwind }
 !5 = !{!"Simple C++ TBAA"}
 
 
-; CHECK: define internal void @fwddiffememcpy_ptr(i8* nocapture %dst, i8* nocapture %"dst'", i8* nocapture readonly %src, i8* nocapture %"src'", i64 %num)
+; CHECK: define internal void @fwddiffememcpy_ptr(i8* nocapture %dst, i8* nocapture %"dst'", i8* nocapture readonly %src, i8* nocapture %"src'", i64 %num, i8* %tapeArg)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 8 %dst, i8* align 8 %src, i64 %num, i1 false)
-; CHECK-NEXT:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 8 %"dst'", i8* align 8 %"src'", i64 %num, i1 false)
+; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

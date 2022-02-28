@@ -33,11 +33,11 @@ cleanup:                                          ; preds = %if.end, %if.then
 ; Function Attrs: noinline nounwind uwtable
 define dso_local double @dsumsquare(double* %x, double* %xp, i64 %n) #0 {
 entry:
-  %call = call fast double @__enzyme_fwdsplit(i8* bitcast (double (double*, i64)* @f to i8*), double* %x, double* %xp, i64 %n)
+  %call = call fast double @__enzyme_fwdsplit(i8* bitcast (double (double*, i64)* @f to i8*), double* %x, double* %xp, i64 %n, i8* null)
   ret double %call
 }
 
-declare dso_local double @__enzyme_fwdsplit(i8*, double*, double*, i64)
+declare dso_local double @__enzyme_fwdsplit(i8*, double*, double*, i64, i8*)
 
 
 attributes #0 = { noinline nounwind uwtable }

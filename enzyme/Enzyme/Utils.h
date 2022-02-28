@@ -202,9 +202,9 @@ getNextNonDebugInstruction(llvm::Instruction *Z) {
 }
 
 /// Check if a global has metadata
-static inline bool hasMetadata(const llvm::GlobalObject *O,
+static inline llvm::MDNode *hasMetadata(const llvm::GlobalObject *O,
                                llvm::StringRef kind) {
-  return O->getMetadata(kind) != nullptr;
+  return O->getMetadata(kind);
 }
 
 /// Check if an instruction has metadata

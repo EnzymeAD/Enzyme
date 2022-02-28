@@ -38,7 +38,7 @@ entry:
 ; Function Attrs: noinline nounwind uwtable
 define dso_local double @derivative(double %x) local_unnamed_addr #1 {
 entry:
-  %0 = tail call double (double (double)*, ...) @__enzyme_fwdsplit(double (double)* nonnull @mulglobal, double %x, double 1.0)
+  %0 = tail call double (double (double)*, ...) @__enzyme_fwdsplit(double (double)* nonnull @mulglobal, double %x, double 1.0, i8* null)
   ret double %0
 }
 
@@ -82,12 +82,14 @@ attributes #4 = { nounwind "correctly-rounded-divide-sqrt-fp-math"="false" "disa
 !7 = !{!"any pointer", !4, i64 0}
 !8 = !{double* @dglobal}
 
-; CHECK: define internal {{(dso_local )?}}double @fwddiffemulglobal(double %x, double %"x'")
+; CHECK: define internal {{(dso_local )?}}double @fwddiffemulglobal(double %x, double %"x'", i8* %tapeArg)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = load double, double* @global, align 8, !tbaa !3
-; CHECK-NEXT:   %1 = load double, double* @dglobal
-; CHECK-NEXT:   %2 = fmul fast double %1, %x
-; CHECK-NEXT:   %3 = fmul fast double %"x'", %0
-; CHECK-NEXT:   %4 = fadd fast double %2, %3
-; CHECK-NEXT:   ret double %4
+; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to double*
+; CHECK-NEXT:   %1 = load double, double* %0
+; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
+; CHECK-NEXT:   %2 = load double, double* @dglobal
+; CHECK-NEXT:   %3 = fmul fast double %2, %x
+; CHECK-NEXT:   %4 = fmul fast double %"x'", %1
+; CHECK-NEXT:   %5 = fadd fast double %3, %4
+; CHECK-NEXT:   ret double %5
 ; CHECK-NEXT: }

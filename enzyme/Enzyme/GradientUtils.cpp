@@ -6481,13 +6481,20 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
   if (secretty) {
     // no change to forward pass if represents floats
     if (mode == DerivativeMode::ReverseModeGradient ||
-        mode == DerivativeMode::ReverseModeCombined) {
-      IRBuilder<> Builder2(MTI->getParent());
-      gutils->getReverseBuilder(Builder2, /*original*/ true);
+        mode == DerivativeMode::ReverseModeCombined ||
+        mode == DerivativeMode::ForwardModeSplit) {
+      IRBuilder<> Builder2(MTI);
+      if (mode == DerivativeMode::ForwardModeSplit)
+        gutils->getForwardBuilder(Builder2);
+      else
+        gutils->getReverseBuilder(Builder2);
 
       // If the src is constant simply zero d_dst and don't propagate to d_src
       // (which thus == src and may be illegal)
       if (srcConstant) {
+        // Don't zero in forward mode.
+        if (mode != DerivativeMode::ForwardModeSplit) {
+        
         Value *args[] = {
           shadowsLookedUp ? shadow_dst : gutils->lookupM(shadow_dst, Builder2),
           ConstantInt::get(Type::getInt8Ty(MTI->getContext()), 0),
@@ -6517,9 +6524,10 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
               0, Attribute::getWithAlignment(MTI->getContext(), dstalign));
 #endif
         }
+        }
 
       } else {
-        auto dsto = shadowsLookedUp ? shadow_dst
+        auto dsto = (shadowsLookedUp || mode == DerivativeMode::ForwardModeSplit)? shadow_dst
                                     : gutils->lookupM(shadow_dst, Builder2);
         if (dsto->getType()->isIntegerTy())
           dsto = Builder2.CreateIntToPtr(
@@ -6535,8 +6543,10 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
           dsto = Builder2.CreateConstInBoundsGEP1_64(dsto, offset);
 #endif
         }
-        auto srco = shadowsLookedUp ? shadow_src
+        auto srco = (shadowsLookedUp || mode == DerivativeMode::ForwardModeSplit) ? shadow_src
                                     : gutils->lookupM(shadow_src, Builder2);
+        if (mode != DerivativeMode::ForwardModeSplit)
+          dsto = Builder2.CreatePointerCast(dsto, secretpt);
         if (srco->getType()->isIntegerTy())
           srco = Builder2.CreateIntToPtr(
               srco, Type::getInt8PtrTy(srco->getContext()));
@@ -6551,7 +6561,19 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
           srco = Builder2.CreateConstInBoundsGEP1_64(srco, offset);
 #endif
         }
+        if (mode != DerivativeMode::ForwardModeSplit)
+          srco = Builder2.CreatePointerCast(srco, secretpt);
 
+        if (mode == DerivativeMode::ForwardModeSplit) {
+          CallInst *call;
+          if (intrinsic == Intrinsic::memmove) {
+            call =
+                Builder2.CreateMemMove(dsto, dstalign, srco, srcalign, length);
+          } else {
+            call =
+                Builder2.CreateMemCpy(dsto, dstalign, srco, srcalign, length);
+          }
+        } else {
         Value *args[]{
             Builder2.CreatePointerCast(dsto, secretpt),
             Builder2.CreatePointerCast(srco, secretpt),
@@ -6571,6 +6593,7 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
             *MTI->getParent()->getParent()->getParent(), secretty, dstalign,
             srcalign, dstaddr, srcaddr);
         Builder2.CreateCall(dmemcpy, args);
+        }
       }
     }
   } else {

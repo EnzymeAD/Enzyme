@@ -1669,8 +1669,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
   // TODO make default typing (not just constant)
 
-  if (hasMetadata(todiff, "enzyme_augment")) {
-    auto md = todiff->getMetadata("enzyme_augment");
+  if (auto md = hasMetadata(todiff, "enzyme_augment")) {
     if (!isa<MDTuple>(md)) {
       llvm::errs() << *todiff << "\n";
       llvm::errs() << *md << "\n";
@@ -3811,8 +3810,7 @@ Function *EnzymeLogic::CreateForwardDiff(
     }
   }
 
-  if (hasMetadata(todiff, "enzyme_derivative")) {
-    auto md = todiff->getMetadata("enzyme_derivative");
+  if (auto md = hasMetadata(todiff, (mode == DerivativeMode::ForwardMode) ? "enzyme_derivative" : "enzyme_splitderivative")) {
     if (!isa<MDTuple>(md)) {
       llvm::errs() << *todiff << "\n";
       llvm::errs() << *md << "\n";
@@ -4059,7 +4057,6 @@ Function *EnzymeLogic::CreateForwardDiff(
 
   std::unique_ptr<const std::map<Instruction *, bool>> can_modref_map;
   if (mode == DerivativeMode::ForwardModeSplit) {
-
     std::map<Argument *, bool> _uncacheable_argsPP;
     {
       auto in_arg = todiff->arg_begin();
@@ -4094,7 +4091,7 @@ Function *EnzymeLogic::CreateForwardDiff(
     maker = new AdjointGenerator<const AugmentedReturn *>(
         mode, gutils, constant_args, retType, TR, getIndex,
         uncacheable_args_map,
-        /*returnuses*/ nullptr, nullptr, nullptr, unnecessaryValues,
+        /*returnuses*/ nullptr, augmenteddata, nullptr, unnecessaryValues,
         unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
         nullptr);
 

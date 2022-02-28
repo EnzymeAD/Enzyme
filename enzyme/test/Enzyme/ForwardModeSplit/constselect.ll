@@ -18,7 +18,7 @@ entry:
 ; Function Attrs: nounwind uwtable
 define i32 @main() {
 entry:
-  %call3.4 = tail call double (i8*, ...) @__enzyme_fwdsplit(i8* bitcast (double (double)* @fun2 to i8*), double 2.000000e+00, double 1.0)
+  %call3.4 = tail call double (i8*, ...) @__enzyme_fwdsplit(i8* bitcast (double (double)* @fun2 to i8*), double 2.000000e+00, double 1.0, i8* null)
   %call4.4 = tail call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([20 x i8], [20 x i8]* @.str, i64 0, i64 0), double %call3.4, i32 2)
   ret i32 0
 }
@@ -40,8 +40,9 @@ attributes #4 = { nounwind }
 !0 = !{i32 1, !"wchar_size", i32 4}
 !1 = !{!"clang version 7.1.0 "}
 
-; CHECK: define internal double @fwddiffefun2(double %x, double %"x'")
+; CHECK: define internal double @fwddiffefun2(double %x, double %"x'", i8* %tapeArg)
 ; CHECK-NEXT: entry:
+; CHECK-NEXT: tail call void @free(i8* nonnull %tapeArg)
 ; CHECK-NEXT:   %cmp.inv = fcmp oge double %x, 0.000000e+00
 ; CHECK-NEXT:   %0 = select{{( fast)?}} i1 %cmp.inv, double %"x'", double 0.000000e+00
 ; CHECK-NEXT:   ret double %0

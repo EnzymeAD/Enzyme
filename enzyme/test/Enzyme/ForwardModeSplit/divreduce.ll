@@ -39,13 +39,13 @@ end:                                                ; preds = %9, %3
 
 ; Function Attrs: nounwind uwtable
 define double @main(double* %A, double* %dA, i64 %N, double %start) {
-  %r = call double @__enzyme_fwdsplit(i8* bitcast (double (double*, i64, double)* @alldiv to i8*), double* %A, double* %dA, i64 %N, double %start, double 1.0)
-  %r2 = call double @__enzyme_fwdsplit2(i8* bitcast (double (double*, i64)* @alldiv2 to i8*), double* %A, double* %dA, i64 %N)
+  %r = call double @__enzyme_fwdsplit(i8* bitcast (double (double*, i64, double)* @alldiv to i8*), double* %A, double* %dA, i64 %N, double %start, double 1.0, i8* null)
+  %r2 = call double @__enzyme_fwdsplit2(i8* bitcast (double (double*, i64)* @alldiv2 to i8*), double* %A, double* %dA, i64 %N, i8* null)
   ret double %r
 }
 
-declare double @__enzyme_fwdsplit(i8*, double*, double*, i64, double, double)
-declare double @__enzyme_fwdsplit2(i8*, double*, double*, i64)
+declare double @__enzyme_fwdsplit(i8*, double*, double*, i64, double, double, i8*)
+declare double @__enzyme_fwdsplit2(i8*, double*, double*, i64, i8*)
 
 !llvm.module.flags = !{!0}
 !llvm.ident = !{!1}

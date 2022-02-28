@@ -13,7 +13,7 @@ entry:
 
 define void @dman_max(float* %a, float* %da, float* %b, float* %db) {
 entry:
-  call float (...) @__enzyme_fwdsplit.f64(float (float*, float*)* @man_max, float* %a, float* %da, float* %b, float* %db)
+  call float (...) @__enzyme_fwdsplit.f64(float (float*, float*)* @man_max, float* %a, float* %da, float* %b, float* %db, i8* null)
   ret void
 }
 
@@ -22,12 +22,12 @@ declare float @__enzyme_fwdsplit.f64(...)
 attributes #0 = { noinline }
 
 
-; CHECK: define internal float @fwddiffeman_max(float* %a, float* %"a'", float* %b, float* %"b'")
+; CHECK: define internal float @fwddiffeman_max(float* %a, float* %"a'", float* %b, float* %"b'", i8* %tapeArg)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = load float, float* %a, align 4
-; CHECK-NEXT:   %1 = load float, float* %b, align 4
-; CHECK-NEXT:   %cmp = fcmp ogt float %0, %1
+; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to i1*
+; CHECK-NEXT:   %cmp = load i1, i1* %0, !enzyme_mustcache !
+; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
 ; CHECK-NEXT:   %"a.b'ipse" = select i1 %cmp, float* %"a'", float* %"b'"
-; CHECK-NEXT:   %2 = load float, float* %"a.b'ipse"
-; CHECK-NEXT:   ret float %2
+; CHECK-NEXT:   %1 = load float, float* %"a.b'ipse"
+; CHECK-NEXT:   ret float %1
 ; CHECK-NEXT: }

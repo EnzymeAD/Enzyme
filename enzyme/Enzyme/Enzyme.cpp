@@ -92,7 +92,7 @@ llvm::cl::opt<bool> EnzymeOMPOpt("enzyme-omp-opt", cl::init(false), cl::Hidden,
 #endif
 namespace {
 
-template <const char *handlername, int numargs>
+template <const char *handlername, DerivativeMode Mode, int numargs>
 static void
 handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
                        std::vector<GlobalVariable *> &globalsToErase) {
@@ -130,7 +130,8 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
           }
         }
 
-        if (numargs == 3) {
+        if (Mode == DerivativeMode::ReverseModeGradient) {
+          assert(numargs == 3);
           Fs[0]->setMetadata(
               "enzyme_augment",
               llvm::MDTuple::get(Fs[0]->getContext(),
@@ -139,12 +140,24 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
               "enzyme_gradient",
               llvm::MDTuple::get(Fs[0]->getContext(),
                                  {llvm::ValueAsMetadata::get(Fs[2])}));
-        } else if (numargs == 2) {
+        } else if (Mode == DerivativeMode::ForwardMode) {
+          assert (numargs == 2);
           Fs[0]->setMetadata(
               "enzyme_derivative",
               llvm::MDTuple::get(Fs[0]->getContext(),
                                  {llvm::ValueAsMetadata::get(Fs[1])}));
-        }
+        } else if (Mode == DerivativeMode::ForwardModeSplit) {
+          assert (numargs == 3);
+          Fs[0]->setMetadata(
+              "enzyme_augment",
+              llvm::MDTuple::get(Fs[0]->getContext(),
+                                 {llvm::ValueAsMetadata::get(Fs[1])}));
+          Fs[0]->setMetadata(
+              "enzyme_splitderivative",
+              llvm::MDTuple::get(Fs[0]->getContext(),
+                                 {llvm::ValueAsMetadata::get(Fs[2])}));
+        } else
+          assert("Unknown mode");
       }
     } else {
       llvm::errs() << M << "\n";
@@ -1734,6 +1747,8 @@ public:
         "__enzyme_register_gradient";
     constexpr static const char derivative_handler_name[] =
         "__enzyme_register_derivative";
+    constexpr static const char splitderivative_handler_name[] =
+        "__enzyme_register_splitderivative";
 
     Logic.clear();
 
@@ -1741,9 +1756,12 @@ public:
     std::vector<GlobalVariable *> globalsToErase;
     for (GlobalVariable &g : M.globals()) {
       if (g.getName().contains(gradient_handler_name)) {
-        handleCustomDerivative<gradient_handler_name, 3>(M, g, globalsToErase);
+        handleCustomDerivative<gradient_handler_name, DerivativeMode::ReverseModeGradient, 3>(M, g, globalsToErase);
       } else if (g.getName().contains(derivative_handler_name)) {
-        handleCustomDerivative<derivative_handler_name, 2>(M, g,
+        handleCustomDerivative<derivative_handler_name, DerivativeMode::ForwardMode, 2>(M, g,
+                                                           globalsToErase);
+      } else if (g.getName().contains(splitderivative_handler_name)) {
+        handleCustomDerivative<splitderivative_handler_name, DerivativeMode::ForwardModeSplit, 3>(M, g,
                                                            globalsToErase);
       } else if (g.getName().contains("__enzyme_inactivefn")) {
         handleInactiveFunction(M, g, globalsToErase);

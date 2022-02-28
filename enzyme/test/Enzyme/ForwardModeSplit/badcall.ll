@@ -35,27 +35,24 @@ entry:
   ret double %call
 }
 
-declare dso_local double @__enzyme_fwdsplit(i8*, double*, double*) local_unnamed_addr
+declare dso_local double @__enzyme_fwdsplit(i8*, double*, double*, i8*) local_unnamed_addr
 
 attributes #0 = { noinline norecurse nounwind uwtable }
 attributes #1 = { noinline nounwind uwtable }
 
-; CHECK: define internal {{(dso_local )?}}void @fwddiffef(double* nocapture %x, double* nocapture %"x'")
+; CHECK: define internal {{(dso_local )?}}void @fwddiffef(double* nocapture %x, double* nocapture %"x'", i8* %tapeArg)
 ; CHECK-NEXT: entry:
+; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
 ; CHECK-NEXT:	call void @fwddiffesubf(double* %x, double* %"x'")
-; CHECK-NEXT:	store double 2.000000e+00, double* %x
 ; CHECK-NEXT:	store double 0.000000e+00, double* %"x'"
 ; CHECK-NEXT:	ret void
 ; CHECK-NEXT: }
 
 ; CHECK: define internal {{(dso_local )?}}void @fwddiffesubf(double* nocapture %x, double* nocapture %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = load double, double* %x
-; CHECK-NEXT:   %1 = load double, double* %"x'"
-; CHECK-NEXT:   %mul = fmul fast double %0, 2.000000e+00
-; CHECK-NEXT:   %2 = fmul fast double %1, 2.000000e+00
-; CHECK-NEXT:   store double %mul, double* %x
-; CHECK-NEXT:   store double %2, double* %"x'"
+; CHECK-NEXT:   %0 = load double, double* %"x'"
+; CHECK-NEXT:   %1 = fmul fast double %0, 2.000000e+00
+; CHECK-NEXT:   store double %1, double* %"x'"
 ; CHECK-NEXT:   call void @fwddiffemetasubf(double* %x, double* %"x'")
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
@@ -63,8 +60,6 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK: define internal {{(dso_local )?}}void @fwddiffemetasubf(double* nocapture %x, double* nocapture %"x'") 
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds double, double* %"x'", i64 1
-; CHECK-NEXT:   %arrayidx = getelementptr inbounds double, double* %x, i64 1
-; CHECK-NEXT:   store double 3.000000e+00, double* %arrayidx
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"arrayidx'ipg"
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

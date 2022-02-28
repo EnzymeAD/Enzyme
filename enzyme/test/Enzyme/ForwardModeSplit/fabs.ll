@@ -9,7 +9,7 @@ entry:
 
 define double @test_derivative(double %x) {
 entry:
-  %0 = tail call double (double (double)*, ...) @__enzyme_fwdsplit(double (double)* nonnull @tester, double %x, double 1.0)
+  %0 = tail call double (double (double)*, ...) @__enzyme_fwdsplit(double (double)* nonnull @tester, double %x, double 1.0, i8* null)
   ret double %0
 }
 
@@ -19,8 +19,9 @@ declare double @llvm.fabs.f64(double)
 ; Function Attrs: nounwind
 declare double @__enzyme_fwdsplit(double (double)*, ...)
 
-; CHECK: define internal {{(dso_local )?}}double @fwddiffetester(double %x, double %[[differet:.+]])
+; CHECK: define internal {{(dso_local )?}}double @fwddiffetester(double %x, double %[[differet:.+]], i8* %tapeArg)
 ; CHECK-NEXT: entry:
+; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
 ; CHECK-NEXT:   %0 = fcmp fast olt double %x, 0.000000e+00
 ; CHECK-NEXT:   %1 = select{{( fast)?}} i1 %0, double -1.000000e+00, double 1.000000e+00
 ; CHECK-NEXT:   %2 = fmul fast double %1, %[[differet]]

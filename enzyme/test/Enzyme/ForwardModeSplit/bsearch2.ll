@@ -37,11 +37,11 @@ exit:
 ; Function Attrs: noinline nounwind uwtable
 define dso_local double @dsumsquare(double* %x, double* %xp, i64 %n) local_unnamed_addr #1 {
 entry:
-  %call = tail call fast double @__enzyme_fwdsplit(i8* bitcast (double (double*, i64)* @f to i8*), double* %x, double* %xp, i64 %n)
+  %call = tail call fast double @__enzyme_fwdsplit(i8* bitcast (double (double*, i64)* @f to i8*), double* %x, double* %xp, i64 %n, i8* null)
   ret double %call
 }
 
-declare dso_local double @__enzyme_fwdsplit(i8*, double*, double*, i64) local_unnamed_addr
+declare dso_local double @__enzyme_fwdsplit(i8*, double*, double*, i64, i8*) local_unnamed_addr
 
 attributes #0 = { noinline norecurse nounwind uwtable }
 attributes #1 = { noinline nounwind uwtable }
@@ -49,6 +49,7 @@ attributes #1 = { noinline nounwind uwtable }
 
 ; CHECK: define internal double @fwddiffef(double* nocapture %x, double* nocapture %"x'", i64 %n)
 ; CHECK-NEXT: entry:
+; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
 ; CHECK-NEXT:   br label %loop
 
 ; CHECK: loop:                                             ; preds = %end, %entry

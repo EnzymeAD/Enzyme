@@ -47,7 +47,7 @@ declare void @llvm.lifetime.end.p0i8(i64, i8* nocapture) #2
 
 define dso_local double @dsquare(double %x) local_unnamed_addr #1 {
 entry:
-  %call = tail call double (i8*, ...) @__enzyme_fwdsplit(i8* bitcast (double (double)* @square to i8*), double %x, double 1.000000e+00) #4
+  %call = tail call double (i8*, ...) @__enzyme_fwdsplit(i8* bitcast (double (double)* @square to i8*), double %x, double 1.000000e+00, i8* null) #4
   ret double %call
 }
 

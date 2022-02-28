@@ -76,7 +76,7 @@ entry:
 ; Function Attrs: nounwind uwtable
 define dso_local double @dsumsquare(double %x) local_unnamed_addr #3 {
 entry:
-  %0 = tail call double (double (double)*, ...) @__enzyme_fwdsplit(double (double)* nonnull @foo, double %x, double 1.0)
+  %0 = tail call double (double (double)*, ...) @__enzyme_fwdsplit(double (double)* nonnull @foo, double %x, double 1.0, i8* null)
   ret double %0
 }
 
@@ -99,17 +99,18 @@ attributes #4 = { nounwind }
 !4 = !{!"omnipotent char", !5, i64 0}
 !5 = !{!"Simple C/C++ TBAA"}
 
-; CHECK: define internal {{(dso_local )?}}double @fwddiffefoo(double %x, double %"x'")
+; CHECK: define internal {{(dso_local )?}}double @fwddiffefoo(double %x, double %"x'", i8* %tapeArg)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call fast double @fwddiffesub(double %x, double %"x'")
-; CHECK-NEXT:   %call1 = tail call fast double @read2()
-; CHECK-NEXT:   ret double %0
+; CHECK-NEXT: %0 = bitcast i8* %tapeArg to double*
+; CHECK-NEXT:  %tapeArg1 = load double, double* %0,
+; CHECK-NEXT: tail call void @free(i8* nonnull %tapeArg)
+; CHECK-NEXT:   %1 = call fast double @fwddiffesub(double %x, double %"x'", double %tapeArg1)
+; CHECK-NEXT:   ret double %1
 ; CHECK-NEXT: }
 
 
-; CHECK: define internal {{(dso_local )?}}double @fwddiffesub(double %x, double %"x'")
+; CHECK: define internal {{(dso_local )?}}double @fwddiffesub(double %x, double %"x'", double %call)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %call = tail call fast double @readDouble()
 ; CHECK-NEXT:   %0 = fmul fast double %"x'", %call
 ; CHECK-NEXT:   ret double %0
 ; CHECK-NEXT: }
