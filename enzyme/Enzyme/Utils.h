@@ -583,11 +583,8 @@ getOrInsertDifferentialFloatMemmove(llvm::Module &M, llvm::Type *T,
                                     unsigned dstalign, unsigned srcalign,
                                     unsigned dstaddr, unsigned srcaddr);
 
-llvm::Function *getOrInsertCheckedFree(llvm::Module &M,
-                                       llvm::FunctionType *FreeTy,
-                                       llvm::Function *Free, llvm::Type *Type,
-                                       llvm::AttributeList FreeAttributes,
-                                       unsigned width);
+llvm::Function *getOrInsertCheckedFree(llvm::Module &M, llvm::CallInst *call,
+                                       llvm::Type *Type, unsigned width);
 
 /// Create function for type that performs the derivative MPI_Wait
 llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,

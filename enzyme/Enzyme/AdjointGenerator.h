@@ -9883,9 +9883,7 @@ public:
           auto tofree = gutils->invertPointerM(origfree, Builder2);
 
           Function *free = getOrInsertCheckedFree(
-              *orig->getModule(), orig->getFunctionType(),
-              orig->getCalledFunction(), newfree->getType(),
-              orig->getAttributes(), gutils->getWidth());
+              *orig->getModule(), orig, newfree->getType(), gutils->getWidth());
 
           SmallVector<Value *, 3> args;
           args.push_back(newfree);

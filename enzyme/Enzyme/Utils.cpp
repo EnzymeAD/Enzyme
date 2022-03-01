@@ -298,9 +298,14 @@ Function *getOrInsertDifferentialFloatMemmove(Module &M, Type *T,
                                             srcaddr);
 }
 
-Function *getOrInsertCheckedFree(Module &M, FunctionType *FreeTy,
-                                 Function *Free, Type *Ty,
-                                 AttributeList FreeAttributes, unsigned width) {
+Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
+                                 unsigned width) {
+  FunctionType *FreeTy = call->getFunctionType();
+  Value *Free = call->getCalledOperand();
+  AttributeList FreeAttributes = call->getAttributes();
+  CallingConv::ID CallingConvention = call->getCallingConv();
+  DebugLoc DebugLoc = call->getDebugLoc();
+
   std::string name = "__enzyme_checked_free_" + std::to_string(width);
 
   SmallVector<Type *, 3> types;
@@ -354,6 +359,8 @@ Function *getOrInsertCheckedFree(Module &M, FunctionType *FreeTy,
     Value *args[] = {shadow};
     CallInst *CI = BodyBuilder.CreateCall(FreeTy, Free, args);
     CI->setAttributes(FreeAttributes);
+    CI->setCallingConv(CallingConvention);
+    CI->setDebugLoc(DebugLoc);
   }
 
   EntryBuilder.CreateCondBr(checkResult, end, body);
