@@ -331,40 +331,53 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
   F->addFnAttr(Attribute::NoUnwind);
 
   BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
-  BasicBlock *body = BasicBlock::Create(M.getContext(), "body", F);
+  BasicBlock *free0 = BasicBlock::Create(M.getContext(), "free0", F);
   BasicBlock *end = BasicBlock::Create(M.getContext(), "end", F);
 
   IRBuilder<> EntryBuilder(entry);
-  IRBuilder<> BodyBuilder(body);
+  IRBuilder<> Free0Builder(free0);
   IRBuilder<> EndBuilder(end);
 
   Value *checkResult = EntryBuilder.getTrue();
 
-  F->addParamAttr(0, Attribute::NoCapture);
   auto primal = F->arg_begin();
+  Argument *first_shadow = F->arg_begin() + 1;
+  F->addParamAttr(0, Attribute::NoCapture);
+  F->addParamAttr(1, Attribute::NoCapture);
 
-  for (unsigned i = 0; i < width; i++) {
-    F->addParamAttr(i + 1, Attribute::NoCapture);
-    Argument *shadow = F->arg_begin() + i + 1;
+  Value *isNotEqual = EntryBuilder.CreateICmpNE(primal, first_shadow);
+  EntryBuilder.CreateCondBr(isNotEqual, end, free0);
 
-    Value *isNotEqual = EntryBuilder.CreateICmpNE(primal, shadow);
-    checkResult = EntryBuilder.CreateAnd(isNotEqual, checkResult);
+  if (width > 1) {
+    BasicBlock *free1 = BasicBlock::Create(M.getContext(), "free1", F);
+    IRBuilder<> Free1Builder(free1);
 
-    if (i < width - 1) {
-      Argument *nextShadow = F->arg_begin() + i + 2;
-      Value *isNotEqual = EntryBuilder.CreateICmpNE(shadow, nextShadow);
-      checkResult = EntryBuilder.CreateAnd(isNotEqual, checkResult);
+    for (unsigned i = 1; i < width; i++) {
+      F->addParamAttr(i + 1, Attribute::NoCapture);
+      Argument *shadow = F->arg_begin() + i + 1;
+
+      if (i < width - 1) {
+        Argument *nextShadow = F->arg_begin() + i + 2;
+        Value *isNotEqual = Free0Builder.CreateICmpNE(shadow, nextShadow);
+        checkResult = Free0Builder.CreateAnd(isNotEqual, checkResult);
+
+        CallInst *CI = Free1Builder.CreateCall(FreeTy, Free, {shadow});
+        CI->setAttributes(FreeAttributes);
+        CI->setCallingConv(CallingConvention);
+        CI->setDebugLoc(DebugLoc);
+      }
     }
-
-    Value *args[] = {shadow};
-    CallInst *CI = BodyBuilder.CreateCall(FreeTy, Free, args);
+    Free0Builder.CreateCondBr(checkResult, free1, end);
+    Free1Builder.CreateBr(end);
+  } else {
+    CallInst *CI = Free0Builder.CreateCall(FreeTy, Free, {first_shadow});
     CI->setAttributes(FreeAttributes);
     CI->setCallingConv(CallingConvention);
     CI->setDebugLoc(DebugLoc);
+
+    Free0Builder.CreateBr(end);
   }
 
-  EntryBuilder.CreateCondBr(checkResult, end, body);
-  BodyBuilder.CreateBr(end);
   EndBuilder.CreateRetVoid();
 
   return F;

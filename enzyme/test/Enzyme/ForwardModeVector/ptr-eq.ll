@@ -62,22 +62,16 @@ entry:
 ; CHECK: define internal void @__enzyme_checked_free_3(i8* nocapture %0, i8* nocapture %1, i8* nocapture %2, i8* nocapture %3)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %4 = icmp ne i8* %0, %1
-; CHECK-NEXT:   %5 = icmp ne i8* %1, %2
-; CHECK-NEXT:   %6 = and i1 %5, %4
-; CHECK-NEXT:   %7 = icmp ne i8* %0, %2
-; CHECK-NEXT:   %8 = and i1 %7, %6
-; CHECK-NEXT:   %9 = icmp ne i8* %2, %3
-; CHECK-NEXT:   %10 = and i1 %9, %8
-; CHECK-NEXT:   %11 = icmp ne i8* %0, %3
-; CHECK-NEXT:   %12 = and i1 %11, %10
-; CHECK-NEXT:   br i1 %12, label %end, label %body
+; CHECK-NEXT:   br i1 %4, label %end, label %free0
 
-; CHECK: body:                                             ; preds = %entry
-; CHECK-NEXT:   call void @free(i8* %1) #0
-; CHECK-NEXT:   call void @free(i8* %2) #0
-; CHECK-NEXT:   call void @free(i8* %3) #0
-; CHECK-NEXT:   br label %end
+; CHECK: free0:                                            ; preds = %entry
+; CHECK-NEXT:   %5 = icmp ne i8* %2, %3
+; CHECK-NEXT:   br i1 %5, label %free1, label %end
 
-; CHECK: end:                                              ; preds = %body, %entry
+; CHECK: end:                                              ; preds = %free1, %free0, %entry
 ; CHECK-NEXT:   ret void
+
+; CHECK: free1:                                            ; preds = %free0
+; CHECK-NEXT:   call void @free(i8* %2)
+; CHECK-NEXT:   br label %end
 ; CHECK-NEXT: }
