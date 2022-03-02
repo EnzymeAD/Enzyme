@@ -246,7 +246,7 @@ template <deriv_reproj_t deriv_reproj>
 void calculate_reproj_error_jacobian_part_forward(struct BAInput &input,
                                                   struct BAOutput &result) {
   auto reproj_err_d = std::vector<double>(2);
-  auto reproj_err_d_row = std::vector<double>(BA_NCAMPARAMS + 3 + 1);
+  auto reproj_err_d_col = std::vector<double>(BA_NCAMPARAMS + 3 + 1);
 
   double parameters[BA_NCAMPARAMS + 3 + 1];
   double *dcams = &parameters[0];
