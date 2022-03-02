@@ -281,7 +281,7 @@ typedef void (*deriv_weight_t)(double const *w, double *dw, double *err,
                                double *derr);
 
 template <deriv_weight_t deriv_weight>
-void calculate_weight_error_jacobian_part(
+void calculate_weight_error_jacobian_part_reverse(
     struct BAInput &input, struct BAOutput &result,
     std::vector<double> &reproj_err_d, std::vector<double> &reproj_err_d_row) {
   for (int j = 0; j < input.p; j++) {
@@ -297,6 +297,20 @@ void calculate_weight_error_jacobian_part(
 
     deriv_weight(&input.w[j], &wb, &err, &errb);
     result.J.insert_w_err_block(j, wb);
+  }
+}
+
+template <deriv_weight_t deriv_weight>
+void calculate_weight_error_jacobian_part_forward(
+    struct BAInput &input, struct BAOutput &result,
+    std::vector<double> &reproj_err_d, std::vector<double> &reproj_err_d_col) {
+  for (int j = 0; j < input.p; j++) {
+    double wb = 1.0;
+    double err = 0.0;
+    double errb = 0.0;
+
+    deriv_weight(&input.w[j], &wb, &err, &errb);
+    result.J.insert_w_err_block(j, errb);
   }
 }
 
