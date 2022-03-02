@@ -338,8 +338,6 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
   IRBuilder<> Free0Builder(free0);
   IRBuilder<> EndBuilder(end);
 
-  Value *checkResult = EntryBuilder.getTrue();
-
   auto primal = F->arg_begin();
   Argument *first_shadow = F->arg_begin() + 1;
   F->addParamAttr(0, Attribute::NoCapture);
@@ -348,7 +346,13 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
   Value *isNotEqual = EntryBuilder.CreateICmpNE(primal, first_shadow);
   EntryBuilder.CreateCondBr(isNotEqual, end, free0);
 
+  CallInst *CI = Free0Builder.CreateCall(FreeTy, Free, {first_shadow});
+  CI->setAttributes(FreeAttributes);
+  CI->setCallingConv(CallingConvention);
+  CI->setDebugLoc(DebugLoc);
+
   if (width > 1) {
+    Value *checkResult = EntryBuilder.getTrue();
     BasicBlock *free1 = BasicBlock::Create(M.getContext(), "free1", F);
     IRBuilder<> Free1Builder(free1);
 
@@ -360,21 +364,15 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
         Argument *nextShadow = F->arg_begin() + i + 2;
         Value *isNotEqual = Free0Builder.CreateICmpNE(shadow, nextShadow);
         checkResult = Free0Builder.CreateAnd(isNotEqual, checkResult);
-
-        CallInst *CI = Free1Builder.CreateCall(FreeTy, Free, {shadow});
-        CI->setAttributes(FreeAttributes);
-        CI->setCallingConv(CallingConvention);
-        CI->setDebugLoc(DebugLoc);
       }
+      CallInst *CI = Free1Builder.CreateCall(FreeTy, Free, {shadow});
+      CI->setAttributes(FreeAttributes);
+      CI->setCallingConv(CallingConvention);
+      CI->setDebugLoc(DebugLoc);
     }
     Free0Builder.CreateCondBr(checkResult, free1, end);
     Free1Builder.CreateBr(end);
   } else {
-    CallInst *CI = Free0Builder.CreateCall(FreeTy, Free, {first_shadow});
-    CI->setAttributes(FreeAttributes);
-    CI->setCallingConv(CallingConvention);
-    CI->setDebugLoc(DebugLoc);
-
     Free0Builder.CreateBr(end);
   }
 

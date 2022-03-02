@@ -65,6 +65,7 @@ entry:
 ; CHECK-NEXT:   br i1 %4, label %end, label %free0
 
 ; CHECK: free0:                                            ; preds = %entry
+; CHECK-NEXT:   call void @free(i8* %1)
 ; CHECK-NEXT:   %5 = icmp ne i8* %2, %3
 ; CHECK-NEXT:   br i1 %5, label %free1, label %end
 
@@ -73,5 +74,6 @@ entry:
 
 ; CHECK: free1:                                            ; preds = %free0
 ; CHECK-NEXT:   call void @free(i8* %2)
+; CHECK-NEXT:   call void @free(i8* %3)
 ; CHECK-NEXT:   br label %end
 ; CHECK-NEXT: }
