@@ -186,9 +186,12 @@ typedef void (*deriv_reproj_t)(double const *, double *, double const *,
                                double const *, double *, double *);
 
 template <deriv_reproj_t deriv_reproj>
-void calculate_reproj_error_jacobian_part_reverse(
-    struct BAInput &input, struct BAOutput &result,
-    std::vector<double> &reproj_err_d, std::vector<double> &reproj_err_d_row) {
+void calculate_reproj_error_jacobian_part_reverse(struct BAInput &input,
+                                                  struct BAOutput &result) {
+
+  auto reproj_err_d = std::vector<double>(2 * (BA_NCAMPARAMS + 3 + 1));
+  auto reproj_err_d_row = std::vector<double>(BA_NCAMPARAMS + 3 + 1);
+
   double
       errb[2]; // stores dY
                // (i-th element equals to 1.0 for calculating i-th jacobian row)
@@ -240,9 +243,11 @@ void calculate_reproj_error_jacobian_part_reverse(
 }
 
 template <deriv_reproj_t deriv_reproj>
-void calculate_reproj_error_jacobian_part_forward(
-    struct BAInput &input, struct BAOutput &result,
-    std::vector<double> &reproj_err_d, std::vector<double> &reproj_err_d_col) {
+void calculate_reproj_error_jacobian_part_forward(struct BAInput &input,
+                                                  struct BAOutput &result) {
+  auto reproj_err_d = std::vector<double>(2);
+  auto reproj_err_d_row = std::vector<double>(BA_NCAMPARAMS + 3 + 1);
+
   double parameters[BA_NCAMPARAMS + 3 + 1];
   double *dcams = &parameters[0];
   double *dX = &parameters[BA_NCAMPARAMS];
@@ -281,9 +286,8 @@ typedef void (*deriv_weight_t)(double const *w, double *dw, double *err,
                                double *derr);
 
 template <deriv_weight_t deriv_weight>
-void calculate_weight_error_jacobian_part_reverse(
-    struct BAInput &input, struct BAOutput &result,
-    std::vector<double> &reproj_err_d, std::vector<double> &reproj_err_d_row) {
+void calculate_weight_error_jacobian_part_reverse(struct BAInput &input,
+                                                  struct BAOutput &result) {
   for (int j = 0; j < input.p; j++) {
     // NOTE added set of 0 here
     double wb = 0.0; // stores calculated derivative
@@ -301,9 +305,8 @@ void calculate_weight_error_jacobian_part_reverse(
 }
 
 template <deriv_weight_t deriv_weight>
-void calculate_weight_error_jacobian_part_forward(
-    struct BAInput &input, struct BAOutput &result,
-    std::vector<double> &reproj_err_d, std::vector<double> &reproj_err_d_col) {
+void calculate_weight_error_jacobian_part_forward(struct BAInput &input,
+                                                  struct BAOutput &result) {
   for (int j = 0; j < input.p; j++) {
     double wb = 1.0;
     double err = 0.0;
@@ -316,13 +319,8 @@ void calculate_weight_error_jacobian_part_forward(
 
 template <deriv_reproj_t deriv_reproj, deriv_weight_t deriv_weight>
 void calculate_jacobian(struct BAInput &input, struct BAOutput &result) {
-  auto reproj_err_d = std::vector<double>(2 * (BA_NCAMPARAMS + 3 + 1));
-  auto reproj_err_d_row = std::vector<double>(BA_NCAMPARAMS + 3 + 1);
-
-  calculate_reproj_error_jacobian_part_reverse<deriv_reproj>(
-      input, result, reproj_err_d, reproj_err_d_row);
-  calculate_weight_error_jacobian_part<deriv_weight>(
-      input, result, reproj_err_d, reproj_err_d_row);
+  calculate_reproj_error_jacobian_part_reverse<deriv_reproj>(input, result);
+  calculate_weight_error_jacobian_part<deriv_weight>(input, result);
 }
 
 int main(const int argc, const char *argv[]) {
