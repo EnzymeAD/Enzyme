@@ -253,7 +253,8 @@ void calculate_reproj_error_jacobian_part_forward(struct BAInput &input,
   double *dX = &parameters[BA_NCAMPARAMS];
   double *dw = &parameters[BA_NCAMPARAMS + 3];
 
-  double *derror = reproj_err_d_col.data();
+  double err[2] = {0};
+  double *derr = reproj_err_d_col.data();
 
   for (int i = 0; i < input.p; i++) {
     int camIdx = input.obs[2 * i + 0];
