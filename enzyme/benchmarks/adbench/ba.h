@@ -320,7 +320,7 @@ void calculate_weight_error_jacobian_part_forward(struct BAInput &input,
 template <deriv_reproj_t deriv_reproj, deriv_weight_t deriv_weight>
 void calculate_jacobian(struct BAInput &input, struct BAOutput &result) {
   calculate_reproj_error_jacobian_part_reverse<deriv_reproj>(input, result);
-  calculate_weight_error_jacobian_part<deriv_weight>(input, result);
+  calculate_weight_error_jacobian_part_reverse<deriv_weight>(input, result);
 }
 
 int main(const int argc, const char *argv[]) {
