@@ -344,7 +344,7 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
   F->addParamAttr(1, Attribute::NoCapture);
 
   Value *isNotEqual = EntryBuilder.CreateICmpNE(primal, first_shadow);
-  EntryBuilder.CreateCondBr(isNotEqual, end, free0);
+  EntryBuilder.CreateCondBr(isNotEqual, free0, end);
 
   CallInst *CI = Free0Builder.CreateCall(FreeTy, Free, {first_shadow});
   CI->setAttributes(FreeAttributes);
