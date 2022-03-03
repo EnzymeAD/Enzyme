@@ -6566,12 +6566,22 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
 
         if (mode == DerivativeMode::ForwardModeSplit) {
           CallInst *call;
-          if (intrinsic == Intrinsic::memmove) {
+#if LLVM_VERSION_MAJOR >= 11
+          MaybeAlign dalign;
+          if (dstalign) dalign = MaybeAlign(dstalign);
+          MaybeAlign salign;
+          if (srcalign) salign = MaybeAlign(srcalign);
+#else
+          auto dalign = dstalign;
+          auto salign = srcalign;
+#endif
+
+          if (intrinsic == Intrinsic::memmove) {            
             call =
-                Builder2.CreateMemMove(dsto, dstalign, srco, srcalign, length);
+                Builder2.CreateMemMove(dsto, dalign, srco, salign, length);
           } else {
             call =
-                Builder2.CreateMemCpy(dsto, dstalign, srco, srcalign, length);
+                Builder2.CreateMemCpy(dsto, dalign, srco, salign, length);
           }
         } else {
         Value *args[]{

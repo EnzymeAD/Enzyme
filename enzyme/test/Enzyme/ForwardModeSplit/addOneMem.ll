@@ -19,9 +19,9 @@ entry:
 }
 
 ; Function Attrs: nounwind uwtable
-define dso_local void @test_derivative(double* %x, double* %xp) local_unnamed_addr {
+define dso_local void @test_derivative(double* %x, double* %xp, i8* %tape) local_unnamed_addr {
 entry:
-  %0 = tail call double (void (double*)*, ...) @__enzyme_fwdsplit(void (double*)* nonnull @addOneMem, double* %x, double* %xp, i8* null)
+  %0 = tail call double (void (double*)*, ...) @__enzyme_fwdsplit(void (double*)* nonnull @addOneMem, double* %x, double* %xp, i8* %tape)
   ret void
 }
 
@@ -39,7 +39,8 @@ declare double @__enzyme_fwdsplit(void (double*)*, ...)
 !5 = !{!"Simple C/C++ TBAA"}
 
 
-; CHECK: define {{(dso_local )?}}void @test_derivative(double* %x, double* %xp)
+; CHECK: define {{(dso_local )?}}void @test_derivative(double* %x, double* %xp, i8* %tape)
 ; CHECK-NEXT: entry:
+; CHECK-NEXT:   call void @free(i8* nonnull %tape)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

@@ -306,11 +306,6 @@ public:
 
 extern "C" {
 extern llvm::cl::opt<bool> looseTypeAnalysis;
-
-extern llvm::cl::opt<bool> cache_reads_always;
-
-extern llvm::cl::opt<bool> cache_reads_never;
-
 extern llvm::cl::opt<bool> nonmarkedglobals_inactiveloads;
 };
 

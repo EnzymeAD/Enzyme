@@ -528,11 +528,6 @@ public:
       }
     }
 
-    // Allow forcing cache reads to be on or off using flags.
-    assert(!(cache_reads_always && cache_reads_never) &&
-           "Both cache_reads_always and cache_reads_never are true. This "
-           "doesn't make sense.");
-
     Value *inst = newi;
 
     //! Store loads that need to be cached for use in reverse pass
@@ -540,18 +535,22 @@ public:
     // Only cache value here if caching decision isn't precomputed.
     // Otherwise caching will be done inside EnzymeLogic.cpp at
     // the end of the function jointly.
-    if ((Mode != DerivativeMode::ForwardMode &&
-         gutils->knownRecomputeHeuristic.count(&I) == 0 &&
-         !gutils->unnecessaryIntermediates.count(&I) && can_modref &&
-         !cache_reads_never) ||
-        cache_reads_always) {
+    if (Mode != DerivativeMode::ForwardMode &&
+         ( (gutils->knownRecomputeHeuristic.count(&I) == 0 && can_modref)||
+           !gutils->knownRecomputeHeuristic[&I]
+         ) &&
+         !gutils->unnecessaryIntermediates.count(&I)) {
       // we can pre initialize all the knownRecomputeHeuristic values to false
       // (not needing) as we may assume that minCutCache already preserves
       // everything it requires.
       std::map<UsageKey, bool> Seen;
+      bool primalNeededInReverse = false;
       for (auto pair : gutils->knownRecomputeHeuristic)
-        Seen[UsageKey(pair.first, ValueType::Primal)] = false;
-      bool primalNeededInReverse =
+        if (!pair.second) {
+          Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+          if (pair.first == &I) primalNeededInReverse = true;
+        }
+      primalNeededInReverse |=
           is_value_needed_in_reverse<ValueType::Primal>(TR, gutils, &I, Mode,
                                                         Seen, oldUnreachable);
       if (primalNeededInReverse) {

@@ -82,14 +82,6 @@ cl::opt<bool> looseTypeAnalysis("enzyme-loose-types", cl::init(false),
                                 cl::Hidden,
                                 cl::desc("Allow looser use of types"));
 
-cl::opt<bool> cache_reads_always("enzyme-cache-always", cl::init(false),
-                                 cl::Hidden,
-                                 cl::desc("Force always caching of all reads"));
-
-cl::opt<bool> cache_reads_never("enzyme-cache-never", cl::init(false),
-                                cl::Hidden,
-                                cl::desc("Disable caching of all reads"));
-
 cl::opt<bool> nonmarkedglobals_inactiveloads(
     "enzyme_nonmarkedglobals_inactiveloads", cl::init(true), cl::Hidden,
     cl::desc("Consider loads of nonmarked globals to be inactive"));
@@ -4081,8 +4073,11 @@ Function *EnzymeLogic::CreateForwardDiff(
     can_modref_map = std::make_unique<const std::map<Instruction *, bool>>(CA.compute_uncacheable_load_map());
     gutils->can_modref_map = can_modref_map.get();
 
-    mapping = augmenteddata->tapeIndices;
+    std::map<std::pair<llvm::Instruction*, CacheType>, int> mapping;
+    if (augmenteddata)
+      mapping = augmenteddata->tapeIndices;
     auto getIndex = [&](Instruction *I, CacheType u) -> unsigned {
+      assert(augmenteddata);
       return gutils->getIndex(std::make_pair(I, u), mapping);
     };
 
