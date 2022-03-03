@@ -301,7 +301,11 @@ Function *getOrInsertDifferentialFloatMemmove(Module &M, Type *T,
 Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
                                  unsigned width) {
   FunctionType *FreeTy = call->getFunctionType();
+#if LLVM_VERSION_MAJOR >= 11
   Value *Free = call->getCalledOperand();
+#else
+  Value *Free = call->getCalledValue();
+#endif
   AttributeList FreeAttributes = call->getAttributes();
   CallingConv::ID CallingConvention = call->getCallingConv();
   DebugLoc DebugLoc = call->getDebugLoc();
