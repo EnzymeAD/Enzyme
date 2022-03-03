@@ -1,7 +1,19 @@
+use clap::ArgEnum;
 use dirs;
-use std::{path::PathBuf, process::Command, str::FromStr};
+use std::{path::PathBuf, process::Command};
 
 use super::version_manager::{ENZYME_VER, RUSTC_VER};
+
+use clap::Parser;
+
+#[derive(Parser)]
+/// Simple build helper to compile Enzyme, Clang, LLVM and our custom Rustc.
+pub struct Cli {
+    /// Specify which rust version should be used
+    pub rust: Option<Repo>,
+    /// Specify which enzyme version should be used
+    pub enzyme: Option<Repo>,
+}
 
 pub(crate) fn run_and_printerror(command: &mut Command) {
     println!("Running: `{:?}`", command);
@@ -17,16 +29,19 @@ pub(crate) fn run_and_printerror(command: &mut Command) {
     }
 }
 
-/// We offer support for downloading and compiling these two repositories.
-#[derive(Clone, Debug)]
+/// Used to decide which Enzyme Version should be used
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, ArgEnum)]
 pub enum Repo {
-    /// For handling the Enzyme repository (latest release).
-    Enzyme,
-    /// For handling the Enzyme repository (main branch).
-    EnzymeHEAD,
-    /// For handling the Rust repository.
-    Rust,
+    /// Use the latest Enzyme stable release
+    Stable,
+    /// Use the current Enzyme head from Github
+    Head,
+    /// Use a local Enzyme repository at the given path
+    #[clap(short, long)]
+    Local(String),
 }
+
+/*
 impl FromStr for Repo {
     type Err = String;
 
@@ -43,6 +58,7 @@ impl FromStr for Repo {
         }
     }
 }
+*/
 
 fn assert_existence(path: PathBuf) {
     if !path.is_dir() {
@@ -63,19 +79,21 @@ pub fn get_enzyme_repo_path() -> PathBuf {
     assert_existence(path.clone());
     path
 }
-fn get_enzyme_subdir_path() -> PathBuf {
-    let path = get_enzyme_repo_path().join("enzyme");
-    assert_existence(path.clone());
+fn get_enzyme_subdir_path(enzyme_repo_path: PathBuf) -> PathBuf {
+    let path = enzyme_repo_path.join("enzyme");
+    //assert_existence(path.clone());
     path
 }
-pub fn get_capi_path() -> PathBuf {
-    get_enzyme_subdir_path().join("Enzyme").join("CApi.h")
+pub fn get_capi_path(enzyme_repo_path: PathBuf) -> PathBuf {
+    get_enzyme_subdir_path(enzyme_repo_path)
+        .join("Enzyme")
+        .join("CApi.h")
 }
 pub fn get_bindings_string() -> PathBuf {
     get_enzyme_base_path().join("enzyme.rs")
 }
-pub fn get_enzyme_build_path() -> PathBuf {
-    let enzyme_path = get_enzyme_subdir_path().join("build");
+pub fn get_enzyme_build_path(repo_path: PathBuf) -> PathBuf {
+    let enzyme_path = get_enzyme_subdir_path(repo_path).join("build");
     assert_existence(enzyme_path.clone());
     enzyme_path
 }
@@ -89,23 +107,27 @@ pub fn get_rustc_repo_path() -> PathBuf {
     assert_existence(rustc_path.clone());
     rustc_path
 }
-pub fn get_rustc_build_path() -> PathBuf {
-    let rustc_path = get_rustc_repo_path().join("build");
+pub fn get_rustc_build_path(rust_repo: PathBuf) -> PathBuf {
+    let rustc_path = rust_repo.join("build");
     assert_existence(rustc_path.clone());
     rustc_path
 }
-fn get_rustc_platform_path() -> PathBuf {
+fn get_rustc_platform_path(rust_repo: PathBuf) -> PathBuf {
     let platform = env!("TARGET");
-    get_rustc_build_path().join(&platform)
+    get_rustc_build_path(rust_repo).join(&platform)
 }
-pub fn get_rustc_stage2_path() -> PathBuf {
-    get_rustc_platform_path().join("stage2")
+pub fn get_rustc_stage2_path(repo_path: PathBuf) -> PathBuf {
+    get_rustc_platform_path(repo_path).join("stage2")
 }
-pub fn get_llvm_build_path() -> PathBuf {
-    get_rustc_platform_path().join("llvm").join("build")
+pub fn get_llvm_build_path(rust_repo: PathBuf) -> PathBuf {
+    get_rustc_platform_path(rust_repo)
+        .join("llvm")
+        .join("build")
 }
-pub fn get_llvm_header_path() -> PathBuf {
-    get_rustc_platform_path().join("llvm").join("include")
+pub fn get_llvm_header_path(rust_repo: PathBuf) -> PathBuf {
+    get_rustc_platform_path(rust_repo)
+        .join("llvm")
+        .join("include")
 }
 pub fn get_remote_enzyme_tarball_path() -> String {
     format!(

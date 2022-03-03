@@ -12,11 +12,11 @@ fn rustc_download_finished() -> PathBuf {
 fn enzyme_download_finished() -> PathBuf {
     utils::get_download_dir().join("enzyme-".to_owned() + ENZYME_VER + "-ok")
 }
-fn rustc_compile_finished() -> PathBuf {
-    utils::get_rustc_build_path().join("rustc-".to_owned() + RUSTC_VER + "-ok")
+fn rustc_compile_finished(rust_repo: PathBuf) -> PathBuf {
+    utils::get_rustc_build_path(rust_repo).join("rustc-".to_owned() + RUSTC_VER + "-ok")
 }
-fn enzyme_compile_finished() -> PathBuf {
-    utils::get_enzyme_build_path().join("enzyme-".to_owned() + ENZYME_VER + "-ok")
+fn enzyme_compile_finished(rust_repo: PathBuf) -> PathBuf {
+    utils::get_enzyme_build_path(rust_repo).join("enzyme-".to_owned() + ENZYME_VER + "-ok")
 }
 fn enzyme_compile_head_finished() -> PathBuf {
     utils::get_enzyme_base_path()
@@ -28,34 +28,34 @@ fn enzyme_compile_head_finished() -> PathBuf {
 
 pub fn check_downloaded(repo: &Repo) -> bool {
     match repo {
-        Repo::Rust => rustc_download_finished().exists(),
-        Repo::Enzyme => enzyme_download_finished().exists(),
-        Repo::EnzymeHEAD => false, // always trigger download of the latest head
+        Repo::Stable => rustc_download_finished().exists(),
+        Repo::Head => enzyme_download_finished().exists(),
+        Repo::Local(_) => false, // always trigger download of the latest head
     }
 }
 
 pub fn set_downloaded(repo: &Repo) {
     let path = match repo {
-        Repo::Rust => rustc_download_finished(),
-        Repo::Enzyme => enzyme_download_finished(),
-        Repo::EnzymeHEAD => return, // we clone directly instead of downloading first
+        Repo::Stable => rustc_download_finished(),
+        Repo::Head => enzyme_download_finished(),
+        Repo::Local(_) => return, // we clone directly instead of downloading first
     };
     File::create(&path).expect("Couldn't create downloaded-finished file");
 }
 
 pub fn check_compiled(repo: &Repo) -> bool {
     match repo {
-        Repo::Rust => rustc_compile_finished().exists(),
-        Repo::Enzyme => enzyme_compile_finished().exists(),
-        Repo::EnzymeHEAD => enzyme_compile_head_finished().exists(),
+        Repo::Stable => rustc_compile_finished().exists(),
+        Repo::Head => enzyme_compile_finished().exists(),
+        Repo::Local(_) => enzyme_compile_head_finished().exists(),
     }
 }
 
 pub fn set_compiled(repo: &Repo) {
     let path = match repo {
-        Repo::Rust => rustc_compile_finished(),
-        Repo::Enzyme => enzyme_compile_finished(),
-        Repo::EnzymeHEAD => enzyme_compile_head_finished(),
+        Repo::Stable => rustc_compile_finished(),
+        Repo::Head => enzyme_compile_finished(),
+        Repo::Local(_) => enzyme_compile_head_finished(),
     };
     File::create(&path).expect("Couldn't create compilation-finished file");
 }

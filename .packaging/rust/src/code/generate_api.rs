@@ -1,29 +1,37 @@
+use crate::{
+    code::utils::{get_capi_path, get_enzyme_base_path, get_enzyme_repo_path, get_rustc_repo_path},
+    Cli, Repo,
+};
+
 use super::utils;
 use bindgen;
 use std::{fs, path::PathBuf};
 
-/// This function can be used to generate Rust wrappers around Enzyme's [C API](https://github.com/wsmoses/Enzyme/blob/main/enzyme/Enzyme/CApi.h) based on the latest release.
-pub fn generate_bindings_from_release() -> Result<(), String> {
-    let capi_header = utils::get_capi_path();
-    let out_file = utils::get_bindings_string();
-    generate_bindings_with(capi_header, out_file)
-}
-
-/// This function can be used to generate Rust wrappers around Enzyme's [C
-/// API](https://github.com/wsmoses/Enzyme/blob/main/enzyme/Enzyme/CApi.h) based on the latest
-/// HEAD.
-pub fn generate_bindings_from_head() -> Result<(), String> {
-    let capi_header = utils::get_enzyme_base_path()
-        .join("Enzyme-HEAD")
-        .join("enzyme")
-        .join("Enzyme")
-        .join("CApi.h");
-    let out_file = utils::get_bindings_string();
-    generate_bindings_with(capi_header, out_file)
-}
-
 /// This function can be used to generate Rust wrappers around Enzyme's [C API](https://github.com/wsmoses/Enzyme/blob/main/enzyme/Enzyme/CApi.h).
-pub fn generate_bindings_with(capi_header: PathBuf, out_file: PathBuf) -> Result<(), String> {
+//pub fn generate_bindings_with(capi_header: PathBuf, out_file: PathBuf) -> Result<(), String> {
+pub fn generate_bindings_with(args: Cli) -> Result<(), String> {
+    let enzyme = match args.enzyme {
+        Some(e) => e,
+        None =>
+            panic!("This method shouldn't be called if Enzyme hasn't been set. Development mistake, please report."),
+    };
+    let rust = match args.rust {
+        Some(r) => r,
+        None =>
+            panic!("This method shouldn't be called if Rust hasn't been set. Development mistake, please report."),
+    };
+
+    let enzyme_repo = match enzyme {
+        Repo::Local(local_path) => PathBuf::new().join(&local_path),
+        Repo::Stable | Repo::Head => get_enzyme_repo_path(),
+    };
+
+    let rust_repo = match enzyme {
+        Repo::Local(local_path) => PathBuf::new().join(&local_path),
+        Repo::Stable | Repo::Head => get_rustc_repo_path(),
+    };
+
+    let capi_header = get_capi_path(enzyme_repo);
     dbg!(&capi_header);
 
     // tell cargo to re-run the builder if the header has changed
@@ -32,7 +40,10 @@ pub fn generate_bindings_with(capi_header: PathBuf, out_file: PathBuf) -> Result
 
     let bindings = bindgen::Builder::default()
         .header_contents("CApi.hpp", &content) // read it as .hpp so bindgen can ignore the class successfully
-        .clang_args(&[format!("-I{}", utils::get_llvm_header_path().display())])
+        .clang_args(&[format!(
+            "-I{}",
+            utils::get_llvm_header_path(rust_repo).display()
+        )])
         //.blacklist_item("CustomFunctionForward")
         //.blacklist_item("DiffeGradientUtils")
         .allowlist_type("CConcreteType")
@@ -81,6 +92,8 @@ pub fn generate_bindings_with(capi_header: PathBuf, out_file: PathBuf) -> Result
             ))
         }
     };
+
+    let out_file = get_enzyme_base_path();
 
     // Write the bindings to the $OUT_DIR/bindings.rs file.
     //let out_path = PathBuf::from(env::var("OUT_DIR").unwrap()); // can't be used outside of build.rs

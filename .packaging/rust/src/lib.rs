@@ -38,4 +38,4 @@ mod code;
 pub use code::compile::build;
 pub use code::downloader::download;
 pub use code::generate_api::*;
-pub use code::utils::Repo;
+pub use code::utils::{Cli, Repo};

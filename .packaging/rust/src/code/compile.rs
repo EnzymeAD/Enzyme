@@ -1,5 +1,5 @@
 use super::{
-    utils::{self, *},
+    utils::*,
     version_manager::{check_compiled, set_compiled},
 };
 use std::{path::PathBuf, process::Command};
@@ -16,45 +16,41 @@ fn print_llvm_version() {
 /// The Rust repository must be build first.
 /// It will build a nightly version of Rust, together with LLVM and Clang.
 /// Building the Enzyme repository will always run tests to verify that it is working correctly.
-pub fn build(to_build: Repo) -> Result<(), String> {
+pub fn build(args: Cli) -> Result<(), String> {
     // If we have compiled that rustc or enzyme version in the past, we have nothing to do.
-    // HEAD will always overwrite older HEAD versions, even if there was no change.
-    if check_compiled(&to_build) {
-        return Ok(());
-    }
+    // if check_compiled(&to_build) {
+    //     return Ok(());
+    // }
 
-    let _repo = match to_build {
-        Repo::Rust => build_rustc(),
-        Repo::Enzyme => build_enzyme_release(),
-        Repo::EnzymeHEAD => build_enzyme_head(),
+    let mut rust_repo = get_rustc_repo_path(); // Default
+    if let Some(rust) = args.rust {
+        if let Repo::Local(local_path) = rust {
+            rust_repo = PathBuf::new().join(&local_path);
+        }
+        build_rustc(rust_repo);
+    };
+
+    if let Some(enzyme) = args.enzyme {
+        let mut enzyme_repo = match enzyme {
+            Repo::Local(local_path) => PathBuf::new().join(&local_path), // TDOO: add build dir
+            Repo::Stable | Repo::Head => get_rustc_repo_path(),
+        };
+        build_enzyme(enzyme_repo, rust_repo);
     };
 
     // Compiling is expensive, so add a note that this compilation run was successfull and that
     // we shouldn't repeat it.
-    set_compiled(&to_build);
+    // set_compiled(&to_build);
 
     Ok(())
 }
 
-fn build_enzyme_head() {
-    let enzyme_head_dir = utils::get_enzyme_base_path()
-        .join("Enzyme-HEAD")
-        .join("enzyme");
-    assert!(
-        enzyme_head_dir.exists(),
-        "Apparently the previous cloning of HEAD failed?"
-    );
-    let build_dir = enzyme_head_dir.join("build");
-    build_enzyme(build_dir);
-}
-
-fn build_enzyme_release() {
-    let build_path = get_enzyme_build_path();
-    build_enzyme(build_path);
-}
-
-fn build_enzyme(build_path: PathBuf) {
-    let llvm_dir = get_llvm_build_path().join("lib").join("cmake").join("llvm");
+fn build_enzyme(enzyme_repo: PathBuf, rust_repo: PathBuf) {
+    let build_path = get_enzyme_build_path(enzyme_repo);
+    let llvm_dir = get_llvm_build_path(rust_repo)
+        .join("lib")
+        .join("cmake")
+        .join("llvm");
     let llvm_dir = "-DLLVM_DIR=".to_owned() + llvm_dir.to_str().unwrap();
     let llvm_external_lit = get_rustc_repo_path()
         .join("src")
@@ -92,20 +88,19 @@ fn build_enzyme(build_path: PathBuf) {
     run_and_printerror(&mut ninja_check);
 }
 
-fn build_rustc() {
+fn build_rustc(repo_path: PathBuf) {
     let mut cargo = Command::new("cargo");
     let mut configure = Command::new("./configure");
     let mut x = Command::new("x");
     let mut rustup = Command::new("rustup");
 
-    let build_path = get_rustc_repo_path();
-
+    let build_path = get_rustc_build_path(repo_path);
     if !std::path::Path::new(&build_path).exists() {
         std::fs::create_dir(&build_path).unwrap();
     }
     let x_path = std::path::Path::new("src").join("tools").join("x");
 
-    let toolchain_path = get_rustc_stage2_path();
+    let toolchain_path = get_rustc_stage2_path(repo_path);
 
     cargo
         .args(&["install", "--path", x_path.to_str().unwrap()])
@@ -115,7 +110,7 @@ fn build_rustc() {
         .args(&[
             "--enable-llvm-link-shared",
             "--enable-llvm-plugins",
-            "--release-channel=nightly",
+            "--release-channel=nightly", // TODO: Do we still need this? how about nightly?
             "--enable-llvm-assertions",
             "--enable-clang",
             "--enable-lld",
