@@ -1,6 +1,6 @@
 .. _multi-source-ad:
 
-Link-time AD of Multi-Source Programs
+AD of Multi-Source Programs
 =====================================
 Enzyme needs access to the IR of any function that is active and being differentiated.
 A function might use code from another compilation unit (a file for C/C++, a crate for Rust, ...),
