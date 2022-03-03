@@ -119,10 +119,10 @@ attributes #9 = { noreturn nounwind }
 ; CHECK: define internal double @fwddiffealldiv(double* noalias nocapture %a, double* nocapture %"a'", i32* noalias nocapture %N, i8* %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to { i1, i32*, double** }*
-; CHECK-NEXT:   %truetape = load { i1, i32*, double** }, { i1, i32*, double** }* %0, !enzyme_mustcache !12
-; CHECK-NEXT:   %1 = extractvalue { i1, i32*, double** } %truetape, 1
-; CHECK-NEXT:   %2 = extractvalue { i1, i32*, double** } %truetape, 2
-; CHECK-NEXT:   %cmp233 = extractvalue { i1, i32*, double** } %truetape, 0
+; CHECK-NEXT:   %truetape = load { i1, i32*, double** }, { i1, i32*, double** }* %0
+; CHECK-DAG:   %[[i1:.+]] = extractvalue { i1, i32*, double** } %truetape, 1
+; CHECK-DAG:   %[[i2:.+]] = extractvalue { i1, i32*, double** } %truetape, 2
+; CHECK-DAG:   %cmp233 = extractvalue { i1, i32*, double** } %truetape, 0
 ; CHECK-NEXT:   br label %for.cond1.preheader
 
 ; CHECK: for.cond1.preheader:                              ; preds = %for.cond.cleanup3, %entry
@@ -133,7 +133,7 @@ attributes #9 = { noreturn nounwind }
 
 ; CHECK: for.body4.lr.ph:                                  ; preds = %for.cond1.preheader
 ; CHECK-NEXT:   %3 = mul nuw nsw i64 %iv, 10
-; CHECK-NEXT:   %4 = getelementptr inbounds i32, i32* %1, i64 %iv
+; CHECK-NEXT:   %4 = getelementptr inbounds i32, i32* %[[i1]], i64 %iv
 ; CHECK-NEXT:   %5 = load i32, i32* %4, align 4, !invariant.group !13
 ; CHECK-NEXT:   %6 = sext i32 %5 to i64
 ; CHECK-NEXT:   br label %for.body4
@@ -144,7 +144,7 @@ attributes #9 = { noreturn nounwind }
 ; CHECK-NEXT:   %iv.next2 = add nuw nsw i64 %iv1, 1
 ; CHECK-NEXT:   %7 = add nuw nsw i64 %iv1, %3
 ; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds double, double* %"a'", i64 %7
-; CHECK-NEXT:   %8 = getelementptr inbounds double*, double** %2, i64 %iv
+; CHECK-NEXT:   %8 = getelementptr inbounds double*, double** %[[i2]], i64 %iv
 ; CHECK-NEXT:   %9 = load double*, double** %8, align 8, !dereferenceable !10, !invariant.group !14
 ; CHECK-NEXT:   %10 = getelementptr inbounds double, double* %9, i64 %iv1
 ; CHECK-NEXT:   %11 = load double, double* %10, align 8, !invariant.group !15

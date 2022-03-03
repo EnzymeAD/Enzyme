@@ -38,7 +38,7 @@ declare dso_local double @_Z16__enzyme_fwdsplitz(...)
 ; CHECK: define internal double @fwddiffe_Z6squared(double %x, double %"x'", i8* %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to { { i8*, i8* }, double*, double }*
-; CHECK-NEXT:   %truetape = load { { i8*, i8* }, double*, double }, { { i8*, i8* }, double*, double }* %0, !enzyme_mustcache !0
+; CHECK-NEXT:   %truetape = load { { i8*, i8* }, double*, double }, { { i8*, i8* }, double*, double }* %0
 ; CHECK-NEXT:   %tapeArg1 = extractvalue { { i8*, i8* }, double*, double } %truetape, 0
 ; CHECK-NEXT:   %1 = call { double*, double* } @fwddiffe_Z6toHeapd(double %x, double %"x'", { i8*, i8* } %tapeArg1)
 ; CHECK-NEXT:   %2 = extractvalue { double*, double* } %1, 1

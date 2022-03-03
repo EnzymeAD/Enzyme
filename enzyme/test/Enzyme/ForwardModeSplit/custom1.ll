@@ -48,7 +48,7 @@ attributes #0 = { norecurse nounwind readnone }
 ; CHECK: define internal double @fwddiffef(double %x, double %"x'", i8* %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to { i8*, double }*
-; CHECK-NEXT:   %truetape = load { i8*, double }, { i8*, double }* %0, !enzyme_mustcache !2
+; CHECK-NEXT:   %truetape = load { i8*, double }, { i8*, double }* %0
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
 ; CHECK-NEXT:   %tapeArg1 = extractvalue { i8*, double } %truetape, 0
 ; CHECK-NEXT:   %1 = call { double, double } @add_err(double %x, double %"x'", double %x, double %"x'", i8* %tapeArg1)

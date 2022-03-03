@@ -103,14 +103,14 @@ attributes #4 = { nounwind }
 
 ; CHECK: for.cond1.preheader:                              ; preds = %entry, %for.cond.cleanup4
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %for.cond.cleanup4 ], [ 0, %entry ]
-; CHECK-NEXT:   %"sum.019'" = phi double [ %5, %for.cond.cleanup4 ], [ 0.000000e+00, %entry ]
+; CHECK-NEXT:   %"sum.019'" = phi {{(fast )?}}double [ %5, %for.cond.cleanup4 ], [ 0.000000e+00, %entry ]
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
 ; CHECK-NEXT:   %1 = getelementptr inbounds double*, double** %truetape.unpack, i64 %iv
 ; CHECK-NEXT:   %"'il_phi" = load double*, double** %1, align 8, !invariant.group !16
 ; CHECK-NEXT:   br label %for.body5
 
 ; CHECK: for.cond.cleanup:                                 ; preds = %for.cond.cleanup4, %entry
-; CHECK-NEXT:   %"sum.0.lcssa'" = phi double [ 0.000000e+00, %entry ], [ %5, %for.cond.cleanup4 ]
+; CHECK-NEXT:   %"sum.0.lcssa'" = phi {{(fast )?}}double [ 0.000000e+00, %entry ], [ %5, %for.cond.cleanup4 ]
 ; CHECK-NEXT:   ret double %"sum.0.lcssa'"
 
 ; CHECK: for.cond.cleanup4:                                ; preds = %for.body5
@@ -121,7 +121,7 @@ attributes #4 = { nounwind }
 
 ; CHECK: for.body5:                                        ; preds = %for.body5, %for.cond1.preheader
 ; CHECK-NEXT:   %iv1 = phi i64 [ %iv.next2, %for.body5 ], [ 0, %for.cond1.preheader ]
-; CHECK-NEXT:   %"sum.116'" = phi double [ %5, %for.body5 ], [ %"sum.019'", %for.cond1.preheader ]
+; CHECK-NEXT:   %"sum.116'" = phi {{(fast )?}}double [ %5, %for.body5 ], [ %"sum.019'", %for.cond1.preheader ]
 ; CHECK-NEXT:   %iv.next2 = add nuw nsw i64 %iv1, 1
 ; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds double, double* %"'il_phi", i64 %iv1
 ; CHECK-NEXT:   %4 = load double, double* %"arrayidx'ipg", align 8

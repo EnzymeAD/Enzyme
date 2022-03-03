@@ -39,24 +39,12 @@ entry:
 
 define dso_local void @_Z7dsquared(%"struct.std::array"* noalias sret(%"struct.std::array") align 8 %agg.result, double %x) local_unnamed_addr #1 {
 entry:
-  tail call void (%"struct.std::array"*, i8*, ...) @_Z16__enzyme_fwdsplitPvz(%"struct.std::array"* sret(%"struct.std::array") align 8 %agg.result, i8* bitcast (void (%"struct.std::array"*, double)* @_Z6squared to i8*), double %x, double 1.000000e+00)
+  tail call void (%"struct.std::array"*, i8*, ...) @_Z16__enzyme_fwdsplitPvz(%"struct.std::array"* sret(%"struct.std::array") align 8 %agg.result, i8* bitcast (void (%"struct.std::array"*, double)* @_Z6squared to i8*), double %x, double 1.000000e+00, i8* null)
   ret void
 }
 
 declare dso_local void @_Z16__enzyme_fwdsplitPvz(%"struct.std::array"* sret(%"struct.std::array") align 8, i8*, ...) local_unnamed_addr #2
 
-define dso_local i32 @main() local_unnamed_addr #3 {
-entry:
-  %ref.tmp = alloca %"struct.std::array", align 8
-  %0 = bitcast %"struct.std::array"* %ref.tmp to i8*
-  call void @llvm.lifetime.start.p0i8(i64 24, i8* nonnull %0) #6
-  call void (%"struct.std::array"*, i8*, ...) @_Z16__enzyme_fwdsplitPvz(%"struct.std::array"* nonnull sret(%"struct.std::array") align 8 %ref.tmp, i8* bitcast (void (%"struct.std::array"*, double)* @_Z6squared to i8*), double 3.000000e+00, double 1.000000e+00)
-  %arrayidx.i.i = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %ref.tmp, i64 0, i32 0, i64 0
-  %1 = load double, double* %arrayidx.i.i, align 8
-  %call1 = call i32 (i8*, ...) @printf(i8* nonnull dereferenceable(1) getelementptr inbounds ([5 x i8], [5 x i8]* @.str, i64 0, i64 0), double %1)
-  call void @llvm.lifetime.end.p0i8(i64 24, i8* nonnull %0) #6
-  ret i32 0
-}
 
 declare dso_local noundef i32 @printf(i8* nocapture noundef readonly, ...) local_unnamed_addr #4
 
@@ -76,31 +64,25 @@ attributes #6 = { nounwind }
 ; CHECK: define dso_local void @_Z7dsquared(%"struct.std::array"* noalias sret(%"struct.std::array") align 8 %agg.result, double %x)
 ; CHECK-NEXT: entry:  
 ; CHECK-NEXT:   %0 = alloca %"struct.std::array"
-; CHECK-NEXT:   call void @fwddiffe_Z6squared(%"struct.std::array"* %0, %"struct.std::array"* %agg.result, double %x, double 1.000000e+00)
+; CHECK-NEXT:   call void @fwddiffe_Z6squared(%"struct.std::array"* %0, %"struct.std::array"* %agg.result, double %x, double 1.000000e+00, i8* null)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
 
-; CHECK: define internal void @fwddiffe_Z6squared(%"struct.std::array"* noalias nocapture align 8 %agg.result, %"struct.std::array"* nocapture %"agg.result'", double %x, double %"x'") #0 {
-; CHECK-NEXT: entry:  
+; CHECK: define internal void @fwddiffe_Z6squared(%"struct.std::array"* noalias nocapture align 8 %agg.result, %"struct.std::array"* nocapture %"agg.result'", double %x, double %"x'", i8* %tapeArg)
+; CHECK-NEXT: entry: 
+; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
 ; CHECK-NEXT:   %"arrayinit.begin'ipg" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %"agg.result'", i64 0, i32 0, i64 0
-; CHECK-NEXT:  %arrayinit.begin = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %agg.result, i64 0, i32 0, i64 0
 ; CHECK-NEXT:   %mul = fmul double %x, %x
 ; CHECK-NEXT:   %0 = fmul fast double %"x'", %x
 ; CHECK-NEXT:   %1 = fadd fast double %0, %0
-; CHECK-NEXT:   store double %mul, double* %arrayinit.begin, align 8
 ; CHECK-NEXT:   store double %1, double* %"arrayinit.begin'ipg", align 8
 ; CHECK-NEXT:   %"arrayinit.element'ipg" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %"agg.result'", i64 0, i32 0, i64 1
-; CHECK-NEXT:   %arrayinit.element = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %agg.result, i64 0, i32 0, i64 1
-; CHECK-NEXT:   %mul2 = fmul double %mul, %x
 ; CHECK-NEXT:   %2 = fmul fast double %1, %x
 ; CHECK-NEXT:   %3 = fmul fast double %"x'", %mul
 ; CHECK-NEXT:   %4 = fadd fast double %2, %3
-; CHECK-NEXT:   store double %mul2, double* %arrayinit.element, align 8
 ; CHECK-NEXT:   store double %4, double* %"arrayinit.element'ipg", align 8
 ; CHECK-NEXT:   %"arrayinit.element3'ipg" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %"agg.result'", i64 0, i32 0, i64 2
-; CHECK-NEXT:   %arrayinit.element3 = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %agg.result, i64 0, i32 0, i64 2
-; CHECK-NEXT:   store double %x, double* %arrayinit.element3, align 8
 ; CHECK-NEXT:   store double %"x'", double* %"arrayinit.element3'ipg", align 8
 ; CHECK-NEXT:  ret void
 ; CHECK-NEXT: }

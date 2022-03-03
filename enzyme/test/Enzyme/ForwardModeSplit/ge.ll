@@ -70,7 +70,7 @@ attributes #3 = { nounwind }
 ; CHECK: define internal double @fwddiffecache(double* nocapture %x, double* nocapture %"x'", i32 %N, i8* %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to double**
-; CHECK-NEXT:   %truetape = load double*, double** %0, !enzyme_mustcache !7
+; CHECK-NEXT:   %truetape = load double*, double** %0
 ; CHECK-NEXT:   br label %for.body
 
 ; CHECK: for.cond.cleanup:                                 ; preds = %for.body

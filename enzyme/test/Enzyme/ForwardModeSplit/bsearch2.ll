@@ -50,7 +50,7 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK: define internal double @fwddiffef(double* nocapture %x, double* nocapture %"x'", i64 %n, i8* %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to { i64**, double** }*
-; CHECK-NEXT:   %truetape = load { i64**, double** }, { i64**, double** }* %0, !enzyme_mustcache !0
+; CHECK-NEXT:   %truetape = load { i64**, double** }, { i64**, double** }* %0
 ; CHECK-NEXT:   %1 = extractvalue { i64**, double** } %truetape, 0
 ; CHECK-NEXT:   %2 = extractvalue { i64**, double** } %truetape, 1
 ; CHECK-NEXT:   br label %loop

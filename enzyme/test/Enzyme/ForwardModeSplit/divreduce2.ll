@@ -48,15 +48,15 @@ declare double @__enzyme_fwdsplit(...)
 ; CHECK: define internal double @fwddiffealldiv(double* nocapture readonly %A, double* nocapture %"A'", i64 %N, double %start, double %"start'", i8* %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to { double*, double* }*
-; CHECK-NEXT:   %truetape = load { double*, double* }, { double*, double* }* %0, !enzyme_mustcache !8
-; CHECK-NEXT:   %1 = extractvalue { double*, double* } %truetape, 0
-; CHECK-NEXT:   %2 = extractvalue { double*, double* } %truetape, 1
+; CHECK-NEXT:   %truetape = load { double*, double* }, { double*, double* }* %0
+; CHECK-DAG:   %[[i1:.+]] = extractvalue { double*, double* } %truetape, 0
+; CHECK-DAG:   %[[i2:.+]] = extractvalue { double*, double* } %truetape, 1
 ; CHECK-NEXT:   br label %loop
 
 ; CHECK: loop:                                             ; preds = %body, %entry
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %body ], [ 0, %entry ]
 ; CHECK-NEXT:   %"reduce'" = phi {{(fast )?}}double [ %"start'", %entry ], [ %10, %body ]
-; CHECK-NEXT:   %3 = getelementptr inbounds double, double* %1, i64 %iv
+; CHECK-NEXT:   %3 = getelementptr inbounds double, double* %[[i1]], i64 %iv
 ; CHECK-NEXT:   %reduce = load double, double* %3, align 8,
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
 ; CHECK-NEXT:   %cmp = icmp ne i64 %iv, %N
@@ -64,7 +64,7 @@ declare double @__enzyme_fwdsplit(...)
 
 ; CHECK: body:                                             ; preds = %loop
 ; CHECK-NEXT:   %"gep'ipg" = getelementptr inbounds double, double* %"A'", i64 %iv
-; CHECK-NEXT:   %4 = getelementptr inbounds double, double* %2, i64 %iv
+; CHECK-NEXT:   %4 = getelementptr inbounds double, double* %[[i2]], i64 %iv
 ; TODO this should keep tbaa
 ; CHECK-NEXT:   %ld = load double, double* %4, align 8
 ; CHECK-NEXT:   %5 = load double, double* %"gep'ipg", align 8

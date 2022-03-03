@@ -38,12 +38,12 @@ attributes #2 = { nounwind }
 ; CHECK: define {{(dso_local )?}}double @dsumsquare(double* %x, double* %xp, i64 %n, i8* %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to double**
-; CHECK-NEXT:   %truetape.i = load double*, double** %0, !enzyme_mustcache !0
+; CHECK-NEXT:   %truetape.i = load double*, double** %0
 ; CHECK-NEXT:   br label %for.body.i
 
 ; CHECK: for.body.i:                                       ; preds = %for.body.i, %entry
 ; CHECK-NEXT:   %iv.i = phi i64 [ %iv.next.i, %for.body.i ], [ 0, %entry ]
-; CHECK-NEXT:   %"total.011'.i" = phi double [ 0.000000e+00, %entry ], [ %6, %for.body.i ]
+; CHECK-NEXT:   %"total.011'.i" = phi {{(fast )?}}double [ 0.000000e+00, %entry ], [ %6, %for.body.i ]
 ; CHECK-NEXT:   %iv.next.i = add nuw nsw i64 %iv.i, 1
 ; CHECK-NEXT:   %"arrayidx'ipg.i" = getelementptr inbounds double, double* %xp, i64 %iv.i
 ; CHECK-NEXT:   %1 = getelementptr inbounds double, double* %truetape.i, i64 %iv.i

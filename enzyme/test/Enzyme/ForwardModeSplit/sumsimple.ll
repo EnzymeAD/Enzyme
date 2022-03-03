@@ -40,7 +40,7 @@ attributes #0 = { noinline nounwind uwtable }
 ; CHECK: define internal void @fwddiffef(double* %x, double* %"x'", double** %y, double** %"y'", i64 %n, i8* %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to double***
-; CHECK-NEXT:   %truetape = load double**, double*** %0, !enzyme_mustcache !0
+; CHECK-NEXT:   %truetape = load double**, double*** %0
 ; CHECK-NEXT:   %1 = add nuw i64 %n, 1
 ; CHECK-NEXT:   br label %for.cond
 

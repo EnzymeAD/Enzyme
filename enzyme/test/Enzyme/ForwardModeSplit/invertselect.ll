@@ -25,7 +25,7 @@ attributes #0 = { noinline }
 ; CHECK: define internal float @fwddiffeman_max(float* %a, float* %"a'", float* %b, float* %"b'", i8* %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to i1*
-; CHECK-NEXT:   %cmp = load i1, i1* %0, !enzyme_mustcache !
+; CHECK-NEXT:   %cmp = load i1, i1* %0
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
 ; CHECK-NEXT:   %"a.b'ipse" = select i1 %cmp, float* %"a'", float* %"b'"
 ; CHECK-NEXT:   %1 = load float, float* %"a.b'ipse"

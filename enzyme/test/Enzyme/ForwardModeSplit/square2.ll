@@ -63,7 +63,7 @@ attributes #4 = { nounwind }
 ; CHECK: define internal double @fwddiffesquare(double %x, double %"x'", i8* %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to { double, i8*, i8* }*
-; CHECK-NEXT:   %truetape = load { double, i8*, i8* }, { double, i8*, i8* }* %0, !enzyme_mustcache !1
+; CHECK-NEXT:   %truetape = load { double, i8*, i8* }, { double, i8*, i8* }* %0
 ; CHECK-NEXT:   %malloccall = extractvalue { double, i8*, i8* } %truetape, 2
 ; CHECK-NEXT:   %"malloccall'mi" = alloca i8, i64 8, align 8
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"malloccall'mi", i8 0, i64 8, i1 false)
