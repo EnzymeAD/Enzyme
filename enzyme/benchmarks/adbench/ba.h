@@ -115,6 +115,14 @@ void dcompute_reproj_error(double const *cam, double *dcam, double const *X,
 void dcompute_zach_weight_error(double const *w, double *dw, double *err,
                                 double *derr);
 
+void dcompute_reproj_error_forward(double const *cam, double *dcam,
+                                   double const *X, double *dX, double const *w,
+                                   double *wb, double const *feat, double *err,
+                                   double *derr);
+
+void dcompute_zach_weight_error_forward(double const *w, double *dw,
+                                        double *err, double *derr);
+
 void compute_reproj_error_b(double const *cam, double *dcam, double const *X,
                             double *dX, double const *w, double *wb,
                             double const *feat, double *err, double *derr);
