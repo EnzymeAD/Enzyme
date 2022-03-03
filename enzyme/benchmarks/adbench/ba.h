@@ -253,8 +253,8 @@ void calculate_reproj_error_jacobian_part_reverse(struct BAInput &input,
 template <deriv_reproj_t deriv_reproj>
 void calculate_reproj_error_jacobian_part_forward(struct BAInput &input,
                                                   struct BAOutput &result) {
-  auto reproj_err_d = std::vector<double>(2);
-  auto reproj_err_d_col = std::vector<double>(BA_NCAMPARAMS + 3 + 1);
+  auto reproj_err_d = std::vector<double>(2 * (BA_NCAMPARAMS + 3 + 1));
+  auto reproj_err_d_col = std::vector<double>(2);
 
   double parameters[BA_NCAMPARAMS + 3 + 1];
   double *dcams = &parameters[0];
@@ -281,7 +281,7 @@ void calculate_reproj_error_jacobian_part_forward(struct BAInput &input,
 
       // fill nth col elements
       for (int j = 0; j < 2; j++) {
-        reproj_err_d[n + j] = reproj_err_d_col[j];
+        reproj_err_d[(2 * n) + j] = reproj_err_d_col[j];
       }
 
       parameters[n] = 0.0;
@@ -327,9 +327,15 @@ void calculate_weight_error_jacobian_part_forward(struct BAInput &input,
 }
 
 template <deriv_reproj_t deriv_reproj, deriv_weight_t deriv_weight>
-void calculate_jacobian(struct BAInput &input, struct BAOutput &result) {
+void calculate_jacobian_reverse(struct BAInput &input, struct BAOutput &result) {
   calculate_reproj_error_jacobian_part_reverse<deriv_reproj>(input, result);
   calculate_weight_error_jacobian_part_reverse<deriv_weight>(input, result);
+}
+
+template <deriv_reproj_t deriv_reproj, deriv_weight_t deriv_weight>
+void calculate_jacobian_forward(struct BAInput &input, struct BAOutput &result) {
+  calculate_reproj_error_jacobian_part_forward<deriv_reproj>(input, result);
+  calculate_weight_error_jacobian_part_forward<deriv_weight>(input, result);
 }
 
 int main(const int argc, const char *argv[]) {
@@ -387,7 +393,7 @@ int main(const int argc, const char *argv[]) {
       {
         struct timeval start, end;
         gettimeofday(&start, NULL);
-        calculate_jacobian<compute_reproj_error_b, compute_zach_weight_error_b>(
+        calculate_jacobian_reverse<compute_reproj_error_b, compute_zach_weight_error_b>(
             input, result);
         gettimeofday(&end, NULL);
         printf("Tapenade combined %0.6f\n", tdiff(&start, &end));
@@ -434,7 +440,7 @@ int main(const int argc, const char *argv[]) {
       {
         struct timeval start, end;
         gettimeofday(&start, NULL);
-        calculate_jacobian<adept_compute_reproj_error,
+        calculate_jacobian_reverse<adept_compute_reproj_error,
                            adept_compute_zach_weight_error>(input, result);
         gettimeofday(&end, NULL);
         printf("Adept combined %0.6f\n", tdiff(&start, &end));
@@ -481,7 +487,7 @@ int main(const int argc, const char *argv[]) {
       {
         struct timeval start, end;
         gettimeofday(&start, NULL);
-        calculate_jacobian<dcompute_reproj_error, dcompute_zach_weight_error>(
+        calculate_jacobian_reverse<dcompute_reproj_error, dcompute_zach_weight_error>(
             input, result);
         gettimeofday(&end, NULL);
         printf("Enzyme combined %0.6f\n", tdiff(&start, &end));
@@ -528,7 +534,7 @@ int main(const int argc, const char *argv[]) {
       {
         struct timeval start, end;
         gettimeofday(&start, NULL);
-        calculate_jacobian<dcompute_reproj_error_forward,
+        calculate_jacobian_forward<dcompute_reproj_error_forward,
                            dcompute_zach_weight_error_forward>(input, result);
         gettimeofday(&end, NULL);
         printf("Enzyme forward combined %0.6f\n", tdiff(&start, &end));
