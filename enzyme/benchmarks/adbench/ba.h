@@ -483,5 +483,52 @@ int main(const int argc, const char *argv[]) {
         printf("\n");
       }
     }
+
+    {
+
+      struct BAInput input;
+      read_ba_instance("data/" + path, input.n, input.m, input.p, input.cams,
+                       input.X, input.w, input.obs, input.feats);
+
+      struct BAOutput result = {std::vector<double>(2 * input.p),
+                                std::vector<double>(input.p),
+                                BASparseMat(input.n, input.m, input.p)};
+
+      // BASparseMat(this->input.n, this->input.m, this->input.p)
+
+      /*
+      ba_objective(
+          input.n,
+          input.m,
+          input.p,
+          input.cams.data(),
+          input.X.data(),
+          input.w.data(),
+          input.obs.data(),
+          input.feats.data(),
+          result.reproj_err.data(),
+          result.w_err.data()
+      );
+
+      for(unsigned i=0; i<input.p; i++) {
+          //printf("w_err[%d]=%f reproj_err[%d]=%f, reproj_err[%d]=%f\n", i,
+      result.w_err[i], 2*i, result.reproj_err[2*i], 2*i+1,
+      result.reproj_err[2*i+1]);
+      }
+      */
+
+      {
+        struct timeval start, end;
+        gettimeofday(&start, NULL);
+        calculate_jacobian<dcompute_reproj_error_forward,
+                           dcompute_zach_weight_error_forward>(input, result);
+        gettimeofday(&end, NULL);
+        printf("Enzyme forward combined %0.6f\n", tdiff(&start, &end));
+        for (unsigned i = 0; i < 5; i++) {
+          printf("%f ", result.J.vals[i]);
+        }
+        printf("\n");
+      }
+    }
   }
 }
