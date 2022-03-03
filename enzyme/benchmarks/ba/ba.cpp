@@ -192,11 +192,11 @@ extern int enzyme_const;
 extern int enzyme_dup;
 extern int enzyme_dupnoneed;
 void __enzyme_autodiff(...) noexcept;
-void __enzyme_fwddiff(...) noexcept
+void __enzyme_fwddiff(...) noexcept;
 
-    void dcompute_reproj_error(double const *cam, double *dcam, double const *X,
-                               double *dX, double const *w, double *wb,
-                               double const *feat, double *err, double *derr) {
+void dcompute_reproj_error(double const *cam, double *dcam, double const *X,
+                           double *dX, double const *w, double *wb,
+                           double const *feat, double *err, double *derr) {
   __enzyme_autodiff(compute_reproj_error, enzyme_dup, cam, dcam, enzyme_dup, X,
                     dX, enzyme_dup, w, wb, enzyme_const, feat, enzyme_dupnoneed,
                     err, derr);
