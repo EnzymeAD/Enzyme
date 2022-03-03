@@ -45,7 +45,7 @@ for.body:                                         ; preds = %entry, %for.body
 ; Function Attrs: nounwind uwtable
 define dso_local void @ad(double* %in, double* %din, i32 %N) local_unnamed_addr #1 {
 entry:
-  tail call double (i8*, ...) @__enzyme_fwdsplit(i8* bitcast (double (double*, i32)* @cache to i8*), double* %in, double* %din, i32 %N, i8* null) #3
+  tail call double (i8*, ...) @__enzyme_fwdsplit(i8* bitcast (double (double*, i32)* @cache to i8*), metadata !"enzyme_nofree", double* %in, double* %din, i32 %N, i8* null) #3
   ret void
 }
 
@@ -67,29 +67,30 @@ attributes #3 = { nounwind }
 !5 = !{!"Simple C/C++ TBAA"}
 
 
-; CHECK: define internal double @fwddiffecache(double* nocapture %x, double* nocapture %"x'", i32 %N)
+; CHECK: define internal double @fwddiffecache(double* nocapture %x, double* nocapture %"x'", i32 %N, i8* %tapeArg)
 ; CHECK-NEXT: entry:
+; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to double**
+; CHECK-NEXT:   %truetape = load double*, double** %0, !enzyme_mustcache !7
 ; CHECK-NEXT:   br label %for.body
 
 ; CHECK: for.cond.cleanup:                                 ; preds = %for.body
-; CHECK-NEXT:   store double 0.000000e+00, double* %x, align 8, !tbaa !2
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"x'", align 8
-; CHECK-NEXT:   ret double %5
+; CHECK-NEXT:   ret double %7
 
 ; CHECK: for.body:                                         ; preds = %for.body, %entry
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %for.body ], [ 0, %entry ]
-; CHECK-NEXT:   %"sum.012'" = phi {{(fast )?}}double [ 0.000000e+00, %entry ], [ %5, %for.body ]
+; CHECK-NEXT:   %"sum.012'" = phi {{(fast )?}}double [ 0.000000e+00, %entry ], [ %7, %for.body ]
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
-; CHECK-NEXT:   %0 = trunc i64 %iv to i32
-; CHECK-NEXT:   %idxprom = zext i32 %0 to i64
+; CHECK-NEXT:   %1 = trunc i64 %iv to i32
+; CHECK-NEXT:   %idxprom = zext i32 %1 to i64
 ; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds double, double* %"x'", i64 %idxprom
-; CHECK-NEXT:   %arrayidx = getelementptr inbounds double, double* %x, i64 %idxprom
-; CHECK-NEXT:   %1 = load double, double* %arrayidx, align 8, !tbaa !2
-; CHECK-NEXT:   %2 = load double, double* %"arrayidx'ipg"
-; CHECK-NEXT:   %3 = fmul fast double %2, %1
-; CHECK-NEXT:   %4 = fadd fast double %3, %3
-; CHECK-NEXT:   %5 = fadd fast double %"sum.012'", %4
-; CHECK-NEXT:   %inc = add i32 %0, 1
+; CHECK-NEXT:   %2 = getelementptr inbounds double, double* %truetape, i64 %iv
+; CHECK-NEXT:   %3 = load double, double* %2, align 8, !invariant.group !8
+; CHECK-NEXT:   %4 = load double, double* %"arrayidx'ipg", align 8
+; CHECK-NEXT:   %5 = fmul fast double %4, %3
+; CHECK-NEXT:   %6 = fadd fast double %5, %5
+; CHECK-NEXT:   %7 = fadd fast double %"sum.012'", %6
+; CHECK-NEXT:   %inc = add i32 %1, 1
 ; CHECK-NEXT:   %cmp = icmp ugt i32 %inc, %N
 ; CHECK-NEXT:   br i1 %cmp, label %for.cond.cleanup, label %for.body
 ; CHECK-NEXT: }

@@ -1934,8 +1934,9 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
 
       LimitContext lctx(/*ReverseLimit*/ reverseBlocks.size() > 0,
                         BuilderQ.GetInsertBlock());
-      AllocaInst *cache = createCacheForScope(
-          lctx, innerType, "mdyncache_fromtape", true, false);
+      AllocaInst *cache =
+          createCacheForScope(lctx, innerType, "mdyncache_fromtape",
+                              ((DiffeGradientUtils *)this)->FreeMemory, false);
       assert(malloc);
       bool isi1 = !ignoreType && malloc->getType()->isIntegerTy() &&
                   cast<IntegerType>(malloc->getType())->getBitWidth() == 1;
@@ -3335,8 +3336,8 @@ GradientUtils *GradientUtils::CreateFromClone(
     EnzymeLogic &Logic, Function *todiff, TargetLibraryInfo &TLI,
     TypeAnalysis &TA, DIFFE_TYPE retType,
     const std::vector<DIFFE_TYPE> &constant_args, bool returnUsed,
-    bool shadowReturnUsed,
-    std::map<AugmentedStruct, int> &returnMapping, bool omp) {
+    bool shadowReturnUsed, std::map<AugmentedStruct, int> &returnMapping,
+    bool omp) {
   assert(!todiff->empty());
 
   // Since this is forward pass this should always return the tape (at index 0)
@@ -3354,7 +3355,7 @@ GradientUtils *GradientUtils::CreateFromClone(
   // We don't need to differentially return something that we know is not a
   // pointer (or somehow needed for shadow analysis)
   if (shadowReturnUsed) {
-    assert (retType == DIFFE_TYPE::DUP_ARG || retType == DIFFE_TYPE::DUP_NONEED);
+    assert(retType == DIFFE_TYPE::DUP_ARG || retType == DIFFE_TYPE::DUP_NONEED);
     assert(!todiff->getReturnType()->isEmptyTy());
     assert(!todiff->getReturnType()->isVoidTy());
     returnMapping[AugmentedStruct::DifferentialReturn] = returnCount + 1;
@@ -3638,11 +3639,11 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
 
   switch (mode) {
   case DerivativeMode::ForwardMode: {
-    Constant *newf =
-        Logic.CreateForwardDiff(fn, retType, types, TA, false, mode, /*freeMemory*/true, width,
-                                nullptr, type_args, uncacheable_args, /*augmented*/nullptr);
+    Constant *newf = Logic.CreateForwardDiff(
+        fn, retType, types, TA, false, mode, /*freeMemory*/ true, width,
+        nullptr, type_args, uncacheable_args, /*augmented*/ nullptr);
 
-    assert (newf);
+    assert(newf);
 
     std::string prefix = "_enzyme_forward";
 
@@ -3666,13 +3667,13 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
         fn, retType, /*constant_args*/ types, TA,
         /*returnUsed*/ !fn->getReturnType()->isEmptyTy() &&
             !fn->getReturnType()->isVoidTy(),
-        /*shadowReturnUsed*/false,
-        type_args, uncacheable_args, /*forceAnonymousTape*/ true, AtomicAdd);
-    Constant *newf =
-        Logic.CreateForwardDiff(fn, retType, types, TA, false, mode, /*freeMemory*/true, width,
-                                nullptr, type_args, uncacheable_args, /*augmented*/&augdata);
+        /*shadowReturnUsed*/ false, type_args, uncacheable_args,
+        /*forceAnonymousTape*/ true, AtomicAdd);
+    Constant *newf = Logic.CreateForwardDiff(
+        fn, retType, types, TA, false, mode, /*freeMemory*/ true, width,
+        nullptr, type_args, uncacheable_args, /*augmented*/ &augdata);
 
-    assert (newf);
+    assert(newf);
 
     std::string prefix = "_enzyme_forwardsplit";
 
@@ -3701,12 +3702,12 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
   case DerivativeMode::ReverseModePrimal: {
     // TODO re atomic add consider forcing it to be atomic always as fallback if
     // used in a parallel context
-    bool returnUsed = !fn->getReturnType()->isEmptyTy() &&
-            !fn->getReturnType()->isVoidTy();
-    bool shadowReturnUsed = returnUsed && (retType == DIFFE_TYPE::DUP_ARG || retType == DIFFE_TYPE::DUP_NONEED);
+    bool returnUsed =
+        !fn->getReturnType()->isEmptyTy() && !fn->getReturnType()->isVoidTy();
+    bool shadowReturnUsed = returnUsed && (retType == DIFFE_TYPE::DUP_ARG ||
+                                           retType == DIFFE_TYPE::DUP_NONEED);
     auto &augdata = Logic.CreateAugmentedPrimal(
-        fn, retType, /*constant_args*/ types, TA,
-        returnUsed, shadowReturnUsed,
+        fn, retType, /*constant_args*/ types, TA, returnUsed, shadowReturnUsed,
         type_args, uncacheable_args, /*forceAnonymousTape*/ true, AtomicAdd);
     Constant *newf = Logic.CreatePrimalAndGradient(
         (ReverseCacheKey){.todiff = fn,
@@ -3724,7 +3725,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
                           .typeInfo = type_args},
         TA,
         /*map*/ &augdata);
-    assert (newf);
+    assert(newf);
     auto cdata = ConstantStruct::get(
         StructType::get(newf->getContext(),
                         {augdata.fn->getType(), newf->getType()}),
@@ -6494,41 +6495,45 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
       if (srcConstant) {
         // Don't zero in forward mode.
         if (mode != DerivativeMode::ForwardModeSplit) {
-        
-        Value *args[] = {
-          shadowsLookedUp ? shadow_dst : gutils->lookupM(shadow_dst, Builder2),
-          ConstantInt::get(Type::getInt8Ty(MTI->getContext()), 0),
-          gutils->lookupM(length, Builder2),
+
+          Value *args[] = {
+            shadowsLookedUp ? shadow_dst
+                            : gutils->lookupM(shadow_dst, Builder2),
+            ConstantInt::get(Type::getInt8Ty(MTI->getContext()), 0),
+            gutils->lookupM(length, Builder2),
 #if LLVM_VERSION_MAJOR <= 6
-          ConstantInt::get(Type::getInt32Ty(MTI->getContext()),
-                           max(1U, dstalign)),
+            ConstantInt::get(Type::getInt32Ty(MTI->getContext()),
+                             max(1U, dstalign)),
 #endif
-          ConstantInt::getFalse(MTI->getContext())
-        };
+            ConstantInt::getFalse(MTI->getContext())
+          };
 
-        if (args[0]->getType()->isIntegerTy())
-          args[0] = Builder2.CreateIntToPtr(
-              args[0], Type::getInt8PtrTy(MTI->getContext()));
+          if (args[0]->getType()->isIntegerTy())
+            args[0] = Builder2.CreateIntToPtr(
+                args[0], Type::getInt8PtrTy(MTI->getContext()));
 
-        Type *tys[] = {args[0]->getType(), args[2]->getType()};
-        auto memsetIntr = Intrinsic::getDeclaration(
-            MTI->getParent()->getParent()->getParent(), Intrinsic::memset, tys);
-        auto cal = Builder2.CreateCall(memsetIntr, args);
-        cal->setCallingConv(memsetIntr->getCallingConv());
-        if (dstalign != 0) {
+          Type *tys[] = {args[0]->getType(), args[2]->getType()};
+          auto memsetIntr = Intrinsic::getDeclaration(
+              MTI->getParent()->getParent()->getParent(), Intrinsic::memset,
+              tys);
+          auto cal = Builder2.CreateCall(memsetIntr, args);
+          cal->setCallingConv(memsetIntr->getCallingConv());
+          if (dstalign != 0) {
 #if LLVM_VERSION_MAJOR >= 10
-          cal->addParamAttr(0, Attribute::getWithAlignment(MTI->getContext(),
-                                                           Align(dstalign)));
+            cal->addParamAttr(0, Attribute::getWithAlignment(MTI->getContext(),
+                                                             Align(dstalign)));
 #else
-          cal->addParamAttr(
-              0, Attribute::getWithAlignment(MTI->getContext(), dstalign));
+            cal->addParamAttr(
+                0, Attribute::getWithAlignment(MTI->getContext(), dstalign));
 #endif
-        }
+          }
         }
 
       } else {
-        auto dsto = (shadowsLookedUp || mode == DerivativeMode::ForwardModeSplit)? shadow_dst
-                                    : gutils->lookupM(shadow_dst, Builder2);
+        auto dsto =
+            (shadowsLookedUp || mode == DerivativeMode::ForwardModeSplit)
+                ? shadow_dst
+                : gutils->lookupM(shadow_dst, Builder2);
         if (dsto->getType()->isIntegerTy())
           dsto = Builder2.CreateIntToPtr(
               dsto, Type::getInt8PtrTy(dsto->getContext()));
@@ -6543,8 +6548,10 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
           dsto = Builder2.CreateConstInBoundsGEP1_64(dsto, offset);
 #endif
         }
-        auto srco = (shadowsLookedUp || mode == DerivativeMode::ForwardModeSplit) ? shadow_src
-                                    : gutils->lookupM(shadow_src, Builder2);
+        auto srco =
+            (shadowsLookedUp || mode == DerivativeMode::ForwardModeSplit)
+                ? shadow_src
+                : gutils->lookupM(shadow_src, Builder2);
         if (mode != DerivativeMode::ForwardModeSplit)
           dsto = Builder2.CreatePointerCast(dsto, secretpt);
         if (srco->getType()->isIntegerTy())
@@ -6568,41 +6575,41 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
           CallInst *call;
 #if LLVM_VERSION_MAJOR >= 11
           MaybeAlign dalign;
-          if (dstalign) dalign = MaybeAlign(dstalign);
+          if (dstalign)
+            dalign = MaybeAlign(dstalign);
           MaybeAlign salign;
-          if (srcalign) salign = MaybeAlign(srcalign);
+          if (srcalign)
+            salign = MaybeAlign(srcalign);
 #else
           auto dalign = dstalign;
           auto salign = srcalign;
 #endif
 
-          if (intrinsic == Intrinsic::memmove) {            
-            call =
-                Builder2.CreateMemMove(dsto, dalign, srco, salign, length);
+          if (intrinsic == Intrinsic::memmove) {
+            call = Builder2.CreateMemMove(dsto, dalign, srco, salign, length);
           } else {
-            call =
-                Builder2.CreateMemCpy(dsto, dalign, srco, salign, length);
+            call = Builder2.CreateMemCpy(dsto, dalign, srco, salign, length);
           }
         } else {
-        Value *args[]{
-            Builder2.CreatePointerCast(dsto, secretpt),
-            Builder2.CreatePointerCast(srco, secretpt),
-            Builder2.CreateUDiv(
-                gutils->lookupM(length, Builder2),
-                ConstantInt::get(length->getType(),
-                                 Builder2.GetInsertBlock()
-                                         ->getParent()
-                                         ->getParent()
-                                         ->getDataLayout()
-                                         .getTypeAllocSizeInBits(secretty) /
-                                     8))};
+          Value *args[]{
+              Builder2.CreatePointerCast(dsto, secretpt),
+              Builder2.CreatePointerCast(srco, secretpt),
+              Builder2.CreateUDiv(
+                  gutils->lookupM(length, Builder2),
+                  ConstantInt::get(length->getType(),
+                                   Builder2.GetInsertBlock()
+                                           ->getParent()
+                                           ->getParent()
+                                           ->getDataLayout()
+                                           .getTypeAllocSizeInBits(secretty) /
+                                       8))};
 
-        auto dmemcpy = ((intrinsic == Intrinsic::memcpy)
-                            ? getOrInsertDifferentialFloatMemcpy
-                            : getOrInsertDifferentialFloatMemmove)(
-            *MTI->getParent()->getParent()->getParent(), secretty, dstalign,
-            srcalign, dstaddr, srcaddr);
-        Builder2.CreateCall(dmemcpy, args);
+          auto dmemcpy = ((intrinsic == Intrinsic::memcpy)
+                              ? getOrInsertDifferentialFloatMemcpy
+                              : getOrInsertDifferentialFloatMemmove)(
+              *MTI->getParent()->getParent()->getParent(), secretty, dstalign,
+              srcalign, dstaddr, srcaddr);
+          Builder2.CreateCall(dmemcpy, args);
         }
       }
     }

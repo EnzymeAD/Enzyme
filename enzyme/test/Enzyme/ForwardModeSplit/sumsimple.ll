@@ -27,38 +27,36 @@ for.end:                                          ; preds = %for.cond
 ; Function Attrs: noinline nounwind uwtable
 define dso_local double @dsumsquare(double* %x, double* %xp, double** %y, double** %yp, i64 %n) #0 {
 entry:
-  %call = call fast double @__enzyme_fwdsplit(i8* bitcast (void (double*, double**, i64)* @f to i8*), double* %x, double* %xp, double** %y, double** %yp, i64 %n, i8* null)
+  %call = call double (...) @__enzyme_fwdsplit(i8* bitcast (void (double*, double**, i64)* @f to i8*), metadata !"enzyme_nofree", double* %x, double* %xp, double** %y, double** %yp, i64 %n, i8* null)
   ret double %call
 }
 
-declare dso_local double @__enzyme_fwdsplit(i8*, double*, double*, double**, double**, i64, i8*)
+declare dso_local double @__enzyme_fwdsplit(...)
 
 
 attributes #0 = { noinline nounwind uwtable }
 
 
-; CHECK: define internal void @fwddiffef(double* %x, double* %"x'", double** %y, double** %"y'", i64 %n)
+; CHECK: define internal void @fwddiffef(double* %x, double* %"x'", double** %y, double** %"y'", i64 %n, i8* %tapeArg)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = add nuw i64 %n, 1
+; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to double***
+; CHECK-NEXT:   %truetape = load double**, double*** %0, !enzyme_mustcache !0
+; CHECK-NEXT:   %1 = add nuw i64 %n, 1
 ; CHECK-NEXT:   br label %for.cond
 
 ; CHECK: for.cond:                                         ; preds = %for.body, %entry
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %for.body ], [ 0, %entry ]
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
-; CHECK-NEXT:   %cmp = icmp ne i64 %iv, %0
+; CHECK-NEXT:   %cmp = icmp ne i64 %iv, %1
 ; CHECK-NEXT:   br i1 %cmp, label %for.body, label %for.end
 
 ; CHECK: for.body:                                         ; preds = %for.cond
-; CHECK-NEXT:   %1 = load double, double* %x
 ; CHECK-NEXT:   %2 = load double, double* %"x'"
-; CHECK-NEXT:   %"'ipl" = load double*, double** %"y'"
-; CHECK-NEXT:   %3 = load double*, double** %y
-; CHECK-NEXT:   %4 = load double, double* %3
-; CHECK-NEXT:   %5 = load double, double* %"'ipl"
-; CHECK-NEXT:   %add = fadd fast double %4, %1
-; CHECK-NEXT:   %6 = fadd fast double %5, %2
-; CHECK-NEXT:   store double %add, double* %3
-; CHECK-NEXT:   store double %6, double* %"'ipl"
+; CHECK-NEXT:   %3 = getelementptr inbounds double*, double** %truetape, i64 %iv
+; CHECK-NEXT:   %"'il_phi" = load double*, double** %3, align 8, !invariant.group !1
+; CHECK-NEXT:   %4 = load double, double* %"'il_phi"
+; CHECK-NEXT:   %5 = fadd fast double %4, %2
+; CHECK-NEXT:   store double %5, double* %"'il_phi"
 ; CHECK-NEXT:   br label %for.cond
 
 ; CHECK: for.end:                                          ; preds = %for.cond

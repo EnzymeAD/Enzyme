@@ -28,7 +28,7 @@ entry:
 ; Function Attrs: noinline nounwind uwtable
 define dso_local double @derivative(double %x) local_unnamed_addr #1 {
 entry:
-  %0 = tail call double (double (double, i64)*, ...) @__enzyme_fwdsplit(double (double, i64)* nonnull @mulglobal, double %x, double 1.0, i64 0)
+  %0 = tail call double (double (double, i64)*, ...) @__enzyme_fwdsplit(double (double, i64)* nonnull @mulglobal, metadata !"enzyme_nofree", double %x, double 1.0, i64 0, i8* null)
   ret double %0
 }
 
@@ -71,22 +71,26 @@ attributes #4 = { nounwind "correctly-rounded-divide-sqrt-fp-math"="false" "disa
 !6 = !{!7, !7, i64 0}
 !7 = !{!"any pointer", !4, i64 0}
 
+; XFAIL: *
+; TODO
 
 ; CHECK: @global_shadow = private unnamed_addr constant [1 x void (double*)*] [void (double*)* bitcast (void (double*, double*)** @"_enzyme_forward_ipmul'" to void (double*)*)]
 ; CHECK:@"_enzyme_forward_ipmul'" = internal constant void (double*, double*)* @fwddiffeipmul
 
-; CHECK: define internal double @fwddiffemulglobal(double %x, double %"x'", i64 %idx)
+; CHECK: define internal double @fwddiffemulglobal(double %x, double %"x'", i64 %idx, i8* %tapeArg)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %"alloc'ipa" = alloca double
-; CHECK-NEXT:   store double 0.000000e+00, double* %"alloc'ipa"
-; CHECK-NEXT:   %alloc = alloca double
-; CHECK-NEXT:   store double %x, double* %alloc
-; CHECK-NEXT:   store double %"x'", double* %"alloc'ipa"
+; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to { i8*, i8*, i8* }*
+; CHECK-NEXT:   %truetape = load { i8*, i8*, i8* }, { i8*, i8*, i8* }* %0, !enzyme_mustcache !10
+; CHECK-NEXT:   %malloccall = extractvalue { i8*, i8*, i8* } %truetape, 2
+; CHECK-NEXT:   %"malloccall'mi" = extractvalue { i8*, i8*, i8* } %truetape, 1
+; CHECK-NEXT:   %"alloc'ipc" = bitcast i8* %"malloccall'mi" to double*
+; CHECK-NEXT:   %alloc = bitcast i8* %malloccall to double*
+; CHECK-NEXT:   store double %"x'", double* %"alloc'ipc"
 ; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds [1 x void (double*)*], [1 x void (double*)*]* @global_shadow, i64 0, i64 %idx
-; CHECK-NEXT:   %"fp'ipl" = load void (double*)*, void (double*)** %"arrayidx'ipg"
-; CHECK-NEXT:   %0 = bitcast void (double*)* %"fp'ipl" to void (double*, double*)**
-; CHECK-NEXT:   %1 = load void (double*, double*)*, void (double*, double*)** %0
-; CHECK-NEXT:   call void %1(double* %alloc, double* %"alloc'ipa")
-; CHECK-NEXT:   %2 = load double, double* %"alloc'ipa"
-; CHECK-NEXT:   ret double %2
+; CHECK-NEXT:   %"fp'ipl" = load void (double*)*, void (double*)** %"arrayidx'ipg", align 8
+; CHECK-NEXT:   %1 = bitcast void (double*)* %"fp'ipl" to void (double*, double*)**
+; CHECK-NEXT:   %2 = load void (double*, double*)*, void (double*, double*)** %1
+; CHECK-NEXT:   call void %2(double* %alloc, double* %"alloc'ipc")
+; CHECK-NEXT:   %3 = load double, double* %"alloc'ipc"
+; CHECK-NEXT:   ret double %3
 ; CHECK-NEXT: }

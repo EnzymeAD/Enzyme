@@ -141,13 +141,13 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
               llvm::MDTuple::get(Fs[0]->getContext(),
                                  {llvm::ValueAsMetadata::get(Fs[2])}));
         } else if (Mode == DerivativeMode::ForwardMode) {
-          assert (numargs == 2);
+          assert(numargs == 2);
           Fs[0]->setMetadata(
               "enzyme_derivative",
               llvm::MDTuple::get(Fs[0]->getContext(),
                                  {llvm::ValueAsMetadata::get(Fs[1])}));
         } else if (Mode == DerivativeMode::ForwardModeSplit) {
-          assert (numargs == 3);
+          assert(numargs == 3);
           Fs[0]->setMetadata(
               "enzyme_augment",
               llvm::MDTuple::get(Fs[0]->getContext(),
@@ -479,11 +479,11 @@ public:
             return false;
           }
 
-  #if LLVM_VERSION_MAJOR >= 14
+#if LLVM_VERSION_MAJOR >= 14
           if (i + 1 >= CI->arg_size())
-  #else
+#else
           if (i + 1 >= CI->getNumArgOperands())
-  #endif
+#endif
           {
             EmitFailure("MissingVectorWidth", CI->getDebugLoc(), CI,
                         "constant integer followong enzyme_width is missing",
@@ -595,7 +595,7 @@ public:
     DIFFE_TYPE retType = whatType(cast<Function>(fn)->getReturnType(), mode);
 
     bool differentialReturn = (mode == DerivativeMode::ReverseModeCombined ||
-                              mode == DerivativeMode::ReverseModeGradient) &&
+                               mode == DerivativeMode::ReverseModeGradient) &&
                               (retType == DIFFE_TYPE::OUT_DIFF);
 
     std::map<int, Type *> byVal;
@@ -613,8 +613,9 @@ public:
       Value *res = CI->getArgOperand(i);
 
       if (truei >= FT->getNumParams()) {
-        if (mode == DerivativeMode::ReverseModeGradient ||
-            mode == DerivativeMode::ForwardModeSplit) {
+        if (!isa<MetadataAsValue>(res) &&
+            (mode == DerivativeMode::ReverseModeGradient ||
+             mode == DerivativeMode::ForwardModeSplit)) {
           if (differentialReturn && differet == nullptr) {
             differet = res;
             if (CI->paramHasAttr(i, Attribute::ByVal)) {
@@ -844,8 +845,8 @@ public:
       bool forceAnonymousTape = !sizeOnly && allocatedTapeSize == -1;
       aug = &Logic.CreateAugmentedPrimal(
           cast<Function>(fn), retType, constants, TA,
-          /*returnUsed*/ false, /*shadowReturnUsed*/false, type_args, volatile_args,
-          forceAnonymousTape, /*atomicAdd*/ AtomicAdd);
+          /*returnUsed*/ false, /*shadowReturnUsed*/ false, type_args,
+          volatile_args, forceAnonymousTape, /*atomicAdd*/ AtomicAdd);
       auto &DL = cast<Function>(fn)->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
         assert(!aug->tapeType);
@@ -905,11 +906,11 @@ public:
     case DerivativeMode::ReverseModeGradient: {
       bool forceAnonymousTape = !sizeOnly && allocatedTapeSize == -1;
       bool shadowReturnUsed = returnUsed && (retType == DIFFE_TYPE::DUP_ARG ||
-        retType == DIFFE_TYPE::DUP_NONEED);
+                                             retType == DIFFE_TYPE::DUP_NONEED);
       aug = &Logic.CreateAugmentedPrimal(
-          cast<Function>(fn), retType, constants, TA,
-          returnUsed, shadowReturnUsed, type_args, volatile_args,
-          forceAnonymousTape, /*atomicAdd*/ AtomicAdd);
+          cast<Function>(fn), retType, constants, TA, returnUsed,
+          shadowReturnUsed, type_args, volatile_args, forceAnonymousTape,
+          /*atomicAdd*/ AtomicAdd);
       auto &DL = cast<Function>(fn)->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
         assert(!aug->tapeType);
@@ -982,7 +983,8 @@ public:
     }
 
     if ((mode == DerivativeMode::ReverseModeGradient ||
-         mode == DerivativeMode::ForwardModeSplit) && tape && tapeType) {
+         mode == DerivativeMode::ForwardModeSplit) &&
+        tape && tapeType) {
       auto &DL = cast<Function>(fn)->getParent()->getDataLayout();
       if (tapeIsPointer) {
         tape = Builder.CreateBitCast(
@@ -1756,13 +1758,17 @@ public:
     std::vector<GlobalVariable *> globalsToErase;
     for (GlobalVariable &g : M.globals()) {
       if (g.getName().contains(gradient_handler_name)) {
-        handleCustomDerivative<gradient_handler_name, DerivativeMode::ReverseModeGradient, 3>(M, g, globalsToErase);
+        handleCustomDerivative<gradient_handler_name,
+                               DerivativeMode::ReverseModeGradient, 3>(
+            M, g, globalsToErase);
       } else if (g.getName().contains(derivative_handler_name)) {
-        handleCustomDerivative<derivative_handler_name, DerivativeMode::ForwardMode, 2>(M, g,
-                                                           globalsToErase);
+        handleCustomDerivative<derivative_handler_name,
+                               DerivativeMode::ForwardMode, 2>(M, g,
+                                                               globalsToErase);
       } else if (g.getName().contains(splitderivative_handler_name)) {
-        handleCustomDerivative<splitderivative_handler_name, DerivativeMode::ForwardModeSplit, 3>(M, g,
-                                                           globalsToErase);
+        handleCustomDerivative<splitderivative_handler_name,
+                               DerivativeMode::ForwardModeSplit, 3>(
+            M, g, globalsToErase);
       } else if (g.getName().contains("__enzyme_inactivefn")) {
         handleInactiveFunction(M, g, globalsToErase);
       }

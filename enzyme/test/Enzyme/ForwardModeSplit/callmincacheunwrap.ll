@@ -8,11 +8,11 @@ $_ZNK5Eigen9EigenBaseINS_6MatrixIdLin1ELin1ELi0ELin1ELin1EEEE4colsEv = comdat an
 
 define void @caller(i8* %a, i8* %b, i8* %c) local_unnamed_addr {
 entry:
-  call void @__enzyme_fwdsplit(i8* bitcast (void (double**, i64*)* @_ZL6matvecPKN5Eigen6MatrixIdLin1ELin1ELi0ELin1ELin1EEES3_ to i8*), i8* %a, i8* %b, i8* %c, i8* null)
+  call void (...) @__enzyme_fwdsplit(i8* bitcast (void (double**, i64*)* @_ZL6matvecPKN5Eigen6MatrixIdLin1ELin1ELi0ELin1ELin1EEES3_ to i8*), metadata !"enzyme_nofree", i8* %a, i8* %b, i8* %c, i8* null)
   ret void
 }
 
-declare void @__enzyme_fwdsplit(i8*, i8*, i8*, i8*, i8*) local_unnamed_addr
+declare void @__enzyme_fwdsplit(...)
 
 ; Function Attrs: noinline nounwind uwtable
 define internal void @_ZL6matvecPKN5Eigen6MatrixIdLin1ELin1ELi0ELin1ELin1EEES3_(double** noalias %m_data.i.i.i, i64* noalias %m_rows) #0 {
@@ -73,26 +73,24 @@ attributes #3 = { nounwind }
 !12 = !{!"double", !5, i64 0}
 
 
-; CHECK: define internal void @fwddiffesubcall(double** %m_data.i.i.i, double** %"m_data.i.i.i'", i64* %tmp7) 
+; CHECK: define internal void @fwddiffesubcall(double** %m_data.i.i.i, double** %"m_data.i.i.i'", i64* %tmp7, { i64, double*, double* } %tapeArg) 
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %"mat'ipl" = load double*, double** %"m_data.i.i.i'", align 8
-; CHECK-NEXT:   %mat = load double*, double** %m_data.i.i.i, align 8, !tbaa !8
-; CHECK-NEXT:   %cols = call i64 @_ZNK5Eigen9EigenBaseINS_6MatrixIdLin1ELin1ELi0ELin1ELin1EEEE4colsEv(i64* %tmp7)
+; CHECK-NEXT:   %0 = extractvalue { i64, double*, double* } %tapeArg, 2
+; CHECK-NEXT:   %"mat'il_phi" = extractvalue { i64, double*, double* } %tapeArg, 1
+; CHECK-NEXT:   %cols = extractvalue { i64, double*, double* } %tapeArg, 0
 ; CHECK-NEXT:   br label %for.body
 
 ; CHECK: for.body:                                         ; preds = %for.body, %entry
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %for.body ], [ 0, %entry ]
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
-; CHECK-NEXT:   %"call'ipg" = getelementptr inbounds double, double* %"mat'ipl", i64 %iv
-; CHECK-NEXT:   %call = getelementptr inbounds double, double* %mat, i64 %iv
-; CHECK-NEXT:   %ld = load double, double* %call, align 8
-; CHECK-NEXT:   %0 = load double, double* %"call'ipg"
-; CHECK-NEXT:   %fmul = fmul double %ld, %ld
-; CHECK-NEXT:   %1 = fmul fast double %0, %ld
-; CHECK-NEXT:   %2 = fmul fast double %0, %ld
-; CHECK-NEXT:   %3 = fadd fast double %1, %2
-; CHECK-NEXT:   store double %fmul, double* %call, align 8, !tbaa !11
-; CHECK-NEXT:   store double %3, double* %"call'ipg", align 8
+; CHECK-NEXT:   %"call'ipg" = getelementptr inbounds double, double* %"mat'il_phi", i64 %iv
+; CHECK-NEXT:   %1 = getelementptr inbounds double, double* %0, i64 %iv
+; CHECK-NEXT:   %ld = load double, double* %1, align 8, !invariant.group !15
+; CHECK-NEXT:   %2 = load double, double* %"call'ipg", align 8
+; CHECK-NEXT:   %3 = fmul fast double %2, %ld
+; CHECK-NEXT:   %4 = fmul fast double %2, %ld
+; CHECK-NEXT:   %5 = fadd fast double %3, %4
+; CHECK-NEXT:   store double %5, double* %"call'ipg", align 8
 ; CHECK-NEXT:   %exitcond = icmp eq i64 %iv.next, %cols
 ; CHECK-NEXT:   br i1 %exitcond, label %exit, label %for.body
 

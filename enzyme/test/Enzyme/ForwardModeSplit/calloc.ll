@@ -20,21 +20,27 @@ entry:
   store double %x, double* %x.addr, align 8
   %0 = load i32, i32* @enzyme_dupnoneed, align 4
   %1 = load double, double* %x.addr, align 8
-  %call = call double (i8*, ...) @__enzyme_fwdsplit(i8* bitcast (double (double,i64)* @f to i8*), i32 %0, double %1, double 1.000000e+00, i64 1, i8* null)
+  %call = call double (i8*, ...) @__enzyme_fwdsplit(i8* bitcast (double (double,i64)* @f to i8*), metadata !"enzyme_nofree", i32 %0, double %1, double 1.000000e+00, i64 1, i8* null)
   ret double %call
 }
 
 declare dso_local double @__enzyme_fwdsplit(i8*, ...)
 
+; TODO check correctness
 
-; CHECK: define internal double @fwddiffef(double %x, double %"x'", i64 %arg)
+; CHECK: define internal i8* @augmented_f(double %x, double %"x'", i64 %arg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %call = call noalias i8* @calloc(i64 8, i64 %arg)
-; CHECK-NEXT:   %0 = call noalias i8* @calloc(i64 8, i64 %arg)
-; CHECK-NEXT:   %"'ipc" = bitcast i8* %0 to double*
-; CHECK-NEXT:   %1 = bitcast i8* %call to double*
-; CHECK-NEXT:   store double %x, double* %1, align 8
+; CHECK-NEXT:   %0 = bitcast i8* %call to double*
+; CHECK-NEXT:   store double %x, double* %0, align 8
+; CHECK-NEXT:   ret i8* null
+; CHECK-NEXT: }
+
+; CHECK: define internal double @fwddiffef(double %x, double %"x'", i64 %arg, i8* %tapeArg)
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   %"call'mi" = call noalias nonnull i8* @calloc(i64 8, i64 %arg)
+; CHECK-NEXT:   %"'ipc" = bitcast i8* %"call'mi" to double*
 ; CHECK-NEXT:   store double %"x'", double* %"'ipc", align 8
-; CHECK-NEXT:   %2 = load double, double* %"'ipc", align 8
-; CHECK-NEXT:   ret double %2
+; CHECK-NEXT:   %0 = load double, double* %"'ipc", align 8
+; CHECK-NEXT:   ret double %0
 ; CHECK-NEXT: }

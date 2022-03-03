@@ -39,13 +39,13 @@ end:                                                ; preds = %9, %3
 
 ; Function Attrs: nounwind uwtable
 define double @main(double* %A, double* %dA, i64 %N, double %start) {
-  %r = call double @__enzyme_fwdsplit(i8* bitcast (double (double*, i64, double)* @alldiv to i8*), double* %A, double* %dA, i64 %N, double %start, double 1.0, i8* null)
-  %r2 = call double @__enzyme_fwdsplit2(i8* bitcast (double (double*, i64)* @alldiv2 to i8*), double* %A, double* %dA, i64 %N, i8* null)
+  %r = call double (...) @__enzyme_fwdsplit(i8* bitcast (double (double*, i64, double)* @alldiv to i8*), metadata !"enzyme_nofree", double* %A, double* %dA, i64 %N, double %start, double 1.0, i8* null)
+  %r2 = call double (...) @__enzyme_fwdsplit2(i8* bitcast (double (double*, i64)* @alldiv2 to i8*), metadata !"enzyme_nofree", double* %A, double* %dA, i64 %N, i8* null)
   ret double %r
 }
 
-declare double @__enzyme_fwdsplit(i8*, double*, double*, i64, double, double, i8*)
-declare double @__enzyme_fwdsplit2(i8*, double*, double*, i64, i8*)
+declare double @__enzyme_fwdsplit(...)
+declare double @__enzyme_fwdsplit2(...)
 
 !llvm.module.flags = !{!0}
 !llvm.ident = !{!1}
@@ -60,55 +60,63 @@ declare double @__enzyme_fwdsplit2(i8*, double*, double*, i64, i8*)
 !7 = !{!"any pointer", !4, i64 0}
 
 
-; CHECK: define internal double @fwddiffealldiv(double* nocapture readonly %A, double* nocapture %"A'", i64 %N, double %start, double %"start'")
+; CHECK: define internal double @fwddiffealldiv(double* nocapture readonly %A, double* nocapture %"A'", i64 %N, double %start, double %"start'", i8* %tapeArg)
 ; CHECK-NEXT: entry:
+; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to { double*, double* }*
+; CHECK-NEXT:   %truetape = load { double*, double* }, { double*, double* }* %0, !enzyme_mustcache !8
+; CHECK-NEXT:   %1 = extractvalue { double*, double* } %truetape, 0
+; CHECK-NEXT:   %2 = extractvalue { double*, double* } %truetape, 1
 ; CHECK-NEXT:   br label %loop
 
 ; CHECK: loop:                                             ; preds = %loop, %entry
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %loop ], [ 0, %entry ]
-; CHECK-NEXT:   %reduce = phi double [ %start, %entry ], [ %div, %loop ]
-; CHECK-NEXT:   %"reduce'" = phi {{(fast )?}}double [ %"start'", %entry ], [ %5, %loop ]
+; CHECK-NEXT:   %"reduce'" = phi {{(fast )?}}double [ %"start'", %entry ], [ %10, %loop ]
+; CHECK-NEXT:   %3 = getelementptr inbounds double, double* %1, i64 %iv
+; CHECK-NEXT:   %reduce = load double, double* %3, align 8, !invariant.group !9
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
 ; CHECK-NEXT:   %"gep'ipg" = getelementptr inbounds double, double* %"A'", i64 %iv
-; CHECK-NEXT:   %gep = getelementptr inbounds double, double* %A, i64 %iv
-; CHECK-NEXT:   %ld = load double, double* %gep, align 8, !tbaa !2
-; CHECK-NEXT:   %0 = load double, double* %"gep'ipg"
-; CHECK-NEXT:   %div = fdiv double %reduce, %ld
-; CHECK-NEXT:   %1 = fmul fast double %"reduce'", %ld
-; CHECK-NEXT:   %2 = fmul fast double %reduce, %0
-; CHECK-NEXT:   %3 = fsub fast double %1, %2
-; CHECK-NEXT:   %4 = fmul fast double %ld, %ld
-; CHECK-NEXT:   %5 = fdiv fast double %3, %4
+; CHECK-NEXT:   %4 = getelementptr inbounds double, double* %2, i64 %iv
+; CHECK-NEXT:   %ld = load double, double* %4, align 8, !invariant.group !10
+; CHECK-NEXT:   %5 = load double, double* %"gep'ipg", align 8
+; CHECK-NEXT:   %6 = fmul fast double %"reduce'", %ld
+; CHECK-NEXT:   %7 = fmul fast double %reduce, %5
+; CHECK-NEXT:   %8 = fsub fast double %6, %7
+; CHECK-NEXT:   %9 = fmul fast double %ld, %ld
+; CHECK-NEXT:   %10 = fdiv fast double %8, %9
 ; CHECK-NEXT:   %cmp = icmp eq i64 %iv.next, %N
 ; CHECK-NEXT:   br i1 %cmp, label %end, label %loop
 
 ; CHECK: end:                                              ; preds = %loop
-; CHECK-NEXT:   ret double %5
+; CHECK-NEXT:   ret double %10
 ; CHECK-NEXT: }
 
 
-; CHECK: define internal double @fwddiffealldiv2(double* nocapture readonly %A, double* nocapture %"A'", i64 %N)
+; CHECK: define internal double @fwddiffealldiv2(double* nocapture readonly %A, double* nocapture %"A'", i64 %N, i8* %tapeArg)
 ; CHECK-NEXT: entry:
+; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to { double*, double* }*
+; CHECK-NEXT:   %truetape = load { double*, double* }, { double*, double* }* %0, !enzyme_mustcache !8
+; CHECK-DAG:   %[[i1:.+]] = extractvalue { double*, double* } %truetape, 0
+; CHECK-DAG:   %[[i2:.+]] = extractvalue { double*, double* } %truetape, 1
 ; CHECK-NEXT:   br label %loop
 
 ; CHECK: loop:                                             ; preds = %loop, %entry
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %loop ], [ 0, %entry ]
-; CHECK-NEXT:   %reduce = phi double [ 2.000000e+00, %entry ], [ %div, %loop ]
-; CHECK-NEXT:   %"reduce'" = phi {{(fast )?}}double [ 0.000000e+00, %entry ], [ %5, %loop ]
+; CHECK-NEXT:   %"reduce'" = phi {{(fast )?}}double [ 0.000000e+00, %entry ], [ %10, %loop ]
+; CHECK-NEXT:   %3 = getelementptr inbounds double, double* %[[i1]], i64 %iv
+; CHECK-NEXT:   %reduce = load double, double* %3, align 8, !invariant.group !13
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
 ; CHECK-NEXT:   %"gep'ipg" = getelementptr inbounds double, double* %"A'", i64 %iv
-; CHECK-NEXT:   %gep = getelementptr inbounds double, double* %A, i64 %iv
-; CHECK-NEXT:   %ld = load double, double* %gep, align 8, !tbaa !2
-; CHECK-NEXT:   %0 = load double, double* %"gep'ipg"
-; CHECK-NEXT:   %div = fdiv double %reduce, %ld
-; CHECK-NEXT:   %1 = fmul fast double %"reduce'", %ld
-; CHECK-NEXT:   %2 = fmul fast double %reduce, %0
-; CHECK-NEXT:   %3 = fsub fast double %1, %2
-; CHECK-NEXT:   %4 = fmul fast double %ld, %ld
-; CHECK-NEXT:   %5 = fdiv fast double %3, %4
+; CHECK-NEXT:   %4 = getelementptr inbounds double, double* %[[i2]], i64 %iv
+; CHECK-NEXT:   %ld = load double, double* %4, align 8, !invariant.group !14
+; CHECK-NEXT:   %5 = load double, double* %"gep'ipg", align 8
+; CHECK-NEXT:   %6 = fmul fast double %"reduce'", %ld
+; CHECK-NEXT:   %7 = fmul fast double %reduce, %5
+; CHECK-NEXT:   %8 = fsub fast double %6, %7
+; CHECK-NEXT:   %9 = fmul fast double %ld, %ld
+; CHECK-NEXT:   %10 = fdiv fast double %8, %9
 ; CHECK-NEXT:   %cmp = icmp eq i64 %iv.next, %N
 ; CHECK-NEXT:   br i1 %cmp, label %end, label %loop
 
 ; CHECK: end:                                              ; preds = %loop
-; CHECK-NEXT:   ret double %5
+; CHECK-NEXT:   ret double %10
 ; CHECK-NEXT: }

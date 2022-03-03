@@ -104,6 +104,21 @@ void EmitWarning(llvm::StringRef RemarkName,
     (llvm::errs() << ... << args) << "\n";
 }
 
+template <typename... Args>
+void EmitWarning(llvm::StringRef RemarkName, const llvm::Function *F,
+                 const Args &...args) {
+
+  llvm::OptimizationRemarkEmitter ORE(F);
+  ORE.emit([&]() {
+    std::string str;
+    llvm::raw_string_ostream ss(str);
+    (ss << ... << args);
+    return llvm::OptimizationRemark("enzyme", RemarkName, F) << ss.str();
+  });
+  if (EnzymePrintPerf)
+    (llvm::errs() << ... << args) << "\n";
+}
+
 class EnzymeFailure : public llvm::DiagnosticInfoIROptimization {
 public:
   EnzymeFailure(llvm::StringRef RemarkName, const llvm::DiagnosticLocation &Loc,
@@ -203,7 +218,7 @@ getNextNonDebugInstruction(llvm::Instruction *Z) {
 
 /// Check if a global has metadata
 static inline llvm::MDNode *hasMetadata(const llvm::GlobalObject *O,
-                               llvm::StringRef kind) {
+                                        llvm::StringRef kind) {
   return O->getMetadata(kind);
 }
 
@@ -403,8 +418,9 @@ static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode,
     return DIFFE_TYPE::CONSTANT;
   } else if (arg->isFPOrFPVectorTy()) {
     return (mode == DerivativeMode::ForwardMode ||
-            mode == DerivativeMode::ForwardModeSplit) ? DIFFE_TYPE::DUP_ARG
-                                                 : DIFFE_TYPE::OUT_DIFF;
+            mode == DerivativeMode::ForwardModeSplit)
+               ? DIFFE_TYPE::DUP_ARG
+               : DIFFE_TYPE::OUT_DIFF;
   } else {
     assert(arg);
     llvm::errs() << "arg: " << *arg << "\n";

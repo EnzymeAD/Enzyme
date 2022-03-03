@@ -61,7 +61,7 @@ declare dso_local noalias i8* @malloc(i64) local_unnamed_addr #2
 ; Function Attrs: noinline nounwind uwtable
 define dso_local double @derivative(%struct.n* %x, %struct.n* %xp, i64 %n) {
 entry:
-  %0 = tail call double (double (%struct.n*, i64)*, ...) @__enzyme_fwdsplit(double (%struct.n*, i64)* nonnull @sum_list, %struct.n* %x, %struct.n* %xp, i64 %n, i8* null)
+  %0 = tail call double (double (%struct.n*, i64)*, ...) @__enzyme_fwdsplit(double (%struct.n*, i64)* nonnull @sum_list, metadata !"enzyme_nofree", %struct.n* %x, %struct.n* %xp, i64 %n, i8* null)
   ret double %0
 }
 
@@ -91,38 +91,40 @@ attributes #4 = { nounwind }
 !10 = !{!4, !4, i64 0}
 
 
-; CHECK: define internal double @fwddiffesum_list(%struct.n* noalias readonly %node, %struct.n* %"node'", i64 %times)
+; CHECK: define internal double @fwddiffesum_list(%struct.n* noalias readonly %node, %struct.n* %"node'", i64 %times, i8* %tapeArg)
 ; CHECK-NEXT: entry:
+; CHECK-NEXT:   %truetape.elt = bitcast i8* %tapeArg to double***
+; CHECK-NEXT:   %truetape.unpack = load double**, double*** %truetape.elt, align 8
+; CHECK-NEXT:   %truetape.elt7 = getelementptr inbounds i8, i8* %tapeArg, i64 16
+; CHECK-NEXT:   %0 = bitcast i8* %truetape.elt7 to %struct.n***
+; CHECK-NEXT:   %truetape.unpack8 = load %struct.n**, %struct.n*** %0, align 8
 ; CHECK-NEXT:   %cmp18 = icmp eq %struct.n* %node, null
 ; CHECK-NEXT:   br i1 %cmp18, label %for.cond.cleanup, label %for.cond1.preheader
 
 ; CHECK: for.cond1.preheader:                              ; preds = %entry, %for.cond.cleanup4
-; CHECK-NEXT:   %0 = phi %struct.n* [ %[[ipl4:.+]], %for.cond.cleanup4 ], [ %"node'", %entry ]
-; CHECK-NEXT:   %val.020 = phi %struct.n* [ %1, %for.cond.cleanup4 ], [ %node, %entry ]
-; CHECK-NEXT:   %"sum.019'" = phi {{(fast )?}}double [ %3, %for.cond.cleanup4 ], [ 0.000000e+00, %entry ]
-; CHECK-NEXT:   %"values'ipg" = getelementptr inbounds %struct.n, %struct.n* %0, i64 0, i32 0
-; CHECK-NEXT:   %"'ipl" = load double*, double** %"values'ipg", align 8
+; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %for.cond.cleanup4 ], [ 0, %entry ]
+; CHECK-NEXT:   %"sum.019'" = phi double [ %5, %for.cond.cleanup4 ], [ 0.000000e+00, %entry ]
+; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
+; CHECK-NEXT:   %1 = getelementptr inbounds double*, double** %truetape.unpack, i64 %iv
+; CHECK-NEXT:   %"'il_phi" = load double*, double** %1, align 8, !invariant.group !16
 ; CHECK-NEXT:   br label %for.body5
 
 ; CHECK: for.cond.cleanup:                                 ; preds = %for.cond.cleanup4, %entry
-; CHECK-NEXT:   %"sum.0.lcssa'" = phi {{(fast )?}}double [ 0.000000e+00, %entry ], [ %3, %for.cond.cleanup4 ]
-; CHECK-NEXT:   ret double %"sum.0.lcssa'
+; CHECK-NEXT:   %"sum.0.lcssa'" = phi double [ 0.000000e+00, %entry ], [ %5, %for.cond.cleanup4 ]
+; CHECK-NEXT:   ret double %"sum.0.lcssa'"
 
 ; CHECK: for.cond.cleanup4:                                ; preds = %for.body5
-; CHECK-NEXT:   %"next'ipg" = getelementptr inbounds %struct.n, %struct.n* %0, i64 0, i32 1
-; CHECK-NEXT:   %next = getelementptr inbounds %struct.n, %struct.n* %val.020, i64 0, i32 1
-; CHECK-NEXT:   %[[ipl4]] = load %struct.n*, %struct.n** %"next'ipg", align 8
-; CHECK-NEXT:   %1 = load %struct.n*, %struct.n** %next, align 8, !tbaa !7
-; CHECK-NEXT:   %cmp = icmp eq %struct.n* %1, null
+; CHECK-NEXT:   %2 = getelementptr inbounds %struct.n*, %struct.n** %truetape.unpack8, i64 %iv
+; CHECK-NEXT:   %3 = load %struct.n*, %struct.n** %2, align 8, !invariant.group !17
+; CHECK-NEXT:   %cmp = icmp eq %struct.n* %3, null
 ; CHECK-NEXT:   br i1 %cmp, label %for.cond.cleanup, label %for.cond1.preheader
 
 ; CHECK: for.body5:                                        ; preds = %for.body5, %for.cond1.preheader
 ; CHECK-NEXT:   %iv1 = phi i64 [ %iv.next2, %for.body5 ], [ 0, %for.cond1.preheader ]
-; CHECK-NEXT:   %"sum.116'" = phi {{(fast )?}}double [ %3, %for.body5 ], [ %"sum.019'", %for.cond1.preheader ]
+; CHECK-NEXT:   %"sum.116'" = phi double [ %5, %for.body5 ], [ %"sum.019'", %for.cond1.preheader ]
 ; CHECK-NEXT:   %iv.next2 = add nuw nsw i64 %iv1, 1
-; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds double, double* %"'ipl", i64 %iv1
-; CHECK-NEXT:   %2 = load double, double* %"arrayidx'ipg", align 8
-; CHECK-NEXT:   %3 = fadd fast double %2, %"sum.116'"
+; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds double, double* %"'il_phi", i64 %iv1
+; CHECK-NEXT:   %4 = load double, double* %"arrayidx'ipg", align 8
+; CHECK-NEXT:   %5 = fadd fast double %4, %"sum.116'"
 ; CHECK-NEXT:   %exitcond = icmp eq i64 %iv1, %times
 ; CHECK-NEXT:   br i1 %exitcond, label %for.cond.cleanup4, label %for.body5
-; CHECK-NEXT: }

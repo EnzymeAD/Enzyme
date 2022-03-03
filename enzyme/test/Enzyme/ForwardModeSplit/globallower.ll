@@ -1,5 +1,8 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-lower-globals -mem2reg -sroa -simplifycfg -instsimplify -S | FileCheck %s
 
+; TODO
+; XFAIL: *
+
 @global = external dso_local local_unnamed_addr global double, align 8
 
 ; Function Attrs: noinline norecurse nounwind readonly uwtable

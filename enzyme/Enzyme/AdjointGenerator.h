@@ -536,10 +536,8 @@ public:
     // Otherwise caching will be done inside EnzymeLogic.cpp at
     // the end of the function jointly.
     if (Mode != DerivativeMode::ForwardMode &&
-         ( (gutils->knownRecomputeHeuristic.count(&I) == 0 && can_modref)||
-           !gutils->knownRecomputeHeuristic[&I]
-         ) &&
-         !gutils->unnecessaryIntermediates.count(&I)) {
+        !gutils->knownRecomputeHeuristic.count(&I) && can_modref &&
+        !gutils->unnecessaryIntermediates.count(&I)) {
       // we can pre initialize all the knownRecomputeHeuristic values to false
       // (not needing) as we may assume that minCutCache already preserves
       // everything it requires.
@@ -548,18 +546,19 @@ public:
       for (auto pair : gutils->knownRecomputeHeuristic)
         if (!pair.second) {
           Seen[UsageKey(pair.first, ValueType::Primal)] = false;
-          if (pair.first == &I) primalNeededInReverse = true;
+          if (pair.first == &I)
+            primalNeededInReverse = true;
         }
-      primalNeededInReverse |=
-          is_value_needed_in_reverse<ValueType::Primal>(TR, gutils, &I, Mode,
-                                                        Seen, oldUnreachable);
+      primalNeededInReverse |= is_value_needed_in_reverse<ValueType::Primal>(
+          TR, gutils, &I, Mode, Seen, oldUnreachable);
       if (primalNeededInReverse) {
         IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&I));
         inst = gutils->cacheForReverse(BuilderZ, newi,
                                        getIndex(&I, CacheType::Self));
         assert(inst->getType() == type);
 
-        if (Mode == DerivativeMode::ReverseModeGradient) {
+        if (Mode == DerivativeMode::ReverseModeGradient ||
+            Mode == DerivativeMode::ForwardModeSplit) {
           assert(inst != newi);
         } else {
           assert(inst == newi);
@@ -4134,9 +4133,9 @@ public:
       if (called) {
         subdata = &gutils->Logic.CreateAugmentedPrimal(
             cast<Function>(called), subretType, argsInverted,
-            TR.analyzer.interprocedural, /*return is used*/ false, /*shadowReturnUsed*/ false,
-            nextTypeInfo,
-            uncacheable_args, false, /*AtomicAdd*/ true,
+            TR.analyzer.interprocedural, /*return is used*/ false,
+            /*shadowReturnUsed*/ false, nextTypeInfo, uncacheable_args, false,
+            /*AtomicAdd*/ true,
             /*OpenMP*/ true);
         if (Mode == DerivativeMode::ReverseModePrimal) {
           assert(augmentedReturn);
@@ -9683,34 +9682,33 @@ public:
       // TODO enable this if we need to free the memory
       // NOTE THAT TOPLEVEL IS THERE SIMPLY BECAUSE THAT WAS PREVIOUS ATTITUTE
       // TO FREE'ing
-        if ((primalNeededInReverse &&
-             !gutils->unnecessaryIntermediates.count(orig)) ||
-            hasPDFree) {
-          Value *nop = gutils->cacheForReverse(BuilderZ, newCall,
-                                               getIndex(orig, CacheType::Self));
-          if (hasPDFree &&
-                ((Mode == DerivativeMode::ReverseModeGradient && shouldFree()) ||
-                  Mode == DerivativeMode::ReverseModeCombined ||
-                  (Mode == DerivativeMode::ForwardModeSplit && shouldFree())
-                  )) {
-            IRBuilder<> Builder2(call.getParent());
-            getReverseBuilder(Builder2);
-            auto dbgLoc = gutils->getNewFromOriginal(orig->getDebugLoc());
-            freeKnownAllocation(Builder2, lookup(nop, Builder2), *called,
-                                dbgLoc, gutils->TLI);
-          }
-        } else if (Mode == DerivativeMode::ReverseModeGradient ||
-                   Mode == DerivativeMode::ReverseModeCombined ||
-                   Mode == DerivativeMode::ForwardModeSplit) {
-          // Note that here we cannot simply replace with null as users who
-          // try to find the shadow pointer will use the shadow of null rather
-          // than the true shadow of this
-          auto pn = BuilderZ.CreatePHI(
-              orig->getType(), 1, (orig->getName() + "_replacementB").str());
-          gutils->fictiousPHIs[pn] = orig;
-          gutils->replaceAWithB(newCall, pn);
-          gutils->erase(newCall);
+      if ((primalNeededInReverse &&
+           !gutils->unnecessaryIntermediates.count(orig)) ||
+          hasPDFree) {
+        Value *nop = gutils->cacheForReverse(BuilderZ, newCall,
+                                             getIndex(orig, CacheType::Self));
+        if (hasPDFree &&
+            ((Mode == DerivativeMode::ReverseModeGradient && shouldFree()) ||
+             Mode == DerivativeMode::ReverseModeCombined ||
+             (Mode == DerivativeMode::ForwardModeSplit && shouldFree()))) {
+          IRBuilder<> Builder2(call.getParent());
+          getReverseBuilder(Builder2);
+          auto dbgLoc = gutils->getNewFromOriginal(orig->getDebugLoc());
+          freeKnownAllocation(Builder2, lookup(nop, Builder2), *called, dbgLoc,
+                              gutils->TLI);
         }
+      } else if (Mode == DerivativeMode::ReverseModeGradient ||
+                 Mode == DerivativeMode::ReverseModeCombined ||
+                 Mode == DerivativeMode::ForwardModeSplit) {
+        // Note that here we cannot simply replace with null as users who
+        // try to find the shadow pointer will use the shadow of null rather
+        // than the true shadow of this
+        auto pn = BuilderZ.CreatePHI(orig->getType(), 1,
+                                     (orig->getName() + "_replacementB").str());
+        gutils->fictiousPHIs[pn] = orig;
+        gutils->replaceAWithB(newCall, pn);
+        gutils->erase(newCall);
+      }
 
       return;
     }
@@ -10021,9 +10019,9 @@ public:
       // pass), erase it
       //  Any uses of it should be handled by the case above so it is safe to
       //  RAUW
-      if (orig->mayWriteToMemory() && (
-          Mode == DerivativeMode::ReverseModeGradient ||
-          Mode == DerivativeMode::ForwardModeSplit)) {
+      if (orig->mayWriteToMemory() &&
+          (Mode == DerivativeMode::ReverseModeGradient ||
+           Mode == DerivativeMode::ForwardModeSplit)) {
         eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
         return;
       }
@@ -10133,23 +10131,23 @@ public:
         }
       }
       Value *tape = nullptr;
-        if (tapeIdx.hasValue()) {
+      if (tapeIdx.hasValue()) {
 
-          FunctionType *FT = cast<FunctionType>(
+        FunctionType *FT = cast<FunctionType>(
             cast<PointerType>(subdata->fn->getType())->getElementType());
 
-          tape = BuilderZ.CreatePHI(
+        tape = BuilderZ.CreatePHI(
             (tapeIdx == -1) ? FT->getReturnType()
                             : cast<StructType>(FT->getReturnType())
                                   ->getElementType(tapeIdx.getValue()),
             1, "tapeArg");
 
-          assert (!tape->getType()->isEmptyTy());
-          gutils->TapesToPreventRecomputation.insert(cast<Instruction>(tape));
-          tape = gutils->cacheForReverse(BuilderZ, tape,
-                                         getIndex(orig, CacheType::Tape));
-          args.push_back(tape);
-        }
+        assert(!tape->getType()->isEmptyTy());
+        gutils->TapesToPreventRecomputation.insert(cast<Instruction>(tape));
+        tape = gutils->cacheForReverse(BuilderZ, tape,
+                                       getIndex(orig, CacheType::Tape));
+        args.push_back(tape);
+      }
 
       Value *newcalled = nullptr;
 
@@ -10157,8 +10155,9 @@ public:
         newcalled = gutils->Logic.CreateForwardDiff(
             cast<Function>(called), subretType, argsInverted,
             TR.analyzer.interprocedural, /*returnValue*/ subretused, Mode,
-            ((DiffeGradientUtils*)gutils)->FreeMemory,
-            gutils->getWidth(), tape ? tape->getType() : nullptr, nextTypeInfo, {}, /*augmented*/subdata);
+            ((DiffeGradientUtils *)gutils)->FreeMemory, gutils->getWidth(),
+            tape ? tape->getType() : nullptr, nextTypeInfo, {},
+            /*augmented*/ subdata);
       } else {
 #if LLVM_VERSION_MAJOR >= 11
         auto callval = orig->getCalledOperand();
@@ -10180,9 +10179,9 @@ public:
                 ? (retActive ? ReturnType::TwoReturns : ReturnType::Return)
                 : (retActive ? ReturnType::Return : ReturnType::Void);
 
-        FunctionType *FTy =
-            getFunctionTypeForClone(ft, Mode, gutils->getWidth(), tape ? tape->getType() : nullptr,
-                                    argsInverted, false, subretVal, subretType);
+        FunctionType *FTy = getFunctionTypeForClone(
+            ft, Mode, gutils->getWidth(), tape ? tape->getType() : nullptr,
+            argsInverted, false, subretVal, subretType);
         PointerType *fptype = PointerType::getUnqual(FTy);
         newcalled = BuilderZ.CreatePointerCast(newcalled,
                                                PointerType::getUnqual(fptype));
@@ -10446,8 +10445,8 @@ public:
           subdata = &gutils->Logic.CreateAugmentedPrimal(
               cast<Function>(called), subretType, argsInverted,
               TR.analyzer.interprocedural, /*return is used*/ subretused,
-              shadowReturnUsed,
-              nextTypeInfo, uncacheable_args, false, gutils->AtomicAdd);
+              shadowReturnUsed, nextTypeInfo, uncacheable_args, false,
+              gutils->AtomicAdd);
           if (Mode == DerivativeMode::ReverseModePrimal) {
             assert(augmentedReturn);
             auto subaugmentations =
@@ -10780,7 +10779,8 @@ public:
                             .constant_args = argsInverted,
                             .uncacheable_args = uncacheable_args,
                             .returnUsed = replaceFunction && subretused,
-                            .shadowReturnUsed = shadowReturnUsed && replaceFunction,
+                            .shadowReturnUsed =
+                                shadowReturnUsed && replaceFunction,
                             .mode = subMode,
                             .width = gutils->getWidth(),
                             .freeMemory = true,
@@ -10903,8 +10903,10 @@ public:
 
     unsigned structidx = 0;
     if (replaceFunction) {
-        if (subretused) structidx++;
-        if (shadowReturnUsed) structidx++;
+      if (subretused)
+        structidx++;
+      if (shadowReturnUsed)
+        structidx++;
     }
 
 #if LLVM_VERSION_MAJOR >= 14
@@ -10934,8 +10936,8 @@ public:
       if (structidx != 0) {
         llvm::errs() << *gutils->oldFunc->getParent() << "\n";
         llvm::errs() << "diffes: " << *diffes << " structidx=" << structidx
-                     << " subretused=" << subretused << " shadowReturnUsed=" << shadowReturnUsed
-                     << "\n";
+                     << " subretused=" << subretused
+                     << " shadowReturnUsed=" << shadowReturnUsed << "\n";
       }
       assert(structidx == 0);
     } else {
@@ -10956,8 +10958,8 @@ public:
         gutils->invertedPointers.erase(ifound);
         if (shadowReturnUsed) {
           dumpMap(gutils->invertedPointers);
-          auto dretval =
-              cast<Instruction>(Builder2.CreateExtractValue(diffes, { subretused ? 1U : 0U}));
+          auto dretval = cast<Instruction>(
+              Builder2.CreateExtractValue(diffes, {subretused ? 1U : 0U}));
           /* todo handle this case later */
           assert(!subretused);
           gutils->invertedPointers.insert(std::make_pair(

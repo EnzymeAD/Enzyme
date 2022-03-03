@@ -47,7 +47,7 @@ declare void @llvm.lifetime.end.p0i8(i64, i8* nocapture) #2
 
 define dso_local double @dsquare(double %x) local_unnamed_addr #1 {
 entry:
-  %call = tail call double (i8*, ...) @__enzyme_fwdsplit(i8* bitcast (double (double)* @square to i8*), double %x, double 1.000000e+00, i8* null) #4
+  %call = tail call double (i8*, ...) @__enzyme_fwdsplit(i8* bitcast (double (double)* @square to i8*), metadata !"enzyme_nofree", double %x, double 1.000000e+00, i8* null) #4
   ret double %call
 }
 
@@ -60,30 +60,33 @@ attributes #3 = { "correctly-rounded-divide-sqrt-fp-math"="false" "disable-tail-
 attributes #4 = { nounwind }
 
 
-; CHECK: define internal double @fwddiffesquare(double %x, double %"x'")
+; CHECK: define internal double @fwddiffesquare(double %x, double %"x'", i8* %tapeArg)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %"x.addr'ipa" = alloca double, align 8
-; CHECK-NEXT:   store double 0.000000e+00, double* %"x.addr'ipa", align 8
-; CHECK-NEXT:   %x.addr = alloca double, align 8
-; CHECK-NEXT:   %"y'ipa" = alloca double, align 8
-; CHECK-NEXT:   store double 0.000000e+00, double* %"y'ipa", align 8
-; CHECK-NEXT:   %y = alloca double, align 8
-; CHECK-NEXT:   store double %x, double* %x.addr, align 8
-; CHECK-NEXT:   store double %"x'", double* %"x.addr'ipa", align 8
-; CHECK-NEXT:   call void @fwddiffesquare_(double* %x.addr, double* %"x.addr'ipa", double* %y, double* %"y'ipa")
-; CHECK-NEXT:   %0 = load double, double* %"y'ipa", align 8
-; CHECK-NEXT:   ret double %0
+; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to { double, i8*, i8* }*
+; CHECK-NEXT:   %truetape = load { double, i8*, i8* }, { double, i8*, i8* }* %0, !enzyme_mustcache !1
+; CHECK-NEXT:   %malloccall = extractvalue { double, i8*, i8* } %truetape, 2
+; CHECK-NEXT:   %"malloccall'mi" = alloca i8, i64 8, align 8
+; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"malloccall'mi", i8 0, i64 8, i1 false)
+; CHECK-NEXT:   %"x.addr'ipc" = bitcast i8* %"malloccall'mi" to double*
+; CHECK-NEXT:   %x.addr = bitcast i8* %malloccall to double*
+; CHECK-NEXT:   %malloccall1 = extractvalue { double, i8*, i8* } %truetape, 1
+; CHECK-NEXT:   %"malloccall1'mi" = alloca i8, i64 8, align 8
+; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"malloccall1'mi", i8 0, i64 8, i1 false)
+; CHECK-NEXT:   %"y'ipc" = bitcast i8* %"malloccall1'mi" to double*
+; CHECK-NEXT:   %y = bitcast i8* %malloccall1 to double*
+; CHECK-NEXT:   store double %"x'", double* %"x.addr'ipc", align 8
+; CHECK-NEXT:   %tapeArg1 = extractvalue { double, i8*, i8* } %truetape, 0
+; CHECK-NEXT:   call void @fwddiffesquare_(double* %x.addr, double* %"x.addr'ipc", double* %y, double* %"y'ipc", double %tapeArg1)
+; CHECK-NEXT:   %1 = load double, double* %"y'ipc", align 8
+; CHECK-NEXT:   ret double %1
 ; CHECK-NEXT: }
 
-; CHECK: define internal void @fwddiffesquare_(double* nocapture readonly %src, double* nocapture %"src'", double* nocapture %dest, double* nocapture %"dest'")
+; CHECK: define internal void @fwddiffesquare_(double* nocapture readonly %src, double* nocapture %"src'", double* nocapture %dest, double* nocapture %"dest'", double
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = load double, double* %src, align 8
 ; CHECK-NEXT:   %1 = load double, double* %"src'", align 8
-; CHECK-NEXT:   %mul = fmul double %0, %0
 ; CHECK-NEXT:   %2 = fmul fast double %1, %0
 ; CHECK-NEXT:   %3 = fmul fast double %1, %0
 ; CHECK-NEXT:   %4 = fadd fast double %2, %3
-; CHECK-NEXT:   store double %mul, double* %dest, align 8
 ; CHECK-NEXT:   store double %4, double* %"dest'", align 8
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

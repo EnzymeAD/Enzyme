@@ -20,9 +20,9 @@ entry:
 }
 
 ; Function Attrs: nounwind uwtable
-define double @caller(double %x, double %dx) {
+define double @caller(double %x, double %dx, i8* %t) {
 entry:
-  %call = call double (i8*, ...) @__enzyme_fwdsplit(i8* bitcast (double (double)* @f to i8*), double %x, double %dx, i8* null)
+  %call = call double (i8*, ...) @__enzyme_fwdsplit(i8* bitcast (double (double)* @f to i8*), double %x, double %dx, i8* %t)
   ret double %call
 }
 
@@ -30,16 +30,15 @@ declare dso_local double @__enzyme_fwdsplit(i8*, ...)
 
 attributes #0 = { norecurse nounwind readnone }
 
-; CHECK: define internal double @fwddiffef(double %x, double %"x'", i8* %tapeArg)
+; CHECK: define internal double @fwddiffef(double %x, double %"x'", i8* %tapeArg1)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
-; CHECK-NEXT:   %0 = call fast double @fixderivative_add(double %x, double %"x'", double 2.000000e+00)
+; CHECK-NEXT:   %0 = call fast double @fixderivative_add(double %x, double %"x'", double 2.000000e+00, i8* %tapeArg1)
 ; CHECK-NEXT:   ret double %0
 ; CHECK-NEXT: }
 
-; CHECK: define internal double @fixderivative_add(double %x, double %"x'", double %y) {
+; CHECK: define internal double @fixderivative_add(double %x, double %"x'", double %y, i8* %tapeArg) {
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call { double, double } @add_err(double %x, double %"x'", double %y, double 0.000000e+00)
+; CHECK-NEXT:   %0 = call { double, double } @add_err(double %x, double %"x'", double %y, double 0.000000e+00, i8* %tapeArg)
 ; CHECK-NEXT:   %1 = extractvalue { double, double } %0, 1
 ; CHECK-NEXT:   ret double %1
 ; CHECK-NEXT: }

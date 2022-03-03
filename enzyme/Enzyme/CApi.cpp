@@ -379,10 +379,9 @@ LLVMValueRef EnzymeCreateForwardDiff(
     EnzymeLogicRef Logic, LLVMValueRef todiff, CDIFFE_TYPE retType,
     CDIFFE_TYPE *constant_args, size_t constant_args_size,
     EnzymeTypeAnalysisRef TA, uint8_t returnValue, CDerivativeMode mode,
-    uint8_t freeMemory,
-    unsigned width, LLVMTypeRef additionalArg, CFnTypeInfo typeInfo,
-    uint8_t *_uncacheable_args, size_t uncacheable_args_size,
-    EnzymeAugmentedReturnPtr augmented) {
+    uint8_t freeMemory, unsigned width, LLVMTypeRef additionalArg,
+    CFnTypeInfo typeInfo, uint8_t *_uncacheable_args,
+    size_t uncacheable_args_size, EnzymeAugmentedReturnPtr augmented) {
   std::vector<DIFFE_TYPE> nconstant_args((DIFFE_TYPE *)constant_args,
                                          (DIFFE_TYPE *)constant_args +
                                              constant_args_size);
@@ -434,12 +433,14 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
       },
       eunwrap(TA), eunwrap(augmented)));
 }
-EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
-    EnzymeLogicRef Logic, LLVMValueRef todiff, CDIFFE_TYPE retType,
-    CDIFFE_TYPE *constant_args, size_t constant_args_size,
-    EnzymeTypeAnalysisRef TA, uint8_t returnUsed, uint8_t shadowReturnUsed, CFnTypeInfo typeInfo,
-    uint8_t *_uncacheable_args, size_t uncacheable_args_size,
-    uint8_t forceAnonymousTape, uint8_t AtomicAdd) {
+EnzymeAugmentedReturnPtr
+EnzymeCreateAugmentedPrimal(EnzymeLogicRef Logic, LLVMValueRef todiff,
+                            CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
+                            size_t constant_args_size, EnzymeTypeAnalysisRef TA,
+                            uint8_t returnUsed, uint8_t shadowReturnUsed,
+                            CFnTypeInfo typeInfo, uint8_t *_uncacheable_args,
+                            size_t uncacheable_args_size,
+                            uint8_t forceAnonymousTape, uint8_t AtomicAdd) {
 
   std::vector<DIFFE_TYPE> nconstant_args((DIFFE_TYPE *)constant_args,
                                          (DIFFE_TYPE *)constant_args +

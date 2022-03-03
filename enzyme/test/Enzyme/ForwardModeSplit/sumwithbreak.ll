@@ -33,45 +33,44 @@ cleanup:                                          ; preds = %if.end, %if.then
 ; Function Attrs: noinline nounwind uwtable
 define dso_local double @dsumsquare(double* %x, double* %xp, i64 %n) #0 {
 entry:
-  %call = call fast double @__enzyme_fwdsplit(i8* bitcast (double (double*, i64)* @f to i8*), double* %x, double* %xp, i64 %n, i8* null)
+  %call = call double (...) @__enzyme_fwdsplit(i8* bitcast (double (double*, i64)* @f to i8*), metadata !"enzyme_nofree", double* %x, double* %xp, i64 %n, i8* null)
   ret double %call
 }
 
-declare dso_local double @__enzyme_fwdsplit(i8*, double*, double*, i64, i8*)
+declare dso_local double @__enzyme_fwdsplit(...)
 
 
 attributes #0 = { noinline nounwind uwtable }
 
 
-; CHECK: define internal double @fwddiffef(double* nocapture readonly %x, double* nocapture %"x'", i64 %n)
+; CHECK: define internal double @fwddiffef(double* nocapture readonly %x, double* nocapture %"x'", i64 %n, i8* %tapeArg)
 ; CHECK-NEXT: entry:
+; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to i1**
+; CHECK-NEXT:   %truetape = load i1*, i1** %0, align 8, !enzyme_mustcache !4
 ; CHECK-NEXT:   br label %for.body
 
 ; CHECK: for.body:                                         ; preds = %if.end, %entry
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %if.end ], [ 0, %entry ]
-; CHECK-NEXT:   %data.016 = phi double [ %add5, %if.end ], [ 0.000000e+00, %entry ]
-; CHECK-NEXT:   %"data.016'" = phi {{(fast )?}}double [ %4, %if.end ], [ 0.000000e+00, %entry ]
-; CHECK-NEXT:   %cmp2 = fcmp fast ogt double %data.016, 1.000000e+01
+; CHECK-NEXT:   %"data.016'" = phi {{(fast )?}}double [ %5, %if.end ], [ 0.000000e+00, %entry ]
+; CHECK-NEXT:   %1 = getelementptr inbounds i1, i1* %truetape, i64 %iv
+; CHECK-NEXT:   %cmp2 = load i1, i1* %1, align 1, !invariant.group !5
 ; CHECK-NEXT:   br i1 %cmp2, label %if.then, label %if.end
 
 ; CHECK: if.then:                                          ; preds = %for.body
 ; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds double, double* %"x'", i64 %n
-; CHECK-NEXT:   %0 = load double, double* %"arrayidx'ipg", align 8
-; CHECK-NEXT:   %1 = fadd fast double %0, %"data.016'"
+; CHECK-NEXT:   %2 = load double, double* %"arrayidx'ipg", align 8
+; CHECK-NEXT:   %3 = fadd fast double %2, %"data.016'"
 ; CHECK-NEXT:   br label %cleanup
 
 ; CHECK: if.end:                                           ; preds = %for.body
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
 ; CHECK-NEXT:   %"arrayidx4'ipg" = getelementptr inbounds double, double* %"x'", i64 %iv
-; CHECK-NEXT:   %arrayidx4 = getelementptr inbounds double, double* %x, i64 %iv
-; CHECK-NEXT:   %2 = load double, double* %arrayidx4, align 8
-; CHECK-NEXT:   %3 = load double, double* %"arrayidx4'ipg", align 8
-; CHECK-NEXT:   %add5 = fadd fast double %2, %data.016
-; CHECK-NEXT:   %4 = fadd fast double %3, %"data.016'"
+; CHECK-NEXT:   %4 = load double, double* %"arrayidx4'ipg", align 8
+; CHECK-NEXT:   %5 = fadd fast double %4, %"data.016'"
 ; CHECK-NEXT:   %cmp = icmp ult i64 %iv, %n
 ; CHECK-NEXT:   br i1 %cmp, label %for.body, label %cleanup
 
 ; CHECK: cleanup:                                          ; preds = %if.end, %if.then
-; CHECK-NEXT:   %"data.1'" = phi {{(fast )?}}double [ %1, %if.then ], [ %4, %if.end ]
+; CHECK-NEXT:   %"data.1'" = phi {{(fast )?}}double [ %3, %if.then ], [ %5, %if.end ]
 ; CHECK-NEXT:   ret double %"data.1'"
 ; CHECK-NEXT: }
