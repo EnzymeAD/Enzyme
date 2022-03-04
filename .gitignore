@@ -9,3 +9,5 @@ enzyme/benchmarks/ReverseMode/*/*.o
 enzyme/benchmarks/ReverseMode/*/*.exe
 enzyme/benchmarks/ReverseMode/*/results.txt
 enzyme/benchmarks/ReverseMode/*/results.json
+
+.DS_Store

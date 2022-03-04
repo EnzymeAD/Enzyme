@@ -23,6 +23,7 @@
 
 #include "../adbench/lstm.h"
 
+// Enzyme Reverse Mode
 extern "C" {
 #include "lstm.h"
 
@@ -202,6 +203,47 @@ void dlstm_objective(
         enzyme_dupnoneed, loss, dloss
     );
 }
+
+}
+
+
+// Enzyme Reverse Vector Mode
+extern "C" {
+
+extern int enzyme_const;
+extern int enzyme_dupv;
+extern int enzyme_width;
+extern int enzyme_dupnoneed;
+void __enzyme_autodiff2(void*, ...) noexcept;
+
+// *      tapenade -b -o lstm_tapenade -head "lstm_objective(loss)/(main_params extra_params)" lstm.c
+
+// void dlstm_objective_vec(
+//     int l,
+//     int c,
+//     int b,
+//     double const* main_params,
+//     double* dmain_params,
+//     double const* extra_params,
+//     double* dextra_params,
+//     double* state,
+//     double const* sequence,
+//     double* loss,
+//     double* dloss
+// )
+// {
+//     __enzyme_autodiff2((void*)lstm_objective,
+//         enzyme_width, NBDirsMax,
+//         enzyme_const, l,
+//         enzyme_const, c,
+//         enzyme_const, b,
+//         enzyme_dupv, NBDirsMax * sizeof(double), main_params, dmain_params,
+//         enzyme_dupv, NBDirsMax * sizeof(double), extra_params, dextra_params,
+//         enzyme_const, state,
+//         enzyme_const, sequence,
+//         enzyme_dupv, 1, loss, dloss
+//     );
+// }
 
 }
 

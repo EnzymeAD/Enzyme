@@ -31,6 +31,8 @@
  *         for generating but result can be slightly different.
  */
 #include "../adbench/gmm.h"
+
+// Reverse-Mode AD
 extern "C" {
 #include "gmm.h"
 
@@ -283,6 +285,37 @@ void dgmm_objective(int d, int k, int n, const double *alphas, double *
 }
 
 }
+
+
+// Enzyme Reverse-Vector
+// extern "C" {
+
+// extern int enzyme_const;
+// extern int enzyme_width;
+// extern int enzyme_dupv;
+// extern int enzyme_dupnoneed;
+// void __enzyme_autodiff2(void*, ...) noexcept;
+
+// // *      tapenade -b -o gmm_tapenade -head "gmm_objective(err)/(alphas means icf)" gmm.c
+// void dgmm_objective_vec(int d, int k, int n, const double *alphas, double *
+//         alphasb, const double *means, double *meansb, const double *icf,
+//         double *icfb, const double *x, Wishart wishart, double *err, double *
+//         errb) {
+//     __enzyme_autodiff2((void*)gmm_objective,
+//             enzyme_width, NBDirsMax,
+//             enzyme_const, d,
+//             enzyme_const, k,
+//             enzyme_const, n,
+//             enzyme_dupv, NBDirsMax * sizeof(double), alphas, alphasb,
+//             enzyme_dupv, NBDirsMax * sizeof(double), means, meansb,
+//             enzyme_dupv, NBDirsMax * sizeof(double), icf, icfb,
+//             enzyme_const, x,
+//             enzyme_const, wishart,
+//             enzyme_dupv, 1, err, errb);
+// }
+
+// }
+
 
 
 // ! Tapenade
