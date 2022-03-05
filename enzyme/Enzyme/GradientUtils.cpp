@@ -1025,26 +1025,24 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     auto eraseBlocks = [&](const SmallVectorImpl<BasicBlock*> &blocks, BasicBlock* bret) {
 		SmallVector<BasicBlock*, 2> revtopo;
 		{
-		SmallVector<BasicBlock*, 2> todo(blocks.begin(), blocks.end());
 		SmallPtrSet<BasicBlock*, 2> seen;
-		while (todo.size()) {
-		   auto B = todo.back();
-		   todo.pop_back();
-		   if (seen.count(B)) continue;
+		std::function<void(BasicBlock*)> dfs = [&](BasicBlock *B) {
+		   if (seen.count(B)) return;
 		   seen.insert(B);
 		   if (B->getTerminator())
 			for (auto S : successors(B))
 			   if (!seen.count(S))
-				todo.push_back(S);
+				dfs(S);
 		   revtopo.push_back(B);
-		}
+		};
+		for (auto B : blocks) dfs(B);
 		if (!seen.count(bret)) revtopo.insert(revtopo.begin(), bret);
 	        }
 
                 SmallVector<Instruction *, 4> toErase;
 		for (auto B : revtopo) {
 		  if (B == bret) continue;
-                  for (auto &I : llvm::reverse(*B)) {
+		  for (auto &I : llvm::reverse(*B)) {
                     toErase.push_back(&I);
                   }
 		  unwrap_cache.erase(B);
