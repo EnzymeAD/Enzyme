@@ -1022,48 +1022,53 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                     oldB) != reverseBlocks[fwd].end();
     }
 
-    auto eraseBlocks = [&](const SmallVectorImpl<BasicBlock*> &blocks, BasicBlock* bret) {
-		SmallVector<BasicBlock*, 2> revtopo;
-		{
-		SmallPtrSet<BasicBlock*, 2> seen;
-		std::function<void(BasicBlock*)> dfs = [&](BasicBlock *B) {
-		   if (seen.count(B)) return;
-		   seen.insert(B);
-		   if (B->getTerminator())
-			for (auto S : successors(B))
-			   if (!seen.count(S))
-				dfs(S);
-		   revtopo.push_back(B);
-		};
-		for (auto B : blocks) dfs(B);
-		if (!seen.count(bret)) revtopo.insert(revtopo.begin(), bret);
-	        }
+    auto eraseBlocks = [&](const SmallVectorImpl<BasicBlock *> &blocks,
+                           BasicBlock *bret) {
+      SmallVector<BasicBlock *, 2> revtopo;
+      {
+        SmallPtrSet<BasicBlock *, 2> seen;
+        std::function<void(BasicBlock *)> dfs = [&](BasicBlock *B) {
+          if (seen.count(B))
+            return;
+          seen.insert(B);
+          if (B->getTerminator())
+            for (auto S : successors(B))
+              if (!seen.count(S))
+                dfs(S);
+          revtopo.push_back(B);
+        };
+        for (auto B : blocks)
+          dfs(B);
+        if (!seen.count(bret))
+          revtopo.insert(revtopo.begin(), bret);
+      }
 
-                SmallVector<Instruction *, 4> toErase;
-		for (auto B : revtopo) {
-		  if (B == bret) continue;
-		  for (auto &I : llvm::reverse(*B)) {
-                    toErase.push_back(&I);
-                  }
-		  unwrap_cache.erase(B);
-		  lookup_cache.erase(B);
-		  if (reverseBlocks.size() > 0) {
-		  auto tfwd = reverseBlockToPrimal[B];
-	          assert(tfwd);
-		  auto rfound = reverseBlocks.find(tfwd);
-		  assert(rfound != reverseBlocks.end());
-		  auto &tlst = rfound->second;
-		  auto found = std::find(tlst.begin(), tlst.end(), B);
-		  if (found != tlst.end())
-		     tlst.erase(found);
-		  reverseBlockToPrimal.erase(B);
-		  }
-		}
-                for (auto I : toErase) {
-                  erase(I);
-                }
-                for (auto B : revtopo)
-                  B->eraseFromParent();
+      SmallVector<Instruction *, 4> toErase;
+      for (auto B : revtopo) {
+        if (B == bret)
+          continue;
+        for (auto &I : llvm::reverse(*B)) {
+          toErase.push_back(&I);
+        }
+        unwrap_cache.erase(B);
+        lookup_cache.erase(B);
+        if (reverseBlocks.size() > 0) {
+          auto tfwd = reverseBlockToPrimal[B];
+          assert(tfwd);
+          auto rfound = reverseBlocks.find(tfwd);
+          assert(rfound != reverseBlocks.end());
+          auto &tlst = rfound->second;
+          auto found = std::find(tlst.begin(), tlst.end(), B);
+          if (found != tlst.end())
+            tlst.erase(found);
+          reverseBlockToPrimal.erase(B);
+        }
+      }
+      for (auto I : toErase) {
+        erase(I);
+      }
+      for (auto B : revtopo)
+        B->eraseFromParent();
     };
 
     if (targetToPreds.size() == 3) {
@@ -1570,7 +1575,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           vals.push_back(phi->getIncomingValueForBlock(PB));
 
         if (!vals[i]) {
-	  eraseBlocks(blocks, bret);
+          eraseBlocks(blocks, bret);
           assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
           goto endCheck;
         }
@@ -1583,7 +1588,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       // were made in the two blocks
       if (isa<BranchInst>(equivalentTerminator) && blocks[0]->size() == 1 &&
           blocks[1]->size() == 1) {
-	eraseBlocks(blocks, bret);
+        eraseBlocks(blocks, bret);
         Value *toret = BuilderM.CreateSelect(cond, vals[0], vals[1],
                                              phi->getName() + "_unwrap");
         if (permitCache) {
@@ -1597,7 +1602,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       }
 
       if (BuilderM.GetInsertPoint() != oldB->end()) {
-	eraseBlocks(blocks, bret);
+        eraseBlocks(blocks, bret);
         assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
         goto endCheck;
       }
