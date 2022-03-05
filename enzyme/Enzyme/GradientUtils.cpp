@@ -1195,7 +1195,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                   unwrap_cache.erase(blocks[j]);
                   lookup_cache.erase(blocks[j]);
                   SmallVector<Instruction *, 4> toErase;
-                  for (auto &I : *blocks[j]) {
+                  for (auto &I : llvm::reverse(*blocks[j])) {
                     toErase.push_back(&I);
                   }
                   for (auto I : toErase) {
@@ -1598,7 +1598,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
             unwrap_cache.erase(blocks[j]);
             lookup_cache.erase(blocks[j]);
             SmallVector<Instruction *, 4> toErase;
-            for (auto &I : *blocks[j]) {
+            for (auto &I : llvm::reverse(*blocks[j])) {
               toErase.push_back(&I);
             }
             for (auto I : toErase) {
@@ -1632,7 +1632,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           unwrap_cache.erase(blocks[j]);
           lookup_cache.erase(blocks[j]);
           SmallVector<Instruction *, 4> toErase;
-          for (auto &I : *blocks[j]) {
+          for (auto &I : llvm::reverse(*blocks[j])) {
             toErase.push_back(&I);
           }
           for (auto I : toErase) {

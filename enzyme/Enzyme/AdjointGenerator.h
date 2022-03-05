@@ -10143,8 +10143,8 @@ public:
       Value *tape = nullptr;
       if (tapeIdx.hasValue()) {
 
-        FunctionType *FT = cast<FunctionType>(
-            subdata->fn->getType()->getPointerElementType());
+        FunctionType *FT =
+            cast<FunctionType>(subdata->fn->getType()->getPointerElementType());
 
         tape = BuilderZ.CreatePHI(
             (tapeIdx == -1) ? FT->getReturnType()
