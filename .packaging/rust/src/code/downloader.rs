@@ -105,6 +105,8 @@ fn download_single(repo: Repo, which: Selection) -> Result<(), String> {
                 if let Err(e) = std::fs::File::create(download_checkfile) {
                     return Err(e.to_string());
                 };
+            } else {
+                println!("Skipping downloading {} tarball.", which);
             }
 
             // TODO: avoid repeated unpacking

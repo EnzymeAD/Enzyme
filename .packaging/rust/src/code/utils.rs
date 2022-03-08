@@ -1,5 +1,5 @@
 use dirs;
-use std::{path::PathBuf, process::Command};
+use std::{fmt, path::PathBuf, process::Command};
 
 use super::version_manager::{ENZYME_VER, RUSTC_VER};
 
@@ -153,6 +153,15 @@ pub enum Selection {
     Rust,
     Enzyme,
 }
+impl fmt::Display for Selection {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Selection::Rust => write!(f, "Rust"),
+            Selection::Enzyme => write!(f, "Enzyme"),
+        }
+    }
+}
+
 pub fn get_local_tarball_path(which: Selection) -> PathBuf {
     match which {
         Selection::Rust => get_download_dir().join("rustc-".to_owned() + RUSTC_VER + ".tar.gz"),
@@ -162,11 +171,11 @@ pub fn get_local_tarball_path(which: Selection) -> PathBuf {
 pub fn get_remote_tarball_url(which: Selection) -> String {
     match which {
         Selection::Rust => format!(
-            "https://github.com/EnzymeAD/Enzyme/archive/refs/tags/v{}.tar.gz",
+            "https://static.rust-lang.org/dist/rustc-{}-src.tar.gz",
             RUSTC_VER
         ),
         Selection::Enzyme => format!(
-            "https://static.rust-lang.org/dist/rustc-{}-src.tar.gz",
+            "https://github.com/EnzymeAD/Enzyme/archive/refs/tags/v{}.tar.gz",
             ENZYME_VER
         ),
     }
