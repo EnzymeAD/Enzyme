@@ -110,7 +110,7 @@ fn download_single(repo: Repo, which: Selection) -> Result<(), String> {
             }
 
             // TODO: avoid repeated unpacking
-            let dest_dir = utils::get_stable_repo_dir(which);
+            let dest_dir = utils::get_enzyme_base_path();
             match unpack(
                 download_filename.to_str().unwrap(),
                 dest_dir.to_str().unwrap(),
