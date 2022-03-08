@@ -1,10 +1,16 @@
-use enzyme::Repo::{self, *};
+use enzyme::Cli;
 
 fn main() {
     let args = Cli::parse();
-    enzyme::download(args);
-    enzyme::build(args);
-    if let Some(enzyme) = args.enzyme {
-        enzyme::generate_bindings(enzyme)?;
+    match setup(args) {
+        Ok(_) => (),
+        Err(e) => panic!("failed due to: {}", e),
     }
+}
+
+fn setup(args: Cli) -> Result<(), String> {
+    enzyme::download(args.clone())?;
+    enzyme::build(args.clone())?;
+    enzyme::generate_bindings(args)?;
+    Ok(())
 }

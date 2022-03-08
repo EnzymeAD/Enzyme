@@ -1,35 +1,19 @@
 use crate::{
-    code::utils::{get_capi_path, get_enzyme_base_path, get_enzyme_repo_path, get_rustc_repo_path},
-    Cli, Repo,
+    code::utils::{
+        get_capi_path, get_enzyme_base_path, get_local_enzyme_repo_path, get_local_rust_repo_path,
+    },
+    Cli,
 };
 
 use super::utils;
 use bindgen;
-use std::{fs, path::PathBuf};
+use std::fs;
 
 /// This function can be used to generate Rust wrappers around Enzyme's [C API](https://github.com/wsmoses/Enzyme/blob/main/enzyme/Enzyme/CApi.h).
 //pub fn generate_bindings_with(capi_header: PathBuf, out_file: PathBuf) -> Result<(), String> {
-pub fn generate_bindings_with(args: Cli) -> Result<(), String> {
-    let enzyme = match args.enzyme {
-        Some(e) => e,
-        None =>
-            panic!("This method shouldn't be called if Enzyme hasn't been set. Development mistake, please report."),
-    };
-    let rust = match args.rust {
-        Some(r) => r,
-        None =>
-            panic!("This method shouldn't be called if Rust hasn't been set. Development mistake, please report."),
-    };
-
-    let enzyme_repo = match enzyme {
-        Repo::Local(local_path) => PathBuf::new().join(&local_path),
-        Repo::Stable | Repo::Head => get_enzyme_repo_path(),
-    };
-
-    let rust_repo = match enzyme {
-        Repo::Local(local_path) => PathBuf::new().join(&local_path),
-        Repo::Stable | Repo::Head => get_rustc_repo_path(),
-    };
+pub fn generate_bindings(args: Cli) -> Result<(), String> {
+    let enzyme_repo = get_local_enzyme_repo_path(args.enzyme);
+    let rust_repo = get_local_rust_repo_path(args.rust);
 
     let capi_header = get_capi_path(enzyme_repo);
     dbg!(&capi_header);

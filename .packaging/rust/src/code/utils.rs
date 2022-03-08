@@ -1,4 +1,3 @@
-use clap::ArgEnum;
 use dirs;
 use std::{path::PathBuf, process::Command};
 
@@ -6,13 +5,79 @@ use super::version_manager::{ENZYME_VER, RUSTC_VER};
 
 use clap::Parser;
 
-#[derive(Parser)]
-/// Simple build helper to compile Enzyme, Clang, LLVM and our custom Rustc.
+/// A struct used to manage which Enzyme / Rustc combination should be used.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Cli {
-    /// Specify which rust version should be used
-    pub rust: Option<Repo>,
-    /// Specify which enzyme version should be used
-    pub enzyme: Option<Repo>,
+    /// Select the rust version to build and use
+    pub rust: Repo,
+    /// Select the enzyme version to build and use
+    pub enzyme: Repo,
+}
+
+impl Cli {
+    /// Parses terminal input into a Cli struct.
+    pub fn parse() -> Cli {
+        App::parse().into()
+    }
+}
+
+impl From<App> for Cli {
+    fn from(app: App) -> Self {
+        let rust: Repo = if let Some(local) = app.rust_local.as_deref() {
+            let p = PathBuf::from(local.to_string());
+            assert!(p.is_dir());
+            Repo::Local(p)
+        } else if app.rust_stable {
+            Repo::Stable
+        } else if app.rust_head {
+            Repo::Head
+        } else {
+            unreachable!()
+        };
+        let enzyme: Repo = if let Some(local) = app.enzyme_local.as_deref() {
+            let p = PathBuf::from(local.to_string());
+            assert!(p.is_dir());
+            Repo::Local(p)
+        } else if app.enzyme_stable {
+            Repo::Stable
+        } else if app.enzyme_head {
+            Repo::Head
+        } else {
+            unreachable!()
+        };
+        Cli { rust, enzyme }
+    }
+}
+
+/// Used to decide which Enzyme Version should be used
+#[derive(Clone, Debug, PartialEq, Eq, clap::ArgEnum)]
+pub enum Repo {
+    /// Use the latest Enzyme stable release
+    Stable,
+    /// Use the current Enzyme head from Github
+    Head,
+    /// Use a local Enzyme repository at the given path
+    Local(PathBuf),
+}
+
+#[derive(Parser)]
+#[clap(
+    group(clap::ArgGroup::new("rust").required(true).args(&["rust-stable", "rust-head", "rust-local"])),
+    group(clap::ArgGroup::new("enzyme").required(true).args(&["enzyme-stable", "enzyme-head", "enzyme-local"])),
+    )]
+struct App {
+    #[clap(long = "rust-stable")]
+    rust_stable: bool,
+    #[clap(long = "rust-head")]
+    rust_head: bool,
+    #[clap(long)]
+    rust_local: Option<String>,
+    #[clap(long = "enzyme-stable")]
+    enzyme_stable: bool,
+    #[clap(long = "enzyme-head")]
+    enzyme_head: bool,
+    #[clap(long)]
+    enzyme_local: Option<String>,
 }
 
 pub(crate) fn run_and_printerror(command: &mut Command) {
@@ -29,37 +94,6 @@ pub(crate) fn run_and_printerror(command: &mut Command) {
     }
 }
 
-/// Used to decide which Enzyme Version should be used
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, ArgEnum)]
-pub enum Repo {
-    /// Use the latest Enzyme stable release
-    Stable,
-    /// Use the current Enzyme head from Github
-    Head,
-    /// Use a local Enzyme repository at the given path
-    #[clap(short, long)]
-    Local(String),
-}
-
-/*
-impl FromStr for Repo {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let lower_s = s.to_lowercase();
-        match lower_s.as_str() {
-            "rust" => Ok(Repo::Rust),
-            "enzyme" => Ok(Repo::Enzyme),
-            "enzyme-head" => Ok(Repo::EnzymeHEAD),
-            _ => Err(
-                "The only supported parameters are \"rust\", \"enzyme\", or \"enzyme-head\""
-                    .to_string(),
-            ),
-        }
-    }
-}
-*/
-
 fn assert_existence(path: PathBuf) {
     if !path.is_dir() {
         std::fs::create_dir_all(path.clone())
@@ -74,11 +108,71 @@ pub fn get_enzyme_base_path() -> PathBuf {
     dbg!(&enzyme_base_path);
     enzyme_base_path
 }
-pub fn get_enzyme_repo_path() -> PathBuf {
-    let path = get_enzyme_base_path().join("Enzyme-".to_owned() + ENZYME_VER);
+
+// Following is a list of repo locations.
+pub fn get_local_rust_repo_path(rust: Repo) -> PathBuf {
+    match rust {
+        Repo::Stable => get_stable_repo_dir(Selection::Rust),
+        Repo::Head => get_head_repo_dir(Selection::Rust),
+        Repo::Local(l) => l,
+    }
+}
+pub fn get_local_enzyme_repo_path(enzyme: Repo) -> PathBuf {
+    match enzyme {
+        Repo::Stable => get_stable_repo_dir(Selection::Enzyme),
+        Repo::Head => get_head_repo_dir(Selection::Enzyme),
+        Repo::Local(l) => l,
+    }
+}
+pub fn get_remote_repo_url(which: Selection) -> String {
+    match which {
+        Selection::Rust => "https://github.com/EnzymeAD/Enzyme".to_string(),
+        Selection::Enzyme => "https://github.com/rust-lang/rust".to_string(),
+    }
+}
+pub fn get_stable_repo_dir(which: Selection) -> PathBuf {
+    let subdir = match which {
+        Selection::Enzyme => "Enzyme-".to_owned() + ENZYME_VER,
+        Selection::Rust => "rustc-".to_owned() + RUSTC_VER + "-src",
+    };
+    let path = get_enzyme_base_path().join(subdir);
     assert_existence(path.clone());
     path
 }
+pub fn get_head_repo_dir(which: Selection) -> PathBuf {
+    let path = match which {
+        Selection::Rust => get_enzyme_base_path().join("rustc-HEAD-src".to_owned()),
+        Selection::Enzyme => get_enzyme_base_path().join("Enzyme-HEAD".to_owned()),
+    };
+    assert_existence(path.clone());
+    path
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Selection {
+    Rust,
+    Enzyme,
+}
+pub fn get_local_tarball_path(which: Selection) -> PathBuf {
+    match which {
+        Selection::Rust => get_download_dir().join("rustc-".to_owned() + RUSTC_VER + ".tar.gz"),
+        Selection::Enzyme => get_download_dir().join("enzyme-".to_owned() + ENZYME_VER + ".tar.gz"),
+    }
+}
+pub fn get_remote_tarball_url(which: Selection) -> String {
+    match which {
+        Selection::Rust => format!(
+            "https://github.com/EnzymeAD/Enzyme/archive/refs/tags/v{}.tar.gz",
+            RUSTC_VER
+        ),
+        Selection::Enzyme => format!(
+            "https://static.rust-lang.org/dist/rustc-{}-src.tar.gz",
+            ENZYME_VER
+        ),
+    }
+}
+
+// Following is a list of function used internally
 fn get_enzyme_subdir_path(enzyme_repo_path: PathBuf) -> PathBuf {
     let path = enzyme_repo_path.join("enzyme");
     //assert_existence(path.clone());
@@ -102,11 +196,6 @@ pub fn get_download_dir() -> PathBuf {
     assert_existence(enzyme_download_path.clone());
     enzyme_download_path
 }
-pub fn get_rustc_repo_path() -> PathBuf {
-    let rustc_path = get_enzyme_base_path().join("rustc-".to_owned() + RUSTC_VER + "-src");
-    assert_existence(rustc_path.clone());
-    rustc_path
-}
 pub fn get_rustc_build_path(rust_repo: PathBuf) -> PathBuf {
     let rustc_path = rust_repo.join("build");
     assert_existence(rustc_path.clone());
@@ -128,16 +217,4 @@ pub fn get_llvm_header_path(rust_repo: PathBuf) -> PathBuf {
     get_rustc_platform_path(rust_repo)
         .join("llvm")
         .join("include")
-}
-pub fn get_remote_enzyme_tarball_path() -> String {
-    format!(
-        "https://github.com/EnzymeAD/Enzyme/archive/refs/tags/v{}.tar.gz",
-        ENZYME_VER
-    )
-}
-pub fn get_remote_rustc_tarball_path() -> String {
-    format!(
-        "https://static.rust-lang.org/dist/rustc-{}-src.tar.gz",
-        RUSTC_VER
-    )
 }

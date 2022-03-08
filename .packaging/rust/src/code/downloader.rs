@@ -1,5 +1,4 @@
-use super::utils::{self, run_and_printerror};
-use super::version_manager::*;
+use super::utils::{self, run_and_printerror, Selection};
 use crate::{Cli, Repo};
 
 use curl::easy::Easy;
@@ -81,8 +80,7 @@ fn unpack(tar_gz_file: &str, dst: &str) -> Result<(), std::io::Error> {
     Ok(())
 }
 
-fn download_head(repo_url: &str, out_dir: PathBuf) -> Result<(), String> {
-    //let out_dir = utils::get_enzyme_base_path().join("Enzyme-HEAD");
+fn download_repo(repo_url: &str, out_dir: PathBuf) -> Result<(), String> {
     if out_dir.exists() {
         // make space to download the latest head
         remove_dir_all(out_dir.clone()).expect("failed to delete existing directory!");
@@ -93,73 +91,50 @@ fn download_head(repo_url: &str, out_dir: PathBuf) -> Result<(), String> {
     Ok(())
 }
 
+fn download_single(repo: Repo, which: Selection) -> Result<(), String> {
+    match repo {
+        Repo::Local(_) => {}
+        Repo::Stable => {
+            let remote_tarball = utils::get_remote_tarball_url(which);
+            let download_filename = utils::get_local_tarball_path(which);
+            let mut download_checkfile = download_filename.clone();
+            assert!(download_checkfile.set_extension("info"));
+            if !download_checkfile.exists() {
+                // Check before to avoid repeated download
+                download_tarball(&remote_tarball, download_filename.clone())?;
+                if let Err(e) = std::fs::File::create(download_checkfile) {
+                    return Err(e.to_string());
+                };
+            }
+
+            // TODO: avoid repeated unpacking
+            let dest_dir = utils::get_stable_repo_dir(which);
+            match unpack(
+                download_filename.to_str().unwrap(),
+                dest_dir.to_str().unwrap(),
+            ) {
+                Ok(_) => {}
+                Err(e) => return Err(format!("failed unpacking: {}", e)),
+            };
+        }
+        Repo::Head => {
+            // TODO: avoid repeating based on commit
+            let remote_path = utils::get_remote_repo_url(which);
+            let dest_dir = utils::get_head_repo_dir(which);
+            download_repo(&remote_path, dest_dir)?;
+        }
+    };
+    Ok(())
+}
+
 /// This function can be used to download enzyme / rust from github.
 ///
 /// Stable released are downloaded as tarballs and unpacked, the Head is taken from the github repo
 /// directly. Data will be processed in `~/.cache/enzyme`.
 /// Will not perform any action for those which are set to None or Some(Local(_)).
 pub fn download(to_download: Cli) -> Result<(), String> {
-    // If we have alrady downloaded it in the past, there's nothing left to do.
-    // if check_downloaded(&to_download) {
-    //     return Ok(());
-    // }
-    if let Some(rust) = to_download.rust {
-        match rust {
-            Repo::Local(_) => {}
-            Repo::Stable => {
-                let remote_tarball = utils::get_remote_rustc_tarball_path();
-                let name = "rustc";
-                // Location to store our tarball, before unpacking
-                let download_filename = utils::get_download_dir().join(name.to_owned() + ".tar.gz");
-                download_head(&remote_tarball, download_filename.clone())?;
-                let dest_dir = utils::get_rustc_repo_path();
-                match unpack(
-                    download_filename.to_str().unwrap(),
-                    dest_dir.to_str().unwrap(),
-                ) {
-                    Ok(_) => {}
-                    Err(e) => return Err(format!("failed unpacking: {}", e)),
-                };
-            }
-            Repo::Head => {
-                let remote_path = "https://github.com/rust-lang/rust";
-                let name = "rust";
-                // Location to store our tarball, before unpacking
-                // TODO: Fix, directly download into repo
-                download_head(&remote_path, download_filename.clone())?;
-            }
-        };
-        // Mark it as downloaded, so we can skip the download step next time.
-        // TODO
-        // set_downloaded(&to_download);
-    }
+    download_single(to_download.rust.clone(), Selection::Rust)?;
+    download_single(to_download.enzyme, Selection::Enzyme)?;
 
-    if let Some(enzyme) = to_download.enzyme {
-        match enzyme {
-            Repo::Local(_) => {}
-            Repo::Stable => {
-                let remote_tarball = utils::get_remote_enzyme_tarball_path();
-                let name = "rustc";
-                // Location to store our tarball, before unpacking
-                let download_filename = utils::get_download_dir().join(name.to_owned() + ".tar.gz");
-                download_tarball(&remote_tarball, download_filename.clone())?;
-                let dest_dir = utils::get_enzyme_base_path();
-                match unpack(
-                    download_filename.to_str().unwrap(),
-                    dest_dir.to_str().unwrap(),
-                ) {
-                    Ok(_) => {}
-                    Err(e) => return Err(format!("failed unpacking: {}", e)),
-                };
-            }
-            Repo::Head => {
-                let remote_path = "https://github.com/EnzymeAD/Enzyme";
-                let name = "enzyme";
-                // Location to store our tarball, before unpacking
-                let download_filename = utils::get_download_dir().join(name.to_owned() + ".tar.gz");
-                download_head(&remote_path, download_filename.clone())?;
-            }
-        };
-    }
     Ok(())
 }

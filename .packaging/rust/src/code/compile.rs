@@ -1,7 +1,6 @@
-use super::{
-    utils::*,
-    version_manager::{check_compiled, set_compiled},
-};
+use super::utils;
+use super::utils::{run_and_printerror, Cli};
+use super::version_manager;
 use std::{path::PathBuf, process::Command};
 
 #[allow(unused)]
@@ -17,42 +16,29 @@ fn print_llvm_version() {
 /// It will build a nightly version of Rust, together with LLVM and Clang.
 /// Building the Enzyme repository will always run tests to verify that it is working correctly.
 pub fn build(args: Cli) -> Result<(), String> {
-    // If we have compiled that rustc or enzyme version in the past, we have nothing to do.
-    // if check_compiled(&to_build) {
-    //     return Ok(());
-    // }
+    let rust_repo = utils::get_local_rust_repo_path(args.rust.clone()); // Default
+    if !version_manager::is_compiled_rust(&args) {
+        build_rustc(rust_repo.clone());
+        version_manager::set_compiled_rust(&args)?;
+    }
 
-    let mut rust_repo = get_rustc_repo_path(); // Default
-    if let Some(rust) = args.rust {
-        if let Repo::Local(local_path) = rust {
-            rust_repo = PathBuf::new().join(&local_path);
-        }
-        build_rustc(rust_repo);
-    };
-
-    if let Some(enzyme) = args.enzyme {
-        let mut enzyme_repo = match enzyme {
-            Repo::Local(local_path) => PathBuf::new().join(&local_path), // TDOO: add build dir
-            Repo::Stable | Repo::Head => get_rustc_repo_path(),
-        };
+    if !version_manager::is_compiled_enzyme(&args) {
+        let enzyme_repo = utils::get_local_enzyme_repo_path(args.enzyme.clone());
         build_enzyme(enzyme_repo, rust_repo);
-    };
-
-    // Compiling is expensive, so add a note that this compilation run was successfull and that
-    // we shouldn't repeat it.
-    // set_compiled(&to_build);
+        version_manager::set_compiled_enzyme(&args)?;
+    }
 
     Ok(())
 }
 
 fn build_enzyme(enzyme_repo: PathBuf, rust_repo: PathBuf) {
-    let build_path = get_enzyme_build_path(enzyme_repo);
-    let llvm_dir = get_llvm_build_path(rust_repo)
+    let build_path = utils::get_enzyme_build_path(enzyme_repo);
+    let llvm_dir = utils::get_llvm_build_path(rust_repo.clone())
         .join("lib")
         .join("cmake")
         .join("llvm");
     let llvm_dir = "-DLLVM_DIR=".to_owned() + llvm_dir.to_str().unwrap();
-    let llvm_external_lit = get_rustc_repo_path()
+    let llvm_external_lit = rust_repo
         .join("src")
         .join("llvm-project")
         .join("llvm")
@@ -94,13 +80,13 @@ fn build_rustc(repo_path: PathBuf) {
     let mut x = Command::new("x");
     let mut rustup = Command::new("rustup");
 
-    let build_path = get_rustc_build_path(repo_path);
+    let build_path = utils::get_rustc_build_path(repo_path.clone());
     if !std::path::Path::new(&build_path).exists() {
         std::fs::create_dir(&build_path).unwrap();
     }
     let x_path = std::path::Path::new("src").join("tools").join("x");
 
-    let toolchain_path = get_rustc_stage2_path(repo_path);
+    let toolchain_path = utils::get_rustc_stage2_path(repo_path);
 
     cargo
         .args(&["install", "--path", x_path.to_str().unwrap()])
