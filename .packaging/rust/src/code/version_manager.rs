@@ -3,8 +3,8 @@ use super::utils;
 use crate::Cli;
 use std::fs::File;
 
-pub const ENZYME_VER: &str = "0.0.26";
-pub const RUSTC_VER: &str = "1.58.1";
+pub const ENZYME_VER: &str = "0.0.27";
+pub const RUSTC_VER: &str = "1.59.0";
 
 pub fn is_compiled_rust(args: &Cli) -> bool {
     utils::get_local_rust_repo_path(args.rust.clone())
