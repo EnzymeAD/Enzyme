@@ -19,15 +19,19 @@ This repository will build enzyme/llvm/clang/rustc in the right configuration su
 Build LLVM, the Rust toolchain and Enzyme with
 
 ```sh
-cargo install enzyme && enzyme-install
+cargo install enzyme && enzyme-install --rust-stable --enzyme-stable
 ```
 
 Depending on your CPU this might take a few hours.  
 The build process will run enzyme tests, so your last output should look similar to these lines:
 
 Testing Time: 0.63s  
-  Passed           : 299  
+  Passed           : 576  
   Expectedly Failed:   5  
+
+## Release schedule:
+We will automatically release a new version of this crate every time either a new Rust, or Enzyme version is published.
+If you want to experiment with upcomming or local changes you can also use --enzyme-head or --enzyme-local \<Path\> (same goes for the Rust flag).
 
 ## Extras
 - Q: It fails some (all) tests or the build breaks even earlier. Help?
@@ -35,7 +39,7 @@ Testing Time: 0.63s
 As an alternative you can also ping us on [Discord](https://discord.gg/MGBqckV7Zb).  
 &nbsp;
 - Q: How often do I have to run this? It takes quite a while..
-- A: We are aware of this and working on offering pre-build versions. In the meantime you have to build it once per rust Version. So we will publish an update once 1.59 hits stable.
+- A: We are aware of this and working on offering pre-build versions.
 
 License
 =======

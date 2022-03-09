@@ -64,18 +64,25 @@ pub enum Repo {
 #[clap(
     group(clap::ArgGroup::new("rust").required(true).args(&["rust-stable", "rust-head", "rust-local"])),
     group(clap::ArgGroup::new("enzyme").required(true).args(&["enzyme-stable", "enzyme-head", "enzyme-local"])),
+    author, version, about, long_about = None
     )]
 struct App {
+    /// Use the latest official Rust release
     #[clap(long = "rust-stable")]
     rust_stable: bool,
+    /// Use the master branch from https://github.com/rust-lang/rust/
     #[clap(long = "rust-head")]
     rust_head: bool,
+    /// Use the (Rust) repository at the given path
     #[clap(long)]
     rust_local: Option<String>,
+    /// Use the latest official Enzyme release
     #[clap(long = "enzyme-stable")]
     enzyme_stable: bool,
     #[clap(long = "enzyme-head")]
+    /// Use the main branch from https://github.com/EnzymeAD/Enzyme
     enzyme_head: bool,
+    /// Use the (Enzyme) repository at the given path
     #[clap(long)]
     enzyme_local: Option<String>,
 }
