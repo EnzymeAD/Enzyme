@@ -1,6 +1,6 @@
 use crate::{
     code::utils::{
-        get_capi_path, get_enzyme_base_path, get_local_enzyme_repo_path, get_local_rust_repo_path,
+        get_bindings_path, get_capi_path, get_local_enzyme_repo_path, get_local_rust_repo_path,
     },
     Cli,
 };
@@ -77,14 +77,11 @@ pub fn generate_bindings(args: Cli) -> Result<(), String> {
         }
     };
 
-    let out_file = get_enzyme_base_path();
+    let out_file = get_bindings_path();
 
-    // Write the bindings to the $OUT_DIR/bindings.rs file.
-    //let out_path = PathBuf::from(env::var("OUT_DIR").unwrap()); // can't be used outside of build.rs
     if out_file.exists() {
         fs::remove_file(out_file.clone()).unwrap();
     }
-
     let result = bindings.write_to_file(out_file.clone());
 
     match result {

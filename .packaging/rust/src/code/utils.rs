@@ -179,19 +179,18 @@ pub fn get_remote_tarball_url(which: Selection) -> String {
     }
 }
 
+/// Returns the path to the generated binding file.
+pub fn get_bindings_path() -> PathBuf {
+    get_enzyme_base_path().join("enzyme.rs")
+}
 // Following is a list of function used internally
 fn get_enzyme_subdir_path(enzyme_repo_path: PathBuf) -> PathBuf {
-    let path = enzyme_repo_path.join("enzyme");
-    //assert_existence(path.clone());
-    path
+    enzyme_repo_path.join("enzyme")
 }
 pub fn get_capi_path(enzyme_repo_path: PathBuf) -> PathBuf {
     get_enzyme_subdir_path(enzyme_repo_path)
         .join("Enzyme")
         .join("CApi.h")
-}
-pub fn get_bindings_string() -> PathBuf {
-    get_enzyme_base_path().join("enzyme.rs")
 }
 pub fn get_enzyme_build_path(repo_path: PathBuf) -> PathBuf {
     let enzyme_path = get_enzyme_subdir_path(repo_path).join("build");
