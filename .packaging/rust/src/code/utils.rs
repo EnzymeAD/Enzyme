@@ -130,8 +130,8 @@ pub fn get_local_enzyme_repo_path(enzyme: Repo) -> PathBuf {
 }
 pub fn get_remote_repo_url(which: Selection) -> String {
     match which {
-        Selection::Rust => "https://github.com/EnzymeAD/Enzyme".to_string(),
-        Selection::Enzyme => "https://github.com/rust-lang/rust".to_string(),
+        Selection::Enzyme => "https://github.com/EnzymeAD/Enzyme".to_string(),
+        Selection::Rust => "https://github.com/rust-lang/rust".to_string(),
     }
 }
 pub fn get_stable_repo_dir(which: Selection) -> PathBuf {
