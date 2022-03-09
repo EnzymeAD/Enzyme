@@ -100,24 +100,38 @@ fn download_single(repo: Repo, which: Selection) -> Result<(), String> {
             let mut download_checkfile = download_filename.clone();
             assert!(download_checkfile.set_extension("info"));
             if !download_checkfile.exists() {
-                // Check before to avoid repeated download
+                // Check to avoid repeated download
                 download_tarball(&remote_tarball, download_filename.clone())?;
                 if let Err(e) = std::fs::File::create(download_checkfile) {
                     return Err(e.to_string());
                 };
             } else {
-                println!("Skipping downloading {} tarball.", which);
+                println!(
+                    "Skipping downloading {which} tarball since it already exists here: {:?}.",
+                    download_filename
+                );
             }
 
-            // TODO: avoid repeated unpacking
             let dest_dir = utils::get_enzyme_base_path();
-            match unpack(
-                download_filename.to_str().unwrap(),
-                dest_dir.to_str().unwrap(),
-            ) {
-                Ok(_) => {}
-                Err(e) => return Err(format!("failed unpacking: {}", e)),
-            };
+            let unpack_checkfile =
+                utils::get_local_repo_dir(repo, which).join("finished-unpacking.txt");
+            if !unpack_checkfile.exists() {
+                match unpack(
+                    download_filename.to_str().unwrap(),
+                    dest_dir.to_str().unwrap(),
+                ) {
+                    Ok(_) => {}
+                    Err(e) => return Err(format!("failed unpacking: {e}")),
+                };
+                if let Err(e) = std::fs::File::create(unpack_checkfile) {
+                    return Err(e.to_string());
+                };
+            } else {
+                println!(
+                    "Skipping unpacking {which} tarball since a checkfile already exists here: {:?}.",
+                    unpack_checkfile
+                );
+            }
         }
         Repo::Head => {
             // TODO: avoid repeating based on commit

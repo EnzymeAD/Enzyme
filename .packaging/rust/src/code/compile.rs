@@ -1,3 +1,7 @@
+use crate::code::version_manager::{
+    get_enzyme_compilation_checkfile_path, get_rust_compilation_checkfile_path,
+};
+
 use super::utils;
 use super::utils::{run_and_printerror, Cli};
 use super::version_manager;
@@ -20,12 +24,22 @@ pub fn build(args: Cli) -> Result<(), String> {
     if !version_manager::is_compiled_rust(&args) {
         build_rustc(rust_repo.clone());
         version_manager::set_compiled_rust(&args)?;
+    } else {
+        println!(
+            "Skipped compiling rust since the checkfile {} exists",
+            get_rust_compilation_checkfile_path(&args).to_string_lossy()
+        );
     }
 
     if !version_manager::is_compiled_enzyme(&args) {
         let enzyme_repo = utils::get_local_enzyme_repo_path(args.enzyme.clone());
         build_enzyme(enzyme_repo, rust_repo);
         version_manager::set_compiled_enzyme(&args)?;
+    } else {
+        println!(
+            "Skipped compiling enzyme since the checkfile {} exists",
+            get_enzyme_compilation_checkfile_path(&args).to_string_lossy()
+        );
     }
 
     Ok(())
@@ -86,11 +100,11 @@ fn build_rustc(repo_path: PathBuf) {
     }
     let x_path = std::path::Path::new("src").join("tools").join("x");
 
-    let toolchain_path = utils::get_rustc_stage2_path(repo_path);
+    let toolchain_path = utils::get_rustc_stage2_path(repo_path.clone());
 
     cargo
         .args(&["install", "--path", x_path.to_str().unwrap()])
-        .current_dir(&build_path.to_str().unwrap());
+        .current_dir(&repo_path.to_str().unwrap());
 
     configure
         .args(&[
@@ -103,7 +117,7 @@ fn build_rustc(repo_path: PathBuf) {
             "--enable-option-checking",
             "--enable-ninja",
         ])
-        .current_dir(&build_path.to_str().unwrap());
+        .current_dir(&repo_path.to_str().unwrap());
 
     x.args(&["build", "--stage", "2"])
         .current_dir(&build_path.to_str().unwrap());

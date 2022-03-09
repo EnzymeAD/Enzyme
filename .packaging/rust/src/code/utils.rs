@@ -108,6 +108,12 @@ pub fn get_enzyme_base_path() -> PathBuf {
 }
 
 // Following is a list of repo locations.
+pub fn get_local_repo_dir(repo: Repo, which: Selection) -> PathBuf {
+    match which {
+        Selection::Rust => get_local_rust_repo_path(repo),
+        Selection::Enzyme => get_local_enzyme_repo_path(repo),
+    }
+}
 pub fn get_local_rust_repo_path(rust: Repo) -> PathBuf {
     match rust {
         Repo::Stable => get_stable_repo_dir(Selection::Rust),
@@ -139,8 +145,8 @@ pub fn get_stable_repo_dir(which: Selection) -> PathBuf {
 }
 pub fn get_head_repo_dir(which: Selection) -> PathBuf {
     let path = match which {
-        Selection::Rust => get_enzyme_base_path().join("rustc-HEAD-src".to_owned()),
-        Selection::Enzyme => get_enzyme_base_path().join("Enzyme-HEAD".to_owned()),
+        Selection::Rust => get_enzyme_base_path().join("rustc-HEAD-src"),
+        Selection::Enzyme => get_enzyme_base_path().join("Enzyme-HEAD"),
     };
     assert_existence(path.clone());
     path
