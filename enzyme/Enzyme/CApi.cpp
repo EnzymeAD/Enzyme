@@ -379,8 +379,9 @@ LLVMValueRef EnzymeCreateForwardDiff(
     EnzymeLogicRef Logic, LLVMValueRef todiff, CDIFFE_TYPE retType,
     CDIFFE_TYPE *constant_args, size_t constant_args_size,
     EnzymeTypeAnalysisRef TA, uint8_t returnValue, CDerivativeMode mode,
-    unsigned width, LLVMTypeRef additionalArg, CFnTypeInfo typeInfo,
-    uint8_t *_uncacheable_args, size_t uncacheable_args_size) {
+    uint8_t freeMemory, unsigned width, LLVMTypeRef additionalArg,
+    CFnTypeInfo typeInfo, uint8_t *_uncacheable_args,
+    size_t uncacheable_args_size, EnzymeAugmentedReturnPtr augmented) {
   std::vector<DIFFE_TYPE> nconstant_args((DIFFE_TYPE *)constant_args,
                                          (DIFFE_TYPE *)constant_args +
                                              constant_args_size);
@@ -393,16 +394,16 @@ LLVMValueRef EnzymeCreateForwardDiff(
   }
   return wrap(eunwrap(Logic).CreateForwardDiff(
       cast<Function>(unwrap(todiff)), (DIFFE_TYPE)retType, nconstant_args,
-      eunwrap(TA), returnValue, (DerivativeMode)mode, width,
+      eunwrap(TA), returnValue, (DerivativeMode)mode, freeMemory, width,
       unwrap(additionalArg), eunwrap(typeInfo, cast<Function>(unwrap(todiff))),
-      uncacheable_args));
+      uncacheable_args, eunwrap(augmented)));
 }
 LLVMValueRef EnzymeCreatePrimalAndGradient(
     EnzymeLogicRef Logic, LLVMValueRef todiff, CDIFFE_TYPE retType,
     CDIFFE_TYPE *constant_args, size_t constant_args_size,
     EnzymeTypeAnalysisRef TA, uint8_t returnValue, uint8_t dretUsed,
-    CDerivativeMode mode, unsigned width, LLVMTypeRef additionalArg,
-    CFnTypeInfo typeInfo, uint8_t *_uncacheable_args,
+    CDerivativeMode mode, unsigned width, uint8_t freeMemory,
+    LLVMTypeRef additionalArg, CFnTypeInfo typeInfo, uint8_t *_uncacheable_args,
     size_t uncacheable_args_size, EnzymeAugmentedReturnPtr augmented,
     uint8_t AtomicAdd) {
   std::vector<DIFFE_TYPE> nconstant_args((DIFFE_TYPE *)constant_args,
@@ -425,19 +426,21 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
           .shadowReturnUsed = (bool)dretUsed,
           .mode = (DerivativeMode)mode,
           .width = width,
-          .freeMemory = true,
+          .freeMemory = (bool)freeMemory,
           .AtomicAdd = (bool)AtomicAdd,
           .additionalType = unwrap(additionalArg),
           .typeInfo = eunwrap(typeInfo, cast<Function>(unwrap(todiff))),
       },
       eunwrap(TA), eunwrap(augmented)));
 }
-EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
-    EnzymeLogicRef Logic, LLVMValueRef todiff, CDIFFE_TYPE retType,
-    CDIFFE_TYPE *constant_args, size_t constant_args_size,
-    EnzymeTypeAnalysisRef TA, uint8_t returnUsed, CFnTypeInfo typeInfo,
-    uint8_t *_uncacheable_args, size_t uncacheable_args_size,
-    uint8_t forceAnonymousTape, uint8_t AtomicAdd) {
+EnzymeAugmentedReturnPtr
+EnzymeCreateAugmentedPrimal(EnzymeLogicRef Logic, LLVMValueRef todiff,
+                            CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
+                            size_t constant_args_size, EnzymeTypeAnalysisRef TA,
+                            uint8_t returnUsed, uint8_t shadowReturnUsed,
+                            CFnTypeInfo typeInfo, uint8_t *_uncacheable_args,
+                            size_t uncacheable_args_size,
+                            uint8_t forceAnonymousTape, uint8_t AtomicAdd) {
 
   std::vector<DIFFE_TYPE> nconstant_args((DIFFE_TYPE *)constant_args,
                                          (DIFFE_TYPE *)constant_args +
@@ -451,7 +454,7 @@ EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
   }
   return ewrap(eunwrap(Logic).CreateAugmentedPrimal(
       cast<Function>(unwrap(todiff)), (DIFFE_TYPE)retType, nconstant_args,
-      eunwrap(TA), returnUsed,
+      eunwrap(TA), returnUsed, shadowReturnUsed,
       eunwrap(typeInfo, cast<Function>(unwrap(todiff))), uncacheable_args,
       forceAnonymousTape, AtomicAdd));
 }
@@ -555,4 +558,18 @@ void EnzymeAddAttributorLegacyPass(LLVMPassManagerRef PM) {
   unwrap(PM)->add(createAttributorLegacyPass());
 }
 #endif
+LLVMMetadataRef EnzymeMakeNonConstTBAA(LLVMMetadataRef MD) {
+  auto M = cast<MDNode>(unwrap(MD));
+  if (M->getNumOperands() != 4)
+    return MD;
+  auto CAM = dyn_cast<ConstantAsMetadata>(M->getOperand(3));
+  if (!CAM)
+    return MD;
+  if (!CAM->getValue()->isOneValue())
+    return MD;
+  SmallVector<Metadata *, 4> MDs(M->operands());
+  MDs[3] =
+      ConstantAsMetadata::get(ConstantInt::get(CAM->getValue()->getType(), 0));
+  return wrap(MDNode::get(M->getContext(), MDs));
+}
 }

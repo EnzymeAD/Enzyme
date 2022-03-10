@@ -726,13 +726,14 @@ Function *CreateMPIWrapper(Function *F) {
 #endif
   return W;
 }
+template <typename T>
 static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
   DominatorTree &DT = FAM.getResult<DominatorTreeAnalysis>(NewF);
-  SmallVector<CallInst *, 4> Todo;
-  SmallVector<CallInst *, 0> OMPBounds;
+  SmallVector<T *, 4> Todo;
+  SmallVector<T *, 0> OMPBounds;
   for (auto &BB : NewF) {
     for (auto &I : BB) {
-      if (auto CI = dyn_cast<CallInst>(&I)) {
+      if (auto CI = dyn_cast<T>(&I)) {
         Function *Fn = CI->getCalledFunction();
         if (Fn == nullptr)
           continue;
@@ -751,6 +752,8 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
       }
     }
   }
+  if (Todo.size() == 0 && OMPBounds.size() == 0)
+    return;
   for (auto CI : Todo) {
     IRBuilder<> B(CI);
     Value *arg[] = {CI->getArgOperand(0)};
@@ -773,7 +776,7 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
     B.SetInsertPoint(res);
 
     if (auto PT = dyn_cast<PointerType>(storePointer->getType())) {
-      if (PT->getElementType() != res->getType())
+      if (PT->getPointerElementType() != res->getType())
         storePointer = B.CreateBitCast(
             storePointer,
             PointerType::get(res->getType(), PT->getAddressSpace()));
@@ -802,7 +805,11 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
         }
       }
     }
-    B.SetInsertPoint(res->getNextNode());
+    if (auto II = dyn_cast<InvokeInst>(res)) {
+      B.SetInsertPoint(II->getNormalDest()->getFirstNonPHI());
+    } else {
+      B.SetInsertPoint(res->getNextNode());
+    }
     B.CreateStore(res, storePointer);
   }
   for (auto Bound : OMPBounds) {
@@ -818,7 +825,11 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
       B.CreateStore(B.CreateLoad(AI), AI2);
 #endif
       Bound->setArgOperand(i, AI2);
-      B.SetInsertPoint(Bound->getNextNode());
+      if (auto II = dyn_cast<InvokeInst>(Bound)) {
+        B.SetInsertPoint(II->getNormalDest()->getFirstNonPHI());
+      } else {
+        B.SetInsertPoint(Bound->getNextNode());
+      }
 #if LLVM_VERSION_MAJOR > 7
       B.CreateStore(B.CreateLoad(AI2->getAllocatedType(), AI2), AI);
 #else
@@ -1057,7 +1068,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
   if (mode == DerivativeMode::ReverseModeGradient)
     mode = DerivativeMode::ReverseModePrimal;
   if (mode == DerivativeMode::ForwardModeSplit)
-    mode = DerivativeMode::ForwardMode;
+    mode = DerivativeMode::ReverseModePrimal;
 
   // If we've already processed this, return the previous version
   // and derive aliasing information
@@ -1191,7 +1202,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       ConstantFoldTerminator(BE);
   }
 
-  SimplifyMPIQueries(*NewF, FAM);
+  SimplifyMPIQueries<CallInst>(*NewF, FAM);
+  SimplifyMPIQueries<InvokeInst>(*NewF, FAM);
 
   if (EnzymeLowerGlobals) {
     std::vector<CallInst *> Calls;
@@ -1422,17 +1434,15 @@ Function *PreProcessCache::preprocessForClone(Function *F,
             }
           }
 
-          SmallVector<Value *, 4> args;
-          args.push_back(
-              bb.CreateBitCast(antialloca, Type::getInt8PtrTy(g.getContext())));
-          args.push_back(
-              bb.CreateBitCast(&g, Type::getInt8PtrTy(g.getContext())));
-          args.push_back(ConstantInt::get(
-              Type::getInt64Ty(g.getContext()),
-              g.getParent()->getDataLayout().getTypeAllocSizeInBits(
-                  g.getValueType()) /
-                  8));
-          args.push_back(ConstantInt::getFalse(g.getContext()));
+          Value *args[] = {
+              bb.CreateBitCast(antialloca, Type::getInt8PtrTy(g.getContext())),
+              bb.CreateBitCast(&g, Type::getInt8PtrTy(g.getContext())),
+              ConstantInt::get(
+                  Type::getInt64Ty(g.getContext()),
+                  g.getParent()->getDataLayout().getTypeAllocSizeInBits(
+                      g.getValueType()) /
+                      8),
+              ConstantInt::getFalse(g.getContext())};
 
           Type *tys[] = {args[0]->getType(), args[1]->getType(),
                          args[2]->getType()};
@@ -1786,11 +1796,7 @@ FunctionType *getFunctionTypeForClone(
     ArgTypes.push_back(I);
     if (constant_args[argno] == DIFFE_TYPE::DUP_ARG ||
         constant_args[argno] == DIFFE_TYPE::DUP_NONEED) {
-      if (width > 1) {
-        ArgTypes.push_back(ArrayType::get(I, width));
-      } else {
-        ArgTypes.push_back(I);
-      }
+      ArgTypes.push_back(GradientUtils::getShadowType(I, width));
     } else if (constant_args[argno] == DIFFE_TYPE::OUT_DIFF) {
       RetTypes.push_back(I);
     }
@@ -2133,5 +2139,6 @@ void PreProcessCache::optimizeIntermediate(Function *F) {
 
 void PreProcessCache::clear() {
   FAM.clear();
+  MAM.clear();
   cache.clear();
 }

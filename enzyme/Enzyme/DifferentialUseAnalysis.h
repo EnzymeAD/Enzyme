@@ -74,8 +74,7 @@ static inline bool is_use_directly_needed_in_reverse(
       // backwards creation shadow.
       if (!TR.query(const_cast<Value *>(SI->getValueOperand()))[{-1}].isFloat())
         for (auto pair : gutils->backwardsOnlyShadows)
-          if (pair.second.first.count(SI) &&
-              !gutils->isConstantValue(pair.first)) {
+          if (pair.second.stores.count(SI)) {
             return true;
           }
     }
@@ -84,16 +83,22 @@ static inline bool is_use_directly_needed_in_reverse(
 
   // If memtransfer, only the size may need preservation for the reverse pass
   if (auto MTI = dyn_cast<MemTransferInst>(user)) {
+    // Unless we're storing into a backwards only shadow store
+    if (MTI->getArgOperand(1) == val || MTI->getArgOperand(2) == val) {
+      for (auto pair : gutils->backwardsOnlyShadows)
+        if (pair.second.stores.count(MTI)) {
+          return true;
+        }
+    }
     if (MTI->getArgOperand(2) != val)
       return false;
   }
 
   // Preserve the length of memsets of backward creation shadows
   if (auto MS = dyn_cast<MemSetInst>(user)) {
-    if (MS->getArgOperand(2) == val) {
+    if (MS->getArgOperand(1) == val || MS->getArgOperand(2) == val) {
       for (auto pair : gutils->backwardsOnlyShadows)
-        if (pair.second.first.count(MS) &&
-            !gutils->isConstantValue(pair.first)) {
+        if (pair.second.stores.count(MS)) {
           return true;
         }
     }
@@ -185,28 +190,36 @@ static inline bool is_use_directly_needed_in_reverse(
   }
 
   if (auto CI = dyn_cast<CallInst>(user)) {
-    if (auto F = CI->getCalledFunction()) {
-      // Only need primal length and datatype for reverse
-      if (F->getName() == "MPI_Isend" || F->getName() == "MPI_Irecv") {
-        if (val != CI->getArgOperand(1) && val != CI->getArgOperand(2)) {
+    if (auto F = getFunctionFromCall(const_cast<CallInst *>(CI))) {
+      auto funcName = F->getName();
+      if (F->hasFnAttribute("enzyme_math"))
+        funcName = F->getFnAttribute("enzyme_math").getValueAsString();
+
+      // Only need primal (and shadow) request for reverse
+      if (funcName == "MPI_Isend" || funcName == "MPI_Irecv" ||
+          funcName == "PMPI_Isend" || funcName == "PMPI_Irecv") {
+        if (val != CI->getArgOperand(6)) {
           return false;
         }
       }
-      // Don't need any primal arguments for mpi_wait
-      if (F->getName() == "MPI_Wait")
-        return false;
-      // Only need element count for reverse of waitall
-      if (F->getName() == "MPI_Waitall")
+
+      // Only need the primal request.
+      if (funcName == "MPI_Wait" || funcName == "PMPI_Wait")
         if (val != CI->getArgOperand(0))
+          return false;
+
+      // Only need element count for reverse of waitall
+      if (funcName == "MPI_Waitall" || funcName == "PMPI_Waitall")
+        if (val != CI->getArgOperand(0) || val != CI->getOperand(1))
           return false;
       // Since adjoint of barrier is another barrier in reverse
       // we still need even if instruction is inactive
-      if (F->getName() == "__kmpc_barrier" || F->getName() == "MPI_Barrier")
+      if (funcName == "__kmpc_barrier" || funcName == "MPI_Barrier")
         return true;
 
       // Since adjoint of GC preserve is another preserve in reverse
       // we still need even if instruction is inactive
-      if (F->getName() == "llvm.julia.gc_preserve_begin")
+      if (funcName == "llvm.julia.gc_preserve_begin")
         return true;
     }
   }
@@ -266,7 +279,7 @@ static inline bool is_value_needed_in_reverse(
           // a possible pointer.
           bool rematerialized = false;
           for (auto pair : gutils->backwardsOnlyShadows)
-            if (pair.second.first.count(SI)) {
+            if (pair.second.stores.count(SI)) {
               rematerialized = true;
               break;
             }
@@ -293,11 +306,75 @@ static inline bool is_value_needed_in_reverse(
       }
 
       if (auto CI = dyn_cast<CallInst>(user)) {
-        if (auto F = CI->getCalledFunction()) {
+        {
+          SmallVector<OperandBundleDef, 2> OrigDefs;
+          CI->getOperandBundlesAsDefs(OrigDefs);
+          SmallVector<OperandBundleDef, 2> Defs;
+          for (auto bund : OrigDefs) {
+            for (auto inp : bund.inputs()) {
+              if (inp == inst)
+                return seen[idx] = true;
+            }
+          }
+        }
+        if (auto F = getFunctionFromCall(const_cast<CallInst *>(CI))) {
+          StringRef funcName = F->getName();
+          if (F->hasFnAttribute("enzyme_math"))
+            funcName = F->getFnAttribute("enzyme_math").getValueAsString();
+
+          // Only need shadow request for reverse
+          if (funcName == "MPI_Irecv" || funcName == "PMPI_Irecv") {
+            if (gutils->isConstantInstruction(const_cast<Instruction *>(user)))
+              continue;
+            // Need shadow request
+            if (inst == CI->getArgOperand(6))
+              return seen[idx] = true;
+            // Need shadow buffer in forward pass
+            if (mode != DerivativeMode::ReverseModeGradient)
+              if (inst == CI->getArgOperand(0))
+                return seen[idx] = true;
+            continue;
+          }
+          if (funcName == "MPI_Isend" || funcName == "PMPI_Isend") {
+            if (gutils->isConstantInstruction(const_cast<Instruction *>(user)))
+              continue;
+            // Need shadow request
+            if (inst == CI->getArgOperand(6))
+              return seen[idx] = true;
+            // Need shadow buffer in reverse pass or forward mode
+            if (inst == CI->getArgOperand(0))
+              return seen[idx] = true;
+            continue;
+          }
+
+          // Don't need shadow of anything (all via cache for reverse),
+          // but need shadow of request for primal.
+          if (funcName == "MPI_Wait" || funcName == "PMPI_Wait") {
+            if (gutils->isConstantInstruction(const_cast<Instruction *>(user)))
+              continue;
+            // Need shadow request in forward pass only
+            if (mode != DerivativeMode::ReverseModeGradient)
+              if (inst == CI->getArgOperand(0))
+                return seen[idx] = true;
+            continue;
+          }
+
+          // Don't need shadow of anything (all via cache for reverse),
+          // but need shadow of request for primal.
+          if (funcName == "MPI_Waitall" || funcName == "PMPI_Waitall") {
+            if (gutils->isConstantInstruction(const_cast<Instruction *>(user)))
+              continue;
+            // Need shadow request in forward pass
+            if (mode != DerivativeMode::ReverseModeGradient)
+              if (inst == CI->getArgOperand(1))
+                return seen[idx] = true;
+            continue;
+          }
+
           // Use in a write barrier requires the shadow in the forward, even
           // though the instruction is active.
           if (mode != DerivativeMode::ReverseModeGradient &&
-              F->getName() == "julia.write_barrier") {
+              funcName == "julia.write_barrier") {
             return seen[idx] = true;
           }
         }
@@ -357,14 +434,15 @@ static inline bool is_value_needed_in_reverse(
     // Anything we may try to rematerialize requires its store opreands for
     // the reverse pass.
     if (!OneLevel) {
-      if (auto SI = dyn_cast<StoreInst>(user)) {
+      if (isa<StoreInst>(user) || isa<MemTransferInst>(user) ||
+          isa<MemSetInst>(user)) {
         for (auto pair : gutils->rematerializableAllocations) {
           // Directly consider all the load uses to avoid an illegal inductive
           // recurrence. Specifically if we're asking if the alloca is used,
           // we'll set it to unused, then check the gep, then here we'll
           // directly say unused by induction instead of checking the final
           // loads.
-          if (pair.second.stores.count(SI))
+          if (pair.second.stores.count(user))
             for (LoadInst *L : pair.second.loads)
               if (is_value_needed_in_reverse<VT>(TR, gutils, L, mode, seen,
                                                  oldUnreachable)) {
@@ -475,7 +553,12 @@ struct Node {
       return true;
     return !(N.V < V) && outgoing < N.outgoing;
   }
-  void dump() { llvm::errs() << "[" << *V << ", " << (int)outgoing << "]\n"; }
+  void dump() {
+    if (V)
+      llvm::errs() << "[" << *V << ", " << (int)outgoing << "]\n";
+    else
+      llvm::errs() << "[" << V << ", " << (int)outgoing << "]\n";
+  }
 };
 
 typedef std::map<Node, std::set<Node>> Graph;
@@ -596,8 +679,8 @@ static inline void minCut(const DataLayout &DL, LoopInfo &OrigLI,
       Node u = parent.find(v)->second;
       assert(u.V != nullptr);
       assert(G[u].count(v) == 1);
-      G[u].erase(v);
       assert(G[v].count(u) == 0);
+      G[u].erase(v);
       G[v].insert(u);
       if (Recomputes.count(u.V) && u.outgoing == false)
         break;

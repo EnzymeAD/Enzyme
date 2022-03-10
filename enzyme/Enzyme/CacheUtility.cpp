@@ -93,8 +93,11 @@ void CacheUtility::replaceAWithB(Value *A, Value *B, bool storeInCache) {
         scopeInstructions.erase(stfound);
         for (auto st : tmpInstructions)
           cast<StoreInst>(&*st)->eraseFromParent();
+        MDNode *TBAA = nullptr;
+        if (auto I = dyn_cast<Instruction>(A))
+          TBAA = I->getMetadata(LLVMContext::MD_tbaa);
         storeInstructionInCache(found->second.second, cast<Instruction>(B),
-                                cache);
+                                cache, TBAA);
       }
     }
 
@@ -509,8 +512,6 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
   loopContexts[L].antivaralloc->setAlignment(
       cast<IntegerType>(CanonicalIV->getType())->getBitWidth() / 8);
 #endif
-
-  SCEVUnionPredicate BackedgePred;
 
   const SCEV *Limit = nullptr;
   const SCEV *MaxIterations = nullptr;
@@ -954,8 +955,7 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
         IRBuilder<> build(containedloops.back().first.incvar->getNextNode());
 #if LLVM_VERSION_MAJOR > 7
         Value *allocation = build.CreateLoad(
-            cast<PointerType>(storeInto->getType())->getElementType(),
-            storeInto);
+            storeInto->getType()->getPointerElementType(), storeInto);
 #else
         Value *allocation = build.CreateLoad(storeInto);
 #endif
@@ -975,8 +975,7 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
             build.CreateMul(tsize, sublimits[i].first, "", /*NUW*/ true,
                             /*NSW*/ true)};
 
-        assert(cast<PointerType>(allocation->getType())->getElementType() ==
-               myType);
+        assert(allocation->getType()->getPointerElementType() == myType);
         Value *realloccall = nullptr;
 
         realloccall = build.CreateCall(
@@ -1020,19 +1019,19 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
       IRBuilder<> v(&sublimits[i - 1].second.back().first.preheader->back());
 
       Value *idx = computeIndexOfChunk(
-          /*inForwardPass*/ true, v, containedloops);
+          /*inForwardPass*/ true, v, containedloops,
+          /*available*/ ValueToValueMapTy());
 
 #if LLVM_VERSION_MAJOR > 7
-      storeInto = v.CreateLoad(
-          cast<PointerType>(storeInto->getType())->getElementType(), storeInto);
+      storeInto = v.CreateLoad(storeInto->getType()->getPointerElementType(),
+                               storeInto);
 #if LLVM_VERSION_MAJOR >= 10
       cast<LoadInst>(storeInto)->setAlignment(Align(alignSize));
 #else
       cast<LoadInst>(storeInto)->setAlignment(alignSize);
 #endif
-      storeInto =
-          v.CreateGEP(cast<PointerType>(storeInto->getType())->getElementType(),
-                      storeInto, idx);
+      storeInto = v.CreateGEP(storeInto->getType()->getPointerElementType(),
+                              storeInto, idx);
 #else
       storeInto = v.CreateLoad(storeInto);
       cast<LoadInst>(storeInto)->setAlignment(alignSize);
@@ -1046,16 +1045,13 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
 
 Value *CacheUtility::computeIndexOfChunk(
     bool inForwardPass, IRBuilder<> &v,
-    const std::vector<std::pair<LoopContext, llvm::Value *>> &containedloops) {
+    const std::vector<std::pair<LoopContext, llvm::Value *>> &containedloops,
+    const ValueToValueMapTy &available) {
   // List of loop indices in chunk from innermost to outermost
   SmallVector<Value *, 3> indices;
   // List of cumulative indices in chunk from innermost to outermost
   // where limit[i] = prod(loop limit[0..i])
   SmallVector<Value *, 3> limits;
-
-  // list of contained loop induction variables available for limit
-  // computation
-  ValueToValueMapTy available;
 
   // Iterate from innermost loop to outermost loop within a chunk
   for (size_t i = 0; i < containedloops.size(); ++i) {
@@ -1066,18 +1062,18 @@ Value *CacheUtility::computeIndexOfChunk(
 
     // In the SingleIteration, var may be null (since there's no legal phinode)
     // In that case the current iteration is simply the constnat Zero
-    if (var == nullptr)
+    if (idx.var == nullptr)
       var = ConstantInt::get(Type::getInt64Ty(newFunc->getContext()), 0);
-    else if (!inForwardPass) {
+    else if (available.count(var)) {
+      var = available.find(var)->second;
+    } else if (!inForwardPass) {
 #if LLVM_VERSION_MAJOR > 7
       var = v.CreateLoad(idx.var->getType(), idx.antivaralloc);
 #else
       var = v.CreateLoad(idx.antivaralloc);
 #endif
-      available[idx.var] = var;
     } else {
       var = idx.var;
-      available[idx.var] = var;
     }
     if (idx.offset) {
       var = v.CreateAdd(var, lookupM(idx.offset, v), "", /*NUW*/ true,
@@ -1354,7 +1350,7 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
 /// in the cache at the location defined in the given builder
 void CacheUtility::storeInstructionInCache(LimitContext ctx,
                                            IRBuilder<> &BuilderM, Value *val,
-                                           AllocaInst *cache) {
+                                           AllocaInst *cache, MDNode *TBAA) {
   assert(BuilderM.GetInsertBlock()->getParent() == newFunc);
   if (auto inst = dyn_cast<Instruction>(val))
     assert(inst->getParent()->getParent() == newFunc);
@@ -1391,7 +1387,9 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
   bool isi1 = val->getType()->isIntegerTy() &&
               cast<IntegerType>(val->getType())->getBitWidth() == 1;
   Value *loc = getCachePointer(/*inForwardPass*/ true, v, ctx, cache, isi1,
-                               /*storeInInstructionsMap*/ true);
+                               /*storeInInstructionsMap*/ true,
+                               /*available*/ llvm::ValueToValueMapTy(),
+                               /*extraSize*/ nullptr);
 
   Value *tostore = val;
 
@@ -1410,8 +1408,8 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
           ConstantInt::get(Type::getInt8Ty(cache->getContext()), 1), subidx));
 
 #if LLVM_VERSION_MAJOR > 7
-      Value *loadChunk = v.CreateLoad(
-          cast<PointerType>(loc->getType())->getElementType(), loc);
+      Value *loadChunk =
+          v.CreateLoad(loc->getType()->getPointerElementType(), loc);
 #else
       Value *loadChunk = v.CreateLoad(loc);
 #endif
@@ -1420,19 +1418,16 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
       auto toset = v.CreateShl(
           v.CreateZExt(val, Type::getInt8Ty(cache->getContext())), subidx);
       tostore = v.CreateOr(cleared, toset);
-      assert(tostore->getType() ==
-             cast<PointerType>(loc->getType())->getElementType());
+      assert(tostore->getType() == loc->getType()->getPointerElementType());
     }
   }
 
-  if (tostore->getType() !=
-      cast<PointerType>(loc->getType())->getElementType()) {
+  if (tostore->getType() != loc->getType()->getPointerElementType()) {
     llvm::errs() << "val: " << *val << "\n";
     llvm::errs() << "tostore: " << *tostore << "\n";
     llvm::errs() << "loc: " << *loc << "\n";
   }
-  assert(tostore->getType() ==
-         cast<PointerType>(loc->getType())->getElementType());
+  assert(tostore->getType() == loc->getType()->getPointerElementType());
   StoreInst *storeinst = v.CreateStore(tostore, loc);
 
   // If the value stored doesnt change (per efficient bool cache),
@@ -1455,6 +1450,7 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
                                .getTypeAllocSizeInBits(val->getType()) /
                            8);
   unsigned align = getCacheAlignment((unsigned)byteSizeOfType->getZExtValue());
+  storeinst->setMetadata(LLVMContext::MD_tbaa, TBAA);
 #if LLVM_VERSION_MAJOR >= 10
   storeinst->setAlignment(Align(align));
 #else
@@ -1467,7 +1463,8 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
 /// in the cache right after the instruction is executed
 void CacheUtility::storeInstructionInCache(LimitContext ctx,
                                            llvm::Instruction *inst,
-                                           llvm::AllocaInst *cache) {
+                                           llvm::AllocaInst *cache,
+                                           llvm::MDNode *TBAA) {
   assert(ctx.Block);
   assert(inst);
   assert(cache);
@@ -1485,7 +1482,7 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
     v.SetInsertPoint(putafter);
   }
   v.setFastMathFlags(getFast());
-  storeInstructionInCache(ctx, v, inst, cache);
+  storeInstructionInCache(ctx, v, inst, cache, TBAA);
 }
 
 /// Given an allocation specified by the LimitContext ctx and cache, compute a
@@ -1495,13 +1492,12 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
 Value *CacheUtility::getCachePointer(bool inForwardPass, IRBuilder<> &BuilderM,
                                      LimitContext ctx, Value *cache, bool isi1,
                                      bool storeInInstructionsMap,
+                                     const ValueToValueMapTy &available,
                                      Value *extraSize) {
   assert(ctx.Block);
   assert(cache);
 
   auto sublimits = getSubLimits(inForwardPass, &BuilderM, ctx, extraSize);
-
-  ValueToValueMapTy available;
 
   Value *next = cache;
   assert(next->getType()->isPointerTy());
@@ -1510,8 +1506,7 @@ Value *CacheUtility::getCachePointer(bool inForwardPass, IRBuilder<> &BuilderM,
   for (int i = sublimits.size() - 1; i >= 0; i--) {
     // Lookup the next allocation pointer
 #if LLVM_VERSION_MAJOR > 7
-    next = BuilderM.CreateLoad(
-        cast<PointerType>(next->getType())->getElementType(), next);
+    next = BuilderM.CreateLoad(next->getType()->getPointerElementType(), next);
 #else
     next = BuilderM.CreateLoad(next);
 #endif
@@ -1558,7 +1553,8 @@ Value *CacheUtility::getCachePointer(bool inForwardPass, IRBuilder<> &BuilderM,
     const auto &containedloops = sublimits[i].second;
 
     if (containedloops.size() > 0) {
-      Value *idx = computeIndexOfChunk(inForwardPass, BuilderM, containedloops);
+      Value *idx = computeIndexOfChunk(inForwardPass, BuilderM, containedloops,
+                                       available);
       if (EfficientBoolCache && isi1 && i == 0)
         idx = BuilderM.CreateLShr(
             idx, ConstantInt::get(Type::getInt64Ty(newFunc->getContext()), 3));
@@ -1568,8 +1564,8 @@ Value *CacheUtility::getCachePointer(bool inForwardPass, IRBuilder<> &BuilderM,
         idx = BuilderM.CreateMul(idx, es, "", /*NUW*/ true, /*NSW*/ true);
       }
 #if LLVM_VERSION_MAJOR > 7
-      next = BuilderM.CreateGEP(
-          cast<PointerType>(next->getType())->getElementType(), next, idx);
+      next = BuilderM.CreateGEP(next->getType()->getPointerElementType(), next,
+                                idx);
 #else
       next = BuilderM.CreateGEP(next, idx);
 #endif
@@ -1590,8 +1586,8 @@ llvm::Value *CacheUtility::loadFromCachePointer(llvm::IRBuilder<> &BuilderM,
                                                 llvm::Value *cache) {
   // Retrieve the actual result
 #if LLVM_VERSION_MAJOR > 7
-  auto result = BuilderM.CreateLoad(
-      cast<PointerType>(cptr->getType())->getElementType(), cptr);
+  auto result =
+      BuilderM.CreateLoad(cptr->getType()->getPointerElementType(), cptr);
 #else
   auto result = BuilderM.CreateLoad(cptr);
 #endif
@@ -1621,21 +1617,21 @@ llvm::Value *CacheUtility::loadFromCachePointer(llvm::IRBuilder<> &BuilderM,
 
 /// Given an allocation specified by the LimitContext ctx and cache, lookup the
 /// underlying cached value.
-Value *CacheUtility::lookupValueFromCache(bool inForwardPass,
-                                          IRBuilder<> &BuilderM,
-                                          LimitContext ctx, Value *cache,
-                                          bool isi1, Value *extraSize,
-                                          Value *extraOffset) {
+Value *
+CacheUtility::lookupValueFromCache(bool inForwardPass, IRBuilder<> &BuilderM,
+                                   LimitContext ctx, Value *cache, bool isi1,
+                                   const ValueToValueMapTy &available,
+                                   Value *extraSize, Value *extraOffset) {
   // Get the underlying cache pointer
-  auto cptr = getCachePointer(inForwardPass, BuilderM, ctx, cache, isi1,
-                              /*storeInInstructionsMap*/ false, extraSize);
+  auto cptr =
+      getCachePointer(inForwardPass, BuilderM, ctx, cache, isi1,
+                      /*storeInInstructionsMap*/ false, available, extraSize);
 
   // Optionally apply the additional offset
   if (extraOffset) {
 #if LLVM_VERSION_MAJOR > 7
-    cptr =
-        BuilderM.CreateGEP(cast<PointerType>(cptr->getType())->getElementType(),
-                           cptr, extraOffset);
+    cptr = BuilderM.CreateGEP(cptr->getType()->getPointerElementType(), cptr,
+                              extraOffset);
 #else
     cptr = BuilderM.CreateGEP(cptr, extraOffset);
 #endif

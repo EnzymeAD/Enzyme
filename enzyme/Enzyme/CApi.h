@@ -121,24 +121,26 @@ LLVMValueRef EnzymeCreateForwardDiff(
     EnzymeLogicRef, LLVMValueRef todiff, CDIFFE_TYPE retType,
     CDIFFE_TYPE *constant_args, size_t constant_args_size,
     EnzymeTypeAnalysisRef TA, uint8_t returnValue, CDerivativeMode mode,
-    unsigned width, LLVMTypeRef additionalArg, struct CFnTypeInfo typeInfo,
-    uint8_t *_uncacheable_args, size_t uncacheable_args_size);
+    uint8_t freeMemory, unsigned width, LLVMTypeRef additionalArg,
+    struct CFnTypeInfo typeInfo, uint8_t *_uncacheable_args,
+    size_t uncacheable_args_size, EnzymeAugmentedReturnPtr augmented);
 
 LLVMValueRef EnzymeCreatePrimalAndGradient(
     EnzymeLogicRef, LLVMValueRef todiff, CDIFFE_TYPE retType,
     CDIFFE_TYPE *constant_args, size_t constant_args_size,
     EnzymeTypeAnalysisRef TA, uint8_t returnValue, uint8_t dretUsed,
-    CDerivativeMode mode, unsigned width, LLVMTypeRef additionalArg,
-    struct CFnTypeInfo typeInfo, uint8_t *_uncacheable_args,
-    size_t uncacheable_args_size, EnzymeAugmentedReturnPtr augmented,
-    uint8_t AtomicAdd);
+    CDerivativeMode mode, unsigned width, uint8_t freeMemory,
+    LLVMTypeRef additionalArg, struct CFnTypeInfo typeInfo,
+    uint8_t *_uncacheable_args, size_t uncacheable_args_size,
+    EnzymeAugmentedReturnPtr augmented, uint8_t AtomicAdd);
 
 EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
     EnzymeLogicRef, LLVMValueRef todiff, CDIFFE_TYPE retType,
     CDIFFE_TYPE *constant_args, size_t constant_args_size,
-    EnzymeTypeAnalysisRef TA, uint8_t returnUsed, struct CFnTypeInfo typeInfo,
-    uint8_t *_uncacheable_args, size_t uncacheable_args_size,
-    uint8_t forceAnonymousTape, uint8_t AtomicAdd);
+    EnzymeTypeAnalysisRef TA, uint8_t returnUsed, uint8_t shadowReturnUsed,
+    struct CFnTypeInfo typeInfo, uint8_t *_uncacheable_args,
+    size_t uncacheable_args_size, uint8_t forceAnonymousTape,
+    uint8_t AtomicAdd);
 
 typedef uint8_t (*CustomRuleType)(int /*direction*/, CTypeTreeRef /*return*/,
                                   CTypeTreeRef * /*args*/,

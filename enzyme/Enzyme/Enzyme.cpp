@@ -92,7 +92,7 @@ llvm::cl::opt<bool> EnzymeOMPOpt("enzyme-omp-opt", cl::init(false), cl::Hidden,
 #endif
 namespace {
 
-template <const char *handlername, int numargs>
+template <const char *handlername, DerivativeMode Mode, int numargs>
 static void
 handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
                        std::vector<GlobalVariable *> &globalsToErase) {
@@ -130,7 +130,8 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
           }
         }
 
-        if (numargs == 3) {
+        if (Mode == DerivativeMode::ReverseModeGradient) {
+          assert(numargs == 3);
           Fs[0]->setMetadata(
               "enzyme_augment",
               llvm::MDTuple::get(Fs[0]->getContext(),
@@ -139,12 +140,24 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
               "enzyme_gradient",
               llvm::MDTuple::get(Fs[0]->getContext(),
                                  {llvm::ValueAsMetadata::get(Fs[2])}));
-        } else if (numargs == 2) {
+        } else if (Mode == DerivativeMode::ForwardMode) {
+          assert(numargs == 2);
           Fs[0]->setMetadata(
               "enzyme_derivative",
               llvm::MDTuple::get(Fs[0]->getContext(),
                                  {llvm::ValueAsMetadata::get(Fs[1])}));
-        }
+        } else if (Mode == DerivativeMode::ForwardModeSplit) {
+          assert(numargs == 3);
+          Fs[0]->setMetadata(
+              "enzyme_augment",
+              llvm::MDTuple::get(Fs[0]->getContext(),
+                                 {llvm::ValueAsMetadata::get(Fs[1])}));
+          Fs[0]->setMetadata(
+              "enzyme_splitderivative",
+              llvm::MDTuple::get(Fs[0]->getContext(),
+                                 {llvm::ValueAsMetadata::get(Fs[2])}));
+        } else
+          assert("Unknown mode");
       }
     } else {
       llvm::errs() << M << "\n";
@@ -200,7 +213,7 @@ handleInactiveFunction(llvm::Module &M, llvm::GlobalVariable &g,
 }
 
 static void handleKnownFunctions(llvm::Function &F) {
-  if (F.getName() == "MPI_Irecv") {
+  if (F.getName() == "MPI_Irecv" || F.getName() == "PMPI_Irecv") {
     F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
@@ -216,7 +229,7 @@ static void handleKnownFunctions(llvm::Function &F) {
     }
     F.addParamAttr(6, Attribute::WriteOnly);
   }
-  if (F.getName() == "MPI_Isend") {
+  if (F.getName() == "MPI_Isend" || F.getName() == "PMPI_Isend") {
     F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
@@ -225,7 +238,7 @@ static void handleKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::NoFree);
     F.addFnAttr(Attribute::NoSync);
 #endif
-    F.addParamAttr(0, Attribute::WriteOnly);
+    F.addParamAttr(0, Attribute::ReadOnly);
     if (F.getFunctionType()->getParamType(2)->isPointerTy()) {
       F.addParamAttr(2, Attribute::NoCapture);
       F.addParamAttr(2, Attribute::ReadOnly);
@@ -251,7 +264,7 @@ static void handleKnownFunctions(llvm::Function &F) {
       F.addParamAttr(1, Attribute::NoCapture);
     }
   }
-  if (F.getName() == "MPI_Wait") {
+  if (F.getName() == "MPI_Wait" || F.getName() == "PMPI_Wait") {
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
 #if LLVM_VERSION_MAJOR >= 9
@@ -259,12 +272,11 @@ static void handleKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::NoFree);
     F.addFnAttr(Attribute::NoSync);
 #endif
-    F.addParamAttr(0, Attribute::ReadOnly);
     F.addParamAttr(0, Attribute::NoCapture);
     F.addParamAttr(1, Attribute::WriteOnly);
     F.addParamAttr(1, Attribute::NoCapture);
   }
-  if (F.getName() == "MPI_Waitall") {
+  if (F.getName() == "MPI_Waitall" || F.getName() == "PMPI_Waitall") {
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
 #if LLVM_VERSION_MAJOR >= 9
@@ -272,7 +284,6 @@ static void handleKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::NoFree);
     F.addFnAttr(Attribute::NoSync);
 #endif
-    F.addParamAttr(1, Attribute::ReadOnly);
     F.addParamAttr(1, Attribute::NoCapture);
     F.addParamAttr(2, Attribute::WriteOnly);
     F.addParamAttr(2, Attribute::NoCapture);
@@ -319,8 +330,8 @@ castToDiffeFunctionArgType(IRBuilder<> &Builder, llvm::CallInst *CI,
     if (auto PT = dyn_cast<PointerType>(destType)) {
       if (ptr->getAddressSpace() != PT->getAddressSpace()) {
         res = Builder.CreateAddrSpaceCast(
-            res,
-            PointerType::get(ptr->getElementType(), PT->getAddressSpace()));
+            res, PointerType::get(ptr->getPointerElementType(),
+                                  PT->getAddressSpace()));
         assert(value);
         assert(destType);
         assert(FT);
@@ -446,6 +457,8 @@ public:
     IRBuilder<> Builder(CI);
     unsigned truei = 0;
     unsigned width = 1;
+    bool returnUsed = !cast<Function>(fn)->getReturnType()->isVoidTy() &&
+                      !cast<Function>(fn)->getReturnType()->isEmptyTy();
 
     // determine width
 #if LLVM_VERSION_MAJOR >= 14
@@ -457,44 +470,44 @@ public:
     {
       Value *arg = CI->getArgOperand(i);
 
-      if (getMetadataName(arg) && *getMetadataName(arg) == "enzyme_width") {
-        assert(mode == DerivativeMode::ForwardMode);
-
-        if (found) {
-          EmitFailure("IllegalVectorWidth", CI->getDebugLoc(), CI,
-                      "vector width declared more than once",
-                      *CI->getArgOperand(i), " in", *CI);
-          return false;
-        }
+      if (auto MDName = getMetadataName(arg)) {
+        if (*MDName == "enzyme_width") {
+          if (found) {
+            EmitFailure("IllegalVectorWidth", CI->getDebugLoc(), CI,
+                        "vector width declared more than once",
+                        *CI->getArgOperand(i), " in", *CI);
+            return false;
+          }
 
 #if LLVM_VERSION_MAJOR >= 14
-        if (i + 1 >= CI->arg_size())
+          if (i + 1 >= CI->arg_size())
 #else
-        if (i + 1 >= CI->getNumArgOperands())
+          if (i + 1 >= CI->getNumArgOperands())
 #endif
-        {
-          EmitFailure("MissingVectorWidth", CI->getDebugLoc(), CI,
-                      "constant integer followong enzyme_width is missing",
-                      *CI->getArgOperand(i), " in", *CI);
-          return false;
-        }
+          {
+            EmitFailure("MissingVectorWidth", CI->getDebugLoc(), CI,
+                        "constant integer followong enzyme_width is missing",
+                        *CI->getArgOperand(i), " in", *CI);
+            return false;
+          }
 
-        Value *width_arg = CI->getArgOperand(i + 1);
-        if (auto cint = dyn_cast<ConstantInt>(width_arg)) {
-          width = cint->getZExtValue();
-          found = true;
-        } else {
-          EmitFailure("IllegalVectorWidth", CI->getDebugLoc(), CI,
-                      "enzyme_width must be a constant integer",
-                      *CI->getArgOperand(i), " in", *CI);
-          return false;
-        }
+          Value *width_arg = CI->getArgOperand(i + 1);
+          if (auto cint = dyn_cast<ConstantInt>(width_arg)) {
+            width = cint->getZExtValue();
+            found = true;
+          } else {
+            EmitFailure("IllegalVectorWidth", CI->getDebugLoc(), CI,
+                        "enzyme_width must be a constant integer",
+                        *CI->getArgOperand(i), " in", *CI);
+            return false;
+          }
 
-        if (!found) {
-          EmitFailure("IllegalVectorWidth", CI->getDebugLoc(), CI,
-                      "illegal enzyme vector argument width ",
-                      *CI->getArgOperand(i), " in", *CI);
-          return false;
+          if (!found) {
+            EmitFailure("IllegalVectorWidth", CI->getDebugLoc(), CI,
+                        "illegal enzyme vector argument width ",
+                        *CI->getArgOperand(i), " in", *CI);
+            return false;
+          }
         }
       }
     }
@@ -524,8 +537,8 @@ public:
       case DerivativeMode::ForwardMode: {
         Value *sretPt = CI->getArgOperand(0);
         if (width > 1) {
-          PointerType *pty = dyn_cast<PointerType>(sretPt->getType());
-          if (auto sty = dyn_cast<StructType>(pty->getElementType())) {
+          PointerType *pty = cast<PointerType>(sretPt->getType());
+          if (auto sty = dyn_cast<StructType>(pty->getPointerElementType())) {
             Value *acc = UndefValue::get(
                 ArrayType::get(PointerType::get(sty->getElementType(0),
                                                 pty->getAddressSpace()),
@@ -533,8 +546,7 @@ public:
             for (size_t i = 0; i < width; ++i) {
 #if LLVM_VERSION_MAJOR > 7
               Value *elem = Builder.CreateStructGEP(
-                  cast<PointerType>(sretPt->getType())->getElementType(),
-                  sretPt, i);
+                  sretPt->getType()->getPointerElementType(), sretPt, i);
 #else
               Value *elem = Builder.CreateStructGEP(sretPt, i);
 #endif
@@ -582,8 +594,8 @@ public:
 
     DIFFE_TYPE retType = whatType(cast<Function>(fn)->getReturnType(), mode);
 
-    bool differentialReturn = mode != DerivativeMode::ForwardMode &&
-                              mode != DerivativeMode::ReverseModePrimal &&
+    bool differentialReturn = (mode == DerivativeMode::ReverseModeCombined ||
+                               mode == DerivativeMode::ReverseModeGradient) &&
                               (retType == DIFFE_TYPE::OUT_DIFF);
 
     std::map<int, Type *> byVal;
@@ -601,14 +613,15 @@ public:
       Value *res = CI->getArgOperand(i);
 
       if (truei >= FT->getNumParams()) {
-        if (mode == DerivativeMode::ReverseModeGradient) {
+        if (!isa<MetadataAsValue>(res) &&
+            (mode == DerivativeMode::ReverseModeGradient ||
+             mode == DerivativeMode::ForwardModeSplit)) {
           if (differentialReturn && differet == nullptr) {
             differet = res;
             if (CI->paramHasAttr(i, Attribute::ByVal)) {
 #if LLVM_VERSION_MAJOR > 7
               differet = Builder.CreateLoad(
-                  cast<PointerType>(differet->getType())->getElementType(),
-                  differet);
+                  differet->getType()->getPointerElementType(), differet);
 #else
               differet = Builder.CreateLoad(differet);
 #endif
@@ -620,7 +633,7 @@ public:
             if (CI->paramHasAttr(i, Attribute::ByVal)) {
 #if LLVM_VERSION_MAJOR > 7
               tape = Builder.CreateLoad(
-                  cast<PointerType>(tape->getType())->getElementType(), tape);
+                  tape->getType()->getPointerElementType(), tape);
 #else
               tape = Builder.CreateLoad(tape);
 #endif
@@ -648,6 +661,9 @@ public:
           ty = DIFFE_TYPE::OUT_DIFF;
         } else if (*metaString == "enzyme_const") {
           ty = DIFFE_TYPE::CONSTANT;
+        } else if (*metaString == "enzyme_noret") {
+          returnUsed = false;
+          continue;
         } else if (*metaString == "enzyme_allocated") {
           assert(!sizeOnly);
           ++i;
@@ -695,7 +711,7 @@ public:
           if (auto PT = dyn_cast<PointerType>(PTy)) {
             if (ptr->getAddressSpace() != PT->getAddressSpace()) {
               res = Builder.CreateAddrSpaceCast(
-                  res, PointerType::get(ptr->getElementType(),
+                  res, PointerType::get(ptr->getPointerElementType(),
                                         PT->getAddressSpace()));
               assert(res);
               assert(PTy);
@@ -792,7 +808,7 @@ public:
       if (a.getType()->isFPOrFPVectorTy()) {
         dt = ConcreteType(a.getType()->getScalarType());
       } else if (a.getType()->isPointerTy()) {
-        auto et = cast<PointerType>(a.getType())->getElementType();
+        auto et = a.getType()->getPointerElementType();
         if (et->isFPOrFPVectorTy()) {
           dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1);
         } else if (et->isPointerTy()) {
@@ -818,13 +834,57 @@ public:
     Type *tapeType = nullptr;
     const AugmentedReturn *aug;
     switch (mode) {
-    case DerivativeMode::ForwardModeSplit:
     case DerivativeMode::ForwardMode:
       newFunc = Logic.CreateForwardDiff(
           cast<Function>(fn), retType, constants, TA,
-          /*should return*/ false, mode, width,
-          /*addedType*/ nullptr, type_args, volatile_args);
+          /*should return*/ false, mode, freeMemory, width,
+          /*addedType*/ nullptr, type_args, volatile_args,
+          /*augmented*/ nullptr);
       break;
+    case DerivativeMode::ForwardModeSplit: {
+      bool forceAnonymousTape = !sizeOnly && allocatedTapeSize == -1;
+      aug = &Logic.CreateAugmentedPrimal(
+          cast<Function>(fn), retType, constants, TA,
+          /*returnUsed*/ false, /*shadowReturnUsed*/ false, type_args,
+          volatile_args, forceAnonymousTape, /*atomicAdd*/ AtomicAdd);
+      auto &DL = cast<Function>(fn)->getParent()->getDataLayout();
+      if (!forceAnonymousTape) {
+        assert(!aug->tapeType);
+        if (aug->returns.find(AugmentedStruct::Tape) != aug->returns.end()) {
+          auto tapeIdx = aug->returns.find(AugmentedStruct::Tape)->second;
+          tapeType = (tapeIdx == -1)
+                         ? aug->fn->getReturnType()
+                         : cast<StructType>(aug->fn->getReturnType())
+                               ->getElementType(tapeIdx);
+        } else {
+          if (sizeOnly) {
+            CI->replaceAllUsesWith(ConstantInt::get(CI->getType(), 0, false));
+            CI->eraseFromParent();
+            return true;
+          }
+        }
+        if (sizeOnly) {
+          auto size = DL.getTypeSizeInBits(tapeType) / 8;
+          CI->replaceAllUsesWith(ConstantInt::get(CI->getType(), size, false));
+          CI->eraseFromParent();
+          return true;
+        }
+        if (tapeType &&
+            DL.getTypeSizeInBits(tapeType) < 8 * (size_t)allocatedTapeSize) {
+          auto bytes = DL.getTypeSizeInBits(tapeType) / 8;
+          EmitFailure("Insufficient tape allocation size", CI->getDebugLoc(),
+                      CI, "need ", bytes, " bytes have ", allocatedTapeSize,
+                      " bytes");
+        }
+      } else {
+        tapeType = PointerType::getInt8PtrTy(fn->getContext());
+      }
+      newFunc = Logic.CreateForwardDiff(
+          cast<Function>(fn), retType, constants, TA,
+          /*should return*/ false, mode, freeMemory, width,
+          /*addedType*/ tapeType, type_args, volatile_args, aug);
+      break;
+    }
     case DerivativeMode::ReverseModeCombined:
       assert(freeMemory);
       newFunc = Logic.CreatePrimalAndGradient(
@@ -845,12 +905,12 @@ public:
     case DerivativeMode::ReverseModePrimal:
     case DerivativeMode::ReverseModeGradient: {
       bool forceAnonymousTape = !sizeOnly && allocatedTapeSize == -1;
-      bool returnUsed = !cast<Function>(fn)->getReturnType()->isVoidTy() &&
-                        !cast<Function>(fn)->getReturnType()->isEmptyTy();
+      bool shadowReturnUsed = returnUsed && (retType == DIFFE_TYPE::DUP_ARG ||
+                                             retType == DIFFE_TYPE::DUP_NONEED);
       aug = &Logic.CreateAugmentedPrimal(
-          cast<Function>(fn), retType, constants, TA,
-          /*returnUsed*/ returnUsed, type_args, volatile_args,
-          forceAnonymousTape, /*atomicAdd*/ AtomicAdd);
+          cast<Function>(fn), retType, constants, TA, returnUsed,
+          shadowReturnUsed, type_args, volatile_args, forceAnonymousTape,
+          /*atomicAdd*/ AtomicAdd);
       auto &DL = cast<Function>(fn)->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
         assert(!aug->tapeType);
@@ -922,7 +982,9 @@ public:
       }
     }
 
-    if (mode == DerivativeMode::ReverseModeGradient && tape && tapeType) {
+    if ((mode == DerivativeMode::ReverseModeGradient ||
+         mode == DerivativeMode::ForwardModeSplit) &&
+        tape && tapeType) {
       auto &DL = cast<Function>(fn)->getParent()->getDataLayout();
       if (tapeIsPointer) {
         tape = Builder.CreateBitCast(
@@ -1099,7 +1161,7 @@ public:
           for (unsigned int i = 0; i < st->getNumElements(); i++) {
 #if LLVM_VERSION_MAJOR > 7
             Value *sgep = Builder.CreateStructGEP(
-                cast<PointerType>(sret->getType())->getElementType(), sret, i);
+                sret->getType()->getPointerElementType(), sret, i);
 #else
             Value *sgep = Builder.CreateStructGEP(sret, i);
 #endif
@@ -1231,6 +1293,7 @@ public:
               Fn->getName().contains("__enzyme_call_inactive") ||
               Fn->getName().contains("__enzyme_autodiff") ||
               Fn->getName().contains("__enzyme_fwddiff") ||
+              Fn->getName().contains("__enzyme_fwdsplit") ||
               Fn->getName().contains("__enzyme_augmentfwd") ||
               Fn->getName().contains("__enzyme_augmentsize") ||
               Fn->getName().contains("__enzyme_reverse")))
@@ -1358,6 +1421,8 @@ public:
         }
         if ((Fn->getName() == "cblas_ddot" || Fn->getName() == "cblas_sdot") &&
             Fn->isDeclaration()) {
+          Fn->addFnAttr(Attribute::ReadOnly);
+          Fn->addFnAttr(Attribute::ArgMemOnly);
           CI->addParamAttr(1, Attribute::ReadOnly);
           CI->addParamAttr(1, Attribute::NoCapture);
           CI->addParamAttr(3, Attribute::ReadOnly);
@@ -1486,6 +1551,9 @@ public:
         } else if (Fn->getName().contains("__enzyme_fwddiff")) {
           enableEnzyme = true;
           mode = DerivativeMode::ForwardMode;
+        } else if (Fn->getName().contains("__enzyme_fwdsplit")) {
+          enableEnzyme = true;
+          mode = DerivativeMode::ForwardModeSplit;
         } else if (Fn->getName().contains("__enzyme_augmentfwd")) {
           enableEnzyme = true;
           mode = DerivativeMode::ReverseModePrimal;
@@ -1681,6 +1749,8 @@ public:
         "__enzyme_register_gradient";
     constexpr static const char derivative_handler_name[] =
         "__enzyme_register_derivative";
+    constexpr static const char splitderivative_handler_name[] =
+        "__enzyme_register_splitderivative";
 
     Logic.clear();
 
@@ -1688,10 +1758,17 @@ public:
     std::vector<GlobalVariable *> globalsToErase;
     for (GlobalVariable &g : M.globals()) {
       if (g.getName().contains(gradient_handler_name)) {
-        handleCustomDerivative<gradient_handler_name, 3>(M, g, globalsToErase);
+        handleCustomDerivative<gradient_handler_name,
+                               DerivativeMode::ReverseModeGradient, 3>(
+            M, g, globalsToErase);
       } else if (g.getName().contains(derivative_handler_name)) {
-        handleCustomDerivative<derivative_handler_name, 2>(M, g,
-                                                           globalsToErase);
+        handleCustomDerivative<derivative_handler_name,
+                               DerivativeMode::ForwardMode, 2>(M, g,
+                                                               globalsToErase);
+      } else if (g.getName().contains(splitderivative_handler_name)) {
+        handleCustomDerivative<splitderivative_handler_name,
+                               DerivativeMode::ForwardModeSplit, 3>(
+            M, g, globalsToErase);
       } else if (g.getName().contains("__enzyme_inactivefn")) {
         handleInactiveFunction(M, g, globalsToErase);
       }
@@ -1819,22 +1896,19 @@ public:
       I->eraseFromParent();
       changed = true;
     }
+    Logic.clear();
 
     if (changed && Logic.PostOpt) {
-      auto &MAM = Logic.PPC.MAM;
-      auto &FAM = Logic.PPC.FAM;
       PassBuilder PB;
-      PB.registerModuleAnalyses(MAM);
-      CGSCCAnalysisManager CGAM;
       LoopAnalysisManager LAM;
+      FunctionAnalysisManager FAM;
+      CGSCCAnalysisManager CGAM;
+      ModuleAnalysisManager MAM;
+      PB.registerModuleAnalyses(MAM);
       PB.registerFunctionAnalyses(FAM);
       PB.registerLoopAnalyses(LAM);
       PB.registerCGSCCAnalyses(CGAM);
-      FAM.registerPass([&] { return CGSCCAnalysisManagerFunctionProxy(CGAM); });
-      FAM.registerPass([&] { return LoopAnalysisManagerFunctionProxy(LAM); });
-      LAM.registerPass([&] { return FunctionAnalysisManagerLoopProxy(FAM); });
-      MAM.registerPass([&] { return CGSCCAnalysisManagerModuleProxy(CGAM); });
-      CGAM.registerPass([&] { return ModuleAnalysisManagerCGSCCProxy(MAM); });
+      PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
 #if LLVM_VERSION_MAJOR >= 14
       auto PM = PB.buildModuleSimplificationPipeline(OptimizationLevel::O2,
                                                      ThinOrFullLTOPhase::None);
@@ -1857,7 +1931,6 @@ public:
       }
 #endif
     }
-    Logic.clear();
     return changed;
   }
 };
