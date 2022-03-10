@@ -7,7 +7,7 @@ authors = [
 	"Manuel Drehwald",
 	"Lorenz Schmidt"
 ]
-repository = "https://github.com/rust-ml/enzyme_build"
+repository = "https://github.com/EnzymeAD/Enzyme"
 keywords = ["enzyme", "auto-diff", "llvm", "machine-learning", "scientific-computing"]
 categories = ["development-tools::cargo-plugins", "mathematics", "science", "simulation"]
 readme = "README.md"
