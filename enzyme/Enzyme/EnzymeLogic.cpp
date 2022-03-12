@@ -240,6 +240,9 @@ struct CacheAnalysis {
         if (PT->getAddressSpace() == 13)
           return false;
 
+    if (li.hasMetadata(LLVMContext::MD_invariant_load))
+      return false;
+
     // Find the underlying object for the pointer operand of the load
     // instruction.
     auto obj =
