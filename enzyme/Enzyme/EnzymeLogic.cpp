@@ -393,7 +393,7 @@ struct CacheAnalysis {
       return {};
     }
 
-    if (isCertainPrintMallocOrFree(Fn)) {
+    if (isCertainPrintMallocOrFree(Fn) || isAllocationFunction(*Fn, TLI)) {
       return {};
     }
 
