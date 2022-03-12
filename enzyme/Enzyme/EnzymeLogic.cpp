@@ -140,6 +140,8 @@ struct CacheAnalysis {
       return false;
     } else if (isa<UndefValue>(obj) || isa<ConstantPointerNull>(obj)) {
       return false;
+    } else if (AA.pointsToConstantMemory(obj)) {
+      return seen[obj] = false;
     } else if (auto arg = dyn_cast<Argument>(obj)) {
       auto found = uncacheable_args.find(arg);
       if (found == uncacheable_args.end()) {
