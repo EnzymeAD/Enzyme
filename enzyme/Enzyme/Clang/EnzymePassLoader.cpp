@@ -1,4 +1,5 @@
-//===- EnzymeClang.cpp - Automatic Differentiation Transformation Pass ----===//
+//===- EnzymePassLoader.cpp - Automatic Differentiation Transformation
+// Pass---===//
 //
 //                             Enzyme Project
 //
