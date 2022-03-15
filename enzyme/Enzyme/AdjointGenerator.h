@@ -3964,36 +3964,31 @@ public:
   void visitOMPCall(llvm::CallInst &call) {
     Function *kmpc = call.getCalledFunction();
 
-    if (uncacheable_args_map.find(&call) == uncacheable_args_map.end()) {
+    if (Mode != DerivativeMode::ForwardMode &&
+        uncacheable_args_map.find(&call) == uncacheable_args_map.end()) {
       llvm::errs() << " call: " << call << "\n";
       for (auto &pair : uncacheable_args_map) {
         llvm::errs() << " + " << *pair.first << "\n";
       }
     }
 
-    assert(uncacheable_args_map.find(&call) != uncacheable_args_map.end());
+    assert(Mode == DerivativeMode::ForwardMode ||
+           uncacheable_args_map.find(&call) != uncacheable_args_map.end());
     const std::map<Argument *, bool> &uncacheable_args =
         uncacheable_args_map.find(&call)->second;
 
-    IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
-    BuilderZ.setFastMathFlags(getFast());
+    IRBuilder<> ForwardBuilder(&call);
+    getForwardBuilder(ForwardBuilder);
 
     Function *task = dyn_cast<Function>(call.getArgOperand(2));
     if (task == nullptr && isa<ConstantExpr>(call.getArgOperand(2))) {
       task = dyn_cast<Function>(
           cast<ConstantExpr>(call.getArgOperand(2))->getOperand(0));
     }
-    if (task == nullptr) {
+    if (task == nullptr || task->empty()) {
       llvm::errs() << "could not derive underlying task from omp call: " << call
                    << "\n";
       llvm_unreachable("could not derive underlying task from omp call");
-    }
-    if (task->empty()) {
-      llvm::errs()
-          << "could not derive underlying task contents from omp call: " << call
-          << "\n";
-      llvm_unreachable(
-          "could not derive underlying task contents from omp call");
     }
 
     auto called = task;
@@ -4022,10 +4017,14 @@ public:
 
       pre_args.push_back(argi);
 
-      if (Mode != DerivativeMode::ReverseModePrimal) {
-        IRBuilder<> Builder2(call.getParent());
-        getReverseBuilder(Builder2);
-        args.push_back(lookup(argi, Builder2));
+      if (Mode == DerivativeMode::ReverseModeGradient ||
+          Mode == DerivativeMode::ReverseModeCombined) {
+        IRBuilder<> ReverseBuilder(call.getParent());
+        getReverseBuilder(ReverseBuilder);
+        args.push_back(lookup(argi, ReverseBuilder));
+      } else if (Mode == DerivativeMode::ForwardMode ||
+                 Mode == DerivativeMode::ForwardModeSplit) {
+        args.push_back(argi);
       }
 
       if (gutils->isConstantValue(call.getArgOperand(i)) && !foreignFunction) {
@@ -4055,14 +4054,27 @@ public:
         argsInverted.push_back(ty);
 
         if (Mode != DerivativeMode::ReverseModePrimal) {
-          IRBuilder<> Builder2(call.getParent());
-          getReverseBuilder(Builder2);
-          args.push_back(
-              lookup(gutils->invertPointerM(call.getArgOperand(i), Builder2),
-                     Builder2));
+          Value *ip;
+          if (Mode == DerivativeMode::ReverseModeCombined ||
+              Mode == DerivativeMode::ReverseModeGradient) {
+            IRBuilder<> ReverseBuilder(call.getParent());
+            getReverseBuilder(ReverseBuilder);
+            ip = gutils->invertPointerM(call.getArgOperand(i), ReverseBuilder);
+            ip = lookup(ip, ReverseBuilder);
+          } else {
+            ip = gutils->invertPointerM(call.getArgOperand(i), ForwardBuilder);
+          }
+          args.push_back(ip);
         }
-        pre_args.push_back(
-            gutils->invertPointerM(call.getArgOperand(i), BuilderZ));
+
+        Value *ip =
+            gutils->invertPointerM(call.getArgOperand(i), ForwardBuilder);
+        if (Mode == DerivativeMode::ReverseModePrimal ||
+            Mode == DerivativeMode::ReverseModeCombined ||
+            Mode == DerivativeMode::ReverseModeGradient)
+          ip = lookup(ip, ForwardBuilder);
+
+        pre_args.push_back(ip);
 
         // Note sometimes whattype mistakenly says something should be constant
         // [because composed of integer pointers alone]
@@ -4132,482 +4144,503 @@ public:
       }
     }
 
+    if (!called) {
+      llvm_unreachable("unhandled unknown outline");
+    }
+
     if (Mode == DerivativeMode::ReverseModePrimal ||
         Mode == DerivativeMode::ReverseModeCombined) {
-      if (called) {
-        subdata = &gutils->Logic.CreateAugmentedPrimal(
-            cast<Function>(called), subretType, argsInverted,
-            TR.analyzer.interprocedural, /*return is used*/ false,
-            /*shadowReturnUsed*/ false, nextTypeInfo, uncacheable_args, false,
-            /*AtomicAdd*/ true,
-            /*OpenMP*/ true);
-        if (Mode == DerivativeMode::ReverseModePrimal) {
-          assert(augmentedReturn);
-          auto subaugmentations =
-              (std::map<const llvm::CallInst *, AugmentedReturn *>
-                   *)&augmentedReturn->subaugmentations;
-          insert_or_assign2<const llvm::CallInst *, AugmentedReturn *>(
-              *subaugmentations, &call, (AugmentedReturn *)subdata);
-        }
-
-        assert(subdata);
-        auto newcalled = subdata->fn;
-
-        if (subdata->returns.find(AugmentedStruct::Tape) !=
-            subdata->returns.end()) {
-          ValueToValueMapTy VMap;
-          newcalled = CloneFunction(newcalled, VMap);
-          auto tapeArg = newcalled->arg_end();
-          tapeArg--;
-          std::vector<std::pair<ssize_t, Value *>> geps;
-          SmallPtrSet<Instruction *, 4> gepsToErase;
-          for (auto a : tapeArg->users()) {
-            if (auto gep = dyn_cast<GetElementPtrInst>(a)) {
-              auto idx = gep->idx_begin();
-              idx++;
-              auto cidx = cast<ConstantInt>(idx->get());
-              assert(gep->getNumIndices() == 2);
-              SmallPtrSet<StoreInst *, 1> storesToErase;
-              for (auto st : gep->users()) {
-                auto SI = cast<StoreInst>(st);
-                Value *op = SI->getValueOperand();
-                storesToErase.insert(SI);
-                geps.emplace_back(cidx->getLimitedValue(), op);
-              }
-              for (auto SI : storesToErase)
-                SI->eraseFromParent();
-              gepsToErase.insert(gep);
-            } else if (auto SI = dyn_cast<StoreInst>(a)) {
-              Value *op = SI->getValueOperand();
-              gepsToErase.insert(SI);
-              geps.emplace_back(-1, op);
-            } else {
-              llvm::errs() << "unknown tape user: " << a << "\n";
-              assert(0 && "unknown tape user");
-              llvm_unreachable("unknown tape user");
-            }
-          }
-          for (auto gep : gepsToErase)
-            gep->eraseFromParent();
-          IRBuilder<> ph(&*newcalled->getEntryBlock().begin());
-          tape = UndefValue::get(tapeArg->getType()->getPointerElementType());
-          ValueToValueMapTy available;
-          auto subarg = newcalled->arg_begin();
-          subarg++;
-          subarg++;
-          for (size_t i = 3; i < pre_args.size(); ++i) {
-            available[&*subarg] = pre_args[i];
-            subarg++;
-          }
-          for (auto pair : geps) {
-            Value *op = pair.second;
-            Value *alloc = op;
-            Value *replacement = gutils->unwrapM(op, BuilderZ, available,
-                                                 UnwrapMode::LegalFullUnwrap);
-            tape =
-                pair.first == -1
-                    ? replacement
-                    : BuilderZ.CreateInsertValue(tape, replacement, pair.first);
-            if (auto ci = dyn_cast<CastInst>(alloc)) {
-              alloc = ci->getOperand(0);
-            }
-            if (auto uload = dyn_cast<Instruction>(replacement)) {
-              gutils->unwrappedLoads.erase(uload);
-              if (auto ci = dyn_cast<CastInst>(replacement)) {
-                if (auto ucast = dyn_cast<Instruction>(ci->getOperand(0)))
-                  gutils->unwrappedLoads.erase(ucast);
-              }
-            }
-            if (auto ci = dyn_cast<CallInst>(alloc)) {
-              if (auto F = ci->getCalledFunction()) {
-                // Store cached values
-                if (F->getName() == "malloc") {
-                  const_cast<AugmentedReturn *>(subdata)
-                      ->tapeIndiciesToFree.emplace(pair.first);
-                  Value *Idxs[] = {
-                      ConstantInt::get(Type::getInt64Ty(tapeArg->getContext()),
-                                       0),
-                      ConstantInt::get(Type::getInt32Ty(tapeArg->getContext()),
-                                       pair.first)};
-#if LLVM_VERSION_MAJOR > 7
-                  op->replaceAllUsesWith(ph.CreateLoad(
-                      op->getType(),
-                      pair.first == -1
-                          ? tapeArg
-                          : ph.CreateInBoundsGEP(
-                                tapeArg->getType()->getPointerElementType(),
-                                tapeArg, Idxs)));
-#else
-                  op->replaceAllUsesWith(ph.CreateLoad(
-                      pair.first == -1 ? tapeArg
-                                       : ph.CreateInBoundsGEP(tapeArg, Idxs)));
-#endif
-                  cast<Instruction>(op)->eraseFromParent();
-                  if (op != alloc)
-                    ci->eraseFromParent();
-                  continue;
-                }
-              }
-            }
-            Value *Idxs[] = {
-                ConstantInt::get(Type::getInt64Ty(tapeArg->getContext()), 0),
-                ConstantInt::get(Type::getInt32Ty(tapeArg->getContext()),
-                                 pair.first)};
-#if LLVM_VERSION_MAJOR > 7
-            op->replaceAllUsesWith(ph.CreateLoad(
-                op->getType(),
-                pair.first == -1
-                    ? tapeArg
-                    : ph.CreateInBoundsGEP(
-                          tapeArg->getType()->getPointerElementType(), tapeArg,
-                          Idxs)));
-#else
-            op->replaceAllUsesWith(ph.CreateLoad(
-                pair.first == -1 ? tapeArg
-                                 : ph.CreateInBoundsGEP(tapeArg, Idxs)));
-#endif
-            cast<Instruction>(op)->eraseFromParent();
-          }
-          assert(tape);
-          auto alloc =
-              IRBuilder<>(gutils->inversionAllocs)
-                  .CreateAlloca(tapeArg->getType()->getPointerElementType());
-          BuilderZ.CreateStore(tape, alloc);
-          pre_args.push_back(alloc);
-          assert(tape);
-          gutils->cacheForReverse(BuilderZ, tape,
-                                  getIndex(&call, CacheType::Tape));
-        }
-
-        auto numargs = ConstantInt::get(Type::getInt32Ty(call.getContext()),
-                                        pre_args.size() - 3);
-        pre_args[0] = gutils->getNewFromOriginal(call.getArgOperand(0));
-        pre_args[1] = numargs;
-        pre_args[2] = BuilderZ.CreatePointerCast(
-            newcalled, kmpc->getFunctionType()->getParamType(2));
-        augmentcall =
-            BuilderZ.CreateCall(kmpc->getFunctionType(), kmpc, pre_args);
-        augmentcall->setCallingConv(call.getCallingConv());
-        augmentcall->setDebugLoc(
-            gutils->getNewFromOriginal(call.getDebugLoc()));
-        BuilderZ.SetInsertPoint(
-            gutils->getNewFromOriginal(&call)->getNextNode());
-        gutils->getNewFromOriginal(&call)->eraseFromParent();
-      } else {
-        assert(0 && "unhandled unknown outline");
+      subdata = &gutils->Logic.CreateAugmentedPrimal(
+          cast<Function>(called), subretType, argsInverted,
+          TR.analyzer.interprocedural, /*return is used*/ false,
+          /*shadowReturnUsed*/ false, nextTypeInfo, uncacheable_args, false,
+          /*AtomicAdd*/ true,
+          /*OpenMP*/ true);
+      if (Mode == DerivativeMode::ReverseModePrimal) {
+        assert(augmentedReturn);
+        auto subaugmentations =
+            (std::map<const llvm::CallInst *, AugmentedReturn *>
+                 *)&augmentedReturn->subaugmentations;
+        insert_or_assign2<const llvm::CallInst *, AugmentedReturn *>(
+            *subaugmentations, &call, (AugmentedReturn *)subdata);
       }
+
+      assert(subdata);
+      auto newcalled = subdata->fn;
+
+      if (subdata->returns.find(AugmentedStruct::Tape) !=
+          subdata->returns.end()) {
+        ValueToValueMapTy VMap;
+        newcalled = CloneFunction(newcalled, VMap);
+        auto tapeArg = newcalled->arg_end();
+        tapeArg--;
+        std::vector<std::pair<ssize_t, Value *>> geps;
+        SmallPtrSet<Instruction *, 4> gepsToErase;
+        for (auto a : tapeArg->users()) {
+          if (auto gep = dyn_cast<GetElementPtrInst>(a)) {
+            auto idx = gep->idx_begin();
+            idx++;
+            auto cidx = cast<ConstantInt>(idx->get());
+            assert(gep->getNumIndices() == 2);
+            SmallPtrSet<StoreInst *, 1> storesToErase;
+            for (auto st : gep->users()) {
+              auto SI = cast<StoreInst>(st);
+              Value *op = SI->getValueOperand();
+              storesToErase.insert(SI);
+              geps.emplace_back(cidx->getLimitedValue(), op);
+            }
+            for (auto SI : storesToErase)
+              SI->eraseFromParent();
+            gepsToErase.insert(gep);
+          } else if (auto SI = dyn_cast<StoreInst>(a)) {
+            Value *op = SI->getValueOperand();
+            gepsToErase.insert(SI);
+            geps.emplace_back(-1, op);
+          } else {
+            llvm::errs() << "unknown tape user: " << a << "\n";
+            assert(0 && "unknown tape user");
+            llvm_unreachable("unknown tape user");
+          }
+        }
+        for (auto gep : gepsToErase)
+          gep->eraseFromParent();
+        IRBuilder<> ph(&*newcalled->getEntryBlock().begin());
+        tape = UndefValue::get(tapeArg->getType()->getPointerElementType());
+        ValueToValueMapTy available;
+        auto subarg = newcalled->arg_begin();
+        subarg++;
+        subarg++;
+        for (size_t i = 3; i < pre_args.size(); ++i) {
+          available[&*subarg] = pre_args[i];
+          subarg++;
+        }
+        for (auto pair : geps) {
+          Value *op = pair.second;
+          Value *alloc = op;
+          Value *replacement = gutils->unwrapM(op, ForwardBuilder, available,
+                                               UnwrapMode::LegalFullUnwrap);
+          tape = pair.first == -1 ? replacement
+                                  : ForwardBuilder.CreateInsertValue(
+                                        tape, replacement, pair.first);
+          if (auto ci = dyn_cast<CastInst>(alloc)) {
+            alloc = ci->getOperand(0);
+          }
+          if (auto uload = dyn_cast<Instruction>(replacement)) {
+            gutils->unwrappedLoads.erase(uload);
+            if (auto ci = dyn_cast<CastInst>(replacement)) {
+              if (auto ucast = dyn_cast<Instruction>(ci->getOperand(0)))
+                gutils->unwrappedLoads.erase(ucast);
+            }
+          }
+          if (auto ci = dyn_cast<CallInst>(alloc)) {
+            if (auto F = ci->getCalledFunction()) {
+              // Store cached values
+              if (F->getName() == "malloc") {
+                const_cast<AugmentedReturn *>(subdata)
+                    ->tapeIndiciesToFree.emplace(pair.first);
+                Value *Idxs[] = {
+                    ConstantInt::get(Type::getInt64Ty(tapeArg->getContext()),
+                                     0),
+                    ConstantInt::get(Type::getInt32Ty(tapeArg->getContext()),
+                                     pair.first)};
+#if LLVM_VERSION_MAJOR > 7
+                op->replaceAllUsesWith(ph.CreateLoad(
+                    op->getType(),
+                    pair.first == -1
+                        ? tapeArg
+                        : ph.CreateInBoundsGEP(
+                              tapeArg->getType()->getPointerElementType(),
+                              tapeArg, Idxs)));
+#else
+                op->replaceAllUsesWith(ph.CreateLoad(
+                    pair.first == -1 ? tapeArg
+                                     : ph.CreateInBoundsGEP(tapeArg, Idxs)));
+#endif
+                cast<Instruction>(op)->eraseFromParent();
+                if (op != alloc)
+                  ci->eraseFromParent();
+                continue;
+              }
+            }
+          }
+          Value *Idxs[] = {
+              ConstantInt::get(Type::getInt64Ty(tapeArg->getContext()), 0),
+              ConstantInt::get(Type::getInt32Ty(tapeArg->getContext()),
+                               pair.first)};
+#if LLVM_VERSION_MAJOR > 7
+          op->replaceAllUsesWith(ph.CreateLoad(
+              op->getType(),
+              pair.first == -1
+                  ? tapeArg
+                  : ph.CreateInBoundsGEP(
+                        tapeArg->getType()->getPointerElementType(), tapeArg,
+                        Idxs)));
+#else
+          op->replaceAllUsesWith(ph.CreateLoad(
+              pair.first == -1 ? tapeArg
+                               : ph.CreateInBoundsGEP(tapeArg, Idxs)));
+#endif
+          cast<Instruction>(op)->eraseFromParent();
+        }
+        assert(tape);
+        auto alloc =
+            IRBuilder<>(gutils->inversionAllocs)
+                .CreateAlloca(tapeArg->getType()->getPointerElementType());
+        ForwardBuilder.CreateStore(tape, alloc);
+        pre_args.push_back(alloc);
+        assert(tape);
+        gutils->cacheForReverse(ForwardBuilder, tape,
+                                getIndex(&call, CacheType::Tape));
+      }
+
+      auto numargs = ConstantInt::get(Type::getInt32Ty(call.getContext()),
+                                      pre_args.size() - 3);
+      pre_args[0] = gutils->getNewFromOriginal(call.getArgOperand(0));
+      pre_args[1] = numargs;
+      pre_args[2] = ForwardBuilder.CreatePointerCast(
+          newcalled, kmpc->getFunctionType()->getParamType(2));
+      augmentcall =
+          ForwardBuilder.CreateCall(kmpc->getFunctionType(), kmpc, pre_args);
+      augmentcall->setCallingConv(call.getCallingConv());
+      augmentcall->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
+      ForwardBuilder.SetInsertPoint(
+          gutils->getNewFromOriginal(&call)->getNextNode());
+      gutils->getNewFromOriginal(&call)->eraseFromParent();
     }
 
-    if (!subdata) {
-      llvm::errs() << *gutils->oldFunc->getParent() << "\n";
-      llvm::errs() << *gutils->oldFunc << "\n";
-      llvm::errs() << *gutils->newFunc << "\n";
-      llvm::errs() << *called << "\n";
-      llvm_unreachable("no subdata");
+    if (Mode == DerivativeMode::ReverseModePrimal)
+      return;
+
+    Function *newcalled = nullptr;
+
+    if (Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeSplit) {
+
+      newcalled = gutils->Logic.CreateForwardDiff(
+          cast<Function>(called), subretType, argsInverted,
+          TR.analyzer.interprocedural, false, Mode,
+          ((DiffeGradientUtils *)gutils)->FreeMemory, gutils->getWidth(),
+          tape ? PointerType::getUnqual(tape->getType()) : nullptr,
+          nextTypeInfo, {}, subdata, /*OpenMP*/ true);
+
+      auto numargs = ConstantInt::get(Type::getInt32Ty(call.getContext()),
+                                      args.size() - 3);
+      args[0] = gutils->getNewFromOriginal(call.getArgOperand(0));
+      args[1] = numargs;
+      args[2] = ForwardBuilder.CreatePointerCast(
+          newcalled, kmpc->getFunctionType()->getParamType(2));
+
+      CallInst *diffes =
+          ForwardBuilder.CreateCall(kmpc->getFunctionType(), kmpc, args);
+      diffes->setCallingConv(call.getCallingConv());
+      diffes->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
+
+      eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+      return;
     }
-
-    auto found = subdata->returns.find(AugmentedStruct::DifferentialReturn);
-    assert(found == subdata->returns.end());
-
-    found = subdata->returns.find(AugmentedStruct::Return);
-    assert(found == subdata->returns.end());
 
     if (Mode == DerivativeMode::ReverseModeGradient ||
         Mode == DerivativeMode::ReverseModeCombined) {
-      IRBuilder<> Builder2(call.getParent());
-      getReverseBuilder(Builder2);
+      IRBuilder<> ReverseBuilder(call.getParent());
+      getReverseBuilder(ReverseBuilder);
+
+      if (!subdata) {
+        llvm::errs() << *gutils->oldFunc->getParent() << "\n";
+        llvm::errs() << *gutils->oldFunc << "\n";
+        llvm::errs() << *gutils->newFunc << "\n";
+        llvm::errs() << *called << "\n";
+        llvm_unreachable("no subdata");
+      }
+
+      auto found = subdata->returns.find(AugmentedStruct::DifferentialReturn);
+      assert(found == subdata->returns.end());
+
+      found = subdata->returns.find(AugmentedStruct::Return);
+      assert(found == subdata->returns.end());
 
       if (Mode == DerivativeMode::ReverseModeGradient) {
-        BuilderZ.SetInsertPoint(
+        ForwardBuilder.SetInsertPoint(
             gutils->getNewFromOriginal(&call)->getNextNode());
         eraseIfUnused(call, /*erase*/ true, /*check*/ false);
       }
 
-      Function *newcalled = nullptr;
-      if (called) {
-        if (subdata->returns.find(AugmentedStruct::Tape) !=
-            subdata->returns.end()) {
-          if (Mode == DerivativeMode::ReverseModeGradient) {
-            if (tape == nullptr)
-              tape = BuilderZ.CreatePHI(subdata->tapeType, 0, "tapeArg");
-            tape = gutils->cacheForReverse(BuilderZ, tape,
-                                           getIndex(&call, CacheType::Tape));
-          }
-          tape = lookup(tape, Builder2);
-          auto alloc = IRBuilder<>(gutils->inversionAllocs)
-                           .CreateAlloca(tape->getType());
-          Builder2.CreateStore(tape, alloc);
-          args.push_back(alloc);
+      if (subdata->returns.find(AugmentedStruct::Tape) !=
+          subdata->returns.end()) {
+        if (Mode == DerivativeMode::ReverseModeGradient) {
+          if (tape == nullptr)
+            tape = ForwardBuilder.CreatePHI(subdata->tapeType, 0, "tapeArg");
+          tape = gutils->cacheForReverse(ForwardBuilder, tape,
+                                         getIndex(&call, CacheType::Tape));
         }
+        tape = lookup(tape, ReverseBuilder);
+        auto alloc =
+            IRBuilder<>(gutils->inversionAllocs).CreateAlloca(tape->getType());
+        ReverseBuilder.CreateStore(tape, alloc);
+        args.push_back(alloc);
+      }
 
-        newcalled = gutils->Logic.CreatePrimalAndGradient(
-            (ReverseCacheKey){.todiff = cast<Function>(called),
-                              .retType = subretType,
-                              .constant_args = argsInverted,
-                              .uncacheable_args = uncacheable_args,
-                              .returnUsed = false,
-                              .shadowReturnUsed = false,
-                              .mode = DerivativeMode::ReverseModeGradient,
-                              .width = gutils->getWidth(),
-                              .freeMemory = true,
-                              .AtomicAdd = true,
-                              .additionalType =
-                                  tape ? PointerType::getUnqual(tape->getType())
-                                       : nullptr,
-                              .typeInfo = nextTypeInfo},
-            TR.analyzer.interprocedural, subdata,
-            /*omp*/ true);
+      newcalled = gutils->Logic.CreatePrimalAndGradient(
+          (ReverseCacheKey){.todiff = cast<Function>(called),
+                            .retType = subretType,
+                            .constant_args = argsInverted,
+                            .uncacheable_args = uncacheable_args,
+                            .returnUsed = false,
+                            .shadowReturnUsed = false,
+                            .mode = DerivativeMode::ReverseModeGradient,
+                            .width = gutils->getWidth(),
+                            .freeMemory = true,
+                            .AtomicAdd = true,
+                            .additionalType =
+                                tape ? PointerType::getUnqual(tape->getType())
+                                     : nullptr,
+                            .typeInfo = nextTypeInfo},
+          TR.analyzer.interprocedural, subdata,
+          /*omp*/ true);
 
-        if (subdata->returns.find(AugmentedStruct::Tape) !=
-            subdata->returns.end()) {
-          auto tapeArg = newcalled->arg_end();
-          tapeArg--;
-          LoadInst *tape = nullptr;
-          for (auto u : tapeArg->users()) {
-            assert(!tape);
-            if (!isa<LoadInst>(u)) {
-              llvm::errs() << " newcalled: " << *newcalled << "\n";
-              llvm::errs() << " u: " << *u << "\n";
-            }
-            tape = cast<LoadInst>(u);
+      if (subdata->returns.find(AugmentedStruct::Tape) !=
+          subdata->returns.end()) {
+        auto tapeArg = newcalled->arg_end();
+        tapeArg--;
+        LoadInst *tape = nullptr;
+        for (auto u : tapeArg->users()) {
+          assert(!tape);
+          if (!isa<LoadInst>(u)) {
+            llvm::errs() << " newcalled: " << *newcalled << "\n";
+            llvm::errs() << " u: " << *u << "\n";
           }
-          assert(tape);
-          std::vector<Value *> extracts;
-          if (subdata->tapeIndices.size() == 1) {
-            assert(subdata->tapeIndices.begin()->second == -1);
-            extracts.push_back(tape);
-          } else {
-            for (auto a : tape->users()) {
-              extracts.push_back(a);
+          tape = cast<LoadInst>(u);
+        }
+        assert(tape);
+        std::vector<Value *> extracts;
+        if (subdata->tapeIndices.size() == 1) {
+          assert(subdata->tapeIndices.begin()->second == -1);
+          extracts.push_back(tape);
+        } else {
+          for (auto a : tape->users()) {
+            extracts.push_back(a);
+          }
+        }
+        std::vector<LoadInst *> geps;
+        for (auto E : extracts) {
+          AllocaInst *AI = nullptr;
+          for (auto U : E->users()) {
+            if (auto SI = dyn_cast<StoreInst>(U)) {
+              assert(SI->getValueOperand() == E);
+              AI = cast<AllocaInst>(SI->getPointerOperand());
             }
           }
-          std::vector<LoadInst *> geps;
-          for (auto E : extracts) {
-            AllocaInst *AI = nullptr;
-            for (auto U : E->users()) {
-              if (auto SI = dyn_cast<StoreInst>(U)) {
-                assert(SI->getValueOperand() == E);
-                AI = cast<AllocaInst>(SI->getPointerOperand());
+          if (AI) {
+            for (auto U : AI->users()) {
+              if (auto LI = dyn_cast<LoadInst>(U)) {
+                geps.push_back(LI);
               }
             }
-            if (AI) {
-              for (auto U : AI->users()) {
-                if (auto LI = dyn_cast<LoadInst>(U)) {
-                  geps.push_back(LI);
+          }
+        }
+        size_t freeCount = 0;
+        for (auto LI : geps) {
+          CallInst *freeCall = nullptr;
+          for (auto LU : LI->users()) {
+            if (auto CI = dyn_cast<CallInst>(LU)) {
+              if (auto F = CI->getCalledFunction()) {
+                if (F->getName() == "free") {
+                  freeCall = CI;
+                  break;
                 }
               }
-            }
-          }
-          size_t freeCount = 0;
-          for (auto LI : geps) {
-            CallInst *freeCall = nullptr;
-            for (auto LU : LI->users()) {
-              if (auto CI = dyn_cast<CallInst>(LU)) {
-                if (auto F = CI->getCalledFunction()) {
-                  if (F->getName() == "free") {
-                    freeCall = CI;
-                    break;
-                  }
-                }
-              } else if (auto BC = dyn_cast<CastInst>(LU)) {
-                for (auto CU : BC->users()) {
-                  if (auto CI = dyn_cast<CallInst>(CU)) {
-                    if (auto F = CI->getCalledFunction()) {
-                      if (F->getName() == "free") {
-                        freeCall = CI;
-                        break;
-                      }
+            } else if (auto BC = dyn_cast<CastInst>(LU)) {
+              for (auto CU : BC->users()) {
+                if (auto CI = dyn_cast<CallInst>(CU)) {
+                  if (auto F = CI->getCalledFunction()) {
+                    if (F->getName() == "free") {
+                      freeCall = CI;
+                      break;
                     }
                   }
                 }
-                if (freeCall)
-                  break;
               }
+              if (freeCall)
+                break;
             }
-            if (freeCall) {
-              freeCall->eraseFromParent();
-              freeCount++;
-            }
+          }
+          if (freeCall) {
+            freeCall->eraseFromParent();
+            freeCount++;
           }
         }
+      }
 
-        Value *OutAlloc = nullptr;
-        auto ST = StructType::get(newcalled->getContext(), OutFPTypes);
-        if (OutTypes.size()) {
-          OutAlloc = IRBuilder<>(gutils->inversionAllocs).CreateAlloca(ST);
-          args.push_back(OutAlloc);
+      Value *OutAlloc = nullptr;
+      auto ST = StructType::get(newcalled->getContext(), OutFPTypes);
+      if (OutTypes.size()) {
+        OutAlloc = IRBuilder<>(gutils->inversionAllocs).CreateAlloca(ST);
+        args.push_back(OutAlloc);
 
-          SmallVector<Type *, 3> MetaTypes;
-          for (auto P :
-               cast<Function>(newcalled)->getFunctionType()->params()) {
-            MetaTypes.push_back(P);
-          }
-          MetaTypes.push_back(PointerType::getUnqual(ST));
-          auto FT = FunctionType::get(Type::getVoidTy(newcalled->getContext()),
-                                      MetaTypes, false);
+        SmallVector<Type *, 3> MetaTypes;
+        for (auto P : cast<Function>(newcalled)->getFunctionType()->params()) {
+          MetaTypes.push_back(P);
+        }
+        MetaTypes.push_back(PointerType::getUnqual(ST));
+        auto FT = FunctionType::get(Type::getVoidTy(newcalled->getContext()),
+                                    MetaTypes, false);
 #if LLVM_VERSION_MAJOR >= 10
-          Function *F =
-              Function::Create(FT, GlobalVariable::InternalLinkage,
-                               cast<Function>(newcalled)->getName() + "#out",
-                               *task->getParent());
+        Function *F = Function::Create(
+            FT, GlobalVariable::InternalLinkage,
+            cast<Function>(newcalled)->getName() + "#out", *task->getParent());
 #else
-          Function *F = Function::Create(
-              FT, GlobalVariable::InternalLinkage,
-              cast<Function>(newcalled)->getName() + "#out", task->getParent());
+        Function *F = Function::Create(
+            FT, GlobalVariable::InternalLinkage,
+            cast<Function>(newcalled)->getName() + "#out", task->getParent());
 #endif
-          BasicBlock *entry =
-              BasicBlock::Create(newcalled->getContext(), "entry", F);
-          IRBuilder<> B(entry);
-          SmallVector<Value *, 2> SubArgs;
-          for (auto &arg : F->args())
-            SubArgs.push_back(&arg);
-          Value *cacheArg = SubArgs.back();
-          SubArgs.pop_back();
-          Value *outdiff = B.CreateCall(newcalled, SubArgs);
-          for (size_t ee = 0; ee < OutTypes.size(); ee++) {
-            Value *dif = B.CreateExtractValue(outdiff, ee);
-            Value *Idxs[] = {
-                ConstantInt::get(Type::getInt64Ty(ST->getContext()), 0),
-                ConstantInt::get(Type::getInt32Ty(ST->getContext()), ee)};
+        BasicBlock *entry =
+            BasicBlock::Create(newcalled->getContext(), "entry", F);
+        IRBuilder<> B(entry);
+        SmallVector<Value *, 2> SubArgs;
+        for (auto &arg : F->args())
+          SubArgs.push_back(&arg);
+        Value *cacheArg = SubArgs.back();
+        SubArgs.pop_back();
+        Value *outdiff = B.CreateCall(newcalled, SubArgs);
+        for (size_t ee = 0; ee < OutTypes.size(); ee++) {
+          Value *dif = B.CreateExtractValue(outdiff, ee);
+          Value *Idxs[] = {
+              ConstantInt::get(Type::getInt64Ty(ST->getContext()), 0),
+              ConstantInt::get(Type::getInt32Ty(ST->getContext()), ee)};
 #if LLVM_VERSION_MAJOR > 7
-            Value *ptr = B.CreateInBoundsGEP(
-                cacheArg->getType()->getPointerElementType(), cacheArg, Idxs);
+          Value *ptr = B.CreateInBoundsGEP(
+              cacheArg->getType()->getPointerElementType(), cacheArg, Idxs);
 #else
-            Value *ptr = B.CreateInBoundsGEP(cacheArg, Idxs);
+          Value *ptr = B.CreateInBoundsGEP(cacheArg, Idxs);
 #endif
 
-            if (dif->getType()->isIntOrIntVectorTy()) {
+          if (dif->getType()->isIntOrIntVectorTy()) {
 
-              ptr = B.CreateBitCast(
-                  ptr,
-                  PointerType::get(
-                      IntToFloatTy(dif->getType()),
-                      cast<PointerType>(ptr->getType())->getAddressSpace()));
-              dif = B.CreateBitCast(dif, IntToFloatTy(dif->getType()));
-            }
+            ptr = B.CreateBitCast(
+                ptr, PointerType::get(
+                         IntToFloatTy(dif->getType()),
+                         cast<PointerType>(ptr->getType())->getAddressSpace()));
+            dif = B.CreateBitCast(dif, IntToFloatTy(dif->getType()));
+          }
 
 #if LLVM_VERSION_MAJOR >= 10
-            MaybeAlign align;
+          MaybeAlign align;
 #elif LLVM_VERSION_MAJOR >= 9
-            unsigned align = 0;
+          unsigned align = 0;
 #endif
 
 #if LLVM_VERSION_MAJOR >= 9
-            AtomicRMWInst::BinOp op = AtomicRMWInst::FAdd;
-            if (auto vt = dyn_cast<VectorType>(dif->getType())) {
+          AtomicRMWInst::BinOp op = AtomicRMWInst::FAdd;
+          if (auto vt = dyn_cast<VectorType>(dif->getType())) {
 #if LLVM_VERSION_MAJOR >= 12
-              assert(!vt->getElementCount().isScalable());
-              size_t numElems = vt->getElementCount().getKnownMinValue();
+            assert(!vt->getElementCount().isScalable());
+            size_t numElems = vt->getElementCount().getKnownMinValue();
 #else
-              size_t numElems = vt->getNumElements();
+            size_t numElems = vt->getNumElements();
 #endif
-              for (size_t i = 0; i < numElems; ++i) {
-                auto vdif = B.CreateExtractElement(dif, i);
-                Value *Idxs[] = {
-                    ConstantInt::get(Type::getInt64Ty(vt->getContext()), 0),
-                    ConstantInt::get(Type::getInt32Ty(vt->getContext()), i)};
+            for (size_t i = 0; i < numElems; ++i) {
+              auto vdif = B.CreateExtractElement(dif, i);
+              Value *Idxs[] = {
+                  ConstantInt::get(Type::getInt64Ty(vt->getContext()), 0),
+                  ConstantInt::get(Type::getInt32Ty(vt->getContext()), i)};
 #if LLVM_VERSION_MAJOR > 7
-                auto vptr = B.CreateInBoundsGEP(
-                    ptr->getType()->getPointerElementType(), ptr, Idxs);
+              auto vptr = B.CreateInBoundsGEP(
+                  ptr->getType()->getPointerElementType(), ptr, Idxs);
 #else
-                auto vptr = B.CreateInBoundsGEP(ptr, Idxs);
+              auto vptr = B.CreateInBoundsGEP(ptr, Idxs);
 #endif
 #if LLVM_VERSION_MAJOR >= 13
-                B.CreateAtomicRMW(op, vptr, vdif, align,
-                                  AtomicOrdering::Monotonic, SyncScope::System);
-#elif LLVM_VERSION_MAJOR >= 11
-                AtomicRMWInst *rmw =
-                    B.CreateAtomicRMW(op, vptr, vdif, AtomicOrdering::Monotonic,
-                                      SyncScope::System);
-                if (align)
-                  rmw->setAlignment(align.getValue());
-#else
-                B.CreateAtomicRMW(op, vptr, vdif, AtomicOrdering::Monotonic,
-                                  SyncScope::System);
-#endif
-              }
-            } else {
-#if LLVM_VERSION_MAJOR >= 13
-              B.CreateAtomicRMW(op, ptr, dif, align, AtomicOrdering::Monotonic,
-                                SyncScope::System);
+              B.CreateAtomicRMW(op, vptr, vdif, align,
+                                AtomicOrdering::Monotonic, SyncScope::System);
 #elif LLVM_VERSION_MAJOR >= 11
               AtomicRMWInst *rmw = B.CreateAtomicRMW(
-                  op, ptr, dif, AtomicOrdering::Monotonic, SyncScope::System);
+                  op, vptr, vdif, AtomicOrdering::Monotonic, SyncScope::System);
               if (align)
                 rmw->setAlignment(align.getValue());
 #else
-              B.CreateAtomicRMW(op, ptr, dif, AtomicOrdering::Monotonic,
+              B.CreateAtomicRMW(op, vptr, vdif, AtomicOrdering::Monotonic,
                                 SyncScope::System);
 #endif
             }
+          } else {
+#if LLVM_VERSION_MAJOR >= 13
+            B.CreateAtomicRMW(op, ptr, dif, align, AtomicOrdering::Monotonic,
+                              SyncScope::System);
+#elif LLVM_VERSION_MAJOR >= 11
+            AtomicRMWInst *rmw = B.CreateAtomicRMW(
+                op, ptr, dif, AtomicOrdering::Monotonic, SyncScope::System);
+            if (align)
+              rmw->setAlignment(align.getValue());
 #else
-            llvm::errs() << "unhandled atomic fadd on llvm version " << *ptr
-                         << " " << *dif << "\n";
-            llvm_unreachable("unhandled atomic fadd");
+            B.CreateAtomicRMW(op, ptr, dif, AtomicOrdering::Monotonic,
+                              SyncScope::System);
 #endif
           }
-          B.CreateRetVoid();
-          newcalled = F;
+#else
+          llvm::errs() << "unhandled atomic fadd on llvm version " << *ptr
+                       << " " << *dif << "\n";
+          llvm_unreachable("unhandled atomic fadd");
+#endif
         }
+        B.CreateRetVoid();
+        newcalled = F;
+      }
 
-        auto numargs = ConstantInt::get(Type::getInt32Ty(call.getContext()),
-                                        args.size() - 3);
-        args[0] =
-            lookup(gutils->getNewFromOriginal(call.getArgOperand(0)), Builder2);
-        args[1] = numargs;
-        args[2] = Builder2.CreatePointerCast(
-            newcalled, kmpc->getFunctionType()->getParamType(2));
+      auto numargs = ConstantInt::get(Type::getInt32Ty(call.getContext()),
+                                      args.size() - 3);
+      args[0] = lookup(gutils->getNewFromOriginal(call.getArgOperand(0)),
+                       ReverseBuilder);
+      args[1] = numargs;
+      args[2] = ReverseBuilder.CreatePointerCast(
+          newcalled, kmpc->getFunctionType()->getParamType(2));
 
-        CallInst *diffes =
-            Builder2.CreateCall(kmpc->getFunctionType(), kmpc, args);
-        diffes->setCallingConv(call.getCallingConv());
-        diffes->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
+      CallInst *diffes =
+          ReverseBuilder.CreateCall(kmpc->getFunctionType(), kmpc, args);
+      diffes->setCallingConv(call.getCallingConv());
+      diffes->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
 
-        for (size_t i = 0; i < OutTypes.size(); i++) {
+      for (size_t i = 0; i < OutTypes.size(); i++) {
 
-          size_t size = 1;
-          if (OutTypes[i]->getType()->isSized())
-            size = (gutils->newFunc->getParent()
-                        ->getDataLayout()
-                        .getTypeSizeInBits(OutTypes[i]->getType()) +
-                    7) /
-                   8;
-          Value *Idxs[] = {
-              ConstantInt::get(Type::getInt64Ty(call.getContext()), 0),
-              ConstantInt::get(Type::getInt32Ty(call.getContext()), i)};
-          ((DiffeGradientUtils *)gutils)
-              ->addToDiffe(OutTypes[i],
+        size_t size = 1;
+        if (OutTypes[i]->getType()->isSized())
+          size =
+              (gutils->newFunc->getParent()->getDataLayout().getTypeSizeInBits(
+                   OutTypes[i]->getType()) +
+               7) /
+              8;
+        Value *Idxs[] = {
+            ConstantInt::get(Type::getInt64Ty(call.getContext()), 0),
+            ConstantInt::get(Type::getInt32Ty(call.getContext()), i)};
+        ((DiffeGradientUtils *)gutils)
+            ->addToDiffe(OutTypes[i],
 #if LLVM_VERSION_MAJOR > 7
-                           Builder2.CreateLoad(
-                               OutFPTypes[i],
-                               Builder2.CreateInBoundsGEP(ST, OutAlloc, Idxs)),
+                         ReverseBuilder.CreateLoad(
+                             OutFPTypes[i], ReverseBuilder.CreateInBoundsGEP(
+                                                ST, OutAlloc, Idxs)),
 #else
-                           Builder2.CreateLoad(
-                               Builder2.CreateInBoundsGEP(OutAlloc, Idxs)),
+                         ReverseBuilder.CreateLoad(
+                             Builder2.CreateInBoundsGEP(OutAlloc, Idxs)),
 #endif
-                           Builder2, TR.addingType(size, OutTypes[i]));
-        }
+                         ReverseBuilder, TR.addingType(size, OutTypes[i]));
+      }
 
-        if (tape && shouldFree()) {
-          for (auto idx : subdata->tapeIndiciesToFree) {
-            auto ci = cast<CallInst>(CallInst::CreateFree(
-                Builder2.CreatePointerCast(
-                    idx == -1 ? tape : Builder2.CreateExtractValue(tape, idx),
-                    Type::getInt8PtrTy(Builder2.getContext())),
-                Builder2.GetInsertBlock()));
+      if (tape && shouldFree()) {
+        for (auto idx : subdata->tapeIndiciesToFree) {
+          auto ci = cast<CallInst>(CallInst::CreateFree(
+              ReverseBuilder.CreatePointerCast(
+                  idx == -1 ? tape
+                            : ReverseBuilder.CreateExtractValue(tape, idx),
+                  Type::getInt8PtrTy(ReverseBuilder.getContext())),
+              ReverseBuilder.GetInsertBlock()));
 #if LLVM_VERSION_MAJOR >= 14
-            ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                    Attribute::NonNull);
+          ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
+                                  Attribute::NonNull);
 #else
-            ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+          ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
 #endif
-            if (ci->getParent() == nullptr) {
-              Builder2.Insert(ci);
-            }
+          if (ci->getParent() == nullptr) {
+            ReverseBuilder.Insert(ci);
           }
         }
-      } else {
-        assert(0 && "openmp indirect unhandled");
       }
     }
   }
@@ -7940,11 +7973,13 @@ public:
       }
     }
 
-    if (Mode != DerivativeMode::ReverseModePrimal && called) {
-      if (funcName == "__kmpc_for_static_init_4" ||
-          funcName == "__kmpc_for_static_init_4u" ||
-          funcName == "__kmpc_for_static_init_8" ||
-          funcName == "__kmpc_for_static_init_8u") {
+    if (funcName == "__kmpc_for_static_init_4" ||
+        funcName == "__kmpc_for_static_init_4u" ||
+        funcName == "__kmpc_for_static_init_8" ||
+        funcName == "__kmpc_for_static_init_8u") {
+      if ((Mode == DerivativeMode::ReverseModeGradient ||
+           Mode == DerivativeMode::ReverseModeCombined) &&
+          called) {
         IRBuilder<> Builder2(call.getParent());
         getReverseBuilder(Builder2);
         auto fini = called->getParent()->getFunction("__kmpc_for_static_fini");
@@ -7955,8 +7990,8 @@ public:
                    Builder2)};
         auto fcall = Builder2.CreateCall(fini->getFunctionType(), fini, args);
         fcall->setCallingConv(fini->getCallingConv());
-        return;
       }
+      return;
     }
 
     if ((funcName.startswith("MPI_") || funcName.startswith("PMPI_")) &&
@@ -8004,7 +8039,8 @@ public:
           funcName == "__kmpc_for_static_init_4u" ||
           funcName == "__kmpc_for_static_init_8" ||
           funcName == "__kmpc_for_static_init_8u") {
-        if (Mode != DerivativeMode::ReverseModePrimal) {
+        if (Mode == DerivativeMode::ReverseModeGradient ||
+            Mode == DerivativeMode::ReverseModeCombined) {
           IRBuilder<> Builder2(call.getParent());
           getReverseBuilder(Builder2);
           auto fini =
@@ -8021,7 +8057,8 @@ public:
         return;
       }
       if (funcName == "__kmpc_for_static_fini") {
-        if (Mode != DerivativeMode::ReverseModePrimal) {
+        if (Mode == DerivativeMode::ReverseModeGradient ||
+            Mode == DerivativeMode::ReverseModeCombined) {
           eraseIfUnused(call, /*erase*/ true, /*check*/ false);
         }
         return;
@@ -8047,7 +8084,8 @@ public:
         return;
       }
       if (funcName == "__kmpc_critical") {
-        if (Mode != DerivativeMode::ReverseModePrimal) {
+        if (Mode == DerivativeMode::ReverseModeGradient ||
+            Mode == DerivativeMode::ReverseModeCombined) {
           IRBuilder<> Builder2(call.getParent());
           getReverseBuilder(Builder2);
           auto crit2 = called->getParent()->getFunction("__kmpc_end_critical");
@@ -8066,7 +8104,8 @@ public:
         return;
       }
       if (funcName == "__kmpc_end_critical") {
-        if (Mode != DerivativeMode::ReverseModePrimal) {
+        if (Mode == DerivativeMode::ReverseModeGradient ||
+            Mode == DerivativeMode::ReverseModeCombined) {
           IRBuilder<> Builder2(call.getParent());
           getReverseBuilder(Builder2);
           auto crit2 = called->getParent()->getFunction("__kmpc_critical");
