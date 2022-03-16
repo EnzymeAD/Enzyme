@@ -9241,6 +9241,13 @@ public:
 
       if (funcName == "__mulsc3" || funcName == "__muldc3" ||
           funcName == "__multc3" || funcName == "__mulxc3") {
+        if (gutils->knownRecomputeHeuristic.find(orig) !=
+            gutils->knownRecomputeHeuristic.end()) {
+          if (!gutils->knownRecomputeHeuristic[orig]) {
+            gutils->cacheForReverse(BuilderZ, newCall,
+                                    getIndex(orig, CacheType::Self));
+          }
+        }
 
         eraseIfUnused(*orig);
         if (gutils->isConstantInstruction(orig))
