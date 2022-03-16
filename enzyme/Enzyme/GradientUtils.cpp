@@ -251,39 +251,53 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           if (orig && knownRecomputeHeuristic.find(orig) !=
                           knownRecomputeHeuristic.end()) {
             if (!knownRecomputeHeuristic[orig]) {
-              // Note that this logic (original load must dominate or
-              // alternatively be in the reverse block) is only valid iff when
-              // applicable (here if in split mode), an uncacheable load cannot
-              // be hoisted outside of a loop to be used as a loop limit. This
-              // optimization is currently done in the combined mode (e.g. if a
-              // load isn't modified between a prior insertion point and the
-              // actual load, it is legal to recompute).
-              if (!isOriginalBlock(*BuilderM.GetInsertBlock()) ||
-                  DT.dominates(inst, &*BuilderM.GetInsertPoint())) {
-                if (mode == DerivativeMode::ReverseModeCombined)
-                  goto endCheck;
-                assert(inst->getParent()->getParent() == newFunc);
-                auto placeholder = BuilderM.CreatePHI(
-                    val->getType(), 0, val->getName() + "_krcAFUWLreplacement");
-                unwrappedLoads[placeholder] = inst;
-                SmallVector<Metadata *, 1> avail;
-                for (auto pair : available)
-                  if (pair.second)
-                    avail.push_back(MDNode::get(
-                        placeholder->getContext(),
-                        {ValueAsMetadata::get(const_cast<Value *>(pair.first)),
-                         ValueAsMetadata::get(pair.second)}));
-                placeholder->setMetadata(
-                    "enzyme_available",
-                    MDNode::get(placeholder->getContext(), avail));
-                if (!permitCache)
-                  return placeholder;
-                return unwrap_cache[BuilderM.GetInsertBlock()][idx.first]
-                                   [idx.second] = placeholder;
+              if (mode == DerivativeMode::ReverseModeCombined) {
+                // Don't unnecessarily cache a value if the caching
+                // heuristic says we should preserve this precise (and not
+                // an lcssa wrapped) value
+                if (!isOriginalBlock(*BuilderM.GetInsertBlock())) {
+                  Value *nval = inst;
+                  if (scope)
+                    nval = fixLCSSA(inst, scope);
+                  if (nval == inst)
+                    goto endCheck;
+                }
+              } else {
+                // Note that this logic (original load must dominate or
+                // alternatively be in the reverse block) is only valid iff when
+                // applicable (here if in split mode), an uncacheable load
+                // cannot be hoisted outside of a loop to be used as a loop
+                // limit. This optimization is currently done in the combined
+                // mode (e.g. if a load isn't modified between a prior insertion
+                // point and the actual load, it is legal to recompute).
+                if (!isOriginalBlock(*BuilderM.GetInsertBlock()) ||
+                    DT.dominates(inst, &*BuilderM.GetInsertPoint())) {
+                  assert(inst->getParent()->getParent() == newFunc);
+                  auto placeholder = BuilderM.CreatePHI(
+                      val->getType(), 0,
+                      val->getName() + "_krcAFUWLreplacement");
+                  unwrappedLoads[placeholder] = inst;
+                  SmallVector<Metadata *, 1> avail;
+                  for (auto pair : available)
+                    if (pair.second)
+                      avail.push_back(
+                          MDNode::get(placeholder->getContext(),
+                                      {ValueAsMetadata::get(
+                                           const_cast<Value *>(pair.first)),
+                                       ValueAsMetadata::get(pair.second)}));
+                  placeholder->setMetadata(
+                      "enzyme_available",
+                      MDNode::get(placeholder->getContext(), avail));
+                  if (!permitCache)
+                    return placeholder;
+                  return unwrap_cache[BuilderM.GetInsertBlock()][idx.first]
+                                     [idx.second] = placeholder;
+                }
               }
             }
           }
-        } else if (unwrapMode != UnwrapMode::LegalFullUnwrapNoTapeReplace) {
+        } else if (unwrapMode != UnwrapMode::LegalFullUnwrapNoTapeReplace &&
+                   mode != DerivativeMode::ReverseModeCombined) {
           // TODO this isOriginal is a bottleneck, the new mapping of
           // knownRecompute should be precomputed and maintained to lookup
           // instead

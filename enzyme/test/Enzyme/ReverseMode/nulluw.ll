@@ -43,7 +43,7 @@ bb1:                                              ; preds = %bb7
 
 declare double @llvm.ceil.f64(double) 
 
-declare dso_local noalias noundef i8* @malloc(i64)
+declare dso_local noalias i8* @malloc(i64)
 
 define internal fastcc void @evaluate_integrand(double* nocapture %a0) {
 bb:
@@ -60,8 +60,6 @@ bb:
 }
 
 declare dso_local double @__enzyme_autodiff(i8*, ...)
-
-attributes #0 = { nofree nosync nounwind readnone speculatable willreturn }
 
 !llvm.module.flags = !{!0}
 !llvm.ident = !{!1}
@@ -94,9 +92,9 @@ attributes #0 = { nofree nosync nounwind readnone speculatable willreturn }
 ; CHECK-NEXT:   br i1 %i6, label %bb12.preheader, label %bb7
 
 ; CHECK: bb12.preheader:                                   ; preds = %bb2
-; CHECK-NEXT:   %2 = add nsw i32 %i5, -1
+; CHECK-NEXT:   %2 = add {{(nsw )?}}i32 %i5, -1
 ; CHECK-NEXT:   %3 = zext i32 %2 to i64
-; CHECK-NEXT:   %4 = add nuw nsw i64 %3, 1
+; CHECK-NEXT:   %4 = add nuw {{(nsw )?}}i64 %3, 1
 ; CHECK-NEXT:   %5 = getelementptr inbounds i8**, i8*** %i15_malloccache, i64 %iv
 ; CHECK-NEXT:   %mallocsize = mul nuw nsw i64 %4, 8
 ; CHECK-NEXT:   %malloccall5 = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
@@ -174,7 +172,7 @@ attributes #0 = { nofree nosync nounwind readnone speculatable willreturn }
 ; CHECK-NEXT:   %"i14'de.2" = phi double [ %"i14'de.1", %invertbb7.loopexit ], [ 0.000000e+00, %incinvertbb12 ]
 ; CHECK-NEXT:   %"i17'de.2" = phi double [ %"i17'de.1", %invertbb7.loopexit ], [ 0.000000e+00, %incinvertbb12 ]
 ; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ %_unwrap2, %invertbb7.loopexit ], [ %18, %incinvertbb12 ]
-; CHECK-NEXT:   %"i15'mi" = tail call noalias nonnull dereferenceable_or_null(8) i8* @malloc(i64 8) #1
+; CHECK-NEXT:   %"i15'mi" = tail call noalias nonnull dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"i15'mi", i8 0, i64 8, i1 false)
 ; CHECK-NEXT:   %19 = fadd fast double %"i14'de.2", %"i18'de.2"
 ; CHECK-NEXT:   %20 = fadd fast double %"i17'de.2", %"i18'de.2"
