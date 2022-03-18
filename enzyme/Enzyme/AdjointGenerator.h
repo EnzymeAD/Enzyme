@@ -4015,7 +4015,10 @@ public:
 
       auto argi = gutils->getNewFromOriginal(call.getArgOperand(i));
 
-      pre_args.push_back(argi);
+      if (Mode == DerivativeMode::ReverseModeGradient ||
+          Mode == DerivativeMode::ReverseModeCombined ||
+          Mode == DerivativeMode::ReverseModePrimal)
+        pre_args.push_back(argi);
 
       if (Mode == DerivativeMode::ReverseModeGradient ||
           Mode == DerivativeMode::ReverseModeCombined) {
@@ -4067,14 +4070,13 @@ public:
           args.push_back(ip);
         }
 
-        Value *ip =
-            gutils->invertPointerM(call.getArgOperand(i), ForwardBuilder);
         if (Mode == DerivativeMode::ReverseModePrimal ||
             Mode == DerivativeMode::ReverseModeCombined ||
-            Mode == DerivativeMode::ReverseModeGradient)
-          ip = lookup(ip, ForwardBuilder);
-
-        pre_args.push_back(ip);
+            Mode == DerivativeMode::ReverseModeGradient) {
+          Value *ip =
+              gutils->invertPointerM(call.getArgOperand(i), ForwardBuilder);
+          pre_args.push_back(lookup(ip, ForwardBuilder));
+        }
 
         // Note sometimes whattype mistakenly says something should be constant
         // [because composed of integer pointers alone]
@@ -4082,12 +4084,13 @@ public:
                whatType(argType, Mode) == DIFFE_TYPE::CONSTANT);
       } else {
         assert(TR.query(call.getArgOperand(i)).Inner0().isFloat());
-        OutTypes.push_back(call.getArgOperand(i));
-        OutFPTypes.push_back(argType);
         if (Mode == DerivativeMode::ForwardMode ||
             Mode == DerivativeMode::ForwardModeSplit) {
           argsInverted.push_back(DIFFE_TYPE::DUP_ARG);
+          args.push_back(diffe(call.getArgOperand(i), ForwardBuilder));
         } else {
+          OutTypes.push_back(call.getArgOperand(i));
+          OutFPTypes.push_back(argType);
           argsInverted.push_back(DIFFE_TYPE::OUT_DIFF);
         }
         assert(whatType(argType, Mode) == DIFFE_TYPE::OUT_DIFF ||
