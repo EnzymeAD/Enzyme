@@ -109,3 +109,9 @@ exit:                                             ; preds = %bb23, %bb
 !11 = !{!12, !12, i64 0}
 !12 = !{!"double", !9, i64 0}
 
+
+; CHECK: define internal void @fwddiffefunc(double* %arg, double* %"arg'", double* %arg1, double* %"arg1'")
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   call void (%1*, i32, void (i32*, i32*, ...)*, ...) @__kmpc_fork_call(%1* @5, i32 4, void (i32*, i32*, ...)* bitcast (void (i32*, i32*, double*, double*, double*, double*)* @fwddiffeoutlined to void (i32*, i32*, ...)*), double* %arg, double* %"arg'", double* %arg1, double* %"arg1'")
+; CHECK-NEXT:   ret void
+; CHECK-NEXT: }

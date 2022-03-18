@@ -115,3 +115,56 @@ attributes #1 = { argmemonly }
 !12 = !{i64 2, i64 -1, i64 -1, i1 true}
 
 
+; CHECK: define internal void @fwddiffe.omp_outlined.(i32* noalias nocapture readonly %.global_tid., i32* noalias nocapture readnone %.bound_tid., i64 %length, double* nocapture nonnull align 8 dereferenceable(8) %tmp, double* nocapture %"tmp'")
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   %.omp.lb_smpl = alloca i64, align 8
+; CHECK-NEXT:   %.omp.ub_smpl = alloca i64, align 8
+; CHECK-NEXT:   %.omp.stride_smpl = alloca i64, align 8
+; CHECK-NEXT:   %.omp.is_last = alloca i32, align 4
+; CHECK-NEXT:   %sub4 = add i64 %length, -1
+; CHECK-NEXT:   %cmp.not = icmp eq i64 %length, 0
+; CHECK-NEXT:   br i1 %cmp.not, label %omp.precond.end, label %omp.precond.then
+
+; CHECK: omp.precond.then:                                 ; preds = %entry
+; CHECK-NEXT:   store i32 0, i32* %.omp.is_last, align 4
+; CHECK-NEXT:   %0 = load i32, i32* %.global_tid., align 4
+; CHECK-NEXT:   store i64 0, i64* %.omp.lb_smpl, align 8
+; CHECK-NEXT:   store i64 %sub4, i64* %.omp.ub_smpl, align 8
+; CHECK-NEXT:   store i64 1, i64* %.omp.stride_smpl, align 8
+; CHECK-NEXT:   call void @__kmpc_for_static_init_8u(%struct.ident_t* nonnull @1, i32 %0, i32 34, i32* nonnull %.omp.is_last, i64* nocapture nonnull %.omp.lb_smpl, i64* nocapture nonnull %.omp.ub_smpl, i64* nocapture nonnull %.omp.stride_smpl, i64 1, i64 1)
+; CHECK-NEXT:   %1 = load i64, i64* %.omp.ub_smpl, align 8
+; CHECK-NEXT:   %2 = load i64, i64* %.omp.lb_smpl, align 8
+; CHECK-NEXT:   %cmp6 = icmp ugt i64 %1, %sub4
+; CHECK-NEXT:   %cond = select i1 %cmp6, i64 %sub4, i64 %1
+; CHECK-NEXT:   %add29 = add i64 %cond, 1
+; CHECK-NEXT:   %cmp730 = icmp ult i64 %2, %add29
+; CHECK-NEXT:   br i1 %cmp730, label %omp.inner.for.body, label %omp.loop.exit
+
+; CHECK: omp.inner.for.body:                               ; preds = %omp.precond.then, %omp.inner.for.body
+; CHECK-NEXT:  %iv = phi i64 [ %iv.next, %omp.inner.for.body ], [ 0, %omp.precond.then ]
+; CHECK-NEXT:  %iv.next = add nuw nsw i64 %iv, 1
+; CHECK-NEXT:  %3 = add i64 %2, %iv
+; CHECK-NEXT:  %"arrayidx'ipg" = getelementptr inbounds double, double* %"tmp'", i64 %3
+; CHECK-NEXT:  %arrayidx = getelementptr inbounds double, double* %tmp, i64 %3
+; CHECK-NEXT:  %4 = load double, double* %arrayidx, align 8
+; CHECK-NEXT:  %5 = load double, double* %"arrayidx'ipg", align 8
+; CHECK-NEXT:  %call = call double @sqrt(double %4) #1
+; CHECK-NEXT:  %6 = call fast double @sqrt(double %4)
+; CHECK-NEXT:  %7 = fmul fast double 5.000000e-01, %5
+; CHECK-NEXT:  %8 = fdiv fast double %7, %6
+; CHECK-NEXT:  %9 = fcmp fast oeq double %4, 0.000000e+00
+; CHECK-NEXT:  %10 = select fast i1 %9, double 0.000000e+00, double %8
+; CHECK-NEXT:  store double %call, double* %arrayidx, align 8
+; CHECK-NEXT:  store double %10, double* %"arrayidx'ipg", align 8
+; CHECK-NEXT:  %add11 = add nuw i64 %3, 1
+; CHECK-NEXT:  %add = add nuw i64 %cond, 1
+; CHECK-NEXT:  %cmp7 = icmp ult i64 %add11, %add
+; CHECK-NEXT:  br i1 %cmp7, label %omp.inner.for.body, label %omp.loop.exit
+
+; CHECK: omp.loop.exit:                                    ; preds = %omp.inner.for.body, %omp.precond.then
+; CHECK-NEXT:   call void @__kmpc_for_static_fini(%struct.ident_t* nonnull @1, i32 %0)
+; CHECK-NEXT:   br label %omp.precond.end
+
+; CHECK: omp.precond.end:                                  ; preds = %omp.loop.exit, %entry
+; CHECK-NEXT:   ret void
+; CHECK-NEXT: }

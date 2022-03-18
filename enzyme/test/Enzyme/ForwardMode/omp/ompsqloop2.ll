@@ -18,7 +18,7 @@ entry:
   call void @llvm.lifetime.start.p0i8(i64 800, i8* nonnull %0) #5
   %1 = bitcast [100 x double]* %d_data to i8*
   call void @llvm.lifetime.start.p0i8(i64 800, i8* nonnull %1) #5
-  call void @_Z17__enzyme_autodiffPvS_S_m(i8* bitcast (void (double*, i64)* @_ZL16LagrangeLeapFrogPdm to i8*), i8* nonnull %0, i8* nonnull %1, i64 100) #5
+  call void @_Z17__enzyme_fwddiffPvS_S_m(i8* bitcast (void (double*, i64)* @_ZL16LagrangeLeapFrogPdm to i8*), i8* nonnull %0, i8* nonnull %1, i64 100) #5
   call void @llvm.lifetime.end.p0i8(i64 800, i8* nonnull %1) #5
   call void @llvm.lifetime.end.p0i8(i64 800, i8* nonnull %0) #5
   ret i32 0
@@ -27,7 +27,7 @@ entry:
 ; Function Attrs: argmemonly nofree nosync nounwind willreturn mustprogress
 declare void @llvm.lifetime.start.p0i8(i64 immarg, i8* nocapture) #1
 
-declare dso_local void @_Z17__enzyme_autodiffPvS_S_m(i8*, i8*, i8*, i64) local_unnamed_addr #2
+declare dso_local void @_Z17__enzyme_fwddiffPvS_S_m(i8*, i8*, i8*, i64) local_unnamed_addr #2
 
 ; Function Attrs: inlinehint nounwind uwtable mustprogress
 define internal void @_ZL16LagrangeLeapFrogPdm(double* %e_new, i64 %length) #3 {
@@ -132,3 +132,58 @@ declare !callback !13 void @__kmpc_fork_call(%struct.ident_t*, i32, void (i32*, 
 !13 = !{!14}
 !14 = !{i64 2, i64 -1, i64 -1, i1 true}
 
+
+; CHECK: define internal void @fwddiffe.omp_outlined.(i32* noalias nocapture readonly %.global_tid., i32* noalias nocapture readnone %.bound_tid., i64 %length, double** nocapture nonnull readonly align 8 dereferenceable(8) %e_new, double** nocapture %"e_new'")
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   %".pre'ipl" = load double*, double** %"e_new'", align 8
+; CHECK-NEXT:   %.pre = load double*, double** %e_new, align 8
+; CHECK-NEXT:   %.omp.lb_smpl = alloca i64, align 8
+; CHECK-NEXT:   %.omp.ub_smpl = alloca i64, align 8
+; CHECK-NEXT:   %.omp.stride_smpl = alloca i64, align 8
+; CHECK-NEXT:   %.omp.is_last = alloca i32, align 4
+; CHECK-NEXT:   %sub2 = add i64 %length, -1
+; CHECK-NEXT:   store i32 0, i32* %.omp.is_last, align 4
+; CHECK-NEXT:   %0 = load i32, i32* %.global_tid., align 4
+; CHECK-NEXT:   store i64 0, i64* %.omp.lb_smpl, align 8
+; CHECK-NEXT:   store i64 %sub2, i64* %.omp.ub_smpl, align 8
+; CHECK-NEXT:   store i64 1, i64* %.omp.stride_smpl, align 8
+; CHECK-NEXT:   call void @__kmpc_for_static_init_8u(%struct.ident_t* nonnull @1, i32 %0, i32 34, i32* nonnull %.omp.is_last, i64* nocapture nonnull %.omp.lb_smpl, i64* nocapture nonnull %.omp.ub_smpl, i64* nocapture nonnull %.omp.stride_smpl, i64 1, i64 1)
+; CHECK-NEXT:   %1 = load i64, i64* %.omp.ub_smpl, align 8
+; CHECK-NEXT:   %2 = load i64, i64* %.omp.lb_smpl, align 8
+; CHECK-NEXT:   %cmp4 = icmp ugt i64 %1, %sub2
+; CHECK-NEXT:   %cond = select i1 %cmp4, i64 %sub2, i64 %1
+; CHECK-NEXT:   %add24 = add i64 %cond, 1
+; CHECK-NEXT:   %cmp525 = icmp ult i64 %2, %add24
+; CHECK-NEXT:   br i1 %cmp525, label %omp.inner.for.body, label %omp.loop.exit
+
+; CHECK: omp.inner.for.body:                               ; preds = %entry, %omp.inner.for.body
+; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %omp.inner.for.body ], [ 0, %entry ]
+; CHECK-NEXT:   %3 = phi double* [ %"i9'ipl", %omp.inner.for.body ], [ %".pre'ipl", %entry ]
+; CHECK-NEXT:   %4 = phi double* [ %i9, %omp.inner.for.body ], [ %.pre, %entry ]
+; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
+; CHECK-NEXT:   %5 = add i64 %2, %iv
+; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds double, double* %3, i64 %5
+; CHECK-NEXT:   %arrayidx = getelementptr inbounds double, double* %4, i64 %5
+; CHECK-NEXT:   %i8 = load double, double* %arrayidx, align 8
+; CHECK-NEXT:   %6 = load double, double* %"arrayidx'ipg", align 8
+; CHECK-NEXT:   %call = call double @sqrt(double %i8) #1
+; CHECK-NEXT:   %7 = call fast double @sqrt(double %i8)
+; CHECK-NEXT:   %8 = fmul fast double 5.000000e-01, %6
+; CHECK-NEXT:   %9 = fdiv fast double %8, %7
+; CHECK-NEXT:   %10 = fcmp fast oeq double %i8, 0.000000e+00
+; CHECK-NEXT:   %11 = select fast i1 %10, double 0.000000e+00, double %9
+; CHECK-NEXT:   %"i9'ipl" = load double*, double** %"e_new'", align 8
+; CHECK-NEXT:   %i9 = load double*, double** %e_new, align 8
+; CHECK-NEXT:   %"arrayidx7'ipg" = getelementptr inbounds double, double* %".pre'ipl", i64 %5
+; CHECK-NEXT:   %arrayidx7 = getelementptr inbounds double, double* %.pre, i64 %5
+; CHECK-NEXT:   store double %call, double* %arrayidx7, align 8
+; CHECK-NEXT:   store double %11, double* %"arrayidx7'ipg", align 8
+; CHECK-NEXT:   %add8 = add nuw i64 %5, 1
+; CHECK-NEXT:   %add = add nuw i64 %cond, 1
+; CHECK-NEXT:   %cmp5 = icmp ult i64 %add8, %add
+; CHECK-NEXT:   br i1 %cmp5, label %omp.inner.for.body, label %omp.loop.exit
+
+; CHECK: omp.loop.exit:                                    ; preds = %omp.inner.for.body, %entry
+; CHECK-NEXT:   call void @__kmpc_for_static_fini(%struct.ident_t* nonnull @1, i32 %0)
+; CHECK-NEXT:   ret void
+; CHECK-NEXT: }

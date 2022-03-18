@@ -50,17 +50,15 @@ int main(int argc, char** argv) {
   float d_a[N];
   for(int i=0; i<N; i++)
     d_a[i] = 0.0f;
+
+  d_a[N-1] = 1.0;
   
   //omp(*a, N);
   printf("ran omp\n");
-  __enzyme_fwddiff((void*)omp, a, d_a, N);
+  float dret = __enzyme_fwddiff((void*)omp, a, d_a, N);
+  printf("dret=%f\n", dret);
 
-  for(int i=0; i<N; i++) {
-    printf("a[%d]=%f  d_a[%d]=%f\n", i, a[i], i, d_a[i]);
-  }
+    APPROX_EQ(dret, 40.0 , 1e-10);
 
-  for(int i=0; i<N; i++) {
-    APPROX_EQ(d_a[i], 2.0f*(i+1), 1e-10);
-  }
   return 0;
 }

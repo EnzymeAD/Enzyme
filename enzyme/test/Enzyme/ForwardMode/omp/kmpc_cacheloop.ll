@@ -172,3 +172,4 @@ attributes #5 = { nounwind }
 !21 = !{!22}
 !22 = !{i64 2, i64 -1, i64 -1, i1 true}
 
+; CHECK: define internal void @fwddiffe.omp_outlined
