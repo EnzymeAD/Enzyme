@@ -13,9 +13,9 @@
 #include <math.h>
 #include <assert.h>
 
-#include "test_utils.h"
+#include "../test_utils.h"
 
-double __enzyme_fwddiff(void*, ...);
+float __enzyme_fwddiff(void*, ...);
 
 float omp(float* a, int N) {
   float res = 0.0;

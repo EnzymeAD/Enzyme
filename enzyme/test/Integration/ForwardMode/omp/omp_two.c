@@ -13,7 +13,7 @@
 #include <math.h>
 #include <assert.h>
 
-#include "test_utils.h"
+#include "../test_utils.h"
 
 void __enzyme_fwddiff(void*, ...);
 
