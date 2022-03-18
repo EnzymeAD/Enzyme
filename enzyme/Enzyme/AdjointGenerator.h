@@ -9253,26 +9253,26 @@ public:
         if (gutils->isConstantInstruction(orig))
           return;
 
+        Value *orig_op0 = call.getOperand(0);
+        Value *orig_op1 = call.getOperand(1);
+        Value *orig_op2 = call.getOperand(2);
+        Value *orig_op3 = call.getOperand(3);
+
+        bool constantval0 = gutils->isConstantValue(orig_op0);
+        bool constantval1 = gutils->isConstantValue(orig_op1);
+        bool constantval2 = gutils->isConstantValue(orig_op2);
+        bool constantval3 = gutils->isConstantValue(orig_op3);
+
+        Value *prim[4] = {gutils->getNewFromOriginal(orig_op0),
+                          gutils->getNewFromOriginal(orig_op1),
+                          gutils->getNewFromOriginal(orig_op2),
+                          gutils->getNewFromOriginal(orig_op3)};
+
         switch (Mode) {
         case DerivativeMode::ForwardMode:
         case DerivativeMode::ForwardModeSplit: {
           IRBuilder<> Builder2(&call);
           getForwardBuilder(Builder2);
-
-          Value *orig_op0 = call.getOperand(0);
-          Value *orig_op1 = call.getOperand(1);
-          Value *orig_op2 = call.getOperand(2);
-          Value *orig_op3 = call.getOperand(3);
-
-          bool constantval0 = gutils->isConstantValue(orig_op0);
-          bool constantval1 = gutils->isConstantValue(orig_op1);
-          bool constantval2 = gutils->isConstantValue(orig_op2);
-          bool constantval3 = gutils->isConstantValue(orig_op3);
-
-          Value *prim[4] = {gutils->getNewFromOriginal(orig_op0),
-                            gutils->getNewFromOriginal(orig_op1),
-                            gutils->getNewFromOriginal(orig_op2),
-                            gutils->getNewFromOriginal(orig_op3)};
 
           Value *diff[4] = {
               constantval0 ? Constant::getNullValue(orig_op0->getType())
@@ -9322,18 +9322,91 @@ public:
 
       if (funcName == "__divsc3" || funcName == "__divdc3" ||
           funcName == "__divtc3" || funcName == "__divxc3") {
+        if (gutils->knownRecomputeHeuristic.find(orig) !=
+            gutils->knownRecomputeHeuristic.end()) {
+          if (!gutils->knownRecomputeHeuristic[orig]) {
+            gutils->cacheForReverse(BuilderZ, newCall,
+                                    getIndex(orig, CacheType::Self));
+          }
+        }
 
         eraseIfUnused(*orig);
         if (gutils->isConstantInstruction(orig))
           return;
 
+        Value *orig_op0 = call.getOperand(0);
+        Value *orig_op1 = call.getOperand(1);
+        Value *orig_op2 = call.getOperand(2);
+        Value *orig_op3 = call.getOperand(3);
+
+        bool constantval0 = gutils->isConstantValue(orig_op0);
+        bool constantval1 = gutils->isConstantValue(orig_op1);
+        bool constantval2 = gutils->isConstantValue(orig_op2);
+        bool constantval3 = gutils->isConstantValue(orig_op3);
+
+        Value *prim[4] = {gutils->getNewFromOriginal(orig_op0),
+                          gutils->getNewFromOriginal(orig_op1),
+                          gutils->getNewFromOriginal(orig_op2),
+                          gutils->getNewFromOriginal(orig_op3)};
+
         switch (Mode) {
         case DerivativeMode::ForwardMode:
-        case DerivativeMode::ForwardModeSplit:
+        case DerivativeMode::ForwardModeSplit: {
+          IRBuilder<> Builder2(&call);
+          getForwardBuilder(Builder2);
+
+          Value *diff[4] = {
+              constantval0 ? Constant::getNullValue(orig_op0->getType())
+                           : diffe(orig_op0, Builder2),
+              constantval1 ? Constant::getNullValue(orig_op1->getType())
+                           : diffe(orig_op1, Builder2),
+              constantval2 ? Constant::getNullValue(orig_op2->getType())
+                           : diffe(orig_op2, Builder2),
+              constantval3 ? Constant::getNullValue(orig_op3->getType())
+                           : diffe(orig_op3, Builder2)};
+
+          StringMap<StringRef> map = {
+              {"__divsc3", "__mulsc3"},
+              {"__divdc3", "__muldc3"},
+              {"__divtc3", "__multc3"},
+              {"__divxc3", "__mulxc3"},
+          };
+
+          auto mul = gutils->oldFunc->getParent()->getOrInsertFunction(
+              map[funcName], called->getFunctionType(),
+              called->getAttributes());
+
+          auto div = gutils->oldFunc->getParent()->getOrInsertFunction(
+              funcName, called->getFunctionType(), called->getAttributes());
+
+          auto mul1 =
+              Builder2.CreateCall(mul, {diff[0], diff[1], prim[2], prim[3]});
+          auto mul2 =
+              Builder2.CreateCall(mul, {prim[0], prim[1], diff[2], diff[3]});
+          auto sq1 =
+              Builder2.CreateCall(mul, {prim[2], prim[3], prim[2], prim[3]});
+
+          Value *subReal =
+              Builder2.CreateFSub(Builder2.CreateExtractValue(mul1, {0}),
+                                  Builder2.CreateExtractValue(mul2, {0}));
+          Value *subImag =
+              Builder2.CreateFSub(Builder2.CreateExtractValue(mul1, {1}),
+                                  Builder2.CreateExtractValue(mul2, {1}));
+
+          auto div1 = Builder2.CreateCall(
+              div, {subReal, subImag, Builder2.CreateExtractValue(sq1, {0}),
+                    Builder2.CreateExtractValue(sq1, {1})});
+
+          setDiffe(&call, div1, Builder2);
           break;
+        }
         case DerivativeMode::ReverseModeGradient:
-        case DerivativeMode::ReverseModeCombined:
+        case DerivativeMode::ReverseModeCombined: {
+          IRBuilder<> Builder2(call.getParent());
+          getReverseBuilder(Builder2);
+
           break;
+        }
         case DerivativeMode::ReverseModePrimal:;
           return;
         }
