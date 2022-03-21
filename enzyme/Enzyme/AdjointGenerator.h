@@ -9412,6 +9412,95 @@ public:
         }
       }
 
+      if (funcName == "logb" || funcName == "logbf" || funcName == "logbl") {
+        eraseIfUnused(*orig);
+        if (gutils->isConstantInstruction(orig))
+          return;
+
+        Value *orig_op0 = call.getOperand(0);
+
+        switch (Mode) {
+        case DerivativeMode::ForwardMode:
+        case DerivativeMode::ForwardModeSplit: {
+          IRBuilder<> Builder2(&call);
+          getForwardBuilder(Builder2);
+          setDiffe(&call, Constant::getNullValue(orig_op0->getType()),
+                   Builder2);
+          break;
+        }
+        case DerivativeMode::ReverseModeGradient:
+        case DerivativeMode::ReverseModeCombined: {
+          break;
+        }
+        case DerivativeMode::ReverseModePrimal:;
+          return;
+        }
+      }
+
+      if (funcName == "scalbn" || funcName == "scalbnf" ||
+          funcName == "scalbnl" || funcName == "scalbln" ||
+          funcName == "scalblnf" || funcName == "scalblnl") {
+        eraseIfUnused(*orig);
+
+        Value *orig_op0 = call.getOperand(0);
+        Value *orig_op1 = call.getOperand(1);
+
+        bool constantval0 = gutils->isConstantValue(orig_op0);
+
+        if (gutils->isConstantInstruction(orig) || constantval0)
+          return;
+
+        Value *op0 = gutils->getNewFromOriginal(orig_op0);
+        Value *op1 = gutils->getNewFromOriginal(orig_op1);
+
+        auto scal = gutils->oldFunc->getParent()->getOrInsertFunction(
+            funcName, called->getFunctionType(), called->getAttributes());
+
+        switch (Mode) {
+        case DerivativeMode::ForwardMode:
+        case DerivativeMode::ForwardModeSplit: {
+          IRBuilder<> Builder2(&call);
+          getForwardBuilder(Builder2);
+
+          Value *diff0 = diffe(orig_op0, Builder2);
+
+          auto cal1 = Builder2.CreateCall(scal, {op0, op1});
+          auto cal2 = Builder2.CreateCall(scal, {diff0, op1});
+
+          Value *diff = Builder2.CreateFMul(
+              cal1, ConstantFP::get(call.getType(), 0.3010299957));
+          diff = Builder2.CreateFAdd(diff, cal2);
+
+          setDiffe(&call, diff, Builder2);
+          break;
+        }
+        case DerivativeMode::ReverseModeGradient:
+        case DerivativeMode::ReverseModeCombined: {
+          IRBuilder<> Builder2(call.getParent());
+          getReverseBuilder(Builder2);
+
+          Value *idiff = diffe(&call, Builder2);
+
+          if (idiff && !constantval0) {
+            op1 = lookup(op1, Builder2);
+
+            auto cal1 = Builder2.CreateCall(scal, {op0, op1});
+            auto cal2 = Builder2.CreateCall(scal, {idiff, op1});
+
+            Value *diff = Builder2.CreateFMul(
+                cal1, ConstantFP::get(call.getType(), 0.3010299957));
+            diff = Builder2.CreateFAdd(diff, cal2);
+
+            addToDiffe(orig_op0, diff, Builder2, call.getType());
+          }
+
+          break;
+        }
+        case DerivativeMode::ReverseModePrimal:;
+          return;
+        }
+      }
+
       if (called) {
         if (funcName == "erf" || funcName == "erfi" || funcName == "erfc" ||
             funcName == "Faddeeva_erf" || funcName == "Faddeeva_erfi" ||
