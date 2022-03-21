@@ -221,6 +221,12 @@ void FreeTypeAnalysis(EnzymeTypeAnalysisRef TAR) {
   delete TA;
 }
 
+void *EnzymeAnalyzeTypes(EnzymeTypeAnalysisRef TAR, CFnTypeInfo CTI,
+                         LLVMValueRef F) {
+  FnTypeInfo FTI(eunwrap(CTI, cast<Function>(unwrap(F))));
+  return (void *)&((TypeAnalysis *)TAR)->analyzeFunction(FTI).analyzer;
+}
+
 void EnzymeRegisterAllocationHandler(char *Name, CustomShadowAlloc AHandle,
                                      CustomShadowFree FHandle) {
   shadowHandlers[std::string(Name)] =

@@ -1395,7 +1395,19 @@ void TypeAnalyzer::visitGetElementPtrInst(GetElementPtrInst &gep) {
     return;
 
   if (direction & DOWN) {
-    updateAnalysis(&gep, pointerAnalysis.KeepMinusOne(), &gep);
+    bool legal = true;
+    auto keepMinus = pointerAnalysis.KeepMinusOne(legal);
+    if (!legal) {
+      if (CustomErrorHandler)
+        CustomErrorHandler("Could not keep minus one", wrap(&gep),
+                           ErrorType::IllegalTypeAnalysis, this);
+      else {
+        dump();
+        llvm::errs() << " could not perform minus one for gep'd: " << gep
+                     << "\n";
+      }
+    }
+    updateAnalysis(&gep, keepMinus, &gep);
     updateAnalysis(&gep, TypeTree(pointerAnalysis.Inner0()).Only(-1), &gep);
   }
   if (direction & UP)
