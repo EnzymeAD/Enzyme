@@ -631,6 +631,17 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
       Invalid = true;
       return;
     }
+    if (CustomErrorHandler) {
+      std::string str;
+      raw_string_ostream ss(str);
+      ss << "Illegal updateAnalysis prev:" << prev.str()
+         << " new: " << Data.str() << "\n";
+      ss << "val: " << *Val;
+      if (Origin)
+        ss << " origin=" << *Origin;
+      CustomErrorHandler(str.c_str(), wrap(Val), ErrorType::IllegalTypeAnalysis,
+                         (void *)this);
+    }
     llvm::errs() << *fntypeinfo.Function->getParent() << "\n";
     llvm::errs() << *fntypeinfo.Function << "\n";
     dump();
@@ -2114,14 +2125,13 @@ void TypeAnalyzer::visitInsertValueInst(InsertValueInst &I) {
     updateAnalysis(&I, new_res, &I);
 }
 
-void TypeAnalyzer::dump() {
-  llvm::errs() << "<analysis>\n";
+void TypeAnalyzer::dump(llvm::raw_ostream &ss) {
+  ss << "<analysis>\n";
   for (auto &pair : analysis) {
-    llvm::errs() << *pair.first << ": " << pair.second.str()
-                 << ", intvals: " << to_string(knownIntegralValues(pair.first))
-                 << "\n";
+    ss << *pair.first << ": " << pair.second.str()
+       << ", intvals: " << to_string(knownIntegralValues(pair.first)) << "\n";
   }
-  llvm::errs() << "</analysis>\n";
+  ss << "</analysis>\n";
 }
 
 void TypeAnalyzer::visitAtomicRMWInst(llvm::AtomicRMWInst &I) {
