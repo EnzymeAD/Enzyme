@@ -3,4 +3,6 @@ sphinx==4.2
 sphinxcontrib.katex
 sphinxcontrib-httpdomain
 breathe
+exhale
+docutils
 matplotlib

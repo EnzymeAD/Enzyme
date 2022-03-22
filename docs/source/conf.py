@@ -11,9 +11,6 @@ from enzyme_sphinx_theme import __version__
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 #sys.path.insert(0, os.path.abspath('.'))
 
-# Call Doxygen
-subprocess.call('doxygen ../doxygen.cfg', shell=True)
-
 # -- General configuration -----------------------------------------------------
 
 # If your documentation needs a minimal Sphinx version, state it here.
@@ -26,8 +23,39 @@ extensions = [
     'sphinx.ext.autodoc',
     'sphinx.ext.viewcode',
     'sphinxcontrib.httpdomain',
-    'breathe'
+    'breathe',
+    'exhale'
 ]
+
+# -- Breathe configuration --------------------------------------------------
+
+breathe_projects = {
+    "Enzyme": "../build/doxygen/xml/"
+}
+
+breathe_default_project = "Enzyme"
+
+
+# -- Exhale configuration --------------------------------------------------
+
+# Setup the exhale extension
+exhale_args = {
+    # These arguments are required
+    "containmentFolder":     "./api",
+    "rootFileName":          "library_root.rst",
+    "doxygenStripFromPath":  "..",
+    "rootFileTitle":         "Library API",
+    # Suggested optional arguments
+    "createTreeView":        True,
+    "exhaleExecutesDoxygen": True,
+    "exhaleUseDoxyfile": True
+}
+
+# Tell sphinx what the primary language being documented is.
+primary_domain = 'cpp'
+
+# Tell sphinx what the pygments highlight language should be.
+highlight_language = 'cpp'
 
 # Do not warn about external images (status badges in README.rst)
 suppress_warnings = ['image.nonlocal_uri']
@@ -249,11 +277,3 @@ texinfo_documents = [
 
 # How to display URL addresses: 'footnote', 'no', or 'inline'.
 #texinfo_show_urls = 'footnote'
-
-# -- Breathe configuration --------------------------------------------------
-
-breathe_projects = {
-    "Enzyme": "../build/doxygen/xml/"
-}
-breathe_default_project = "Enzyme"
-#breathe_default_members = ('members', 'undoc-members')
