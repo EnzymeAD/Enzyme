@@ -3590,11 +3590,15 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
        cast<IntegerType>(fn->getReturnType())->getBitWidth() < 16))
     retType = DIFFE_TYPE::CONSTANT;
 
+  // TODO find actual context.
+  llvm::Instruction *context = nullptr;
+
   switch (mode) {
   case DerivativeMode::ForwardMode: {
     Constant *newf = Logic.CreateForwardDiff(
         fn, retType, types, TA, false, mode, /*freeMemory*/ true, width,
-        nullptr, type_args, uncacheable_args, /*augmented*/ nullptr);
+        nullptr, type_args, uncacheable_args, /*augmented*/ nullptr,
+        /*omp*/ false, context);
 
     assert(newf);
 
@@ -3621,10 +3625,11 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
         /*returnUsed*/ !fn->getReturnType()->isEmptyTy() &&
             !fn->getReturnType()->isVoidTy(),
         /*shadowReturnUsed*/ false, type_args, uncacheable_args,
-        /*forceAnonymousTape*/ true, AtomicAdd);
+        /*forceAnonymousTape*/ true, AtomicAdd, /*omp*/ false, context);
     Constant *newf = Logic.CreateForwardDiff(
         fn, retType, types, TA, false, mode, /*freeMemory*/ true, width,
-        nullptr, type_args, uncacheable_args, /*augmented*/ &augdata);
+        nullptr, type_args, uncacheable_args, /*augmented*/ &augdata,
+        /*omp*/ false, context);
 
     assert(newf);
 
@@ -3661,7 +3666,9 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
                                            retType == DIFFE_TYPE::DUP_NONEED);
     auto &augdata = Logic.CreateAugmentedPrimal(
         fn, retType, /*constant_args*/ types, TA, returnUsed, shadowReturnUsed,
-        type_args, uncacheable_args, /*forceAnonymousTape*/ true, AtomicAdd);
+        type_args, uncacheable_args, /*forceAnonymousTape*/ true, AtomicAdd,
+        /*omp*/ false,
+        /*context*/ context);
     Constant *newf = Logic.CreatePrimalAndGradient(
         (ReverseCacheKey){.todiff = fn,
                           .retType = retType,
@@ -3677,7 +3684,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
                               Type::getInt8PtrTy(fn->getContext()),
                           .typeInfo = type_args},
         TA,
-        /*map*/ &augdata);
+        /*map*/ &augdata, /*omp*/ false, context);
     assert(newf);
     auto cdata = ConstantStruct::get(
         StructType::get(newf->getContext(),

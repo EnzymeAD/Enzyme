@@ -1640,7 +1640,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     const std::vector<DIFFE_TYPE> &constant_args, TypeAnalysis &TA,
     bool returnUsed, bool shadowReturnUsed, const FnTypeInfo &oldTypeInfo_,
     const std::map<Argument *, bool> _uncacheable_args, bool forceAnonymousTape,
-    bool AtomicAdd, bool omp) {
+    bool AtomicAdd, bool omp, Instruction *context) {
   if (returnUsed)
     assert(!todiff->getReturnType()->isEmptyTy() &&
            !todiff->getReturnType()->isVoidTy());
@@ -1745,7 +1745,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       }
       auto &aug = CreateAugmentedPrimal(
           todiff, retType, next_constant_args, TA, returnUsed, shadowReturnUsed,
-          oldTypeInfo_, _uncacheable_args, forceAnonymousTape, AtomicAdd, omp);
+          oldTypeInfo_, _uncacheable_args, forceAnonymousTape, AtomicAdd, omp,
+          context);
       auto cal = bb.CreateCall(aug.fn, fwdargs);
       cal->setCallingConv(aug.fn->getCallingConv());
 
@@ -1825,7 +1826,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       ss << "No augmented forward pass found for " + todiff->getName() << "\n";
       ss << *todiff << "\n";
       CustomErrorHandler(ss.str().c_str(), wrap(todiff),
-                         ErrorType::NoDerivative, nullptr);
+                         ErrorType::NoDerivative, context);
     }
     llvm::errs() << "mod: " << *todiff->getParent() << "\n";
     llvm::errs() << *todiff << "\n";
@@ -2983,7 +2984,7 @@ void createInvertedTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
 
 Function *EnzymeLogic::CreatePrimalAndGradient(
     const ReverseCacheKey &&key, TypeAnalysis &TA,
-    const AugmentedReturn *augmenteddata, bool omp) {
+    const AugmentedReturn *augmenteddata, bool omp, Instruction *context) {
 
   assert(key.mode == DerivativeMode::ReverseModeCombined ||
          key.mode == DerivativeMode::ReverseModeGradient);
@@ -3050,7 +3051,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       auto &aug = CreateAugmentedPrimal(
           key.todiff, key.retType, key.constant_args, TA, key.returnUsed,
           key.shadowReturnUsed, key.typeInfo, key.uncacheable_args,
-          /*forceAnonymousTape*/ false, key.AtomicAdd, omp);
+          /*forceAnonymousTape*/ false, key.AtomicAdd, omp, context);
 
       SmallVector<Value *, 4> fwdargs;
       for (auto &a : NewF->args())
@@ -3104,7 +3105,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                             .AtomicAdd = key.AtomicAdd,
                             .additionalType = tape ? tape->getType() : nullptr,
                             .typeInfo = key.typeInfo},
-          TA, &aug, omp);
+          TA, &aug, omp, context);
 
       SmallVector<Value *, 4> revargs;
       for (auto &a : NewF->args()) {
@@ -3185,7 +3186,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                             .AtomicAdd = key.AtomicAdd,
                             .additionalType = nullptr,
                             .typeInfo = key.typeInfo},
-          TA, augmenteddata, omp);
+          TA, augmenteddata, omp, context);
 
       {
         auto arg = revfn->arg_begin();
@@ -3343,7 +3344,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     ss << *key.todiff << "\n";
     if (CustomErrorHandler) {
       CustomErrorHandler(ss.str().c_str(), wrap(key.todiff),
-                         ErrorType::NoDerivative, nullptr);
+                         ErrorType::NoDerivative, context);
     } else {
       llvm_unreachable(ss.str().c_str());
     }
@@ -3773,7 +3774,8 @@ Function *EnzymeLogic::CreateForwardDiff(
     bool returnUsed, DerivativeMode mode, bool freeMemory, unsigned width,
     llvm::Type *additionalArg, const FnTypeInfo &oldTypeInfo_,
     const std::map<Argument *, bool> _uncacheable_args,
-    const AugmentedReturn *augmenteddata, bool omp) {
+    const AugmentedReturn *augmenteddata, bool omp,
+    llvm::Instruction *context) {
   assert(retType != DIFFE_TYPE::OUT_DIFF);
 
   assert(mode == DerivativeMode::ForwardMode ||
@@ -3959,7 +3961,7 @@ Function *EnzymeLogic::CreateForwardDiff(
     ss << "No forward derivative found for " + todiff->getName() << "\n";
     ss << *todiff << "\n";
     CustomErrorHandler(s.c_str(), wrap(todiff), ErrorType::NoDerivative,
-                       nullptr);
+                       context);
   }
   if (todiff->empty())
     llvm::errs() << *todiff << "\n";

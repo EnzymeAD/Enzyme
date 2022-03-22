@@ -257,7 +257,8 @@ public:
       const std::vector<DIFFE_TYPE> &constant_args, TypeAnalysis &TA,
       bool returnUsed, bool shadowReturnUsed, const FnTypeInfo &typeInfo,
       const std::map<llvm::Argument *, bool> _uncacheable_args,
-      bool forceAnonymousTape, bool AtomicAdd, bool omp = false);
+      bool forceAnonymousTape, bool AtomicAdd, bool omp,
+      llvm::Instruction *context);
 
   std::map<ReverseCacheKey, llvm::Function *> ReverseCachedFunctions;
 
@@ -276,25 +277,28 @@ public:
   ///  \p returnValue is whether the primal's return should also be returned
   ///  \p dretUsed is whether the shadow return value should also be returned
   ///  \p additionalArg is the type (or null) of an additional type in the
-  ///  signature to hold the tape. \p typeInfo is the type info information
-  ///  about the calling context \p _uncacheable_args marks whether an argument
-  ///  may be rewritten before loads in the generated function (and thus cannot
-  ///  be cached). \p augmented is the data structure created by prior call to
-  ///  an augmented forward pass \p AtomicAdd is whether to perform all adjoint
-  ///  updates to memory in an atomic way
+  ///  signature to hold the tape.
+  ///  \p typeInfo is the type info information about the calling context
+  ///  \p _uncacheable_args marks whether an argument may be rewritten
+  ///  before loads in the generated function (and thus cannot be cached).
+  ///  \p augmented is the data structure created by prior call to
+  ///  an augmented forward pass
+  ///  \p AtomicAdd is whether to perform all adjoint updates to memory in
+  ///  an atomic way.
+  ///  \p context provides the calling context for why this derivative was
+  ///  requested.
   llvm::Function *CreatePrimalAndGradient(const ReverseCacheKey &&key,
                                           TypeAnalysis &TA,
                                           const AugmentedReturn *augmented,
-                                          bool omp = false);
+                                          bool omp, llvm::Instruction *context);
 
-  llvm::Function *
-  CreateForwardDiff(llvm::Function *todiff, DIFFE_TYPE retType,
-                    const std::vector<DIFFE_TYPE> &constant_args,
-                    TypeAnalysis &TA, bool returnValue, DerivativeMode mode,
-                    bool freeMemory, unsigned width, llvm::Type *additionalArg,
-                    const FnTypeInfo &typeInfo,
-                    const std::map<llvm::Argument *, bool> _uncacheable_args,
-                    const AugmentedReturn *augmented, bool omp = false);
+  llvm::Function *CreateForwardDiff(
+      llvm::Function *todiff, DIFFE_TYPE retType,
+      const std::vector<DIFFE_TYPE> &constant_args, TypeAnalysis &TA,
+      bool returnValue, DerivativeMode mode, bool freeMemory, unsigned width,
+      llvm::Type *additionalArg, const FnTypeInfo &typeInfo,
+      const std::map<llvm::Argument *, bool> _uncacheable_args,
+      const AugmentedReturn *augmented, bool omp, llvm::Instruction *context);
 
   void clear();
 };

@@ -387,7 +387,8 @@ LLVMValueRef EnzymeCreateForwardDiff(
     EnzymeTypeAnalysisRef TA, uint8_t returnValue, CDerivativeMode mode,
     uint8_t freeMemory, unsigned width, LLVMTypeRef additionalArg,
     CFnTypeInfo typeInfo, uint8_t *_uncacheable_args,
-    size_t uncacheable_args_size, EnzymeAugmentedReturnPtr augmented) {
+    size_t uncacheable_args_size, EnzymeAugmentedReturnPtr augmented,
+    LLVMValueRef context) {
   std::vector<DIFFE_TYPE> nconstant_args((DIFFE_TYPE *)constant_args,
                                          (DIFFE_TYPE *)constant_args +
                                              constant_args_size);
@@ -402,7 +403,8 @@ LLVMValueRef EnzymeCreateForwardDiff(
       cast<Function>(unwrap(todiff)), (DIFFE_TYPE)retType, nconstant_args,
       eunwrap(TA), returnValue, (DerivativeMode)mode, freeMemory, width,
       unwrap(additionalArg), eunwrap(typeInfo, cast<Function>(unwrap(todiff))),
-      uncacheable_args, eunwrap(augmented)));
+      uncacheable_args, eunwrap(augmented), /*bool omp*/ false,
+      dyn_cast_or_null<Instruction>(unwrap(context))));
 }
 LLVMValueRef EnzymeCreatePrimalAndGradient(
     EnzymeLogicRef Logic, LLVMValueRef todiff, CDIFFE_TYPE retType,
@@ -411,7 +413,7 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
     CDerivativeMode mode, unsigned width, uint8_t freeMemory,
     LLVMTypeRef additionalArg, CFnTypeInfo typeInfo, uint8_t *_uncacheable_args,
     size_t uncacheable_args_size, EnzymeAugmentedReturnPtr augmented,
-    uint8_t AtomicAdd) {
+    uint8_t AtomicAdd, LLVMValueRef context) {
   std::vector<DIFFE_TYPE> nconstant_args((DIFFE_TYPE *)constant_args,
                                          (DIFFE_TYPE *)constant_args +
                                              constant_args_size);
@@ -437,16 +439,16 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
           .additionalType = unwrap(additionalArg),
           .typeInfo = eunwrap(typeInfo, cast<Function>(unwrap(todiff))),
       },
-      eunwrap(TA), eunwrap(augmented)));
+      eunwrap(TA), eunwrap(augmented), /*omp*/ false,
+      dyn_cast_or_null<Instruction>(unwrap(context))));
 }
-EnzymeAugmentedReturnPtr
-EnzymeCreateAugmentedPrimal(EnzymeLogicRef Logic, LLVMValueRef todiff,
-                            CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
-                            size_t constant_args_size, EnzymeTypeAnalysisRef TA,
-                            uint8_t returnUsed, uint8_t shadowReturnUsed,
-                            CFnTypeInfo typeInfo, uint8_t *_uncacheable_args,
-                            size_t uncacheable_args_size,
-                            uint8_t forceAnonymousTape, uint8_t AtomicAdd) {
+EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
+    EnzymeLogicRef Logic, LLVMValueRef todiff, CDIFFE_TYPE retType,
+    CDIFFE_TYPE *constant_args, size_t constant_args_size,
+    EnzymeTypeAnalysisRef TA, uint8_t returnUsed, uint8_t shadowReturnUsed,
+    CFnTypeInfo typeInfo, uint8_t *_uncacheable_args,
+    size_t uncacheable_args_size, uint8_t forceAnonymousTape, uint8_t AtomicAdd,
+    LLVMValueRef context) {
 
   std::vector<DIFFE_TYPE> nconstant_args((DIFFE_TYPE *)constant_args,
                                          (DIFFE_TYPE *)constant_args +
@@ -462,7 +464,8 @@ EnzymeCreateAugmentedPrimal(EnzymeLogicRef Logic, LLVMValueRef todiff,
       cast<Function>(unwrap(todiff)), (DIFFE_TYPE)retType, nconstant_args,
       eunwrap(TA), returnUsed, shadowReturnUsed,
       eunwrap(typeInfo, cast<Function>(unwrap(todiff))), uncacheable_args,
-      forceAnonymousTape, AtomicAdd));
+      forceAnonymousTape, AtomicAdd, /*omp*/ false,
+      dyn_cast_or_null<Instruction>(unwrap(context))));
 }
 
 LLVMValueRef

@@ -840,14 +840,15 @@ public:
           cast<Function>(fn), retType, constants, TA,
           /*should return*/ false, mode, freeMemory, width,
           /*addedType*/ nullptr, type_args, volatile_args,
-          /*augmented*/ nullptr);
+          /*augmented*/ nullptr, /*omp*/ false, /*context*/ CI);
       break;
     case DerivativeMode::ForwardModeSplit: {
       bool forceAnonymousTape = !sizeOnly && allocatedTapeSize == -1;
       aug = &Logic.CreateAugmentedPrimal(
           cast<Function>(fn), retType, constants, TA,
           /*returnUsed*/ false, /*shadowReturnUsed*/ false, type_args,
-          volatile_args, forceAnonymousTape, /*atomicAdd*/ AtomicAdd);
+          volatile_args, forceAnonymousTape, /*atomicAdd*/ AtomicAdd,
+          /*omp*/ false, /*context*/ CI);
       auto &DL = cast<Function>(fn)->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
         assert(!aug->tapeType);
@@ -883,7 +884,8 @@ public:
       newFunc = Logic.CreateForwardDiff(
           cast<Function>(fn), retType, constants, TA,
           /*should return*/ false, mode, freeMemory, width,
-          /*addedType*/ tapeType, type_args, volatile_args, aug);
+          /*addedType*/ tapeType, type_args, volatile_args, aug, /*omp*/ false,
+          /*context*/ CI);
       break;
     }
     case DerivativeMode::ReverseModeCombined:
@@ -901,7 +903,7 @@ public:
                             .AtomicAdd = AtomicAdd,
                             .additionalType = nullptr,
                             .typeInfo = type_args},
-          TA, /*augmented*/ nullptr);
+          TA, /*augmented*/ nullptr, /*omp*/ false, /*context*/ CI);
       break;
     case DerivativeMode::ReverseModePrimal:
     case DerivativeMode::ReverseModeGradient: {
@@ -911,7 +913,7 @@ public:
       aug = &Logic.CreateAugmentedPrimal(
           cast<Function>(fn), retType, constants, TA, returnUsed,
           shadowReturnUsed, type_args, volatile_args, forceAnonymousTape,
-          /*atomicAdd*/ AtomicAdd);
+          /*atomicAdd*/ AtomicAdd, /*omp*/ false, /*context*/ CI);
       auto &DL = cast<Function>(fn)->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
         assert(!aug->tapeType);
@@ -960,7 +962,7 @@ public:
                               .AtomicAdd = AtomicAdd,
                               .additionalType = tapeType,
                               .typeInfo = type_args},
-            TA, aug);
+            TA, aug, /*omp*/ false, /*context*/ CI);
     }
     }
 

@@ -4140,7 +4140,7 @@ public:
             TR.analyzer.interprocedural, /*return is used*/ false,
             /*shadowReturnUsed*/ false, nextTypeInfo, uncacheable_args, false,
             /*AtomicAdd*/ true,
-            /*OpenMP*/ true);
+            /*OpenMP*/ true, /*context*/ &call);
         if (Mode == DerivativeMode::ReverseModePrimal) {
           assert(augmentedReturn);
           auto subaugmentations =
@@ -4356,7 +4356,7 @@ public:
                                        : nullptr,
                               .typeInfo = nextTypeInfo},
             TR.analyzer.interprocedural, subdata,
-            /*omp*/ true);
+            /*omp*/ true, /*context*/ &call);
 
         if (subdata->returns.find(AugmentedStruct::Tape) !=
             subdata->returns.end()) {
@@ -10341,7 +10341,7 @@ public:
             TR.analyzer.interprocedural, /*returnValue*/ subretused, Mode,
             ((DiffeGradientUtils *)gutils)->FreeMemory, gutils->getWidth(),
             tape ? tape->getType() : nullptr, nextTypeInfo, {},
-            /*augmented*/ subdata);
+            /*augmented*/ subdata, /*omp*/ false, /*context*/ orig);
       } else {
 #if LLVM_VERSION_MAJOR >= 11
         auto callval = orig->getCalledOperand();
@@ -10632,7 +10632,7 @@ public:
               cast<Function>(called), subretType, argsInverted,
               TR.analyzer.interprocedural, /*return is used*/ subretused,
               shadowReturnUsed, nextTypeInfo, uncacheable_args, false,
-              gutils->AtomicAdd);
+              gutils->AtomicAdd, /*omp*/ false, orig);
           if (Mode == DerivativeMode::ReverseModePrimal) {
             assert(augmentedReturn);
             auto subaugmentations =
@@ -10973,7 +10973,7 @@ public:
                             .AtomicAdd = gutils->AtomicAdd,
                             .additionalType = tape ? tape->getType() : nullptr,
                             .typeInfo = nextTypeInfo},
-          TR.analyzer.interprocedural, subdata);
+          TR.analyzer.interprocedural, subdata, /*omp*/ false, orig);
       if (!newcalled)
         return;
     } else {
