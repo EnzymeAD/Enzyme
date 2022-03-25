@@ -179,6 +179,44 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
   globalsToErase.push_back(&g);
 }
 
+static void handleCustomGlobal(llvm::Module &M, llvm::GlobalVariable &g,
+                               std::vector<GlobalVariable *> &globalsToErase) {
+  if (g.hasInitializer()) {
+    Value *V = g.getInitializer();
+    if (auto CS = dyn_cast<ConstantStruct>(V)) {
+      assert(CS->getNumOperands() == 2);
+
+      Value *A = CS->getOperand(0);
+      Value *B = CS->getOperand(1);
+      assert(A->getType()->isPointerTy());
+      assert(B->getType()->isPointerTy());
+      if (auto GA = dyn_cast<GlobalObject>(A)) {
+        GA->setMetadata("enzyme_shadow",
+                        llvm::MDTuple::get(B->getContext(),
+                                           {llvm::ValueAsMetadata::get(B)}));
+      } else {
+        llvm::errs() << M << "\n";
+        llvm::errs() << "Arguments of __enzyme_globalshadow must refer to "
+                        "global objects. "
+                     << g << "\n";
+        llvm_unreachable("__enzyme_globalshadow");
+      }
+    } else {
+      llvm::errs() << M << "\n";
+      llvm::errs() << "Use of __enzyme_globalshadow must be a "
+                      "struct with two members "
+                   << g << "\n";
+      llvm_unreachable("__enzyme_globalshadow");
+    }
+  } else {
+    llvm::errs() << M << "\n";
+    llvm::errs() << "Use of __enzyme_globalshadow must be a "
+                    "struct with two members "
+                 << g << "\n";
+    llvm_unreachable("__enzyme_globalshadow");
+  }
+  globalsToErase.push_back(&g);
+}
 static void
 handleInactiveFunction(llvm::Module &M, llvm::GlobalVariable &g,
                        std::vector<GlobalVariable *> &globalsToErase) {
@@ -1752,6 +1790,8 @@ public:
         "__enzyme_register_derivative";
     constexpr static const char splitderivative_handler_name[] =
         "__enzyme_register_splitderivative";
+    constexpr static const char shadowglobal_handler_name[] =
+        "__enzyme_globalshadow";
 
     Logic.clear();
 
@@ -1772,6 +1812,8 @@ public:
             M, g, globalsToErase);
       } else if (g.getName().contains("__enzyme_inactivefn")) {
         handleInactiveFunction(M, g, globalsToErase);
+      } else if (g.getName().contains(shadowglobal_handler_name)) {
+        handleCustomGlobal(M, g, globalsToErase);
       }
     }
     for (auto g : globalsToErase) {
