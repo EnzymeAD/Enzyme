@@ -10,13 +10,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "TableGen/GenInfo.h"
-#include "TableGen/GenNameParser.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FormatVariadic.h"
-#include "llvm/Support/InitLLVM.h"
-#include "llvm/Support/ManagedStatic.h"
+#include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/TableGen/Error.h"
 #include "llvm/TableGen/Main.h"
@@ -24,140 +21,174 @@
 #include "llvm/TableGen/TableGenBackend.h"
 
 using namespace llvm;
-using namespace mlir;
 
-enum DeprecatedAction { None, Warn, Error };
-llvm::cl::opt<DeprecatedAction> actionOnDeprecated(
-    "on-deprecated", llvm::cl::init(Warn),
-    llvm::cl::desc("Action to perform on deprecated def"),
-    llvm::cl::values(clEnumValN(DeprecatedAction::None, "none", "No action"),
-                     clEnumValN(DeprecatedAction::Warn, "warn", "Warn on use"),
-                     clEnumValN(DeprecatedAction::Error, "error",
-                                "Error on use")));
+enum ActionType { GenRewriters };
 
-static llvm::ManagedStatic<std::vector<GenInfo>> generatorRegistry;
+static cl::opt<ActionType>
+    action(cl::desc("Action to perform:"),
+           cl::values(clEnumValN(GenRewriters, "gen-rewriters",
+                                 "Generate rewriter definitions")));
 
-mlir::GenRegistration::GenRegistration(StringRef arg, StringRef description,
-                                       const GenFunction &function) {
-  generatorRegistry->emplace_back(arg, description, function);
-}
+static void emitRewriters(const RecordKeeper &recordKeeper, raw_ostream &os) {
+  emitSourceFileHeader("Rewriters", os);
+  const auto &patterns = recordKeeper.getAllDerivedDefinitions("Pattern");
+  Record *attrClass = recordKeeper.getClass("Attr");
 
-GenNameParser::GenNameParser(llvm::cl::Option &opt)
-    : llvm::cl::parser<const GenInfo *>(opt) {
-  for (const auto &kv : *generatorRegistry) {
-    addLiteralOption(kv.getGenArgument(), &kv, kv.getGenDescription());
-  }
-}
+  // Ensure unique patterns simply by appending unique suffix.
+  unsigned rewritePatternCount = 0;
+  std::string baseRewriteName = "GeneratedConvert";
+  for (Record *pattern : patterns) {
+    DagInit *tree = pattern->getValueAsDag("PatternToMatch");
 
-void GenNameParser::printOptionInfo(const llvm::cl::Option &o,
-                                    size_t globalWidth) const {
-  GenNameParser *tp = const_cast<GenNameParser *>(this);
-  llvm::array_pod_sort(tp->Values.begin(), tp->Values.end(),
-                       [](const GenNameParser::OptionInfo *vT1,
-                          const GenNameParser::OptionInfo *vT2) {
-                         return vT1->Name.compare(vT2->Name);
-                       });
-  using llvm::cl::parser;
-  parser<const GenInfo *>::printOptionInfo(o, globalWidth);
-}
+    StringMap<int> nameToOrdinal;
+    for (int i = 0, e = tree->getNumArgs(); i != e; ++i)
+      nameToOrdinal[tree->getArgNameStr(i)] = i;
 
-// Generator that prints records.
-GenRegistration printRecords("print-records", "Print all records to stdout",
-                             [](const RecordKeeper &records, raw_ostream &os) {
-                               os << records;
-                               return false;
-                             });
-
-// Generator to invoke.
-const mlir::GenInfo *generator;
-
-// Returns if there is a use of `init` in `record`.
-bool findUse(Record &record, Init *init,
-             llvm::DenseMap<Record *, bool> &known) {
-  auto it = known.find(&record);
-  if (it != known.end())
-    return it->second;
-
-  auto memoize = [&](bool val) {
-    known[&record] = val;
-    return val;
-  };
-
-  for (const RecordVal &val : record.getValues()) {
-    Init *valInit = val.getValue();
-    if (valInit == init)
-      return true;
-    if (auto *di = dyn_cast<DefInit>(valInit)) {
-      if (findUse(*di->getDef(), init, known))
-        return memoize(true);
-    } else if (auto *di = dyn_cast<DagInit>(valInit)) {
-      for (Init *arg : di->getArgs())
-        if (auto *di = dyn_cast<DefInit>(arg))
-          if (findUse(*di->getDef(), init, known))
-            return memoize(true);
-    } else if (ListInit *li = dyn_cast<ListInit>(valInit)) {
-      for (Init *jt : li->getValues())
-        if (jt == init)
-          return memoize(true);
+    // TODO(jpienaar): Expand to multiple matches.
+    for (auto arg : tree->getArgs()) {
+      if (isa<DagInit>(arg))
+        PrintFatalError(pattern->getLoc(),
+                        "only single pattern inputs supported");
     }
-  }
-  return memoize(false);
-}
 
-void warnOfDeprecatedUses(RecordKeeper &records) {
-  // This performs a direct check for any def marked as deprecated and then
-  // finds all uses of deprecated def. Deprecated defs are not expected to be
-  // either numerous or long lived.
-  bool deprecatedDefsFounds = false;
-  for (auto &it : records.getDefs()) {
-    const RecordVal *r = it.second->getValue("odsDeprecated");
-    if (!r || !r->getValue())
-      continue;
+    // Emit RewritePattern for Pattern.
+    DefInit *root = cast<DefInit>(tree->getOperator());
+    std::string rewriteName =
+        baseRewriteName + llvm::utostr(rewritePatternCount++);
+    auto *rootName = cast<StringInit>(root->getDef()->getValueInit("opName"));
+    os << "struct " << rewriteName << " : public RewritePattern {\n"
+       << "  " << rewriteName << "(MLIRContext *context) : RewritePattern("
+       << rootName->getAsString() << ", 1, context) {}\n"
+       << "  PatternMatchResult match(Operation *op) const override {\n"
+       << "    // TODO: This just handle 1 result\n"
+       << "    if (op->getNumResults() != 1) return matchFailure();\n"
+       << "    return matchSuccess();\n  }\n";
 
-    llvm::DenseMap<Record *, bool> hasUse;
-    if (auto *si = dyn_cast<StringInit>(r->getValue())) {
-      for (auto &jt : records.getDefs()) {
-        // Skip anonymous defs.
-        if (jt.second->isAnonymous())
-          continue;
-        // Skip all outside main file to avoid flagging redundantly.
-        unsigned buf =
-            SrcMgr.FindBufferContainingLoc(jt.second->getLoc().front());
-        if (buf != SrcMgr.getMainFileID())
-          continue;
+    ListInit *resultOps = pattern->getValueAsListInit("ResultOps");
+    if (resultOps->size() != 1)
+      PrintFatalError("only single result rules supported");
+    DagInit *resultTree = cast<DagInit>(resultOps->getElement(0));
 
-        if (findUse(*jt.second, it.second->getDefInit(), hasUse)) {
-          PrintWarning(jt.second->getLoc(),
-                       "Using deprecated def `" + it.first + "`");
-          PrintNote(si->getAsUnquotedString());
-          deprecatedDefsFounds = true;
-        }
+    // TODO(jpienaar): Expand to multiple results.
+    for (auto result : resultTree->getArgs()) {
+      if (isa<DagInit>(result))
+        PrintFatalError(pattern->getLoc(), "only single op result supported");
+    }
+    DefInit *resultRoot = cast<DefInit>(resultTree->getOperator());
+    std::string opName = resultRoot->getAsUnquotedString();
+    auto resultOperands = resultRoot->getDef()->getValueAsDag("arguments");
+
+    SmallVector<StringRef, 2> split;
+    SplitString(opName, split, "_");
+    auto className = join(split, "::");
+    os << formatv(R"(
+  void rewrite(Operation *op, PatternRewriter &rewriter) const override {
+    auto* context = op->getContext(); (void)context;
+    rewriter.replaceOpWithNewOp<{0}>(op, op->getResult(0)->getType())",
+                  className);
+    if (resultOperands->getNumArgs() != resultTree->getNumArgs()) {
+      PrintFatalError(pattern->getLoc(),
+                      Twine("mismatch between arguments of resultant op (") +
+                          Twine(resultOperands->getNumArgs()) +
+                          ") and arguments provided for rewrite (" +
+                          Twine(resultTree->getNumArgs()) + Twine(')'));
+    }
+
+    // Create the builder call for the result.
+    for (int i = 0, e = resultTree->getNumArgs(); i != e; ++i) {
+      // Start each operand on its own line.
+      (os << ",\n").indent(6);
+
+      auto *arg = resultTree->getArg(i);
+      std::string name = resultTree->getArgName(i)->getAsUnquotedString();
+      auto defInit = dyn_cast<DefInit>(arg);
+
+      auto *argument = resultOperands->getArg(i);
+      auto argumentDefInit = dyn_cast<DefInit>(argument);
+      bool argumentIsAttr = false;
+      if (argumentDefInit) {
+        if (auto recTy = dyn_cast<RecordRecTy>(argumentDefInit->getType()))
+          argumentIsAttr = recTy->isSubClassOf(attrClass);
       }
+
+      if (argumentIsAttr) {
+        if (!defInit) {
+          std::string argumentName =
+              resultOperands->getArgName(i)->getAsUnquotedString();
+          PrintFatalError(pattern->getLoc(),
+                          Twine("attribute '") + argumentName +
+                              "' needs to be constant initialized");
+        }
+
+        auto value = defInit->getDef()->getValue("value");
+        if (!value)
+          PrintFatalError(pattern->getLoc(), Twine("'value' not defined in ") +
+                                                 arg->getAsString());
+
+        switch (value->getType()->getRecTyKind()) {
+        case RecTy::IntRecTyKind:
+          // TODO(jpienaar): This is using 64-bits for all the bitwidth of the
+          // type could instead be queried. These are expected to be mostly used
+          // for enums or constant indices and so no arithmetic operations are
+          // expected on these.
+          os << formatv(
+              "/*{0}=*/IntegerAttr::get(Type::getInteger(64, context), {1})",
+              name, value->getValue()->getAsString());
+          break;
+        case RecTy::StringRecTyKind:
+          os << formatv("/*{0}=*/StringAttr::get({1}, context)", name,
+                        value->getValue()->getAsString());
+          break;
+        default:
+          PrintFatalError(pattern->getLoc(),
+                          Twine("unsupported/unimplemented value type for ") +
+                              name);
+        }
+        continue;
+      }
+
+      // Verify the types match between the rewriter's result and the
+      if (defInit && argumentDefInit &&
+          defInit->getType() != argumentDefInit->getType()) {
+        PrintFatalError(
+            pattern->getLoc(),
+            "mismatch in type of operation's argument and rewrite argument " +
+                Twine(i));
+      }
+
+      // Lookup the ordinal for the named operand.
+      auto ord = nameToOrdinal.find(name);
+      if (ord == nameToOrdinal.end())
+        PrintFatalError(pattern->getLoc(),
+                        Twine("unknown named operand '") + name + "'");
+      os << "/*" << name << "=*/op->getOperand(" << ord->getValue() << ")";
     }
+    os << "\n    );\n  }\n};\n";
   }
-  if (deprecatedDefsFounds && actionOnDeprecated == DeprecatedAction::Error)
-    PrintFatalNote("Error'ing out due to deprecated defs");
+
+  // Emit function to add the generated matchers to the pattern list.
+  os << "void populateWithGenerated(MLIRContext *context, "
+     << "OwningRewritePatternList *patterns) {\n";
+  for (unsigned i = 0; i != rewritePatternCount; ++i) {
+    os << " patterns->push_back(std::make_unique<" << baseRewriteName << i
+       << ">(context));\n";
+  }
+  os << "}\n";
 }
 
-// TableGenMain requires a function pointer so this function is passed in which
-// simply wraps the call to the generator.
-static bool enzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
-  if (actionOnDeprecated != DeprecatedAction::None)
-    warnOfDeprecatedUses(records);
-
-  if (!generator) {
-    os << records;
+static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
+  switch (action) {
+  case GenRewriters:
+    emitRewriters(records, os);
     return false;
   }
-  return generator->invoke(records, os);
 }
 
 int main(int argc, char **argv) {
-  llvm::InitLLVM y(argc, argv);
-  llvm::cl::opt<const mlir::GenInfo *, false, mlir::GenNameParser> generator(
-      "", llvm::cl::desc("Generator to run"));
+  sys::PrintStackTraceOnErrorSignal(argv[0]);
+  PrettyStackTraceProgram X(argc, argv);
   cl::ParseCommandLineOptions(argc, argv);
-  ::generator = generator.getValue();
 
-  return TableGenMain(argv[0], &enzymeTableGenMain);
+  llvm_shutdown_obj Y;
+  return TableGenMain(argv[0], &EnzymeTableGenMain);
 }

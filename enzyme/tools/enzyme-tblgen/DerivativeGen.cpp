@@ -10,15 +10,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "mlir/Support/IndentedOstream.h"
-#include "mlir/TableGen/Attribute.h"
-#include "mlir/TableGen/CodeGenHelpers.h"
-#include "mlir/TableGen/Format.h"
-#include "mlir/TableGen/GenInfo.h"
-#include "mlir/TableGen/Operator.h"
-#include "mlir/TableGen/Pattern.h"
-#include "mlir/TableGen/Predicate.h"
-#include "mlir/TableGen/Type.h"
 #include "llvm/ADT/FunctionExtras.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringExtras.h"
@@ -33,14 +24,14 @@
 #include "llvm/TableGen/Record.h"
 #include "llvm/TableGen/TableGenBackend.h"
 
-using namespace mlir;
-using namespace mlir::tblgen;
+using namespace enzyme;
+using namespace enzyme::tblgen;
 
 using llvm::formatv;
 using llvm::Record;
 using llvm::RecordKeeper;
 
-#define DEBUG_TYPE "mlir-tblgen-rewritergen"
+#define DEBUG_TYPE "enzyme-tblgen-derivativegen"
 
 namespace llvm {
 template <>
@@ -1754,8 +1745,8 @@ StringRef StaticMatcherHelper::getVerifierName(DagLeaf leaf) {
   return staticVerifierEmitter.getTypeConstraintFn(leaf.getAsConstraint());
 }
 
-static void emitRewriters(const RecordKeeper &recordKeeper, raw_ostream &os) {
-  emitSourceFileHeader("Rewriters", os);
+static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
+  emitSourceFileHeader("Derivatives", os);
 
   const auto &patterns = recordKeeper.getAllDerivedDefinitions("Pattern");
 
@@ -1802,9 +1793,9 @@ static void emitRewriters(const RecordKeeper &recordKeeper, raw_ostream &os) {
   os << "}\n";
 }
 
-static mlir::GenRegistration
-    genRewriters("gen-rewriters", "Generate pattern rewriters",
+static enzyme::GenRegistration
+    genRewriters("gen-derivatives", "Generate instruction derivatives",
                  [](const RecordKeeper &records, raw_ostream &os) {
-                   emitRewriters(records, os);
+                   emitDerivatives(records, os);
                    return false;
                  });
