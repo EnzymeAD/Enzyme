@@ -10427,6 +10427,10 @@ public:
         }
         if (diffe) {
           gutils->replaceAWithB(placeholder, diffe);
+          if (!placeholder->getType()->isPointerTy()) {
+            // example: return of an augmented function { i8*, double }.
+            setDiffe(&call, diffe, Builder2);
+          }
         } else {
           gutils->invertedPointers.erase(ifound);
         }
