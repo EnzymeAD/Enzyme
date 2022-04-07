@@ -9503,6 +9503,7 @@ public:
         }
         case DerivativeMode::ReverseModeGradient:
         case DerivativeMode::ReverseModeCombined: {
+          // Derivative of these is zero and requires no modification
           return;
         }
         case DerivativeMode::ReverseModePrimal:;
