@@ -1179,14 +1179,6 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
       return false;
     }
 
-    if (EnzymePrintActivity)
-      llvm::errs() << " < MEMSEARCH" << (int)directions << ">" << *Val << "\n";
-    // A pointer value is active if two things hold:
-    //   an potentially active value is stored into the memory
-    //   memory loaded from the value is used in an active way
-    bool potentialStore = false;
-    bool potentiallyActiveLoad = false;
-
     // Assume the value (not instruction) is itself active
     // In spite of that can we show that there are either no active stores
     // or no active loads
@@ -1194,6 +1186,20 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
         std::shared_ptr<ActivityAnalyzer>(
             new ActivityAnalyzer(*this, directions));
     Hypothesis->ActiveValues.insert(Val);
+
+    if (Hypothesis->isValueInactiveFromUsers(TR, Val, UseActivity::None)) {
+      insertConstantsFrom(TR, *Hypothesis);
+      InsertConstantValue(TR, Val);
+      return true;
+    }
+
+    if (EnzymePrintActivity)
+      llvm::errs() << " < MEMSEARCH" << (int)directions << ">" << *Val << "\n";
+    // A pointer value is active if two things hold:
+    //   an potentially active value is stored into the memory
+    //   memory loaded from the value is used in an active way
+    bool potentialStore = false;
+    bool potentiallyActiveLoad = false;
 
     if (isa<Instruction>(Val) || isa<Argument>(Val)) {
       // These are handled by iterating through all
@@ -1203,256 +1209,259 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
       llvm_unreachable("unknown pointer value type");
     }
 
-    // Search through all the instructions in this function
-    // for potential loads / stores of this value
-    for (BasicBlock &BB : *TR.getFunction()) {
-      if (potentialStore && potentiallyActiveLoad)
-        goto activeLoadAndStore;
-      if (notForAnalysis.count(&BB))
-        continue;
-      auto IVal = dyn_cast<Instruction>(Val);
-      if (IVal && IVal->getParent() != &BB &&
-          TR.analyzer.DT.dominates(&BB, IVal->getParent())) {
-        continue;
-      }
-      for (Instruction &I : BB) {
-        if (potentialStore && potentiallyActiveLoad)
-          goto activeLoadAndStore;
+    auto checkActivity = [&](Instruction *I) {
+      if (notForAnalysis.count(I->getParent()))
+        return false;
 
-        // If this is a malloc or free, this doesn't impact the activity
-        if (auto CI = dyn_cast<CallInst>(&I)) {
-          if (CI->hasFnAttr("enzyme_inactive"))
-            continue;
+      // If this is a malloc or free, this doesn't impact the activity
+      if (auto CI = dyn_cast<CallInst>(I)) {
+        if (CI->hasFnAttr("enzyme_inactive"))
+          return false;
 
 #if LLVM_VERSION_MAJOR >= 11
-          if (auto iasm = dyn_cast<InlineAsm>(CI->getCalledOperand()))
+        if (auto iasm = dyn_cast<InlineAsm>(CI->getCalledOperand()))
 #else
-          if (auto iasm = dyn_cast<InlineAsm>(CI->getCalledValue()))
+        if (auto iasm = dyn_cast<InlineAsm>(CI->getCalledValue()))
 #endif
-          {
-            if (StringRef(iasm->getAsmString()).contains("exit") ||
-                StringRef(iasm->getAsmString()).contains("cpuid"))
-              continue;
+        {
+          if (StringRef(iasm->getAsmString()).contains("exit") ||
+              StringRef(iasm->getAsmString()).contains("cpuid"))
+            return false;
+        }
+
+        Function *F = getFunctionFromCall(CI);
+
+        if (F) {
+          if (F->hasFnAttribute("enzyme_inactive")) {
+            return false;
+          }
+          if (isAllocationFunction(*F, TLI) ||
+              isDeallocationFunction(*F, TLI)) {
+            return false;
+          }
+          if (KnownInactiveFunctions.count(F->getName().str()) ||
+              MPIInactiveCommAllocators.find(F->getName().str()) !=
+                  MPIInactiveCommAllocators.end()) {
+            return false;
+          }
+          if (isMemFreeLibMFunction(F->getName()) ||
+              F->getName() == "__fd_sincos_1") {
+            return false;
+          }
+          for (auto FuncName : KnownInactiveFunctionsStartingWith) {
+            if (F->getName().startswith(FuncName)) {
+              return false;
+            }
+          }
+          for (auto FuncName : KnownInactiveFunctionsContains) {
+            if (F->getName().contains(FuncName)) {
+              return false;
+            }
           }
 
-          Function *F = getFunctionFromCall(CI);
+          if (F->getName() == "__cxa_guard_acquire" ||
+              F->getName() == "__cxa_guard_release" ||
+              F->getName() == "__cxa_guard_abort" ||
+              F->getName() == "posix_memalign") {
+            return false;
+          }
 
-          if (F) {
-            if (F->hasFnAttribute("enzyme_inactive")) {
-              continue;
-            }
-            if (isAllocationFunction(*F, TLI) ||
-                isDeallocationFunction(*F, TLI)) {
-              continue;
-            }
-            if (KnownInactiveFunctions.count(F->getName().str()) ||
-                MPIInactiveCommAllocators.find(F->getName().str()) !=
-                    MPIInactiveCommAllocators.end()) {
-              continue;
-            }
-            if (isMemFreeLibMFunction(F->getName()) ||
-                F->getName() == "__fd_sincos_1") {
-              continue;
-            }
-            for (auto FuncName : KnownInactiveFunctionsStartingWith) {
-              if (F->getName().startswith(FuncName)) {
-                continue;
-              }
-            }
-            for (auto FuncName : KnownInactiveFunctionsContains) {
-              if (F->getName().contains(FuncName)) {
-                continue;
-              }
-            }
-
-            if (F->getName() == "__cxa_guard_acquire" ||
-                F->getName() == "__cxa_guard_release" ||
-                F->getName() == "__cxa_guard_abort" ||
-                F->getName() == "posix_memalign") {
-              continue;
-            }
-
-            bool noUse = false;
-            switch (F->getIntrinsicID()) {
-            case Intrinsic::nvvm_barrier0:
-            case Intrinsic::nvvm_barrier0_popc:
-            case Intrinsic::nvvm_barrier0_and:
-            case Intrinsic::nvvm_barrier0_or:
-            case Intrinsic::nvvm_membar_cta:
-            case Intrinsic::nvvm_membar_gl:
-            case Intrinsic::nvvm_membar_sys:
-            case Intrinsic::amdgcn_s_barrier:
-            case Intrinsic::assume:
-            case Intrinsic::stacksave:
-            case Intrinsic::stackrestore:
-            case Intrinsic::lifetime_start:
-            case Intrinsic::lifetime_end:
-            case Intrinsic::dbg_addr:
-            case Intrinsic::dbg_declare:
-            case Intrinsic::dbg_value:
-            case Intrinsic::invariant_start:
-            case Intrinsic::invariant_end:
-            case Intrinsic::var_annotation:
-            case Intrinsic::ptr_annotation:
-            case Intrinsic::annotation:
-            case Intrinsic::codeview_annotation:
-            case Intrinsic::expect:
-            case Intrinsic::type_test:
-            case Intrinsic::donothing:
-            case Intrinsic::prefetch:
-            case Intrinsic::trap:
+          bool noUse = false;
+          switch (F->getIntrinsicID()) {
+          case Intrinsic::nvvm_barrier0:
+          case Intrinsic::nvvm_barrier0_popc:
+          case Intrinsic::nvvm_barrier0_and:
+          case Intrinsic::nvvm_barrier0_or:
+          case Intrinsic::nvvm_membar_cta:
+          case Intrinsic::nvvm_membar_gl:
+          case Intrinsic::nvvm_membar_sys:
+          case Intrinsic::amdgcn_s_barrier:
+          case Intrinsic::assume:
+          case Intrinsic::stacksave:
+          case Intrinsic::stackrestore:
+          case Intrinsic::lifetime_start:
+          case Intrinsic::lifetime_end:
+          case Intrinsic::dbg_addr:
+          case Intrinsic::dbg_declare:
+          case Intrinsic::dbg_value:
+          case Intrinsic::invariant_start:
+          case Intrinsic::invariant_end:
+          case Intrinsic::var_annotation:
+          case Intrinsic::ptr_annotation:
+          case Intrinsic::annotation:
+          case Intrinsic::codeview_annotation:
+          case Intrinsic::expect:
+          case Intrinsic::type_test:
+          case Intrinsic::donothing:
+          case Intrinsic::prefetch:
+          case Intrinsic::trap:
 #if LLVM_VERSION_MAJOR >= 8
-            case Intrinsic::is_constant:
+          case Intrinsic::is_constant:
 #endif
-              noUse = true;
-              break;
-            default:
-              break;
-            }
-            if (noUse)
-              continue;
+            noUse = true;
+            break;
+          default:
+            break;
+          }
+          if (noUse)
+            return false;
+        }
+      }
+
+      Value *memval = Val;
+
+      // BasicAA stupidy assumes that non-pointer's don't alias
+      // if this is a nonpointer, use something else to force alias
+      // consideration
+      if (!memval->getType()->isPointerTy()) {
+        if (auto ci = dyn_cast<CastInst>(Val)) {
+          if (ci->getOperand(0)->getType()->isPointerTy()) {
+            memval = ci->getOperand(0);
           }
         }
-
-        Value *memval = Val;
-
-        // BasicAA stupidy assumes that non-pointer's don't alias
-        // if this is a nonpointer, use something else to force alias
-        // consideration
-        if (!memval->getType()->isPointerTy()) {
-          if (auto ci = dyn_cast<CastInst>(Val)) {
-            if (ci->getOperand(0)->getType()->isPointerTy()) {
-              memval = ci->getOperand(0);
-            }
-          }
-          for (auto user : Val->users()) {
-            if (isa<CastInst>(user) && user->getType()->isPointerTy()) {
-              memval = user;
-              break;
-            }
+        for (auto user : Val->users()) {
+          if (isa<CastInst>(user) && user->getType()->isPointerTy()) {
+            memval = user;
+            break;
           }
         }
+      }
 
 #if LLVM_VERSION_MAJOR >= 12
-        auto AARes = AA.getModRefInfo(
-            &I, MemoryLocation(memval, LocationSize::beforeOrAfterPointer()));
+      auto AARes = AA.getModRefInfo(
+          I, MemoryLocation(memval, LocationSize::beforeOrAfterPointer()));
 #elif LLVM_VERSION_MAJOR >= 9
-        auto AARes = AA.getModRefInfo(
-            &I, MemoryLocation(memval, LocationSize::unknown()));
+      auto AARes =
+          AA.getModRefInfo(I, MemoryLocation(memval, LocationSize::unknown()));
 #else
-        auto AARes = AA.getModRefInfo(
-            &I, MemoryLocation(memval, MemoryLocation::UnknownSize));
+      auto AARes = AA.getModRefInfo(
+          I, MemoryLocation(memval, MemoryLocation::UnknownSize));
 #endif
 
-        // Still having failed to replace the location used by AA, fall back to
-        // getModref against any location.
-        if (!memval->getType()->isPointerTy()) {
-          if (auto CB = dyn_cast<CallInst>(&I)) {
-            AARes = createModRefInfo(AA.getModRefBehavior(CB));
-          } else {
-            bool mayRead = I.mayReadFromMemory();
-            bool mayWrite = I.mayWriteToMemory();
-            AARes = mayRead
-                        ? (mayWrite ? ModRefInfo::ModRef : ModRefInfo::Ref)
-                        : (mayWrite ? ModRefInfo::Mod : ModRefInfo::NoModRef);
-          }
+      // Still having failed to replace the location used by AA, fall back to
+      // getModref against any location.
+      if (!memval->getType()->isPointerTy()) {
+        if (auto CB = dyn_cast<CallInst>(I)) {
+          AARes = createModRefInfo(AA.getModRefBehavior(CB));
+        } else {
+          bool mayRead = I->mayReadFromMemory();
+          bool mayWrite = I->mayWriteToMemory();
+          AARes = mayRead ? (mayWrite ? ModRefInfo::ModRef : ModRefInfo::Ref)
+                          : (mayWrite ? ModRefInfo::Mod : ModRefInfo::NoModRef);
         }
+      }
 
-        // TODO this aliasing information is too conservative, the question
-        // isn't merely aliasing but whether there is a path for THIS value to
-        // eventually be loaded by it not simply because there isnt aliasing
+      // TODO this aliasing information is too conservative, the question
+      // isn't merely aliasing but whether there is a path for THIS value to
+      // eventually be loaded by it not simply because there isnt aliasing
 
-        // If we haven't already shown a potentially active load
-        // check if this loads the given value and is active
-        if (!potentiallyActiveLoad && isRefSet(AARes)) {
-          if (EnzymePrintActivity)
-            llvm::errs() << "potential active load: " << I << "\n";
-          if (isa<LoadInst>(&I) ||
-              (isa<IntrinsicInst>(&I) &&
-               (cast<IntrinsicInst>(&I)->getIntrinsicID() ==
-                    Intrinsic::nvvm_ldu_global_i ||
-                cast<IntrinsicInst>(&I)->getIntrinsicID() ==
-                    Intrinsic::nvvm_ldu_global_p ||
-                cast<IntrinsicInst>(&I)->getIntrinsicID() ==
-                    Intrinsic::nvvm_ldu_global_f ||
-                cast<IntrinsicInst>(&I)->getIntrinsicID() ==
-                    Intrinsic::nvvm_ldg_global_i ||
-                cast<IntrinsicInst>(&I)->getIntrinsicID() ==
-                    Intrinsic::nvvm_ldg_global_p ||
-                cast<IntrinsicInst>(&I)->getIntrinsicID() ==
-                    Intrinsic::nvvm_ldg_global_f))) {
-            // If the ref'ing value is a load check if the loaded value is
-            // active
-            if (!Hypothesis->isConstantValue(TR, &I)) {
-              potentiallyActiveLoad = true;
-              if (TR.query(&I)[{-1}].isPossiblePointer()) {
-                if (EnzymePrintActivity)
-                  llvm::errs()
-                      << "potential active store via pointer in load: " << I
-                      << " of " << *Val << "\n";
-                potentialStore = true;
-              }
+      // If we haven't already shown a potentially active load
+      // check if this loads the given value and is active
+      if (!potentiallyActiveLoad && isRefSet(AARes)) {
+        if (EnzymePrintActivity)
+          llvm::errs() << "potential active load: " << *I << "\n";
+        if (isa<LoadInst>(I) || (isa<IntrinsicInst>(I) &&
+                                 (cast<IntrinsicInst>(I)->getIntrinsicID() ==
+                                      Intrinsic::nvvm_ldu_global_i ||
+                                  cast<IntrinsicInst>(I)->getIntrinsicID() ==
+                                      Intrinsic::nvvm_ldu_global_p ||
+                                  cast<IntrinsicInst>(I)->getIntrinsicID() ==
+                                      Intrinsic::nvvm_ldu_global_f ||
+                                  cast<IntrinsicInst>(I)->getIntrinsicID() ==
+                                      Intrinsic::nvvm_ldg_global_i ||
+                                  cast<IntrinsicInst>(I)->getIntrinsicID() ==
+                                      Intrinsic::nvvm_ldg_global_p ||
+                                  cast<IntrinsicInst>(I)->getIntrinsicID() ==
+                                      Intrinsic::nvvm_ldg_global_f))) {
+          // If the ref'ing value is a load check if the loaded value is
+          // active
+          if (!Hypothesis->isConstantValue(TR, I)) {
+            potentiallyActiveLoad = true;
+            if (TR.query(I)[{-1}].isPossiblePointer()) {
+              if (EnzymePrintActivity)
+                llvm::errs()
+                    << "potential active store via pointer in load: " << *I
+                    << " of " << *Val << "\n";
+              potentialStore = true;
             }
-          } else if (auto MTI = dyn_cast<MemTransferInst>(&I)) {
-            if (!Hypothesis->isConstantValue(TR, MTI->getArgOperand(0))) {
-              potentiallyActiveLoad = true;
-              if (TR.query(Val)[{-1, -1}].isPossiblePointer()) {
-                if (EnzymePrintActivity)
-                  llvm::errs()
-                      << "potential active store via pointer in memcpy: " << I
-                      << " of " << *Val << "\n";
-                potentialStore = true;
-              }
+          }
+        } else if (auto MTI = dyn_cast<MemTransferInst>(I)) {
+          if (!Hypothesis->isConstantValue(TR, MTI->getArgOperand(0))) {
+            potentiallyActiveLoad = true;
+            if (TR.query(Val)[{-1, -1}].isPossiblePointer()) {
+              if (EnzymePrintActivity)
+                llvm::errs()
+                    << "potential active store via pointer in memcpy: " << *I
+                    << " of " << *Val << "\n";
+              potentialStore = true;
             }
-          } else {
-            // Otherwise fallback and check any part of the instruction is
-            // active
-            // TODO: note that this can be optimized (especially for function
-            // calls)
-            // Notably need both to check the result and instruction since
-            // A load that has as result an active pointer is not an active
-            // instruction, but does have an active value
-            if (!Hypothesis->isConstantInstruction(TR, &I) ||
-                !Hypothesis->isConstantValue(TR, &I)) {
-              potentiallyActiveLoad = true;
-              // If this a potential pointer of pointer AND
-              if (TR.query(Val)[{-1, -1}].isPossiblePointer()) {
-                // If this instruction either can store into the inner pointer,
-                // or could return an active loaded pointer(thus into a
-                // potential pointer of pointer
-                if (I.mayWriteToMemory() ||
-                    (!Hypothesis->isConstantValue(TR, &I) &&
-                     TR.query(&I)[{-1}].isPossiblePointer())) {
-                  if (EnzymePrintActivity)
-                    llvm::errs() << "potential active store via pointer in "
-                                    "unknown inst: "
-                                 << I << " of " << *Val << "\n";
-                  potentialStore = true;
-                }
+          }
+        } else {
+          // Otherwise fallback and check any part of the instruction is
+          // active
+          // TODO: note that this can be optimized (especially for function
+          // calls)
+          // Notably need both to check the result and instruction since
+          // A load that has as result an active pointer is not an active
+          // instruction, but does have an active value
+          if (!Hypothesis->isConstantInstruction(TR, I) ||
+              !Hypothesis->isConstantValue(TR, I)) {
+            potentiallyActiveLoad = true;
+            // If this a potential pointer of pointer AND
+            if (TR.query(Val)[{-1, -1}].isPossiblePointer()) {
+              // If this instruction either can store into the inner pointer,
+              // or could return an active loaded pointer(thus into a
+              // potential pointer of pointer
+              if (I->mayWriteToMemory() ||
+                  (!Hypothesis->isConstantValue(TR, I) &&
+                   TR.query(I)[{-1}].isPossiblePointer())) {
+                if (EnzymePrintActivity)
+                  llvm::errs() << "potential active store via pointer in "
+                                  "unknown inst: "
+                               << *I << " of " << *Val << "\n";
+                potentialStore = true;
               }
             }
           }
         }
-        if (!potentialStore && isModSet(AARes)) {
+      }
+      if (!potentialStore && isModSet(AARes)) {
+        if (EnzymePrintActivity)
+          llvm::errs() << "potential active store: " << *I << " Val=" << *Val
+                       << "\n";
+        if (auto SI = dyn_cast<StoreInst>(I)) {
+          bool cop = !Hypothesis->isConstantValue(TR, SI->getValueOperand());
           if (EnzymePrintActivity)
-            llvm::errs() << "potential active store: " << I << " Val=" << *Val
-                         << "\n";
-          if (auto SI = dyn_cast<StoreInst>(&I)) {
-            bool cop = !Hypothesis->isConstantValue(TR, SI->getValueOperand());
-            if (EnzymePrintActivity)
-              llvm::errs() << " -- store potential activity: " << (int)cop
-                           << " - " << *SI << " of "
-                           << " Val=" << *Val << "\n";
-            potentialStore |= cop;
-          } else if (auto MTI = dyn_cast<MemTransferInst>(&I)) {
-            potentialStore |=
-                !Hypothesis->isConstantValue(TR, MTI->getArgOperand(1));
-          } else {
-            // Otherwise fallback and check if the instruction is active
-            // TODO: note that this can be optimized (especially for function
-            // calls)
-            potentialStore |= !Hypothesis->isConstantInstruction(TR, &I);
-          }
+            llvm::errs() << " -- store potential activity: " << (int)cop
+                         << " - " << *SI << " of "
+                         << " Val=" << *Val << "\n";
+          potentialStore |= cop;
+        } else if (auto MTI = dyn_cast<MemTransferInst>(I)) {
+          potentialStore |=
+              !Hypothesis->isConstantValue(TR, MTI->getArgOperand(1));
+        } else {
+          // Otherwise fallback and check if the instruction is active
+          // TODO: note that this can be optimized (especially for function
+          // calls)
+          potentialStore |= !Hypothesis->isConstantInstruction(TR, I);
+        }
+      }
+      if (potentialStore && potentiallyActiveLoad)
+        return true;
+      return false;
+    };
+
+    // Search through all the instructions in this function
+    // for potential loads / stores of this value
+    if (auto IVal = dyn_cast<Instruction>(Val)) {
+      allFollowersOf(IVal, checkActivity);
+    } else {
+      for (BasicBlock &BB : *TR.getFunction()) {
+        if (notForAnalysis.count(&BB))
+          continue;
+        for (Instruction &I : BB) {
+          if (checkActivity(&I))
+            goto activeLoadAndStore;
         }
       }
     }
