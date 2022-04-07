@@ -28,6 +28,28 @@ pub fn generate_bindings(args: Cli) -> Result<(), String> {
             "-I{}",
             utils::get_llvm_header_path(rust_repo).display()
         )])
+        .allowlist_type("CConcreteType")
+        .rustified_enum("CConcreteType")
+        .allowlist_type("CDerivativeMode")
+        .rustified_enum("CDerivativeMode")
+        .allowlist_type("CDIFFE_TYPE")
+        .rustified_enum("CDIFFE_TYPE")
+        .allowlist_type("CTypeTreeRef")
+        .allowlist_type("EnzymeTypeAnalysisRef")
+        .allowlist_function("EnzymeNewTypeTree")
+        .allowlist_function("EnzymeFreeTypeTree")
+        // Next two are for debugging / printning type information
+        .allowlist_function("EnzymeSetCLBool")
+        .allowlist_function("EnzymeSetCLInteger")
+        .allowlist_function("CreateTypeAnalysis")
+        .allowlist_function("ClearTypeAnalysis")
+        .allowlist_function("FreeTypeAnalysis")
+        .allowlist_function("CreateEnzymeLogic")
+        .allowlist_function("ClearEnzymeLogic")
+        .allowlist_function("FreeEnzymeLogic")
+        .allowlist_function("EnzymeCreateForwardDiff")
+        .allowlist_function("EnzymeCreatePrimalAndGradient")
+        .allowlist_function("EnzymeCreateAugmentedPrimal")
         // Tell cargo to invalidate the built crate whenever any of the
         // included header files changed.
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))

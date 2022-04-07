@@ -28,7 +28,7 @@ path = "src/bin/run.rs"
 
 [dependencies]
 clap = { version = "3.1", features = ["default", "derive"] }
-bindgen = { version = "0.58", default-features = false }
+bindgen = { version = "0.59", default-features = false }
 dirs = { version = "3.0", default-features = false }
 curl = "0.4"
 tar = { version = "0.4", default-features = false }
