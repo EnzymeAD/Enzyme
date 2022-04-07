@@ -1453,16 +1453,12 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
 
     // Search through all the instructions in this function
     // for potential loads / stores of this value
-    if (auto IVal = dyn_cast<Instruction>(Val)) {
-      allFollowersOf(IVal, checkActivity);
-    } else {
-      for (BasicBlock &BB : *TR.getFunction()) {
-        if (notForAnalysis.count(&BB))
-          continue;
-        for (Instruction &I : BB) {
-          if (checkActivity(&I))
-            goto activeLoadAndStore;
-        }
+    for (BasicBlock &BB : *TR.getFunction()) {
+      if (notForAnalysis.count(&BB))
+        continue;
+      for (Instruction &I : BB) {
+        if (checkActivity(&I))
+          goto activeLoadAndStore;
       }
     }
 
