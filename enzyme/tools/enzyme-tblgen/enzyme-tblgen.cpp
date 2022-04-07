@@ -22,16 +22,117 @@
 
 using namespace llvm;
 
-enum ActionType { GenRewriters };
+enum ActionType { GenDerivatives };
 
 static cl::opt<ActionType>
     action(cl::desc("Action to perform:"),
-           cl::values(clEnumValN(GenRewriters, "gen-rewriters",
-                                 "Generate rewriter definitions")));
+           cl::values(clEnumValN(GenDerivatives, "gen-derivatives",
+                                 "Generate instruction derivative")));
 
-static void emitRewriters(const RecordKeeper &recordKeeper, raw_ostream &os) {
+bool hasDiffeRet(Init * resultTree) {
+  if (DagInit *resultRoot = dyn_cast<DagInit>(resultTree)) {
+    auto opName = resultRoot->getOperator()->getAsString();
+    auto Def = cast<DefInit>(resultRoot->getOperator()) ->getDef();
+    if (opName == "DiffeRet" || Def->isSubClassOf("DiffeRet")) {
+      return true;
+    }
+    for (auto zp : llvm::zip(resultRoot->getArgs(), resultRoot->getArgNames())) {
+      if (hasDiffeRet(std::get<0>(zp)))
+        return true;
+    }
+  }
+  return false;
+}
+
+void handle(raw_ostream &os, Record *pattern, Init * resultTree, std::string builder, StringMap<std::string> &nameToOrdinal, bool lookup) {
+  resultTree->dump();
+  if (DagInit *resultRoot = dyn_cast<DagInit>(resultTree)) {
+    llvm::errs() << " daginit\n";
+    auto opName = resultRoot->getOperator()->getAsString();
+    auto Def = cast<DefInit>(resultRoot->getOperator()) ->getDef();
+    Def->dump();
+    llvm::errs() << " opname: " << opName << " - " << Def->getName() << " subc: " << Def->isSubClassOf("ConstantFP") << "\n";
+    if (opName == "DiffeRet" || Def->isSubClassOf("DiffeRet")) {
+      os << "dif";
+      return;
+    } else if (opName == "ConstantFP" || Def->isSubClassOf("ConstantFP")) {
+      if (resultRoot->getNumArgs() != 1)
+        PrintFatalError(pattern->getLoc(), "only single op constant supported");
+      
+      auto *argument = resultRoot->getArg(0);
+
+        auto value = dyn_cast<StringInit>(  Def->getValueInit("value"));
+        if (!value)
+          PrintFatalError(pattern->getLoc(), Twine("'value' not defined in ") +
+                                                 resultTree->getAsString());
+      os << "ConstantFP::get(";
+
+      if (resultRoot->getArgName(0)) {
+        auto name = resultRoot->getArgName(0)->getAsUnquotedString();
+        auto ord = nameToOrdinal.find(name);
+        if (ord == nameToOrdinal.end())
+          PrintFatalError(pattern->getLoc(),
+                          Twine("unknown named operand '") + name + "'" + resultTree->getAsString());
+        os << ord->getValue();
+      } else
+        PrintFatalError(pattern->getLoc(),
+                        Twine("unknown named operand in constantfp") + resultTree->getAsString());
+      os << "->getType(), \"" << value->getValue() << "\")";
+      return;
+    } else if (opName == "Shadow" || Def->isSubClassOf("Shadow")) {
+      if (resultRoot->getNumArgs() != 1)
+        PrintFatalError(pattern->getLoc(), "only single op constant supported");
+      
+        auto *argument = resultRoot->getArg(0);
+        if (lookup) os << "lookup(";
+        os << "gutils->invertPointerM(" << builder << ", ";
+
+      if (resultRoot->getArgName(0)) {
+        auto name = resultRoot->getArgName(0)->getAsUnquotedString();
+        auto ord = nameToOrdinal.find(name);
+        if (ord == nameToOrdinal.end())
+          PrintFatalError(pattern->getLoc(),
+                          Twine("unknown named operand '") + name + "'" + resultTree->getAsString());
+        os << ord->getValue();
+
+      } else 
+          PrintFatalError(pattern->getLoc(),
+                          Twine("unknown named operand in shadow") + resultTree->getAsString());
+      os << ")";
+      if (lookup) os << ", " << builder << ")";
+      return;
+    }
+    os << builder << ".Create" << opName << "(";
+    bool seen = false;
+    for (auto zp : llvm::zip(resultRoot->getArgs(), resultRoot->getArgNames())) {
+      if (seen) os << ", ";
+      seen = true;
+      if (std::get<1>(zp)) {
+        auto name = std::get<1>(zp)->getAsUnquotedString();
+        auto ord = nameToOrdinal.find(name);
+        if (ord == nameToOrdinal.end())
+          PrintFatalError(pattern->getLoc(),
+                          Twine("unknown named operand '") + name + "'" + resultTree->getAsString());
+        if (lookup) os << "lookup(";
+        os << "gutils->getNewFromOriginal(";
+        os << ord->getValue();
+        os << ")";
+        if (lookup) os << ", " << builder << ")";
+        continue;
+      }
+      handle(os, pattern, std::get<0>(zp), builder, nameToOrdinal, lookup);
+    }
+    os << ")";
+    return;
+  }
+
+  PrintFatalError(pattern->getLoc(),
+                    Twine("unknown dag"));
+}
+
+static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
   emitSourceFileHeader("Rewriters", os);
-  const auto &patterns = recordKeeper.getAllDerivedDefinitions("Pattern");
+  const auto &patterns = recordKeeper.getAllDerivedDefinitions("CallPattern");
   Record *attrClass = recordKeeper.getClass("Attr");
 
   // Ensure unique patterns simply by appending unique suffix.
@@ -40,11 +141,13 @@ static void emitRewriters(const RecordKeeper &recordKeeper, raw_ostream &os) {
   for (Record *pattern : patterns) {
     DagInit *tree = pattern->getValueAsDag("PatternToMatch");
 
-    StringMap<int> nameToOrdinal;
+    StringMap<std::string> nameToOrdinal;
     for (int i = 0, e = tree->getNumArgs(); i != e; ++i)
-      nameToOrdinal[tree->getArgNameStr(i)] = i;
+      nameToOrdinal[tree->getArgNameStr(i)] = "orig->getOperand(" + std::to_string(i) + ")";
 
-    // TODO(jpienaar): Expand to multiple matches.
+    if (tree->getNameStr().str().size())
+      nameToOrdinal[tree->getNameStr().str()] = "orig";
+
     for (auto arg : tree->getArgs()) {
       if (isa<DagInit>(arg))
         PrintFatalError(pattern->getLoc(),
@@ -53,119 +156,121 @@ static void emitRewriters(const RecordKeeper &recordKeeper, raw_ostream &os) {
 
     // Emit RewritePattern for Pattern.
     DefInit *root = cast<DefInit>(tree->getOperator());
+    auto *rootName = cast<StringInit>(root->getDef()->getValueInit("name"));
     std::string rewriteName =
         baseRewriteName + llvm::utostr(rewritePatternCount++);
-    auto *rootName = cast<StringInit>(root->getDef()->getValueInit("opName"));
+        /*
     os << "struct " << rewriteName << " : public RewritePattern {\n"
        << "  " << rewriteName << "(MLIRContext *context) : RewritePattern("
-       << rootName->getAsString() << ", 1, context) {}\n"
-       << "  PatternMatchResult match(Operation *op) const override {\n"
-       << "    // TODO: This just handle 1 result\n"
-       << "    if (op->getNumResults() != 1) return matchFailure();\n"
-       << "    return matchSuccess();\n  }\n";
+       << rootName->getAsString() << ") {}\n";
+       */
 
-    ListInit *resultOps = pattern->getValueAsListInit("ResultOps");
-    if (resultOps->size() != 1)
-      PrintFatalError("only single result rules supported");
-    DagInit *resultTree = cast<DagInit>(resultOps->getElement(0));
+    ListInit *argOps = pattern->getValueAsListInit("ArgDerivatives");
+    //if (resultOps->size() != 1)
+    //  PrintFatalError("only single result rules supported");
 
-    // TODO(jpienaar): Expand to multiple results.
-    for (auto result : resultTree->getArgs()) {
-      if (isa<DagInit>(result))
-        PrintFatalError(pattern->getLoc(), "only single op result supported");
+    os << "  if (funcName == " << rootName->getAsString() << ") {\n";
+    os << "    if (gutils->knownRecomputeHeuristic.find(orig) !=\n";
+    os << "        gutils->knownRecomputeHeuristic.end()) {\n";
+    os << "        if (!gutils->knownRecomputeHeuristic[orig]) {\n";
+    os << "          gutils->cacheForReverse(BuilderZ, newCall,\n";
+    os << "                                  getIndex(orig, CacheType::Self));\n";
+    os << "        }\n";
+    os << "    }\n";
+
+
+    os << "    eraseIfUnused(*orig);\n";
+    os << "    if (gutils->isConstantInstruction(orig))\n";
+    os << "      return;\n";
+
+    os << "    switch (Mode) {\n";
+    os << "      case DerivativeMode::ForwardModeSplit:\n";
+    os << "      case DerivativeMode::ForwardMode:{\n";
+    os << "        IRBuilder<> Builder2(&call);\n";
+    os << "        getForwardBuilder(Builder2);\n";
+    // TODO
+    
+  #if 0
+    os << "        Value *dif = nullptr;\n";
+    bool seen = false;
+    for (auto argOpEn : llvm::enumerate(*argOps)) {
+      size_t argIdx = argOpEn.index();
+      os << "        ";
+      if (seen) os << "} else ";
+      seen = true;
+      os << "if (!dif && !gutils->isConstantValue(orig->getArgOperand(" << argIdx << "))) {\n";
+      DagInit *resultTree = cast<DagInit>(argOpEn.value());
+      if (hasDiffeRet(resultTree))
+        os << "          dif = diffe(orig, Builder2);\n";
     }
-    DefInit *resultRoot = cast<DefInit>(resultTree->getOperator());
-    std::string opName = resultRoot->getAsUnquotedString();
-    auto resultOperands = resultRoot->getDef()->getValueAsDag("arguments");
+    if (seen) os << "        }\n";
 
-    SmallVector<StringRef, 2> split;
-    SplitString(opName, split, "_");
-    auto className = join(split, "::");
-    os << formatv(R"(
-  void rewrite(Operation *op, PatternRewriter &rewriter) const override {
-    auto* context = op->getContext(); (void)context;
-    rewriter.replaceOpWithNewOp<{0}>(op, op->getResult(0)->getType())",
-                  className);
-    if (resultOperands->getNumArgs() != resultTree->getNumArgs()) {
-      PrintFatalError(pattern->getLoc(),
-                      Twine("mismatch between arguments of resultant op (") +
-                          Twine(resultOperands->getNumArgs()) +
-                          ") and arguments provided for rewrite (" +
-                          Twine(resultTree->getNumArgs()) + Twine(')'));
+    for (auto argOpEn : llvm::enumerate(*argOps)) {
+      size_t argIdx = argOpEn.index();
+      os << "        if (!gutils->isConstantValue(orig->getArgOperand(" << argIdx << "))) {\n";
+      DagInit *resultTree = cast<DagInit>(argOpEn.value());
+      os << "          addToDiffe(orig->getArgOperand(" << argIdx << "), ";
+      handle(os, pattern, resultTree, "Builder2", nameToOrdinal, /*lookup*/true);
+      os << ");\n";
+      os << "        }\n";
     }
 
-    // Create the builder call for the result.
-    for (int i = 0, e = resultTree->getNumArgs(); i != e; ++i) {
-      // Start each operand on its own line.
-      (os << ",\n").indent(6);
+    os << "        auto rule = [&](";
+    
+    Value *op) {
+            return Builder2.CreateFDiv(op, onePx2);
+          };
 
-      auto *arg = resultTree->getArg(i);
-      std::string name = resultTree->getArgName(i)->getAsUnquotedString();
-      auto defInit = dyn_cast<DefInit>(arg);
+          Value *dif0 = applyChainRule(call.getType(), Builder2, rule, op);
+          setDiffe(orig, dif0, Builder2);
+  #endif
 
-      auto *argument = resultOperands->getArg(i);
-      auto argumentDefInit = dyn_cast<DefInit>(argument);
-      bool argumentIsAttr = false;
-      if (argumentDefInit) {
-        if (auto recTy = dyn_cast<RecordRecTy>(argumentDefInit->getType()))
-          argumentIsAttr = recTy->isSubClassOf(attrClass);
-      }
+    os << "        break;\n";
+    os << "      }\n";
 
-      if (argumentIsAttr) {
-        if (!defInit) {
-          std::string argumentName =
-              resultOperands->getArgName(i)->getAsUnquotedString();
-          PrintFatalError(pattern->getLoc(),
-                          Twine("attribute '") + argumentName +
-                              "' needs to be constant initialized");
-        }
 
-        auto value = defInit->getDef()->getValue("value");
-        if (!value)
-          PrintFatalError(pattern->getLoc(), Twine("'value' not defined in ") +
-                                                 arg->getAsString());
+    os << "      case DerivativeMode::ReverseModeGradient:\n";
+    os << "      case DerivativeMode::ReverseModeCombined:{\n";
+    os << "        IRBuilder<> Builder2(&call);\n";
+    os << "        getReverseBuilder(Builder2);\n";
+    // TODO vector
 
-        switch (value->getType()->getRecTyKind()) {
-        case RecTy::IntRecTyKind:
-          // TODO(jpienaar): This is using 64-bits for all the bitwidth of the
-          // type could instead be queried. These are expected to be mostly used
-          // for enums or constant indices and so no arithmetic operations are
-          // expected on these.
-          os << formatv(
-              "/*{0}=*/IntegerAttr::get(Type::getInteger(64, context), {1})",
-              name, value->getValue()->getAsString());
-          break;
-        case RecTy::StringRecTyKind:
-          os << formatv("/*{0}=*/StringAttr::get({1}, context)", name,
-                        value->getValue()->getAsString());
-          break;
-        default:
-          PrintFatalError(pattern->getLoc(),
-                          Twine("unsupported/unimplemented value type for ") +
-                              name);
-        }
-        continue;
-      }
-
-      // Verify the types match between the rewriter's result and the
-      if (defInit && argumentDefInit &&
-          defInit->getType() != argumentDefInit->getType()) {
-        PrintFatalError(
-            pattern->getLoc(),
-            "mismatch in type of operation's argument and rewrite argument " +
-                Twine(i));
-      }
-
-      // Lookup the ordinal for the named operand.
-      auto ord = nameToOrdinal.find(name);
-      if (ord == nameToOrdinal.end())
-        PrintFatalError(pattern->getLoc(),
-                        Twine("unknown named operand '") + name + "'");
-      os << "/*" << name << "=*/op->getOperand(" << ord->getValue() << ")";
+    os << "        Value *dif = nullptr;\n";
+    bool seen = false;
+    for (auto argOpEn : llvm::enumerate(*argOps)) {
+      size_t argIdx = argOpEn.index();
+      os << "        ";
+      if (seen) os << "} else ";
+      seen = true;
+      os << "if (!dif && !gutils->isConstantValue(orig->getArgOperand(" << argIdx << "))) {\n";
+      DagInit *resultTree = cast<DagInit>(argOpEn.value());
+      if (hasDiffeRet(resultTree))
+        os << "          dif = diffe(orig, Builder2);\n";
     }
-    os << "\n    );\n  }\n};\n";
+    if (seen) os << "        }\n";
+
+    for (auto argOpEn : llvm::enumerate(*argOps)) {
+      size_t argIdx = argOpEn.index();
+      os << "        if (!gutils->isConstantValue(orig->getArgOperand(" << argIdx << "))) {\n";
+      DagInit *resultTree = cast<DagInit>(argOpEn.value());
+      os << "          addToDiffe(orig->getArgOperand(" << argIdx << "), ";
+      handle(os, pattern, resultTree, "Builder2", nameToOrdinal, /*lookup*/true);
+      os << ");\n";
+      os << "        }\n";
+    }
+
+    os << "        break;\n";
+    os << "      }\n";
+
+    os << "      case DerivativeMode::ReverseModePrimal:{\n";
+    // TODO
+    os << "        break;\n";
+    os << "      }\n";
+
+    os << "    return;\n  }\n";
   }
 
+  /*
   // Emit function to add the generated matchers to the pattern list.
   os << "void populateWithGenerated(MLIRContext *context, "
      << "OwningRewritePatternList *patterns) {\n";
@@ -174,12 +279,13 @@ static void emitRewriters(const RecordKeeper &recordKeeper, raw_ostream &os) {
        << ">(context));\n";
   }
   os << "}\n";
+  */
 }
 
 static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
   switch (action) {
-  case GenRewriters:
-    emitRewriters(records, os);
+  case GenDerivatives:
+    emitDerivatives(records, os);
     return false;
   }
 }
