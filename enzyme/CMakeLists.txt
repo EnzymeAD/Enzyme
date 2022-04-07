@@ -170,6 +170,7 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/include/SCEV/ScalarEvolutionExpander.h" 
 
 include_directories("${CMAKE_CURRENT_BINARY_DIR}/include")
 
+add_subdirectory(tools)
 add_subdirectory(Enzyme)
 add_subdirectory(BCLoad)
 add_subdirectory(test)

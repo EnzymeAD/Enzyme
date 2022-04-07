@@ -2,6 +2,16 @@
 #  set(LLVM_LINK_COMPONENTS Core Support)
 #endif()
 
+function(enzyme_tablegen ofn)
+   tablegen(Enzyme ${ARGV})
+  set(TABLEGEN_OUTPUT ${TABLEGEN_OUTPUT} ${CMAKE_CURRENT_BINARY_DIR}/${ofn}
+      PARENT_SCOPE)
+endfunction()
+
+set(LLVM_TARGET_DEFINITIONS InstructionDerivatives.td)
+enzyme_tablegen(InstructionDerivatives.inc -gen-)
+add_public_tablegen_target(MLIRArithmeticCanonicalizationIncGen)
+
 file(GLOB ENZYME_SRC RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     "*.cpp"
 )
