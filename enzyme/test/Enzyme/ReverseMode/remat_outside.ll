@@ -52,8 +52,8 @@ declare dso_local double @_Z17__enzyme_autodiffPFddiEz(double (double, i32)*, ..
 ; CHECK: define internal void @diffe_Z15integrate_imagedi(double %arg, i32 %arg1, double %differeturn)
 ; CHECK-NEXT: bb:
 ; CHECK-NEXT:   %i7 = zext i32 %arg1 to i64
-; CHECK-NEXT:   %i4 = mul nuw nsw i64 %i7, 8
-; CHECK-NEXT:   %0 = add nsw i64 %i7, -1
+; CHECK-NEXT:   %i4 = mul {{(nuw nsw )?}}i64 %i7, 8
+; CHECK-NEXT:   %0 = add {{(nsw )?}}i64 %i7, -1
 ; CHECK-NEXT:   br label %bb8
 
 ; CHECK: bb8:                                              ; preds = %bb12, %bb
