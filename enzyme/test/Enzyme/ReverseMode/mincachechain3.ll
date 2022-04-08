@@ -58,6 +58,11 @@ entry:
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
+; CHECK: define internal i64* @augmented__ZNKSt5arrayIlLm4EEixEm(i64* %ptr)
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   ret i64* %ptr
+; CHECK-NEXT: }
+
 ; CHECK: define internal void @augmented_usesize(double* %ptr, double* %"ptr'", i64 %off)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   ret void
@@ -73,7 +78,7 @@ entry:
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %for.body ], [ 0, %entry ]
 ; CHECK-NEXT:   %size.0 = phi i64 [ 1, %entry ], [ %a2, %for.body ]
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
-; CHECK-NEXT:   %call3 = call i64* @_ZNKSt5arrayIlLm4EEixEm(i64* %v)
+; CHECK-NEXT:   %call3 = call i64* @augmented__ZNKSt5arrayIlLm4EEixEm(i64* %v)
 ; CHECK-NEXT:   %a2 = load i64, i64* %call3, align 8, !tbaa !0
 ; CHECK-NEXT:   %0 = getelementptr inbounds i64, i64* %a2_malloccache, i64 %iv
 ; CHECK-NEXT:   store i64 %a2, i64* %0, align 8, !tbaa !0, !invariant.group 
@@ -105,6 +110,7 @@ entry:
 
 ; CHECK: invertfor.body:                                   ; preds = %invertfor.end, %incinvertfor.body
 ; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ 3, %invertfor.end ], [ %[[dec:.+]], %incinvertfor.body ]
+; CHECK-NEXT:   call void @diffe_ZNKSt5arrayIlLm4EEixEm(i64* %v)
 ; CHECK-NEXT:   %[[rcmp:.+]] = icmp eq i64 %"iv'ac.0", 0
 ; CHECK-NEXT:   br i1 %[[rcmp]], label %invertentry, label %incinvertfor.body
 
@@ -115,6 +121,11 @@ entry:
 ; CHECK: invertfor.end:                                    ; preds = %for.body
 ; CHECK-NEXT:   call void @diffeusesize(double* %__x, double* %"__x'", i64 %size.0, double %differeturn)
 ; CHECK-NEXT:   br label %invertfor.body
+; CHECK-NEXT: }
+
+; CHECK: define internal void @diffe_ZNKSt5arrayIlLm4EEixEm(i64* %ptr)
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
 ; CHECK: define internal void @diffeusesize(double* %ptr, double* %"ptr'", i64 %off, double %differeturn)
