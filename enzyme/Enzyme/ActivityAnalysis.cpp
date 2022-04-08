@@ -677,6 +677,8 @@ bool isValuePotentiallyUsedAsPointer(llvm::Value *val) {
       continue;
     seen.insert(cur);
     for (auto u : cur->users()) {
+      if (isa<ReturnInst>(u))
+        return true;
       if (!cast<Instruction>(u)->mayReadOrWriteMemory()) {
         todo.push_back(u);
         continue;
