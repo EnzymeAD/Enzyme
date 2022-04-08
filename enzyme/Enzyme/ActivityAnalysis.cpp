@@ -667,6 +667,29 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults &TR, Instruction *I) {
   return false;
 }
 
+bool isValuePotentiallyUsedAsPointer(llvm::Value *val) {
+  std::deque<llvm::Value *> todo = {val};
+  SmallPtrSet<Value *, 3> seen;
+  while (todo.size()) {
+    auto cur = todo.back();
+    todo.pop_back();
+    if (seen.count(cur))
+      continue;
+    seen.insert(cur);
+    for (auto u : cur->users()) {
+      if (!cast<Instruction>(u)->mayReadOrWriteMemory()) {
+        todo.push_back(u);
+        continue;
+      }
+      if (EnzymePrintActivity)
+        llvm::errs() << " VALUE potentially used as pointer " << *val << " by "
+                     << *u << "\n";
+      return true;
+    }
+  }
+  return false;
+}
+
 bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
   // This analysis may only be called by instructions corresponding to
   // the function analyzed by TypeInfo -- however if the Value
@@ -972,6 +995,10 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
   if (!TR.intType(1, Val, /*errIfNotFound*/ false).isPossiblePointer())
     containsPointer = false;
 
+  if (containsPointer && !isValuePotentiallyUsedAsPointer(Val)) {
+    containsPointer = false;
+  }
+
   if (containsPointer) {
 
     auto TmpOrig =
@@ -1179,20 +1206,6 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
       return false;
     }
 
-    // Assume the value (not instruction) is itself active
-    // In spite of that can we show that there are either no active stores
-    // or no active loads
-    std::shared_ptr<ActivityAnalyzer> Hypothesis =
-        std::shared_ptr<ActivityAnalyzer>(
-            new ActivityAnalyzer(*this, directions));
-    Hypothesis->ActiveValues.insert(Val);
-
-    if (Hypothesis->isValueInactiveFromUsers(TR, Val, UseActivity::None)) {
-      insertConstantsFrom(TR, *Hypothesis);
-      InsertConstantValue(TR, Val);
-      return true;
-    }
-
     if (EnzymePrintActivity)
       llvm::errs() << " < MEMSEARCH" << (int)directions << ">" << *Val << "\n";
     // A pointer value is active if two things hold:
@@ -1208,6 +1221,14 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
       assert(0 && "unknown pointer value type");
       llvm_unreachable("unknown pointer value type");
     }
+
+    // Assume the value (not instruction) is itself active
+    // In spite of that can we show that there are either no active stores
+    // or no active loads
+    std::shared_ptr<ActivityAnalyzer> Hypothesis =
+        std::shared_ptr<ActivityAnalyzer>(
+            new ActivityAnalyzer(*this, directions));
+    Hypothesis->ActiveValues.insert(Val);
 
     auto checkActivity = [&](Instruction *I) {
       if (notForAnalysis.count(I->getParent()))
