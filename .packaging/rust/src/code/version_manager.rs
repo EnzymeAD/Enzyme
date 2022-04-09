@@ -4,7 +4,7 @@ use crate::Cli;
 use std::{fs::File, path::PathBuf};
 
 pub const ENZYME_VER: &str = "0.0.29";
-pub const RUSTC_VER: &str = "1.59.0";
+pub const RUSTC_VER: &str = "1.60.0";
 
 pub fn get_rust_compilation_checkfile_path(args: &Cli) -> PathBuf {
     utils::get_local_rust_repo_path(args.rust.clone()).join("finished-building.txt")
