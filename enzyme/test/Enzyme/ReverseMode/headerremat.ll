@@ -145,8 +145,8 @@ declare void @_Z17__enzyme_autodiffPFddPdEz(double (double, double*)*, ...)
 ; CHECK-NEXT:   %2 = fadd fast double %"i7'de.0", %d0diffei7
 ; CHECK-NEXT:   %"i13'ipg_unwrap" = getelementptr inbounds double, double* %"arg1'", i64 %"iv'ac.0"
 ; CHECK-NEXT:   %3 = load double, double* %"i13'ipg_unwrap", align 8
-; CHECK-NEXT:   store double 0.000000e+00, double* %"i13'ipg_unwrap", align 8
-; CHECK-NEXT:   %4 = getelementptr inbounds double, double* %i7_malloccache, i64 %"iv'ac.0"
+; DCE-NEXT:   store double 0.000000e+00, double* %"i13'ipg_unwrap", align 8
+; CHECK:   %4 = getelementptr inbounds double, double* %i7_malloccache, i64 %"iv'ac.0"
 ; CHECK-NEXT:   %5 = load double, double* %4, align 8, !invariant.group !0
 ; CHECK-NEXT:   %i9_unwrap = fptosi double %5 to i32
 ; CHECK-NEXT:   %6 = icmp ne i64 %"iv'ac.0", 0
