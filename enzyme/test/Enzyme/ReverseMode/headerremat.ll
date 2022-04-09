@@ -43,7 +43,7 @@ bb2:                                              ; preds = %bb5
 }
 
 ; Function Attrs: nofree nounwind
-declare dso_local noundef i32 @printf(i8* nocapture noundef readonly, ...)
+declare dso_local i32 @printf(i8* nocapture readonly, ...)
 
 ; Function Attrs: norecurse uwtable mustprogress
 define dso_local i32 @main() {
@@ -126,7 +126,7 @@ declare void @_Z17__enzyme_autodiffPFddPdEz(double (double, double*)*, ...)
 ; CHECK-NEXT:   br i1 %i20, label %bb2, label %bb5
 
 ; CHECK: bb2:                                              ; preds = %bb5
-; CHECK-NEXT:   %i = tail call i32 @_Z18evaluate_integrandii(i32 %i9, i32 %i10) #0
+; CHECK-NEXT:   %i = tail call i32 @_Z18evaluate_integrandii(i32 %i9, i32 %i10)
 ; CHECK-NEXT:   %i3 = sitofp i32 %i to double
 ; CHECK-NEXT:   %m0diffei7 = fmul fast double %differeturn, %i3
 ; CHECK-NEXT:   br label %invertbb5
@@ -161,7 +161,7 @@ declare void @_Z17__enzyme_autodiffPFddPdEz(double (double, double*)*, ...)
 ; CHECK-NEXT:   br label %invertbb5_phimerge
 
 ; CHECK: invertbb5_phimerge:                               ; preds = %invertbb5, %invertbb5_phirc
-; CHECK-NEXT:   %10 = phi fast double [ %i18_unwrap, %invertbb5_phirc ], [ 1.000000e+00, %invertbb5 ]
+; CHECK-NEXT:   %10 = phi {{(fast )?}}double [ %i18_unwrap, %invertbb5_phirc ], [ 1.000000e+00, %invertbb5 ]
 ; CHECK-NEXT:   %i10_unwrap = fptosi double %10 to i32
 ; CHECK-NEXT:   %i11_unwrap = mul nsw i32 %i9_unwrap, %i10_unwrap
 ; CHECK-NEXT:   %i12_unwrap = sitofp i32 %i11_unwrap to double
