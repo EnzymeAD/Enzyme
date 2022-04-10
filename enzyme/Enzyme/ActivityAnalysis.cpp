@@ -83,15 +83,13 @@ const char *KnownInactiveFunctionsStartingWith[] = {
     "_ZNSt7__cxx1112basic_string",
     // ostream generic <<
     "_ZStlsISt11char_traitsIcEERSt13basic_ostreamIcT_ES5_",
-    "_ZSt16__ostream_insert",
-    "_ZNSo9_M_insert",
-    // ostream put 
+    "_ZSt16__ostream_insert", "_ZNSo9_M_insert",
+    // ostream put
     "_ZNSo3put",
     // generic <<
     "_ZNSolsE",
     // std::endl
-    "_ZNSo5flushEv",
-    "_ZSt4endl"};
+    "_ZNSo5flushEv", "_ZSt4endl"};
 
 const char *KnownInactiveFunctionsContains[] = {
     "__enzyme_float", "__enzyme_double", "__enzyme_integer",
