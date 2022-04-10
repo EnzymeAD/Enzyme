@@ -86,6 +86,8 @@ const char *KnownInactiveFunctionsStartingWith[] = {
     "_ZSt16__ostream_insert", "_ZNSo9_M_insert",
     // ostream put
     "_ZNSo3put",
+    // std::cout
+    "_ZSt4cout",
     // generic <<
     "_ZNSolsE",
     // std::endl
@@ -102,7 +104,6 @@ const std::set<std::string> InactiveGlobals = {
     "stderr",
     "stdout",
     "stdin",
-    "cout",
 };
 
 const std::map<std::string, size_t> MPIInactiveCommAllocators = {

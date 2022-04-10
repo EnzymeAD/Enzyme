@@ -573,10 +573,7 @@ static inline bool isCertainPrintMallocOrFree(llvm::Function *called) {
   if (isCertainPrintOrFree(called))
     return true;
 
-  if (called->getName() == "malloc" ||
-      called->getName() == "swift_allocObject" ||
-      called->getName() == "_Znwm" || called->getName() == "free" ||
-      shadowHandlers.find(called->getName().str()) != shadowHandlers.end())
+  if (isCertainMallocOrFree(called))
     return true;
 
   return false;
