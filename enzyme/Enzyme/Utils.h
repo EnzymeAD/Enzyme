@@ -536,9 +536,12 @@ static inline bool isCertainPrintOrFree(llvm::Function *called) {
       called->getName().startswith(
           "_ZStlsISt11char_traitsIcEERSt13basic_ostreamIcT_ES5_") ||
       called->getName().startswith("_ZNSolsE") ||
+      called->getName().startswith("_ZNSo9_M_insert") ||
       called->getName().startswith("_ZSt16__ostream_insert") ||
+      called->getName().startswith("_ZNSo3put") ||
       called->getName().startswith("_ZSt4endl") ||
       called->getName().startswith("_ZN3std2io5stdio6_print") ||
+      called->getName().startswith("_ZNSo5flushEv") ||
       called->getName().startswith("_ZN4core3fmt") ||
       called->getName() == "vprintf" || called->getName() == "_ZdlPv" ||
       called->getName() == "_ZdlPvm" || called->getName() == "free" ||
@@ -572,9 +575,12 @@ static inline bool isCertainPrintMallocOrFree(llvm::Function *called) {
       called->getName().startswith(
           "_ZStlsISt11char_traitsIcEERSt13basic_ostreamIcT_ES5_") ||
       called->getName().startswith("_ZNSolsE") ||
+      called->getName().startswith("_ZNSo9_M_insert") ||
       called->getName().startswith("_ZSt16__ostream_insert") ||
+      called->getName().startswith("_ZNSo3put") ||
       called->getName().startswith("_ZSt4endl") ||
       called->getName().startswith("_ZN3std2io5stdio6_print") ||
+      called->getName().startswith("_ZNSo5flushEv") ||
       called->getName().startswith("_ZN4core3fmt") ||
       called->getName() == "vprintf" || called->getName() == "malloc" ||
       called->getName() == "swift_allocObject" ||
