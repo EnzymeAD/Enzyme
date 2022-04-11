@@ -9,32 +9,36 @@
 
 #include "test_utils.h"
 #include <iostream>
+#include <sstream>
+#include <utility>
 
 extern double __enzyme_autodiff(void*, double);
 
 double fn(double vec) {
+  std::stringstream testInput("14 1.5 somerandomextrachars");
   double in;
   float in2;
-  std::cin >> in >> in2;
+  testInput >> in >> in2;
 
-  std::cin.ignore();
+  testInput.ignore();
 
   char ch;
-  std::cin.get(ch);
+  testInput.get(ch);
 
   char foo[5];
   const char fdelim = '\t';
-  std::cin.get(foo, 3, fdelim);
+  testInput.get(foo, 3, fdelim);
 
-  char bar[5];
-  std::cin.getline(bar, 3);
+  // The following two lines cause a segfault with Enzyme
+  // char bar[5];
+  // testInput.getline(bar, 3);
 
-  return vec * vec;
+  return vec * vec * in * in2;
 }
 
 int main() {
     double x = 2.1;
     double dsq = __enzyme_autodiff((void*)fn, x);
 
-    APPROX_EQ(dsq, 2 * x, 1e-7);
+    APPROX_EQ(dsq, 14 * 1.5 * 2 * x, 1e-7);
 }

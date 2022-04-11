@@ -14,6 +14,7 @@ extern double __enzyme_autodiff(void*, double);
 
 double fn(double vec) {
   std::cout << "hello" << 7 << '7' << std::endl;
+  std::cout << "foo" << std::flush;
   std::cerr << vec << vec * vec << "\n";
   return vec * vec;
 }

@@ -86,12 +86,20 @@ const char *KnownInactiveFunctionsStartingWith[] = {
     "_ZSt16__ostream_insert", "_ZNSo9_M_insert",
     // ostream put
     "_ZNSo3put",
+    // std::istream init, widen_init, get, getline, >>, sync, ignore
+    "_ZNSt8ios_base4InitC1Ev", "_ZNKSt5ctypeIcE13_M_widen_initEv", "_ZNSi3get",
+    "_ZNSi7getline", "_ZNSirsER", "_ZNSt7__cxx1115basic_stringbuf",
+    "_ZNSi6ignoreEv",
+    // std::ios_base::ios_base() ==  "_ZNSt8ios_baseC2Ev",
+    "_ZNSt8ios_base", "_ZNSt9basic_ios",
+    // std::local::local() ==   "_ZNSt6localeC1Ev",
+    "_ZNSt6locale",
     // init
     "_ZNSt9basic_iosIcSt11char_traitsIcEE4init",
     // std::cout
     "_ZSt4cout",
     // std::cin
-    "_ZSt3cin", "_ZNSi10_M_extract", "_ZNSi7getline", "_ZNSi3get",
+    "_ZSt3cin", "_ZNSi10_M_extract",
     // generic <<
     "_ZNSolsE",
     // std::endl
@@ -110,6 +118,18 @@ const std::set<std::string> InactiveGlobals = {
     "stdin",
     "_ZSt3cin",
     "_ZSt4cout",
+    "_ZTVNSt7__cxx1115basic_stringbufIcSt11char_traitsIcESaIcEEE",
+    "_ZTVSt15basic_streambufIcSt11char_traitsIcEE",
+    "_ZTVSt9basic_iosIcSt11char_traitsIcEE",
+    // istream
+    "_ZTVNSt7__cxx1119basic_istringstreamIcSt11char_traitsIcESaIcEEE",
+    "_ZTTNSt7__cxx1119basic_istringstreamIcSt11char_traitsIcESaIcEEE",
+    // ostream
+    "_ZTVNSt7__cxx1119basic_ostringstreamIcSt11char_traitsIcESaIcEEE",
+    "_ZTTNSt7__cxx1119basic_ostringstreamIcSt11char_traitsIcESaIcEEE",
+    // stringstream
+    "_ZTVNSt7__cxx1118basic_stringstreamIcSt11char_traitsIcESaIcEEE",
+    "_ZTTNSt7__cxx1118basic_stringstreamIcSt11char_traitsIcESaIcEEE",
 };
 
 const std::map<std::string, size_t> MPIInactiveCommAllocators = {
