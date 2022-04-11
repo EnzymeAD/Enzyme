@@ -82,18 +82,21 @@ const char *KnownInactiveFunctionsStartingWith[] = {
     "_ZN4core3fmt", "_ZN3std2io5stdio6_print", "f90io", "$ss5print",
     "_ZNSt7__cxx1112basic_string", "_ZNSt7__cxx1118basic_string",
     // ostream generic <<
-    "_ZStlsISt11char_traitsIcEERSt13basic_ostreamIcT_ES5_",
-    "_ZSt16__ostream_insert", "_ZNSo9_M_insert",
+    "_ZStlsISt11char_traitsIcEERSt13basic_ostream", "_ZSt16__ostream_insert",
+    "_ZNSo9_M_insert",
+    // ostream wchar
+    "_ZNSt13basic_ostreamIwSt11char_traits",
+    "_ZStlsIwSt11char_traitsIwEERSt13basic_ostream",
     // ostream put
     "_ZNSo3put",
-    // std::istream init, widen_init, get, getline, >>, sync, ignore
+    // std::istream: init, widen_init, get, getline, >>, sync, ignore
     "_ZNSt8ios_base4InitC1Ev", "_ZNKSt5ctypeIcE13_M_widen_initEv", "_ZNSi3get",
     "_ZNSi7getline", "_ZNSirsER", "_ZNSt7__cxx1115basic_stringbuf",
     "_ZNSi6ignoreEv",
-    // std::ios_base::ios_base() ==  "_ZNSt8ios_baseC2Ev",
+    // std::ios_base
     "_ZNSt8ios_base", "_ZNSt9basic_ios",
-    // std::local::local() ==   "_ZNSt6localeC1Ev",
-    "_ZNSt6locale",
+    // std::local
+    "_ZNSt6locale", "_ZNKSt6locale4name",
     // init
     "_ZNSt9basic_iosIcSt11char_traitsIcEE4init",
     // std::cout
@@ -118,6 +121,7 @@ const std::set<std::string> InactiveGlobals = {
     "stdin",
     "_ZSt3cin",
     "_ZSt4cout",
+    "_ZSt5wcout",
     "_ZSt4cerr",
     "_ZTVNSt7__cxx1115basic_stringbufIcSt11char_traitsIcESaIcEEE",
     "_ZTVSt15basic_streambufIcSt11char_traitsIcEE",
