@@ -80,7 +80,7 @@ cl::opt<bool>
 
 const char *KnownInactiveFunctionsStartingWith[] = {
     "_ZN4core3fmt", "_ZN3std2io5stdio6_print", "f90io", "$ss5print",
-    "_ZNSt7__cxx1112basic_string",
+    "_ZNSt7__cxx1112basic_string", "_ZNSt7__cxx1118basic_string",
     // ostream generic <<
     "_ZStlsISt11char_traitsIcEERSt13basic_ostreamIcT_ES5_",
     "_ZSt16__ostream_insert", "_ZNSo9_M_insert",
