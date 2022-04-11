@@ -86,6 +86,8 @@ const char *KnownInactiveFunctionsStartingWith[] = {
     "_ZSt16__ostream_insert", "_ZNSo9_M_insert",
     // ostream put
     "_ZNSo3put",
+    // init
+    "_ZNSt9basic_iosIcSt11char_traitsIcEE4init",
     // std::cout
     "_ZSt4cout",
     // std::cin
@@ -865,7 +867,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
 
     // If this global is unchanging and the internal constant data
     // is inactive, the global is inactive
-    if (GI->isConstant() && isConstantValue(TR, GI->getInitializer())) {
+    if (GI->isConstant() && GI->hasInitializer() &&
+        isConstantValue(TR, GI->getInitializer())) {
       InsertConstantValue(TR, Val);
       if (EnzymePrintActivity)
         llvm::errs() << " VALUE const global " << *Val
