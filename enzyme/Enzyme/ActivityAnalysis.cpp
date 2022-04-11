@@ -118,6 +118,7 @@ const std::set<std::string> InactiveGlobals = {
     "stdin",
     "_ZSt3cin",
     "_ZSt4cout",
+    "_ZSt4cerr",
     "_ZTVNSt7__cxx1115basic_stringbufIcSt11char_traitsIcESaIcEEE",
     "_ZTVSt15basic_streambufIcSt11char_traitsIcEE",
     "_ZTVSt9basic_iosIcSt11char_traitsIcEE",
