@@ -2848,7 +2848,9 @@ void createInvertedTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
     }
 
     if (!handled) {
-      gutils->setDiffe(orig, Constant::getNullValue(orig->getType()), Builder);
+      gutils->setDiffe(
+          orig, Constant::getNullValue(gutils->getShadowType(orig->getType())),
+          Builder);
 
       for (BasicBlock *opred : predecessors(oBB)) {
         auto oval = orig->getIncomingValueForBlock(opred);
@@ -3515,11 +3517,21 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     if (key.additionalType)
       endarg--;
     differetval = endarg;
-    if (differetval->getType() != key.todiff->getReturnType()) {
-      llvm::errs() << *gutils->oldFunc << "\n";
-      llvm::errs() << *gutils->newFunc << "\n";
+    if (auto agg = dyn_cast<ArrayType>(differetval->getType())) {
+      if (agg->getElementType() != key.todiff->getReturnType() ||
+          agg->getNumElements() != gutils->getWidth()) {
+        llvm::errs() << *gutils->oldFunc << "\n";
+        llvm::errs() << *gutils->newFunc << "\n";
+      }
+      assert(agg->getNumElements() == gutils->getWidth());
+      assert(agg->getElementType() == key.todiff->getReturnType());
+    } else {
+      if (differetval->getType() != key.todiff->getReturnType()) {
+        llvm::errs() << *gutils->oldFunc << "\n";
+        llvm::errs() << *gutils->newFunc << "\n";
+      }
+      assert(differetval->getType() == key.todiff->getReturnType());
     }
-    assert(differetval->getType() == key.todiff->getReturnType());
   }
 
   // Explicitly handle all returns first to ensure that return instructions know
