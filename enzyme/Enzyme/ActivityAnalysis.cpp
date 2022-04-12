@@ -79,35 +79,53 @@ cl::opt<bool>
 #include <unordered_map>
 
 const char *KnownInactiveFunctionsStartingWith[] = {
-    "_ZN4core3fmt", "_ZN3std2io5stdio6_print", "f90io", "$ss5print",
-    "_ZNSt7__cxx1112basic_string", "_ZNSt7__cxx1118basic_string",
+    "_ZN4core3fmt",
+    "_ZN3std2io5stdio6_print",
+    "f90io",
+    "$ss5print",
+    "_ZNSt7__cxx1112basic_string",
+    "_ZNSt7__cxx1118basic_string",
     // ostream generic <<
-    "_ZStlsISt11char_traitsIcEERSt13basic_ostream", "_ZSt16__ostream_insert",
-    "_ZStlsIwSt11char_traitsIwEERSt13basic_ostream", "_ZNSo9_M_insert",
+    "_ZStlsISt11char_traitsIcEERSt13basic_ostream",
+    "_ZSt16__ostream_insert",
+    "_ZStlsIwSt11char_traitsIwEERSt13basic_ostream",
+    "_ZNSo9_M_insert",
     // ostream wchar
     "_ZNSt13basic_ostream",
     // ostream put
     "_ZNSo3put",
     // std::istream: widen_init, get, getline, >>, sync, ignore
-    "_ZNKSt5ctypeIcE13_M_widen_init", "_ZNSi3get", "_ZNSi7getline", "_ZNSirsER",
-    "_ZNSt7__cxx1115basic_stringbuf", "_ZNSi6ignore",
+    "_ZNKSt5ctypeIcE13_M_widen_init",
+    "_ZNSi3get",
+    "_ZNSi7getline",
+    "_ZNSirsER",
+    "_ZNSt7__cxx1115basic_stringbuf",
+    "_ZNSi6ignore",
     // std::ios_base
-    "_ZNSt8ios_base", "_ZNSt9basic_ios", "_ZStorSt13_Ios_OpenmodeS_",
+    "_ZNSt8ios_base",
+    "_ZNSt9basic_ios",
+    "_ZStorSt13_Ios_OpenmodeS_",
     // std::local
-    "_ZNSt6locale", "_ZNKSt6locale4name",
+    "_ZNSt6locale",
+    "_ZNKSt6locale4name",
     // init
     "_ZStL8__ioinit"
     "_ZNSt9basic_ios",
     // std::cout
     "_ZSt4cout",
     // std::cin
-    "_ZSt3cin", "_ZNSi10_M_extract",
+    "_ZSt3cin",
+    "_ZNSi10_M_extract",
     // generic <<
     "_ZNSolsE",
     // std::flush
-    "_ZSt5flush", "_ZNSo5flush",
+    "_ZSt5flush",
+    "_ZNSo5flush",
     // std::endl
-    "_ZSt4endl"};
+    "_ZSt4endl",
+    // std::allocator
+    "_ZNSaIcE",
+};
 
 const char *KnownInactiveFunctionsContains[] = {
     "__enzyme_float", "__enzyme_double", "__enzyme_integer",
