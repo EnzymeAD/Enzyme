@@ -83,30 +83,31 @@ const char *KnownInactiveFunctionsStartingWith[] = {
     "_ZNSt7__cxx1112basic_string", "_ZNSt7__cxx1118basic_string",
     // ostream generic <<
     "_ZStlsISt11char_traitsIcEERSt13basic_ostream", "_ZSt16__ostream_insert",
-    "_ZNSo9_M_insert",
+    "_ZStlsIwSt11char_traitsIwEERSt13basic_ostream", "_ZNSo9_M_insert",
     // ostream wchar
-    "_ZNSt13basic_ostreamIwSt11char_traits",
-    "_ZStlsIwSt11char_traitsIwEERSt13basic_ostream",
+    "_ZNSt13basic_ostream",
     // ostream put
     "_ZNSo3put",
-    // std::istream: init, widen_init, get, getline, >>, sync, ignore
-    "_ZNSt8ios_base4InitC1Ev", "_ZNKSt5ctypeIcE13_M_widen_initEv", "_ZNSi3get",
-    "_ZNSi7getline", "_ZNSirsER", "_ZNSt7__cxx1115basic_stringbuf",
-    "_ZNSi6ignoreEv",
+    // std::istream: widen_init, get, getline, >>, sync, ignore
+    "_ZNKSt5ctypeIcE13_M_widen_init", "_ZNSi3get", "_ZNSi7getline", "_ZNSirsER",
+    "_ZNSt7__cxx1115basic_stringbuf", "_ZNSi6ignore",
     // std::ios_base
-    "_ZNSt8ios_base", "_ZNSt9basic_ios",
+    "_ZNSt8ios_base", "_ZNSt9basic_ios", "_ZStorSt13_Ios_OpenmodeS_",
     // std::local
     "_ZNSt6locale", "_ZNKSt6locale4name",
     // init
-    "_ZNSt9basic_iosIcSt11char_traitsIcEE4init",
+    "_ZStL8__ioinit"
+    "_ZNSt9basic_ios",
     // std::cout
     "_ZSt4cout",
     // std::cin
     "_ZSt3cin", "_ZNSi10_M_extract",
     // generic <<
     "_ZNSolsE",
+    // std::flush
+    "_ZSt5flush", "_ZNSo5flush",
     // std::endl
-    "_ZNSo5flushEv", "_ZSt4endl"};
+    "_ZSt4endl"};
 
 const char *KnownInactiveFunctionsContains[] = {
     "__enzyme_float", "__enzyme_double", "__enzyme_integer",
