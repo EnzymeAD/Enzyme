@@ -45,12 +45,10 @@ bool hasDiffeRet(Init * resultTree) {
 }
 
 void handle(raw_ostream &os, Record *pattern, Init * resultTree, std::string builder, StringMap<std::string> &nameToOrdinal, bool lookup) {
-  resultTree->dump();
   if (DagInit *resultRoot = dyn_cast<DagInit>(resultTree)) {
     llvm::errs() << " daginit\n";
     auto opName = resultRoot->getOperator()->getAsString();
     auto Def = cast<DefInit>(resultRoot->getOperator()) ->getDef();
-    Def->dump();
     llvm::errs() << " opname: " << opName << " - " << Def->getName() << " subc: " << Def->isSubClassOf("ConstantFP") << "\n";
     if (opName == "DiffeRet" || Def->isSubClassOf("DiffeRet")) {
       os << "dif";
@@ -65,8 +63,9 @@ void handle(raw_ostream &os, Record *pattern, Init * resultTree, std::string bui
         if (!value)
           PrintFatalError(pattern->getLoc(), Twine("'value' not defined in ") +
                                                  resultTree->getAsString());
-      os << "ConstantFP::get(";
 
+
+    os << " ({ Type* T = ";
       if (resultRoot->getArgName(0)) {
         auto name = resultRoot->getArgName(0)->getAsUnquotedString();
         auto ord = nameToOrdinal.find(name);
@@ -77,7 +76,16 @@ void handle(raw_ostream &os, Record *pattern, Init * resultTree, std::string bui
       } else
         PrintFatalError(pattern->getLoc(),
                         Twine("unknown named operand in constantfp") + resultTree->getAsString());
-      os << "->getType(), \"" << value->getValue() << "\")";
+      os << "->getType();\n";
+      os << " Type* ET = T;\n";
+      os << " if (gutils->getWidth() > 1) ET = cast<ArrayType>(T)->getElementType();\n";
+
+      os << "Constant *res = ConstantFP::get(ET, \"" << value->getValue() << "\");\n";
+      os << "if (gutils->getWidth() > 1) {\n";
+      os << "  SmallVector<Constant*, 2> vals(gutils->getWidth(), res);\n";
+      os << "  res = ConstantArray::get(cast<ArrayType>(T), vals);\n";
+      os << "}\n";
+      os << "res; })";
       return;
     } else if (opName == "Shadow" || Def->isSubClassOf("Shadow")) {
       if (resultRoot->getNumArgs() != 1)
@@ -100,13 +108,17 @@ void handle(raw_ostream &os, Record *pattern, Init * resultTree, std::string bui
                           Twine("unknown named operand in shadow") + resultTree->getAsString());
       os << ")";
       if (lookup) os << ", " << builder << ")";
+
       return;
     }
-    os << builder << ".Create" << opName << "(";
-    bool seen = false;
+
+    os << " ({\n";
+    os << "    Value* args[" << resultRoot->getArgs().size() << "];\n";
+
+    size_t idx = 0;
     for (auto zp : llvm::zip(resultRoot->getArgs(), resultRoot->getArgNames())) {
-      if (seen) os << ", ";
-      seen = true;
+      os << " args[" << idx << "] = ";
+      idx++;
       if (std::get<1>(zp)) {
         auto name = std::get<1>(zp)->getAsUnquotedString();
         auto ord = nameToOrdinal.find(name);
@@ -118,11 +130,32 @@ void handle(raw_ostream &os, Record *pattern, Init * resultTree, std::string bui
         os << ord->getValue();
         os << ")";
         if (lookup) os << ", " << builder << ")";
+        os << " ;\n";
         continue;
       }
       handle(os, pattern, std::get<0>(zp), builder, nameToOrdinal, lookup);
+      os << " ;\n";
     }
-    os << ")";
+
+    os << " Value *res = nullptr;\n";
+    os << " if (gutils->getWidth() == 1) res = " << builder << ".Create" << opName << "(";
+    for (size_t i=0; i<idx; i++) {
+      if (i > 0) os << ", ";
+      os << "args[" << i << "]";
+    }
+    os << ");\n";
+    os << " else {\n";
+    os << " for(unsigned int idx=0, W=gutils->getWidth(); idx<W; idx++) {\n";
+    os << "   Value *V = " << builder << ".Create" << opName << "(";
+    for (size_t i=0; i<idx; i++) {
+      if (i > 0) os << ", ";
+      os << builder << ".CreateExtractValue(args[" << i << "], {idx})";
+    }
+    os << ");\n";
+    os << "   if (res == nullptr) res = UndefValue::get(ArrayType::get(V->getType(), gutils->getWidth()));\n";
+    os << "   res = " << builder << ".CreateInsertValue(res, V, {idx});\n";
+    os << " }\n }\n";
+    os << " res; })";
     return;
   }
 
@@ -155,21 +188,17 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
     }
 
     // Emit RewritePattern for Pattern.
-    DefInit *root = cast<DefInit>(tree->getOperator());
-    auto *rootName = cast<StringInit>(root->getDef()->getValueInit("name"));
-    std::string rewriteName =
-        baseRewriteName + llvm::utostr(rewritePatternCount++);
-        /*
-    os << "struct " << rewriteName << " : public RewritePattern {\n"
-       << "  " << rewriteName << "(MLIRContext *context) : RewritePattern("
-       << rootName->getAsString() << ") {}\n";
-       */
-
     ListInit *argOps = pattern->getValueAsListInit("ArgDerivatives");
-    //if (resultOps->size() != 1)
-    //  PrintFatalError("only single result rules supported");
 
-    os << "  if (funcName == " << rootName->getAsString() << ") {\n";
+    os << "  if (";
+
+    bool prev = false;
+    for (auto *nameI : *cast<ListInit>(pattern->getValueAsListInit("names"))) {
+      if (prev) os << " ||\n      ";
+      os << "funcName == " << cast<StringInit>(nameI)->getAsString() << "";
+      prev = true;
+    }
+    os << " ){\n";
     os << "    if (gutils->knownRecomputeHeuristic.find(orig) !=\n";
     os << "        gutils->knownRecomputeHeuristic.end()) {\n";
     os << "        if (!gutils->knownRecomputeHeuristic[orig]) {\n";
@@ -189,7 +218,49 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
     os << "        IRBuilder<> Builder2(&call);\n";
     os << "        getForwardBuilder(Builder2);\n";
     // TODO
-    
+
+    os << "        Value *res = nullptr;\n";
+
+
+
+    for (auto argOpEn : llvm::enumerate(*argOps)) {
+      size_t argIdx = argOpEn.index();
+      os << "        if (!gutils->isConstantValue(orig->getArgOperand(" << argIdx << "))) {\n";
+      os << "          Value *dif = diffe(orig->getArgOperand(" << argIdx << "), Builder2);\n";
+      DagInit *resultTree = cast<DagInit>(argOpEn.value());
+      os << "          Value *tmp = ";
+      handle(os, pattern, resultTree, "Builder2", nameToOrdinal, /*lookup*/false);
+      os << ";\n";
+
+      os << "          if (res == nullptr) res = tmp;\n";
+      os << "          else if (gutils->getWidth() == 1) res = Builder2.CreateFAdd(res, tmp);\n";
+      os << "          else {\n";
+      os << "            Value *out = UndefValue::get(res->getType());\n";
+      os << "            for(unsigned int idx=0, W=gutils->getWidth(); idx<W; idx++) {\n";
+      os << "              Value *V = Builder2.CreateFAdd(Builder2.CreateExtractValue(res, {idx}), Builder2.CreateExtractValue(tmp, {idx}));\n";
+      os << "              out = Builder2.CreateInsertValue(out, V, {idx});\n";
+      os << "            }\n";
+      os << "            res = out;\n";
+      os << "          }\n";
+      os << "        }\n";
+    }
+
+    os << "        setDiffe(orig, res, Builder2);\n";
+    /*
+    os << "          Value *x = gutils->getNewFromOriginal(orig->getArgOperand(0));\n";
+    os << "          Value *onePx2 = Builder2.CreateFAdd(\n";
+    os << "              ConstantFP::get(x->getType(), 1.0), Builder2.CreateFMul(x, x));\n";
+
+    os << "          Value *op = diffe(orig->getArgOperand(0), Builder2);\n";
+
+    os << "          auto rule = [&](Value *op) {\n";
+    os << "            return Builder2.CreateFDiv(op, onePx2);\n";
+    os << "          };\n";
+
+    os << "          Value *dif0 = applyChainRule(call.getType(), Builder2, rule, op);\n";
+    os << "          return;\n";
+    */
+
   #if 0
     os << "        Value *dif = nullptr;\n";
     bool seen = false;
@@ -255,7 +326,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
       DagInit *resultTree = cast<DagInit>(argOpEn.value());
       os << "          addToDiffe(orig->getArgOperand(" << argIdx << "), ";
       handle(os, pattern, resultTree, "Builder2", nameToOrdinal, /*lookup*/true);
-      os << ");\n";
+      os << ", Builder2, orig->getArgOperand(" << argIdx << ")->getType());\n";
       os << "        }\n";
     }
 
@@ -266,20 +337,10 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
     // TODO
     os << "        break;\n";
     os << "      }\n";
+    os << "    }\n";
 
     os << "    return;\n  }\n";
   }
-
-  /*
-  // Emit function to add the generated matchers to the pattern list.
-  os << "void populateWithGenerated(MLIRContext *context, "
-     << "OwningRewritePatternList *patterns) {\n";
-  for (unsigned i = 0; i != rewritePatternCount; ++i) {
-    os << " patterns->push_back(std::make_unique<" << baseRewriteName << i
-       << ">(context));\n";
-  }
-  os << "}\n";
-  */
 }
 
 static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {

@@ -1,10 +1,10 @@
 class Type;
-class CallPattern<dag patternToMatch, list<dag> resultOps> {
+class CallPattern<dag patternToMatch, list<string> funcNames, list<dag> resultOps> {
   dag PatternToMatch = patternToMatch;
+  list<string> names = funcNames;
   list<dag> ArgDerivatives = resultOps;
 }
 
-class Pat<dag pattern, dag result> : CallPattern<pattern, [result]>;
 class Inst<string mnemonic> {
   string name = mnemonic;
 }
@@ -16,6 +16,7 @@ def FDiv : Inst<"FDiv">;
 def FAdd : Inst<"FAdd">;
 def FSub : Inst<"FSub">;
 def FMul : Inst<"FMul">;
+def FNeg : Inst<"FNeg">;
 
 def DifR : Inst<"DifR">;
 
@@ -23,7 +24,7 @@ class CallOp<string mnemonic> {
   string name = mnemonic;
 }
 
-def AtanOp : CallOp<"atan"> {
+def Op {
 }
 
 class ConstantFP<string val> {
@@ -37,5 +38,17 @@ class Shadow<string val> {
 }
 
 // Define rewrite pattern.
-def : CallPattern<(AtanOp $y, $x), [(FMul (FAdd $y, $x), (DiffeRet<"">), (Shadow<""> $y) ), (FDiv $y, (ConstantFP<"1.0"> $y))]>;
+// def : CallPattern<(Op $y, $x), ["atan", "atanf", "atanl", "__fd_atan_1"], [(FMul (FAdd $y, $x), (DiffeRet<"">), (Shadow<""> $y) ), (FDiv $y, (ConstantFP<"1.0"> $y))]>;
 
+def : CallPattern<(Op $x),
+                  ["atan", "atanf", "atanl", "__fd_atan_1"],
+                  [(FDiv (DiffeRet<"">), (FAdd (ConstantFP<"1.0"> $x), (FMul $x, $x)))]
+                  >;
+
+def : CallPattern<(Op $y, $x),
+                  ["atan2"],
+                  [
+                  (FDiv (FMul (DiffeRet<"">), $x), (FAdd (FMul $x, $x), (FMul $y, $y))),
+                  (FDiv (FNeg (FMul (DiffeRet<"">), $y)), (FAdd (FMul $x, $x), (FMul $y, $y))),
+                  ]
+                  >;

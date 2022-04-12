@@ -14,6 +14,8 @@ set(LLVM_TARGET_DEFINITIONS InstructionDerivatives.td)
 enzyme_tablegen(InstructionDerivatives.inc -gen-derivatives)
 add_public_tablegen_target(MLIRArithmeticCanonicalizationIncGen)
 
+include_directories(${CMAKE_CURRENT_BINARY_DIR})
+
 file(GLOB ENZYME_SRC RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     "*.cpp"
 )
