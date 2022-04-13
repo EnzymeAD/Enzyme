@@ -3602,7 +3602,27 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       }
 
       for (auto sucBB : toRemove) {
-        sucBB->removePredecessor(newBB);
+        if (sucBB->empty() || !isa<PHINode>(sucBB->begin()))
+          continue;
+
+        for (PHINode &Phi : make_early_inc_range(sucBB->phis())) {
+          unsigned NumPreds =
+              cast<PHINode>(sucBB->front()).getNumIncomingValues();
+          if (NumPreds == 0)
+            continue;
+          Phi.removeIncomingValue(newBB);
+
+          // If we have a single predecessor, removeIncomingValue may have
+          // erased the PHI node itself.
+          if (NumPreds == 1)
+            continue;
+
+          // Try to replace the PHI node with a constant value.
+          if (Value *PhiConstant = Phi.hasConstantValue()) {
+            Phi.replaceAllUsesWith(PhiConstant);
+            Phi.eraseFromParent();
+          }
+        }
       }
 
       SmallVector<Instruction *, 2> toerase;
