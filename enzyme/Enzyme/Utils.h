@@ -504,7 +504,7 @@ static inline bool isCertainMallocOrFree(llvm::Function *called) {
       called->getName() == "malloc" || called->getName() == "_Znwm" ||
       called->getName() == "_ZdlPv" || called->getName() == "_ZdlPvm" ||
       called->getName() == "free" || called->getName() == "swift_allocObject" ||
-      called->getName() == "swift_release" ||
+      called->getName() == "swift_release" || called->getName() == "_ZNSaIcE" ||
       shadowHandlers.find(called->getName().str()) != shadowHandlers.end())
     return true;
   switch (called->getIntrinsicID()) {
@@ -533,19 +533,41 @@ static inline bool isCertainPrintOrFree(llvm::Function *called) {
 
   if (called->getName() == "printf" || called->getName() == "puts" ||
       called->getName() == "fprintf" || called->getName() == "putchar" ||
-      called->getName().startswith(
-          "_ZStlsISt11char_traitsIcEERSt13basic_ostreamIcT_ES5_") ||
-      called->getName().startswith("_ZNSolsE") ||
-      called->getName().startswith("_ZNSo9_M_insert") ||
-      called->getName().startswith("_ZSt16__ostream_insert") ||
-      called->getName().startswith("_ZNSo3put") ||
-      called->getName().startswith("_ZSt4endl") ||
-      called->getName().startswith("_ZN3std2io5stdio6_print") ||
-      called->getName().startswith("_ZNSo5flushEv") ||
       called->getName().startswith("_ZN4core3fmt") ||
-      called->getName() == "vprintf" || called->getName() == "_ZdlPv" ||
-      called->getName() == "_ZdlPvm" || called->getName() == "free" ||
-      called->getName() == "swift_release")
+      called->getName().startswith("_ZN3std2io5stdio6_print") ||
+      called->getName().startswith("_ZNSt7__cxx1112basic_string") ||
+      called->getName().startswith("_ZNSt7__cxx1118basic_string") ||
+      called->getName().startswith("_ZSt16__ostream_insert") ||
+      called->getName().startswith(
+          "_ZStlsIwSt11char_traitsIwEERSt13basic_ostream") ||
+      called->getName().startswith(
+          "_ZStlsISt11char_traitsIcEERSt13basic_ostream") ||
+      called->getName().startswith("_ZNSo9_M_insert") ||
+      called->getName().startswith("_ZNSt13basic_ostream") ||
+      called->getName().startswith("_ZNSo3put") ||
+      called->getName().startswith("_ZNKSt5ctypeIcE13_M_widen_init") ||
+      called->getName().startswith("_ZNSi3get") ||
+      called->getName().startswith("_ZNSi7getline") ||
+      called->getName().startswith("_ZNSirsER") ||
+      called->getName().startswith("_ZNSt7__cxx1115basic_stringbuf") ||
+      called->getName().startswith("_ZNSi6ignore") ||
+      called->getName().startswith("_ZNSt8ios_base") ||
+      called->getName().startswith("_ZNSt9basic_ios") ||
+      called->getName().startswith("_ZStorSt13_Ios_OpenmodeS_") ||
+      called->getName().startswith("_ZNSt6locale") ||
+      called->getName().startswith("_ZNKSt6locale4name") ||
+      called->getName().startswith("_ZStL8__ioinit") ||
+      called->getName().startswith("_ZNSt9basic_ios") ||
+      called->getName().startswith("_ZSt4cout") ||
+      called->getName().startswith("_ZSt3cin") ||
+      called->getName().startswith("_ZNSi10_M_extract") ||
+      called->getName().startswith("_ZNSolsE") ||
+      called->getName().startswith("_ZSt5flush") ||
+      called->getName().startswith("_ZNSo5flush") ||
+      called->getName().startswith("_ZSt4endl") ||
+      called->getName() == "_ZNSaIcE" || called->getName() == "vprintf" ||
+      called->getName() == "_ZdlPv" || called->getName() == "_ZdlPvm" ||
+      called->getName() == "free" || called->getName() == "swift_release")
     return true;
   switch (called->getIntrinsicID()) {
   case llvm::Intrinsic::dbg_declare:
@@ -566,7 +588,7 @@ static inline bool isCertainPrintOrFree(llvm::Function *called) {
 // TODO replace/rename
 /// Determine whether this function is a certain print malloc free
 /// debug or lifetime
-static inline bool isCertainPrintMallocOrFree(llvm::Function *called) {
+static inline bool isCertainCacheable(llvm::Function *called) {
   if (called == nullptr)
     return false;
 

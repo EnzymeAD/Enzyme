@@ -1187,7 +1187,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
 
           // If requesting empty unknown functions to be considered inactive,
           // abide by those rules
-          if (!isCertainPrintMallocOrFree(called) && called->empty() &&
+          if (!isCertainCacheable(called) && called->empty() &&
               !hasMetadata(called, "enzyme_gradient") &&
               !hasMetadata(called, "enzyme_derivative") &&
               !isa<IntrinsicInst>(op) && EnzymeEmptyFnInactive) {
@@ -1867,7 +1867,7 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults &TR,
 
       // If requesting empty unknown functions to be considered inactive, abide
       // by those rules
-      if (!isCertainPrintMallocOrFree(called) && called->empty() &&
+      if (!isCertainCacheable(called) && called->empty() &&
           !hasMetadata(called, "enzyme_gradient") &&
           !hasMetadata(called, "enzyme_derivative") &&
           !isa<IntrinsicInst>(op) && EnzymeEmptyFnInactive) {
@@ -1950,7 +1950,7 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults &TR,
       if (!ci->onlyAccessesArgMemory() && !ci->doesNotAccessMemory()) {
 
         Function *called = getFunctionFromCall(ci);
-        if (!called || (!isCertainPrintMallocOrFree(called) &&
+        if (!called || (!isCertainCacheable(called) &&
                         !isMemFreeLibMFunction(called->getName()))) {
           if (EnzymePrintActivity)
             llvm::errs() << "nonconstant(" << (int)directions << ")  up-global "

@@ -396,7 +396,7 @@ struct CacheAnalysis {
       return {};
     }
 
-    if (isCertainPrintMallocOrFree(Fn) || isAllocationFunction(*Fn, TLI)) {
+    if (isCertainCacheable(Fn) || isAllocationFunction(*Fn, TLI)) {
       return {};
     }
 
@@ -460,7 +460,7 @@ struct CacheAnalysis {
       // Don't consider modref from malloc/free as a need to cache
       if (auto obj_op = dyn_cast<CallInst>(inst2)) {
         Function *called = getFunctionFromCall(obj_op);
-        if (called && isCertainPrintMallocOrFree(called)) {
+        if (called && isCertainCacheable(called)) {
           return false;
         }
         if (called && isMemFreeLibMFunction(called->getName())) {
