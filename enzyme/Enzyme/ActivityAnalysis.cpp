@@ -1869,10 +1869,11 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults &TR,
 
       // If requesting empty unknown functions to be considered inactive, abide
       // by those rules
-      if (!isCertainPrintMallocOrFree(called) && called->empty() &&
+      if (EnzymeEmptyFnInactive && called->empty() &&
           !hasMetadata(called, "enzyme_gradient") &&
           !hasMetadata(called, "enzyme_derivative") &&
-          !isa<IntrinsicInst>(op) && EnzymeEmptyFnInactive) {
+          !isAllocationFunction(*called, TLI) &&
+          !isDeallocationFunction(*called, TLI) && !isa<IntrinsicInst>(op)) {
         if (EnzymePrintActivity)
           llvm::errs() << "constant(" << (int)directions << ") up-emptyconst "
                        << *inst << "\n";
