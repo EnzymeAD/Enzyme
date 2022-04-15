@@ -588,7 +588,7 @@ static inline bool isCertainPrintOrFree(llvm::Function *called) {
 // TODO replace/rename
 /// Determine whether this function is a certain print malloc free
 /// debug or lifetime
-static inline bool isCertainCacheable(llvm::Function *called) {
+static inline bool isCertainPrintMallocOrFree(llvm::Function *called) {
   if (called == nullptr)
     return false;
 

@@ -1214,7 +1214,7 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::Instruction *maybeReader,
   using namespace llvm;
   if (auto call = dyn_cast<CallInst>(maybeWriter)) {
     Function *called = getFunctionFromCall(call);
-    if (called && isCertainCacheable(called)) {
+    if (called && isCertainPrintMallocOrFree(called)) {
       return false;
     }
     if (called && isMemFreeLibMFunction(called->getName())) {
