@@ -10990,8 +10990,6 @@ public:
         llvm::errs() << *gutils->newFunc->getParent() << "\n";
         llvm::errs() << " orig: " << *orig << " callval: " << *callval << "\n";
       }
-      llvm::errs() << callval->getName() << "\n";
-      callval->print(llvm::errs());
       assert(!gutils->isConstantValue(callval));
       newcalled = lookup(gutils->invertPointerM(callval, Builder2), Builder2);
 
