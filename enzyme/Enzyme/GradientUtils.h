@@ -1800,28 +1800,6 @@ public:
       return rule(diffs);
     }
   }
-
-  /// Unwraps an collection of constant vector derivatives from their internal
-  /// representations and applies a function f to each element.
-  template <typename Func>
-  Value *applyChainRule(ArrayRef<Value *> diffs, IRBuilder<> &Builder,
-                        Func rule) {
-    if (width > 1) {
-      for (auto diff : diffs) {
-        assert(diff);
-        assert(cast<ArrayType>(diff->getType())->getNumElements() == width);
-      }
-      for (unsigned int i = 0; i < getWidth(); ++i) {
-        SmallVector<Value *, 3> extracted_diffs;
-        for (auto diff : diffs) {
-          extracted_diffs.push_back(Builder.CreateExtractValue(diff, {i}));
-        }
-        rule(extracted_diffs);
-      }
-    } else {
-      rule(diffs);
-    }
-  }
 };
 
 class DiffeGradientUtils : public GradientUtils {

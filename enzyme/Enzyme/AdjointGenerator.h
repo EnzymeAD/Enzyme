@@ -3315,19 +3315,22 @@ public:
           cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
 
           auto rule = [&](Value *vdiff) {
-            Value *dif0 = Builder2.CreateBinOp(
-                Instruction::FDiv,
+            return Builder2.CreateFDiv(
                 Builder2.CreateFMul(ConstantFP::get(I.getType(), 0.5), vdiff),
                 cal);
-
-            Value *cmp = Builder2.CreateFCmpOEQ(
-                args[0], ConstantFP::get(orig_ops[0]->getType(), 0));
-            return Builder2.CreateSelect(
-                cmp, ConstantFP::get(orig_ops[0]->getType(), 0), dif0);
           };
 
           Value *dif0 =
               applyChainRule(orig_ops[0]->getType(), Builder2, rule, vdiff);
+          Value *cmp = Builder2.CreateFCmpOEQ(
+              args[0], Constant::getNullValue(
+                           gutils->getShadowType(orig_ops[0]->getType())));
+          dif0 = Builder2.CreateSelect(
+              cmp,
+              Constant::getNullValue(
+                  gutils->getShadowType(orig_ops[0]->getType())),
+              dif0);
+
           addToDiffe(orig_ops[0], dif0, Builder2, I.getType());
         }
         return;
@@ -3362,24 +3365,23 @@ public:
           Value *cmp = Builder2.CreateFCmpOLT(
               lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2),
               lookup(gutils->getNewFromOriginal(orig_ops[1]), Builder2));
-          auto rule = [&](Value *vdiff) {
-            return Builder2.CreateSelect(
-                cmp, ConstantFP::get(orig_ops[0]->getType(), 0), vdiff);
-          };
-          Value *dif0 =
-              applyChainRule(orig_ops[0]->getType(), Builder2, rule, vdiff);
+
+          Value *dif0 = Builder2.CreateSelect(
+              cmp,
+              Constant::getNullValue(
+                  gutils->getShadowType(orig_ops[0]->getType())),
+              vdiff);
           addToDiffe(orig_ops[0], dif0, Builder2, I.getType());
         }
         if (vdiff && !gutils->isConstantValue(orig_ops[1])) {
           Value *cmp = Builder2.CreateFCmpOLT(
               lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2),
               lookup(gutils->getNewFromOriginal(orig_ops[1]), Builder2));
-          auto rule = [&](Value *vdiff) {
-            return Builder2.CreateSelect(
-                cmp, vdiff, ConstantFP::get(orig_ops[0]->getType(), 0));
-          };
-          Value *dif1 =
-              applyChainRule(orig_ops[1]->getType(), Builder2, rule, vdiff);
+
+          Value *dif1 = Builder2.CreateSelect(
+              cmp, vdiff,
+              Constant::getNullValue(
+                  gutils->getShadowType(orig_ops[1]->getType())));
           addToDiffe(orig_ops[1], dif1, Builder2, I.getType());
         }
         return;
@@ -3394,24 +3396,23 @@ public:
           Value *cmp = Builder2.CreateFCmpOLT(
               lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2),
               lookup(gutils->getNewFromOriginal(orig_ops[1]), Builder2));
-          auto rule = [&](Value *vdiff) {
-            return Builder2.CreateSelect(
-                cmp, vdiff, ConstantFP::get(orig_ops[0]->getType(), 0));
-          };
-          Value *dif0 =
-              applyChainRule(orig_ops[0]->getType(), Builder2, rule, vdiff);
+
+          Value *dif0 = Builder2.CreateSelect(
+              cmp, vdiff,
+              Constant::getNullValue(
+                  gutils->getShadowType(orig_ops[0]->getType())));
           addToDiffe(orig_ops[0], dif0, Builder2, I.getType());
         }
         if (vdiff && !gutils->isConstantValue(orig_ops[1])) {
           Value *cmp = Builder2.CreateFCmpOLT(
               lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2),
               lookup(gutils->getNewFromOriginal(orig_ops[1]), Builder2));
-          auto rule = [&](Value *vdiff) {
-            return Builder2.CreateSelect(
-                cmp, ConstantFP::get(orig_ops[0]->getType(), 0), vdiff);
-          };
-          Value *dif1 =
-              applyChainRule(orig_ops[1]->getType(), Builder2, rule, vdiff);
+
+          Value *dif1 = Builder2.CreateSelect(
+              cmp,
+              Constant::getNullValue(
+                  gutils->getShadowType(orig_ops[1]->getType())),
+              vdiff);
           addToDiffe(orig_ops[1], dif1, Builder2, I.getType());
         }
         return;
@@ -3585,18 +3586,17 @@ public:
           cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
           Value *op1Lookup = lookup(op1, Builder2);
           auto rule = [&](Value *vdiff) {
-            Value *dif0 = Builder2.CreateFMul(
+            return Builder2.CreateFMul(
                 Builder2.CreateFMul(vdiff, cal),
                 Builder2.CreateSIToFP(op1Lookup,
                                       op0->getType()->getScalarType()));
-            dif0 = Builder2.CreateSelect(
-                Builder2.CreateICmpEQ(ConstantInt::get(nop1->getType(), 0),
-                                      nop1),
-                Constant::getNullValue(dif0->getType()), dif0);
-            return dif0;
           };
           Value *dif0 =
               applyChainRule(orig_ops[0]->getType(), Builder2, rule, vdiff);
+          auto cmp =
+              Builder2.CreateICmpEQ(ConstantInt::get(nop1->getType(), 0), nop1);
+          dif0 = Builder2.CreateSelect(
+              cmp, Constant::getNullValue(dif0->getType()), dif0);
           addToDiffe(orig_ops[0], dif0, Builder2, I.getType());
         }
         return;
