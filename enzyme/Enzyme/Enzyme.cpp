@@ -978,8 +978,8 @@ public:
         } else {
           ArrayType *arrayType =
               ArrayType::get(cast<Function>(fn)->getReturnType(), width);
-          args.push_back(
-              ConstantArray::get(arrayType, SmallVector(width, seed)));
+          args.push_back(ConstantArray::get(
+              arrayType, SmallVector<Constant *, 3>(width, seed)));
         }
       } else if (auto ST = dyn_cast<StructType>(
                      cast<Function>(fn)->getReturnType())) {
