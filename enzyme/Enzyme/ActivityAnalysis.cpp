@@ -1317,8 +1317,15 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
             new ActivityAnalyzer(*this, directions));
     Hypothesis->ActiveValues.insert(Val);
     if (auto VI = dyn_cast<Instruction>(Val)) {
-      if (Hypothesis->isConstantInstruction(TR, VI))
+      if (UpHypothesis->isInstructionInactiveFromOrigin(TR, VI)) {
         Hypothesis->DeducingPointers.insert(Val);
+        if (EnzymePrintActivity)
+          llvm::errs() << " constant instruction hypothesis: " << *VI << "\n";
+      } else {
+        if (EnzymePrintActivity)
+          llvm::errs() << " cannot show constant instruction hypothesis: "
+                       << *VI << "\n";
+      }
     }
 
     auto checkActivity = [&](Instruction *I) {
