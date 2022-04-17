@@ -7,7 +7,6 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include "BCLoader.h"
-#include "BCLoaderNew.h"
 
 #include <map>
 #include <set>
@@ -122,5 +121,7 @@ ModulePass *createBCLoaderPass() { return new BCLoader(); }
 
 
 PreservedAnalyses BCLoaderNew::run(Module &M,ModuleAnalysisManager &MAM){
-    return runCommon(M) ? PreservedAnalyses::all() : PreservedAnalyses::none();
+    return provideDefinitions(M) ? PreservedAnalyses::all() : PreservedAnalyses::none();
 }
+
+// TODO: Register NewPass
