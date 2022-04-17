@@ -6,6 +6,9 @@
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include "BCLoader.h"
+#include "BCLoaderNew.h"
+
 #include <set>
 #include <string>
 
@@ -14,13 +17,8 @@ using namespace llvm;
 cl::opt<std::string> BCPath("bcpath", cl::init(""), cl::Hidden,
                             cl::desc("Path to BC definitions"));
 
-namespace {
-class BCLoader : public ModulePass {
-public:
-  static char ID;
-  BCLoader() : ModulePass(ID) {}
 
-  bool runOnModule(Module &M) override {
+bool runCommon(Module& M){
     std::set<std::string> bcfuncs = {"cblas_ddot"};
     for (std::string name : bcfuncs) {
       if (name == "cblas_ddot") {
@@ -45,6 +43,16 @@ public:
       }
     }
     return true;
+}
+
+namespace {
+class BCLoader : public ModulePass {
+public:
+  static char ID;
+  BCLoader() : ModulePass(ID) {}
+
+  bool runOnModule(Module &M) override {
+      return runCommon(M);
   }
 };
 } // namespace
@@ -55,3 +63,8 @@ static RegisterPass<BCLoader> X("bcloader",
                                 "Link bitcode files for known functions");
 
 ModulePass *createBCLoaderPass() { return new BCLoader(); }
+
+
+PreservedAnalyses BCLoaderNew::run(Module &M,ModuleAnalysisManager &MAM){
+    return runCommon(M) ? PreservedAnalyses::all() : PreservedAnalyses::none();
+}
