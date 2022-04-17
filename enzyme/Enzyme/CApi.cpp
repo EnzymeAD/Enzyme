@@ -293,6 +293,10 @@ void EnzymeRegisterFwdCallHandler(char *Name, CustomFunctionForward FwdHandle) {
   };
 }
 
+uint64_t EnzymeGradientUtilsGetWidth(GradientUtils *gutils) {
+  return gutils->getWidth();
+}
+
 LLVMValueRef EnzymeGradientUtilsNewFromOriginal(GradientUtils *gutils,
                                                 LLVMValueRef val) {
   return wrap(gutils->getNewFromOriginal(unwrap(val)));
