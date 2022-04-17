@@ -6,6 +6,10 @@
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 
+
+#include "llvm/Passes/PassBuilder.h"
+#include "llvm/Passes/PassPlugin.h"
+
 #include "BCLoader.h"
 
 #include <set>
@@ -68,4 +72,21 @@ PreservedAnalyses BCLoaderNew::run(Module &M,ModuleAnalysisManager &MAM){
     return lowerDeclarationsToBitcode(M) ? PreservedAnalyses::all() : PreservedAnalyses::none();
 }
 
-// TODO: Register NewPass 
+extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
+llvmGetPassPluginInfo() {
+  return {
+    LLVM_PLUGIN_API_VERSION, "BCLoaderNew", "v0.1",
+    [](llvm::PassBuilder &PB) {
+      PB.registerPipelineParsingCallback(
+        [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
+           llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
+          if(Name == "BCPass"){
+            MPM.addPass(BCLoaderNew());
+            return true;
+          }
+          return false;
+        }
+      );
+    }
+  };
+}
