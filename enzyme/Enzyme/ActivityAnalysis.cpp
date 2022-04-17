@@ -1317,6 +1317,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
             new ActivityAnalyzer(*this, directions));
     Hypothesis->ActiveValues.insert(Val);
     if (auto VI = dyn_cast<Instruction>(Val)) {
+      for (auto V : DeducingPointers) {
+        UpHypothesis->InsertConstantValue(TR, V);
+      }
       if (UpHypothesis->isInstructionInactiveFromOrigin(TR, VI)) {
         Hypothesis->DeducingPointers.insert(Val);
         if (EnzymePrintActivity)
@@ -1545,18 +1548,13 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
               //
               if ((I->mayWriteToMemory() &&
                    !Hypothesis->isConstantInstruction(TR, I)) ||
-                  (!Hypothesis->isConstantValue(TR, I) &&
+                  (!Hypothesis->DeducingPointers.count(I) &&
+                   !Hypothesis->isConstantValue(TR, I) &&
                    TR.query(I)[{-1}].isPossiblePointer())) {
                 if (EnzymePrintActivity)
                   llvm::errs() << "potential active store via pointer in "
                                   "unknown inst: "
                                << *I << " of " << *Val << "\n";
-                llvm::errs()
-                    << " write: " << I->mayWriteToMemory()
-                    << " ci: " << Hypothesis->isConstantInstruction(TR, I)
-                    << "\n";
-                llvm::errs() << " cv: " << Hypothesis->isConstantValue(TR, I)
-                             << " ipp:\n";
                 potentiallyActiveStore = true;
               }
             }
