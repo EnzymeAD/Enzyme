@@ -7,6 +7,9 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <map>
+#include "BCLoader.h"
+#include "BCLoaderNew.h"
+
 #include <set>
 #include <string>
 
@@ -107,6 +110,7 @@ public:
   BCLoader() : ModulePass(ID) {}
 
   bool runOnModule(Module &M) override { return provideDefinitions(M); }
+
 };
 } // namespace
 
@@ -116,3 +120,7 @@ static RegisterPass<BCLoader> X("bcloader",
                                 "Link bitcode files for known functions");
 
 ModulePass *createBCLoaderPass() { return new BCLoader(); }
+
+PreservedAnalyses BCLoaderNew::run(Module &M,ModuleAnalysisManager &MAM){
+    return provideDefinitions(M) ? PreservedAnalyses::all() : PreservedAnalyses::none();
+}
