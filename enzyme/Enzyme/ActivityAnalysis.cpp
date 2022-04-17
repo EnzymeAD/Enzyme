@@ -1601,9 +1601,31 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
     };
 
     // Search through all the instructions in this function
-    // for potential loads / stores of this value
+    // for potential loads / stores of this value.
+    //
+    // We can choose to only look at potential follower instructions
+    // if the value is created by the instruction (alloca, noalias)
+    // since no potentially active store to the same location can occur
+    // prior to its creation. Otherwise, check all instructions in the
+    // function as a store to an aliasing location may have occured
+    // prior to the instruction generating the value.
 
-    if (isa<Argument>(Val)) {
+    if (auto VI = dyn_cast<AllocaInst>(Val)) {
+      allFollowersOf(VI, checkActivity);
+    } else if (auto VI = dyn_cast<CallInst>(Val)) {
+      if (VI->hasRetAttr(Attribute::NoAlias))
+        allFollowersOf(VI, checkActivity);
+      else {
+        for (BasicBlock &BB : *TR.getFunction()) {
+          if (notForAnalysis.count(&BB))
+            continue;
+          for (Instruction &I : BB) {
+            if (checkActivity(&I))
+              goto activeLoadAndStore;
+          }
+        }
+      }
+    } else if (isa<Argument>(Val) || isa<Instruction>(Val)) {
       for (BasicBlock &BB : *TR.getFunction()) {
         if (notForAnalysis.count(&BB))
           continue;
@@ -1612,8 +1634,6 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
             goto activeLoadAndStore;
         }
       }
-    } else if (auto VI = dyn_cast<Instruction>(Val)) {
-      allFollowersOf(VI, checkActivity);
     } else {
       llvm::errs() << "unknown pointer value type: " << *Val << "\n";
       assert(0 && "unknown pointer value type");
@@ -1651,7 +1671,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
 
       assert(UpHypothesis);
       // UpHypothesis.ConstantValues.insert(val);
-      UpHypothesis->insertConstantsFrom(TR, *Hypothesis);
+      if (DeducingPointers.size() == 0)
+        UpHypothesis->insertConstantsFrom(TR, *Hypothesis);
       for (auto V : DeducingPointers) {
         UpHypothesis->InsertConstantValue(TR, V);
       }
