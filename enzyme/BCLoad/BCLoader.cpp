@@ -8,7 +8,6 @@
 
 #include <map>
 #include "BCLoader.h"
-#include "BCLoaderNew.h"
 
 #include <set>
 #include <string>
@@ -67,6 +66,14 @@ bool provideDefinitions(Module &M) {
     SMDiagnostic Err;
     MemoryBufferRef buf(mod, StringRef("bcloader"));
 
+<<<<<<< HEAD
+=======
+bool lowerDeclarationsToBitcode(Module& M){
+    std::set<std::string> bcfuncs = {"cblas_ddot"};
+    for (std::string name : bcfuncs) {
+      if (name == "cblas_ddot") {
+        SMDiagnostic Err;
+>>>>>>> ecd61d02 (rename common run function)
 #if LLVM_VERSION_MAJOR <= 10
     auto BC = llvm::parseIR(buf, Err, M.getContext(), true,
                             M.getDataLayout().getStringRepresentation());
@@ -109,8 +116,14 @@ public:
   static char ID;
   BCLoader() : ModulePass(ID) {}
 
+<<<<<<< HEAD
   bool runOnModule(Module &M) override { return provideDefinitions(M); }
 
+=======
+  bool runOnModule(Module &M) override {
+      return lowerDeclarationsToBitcode(M);
+  }
+>>>>>>> ecd61d02 (rename common run function)
 };
 } // namespace
 
@@ -124,3 +137,5 @@ ModulePass *createBCLoaderPass() { return new BCLoader(); }
 PreservedAnalyses BCLoaderNew::run(Module &M,ModuleAnalysisManager &MAM){
     return provideDefinitions(M) ? PreservedAnalyses::all() : PreservedAnalyses::none();
 }
+
+// TODO: Register NewPass 
