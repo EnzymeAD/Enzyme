@@ -7,7 +7,6 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include "BCLoader.h"
-#include "BCLoaderNew.h"
 
 #include <set>
 #include <string>
@@ -18,7 +17,7 @@ cl::opt<std::string> BCPath("bcpath", cl::init(""), cl::Hidden,
                             cl::desc("Path to BC definitions"));
 
 
-bool runCommon(Module& M){
+bool lowerDeclarationsToBitcode(Module& M){
     std::set<std::string> bcfuncs = {"cblas_ddot"};
     for (std::string name : bcfuncs) {
       if (name == "cblas_ddot") {
@@ -52,7 +51,7 @@ public:
   BCLoader() : ModulePass(ID) {}
 
   bool runOnModule(Module &M) override {
-      return runCommon(M);
+      return lowerDeclarationsToBitcode(M);
   }
 };
 } // namespace
@@ -66,5 +65,7 @@ ModulePass *createBCLoaderPass() { return new BCLoader(); }
 
 
 PreservedAnalyses BCLoaderNew::run(Module &M,ModuleAnalysisManager &MAM){
-    return runCommon(M) ? PreservedAnalyses::all() : PreservedAnalyses::none();
+    return lowerDeclarationsToBitcode(M) ? PreservedAnalyses::all() : PreservedAnalyses::none();
 }
+
+// TODO: Register NewPass 
