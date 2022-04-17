@@ -2097,9 +2097,10 @@ public:
         Value *v = ConstantInt::get(Type::getInt32Ty(st->getContext()), i);
         SmallVector<Value *, 2> idx2(idxs.begin(), idxs.end());
         idx2.push_back(v);
+        // FIXME: reconsider if passing a nullptr is correct here.
         auto selects = addToDiffe(
             val, BuilderM.CreateExtractValue(dif, ArrayRef<unsigned>(i)),
-            BuilderM, addingType, idx2);
+            BuilderM, nullptr, idx2);
         for (auto select : selects) {
           addedSelects.push_back(select);
         }
