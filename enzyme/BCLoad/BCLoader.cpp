@@ -6,10 +6,7 @@
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include "llvm/Passes/PassPlugin.h"
-#include "llvm/Passes/PassBuilder.h"
-
-#include "BCLoader.h"
+#include "BCLoaderNew.h"
 
 #include <map>
 
