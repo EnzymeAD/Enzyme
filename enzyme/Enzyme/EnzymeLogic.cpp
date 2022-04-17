@@ -3517,20 +3517,15 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     if (key.additionalType)
       endarg--;
     differetval = endarg;
-    if (auto agg = dyn_cast<ArrayType>(differetval->getType())) {
-      if (agg->getElementType() != key.todiff->getReturnType() ||
-          agg->getNumElements() != gutils->getWidth()) {
+
+    if (!key.todiff->getReturnType()->isVoidTy()) {
+      if (!(differetval->getType() ==
+            gutils->getShadowType(key.todiff->getReturnType()))) {
         llvm::errs() << *gutils->oldFunc << "\n";
         llvm::errs() << *gutils->newFunc << "\n";
       }
-      assert(agg->getNumElements() == gutils->getWidth());
-      assert(agg->getElementType() == key.todiff->getReturnType());
-    } else {
-      if (differetval->getType() != key.todiff->getReturnType()) {
-        llvm::errs() << *gutils->oldFunc << "\n";
-        llvm::errs() << *gutils->newFunc << "\n";
-      }
-      assert(differetval->getType() == key.todiff->getReturnType());
+      assert(differetval->getType() ==
+             gutils->getShadowType(key.todiff->getReturnType()));
     }
   }
 
