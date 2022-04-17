@@ -3,8 +3,6 @@
 
 #include "BCLoader.h"
 
-#include "BCLoaderNew.h"
-
 #include "llvm/LinkAllPasses.h"
 
 using namespace llvm;
