@@ -4386,6 +4386,7 @@ public:
             cast<Function>(called), subretType, argsInverted,
             TR.analyzer.interprocedural, /*return is used*/ false,
             /*shadowReturnUsed*/ false, nextTypeInfo, uncacheable_args, false,
+            gutils->getWidth(),
             /*AtomicAdd*/ true,
             /*OpenMP*/ true);
         if (Mode == DerivativeMode::ReverseModePrimal) {
@@ -11135,7 +11136,7 @@ public:
               cast<Function>(called), subretType, argsInverted,
               TR.analyzer.interprocedural, /*return is used*/ subretused,
               shadowReturnUsed, nextTypeInfo, uncacheable_args, false,
-              gutils->AtomicAdd);
+              gutils->getWidth(), gutils->AtomicAdd);
           if (Mode == DerivativeMode::ReverseModePrimal) {
             assert(augmentedReturn);
             auto subaugmentations =
