@@ -8287,7 +8287,8 @@ public:
             gutils->erase(placeholder);
           } else {
             if (invertedReturn && invertedReturn != placeholder) {
-              if (invertedReturn->getType() != orig->getType()) {
+              if (invertedReturn->getType() !=
+                  gutils->getShadowType(orig->getType())) {
                 llvm::errs() << " o: " << *orig << "\n";
                 llvm::errs() << " ot: " << *orig->getType() << "\n";
                 llvm::errs() << " ir: " << *invertedReturn << "\n";
@@ -8297,7 +8298,8 @@ public:
                 llvm::errs() << " newCall: " << *newCall << "\n";
                 llvm::errs() << " newCallT: " << *newCall->getType() << "\n";
               }
-              assert(invertedReturn->getType() == orig->getType());
+              assert(invertedReturn->getType() ==
+                     gutils->getShadowType(orig->getType()));
               placeholder->replaceAllUsesWith(invertedReturn);
               gutils->erase(placeholder);
             } else
