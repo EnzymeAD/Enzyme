@@ -9998,8 +9998,15 @@ public:
                    forwardsShadow) ||
                   (Mode == DerivativeMode::ReverseModeGradient &&
                    backwardsShadow)) {
-                anti = shadowHandlers[called->getName().str()](bb, orig, args);
-
+                anti = applyChainRule(call.getType(), bb, [&]() {
+                  return shadowHandlers[called->getName().str()](bb, orig,
+                                                                 args);
+                });
+                if (anti->getType() != placeholder->getType()) {
+                  llvm::errs() << "orig: " << *orig << "\n";
+                  llvm::errs() << "placeholder: " << *placeholder << "\n";
+                  llvm::errs() << "anti: " << *anti << "\n";
+                }
                 gutils->invertedPointers.erase(found);
                 bb.SetInsertPoint(placeholder);
 
