@@ -2751,22 +2751,29 @@ public:
       if (!forwardMode)
         op3 = gutils->lookupM(op3, BuilderZ);
 
-      Type *tys[] = {op0->getType(), op2->getType()};
-      Value *args[] = {op0, op1, op2, op3};
       auto Defs =
           gutils->getInvertedBundles(&MS,
                                      {ValueType::Shadow, ValueType::Primal,
                                       ValueType::Primal, ValueType::Primal},
                                      BuilderZ, /*lookup*/ false);
-      auto cal = BuilderZ.CreateCall(
-          Intrinsic::getDeclaration(MS.getParent()->getParent()->getParent(),
-                                    Intrinsic::memset, tys),
-          args, Defs);
-      cal->copyMetadata(MS, MD_ToCopy);
-      cal->setAttributes(MS.getAttributes());
-      cal->setCallingConv(MS.getCallingConv());
-      cal->setTailCallKind(MS.getTailCallKind());
-      cal->setDebugLoc(gutils->getNewFromOriginal(MS.getDebugLoc()));
+
+      applyChainRule(
+          BuilderZ,
+          [&](Value *op0) {
+            Type *tys[] = {op0->getType(), op2->getType()};
+            Value *args[] = {op0, op1, op2, op3};
+            auto cal = BuilderZ.CreateCall(
+                Intrinsic::getDeclaration(
+                    MS.getParent()->getParent()->getParent(), Intrinsic::memset,
+                    tys),
+                args, Defs);
+            cal->copyMetadata(MS, MD_ToCopy);
+            cal->setAttributes(MS.getAttributes());
+            cal->setCallingConv(MS.getCallingConv());
+            cal->setTailCallKind(MS.getTailCallKind());
+            cal->setDebugLoc(gutils->getNewFromOriginal(MS.getDebugLoc()));
+          },
+          op0);
     }
   }
 
@@ -2823,15 +2830,15 @@ public:
       IRBuilder<> Builder2(&MTI);
       getForwardBuilder(Builder2);
       auto ddst = gutils->invertPointerM(orig_dst, Builder2);
-      if (ddst->getType()->isIntegerTy())
-        ddst = Builder2.CreateIntToPtr(ddst,
-                                       Type::getInt8PtrTy(ddst->getContext()));
       auto dsrc = gutils->invertPointerM(orig_src, Builder2);
-      if (dsrc->getType()->isIntegerTy())
-        dsrc = Builder2.CreateIntToPtr(dsrc,
-                                       Type::getInt8PtrTy(dsrc->getContext()));
 
       auto rule = [&](Value *ddst, Value *dsrc) {
+        if (ddst->getType()->isIntegerTy())
+          ddst = Builder2.CreateIntToPtr(
+              ddst, Type::getInt8PtrTy(ddst->getContext()));
+        if (dsrc->getType()->isIntegerTy())
+          dsrc = Builder2.CreateIntToPtr(
+              dsrc, Type::getInt8PtrTy(dsrc->getContext()));
         CallInst *call;
         if (ID == Intrinsic::memmove) {
           call =
