@@ -8047,7 +8047,8 @@ public:
               llvm::errs() << " newCall: " << *newCall << "\n";
               llvm::errs() << " newCallT: " << *newCall->getType() << "\n";
             }
-            assert(invertedReturn->getType() == orig->getType());
+            assert(invertedReturn->getType() ==
+                   gutils->getShadowType(orig->getType()));
             placeholder->replaceAllUsesWith(invertedReturn);
             gutils->erase(placeholder);
             gutils->invertedPointers.insert(
@@ -10263,7 +10264,11 @@ public:
 
       Value *ptrshadow =
           gutils->invertPointerM(call.getArgOperand(0), BuilderZ);
-      Value *val = BuilderZ.CreateCall(called, {ptrshadow});
+
+      Value *val = applyChainRule(
+          call.getType(), BuilderZ,
+          [&](Value *v) -> Value * { return BuilderZ.CreateCall(called, {v}); },
+          ptrshadow);
 
       gutils->replaceAWithB(placeholder, val);
       gutils->erase(placeholder);
