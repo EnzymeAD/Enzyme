@@ -1715,6 +1715,8 @@ public:
 
   static Type *getShadowType(Type *ty, unsigned width) {
     if (width > 1) {
+      if (ty->isVoidTy())
+          return ty;
       return ArrayType::get(ty, width);
     } else {
       return ty;
