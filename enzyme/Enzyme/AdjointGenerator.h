@@ -9362,7 +9362,6 @@ public:
           }
         }
 
-        eraseIfUnused(*orig);
         if (gutils->isConstantInstruction(orig))
           return;
 
@@ -9429,6 +9428,9 @@ public:
                     Builder2.CreateExtractValue(sq1, {1})});
 
           setDiffe(&call, div1, Builder2);
+
+          eraseIfUnused(*orig);
+
           return;
         }
         case DerivativeMode::ReverseModeGradient:
@@ -9450,13 +9452,15 @@ public:
 
           if (!constantval2 || !constantval3) {
             auto fdiv = Builder2.CreateCall(div, {idiffReal, idiffImag,
-                                                  lookup(prim[2], Builder2),
-                                                  lookup(prim[3], Builder2)});
+                                                  lookup(prim[1], Builder2),
+                                                  lookup(prim[2], Builder2)});
+
+            Value *newcall = gutils->getNewFromOriginal(&call);
 
             diff1 = Builder2.CreateCall(
                 mul,
-                {Builder2.CreateFNeg(Builder2.CreateExtractValue(&call, {0})),
-                 Builder2.CreateFNeg(Builder2.CreateExtractValue(&call, {1})),
+                {Builder2.CreateFNeg(Builder2.CreateExtractValue(newcall, {0})),
+                 Builder2.CreateFNeg(Builder2.CreateExtractValue(newcall, {1})),
                  Builder2.CreateExtractValue(fdiv, {0}),
                  Builder2.CreateExtractValue(fdiv, {1})});
           }
@@ -9477,6 +9481,9 @@ public:
             addToDiffe(orig_op3, Builder2.CreateExtractValue(diff1, {1}),
                        Builder2, orig_op3->getType());
           }
+
+          if (constantval2 && constantval3)
+            eraseIfUnused(*orig);
 
           return;
         }
