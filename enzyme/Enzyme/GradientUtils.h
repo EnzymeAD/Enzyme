@@ -1716,7 +1716,7 @@ public:
   static Type *getShadowType(Type *ty, unsigned width) {
     if (width > 1) {
       if (ty->isVoidTy())
-          return ty;
+        return ty;
       return ArrayType::get(ty, width);
     } else {
       return ty;
@@ -2331,12 +2331,15 @@ public:
     if (Atomic) {
       // For amdgcn constant AS is 4 and if the primal is in it we need to cast
       // the derivative value to AS 1
-      auto AS = cast<PointerType>(ptr->getType())->getAddressSpace();
-      if (Arch == Triple::amdgcn && AS == 4) {
+      if (Arch == Triple::amdgcn) {
         auto rule = [&](Value *ptr) {
-          return BuilderM.CreateAddrSpaceCast(
-              ptr,
-              PointerType::get(ptr->getType()->getPointerElementType(), 1));
+          auto AS = cast<PointerType>(ptr->getType())->getAddressSpace();
+          if (AS == 4)
+            return BuilderM.CreateAddrSpaceCast(
+                ptr,
+                PointerType::get(ptr->getType()->getPointerElementType(), 1));
+          else
+            return ptr;
         };
         ptr = applyChainRule(diffType, BuilderM, rule, ptr);
       }
