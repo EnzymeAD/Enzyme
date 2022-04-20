@@ -78,10 +78,8 @@ void getFunction(raw_ostream &os, std::string callval, std::string FT, std::stri
 // Returns whether value generated is a vector value or not.
 bool handle(raw_ostream &os, Record *pattern, Init * resultTree, std::string builder, StringMap<std::string> &nameToOrdinal, bool lookup) {
   if (DagInit *resultRoot = dyn_cast<DagInit>(resultTree)) {
-    llvm::errs() << " daginit\n";
     auto opName = resultRoot->getOperator()->getAsString();
     auto Def = cast<DefInit>(resultRoot->getOperator()) ->getDef();
-    llvm::errs() << " opname: " << opName << " - " << Def->getName() << " subc: " << Def->isSubClassOf("Call") << "\n";
     if (opName == "DiffeRet" || Def->isSubClassOf("DiffeRet")) {
       os << "dif";
       return true;
@@ -170,7 +168,6 @@ bool handle(raw_ostream &os, Record *pattern, Init * resultTree, std::string bui
     for (auto zp : llvm::zip(resultRoot->getArgs(), resultRoot->getArgNames())) {
       os << " args[" << idx << "] = ";
       idx++;
-      llvm::errs() << " zp: " <<*std::get<0>(zp) << " rs: " << std::get<1>(zp) << "\n";
       if (isa<UnsetInit>(std::get<0>(zp)) && std::get<1>(zp)) {
         auto name = std::get<1>(zp)->getAsUnquotedString();
         auto ord = nameToOrdinal.find(name);
