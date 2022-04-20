@@ -44,15 +44,35 @@ bool hasDiffeRet(Init * resultTree) {
   return false;
 }
 
-void handle(raw_ostream &os, Record *pattern, Init * resultTree, std::string builder, StringMap<std::string> &nameToOrdinal, bool lookup) {
+void getFunction(raw_ostream &os, std::string callval, std::string FT, std::string cconv, Init* func) {
+  if (DagInit *resultRoot = dyn_cast<DagInit>(func)) {
+    auto opName = resultRoot->getOperator()->getAsString();
+    auto Def = cast<DefInit>(resultRoot->getOperator()) ->getDef();
+    if (opName == "SameFunc" || Def->isSubClassOf("SameFunc")) {
+      os << "#if LLVM_VERSION_MAJOR >= 11\n";
+      os << "  auto " << callval << " = orig->getCalledOperand();\n";
+      os << "#else\n";
+      os << "  auto " << callval << " = orig->getCalledValue();\n";
+      os << "#endif\n";
+      os << "  auto " << FT << " = orig->getFunctionType();\n";
+      os << "  auto " << cconv << " = orig->getCallingConv();\n";
+      return;
+    }
+  }
+  assert(0 && "Unhandled function");
+
+}
+
+// Returns whether value generated is a vector value or not.
+bool handle(raw_ostream &os, Record *pattern, Init * resultTree, std::string builder, StringMap<std::string> &nameToOrdinal, bool lookup) {
   if (DagInit *resultRoot = dyn_cast<DagInit>(resultTree)) {
     llvm::errs() << " daginit\n";
     auto opName = resultRoot->getOperator()->getAsString();
     auto Def = cast<DefInit>(resultRoot->getOperator()) ->getDef();
-    llvm::errs() << " opname: " << opName << " - " << Def->getName() << " subc: " << Def->isSubClassOf("ConstantFP") << "\n";
+    llvm::errs() << " opname: " << opName << " - " << Def->getName() << " subc: " << Def->isSubClassOf("Call") << "\n";
     if (opName == "DiffeRet" || Def->isSubClassOf("DiffeRet")) {
       os << "dif";
-      return;
+      return true;
     } else if (opName == "ConstantFP" || Def->isSubClassOf("ConstantFP")) {
       if (resultRoot->getNumArgs() != 1)
         PrintFatalError(pattern->getLoc(), "only single op constant supported");
@@ -64,6 +84,21 @@ void handle(raw_ostream &os, Record *pattern, Init * resultTree, std::string bui
           PrintFatalError(pattern->getLoc(), Twine("'value' not defined in ") +
                                                  resultTree->getAsString());
 
+
+      os << "ConstantFP::get(";
+      if (resultRoot->getArgName(0)) {
+        auto name = resultRoot->getArgName(0)->getAsUnquotedString();
+        auto ord = nameToOrdinal.find(name);
+        if (ord == nameToOrdinal.end())
+          PrintFatalError(pattern->getLoc(),
+                          Twine("unknown named operand '") + name + "'" + resultTree->getAsString());
+        os << ord->getValue();
+      } else
+        PrintFatalError(pattern->getLoc(),
+                        Twine("unknown named operand in constantfp") + resultTree->getAsString());
+      os << "->getType(), \"" << value->getValue() << "\")";
+
+      /*
 
     os << " ({ Type* T = ";
       if (resultRoot->getArgName(0)) {
@@ -86,7 +121,8 @@ void handle(raw_ostream &os, Record *pattern, Init * resultTree, std::string bui
       os << "  res = ConstantArray::get(cast<ArrayType>(T), vals);\n";
       os << "}\n";
       os << "res; })";
-      return;
+      */
+      return false;
     } else if (opName == "Shadow" || Def->isSubClassOf("Shadow")) {
       if (resultRoot->getNumArgs() != 1)
         PrintFatalError(pattern->getLoc(), "only single op constant supported");
@@ -109,11 +145,14 @@ void handle(raw_ostream &os, Record *pattern, Init * resultTree, std::string bui
       os << ")";
       if (lookup) os << ", " << builder << ")";
 
-      return;
+      return true;
     }
 
     os << " ({\n";
     os << "    Value* args[" << resultRoot->getArgs().size() << "];\n";
+
+    SmallVector<bool, 1> vectorValued;
+    bool anyVector = false;
 
     size_t idx = 0;
     for (auto zp : llvm::zip(resultRoot->getArgs(), resultRoot->getArgNames())) {
@@ -131,32 +170,83 @@ void handle(raw_ostream &os, Record *pattern, Init * resultTree, std::string bui
         os << ")";
         if (lookup) os << ", " << builder << ")";
         os << " ;\n";
+        vectorValued.push_back(false);
         continue;
       }
-      handle(os, pattern, std::get<0>(zp), builder, nameToOrdinal, lookup);
+      vectorValued.push_back(handle(os, pattern, std::get<0>(zp), builder, nameToOrdinal, lookup));
+      anyVector |= vectorValued.back();
       os << " ;\n";
     }
 
+    if (opName == "Call" || Def->isSubClassOf("Call")) {
+      getFunction(os, "callval", "FT", "cconv", Def->getValueInit("func"));
+    }
+
     os << " Value *res = nullptr;\n";
-    os << " if (gutils->getWidth() == 1) res = " << builder << ".Create" << opName << "(";
+
+    if (anyVector) {
+      os << " if (gutils->getWidth() == 1) { \n";
+    }
+
+    if (opName == "Call" || Def->isSubClassOf("Call")) {
+      os << " CallInst *cubcall = cast<CallInst>(" << builder << ".CreateCall(FT, callval, {";
+    } else {
+      os << "   res = " << builder << ".Create" << opName << "(";
+    }
     for (size_t i=0; i<idx; i++) {
       if (i > 0) os << ", ";
       os << "args[" << i << "]";
     }
-    os << ");\n";
-    os << " else {\n";
-    os << " for(unsigned int idx=0, W=gutils->getWidth(); idx<W; idx++) {\n";
-    os << "   Value *V = " << builder << ".Create" << opName << "(";
-    for (size_t i=0; i<idx; i++) {
-      if (i > 0) os << ", ";
-      os << builder << ".CreateExtractValue(args[" << i << "], {idx})";
+    if (opName == "Call" || Def->isSubClassOf("Call")) os << "}";
+    os << ")";
+    if (opName == "Call" || Def->isSubClassOf("Call")) os << ")";
+    os << ";\n";
+    if (opName == "Call" || Def->isSubClassOf("Call")) {
+    os << " cubcall->setDebugLoc(gutils->getNewFromOriginal(orig->getDebugLoc()));\n";
+    os << " cubcall->setCallingConv(cconv);\n";
+    for (auto *attr : *cast<ListInit>(Def->getValueAsListInit("fnattrs"))) {
+      auto attrDef = cast<DefInit>(attr) ->getDef();
+      os << " cubcall->addAttribute(AttributeList::FunctionIndex, Attribute::" << attrDef->getValueInit("name")->getAsUnquotedString() << ");\n";
     }
-    os << ");\n";
-    os << "   if (res == nullptr) res = UndefValue::get(ArrayType::get(V->getType(), gutils->getWidth()));\n";
-    os << "   res = " << builder << ".CreateInsertValue(res, V, {idx});\n";
-    os << " }\n }\n";
-    os << " res; })";
-    return;
+    os << " res = cubcall;\n";
+    }
+    if (anyVector) {
+      os << " } else {\n";
+      os << " for(unsigned int idx=0, W=gutils->getWidth(); idx<W; idx++) {\n";
+
+      if (opName == "Call" || Def->isSubClassOf("Call")) {
+        os << " CallInst *V = cast<CallInst>(" << builder << ".CreateCall(FT, callval, {";
+      } else {
+        os << "   Value *V = " << builder << ".Create" << opName << "(";
+      }
+      for (size_t i=0; i<idx; i++) {
+        if (i > 0) os << ", ";
+        if (vectorValued[i])
+          os << builder << ".CreateExtractValue(args[" << i << "], {idx})";
+        else
+          os << "args[" << i << "]";
+      }
+      if (opName == "Call" || Def->isSubClassOf("Call")) os << "}";
+      os << ")";
+      if (opName == "Call" || Def->isSubClassOf("Call")) {
+        os << ")";
+      }
+      os << ";\n";
+
+      if (opName == "Call" || Def->isSubClassOf("Call")) {
+        os << "   V->setDebugLoc(gutils->getNewFromOriginal(orig->getDebugLoc()));\n";
+        os << "   V->setCallingConv(cconv);\n";
+        for (auto *attr : *cast<ListInit>(Def->getValueAsListInit("fnattrs"))) {
+          auto attrDef = cast<DefInit>(attr) ->getDef();
+          os << "   V->addAttribute(AttributeList::FunctionIndex, Attribute::" << attrDef->getValueInit("name")->getAsUnquotedString() << ");\n";
+        }
+      }
+      os << "   if (res == nullptr) res = UndefValue::get(ArrayType::get(V->getType(), gutils->getWidth()));\n";
+      os << "   res = " << builder << ".CreateInsertValue(res, V, {idx});\n";
+      os << " }\n }\n";
+    }
+      os << " res; })";
+    return anyVector;
   }
 
   PrintFatalError(pattern->getLoc(),
@@ -229,15 +319,25 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
       os << "          Value *dif = diffe(orig->getArgOperand(" << argIdx << "), Builder2);\n";
       DagInit *resultTree = cast<DagInit>(argOpEn.value());
       os << "          Value *tmp = ";
-      handle(os, pattern, resultTree, "Builder2", nameToOrdinal, /*lookup*/false);
+
+      bool vectorValued = handle(os, pattern, resultTree, "Builder2", nameToOrdinal, /*lookup*/false);
       os << ";\n";
 
       os << "          if (res == nullptr) res = tmp;\n";
       os << "          else if (gutils->getWidth() == 1) res = Builder2.CreateFAdd(res, tmp);\n";
       os << "          else {\n";
-      os << "            Value *out = UndefValue::get(res->getType());\n";
+      if (vectorValued)
+        os << "            Value *out = UndefValue::get(res->getType());\n";
+      else
+        os << "            Value *out = UndefValue::get(gutils->getShadowType(res->getType()));\n";
+
       os << "            for(unsigned int idx=0, W=gutils->getWidth(); idx<W; idx++) {\n";
-      os << "              Value *V = Builder2.CreateFAdd(Builder2.CreateExtractValue(res, {idx}), Builder2.CreateExtractValue(tmp, {idx}));\n";
+      os << "              Value *V = Builder2.CreateFAdd(Builder2.CreateExtractValue(res, {idx}), ";
+      if (vectorValued)
+        os << "Builder2.CreateExtractValue(tmp, {idx})";
+      else
+        os << "tmp";
+      os << ");\n";
       os << "              out = Builder2.CreateInsertValue(out, V, {idx});\n";
       os << "            }\n";
       os << "            res = out;\n";
@@ -246,55 +346,6 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
     }
 
     os << "        setDiffe(orig, res, Builder2);\n";
-    /*
-    os << "          Value *x = gutils->getNewFromOriginal(orig->getArgOperand(0));\n";
-    os << "          Value *onePx2 = Builder2.CreateFAdd(\n";
-    os << "              ConstantFP::get(x->getType(), 1.0), Builder2.CreateFMul(x, x));\n";
-
-    os << "          Value *op = diffe(orig->getArgOperand(0), Builder2);\n";
-
-    os << "          auto rule = [&](Value *op) {\n";
-    os << "            return Builder2.CreateFDiv(op, onePx2);\n";
-    os << "          };\n";
-
-    os << "          Value *dif0 = applyChainRule(call.getType(), Builder2, rule, op);\n";
-    os << "          return;\n";
-    */
-
-  #if 0
-    os << "        Value *dif = nullptr;\n";
-    bool seen = false;
-    for (auto argOpEn : llvm::enumerate(*argOps)) {
-      size_t argIdx = argOpEn.index();
-      os << "        ";
-      if (seen) os << "} else ";
-      seen = true;
-      os << "if (!dif && !gutils->isConstantValue(orig->getArgOperand(" << argIdx << "))) {\n";
-      DagInit *resultTree = cast<DagInit>(argOpEn.value());
-      if (hasDiffeRet(resultTree))
-        os << "          dif = diffe(orig, Builder2);\n";
-    }
-    if (seen) os << "        }\n";
-
-    for (auto argOpEn : llvm::enumerate(*argOps)) {
-      size_t argIdx = argOpEn.index();
-      os << "        if (!gutils->isConstantValue(orig->getArgOperand(" << argIdx << "))) {\n";
-      DagInit *resultTree = cast<DagInit>(argOpEn.value());
-      os << "          addToDiffe(orig->getArgOperand(" << argIdx << "), ";
-      handle(os, pattern, resultTree, "Builder2", nameToOrdinal, /*lookup*/true);
-      os << ");\n";
-      os << "        }\n";
-    }
-
-    os << "        auto rule = [&](";
-    
-    Value *op) {
-            return Builder2.CreateFDiv(op, onePx2);
-          };
-
-          Value *dif0 = applyChainRule(call.getType(), Builder2, rule, op);
-          setDiffe(orig, dif0, Builder2);
-  #endif
 
     os << "        break;\n";
     os << "      }\n";
@@ -322,10 +373,24 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
 
     for (auto argOpEn : llvm::enumerate(*argOps)) {
       size_t argIdx = argOpEn.index();
-      os << "        if (!gutils->isConstantValue(orig->getArgOperand(" << argIdx << "))) {\n";
       DagInit *resultTree = cast<DagInit>(argOpEn.value());
-      os << "          addToDiffe(orig->getArgOperand(" << argIdx << "), ";
-      handle(os, pattern, resultTree, "Builder2", nameToOrdinal, /*lookup*/true);
+
+      os << "        if (!gutils->isConstantValue(orig->getArgOperand(" << argIdx << "))) {\n";
+      os << "          Value *tmp = ";
+      bool vectorValued = handle(os, pattern, resultTree, "Builder2", nameToOrdinal, /*lookup*/true);
+      os << ";\n";
+      os << "          Value *toadd = tmp;\n";
+
+      if (!vectorValued) {
+        os << "          if (gutils->getWidth() > 1) {\n";
+        os << "            toadd = UndefValue::get(gutils->getShadowType(tmp->getType()));\n";
+        os << "            for(unsigned int idx=0, W=gutils->getWidth(); idx<W; idx++) {\n";
+        os << "              toadd = Builder2.CreateInsertValue(toadd, tmp, {idx});\n";
+        os << "            }\n";
+        os << "          }\n";
+      }
+
+      os << "          addToDiffe(orig->getArgOperand(" << argIdx << "), toadd";
       os << ", Builder2, orig->getArgOperand(" << argIdx << ")->getType());\n";
       os << "        }\n";
     }

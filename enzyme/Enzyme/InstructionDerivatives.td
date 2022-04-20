@@ -20,8 +20,21 @@ def FNeg : Inst<"FNeg">;
 
 def DifR : Inst<"DifR">;
 
-class CallOp<string mnemonic> {
-  string name = mnemonic;
+
+def SameFunc {
+}
+
+class Attribute<string name_> {
+  string name = name_;
+}
+
+def ReadNone : Attribute<"ReadNone">;
+def ReadOnly : Attribute<"ReadOnly">;
+def NoUnwind : Attribute<"NoUnwind">;
+
+class Call<dag mnemonic, list<Attribute> _fnattrs=[]> {
+  dag func = mnemonic;
+  list<Attribute> fnattrs = _fnattrs;
 }
 
 def Op {
@@ -44,11 +57,22 @@ def : CallPattern<(Op $x),
                   ["atan", "atanf", "atanl", "__fd_atan_1"],
                   [(FDiv (DiffeRet<"">), (FAdd (ConstantFP<"1.0"> $x), (FMul $x, $x)))]
                   >;
-
 def : CallPattern<(Op $y, $x),
                   ["atan2"],
                   [
                   (FDiv (FMul (DiffeRet<"">), $x), (FAdd (FMul $x, $x), (FMul $y, $y))),
-                  (FDiv (FNeg (FMul (DiffeRet<"">), $y)), (FAdd (FMul $x, $x), (FMul $y, $y))),
+                  (FNeg (FDiv (FMul (DiffeRet<"">), $y), (FAdd (FMul $x, $x), (FMul $y, $y)))),
+                  ]
+                  >;
+def : CallPattern<(Op $x),
+                  ["cbrt"],
+                  [(FDiv (FMul (DiffeRet<"">), (Call<(SameFunc), [ReadNone,NoUnwind]> $x) ), (FMul (ConstantFP<"3.0"> $x), $x))]
+                  >;
+
+def : CallPattern<(Op $x, $y),
+                  ["hypot", "hypotf", "hypotl"],
+                  [
+                    (FDiv (FMul (DiffeRet<"">), $x), (Call<(SameFunc), [ReadNone,NoUnwind]> $x, $y)),
+                    (FDiv (FMul (DiffeRet<"">), $y), (Call<(SameFunc), [ReadNone,NoUnwind]> $x, $y))
                   ]
                   >;
