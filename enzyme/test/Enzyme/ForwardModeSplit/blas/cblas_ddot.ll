@@ -46,7 +46,7 @@ entry:
 ; CHECK: define internal double @[[active]](i32 %len, double* noalias %m, double* %"m'", i32 %incm, double* noalias %n, double* %"n'", i32 %incn, i8* %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to { double*, double* }*
-; CHECK-NEXT:   %1 = load { double*, double* }, { double*, double* }* %0, align 8, !enzyme_mustcache !0
+; CHECK-NEXT:   %1 = load { double*, double* }, { double*, double* }* %0
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
 ; CHECK-NEXT:   %2 = extractvalue { double*, double* } %1, 0
 ; CHECK-NEXT:   %3 = extractvalue { double*, double* } %1, 1
@@ -63,7 +63,7 @@ entry:
 ; CHECK: define internal double @[[inactiveFirst]](i32 %len, double* noalias %m, i32 %incm, double* noalias %n, double* %"n'", i32 %incn, i8* %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to double**
-; CHECK-NEXT:   %1 = load double*, double** %0, align 8, !enzyme_mustcache !0
+; CHECK-NEXT:   %1 = load double*, double** %0
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
 ; CHECK-NEXT:   %2 = call fast double @cblas_ddot(i32 %len, double* nocapture readonly %1, i32 1, double* nocapture readonly %"n'", i32 %incn)
 ; CHECK-NEXT:   %3 = bitcast double* %1 to i8*
@@ -74,7 +74,7 @@ entry:
 ; CHECK: define internal double @[[inactiveSecond]](i32 %len, double* noalias %m, double* %"m'", i32 %incm, double* noalias %n, i32 %incn, i8* %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to double**
-; CHECK-NEXT:   %1 = load double*, double** %0, align 8, !enzyme_mustcache !0
+; CHECK-NEXT:   %1 = load double*, double** %0
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
 ; CHECK-NEXT:   %2 = call fast double @cblas_ddot(i32 %len, double* nocapture readonly %1, i32 1, double* nocapture readonly %"m'", i32 %incm)
 ; CHECK-NEXT:   %3 = bitcast double* %1 to i8*

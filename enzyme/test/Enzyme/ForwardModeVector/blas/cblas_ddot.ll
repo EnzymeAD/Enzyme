@@ -33,15 +33,15 @@ entry:
 
 ; CHECK: define [2 x double] @active
 ; CHECK-NEXT: entry
-; CHECK: call fast [2 x double] @[[active:.+]](
+; CHECK: call {{(fast )?}}[2 x double] @[[active:.+]](
 
 ; CHECK: define [2 x double] @inactiveFirst
 ; CHECK-NEXT: entry
-; CHECK: call fast [2 x double] @[[inactiveFirst:.+]](
+; CHECK: call {{(fast )?}}[2 x double] @[[inactiveFirst:.+]](
 
 ; CHECK: define [2 x double] @inactiveSecond
 ; CHECK-NEXT: entry
-; CHECK: call fast [2 x double] @[[inactiveSecond:.+]](
+; CHECK: call {{(fast )?}}[2 x double] @[[inactiveSecond:.+]](
 
 ; CHECK: define internal [2 x double] @[[active]](i32 %len, double* noalias %m, [2 x double*] %"m'", i32 %incm, double* noalias %n, [2 x double*] %"n'", i32 %incn)
 ; CHECK-NEXT: entry:
