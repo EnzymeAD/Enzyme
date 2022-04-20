@@ -219,7 +219,7 @@ bool handle(raw_ostream &os, Record *pattern, Init * resultTree, std::string bui
     }
 
     if (opName == "Call" || Def->isSubClassOf("Call")) {
-      os << " CallInst *cubcall = cast<CallInst>(" << builder << ".CreateCall(FT, callval, {";
+      os << " CallInst *cubcall = cast<CallInst>(" << builder << ".CreateCall(FT, callval, ArrayRef<Value*>({";
     } else {
       os << "   res = " << builder << ".Create" << opName << "(";
     }
@@ -227,7 +227,7 @@ bool handle(raw_ostream &os, Record *pattern, Init * resultTree, std::string bui
       if (i > 0) os << ", ";
       os << "args[" << i << "]";
     }
-    if (opName == "Call" || Def->isSubClassOf("Call")) os << "}";
+    if (opName == "Call" || Def->isSubClassOf("Call")) os << "})";
     os << ")";
     if (opName == "Call" || Def->isSubClassOf("Call")) os << ")";
     os << ";\n";
@@ -245,7 +245,7 @@ bool handle(raw_ostream &os, Record *pattern, Init * resultTree, std::string bui
       os << " for(unsigned int idx=0, W=gutils->getWidth(); idx<W; idx++) {\n";
 
       if (opName == "Call" || Def->isSubClassOf("Call")) {
-        os << " CallInst *V = cast<CallInst>(" << builder << ".CreateCall(FT, callval, {";
+        os << " CallInst *V = cast<CallInst>(" << builder << ".CreateCall(FT, callval, ArrayRef<Value*>({";
       } else {
         os << "   Value *V = " << builder << ".Create" << opName << "(";
       }
@@ -256,7 +256,7 @@ bool handle(raw_ostream &os, Record *pattern, Init * resultTree, std::string bui
         else
           os << "args[" << i << "]";
       }
-      if (opName == "Call" || Def->isSubClassOf("Call")) os << "}";
+      if (opName == "Call" || Def->isSubClassOf("Call")) os << "})";
       os << ")";
       if (opName == "Call" || Def->isSubClassOf("Call")) {
         os << ")";
