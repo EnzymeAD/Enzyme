@@ -5222,8 +5222,10 @@ public:
         Argument *yincarg = in_arg;
 
         bool xcache = !gutils->isConstantValue(call.getArgOperand(3)) &&
+                      Mode != DerivativeMode::ForwardMode &&
                       uncacheable_args.find(xfuncarg)->second;
         bool ycache = !gutils->isConstantValue(call.getArgOperand(1)) &&
+                      Mode != DerivativeMode::ForwardMode &&
                       uncacheable_args.find(yfuncarg)->second;
 
         bool countcache = false;
