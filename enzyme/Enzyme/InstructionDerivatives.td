@@ -20,8 +20,14 @@ def FNeg : Inst<"FNeg">;
 
 def DifR : Inst<"DifR">;
 
-
+// Same function as the one being called
 def SameFunc {
+}
+
+// Same types / attributes / callingconv as original
+// Different name, however
+class SameTypesFunc<string name_> {
+  string name = name_;
 }
 
 class Attribute<string name_> {
@@ -76,3 +82,7 @@ def : CallPattern<(Op $x, $y),
                     (FDiv (FMul (DiffeRet<"">), $y), (Call<(SameFunc), [ReadNone,NoUnwind]> $x, $y))
                   ]
                   >;
+
+def : CallPattern<(Op $x),
+                  ["tanh"],
+                  [(FDiv (DiffeRet<"">), (FMul(Call<(SameTypesFunc<"cosh">), [ReadNone,NoUnwind]> $x):$c, $c))]>;

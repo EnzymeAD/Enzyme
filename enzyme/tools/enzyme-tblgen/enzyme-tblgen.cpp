@@ -58,6 +58,18 @@ void getFunction(raw_ostream &os, std::string callval, std::string FT, std::stri
       os << "  auto " << cconv << " = orig->getCallingConv();\n";
       return;
     }
+    if (opName == "SameTypesFunc" || Def->isSubClassOf("SameTypesFunc")) {
+      os << "  auto " << FT << " = orig->getFunctionType();\n";
+      os << "  auto " << callval << " = gutils->oldFunc->getParent()->getOrInsertFunction(";
+      os << Def->getValueInit("name")->getAsString();
+      os << ", " << FT << ", called->getAttributes())\n";
+      os << "#if LLVM_VERSION_MAJOR >= 11\n";
+      os << "  .getCallee()\n";
+      os << "#endif\n";
+      os << ";\n";
+      os << "  auto " << cconv << " = orig->getCallingConv();\n";
+      return;
+    }
   }
   assert(0 && "Unhandled function");
 
@@ -144,7 +156,6 @@ bool handle(raw_ostream &os, Record *pattern, Init * resultTree, std::string bui
                           Twine("unknown named operand in shadow") + resultTree->getAsString());
       os << ")";
       if (lookup) os << ", " << builder << ")";
-
       return true;
     }
 
@@ -155,27 +166,46 @@ bool handle(raw_ostream &os, Record *pattern, Init * resultTree, std::string bui
     bool anyVector = false;
 
     size_t idx = 0;
+    StringMap<std::string> oldMaps;
     for (auto zp : llvm::zip(resultRoot->getArgs(), resultRoot->getArgNames())) {
       os << " args[" << idx << "] = ";
       idx++;
-      if (std::get<1>(zp)) {
+      llvm::errs() << " zp: " <<*std::get<0>(zp) << " rs: " << std::get<1>(zp) << "\n";
+      if (isa<UnsetInit>(std::get<0>(zp)) && std::get<1>(zp)) {
         auto name = std::get<1>(zp)->getAsUnquotedString();
         auto ord = nameToOrdinal.find(name);
         if (ord == nameToOrdinal.end())
           PrintFatalError(pattern->getLoc(),
                           Twine("unknown named operand '") + name + "'" + resultTree->getAsString());
-        if (lookup) os << "lookup(";
-        os << "gutils->getNewFromOriginal(";
+        if (!StringRef(ord->getValue()).startswith("__tmp_")) {
+          if (lookup) os << "lookup(";
+          os << "gutils->getNewFromOriginal(";
+        }
         os << ord->getValue();
-        os << ")";
-        if (lookup) os << ", " << builder << ")";
+        if (!StringRef(ord->getValue()).startswith("__tmp_")) {
+          os << ")";
+          if (lookup) os << ", " << builder << ")";
+        }
         os << " ;\n";
         vectorValued.push_back(false);
         continue;
       }
       vectorValued.push_back(handle(os, pattern, std::get<0>(zp), builder, nameToOrdinal, lookup));
-      anyVector |= vectorValued.back();
       os << " ;\n";
+      if (std::get<1>(zp)) {
+        auto name = std::get<1>(zp)->getAsUnquotedString();
+        oldMaps.try_emplace(name, nameToOrdinal[name]);
+        nameToOrdinal[name] = "__tmp_" + name;
+        os << " Value* __tmp_" << name << " = args[" << (idx-1) << "];\n";
+      }
+
+      anyVector |= vectorValued.back();
+    }
+    for (auto & pair : oldMaps) {
+      if (pair.second.size())
+        nameToOrdinal[pair.getKey()] = pair.second;
+      else
+        nameToOrdinal.erase(pair.getKey());
     }
 
     if (opName == "Call" || Def->isSubClassOf("Call")) {
@@ -366,8 +396,10 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
       seen = true;
       os << "if (!dif && !gutils->isConstantValue(orig->getArgOperand(" << argIdx << "))) {\n";
       DagInit *resultTree = cast<DagInit>(argOpEn.value());
-      if (hasDiffeRet(resultTree))
+      if (hasDiffeRet(resultTree)) {
         os << "          dif = diffe(orig, Builder2);\n";
+        os << "          setDiffe(orig, Constant::getNullValue(gutils->getShadowType(orig->getType())), Builder2);\n";
+      }
     }
     if (seen) os << "        }\n";
 
