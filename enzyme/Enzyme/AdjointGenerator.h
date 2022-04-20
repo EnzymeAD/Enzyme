@@ -5538,7 +5538,6 @@ public:
           }
         }
 
-        // Forward Mode not handled yet
         if (Mode == DerivativeMode::ForwardMode ||
             Mode == DerivativeMode::ForwardModeSplit) {
 
