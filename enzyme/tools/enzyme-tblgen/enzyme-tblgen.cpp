@@ -113,29 +113,6 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
                         Twine("unknown named operand in constantfp") +
                             resultTree->getAsString());
       os << "->getType(), \"" << value->getValue() << "\")";
-
-      /*
-
-    os << " ({ Type* T = ";
-      if (resultRoot->getArgName(0)) {
-        auto name = resultRoot->getArgName(0)->getAsUnquotedString();
-        auto ord = nameToOrdinal.find(name);
-        if (ord == nameToOrdinal.end())
-          PrintFatalError(pattern->getLoc(),
-                          Twine("unknown named operand '") + name + "'" +
-    resultTree->getAsString()); os << ord->getValue(); } else
-        PrintFatalError(pattern->getLoc(),
-                        Twine("unknown named operand in constantfp") +
-    resultTree->getAsString()); os << "->getType();\n"; os << " Type* ET =
-    T;\n"; os << " if (gutils->getWidth() > 1) ET =
-    cast<ArrayType>(T)->getElementType();\n";
-
-      os << "Constant *res = ConstantFP::get(ET, \"" << value->getValue() <<
-    "\");\n"; os << "if (gutils->getWidth() > 1) {\n"; os << "
-    SmallVector<Constant*, 2> vals(gutils->getWidth(), res);\n"; os << "  res =
-    ConstantArray::get(cast<ArrayType>(T), vals);\n"; os << "}\n"; os << "res;
-    })";
-      */
       return false;
     } else if (opName == "Shadow" || Def->isSubClassOf("Shadow")) {
       if (resultRoot->getNumArgs() != 1)
