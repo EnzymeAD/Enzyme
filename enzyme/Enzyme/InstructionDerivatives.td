@@ -56,13 +56,11 @@ class DiffeRet<string val> {
 class Shadow<string val> {
 }
 
-// Define rewrite pattern.
-// def : CallPattern<(Op $y, $x), ["atan", "atanf", "atanl", "__fd_atan_1"], [(FMul (FAdd $y, $x), (DiffeRet<"">), (Shadow<""> $y) ), (FDiv $y, (ConstantFP<"1.0"> $y))]>;
-
 def : CallPattern<(Op $x),
                   ["atan", "atanf", "atanl", "__fd_atan_1"],
                   [(FDiv (DiffeRet<"">), (FAdd (ConstantFP<"1.0"> $x), (FMul $x, $x)))]
                   >;
+
 def : CallPattern<(Op $y, $x),
                   ["atan2"],
                   [
@@ -86,3 +84,21 @@ def : CallPattern<(Op $x, $y),
 def : CallPattern<(Op $x),
                   ["tanh"],
                   [(FDiv (DiffeRet<"">), (FMul(Call<(SameTypesFunc<"cosh">), [ReadNone,NoUnwind]> $x):$c, $c))]>;
+
+def : CallPattern<(Op $x),
+                  ["tanhf"],
+                  [(FDiv (DiffeRet<"">), (FMul(Call<(SameTypesFunc<"coshf">), [ReadNone,NoUnwind]> $x):$c, $c))]>;
+
+def : CallPattern<(Op $x),
+                  ["cosh"],
+                  [(FMul (DiffeRet<"">), (Call<(SameTypesFunc<"sinh">), [ReadNone,NoUnwind]> $x))]>;
+def : CallPattern<(Op $x),
+                  ["coshf"],
+                  [(FMul (DiffeRet<"">), (Call<(SameTypesFunc<"sinhf">), [ReadNone,NoUnwind]> $x))]>;
+
+def : CallPattern<(Op $x),
+                  ["sinh"],
+                  [(FMul (DiffeRet<"">), (Call<(SameTypesFunc<"cosh">), [ReadNone,NoUnwind]> $x))]>;
+def : CallPattern<(Op $x),
+                  ["sinhf"],
+                  [(FMul (DiffeRet<"">), (Call<(SameTypesFunc<"coshf">), [ReadNone,NoUnwind]> $x))]>;
