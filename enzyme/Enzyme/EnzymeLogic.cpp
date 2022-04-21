@@ -1640,7 +1640,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     const std::vector<DIFFE_TYPE> &constant_args, TypeAnalysis &TA,
     bool returnUsed, bool shadowReturnUsed, const FnTypeInfo &oldTypeInfo_,
     const std::map<Argument *, bool> _uncacheable_args, bool forceAnonymousTape,
-    bool AtomicAdd, bool omp) {
+    unsigned width, bool AtomicAdd, bool omp) {
   if (returnUsed)
     assert(!todiff->getReturnType()->isEmptyTy() &&
            !todiff->getReturnType()->isVoidTy());
@@ -1656,7 +1656,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                       std::map<Argument *, bool>(_uncacheable_args.begin(),
                                                  _uncacheable_args.end()),
                       returnUsed, shadowReturnUsed, oldTypeInfo,
-                      forceAnonymousTape, AtomicAdd, omp);
+                      forceAnonymousTape, AtomicAdd, omp, width);
   auto found = AugmentedCachedFunctions.find(tup);
   if (found != AugmentedCachedFunctions.end()) {
     return found->second;
@@ -1745,7 +1745,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       }
       auto &aug = CreateAugmentedPrimal(
           todiff, retType, next_constant_args, TA, returnUsed, shadowReturnUsed,
-          oldTypeInfo_, _uncacheable_args, forceAnonymousTape, AtomicAdd, omp);
+          oldTypeInfo_, _uncacheable_args, forceAnonymousTape, width, AtomicAdd,
+          omp);
       auto cal = bb.CreateCall(aug.fn, fwdargs);
       cal->setCallingConv(aug.fn->getCallingConv());
 
@@ -1835,7 +1836,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   std::map<AugmentedStruct, int> returnMapping;
 
   GradientUtils *gutils = GradientUtils::CreateFromClone(
-      *this, todiff, TLI, TA, retType, constant_args,
+      *this, width, todiff, TLI, TA, retType, constant_args,
       /*returnUsed*/ returnUsed, /*shadowReturnUsed*/ shadowReturnUsed,
       returnMapping, omp);
   gutils->AtomicAdd = AtomicAdd;
@@ -2848,7 +2849,9 @@ void createInvertedTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
     }
 
     if (!handled) {
-      gutils->setDiffe(orig, Constant::getNullValue(orig->getType()), Builder);
+      gutils->setDiffe(
+          orig, Constant::getNullValue(gutils->getShadowType(orig->getType())),
+          Builder);
 
       for (BasicBlock *opred : predecessors(oBB)) {
         auto oval = orig->getIncomingValueForBlock(opred);
@@ -3050,7 +3053,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       auto &aug = CreateAugmentedPrimal(
           key.todiff, key.retType, key.constant_args, TA, key.returnUsed,
           key.shadowReturnUsed, key.typeInfo, key.uncacheable_args,
-          /*forceAnonymousTape*/ false, key.AtomicAdd, omp);
+          /*forceAnonymousTape*/ false, key.width, key.AtomicAdd, omp);
 
       SmallVector<Value *, 4> fwdargs;
       for (auto &a : NewF->args())
@@ -3084,9 +3087,13 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                               MDNode::get(truetape->getContext(), {}));
 
         if (key.freeMemory) {
-          CallInst *ci = cast<CallInst>(CallInst::CreateFree(tape, BB));
-          bb.Insert(ci);
-          ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+          auto size = NewF->getParent()->getDataLayout().getTypeAllocSizeInBits(
+              aug.tapeType);
+          if (size != 0) {
+            CallInst *ci = cast<CallInst>(CallInst::CreateFree(tape, BB));
+            bb.Insert(ci);
+            ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+          }
         }
         tape = truetape;
       }
@@ -3511,11 +3518,16 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     if (key.additionalType)
       endarg--;
     differetval = endarg;
-    if (differetval->getType() != key.todiff->getReturnType()) {
-      llvm::errs() << *gutils->oldFunc << "\n";
-      llvm::errs() << *gutils->newFunc << "\n";
+
+    if (!key.todiff->getReturnType()->isVoidTy()) {
+      if (!(differetval->getType() ==
+            gutils->getShadowType(key.todiff->getReturnType()))) {
+        llvm::errs() << *gutils->oldFunc << "\n";
+        llvm::errs() << *gutils->newFunc << "\n";
+      }
+      assert(differetval->getType() ==
+             gutils->getShadowType(key.todiff->getReturnType()));
     }
-    assert(differetval->getType() == key.todiff->getReturnType());
   }
 
   // Explicitly handle all returns first to ensure that return instructions know
@@ -3598,7 +3610,19 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       }
 
       for (auto sucBB : toRemove) {
-        sucBB->removePredecessor(newBB);
+        if (sucBB->empty() || !isa<PHINode>(sucBB->begin()))
+          continue;
+
+        SmallVector<PHINode *, 2> phis;
+        for (PHINode &Phi : sucBB->phis()) {
+          phis.push_back(&Phi);
+        }
+        for (PHINode *Phi : phis) {
+          unsigned NumPreds = Phi->getNumIncomingValues();
+          if (NumPreds == 0)
+            continue;
+          Phi->removeIncomingValue(newBB);
+        }
       }
 
       SmallVector<Instruction *, 2> toerase;
@@ -4135,10 +4159,16 @@ Function *EnzymeLogic::CreateForwardDiff(
           additionalValue = truetape;
         } else {
           if (gutils->FreeMemory) {
-            CallInst *ci = cast<CallInst>(
-                CallInst::CreateFree(additionalValue, gutils->inversionAllocs));
-            ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
-            BuilderZ.Insert(ci);
+            auto size = gutils->newFunc->getParent()
+                            ->getDataLayout()
+                            .getTypeAllocSizeInBits(augmenteddata->tapeType);
+            if (size != 0) {
+              CallInst *ci = cast<CallInst>(CallInst::CreateFree(
+                  additionalValue, gutils->inversionAllocs));
+              ci->addAttribute(AttributeList::FirstArgIndex,
+                               Attribute::NonNull);
+              BuilderZ.Insert(ci);
+            }
           }
           additionalValue = UndefValue::get(augmenteddata->tapeType);
         }

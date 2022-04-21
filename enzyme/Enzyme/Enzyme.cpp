@@ -458,6 +458,7 @@ public:
     IRBuilder<> Builder(CI);
     unsigned truei = 0;
     unsigned width = 1;
+    std::map<unsigned, Value *> batchOffset;
     bool returnUsed = !cast<Function>(fn)->getReturnType()->isVoidTy() &&
                       !cast<Function>(fn)->getReturnType()->isEmptyTy();
 
@@ -656,6 +657,20 @@ public:
       if (metaString && metaString.getValue().startswith("enzyme_")) {
         if (*metaString == "enzyme_dup") {
           ty = DIFFE_TYPE::DUP_ARG;
+        } else if (*metaString == "enzyme_dupv") {
+          ty = DIFFE_TYPE::DUP_ARG;
+          ++i;
+          Value *offset_arg = CI->getArgOperand(i);
+          if (offset_arg->getType()->isIntegerTy()) {
+            batchOffset[i + 1] = offset_arg;
+          } else {
+            EmitFailure("IllegalVectorOffset", CI->getDebugLoc(), CI,
+                        "enzyme_batch must be followd by an integer "
+                        "offset.",
+                        *CI->getArgOperand(i), " in", *CI);
+            return false;
+          }
+          continue;
         } else if (*metaString == "enzyme_dupnoneed") {
           ty = DIFFE_TYPE::DUP_NONEED;
         } else if (*metaString == "enzyme_out") {
@@ -753,6 +768,7 @@ public:
         ++i;
 
         Value *res = nullptr;
+        bool batch = batchOffset.count(i - 1) != 0;
 
         for (unsigned v = 0; v < width; ++v) {
 #if LLVM_VERSION_MAJOR >= 14
@@ -771,6 +787,21 @@ public:
 
           // cast diffe
           Value *element = CI->getArgOperand(i);
+          if (batch) {
+            if (auto elementPtrTy = dyn_cast<PointerType>(element->getType())) {
+              element = Builder.CreateBitCast(
+                  element, PointerType::get(Type::getInt8Ty(CI->getContext()),
+                                            elementPtrTy->getAddressSpace()));
+              element = Builder.CreateGEP(
+                  element,
+                  Builder.CreateMul(
+                      batchOffset[i - 1],
+                      ConstantInt::get(batchOffset[i - 1]->getType(), v)));
+              element = Builder.CreateBitCast(element, elementPtrTy);
+            } else {
+              return false;
+            }
+          }
           if (PTy != element->getType()) {
             element = castToDiffeFunctionArgType(Builder, CI, FT, PTy, i, mode,
                                                  element, truei);
@@ -786,7 +817,7 @@ public:
                                                     element->getType(), width)),
                                                 element, {v});
 
-            if (v < width - 1) {
+            if (v < width - 1 && !batch) {
               ++i;
             }
 
@@ -847,7 +878,7 @@ public:
       aug = &Logic.CreateAugmentedPrimal(
           cast<Function>(fn), retType, constants, TA,
           /*returnUsed*/ false, /*shadowReturnUsed*/ false, type_args,
-          volatile_args, forceAnonymousTape, /*atomicAdd*/ AtomicAdd);
+          volatile_args, forceAnonymousTape, width, /*atomicAdd*/ AtomicAdd);
       auto &DL = cast<Function>(fn)->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
         assert(!aug->tapeType);
@@ -910,7 +941,7 @@ public:
                                              retType == DIFFE_TYPE::DUP_NONEED);
       aug = &Logic.CreateAugmentedPrimal(
           cast<Function>(fn), retType, constants, TA, returnUsed,
-          shadowReturnUsed, type_args, volatile_args, forceAnonymousTape,
+          shadowReturnUsed, type_args, volatile_args, forceAnonymousTape, width,
           /*atomicAdd*/ AtomicAdd);
       auto &DL = cast<Function>(fn)->getParent()->getDataLayout();
       if (!forceAnonymousTape) {
@@ -970,11 +1001,19 @@ public:
     if (differentialReturn) {
       if (differet)
         args.push_back(differet);
-      else if (cast<Function>(fn)->getReturnType()->isFPOrFPVectorTy())
-        args.push_back(
-            ConstantFP::get(cast<Function>(fn)->getReturnType(), 1.0));
-      else if (auto ST =
-                   dyn_cast<StructType>(cast<Function>(fn)->getReturnType())) {
+      else if (cast<Function>(fn)->getReturnType()->isFPOrFPVectorTy()) {
+        Constant *seed =
+            ConstantFP::get(cast<Function>(fn)->getReturnType(), 1.0);
+        if (width == 1) {
+          args.push_back(seed);
+        } else {
+          ArrayType *arrayType =
+              ArrayType::get(cast<Function>(fn)->getReturnType(), width);
+          args.push_back(ConstantArray::get(
+              arrayType, SmallVector<Constant *, 3>(width, seed)));
+        }
+      } else if (auto ST = dyn_cast<StructType>(
+                     cast<Function>(fn)->getReturnType())) {
         SmallVector<Constant *, 2> csts;
         for (auto e : ST->elements()) {
           csts.push_back(ConstantFP::get(e, 1.0));
@@ -1090,7 +1129,9 @@ public:
     // Adapt the returned vector type to the struct type expected by our calling
     // convention.
     if (width > 1 && !diffret->getType()->isEmptyTy() &&
-        !diffret->getType()->isVoidTy()) {
+        !diffret->getType()->isVoidTy() &&
+        (mode == DerivativeMode::ForwardMode ||
+         mode == DerivativeMode::ForwardModeSplit)) {
 
       /// Actual return type (including struct return)
       Type *returnType =

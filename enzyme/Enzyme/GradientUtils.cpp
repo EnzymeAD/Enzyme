@@ -82,6 +82,11 @@ llvm::cl::opt<bool> EnzymeInactiveDynamic(
     cl::desc("Force wholy inactive dynamic loops to have 0 iter reverse pass"));
 
 llvm::cl::opt<bool>
+    EnzymeRuntimeActivityCheck("enzyme-runtime-activity", cl::init(false),
+                               cl::Hidden,
+                               cl::desc("Perform runtime activity checks"));
+
+llvm::cl::opt<bool>
     EnzymeSharedForward("enzyme-shared-forward", cl::init(false), cl::Hidden,
                         cl::desc("Forward Shared Memory from definitions"));
 
@@ -1361,10 +1366,12 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           }
           IRBuilder<> B(blocks[i]);
 
-          for (auto pair : unwrap_cache[oldB])
-            unwrap_cache[blocks[i]].insert(pair);
-          for (auto pair : lookup_cache[oldB])
-            lookup_cache[blocks[i]].insert(pair);
+          if (!prevIteration.count(PB)) {
+            for (auto pair : unwrap_cache[oldB])
+              unwrap_cache[blocks[i]].insert(pair);
+            for (auto pair : lookup_cache[oldB])
+              lookup_cache[blocks[i]].insert(pair);
+          }
 
           if (auto inst =
                   dyn_cast<Instruction>(phi->getIncomingValueForBlock(PB))) {
@@ -2779,8 +2786,11 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
             // the phi unwrapping
             if (!notForAnalysis.count(B) &&
                 NB.GetInsertBlock() != origToNewForward[B]) {
-              for (auto S : successors(B)) {
-                S = origToNewForward[S];
+              for (auto S0 : successors(B)) {
+                if (!origToNewForward.count(S0))
+                  continue;
+                auto S = origToNewForward[S0];
+                assert(S);
                 for (auto I = S->begin(), E = S->end(); I != E; ++I) {
                   PHINode *orig = dyn_cast<PHINode>(&*I);
                   if (orig == nullptr)
@@ -3284,8 +3294,8 @@ bool GradientUtils::shouldRecompute(const Value *val,
 }
 
 GradientUtils *GradientUtils::CreateFromClone(
-    EnzymeLogic &Logic, Function *todiff, TargetLibraryInfo &TLI,
-    TypeAnalysis &TA, DIFFE_TYPE retType,
+    EnzymeLogic &Logic, unsigned width, Function *todiff,
+    TargetLibraryInfo &TLI, TypeAnalysis &TA, DIFFE_TYPE retType,
     const std::vector<DIFFE_TYPE> &constant_args, bool returnUsed,
     bool shadowReturnUsed, std::map<AugmentedStruct, int> &returnMapping,
     bool omp) {
@@ -3332,18 +3342,22 @@ GradientUtils *GradientUtils::CreateFromClone(
   SmallPtrSet<Value *, 4> constant_values;
   SmallPtrSet<Value *, 4> nonconstant_values;
 
+  std::string prefix = "fakeaugmented";
+  if (width > 1)
+    prefix += std::to_string(width);
+  prefix += "_";
+  prefix += todiff->getName().str();
   auto newFunc = Logic.PPC.CloneFunctionWithReturns(
-      DerivativeMode::ReverseModePrimal, /* width */ 1, todiff,
+      DerivativeMode::ReverseModePrimal, /* width */ width, todiff,
       invertedPointers, constant_args, constant_values, nonconstant_values,
       returnvals,
-      /*returnValue*/ returnValue, retType,
-      "fakeaugmented_" + todiff->getName(), &originalToNew,
+      /*returnValue*/ returnValue, retType, prefix, &originalToNew,
       /*diffeReturnArg*/ false, /*additionalArg*/ nullptr);
 
   auto res = new GradientUtils(
       Logic, newFunc, todiff, TLI, TA, invertedPointers, constant_values,
       nonconstant_values, retType, originalToNew,
-      DerivativeMode::ReverseModePrimal, /* width */ 1, omp);
+      DerivativeMode::ReverseModePrimal, /* width */ width, omp);
   return res;
 }
 
@@ -3372,8 +3386,6 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
   case DerivativeMode::ForwardMode:
   case DerivativeMode::ForwardModeSplit:
     prefix = "fwddiffe";
-    if (width > 1)
-      prefix += std::to_string(width);
     break;
   case DerivativeMode::ReverseModeCombined:
   case DerivativeMode::ReverseModeGradient:
@@ -3382,6 +3394,9 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
   case DerivativeMode::ReverseModePrimal:
     llvm_unreachable("invalid DerivativeMode: ReverseModePrimal\n");
   }
+
+  if (width > 1)
+    prefix += std::to_string(width);
 
   auto newFunc = Logic.PPC.CloneFunctionWithReturns(
       mode, width, todiff, invertedPointers, constant_args, constant_values,
@@ -3621,7 +3636,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
         /*returnUsed*/ !fn->getReturnType()->isEmptyTy() &&
             !fn->getReturnType()->isVoidTy(),
         /*shadowReturnUsed*/ false, type_args, uncacheable_args,
-        /*forceAnonymousTape*/ true, AtomicAdd);
+        /*forceAnonymousTape*/ true, width, AtomicAdd);
     Constant *newf = Logic.CreateForwardDiff(
         fn, retType, types, TA, false, mode, /*freeMemory*/ true, width,
         nullptr, type_args, uncacheable_args, /*augmented*/ &augdata);
@@ -3661,7 +3676,8 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
                                            retType == DIFFE_TYPE::DUP_NONEED);
     auto &augdata = Logic.CreateAugmentedPrimal(
         fn, retType, /*constant_args*/ types, TA, returnUsed, shadowReturnUsed,
-        type_args, uncacheable_args, /*forceAnonymousTape*/ true, AtomicAdd);
+        type_args, uncacheable_args, /*forceAnonymousTape*/ true, width,
+        AtomicAdd);
     Constant *newf = Logic.CreatePrimalAndGradient(
         (ReverseCacheKey){.todiff = fn,
                           .retType = retType,
@@ -3741,7 +3757,6 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     auto rule = [&CD](ArrayRef<Constant *> Vals) {
       return ConstantStruct::get(CD->getType(), Vals);
     };
-
     return applyChainRule(CD->getType(), Vals, BuilderM, rule);
   } else if (auto CD = dyn_cast<ConstantVector>(oval)) {
     SmallVector<Constant *, 1> Vals;

@@ -4246,7 +4246,7 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
     }
 
     if (funcName == "__cxa_guard_acquire" || funcName == "printf" ||
-        funcName == "vprintf" || funcName == "puts") {
+        funcName == "vprintf" || funcName == "puts" || funcName == "fprintf") {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1), &call);
     }
 
@@ -4286,6 +4286,8 @@ FnTypeInfo::knownIntegralValues(llvm::Value *val, const DominatorTree &DT,
                                 std::map<Value *, std::set<int64_t>> &intseen,
                                 ScalarEvolution &SE) const {
   if (auto constant = dyn_cast<ConstantInt>(val)) {
+    // if (constant->getValue().getSignificantBits() > 64)
+    //  return {};
     return {constant->getSExtValue()};
   }
 
@@ -4347,7 +4349,13 @@ FnTypeInfo::knownIntegralValues(llvm::Value *val, const DominatorTree &DT,
   };
   if (auto II = dyn_cast<IntrinsicInst>(val)) {
     switch (II->getIntrinsicID()) {
-
+#if LLVM_VERSION_MAJOR >= 12
+    case Intrinsic::abs:
+      for (auto val :
+           knownIntegralValues(II->getArgOperand(0), DT, intseen, SE))
+        insert(abs(val));
+      break;
+#endif
     case Intrinsic::nvvm_read_ptx_sreg_tid_x:
     case Intrinsic::nvvm_read_ptx_sreg_tid_y:
     case Intrinsic::nvvm_read_ptx_sreg_tid_z:

@@ -28,9 +28,9 @@ attributes #0 = { noinline readonly }
 attributes #1 = { readonly }
 ; CHECK: double %arg: icv:1
 ; CHECK-NEXT: entry
-; CHECK-NEXT:   %i2 = call noalias nonnull double** @jl_alloc(): icv:0 ici:1
-; CHECK-NEXT:   %i4 = load double*, double** %i2, align 8: icv:0 ici:1
+; CHECK-NEXT:   %i2 = call noalias nonnull double** @jl_alloc(): icv:1 ici:1
+; CHECK-NEXT:   %i4 = load double*, double** %i2, align 8: icv:1 ici:1
 ; CHECK-NEXT:   store double %arg, double* %i4, align 8: icv:1 ici:1
-; CHECK-NEXT:   %i5 = call fastcc double @julia_func_1396(double** noalias nocapture nonnull readonly %i2) #1: icv:0 ici:0
-; CHECK-NEXT:   %c = fadd double %i5, %arg: icv:0 ici:0
+; CHECK-NEXT:   %i5 = call fastcc double @julia_func_1396(double** noalias nocapture nonnull readonly %i2) #1: icv:1 ici:1
+; CHECK-NEXT:   %c = fadd double %i5, %arg: icv:1 ici:1
 ; CHECK-NEXT:   ret double %c: icv:1 ici:1
