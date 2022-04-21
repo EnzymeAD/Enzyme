@@ -20,13 +20,13 @@ entry:
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = call { double, double } @__muldc3(double %"x.coerce0'", double %"x.coerce1'", double %x.coerce0, double %x.coerce1)
 ; CHECK-NEXT:   %1 = call { double, double } @__muldc3(double %x.coerce0, double %x.coerce1, double %"x.coerce0'", double %"x.coerce1'")
-; CHECK-NEXT:   %2 = extractvalue { double, double } %0, 0
-; CHECK-NEXT:   %3 = extractvalue { double, double } %1, 0
-; CHECK-NEXT:   %4 = fadd fast double %2, %3
-; CHECK-NEXT:   %5 = extractvalue { double, double } %0, 1
-; CHECK-NEXT:   %6 = extractvalue { double, double } %1, 1
-; CHECK-NEXT:   %7 = fadd fast double %5, %6
-; CHECK-NEXT:   %8 = insertvalue { double, double } undef, double %4, 0
-; CHECK-NEXT:   %9 = insertvalue { double, double } %8, double %7, 1
-; CHECK-NEXT:   ret { double, double } %9
+; CHECK-DAG:    %[[a2:.+]] = extractvalue { double, double } %0, 0
+; CHECK-DAG:    %[[a3:.+]] = extractvalue { double, double } %1, 0
+; CHECK-DAG:    %4 = fadd fast double %[[a2]], %[[a3]]
+; CHECK-DAG:    %[[a5:.+]] = extractvalue { double, double } %0, 1
+; CHECK-DAG:    %[[a6:.+]] = extractvalue { double, double } %1, 1
+; CHECK-DAG:    %7 = fadd fast double %[[a5]], %[[a6]]
+; CHECK-DAG:    %[[a8:.+]] = insertvalue { double, double } undef, double %4, 0
+; CHECK-DAG:    %[[a9:.+]] = insertvalue { double, double } %[[a8]], double %7, 1
+; CHECK-DAG:    ret { double, double } %[[a9]]
 ; CHECK-NEXT: }

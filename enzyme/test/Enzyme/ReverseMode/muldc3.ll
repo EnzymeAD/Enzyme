@@ -18,16 +18,16 @@ entry:
 
 ; CHECK: define internal { double, double } @diffesquare(double %x.coerce0, double %x.coerce1, { double, double } %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = extractvalue { double, double } %differeturn, 0
-; CHECK-NEXT:   %1 = extractvalue { double, double } %differeturn, 1
-; CHECK-NEXT:   %2 = call { double, double } @__muldc3(double %0, double %1, double %x.coerce0, double %x.coerce1)
-; CHECK-NEXT:   %3 = call { double, double } @__muldc3(double %x.coerce0, double %x.coerce1, double %0, double %1)
-; CHECK-NEXT:   %4 = extractvalue { double, double } %2, 0
-; CHECK-NEXT:   %5 = extractvalue { double, double } %2, 1
-; CHECK-NEXT:   %6 = extractvalue { double, double } %3, 0
-; CHECK-NEXT:   %7 = fadd fast double %4, %6
-; CHECK-NEXT:   %8 = extractvalue { double, double } %3, 1
-; CHECK-NEXT:   %9 = fadd fast double %5, %8
+; CHECK-DAG:    %[[a0:.+]] = extractvalue { double, double } %differeturn, 0
+; CHECK-DAG:    %[[a1:.+]] = extractvalue { double, double } %differeturn, 1
+; CHECK-DAG:    %2 = call { double, double } @__muldc3(double %[[a0]], double %[[a1]], double %x.coerce0, double %x.coerce1)
+; CHECK-DAG:    %3 = call { double, double } @__muldc3(double %x.coerce0, double %x.coerce1, double %[[a0]], double %[[a1]])
+; CHECK-DAG:    %[[a4:.+]] = extractvalue { double, double } %2, 0
+; CHECK-DAG:    %[[a5:.+]] = extractvalue { double, double } %2, 1
+; CHECK-DAG:    %[[a6:.+]] = extractvalue { double, double } %3, 0
+; CHECK-DAG:    %7 = fadd fast double %[[a4]], %[[a6]]
+; CHECK-DAG:    %[[a8:.+]] = extractvalue { double, double } %3, 1
+; CHECK-DAG:    %9 = fadd fast double %[[a5]], %[[a8]]
 ; CHECK-NEXT:   %10 = insertvalue { double, double } undef, double %7, 0
 ; CHECK-NEXT:   %11 = insertvalue { double, double } %10, double %9, 1
 ; CHECK-NEXT:   ret { double, double } %11
