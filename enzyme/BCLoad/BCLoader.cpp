@@ -18,14 +18,41 @@ using namespace llvm;
 
 bool provideDefinitions(Module &M) {
   std::vector<const char *> todo;
+  bool seen32 = false;
+  bool seen64 = false;
   for (auto &F : M) {
     if (!F.empty())
       continue;
-    auto found = EnzymeBlasBC.find(F.getName().str());
-    if (found != EnzymeBlasBC.end()) {
-      todo.push_back(found->second);
+    int index = 0;
+    for (auto postfix : {"", "_", "_64_"}) {
+      std::string str;
+      if (strlen(postfix) == 0)
+        str = F.getName().str();
+      else if (F.getName().endswith(postfix)) {
+        str = "cblas_" +
+              F.getName().substr(0, F.getName().size() - strlen(postfix)).str();
+      }
+
+      auto found = EnzymeBlasBC.find(str);
+      if (found != EnzymeBlasBC.end()) {
+        todo.push_back(found->second);
+        if (index == 1)
+          seen32 = true;
+        if (index == 2)
+          seen64 = true;
+        break;
+      }
+      index++;
     }
   }
+
+  // Push fortran wrapper libs before all the other blas
+  // to ensure the fortran injections have their code
+  // replaced
+  if (seen32)
+    todo.insert(todo.begin(), __data_fblas32);
+  if (seen64)
+    todo.insert(todo.begin(), __data_fblas64);
   bool changed = false;
   for (auto mod : todo) {
     SMDiagnostic Err;
