@@ -2,7 +2,6 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if (${Clang_FOUND})
-    message("starting ext project")
 include(ExternalProject)
 ExternalProject_Add(gsl
     GIT_REPOSITORY https://github.com/ampl/gsl
@@ -82,7 +81,7 @@ endif()
 endif()
 
 add_dependencies(BCPass-${LLVM_VERSION_MAJOR} blasheaders)
-target_include_directories(BCPass-${LLVM_VERSION_MAJOR} PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/gsl)
+target_include_directories(BCPass-${LLVM_VERSION_MAJOR} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gsl)
 
 if (APPLE)
 # Darwin-specific linker flags for loadable modules.
@@ -91,4 +90,21 @@ set_target_properties(BCPass-${LLVM_VERSION_MAJOR} PROPERTIES
 endif()
 
 set_target_properties(BCPass-${LLVM_VERSION_MAJOR} PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
+if (${ENZYME_EXTERNAL_SHARED_LIB})
+    add_library( EnzymeBCLoad-${LLVM_VERSION_MAJOR}
+        SHARED
+        BCLoader.cpp 
+    )
+    add_dependencies(EnzymeBCLoad-${LLVM_VERSION_MAJOR} blasheaders)
+    target_include_directories(EnzymeBCLoad-${LLVM_VERSION_MAJOR} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gsl)
+
+    target_link_libraries(EnzymeBCLoad-${LLVM_VERSION_MAJOR} LLVM)
+    install(TARGETS EnzymeBCLoad-${LLVM_VERSION_MAJOR}
+        EXPORT EnzymeTargets
+        LIBRARY DESTINATION lib COMPONENT shlib
+        PUBLIC_HEADER DESTINATION "${INSTALL_INCLUDE_DIR}/Enzyme"
+        COMPONENT dev)
+endif()
+
 endif()
