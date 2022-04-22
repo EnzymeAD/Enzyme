@@ -1954,6 +1954,9 @@ public:
       I->eraseFromParent();
       changed = true;
     }
+
+    for (auto [key, val] : Logic.PPC.cache)
+      val->eraseFromParent();
     Logic.clear();
 
     if (changed && Logic.PostOpt) {

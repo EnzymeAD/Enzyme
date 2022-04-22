@@ -2149,8 +2149,6 @@ void PreProcessCache::optimizeIntermediate(Function *F) {
 }
 
 void PreProcessCache::clear() {
-  for (auto [key, val] : cache)
-    val->eraseFromParent();
   FAM.clear();
   MAM.clear();
   cache.clear();
