@@ -26,7 +26,7 @@ cd Enzyme
 # install_license LICENSE.TXT
 CMAKE_FLAGS=()
 CMAKE_FLAGS+=(-DENZYME_EXTERNAL_SHARED_LIB=ON)
-CMAKE_FLAGS+=(-DENZYME_CLANG=OFF)
+CMAKE_FLAGS+=(-DENZYME_CLANG=ON)
 # RelWithDebInfo for decent performance, with debugability
 CMAKE_FLAGS+=(-DCMAKE_BUILD_TYPE=RelWithDebInfo)
 # Install things into $prefix
@@ -66,6 +66,7 @@ for llvm_version in llvm_versions, llvm_assertions in (false, true)
     # The products that we will ensure are always built
     products = Product[
         LibraryProduct(["libEnzyme-$(llvm_version.major)", "libEnzyme"], :libEnzyme, dont_dlopen=true),
+        LibraryProduct(["libEnzymeBCLoad-$(llvm_version.major)", "libEnzymeBCLoad"], :libEnzymeBCLoad, dont_dlopen=true),
     ]
 
     for platform in platforms
