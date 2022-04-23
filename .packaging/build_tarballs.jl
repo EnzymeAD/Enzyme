@@ -44,6 +44,7 @@ ninja -C build-native -j ${nproc} blasheaders
 # 2. Cross-compile
 CMAKE_FLAGS=()
 CMAKE_FLAGS+=(-DENZYME_EXTERNAL_SHARED_LIB=ON)
+CMAKE_FLAGS+=(-DBC_LOAD_HEADER=`pwd`/build-native/BCLoad/gsl/blas_headers.h)
 CMAKE_FLAGS+=(-DENZYME_CLANG=OFF)
 # RelWithDebInfo for decent performance, with debugability
 CMAKE_FLAGS+=(-DCMAKE_BUILD_TYPE=RelWithDebInfo)
@@ -63,8 +64,6 @@ if [[ "${target}" == x86_64-apple* ]]; then
 fi
 
 cmake -B build -S enzyme -GNinja ${CMAKE_FLAGS[@]}
-
-cp build-native/BCLoad/gsl/blas_headers.h build/BCLoad/gsl
 
 ninja -C build -j ${nproc} install
 """
