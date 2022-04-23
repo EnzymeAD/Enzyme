@@ -200,6 +200,9 @@ endif()
 export(TARGETS LLDEnzyme-${LLVM_VERSION_MAJOR}
     APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
 
+export(TARGETS EnzymeBCLoad-${LLVM_VERSION_MAJOR}
+    APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
+
 export(PACKAGE Enzyme)
 
 set(CONF_LLVM_VERSION_MAJOR ${LLVM_VERSION_MAJOR})
