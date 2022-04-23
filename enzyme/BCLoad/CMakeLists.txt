@@ -50,7 +50,7 @@ set_target_properties(fblas PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
 add_custom_target(blasheaders cp "${CMAKE_CURRENT_SOURCE_DIR}/makeblas.cmake" "${CMAKE_CURRENT_BINARY_DIR}/gsl/CMakeLists.txt" && cd "${CMAKE_CURRENT_BINARY_DIR}/gsl" && ${CMAKE_COMMAND} . DEPENDS gsl fblas ${CMAKE_CURRENT_SOURCE_DIR}/makeblas.cmake)
 else()
-add_custom_target(blasheaders SOURCES "gsl/blas_headers.h")
+add_custom_target(blasheaders SOURCES "${CMAKE_CURRENT_BINARY_DIR}/gsl/blas_headers.h")
 endif()
 set_target_properties(blasheaders PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
@@ -72,6 +72,7 @@ if ((WIN32 OR CYGWIN) AND LLVM_LINK_LLVM_DYLIB)
         intrinsics_gen
 	LINK_COMPONENTS
 	LLVM
+    BUILDTREE_ONLY
     )
 else()
     add_llvm_library( BCPass-${LLVM_VERSION_MAJOR}
@@ -81,6 +82,7 @@ else()
         intrinsics_gen
         PLUGIN_TOOL
         opt
+        BUILDTREE_ONLY
     )
 endif()
 endif()
