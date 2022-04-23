@@ -1779,7 +1779,8 @@ FunctionType *getFunctionTypeForClone(
   } else if (returnValue == ReturnType::ArgsWithTwoReturns ||
              returnValue == ReturnType::TwoReturns) {
     RetTypes.push_back(FTy->getReturnType());
-    if (returnType != DIFFE_TYPE::CONSTANT) {
+    if (returnType != DIFFE_TYPE::CONSTANT && returnType !=
+            DIFFE_TYPE::OUT_DIFF) {
       RetTypes.push_back(
           GradientUtils::getShadowType(FTy->getReturnType(), width));
     } else {
