@@ -49,6 +49,9 @@ ExternalProject_Add(fblas
 set_target_properties(fblas PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
 add_custom_target(blasheaders cp "${CMAKE_CURRENT_SOURCE_DIR}/makeblas.cmake" "${CMAKE_CURRENT_BINARY_DIR}/gsl/CMakeLists.txt" && cd "${CMAKE_CURRENT_BINARY_DIR}/gsl" && ${CMAKE_COMMAND} . DEPENDS gsl fblas ${CMAKE_CURRENT_SOURCE_DIR}/makeblas.cmake)
+else()
+add_custom_target(blasheaders SOURCES "gsl/blas_headers.h")
+endif()
 set_target_properties(blasheaders PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
 if (${LLVM_VERSION_MAJOR} LESS 8)
@@ -109,4 +112,3 @@ if (${ENZYME_EXTERNAL_SHARED_LIB})
         COMPONENT dev)
 endif()
 
-endif()
