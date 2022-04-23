@@ -1955,8 +1955,8 @@ public:
       changed = true;
     }
 
-    for (auto [key, val] : Logic.PPC.cache)
-      val->eraseFromParent();
+    for (const auto &pair : Logic.PPC.cache)
+      pair.second->eraseFromParent();
     Logic.clear();
 
     if (changed && Logic.PostOpt) {
