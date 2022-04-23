@@ -1,6 +1,8 @@
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+set(BC_LOAD_FLAGS "" CACHE STRING "")
+
 if (${Clang_FOUND})
 include(ExternalProject)
 ExternalProject_Add(gsl
@@ -9,8 +11,8 @@ ExternalProject_Add(gsl
     PREFIX gsl
     BUILD_IN_SOURCE 1
     INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/gsl/install
-    CONFIGURE_COMMAND autoreconf -i && ./configure --prefix=${CMAKE_CURRENT_BINARY_DIR}/gsl/install CC=$<TARGET_FILE:clang> 
-    BUILD_COMMAND  sh -c "make -C gsl && $<TARGET_FILE:clang> cblas/*.c -I . -S -emit-llvm -O1"
+    CONFIGURE_COMMAND autoreconf -i && ./configure --prefix=${CMAKE_CURRENT_BINARY_DIR}/gsl/install
+    BUILD_COMMAND  sh -c "make -C gsl && $<TARGET_FILE:clang> cblas/*.c ${BC_LOAD_FLAGS} -I . -S -emit-llvm -O1"
     INSTALL_COMMAND ""
     UPDATE_COMMAND ""
     TEST_COMMAND      ""
@@ -39,7 +41,7 @@ ExternalProject_Add(fblas
     BUILD_IN_SOURCE 1
     INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/openblas/install
     CONFIGURE_COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/fixwrapblas.sh
-    BUILD_COMMAND $<TARGET_FILE:clang> -S -emit-llvm -O1 BLAS/WRAP/bclib32.c BLAS/WRAP/bclib64.c -I ../../INCLUDE
+    BUILD_COMMAND sh -c "$<TARGET_FILE:clang> ${BC_LOAD_FLAGS} -S -emit-llvm -O1 BLAS/WRAP/bclib32.c BLAS/WRAP/bclib64.c -I ../../INCLUDE"
     INSTALL_COMMAND ""
     UPDATE_COMMAND ""
     TEST_COMMAND      ""
