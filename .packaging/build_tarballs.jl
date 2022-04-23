@@ -23,10 +23,28 @@ platforms = expand_cxxstring_abis(supported_platforms(; experimental=true))
 # Bash recipe for building across all platforms
 script = raw"""
 cd Enzyme
-# install_license LICENSE.TXT
+
+# 1. Build HOST
+NATIVE_CMAKE_FLAGS=()
+NATIVE_CMAKE_FLAGS+=(-DENZYME_CLANG=ON)
+NATIVE_CMAKE_FLAGS+=(-DCMAKE_BUILD_TYPE=RelWithDebInfo)
+NATIVE_CMAKE_FLAGS+=(-DCMAKE_CROSSCOMPILING:BOOL=OFF)
+# Install things into $host_prefix
+NATIVE_CMAKE_FLAGS+=(-DCMAKE_TOOLCHAIN_FILE=${CMAKE_HOST_TOOLCHAIN})
+NATIVE_CMAKE_FLAGS+=(-DCMAKE_INSTALL_PREFIX=${host_prefix})
+# Tell CMake where LLVM is
+NATIVE_CMAKE_FLAGS+=(-DLLVM_DIR="${host_prefix}/lib/cmake/llvm")
+NATIVE_CMAKE_FLAGS+=(-DBC_LOAD_FLAGS="-target ${target} --sysroot=/opt/${target}/${target}/sys-root --gcc-toolchain=/opt/${target}")
+
+cmake -B build-native -S enzyme -GNinja "${NATIVE_CMAKE_FLAGS[@]}"
+
+# Only build blasheaders (and eventually tblgen)
+ninja -C build-native -j ${nproc} blasheaders
+
+# 2. Cross-compile
 CMAKE_FLAGS=()
 CMAKE_FLAGS+=(-DENZYME_EXTERNAL_SHARED_LIB=ON)
-CMAKE_FLAGS+=(-DENZYME_CLANG=ON)
+CMAKE_FLAGS+=(-DENZYME_CLANG=OFF)
 # RelWithDebInfo for decent performance, with debugability
 CMAKE_FLAGS+=(-DCMAKE_BUILD_TYPE=RelWithDebInfo)
 # Install things into $prefix
@@ -43,7 +61,11 @@ CMAKE_FLAGS+=(-DBUILD_SHARED_LIBS=ON)
 if [[ "${target}" == x86_64-apple* ]]; then
   CMAKE_FLAGS+=(-DCMAKE_OSX_DEPLOYMENT_TARGET:STRING=10.12)
 fi
+
 cmake -B build -S enzyme -GNinja ${CMAKE_FLAGS[@]}
+
+cp build-native/BCLoad/gsl/blas_headers.h build/BCLoad/gsl
+
 ninja -C build -j ${nproc} install
 """
 
@@ -60,6 +82,7 @@ for llvm_version in llvm_versions, llvm_assertions in (false, true)
     # Dependencies that must be installed before this package can be built
     llvm_name = llvm_assertions ? "LLVM_full_assert_jll" : "LLVM_full_jll"
     dependencies = [
+        HostBuildDependency(PackageSpec(name=llvm_name, version=llvm_version)),
         BuildDependency(PackageSpec(name=llvm_name, version=llvm_version))
     ]
 
