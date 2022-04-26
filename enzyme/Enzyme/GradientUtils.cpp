@@ -4062,12 +4062,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         Constant *idxs[] = {
             ConstantInt::get(Type::getInt32Ty(cs->getContext()), 0),
             ConstantInt::get(Type::getInt32Ty(cs->getContext()), i)};
-#if LLVM_VERSION_MAJOR >= 8
         Constant *elem = ConstantExpr::getInBoundsGetElementPtr(
             cs->getType()->getPointerElementType(), cs, idxs);
-#else
-        Constant *elem = ConstantExpr::getInBoundsGetElementPtr(cs, idxs);
-#endif
         Vals.push_back(elem);
       }
 
@@ -4457,6 +4453,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     IRBuilder<> bb(getNewFromOriginal(II));
     bb.setFastMathFlags(getFast());
     switch (II->getIntrinsicID()) {
+    default: goto end;
     case Intrinsic::nvvm_ldu_global_i:
     case Intrinsic::nvvm_ldu_global_p:
     case Intrinsic::nvvm_ldu_global_f:
