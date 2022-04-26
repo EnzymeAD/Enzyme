@@ -3990,7 +3990,6 @@ public:
         if (gutils->isConstantInstruction(&I))
           return;
 
-        Type *tys[] = {orig_ops[0]->getType()};
         auto &CI = cast<CallInst>(I);
 #if LLVM_VERSION_MAJOR >= 11
         auto *PowF = CI.getCalledOperand();
@@ -4004,40 +4003,80 @@ public:
         Value *op1 = gutils->getNewFromOriginal(orig_ops[1]);
         Type *op0Ty = gutils->getShadowType(orig_ops[0]->getType());
 
-        Value *res = Constant::getNullValue(op0Ty);
+        Value *res =
+            Constant::getNullValue(gutils->getShadowType(CI.getType()));
+
+        auto &DL = gutils->newFunc->getParent()->getDataLayout();
 
         if (!gutils->isConstantValue(orig_ops[0])) {
           Value *args[2] = {
-              op0, Builder2.CreateFSub(op1, ConstantFP::get(I.getType(), 1.0))};
-          auto powcall1 = cast<CallInst>(Builder2.CreateCall(FT, PowF, args));
-          powcall1->setCallingConv(CI.getCallingConv());
-          powcall1->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
+              op0,
+              Builder2.CreateFSub(op1, ConstantFP::get(op1->getType(), 1.0))};
+          Value *powcall1 = Builder2.CreateCall(FT, PowF, args);
+          cast<CallInst>(powcall1)->setCallingConv(CI.getCallingConv());
+          cast<CallInst>(powcall1)->setDebugLoc(
+              gutils->getNewFromOriginal(I.getDebugLoc()));
+
+          if (powcall1->getType() != op1->getType()) {
+            if (DL.getTypeSizeInBits(powcall1->getType()) <
+                DL.getTypeSizeInBits(op1->getType()))
+              powcall1 = Builder2.CreateFPExt(powcall1, op1->getType());
+            else
+              powcall1 = Builder2.CreateFPTrunc(powcall1, op1->getType());
+          }
 
           Value *mul = Builder2.CreateFMul(op1, powcall1);
           Value *op = diffe(orig_ops[0], Builder2);
 
           auto rule = [&](Value *op, Value *res) {
             Value *dfdx = Builder2.CreateFMul(mul, op);
-            return Builder2.CreateFAdd(res, dfdx);
+            Value *out = Builder2.CreateFAdd(res, dfdx);
+
+            if (out->getType() != CI.getType()) {
+              if (DL.getTypeSizeInBits(out->getType()) <
+                  DL.getTypeSizeInBits(CI.getType()))
+                out = Builder2.CreateFPExt(out, CI.getType());
+              else
+                out = Builder2.CreateFPTrunc(out, CI.getType());
+            }
+            return out;
           };
 
           res = applyChainRule(I.getType(), Builder2, rule, op, res);
         }
         if (!gutils->isConstantValue(orig_ops[1])) {
-          auto powcall =
-              cast<CallInst>(Builder2.CreateCall(FT, PowF, {op0, op1}));
-          powcall->setCallingConv(CI.getCallingConv());
-          powcall->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
+          Value *powcall = Builder2.CreateCall(FT, PowF, {op0, op1});
+          cast<CallInst>(powcall)->setCallingConv(CI.getCallingConv());
+          cast<CallInst>(powcall)->setDebugLoc(
+              gutils->getNewFromOriginal(I.getDebugLoc()));
 
+          Type *tys[] = {op0->getType()};
           CallInst *logcall = Builder2.CreateCall(
               Intrinsic::getDeclaration(M, Intrinsic::log, tys), {op0});
+
+          if (powcall->getType() != op0->getType()) {
+            if (DL.getTypeSizeInBits(powcall->getType()) <
+                DL.getTypeSizeInBits(op0->getType()))
+              powcall = Builder2.CreateFPExt(powcall, op0->getType());
+            else
+              powcall = Builder2.CreateFPTrunc(powcall, op0->getType());
+          }
 
           Value *mul = Builder2.CreateFMul(powcall, logcall);
           Value *op = diffe(orig_ops[1], Builder2);
 
           auto rule = [&](Value *op, Value *res) {
             Value *dfdy = Builder2.CreateFMul(mul, op);
-            return Builder2.CreateFAdd(res, dfdy);
+            Value *out = Builder2.CreateFAdd(res, dfdy);
+
+            if (out->getType() != CI.getType()) {
+              if (DL.getTypeSizeInBits(out->getType()) <
+                  DL.getTypeSizeInBits(CI.getType()))
+                out = Builder2.CreateFPExt(out, CI.getType());
+              else
+                out = Builder2.CreateFPTrunc(out, CI.getType());
+            }
+            return out;
           };
 
           res = applyChainRule(I.getType(), Builder2, rule, op, res);
