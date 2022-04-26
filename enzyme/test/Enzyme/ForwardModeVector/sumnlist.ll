@@ -98,58 +98,58 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   br i1 %cmp18, label %for.cond.cleanup, label %for.cond1.preheader
 
 ; CHECK: for.cond1.preheader:                              ; preds = %entry, %for.cond.cleanup4
-; CHECK-NEXT:   %0 = phi [3 x %struct.n*] [ %6, %for.cond.cleanup4 ], [ %"node'", %entry ]
-; CHECK-NEXT:   %val.020 = phi %struct.n* [ %7, %for.cond.cleanup4 ], [ %node, %entry ]
-; CHECK-NEXT:   %"sum.019'" = phi {{(fast )?}}[3 x double] [ %19, %for.cond.cleanup4 ], [ zeroinitializer, %entry ]
-; CHECK-NEXT:   %1 = extractvalue [3 x %struct.n*] %0, 0
-; CHECK-NEXT:   %"values'ipg" = getelementptr inbounds %struct.n, %struct.n* %1, i64 0, i32 0
-; CHECK-NEXT:   %2 = extractvalue [3 x %struct.n*] %0, 1
-; CHECK-NEXT:   %"values'ipg2" = getelementptr inbounds %struct.n, %struct.n* %2, i64 0, i32 0
-; CHECK-NEXT:   %3 = extractvalue [3 x %struct.n*] %0, 2
-; CHECK-NEXT:   %"values'ipg3" = getelementptr inbounds %struct.n, %struct.n* %3, i64 0, i32 0
-; CHECK-NEXT:   %"'ipl" = load double*, double** %"values'ipg", align 8
-; CHECK-NEXT:   %"'ipl4" = load double*, double** %"values'ipg2", align 8
-; CHECK-NEXT:   %"'ipl5" = load double*, double** %"values'ipg3", align 8
+; CHECK-NEXT:   %val.020 = phi %struct.n* [ %[[i7:.+]], %for.cond.cleanup4 ], [ %node, %entry ]
+; CHECK-NEXT:   %[[i0:.+]] = phi [3 x %struct.n*] [ %[[i6:.+]], %for.cond.cleanup4 ], [ %"node'", %entry ]
+; CHECK-NEXT:   %"sum.019'" = phi {{(fast )?}}[3 x double] [ %[[i19:.+]], %for.cond.cleanup4 ], [ zeroinitializer, %entry ]
+; CHECK-NEXT:   %[[i1:.+]] = extractvalue [3 x %struct.n*] %[[i0]], 0
+; CHECK-NEXT:   %[[valuesipg:.+]] = getelementptr inbounds %struct.n, %struct.n* %[[i1]], i64 0, i32 0
+; CHECK-NEXT:   %[[i2:.+]] = extractvalue [3 x %struct.n*] %[[i0]], 1
+; CHECK-NEXT:   %[[valuesipg2:.+]] = getelementptr inbounds %struct.n, %struct.n* %[[i2]], i64 0, i32 0
+; CHECK-NEXT:   %[[i3:.+]] = extractvalue [3 x %struct.n*] %[[i0]], 2
+; CHECK-NEXT:   %[[valuesipg3:.+]] = getelementptr inbounds %struct.n, %struct.n* %[[i3]], i64 0, i32 0
+; CHECK-NEXT:   %"'ipl" = load double*, double** %[[valuesipg]], align 8
+; CHECK-NEXT:   %[[ipl4:.+]] = load double*, double** %[[valuesipg2]], align 8
+; CHECK-NEXT:   %[[ipl5:.+]] = load double*, double** %[[valuesipg3]], align 8
 ; CHECK-NEXT:   br label %for.body5
 
 ; CHECK: for.cond.cleanup:                                 ; preds = %for.cond.cleanup4, %entry
-; CHECK-NEXT:   %"sum.0.lcssa'" = phi {{(fast )?}}[3 x double] [ zeroinitializer, %entry ], [ %19, %for.cond.cleanup4 ]
+; CHECK-NEXT:   %"sum.0.lcssa'" = phi {{(fast )?}}[3 x double] [ zeroinitializer, %entry ], [ %[[i19]], %for.cond.cleanup4 ]
 ; CHECK-NEXT:   ret [3 x double] %"sum.0.lcssa'"
 
 ; CHECK: for.cond.cleanup4:                                ; preds = %for.body5
-; CHECK-NEXT:   %"next'ipg" = getelementptr inbounds %struct.n, %struct.n* %1, i64 0, i32 1
-; CHECK-NEXT:   %"next'ipg6" = getelementptr inbounds %struct.n, %struct.n* %2, i64 0, i32 1
-; CHECK-NEXT:   %"next'ipg7" = getelementptr inbounds %struct.n, %struct.n* %3, i64 0, i32 1
+; CHECK-NEXT:   %"next'ipg" = getelementptr inbounds %struct.n, %struct.n* %[[i1]], i64 0, i32 1
+; CHECK-NEXT:   %[[nextipg6:.+]] = getelementptr inbounds %struct.n, %struct.n* %[[i2]], i64 0, i32 1
+; CHECK-NEXT:   %[[nextipg7:.+]] = getelementptr inbounds %struct.n, %struct.n* %[[i3]], i64 0, i32 1
 ; CHECK-NEXT:   %next = getelementptr inbounds %struct.n, %struct.n* %val.020, i64 0, i32 1
-; CHECK-NEXT:   %"'ipl8" = load %struct.n*, %struct.n** %"next'ipg", align 8
-; CHECK-NEXT:   %4 = insertvalue [3 x %struct.n*] undef, %struct.n* %"'ipl8", 0
-; CHECK-NEXT:   %"'ipl9" = load %struct.n*, %struct.n** %"next'ipg6", align 8
-; CHECK-NEXT:   %5 = insertvalue [3 x %struct.n*] %4, %struct.n* %"'ipl9", 1
-; CHECK-NEXT:   %"'ipl10" = load %struct.n*, %struct.n** %"next'ipg7", align 8
-; CHECK-NEXT:   %6 = insertvalue [3 x %struct.n*] %5, %struct.n* %"'ipl10", 2
-; CHECK-NEXT:   %7 = load %struct.n*, %struct.n** %next, align 8, !tbaa !7
-; CHECK-NEXT:   %cmp = icmp eq %struct.n* %7, null
+; CHECK-NEXT:   %[[ipl8:.+]] = load %struct.n*, %struct.n** %"next'ipg", align 8
+; CHECK-NEXT:   %[[i4:.+]] = insertvalue [3 x %struct.n*] undef, %struct.n* %[[ipl8]], 0
+; CHECK-NEXT:   %[[ipl9:.+]] = load %struct.n*, %struct.n** %[[nextipg6]], align 8
+; CHECK-NEXT:   %[[i5:.+]] = insertvalue [3 x %struct.n*] %[[i4:.+]], %struct.n* %[[ipl9]], 1
+; CHECK-NEXT:   %[[ipl10:.+]] = load %struct.n*, %struct.n** %[[nextipg7]], align 8
+; CHECK-NEXT:   %[[i6]] = insertvalue [3 x %struct.n*] %[[i5]], %struct.n* %[[ipl10]], 2
+; CHECK-NEXT:   %[[i7]] = load %struct.n*, %struct.n** %next, align 8, !tbaa !7
+; CHECK-NEXT:   %cmp = icmp eq %struct.n* %[[i7]], null
 ; CHECK-NEXT:   br i1 %cmp, label %for.cond.cleanup, label %for.cond1.preheader
 
 ; CHECK: for.body5:                                        ; preds = %for.body5, %for.cond1.preheader
 ; CHECK-NEXT:   %iv1 = phi i64 [ %iv.next2, %for.body5 ], [ 0, %for.cond1.preheader ]
-; CHECK-NEXT:   %"sum.116'" = phi {{(fast )?}}[3 x double] [ %19, %for.body5 ], [ %"sum.019'", %for.cond1.preheader ]
+; CHECK-NEXT:   %"sum.116'" = phi {{(fast )?}}[3 x double] [ %[[i19]], %for.body5 ], [ %"sum.019'", %for.cond1.preheader ]
 ; CHECK-NEXT:   %iv.next2 = add nuw nsw i64 %iv1, 1
 ; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds double, double* %"'ipl", i64 %iv1
-; CHECK-NEXT:   %"arrayidx'ipg11" = getelementptr inbounds double, double* %"'ipl4", i64 %iv1
-; CHECK-NEXT:   %"arrayidx'ipg12" = getelementptr inbounds double, double* %"'ipl5", i64 %iv1
-; CHECK-NEXT:   %8 = load double, double* %"arrayidx'ipg", align 8
-; CHECK-NEXT:   %9 = load double, double* %"arrayidx'ipg11", align 8
-; CHECK-NEXT:   %10 = load double, double* %"arrayidx'ipg12", align 8
-; CHECK-NEXT:   %11 = extractvalue [3 x double] %"sum.116'", 0
-; CHECK-NEXT:   %12 = fadd fast double %8, %11
-; CHECK-NEXT:   %13 = insertvalue [3 x double] undef, double %12, 0
-; CHECK-NEXT:   %14 = extractvalue [3 x double] %"sum.116'", 1
-; CHECK-NEXT:   %15 = fadd fast double %9, %14
-; CHECK-NEXT:   %16 = insertvalue [3 x double] %13, double %15, 1
-; CHECK-NEXT:   %17 = extractvalue [3 x double] %"sum.116'", 2
-; CHECK-NEXT:   %18 = fadd fast double %10, %17
-; CHECK-NEXT:   %19 = insertvalue [3 x double] %16, double %18, 2
+; CHECK-NEXT:   %[[arrayidxipg11:.+]] = getelementptr inbounds double, double* %[[ipl4]], i64 %iv1
+; CHECK-NEXT:   %[[arrayidxipg12:.+]] = getelementptr inbounds double, double* %[[ipl5]], i64 %iv1
+; CHECK-NEXT:   %[[i8:.+]] = load double, double* %"arrayidx'ipg", align 8
+; CHECK-NEXT:   %[[i9:.+]] = load double, double* %[[arrayidxipg11]], align 8
+; CHECK-NEXT:   %[[i10:.+]] = load double, double* %[[arrayidxipg12]], align 8
+; CHECK-NEXT:   %[[i11:.+]] = extractvalue [3 x double] %"sum.116'", 0
+; CHECK-NEXT:   %[[i12:.+]] = fadd fast double %[[i8]], %[[i11]]
+; CHECK-NEXT:   %[[i13:.+]] = insertvalue [3 x double] undef, double %[[i12]], 0
+; CHECK-NEXT:   %[[i14:.+]] = extractvalue [3 x double] %"sum.116'", 1
+; CHECK-NEXT:   %[[i15:.+]] = fadd fast double %[[i9]], %[[i14]]
+; CHECK-NEXT:   %[[i16:.+]] = insertvalue [3 x double] %[[i13]], double %[[i15]], 1
+; CHECK-NEXT:   %[[i17:.+]] = extractvalue [3 x double] %"sum.116'", 2
+; CHECK-NEXT:   %[[i18:.+]] = fadd fast double %[[i10]], %[[i17]]
+; CHECK-NEXT:   %[[i19]] = insertvalue [3 x double] %[[i16]], double %[[i18]], 2
 ; CHECK-NEXT:   %exitcond = icmp eq i64 %iv1, %times
 ; CHECK-NEXT:   br i1 %exitcond, label %for.cond.cleanup4, label %for.body5
 ; CHECK-NEXT: }

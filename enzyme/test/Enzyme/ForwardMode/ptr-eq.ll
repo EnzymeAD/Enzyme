@@ -21,10 +21,10 @@ entry:
 
 ; CHECK: define internal void @fwddiffef(double* %x, double* %"x'", double* %y, double* %"y'")
 ; CHECK-NEXT: entry:
+; CHECK-NEXT:   %[[i0:.+]] = load double, double* %"x'"
 ; CHECK-NEXT:   %val = load double, double* %x
-; CHECK-NEXT:   %0 = load double, double* %"x'"
 ; CHECK-NEXT:   store double %val, double* %y
-; CHECK-NEXT:   store double %0, double* %"y'"
+; CHECK-NEXT:   store double %[[i0]], double* %"y'"
 ; CHECK-NEXT:   %"ptr'ipc" = bitcast double* %"x'" to i8*
 ; CHECK-NEXT:   %ptr = bitcast double* %x to i8*
 ; CHECK-NEXT:   call void @free(i8* %ptr)

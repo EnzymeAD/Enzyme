@@ -136,23 +136,23 @@ attributes #9 = { noreturn nounwind }
 
 ; CHECK: for.body4:                                        ; preds = %for.body4, %for.body4.lr.ph
 ; CHECK-NEXT:   %iv1 = phi i64 [ %iv.next2, %for.body4 ], [ 0, %for.body4.lr.ph ]
-; CHECK-NEXT:   %"sum.134'" = phi {{(fast )?}}double [ %"sum.036'", %for.body4.lr.ph ], [ %9, %for.body4 ]
+; CHECK-NEXT:   %"sum.134'" = phi {{(fast )?}}double [ %"sum.036'", %for.body4.lr.ph ], [ %[[i9:.+]], %for.body4 ]
 ; CHECK-NEXT:   %iv.next2 = add nuw nsw i64 %iv1, 1
 ; CHECK-NEXT:   %4 = add nuw nsw i64 %iv1, %1
 ; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds double, double* %"a'", i64 %4
 ; CHECK-NEXT:   %arrayidx = getelementptr inbounds double, double* %a, i64 %4
-; CHECK-NEXT:   %5 = load double, double* %arrayidx, align 8, !tbaa !6
-; CHECK-NEXT:   %6 = load double, double* %"arrayidx'ipg"
-; CHECK-NEXT:   %7 = fmul fast double %6, %5
-; CHECK-NEXT:   %8 = fadd fast double %7, %7
-; CHECK-NEXT:   %9 = fadd fast double %"sum.134'", %8
+; CHECK-NEXT:   %[[i6:.+]] = load double, double* %"arrayidx'ipg"
+; CHECK-NEXT:   %[[i5:.+]] = load double, double* %arrayidx, align 8, !tbaa !6
+; CHECK-NEXT:   %[[i7:.+]] = fmul fast double %[[i6]], %[[i5]]
+; CHECK-NEXT:   %[[i8:.+]] = fadd fast double %[[i7]], %[[i7]]
+; CHECK-NEXT:   %[[i9]] = fadd fast double %"sum.134'", %[[i8]]
 ; CHECK-NEXT:   store double 0.000000e+00, double* %arrayidx, align 8, !tbaa !6
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"arrayidx'ipg", align 8
 ; CHECK-NEXT:   %cmp2 = icmp slt i64 %iv.next2, %3
 ; CHECK-NEXT:   br i1 %cmp2, label %for.body4, label %for.cond.cleanup3
 
 ; CHECK: for.cond.cleanup3:                                ; preds = %for.body4, %for.cond1.preheader
-; CHECK-NEXT:   %"sum.1.lcssa'" = phi {{(fast )?}}double [ %"sum.036'", %for.cond1.preheader ], [ %9, %for.body4 ]
+; CHECK-NEXT:   %"sum.1.lcssa'" = phi {{(fast )?}}double [ %"sum.036'", %for.cond1.preheader ], [ %[[i9]], %for.body4 ]
 ; CHECK-NEXT:   %exitcond = icmp eq i64 %iv.next, 10
 ; CHECK-NEXT:   br i1 %exitcond, label %for.cond.cleanup, label %for.cond1.preheader
 
