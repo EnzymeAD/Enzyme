@@ -435,6 +435,12 @@ public:
     auto placeholder = cast<PHINode>(&*found->second);
     gutils->invertedPointers.erase(found);
 
+    if (!is_value_needed_in_reverse<ValueType::Shadow>(TR, gutils, &I, Mode,
+                                                       oldUnreachable)) {
+      gutils->erase(placeholder);
+      return;
+    }
+
     IRBuilder<> Builder2(&I);
     getForwardBuilder(Builder2);
 
@@ -2537,6 +2543,19 @@ public:
             }
           }
         }
+      goto def;
+    }
+    case Instruction::Shl:
+    case Instruction::Mul:
+    case Instruction::Sub:
+    case Instruction::Add: {
+      if (looseTypeAnalysis) {
+        forwardModeInvertedPointerFallback(BO);
+        llvm::errs() << "warning: binary operator is integer and constant: "
+                     << BO << "\n";
+        // if loose type analysis, assume this integer add is constant
+        return;
+      }
       goto def;
     }
     default:
