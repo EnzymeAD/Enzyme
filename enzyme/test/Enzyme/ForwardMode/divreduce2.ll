@@ -50,9 +50,9 @@ declare double @__enzyme_fwddiff(i8*, double*, double*, i64, double, double)
 ; CHECK-NEXT:   br label %loop
 
 ; CHECK: loop:                                             ; preds = %body, %entry
-; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %body ], [ 0, %entry ]
-; CHECK-NEXT:   %reduce = phi double [ %start, %entry ], [ %div, %body ]
-; CHECK-NEXT:   %"reduce'" = phi {{(fast )?}}double [ %"start'", %entry ], [ %[[i5:.+]], %body ]
+; CHECK-DAG:   %iv = phi i64 [ %iv.next, %body ], [ 0, %entry ]
+; CHECK-DAG:   %reduce = phi double [ %start, %entry ], [ %div, %body ]
+; CHECK-DAG:   %[[dreduce:.+]] = phi {{(fast )?}}double [ %"start'", %entry ], [ %[[i5:.+]], %body ]
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
 ; CHECK-NEXT:   %cmp = icmp ne i64 %iv, %N
 ; CHECK-NEXT:   br i1 %cmp, label %body, label %end
@@ -63,7 +63,7 @@ declare double @__enzyme_fwddiff(i8*, double*, double*, i64, double, double)
 ; CHECK-NEXT:   %[[i0:.+]] = load double, double* %"gep'ipg"
 ; CHECK-NEXT:   %ld = load double, double* %gep, align 8, !tbaa !2
 ; CHECK-NEXT:   %div = fdiv double %reduce, %ld
-; CHECK-NEXT:   %[[i1:.+]] = fmul fast double %"reduce'", %ld
+; CHECK-NEXT:   %[[i1:.+]] = fmul fast double %[[dreduce]], %ld
 ; CHECK-NEXT:   %[[i2:.+]] = fmul fast double %reduce, %[[i0]]
 ; CHECK-NEXT:   %[[i3:.+]] = fsub fast double %[[i1]], %[[i2]]
 ; CHECK-NEXT:   %[[i4:.+]] = fmul fast double %ld, %ld
@@ -71,5 +71,5 @@ declare double @__enzyme_fwddiff(i8*, double*, double*, i64, double, double)
 ; CHECK-NEXT:   br label %loop
 
 ; CHECK: end:                                              ; preds = %loop
-; CHECK-NEXT:   ret double %"reduce'"
+; CHECK-NEXT:   ret double %[[dreduce]]
 ; CHECK-NEXT: }

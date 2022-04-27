@@ -4524,6 +4524,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     else {
       auto NewV = getNewFromOriginal(phi);
       IRBuilder<> bb(NewV);
+      bb.setFastMathFlags(getFast());
       // Note if the original phi node get's scev'd in NewF, it may
       // no longer be a phi and we need a new place to insert this phi
       // Note that if scev'd this can still be a phi with 0 incoming indicating
@@ -4536,6 +4537,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
       Type *shadowTy = getShadowType(phi->getType());
       PHINode *which = bb.CreatePHI(shadowTy, phi->getNumIncomingValues());
+      which->setDebugLoc(getNewFromOriginal(phi->getDebugLoc()));
 
       invertedPointers.insert(
           std::make_pair((const Value *)oval, InvertedPointerVH(this, which)));

@@ -37,15 +37,15 @@ declare double @__enzyme_fwddiff(void (float*, float*)*, ...) #2
 ; CHECK-NEXT:   br label %do.body
 
 ; CHECK: do.body:                                          ; preds = %do.body, %entry
-; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %do.body ], [ 0, %entry ]
-; CHECK-NEXT:   %intsum = phi i32 [ 0, %entry ], [ %intadd, %do.body ]
-; CHECK-NEXT:   %"intsum'" = phi i32 [ 0, %entry ], [ %[[i3:.+]], %do.body ]
+; CHECK-DAG:   %iv = phi i64 [ %iv.next, %do.body ], [ 0, %entry ]
+; CHECK-DAG:   %intsum = phi i32 [ 0, %entry ], [ %intadd, %do.body ]
+; CHECK-DAG:   %[[dintsum:.+]] = phi i32 [ 0, %entry ], [ %[[i3:.+]], %do.body ]
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
 ; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds float, float* %"array'", i64 %iv
 ; CHECK-NEXT:   %arrayidx = getelementptr inbounds float, float* %array, i64 %iv
 ; CHECK-NEXT:   %[[i0:.+]] = load float, float* %"arrayidx'ipg"
 ; CHECK-NEXT:   %loaded = load float, float* %arrayidx
-; CHECK-NEXT:   %[[i1:.+]] = bitcast i32 %"intsum'" to float
+; CHECK-NEXT:   %[[i1:.+]] = bitcast i32 %[[dintsum]] to float
 ; CHECK-NEXT:   %fltload = bitcast i32 %intsum to float
 ; CHECK-NEXT:   %add = fadd float %fltload, %loaded
 ; CHECK-NEXT:   %[[i2:.+]] = fadd fast float %[[i1]], %[[i0]]

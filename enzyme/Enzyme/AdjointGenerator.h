@@ -505,17 +505,23 @@ public:
 
         IRBuilder<> BuilderZ(newi);
         // only make shadow where caching needed
+        if (!is_value_needed_in_reverse<ValueType::Shadow>(TR, gutils, &I, Mode,
+                                                           oldUnreachable)) {
+          gutils->erase(placeholder);
+          return;
+        }
+
         if (can_modref) {
-          if (!I.getType()->isEmptyTy() && !I.getType()->isFPOrFPVectorTy() &&
-              TR.query(&I).Inner0().isPossiblePointer()) {
+          //if (!I.getType()->isEmptyTy() && !I.getType()->isFPOrFPVectorTy() &&
+          //    TR.query(&I).Inner0().isPossiblePointer()) {
             Value *newip = gutils->cacheForReverse(
                 BuilderZ, placeholder, getIndex(&I, CacheType::Shadow));
             assert(newip->getType() == type);
             gutils->invertedPointers.insert(std::make_pair(
                 (const Value *)&I, InvertedPointerVH(gutils, newip)));
-          } else {
-            gutils->erase(placeholder);
-          }
+          //} else {
+          //  gutils->erase(placeholder);
+          //}
         } else {
           Value *newip = gutils->invertPointerM(&I, BuilderZ);
           assert(newip->getType() == type);
@@ -544,9 +550,7 @@ public:
 
         // TODO: In the case of fwd mode this should be true if the loaded value
         // itself is used as a pointer.
-        bool needShadow = Mode == DerivativeMode::ForwardMode
-                              ? false
-                              : is_value_needed_in_reverse<ValueType::Shadow>(
+        bool needShadow = is_value_needed_in_reverse<ValueType::Shadow>(
                                     TR, gutils, &I, Mode, oldUnreachable);
 
         switch (Mode) {
@@ -1056,40 +1060,7 @@ public:
     }
     case DerivativeMode::ForwardModeSplit:
     case DerivativeMode::ForwardMode: {
-      if (gutils->isConstantValue(&phi))
-        return;
-      BasicBlock *oBB = phi.getParent();
-      BasicBlock *nBB = gutils->getNewFromOriginal(oBB);
-
-      IRBuilder<> phiBuilder(&phi);
-      getForwardBuilder(phiBuilder);
-      phiBuilder.SetInsertPoint(
-          gutils->getNewFromOriginal(&phi)->getNextNode());
-
-      Type *diffeType = gutils->getShadowType(phi.getType());
-
-      auto newPhi = phiBuilder.CreatePHI(diffeType, 1, phi.getName() + "'");
-
-      for (unsigned int i = 0; i < phi.getNumIncomingValues(); ++i) {
-        auto val = phi.getIncomingValue(i);
-        auto block = phi.getIncomingBlock(i);
-
-        auto newBlock = gutils->getNewFromOriginal(block);
-        IRBuilder<> pBuilder(newBlock->getTerminator());
-        pBuilder.setFastMathFlags(getFast());
-
-        if (gutils->isConstantValue(val)) {
-          newPhi->addIncoming(Constant::getNullValue(diffeType), newBlock);
-        } else {
-          auto diff = diffe(val, pBuilder);
-          newPhi->addIncoming(diff, newBlock);
-        }
-      }
-
-      IRBuilder<> diffeBuilder(nBB->getFirstNonPHI());
-      diffeBuilder.setFastMathFlags(getFast());
-      setDiffe(&phi, newPhi, diffeBuilder);
-
+      forwardModeInvertedPointerFallback(phi);
       return;
     }
     }
@@ -4029,8 +4000,7 @@ public:
           Value *op = diffe(orig_ops[0], Builder2);
 
           auto rule = [&](Value *op, Value *res) {
-            Value *dfdx = Builder2.CreateFMul(mul, op);
-            Value *out = Builder2.CreateFAdd(res, dfdx);
+            Value *out = Builder2.CreateFMul(mul, op);
 
             if (out->getType() != CI.getType()) {
               if (DL.getTypeSizeInBits(out->getType()) <
@@ -4039,7 +4009,7 @@ public:
               else
                 out = Builder2.CreateFPTrunc(out, CI.getType());
             }
-            return out;
+            return Builder2.CreateFAdd(res, out);
           };
 
           res = applyChainRule(I.getType(), Builder2, rule, op, res);
@@ -4066,8 +4036,7 @@ public:
           Value *op = diffe(orig_ops[1], Builder2);
 
           auto rule = [&](Value *op, Value *res) {
-            Value *dfdy = Builder2.CreateFMul(mul, op);
-            Value *out = Builder2.CreateFAdd(res, dfdy);
+            Value *out = Builder2.CreateFMul(mul, op);
 
             if (out->getType() != CI.getType()) {
               if (DL.getTypeSizeInBits(out->getType()) <
@@ -4076,7 +4045,7 @@ public:
               else
                 out = Builder2.CreateFPTrunc(out, CI.getType());
             }
-            return out;
+            return Builder2.CreateFAdd(res, out);
           };
 
           res = applyChainRule(I.getType(), Builder2, rule, op, res);

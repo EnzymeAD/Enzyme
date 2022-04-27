@@ -77,8 +77,8 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   ret double %[[i5:.+]]
 
 ; CHECK: for.body:                                         ; preds = %for.body, %entry
-; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %for.body ], [ 0, %entry ]
-; CHECK-NEXT:   %"sum.012'" = phi {{(fast )?}}double [ 0.000000e+00, %entry ], [ %[[i5]], %for.body ]
+; CHECK-DAG:   %iv = phi i64 [ %iv.next, %for.body ], [ 0, %entry ]
+; CHECK-DAG:   %[[sum012:.+]] = phi {{(fast )?}}double [ 0.000000e+00, %entry ], [ %[[i5]], %for.body ]
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
 ; CHECK-NEXT:   %[[i0:.+]] = trunc i64 %iv to i32
 ; CHECK-NEXT:   %idxprom = zext i32 %[[i0]] to i64
@@ -88,7 +88,7 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   %[[i1:.+]] = load double, double* %arrayidx, align 8, !tbaa !2
 ; CHECK-NEXT:   %[[i3:.+]] = fmul fast double %[[i2]], %[[i1]]
 ; CHECK-NEXT:   %[[i4:.+]] = fadd fast double %[[i3]], %[[i3]]
-; CHECK-NEXT:   %[[i5]] = fadd fast double %"sum.012'", %[[i4]]
+; CHECK-NEXT:   %[[i5]] = fadd fast double %[[sum012]], %[[i4]]
 ; CHECK-NEXT:   %inc = add i32 %[[i0]], 1
 ; CHECK-NEXT:   %cmp = icmp ugt i32 %inc, %N
 ; CHECK-NEXT:   br i1 %cmp, label %for.cond.cleanup, label %for.body
