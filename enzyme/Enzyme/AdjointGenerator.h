@@ -551,7 +551,7 @@ public:
         // TODO: In the case of fwd mode this should be true if the loaded value
         // itself is used as a pointer.
         bool needShadow = is_value_needed_in_reverse<ValueType::Shadow>(
-                                    TR, gutils, &I, Mode, oldUnreachable);
+            TR, gutils, &I, Mode, oldUnreachable);
 
         switch (Mode) {
 

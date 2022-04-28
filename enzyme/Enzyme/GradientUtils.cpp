@@ -4453,7 +4453,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     IRBuilder<> bb(getNewFromOriginal(II));
     bb.setFastMathFlags(getFast());
     switch (II->getIntrinsicID()) {
-    default: goto end;
+    default:
+      goto end;
     case Intrinsic::nvvm_ldu_global_i:
     case Intrinsic::nvvm_ldu_global_p:
     case Intrinsic::nvvm_ldu_global_f:
