@@ -512,16 +512,16 @@ public:
         }
 
         if (can_modref) {
-          //if (!I.getType()->isEmptyTy() && !I.getType()->isFPOrFPVectorTy() &&
-          //    TR.query(&I).Inner0().isPossiblePointer()) {
+          if (!I.getType()->isEmptyTy() && !I.getType()->isFPOrFPVectorTy() &&
+              TR.query(&I).Inner0().isPossiblePointer()) {
             Value *newip = gutils->cacheForReverse(
                 BuilderZ, placeholder, getIndex(&I, CacheType::Shadow));
             assert(newip->getType() == type);
             gutils->invertedPointers.insert(std::make_pair(
                 (const Value *)&I, InvertedPointerVH(gutils, newip)));
-          //} else {
-          //  gutils->erase(placeholder);
-          //}
+          } else {
+            gutils->erase(placeholder);
+          }
         } else {
           Value *newip = gutils->invertPointerM(&I, BuilderZ);
           assert(newip->getType() == type);
