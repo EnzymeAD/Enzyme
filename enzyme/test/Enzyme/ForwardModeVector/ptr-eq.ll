@@ -57,15 +57,15 @@ entry:
 ; CHECK-NEXT:    [[TMP20:%.*]] = extractvalue [3 x i8*] [[TMP17]], 2
 ; CHECK-NEXT:    [[TMPZ4:%.*]] = icmp ne i8* [[PTR]], [[TMP18]]
 ; CHECK-NEXT:    br i1 [[TMPZ4]], label [[FREE0:%.*]], label [[END:%.*]]
-; CHECK:       free0:
+; CHECK:       free0.i:
 ; CHECK-NEXT:    call void @free(i8* [[TMP18]]) 
 ; CHECK-NEXT:    [[TMPZ5:%.*]] = icmp ne i8* [[TMP18]], [[TMP19]]
 ; CHECK-NEXT:    [[TMPZ6:%.*]] = icmp ne i8* [[TMP19]], [[TMP20]]
 ; CHECK-NEXT:    [[TMPZ7:%.*]] = and i1 [[TMPZ6]], [[TMPZ5]]
 ; CHECK-NEXT:    br i1 [[TMPZ7]], label [[FREE1:%.*]], label [[END]]
-; CHECK:       end:
-; CHECK-NEXT:    ret void
-; CHECK:       free1:
+; CHECK:       free1.i:
 ; CHECK-NEXT:    call void @free(i8* [[TMP19]]) 
 ; CHECK-NEXT:    call void @free(i8* [[TMP20]]) 
 ; CHECK-NEXT:    br label [[END]]
+; CHECK:       __enzyme_checked_free_3.exit:
+; CHECK-NEXT:    ret void
