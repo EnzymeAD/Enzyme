@@ -832,37 +832,42 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         if (pidx == nullptr)
           goto endCheck;
 
-        if (pidx->getType() != dli->getOperand(0)->getType()) {
+        if (pidx->getType() != getShadowType(dli->getOperand(0)->getType())) {
           llvm::errs() << "dli: " << *dli << "\n";
           llvm::errs() << "dli->getOperand(0): " << *dli->getOperand(0) << "\n";
           llvm::errs() << "pidx: " << *pidx << "\n";
         }
-        assert(pidx->getType() == dli->getOperand(0)->getType());
+        assert(pidx->getType() == getShadowType(dli->getOperand(0)->getType()));
+
+        Value *toreturn = applyChainRule(
+            dli->getType(), BuilderM,
+            [&](Value *pidx) {
 #if LLVM_VERSION_MAJOR > 7
-        auto toreturn =
-            BuilderM.CreateLoad(pidx->getType()->getPointerElementType(), pidx,
-                                phi->getName() + "_unwrap");
+              auto toreturn = BuilderM.CreateLoad(dli->getType(), pidx,
+                                                  phi->getName() + "_unwrap");
 #else
-        auto toreturn = BuilderM.CreateLoad(pidx, phi->getName() + "_unwrap");
+              auto toreturn =
+                  BuilderM.CreateLoad(pidx, phi->getName() + "_unwrap");
 #endif
-        if (auto newi = dyn_cast<Instruction>(toreturn)) {
-          newi->copyIRFlags(dli);
-          unwrappedLoads[toreturn] = dli;
-        }
+              if (auto newi = dyn_cast<Instruction>(toreturn)) {
+                newi->copyIRFlags(dli);
+                unwrappedLoads[toreturn] = dli;
+              }
 #if LLVM_VERSION_MAJOR >= 10
-        toreturn->setAlignment(dli->getAlign());
+              toreturn->setAlignment(dli->getAlign());
 #else
-        toreturn->setAlignment(dli->getAlignment());
+              toreturn->setAlignment(dli->getAlignment());
 #endif
-        toreturn->setVolatile(dli->isVolatile());
-        toreturn->setOrdering(dli->getOrdering());
-        toreturn->setSyncScopeID(dli->getSyncScopeID());
-        toreturn->setDebugLoc(getNewFromOriginal(dli->getDebugLoc()));
-        toreturn->setMetadata(LLVMContext::MD_tbaa,
-                              dli->getMetadata(LLVMContext::MD_tbaa));
-        toreturn->setMetadata(
-            LLVMContext::MD_invariant_group,
-            dli->getMetadata(LLVMContext::MD_invariant_group));
+              toreturn->setVolatile(dli->isVolatile());
+              toreturn->setOrdering(dli->getOrdering());
+              toreturn->setSyncScopeID(dli->getSyncScopeID());
+              toreturn->setDebugLoc(getNewFromOriginal(dli->getDebugLoc()));
+              toreturn->setMetadata(LLVMContext::MD_tbaa,
+                                    dli->getMetadata(LLVMContext::MD_tbaa));
+              return toreturn;
+            },
+            pidx);
+
         // TODO adding to cache only legal if no alias of any future writes
         if (permitCache)
           unwrap_cache[BuilderM.GetInsertBlock()][idx.first][idx.second] =
@@ -3731,10 +3736,13 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   } else if (auto CD = dyn_cast<ConstantDataArray>(oval)) {
     SmallVector<Constant *, 1> Vals;
     for (size_t i = 0, len = CD->getNumElements(); i < len; i++) {
-      Vals.push_back(cast<Constant>(
-          invertPointerM(CD->getElementAsConstant(i), BuilderM)));
+      Value *val = invertPointerM(CD->getElementAsConstant(i), BuilderM);
+      Vals.push_back(cast<Constant>(val));
     }
-    return ConstantArray::get(CD->getType(), Vals);
+    auto rule = [&CD](ArrayRef<Constant *> Vals) {
+      return ConstantArray::get(CD->getType(), Vals);
+    };
+    return applyChainRule(CD->getType(), Vals, BuilderM, rule);
   } else if (auto CD = dyn_cast<ConstantArray>(oval)) {
     SmallVector<Constant *, 1> Vals;
     for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
@@ -4824,6 +4832,9 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
             }
             new_op->setMetadata(LLVMContext::MD_invariant_group, invgroup);
           }
+        }
+        if (op->getType() != inst->getType()) {
+          llvm::errs() << " op: " << *op << " inst: " << *inst << "\n";
         }
         assert(op->getType() == inst->getType());
         if (!reduceRegister)
