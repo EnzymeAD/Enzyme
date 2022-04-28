@@ -42,10 +42,10 @@ attributes #1 = { nounwind readnone noinline }
 ; CHECK-NEXT:    [[CMP_I:%.*]] = fcmp fast ogt double [[X]], 0.000000e+00
 ; CHECK-NEXT:    br i1 [[CMP_I]], label [[COND_TRUE_I:%.*]], label [[FWDDIFFE2RELU_EXIT:%.*]]
 ; CHECK:       cond.true.i:
-; CHECK-NEXT:    [[TMP0:%.*]] = call fast [2 x double] @fwddiffe2f(double [[X]], [2 x double] [double 0.000000e+00, double 1.000000e+00])
+; CHECK-NEXT:    [[TMP0:%.*]] = call {{(fast )?}}[2 x double] @fwddiffe2f(double [[X]], [2 x double] [double 0.000000e+00, double 1.000000e+00])
 ; CHECK-NEXT:    br label [[FWDDIFFE2RELU_EXIT]]
 ; CHECK:       fwddiffe2relu.exit:
-; CHECK-NEXT:    [[TMP1:%.*]] = phi fast [2 x double] [ [[TMP0]], [[COND_TRUE_I]] ], [ zeroinitializer, [[ENTRY:%.*]] ]
+; CHECK-NEXT:    [[TMP1:%.*]] = phi {{(fast )?}}[2 x double] [ [[TMP0]], [[COND_TRUE_I]] ], [ zeroinitializer, [[ENTRY:%.*]] ]
 ; CHECK-NEXT:    [[TMP2:%.*]] = extractvalue [2 x double] [[TMP1]], 0
 ; CHECK-NEXT:    [[TMP3:%.*]] = insertvalue [[STRUCT_GRADIENTS:%.*]] zeroinitializer, double [[TMP2]], 0
 ; CHECK-NEXT:    [[TMP4:%.*]] = extractvalue [2 x double] [[TMP1]], 1

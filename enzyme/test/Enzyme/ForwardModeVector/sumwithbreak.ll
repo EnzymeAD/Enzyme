@@ -51,7 +51,7 @@ attributes #0 = { noinline nounwind uwtable }
 ; CHECK-NEXT:    br label [[FOR_BODY:%.*]]
 ; CHECK:       for.body:
 ; CHECK-NEXT:    [[IV:%.*]] = phi i64 [ [[IV_NEXT:%.*]], [[IF_END:%.*]] ], [ 0, [[ENTRY:%.*]] ]
-; CHECK-NEXT:    [[TMP0:%.*]] = phi fast [3 x double] [ [[TMP25:%.*]], [[IF_END]] ], [ zeroinitializer, [[ENTRY]] ]
+; CHECK-NEXT:    [[TMP0:%.*]] = phi {{(fast )?}}[3 x double] [ [[TMP25:%.*]], [[IF_END]] ], [ zeroinitializer, [[ENTRY]] ]
 ; CHECK-NEXT:    [[DATA_016:%.*]] = phi double [ [[ADD5:%.*]], [[IF_END]] ], [ 0.000000e+00, [[ENTRY]] ]
 ; CHECK-NEXT:    [[CMP2:%.*]] = fcmp fast ogt double [[DATA_016]], 1.000000e+01
 ; CHECK-NEXT:    br i1 [[CMP2]], label [[IF_THEN:%.*]], label [[IF_END]]
@@ -101,6 +101,6 @@ attributes #0 = { noinline nounwind uwtable }
 ; CHECK-NEXT:    [[CMP:%.*]] = icmp ult i64 [[IV]], [[N]]
 ; CHECK-NEXT:    br i1 [[CMP]], label [[FOR_BODY]], label [[CLEANUP]]
 ; CHECK:       cleanup:
-; CHECK-NEXT:    [[TMP26:%.*]] = phi fast [3 x double] [ [[TMP12]], [[IF_THEN]] ], [ [[TMP25]], [[IF_END]] ]
+; CHECK-NEXT:    [[TMP26:%.*]] = phi {{(fast )?}}[3 x double] [ [[TMP12]], [[IF_THEN]] ], [ [[TMP25]], [[IF_END]] ]
 ; CHECK-NEXT:    ret [3 x double] [[TMP26]]
 ;

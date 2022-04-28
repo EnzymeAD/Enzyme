@@ -60,17 +60,17 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:    [[TMP9:%.*]] = fmul fast double 5.000000e-01, [[TMP4]]
 ; CHECK-NEXT:    [[TMP10:%.*]] = fdiv fast double [[TMP9]], [[TMP8]]
 ; CHECK-NEXT:    [[TMP11:%.*]] = fcmp fast oeq double [[MUL_I]], 0.000000e+00
-; CHECK-NEXT:    [[TMP12:%.*]] = select fast i1 [[TMP11]], double 0.000000e+00, double [[TMP10]]
+; CHECK-NEXT:    [[TMP12:%.*]] = select {{(fast )?}}i1 [[TMP11]], double 0.000000e+00, double [[TMP10]]
 ; CHECK-NEXT:    [[TMP13:%.*]] = insertvalue [2 x double] undef, double [[TMP12]], 0
 ; CHECK-NEXT:    [[TMP14:%.*]] = call fast double @llvm.sqrt.f64(double [[MUL_I]]) 
 ; CHECK-NEXT:    [[TMP15:%.*]] = fmul fast double 5.000000e-01, [[TMP7]]
 ; CHECK-NEXT:    [[TMP16:%.*]] = fdiv fast double [[TMP15]], [[TMP14]]
 ; CHECK-NEXT:    [[TMP17:%.*]] = fcmp fast oeq double [[MUL_I]], 0.000000e+00
-; CHECK-NEXT:    [[TMP18:%.*]] = select fast i1 [[TMP17]], double 0.000000e+00, double [[TMP16]]
+; CHECK-NEXT:    [[TMP18:%.*]] = select {{(fast )?}}i1 [[TMP17]], double 0.000000e+00, double [[TMP16]]
 ; CHECK-NEXT:    [[TMP19:%.*]] = insertvalue [2 x double] [[TMP13]], double [[TMP18]], 1
 ; CHECK-NEXT:    br label [[FWDDIFFE2SQRELU_EXIT]]
 ; CHECK:       fwddiffe2sqrelu.exit:
-; CHECK-NEXT:    [[TMP20:%.*]] = phi fast [2 x double] [ [[TMP19]], [[COND_TRUE_I]] ], [ zeroinitializer, [[ENTRY:%.*]] ]
+; CHECK-NEXT:    [[TMP20:%.*]] = phi {{(fast )?}}[2 x double] [ [[TMP19]], [[COND_TRUE_I]] ], [ zeroinitializer, [[ENTRY:%.*]] ]
 ; CHECK-NEXT:    [[TMP21:%.*]] = extractvalue [2 x double] [[TMP20]], 0
 ; CHECK-NEXT:    [[TMP22:%.*]] = insertvalue [[STRUCT_GRADIENTS:%.*]] zeroinitializer, double [[TMP21]], 0
 ; CHECK-NEXT:    [[TMP23:%.*]] = extractvalue [2 x double] [[TMP20]], 1

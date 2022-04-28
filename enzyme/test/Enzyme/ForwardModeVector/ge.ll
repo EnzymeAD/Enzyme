@@ -80,7 +80,7 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:    store double 0.000000e+00, double* [[TMP4:%.*]], align 8
 ; CHECK-NEXT:    ret [3 x double] [[TMP20:%.*]]
 ; CHECK:       for.body:
-; CHECK-NEXT:    [[TMP0:%.*]] = phi fast [3 x double] [ zeroinitializer, [[ENTRY:%.*]] ], [ [[TMP20]], [[FOR_BODY]] ]
+; CHECK-NEXT:    [[TMP0:%.*]] = phi {{(fast )?}}[3 x double] [ zeroinitializer, [[ENTRY:%.*]] ], [ [[TMP20]], [[FOR_BODY]] ]
 ; CHECK-NEXT:    [[IV:%.*]] = phi i64 [ [[IV_NEXT:%.*]], [[FOR_BODY]] ], [ 0, [[ENTRY]] ]
 ; CHECK-NEXT:    [[IV_NEXT]] = add nuw nsw i64 [[IV]], 1
 ; CHECK-NEXT:    [[TMP1:%.*]] = trunc i64 [[IV]] to i32

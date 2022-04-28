@@ -55,7 +55,7 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK-NEXT:  entry:
 ; CHECK-NEXT:    br label [[LOOP:%.*]]
 ; CHECK:       loop:
-; CHECK-NEXT:    [[TMP0:%.*]] = phi fast [3 x double] [ [[TMP12:%.*]], [[END:%.*]] ], [ zeroinitializer, [[ENTRY:%.*]] ]
+; CHECK-NEXT:    [[TMP0:%.*]] = phi {{(fast )?}}[3 x double] [ [[TMP12:%.*]], [[END:%.*]] ], [ zeroinitializer, [[ENTRY:%.*]] ]
 ; CHECK-NEXT:    [[IV:%.*]] = phi i64 [ [[IV_NEXT:%.*]], [[END]] ], [ 0, [[ENTRY]] ]
 ; CHECK-NEXT:    [[IV_NEXT]] = add nuw nsw i64 [[IV]], 1
 ; CHECK-NEXT:    [[G0:%.*]] = getelementptr inbounds double, double* [[X]], i64 [[IV]]

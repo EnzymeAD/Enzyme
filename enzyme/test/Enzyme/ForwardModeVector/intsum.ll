@@ -50,10 +50,10 @@ entry:
 ; CHECK-NEXT:    [[TMP3:%.*]] = extractvalue [3 x float*] %"array'", 2
 ; CHECK-NEXT:    %"arrayidx'ipg2" = getelementptr inbounds float, float* [[TMP3]], i64 [[IV]]
 ; CHECK-NEXT:    [[ARRAYIDX:%.*]] = getelementptr inbounds float, float* [[ARRAY]], i64 [[IV]]
-; CHECK-NEXT:    %"loaded'ipl" = load float, float* %"arrayidx'ipg", align 4
-; CHECK-NEXT:    %"loaded'ipl3" = load float, float* %"arrayidx'ipg1", align 4
-; CHECK-NEXT:    %"loaded'ipl4" = load float, float* %"arrayidx'ipg2", align 4
-; CHECK-NEXT:    [[LOADED:%.*]] = load float, float* [[ARRAYIDX]], align 4
+; CHECK-NEXT:    %"loaded'ipl" = load float, float* %"arrayidx'ipg"
+; CHECK-NEXT:    %"loaded'ipl3" = load float, float* %"arrayidx'ipg1"
+; CHECK-NEXT:    %"loaded'ipl4" = load float, float* %"arrayidx'ipg2"
+; CHECK-NEXT:    [[LOADED:%.*]] = load float, float* [[ARRAYIDX]]
 ; CHECK-NEXT:    [[TMP4:%.*]] = extractvalue [3 x i32] [[TMP0]], 0
 ; CHECK-NEXT:    %"fltload'ipc" = bitcast i32 [[TMP4]] to float
 ; CHECK-NEXT:    [[TMP5:%.*]] = extractvalue [3 x i32] [[TMP0]], 1

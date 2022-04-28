@@ -44,9 +44,9 @@ attributes #2 = { noinline nounwind uwtable }
 ; CHECK-NEXT:    [[TMP6:%.*]] = extractvalue [3 x double*] %"src'", 2
 ; CHECK-NEXT:    %"'ipc6" = bitcast double* [[TMP6]] to i8*
 ; CHECK-NEXT:    [[TMP7:%.*]] = bitcast double* [[SRC]] to i8*
-; CHECK-NEXT:    tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 [[TMP3]], i8* align 1 [[TMP7]], i64 [[NUM]], i1 false) [[ATTR3:#.*]]
-; CHECK-NEXT:    tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %"'ipc", i8* align 1 %"'ipc4", i64 [[NUM]], i1 false) [[ATTR3]]
-; CHECK-NEXT:    tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %"'ipc2", i8* align 1 %"'ipc5", i64 [[NUM]], i1 false) [[ATTR3]]
-; CHECK-NEXT:    tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %"'ipc3", i8* align 1 %"'ipc6", i64 [[NUM]], i1 false) [[ATTR3]]
+; CHECK-NEXT:    tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 [[TMP3]], i8* align 1 [[TMP7]], i64 [[NUM]], i1 false)
+; CHECK-NEXT:    tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %"'ipc", i8* align 1 %"'ipc4", i64 [[NUM]], i1 false)
+; CHECK-NEXT:    tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %"'ipc2", i8* align 1 %"'ipc5", i64 [[NUM]], i1 false)
+; CHECK-NEXT:    tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %"'ipc3", i8* align 1 %"'ipc6", i64 [[NUM]], i1 false)
 ; CHECK-NEXT:    ret void
 ;

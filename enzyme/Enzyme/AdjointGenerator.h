@@ -1077,6 +1077,11 @@ public:
     case DerivativeMode::ReverseModeCombined: {
       if (gutils->isConstantInstruction(&I))
         return;
+
+      if (I.getType()->isPointerTy() ||
+          I.getOpcode() == CastInst::CastOps::PtrToInt)
+        return;
+
       Value *orig_op0 = I.getOperand(0);
       Value *op0 = gutils->getNewFromOriginal(orig_op0);
 

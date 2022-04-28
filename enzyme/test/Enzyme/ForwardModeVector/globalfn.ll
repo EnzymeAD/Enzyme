@@ -76,98 +76,48 @@ attributes #4 = { nounwind "correctly-rounded-divide-sqrt-fp-math"="false" "disa
 !7 = !{!"any pointer", !4, i64 0}
 
 
-
-; CHECK-LABEL: define {{[^@]+}}@ipmul
-; CHECK-SAME: (double* [[X:%.*]]) {
+; CHECK: define {{[^@]+}}@fwddiffe3mulglobal(double [[X:%.*]], [3 x double] %"x'", i64 [[IDX:%.*]]) 
 ; CHECK-NEXT:  entry:
-; CHECK-NEXT:    [[TMP0:%.*]] = load double, double* [[X]], align 8, [[TBAA3:!tbaa !.*]]
-; CHECK-NEXT:    [[MUL:%.*]] = fmul fast double [[TMP0]], [[TMP0]]
-; CHECK-NEXT:    store double [[MUL]], double* [[X]], align 8
-; CHECK-NEXT:    ret void
-;
-;
-; CHECK-LABEL: define {{[^@]+}}@mulglobal
-; CHECK-SAME: (double [[X:%.*]], i64 [[IDX:%.*]]) [[ATTR1:#.*]] {
-; CHECK-NEXT:  entry:
-; CHECK-NEXT:    [[ALLOC:%.*]] = alloca double, align 8
-; CHECK-NEXT:    store double [[X]], double* [[ALLOC]], align 8
-; CHECK-NEXT:    [[ARRAYIDX:%.*]] = getelementptr inbounds [1 x void (double*)*], [1 x void (double*)*]* @global, i64 0, i64 [[IDX]]
-; CHECK-NEXT:    [[FP:%.*]] = load void (double*)*, void (double*)** [[ARRAYIDX]], align 8
-; CHECK-NEXT:    call void [[FP]](double* [[ALLOC]])
-; CHECK-NEXT:    [[RET:%.*]] = load double, double* [[ALLOC]], align 8, [[TBAA3]]
-; CHECK-NEXT:    ret double [[RET]]
-;
-;
-; CHECK-LABEL: define {{[^@]+}}@derivative
-; CHECK-SAME: (double [[X:%.*]]) local_unnamed_addr [[ATTR2:#.*]] {
-; CHECK-NEXT:  entry:
-; CHECK-NEXT:    [[TMP0:%.*]] = call fast [3 x double] @fwddiffe3mulglobal(double [[X]], [3 x double] [double 1.000000e+00, double 2.000000e+00, double 3.000000e+00], i64 0)
-; CHECK-NEXT:    [[TMP1:%.*]] = extractvalue [3 x double] [[TMP0]], 0
-; CHECK-NEXT:    [[TMP2:%.*]] = insertvalue [[STRUCT_GRADIENTS:%.*]] zeroinitializer, double [[TMP1]], 0
-; CHECK-NEXT:    [[TMP3:%.*]] = extractvalue [3 x double] [[TMP0]], 1
-; CHECK-NEXT:    [[TMP4:%.*]] = insertvalue [[STRUCT_GRADIENTS]] [[TMP2]], double [[TMP3]], 1
-; CHECK-NEXT:    [[TMP5:%.*]] = extractvalue [3 x double] [[TMP0]], 2
-; CHECK-NEXT:    [[TMP6:%.*]] = insertvalue [[STRUCT_GRADIENTS]] [[TMP4]], double [[TMP5]], 2
-; CHECK-NEXT:    ret [[STRUCT_GRADIENTS]] [[TMP6]]
-;
-;
-; CHECK-LABEL: define {{[^@]+}}@main
-; CHECK-SAME: (i32 [[ARGC:%.*]], i8** nocapture readonly [[ARGV:%.*]]) local_unnamed_addr [[ATTR3:#.*]] {
-; CHECK-NEXT:  entry:
-; CHECK-NEXT:    [[ARRAYIDX:%.*]] = getelementptr inbounds i8*, i8** [[ARGV]], i64 1
-; CHECK-NEXT:    [[TMP0:%.*]] = load i8*, i8** [[ARRAYIDX]], align 8, [[TBAA7:!tbaa !.*]]
-; CHECK-NEXT:    [[CALL_I:%.*]] = tail call fast double @strtod(i8* nocapture nonnull [[TMP0]], i8** null) [[ATTR0:#.*]]
-; CHECK-NEXT:    [[CALL1:%.*]] = tail call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([6 x i8], [6 x i8]* @.str, i64 0, i64 0), double [[CALL_I]])
-; CHECK-NEXT:    [[CALL2:%.*]] = tail call [[STRUCT_GRADIENTS:%.*]] @derivative(double [[CALL_I]])
-; CHECK-NEXT:    [[TMP1:%.*]] = extractvalue [[STRUCT_GRADIENTS]] [[CALL2]], 0
-; CHECK-NEXT:    [[CALL3:%.*]] = tail call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([7 x i8], [7 x i8]* @.str.1, i64 0, i64 0), double [[TMP1]])
-; CHECK-NEXT:    ret void
-;
-;
-; CHECK-LABEL: define {{[^@]+}}@fwddiffe3mulglobal
-; CHECK-SAME: (double [[X:%.*]], [3 x double] %"x'", i64 [[IDX:%.*]]) [[ATTR5:#.*]] {
-; CHECK-NEXT:  entry:
-; CHECK-NEXT:    %"alloc'ipa" = alloca double, align 8
+; CHECK-NEXT:    %"alloc'ipa" = alloca double
 ; CHECK-NEXT:    [[TMP0:%.*]] = insertvalue [3 x double*] undef, double* %"alloc'ipa", 0
-; CHECK-NEXT:    %"alloc'ipa1" = alloca double, align 8
+; CHECK-NEXT:    %"alloc'ipa1" = alloca double
 ; CHECK-NEXT:    [[TMP1:%.*]] = insertvalue [3 x double*] [[TMP0]], double* %"alloc'ipa1", 1
-; CHECK-NEXT:    %"alloc'ipa2" = alloca double, align 8
+; CHECK-NEXT:    %"alloc'ipa2" = alloca double
 ; CHECK-NEXT:    [[TMP2:%.*]] = insertvalue [3 x double*] [[TMP1]], double* %"alloc'ipa2", 2
-; CHECK-NEXT:    store double 0.000000e+00, double* %"alloc'ipa", align 8
-; CHECK-NEXT:    store double 0.000000e+00, double* %"alloc'ipa1", align 8
-; CHECK-NEXT:    store double 0.000000e+00, double* %"alloc'ipa2", align 8
-; CHECK-NEXT:    [[ALLOC:%.*]] = alloca double, align 8
-; CHECK-NEXT:    store double [[X]], double* [[ALLOC]], align 8
+; CHECK-NEXT:    store double 0.000000e+00, double* %"alloc'ipa"
+; CHECK-NEXT:    store double 0.000000e+00, double* %"alloc'ipa1"
+; CHECK-NEXT:    store double 0.000000e+00, double* %"alloc'ipa2"
+; CHECK-NEXT:    [[ALLOC:%.*]] = alloca double
+; CHECK-NEXT:    store double [[X]], double* [[ALLOC]]
 ; CHECK-NEXT:    [[TMP3:%.*]] = extractvalue [3 x double] %"x'", 0
-; CHECK-NEXT:    store double [[TMP3]], double* %"alloc'ipa", align 8
+; CHECK-NEXT:    store double [[TMP3]], double* %"alloc'ipa"
 ; CHECK-NEXT:    [[TMP4:%.*]] = extractvalue [3 x double] %"x'", 1
-; CHECK-NEXT:    store double [[TMP4]], double* %"alloc'ipa1", align 8
+; CHECK-NEXT:    store double [[TMP4]], double* %"alloc'ipa1"
 ; CHECK-NEXT:    [[TMP5:%.*]] = extractvalue [3 x double] %"x'", 2
-; CHECK-NEXT:    store double [[TMP5]], double* %"alloc'ipa2", align 8
+; CHECK-NEXT:    store double [[TMP5]], double* %"alloc'ipa2"
 ; CHECK-NEXT:    %"arrayidx'ipg" = getelementptr inbounds [1 x void (double*)*], [1 x void (double*)*]* @global_shadow, i64 0, i64 [[IDX]]
-; CHECK-NEXT:    %"fp'ipl" = load void (double*)*, void (double*)** %"arrayidx'ipg", align 8
+; CHECK-NEXT:    %"fp'ipl" = load void (double*)*, void (double*)** %"arrayidx'ipg"
 ; CHECK-NEXT:    [[TMP6:%.*]] = bitcast void (double*)* %"fp'ipl" to void (double*, [3 x double*])**
-; CHECK-NEXT:    [[TMP7:%.*]] = load void (double*, [3 x double*])*, void (double*, [3 x double*])** [[TMP6]], align 8
+; CHECK-NEXT:    [[TMP7:%.*]] = load void (double*, [3 x double*])*, void (double*, [3 x double*])** [[TMP6]]
 ; CHECK-NEXT:    call void [[TMP7]](double* [[ALLOC]], [3 x double*] [[TMP2]])
-; CHECK-NEXT:    %"ret'ipl" = load double, double* %"alloc'ipa", align 8, [[TBAA3]]
+; CHECK-NEXT:    %"ret'ipl" = load double, double* %"alloc'ipa"
 ; CHECK-NEXT:    [[TMP8:%.*]] = insertvalue [3 x double] undef, double %"ret'ipl", 0
-; CHECK-NEXT:    %"ret'ipl7" = load double, double* %"alloc'ipa1", align 8, [[TBAA3]]
+; CHECK-NEXT:    %"ret'ipl7" = load double, double* %"alloc'ipa1"
 ; CHECK-NEXT:    [[TMP9:%.*]] = insertvalue [3 x double] [[TMP8]], double %"ret'ipl7", 1
-; CHECK-NEXT:    %"ret'ipl8" = load double, double* %"alloc'ipa2", align 8, [[TBAA3]]
+; CHECK-NEXT:    %"ret'ipl8" = load double, double* %"alloc'ipa2"
 ; CHECK-NEXT:    [[TMP10:%.*]] = insertvalue [3 x double] [[TMP9]], double %"ret'ipl8", 2
 ; CHECK-NEXT:    ret [3 x double] [[TMP10]]
 ;
 ;
-; CHECK-LABEL: define {{[^@]+}}@fwddiffe3ipmul
-; CHECK-SAME: (double* [[X:%.*]], [3 x double*] %"x'") [[ATTR6:#.*]] {
+; CHECK: define {{[^@]+}}@fwddiffe3ipmul(double* [[X:%.*]], [3 x double*] %"x'")
 ; CHECK-NEXT:  entry:
 ; CHECK-NEXT:    [[TMP0:%.*]] = extractvalue [3 x double*] %"x'", 0
-; CHECK-NEXT:    %"'ipl" = load double, double* [[TMP0]], align 8, [[TBAA3]]
+; CHECK-NEXT:    %"'ipl" = load double, double* [[TMP0]]
 ; CHECK-NEXT:    [[TMP1:%.*]] = extractvalue [3 x double*] %"x'", 1
-; CHECK-NEXT:    %"'ipl1" = load double, double* [[TMP1]], align 8, [[TBAA3]]
+; CHECK-NEXT:    %"'ipl1" = load double, double* [[TMP1]]
 ; CHECK-NEXT:    [[TMP2:%.*]] = extractvalue [3 x double*] %"x'", 2
-; CHECK-NEXT:    %"'ipl2" = load double, double* [[TMP2]], align 8, [[TBAA3]]
-; CHECK-NEXT:    [[TMP3:%.*]] = load double, double* [[X]], align 8, [[TBAA3]]
+; CHECK-NEXT:    %"'ipl2" = load double, double* [[TMP2]]
+; CHECK-NEXT:    [[TMP3:%.*]] = load double, double* [[X]]
 ; CHECK-NEXT:    [[MUL:%.*]] = fmul fast double [[TMP3]], [[TMP3]]
 ; CHECK-NEXT:    [[TMP4:%.*]] = fmul fast double %"'ipl", [[TMP3]]
 ; CHECK-NEXT:    [[TMP5:%.*]] = fmul fast double %"'ipl", [[TMP3]]
@@ -178,12 +128,12 @@ attributes #4 = { nounwind "correctly-rounded-divide-sqrt-fp-math"="false" "disa
 ; CHECK-NEXT:    [[TMP10:%.*]] = fmul fast double %"'ipl2", [[TMP3]]
 ; CHECK-NEXT:    [[TMP11:%.*]] = fmul fast double %"'ipl2", [[TMP3]]
 ; CHECK-NEXT:    [[TMP12:%.*]] = fadd fast double [[TMP10]], [[TMP11]]
-; CHECK-NEXT:    store double [[MUL]], double* [[X]], align 8
+; CHECK-NEXT:    store double [[MUL]], double* [[X]]
 ; CHECK-NEXT:    [[TMP13:%.*]] = extractvalue [3 x double*] %"x'", 0
-; CHECK-NEXT:    store double [[TMP6]], double* [[TMP13]], align 8
+; CHECK-NEXT:    store double [[TMP6]], double* [[TMP13]]
 ; CHECK-NEXT:    [[TMP14:%.*]] = extractvalue [3 x double*] %"x'", 1
-; CHECK-NEXT:    store double [[TMP9]], double* [[TMP14]], align 8
+; CHECK-NEXT:    store double [[TMP9]], double* [[TMP14]]
 ; CHECK-NEXT:    [[TMP15:%.*]] = extractvalue [3 x double*] %"x'", 2
-; CHECK-NEXT:    store double [[TMP12]], double* [[TMP15]], align 8
+; CHECK-NEXT:    store double [[TMP12]], double* [[TMP15]]
 ; CHECK-NEXT:    ret void
 ;

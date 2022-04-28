@@ -67,7 +67,7 @@ define %struct.Gradients @main(double* %A, double* %dA1, double* %dA2, double* %
 ; CHECK-NEXT:    br label [[LOOP:%.*]]
 ; CHECK:       loop:
 ; CHECK-NEXT:    [[IV:%.*]] = phi i64 [ [[IV_NEXT:%.*]], [[LOOP]] ], [ 0, [[ENTRY:%.*]] ]
-; CHECK-NEXT:    [[TMP0:%.*]] = phi fast [3 x double] [ %"start'", [[ENTRY]] ], [ [[TMP22:%.*]], [[LOOP]] ]
+; CHECK-NEXT:    [[TMP0:%.*]] = phi {{(fast )?}}[3 x double] [ %"start'", [[ENTRY]] ], [ [[TMP22:%.*]], [[LOOP]] ]
 ; CHECK-NEXT:    [[REDUCE:%.*]] = phi double [ [[START]], [[ENTRY]] ], [ [[DIV:%.*]], [[LOOP]] ]
 ; CHECK-NEXT:    [[IV_NEXT]] = add nuw nsw i64 [[IV]], 1
 ; CHECK-NEXT:    [[TMP1:%.*]] = extractvalue [3 x double*] %"A'", 0
@@ -112,7 +112,7 @@ define %struct.Gradients @main(double* %A, double* %dA1, double* %dA2, double* %
 ; CHECK-NEXT:    br label [[LOOP:%.*]]
 ; CHECK:       loop:
 ; CHECK-NEXT:    [[IV:%.*]] = phi i64 [ [[IV_NEXT:%.*]], [[LOOP]] ], [ 0, [[ENTRY:%.*]] ]
-; CHECK-NEXT:    [[TMP0:%.*]] = phi fast [3 x double] [ zeroinitializer, [[ENTRY]] ], [ [[TMP22:%.*]], [[LOOP]] ]
+; CHECK-NEXT:    [[TMP0:%.*]] = phi {{(fast )?}}[3 x double] [ zeroinitializer, [[ENTRY]] ], [ [[TMP22:%.*]], [[LOOP]] ]
 ; CHECK-NEXT:    [[REDUCE:%.*]] = phi double [ 2.000000e+00, [[ENTRY]] ], [ [[DIV:%.*]], [[LOOP]] ]
 ; CHECK-NEXT:    [[IV_NEXT]] = add nuw nsw i64 [[IV]], 1
 ; CHECK-NEXT:    [[TMP1:%.*]] = extractvalue [3 x double*] %"A'", 0

@@ -26,9 +26,9 @@ declare %struct.Gradients @__enzyme_fwddiff(<2 x double> (<2 x double>)*, ...)
 ; CHECK-NEXT:    [[TMP0:%.*]] = extractvalue [3 x <2 x double>] %"x'", 0
 ; CHECK-NEXT:    [[TMP1:%.*]] = extractvalue [3 x <2 x double>] %"x'", 1
 ; CHECK-NEXT:    [[TMP2:%.*]] = extractvalue [3 x <2 x double>] %"x'", 2
-; CHECK-NEXT:    [[TMP3:%.*]] = fneg fast <2 x double> [[TMP0]]
-; CHECK-NEXT:    [[TMP4:%.*]] = fneg fast <2 x double> [[TMP1]]
-; CHECK-NEXT:    [[TMP5:%.*]] = fneg fast <2 x double> [[TMP2]]
+; CHECK-NEXT:    [[TMP3:%.*]] = {{(fsub fast <2 x double> <double \-0.000000e\+00, double \-0.000000e\+00>,|fneg fast <2 x double>)}} [[TMP0]]
+; CHECK-NEXT:    [[TMP4:%.*]] = {{(fsub fast <2 x double> <double \-0.000000e\+00, double \-0.000000e\+00>,|fneg fast <2 x double>)}} [[TMP1]]
+; CHECK-NEXT:    [[TMP5:%.*]] = {{(fsub fast <2 x double> <double \-0.000000e\+00, double \-0.000000e\+00>,|fneg fast <2 x double>)}} [[TMP2]]
 ; CHECK-NEXT:    [[TMP6:%.*]] = insertvalue [3 x <2 x double>] undef, <2 x double> [[TMP3]], 0
 ; CHECK-NEXT:    [[TMP7:%.*]] = insertvalue [3 x <2 x double>] [[TMP6]], <2 x double> [[TMP4]], 1
 ; CHECK-NEXT:    [[TMP8:%.*]] = insertvalue [3 x <2 x double>] [[TMP7]], <2 x double> [[TMP5]], 2

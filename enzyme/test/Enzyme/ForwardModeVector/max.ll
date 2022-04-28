@@ -26,11 +26,11 @@ entry:
 ; CHECK-NEXT:    [[CMP:%.*]] = fcmp fast ogt double [[X]], [[Y]]
 ; CHECK-NEXT:    [[TMP0:%.*]] = extractvalue [2 x double] %"x'", 0
 ; CHECK-NEXT:    [[TMP1:%.*]] = extractvalue [2 x double] %"y'", 0
-; CHECK-NEXT:    %"cond'ipse" = select fast i1 [[CMP]], double [[TMP0]], double [[TMP1]]
+; CHECK-NEXT:    %"cond'ipse" = select {{(fast )?}}i1 [[CMP]], double [[TMP0]], double [[TMP1]]
 ; CHECK-NEXT:    [[TMP2:%.*]] = insertvalue [2 x double] undef, double %"cond'ipse", 0
 ; CHECK-NEXT:    [[TMP3:%.*]] = extractvalue [2 x double] %"x'", 1
 ; CHECK-NEXT:    [[TMP4:%.*]] = extractvalue [2 x double] %"y'", 1
-; CHECK-NEXT:    %"cond'ipse1" = select fast i1 [[CMP]], double [[TMP3]], double [[TMP4]]
+; CHECK-NEXT:    %"cond'ipse1" = select {{(fast )?}}i1 [[CMP]], double [[TMP3]], double [[TMP4]]
 ; CHECK-NEXT:    [[TMP5:%.*]] = insertvalue [2 x double] [[TMP2]], double %"cond'ipse1", 1
 ; CHECK-NEXT:    ret [2 x double] [[TMP5]]
 ;

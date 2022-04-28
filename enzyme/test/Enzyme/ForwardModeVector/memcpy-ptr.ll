@@ -50,15 +50,15 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:    %"'ipc6" = bitcast double** [[TMP11]] to i8*
 ; CHECK-NEXT:    [[TMP12:%.*]] = insertvalue [3 x i8*] [[TMP10]], i8* %"'ipc6", 2
 ; CHECK-NEXT:    [[TMP13:%.*]] = bitcast double** [[SRC]] to i8*
-; CHECK-NEXT:    tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 [[TMP6]], i8* align 1 [[TMP13]], i64 [[NUM]], i1 false) [[ATTR3:#.*]]
+; CHECK-NEXT:    tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 [[TMP6]], i8* align 1 [[TMP13]], i64 [[NUM]], i1 false)
 ; CHECK-NEXT:    [[TMP14:%.*]] = extractvalue [3 x i8*] [[TMP5]], 0
 ; CHECK-NEXT:    [[TMP15:%.*]] = extractvalue [3 x i8*] [[TMP12]], 0
-; CHECK-NEXT:    tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 [[TMP14]], i8* align 1 [[TMP15]], i64 [[NUM]], i1 false) [[ATTR3]]
+; CHECK-NEXT:    tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 [[TMP14]], i8* align 1 [[TMP15]], i64 [[NUM]], i1 false) 
 ; CHECK-NEXT:    [[TMP16:%.*]] = extractvalue [3 x i8*] [[TMP5]], 1
 ; CHECK-NEXT:    [[TMP17:%.*]] = extractvalue [3 x i8*] [[TMP12]], 1
-; CHECK-NEXT:    tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 [[TMP16]], i8* align 1 [[TMP17]], i64 [[NUM]], i1 false) [[ATTR3]]
+; CHECK-NEXT:    tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 [[TMP16]], i8* align 1 [[TMP17]], i64 [[NUM]], i1 false)
 ; CHECK-NEXT:    [[TMP18:%.*]] = extractvalue [3 x i8*] [[TMP5]], 2
 ; CHECK-NEXT:    [[TMP19:%.*]] = extractvalue [3 x i8*] [[TMP12]], 2
-; CHECK-NEXT:    tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 [[TMP18]], i8* align 1 [[TMP19]], i64 [[NUM]], i1 false) [[ATTR3]]
+; CHECK-NEXT:    tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 [[TMP18]], i8* align 1 [[TMP19]], i64 [[NUM]], i1 false) 
 ; CHECK-NEXT:    ret void
 ;

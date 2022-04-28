@@ -96,7 +96,7 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:    [[CMP18:%.*]] = icmp eq %struct.n* [[NODE]], null
 ; CHECK-NEXT:    br i1 [[CMP18]], label [[FOR_COND_CLEANUP:%.*]], label [[FOR_COND1_PREHEADER:%.*]]
 ; CHECK:       for.cond1.preheader:
-; CHECK-NEXT:    [[TMP0:%.*]] = phi fast [3 x double] [ [[TMP19:%.*]], [[FOR_COND_CLEANUP4:%.*]] ], [ zeroinitializer, [[ENTRY:%.*]] ]
+; CHECK-NEXT:    [[TMP0:%.*]] = phi {{(fast )?}}[3 x double] [ [[TMP19:%.*]], [[FOR_COND_CLEANUP4:%.*]] ], [ zeroinitializer, [[ENTRY:%.*]] ]
 ; CHECK-NEXT:    [[TMP1:%.*]] = phi [3 x %struct.n*] [ [[TMP8:%.*]], [[FOR_COND_CLEANUP4]] ], [ %"node'", [[ENTRY]] ]
 ; CHECK-NEXT:    [[VAL_020:%.*]] = phi %struct.n* [ [[TMP9:%.*]], [[FOR_COND_CLEANUP4]] ], [ [[NODE]], [[ENTRY]] ]
 ; CHECK-NEXT:    [[TMP2:%.*]] = extractvalue [3 x %struct.n*] [[TMP1]], 0
@@ -110,7 +110,7 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:    %"'ipl6" = load double*, double** %"values'ipg4", align 8, !tbaa !2
 ; CHECK-NEXT:    br label [[FOR_BODY5:%.*]]
 ; CHECK:       for.cond.cleanup:
-; CHECK-NEXT:    [[TMP5:%.*]] = phi fast [3 x double] [ zeroinitializer, [[ENTRY]] ], [ [[TMP19]], [[FOR_COND_CLEANUP4]] ]
+; CHECK-NEXT:    [[TMP5:%.*]] = phi {{(fast )?}}[3 x double] [ zeroinitializer, [[ENTRY]] ], [ [[TMP19]], [[FOR_COND_CLEANUP4]] ]
 ; CHECK-NEXT:    ret [3 x double] [[TMP5]]
 ; CHECK:       for.cond.cleanup4:
 ; CHECK-NEXT:    %"next'ipg" = getelementptr inbounds [[STRUCT_N]], %struct.n* [[TMP2]], i64 0, i32 1
@@ -127,7 +127,7 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:    [[CMP:%.*]] = icmp eq %struct.n* [[TMP9]], null
 ; CHECK-NEXT:    br i1 [[CMP]], label [[FOR_COND_CLEANUP]], label [[FOR_COND1_PREHEADER]]
 ; CHECK:       for.body5:
-; CHECK-NEXT:    [[TMP10:%.*]] = phi fast [3 x double] [ [[TMP0]], [[FOR_COND1_PREHEADER]] ], [ [[TMP19]], [[FOR_BODY5]] ]
+; CHECK-NEXT:    [[TMP10:%.*]] = phi {{(fast )?}}[3 x double] [ [[TMP0]], [[FOR_COND1_PREHEADER]] ], [ [[TMP19]], [[FOR_BODY5]] ]
 ; CHECK-NEXT:    [[IV1:%.*]] = phi i64 [ 0, [[FOR_COND1_PREHEADER]] ], [ [[IV_NEXT2:%.*]], [[FOR_BODY5]] ]
 ; CHECK-NEXT:    [[IV_NEXT2]] = add nuw nsw i64 [[IV1]], 1
 ; CHECK-NEXT:    %"arrayidx'ipg" = getelementptr inbounds double, double* %"'ipl", i64 [[IV1]]

@@ -54,7 +54,7 @@ define %struct.Gradients @main(double* %A, double* %dA1, double* %dA2, double* %
 ; CHECK-NEXT:    br label [[LOOP:%.*]]
 ; CHECK:       loop:
 ; CHECK-NEXT:    [[IV:%.*]] = phi i64 [ [[IV_NEXT:%.*]], [[BODY:%.*]] ], [ 0, [[ENTRY:%.*]] ]
-; CHECK-NEXT:    [[TMP0:%.*]] = phi fast [3 x double] [ %"start'", [[ENTRY]] ], [ [[TMP22:%.*]], [[BODY]] ]
+; CHECK-NEXT:    [[TMP0:%.*]] = phi {{(fast )?}}[3 x double] [ %"start'", [[ENTRY]] ], [ [[TMP22:%.*]], [[BODY]] ]
 ; CHECK-NEXT:    [[REDUCE:%.*]] = phi double [ [[START]], [[ENTRY]] ], [ [[DIV:%.*]], [[BODY]] ]
 ; CHECK-NEXT:    [[IV_NEXT]] = add nuw nsw i64 [[IV]], 1
 ; CHECK-NEXT:    [[CMP:%.*]] = icmp ne i64 [[IV]], [[N]]

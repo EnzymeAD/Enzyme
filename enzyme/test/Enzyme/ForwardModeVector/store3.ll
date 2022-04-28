@@ -33,9 +33,9 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK-NEXT:    store double 0.000000e+00, double* [[TMP0]], align 8
 ; CHECK-NEXT:    store double 0.000000e+00, double* [[TMP1]], align 8
 ; CHECK-NEXT:    store double 0.000000e+00, double* [[TMP2]], align 8
-; CHECK-NEXT:    %"res'ipl" = load double, double* [[TMP0]], align 8
+; CHECK-NEXT:    %"res'ipl" = load double, double* [[TMP0]]
 ; CHECK-NEXT:    [[TMP3:%.*]] = insertvalue [3 x double] undef, double %"res'ipl", 0
-; CHECK-NEXT:    %"res'ipl1" = load double, double* [[TMP1]], align 8
+; CHECK-NEXT:    %"res'ipl1" = load double, double* [[TMP1]]
 ; CHECK-NEXT:    [[TMP4:%.*]] = insertvalue [3 x double] [[TMP3]], double %"res'ipl1", 1
 ; CHECK-NEXT:    [[TMP5:%.*]] = insertvalue [3 x double] [[TMP4]], double 0.000000e+00, 2
 ; CHECK-NEXT:    ret [3 x double] [[TMP5]]

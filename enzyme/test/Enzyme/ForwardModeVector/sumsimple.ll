@@ -50,31 +50,31 @@ attributes #0 = { noinline nounwind uwtable }
 ; CHECK-NEXT:    br i1 [[CMP]], label [[FOR_BODY]], label [[FOR_END:%.*]]
 ; CHECK:       for.body:
 ; CHECK-NEXT:    [[TMP1:%.*]] = extractvalue [3 x double*] %"x'", 0
-; CHECK-NEXT:    %"'ipl" = load double, double* [[TMP1]], align 8
+; CHECK-NEXT:    %"'ipl" = load double, double* [[TMP1]]
 ; CHECK-NEXT:    [[TMP2:%.*]] = extractvalue [3 x double*] %"x'", 1
-; CHECK-NEXT:    %"'ipl5" = load double, double* [[TMP2]], align 8
+; CHECK-NEXT:    %"'ipl5" = load double, double* [[TMP2]]
 ; CHECK-NEXT:    [[TMP3:%.*]] = extractvalue [3 x double*] %"x'", 2
-; CHECK-NEXT:    %"'ipl6" = load double, double* [[TMP3]], align 8
-; CHECK-NEXT:    [[TMP4:%.*]] = load double, double* [[X]], align 8
+; CHECK-NEXT:    %"'ipl6" = load double, double* [[TMP3]]
+; CHECK-NEXT:    [[TMP4:%.*]] = load double, double* [[X]]
 ; CHECK-NEXT:    [[TMP5:%.*]] = extractvalue [3 x double**] %"y'", 0
-; CHECK-NEXT:    %"'ipl7" = load double*, double** [[TMP5]], align 8
+; CHECK-NEXT:    %"'ipl7" = load double*, double** [[TMP5]]
 ; CHECK-NEXT:    [[TMP6:%.*]] = extractvalue [3 x double**] %"y'", 1
-; CHECK-NEXT:    %"'ipl8" = load double*, double** [[TMP6]], align 8
+; CHECK-NEXT:    %"'ipl8" = load double*, double** [[TMP6]]
 ; CHECK-NEXT:    [[TMP7:%.*]] = extractvalue [3 x double**] %"y'", 2
-; CHECK-NEXT:    %"'ipl9" = load double*, double** [[TMP7]], align 8
-; CHECK-NEXT:    [[TMP8:%.*]] = load double*, double** [[Y]], align 8
-; CHECK-NEXT:    %"'ipl10" = load double, double* %"'ipl7", align 8
-; CHECK-NEXT:    %"'ipl11" = load double, double* %"'ipl8", align 8
-; CHECK-NEXT:    %"'ipl12" = load double, double* %"'ipl9", align 8
-; CHECK-NEXT:    [[TMP9:%.*]] = load double, double* [[TMP8]], align 8
+; CHECK-NEXT:    %"'ipl9" = load double*, double** [[TMP7]]
+; CHECK-NEXT:    [[TMP8:%.*]] = load double*, double** [[Y]]
+; CHECK-NEXT:    %"'ipl10" = load double, double* %"'ipl7"
+; CHECK-NEXT:    %"'ipl11" = load double, double* %"'ipl8"
+; CHECK-NEXT:    %"'ipl12" = load double, double* %"'ipl9"
+; CHECK-NEXT:    [[TMP9:%.*]] = load double, double* [[TMP8]]
 ; CHECK-NEXT:    [[ADD:%.*]] = fadd fast double [[TMP9]], [[TMP4]]
 ; CHECK-NEXT:    [[TMP10:%.*]] = fadd fast double %"'ipl10", %"'ipl"
 ; CHECK-NEXT:    [[TMP11:%.*]] = fadd fast double %"'ipl11", %"'ipl5"
 ; CHECK-NEXT:    [[TMP12:%.*]] = fadd fast double %"'ipl12", %"'ipl6"
-; CHECK-NEXT:    store double [[ADD]], double* [[TMP8]], align 8
-; CHECK-NEXT:    store double [[TMP10]], double* %"'ipl7", align 8
-; CHECK-NEXT:    store double [[TMP11]], double* %"'ipl8", align 8
-; CHECK-NEXT:    store double [[TMP12]], double* %"'ipl9", align 8
+; CHECK-NEXT:    store double [[ADD]], double* [[TMP8]]
+; CHECK-NEXT:    store double [[TMP10]], double* %"'ipl7"
+; CHECK-NEXT:    store double [[TMP11]], double* %"'ipl8"
+; CHECK-NEXT:    store double [[TMP12]], double* %"'ipl9"
 ; CHECK-NEXT:    br label [[FOR_COND]]
 ; CHECK:       for.end:
 ; CHECK-NEXT:    ret void
