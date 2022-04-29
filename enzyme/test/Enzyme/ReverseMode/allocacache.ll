@@ -476,7 +476,7 @@ attributes #11 = { cold }
 ; CHECK-NEXT:   %0 = load <2 x double>, <2 x double>* %a, align 16
 ; CHECK-NEXT:   %1 = load <2 x double>, <2 x double>* %b, align 16
 ; CHECK-NEXT:   %mul.i = fmul <2 x double> %0, %1
-; CHECK-NEXT:   %.fca.0.insert = insertvalue { <2 x double>, <2 x double> } undef, <2 x double> %0, 0
+; CHECK-NEXT:   %.fca.0.insert = insertvalue { <2 x double>, <2 x double> } {{(undef|poison)}}, <2 x double> %0, 0
 ; CHECK-NEXT:   %.fca.1.insert = insertvalue { <2 x double>, <2 x double> } %.fca.0.insert, <2 x double> %mul.i, 1
 ; CHECK-NEXT:   ret { <2 x double>, <2 x double> } %.fca.1.insert
 ; CHECK-NEXT: }

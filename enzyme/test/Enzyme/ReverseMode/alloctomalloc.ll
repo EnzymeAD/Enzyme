@@ -487,7 +487,7 @@ attributes #9 = { cold }
 
 ; CHECK: define internal { <2 x double>*, <2 x double>* } @augmented_subcast(<2 x double>* %tmp.i, <2 x double>* %"tmp.i'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %.fca.0.insert = insertvalue { <2 x double>*, <2 x double>* } undef, <2 x double>* %tmp.i, 0
+; CHECK-NEXT:   %.fca.0.insert = insertvalue { <2 x double>*, <2 x double>* } {{(undef|poison)}}, <2 x double>* %tmp.i, 0
 ; CHECK-NEXT:   %.fca.1.insert = insertvalue { <2 x double>*, <2 x double>* } %.fca.0.insert, <2 x double>* %"tmp.i'", 1
 ; CHECK-NEXT:   ret { <2 x double>*, <2 x double>* } %.fca.1.insert
 ; CHECK-NEXT: }
