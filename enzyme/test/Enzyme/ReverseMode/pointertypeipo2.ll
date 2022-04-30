@@ -85,7 +85,7 @@ attributes #4 = { nounwind }
 
 ; CHECK: define internal { i64*, i64* } @augmented_cast(i64* %a, i64* %"a'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %.fca.0.insert = insertvalue { i64*, i64* } poison, i64* %a, 0
+; CHECK-NEXT:   %.fca.0.insert = insertvalue { i64*, i64* } {{(undef|poison)}}, i64* %a, 0
 ; CHECK-NEXT:   %.fca.1.insert = insertvalue { i64*, i64* } %.fca.0.insert, i64* %"a'", 1
 ; CHECK-NEXT:   ret { i64*, i64* } %.fca.1.insert
 ; CHECK-NEXT: }
