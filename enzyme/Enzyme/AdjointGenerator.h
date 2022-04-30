@@ -10202,10 +10202,18 @@ public:
                 std::make_pair(orig, InvertedPointerVH(gutils, anti)));
           }
         endAnti:;
+
+          bool isAlloca = isa_and_nonnull<AllocaInst>(anti);
+          if (gutils->getWidth() != 1) {
+            if (auto insertion = dyn_cast_or_null<InsertElementInst>(anti)) {
+              isAlloca = isa<AllocaInst>(insertion->getOperand(1));
+            }
+          }
+
           if (((Mode == DerivativeMode::ReverseModeCombined && shouldFree()) ||
                (Mode == DerivativeMode::ReverseModeGradient && shouldFree()) ||
                (Mode == DerivativeMode::ForwardModeSplit && shouldFree())) &&
-              !isa<AllocaInst>(anti)) {
+              !isAlloca) {
             IRBuilder<> Builder2(call.getParent());
             getReverseBuilder(Builder2);
             assert(anti);
