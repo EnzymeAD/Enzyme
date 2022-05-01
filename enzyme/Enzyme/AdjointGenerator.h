@@ -8273,11 +8273,10 @@ public:
 
         if (normalReturn && normalReturn != newCall) {
           assert(normalReturn->getType() == newCall->getType());
-          assert(Mode != DerivativeMode::ReverseModeGradient);
           gutils->replaceAWithB(newCall, normalReturn);
           gutils->erase(newCall);
-        }
-        eraseIfUnused(*orig);
+        } else
+          eraseIfUnused(*orig);
         return;
       }
     }
