@@ -4957,12 +4957,6 @@ public:
         if (Mode != DerivativeMode::ForwardMode) {
           return false;
         } else {
-          Type *castval;
-          if (auto PT = dyn_cast<PointerType>(call.getArgOperand(1)->getType()))
-            castval = PT;
-          else
-            castval = PointerType::getUnqual(innerType);
-
           auto in_arg = call.getCalledFunction()->arg_begin();
           Argument *n = in_arg;
           in_arg++;
