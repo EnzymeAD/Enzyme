@@ -10203,7 +10203,7 @@ public:
           }
         endAnti:;
 
-          bool isAlloca = isa_and_nonnull<AllocaInst>(anti);
+          bool isAlloca = anti ? isa<AllocaInst>(anti) : false;
           if (gutils->getWidth() != 1) {
             if (auto insertion = dyn_cast_or_null<InsertElementInst>(anti)) {
               isAlloca = isa<AllocaInst>(insertion->getOperand(1));
