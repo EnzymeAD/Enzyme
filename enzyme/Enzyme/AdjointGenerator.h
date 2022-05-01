@@ -3984,7 +3984,6 @@ public:
 
         Value *op0 = gutils->getNewFromOriginal(orig_ops[0]);
         Value *op1 = gutils->getNewFromOriginal(orig_ops[1]);
-        Type *op0Ty = gutils->getShadowType(orig_ops[0]->getType());
 
         Value *res =
             Constant::getNullValue(gutils->getShadowType(CI.getType()));
