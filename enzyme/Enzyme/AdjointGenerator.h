@@ -850,8 +850,15 @@ public:
       IRBuilder<> Builder2(&I);
       getForwardBuilder(Builder2);
 
-      Value *diff =
-          gutils->invertPointerM(orig_val, Builder2, /*nullShadow*/ true);
+      Value *diff;
+      // TODO type analyze
+      if (!constantval)
+        diff = gutils->invertPointerM(orig_val, Builder2, /*nullShadow*/ true);
+      else if (orig_val->getType()->isPointerTy())
+        diff = gutils->invertPointerM(orig_val, Builder2, /*nullShadow*/ false);
+      else
+        diff = gutils->invertPointerM(orig_val, Builder2, /*nullShadow*/ true);
+
       gutils->setPtrDiffe(orig_ptr, diff, Builder2, align, isVolatile, ordering,
                           syncScope, mask);
       return;
