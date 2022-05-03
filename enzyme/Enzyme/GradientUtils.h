@@ -2394,21 +2394,25 @@ public:
         auto rule1 = [&](Value *ptr) {
           return BuilderM.CreateBitCast(
               ptr, PointerType::get(
-                       IntToFloatTy(dif->getType()),
+                       IntToFloatTy(diffType),
                        cast<PointerType>(ptr->getType())->getAddressSpace()));
         };
 
-        ptr = applyChainRule(diffType, BuilderM, rule1, ptr);
+        ptr = applyChainRule(
+            PointerType::get(
+                IntToFloatTy(diffType),
+                cast<PointerType>(origptr->getType())->getAddressSpace()),
+            BuilderM, rule1, ptr);
 
         auto rule2 = [&](Value *dif) {
-          return BuilderM.CreateBitCast(dif, IntToFloatTy(dif->getType()));
+          return BuilderM.CreateBitCast(dif, IntToFloatTy(diffType));
         };
 
-        dif = applyChainRule(diffType, BuilderM, rule2, dif);
+        dif = applyChainRule(IntToFloatTy(diffType), BuilderM, rule2, dif);
       }
 #if LLVM_VERSION_MAJOR >= 9
       AtomicRMWInst::BinOp op = AtomicRMWInst::FAdd;
-      if (auto vt = dyn_cast<VectorType>(dif->getType())) {
+      if (auto vt = dyn_cast<VectorType>(diffType)) {
 #if LLVM_VERSION_MAJOR >= 12
         assert(!vt->getElementCount().isScalable());
         size_t numElems = vt->getElementCount().getKnownMinValue();
@@ -2488,7 +2492,7 @@ public:
       };
       old = applyChainRule(diffType, BuilderM, rule, ptr);
     } else {
-      Type *tys[] = {dif->getType(), origptr->getType()};
+      Type *tys[] = {diffType, origptr->getType()};
       auto F = Intrinsic::getDeclaration(oldFunc->getParent(),
                                          Intrinsic::masked_load, tys);
 #if LLVM_VERSION_MAJOR >= 10
@@ -2505,7 +2509,7 @@ public:
                          Constant::getNullValue(dif->getType())};
         return BuilderM.CreateCall(F, args);
       };
-      old = applyChainRule(dif->getType(), BuilderM, rule, ip);
+      old = applyChainRule(diffType, BuilderM, rule, ip);
     }
 
     auto rule = [&](Value *dif, Value *old) {
@@ -2541,7 +2545,7 @@ public:
       };
       applyChainRule(BuilderM, rule, ptr, res);
     } else {
-      Type *tys[] = {dif->getType(), origptr->getType()};
+      Type *tys[] = {diffType, origptr->getType()};
       auto F = Intrinsic::getDeclaration(oldFunc->getParent(),
                                          Intrinsic::masked_store, tys);
       assert(align);

@@ -675,8 +675,8 @@ public:
       Type *isfloat = I.getType()->isFPOrFPVectorTy()
                           ? I.getType()->getScalarType()
                           : nullptr;
-      if (!isfloat && type->isIntOrIntVectorTy()) {
-        auto LoadSize = DL.getTypeSizeInBits(type) / 8;
+      if (!isfloat && I.getType()->isIntOrIntVectorTy()) {
+        auto LoadSize = DL.getTypeSizeInBits(I.getType()) / 8;
         ConcreteType vd = BaseType::Unknown;
         if (!OrigOffset)
           vd =
@@ -684,14 +684,14 @@ public:
                               /*errifnotfound*/ false, /*pointerIntSame*/ true);
         if (vd.isKnown())
           isfloat = vd.isFloat();
-        else
+        else {
           isfloat =
               TR.intType(LoadSize, &I, /*errIfNotFound*/ !looseTypeAnalysis)
                   .isFloat();
+        }
       }
 
       if (isfloat) {
-
         switch (Mode) {
         case DerivativeMode::ForwardModeSplit:
         case DerivativeMode::ForwardMode: {
@@ -3977,7 +3977,6 @@ public:
 
         Value *op0 = gutils->getNewFromOriginal(orig_ops[0]);
         Value *op1 = gutils->getNewFromOriginal(orig_ops[1]);
-        Type *op0Ty = gutils->getShadowType(orig_ops[0]->getType());
 
         Value *res =
             Constant::getNullValue(gutils->getShadowType(CI.getType()));
