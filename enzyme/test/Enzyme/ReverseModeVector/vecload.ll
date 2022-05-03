@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -adce -instsimplify -S | FileCheck %s
+; RUN: if [ %llvmver -ge 9 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -adce -instsimplify -S | FileCheck %s; fi
 
 source_filename = "text"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
@@ -68,36 +68,36 @@ entry:
 ; CHECK: define internal void @diffe2tester(i64 addrspace(12)* %i2, [2 x i64 addrspace(12)*] %"i2'", i64 addrspace(13)* %i7, [2 x i64 addrspace(13)*] %"i7'", i8* %tapeArg) 
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
-; CHECK-NEXT:   %"i3'de" = alloca [2 x i64], align 8
-; CHECK-NEXT:   store [2 x i64] zeroinitializer, [2 x i64]* %"i3'de", align 8
+; CHECK-NEXT:   %"i3'de" = alloca [2 x i64]
+; CHECK-NEXT:   store [2 x i64] zeroinitializer, [2 x i64]* %"i3'de"
 ; CHECK-NEXT:   %0 = extractvalue [2 x i64 addrspace(13)*] %"i7'", 0
-; CHECK-NEXT:   %1 = load i64, i64 addrspace(13)* %0, align 8
+; CHECK-NEXT:   %1 = load i64, i64 addrspace(13)* %0
 ; CHECK-NEXT:   %2 = extractvalue [2 x i64 addrspace(13)*] %"i7'", 1
-; CHECK-NEXT:   %3 = load i64, i64 addrspace(13)* %2, align 8
+; CHECK-NEXT:   %3 = load i64, i64 addrspace(13)* %2
 ; CHECK-NEXT:   %4 = extractvalue [2 x i64 addrspace(13)*] %"i7'", 0
-; CHECK-NEXT:   store i64 0, i64 addrspace(13)* %4, align 8
+; CHECK-NEXT:   store i64 0, i64 addrspace(13)* %4
 ; CHECK-NEXT:   %5 = extractvalue [2 x i64 addrspace(13)*] %"i7'", 1
-; CHECK-NEXT:   store i64 0, i64 addrspace(13)* %5, align 8
+; CHECK-NEXT:   store i64 0, i64 addrspace(13)* %5
 ; CHECK-NEXT:   %6 = getelementptr inbounds [2 x i64], [2 x i64]* %"i3'de", i32 0, i32 0
-; CHECK-NEXT:   %7 = load i64, i64* %6, align 8
+; CHECK-NEXT:   %7 = load i64, i64* %6
 ; CHECK-NEXT:   %8 = bitcast i64 %7 to double
 ; CHECK-NEXT:   %9 = bitcast i64 %1 to double
 ; CHECK-NEXT:   %10 = fadd fast double %8, %9
 ; CHECK-NEXT:   %11 = bitcast double %10 to i64
-; CHECK-NEXT:   store i64 %11, i64* %6, align 8
+; CHECK-NEXT:   store i64 %11, i64* %6
 ; CHECK-NEXT:   %12 = getelementptr inbounds [2 x i64], [2 x i64]* %"i3'de", i32 0, i32 1
-; CHECK-NEXT:   %13 = load i64, i64* %12, align 8
+; CHECK-NEXT:   %13 = load i64, i64* %12
 ; CHECK-NEXT:   %14 = bitcast i64 %13 to double
 ; CHECK-NEXT:   %15 = bitcast i64 %3 to double
 ; CHECK-NEXT:   %16 = fadd fast double %14, %15
 ; CHECK-NEXT:   %17 = bitcast double %16 to i64
-; CHECK-NEXT:   store i64 %17, i64* %12, align 8
-; CHECK-NEXT:   %18 = load [2 x i64], [2 x i64]* %"i3'de", align 8
-; CHECK-NEXT:   store [2 x i64] zeroinitializer, [2 x i64]* %"i3'de", align 8
+; CHECK-NEXT:   store i64 %17, i64* %12
+; CHECK-NEXT:   %18 = load [2 x i64], [2 x i64]* %"i3'de"
+; CHECK-NEXT:   store [2 x i64] zeroinitializer, [2 x i64]* %"i3'de"
 ; CHECK-NEXT:   %19 = extractvalue [2 x i64 addrspace(12)*] %"i2'", 0
-; CHECK-NEXT:   %20 = load i64, i64 addrspace(12)* %19, align 8
+; CHECK-NEXT:   %20 = load i64, i64 addrspace(12)* %19
 ; CHECK-NEXT:   %21 = extractvalue [2 x i64 addrspace(12)*] %"i2'", 1
-; CHECK-NEXT:   %22 = load i64, i64 addrspace(12)* %21, align 8
+; CHECK-NEXT:   %22 = load i64, i64 addrspace(12)* %21
 ; CHECK-NEXT:   %23 = extractvalue [2 x i64] %18, 0
 ; CHECK-NEXT:   %24 = bitcast i64 %23 to double
 ; CHECK-NEXT:   %25 = bitcast i64 %20 to double
@@ -109,9 +109,9 @@ entry:
 ; CHECK-NEXT:   %31 = fadd fast double %30, %29
 ; CHECK-NEXT:   %32 = bitcast double %31 to i64
 ; CHECK-NEXT:   %33 = extractvalue [2 x i64 addrspace(12)*] %"i2'", 0
-; CHECK-NEXT:   store i64 %27, i64 addrspace(12)* %33, align 8
+; CHECK-NEXT:   store i64 %27, i64 addrspace(12)* %33
 ; CHECK-NEXT:   %34 = extractvalue [2 x i64 addrspace(12)*] %"i2'", 1
-; CHECK-NEXT:   store i64 %32, i64 addrspace(12)* %34, align 8
+; CHECK-NEXT:   store i64 %32, i64 addrspace(12)* %34
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
