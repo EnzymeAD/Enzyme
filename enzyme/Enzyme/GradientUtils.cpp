@@ -445,7 +445,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     SmallVector<std::pair<Value *, unsigned>, 0> insertElements;
     Value *agg = op->getAggregateOperand();
     while (auto op1 = dyn_cast<InsertValueInst>(agg)) {
-      if (knownRecomputeHeuristic.count(op1) &&
+      if (knownRecomputeHeuristic.count(op1) == 1 &&
           knownRecomputeHeuristic[op1] == true)
         break;
       insertElements.push_back({op1->getInsertedValueOperand(),
