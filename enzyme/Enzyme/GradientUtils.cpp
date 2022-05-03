@@ -442,22 +442,36 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     assert(val->getType() == toreturn->getType());
     return toreturn;
   } else if (auto op = dyn_cast<InsertValueInst>(val)) {
-    auto op0 = getOp(op->getAggregateOperand());
-    if (op0 == nullptr)
-      goto endCheck;
-    auto op1 = getOp(op->getInsertedValueOperand());
-    if (op1 == nullptr)
-      goto endCheck;
-    auto toreturn = BuilderM.CreateInsertValue(op0, op1, op->getIndices(),
-                                               op->getName() + "_unwrap");
-    if (permitCache)
-      unwrap_cache[BuilderM.GetInsertBlock()][idx.first][idx.second] = toreturn;
-    if (auto newi = dyn_cast<Instruction>(toreturn)) {
-      newi->copyIRFlags(op);
-      unwrappedLoads[newi] = val;
-      if (newi->getParent()->getParent() != op->getParent()->getParent())
-        newi->setDebugLoc(nullptr);
+    SmallVector<std::pair<Value *, unsigned>, 0> insertElements;
+    Value *agg = op->getAggregateOperand();
+    while (auto op1 = dyn_cast<InsertValueInst>(agg)) {
+      if (knownRecomputeHeuristic.count(op1) &&
+          knownRecomputeHeuristic[op1] == true)
+        break;
+      insertElements.push_back({op1->getInsertedValueOperand(),
+                                op1->getInsertedValueOperandIndex()});
+      agg = op1->getAggregateOperand();
     }
+
+    Value *toreturn = agg;
+    for (auto &&[valOp, idcs] : reverse(insertElements)) {
+      auto op1 = getOp(valOp);
+      if (op1 == nullptr)
+        goto endCheck;
+      toreturn = BuilderM.CreateInsertValue(toreturn, op1, idcs,
+                                            op->getName() + "_unwrap");
+
+      if (permitCache)
+        unwrap_cache[BuilderM.GetInsertBlock()][idx.first][idx.second] =
+            toreturn;
+      if (auto newi = dyn_cast<Instruction>(toreturn)) {
+        newi->copyIRFlags(op);
+        unwrappedLoads[newi] = val;
+        if (newi->getParent()->getParent() != op->getParent()->getParent())
+          newi->setDebugLoc(nullptr);
+      }
+    }
+
     assert(val->getType() == toreturn->getType());
     return toreturn;
   } else if (auto op = dyn_cast<ExtractElementInst>(val)) {
