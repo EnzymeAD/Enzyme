@@ -10100,18 +10100,13 @@ public:
                 cast<CallInst>(anti)->addAttribute(AttributeList::ReturnIndex,
                                                    Attribute::NonNull);
 #endif
-                return anti;
-              };
 
-              anti = applyChainRule(orig->getType(), bb, rule);
-
-              if (called->getName() == "malloc" ||
-                  called->getName() == "_Znwm") {
-                if (auto ci = dyn_cast<ConstantInt>(args[0])) {
-                  unsigned derefBytes = ci->getLimitedValue();
-                  CallInst *cal =
-                      cast<CallInst>(gutils->getNewFromOriginal(orig));
-                  auto rule = [&](Value *anti) {
+                if (called->getName() == "malloc" ||
+                    called->getName() == "_Znwm") {
+                  if (auto ci = dyn_cast<ConstantInt>(args[0])) {
+                    unsigned derefBytes = ci->getLimitedValue();
+                    CallInst *cal =
+                        cast<CallInst>(gutils->getNewFromOriginal(orig));
 #if LLVM_VERSION_MAJOR >= 14
                     cast<CallInst>(anti)->addDereferenceableRetAttr(derefBytes);
                     cal->addDereferenceableRetAttr(derefBytes);
@@ -10144,10 +10139,13 @@ public:
                     cal->addAttribute(AttributeList::ReturnIndex,
                                       Attribute::NonNull);
 #endif
-                  };
-                  applyChainRule(bb, rule, anti);
+                  }
                 }
-              }
+                return anti;
+              };
+
+              anti = applyChainRule(orig->getType(), bb, rule);
+
               gutils->invertedPointers.erase(found);
               if (&*bb.GetInsertPoint() == placeholder)
                 bb.SetInsertPoint(placeholder->getNextNode());
@@ -10159,24 +10157,19 @@ public:
                     bb, anti, getIndex(orig, CacheType::Shadow));
               else {
                 if (auto MD = hasMetadata(orig, "enzyme_fromstack")) {
-                  auto rule = [&](Value *anti) {
-                    AllocaInst *replacement = bb.CreateAlloca(
-                        Type::getInt8Ty(orig->getContext()), args[0]);
-                    replacement->takeName(anti);
-                    auto Alignment = cast<ConstantInt>(cast<ConstantAsMetadata>(
-                                                           MD->getOperand(0))
-                                                           ->getValue())
-                                         ->getLimitedValue();
+                  AllocaInst *replacement = bb.CreateAlloca(
+                      Type::getInt8Ty(orig->getContext()), args[0]);
+                  replacement->takeName(anti);
+                  auto Alignment = cast<ConstantInt>(cast<ConstantAsMetadata>(
+                                                         MD->getOperand(0))
+                                                         ->getValue())
+                                       ->getLimitedValue();
 #if LLVM_VERSION_MAJOR >= 10
-                    replacement->setAlignment(Align(Alignment));
+                  replacement->setAlignment(Align(Alignment));
 #else
-                    replacement->setAlignment(Alignment);
+                  replacement->setAlignment(Alignment);
 #endif
-                    return replacement;
-                  };
 
-                  Value *replacement = applyChainRule(
-                      Type::getInt8Ty(orig->getContext()), bb, rule, anti);
                   gutils->replaceAWithB(cast<Instruction>(anti), replacement);
                   gutils->erase(cast<Instruction>(anti));
                   anti = replacement;
@@ -10191,10 +10184,13 @@ public:
                   (Mode == DerivativeMode::ForwardModeSplit &&
                    backwardsShadow)) {
                 if (!inLoop) {
-                  auto rule = [&](Value *anti) {
-                    zeroKnownAllocation(bb, anti, args, *called, gutils->TLI);
-                  };
-                  applyChainRule(bb, rule, anti);
+                  applyChainRule(
+                      bb,
+                      [&](Value *anti) {
+                        zeroKnownAllocation(bb, anti, args, *called,
+                                            gutils->TLI);
+                      },
+                      anti);
                 }
               }
             }
