@@ -99,14 +99,14 @@ entry:
 ; CHECK-NEXT:   %21 = extractvalue [2 x i64 addrspace(12)*] %"i2'", 1
 ; CHECK-NEXT:   %22 = load i64, i64 addrspace(12)* %21
 ; CHECK-NEXT:   %23 = extractvalue [2 x i64] %18, 0
-; CHECK-NEXT:   %24 = bitcast i64 %23 to double
-; CHECK-NEXT:   %25 = bitcast i64 %20 to double
-; CHECK-NEXT:   %26 = fadd fast double %25, %24
+; CHECK-DAG:   %[[i24:.+]] = bitcast i64 %23 to double
+; CHECK-DAG:   %[[i25:.+]] = bitcast i64 %20 to double
+; CHECK-NEXT:   %26 = fadd fast double %[[i25]], %[[i24]]
 ; CHECK-NEXT:   %27 = bitcast double %26 to i64
 ; CHECK-NEXT:   %28 = extractvalue [2 x i64] %18, 1
-; CHECK-NEXT:   %29 = bitcast i64 %28 to double
-; CHECK-NEXT:   %30 = bitcast i64 %22 to double
-; CHECK-NEXT:   %31 = fadd fast double %30, %29
+; CHECK-DAG:   %[[i29:.+]] = bitcast i64 %28 to double
+; CHECK-DAG:   %[[i30:.+]] = bitcast i64 %22 to double
+; CHECK-NEXT:   %31 = fadd fast double %[[i30]], %[[i29]]
 ; CHECK-NEXT:   %32 = bitcast double %31 to i64
 ; CHECK-NEXT:   %33 = extractvalue [2 x i64 addrspace(12)*] %"i2'", 0
 ; CHECK-NEXT:   store i64 %27, i64 addrspace(12)* %33
