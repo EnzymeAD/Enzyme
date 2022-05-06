@@ -3848,15 +3848,6 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           cast<PointerType>(oval->getType())->getPointerAddressSpace(), nullptr,
           oval->getName() + "'ipa");
 
-      return antialloca;
-    };
-
-    Value *antialloca = applyChainRule(oval->getType(), bb, rule1);
-
-    invertedPointers.insert(std::make_pair(
-        (const Value *)oval, InvertedPointerVH(this, antialloca)));
-
-    auto rule2 = [&](Value *antialloca) {
       auto dst_arg =
           bb.CreateBitCast(antialloca, Type::getInt8PtrTy(oval->getContext()));
       auto val_arg = ConstantInt::get(Type::getInt8Ty(oval->getContext()), 0);
@@ -3877,9 +3868,14 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       Type *tys[] = {dst_arg->getType(), len_arg->getType()};
       cast<CallInst>(bb.CreateCall(
           Intrinsic::getDeclaration(M, Intrinsic::memset, tys), args));
+
+      return antialloca;
     };
 
-    applyChainRule(bb, rule2, antialloca);
+    Value *antialloca = applyChainRule(oval->getType(), bb, rule1);
+
+    invertedPointers.insert(std::make_pair(
+        (const Value *)oval, InvertedPointerVH(this, antialloca)));
 
     return antialloca;
   } else if (auto arg = dyn_cast<GlobalVariable>(oval)) {
