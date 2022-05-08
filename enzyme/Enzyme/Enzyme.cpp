@@ -536,7 +536,8 @@ public:
       Value *shadow;
       switch (mode) {
       case DerivativeMode::ForwardModeSplit:
-      case DerivativeMode::ForwardMode: {
+      case DerivativeMode::ForwardMode:
+      case DerivativeMode::BatchMode: {
         Value *sretPt = CI->getArgOperand(0);
         if (width > 1) {
           PointerType *pty = cast<PointerType>(sretPt->getType());
@@ -887,6 +888,13 @@ public:
     Type *tapeType = nullptr;
     const AugmentedReturn *aug;
     switch (mode) {
+    case DerivativeMode::BatchMode:
+      newFunc =
+          Logic.CreateBatch(cast<Function>(fn), retType, constants, TA,
+                            /*should return*/ false, mode, freeMemory, width,
+                            /*addedType*/ nullptr, type_args, volatile_args,
+                            /*augmented*/ nullptr);
+      break;
     case DerivativeMode::ForwardMode:
       newFunc = Logic.CreateForwardDiff(
           cast<Function>(fn), retType, constants, TA,
@@ -1152,7 +1160,8 @@ public:
     if (width > 1 && !diffret->getType()->isEmptyTy() &&
         !diffret->getType()->isVoidTy() &&
         (mode == DerivativeMode::ForwardMode ||
-         mode == DerivativeMode::ForwardModeSplit)) {
+         mode == DerivativeMode::ForwardModeSplit ||
+         mode == DerivativeMode::BatchMode)) {
 
       /// Actual return type (including struct return)
       Type *returnType =
@@ -1359,7 +1368,8 @@ public:
               Fn->getName().contains("__enzyme_fwdsplit") ||
               Fn->getName().contains("__enzyme_augmentfwd") ||
               Fn->getName().contains("__enzyme_augmentsize") ||
-              Fn->getName().contains("__enzyme_reverse")))
+              Fn->getName().contains("__enzyme_reverse") ||
+              Fn->getName().contains("__enzyme_batch")))
           continue;
 
         SmallVector<Value *, 16> CallArgs(II->arg_begin(), II->arg_end());
@@ -1631,6 +1641,9 @@ public:
           enableEnzyme = true;
           virtualCall = true;
           mode = DerivativeMode::ReverseModeCombined;
+        } else if (Fn->getName().contains("__enzyme_batch")) {
+          enableEnzyme = true;
+          mode = DerivativeMode::BatchMode;
         }
 
         if (enableEnzyme) {

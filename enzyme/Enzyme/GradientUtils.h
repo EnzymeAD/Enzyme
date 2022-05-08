@@ -1205,11 +1205,13 @@ public:
 
     ptr = invertPointerM(ptr, BuilderM);
     if (!isOriginalBlock(*BuilderM.GetInsertBlock()) &&
-        mode != DerivativeMode::ForwardMode)
+        mode != DerivativeMode::ForwardMode &&
+        mode != DerivativeMode::BatchMode)
       ptr = lookupM(ptr, BuilderM);
 
     if (mask && !isOriginalBlock(*BuilderM.GetInsertBlock()) &&
-        mode != DerivativeMode::ForwardMode)
+        mode != DerivativeMode::ForwardMode &&
+        mode != DerivativeMode::BatchMode)
       mask = lookupM(mask, BuilderM);
 
     auto rule = [&](Value *ptr, Value *newval) {
@@ -1426,7 +1428,8 @@ public:
           continue;
 
         if (mode == DerivativeMode::ForwardMode ||
-            mode == DerivativeMode::ForwardModeSplit) {
+            mode == DerivativeMode::ForwardModeSplit ||
+            mode == DerivativeMode::BatchMode) {
           if (!isConstantValue(inst)) {
             IRBuilder<> BuilderZ(inst);
             getForwardBuilder(BuilderZ);
@@ -1848,7 +1851,8 @@ class DiffeGradientUtils : public GradientUtils {
                       mode, width, omp) {
     assert(reverseBlocks.size() == 0);
     if (mode == DerivativeMode::ForwardMode ||
-        mode == DerivativeMode::ForwardModeSplit) {
+        mode == DerivativeMode::ForwardModeSplit ||
+        mode == DerivativeMode::BatchMode) {
       return;
     }
     for (BasicBlock *BB : originalBlocks) {
@@ -1915,7 +1919,8 @@ public:
       assert(0 && "getting diffe of constant value");
     }
     if (mode == DerivativeMode::ForwardMode ||
-        mode == DerivativeMode::ForwardModeSplit)
+        mode == DerivativeMode::ForwardModeSplit ||
+        mode == DerivativeMode::BatchMode)
       return invertPointerM(val, BuilderM);
     if (val->getType()->isPointerTy()) {
       llvm::errs() << *newFunc << "\n";
@@ -2176,7 +2181,8 @@ public:
     }
     assert(!isConstantValue(val));
     if (mode == DerivativeMode::ForwardMode ||
-        mode == DerivativeMode::ForwardModeSplit) {
+        mode == DerivativeMode::ForwardModeSplit ||
+        mode == DerivativeMode::BatchMode) {
       assert(getShadowType(val->getType()) == toset->getType());
       auto found = invertedPointers.find(val);
       assert(found != invertedPointers.end());
@@ -2322,6 +2328,7 @@ public:
     switch (mode) {
     case DerivativeMode::ForwardModeSplit:
     case DerivativeMode::ForwardMode:
+    case DerivativeMode::BatchMode:
       ptr = invertPointerM(origptr, BuilderM);
       break;
     case DerivativeMode::ReverseModePrimal:

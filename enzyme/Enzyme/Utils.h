@@ -280,6 +280,7 @@ enum class DerivativeMode {
   ReverseModeGradient = 2,
   ReverseModeCombined = 3,
   ForwardModeSplit = 4,
+  BatchMode = 5,
 };
 
 /// Classification of value as an original program
@@ -310,6 +311,8 @@ static inline std::string to_string(DerivativeMode mode) {
     return "ReverseModeGradient";
   case DerivativeMode::ReverseModeCombined:
     return "ReverseModeCombined";
+  case DerivativeMode::BatchMode:
+    return "Batch";
   }
   llvm_unreachable("illegal derivative mode");
 }
@@ -436,7 +439,8 @@ static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode,
     return DIFFE_TYPE::CONSTANT;
   } else if (arg->isFPOrFPVectorTy()) {
     return (mode == DerivativeMode::ForwardMode ||
-            mode == DerivativeMode::ForwardModeSplit)
+            mode == DerivativeMode::ForwardModeSplit ||
+            mode == DerivativeMode::BatchMode)
                ? DIFFE_TYPE::DUP_ARG
                : DIFFE_TYPE::OUT_DIFF;
   } else {

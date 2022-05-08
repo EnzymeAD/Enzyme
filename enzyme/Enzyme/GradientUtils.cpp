@@ -3394,7 +3394,8 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
   assert(mode == DerivativeMode::ReverseModeGradient ||
          mode == DerivativeMode::ReverseModeCombined ||
          mode == DerivativeMode::ForwardMode ||
-         mode == DerivativeMode::ForwardModeSplit);
+         mode == DerivativeMode::ForwardModeSplit ||
+         mode == DerivativeMode::BatchMode);
   ValueToValueMapTy invertedPointers;
   SmallPtrSet<Instruction *, 4> constants;
   SmallPtrSet<Instruction *, 20> nonconstant;
@@ -3414,6 +3415,9 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
   case DerivativeMode::ReverseModeCombined:
   case DerivativeMode::ReverseModeGradient:
     prefix = "diffe";
+    break;
+  case DerivativeMode::BatchMode:
+    prefix = "batch";
     break;
   case DerivativeMode::ReverseModePrimal:
     llvm_unreachable("invalid DerivativeMode: ReverseModePrimal\n");

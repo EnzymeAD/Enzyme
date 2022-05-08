@@ -1724,6 +1724,8 @@ public:
       break;
     case DerivativeMode::ReverseModePrimal:
       return;
+    case DerivativeMode::BatchMode:
+      createBinaryBatch(BO);
     }
   }
 
@@ -2455,6 +2457,382 @@ public:
 
       Value *dif[2] = {constantval0 ? nullptr : diffe(orig_op0, Builder2),
                        constantval1 ? nullptr : diffe(orig_op1, Builder2)};
+
+      auto FT = TR.query(&BO).IsAllFloat(size);
+      auto eFT = FT;
+      // If & against 0b10000000000 and a float the result is a float
+      if (FT)
+        for (int i = 0; i < 2; ++i) {
+          auto CI = dyn_cast<ConstantInt>(BO.getOperand(i));
+          if (auto CV = dyn_cast<ConstantVector>(BO.getOperand(i))) {
+            CI = dyn_cast_or_null<ConstantInt>(CV->getSplatValue());
+#if LLVM_VERSION_MAJOR >= 12
+            FT = VectorType::get(FT, CV->getType()->getElementCount());
+#else
+            FT = VectorType::get(FT, CV->getType()->getNumElements());
+#endif
+          }
+          if (auto CV = dyn_cast<ConstantDataVector>(BO.getOperand(i))) {
+            CI = dyn_cast_or_null<ConstantInt>(CV->getSplatValue());
+#if LLVM_VERSION_MAJOR >= 12
+            FT = VectorType::get(FT, CV->getType()->getElementCount());
+#else
+            FT = VectorType::get(FT, CV->getType()->getNumElements());
+#endif
+          }
+          if (CI && dl.getTypeSizeInBits(eFT) ==
+                        dl.getTypeSizeInBits(CI->getType())) {
+            auto AP = CI->getValue();
+            bool validXor = false;
+            if (AP.isNullValue()) {
+              validXor = true;
+            } else if (
+                !AP.isNegative() &&
+                ((FT->isFloatTy() &&
+                  (AP & ~0b01111111100000000000000000000000ULL)
+                      .isNullValue()) ||
+                 (FT->isDoubleTy() &&
+                  (AP &
+                   ~0b0111111111110000000000000000000000000000000000000000000000000000ULL)
+                      .isNullValue()))) {
+              validXor = true;
+            }
+            if (validXor) {
+              auto rule = [&](Value *difi) {
+                auto arg = gutils->getNewFromOriginal(BO.getOperand(1 - i));
+                auto prev = Builder2.CreateOr(arg, BO.getOperand(i));
+                prev = Builder2.CreateSub(prev, arg, "", /*NUW*/ true,
+                                          /*NSW*/ false);
+                uint64_t num = 0;
+                if (FT->isFloatTy()) {
+                  num = 127ULL << 23;
+                } else {
+                  assert(FT->isDoubleTy());
+                  num = 1023ULL << 52;
+                }
+                prev = Builder2.CreateAdd(
+                    prev, ConstantInt::get(prev->getType(), num, false), "",
+                    /*NUW*/ true, /*NSW*/ true);
+                prev = Builder2.CreateBitCast(
+                    Builder2.CreateFMul(Builder2.CreateBitCast(difi, FT),
+                                        Builder2.CreateBitCast(prev, FT)),
+                    prev->getType());
+
+                return prev;
+              };
+
+              auto diffe =
+                  applyChainRule(BO.getType(), Builder2, rule, dif[1 - i]);
+              setDiffe(&BO, diffe, Builder2);
+              return;
+            }
+          }
+        }
+      goto def;
+    }
+    case Instruction::Shl:
+    case Instruction::Mul:
+    case Instruction::Sub:
+    case Instruction::Add: {
+      if (looseTypeAnalysis) {
+        forwardModeInvertedPointerFallback(BO);
+        llvm::errs() << "warning: binary operator is integer and constant: "
+                     << BO << "\n";
+        // if loose type analysis, assume this integer add is constant
+        return;
+      }
+      goto def;
+    }
+    default:
+    def:;
+      llvm::errs() << *gutils->oldFunc->getParent() << "\n";
+      llvm::errs() << *gutils->oldFunc << "\n";
+      for (auto &arg : gutils->oldFunc->args()) {
+        llvm::errs() << " constantarg[" << arg
+                     << "] = " << gutils->isConstantValue(&arg)
+                     << " type: " << TR.query(&arg).str() << " - vals: {";
+        for (auto v : TR.knownIntegralValues(&arg))
+          llvm::errs() << v << ",";
+        llvm::errs() << "}\n";
+      }
+      for (auto &BB : *gutils->oldFunc)
+        for (auto &I : BB) {
+          llvm::errs() << " constantinst[" << I
+                       << "] = " << gutils->isConstantInstruction(&I)
+                       << " val:" << gutils->isConstantValue(&I)
+                       << " type: " << TR.query(&I).str() << "\n";
+        }
+      llvm::errs() << "cannot handle unknown binary operator: " << BO << "\n";
+      report_fatal_error("unknown binary operator");
+      break;
+    }
+  }
+
+  void createBinaryBatch(llvm::BinaryOperator &BO) {
+    IRBuilder<> Builder2(&BO);
+    getForwardBuilder(Builder2);
+
+    Value *orig_op0 = BO.getOperand(0);
+    Value *orig_op1 = BO.getOperand(1);
+
+    bool scalarval0 = gutils->isConstantValue(orig_op0);
+    bool scalarval1 = gutils->isConstantValue(orig_op1);
+
+    Value *dif[2] = {scalarval0 ? nullptr : diffe(orig_op0, Builder2),
+                     scalarval1 ? nullptr : diffe(orig_op1, Builder2)};
+
+    switch (BO.getOpcode()) {
+    case Instruction::FMul: {
+      if (!scalarval0 && !scalarval1) {
+        auto rule = [&](Value *dif0, Value *dif1) {
+          return Builder2.CreateFMul(dif0, dif1);
+        };
+        Value *diff =
+            applyChainRule(BO.getType(), Builder2, rule, dif[0], dif[1]);
+        setDiffe(&BO, diff, Builder2);
+      } else if (!scalarval0) {
+        auto rule = [&](Value *dif0) {
+          return Builder2.CreateFMul(dif0,
+                                     gutils->getNewFromOriginal(orig_op1));
+        };
+        Value *idiff0 = applyChainRule(BO.getType(), Builder2, rule, dif[0]);
+        setDiffe(&BO, idiff0, Builder2);
+      } else if (!scalarval1) {
+        auto rule = [&](Value *dif1) {
+          return Builder2.CreateFMul(dif1,
+                                     gutils->getNewFromOriginal(orig_op0));
+        };
+        Value *idiff1 = applyChainRule(BO.getType(), Builder2, rule, dif[1]);
+        setDiffe(&BO, idiff1, Builder2);
+      }
+      break;
+    }
+    case Instruction::FAdd: {
+      if (!scalarval0 && !scalarval1) {
+        auto rule = [&](Value *dif0, Value *dif1) {
+          return Builder2.CreateFAdd(dif0, dif1);
+        };
+        Value *diff =
+            applyChainRule(BO.getType(), Builder2, rule, dif[0], dif[1]);
+        setDiffe(&BO, diff, Builder2);
+      } else if (!scalarval0) {
+        setDiffe(&BO, dif[0], Builder2);
+      } else if (!scalarval1) {
+        setDiffe(&BO, dif[1], Builder2);
+      }
+      break;
+    }
+    case Instruction::FSub: {
+      if (!scalarval0 && !scalarval1) {
+        auto rule = [&](Value *dif0, Value *dif1) {
+          return Builder2.CreateFAdd(dif0, Builder2.CreateFNeg(dif1));
+        };
+        Value *diff =
+            applyChainRule(BO.getType(), Builder2, rule, dif[0], dif[1]);
+        setDiffe(&BO, diff, Builder2);
+      } else if (!scalarval0) {
+        setDiffe(&BO, dif[0], Builder2);
+      } else if (!scalarval1) {
+        auto rule = [&](Value *dif1) { return Builder2.CreateFNeg(dif1); };
+        Value *diff = applyChainRule(BO.getType(), Builder2, rule, dif[1]);
+        setDiffe(&BO, diff, Builder2);
+      }
+      break;
+    }
+    case Instruction::FDiv: {
+      Value *idiff3 = nullptr;
+      if (!scalarval0 && !scalarval1) {
+        auto rule = [&](Value *dif0, Value *dif1) {
+          Value *idiff1 =
+              Builder2.CreateFMul(dif0, gutils->getNewFromOriginal(orig_op1));
+          Value *idiff2 =
+              Builder2.CreateFMul(gutils->getNewFromOriginal(orig_op0), dif1);
+          return Builder2.CreateFSub(idiff1, idiff2);
+        };
+        idiff3 = applyChainRule(BO.getType(), Builder2, rule, dif[0], dif[1]);
+      } else if (!scalarval0) {
+        auto rule = [&](Value *dif0) {
+          return Builder2.CreateFMul(dif0,
+                                     gutils->getNewFromOriginal(orig_op1));
+        };
+        idiff3 = applyChainRule(BO.getType(), Builder2, rule, dif[0]);
+      } else if (!scalarval1) {
+        auto rule = [&](Value *dif1) {
+          return Builder2.CreateFNeg(
+              Builder2.CreateFMul(gutils->getNewFromOriginal(orig_op0), dif1));
+        };
+        idiff3 = applyChainRule(BO.getType(), Builder2, rule, dif[1]);
+      }
+
+      Value *idiff4 = Builder2.CreateFMul(gutils->getNewFromOriginal(orig_op1),
+                                          gutils->getNewFromOriginal(orig_op1));
+
+      auto rule = [&](Value *idiff3) {
+        return Builder2.CreateFDiv(idiff3, idiff4);
+      };
+
+      Value *idiff5 = applyChainRule(BO.getType(), Builder2, rule, idiff3);
+      setDiffe(&BO, idiff5, Builder2);
+
+      break;
+    }
+    case Instruction::And: {
+      // If & against 0b10000000000 and a float the result is 0
+      auto &dl = gutils->oldFunc->getParent()->getDataLayout();
+      auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
+      Type *diffTy = gutils->getShadowType(BO.getType());
+
+      auto FT = TR.query(&BO).IsAllFloat(size);
+      auto eFT = FT;
+      if (FT)
+        for (int i = 0; i < 2; ++i) {
+          auto CI = dyn_cast<ConstantInt>(BO.getOperand(i));
+          if (CI && dl.getTypeSizeInBits(eFT) ==
+                        dl.getTypeSizeInBits(CI->getType())) {
+            if (CI->isNegative() && CI->isMinValue(/*signed*/ true)) {
+              setDiffe(&BO, Constant::getNullValue(diffTy), Builder2);
+              // Derivative is zero, no update
+              return;
+            }
+            if (eFT->isDoubleTy() && CI->getValue() == -134217728) {
+              setDiffe(&BO, Constant::getNullValue(diffTy), Builder2);
+              // Derivative is zero (equivalent to rounding as just chopping off
+              // bits of mantissa), no update
+              return;
+            }
+          }
+        }
+      goto def;
+    }
+    case Instruction::Xor: {
+      auto &dl = gutils->oldFunc->getParent()->getDataLayout();
+      auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
+
+      Value *dif[2] = {scalarval0 ? nullptr : diffe(orig_op0, Builder2),
+                       scalarval1 ? nullptr : diffe(orig_op1, Builder2)};
+
+      auto FT = TR.query(&BO).IsAllFloat(size);
+      auto eFT = FT;
+      // If ^ against 0b10000000000 and a float the result is a float
+      if (FT)
+        for (int i = 0; i < 2; ++i) {
+          auto CI = dyn_cast<ConstantInt>(BO.getOperand(i));
+          if (auto CV = dyn_cast<ConstantVector>(BO.getOperand(i))) {
+            CI = dyn_cast_or_null<ConstantInt>(CV->getSplatValue());
+#if LLVM_VERSION_MAJOR >= 12
+            FT = VectorType::get(FT, CV->getType()->getElementCount());
+#else
+            FT = VectorType::get(FT, CV->getType()->getNumElements());
+#endif
+          }
+          if (auto CV = dyn_cast<ConstantDataVector>(BO.getOperand(i))) {
+            CI = dyn_cast_or_null<ConstantInt>(CV->getSplatValue());
+#if LLVM_VERSION_MAJOR >= 12
+            FT = VectorType::get(FT, CV->getType()->getElementCount());
+#else
+            FT = VectorType::get(FT, CV->getType()->getNumElements());
+#endif
+          }
+          if (CI && dl.getTypeSizeInBits(eFT) ==
+                        dl.getTypeSizeInBits(CI->getType())) {
+            if (CI->isNegative() && CI->isMinValue(/*signed*/ true)) {
+              assert(dif[1 - i]);
+              auto rule = [&](Value *difi) {
+                auto neg =
+                    Builder2.CreateFNeg(Builder2.CreateBitCast(difi, FT));
+                return Builder2.CreateBitCast(neg, BO.getType());
+              };
+
+              auto diffe =
+                  applyChainRule(BO.getType(), Builder2, rule, dif[1 - i]);
+              setDiffe(&BO, diffe, Builder2);
+              return;
+            }
+          }
+
+          if (auto CV = dyn_cast<ConstantVector>(BO.getOperand(i))) {
+            bool validXor = true;
+            if (dl.getTypeSizeInBits(eFT) !=
+                dl.getTypeSizeInBits(CV->getOperand(0)->getType()))
+              validXor = false;
+            for (size_t i = 0, end = CV->getNumOperands(); i < end; ++i) {
+              auto CI = dyn_cast<ConstantInt>(CV->getOperand(i))->getValue();
+              if (!(CI.isNullValue() || CI.isMinSignedValue())) {
+                validXor = false;
+              }
+            }
+            if (validXor) {
+              auto rule = [&](Value *difi) {
+                Value *V = UndefValue::get(CV->getType());
+                for (size_t j = 0, end = CV->getNumOperands(); j < end; ++j) {
+                  auto CI =
+                      dyn_cast<ConstantInt>(CV->getOperand(j))->getValue();
+                  if (CI.isNullValue())
+                    V = Builder2.CreateInsertElement(
+                        V, Builder2.CreateExtractElement(difi, j), j);
+                  if (CI.isMinSignedValue())
+                    V = Builder2.CreateInsertElement(
+                        V,
+                        Builder2.CreateBitCast(
+                            Builder2.CreateFNeg(Builder2.CreateBitCast(
+                                Builder2.CreateExtractElement(difi, j), eFT)),
+                            CV->getOperand(j)->getType()),
+                        j);
+                }
+                return V;
+              };
+
+              auto diffe =
+                  applyChainRule(BO.getType(), Builder2, rule, dif[1 - i]);
+              setDiffe(&BO, diffe, Builder2);
+              return;
+            }
+          } else if (auto CV = dyn_cast<ConstantDataVector>(BO.getOperand(i))) {
+            bool validXor = true;
+            if (dl.getTypeSizeInBits(eFT) !=
+                dl.getTypeSizeInBits(CV->getElementType()))
+              validXor = false;
+            for (size_t i = 0, end = CV->getNumElements(); i < end; ++i) {
+              auto CI = CV->getElementAsAPInt(i);
+              if (!(CI.isNullValue() || CI.isMinSignedValue())) {
+                validXor = false;
+              }
+            }
+            if (validXor) {
+              auto rule = [&](Value *difi) {
+                Value *V = UndefValue::get(CV->getType());
+                for (size_t j = 0, end = CV->getNumElements(); j < end; ++j) {
+                  auto CI = CV->getElementAsAPInt(j);
+                  if (CI.isNullValue())
+                    V = Builder2.CreateInsertElement(
+                        V, Builder2.CreateExtractElement(difi, j), j);
+                  if (CI.isMinSignedValue())
+                    V = Builder2.CreateInsertElement(
+                        V,
+                        Builder2.CreateBitCast(
+                            Builder2.CreateFNeg(Builder2.CreateBitCast(
+                                Builder2.CreateExtractElement(difi, j), eFT)),
+                            CV->getElementType()),
+                        j);
+                }
+                return V;
+              };
+
+              auto diffe =
+                  applyChainRule(BO.getType(), Builder2, rule, dif[1 - i]);
+              setDiffe(&BO, diffe, Builder2);
+              return;
+            }
+          }
+        }
+      goto def;
+    }
+    case Instruction::Or: {
+      auto &dl = gutils->oldFunc->getParent()->getDataLayout();
+      auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
+
+      Value *dif[2] = {scalarval0 ? nullptr : diffe(orig_op0, Builder2),
+                       scalarval1 ? nullptr : diffe(orig_op1, Builder2)};
 
       auto FT = TR.query(&BO).IsAllFloat(size);
       auto eFT = FT;

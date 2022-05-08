@@ -4269,6 +4269,307 @@ Function *EnzymeLogic::CreateForwardDiff(
   return nf;
 }
 
+Function *EnzymeLogic::CreateBatch(
+    Function *todiff, DIFFE_TYPE retType,
+    const std::vector<DIFFE_TYPE> &constant_args, TypeAnalysis &TA,
+    bool returnUsed, DerivativeMode mode, bool freeMemory, unsigned width,
+    llvm::Type *additionalArg, const FnTypeInfo &oldTypeInfo_,
+    const std::map<Argument *, bool> _uncacheable_args,
+    const AugmentedReturn *augmenteddata, bool omp) {
+  assert(retType != DIFFE_TYPE::OUT_DIFF);
+
+  assert(mode == DerivativeMode::BatchMode);
+
+  FnTypeInfo oldTypeInfo = preventTypeAnalysisLoops(oldTypeInfo_, todiff);
+
+  if (retType != DIFFE_TYPE::CONSTANT)
+    assert(!todiff->getReturnType()->isVoidTy());
+
+  BatchCacheKey tup =
+      std::make_tuple(todiff, retType, constant_args,
+                      std::map<Argument *, bool>(_uncacheable_args.begin(),
+                                                 _uncacheable_args.end()),
+                      returnUsed, mode, width, additionalArg, oldTypeInfo);
+  if (BatchCachedFunctions.find(tup) != BatchCachedFunctions.end()) {
+    return BatchCachedFunctions.find(tup)->second;
+  }
+
+  TargetLibraryInfo &TLI = PPC.FAM.getResult<TargetLibraryAnalysis>(*todiff);
+
+  if (todiff->empty() && CustomErrorHandler) {
+    std::string s;
+    llvm::raw_string_ostream ss(s);
+    ss << "No forward derivative found for " + todiff->getName() << "\n";
+    ss << *todiff << "\n";
+    CustomErrorHandler(s.c_str(), wrap(todiff), ErrorType::NoDerivative,
+                       nullptr);
+  }
+
+  if (todiff->empty())
+    llvm::errs() << *todiff << "\n";
+  assert(!todiff->empty());
+
+  bool retActive = retType != DIFFE_TYPE::CONSTANT;
+
+  ReturnType retVal =
+      returnUsed ? (retActive ? ReturnType::TwoReturns : ReturnType::Return)
+                 : (retActive ? ReturnType::Return : ReturnType::Void);
+
+  bool diffeReturnArg = false;
+
+  DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
+      *this, mode, width, todiff, TLI, TA, retType, diffeReturnArg,
+      constant_args, retVal, additionalArg, omp);
+
+  insert_or_assign2<BatchCacheKey, Function *>(BatchCachedFunctions, tup,
+                                               gutils->newFunc);
+
+  gutils->FreeMemory = freeMemory;
+
+  const SmallPtrSet<BasicBlock *, 4> guaranteedUnreachable =
+      getGuaranteedUnreachable(gutils->oldFunc);
+
+  // Convert uncacheable args from the input function to the preprocessed
+  // function
+
+  FnTypeInfo typeInfo(gutils->oldFunc);
+  {
+    auto toarg = todiff->arg_begin();
+    auto olarg = gutils->oldFunc->arg_begin();
+    for (; toarg != todiff->arg_end(); ++toarg, ++olarg) {
+
+      {
+        auto fd = oldTypeInfo.Arguments.find(toarg);
+        assert(fd != oldTypeInfo.Arguments.end());
+        typeInfo.Arguments.insert(
+            std::pair<Argument *, TypeTree>(olarg, fd->second));
+      }
+
+      {
+        auto cfd = oldTypeInfo.KnownValues.find(toarg);
+        assert(cfd != oldTypeInfo.KnownValues.end());
+        typeInfo.KnownValues.insert(
+            std::pair<Argument *, std::set<int64_t>>(olarg, cfd->second));
+      }
+    }
+    typeInfo.Return = oldTypeInfo.Return;
+  }
+
+  TypeResults TR = TA.analyzeFunction(typeInfo);
+  assert(TR.getFunction() == gutils->oldFunc);
+
+  gutils->forceActiveDetection(TR);
+  gutils->forceAugmentedReturns(TR, guaranteedUnreachable);
+
+  // TODO populate with actual unnecessaryInstructions once the dependency
+  // cycle with activity analysis is removed
+  SmallPtrSet<const Instruction *, 4> unnecessaryInstructionsTmp;
+  for (auto BB : guaranteedUnreachable) {
+    for (auto &I : *BB)
+      unnecessaryInstructionsTmp.insert(&I);
+  }
+
+  SmallPtrSet<const Value *, 4> unnecessaryValues;
+  SmallPtrSet<const Instruction *, 4> unnecessaryInstructions;
+  calculateUnusedValuesInFunction(
+      *gutils->oldFunc, unnecessaryValues, unnecessaryInstructions, returnUsed,
+      mode, TR, gutils, TLI, constant_args, guaranteedUnreachable);
+
+  SmallPtrSet<const Instruction *, 4> unnecessaryStores;
+  calculateUnusedStoresInFunction(*gutils->oldFunc, unnecessaryStores,
+                                  unnecessaryInstructions, gutils);
+
+  AdjointGenerator<const AugmentedReturn *> *maker;
+
+  std::unique_ptr<const std::map<Instruction *, bool>> can_modref_map;
+  if (mode == DerivativeMode::ForwardModeSplit) {
+    std::map<Argument *, bool> _uncacheable_argsPP;
+    {
+      auto in_arg = todiff->arg_begin();
+      auto pp_arg = gutils->oldFunc->arg_begin();
+      for (; pp_arg != gutils->oldFunc->arg_end();) {
+        _uncacheable_argsPP[pp_arg] = _uncacheable_args.find(in_arg)->second;
+        ++pp_arg;
+        ++in_arg;
+      }
+    }
+
+    gutils->computeGuaranteedFrees(guaranteedUnreachable, TR);
+    CacheAnalysis CA(
+        gutils->allocationsWithGuaranteedFree,
+        gutils->rematerializableAllocations, TR, gutils->OrigAA,
+        gutils->oldFunc,
+        PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
+        gutils->OrigLI, gutils->OrigDT, TLI, unnecessaryInstructionsTmp,
+        _uncacheable_argsPP, mode, omp);
+    const std::map<CallInst *, const std::map<Argument *, bool>>
+        uncacheable_args_map = CA.compute_uncacheable_args_for_callsites();
+    can_modref_map = std::make_unique<const std::map<Instruction *, bool>>(
+        CA.compute_uncacheable_load_map());
+    gutils->can_modref_map = can_modref_map.get();
+
+    auto getIndex = [&](Instruction *I, CacheType u) -> unsigned {
+      assert(augmenteddata);
+      return gutils->getIndex(std::make_pair(I, u), augmenteddata->tapeIndices);
+    };
+
+    gutils->computeMinCache(TR, guaranteedUnreachable);
+
+    maker = new AdjointGenerator<const AugmentedReturn *>(
+        mode, gutils, constant_args, retType, TR, getIndex,
+        uncacheable_args_map,
+        /*returnuses*/ nullptr, augmenteddata, nullptr, unnecessaryValues,
+        unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
+        nullptr);
+
+    if (additionalArg) {
+      auto v = gutils->newFunc->arg_end();
+      v--;
+      Value *additionalValue = v;
+      assert(augmenteddata);
+
+      // TODO VERIFY THIS
+      if (augmenteddata->tapeType &&
+          augmenteddata->tapeType != additionalValue->getType()) {
+        IRBuilder<> BuilderZ(gutils->inversionAllocs);
+        if (!augmenteddata->tapeType->isEmptyTy()) {
+          auto tapep = BuilderZ.CreatePointerCast(
+              additionalValue, PointerType::getUnqual(augmenteddata->tapeType));
+#if LLVM_VERSION_MAJOR > 7
+          LoadInst *truetape =
+              BuilderZ.CreateLoad(augmenteddata->tapeType, tapep, "truetape");
+#else
+          LoadInst *truetape = BuilderZ.CreateLoad(tapep, "truetape");
+#endif
+          truetape->setMetadata("enzyme_mustcache",
+                                MDNode::get(truetape->getContext(), {}));
+
+          if (!omp && gutils->FreeMemory) {
+            CallInst *ci =
+                cast<CallInst>(CallInst::CreateFree(additionalValue, truetape));
+            ci->moveAfter(truetape);
+            ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+          }
+          additionalValue = truetape;
+        } else {
+          if (gutils->FreeMemory) {
+            auto size = gutils->newFunc->getParent()
+                            ->getDataLayout()
+                            .getTypeAllocSizeInBits(augmenteddata->tapeType);
+            if (size != 0) {
+              CallInst *ci = cast<CallInst>(CallInst::CreateFree(
+                  additionalValue, gutils->inversionAllocs));
+              ci->addAttribute(AttributeList::FirstArgIndex,
+                               Attribute::NonNull);
+              BuilderZ.Insert(ci);
+            }
+          }
+          additionalValue = UndefValue::get(augmenteddata->tapeType);
+        }
+      }
+
+      // TODO here finish up making recursive structs simply pass in i8*
+      gutils->setTape(additionalValue);
+    }
+  } else {
+
+    maker = new AdjointGenerator<const AugmentedReturn *>(
+        mode, gutils, constant_args, retType, TR, nullptr, {},
+        /*returnuses*/ nullptr, nullptr, nullptr, unnecessaryValues,
+        unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
+        nullptr);
+  }
+
+  for (BasicBlock &oBB : *gutils->oldFunc) {
+    // Don't create derivatives for code that results in termination
+    if (guaranteedUnreachable.find(&oBB) != guaranteedUnreachable.end()) {
+      auto newBB = cast<BasicBlock>(gutils->getNewFromOriginal(&oBB));
+      std::vector<BasicBlock *> toRemove;
+      if (auto II = dyn_cast<InvokeInst>(oBB.getTerminator())) {
+        toRemove.push_back(
+            cast<BasicBlock>(gutils->getNewFromOriginal(II->getNormalDest())));
+      } else {
+        for (auto next : successors(&oBB)) {
+          auto sucBB = cast<BasicBlock>(gutils->getNewFromOriginal(next));
+          toRemove.push_back(sucBB);
+        }
+      }
+
+      for (auto sucBB : toRemove) {
+        sucBB->removePredecessor(newBB);
+      }
+
+      std::vector<Instruction *> toerase;
+      for (auto &I : oBB) {
+        toerase.push_back(&I);
+      }
+      for (auto I : toerase) {
+        maker->eraseIfUnused(*I, /*erase*/ true, /*check*/ true);
+      }
+      if (newBB->getTerminator())
+        newBB->getTerminator()->eraseFromParent();
+      IRBuilder<> builder(newBB);
+      builder.CreateUnreachable();
+      continue;
+    }
+
+    auto term = oBB.getTerminator();
+    assert(term);
+    if (!isa<ReturnInst>(term) && !isa<BranchInst>(term) &&
+        !isa<SwitchInst>(term)) {
+      llvm::errs() << *oBB.getParent() << "\n";
+      llvm::errs() << "unknown terminator instance " << *term << "\n";
+      assert(0 && "unknown terminator inst");
+    }
+
+    auto first = oBB.begin();
+    auto last = oBB.empty() ? oBB.end() : std::prev(oBB.end());
+    for (auto it = first; it != last; ++it) {
+      maker->visit(&*it);
+    }
+
+    createTerminator(TR, gutils, &oBB, retType, retVal);
+  }
+
+  if (mode == DerivativeMode::ForwardModeSplit && augmenteddata)
+    restoreCache(gutils, augmenteddata->tapeIndices, guaranteedUnreachable);
+
+  gutils->eraseFictiousPHIs();
+
+  BasicBlock *entry = &gutils->newFunc->getEntryBlock();
+
+  auto Arch =
+      llvm::Triple(gutils->newFunc->getParent()->getTargetTriple()).getArch();
+
+  cleanupInversionAllocs(gutils, entry);
+  clearFunctionAttributes(gutils->newFunc);
+
+  if (llvm::verifyFunction(*gutils->newFunc, &llvm::errs())) {
+    llvm::errs() << *gutils->oldFunc << "\n";
+    llvm::errs() << *gutils->newFunc << "\n";
+    report_fatal_error("function failed verification (4)");
+  }
+
+  auto nf = gutils->newFunc;
+  delete gutils;
+  delete maker;
+
+  {
+    PreservedAnalyses PA;
+    PPC.FAM.invalidate(*nf, PA);
+  }
+  PPC.AlwaysInline(nf);
+  if (Arch == Triple::nvptx || Arch == Triple::nvptx64)
+    PPC.ReplaceReallocs(nf, /*mem2reg*/ true);
+
+  if (PostOpt)
+    PPC.optimizeIntermediate(nf);
+  if (EnzymePrint) {
+    llvm::errs() << *nf << "\n";
+  }
+  return nf;
+}
+
 void EnzymeLogic::clear() {
   PPC.clear();
   AugmentedCachedFunctions.clear();
