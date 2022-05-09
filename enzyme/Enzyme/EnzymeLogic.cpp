@@ -58,6 +58,7 @@
 
 #include "FunctionUtils.h"
 #include "GradientUtils.h"
+#include "InstructionBatcher.h"
 #include "LibraryFuncs.h"
 #include "Utils.h"
 
@@ -4263,6 +4264,60 @@ Function *EnzymeLogic::CreateForwardDiff(
   }
   return nf;
 }
+
+llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width) {
+
+  BatchCacheKey tup = std::make_tuple(tobatch, width);
+  if (BatchCachedFunctions.find(tup) != BatchCachedFunctions.end()) {
+    return BatchCachedFunctions.find(tup)->second;
+  }
+
+  ValueMap<const Value *, std::vector<Value *>> vectorizedValues;
+  ValueToValueMapTy originalToNewFn;
+
+  FunctionType *orig_FTy = tobatch->getFunctionType();
+  SmallVector<Type *, 0> params;
+
+  for (int i = 0; i < orig_FTy->getNumParams(); ++i) {
+    for (int j = 0; j < width; ++j)
+      params.push_back(orig_FTy);
+  }
+
+  Type *NewTy = GradientUtils::getShadowType(tobatch->getType(), width);
+
+  FunctionType *FTy = FunctionType::get(NewTy, params, tobatch->isVarArg());
+  Function *NewF =
+      Function::Create(FTy, tobatch->getLinkage(),
+                       "batch_" + tobatch->getName(), tobatch->getParent());
+
+  for (BasicBlock &BB : *tobatch) {
+    BasicBlock *newBB =
+        BasicBlock::Create(NewF->getContext(), BB.getName(), NewF);
+    originalToNewFn[&BB] = newBB;
+  }
+
+  for (int i = 0; i < FTy->getNumParams(); ++i) {
+    auto orig_arg = tobatch->getArg(i);
+    std::vector<Value *> args;
+    for (int j = 0; j < width; ++j) {
+      args.push_back(NewF->getArg(i + j));
+    }
+    vectorizedValues[orig_arg] = args;
+  }
+
+  InstructionBatcher *batcher = new InstructionBatcher(
+      tobatch, NewF, width, vectorizedValues, originalToNewFn, *this);
+
+  for (BasicBlock &BB : *tobatch) {
+    for (Instruction &I : BB) {
+      batcher->visit(I);
+    }
+  }
+
+  delete batcher;
+
+  return NewF;
+};
 
 void EnzymeLogic::clear() {
   PPC.clear();

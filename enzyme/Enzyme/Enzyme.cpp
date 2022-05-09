@@ -62,6 +62,8 @@
 #include "GradientUtils.h"
 #include "Utils.h"
 
+#include "InstructionBatcher.h"
+
 #include "llvm/Transforms/Utils.h"
 
 #if LLVM_VERSION_MAJOR >= 13
@@ -504,6 +506,98 @@ public:
       }
     }
     return width;
+  }
+
+  bool HandleBatch(CallInst *CI) {
+    Value *fn = CI->getArgOperand(0);
+
+    std::vector<DIFFE_TYPE> constants;
+    SmallVector<Value *, 2> args;
+
+    if (CI->hasStructRetAttr()) {
+      fn = CI->getArgOperand(1);
+    }
+
+    while (auto ci = dyn_cast<CastInst>(fn)) {
+      fn = ci->getOperand(0);
+    }
+    while (auto ci = dyn_cast<BlockAddress>(fn)) {
+      fn = ci->getFunction();
+    }
+    while (auto ci = dyn_cast<ConstantExpr>(fn)) {
+      fn = ci->getOperand(0);
+    }
+
+    Function *F = dyn_cast<Function>(fn);
+
+    unsigned width = 1;
+
+    // determine width
+#if LLVM_VERSION_MAJOR >= 14
+    for (auto [i, found] = std::tuple{0u, false}; i < CI->arg_size(); ++i)
+#else
+    for (auto [i, found] = std::tuple{0u, false}; i < CI->getNumArgOperands();
+         ++i)
+#endif
+    {
+      Value *arg = CI->getArgOperand(i);
+
+      if (auto MDName = getMetadataName(arg)) {
+        if (*MDName == "enzyme_width") {
+          if (found) {
+            EmitFailure("IllegalVectorWidth", CI->getDebugLoc(), CI,
+                        "vector width declared more than once",
+                        *CI->getArgOperand(i), " in", *CI);
+            return false;
+          }
+
+#if LLVM_VERSION_MAJOR >= 14
+          if (i + 1 >= CI->arg_size())
+#else
+          if (i + 1 >= CI->getNumArgOperands())
+#endif
+          {
+            EmitFailure("MissingVectorWidth", CI->getDebugLoc(), CI,
+                        "constant integer followong enzyme_width is missing",
+                        *CI->getArgOperand(i), " in", *CI);
+            return false;
+          }
+
+          Value *width_arg = CI->getArgOperand(i + 1);
+          if (auto cint = dyn_cast<ConstantInt>(width_arg)) {
+            width = cint->getZExtValue();
+            found = true;
+          } else {
+            EmitFailure("IllegalVectorWidth", CI->getDebugLoc(), CI,
+                        "enzyme_width must be a constant integer",
+                        *CI->getArgOperand(i), " in", *CI);
+            return false;
+          }
+
+          if (!found) {
+            EmitFailure("IllegalVectorWidth", CI->getDebugLoc(), CI,
+                        "illegal enzyme vector argument width ",
+                        *CI->getArgOperand(i), " in", *CI);
+            return false;
+          }
+        }
+      }
+    }
+
+    assert(F);
+
+    auto newFunc = Logic.CreateBatch(F, width);
+
+    // TODO: handle scalar args
+
+    IRBuilder<> Builder2(CI);
+
+    SmallVector<Value *, 0> wrapped_args;
+    // wrap args
+
+    Builder2.CreateCall(newFunc->getFunctionType(), newFunc, args);
+
+    // unwrap args
   }
 
   /// Return whether successful
@@ -1419,7 +1513,8 @@ public:
               Fn->getName().contains("__enzyme_fwdsplit") ||
               Fn->getName().contains("__enzyme_augmentfwd") ||
               Fn->getName().contains("__enzyme_augmentsize") ||
-              Fn->getName().contains("__enzyme_reverse")))
+              Fn->getName().contains("__enzyme_reverse") ||
+              Fn->getName().contains("__enzyme_batch")))
           continue;
 
         SmallVector<Value *, 16> CallArgs(II->arg_begin(), II->arg_end());
@@ -1455,6 +1550,7 @@ public:
     MapVector<CallInst *, DerivativeMode> toLower;
     MapVector<CallInst *, DerivativeMode> toVirtual;
     MapVector<CallInst *, DerivativeMode> toSize;
+    SmallVector<CallInst *> toBatch;
     SetVector<CallInst *> InactiveCalls;
     SetVector<CallInst *> IterCalls;
   retry:;
@@ -1673,6 +1769,7 @@ public:
         bool enableEnzyme = false;
         bool virtualCall = false;
         bool sizeOnly = false;
+        bool batch = false;
         DerivativeMode mode;
         if (Fn->getName().contains("__enzyme_autodiff")) {
           enableEnzyme = true;
@@ -1697,6 +1794,9 @@ public:
           enableEnzyme = true;
           virtualCall = true;
           mode = DerivativeMode::ReverseModeCombined;
+        } else if (Fn->getName().contains("__enzyme_batch")) {
+          enableEnzyme = true;
+          batch = true;
         }
 
         if (enableEnzyme) {
@@ -1736,11 +1836,12 @@ public:
             }
             goto retry;
           }
-
           if (virtualCall)
             toVirtual[CI] = mode;
           else if (sizeOnly)
             toSize[CI] = mode;
+          else if (batch)
+            toBatch.push_back(CI);
           else
             toLower[CI] = mode;
 
@@ -1822,6 +1923,10 @@ public:
       CI->replaceAllUsesWith(ConstantExpr::getPointerCast(val, CI->getType()));
       CI->eraseFromParent();
       Changed = true;
+    }
+
+    for (auto call : toBatch) {
+      HandleBatch(call);
     }
 
     if (Changed && EnzymeAttributor) {
