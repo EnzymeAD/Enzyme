@@ -10,10 +10,18 @@ entry:
 
 declare void @cblas_daxpy(i32, double, double*, i32, double*, i32)
 
-define void @wrapperMod(i32 %n, double %alpha, double* %x, i32 %incx, double* %y, i32 %incy) {
+define void @wrapperModX(i32 %n, double %alpha, double* %x, i32 %incx, double* %y, i32 %incy) {
 entry:
   tail call void @cblas_daxpy(i32 %n, double %alpha, double* %x, i32 %incx, double* %y, i32 %incy)
   store double 0.000000e+00, double* %x, align 8
+  ret void
+}
+
+define void @wrapperModXY(i32 %n, double %alpha, double* %x, i32 %incx, double* %y, i32 %incy) {
+entry:
+  tail call void @cblas_daxpy(i32 %n, double %alpha, double* %x, i32 %incx, double* %y, i32 %incy)
+  store double 0.000000e+00, double* %x, align 8
+  store double 0.000000e+00, double* %y, align 8
   ret void
 }
 
@@ -34,9 +42,15 @@ entry:
 
 declare void @__enzyme_autodiff1(i8*, i32, i32, double, double*, double*, i32, double*, double*, i32)
 
-define void @activeMod(i32 %n, double %alpha, double* %x, double* %_x, i32 %incx, double* %y, double* %_y, i32 %incy) {
+define void @activeModX(i32 %n, double %alpha, double* %x, double* %_x, i32 %incx, double* %y, double* %_y, i32 %incy) {
 entry:
-  %call = tail call double @__enzyme_autodiff(i8* bitcast (void (i32, double, double*, i32, double*, i32)* @wrapperMod to i8*), i32 %n, double %alpha, double* %x, double* %_x, i32 %incx, double* %y, double* %_y, i32 %incy)
+  %call = tail call double @__enzyme_autodiff(i8* bitcast (void (i32, double, double*, i32, double*, i32)* @wrapperModX to i8*), i32 %n, double %alpha, double* %x, double* %_x, i32 %incx, double* %y, double* %_y, i32 %incy)
+  ret void
+}
+
+define void @activeModXY(i32 %n, double %alpha, double* %x, double* %_x, i32 %incx, double* %y, double* %_y, i32 %incy) {
+entry:
+  %call = tail call double @__enzyme_autodiff(i8* bitcast (void (i32, double, double*, i32, double*, i32)* @wrapperModXY to i8*), i32 %n, double %alpha, double* %x, double* %_x, i32 %incx, double* %y, double* %_y, i32 %incy)
   ret void
 }
 
@@ -48,9 +62,13 @@ entry:
 ;CHECK-NEXT: entry
 ;CHECK-NEXT: call void @[[inactive_alpha:.+]](
 
-;CHECK: define void @activeMod
+;CHECK: define void @activeModX
 ;CHECK-NEXT: entry
-;CHECK-NEXT: call { double } @[[activeMod:.+]](
+;CHECK-NEXT: call { double } @[[activeModX:.+]](
+
+;CHECK: define void @activeModXY
+;CHECK-NEXT: entry
+;CHECK-NEXT: call { double } @[[activeModXY:.+]](
 
 ;CHECK:define internal { double } @[[active]](i32 %n, double %alpha, double* %x, double* %"x'", i32 %incx, double* %y, double* %"y'", i32 %incy)
 ;CHECK-NEXT:entry:
@@ -68,7 +86,7 @@ entry:
 ;CHECK-NEXT:  ret void
 ;CHECK-NEXT:}
 
-;CHECK:define internal { double } @[[activeMod]](i32 %n, double %alpha, double* %x, double* %"x'", i32 %incx, double* %y, double* %"y'", i32 %incy)
+;CHECK:define internal { double } @[[activeModX]](i32 %n, double %alpha, double* %x, double* %"x'", i32 %incx, double* %y, double* %"y'", i32 %incy)
 ;CHECK-NEXT:entry:
 ;CHECK-NEXT:  %0 = zext i32 %n to i64
 ;CHECK-NEXT:  %mallocsize = mul i64 %0, ptrtoint (double* getelementptr (double, double* null, i32 1) to i64)
@@ -77,6 +95,24 @@ entry:
 ;CHECK-NEXT:  call void @__enzyme_memcpy_doubleda0sa0stride(double* %1, double* %x, i32 %n, i32 %incx)
 ;CHECK-NEXT:  tail call void @cblas_daxpy(i32 %n, double %alpha, double* %x, i32 %incx, double* %y, i32 %incy)
 ;CHECK-NEXT:  store double 0.000000e+00, double* %x, align 8
+;CHECK-NEXT:  store double 0.000000e+00, double* %"x'", align 8
+;CHECK-NEXT:  call void @cblas_daxpy(i32 %n, double %alpha, double* %"y'", i32 %incy, double* %"x'", i32 1)
+;CHECK-NEXT:  %2 = call fast double @cblas_ddot(i32 %n, double* nocapture readonly %"y'", i32 %incy, double* nocapture readonly %1, i32 1)
+;CHECK-NEXT:  %3 = insertvalue { double } undef, double %2, 0
+;CHECK-NEXT:  ret { double } %3
+;CHECK-NEXT:}
+
+;CHECK:define internal { double } @[[activeModXY]](i32 %n, double %alpha, double* %x, double* %"x'", i32 %incx, double* %y, double* %"y'", i32 %incy)
+;CHECK-NEXT:entry:
+;CHECK-NEXT:  %0 = zext i32 %n to i64
+;CHECK-NEXT:  %mallocsize = mul i64 %0, ptrtoint (double* getelementptr (double, double* null, i32 1) to i64)
+;CHECK-NEXT:  %malloccall = tail call i8* @malloc(i64 %mallocsize)
+;CHECK-NEXT:  %1 = bitcast i8* %malloccall to double*
+;CHECK-NEXT:  call void @__enzyme_memcpy_doubleda0sa0stride(double* %1, double* %x, i32 %n, i32 %incx)
+;CHECK-NEXT:  tail call void @cblas_daxpy(i32 %n, double %alpha, double* %x, i32 %incx, double* %y, i32 %incy)
+;CHECK-NEXT:  store double 0.000000e+00, double* %x, align 8
+;CHECK-NEXT:  store double 0.000000e+00, double* %y, align 8
+;CHECK-NEXT:  store double 0.000000e+00, double* %"y'", align 8
 ;CHECK-NEXT:  store double 0.000000e+00, double* %"x'", align 8
 ;CHECK-NEXT:  call void @cblas_daxpy(i32 %n, double %alpha, double* %"y'", i32 %incy, double* %"x'", i32 1)
 ;CHECK-NEXT:  %2 = call fast double @cblas_ddot(i32 %n, double* nocapture readonly %"y'", i32 %incy, double* nocapture readonly %1, i32 1)

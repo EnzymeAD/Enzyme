@@ -576,6 +576,16 @@ getOrInsertDifferentialFloatMemcpy(llvm::Module &M, llvm::Type *T,
 llvm::Function *getOrInsertMemcpyStrided(llvm::Module &M, llvm::PointerType *T,
                                          unsigned dstalign, unsigned srcalign);
 
+/// Create function for type that performs memcpy for a BLAS-style matrix with m, n and ld (leading dimension)
+llvm::Function *getOrInsertMemcpyMatrix(llvm::Module &M, llvm::PointerType *T,
+                                         unsigned dstalign, unsigned srcalign);
+
+/// Create function for type that performs uniform scaling for a BLAS-style matrix
+llvm::Function *getOrInsertScalMatrix(llvm::Module &M, llvm::PointerType *T, llvm::FunctionCallee &scal);
+
+/// Create function for type that performs adjoint for cblas_?asum
+llvm::Function *getOrInsertAsumAdjoint(llvm::Module &M, llvm::PointerType *T);
+
 /// Create function for type that performs the derivative memmove on floating
 /// point memory
 llvm::Function *

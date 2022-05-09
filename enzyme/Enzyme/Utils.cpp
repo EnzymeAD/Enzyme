@@ -287,6 +287,332 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, unsigned dstalign,
   return F;
 }
 
+Function *getOrInsertMemcpyMatrix(Module &M, PointerType *T, unsigned dstalign,
+                                   unsigned srcalign) {
+  Type *elementType = T->getElementType();
+  assert(elementType->isFloatingPointTy());
+  std::string name = "__enzyme_memcpy_" + tofltstr(elementType) + "da" +
+                     std::to_string(dstalign) + "sa" +
+                     std::to_string(srcalign) + "matrix";
+  FunctionType *FT = FunctionType::get(Type::getVoidTy(M.getContext()),
+                                       {T, T, Type::getInt32Ty(M.getContext()),
+                                        Type::getInt32Ty(M.getContext()), Type::getInt32Ty(M.getContext()), Type::getInt32Ty(M.getContext())},
+                                       false);
+
+#if LLVM_VERSION_MAJOR >= 9
+  Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
+#else
+  Function *F = cast<Function>(M.getOrInsertFunction(name, FT));
+#endif
+
+  if (!F->empty())
+    return F;
+
+  F->setLinkage(Function::LinkageTypes::InternalLinkage);
+  F->addFnAttr(Attribute::ArgMemOnly);
+  F->addFnAttr(Attribute::NoUnwind);
+  F->addParamAttr(0, Attribute::NoCapture);
+  F->addParamAttr(1, Attribute::NoCapture);
+  F->addParamAttr(0, Attribute::WriteOnly);
+  F->addParamAttr(1, Attribute::ReadOnly);
+
+  BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
+  BasicBlock *col_pre = BasicBlock::Create(M.getContext(), "for.col.pre", F);
+  BasicBlock *col_body = BasicBlock::Create(M.getContext(), "for.col.body", F);
+  BasicBlock *row_pre = BasicBlock::Create(M.getContext(), "for.row.pre", F);
+  BasicBlock *row_body = BasicBlock::Create(M.getContext(), "for.row.body", F);
+  BasicBlock *end = BasicBlock::Create(M.getContext(), "if.end", F);
+
+  auto dst = F->arg_begin();
+  dst->setName("dst");
+  auto src = dst + 1;
+  src->setName("src");
+  auto m = src + 1;
+  m->setName("m");
+  auto n = m + 1;
+  n->setName("n");
+  auto ld = n + 1;
+  ld->setName("ld");
+  auto layout = ld + 1;
+  layout->setName("layout");
+
+  {
+    IRBuilder<> B(entry);
+    B.CreateCondBr(B.CreateICmpEQ(layout, ConstantInt::get(layout->getType(), 102)),
+                   col_pre, row_pre);
+  }
+
+  {
+    IRBuilder<> B(col_pre);
+    B.CreateCondBr(B.CreateICmpEQ(n, ConstantInt::get(n->getType(), 0)), end, col_body);
+  }
+
+  {
+    IRBuilder<> B(row_pre);
+    B.CreateCondBr(B.CreateICmpEQ(m, ConstantInt::get(m->getType(), 0)), end, row_body);
+  }
+
+  {
+    IRBuilder<> B(col_body);
+    B.setFastMathFlags(getFast());
+    PHINode *col_idx = B.CreatePHI(n->getType(), 2, "col.idx");
+    auto copysize = B.CreateMul(B.CreateZExt(m, B.getInt64Ty()), ConstantExpr::getSizeOf(elementType));
+    col_idx->addIncoming(ConstantInt::get(n->getType(), 0), col_pre);
+    auto src_offset = B.CreateMul(col_idx, ld), dst_offset = B.CreateMul(col_idx, m);
+
+#if LLVM_VERSION_MAJOR > 7
+    Value *dsti = B.CreateGEP(
+        cast<PointerType>(dst->getType())->getElementType(), dst, dst_offset, "col.dst.i");
+    Value *srci =
+        B.CreateGEP(cast<PointerType>(src->getType())->getElementType(), src,
+                    src_offset, "col.src.i");
+#else
+    Value *dsti = B.CreateGEP(dst, dst_offset, "col.dst.i");
+    Value *srci = B.CreateGEP(src, src_offset, "col.src.i");
+#endif
+
+    B.CreateMemCpy(dsti, dstalign, srci, srcalign, copysize);
+
+    Value *col_next =
+        B.CreateNUWAdd(col_idx, ConstantInt::get(col_idx->getType(), 1), "col.idx.next");
+    col_idx->addIncoming(col_next, col_body);
+    B.CreateCondBr(B.CreateICmpEQ(col_next, n), end, col_body);
+  }
+
+  {
+    IRBuilder<> B(row_body);
+    B.setFastMathFlags(getFast());
+    PHINode *row_idx = B.CreatePHI(m->getType(), 2, "row.idx");
+    auto copysize = B.CreateMul(B.CreateZExt(n, B.getInt64Ty()), ConstantExpr::getSizeOf(elementType));
+    row_idx->addIncoming(ConstantInt::get(m->getType(), 0), row_pre);
+    auto src_offset = B.CreateMul(row_idx, ld), dst_offset = B.CreateMul(row_idx, n);
+
+#if LLVM_VERSION_MAJOR > 7
+    Value *dsti = B.CreateGEP(
+        cast<PointerType>(dst->getType())->getElementType(), dst, dst_offset, "row.dst.i");
+    Value *srci =
+        B.CreateGEP(cast<PointerType>(src->getType())->getElementType(), src,
+                    src_offset, "row.src.i");
+#else
+    Value *dsti = B.CreateGEP(dst, dst_offset, "row.dst.i");
+    Value *srci = B.CreateGEP(src, src_offset, "row.src.i");
+#endif
+
+    B.CreateMemCpy(dsti, dstalign, srci, srcalign, copysize);
+
+    Value *row_next =
+        B.CreateNUWAdd(row_idx, ConstantInt::get(row_idx->getType(), 1), "row.idx.next");
+    row_idx->addIncoming(row_next, row_body);
+    B.CreateCondBr(B.CreateICmpEQ(row_next, m), end, row_body);
+  }
+
+  {
+    IRBuilder<> B(end);
+    B.CreateRetVoid();
+  }
+
+  return F;
+}
+
+Function *getOrInsertScalMatrix(Module &M, PointerType *T, FunctionCallee &scal) {
+  Type *elementType = T->getElementType();
+  assert(elementType->isFloatingPointTy());
+  std::string name = "__enzyme_memcpy_" + tofltstr(elementType) +  "matrix_scal";
+  FunctionType *FT = FunctionType::get(Type::getVoidTy(M.getContext()),
+                                       {Type::getInt32Ty(M.getContext()), Type::getInt32Ty(M.getContext()), Type::getInt32Ty(M.getContext()),
+                                       elementType, T, Type::getInt32Ty(M.getContext())},
+                                       false);
+
+#if LLVM_VERSION_MAJOR >= 9
+  Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
+#else
+  Function *F = cast<Function>(M.getOrInsertFunction(name, FT));
+#endif
+
+  if (!F->empty())
+    return F;
+
+  F->setLinkage(Function::LinkageTypes::InternalLinkage);
+  F->addFnAttr(Attribute::ArgMemOnly);
+  F->addFnAttr(Attribute::NoUnwind);
+  F->addParamAttr(4, Attribute::NoCapture);
+
+  BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
+  BasicBlock *col_pre = BasicBlock::Create(M.getContext(), "for.col.pre", F);
+  BasicBlock *col_body = BasicBlock::Create(M.getContext(), "for.col.body", F);
+  BasicBlock *row_pre = BasicBlock::Create(M.getContext(), "for.row.pre", F);
+  BasicBlock *row_body = BasicBlock::Create(M.getContext(), "for.row.body", F);
+  BasicBlock *end = BasicBlock::Create(M.getContext(), "if.end", F);
+
+  auto layout = F->arg_begin();
+  layout->setName("layout");
+  auto m = layout + 1;
+  m->setName("m");
+  auto n = m + 1;
+  n->setName("n");
+  auto alpha = n + 1;
+  alpha->setName("alpha");
+  auto a = alpha + 1;
+  a->setName("a");
+  auto ld = a + 1;
+  ld->setName("ld");
+
+  {
+    IRBuilder<> B(entry);
+    B.CreateCondBr(B.CreateICmpEQ(layout, ConstantInt::get(layout->getType(), 102)),
+                   col_pre, row_pre);
+  }
+
+  {
+    IRBuilder<> B(col_pre);
+    B.CreateCondBr(B.CreateICmpEQ(n, ConstantInt::get(n->getType(), 0)), end, col_body);
+  }
+
+  {
+    IRBuilder<> B(row_pre);
+    B.CreateCondBr(B.CreateICmpEQ(m, ConstantInt::get(m->getType(), 0)), end, row_body);
+  }
+
+  {
+    IRBuilder<> B(col_body);
+    B.setFastMathFlags(getFast());
+    PHINode *col_idx = B.CreatePHI(n->getType(), 2, "col.idx");
+    col_idx->addIncoming(ConstantInt::get(n->getType(), 0), col_pre);
+    auto offset = B.CreateMul(col_idx, ld);
+
+#if LLVM_VERSION_MAJOR > 7
+    Value *start = B.CreateGEP(
+        cast<PointerType>(a->getType())->getElementType(), a, offset, "col.start");
+#else
+    Value *start = B.CreateGEP(a, offset, "col.start");
+#endif
+
+    SmallVector<Value *, 4> args = {m, alpha, start, ConstantInt::get(m->getType(), 1)};
+    B.CreateCall(scal, args);
+
+    Value *col_next =
+        B.CreateNUWAdd(col_idx, ConstantInt::get(col_idx->getType(), 1), "col.idx.next");
+    col_idx->addIncoming(col_next, col_body);
+    B.CreateCondBr(B.CreateICmpEQ(col_next, n), end, col_body);
+  }
+
+  {
+    IRBuilder<> B(row_body);
+    B.setFastMathFlags(getFast());
+    PHINode *row_idx = B.CreatePHI(m->getType(), 2, "row.idx");
+    row_idx->addIncoming(ConstantInt::get(m->getType(), 0), row_pre);
+    auto offset = B.CreateMul(row_idx, ld);
+
+#if LLVM_VERSION_MAJOR > 7
+    Value *start = B.CreateGEP(
+        cast<PointerType>(a->getType())->getElementType(), a, offset, "col.start");
+#else
+    Value *start = B.CreateGEP(a, offset, "col.start");
+#endif
+
+    SmallVector<Value *, 4> args = {n, alpha, start, ConstantInt::get(n->getType(), 1)};
+    B.CreateCall(scal, args);
+
+    Value *row_next =
+        B.CreateNUWAdd(row_idx, ConstantInt::get(row_idx->getType(), 1), "row.idx.next");
+    row_idx->addIncoming(row_next, row_body);
+    B.CreateCondBr(B.CreateICmpEQ(row_next, m), end, row_body);
+  }
+
+  {
+    IRBuilder<> B(end);
+    B.CreateRetVoid();
+  }
+
+  return F;
+}
+
+Function *getOrInsertAsumAdjoint(Module &M, PointerType *T) {
+  Type *elementType = T->getElementType();
+  assert(elementType->isFloatingPointTy());
+  std::string name = "__enzyme_memcpy_" + tofltstr(elementType) +  "asum_adjoint";
+  FunctionType *FT = FunctionType::get(Type::getVoidTy(M.getContext()),
+                                       {Type::getInt32Ty(M.getContext()), elementType,
+                                       T,
+                                       T,
+                                       Type::getInt32Ty(M.getContext())},
+                                       false);
+
+#if LLVM_VERSION_MAJOR >= 9
+  Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
+#else
+  Function *F = cast<Function>(M.getOrInsertFunction(name, FT));
+#endif
+
+  if (!F->empty())
+    return F;
+
+  F->setLinkage(Function::LinkageTypes::InternalLinkage);
+  F->addFnAttr(Attribute::ArgMemOnly);
+  F->addFnAttr(Attribute::NoUnwind);
+  F->addParamAttr(2, Attribute::NoCapture);
+  F->addParamAttr(3, Attribute::NoCapture);
+
+  BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
+  BasicBlock *body = BasicBlock::Create(M.getContext(), "for.col.body", F);
+  BasicBlock *end = BasicBlock::Create(M.getContext(), "for.end", F);
+
+  auto n = F->arg_begin();
+  n->setName("n");
+  auto f = n + 1;
+  f->setName("f");
+  auto x = f + 1;
+  x->setName("x");
+  auto _x = x + 1;
+  _x->setName("_x");
+  auto incx = _x + 1;
+  incx->setName("incx");
+
+  IRBuilder<> B1(entry);
+  auto maxidx = B1.CreateMul(n, incx);
+  auto negf = B1.CreateFSub(ConstantFP::get(f->getType(), 0), f);
+  B1.CreateCondBr(B1.CreateICmpEQ(n, ConstantInt::get(n->getType(), 0)),
+                  end, body);
+
+  IRBuilder<> B2(body);
+  B2.setFastMathFlags(getFast());
+  PHINode *idx = B2.CreatePHI(n->getType(), 2, "idx");
+  idx->addIncoming(ConstantInt::get(n->getType(), 0), entry);
+
+#if LLVM_VERSION_MAJOR > 7
+  Value *primal_ptr = B2.CreateGEP(
+      cast<PointerType>(x->getType())->getElementType(), x, idx, "primal.ptr");
+  LoadInst *primal_load = B2.CreateLoad(
+      cast<PointerType>(primal_ptr->getType())->getElementType(), primal_ptr, "primal.load");
+  Value *shadow_ptr = B2.CreateGEP(
+      cast<PointerType>(_x->getType())->getElementType(), _x, idx, "shadow.ptr");
+  LoadInst *shadow_load = B2.CreateLoad(
+      cast<PointerType>(shadow_ptr->getType())->getElementType(), shadow_ptr, "shadow.load");
+#else
+  Value *primal_ptr = B2.CreateGEP(x, idx, "primal_ptr");
+  LoadInst *primal_load = B2.CreateLoad(primal_ptr, "primal_load");
+  Value *shadow_ptr = B2.CreateGEP(_x, idx, "shadow_ptr");
+  LoadInst *shadow_load = B2.CreateLoad(shadow_ptr, "shadow_load");
+#endif
+
+  auto fcmp = B2.CreateFCmpULT(primal_load, ConstantFP::get(f->getType(), 0.0));
+  auto delta = B2.CreateSelect(fcmp, negf, f);
+  auto shadow_store = B2.CreateFAdd(shadow_load, delta);
+  B2.CreateStore(shadow_store, shadow_ptr);
+
+  Value *next =
+      B2.CreateNUWAdd(idx, ConstantInt::get(idx->getType(), 1), "idx.next");
+  idx->addIncoming(next, body);
+  B2.CreateCondBr(B2.CreateICmpEQ(next, n), end, body);
+
+  {
+    IRBuilder<> B(end);
+    B.CreateRetVoid();
+  }
+
+  return F;
+}
+
 // TODO implement differential memmove
 Function *getOrInsertDifferentialFloatMemmove(Module &M, Type *T,
                                               unsigned dstalign,
