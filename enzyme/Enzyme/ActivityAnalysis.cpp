@@ -85,6 +85,7 @@ const char *KnownInactiveFunctionsStartingWith[] = {
     "$ss5print",
     "_ZNSt7__cxx1112basic_string",
     "_ZNSt7__cxx1118basic_string",
+    "_ZNKSt7__cxx1112basic_string",
     // ostream generic <<
     "_ZStlsISt11char_traitsIcEERSt13basic_ostream",
     "_ZSt16__ostream_insert",
