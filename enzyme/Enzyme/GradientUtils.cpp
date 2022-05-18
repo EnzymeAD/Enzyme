@@ -3821,6 +3821,10 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       }
     }
 
+    if (auto arg = dyn_cast<ConstantExpr>(oval)) {
+      return oval;
+    }
+
     Value *newval = getNewFromOriginal(oval);
 
     auto rule = [&]() { return newval; };
