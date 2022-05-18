@@ -187,6 +187,7 @@ const std::set<std::string> KnownInactiveFunctions = {
     "putchar",
     "fprintf",
     "vprintf",
+    "vsnprintf",
     "puts",
     "fflush",
     "__kmpc_for_static_init_4",
