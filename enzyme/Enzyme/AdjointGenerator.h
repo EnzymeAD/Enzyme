@@ -53,7 +53,7 @@ private:
   GradientUtils *const gutils;
   const std::vector<DIFFE_TYPE> &constant_args;
   DIFFE_TYPE retType;
-  TypeResults &TR;
+  TypeResults &TR = gutils->TR;
   std::function<unsigned(Instruction *, CacheType)> getIndex;
   const std::map<CallInst *, const std::map<Argument *, bool>>
       uncacheable_args_map;
@@ -71,7 +71,6 @@ public:
   AdjointGenerator(
       DerivativeMode Mode, GradientUtils *gutils,
       const std::vector<DIFFE_TYPE> &constant_args, DIFFE_TYPE retType,
-      TypeResults &TR,
       std::function<unsigned(Instruction *, CacheType)> getIndex,
       const std::map<CallInst *, const std::map<Argument *, bool>>
           uncacheable_args_map,
