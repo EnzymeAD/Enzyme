@@ -2296,7 +2296,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
               Seen[UsageKey(pair.first, ValueType::Primal)] = false;
 
           if (is_value_needed_in_reverse<ValueType::Primal>(
-                  TR, this, pair.first, mode, Seen, notForAnalysis)) {
+                  this, pair.first, mode, Seen, notForAnalysis)) {
             rematerialized = true;
           }
           if (rematerialized) {
@@ -4284,7 +4284,6 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
     return shadow;
   } else if (auto arg = dyn_cast<InsertValueInst>(oval)) {
-    assert(false);
     IRBuilder<> bb(getNewFromOriginal(arg));
     auto ip0 = invertPointerM(arg->getOperand(0), bb, nullShadow);
     auto ip1 = invertPointerM(arg->getOperand(1), bb, nullShadow);
@@ -6506,10 +6505,10 @@ void GradientUtils::computeMinCache(
 
         if (!legalRecompute(&I, Available2, nullptr)) {
           if (is_value_needed_in_reverse<ValueType::Primal>(
-                  TR, this, &I, minCutMode, FullSeen, guaranteedUnreachable)) {
+                  this, &I, minCutMode, FullSeen, guaranteedUnreachable)) {
             bool oneneed = is_value_needed_in_reverse<ValueType::Primal,
                                                       /*OneLevel*/ true>(
-                TR, this, &I, minCutMode, OneLevelSeen, guaranteedUnreachable);
+                this, &I, minCutMode, OneLevelSeen, guaranteedUnreachable);
             if (oneneed) {
               knownRecomputeHeuristic[&I] = false;
             } else
@@ -6532,7 +6531,7 @@ void GradientUtils::computeMinCache(
       if (Intermediates.count(V))
         continue;
       if (!is_value_needed_in_reverse<ValueType::Primal>(
-              TR, this, V, minCutMode, FullSeen, guaranteedUnreachable)) {
+              this, V, minCutMode, FullSeen, guaranteedUnreachable)) {
         continue;
       }
       if (!Recomputes.count(V)) {
@@ -6553,7 +6552,7 @@ void GradientUtils::computeMinCache(
       }
       Intermediates.insert(V);
       if (is_value_needed_in_reverse<ValueType::Primal, /*OneLevel*/ true>(
-              TR, this, V, minCutMode, OneLevelSeen, guaranteedUnreachable)) {
+              this, V, minCutMode, OneLevelSeen, guaranteedUnreachable)) {
         Required.insert(V);
       } else {
         for (auto V2 : V->users()) {

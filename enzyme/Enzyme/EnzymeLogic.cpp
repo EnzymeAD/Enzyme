@@ -596,7 +596,6 @@ void calculateUnusedValuesInFunction(
     bool returnValue, DerivativeMode mode, GradientUtils *gutils,
     TargetLibraryInfo &TLI, const std::vector<DIFFE_TYPE> &constant_args,
     const llvm::SmallPtrSetImpl<BasicBlock *> &oldUnreachable) {
-  TypeResults &TR = gutils->TR;
   std::map<UsageKey, bool> CacheResults;
   for (auto pair : gutils->knownRecomputeHeuristic) {
     if (!pair.second) {
@@ -613,7 +612,7 @@ void calculateUnusedValuesInFunction(
       continue;
 
     bool primalNeededInReverse = is_value_needed_in_reverse<ValueType::Primal>(
-        TR, gutils, pair.first, mode, CacheResults, oldUnreachable);
+        gutils, pair.first, mode, CacheResults, oldUnreachable);
     bool cacheWholeAllocation = false;
 
     if (gutils->knownRecomputeHeuristic.count(pair.first)) {
@@ -648,7 +647,7 @@ void calculateUnusedValuesInFunction(
       func, unnecessaryValues, unnecessaryInstructions, returnValue,
       [&](const Value *val) {
         bool ivn = is_value_needed_in_reverse<ValueType::Primal>(
-            TR, gutils, val, mode, PrimalSeen, oldUnreachable);
+            gutils, val, mode, PrimalSeen, oldUnreachable);
         return ivn;
       },
       [&](const Instruction *inst) {
@@ -832,8 +831,7 @@ void calculateUnusedValuesInFunction(
             for (auto pair : gutils->rematerializableAllocations) {
               if (pair.second.stores.count(inst)) {
                 if (is_value_needed_in_reverse<ValueType::Primal>(
-                        TR, gutils, pair.first, mode, PrimalSeen,
-                        oldUnreachable)) {
+                        gutils, pair.first, mode, PrimalSeen, oldUnreachable)) {
                   return UseReq::Need;
                 }
               }
@@ -842,7 +840,7 @@ void calculateUnusedValuesInFunction(
           }
         }
         bool ivn = is_value_needed_in_reverse<ValueType::Primal>(
-            TR, gutils, inst, mode, PrimalSeen, oldUnreachable);
+            gutils, inst, mode, PrimalSeen, oldUnreachable);
         if (ivn) {
           return UseReq::Need;
         }
@@ -855,9 +853,9 @@ void calculateUnusedValuesInFunction(
     for (auto &BB : func)
       for (auto &I : BB) {
         bool ivn = is_value_needed_in_reverse<ValueType::Primal>(
-            TR, gutils, &I, mode, PrimalSeen, oldUnreachable);
+            gutils, &I, mode, PrimalSeen, oldUnreachable);
         bool isn = is_value_needed_in_reverse<ValueType::Shadow>(
-            TR, gutils, &I, mode, PrimalSeen, oldUnreachable);
+            gutils, &I, mode, PrimalSeen, oldUnreachable);
         llvm::errs() << I << " ivn=" << (int)ivn << " isn: " << (int)isn;
         auto found = gutils->knownRecomputeHeuristic.find(&I);
         if (found != gutils->knownRecomputeHeuristic.end()) {
@@ -869,9 +867,9 @@ void calculateUnusedValuesInFunction(
                  << ": mode=" << to_string(mode) << "\n";
     for (auto a : unnecessaryValues) {
       bool ivn = is_value_needed_in_reverse<ValueType::Primal>(
-          TR, gutils, a, mode, PrimalSeen, oldUnreachable);
+          gutils, a, mode, PrimalSeen, oldUnreachable);
       bool isn = is_value_needed_in_reverse<ValueType::Shadow>(
-          TR, gutils, a, mode, PrimalSeen, oldUnreachable);
+          gutils, a, mode, PrimalSeen, oldUnreachable);
       llvm::errs() << *a << " ivn=" << (int)ivn << " isn: " << (int)isn;
       auto found = gutils->knownRecomputeHeuristic.find(a);
       if (found != gutils->knownRecomputeHeuristic.end()) {
@@ -1009,8 +1007,7 @@ getDefaultFunctionTypeForGradient(FunctionType *called, DIFFE_TYPE retType) {
   return std::pair<SmallVector<Type *, 4>, SmallVector<Type *, 4>>(args, outs);
 }
 
-bool shouldAugmentCall(CallInst *op, const GradientUtils *gutils,
-                       TypeResults &TR) {
+bool shouldAugmentCall(CallInst *op, const GradientUtils *gutils) {
   assert(op->getParent()->getParent() == gutils->oldFunc);
 
   Function *called = op->getCalledFunction();
@@ -1031,7 +1028,7 @@ bool shouldAugmentCall(CallInst *op, const GradientUtils *gutils,
   }
 
   if (!op->getType()->isFPOrFPVectorTy() && !gutils->isConstantValue(op) &&
-      TR.query(op).Inner0().isPossiblePointer()) {
+      gutils->TR.query(op).Inner0().isPossiblePointer()) {
     modifyPrimal = true;
 
 #ifdef PRINT_AUGCALL
@@ -1064,7 +1061,7 @@ bool shouldAugmentCall(CallInst *op, const GradientUtils *gutils,
 
     if (!argType->isFPOrFPVectorTy() &&
         !gutils->isConstantValue(op->getArgOperand(i)) &&
-        TR.query(op->getArgOperand(i)).Inner0().isPossiblePointer()) {
+        gutils->TR.query(op->getArgOperand(i)).Inner0().isPossiblePointer()) {
       if (called && !(called->hasParamAttribute(i, Attribute::ReadOnly) ||
                       called->hasParamAttribute(i, Attribute::ReadNone))) {
         modifyPrimal = true;
@@ -1118,7 +1115,6 @@ bool legalCombinedForwardReverse(
     const std::map<ReturnInst *, StoreInst *> &replacedReturns,
     std::vector<Instruction *> &postCreate,
     std::vector<Instruction *> &userReplace, GradientUtils *gutils,
-    TypeResults &TR,
     const SmallPtrSetImpl<const Instruction *> &unnecessaryInstructions,
     const SmallPtrSetImpl<BasicBlock *> &oldUnreachable,
     const bool subretused) {
@@ -1133,7 +1129,7 @@ bool legalCombinedForwardReverse(
     bool sret = subretused;
     if (!sret && !gutils->isConstantValue(origop)) {
       sret = is_value_needed_in_reverse<ValueType::Shadow>(
-          TR, gutils, origop, gutils->mode, oldUnreachable);
+          gutils, origop, gutils->mode, oldUnreachable);
     }
 
     if (sret) {
@@ -1224,8 +1220,7 @@ bool legalCombinedForwardReverse(
       return;
     }
     if (is_value_needed_in_reverse<ValueType::Primal>(
-            TR, gutils, I, DerivativeMode::ReverseModeCombined,
-            oldUnreachable)) {
+            gutils, I, DerivativeMode::ReverseModeCombined, oldUnreachable)) {
       legal = false;
       if (EnzymePrintPerf) {
         if (called)
@@ -3996,7 +3991,7 @@ Function *EnzymeLogic::CreateForwardDiff(
       unnecessaryInstructionsTmp.insert(&I);
   }
   if (mode == DerivativeMode::ForwardModeSplit)
-    gutils->computeGuaranteedFrees(guaranteedUnreachable, TR);
+    gutils->computeGuaranteedFrees(guaranteedUnreachable);
 
   SmallPtrSet<const Value *, 4> unnecessaryValues;
   SmallPtrSet<const Instruction *, 4> unnecessaryInstructions;
