@@ -595,7 +595,7 @@ public:
   // (for use) as a structure which carries data.
   ValueMap<Value *, ShadowRematerializer> backwardsOnlyShadows;
 
-  void computeForwardingProperties(Instruction *V, TypeResults &TR) {
+  void computeForwardingProperties(Instruction *V) {
     if (!EnzymeRematerialize)
       return;
     SmallVector<LoadInst *, 1> loads;
@@ -918,7 +918,7 @@ public:
         continue;
       for (auto &I : BB) {
         if (auto AI = dyn_cast<AllocaInst>(&I))
-          computeForwardingProperties(AI, TR);
+          computeForwardingProperties(AI);
 
         auto CI = dyn_cast<CallInst>(&I);
         if (!CI)
@@ -977,7 +977,7 @@ public:
       // the derivative of store needs to redo the store,
       // isValueNeededInReverse needs to know to preserve the
       // store operands in this case, etc
-      computeForwardingProperties(V, TR);
+      computeForwardingProperties(V);
     }
   }
 
@@ -1160,7 +1160,7 @@ public:
 public:
   AAResults &OrigAA;
   TypeAnalysis &TA;
-  TypeResults &TR;
+  TypeResults TR;
   bool omp;
 
 private:
@@ -1171,7 +1171,7 @@ public:
 
 public:
   GradientUtils(EnzymeLogic &Logic, Function *newFunc_, Function *oldFunc_,
-                TargetLibraryInfo &TLI_, TypeAnalysis &TA_, TypeResults &TR_,
+                TargetLibraryInfo &TLI_, TypeAnalysis &TA_, TypeResults TR_,
                 ValueToValueMapTy &invertedPointers_,
                 const SmallPtrSetImpl<Value *> &constantvalues_,
                 const SmallPtrSetImpl<Value *> &activevals_,
@@ -1908,7 +1908,7 @@ public:
 
 class DiffeGradientUtils : public GradientUtils {
   DiffeGradientUtils(EnzymeLogic &Logic, Function *newFunc_, Function *oldFunc_,
-                     TargetLibraryInfo &TLI, TypeAnalysis &TA, TypeResults &TR,
+                     TargetLibraryInfo &TLI, TypeAnalysis &TA, TypeResults TR,
                      ValueToValueMapTy &invertedPointers_,
                      const SmallPtrSetImpl<Value *> &constantvalues_,
                      const SmallPtrSetImpl<Value *> &returnvals_,
