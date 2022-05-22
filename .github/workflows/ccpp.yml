@@ -18,7 +18,7 @@ jobs:
       matrix:
         llvm: ["7", "8", "9", "10", "11", "12", "13"] #, "14"]
         build: ["Release"] # "RelWithDebInfo"
-        os: [ubuntu-20.04, ubuntu-18.04]
+        os: [ubuntu-22.04, ubuntu-20.04, ubuntu-18.04]
     
     timeout-minutes: 45 
     steps:
