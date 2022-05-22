@@ -85,6 +85,7 @@ const char *KnownInactiveFunctionsStartingWith[] = {
     "$ss5print",
     "_ZNSt7__cxx1112basic_string",
     "_ZNSt7__cxx1118basic_string",
+    "_ZNKSt7__cxx1112basic_string",
     // ostream generic <<
     "_ZStlsISt11char_traitsIcEERSt13basic_ostream",
     "_ZSt16__ostream_insert",
@@ -186,6 +187,7 @@ const std::set<std::string> KnownInactiveFunctions = {
     "putchar",
     "fprintf",
     "vprintf",
+    "vsnprintf",
     "puts",
     "fflush",
     "__kmpc_for_static_init_4",
@@ -472,6 +474,12 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults &TR, Instruction *I) {
       ActiveInstructions.insert(I);
       return false;
     }
+    if (CI->hasFnAttr("enzyme_inactive")) {
+      if (EnzymePrintActivity)
+        llvm::errs() << "forced inactive " << *I << "\n";
+      InsertConstantInstruction(TR, I);
+      return true;
+    }
     Function *called = getFunctionFromCall(CI);
 
     if (called) {
@@ -480,6 +488,12 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults &TR, Instruction *I) {
           llvm::errs() << "forced active " << *I << "\n";
         ActiveInstructions.insert(I);
         return false;
+      }
+      if (called->hasFnAttribute("enzyme_inactive")) {
+        if (EnzymePrintActivity)
+          llvm::errs() << "forced inactive " << *I << "\n";
+        InsertConstantInstruction(TR, I);
+        return true;
       }
     }
   }
@@ -1045,6 +1059,37 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
       llvm::errs() << " VALUE nonconst unknown expr " << *Val << "\n";
     ActiveValues.insert(Val);
     return false;
+  }
+
+  if (auto CI = dyn_cast<CallInst>(Val)) {
+    if (CI->hasFnAttr("enzyme_active")) {
+      if (EnzymePrintActivity)
+        llvm::errs() << "forced active val " << *Val << "\n";
+      ActiveValues.insert(Val);
+      return false;
+    }
+    if (CI->hasFnAttr("enzyme_inactive")) {
+      if (EnzymePrintActivity)
+        llvm::errs() << "forced inactive val " << *Val << "\n";
+      InsertConstantValue(TR, Val);
+      return true;
+    }
+    Function *called = getFunctionFromCall(CI);
+
+    if (called) {
+      if (called->hasFnAttribute("enzyme_active")) {
+        if (EnzymePrintActivity)
+          llvm::errs() << "forced active val " << *Val << "\n";
+        ActiveValues.insert(Val);
+        return false;
+      }
+      if (called->hasFnAttribute("enzyme_inactive")) {
+        if (EnzymePrintActivity)
+          llvm::errs() << "forced inactive val " << *Val << "\n";
+        InsertConstantValue(TR, Val);
+        return true;
+      }
+    }
   }
 
   std::shared_ptr<ActivityAnalyzer> UpHypothesis;

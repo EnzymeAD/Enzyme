@@ -739,9 +739,9 @@ void calculateUnusedValuesInFunction(
           if (called && isDeallocationFunction(*called, TLI)) {
             if (mode == DerivativeMode::ForwardMode ||
                 mode == DerivativeMode::ForwardModeSplit ||
-                (mode == DerivativeMode::ReverseModePrimal ||
-                 mode == DerivativeMode::ReverseModeCombined) &&
-                    gutils->forwardDeallocations.count(obj_op))
+                ((mode == DerivativeMode::ReverseModePrimal ||
+                  mode == DerivativeMode::ReverseModeCombined) &&
+                 gutils->forwardDeallocations.count(obj_op)))
               return UseReq::Need;
             return UseReq::Recur;
           }
@@ -4068,13 +4068,6 @@ Function *EnzymeLogic::CreateForwardDiff(
     case DIFFE_TYPE::DUP_ARG:
     case DIFFE_TYPE::DUP_NONEED: {
       newArgs += 1;
-      auto pri = gutils->oldFunc->arg_begin() + i;
-      auto dif = newArgs;
-
-      BasicBlock &BB = gutils->newFunc->getEntryBlock();
-      IRBuilder<> Builder(&BB.front());
-
-      gutils->setDiffe(pri, dif, Builder);
       break;
     }
     case DIFFE_TYPE::CONSTANT:

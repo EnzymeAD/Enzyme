@@ -1300,8 +1300,12 @@ public:
           if (auto I = dyn_cast<Instruction>(U))
             todo.push_back(I);
       }
+
       for (auto v : llvm::reverse(seen)) {
-        assert(v->getNumUses() == 0);
+        for (auto &use : v->uses())
+          if (!seen.count(dyn_cast<Instruction>(use.getUser())))
+            assert(false);
+
         v->replaceAllUsesWith(UndefValue::get(v->getType()));
         erase(v);
       }
@@ -1418,8 +1422,22 @@ public:
       for (Instruction &I : oBB) {
         Instruction *inst = &I;
 
-        if (inst->getType()->isEmptyTy())
+        if (inst->getType()->isEmptyTy() || inst->getType()->isVoidTy())
           continue;
+
+        if (mode == DerivativeMode::ForwardMode ||
+            mode == DerivativeMode::ForwardModeSplit) {
+          if (!isConstantValue(inst)) {
+            IRBuilder<> BuilderZ(inst);
+            getForwardBuilder(BuilderZ);
+            Type *antiTy = getShadowType(inst->getType());
+            PHINode *anti =
+                BuilderZ.CreatePHI(antiTy, 1, inst->getName() + "'dual_phi");
+            invertedPointers.insert(std::make_pair(
+                (const Value *)inst, InvertedPointerVH(this, anti)));
+          }
+          continue;
+        }
 
         if (inst->getType()->isFPOrFPVectorTy())
           continue; //! op->getType()->isPointerTy() &&
@@ -1725,6 +1743,19 @@ public:
 
   Type *getShadowType(Type *ty) { return getShadowType(ty, width); }
 
+  static inline Value *extractMeta(IRBuilder<> &Builder, Value *Agg,
+                                   unsigned off) {
+    while (auto Ins = dyn_cast<InsertValueInst>(Agg)) {
+      if (Ins->getNumIndices() != 1)
+        break;
+      if (Ins->getIndices()[0] == off)
+        return Ins->getInsertedValueOperand();
+      else
+        Agg = Ins->getAggregateOperand();
+    }
+    return Builder.CreateExtractValue(Agg, {off});
+  }
+
   /// Unwraps a vector derivative from its internal representation and applies a
   /// function f to each element. Return values of f are collected and wrapped.
   template <typename Func, typename... Args>
@@ -1743,7 +1774,7 @@ public:
       Value *res = UndefValue::get(wrappedType);
       for (unsigned int i = 0; i < getWidth(); ++i) {
         auto tup = std::tuple<Args...>{
-            (args ? Builder.CreateExtractValue(args, {i}) : nullptr)...};
+            (args ? extractMeta(Builder, args, i) : nullptr)...};
         auto diff = std::apply(rule, std::move(tup));
         res = Builder.CreateInsertValue(res, diff, {i});
       }
@@ -1768,7 +1799,7 @@ public:
 
       for (unsigned int i = 0; i < getWidth(); ++i) {
         auto tup = std::tuple<Args...>{
-            (args ? Builder.CreateExtractValue(args, {i}) : nullptr)...};
+            (args ? extractMeta(Builder, args, i) : nullptr)...};
         std::apply(rule, std::move(tup));
       }
     } else {
@@ -1792,7 +1823,7 @@ public:
         SmallVector<Constant *, 3> extracted_diffs;
         for (auto diff : diffs) {
           extracted_diffs.push_back(
-              cast<Constant>(Builder.CreateExtractValue(diff, {i})));
+              cast<Constant>(extractMeta(Builder, diff, i)));
         }
         auto diff = rule(extracted_diffs);
         res = Builder.CreateInsertValue(res, diff, {i});
@@ -1883,6 +1914,9 @@ public:
       llvm::errs() << *val << "\n";
       assert(0 && "getting diffe of constant value");
     }
+    if (mode == DerivativeMode::ForwardMode ||
+        mode == DerivativeMode::ForwardModeSplit)
+      return invertPointerM(val, BuilderM);
     if (val->getType()->isPointerTy()) {
       llvm::errs() << *newFunc << "\n";
       llvm::errs() << *val << "\n";
@@ -2100,9 +2134,8 @@ public:
         SmallVector<Value *, 2> idx2(idxs.begin(), idxs.end());
         idx2.push_back(v);
         // FIXME: reconsider if passing a nullptr is correct here.
-        auto selects = addToDiffe(
-            val, BuilderM.CreateExtractValue(dif, ArrayRef<unsigned>(i)),
-            BuilderM, nullptr, idx2);
+        auto selects = addToDiffe(val, extractMeta(BuilderM, dif, i), BuilderM,
+                                  nullptr, idx2);
         for (auto select : selects) {
           addedSelects.push_back(select);
         }
@@ -2119,9 +2152,8 @@ public:
         Value *v = ConstantInt::get(Type::getInt32Ty(at->getContext()), i);
         SmallVector<Value *, 2> idx2(idxs.begin(), idxs.end());
         idx2.push_back(v);
-        auto selects = addToDiffe(
-            val, BuilderM.CreateExtractValue(dif, ArrayRef<unsigned>(i)),
-            BuilderM, addingType, idx2);
+        auto selects = addToDiffe(val, extractMeta(BuilderM, dif, i), BuilderM,
+                                  addingType, idx2);
         for (auto select : selects) {
           addedSelects.push_back(select);
         }
@@ -2143,6 +2175,21 @@ public:
       llvm::errs() << *val << "\n";
     }
     assert(!isConstantValue(val));
+    if (mode == DerivativeMode::ForwardMode ||
+        mode == DerivativeMode::ForwardModeSplit) {
+      assert(getShadowType(val->getType()) == toset->getType());
+      auto found = invertedPointers.find(val);
+      assert(found != invertedPointers.end());
+      auto placeholder0 = &*found->second;
+      auto placeholder = cast<PHINode>(placeholder0);
+      invertedPointers.erase(found);
+      replaceAWithB(placeholder, toset);
+      placeholder->replaceAllUsesWith(toset);
+      erase(placeholder);
+      invertedPointers.insert(
+          std::make_pair((const Value *)val, InvertedPointerVH(this, toset)));
+      return;
+    }
     Value *tostore = getDifferential(val);
     if (toset->getType() != tostore->getType()->getPointerElementType()) {
       llvm::errs() << "toset:" << *toset << "\n";
@@ -2362,21 +2409,25 @@ public:
         auto rule1 = [&](Value *ptr) {
           return BuilderM.CreateBitCast(
               ptr, PointerType::get(
-                       IntToFloatTy(dif->getType()),
+                       IntToFloatTy(diffType),
                        cast<PointerType>(ptr->getType())->getAddressSpace()));
         };
 
-        ptr = applyChainRule(diffType, BuilderM, rule1, ptr);
+        ptr = applyChainRule(
+            PointerType::get(
+                IntToFloatTy(diffType),
+                cast<PointerType>(origptr->getType())->getAddressSpace()),
+            BuilderM, rule1, ptr);
 
         auto rule2 = [&](Value *dif) {
-          return BuilderM.CreateBitCast(dif, IntToFloatTy(dif->getType()));
+          return BuilderM.CreateBitCast(dif, IntToFloatTy(diffType));
         };
 
-        dif = applyChainRule(diffType, BuilderM, rule2, dif);
+        dif = applyChainRule(IntToFloatTy(diffType), BuilderM, rule2, dif);
       }
 #if LLVM_VERSION_MAJOR >= 9
       AtomicRMWInst::BinOp op = AtomicRMWInst::FAdd;
-      if (auto vt = dyn_cast<VectorType>(dif->getType())) {
+      if (auto vt = dyn_cast<VectorType>(diffType)) {
 #if LLVM_VERSION_MAJOR >= 12
         assert(!vt->getElementCount().isScalable());
         size_t numElems = vt->getElementCount().getKnownMinValue();
@@ -2456,7 +2507,7 @@ public:
       };
       old = applyChainRule(diffType, BuilderM, rule, ptr);
     } else {
-      Type *tys[] = {dif->getType(), origptr->getType()};
+      Type *tys[] = {diffType, origptr->getType()};
       auto F = Intrinsic::getDeclaration(oldFunc->getParent(),
                                          Intrinsic::masked_load, tys);
 #if LLVM_VERSION_MAJOR >= 10
@@ -2473,7 +2524,7 @@ public:
                          Constant::getNullValue(dif->getType())};
         return BuilderM.CreateCall(F, args);
       };
-      old = applyChainRule(dif->getType(), BuilderM, rule, ip);
+      old = applyChainRule(diffType, BuilderM, rule, ip);
     }
 
     auto rule = [&](Value *dif, Value *old) {
@@ -2509,7 +2560,7 @@ public:
       };
       applyChainRule(BuilderM, rule, ptr, res);
     } else {
-      Type *tys[] = {dif->getType(), origptr->getType()};
+      Type *tys[] = {diffType, origptr->getType()};
       auto F = Intrinsic::getDeclaration(oldFunc->getParent(),
                                          Intrinsic::masked_store, tys);
       assert(align);

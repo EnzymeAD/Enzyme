@@ -613,7 +613,6 @@ public:
 #endif
     {
       Value *res = CI->getArgOperand(i);
-
       if (truei >= FT->getNumParams()) {
         if (!isa<MetadataAsValue>(res) &&
             (mode == DerivativeMode::ReverseModeGradient ||
@@ -659,6 +658,20 @@ public:
           ty = DIFFE_TYPE::DUP_ARG;
         } else if (*metaString == "enzyme_dupv") {
           ty = DIFFE_TYPE::DUP_ARG;
+          ++i;
+          Value *offset_arg = CI->getArgOperand(i);
+          if (offset_arg->getType()->isIntegerTy()) {
+            batchOffset[i + 1] = offset_arg;
+          } else {
+            EmitFailure("IllegalVectorOffset", CI->getDebugLoc(), CI,
+                        "enzyme_batch must be followd by an integer "
+                        "offset.",
+                        *CI->getArgOperand(i), " in", *CI);
+            return false;
+          }
+          continue;
+        } else if (*metaString == "enzyme_dupnoneedv") {
+          ty = DIFFE_TYPE::DUP_NONEED;
           ++i;
           Value *offset_arg = CI->getArgOperand(i);
           if (offset_arg->getType()->isIntegerTy()) {
@@ -792,6 +805,13 @@ public:
               element = Builder.CreateBitCast(
                   element, PointerType::get(Type::getInt8Ty(CI->getContext()),
                                             elementPtrTy->getAddressSpace()));
+#if LLVM_VERSION_MAJOR >= 7
+              element = Builder.CreateGEP(
+                  Type::getInt8Ty(CI->getContext()), element,
+                  Builder.CreateMul(
+                      batchOffset[i - 1],
+                      ConstantInt::get(batchOffset[i - 1]->getType(), v)));
+#else
               element = Builder.CreateGEP(
 #if LLVM_VERSION_MAJOR >= 14
                   elementPtrTy,
@@ -800,6 +820,7 @@ public:
                   Builder.CreateMul(
                       batchOffset[i - 1],
                       ConstantInt::get(batchOffset[i - 1]->getType(), v)));
+#endif
               element = Builder.CreateBitCast(element, elementPtrTy);
             } else {
               return false;
@@ -1775,8 +1796,16 @@ public:
           //&AAPotentialValues::ID,
       };
 
+#if LLVM_VERSION_MAJOR >= 15
+      AttributorConfig aconfig(CGUpdater);
+      aconfig.Allowed = &Allowed;
+      aconfig.DeleteFns = false;
+      Attributor A(Functions, InfoCache, aconfig);
+#else
+
       Attributor A(Functions, InfoCache, CGUpdater, &Allowed,
                    /*DeleteFns*/ false);
+#endif
       for (Function *F : Functions) {
         // Populate the Attributor with abstract attribute opportunities in the
         // function and the information cache with IR information.
@@ -1941,6 +1970,9 @@ public:
       I->eraseFromParent();
       changed = true;
     }
+
+    for (const auto &pair : Logic.PPC.cache)
+      pair.second->eraseFromParent();
     Logic.clear();
 
     if (changed && Logic.PostOpt) {

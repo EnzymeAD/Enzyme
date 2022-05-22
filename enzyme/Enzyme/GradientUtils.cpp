@@ -832,37 +832,42 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         if (pidx == nullptr)
           goto endCheck;
 
-        if (pidx->getType() != dli->getOperand(0)->getType()) {
+        if (pidx->getType() != getShadowType(dli->getOperand(0)->getType())) {
           llvm::errs() << "dli: " << *dli << "\n";
           llvm::errs() << "dli->getOperand(0): " << *dli->getOperand(0) << "\n";
           llvm::errs() << "pidx: " << *pidx << "\n";
         }
-        assert(pidx->getType() == dli->getOperand(0)->getType());
+        assert(pidx->getType() == getShadowType(dli->getOperand(0)->getType()));
+
+        Value *toreturn = applyChainRule(
+            dli->getType(), BuilderM,
+            [&](Value *pidx) {
 #if LLVM_VERSION_MAJOR > 7
-        auto toreturn =
-            BuilderM.CreateLoad(pidx->getType()->getPointerElementType(), pidx,
-                                phi->getName() + "_unwrap");
+              auto toreturn = BuilderM.CreateLoad(dli->getType(), pidx,
+                                                  phi->getName() + "_unwrap");
 #else
-        auto toreturn = BuilderM.CreateLoad(pidx, phi->getName() + "_unwrap");
+              auto toreturn =
+                  BuilderM.CreateLoad(pidx, phi->getName() + "_unwrap");
 #endif
-        if (auto newi = dyn_cast<Instruction>(toreturn)) {
-          newi->copyIRFlags(dli);
-          unwrappedLoads[toreturn] = dli;
-        }
+              if (auto newi = dyn_cast<Instruction>(toreturn)) {
+                newi->copyIRFlags(dli);
+                unwrappedLoads[toreturn] = dli;
+              }
 #if LLVM_VERSION_MAJOR >= 10
-        toreturn->setAlignment(dli->getAlign());
+              toreturn->setAlignment(dli->getAlign());
 #else
-        toreturn->setAlignment(dli->getAlignment());
+              toreturn->setAlignment(dli->getAlignment());
 #endif
-        toreturn->setVolatile(dli->isVolatile());
-        toreturn->setOrdering(dli->getOrdering());
-        toreturn->setSyncScopeID(dli->getSyncScopeID());
-        toreturn->setDebugLoc(getNewFromOriginal(dli->getDebugLoc()));
-        toreturn->setMetadata(LLVMContext::MD_tbaa,
-                              dli->getMetadata(LLVMContext::MD_tbaa));
-        toreturn->setMetadata(
-            LLVMContext::MD_invariant_group,
-            dli->getMetadata(LLVMContext::MD_invariant_group));
+              toreturn->setVolatile(dli->isVolatile());
+              toreturn->setOrdering(dli->getOrdering());
+              toreturn->setSyncScopeID(dli->getSyncScopeID());
+              toreturn->setDebugLoc(getNewFromOriginal(dli->getDebugLoc()));
+              toreturn->setMetadata(LLVMContext::MD_tbaa,
+                                    dli->getMetadata(LLVMContext::MD_tbaa));
+              return toreturn;
+            },
+            pidx);
+
         // TODO adding to cache only legal if no alias of any future writes
         if (permitCache)
           unwrap_cache[BuilderM.GetInsertBlock()][idx.first][idx.second] =
@@ -2682,55 +2687,74 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                     anti =
                         shadowHandlers[called->getName().str()](NB, orig, args);
                   } else {
+                    auto rule = [&]() {
 #if LLVM_VERSION_MAJOR >= 11
-                    anti = NB.CreateCall(orig->getFunctionType(),
-                                         orig->getCalledOperand(), args,
-                                         orig->getName() + "'mi");
+                      Value *anti = NB.CreateCall(
+                          orig->getFunctionType(), orig->getCalledOperand(),
+                          args, orig->getName() + "'mi");
 #else
-                    anti = NB.CreateCall(orig->getCalledValue(), args,
-                                         orig->getName() + "'mi");
+                      Value *anti = NB.CreateCall(orig->getCalledValue(), args,
+                                                  orig->getName() + "'mi");
 #endif
-                    cast<CallInst>(anti)->setAttributes(orig->getAttributes());
-                    cast<CallInst>(anti)->setCallingConv(
-                        orig->getCallingConv());
-                    cast<CallInst>(anti)->setTailCallKind(
-                        orig->getTailCallKind());
-                    cast<CallInst>(anti)->setDebugLoc(
-                        getNewFromOriginal(I.getDebugLoc()));
+                      cast<CallInst>(anti)->setAttributes(
+                          orig->getAttributes());
+                      cast<CallInst>(anti)->setCallingConv(
+                          orig->getCallingConv());
+                      cast<CallInst>(anti)->setTailCallKind(
+                          orig->getTailCallKind());
+                      cast<CallInst>(anti)->setDebugLoc(
+                          getNewFromOriginal(I.getDebugLoc()));
 
 #if LLVM_VERSION_MAJOR >= 14
-                    cast<CallInst>(anti)->addAttributeAtIndex(
-                        AttributeList::ReturnIndex, Attribute::NoAlias);
-                    cast<CallInst>(anti)->addAttributeAtIndex(
-                        AttributeList::ReturnIndex, Attribute::NonNull);
+                      cast<CallInst>(anti)->addAttributeAtIndex(
+                          AttributeList::ReturnIndex, Attribute::NoAlias);
+                      cast<CallInst>(anti)->addAttributeAtIndex(
+                          AttributeList::ReturnIndex, Attribute::NonNull);
 #else
-                    cast<CallInst>(anti)->addAttribute(
-                        AttributeList::ReturnIndex, Attribute::NoAlias);
-                    cast<CallInst>(anti)->addAttribute(
-                        AttributeList::ReturnIndex, Attribute::NonNull);
+                      cast<CallInst>(anti)->addAttribute(
+                          AttributeList::ReturnIndex, Attribute::NoAlias);
+                      cast<CallInst>(anti)->addAttribute(
+                          AttributeList::ReturnIndex, Attribute::NonNull);
 #endif
+                      return anti;
+                    };
+
+                    anti = applyChainRule(orig->getType(), NB, rule);
+
                     if (auto MD = hasMetadata(orig, "enzyme_fromstack")) {
-                      AllocaInst *replacement = NB.CreateAlloca(
-                          Type::getInt8Ty(orig->getContext()), args[0]);
-                      replacement->takeName(anti);
-                      auto Alignment =
-                          cast<ConstantInt>(
-                              cast<ConstantAsMetadata>(MD->getOperand(0))
-                                  ->getValue())
-                              ->getLimitedValue();
+                      auto rule = [&](Value *anti) {
+                        AllocaInst *replacement = NB.CreateAlloca(
+                            Type::getInt8Ty(orig->getContext()), args[0]);
+                        replacement->takeName(anti);
+                        auto Alignment =
+                            cast<ConstantInt>(
+                                cast<ConstantAsMetadata>(MD->getOperand(0))
+                                    ->getValue())
+                                ->getLimitedValue();
 #if LLVM_VERSION_MAJOR >= 10
-                      replacement->setAlignment(Align(Alignment));
+                        replacement->setAlignment(Align(Alignment));
 #else
-                      replacement->setAlignment(Alignment);
+                        replacement->setAlignment(Alignment);
 #endif
-                      replacement->setDebugLoc(
-                          getNewFromOriginal(I.getDebugLoc()));
+                        replacement->setDebugLoc(
+                            getNewFromOriginal(I.getDebugLoc()));
+                        return replacement;
+                      };
+
+                      Value *replacement = applyChainRule(
+                          Type::getInt8Ty(orig->getContext()), NB, rule, anti);
+
                       replaceAWithB(cast<Instruction>(anti), replacement);
                       erase(cast<Instruction>(anti));
                       anti = replacement;
                     }
 
-                    zeroKnownAllocation(NB, anti, args, *called, TLI);
+                    applyChainRule(
+                        NB,
+                        [&](Value *anti) {
+                          zeroKnownAllocation(NB, anti, args, *called, TLI);
+                        },
+                        anti);
                   }
                 } else {
                   llvm_unreachable("Unknown shadow rematerialization value");
@@ -3725,16 +3749,23 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   if (isa<ConstantPointerNull>(oval)) {
     return applyChainRule(oval->getType(), BuilderM, [&]() { return oval; });
   } else if (isa<UndefValue>(oval)) {
+    if (nullShadow)
+      return Constant::getNullValue(getShadowType(oval->getType()));
     return applyChainRule(oval->getType(), BuilderM, [&]() { return oval; });
   } else if (isa<ConstantInt>(oval)) {
+    if (nullShadow)
+      return Constant::getNullValue(getShadowType(oval->getType()));
     return applyChainRule(oval->getType(), BuilderM, [&]() { return oval; });
   } else if (auto CD = dyn_cast<ConstantDataArray>(oval)) {
     SmallVector<Constant *, 1> Vals;
     for (size_t i = 0, len = CD->getNumElements(); i < len; i++) {
-      Vals.push_back(cast<Constant>(
-          invertPointerM(CD->getElementAsConstant(i), BuilderM)));
+      Value *val = invertPointerM(CD->getElementAsConstant(i), BuilderM);
+      Vals.push_back(cast<Constant>(val));
     }
-    return ConstantArray::get(CD->getType(), Vals);
+    auto rule = [&CD](ArrayRef<Constant *> Vals) {
+      return ConstantArray::get(CD->getType(), Vals);
+    };
+    return applyChainRule(CD->getType(), Vals, BuilderM, rule);
   } else if (auto CD = dyn_cast<ConstantArray>(oval)) {
     SmallVector<Constant *, 1> Vals;
     for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
@@ -3780,6 +3811,16 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     // NOTE, this is legal and the correct resolution, however, our activity
     // analysis honeypot no longer exists
 
+    // Nulling the shadow for a constant is only necessary if any of the data
+    // could contain a float (e.g. should not be applied to pointers).
+    if (nullShadow) {
+      assert(my_TR);
+      auto CT = my_TR->query(oval)[{-1}];
+      if (!CT.isKnown() || CT.isFloat()) {
+        return Constant::getNullValue(getShadowType(oval->getType()));
+      }
+    }
+
     Value *newval = getNewFromOriginal(oval);
 
     auto rule = [&]() { return newval; };
@@ -3800,32 +3841,42 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
   if (isa<Argument>(oval) && cast<Argument>(oval)->hasByValAttr()) {
     IRBuilder<> bb(inversionAllocs);
-    AllocaInst *antialloca = bb.CreateAlloca(
-        oval->getType()->getPointerElementType(),
-        cast<PointerType>(oval->getType())->getPointerAddressSpace(), nullptr,
-        oval->getName() + "'ipa");
-    invertedPointers.insert(std::make_pair(
-        (const Value *)oval, InvertedPointerVH(this, antialloca)));
-    auto dst_arg =
-        bb.CreateBitCast(antialloca, Type::getInt8PtrTy(oval->getContext()));
-    auto val_arg = ConstantInt::get(Type::getInt8Ty(oval->getContext()), 0);
-    auto len_arg =
-        ConstantInt::get(Type::getInt64Ty(oval->getContext()),
-                         M->getDataLayout().getTypeAllocSizeInBits(
-                             oval->getType()->getPointerElementType()) /
-                             8);
-    auto volatile_arg = ConstantInt::getFalse(oval->getContext());
+
+    auto rule1 = [&]() {
+      AllocaInst *antialloca = bb.CreateAlloca(
+          oval->getType()->getPointerElementType(),
+          cast<PointerType>(oval->getType())->getPointerAddressSpace(), nullptr,
+          oval->getName() + "'ipa");
+
+      auto dst_arg =
+          bb.CreateBitCast(antialloca, Type::getInt8PtrTy(oval->getContext()));
+      auto val_arg = ConstantInt::get(Type::getInt8Ty(oval->getContext()), 0);
+      auto len_arg =
+          ConstantInt::get(Type::getInt64Ty(oval->getContext()),
+                           M->getDataLayout().getTypeAllocSizeInBits(
+                               oval->getType()->getPointerElementType()) /
+                               8);
+      auto volatile_arg = ConstantInt::getFalse(oval->getContext());
 
 #if LLVM_VERSION_MAJOR == 6
-    auto align_arg = ConstantInt::get(Type::getInt32Ty(oval->getContext()),
-                                      antialloca->getAlignment());
-    Value *args[] = {dst_arg, val_arg, len_arg, align_arg, volatile_arg};
+      auto align_arg = ConstantInt::get(Type::getInt32Ty(oval->getContext()),
+                                        antialloca->getAlignment());
+      Value *args[] = {dst_arg, val_arg, len_arg, align_arg, volatile_arg};
 #else
-    Value *args[] = {dst_arg, val_arg, len_arg, volatile_arg};
+      Value *args[] = {dst_arg, val_arg, len_arg, volatile_arg};
 #endif
-    Type *tys[] = {dst_arg->getType(), len_arg->getType()};
-    cast<CallInst>(bb.CreateCall(
-        Intrinsic::getDeclaration(M, Intrinsic::memset, tys), args));
+      Type *tys[] = {dst_arg->getType(), len_arg->getType()};
+      cast<CallInst>(bb.CreateCall(
+          Intrinsic::getDeclaration(M, Intrinsic::memset, tys), args));
+
+      return antialloca;
+    };
+
+    Value *antialloca = applyChainRule(oval->getType(), bb, rule1);
+
+    invertedPointers.insert(std::make_pair(
+        (const Value *)oval, InvertedPointerVH(this, antialloca)));
+
     return antialloca;
   } else if (auto arg = dyn_cast<GlobalVariable>(oval)) {
     if (!hasMetadata(arg, "enzyme_shadow")) {
@@ -4031,21 +4082,23 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     auto md2 = cast<MDTuple>(md);
     assert(md2->getNumOperands() == 1);
     auto gvemd = cast<ConstantAsMetadata>(md2->getOperand(0));
-    auto cs = gvemd->getValue();
+    auto cs = cast<Constant>(gvemd->getValue());
 
     if (width > 1) {
-      Value *agg = UndefValue::get(getShadowType(arg->getType()));
+      SmallVector<Constant *, 2> Vals;
       for (unsigned i = 0; i < width; ++i) {
-#if LLVM_VERSION_MAJOR >= 8
-        Value *elem =
-            BuilderM.CreateGEP(cs->getType()->getPointerElementType(), cs,
-                               {BuilderM.getInt32(0), BuilderM.getInt32(i)});
-#else
-        Value *elem = BuilderM.CreateGEP(
-            cs, {BuilderM.getInt32(0), BuilderM.getInt32(i)});
-#endif
-        agg = BuilderM.CreateInsertValue(agg, elem, {i});
+
+        Constant *idxs[] = {
+            ConstantInt::get(Type::getInt32Ty(cs->getContext()), 0),
+            ConstantInt::get(Type::getInt32Ty(cs->getContext()), i)};
+        Constant *elem = ConstantExpr::getInBoundsGetElementPtr(
+            cs->getType()->getPointerElementType(), cs, idxs);
+        Vals.push_back(elem);
       }
+
+      auto agg = ConstantArray::get(
+          cast<ArrayType>(getShadowType(arg->getType())), Vals);
+
       invertedPointers.insert(
           std::make_pair((const Value *)oval, InvertedPointerVH(this, agg)));
       return agg;
@@ -4166,8 +4219,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     return shadow;
   } else if (auto arg = dyn_cast<InsertValueInst>(oval)) {
     IRBuilder<> bb(getNewFromOriginal(arg));
-    auto ip0 = invertPointerM(arg->getOperand(0), bb);
-    auto ip1 = invertPointerM(arg->getOperand(1), bb);
+    auto ip0 = invertPointerM(arg->getOperand(0), bb, nullShadow);
+    auto ip1 = invertPointerM(arg->getOperand(1), bb, nullShadow);
 
     auto rule = [&bb, &arg](Value *ip0, Value *ip1) {
       return bb.CreateInsertValue(ip0, ip1, arg->getIndices(),
@@ -4200,8 +4253,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     Value *op0 = arg->getOperand(0);
     Value *op1 = arg->getOperand(1);
     Value *op2 = arg->getOperand(2);
-    auto ip0 = invertPointerM(op0, bb);
-    auto ip1 = invertPointerM(op1, bb);
+    auto ip0 = invertPointerM(op0, bb, nullShadow);
+    auto ip1 = invertPointerM(op1, bb, nullShadow);
 
     auto rule = [&](Value *ip0, Value *ip1) {
       return bb.CreateInsertElement(ip0, ip1, getNewFromOriginal(op2),
@@ -4237,10 +4290,15 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     return shadow;
   } else if (auto arg = dyn_cast<SelectInst>(oval)) {
     IRBuilder<> bb(getNewFromOriginal(arg));
-    Value *shadow = bb.CreateSelect(getNewFromOriginal(arg->getCondition()),
-                                    invertPointerM(arg->getTrueValue(), bb),
-                                    invertPointerM(arg->getFalseValue(), bb),
-                                    arg->getName() + "'ipse");
+    bb.setFastMathFlags(getFast());
+    Value *shadow = applyChainRule(
+        arg->getType(), bb,
+        [&](Value *tv, Value *fv) {
+          return bb.CreateSelect(getNewFromOriginal(arg->getCondition()), tv,
+                                 fv, arg->getName() + "'ipse");
+        },
+        invertPointerM(arg->getTrueValue(), bb, nullShadow),
+        invertPointerM(arg->getFalseValue(), bb, nullShadow));
     invertedPointers.insert(
         std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
     return shadow;
@@ -4420,6 +4478,44 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     applyChainRule(bb, rule2, antialloca);
 
     return antialloca;
+  } else if (auto II = dyn_cast<IntrinsicInst>(oval)) {
+    IRBuilder<> bb(getNewFromOriginal(II));
+    bb.setFastMathFlags(getFast());
+    switch (II->getIntrinsicID()) {
+    default:
+      goto end;
+    case Intrinsic::nvvm_ldu_global_i:
+    case Intrinsic::nvvm_ldu_global_p:
+    case Intrinsic::nvvm_ldu_global_f:
+    case Intrinsic::nvvm_ldg_global_i:
+    case Intrinsic::nvvm_ldg_global_p:
+    case Intrinsic::nvvm_ldg_global_f: {
+      return applyChainRule(
+          II->getType(), bb,
+          [&](Value *ptr) {
+            Value *args[] = {ptr};
+            auto li = bb.CreateCall(II->getCalledFunction(), args);
+            li->copyMetadata(*II, MD_ToCopy);
+            li->setDebugLoc(getNewFromOriginal(II->getDebugLoc()));
+            return li;
+          },
+          invertPointerM(II->getArgOperand(0), bb));
+    case Intrinsic::masked_load:
+      return applyChainRule(
+          II->getType(), bb,
+          [&](Value *ptr, Value *defaultV) {
+            Value *args[] = {ptr, getNewFromOriginal(II->getArgOperand(1)),
+                             getNewFromOriginal(II->getArgOperand(2)),
+                             defaultV};
+            auto li = bb.CreateCall(II->getCalledFunction(), args);
+            li->copyMetadata(*II, MD_ToCopy);
+            li->setDebugLoc(getNewFromOriginal(II->getDebugLoc()));
+            return li;
+          },
+          invertPointerM(II->getArgOperand(0), bb),
+          invertPointerM(II->getArgOperand(3), bb, nullShadow));
+    }
+    }
   } else if (auto phi = dyn_cast<PHINode>(oval)) {
 
     if (phi->getNumIncomingValues() == 0) {
@@ -4458,6 +4554,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     else {
       auto NewV = getNewFromOriginal(phi);
       IRBuilder<> bb(NewV);
+      bb.setFastMathFlags(getFast());
       // Note if the original phi node get's scev'd in NewF, it may
       // no longer be a phi and we need a new place to insert this phi
       // Note that if scev'd this can still be a phi with 0 incoming indicating
@@ -4470,6 +4567,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
       Type *shadowTy = getShadowType(phi->getType());
       PHINode *which = bb.CreatePHI(shadowTy, phi->getNumIncomingValues());
+      which->setDebugLoc(getNewFromOriginal(phi->getDebugLoc()));
 
       invertedPointers.insert(
           std::make_pair((const Value *)oval, InvertedPointerVH(this, which)));
@@ -4478,7 +4576,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         IRBuilder<> pre(
             cast<BasicBlock>(getNewFromOriginal(phi->getIncomingBlock(i)))
                 ->getTerminator());
-        Value *val = invertPointerM(phi->getIncomingValue(i), pre);
+        Value *val = invertPointerM(phi->getIncomingValue(i), pre, nullShadow);
         which->addIncoming(val, cast<BasicBlock>(getNewFromOriginal(
                                     phi->getIncomingBlock(i))));
       }
@@ -4824,6 +4922,9 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
             }
             new_op->setMetadata(LLVMContext::MD_invariant_group, invgroup);
           }
+        }
+        if (op->getType() != inst->getType()) {
+          llvm::errs() << " op: " << *op << " inst: " << *inst << "\n";
         }
         assert(op->getType() == inst->getType());
         if (!reduceRegister)
