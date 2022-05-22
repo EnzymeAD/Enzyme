@@ -228,8 +228,15 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
       os << " cubcall->setCallingConv(cconv);\n";
       for (auto *attr : *cast<ListInit>(Def->getValueAsListInit("fnattrs"))) {
         auto attrDef = cast<DefInit>(attr)->getDef();
-        os << " cubcall->addAttribute(AttributeList::FunctionIndex, Attribute::"
+        os << "#if LLVM_VERSION_MAJOR >= 14\n"
+           << " cubcall->addAttributeAtIndex(AttributeList::FunctionIndex, "
+           << "Attribute::"
            << attrDef->getValueInit("name")->getAsUnquotedString() << ");\n";
+        os << "#else\n"
+           << " cubcall->addAttribute(AttributeList::FunctionIndex, "
+           << "Attribute::"
+           << attrDef->getValueInit("name")->getAsUnquotedString() << ");\n";
+        os << "#endif\n";
       }
       os << " res = cubcall;\n";
     }
@@ -266,8 +273,15 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
         os << "   V->setCallingConv(cconv);\n";
         for (auto *attr : *cast<ListInit>(Def->getValueAsListInit("fnattrs"))) {
           auto attrDef = cast<DefInit>(attr)->getDef();
-          os << "   V->addAttribute(AttributeList::FunctionIndex, Attribute::"
+          os << "#if LLVM_VERSION_MAJOR >= 14\n"
+             << "   V->addAttributeAtIndex(AttributeList::FunctionIndex, "
+                "Attribute::"
              << attrDef->getValueInit("name")->getAsUnquotedString() << ");\n";
+          os << "#else \n"
+             << "   V->addAttribute(AttributeList::FunctionIndex, "
+                "Attribute::"
+             << attrDef->getValueInit("name")->getAsUnquotedString() << ");\n";
+          os << "#endif \n";
         }
       }
       os << "   if (res == nullptr) res = "

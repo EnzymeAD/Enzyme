@@ -793,6 +793,9 @@ public:
                   element, PointerType::get(Type::getInt8Ty(CI->getContext()),
                                             elementPtrTy->getAddressSpace()));
               element = Builder.CreateGEP(
+#if LLVM_VERSION_MAJOR >= 14
+                  elementPtrTy,
+#endif
                   element,
                   Builder.CreateMul(
                       batchOffset[i - 1],
