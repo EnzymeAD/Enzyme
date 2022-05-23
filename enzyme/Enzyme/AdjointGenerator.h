@@ -9492,32 +9492,6 @@ public:
         }
       }
 
-      if (funcName == "logb" || funcName == "logbf" || funcName == "logbl") {
-        eraseIfUnused(*orig);
-        if (gutils->isConstantInstruction(orig))
-          return;
-
-        Value *orig_op0 = call.getOperand(0);
-
-        switch (Mode) {
-        case DerivativeMode::ForwardMode:
-        case DerivativeMode::ForwardModeSplit: {
-          IRBuilder<> Builder2(&call);
-          getForwardBuilder(Builder2);
-          setDiffe(&call, Constant::getNullValue(orig_op0->getType()),
-                   Builder2);
-          return;
-        }
-        case DerivativeMode::ReverseModeGradient:
-        case DerivativeMode::ReverseModeCombined: {
-          // Derivative of these is zero and requires no modification
-          return;
-        }
-        case DerivativeMode::ReverseModePrimal:;
-          return;
-        }
-      }
-
       if (funcName == "scalbn" || funcName == "scalbnf" ||
           funcName == "scalbnl" || funcName == "scalbln" ||
           funcName == "scalblnf" || funcName == "scalblnl") {
