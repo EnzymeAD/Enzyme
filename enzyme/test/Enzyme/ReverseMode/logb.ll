@@ -18,7 +18,6 @@ entry:
 
 ; CHECK: define internal { double } @diffetest(double %x, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %call = call double @logb(double %x)
 ; CHECK-NEXT:   %0 = insertvalue { double } undef, double 0.000000e+00, 0
 ; CHECK-NEXT:   ret { double } %0
 ; CHECK-NEXT: }

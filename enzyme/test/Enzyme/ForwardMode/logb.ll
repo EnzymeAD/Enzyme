@@ -18,6 +18,5 @@ entry:
 
 ; CHECK: define internal double @fwddiffetest(double %x, double %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %call = call double @logb(double %x)
 ; CHECK-NEXT:   ret double 0.000000e+00
 ; CHECK-NEXT: }
