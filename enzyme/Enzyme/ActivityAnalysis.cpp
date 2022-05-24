@@ -85,6 +85,7 @@ const char *KnownInactiveFunctionsStartingWith[] = {
     "$ss5print",
     "_ZNSt7__cxx1112basic_string",
     "_ZNSt7__cxx1118basic_string",
+    "_ZNKSt7__cxx1112basic_string",
     // ostream generic <<
     "_ZStlsISt11char_traitsIcEERSt13basic_ostream",
     "_ZSt16__ostream_insert",
@@ -186,6 +187,7 @@ const std::set<std::string> KnownInactiveFunctions = {
     "putchar",
     "fprintf",
     "vprintf",
+    "vsnprintf",
     "puts",
     "fflush",
     "__kmpc_for_static_init_4",
@@ -240,7 +242,11 @@ const std::set<std::string> KnownInactiveFunctions = {
     "_msize",
     "ftnio_fmt_write64",
     "f90_strcmp_klen",
-    "__swift_instantiateConcreteTypeFromMangledName"};
+    "__swift_instantiateConcreteTypeFromMangledName",
+    "logb",
+    "logbf",
+    "logbl",
+};
 
 /// Is the use of value val as an argument of call CI known to be inactive
 /// This tool can only be used when in DOWN mode
