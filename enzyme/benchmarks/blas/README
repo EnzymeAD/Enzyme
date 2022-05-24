@@ -1,0 +1,4 @@
+The test cases comes from two sources:
+
+1. A re-implementation of the benchmark suite provided by Microsoft (the gmm, ba and ht) to make use of blas routines as much as possible;
+2. Some portion computational routines taken from the call graph of four driver routines in LAPACK (gesv, gels, syev, gebrd), where the c code is implemented by analogy to the reference fortran implementation on the Netlib website. They extensively call blas routines.

@@ -5797,38 +5797,38 @@ public:
               new_incy,  diff_x, new_incx, new_a,     new_lda};
           Builder2.CreateCall(gerCall, args);
         }
-        if (has_diff_alpha) { // update [alpha]
-          auto size = ConstantExpr::getSizeOf(scalarType);
-          auto malins = CallInst::CreateMalloc(
-              gutils->getNewFromOriginal(&call), size->getType(), scalarType,
-              size, new_m, nullptr, "");
-          auto tmp_y = Builder2.CreateBitCast(malins, arg_x->getType());
-          auto gemvCall = gutils->oldFunc->getParent()->getOrInsertFunction(
-              gemvName, voidTy, int32Ty /* order */, int32Ty /* transa */,
-              int32Ty /* m */, int32Ty /* n */, scalarType /* a */, aTy /* A */,
-              int32Ty /* lA */, xTy /* x */, int32Ty /* incx */, scalarType,
-              yTy /* tmpy */, int32Ty /* 1 */);
-          SmallVector<Value *, 12> args1 = {new_order,
-                                            new_transa,
-                                            new_m,
-                                            new_n,
-                                            ConstantFP::get(scalarType, 1.0),
-                                            new_a,
-                                            new_lda,
-                                            new_x,
-                                            new_incx,
-                                            ConstantFP::get(scalarType, 0.0),
-                                            tmp_y,
-                                            Builder2.getInt32(1)};
-          Builder2.CreateCall(gemvCall, args1);
-          auto dotCall = currentModule->getOrInsertFunction(
-              dotName, scalarType, int32Ty /* m */, yTy /* [y] */,
-              int32Ty /* incy */, yTy /* y */, int32Ty /* incx */);
-          SmallVector<Value *, 5> args2 = {new_m, diff_y, new_incy, tmp_y,
-                                           Builder2.getInt32(1)};
-          auto dot = Builder2.CreateCall(dotCall, args2);
-          addToDiffe(arg_alpha, dot, Builder2, scalarType);
-        }
+        // if (has_diff_alpha) { // update [alpha]
+        //   auto size = ConstantExpr::getSizeOf(scalarType);
+        //   auto malins = CallInst::CreateMalloc(
+        //       gutils->getNewFromOriginal(&call), size->getType(), scalarType,
+        //       size, new_m, nullptr, "");
+        //   auto tmp_y = Builder2.CreateBitCast(malins, arg_x->getType());
+        //   auto gemvCall = gutils->oldFunc->getParent()->getOrInsertFunction(
+        //       gemvName, voidTy, int32Ty /* order */, int32Ty /* transa */,
+        //       int32Ty /* m */, int32Ty /* n */, scalarType /* a */, aTy /* A */,
+        //       int32Ty /* lA */, xTy /* x */, int32Ty /* incx */, scalarType,
+        //       yTy /* tmpy */, int32Ty /* 1 */);
+        //   SmallVector<Value *, 12> args1 = {new_order,
+        //                                     new_transa,
+        //                                     new_m,
+        //                                     new_n,
+        //                                     ConstantFP::get(scalarType, 1.0),
+        //                                     new_a,
+        //                                     new_lda,
+        //                                     new_x,
+        //                                     new_incx,
+        //                                     ConstantFP::get(scalarType, 0.0),
+        //                                     tmp_y,
+        //                                     Builder2.getInt32(1)};
+        //   Builder2.CreateCall(gemvCall, args1);
+        //   auto dotCall = currentModule->getOrInsertFunction(
+        //       dotName, scalarType, int32Ty /* m */, yTy /* [y] */,
+        //       int32Ty /* incy */, yTy /* y */, int32Ty /* incx */);
+        //   SmallVector<Value *, 5> args2 = {new_m, diff_y, new_incy, tmp_y,
+        //                                    Builder2.getInt32(1)};
+        //   auto dot = Builder2.CreateCall(dotCall, args2);
+        //   addToDiffe(arg_alpha, dot, Builder2, scalarType);
+        // }
         if (has_diff_beta) { // update [beta]
           auto dotCall = currentModule->getOrInsertFunction(
               dotName, scalarType, int32Ty /* m */, yTy /* [y] */,
@@ -6153,37 +6153,37 @@ public:
             Builder2.CreateCall(gemvCall, args);
           }
         }
-        if (has_diff_alpha) { // update [alpha]
-          if (has_diff_a) {
-            auto diff_a = lookup(gutils->invertPointerM(arg_a, Builder2), Builder2);
-            auto size = ConstantExpr::getSizeOf(scalarType);
-            auto malins = CallInst::CreateMalloc(
-                lookup(gutils->getNewFromOriginal(&call), Builder2), size->getType(), scalarType,
-                size, new_m, nullptr, "");
-            auto tmp_y = Builder2.CreateBitCast(malins, type_x);
-            auto gemvCall = currentModule->getOrInsertFunction(
-                gemvName, voidType, type_layout, Builder2.getInt32Ty(), type_m, type_n, scalarType, type_a, type_lda, type_y, type_incy, scalarType, type_x, type_incx);
-            SmallVector<Value *, 12> args1 = {new_layout,
-                                              new_notrans,
-                                              new_m,
-                                              new_n,
-                                              ConstantFP::get(scalarType, 1.0),
-                                              diff_a,
-                                              new_lda,
-                                              new_y,
-                                              new_incy,
-                                              ConstantFP::get(scalarType, 0.0),
-                                              tmp_y,
-                                              Builder2.getInt32(1)};
-            Builder2.CreateCall(gemvCall, args1);
-            auto dotCall = currentModule->getOrInsertFunction(
-                dotName, scalarType, type_m, type_x, type_incx, type_x, type_incx);
-            SmallVector<Value *, 5> args2 = {new_m, new_x, new_incy, tmp_y,
-                                            Builder2.getInt32(1)};
-            auto dot = Builder2.CreateCall(dotCall, args2);
-            addToDiffe(arg_alpha, dot, Builder2, scalarType);
-          }
-        }
+        // if (has_diff_alpha) { // update [alpha]
+        //   if (has_diff_a) {
+        //     auto diff_a = lookup(gutils->invertPointerM(arg_a, Builder2), Builder2);
+        //     auto size = ConstantExpr::getSizeOf(scalarType);
+        //     auto malins = CallInst::CreateMalloc(
+        //         lookup(gutils->getNewFromOriginal(&call), Builder2), size->getType(), scalarType,
+        //         size, new_m, nullptr, "");
+        //     auto tmp_y = Builder2.CreateBitCast(malins, type_x);
+        //     auto gemvCall = currentModule->getOrInsertFunction(
+        //         gemvName, voidType, type_layout, Builder2.getInt32Ty(), type_m, type_n, scalarType, type_a, type_lda, type_y, type_incy, scalarType, type_x, type_incx);
+        //     SmallVector<Value *, 12> args1 = {new_layout,
+        //                                       new_notrans,
+        //                                       new_m,
+        //                                       new_n,
+        //                                       ConstantFP::get(scalarType, 1.0),
+        //                                       diff_a,
+        //                                       new_lda,
+        //                                       new_y,
+        //                                       new_incy,
+        //                                       ConstantFP::get(scalarType, 0.0),
+        //                                       tmp_y,
+        //                                       Builder2.getInt32(1)};
+        //     Builder2.CreateCall(gemvCall, args1);
+        //     auto dotCall = currentModule->getOrInsertFunction(
+        //         dotName, scalarType, type_m, type_x, type_incx, type_x, type_incx);
+        //     SmallVector<Value *, 5> args2 = {new_m, new_x, new_incy, tmp_y,
+        //                                     Builder2.getInt32(1)};
+        //     auto dot = Builder2.CreateCall(dotCall, args2);
+        //     addToDiffe(arg_alpha, dot, Builder2, scalarType);
+        //   }
+        // }
       }
 
       // 4. Finalize step
