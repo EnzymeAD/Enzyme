@@ -167,7 +167,7 @@ attributes #5 = { nounwind }
 ; CHECK-NEXT:   %conv = zext i32 %n to i64
 ; CHECK-NEXT:   %mul = shl nuw nsw i64 %conv, 3
 ; CHECK-NEXT:   %call = tail call i8* @malloc(i64 %mul)
-; CHECK-NEXT:   %[[dcall:.+]] = {{(tail call noalias nonnull i8\* @malloc\(i64 %mul\) (#[0-9]+)?[[:space:]].*call void @llvm.memset.p0i8.i64\(i8\* nonnull (align 1 )?%"call'mi.i", i8 0, i64 %mul, (i32 1, )?i1 false\)|call i8\* @calloc\(i64 1, i64 %mul\))}}
+; CHECK-NEXT:   %[[dcall:.+]] = {{(tail call noalias nonnull i8\* @malloc\(i64 %mul\)[[:space:]].*call void @llvm.memset.p0i8.i64\(i8\* nonnull (align 1 )?%"call'mi.i", i8 0, i64 %mul, (i32 1, )?i1 false\)|call i8\* @calloc\(i64 1, i64 %mul\))}}
 ; CHECK-NEXT:   %"'ipc" = bitcast double** %"arrayp'" to i8**
 ; CHECK-NEXT:   %0 = bitcast double** %arrayp to i8**
 ; CHECK-NEXT:   store i8* %[[dcall]], i8** %"'ipc", align 8
