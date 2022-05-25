@@ -188,7 +188,7 @@ attributes #1 = { argmemonly }
 ; CHECK-NEXT:   %[[_unwrap8:.+]] = load i64, i64* %.omp.ub_smpl
 ; CHECK-NEXT:   %[[cmp6_unwrap:.+]] = icmp ugt i64 %[[_unwrap8]], %sub4
 ; CHECK-NEXT:   %[[cond_unwrap:.+]] = select i1 %[[cmp6_unwrap]], i64 %sub4, i64 %[[_unwrap8]]
-; CHECK-NEXT:   %[[add29_unwrap:.+]] = add{{( nuw)}} i64 %[[cond_unwrap]], 1
+; CHECK-NEXT:   %[[add29_unwrap:.+]] = add{{( nuw)?}} i64 %[[cond_unwrap]], 1
 ; CHECK-NEXT:   %[[cmp730_unwrap:.+]] = icmp ult i64 %[[_unwrap7]], %[[add29_unwrap]]
 ; CHECK-NEXT:   br i1 %[[cmp730_unwrap]], label %invertomp.loop.exit.loopexit, label %invertomp.precond.then
 
