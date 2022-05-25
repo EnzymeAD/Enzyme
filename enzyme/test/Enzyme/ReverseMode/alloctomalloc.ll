@@ -574,8 +574,8 @@ attributes #9 = { cold }
 ; CHECK-NEXT:   store <2 x double> zeroinitializer, <2 x double>* %[[dsubcast]], align 16
 ; CHECK-NEXT:   %m0diffeW34 = fmul fast <2 x double> %[[loadsc]], %B22
 ; CHECK-NEXT:   %m1diffeB22 = fmul fast <2 x double> %[[loadsc]], %[[W34]]
-; CHECK-NEXT:   %[[b221:.+]] = extractelement <2 x double> %m1diffeB22, i32 1
-; CHECK-NEXT:   %[[b220:.+]] = extractelement <2 x double> %m1diffeB22, i32 0
+; CHECK-DAG:    %[[b221:.+]] = extractelement <2 x double> %m1diffeB22, {{(i32|i64)}} 1
+; CHECK-DAG:    %[[b220:.+]] = extractelement <2 x double> %m1diffeB22, {{(i32|i64)}} 0
 ; CHECK-NEXT:   %[[added:.+]] = fadd fast double %[[b221]], %[[b220]]
 
 ; CHECK-NEXT:   %[[lb2p:.+]] = load double, double* %[[B2p_ipge]], align 8
@@ -589,8 +589,8 @@ attributes #9 = { cold }
 
 ; CHECK-NEXT:   %m0diffeW12 = fmul fast <2 x double> %[[loadsc]], %B11
 ; CHECK-NEXT:   %m1diffeB11 = fmul fast <2 x double> %[[loadsc]], %[[W12]]
-; CHECK-NEXT:   %12 = extractelement <2 x double> %m1diffeB11, i32 1
-; CHECK-NEXT:   %13 = extractelement <2 x double> %m1diffeB11, i32 0
+; CHECK-NEXT:   %12 = extractelement <2 x double> %m1diffeB11, {{(i32|i64)}} 1
+; CHECK-NEXT:   %13 = extractelement <2 x double> %m1diffeB11, {{(i32|i64)}} 0
 ; CHECK-NEXT:   %14 = fadd fast double %12, %13
 ; CHECK-NEXT:   %15 = load double, double* %"B'", align 8
 ; CHECK-NEXT:   %16 = fadd fast double %15, %14
