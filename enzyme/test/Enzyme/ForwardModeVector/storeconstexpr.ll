@@ -22,10 +22,10 @@ entry:
 ; CHECK-NEXT:  entry:
 ; CHECK-NEXT:    store i64 ptrtoint ([18 x i8]* @.str to i64), i64* [[TO]], align 4
 ; CHECK-NEXT:    [[TMP0:%.*]] = extractvalue [3 x i64*] %"to'", 0
-; CHECK-NEXT:    store i64 ptrtoint ([18 x i8]* @.str to i64), i64* [[TMP0]], align 4
+; CHECK-NEXT:    store i64 0, i64* [[TMP0]], align 4
 ; CHECK-NEXT:    [[TMP1:%.*]] = extractvalue [3 x i64*] %"to'", 1
-; CHECK-NEXT:    store i64 ptrtoint ([18 x i8]* @.str to i64), i64* [[TMP1]], align 4
+; CHECK-NEXT:    store i64 0, i64* [[TMP1]], align 4
 ; CHECK-NEXT:    [[TMP2:%.*]] = extractvalue [3 x i64*] %"to'", 2
-; CHECK-NEXT:    store i64 ptrtoint ([18 x i8]* @.str to i64), i64* [[TMP2]], align 4
+; CHECK-NEXT:    store i64 0, i64* [[TMP2]], align 4
 ; CHECK-NEXT:    ret void
 ;
