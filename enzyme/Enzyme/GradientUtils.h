@@ -744,15 +744,15 @@ public:
 #if LLVM_VERSION_MAJOR >= 8
           if (CI->doesNotCapture(idx))
 #else
-          if (CI->dataOperandHasImpliedAttr(idx, Attribute::NoCapture) ||
+          if (CI->dataOperandHasImpliedAttr(idx + 1, Attribute::NoCapture) ||
               (F && F->hasParamAttribute(idx, Attribute::NoCapture)))
 #endif
           {
 #if LLVM_VERSION_MAJOR >= 8
             if (CI->onlyReadsMemory(idx))
 #else
-            if (CI->dataOperandHasImpliedAttr(idx, Attribute::ReadOnly) ||
-                CI->dataOperandHasImpliedAttr(idx, Attribute::ReadNone) ||
+            if (CI->dataOperandHasImpliedAttr(idx + 1, Attribute::ReadOnly) ||
+                CI->dataOperandHasImpliedAttr(idx + 1, Attribute::ReadNone) ||
                 (F && (F->hasParamAttribute(idx, Attribute::ReadOnly) ||
                        F->hasParamAttribute(idx, Attribute::ReadNone))))
 #endif
@@ -797,8 +797,10 @@ public:
 #if LLVM_VERSION_MAJOR >= 8
             else if (CI->onlyReadsMemory(idx))
 #else
-            else if (CI->dataOperandHasImpliedAttr(idx, Attribute::ReadOnly) ||
-                     CI->dataOperandHasImpliedAttr(idx, Attribute::ReadNone) ||
+            else if (CI->dataOperandHasImpliedAttr(idx + 1,
+                                                   Attribute::ReadOnly) ||
+                     CI->dataOperandHasImpliedAttr(idx + 1,
+                                                   Attribute::ReadNone) ||
                      (F && (F->hasParamAttribute(idx, Attribute::ReadOnly) ||
                             F->hasParamAttribute(idx, Attribute::ReadNone))))
 #endif
