@@ -293,6 +293,88 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
   return F;
 }
 
+Function *getOrInsertMemsetStrided(Module &M, PointerType *T, Type *IT,
+                                   unsigned align) {
+  Type *elementType = T->getPointerElementType();
+  assert(elementType->isFloatingPointTy());
+  std::string name = "__enzyme_memset_" + tofltstr(elementType) + "_" +
+                     std::to_string(cast<IntegerType>(IT)->getBitWidth()) +
+                     "_align" + std::to_string(align) + "stride";
+  FunctionType *FT = FunctionType::get(Type::getVoidTy(M.getContext()),
+                                       {T, elementType, IT, IT}, false);
+
+#if LLVM_VERSION_MAJOR >= 9
+  Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
+#else
+  Function *F = cast<Function>(M.getOrInsertFunction(name, FT));
+#endif
+
+  if (!F->empty())
+    return F;
+
+  F->setLinkage(Function::LinkageTypes::InternalLinkage);
+  F->addFnAttr(Attribute::ArgMemOnly);
+  F->addFnAttr(Attribute::NoUnwind);
+  F->addFnAttr(Attribute::AlwaysInline);
+  F->addParamAttr(0, Attribute::NoCapture);
+  F->addParamAttr(0, Attribute::WriteOnly);
+
+  BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
+  BasicBlock *body = BasicBlock::Create(M.getContext(), "for.body", F);
+  BasicBlock *end = BasicBlock::Create(M.getContext(), "for.end", F);
+
+  auto dst = F->arg_begin();
+  dst->setName("dst");
+  auto val = dst + 1;
+  val->setName("val");
+  auto num = val + 1;
+  num->setName("num");
+  auto stride = num + 1;
+  stride->setName("stride");
+
+  {
+    IRBuilder<> B(entry);
+    B.CreateCondBr(B.CreateICmpEQ(num, ConstantInt::get(num->getType(), 0)),
+                   end, body);
+  }
+
+  {
+    IRBuilder<> B(body);
+    B.setFastMathFlags(getFast());
+    PHINode *idx = B.CreatePHI(num->getType(), 2, "idx");
+    idx->addIncoming(ConstantInt::get(num->getType(), 0), entry);
+
+#if LLVM_VERSION_MAJOR > 7
+    Value *dsti = B.CreateInBoundsGEP(dst->getType()->getPointerElementType(),
+                                      dst, idx, "dst.i");
+#else
+    Value *dsti = B.CreateInBoundsGEP(dst, idx, "dst.i");
+#endif
+
+    StoreInst *dsts = B.CreateStore(val, dsti);
+
+    if (align) {
+#if LLVM_VERSION_MAJOR >= 10
+      dsts->setAlignment(Align(align));
+#else
+      dsts->setAlignment(align);
+#endif
+    }
+
+    Value *next =
+        B.CreateNUWAdd(idx, ConstantInt::get(num->getType(), 1), "idx.next");
+    idx->addIncoming(next, body);
+    B.CreateCondBr(B.CreateICmpEQ(num, next), end, body);
+  }
+
+  {
+    IRBuilder<> B(end);
+    B.CreateRetVoid();
+  }
+
+  return F;
+}
+
 // TODO implement differential memmove
 Function *getOrInsertDifferentialFloatMemmove(Module &M, Type *T,
                                               unsigned dstalign,

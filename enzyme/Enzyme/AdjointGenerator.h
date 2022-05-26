@@ -24,7 +24,6 @@
 //
 //===----------------------------------------------------------------------===//
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Constants.h"
@@ -32,10 +31,6 @@
 #include "llvm/IR/Value.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
-#include <algorithm>
-#include <cstdlib>
-#include <map>
-#include <utility>
 
 #include "DifferentialUseAnalysis.h"
 #include "EnzymeLogic.h"
@@ -43,7 +38,6 @@
 #include "GradientUtils.h"
 #include "LibraryFuncs.h"
 #include "TypeAnalysis/TBAA.h"
-#include "Utils.h"
 
 #define DEBUG_TYPE "enzyme"
 using namespace llvm;
@@ -4906,7 +4900,8 @@ public:
 
   std::string extractBLAS(StringRef in, std::string &prefix,
                           std::string &suffix) {
-    std::string extractable[] = {"ddot", "sdot", "dnrm2", "snrm2"};
+    std::string extractable[] = {"ddot",  "sdot",  "dnrm2", "snrm2",
+                                 "dswap", "sswap", "dcopy", "scopy"};
     std::string prefixes[] = {"", "cblas_", "cublas_"};
     std::string suffixes[] = {"", "_", "_64_"};
     for (auto ex : extractable) {
@@ -4918,8 +4913,6 @@ public:
             return ex;
           }
         }
-        gutils->cacheForReverse(BuilderZ, cacheValue,
-                                getIndex(&call, CacheType::Tape));
       }
     }
     return "";
@@ -4933,6 +4926,8 @@ public:
     BuilderZ.setFastMathFlags(getFast());
     IRBuilder<> allocationBuilder(gutils->inversionAllocs);
     allocationBuilder.setFastMathFlags(getFast());
+
+    Module *currentModule = gutils->oldFunc->getParent();
 
     if (funcName == "dnrm2" || funcName == "snrm2") {
       if (!gutils->isConstantInstruction(&call)) {
@@ -5084,6 +5079,7 @@ public:
       }
       return true;
     }
+
     if (funcName == "ddot" || funcName == "sdot") {
       if (!gutils->isConstantInstruction(&call)) {
         Type *innerType;
@@ -5668,52 +5664,101 @@ public:
       return true;
     }
 
-    if ((funcName == "cblas_sswap" || funcName == "cblas_dswap") &&
+    if ((funcName == "sswap" || funcName == "dswap") &&
         called->isDeclaration()) {
-      // sswap(int n, float *x, int incx, float *y, int incy)
-      handled = true;
+      // swap(n, x, incx, y, incy)
+      Type *innerType;
+      if (funcName == "dswap") {
+        innerType = Type::getDoubleTy(call.getContext());
+      } else if (funcName == "sswap") {
+        innerType = Type::getFloatTy(call.getContext());
+      } else {
+        assert(false && "Unreachable");
+      }
+      assert(Mode != DerivativeMode::ForwardMode &&
+             Mode != DerivativeMode::ForwardModeSplit &&
+             "forward mode not handled");
       auto arg_n = call.getArgOperand(0), arg_x = call.getArgOperand(1),
            arg_incx = call.getArgOperand(2), arg_y = call.getArgOperand(3),
            arg_incy = call.getArgOperand(4);
+      auto type_n = arg_n->getType(), type_x = arg_x->getType(),
+           type_incx = arg_incx->getType(), type_y = arg_y->getType(),
+           type_incy = arg_incy->getType();
       auto has_diff_x = !gutils->isConstantValue(arg_x),
            has_diff_y = !gutils->isConstantValue(arg_y);
       if (Mode == DerivativeMode::ReverseModeCombined ||
           Mode == DerivativeMode::ReverseModeGradient) {
         IRBuilder<> Builder2(call.getParent());
         getReverseBuilder(Builder2);
-        if (has_diff_x) {
+        auto new_n = lookup(gutils->getNewFromOriginal(arg_n), Builder2),
+             new_incx = lookup(gutils->getNewFromOriginal(arg_incx), Builder2),
+             new_incy = lookup(gutils->getNewFromOriginal(arg_incy), Builder2);
+        if (has_diff_x && has_diff_y) {
+          auto diff_x =
+                   lookup(gutils->invertPointerM(arg_x, Builder2), Builder2),
+               diff_y =
+                   lookup(gutils->invertPointerM(arg_y, Builder2), Builder2);
 #if LLVM_VERSION_MAJOR >= 11
           auto swapCall =
               FunctionCallee(call.getFunctionType(), call.getCalledOperand());
 #else
           auto swapCall = call.getCalledFunction();
 #endif
-          assert(has_diff_y && "Swapping with constant is not handled");
-          SmallVector<Value *, 4> args1 = {
-              lookup(gutils->getNewFromOriginal(arg_n), Builder2),       // n
-              lookup(gutils->invertPointerM(arg_x, Builder2), Builder2), // [x]
-              lookup(gutils->getNewFromOriginal(arg_incx), Builder2),    // incx
-              lookup(gutils->invertPointerM(arg_y, Builder2), Builder2), // [y]
-              lookup(gutils->getNewFromOriginal(arg_incy), Builder2)};   // incy
-          Builder2.CreateCall(
-              swapCall, args1,
-              gutils->getInvertedBundles(&call,
-                                         {ValueType::None, ValueType::Shadow,
-                                          ValueType::None, ValueType::Shadow,
-                                          ValueType::None},
-                                         Builder2, true));
-        }
-        if (has_diff_y) {
-          assert(has_diff_x && "Swapping with constant is not handled");
+          SmallVector<Value *, 5> args = {new_n, diff_x, new_incx, diff_y,
+                                          new_incy};
+          SmallVector<ValueType, 5> vtypes = {
+              ValueType::None, ValueType::Shadow, ValueType::None,
+              ValueType::Shadow, ValueType::None};
+          auto defs = gutils->getInvertedBundles(&call, vtypes, Builder2, true);
+          Builder2.CreateCall(swapCall, args, defs);
+        } else if (has_diff_x || has_diff_y) {
+          auto toset =
+              has_diff_x
+                  ? lookup(gutils->invertPointerM(arg_x, Builder2), Builder2)
+                  : lookup(gutils->invertPointerM(arg_y, Builder2), Builder2);
+          auto tosettype = has_diff_x ? type_x : type_y;
+          auto tosetinc = has_diff_x ? new_incx : new_incy;
+          auto memset = getOrInsertMemsetStrided(
+              *currentModule, cast<PointerType>(tosettype), type_n, 0);
+          SmallVector<Value *, 4> args = {
+              toset, ConstantFP::get(innerType, 0.0), new_n, tosetinc};
+          SmallVector<ValueType, 4> vtypes = {ValueType::Shadow,
+                                              ValueType::None, ValueType::None,
+                                              ValueType::None};
+          auto defs = gutils->getInvertedBundles(&call, vtypes, BuilderZ, true);
+          Builder2.CreateCall(memset, args, defs);
         }
       }
+      if (gutils->knownRecomputeHeuristic.find(&call) !=
+          gutils->knownRecomputeHeuristic.end()) {
+        if (!gutils->knownRecomputeHeuristic[&call]) {
+          gutils->cacheForReverse(BuilderZ, newCall,
+                                  getIndex(&call, CacheType::Self));
+        }
+      }
+
+      if (Mode == DerivativeMode::ReverseModeGradient) {
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+      } else {
+        eraseIfUnused(call);
+      }
+      return true;
     }
 
-    if ((funcName == "cblas_scopy" || funcName == "cblas_dcopy") &&
+    if ((funcName == "scopy" || funcName == "dcopy") &&
         called->isDeclaration()) {
-      // void scopy(int n, float *x, int incx, float *y, int incy)
-      handled = true;
-      std::string axpyName = getBLASName(funcName, "axpy");
+      // scopy(n, x, incx, y, incy)
+      Type *innerType;
+      std::string axpyName;
+      if (funcName == "dcopy") {
+        innerType = Type::getDoubleTy(call.getContext());
+        axpyName = (prefix + "daxpy" + suffix).str();
+      } else if (funcName == "scopy") {
+        innerType = Type::getFloatTy(call.getContext());
+        axpyName = (prefix + "saxpy" + suffix).str();
+      } else {
+        assert(false && "Unreachable");
+      }
       auto arg_n = call.getArgOperand(0), arg_x = call.getArgOperand(1),
            arg_incx = call.getArgOperand(2), arg_y = call.getArgOperand(3),
            arg_incy = call.getArgOperand(4);
@@ -5735,11 +5780,11 @@ public:
                      lookup(gutils->invertPointerM(arg_x, Builder2), Builder2),
                  diff_y =
                      lookup(gutils->invertPointerM(arg_y, Builder2), Builder2);
-            auto axpyCall = module->getOrInsertFunction(
-                axpyName, voidType, type_n, scalarType, type_y, type_incy,
-                type_x, type_incx);
+            auto axpyCall = currentModule->getOrInsertFunction(
+                axpyName, Builder2.getVoidTy(), type_n, innerType, type_y,
+                type_incy, type_x, type_incx);
             SmallVector<Value *, 6> args = {
-                new_n,  ConstantFP::get(scalarType, 1.0),
+                new_n,  ConstantFP::get(innerType, 1.0),
                 diff_y, new_incy,
                 diff_x, new_incx};
             Builder2.CreateCall(
@@ -5752,317 +5797,7 @@ public:
           }
         }
       }
-    }
 
-    if ((funcName == "cblas_sscal" || funcName == "cblas_dscal") &&
-        called->isDeclaration()) {
-      // sscal(int n, float alpha, float *x, int incx)
-      handled = true;
-      std::string dotName = getBLASName(funcName, "dot"),
-                  scalName = getBLASName(funcName, "scal");
-      auto size = ConstantExpr::getSizeOf(scalarType);
-      auto arg_n = call.getArgOperand(0), arg_alpha = call.getArgOperand(1),
-           arg_x = call.getArgOperand(2), arg_incx = call.getArgOperand(3);
-      auto type_n = arg_n->getType(), type_alpha = arg_alpha->getType(),
-           type_x = arg_x->getType(), type_incx = arg_incx->getType();
-      bool has_diff_alpha = !gutils->isConstantValue(arg_alpha),
-           has_diff_x = !gutils->isConstantValue(arg_x);
-      Function *calledFunc = call.getCalledFunction();
-      Argument *nfuncarg = calledFunc->arg_begin(), *xfuncarg = nfuncarg + 2;
-      bool xcache = has_diff_alpha && uncacheable_args.find(xfuncarg)->second;
-      Value *cacheval = nullptr;
-      if ((Mode == DerivativeMode::ReverseModeCombined ||
-           Mode == DerivativeMode::ReverseModePrimal) &&
-          xcache) {
-        auto dmemcpy = getOrInsertMemcpyStrided(
-            *gutils->oldFunc->getParent(), cast<PointerType>(type_x), 0, 0);
-        auto malins = CallInst::CreateMalloc(
-            gutils->getNewFromOriginal(&call), size->getType(), scalarType,
-            size, gutils->getNewFromOriginal(arg_n), nullptr, "");
-        Value *arg1 = BuilderZ.CreateBitCast(malins, arg_x->getType());
-        SmallVector<Value *, 4> args = {arg1, gutils->getNewFromOriginal(arg_x),
-                                        gutils->getNewFromOriginal(arg_n),
-                                        gutils->getNewFromOriginal(arg_incx)};
-        BuilderZ.CreateCall(
-            dmemcpy, args,
-            gutils->getInvertedBundles(&call,
-                                       {ValueType::None, ValueType::None,
-                                        ValueType::Shadow, ValueType::None},
-                                       BuilderZ, false));
-        cacheval = arg1;
-        gutils->cacheForReverse(BuilderZ, cacheval,
-                                getIndex(&call, CacheType::Tape));
-      }
-      if (Mode == DerivativeMode::ReverseModeCombined ||
-          Mode == DerivativeMode::ReverseModeGradient) {
-        IRBuilder<> Builder2(call.getParent());
-        getReverseBuilder(Builder2);
-        Value *new_x = nullptr, *new_incx = nullptr;
-        if (xcache) {
-          if (Mode == DerivativeMode::ReverseModeGradient && has_diff_x) {
-            cacheval = BuilderZ.CreatePHI(type_x, 0);
-          }
-          cacheval =
-              lookup(gutils->cacheForReverse(BuilderZ, cacheval,
-                                             getIndex(&call, CacheType::Tape)),
-                     Builder2);
-          if (xcache) {
-            new_x = cacheval;
-            new_incx = ConstantInt::get(type_incx, 1);
-          }
-        }
-        if (!new_x)
-          new_x = lookup(gutils->getNewFromOriginal(arg_x), Builder2);
-        if (!new_incx)
-          new_incx = lookup(gutils->getNewFromOriginal(arg_incx), Builder2);
-        auto new_n = lookup(gutils->getNewFromOriginal(arg_n), Builder2),
-             new_alpha =
-                 lookup(gutils->getNewFromOriginal(arg_alpha), Builder2);
-        if (has_diff_x) {
-          auto diff_x =
-              lookup(gutils->invertPointerM(arg_x, Builder2), Builder2);
-#if LLVM_VERSION_MAJOR >= 11
-          auto scalCall =
-              FunctionCallee(call.getFunctionType(), call.getCalledOperand());
-#else
-          auto scalCall = call.getCalledFunction();
-#endif
-          SmallVector<Value *, 4> args = {new_n, new_alpha, diff_x, new_incx};
-          Builder2.CreateCall(
-              scalCall, args,
-              gutils->getInvertedBundles(&call,
-                                         {ValueType::None, ValueType::None,
-                                          ValueType::Shadow, ValueType::None},
-                                         Builder2, true));
-        }
-        if (has_diff_alpha) {
-          if (has_diff_x) {
-            auto diff_x =
-                lookup(gutils->invertPointerM(arg_x, Builder2), Builder2);
-            auto dotCall =
-                module->getOrInsertFunction(dotName, scalarType, type_n, type_x,
-                                            type_incx, type_x, type_incx);
-            SmallVector<Value *, 5> args = {new_n, new_x, new_incx, diff_x,
-                                            new_incx};
-            auto dot = Builder2.CreateCall(
-                dotCall, args,
-                gutils->getInvertedBundles(
-                    &call,
-                    {ValueType::None, ValueType::None,
-                     xcache ? ValueType::Shadow : ValueType::Both,
-                     ValueType::None},
-                    Builder2, true));
-            addToDiffe(arg_alpha, dot, Builder2, scalarType);
-          }
-        }
-      }
-    }
-
-    if ((funcName == "cblas_saxpy" || funcName == "cblas_daxpy") &&
-        called->isDeclaration()) {
-      // saxpy(int n, float alpha, float *x, int incx, float *y, int incy)
-      handled = true;
-      std::string dotName = getBLASName(funcName, "dot");
-      auto arg_n = call.getArgOperand(0), arg_alpha = call.getArgOperand(1),
-           arg_x = call.getArgOperand(2), arg_incx = call.getArgOperand(3),
-           arg_y = call.getArgOperand(4), arg_incy = call.getArgOperand(5);
-      auto type_n = arg_n->getType(), type_alpha = arg_alpha->getType(),
-           type_x = arg_x->getType(), type_incx = arg_incx->getType(),
-           type_y = arg_y->getType(), type_incy = arg_incy->getType();
-      bool has_diff_alpha = !gutils->isConstantValue(arg_alpha),
-           has_diff_x = !gutils->isConstantValue(arg_x),
-           has_diff_y = !gutils->isConstantValue(arg_y);
-      Value *cacheval;
-      auto nfuncarg = call.getCalledFunction()->arg_begin(),
-           xfuncarg = nfuncarg + 2;
-      bool xcache = !gutils->isConstantValue(arg_alpha) &&
-                    uncacheable_args.find(xfuncarg)->second;
-      if ((Mode == DerivativeMode::ReverseModeCombined ||
-           Mode == DerivativeMode::ReverseModePrimal) &&
-          (xcache)) {
-
-        Value *arg1;
-        auto size = ConstantExpr::getSizeOf(scalarType);
-        auto dmemcpy =
-            getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(),
-                                     PointerType::getUnqual(scalarType), 0, 0);
-        auto malins = CallInst::CreateMalloc(
-            gutils->getNewFromOriginal(&call), size->getType(), scalarType,
-            size, gutils->getNewFromOriginal(arg_n), nullptr, "");
-        arg1 = BuilderZ.CreateBitCast(malins, arg_x->getType());
-        SmallVector<Value *, 4> args = {arg1, gutils->getNewFromOriginal(arg_x),
-                                        gutils->getNewFromOriginal(arg_n),
-                                        gutils->getNewFromOriginal(arg_incx)};
-        BuilderZ.CreateCall(
-            dmemcpy, args,
-            gutils->getInvertedBundles(&call,
-                                       {ValueType::None, ValueType::None,
-                                        ValueType::Shadow, ValueType::None,
-                                        ValueType::None, ValueType::None},
-                                       BuilderZ, false));
-        cacheval = arg1;
-        gutils->cacheForReverse(BuilderZ, cacheval,
-                                getIndex(&call, CacheType::Tape));
-      }
-      if (Mode == DerivativeMode::ReverseModeCombined ||
-          Mode == DerivativeMode::ReverseModeGradient) {
-        IRBuilder<> Builder2(call.getParent());
-        getReverseBuilder(Builder2);
-        Value *new_x = nullptr, *new_incx = nullptr;
-        if (xcache) {
-          if (Mode == DerivativeMode::ReverseModeGradient &&
-              !gutils->isConstantValue(arg_alpha)) {
-            cacheval = BuilderZ.CreatePHI(type_x, 0);
-          }
-          cacheval =
-              lookup(gutils->cacheForReverse(BuilderZ, cacheval,
-                                             getIndex(&call, CacheType::Tape)),
-                     Builder2);
-          new_x = cacheval;
-          new_incx = ConstantInt::get(type_incx, 1);
-        }
-        if (!new_x)
-          new_x = lookup(gutils->getNewFromOriginal(arg_x), Builder2);
-        if (!new_incx)
-          new_incx = lookup(gutils->getNewFromOriginal(arg_incx), Builder2);
-        auto new_n = lookup(gutils->getNewFromOriginal(arg_n), Builder2),
-             new_alpha =
-                 lookup(gutils->getNewFromOriginal(arg_alpha), Builder2),
-             new_incy = lookup(gutils->getNewFromOriginal(arg_incy), Builder2);
-        if (has_diff_x) {
-          if (has_diff_y) {
-            auto diff_x =
-                     lookup(gutils->invertPointerM(arg_x, Builder2), Builder2),
-                 diff_y =
-                     lookup(gutils->invertPointerM(arg_y, Builder2), Builder2);
-#if LLVM_VERSION_MAJOR >= 11
-            auto axpyCall =
-                FunctionCallee(call.getFunctionType(), call.getCalledOperand());
-#else
-            auto axpyCall = call.getCalledFunction();
-#endif
-            SmallVector<Value *, 4> args1 = {
-                new_n, new_alpha, diff_y, new_incy, diff_x, new_incx}; // incx
-            Builder2.CreateCall(
-                axpyCall, args1,
-                gutils->getInvertedBundles(&call,
-                                           {ValueType::None, ValueType::None,
-                                            ValueType::Shadow, ValueType::None,
-                                            ValueType::Shadow, ValueType::None},
-                                           Builder2, true));
-          }
-        }
-        if (has_diff_alpha) {
-          if (has_diff_y) {
-            auto diff_y =
-                lookup(gutils->invertPointerM(arg_y, Builder2), Builder2);
-            auto dotCall =
-                module->getOrInsertFunction(dotName, scalarType, type_n, type_y,
-                                            type_incy, type_x, type_incx);
-            SmallVector<Value *, 5> args2 = {new_n, diff_y, new_incy, new_x,
-                                             new_incx};
-            auto dot = Builder2.CreateCall(
-                dotCall, args2,
-                gutils->getInvertedBundles(
-                    &call,
-                    {ValueType::None, ValueType::None,
-                     xcache ? ValueType::None : ValueType::Primal,
-                     ValueType::None, ValueType::Shadow, ValueType::None},
-                    Builder2, true));
-            addToDiffe(arg_alpha, dot, Builder2, scalarType);
-          }
-        }
-      }
-    }
-
-    if ((funcName == "cblas_snrm2" || funcName == "cblas_dnrm2") &&
-        called->isDeclaration()) {
-      // snrm2(int n, float *x, int incx)
-      handled = true;
-      std::string axpyName = getBLASName(funcName, "axpy");
-      auto arg_n = call.getArgOperand(0), arg_x = call.getArgOperand(1),
-           arg_incx = call.getArgOperand(2);
-      auto type_n = arg_n->getType(), type_x = arg_x->getType(),
-           type_incx = arg_incx->getType();
-      Value *cacheval;
-      auto has_diff_x = !gutils->isConstantValue(arg_x),
-           has_diff_ret = !gutils->isConstantInstruction(&call);
-      auto nfuncarg = call.getCalledFunction()->arg_begin(),
-           xfuncarg = nfuncarg + 1;
-      bool xcache =
-          has_diff_ret && has_diff_x && uncacheable_args.find(xfuncarg)->second;
-      if ((Mode == DerivativeMode::ReverseModeCombined ||
-           Mode == DerivativeMode::ReverseModePrimal) &&
-          (xcache)) {
-
-        Value *arg1;
-        auto size = ConstantExpr::getSizeOf(scalarType);
-        auto dmemcpy =
-            getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(),
-                                     PointerType::getUnqual(scalarType), 0, 0);
-        auto malins = CallInst::CreateMalloc(
-            gutils->getNewFromOriginal(&call), size->getType(), scalarType,
-            size, gutils->getNewFromOriginal(arg_n), nullptr, "");
-        arg1 = BuilderZ.CreateBitCast(malins, arg_x->getType());
-        SmallVector<Value *, 4> args = {arg1, gutils->getNewFromOriginal(arg_x),
-                                        gutils->getNewFromOriginal(arg_n),
-                                        gutils->getNewFromOriginal(arg_incx)};
-        BuilderZ.CreateCall(
-            dmemcpy, args,
-            gutils->getInvertedBundles(
-                &call, {ValueType::None, ValueType::Shadow, ValueType::None},
-                BuilderZ, false));
-        cacheval = arg1;
-        gutils->cacheForReverse(BuilderZ, cacheval,
-                                getIndex(&call, CacheType::Tape));
-      }
-      if (Mode == DerivativeMode::ReverseModeCombined ||
-          Mode == DerivativeMode::ReverseModeGradient) {
-        IRBuilder<> Builder2(call.getParent());
-        getReverseBuilder(Builder2);
-        Value *new_x = nullptr, *new_incx = nullptr;
-        if (xcache) {
-          if (Mode == DerivativeMode::ReverseModeGradient && has_diff_x) {
-            cacheval = BuilderZ.CreatePHI(type_x, 0);
-          }
-          cacheval =
-              lookup(gutils->cacheForReverse(BuilderZ, cacheval,
-                                             getIndex(&call, CacheType::Tape)),
-                     Builder2);
-          new_x = cacheval;
-          new_incx = ConstantInt::get(type_incx, 1);
-        }
-        if (!new_x)
-          new_x = lookup(gutils->getNewFromOriginal(arg_x), Builder2);
-        if (!new_incx)
-          new_incx = lookup(gutils->getNewFromOriginal(arg_incx), Builder2);
-        auto new_n = lookup(gutils->getNewFromOriginal(arg_n), Builder2),
-             new_ret = lookup(gutils->getNewFromOriginal(&call), Builder2);
-        if (has_diff_x) {
-          auto diff_x =
-              lookup(gutils->invertPointerM(arg_x, Builder2), Builder2);
-          if (has_diff_ret) {
-            auto diff_ret = diffe(&call, Builder2);
-            auto axpyCall = module->getOrInsertFunction(
-                axpyName, voidType, type_n, scalarType, type_x, type_incx,
-                type_x, type_incx);
-            auto factor = Builder2.CreateFDiv(diff_ret, new_ret);
-            SmallVector<Value *, 6> args = {new_n,    factor, new_x,
-                                            new_incx, diff_x, new_incx};
-            Builder2.CreateCall(
-                axpyCall, args,
-                gutils->getInvertedBundles(
-                    &call,
-                    {ValueType::None,
-                     xcache ? ValueType::Shadow : ValueType::Both,
-                     ValueType::None},
-                    Builder2, true));
-          }
-        }
-      }
-    }
-
-    if (handled) {
       if (gutils->knownRecomputeHeuristic.find(&call) !=
           gutils->knownRecomputeHeuristic.end()) {
         if (!gutils->knownRecomputeHeuristic[&call]) {
@@ -6080,7 +5815,6 @@ public:
     }
 
     llvm::errs() << " fallback?\n";
-
     return false;
   }
 

@@ -601,6 +601,10 @@ llvm::Function *getOrInsertMemcpyStrided(llvm::Module &M, llvm::PointerType *T,
                                          llvm::Type *IT, unsigned dstalign,
                                          unsigned srcalign);
 
+/// Create function for type that performs memset with a stride
+llvm::Function *getOrInsertMemsetStrided(llvm::Module &M, llvm::PointerType *T,
+                                         llvm::Type *IT, unsigned align);
+
 /// Create function for type that performs the derivative memmove on floating
 /// point memory
 llvm::Function *
