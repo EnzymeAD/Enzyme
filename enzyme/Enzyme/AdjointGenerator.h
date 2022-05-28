@@ -3792,8 +3792,8 @@ public:
         if (gutils->isConstantInstruction(&I))
           return;
 
+        Value *op0 = gutils->getNewFromOriginal(orig_ops[0]);
         Value *op1 = gutils->getNewFromOriginal(orig_ops[1]);
-        Value *op2 = gutils->getNewFromOriginal(orig_ops[2]);
 
         Type *opType0 = gutils->getShadowType(orig_ops[0]->getType());
         Type *opType1 = gutils->getShadowType(orig_ops[1]->getType());
@@ -3810,8 +3810,8 @@ public:
                           : diffe(orig_ops[2], Builder2);
 
         auto rule = [&](Value *dif0, Value *dif1, Value *dif2) {
-          Value *dif = Builder2.CreateFAdd(Builder2.CreateFMul(op1, dif2),
-                                           Builder2.CreateFMul(dif1, op2));
+          Value *dif = Builder2.CreateFAdd(Builder2.CreateFMul(op0, dif1),
+                                           Builder2.CreateFMul(op1, dif0));
           return Builder2.CreateFAdd(dif, dif0);
         };
 
@@ -8562,6 +8562,60 @@ public:
         llvm_unreachable("unhandled openmp function");
       }
 
+      if (funcName == "log1p" || funcName == "log1pf" || funcName == "log1pl") {
+        if (gutils->knownRecomputeHeuristic.find(orig) !=
+            gutils->knownRecomputeHeuristic.end()) {
+          if (!gutils->knownRecomputeHeuristic[orig]) {
+            gutils->cacheForReverse(BuilderZ, newCall,
+                                    getIndex(orig, CacheType::Self));
+          }
+        }
+        eraseIfUnused(*orig);
+        if (gutils->isConstantInstruction(orig))
+          return;
+
+        switch (Mode) {
+        case DerivativeMode::ForwardModeSplit:
+        case DerivativeMode::ForwardMode: {
+          IRBuilder<> Builder2(&call);
+          getForwardBuilder(Builder2);
+          Value *x = gutils->getNewFromOriginal(orig->getArgOperand(0));
+          Value *onePx =
+              Builder2.CreateFAdd(ConstantFP::get(x->getType(), 1.0), x);
+
+          Value *op = diffe(orig->getArgOperand(0), Builder2);
+
+          auto rule = [&](Value *op) { return Builder2.CreateFDiv(op, onePx); };
+          Value *dif0 = applyChainRule(call.getType(), Builder2, rule, op);
+          setDiffe(orig, dif0, Builder2);
+          return;
+        }
+        case DerivativeMode::ReverseModeGradient:
+        case DerivativeMode::ReverseModeCombined: {
+          IRBuilder<> Builder2(call.getParent());
+          getReverseBuilder(Builder2);
+          Value *x = lookup(gutils->getNewFromOriginal(orig->getArgOperand(0)),
+                            Builder2);
+          Value *onePx =
+              Builder2.CreateFAdd(ConstantFP::get(x->getType(), 1.0), x);
+
+          auto rule = [&](Value *dorig) {
+            return Builder2.CreateFDiv(dorig, onePx);
+          };
+
+          Value *dorig = diffe(orig, Builder2);
+          Value *dif0 = applyChainRule(orig->getArgOperand(0)->getType(),
+                                       Builder2, rule, dorig);
+
+          addToDiffe(orig->getArgOperand(0), dif0, Builder2, x->getType());
+          return;
+        }
+        case DerivativeMode::ReverseModePrimal: {
+          return;
+        }
+        }
+      }
+
       if (funcName == "asin" || funcName == "asinf" || funcName == "asinl") {
         if (gutils->knownRecomputeHeuristic.find(orig) !=
             gutils->knownRecomputeHeuristic.end()) {
@@ -10433,7 +10487,7 @@ public:
 #if LLVM_VERSION_MAJOR >= 14
                     cast<CallInst>(anti)->addDereferenceableRetAttr(derefBytes);
                     cal->addDereferenceableRetAttr(derefBytes);
-#ifndef FLANG
+#if !defined(FLANG) && !defined(ROCM)
                     AttrBuilder B(called->getContext());
 #else
                     AttrBuilder B;
