@@ -45,7 +45,7 @@ ExternalProject_Add(fblas
     BUILD_IN_SOURCE 1
     INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/openblas/install
     CONFIGURE_COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/fixwrapblas.sh
-    BUILD_COMMAND sh -c "$<TARGET_FILE:clang> ${BC_LOAD_FLAGS} -S -emit-llvm -O1 BLAS/WRAP/bclib32.c BLAS/WRAP/bclib64.c SRC/*.c.i32.c SRC/*.c.i64.c -I ../../INCLUDE"
+    BUILD_COMMAND sh -c "$<TARGET_FILE:clang> ${BC_LOAD_FLAGS} -S -emit-llvm -O1 BLAS/WRAP/bclib32.c BLAS/WRAP/bclib64.c SRC/*.c.i32.c SRC/*.c.i64.c F2CLIBS/libf2c/*.proc.c -I ../../INCLUDE"
     INSTALL_COMMAND ""
     UPDATE_COMMAND ""
     TEST_COMMAND      ""

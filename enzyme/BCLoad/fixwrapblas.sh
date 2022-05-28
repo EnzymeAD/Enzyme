@@ -52,3 +52,30 @@ esac
 sed "s/typedef long int integer;/typedef int32_t integer;/g" $f.in | sed "s/EXTRAWIDTH//g" > $f.i32.c
 sed "s/typedef long int integer;/typedef int64_t integer;/g" $f.in | sed "s/EXTRAWIDTH/64_/g" > $f.i64.c
 done
+
+cp F2CLIBS/libf2c/sysdep1.h0 F2CLIBS/libf2c/sysdep1.h 
+cp F2CLIBS/libf2c/signal1.h0 F2CLIBS/libf2c/signal1.h 
+rm -f F2CLIBS/libf2c/sig_die.c
+rm -f F2CLIBS/libf2c/pow_qq.c
+rm -f F2CLIBS/libf2c/qbitbits.c
+rm -f F2CLIBS/libf2c/qbitshft.c
+rm -f F2CLIBS/libf2c/main.c
+rm -f F2CLIBS/libf2c/ftell_.c
+rm -f F2CLIBS/libf2c/ftell64_.c
+for f in F2CLIBS/libf2c/*.c
+do
+cat INCLUDE/f2c.h > $f.proc.c
+cat $f >> $f.proc.c
+
+case $OS in
+  'Darwin') 
+sed -i.bu "s/#include \"f2c.h\"//g" $f.proc.c
+sed -i.bu "s/#include \"arith.h\"//g" $f.proc.c
+    ;;
+  *)
+sed "s/#include \"f2c.h\"//g" -i $f.proc.c
+sed "s/#include \"arith.h\"//g" -i $f.proc.c
+;;
+esac
+
+done

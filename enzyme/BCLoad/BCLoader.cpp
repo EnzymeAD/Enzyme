@@ -60,9 +60,9 @@ bool provideDefinitions(Module &M) {
     todo.push_back(__data_xerbla);
   }
   bool changed = false;
-  for (auto mod : todo) {
+  for (size_t i = 0; i < todo.size(); i++) {
     SMDiagnostic Err;
-    MemoryBufferRef buf(mod, StringRef("bcloader"));
+    MemoryBufferRef buf(todo[i], StringRef("bcloader"));
 
 #if LLVM_VERSION_MAJOR <= 10
     auto BC = llvm::parseIR(buf, Err, M.getContext(), true,
