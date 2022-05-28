@@ -77,8 +77,13 @@ bool provideDefinitions(Module &M) {
     assert(BC);
     SmallVector<std::string, 1> toReplace;
     for (auto &F : *BC) {
-      if (F.empty())
+      if (F.empty()) {
+        auto found = EnzymeBlasBC.find(F.getName().str());
+        if (found != EnzymeBlasBC.end()) {
+          todo.push_back(found->second);
+        }
         continue;
+      }
       toReplace.push_back(F.getName().str());
     }
     Linker L(M);
