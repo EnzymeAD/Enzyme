@@ -78,9 +78,31 @@ bool provideDefinitions(Module &M) {
     SmallVector<std::string, 1> toReplace;
     for (auto &F : *BC) {
       if (F.empty()) {
-        auto found = EnzymeBlasBC.find(F.getName().str());
-        if (found != EnzymeBlasBC.end()) {
-          todo.push_back(found->second);
+        if (todo[i] != __data_fblas32 && todo[i] != __data_fblas64) {
+
+          int index = 0;
+          for (auto postfix : {"", "_", "_64_"}) {
+            std::string str;
+            if (strlen(postfix) == 0)
+              str = F.getName().str();
+            else if (F.getName().endswith(postfix)) {
+              str = "cblas_" +
+                    F.getName()
+                        .substr(0, F.getName().size() - strlen(postfix))
+                        .str();
+            }
+
+            auto found = EnzymeBlasBC.find(str);
+            if (found != EnzymeBlasBC.end()) {
+              if (index == 1)
+                todo.push_back(__data_fblas32);
+              if (index == 2)
+                todo.push_back(__data_fblas64);
+              todo.push_back(found->second);
+              break;
+            }
+            index++;
+          }
         }
         continue;
       }
