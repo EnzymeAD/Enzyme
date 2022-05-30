@@ -80,8 +80,8 @@ entry:
 
 ; NOTE this needs to be a cache rather than attempting to merge an uncomputable condition
 ; CHECK: invertjulia_foo_1762.inner.exit:
-; CHECK-NEXT:   switch i8 %_cache.0, label %invertL{{[0-9]+}}.i [
-; CHECK-DAG:     i8 [[a0]], label %invertL{{[0-9]+}}.i
-; CHECK-DAG:     i8 [[a1]], label %invertL{{[0-9]+}}.i
+; CHECK-NEXT:   switch i8 %_cache.0, label %invertL{{[1-9]+}}.i [
+; CHECK-DAG:     i8 {{[0-1]}}, label %invertL{{[1-9]+}}.i
+; CHECK-DAG:     i8 {{[0-1]}}, label %invertL{{[1-9]+}}.i
 ; CHECK-NEXT:   ]
 ; CHECK-NEXT: }

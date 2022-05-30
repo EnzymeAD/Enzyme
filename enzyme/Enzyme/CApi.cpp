@@ -228,7 +228,7 @@ void *EnzymeAnalyzeTypes(EnzymeTypeAnalysisRef TAR, CFnTypeInfo CTI,
 }
 
 void *EnzymeGradientUtilsTypeAnalyzer(GradientUtils *G) {
-  return (void *)&G->my_TR->analyzer;
+  return (void *)&G->TR.analyzer;
 }
 
 void EnzymeRegisterAllocationHandler(char *Name, CustomShadowAlloc AHandle,

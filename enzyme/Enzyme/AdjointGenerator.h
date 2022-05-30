@@ -8363,7 +8363,7 @@ public:
             if (!orig->getType()->isFPOrFPVectorTy() &&
                 TR.query(orig).Inner0().isPossiblePointer()) {
               if (is_value_needed_in_reverse<ValueType::Shadow>(
-                      TR, gutils, orig, DerivativeMode::ReverseModePrimal,
+                      gutils, orig, DerivativeMode::ReverseModePrimal,
                       oldUnreachable)) {
                 hasNonReturnUse = true;
               }
