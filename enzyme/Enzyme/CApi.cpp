@@ -227,6 +227,10 @@ void *EnzymeAnalyzeTypes(EnzymeTypeAnalysisRef TAR, CFnTypeInfo CTI,
   return (void *)&((TypeAnalysis *)TAR)->analyzeFunction(FTI).analyzer;
 }
 
+void *EnzymeGradientUtilsTypeAnalyzer(GradientUtils *G) {
+  return (void *)&G->TR.analyzer;
+}
+
 void EnzymeRegisterAllocationHandler(char *Name, CustomShadowAlloc AHandle,
                                      CustomShadowFree FHandle) {
   shadowHandlers[std::string(Name)] =
@@ -367,15 +371,13 @@ LLVMBasicBlockRef EnzymeGradientUtilsAllocationBlock(GradientUtils *gutils) {
 CTypeTreeRef EnzymeGradientUtilsAllocAndGetTypeTree(GradientUtils *gutils,
                                                     LLVMValueRef val) {
   auto v = unwrap(val);
-  assert(gutils->my_TR);
-  TypeTree TT = gutils->my_TR->query(v);
+  TypeTree TT = gutils->TR.query(v);
   TypeTree *pTT = new TypeTree(TT);
   return (CTypeTreeRef)pTT;
 }
 
 void EnzymeGradientUtilsDumpTypeResults(GradientUtils *gutils) {
-  assert(gutils->my_TR);
-  gutils->my_TR->dump();
+  gutils->TR.dump();
 }
 
 void EnzymeGradientUtilsSubTransferHelper(
@@ -452,14 +454,13 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
       },
       eunwrap(TA), eunwrap(augmented)));
 }
-EnzymeAugmentedReturnPtr
-EnzymeCreateAugmentedPrimal(EnzymeLogicRef Logic, LLVMValueRef todiff,
-                            CDIFFE_TYPE retType, CDIFFE_TYPE *constant_args,
-                            size_t constant_args_size, EnzymeTypeAnalysisRef TA,
-                            uint8_t returnUsed, uint8_t shadowReturnUsed,
-                            CFnTypeInfo typeInfo, uint8_t *_uncacheable_args,
-                            size_t uncacheable_args_size,
-                            uint8_t forceAnonymousTape, uint8_t AtomicAdd) {
+EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
+    EnzymeLogicRef Logic, LLVMValueRef todiff, CDIFFE_TYPE retType,
+    CDIFFE_TYPE *constant_args, size_t constant_args_size,
+    EnzymeTypeAnalysisRef TA, uint8_t returnUsed, uint8_t shadowReturnUsed,
+    CFnTypeInfo typeInfo, uint8_t *_uncacheable_args,
+    size_t uncacheable_args_size, uint8_t forceAnonymousTape, unsigned width,
+    uint8_t AtomicAdd) {
 
   std::vector<DIFFE_TYPE> nconstant_args((DIFFE_TYPE *)constant_args,
                                          (DIFFE_TYPE *)constant_args +
@@ -475,7 +476,7 @@ EnzymeCreateAugmentedPrimal(EnzymeLogicRef Logic, LLVMValueRef todiff,
       cast<Function>(unwrap(todiff)), (DIFFE_TYPE)retType, nconstant_args,
       eunwrap(TA), returnUsed, shadowReturnUsed,
       eunwrap(typeInfo, cast<Function>(unwrap(todiff))), uncacheable_args,
-      forceAnonymousTape, AtomicAdd));
+      forceAnonymousTape, width, AtomicAdd));
 }
 
 LLVMValueRef

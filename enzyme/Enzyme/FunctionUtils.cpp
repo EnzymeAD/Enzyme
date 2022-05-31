@@ -319,7 +319,7 @@ static inline void UpgradeAllocasToMallocs(Function *NewF,
 #if LLVM_VERSION_MAJOR >= 14
     if (ConstantInt *size = dyn_cast<ConstantInt>(CI->getOperand(0))) {
       CI->addDereferenceableRetAttr(size->getLimitedValue());
-#ifndef FLANG
+#if !defined(FLANG) && !defined(ROCM)
       AttrBuilder B(CI->getContext());
 #else
       AttrBuilder B;
@@ -1770,7 +1770,8 @@ FunctionType *getFunctionTypeForClone(
   std::vector<Type *> RetTypes;
   if (returnValue == ReturnType::ArgsWithReturn ||
       returnValue == ReturnType::Return) {
-    if (returnType != DIFFE_TYPE::CONSTANT) {
+    if (returnType != DIFFE_TYPE::CONSTANT &&
+        returnType != DIFFE_TYPE::OUT_DIFF) {
       RetTypes.push_back(
           GradientUtils::getShadowType(FTy->getReturnType(), width));
     } else {
@@ -1779,7 +1780,8 @@ FunctionType *getFunctionTypeForClone(
   } else if (returnValue == ReturnType::ArgsWithTwoReturns ||
              returnValue == ReturnType::TwoReturns) {
     RetTypes.push_back(FTy->getReturnType());
-    if (returnType != DIFFE_TYPE::CONSTANT) {
+    if (returnType != DIFFE_TYPE::CONSTANT &&
+        returnType != DIFFE_TYPE::OUT_DIFF) {
       RetTypes.push_back(
           GradientUtils::getShadowType(FTy->getReturnType(), width));
     } else {
@@ -1798,14 +1800,15 @@ FunctionType *getFunctionTypeForClone(
         constant_args[argno] == DIFFE_TYPE::DUP_NONEED) {
       ArgTypes.push_back(GradientUtils::getShadowType(I, width));
     } else if (constant_args[argno] == DIFFE_TYPE::OUT_DIFF) {
-      RetTypes.push_back(I);
+      RetTypes.push_back(GradientUtils::getShadowType(I, width));
     }
     ++argno;
   }
 
   if (diffeReturnArg) {
     assert(!FTy->getReturnType()->isVoidTy());
-    ArgTypes.push_back(FTy->getReturnType());
+    ArgTypes.push_back(
+        GradientUtils::getShadowType(FTy->getReturnType(), width));
   }
   if (additionalArg) {
     ArgTypes.push_back(additionalArg);
@@ -1818,9 +1821,15 @@ FunctionType *getFunctionTypeForClone(
     RetTypes.push_back(Type::getInt8PtrTy(FTy->getContext()));
     if (returnValue == ReturnType::TapeAndTwoReturns) {
       RetTypes.push_back(FTy->getReturnType());
-      RetTypes.push_back(FTy->getReturnType());
+      RetTypes.push_back(
+          GradientUtils::getShadowType(FTy->getReturnType(), width));
     } else if (returnValue == ReturnType::TapeAndReturn) {
-      RetTypes.push_back(FTy->getReturnType());
+      if (returnType != DIFFE_TYPE::CONSTANT &&
+          returnType != DIFFE_TYPE::OUT_DIFF)
+        RetTypes.push_back(
+            GradientUtils::getShadowType(FTy->getReturnType(), width));
+      else
+        RetTypes.push_back(FTy->getReturnType());
     }
     RetType = StructType::get(FTy->getContext(), RetTypes);
   } else if (returnValue == ReturnType::Return) {

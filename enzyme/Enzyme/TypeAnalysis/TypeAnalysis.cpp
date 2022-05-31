@@ -92,10 +92,22 @@ const std::map<std::string, llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"log1p", Intrinsic::not_intrinsic},
     {"log2", Intrinsic::log2},
     {"logb", Intrinsic::not_intrinsic},
+    {"logbf", Intrinsic::not_intrinsic},
+    {"logbl", Intrinsic::not_intrinsic},
     {"pow", Intrinsic::pow},
     {"sqrt", Intrinsic::sqrt},
     {"cbrt", Intrinsic::not_intrinsic},
     {"hypot", Intrinsic::not_intrinsic},
+
+    {"__mulsc3", Intrinsic::not_intrinsic},
+    {"__muldc3", Intrinsic::not_intrinsic},
+    {"__multc3", Intrinsic::not_intrinsic},
+    {"__mulxc3", Intrinsic::not_intrinsic},
+
+    {"__divsc3", Intrinsic::not_intrinsic},
+    {"__divdc3", Intrinsic::not_intrinsic},
+    {"__divtc3", Intrinsic::not_intrinsic},
+    {"__divxc3", Intrinsic::not_intrinsic},
 
     {"Faddeeva_erf", Intrinsic::not_intrinsic},
     {"Faddeeva_erfc", Intrinsic::not_intrinsic},
@@ -139,6 +151,11 @@ const std::map<std::string, llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"fma", Intrinsic::fma},
     {"ilogb", Intrinsic::not_intrinsic},
     {"scalbn", Intrinsic::not_intrinsic},
+    {"scalbnf", Intrinsic::not_intrinsic},
+    {"scalbnl", Intrinsic::not_intrinsic},
+    {"scalbln", Intrinsic::not_intrinsic},
+    {"scalblnf", Intrinsic::not_intrinsic},
+    {"scalblnl", Intrinsic::not_intrinsic},
     {"powi", Intrinsic::powi},
     {"cabs", Intrinsic::not_intrinsic},
     {"ldexp", Intrinsic::not_intrinsic},
@@ -4286,8 +4303,13 @@ FnTypeInfo::knownIntegralValues(llvm::Value *val, const DominatorTree &DT,
                                 std::map<Value *, std::set<int64_t>> &intseen,
                                 ScalarEvolution &SE) const {
   if (auto constant = dyn_cast<ConstantInt>(val)) {
-    // if (constant->getValue().getSignificantBits() > 64)
-    //  return {};
+#if LLVM_VERSION_MAJOR > 14
+    if (constant->getValue().getSignificantBits() > 64)
+      return {};
+#else
+    if (constant->getValue().getMinSignedBits() > 64)
+      return {};
+#endif
     return {constant->getSExtValue()};
   }
 
@@ -4349,7 +4371,13 @@ FnTypeInfo::knownIntegralValues(llvm::Value *val, const DominatorTree &DT,
   };
   if (auto II = dyn_cast<IntrinsicInst>(val)) {
     switch (II->getIntrinsicID()) {
-
+#if LLVM_VERSION_MAJOR >= 12
+    case Intrinsic::abs:
+      for (auto val :
+           knownIntegralValues(II->getArgOperand(0), DT, intseen, SE))
+        insert(abs(val));
+      break;
+#endif
     case Intrinsic::nvvm_read_ptx_sreg_tid_x:
     case Intrinsic::nvvm_read_ptx_sreg_tid_y:
     case Intrinsic::nvvm_read_ptx_sreg_tid_z:
@@ -4810,7 +4838,7 @@ TypeResults TypeAnalysis::analyzeFunction(const FnTypeInfo &fn) {
 
 TypeResults::TypeResults(TypeAnalyzer &analyzer) : analyzer(analyzer) {}
 
-FnTypeInfo TypeResults::getAnalyzedTypeInfo() {
+FnTypeInfo TypeResults::getAnalyzedTypeInfo() const {
   FnTypeInfo res(analyzer.fntypeinfo.Function);
   for (auto &arg : analyzer.fntypeinfo.Function->args()) {
     res.Arguments.insert(std::pair<Argument *, TypeTree>(&arg, query(&arg)));
@@ -4820,11 +4848,11 @@ FnTypeInfo TypeResults::getAnalyzedTypeInfo() {
   return res;
 }
 
-FnTypeInfo TypeResults::getCallInfo(CallInst &CI, Function &fn) {
+FnTypeInfo TypeResults::getCallInfo(CallInst &CI, Function &fn) const {
   return analyzer.getCallInfo(CI, fn);
 }
 
-TypeTree TypeResults::query(Value *val) {
+TypeTree TypeResults::query(Value *val) const {
   if (auto inst = dyn_cast<Instruction>(val)) {
     assert(inst->getParent()->getParent() == analyzer.fntypeinfo.Function);
   }
@@ -4834,10 +4862,10 @@ TypeTree TypeResults::query(Value *val) {
   return analyzer.getAnalysis(val);
 }
 
-void TypeResults::dump() { analyzer.dump(); }
+void TypeResults::dump() const { analyzer.dump(); }
 
 ConcreteType TypeResults::intType(size_t num, Value *val, bool errIfNotFound,
-                                  bool pointerIntSame) {
+                                  bool pointerIntSame) const {
   assert(val);
   assert(val->getType());
   auto q = query(val);
@@ -4868,7 +4896,7 @@ ConcreteType TypeResults::intType(size_t num, Value *val, bool errIfNotFound,
   return dt;
 }
 
-Type *TypeResults::addingType(size_t num, Value *val) {
+Type *TypeResults::addingType(size_t num, Value *val) const {
   assert(val);
   assert(val->getType());
   auto q = query(val).PurgeAnything();
@@ -4889,7 +4917,7 @@ Type *TypeResults::addingType(size_t num, Value *val) {
 
 ConcreteType TypeResults::firstPointer(size_t num, Value *val,
                                        bool errIfNotFound,
-                                       bool pointerIntSame) {
+                                       bool pointerIntSame) const {
   assert(val);
   assert(val->getType());
   auto q = query(val).Data0();
@@ -4983,7 +5011,7 @@ Function *TypeResults::getFunction() const {
   return analyzer.fntypeinfo.Function;
 }
 
-TypeTree TypeResults::getReturnAnalysis() {
+TypeTree TypeResults::getReturnAnalysis() const {
   return analyzer.getReturnAnalysis();
 }
 

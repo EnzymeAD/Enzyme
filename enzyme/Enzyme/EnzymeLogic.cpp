@@ -593,9 +593,8 @@ struct CacheAnalysis {
 void calculateUnusedValuesInFunction(
     Function &func, llvm::SmallPtrSetImpl<const Value *> &unnecessaryValues,
     llvm::SmallPtrSetImpl<const Instruction *> &unnecessaryInstructions,
-    bool returnValue, DerivativeMode mode, TypeResults &TR,
-    GradientUtils *gutils, TargetLibraryInfo &TLI,
-    const std::vector<DIFFE_TYPE> &constant_args,
+    bool returnValue, DerivativeMode mode, GradientUtils *gutils,
+    TargetLibraryInfo &TLI, const std::vector<DIFFE_TYPE> &constant_args,
     const llvm::SmallPtrSetImpl<BasicBlock *> &oldUnreachable) {
   std::map<UsageKey, bool> CacheResults;
   for (auto pair : gutils->knownRecomputeHeuristic) {
@@ -613,7 +612,7 @@ void calculateUnusedValuesInFunction(
       continue;
 
     bool primalNeededInReverse = is_value_needed_in_reverse<ValueType::Primal>(
-        TR, gutils, pair.first, mode, CacheResults, oldUnreachable);
+        gutils, pair.first, mode, CacheResults, oldUnreachable);
     bool cacheWholeAllocation = false;
 
     if (gutils->knownRecomputeHeuristic.count(pair.first)) {
@@ -648,7 +647,7 @@ void calculateUnusedValuesInFunction(
       func, unnecessaryValues, unnecessaryInstructions, returnValue,
       [&](const Value *val) {
         bool ivn = is_value_needed_in_reverse<ValueType::Primal>(
-            TR, gutils, val, mode, PrimalSeen, oldUnreachable);
+            gutils, val, mode, PrimalSeen, oldUnreachable);
         return ivn;
       },
       [&](const Instruction *inst) {
@@ -739,9 +738,9 @@ void calculateUnusedValuesInFunction(
           if (called && isDeallocationFunction(*called, TLI)) {
             if (mode == DerivativeMode::ForwardMode ||
                 mode == DerivativeMode::ForwardModeSplit ||
-                (mode == DerivativeMode::ReverseModePrimal ||
-                 mode == DerivativeMode::ReverseModeCombined) &&
-                    gutils->forwardDeallocations.count(obj_op))
+                ((mode == DerivativeMode::ReverseModePrimal ||
+                  mode == DerivativeMode::ReverseModeCombined) &&
+                 gutils->forwardDeallocations.count(obj_op)))
               return UseReq::Need;
             return UseReq::Recur;
           }
@@ -781,10 +780,18 @@ void calculateUnusedValuesInFunction(
               return UseReq::Recur;
             }
           }
-          if (auto ai = dyn_cast<AllocaInst>(at)) {
+          bool newMemory = false;
+          if (isa<AllocaInst>(at))
+            newMemory = true;
+          else if (auto CI = dyn_cast<CallInst>(at))
+            if (Function *F = getFunctionFromCall(CI))
+              if (isAllocationFunction(*F, TLI))
+                newMemory = true;
+          if (newMemory) {
             bool foundStore = false;
             allInstructionsBetween(
-                gutils->OrigLI, ai, const_cast<MemTransferInst *>(mti),
+                gutils->OrigLI, cast<Instruction>(at),
+                const_cast<MemTransferInst *>(mti),
                 [&](Instruction *I) -> bool {
                   if (!I->mayWriteToMemory())
                     return /*earlyBreak*/ false;
@@ -814,7 +821,8 @@ void calculateUnusedValuesInFunction(
         // Don't erase any store that needs to be preserved for a
         // rematerialization. However, if not used in a rematerialization, the
         // store should be eliminated in the reverse pass
-        if (mode == DerivativeMode::ReverseModeGradient) {
+        if (mode == DerivativeMode::ReverseModeGradient ||
+            mode == DerivativeMode::ForwardModeSplit) {
           auto CI = dyn_cast<CallInst>(const_cast<Instruction *>(inst));
           Function *CF = CI ? getFunctionFromCall(CI) : nullptr;
           StringRef funcName = CF ? CF->getName() : "";
@@ -823,16 +831,16 @@ void calculateUnusedValuesInFunction(
             for (auto pair : gutils->rematerializableAllocations) {
               if (pair.second.stores.count(inst)) {
                 if (is_value_needed_in_reverse<ValueType::Primal>(
-                        TR, gutils, pair.first, mode, PrimalSeen,
-                        oldUnreachable))
+                        gutils, pair.first, mode, PrimalSeen, oldUnreachable)) {
                   return UseReq::Need;
+                }
               }
             }
             return UseReq::Recur;
           }
         }
         bool ivn = is_value_needed_in_reverse<ValueType::Primal>(
-            TR, gutils, inst, mode, PrimalSeen, oldUnreachable);
+            gutils, inst, mode, PrimalSeen, oldUnreachable);
         if (ivn) {
           return UseReq::Need;
         }
@@ -845,9 +853,9 @@ void calculateUnusedValuesInFunction(
     for (auto &BB : func)
       for (auto &I : BB) {
         bool ivn = is_value_needed_in_reverse<ValueType::Primal>(
-            TR, gutils, &I, mode, PrimalSeen, oldUnreachable);
+            gutils, &I, mode, PrimalSeen, oldUnreachable);
         bool isn = is_value_needed_in_reverse<ValueType::Shadow>(
-            TR, gutils, &I, mode, PrimalSeen, oldUnreachable);
+            gutils, &I, mode, PrimalSeen, oldUnreachable);
         llvm::errs() << I << " ivn=" << (int)ivn << " isn: " << (int)isn;
         auto found = gutils->knownRecomputeHeuristic.find(&I);
         if (found != gutils->knownRecomputeHeuristic.end()) {
@@ -859,9 +867,9 @@ void calculateUnusedValuesInFunction(
                  << ": mode=" << to_string(mode) << "\n";
     for (auto a : unnecessaryValues) {
       bool ivn = is_value_needed_in_reverse<ValueType::Primal>(
-          TR, gutils, a, mode, PrimalSeen, oldUnreachable);
+          gutils, a, mode, PrimalSeen, oldUnreachable);
       bool isn = is_value_needed_in_reverse<ValueType::Shadow>(
-          TR, gutils, a, mode, PrimalSeen, oldUnreachable);
+          gutils, a, mode, PrimalSeen, oldUnreachable);
       llvm::errs() << *a << " ivn=" << (int)ivn << " isn: " << (int)isn;
       auto found = gutils->knownRecomputeHeuristic.find(a);
       if (found != gutils->knownRecomputeHeuristic.end()) {
@@ -880,7 +888,7 @@ void calculateUnusedStoresInFunction(
     Function &func,
     llvm::SmallPtrSetImpl<const Instruction *> &unnecessaryStores,
     const llvm::SmallPtrSetImpl<const Instruction *> &unnecessaryInstructions,
-    GradientUtils *gutils) {
+    GradientUtils *gutils, TargetLibraryInfo &TLI) {
   calculateUnusedStores(func, unnecessaryStores, [&](const Instruction *inst) {
     if (auto si = dyn_cast<StoreInst>(inst)) {
       if (isa<UndefValue>(si->getValueOperand()))
@@ -891,15 +899,22 @@ void calculateUnusedStoresInFunction(
 #if LLVM_VERSION_MAJOR >= 12
       auto at = getUnderlyingObject(mti->getArgOperand(1), 100);
 #else
-          auto at = GetUnderlyingObject(
-              mti->getArgOperand(1),
-              func.getParent()->getDataLayout(), 100);
+      auto at = GetUnderlyingObject(
+          mti->getArgOperand(1),
+          func.getParent()->getDataLayout(), 100);
 #endif
-      if (auto ai = dyn_cast<AllocaInst>(at)) {
+      bool newMemory = false;
+      if (isa<AllocaInst>(at))
+        newMemory = true;
+      else if (auto CI = dyn_cast<CallInst>(at))
+        if (Function *F = getFunctionFromCall(CI))
+          if (isAllocationFunction(*F, TLI))
+            newMemory = true;
+      if (newMemory) {
         bool foundStore = false;
         allInstructionsBetween(
-            gutils->OrigLI, ai, const_cast<MemTransferInst *>(mti),
-            [&](Instruction *I) -> bool {
+            gutils->OrigLI, cast<Instruction>(at),
+            const_cast<MemTransferInst *>(mti), [&](Instruction *I) -> bool {
               if (!I->mayWriteToMemory())
                 return /*earlyBreak*/ false;
               if (unnecessaryInstructions.count(I))
@@ -992,8 +1007,7 @@ getDefaultFunctionTypeForGradient(FunctionType *called, DIFFE_TYPE retType) {
   return std::pair<SmallVector<Type *, 4>, SmallVector<Type *, 4>>(args, outs);
 }
 
-bool shouldAugmentCall(CallInst *op, const GradientUtils *gutils,
-                       TypeResults &TR) {
+bool shouldAugmentCall(CallInst *op, const GradientUtils *gutils) {
   assert(op->getParent()->getParent() == gutils->oldFunc);
 
   Function *called = op->getCalledFunction();
@@ -1014,7 +1028,7 @@ bool shouldAugmentCall(CallInst *op, const GradientUtils *gutils,
   }
 
   if (!op->getType()->isFPOrFPVectorTy() && !gutils->isConstantValue(op) &&
-      TR.query(op).Inner0().isPossiblePointer()) {
+      gutils->TR.query(op).Inner0().isPossiblePointer()) {
     modifyPrimal = true;
 
 #ifdef PRINT_AUGCALL
@@ -1047,7 +1061,7 @@ bool shouldAugmentCall(CallInst *op, const GradientUtils *gutils,
 
     if (!argType->isFPOrFPVectorTy() &&
         !gutils->isConstantValue(op->getArgOperand(i)) &&
-        TR.query(op->getArgOperand(i)).Inner0().isPossiblePointer()) {
+        gutils->TR.query(op->getArgOperand(i)).Inner0().isPossiblePointer()) {
       if (called && !(called->hasParamAttribute(i, Attribute::ReadOnly) ||
                       called->hasParamAttribute(i, Attribute::ReadNone))) {
         modifyPrimal = true;
@@ -1101,7 +1115,6 @@ bool legalCombinedForwardReverse(
     const std::map<ReturnInst *, StoreInst *> &replacedReturns,
     std::vector<Instruction *> &postCreate,
     std::vector<Instruction *> &userReplace, GradientUtils *gutils,
-    TypeResults &TR,
     const SmallPtrSetImpl<const Instruction *> &unnecessaryInstructions,
     const SmallPtrSetImpl<BasicBlock *> &oldUnreachable,
     const bool subretused) {
@@ -1116,7 +1129,7 @@ bool legalCombinedForwardReverse(
     bool sret = subretused;
     if (!sret && !gutils->isConstantValue(origop)) {
       sret = is_value_needed_in_reverse<ValueType::Shadow>(
-          TR, gutils, origop, gutils->mode, oldUnreachable);
+          gutils, origop, gutils->mode, oldUnreachable);
     }
 
     if (sret) {
@@ -1207,8 +1220,7 @@ bool legalCombinedForwardReverse(
       return;
     }
     if (is_value_needed_in_reverse<ValueType::Primal>(
-            TR, gutils, I, DerivativeMode::ReverseModeCombined,
-            oldUnreachable)) {
+            gutils, I, DerivativeMode::ReverseModeCombined, oldUnreachable)) {
       legal = false;
       if (EnzymePrintPerf) {
         if (called)
@@ -1640,7 +1652,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     const std::vector<DIFFE_TYPE> &constant_args, TypeAnalysis &TA,
     bool returnUsed, bool shadowReturnUsed, const FnTypeInfo &oldTypeInfo_,
     const std::map<Argument *, bool> _uncacheable_args, bool forceAnonymousTape,
-    bool AtomicAdd, bool omp) {
+    unsigned width, bool AtomicAdd, bool omp) {
   if (returnUsed)
     assert(!todiff->getReturnType()->isEmptyTy() &&
            !todiff->getReturnType()->isVoidTy());
@@ -1656,7 +1668,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                       std::map<Argument *, bool>(_uncacheable_args.begin(),
                                                  _uncacheable_args.end()),
                       returnUsed, shadowReturnUsed, oldTypeInfo,
-                      forceAnonymousTape, AtomicAdd, omp);
+                      forceAnonymousTape, AtomicAdd, omp, width);
   auto found = AugmentedCachedFunctions.find(tup);
   if (found != AugmentedCachedFunctions.end()) {
     return found->second;
@@ -1745,7 +1757,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       }
       auto &aug = CreateAugmentedPrimal(
           todiff, retType, next_constant_args, TA, returnUsed, shadowReturnUsed,
-          oldTypeInfo_, _uncacheable_args, forceAnonymousTape, AtomicAdd, omp);
+          oldTypeInfo_, _uncacheable_args, forceAnonymousTape, width, AtomicAdd,
+          omp);
       auto cal = bb.CreateCall(aug.fn, fwdargs);
       cal->setCallingConv(aug.fn->getCallingConv());
 
@@ -1835,7 +1848,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   std::map<AugmentedStruct, int> returnMapping;
 
   GradientUtils *gutils = GradientUtils::CreateFromClone(
-      *this, todiff, TLI, TA, retType, constant_args,
+      *this, width, todiff, TLI, TA, oldTypeInfo, retType, constant_args,
       /*returnUsed*/ returnUsed, /*shadowReturnUsed*/ shadowReturnUsed,
       returnMapping, omp);
   gutils->AtomicAdd = AtomicAdd;
@@ -1860,34 +1873,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     }
   }
 
-  FnTypeInfo typeInfo(gutils->oldFunc);
-  {
-    auto toarg = todiff->arg_begin();
-    auto olarg = gutils->oldFunc->arg_begin();
-    for (; toarg != todiff->arg_end(); ++toarg, ++olarg) {
-
-      {
-        auto fd = oldTypeInfo.Arguments.find(toarg);
-        assert(fd != oldTypeInfo.Arguments.end());
-        typeInfo.Arguments.insert(
-            std::pair<Argument *, TypeTree>(olarg, fd->second));
-      }
-
-      {
-        auto cfd = oldTypeInfo.KnownValues.find(toarg);
-        assert(cfd != oldTypeInfo.KnownValues.end());
-        typeInfo.KnownValues.insert(
-            std::pair<Argument *, std::set<int64_t>>(olarg, cfd->second));
-      }
-    }
-    typeInfo.Return = oldTypeInfo.Return;
-  }
-  TypeResults TR = TA.analyzeFunction(typeInfo);
-  assert(TR.getFunction() == gutils->oldFunc);
-
-  gutils->forceActiveDetection(TR);
-
-  gutils->forceAugmentedReturns(TR, guaranteedUnreachable);
+  gutils->forceActiveDetection();
+  gutils->forceAugmentedReturns(guaranteedUnreachable);
 
   // TODO actually populate unnecessaryInstructions with what can be
   // derived without activity info
@@ -1896,14 +1883,15 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     for (auto &I : *BB)
       unnecessaryInstructionsTmp.insert(&I);
   }
-  gutils->computeGuaranteedFrees(guaranteedUnreachable, TR);
+  gutils->computeGuaranteedFrees(guaranteedUnreachable);
 
-  CacheAnalysis CA(
-      gutils->allocationsWithGuaranteedFree,
-      gutils->rematerializableAllocations, TR, gutils->OrigAA, gutils->oldFunc,
-      PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
-      gutils->OrigLI, gutils->OrigDT, TLI, unnecessaryInstructionsTmp,
-      _uncacheable_argsPP, DerivativeMode::ReverseModePrimal, omp);
+  CacheAnalysis CA(gutils->allocationsWithGuaranteedFree,
+                   gutils->rematerializableAllocations, gutils->TR,
+                   gutils->OrigAA, gutils->oldFunc,
+                   PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
+                   gutils->OrigLI, gutils->OrigDT, TLI,
+                   unnecessaryInstructionsTmp, _uncacheable_argsPP,
+                   DerivativeMode::ReverseModePrimal, omp);
   const std::map<CallInst *, const std::map<Argument *, bool>>
       uncacheable_args_map = CA.compute_uncacheable_args_for_callsites();
 
@@ -1911,18 +1899,18 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       CA.compute_uncacheable_load_map();
   gutils->can_modref_map = &can_modref_map;
 
-  gutils->computeMinCache(TR, guaranteedUnreachable);
+  gutils->computeMinCache(guaranteedUnreachable);
 
   SmallPtrSet<const Value *, 4> unnecessaryValues;
   SmallPtrSet<const Instruction *, 4> unnecessaryInstructions;
   calculateUnusedValuesInFunction(*gutils->oldFunc, unnecessaryValues,
                                   unnecessaryInstructions, returnUsed,
-                                  DerivativeMode::ReverseModePrimal, TR, gutils,
+                                  DerivativeMode::ReverseModePrimal, gutils,
                                   TLI, constant_args, guaranteedUnreachable);
 
   SmallPtrSet<const Instruction *, 4> unnecessaryStores;
   calculateUnusedStoresInFunction(*gutils->oldFunc, unnecessaryStores,
-                                  unnecessaryInstructions, gutils);
+                                  unnecessaryInstructions, gutils, TLI);
 
   insert_or_assign(AugmentedCachedFunctions, tup,
                    AugmentedReturn(gutils->newFunc, nullptr, {}, returnMapping,
@@ -1969,7 +1957,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   }
 
   AdjointGenerator<AugmentedReturn *> maker(
-      DerivativeMode::ReverseModePrimal, gutils, constant_args, retType, TR,
+      DerivativeMode::ReverseModePrimal, gutils, constant_args, retType,
       getIndex, uncacheable_args_map, &returnuses,
       &AugmentedCachedFunctions.find(tup)->second, nullptr, unnecessaryValues,
       unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
@@ -2300,7 +2288,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         }
 #if LLVM_VERSION_MAJOR >= 14
         malloccall->addDereferenceableRetAttr(size->getLimitedValue());
-#ifndef FLANG
+#if !defined(FLANG) && !defined(ROCM)
         AttrBuilder B(malloccall->getContext());
 #else
         AttrBuilder B;
@@ -2526,8 +2514,9 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   return AugmentedCachedFunctions.find(tup)->second;
 }
 
-void createTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
-                      BasicBlock *oBB, DIFFE_TYPE retType, ReturnType retVal) {
+void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
+                      DIFFE_TYPE retType, ReturnType retVal) {
+  TypeResults &TR = gutils->TR;
   ReturnInst *inst = dyn_cast<ReturnInst>(oBB->getTerminator());
   // In forward mode we only need to update the return value
   if (inst == nullptr)
@@ -2601,11 +2590,12 @@ void createTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
   return;
 }
 
-void createInvertedTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
+void createInvertedTerminator(DiffeGradientUtils *gutils,
                               const std::vector<DIFFE_TYPE> &argTypes,
                               BasicBlock *oBB, AllocaInst *retAlloca,
                               AllocaInst *dretAlloca, unsigned extraArgs,
                               DIFFE_TYPE retType) {
+  TypeResults &TR = gutils->TR;
   LoopContext loopContext;
   BasicBlock *BB = cast<BasicBlock>(gutils->getNewFromOriginal(oBB));
   bool inLoop = gutils->getContext(BB, loopContext);
@@ -2710,6 +2700,13 @@ void createInvertedTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
       }
     }
     if (!PNfloatType) {
+      if (CustomErrorHandler) {
+        std::string str;
+        raw_string_ostream ss(str);
+        ss << "Cannot deduce type of phi " << *orig;
+        CustomErrorHandler(str.c_str(), wrap(orig), ErrorType::NoType,
+                           &TR.analyzer);
+      }
       llvm::errs() << *gutils->oldFunc->getParent() << "\n";
       llvm::errs() << *gutils->oldFunc << "\n";
       llvm::errs() << " for orig " << *orig << " saw "
@@ -2848,7 +2845,9 @@ void createInvertedTerminator(TypeResults &TR, DiffeGradientUtils *gutils,
     }
 
     if (!handled) {
-      gutils->setDiffe(orig, Constant::getNullValue(orig->getType()), Builder);
+      gutils->setDiffe(
+          orig, Constant::getNullValue(gutils->getShadowType(orig->getType())),
+          Builder);
 
       for (BasicBlock *opred : predecessors(oBB)) {
         auto oval = orig->getIncomingValueForBlock(opred);
@@ -3050,7 +3049,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       auto &aug = CreateAugmentedPrimal(
           key.todiff, key.retType, key.constant_args, TA, key.returnUsed,
           key.shadowReturnUsed, key.typeInfo, key.uncacheable_args,
-          /*forceAnonymousTape*/ false, key.AtomicAdd, omp);
+          /*forceAnonymousTape*/ false, key.width, key.AtomicAdd, omp);
 
       SmallVector<Value *, 4> fwdargs;
       for (auto &a : NewF->args())
@@ -3363,7 +3362,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   bool diffeReturnArg = key.retType == DIFFE_TYPE::OUT_DIFF;
 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
-      *this, key.mode, key.width, key.todiff, TLI, TA, key.retType,
+      *this, key.mode, key.width, key.todiff, TLI, TA, oldTypeInfo, key.retType,
       diffeReturnArg, key.constant_args, retVal, key.additionalType, omp);
 
   gutils->AtomicAdd = key.AtomicAdd;
@@ -3387,36 +3386,10 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     }
   }
 
-  FnTypeInfo typeInfo(gutils->oldFunc);
-  {
-    auto toarg = key.todiff->arg_begin();
-    auto olarg = gutils->oldFunc->arg_begin();
-    for (; toarg != key.todiff->arg_end(); ++toarg, ++olarg) {
+  gutils->forceActiveDetection();
+  gutils->forceAugmentedReturns(guaranteedUnreachable);
 
-      {
-        auto fd = oldTypeInfo.Arguments.find(toarg);
-        assert(fd != oldTypeInfo.Arguments.end());
-        typeInfo.Arguments.insert(
-            std::pair<Argument *, TypeTree>(olarg, fd->second));
-      }
-
-      {
-        auto cfd = oldTypeInfo.KnownValues.find(toarg);
-        assert(cfd != oldTypeInfo.KnownValues.end());
-        typeInfo.KnownValues.insert(
-            std::pair<Argument *, std::set<int64_t>>(olarg, cfd->second));
-      }
-    }
-    typeInfo.Return = oldTypeInfo.Return;
-  }
-
-  TypeResults TR = TA.analyzeFunction(typeInfo);
-  assert(TR.getFunction() == gutils->oldFunc);
-
-  gutils->forceActiveDetection(TR);
-  gutils->forceAugmentedReturns(TR, guaranteedUnreachable);
-
-  gutils->computeGuaranteedFrees(guaranteedUnreachable, TR);
+  gutils->computeGuaranteedFrees(guaranteedUnreachable);
 
   // TODO populate with actual unnecessaryInstructions once the dependency
   // cycle with activity analysis is removed
@@ -3425,12 +3398,13 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     for (auto &I : *BB)
       unnecessaryInstructionsTmp.insert(&I);
   }
-  CacheAnalysis CA(
-      gutils->allocationsWithGuaranteedFree,
-      gutils->rematerializableAllocations, TR, gutils->OrigAA, gutils->oldFunc,
-      PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
-      gutils->OrigLI, gutils->OrigDT, TLI, unnecessaryInstructionsTmp,
-      _uncacheable_argsPP, key.mode, omp);
+  CacheAnalysis CA(gutils->allocationsWithGuaranteedFree,
+                   gutils->rematerializableAllocations, gutils->TR,
+                   gutils->OrigAA, gutils->oldFunc,
+                   PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
+                   gutils->OrigLI, gutils->OrigDT, TLI,
+                   unnecessaryInstructionsTmp, _uncacheable_argsPP, key.mode,
+                   omp);
   const std::map<CallInst *, const std::map<Argument *, bool>>
       uncacheable_args_map =
           (augmenteddata) ? augmenteddata->uncacheable_args_map
@@ -3449,18 +3423,18 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     return gutils->getIndex(std::make_pair(I, u), mapping);
   };
 
-  gutils->computeMinCache(TR, guaranteedUnreachable);
+  gutils->computeMinCache(guaranteedUnreachable);
 
   SmallPtrSet<const Value *, 4> unnecessaryValues;
   SmallPtrSet<const Instruction *, 4> unnecessaryInstructions;
   calculateUnusedValuesInFunction(*gutils->oldFunc, unnecessaryValues,
                                   unnecessaryInstructions, key.returnUsed,
-                                  key.mode, TR, gutils, TLI, key.constant_args,
+                                  key.mode, gutils, TLI, key.constant_args,
                                   guaranteedUnreachable);
 
   SmallPtrSet<const Instruction *, 4> unnecessaryStores;
   calculateUnusedStoresInFunction(*gutils->oldFunc, unnecessaryStores,
-                                  unnecessaryInstructions, gutils);
+                                  unnecessaryInstructions, gutils, TLI);
 
   Value *additionalValue = nullptr;
   if (key.additionalType) {
@@ -3515,11 +3489,16 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     if (key.additionalType)
       endarg--;
     differetval = endarg;
-    if (differetval->getType() != key.todiff->getReturnType()) {
-      llvm::errs() << *gutils->oldFunc << "\n";
-      llvm::errs() << *gutils->newFunc << "\n";
+
+    if (!key.todiff->getReturnType()->isVoidTy()) {
+      if (!(differetval->getType() ==
+            gutils->getShadowType(key.todiff->getReturnType()))) {
+        llvm::errs() << *gutils->oldFunc << "\n";
+        llvm::errs() << *gutils->newFunc << "\n";
+      }
+      assert(differetval->getType() ==
+             gutils->getShadowType(key.todiff->getReturnType()));
     }
-    assert(differetval->getType() == key.todiff->getReturnType());
   }
 
   // Explicitly handle all returns first to ensure that return instructions know
@@ -3580,7 +3559,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   }
 
   AdjointGenerator<const AugmentedReturn *> maker(
-      key.mode, gutils, key.constant_args, key.retType, TR, getIndex,
+      key.mode, gutils, key.constant_args, key.retType, getIndex,
       uncacheable_args_map,
       /*returnuses*/ nullptr, augmenteddata, &replacedReturns,
       unnecessaryValues, unnecessaryInstructions, unnecessaryStores,
@@ -3649,7 +3628,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       assert(oBB.rend() == E);
     }
 
-    createInvertedTerminator(TR, gutils, key.constant_args, &oBB, retAlloca,
+    createInvertedTerminator(gutils, key.constant_args, &oBB, retAlloca,
                              dretAlloca,
                              0 + (key.additionalType ? 1 : 0) +
                                  ((key.retType == DIFFE_TYPE::DUP_ARG ||
@@ -3990,7 +3969,7 @@ Function *EnzymeLogic::CreateForwardDiff(
   bool diffeReturnArg = false;
 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
-      *this, mode, width, todiff, TLI, TA, retType, diffeReturnArg,
+      *this, mode, width, todiff, TLI, TA, oldTypeInfo, retType, diffeReturnArg,
       constant_args, retVal, additionalArg, omp);
 
   insert_or_assign2<ForwardCacheKey, Function *>(ForwardCachedFunctions, tup,
@@ -4001,37 +3980,8 @@ Function *EnzymeLogic::CreateForwardDiff(
   const SmallPtrSet<BasicBlock *, 4> guaranteedUnreachable =
       getGuaranteedUnreachable(gutils->oldFunc);
 
-  // Convert uncacheable args from the input function to the preprocessed
-  // function
-
-  FnTypeInfo typeInfo(gutils->oldFunc);
-  {
-    auto toarg = todiff->arg_begin();
-    auto olarg = gutils->oldFunc->arg_begin();
-    for (; toarg != todiff->arg_end(); ++toarg, ++olarg) {
-
-      {
-        auto fd = oldTypeInfo.Arguments.find(toarg);
-        assert(fd != oldTypeInfo.Arguments.end());
-        typeInfo.Arguments.insert(
-            std::pair<Argument *, TypeTree>(olarg, fd->second));
-      }
-
-      {
-        auto cfd = oldTypeInfo.KnownValues.find(toarg);
-        assert(cfd != oldTypeInfo.KnownValues.end());
-        typeInfo.KnownValues.insert(
-            std::pair<Argument *, std::set<int64_t>>(olarg, cfd->second));
-      }
-    }
-    typeInfo.Return = oldTypeInfo.Return;
-  }
-
-  TypeResults TR = TA.analyzeFunction(typeInfo);
-  assert(TR.getFunction() == gutils->oldFunc);
-
-  gutils->forceActiveDetection(TR);
-  gutils->forceAugmentedReturns(TR, guaranteedUnreachable);
+  gutils->forceActiveDetection();
+  gutils->forceAugmentedReturns(guaranteedUnreachable);
 
   // TODO populate with actual unnecessaryInstructions once the dependency
   // cycle with activity analysis is removed
@@ -4040,16 +3990,18 @@ Function *EnzymeLogic::CreateForwardDiff(
     for (auto &I : *BB)
       unnecessaryInstructionsTmp.insert(&I);
   }
+  if (mode == DerivativeMode::ForwardModeSplit)
+    gutils->computeGuaranteedFrees(guaranteedUnreachable);
 
   SmallPtrSet<const Value *, 4> unnecessaryValues;
   SmallPtrSet<const Instruction *, 4> unnecessaryInstructions;
   calculateUnusedValuesInFunction(
       *gutils->oldFunc, unnecessaryValues, unnecessaryInstructions, returnUsed,
-      mode, TR, gutils, TLI, constant_args, guaranteedUnreachable);
+      mode, gutils, TLI, constant_args, guaranteedUnreachable);
 
   SmallPtrSet<const Instruction *, 4> unnecessaryStores;
   calculateUnusedStoresInFunction(*gutils->oldFunc, unnecessaryStores,
-                                  unnecessaryInstructions, gutils);
+                                  unnecessaryInstructions, gutils, TLI);
 
   // set derivative of function arguments
   auto newArgs = gutils->newFunc->arg_begin();
@@ -4060,13 +4012,6 @@ Function *EnzymeLogic::CreateForwardDiff(
     case DIFFE_TYPE::DUP_ARG:
     case DIFFE_TYPE::DUP_NONEED: {
       newArgs += 1;
-      auto pri = gutils->oldFunc->arg_begin() + i;
-      auto dif = newArgs;
-
-      BasicBlock &BB = gutils->newFunc->getEntryBlock();
-      IRBuilder<> Builder(&BB.front());
-
-      gutils->setDiffe(pri, dif, Builder);
       break;
     }
     case DIFFE_TYPE::CONSTANT:
@@ -4092,10 +4037,10 @@ Function *EnzymeLogic::CreateForwardDiff(
       }
     }
 
-    gutils->computeGuaranteedFrees(guaranteedUnreachable, TR);
+    gutils->computeGuaranteedFrees(guaranteedUnreachable);
     CacheAnalysis CA(
         gutils->allocationsWithGuaranteedFree,
-        gutils->rematerializableAllocations, TR, gutils->OrigAA,
+        gutils->rematerializableAllocations, gutils->TR, gutils->OrigAA,
         gutils->oldFunc,
         PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
         gutils->OrigLI, gutils->OrigDT, TLI, unnecessaryInstructionsTmp,
@@ -4111,11 +4056,10 @@ Function *EnzymeLogic::CreateForwardDiff(
       return gutils->getIndex(std::make_pair(I, u), augmenteddata->tapeIndices);
     };
 
-    gutils->computeMinCache(TR, guaranteedUnreachable);
+    gutils->computeMinCache(guaranteedUnreachable);
 
     maker = new AdjointGenerator<const AugmentedReturn *>(
-        mode, gutils, constant_args, retType, TR, getIndex,
-        uncacheable_args_map,
+        mode, gutils, constant_args, retType, getIndex, uncacheable_args_map,
         /*returnuses*/ nullptr, augmenteddata, nullptr, unnecessaryValues,
         unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
         nullptr);
@@ -4172,7 +4116,7 @@ Function *EnzymeLogic::CreateForwardDiff(
   } else {
 
     maker = new AdjointGenerator<const AugmentedReturn *>(
-        mode, gutils, constant_args, retType, TR, nullptr, {},
+        mode, gutils, constant_args, retType, nullptr, {},
         /*returnuses*/ nullptr, nullptr, nullptr, unnecessaryValues,
         unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
         nullptr);
@@ -4226,7 +4170,7 @@ Function *EnzymeLogic::CreateForwardDiff(
       maker->visit(&*it);
     }
 
-    createTerminator(TR, gutils, &oBB, retType, retVal);
+    createTerminator(gutils, &oBB, retType, retVal);
   }
 
   if (mode == DerivativeMode::ForwardModeSplit && augmenteddata)
