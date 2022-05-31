@@ -509,79 +509,23 @@ public:
   }
 
   bool HandleBatch(CallInst *CI) {
-    Value *fn = CI->getArgOperand(0);
-
-    std::vector<DIFFE_TYPE> constants;
-    SmallVector<Value *, 2> args;
-
-    if (CI->hasStructRetAttr()) {
-      fn = CI->getArgOperand(1);
-    }
-
-    while (auto ci = dyn_cast<CastInst>(fn)) {
-      fn = ci->getOperand(0);
-    }
-    while (auto ci = dyn_cast<BlockAddress>(fn)) {
-      fn = ci->getFunction();
-    }
-    while (auto ci = dyn_cast<ConstantExpr>(fn)) {
-      fn = ci->getOperand(0);
-    }
-
-    Function *F = dyn_cast<Function>(fn);
-
     unsigned width = 1;
+    SmallVector<Value *, 2> args;
+    IRBuilder<> Builder2(CI);
+    Function *F;
+    auto parsedFunction = parseFunctionParameter(CI);
+    if (parsedFunction.hasValue()) {
+      F = parsedFunction.getValue();
+    } else {
+      return false;
+    }
 
-    // determine width
-#if LLVM_VERSION_MAJOR >= 14
-    for (auto [i, found] = std::tuple{0u, false}; i < CI->arg_size(); ++i)
-#else
-    for (auto [i, found] = std::tuple{0u, false}; i < CI->getNumArgOperands();
-         ++i)
-#endif
-    {
-      Value *arg = CI->getArgOperand(i);
-
-      if (auto MDName = getMetadataName(arg)) {
-        if (*MDName == "enzyme_width") {
-          if (found) {
-            EmitFailure("IllegalVectorWidth", CI->getDebugLoc(), CI,
-                        "vector width declared more than once",
-                        *CI->getArgOperand(i), " in", *CI);
-            return false;
-          }
-
-#if LLVM_VERSION_MAJOR >= 14
-          if (i + 1 >= CI->arg_size())
-#else
-          if (i + 1 >= CI->getNumArgOperands())
-#endif
-          {
-            EmitFailure("MissingVectorWidth", CI->getDebugLoc(), CI,
-                        "constant integer followong enzyme_width is missing",
-                        *CI->getArgOperand(i), " in", *CI);
-            return false;
-          }
-
-          Value *width_arg = CI->getArgOperand(i + 1);
-          if (auto cint = dyn_cast<ConstantInt>(width_arg)) {
-            width = cint->getZExtValue();
-            found = true;
-          } else {
-            EmitFailure("IllegalVectorWidth", CI->getDebugLoc(), CI,
-                        "enzyme_width must be a constant integer",
-                        *CI->getArgOperand(i), " in", *CI);
-            return false;
-          }
-
-          if (!found) {
-            EmitFailure("IllegalVectorWidth", CI->getDebugLoc(), CI,
-                        "illegal enzyme vector argument width ",
-                        *CI->getArgOperand(i), " in", *CI);
-            return false;
-          }
-        }
-      }
+    // find and handle enzyme_width
+    auto parsedWidth = parseWidthParameter(CI);
+    if (parsedWidth.hasValue()) {
+      width = parsedWidth.getValue();
+    } else {
+      return false;
     }
 
     assert(F);
@@ -589,8 +533,6 @@ public:
     auto newFunc = Logic.CreateBatch(F, width);
 
     // TODO: handle scalar args
-
-    IRBuilder<> Builder2(CI);
 
     SmallVector<Value *, 0> wrapped_args;
     // wrap args
