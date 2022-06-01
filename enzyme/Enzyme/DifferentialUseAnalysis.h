@@ -269,7 +269,8 @@ static inline bool is_value_needed_in_reverse(
     // If inst is a constant value, the primal may be used in its place and
     // thus required.
     if (VT == ValueType::Shadow ||
-        gutils->isConstantValue(const_cast<Value *>(inst))) {
+        (gutils->isConstantValue(const_cast<Value *>(inst)) &&
+         !TR.query(const_cast<Value *>(inst))[{-1}].isFloat())) {
       if (!user)
         return seen[idx] = true;
 
