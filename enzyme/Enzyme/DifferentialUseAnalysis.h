@@ -264,8 +264,11 @@ static inline bool is_value_needed_in_reverse(
     const Instruction *user = dyn_cast<Instruction>(use);
 
     // A shadow value is only needed in reverse if it or one of its descendants
-    // is used in an active instruction
-    if (VT == ValueType::Shadow) {
+    // is used in an active instruction.
+    // If inst is a constant value, the primal may be used in its place and
+    // thus required.
+    if (VT == ValueType::Shadow ||
+        gutils->isConstantValue(const_cast<Value *>(inst))) {
       if (!user)
         return seen[idx] = true;
 
