@@ -77,7 +77,9 @@ public:
       for (int j = 0; j < inst.getNumOperands(); ++j) {
         Value *op = inst.getOperand(j);
         Value *new_op;
-        if (vectorizedValues.count(op) != 0) {
+        if (isa<Constant>(op)) {
+          new_op = op;
+        } else if (vectorizedValues.count(op) != 0) {
           new_op = vectorizedValues[op][i];
         } else {
           new_op = originalToNewFn[op];
@@ -95,6 +97,13 @@ public:
   }
 
   void visitBranchInst(llvm::BranchInst &branch) {
+    if (branch.isConditional() && toVectorize.contains(branch.getCondition())) {
+      EmitFailure("BranchConditionCannotBeVectorized", branch.getDebugLoc(),
+                  &branch, "branch conditions have to be scalar values",
+                  branch);
+      llvm_unreachable("vectorized control flow is not allowed");
+    }
+
     auto found = originalToNewFn.find(branch.getParent());
     BasicBlock *nBB = dyn_cast<BasicBlock>(&*found->second);
     IRBuilder<> Builder2 = IRBuilder<>(nBB);
