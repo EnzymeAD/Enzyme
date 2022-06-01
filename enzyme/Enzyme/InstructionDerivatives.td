@@ -65,7 +65,7 @@ def : CallPattern<(Op $y, $x),
                   ["atan2"],
                   [
                   (FDiv (FMul (DiffeRet<"">), $x), (FAdd (FMul $x, $x), (FMul $y, $y))),
-                  (FNeg (FDiv (FMul (DiffeRet<"">), $y), (FAdd (FMul $x, $x), (FMul $y, $y)))),
+                  (FNeg (FDiv (FMul (DiffeRet<"">), $y), (FAdd (FMul $x, $x), (FMul $y, $y))))
                   ]
                   >;
 def : CallPattern<(Op $x),
