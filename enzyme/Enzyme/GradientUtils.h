@@ -529,9 +529,19 @@ public:
     return cast_or_null<BasicBlock>(isOriginal((const Value *)newinst));
   }
 
+  struct LoadLikeCall {
+    CallInst *loadCall;
+    Value *operand;
+    LoadLikeCall() = default;
+    LoadLikeCall(CallInst *a, Value *b) : loadCall(a), operand(b) {}
+  };
+
   struct Rematerializer {
     // Loads which may need to be rematerialized.
-    SmallPtrSet<LoadInst *, 1> loads;
+    SmallVector<LoadInst *, 1> loads;
+
+    // Loads-like calls which need the memory initialized for the reverse.
+    SmallVector<LoadLikeCall, 1> loadLikeCalls;
 
     // Operations which must be rerun to rematerialize
     // the value.
@@ -544,10 +554,12 @@ public:
     Loop *LI;
 
     Rematerializer() : loads(), stores(), frees(), LI(nullptr) {}
-    Rematerializer(const SmallPtrSetImpl<LoadInst *> &loads,
+    Rematerializer(const SmallVectorImpl<LoadInst *> &loads,
+                   const SmallVectorImpl<LoadLikeCall> &loadLikeCalls,
                    const SmallPtrSetImpl<Instruction *> &stores,
                    const SmallPtrSetImpl<Instruction *> &frees, Loop *LI)
         : loads(loads.begin(), loads.end()),
+          loadLikeCalls(loadLikeCalls.begin(), loadLikeCalls.end()),
           stores(stores.begin(), stores.end()),
           frees(frees.begin(), frees.end()), LI(LI) {}
   };
@@ -583,10 +595,11 @@ public:
   // (for use) as a structure which carries data.
   ValueMap<Value *, ShadowRematerializer> backwardsOnlyShadows;
 
-  void computeForwardingProperties(Instruction *V, TypeResults &TR) {
+  void computeForwardingProperties(Instruction *V) {
     if (!EnzymeRematerialize)
       return;
-    SmallPtrSet<LoadInst *, 1> loads;
+    SmallVector<LoadInst *, 1> loads;
+    SmallVector<LoadLikeCall, 1> loadLikeCalls;
     SmallPtrSet<Instruction *, 1> stores;
     SmallPtrSet<Instruction *, 1> frees;
     SmallPtrSet<IntrinsicInst *, 1> LifetimeStarts;
@@ -638,7 +651,7 @@ public:
             shadowpromotable = false;
           }
         }
-        loads.insert(load);
+        loads.push_back(load);
       } else if (auto store = dyn_cast<StoreInst>(cur)) {
         // TODO only add store to shadow iff non float type
         if (store->getValueOperand() == prev) {
@@ -710,12 +723,8 @@ public:
           continue;
         }
 
-        promotable = false;
-
-        EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
-                    cur->getParent(), " Could not promote allocation ", *V,
-                    " due to unknown call ", *cur);
         size_t idx = 0;
+        bool seenLoadLikeCall = false;
 #if LLVM_VERSION_MAJOR >= 14
         for (auto &arg : CI->args())
 #else
@@ -735,18 +744,63 @@ public:
 #if LLVM_VERSION_MAJOR >= 8
           if (CI->doesNotCapture(idx))
 #else
-          if (CI->dataOperandHasImpliedAttr(idx, Attribute::NoCapture) ||
+          if (CI->dataOperandHasImpliedAttr(idx + 1, Attribute::NoCapture) ||
               (F && F->hasParamAttribute(idx, Attribute::NoCapture)))
 #endif
           {
+#if LLVM_VERSION_MAJOR >= 8
+            if (CI->onlyReadsMemory(idx))
+#else
+            if (CI->dataOperandHasImpliedAttr(idx + 1, Attribute::ReadOnly) ||
+                CI->dataOperandHasImpliedAttr(idx + 1, Attribute::ReadNone) ||
+                (F && (F->hasParamAttribute(idx, Attribute::ReadOnly) ||
+                       F->hasParamAttribute(idx, Attribute::ReadNone))))
+#endif
+            {
+              // if only reading memory, ok to duplicate in forward /
+              // reverse if it is a stack or GC allocation.
+              // Said memory will still be primal initialized.
+              StringRef funcName = "";
+              if (auto CI = dyn_cast<CallInst>(V))
+                if (Function *originCall = getFunctionFromCall(CI))
+                  funcName = originCall->getName();
+              if (isa<AllocaInst>(V) || hasMetadata(V, "enzyme_fromstack") ||
+                  funcName == "jl_alloc_array_1d" ||
+                  funcName == "jl_alloc_array_2d" ||
+                  funcName == "jl_alloc_array_3d" ||
+                  funcName == "jl_array_copy" ||
+                  funcName == "ijl_alloc_array_1d" ||
+                  funcName == "ijl_alloc_array_2d" ||
+                  funcName == "ijl_alloc_array_3d" ||
+                  funcName == "ijl_array_copy" ||
+                  funcName == "julia.gc_alloc_obj") {
+                if (!seenLoadLikeCall) {
+                  loadLikeCalls.push_back(LoadLikeCall(CI, prev));
+                  seenLoadLikeCall = true;
+                }
+              } else {
+                promotable = false;
+                EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
+                            cur->getParent(), " Could not promote allocation ",
+                            *V, " due to unknown non-local call ", *cur);
+              }
+            } else {
+              promotable = false;
+              EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
+                          cur->getParent(), " Could not promote allocation ",
+                          *V, " due to unknown writing call ", *cur);
+            }
+
             if (TT.isFloat()) {
               // all floats ok
             }
 #if LLVM_VERSION_MAJOR >= 8
             else if (CI->onlyReadsMemory(idx))
 #else
-            else if (CI->dataOperandHasImpliedAttr(idx, Attribute::ReadOnly) ||
-                     CI->dataOperandHasImpliedAttr(idx, Attribute::ReadNone) ||
+            else if (CI->dataOperandHasImpliedAttr(idx + 1,
+                                                   Attribute::ReadOnly) ||
+                     CI->dataOperandHasImpliedAttr(idx + 1,
+                                                   Attribute::ReadNone) ||
                      (F && (F->hasParamAttribute(idx, Attribute::ReadOnly) ||
                             F->hasParamAttribute(idx, Attribute::ReadNone))))
 #endif
@@ -775,9 +829,12 @@ public:
             } else {
               shadowpromotable = false;
             }
-            break;
           } else {
             shadowpromotable = false;
+            promotable = false;
+            EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
+                        cur->getParent(), " Could not promote allocation ", *V,
+                        " due to unknown capturing call ", *cur);
           }
           idx++;
         }
@@ -832,20 +889,36 @@ public:
       }
       rematerializable.insert(LI);
     }
+    for (auto LI : loadLikeCalls) {
+      // Is there a store which could occur after the load.
+      // In other words
+      SmallVector<Instruction *, 2> results;
+      mayExecuteAfter(results, LI.loadCall, stores, outer);
+      for (auto res : results) {
+        if (overwritesToMemoryReadBy(OrigAA, SE, OrigLI, OrigDT, LI.loadCall,
+                                     res, outer)) {
+          EmitWarning("NotPromotable", LI.loadCall->getDebugLoc(), oldFunc,
+                      LI.loadCall->getParent(),
+                      " Could not promote allocation ", *V,
+                      " due to load-like call ", *LI.loadCall,
+                      " which does not postdominates store ", *res);
+          return;
+        }
+      }
+    }
     rematerializableAllocations[V] =
-        Rematerializer(loads, stores, frees, outer);
+        Rematerializer(loads, loadLikeCalls, stores, frees, outer);
   }
 
   void computeGuaranteedFrees(
-      const llvm::SmallPtrSetImpl<BasicBlock *> &oldUnreachable,
-      TypeResults &TR) {
+      const llvm::SmallPtrSetImpl<BasicBlock *> &oldUnreachable) {
     SmallPtrSet<CallInst *, 2> allocsToPromote;
     for (auto &BB : *oldFunc) {
       if (oldUnreachable.count(&BB))
         continue;
       for (auto &I : BB) {
         if (auto AI = dyn_cast<AllocaInst>(&I))
-          computeForwardingProperties(AI, TR);
+          computeForwardingProperties(AI);
 
         auto CI = dyn_cast<CallInst>(&I);
         if (!CI)
@@ -904,7 +977,7 @@ public:
       // the derivative of store needs to redo the store,
       // isValueNeededInReverse needs to know to preserve the
       // store operands in this case, etc
-      computeForwardingProperties(V, TR);
+      computeForwardingProperties(V);
     }
   }
 
@@ -1087,6 +1160,7 @@ public:
 public:
   AAResults &OrigAA;
   TypeAnalysis &TA;
+  TypeResults TR;
   bool omp;
 
 private:
@@ -1097,7 +1171,7 @@ public:
 
 public:
   GradientUtils(EnzymeLogic &Logic, Function *newFunc_, Function *oldFunc_,
-                TargetLibraryInfo &TLI_, TypeAnalysis &TA_,
+                TargetLibraryInfo &TLI_, TypeAnalysis &TA_, TypeResults TR_,
                 ValueToValueMapTy &invertedPointers_,
                 const SmallPtrSetImpl<Value *> &constantvalues_,
                 const SmallPtrSetImpl<Value *> &activevals_,
@@ -1117,8 +1191,8 @@ public:
                                  notForAnalysis, TLI_, constantvalues_,
                                  activevals_, ReturnActivity)),
         tid(nullptr), numThreads(nullptr),
-        OrigAA(Logic.PPC.getAAResultsFromFunction(oldFunc_)), TA(TA_), omp(omp),
-        width(width) {
+        OrigAA(Logic.PPC.getAAResultsFromFunction(oldFunc_)), TA(TA_), TR(TR_),
+        omp(omp), width(width) {
     if (oldFunc_->getSubprogram()) {
       assert(originalToNewFn_.hasMD());
     }
@@ -1181,7 +1255,8 @@ public:
 public:
   static GradientUtils *
   CreateFromClone(EnzymeLogic &Logic, unsigned width, Function *todiff,
-                  TargetLibraryInfo &TLI, TypeAnalysis &TA, DIFFE_TYPE retType,
+                  TargetLibraryInfo &TLI, TypeAnalysis &TA,
+                  FnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
                   const std::vector<DIFFE_TYPE> &constant_args, bool returnUsed,
                   bool shadowReturnUsed,
                   std::map<AugmentedStruct, int> &returnMapping, bool omp);
@@ -1271,8 +1346,7 @@ public:
   void forceContexts();
 
   void
-  computeMinCache(TypeResults &TR,
-                  const SmallPtrSetImpl<BasicBlock *> &guaranteedUnreachable);
+  computeMinCache(const SmallPtrSetImpl<BasicBlock *> &guaranteedUnreachable);
 
   bool isOriginalBlock(const BasicBlock &BB) const {
     for (auto A : originalBlocks) {
@@ -1329,9 +1403,7 @@ public:
     }
   }
 
-  TypeResults *my_TR;
-  void forceActiveDetection(TypeResults &TR) {
-    my_TR = &TR;
+  void forceActiveDetection() {
     for (auto &Arg : oldFunc->args()) {
       ATA->isConstantValue(TR, &Arg);
     }
@@ -1351,12 +1423,12 @@ public:
   bool isConstantValue(Value *val) const {
     if (auto inst = dyn_cast<Instruction>(val)) {
       assert(inst->getParent()->getParent() == oldFunc);
-      return ATA->isConstantValue(*my_TR, val);
+      return ATA->isConstantValue(TR, val);
     }
 
     if (auto arg = dyn_cast<Argument>(val)) {
       assert(arg->getParent() == oldFunc);
-      return ATA->isConstantValue(*my_TR, val);
+      return ATA->isConstantValue(TR, val);
     }
 
     //! Functions must be false so we can replace function with augmentation,
@@ -1364,7 +1436,7 @@ public:
     if (isa<Function>(val) || isa<InlineAsm>(val) || isa<Constant>(val) ||
         isa<UndefValue>(val) || isa<MetadataAsValue>(val)) {
       // llvm::errs() << "calling icv on: " << *val << "\n";
-      return ATA->isConstantValue(*my_TR, val);
+      return ATA->isConstantValue(TR, val);
     }
 
     if (auto gv = dyn_cast<GlobalVariable>(val)) {
@@ -1398,7 +1470,7 @@ public:
 
   bool isConstantInstruction(const Instruction *inst) const {
     assert(inst->getParent()->getParent() == oldFunc);
-    return ATA->isConstantInstruction(*my_TR, const_cast<Instruction *>(inst));
+    return ATA->isConstantInstruction(TR, const_cast<Instruction *>(inst));
   }
 
   bool getContext(llvm::BasicBlock *BB, LoopContext &lc) {
@@ -1407,7 +1479,6 @@ public:
   }
 
   void forceAugmentedReturns(
-      TypeResults &TR,
       const SmallPtrSetImpl<BasicBlock *> &guaranteedUnreachable) {
     assert(TR.getFunction() == oldFunc);
 
@@ -1837,13 +1908,13 @@ public:
 
 class DiffeGradientUtils : public GradientUtils {
   DiffeGradientUtils(EnzymeLogic &Logic, Function *newFunc_, Function *oldFunc_,
-                     TargetLibraryInfo &TLI, TypeAnalysis &TA,
+                     TargetLibraryInfo &TLI, TypeAnalysis &TA, TypeResults TR,
                      ValueToValueMapTy &invertedPointers_,
                      const SmallPtrSetImpl<Value *> &constantvalues_,
                      const SmallPtrSetImpl<Value *> &returnvals_,
                      DIFFE_TYPE ActiveReturn, ValueToValueMapTy &origToNew_,
                      DerivativeMode mode, unsigned width, bool omp)
-      : GradientUtils(Logic, newFunc_, oldFunc_, TLI, TA, invertedPointers_,
+      : GradientUtils(Logic, newFunc_, oldFunc_, TLI, TA, TR, invertedPointers_,
                       constantvalues_, returnvals_, ActiveReturn, origToNew_,
                       mode, width, omp) {
     assert(reverseBlocks.size() == 0);
@@ -1869,7 +1940,8 @@ public:
   static DiffeGradientUtils *
   CreateFromClone(EnzymeLogic &Logic, DerivativeMode mode, unsigned width,
                   Function *todiff, TargetLibraryInfo &TLI, TypeAnalysis &TA,
-                  DIFFE_TYPE retType, bool diffeReturnArg,
+                  FnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
+                  bool diffeReturnArg,
                   const std::vector<DIFFE_TYPE> &constant_args,
                   ReturnType returnValue, Type *additionalArg, bool omp);
 
