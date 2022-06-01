@@ -92,6 +92,7 @@ static inline bool is_use_directly_needed_in_reverse(
     }
     if (MTI->getArgOperand(2) != val)
       return false;
+    return !gutils->isConstantInstruction(MTI);
   }
 
   // Preserve the length of memsets of backward creation shadows
@@ -289,25 +290,25 @@ static inline bool is_value_needed_in_reverse(
               break;
             }
           if (!rematerialized)
-            continue;
+            goto endShadow;
         }
 
         if (!gutils->isConstantValue(
                 const_cast<Value *>(SI->getPointerOperand())))
           return seen[idx] = true;
         else
-          continue;
+          goto endShadow;
       }
 
       if (auto MTI = dyn_cast<MemTransferInst>(user)) {
         if (MTI->getArgOperand(0) != inst && MTI->getArgOperand(1) != inst)
-          continue;
+          goto endShadow;
 
         if (!gutils->isConstantValue(
                 const_cast<Value *>(MTI->getArgOperand(0))))
           return seen[idx] = true;
         else
-          continue;
+          goto endShadow;
       }
 
       if (auto CI = dyn_cast<CallInst>(user)) {
@@ -330,7 +331,7 @@ static inline bool is_value_needed_in_reverse(
           // Only need shadow request for reverse
           if (funcName == "MPI_Irecv" || funcName == "PMPI_Irecv") {
             if (gutils->isConstantInstruction(const_cast<Instruction *>(user)))
-              continue;
+              goto endShadow;
             // Need shadow request
             if (inst == CI->getArgOperand(6))
               return seen[idx] = true;
@@ -338,42 +339,42 @@ static inline bool is_value_needed_in_reverse(
             if (mode != DerivativeMode::ReverseModeGradient)
               if (inst == CI->getArgOperand(0))
                 return seen[idx] = true;
-            continue;
+            goto endShadow;
           }
           if (funcName == "MPI_Isend" || funcName == "PMPI_Isend") {
             if (gutils->isConstantInstruction(const_cast<Instruction *>(user)))
-              continue;
+              goto endShadow;
             // Need shadow request
             if (inst == CI->getArgOperand(6))
               return seen[idx] = true;
             // Need shadow buffer in reverse pass or forward mode
             if (inst == CI->getArgOperand(0))
               return seen[idx] = true;
-            continue;
+            goto endShadow;
           }
 
           // Don't need shadow of anything (all via cache for reverse),
           // but need shadow of request for primal.
           if (funcName == "MPI_Wait" || funcName == "PMPI_Wait") {
             if (gutils->isConstantInstruction(const_cast<Instruction *>(user)))
-              continue;
+              goto endShadow;
             // Need shadow request in forward pass only
             if (mode != DerivativeMode::ReverseModeGradient)
               if (inst == CI->getArgOperand(0))
                 return seen[idx] = true;
-            continue;
+            goto endShadow;
           }
 
           // Don't need shadow of anything (all via cache for reverse),
           // but need shadow of request for primal.
           if (funcName == "MPI_Waitall" || funcName == "PMPI_Waitall") {
             if (gutils->isConstantInstruction(const_cast<Instruction *>(user)))
-              continue;
+              goto endShadow;
             // Need shadow request in forward pass
             if (mode != DerivativeMode::ReverseModeGradient)
               if (inst == CI->getArgOperand(1))
                 return seen[idx] = true;
-            continue;
+            goto endShadow;
           }
 
           // Use in a write barrier requires the shadow in the forward, even
@@ -401,7 +402,7 @@ static inline bool is_value_needed_in_reverse(
             gutils->ATA->ActiveReturns == DIFFE_TYPE::DUP_NONEED)
           return seen[idx] = true;
         else
-          continue;
+          goto endShadow;
       }
 
       // Assume active instructions require the operand.
@@ -414,18 +415,20 @@ static inline bool is_value_needed_in_reverse(
       // in the forward pass, for example double* x = load double** y
       // is a constant instruction, but needed in the forward
       if (user->getType()->isVoidTy())
-        continue;
+        goto endShadow;
 
       if (!TR.query(const_cast<Instruction *>(user))
                .Inner0()
                .isPossiblePointer())
-        continue;
+        goto endShadow;
 
       if (!OneLevel && is_value_needed_in_reverse<ValueType::Shadow>(
                            gutils, user, mode, seen, oldUnreachable)) {
         return seen[idx] = true;
       }
-      continue;
+    endShadow:
+      if (VT != ValueType::Primal)
+        continue;
     }
 
     assert(VT == ValueType::Primal);
