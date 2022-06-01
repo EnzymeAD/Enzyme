@@ -423,7 +423,8 @@ public:
 
   std::map<ForwardCacheKey, llvm::Function *> ForwardCachedFunctions;
 
-  using BatchCacheKey = std::tuple<llvm::Function *, unsigned>;
+  using BatchCacheKey =
+      std::tuple<llvm::Function *, unsigned, std::vector<BATCH_TYPE>>;
   std::map<BatchCacheKey, llvm::Function *> BatchCachedFunctions;
 
   /// Create the derivative function itself.
@@ -453,7 +454,8 @@ public:
                     const std::map<llvm::Argument *, bool> _uncacheable_args,
                     const AugmentedReturn *augmented, bool omp = false);
 
-  llvm::Function *CreateBatch(llvm::Function *tobatch, unsigned width);
+  llvm::Function *CreateBatch(llvm::Function *tobatch, unsigned width,
+                              llvm::ArrayRef<BATCH_TYPE> arg_types);
 
   void clear();
 };

@@ -510,8 +510,11 @@ public:
 
   bool HandleBatch(CallInst *CI) {
     unsigned width = 1;
-    SmallVector<Value *, 2> args;
-    IRBuilder<> Builder2(CI);
+    unsigned truei = 0;
+    std::map<unsigned, Value *> batchOffset;
+    SmallVector<Value *, 0> args;
+    SmallVector<BATCH_TYPE, 0> arg_types;
+    IRBuilder<> Builder(CI);
     Function *F;
     auto parsedFunction = parseFunctionParameter(CI);
     if (parsedFunction.hasValue()) {
@@ -519,6 +522,9 @@ public:
     } else {
       return false;
     }
+
+    assert(F);
+    FunctionType *FT = F->getFunctionType();
 
     // find and handle enzyme_width
     auto parsedWidth = parseWidthParameter(CI);
@@ -528,18 +534,144 @@ public:
       return false;
     }
 
-    assert(F);
+    // TODO: handle sret
+    bool sret = false;
 
-    auto newFunc = Logic.CreateBatch(F, width);
+#if LLVM_VERSION_MAJOR >= 14
+    for (unsigned i = 1 + sret; i < CI->arg_size(); ++i)
+#else
+    for (unsigned i = 1 + sret; i < CI->getNumArgOperands(); ++i)
+#endif
+    {
+      Value *res = CI->getArgOperand(i);
 
-    // TODO: handle scalar args
+      if (truei >= FT->getNumParams()) {
+        EmitFailure("TooManyArgs", CI->getDebugLoc(), CI,
+                    "Had too many arguments to __enzyme_autodiff", *CI,
+                    " - extra arg - ", *res);
+        return false;
+      }
+      assert(truei < FT->getNumParams());
+      auto PTy = FT->getParamType(truei);
 
-    SmallVector<Value *, 0> wrapped_args;
-    // wrap args
+      BATCH_TYPE ty = BATCH_TYPE::SCALAR;
+      Optional<StringRef> metaString = getMetadataName(res);
 
-    Builder2.CreateCall(newFunc->getFunctionType(), newFunc, args);
+      // handle metadata
+      if (metaString && metaString.getValue().startswith("enzyme_")) {
+        if (*metaString == "enzyme_scalar") {
+          ty = BATCH_TYPE::SCALAR;
+        } else if (*metaString == "enzyme_vector") {
+          ty = BATCH_TYPE::VECTOR;
+        } else if (*metaString == "enzyme_buffer") {
+          ty = BATCH_TYPE::VECTOR;
+          ++i;
+          Value *offset_arg = CI->getArgOperand(i);
+          if (offset_arg->getType()->isIntegerTy()) {
+            batchOffset[i + 1] = offset_arg;
+          } else {
+            EmitFailure("IllegalVectorOffset", CI->getDebugLoc(), CI,
+                        "enzyme_batch must be followd by an integer "
+                        "offset.",
+                        *CI->getArgOperand(i), " in", *CI);
+            return false;
+          }
+          continue;
+        } else if (*metaString == "enzyme_width") {
+          ++i;
+          continue;
+        } else {
+          EmitFailure("IllegalDiffeType", CI->getDebugLoc(), CI,
+                      "illegal enzyme metadata classification ", *CI,
+                      *metaString);
+          return false;
+        }
+        ++i;
+        res = CI->getArgOperand(i);
+      }
+
+      arg_types.push_back(ty);
+
+      // wrap vector
+      if (ty == BATCH_TYPE::VECTOR) {
+        Value *res = nullptr;
+        bool batch = batchOffset.count(i - 1) != 0;
+
+        for (unsigned v = 0; v < width; ++v) {
+#if LLVM_VERSION_MAJOR >= 14
+          if (i >= CI->arg_size())
+#else
+          if (i >= CI->getNumArgOperands())
+#endif
+          {
+            EmitFailure("MissingArgShadow", CI->getDebugLoc(), CI,
+                        "__enzyme_autodiff missing argument shadow at index ",
+                        i, ", need shadow of type ", *PTy,
+                        " to shadow primal argument ", *args.back(),
+                        " at call ", *CI);
+            return false;
+          }
+
+          // vectorize pointer
+          Value *element = CI->getArgOperand(i);
+          if (batch) {
+            if (auto elementPtrTy = dyn_cast<PointerType>(element->getType())) {
+              element = Builder.CreateBitCast(
+                  element, PointerType::get(Type::getInt8Ty(CI->getContext()),
+                                            elementPtrTy->getAddressSpace()));
+#if LLVM_VERSION_MAJOR >= 7
+              element = Builder.CreateGEP(
+                  Type::getInt8Ty(CI->getContext()), element,
+                  Builder.CreateMul(
+                      batchOffset[i - 1],
+                      ConstantInt::get(batchOffset[i - 1]->getType(), v)));
+#else
+              element = Builder.CreateGEP(
+                  element,
+                  Builder.CreateMul(
+                      batchOffset[i - 1],
+                      ConstantInt::get(batchOffset[i - 1]->getType(), v)));
+#endif
+              element = Builder.CreateBitCast(element, elementPtrTy);
+            } else {
+              return false;
+            }
+          }
+
+          if (width > 1) {
+            res =
+                res ? Builder.CreateInsertValue(res, element, {v})
+                    : Builder.CreateInsertValue(UndefValue::get(ArrayType::get(
+                                                    element->getType(), width)),
+                                                element, {v});
+
+            if (v < width - 1 && !batch) {
+              ++i;
+            }
+
+          } else {
+            res = element;
+          }
+        }
+
+        args.push_back(res);
+
+      } else if (ty == BATCH_TYPE::SCALAR) {
+        args.push_back(res);
+      }
+
+      truei++;
+    }
+
+    auto newFunc = Logic.CreateBatch(F, width, arg_types);
+
+    Builder.CreateCall(newFunc->getFunctionType(), newFunc, args);
 
     // unwrap args
+
+    // call batch function
+
+    return true;
   }
 
   /// Return whether successful

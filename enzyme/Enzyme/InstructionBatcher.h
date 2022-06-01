@@ -49,38 +49,48 @@ public:
   InstructionBatcher(
       Function *oldFunc, Function *newFunc, unsigned width,
       ValueMap<const Value *, std::vector<Value *>> &vectorizedValues,
-      ValueToValueMapTy &originalToNewFn, EnzymeLogic &Logic)
+      ValueToValueMapTy &originalToNewFn, SmallPtrSetImpl<Value *> &toVectorize,
+      EnzymeLogic &Logic)
       : vectorizedValues(vectorizedValues), originalToNewFn(originalToNewFn),
-        newFunc(newFunc), oldFunc(oldFunc), width(width), Logic(Logic) {}
+        toVectorize(toVectorize), width(width), Logic(Logic) {}
 
 private:
   ValueMap<const Value *, std::vector<Value *>> &vectorizedValues;
   ValueToValueMapTy &originalToNewFn;
-  Function *newFunc;
-  Function *oldFunc;
+  SmallPtrSetImpl<Value *> &toVectorize;
   unsigned width;
   EnzymeLogic &Logic;
 
 public:
   void visitInstruction(llvm::Instruction &inst) {
     auto found = originalToNewFn.find(inst.getParent());
+    assert(found != originalToNewFn.end());
     BasicBlock *nBB = dyn_cast<BasicBlock>(&*found->second);
     IRBuilder<> Builder2 = IRBuilder<>(nBB);
+    unsigned actualWidth = toVectorize.contains(&inst) ? width : 1;
 
-    for (int i = 0; i < width; ++i) {
+    for (int i = 0; i < actualWidth; ++i) {
       ValueToValueMapTy vmap;
       Instruction *new_inst = inst.clone();
       vmap[&inst] = new_inst;
 
       for (int j = 0; j < inst.getNumOperands(); ++j) {
         Value *op = inst.getOperand(j);
-        Value *new_op = vectorizedValues[op][i];
+        Value *new_op;
+        if (vectorizedValues.count(op) != 0) {
+          new_op = vectorizedValues[op][i];
+        } else {
+          new_op = originalToNewFn[op];
+        }
         vmap[op] = new_op;
       }
 
       Builder2.Insert(new_inst);
       RemapInstruction(new_inst, vmap);
-      vectorizedValues[&inst].push_back(new_inst);
+      if (actualWidth > 1)
+        vectorizedValues[&inst].push_back(new_inst);
+      if (actualWidth == 1)
+        originalToNewFn[&inst] = new_inst;
     }
   }
 
@@ -107,13 +117,17 @@ public:
     auto found = originalToNewFn.find(ret.getParent());
     BasicBlock *nBB = dyn_cast<BasicBlock>(&*found->second);
     IRBuilder<> Builder2 = IRBuilder<>(nBB);
-
     SmallVector<Value *, 0> rets;
 
     for (int j = 0; j < ret.getNumOperands(); ++j) {
+      Value *op = ret.getOperand(j);
       for (int i = 0; i < width; ++i) {
-        Value *op = ret.getOperand(j);
-        Value *new_op = vectorizedValues[op][i];
+        Value *new_op;
+        if (vectorizedValues.count(op) != 0) {
+          new_op = vectorizedValues[op][i];
+        } else {
+          new_op = originalToNewFn[op];
+        }
         rets.push_back(new_op);
       }
     }
@@ -140,8 +154,10 @@ public:
       args.push_back(agg);
     }
 
+    // TODO: determine arg_types
+
     Function *orig_func = call.getCalledFunction();
-    Function *new_func = Logic.CreateBatch(orig_func, width);
+    Function *new_func = Logic.CreateBatch(orig_func, width, {});
     CallInst *new_call =
         Builder2.CreateCall(new_func->getFunctionType(), new_func, args);
 

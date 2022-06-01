@@ -4265,30 +4265,34 @@ Function *EnzymeLogic::CreateForwardDiff(
   return nf;
 }
 
-llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width) {
+llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
+                                         ArrayRef<BATCH_TYPE> arg_types) {
 
-  BatchCacheKey tup = std::make_tuple(tobatch, width);
+  BatchCacheKey tup = std::make_tuple(tobatch, width, arg_types);
   if (BatchCachedFunctions.find(tup) != BatchCachedFunctions.end()) {
     return BatchCachedFunctions.find(tup)->second;
   }
-
-  ValueMap<const Value *, std::vector<Value *>> vectorizedValues;
-  ValueToValueMapTy originalToNewFn;
 
   FunctionType *orig_FTy = tobatch->getFunctionType();
   SmallVector<Type *, 0> params;
 
   for (int i = 0; i < orig_FTy->getNumParams(); ++i) {
-    for (int j = 0; j < width; ++j)
-      params.push_back(orig_FTy);
+    if (arg_types[i] == BATCH_TYPE::VECTOR) {
+      Type *ty = GradientUtils::getShadowType(orig_FTy->getParamType(i), width);
+      params.push_back(ty);
+    } else {
+      params.push_back(orig_FTy->getParamType(i));
+    }
   }
 
-  Type *NewTy = GradientUtils::getShadowType(tobatch->getType(), width);
+  Type *NewTy = GradientUtils::getShadowType(tobatch->getReturnType(), width);
 
   FunctionType *FTy = FunctionType::get(NewTy, params, tobatch->isVarArg());
   Function *NewF =
       Function::Create(FTy, tobatch->getLinkage(),
                        "batch_" + tobatch->getName(), tobatch->getParent());
+
+  ValueToValueMapTy originalToNewFn;
 
   for (BasicBlock &BB : *tobatch) {
     BasicBlock *newBB =
@@ -4296,17 +4300,50 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width) {
     originalToNewFn[&BB] = newBB;
   }
 
-  for (int i = 0; i < FTy->getNumParams(); ++i) {
-    auto orig_arg = tobatch->getArg(i);
-    std::vector<Value *> args;
-    for (int j = 0; j < width; ++j) {
-      args.push_back(NewF->getArg(i + j));
+  SmallPtrSet<Value *, 4> toVectorize;
+
+  for (int i = 0; i < tobatch->getFunctionType()->getNumParams(); i++) {
+    if (arg_types[i] == BATCH_TYPE::VECTOR) {
+      Argument *arg = tobatch->getArg(i);
+      toVectorize.insert(arg);
     }
-    vectorizedValues[orig_arg] = args;
   }
 
-  InstructionBatcher *batcher = new InstructionBatcher(
-      tobatch, NewF, width, vectorizedValues, originalToNewFn, *this);
+  for (auto &bb : *tobatch) {
+    for (auto &inst : bb) {
+      for (int i = 0; i < inst.getNumOperands(); ++i) {
+        Value *op = inst.getOperand(i);
+        if (toVectorize.contains(op)) {
+          toVectorize.insert(&inst);
+          break;
+        }
+      }
+    }
+  }
+
+  // unwrap arguments
+  ValueMap<const Value *, std::vector<Value *>> vectorizedValues;
+
+  IRBuilder<> Builder2(&NewF->getEntryBlock());
+  for (int i = 0; i < FTy->getNumParams(); ++i) {
+    Argument *arg = NewF->getArg(i);
+    if (arg_types[i] == BATCH_TYPE::SCALAR) {
+      originalToNewFn[tobatch->getArg(i)] = arg;
+      continue;
+      ;
+    }
+
+    std::vector<Value *> args;
+    for (unsigned j = 0; j < width; ++j) {
+      Value *argVecElem = Builder2.CreateExtractValue(arg, {j});
+      args.push_back(argVecElem);
+    }
+    vectorizedValues[tobatch->getArg(i)] = args;
+  }
+
+  InstructionBatcher *batcher =
+      new InstructionBatcher(tobatch, NewF, width, vectorizedValues,
+                             originalToNewFn, toVectorize, *this);
 
   for (BasicBlock &BB : *tobatch) {
     for (Instruction &I : BB) {
