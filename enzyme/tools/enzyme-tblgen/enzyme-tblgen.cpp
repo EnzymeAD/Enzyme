@@ -67,7 +67,7 @@ void getFunction(raw_ostream &os, std::string callval, std::string FT,
          << " = gutils->oldFunc->getParent()->getOrInsertFunction(";
       os << Def->getValueInit("name")->getAsString();
       os << ", " << FT << ", called->getAttributes())\n";
-      os << "#if LLVM_VERSION_MAJOR >= 11\n";
+      os << "#if LLVM_VERSION_MAJOR >= 9\n";
       os << "  .getCallee()\n";
       os << "#endif\n";
       os << ";\n";
