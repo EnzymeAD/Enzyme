@@ -1255,8 +1255,7 @@ public:
   CreateFromClone(EnzymeLogic &Logic, unsigned width, Function *todiff,
                   TargetLibraryInfo &TLI, TypeAnalysis &TA,
                   FnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
-                  ArrayRef<DIFFE_TYPE> constant_args,
-                  bool returnUsed,
+                  ArrayRef<DIFFE_TYPE> constant_args, bool returnUsed,
                   bool shadowReturnUsed,
                   std::map<AugmentedStruct, int> &returnMapping, bool omp);
 

@@ -593,9 +593,8 @@ struct CacheAnalysis {
 void calculateUnusedValuesInFunction(
     Function &func, llvm::SmallPtrSetImpl<const Value *> &unnecessaryValues,
     llvm::SmallPtrSetImpl<const Instruction *> &unnecessaryInstructions,
-    bool returnValue, DerivativeMode mode,
-    GradientUtils *gutils, TargetLibraryInfo &TLI,
-    ArrayRef<DIFFE_TYPE> constant_args,
+    bool returnValue, DerivativeMode mode, GradientUtils *gutils,
+    TargetLibraryInfo &TLI, ArrayRef<DIFFE_TYPE> constant_args,
     const llvm::SmallPtrSetImpl<BasicBlock *> &oldUnreachable) {
   std::map<UsageKey, bool> CacheResults;
   for (auto pair : gutils->knownRecomputeHeuristic) {
@@ -2719,7 +2718,8 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
       llvm::errs() << *gutils->oldFunc->getParent() << "\n";
       llvm::errs() << *gutils->oldFunc << "\n";
       llvm::errs() << " for orig " << *orig << " saw "
-                   << gutils->TR.intType(size, orig, /*necessary*/ false).str() << " - "
+                   << gutils->TR.intType(size, orig, /*necessary*/ false).str()
+                   << " - "
                    << "\n";
       gutils->TR.intType(size, orig, /*necessary*/ true);
     }
