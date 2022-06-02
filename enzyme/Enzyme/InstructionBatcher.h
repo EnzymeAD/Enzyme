@@ -79,7 +79,7 @@ public:
         Value *new_op;
         if (isa<Constant>(op)) {
           new_op = op;
-        } else if (vectorizedValues.count(op) != 0) {
+        } else if (toVectorize.contains(op)) {
           new_op = vectorizedValues[op][i];
         } else {
           new_op = originalToNewFn[op];
@@ -132,7 +132,7 @@ public:
       Value *op = ret.getOperand(j);
       for (int i = 0; i < width; ++i) {
         Value *new_op;
-        if (vectorizedValues.count(op) != 0) {
+        if (toVectorize.contains(op)) {
           new_op = vectorizedValues[op][i];
         } else {
           new_op = originalToNewFn[op];
@@ -149,24 +149,58 @@ public:
     BasicBlock *nBB = dyn_cast<BasicBlock>(&*found->second);
     IRBuilder<> Builder2 = IRBuilder<>(nBB);
 
+    if (!toVectorize.contains(&call)) {
+      ValueToValueMapTy vmap;
+      Instruction *new_call = call.clone();
+      vmap[&call] = new_call;
+
+      for (int j = 0; j < call.getNumArgOperands(); ++j) {
+        Value *arg = call.getArgOperand(j);
+        Value *new_arg;
+        if (isa<Constant>(arg)) {
+          new_arg = arg;
+        } else {
+          new_arg = originalToNewFn[arg];
+        }
+        vmap[arg] = new_arg;
+      }
+
+      Builder2.Insert(new_call);
+      RemapInstruction(new_call, vmap);
+      originalToNewFn[&call] = new_call;
+      return;
+    }
+
     SmallVector<Value *, 0> args;
+    SmallVector<BATCH_TYPE> arg_types;
 
     for (int j = 0; j < call.getNumArgOperands(); ++j) {
       // make sure this does not include the called func!
       Value *op = call.getArgOperand(j);
-      Type *aggTy = ArrayType::get(
-          GradientUtils::getShadowType(op->getType(), width), width);
-      Value *agg = UndefValue::get(aggTy);
-      for (Value *new_op : vectorizedValues[op]) {
-        Builder2.CreateInsertValue(agg, new_op, {0});
+
+      if (toVectorize.contains(op)) {
+        Type *aggTy = GradientUtils::getShadowType(op->getType(), width);
+        Value *agg = UndefValue::get(aggTy);
+        for (unsigned i = 0; i < width; i++) {
+          Value *new_op = vectorizedValues[op][i];
+          Builder2.CreateInsertValue(agg, new_op, {i});
+        }
+        args.push_back(agg);
+        arg_types.push_back(BATCH_TYPE::VECTOR);
+      } else if (isa<Constant>(op)) {
+        args.push_back(op);
+        arg_types.push_back(BATCH_TYPE::SCALAR);
+      } else {
+        Value *arg = originalToNewFn[op];
+        args.push_back(arg);
+        arg_types.push_back(BATCH_TYPE::SCALAR);
       }
-      args.push_back(agg);
     }
 
     // TODO: determine arg_types
 
     Function *orig_func = call.getCalledFunction();
-    Function *new_func = Logic.CreateBatch(orig_func, width, {});
+    Function *new_func = Logic.CreateBatch(orig_func, width, arg_types);
     CallInst *new_call =
         Builder2.CreateCall(new_func->getFunctionType(), new_func, args);
 
