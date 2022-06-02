@@ -399,6 +399,38 @@ static Optional<StringRef> getMetadataName(llvm::Value *res) {
   }
 }
 
+static bool adaptReturnedVector(CallInst *CI, Value *diffret,
+                                IRBuilder<> &Builder, unsigned width) {
+  /// Actual return type (including struct return)
+  Type *returnType =
+      CI->hasStructRetAttr()
+          ? dyn_cast<PointerType>(CI->getArgOperand(0)->getType())
+                ->getPointerElementType()
+          : CI->getType();
+
+  if (StructType *sty = dyn_cast<StructType>(returnType)) {
+    Value *agg = ConstantAggregateZero::get(sty);
+
+    for (unsigned int i = 0; i < width; i++) {
+      Value *elem = Builder.CreateExtractValue(diffret, {i});
+#if LLVM_VERSION_MAJOR >= 11
+      if (auto vty = dyn_cast<FixedVectorType>(elem->getType())) {
+#else
+      if (auto vty = dyn_cast<VectorType>(elem->getType())) {
+#endif
+        for (unsigned j = 0; j < vty->getNumElements(); ++j) {
+          Value *vecelem = Builder.CreateExtractElement(elem, j);
+          agg = Builder.CreateInsertValue(agg, vecelem, {i * j});
+        }
+      } else {
+        agg = Builder.CreateInsertValue(agg, elem, {i});
+      }
+    }
+    diffret = agg;
+  }
+}
+} // namespace
+
 class Enzyme : public ModulePass {
 public:
   EnzymeLogic Logic;
@@ -547,7 +579,7 @@ public:
 
       if (truei >= FT->getNumParams()) {
         EmitFailure("TooManyArgs", CI->getDebugLoc(), CI,
-                    "Had too many arguments to __enzyme_autodiff", *CI,
+                    "Had too many arguments to __enzyme_batch", *CI,
                     " - extra arg - ", *res);
         return false;
       }
@@ -604,11 +636,9 @@ public:
           if (i >= CI->getNumArgOperands())
 #endif
           {
-            EmitFailure("MissingArgShadow", CI->getDebugLoc(), CI,
-                        "__enzyme_autodiff missing argument shadow at index ",
-                        i, ", need shadow of type ", *PTy,
-                        " to shadow primal argument ", *args.back(),
-                        " at call ", *CI);
+            EmitFailure("MissingVectorArg", CI->getDebugLoc(), CI,
+                        "__enzyme_batch missing vector argument at index ", i,
+                        ", need argument of type ", *PTy, " at call ", *CI);
             return false;
           }
 
@@ -1363,33 +1393,7 @@ public:
         (mode == DerivativeMode::ForwardMode ||
          mode == DerivativeMode::ForwardModeSplit)) {
 
-      /// Actual return type (including struct return)
-      Type *returnType =
-          CI->hasStructRetAttr()
-              ? dyn_cast<PointerType>(CI->getArgOperand(0)->getType())
-                    ->getPointerElementType()
-              : CI->getType();
-
-      if (StructType *sty = dyn_cast<StructType>(returnType)) {
-        Value *agg = ConstantAggregateZero::get(sty);
-
-        for (unsigned int i = 0; i < width; i++) {
-          Value *elem = Builder.CreateExtractValue(diffret, {i});
-#if LLVM_VERSION_MAJOR >= 11
-          if (auto vty = dyn_cast<FixedVectorType>(elem->getType())) {
-#else
-          if (auto vty = dyn_cast<VectorType>(elem->getType())) {
-#endif
-            for (unsigned j = 0; j < vty->getNumElements(); ++j) {
-              Value *vecelem = Builder.CreateExtractElement(elem, j);
-              agg = Builder.CreateInsertValue(agg, vecelem, {i * j});
-            }
-          } else {
-            agg = Builder.CreateInsertValue(agg, elem, {i});
-          }
-        }
-        diffret = agg;
-      }
+      adaptReturnedVector(CI, diffret, Builder, width);
     }
 
     if (!diffret->getType()->isEmptyTy() && !diffret->getType()->isVoidTy() &&
@@ -2049,8 +2053,8 @@ public:
                    /*DeleteFns*/ false);
 #endif
       for (Function *F : Functions) {
-        // Populate the Attributor with abstract attribute opportunities in the
-        // function and the information cache with IR information.
+        // Populate the Attributor with abstract attribute opportunities in
+        // the function and the information cache with IR information.
         A.identifyDefaultAbstractAttributes(*F);
       }
       A.run();
@@ -2235,8 +2239,8 @@ public:
       auto PM = PB.buildModuleSimplificationPipeline(
           PassBuilder::OptimizationLevel::O2, ThinOrFullLTOPhase::None);
 #else
-    auto PM = PB.buildModuleSimplificationPipeline(
-        PassBuilder::OptimizationLevel::O2, PassBuilder::ThinLTOPhase::None);
+      auto PM = PB.buildModuleSimplificationPipeline(
+          PassBuilder::OptimizationLevel::O2, PassBuilder::ThinLTOPhase::None);
 #endif
       PM.run(M, MAM);
 #if LLVM_VERSION_MAJOR >= 13
