@@ -34,7 +34,7 @@ declare double @__enzyme_autodiff(...)
 ; CHECK-DAG:   %[[a4:.+]] = fdiv fast double %[[a3]], %[[a2]]
 ; CHECK-DAG:   %[[a5:.+]] = fmul fast double %differeturn, %y
 ; CHECK-DAG:   %[[a6:.+]] = fdiv fast double %[[a5]], %[[a2]]
-; CHECK-DAG:   %[[a7:.+]] = {{(fneg fast double)|(fsub fast double \-0.000000e\+00,)}} %[[a6]]
+; CHECK-DAG:   %[[a7:.+]] = {{(fneg fast double)|(fsub fast double (-)?0.000000e\+00,)}} %[[a6]]
 ; CHECK-DAG:   %[[a8:.+]] = insertvalue { double, double } undef, double %4, 0
 ; CHECK-DAG:   %[[a9:.+]] = insertvalue { double, double } %[[a8]], double %[[a7]], 1
 ; CHECK-DAG:   ret { double, double } %[[a9]]
