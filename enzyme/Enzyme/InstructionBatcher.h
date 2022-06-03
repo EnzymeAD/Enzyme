@@ -96,6 +96,8 @@ public:
     }
   }
 
+  // TODO: switch
+
   void visitBranchInst(llvm::BranchInst &branch) {
     if (branch.isConditional() && toVectorize.contains(branch.getCondition())) {
       EmitFailure("BranchConditionCannotBeVectorized", branch.getDebugLoc(),
@@ -207,8 +209,6 @@ public:
         arg_types.push_back(BATCH_TYPE::SCALAR);
       }
     }
-
-    // TODO: determine arg_types
 
     Function *orig_func = call.getCalledFunction();
     Function *new_func = Logic.CreateBatch(orig_func, width, arg_types);

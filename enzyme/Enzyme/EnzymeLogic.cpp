@@ -4343,7 +4343,6 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
     if (arg_types[i] == BATCH_TYPE::SCALAR) {
       originalToNewFn[tobatch->getArg(i)] = arg;
       continue;
-      ;
     }
 
     std::vector<Value *> args;
