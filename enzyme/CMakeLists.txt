@@ -23,6 +23,7 @@ SET(CMAKE_CXX_FLAGS_DEBUG  "-O0 -g -ggdb -fno-omit-frame-pointer")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+cmake_policy(SET CMP0116 OLD)
 
 option(ENZYME_CLANG "Build enzyme clang plugin" ON)
 option(ENZYME_EXTERNAL_SHARED_LIB "Build external shared library" OFF)
