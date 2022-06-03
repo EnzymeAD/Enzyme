@@ -399,8 +399,8 @@ static Optional<StringRef> getMetadataName(llvm::Value *res) {
   }
 }
 
-static void adaptReturnedVector(CallInst *CI, Value *diffret,
-                                IRBuilder<> &Builder, unsigned width) {
+static Value *adaptReturnedVector(CallInst *CI, Value *diffret,
+                                  IRBuilder<> &Builder, unsigned width) {
   /// Actual return type (including struct return)
   Type *returnType =
       CI->hasStructRetAttr()
@@ -428,6 +428,7 @@ static void adaptReturnedVector(CallInst *CI, Value *diffret,
     }
     diffret = agg;
   }
+  return diffret;
 }
 
 static bool replaceOriginalCall(CallInst *CI, Function *fn, Value *diffret,
@@ -790,7 +791,7 @@ public:
     Value *batch =
         Builder.CreateCall(newFunc->getFunctionType(), newFunc, args);
 
-    adaptReturnedVector(CI, batch, Builder, width);
+    batch = adaptReturnedVector(CI, batch, Builder, width);
 
     replaceOriginalCall(CI, F, batch, Builder, DerivativeMode::ForwardMode);
 
@@ -1484,7 +1485,7 @@ public:
         (mode == DerivativeMode::ForwardMode ||
          mode == DerivativeMode::ForwardModeSplit)) {
 
-      adaptReturnedVector(CI, diffret, Builder, width);
+      diffret = adaptReturnedVector(CI, diffret, Builder, width);
     }
 
     replaceOriginalCall(CI, fn, diffret, Builder, mode);
