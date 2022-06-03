@@ -4311,11 +4311,24 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
 
   for (auto &bb : *tobatch) {
     for (auto &inst : bb) {
-      for (int i = 0; i < inst.getNumOperands(); ++i) {
-        Value *op = inst.getOperand(i);
-        if (toVectorize.contains(op)) {
+      if (auto store = dyn_cast<StoreInst>(&inst)) {
+        Value *val = store->getOperand(0);
+        Value *addr = store->getOperand(1);
+        if (toVectorize.contains(val)) {
           toVectorize.insert(&inst);
-          break;
+          toVectorize.insert(addr);
+        }
+      } else if (auto load = dyn_cast<LoadInst>(&inst)) {
+        Value *addr = load->getOperand(0);
+        if (toVectorize.contains(addr))
+          toVectorize.insert(&inst);
+      } else {
+        for (int i = 0; i < inst.getNumOperands(); ++i) {
+          Value *op = inst.getOperand(i);
+          if (toVectorize.contains(op)) {
+            toVectorize.insert(&inst);
+            break;
+          }
         }
       }
     }

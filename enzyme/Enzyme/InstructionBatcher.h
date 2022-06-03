@@ -124,6 +124,7 @@ public:
 
   void visitReturnInst(llvm::ReturnInst &ret) {
     auto found = originalToNewFn.find(ret.getParent());
+    assert(found != originalToNewFn.end());
     BasicBlock *nBB = dyn_cast<BasicBlock>(&*found->second);
     IRBuilder<> Builder2 = IRBuilder<>(nBB);
     SmallVector<Value *, 0> rets;
@@ -141,13 +142,22 @@ public:
       }
     }
 
-    Builder2.CreateAggregateRet(rets.data(), width);
+    if (ret.getNumOperands() == 0) {
+      Builder2.CreateRetVoid();
+    } else {
+      Builder2.CreateAggregateRet(rets.data(), width);
+    }
   }
 
   void visitCallInst(llvm::CallInst &call) {
     auto found = originalToNewFn.find(call.getParent());
+    assert(found != originalToNewFn.end());
     BasicBlock *nBB = dyn_cast<BasicBlock>(&*found->second);
     IRBuilder<> Builder2 = IRBuilder<>(nBB);
+
+    if (call.isDebugOrPseudoInst()) {
+      return;
+    }
 
     if (!toVectorize.contains(&call)) {
       ValueToValueMapTy vmap;
@@ -161,6 +171,7 @@ public:
           new_arg = arg;
         } else {
           new_arg = originalToNewFn[arg];
+          assert(originalToNewFn.find(arg) != originalToNewFn.end());
         }
         vmap[arg] = new_arg;
       }
