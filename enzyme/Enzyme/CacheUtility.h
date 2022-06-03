@@ -241,7 +241,7 @@ public:
   typedef llvm::SmallVector<std::pair<
                                 /*sublimit*/ llvm::Value *,
                                 /*loop limits*/ llvm::SmallVector<
-                                    std::pair<LoopContext, llvm::Value *>, 0>>,
+                                    std::pair<LoopContext, llvm::Value *>, 4>>,
                             0>
       SubLimitType;
   SubLimitType getSubLimits(bool inForwardPass, llvm::IRBuilder<> *RB,
@@ -294,7 +294,7 @@ protected:
   /// is stored as a vector explicitly to order theses instructions in such a
   /// way that they can be erased by iterating in reverse order.
   std::map<llvm::AllocaInst *,
-           llvm::SmallVector<llvm::AssertingVH<llvm::Instruction>, 0>>
+           llvm::SmallVector<llvm::AssertingVH<llvm::Instruction>, 4>>
       scopeInstructions;
 
   /// A map of allocations to a set of instructions which free memory as part of
@@ -305,7 +305,7 @@ protected:
   /// A map of allocations to a set of instructions which allocate memory as
   /// part of the cache
   std::map<llvm::AllocaInst *,
-           llvm::SmallVector<llvm::AssertingVH<llvm::CallInst>, 0>>
+           llvm::SmallVector<llvm::AssertingVH<llvm::CallInst>, 4>>
       scopeAllocs;
 
   /// Perform the final load from the cache, applying requisite invariant

@@ -175,7 +175,7 @@ public:
   SmallPtrSet<const CallInst *, 1> forwardDeallocations;
 
   // Map of primal block to corresponding block(s) in reverse
-  std::map<BasicBlock *, SmallVector<BasicBlock *, 0>> reverseBlocks;
+  std::map<BasicBlock *, SmallVector<BasicBlock *, 4>> reverseBlocks;
   // Map of block in reverse to corresponding primal block
   std::map<BasicBlock *, BasicBlock *> reverseBlockToPrimal;
 
@@ -186,7 +186,7 @@ public:
   ValueMap<PHINode *, WeakTrackingVH> fictiousPHIs;
   ValueToValueMapTy originalToNewFn;
   ValueToValueMapTy newToOriginalFn;
-  SmallVector<CallInst *, 0> originalCalls;
+  SmallVector<CallInst *, 4> originalCalls;
 
   SmallPtrSet<Instruction *, 4> unnecessaryIntermediates;
 
@@ -998,7 +998,7 @@ public:
     auto found = reverseBlockToPrimal.find(currentBlock);
     assert(found != reverseBlockToPrimal.end());
 
-    SmallVector<BasicBlock *, 0> &vec = reverseBlocks[found->second];
+    SmallVector<BasicBlock *, 4> &vec = reverseBlocks[found->second];
     assert(vec.size());
     assert(vec.back() == currentBlock);
 
@@ -1382,7 +1382,7 @@ public:
         erase(v);
       }
     }
-    SmallVector<std::pair<PHINode *, Value *>, 0> phis;
+    SmallVector<std::pair<PHINode *, Value *>, 4> phis;
     for (auto pair : fictiousPHIs)
       phis.emplace_back(pair.first, pair.second);
     fictiousPHIs.clear();
@@ -2001,7 +2001,7 @@ public:
   }
 
   // Returns created select instructions, if any
-  SmallVector<SelectInst *, 0>
+  SmallVector<SelectInst *, 4>
   addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM, Type *addingType,
              ArrayRef<Value *> idxs = {}, Value *mask = nullptr) {
     assert(mode == DerivativeMode::ReverseModeGradient ||
@@ -2012,7 +2012,7 @@ public:
     if (auto inst = dyn_cast<Instruction>(val))
       assert(inst->getParent()->getParent() == oldFunc);
 
-    SmallVector<SelectInst *, 0> addedSelects;
+    SmallVector<SelectInst *, 4> addedSelects;
 
     auto faddForNeg = [&](Value *old, Value *inc) {
       if (auto bi = dyn_cast<BinaryOperator>(inc)) {

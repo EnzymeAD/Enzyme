@@ -1864,7 +1864,7 @@ public:
     Logic.clear();
 
     bool changed = false;
-    SmallVector<GlobalVariable *, 0> globalsToErase;
+    SmallVector<GlobalVariable *, 4> globalsToErase;
     for (GlobalVariable &g : M.globals()) {
       if (g.getName().contains(gradient_handler_name)) {
         handleCustomDerivative<gradient_handler_name,
@@ -1890,7 +1890,7 @@ public:
       handleKnownFunctions(F);
       if (F.empty())
         continue;
-      SmallVector<Instruction *, 0> toErase;
+      SmallVector<Instruction *, 4> toErase;
       for (BasicBlock &BB : F) {
         for (Instruction &I : BB) {
           if (auto CI = dyn_cast<CallInst>(&I)) {
@@ -1965,7 +1965,7 @@ public:
       }
     }
 
-    SmallVector<CallInst *, 0> toErase;
+    SmallVector<CallInst *, 4> toErase;
     for (Function &F : M) {
       if (F.empty())
         continue;

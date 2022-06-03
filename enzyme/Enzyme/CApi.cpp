@@ -402,7 +402,7 @@ LLVMValueRef EnzymeCreateForwardDiff(
     uint8_t freeMemory, unsigned width, LLVMTypeRef additionalArg,
     CFnTypeInfo typeInfo, uint8_t *_uncacheable_args,
     size_t uncacheable_args_size, EnzymeAugmentedReturnPtr augmented) {
-  SmallVector<DIFFE_TYPE, 0> nconstant_args((DIFFE_TYPE *)constant_args,
+  SmallVector<DIFFE_TYPE, 4> nconstant_args((DIFFE_TYPE *)constant_args,
                                             (DIFFE_TYPE *)constant_args +
                                                 constant_args_size);
   std::map<llvm::Argument *, bool> uncacheable_args;
@@ -461,7 +461,7 @@ EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
     size_t uncacheable_args_size, uint8_t forceAnonymousTape, unsigned width,
     uint8_t AtomicAdd) {
 
-  SmallVector<DIFFE_TYPE, 0> nconstant_args((DIFFE_TYPE *)constant_args,
+  SmallVector<DIFFE_TYPE, 4> nconstant_args((DIFFE_TYPE *)constant_args,
                                             (DIFFE_TYPE *)constant_args +
                                                 constant_args_size);
   std::map<llvm::Argument *, bool> uncacheable_args;

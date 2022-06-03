@@ -769,7 +769,7 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
   // This is stored from innner-most chunk to outermost
   // Thus it begins with the underlying type, and adds pointers
   // to the previous type.
-  SmallVector<Type *, 0> types = {T};
+  SmallVector<Type *, 4> types = {T};
   bool isi1 = T->isIntegerTy() && cast<IntegerType>(T)->getBitWidth() == 1;
   if (EfficientBoolCache && isi1 && sublimits.size() != 0)
     types[0] = Type::getInt8Ty(T->getContext());
@@ -1118,7 +1118,7 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
                                                       LimitContext ctx,
                                                       Value *extraSize) {
   // Store the LoopContext's in InnerMost => Outermost order
-  SmallVector<LoopContext, 0> contexts;
+  SmallVector<LoopContext, 4> contexts;
 
   // Given a ``SingleIteration'' Limit Context, return a chunking of
   // one loop with size 1, and header/preheader of the BasicBlock
@@ -1155,9 +1155,9 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
   }
 
   // Legal preheaders for loop i (indexed from inner => outer)
-  SmallVector<BasicBlock *, 0> allocationPreheaders(contexts.size(), nullptr);
+  SmallVector<BasicBlock *, 4> allocationPreheaders(contexts.size(), nullptr);
   // Limit of loop i (indexed from inner => outer)
-  SmallVector<Value *, 0> limits(contexts.size(), nullptr);
+  SmallVector<Value *, 4> limits(contexts.size(), nullptr);
 
   // Iterate from outermost loop to innermost loop
   for (int i = contexts.size() - 1; i >= 0; --i) {

@@ -412,8 +412,8 @@ struct CacheAnalysis {
       return {};
     }
 
-    SmallVector<Value *, 0> args;
-    SmallVector<bool, 0> args_safe;
+    SmallVector<Value *, 4> args;
+    SmallVector<bool, 4> args_safe;
 
     // First, we need to propagate the uncacheable status from the parent
     // function to the callee.
@@ -1497,7 +1497,7 @@ void restoreCache(
   // One must use this temporary map to first create all the replacements
   // prior to actually replacing to ensure that getSubLimits has the same
   // behavior and unwrap behavior for all replacements.
-  SmallVector<std::pair<Value *, Value *>, 0> newIToNextI;
+  SmallVector<std::pair<Value *, Value *>, 4> newIToNextI;
 
   for (const auto &m : mapping) {
     if (m.first.second == CacheType::Self &&
@@ -1526,7 +1526,7 @@ void restoreCache(
     }
   }
 
-  std::map<Value *, SmallVector<Instruction *, 0>> unwrapToOrig;
+  std::map<Value *, SmallVector<Instruction *, 4>> unwrapToOrig;
   for (auto pair : gutils->unwrappedLoads)
     unwrapToOrig[pair.second].push_back(const_cast<Instruction *>(pair.first));
   gutils->unwrappedLoads.clear();
@@ -1584,8 +1584,8 @@ void restoreCache(
   // TODO can also insert to topLevel as well [note this requires putting the
   // intrinsic at the correct location]
   for (auto &BB : *gutils->oldFunc) {
-    SmallVector<BasicBlock *, 0> unreachables;
-    SmallVector<BasicBlock *, 0> reachables;
+    SmallVector<BasicBlock *, 4> unreachables;
+    SmallVector<BasicBlock *, 4> reachables;
     for (auto Succ : successors(&BB)) {
       if (guaranteedUnreachable.find(Succ) != guaranteedUnreachable.end()) {
         unreachables.push_back(Succ);
@@ -1709,8 +1709,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                   "Massaging provided custom augmented forward pass to handle "
                   "constant argumented");
       SmallVector<Type *, 3> dupargs;
-      SmallVector<DIFFE_TYPE, 0> next_constant_args =
-          SmallVector<DIFFE_TYPE, 0>(constant_args.begin(),
+      SmallVector<DIFFE_TYPE, 4> next_constant_args =
+          SmallVector<DIFFE_TYPE, 4>(constant_args.begin(),
                                      constant_args.end());
       {
         auto OFT = todiff->getFunctionType();
@@ -1978,7 +1978,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 
     // Don't create derivatives for code that results in termination
     if (guaranteedUnreachable.find(&oBB) != guaranteedUnreachable.end()) {
-      SmallVector<Instruction *, 0> toerase;
+      SmallVector<Instruction *, 4> toerase;
 
       // For having the prints still exist on bugs, check if indeed unused
       for (auto &I : oBB) {
@@ -2125,10 +2125,10 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   }
 
   StructType *sty = cast<StructType>(gutils->newFunc->getReturnType());
-  SmallVector<Type *, 0> RetTypes(sty->elements().begin(),
+  SmallVector<Type *, 4> RetTypes(sty->elements().begin(),
                                   sty->elements().end());
 
-  SmallVector<Type *, 0> MallocTypes;
+  SmallVector<Type *, 4> MallocTypes;
 
   for (auto a : gutils->getTapeValues()) {
     MallocTypes.push_back(a->getType());
@@ -2205,7 +2205,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   }
 
   ValueToValueMapTy VMap;
-  SmallVector<Type *, 0> ArgTypes;
+  SmallVector<Type *, 4> ArgTypes;
   for (const Argument &I : nf->args()) {
     ArgTypes.push_back(I.getType());
   }
@@ -2470,7 +2470,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       IRBuilder<> B(user);
       auto n = user->getName().str();
       user->setName("");
-      SmallVector<Value *, 0> args(user->arg_begin(), user->arg_end());
+      SmallVector<Value *, 4> args(user->arg_begin(), user->arg_end());
       auto rep = B.CreateCall(NewF, args);
       rep->copyIRFlags(user);
       rep->setAttributes(user->getAttributes());
@@ -2478,7 +2478,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       rep->setTailCallKind(user->getTailCallKind());
       rep->setDebugLoc(gutils->getNewFromOriginal(user->getDebugLoc()));
       assert(user);
-      SmallVector<ExtractValueInst *, 0> torep;
+      SmallVector<ExtractValueInst *, 4> torep;
       for (auto u : user->users()) {
         assert(u);
         if (auto ei = dyn_cast<ExtractValueInst>(u)) {
@@ -2612,7 +2612,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
   IRBuilder<> Builder(BB2);
   Builder.setFastMathFlags(getFast());
 
-  std::map<BasicBlock *, SmallVector<BasicBlock *, 0>> targetToPreds;
+  std::map<BasicBlock *, SmallVector<BasicBlock *, 4>> targetToPreds;
   for (auto pred : predecessors(BB)) {
     targetToPreds[gutils->getReverseOrLatchMerge(pred, BB)].emplace_back(pred);
   }
@@ -2671,7 +2671,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
   // PHINodes to replace that will contain true iff the predecessor was given
   // basicblock
   std::map<BasicBlock *, PHINode *> replacePHIs;
-  SmallVector<SelectInst *, 0> selects;
+  SmallVector<SelectInst *, 4> selects;
 
   IRBuilder<> phibuilder(BB2);
   bool setphi = false;
@@ -2895,7 +2895,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
   }
 
   if (inLoop && BB == loopContext.header) {
-    std::map<BasicBlock *, SmallVector<BasicBlock *, 0>> targetToPreds;
+    std::map<BasicBlock *, SmallVector<BasicBlock *, 4>> targetToPreds;
     for (auto pred : predecessors(BB)) {
       if (pred == loopContext.preheader)
         continue;
@@ -3578,7 +3578,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     // Don't create derivatives for code that results in termination
     if (guaranteedUnreachable.find(&oBB) != guaranteedUnreachable.end()) {
       auto newBB = cast<BasicBlock>(gutils->getNewFromOriginal(&oBB));
-      SmallVector<BasicBlock *, 0> toRemove;
+      SmallVector<BasicBlock *, 4> toRemove;
       if (auto II = dyn_cast<InvokeInst>(oBB.getTerminator())) {
         toRemove.push_back(
             cast<BasicBlock>(gutils->getNewFromOriginal(II->getNormalDest())));
@@ -3863,7 +3863,7 @@ Function *EnzymeLogic::CreateForwardDiff(
 
     SmallVector<Type *, 2> curTypes;
     bool legal = true;
-    SmallVector<DIFFE_TYPE, 0> nextConstantArgs;
+    SmallVector<DIFFE_TYPE, 4> nextConstantArgs;
     for (auto tup : llvm::zip(todiff->args(), constant_args)) {
       auto &arg = std::get<0>(tup);
       curTypes.push_back(arg.getType());
@@ -4140,7 +4140,7 @@ Function *EnzymeLogic::CreateForwardDiff(
     // Don't create derivatives for code that results in termination
     if (guaranteedUnreachable.find(&oBB) != guaranteedUnreachable.end()) {
       auto newBB = cast<BasicBlock>(gutils->getNewFromOriginal(&oBB));
-      SmallVector<BasicBlock *, 0> toRemove;
+      SmallVector<BasicBlock *, 4> toRemove;
       if (auto II = dyn_cast<InvokeInst>(oBB.getTerminator())) {
         toRemove.push_back(
             cast<BasicBlock>(gutils->getNewFromOriginal(II->getNormalDest())));
@@ -4155,7 +4155,7 @@ Function *EnzymeLogic::CreateForwardDiff(
         sucBB->removePredecessor(newBB);
       }
 
-      SmallVector<Instruction *, 0> toerase;
+      SmallVector<Instruction *, 4> toerase;
       for (auto &I : oBB) {
         toerase.push_back(&I);
       }

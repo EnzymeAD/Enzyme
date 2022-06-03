@@ -1747,7 +1747,7 @@ public:
     return ((DiffeGradientUtils *)gutils)->FreeMemory;
   }
 
-  SmallVector<SelectInst *, 0> addToDiffe(Value *val, Value *dif,
+  SmallVector<SelectInst *, 4> addToDiffe(Value *val, Value *dif,
                                           IRBuilder<> &Builder, Type *T,
                                           Value *mask = nullptr) {
     return ((DiffeGradientUtils *)gutils)
@@ -4285,11 +4285,11 @@ public:
     SmallVector<Value *, 8> pre_args = {0, 0, 0};
     std::vector<DIFFE_TYPE> argsInverted = {DIFFE_TYPE::CONSTANT,
                                             DIFFE_TYPE::CONSTANT};
-    SmallVector<Instruction *, 0> postCreate;
-    SmallVector<Instruction *, 0> userReplace;
+    SmallVector<Instruction *, 4> postCreate;
+    SmallVector<Instruction *, 4> userReplace;
 
-    SmallVector<Value *, 0> OutTypes;
-    SmallVector<Type *, 0> OutFPTypes;
+    SmallVector<Value *, 4> OutTypes;
+    SmallVector<Type *, 4> OutFPTypes;
 
 #if LLVM_VERSION_MAJOR >= 14
     for (unsigned i = 3; i < call.arg_size(); ++i)
@@ -4440,7 +4440,7 @@ public:
           newcalled = CloneFunction(newcalled, VMap);
           auto tapeArg = newcalled->arg_end();
           tapeArg--;
-          SmallVector<std::pair<ssize_t, Value *>, 0> geps;
+          SmallVector<std::pair<ssize_t, Value *>, 4> geps;
           SmallPtrSet<Instruction *, 4> gepsToErase;
           for (auto a : tapeArg->users()) {
             if (auto gep = dyn_cast<GetElementPtrInst>(a)) {
@@ -4653,7 +4653,7 @@ public:
             tape = cast<LoadInst>(u);
           }
           assert(tape);
-          SmallVector<Value *, 0> extracts;
+          SmallVector<Value *, 4> extracts;
           if (subdata->tapeIndices.size() == 1) {
             assert(subdata->tapeIndices.begin()->second == -1);
             extracts.push_back(tape);
@@ -4662,7 +4662,7 @@ public:
               extracts.push_back(a);
             }
           }
-          SmallVector<LoadInst *, 0> geps;
+          SmallVector<LoadInst *, 4> geps;
           for (auto E : extracts) {
             AllocaInst *AI = nullptr;
             for (auto U : E->users()) {
@@ -6295,7 +6295,7 @@ public:
         {
           auto found = gutils->reverseBlockToPrimal.find(endBlock);
           assert(found != gutils->reverseBlockToPrimal.end());
-          SmallVector<BasicBlock *, 0> &vec =
+          SmallVector<BasicBlock *, 4> &vec =
               gutils->reverseBlocks[found->second];
           assert(vec.size());
           vec.push_back(endBlock);
@@ -6495,7 +6495,7 @@ public:
         {
           auto found = gutils->reverseBlockToPrimal.find(endBlock);
           assert(found != gutils->reverseBlockToPrimal.end());
-          SmallVector<BasicBlock *, 0> &vec =
+          SmallVector<BasicBlock *, 4> &vec =
               gutils->reverseBlocks[found->second];
           assert(vec.size());
           vec.push_back(endBlock);
@@ -11582,8 +11582,8 @@ public:
     SmallVector<Value *, 8> args;
     SmallVector<Value *, 8> pre_args;
     std::vector<DIFFE_TYPE> argsInverted;
-    SmallVector<Instruction *, 0> postCreate;
-    SmallVector<Instruction *, 0> userReplace;
+    SmallVector<Instruction *, 4> postCreate;
+    SmallVector<Instruction *, 4> userReplace;
     std::map<int, Type *> preByVal;
     std::map<int, Type *> gradByVal;
 
