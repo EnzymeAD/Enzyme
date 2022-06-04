@@ -125,7 +125,7 @@ ModulePass *createBCLoaderPass() { return new BCLoader(); }
 
 
 PreservedAnalyses BCLoaderNew::run(Module &M,ModuleAnalysisManager &MAM){
-    return provideDefinitions(M) ? PreservedAnalyses::all() : PreservedAnalyses::none();
+    return provideDefinitions(M) ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
 
 extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
