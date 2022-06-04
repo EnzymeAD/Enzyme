@@ -9,5 +9,5 @@
         "source=enzyme-extensions-insiders,target=/root/.vscode-server-insiders/extensions,type=volume",
         "source=enzyme-build,target=${containerWorkspaceFolder}/enzyme/build,type=volume",
     ],
-    "postCreateCommand": "sudo chown vscode ./enzyme/build"
+    "postCreateCommand": "sudo git config --global --add safe.directory /workspaces/Enzyme &&  sudo chown vscode ./enzyme/build"
 }
