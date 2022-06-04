@@ -85,7 +85,24 @@ const char *KnownInactiveFunctionsStartingWith[] = {
     "$ss5print",
     "_ZNSt7__cxx1112basic_string",
     "_ZNSt7__cxx1118basic_string",
+    "_ZNKSt7__cxx1112basic_string",
+    // filebuf
+    "_ZNSt12__basic_file",
+    "_ZNSt15basic_streambufIcSt11char_traits",
+    "_ZNSt13basic_filebufIcSt11char_traits",
+    "_ZNSt14basic_ofstreamIcSt11char_traits",
+    // ifstream
+    "_ZNSi4readEPcl",
+    "_ZNKSt14basic_ifstreamIcSt11char_traits",
+    "_ZNSt14basic_ifstreamIcSt11char_traits",
     // ostream generic <<
+    "_ZNSo5writeEPKcl",
+    "_ZNSt19basic_ostringstreamIcSt11char_traits",
+    "_ZStlsIcSt11char_traitsIcESaIcEERSt13basic_ostream",
+    "_ZNSt7__cxx1119basic_ostringstreamIcSt11char_traits",
+    "_ZNKSt7__cxx1119basic_ostringstreamIcSt11char_traits",
+    "_ZNSoD1Ev",
+    "_ZNSoC1EPSt15basic_streambufIcSt11char_traits",
     "_ZStlsISt11char_traitsIcEERSt13basic_ostream",
     "_ZSt16__ostream_insert",
     "_ZStlsIwSt11char_traitsIwEERSt13basic_ostream",
@@ -186,6 +203,7 @@ const std::set<std::string> KnownInactiveFunctions = {
     "putchar",
     "fprintf",
     "vprintf",
+    "vsnprintf",
     "puts",
     "fflush",
     "__kmpc_for_static_init_4",
@@ -240,7 +258,11 @@ const std::set<std::string> KnownInactiveFunctions = {
     "_msize",
     "ftnio_fmt_write64",
     "f90_strcmp_klen",
-    "__swift_instantiateConcreteTypeFromMangledName"};
+    "__swift_instantiateConcreteTypeFromMangledName",
+    "logb",
+    "logbf",
+    "logbl",
+};
 
 /// Is the use of value val as an argument of call CI known to be inactive
 /// This tool can only be used when in DOWN mode
@@ -435,7 +457,8 @@ static inline void propagateArgumentInformation(
 /// Return whether this instruction is known not to propagate adjoints
 /// Note that instructions could return an active pointer, but
 /// do not propagate adjoints themselves
-bool ActivityAnalyzer::isConstantInstruction(TypeResults &TR, Instruction *I) {
+bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
+                                             Instruction *I) {
   // This analysis may only be called by instructions corresponding to
   // the function analyzed by TypeInfo
   assert(I);
@@ -472,6 +495,12 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults &TR, Instruction *I) {
       ActiveInstructions.insert(I);
       return false;
     }
+    if (CI->hasFnAttr("enzyme_inactive")) {
+      if (EnzymePrintActivity)
+        llvm::errs() << "forced inactive " << *I << "\n";
+      InsertConstantInstruction(TR, I);
+      return true;
+    }
     Function *called = getFunctionFromCall(CI);
 
     if (called) {
@@ -480,6 +509,12 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults &TR, Instruction *I) {
           llvm::errs() << "forced active " << *I << "\n";
         ActiveInstructions.insert(I);
         return false;
+      }
+      if (called->hasFnAttribute("enzyme_inactive")) {
+        if (EnzymePrintActivity)
+          llvm::errs() << "forced inactive " << *I << "\n";
+        InsertConstantInstruction(TR, I);
+        return true;
       }
     }
   }
@@ -753,7 +788,7 @@ bool isValuePotentiallyUsedAsPointer(llvm::Value *val) {
   return false;
 }
 
-bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
+bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
   // This analysis may only be called by instructions corresponding to
   // the function analyzed by TypeInfo -- however if the Value
   // was created outside a function (e.g. global, constant), that is allowed
@@ -1045,6 +1080,37 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
       llvm::errs() << " VALUE nonconst unknown expr " << *Val << "\n";
     ActiveValues.insert(Val);
     return false;
+  }
+
+  if (auto CI = dyn_cast<CallInst>(Val)) {
+    if (CI->hasFnAttr("enzyme_active")) {
+      if (EnzymePrintActivity)
+        llvm::errs() << "forced active val " << *Val << "\n";
+      ActiveValues.insert(Val);
+      return false;
+    }
+    if (CI->hasFnAttr("enzyme_inactive")) {
+      if (EnzymePrintActivity)
+        llvm::errs() << "forced inactive val " << *Val << "\n";
+      InsertConstantValue(TR, Val);
+      return true;
+    }
+    Function *called = getFunctionFromCall(CI);
+
+    if (called) {
+      if (called->hasFnAttribute("enzyme_active")) {
+        if (EnzymePrintActivity)
+          llvm::errs() << "forced active val " << *Val << "\n";
+        ActiveValues.insert(Val);
+        return false;
+      }
+      if (called->hasFnAttribute("enzyme_inactive")) {
+        if (EnzymePrintActivity)
+          llvm::errs() << "forced inactive val " << *Val << "\n";
+        InsertConstantValue(TR, Val);
+        return true;
+      }
+    }
   }
 
   std::shared_ptr<ActivityAnalyzer> UpHypothesis;
@@ -1854,7 +1920,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults &TR, Value *Val) {
 }
 
 /// Is the instruction guaranteed to be inactive because of its operands
-bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults &TR,
+bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
                                                        llvm::Value *val) {
   // Must be an analyzer only searching up
   assert(directions == UP);
@@ -2110,7 +2176,7 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults &TR,
 }
 
 /// Is the value free of any active uses
-bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults &TR,
+bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
                                                 llvm::Value *val,
                                                 UseActivity PUA,
                                                 Instruction **FoundInst) {
@@ -2300,7 +2366,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults &TR,
 }
 
 /// Is the value potentially actively returned or stored
-bool ActivityAnalyzer::isValueActivelyStoredOrReturned(TypeResults &TR,
+bool ActivityAnalyzer::isValueActivelyStoredOrReturned(TypeResults const &TR,
                                                        llvm::Value *val,
                                                        bool outside) {
   // Must be an analyzer only searching down
@@ -2438,7 +2504,7 @@ bool ActivityAnalyzer::isValueActivelyStoredOrReturned(TypeResults &TR,
   return false;
 }
 
-void ActivityAnalyzer::InsertConstantInstruction(TypeResults &TR,
+void ActivityAnalyzer::InsertConstantInstruction(TypeResults const &TR,
                                                  llvm::Instruction *I) {
   ConstantInstructions.insert(I);
   auto found = ReEvaluateValueIfInactiveInst.find(I);
@@ -2457,7 +2523,8 @@ void ActivityAnalyzer::InsertConstantInstruction(TypeResults &TR,
   }
 }
 
-void ActivityAnalyzer::InsertConstantValue(TypeResults &TR, llvm::Value *V) {
+void ActivityAnalyzer::InsertConstantValue(TypeResults const &TR,
+                                           llvm::Value *V) {
   ConstantValues.insert(V);
   auto found = ReEvaluateValueIfInactiveValue.find(V);
   if (found != ReEvaluateValueIfInactiveValue.end()) {

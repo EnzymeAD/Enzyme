@@ -34,9 +34,9 @@ typedef std::pair<const Value *, ValueType> UsageKey;
 // Determine if a value is needed directly to compute the adjoint
 // of the given instruction user
 static inline bool is_use_directly_needed_in_reverse(
-    TypeResults &TR, const GradientUtils *gutils, const Value *val,
-    const Instruction *user,
+    const GradientUtils *gutils, const Value *val, const Instruction *user,
     const SmallPtrSetImpl<BasicBlock *> &oldUnreachable) {
+  TypeResults const &TR = gutils->TR;
   if (auto ainst = dyn_cast<Instruction>(val)) {
     assert(ainst->getParent()->getParent() == gutils->oldFunc);
   }
@@ -92,6 +92,7 @@ static inline bool is_use_directly_needed_in_reverse(
     }
     if (MTI->getArgOperand(2) != val)
       return false;
+    return !gutils->isConstantInstruction(MTI);
   }
 
   // Preserve the length of memsets of backward creation shadows
@@ -230,9 +231,10 @@ static inline bool is_use_directly_needed_in_reverse(
 
 template <ValueType VT, bool OneLevel = false>
 static inline bool is_value_needed_in_reverse(
-    TypeResults &TR, const GradientUtils *gutils, const Value *inst,
-    DerivativeMode mode, std::map<UsageKey, bool> &seen,
+    const GradientUtils *gutils, const Value *inst, DerivativeMode mode,
+    std::map<UsageKey, bool> &seen,
     const SmallPtrSetImpl<BasicBlock *> &oldUnreachable) {
+  TypeResults const &TR = gutils->TR;
   static_assert(VT == ValueType::Primal || VT == ValueType::Shadow);
   auto idx = UsageKey(inst, VT);
   if (seen.find(idx) != seen.end())
@@ -263,8 +265,12 @@ static inline bool is_value_needed_in_reverse(
     const Instruction *user = dyn_cast<Instruction>(use);
 
     // A shadow value is only needed in reverse if it or one of its descendants
-    // is used in an active instruction
-    if (VT == ValueType::Shadow) {
+    // is used in an active instruction.
+    // If inst is a constant value, the primal may be used in its place and
+    // thus required.
+    if (VT == ValueType::Shadow ||
+        (gutils->isConstantValue(const_cast<Value *>(inst)) &&
+         !TR.query(const_cast<Value *>(inst))[{-1}].isFloat())) {
       if (!user)
         return seen[idx] = true;
 
@@ -273,7 +279,8 @@ static inline bool is_value_needed_in_reverse(
         // doesn't require the shadow pointer for the
         // reverse pass
         if (SI->getValueOperand() == inst &&
-            mode == DerivativeMode::ReverseModeGradient) {
+            (mode == DerivativeMode::ReverseModeGradient ||
+             mode == DerivativeMode::ForwardModeSplit)) {
           // Unless the store is into a backwards store, which would
           // would then be performed in the reverse if the stored value was
           // a possible pointer.
@@ -284,25 +291,25 @@ static inline bool is_value_needed_in_reverse(
               break;
             }
           if (!rematerialized)
-            continue;
+            goto endShadow;
         }
 
         if (!gutils->isConstantValue(
                 const_cast<Value *>(SI->getPointerOperand())))
           return seen[idx] = true;
         else
-          continue;
+          goto endShadow;
       }
 
       if (auto MTI = dyn_cast<MemTransferInst>(user)) {
         if (MTI->getArgOperand(0) != inst && MTI->getArgOperand(1) != inst)
-          continue;
+          goto endShadow;
 
         if (!gutils->isConstantValue(
                 const_cast<Value *>(MTI->getArgOperand(0))))
           return seen[idx] = true;
         else
-          continue;
+          goto endShadow;
       }
 
       if (auto CI = dyn_cast<CallInst>(user)) {
@@ -325,7 +332,7 @@ static inline bool is_value_needed_in_reverse(
           // Only need shadow request for reverse
           if (funcName == "MPI_Irecv" || funcName == "PMPI_Irecv") {
             if (gutils->isConstantInstruction(const_cast<Instruction *>(user)))
-              continue;
+              goto endShadow;
             // Need shadow request
             if (inst == CI->getArgOperand(6))
               return seen[idx] = true;
@@ -333,42 +340,42 @@ static inline bool is_value_needed_in_reverse(
             if (mode != DerivativeMode::ReverseModeGradient)
               if (inst == CI->getArgOperand(0))
                 return seen[idx] = true;
-            continue;
+            goto endShadow;
           }
           if (funcName == "MPI_Isend" || funcName == "PMPI_Isend") {
             if (gutils->isConstantInstruction(const_cast<Instruction *>(user)))
-              continue;
+              goto endShadow;
             // Need shadow request
             if (inst == CI->getArgOperand(6))
               return seen[idx] = true;
             // Need shadow buffer in reverse pass or forward mode
             if (inst == CI->getArgOperand(0))
               return seen[idx] = true;
-            continue;
+            goto endShadow;
           }
 
           // Don't need shadow of anything (all via cache for reverse),
           // but need shadow of request for primal.
           if (funcName == "MPI_Wait" || funcName == "PMPI_Wait") {
             if (gutils->isConstantInstruction(const_cast<Instruction *>(user)))
-              continue;
+              goto endShadow;
             // Need shadow request in forward pass only
             if (mode != DerivativeMode::ReverseModeGradient)
               if (inst == CI->getArgOperand(0))
                 return seen[idx] = true;
-            continue;
+            goto endShadow;
           }
 
           // Don't need shadow of anything (all via cache for reverse),
           // but need shadow of request for primal.
           if (funcName == "MPI_Waitall" || funcName == "PMPI_Waitall") {
             if (gutils->isConstantInstruction(const_cast<Instruction *>(user)))
-              continue;
+              goto endShadow;
             // Need shadow request in forward pass
             if (mode != DerivativeMode::ReverseModeGradient)
               if (inst == CI->getArgOperand(1))
                 return seen[idx] = true;
-            continue;
+            goto endShadow;
           }
 
           // Use in a write barrier requires the shadow in the forward, even
@@ -396,7 +403,7 @@ static inline bool is_value_needed_in_reverse(
             gutils->ATA->ActiveReturns == DIFFE_TYPE::DUP_NONEED)
           return seen[idx] = true;
         else
-          continue;
+          goto endShadow;
       }
 
       // Assume active instructions require the operand.
@@ -409,29 +416,31 @@ static inline bool is_value_needed_in_reverse(
       // in the forward pass, for example double* x = load double** y
       // is a constant instruction, but needed in the forward
       if (user->getType()->isVoidTy())
-        continue;
+        goto endShadow;
 
       if (!TR.query(const_cast<Instruction *>(user))
                .Inner0()
                .isPossiblePointer())
-        continue;
+        goto endShadow;
 
       if (!OneLevel && is_value_needed_in_reverse<ValueType::Shadow>(
-                           TR, gutils, user, mode, seen, oldUnreachable)) {
+                           gutils, user, mode, seen, oldUnreachable)) {
         return seen[idx] = true;
       }
-      continue;
+    endShadow:
+      if (VT != ValueType::Primal)
+        continue;
     }
 
     assert(VT == ValueType::Primal);
 
     // If a sub user needs, we need
-    if (!OneLevel && is_value_needed_in_reverse<VT>(TR, gutils, user, mode,
-                                                    seen, oldUnreachable)) {
+    if (!OneLevel && is_value_needed_in_reverse<VT>(gutils, user, mode, seen,
+                                                    oldUnreachable)) {
       return seen[idx] = true;
     }
 
-    // Anything we may try to rematerialize requires its store opreands for
+    // Anything we may try to rematerialize requires its store operands for
     // the reverse pass.
     if (!OneLevel) {
       if (isa<StoreInst>(user) || isa<MemTransferInst>(user) ||
@@ -442,12 +451,20 @@ static inline bool is_value_needed_in_reverse(
           // we'll set it to unused, then check the gep, then here we'll
           // directly say unused by induction instead of checking the final
           // loads.
-          if (pair.second.stores.count(user))
+          if (pair.second.stores.count(user)) {
             for (LoadInst *L : pair.second.loads)
-              if (is_value_needed_in_reverse<VT>(TR, gutils, L, mode, seen,
+              if (is_value_needed_in_reverse<VT>(gutils, L, mode, seen,
                                                  oldUnreachable)) {
                 return seen[idx] = true;
               }
+            for (auto &pair : pair.second.loadLikeCalls)
+              if (is_use_directly_needed_in_reverse(
+                      gutils, pair.operand, pair.loadCall, oldUnreachable) ||
+                  is_value_needed_in_reverse<VT>(gutils, pair.loadCall, mode,
+                                                 seen, oldUnreachable)) {
+                return seen[idx] = true;
+              }
+          }
         }
       }
     }
@@ -514,13 +531,13 @@ static inline bool is_value_needed_in_reverse(
               .Inner0()
               .isPossiblePointer()) {
         if (is_value_needed_in_reverse<ValueType::Shadow>(
-                TR, gutils, user, mode, seen, oldUnreachable)) {
+                gutils, user, mode, seen, oldUnreachable)) {
           return seen[idx] = true;
         }
       }
 
-    bool direct = is_use_directly_needed_in_reverse(TR, gutils, inst, user,
-                                                    oldUnreachable);
+    bool direct =
+        is_use_directly_needed_in_reverse(gutils, inst, user, oldUnreachable);
     if (!direct)
       continue;
 
@@ -536,11 +553,11 @@ static inline bool is_value_needed_in_reverse(
 
 template <ValueType VT>
 static inline bool is_value_needed_in_reverse(
-    TypeResults &TR, const GradientUtils *gutils, const Value *inst,
-    DerivativeMode mode, const SmallPtrSetImpl<BasicBlock *> &oldUnreachable) {
+    const GradientUtils *gutils, const Value *inst, DerivativeMode mode,
+    const SmallPtrSetImpl<BasicBlock *> &oldUnreachable) {
   static_assert(VT == ValueType::Primal || VT == ValueType::Shadow);
   std::map<UsageKey, bool> seen;
-  return is_value_needed_in_reverse<VT>(TR, gutils, inst, mode, seen,
+  return is_value_needed_in_reverse<VT>(gutils, inst, mode, seen,
                                         oldUnreachable);
 }
 
@@ -645,6 +662,11 @@ static inline void minCut(const DataLayout &DL, LoopInfo &OrigLI,
       for (LoadInst *L : pair.second.loads) {
         if (Intermediates.count(L)) {
           G[Node(pair.first, true)].insert(Node(L, false));
+        }
+      }
+      for (auto L : pair.second.loadLikeCalls) {
+        if (Intermediates.count(L.loadCall)) {
+          G[Node(pair.first, true)].insert(Node(L.loadCall, false));
         }
       }
     }

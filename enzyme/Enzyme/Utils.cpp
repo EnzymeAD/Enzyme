@@ -111,6 +111,7 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
   F->addFnAttr(Attribute::ArgMemOnly);
   F->addFnAttr(Attribute::NoUnwind);
+  F->addFnAttr(Attribute::AlwaysInline);
   F->addParamAttr(0, Attribute::NoCapture);
   F->addParamAttr(1, Attribute::NoCapture);
 
@@ -213,6 +214,7 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
   F->addFnAttr(Attribute::ArgMemOnly);
   F->addFnAttr(Attribute::NoUnwind);
+  F->addFnAttr(Attribute::AlwaysInline);
   F->addParamAttr(0, Attribute::NoCapture);
   F->addParamAttr(1, Attribute::NoCapture);
   F->addParamAttr(0, Attribute::WriteOnly);
@@ -338,6 +340,7 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
   F->addFnAttr(Attribute::ArgMemOnly);
   F->addFnAttr(Attribute::NoUnwind);
+  F->addFnAttr(Attribute::AlwaysInline);
 
   BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
   BasicBlock *free0 = BasicBlock::Create(M.getContext(), "free0", F);
@@ -361,7 +364,7 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
   CI->setDebugLoc(DebugLoc);
 
   if (width > 1) {
-    Value *checkResult = EntryBuilder.getTrue();
+    Value *checkResult = nullptr;
     BasicBlock *free1 = BasicBlock::Create(M.getContext(), "free1", F);
     IRBuilder<> Free1Builder(free1);
 
@@ -372,7 +375,9 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
       if (i < width - 1) {
         Argument *nextShadow = F->arg_begin() + i + 2;
         Value *isNotEqual = Free0Builder.CreateICmpNE(shadow, nextShadow);
-        checkResult = Free0Builder.CreateAnd(isNotEqual, checkResult);
+        checkResult = checkResult
+                          ? Free0Builder.CreateAnd(isNotEqual, checkResult)
+                          : isNotEqual;
 
         CallInst *CI = Free1Builder.CreateCall(FreeTy, Free, {nextShadow});
         CI->setAttributes(FreeAttributes);
@@ -418,6 +423,10 @@ llvm::Function *getOrInsertDifferentialWaitallSave(llvm::Module &M,
 
   if (!F->empty())
     return F;
+
+  F->setLinkage(Function::LinkageTypes::InternalLinkage);
+  F->addFnAttr(Attribute::NoUnwind);
+  F->addFnAttr(Attribute::AlwaysInline);
 
   BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
 
@@ -514,6 +523,10 @@ llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
 
   if (!F->empty())
     return F;
+
+  F->setLinkage(Function::LinkageTypes::InternalLinkage);
+  F->addFnAttr(Attribute::NoUnwind);
+  F->addFnAttr(Attribute::AlwaysInline);
 
   BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
   BasicBlock *isend = BasicBlock::Create(M.getContext(), "invertISend", F);
@@ -641,6 +654,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
   F->addFnAttr(Attribute::ArgMemOnly);
   F->addFnAttr(Attribute::NoUnwind);
+  F->addFnAttr(Attribute::AlwaysInline);
   F->addParamAttr(0, Attribute::NoCapture);
   F->addParamAttr(0, Attribute::ReadOnly);
   F->addParamAttr(1, Attribute::NoCapture);
