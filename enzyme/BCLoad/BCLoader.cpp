@@ -6,6 +6,11 @@
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include "llvm/Passes/PassPlugin.h"
+#include "llvm/Passes/PassBuilder.h"
+
+#include "BCLoader.h"
+
 #include <map>
 #include <set>
 #include <string>
@@ -120,7 +125,7 @@ ModulePass *createBCLoaderPass() { return new BCLoader(); }
 
 
 PreservedAnalyses BCLoaderNew::run(Module &M,ModuleAnalysisManager &MAM){
-    return lowerDeclarationsToBitcode(M) ? PreservedAnalyses::all() : PreservedAnalyses::none();
+    return provideDefinitions(M) ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }
 
 extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
