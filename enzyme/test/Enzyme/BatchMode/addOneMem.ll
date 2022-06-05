@@ -17,7 +17,7 @@ entry:
 declare void @__enzyme_batch(...)
 
 
-; CHECK: ddefine void @batch_addOneMem([4 x double*] %0)
+; CHECK: define void @batch_addOneMem([4 x double*] %0)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %1 = extractvalue [4 x double*] %0, 0
 ; CHECK-NEXT:   %2 = extractvalue [4 x double*] %0, 1

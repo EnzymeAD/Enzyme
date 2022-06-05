@@ -4301,35 +4301,37 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
   }
 
   SmallPtrSet<Value *, 4> toVectorize;
+  SetVector<llvm::Value *, std::deque<llvm::Value *>> worklist;
 
   for (int i = 0; i < tobatch->getFunctionType()->getNumParams(); i++) {
     if (arg_types[i] == BATCH_TYPE::VECTOR) {
       Argument *arg = tobatch->getArg(i);
       toVectorize.insert(arg);
+
+      for (auto user : arg->users()) {
+        worklist.insert(user);
+      }
     }
   }
 
-  for (auto &bb : *tobatch) {
-    for (auto &inst : bb) {
-      if (auto store = dyn_cast<StoreInst>(&inst)) {
-        Value *val = store->getOperand(0);
-        Value *addr = store->getOperand(1);
-        if (toVectorize.contains(val)) {
-          toVectorize.insert(&inst);
-          toVectorize.insert(addr);
-        }
-      } else if (auto load = dyn_cast<LoadInst>(&inst)) {
-        Value *addr = load->getOperand(0);
-        if (toVectorize.contains(addr))
-          toVectorize.insert(&inst);
-      } else {
-        for (int i = 0; i < inst.getNumOperands(); ++i) {
-          Value *op = inst.getOperand(i);
-          if (toVectorize.contains(op)) {
-            toVectorize.insert(&inst);
-            break;
-          }
-        }
+  while (!worklist.empty()) {
+    Value *todo = *worklist.begin();
+    worklist.erase(worklist.begin());
+
+    if (toVectorize.contains(todo)) {
+      continue;
+    }
+
+    toVectorize.insert(todo);
+
+    if (auto store = dyn_cast<StoreInst>(todo)) {
+      Value *addr = store->getOperand(1);
+      for (auto user : addr->users()) {
+        worklist.insert(user);
+      }
+    } else if (auto inst = dyn_cast<Instruction>(todo)) {
+      for (auto user : inst->users()) {
+        worklist.insert(user);
       }
     }
   }
