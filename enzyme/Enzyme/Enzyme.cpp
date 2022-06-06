@@ -1634,7 +1634,7 @@ public:
     MapVector<CallInst *, DerivativeMode> toLower;
     MapVector<CallInst *, DerivativeMode> toVirtual;
     MapVector<CallInst *, DerivativeMode> toSize;
-    SmallVector<CallInst *> toBatch;
+    SmallVector<CallInst *, 4> toBatch;
     SetVector<CallInst *> InactiveCalls;
     SetVector<CallInst *> IterCalls;
   retry:;

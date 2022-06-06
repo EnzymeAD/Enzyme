@@ -203,7 +203,7 @@ public:
     assert(found != originalToNewFn.end());
     BasicBlock *nBB = dyn_cast<BasicBlock>(&*found->second);
     IRBuilder<> Builder2 = IRBuilder<>(nBB);
-    SmallVector<Value *, 0> rets;
+    SmallVector<Value *, 4> rets;
 
     for (unsigned j = 0; j < ret.getNumOperands(); ++j) {
       Value *op = ret.getOperand(j);
@@ -235,7 +235,7 @@ public:
       return;
     }
 
-    if (!toVectorize.count(&call) != 0) {
+    if (toVectorize.count(&call) == 0) {
       ValueToValueMapTy vmap;
       Instruction *new_call = call.clone();
       vmap[&call] = new_call;
@@ -258,8 +258,8 @@ public:
       return;
     }
 
-    SmallVector<Value *, 0> args;
-    SmallVector<BATCH_TYPE> arg_types;
+    SmallVector<Value *, 4> args;
+    SmallVector<BATCH_TYPE, 4> arg_types;
 
     for (unsigned j = 0; j < call.getNumArgOperands(); ++j) {
       // make sure this does not include the called func!

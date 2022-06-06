@@ -4351,7 +4351,7 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
     }
 
     for (unsigned j = 0; j < width; ++j) {
-      Value *orig_arg = tobatch->getArg(i);
+      Value *orig_arg = tobatch->arg_begin() + j;
       Value *argVecElem = Builder2.CreateExtractValue(
           arg, {j}, "unwrap." + orig_arg->getName() + std::to_string(j));
       vectorizedValues[orig_arg].push_back(argVecElem);
