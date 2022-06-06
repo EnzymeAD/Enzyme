@@ -92,7 +92,7 @@ public:
       } else {
         Builder2.Insert(new_inst);
       }
-      RemapInstruction(new_inst, vmap);
+      RemapInstruction(new_inst, vmap, RF_NoModuleLevelChanges);
       if (toVectorize.contains(&inst)) {
         vectorizedValues[&inst].push_back(new_inst);
       } else {
@@ -129,7 +129,7 @@ public:
         vmap[orig_block] = new_block;
       }
 
-      RemapInstruction(new_phi, vmap);
+      RemapInstruction(new_phi, vmap, RF_NoModuleLevelChanges);
       Instruction *placeholder;
       if (toVectorize.contains(&phi)) {
         placeholder = cast<Instruction>(vectorizedValues[&phi][i]);
@@ -169,7 +169,7 @@ public:
     }
 
     Builder2.Insert(new_switch, inst.getName());
-    RemapInstruction(new_switch, vmap);
+    RemapInstruction(new_switch, vmap, RF_NoModuleLevelChanges);
   }
 
   void visitBranchInst(llvm::BranchInst &branch) {
@@ -195,7 +195,7 @@ public:
     }
 
     Builder2.Insert(new_branch);
-    RemapInstruction(new_branch, vmap);
+    RemapInstruction(new_branch, vmap, RF_NoModuleLevelChanges);
   }
 
   void visitReturnInst(llvm::ReturnInst &ret) {
@@ -253,7 +253,7 @@ public:
       }
 
       Builder2.Insert(new_call, call.getName());
-      RemapInstruction(new_call, vmap);
+      RemapInstruction(new_call, vmap, RF_NoModuleLevelChanges);
       originalToNewFn[&call] = new_call;
       return;
     }

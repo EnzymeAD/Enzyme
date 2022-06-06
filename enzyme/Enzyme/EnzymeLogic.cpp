@@ -4394,6 +4394,12 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
     }
   }
 
+  if (llvm::verifyFunction(*NewF, &llvm::errs())) {
+    llvm::errs() << *tobatch << "\n";
+    llvm::errs() << *NewF << "\n";
+    report_fatal_error("function failed verification (4)");
+  }
+
   delete batcher;
 
   return NewF;
