@@ -19,9 +19,8 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file contains an instruction visitor AdjointGenerator that generates
-// the corresponding augmented forward pass code, and adjoints for all
-// LLVM instructions.
+// This file contains an instruction visitor InstructionBatcher that generates
+// the batches all LLVM instructions.
 //
 //===----------------------------------------------------------------------===//
 
