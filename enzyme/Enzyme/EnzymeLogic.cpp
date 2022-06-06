@@ -4274,7 +4274,7 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
   }
 
   FunctionType *orig_FTy = tobatch->getFunctionType();
-  SmallVector<Type *, 0> params;
+  SmallVector<Type *, 4> params;
 
   for (unsigned i = 0; i < orig_FTy->getNumParams(); ++i) {
     if (arg_types[i] == BATCH_TYPE::VECTOR) {
@@ -4321,7 +4321,7 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
     Value *todo = *worklist.begin();
     worklist.erase(worklist.begin());
 
-    if (toVectorize.contains(todo)) {
+    if (toVectorize.count(todo) != 0) {
       continue;
     }
 
@@ -4362,7 +4362,7 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
   for (auto &bb : *tobatch) {
     IRBuilder<> Builder2(cast<BasicBlock>(originalToNewFn[&bb]));
     for (auto &phi : bb.phis()) {
-      if (toVectorize.contains(&phi)) {
+      if (toVectorize.count(&phi) != 0) {
         for (unsigned i = 0; i < width; ++i) {
           PHINode *placeholder = Builder2.CreatePHI(
               phi.getType(), 0,

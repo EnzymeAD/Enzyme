@@ -637,7 +637,7 @@ public:
     unsigned width = 1;
     unsigned truei = 0;
     std::map<unsigned, Value *> batchOffset;
-    SmallVector<Value *, 0> args;
+    SmallVector<Value *, 4> args;
     SmallVector<BATCH_TYPE, 0> arg_types;
     IRBuilder<> Builder(CI);
     Function *F;

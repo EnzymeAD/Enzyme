@@ -67,7 +67,7 @@ public:
     assert(found != originalToNewFn.end());
     BasicBlock *nBB = dyn_cast<BasicBlock>(&*found->second);
     IRBuilder<> Builder2 = IRBuilder<>(nBB);
-    unsigned actualWidth = toVectorize.contains(&inst) ? width : 1;
+    unsigned actualWidth = toVectorize.count(&inst) != 0 ? width : 1;
 
     for (unsigned i = 0; i < actualWidth; ++i) {
       ValueToValueMapTy vmap;
@@ -79,7 +79,7 @@ public:
         Value *new_op;
         if (isa<Constant>(op)) {
           new_op = op;
-        } else if (toVectorize.contains(op)) {
+        } else if (toVectorize.count(op) != 0) {
           new_op = vectorizedValues[op][i];
         } else {
           new_op = originalToNewFn[op];
@@ -93,7 +93,7 @@ public:
         Builder2.Insert(new_inst);
       }
       RemapInstruction(new_inst, vmap, RF_NoModuleLevelChanges);
-      if (toVectorize.contains(&inst)) {
+      if (toVectorize.count(&inst) != 0) {
         vectorizedValues[&inst].push_back(new_inst);
       } else {
         originalToNewFn[&inst] = new_inst;
@@ -106,7 +106,7 @@ public:
     BasicBlock *nBB = dyn_cast<BasicBlock>(&*found->second);
     IRBuilder<> Builder2 = IRBuilder<>(nBB);
 
-    unsigned actualWidth = toVectorize.contains(&phi) ? width : 1;
+    unsigned actualWidth = toVectorize.count(&phi) != 0 ? width : 1;
 
     for (unsigned i = 0; i < actualWidth; ++i) {
       ValueToValueMapTy vmap;
@@ -120,7 +120,7 @@ public:
         Value *new_val;
         if (isa<Constant>(orig_val)) {
           new_val = orig_val;
-        } else if (toVectorize.contains(orig_val)) {
+        } else if (toVectorize.count(orig_val) != 0) {
           new_val = vectorizedValues[orig_val][i];
         } else {
           new_val = originalToNewFn[orig_val];
@@ -131,7 +131,7 @@ public:
 
       RemapInstruction(new_phi, vmap, RF_NoModuleLevelChanges);
       Instruction *placeholder;
-      if (toVectorize.contains(&phi)) {
+      if (toVectorize.count(&phi) != 0) {
         placeholder = cast<Instruction>(vectorizedValues[&phi][i]);
       } else {
         placeholder = cast<Instruction>(originalToNewFn[&phi]);
@@ -139,7 +139,7 @@ public:
       ReplaceInstWithInst(placeholder, new_phi);
       new_phi->setName(phi.getName());
 
-      if (toVectorize.contains(&phi)) {
+      if (toVectorize.count(&phi) != 0) {
         vectorizedValues[&phi][i] = new_phi;
       } else {
         originalToNewFn[&phi] = new_phi;
@@ -148,7 +148,7 @@ public:
   }
 
   void visitSwitchInst(llvm::SwitchInst &inst) {
-    if (toVectorize.contains(inst.getCondition())) {
+    if (toVectorize.count(inst.getCondition()) != 0) {
       EmitFailure("SwitchConditionCannotBeVectorized", inst.getDebugLoc(),
                   &inst, "switch conditions have to be scalar values", inst);
       llvm_unreachable("vectorized control flow is not allowed");
@@ -173,7 +173,8 @@ public:
   }
 
   void visitBranchInst(llvm::BranchInst &branch) {
-    if (branch.isConditional() && toVectorize.contains(branch.getCondition())) {
+    if (branch.isConditional() &&
+        toVectorize.count(branch.getCondition()) != 0) {
       EmitFailure("BranchConditionCannotBeVectorized", branch.getDebugLoc(),
                   &branch, "branch conditions have to be scalar values",
                   branch);
@@ -209,7 +210,7 @@ public:
       Value *op = ret.getOperand(j);
       for (unsigned i = 0; i < width; ++i) {
         Value *new_op;
-        if (toVectorize.contains(op)) {
+        if (toVectorize.count(op) != 0) {
           new_op = vectorizedValues[op][i];
         } else {
           new_op = originalToNewFn[op];
@@ -235,7 +236,7 @@ public:
       return;
     }
 
-    if (!toVectorize.contains(&call)) {
+    if (!toVectorize.count(&call) != 0) {
       ValueToValueMapTy vmap;
       Instruction *new_call = call.clone();
       vmap[&call] = new_call;
@@ -265,7 +266,7 @@ public:
       // make sure this does not include the called func!
       Value *op = call.getArgOperand(j);
 
-      if (toVectorize.contains(op)) {
+      if (toVectorize.count(op) != 0) {
         Type *aggTy = GradientUtils::getShadowType(op->getType(), width);
         Value *agg = UndefValue::get(aggTy);
         for (unsigned i = 0; i < width; i++) {
