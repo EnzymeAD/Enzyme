@@ -4308,7 +4308,7 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
 
   for (unsigned i = 0; i < tobatch->getFunctionType()->getNumParams(); i++) {
     if (arg_types[i] == BATCH_TYPE::VECTOR) {
-      Argument *arg = tobatch->getArg(i);
+      Argument *arg = tobatch->arg_begin() + i;
       toVectorize.insert(arg);
 
       for (auto user : arg->users()) {
@@ -4344,9 +4344,9 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
   IRBuilder<> Builder2(&NewF->getEntryBlock());
 
   for (unsigned i = 0; i < FTy->getNumParams(); ++i) {
-    Argument *arg = NewF->getArg(i);
+    Argument *arg = NewF->arg_begin() + i;
     if (arg_types[i] == BATCH_TYPE::SCALAR) {
-      originalToNewFn[tobatch->getArg(i)] = arg;
+      originalToNewFn[tobatch->arg_begin() + i] = arg;
       continue;
     }
 
