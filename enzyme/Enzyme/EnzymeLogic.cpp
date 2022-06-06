@@ -4276,7 +4276,7 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
   FunctionType *orig_FTy = tobatch->getFunctionType();
   SmallVector<Type *, 0> params;
 
-  for (int i = 0; i < orig_FTy->getNumParams(); ++i) {
+  for (unsigned i = 0; i < orig_FTy->getNumParams(); ++i) {
     if (arg_types[i] == BATCH_TYPE::VECTOR) {
       Type *ty = GradientUtils::getShadowType(orig_FTy->getParamType(i), width);
       params.push_back(ty);
@@ -4292,6 +4292,8 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
       Function::Create(FTy, tobatch->getLinkage(),
                        "batch_" + tobatch->getName(), tobatch->getParent());
 
+  NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
+
   ValueToValueMapTy originalToNewFn;
 
   for (BasicBlock &BB : *tobatch) {
@@ -4300,10 +4302,11 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
     originalToNewFn[&BB] = newBB;
   }
 
+  // find instructions to vectorize
   SmallPtrSet<Value *, 4> toVectorize;
   SetVector<llvm::Value *, std::deque<llvm::Value *>> worklist;
 
-  for (int i = 0; i < tobatch->getFunctionType()->getNumParams(); i++) {
+  for (unsigned i = 0; i < tobatch->getFunctionType()->getNumParams(); i++) {
     if (arg_types[i] == BATCH_TYPE::VECTOR) {
       Argument *arg = tobatch->getArg(i);
       toVectorize.insert(arg);
@@ -4338,21 +4341,40 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
 
   // unwrap arguments
   ValueMap<const Value *, std::vector<Value *>> vectorizedValues;
-
   IRBuilder<> Builder2(&NewF->getEntryBlock());
-  for (int i = 0; i < FTy->getNumParams(); ++i) {
+
+  for (unsigned i = 0; i < FTy->getNumParams(); ++i) {
     Argument *arg = NewF->getArg(i);
     if (arg_types[i] == BATCH_TYPE::SCALAR) {
       originalToNewFn[tobatch->getArg(i)] = arg;
       continue;
     }
 
-    std::vector<Value *> args;
     for (unsigned j = 0; j < width; ++j) {
-      Value *argVecElem = Builder2.CreateExtractValue(arg, {j});
-      args.push_back(argVecElem);
+      Value *orig_arg = tobatch->getArg(i);
+      Value *argVecElem = Builder2.CreateExtractValue(
+          arg, {j}, "unwrap." + orig_arg->getName() + std::to_string(j));
+      vectorizedValues[orig_arg].push_back(argVecElem);
     }
-    vectorizedValues[tobatch->getArg(i)] = args;
+  }
+
+  // create placeholders for vectorized phi nodes
+  for (auto &bb : *tobatch) {
+    IRBuilder<> Builder2(cast<BasicBlock>(originalToNewFn[&bb]));
+    for (auto &phi : bb.phis()) {
+      if (toVectorize.contains(&phi)) {
+        for (unsigned i = 0; i < width; ++i) {
+          PHINode *placeholder = Builder2.CreatePHI(
+              phi.getType(), 0,
+              "placeholder." + phi.getName() + std::to_string(i));
+          vectorizedValues[&phi].push_back(placeholder);
+        }
+      } else {
+        PHINode *placeholder = Builder2.CreatePHI(
+            phi.getType(), 0, "placeholder." + phi.getName());
+        originalToNewFn[&phi] = placeholder;
+      }
+    }
   }
 
   InstructionBatcher *batcher =
@@ -4361,7 +4383,14 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
 
   for (BasicBlock &BB : *tobatch) {
     for (Instruction &I : BB) {
-      batcher->visit(I);
+      if (!isa<PHINode>(I))
+        batcher->visit(I);
+    }
+  }
+
+  for (BasicBlock &BB : *tobatch) {
+    for (PHINode &phi : BB.phis()) {
+      batcher->visit(phi);
     }
   }
 

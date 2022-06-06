@@ -16,23 +16,23 @@ entry:
 }
 
 
-; CHECK: define [4 x double] @batch_square_add([4 x double] %0, double %1)
+; CHECK: define internal [4 x double] @batch_square_add([4 x double] %0, double %1)
 ; CHECK-NEXT: entry:
-; CHECK:   %2 = extractvalue [4 x double] %0, 0
-; CHECK:   %3 = extractvalue [4 x double] %0, 1
-; CHECK:   %4 = extractvalue [4 x double] %0, 2
-; CHECK:   %5 = extractvalue [4 x double] %0, 3
-; CHECK:   %6 = fmul double %2, %2
-; CHECK:   %7 = fmul double %3, %3
-; CHECK:   %8 = fmul double %4, %4
-; CHECK:   %9 = fmul double %5, %5
-; CHECK:   %10 = fadd double %6, %1
-; CHECK:   %11 = fadd double %7, %1
-; CHECK:   %12 = fadd double %8, %1
-; CHECK:   %13 = fadd double %9, %1
-; CHECK:   %mrv = insertvalue [4 x double] undef, double %10, 0
-; CHECK:   %mrv1 = insertvalue [4 x double] %mrv, double %11, 1
-; CHECK:   %mrv2 = insertvalue [4 x double] %mrv1, double %12, 2
-; CHECK:   %mrv3 = insertvalue [4 x double] %mrv2, double %13, 3
-; CHECK:   ret [4 x double] %mrv3
-; CHECK: }
+; CHECK-NEXT:   %unwrap.x0 = extractvalue [4 x double] %0, 0
+; CHECK-NEXT:   %unwrap.x1 = extractvalue [4 x double] %0, 1
+; CHECK-NEXT:   %unwrap.x2 = extractvalue [4 x double] %0, 2
+; CHECK-NEXT:   %unwrap.x3 = extractvalue [4 x double] %0, 3
+; CHECK-NEXT:   %mul0 = fmul double %unwrap.x0, %unwrap.x0
+; CHECK-NEXT:   %mul1 = fmul double %unwrap.x1, %unwrap.x1
+; CHECK-NEXT:   %mul2 = fmul double %unwrap.x2, %unwrap.x2
+; CHECK-NEXT:   %mul3 = fmul double %unwrap.x3, %unwrap.x3
+; CHECK-NEXT:   %add0 = fadd double %mul0, %1
+; CHECK-NEXT:   %add1 = fadd double %mul1, %1
+; CHECK-NEXT:   %add2 = fadd double %mul2, %1
+; CHECK-NEXT:   %add3 = fadd double %mul3, %1
+; CHECK-NEXT:   %mrv = insertvalue [4 x double] undef, double %add0, 0
+; CHECK-NEXT:   %mrv1 = insertvalue [4 x double] %mrv, double %add1, 1
+; CHECK-NEXT:   %mrv2 = insertvalue [4 x double] %mrv1, double %add2, 2
+; CHECK-NEXT:   %mrv3 = insertvalue [4 x double] %mrv2, double %add3, 3
+; CHECK-NEXT:   ret [4 x double] %mrv3
+; CHECK-NEXT: }
