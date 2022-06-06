@@ -2,9 +2,8 @@
 
 declare void @_Z16__enzyme_fwddiff(...)
 
-; Function Attrs: mustprogress noinline nounwind optnone uwtable
 define void @_Z34testFwdDerivativesRosenbrockEnzymev(i8* %a, i8* %b) {
-  call void (...) @_Z16__enzyme_fwddiff(double (i64*)* noundef @f, metadata !"enzyme_dup", i8* %a, i8* %b)
+  call void (...) @_Z16__enzyme_fwddiff(double (i64*)* @f, metadata !"enzyme_dup", i8* %a, i8* %b)
   ret void
 }
 
