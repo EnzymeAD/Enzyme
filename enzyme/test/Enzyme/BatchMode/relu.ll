@@ -22,30 +22,27 @@ entry:
 declare [4 x double] @__enzyme_batch(...)
 
 
-; CHECK: define internal [4 x double] @batch_relu(double %0, [4 x double] %1)
+; CHECK: define internal [4 x double] @batch_relu(double %a, [4 x double] %0)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %unwrap.a0 = extractvalue [4 x double] %1, 0
-; CHECK-NEXT:   %unwrap.a1 = extractvalue [4 x double] %1, 1
-; CHECK-NEXT:   %unwrap.a2 = extractvalue [4 x double] %1, 2
-; CHECK-NEXT:   %unwrap.a3 = extractvalue [4 x double] %1, 3
-; CHECK-NEXT:   %cmp0 = fcmp fast ogt double %0, 0.000000e+00
-; CHECK-NEXT:   br i1 %cmp0, label %cond.true, label %cond.end
+; CHECK-NEXT:   %unwrap.a0 = extractvalue [4 x double] %0, 0
+; CHECK-NEXT:   %unwrap.a1 = extractvalue [4 x double] %0, 1
+; CHECK-NEXT:   %unwrap.a2 = extractvalue [4 x double] %0, 2
+; CHECK-NEXT:   %unwrap.a3 = extractvalue [4 x double] %0, 3
+; CHECK-NEXT:   %cmp = fcmp fast ogt double %a, 0.000000e+00
+; CHECK-NEXT:   br i1 %cmp, label %cond.true, label %cond.end
 
 ; CHECK: cond.true:                                        ; preds = %entry
-; CHECK-NEXT:   %ax0 = fmul double %0, %unwrap.a0
-; CHECK-NEXT:   %ax1 = fmul double %0, %unwrap.a1
-; CHECK-NEXT:   %ax2 = fmul double %0, %unwrap.a2
-; CHECK-NEXT:   %ax3 = fmul double %0, %unwrap.a3
-; CHECK-NEXT:   %mrv = insertvalue [4 x double] undef, double %ax0, 0
-; CHECK-NEXT:   %mrv1 = insertvalue [4 x double] %mrv, double %ax1, 1
-; CHECK-NEXT:   %mrv2 = insertvalue [4 x double] %mrv1, double %ax2, 2
-; CHECK-NEXT:   %mrv3 = insertvalue [4 x double] %mrv2, double %ax3, 3
+; CHECK-NEXT:   %ax = fmul double %a, %unwrap.a0
+; CHECK-NEXT:   %mrv = insertvalue [4 x double] undef, double %ax, 0
+; CHECK-NEXT:   %mrv1 = insertvalue [4 x double] %mrv, double %ax, 1
+; CHECK-NEXT:   %mrv2 = insertvalue [4 x double] %mrv1, double %ax, 2
+; CHECK-NEXT:   %mrv3 = insertvalue [4 x double] %mrv2, double %ax, 3
 ; CHECK-NEXT:   ret [4 x double] %mrv3
 
 ; CHECK: cond.end:                                         ; preds = %entry
-; CHECK-NEXT:   %mrv4 = insertvalue [4 x double] undef, double %0, 0
-; CHECK-NEXT:   %mrv5 = insertvalue [4 x double] %mrv4, double %0, 1
-; CHECK-NEXT:   %mrv6 = insertvalue [4 x double] %mrv5, double %0, 2
-; CHECK-NEXT:   %mrv7 = insertvalue [4 x double] %mrv6, double %0, 3
+; CHECK-NEXT:   %mrv4 = insertvalue [4 x double] undef, double %a, 0
+; CHECK-NEXT:   %mrv5 = insertvalue [4 x double] %mrv4, double %a, 1
+; CHECK-NEXT:   %mrv6 = insertvalue [4 x double] %mrv5, double %a, 2
+; CHECK-NEXT:   %mrv7 = insertvalue [4 x double] %mrv6, double %a, 3
 ; CHECK-NEXT:   ret [4 x double] %mrv7
 ; CHECK-NEXT: }

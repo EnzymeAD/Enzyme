@@ -22,20 +22,34 @@ entry:
 }
 
 
-; CHECK: define internal [4 x double] @batch_square([4 x double] %0, double %1)
+; CHECK: define internal [4 x double] @batch_square([4 x double] %x, double %0)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %unwrap.x0 = extractvalue [4 x double] %0, 0
-; CHECK-NEXT:   %unwrap.x1 = extractvalue [4 x double] %0, 1
-; CHECK-NEXT:   %unwrap.x2 = extractvalue [4 x double] %0, 2
-; CHECK-NEXT:   %unwrap.x3 = extractvalue [4 x double] %0, 3
-; CHECK-NEXT:   %call = call double @add3(double %1, double 3.000000e+00)
-; CHECK-NEXT:   %mul0 = fmul double %unwrap.x0, %call
-; CHECK-NEXT:   %mul1 = fmul double %unwrap.x1, %call
-; CHECK-NEXT:   %mul2 = fmul double %unwrap.x2, %call
-; CHECK-NEXT:   %mul3 = fmul double %unwrap.x3, %call
+; CHECK-NEXT:   %unwrap.x0 = extractvalue [4 x double] %x, 0
+; CHECK-NEXT:   %unwrap.x1 = extractvalue [4 x double] %x, 1
+; CHECK-NEXT:   %unwrap.x2 = extractvalue [4 x double] %x, 2
+; CHECK-NEXT:   %unwrap.x3 = extractvalue [4 x double] %x, 3
+; CHECK-NEXT:   %call = call [4 x double] @batch_add3(double %0, double 3.000000e+00)
+; CHECK-NEXT:   %unwrap.call0 = extractvalue [4 x double] %call, 0
+; CHECK-NEXT:   %unwrap.call1 = extractvalue [4 x double] %call, 1
+; CHECK-NEXT:   %unwrap.call2 = extractvalue [4 x double] %call, 2
+; CHECK-NEXT:   %unwrap.call3 = extractvalue [4 x double] %call, 3
+; CHECK-NEXT:   %mul0 = fmul double %unwrap.x0, %unwrap.call0
+; CHECK-NEXT:   %mul1 = fmul double %unwrap.x1, %unwrap.call1
+; CHECK-NEXT:   %mul2 = fmul double %unwrap.x2, %unwrap.call2
+; CHECK-NEXT:   %mul3 = fmul double %unwrap.x3, %unwrap.call3
 ; CHECK-NEXT:   %mrv = insertvalue [4 x double] undef, double %mul0, 0
 ; CHECK-NEXT:   %mrv1 = insertvalue [4 x double] %mrv, double %mul1, 1
 ; CHECK-NEXT:   %mrv2 = insertvalue [4 x double] %mrv1, double %mul2, 2
 ; CHECK-NEXT:   %mrv3 = insertvalue [4 x double] %mrv2, double %mul3, 3
+; CHECK-NEXT:   ret [4 x double] %mrv3
+; CHECK-NEXT: }
+
+; CHECK: define internal [4 x double] @batch_add3(double %0, double %1)
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   %add = fadd double %0, %1
+; CHECK-NEXT:   %mrv = insertvalue [4 x double] undef, double %add, 0
+; CHECK-NEXT:   %mrv1 = insertvalue [4 x double] %mrv, double %add, 1
+; CHECK-NEXT:   %mrv2 = insertvalue [4 x double] %mrv1, double %add, 2
+; CHECK-NEXT:   %mrv3 = insertvalue [4 x double] %mrv2, double %add, 3
 ; CHECK-NEXT:   ret [4 x double] %mrv3
 ; CHECK-NEXT: }

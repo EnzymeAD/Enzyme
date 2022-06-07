@@ -184,7 +184,8 @@ public:
     // TODO: handle debug intrinsics
     auto found = vectorizedValues.find(&call);
     assert(found != vectorizedValues.end());
-    CallInst *placeholder = cast<CallInst>(found->second[0]);
+    auto placeholders = found->second;
+    CallInst *placeholder = cast<CallInst>(placeholders[0]);
     IRBuilder<> Builder2(placeholder);
     Builder2.SetCurrentDebugLocation(DebugLoc());
 
@@ -220,14 +221,17 @@ public:
     new_call->setDebugLoc(placeholder->getDebugLoc());
 
     if (!call.getType()->isVoidTy()) {
-      placeholder->replaceAllUsesWith(new_call);
       for (unsigned i = 0; i < width; ++i) {
-        Value *ret = Builder2.CreateExtractValue(
+        Instruction *placeholder = dyn_cast<Instruction>(placeholders[i]);
+        ExtractValueInst *ret = ExtractValueInst::Create(
             new_call, {i},
             "unwrap" + (call.hasName() ? "." + call.getName() + Twine(i) : ""));
+        ReplaceInstWithInst(placeholder, ret);
         vectorizedValues[&call][i] = ret;
       }
+    } else {
+      placeholder->replaceAllUsesWith(new_call);
+      placeholder->eraseFromParent();
     }
-    placeholder->eraseFromParent();
   }
 };

@@ -15,12 +15,12 @@ entry:
 }
 
 
-; CHECK: define internal [4 x double] @batch_square([4 x double] %0)
+; CHECK: define internal [4 x double] @batch_square([4 x double] %x)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %unwrap.x0 = extractvalue [4 x double] %0, 0
-; CHECK-NEXT:   %unwrap.x1 = extractvalue [4 x double] %0, 1
-; CHECK-NEXT:   %unwrap.x2 = extractvalue [4 x double] %0, 2
-; CHECK-NEXT:   %unwrap.x3 = extractvalue [4 x double] %0, 3
+; CHECK-NEXT:   %unwrap.x0 = extractvalue [4 x double] %x, 0
+; CHECK-NEXT:   %unwrap.x1 = extractvalue [4 x double] %x, 1
+; CHECK-NEXT:   %unwrap.x2 = extractvalue [4 x double] %x, 2
+; CHECK-NEXT:   %unwrap.x3 = extractvalue [4 x double] %x, 3
 ; CHECK-NEXT:   %mul0 = fmul double %unwrap.x0, %unwrap.x0
 ; CHECK-NEXT:   %mul1 = fmul double %unwrap.x1, %unwrap.x1
 ; CHECK-NEXT:   %mul2 = fmul double %unwrap.x2, %unwrap.x2
