@@ -4349,23 +4349,24 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
     Value *todo = *worklist.begin();
     worklist.erase(worklist.begin());
 
+    if (isa<ConstantData>(todo))
+      continue;
+
     if (toVectorize.count(todo) != 0) {
       continue;
     }
 
     toVectorize.insert(todo);
 
-    if (auto store = dyn_cast<StoreInst>(todo)) {
-      Value *addr = store->getOperand(1);
-      worklist.insert(addr);
-    } else if (auto inst = dyn_cast<Instruction>(todo)) {
+    if (auto inst = dyn_cast<Instruction>(todo)) {
       for (auto user : inst->users()) {
+        worklist.insert(user);
+      }
+      for (auto &user : inst->operands()) {
         worklist.insert(user);
       }
     }
   }
-
-  dumpSet(toVectorize);
 
   // unwrap arguments
   ValueMap<const Value *, std::vector<Value *>> vectorizedValues;
