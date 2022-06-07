@@ -88,6 +88,7 @@ public:
       if (placeholders.size() == width) {
         Instruction *placeholder = cast<Instruction>(placeholders[i]);
         ReplaceInstWithInst(placeholder, new_inst);
+        vectorizedValues[&inst][i] = new_inst;
       } else if (placeholders.size() == 1) {
         Instruction *insertionPoint = placeholder->getNextNode()
                                           ? placeholder->getNextNode()
@@ -95,6 +96,7 @@ public:
         IRBuilder<> Builder2(insertionPoint);
         Builder2.SetCurrentDebugLocation(DebugLoc());
         Builder2.Insert(new_inst);
+        vectorizedValues[&inst].push_back(new_inst);
       } else {
         llvm_unreachable("Unexpected number of values in mapping");
       }
@@ -103,7 +105,6 @@ public:
 
       if (!inst.getType()->isVoidTy() && inst.hasName())
         new_inst->setName(inst.getName() + Twine(i));
-      vectorizedValues[&inst][i] = new_inst;
     }
   }
 

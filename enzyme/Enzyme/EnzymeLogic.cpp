@@ -4306,16 +4306,24 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
   PlaceholderBuilder.SetCurrentDebugLocation(DebugLoc());
   ValueToValueMapTy vmap;
   auto DestArg = NewF->arg_begin();
-  for (auto &arg : tobatch->args()) {
-    auto placeholder = PlaceholderBuilder.CreatePHI(
-        arg.getType(), 0, "placeholder." + arg.getName());
-    vmap[&arg] = placeholder;
-    DestArg->setName(arg.getName());
-    DestArg++;
+
+  for (unsigned i = 0; i < orig_FTy->getNumParams(); ++i) {
+    Argument *arg = tobatch->getArg(i);
+    if (arg_types[i] == BATCH_TYPE::VECTOR) {
+      auto placeholder = PlaceholderBuilder.CreatePHI(
+          arg->getType(), 0, "placeholder." + arg->getName());
+      vmap[arg] = placeholder;
+      DestArg->setName(arg->getName());
+      DestArg++;
+    } else {
+      vmap[arg] = NewF->getArg(i);
+    }
   }
 
   SmallVector<ReturnInst *, 4> Returns;
   CloneFunctionInto(NewF, tobatch, vmap, true, Returns);
+
+  NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
 
   // find instructions to vectorize
   SmallPtrSet<Value *, 32> toVectorize;
@@ -4331,6 +4339,11 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
       }
     }
   }
+
+  if (!NewF->getReturnType()->isVoidTy())
+    for (auto &BB : *tobatch)
+      if (auto ret = dyn_cast<ReturnInst>(BB.getTerminator()))
+        worklist.insert(ret);
 
   while (!worklist.empty()) {
     Value *todo = *worklist.begin();
@@ -4362,11 +4375,13 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
   for (unsigned i = 0; i < FTy->getNumParams(); ++i) {
     Argument *orig_arg = tobatch->arg_begin() + i;
     Argument *arg = NewF->arg_begin() + i;
-    Instruction *placeholder = cast<Instruction>(vmap[orig_arg]);
+
     if (arg_types[i] == BATCH_TYPE::SCALAR) {
       originalToNewFn[tobatch->arg_begin() + i] = arg;
       continue;
     }
+
+    Instruction *placeholder = cast<Instruction>(vmap[orig_arg]);
 
     for (unsigned j = 0; j < width; ++j) {
       ExtractValueInst *argVecElem =
