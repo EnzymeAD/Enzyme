@@ -201,6 +201,8 @@ const std::set<std::string> KnownInactiveFunctions = {
 };
 
 const char *DemangledKnownInactiveFunctionsStartingWith[] = {
+    "f90io",
+    "$ss5print",
     "fprintf",
     "std::string",
     "std::cerr",
