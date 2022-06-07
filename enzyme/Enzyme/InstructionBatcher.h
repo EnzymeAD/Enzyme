@@ -181,6 +181,7 @@ public:
 
   void visitCallInst(llvm::CallInst &call) {
     // TODO: indirect call
+    // TODO: handle debug intrinsics
     auto found = vectorizedValues.find(&call);
     assert(found != vectorizedValues.end());
     CallInst *placeholder = cast<CallInst>(found->second[0]);
@@ -212,7 +213,7 @@ public:
       }
     }
 
-    Function *orig_func = call.getCalledFunction();
+    Function *orig_func = getFunctionFromCall(&call);
     Function *new_func = Logic.CreateBatch(orig_func, width, arg_types);
     CallInst *new_call = Builder2.CreateCall(new_func->getFunctionType(),
                                              new_func, args, call.getName());
