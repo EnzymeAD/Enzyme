@@ -51,7 +51,7 @@ private:
   const DerivativeMode Mode;
 
   GradientUtils *const gutils;
-  const std::vector<DIFFE_TYPE> &constant_args;
+  ArrayRef<DIFFE_TYPE> constant_args;
   DIFFE_TYPE retType;
   TypeResults &TR = gutils->TR;
   std::function<unsigned(Instruction *, CacheType)> getIndex;
@@ -70,7 +70,7 @@ private:
 public:
   AdjointGenerator(
       DerivativeMode Mode, GradientUtils *gutils,
-      const std::vector<DIFFE_TYPE> &constant_args, DIFFE_TYPE retType,
+      ArrayRef<DIFFE_TYPE> constant_args, DIFFE_TYPE retType,
       std::function<unsigned(Instruction *, CacheType)> getIndex,
       const std::map<CallInst *, const std::map<Argument *, bool>>
           uncacheable_args_map,
@@ -1747,9 +1747,9 @@ public:
     return ((DiffeGradientUtils *)gutils)->FreeMemory;
   }
 
-  std::vector<SelectInst *> addToDiffe(Value *val, Value *dif,
-                                       IRBuilder<> &Builder, Type *T,
-                                       Value *mask = nullptr) {
+  SmallVector<SelectInst *, 4> addToDiffe(Value *val, Value *dif,
+                                          IRBuilder<> &Builder, Type *T,
+                                          Value *mask = nullptr) {
     return ((DiffeGradientUtils *)gutils)
         ->addToDiffe(val, dif, Builder, T, /*idxs*/ {}, mask);
   }
@@ -1760,8 +1760,6 @@ public:
 
   void visitBinaryOperator(llvm::BinaryOperator &BO) {
     eraseIfUnused(BO);
-    if (gutils->isConstantInstruction(&BO))
-      return;
 
     size_t size = 1;
     if (BO.getType()->isSized())
@@ -1778,6 +1776,8 @@ public:
     switch (Mode) {
     case DerivativeMode::ReverseModeGradient:
     case DerivativeMode::ReverseModeCombined:
+      if (gutils->isConstantInstruction(&BO))
+        return;
       createBinaryOperatorAdjoint(BO);
       break;
     case DerivativeMode::ForwardMode:
@@ -2255,6 +2255,11 @@ public:
   }
 
   void createBinaryOperatorDual(llvm::BinaryOperator &BO) {
+    if (gutils->isConstantInstruction(&BO)) {
+      forwardModeInvertedPointerFallback(BO);
+      return;
+    }
+
     IRBuilder<> Builder2(&BO);
     getForwardBuilder(Builder2);
 
@@ -3914,7 +3919,7 @@ public:
         auto rule = [&](Value *dif0, Value *dif1, Value *dif2) {
           Value *dif = Builder2.CreateFAdd(Builder2.CreateFMul(op0, dif1),
                                            Builder2.CreateFMul(op1, dif0));
-          return Builder2.CreateFAdd(dif, dif0);
+          return Builder2.CreateFAdd(dif, dif2);
         };
 
         Value *dif =
@@ -4285,11 +4290,11 @@ public:
     SmallVector<Value *, 8> pre_args = {0, 0, 0};
     std::vector<DIFFE_TYPE> argsInverted = {DIFFE_TYPE::CONSTANT,
                                             DIFFE_TYPE::CONSTANT};
-    std::vector<Instruction *> postCreate;
-    std::vector<Instruction *> userReplace;
+    SmallVector<Instruction *, 4> postCreate;
+    SmallVector<Instruction *, 4> userReplace;
 
-    SmallVector<Value *, 0> OutTypes;
-    SmallVector<Type *, 0> OutFPTypes;
+    SmallVector<Value *, 4> OutTypes;
+    SmallVector<Type *, 4> OutFPTypes;
 
 #if LLVM_VERSION_MAJOR >= 14
     for (unsigned i = 3; i < call.arg_size(); ++i)
@@ -4440,7 +4445,7 @@ public:
           newcalled = CloneFunction(newcalled, VMap);
           auto tapeArg = newcalled->arg_end();
           tapeArg--;
-          std::vector<std::pair<ssize_t, Value *>> geps;
+          SmallVector<std::pair<ssize_t, Value *>, 4> geps;
           SmallPtrSet<Instruction *, 4> gepsToErase;
           for (auto a : tapeArg->users()) {
             if (auto gep = dyn_cast<GetElementPtrInst>(a)) {
@@ -4653,7 +4658,7 @@ public:
             tape = cast<LoadInst>(u);
           }
           assert(tape);
-          std::vector<Value *> extracts;
+          SmallVector<Value *, 4> extracts;
           if (subdata->tapeIndices.size() == 1) {
             assert(subdata->tapeIndices.begin()->second == -1);
             extracts.push_back(tape);
@@ -4662,7 +4667,7 @@ public:
               extracts.push_back(a);
             }
           }
-          std::vector<LoadInst *> geps;
+          SmallVector<LoadInst *, 4> geps;
           for (auto E : extracts) {
             AllocaInst *AI = nullptr;
             for (auto U : E->users()) {
@@ -6295,7 +6300,8 @@ public:
         {
           auto found = gutils->reverseBlockToPrimal.find(endBlock);
           assert(found != gutils->reverseBlockToPrimal.end());
-          std::vector<BasicBlock *> &vec = gutils->reverseBlocks[found->second];
+          SmallVector<BasicBlock *, 4> &vec =
+              gutils->reverseBlocks[found->second];
           assert(vec.size());
           vec.push_back(endBlock);
         }
@@ -6494,7 +6500,8 @@ public:
         {
           auto found = gutils->reverseBlockToPrimal.find(endBlock);
           assert(found != gutils->reverseBlockToPrimal.end());
-          std::vector<BasicBlock *> &vec = gutils->reverseBlocks[found->second];
+          SmallVector<BasicBlock *, 4> &vec =
+              gutils->reverseBlocks[found->second];
           assert(vec.size());
           vec.push_back(endBlock);
         }
@@ -8314,7 +8321,9 @@ public:
     assert(uncacheable_args_map.find(&call) != uncacheable_args_map.end() ||
            Mode == DerivativeMode::ForwardMode);
     const std::map<Argument *, bool> &uncacheable_args =
-        uncacheable_args_map.find(&call)->second;
+        Mode == DerivativeMode::ForwardMode
+            ? std::map<Argument *, bool>()
+            : uncacheable_args_map.find(&call)->second;
 
     CallInst *orig = &call;
 
@@ -11459,7 +11468,7 @@ public:
             cast<Function>(called), subretType, argsInverted,
             TR.analyzer.interprocedural, /*returnValue*/ subretused, Mode,
             ((DiffeGradientUtils *)gutils)->FreeMemory, gutils->getWidth(),
-            tape ? tape->getType() : nullptr, nextTypeInfo, {},
+            tape ? tape->getType() : nullptr, nextTypeInfo, uncacheable_args,
             /*augmented*/ subdata);
       } else {
 #if LLVM_VERSION_MAJOR >= 11
@@ -11578,8 +11587,8 @@ public:
     SmallVector<Value *, 8> args;
     SmallVector<Value *, 8> pre_args;
     std::vector<DIFFE_TYPE> argsInverted;
-    std::vector<Instruction *> postCreate;
-    std::vector<Instruction *> userReplace;
+    SmallVector<Instruction *, 4> postCreate;
+    SmallVector<Instruction *, 4> userReplace;
     std::map<int, Type *> preByVal;
     std::map<int, Type *> gradByVal;
 
