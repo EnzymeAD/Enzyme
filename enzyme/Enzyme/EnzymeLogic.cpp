@@ -4325,7 +4325,7 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
 
   NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
 
-  // find instructions to vectorize
+  // find instructions to vectorize (going up / overestimation)
   SmallPtrSet<Value *, 32> toVectorize;
   SetVector<llvm::Value *, std::deque<llvm::Value *>> worklist;
 
@@ -4352,6 +4352,9 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
     if (isa<ConstantData>(todo))
       continue;
 
+    if (isa<Argument>(todo))
+      continue;
+
     if (toVectorize.count(todo) != 0) {
       continue;
     }
@@ -4364,6 +4367,51 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
       }
       for (auto &user : inst->operands()) {
         worklist.insert(user);
+      }
+    }
+  }
+
+  // find instructions to vectorize (going down / refine)
+  SetVector<llvm::Value *, std::deque<llvm::Value *>> refinelist;
+
+  for (unsigned i = 0; i < tobatch->getFunctionType()->getNumParams(); i++) {
+    if (arg_types[i] == BATCH_TYPE::SCALAR) {
+      Argument *arg = tobatch->arg_begin() + i;
+
+      for (auto user : arg->users()) {
+        refinelist.insert(user);
+      }
+    }
+  }
+
+  while (!refinelist.empty()) {
+    Value *todo = *refinelist.begin();
+    refinelist.erase(refinelist.begin());
+
+    if (isa<ReturnInst>(todo))
+      continue;
+
+    if (isa<CallInst>(todo))
+      continue;
+
+    if (auto todo_inst = dyn_cast<Instruction>(todo)) {
+
+      if (todo_inst->mayReadOrWriteMemory())
+        continue;
+
+      bool br = false;
+      for (auto &arg : todo_inst->operands()) {
+        if (toVectorize.count(arg) != 0)
+          br = true;
+        break;
+      }
+
+      if (br)
+        break;
+
+      toVectorize.erase(todo);
+      for (auto user : todo_inst->users()) {
+        refinelist.insert(user);
       }
     }
   }
