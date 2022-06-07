@@ -254,19 +254,19 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
     return true;
 
   std::string demangledName = llvm::demangle(Name.str());
-    auto dName = StringRef(demangledName);
-    for (auto FuncName : DemangledKnownInactiveFunctionsStartingWith) {
-      if (dName.startswith(FuncName)) {
-        return true;
-      }
+  auto dName = StringRef(demangledName);
+  for (auto FuncName : DemangledKnownInactiveFunctionsStartingWith) {
+    if (dName.startswith(FuncName)) {
+      return true;
     }
-    if (demangledName == Name.str()) {
-      // Either demangeling failed
-      // or they are equal but matching failed
-      // if (!Name.startswith("llvm."))
-      //  llvm::errs() << "matching failed: " << Name.str() << " "
-      //               << demangledName << "\n";
-    }
+  }
+  if (demangledName == Name.str()) {
+    // Either demangeling failed
+    // or they are equal but matching failed
+    // if (!Name.startswith("llvm."))
+    //  llvm::errs() << "matching failed: " << Name.str() << " "
+    //               << demangledName << "\n";
+  }
 
   for (auto FuncName : KnownInactiveFunctionsContains) {
     if (Name.contains(FuncName)) {
