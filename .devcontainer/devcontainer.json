@@ -9,10 +9,6 @@
         "source=enzyme-extensions-insiders,target=/root/.vscode-server-insiders/extensions,type=volume",
         "source=enzyme-build,target=${containerWorkspaceFolder}/enzyme/build,type=volume",
     ],
-<<<<<<< HEAD
     "postCreateCommand": "sudo chown vscode ./enzyme/build",
     "runArgs": ["--cap-add=SYS_PTRACE", "--security-opt", "seccomp=unconfined"]
-=======
-    "postCreateCommand": "sudo git config --global --add safe.directory /workspaces/Enzyme &&  sudo chown vscode ./enzyme/build"
->>>>>>> 494283c8 (need to add directory as safe when building container)
 }
