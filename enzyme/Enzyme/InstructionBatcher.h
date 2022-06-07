@@ -62,16 +62,15 @@ private:
 
 public:
   void visitInstruction(llvm::Instruction &inst) {
-    auto found = originalToNewFn.find(inst.getParent());
-    assert(found != originalToNewFn.end());
-    BasicBlock *nBB = dyn_cast<BasicBlock>(&*found->second);
-    IRBuilder<> Builder2 = IRBuilder<>(nBB);
-    unsigned actualWidth = toVectorize.count(&inst) != 0 ? width : 1;
+    auto found = vectorizedValues.find(&inst);
+    assert(found != vectorizedValues.end());
+    auto placeholders = found->second;
+    Instruction *placeholder = cast<Instruction>(placeholders[0]);
 
-    for (unsigned i = 0; i < actualWidth; ++i) {
+    for (unsigned i = 1; i < width; ++i) {
       ValueToValueMapTy vmap;
-      Instruction *new_inst = inst.clone();
-      vmap[&inst] = new_inst;
+      Instruction *new_inst = placeholder->clone();
+      vmap[placeholder] = new_inst;
 
       for (unsigned j = 0; j < inst.getNumOperands(); ++j) {
         Value *op = inst.getOperand(j);
@@ -83,34 +82,38 @@ public:
         } else {
           new_op = originalToNewFn[op];
         }
-        vmap[op] = new_op;
+        vmap[placeholder->getOperand(j)] = new_op;
       }
 
-      if (!inst.getType()->isVoidTy() && inst.hasName()) {
-        Builder2.Insert(new_inst, inst.getName() + std::to_string(i));
-      } else {
+      if (placeholders.size() == width) {
+        Instruction *placeholder = cast<Instruction>(placeholders[i]);
+        ReplaceInstWithInst(placeholder, new_inst);
+      } else if (placeholders.size() == 1) {
+        Instruction *insertionPoint = placeholder->getNextNode()
+                                          ? placeholder->getNextNode()
+                                          : placeholder;
+        IRBuilder<> Builder2(insertionPoint);
+        Builder2.SetCurrentDebugLocation(DebugLoc());
         Builder2.Insert(new_inst);
-      }
-      RemapInstruction(new_inst, vmap, RF_NoModuleLevelChanges);
-      if (toVectorize.count(&inst) != 0) {
-        vectorizedValues[&inst].push_back(new_inst);
       } else {
-        originalToNewFn[&inst] = new_inst;
+        llvm_unreachable("Unexpected number of values in mapping");
       }
+
+      RemapInstruction(new_inst, vmap, RF_NoModuleLevelChanges);
+
+      if (!inst.getType()->isVoidTy() && inst.hasName())
+        new_inst->setName(inst.getName() + Twine(i));
+      vectorizedValues[&inst][i] = new_inst;
     }
   }
 
   void visitPHINode(PHINode &phi) {
-    auto found = originalToNewFn.find(phi.getParent());
-    BasicBlock *nBB = dyn_cast<BasicBlock>(&*found->second);
-    IRBuilder<> Builder2 = IRBuilder<>(nBB);
+    PHINode *placeholder = cast<PHINode>(vectorizedValues[&phi][0]);
 
-    unsigned actualWidth = toVectorize.count(&phi) != 0 ? width : 1;
-
-    for (unsigned i = 0; i < actualWidth; ++i) {
+    for (unsigned i = 1; i < width; ++i) {
       ValueToValueMapTy vmap;
-      Instruction *new_phi = phi.clone();
-      vmap[&phi] = new_phi;
+      Instruction *new_phi = placeholder->clone();
+      vmap[placeholder] = new_phi;
 
       for (unsigned j = 0; j < phi.getNumIncomingValues(); ++j) {
         Value *orig_block = phi.getIncomingBlock(j);
@@ -119,83 +122,31 @@ public:
         Value *new_val;
         if (isa<Constant>(orig_val)) {
           new_val = orig_val;
-        } else if (toVectorize.count(orig_val) != 0) {
-          new_val = vectorizedValues[orig_val][i];
         } else {
-          new_val = originalToNewFn[orig_val];
+          new_val = vectorizedValues[orig_val][i];
         }
-        vmap[orig_val] = new_val;
-        vmap[orig_block] = new_block;
+        vmap[placeholder->getIncomingValue(j)] = new_val;
+        vmap[new_block] = new_block;
       }
 
       RemapInstruction(new_phi, vmap, RF_NoModuleLevelChanges);
-      Instruction *placeholder;
-      if (toVectorize.count(&phi) != 0) {
-        placeholder = cast<Instruction>(vectorizedValues[&phi][i]);
-      } else {
-        placeholder = cast<Instruction>(originalToNewFn[&phi]);
-      }
+      Instruction *placeholder = cast<Instruction>(vectorizedValues[&phi][i]);
       ReplaceInstWithInst(placeholder, new_phi);
       new_phi->setName(phi.getName());
-
-      if (toVectorize.count(&phi) != 0) {
-        vectorizedValues[&phi][i] = new_phi;
-      } else {
-        originalToNewFn[&phi] = new_phi;
-      }
+      vectorizedValues[&phi][i] = new_phi;
     }
   }
 
   void visitSwitchInst(llvm::SwitchInst &inst) {
-    if (toVectorize.count(inst.getCondition()) != 0) {
-      EmitFailure("SwitchConditionCannotBeVectorized", inst.getDebugLoc(),
-                  &inst, "switch conditions have to be scalar values", inst);
-      llvm_unreachable("vectorized control flow is not allowed");
-    }
-
-    auto found = originalToNewFn.find(inst.getParent());
-    BasicBlock *nBB = dyn_cast<BasicBlock>(&*found->second);
-    IRBuilder<> Builder2 = IRBuilder<>(nBB);
-
-    Instruction *new_switch = inst.clone();
-    ValueToValueMapTy vmap;
-    vmap[&inst] = new_switch;
-
-    for (unsigned j = 0; j < inst.getNumOperands(); ++j) {
-      Value *op = inst.getOperand(j);
-      Value *new_op = originalToNewFn[op];
-      vmap[op] = new_op;
-    }
-
-    Builder2.Insert(new_switch, inst.getName());
-    RemapInstruction(new_switch, vmap, RF_NoModuleLevelChanges);
+    EmitFailure("SwitchConditionCannotBeVectorized", inst.getDebugLoc(), &inst,
+                "switch conditions have to be scalar values", inst);
+    llvm_unreachable("vectorized control flow is not allowed");
   }
 
   void visitBranchInst(llvm::BranchInst &branch) {
-    if (branch.isConditional() &&
-        toVectorize.count(branch.getCondition()) != 0) {
-      EmitFailure("BranchConditionCannotBeVectorized", branch.getDebugLoc(),
-                  &branch, "branch conditions have to be scalar values",
-                  branch);
-      llvm_unreachable("vectorized control flow is not allowed");
-    }
-
-    auto found = originalToNewFn.find(branch.getParent());
-    BasicBlock *nBB = dyn_cast<BasicBlock>(&*found->second);
-    IRBuilder<> Builder2 = IRBuilder<>(nBB);
-
-    Instruction *new_branch = branch.clone();
-    ValueToValueMapTy vmap;
-    vmap[&branch] = new_branch;
-
-    for (unsigned j = 0; j < branch.getNumOperands(); ++j) {
-      Value *op = branch.getOperand(j);
-      Value *new_op = originalToNewFn[op];
-      vmap[op] = new_op;
-    }
-
-    Builder2.Insert(new_branch);
-    RemapInstruction(new_branch, vmap, RF_NoModuleLevelChanges);
+    EmitFailure("BranchConditionCannotBeVectorized", branch.getDebugLoc(),
+                &branch, "branch conditions have to be scalar values", branch);
+    llvm_unreachable("vectorized control flow is not allowed");
   }
 
   void visitReturnInst(llvm::ReturnInst &ret) {
@@ -203,6 +154,8 @@ public:
     assert(found != originalToNewFn.end());
     BasicBlock *nBB = dyn_cast<BasicBlock>(&*found->second);
     IRBuilder<> Builder2 = IRBuilder<>(nBB);
+    Builder2.SetCurrentDebugLocation(DebugLoc());
+    ReturnInst *placeholder = cast<ReturnInst>(nBB->getTerminator());
     SmallVector<Value *, 4> rets;
 
     for (unsigned j = 0; j < ret.getNumOperands(); ++j) {
@@ -218,51 +171,25 @@ public:
       }
     }
 
-    if (ret.getNumOperands() == 0) {
-      Builder2.CreateRetVoid();
-    } else {
-      Builder2.CreateAggregateRet(rets.data(), width);
+    if (ret.getNumOperands() != 0) {
+      auto ret = Builder2.CreateAggregateRet(rets.data(), width);
+      ret->setDebugLoc(placeholder->getDebugLoc());
+      placeholder->eraseFromParent();
     }
   }
 
   void visitCallInst(llvm::CallInst &call) {
-    auto found = originalToNewFn.find(call.getParent());
-    assert(found != originalToNewFn.end());
-    BasicBlock *nBB = dyn_cast<BasicBlock>(&*found->second);
-    IRBuilder<> Builder2 = IRBuilder<>(nBB);
-
-    if (call.isDebugOrPseudoInst()) {
-      return;
-    }
-
-    if (toVectorize.count(&call) == 0) {
-      ValueToValueMapTy vmap;
-      Instruction *new_call = call.clone();
-      vmap[&call] = new_call;
-
-      for (unsigned j = 0; j < call.getNumArgOperands(); ++j) {
-        Value *arg = call.getArgOperand(j);
-        Value *new_arg;
-        if (isa<Constant>(arg)) {
-          new_arg = arg;
-        } else {
-          new_arg = originalToNewFn[arg];
-          assert(originalToNewFn.find(arg) != originalToNewFn.end());
-        }
-        vmap[arg] = new_arg;
-      }
-
-      Builder2.Insert(new_call, call.getName());
-      RemapInstruction(new_call, vmap, RF_NoModuleLevelChanges);
-      originalToNewFn[&call] = new_call;
-      return;
-    }
+    // TODO: indirect call
+    auto found = vectorizedValues.find(&call);
+    assert(found != vectorizedValues.end());
+    CallInst *placeholder = cast<CallInst>(found->second[0]);
+    IRBuilder<> Builder2(placeholder);
+    Builder2.SetCurrentDebugLocation(DebugLoc());
 
     SmallVector<Value *, 4> args;
     SmallVector<BATCH_TYPE, 4> arg_types;
 
     for (unsigned j = 0; j < call.getNumArgOperands(); ++j) {
-      // make sure this does not include the called func!
       Value *op = call.getArgOperand(j);
 
       if (toVectorize.count(op) != 0) {
@@ -288,13 +215,17 @@ public:
     Function *new_func = Logic.CreateBatch(orig_func, width, arg_types);
     CallInst *new_call = Builder2.CreateCall(new_func->getFunctionType(),
                                              new_func, args, call.getName());
+    new_call->setDebugLoc(placeholder->getDebugLoc());
 
-    if (!call.getFunctionType()->getReturnType()->isVoidTy()) {
+    if (!call.getType()->isVoidTy()) {
+      placeholder->replaceAllUsesWith(new_call);
       for (unsigned i = 0; i < width; ++i) {
         Value *ret = Builder2.CreateExtractValue(
-            new_call, {i}, "unwrap." + call.getName() + std::to_string(i));
-        vectorizedValues[&call].push_back(ret);
+            new_call, {i},
+            "unwrap" + (call.hasName() ? "." + call.getName() + Twine(i) : ""));
+        vectorizedValues[&call][i] = ret;
       }
     }
+    placeholder->eraseFromParent();
   }
 };

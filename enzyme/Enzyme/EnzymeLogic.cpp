@@ -4275,6 +4275,8 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
 
   FunctionType *orig_FTy = tobatch->getFunctionType();
   SmallVector<Type *, 4> params;
+  unsigned numVecParams =
+      std::count(arg_types.begin(), arg_types.end(), BATCH_TYPE::VECTOR);
 
   for (unsigned i = 0; i < orig_FTy->getNumParams(); ++i) {
     if (arg_types[i] == BATCH_TYPE::VECTOR) {
@@ -4296,14 +4298,27 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
 
   ValueToValueMapTy originalToNewFn;
 
-  for (BasicBlock &BB : *tobatch) {
-    BasicBlock *newBB =
-        BasicBlock::Create(NewF->getContext(), BB.getName(), NewF);
-    originalToNewFn[&BB] = newBB;
+  BasicBlock *placeholderBB =
+      BasicBlock::Create(NewF->getContext(), "placeholders", NewF);
+
+  // Create placeholder for the old arguments
+  IRBuilder<> PlaceholderBuilder(placeholderBB);
+  PlaceholderBuilder.SetCurrentDebugLocation(DebugLoc());
+  ValueToValueMapTy vmap;
+  auto DestArg = NewF->arg_begin();
+  for (auto &arg : tobatch->args()) {
+    auto placeholder = PlaceholderBuilder.CreatePHI(
+        arg.getType(), 0, "placeholder." + arg.getName());
+    vmap[&arg] = placeholder;
+    DestArg->setName(arg.getName());
+    DestArg++;
   }
 
+  SmallVector<ReturnInst *, 4> Returns;
+  CloneFunctionInto(NewF, tobatch, vmap, true, Returns);
+
   // find instructions to vectorize
-  SmallPtrSet<Value *, 4> toVectorize;
+  SmallPtrSet<Value *, 32> toVectorize;
   SetVector<llvm::Value *, std::deque<llvm::Value *>> worklist;
 
   for (unsigned i = 0; i < tobatch->getFunctionType()->getNumParams(); i++) {
@@ -4329,9 +4344,7 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
 
     if (auto store = dyn_cast<StoreInst>(todo)) {
       Value *addr = store->getOperand(1);
-      for (auto user : addr->users()) {
-        worklist.insert(user);
-      }
+      worklist.insert(addr);
     } else if (auto inst = dyn_cast<Instruction>(todo)) {
       for (auto user : inst->users()) {
         worklist.insert(user);
@@ -4339,40 +4352,81 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
     }
   }
 
+  dumpSet(toVectorize);
+
   // unwrap arguments
   ValueMap<const Value *, std::vector<Value *>> vectorizedValues;
-  IRBuilder<> Builder2(&NewF->getEntryBlock());
-
+  auto entry = std::next(NewF->begin());
+  IRBuilder<> Builder2(entry->getFirstNonPHIOrDbg());
+  Builder2.SetCurrentDebugLocation(DebugLoc());
   for (unsigned i = 0; i < FTy->getNumParams(); ++i) {
+    Argument *orig_arg = tobatch->arg_begin() + i;
     Argument *arg = NewF->arg_begin() + i;
+    Instruction *placeholder = cast<Instruction>(vmap[orig_arg]);
     if (arg_types[i] == BATCH_TYPE::SCALAR) {
       originalToNewFn[tobatch->arg_begin() + i] = arg;
       continue;
     }
 
     for (unsigned j = 0; j < width; ++j) {
-      Value *orig_arg = tobatch->arg_begin() + j;
-      Value *argVecElem = Builder2.CreateExtractValue(
-          arg, {j}, "unwrap." + orig_arg->getName() + std::to_string(j));
+      ExtractValueInst *argVecElem =
+          cast<ExtractValueInst>(Builder2.CreateExtractValue(
+              arg, {j},
+              "unwrap" + (orig_arg->hasName()
+                              ? "." + orig_arg->getName() + Twine(j)
+                              : "")));
+      if (j == 0) {
+        placeholder->replaceAllUsesWith(argVecElem);
+        placeholder->eraseFromParent();
+      }
       vectorizedValues[orig_arg].push_back(argVecElem);
     }
   }
 
-  // create placeholders for vectorized phi nodes
-  for (auto &bb : *tobatch) {
-    IRBuilder<> Builder2(cast<BasicBlock>(originalToNewFn[&bb]));
-    for (auto &phi : bb.phis()) {
-      if (toVectorize.count(&phi) != 0) {
-        for (unsigned i = 0; i < width; ++i) {
-          PHINode *placeholder = Builder2.CreatePHI(
-              phi.getType(), 0,
-              "placeholder." + phi.getName() + std::to_string(i));
-          vectorizedValues[&phi].push_back(placeholder);
+  placeholderBB->eraseFromParent();
+
+  // update mapping with cloned basic blocks
+  for (auto i = tobatch->begin(), j = NewF->begin();
+       i != tobatch->end() && j != NewF->end(); ++i, ++j) {
+    originalToNewFn[&*i] = &*j;
+  }
+
+  // update mapping with cloned scalar values and the first vectorized values
+  auto J = inst_begin(NewF);
+  // skip the unwrapped vector params
+  std::advance(J, width * numVecParams);
+  for (auto I = inst_begin(tobatch);
+       I != inst_end(tobatch) && J != inst_end(NewF); ++I) {
+    if (toVectorize.count(&*I) != 0) {
+      vectorizedValues[&*I].push_back(&*J);
+      ++J;
+    } else {
+      originalToNewFn[&*I] = &*J;
+      ++J;
+    }
+  }
+
+  // create placeholders for vector instructions 1..<n
+  for (BasicBlock &BB : *tobatch) {
+    for (Instruction &I : BB) {
+      if (I.getType()->isVoidTy())
+        continue;
+
+      auto found = vectorizedValues.find(&I);
+      if (found != vectorizedValues.end()) {
+        Instruction *new_val_1 = cast<Instruction>(found->second.front());
+        if (I.hasName())
+          new_val_1->setName(I.getName() + "0");
+        Instruction *insertPoint =
+            new_val_1->getNextNode() ? new_val_1->getNextNode() : new_val_1;
+        IRBuilder<> Builder2(insertPoint);
+        Builder2.SetCurrentDebugLocation(DebugLoc());
+        for (unsigned i = 1; i < width; ++i) {
+          PHINode *placeholder = Builder2.CreatePHI(I.getType(), 0);
+          vectorizedValues[&I].push_back(placeholder);
+          if (I.hasName())
+            placeholder->setName("placeholder." + I.getName() + Twine(i));
         }
-      } else {
-        PHINode *placeholder = Builder2.CreatePHI(
-            phi.getType(), 0, "placeholder." + phi.getName());
-        originalToNewFn[&phi] = placeholder;
       }
     }
   }
@@ -4381,17 +4435,9 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
       new InstructionBatcher(tobatch, NewF, width, vectorizedValues,
                              originalToNewFn, toVectorize, *this);
 
-  for (BasicBlock &BB : *tobatch) {
-    for (Instruction &I : BB) {
-      if (!isa<PHINode>(I))
-        batcher->visit(I);
-    }
-  }
-
-  for (BasicBlock &BB : *tobatch) {
-    for (PHINode &phi : BB.phis()) {
-      batcher->visit(phi);
-    }
+  for (auto val : toVectorize) {
+    if (auto inst = dyn_cast<Instruction>(val))
+      batcher->visit(inst);
   }
 
   if (llvm::verifyFunction(*NewF, &llvm::errs())) {
