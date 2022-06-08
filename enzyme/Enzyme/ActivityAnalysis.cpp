@@ -204,6 +204,7 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     "f90io",
     "$ss5print",
     "fprintf",
+    "std::allocator",
     "std::string",
     "std::cerr",
     "std::basic_ios",
