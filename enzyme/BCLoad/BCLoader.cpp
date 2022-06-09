@@ -136,7 +136,7 @@ llvmGetPassPluginInfo() {
       PB.registerPipelineParsingCallback(
         [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
            llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
-          if(Name == "BCPass"){
+          if(Name == "bcloader"){
             MPM.addPass(BCLoaderNew());
             return true;
           }
