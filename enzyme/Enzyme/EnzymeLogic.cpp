@@ -4275,7 +4275,7 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
 
   FunctionType *orig_FTy = tobatch->getFunctionType();
   SmallVector<Type *, 4> params;
-  unsigned numVecParams =
+  unsigned long numVecParams =
       std::count(arg_types.begin(), arg_types.end(), BATCH_TYPE::VECTOR);
 
   for (unsigned i = 0; i < orig_FTy->getNumParams(); ++i) {
@@ -4298,10 +4298,10 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
 
   ValueToValueMapTy originalToNewFn;
 
+  // Create placeholder for the old arguments
   BasicBlock *placeholderBB =
       BasicBlock::Create(NewF->getContext(), "placeholders", NewF);
 
-  // Create placeholder for the old arguments
   IRBuilder<> PlaceholderBuilder(placeholderBB);
   PlaceholderBuilder.SetCurrentDebugLocation(DebugLoc());
   ValueToValueMapTy vmap;
