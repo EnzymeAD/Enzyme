@@ -180,58 +180,63 @@ public:
   }
 
   void visitCallInst(llvm::CallInst &call) {
-    // TODO: indirect call
-    // TODO: handle debug intrinsics
     auto found = vectorizedValues.find(&call);
     assert(found != vectorizedValues.end());
     auto placeholders = found->second;
     CallInst *placeholder = cast<CallInst>(placeholders[0]);
     IRBuilder<> Builder2(placeholder);
     Builder2.SetCurrentDebugLocation(DebugLoc());
-
-    SmallVector<Value *, 4> args;
-    SmallVector<BATCH_TYPE, 4> arg_types;
-
-    for (unsigned j = 0; j < call.getNumArgOperands(); ++j) {
-      Value *op = call.getArgOperand(j);
-
-      if (toVectorize.count(op) != 0) {
-        Type *aggTy = GradientUtils::getShadowType(op->getType(), width);
-        Value *agg = UndefValue::get(aggTy);
-        for (unsigned i = 0; i < width; i++) {
-          Value *new_op = vectorizedValues[op][i];
-          Builder2.CreateInsertValue(agg, new_op, {i});
-        }
-        args.push_back(agg);
-        arg_types.push_back(BATCH_TYPE::VECTOR);
-      } else if (isa<Constant>(op)) {
-        args.push_back(op);
-        arg_types.push_back(BATCH_TYPE::SCALAR);
-      } else {
-        Value *arg = originalToNewFn[op];
-        args.push_back(arg);
-        arg_types.push_back(BATCH_TYPE::SCALAR);
-      }
-    }
-
     Function *orig_func = getFunctionFromCall(&call);
-    Function *new_func = Logic.CreateBatch(orig_func, width, arg_types);
-    CallInst *new_call = Builder2.CreateCall(new_func->getFunctionType(),
-                                             new_func, args, call.getName());
-    new_call->setDebugLoc(placeholder->getDebugLoc());
 
-    if (!call.getType()->isVoidTy()) {
-      for (unsigned i = 0; i < width; ++i) {
-        Instruction *placeholder = dyn_cast<Instruction>(placeholders[i]);
-        ExtractValueInst *ret = ExtractValueInst::Create(
-            new_call, {i},
-            "unwrap" + (call.hasName() ? "." + call.getName() + Twine(i) : ""));
-        ReplaceInstWithInst(placeholder, ret);
-        vectorizedValues[&call][i] = ret;
+    auto isDefined = !orig_func->isDeclaration();
+    if (isDefined) {
+      SmallVector<Value *, 4> args;
+      SmallVector<BATCH_TYPE, 4> arg_types;
+
+      for (unsigned j = 0; j < call.getNumArgOperands(); ++j) {
+        Value *op = call.getArgOperand(j);
+
+        if (toVectorize.count(op) != 0) {
+          Type *aggTy = GradientUtils::getShadowType(op->getType(), width);
+          Value *agg = UndefValue::get(aggTy);
+          for (unsigned i = 0; i < width; i++) {
+            Value *new_op = vectorizedValues[op][i];
+            Builder2.CreateInsertValue(agg, new_op, {i});
+          }
+          args.push_back(agg);
+          arg_types.push_back(BATCH_TYPE::VECTOR);
+        } else if (isa<Constant>(op)) {
+          args.push_back(op);
+          arg_types.push_back(BATCH_TYPE::SCALAR);
+        } else {
+          Value *arg = originalToNewFn[op];
+          args.push_back(arg);
+          arg_types.push_back(BATCH_TYPE::SCALAR);
+        }
+      }
+
+      Function *new_func = Logic.CreateBatch(orig_func, width, arg_types);
+      CallInst *new_call = Builder2.CreateCall(new_func->getFunctionType(),
+                                               new_func, args, call.getName());
+
+      new_call->setDebugLoc(placeholder->getDebugLoc());
+
+      if (!call.getType()->isVoidTy()) {
+        for (unsigned i = 0; i < width; ++i) {
+          Instruction *placeholder = dyn_cast<Instruction>(placeholders[i]);
+          ExtractValueInst *ret = ExtractValueInst::Create(
+              new_call, {i},
+              "unwrap" +
+                  (call.hasName() ? "." + call.getName() + Twine(i) : ""));
+          ReplaceInstWithInst(placeholder, ret);
+          vectorizedValues[&call][i] = ret;
+        }
+      } else {
+        placeholder->replaceAllUsesWith(new_call);
+        placeholder->eraseFromParent();
       }
     } else {
-      placeholder->replaceAllUsesWith(new_call);
-      placeholder->eraseFromParent();
+      visitInstruction(call);
     }
   }
 };
