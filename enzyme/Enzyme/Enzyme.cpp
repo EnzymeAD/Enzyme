@@ -638,7 +638,7 @@ public:
     unsigned truei = 0;
     std::map<unsigned, Value *> batchOffset;
     SmallVector<Value *, 4> args;
-    SmallVector<BATCH_TYPE, 0> arg_types;
+    SmallVector<BATCH_TYPE, 4> arg_types;
     IRBuilder<> Builder(CI);
     Function *F;
     auto parsedFunction = parseFunctionParameter(CI);
@@ -660,6 +660,8 @@ public:
     }
 
     // TODO: handle sret
+    assert(!CI->hasStructRetAttr() && !F->hasStructRetAttr());
+
     bool sret = false;
 
 #if LLVM_VERSION_MAJOR >= 14
@@ -679,7 +681,7 @@ public:
       assert(truei < FT->getNumParams());
       auto PTy = FT->getParamType(truei);
 
-      BATCH_TYPE ty = BATCH_TYPE::SCALAR;
+      BATCH_TYPE ty = BATCH_TYPE::VECTOR;
       Optional<StringRef> metaString = getMetadataName(res);
 
       // handle metadata
