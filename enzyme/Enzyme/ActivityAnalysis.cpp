@@ -46,7 +46,9 @@
 #include "ActivityAnalysis.h"
 #include "Utils.h"
 
+#if LLVM_VERSION_MAJOR >= 9
 #include "llvm/Demangle/Demangle.h"
+#endif
 
 #include "FunctionUtils.h"
 #include "LibraryFuncs.h"
@@ -79,6 +81,62 @@ cl::opt<bool>
 #include <map>
 #include <set>
 #include <unordered_map>
+
+const char *KnownInactiveFunctionsStartingWith[] = {
+    "f90io",
+    "$ss5print",
+#if LLVM_VERSION_MAJOR <= 8
+    "_ZN4core3fmt",
+    "_ZN3std2io5stdio6_print",
+    "_ZNSt7__cxx1112basic_string",
+    "_ZNSt7__cxx1118basic_string",
+    "_ZNKSt7__cxx1112basic_string",
+    "_ZN9__gnu_cxx12__to_xstringINSt7__cxx1112basic_string",
+    "_ZNSt12__basic_file",
+    "_ZNSt15basic_streambufIcSt11char_traits",
+    "_ZNSt13basic_filebufIcSt11char_traits",
+    "_ZNSt14basic_ofstreamIcSt11char_traits",
+    "_ZNSi4readEPcl",
+    "_ZNKSt14basic_ifstreamIcSt11char_traits",
+    "_ZNSt14basic_ifstreamIcSt11char_traits",
+    "_ZNSo5writeEPKcl",
+    "_ZNSt19basic_ostringstreamIcSt11char_traits",
+    "_ZStrsIcSt11char_traitsIcESaIcEERSt13basic_istream",
+    "_ZStlsIcSt11char_traitsIcESaIcEERSt13basic_ostream",
+    "_ZNSt7__cxx1119basic_ostringstreamIcSt11char_traits",
+    "_ZNKSt7__cxx1119basic_ostringstreamIcSt11char_traits",
+    "_ZNSoD1Ev",
+    "_ZNSoC1EPSt15basic_streambufIcSt11char_traits",
+    "_ZStlsISt11char_traitsIcEERSt13basic_ostream",
+    "_ZSt16__ostream_insert",
+    "_ZStlsIwSt11char_traitsIwEERSt13basic_ostream",
+    "_ZNSo9_M_insert",
+    "_ZNSt13basic_ostream",
+    "_ZNSo3put",
+    "_ZNKSt5ctypeIcE13_M_widen_init",
+    "_ZNSi3get",
+    "_ZNSi7getline",
+    "_ZNSirsER",
+    "_ZNSt7__cxx1115basic_stringbuf",
+    "_ZNSi6ignore",
+    "_ZNSt8ios_base",
+    "_ZNKSt9basic_ios",
+    "_ZNSt9basic_ios",
+    "_ZStorSt13_Ios_OpenmodeS_",
+    "_ZNSt6locale",
+    "_ZNKSt6locale4name",
+    "_ZStL8__ioinit"
+    "_ZNSt9basic_ios",
+    "_ZSt4cout",
+    "_ZSt3cin",
+    "_ZNSi10_M_extract",
+    "_ZNSolsE",
+    "_ZSt5flush",
+    "_ZNSo5flush",
+    "_ZSt4endl",
+    "_ZNSaIcE",
+#endif
+};
 
 const char *KnownInactiveFunctionsContains[] = {
     "__enzyme_float", "__enzyme_double", "__enzyme_integer",
@@ -201,8 +259,6 @@ const std::set<std::string> KnownInactiveFunctions = {
 };
 
 const char *DemangledKnownInactiveFunctionsStartingWith[] = {
-    "f90io",
-    "$ss5print",
     "fprintf",
     "std::allocator",
     "std::string",
@@ -254,6 +310,7 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
   if (Name == "posix_memalign")
     return true;
 
+#if LLVM_VERSION_MAJOR >= 9
   std::string demangledName = llvm::demangle(Name.str());
   auto dName = StringRef(demangledName);
   for (auto FuncName : DemangledKnownInactiveFunctionsStartingWith) {
@@ -267,6 +324,12 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
     // if (!Name.startswith("llvm."))
     //  llvm::errs() << "matching failed: " << Name.str() << " "
     //               << demangledName << "\n";
+  }
+#endif
+  for (auto FuncName : KnownInactiveFunctionsStartingWith) {
+    if (Name.startswith(FuncName)) {
+      return true;
+    }
   }
 
   for (auto FuncName : KnownInactiveFunctionsContains) {
@@ -1226,6 +1289,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
             return true;
           }
 
+#if LLVM_VERSION_MAJOR >= 9
           auto dName = demangle(called->getName().str());
           for (auto FuncName : DemangledKnownInactiveFunctionsStartingWith) {
             if (StringRef(dName).startswith(FuncName)) {
@@ -1234,6 +1298,16 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
               return true;
             }
           }
+#endif
+
+          for (auto FuncName : KnownInactiveFunctionsStartingWith) {
+            if (called->getName().startswith(FuncName)) {
+              InsertConstantValue(TR, Val);
+              insertConstantsFrom(TR, *UpHypothesis);
+              return true;
+            }
+          }
+
           for (auto FuncName : KnownInactiveFunctionsContains) {
             if (called->getName().contains(FuncName)) {
               InsertConstantValue(TR, Val);
@@ -1412,12 +1486,15 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
               F->getName() == "__fd_sincos_1") {
             return false;
           }
+#if LLVM_VERSION_MAJOR >= 9
           auto dName = demangle(F->getName().str());
           for (auto FuncName : DemangledKnownInactiveFunctionsStartingWith) {
             if (StringRef(dName).startswith(FuncName)) {
               return false;
             }
           }
+#endif
+
           for (auto FuncName : KnownInactiveFunctionsContains) {
             if (F->getName().contains(FuncName)) {
               return false;
@@ -1983,12 +2060,21 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
         return true;
       }
 
+#if LLVM_VERSION_MAJOR >= 9
       auto dName = demangle(called->getName().str());
       for (auto FuncName : DemangledKnownInactiveFunctionsStartingWith) {
         if (StringRef(dName).startswith(FuncName)) {
           return true;
         }
       }
+#endif
+
+      for (auto FuncName : KnownInactiveFunctionsStartingWith) {
+        if (called->getName().startswith(FuncName)) {
+          return true;
+        }
+      }
+
       for (auto FuncName : KnownInactiveFunctionsContains) {
         if (called->getName().contains(FuncName)) {
           return true;
