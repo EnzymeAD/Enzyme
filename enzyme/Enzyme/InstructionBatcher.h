@@ -60,6 +60,17 @@ private:
   unsigned width;
   EnzymeLogic &Logic;
 
+private:
+  Value *getNewOperand(unsigned int i, llvm::Value *op) {
+    if (isa<Constant>(op)) {
+      return op;
+    } else if (toVectorize.count(op) != 0) {
+      return vectorizedValues[op][i];
+    } else {
+      return originalToNewFn[op];
+    }
+  }
+
 public:
   void visitInstruction(llvm::Instruction &inst) {
     auto found = vectorizedValues.find(&inst);
@@ -74,14 +85,7 @@ public:
 
       for (unsigned j = 0; j < inst.getNumOperands(); ++j) {
         Value *op = inst.getOperand(j);
-        Value *new_op;
-        if (isa<Constant>(op)) {
-          new_op = op;
-        } else if (toVectorize.count(op) != 0) {
-          new_op = vectorizedValues[op][i];
-        } else {
-          new_op = originalToNewFn[op];
-        }
+        Value *new_op = getNewOperand(i, op);
         vmap[placeholder->getOperand(j)] = new_op;
       }
 
@@ -166,12 +170,7 @@ public:
     for (unsigned j = 0; j < ret.getNumOperands(); ++j) {
       Value *op = ret.getOperand(j);
       for (unsigned i = 0; i < width; ++i) {
-        Value *new_op;
-        if (toVectorize.count(op) != 0) {
-          new_op = vectorizedValues[op][i];
-        } else {
-          new_op = originalToNewFn[op];
-        }
+        Value *new_op = getNewOperand(i, op);
         rets.push_back(new_op);
       }
     }
