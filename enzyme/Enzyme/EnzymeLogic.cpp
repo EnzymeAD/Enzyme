@@ -4266,9 +4266,10 @@ Function *EnzymeLogic::CreateForwardDiff(
 }
 
 llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
-                                         ArrayRef<BATCH_TYPE> arg_types) {
+                                         ArrayRef<BATCH_TYPE> arg_types,
+                                         BATCH_TYPE ret_type) {
 
-  BatchCacheKey tup = std::make_tuple(tobatch, width, arg_types);
+  BatchCacheKey tup = std::make_tuple(tobatch, width, arg_types, ret_type);
   if (BatchCachedFunctions.find(tup) != BatchCachedFunctions.end()) {
     return BatchCachedFunctions.find(tup)->second;
   }

@@ -215,7 +215,12 @@ public:
         }
       }
 
-      Function *new_func = Logic.CreateBatch(orig_func, width, arg_types);
+      BATCH_TYPE ret_type = orig_func->getReturnType()->isVoidTy()
+                                ? BATCH_TYPE::SCALAR
+                                : BATCH_TYPE::VECTOR;
+
+      Function *new_func =
+          Logic.CreateBatch(orig_func, width, arg_types, ret_type);
       CallInst *new_call = Builder2.CreateCall(new_func->getFunctionType(),
                                                new_func, args, call.getName());
 

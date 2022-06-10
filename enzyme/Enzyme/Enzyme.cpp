@@ -788,7 +788,10 @@ public:
       truei++;
     }
 
-    auto newFunc = Logic.CreateBatch(F, width, arg_types);
+    BATCH_TYPE ret_type = F->getReturnType()->isVoidTy() ? BATCH_TYPE::SCALAR
+                                                         : BATCH_TYPE::VECTOR;
+
+    auto newFunc = Logic.CreateBatch(F, width, arg_types, ret_type);
 
     Value *batch =
         Builder.CreateCall(newFunc->getFunctionType(), newFunc, args);
