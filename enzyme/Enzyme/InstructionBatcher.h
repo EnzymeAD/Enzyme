@@ -86,10 +86,12 @@ public:
       }
 
       if (placeholders.size() == width) {
+        // Instructions which return a value
         Instruction *placeholder = cast<Instruction>(placeholders[i]);
         ReplaceInstWithInst(placeholder, new_inst);
         vectorizedValues[&inst][i] = new_inst;
       } else if (placeholders.size() == 1) {
+        // Instructions which don't return a value
         Instruction *insertionPoint = placeholder->getNextNode()
                                           ? placeholder->getNextNode()
                                           : placeholder;
@@ -139,12 +141,14 @@ public:
   }
 
   void visitSwitchInst(llvm::SwitchInst &inst) {
+    // TODO: runtime check
     EmitFailure("SwitchConditionCannotBeVectorized", inst.getDebugLoc(), &inst,
                 "switch conditions have to be scalar values", inst);
     llvm_unreachable("vectorized control flow is not allowed");
   }
 
   void visitBranchInst(llvm::BranchInst &branch) {
+    // TODO: runtime check
     EmitFailure("BranchConditionCannotBeVectorized", branch.getDebugLoc(),
                 &branch, "branch conditions have to be scalar values", branch);
     llvm_unreachable("vectorized control flow is not allowed");
@@ -188,60 +192,59 @@ public:
     Builder2.SetCurrentDebugLocation(DebugLoc());
     Function *orig_func = getFunctionFromCall(&call);
 
-    auto isDefined = !orig_func->isDeclaration();
-    if (isDefined) {
-      SmallVector<Value *, 4> args;
-      SmallVector<BATCH_TYPE, 4> arg_types;
+    bool isDefined = !orig_func->isDeclaration();
 
-      for (unsigned j = 0; j < call.getNumArgOperands(); ++j) {
-        Value *op = call.getArgOperand(j);
+    if (!isDefined)
+      return visitInstruction(call);
 
-        if (toVectorize.count(op) != 0) {
-          Type *aggTy = GradientUtils::getShadowType(op->getType(), width);
-          Value *agg = UndefValue::get(aggTy);
-          for (unsigned i = 0; i < width; i++) {
-            Value *new_op = vectorizedValues[op][i];
-            Builder2.CreateInsertValue(agg, new_op, {i});
-          }
-          args.push_back(agg);
-          arg_types.push_back(BATCH_TYPE::VECTOR);
-        } else if (isa<Constant>(op)) {
-          args.push_back(op);
-          arg_types.push_back(BATCH_TYPE::SCALAR);
-        } else {
-          Value *arg = originalToNewFn[op];
-          args.push_back(arg);
-          arg_types.push_back(BATCH_TYPE::SCALAR);
+    SmallVector<Value *, 4> args;
+    SmallVector<BATCH_TYPE, 4> arg_types;
+
+    for (unsigned j = 0; j < call.getNumArgOperands(); ++j) {
+      Value *op = call.getArgOperand(j);
+
+      if (toVectorize.count(op) != 0) {
+        Type *aggTy = GradientUtils::getShadowType(op->getType(), width);
+        Value *agg = UndefValue::get(aggTy);
+        for (unsigned i = 0; i < width; i++) {
+          Value *new_op = vectorizedValues[op][i];
+          Builder2.CreateInsertValue(agg, new_op, {i});
         }
-      }
-
-      BATCH_TYPE ret_type = orig_func->getReturnType()->isVoidTy()
-                                ? BATCH_TYPE::SCALAR
-                                : BATCH_TYPE::VECTOR;
-
-      Function *new_func =
-          Logic.CreateBatch(orig_func, width, arg_types, ret_type);
-      CallInst *new_call = Builder2.CreateCall(new_func->getFunctionType(),
-                                               new_func, args, call.getName());
-
-      new_call->setDebugLoc(placeholder->getDebugLoc());
-
-      if (!call.getType()->isVoidTy()) {
-        for (unsigned i = 0; i < width; ++i) {
-          Instruction *placeholder = dyn_cast<Instruction>(placeholders[i]);
-          ExtractValueInst *ret = ExtractValueInst::Create(
-              new_call, {i},
-              "unwrap" +
-                  (call.hasName() ? "." + call.getName() + Twine(i) : ""));
-          ReplaceInstWithInst(placeholder, ret);
-          vectorizedValues[&call][i] = ret;
-        }
+        args.push_back(agg);
+        arg_types.push_back(BATCH_TYPE::VECTOR);
+      } else if (isa<Constant>(op)) {
+        args.push_back(op);
+        arg_types.push_back(BATCH_TYPE::SCALAR);
       } else {
-        placeholder->replaceAllUsesWith(new_call);
-        placeholder->eraseFromParent();
+        Value *arg = originalToNewFn[op];
+        args.push_back(arg);
+        arg_types.push_back(BATCH_TYPE::SCALAR);
+      }
+    }
+
+    BATCH_TYPE ret_type = orig_func->getReturnType()->isVoidTy()
+                              ? BATCH_TYPE::SCALAR
+                              : BATCH_TYPE::VECTOR;
+
+    Function *new_func =
+        Logic.CreateBatch(orig_func, width, arg_types, ret_type);
+    CallInst *new_call = Builder2.CreateCall(new_func->getFunctionType(),
+                                             new_func, args, call.getName());
+
+    new_call->setDebugLoc(placeholder->getDebugLoc());
+
+    if (!call.getType()->isVoidTy()) {
+      for (unsigned i = 0; i < width; ++i) {
+        Instruction *placeholder = dyn_cast<Instruction>(placeholders[i]);
+        ExtractValueInst *ret = ExtractValueInst::Create(
+            new_call, {i},
+            "unwrap" + (call.hasName() ? "." + call.getName() + Twine(i) : ""));
+        ReplaceInstWithInst(placeholder, ret);
+        vectorizedValues[&call][i] = ret;
       }
     } else {
-      visitInstruction(call);
+      placeholder->replaceAllUsesWith(new_call);
+      placeholder->eraseFromParent();
     }
   }
 };
