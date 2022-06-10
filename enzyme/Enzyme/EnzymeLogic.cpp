@@ -4334,43 +4334,12 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
     if (arg_types[i] == BATCH_TYPE::VECTOR) {
       Argument *arg = tobatch->arg_begin() + i;
       toVectorize.insert(arg);
-
-      for (auto user : arg->users()) {
-        worklist.insert(user);
-      }
     }
   }
 
-  if (!NewF->getReturnType()->isVoidTy())
-    for (auto &BB : *tobatch)
-      if (auto ret = dyn_cast<ReturnInst>(BB.getTerminator()))
-        worklist.insert(ret);
-
-  while (!worklist.empty()) {
-    Value *todo = *worklist.begin();
-    worklist.erase(worklist.begin());
-
-    if (isa<ConstantData>(todo))
-      continue;
-
-    if (isa<Argument>(todo))
-      continue;
-
-    if (toVectorize.count(todo) != 0) {
-      continue;
-    }
-
-    toVectorize.insert(todo);
-
-    if (auto inst = dyn_cast<Instruction>(todo)) {
-      for (auto user : inst->users()) {
-        worklist.insert(user);
-      }
-      for (auto &user : inst->operands()) {
-        worklist.insert(user);
-      }
-    }
-  }
+  for (auto &BB : *tobatch)
+    for (auto &Inst : BB)
+      toVectorize.insert(&Inst);
 
   // find instructions to vectorize (going down / refine)
   SetVector<llvm::Value *, std::deque<llvm::Value *>> refinelist;
@@ -4397,23 +4366,37 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
 
     if (auto todo_inst = dyn_cast<Instruction>(todo)) {
 
-      if (todo_inst->mayReadOrWriteMemory())
-        continue;
+      SetVector<llvm::Value *, std::deque<llvm::Value *>> toCheck;
+      toCheck.insert(todo_inst->op_begin(), todo_inst->op_end());
+      SmallPtrSet<Value *, 8> safe;
+      bool legal = true;
+      while (!toCheck.empty()) {
+        Value *cur = *toCheck.begin();
+        toCheck.erase(toCheck.begin());
 
-      bool br = false;
-      for (auto &arg : todo_inst->operands()) {
-        if (toVectorize.count(arg) != 0)
-          br = true;
+        if (safe.count(cur))
+          continue;
+
+        safe.insert(cur);
+
+        if (!toVectorize.contains(cur))
+          continue;
+
+        if (Instruction *cur_inst = dyn_cast<Instruction>(cur)) {
+          if (!isa<CallInst>(cur_inst) && cur_inst->mayReadOrWriteMemory()) {
+            for (auto user : todo_inst->users())
+              refinelist.insert(user);
+            continue;
+          }
+        }
+        legal = false;
         break;
       }
 
-      if (br)
+      if (!legal)
         break;
 
       toVectorize.erase(todo);
-      for (auto user : todo_inst->users()) {
-        refinelist.insert(user);
-      }
     }
   }
 
