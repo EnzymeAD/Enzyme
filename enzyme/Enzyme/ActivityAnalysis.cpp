@@ -1494,7 +1494,11 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
             }
           }
 #endif
-
+          for (auto FuncName : KnownInactiveFunctionsStartingWith) {
+            if (F->getName().startswith(FuncName)) {
+              return false;
+            }
+          }
           for (auto FuncName : KnownInactiveFunctionsContains) {
             if (F->getName().contains(FuncName)) {
               return false;
