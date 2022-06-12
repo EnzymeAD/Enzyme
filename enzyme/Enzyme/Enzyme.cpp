@@ -96,7 +96,7 @@ namespace {
 template <const char *handlername, DerivativeMode Mode, int numargs>
 static void
 handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
-                       std::vector<GlobalVariable *> &globalsToErase) {
+                       SmallVectorImpl<GlobalVariable *> &globalsToErase) {
   if (g.hasInitializer()) {
     if (auto CA = dyn_cast<ConstantAggregate>(g.getInitializer())) {
       if (CA->getNumOperands() != numargs) {
@@ -181,7 +181,7 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
 
 static void
 handleInactiveFunction(llvm::Module &M, llvm::GlobalVariable &g,
-                       std::vector<GlobalVariable *> &globalsToErase) {
+                       SmallVectorImpl<GlobalVariable *> &globalsToErase) {
   if (g.hasInitializer()) {
     Value *V = g.getInitializer();
     while (auto CE = dyn_cast<ConstantExpr>(V)) {
@@ -1867,7 +1867,7 @@ public:
     Logic.clear();
 
     bool changed = false;
-    std::vector<GlobalVariable *> globalsToErase;
+    SmallVector<GlobalVariable *, 4> globalsToErase;
     for (GlobalVariable &g : M.globals()) {
       if (g.getName().contains(gradient_handler_name)) {
         handleCustomDerivative<gradient_handler_name,
@@ -1893,7 +1893,7 @@ public:
       handleKnownFunctions(F);
       if (F.empty())
         continue;
-      std::vector<Instruction *> toErase;
+      SmallVector<Instruction *, 4> toErase;
       for (BasicBlock &BB : F) {
         for (Instruction &I : BB) {
           if (auto CI = dyn_cast<CallInst>(&I)) {
@@ -1968,7 +1968,7 @@ public:
       }
     }
 
-    std::vector<CallInst *> toErase;
+    SmallVector<CallInst *, 4> toErase;
     for (Function &F : M) {
       if (F.empty())
         continue;
