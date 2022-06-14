@@ -4387,19 +4387,20 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
 
         if (Instruction *cur_inst = dyn_cast<Instruction>(cur)) {
           if (!isa<CallInst>(cur_inst) && cur_inst->mayReadOrWriteMemory()) {
-            for (auto user : todo_inst->users())
-              refinelist.insert(user);
+            toCheck.insert(cur_inst->op_begin(), cur_inst->op_end());
             continue;
           }
         }
+
         legal = false;
         break;
       }
 
-      if (!legal)
-        break;
-
-      toVectorize.erase(todo);
+      if (legal) {
+        toVectorize.erase(todo);
+        for (auto user : todo_inst->users())
+          refinelist.insert(user);
+      }
     }
   }
 
