@@ -681,7 +681,7 @@ public:
       assert(truei < FT->getNumParams());
       auto PTy = FT->getParamType(truei);
 
-      BATCH_TYPE ty = BATCH_TYPE::VECTOR;
+      BATCH_TYPE ty = width == 1 ? BATCH_TYPE::SCALAR : BATCH_TYPE::VECTOR;
       Optional<StringRef> metaString = getMetadataName(res);
 
       // handle metadata
@@ -788,8 +788,9 @@ public:
       truei++;
     }
 
-    BATCH_TYPE ret_type = F->getReturnType()->isVoidTy() ? BATCH_TYPE::SCALAR
-                                                         : BATCH_TYPE::VECTOR;
+    BATCH_TYPE ret_type = (F->getReturnType()->isVoidTy() || width == 1)
+                              ? BATCH_TYPE::SCALAR
+                              : BATCH_TYPE::VECTOR;
 
     auto newFunc = Logic.CreateBatch(F, width, arg_types, ret_type);
 
