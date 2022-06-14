@@ -4337,32 +4337,35 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
     }
   }
 
-  for (auto &BB : *tobatch)
-    for (auto &Inst : BB)
-      toVectorize.insert(&Inst);
-
-  // find instructions to vectorize (going down / refine)
   SetVector<llvm::Value *, std::deque<llvm::Value *>> refinelist;
 
-  for (unsigned i = 0; i < tobatch->getFunctionType()->getNumParams(); i++) {
-    if (arg_types[i] == BATCH_TYPE::SCALAR) {
-      Argument *arg = tobatch->arg_begin() + i;
-
-      for (auto user : arg->users()) {
-        refinelist.insert(user);
-      }
+  for (auto &BB : *tobatch)
+    for (auto &Inst : BB) {
+      toVectorize.insert(&Inst);
+      refinelist.insert(&Inst);
     }
-  }
 
+  // find scalar instructions
   while (!refinelist.empty()) {
     Value *todo = *refinelist.begin();
     refinelist.erase(refinelist.begin());
 
-    if (isa<ReturnInst>(todo))
+    if (isa<ReturnInst>(todo) && ret_type == BATCH_TYPE::VECTOR)
       continue;
 
-    if (isa<CallInst>(todo))
+    if (auto branch_inst = dyn_cast<BranchInst>(todo)) {
+      if (!branch_inst->isConditional()) {
+        toVectorize.erase(todo);
+        continue;
+      }
+    }
+
+    if (auto call_inst = dyn_cast<CallInst>(todo)) {
+      if (call_inst->getFunctionType()->isVoidTy() &&
+          call_inst->getFunctionType()->getNumParams() == 0)
+        toVectorize.erase(todo);
       continue;
+    }
 
     if (auto todo_inst = dyn_cast<Instruction>(todo)) {
 
@@ -4377,17 +4380,16 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
         Value *cur = *toCheck.begin();
         toCheck.erase(toCheck.begin());
 
-        if (safe.count(cur))
+        if (!std::get<1>(safe.insert(cur)))
           continue;
 
-        safe.insert(cur);
-
-        if (!toVectorize.contains(cur))
+        if (toVectorize.count(cur) == 0)
           continue;
 
         if (Instruction *cur_inst = dyn_cast<Instruction>(cur)) {
-          if (!isa<CallInst>(cur_inst) && cur_inst->mayReadOrWriteMemory()) {
-            toCheck.insert(cur_inst->op_begin(), cur_inst->op_end());
+          if (!isa<CallInst>(cur_inst) && !cur_inst->mayReadOrWriteMemory()) {
+            for (auto &op : todo_inst->operands())
+              toCheck.insert(op);
             continue;
           }
         }
@@ -4396,11 +4398,10 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
         break;
       }
 
-      if (legal) {
-        toVectorize.erase(todo);
-        for (auto user : todo_inst->users())
-          refinelist.insert(user);
-      }
+      if (legal)
+        if (toVectorize.erase(todo))
+          for (auto user : todo_inst->users())
+            refinelist.insert(user);
     }
   }
 

@@ -32,11 +32,14 @@ declare [4 x double] @__enzyme_batch(...)
 ; CHECK-NEXT:   br i1 %cmp, label %cond.true, label %cond.end
 
 ; CHECK: cond.true:                                        ; preds = %entry
-; CHECK-NEXT:   %ax = fmul double %a, %unwrap.a0
-; CHECK-NEXT:   %mrv = insertvalue [4 x double] undef, double %ax, 0
-; CHECK-NEXT:   %mrv1 = insertvalue [4 x double] %mrv, double %ax, 1
-; CHECK-NEXT:   %mrv2 = insertvalue [4 x double] %mrv1, double %ax, 2
-; CHECK-NEXT:   %mrv3 = insertvalue [4 x double] %mrv2, double %ax, 3
+; CHECK-NEXT:   %ax0 = fmul double %a, %unwrap.a0
+; CHECK-NEXT:   %ax1 = fmul double %a, %unwrap.a1
+; CHECK-NEXT:   %ax2 = fmul double %a, %unwrap.a2
+; CHECK-NEXT:   %ax3 = fmul double %a, %unwrap.a3
+; CHECK-NEXT:   %mrv = insertvalue [4 x double] undef, double %ax0, 0
+; CHECK-NEXT:   %mrv1 = insertvalue [4 x double] %mrv, double %ax1, 1
+; CHECK-NEXT:   %mrv2 = insertvalue [4 x double] %mrv1, double %ax2, 2
+; CHECK-NEXT:   %mrv3 = insertvalue [4 x double] %mrv2, double %ax3, 3
 ; CHECK-NEXT:   ret [4 x double] %mrv3
 
 ; CHECK: cond.end:                                         ; preds = %entry
