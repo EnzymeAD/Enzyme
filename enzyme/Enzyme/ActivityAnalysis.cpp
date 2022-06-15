@@ -2623,4 +2623,3 @@ void ActivityAnalyzer::InsertConstantValue(TypeResults const &TR,
     }
   }
 }
-
