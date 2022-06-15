@@ -442,7 +442,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     assert(val->getType() == toreturn->getType());
     return toreturn;
   } else if (auto op = dyn_cast<InsertValueInst>(val)) {
-    SmallVector<std::pair<Value *, unsigned>, 4> insertElements;
+    SmallVector<std::pair<Value *, ArrayRef<unsigned>>, 2> insertElements;
     Value *agg = op->getAggregateOperand();
     while (auto op1 = dyn_cast<InsertValueInst>(agg)) {
       if (knownRecomputeHeuristic.count(op1) &&
@@ -450,8 +450,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         break;
       if (op1->getNumIndices() != 1)
         break;
-      insertElements.push_back({op1->getInsertedValueOperand(),
-                                op1->getInsertedValueOperandIndex()});
+      insertElements.push_back(
+          {op1->getInsertedValueOperand(), op1->getIndices()});
       agg = op1->getAggregateOperand();
     }
 
