@@ -62,12 +62,32 @@ private:
 
 private:
   Value *getNewOperand(unsigned int i, llvm::Value *op) {
+    if (auto meta = dyn_cast<MetadataAsValue>(op)) {
+      auto md = meta->getMetadata();
+      if (auto val = dyn_cast<ValueAsMetadata>(md))
+        return MetadataAsValue::get(
+            op->getContext(),
+            ValueAsMetadata::get(getNewOperand(i, val->getValue())));
+    }
     if (isa<Constant>(op)) {
       return op;
     } else if (toVectorize.count(op) != 0) {
-      return vectorizedValues[op][i];
+      auto found = vectorizedValues.find(op);
+      assert(found != vectorizedValues.end());
+      return found->second[i];
     } else {
-      return originalToNewFn[op];
+      auto found = originalToNewFn.find(op);
+      if (auto op_inst = dyn_cast<Instruction>(op)) {
+        if (found == originalToNewFn.end())
+          dumpMap(originalToNewFn);
+        assert(found != originalToNewFn.end());
+        return found->second;
+      } else {
+        if (found == originalToNewFn.end())
+          dumpMap(originalToNewFn);
+        assert(found != originalToNewFn.end());
+        return found->second;
+      }
     }
   }
 
@@ -85,6 +105,9 @@ public:
 
       for (unsigned j = 0; j < inst.getNumOperands(); ++j) {
         Value *op = inst.getOperand(j);
+        if (auto meta = dyn_cast<MetadataAsValue>(op))
+          if (!isa<ValueAsMetadata>(meta->getMetadata()))
+            continue;
         Value *new_op = getNewOperand(i, op);
         vmap[placeholder->getOperand(j)] = new_op;
       }
