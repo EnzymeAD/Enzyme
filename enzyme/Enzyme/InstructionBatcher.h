@@ -69,7 +69,8 @@ private:
             op->getContext(),
             ValueAsMetadata::get(getNewOperand(i, val->getValue())));
     }
-    if (isa<Constant>(op)) {
+
+    if (isa<ConstantData>(op)) {
       return op;
     } else if (toVectorize.count(op) != 0) {
       auto found = vectorizedValues.find(op);
@@ -77,17 +78,8 @@ private:
       return found->second[i];
     } else {
       auto found = originalToNewFn.find(op);
-      if (auto op_inst = dyn_cast<Instruction>(op)) {
-        if (found == originalToNewFn.end())
-          dumpMap(originalToNewFn);
-        assert(found != originalToNewFn.end());
-        return found->second;
-      } else {
-        if (found == originalToNewFn.end())
-          dumpMap(originalToNewFn);
-        assert(found != originalToNewFn.end());
-        return found->second;
-      }
+      assert(found != originalToNewFn.end());
+      return found->second;
     }
   }
 
@@ -115,10 +107,14 @@ public:
       if (placeholders.size() == width) {
         // Instructions which return a value
         Instruction *placeholder = cast<Instruction>(placeholders[i]);
+        assert(!placeholder->getType()->isVoidTy());
+
         ReplaceInstWithInst(placeholder, new_inst);
         vectorizedValues[&inst][i] = new_inst;
       } else if (placeholders.size() == 1) {
         // Instructions which don't return a value
+        assert(placeholder->getType()->isVoidTy());
+
         Instruction *insertionPoint = placeholder->getNextNode()
                                           ? placeholder->getNextNode()
                                           : placeholder;
@@ -149,12 +145,8 @@ public:
         Value *orig_block = phi.getIncomingBlock(j);
         BasicBlock *new_block = cast<BasicBlock>(originalToNewFn[orig_block]);
         Value *orig_val = phi.getIncomingValue(j);
-        Value *new_val;
-        if (isa<Constant>(orig_val)) {
-          new_val = orig_val;
-        } else {
-          new_val = vectorizedValues[orig_val][i];
-        }
+        Value *new_val = getNewOperand(i, orig_val);
+
         vmap[placeholder->getIncomingValue(j)] = new_val;
         vmap[new_block] = new_block;
       }
@@ -229,16 +221,20 @@ public:
         Type *aggTy = GradientUtils::getShadowType(op->getType(), width);
         Value *agg = UndefValue::get(aggTy);
         for (unsigned i = 0; i < width; i++) {
-          Value *new_op = vectorizedValues[op][i];
+          auto found = vectorizedValues.find(op);
+          assert(found != vectorizedValues.end());
+          Value *new_op = found->second[i];
           Builder2.CreateInsertValue(agg, new_op, {i});
         }
         args.push_back(agg);
         arg_types.push_back(BATCH_TYPE::VECTOR);
-      } else if (isa<Constant>(op)) {
+      } else if (isa<ConstantData>(op)) {
         args.push_back(op);
         arg_types.push_back(BATCH_TYPE::SCALAR);
       } else {
-        Value *arg = originalToNewFn[op];
+        auto found = originalToNewFn.find(op);
+        assert(found != originalToNewFn.end());
+        Value *arg = found->second;
         args.push_back(arg);
         arg_types.push_back(BATCH_TYPE::SCALAR);
       }
