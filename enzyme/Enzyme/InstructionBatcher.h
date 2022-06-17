@@ -101,9 +101,21 @@ public:
 
       for (unsigned j = 0; j < inst.getNumOperands(); ++j) {
         Value *op = inst.getOperand(j);
+
+        // Don't allow writing vectors to global memory, loading and splatting a
+        // global is fine though.
+        if (isa<GlobalValue>(op) && !isa<ConstantData>(op) &&
+            inst.mayWriteToMemory() && toVectorize.count(op) != 0) {
+          // TODO: handle buffer access
+          EmitFailure("GlobalValueCannotBeVectorized", inst.getDebugLoc(),
+                      &inst, "global variables have to be scalar values", inst);
+          llvm_unreachable("vectorized control flow is not allowed");
+        }
+
         if (auto meta = dyn_cast<MetadataAsValue>(op))
           if (!isa<ValueAsMetadata>(meta->getMetadata()))
             continue;
+
         Value *new_op = getNewOperand(i, op);
         vmap[placeholder->getOperand(j)] = new_op;
       }
