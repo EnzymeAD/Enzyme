@@ -4372,6 +4372,9 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
       if (todo_inst->mayReadOrWriteMemory())
         continue;
 
+      if (isa<AllocaInst>(todo_inst))
+        continue;
+
       SetVector<llvm::Value *, std::deque<llvm::Value *>> toCheck;
       toCheck.insert(todo_inst->op_begin(), todo_inst->op_end());
       SmallPtrSet<Value *, 8> safe;

@@ -116,25 +116,28 @@ attributes #3 = { noinline norecurse optnone ssp uwtable "frame-pointer"="non-le
 ; CHECK-NEXT:   %unwrap2 = extractvalue [4 x double] %0, 2
 ; CHECK-NEXT:   %unwrap3 = extractvalue [4 x double] %0, 3
 ; CHECK-NEXT:   %2 = alloca double, align 8
+; CHECK-NEXT:   %3 = alloca double, align 8
+; CHECK-NEXT:   %4 = alloca double, align 8
+; CHECK-NEXT:   %5 = alloca double, align 8
 ; CHECK-NEXT:   store double %unwrap, double* %2, align 8
-; CHECK-NEXT:   store double %unwrap3, double* %2, align 8
-; CHECK-NEXT:   store double %unwrap2, double* %2, align 8
-; CHECK-NEXT:   store double %unwrap1, double* %2, align 8
-; CHECK-NEXT:   %3 = load double, double* %2, align 8
-; CHECK-NEXT:   %4 = load double, double* %2, align 8
-; CHECK-NEXT:   %5 = load double, double* %2, align 8
+; CHECK-NEXT:   store double %unwrap3, double* %5, align 8
+; CHECK-NEXT:   store double %unwrap2, double* %4, align 8
+; CHECK-NEXT:   store double %unwrap1, double* %3, align 8
 ; CHECK-NEXT:   %6 = load double, double* %2, align 8
-; CHECK-NEXT:   %7 = load double, double* %2, align 8
-; CHECK-NEXT:   %8 = load double, double* %2, align 8
-; CHECK-NEXT:   %9 = load double, double* %2, align 8
+; CHECK-NEXT:   %7 = load double, double* %3, align 8
+; CHECK-NEXT:   %8 = load double, double* %4, align 8
+; CHECK-NEXT:   %9 = load double, double* %5, align 8
 ; CHECK-NEXT:   %10 = load double, double* %2, align 8
-; CHECK-NEXT:   %11 = fmul double %3, %7
-; CHECK-NEXT:   %12 = fmul double %4, %8
-; CHECK-NEXT:   %13 = fmul double %5, %9
+; CHECK-NEXT:   %11 = load double, double* %3, align 8
+; CHECK-NEXT:   %12 = load double, double* %4, align 8
+; CHECK-NEXT:   %13 = load double, double* %5, align 8
 ; CHECK-NEXT:   %14 = fmul double %6, %10
-; CHECK-NEXT:   %mrv = insertvalue [4 x double] undef, double %11, 0
-; CHECK-NEXT:   %mrv4 = insertvalue [4 x double] %mrv, double %12, 1
-; CHECK-NEXT:   %mrv5 = insertvalue [4 x double] %mrv4, double %13, 2
-; CHECK-NEXT:   %mrv6 = insertvalue [4 x double] %mrv5, double %14, 3
+; CHECK-NEXT:   %15 = fmul double %7, %11
+; CHECK-NEXT:   %16 = fmul double %8, %12
+; CHECK-NEXT:   %17 = fmul double %9, %13
+; CHECK-NEXT:   %mrv = insertvalue [4 x double] undef, double %14, 0
+; CHECK-NEXT:   %mrv4 = insertvalue [4 x double] %mrv, double %15, 1
+; CHECK-NEXT:   %mrv5 = insertvalue [4 x double] %mrv4, double %16, 2
+; CHECK-NEXT:   %mrv6 = insertvalue [4 x double] %mrv5, double %17, 3
 ; CHECK-NEXT:   ret [4 x double] %mrv6
 ; CHECK-NEXT: }
