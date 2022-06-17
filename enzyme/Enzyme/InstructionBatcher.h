@@ -72,6 +72,10 @@ private:
 
     if (isa<ConstantData>(op)) {
       return op;
+    } else if (isa<Function>(op)) {
+      return op;
+    } else if (isa<GlobalValue>(op)) {
+      // TODO: !!!
     } else if (toVectorize.count(op) != 0) {
       auto found = vectorizedValues.find(op);
       assert(found != vectorizedValues.end());
@@ -201,7 +205,7 @@ public:
     auto found = vectorizedValues.find(&call);
     assert(found != vectorizedValues.end());
     auto placeholders = found->second;
-    CallInst *placeholder = cast<CallInst>(placeholders[0]);
+    Instruction *placeholder = cast<Instruction>(placeholders[0]);
     IRBuilder<> Builder2(placeholder);
     Builder2.SetCurrentDebugLocation(DebugLoc());
     Function *orig_func = getFunctionFromCall(&call);

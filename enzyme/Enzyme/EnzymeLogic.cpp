@@ -4408,7 +4408,7 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
   // unwrap arguments
   ValueMap<const Value *, std::vector<Value *>> vectorizedValues;
   auto entry = std::next(NewF->begin());
-  IRBuilder<> Builder2(entry->getFirstNonPHIOrDbg());
+  IRBuilder<> Builder2(entry->getFirstNonPHI());
   Builder2.SetCurrentDebugLocation(DebugLoc());
   for (unsigned i = 0; i < FTy->getNumParams(); ++i) {
     Argument *orig_arg = tobatch->arg_begin() + i;
