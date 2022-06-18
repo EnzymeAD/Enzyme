@@ -122,7 +122,7 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %i12 = icmp eq i64 %iv.next, 20
 ; CHECK-NEXT:   br i1 %i12, label %invertexit, label %loop
 
-; CHECK: nvertentry:                                      ; preds = %invertloop
+; CHECK: invertentry:                                      ; preds = %invertloop
 ; CHECK-NEXT:   %.fca.0.insert134 = insertvalue [3 x double] {{(undef|poison)}}, double %"arg'de.sroa.0.0", 0
 ; CHECK-NEXT:   %.fca.1.insert136 = insertvalue [3 x double] %.fca.0.insert134, double %"arg'de.sroa.5.0", 1
 ; CHECK-NEXT:   %.fca.2.insert138 = insertvalue [3 x double] %.fca.1.insert136, double %"arg'de.sroa.10.0", 2
