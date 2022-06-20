@@ -39,6 +39,8 @@
 #include "LibraryFuncs.h"
 #include "TypeAnalysis/TBAA.h"
 
+#include <optional>
+
 #define DEBUG_TYPE "enzyme"
 using namespace llvm;
 
@@ -5018,75 +5020,77 @@ public:
     }
   }
 
-  std::string extractBLAS(StringRef in, std::string &prefix,
-                          std::string &suffix) {
-    std::string extractable[] = {"ddot", "sdot", "dnrm2", "snrm2"};
+  struct BlasInfo {
+    StringRef floatType;
+    StringRef prefix;
+    StringRef suffix;
+    StringRef function;
+  };
+
+  std::optional<BlasInfo> extractBLAS(StringRef in) {
+    std::string floatType[] = {"s", "d"}; // c, z
+    std::string extractable[] = {"dot", "nrm2"};
     std::string prefixes[] = {"", "cblas_", "cublas_"};
     std::string suffixes[] = {"", "_", "_64_"};
-    for (auto ex : extractable) {
-      for (auto p : prefixes) {
-        for (auto s : suffixes) {
-          if (in == p + ex + s) {
-            prefix = p;
-            suffix = s;
-            return ex;
+    for (auto t : floatType) {
+      for (auto ex : extractable) {
+        for (auto p : prefixes) {
+          for (auto s : suffixes) {
+            if (in == t + p + ex + s) {
+              return BlasInfo{
+                  t,
+                  p,
+                  s,
+                  ex,
+              };
+            }
           }
         }
       }
     }
-    return "";
+    return std::nullopt;
   }
 
-  bool handleBLAS(llvm::CallInst &call, Function *called, StringRef funcName,
-                  StringRef prefix, StringRef suffix,
-                  const std::map<Argument *, bool> &uncacheable_args) {
+  bool handlenrm2(BlasInfo blas, llvm::CallInst &call, Function *called,
+                  const std::map<Argument *, bool> &uncacheable_args,
+                  Type *innerType) {
+    if (gutils->isConstantInstruction(&call)) {
+      return true;
+    }
     CallInst *const newCall = cast<CallInst>(gutils->getNewFromOriginal(&call));
     IRBuilder<> BuilderZ(newCall);
     BuilderZ.setFastMathFlags(getFast());
     IRBuilder<> allocationBuilder(gutils->inversionAllocs);
     allocationBuilder.setFastMathFlags(getFast());
 
-    if (funcName == "dnrm2" || funcName == "snrm2") {
-      if (!gutils->isConstantInstruction(&call)) {
+    std::string dfuncName =
+        (blas.prefix + blas.floatType + "dot" + blas.suffix).str();
 
-        Type *innerType;
-        std::string dfuncName;
-        if (funcName == "dnrm2") {
-          innerType = Type::getDoubleTy(call.getContext());
-          dfuncName = (prefix + "ddot" + suffix).str();
-        } else if (funcName == "snrm2") {
-          innerType = Type::getFloatTy(call.getContext());
-          dfuncName = (prefix + "sdot" + suffix).str();
-        } else {
-          assert(false && "Unreachable");
-        }
+    IntegerType *intType = dyn_cast<IntegerType>(call.getOperand(0)->getType());
+    bool byRef = false;
+    if (!intType) {
+      auto PT = cast<PointerType>(call.getOperand(0)->getType());
+      if (blas.suffix.contains("64"))
+        intType = IntegerType::get(PT->getContext(), 64);
+      else
+        intType = IntegerType::get(PT->getContext(), 32);
+      byRef = true;
+      }
 
-        IntegerType *intType =
-            dyn_cast<IntegerType>(call.getOperand(0)->getType());
-        bool byRef = false;
-        if (!intType) {
-          auto PT = cast<PointerType>(call.getOperand(0)->getType());
-          if (suffix.contains("64"))
-            intType = IntegerType::get(PT->getContext(), 64);
-          else
-            intType = IntegerType::get(PT->getContext(), 32);
-          byRef = true;
-        }
+      // Non-forward Mode not handled yet
+      if (Mode != DerivativeMode::ForwardMode) {
+        return false;
+      } else {
+        auto in_arg = call.getCalledFunction()->arg_begin();
+        Argument *n = in_arg;
+        in_arg++;
+        Argument *x = in_arg;
+        in_arg++;
+        Argument *xinc = in_arg;
 
-        // Non-forward Mode not handled yet
-        if (Mode != DerivativeMode::ForwardMode) {
-          return false;
-        } else {
-          auto in_arg = call.getCalledFunction()->arg_begin();
-          Argument *n = in_arg;
-          in_arg++;
-          Argument *x = in_arg;
-          in_arg++;
-          Argument *xinc = in_arg;
-
-          auto derivcall = gutils->oldFunc->getParent()->getOrInsertFunction(
-              dfuncName, innerType, n->getType(), x->getType(), xinc->getType(),
-              x->getType(), xinc->getType());
+        auto derivcall = gutils->oldFunc->getParent()->getOrInsertFunction(
+            dfuncName, innerType, n->getType(), x->getType(), xinc->getType(),
+            x->getType(), xinc->getType());
 
 #if LLVM_VERSION_MAJOR >= 9
           if (auto F = dyn_cast<Function>(derivcall.getCallee()))
@@ -5187,135 +5191,126 @@ public:
                                     getIndex(&call, CacheType::Self));
           }
         }
-      }
+        return true;
+  }
 
-      if (Mode == DerivativeMode::ReverseModeGradient) {
-        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
-      } else {
-        eraseIfUnused(call);
-      }
-      return true;
+  bool handledot(BlasInfo blas, llvm::CallInst &call, Function *called,
+                 const std::map<Argument *, bool> &uncacheable_args,
+                 Type *innerType) {
+    CallInst *const newCall = cast<CallInst>(gutils->getNewFromOriginal(&call));
+    IRBuilder<> BuilderZ(newCall);
+    BuilderZ.setFastMathFlags(getFast());
+    IRBuilder<> allocationBuilder(gutils->inversionAllocs);
+    allocationBuilder.setFastMathFlags(getFast());
+
+    std::string dfuncName =
+        (blas.prefix + blas.floatType + "axpy" + blas.suffix).str();
+
+    Type *castvals[2];
+    if (auto PT = dyn_cast<PointerType>(call.getArgOperand(1)->getType()))
+      castvals[0] = PT;
+    else
+      castvals[0] = PointerType::getUnqual(innerType);
+    if (auto PT = dyn_cast<PointerType>(call.getArgOperand(3)->getType()))
+      castvals[1] = PT;
+    else
+      castvals[1] = PointerType::getUnqual(innerType);
+
+    IntegerType *intType = dyn_cast<IntegerType>(call.getOperand(0)->getType());
+    bool byRef = false;
+    if (!intType) {
+      auto PT = cast<PointerType>(call.getOperand(0)->getType());
+      if (blas.suffix.contains("64"))
+        intType = IntegerType::get(PT->getContext(), 64);
+      else
+        intType = IntegerType::get(PT->getContext(), 32);
+      byRef = true;
     }
-    if (funcName == "ddot" || funcName == "sdot") {
-      if (!gutils->isConstantInstruction(&call)) {
-        Type *innerType;
-        std::string dfuncName;
-        if (funcName == "ddot") {
-          innerType = Type::getDoubleTy(call.getContext());
-          dfuncName = (prefix + "daxpy" + suffix).str();
-        } else if (funcName == "sdot") {
-          innerType = Type::getFloatTy(call.getContext());
-          dfuncName = (prefix + "saxpy" + suffix).str();
-        } else {
-          assert(false && "Unreachable");
-        }
 
-        Type *castvals[2];
-        if (auto PT = dyn_cast<PointerType>(call.getArgOperand(1)->getType()))
-          castvals[0] = PT;
-        else
-          castvals[0] = PointerType::getUnqual(innerType);
-        if (auto PT = dyn_cast<PointerType>(call.getArgOperand(3)->getType()))
-          castvals[1] = PT;
-        else
-          castvals[1] = PointerType::getUnqual(innerType);
+    auto &DL = gutils->oldFunc->getParent()->getDataLayout();
 
-        IntegerType *intType =
-            dyn_cast<IntegerType>(call.getOperand(0)->getType());
-        bool byRef = false;
-        if (!intType) {
-          auto PT = cast<PointerType>(call.getOperand(0)->getType());
-          if (suffix.contains("64"))
-            intType = IntegerType::get(PT->getContext(), 64);
-          else
-            intType = IntegerType::get(PT->getContext(), 32);
-          byRef = true;
-        }
+    Value *cacheval;
+    auto in_arg = call.getCalledFunction()->arg_begin();
+    Argument *countarg = in_arg;
+    in_arg++;
+    Argument *xfuncarg = in_arg;
+    in_arg++;
+    Argument *xincarg = in_arg;
+    in_arg++;
+    Argument *yfuncarg = in_arg;
+    in_arg++;
+    Argument *yincarg = in_arg;
 
-        auto &DL = gutils->oldFunc->getParent()->getDataLayout();
+    bool xcache = !gutils->isConstantValue(call.getArgOperand(3)) &&
+                  Mode != DerivativeMode::ForwardMode &&
+                  uncacheable_args.find(xfuncarg)->second;
+    bool ycache = !gutils->isConstantValue(call.getArgOperand(1)) &&
+                  Mode != DerivativeMode::ForwardMode &&
+                  uncacheable_args.find(yfuncarg)->second;
 
-        Value *cacheval;
-        auto in_arg = call.getCalledFunction()->arg_begin();
-        Argument *countarg = in_arg;
-        in_arg++;
-        Argument *xfuncarg = in_arg;
-        in_arg++;
-        Argument *xincarg = in_arg;
-        in_arg++;
-        Argument *yfuncarg = in_arg;
-        in_arg++;
-        Argument *yincarg = in_arg;
+    bool countcache = false;
+    bool xinccache = false;
+    bool yinccache = false;
 
-        bool xcache = !gutils->isConstantValue(call.getArgOperand(3)) &&
-                      Mode != DerivativeMode::ForwardMode &&
-                      uncacheable_args.find(xfuncarg)->second;
-        bool ycache = !gutils->isConstantValue(call.getArgOperand(1)) &&
-                      Mode != DerivativeMode::ForwardMode &&
-                      uncacheable_args.find(yfuncarg)->second;
+    SmallVector<Type *, 2> cacheTypes;
+    if (byRef) {
+      // count must be preserved if overwritten
+      if (uncacheable_args.find(countarg)->second) {
+        cacheTypes.push_back(intType);
+        countcache = true;
+      }
+      // xinc is needed to be preserved if
+      // 1) it is potentially overwritten
+      //       AND EITHER
+      //     a) x is active (for performing the shadow increment) or
+      //     b) we're not caching x and need xinc to compute the derivative
+      //        of y
+      if (uncacheable_args.find(xincarg)->second &&
+          (!gutils->isConstantValue(call.getArgOperand(1)) ||
+           (!xcache && !gutils->isConstantValue(call.getArgOperand(3))))) {
+        cacheTypes.push_back(intType);
+        xinccache = true;
+      }
+      // Similarly for yinc
+      if (uncacheable_args.find(yincarg)->second &&
+          (!gutils->isConstantValue(call.getArgOperand(3)) ||
+           (!ycache && !gutils->isConstantValue(call.getArgOperand(1))))) {
+        cacheTypes.push_back(intType);
+        yinccache = true;
+      }
+    }
 
-        bool countcache = false;
-        bool xinccache = false;
-        bool yinccache = false;
+    if (xcache)
+      cacheTypes.push_back(castvals[0]);
 
-        SmallVector<Type *, 2> cacheTypes;
-        if (byRef) {
-          // count must be preserved if overwritten
-          if (uncacheable_args.find(countarg)->second) {
-            cacheTypes.push_back(intType);
-            countcache = true;
-          }
-          // xinc is needed to be preserved if
-          // 1) it is potentially overwritten
-          //       AND EITHER
-          //     a) x is active (for performing the shadow increment) or
-          //     b) we're not caching x and need xinc to compute the derivative
-          //        of y
-          if (uncacheable_args.find(xincarg)->second &&
-              (!gutils->isConstantValue(call.getArgOperand(1)) ||
-               (!xcache && !gutils->isConstantValue(call.getArgOperand(3))))) {
-            cacheTypes.push_back(intType);
-            xinccache = true;
-          }
-          // Similarly for yinc
-          if (uncacheable_args.find(yincarg)->second &&
-              (!gutils->isConstantValue(call.getArgOperand(3)) ||
-               (!ycache && !gutils->isConstantValue(call.getArgOperand(1))))) {
-            cacheTypes.push_back(intType);
-            yinccache = true;
-          }
-        }
+    if (ycache)
+      cacheTypes.push_back(castvals[1]);
 
-        if (xcache)
-          cacheTypes.push_back(castvals[0]);
+    Type *cachetype = nullptr;
+    switch (cacheTypes.size()) {
+    case 0:
+      break;
+    case 1:
+      cachetype = cacheTypes[0];
+      break;
+    default:
+      cachetype = StructType::get(call.getContext(), cacheTypes);
+      break;
+    }
 
-        if (ycache)
-          cacheTypes.push_back(castvals[1]);
+    if ((Mode == DerivativeMode::ReverseModeCombined ||
+         Mode == DerivativeMode::ReverseModePrimal) &&
+        cachetype) {
 
-        Type *cachetype = nullptr;
-        switch (cacheTypes.size()) {
-        case 0:
-          break;
-        case 1:
-          cachetype = cacheTypes[0];
-          break;
-        default:
-          cachetype = StructType::get(call.getContext(), cacheTypes);
-          break;
-        }
+      SmallVector<Value *, 2> cacheValues;
+      auto size =
+          ConstantInt::get(intType, DL.getTypeSizeInBits(innerType) / 8);
 
-        if ((Mode == DerivativeMode::ReverseModeCombined ||
-             Mode == DerivativeMode::ReverseModePrimal) &&
-            cachetype) {
+      Value *count = gutils->getNewFromOriginal(call.getArgOperand(0));
 
-          SmallVector<Value *, 2> cacheValues;
-          auto size =
-              ConstantInt::get(intType, DL.getTypeSizeInBits(innerType) / 8);
-
-          Value *count = gutils->getNewFromOriginal(call.getArgOperand(0));
-
-          if (byRef) {
-            count = BuilderZ.CreatePointerCast(count,
-                                               PointerType::getUnqual(intType));
+      if (byRef) {
+        count =
+            BuilderZ.CreatePointerCast(count, PointerType::getUnqual(intType));
 #if LLVM_VERSION_MAJOR > 7
             count = BuilderZ.CreateLoad(intType, count);
 #else
@@ -5770,17 +5765,41 @@ public:
                                     getIndex(&call, CacheType::Self));
           }
         }
-      }
+  }
 
-      if (Mode == DerivativeMode::ReverseModeGradient) {
-        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
-      } else {
-        eraseIfUnused(call);
-      }
-      return true;
+  bool handleBLAS(llvm::CallInst &call, Function *called, BlasInfo blas,
+                  const std::map<Argument *, bool> &uncacheable_args) {
+    CallInst *const newCall = cast<CallInst>(gutils->getNewFromOriginal(&call));
+    IRBuilder<> BuilderZ(newCall);
+    BuilderZ.setFastMathFlags(getFast());
+    IRBuilder<> allocationBuilder(gutils->inversionAllocs);
+    allocationBuilder.setFastMathFlags(getFast());
+
+    Type *innerType;
+    if (blas.floatType == "d") {
+      innerType = Type::getDoubleTy(call.getContext());
+    } else if (blas.floatType == "s") {
+      innerType = Type::getFloatTy(call.getContext());
+    } else {
+      assert(false && "Unreachable");
     }
-    llvm::errs() << " fallback?\n";
-    return false;
+
+    if (!blas.function.compare("nrm2")) {
+      if (!handlenrm2(blas, call, called, uncacheable_args, innerType))
+        return false;
+    } else if (!blas.function.compare("dot")) {
+      if (!handledot(blas, call, called, uncacheable_args, innerType))
+        return false;
+    } else {
+      llvm::errs() << " fallback?\n";
+      return false;
+    }
+    if (Mode == DerivativeMode::ReverseModeGradient) {
+      eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+    } else {
+      eraseIfUnused(call);
+    }
+    return true;
   }
 
   void handleMPI(llvm::CallInst &call, Function *called, StringRef funcName) {
@@ -8578,11 +8597,10 @@ public:
     }
 
     if (!called || called->empty()) {
-      std::string prefix, suffix;
-      std::string found = extractBLAS(funcName, prefix, suffix);
-      if (found.size()) {
-        if (handleBLAS(call, called, found, prefix, suffix, uncacheable_args))
+      if (auto blas = extractBLAS(funcName)) {
+        if (handleBLAS(call, called, *blas, uncacheable_args))
           return;
+        // else panic?
       }
     }
 
