@@ -1764,7 +1764,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
 }
 
 FunctionType *getFunctionTypeForClone(
-    llvm::FunctionType *FTy, DerivativeMode mode, unsigned width,
+    llvm::FunctionType *FTy, DerivativeMode mode,
+    VectorModeMemoryLayout memoryLayout, unsigned width,
     llvm::Type *additionalArg, llvm::ArrayRef<DIFFE_TYPE> constant_args,
     bool diffeReturnArg, ReturnType returnValue, DIFFE_TYPE returnType) {
   SmallVector<Type *, 4> RetTypes;
@@ -1772,8 +1773,8 @@ FunctionType *getFunctionTypeForClone(
       returnValue == ReturnType::Return) {
     if (returnType != DIFFE_TYPE::CONSTANT &&
         returnType != DIFFE_TYPE::OUT_DIFF) {
-      RetTypes.push_back(
-          GradientUtils::getShadowType(FTy->getReturnType(), width));
+      RetTypes.push_back(GradientUtils::getShadowType(FTy->getReturnType(),
+                                                      width, memoryLayout));
     } else {
       RetTypes.push_back(FTy->getReturnType());
     }
@@ -1782,8 +1783,8 @@ FunctionType *getFunctionTypeForClone(
     RetTypes.push_back(FTy->getReturnType());
     if (returnType != DIFFE_TYPE::CONSTANT &&
         returnType != DIFFE_TYPE::OUT_DIFF) {
-      RetTypes.push_back(
-          GradientUtils::getShadowType(FTy->getReturnType(), width));
+      RetTypes.push_back(GradientUtils::getShadowType(FTy->getReturnType(),
+                                                      width, memoryLayout));
     } else {
       RetTypes.push_back(FTy->getReturnType());
     }
@@ -1798,17 +1799,17 @@ FunctionType *getFunctionTypeForClone(
     ArgTypes.push_back(I);
     if (constant_args[argno] == DIFFE_TYPE::DUP_ARG ||
         constant_args[argno] == DIFFE_TYPE::DUP_NONEED) {
-      ArgTypes.push_back(GradientUtils::getShadowType(I, width));
+      ArgTypes.push_back(GradientUtils::getShadowType(I, width, memoryLayout));
     } else if (constant_args[argno] == DIFFE_TYPE::OUT_DIFF) {
-      RetTypes.push_back(GradientUtils::getShadowType(I, width));
+      RetTypes.push_back(GradientUtils::getShadowType(I, width, memoryLayout));
     }
     ++argno;
   }
 
   if (diffeReturnArg) {
     assert(!FTy->getReturnType()->isVoidTy());
-    ArgTypes.push_back(
-        GradientUtils::getShadowType(FTy->getReturnType(), width));
+    ArgTypes.push_back(GradientUtils::getShadowType(FTy->getReturnType(), width,
+                                                    memoryLayout));
   }
   if (additionalArg) {
     ArgTypes.push_back(additionalArg);
@@ -1821,13 +1822,13 @@ FunctionType *getFunctionTypeForClone(
     RetTypes.push_back(Type::getInt8PtrTy(FTy->getContext()));
     if (returnValue == ReturnType::TapeAndTwoReturns) {
       RetTypes.push_back(FTy->getReturnType());
-      RetTypes.push_back(
-          GradientUtils::getShadowType(FTy->getReturnType(), width));
+      RetTypes.push_back(GradientUtils::getShadowType(FTy->getReturnType(),
+                                                      width, memoryLayout));
     } else if (returnValue == ReturnType::TapeAndReturn) {
       if (returnType != DIFFE_TYPE::CONSTANT &&
           returnType != DIFFE_TYPE::OUT_DIFF)
-        RetTypes.push_back(
-            GradientUtils::getShadowType(FTy->getReturnType(), width));
+        RetTypes.push_back(GradientUtils::getShadowType(FTy->getReturnType(),
+                                                        width, memoryLayout));
       else
         RetTypes.push_back(FTy->getReturnType());
     }
@@ -1848,18 +1849,19 @@ FunctionType *getFunctionTypeForClone(
 }
 
 Function *PreProcessCache::CloneFunctionWithReturns(
-    DerivativeMode mode, unsigned width, Function *&F,
-    ValueToValueMapTy &ptrInputs, ArrayRef<DIFFE_TYPE> constant_args,
-    SmallPtrSetImpl<Value *> &constants, SmallPtrSetImpl<Value *> &nonconstant,
-    SmallPtrSetImpl<Value *> &returnvals, ReturnType returnValue,
+    DerivativeMode mode, VectorModeMemoryLayout memoryLayout, unsigned width,
+    Function *&F, ValueToValueMapTy &ptrInputs,
+    ArrayRef<DIFFE_TYPE> constant_args, SmallPtrSetImpl<Value *> &constants,
+    SmallPtrSetImpl<Value *> &nonconstant, SmallPtrSetImpl<Value *> &returnvals,
+    SmallPtrSetImpl<Value *> &wrappedvals, ReturnType returnValue,
     DIFFE_TYPE returnType, Twine name, ValueToValueMapTy *VMapO,
     bool diffeReturnArg, llvm::Type *additionalArg) {
   assert(!F->empty());
   F = preprocessForClone(F, mode);
   llvm::ValueToValueMapTy VMap;
   llvm::FunctionType *FTy = getFunctionTypeForClone(
-      F->getFunctionType(), mode, width, additionalArg, constant_args,
-      diffeReturnArg, returnValue, returnType);
+      F->getFunctionType(), mode, memoryLayout, width, additionalArg,
+      constant_args, diffeReturnArg, returnValue, returnType);
 
   for (BasicBlock &BB : *F) {
     if (auto ri = dyn_cast<ReturnInst>(BB.getTerminator())) {
@@ -1949,6 +1951,8 @@ Function *PreProcessCache::CloneFunctionWithReturns(
       ++j;
       j->setName(i->getName() + "'");
       nonconstant.insert(j);
+      if (width > 1)
+        wrappedvals.insert(j);
       ++j;
       jj += 2;
 

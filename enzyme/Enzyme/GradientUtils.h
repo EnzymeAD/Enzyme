@@ -146,6 +146,7 @@ public:
   EnzymeLogic &Logic;
   bool AtomicAdd;
   DerivativeMode mode;
+  VectorModeMemoryLayout memoryLayout;
   llvm::Function *oldFunc;
   llvm::ValueMap<const Value *, InvertedPointerVH> invertedPointers;
   DominatorTree &OrigDT;
@@ -1160,6 +1161,7 @@ public:
   TypeAnalysis &TA;
   TypeResults TR;
   bool omp;
+  SmallPtrSet<Value *, 16> wrappedvalues;
 
 private:
   unsigned width;
@@ -1173,10 +1175,12 @@ public:
                 ValueToValueMapTy &invertedPointers_,
                 const SmallPtrSetImpl<Value *> &constantvalues_,
                 const SmallPtrSetImpl<Value *> &activevals_,
+                const SmallPtrSetImpl<Value *> &wrappedvalues_,
                 DIFFE_TYPE ReturnActivity, ValueToValueMapTy &originalToNewFn_,
-                DerivativeMode mode, unsigned width, bool omp)
+                DerivativeMode mode, VectorModeMemoryLayout memoryLayout,
+                unsigned width, bool omp)
       : CacheUtility(TLI_, newFunc_), Logic(Logic), mode(mode),
-        oldFunc(oldFunc_), invertedPointers(),
+        memoryLayout(memoryLayout), oldFunc(oldFunc_), invertedPointers(),
         OrigDT(Logic.PPC.FAM.getResult<llvm::DominatorTreeAnalysis>(*oldFunc_)),
         OrigPDT(Logic.PPC.FAM.getResult<llvm::PostDominatorTreeAnalysis>(
             *oldFunc_)),
@@ -1191,6 +1195,8 @@ public:
         tid(nullptr), numThreads(nullptr),
         OrigAA(Logic.PPC.getAAResultsFromFunction(oldFunc_)), TA(TA_), TR(TR_),
         omp(omp), width(width) {
+    wrappedvalues =
+        SmallPtrSet<Value *, 16>(wrappedvalues_.begin(), wrappedvalues_.end());
     if (oldFunc_->getSubprogram()) {
       assert(originalToNewFn_.hasMD());
     }
@@ -1252,9 +1258,9 @@ public:
 
 public:
   static GradientUtils *
-  CreateFromClone(EnzymeLogic &Logic, unsigned width, Function *todiff,
-                  TargetLibraryInfo &TLI, TypeAnalysis &TA,
-                  FnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
+  CreateFromClone(EnzymeLogic &Logic, VectorModeMemoryLayout memoryLayout,
+                  unsigned width, Function *todiff, TargetLibraryInfo &TLI,
+                  TypeAnalysis &TA, FnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
                   ArrayRef<DIFFE_TYPE> constant_args, bool returnUsed,
                   bool shadowReturnUsed,
                   std::map<AugmentedStruct, int> &returnMapping, bool omp);
@@ -1745,17 +1751,17 @@ public:
   Value *invertPointerM(Value *val, IRBuilder<> &BuilderM,
                         bool nullShadow = false);
 
-  static Constant *GetOrCreateShadowConstant(EnzymeLogic &Logic,
-                                             TargetLibraryInfo &TLI,
-                                             TypeAnalysis &TA, Constant *F,
-                                             DerivativeMode mode,
-                                             unsigned width, bool AtomicAdd);
+  static Constant *
+  GetOrCreateShadowConstant(EnzymeLogic &Logic, TargetLibraryInfo &TLI,
+                            TypeAnalysis &TA, Constant *F, DerivativeMode mode,
+                            VectorModeMemoryLayout memoryLayout, unsigned width,
+                            bool AtomicAdd);
 
-  static Constant *GetOrCreateShadowFunction(EnzymeLogic &Logic,
-                                             TargetLibraryInfo &TLI,
-                                             TypeAnalysis &TA, Function *F,
-                                             DerivativeMode mode,
-                                             unsigned width, bool AtomicAdd);
+  static Constant *
+  GetOrCreateShadowFunction(EnzymeLogic &Logic, TargetLibraryInfo &TLI,
+                            TypeAnalysis &TA, Function *F, DerivativeMode mode,
+                            VectorModeMemoryLayout memoryLayout, unsigned width,
+                            bool AtomicAdd);
 
   void branchToCorrespondingTarget(
       BasicBlock *ctx, IRBuilder<> &BuilderM,
@@ -1800,17 +1806,70 @@ public:
     Builder2.setFastMathFlags(getFast());
   }
 
-  static Type *getShadowType(Type *ty, unsigned width) {
-    if (width > 1) {
-      if (ty->isVoidTy())
-        return ty;
-      return ArrayType::get(ty, width);
+  static Type *getShadowTypeVectorizedAtLeafNodes(Type *ty, unsigned width) {
+    static std::map<Type *, Type *> visited;
+
+    if (auto sty = dyn_cast<StructType>(ty)) {
+
+      auto found = visited.find(sty);
+      if (found != visited.end())
+        return found->second;
+
+      StructType *new_sty = StructType::create(ty->getContext());
+      SmallVector<Type *, 3> subtys;
+
+      visited[sty] = new_sty;
+
+      for (auto sety : sty->subtypes()) {
+        Type *subty = getShadowTypeVectorizedAtLeafNodes(sety, width);
+        subtys.push_back(subty);
+      }
+
+      if (sty->hasName()) {
+        auto name = sty->getName() + ".Vec." + Twine(width);
+        new_sty->setBody(subtys);
+        new_sty->setName(name.str());
+        return new_sty;
+      } else {
+        visited.erase(sty);
+        return StructType::get(sty->getContext(), subtys);
+      }
+    } else if (auto aty = dyn_cast<ArrayType>(ty)) {
+      return ArrayType::get(
+          getShadowTypeVectorizedAtLeafNodes(aty->getElementType(), width),
+          aty->getNumElements());
+    } else if (auto pty = dyn_cast<PointerType>(ty)) {
+      return PointerType::get(
+          getShadowTypeVectorizedAtLeafNodes(pty->getElementType(), width),
+          pty->getAddressSpace());
     } else {
-      return ty;
+      return ArrayType::get(ty, width);
     }
   }
 
-  Type *getShadowType(Type *ty) { return getShadowType(ty, width); }
+  static Type *getShadowTypeVectorizedAtRootNode(Type *ty, unsigned width) {
+    return ArrayType::get(ty, width);
+  }
+
+  static Type *getShadowType(Type *ty, unsigned width,
+                             VectorModeMemoryLayout memoryLayout) {
+    if (width == 1)
+      return ty;
+
+    if (ty->isVoidTy())
+      return ty;
+
+    switch (memoryLayout) {
+    case VectorModeMemoryLayout::VectorizeAtRootNode:
+      return getShadowTypeVectorizedAtRootNode(ty, width);
+    case VectorModeMemoryLayout::VectorizeAtLeafNodes:
+      return getShadowTypeVectorizedAtLeafNodes(ty, width);
+    }
+  }
+
+  Type *getShadowType(Type *ty) {
+    return getShadowType(ty, width, memoryLayout);
+  }
 
   static inline Value *extractMeta(IRBuilder<> &Builder, Value *Agg,
                                    unsigned off) {
@@ -1830,49 +1889,80 @@ public:
   template <typename Func, typename... Args>
   Value *applyChainRule(Type *diffType, IRBuilder<> &Builder, Func rule,
                         Args... args) {
-    if (width > 1) {
-      const int size = sizeof...(args);
-      Value *vals[size] = {args...};
+    const int size = sizeof...(args);
+    Value *vals[size] = {args...};
 
-      for (size_t i = 0; i < size; ++i)
-        if (vals[i])
-          assert(cast<ArrayType>(vals[i]->getType())->getNumElements() ==
-                 width);
+    bool allUnwrapped = true;
+    bool allWrapped = true;
+    for (size_t i = 0; i < size; ++i) {
+      allWrapped = allWrapped && wrappedvalues.contains(vals[i]);
+      allUnwrapped = allUnwrapped && !wrappedvalues.contains(vals[i]);
+    }
 
-      Type *wrappedType = ArrayType::get(diffType, width);
-      Value *res = UndefValue::get(wrappedType);
-      for (unsigned int i = 0; i < getWidth(); ++i) {
-        auto tup = std::tuple<Args...>{
-            (args ? extractMeta(Builder, args, i) : nullptr)...};
-        auto diff = std::apply(rule, std::move(tup));
-        res = Builder.CreateInsertValue(res, diff, {i});
-      }
-      return res;
-    } else {
+    assert(size == 0 || allUnwrapped != allWrapped);
+
+    if (width == 1) {
+      assert(allUnwrapped);
       return rule(args...);
     }
+
+    if (allUnwrapped &&
+        memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
+      return rule(args...);
+
+    assert(allWrapped);
+
+    for (size_t i = 0; i < size; ++i)
+      if (vals[i])
+        assert(cast<ArrayType>(vals[i]->getType())->getNumElements() == width);
+
+    Type *wrappedType = ArrayType::get(diffType, width);
+    Value *res = UndefValue::get(wrappedType);
+    for (unsigned int i = 0; i < getWidth(); ++i) {
+      auto tup = std::tuple<Args...>{
+          (args ? extractMeta(Builder, args, i) : nullptr)...};
+      auto diff = std::apply(rule, std::move(tup));
+      res = Builder.CreateInsertValue(res, diff, {i});
+    }
+    wrappedvalues.insert(res);
+    return res;
   }
 
   /// Unwraps a vector derivative from its internal representation and applies a
   /// function f to each element. Return values of f are collected and wrapped.
   template <typename Func, typename... Args>
   void applyChainRule(IRBuilder<> &Builder, Func rule, Args... args) {
-    if (width > 1) {
-      const int size = sizeof...(args);
-      Value *vals[size] = {args...};
+    const int size = sizeof...(args);
+    Value *vals[size] = {args...};
 
-      for (size_t i = 0; i < size; ++i)
-        if (vals[i])
-          assert(cast<ArrayType>(vals[i]->getType())->getNumElements() ==
-                 width);
+    bool allUnwrapped = true;
+    bool allWrapped = true;
+    for (size_t i = 0; i < size; ++i) {
+      allWrapped = allWrapped && wrappedvalues.contains(vals[i]);
+      allUnwrapped = allUnwrapped && !wrappedvalues.contains(vals[i]);
+    }
 
-      for (unsigned int i = 0; i < getWidth(); ++i) {
-        auto tup = std::tuple<Args...>{
-            (args ? extractMeta(Builder, args, i) : nullptr)...};
-        std::apply(rule, std::move(tup));
-      }
-    } else {
-      rule(args...);
+    assert(size == 0 || allUnwrapped != allWrapped);
+
+    if (width == 1) {
+      assert(allUnwrapped);
+      return rule(args...);
+    }
+
+    if (allUnwrapped &&
+        memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
+      return rule(args...);
+
+    assert(allWrapped);
+
+    for (size_t i = 0; i < size; ++i)
+      if (vals[i])
+        assert(cast<ArrayType>(vals[i]->getType())->getNumElements() == width);
+
+    for (unsigned int i = 0; i < getWidth(); ++i) {
+      auto tup = std::tuple<Args...>{
+          (args ? extractMeta(Builder, args, i) : nullptr)...};
+      std::apply(rule, std::move(tup));
     }
   }
 
@@ -1881,26 +1971,42 @@ public:
   template <typename Func>
   Value *applyChainRule(Type *diffType, ArrayRef<Constant *> diffs,
                         IRBuilder<> &Builder, Func rule) {
-    if (width > 1) {
-      for (auto diff : diffs) {
-        assert(diff);
-        assert(cast<ArrayType>(diff->getType())->getNumElements() == width);
-      }
-      Type *wrappedType = ArrayType::get(diffType, width);
-      Value *res = UndefValue::get(wrappedType);
-      for (unsigned int i = 0; i < getWidth(); ++i) {
-        SmallVector<Constant *, 3> extracted_diffs;
-        for (auto diff : diffs) {
-          extracted_diffs.push_back(
-              cast<Constant>(extractMeta(Builder, diff, i)));
-        }
-        auto diff = rule(extracted_diffs);
-        res = Builder.CreateInsertValue(res, diff, {i});
-      }
-      return res;
-    } else {
+    bool allUnwrapped = true;
+    bool allWrapped = true;
+    for (auto diff : diffs) {
+      allWrapped = allWrapped && wrappedvalues.contains(diff);
+      allUnwrapped = allUnwrapped && !wrappedvalues.contains(diff);
+    }
+
+    assert(diffs.size() == 0 || allUnwrapped != allWrapped);
+
+    if (width == 1) {
+      assert(allUnwrapped);
       return rule(diffs);
     }
+
+    if (allUnwrapped &&
+        memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
+      return rule(diffs);
+
+    assert(allWrapped);
+
+    for (auto diff : diffs)
+      assert(cast<ArrayType>(diff->getType())->getNumElements() == width);
+
+    Type *wrappedType = ArrayType::get(diffType, width);
+    Value *res = UndefValue::get(wrappedType);
+    for (unsigned int i = 0; i < getWidth(); ++i) {
+      SmallVector<Constant *, 3> extracted_diffs;
+      for (auto diff : diffs) {
+        extracted_diffs.push_back(
+            cast<Constant>(extractMeta(Builder, diff, i)));
+      }
+      auto diff = rule(extracted_diffs);
+      res = Builder.CreateInsertValue(res, diff, {i});
+    }
+    wrappedvalues.insert(res);
+    return res;
   }
 };
 
@@ -1910,11 +2016,13 @@ class DiffeGradientUtils : public GradientUtils {
                      ValueToValueMapTy &invertedPointers_,
                      const SmallPtrSetImpl<Value *> &constantvalues_,
                      const SmallPtrSetImpl<Value *> &returnvals_,
+                     const SmallPtrSetImpl<Value *> &wrappedvals_,
                      DIFFE_TYPE ActiveReturn, ValueToValueMapTy &origToNew_,
-                     DerivativeMode mode, unsigned width, bool omp)
+                     DerivativeMode mode, VectorModeMemoryLayout memoryLayout,
+                     unsigned width, bool omp)
       : GradientUtils(Logic, newFunc_, oldFunc_, TLI, TA, TR, invertedPointers_,
-                      constantvalues_, returnvals_, ActiveReturn, origToNew_,
-                      mode, width, omp) {
+                      constantvalues_, returnvals_, wrappedvals_, ActiveReturn,
+                      origToNew_, mode, memoryLayout, width, omp) {
     assert(reverseBlocks.size() == 0);
     if (mode == DerivativeMode::ForwardMode ||
         mode == DerivativeMode::ForwardModeSplit) {
@@ -1936,7 +2044,8 @@ public:
   bool FreeMemory;
   ValueMap<const Value *, TrackingVH<AllocaInst>> differentials;
   static DiffeGradientUtils *
-  CreateFromClone(EnzymeLogic &Logic, DerivativeMode mode, unsigned width,
+  CreateFromClone(EnzymeLogic &Logic, DerivativeMode mode,
+                  VectorModeMemoryLayout memoryLayout, unsigned width,
                   Function *todiff, TargetLibraryInfo &TLI, TypeAnalysis &TA,
                   FnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
                   bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,

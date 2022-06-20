@@ -359,6 +359,7 @@ public:
     std::map<llvm::Argument *, bool> uncacheable_args;
     bool returnUsed;
     DerivativeMode mode;
+    VectorModeMemoryLayout memoryLayout;
     unsigned width;
     llvm::Type *additionalType;
     const FnTypeInfo typeInfo;
@@ -400,6 +401,11 @@ public:
       if (mode < rhs.mode)
         return true;
       if (rhs.mode < mode)
+        return false;
+
+      if (memoryLayout < rhs.memoryLayout)
+        return true;
+      if (rhs.memoryLayout < memoryLayout)
         return false;
 
       if (width < rhs.width)
@@ -448,7 +454,8 @@ public:
   llvm::Function *
   CreateForwardDiff(llvm::Function *todiff, DIFFE_TYPE retType,
                     llvm::ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA,
-                    bool returnValue, DerivativeMode mode, bool freeMemory,
+                    bool returnValue, DerivativeMode mode,
+                    VectorModeMemoryLayout MemoryLayout, bool freeMemory,
                     unsigned width, llvm::Type *additionalArg,
                     const FnTypeInfo &typeInfo,
                     const std::map<llvm::Argument *, bool> _uncacheable_args,

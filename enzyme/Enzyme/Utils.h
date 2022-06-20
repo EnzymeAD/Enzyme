@@ -288,6 +288,11 @@ enum class DerivativeMode {
   ForwardModeSplit = 4,
 };
 
+enum class VectorModeMemoryLayout {
+  VectorizeAtRootNode = 0,
+  VectorizeAtLeafNodes = 1,
+};
+
 /// Classification of value as an original program
 /// variable, a derivative variable, neither, or both.
 /// This type is used both in differential use analysis

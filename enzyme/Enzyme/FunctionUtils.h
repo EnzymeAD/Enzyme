@@ -60,12 +60,13 @@ public:
   llvm::AAResults &getAAResultsFromFunction(llvm::Function *NewF);
 
   llvm::Function *CloneFunctionWithReturns(
-      DerivativeMode mode, unsigned width, llvm::Function *&F,
-      llvm::ValueToValueMapTy &ptrInputs,
+      DerivativeMode mode, VectorModeMemoryLayout memoryLayout, unsigned width,
+      llvm::Function *&F, llvm::ValueToValueMapTy &ptrInputs,
       llvm::ArrayRef<DIFFE_TYPE> constant_args,
       llvm::SmallPtrSetImpl<llvm::Value *> &constants,
       llvm::SmallPtrSetImpl<llvm::Value *> &nonconstant,
-      llvm::SmallPtrSetImpl<llvm::Value *> &returnvals, ReturnType returnValue,
+      llvm::SmallPtrSetImpl<llvm::Value *> &returnvals,
+      llvm::SmallPtrSetImpl<llvm::Value *> &wrappedvals, ReturnType returnValue,
       DIFFE_TYPE returnType, llvm::Twine name, llvm::ValueToValueMapTy *VMapO,
       bool diffeReturnArg, llvm::Type *additionalArg = nullptr);
 
@@ -351,6 +352,7 @@ bool couldFunctionArgumentCapture(llvm::CallInst *CI, llvm::Value *val);
 #endif
 
 llvm::FunctionType *getFunctionTypeForClone(
-    llvm::FunctionType *FTy, DerivativeMode mode, unsigned width,
+    llvm::FunctionType *FTy, DerivativeMode mode,
+    VectorModeMemoryLayout memoryLayout, unsigned width,
     llvm::Type *additionalArg, llvm::ArrayRef<DIFFE_TYPE> constant_args,
     bool diffeReturnArg, ReturnType returnValue, DIFFE_TYPE returnType);

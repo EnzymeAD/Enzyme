@@ -49,6 +49,7 @@ class AdjointGenerator
 private:
   // Type of code being generated (forward, reverse, or both)
   const DerivativeMode Mode;
+  const VectorModeMemoryLayout MemoryLayout;
 
   GradientUtils *const gutils;
   ArrayRef<DIFFE_TYPE> constant_args;
@@ -69,8 +70,9 @@ private:
 
 public:
   AdjointGenerator(
-      DerivativeMode Mode, GradientUtils *gutils,
-      ArrayRef<DIFFE_TYPE> constant_args, DIFFE_TYPE retType,
+      DerivativeMode Mode, VectorModeMemoryLayout MemoryLayout,
+      GradientUtils *gutils, ArrayRef<DIFFE_TYPE> constant_args,
+      DIFFE_TYPE retType,
       std::function<unsigned(Instruction *, CacheType)> getIndex,
       const std::map<CallInst *, const std::map<Argument *, bool>>
           uncacheable_args_map,
@@ -82,8 +84,8 @@ public:
       const SmallPtrSetImpl<const Instruction *> &unnecessaryStores,
       const SmallPtrSetImpl<BasicBlock *> &oldUnreachable,
       AllocaInst *dretAlloca)
-      : Mode(Mode), gutils(gutils), constant_args(constant_args),
-        retType(retType), getIndex(getIndex),
+      : Mode(Mode), MemoryLayout(MemoryLayout), gutils(gutils),
+        constant_args(constant_args), retType(retType), getIndex(getIndex),
         uncacheable_args_map(uncacheable_args_map), returnuses(returnuses),
         augmentedReturn(augmentedReturn), replacedReturns(replacedReturns),
         unnecessaryValues(unnecessaryValues),
@@ -11084,8 +11086,9 @@ public:
         newcalled = gutils->Logic.CreateForwardDiff(
             cast<Function>(called), subretType, argsInverted,
             TR.analyzer.interprocedural, /*returnValue*/ subretused, Mode,
-            ((DiffeGradientUtils *)gutils)->FreeMemory, gutils->getWidth(),
-            tape ? tape->getType() : nullptr, nextTypeInfo, uncacheable_args,
+            MemoryLayout, ((DiffeGradientUtils *)gutils)->FreeMemory,
+            gutils->getWidth(), tape ? tape->getType() : nullptr, nextTypeInfo,
+            uncacheable_args,
             /*augmented*/ subdata);
       } else {
 #if LLVM_VERSION_MAJOR >= 11
@@ -11113,9 +11116,10 @@ public:
                 ? (retActive ? ReturnType::TwoReturns : ReturnType::Return)
                 : (retActive ? ReturnType::Return : ReturnType::Void);
 
-        FunctionType *FTy = getFunctionTypeForClone(
-            ft, Mode, gutils->getWidth(), tape ? tape->getType() : nullptr,
-            argsInverted, false, subretVal, subretType);
+        FunctionType *FTy =
+            getFunctionTypeForClone(ft, Mode, MemoryLayout, gutils->getWidth(),
+                                    tape ? tape->getType() : nullptr,
+                                    argsInverted, false, subretVal, subretType);
         PointerType *fptype = PointerType::getUnqual(FTy);
         newcalled = BuilderZ.CreatePointerCast(newcalled,
                                                PointerType::getUnqual(fptype));

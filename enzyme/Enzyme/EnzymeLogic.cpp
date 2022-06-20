@@ -1868,7 +1868,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   std::map<AugmentedStruct, int> returnMapping;
 
   GradientUtils *gutils = GradientUtils::CreateFromClone(
-      *this, width, todiff, TLI, TA, oldTypeInfo, retType, constant_args,
+      *this, VectorModeMemoryLayout::VectorizeAtRootNode, width, todiff, TLI,
+      TA, oldTypeInfo, retType, constant_args,
       /*returnUsed*/ returnUsed, /*shadowReturnUsed*/ shadowReturnUsed,
       returnMapping, omp);
   gutils->AtomicAdd = AtomicAdd;
@@ -1977,8 +1978,9 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   }
 
   AdjointGenerator<AugmentedReturn *> maker(
-      DerivativeMode::ReverseModePrimal, gutils, constant_args, retType,
-      getIndex, uncacheable_args_map, &returnuses,
+      DerivativeMode::ReverseModePrimal,
+      VectorModeMemoryLayout::VectorizeAtRootNode, gutils, constant_args,
+      retType, getIndex, uncacheable_args_map, &returnuses,
       &AugmentedCachedFunctions.find(tup)->second, nullptr, unnecessaryValues,
       unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
       nullptr);
@@ -2547,7 +2549,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     auto GV = pair.first;
     GV->setName("_tmp");
     auto R = gutils->GetOrCreateShadowFunction(
-        *this, TLI, TA, todiff, pair.second, width, gutils->AtomicAdd);
+        *this, TLI, TA, todiff, pair.second,
+        VectorModeMemoryLayout::VectorizeAtRootNode, width, gutils->AtomicAdd);
     SmallVector<ConstantExpr *, 1> users;
     for (auto U : GV->users()) {
       if (auto CE = dyn_cast<ConstantExpr>(U)) {
@@ -3429,8 +3432,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   bool diffeReturnArg = key.retType == DIFFE_TYPE::OUT_DIFF;
 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
-      *this, key.mode, key.width, key.todiff, TLI, TA, oldTypeInfo, key.retType,
-      diffeReturnArg, key.constant_args, retVal, key.additionalType, omp);
+      *this, key.mode, VectorModeMemoryLayout::VectorizeAtRootNode, key.width,
+      key.todiff, TLI, TA, oldTypeInfo, key.retType, diffeReturnArg,
+      key.constant_args, retVal, key.additionalType, omp);
 
   gutils->AtomicAdd = key.AtomicAdd;
   gutils->FreeMemory = key.freeMemory;
@@ -3626,8 +3630,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   }
 
   AdjointGenerator<const AugmentedReturn *> maker(
-      key.mode, gutils, key.constant_args, key.retType, getIndex,
-      uncacheable_args_map,
+      key.mode, VectorModeMemoryLayout::VectorizeAtRootNode, gutils,
+      key.constant_args, key.retType, getIndex, uncacheable_args_map,
       /*returnuses*/ nullptr, augmenteddata, &replacedReturns,
       unnecessaryValues, unnecessaryInstructions, unnecessaryStores,
       guaranteedUnreachable, dretAlloca);
@@ -3831,8 +3835,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
 Function *EnzymeLogic::CreateForwardDiff(
     Function *todiff, DIFFE_TYPE retType, ArrayRef<DIFFE_TYPE> constant_args,
-    TypeAnalysis &TA, bool returnUsed, DerivativeMode mode, bool freeMemory,
-    unsigned width, llvm::Type *additionalArg, const FnTypeInfo &oldTypeInfo_,
+    TypeAnalysis &TA, bool returnUsed, DerivativeMode mode,
+    VectorModeMemoryLayout memoryLayout, bool freeMemory, unsigned width,
+    llvm::Type *additionalArg, const FnTypeInfo &oldTypeInfo_,
     const std::map<Argument *, bool> _uncacheable_args,
     const AugmentedReturn *augmenteddata, bool omp) {
   assert(retType != DIFFE_TYPE::OUT_DIFF);
@@ -3852,6 +3857,7 @@ Function *EnzymeLogic::CreateForwardDiff(
                                                     _uncacheable_args.end()),
                          returnUsed,
                          mode,
+                         memoryLayout,
                          width,
                          additionalArg,
                          oldTypeInfo};
@@ -3875,6 +3881,9 @@ Function *EnzymeLogic::CreateForwardDiff(
   if (auto md = hasMetadata(todiff, (mode == DerivativeMode::ForwardMode)
                                         ? "enzyme_derivative"
                                         : "enzyme_splitderivative")) {
+    // TODO: handle different kinds of memory layouts in custom derivatives
+    assert(memoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode);
+
     if (!isa<MDTuple>(md)) {
       llvm::errs() << *todiff << "\n";
       llvm::errs() << *md << "\n";
@@ -4041,8 +4050,8 @@ Function *EnzymeLogic::CreateForwardDiff(
   bool diffeReturnArg = false;
 
   DiffeGradientUtils *gutils = DiffeGradientUtils::CreateFromClone(
-      *this, mode, width, todiff, TLI, TA, oldTypeInfo, retType, diffeReturnArg,
-      constant_args, retVal, additionalArg, omp);
+      *this, mode, memoryLayout, width, todiff, TLI, TA, oldTypeInfo, retType,
+      diffeReturnArg, constant_args, retVal, additionalArg, omp);
 
   insert_or_assign2<ForwardCacheKey, Function *>(ForwardCachedFunctions, tup,
                                                  gutils->newFunc);
@@ -4112,7 +4121,8 @@ Function *EnzymeLogic::CreateForwardDiff(
     gutils->computeMinCache(guaranteedUnreachable);
 
     maker = new AdjointGenerator<const AugmentedReturn *>(
-        mode, gutils, constant_args, retType, getIndex, uncacheable_args_map,
+        mode, memoryLayout, gutils, constant_args, retType, getIndex,
+        uncacheable_args_map,
         /*returnuses*/ nullptr, augmenteddata, nullptr, unnecessaryValues,
         unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
         nullptr);
@@ -4169,7 +4179,7 @@ Function *EnzymeLogic::CreateForwardDiff(
   } else {
 
     maker = new AdjointGenerator<const AugmentedReturn *>(
-        mode, gutils, constant_args, retType, nullptr, {},
+        mode, memoryLayout, gutils, constant_args, retType, nullptr, {},
         /*returnuses*/ nullptr, nullptr, nullptr, unnecessaryValues,
         unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
         nullptr);
@@ -4281,14 +4291,14 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
 
   for (unsigned i = 0; i < orig_FTy->getNumParams(); ++i) {
     if (arg_types[i] == BATCH_TYPE::VECTOR) {
-      Type *ty = GradientUtils::getShadowType(orig_FTy->getParamType(i), width);
+      Type *ty = GradientUtils::getShadowType(orig_FTy->getParamType(i), width, VectorModeMemoryLayout::VectorizeAtRootNode);
       params.push_back(ty);
     } else {
       params.push_back(orig_FTy->getParamType(i));
     }
   }
 
-  Type *NewTy = GradientUtils::getShadowType(tobatch->getReturnType(), width);
+  Type *NewTy = GradientUtils::getShadowType(tobatch->getReturnType(), width, VectorModeMemoryLayout::VectorizeAtRootNode);
 
   FunctionType *FTy = FunctionType::get(NewTy, params, tobatch->isVarArg());
   Function *NewF =

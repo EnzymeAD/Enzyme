@@ -2585,6 +2585,9 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                           array = NB.CreateInsertValue(array, val, {i});
                         }
                         valueop = array;
+                        if (memoryLayout ==
+                            VectorModeMemoryLayout::VectorizeAtRootNode)
+                          wrappedvalues.insert(array);
                       }
                     } else {
                       valueop =
@@ -3338,11 +3341,11 @@ bool GradientUtils::shouldRecompute(const Value *val,
 }
 
 GradientUtils *GradientUtils::CreateFromClone(
-    EnzymeLogic &Logic, unsigned width, Function *todiff,
-    TargetLibraryInfo &TLI, TypeAnalysis &TA, FnTypeInfo &oldTypeInfo,
-    DIFFE_TYPE retType, ArrayRef<DIFFE_TYPE> constant_args, bool returnUsed,
-    bool shadowReturnUsed, std::map<AugmentedStruct, int> &returnMapping,
-    bool omp) {
+    EnzymeLogic &Logic, VectorModeMemoryLayout memoryLayout, unsigned width,
+    Function *todiff, TargetLibraryInfo &TLI, TypeAnalysis &TA,
+    FnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
+    ArrayRef<DIFFE_TYPE> constant_args, bool returnUsed, bool shadowReturnUsed,
+    std::map<AugmentedStruct, int> &returnMapping, bool omp) {
   assert(!todiff->empty());
   Function *oldFunc = todiff;
 
@@ -3386,6 +3389,7 @@ GradientUtils *GradientUtils::CreateFromClone(
 
   SmallPtrSet<Value *, 4> constant_values;
   SmallPtrSet<Value *, 4> nonconstant_values;
+  SmallPtrSet<Value *, 16> wrapped_values;
 
   std::string prefix = "fakeaugmented";
   if (width > 1)
@@ -3394,9 +3398,9 @@ GradientUtils *GradientUtils::CreateFromClone(
   prefix += todiff->getName().str();
 
   auto newFunc = Logic.PPC.CloneFunctionWithReturns(
-      DerivativeMode::ReverseModePrimal, /* width */ width, oldFunc,
+      DerivativeMode::ReverseModePrimal, memoryLayout, width, oldFunc,
       invertedPointers, constant_args, constant_values, nonconstant_values,
-      returnvals,
+      returnvals, wrapped_values,
       /*returnValue*/ returnValue, retType, prefix, &originalToNew,
       /*diffeReturnArg*/ false, /*additionalArg*/ nullptr);
 
@@ -3431,13 +3435,14 @@ GradientUtils *GradientUtils::CreateFromClone(
 
   auto res = new GradientUtils(
       Logic, newFunc, oldFunc, TLI, TA, TR, invertedPointers, constant_values,
-      nonconstant_values, retType, originalToNew,
-      DerivativeMode::ReverseModePrimal, /* width */ width, omp);
+      nonconstant_values, wrapped_values, retType, originalToNew,
+      DerivativeMode::ReverseModePrimal, memoryLayout, width, omp);
   return res;
 }
 
 DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
-    EnzymeLogic &Logic, DerivativeMode mode, unsigned width, Function *todiff,
+    EnzymeLogic &Logic, DerivativeMode mode,
+    VectorModeMemoryLayout memoryLayout, unsigned width, Function *todiff,
     TargetLibraryInfo &TLI, TypeAnalysis &TA, FnTypeInfo &oldTypeInfo,
     DIFFE_TYPE retType, bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
     ReturnType returnValue, Type *additionalArg, bool omp) {
@@ -3451,6 +3456,8 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
   SmallPtrSet<Instruction *, 4> constants;
   SmallPtrSet<Instruction *, 20> nonconstant;
   SmallPtrSet<Value *, 2> returnvals;
+  SmallPtrSet<Value *, 1> wrappedvals;
+
   ValueToValueMapTy originalToNew;
 
   SmallPtrSet<Value *, 4> constant_values;
@@ -3475,9 +3482,9 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
     prefix += std::to_string(width);
 
   auto newFunc = Logic.PPC.CloneFunctionWithReturns(
-      mode, width, oldFunc, invertedPointers, constant_args, constant_values,
-      nonconstant_values, returnvals, returnValue, retType,
-      prefix + oldFunc->getName(), &originalToNew,
+      mode, memoryLayout, width, oldFunc, invertedPointers, constant_args,
+      constant_values, nonconstant_values, returnvals, wrappedvals, returnValue,
+      retType, prefix + oldFunc->getName(), &originalToNew,
       /*diffeReturnArg*/ diffeReturnArg, additionalArg);
 
   // Convert uncacheable args from the input function to the preprocessed
@@ -3511,14 +3518,16 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
 
   auto res = new DiffeGradientUtils(
       Logic, newFunc, oldFunc, TLI, TA, TR, invertedPointers, constant_values,
-      nonconstant_values, retType, originalToNew, mode, width, omp);
+      nonconstant_values, wrappedvals, retType, originalToNew, mode,
+      memoryLayout, width, omp);
 
   return res;
 }
 
 Constant *GradientUtils::GetOrCreateShadowConstant(
     EnzymeLogic &Logic, TargetLibraryInfo &TLI, TypeAnalysis &TA,
-    Constant *oval, DerivativeMode mode, unsigned width, bool AtomicAdd) {
+    Constant *oval, DerivativeMode mode, VectorModeMemoryLayout memoryLayout,
+    unsigned width, bool AtomicAdd) {
   if (isa<ConstantPointerNull>(oval)) {
     return oval;
   } else if (isa<UndefValue>(oval)) {
@@ -3528,36 +3537,41 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
   } else if (auto CD = dyn_cast<ConstantDataArray>(oval)) {
     SmallVector<Constant *, 1> Vals;
     for (size_t i = 0, len = CD->getNumElements(); i < len; i++) {
-      Vals.push_back(GetOrCreateShadowConstant(
-          Logic, TLI, TA, CD->getElementAsConstant(i), mode, width, AtomicAdd));
+      Vals.push_back(
+          GetOrCreateShadowConstant(Logic, TLI, TA, CD->getElementAsConstant(i),
+                                    mode, memoryLayout, width, AtomicAdd));
     }
     return ConstantArray::get(CD->getType(), Vals);
   } else if (auto CD = dyn_cast<ConstantArray>(oval)) {
     SmallVector<Constant *, 1> Vals;
     for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
-      Vals.push_back(GetOrCreateShadowConstant(
-          Logic, TLI, TA, CD->getOperand(i), mode, width, AtomicAdd));
+      Vals.push_back(GetOrCreateShadowConstant(Logic, TLI, TA,
+                                               CD->getOperand(i), mode,
+                                               memoryLayout, width, AtomicAdd));
     }
     return ConstantArray::get(CD->getType(), Vals);
   } else if (auto CD = dyn_cast<ConstantStruct>(oval)) {
     SmallVector<Constant *, 1> Vals;
     for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
-      Vals.push_back(GetOrCreateShadowConstant(
-          Logic, TLI, TA, CD->getOperand(i), mode, width, AtomicAdd));
+      Vals.push_back(GetOrCreateShadowConstant(Logic, TLI, TA,
+                                               CD->getOperand(i), mode,
+                                               memoryLayout, width, AtomicAdd));
     }
     return ConstantStruct::get(CD->getType(), Vals);
   } else if (auto CD = dyn_cast<ConstantVector>(oval)) {
     SmallVector<Constant *, 1> Vals;
     for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
-      Vals.push_back(GetOrCreateShadowConstant(
-          Logic, TLI, TA, CD->getOperand(i), mode, width, AtomicAdd));
+      Vals.push_back(GetOrCreateShadowConstant(Logic, TLI, TA,
+                                               CD->getOperand(i), mode,
+                                               memoryLayout, width, AtomicAdd));
     }
     return ConstantVector::get(Vals);
   } else if (auto F = dyn_cast<Function>(oval)) {
-    return GetOrCreateShadowFunction(Logic, TLI, TA, F, mode, width, AtomicAdd);
+    return GetOrCreateShadowFunction(Logic, TLI, TA, F, mode, memoryLayout,
+                                     width, AtomicAdd);
   } else if (auto arg = dyn_cast<ConstantExpr>(oval)) {
     auto C = GetOrCreateShadowConstant(Logic, TLI, TA, arg->getOperand(0), mode,
-                                       width, AtomicAdd);
+                                       memoryLayout, width, AtomicAdd);
     if (arg->isCast() || arg->getOpcode() == Instruction::GetElementPtr) {
       SmallVector<Constant *, 8> NewOps;
       for (unsigned i = 0, e = arg->getNumOperands(); i != e; ++i)
@@ -3619,8 +3633,8 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
       shadow->setUnnamedAddr(arg->getUnnamedAddr());
       if (arg->hasInitializer())
         shadow->setInitializer(GetOrCreateShadowConstant(
-            Logic, TLI, TA, cast<Constant>(arg->getOperand(0)), mode, width,
-            AtomicAdd));
+            Logic, TLI, TA, cast<Constant>(arg->getOperand(0)), mode,
+            memoryLayout, width, AtomicAdd));
       return shadow;
     }
   }
@@ -3630,7 +3644,8 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
 
 Constant *GradientUtils::GetOrCreateShadowFunction(
     EnzymeLogic &Logic, TargetLibraryInfo &TLI, TypeAnalysis &TA, Function *fn,
-    DerivativeMode mode, unsigned width, bool AtomicAdd) {
+    DerivativeMode mode, VectorModeMemoryLayout memoryLayout, unsigned width,
+    bool AtomicAdd) {
   //! Todo allow tape propagation
   //  Note that specifically this should _not_ be called with topLevel=true
   //  (since it may not be valid to always assume we can recompute the
@@ -3716,8 +3731,8 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
   switch (mode) {
   case DerivativeMode::ForwardMode: {
     Constant *newf = Logic.CreateForwardDiff(
-        fn, retType, types, TA, false, mode, /*freeMemory*/ true, width,
-        nullptr, type_args, uncacheable_args, /*augmented*/ nullptr);
+        fn, retType, types, TA, false, mode, memoryLayout, /*freeMemory*/ true,
+        width, nullptr, type_args, uncacheable_args, /*augmented*/ nullptr);
 
     assert(newf);
 
@@ -3746,8 +3761,8 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
         /*shadowReturnUsed*/ false, type_args, uncacheable_args,
         /*forceAnonymousTape*/ true, width, AtomicAdd);
     Constant *newf = Logic.CreateForwardDiff(
-        fn, retType, types, TA, false, mode, /*freeMemory*/ true, width,
-        nullptr, type_args, uncacheable_args, /*augmented*/ &augdata);
+        fn, retType, types, TA, false, mode, memoryLayout, /*freeMemory*/ true,
+        width, nullptr, type_args, uncacheable_args, /*augmented*/ &augdata);
 
     assert(newf);
 
@@ -4201,6 +4216,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       auto agg = ConstantArray::get(
           cast<ArrayType>(getShadowType(arg->getType())), Vals);
 
+      if (memoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode)
+        wrappedvalues.insert(agg);
+
       invertedPointers.insert(
           std::make_pair((const Value *)oval, InvertedPointerVH(this, agg)));
       return agg;
@@ -4210,8 +4228,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       return cs;
     }
   } else if (auto fn = dyn_cast<Function>(oval)) {
-    Constant *shadow =
-        GetOrCreateShadowFunction(Logic, TLI, TA, fn, mode, width, AtomicAdd);
+    Constant *shadow = GetOrCreateShadowFunction(
+        Logic, TLI, TA, fn, mode, memoryLayout, width, AtomicAdd);
     if (width > 1) {
       SmallVector<Constant *, 3> arr;
       for (unsigned i = 0; i < width; ++i) {
@@ -4411,9 +4429,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
     auto rule = [&](Value *ip) {
 #if LLVM_VERSION_MAJOR > 7
-      auto li =
-          bb.CreateLoad(arg->getPointerOperandType()->getPointerElementType(),
-                        ip, arg->getName() + "'ipl");
+      PointerType *ipty = cast<PointerType>(ip->getType());
+      auto li = bb.CreateLoad(ipty->getPointerElementType(), ip,
+                              arg->getName() + "'ipl");
 #else
       auto li = bb.CreateLoad(ip, arg->getName() + "'ipl");
 #endif
@@ -4670,6 +4688,10 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       Type *shadowTy = getShadowType(phi->getType());
       PHINode *which = bb.CreatePHI(shadowTy, phi->getNumIncomingValues());
       which->setDebugLoc(getNewFromOriginal(phi->getDebugLoc()));
+
+      if (width > 1 &&
+          memoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode)
+        wrappedvalues.insert(which);
 
       invertedPointers.insert(
           std::make_pair((const Value *)oval, InvertedPointerVH(this, which)));
