@@ -631,10 +631,10 @@ public:
       // everything it requires.
       std::map<UsageKey, bool> Seen;
       bool primalNeededInReverse = false;
-      for (auto pair : gutils->knownRecomputeHeuristic)
-        if (!pair.second) {
-          Seen[UsageKey(pair.first, ValueType::Primal)] = false;
-          if (pair.first == &I)
+      for (auto &&[value, knownHeuristic] : gutils->knownRecomputeHeuristic)
+        if (!knownHeuristic) {
+          Seen[UsageKey(value, ValueType::Primal)] = false;
+          if (value == &I)
             primalNeededInReverse = true;
         }
       primalNeededInReverse |= is_value_needed_in_reverse<ValueType::Primal>(
@@ -1072,13 +1072,13 @@ public:
 
       bool backwardsShadow = false;
       bool forwardsShadow = true;
-      for (auto pair : gutils->backwardsOnlyShadows) {
-        if (pair.second.stores.count(&I)) {
+      for (auto &&[val, rematerializer] : gutils->backwardsOnlyShadows) {
+        if (rematerializer.stores.count(&I)) {
           backwardsShadow = true;
-          forwardsShadow = pair.second.primalInitialize;
-          if (auto inst = dyn_cast<Instruction>(pair.first))
-            if (!forwardsShadow && pair.second.LI &&
-                pair.second.LI->contains(inst->getParent()))
+          forwardsShadow = rematerializer.primalInitialize;
+          if (auto inst = dyn_cast<Instruction>(val))
+            if (!forwardsShadow && rematerializer.LI &&
+                rematerializer.LI->contains(inst->getParent()))
               backwardsShadow = false;
         }
       }
@@ -2695,13 +2695,13 @@ public:
 
     bool backwardsShadow = false;
     bool forwardsShadow = true;
-    for (auto pair : gutils->backwardsOnlyShadows) {
-      if (pair.second.stores.count(&MS)) {
+    for (auto &&[val, rematerializer] : gutils->backwardsOnlyShadows) {
+      if (rematerializer.stores.count(&MS)) {
         backwardsShadow = true;
-        forwardsShadow = pair.second.primalInitialize;
-        if (auto inst = dyn_cast<Instruction>(pair.first))
-          if (!forwardsShadow && pair.second.LI &&
-              pair.second.LI->contains(inst->getParent()))
+        forwardsShadow = rematerializer.primalInitialize;
+        if (auto inst = dyn_cast<Instruction>(val))
+          if (!forwardsShadow && rematerializer.LI &&
+              rematerializer.LI->contains(inst->getParent()))
             backwardsShadow = false;
       }
     }
@@ -2943,13 +2943,13 @@ public:
 
     bool backwardsShadow = false;
     bool forwardsShadow = true;
-    for (auto pair : gutils->backwardsOnlyShadows) {
-      if (pair.second.stores.count(&MTI)) {
+    for (auto &&[val, rematerializer] : gutils->backwardsOnlyShadows) {
+      if (rematerializer.stores.count(&MTI)) {
         backwardsShadow = true;
-        forwardsShadow = pair.second.primalInitialize;
-        if (auto inst = dyn_cast<Instruction>(pair.first))
-          if (!forwardsShadow && pair.second.LI &&
-              pair.second.LI->contains(inst->getParent()))
+        forwardsShadow = rematerializer.primalInitialize;
+        if (auto inst = dyn_cast<Instruction>(val))
+          if (!forwardsShadow && rematerializer.LI &&
+              rematerializer.LI->contains(inst->getParent()))
             backwardsShadow = false;
       }
     }
@@ -8563,9 +8563,9 @@ public:
           primalNeededInReverse = !gutils->knownRecomputeHeuristic[orig];
         } else {
           std::map<UsageKey, bool> Seen;
-          for (auto pair : gutils->knownRecomputeHeuristic)
-            if (!pair.second)
-              Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+          for (auto &&[value, knownHeuristic] : gutils->knownRecomputeHeuristic)
+            if (!knownHeuristic)
+              Seen[UsageKey(value, ValueType::Primal)] = false;
           primalNeededInReverse = is_value_needed_in_reverse<ValueType::Primal>(
               gutils, orig, Mode, Seen, oldUnreachable);
         }
@@ -9009,8 +9009,8 @@ public:
 
         if (!shouldCache && !lrc) {
           std::map<UsageKey, bool> Seen;
-          for (auto pair : gutils->knownRecomputeHeuristic)
-            Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+          for (auto &&[value, knownHeuristic] : gutils->knownRecomputeHeuristic)
+            Seen[UsageKey(value, ValueType::Primal)] = false;
           bool primalNeededInReverse =
               is_value_needed_in_reverse<ValueType::Primal>(
                   gutils, orig, Mode, Seen, oldUnreachable);
@@ -9746,13 +9746,13 @@ public:
         if (funcName == "julia.write_barrier") {
           bool backwardsShadow = false;
           bool forwardsShadow = true;
-          for (auto pair : gutils->backwardsOnlyShadows) {
-            if (pair.second.stores.count(orig)) {
+          for (auto &&[val, rematerializer] : gutils->backwardsOnlyShadows) {
+            if (rematerializer.stores.count(orig)) {
               backwardsShadow = true;
-              forwardsShadow = pair.second.primalInitialize;
-              if (auto inst = dyn_cast<Instruction>(pair.first))
-                if (!forwardsShadow && pair.second.LI &&
-                    pair.second.LI->contains(inst->getParent()))
+              forwardsShadow = rematerializer.primalInitialize;
+              if (auto inst = dyn_cast<Instruction>(val))
+                if (!forwardsShadow && rematerializer.LI &&
+                    rematerializer.LI->contains(inst->getParent()))
                   backwardsShadow = false;
               break;
             }
@@ -10418,9 +10418,9 @@ public:
         return;
 
       std::map<UsageKey, bool> Seen;
-      for (auto pair : gutils->knownRecomputeHeuristic)
-        if (!pair.second)
-          Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+      for (auto &&[value, knownHeuristic] : gutils->knownRecomputeHeuristic)
+        if (!knownHeuristic)
+          Seen[UsageKey(value, ValueType::Primal)] = false;
       bool primalNeededInReverse =
           Mode == DerivativeMode::ForwardMode
               ? false
@@ -10868,9 +10868,10 @@ public:
           } else {
             assert(Mode == DerivativeMode::ReverseModeCombined);
             std::map<UsageKey, bool> Seen;
-            for (auto pair : gutils->knownRecomputeHeuristic)
-              if (!pair.second)
-                Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+            for (auto &&[value, knownHeuristic] :
+                 gutils->knownRecomputeHeuristic)
+              if (!knownHeuristic)
+                Seen[UsageKey(value, ValueType::Primal)] = false;
             bool primalNeededInReverse =
                 is_value_needed_in_reverse<ValueType::Primal>(
                     gutils, rmat.first, Mode, Seen, oldUnreachable);

@@ -73,8 +73,8 @@ static inline bool is_use_directly_needed_in_reverse(
       // Preserve any non-floating point values that are stored in an active
       // backwards creation shadow.
       if (!TR.query(const_cast<Value *>(SI->getValueOperand()))[{-1}].isFloat())
-        for (auto pair : gutils->backwardsOnlyShadows)
-          if (pair.second.stores.count(SI)) {
+        for (auto &&[val, rematerializer] : gutils->backwardsOnlyShadows)
+          if (rematerializer.stores.count(SI)) {
             return true;
           }
     }
@@ -85,8 +85,8 @@ static inline bool is_use_directly_needed_in_reverse(
   if (auto MTI = dyn_cast<MemTransferInst>(user)) {
     // Unless we're storing into a backwards only shadow store
     if (MTI->getArgOperand(1) == val || MTI->getArgOperand(2) == val) {
-      for (auto pair : gutils->backwardsOnlyShadows)
-        if (pair.second.stores.count(MTI)) {
+      for (auto &&[val, rematerializer] : gutils->backwardsOnlyShadows)
+        if (rematerializer.stores.count(MTI)) {
           return true;
         }
     }
@@ -98,8 +98,8 @@ static inline bool is_use_directly_needed_in_reverse(
   // Preserve the length of memsets of backward creation shadows
   if (auto MS = dyn_cast<MemSetInst>(user)) {
     if (MS->getArgOperand(1) == val || MS->getArgOperand(2) == val) {
-      for (auto pair : gutils->backwardsOnlyShadows)
-        if (pair.second.stores.count(MS)) {
+      for (auto &&[val, rematerializer] : gutils->backwardsOnlyShadows)
+        if (rematerializer.stores.count(MS)) {
           return true;
         }
     }
@@ -352,8 +352,8 @@ static inline bool is_value_needed_in_reverse(
             mode == DerivativeMode::ForwardModeSplit) {
 
           bool rematerialized = false;
-          for (auto pair : gutils->backwardsOnlyShadows)
-            if (pair.second.stores.count(SI)) {
+          for (auto &&[val, rematerializer] : gutils->backwardsOnlyShadows)
+            if (rematerializer.stores.count(SI)) {
               rematerialized = true;
               break;
             }
@@ -528,23 +528,25 @@ static inline bool is_value_needed_in_reverse(
     if (!OneLevel) {
       if (isa<StoreInst>(user) || isa<MemTransferInst>(user) ||
           isa<MemSetInst>(user)) {
-        for (auto pair : gutils->rematerializableAllocations) {
+        for (auto &&[val, rematerializer] :
+             gutils->rematerializableAllocations) {
           // Directly consider all the load uses to avoid an illegal inductive
           // recurrence. Specifically if we're asking if the alloca is used,
           // we'll set it to unused, then check the gep, then here we'll
           // directly say unused by induction instead of checking the final
           // loads.
-          if (pair.second.stores.count(user)) {
-            for (LoadInst *L : pair.second.loads)
+          if (rematerializer.stores.count(user)) {
+            for (LoadInst *L : rematerializer.loads)
               if (is_value_needed_in_reverse<VT>(gutils, L, mode, seen,
                                                  oldUnreachable)) {
                 return seen[idx] = true;
               }
-            for (auto &pair : pair.second.loadLikeCalls)
+            for (auto &loadLikeCall : rematerializer.loadLikeCalls)
               if (is_use_directly_needed_in_reverse(
-                      gutils, pair.operand, pair.loadCall, oldUnreachable) ||
-                  is_value_needed_in_reverse<VT>(gutils, pair.loadCall, mode,
-                                                 seen, oldUnreachable)) {
+                      gutils, loadLikeCall.operand, loadLikeCall.loadCall,
+                      oldUnreachable) ||
+                  is_value_needed_in_reverse<VT>(gutils, loadLikeCall.loadCall,
+                                                 mode, seen, oldUnreachable)) {
                 return seen[idx] = true;
               }
           }
@@ -730,9 +732,9 @@ static inline void minCut(const DataLayout &DL, LoopInfo &OrigLI,
     G[Node(V, false)].insert(Node(V, true));
     for (auto U : V->users()) {
       if (auto I = dyn_cast<Instruction>(U)) {
-        for (auto pair : rematerializableAllocations) {
-          if (Intermediates.count(pair.first) && pair.second.stores.count(I))
-            G[Node(V, true)].insert(Node(pair.first, false));
+        for (auto &&[val, rematerializer] : rematerializableAllocations) {
+          if (Intermediates.count(val) && rematerializer.stores.count(I))
+            G[Node(V, true)].insert(Node(val, false));
         }
       }
       if (Intermediates.count(U)) {
@@ -740,16 +742,16 @@ static inline void minCut(const DataLayout &DL, LoopInfo &OrigLI,
       }
     }
   }
-  for (auto pair : rematerializableAllocations) {
-    if (Intermediates.count(pair.first)) {
-      for (LoadInst *L : pair.second.loads) {
+  for (auto &&[val, rematerializer] : rematerializableAllocations) {
+    if (Intermediates.count(val)) {
+      for (LoadInst *L : rematerializer.loads) {
         if (Intermediates.count(L)) {
-          G[Node(pair.first, true)].insert(Node(L, false));
+          G[Node(val, true)].insert(Node(L, false));
         }
       }
-      for (auto L : pair.second.loadLikeCalls) {
+      for (auto L : rematerializer.loadLikeCalls) {
         if (Intermediates.count(L.loadCall)) {
-          G[Node(pair.first, true)].insert(Node(L.loadCall, false));
+          G[Node(val, true)].insert(Node(L.loadCall, false));
         }
       }
     }

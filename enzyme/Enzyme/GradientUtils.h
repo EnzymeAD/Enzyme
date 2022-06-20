@@ -1211,9 +1211,9 @@ public:
 #if LLVM_VERSION_MAJOR <= 6
     OrigPDT.recalculate(*oldFunc_);
 #endif
-    for (auto pair : invertedPointers_) {
-      invertedPointers.insert(std::make_pair(
-          (const Value *)pair.first, InvertedPointerVH(this, pair.second)));
+    for (auto &&[orig_ptr, new_ptr] : invertedPointers_) {
+      invertedPointers.insert(std::make_pair((const Value *)orig_ptr,
+                                             InvertedPointerVH(this, new_ptr)));
     }
     originalToNewFn.insert(originalToNewFn_.begin(), originalToNewFn_.end());
     for (BasicBlock &oBB : *oldFunc) {

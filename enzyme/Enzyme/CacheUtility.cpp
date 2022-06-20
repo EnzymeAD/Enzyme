@@ -492,9 +492,8 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
   loopContexts[L].offset = nullptr;
   loopContexts[L].allocLimit = nullptr;
   // A precisely matching canonical IV shouldve been run during preprocessing.
-  auto pair = FindCanonicalIV(L, Type::getInt64Ty(BB->getContext()));
-  PHINode *CanonicalIV = pair.first;
-  auto incVar = pair.second;
+  auto &&[CanonicalIV, incVar] =
+      FindCanonicalIV(L, Type::getInt64Ty(BB->getContext()));
   assert(CanonicalIV);
   loopContexts[L].var = CanonicalIV;
   loopContexts[L].incvar = incVar;

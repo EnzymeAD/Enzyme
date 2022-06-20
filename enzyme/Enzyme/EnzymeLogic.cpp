@@ -608,9 +608,9 @@ void calculateUnusedValuesInFunction(
     TargetLibraryInfo &TLI, ArrayRef<DIFFE_TYPE> constant_args,
     const llvm::SmallPtrSetImpl<BasicBlock *> &oldUnreachable) {
   std::map<UsageKey, bool> CacheResults;
-  for (auto pair : gutils->knownRecomputeHeuristic) {
-    if (!pair.second) {
-      CacheResults[UsageKey(pair.first, ValueType::Primal)] = false;
+  for (auto &&[value, knownHeuristic] : gutils->knownRecomputeHeuristic) {
+    if (!knownHeuristic) {
+      CacheResults[UsageKey(value, ValueType::Primal)] = false;
     }
   }
   std::map<UsageKey, bool> PrimalSeen;
@@ -839,10 +839,11 @@ void calculateUnusedValuesInFunction(
           StringRef funcName = CF ? CF->getName() : "";
           if (isa<MemTransferInst>(inst) || isa<StoreInst>(inst) ||
               isa<MemSetInst>(inst) || funcName == "julia.write_barrier") {
-            for (auto pair : gutils->rematerializableAllocations) {
-              if (pair.second.stores.count(inst)) {
+            for (auto &&[value, rematerializer] :
+                 gutils->rematerializableAllocations) {
+              if (rematerializer.stores.count(inst)) {
                 if (is_value_needed_in_reverse<ValueType::Primal>(
-                        gutils, pair.first, mode, PrimalSeen, oldUnreachable)) {
+                        gutils, value, mode, PrimalSeen, oldUnreachable)) {
                   return UseReq::Need;
                 }
               }
@@ -1560,13 +1561,11 @@ void restoreCache(
   }
 
   std::map<Value *, SmallVector<Instruction *, 4>> unwrapToOrig;
-  for (auto pair : gutils->unwrappedLoads)
-    unwrapToOrig[pair.second].push_back(const_cast<Instruction *>(pair.first));
+  for (auto &&[orig, unwrapped] : gutils->unwrappedLoads)
+    unwrapToOrig[unwrapped].push_back(const_cast<Instruction *>(orig));
   gutils->unwrappedLoads.clear();
 
-  for (auto pair : newIToNextI) {
-    auto newi = pair.first;
-    auto nexti = pair.second;
+  for (auto &&[newi, nexti] : newIToNextI) {
     if (newi != nexti) {
       gutils->replaceAWithB(newi, nexti);
     }
@@ -1575,9 +1574,7 @@ void restoreCache(
   // This most occur after all the replacements have been made
   // in the previous loop, lest a loop bound being unwrapped use
   // a value being replaced.
-  for (auto pair : newIToNextI) {
-    auto newi = pair.first;
-    auto nexti = pair.second;
+  for (auto &&[newi, nexti] : newIToNextI) {
     for (auto V : unwrapToOrig[newi]) {
       ValueToValueMapTy available;
       if (auto MD = hasMetadata(V, "enzyme_available")) {
@@ -1604,9 +1601,7 @@ void restoreCache(
   }
 
   // Erasure happens after to not erase the key of unwrapToOrig
-  for (auto pair : newIToNextI) {
-    auto newi = pair.first;
-    auto nexti = pair.second;
+  for (auto &&[newi, nexti] : newIToNextI) {
     if (newi != nexti) {
       if (auto inst = dyn_cast<Instruction>(newi))
         gutils->erase(inst);
@@ -3151,17 +3146,17 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
         phibuilder.CreateICmpEQ(av, Constant::getNullValue(av->getType()));
     Value *nphi = phibuilder.CreateNot(phi);
 
-    for (auto pair : replacePHIs) {
+    for (auto &&[predBB, phiToReplace] : replacePHIs) {
       Value *replaceWith = nullptr;
 
-      if (pair.first == loopContext.preheader) {
+      if (predBB == loopContext.preheader) {
         replaceWith = phi;
       } else {
         replaceWith = nphi;
       }
 
-      pair.second->replaceAllUsesWith(replaceWith);
-      pair.second->eraseFromParent();
+      phiToReplace->replaceAllUsesWith(replaceWith);
+      phiToReplace->eraseFromParent();
     }
     BB2 = gutils->reverseBlocks[BB].back();
     Builder.SetInsertPoint(BB2);
@@ -3173,8 +3168,8 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
   } else {
     std::map<BasicBlock *, std::vector<std::pair<BasicBlock *, BasicBlock *>>>
         phiTargetToPreds;
-    for (auto pair : replacePHIs) {
-      phiTargetToPreds[pair.first].emplace_back(std::make_pair(pair.first, BB));
+    for (auto &&[predBB, phiToReplace] : replacePHIs) {
+      phiTargetToPreds[predBB].emplace_back(std::make_pair(predBB, BB));
     }
     BasicBlock *fakeTarget = nullptr;
     for (auto pred : predecessors(BB)) {
@@ -4116,8 +4111,9 @@ Function *EnzymeLogic::CreateForwardDiff(
         Function *NewF = Function::Create(
             FTy, Function::LinkageTypes::InternalLinkage,
             "fixderivative_" + todiff->getName(), todiff->getParent());
-        for (auto pair : llvm::zip(NewF->args(), foundcalled->args())) {
-          std::get<0>(pair).setName(std::get<1>(pair).getName());
+        for (auto &&[diffe_arg, called_arg] :
+             llvm::zip(NewF->args(), foundcalled->args())) {
+          diffe_arg.setName(called_arg.getName());
         }
 
         BasicBlock *BB = BasicBlock::Create(NewF->getContext(), "entry", NewF);

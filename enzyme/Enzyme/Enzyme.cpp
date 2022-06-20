@@ -714,9 +714,9 @@ public:
     unsigned width = 1;
 
 #if LLVM_VERSION_MAJOR >= 14
-    for (auto [i, found] = std::tuple{0u, false}; i < CI->arg_size(); ++i)
+    for (auto &&[i, found] = std::tuple{0u, false}; i < CI->arg_size(); ++i)
 #else
-    for (auto [i, found] = std::tuple{0u, false}; i < CI->getNumArgOperands();
+    for (auto &&[i, found] = std::tuple{0u, false}; i < CI->getNumArgOperands();
          ++i)
 #endif
     {
@@ -2173,23 +2173,22 @@ public:
     }
 
     // Perform all the size replacements first to create constants
-    for (auto pair : toSize) {
-      successful &= HandleAutoDiff(pair.first, TLI, pair.second,
+    for (auto &[CI, mode] : toSize) {
+      successful &= HandleAutoDiff(CI, TLI, mode,
                                    /*sizeOnly*/ true);
       Changed = true;
       if (!successful)
         break;
     }
-    for (auto pair : toLower) {
-      successful &= HandleAutoDiff(pair.first, TLI, pair.second,
+    for (auto &[CI, mode] : toLower) {
+      successful &= HandleAutoDiff(CI, TLI, mode,
                                    /*sizeOnly*/ false);
       Changed = true;
       if (!successful)
         break;
     }
 
-    for (auto pair : toVirtual) {
-      auto CI = pair.first;
+    for (auto &[CI, mode] : toVirtual) {
       Constant *fn = dyn_cast<Constant>(CI->getArgOperand(0));
       if (!fn) {
         EmitFailure("IllegalVirtual", CI->getDebugLoc(), CI,
@@ -2208,7 +2207,7 @@ public:
                        Arch == Triple::amdgcn;
 
       auto val = GradientUtils::GetOrCreateShadowConstant(
-          Logic, TLI, TA, fn, pair.second, /*width*/ 1, AtomicAdd);
+          Logic, TLI, TA, fn, mode, /*width*/ 1, AtomicAdd);
       CI->replaceAllUsesWith(ConstantExpr::getPointerCast(val, CI->getType()));
       CI->eraseFromParent();
       Changed = true;

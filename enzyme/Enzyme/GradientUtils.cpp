@@ -1055,8 +1055,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     }
 
     std::set<BasicBlock *> blocks;
-    for (auto pair : done) {
-      const auto &edge = pair.first;
+    for (auto &&[edge, possibleValues] : done) {
       blocks.insert(edge.first);
     }
 
@@ -2307,40 +2306,42 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
       SmallPtrSet<Instruction *, 1> loopShadowReallocations;
       SmallPtrSet<Instruction *, 1> loopShadowRematerializations;
       Loop *origLI = nullptr;
-      for (auto pair : rematerializableAllocations) {
-        if (pair.second.LI &&
-            getNewFromOriginal(pair.second.LI->getHeader()) == L->getHeader()) {
+      for (auto &&[val, rematerializer] : rematerializableAllocations) {
+        if (rematerializer.LI &&
+            getNewFromOriginal(rematerializer.LI->getHeader()) ==
+                L->getHeader()) {
           bool rematerialized = false;
           std::map<UsageKey, bool> Seen;
-          for (auto pair : knownRecomputeHeuristic)
-            if (!pair.second)
-              Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+          for (auto &&[val, knownHeuristic] : knownRecomputeHeuristic)
+            if (!knownHeuristic)
+              Seen[UsageKey(val, ValueType::Primal)] = false;
 
           if (is_value_needed_in_reverse<ValueType::Primal>(
-                  this, pair.first, mode, Seen, notForAnalysis)) {
+                  this, val, mode, Seen, notForAnalysis)) {
             rematerialized = true;
           }
           if (rematerialized) {
-            if (auto inst = dyn_cast<Instruction>(pair.first))
-              if (pair.second.LI->contains(inst->getParent())) {
+            if (auto inst = dyn_cast<Instruction>(val))
+              if (rematerializer.LI->contains(inst->getParent())) {
                 loopReallocations.insert(inst);
               }
-            for (auto I : pair.second.stores)
+            for (auto I : rematerializer.stores)
               loopRematerializations.insert(I);
-            origLI = pair.second.LI;
+            origLI = rematerializer.LI;
           }
         }
       }
-      for (auto pair : backwardsOnlyShadows) {
-        if (pair.second.LI &&
-            getNewFromOriginal(pair.second.LI->getHeader()) == L->getHeader()) {
-          if (!pair.second.primalInitialize) {
-            if (auto inst = dyn_cast<Instruction>(pair.first)) {
-              if (pair.second.LI->contains(inst->getParent())) {
+      for (auto &&[val, rematerializer] : backwardsOnlyShadows) {
+        if (rematerializer.LI &&
+            getNewFromOriginal(rematerializer.LI->getHeader()) ==
+                L->getHeader()) {
+          if (!rematerializer.primalInitialize) {
+            if (auto inst = dyn_cast<Instruction>(val)) {
+              if (rematerializer.LI->contains(inst->getParent())) {
                 loopShadowReallocations.insert(inst);
-                for (auto I : pair.second.stores)
+                for (auto I : rematerializer.stores)
                   loopShadowRematerializations.insert(I);
-                origLI = pair.second.LI;
+                origLI = rematerializer.LI;
               }
             }
           }
@@ -5058,8 +5059,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 #endif
 
       if (scopeMap.find(inst) == scopeMap.end()) {
-        for (auto pair : scopeMap) {
-          if (auto li2 = dyn_cast<LoadInst>(const_cast<Value *>(pair.first))) {
+        for (auto &&[val, limitContext] : scopeMap) {
+          if (auto li2 = dyn_cast<LoadInst>(const_cast<Value *>(val))) {
 
 #if LLVM_VERSION_MAJOR >= 12
             auto li2obj = getUnderlyingObject(li2->getPointerOperand(), 100);
@@ -5791,11 +5792,11 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
           scope = &newFunc->getEntryBlock();
       }
   } else {
-    for (auto pair : backwardsOnlyShadows) {
-      if (auto pinst = dyn_cast<Instruction>(pair.first))
-        if (!pair.second.primalInitialize && pair.second.LI &&
-            pair.second.LI->contains(pinst->getParent())) {
-          auto found = invertedPointers.find(pair.first);
+    for (auto &&[val, rematerializer] : backwardsOnlyShadows) {
+      if (auto pinst = dyn_cast<Instruction>(val))
+        if (!rematerializer.primalInitialize && rematerializer.LI &&
+            rematerializer.LI->contains(pinst->getParent())) {
+          auto found = invertedPointers.find(val);
           if (found != invertedPointers.end() && found->second == inst) {
             scope = &newFunc->getEntryBlock();
 
@@ -5868,8 +5869,8 @@ void GradientUtils::branchToCorrespondingTarget(
     if (replacePHIs->size() == 0)
       return;
 
-    for (auto x : *replacePHIs) {
-      assert(targetToPreds.find(x.first) != targetToPreds.end());
+    for (auto &&[predBB, phiToReplace] : *replacePHIs) {
+      assert(targetToPreds.find(predBB) != targetToPreds.end());
     }
   }
 
@@ -5885,10 +5886,10 @@ void GradientUtils::branchToCorrespondingTarget(
              !isa<BranchInst>(BuilderM.GetInsertBlock()->back()));
       BuilderM.CreateBr(targetToPreds.begin()->first);
     } else {
-      for (auto pair : *replacePHIs) {
-        pair.second->replaceAllUsesWith(
-            ConstantInt::getTrue(pair.second->getContext()));
-        pair.second->eraseFromParent();
+      for (auto &&[predBB, phiToReplace] : *replacePHIs) {
+        phiToReplace->replaceAllUsesWith(
+            ConstantInt::getTrue(phiToReplace->getContext()));
+        phiToReplace->eraseFromParent();
       }
     }
     return;
@@ -5904,9 +5905,9 @@ void GradientUtils::branchToCorrespondingTarget(
                    BasicBlock *>>
         Q; // newblock, target
 
-    for (auto pair : targetToPreds) {
-      for (auto pred_edge : pair.second) {
-        Q.push_back(std::make_pair(pred_edge, pair.first));
+    for (auto &&[target, pred] : targetToPreds) {
+      for (auto pred_edge : pred) {
+        Q.push_back(std::make_pair(pred_edge, target));
       }
     }
 
@@ -5955,8 +5956,7 @@ void GradientUtils::branchToCorrespondingTarget(
   std::set<BasicBlock *> blocks;
 
   // llvm::errs() << "\n\n<DONE = " << ctx->getName() << ">\n";
-  for (auto pair : done) {
-    const auto &edge = pair.first;
+  for (auto &&[edge, targets] : done) {
     blocks.insert(edge.first);
     // llvm::errs() << " edge  (" << edge.first->getName() << ", "
     //             << edge.second->getName() << ") : [";
@@ -6228,30 +6228,28 @@ fast:;
           *done[std::make_pair(block, branch->getSuccessor(0))].begin(),
           *done[std::make_pair(block, branch->getSuccessor(1))].begin());
     } else {
-      for (auto pair : *replacePHIs) {
+      for (auto &&[predBB, phiToReplace] : *replacePHIs) {
         Value *phi = lookupM(branch->getCondition(), BuilderM);
         Value *val = nullptr;
-        if (pair.first ==
+        if (predBB ==
             *done[std::make_pair(block, branch->getSuccessor(0))].begin()) {
           val = phi;
-        } else if (pair.first ==
-                   *done[std::make_pair(block, branch->getSuccessor(1))]
-                        .begin()) {
+        } else if (predBB == *done[{block, branch->getSuccessor(1)}].begin()) {
           val = BuilderM.CreateNot(phi);
         } else {
-          llvm::errs() << *pair.first->getParent() << "\n";
-          llvm::errs() << *pair.first << "\n";
+          llvm::errs() << *predBB->getParent() << "\n";
+          llvm::errs() << *predBB << "\n";
           llvm::errs() << *branch << "\n";
           llvm_unreachable("unknown successor for replacephi");
         }
-        if (&*BuilderM.GetInsertPoint() == pair.second) {
-          if (pair.second->getNextNode())
-            BuilderM.SetInsertPoint(pair.second->getNextNode());
+        if (&*BuilderM.GetInsertPoint() == phiToReplace) {
+          if (phiToReplace->getNextNode())
+            BuilderM.SetInsertPoint(phiToReplace->getNextNode());
           else
-            BuilderM.SetInsertPoint(pair.second->getParent());
+            BuilderM.SetInsertPoint(phiToReplace->getParent());
         }
-        pair.second->replaceAllUsesWith(val);
-        pair.second->eraseFromParent();
+        phiToReplace->replaceAllUsesWith(val);
+        phiToReplace->eraseFromParent();
       }
     }
   } else if (auto si = dyn_cast<SwitchInst>(equivalentTerminator)) {
@@ -6271,17 +6269,17 @@ fast:;
                  .begin());
       }
     } else {
-      for (auto pair : *replacePHIs) {
+      for (auto &&[predBB, phiToReplace] : *replacePHIs) {
         Value *cas = nullptr;
         for (auto c : si->cases()) {
-          if (pair.first ==
+          if (predBB ==
               *done[std::make_pair(block, c.getCaseSuccessor())].begin()) {
             cas = c.getCaseValue();
             break;
           }
         }
         if (cas == nullptr) {
-          assert(pair.first ==
+          assert(predBB ==
                  *done[std::make_pair(block, si->getDefaultDest())].begin());
         }
         Value *val = nullptr;
@@ -6291,21 +6289,21 @@ fast:;
           val = BuilderM.CreateICmpEQ(cas, phi);
         } else {
           // default case
-          val = ConstantInt::getFalse(pair.second->getContext());
+          val = ConstantInt::getFalse(phiToReplace->getContext());
           for (auto switchcase : si->cases()) {
             val = BuilderM.CreateOr(
                 val, BuilderM.CreateICmpEQ(switchcase.getCaseValue(), phi));
           }
           val = BuilderM.CreateNot(val);
         }
-        if (&*BuilderM.GetInsertPoint() == pair.second) {
-          if (pair.second->getNextNode())
-            BuilderM.SetInsertPoint(pair.second->getNextNode());
+        if (&*BuilderM.GetInsertPoint() == phiToReplace) {
+          if (phiToReplace->getNextNode())
+            BuilderM.SetInsertPoint(phiToReplace->getNextNode());
           else
-            BuilderM.SetInsertPoint(pair.second->getParent());
+            BuilderM.SetInsertPoint(phiToReplace->getParent());
         }
-        pair.second->replaceAllUsesWith(val);
-        pair.second->eraseFromParent();
+        phiToReplace->replaceAllUsesWith(val);
+        phiToReplace->eraseFromParent();
       }
     }
   } else {
@@ -6594,9 +6592,9 @@ void GradientUtils::computeMinCache(
       } else {
         for (auto V2 : V->users()) {
           if (auto Inst = dyn_cast<Instruction>(V2))
-            for (auto pair : rematerializableAllocations) {
-              if (pair.second.stores.count(Inst)) {
-                todo.push_back(pair.first);
+            for (auto &&[val, rematerializer] : rematerializableAllocations) {
+              if (rematerializer.stores.count(Inst)) {
+                todo.push_back(val);
               }
             }
           todo.push_back(V2);
