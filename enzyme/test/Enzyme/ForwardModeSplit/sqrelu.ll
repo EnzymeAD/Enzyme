@@ -59,14 +59,15 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   %mul.i = fmul fast double %0, %x
 ; CHECK-NEXT:   %2 = fmul fast double %1, %x
 ; CHECK-NEXT:   %3 = fadd fast double %2, %0
-; CHECK-NEXT:   %4 = call fast double @llvm.sqrt.f64(double %mul.i)
-; CHECK-NEXT:   %5 = fmul fast double %3, 5.000000e-01
-; CHECK-NEXT:   %6 = fdiv fast double %5, %4
-; CHECK-NEXT:   %7 = fcmp fast oeq double %mul.i, 0.000000e+00
-; CHECK-NEXT:   %8 = select  {{(fast )?}}i1 %7, double 0.000000e+00, double %6
+; CHECK-NEXT:   %4 = fcmp fast oeq double %mul.i, 0.000000e+00
+; CHECK-NEXT:   %5 = call fast double @llvm.sqrt.f64(double %mul.i)
+; CHECK-NEXT:   %6 = fmul fast double %3, 5.000000e-01
+; CHECK-NEXT:   %7 = fdiv fast double %6, %5
+; CHECK-NEXT:   %8 = select  {{(fast )?}}i1 %4, double 0.000000e+00, double %7
 ; CHECK-NEXT:   br label %fwddiffesqrelu.exit
 
 ; CHECK: fwddiffesqrelu.exit: 
 ; CHECK-NEXT:   %[[condi:.+]] = phi  {{(fast )?}}double [ %8, %cond.true.i ], [ 0.000000e+00, %entry ]
 ; CHECK-NEXT:   ret double %[[condi]]
 ; CHECK-NEXT: }
+

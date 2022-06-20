@@ -91,6 +91,10 @@ llvm::cl::opt<bool> EnzymeAttributor("enzyme-attributor", cl::init(false),
 llvm::cl::opt<bool> EnzymeOMPOpt("enzyme-omp-opt", cl::init(false), cl::Hidden,
                                  cl::desc("Whether to enable openmp opt"));
 
+llvm::cl::opt<bool> EnzymeVectorizeAtLeafNodes(
+    "enzyme-vectorize-at-leaf-nodes", cl::init(false), cl::Hidden,
+    cl::desc("Run enzyme with an optimized memory layout for vector mode"));
+
 #if LLVM_VERSION_MAJOR >= 14
 #define addAttribute addAttributeAtIndex
 #endif
@@ -965,6 +969,43 @@ public:
 
     return true;
   }
+  
+  Type *getTypeVectorizedAtLeafNodes(Type *ty, unsigned width) {
+    if (auto sty = dyn_cast<StructType>(ty)) {
+      return getTypeVectorizedAtLeafNodes(sty, width);
+    } else if (auto aty = dyn_cast<ArrayType>(ty)) {
+      return ArrayType::get(
+          getTypeVectorizedAtLeafNodes(aty->getElementType(), width),
+          aty->getNumElements());
+    } else if (auto pty = dyn_cast<PointerType>(ty)) {
+      return PointerType::get(
+          getTypeVectorizedAtLeafNodes(pty->getElementType(), width),
+          pty->getAddressSpace());
+    } else {
+      return ArrayType::get(ty, width);
+    }
+  }
+
+  std::vector<std::tuple<Type *, std::vector<Value *>>>
+  getLeafNodeIndices(Type *ScalarTy, ArrayRef<Value *> idx) {
+    std::vector<std::tuple<Type *, std::vector<Value *>>> result;
+
+    if (ScalarTy->getNumContainedTypes() == 0) {
+      result.push_back({ScalarTy, idx});
+      return result;
+    }
+
+    for (unsigned i = 0; i < ScalarTy->getNumContainedTypes(); ++i) {
+      Type *Ty = ScalarTy->getContainedType(i);
+      auto vec = idx.vec();
+      vec.push_back(
+          ConstantInt::get(IntegerType::getInt32Ty(ScalarTy->getContext()), i));
+      auto idxs = getLeafNodeIndices(Ty, vec);
+      result.insert(result.end(), idxs.begin(), idxs.end());
+    }
+
+    return result;
+  }
 
   /// Return whether successful
   bool HandleAutoDiff(CallInst *CI, DerivativeMode mode, bool sizeOnly) {
@@ -1023,7 +1064,7 @@ public:
       case DerivativeMode::ForwardModeSplit:
       case DerivativeMode::ForwardMode: {
         Value *sretPt = CI->getArgOperand(0);
-        if (width > 1) {
+        if (width > 1 && !EnzymeVectorizeAtLeafNodes) {
           PointerType *pty = cast<PointerType>(sretPt->getType());
           if (auto sty = dyn_cast<StructType>(pty->getPointerElementType())) {
             Value *acc = UndefValue::get(
@@ -1047,6 +1088,8 @@ public:
                 width, "elements of the same type.");
             return false;
           }
+        } else if (width > 1) {
+          shadow = Builder.CreatePointerCast(sretPt, GradientUtils::getShadowType(primal->getType(), width, VectorModeMemoryLayout::VectorizeAtLeafNodes));
         } else {
           shadow = sretPt;
         }
@@ -1390,7 +1433,18 @@ public:
               return false;
             }
           }
-          if (PTy != element->getType()) {
+
+          auto expectedType = GradientUtils::getShadowType(
+              PTy, width, VectorModeMemoryLayout::VectorizeAtLeafNodes);
+          if (EnzymeVectorizeAtLeafNodes &&
+              expectedType != element->getType()) {
+            element = castToDiffeFunctionArgType(Builder, CI, FT, expectedType,
+                                                 i, mode, element, truei);
+
+            if (!element) {
+              return false;
+            }
+          } else if (!EnzymeVectorizeAtLeafNodes && PTy != element->getType()) {
             element = castToDiffeFunctionArgType(Builder, CI, FT, PTy, i, mode,
                                                  element, truei);
             if (!element) {
@@ -1398,7 +1452,7 @@ public:
             }
           }
 
-          if (width > 1) {
+          if (width > 1 && !EnzymeVectorizeAtLeafNodes) {
             res =
                 res ? Builder.CreateInsertValue(res, element, {v})
                     : Builder.CreateInsertValue(UndefValue::get(ArrayType::get(
@@ -1467,11 +1521,15 @@ public:
     Function *newFunc = nullptr;
     Type *tapeType = nullptr;
     const AugmentedReturn *aug;
+    VectorModeMemoryLayout memoryLayout =
+        EnzymeVectorizeAtLeafNodes
+            ? VectorModeMemoryLayout::VectorizeAtLeafNodes
+            : VectorModeMemoryLayout::VectorizeAtRootNode;
     switch (mode) {
     case DerivativeMode::ForwardMode:
       newFunc = Logic.CreateForwardDiff(
           fn, retType, constants, TA,
-          /*should return*/ false, mode, freeMemory, width,
+          /*should return*/ false, mode, memoryLayout, freeMemory, width,
           /*addedType*/ nullptr, type_args, volatile_args,
           /*augmented*/ nullptr);
       break;
@@ -1515,7 +1573,7 @@ public:
       }
       newFunc = Logic.CreateForwardDiff(
           fn, retType, constants, TA,
-          /*should return*/ false, mode, freeMemory, width,
+          /*should return*/ false, mode, memoryLayout, freeMemory, width,
           /*addedType*/ tapeType, type_args, volatile_args, aug);
       break;
     }
@@ -1731,6 +1789,7 @@ public:
     // convention.
     if (width > 1 && !diffret->getType()->isEmptyTy() &&
         !diffret->getType()->isVoidTy() &&
+        memoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode &&
         (mode == DerivativeMode::ForwardMode ||
          mode == DerivativeMode::ForwardModeSplit)) {
 
@@ -2243,8 +2302,8 @@ public:
                        Arch == Triple::amdgcn;
 
       auto val = GradientUtils::GetOrCreateShadowConstant(
-          Logic, Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(F), TA, fn,
-          pair.second, /*width*/ 1, AtomicAdd);
+          Logic, Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(F), TA, fn, pair.second,
+          VectorModeMemoryLayout::VectorizeAtRootNode, /*width*/ 1, AtomicAdd);
       CI->replaceAllUsesWith(ConstantExpr::getPointerCast(val, CI->getType()));
       CI->eraseFromParent();
       Changed = true;
