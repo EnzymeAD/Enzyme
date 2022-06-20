@@ -21,9 +21,9 @@ declare double @__enzyme_fwdsplit(double (double)*, ...)
 
 ; CHECK: define double @test_derivative(double %x)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = tail call fast double @llvm.sqrt.f64(double %x)
-; CHECK-NEXT:   %1 = fdiv fast double 5.000000e-01, %0
-; CHECK-NEXT:   %2 = fcmp fast oeq double %x, 0.000000e+00
-; CHECK-NEXT:   %3 = select{{( fast)?}} i1 %2, double 0.000000e+00, double %1
+; CHECK-NEXT:   %0 = fcmp fast oeq double %x, 0.000000e+00
+; CHECK-NEXT:   %1 = tail call fast double @llvm.sqrt.f64(double %x)
+; CHECK-NEXT:   %2 = fdiv fast double 5.000000e-01, %1
+; CHECK-NEXT:   %3 = select {{(fast )?}}i1 %0, double 0.000000e+00, double %2
 ; CHECK-NEXT:   ret double %3
 ; CHECK-NEXT: }

@@ -311,6 +311,11 @@ enum class DerivativeMode {
   ForwardModeSplit = 4,
 };
 
+enum class VectorModeMemoryLayout {
+  VectorizeAtRootNode = 0,
+  VectorizeAtLeafNodes = 1,
+};
+
 /// Classification of value as an original program
 /// variable, a derivative variable, neither, or both.
 /// This type is used both in differential use analysis
@@ -615,7 +620,7 @@ getOrInsertDifferentialFloatMemmove(llvm::Module &M, llvm::Type *T,
                                     unsigned dstaddr, unsigned srcaddr);
 
 llvm::Function *getOrInsertCheckedFree(llvm::Module &M, llvm::CallInst *call,
-                                       llvm::Type *Type, unsigned width);
+                                       llvm::Type *Type, unsigned width, VectorModeMemoryLayout memoryLayout);
 
 /// Create function for type that performs the derivative MPI_Wait
 llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
