@@ -618,16 +618,16 @@ void calculateUnusedValuesInFunction(
     PrimalSeen = CacheResults;
   }
 
-  for (const auto &pair : gutils->allocationsWithGuaranteedFree) {
-    if (pair.second.size() == 0)
+  for (auto &&[alloc, frees] : gutils->allocationsWithGuaranteedFree) {
+    if (frees.size() == 0)
       continue;
 
     bool primalNeededInReverse = is_value_needed_in_reverse<ValueType::Primal>(
-        gutils, pair.first, mode, CacheResults, oldUnreachable);
+        gutils, alloc, mode, CacheResults, oldUnreachable);
     bool cacheWholeAllocation = false;
 
-    if (gutils->knownRecomputeHeuristic.count(pair.first)) {
-      if (!gutils->knownRecomputeHeuristic[pair.first]) {
+    if (gutils->knownRecomputeHeuristic.count(alloc)) {
+      if (!gutils->knownRecomputeHeuristic[alloc]) {
         primalNeededInReverse = true;
         cacheWholeAllocation = true;
       }
@@ -636,9 +636,9 @@ void calculateUnusedValuesInFunction(
     // is not needed in the reverse.
     if (!cacheWholeAllocation && primalNeededInReverse) {
       auto found = gutils->rematerializableAllocations.find(
-          const_cast<CallInst *>(pair.first));
+          const_cast<CallInst *>(alloc));
       if (found != gutils->rematerializableAllocations.end()) {
-        if (auto inst = dyn_cast<Instruction>(pair.first))
+        if (auto inst = dyn_cast<Instruction>(alloc))
           if (found->second.LI &&
               found->second.LI->contains(inst->getParent())) {
             primalNeededInReverse = false;
@@ -646,7 +646,7 @@ void calculateUnusedValuesInFunction(
       }
     }
 
-    for (auto freeCall : pair.second) {
+    for (auto freeCall : frees) {
       if (!primalNeededInReverse)
         gutils->forwardDeallocations.insert(freeCall);
       else
@@ -1498,15 +1498,15 @@ void cleanupInversionAllocs(DiffeGradientUtils *gutils, BasicBlock *entry) {
 static FnTypeInfo preventTypeAnalysisLoops(const FnTypeInfo &oldTypeInfo_,
                                            llvm::Function *todiff) {
   FnTypeInfo oldTypeInfo = oldTypeInfo_;
-  for (auto &pair : oldTypeInfo.KnownValues) {
-    if (pair.second.size() != 0) {
+  for (auto &&[constantArg, constants] : oldTypeInfo.KnownValues) {
+    if (constants.size() != 0) {
       bool recursiveUse = false;
-      for (auto user : pair.first->users()) {
+      for (auto user : constantArg->users()) {
         if (auto bi = dyn_cast<BinaryOperator>(user)) {
           for (auto biuser : bi->users()) {
             if (auto ci = dyn_cast<CallInst>(biuser)) {
               if (ci->getCalledFunction() == todiff &&
-                  ci->getArgOperand(pair.first->getArgNo()) == bi) {
+                  ci->getArgOperand(constantArg->getArgNo()) == bi) {
                 recursiveUse = true;
                 break;
               }
@@ -1516,8 +1516,9 @@ static FnTypeInfo preventTypeAnalysisLoops(const FnTypeInfo &oldTypeInfo_,
         if (recursiveUse)
           break;
       }
+
       if (recursiveUse) {
-        pair.second.clear();
+        constants.clear();
       }
     }
   }

@@ -2001,47 +2001,48 @@ void CoaleseTrivialMallocs(Function &F, DominatorTree &DT) {
       }
     }
   }
-  for (auto &pair : LegalMallocs) {
-    if (pair.second.size() < 2)
+  for (auto &&[bb, mallocFreePairs] : LegalMallocs) {
+    if (mallocFreePairs.size() < 2)
       continue;
-    CallInst *First = pair.second[0].first;
-    for (auto &z : pair.second) {
-      if (!DT.dominates(First, z.first))
-        First = z.first;
+    CallInst *FirstMallocCall = mallocFreePairs[0].first;
+    for (auto &&[malloc_call, free_call] : mallocFreePairs) {
+      if (!DT.dominates(FirstMallocCall, malloc_call))
+        FirstMallocCall = malloc_call;
     }
     bool legal = true;
-    for (auto &z : pair.second) {
-      if (auto inst = dyn_cast<Instruction>(z.first->getArgOperand(0)))
-        if (!DT.dominates(inst, First))
+    for (auto &&[malloc_call, free_call] : mallocFreePairs) {
+      if (auto inst = dyn_cast<Instruction>(malloc_call->getArgOperand(0)))
+        if (!DT.dominates(inst, FirstMallocCall))
           legal = true;
     }
     if (!legal)
       continue;
-    IRBuilder<> B(First);
-    Value *Size = First->getArgOperand(0);
-    for (auto &z : pair.second) {
-      if (z.first == First)
+    IRBuilder<> B(FirstMallocCall);
+    Value *Size = FirstMallocCall->getArgOperand(0);
+    for (auto &&[malloc_call, free_call] : mallocFreePairs) {
+      if (malloc_call == FirstMallocCall)
         continue;
       Size = B.CreateAdd(
           B.CreateOr(B.CreateSub(Size, ConstantInt::get(Size->getType(), 1)),
                      ConstantInt::get(Size->getType(), 15)),
           ConstantInt::get(Size->getType(), 1));
-      z.second->eraseFromParent();
-      IRBuilder<> B2(z.first);
+      free_call->eraseFromParent();
+      IRBuilder<> B2(malloc_call);
 #if LLVM_VERSION_MAJOR > 7
-      Value *gepPtr = B2.CreateInBoundsGEP(z.first->getType(), First, Size);
+      Value *gepPtr =
+          B2.CreateInBoundsGEP(malloc_call->getType(), FirstMallocCall, Size);
 #else
-      Value *gepPtr = B2.CreateInBoundsGEP(First, Size);
+      Value *gepPtr = B2.CreateInBoundsGEP(FirstMallocCall, Size);
 #endif
-      z.first->replaceAllUsesWith(gepPtr);
-      Size = B.CreateAdd(Size, z.first->getArgOperand(0));
-      z.first->eraseFromParent();
+      malloc_call->replaceAllUsesWith(gepPtr);
+      Size = B.CreateAdd(Size, malloc_call->getArgOperand(0));
+      malloc_call->eraseFromParent();
     }
-    auto NewMalloc =
-        cast<CallInst>(B.CreateCall(First->getCalledFunction(), Size));
-    NewMalloc->copyIRFlags(First);
-    First->replaceAllUsesWith(NewMalloc);
-    First->eraseFromParent();
+    auto NewMalloc = cast<CallInst>(
+        B.CreateCall(FirstMallocCall->getCalledFunction(), Size));
+    NewMalloc->copyIRFlags(FirstMallocCall);
+    FirstMallocCall->replaceAllUsesWith(NewMalloc);
+    FirstMallocCall->eraseFromParent();
   }
 }
 

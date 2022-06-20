@@ -3062,11 +3062,9 @@ bool GradientUtils::legalRecompute(const Value *val,
           llvm::errs() << *newFunc << "\n";
           llvm::errs() << *oldFunc << "\n";
           llvm::errs() << "can_modref_map:\n";
-          for (auto &pair : *can_modref_map) {
-            llvm::errs() << " + " << *pair.first << ": " << pair.second
-                         << " of func "
-                         << pair.first->getParent()->getParent()->getName()
-                         << "\n";
+          for (auto &&[inst, can_modref] : *can_modref_map) {
+            llvm::errs() << " + " << *inst << ": " << can_modref << " of func "
+                         << inst->getParent()->getParent()->getName() << "\n";
           }
           llvm::errs() << "couldn't find in can_modref_map: " << *li << " - "
                        << *orig << " in fn: "
@@ -6326,27 +6324,27 @@ nofast:;
              std::map<ConstantInt * /*target*/,
                       std::vector<BasicBlock *> /*predecessors*/>>
         storing;
-    for (const auto &pair : targetToPreds) {
-      for (auto pred : pair.second) {
-        storing[pred.first][ConstantInt::get(T, idx)].push_back(pred.second);
+    for (auto &&[target, preds] : targetToPreds) {
+      for (auto &&[pred, successor] : preds) {
+        storing[pred][ConstantInt::get(T, idx)].push_back(successor);
       }
-      targets.push_back(pair.first);
+      targets.push_back(target);
       ++idx;
     }
     assert(targets.size() > 0);
 
-    for (const auto &pair : storing) {
-      IRBuilder<> pbuilder(pair.first);
+    for (auto &&[storingblock, targetMap] : storing) {
+      IRBuilder<> pbuilder(storingblock);
 
-      if (pair.first->getTerminator())
-        pbuilder.SetInsertPoint(pair.first->getTerminator());
+      if (storingblock->getTerminator())
+        pbuilder.SetInsertPoint(storingblock->getTerminator());
 
       pbuilder.setFastMathFlags(getFast());
 
       Value *tostore = ConstantInt::get(T, 0);
 
-      if (pair.second.size() == 1) {
-        tostore = pair.second.begin()->first;
+      if (targetMap.size() == 1) {
+        tostore = targetMap.begin()->first;
       } else {
         assert(0 && "multi exit edges not supported");
         exit(1);

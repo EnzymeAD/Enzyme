@@ -725,9 +725,9 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
 /// Analyze type info given by the arguments, possibly adding to work queue
 void TypeAnalyzer::prepareArgs() {
   // Propagate input type information for arguments
-  for (auto &pair : fntypeinfo.Arguments) {
-    assert(pair.first->getParent() == fntypeinfo.Function);
-    updateAnalysis(pair.first, pair.second, pair.first);
+  for (auto &&[arg, arg_type_tree] : fntypeinfo.Arguments) {
+    assert(arg->getParent() == fntypeinfo.Function);
+    updateAnalysis(arg, arg_type_tree, arg);
   }
 
   // Get type and other information about argument
@@ -989,8 +989,8 @@ void TypeAnalyzer::runPHIHypotheses() {
               if (Result == TypeTree(BaseType::Integer).Only(-1) ||
                   Result == TypeTree(BaseType::Anything).Only(-1)) {
                 updateAnalysis(phi, Result, phi);
-                for (auto &pair : tmpAnalysis.analysis) {
-                  updateAnalysis(pair.first, pair.second, phi);
+                for (auto &&[value, type_tree] : tmpAnalysis.analysis) {
+                  updateAnalysis(value, type_tree, phi);
                 }
                 Changed = true;
               }
@@ -1023,8 +1023,8 @@ void TypeAnalyzer::runPHIHypotheses() {
                       TypeTree(phi->getType()->getScalarType()).Only(-1) ||
                   Result == TypeTree(BaseType::Anything).Only(-1)) {
                 updateAnalysis(phi, Result, phi);
-                for (auto &pair : tmpAnalysis.analysis) {
-                  updateAnalysis(pair.first, pair.second, phi);
+                for (auto &&[value, type_tree] : tmpAnalysis.analysis) {
+                  updateAnalysis(value, type_tree, phi);
                 }
                 Changed = true;
               }
@@ -2180,9 +2180,9 @@ void TypeAnalyzer::visitInsertValueInst(InsertValueInst &I) {
 
 void TypeAnalyzer::dump(llvm::raw_ostream &ss) {
   ss << "<analysis>\n";
-  for (auto &pair : analysis) {
-    ss << *pair.first << ": " << pair.second.str()
-       << ", intvals: " << to_string(knownIntegralValues(pair.first)) << "\n";
+  for (auto &&[value, type_tree] : analysis) {
+    ss << *value << ": " << type_tree.str()
+       << ", intvals: " << to_string(knownIntegralValues(value)) << "\n";
   }
   ss << "</analysis>\n";
 }
@@ -4381,9 +4381,9 @@ FnTypeInfo::knownIntegralValues(llvm::Value *val, const DominatorTree &DT,
   if (auto arg = dyn_cast<llvm::Argument>(val)) {
     auto found = KnownValues.find(arg);
     if (found == KnownValues.end()) {
-      for (const auto &pair : KnownValues) {
-        llvm::errs() << " KnownValues[" << *pair.first << "] - "
-                     << pair.first->getParent()->getName() << "\n";
+      for (auto &&[constantArg, constants] : KnownValues) {
+        llvm::errs() << " KnownValues[" << *constantArg << "] - "
+                     << constantArg->getParent()->getName() << "\n";
       }
       llvm::errs() << " arg: " << *arg << " - " << arg->getParent()->getName()
                    << "\n";
@@ -4852,10 +4852,9 @@ TypeResults TypeAnalysis::analyzeFunction(const FnTypeInfo &fn) {
 
   if (EnzymePrintType) {
     llvm::errs() << "analyzing function " << fn.Function->getName() << "\n";
-    for (auto &pair : fn.Arguments) {
-      llvm::errs() << " + knowndata: " << *pair.first << " : "
-                   << pair.second.str();
-      auto found = fn.KnownValues.find(pair.first);
+    for (auto &&[argument, type_tree] : fn.Arguments) {
+      llvm::errs() << " + knowndata: " << *argument << " : " << type_tree.str();
+      auto found = fn.KnownValues.find(argument);
       if (found != fn.KnownValues.end()) {
         llvm::errs() << " - " << to_string(found->second);
       }
@@ -4944,9 +4943,8 @@ ConcreteType TypeResults::intType(size_t num, Value *val, bool errIfNotFound,
     if (auto inst = dyn_cast<Instruction>(val)) {
       llvm::errs() << *inst->getParent()->getParent()->getParent() << "\n";
       llvm::errs() << *inst->getParent()->getParent() << "\n";
-      for (auto &pair : analyzer.analysis) {
-        llvm::errs() << "val: " << *pair.first << " - " << pair.second.str()
-                     << "\n";
+      for (auto &&[value, type_tree] : analyzer.analysis) {
+        llvm::errs() << "val: " << *value << " - " << type_tree.str() << "\n";
       }
     }
     llvm::errs() << "could not deduce type of integer " << *val << "\n";
@@ -4998,8 +4996,8 @@ ConcreteType TypeResults::firstPointer(size_t num, Value *val,
     if (auto inst = dyn_cast<Instruction>(val)) {
       llvm::errs() << *inst->getParent()->getParent()->getParent() << "\n";
       llvm::errs() << *inst->getParent()->getParent() << "\n";
-      for (auto &pair : res.analysis) {
-        if (auto in = dyn_cast<Instruction>(pair.first)) {
+      for (auto &&[value, type_tree] : res.analysis) {
+        if (auto in = dyn_cast<Instruction>(value)) {
           if (in->getParent()->getParent() != inst->getParent()->getParent()) {
             llvm::errs() << "inf: " << *in->getParent()->getParent() << "\n";
             llvm::errs() << "instf: " << *inst->getParent()->getParent()
@@ -5010,20 +5008,18 @@ ConcreteType TypeResults::firstPointer(size_t num, Value *val,
           assert(in->getParent()->getParent() ==
                  inst->getParent()->getParent());
         }
-        llvm::errs() << "val: " << *pair.first << " - " << pair.second.str()
-                     << " int: " +
-                            to_string(res.knownIntegralValues(pair.first))
+        llvm::errs() << "val: " << *value << " - " << type_tree.str()
+                     << " int: " + to_string(res.knownIntegralValues(value))
                      << "\n";
       }
     }
     if (auto arg = dyn_cast<Argument>(val)) {
       llvm::errs() << *arg->getParent() << "\n";
-      for (auto &pair : res.analysis) {
-        if (auto in = dyn_cast<Instruction>(pair.first))
+      for (auto &&[value, type_tree] : res.analysis) {
+        if (auto in = dyn_cast<Instruction>(value))
           assert(in->getParent()->getParent() == arg->getParent());
-        llvm::errs() << "val: " << *pair.first << " - " << pair.second.str()
-                     << " int: " +
-                            to_string(res.knownIntegralValues(pair.first))
+        llvm::errs() << "val: " << *value << " - " << type_tree.str()
+                     << " int: " + to_string(res.knownIntegralValues(value))
                      << "\n";
       }
     }

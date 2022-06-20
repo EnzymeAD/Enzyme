@@ -666,10 +666,9 @@ struct Node {
 typedef std::map<Node, std::set<Node>> Graph;
 
 static inline void dump(Graph &G) {
-  for (auto &pair : G) {
-    llvm::errs() << "[" << *pair.first.V << ", " << (int)pair.first.outgoing
-                 << "]\n";
-    for (auto N : pair.second) {
+  for (auto &&[node, nodes] : G) {
+    llvm::errs() << "[" << *node.V << ", " << (int)node.outgoing << "]\n";
+    for (auto N : nodes) {
       llvm::errs() << "\t[" << *N.V << ", " << (int)N.outgoing << "]\n";
     }
   }
@@ -802,12 +801,12 @@ static inline void minCut(const DataLayout &DL, LoopInfo &OrigLI,
 
   // Print all edges that are from a reachable vertex to
   // non-reachable vertex in the original graph
-  for (auto &pair : Orig) {
-    if (parent.find(pair.first) != parent.end())
-      for (auto N : pair.second) {
+  for (auto &[node, nodes] : Orig) {
+    if (parent.find(node) != parent.end())
+      for (auto N : nodes) {
         if (parent.find(N) == parent.end()) {
-          assert(pair.first.outgoing == 0 && N.outgoing == 1);
-          assert(pair.first.V == N.V);
+          assert(node.outgoing == 0 && N.outgoing == 1);
+          assert(node.V == N.V);
           MinReq.insert(N.V);
         }
       }

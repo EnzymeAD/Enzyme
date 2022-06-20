@@ -2427,8 +2427,8 @@ public:
       changed = true;
     }
 
-    for (const auto &pair : Logic.PPC.cache)
-      pair.second->eraseFromParent();
+    for (auto &&[cached_func, orig_func] : Logic.PPC.cache)
+      orig_func->eraseFromParent();
     Logic.clear();
 
     if (changed && Logic.PostOpt) {

@@ -92,8 +92,8 @@ public:
         dretAlloca(dretAlloca) {
 
     assert(TR.getFunction() == gutils->oldFunc);
-    for (auto &pair : TR.analyzer.analysis) {
-      if (auto in = dyn_cast<Instruction>(pair.first)) {
+    for (auto &&[value, type_tree] : TR.analyzer.analysis) {
+      if (auto in = dyn_cast<Instruction>(value)) {
         if (in->getParent()->getParent() != gutils->oldFunc) {
           llvm::errs() << "inf: " << *in->getParent()->getParent() << "\n";
           llvm::errs() << "gutils->oldFunc: " << *gutils->oldFunc << "\n";
