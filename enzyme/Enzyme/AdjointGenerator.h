@@ -5207,7 +5207,6 @@ public:
     std::string dfuncName =
         (blas.prefix + blas.floatType + "axpy" + blas.suffix).str();
 
-
     Type *castvals[2];
     if (auto PT = dyn_cast<PointerType>(call.getArgOperand(1)->getType()))
       castvals[0] = PT;
