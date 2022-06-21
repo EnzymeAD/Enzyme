@@ -39,8 +39,6 @@
 #include "LibraryFuncs.h"
 #include "TypeAnalysis/TBAA.h"
 
-#include <optional>
-
 #define DEBUG_TYPE "enzyme"
 using namespace llvm;
 
@@ -5027,28 +5025,28 @@ public:
     StringRef function;
   };
 
-  std::optional<BlasInfo> extractBLAS(StringRef in) {
-    std::string floatType[] = {"s", "d"}; // c, z
-    std::string extractable[] = {"dot", "nrm2"};
-    std::string prefixes[] = {"", "cblas_", "cublas_"};
-    std::string suffixes[] = {"", "_", "_64_"};
+  llvm::Optional<BlasInfo> extractBLAS(StringRef in) {
+    llvm::Twine floatType[] = {"s", "d"}; // c, z
+    llvm::Twine extractable[] = {"dot", "nrm2"};
+    llvm::Twine prefixes[] = {"", "cblas_", "cublas_"};
+    llvm::Twine suffixes[] = {"", "_", "_64_"};
     for (auto t : floatType) {
-      for (auto ex : extractable) {
+      for (auto f : extractable) {
         for (auto p : prefixes) {
           for (auto s : suffixes) {
-            if (in == t + p + ex + s) {
-              return BlasInfo{
-                  t,
-                  p,
-                  s,
-                  ex,
-              };
+            if (in == (p + t + f + s).str()) {
+              return llvm::Optional<BlasInfo>(BlasInfo{
+                  t.getSingleStringRef(),
+                  p.getSingleStringRef(),
+                  s.getSingleStringRef(),
+                  f.getSingleStringRef(),
+              });
             }
           }
         }
       }
     }
-    return std::nullopt;
+    return llvm::NoneType();
   }
 
   bool handlenrm2(BlasInfo blas, llvm::CallInst &call, Function *called,
@@ -5189,6 +5187,11 @@ public:
                                 getIndex(&call, CacheType::Self));
       }
     }
+    if (Mode == DerivativeMode::ReverseModeGradient) {
+      eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+    } else {
+      eraseIfUnused(call);
+    }
     return true;
   }
 
@@ -5203,6 +5206,7 @@ public:
 
     std::string dfuncName =
         (blas.prefix + blas.floatType + "axpy" + blas.suffix).str();
+
 
     Type *castvals[2];
     if (auto PT = dyn_cast<PointerType>(call.getArgOperand(1)->getType()))
@@ -5754,6 +5758,12 @@ public:
                                 getIndex(&call, CacheType::Self));
       }
     }
+    if (Mode == DerivativeMode::ReverseModeGradient) {
+      eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+    } else {
+      eraseIfUnused(call);
+    }
+    return true;
   }
 
   bool handleBLAS(llvm::CallInst &call, Function *called, BlasInfo blas,
@@ -5768,22 +5778,14 @@ public:
       assert(false && "Unreachable");
     }
 
-    if (!blas.function.compare("nrm2")) {
-      if (!handlenrm2(blas, call, called, uncacheable_args, innerType))
-        return false;
-    } else if (!blas.function.compare("dot")) {
-      if (!handledot(blas, call, called, uncacheable_args, innerType))
-        return false;
+    if (blas.function == "nrm2") {
+      return handlenrm2(blas, call, called, uncacheable_args, innerType);
+    } else if (blas.function == "dot") {
+      return handledot(blas, call, called, uncacheable_args, innerType);
     } else {
       llvm::errs() << " fallback?\n";
       return false;
     }
-    if (Mode == DerivativeMode::ReverseModeGradient) {
-      eraseIfUnused(call, /*erase*/ true, /*check*/ false);
-    } else {
-      eraseIfUnused(call);
-    }
-    return true;
   }
 
   void handleMPI(llvm::CallInst &call, Function *called, StringRef funcName) {
@@ -8582,7 +8584,7 @@ public:
 
     if (!called || called->empty()) {
       if (auto blas = extractBLAS(funcName)) {
-        if (handleBLAS(call, called, *blas, uncacheable_args))
+        if (handleBLAS(call, called, blas.getValue(), uncacheable_args))
           return;
         // else panic?
       }
