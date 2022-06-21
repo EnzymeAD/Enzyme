@@ -1338,7 +1338,7 @@ class EnzymeBase{
     }
 
     bool lowerEnzymeCalls(Function &F, bool &successful,
-                          std::set<Function *> &done) {
+                          std::set<Function *> &done, TargetLibraryInfo &tli) {
         if (done.count(&F))
             return false;
         done.insert(&F);
@@ -1346,11 +1346,13 @@ class EnzymeBase{
         if (F.empty())
             return false;
 
-#if LLVM_VERSION_MAJOR >= 10
-        auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
-#else
-        auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
-#endif
+//#if LLVM_VERSION_MAJOR >= 10
+//        auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
+//#else
+//        auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
+//#endif
+
+    TargetLibraryInfo TLI = tli;
 
         bool Changed = false;
 
@@ -1707,7 +1709,7 @@ class EnzymeBase{
                         // AD case.
                         bool tmp = Logic.PostOpt;
                         Logic.PostOpt = true;
-                        Changed |= lowerEnzymeCalls(*dc, successful, done);
+                        Changed |= lowerEnzymeCalls(*dc, successful, done,TLI);
                         Logic.PostOpt = tmp;
                     }
                 }
@@ -1839,6 +1841,207 @@ class EnzymeBase{
         return Changed;
     }
 
+    bool implementation(Module & M,std::function<TargetLibraryInfo& (Function &F)>& getTLI){
+        constexpr static const char gradient_handler_name[] =
+                "__enzyme_register_gradient";
+        constexpr static const char derivative_handler_name[] =
+                "__enzyme_register_derivative";
+        constexpr static const char splitderivative_handler_name[] =
+                "__enzyme_register_splitderivative";
+
+        Logic.clear();
+
+        bool changed = false;
+        SmallVector<GlobalVariable *, 4> globalsToErase;
+        for (GlobalVariable &g : M.globals()) {
+            if (g.getName().contains(gradient_handler_name)) {
+                handleCustomDerivative<gradient_handler_name,
+                        DerivativeMode::ReverseModeGradient, 3>(
+                        M, g, globalsToErase);
+            } else if (g.getName().contains(derivative_handler_name)) {
+                handleCustomDerivative<derivative_handler_name,
+                        DerivativeMode::ForwardMode, 2>(M, g,
+                                                        globalsToErase);
+            } else if (g.getName().contains(splitderivative_handler_name)) {
+                handleCustomDerivative<splitderivative_handler_name,
+                        DerivativeMode::ForwardModeSplit, 3>(
+                        M, g, globalsToErase);
+            } else if (g.getName().contains("__enzyme_inactivefn")) {
+                handleInactiveFunction(M, g, globalsToErase);
+            }
+        }
+        for (auto g : globalsToErase) {
+            g->eraseFromParent();
+        }
+        for (Function &F : M) {
+            handleAnnotations(F);
+            handleKnownFunctions(F);
+            if (F.empty())
+                continue;
+            SmallVector<Instruction *, 4> toErase;
+            for (BasicBlock &BB : F) {
+                for (Instruction &I : BB) {
+                    if (auto CI = dyn_cast<CallInst>(&I)) {
+                        Function *F = CI->getCalledFunction();
+#if LLVM_VERSION_MAJOR >= 11
+                        if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand()))
+#else
+                            if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledValue()))
+#endif
+                        {
+                            if (castinst->isCast())
+                                if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
+                                    F = fn;
+                                }
+                        }
+                        if (F && F->getName() == "f90_mzero8") {
+                            toErase.push_back(CI);
+                            IRBuilder<> B(CI);
+
+                            SmallVector<Value *, 4> args;
+                            args.push_back(CI->getArgOperand(0));
+                            args.push_back(
+                                    ConstantInt::get(Type::getInt8Ty(M.getContext()), 0));
+                            args.push_back(B.CreateMul(
+                                    CI->getArgOperand(1),
+                                    ConstantInt::get(CI->getArgOperand(1)->getType(), 8)));
+#if LLVM_VERSION_MAJOR <= 6
+                            args.push_back(
+              ConstantInt::get(Type::getInt32Ty(M.getContext()), 1U));
+#endif
+                            args.push_back(ConstantInt::getFalse(M.getContext()));
+
+                            Type *tys[] = {args[0]->getType(), args[2]->getType()};
+                            auto memsetIntr =
+                                    Intrinsic::getDeclaration(&M, Intrinsic::memset, tys);
+                            B.CreateCall(memsetIntr, args);
+                        }
+                    }
+                }
+            }
+            for (Instruction *I : toErase) {
+                I->eraseFromParent();
+            }
+        }
+
+#if LLVM_VERSION_MAJOR >= 13
+        if (Logic.PostOpt && EnzymeOMPOpt) {
+  OpenMPOptPass().run(M, Logic.PPC.MAM);
+  /// Attributor is run second time for promoted args to get attributes.
+  AttributorPass().run(M, Logic.PPC.MAM);
+  for (auto &F : M)
+    if (!F.empty())
+      PromotePass().run(F, Logic.PPC.FAM);
+  changed = true;
+}
+#endif
+
+        std::set<Function *> done;
+        for (Function &F : M) {
+            if (F.empty())
+                continue;
+
+            bool successful = true;
+
+            ///  Initializing TLI here to forward to lowerEnzymeCalls
+//#if LLVM_VERSION_MAJOR >= 10
+////            auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
+//#else
+////            auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
+//#endif
+            ///
+            auto TLI = getTLI(F);
+            changed |= lowerEnzymeCalls(F, successful, done, TLI);
+
+            if (!successful) {
+                M.getContext().diagnose(
+                        (EnzymeFailure("FailedToDifferentiate", F.getSubprogram(),
+                                       &*F.getEntryBlock().begin())
+                                << "EnzymeFailure when replacing __enzyme_autodiff calls in "
+                                << F.getName()));
+            }
+        }
+
+        SmallVector<CallInst *, 4> toErase;
+        for (Function &F : M) {
+            if (F.empty())
+                continue;
+
+            for (BasicBlock &BB : F) {
+                for (Instruction &I : BB) {
+                    if (auto CI = dyn_cast<CallInst>(&I)) {
+                        Function *F = CI->getCalledFunction();
+#if LLVM_VERSION_MAJOR >= 11
+                        if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand()))
+#else
+                            if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledValue()))
+#endif
+                        {
+                            if (castinst->isCast())
+                                if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
+                                    F = fn;
+                                }
+                        }
+                        if (F) {
+                            if (F->getName().contains("__enzyme_float") ||
+                                F->getName().contains("__enzyme_double") ||
+                                F->getName().contains("__enzyme_integer") ||
+                                F->getName().contains("__enzyme_pointer")) {
+                                toErase.push_back(CI);
+                            }
+                            if (F->getName() == "__enzyme_iter") {
+                                CI->replaceAllUsesWith(CI->getArgOperand(0));
+                                toErase.push_back(CI);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for (auto I : toErase) {
+            I->eraseFromParent();
+            changed = true;
+        }
+
+        for (const auto &pair : Logic.PPC.cache)
+            pair.second->eraseFromParent();
+        Logic.clear();
+
+        if (changed && Logic.PostOpt) {
+            PassBuilder PB;
+            LoopAnalysisManager LAM;
+            FunctionAnalysisManager FAM;
+            CGSCCAnalysisManager CGAM;
+            ModuleAnalysisManager MAM;
+            PB.registerModuleAnalyses(MAM);
+            PB.registerFunctionAnalyses(FAM);
+            PB.registerLoopAnalyses(LAM);
+            PB.registerCGSCCAnalyses(CGAM);
+            PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+#if LLVM_VERSION_MAJOR >= 14
+            auto PM = PB.buildModuleSimplificationPipeline(OptimizationLevel::O2,
+                                                 ThinOrFullLTOPhase::None);
+#elif LLVM_VERSION_MAJOR >= 12
+            auto PM = PB.buildModuleSimplificationPipeline(
+                    PassBuilder::OptimizationLevel::O2, ThinOrFullLTOPhase::None);
+#else
+            auto PM = PB.buildModuleSimplificationPipeline(
+    PassBuilder::OptimizationLevel::O2, PassBuilder::ThinLTOPhase::None);
+#endif
+            PM.run(M, MAM);
+#if LLVM_VERSION_MAJOR >= 13
+            if (EnzymeOMPOpt) {
+    OpenMPOptPass().run(M, MAM);
+    /// Attributor is run second time for promoted args to get attributes.
+    AttributorPass().run(M, MAM);
+    for (auto &F : M)
+      if (!F.empty())
+        PromotePass().run(F, FAM);
+  }
+#endif
+        }
+        return changed;
+    }
     };
 
 
@@ -1861,196 +2064,17 @@ public:
         // AU.addRequiredID(llvm::LoopSimplifyID);//<LoopSimplifyWrapperPass>();
     }
   bool runOnModule(Module &M) override {
-    constexpr static const char gradient_handler_name[] =
-        "__enzyme_register_gradient";
-    constexpr static const char derivative_handler_name[] =
-        "__enzyme_register_derivative";
-    constexpr static const char splitderivative_handler_name[] =
-        "__enzyme_register_splitderivative";
-
-    Logic.clear();
-
-    bool changed = false;
-    SmallVector<GlobalVariable *, 4> globalsToErase;
-    for (GlobalVariable &g : M.globals()) {
-      if (g.getName().contains(gradient_handler_name)) {
-        handleCustomDerivative<gradient_handler_name,
-                               DerivativeMode::ReverseModeGradient, 3>(
-            M, g, globalsToErase);
-      } else if (g.getName().contains(derivative_handler_name)) {
-        handleCustomDerivative<derivative_handler_name,
-                               DerivativeMode::ForwardMode, 2>(M, g,
-                                                               globalsToErase);
-      } else if (g.getName().contains(splitderivative_handler_name)) {
-        handleCustomDerivative<splitderivative_handler_name,
-                               DerivativeMode::ForwardModeSplit, 3>(
-            M, g, globalsToErase);
-      } else if (g.getName().contains("__enzyme_inactivefn")) {
-        handleInactiveFunction(M, g, globalsToErase);
-      }
-    }
-    for (auto g : globalsToErase) {
-      g->eraseFromParent();
-    }
-    for (Function &F : M) {
-      handleAnnotations(F);
-      handleKnownFunctions(F);
-      if (F.empty())
-        continue;
-      SmallVector<Instruction *, 4> toErase;
-      for (BasicBlock &BB : F) {
-        for (Instruction &I : BB) {
-          if (auto CI = dyn_cast<CallInst>(&I)) {
-            Function *F = CI->getCalledFunction();
-#if LLVM_VERSION_MAJOR >= 11
-            if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand()))
+      auto getTLI =  [&](Function& F) -> TargetLibraryInfo& {
+          ///  Initializing TLI here to forward to lowerEnzymeCalls
+#if LLVM_VERSION_MAJOR >= 10
+            auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
 #else
-            if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledValue()))
+            auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
 #endif
-            {
-              if (castinst->isCast())
-                if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-                  F = fn;
-                }
-            }
-            if (F && F->getName() == "f90_mzero8") {
-              toErase.push_back(CI);
-              IRBuilder<> B(CI);
-
-              SmallVector<Value *, 4> args;
-              args.push_back(CI->getArgOperand(0));
-              args.push_back(
-                  ConstantInt::get(Type::getInt8Ty(M.getContext()), 0));
-              args.push_back(B.CreateMul(
-                  CI->getArgOperand(1),
-                  ConstantInt::get(CI->getArgOperand(1)->getType(), 8)));
-#if LLVM_VERSION_MAJOR <= 6
-              args.push_back(
-                  ConstantInt::get(Type::getInt32Ty(M.getContext()), 1U));
-#endif
-              args.push_back(ConstantInt::getFalse(M.getContext()));
-
-              Type *tys[] = {args[0]->getType(), args[2]->getType()};
-              auto memsetIntr =
-                  Intrinsic::getDeclaration(&M, Intrinsic::memset, tys);
-              B.CreateCall(memsetIntr, args);
-            }
-          }
-        }
-      }
-      for (Instruction *I : toErase) {
-        I->eraseFromParent();
-      }
-    }
-
-#if LLVM_VERSION_MAJOR >= 13
-    if (Logic.PostOpt && EnzymeOMPOpt) {
-      OpenMPOptPass().run(M, Logic.PPC.MAM);
-      /// Attributor is run second time for promoted args to get attributes.
-      AttributorPass().run(M, Logic.PPC.MAM);
-      for (auto &F : M)
-        if (!F.empty())
-          PromotePass().run(F, Logic.PPC.FAM);
-      changed = true;
-    }
-#endif
-
-    std::set<Function *> done;
-    for (Function &F : M) {
-      if (F.empty())
-        continue;
-
-      bool successful = true;
-      changed |= lowerEnzymeCalls(F, successful, done);
-
-      if (!successful) {
-        M.getContext().diagnose(
-            (EnzymeFailure("FailedToDifferentiate", F.getSubprogram(),
-                           &*F.getEntryBlock().begin())
-             << "EnzymeFailure when replacing __enzyme_autodiff calls in "
-             << F.getName()));
-      }
-    }
-
-    SmallVector<CallInst *, 4> toErase;
-    for (Function &F : M) {
-      if (F.empty())
-        continue;
-
-      for (BasicBlock &BB : F) {
-        for (Instruction &I : BB) {
-          if (auto CI = dyn_cast<CallInst>(&I)) {
-            Function *F = CI->getCalledFunction();
-#if LLVM_VERSION_MAJOR >= 11
-            if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledOperand()))
-#else
-            if (auto castinst = dyn_cast<ConstantExpr>(CI->getCalledValue()))
-#endif
-            {
-              if (castinst->isCast())
-                if (auto fn = dyn_cast<Function>(castinst->getOperand(0))) {
-                  F = fn;
-                }
-            }
-            if (F) {
-              if (F->getName().contains("__enzyme_float") ||
-                  F->getName().contains("__enzyme_double") ||
-                  F->getName().contains("__enzyme_integer") ||
-                  F->getName().contains("__enzyme_pointer")) {
-                toErase.push_back(CI);
-              }
-              if (F->getName() == "__enzyme_iter") {
-                CI->replaceAllUsesWith(CI->getArgOperand(0));
-                toErase.push_back(CI);
-              }
-            }
-          }
-        }
-      }
-    }
-    for (auto I : toErase) {
-      I->eraseFromParent();
-      changed = true;
-    }
-
-    for (const auto &pair : Logic.PPC.cache)
-      pair.second->eraseFromParent();
-    Logic.clear();
-
-    if (changed && Logic.PostOpt) {
-      PassBuilder PB;
-      LoopAnalysisManager LAM;
-      FunctionAnalysisManager FAM;
-      CGSCCAnalysisManager CGAM;
-      ModuleAnalysisManager MAM;
-      PB.registerModuleAnalyses(MAM);
-      PB.registerFunctionAnalyses(FAM);
-      PB.registerLoopAnalyses(LAM);
-      PB.registerCGSCCAnalyses(CGAM);
-      PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
-#if LLVM_VERSION_MAJOR >= 14
-      auto PM = PB.buildModuleSimplificationPipeline(OptimizationLevel::O2,
-                                                     ThinOrFullLTOPhase::None);
-#elif LLVM_VERSION_MAJOR >= 12
-      auto PM = PB.buildModuleSimplificationPipeline(
-          PassBuilder::OptimizationLevel::O2, ThinOrFullLTOPhase::None);
-#else
-    auto PM = PB.buildModuleSimplificationPipeline(
-        PassBuilder::OptimizationLevel::O2, PassBuilder::ThinLTOPhase::None);
-#endif
-      PM.run(M, MAM);
-#if LLVM_VERSION_MAJOR >= 13
-      if (EnzymeOMPOpt) {
-        OpenMPOptPass().run(M, MAM);
-        /// Attributor is run second time for promoted args to get attributes.
-        AttributorPass().run(M, MAM);
-        for (auto &F : M)
-          if (!F.empty())
-            PromotePass().run(F, FAM);
-      }
-#endif
-    }
-    return changed;
+          ///
+          return TLI;
+      };
+    return implementation(M, reinterpret_cast<std::function<TargetLibraryInfo& (Function &)> &>(getTLI));
   }
 };
 
