@@ -5769,11 +5769,6 @@ public:
 
   bool handleBLAS(llvm::CallInst &call, Function *called, BlasInfo blas,
                   const std::map<Argument *, bool> &uncacheable_args) {
-    CallInst *const newCall = cast<CallInst>(gutils->getNewFromOriginal(&call));
-    IRBuilder<> BuilderZ(newCall);
-    BuilderZ.setFastMathFlags(getFast());
-    IRBuilder<> allocationBuilder(gutils->inversionAllocs);
-    allocationBuilder.setFastMathFlags(getFast());
 
     Type *innerType;
     if (blas.floatType == "d") {
