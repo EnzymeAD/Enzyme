@@ -5075,29 +5075,65 @@ public:
       else
         intType = IntegerType::get(PT->getContext(), 32);
       byRef = true;
-      }
+    }
 
-      // Non-forward Mode not handled yet
-      if (Mode != DerivativeMode::ForwardMode) {
-        return false;
-      } else {
-        auto in_arg = call.getCalledFunction()->arg_begin();
-        Argument *n = in_arg;
-        in_arg++;
-        Argument *x = in_arg;
-        in_arg++;
-        Argument *xinc = in_arg;
+    // Non-forward Mode not handled yet
+    if (Mode != DerivativeMode::ForwardMode) {
+      return false;
+    } else {
+      auto in_arg = call.getCalledFunction()->arg_begin();
+      Argument *n = in_arg;
+      in_arg++;
+      Argument *x = in_arg;
+      in_arg++;
+      Argument *xinc = in_arg;
 
-        auto derivcall = gutils->oldFunc->getParent()->getOrInsertFunction(
-            dfuncName, innerType, n->getType(), x->getType(), xinc->getType(),
-            x->getType(), xinc->getType());
+      auto derivcall = gutils->oldFunc->getParent()->getOrInsertFunction(
+          dfuncName, innerType, n->getType(), x->getType(), xinc->getType(),
+          x->getType(), xinc->getType());
 
 #if LLVM_VERSION_MAJOR >= 9
-          if (auto F = dyn_cast<Function>(derivcall.getCallee()))
+      if (auto F = dyn_cast<Function>(derivcall.getCallee()))
 #else
-          if (auto F = dyn_cast<Function>(derivcall))
+      if (auto F = dyn_cast<Function>(derivcall))
 #endif
-          {
+      {
+        F->addFnAttr(Attribute::ArgMemOnly);
+        F->addFnAttr(Attribute::ReadOnly);
+        if (byRef) {
+          F->addParamAttr(0, Attribute::ReadOnly);
+          F->addParamAttr(0, Attribute::NoCapture);
+          F->addParamAttr(2, Attribute::ReadOnly);
+          F->addParamAttr(2, Attribute::NoCapture);
+          F->addParamAttr(4, Attribute::ReadOnly);
+          F->addParamAttr(4, Attribute::NoCapture);
+        }
+        if (call.getArgOperand(1)->getType()->isPointerTy()) {
+          F->addParamAttr(1, Attribute::ReadOnly);
+          F->addParamAttr(1, Attribute::NoCapture);
+          F->addParamAttr(3, Attribute::ReadOnly);
+          F->addParamAttr(3, Attribute::NoCapture);
+        }
+      }
+
+      if (!gutils->isConstantValue(&call)) {
+        if (gutils->isConstantValue(call.getOperand(1))) {
+          setDiffe(
+              &call,
+              Constant::getNullValue(gutils->getShadowType(call.getType())),
+              BuilderZ);
+        } else {
+          auto Defs = gutils->getInvertedBundles(
+              &call, {ValueType::Primal, ValueType::Primal, ValueType::Primal},
+              BuilderZ, /*lookup*/ false);
+
+#if LLVM_VERSION_MAJOR >= 11
+          auto callval = call.getCalledOperand();
+#else
+          auto callval = call.getCalledValue();
+#endif
+
+          if (auto F = dyn_cast<Function>(callval)) {
             F->addFnAttr(Attribute::ArgMemOnly);
             F->addFnAttr(Attribute::ReadOnly);
             if (byRef) {
@@ -5105,93 +5141,55 @@ public:
               F->addParamAttr(0, Attribute::NoCapture);
               F->addParamAttr(2, Attribute::ReadOnly);
               F->addParamAttr(2, Attribute::NoCapture);
-              F->addParamAttr(4, Attribute::ReadOnly);
-              F->addParamAttr(4, Attribute::NoCapture);
             }
             if (call.getArgOperand(1)->getType()->isPointerTy()) {
               F->addParamAttr(1, Attribute::ReadOnly);
               F->addParamAttr(1, Attribute::NoCapture);
-              F->addParamAttr(3, Attribute::ReadOnly);
-              F->addParamAttr(3, Attribute::NoCapture);
             }
           }
 
-          if (!gutils->isConstantValue(&call)) {
-            if (gutils->isConstantValue(call.getOperand(1))) {
-              setDiffe(
-                  &call,
-                  Constant::getNullValue(gutils->getShadowType(call.getType())),
-                  BuilderZ);
-            } else {
-              auto Defs = gutils->getInvertedBundles(
-                  &call,
-                  {ValueType::Primal, ValueType::Primal, ValueType::Primal},
-                  BuilderZ, /*lookup*/ false);
-
-#if LLVM_VERSION_MAJOR >= 11
-              auto callval = call.getCalledOperand();
-#else
-              auto callval = call.getCalledValue();
-#endif
-
-              if (auto F = dyn_cast<Function>(callval)) {
-                F->addFnAttr(Attribute::ArgMemOnly);
-                F->addFnAttr(Attribute::ReadOnly);
-                if (byRef) {
-                  F->addParamAttr(0, Attribute::ReadOnly);
-                  F->addParamAttr(0, Attribute::NoCapture);
-                  F->addParamAttr(2, Attribute::ReadOnly);
-                  F->addParamAttr(2, Attribute::NoCapture);
-                }
-                if (call.getArgOperand(1)->getType()->isPointerTy()) {
-                  F->addParamAttr(1, Attribute::ReadOnly);
-                  F->addParamAttr(1, Attribute::NoCapture);
-                }
-              }
-
-              Value *args[] = {gutils->getNewFromOriginal(call.getOperand(0)),
-                               gutils->getNewFromOriginal(call.getOperand(1)),
-                               gutils->getNewFromOriginal(call.getOperand(2))};
+          Value *args[] = {gutils->getNewFromOriginal(call.getOperand(0)),
+                           gutils->getNewFromOriginal(call.getOperand(1)),
+                           gutils->getNewFromOriginal(call.getOperand(2))};
 
 #if LLVM_VERSION_MAJOR > 7
-              auto norm = BuilderZ.CreateCall(call.getFunctionType(), callval,
-                                              args, Defs);
+          auto norm =
+              BuilderZ.CreateCall(call.getFunctionType(), callval, args, Defs);
 #else
-              auto norm = BuilderZ.CreateCall(callval, args, Defs);
+          auto norm = BuilderZ.CreateCall(callval, args, Defs);
 #endif
 
-              Value *dval = applyChainRule(
-                  call.getType(), BuilderZ,
-                  [&](Value *ip) {
-                    Value *args1[] = {
-                        gutils->getNewFromOriginal(call.getOperand(0)),
-                        gutils->getNewFromOriginal(call.getOperand(1)),
-                        gutils->getNewFromOriginal(call.getOperand(2)), ip,
-                        gutils->getNewFromOriginal(call.getOperand(2))};
-                    return BuilderZ.CreateFDiv(
-                        BuilderZ.CreateCall(
-                            derivcall, args1,
-                            gutils->getInvertedBundles(
-                                &call,
-                                {ValueType::Primal, ValueType::Both,
-                                 ValueType::Primal},
-                                BuilderZ, /*lookup*/ false)),
-                        norm);
-                  },
-                  gutils->invertPointerM(call.getOperand(1), BuilderZ));
-              setDiffe(&call, dval, BuilderZ);
-            }
-          }
+          Value *dval = applyChainRule(
+              call.getType(), BuilderZ,
+              [&](Value *ip) {
+                Value *args1[] = {
+                    gutils->getNewFromOriginal(call.getOperand(0)),
+                    gutils->getNewFromOriginal(call.getOperand(1)),
+                    gutils->getNewFromOriginal(call.getOperand(2)), ip,
+                    gutils->getNewFromOriginal(call.getOperand(2))};
+                return BuilderZ.CreateFDiv(
+                    BuilderZ.CreateCall(derivcall, args1,
+                                        gutils->getInvertedBundles(
+                                            &call,
+                                            {ValueType::Primal, ValueType::Both,
+                                             ValueType::Primal},
+                                            BuilderZ, /*lookup*/ false)),
+                    norm);
+              },
+              gutils->invertPointerM(call.getOperand(1), BuilderZ));
+          setDiffe(&call, dval, BuilderZ);
         }
+      }
+    }
 
-        if (gutils->knownRecomputeHeuristic.find(&call) !=
-            gutils->knownRecomputeHeuristic.end()) {
-          if (!gutils->knownRecomputeHeuristic[&call]) {
-            gutils->cacheForReverse(BuilderZ, newCall,
-                                    getIndex(&call, CacheType::Self));
-          }
-        }
-        return true;
+    if (gutils->knownRecomputeHeuristic.find(&call) !=
+        gutils->knownRecomputeHeuristic.end()) {
+      if (!gutils->knownRecomputeHeuristic[&call]) {
+        gutils->cacheForReverse(BuilderZ, newCall,
+                                getIndex(&call, CacheType::Self));
+      }
+    }
+    return true;
   }
 
   bool handledot(BlasInfo blas, llvm::CallInst &call, Function *called,
@@ -5312,459 +5310,450 @@ public:
         count =
             BuilderZ.CreatePointerCast(count, PointerType::getUnqual(intType));
 #if LLVM_VERSION_MAJOR > 7
-            count = BuilderZ.CreateLoad(intType, count);
+        count = BuilderZ.CreateLoad(intType, count);
 #else
-            count = BuilderZ.CreateLoad(count);
+        count = BuilderZ.CreateLoad(count);
 #endif
-            if (countcache)
-              cacheValues.push_back(count);
-          }
+        if (countcache)
+          cacheValues.push_back(count);
+      }
 
-          Value *xinc = gutils->getNewFromOriginal(call.getArgOperand(2));
-          if (byRef) {
-            xinc = BuilderZ.CreatePointerCast(xinc,
-                                              PointerType::getUnqual(intType));
+      Value *xinc = gutils->getNewFromOriginal(call.getArgOperand(2));
+      if (byRef) {
+        xinc =
+            BuilderZ.CreatePointerCast(xinc, PointerType::getUnqual(intType));
 #if LLVM_VERSION_MAJOR > 7
-            xinc = BuilderZ.CreateLoad(intType, xinc);
+        xinc = BuilderZ.CreateLoad(intType, xinc);
 #else
-            xinc = BuilderZ.CreateLoad(xinc);
+        xinc = BuilderZ.CreateLoad(xinc);
 #endif
-            if (xinccache)
-              cacheValues.push_back(xinc);
-          }
+        if (xinccache)
+          cacheValues.push_back(xinc);
+      }
 
-          Value *yinc = gutils->getNewFromOriginal(call.getArgOperand(4));
-          if (byRef) {
-            yinc = BuilderZ.CreatePointerCast(yinc,
-                                              PointerType::getUnqual(intType));
+      Value *yinc = gutils->getNewFromOriginal(call.getArgOperand(4));
+      if (byRef) {
+        yinc =
+            BuilderZ.CreatePointerCast(yinc, PointerType::getUnqual(intType));
 #if LLVM_VERSION_MAJOR > 7
-            yinc = BuilderZ.CreateLoad(intType, yinc);
+        yinc = BuilderZ.CreateLoad(intType, yinc);
 #else
-            yinc = BuilderZ.CreateLoad(yinc);
+        yinc = BuilderZ.CreateLoad(yinc);
 #endif
-            if (yinccache)
-              cacheValues.push_back(yinc);
-          }
+        if (yinccache)
+          cacheValues.push_back(yinc);
+      }
 
-          if (xcache) {
-            auto dmemcpy = getOrInsertMemcpyStrided(
-                *gutils->oldFunc->getParent(), cast<PointerType>(castvals[0]),
-                size->getType(), 0, 0);
-            auto malins = CallInst::CreateMalloc(
-                gutils->getNewFromOriginal(&call), size->getType(), innerType,
-                size, count, nullptr, "");
-            Value *arg = BuilderZ.CreateBitCast(malins, castvals[0]);
-            Value *args[4] = {arg,
-                              gutils->getNewFromOriginal(call.getArgOperand(1)),
-                              count, xinc};
+      if (xcache) {
+        auto dmemcpy = getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(),
+                                                cast<PointerType>(castvals[0]),
+                                                size->getType(), 0, 0);
+        auto malins = CallInst::CreateMalloc(gutils->getNewFromOriginal(&call),
+                                             size->getType(), innerType, size,
+                                             count, nullptr, "");
+        Value *arg = BuilderZ.CreateBitCast(malins, castvals[0]);
+        Value *args[4] = {arg,
+                          gutils->getNewFromOriginal(call.getArgOperand(1)),
+                          count, xinc};
 
-            if (args[1]->getType()->isIntegerTy())
-              args[1] = BuilderZ.CreateIntToPtr(args[1], castvals[0]);
+        if (args[1]->getType()->isIntegerTy())
+          args[1] = BuilderZ.CreateIntToPtr(args[1], castvals[0]);
 
-            BuilderZ.CreateCall(
-                dmemcpy, args,
-                gutils->getInvertedBundles(&call,
-                                           {ValueType::None, ValueType::Shadow,
-                                            ValueType::None, ValueType::None,
-                                            ValueType::None},
-                                           BuilderZ, /*lookup*/ false));
-            cacheValues.push_back(arg);
-          }
+        BuilderZ.CreateCall(
+            dmemcpy, args,
+            gutils->getInvertedBundles(&call,
+                                       {ValueType::None, ValueType::Shadow,
+                                        ValueType::None, ValueType::None,
+                                        ValueType::None},
+                                       BuilderZ, /*lookup*/ false));
+        cacheValues.push_back(arg);
+      }
 
-          if (ycache) {
-            auto dmemcpy = getOrInsertMemcpyStrided(
-                *gutils->oldFunc->getParent(), cast<PointerType>(castvals[1]),
-                size->getType(), 0, 0);
-            auto malins = CallInst::CreateMalloc(
-                gutils->getNewFromOriginal(&call), size->getType(), innerType,
-                size, count, nullptr, "");
-            Value *arg = BuilderZ.CreateBitCast(malins, castvals[1]);
-            Value *args[4] = {arg,
-                              gutils->getNewFromOriginal(call.getArgOperand(3)),
-                              count, yinc};
+      if (ycache) {
+        auto dmemcpy = getOrInsertMemcpyStrided(*gutils->oldFunc->getParent(),
+                                                cast<PointerType>(castvals[1]),
+                                                size->getType(), 0, 0);
+        auto malins = CallInst::CreateMalloc(gutils->getNewFromOriginal(&call),
+                                             size->getType(), innerType, size,
+                                             count, nullptr, "");
+        Value *arg = BuilderZ.CreateBitCast(malins, castvals[1]);
+        Value *args[4] = {arg,
+                          gutils->getNewFromOriginal(call.getArgOperand(3)),
+                          count, yinc};
 
-            if (args[1]->getType()->isIntegerTy())
-              args[1] = BuilderZ.CreateIntToPtr(args[1], castvals[1]);
+        if (args[1]->getType()->isIntegerTy())
+          args[1] = BuilderZ.CreateIntToPtr(args[1], castvals[1]);
 
-            BuilderZ.CreateCall(
-                dmemcpy, args,
-                gutils->getInvertedBundles(&call,
-                                           {ValueType::None, ValueType::None,
-                                            ValueType::None, ValueType::Shadow,
-                                            ValueType::None},
-                                           BuilderZ, /*lookup*/ false));
-            cacheValues.push_back(arg);
-          }
+        BuilderZ.CreateCall(
+            dmemcpy, args,
+            gutils->getInvertedBundles(&call,
+                                       {ValueType::None, ValueType::None,
+                                        ValueType::None, ValueType::Shadow,
+                                        ValueType::None},
+                                       BuilderZ, /*lookup*/ false));
+        cacheValues.push_back(arg);
+      }
 
-          if (cacheValues.size() == 1)
-            cacheval = cacheValues[0];
-          else {
-            cacheval = UndefValue::get(cachetype);
-            for (auto tup : llvm::enumerate(cacheValues))
-              cacheval = BuilderZ.CreateInsertValue(cacheval, tup.value(),
-                                                    tup.index());
-          }
-          gutils->cacheForReverse(BuilderZ, cacheval,
-                                  getIndex(&call, CacheType::Tape));
+      if (cacheValues.size() == 1)
+        cacheval = cacheValues[0];
+      else {
+        cacheval = UndefValue::get(cachetype);
+        for (auto tup : llvm::enumerate(cacheValues))
+          cacheval =
+              BuilderZ.CreateInsertValue(cacheval, tup.value(), tup.index());
+      }
+      gutils->cacheForReverse(BuilderZ, cacheval,
+                              getIndex(&call, CacheType::Tape));
+    }
+
+    unsigned cacheidx = 0;
+    Value *count = gutils->getNewFromOriginal(call.getArgOperand(0));
+    Value *trueXinc = gutils->getNewFromOriginal(call.getArgOperand(2));
+    Value *trueYinc = gutils->getNewFromOriginal(call.getArgOperand(4));
+
+    IRBuilder<> Builder2(call.getParent());
+    switch (Mode) {
+    case DerivativeMode::ReverseModeCombined:
+    case DerivativeMode::ReverseModeGradient:
+      getReverseBuilder(Builder2);
+      break;
+    case DerivativeMode::ForwardMode:
+    case DerivativeMode::ForwardModeSplit:
+      Builder2.SetInsertPoint(BuilderZ.GetInsertBlock(),
+                              BuilderZ.GetInsertPoint());
+      Builder2.setFastMathFlags(BuilderZ.getFastMathFlags());
+      break;
+    case DerivativeMode::ReverseModePrimal:
+      break;
+    }
+
+    if (Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeGradient ||
+        Mode == DerivativeMode::ForwardModeSplit) {
+
+      if (cachetype) {
+        if (Mode != DerivativeMode::ReverseModeCombined) {
+          cacheval = BuilderZ.CreatePHI(cachetype, 0);
         }
+        cacheval = gutils->cacheForReverse(BuilderZ, cacheval,
+                                           getIndex(&call, CacheType::Tape));
+        if (Mode != DerivativeMode::ForwardModeSplit)
+          cacheval = lookup(cacheval, Builder2);
+      }
 
-        unsigned cacheidx = 0;
-        Value *count = gutils->getNewFromOriginal(call.getArgOperand(0));
-        Value *trueXinc = gutils->getNewFromOriginal(call.getArgOperand(2));
-        Value *trueYinc = gutils->getNewFromOriginal(call.getArgOperand(4));
-
-        IRBuilder<> Builder2(call.getParent());
-        switch (Mode) {
-        case DerivativeMode::ReverseModeCombined:
-        case DerivativeMode::ReverseModeGradient:
-          getReverseBuilder(Builder2);
-          break;
-        case DerivativeMode::ForwardMode:
-        case DerivativeMode::ForwardModeSplit:
-          Builder2.SetInsertPoint(BuilderZ.GetInsertBlock(),
-                                  BuilderZ.GetInsertPoint());
-          Builder2.setFastMathFlags(BuilderZ.getFastMathFlags());
-          break;
-        case DerivativeMode::ReverseModePrimal:
-          break;
-        }
-
-        if (Mode == DerivativeMode::ReverseModeCombined ||
-            Mode == DerivativeMode::ReverseModeGradient ||
-            Mode == DerivativeMode::ForwardModeSplit) {
-
-          if (cachetype) {
-            if (Mode != DerivativeMode::ReverseModeCombined) {
-              cacheval = BuilderZ.CreatePHI(cachetype, 0);
-            }
-            cacheval = gutils->cacheForReverse(
-                BuilderZ, cacheval, getIndex(&call, CacheType::Tape));
-            if (Mode != DerivativeMode::ForwardModeSplit)
-              cacheval = lookup(cacheval, Builder2);
-          }
-
-          if (byRef) {
-            if (countcache) {
-              count = (cacheTypes.size() == 1)
-                          ? cacheval
-                          : Builder2.CreateExtractValue(cacheval, {cacheidx});
-              auto alloc = allocationBuilder.CreateAlloca(intType);
-              Builder2.CreateStore(count, alloc);
-              count = Builder2.CreatePointerCast(
-                  alloc, call.getArgOperand(0)->getType());
-              cacheidx++;
-            } else {
-              if (Mode != DerivativeMode::ForwardModeSplit)
-                count = lookup(count, Builder2);
-            }
-
-            if (xinccache) {
-              trueXinc =
-                  (cacheTypes.size() == 1)
+      if (byRef) {
+        if (countcache) {
+          count = (cacheTypes.size() == 1)
                       ? cacheval
                       : Builder2.CreateExtractValue(cacheval, {cacheidx});
-              auto alloc = allocationBuilder.CreateAlloca(intType);
-              Builder2.CreateStore(trueXinc, alloc);
-              trueXinc = Builder2.CreatePointerCast(
-                  alloc, call.getArgOperand(0)->getType());
-              cacheidx++;
-            } else if (!gutils->isConstantValue(call.getArgOperand(1)) ||
-                       (!xcache &&
-                        !gutils->isConstantValue(call.getArgOperand(3)))) {
-              if (Mode != DerivativeMode::ForwardModeSplit)
-                trueXinc = lookup(trueXinc, Builder2);
-            }
-
-            if (yinccache) {
-              trueYinc =
-                  (cacheTypes.size() == 1)
-                      ? cacheval
-                      : Builder2.CreateExtractValue(cacheval, {cacheidx});
-              auto alloc = allocationBuilder.CreateAlloca(intType);
-              Builder2.CreateStore(trueYinc, alloc);
-              trueYinc = Builder2.CreatePointerCast(
-                  alloc, call.getArgOperand(0)->getType());
-              cacheidx++;
-            } else if (!gutils->isConstantValue(call.getArgOperand(3)) ||
-                       (!ycache &&
-                        !gutils->isConstantValue(call.getArgOperand(1)))) {
-              if (Mode != DerivativeMode::ForwardModeSplit)
-                trueXinc = lookup(trueXinc, Builder2);
-            }
-          } else if (Mode != DerivativeMode::ForwardModeSplit) {
-            count = lookup(count, Builder2);
-
-            if (!gutils->isConstantValue(call.getArgOperand(1)) ||
-                (!xcache && !gutils->isConstantValue(call.getArgOperand(3))))
-              trueXinc = lookup(trueXinc, Builder2);
-
-            if (!gutils->isConstantValue(call.getArgOperand(3)) ||
-                (!ycache && !gutils->isConstantValue(call.getArgOperand(1))))
-              trueYinc = lookup(trueYinc, Builder2);
-          }
-        }
-
-        Value *xdata = gutils->getNewFromOriginal(call.getArgOperand(1));
-        Value *xdata_ptr = nullptr;
-        Value *xinc = trueXinc;
-
-        Value *ydata = gutils->getNewFromOriginal(call.getArgOperand(3));
-        Value *ydata_ptr = nullptr;
-        Value *yinc = trueYinc;
-
-        if (Mode == DerivativeMode::ReverseModeCombined ||
-            Mode == DerivativeMode::ReverseModeGradient ||
-            Mode == DerivativeMode::ForwardModeSplit) {
-
-          if (xcache) {
-            xdata_ptr = xdata =
-                (cacheTypes.size() == 1)
-                    ? cacheval
-                    : Builder2.CreateExtractValue(cacheval, {cacheidx});
-            cacheidx++;
-            xinc = ConstantInt::get(intType, 1);
-            if (byRef) {
-              auto alloc = allocationBuilder.CreateAlloca(intType);
-              Builder2.CreateStore(xinc, alloc);
-              xinc = Builder2.CreatePointerCast(
-                  alloc, call.getArgOperand(0)->getType());
-            }
-            if (call.getArgOperand(1)->getType()->isIntegerTy())
-              xdata = Builder2.CreatePtrToInt(xdata,
-                                              call.getArgOperand(1)->getType());
-          } else if (!gutils->isConstantValue(call.getArgOperand(3))) {
-            xdata = lookup(gutils->getNewFromOriginal(call.getArgOperand(1)),
-                           Builder2);
-          }
-          if (ycache) {
-            ydata_ptr = ydata =
-                (cacheTypes.size() == 1)
-                    ? cacheval
-                    : Builder2.CreateExtractValue(cacheval, {cacheidx});
-            cacheidx++;
-            yinc = ConstantInt::get(intType, 1);
-            if (byRef) {
-              auto alloc = allocationBuilder.CreateAlloca(intType);
-              Builder2.CreateStore(yinc, alloc);
-              yinc = Builder2.CreatePointerCast(
-                  alloc, call.getArgOperand(0)->getType());
-            }
-            if (call.getArgOperand(3)->getType()->isIntegerTy())
-              ydata = Builder2.CreatePtrToInt(ydata,
-                                              call.getArgOperand(3)->getType());
-          } else if (!gutils->isConstantValue(call.getArgOperand(1))) {
-            ydata = lookup(gutils->getNewFromOriginal(call.getArgOperand(3)),
-                           Builder2);
-          }
+          auto alloc = allocationBuilder.CreateAlloca(intType);
+          Builder2.CreateStore(count, alloc);
+          count = Builder2.CreatePointerCast(alloc,
+                                             call.getArgOperand(0)->getType());
+          cacheidx++;
         } else {
-          if (call.getArgOperand(1)->getType()->isIntegerTy())
-            xdata = Builder2.CreatePtrToInt(xdata,
-                                            call.getArgOperand(1)->getType());
-          if (call.getArgOperand(3)->getType()->isIntegerTy())
-            ydata = Builder2.CreatePtrToInt(ydata,
-                                            call.getArgOperand(3)->getType());
+          if (Mode != DerivativeMode::ForwardModeSplit)
+            count = lookup(count, Builder2);
         }
 
-        if (Mode == DerivativeMode::ForwardMode ||
-            Mode == DerivativeMode::ForwardModeSplit) {
+        if (xinccache) {
+          trueXinc = (cacheTypes.size() == 1)
+                         ? cacheval
+                         : Builder2.CreateExtractValue(cacheval, {cacheidx});
+          auto alloc = allocationBuilder.CreateAlloca(intType);
+          Builder2.CreateStore(trueXinc, alloc);
+          trueXinc = Builder2.CreatePointerCast(
+              alloc, call.getArgOperand(0)->getType());
+          cacheidx++;
+        } else if (!gutils->isConstantValue(call.getArgOperand(1)) ||
+                   (!xcache &&
+                    !gutils->isConstantValue(call.getArgOperand(3)))) {
+          if (Mode != DerivativeMode::ForwardModeSplit)
+            trueXinc = lookup(trueXinc, Builder2);
+        }
+
+        if (yinccache) {
+          trueYinc = (cacheTypes.size() == 1)
+                         ? cacheval
+                         : Builder2.CreateExtractValue(cacheval, {cacheidx});
+          auto alloc = allocationBuilder.CreateAlloca(intType);
+          Builder2.CreateStore(trueYinc, alloc);
+          trueYinc = Builder2.CreatePointerCast(
+              alloc, call.getArgOperand(0)->getType());
+          cacheidx++;
+        } else if (!gutils->isConstantValue(call.getArgOperand(3)) ||
+                   (!ycache &&
+                    !gutils->isConstantValue(call.getArgOperand(1)))) {
+          if (Mode != DerivativeMode::ForwardModeSplit)
+            trueXinc = lookup(trueXinc, Builder2);
+        }
+      } else if (Mode != DerivativeMode::ForwardModeSplit) {
+        count = lookup(count, Builder2);
+
+        if (!gutils->isConstantValue(call.getArgOperand(1)) ||
+            (!xcache && !gutils->isConstantValue(call.getArgOperand(3))))
+          trueXinc = lookup(trueXinc, Builder2);
+
+        if (!gutils->isConstantValue(call.getArgOperand(3)) ||
+            (!ycache && !gutils->isConstantValue(call.getArgOperand(1))))
+          trueYinc = lookup(trueYinc, Builder2);
+      }
+    }
+
+    Value *xdata = gutils->getNewFromOriginal(call.getArgOperand(1));
+    Value *xdata_ptr = nullptr;
+    Value *xinc = trueXinc;
+
+    Value *ydata = gutils->getNewFromOriginal(call.getArgOperand(3));
+    Value *ydata_ptr = nullptr;
+    Value *yinc = trueYinc;
+
+    if (Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeGradient ||
+        Mode == DerivativeMode::ForwardModeSplit) {
+
+      if (xcache) {
+        xdata_ptr = xdata =
+            (cacheTypes.size() == 1)
+                ? cacheval
+                : Builder2.CreateExtractValue(cacheval, {cacheidx});
+        cacheidx++;
+        xinc = ConstantInt::get(intType, 1);
+        if (byRef) {
+          auto alloc = allocationBuilder.CreateAlloca(intType);
+          Builder2.CreateStore(xinc, alloc);
+          xinc = Builder2.CreatePointerCast(alloc,
+                                            call.getArgOperand(0)->getType());
+        }
+        if (call.getArgOperand(1)->getType()->isIntegerTy())
+          xdata =
+              Builder2.CreatePtrToInt(xdata, call.getArgOperand(1)->getType());
+      } else if (!gutils->isConstantValue(call.getArgOperand(3))) {
+        xdata =
+            lookup(gutils->getNewFromOriginal(call.getArgOperand(1)), Builder2);
+      }
+      if (ycache) {
+        ydata_ptr = ydata =
+            (cacheTypes.size() == 1)
+                ? cacheval
+                : Builder2.CreateExtractValue(cacheval, {cacheidx});
+        cacheidx++;
+        yinc = ConstantInt::get(intType, 1);
+        if (byRef) {
+          auto alloc = allocationBuilder.CreateAlloca(intType);
+          Builder2.CreateStore(yinc, alloc);
+          yinc = Builder2.CreatePointerCast(alloc,
+                                            call.getArgOperand(0)->getType());
+        }
+        if (call.getArgOperand(3)->getType()->isIntegerTy())
+          ydata =
+              Builder2.CreatePtrToInt(ydata, call.getArgOperand(3)->getType());
+      } else if (!gutils->isConstantValue(call.getArgOperand(1))) {
+        ydata =
+            lookup(gutils->getNewFromOriginal(call.getArgOperand(3)), Builder2);
+      }
+    } else {
+      if (call.getArgOperand(1)->getType()->isIntegerTy())
+        xdata =
+            Builder2.CreatePtrToInt(xdata, call.getArgOperand(1)->getType());
+      if (call.getArgOperand(3)->getType()->isIntegerTy())
+        ydata =
+            Builder2.CreatePtrToInt(ydata, call.getArgOperand(3)->getType());
+    }
+
+    if (Mode == DerivativeMode::ForwardMode ||
+        Mode == DerivativeMode::ForwardModeSplit) {
 
 #if LLVM_VERSION_MAJOR >= 11
-          auto callval = call.getCalledOperand();
+      auto callval = call.getCalledOperand();
 #else
-          auto callval = call.getCalledValue();
+      auto callval = call.getCalledValue();
 #endif
 
-          Value *dx =
-              gutils->isConstantValue(call.getArgOperand(1))
-                  ? nullptr
-                  : gutils->invertPointerM(call.getArgOperand(1), Builder2);
-          Value *dy =
-              gutils->isConstantValue(call.getArgOperand(3))
-                  ? nullptr
-                  : gutils->invertPointerM(call.getArgOperand(3), Builder2);
+      Value *dx = gutils->isConstantValue(call.getArgOperand(1))
+                      ? nullptr
+                      : gutils->invertPointerM(call.getArgOperand(1), Builder2);
+      Value *dy = gutils->isConstantValue(call.getArgOperand(3))
+                      ? nullptr
+                      : gutils->invertPointerM(call.getArgOperand(3), Builder2);
 
-          Value *dres = applyChainRule(
-              call.getType(), Builder2,
-              [&](Value *dx, Value *dy) {
-                Value *dres = nullptr;
-                if (!gutils->isConstantValue(call.getArgOperand(3))) {
-                  Value *args1[] = {count, xdata, xinc, dy, trueYinc};
+      Value *dres = applyChainRule(
+          call.getType(), Builder2,
+          [&](Value *dx, Value *dy) {
+            Value *dres = nullptr;
+            if (!gutils->isConstantValue(call.getArgOperand(3))) {
+              Value *args1[] = {count, xdata, xinc, dy, trueYinc};
 
-                  auto Defs = gutils->getInvertedBundles(
+              auto Defs = gutils->getInvertedBundles(
+                  &call,
+                  {ValueType::None,
+                   xcache ? ValueType::None : ValueType::Primal,
+                   ValueType::None, ValueType::Shadow, ValueType::None},
+                  Builder2, /*lookup*/ false);
+
+#if LLVM_VERSION_MAJOR > 7
+              dres = Builder2.CreateCall(call.getFunctionType(), callval, args1,
+                                         Defs);
+#else
+              dres = Builder2.CreateCall(callval, args1, Defs);
+#endif
+            }
+            if (!gutils->isConstantValue(call.getArgOperand(1))) {
+              Value *args1[] = {count, ydata, yinc, dx, trueXinc};
+
+              auto Defs = gutils->getInvertedBundles(
+                  &call,
+                  {ValueType::None, ValueType::Shadow, ValueType::None,
+                   ycache ? ValueType::None : ValueType::Primal,
+                   ValueType::None},
+                  Builder2, /*lookup*/ false);
+
+#if LLVM_VERSION_MAJOR > 7
+              Value *secondcall = Builder2.CreateCall(call.getFunctionType(),
+                                                      callval, args1, Defs);
+#else
+              Value *secondcall = Builder2.CreateCall(callval, args1, Defs);
+#endif
+              if (dres)
+                dres = Builder2.CreateFAdd(dres, secondcall);
+              else
+                dres = secondcall;
+            }
+            return dres;
+          },
+          dx, dy);
+      setDiffe(&call, dres, Builder2);
+    }
+
+    if (Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeGradient) {
+      Value *dif = diffe(&call, Builder2);
+      Value *alloc = nullptr;
+      if (byRef) {
+        alloc = allocationBuilder.CreateAlloca(innerType);
+      }
+      auto derivcall = gutils->oldFunc->getParent()->getOrInsertFunction(
+          dfuncName, Builder2.getVoidTy(), call.getArgOperand(0)->getType(),
+          byRef ? PointerType::getUnqual(call.getType()) : call.getType(),
+          call.getArgOperand(1)->getType(), call.getArgOperand(0)->getType(),
+          call.getArgOperand(3)->getType(), call.getArgOperand(0)->getType());
+#if LLVM_VERSION_MAJOR >= 9
+      if (auto F = dyn_cast<Function>(derivcall.getCallee()))
+#else
+      if (auto F = dyn_cast<Function>(derivcall))
+#endif
+      {
+        F->addFnAttr(Attribute::ArgMemOnly);
+        if (byRef) {
+          F->addParamAttr(0, Attribute::ReadOnly);
+          F->addParamAttr(0, Attribute::NoCapture);
+          F->addParamAttr(3, Attribute::ReadOnly);
+          F->addParamAttr(3, Attribute::NoCapture);
+          F->addParamAttr(5, Attribute::ReadOnly);
+          F->addParamAttr(5, Attribute::NoCapture);
+        }
+        if (call.getArgOperand(1)->getType()->isPointerTy()) {
+          F->addParamAttr(2, Attribute::ReadOnly);
+          F->addParamAttr(2, Attribute::NoCapture);
+        }
+        if (call.getArgOperand(3)->getType()->isPointerTy()) {
+          F->addParamAttr(4, Attribute::NoCapture);
+        }
+      }
+
+      // Vector Mode not handled yet
+      Value *dx =
+          gutils->isConstantValue(call.getArgOperand(1))
+              ? nullptr
+              : lookup(gutils->invertPointerM(call.getArgOperand(1), Builder2),
+                       Builder2);
+      Value *dy =
+          gutils->isConstantValue(call.getArgOperand(3))
+              ? nullptr
+              : lookup(gutils->invertPointerM(call.getArgOperand(3), Builder2),
+                       Builder2);
+
+      applyChainRule(
+          Builder2,
+          [&](Value *dx, Value *dy, Value *dif) {
+            if (byRef) {
+              Builder2.CreateStore(dif, alloc);
+              dif = alloc;
+            }
+            if (!gutils->isConstantValue(call.getArgOperand(3))) {
+              Value *args1[6] = {count, dif, xdata, xinc, dy, trueYinc};
+              Builder2.CreateCall(
+                  derivcall, args1,
+                  gutils->getInvertedBundles(
                       &call,
                       {ValueType::None,
                        xcache ? ValueType::None : ValueType::Primal,
                        ValueType::None, ValueType::Shadow, ValueType::None},
-                      Builder2, /*lookup*/ false);
-
-#if LLVM_VERSION_MAJOR > 7
-                  dres = Builder2.CreateCall(call.getFunctionType(), callval,
-                                             args1, Defs);
-#else
-                  dres = Builder2.CreateCall(callval, args1, Defs);
-#endif
-                }
-                if (!gutils->isConstantValue(call.getArgOperand(1))) {
-                  Value *args1[] = {count, ydata, yinc, dx, trueXinc};
-
-                  auto Defs = gutils->getInvertedBundles(
+                      Builder2, /*lookup*/ true));
+            }
+            if (!gutils->isConstantValue(call.getArgOperand(1))) {
+              Value *args2[6] = {count, dif, ydata, yinc, dx, trueXinc};
+              Builder2.CreateCall(
+                  derivcall, args2,
+                  gutils->getInvertedBundles(
                       &call,
                       {ValueType::None, ValueType::Shadow, ValueType::None,
                        ycache ? ValueType::None : ValueType::Primal,
                        ValueType::None},
-                      Builder2, /*lookup*/ false);
-
-#if LLVM_VERSION_MAJOR > 7
-                  Value *secondcall = Builder2.CreateCall(
-                      call.getFunctionType(), callval, args1, Defs);
-#else
-                  Value *secondcall = Builder2.CreateCall(callval, args1, Defs);
-#endif
-                  if (dres)
-                    dres = Builder2.CreateFAdd(dres, secondcall);
-                  else
-                    dres = secondcall;
-                }
-                return dres;
-              },
-              dx, dy);
-          setDiffe(&call, dres, Builder2);
-        }
-
-        if (Mode == DerivativeMode::ReverseModeCombined ||
-            Mode == DerivativeMode::ReverseModeGradient) {
-          Value *dif = diffe(&call, Builder2);
-          Value *alloc = nullptr;
-          if (byRef) {
-            alloc = allocationBuilder.CreateAlloca(innerType);
-          }
-          auto derivcall = gutils->oldFunc->getParent()->getOrInsertFunction(
-              dfuncName, Builder2.getVoidTy(), call.getArgOperand(0)->getType(),
-              byRef ? PointerType::getUnqual(call.getType()) : call.getType(),
-              call.getArgOperand(1)->getType(),
-              call.getArgOperand(0)->getType(),
-              call.getArgOperand(3)->getType(),
-              call.getArgOperand(0)->getType());
-#if LLVM_VERSION_MAJOR >= 9
-          if (auto F = dyn_cast<Function>(derivcall.getCallee()))
-#else
-          if (auto F = dyn_cast<Function>(derivcall))
-#endif
-          {
-            F->addFnAttr(Attribute::ArgMemOnly);
-            if (byRef) {
-              F->addParamAttr(0, Attribute::ReadOnly);
-              F->addParamAttr(0, Attribute::NoCapture);
-              F->addParamAttr(3, Attribute::ReadOnly);
-              F->addParamAttr(3, Attribute::NoCapture);
-              F->addParamAttr(5, Attribute::ReadOnly);
-              F->addParamAttr(5, Attribute::NoCapture);
+                      Builder2, /*lookup*/ true));
             }
-            if (call.getArgOperand(1)->getType()->isPointerTy()) {
-              F->addParamAttr(2, Attribute::ReadOnly);
-              F->addParamAttr(2, Attribute::NoCapture);
-            }
-            if (call.getArgOperand(3)->getType()->isPointerTy()) {
-              F->addParamAttr(4, Attribute::NoCapture);
-            }
-          }
+          },
+          dx, dy, dif);
 
-          // Vector Mode not handled yet
-          Value *dx = gutils->isConstantValue(call.getArgOperand(1))
-                          ? nullptr
-                          : lookup(gutils->invertPointerM(call.getArgOperand(1),
-                                                          Builder2),
-                                   Builder2);
-          Value *dy = gutils->isConstantValue(call.getArgOperand(3))
-                          ? nullptr
-                          : lookup(gutils->invertPointerM(call.getArgOperand(3),
-                                                          Builder2),
-                                   Builder2);
+      setDiffe(&call,
+               Constant::getNullValue(gutils->getShadowType(call.getType())),
+               Builder2);
+    }
 
-          applyChainRule(
-              Builder2,
-              [&](Value *dx, Value *dy, Value *dif) {
-                if (byRef) {
-                  Builder2.CreateStore(dif, alloc);
-                  dif = alloc;
-                }
-                if (!gutils->isConstantValue(call.getArgOperand(3))) {
-                  Value *args1[6] = {count, dif, xdata, xinc, dy, trueYinc};
-                  Builder2.CreateCall(
-                      derivcall, args1,
-                      gutils->getInvertedBundles(
-                          &call,
-                          {ValueType::None,
-                           xcache ? ValueType::None : ValueType::Primal,
-                           ValueType::None, ValueType::Shadow, ValueType::None},
-                          Builder2, /*lookup*/ true));
-                }
-                if (!gutils->isConstantValue(call.getArgOperand(1))) {
-                  Value *args2[6] = {count, dif, ydata, yinc, dx, trueXinc};
-                  Builder2.CreateCall(
-                      derivcall, args2,
-                      gutils->getInvertedBundles(
-                          &call,
-                          {ValueType::None, ValueType::Shadow, ValueType::None,
-                           ycache ? ValueType::None : ValueType::Primal,
-                           ValueType::None},
-                          Builder2, /*lookup*/ true));
-                }
-              },
-              dx, dy, dif);
-
-          setDiffe(
-              &call,
-              Constant::getNullValue(gutils->getShadowType(call.getType())),
-              Builder2);
-        }
-
-        if (Mode == DerivativeMode::ReverseModeCombined ||
-            Mode == DerivativeMode::ReverseModeGradient ||
-            Mode == DerivativeMode::ForwardModeSplit) {
-          if (shouldFree()) {
-            if (xcache) {
-              auto ci = cast<CallInst>(CallInst::CreateFree(
-                  Builder2.CreatePointerCast(
-                      xdata_ptr, Type::getInt8PtrTy(xdata_ptr->getContext())),
-                  Builder2.GetInsertBlock()));
+    if (Mode == DerivativeMode::ReverseModeCombined ||
+        Mode == DerivativeMode::ReverseModeGradient ||
+        Mode == DerivativeMode::ForwardModeSplit) {
+      if (shouldFree()) {
+        if (xcache) {
+          auto ci = cast<CallInst>(CallInst::CreateFree(
+              Builder2.CreatePointerCast(
+                  xdata_ptr, Type::getInt8PtrTy(xdata_ptr->getContext())),
+              Builder2.GetInsertBlock()));
 #if LLVM_VERSION_MAJOR >= 14
-              ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                      Attribute::NonNull);
+          ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
+                                  Attribute::NonNull);
 #else
-              ci->addAttribute(AttributeList::FirstArgIndex,
-                               Attribute::NonNull);
+          ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
 #endif
-              if (ci->getParent() == nullptr) {
-                Builder2.Insert(ci);
-              }
-            }
-            if (ycache) {
-              auto ci = cast<CallInst>(CallInst::CreateFree(
-                  Builder2.CreatePointerCast(
-                      ydata_ptr, Type::getInt8PtrTy(ydata_ptr->getContext())),
-                  Builder2.GetInsertBlock()));
+          if (ci->getParent() == nullptr) {
+            Builder2.Insert(ci);
+          }
+        }
+        if (ycache) {
+          auto ci = cast<CallInst>(CallInst::CreateFree(
+              Builder2.CreatePointerCast(
+                  ydata_ptr, Type::getInt8PtrTy(ydata_ptr->getContext())),
+              Builder2.GetInsertBlock()));
 #if LLVM_VERSION_MAJOR >= 14
-              ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                      Attribute::NonNull);
+          ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
+                                  Attribute::NonNull);
 #else
-              ci->addAttribute(AttributeList::FirstArgIndex,
-                               Attribute::NonNull);
+          ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
 #endif
-              if (ci->getParent() == nullptr) {
-                Builder2.Insert(ci);
-              }
-            }
+          if (ci->getParent() == nullptr) {
+            Builder2.Insert(ci);
           }
         }
+      }
+    }
 
-        if (gutils->knownRecomputeHeuristic.find(&call) !=
-            gutils->knownRecomputeHeuristic.end()) {
-          if (!gutils->knownRecomputeHeuristic[&call]) {
-            gutils->cacheForReverse(BuilderZ, newCall,
-                                    getIndex(&call, CacheType::Self));
-          }
-        }
+    if (gutils->knownRecomputeHeuristic.find(&call) !=
+        gutils->knownRecomputeHeuristic.end()) {
+      if (!gutils->knownRecomputeHeuristic[&call]) {
+        gutils->cacheForReverse(BuilderZ, newCall,
+                                getIndex(&call, CacheType::Self));
+      }
+    }
   }
 
   bool handleBLAS(llvm::CallInst &call, Function *called, BlasInfo blas,
