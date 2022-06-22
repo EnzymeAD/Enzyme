@@ -2045,11 +2045,11 @@ bool lowerEnzymeCalls(Function &F, bool &successful,
     };
 
 
-class Enzyme : public ModulePass , EnzymeBase {
+class EnzymeLegacy : public ModulePass , EnzymeBase {
 public:
 
   static char ID;
-  Enzyme(bool PostOpt = false)
+  EnzymeLegacy(bool PostOpt = false)
       : ModulePass(ID), EnzymeBase(PostOpt) {
     // initializeLowerAutodiffIntrinsicPass(*PassRegistry::getPassRegistry());
   }
@@ -2078,19 +2078,60 @@ public:
   }
 };
 
+class Enzyme : public PassInfoMixin<Enzyme>,EnzymeBase {
+public:
+    Enzyme(bool PostOpt = false) : EnzymeBase(PostOpt){}
+    llvm::PreservedAnalyses run(llvm::Module & M,
+                                llvm::ModuleAnalysisManager &MAM){
+
+        std::function<TargetLibraryInfo& (Function &F)> getTLI =  [&](Function& F) -> TargetLibraryInfo& {
+            ///  Initializing TLI here to forward to lowerEnzymeCalls
+#if LLVM_VERSION_MAJOR >= 10
+//          auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
+            auto &FAM = MAM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
+            auto &TLI = FAM.getResult<TargetLibraryAnalysis>(F);
+#else
+            auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
+#endif
+            ///
+            return TLI;
+        };
+        return implementation(M,getTLI) ? PreservedAnalyses::none() : PreservedAnalyses::all();
+    }
+};
+
 } // namespace
 
-char Enzyme::ID = 0;
+char EnzymeLegacy::ID = 0;
 
-static RegisterPass<Enzyme> X("enzyme", "Enzyme Pass");
+static RegisterPass<EnzymeLegacy> X("enzyme", "Enzyme Pass");
 
-ModulePass *createEnzymePass(bool PostOpt) { return new Enzyme(PostOpt); }
+ModulePass *createEnzymePass(bool PostOpt) { return new EnzymeLegacy(PostOpt); }
 
 #include <llvm-c/Core.h>
 #include <llvm-c/Types.h>
 
 #include "llvm/IR/LegacyPassManager.h"
+#include "llvm/Passes/PassPlugin.h"
 
 extern "C" void AddEnzymePass(LLVMPassManagerRef PM) {
   unwrap(PM)->add(createEnzymePass(/*PostOpt*/ false));
+}
+extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
+llvmGetPassPluginInfo() {
+    return {
+            LLVM_PLUGIN_API_VERSION, "EnzymeNew", "v0.1",
+            [](llvm::PassBuilder &PB) {
+                PB.registerPipelineParsingCallback(
+                        [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
+                           llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
+                            if(Name == "enzyme"){
+                                MPM.addPass(Enzyme());
+                                return true;
+                            }
+                            return false;
+                        }
+                );
+            }
+    };
 }
