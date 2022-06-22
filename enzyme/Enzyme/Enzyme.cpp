@@ -1337,8 +1337,8 @@ class EnzymeBase{
         return true;
     }
 
-    bool lowerEnzymeCalls(Function &F, bool &successful,
-                          std::set<Function *> &done, TargetLibraryInfo &tli) {
+bool lowerEnzymeCalls(Function &F, bool &successful,
+                          std::set<Function *> &done, std::function<TargetLibraryInfo& (Function &F)>& getTLI) {
         if (done.count(&F))
             return false;
         done.insert(&F);
@@ -1352,7 +1352,7 @@ class EnzymeBase{
 //        auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
 //#endif
 
-    TargetLibraryInfo TLI = tli;
+    TargetLibraryInfo tli = getTLI(F);
 
         bool Changed = false;
 
@@ -1709,7 +1709,7 @@ class EnzymeBase{
                         // AD case.
                         bool tmp = Logic.PostOpt;
                         Logic.PostOpt = true;
-                        Changed |= lowerEnzymeCalls(*dc, successful, done,TLI);
+                        Changed |= lowerEnzymeCalls(*dc, successful, done,getTLI);
                         Logic.PostOpt = tmp;
                     }
                 }
@@ -1744,14 +1744,14 @@ class EnzymeBase{
 
         // Perform all the size replacements first to create constants
         for (auto pair : toSize) {
-            successful &= HandleAutoDiff(pair.first, TLI, pair.second,
+            successful &= HandleAutoDiff(pair.first, tli, pair.second,
                     /*sizeOnly*/ true);
             Changed = true;
             if (!successful)
                 break;
         }
         for (auto pair : toLower) {
-            successful &= HandleAutoDiff(pair.first, TLI, pair.second,
+            successful &= HandleAutoDiff(pair.first, tli, pair.second,
                     /*sizeOnly*/ false);
             Changed = true;
             if (!successful)
@@ -1778,7 +1778,7 @@ class EnzymeBase{
                              Arch == Triple::amdgcn;
 
             auto val = GradientUtils::GetOrCreateShadowConstant(
-                    Logic, TLI, TA, fn, pair.second, /*width*/ 1, AtomicAdd);
+                    Logic, tli, TA, fn, pair.second, /*width*/ 1, AtomicAdd);
             CI->replaceAllUsesWith(ConstantExpr::getPointerCast(val, CI->getType()));
             CI->eraseFromParent();
             Changed = true;
@@ -1950,8 +1950,8 @@ class EnzymeBase{
 ////            auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
 //#endif
             ///
-            auto TLI = getTLI(F);
-            changed |= lowerEnzymeCalls(F, successful, done, TLI);
+//            auto TLI = getTLI(F);
+            changed |= lowerEnzymeCalls(F, successful, done, getTLI);
 
             if (!successful) {
                 M.getContext().diagnose(
@@ -2064,7 +2064,7 @@ public:
         // AU.addRequiredID(llvm::LoopSimplifyID);//<LoopSimplifyWrapperPass>();
     }
   bool runOnModule(Module &M) override {
-      auto getTLI =  [&](Function& F) -> TargetLibraryInfo& {
+      std::function<TargetLibraryInfo& (Function &F)> getTLI =  [&](Function& F) -> TargetLibraryInfo& {
           ///  Initializing TLI here to forward to lowerEnzymeCalls
 #if LLVM_VERSION_MAJOR >= 10
             auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
@@ -2074,7 +2074,7 @@ public:
           ///
           return TLI;
       };
-    return implementation(M, reinterpret_cast<std::function<TargetLibraryInfo& (Function &)> &>(getTLI));
+    return implementation(M, getTLI);
   }
 };
 
