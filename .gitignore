@@ -4,5 +4,3 @@
 build
 .vscode
 CLArgs.txt
-cmake-build-debug
-.idea
