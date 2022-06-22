@@ -47,6 +47,13 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Transforms/Scalar.h"
 
+
+#include <llvm-c/Core.h>
+#include <llvm-c/Types.h>
+
+#include "llvm/IR/LegacyPassManager.h"
+#include "llvm/Passes/PassPlugin.h"
+
 #include "llvm/Transforms/Utils/Cloning.h"
 #if LLVM_VERSION_MAJOR >= 11
 #include "llvm/Analysis/InlineAdvisor.h"
@@ -2078,26 +2085,39 @@ public:
   }
 };
 
-class Enzyme : public PassInfoMixin<Enzyme>,EnzymeBase {
+class Enzyme : public AnalysisInfoMixin<Enzyme>,EnzymeBase {
 public:
-    Enzyme(bool PostOpt = false) : EnzymeBase(PostOpt){}
-    llvm::PreservedAnalyses run(llvm::Module & M,
-                                llvm::ModuleAnalysisManager &MAM){
+    using Result = llvm::PreservedAnalyses;
 
+    Enzyme(bool PostOpt = false) : EnzymeBase(PostOpt){}
+
+    Result run(llvm::Module & M, llvm::ModuleAnalysisManager &MAM){
         std::function<TargetLibraryInfo& (Function &F)> getTLI =  [&](Function& F) -> TargetLibraryInfo& {
-            ///  Initializing TLI here to forward to lowerEnzymeCalls
-#if LLVM_VERSION_MAJOR >= 10
-//          auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
             auto &FAM = MAM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
             auto &TLI = FAM.getResult<TargetLibraryAnalysis>(F);
-#else
-            auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
-#endif
-            ///
             return TLI;
         };
         return implementation(M,getTLI) ? PreservedAnalyses::none() : PreservedAnalyses::all();
     }
+
+    static bool isRequired() { return true; }
+
+private:
+    static llvm::AnalysisKey Key;
+    friend struct llvm::AnalysisInfoMixin<Enzyme>;
+};
+
+class EnzymePrinter : public PassInfoMixin<EnzymePrinter>{
+public :
+    explicit EnzymePrinter(raw_fd_ostream &ostream) : OS(ostream) {}
+
+    PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM){
+        auto res = MAM.getResult<Enzyme>(M);
+        return res;
+    }
+    static bool isRequired() { return true; }
+private:
+    llvm::raw_ostream &OS;
 };
 
 } // namespace
@@ -2108,15 +2128,15 @@ static RegisterPass<EnzymeLegacy> X("enzyme", "Enzyme Pass");
 
 ModulePass *createEnzymePass(bool PostOpt) { return new EnzymeLegacy(PostOpt); }
 
-#include <llvm-c/Core.h>
-#include <llvm-c/Types.h>
 
-#include "llvm/IR/LegacyPassManager.h"
-#include "llvm/Passes/PassPlugin.h"
 
 extern "C" void AddEnzymePass(LLVMPassManagerRef PM) {
   unwrap(PM)->add(createEnzymePass(/*PostOpt*/ false));
 }
+
+//TODO why this?
+AnalysisKey Enzyme::Key;
+
 extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
 llvmGetPassPluginInfo() {
     return {
@@ -2126,12 +2146,15 @@ llvmGetPassPluginInfo() {
                         [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
                            llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
                             if(Name == "enzyme"){
-                                MPM.addPass(Enzyme());
+                                MPM.addPass(EnzymePrinter(llvm::errs()));
                                 return true;
                             }
                             return false;
                         }
                 );
+                PB.registerAnalysisRegistrationCallback([](ModuleAnalysisManager & MAM){
+                    MAM.registerPass([&]{return Enzyme();});
+                });
             }
     };
 }
