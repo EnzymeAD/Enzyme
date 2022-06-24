@@ -116,6 +116,7 @@ if (${ENZYME_EXTERNAL_SHARED_LIB})
         SHARED
         ${ENZYME_SRC}
     )
+    add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} intrinsics_gen)
     target_link_libraries(Enzyme-${LLVM_VERSION_MAJOR} LLVM)
     install(TARGETS Enzyme-${LLVM_VERSION_MAJOR}
         EXPORT EnzymeTargets
