@@ -68,6 +68,17 @@ def : CallPattern<(Op $y, $x),
                   (FNeg (FDiv (FMul (DiffeRet<"">), $y), (FAdd (FMul $x, $x), (FMul $y, $y))))
                   ]
                   >;
+
+def : CallPattern<(Op $x),
+                  ["asin", "asinf", "asinl"],
+                  [(FDiv (DiffeRet<"">), (SameSqrt (FSub (ConstantFP<"1.0"> $x), (FMul $x, $x)))  )]
+                  >;
+
+def : CallPattern<(Op $x),
+                  ["log1p", "log1pf", "log1pl"],
+                  [(FDiv (DiffeRet<"">), (FAdd (ConstantFP<"1.0"> $x), $x))]
+                  >;
+                  
 def : CallPattern<(Op $x),
                   ["cbrt"],
                   [(FDiv (FMul (DiffeRet<"">), (Call<(SameFunc), [ReadNone,NoUnwind]> $x) ), (FMul (ConstantFP<"3.0"> $x), $x))]
