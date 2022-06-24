@@ -16,6 +16,8 @@ add_public_tablegen_target(MLIRArithmeticCanonicalizationIncGen)
 
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
+set(LLVM_LINK_COMPONENTS Demangle)
+
 file(GLOB ENZYME_SRC RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
     "*.cpp"
 )
