@@ -4328,7 +4328,7 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
 
   // find instructions to vectorize (going up / overestimation)
   SmallPtrSet<Value *, 32> toVectorize;
-  SetVector<llvm::Value *, std::deque<llvm::Value *>> worklist;
+  SetVector<llvm::Value *, std::deque<llvm::Value *>> refinelist;
 
   for (unsigned i = 0; i < tobatch->getFunctionType()->getNumParams(); i++) {
     if (arg_types[i] == BATCH_TYPE::VECTOR) {
@@ -4336,8 +4336,6 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
       toVectorize.insert(arg);
     }
   }
-
-  SetVector<llvm::Value *, std::deque<llvm::Value *>> refinelist;
 
   for (auto &BB : *tobatch)
     for (auto &Inst : BB) {
