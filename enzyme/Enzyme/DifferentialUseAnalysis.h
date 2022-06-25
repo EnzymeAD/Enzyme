@@ -113,7 +113,8 @@ static inline bool is_use_directly_needed_in_reverse(
       // isa<ExtractElement>(use) ||
       // isa<InsertElementInst>(use) || isa<ShuffleVectorInst>(use) ||
       // isa<ExtractValueInst>(use) || isa<AllocaInst>(use)
-      /*|| isa<StoreInst>(use)*/) {
+      // || isa<StoreInst>(use)
+  ) {
     return false;
   }
 
