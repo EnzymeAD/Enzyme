@@ -106,9 +106,9 @@ static inline bool is_use_directly_needed_in_reverse(
   }
 
   if (isa<CmpInst>(user) || isa<BranchInst>(user) || isa<ReturnInst>(user) ||
-      isa<FPExtInst>(user) || isa<FPTruncInst>(user) ||
+      isa<FPExtInst>(user) || isa<FPTruncInst>(user)
 #if LLVM_VERSION_MAJOR >= 10
-      isa<FreezeInst>(user)
+      || isa<FreezeInst>(user)
 #endif
       // isa<ExtractElement>(use) ||
       // isa<InsertElementInst>(use) || isa<ShuffleVectorInst>(use) ||
