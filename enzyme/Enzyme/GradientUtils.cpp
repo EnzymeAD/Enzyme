@@ -442,34 +442,40 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     assert(val->getType() == toreturn->getType());
     return toreturn;
   } else if (auto op = dyn_cast<InsertValueInst>(val)) {
-    SmallVector<std::pair<Value *, ArrayRef<unsigned>>, 2> insertElements;
-    Value *agg = op->getAggregateOperand();
+    // Unwrapped Aggregate, Indices, parent
+    SmallVector<std::tuple<Value *, ArrayRef<unsigned>, InsertValueInst *>, 1>
+        insertElements;
+
+    Value *agg = op;
     while (auto op1 = dyn_cast<InsertValueInst>(agg)) {
-      if (knownRecomputeHeuristic.count(op1) &&
-          knownRecomputeHeuristic[op1] == true)
-        break;
-      if (op1->getNumIndices() != 1)
-        break;
-      insertElements.push_back(
-          {op1->getInsertedValueOperand(), op1->getIndices()});
+      if (Value *orig = isOriginal(op1)) {
+        if (knownRecomputeHeuristic.count(orig)) {
+          if (!knownRecomputeHeuristic[orig]) {
+            break;
+          }
+        }
+      }
+      Value *valOp = op1->getInsertedValueOperand();
+      valOp = getOp(valOp);
+      if (valOp == nullptr)
+        goto endCheck;
+      insertElements.push_back({valOp, op1->getIndices(), op1});
       agg = op1->getAggregateOperand();
     }
 
-    Value *toreturn = agg;
-    for (auto &&[valOp, idcs] : reverse(insertElements)) {
-      auto op1 = getOp(valOp);
-      if (op1 == nullptr)
-        goto endCheck;
-      toreturn = BuilderM.CreateInsertValue(toreturn, op1, idcs,
-                                            op->getName() + "_unwrap");
+    Value *toreturn = getOp(agg);
+    if (toreturn == nullptr)
+      goto endCheck;
+    for (auto &&[valOp, idcs, parent] : reverse(insertElements)) {
+      toreturn = BuilderM.CreateInsertValue(toreturn, valOp, idcs,
+                                            parent->getName() + "_unwrap");
 
       if (permitCache)
-        unwrap_cache[BuilderM.GetInsertBlock()][idx.first][idx.second] =
-            toreturn;
+        unwrap_cache[BuilderM.GetInsertBlock()][parent][idx.second] = toreturn;
       if (auto newi = dyn_cast<Instruction>(toreturn)) {
-        newi->copyIRFlags(op);
+        newi->copyIRFlags(parent);
         unwrappedLoads[newi] = val;
-        if (newi->getParent()->getParent() != op->getParent()->getParent())
+        if (newi->getParent()->getParent() != parent->getParent()->getParent())
           newi->setDebugLoc(nullptr);
       }
     }
