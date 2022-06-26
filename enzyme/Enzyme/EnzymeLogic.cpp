@@ -4324,7 +4324,13 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
   }
 
   SmallVector<ReturnInst *, 4> Returns;
-  CloneFunctionInto(NewF, tobatch, vmap, true, Returns);
+#if LLVM_VERSION_MAJOR >= 13
+  CloneFunctionInto(NewF, tobatch, vmap,
+                    CloneFunctionChangeType::LocalChangesOnly, Returns, "",
+                    nullptr);
+#else
+  CloneFunctionInto(NewF, tobatch, vmap, true, Returns, "", nullptr);
+#endif
 
   NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
 
