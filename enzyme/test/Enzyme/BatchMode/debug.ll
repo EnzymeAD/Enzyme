@@ -115,22 +115,22 @@ attributes #3 = { noinline norecurse optnone ssp uwtable "frame-pointer"="non-le
 ; CHECK-NEXT:   %unwrap1 = extractvalue [4 x double] %0, 1
 ; CHECK-NEXT:   %unwrap2 = extractvalue [4 x double] %0, 2
 ; CHECK-NEXT:   %unwrap3 = extractvalue [4 x double] %0, 3
-; CHECK-NEXT:   %2 = alloca double, align 8
-; CHECK-NEXT:   %3 = alloca double, align 8
-; CHECK-NEXT:   %4 = alloca double, align 8
-; CHECK-NEXT:   %5 = alloca double, align 8
-; CHECK-NEXT:   store double %unwrap, double* %2, align 8
-; CHECK-NEXT:   store double %unwrap3, double* %5, align 8
-; CHECK-NEXT:   store double %unwrap2, double* %4, align 8
-; CHECK-NEXT:   store double %unwrap1, double* %3, align 8
-; CHECK-NEXT:   %6 = load double, double* %2, align 8
-; CHECK-NEXT:   %7 = load double, double* %3, align 8
-; CHECK-NEXT:   %8 = load double, double* %4, align 8
-; CHECK-NEXT:   %9 = load double, double* %5, align 8
-; CHECK-NEXT:   %10 = load double, double* %2, align 8
-; CHECK-NEXT:   %11 = load double, double* %3, align 8
-; CHECK-NEXT:   %12 = load double, double* %4, align 8
-; CHECK-NEXT:   %13 = load double, double* %5, align 8
+; CHECK-NEXT:   %2 = alloca double
+; CHECK-NEXT:   %3 = alloca double
+; CHECK-NEXT:   %4 = alloca double
+; CHECK-NEXT:   %5 = alloca double
+; CHECK-NEXT:   store double %unwrap, double* %2
+; CHECK-NEXT:   store double %unwrap3, double* %5
+; CHECK-NEXT:   store double %unwrap2, double* %4
+; CHECK-NEXT:   store double %unwrap1, double* %3
+; CHECK-NEXT:   %6 = load double, double* %2
+; CHECK-NEXT:   %7 = load double, double* %3
+; CHECK-NEXT:   %8 = load double, double* %4
+; CHECK-NEXT:   %9 = load double, double* %5
+; CHECK-NEXT:   %10 = load double, double* %2
+; CHECK-NEXT:   %11 = load double, double* %3
+; CHECK-NEXT:   %12 = load double, double* %4
+; CHECK-NEXT:   %13 = load double, double* %5
 ; CHECK-NEXT:   %14 = fmul double %6, %10
 ; CHECK-NEXT:   %15 = fmul double %7, %11
 ; CHECK-NEXT:   %16 = fmul double %8, %12

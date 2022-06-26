@@ -46,10 +46,10 @@ declare [4 x float] @__enzyme_batch(...)
 ; CHECK-NEXT:   %arrayidx1 = getelementptr inbounds float, float* %unwrap.array1, i64 %i
 ; CHECK-NEXT:   %arrayidx2 = getelementptr inbounds float, float* %unwrap.array2, i64 %i
 ; CHECK-NEXT:   %arrayidx3 = getelementptr inbounds float, float* %unwrap.array3, i64 %i
-; CHECK-NEXT:   %loaded0 = load float, float* %arrayidx0, align 4
-; CHECK-NEXT:   %loaded1 = load float, float* %arrayidx1, align 4
-; CHECK-NEXT:   %loaded2 = load float, float* %arrayidx2, align 4
-; CHECK-NEXT:   %loaded3 = load float, float* %arrayidx3, align 4
+; CHECK-NEXT:   %loaded0 = load float, float* %arrayidx0
+; CHECK-NEXT:   %loaded1 = load float, float* %arrayidx1
+; CHECK-NEXT:   %loaded2 = load float, float* %arrayidx2
+; CHECK-NEXT:   %loaded3 = load float, float* %arrayidx3
 ; CHECK-NEXT:   %fltload = bitcast i32 %intsum to float
 ; CHECK-NEXT:   %add0 = fadd float %fltload, %loaded0
 ; CHECK-NEXT:   %add1 = fadd float %fltload, %loaded1
