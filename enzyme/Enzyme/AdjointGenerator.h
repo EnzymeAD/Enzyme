@@ -11337,10 +11337,10 @@ public:
         newcalled = gutils->invertPointerM(callval, BuilderZ);
 
         if (Mode != DerivativeMode::ReverseModeGradient)
-          ErrorIfRuntimeInactive(BuilderZ, gutils->getNewFromOriginal(callval),
-                                 newcalled,
-                                 "Attempting to call an indirect active function "
-                                 "whose runtime value is inactive");
+          ErrorIfRuntimeInactive(
+              BuilderZ, gutils->getNewFromOriginal(callval), newcalled,
+              "Attempting to call an indirect active function "
+              "whose runtime value is inactive");
 
         auto ft =
             cast<FunctionType>(callval->getType()->getPointerElementType());

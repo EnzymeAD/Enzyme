@@ -2,10 +2,10 @@
 
 define void @_Z2fnv() {
 entry:
-  %ref.tmp = alloca i8*
+  %ref.tmp = alloca i8*, align 8
   %i35 = load i8*, i8** %ref.tmp, align 8
   
-  %alloc2 = alloca i64*
+  %alloc2 = alloca i64*, align 8
   %i40 = bitcast i64** %alloc2 to i8*
   call void @llvm.memcpy.p0i8.p0i8.i64(i8* %i40, i8* %i35, i64 6, i1 false)
   

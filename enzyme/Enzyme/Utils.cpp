@@ -79,27 +79,25 @@ static inline std::string tofltstr(Type *T) {
   }
 }
 
-Constant* getString(Module& M, StringRef Str) {
+Constant *getString(Module &M, StringRef Str) {
   llvm::Constant *s = llvm::ConstantDataArray::getString(M.getContext(), Str);
-  auto *gv =
-      new llvm::GlobalVariable(M, s->getType(), true,
-                               llvm::GlobalValue::PrivateLinkage, s, ".str");
+  auto *gv = new llvm::GlobalVariable(
+      M, s->getType(), true, llvm::GlobalValue::PrivateLinkage, s, ".str");
   gv->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-  Value* Idxs[2] = { ConstantInt::get(Type::getInt32Ty(M.getContext()), 0), ConstantInt::get(Type::getInt32Ty(M.getContext()), 0) };
-  return ConstantExpr::getInBoundsGetElementPtr(nullptr, gv, Idxs);
+  Value *Idxs[2] = {ConstantInt::get(Type::getInt32Ty(M.getContext()), 0),
+                    ConstantInt::get(Type::getInt32Ty(M.getContext()), 0)};
+  return ConstantExpr::getInBoundsGetElementPtr(s->getType(), gv, Idxs);
 }
 
-void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B,
-                            llvm::Value* primal, llvm::Value* shadow,
-                            const char* Message) {
-    Module &M = *B.GetInsertBlock()->getParent()->getParent();
-    std::string name = "__enzyme_runtimeinactiveerr";
-    FunctionType *FT = FunctionType::get(Type::getVoidTy(M.getContext()),
-                                       {
-                                       Type::getInt8PtrTy(M.getContext()),
-                                       Type::getInt8PtrTy(M.getContext()),
-                                       Type::getInt8PtrTy(M.getContext())
-                                       }, false);
+void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
+                            llvm::Value *shadow, const char *Message) {
+  Module &M = *B.GetInsertBlock()->getParent()->getParent();
+  std::string name = "__enzyme_runtimeinactiveerr";
+  FunctionType *FT = FunctionType::get(Type::getVoidTy(M.getContext()),
+                                       {Type::getInt8PtrTy(M.getContext()),
+                                        Type::getInt8PtrTy(M.getContext()),
+                                        Type::getInt8PtrTy(M.getContext())},
+                                       false);
 
 #if LLVM_VERSION_MAJOR >= 9
   Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
@@ -108,61 +106,57 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B,
 #endif
 
   if (F->empty()) {
-  F->setLinkage(Function::LinkageTypes::InternalLinkage);
-  F->addFnAttr(Attribute::AlwaysInline);
-  F->addParamAttr(0, Attribute::NoCapture);
-  F->addParamAttr(1, Attribute::NoCapture);
+    F->setLinkage(Function::LinkageTypes::InternalLinkage);
+    F->addFnAttr(Attribute::AlwaysInline);
+    F->addParamAttr(0, Attribute::NoCapture);
+    F->addParamAttr(1, Attribute::NoCapture);
 
-  BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
-  BasicBlock *error = BasicBlock::Create(M.getContext(), "error", F);
-  BasicBlock *end = BasicBlock::Create(M.getContext(), "end", F);
+    BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
+    BasicBlock *error = BasicBlock::Create(M.getContext(), "error", F);
+    BasicBlock *end = BasicBlock::Create(M.getContext(), "end", F);
 
-  auto prim = F->arg_begin();
-  prim->setName("primal");
-  auto shadow = prim + 1;
-  shadow->setName("shadow");
-  auto msg = prim + 2;
-  msg->setName("msg");
+    auto prim = F->arg_begin();
+    prim->setName("primal");
+    auto shadow = prim + 1;
+    shadow->setName("shadow");
+    auto msg = prim + 2;
+    msg->setName("msg");
 
     IRBuilder<> EB(entry);
     EB.CreateCondBr(EB.CreateICmpEQ(prim, shadow), error, end);
 
     EB.SetInsertPoint(error);
-    FunctionType *FT = FunctionType::get(Type::getInt32Ty(M.getContext()),
-                                       {
-                                       Type::getInt8PtrTy(M.getContext())
-                                       }, false);
+    FunctionType *FT =
+        FunctionType::get(Type::getInt32Ty(M.getContext()),
+                          {Type::getInt8PtrTy(M.getContext())}, false);
 
 #if LLVM_VERSION_MAJOR >= 9
-  auto PutsF = M.getOrInsertFunction("puts", FT);
+    auto PutsF = M.getOrInsertFunction("puts", FT);
 #else
-  auto PutsF = M.getOrInsertFunction("puts", FT);
+    auto PutsF = M.getOrInsertFunction("puts", FT);
 #endif
     EB.CreateCall(PutsF, msg);
-    
-    FunctionType *FT2 = FunctionType::get(Type::getVoidTy(M.getContext()),
-                                       {
-                                       Type::getInt32Ty(M.getContext())
-                                       }, false);
+
+    FunctionType *FT2 =
+        FunctionType::get(Type::getVoidTy(M.getContext()),
+                          {Type::getInt32Ty(M.getContext())}, false);
 
 #if LLVM_VERSION_MAJOR >= 9
-  auto ExitF = M.getOrInsertFunction("exit", FT2);
+    auto ExitF = M.getOrInsertFunction("exit", FT2);
 #else
-  auto ExitF = M.getOrInsertFunction("exit", FT2);
+    auto ExitF = M.getOrInsertFunction("exit", FT2);
 #endif
     EB.CreateCall(ExitF, ConstantInt::get(Type::getInt32Ty(M.getContext()), 1));
     EB.CreateUnreachable();
 
     EB.SetInsertPoint(end);
     EB.CreateRetVoid();
-
   }
 
-  Value* args[] = {
-    B.CreatePointerCast(primal, Type::getInt8PtrTy(M.getContext())),
-    B.CreatePointerCast(shadow, Type::getInt8PtrTy(M.getContext())),
-    getString(M, Message)
-  };
+  Value *args[] = {
+      B.CreatePointerCast(primal, Type::getInt8PtrTy(M.getContext())),
+      B.CreatePointerCast(shadow, Type::getInt8PtrTy(M.getContext())),
+      getString(M, Message)};
   B.CreateCall(F, args);
 }
 
