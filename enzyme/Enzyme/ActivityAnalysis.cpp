@@ -178,6 +178,7 @@ const std::map<std::string, size_t> MPIInactiveCommAllocators = {
 };
 
 const std::set<std::string> KnownInactiveFunctions = {
+    "strcmp",
     "abort",
     "__assert_fail",
     "__cxa_atexit",
