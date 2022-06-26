@@ -43,6 +43,8 @@ class Call<dag mnemonic, list<Attribute> _fnattrs=[]> {
   list<Attribute> fnattrs = _fnattrs;
 }
 
+def SameSqrt : Call<(SameTypesFunc<"sqrt">), [ReadNone,NoUnwind]>;
+
 def Op {
 }
 
