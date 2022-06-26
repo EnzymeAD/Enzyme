@@ -3917,8 +3917,13 @@ public:
                           : diffe(orig_ops[2], Builder2);
 
         auto rule = [&](Value *dif0, Value *dif1, Value *dif2) {
-          Value *dif = Builder2.CreateFAdd(Builder2.CreateFMul(op0, dif1),
-                                           Builder2.CreateFMul(op1, dif0));
+          Value *dif =
+              Builder2.CreateFAdd(gutils->isConstantValue(orig_ops[1])
+                                      ? Constant::getNullValue(opType1)
+                                      : Builder2.CreateFMul(op0, dif1),
+                                  gutils->isConstantValue(orig_ops[0])
+                                      ? Constant::getNullValue(opType2)
+                                      : Builder2.CreateFMul(op1, dif0));
           return Builder2.CreateFAdd(dif, dif2);
         };
 
@@ -10742,8 +10747,30 @@ public:
           (orig->mayWriteToMemory() ||
            !gutils->legalRecompute(orig, ValueToValueMapTy(), nullptr))) {
         if (!gutils->unnecessaryIntermediates.count(orig)) {
-          gutils->cacheForReverse(BuilderZ, newCall,
-                                  getIndex(orig, CacheType::Self));
+
+          std::map<UsageKey, bool> Seen;
+          bool primalNeededInReverse = false;
+          for (auto pair : gutils->knownRecomputeHeuristic)
+            if (!pair.second) {
+              if (pair.first == orig) {
+                primalNeededInReverse = true;
+                break;
+              } else {
+                Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+              }
+            }
+          if (!primalNeededInReverse) {
+
+            auto minCutMode = (Mode == DerivativeMode::ReverseModePrimal)
+                                  ? DerivativeMode::ReverseModeGradient
+                                  : Mode;
+            primalNeededInReverse =
+                is_value_needed_in_reverse<ValueType::Primal>(
+                    gutils, orig, minCutMode, Seen, oldUnreachable);
+          }
+          if (primalNeededInReverse)
+            gutils->cacheForReverse(BuilderZ, newCall,
+                                    getIndex(orig, CacheType::Self));
         }
         eraseIfUnused(*orig);
         return;
@@ -11338,11 +11365,31 @@ public:
           }
 
           if (Mode == DerivativeMode::ReverseModePrimal &&
-              is_value_needed_in_reverse<ValueType::Primal>(gutils, orig, Mode,
-                                                            oldUnreachable) &&
               !gutils->unnecessaryIntermediates.count(orig)) {
-            gutils->cacheForReverse(BuilderZ, dcall,
-                                    getIndex(orig, CacheType::Self));
+
+            std::map<UsageKey, bool> Seen;
+            bool primalNeededInReverse = false;
+            for (auto pair : gutils->knownRecomputeHeuristic)
+              if (!pair.second) {
+                if (pair.first == orig) {
+                  primalNeededInReverse = true;
+                  break;
+                } else {
+                  Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+                }
+              }
+            if (!primalNeededInReverse) {
+
+              auto minCutMode = (Mode == DerivativeMode::ReverseModePrimal)
+                                    ? DerivativeMode::ReverseModeGradient
+                                    : Mode;
+              primalNeededInReverse =
+                  is_value_needed_in_reverse<ValueType::Primal>(
+                      gutils, orig, minCutMode, Seen, oldUnreachable);
+            }
+            if (primalNeededInReverse)
+              gutils->cacheForReverse(BuilderZ, dcall,
+                                      getIndex(orig, CacheType::Self));
           }
           BuilderZ.SetInsertPoint(newCall->getNextNode());
           gutils->erase(newCall);
