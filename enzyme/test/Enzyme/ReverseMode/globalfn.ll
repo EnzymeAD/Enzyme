@@ -117,18 +117,18 @@ attributes #4 = { nounwind "correctly-rounded-divide-sqrt-fp-math"="false" "disa
 
 ; CHECK: __enzyme_runtimeinactiveerr.exit:                 ; preds = %entry
 ; CHECK-NEXT:   %4 = bitcast void (double*)* %"fp'ipl" to { i8* } (double*, double*)**
-; CHECK-NEXT:   %5 = load { i8* } (double*, double*)*, { i8* } (double*, double*)** %4, align 8
+; CHECK-NEXT:   %5 = load { i8* } (double*, double*)*, { i8* } (double*, double*)** %4
 ; CHECK-NEXT:   %_augmented = call { i8* } %5(double* %alloc, double* %"alloc'ipa")
 ; CHECK-NEXT:   %subcache = extractvalue { i8* } %_augmented, 0
-; CHECK-NEXT:   %6 = load double, double* %"alloc'ipa", align 8
+; CHECK-NEXT:   %6 = load double, double* %"alloc'ipa"
 ; CHECK-NEXT:   %7 = fadd fast double %6, %differeturn
-; CHECK-NEXT:   store double %7, double* %"alloc'ipa", align 8
+; CHECK-NEXT:   store double %7, double* %"alloc'ipa"
 ; CHECK-NEXT:   %8 = bitcast void (double*)* %"fp'ipl" to {} (double*, double*, i8*)**
 ; CHECK-NEXT:   %9 = getelementptr {} (double*, double*, i8*)*, {} (double*, double*, i8*)** %8, i64 1
-; CHECK-NEXT:   %10 = load {} (double*, double*, i8*)*, {} (double*, double*, i8*)** %9, align 8
+; CHECK-NEXT:   %10 = load {} (double*, double*, i8*)*, {} (double*, double*, i8*)** %9
 ; CHECK-NEXT:   %11 = call {} %10(double* %alloc, double* %"alloc'ipa", i8* %subcache)
-; CHECK-NEXT:   %12 = load double, double* %"alloc'ipa", align 8
-; CHECK-NEXT:   store double 0.000000e+00, double* %"alloc'ipa", align 8
+; CHECK-NEXT:   %12 = load double, double* %"alloc'ipa"
+; CHECK-NEXT:   store double 0.000000e+00, double* %"alloc'ipa"
 ; CHECK-NEXT:   %13 = insertvalue { double } undef, double %12, 0
 ; CHECK-NEXT:   ret { double } %13
 ; CHECK-NEXT: }

@@ -77,13 +77,13 @@ declare void @__enzyme_autodiff(...)
 
 ; CHECK: __enzyme_runtimeinactiveerr.exit:                 ; preds = %entry
 ; CHECK-NEXT:   %7 = bitcast double (double*)* %"f'ipl" to { i8*, double } (double*, double*)**
-; CHECK-NEXT:   %8 = load { i8*, double } (double*, double*)*, { i8*, double } (double*, double*)** %7, align 8
+; CHECK-NEXT:   %8 = load { i8*, double } (double*, double*)*, { i8*, double } (double*, double*)** %7
 ; CHECK-NEXT:   %r_augmented = call { i8*, double } %8(double* %in, double* %"in'")
 ; CHECK-NEXT:   %subcache = extractvalue { i8*, double } %r_augmented, 0
-; CHECK-NEXT:   store i8* %subcache, i8** %1, align 8
+; CHECK-NEXT:   store i8* %subcache, i8** %1
 ; CHECK-NEXT:   %r = extractvalue { i8*, double } %r_augmented, 1
 ; CHECK-NEXT:   %9 = getelementptr inbounds { i8*, double }, { i8*, double }* %0, i32 0, i32 1
-; CHECK-NEXT:   store double %r, double* %9, align 8
-; CHECK-NEXT:   %10 = load { i8*, double }, { i8*, double }* %0, align 8
+; CHECK-NEXT:   store double %r, double* %9
+; CHECK-NEXT:   %10 = load { i8*, double }, { i8*, double }* %0
 ; CHECK-NEXT:   ret { i8*, double } %10
 ; CHECK-NEXT: }
