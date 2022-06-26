@@ -4307,18 +4307,20 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
   PlaceholderBuilder.SetCurrentDebugLocation(DebugLoc());
   ValueToValueMapTy vmap;
   auto DestArg = NewF->arg_begin();
+  auto SrcArg = tobatch->arg_begin();
 
   for (unsigned i = 0; i < orig_FTy->getNumParams(); ++i) {
-    Argument *arg = tobatch->getArg(i);
+    Argument *arg = SrcArg;
     if (arg_types[i] == BATCH_TYPE::VECTOR) {
       auto placeholder = PlaceholderBuilder.CreatePHI(
           arg->getType(), 0, "placeholder." + arg->getName());
       vmap[arg] = placeholder;
-      DestArg->setName(arg->getName());
-      DestArg++;
     } else {
-      vmap[arg] = NewF->getArg(i);
+      vmap[arg] = DestArg;
     }
+    DestArg->setName(arg->getName());
+    DestArg++;
+    SrcArg++;
   }
 
   SmallVector<ReturnInst *, 4> Returns;

@@ -15,9 +15,9 @@ entry:
 }
 
 
-; CHECK: define internal [4 x double] @batch_square(double %0)
+; CHECK: define internal [4 x double] @batch_square(double %x)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %mul = fmul double %0, %0
+; CHECK-NEXT:   %mul = fmul double %x, %x
 ; CHECK-NEXT:   %mrv = insertvalue [4 x double] undef, double %mul, 0
 ; CHECK-NEXT:   %mrv1 = insertvalue [4 x double] %mrv, double %mul, 1
 ; CHECK-NEXT:   %mrv2 = insertvalue [4 x double] %mrv1, double %mul, 2

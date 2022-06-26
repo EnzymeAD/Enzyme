@@ -16,7 +16,7 @@ entry:
 }
 
 
-; CHECK: define internal [4 x double] @batch_square_add([4 x double] %x, double %0)
+; CHECK: define internal [4 x double] @batch_square_add([4 x double] %x, double %y)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %unwrap.x0 = extractvalue [4 x double] %x, 0
 ; CHECK-NEXT:   %unwrap.x1 = extractvalue [4 x double] %x, 1
@@ -26,7 +26,7 @@ entry:
 ; CHECK-NEXT:   %mul1 = fmul double %unwrap.x1, %unwrap.x1
 ; CHECK-NEXT:   %mul2 = fmul double %unwrap.x2, %unwrap.x2
 ; CHECK-NEXT:   %mul3 = fmul double %unwrap.x3, %unwrap.x3
-; CHECK-NEXT:   %add = fadd double %mul0, %0
+; CHECK-NEXT:   %add = fadd double %mul0, %y
 ; CHECK-NEXT:   %mrv = insertvalue [4 x double] undef, double %add, 0
 ; CHECK-NEXT:   %mrv1 = insertvalue [4 x double] %mrv, double %add, 1
 ; CHECK-NEXT:   %mrv2 = insertvalue [4 x double] %mrv1, double %add, 2
