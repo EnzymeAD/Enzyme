@@ -1561,7 +1561,7 @@ public:
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
         }
         if (Fn->getName().contains("strcmp")) {
-          InactiveCalls.insert(CI);
+          CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadOnly);
         }
         if (Fn->getName() == "f90io_fmtw_end" ||
             Fn->getName() == "f90io_unf_end") {
