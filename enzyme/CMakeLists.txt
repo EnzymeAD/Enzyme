@@ -23,7 +23,6 @@ SET(CMAKE_CXX_FLAGS_DEBUG  "-O0 -g -ggdb -fno-omit-frame-pointer")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-
 option(ENZYME_CLANG "Build enzyme clang plugin" ON)
 option(ENZYME_EXTERNAL_SHARED_LIB "Build external shared library" OFF)
 set(ENZYME_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
@@ -63,7 +62,7 @@ get_filename_component(LLVM_ABSOLUTE_LIT
 message("found llvm lit " ${LLVM_EXTERNAL_LIT})
 
 list(INSERT CMAKE_PREFIX_PATH 0 "${LLVM_DIR}")
-
+set(LLVM_MAIN_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 if (ENZYME_CLANG)
 if (DEFINED Clang_DIR)
     get_filename_component(Clang_ABSOLUTE_DIR
@@ -175,6 +174,7 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/include/SCEV/ScalarEvolutionExpander.h" 
 
 include_directories("${CMAKE_CURRENT_BINARY_DIR}/include")
 
+add_subdirectory(tools)
 add_subdirectory(Enzyme)
 add_subdirectory(BCLoad)
 add_subdirectory(test)

@@ -854,6 +854,9 @@ public:
                       ConstantInt::get(batchOffset[i - 1]->getType(), v)));
 #else
               element = Builder.CreateGEP(
+#if LLVM_VERSION_MAJOR >= 14
+                  elementPtrTy,
+#endif
                   element,
                   Builder.CreateMul(
                       batchOffset[i - 1],
@@ -1251,14 +1254,19 @@ public:
 #endif
           CI->replaceAllUsesWith(cload);
         } else {
-          llvm::errs() << *CI << " - " << *diffret << "\n";
-          assert(0 && " what");
+          EmitFailure("IllegalReturnCast", CI->getDebugLoc(), CI,
+                      "Cannot cast return type of gradient ",
+                      *diffret->getType(), *diffret, ", to desired type ",
+                      *CI->getType());
+          return false;
         }
       } else if (CI->hasStructRetAttr()) {
         Value *sret = CI->getArgOperand(0);
+        PointerType *stype = cast<PointerType>(sret->getType());
+        StructType *st = dyn_cast<StructType>(stype->getElementType());
 
         // Assign results to struct allocated at the call site.
-        if (StructType *st = cast<StructType>(diffret->getType())) {
+        if (st && st->isLayoutIdentical(diffretsty)) {
           for (unsigned int i = 0; i < st->getNumElements(); i++) {
 #if LLVM_VERSION_MAJOR > 7
             Value *sgep = Builder.CreateStructGEP(
@@ -1268,6 +1276,20 @@ public:
 #endif
             Builder.CreateStore(Builder.CreateExtractValue(diffret, {i}), sgep);
           }
+        } else {
+          auto &DL = fn->getParent()->getDataLayout();
+          if (DL.getTypeSizeInBits(stype->getElementType()) !=
+              DL.getTypeSizeInBits(diffret->getType())) {
+            EmitFailure("IllegalReturnCast", CI->getDebugLoc(), CI,
+                        "Cannot cast return type of gradient ",
+                        *diffret->getType(), *diffret, ", to desired type ",
+                        *stype->getElementType());
+            return false;
+          }
+          Builder.CreateStore(
+              diffret, Builder.CreatePointerCast(
+                           sret, PointerType::get(diffret->getType(),
+                                                  stype->getAddressSpace())));
         }
       } else {
 
@@ -1537,6 +1559,12 @@ public:
         if (Fn->getName() == "__fd_sincos_1" || Fn->getName() == "__fd_cos_1" ||
             Fn->getName() == "__mth_i_ipowi") {
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
+        }
+        if (Fn->getName().contains("strcmp")) {
+          Fn->addParamAttr(0, Attribute::ReadOnly);
+          Fn->addParamAttr(1, Attribute::ReadOnly);
+          Fn->addFnAttr(Attribute::ReadOnly);
+          CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadOnly);
         }
         if (Fn->getName() == "f90io_fmtw_end" ||
             Fn->getName() == "f90io_unf_end") {

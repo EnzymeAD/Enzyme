@@ -442,22 +442,44 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     assert(val->getType() == toreturn->getType());
     return toreturn;
   } else if (auto op = dyn_cast<InsertValueInst>(val)) {
-    auto op0 = getOp(op->getAggregateOperand());
-    if (op0 == nullptr)
-      goto endCheck;
-    auto op1 = getOp(op->getInsertedValueOperand());
-    if (op1 == nullptr)
-      goto endCheck;
-    auto toreturn = BuilderM.CreateInsertValue(op0, op1, op->getIndices(),
-                                               op->getName() + "_unwrap");
-    if (permitCache)
-      unwrap_cache[BuilderM.GetInsertBlock()][idx.first][idx.second] = toreturn;
-    if (auto newi = dyn_cast<Instruction>(toreturn)) {
-      newi->copyIRFlags(op);
-      unwrappedLoads[newi] = val;
-      if (newi->getParent()->getParent() != op->getParent()->getParent())
-        newi->setDebugLoc(nullptr);
+    // Unwrapped Aggregate, Indices, parent
+    SmallVector<std::tuple<Value *, ArrayRef<unsigned>, InsertValueInst *>, 1>
+        insertElements;
+
+    Value *agg = op;
+    while (auto op1 = dyn_cast<InsertValueInst>(agg)) {
+      if (Value *orig = isOriginal(op1)) {
+        if (knownRecomputeHeuristic.count(orig)) {
+          if (!knownRecomputeHeuristic[orig]) {
+            break;
+          }
+        }
+      }
+      Value *valOp = op1->getInsertedValueOperand();
+      valOp = getOp(valOp);
+      if (valOp == nullptr)
+        goto endCheck;
+      insertElements.push_back({valOp, op1->getIndices(), op1});
+      agg = op1->getAggregateOperand();
     }
+
+    Value *toreturn = getOp(agg);
+    if (toreturn == nullptr)
+      goto endCheck;
+    for (auto &&[valOp, idcs, parent] : reverse(insertElements)) {
+      toreturn = BuilderM.CreateInsertValue(toreturn, valOp, idcs,
+                                            parent->getName() + "_unwrap");
+
+      if (permitCache)
+        unwrap_cache[BuilderM.GetInsertBlock()][parent][idx.second] = toreturn;
+      if (auto newi = dyn_cast<Instruction>(toreturn)) {
+        newi->copyIRFlags(parent);
+        unwrappedLoads[newi] = val;
+        if (newi->getParent()->getParent() != parent->getParent()->getParent())
+          newi->setDebugLoc(nullptr);
+      }
+    }
+
     assert(val->getType() == toreturn->getType());
     return toreturn;
   } else if (auto op = dyn_cast<ExtractElementInst>(val)) {
@@ -3582,13 +3604,9 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
       Type *type = arg->getType()->getPointerElementType();
       auto shadow = new GlobalVariable(
           *arg->getParent(), type, arg->isConstant(), arg->getLinkage(),
-          arg->getInitializer()
-              ? GetOrCreateShadowConstant(Logic, TLI, TA,
-                                          cast<Constant>(arg->getOperand(0)),
-                                          mode, width, AtomicAdd)
-              : Constant::getNullValue(type),
-          arg->getName() + "_shadow", arg, arg->getThreadLocalMode(),
-          arg->getType()->getAddressSpace(), arg->isExternallyInitialized());
+          Constant::getNullValue(type), arg->getName() + "_shadow", arg,
+          arg->getThreadLocalMode(), arg->getType()->getAddressSpace(),
+          arg->isExternallyInitialized());
       arg->setMetadata("enzyme_shadow",
                        MDTuple::get(shadow->getContext(),
                                     {ConstantAsMetadata::get(shadow)}));
@@ -3598,6 +3616,10 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
       shadow->setAlignment(arg->getAlignment());
 #endif
       shadow->setUnnamedAddr(arg->getUnnamedAddr());
+      if (arg->hasInitializer())
+        shadow->setInitializer(GetOrCreateShadowConstant(
+            Logic, TLI, TA, cast<Constant>(arg->getOperand(0)), mode, width,
+            AtomicAdd));
       return shadow;
     }
   }
@@ -4090,19 +4112,23 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       }
 
       // Create global variable locally if not externally visible
+      //  If a variable is constant, for forward mode it will also
+      //  only be read, so invert initializing is fine.
+      //  For reverse mode, any floats will be +='d into, but never
+      //  read, and any pointers will be used as expected. The never
+      //  read means even if two globals for floats, that's fine.
+      //  As long as the pointers point to equivalent places (which
+      //  they should from the same initialization), it is also ok.
       if (arg->hasInternalLinkage() || arg->hasPrivateLinkage() ||
-          (arg->hasExternalLinkage() && arg->hasInitializer())) {
+          (arg->hasExternalLinkage() && arg->hasInitializer()) ||
+          arg->isConstant()) {
         Type *elemTy = arg->getType()->getPointerElementType();
-        Type *type = getShadowType(elemTy);
         IRBuilder<> B(inversionAllocs);
-        auto ip = arg->getInitializer() ? invertPointerM(arg->getInitializer(),
-                                                         B, /*nullShadow*/ true)
-                                        : Constant::getNullValue(type);
 
-        auto rule = [&](Value *ip) {
+        auto rule = [&]() {
           auto shadow = new GlobalVariable(
               *arg->getParent(), elemTy, arg->isConstant(), arg->getLinkage(),
-              cast<Constant>(ip), arg->getName() + "_shadow", arg,
+              Constant::getNullValue(elemTy), arg->getName() + "_shadow", arg,
               arg->getThreadLocalMode(), arg->getType()->getAddressSpace(),
               arg->isExternallyInitialized());
           arg->setMetadata("enzyme_shadow",
@@ -4118,7 +4144,18 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           return shadow;
         };
 
-        Value *shadow = applyChainRule(oval->getType(), BuilderM, rule, ip);
+        Value *shadow = applyChainRule(oval->getType(), BuilderM, rule);
+
+        if (arg->hasInitializer()) {
+          applyChainRule(
+              BuilderM,
+              [&](Value *shadow, Value *ip) {
+                cast<GlobalVariable>(shadow)->setInitializer(
+                    cast<Constant>(ip));
+              },
+              shadow,
+              invertPointerM(arg->getInitializer(), B, /*nullShadow*/ true));
+        }
 
         invertedPointers.insert(std::make_pair(
             (const Value *)oval, InvertedPointerVH(this, shadow)));

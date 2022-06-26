@@ -143,16 +143,8 @@ const char *KnownInactiveFunctionsContains[] = {
     "__enzyme_pointer"};
 
 const std::set<std::string> InactiveGlobals = {
-    "ompi_request_null",
-    "ompi_mpi_double",
-    "ompi_mpi_comm_world",
-    "stderr",
-    "stdout",
-    "stdin",
-    "_ZSt3cin",
-    "_ZSt4cout",
-    "_ZSt5wcout",
-    "_ZSt4cerr",
+    "ompi_request_null", "ompi_mpi_double", "ompi_mpi_comm_world", "stderr",
+    "stdout", "stdin", "_ZSt3cin", "_ZSt4cout", "_ZSt5wcout", "_ZSt4cerr",
     "_ZTVNSt7__cxx1115basic_stringbufIcSt11char_traitsIcESaIcEEE",
     "_ZTVSt15basic_streambufIcSt11char_traitsIcEE",
     "_ZTVSt9basic_iosIcSt11char_traitsIcEE",
@@ -165,7 +157,9 @@ const std::set<std::string> InactiveGlobals = {
     // stringstream
     "_ZTVNSt7__cxx1118basic_stringstreamIcSt11char_traitsIcESaIcEEE",
     "_ZTTNSt7__cxx1118basic_stringstreamIcSt11char_traitsIcESaIcEEE",
-};
+    // vtable for __cxxabiv1::__si_class_type_info
+    "_ZTVN10__cxxabiv120__si_class_type_infoE",
+    "_ZTVN10__cxxabiv117__class_type_infoE"};
 
 const std::map<std::string, size_t> MPIInactiveCommAllocators = {
     {"MPI_Graph_create", 5},
@@ -263,25 +257,41 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     "std::allocator",
     "std::string",
     "std::cerr",
-    "std::basic_ios",
-    "std::basic_istream",
-    "std::basic_ostream",
-    "std::basic_ifstream",
-    "std::basic_ofstream",
-    "std::basic_filebuf",
-    "std::basic_streambuf",
     "std::istream",
     "std::ostream",
     "std::ios_base",
     "std::locale",
     "std::ctype<char>",
-    "std::__cxx11::basic_string",
-    "std::__cxx11::basic_ostringstream",
-    "std::__cxx11::basic_istringstream",
-    "std::__cxx11::basic_stringbuf",
     "std::__basic_file",
     "std::__ioinit",
     "std::__basic_file",
+
+    // __cxx11
+    "std::__cxx11::basic_string",
+    "std::__cxx11::basic_ios",
+    "std::__cxx11::basic_ostringstream",
+    "std::__cxx11::basic_istringstream",
+    "std::__cxx11::basic_istream",
+    "std::__cxx11::basic_ostream",
+    "std::__cxx11::basic_ifstream",
+    "std::__cxx11::basic_ofstream",
+    "std::__cxx11::basic_stringbuf",
+    "std::__cxx11::basic_filebuf",
+    "std::__cxx11::basic_streambuf",
+
+    // non __cxx11
+    "std::basic_string",
+    "std::basic_ios",
+    "std::basic_ostringstream",
+    "std::basic_istringstream",
+    "std::basic_istream",
+    "std::basic_ostream",
+    "std::basic_ifstream",
+    "std::basic_ofstream",
+    "std::basic_stringbuf",
+    "std::basic_filebuf",
+    "std::basic_streambuf",
+
 };
 
 /// Is the use of value val as an argument of call CI known to be inactive
@@ -1085,17 +1095,6 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
   // infinite loop
   if (auto ce = dyn_cast<ConstantExpr>(Val)) {
     if (ce->isCast()) {
-      if (auto PT = dyn_cast<PointerType>(ce->getType())) {
-        if (PT->getPointerElementType()->isFunctionTy()) {
-          if (EnzymePrintActivity)
-            llvm::errs()
-                << " VALUE nonconst as cast to pointer of functiontype " << *Val
-                << "\n";
-          ActiveValues.insert(Val);
-          return false;
-        }
-      }
-
       if (isConstantValue(TR, ce->getOperand(0))) {
         if (EnzymePrintActivity)
           llvm::errs() << " VALUE const cast from from operand " << *Val
