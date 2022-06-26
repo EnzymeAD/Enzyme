@@ -1560,6 +1560,9 @@ public:
             Fn->getName() == "__mth_i_ipowi") {
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
         }
+        if (Fn->getName().contains("strcmp")) {
+          InactiveCalls.insert(CI);
+        }
         if (Fn->getName() == "f90io_fmtw_end" ||
             Fn->getName() == "f90io_unf_end") {
           Fn->addFnAttr(Attribute::InaccessibleMemOnly);
