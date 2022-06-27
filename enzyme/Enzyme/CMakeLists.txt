@@ -5,7 +5,7 @@
 set(Enzyme_TABLEGEN_EXE enzyme-tblgen)
 
 function(enzyme_tablegen ofn)
-  if (${LLVM_VERSION_MAJOR} GREATER 12)
+  if (${LLVM_VERSION_MAJOR} GREATER 11)
     if(${CMAKE_VERSION} VERSION_LESS "3.13.0")
       message("Using fallback code. Please switch to a newer cmake")
       tablegenSubstitute(Enzyme ${ARGV})
