@@ -663,8 +663,13 @@ public:
     bool sret =
         CI->hasStructRetAttr() || F->hasParamAttribute(0, Attribute::StructRet);
 
-    if (sret)
+    if (F->hasParamAttribute(0, Attribute::StructRet)) {
       truei = 1;
+      Value *sretPt = CI->getArgOperand(0);
+
+      args.push_back(sretPt);
+      arg_types.push_back(BATCH_TYPE::VECTOR);
+    }
 
 #if LLVM_VERSION_MAJOR >= 14
     for (unsigned i = 1 + sret; i < CI->arg_size(); ++i)
