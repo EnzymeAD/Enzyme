@@ -659,10 +659,12 @@ public:
       return false;
     }
 
-    // TODO: handle sret
-    assert(!CI->hasStructRetAttr() && !F->hasStructRetAttr());
+    // handle different argument order for struct return.
+    bool sret =
+        CI->hasStructRetAttr() || F->hasParamAttribute(0, Attribute::StructRet);
 
-    bool sret = false;
+    if (sret)
+      truei = 1;
 
 #if LLVM_VERSION_MAJOR >= 14
     for (unsigned i = 1 + sret; i < CI->arg_size(); ++i)
