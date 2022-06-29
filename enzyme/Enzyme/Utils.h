@@ -275,6 +275,11 @@ enum class DIFFE_TYPE {
                  // don't need the forward
 };
 
+enum class BATCH_TYPE {
+  SCALAR = 0,
+  VECTOR = 1,
+};
+
 enum class DerivativeMode {
   ForwardMode = 0,
   ReverseModePrimal = 1,
@@ -1024,4 +1029,7 @@ llvm::Function *
 getOrInsertDifferentialWaitallSave(llvm::Module &M,
                                    llvm::ArrayRef<llvm::Type *> T,
                                    llvm::PointerType *reqType);
+
+void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
+                            llvm::Value *shadow, const char *Message);
 #endif
