@@ -1093,6 +1093,7 @@ public:
 
       if (byRefSize) {
         Type *subTy = cast<PointerType>(res->getType())->getElementType();
+        auto &DL = fn->getParent()->getDataLayout();
         if (DL.getTypeSizeInBits(subTy) != byRefSize) {
           EmitFailure("IllegalByRefSize", CI->getDebugLoc(), CI,
                       "illegal enzyme pointer type size ", *res, " expected ",
