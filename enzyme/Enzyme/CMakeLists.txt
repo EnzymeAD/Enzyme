@@ -20,6 +20,7 @@ function(enzyme_tablegen ofn)
   message("Libraries linked to tbl: ${TBL_LINKED_LIBS}")
 
   list(REMOVE_ITEM TBL_LINKED_LIBS "ZLIB::ZLIB")
+  list(REMOVE_ITEM TBL_LINKED_LIBS "LLVMSupport")
   message("Post libraries linked to tbl: ${TBL_LINKED_LIBS}")
   set_property(TARGET enzyme-tblgen PROPERTY LINK_LIBRARIES ${TBL_LINKED_LIBS})
 
