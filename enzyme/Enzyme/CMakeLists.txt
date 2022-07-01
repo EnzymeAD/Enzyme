@@ -17,6 +17,8 @@ function(enzyme_tablegen ofn)
     tablegen(Enzyme ${ARGV})
   endif()
 
+  list(REMOVE_ITEM TBL_LINKED_LIBS ZLIB::ZLIB)
+  set_property(TARGET enzyme-tblgen PROPERTY LINK_LIBRARIES ${TBL_LINKED_LIBS})
 
   set(TABLEGEN_OUTPUT ${TABLEGEN_OUTPUT} ${CMAKE_CURRENT_BINARY_DIR}/${ofn}
       PARENT_SCOPE)
