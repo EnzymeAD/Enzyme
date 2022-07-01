@@ -37,6 +37,8 @@ message( LLVM_SHLIBEXT = ${LLVM_SHLIBEXT} )
 
 set(LLVM_MAIN_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 
+if ("${LLVM_DIR}" STREQUAL "")
+else()
 message("LLVM dir0 ${LLVM_DIR}")
 get_filename_component(LLVM_ABSOLUTE_DIR
     "${LLVM_DIR}"
@@ -95,6 +97,7 @@ else()
   message("clang dir from llvm ${Clang_DIR}")
 endif()
 else()
+endif()
 endif()
 
 message("CMAKE_PREFIX_PATH " ${CMAKE_PREFIX_PATH})
