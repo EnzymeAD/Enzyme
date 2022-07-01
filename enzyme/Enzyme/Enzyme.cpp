@@ -936,6 +936,7 @@ public:
     llvm::Value *tape = nullptr;
     bool tapeIsPointer = false;
     int allocatedTapeSize = -1;
+    unsigned byRefSize = 0;
 
 #if LLVM_VERSION_MAJOR >= 14
     for (unsigned i = 1 + sret; i < CI->arg_size(); ++i)
@@ -985,6 +986,19 @@ public:
 
       // handle metadata
       if (metaString && metaString.getValue().startswith("enzyme_")) {
+        if (*metaString == "enzyme_byref") {
+          ++i;
+          if (!isa<ConstantInt>(CI->getArgOperand(i))) {
+            EmitFailure("IllegalAllocatedSize", CI->getDebugLoc(), CI,
+                        "illegal enzyme byref size ", *CI->getArgOperand(i),
+                        "in", *CI);
+            return false;
+          }
+          auto byRefSize =
+              cast<ConstantInt>(CI->getArgOperand(i))->getZExtValue();
+          assert(byRefSize > 0);
+          continue;
+        }
         if (*metaString == "enzyme_dup") {
           ty = DIFFE_TYPE::DUP_ARG;
         } else if (*metaString == "enzyme_dupv") {
@@ -1075,6 +1089,21 @@ public:
         }
         ++i;
         res = CI->getArgOperand(i);
+      }
+
+      if (byRefSize) {
+        Type *subTy = cast<PointerType>(res->getType())->getEleemntType();
+        if (DL.getTypeSizeInBits(subTy) !=) {
+          EmitFailure("IllegalByRefSize", CI->getDebugLoc(), CI,
+                      "illegal enzyme pointer type size ", *res, " expected ",
+                      byRefSize, " in ", *CI);
+        }
+#if LLVM_VERSION_MAJOR > 7
+        res = Builder.CreateLoad(suTy, res);
+#else
+        res = Builder.CreateLoad(res);
+#endif
+        byRefSize = 0;
       }
 
       constants.push_back(ty);
