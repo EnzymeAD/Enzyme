@@ -35,11 +35,15 @@ if (APPLE)
 endif()
 message( LLVM_SHLIBEXT = ${LLVM_SHLIBEXT} )
 
+set(LLVM_MAIN_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+
+message("LLVM dir0 ${LLVM_DIR}")
 get_filename_component(LLVM_ABSOLUTE_DIR
     "${LLVM_DIR}"
     REALPATH BASE_DIR "${CMAKE_BINARY_DIR}")
 
 set(LLVM_DIR "${LLVM_ABSOLUTE_DIR}" CACHE FILEPATH "b" FORCE)
+message("LLVM dir1 ${LLVM_DIR}")
 
 if (NOT DEFINED LLVM_EXTERNAL_LIT)
   if(LLVM_DIR MATCHES ".*/cmake/llvm/?$")
@@ -62,8 +66,7 @@ get_filename_component(LLVM_ABSOLUTE_LIT
 message("found llvm lit " ${LLVM_EXTERNAL_LIT})
 
 list(INSERT CMAKE_PREFIX_PATH 0 "${LLVM_DIR}")
-message("LLVM dir from ${LLVM_DIR}")
-set(LLVM_MAIN_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+message("LLVM dir ${LLVM_DIR}")
 if (ENZYME_CLANG)
 if (DEFINED Clang_DIR)
     get_filename_component(Clang_ABSOLUTE_DIR
