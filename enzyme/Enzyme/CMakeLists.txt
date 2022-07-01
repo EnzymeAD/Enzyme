@@ -2,7 +2,6 @@
 #  set(LLVM_LINK_COMPONENTS Core Support)
 #endif()
 
-set(LLVM_LINK_COMPONENTS "")
 set(Enzyme_TABLEGEN_EXE enzyme-tblgen)
 
 function(enzyme_tablegen ofn)
