@@ -4,7 +4,11 @@
 
 set(Enzyme_TABLEGEN_EXE enzyme-tblgen)
 
-find_package(ZLIB)
+get_target_property(TBL_LINKED_LIBS LLVMSupport INTERFACE_LINK_LIBRARIES)
+  message("Libraries linked to tbl: ${TBL_LINKED_LIBS}")
+  list(REMOVE_ITEM TBL_LINKED_LIBS "ZLIB::ZLIB")
+  message("Post libraries linked to tbl: ${TBL_LINKED_LIBS}")
+  set_property(TARGET LLVMSupport PROPERTY INTERFACE_LINK_LIBRARIES ${TBL_LINKED_LIBS})
 
 function(enzyme_tablegen ofn)
   if (${LLVM_VERSION_MAJOR} GREATER 11)
