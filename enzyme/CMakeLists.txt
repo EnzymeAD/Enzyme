@@ -37,15 +37,15 @@ message( LLVM_SHLIBEXT = ${LLVM_SHLIBEXT} )
 
 set(LLVM_MAIN_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 
-if ("${LLVM_DIR}" STREQUAL "")
-else()
-message("LLVM dir0 ${LLVM_DIR}")
 get_filename_component(LLVM_ABSOLUTE_DIR
     "${LLVM_DIR}"
     REALPATH BASE_DIR "${CMAKE_BINARY_DIR}")
 
 set(LLVM_DIR "${LLVM_ABSOLUTE_DIR}" CACHE FILEPATH "b" FORCE)
-message("LLVM dir1 ${LLVM_DIR}")
+
+message("CMAKE_PREFIX_PATH " ${CMAKE_PREFIX_PATH})
+
+find_package(LLVM REQUIRED CONFIG)
 
 if (NOT DEFINED LLVM_EXTERNAL_LIT)
   if(LLVM_DIR MATCHES ".*/cmake/llvm/?$")
@@ -98,11 +98,6 @@ else()
 endif()
 else()
 endif()
-endif()
-
-message("CMAKE_PREFIX_PATH " ${CMAKE_PREFIX_PATH})
-
-find_package(LLVM REQUIRED CONFIG)
 
 list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
 include(AddLLVM)
