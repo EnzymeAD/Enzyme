@@ -4,6 +4,8 @@
 
 set(Enzyme_TABLEGEN_EXE enzyme-tblgen)
 
+find_package(ZLIB)
+
 function(enzyme_tablegen ofn)
   if (${LLVM_VERSION_MAJOR} GREATER 11)
     if(${CMAKE_VERSION} VERSION_LESS "3.13.0")
@@ -18,7 +20,6 @@ function(enzyme_tablegen ofn)
 
   get_target_property(TBL_LINKED_LIBS enzyme-tblgen LINK_LIBRARIES)
   message("Libraries linked to tbl: ${TBL_LINKED_LIBS}")
-
   list(REMOVE_ITEM TBL_LINKED_LIBS "ZLIB::ZLIB")
   list(REMOVE_ITEM TBL_LINKED_LIBS LLVMSupport)
   message("Post libraries linked to tbl: ${TBL_LINKED_LIBS}")
