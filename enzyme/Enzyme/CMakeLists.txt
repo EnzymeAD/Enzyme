@@ -16,6 +16,7 @@ function(enzyme_tablegen ofn)
     tablegen(Enzyme ${ARGV})
   endif()
 
+  get_target_property(TBL_LINKED_LIBS enzyme-tblgen LINK_LIBRARIES)
   list(REMOVE_ITEM TBL_LINKED_LIBS ZLIB::ZLIB)
   set_property(TARGET enzyme-tblgen PROPERTY LINK_LIBRARIES ${TBL_LINKED_LIBS})
 
