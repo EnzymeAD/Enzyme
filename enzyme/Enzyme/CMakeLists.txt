@@ -17,7 +17,10 @@ function(enzyme_tablegen ofn)
   endif()
 
   get_target_property(TBL_LINKED_LIBS enzyme-tblgen LINK_LIBRARIES)
-  list(REMOVE_ITEM TBL_LINKED_LIBS ZLIB::ZLIB)
+  message("Libraries linked to tbl: ${TBL_LINKED_LIBS}")
+
+  list(REMOVE_ITEM TBL_LINKED_LIBS "ZLIB::ZLIB")
+  message("Post libraries linked to tbl: ${TBL_LINKED_LIBS}")
   set_property(TARGET enzyme-tblgen PROPERTY LINK_LIBRARIES ${TBL_LINKED_LIBS})
 
   set(TABLEGEN_OUTPUT ${TABLEGEN_OUTPUT} ${CMAKE_CURRENT_BINARY_DIR}/${ofn}
