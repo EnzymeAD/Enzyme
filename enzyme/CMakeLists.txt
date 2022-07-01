@@ -62,6 +62,7 @@ get_filename_component(LLVM_ABSOLUTE_LIT
 message("found llvm lit " ${LLVM_EXTERNAL_LIT})
 
 list(INSERT CMAKE_PREFIX_PATH 0 "${LLVM_DIR}")
+message("LLVM dir from ${LLVM_DIR}")
 set(LLVM_MAIN_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 if (ENZYME_CLANG)
 if (DEFINED Clang_DIR)
