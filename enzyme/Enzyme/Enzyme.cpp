@@ -1058,10 +1058,12 @@ public:
       if (byRefSize) {
         Type *subTy = cast<PointerType>(res->getType())->getElementType();
         auto &DL = fn->getParent()->getDataLayout();
-        if (DL.getTypeSizeInBits(subTy) != byRefSize) {
+        auto BitSize = DL.getTypeSizeInBits(subTy);
+        if (BitSize / 8 != byRefSize) {
           EmitFailure("IllegalByRefSize", CI->getDebugLoc(), CI,
                       "illegal enzyme pointer type size ", *res, " expected ",
-                      byRefSize, " in ", *CI);
+                      byRefSize, " (bytes) actual size ", BitSize,
+                      " (bits) in ", *CI);
         }
 #if LLVM_VERSION_MAJOR > 7
         res = Builder.CreateLoad(subTy, res);
