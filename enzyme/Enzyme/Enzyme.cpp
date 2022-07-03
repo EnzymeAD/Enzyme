@@ -945,43 +945,7 @@ public:
 #endif
     {
       Value *res = CI->getArgOperand(i);
-      if (truei >= FT->getNumParams()) {
-        if (!isa<MetadataAsValue>(res) &&
-            (mode == DerivativeMode::ReverseModeGradient ||
-             mode == DerivativeMode::ForwardModeSplit)) {
-          if (differentialReturn && differet == nullptr) {
-            differet = res;
-            if (CI->paramHasAttr(i, Attribute::ByVal) || byRefSize) {
-#if LLVM_VERSION_MAJOR > 7
-              differet = Builder.CreateLoad(
-                  differet->getType()->getPointerElementType(), differet);
-#else
-              differet = Builder.CreateLoad(differet);
-#endif
-            }
-            assert(differet->getType() == fn->getReturnType());
-            continue;
-          } else if (tape == nullptr) {
-            tape = res;
-            if (CI->paramHasAttr(i, Attribute::ByVal)) {
-#if LLVM_VERSION_MAJOR > 7
-              tape = Builder.CreateLoad(
-                  tape->getType()->getPointerElementType(), tape);
-#else
-              tape = Builder.CreateLoad(tape);
-#endif
-            }
-            continue;
-          }
-        }
-        EmitFailure("TooManyArgs", CI->getDebugLoc(), CI,
-                    "Had too many arguments to __enzyme_autodiff", *CI,
-                    " - extra arg - ", *res);
-        return false;
-      }
-      assert(truei < FT->getNumParams());
-      auto PTy = FT->getParamType(truei);
-      DIFFE_TYPE ty = whatType(PTy, mode);
+      Optional<DIFFE_TYPE> opt_ty;
       Optional<StringRef> metaString = getMetadataName(res);
 
       // handle metadata
@@ -1000,9 +964,9 @@ public:
           continue;
         }
         if (*metaString == "enzyme_dup") {
-          ty = DIFFE_TYPE::DUP_ARG;
+          opt_ty = DIFFE_TYPE::DUP_ARG;
         } else if (*metaString == "enzyme_dupv") {
-          ty = DIFFE_TYPE::DUP_ARG;
+          opt_ty = DIFFE_TYPE::DUP_ARG;
           ++i;
           Value *offset_arg = CI->getArgOperand(i);
           if (offset_arg->getType()->isIntegerTy()) {
@@ -1016,7 +980,7 @@ public:
           }
           continue;
         } else if (*metaString == "enzyme_dupnoneedv") {
-          ty = DIFFE_TYPE::DUP_NONEED;
+          opt_ty = DIFFE_TYPE::DUP_NONEED;
           ++i;
           Value *offset_arg = CI->getArgOperand(i);
           if (offset_arg->getType()->isIntegerTy()) {
@@ -1030,9 +994,9 @@ public:
           }
           continue;
         } else if (*metaString == "enzyme_dupnoneed") {
-          ty = DIFFE_TYPE::DUP_NONEED;
+          opt_ty = DIFFE_TYPE::DUP_NONEED;
         } else if (*metaString == "enzyme_dupnoneedv") {
-          ty = DIFFE_TYPE::DUP_NONEED;
+          opt_ty = DIFFE_TYPE::DUP_NONEED;
           ++i;
           Value *offset_arg = CI->getArgOperand(i);
           if (offset_arg->getType()->isIntegerTy()) {
@@ -1046,9 +1010,9 @@ public:
           }
           continue;
         } else if (*metaString == "enzyme_out") {
-          ty = DIFFE_TYPE::OUT_DIFF;
+          opt_ty = DIFFE_TYPE::OUT_DIFF;
         } else if (*metaString == "enzyme_const") {
-          ty = DIFFE_TYPE::CONSTANT;
+          opt_ty = DIFFE_TYPE::CONSTANT;
         } else if (*metaString == "enzyme_noret") {
           returnUsed = false;
           continue;
@@ -1084,7 +1048,8 @@ public:
           return false;
         }
         if (sizeOnly) {
-          constants.push_back(ty);
+          assert(opt_ty);
+          constants.push_back(*opt_ty);
           continue;
         }
         ++i;
@@ -1106,6 +1071,50 @@ public:
 #endif
         byRefSize = 0;
       }
+
+      if (truei >= FT->getNumParams()) {
+        if (!isa<MetadataAsValue>(res) &&
+            (mode == DerivativeMode::ReverseModeGradient ||
+             mode == DerivativeMode::ForwardModeSplit)) {
+          if (differentialReturn && differet == nullptr) {
+            differet = res;
+            if (CI->paramHasAttr(i, Attribute::ByVal)) {
+#if LLVM_VERSION_MAJOR > 7
+              differet = Builder.CreateLoad(
+                  differet->getType()->getPointerElementType(), differet);
+#else
+              differet = Builder.CreateLoad(differet);
+#endif
+            }
+            if (differet->getType() != fn->getType()) {
+              EmitFailure("BadDiffRet", CI->getDebugLoc(), CI,
+                          "Bad DiffRet type ", *differet, " expected ",
+                          *fn->getType());
+              return false;
+            }
+            continue;
+          } else if (tape == nullptr) {
+            tape = res;
+            if (CI->paramHasAttr(i, Attribute::ByVal)) {
+#if LLVM_VERSION_MAJOR > 7
+              tape = Builder.CreateLoad(
+                  tape->getType()->getPointerElementType(), tape);
+#else
+              tape = Builder.CreateLoad(tape);
+#endif
+            }
+            continue;
+          }
+        }
+        EmitFailure("TooManyArgs", CI->getDebugLoc(), CI,
+                    "Had too many arguments to __enzyme_autodiff", *CI,
+                    " - extra arg - ", *res);
+        return false;
+      }
+      assert(truei < FT->getNumParams());
+
+      auto PTy = FT->getParamType(truei);
+      DIFFE_TYPE ty = opt_ty ? *opt_ty : whatType(PTy, mode);
 
       constants.push_back(ty);
 
