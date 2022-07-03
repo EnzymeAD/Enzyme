@@ -951,7 +951,7 @@ public:
              mode == DerivativeMode::ForwardModeSplit)) {
           if (differentialReturn && differet == nullptr) {
             differet = res;
-            if (CI->paramHasAttr(i, Attribute::ByVal)) {
+            if (CI->paramHasAttr(i, Attribute::ByVal) || byRefSize) {
 #if LLVM_VERSION_MAJOR > 7
               differet = Builder.CreateLoad(
                   differet->getType()->getPointerElementType(), differet);
