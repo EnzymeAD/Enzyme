@@ -45,7 +45,6 @@ set(LLVM_DIR "${LLVM_ABSOLUTE_DIR}" CACHE FILEPATH "b" FORCE)
 
 message("CMAKE_PREFIX_PATH " ${CMAKE_PREFIX_PATH})
 
-include(AddLLVM)
 find_package(LLVM REQUIRED CONFIG)
 
 if (NOT DEFINED LLVM_EXTERNAL_LIT)
@@ -107,6 +106,7 @@ else()
 endif()
 
 list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
+include(AddLLVM)
 
 message("clang dir ${Clang_DIR}")
 
