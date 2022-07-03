@@ -3079,9 +3079,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
   if (hasMetadata(key.todiff, "enzyme_gradient")) {
 
-    DIFFE_TYPE subretType = key.todiff->getReturnType()->isFPOrFPVectorTy()
-                                ? DIFFE_TYPE::OUT_DIFF
-                                : DIFFE_TYPE::DUP_ARG;
+    DIFFE_TYPE subretType = whatType(key.todiff->getReturnType(),
+                                     DerivativeMode::ReverseModeGradient);
     if (key.todiff->getReturnType()->isVoidTy() ||
         key.todiff->getReturnType()->isEmptyTy())
       subretType = DIFFE_TYPE::CONSTANT;
