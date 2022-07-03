@@ -45,6 +45,7 @@ set(LLVM_DIR "${LLVM_ABSOLUTE_DIR}" CACHE FILEPATH "b" FORCE)
 
 message("CMAKE_PREFIX_PATH " ${CMAKE_PREFIX_PATH})
 
+include(AddLLVM)
 find_package(LLVM REQUIRED CONFIG)
 
 if (NOT DEFINED LLVM_EXTERNAL_LIT)
@@ -88,6 +89,12 @@ else()
       set(Clang_DIR ${LLVM_DIR}/lib/cmake/clang)
      list(INSERT CMAKE_PREFIX_PATH 0 "${Clang_DIR}")
     endif()
+  elseif(LLVM_DIR MATCHES ".*/llvm-([0-9]+)/cmake/?$")
+      cmake_path(GET "${LLVM_DIR}" PARENT_PATH LLDIR)
+    if (EXISTS ${LLDIR}/lib/libclangBasic.a)
+      set(Clang_DIR ${LLDIR}/lib/cmake/clang)
+     list(INSERT CMAKE_PREFIX_PATH 0 "${Clang_DIR}")
+    endif()
   else()
     if (EXISTS ${LLVM_DIR}/lib/libclangBasic.a)
       set(Clang_DIR ${LLVM_DIR})
@@ -100,7 +107,6 @@ else()
 endif()
 
 list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
-include(AddLLVM)
 
 message("clang dir ${Clang_DIR}")
 
