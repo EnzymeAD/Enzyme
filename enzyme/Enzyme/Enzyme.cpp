@@ -1087,11 +1087,18 @@ public:
               differet = Builder.CreateLoad(differet);
 #endif
             }
+            if (differet->getType() != fn->getReturnType())
+              if (auto ST0 = cast<StructType>(diffret->getType())
+                if (auto ST1 = cast<StructType>(fn->getReturnType())
+                    if (ST0->isLayoutIdentical(ST1)) {
+                differet = Builder.CreateBitCast(differet, ST1);
+                    }
+
             if (differet->getType() != fn->getReturnType()) {
-              EmitFailure("BadDiffRet", CI->getDebugLoc(), CI,
-                          "Bad DiffRet type ", *differet, " expected ",
-                          *fn->getReturnType());
-              return false;
+                EmitFailure("BadDiffRet", CI->getDebugLoc(), CI,
+                            "Bad DiffRet type ", *differet, " expected ",
+                            *fn->getReturnType());
+                return false;
             }
             continue;
           } else if (tape == nullptr) {
