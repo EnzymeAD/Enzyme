@@ -958,8 +958,7 @@ public:
                         "in", *CI);
             return false;
           }
-          auto byRefSize =
-              cast<ConstantInt>(CI->getArgOperand(i))->getZExtValue();
+          byRefSize = cast<ConstantInt>(CI->getArgOperand(i))->getZExtValue();
           assert(byRefSize > 0);
           continue;
         }
@@ -1086,10 +1085,10 @@ public:
               differet = Builder.CreateLoad(differet);
 #endif
             }
-            if (differet->getType() != fn->getType()) {
+            if (differet->getType() != fn->getReturnType()) {
               EmitFailure("BadDiffRet", CI->getDebugLoc(), CI,
                           "Bad DiffRet type ", *differet, " expected ",
-                          *fn->getType());
+                          *fn->getReturnType());
               return false;
             }
             continue;
