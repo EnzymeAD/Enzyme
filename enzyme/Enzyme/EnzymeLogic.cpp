@@ -993,20 +993,27 @@ getDefaultFunctionTypeForAugmentation(FunctionType *called, bool returnUsed,
 
 //! assuming not top level
 std::pair<SmallVector<Type *, 4>, SmallVector<Type *, 4>>
-getDefaultFunctionTypeForGradient(FunctionType *called, DIFFE_TYPE retType) {
+getDefaultFunctionTypeForGradient(FunctionType *called, DIFFE_TYPE retType,
+                                  const std::vector<DIFFE_TYPE> &tys) {
   SmallVector<Type *, 4> args;
   SmallVector<Type *, 4> outs;
-  // TODO CONSIDER a.getType()->isIntegerTy() &&
-  // cast<IntegerType>(a.getType())->getBitWidth() < 16
 
+  size_t i = 0;
   for (auto &argType : called->params()) {
     args.push_back(argType);
 
-    if (!argType->isFPOrFPVectorTy()) {
-      args.push_back(argType);
-    } else {
+    switch (tys[i]) {
+    case DIFFE_TYPE::CONSTANT:
+      break;
+    case DIFFE_TYPE::OUT_DIFF:
       outs.push_back(argType);
+      break;
+    case DIFFE_TYPE::DUP_ARG:
+    case DIFFE_TYPE::DUP_NONEED:
+      args.push_back(argType);
+      break;
     }
+    i++;
   }
 
   auto ret = called->getReturnType();
@@ -1016,6 +1023,21 @@ getDefaultFunctionTypeForGradient(FunctionType *called, DIFFE_TYPE retType) {
   }
 
   return std::pair<SmallVector<Type *, 4>, SmallVector<Type *, 4>>(args, outs);
+}
+
+//! assuming not top level
+std::pair<SmallVector<Type *, 4>, SmallVector<Type *, 4>>
+getDefaultFunctionTypeForGradient(FunctionType *called, DIFFE_TYPE retType) {
+  std::vector<DIFFE_TYPE> act;
+  for (auto &argType : called->params()) {
+
+    if (argType->isFPOrFPVectorTy()) {
+      act.push_back(DIFFE_TYPE::OUT_DIFF);
+    } else {
+      act.push_back(DIFFE_TYPE::DUP_ARG);
+    }
+  }
+  return getDefaultFunctionTypeForGradient(called, retType, act);
 }
 
 bool shouldAugmentCall(CallInst *op, const GradientUtils *gutils) {
@@ -1744,8 +1766,14 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
           }
         }
       }
+
+      auto &aug = CreateAugmentedPrimal(
+          todiff, retType, next_constant_args, TA, returnUsed, shadowReturnUsed,
+          oldTypeInfo_, _uncacheable_args, forceAnonymousTape, width, AtomicAdd,
+          omp);
+
       FunctionType *FTy =
-          FunctionType::get(foundcalled->getReturnType(), dupargs,
+          FunctionType::get(aug.fn->getReturnType(), dupargs,
                             todiff->getFunctionType()->isVarArg());
       Function *NewF = Function::Create(
           FTy, Function::LinkageTypes::InternalLinkage,
@@ -1757,6 +1785,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       SmallVector<Value *, 3> fwdargs;
       int act_idx = 0;
       while (arg != NewF->arg_end()) {
+        arg->setName("arg" + std::to_string(act_idx));
         fwdargs.push_back(arg);
         switch (constant_args[act_idx]) {
         case DIFFE_TYPE::OUT_DIFF:
@@ -1764,6 +1793,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         case DIFFE_TYPE::DUP_ARG:
         case DIFFE_TYPE::DUP_NONEED:
           arg++;
+          arg->setName("arg" + std::to_string(act_idx) + "'");
           fwdargs.push_back(arg);
           break;
         case DIFFE_TYPE::CONSTANT:
@@ -1775,10 +1805,6 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         arg++;
         act_idx++;
       }
-      auto &aug = CreateAugmentedPrimal(
-          todiff, retType, next_constant_args, TA, returnUsed, shadowReturnUsed,
-          oldTypeInfo_, _uncacheable_args, forceAnonymousTape, width, AtomicAdd,
-          omp);
       auto cal = bb.CreateCall(aug.fn, fwdargs);
       cal->setCallingConv(aug.fn->getCallingConv());
 
@@ -1795,6 +1821,54 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                                  aug.returns, aug.uncacheable_args_map,
                                  aug.can_modref_map))
           ->second;
+    }
+
+    if (foundcalled->hasStructRetAttr() && !todiff->hasStructRetAttr()) {
+      SmallVector<Type *, 3> args;
+      Type *sretTy = nullptr;
+      for (size_t i = 0; i < foundcalled->arg_size(); i++) {
+        if (!foundcalled->hasParamAttribute(i, Attribute::StructRet))
+          args.push_back(foundcalled->getArg(i)->getType());
+        else
+          sretTy = foundcalled->getParamStructRetType(i);
+      }
+      assert(foundcalled->getReturnType()->isVoidTy());
+      FunctionType *FTy = FunctionType::get(
+          sretTy, args, foundcalled->getFunctionType()->isVarArg());
+      Function *NewF = Function::Create(
+          FTy, Function::LinkageTypes::InternalLinkage,
+          "fixaugment_" + foundcalled->getName(), foundcalled->getParent());
+
+      BasicBlock *BB = BasicBlock::Create(NewF->getContext(), "entry", NewF);
+      IRBuilder<> bb(BB);
+      auto AI = bb.CreateAlloca(sretTy);
+      SmallVector<Value *, 3> argVs;
+      auto arg = NewF->arg_begin();
+      size_t realidx = 0;
+      for (size_t i = 0; i < foundcalled->arg_size(); i++) {
+        if (!foundcalled->hasParamAttribute(i, Attribute::StructRet)) {
+          arg->setName("arg" + std::to_string(realidx));
+          realidx++;
+          argVs.push_back(arg);
+          ++arg;
+        } else
+          argVs.push_back(AI);
+      }
+      auto cal = bb.CreateCall(foundcalled, argVs);
+      cal->setCallingConv(foundcalled->getCallingConv());
+
+#if LLVM_VERSION_MAJOR > 7
+      Value *res = bb.CreateLoad(sretTy, AI);
+#else
+      Value *res = bb.CreateLoad(AI);
+#endif
+      bb.CreateRet(res);
+
+      todiff->setMetadata(
+          "enzyme_augment",
+          llvm::MDTuple::get(todiff->getContext(),
+                             {llvm::ValueAsMetadata::get(NewF)}));
+      foundcalled = NewF;
     }
 
     if (foundcalled->getReturnType() == todiff->getReturnType()) {
@@ -3078,18 +3152,19 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   }
 
   if (hasMetadata(key.todiff, "enzyme_gradient")) {
-
+    std::set<llvm::Type *> seen;
     DIFFE_TYPE subretType = whatType(key.todiff->getReturnType(),
-                                     DerivativeMode::ReverseModeGradient);
+                                     DerivativeMode::ReverseModeGradient,
+                                     /*intAreConstant*/ false, seen);
     if (key.todiff->getReturnType()->isVoidTy() ||
         key.todiff->getReturnType()->isEmptyTy())
       subretType = DIFFE_TYPE::CONSTANT;
     assert(subretType == key.retType);
 
-    auto res = getDefaultFunctionTypeForGradient(key.todiff->getFunctionType(),
-                                                 /*retType*/ key.retType);
-
     if (key.mode == DerivativeMode::ReverseModeCombined) {
+      auto res = getDefaultFunctionTypeForGradient(
+          key.todiff->getFunctionType(),
+          /*retType*/ key.retType, key.constant_args);
 
       Type *FRetTy =
           res.second.empty()
@@ -3212,9 +3287,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     auto foundcalled = cast<Function>(gvemd->getValue());
 
     if (hasconstant) {
-      EmitWarning("NoCustom",
-                  key.todiff->getEntryBlock().begin()->getDebugLoc(),
-                  key.todiff, &key.todiff->getEntryBlock(),
+      EmitWarning("NoCustom", key.todiff,
                   "Massaging provided custom reverse pass");
       SmallVector<Type *, 3> dupargs;
       std::vector<DIFFE_TYPE> next_constant_args(key.constant_args);
@@ -3282,6 +3355,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       SmallVector<Value *, 3> revargs;
       size_t act_idx = 0;
       while (act_idx != key.constant_args.size()) {
+        arg->setName("arg" + std::to_string(act_idx));
         revargs.push_back(arg);
         switch (key.constant_args[act_idx]) {
         case DIFFE_TYPE::OUT_DIFF:
@@ -3289,6 +3363,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         case DIFFE_TYPE::DUP_ARG:
         case DIFFE_TYPE::DUP_NONEED:
           arg++;
+          arg->setName("arg" + std::to_string(act_idx) + "'");
           revargs.push_back(arg);
           break;
         case DIFFE_TYPE::CONSTANT:
@@ -3300,8 +3375,11 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         arg++;
         act_idx++;
       }
+      size_t pa = 0;
       while (arg != NewF->arg_end()) {
         revargs.push_back(arg);
+        arg->setName("postarg" + std::to_string(pa));
+        pa++;
         arg++;
       }
       auto cal = bb.CreateCall(revfn, revargs);
@@ -3320,6 +3398,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     }
 
     if (!key.returnUsed && key.freeMemory) {
+      auto res =
+          getDefaultFunctionTypeForGradient(key.todiff->getFunctionType(),
+                                            /*retType*/ key.retType);
       assert(augmenteddata);
       if (foundcalled->arg_size() == res.first.size() + 1 /*tape*/) {
         auto lastarg = foundcalled->arg_end();
