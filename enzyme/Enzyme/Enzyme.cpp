@@ -152,28 +152,15 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
                 if (auto C = GV->getInitializer())
                   if (auto CA = dyn_cast<ConstantDataArray>(C))
                     if (CA->getType()->getElementType()->isIntegerTy(8) &&
-                        CA->getType()->getNumElements() >=
-                            strlen("byref_") + 1 &&
-                        cast<ConstantInt>(
-                            CA->getOperand(CA->getType()->getNumElements() - 1))
-                            ->isZero()) {
+                        CA->isCString()) {
 
-                      bool legal = true;
-                      const char *data = "byref_";
-                      for (size_t i = 0, len = strlen(data); i < len; i++) {
-                        if (cast<ConstantInt>(CA->getOperand(i))
-                                ->getZExtValue() != data[i]) {
-                          legal = false;
-                          break;
-                        }
-                      }
+                      auto str = CA->getAsCString();
+                      bool legal = str.startswith("byref_");
                       size_t argnum = 0;
                       if (legal) {
-                        for (size_t i = CA->getType()->getNumElements() - 2,
-                                    len = strlen(data);
-                             i >= len; i++) {
-                          char c = (char)cast<ConstantInt>(CA->getOperand(i))
-                                       ->getZExtValue();
+                        for (size_t i = str.size() - 1, len = strlen("byref_");
+                             i >= len; i--) {
+                          char c = str[i];
                           if (c < '0' || c > '9') {
                             legal = false;
                             break;
@@ -200,8 +187,12 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
             for (size_t fn = 1; fn <= 2; fn++) {
               Function *F = Fs[fn];
               bool need = false;
+              size_t nonSRetSize = 0;
+              for (size_t i = 0; i < F->arg_size(); i++)
+                if (!F->hasParamAttribute(i, Attribute::StructRet))
+                  nonSRetSize++;
               for (auto r : byref)
-                if (r < F->arg_size())
+                if (r < nonSRetSize)
                   need = true;
               if (!need)
                 continue;
@@ -245,7 +236,6 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
               for (size_t i = 0; i < F->arg_size(); i++) {
                 if (!F->hasParamAttribute(i, Attribute::StructRet)) {
                   arg->setName("arg" + std::to_string(realidx));
-                  realidx++;
                   if (!byref.count(realidx))
                     argVs.push_back(arg);
                   else {
@@ -253,6 +243,7 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
                     bb.CreateStore(arg, A);
                     argVs.push_back(A);
                   }
+                  realidx++;
                   ++arg;
                 } else {
                   argVs.push_back(AI);
