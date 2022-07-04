@@ -1887,6 +1887,55 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         returnMapping[AugmentedStruct::Tape] = 0;
         returnMapping[AugmentedStruct::Return] = 1;
         returnMapping[AugmentedStruct::DifferentialReturn] = 2;
+        if (ST->getTypeAtIndex(1) != todiff->getReturnType() ||
+            ST->getTypeAtIndex(2) != todiff->getReturnType()) {
+          Type *retTys[] = {ST->getTypeAtIndex((unsigned)0),
+                            todiff->getReturnType(), todiff->getReturnType()};
+          auto RT =
+              StructType::get(ST->getContext(), retTys, /*isPacked*/ false);
+          FunctionType *FTy =
+              FunctionType::get(RT, foundcalled->getFunctionType()->params(),
+                                foundcalled->getFunctionType()->isVarArg());
+          Function *NewF = Function::Create(
+              FTy, Function::LinkageTypes::InternalLinkage,
+              "fixaugment_" + foundcalled->getName(), foundcalled->getParent());
+
+          BasicBlock *BB =
+              BasicBlock::Create(NewF->getContext(), "entry", NewF);
+          IRBuilder<> bb(BB);
+          SmallVector<Value *, 3> argVs;
+          size_t realidx = 0;
+          for (auto &a : NewF->args()) {
+            a.setName("arg" + std::to_string(realidx));
+            realidx++;
+            argVs.push_back(&a);
+          }
+          auto cal = bb.CreateCall(foundcalled, argVs);
+          cal->setCallingConv(foundcalled->getCallingConv());
+
+          Value *res = UndefValue::get(RT);
+          res = bb.CreateInsertValue(res, bb.CreateExtractValue(cal, {0}), {0});
+          for (unsigned i = 1; i <= 2; i++) {
+            auto AI = bb.CreateAlloca(todiff->getReturnType());
+            bb.CreateStore(
+                bb.CreateExtractValue(cal, {i}),
+                bb.CreatePointerCast(
+                    AI, PointerType::getUnqual(ST->getTypeAtIndex(i))));
+#if LLVM_VERSION_MAJOR > 7
+            Value *vres = bb.CreateLoad(todiff->getReturnType(), AI);
+#else
+            Value *vres = bb.CreateLoad(AI);
+#endif
+            res = bb.CreateInsertValue(res, vres, {i});
+          }
+          bb.CreateRet(res);
+
+          todiff->setMetadata(
+              "enzyme_augment",
+              llvm::MDTuple::get(todiff->getContext(),
+                                 {llvm::ValueAsMetadata::get(NewF)}));
+          foundcalled = NewF;
+        }
         return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                    AugmentedCachedFunctions, tup,
                    AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {},
@@ -1908,6 +1957,54 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         std::map<AugmentedStruct, int> returnMapping;
         returnMapping[AugmentedStruct::Tape] = 0;
         returnMapping[AugmentedStruct::Return] = 1;
+        if (ST->getTypeAtIndex(1) != todiff->getReturnType()) {
+          Type *retTys[] = {ST->getTypeAtIndex((unsigned)0),
+                            todiff->getReturnType()};
+          auto RT =
+              StructType::get(ST->getContext(), retTys, /*isPacked*/ false);
+          FunctionType *FTy =
+              FunctionType::get(RT, foundcalled->getFunctionType()->params(),
+                                foundcalled->getFunctionType()->isVarArg());
+          Function *NewF = Function::Create(
+              FTy, Function::LinkageTypes::InternalLinkage,
+              "fixaugment_" + foundcalled->getName(), foundcalled->getParent());
+
+          BasicBlock *BB =
+              BasicBlock::Create(NewF->getContext(), "entry", NewF);
+          IRBuilder<> bb(BB);
+          SmallVector<Value *, 3> argVs;
+          size_t realidx = 0;
+          for (auto &a : NewF->args()) {
+            a.setName("arg" + std::to_string(realidx));
+            realidx++;
+            argVs.push_back(&a);
+          }
+          auto cal = bb.CreateCall(foundcalled, argVs);
+          cal->setCallingConv(foundcalled->getCallingConv());
+
+          Value *res = UndefValue::get(RT);
+          res = bb.CreateInsertValue(res, bb.CreateExtractValue(cal, {0}), {0});
+          for (unsigned i = 1; i <= 1; i++) {
+            auto AI = bb.CreateAlloca(todiff->getReturnType());
+            bb.CreateStore(
+                bb.CreateExtractValue(cal, {i}),
+                bb.CreatePointerCast(
+                    AI, PointerType::getUnqual(ST->getTypeAtIndex(i))));
+#if LLVM_VERSION_MAJOR > 7
+            Value *vres = bb.CreateLoad(todiff->getReturnType(), AI);
+#else
+            Value *vres = bb.CreateLoad(AI);
+#endif
+            res = bb.CreateInsertValue(res, vres, {i});
+          }
+          bb.CreateRet(res);
+
+          todiff->setMetadata(
+              "enzyme_augment",
+              llvm::MDTuple::get(todiff->getContext(),
+                                 {llvm::ValueAsMetadata::get(NewF)}));
+          foundcalled = NewF;
+        }
         return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                    AugmentedCachedFunctions, tup,
                    AugmentedReturn(foundcalled, nullptr, {}, returnMapping, {},

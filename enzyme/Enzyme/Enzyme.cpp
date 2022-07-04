@@ -101,7 +101,7 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
                        SmallVectorImpl<GlobalVariable *> &globalsToErase) {
   if (g.hasInitializer()) {
     if (auto CA = dyn_cast<ConstantAggregate>(g.getInitializer())) {
-      if (CA->getNumOperands() != numargs) {
+      if (CA->getNumOperands() >= numargs) {
         llvm::errs() << M << "\n";
         llvm::errs() << "Use of " << handlername
                      << " must be a "
@@ -134,7 +134,7 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
         }
 
         if (Mode == DerivativeMode::ReverseModeGradient) {
-          assert(numargs == 3);
+          assert(numargs >= 3);
           Fs[0]->setMetadata(
               "enzyme_augment",
               llvm::MDTuple::get(Fs[0]->getContext(),
@@ -143,6 +143,18 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
               "enzyme_gradient",
               llvm::MDTuple::get(Fs[0]->getContext(),
                                  {llvm::ValueAsMetadata::get(Fs[2])}));
+          for (size_t i = numargs; i < CA->getNumOperands(); i++) {
+            Value *V = CA->getOperand(i);
+            while (auto CE = dyn_cast<ConstantExpr>(V)) {
+              V = CE->getOperand(0);
+            }
+            if (auto CA = dyn_cast<ConstantAggregate>(V))
+              V = CA->getOperand(0);
+            while (auto CE = dyn_cast<ConstantExpr>(V)) {
+              V = CE->getOperand(0);
+            }
+            llvm::errs() << " next V: " << *V << "\n";
+          }
         } else if (Mode == DerivativeMode::ForwardMode) {
           assert(numargs == 2);
           Fs[0]->setMetadata(
