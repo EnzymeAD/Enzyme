@@ -153,7 +153,17 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
             while (auto CE = dyn_cast<ConstantExpr>(V)) {
               V = CE->getOperand(0);
             }
-            llvm::errs() << " next V: " << *V << "\n";
+            if (auto GV = dyn_cast<GlobalVariable>(V)) {
+              if (GV->isConstant())
+                if (auto C = GV->getInitializer()) {
+                  llvm::errs() << *C << "\n";
+                }
+            }
+            llvm::errs() << M << "\n";
+            llvm::errs() << "Use of " << handlername
+                         << " possible post args include 'byref_ret'"
+                         << "\n";
+            llvm_unreachable(handlername);
           }
         } else if (Mode == DerivativeMode::ForwardMode) {
           assert(numargs == 2);
