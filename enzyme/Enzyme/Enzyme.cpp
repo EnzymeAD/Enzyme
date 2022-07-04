@@ -133,16 +133,10 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
           }
         }
 
+        std::set<size_t> byref;
+
         if (Mode == DerivativeMode::ReverseModeGradient) {
           assert(numargs >= 3);
-          Fs[0]->setMetadata(
-              "enzyme_augment",
-              llvm::MDTuple::get(Fs[0]->getContext(),
-                                 {llvm::ValueAsMetadata::get(Fs[1])}));
-          Fs[0]->setMetadata(
-              "enzyme_gradient",
-              llvm::MDTuple::get(Fs[0]->getContext(),
-                                 {llvm::ValueAsMetadata::get(Fs[2])}));
           for (size_t i = numargs; i < CA->getNumOperands(); i++) {
             Value *V = CA->getOperand(i);
             while (auto CE = dyn_cast<ConstantExpr>(V)) {
@@ -155,9 +149,45 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
             }
             if (auto GV = dyn_cast<GlobalVariable>(V)) {
               if (GV->isConstant())
-                if (auto C = GV->getInitializer()) {
-                  llvm::errs() << *C << "\n";
-                }
+                if (auto C = GV->getInitializer())
+                  if (auto CA = dyn_cast<ConstantDataArray>(C))
+                    if (CA->getType()->getElementType()->isIntegerTy(8) &&
+                        CA->getType()->getNumElements() >=
+                            strlen("byref_") + 1 &&
+                        cast<ConstantInt>(
+                            CA->getOperand(CA->getType()->getNumElements() - 1))
+                            ->isZero()) {
+
+                      bool legal = true;
+                      const char *data = "byref_";
+                      for (size_t i = 0, len = strlen(data); i < len; i++) {
+                        if (cast<ConstantInt>(CA->getOperand(i))
+                                ->getZExtValue() != data[i]) {
+                          legal = false;
+                          break;
+                        }
+                      }
+                      size_t argnum = 0;
+                      if (legal) {
+                        for (size_t i = CA->getType()->getNumElements() - 2,
+                                    len = strlen(data);
+                             i >= len; i++) {
+                          char c = (char)cast<ConstantInt>(CA->getOperand(i))
+                                       ->getZExtValue();
+                          if (c < '0' || c > '9') {
+                            legal = false;
+                            break;
+                          }
+                          argnum *= 10;
+                          argnum += c - '0';
+                        }
+                      }
+                      if (legal) {
+                        llvm::errs() << *CA << " an: " << argnum << "\n";
+                        byref.insert(argnum);
+                        continue;
+                      }
+                    }
             }
             llvm::errs() << M << "\n";
             llvm::errs() << "Use of " << handlername
@@ -165,6 +195,95 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
                          << "\n";
             llvm_unreachable(handlername);
           }
+
+          if (byref.size())
+            for (size_t fn = 1; fn <= 2; fn++) {
+              Function *F = Fs[fn];
+              bool need = false;
+              for (auto r : byref)
+                if (r < F->arg_size())
+                  need = true;
+              if (!need)
+                continue;
+
+              SmallVector<Type *, 3> args;
+              Type *sretTy = nullptr;
+              size_t realidx = 0;
+              for (size_t i = 0; i < F->arg_size(); i++) {
+                if (!F->hasParamAttribute(i, Attribute::StructRet)) {
+                  if (!byref.count(realidx))
+                    args.push_back(F->getArg(i)->getType());
+                  else
+                    args.push_back(cast<PointerType>(F->getArg(i)->getType())
+                                       ->getElementType());
+                  realidx++;
+                } else {
+                  sretTy = cast<PointerType>(F->getArg(i)->getType())
+                               ->getElementType();
+                }
+              }
+              Type *RT = F->getReturnType();
+              if (sretTy) {
+                assert(RT->isVoidTy());
+                RT = sretTy;
+              }
+              FunctionType *FTy =
+                  FunctionType::get(RT, args, F->getFunctionType()->isVarArg());
+              Function *NewF =
+                  Function::Create(FTy, Function::LinkageTypes::InternalLinkage,
+                                   "fixbyval_" + F->getName(), F->getParent());
+
+              AllocaInst *AI = nullptr;
+              BasicBlock *BB =
+                  BasicBlock::Create(NewF->getContext(), "entry", NewF);
+              IRBuilder<> bb(BB);
+              if (sretTy)
+                AI = bb.CreateAlloca(sretTy);
+              SmallVector<Value *, 3> argVs;
+              auto arg = NewF->arg_begin();
+              realidx = 0;
+              for (size_t i = 0; i < F->arg_size(); i++) {
+                if (!F->hasParamAttribute(i, Attribute::StructRet)) {
+                  arg->setName("arg" + std::to_string(realidx));
+                  realidx++;
+                  if (!byref.count(realidx))
+                    argVs.push_back(arg);
+                  else {
+                    auto A = bb.CreateAlloca(arg->getType());
+                    bb.CreateStore(arg, A);
+                    argVs.push_back(A);
+                  }
+                  ++arg;
+                } else {
+                  argVs.push_back(AI);
+                }
+              }
+              auto cal = bb.CreateCall(F, argVs);
+              cal->setCallingConv(F->getCallingConv());
+
+              if (sretTy) {
+#if LLVM_VERSION_MAJOR > 7
+                Value *res = bb.CreateLoad(sretTy, AI);
+#else
+                Value *res = bb.CreateLoad(AI);
+#endif
+                bb.CreateRet(res);
+              } else if (!RT->isVoidTy()) {
+                bb.CreateRet(cal);
+              } else
+                bb.CreateRetVoid();
+
+              Fs[fn] = NewF;
+            }
+
+          Fs[0]->setMetadata(
+              "enzyme_augment",
+              llvm::MDTuple::get(Fs[0]->getContext(),
+                                 {llvm::ValueAsMetadata::get(Fs[1])}));
+          Fs[0]->setMetadata(
+              "enzyme_gradient",
+              llvm::MDTuple::get(Fs[0]->getContext(),
+                                 {llvm::ValueAsMetadata::get(Fs[2])}));
         } else if (Mode == DerivativeMode::ForwardMode) {
           assert(numargs == 2);
           Fs[0]->setMetadata(
