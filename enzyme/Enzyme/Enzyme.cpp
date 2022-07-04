@@ -170,7 +170,6 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
                         }
                       }
                       if (legal) {
-                        llvm::errs() << *CA << " an: " << argnum << "\n";
                         byref.insert(argnum);
                         continue;
                       }
@@ -580,27 +579,6 @@ static bool replaceOriginalCall(CallInst *CI, Function *fn, Value *diffret,
         newStruct = Builder.CreateInsertValue(newStruct, elem, {i});
       }
       CI->replaceAllUsesWith(newStruct);
-    } else if (mode == DerivativeMode::ReverseModePrimal) {
-      auto &DL = fn->getParent()->getDataLayout();
-      if (DL.getTypeSizeInBits(CI->getType()) >=
-          DL.getTypeSizeInBits(diffret->getType())) {
-        IRBuilder<> EB(&CI->getParent()->getParent()->getEntryBlock().front());
-        auto AL = EB.CreateAlloca(CI->getType());
-        Builder.CreateStore(
-            diffret, Builder.CreatePointerCast(
-                         AL, PointerType::getUnqual(diffret->getType())));
-#if LLVM_VERSION_MAJOR > 7
-        Value *cload = Builder.CreateLoad(CI->getType(), AL);
-#else
-        Value *cload = Builder.CreateLoad(AL);
-#endif
-        CI->replaceAllUsesWith(cload);
-      } else {
-        EmitFailure("IllegalReturnCast", CI->getDebugLoc(), CI,
-                    "Cannot cast return type of gradient ", *diffret->getType(),
-                    *diffret, ", to desired type ", *CI->getType());
-        return false;
-      }
     } else if (CI->hasStructRetAttr()) {
       Value *sret = CI->getArgOperand(0);
       PointerType *stype = cast<PointerType>(sret->getType());
@@ -631,6 +609,27 @@ static bool replaceOriginalCall(CallInst *CI, Function *fn, Value *diffret,
             diffret, Builder.CreatePointerCast(
                          sret, PointerType::get(diffret->getType(),
                                                 stype->getAddressSpace())));
+      }
+    } else if (mode == DerivativeMode::ReverseModePrimal) {
+      auto &DL = fn->getParent()->getDataLayout();
+      if (DL.getTypeSizeInBits(CI->getType()) >=
+          DL.getTypeSizeInBits(diffret->getType())) {
+        IRBuilder<> EB(&CI->getParent()->getParent()->getEntryBlock().front());
+        auto AL = EB.CreateAlloca(CI->getType());
+        Builder.CreateStore(
+            diffret, Builder.CreatePointerCast(
+                         AL, PointerType::getUnqual(diffret->getType())));
+#if LLVM_VERSION_MAJOR > 7
+        Value *cload = Builder.CreateLoad(CI->getType(), AL);
+#else
+        Value *cload = Builder.CreateLoad(AL);
+#endif
+        CI->replaceAllUsesWith(cload);
+      } else {
+        EmitFailure("IllegalReturnCast", CI->getDebugLoc(), CI,
+                    "Cannot cast return type of gradient ", *diffret->getType(),
+                    *diffret, ", to desired type ", *CI->getType());
+        return false;
       }
     } else {
 

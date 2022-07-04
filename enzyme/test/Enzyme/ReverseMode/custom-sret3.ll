@@ -56,7 +56,7 @@ define dso_local { double, double } @myblas_cdot(%struct.complex* nocapture read
 
 ; Function Attrs: nounwind uwtable
 define dso_local void @myblas_cdot_fwd(%struct.TapeAndComplex* noalias sret(%struct.TapeAndComplex) align 8 %0, %struct.complex* %1, %struct.complex* %2, %struct.complex* %3, %struct.complex* %4, i32 %5, i32 %6) #1 {
-  tail call void (%struct.TapeAndComplex*, i8*, ...) @__enzyme_augmentedfwd(%struct.TapeAndComplex* sret(%struct.TapeAndComplex) align 8 %0, i8* bitcast ({ double, double } (%struct.complex*, %struct.complex*, i32)* @myblas_cdot to i8*), %struct.complex* %1, %struct.complex* %2, %struct.complex* %3, %struct.complex* %4, i32 %5, i32 %6) #4
+  tail call void (%struct.TapeAndComplex*, i8*, ...) @__enzyme_augmentfwd(%struct.TapeAndComplex* sret(%struct.TapeAndComplex) align 8 %0, i8* bitcast ({ double, double } (%struct.complex*, %struct.complex*, i32)* @myblas_cdot to i8*), %struct.complex* %1, %struct.complex* %2, %struct.complex* %3, %struct.complex* %4, i32 %5) #4
   ret void
 }
 
@@ -77,7 +77,7 @@ define dso_local double @myblas_cabs(double %0, double %1) #2 {
 
 ; Function Attrs: nounwind uwtable
 define dso_local { i8*, double } @myblas_cabs_fwd(double %0, double %1) #1 {
-  %3 = tail call { i8*, double } (i8*, ...) @__enzyme_augmentedfwd2(i8* bitcast (double (double, double)* @myblas_cabs to i8*), double %0, double %1) #4
+  %3 = tail call { i8*, double } (i8*, ...) @__enzyme_augmentfwd2(i8* bitcast (double (double, double)* @myblas_cabs to i8*), double %0, double %1) #4
   ret { i8*, double } %3
 }
 
@@ -87,11 +87,11 @@ define dso_local { double, double } @myblas_cabs_rev(double %0, double %1, doubl
   ret { double, double } %5
 }
 
-declare dso_local void @__enzyme_augmentedfwd(%struct.TapeAndComplex* sret(%struct.TapeAndComplex) align 8, i8*, ...) local_unnamed_addr #3
+declare dso_local void @__enzyme_augmentfwd(%struct.TapeAndComplex* sret(%struct.TapeAndComplex) align 8, i8*, ...) local_unnamed_addr #3
 
 declare dso_local void @__enzyme_reverse(i8*, ...) local_unnamed_addr #3
 
-declare dso_local { i8*, double } @__enzyme_augmentedfwd2(i8*, ...) local_unnamed_addr #3
+declare dso_local { i8*, double } @__enzyme_augmentfwd2(i8*, ...) local_unnamed_addr #3
 
 declare dso_local { double, double } @__enzyme_reverse2(i8*, ...) local_unnamed_addr #3
 
