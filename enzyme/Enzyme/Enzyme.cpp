@@ -101,11 +101,11 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
                        SmallVectorImpl<GlobalVariable *> &globalsToErase) {
   if (g.hasInitializer()) {
     if (auto CA = dyn_cast<ConstantAggregate>(g.getInitializer())) {
-      if (CA->getNumOperands() >= numargs) {
+      if (CA->getNumOperands() < numargs) {
         llvm::errs() << M << "\n";
         llvm::errs() << "Use of " << handlername
                      << " must be a "
-                        "constant of size "
+                        "constant of size at least "
                      << numargs << " " << g << "\n";
         llvm_unreachable(handlername);
       } else {
