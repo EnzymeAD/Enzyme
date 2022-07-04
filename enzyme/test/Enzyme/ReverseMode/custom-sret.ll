@@ -46,8 +46,8 @@ declare void @__enzyme_autodiff(...)
 
 ; CHECK: define internal void @fixgradient_myblas_cdot(%struct.complex* %arg0, %struct.complex* %arg1, %struct.complex* %arg2, %struct.complex* %arg3, i32 %arg4, { double, double } %arg5) 
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call %struct.TapeAndComplex @fixaugment_myblas_cdot(%struct.complex* %arg0, %struct.complex* %arg1, %struct.complex* %arg2, %struct.complex* %arg3, i32 %arg4)
-; CHECK-NEXT:   %1 = extractvalue %struct.TapeAndComplex %0, 0
+; CHECK-NEXT:   %0 = call { i8*, { double, double } } @fixaugment_myblas_cdot(%struct.complex* %arg0, %struct.complex* %arg1, %struct.complex* %arg2, %struct.complex* %arg3, i32 %arg4)
+; CHECK-NEXT:   %1 = extractvalue { i8*, { double, double } } %0, 0
 ; CHECK-NEXT:   call void @fixgradient_myblas_cdot.1(%struct.complex* %arg0, %struct.complex* %arg1, %struct.complex* %arg2, %struct.complex* %arg3, i32 %arg4, { double, double } %arg5, i8* %1)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
@@ -60,10 +60,24 @@ declare void @__enzyme_autodiff(...)
 ; CHECK-NEXT:   ret %struct.TapeAndComplex %1
 ; CHECK-NEXT: }
 
-; CHECK: define internal %struct.TapeAndComplex @fixaugment_myblas_cdot(%struct.complex* %arg0, %struct.complex* %"arg0'", %struct.complex* %arg1, %struct.complex* %"arg1'", i32 %arg2)
+; CHECK: define internal { i8*, { double, double } } @fixaugment_fixaugment_myblas_cdot_fwd(%struct.complex* %arg0, %struct.complex* %arg1, %struct.complex* %arg2, %struct.complex* %arg3, i32 %arg4, i32 %arg5) {
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call %struct.TapeAndComplex @fixaugment_myblas_cdot_fwd(%struct.complex* %arg0, %struct.complex* %"arg0'", %struct.complex* %arg1, %struct.complex* %"arg1'", i32 %arg2, i32 %arg2)
-; CHECK-NEXT:   ret %struct.TapeAndComplex %0
+; CHECK-NEXT:   %0 = call %struct.TapeAndComplex @fixaugment_myblas_cdot_fwd(%struct.complex* %arg0, %struct.complex* %arg1, %struct.complex* %arg2, %struct.complex* %arg3, i32 %arg4, i32 %arg5)
+; CHECK-NEXT:   %1 = extractvalue %struct.TapeAndComplex %0, 0
+; CHECK-NEXT:   %2 = insertvalue { i8*, { double, double } } undef, i8* %1, 0
+; CHECK-NEXT:   %3 = alloca { double, double }
+; CHECK-NEXT:   %4 = bitcast { double, double }* %3 to %struct.complex*
+; CHECK-NEXT:   %5 = extractvalue %struct.TapeAndComplex %0, 1
+; CHECK-NEXT:   store %struct.complex %5, %struct.complex* %4
+; CHECK-NEXT:   %6 = load { double, double }, { double, double }* %3
+; CHECK-NEXT:   %7 = insertvalue { i8*, { double, double } } %2, { double, double } %6, 1
+; CHECK-NEXT:   ret { i8*, { double, double } } %7
+; CHECK-NEXT: }
+
+; CHECK: define internal { i8*, { double, double } } @fixaugment_myblas_cdot(%struct.complex* %arg0, %struct.complex* %"arg0'", %struct.complex* %arg1, %struct.complex* %"arg1'", i32 %arg2)
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   %0 = call { i8*, { double, double } } @fixaugment_fixaugment_myblas_cdot_fwd(%struct.complex* %arg0, %struct.complex* %"arg0'", %struct.complex* %arg1, %struct.complex* %"arg1'", i32 %arg2, i32 %arg2)
+; CHECK-NEXT:   ret { i8*, { double, double } } %0
 ; CHECK-NEXT: }
 
 ; CHECK: define internal void @fixgradient_myblas_cdot.1(%struct.complex* %arg0, %struct.complex* %"arg0'", %struct.complex* %arg1, %struct.complex* %"arg1'", i32 %arg2, { double, double } %postarg0, i8* %postarg1)

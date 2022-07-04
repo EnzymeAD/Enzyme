@@ -1220,10 +1220,18 @@ public:
 #endif
             }
             if (differet->getType() != fn->getReturnType())
-              if (auto ST0 = cast<StructType>(differet->getType()))
-                if (auto ST1 = cast<StructType>(fn->getReturnType()))
+              if (auto ST0 = dyn_cast<StructType>(differet->getType()))
+                if (auto ST1 = dyn_cast<StructType>(fn->getReturnType()))
                   if (ST0->isLayoutIdentical(ST1)) {
-                    differet = Builder.CreateBitCast(differet, ST1);
+                    auto AI = Builder.CreateAlloca(ST1);
+                    Builder.CreateStore(differet,
+                                        Builder.CreatePointerCast(
+                                            AI, PointerType::getUnqual(ST0)));
+#if LLVM_VERSION_MAJOR > 7
+                    differet = Builder.CreateLoad(ST1, AI);
+#else
+                    differet = Builder.CreateLoad(AI);
+#endif
                   }
 
             if (differet->getType() != fn->getReturnType()) {

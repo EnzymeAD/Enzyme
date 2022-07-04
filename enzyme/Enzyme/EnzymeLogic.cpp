@@ -3499,11 +3499,25 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           getDefaultFunctionTypeForGradient(key.todiff->getFunctionType(),
                                             /*retType*/ key.retType);
       assert(augmenteddata);
+      bool badDiffRet = false;
+      bool hasTape = true;
       if (foundcalled->arg_size() == res.first.size() + 1 /*tape*/) {
         auto lastarg = foundcalled->arg_end();
         lastarg--;
         res.first.push_back(lastarg->getType());
+        if (key.retType == DIFFE_TYPE::OUT_DIFF) {
+          lastarg--;
+          if (lastarg->getType() != key.todiff->getReturnType())
+            badDiffRet = true;
+        }
       } else if (foundcalled->arg_size() == res.first.size()) {
+        if (key.retType == DIFFE_TYPE::OUT_DIFF) {
+          auto lastarg = foundcalled->arg_end();
+          lastarg--;
+          if (lastarg->getType() != key.todiff->getReturnType())
+            badDiffRet = true;
+        }
+        hasTape = false;
         // res.first.push_back(StructType::get(todiff->getContext(), {}));
       } else {
         llvm::errs() << "expected args: [";
@@ -3519,7 +3533,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       auto st = dyn_cast<StructType>(foundcalled->getReturnType());
       bool wrongRet =
           st == nullptr && !foundcalled->getReturnType()->isVoidTy();
-      if (wrongRet) {
+      if (wrongRet || badDiffRet) {
         // if (wrongRet || !hasTape) {
         Type *FRetTy =
             res.second.empty()
@@ -3550,6 +3564,20 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         SmallVector<Value *, 4> args;
         for (auto &a : NewF->args())
           args.push_back(&a);
+        if (badDiffRet) {
+          auto idx = hasTape ? (args.size() - 2) : (args.size() - 1);
+
+          auto AI = bb.CreateAlloca(foundcalled->getArg(idx)->getType());
+          bb.CreateStore(args[idx],
+                         bb.CreatePointerCast(
+                             AI, PointerType::getUnqual(args[idx]->getType())));
+#if LLVM_VERSION_MAJOR > 7
+          Value *vres = bb.CreateLoad(foundcalled->getArg(idx)->getType(), AI);
+#else
+          Value *vres = bb.CreateLoad(AI);
+#endif
+          args[idx] = vres;
+        }
         // if (!hasTape) {
         //  args.pop_back();
         //}
@@ -3569,7 +3597,10 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
             llvm_unreachable("illegal type for reverse");
           }
         }
-        bb.CreateRet(val);
+        if (val->getType()->isVoidTy())
+          bb.CreateRetVoid();
+        else
+          bb.CreateRet(val);
         foundcalled = NewF;
       }
       return insert_or_assign2<ReverseCacheKey, Function *>(
