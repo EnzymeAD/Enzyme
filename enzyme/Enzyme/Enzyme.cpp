@@ -199,18 +199,19 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
               SmallVector<Type *, 3> args;
               Type *sretTy = nullptr;
               size_t realidx = 0;
-              for (size_t i = 0; i < F->arg_size(); i++) {
+              size_t i = 0;
+              for (auto &arg : F->args()) {
                 if (!F->hasParamAttribute(i, Attribute::StructRet)) {
                   if (!byref.count(realidx))
-                    args.push_back(F->getArg(i)->getType());
+                    args.push_back(arg.getType());
                   else
-                    args.push_back(cast<PointerType>(F->getArg(i)->getType())
-                                       ->getElementType());
+                    args.push_back(
+                        cast<PointerType>(arg.getType())->getElementType());
                   realidx++;
                 } else {
-                  sretTy = cast<PointerType>(F->getArg(i)->getType())
-                               ->getElementType();
+                  sretTy = cast<PointerType>(arg.getType())->getElementType();
                 }
+                i++;
               }
               Type *RT = F->getReturnType();
               if (sretTy) {

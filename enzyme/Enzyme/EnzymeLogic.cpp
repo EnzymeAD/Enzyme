@@ -1826,11 +1826,17 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     if (foundcalled->hasStructRetAttr() && !todiff->hasStructRetAttr()) {
       SmallVector<Type *, 3> args;
       Type *sretTy = nullptr;
-      for (size_t i = 0; i < foundcalled->arg_size(); i++) {
-        if (!foundcalled->hasParamAttribute(i, Attribute::StructRet))
-          args.push_back(foundcalled->getArg(i)->getType());
-        else
-          sretTy = foundcalled->getParamStructRetType(i);
+      {
+        size_t i = 0;
+        for (auto &arg : foundcalled->args()) {
+          if (!foundcalled->hasParamAttribute(i, Attribute::StructRet))
+            args.push_back(arg.getType());
+          else {
+            sretTy = cast<PointerType>(arg.getType())->getElementType();
+            //  sretTy = foundcalled->getParamStructRetType(i);
+          }
+          i++;
+        }
       }
       assert(foundcalled->getReturnType()->isVoidTy());
       FunctionType *FTy = FunctionType::get(
@@ -3566,13 +3572,14 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
           args.push_back(&a);
         if (badDiffRet) {
           auto idx = hasTape ? (args.size() - 2) : (args.size() - 1);
+          Type *T = (foundcalled->arg_begin() + idx)->getType();
 
-          auto AI = bb.CreateAlloca(foundcalled->getArg(idx)->getType());
+          auto AI = bb.CreateAlloca(T);
           bb.CreateStore(args[idx],
                          bb.CreatePointerCast(
                              AI, PointerType::getUnqual(args[idx]->getType())));
 #if LLVM_VERSION_MAJOR > 7
-          Value *vres = bb.CreateLoad(foundcalled->getArg(idx)->getType(), AI);
+          Value *vres = bb.CreateLoad(T, AI);
 #else
           Value *vres = bb.CreateLoad(AI);
 #endif
