@@ -49,6 +49,9 @@
 
 #include "llvm/Support/CommandLine.h"
 
+#include "llvm/Passes/PassPlugin.h"
+#include "llvm/Passes/PassBuilder.h"
+
 #include "../FunctionUtils.h"
 #include "../Utils.h"
 #include "TypeAnalysis.h"
@@ -64,6 +67,81 @@ llvm::cl::opt<std::string>
     FunctionToAnalyze("type-analysis-func", cl::init(""), cl::Hidden,
                       cl::desc("Which function to analyze/print"));
 
+bool implementation(Function &F){
+    if (F.getName() != FunctionToAnalyze)
+        return /*changed*/ false;
+
+    FnTypeInfo type_args(&F);
+    for (auto &a : type_args.Function->args()) {
+        TypeTree dt;
+        if (a.getType()->isFPOrFPVectorTy()) {
+            dt = ConcreteType(a.getType()->getScalarType());
+        } else if (a.getType()->isPointerTy()) {
+            auto et = cast<PointerType>(a.getType())->getPointerElementType();
+            if (et->isFPOrFPVectorTy()) {
+                dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1);
+            } else if (et->isPointerTy()) {
+                dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1);
+            }
+            dt.insert({}, BaseType::Pointer);
+        } else if (a.getType()->isIntOrIntVectorTy()) {
+            dt = ConcreteType(BaseType::Integer);
+        }
+        type_args.Arguments.insert(
+                std::pair<Argument *, TypeTree>(&a, dt.Only(-1)));
+        // TODO note that here we do NOT propagate constants in type info (and
+        // should consider whether we should)
+        type_args.KnownValues.insert(
+                std::pair<Argument *, std::set<int64_t>>(&a, {}));
+    }
+
+    TypeTree dt;
+    if (F.getReturnType()->isFPOrFPVectorTy()) {
+        dt = ConcreteType(F.getReturnType()->getScalarType());
+    } else if (F.getReturnType()->isPointerTy()) {
+        auto et = cast<PointerType>(F.getReturnType())->getPointerElementType();
+        if (et->isFPOrFPVectorTy()) {
+            dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1);
+        } else if (et->isPointerTy()) {
+            dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1);
+        }
+    } else if (F.getReturnType()->isIntOrIntVectorTy()) {
+        dt = ConcreteType(BaseType::Integer);
+    }
+    type_args.Return = dt.Only(-1);
+    PreProcessCache PPC;
+    TypeAnalysis TA(PPC.FAM);
+    TA.analyzeFunction(type_args);
+    for (Function &f : *F.getParent()) {
+
+        for (auto &analysis : TA.analyzedFunctions) {
+            if (analysis.first.Function != &f)
+                continue;
+            auto &ta = *analysis.second;
+            llvm::outs() << f.getName() << " - " << analysis.first.Return.str()
+                         << " |";
+
+            for (auto &a : f.args()) {
+                llvm::outs() << analysis.first.Arguments.find(&a)->second.str() << ":"
+                             << to_string(analysis.first.KnownValues.find(&a)->second)
+                             << " ";
+            }
+            llvm::outs() << "\n";
+
+            for (auto &a : f.args()) {
+                llvm::outs() << a << ": " << ta.getAnalysis(&a).str() << "\n";
+            }
+            for (auto &BB : f) {
+                llvm::outs() << BB.getName() << "\n";
+                for (auto &I : BB) {
+                    llvm::outs() << I << ": " << ta.getAnalysis(&I).str() << "\n";
+                }
+            }
+        }
+    }
+    return /*changed*/ false;
+}
+
 namespace {
 
 class TypeAnalysisPrinter : public FunctionPass {
@@ -76,78 +154,7 @@ public:
   }
 
   bool runOnFunction(Function &F) override {
-    if (F.getName() != FunctionToAnalyze)
-      return /*changed*/ false;
-
-    FnTypeInfo type_args(&F);
-    for (auto &a : type_args.Function->args()) {
-      TypeTree dt;
-      if (a.getType()->isFPOrFPVectorTy()) {
-        dt = ConcreteType(a.getType()->getScalarType());
-      } else if (a.getType()->isPointerTy()) {
-        auto et = cast<PointerType>(a.getType())->getPointerElementType();
-        if (et->isFPOrFPVectorTy()) {
-          dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1);
-        } else if (et->isPointerTy()) {
-          dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1);
-        }
-        dt.insert({}, BaseType::Pointer);
-      } else if (a.getType()->isIntOrIntVectorTy()) {
-        dt = ConcreteType(BaseType::Integer);
-      }
-      type_args.Arguments.insert(
-          std::pair<Argument *, TypeTree>(&a, dt.Only(-1)));
-      // TODO note that here we do NOT propagate constants in type info (and
-      // should consider whether we should)
-      type_args.KnownValues.insert(
-          std::pair<Argument *, std::set<int64_t>>(&a, {}));
-    }
-
-    TypeTree dt;
-    if (F.getReturnType()->isFPOrFPVectorTy()) {
-      dt = ConcreteType(F.getReturnType()->getScalarType());
-    } else if (F.getReturnType()->isPointerTy()) {
-      auto et = cast<PointerType>(F.getReturnType())->getPointerElementType();
-      if (et->isFPOrFPVectorTy()) {
-        dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1);
-      } else if (et->isPointerTy()) {
-        dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1);
-      }
-    } else if (F.getReturnType()->isIntOrIntVectorTy()) {
-      dt = ConcreteType(BaseType::Integer);
-    }
-    type_args.Return = dt.Only(-1);
-    PreProcessCache PPC;
-    TypeAnalysis TA(PPC.FAM);
-    TA.analyzeFunction(type_args);
-    for (Function &f : *F.getParent()) {
-
-      for (auto &analysis : TA.analyzedFunctions) {
-        if (analysis.first.Function != &f)
-          continue;
-        auto &ta = *analysis.second;
-        llvm::outs() << f.getName() << " - " << analysis.first.Return.str()
-                     << " |";
-
-        for (auto &a : f.args()) {
-          llvm::outs() << analysis.first.Arguments.find(&a)->second.str() << ":"
-                       << to_string(analysis.first.KnownValues.find(&a)->second)
-                       << " ";
-        }
-        llvm::outs() << "\n";
-
-        for (auto &a : f.args()) {
-          llvm::outs() << a << ": " << ta.getAnalysis(&a).str() << "\n";
-        }
-        for (auto &BB : f) {
-          llvm::outs() << BB.getName() << "\n";
-          for (auto &I : BB) {
-            llvm::outs() << I << ": " << ta.getAnalysis(&I).str() << "\n";
-          }
-        }
-      }
-    }
-    return /*changed*/ false;
+      return implementation(F);
   }
 };
 
@@ -157,3 +164,33 @@ char TypeAnalysisPrinter::ID = 0;
 
 static RegisterPass<TypeAnalysisPrinter> X("print-type-analysis",
                                            "Print Type Analysis Results");
+
+class TypeAnalysisPrinterNew : public PassInfoMixin<TypeAnalysisPrinterNew>{
+public:
+    llvm::PreservedAnalyses run(llvm::Function &func,
+                                    llvm::FunctionAnalysisManager &FAM);
+
+};
+
+llvm::PreservedAnalyses TypeAnalysisPrinterNew::run(llvm::Function &func, llvm::FunctionAnalysisManager &FAM) {
+    return implementation(func) ? llvm::PreservedAnalyses::none() : llvm::PreservedAnalyses::all();
+}
+
+extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
+llvmGetPassPluginInfo(){
+    return {
+            LLVM_PLUGIN_API_VERSION,"TypeAnalysisPrinterNew","v0.1",
+            [](llvm::PassBuilder &PB){
+                PB.registerPipelineParsingCallback(
+                        [](llvm::StringRef Name, llvm::FunctionPassManager &FPM,
+                                llvm::ArrayRef<llvm::PassBuilder::PipelineElement>){
+                            if(Name=="print-type-analysis"){
+                                FPM.addPass(TypeAnalysisPrinterNew());
+                                return true;
+                            }
+                            return false;
+                        }
+                        );
+            }
+    };
+};

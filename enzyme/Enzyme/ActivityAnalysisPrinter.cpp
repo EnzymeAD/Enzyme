@@ -49,6 +49,9 @@
 
 #include "llvm/Support/CommandLine.h"
 
+#include "llvm/Passes/PassBuilder.h"
+#include "llvm/Passes/PassPlugin.h"
+
 #include "ActivityAnalysis.h"
 #include "FunctionUtils.h"
 #include "TypeAnalysis/TypeAnalysis.h"
@@ -68,6 +71,112 @@ static llvm::cl::opt<std::string>
 static llvm::cl::opt<bool>
     InactiveArgs("activity-analysis-inactive-args", cl::init(false), cl::Hidden,
                  cl::desc("Whether all args are inactive"));
+
+bool implementation(Function &F,std::function<TargetLibraryInfo& (Function &F)> &getTLI){
+    if (F.getName() != FunctionToAnalyze)
+        return /*changed*/ false;
+
+/*
+#if LLVM_VERSION_MAJOR >= 10
+    auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
+#else
+    auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
+#endif
+*/
+    auto TLI = getTLI(F);
+
+    FnTypeInfo type_args(&F);
+    for (auto &a : type_args.Function->args()) {
+        TypeTree dt;
+        if (a.getType()->isFPOrFPVectorTy()) {
+            dt = ConcreteType(a.getType()->getScalarType());
+        } else if (a.getType()->isPointerTy()) {
+            auto et = a.getType()->getPointerElementType();
+            if (et->isFPOrFPVectorTy()) {
+                dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1);
+            } else if (et->isPointerTy()) {
+                dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1);
+            }
+        } else if (a.getType()->isIntOrIntVectorTy()) {
+            dt = ConcreteType(BaseType::Integer);
+        }
+        type_args.Arguments.insert(
+                std::pair<Argument *, TypeTree>(&a, dt.Only(-1)));
+        // TODO note that here we do NOT propagate constants in type info (and
+        // should consider whether we should)
+        type_args.KnownValues.insert(
+                std::pair<Argument *, std::set<int64_t>>(&a, {}));
+    }
+
+    TypeTree dt;
+    if (F.getReturnType()->isFPOrFPVectorTy()) {
+        dt = ConcreteType(F.getReturnType()->getScalarType());
+    } else if (F.getReturnType()->isPointerTy()) {
+        auto et = F.getReturnType()->getPointerElementType();
+        if (et->isFPOrFPVectorTy()) {
+            dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1);
+        } else if (et->isPointerTy()) {
+            dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1);
+        }
+    } else if (F.getReturnType()->isIntOrIntVectorTy()) {
+        dt = ConcreteType(BaseType::Integer);
+    }
+    type_args.Return = dt.Only(-1);
+
+    PreProcessCache PPC;
+    TypeAnalysis TA(PPC.FAM);
+    TypeResults TR = TA.analyzeFunction(type_args);
+
+    llvm::SmallPtrSet<llvm::Value *, 4> ConstantValues;
+    llvm::SmallPtrSet<llvm::Value *, 4> ActiveValues;
+    for (auto &a : type_args.Function->args()) {
+        if (InactiveArgs) {
+            ConstantValues.insert(&a);
+        } else if (a.getType()->isIntOrIntVectorTy()) {
+            ConstantValues.insert(&a);
+        } else {
+            ActiveValues.insert(&a);
+        }
+    }
+
+    DIFFE_TYPE ActiveReturns = F.getReturnType()->isFPOrFPVectorTy()
+                               ? DIFFE_TYPE::OUT_DIFF
+                               : DIFFE_TYPE::CONSTANT;
+    SmallPtrSet<BasicBlock *, 4> notForAnalysis(getGuaranteedUnreachable(&F));
+    ActivityAnalyzer ATA(PPC, PPC.FAM.getResult<AAManager>(F), notForAnalysis,
+                         TLI, ConstantValues, ActiveValues, ActiveReturns);
+
+    for (auto &a : F.args()) {
+        ATA.isConstantValue(TR, &a);
+        llvm::errs().flush();
+    }
+    for (auto &BB : F) {
+        for (auto &I : BB) {
+            ATA.isConstantInstruction(TR, &I);
+            ATA.isConstantValue(TR, &I);
+            llvm::errs().flush();
+        }
+    }
+
+    for (auto &a : F.args()) {
+        bool icv = ATA.isConstantValue(TR, &a);
+        llvm::errs().flush();
+        llvm::outs() << a << ": icv:" << icv << "\n";
+        llvm::outs().flush();
+    }
+    for (auto &BB : F) {
+        llvm::outs() << BB.getName() << "\n";
+        for (auto &I : BB) {
+            bool ici = ATA.isConstantInstruction(TR, &I);
+            bool icv = ATA.isConstantValue(TR, &I);
+            llvm::errs().flush();
+            llvm::outs() << I << ": icv:" << icv << " ici:" << ici << "\n";
+            llvm::outs().flush();
+        }
+    }
+    return /*changed*/ false;
+};
+
 namespace {
 
 class ActivityAnalysisPrinter : public FunctionPass {
@@ -80,105 +189,15 @@ public:
   }
 
   bool runOnFunction(Function &F) override {
-    if (F.getName() != FunctionToAnalyze)
-      return /*changed*/ false;
-
-#if LLVM_VERSION_MAJOR >= 10
-    auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
-#else
-    auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
-#endif
-
-    FnTypeInfo type_args(&F);
-    for (auto &a : type_args.Function->args()) {
-      TypeTree dt;
-      if (a.getType()->isFPOrFPVectorTy()) {
-        dt = ConcreteType(a.getType()->getScalarType());
-      } else if (a.getType()->isPointerTy()) {
-        auto et = a.getType()->getPointerElementType();
-        if (et->isFPOrFPVectorTy()) {
-          dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1);
-        } else if (et->isPointerTy()) {
-          dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1);
-        }
-      } else if (a.getType()->isIntOrIntVectorTy()) {
-        dt = ConcreteType(BaseType::Integer);
-      }
-      type_args.Arguments.insert(
-          std::pair<Argument *, TypeTree>(&a, dt.Only(-1)));
-      // TODO note that here we do NOT propagate constants in type info (and
-      // should consider whether we should)
-      type_args.KnownValues.insert(
-          std::pair<Argument *, std::set<int64_t>>(&a, {}));
-    }
-
-    TypeTree dt;
-    if (F.getReturnType()->isFPOrFPVectorTy()) {
-      dt = ConcreteType(F.getReturnType()->getScalarType());
-    } else if (F.getReturnType()->isPointerTy()) {
-      auto et = F.getReturnType()->getPointerElementType();
-      if (et->isFPOrFPVectorTy()) {
-        dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1);
-      } else if (et->isPointerTy()) {
-        dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1);
-      }
-    } else if (F.getReturnType()->isIntOrIntVectorTy()) {
-      dt = ConcreteType(BaseType::Integer);
-    }
-    type_args.Return = dt.Only(-1);
-
-    PreProcessCache PPC;
-    TypeAnalysis TA(PPC.FAM);
-    TypeResults TR = TA.analyzeFunction(type_args);
-
-    llvm::SmallPtrSet<llvm::Value *, 4> ConstantValues;
-    llvm::SmallPtrSet<llvm::Value *, 4> ActiveValues;
-    for (auto &a : type_args.Function->args()) {
-      if (InactiveArgs) {
-        ConstantValues.insert(&a);
-      } else if (a.getType()->isIntOrIntVectorTy()) {
-        ConstantValues.insert(&a);
-      } else {
-        ActiveValues.insert(&a);
-      }
-    }
-
-    DIFFE_TYPE ActiveReturns = F.getReturnType()->isFPOrFPVectorTy()
-                                   ? DIFFE_TYPE::OUT_DIFF
-                                   : DIFFE_TYPE::CONSTANT;
-    SmallPtrSet<BasicBlock *, 4> notForAnalysis(getGuaranteedUnreachable(&F));
-    ActivityAnalyzer ATA(PPC, PPC.FAM.getResult<AAManager>(F), notForAnalysis,
-                         TLI, ConstantValues, ActiveValues, ActiveReturns);
-
-    for (auto &a : F.args()) {
-      ATA.isConstantValue(TR, &a);
-      llvm::errs().flush();
-    }
-    for (auto &BB : F) {
-      for (auto &I : BB) {
-        ATA.isConstantInstruction(TR, &I);
-        ATA.isConstantValue(TR, &I);
-        llvm::errs().flush();
-      }
-    }
-
-    for (auto &a : F.args()) {
-      bool icv = ATA.isConstantValue(TR, &a);
-      llvm::errs().flush();
-      llvm::outs() << a << ": icv:" << icv << "\n";
-      llvm::outs().flush();
-    }
-    for (auto &BB : F) {
-      llvm::outs() << BB.getName() << "\n";
-      for (auto &I : BB) {
-        bool ici = ATA.isConstantInstruction(TR, &I);
-        bool icv = ATA.isConstantValue(TR, &I);
-        llvm::errs().flush();
-        llvm::outs() << I << ": icv:" << icv << " ici:" << ici << "\n";
-        llvm::outs().flush();
-      }
-    }
-    return /*changed*/ false;
+      std::function<TargetLibraryInfo& (Function &)> getTLI = [&](Function& Func)->TargetLibraryInfo&{
+        #if LLVM_VERSION_MAJOR >= 10
+              auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
+        #else
+              auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
+        #endif
+        return TLI;
+      };
+      return implementation(F,getTLI);
   }
 };
 
@@ -188,3 +207,36 @@ char ActivityAnalysisPrinter::ID = 0;
 
 static RegisterPass<ActivityAnalysisPrinter>
     X("print-activity-analysis", "Print Activity Analysis Results");
+
+
+class ActivityAnalysisPrinterNew : public PassInfoMixin<ActivityAnalysisPrinterNew>{
+public:
+    llvm::PreservedAnalyses run(Function &F, FunctionAnalysisManager & FAM){
+
+        std::function<TargetLibraryInfo& (Function &F)> getTLI =  [&](Function& F) -> TargetLibraryInfo& {
+            auto &TLI = FAM.getResult<TargetLibraryAnalysis>(F);
+            return TLI;
+        };
+
+        return implementation(F,getTLI) ? llvm::PreservedAnalyses::none() : llvm::PreservedAnalyses::all();
+    }
+};
+
+extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
+llvmGetPassPluginInfo(){
+    return {
+            LLVM_PLUGIN_API_VERSION,"TypeAnalysisPrinterNew","v0.1",
+            [](llvm::PassBuilder &PB){
+                PB.registerPipelineParsingCallback(
+                        [](llvm::StringRef Name, llvm::FunctionPassManager &FPM,
+                           llvm::ArrayRef<llvm::PassBuilder::PipelineElement>){
+                            if(Name=="print-activity-analysis"){
+                                FPM.addPass(ActivityAnalysisPrinterNew());
+                                return true;
+                            }
+                            return false;
+                        }
+                );
+            }
+    };
+};
