@@ -994,7 +994,7 @@ getDefaultFunctionTypeForAugmentation(FunctionType *called, bool returnUsed,
 //! assuming not top level
 std::pair<SmallVector<Type *, 4>, SmallVector<Type *, 4>>
 getDefaultFunctionTypeForGradient(FunctionType *called, DIFFE_TYPE retType,
-                                  const ArrayRef<DIFFE_TYPE> &tys) {
+                                 ArrayRef<DIFFE_TYPE> tys) {
   SmallVector<Type *, 4> args;
   SmallVector<Type *, 4> outs;
 
