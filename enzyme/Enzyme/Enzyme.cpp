@@ -1226,7 +1226,8 @@ public:
                   if (ST0->isLayoutIdentical(ST1)) {
                     IRBuilder<> B(&Builder.GetInsertBlock()
                                        ->getParent()
-                                       ->getEntryBlock());
+                                       ->getEntryBlock()
+                                       .front());
                     auto AI = B.CreateAlloca(ST1);
                     Builder.CreateStore(differet,
                                         Builder.CreatePointerCast(
