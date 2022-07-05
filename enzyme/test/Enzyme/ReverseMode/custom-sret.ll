@@ -66,9 +66,9 @@ declare void @__enzyme_autodiff(...)
 ; CHECK-NEXT:   %1 = extractvalue %struct.TapeAndComplex %0, 0
 ; CHECK-NEXT:   %2 = insertvalue { i8*, { double, double } } undef, i8* %1, 0
 ; CHECK-NEXT:   %3 = alloca { double, double }
-; CHECK-NEXT:   %4 = bitcast { double, double }* %3 to %struct.complex*
-; CHECK-NEXT:   %5 = extractvalue %struct.TapeAndComplex %0, 1
-; CHECK-NEXT:   store %struct.complex %5, %struct.complex* %4
+; CHECK-DAG:   %[[i4:.+]] = bitcast { double, double }* %3 to %struct.complex*
+; CHECK-DAG:   %[[i5:.+]] = extractvalue %struct.TapeAndComplex %0, 1
+; CHECK-NEXT:   store %struct.complex %[[i5]], %struct.complex* %[[i4]]
 ; CHECK-NEXT:   %6 = load { double, double }, { double, double }* %3
 ; CHECK-NEXT:   %7 = insertvalue { i8*, { double, double } } %2, { double, double } %6, 1
 ; CHECK-NEXT:   ret { i8*, { double, double } } %7
