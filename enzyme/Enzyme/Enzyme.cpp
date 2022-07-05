@@ -133,7 +133,7 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
           }
         }
 
-        std::set<size_t> byref;
+        SmallSet<size_t, 1> byref;
 
         if (Mode == DerivativeMode::ReverseModeGradient) {
           assert(numargs >= 3);
@@ -1223,7 +1223,10 @@ public:
               if (auto ST0 = dyn_cast<StructType>(differet->getType()))
                 if (auto ST1 = dyn_cast<StructType>(fn->getReturnType()))
                   if (ST0->isLayoutIdentical(ST1)) {
-                    auto AI = Builder.CreateAlloca(ST1);
+                    IRBuilder<> B(&Builder.GetInsertBlock()
+                                       ->getParent()
+                                       ->getEntryBlock());
+                    auto AI = B.CreateAlloca(ST1);
                     Builder.CreateStore(differet,
                                         Builder.CreatePointerCast(
                                             AI, PointerType::getUnqual(ST0)));

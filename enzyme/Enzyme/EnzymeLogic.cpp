@@ -994,7 +994,7 @@ getDefaultFunctionTypeForAugmentation(FunctionType *called, bool returnUsed,
 //! assuming not top level
 std::pair<SmallVector<Type *, 4>, SmallVector<Type *, 4>>
 getDefaultFunctionTypeForGradient(FunctionType *called, DIFFE_TYPE retType,
-                                  const std::vector<DIFFE_TYPE> &tys) {
+                                  const ArrayRef<DIFFE_TYPE> &tys) {
   SmallVector<Type *, 4> args;
   SmallVector<Type *, 4> outs;
 
@@ -1028,7 +1028,7 @@ getDefaultFunctionTypeForGradient(FunctionType *called, DIFFE_TYPE retType,
 //! assuming not top level
 std::pair<SmallVector<Type *, 4>, SmallVector<Type *, 4>>
 getDefaultFunctionTypeForGradient(FunctionType *called, DIFFE_TYPE retType) {
-  std::vector<DIFFE_TYPE> act;
+  SmallVector<DIFFE_TYPE, 4> act;
   for (auto &argType : called->params()) {
 
     if (argType->isFPOrFPVectorTy()) {
