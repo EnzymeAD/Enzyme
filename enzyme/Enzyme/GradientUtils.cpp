@@ -467,8 +467,12 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     if (toreturn == nullptr)
       goto endCheck;
     for (auto &&[valOp, idcs, parent] : reverse(insertElements)) {
-      toreturn = BuilderM.CreateInsertValue(toreturn, valOp, idcs,
+      auto tmp = BuilderM.CreateInsertValue(toreturn, valOp, idcs,
                                             parent->getName() + "_unwrap");
+      if (wrappedvalues.contains(toreturn))
+        wrappedvalues.insert(tmp);
+
+      toreturn = tmp;
 
       if (permitCache)
         unwrap_cache[BuilderM.GetInsertBlock()][parent][idx.second] = toreturn;
@@ -2581,8 +2585,10 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                       if (getWidth() > 1) {
                         Value *array =
                             UndefValue::get(getShadowType(val->getType()));
+                        wrappedvalues.insert(array);
                         for (unsigned i = 0; i < getWidth(); ++i) {
                           array = NB.CreateInsertValue(array, val, {i});
+                          wrappedvalues.insert(array);
                         }
                         valueop = array;
                         if (memoryLayout ==
@@ -3849,11 +3855,11 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     return applyChainRule(oval->getType(), BuilderM, [&]() { return oval; });
   } else if (isa<UndefValue>(oval)) {
     if (nullShadow)
-      return Constant::getNullValue(getShadowType(oval->getType()));
+      return getNullShadow(oval->getType());
     return applyChainRule(oval->getType(), BuilderM, [&]() { return oval; });
   } else if (isa<ConstantInt>(oval)) {
     if (nullShadow)
-      return Constant::getNullValue(getShadowType(oval->getType()));
+      return getNullShadow(oval->getType());
     return applyChainRule(oval->getType(), BuilderM, [&]() { return oval; });
   } else if (auto CD = dyn_cast<ConstantDataArray>(oval)) {
     SmallVector<Constant *, 1> Vals;
@@ -3915,7 +3921,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     if (nullShadow) {
       auto CT = TR.query(oval)[{-1}];
       if (!CT.isKnown() || CT.isFloat()) {
-        return Constant::getNullValue(getShadowType(oval->getType()));
+        return getNullShadow(oval->getType());
       }
     }
 
@@ -4216,7 +4222,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       auto agg = ConstantArray::get(
           cast<ArrayType>(getShadowType(arg->getType())), Vals);
 
-      if (memoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode)
+      if (getWidth() > 1 &&
+          memoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode)
         wrappedvalues.insert(agg);
 
       invertedPointers.insert(
@@ -4237,6 +4244,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       }
       ArrayType *arrTy = ArrayType::get(shadow->getType(), width);
       shadow = ConstantArray::get(arrTy, arr);
+      wrappedvalues.insert(shadow);
     }
     return shadow;
   } else if (auto arg = dyn_cast<CastInst>(oval)) {
@@ -5848,6 +5856,9 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
   Value *result =
       lookupValueFromCache(/*isForwardPass*/ false, BuilderM, found->second,
                            found->first, isi1, available);
+  if (wrappedvalues.contains(inst))
+    wrappedvalues.insert(result);
+
   if (auto LI2 = dyn_cast<LoadInst>(result))
     if (auto LI1 = dyn_cast<LoadInst>(inst))
       LI2->copyMetadata(*LI1, MD_ToCopy);

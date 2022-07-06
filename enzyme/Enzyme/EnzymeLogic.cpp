@@ -2615,8 +2615,7 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
     } else if (!gutils->isConstantValue(ret)) {
       toret = gutils->diffe(ret, nBuilder);
     } else {
-      Type *retTy = gutils->getShadowType(ret->getType());
-      toret = Constant::getNullValue(retTy);
+      toret = gutils->getNullShadow(ret->getType());
     }
 
     break;
@@ -2915,9 +2914,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
     }
 
     if (!handled) {
-      gutils->setDiffe(
-          orig, Constant::getNullValue(gutils->getShadowType(orig->getType())),
-          Builder);
+      gutils->setDiffe(orig, gutils->getNullShadow(orig->getType()), Builder);
 
       for (BasicBlock *opred : predecessors(oBB)) {
         auto oval = orig->getIncomingValueForBlock(opred);
@@ -3560,6 +3557,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     if (key.additionalType)
       endarg--;
     differetval = endarg;
+
+    if (gutils->getWidth() > 1)
+      gutils->wrappedvalues.insert(differetval);
 
     if (!key.todiff->getReturnType()->isVoidTy()) {
       if (!(differetval->getType() ==
@@ -4291,14 +4291,18 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
 
   for (unsigned i = 0; i < orig_FTy->getNumParams(); ++i) {
     if (arg_types[i] == BATCH_TYPE::VECTOR) {
-      Type *ty = GradientUtils::getShadowType(orig_FTy->getParamType(i), width, VectorModeMemoryLayout::VectorizeAtRootNode);
+      Type *ty = GradientUtils::getShadowType(
+          orig_FTy->getParamType(i), width,
+          VectorModeMemoryLayout::VectorizeAtRootNode);
       params.push_back(ty);
     } else {
       params.push_back(orig_FTy->getParamType(i));
     }
   }
 
-  Type *NewTy = GradientUtils::getShadowType(tobatch->getReturnType(), width, VectorModeMemoryLayout::VectorizeAtRootNode);
+  Type *NewTy =
+      GradientUtils::getShadowType(tobatch->getReturnType(), width,
+                                   VectorModeMemoryLayout::VectorizeAtRootNode);
 
   FunctionType *FTy = FunctionType::get(NewTy, params, tobatch->isVarArg());
   Function *NewF =

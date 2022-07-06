@@ -331,9 +331,7 @@ public:
       auto rule = [&](Value *idiff) { return Builder2.CreateFreeze(idiff); };
       Value *idiff = diffe(&inst, Builder2);
       Value *dif1 = applyChainRule(orig_op0->getType(), Builder2, rule, idiff);
-      setDiffe(&inst,
-               Constant::getNullValue(gutils->getShadowType(inst.getType())),
-               Builder2);
+      setDiffe(&inst, getNullShadow(inst.getType()), Builder2);
       size_t size = 1;
       if (inst.getType()->isSized())
         size = (gutils->newFunc->getParent()->getDataLayout().getTypeSizeInBits(
@@ -388,10 +386,7 @@ public:
           Value *idiff = diffe(FPMO, Builder2);
           Value *dif1 =
               applyChainRule(orig_op1->getType(), Builder2, rule, idiff);
-          setDiffe(
-              FPMO,
-              Constant::getNullValue(gutils->getShadowType(FPMO->getType())),
-              Builder2);
+          setDiffe(FPMO, getNullShadow(FPMO->getType()), Builder2);
           addToDiffe(orig_op1, dif1, Builder2,
                      dif1->getType()->getScalarType());
           break;
@@ -975,9 +970,8 @@ public:
         getReverseBuilder(Builder2);
 
         if (constantval) {
-          gutils->setPtrDiffe(
-              orig_ptr, Constant::getNullValue(gutils->getShadowType(valType)),
-              Builder2, align, isVolatile, ordering, syncScope, mask);
+          gutils->setPtrDiffe(orig_ptr, getNullShadow(valType), Builder2, align,
+                              isVolatile, ordering, syncScope, mask);
         } else {
           Value *diff;
           if (!mask) {
@@ -1030,9 +1024,8 @@ public:
             diff = applyChainRule(valType, Builder2, rule, ip);
           }
 
-          gutils->setPtrDiffe(
-              orig_ptr, Constant::getNullValue(gutils->getShadowType(valType)),
-              Builder2, align, isVolatile, ordering, syncScope, mask);
+          gutils->setPtrDiffe(orig_ptr, getNullShadow(valType), Builder2, align,
+                              isVolatile, ordering, syncScope, mask);
           addToDiffe(orig_val, diff, Builder2, FT, mask);
         }
         break;
@@ -1042,10 +1035,8 @@ public:
         IRBuilder<> Builder2(&I);
         getForwardBuilder(Builder2);
 
-        Type *diffeTy = gutils->getShadowType(valType);
-
-        Value *diff = constantval ? Constant::getNullValue(diffeTy)
-                                  : diffe(orig_val, Builder2);
+        Value *diff =
+            constantval ? getNullShadow(valType) : diffe(orig_val, Builder2);
         gutils->setPtrDiffe(orig_ptr, diff, Builder2, align, isVolatile,
                             ordering, syncScope, mask);
 
@@ -1098,8 +1089,10 @@ public:
           if (gutils->getWidth() > 1) {
             Value *array =
                 UndefValue::get(gutils->getShadowType(val->getType()));
+            gutils->wrappedvalues.insert(array);
             for (unsigned i = 0; i < gutils->getWidth(); ++i) {
               array = storeBuilder.CreateInsertValue(array, val, {i});
+              gutils->wrappedvalues.insert(array);
             }
             valueop = array;
           }
@@ -1210,8 +1203,7 @@ public:
         addToDiffe(orig_op0, diff, Builder2, FT);
       }
 
-      Type *diffTy = gutils->getShadowType(I.getType());
-      setDiffe(&I, Constant::getNullValue(diffTy), Builder2);
+      setDiffe(&I, getNullShadow(I.getType()), Builder2);
 
       break;
     }
@@ -1314,9 +1306,7 @@ public:
                 }
                 Value *dif = Builder2.CreateSelect(
                     Builder2.CreateICmpEQ(gutils->lookupM(index, EB), inc),
-                    diffe(&SI, Builder2),
-                    Constant::getNullValue(
-                        gutils->getShadowType(op1->getType())));
+                    diffe(&SI, Builder2), getNullShadow(op1->getType()));
                 addToDiffe(SI.getOperand(2 - i), dif, Builder2, addingType);
               }
             }
@@ -1326,18 +1316,15 @@ public:
       }
 
     if (!gutils->isConstantValue(orig_op1))
-      dif1 = Builder2.CreateSelect(
-          lookup(op0, Builder2), diffe(&SI, Builder2),
-          Constant::getNullValue(gutils->getShadowType(op1->getType())),
-          "diffe" + op1->getName());
+      dif1 = Builder2.CreateSelect(lookup(op0, Builder2), diffe(&SI, Builder2),
+                                   getNullShadow(op1->getType()),
+                                   "diffe" + op1->getName());
     if (!gutils->isConstantValue(orig_op2))
       dif2 = Builder2.CreateSelect(
-          lookup(op0, Builder2),
-          Constant::getNullValue(gutils->getShadowType(op2->getType())),
+          lookup(op0, Builder2), getNullShadow(op2->getType()),
           diffe(&SI, Builder2), "diffe" + op2->getName());
 
-    setDiffe(&SI, Constant::getNullValue(gutils->getShadowType(SI.getType())),
-             Builder2);
+    setDiffe(&SI, getNullShadow(SI.getType()), Builder2);
     if (dif1) {
       Type *addingType = TR.addingType(size, orig_op1);
       if (addingType || !looseTypeAnalysis)
@@ -1385,9 +1372,7 @@ public:
             ->addToDiffe(orig_vec, diffe(&EEI, Builder2), Builder2,
                          TR.addingType(size, &EEI), sv);
       }
-      setDiffe(&EEI,
-               Constant::getNullValue(gutils->getShadowType(EEI.getType())),
-               Builder2);
+      setDiffe(&EEI, getNullShadow(EEI.getType()), Builder2);
       return;
     }
     case DerivativeMode::ReverseModePrimal: {
@@ -1435,22 +1420,18 @@ public:
             8;
 
       if (!gutils->isConstantValue(orig_op0))
-        addToDiffe(
-            orig_op0,
-            Builder2.CreateInsertElement(
-                dif1,
-                Constant::getNullValue(gutils->getShadowType(op1->getType())),
-                lookup(op2, Builder2)),
-            Builder2, TR.addingType(size0, orig_op0));
+        addToDiffe(orig_op0,
+                   Builder2.CreateInsertElement(dif1,
+                                                getNullShadow(op1->getType()),
+                                                lookup(op2, Builder2)),
+                   Builder2, TR.addingType(size0, orig_op0));
 
       if (!gutils->isConstantValue(orig_op1))
         addToDiffe(orig_op1,
                    Builder2.CreateExtractElement(dif1, lookup(op2, Builder2)),
                    Builder2, TR.addingType(size1, orig_op1));
 
-      setDiffe(&IEI,
-               Constant::getNullValue(gutils->getShadowType(IEI.getType())),
-               Builder2);
+      setDiffe(&IEI, getNullShadow(IEI.getType()), Builder2);
       return;
     }
     case DerivativeMode::ReverseModePrimal: {
@@ -1509,9 +1490,7 @@ public:
         }
         ++instidx;
       }
-      setDiffe(&SVI,
-               Constant::getNullValue(gutils->getShadowType(SVI.getType())),
-               Builder2);
+      setDiffe(&SVI, getNullShadow(SVI.getType()), Builder2);
       return;
     }
     case DerivativeMode::ReverseModePrimal: {
@@ -1559,9 +1538,7 @@ public:
                          sv);
       }
 
-      setDiffe(&EVI,
-               Constant::getNullValue(gutils->getShadowType(EVI.getType())),
-               Builder2);
+      setDiffe(&EVI, getNullShadow(EVI.getType()), Builder2);
       return;
     }
     case DerivativeMode::ReverseModePrimal: {
@@ -1700,9 +1677,7 @@ public:
         addToDiffe(orig_agg, dindex, Builder2, TR.addingType(size1, orig_agg));
       }
 
-      setDiffe(&IVI,
-               Constant::getNullValue(gutils->getShadowType(IVI.getType())),
-               Builder2);
+      setDiffe(&IVI, getNullShadow(IVI.getType()), Builder2);
       return;
     }
     case DerivativeMode::ReverseModePrimal: {
@@ -1729,12 +1704,16 @@ public:
     ((DiffeGradientUtils *)gutils)->setDiffe(val, dif, Builder);
   }
 
+  Constant *getNullShadow(Type *ty) {
+    return ((GradientUtils *)gutils)->getNullShadow(ty);
+  }
+
   /// Unwraps a vector derivative from its internal representation and applies a
   /// function f to each element. Return values of f are collected and wrapped.
   template <typename Func, typename... Args>
   Value *applyChainRule(Type *diffType, IRBuilder<> &Builder, Func rule,
                         Args... args) {
-    return ((DiffeGradientUtils *)gutils)
+    return ((GradientUtils *)gutils)
         ->applyChainRule(diffType, Builder, rule, args...);
   }
 
@@ -1742,7 +1721,7 @@ public:
   /// function f to each element.
   template <typename Func, typename... Args>
   void applyChainRule(IRBuilder<> &Builder, Func rule, Args... args) {
-    ((DiffeGradientUtils *)gutils)->applyChainRule(Builder, rule, args...);
+    ((GradientUtils *)gutils)->applyChainRule(Builder, rule, args...);
   }
 
   /// Unwraps an collection of constant vector derivatives from their internal
@@ -1750,7 +1729,7 @@ public:
   template <typename Func>
   void applyChainRule(ArrayRef<Value *> diffs, IRBuilder<> &Builder,
                       Func rule) {
-    ((DiffeGradientUtils *)gutils)->applyChainRule(diffs, Builder, rule);
+    ((GradientUtils *)gutils)->applyChainRule(diffs, Builder, rule);
   }
 
   bool shouldFree() {
@@ -1985,18 +1964,12 @@ public:
           if (CI && dl.getTypeSizeInBits(eFT) ==
                         dl.getTypeSizeInBits(CI->getType())) {
             if (CI->isNegative() && CI->isMinValue(/*signed*/ true)) {
-              setDiffe(
-                  &BO,
-                  Constant::getNullValue(gutils->getShadowType(BO.getType())),
-                  Builder2);
+              setDiffe(&BO, getNullShadow(BO.getType()), Builder2);
               // Derivative is zero, no update
               return;
             }
             if (eFT->isDoubleTy() && CI->getValue() == -134217728) {
-              setDiffe(
-                  &BO,
-                  Constant::getNullValue(gutils->getShadowType(BO.getType())),
-                  Builder2);
+              setDiffe(&BO, getNullShadow(BO.getType()), Builder2);
               // Derivative is zero (equivalent to rounding as just chopping off
               // bits of mantissa), no update
               return;
@@ -2034,10 +2007,7 @@ public:
           if (CI && dl.getTypeSizeInBits(eFT) ==
                         dl.getTypeSizeInBits(CI->getType())) {
             if (CI->isNegative() && CI->isMinValue(/*signed*/ true)) {
-              setDiffe(
-                  &BO,
-                  Constant::getNullValue(gutils->getShadowType(BO.getType())),
-                  Builder2);
+              setDiffe(&BO, getNullShadow(BO.getType()), Builder2);
               auto rule = [&](Value *idiff) {
                 auto neg =
                     Builder2.CreateFNeg(Builder2.CreateBitCast(idiff, FT));
@@ -2062,10 +2032,7 @@ public:
               }
             }
             if (validXor) {
-              setDiffe(
-                  &BO,
-                  Constant::getNullValue(gutils->getShadowType(BO.getType())),
-                  Builder2);
+              setDiffe(&BO, getNullShadow(BO.getType()), Builder2);
               auto rule = [&](Value *idiff) {
                 Value *V = UndefValue::get(CV->getType());
                 for (size_t i = 0, end = CV->getNumOperands(); i < end; ++i) {
@@ -2102,10 +2069,7 @@ public:
               }
             }
             if (validXor) {
-              setDiffe(
-                  &BO,
-                  Constant::getNullValue(gutils->getShadowType(BO.getType())),
-                  Builder2);
+              setDiffe(&BO, getNullShadow(BO.getType()), Builder2);
 
               auto rule = [&](Value *idiff) {
                 Value *V = UndefValue::get(CV->getType());
@@ -2178,10 +2142,7 @@ public:
               validXor = true;
             }
             if (validXor) {
-              setDiffe(
-                  &BO,
-                  Constant::getNullValue(gutils->getShadowType(BO.getType())),
-                  Builder2);
+              setDiffe(&BO, getNullShadow(BO.getType()), Builder2);
 
               auto arg = lookup(
                   gutils->getNewFromOriginal(BO.getOperand(1 - i)), Builder2);
@@ -2259,8 +2220,7 @@ public:
 
   done:;
     if (dif0 || dif1)
-      setDiffe(&BO, Constant::getNullValue(gutils->getShadowType(BO.getType())),
-               Builder2);
+      setDiffe(&BO, getNullShadow(BO.getType()), Builder2);
     if (dif0)
       addToDiffe(orig_op0, dif0, Builder2, addingType);
     if (dif1)
@@ -2388,7 +2348,6 @@ public:
       // If & against 0b10000000000 and a float the result is 0
       auto &dl = gutils->oldFunc->getParent()->getDataLayout();
       auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
-      Type *diffTy = gutils->getShadowType(BO.getType());
 
       auto FT = TR.query(&BO).IsAllFloat(size);
       auto eFT = FT;
@@ -2398,12 +2357,12 @@ public:
           if (CI && dl.getTypeSizeInBits(eFT) ==
                         dl.getTypeSizeInBits(CI->getType())) {
             if (CI->isNegative() && CI->isMinValue(/*signed*/ true)) {
-              setDiffe(&BO, Constant::getNullValue(diffTy), Builder2);
+              setDiffe(&BO, getNullShadow(BO.getType()), Builder2);
               // Derivative is zero, no update
               return;
             }
             if (eFT->isDoubleTy() && CI->getValue() == -134217728) {
-              setDiffe(&BO, Constant::getNullValue(diffTy), Builder2);
+              setDiffe(&BO, getNullShadow(BO.getType()), Builder2);
               // Derivative is zero (equivalent to rounding as just chopping off
               // bits of mantissa), no update
               return;
@@ -3197,8 +3156,7 @@ public:
       Value *vdiff = nullptr;
       if (!gutils->isConstantValue(&I)) {
         vdiff = diffe(&I, Builder2);
-        setDiffe(&I, Constant::getNullValue(gutils->getShadowType(I.getType())),
-                 Builder2);
+        setDiffe(&I, getNullShadow(I.getType()), Builder2);
       }
 
       switch (ID) {
@@ -3325,13 +3283,9 @@ public:
           Value *dif0 =
               applyChainRule(orig_ops[0]->getType(), Builder2, rule, vdiff);
           Value *cmp = Builder2.CreateFCmpOEQ(
-              args[0], Constant::getNullValue(
-                           gutils->getShadowType(orig_ops[0]->getType())));
+              args[0], getNullShadow(orig_ops[0]->getType()));
           dif0 = Builder2.CreateSelect(
-              cmp,
-              Constant::getNullValue(
-                  gutils->getShadowType(orig_ops[0]->getType())),
-              dif0);
+              cmp, getNullShadow(orig_ops[0]->getType()), dif0);
 
           addToDiffe(orig_ops[0], dif0, Builder2, I.getType());
         }
@@ -3369,10 +3323,7 @@ public:
               lookup(gutils->getNewFromOriginal(orig_ops[1]), Builder2));
 
           Value *dif0 = Builder2.CreateSelect(
-              cmp,
-              Constant::getNullValue(
-                  gutils->getShadowType(orig_ops[0]->getType())),
-              vdiff);
+              cmp, getNullShadow(orig_ops[0]->getType()), vdiff);
           addToDiffe(orig_ops[0], dif0, Builder2, I.getType());
         }
         if (vdiff && !gutils->isConstantValue(orig_ops[1])) {
@@ -3381,9 +3332,7 @@ public:
               lookup(gutils->getNewFromOriginal(orig_ops[1]), Builder2));
 
           Value *dif1 = Builder2.CreateSelect(
-              cmp, vdiff,
-              Constant::getNullValue(
-                  gutils->getShadowType(orig_ops[1]->getType())));
+              cmp, vdiff, getNullShadow(orig_ops[1]->getType()));
           addToDiffe(orig_ops[1], dif1, Builder2, I.getType());
         }
         return;
@@ -3400,9 +3349,7 @@ public:
               lookup(gutils->getNewFromOriginal(orig_ops[1]), Builder2));
 
           Value *dif0 = Builder2.CreateSelect(
-              cmp, vdiff,
-              Constant::getNullValue(
-                  gutils->getShadowType(orig_ops[0]->getType())));
+              cmp, vdiff, getNullShadow(orig_ops[0]->getType()));
           addToDiffe(orig_ops[0], dif0, Builder2, I.getType());
         }
         if (vdiff && !gutils->isConstantValue(orig_ops[1])) {
@@ -3411,10 +3358,7 @@ public:
               lookup(gutils->getNewFromOriginal(orig_ops[1]), Builder2));
 
           Value *dif1 = Builder2.CreateSelect(
-              cmp,
-              Constant::getNullValue(
-                  gutils->getShadowType(orig_ops[1]->getType())),
-              vdiff);
+              cmp, getNullShadow(orig_ops[1]->getType()), vdiff);
           addToDiffe(orig_ops[1], dif1, Builder2, I.getType());
         }
         return;
@@ -3753,15 +3697,12 @@ public:
         if (gutils->isConstantInstruction(&I))
           return;
 
-        Type *acctype = gutils->getShadowType(orig_ops[0]->getType());
-        Type *vectype = gutils->getShadowType(orig_ops[1]->getType());
-
         auto accdif = gutils->isConstantValue(orig_ops[0])
-                          ? Constant::getNullValue(acctype)
+                          ? getNullShadow(orig_ops[0]->getType())
                           : diffe(orig_ops[0], Builder2);
 
         auto vecdif = gutils->isConstantValue(orig_ops[1])
-                          ? Constant::getNullValue(vectype)
+                          ? getNullShadow(orig_ops[1]->getType())
                           : diffe(orig_ops[1], Builder2);
 
 #if LLVM_VERSION_MAJOR < 12
@@ -3855,14 +3796,11 @@ public:
         Value *op1 = gutils->getNewFromOriginal(orig_ops[1]);
         Value *cmp = Builder2.CreateFCmpOLT(op0, op1);
 
-        Type *opType0 = gutils->getShadowType(orig_ops[0]->getType());
-        Type *opType1 = gutils->getShadowType(orig_ops[1]->getType());
-
         Value *diffe0 = gutils->isConstantValue(orig_ops[0])
-                            ? Constant::getNullValue(opType0)
+                            ? getNullShadow(orig_ops[0]->getType())
                             : diffe(orig_ops[0], Builder2);
         Value *diffe1 = gutils->isConstantValue(orig_ops[1])
-                            ? Constant::getNullValue(opType1)
+                            ? getNullShadow(orig_ops[1]->getType())
                             : diffe(orig_ops[1], Builder2);
 
         auto rule = [&](Value *diffe0, Value *diffe1) {
@@ -3886,14 +3824,11 @@ public:
         Value *op1 = gutils->getNewFromOriginal(orig_ops[1]);
         Value *cmp = Builder2.CreateFCmpOLT(op0, op1);
 
-        Type *opType0 = gutils->getShadowType(orig_ops[0]->getType());
-        Type *opType1 = gutils->getShadowType(orig_ops[1]->getType());
-
         Value *diffe0 = gutils->isConstantValue(orig_ops[0])
-                            ? Constant::getNullValue(opType0)
+                            ? getNullShadow(orig_ops[0]->getType())
                             : diffe(orig_ops[0], Builder2);
         Value *diffe1 = gutils->isConstantValue(orig_ops[1])
-                            ? Constant::getNullValue(opType1)
+                            ? getNullShadow(orig_ops[1]->getType())
                             : diffe(orig_ops[1], Builder2);
 
         auto rule = [&](Value *diffe0, Value *diffe1) {
@@ -3915,27 +3850,23 @@ public:
         Value *op0 = gutils->getNewFromOriginal(orig_ops[0]);
         Value *op1 = gutils->getNewFromOriginal(orig_ops[1]);
 
-        Type *opType0 = gutils->getShadowType(orig_ops[0]->getType());
-        Type *opType1 = gutils->getShadowType(orig_ops[1]->getType());
-        Type *opType2 = gutils->getShadowType(orig_ops[2]->getType());
-
         Value *dif0 = gutils->isConstantValue(orig_ops[0])
-                          ? Constant::getNullValue(opType0)
+                          ? getNullShadow(orig_ops[0]->getType())
                           : diffe(orig_ops[0], Builder2);
         Value *dif1 = gutils->isConstantValue(orig_ops[1])
-                          ? Constant::getNullValue(opType1)
+                          ? getNullShadow(orig_ops[1]->getType())
                           : diffe(orig_ops[1], Builder2);
         Value *dif2 = gutils->isConstantValue(orig_ops[2])
-                          ? Constant::getNullValue(opType2)
+                          ? getNullShadow(orig_ops[2]->getType())
                           : diffe(orig_ops[2], Builder2);
 
         auto rule = [&](Value *dif0, Value *dif1, Value *dif2) {
           Value *dif =
               Builder2.CreateFAdd(gutils->isConstantValue(orig_ops[1])
-                                      ? Constant::getNullValue(opType1)
+                                      ? getNullShadow(orig_ops[1]->getType())
                                       : Builder2.CreateFMul(op0, dif1),
                                   gutils->isConstantValue(orig_ops[0])
-                                      ? Constant::getNullValue(opType2)
+                                      ? getNullShadow(orig_ops[2]->getType())
                                       : Builder2.CreateFMul(op1, dif0));
           return Builder2.CreateFAdd(dif, dif2);
         };
@@ -4117,8 +4048,7 @@ public:
         Value *op0 = gutils->getNewFromOriginal(orig_ops[0]);
         Value *op1 = gutils->getNewFromOriginal(orig_ops[1]);
 
-        Value *res =
-            Constant::getNullValue(gutils->getShadowType(CI.getType()));
+        Value *res = getNullShadow(CI.getType());
 
         auto &DL = gutils->newFunc->getParent()->getDataLayout();
 
@@ -5132,10 +5062,7 @@ public:
 
           if (!gutils->isConstantValue(&call)) {
             if (gutils->isConstantValue(call.getOperand(1))) {
-              setDiffe(
-                  &call,
-                  Constant::getNullValue(gutils->getShadowType(call.getType())),
-                  BuilderZ);
+              setDiffe(&call, getNullShadow(call.getType()), BuilderZ);
             } else {
               auto Defs = gutils->getInvertedBundles(
                   &call,
@@ -5736,10 +5663,7 @@ public:
               },
               dx, dy, dif);
 
-          setDiffe(
-              &call,
-              Constant::getNullValue(gutils->getShadowType(call.getType())),
-              Builder2);
+          setDiffe(&call, getNullShadow(call.getType()), Builder2);
         }
 
         if (Mode == DerivativeMode::ReverseModeCombined ||
@@ -9468,10 +9392,7 @@ public:
                 Mode == DerivativeMode::ForwardModeSplit) {
               setDiffe(orig, cal, Builder2);
             } else {
-              setDiffe(orig,
-                       Constant::getNullValue(
-                           gutils->getShadowType(orig->getType())),
-                       Builder2);
+              setDiffe(orig, getNullShadow(orig->getType()), Builder2);
               addToDiffe(orig->getArgOperand(0), cal, Builder2, x->getType());
             }
             return;
@@ -9534,10 +9455,7 @@ public:
             Value *dorig = diffe(orig, Builder2);
             dx = applyChainRule(orig->getArgOperand(0)->getType(), Builder2,
                                 rule, dorig);
-            setDiffe(
-                orig,
-                Constant::getNullValue(gutils->getShadowType(orig->getType())),
-                Builder2);
+            setDiffe(orig, getNullShadow(orig->getType()), Builder2);
             addToDiffe(orig->getArgOperand(0), dx, Builder2, x->getType());
             return;
           }
@@ -9626,10 +9544,7 @@ public:
             Value *dorig = diffe(orig, Builder2);
             dx = applyChainRule(orig->getArgOperand(0)->getType(), Builder2,
                                 rule, dorig);
-            setDiffe(
-                orig,
-                Constant::getNullValue(gutils->getShadowType(orig->getType())),
-                Builder2);
+            setDiffe(orig, getNullShadow(orig->getType()), Builder2);
             addToDiffe(orig->getArgOperand(0), dx, Builder2, x->getType());
             return;
           }
@@ -9703,10 +9618,7 @@ public:
             Value *dorig = diffe(orig, Builder2);
             dx = applyChainRule(orig->getArgOperand(1)->getType(), Builder2,
                                 rule, dorig);
-            setDiffe(
-                orig,
-                Constant::getNullValue(gutils->getShadowType(orig->getType())),
-                Builder2);
+            setDiffe(orig, getNullShadow(orig->getType()), Builder2);
             addToDiffe(orig->getArgOperand(1), dx, Builder2, x->getType());
             return;
           }
@@ -9866,10 +9778,7 @@ public:
             Value *vdiff = diffe(orig, Builder2);
             Value *dif0 = applyChainRule(orig->getArgOperand(0)->getType(),
                                          Builder2, rule, vdiff);
-            setDiffe(
-                orig,
-                Constant::getNullValue(gutils->getShadowType(orig->getType())),
-                Builder2);
+            setDiffe(orig, getNullShadow(orig->getType()), Builder2);
             addToDiffe(orig->getArgOperand(0), dif0, Builder2, x->getType());
             return;
           }
@@ -9951,10 +9860,7 @@ public:
             };
             Value *vdiff = diffe(orig, Builder2);
             Value *div = applyChainRule(orig->getType(), Builder2, rule, vdiff);
-            setDiffe(
-                orig,
-                Constant::getNullValue(gutils->getShadowType(orig->getType())),
-                Builder2);
+            setDiffe(orig, getNullShadow(orig->getType()), Builder2);
 
             if (args.size() == 2) {
               for (int i = 0; i < 2; i++)
@@ -10022,10 +9928,7 @@ public:
             Value *vdiff = diffe(orig, Builder2);
             Value *darg = applyChainRule(orig->getArgOperand(0)->getType(),
                                          Builder2, rule, vdiff);
-            setDiffe(
-                orig,
-                Constant::getNullValue(gutils->getShadowType(orig->getType())),
-                Builder2);
+            setDiffe(orig, getNullShadow(orig->getType()), Builder2);
             addToDiffe(orig->getArgOperand(0), darg, Builder2, orig->getType());
             return;
           }
@@ -11167,8 +11070,12 @@ public:
       if (subretused && subretType != DIFFE_TYPE::CONSTANT) {
         primal = Builder2.CreateExtractValue(diffes, 0);
         diffe = Builder2.CreateExtractValue(diffes, 1);
+        if (gutils->getWidth() > 1)
+          gutils->wrappedvalues.insert(diffe);
       } else if (subretType != DIFFE_TYPE::CONSTANT) {
         diffe = diffes;
+        if (gutils->getWidth() > 1)
+          gutils->wrappedvalues.insert(diffe);
       } else if (!FT->getReturnType()->isVoidTy()) {
         primal = diffes;
       }
@@ -11916,9 +11823,7 @@ public:
     }
 
     if (subretType == DIFFE_TYPE::OUT_DIFF)
-      setDiffe(orig,
-               Constant::getNullValue(gutils->getShadowType(orig->getType())),
-               Builder2);
+      setDiffe(orig, getNullShadow(orig->getType()), Builder2);
 
     if (replaceFunction) {
 

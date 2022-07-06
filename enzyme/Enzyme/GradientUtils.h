@@ -1049,6 +1049,10 @@ public:
         assert(foundB == newToOriginalFn.end());
       }
     }
+    if (wrappedvalues.contains(A)) {
+      wrappedvalues.insert(B);
+      wrappedvalues.erase(A);
+    }
 
     CacheUtility::replaceAWithB(A, B, storeInCache);
   }
@@ -1508,6 +1512,8 @@ public:
             Type *antiTy = getShadowType(inst->getType());
             PHINode *anti =
                 BuilderZ.CreatePHI(antiTy, 1, inst->getName() + "'dual_phi");
+            if (width > 1)
+              wrappedvalues.insert(anti);
             invertedPointers.insert(std::make_pair(
                 (const Value *)inst, InvertedPointerVH(this, anti)));
           }
@@ -1527,6 +1533,8 @@ public:
           Type *antiTy = getShadowType(inst->getType());
           PHINode *anti =
               BuilderZ.CreatePHI(antiTy, 1, inst->getName() + "'il_phi");
+          if (width > 1)
+            wrappedvalues.insert(anti);
           invertedPointers.insert(std::make_pair(
               (const Value *)inst, InvertedPointerVH(this, anti)));
           continue;
@@ -1557,6 +1565,8 @@ public:
 
         PHINode *anti =
             BuilderZ.CreatePHI(antiTy, 1, op->getName() + "'ip_phi");
+        if (width > 1)
+          wrappedvalues.insert(anti);
         invertedPointers.insert(
             std::make_pair((const Value *)inst, InvertedPointerVH(this, anti)));
 
@@ -1884,6 +1894,13 @@ public:
     return Builder.CreateExtractValue(Agg, {off});
   }
 
+  Constant *getNullShadow(Type *ty) {
+    auto val = Constant::getNullValue(getShadowType(ty));
+    if (width > 1)
+      wrappedvalues.insert(val);
+    return val;
+  }
+
   /// Unwraps a vector derivative from its internal representation and applies a
   /// function f to each element. Return values of f are collected and wrapped.
   template <typename Func, typename... Args>
@@ -1895,8 +1912,10 @@ public:
     bool allUnwrapped = true;
     bool allWrapped = true;
     for (size_t i = 0; i < size; ++i) {
-      allWrapped = allWrapped && wrappedvalues.contains(vals[i]);
-      allUnwrapped = allUnwrapped && !wrappedvalues.contains(vals[i]);
+      if (vals[i]) {
+        allWrapped = allWrapped && wrappedvalues.contains(vals[i]);
+        allUnwrapped = allUnwrapped && !wrappedvalues.contains(vals[i]);
+      }
     }
 
     assert(size == 0 || allUnwrapped != allWrapped);
@@ -1910,6 +1929,8 @@ public:
         memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
       return rule(args...);
 
+    if (!allWrapped)
+      dumpSet(wrappedvalues);
     assert(allWrapped);
 
     for (size_t i = 0; i < size; ++i)
@@ -1918,13 +1939,16 @@ public:
 
     Type *wrappedType = ArrayType::get(diffType, width);
     Value *res = UndefValue::get(wrappedType);
+    if (getWidth() > 1)
+      wrappedvalues.insert(res);
     for (unsigned int i = 0; i < getWidth(); ++i) {
       auto tup = std::tuple<Args...>{
           (args ? extractMeta(Builder, args, i) : nullptr)...};
       auto diff = std::apply(rule, std::move(tup));
       res = Builder.CreateInsertValue(res, diff, {i});
+      if (getWidth() > 1)
+        wrappedvalues.insert(res);
     }
-    wrappedvalues.insert(res);
     return res;
   }
 
@@ -1938,8 +1962,10 @@ public:
     bool allUnwrapped = true;
     bool allWrapped = true;
     for (size_t i = 0; i < size; ++i) {
-      allWrapped = allWrapped && wrappedvalues.contains(vals[i]);
-      allUnwrapped = allUnwrapped && !wrappedvalues.contains(vals[i]);
+      if (vals[i]) {
+        allWrapped = allWrapped && wrappedvalues.contains(vals[i]);
+        allUnwrapped = allUnwrapped && !wrappedvalues.contains(vals[i]);
+      }
     }
 
     assert(size == 0 || allUnwrapped != allWrapped);
@@ -1996,6 +2022,8 @@ public:
 
     Type *wrappedType = ArrayType::get(diffType, width);
     Value *res = UndefValue::get(wrappedType);
+    if (getWidth() > 1)
+      wrappedvalues.insert(res);
     for (unsigned int i = 0; i < getWidth(); ++i) {
       SmallVector<Constant *, 3> extracted_diffs;
       for (auto diff : diffs) {
@@ -2004,8 +2032,9 @@ public:
       }
       auto diff = rule(extracted_diffs);
       res = Builder.CreateInsertValue(res, diff, {i});
+      if (getWidth() > 1)
+        wrappedvalues.insert(res);
     }
-    wrappedvalues.insert(res);
     return res;
   }
 };
@@ -2073,7 +2102,7 @@ private:
 #else
       differentials[val]->setAlignment(Alignment);
 #endif
-      entryBuilder.CreateStore(Constant::getNullValue(type),
+      entryBuilder.CreateStore(getNullShadow(val->getType()),
                                differentials[val]);
     }
     assert(differentials[val]->getType()->getPointerElementType() == type);
@@ -2093,8 +2122,13 @@ public:
       assert(0 && "getting diffe of constant value");
     }
     if (mode == DerivativeMode::ForwardMode ||
-        mode == DerivativeMode::ForwardModeSplit)
-      return invertPointerM(val, BuilderM);
+        mode == DerivativeMode::ForwardModeSplit) {
+      auto ip = invertPointerM(val, BuilderM);
+      if (getWidth() > 1 &&
+          memoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode)
+        assert(wrappedvalues.contains(ip));
+      return ip;
+    }
     if (val->getType()->isPointerTy()) {
       llvm::errs() << *newFunc << "\n";
       llvm::errs() << *val << "\n";
@@ -2103,10 +2137,14 @@ public:
     assert(!val->getType()->isVoidTy());
 #if LLVM_VERSION_MAJOR > 7
     Type *ty = getShadowType(val->getType());
-    return BuilderM.CreateLoad(ty, getDifferential(val));
+    auto load = BuilderM.CreateLoad(ty, getDifferential(val));
 #else
-    return BuilderM.CreateLoad(getDifferential(val));
+    auto load = BuilderM.CreateLoad(getDifferential(val));
 #endif
+    if (getWidth() > 1 &&
+        memoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode)
+      wrappedvalues.insert(load);
+    return load;
   }
 
   // Returns created select instructions, if any
@@ -2352,6 +2390,14 @@ public:
       llvm::errs() << *val << "\n";
     }
     assert(!isConstantValue(val));
+
+    if (getWidth() > 1 &&
+        memoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode) {
+      if (!wrappedvalues.contains(toset))
+        dumpSet(wrappedvalues);
+      assert(wrappedvalues.contains(toset));
+    }
+
     if (mode == DerivativeMode::ForwardMode ||
         mode == DerivativeMode::ForwardModeSplit) {
       assert(getShadowType(val->getType()) == toset->getType());

@@ -288,6 +288,7 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
             "UndefValue::get(ArrayType::get(V->getType(), "
             "gutils->getWidth()));\n";
       os << "   res = " << builder << ".CreateInsertValue(res, V, {idx});\n";
+      os << "   gutils->wrappedvalues.insert(res);\n";
       os << " }\n }\n";
     }
     os << " res; })";
@@ -374,12 +375,13 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
       os << "          else if (gutils->getWidth() == 1) res = "
             "Builder2.CreateFAdd(res, tmp);\n";
       os << "          else {\n";
-      if (vectorValued)
+      if (vectorValued) {
         os << "            Value *out = UndefValue::get(res->getType());\n";
-      else
+        os << "            gutils->wrappedvalues.insert(out);\n";
+      } else {
         os << "            Value *out = "
               "UndefValue::get(gutils->getShadowType(res->getType()));\n";
-
+      }
       os << "            for(unsigned int idx=0, W=gutils->getWidth(); idx<W; "
             "idx++) {\n";
       os << "              Value *V = "
@@ -390,6 +392,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
         os << "tmp";
       os << ");\n";
       os << "              out = Builder2.CreateInsertValue(out, V, {idx});\n";
+      os << "              gutils->wrappedvalues.insert(out);\n";
       os << "            }\n";
       os << "            res = out;\n";
       os << "          }\n";
@@ -421,7 +424,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
       if (hasDiffeRet(resultTree)) {
         os << "          dif = diffe(orig, Builder2);\n";
         os << "          setDiffe(orig, "
-              "Constant::getNullValue(gutils->getShadowType(orig->getType())), "
+              "getNullShadow(orig->getType()), "
               "Builder2);\n";
       }
     }
@@ -449,6 +452,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
         os << "              toadd = Builder2.CreateInsertValue(toadd, tmp, "
               "{idx});\n";
         os << "            }\n";
+        os << "            gutils->wrappedvalues.insert(toadd);\n";
         os << "          }\n";
       }
 
