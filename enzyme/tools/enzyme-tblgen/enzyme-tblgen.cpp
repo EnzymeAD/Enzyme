@@ -11,6 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FormatVariadic.h"
@@ -20,6 +21,9 @@
 #include "llvm/TableGen/Main.h"
 #include "llvm/TableGen/Record.h"
 #include "llvm/TableGen/TableGenBackend.h"
+
+// clang-format off
+//
 
 using namespace llvm;
 
@@ -216,11 +220,11 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
         os << ", ";
       os << "args[" << i << "]";
     }
-    if (opName == "Call" || Def->isSubClassOf("Call"))
+    if (opName == "Call" || Def->isSubClassOf("Call")) {
       os << "})";
-    os << ")";
-    if (opName == "Call" || Def->isSubClassOf("Call"))
       os << ")";
+    }
+    os << ")";
     os << ";\n";
     if (opName == "Call" || Def->isSubClassOf("Call")) {
       os << " cubcall->setDebugLoc(gutils->getNewFromOriginal(orig->"
@@ -297,11 +301,8 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
   PrintFatalError(pattern->getLoc(), Twine("unknown dag"));
 }
 
-static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
-  emitSourceFileHeader("Rewriters", os);
-  const auto &patterns = recordKeeper.getAllDerivedDefinitions("CallPattern");
-  Record *attrClass = recordKeeper.getClass("Attr");
-
+void emitFullDerivatives(const std::vector<Record *> &patterns,
+                         raw_ostream &os) {
   // Ensure unique patterns simply by appending unique suffix.
   unsigned rewritePatternCount = 0;
   std::string baseRewriteName = "GeneratedConvert";
@@ -328,7 +329,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
     os << "  if (";
 
     bool prev = false;
-    for (auto *nameI : *cast<ListInit>(pattern->getValueAsListInit("names"))) {
+    for (auto *nameI : *cast<ListInit>(pattern->getValueAsListInit("name"))) {
       if (prev)
         os << " ||\n      ";
       os << "funcName == " << cast<StringInit>(nameI)->getAsString() << "";
@@ -468,6 +469,860 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
 
     os << "    return;\n  }\n";
   }
+}
+
+
+void emitEnumMatcher(const std::vector<Record *> &blas_modes, raw_ostream &os) {
+  for (auto mode : blas_modes) {
+    auto name = mode->getName();
+    auto sub_modes = mode->getValueAsListOfStrings("modes");
+    llvm::errs() << "std::string read_" << name
+                 << "(llvm::CallInst &call, size_t pos) {\n"
+                 << "  std::string s = call.getArgOperand(pos)->getValue();\n";
+    for (auto sub_mode : sub_modes) {
+      llvm::errs() << "  if (s == \"" << sub_mode << "\")\n"
+                   << "    return \"" << sub_mode << "\";\n";
+    }
+    llvm::errs() << "  assert(false && \"failed reading " << name << "\");\n"
+                 << "}\n\n";
+  }
+}
+
+void writeEnums(Record *pattern, const std::vector<Record *> &blas_modes,
+                raw_ostream &os) {
+  std::vector<Record *> inputTypes =
+      pattern->getValueAsListOfDefs("inputTypes");
+  for (auto inputType : inputTypes) {
+    if (inputType->isSubClassOf("blas_modes")) {
+      llvm::errs() << inputType->getName() << ": ";
+      for (auto a : inputType->getValueAsListOfStrings("modes")) {
+        llvm::errs() << a << " ";
+      }
+      llvm::errs() << "\n";
+    }
+  }
+  DagInit *tree = pattern->getValueAsDag("PatternToMatch");
+  for (int i = 0, e = tree->getNumArgs(); i != e; ++i) {
+    // llvm::errs() << tree->getArgNameStr(i) << " ";
+    //  auto optns = blas_arg->getValueAsListOfStrings("modes");
+    //  for (auto optn : optns)
+    //    llvm::errs() << optn << " ";
+    //  }
+  }
+}
+
+void emit_castvals(Record *pattern, std::vector<size_t> activeArgs,
+                   raw_ostream &os) {
+  llvm::errs() << "Type *castvalls[" << activeArgs.size() << "];\n";
+
+  for (auto argPos : llvm::enumerate(activeArgs)) {
+    size_t argIdx = argPos.index();
+    llvm::errs() << "if (auto PT = dyn_cast<PointerType>(call.getArgOperand("
+                 << argPos.value() << ")->getType()))\n"
+                 << "  castvals[" << argIdx << "] = PT;\n"
+                 << "else\n"
+                 << "  castvals[" << argIdx
+                 << "] = PointerType::getUnqual(innerType);\n";
+  }
+  //              << "Value *undefinit = UndefValue::get(cachetype);\n"
+  llvm::errs() << "Value *cacheval;\n\n";
+}
+
+void emit_inttype(Record *pattern, raw_ostream &os) {
+  // We only look at the type of the first integer showing up.
+  // This allows to learn if we use Fortran abi (byRef) or cabi
+  size_t firstIntPos = 0;
+  bool found = false;
+  std::vector<Record *> inputTypes =
+      pattern->getValueAsListOfDefs("inputTypes");
+  for (auto val : inputTypes) {
+    if (val->getName() == "len") {
+      found = true;
+      // llvm::errs() << "first integer at: " << firstIntPos << "\n";
+      break;
+    }
+    firstIntPos += val->getValueAsInt("nelem");
+  }
+  assert(found && "no int type found in blas call");
+
+  llvm::errs()
+      << "IntegerType *intType = dyn_cast<IntegerType>(call.getOperand("
+      << firstIntPos << ")->getType());\n"
+      << "bool byRef = false;\n" // Fortran Abi?
+      << "if (!intType) {\n"
+      << "  auto PT = cast<PointerType>(call.getOperand(" << firstIntPos
+      << ")->getType());\n"
+      << "  if (blas.suffix.contains(\"64\"))\n"
+      << "    intType = IntegerType::get(PT->getContext(), 64);\n"
+      << "  else\n"
+      << "    intType = IntegerType::get(PT->getContext(), 32);\n"
+      << "  byRef = true;\n"
+      << "}\n\n";
+}
+
+
+void emit_beginning(Record *pattern, raw_ostream &os) {
+  auto name = pattern->getName();
+  llvm::errs()
+      << "\nbool handle_" << name
+      << "(BlasInfo blas, llvm::CallInst &call, "
+         "Function *called,\n"
+      << "const std::map<Argument *, bool> &uncacheable_args,\n"
+      << "Type *innerType) {\n"
+      << "CallInst *const newCall = "
+         "cast<CallInst>(gutils->getNewFromOriginal(&call));\n"
+      << "IRBuilder<> BuilderZ(newCall);\n"
+      << "BuilderZ.setFastMathFlags(getFast());\n"
+      << "IRBuilder<> allocationBuilder(gutils->inversionAllocs);\n"
+      << "allocationBuilder.setFastMathFlags(getFast());\n\n"
+      << "auto &DL = gutils->oldFunc->getParent()->getDataLayout();\n\n";
+}
+
+std::vector<size_t> getPossiblyActiveArgs(Record *pattern) {
+  std::vector<Record *> inputTypes =
+      pattern->getValueAsListOfDefs("inputTypes");
+  int numTypes = 0;
+  std::vector<size_t> activeArgs;
+  for (auto val : inputTypes) {
+    if (val->getValueAsBit("active"))
+      activeArgs.push_back(numTypes);
+    numTypes += val->getValueAsInt("nelem");
+  }
+
+  // verify correctness of declarations in td file
+  auto name = pattern->getName();
+  DagInit *tree = pattern->getValueAsDag("PatternToMatch");
+  int lenDagArgs = tree->getNumArgs();
+  llvm::errs() << activeArgs.size() << name;
+  assert(numTypes == lenDagArgs);
+  return activeArgs;
+}
+
+// only for testing
+#include "llvm/IR/Type.h"
+
+void emit_ending(Record *pattern, raw_ostream &os) {
+
+  llvm::errs() << "if (gutils->knownRecomputeHeuristic.find(&call) !=\n"
+               << "gutils->knownRecomputeHeuristic.end()) {\n"
+               << "if (!gutils->knownRecomputeHeuristic[&call]) {\n"
+               << "gutils->cacheForReverse(BuilderZ, newCall,\n"
+               << " getIndex(&call, CacheType::Self));\n"
+               << "}\n"
+               << "}\n";
+
+  llvm::errs() << "if (Mode == DerivativeMode::ReverseModeGradient) {\n"
+               << "  eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);\n"
+               << "} else {\n"
+               << "  eraseIfUnused(*orig);\n"
+               << "}\n"
+               << "return true;\n"
+               << "}\n\n";
+}
+
+void emit_vinc_caching(Record *pattern, std::vector<size_t> actArgs, 
+    llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, raw_ostream &os) {
+
+  std::vector<Record *> inputTypes =
+      pattern->getValueAsListOfDefs("inputTypes");
+  DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
+  size_t argPosition = 0;
+  std::vector<std::string> cacheVars{};
+
+  // Debug
+  // for (size_t i = 0; i < 6; i++) {
+  //   llvm::errs() << "arg " << i << " is used by: ";
+  //   llvm::SmallSet<size_t, 5> x = argUsers.lookup(i);
+  //   for (auto val : x) 
+  //     llvm::errs() << val << " ";
+  //   llvm::errs() << "\n";
+  // }
+
+  for (auto val : inputTypes) {
+    if (val->getName() == "vinc") {
+      auto vecName = argOps->getArgNameStr(argPosition);
+      auto vecPosition = argPosition;
+      auto vecUsers = argUsers.lookup(vecPosition);
+      auto incName = argOps->getArgNameStr(argPosition + 1);
+      auto incPosition = argPosition + 1;
+      auto incUsers = argUsers.lookup(incPosition);
+      llvm::errs() << " bool cache_" << vecName
+                   << " = Mode != DerivativeMode::ForwardMode &&\n"
+                   << "         uncacheable_" << vecName;
+      for (size_t user: vecUsers) {
+        auto name = argOps->getArgNameStr(user);
+        llvm::errs() << " && active_" << name;
+      }
+      llvm::errs() << ";\n";
+      llvm::errs() << " bool cache_" << incName << " = false;\n";
+      cacheVars.push_back("cache_" + vecName.str());
+      // xinc is needed to be preserved if
+      // 1) it is potentially overwritten AND EITHER
+      //     a) x is active (for performing the shadow increment) or
+      //     b) we're not caching x and need xinc to compute the
+      //     derivative of a different variable
+      llvm::errs() << " bool need_" << incName << " = (active_" << vecName;
+      if (incUsers.size() > 0) {
+        llvm::errs() << " || (!cache_" << vecName << " && (";
+        bool first = true;
+        for (size_t user: incUsers) {
+          auto name = argOps->getArgNameStr(user);
+          if (!first)
+            llvm::errs() << " || ";
+          llvm::errs() << "active_" << name;
+          first = false;
+        }
+        llvm::errs() << "));\n";
+      }
+
+      llvm::errs() 
+        << " if (byRef && uncacheable_" << incName << " && need_" << incName << ") {\n"
+        << "   cacheTypes.push_back(intType);\n"
+        << "   cache_" << incName << " = true;\n "
+        << " }\n\n";
+
+    }
+    argPosition += val->getValueAsInt("nelem");
+  }
+  llvm::errs() << "int numCached = ";
+  for (size_t i = 0; i < cacheVars.size(); i++) {
+    if (i > 0)
+      llvm::errs() << " + ";
+    llvm::errs() << "(int) " << cacheVars[i];
+  }
+  llvm::errs() << ";\n";
+  llvm::errs() << "bool anyCache = (numCached > 0);\n";
+}
+
+// This impl is slightly suboptimal as for lv3 blas it might cache one or two
+// integers that might not be needed under all circumstances. Shouldn't matter.
+void emit_count_caching(Record *pattern, std::vector<size_t> actArgs,
+                        raw_ostream &os) {
+  llvm::errs() << "   // count must be preserved if overwritten\n";
+  std::vector<Record *> inputTypes =
+      pattern->getValueAsListOfDefs("inputTypes");
+  DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
+  size_t argPosition = 0;
+  for (auto val : inputTypes) {
+    if (val->getName() == "len") {
+      auto name = argOps->getArgNameStr(argPosition);
+      llvm::errs() << " bool cache_" << name << " = false;\n";
+      llvm::errs() << " if (byRef && uncacheable_" << name << ") {\n"
+                   << "     cacheTypes.push_back(intType);\n"
+                   << "     cache_" << name << " = true;\n"
+                   << "   }\n";
+    }
+    argPosition += val->getValueAsInt("nelem");
+  }
+}
+
+void emit_cache_for_reverse(Record *pattern, std::vector<size_t> actArgs, 
+    llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, raw_ostream &os) {
+  llvm::errs() << "if ((Mode == DerivativeMode::ReverseModeCombined ||\n"
+               << "         Mode == DerivativeMode::ReverseModePrimal) && cachetype) {\n";
+
+  llvm::errs() << "SmallVector<Value *, 2> cacheValues;\n";
+  llvm::errs() << "auto size = ConstantInt::get(intType, "
+                  "DL.getTypeSizeInBits(innerType) / 8);\n";
+  
+  std::vector<Record *> inputTypes =
+      pattern->getValueAsListOfDefs("inputTypes");
+  DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
+
+  size_t argPosition = 0;
+  for (auto inputType : inputTypes) {
+    if (inputType->getName() == "len") {
+      auto name = argOps->getArgNameStr(argPosition);
+      llvm::errs() << "Value *count = gutils->getNewFromOriginal(arg_" << name << ");\n";
+      break;
+    }
+    argPosition += inputType->getValueAsInt("nelem");
+  }
+
+  argPosition = 0;
+  for (auto inputType : inputTypes) {
+
+    // cache count if needed
+    if (inputType->getName() == "len") {
+      llvm::errs()
+        << "          if (byRef) {\n"
+        << "            count = BuilderZ.CreatePointerCast(count, PointerType::getUnqual(intType));\n"
+        << "#if LLVM_VERSION_MAJOR > 7\n"
+        << "            count = BuilderZ.CreateLoad(intType, count);\n"
+        << "#else\n"
+        << "            count = BuilderZ.CreateLoad(count);\n"
+        << "#endif\n"
+        << "            if (countcache)\n"
+        << "              cacheValues.push_back(count);\n"
+        << "          }\n";
+    } else if (inputType->getName() == "vinc") {
+      auto vecName = argOps->getArgNameStr(argPosition);
+      auto incName = argOps->getArgNameStr(argPosition + 1);
+      auto incPosition = argPosition + 1;
+
+      // cache vinc's if needed.
+      llvm::errs() 
+        << "          Value *" << incName << " = gutils->getNewFromOriginal(" << incName <<");\n"
+        << "          if (byRef) {\n"
+        << "            " << incName << " = BuilderZ.CreatePointerCast(" << incName << ",\n"
+           "PointerType::getUnqual(intType));\n"
+        << "#if LLVM_VERSION_MAJOR > 7\n"
+        << "            " << incName << " = BuilderZ.CreateLoad(intType, " << incName << ");\n"
+        << "#else\n"
+        << "            " << incName << " = BuilderZ.CreateLoad(" << incName << ");\n"
+        << "#endif\n"
+        << "            if (cache_" << incName << ")\n"
+        << "              cacheValues.push_back(" << incName << ");\n"
+        << "          }\n";
+    } else {
+      // handle fp
+      continue;
+    }
+    argPosition += inputType->getValueAsInt("nelem");
+  }
+
+  size_t i = 0;
+  argPosition = 0;
+  for (auto inputType : inputTypes) {
+    if (inputType->getName() == "vinc") {
+      auto vecName = argOps->getArgNameStr(argPosition);
+      auto incName = argOps->getArgNameStr(argPosition + 1);
+      llvm::errs()
+      << " if (cache_" << vecName << ") {\n"
+      << "           auto dmemcpy = getOrInsertMemcpyStrided(\n"
+      << "               *gutils->oldFunc->getParent(), cast<PointerType>(castvals[" << i << "]),\n"
+      << "               size->getType(), 0, 0);\n"
+      << "           auto malins = CallInst::CreateMalloc(\n"
+      << "               gutils->getNewFromOriginal(&call), size->getType(), innerType,\n"
+      << "               size, count, nullptr, \"\");\n"
+      << "           Value *arg = BuilderZ.CreateBitCast(malins, castvals[" << i << "]);\n"
+      << "           Value *args[4] = {arg,\n"
+         "                              gutils->getNewFromOriginal(call.getArgOperand(" << argPosition << ")),\n"
+      << "                              count, " << incName << "};\n"
+
+      << "           if (args[1]->getType()->isIntegerTy())\n"
+      << "             args[1] = BuilderZ.CreateIntToPtr(args[1], castvals[" << i << "]);\n"
+
+      << "           BuilderZ.CreateCall(\n"
+      << "               dmemcpy, args,\n"
+      << "               gutils->getInvertedBundles(&call,\n"
+      << "                                          {ValueType::None, ValueType::Shadow,\n"
+      << "                                           ValueType::None, ValueType::None,\n"
+      << "                                           ValueType::None},\n"
+      << "                                          BuilderZ, /*lookup*/ false));\n"
+      << "           cacheValues.push_back(arg);\n"
+      << "         }\n";
+    }
+    argPosition += inputType->getValueAsInt("nelem");
+    i++;
+  }
+
+  llvm::errs()
+      << "      if (cacheValues.size() == 1) {\n"
+      << "        cacheval = cacheValues[0];\n"
+      << "      } else {\n"
+      << "        cacheval = UndefValue::get(cachetype);\n"
+      << "        for (auto tup : llvm::enumerate(cacheValues))\n"
+      << "          cacheval = BuilderZ.CreateInsertValue(cacheval, "
+         "tup.value(), tup.index());\n"
+      << "      }\n"
+      << "      gutils->cacheForReverse(BuilderZ, cacheval,\n"
+      << "                              getIndex(&call, CacheType::Tape));\n"
+      << " }\n";
+
+  llvm::errs()
+      << "    unsigned cacheidx = 0;\n"
+      << "    Value *count = gutils->getNewFromOriginal(call.getArgOperand(0));\n"; // todo adjust idx
+ 
+  argPosition = 0;
+  for (auto inputType : inputTypes) {
+    if (inputType->getName() == "vinc") {
+      auto incName = argOps->getArgNameStr(argPosition + 1);
+      llvm::errs() << "    Value *true_" << incName 
+        << " = gutils->getNewFromOriginal(arg_" << incName << ");\n";
+    }
+    argPosition += inputType->getValueAsInt("nelem");
+  }
+
+  llvm::errs()
+      << "    IRBuilder<> Builder2(call.getParent());\n"
+      << "    switch (Mode) {\n"
+      << "      case DerivativeMode::ReverseModeCombined:\n"
+      << "      case DerivativeMode::ReverseModeGradient:\n"
+      << "        getReverseBuilder(Builder2);\n"
+      << "        break;\n"
+      << "      case DerivativeMode::ForwardMode:\n"
+      << "      case DerivativeMode::ForwardModeSplit:\n"
+      << "        Builder2.SetInsertPoint(BuilderZ.GetInsertBlock(),\n"
+      << "                                BuilderZ.GetInsertPoint());\n"
+      << "        Builder2.setFastMathFlags(BuilderZ.getFastMathFlags());\n"
+      << "        break;\n"
+      << "      case DerivativeMode::ReverseModePrimal:\n"
+      << "        break;\n"
+      << "    }\n\n";
+}
+
+void emit_free(Record *pattern, std::vector<size_t> actArgs,
+                  raw_ostream &os) {
+    llvm::errs()
+      << "          if (Mode == DerivativeMode::ReverseModeCombined ||\n"
+      << "            Mode == DerivativeMode::ReverseModeGradient ||\n"
+      << "            Mode == DerivativeMode::ForwardModeSplit) {\n"
+      << "          if (shouldFree()) {\n";
+  size_t argPosition = 0;
+  std::vector<Record *> inputTypes =
+      pattern->getValueAsListOfDefs("inputTypes");
+  DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
+  for (auto inputType : inputTypes) {
+    if (inputType->getName() == "vinc") {
+      auto name = argOps->getArgNameStr(argPosition);
+      llvm::errs()
+        << "            if (cache_" << name << ") {\n"
+        << "              auto ci = cast<CallInst>(CallInst::CreateFree(\n"
+        << "                  Builder2.CreatePointerCast(\n"
+        << "                      data_ptr_" << name <<", Type::getInt8PtrTy(data_ptr_" << name << "->getContext())),\n"
+        << "                  Builder2.GetInsertBlock()));\n"
+        << "#if LLVM_VERSION_MAJOR >= 14\n"
+        << "              ci->addAttributeAtIndex(AttributeList::FirstArgIndex,\n"
+        << "                                      Attribute::NonNull);\n"
+        << "#else\n"
+        << "              ci->addAttribute(AttributeList::FirstArgIndex,\n"
+        << "                               Attribute::NonNull);\n"
+        << "#endif\n"
+        << "              if (ci->getParent() == nullptr) {\n"
+        << "                Builder2.Insert(ci);\n"
+        << "              }\n"
+        << "            }\n";
+    }
+    argPosition += inputType->getValueAsInt("nelem");
+
+    }
+    llvm::errs()
+        << "          }\n"
+        << "        }\n";
+}
+
+void emit_extract_calls(Record *pattern, std::vector<size_t> actArgs, 
+    llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, raw_ostream &os) {
+  size_t argPosition = 0;
+  std::vector<Record *> inputTypes =
+      pattern->getValueAsListOfDefs("inputTypes");
+  DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
+  llvm::errs() 
+<< "        if (Mode == DerivativeMode::ReverseModeCombined ||\n"
+<< "            Mode == DerivativeMode::ReverseModeGradient ||\n"
+<< "            Mode == DerivativeMode::ForwardModeSplit) {\n"
+<< "\n"
+<< "        if (cachetype) {\n"
+<< "          if (Mode != DerivativeMode::ReverseModeCombined) {\n"
+<< "            cacheval = BuilderZ.CreatePHI(cachetype, 0);\n"
+<< "          }\n"
+<< "          cacheval = gutils->cacheForReverse(\n"
+<< "              BuilderZ, cacheval, getIndex(&call, CacheType::Tape));\n"
+<< "          if (Mode != DerivativeMode::ForwardModeSplit)\n"
+<< "            cacheval = lookup(cacheval, Builder2);\n"
+<< "        }\n"
+<< "\n"
+<< "        if (byRef) {\n"
+<< "          if (countcache) {\n"
+<< "            count = (cacheTypes.size() == 1)\n"
+<< "                        ? cacheval\n"
+<< "                        : Builder2.CreateExtractValue(cacheval, {cacheidx});\n"
+<< "            auto alloc = allocationBuilder.CreateAlloca(intType);\n"
+<< "            Builder2.CreateStore(count, alloc);\n"
+<< "            count = Builder2.CreatePointerCast(\n"
+<< "                alloc, call.getArgOperand(0)->getType());\n"
+<< "            cacheidx++;\n"
+<< "          } else {\n"
+<< "            if (Mode != DerivativeMode::ForwardModeSplit)\n"
+<< "              count = lookup(count, Builder2);\n"
+<< "          }\n"
+<< "\n";
+  argPosition = 0;
+  for (auto inputType : inputTypes) {
+    if (inputType->getName() == "vinc") {
+      auto incName = argOps->getArgNameStr(argPosition + 1);
+  llvm::errs()
+<< "          if (cache_" << incName << ") {\n"
+<< "            true_" << incName << " =\n"
+<< "                (cacheTypes.size() == 1)\n"
+<< "                    ? cacheval\n"
+<< "                    : Builder2.CreateExtractValue(cacheval, {cacheidx});\n"
+<< "            auto alloc = allocationBuilder.CreateAlloca(intType);\n"
+<< "            Builder2.CreateStore(true_" << incName << ", alloc);\n"
+<< "            true_" << incName << " = Builder2.CreatePointerCast(\n"
+<< "                alloc, call.getArgOperand(0)->getType());\n"
+<< "            cacheidx++;\n"
+<< "          } else if (need_" << incName << ") {\n"
+<< "            if (Mode != DerivativeMode::ForwardModeSplit)\n"
+<< "              true_" << incName <<" = lookup(true_" << incName << ", Builder2);\n"
+<< "          }\n"
+<< "\n";
+    }
+    argPosition += inputType->getValueAsInt("nelem");
+  }
+  llvm::errs()
+<< "        } else if (Mode != DerivativeMode::ForwardModeSplit) {\n"
+<< "          count = lookup(count, Builder2);\n"
+<< "\n";
+  argPosition = 0;
+  for (auto inputType : inputTypes) {
+    if (inputType->getName() == "vinc") {
+      auto incName = argOps->getArgNameStr(argPosition + 1);
+  llvm::errs()
+<< "          if (cache_" << incName << ") \n"
+<< "            true_" << incName << " = lookup(true_" << incName <<", Builder2);\n"
+<< "\n";
+    }
+    argPosition += inputType->getValueAsInt("nelem");
+  }
+  llvm::errs() << "        }\n" << "\n";
+
+  argPosition = 0;
+  for (auto inputType : inputTypes) {
+    if (inputType->getName() == "vinc") {
+      auto vecName = argOps->getArgNameStr(argPosition);
+      auto incName = argOps->getArgNameStr(argPosition + 1);
+  llvm::errs()
+<< "        Value *data_" << vecName << " = gutils->getNewFromOriginal(arg_" << vecName << ");\n"
+<< "        Value *data_ptr_" << vecName << " = nullptr;\n"
+<< "        Value *" << incName << " = true_" << incName << ";\n"
+<< "\n";
+    }
+    argPosition += inputType->getValueAsInt("nelem");
+  }
+
+  argPosition = 0;
+  for (auto inputType : inputTypes) {
+    if (inputType->getName() == "vinc") {
+      auto vecName = argOps->getArgNameStr(argPosition);
+      auto vecPosition = argPosition;
+      auto vecUsers = argUsers.lookup(vecPosition);
+      auto incName = argOps->getArgNameStr(argPosition + 1);
+      llvm::errs() // todo update numbers
+<< "        if (cache_" << vecName << ") {\n"
+<< "          data_ptr_" << vecName << " = data_" << vecName << " =\n"
+<< "              (cacheTypes.size() == 1)\n"
+<< "                  ? cacheval\n"
+<< "                  : Builder2.CreateExtractValue(cacheval, {cacheidx});\n"
+<< "          cacheidx++;\n"
+<< "          " << incName << " = ConstantInt::get(intType, 1);\n"
+<< "          if (byRef) {\n"
+<< "            auto alloc = allocationBuilder.CreateAlloca(intType);\n"
+<< "            Builder2.CreateStore(" << incName << ", alloc);\n"
+<< "            " << incName << " = Builder2.CreatePointerCast(\n"
+<< "                alloc, call.getArgOperand(0)->getType());\n"
+<< "          }\n"
+<< "          if (type_" << vecName << "->isIntegerTy())\n"
+<< "            data_" << vecName << " = Builder2.CreatePtrToInt(data_" 
+<< vecName << ", type_" << vecName << ");\n"
+<< "        }";
+
+      if (vecUsers.size() > 0) {
+        llvm::errs() << " else if (";
+        for (auto user: vecUsers) {
+          auto name = argOps->getArgNameStr(user);
+          llvm::errs() << "active_" << name;
+        }
+        llvm::errs() << ") {\n"
+<< "          data_" << vecName << " = lookup(gutils->getNewFromOriginal(arg_" 
+<< vecName << "), Builder2);\n"
+<< "        }\n";
+      }
+    }
+    argPosition += inputType->getValueAsInt("nelem");
+  }
+
+// << "        if (ycache) {\n"
+// << "          ydata_ptr = ydata =\n"
+// << "              (cacheTypes.size() == 1)\n"
+// << "                  ? cacheval\n"
+// << "                  : Builder2.CreateExtractValue(cacheval, {cacheidx});\n"
+// << "          cacheidx++;\n"
+// << "          yinc = ConstantInt::get(intType, 1);\n"
+// << "          if (byRef) {\n"
+// << "            auto alloc = allocationBuilder.CreateAlloca(intType);\n"
+// << "            Builder2.CreateStore(yinc, alloc);\n"
+// << "            yinc = Builder2.CreatePointerCast(\n"
+// << "                alloc, call.getArgOperand(0)->getType());\n"
+// << "          }\n"
+// << "          if (call.getArgOperand(3)->getType()->isIntegerTy())\n"
+// << "            ydata = Builder2.CreatePtrToInt(ydata,\n"
+// << "                                            call.getArgOperand(3)->getType());\n"
+// << "        } else if (!gutils->isConstantValue(call.getArgOperand(1))) {\n"
+// << "          ydata = lookup(gutils->getNewFromOriginal(call.getArgOperand(3)),\n"
+// << "                         Builder2);\n"
+// << "        }\n"
+  llvm::errs() << "        } else {\n";
+  argPosition = 0;
+  for (auto inputType : inputTypes) {
+    if (inputType->getName() == "vinc") {
+      auto vecName = argOps->getArgNameStr(argPosition);
+      auto incName = argOps->getArgNameStr(argPosition + 1);
+  llvm::errs()
+<< "        Value *data_" << vecName << " = gutils->getNewFromOriginal(arg_" << vecName << ");\n"
+<< "        Value *data_ptr_" << vecName << " = nullptr;\n"
+<< "        Value *" << incName << " = true_" << incName << ";\n"
+<< "\n";
+    }
+    argPosition += inputType->getValueAsInt("nelem");
+  }
+
+  llvm::errs() << "\n";
+  
+  argPosition = 0;
+  for (auto inputType : inputTypes) {
+    if (inputType->getName() == "vinc") {
+      auto vecName = argOps->getArgNameStr(argPosition);
+      auto incName = argOps->getArgNameStr(argPosition + 1);
+  llvm::errs()
+    << "          if (type_" << vecName << "->isIntegerTy())\n"
+    << "            data_" << vecName << " = Builder2.CreatePtrToInt(data_" << vecName << ",\n"
+    << "                                           type_" << vecName << ");\n";
+    }
+    argPosition += inputType->getValueAsInt("nelem");
+  }
+
+  llvm::errs() << "        }\n";
+}
+
+void emit_caching(Record *pattern, std::vector<size_t> actArgs,
+    llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, raw_ostream &os) {
+
+  // 1. No caching for fwd-mode
+  // 2. Deactivate caching for uncacheable_args
+  // 3. Only caching if we do need the primary for an active gradient.
+  llvm::errs() << "SmallVector<Type *, 2> cacheTypes;\n\n";
+
+  emit_count_caching(pattern, actArgs, os);
+  // emit_fp_caching(pattern, actArgs, os);
+  emit_vinc_caching(pattern, actArgs, argUsers, os);
+
+  DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
+  for (auto actEn : llvm::enumerate(actArgs)) {
+    auto name = argOps->getArgNameStr(actEn.value());
+    llvm::errs() << " if (" << name << "cache)\n"
+                 << "   cacheTypes.push_back(castvals[" << actEn.index()
+                 << "]);\n";
+  }
+  llvm::errs()
+      << "  Type *cachetype = nullptr;\n"
+      << "  switch (cacheTypes.size()) {\n"
+      << "  case 0:\n"
+      << "    break;\n"
+      << "  case 1:\n"
+      << "    cachetype = cacheTypes[0];\n"
+      << "    break;\n"
+      << "  default:\n"
+      << "    cachetype = StructType::get(call.getContext(), cacheTypes);\n"
+      << "    break;\n"
+      << "  }\n\n";
+
+  emit_cache_for_reverse(pattern, actArgs, argUsers, os);
+
+}
+
+void findArgPositions(const std::vector<StringRef> toFind,
+                      const DagInit *toSearch,
+                      llvm::SmallSet<size_t, 5> &toInsert) {
+  for (size_t i = 0; i < toSearch->getNumArgs(); i++) {
+    if (DagInit *arg = dyn_cast<DagInit>(toSearch->getArg(i))) {
+      // llvm::errs() << " Recursing. Magic!\n";
+      findArgPositions(toFind, arg, toInsert);
+    } else {
+      auto name = toSearch->getArgNameStr(i);
+      for (size_t i = 0; i < toFind.size(); i++) {
+        if (name == toFind[i])
+          toInsert.insert(i);
+      }
+    }
+  }
+}
+
+llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> getUsedInputs(
+    Record *pattern, std::vector<size_t> posActArgs) {
+
+  DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
+  std::vector<StringRef> inputs;
+  for (size_t i = 0; i < argOps->getNumArgs(); i++) {
+    inputs.push_back(argOps->getArgNameStr(i));
+  }
+
+  llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers{};
+
+  // For each Gradient (say possibly active arg)
+  ListInit *gradOps = pattern->getValueAsListInit("ArgDerivatives");
+  assert(posActArgs.size() == gradOps->size() && "tblgen error");
+  for (size_t i = 0; i < posActArgs.size(); i++) {
+    auto val = gradOps->getElement(i);
+    DagInit *resultRoot = cast<DagInit>(val);
+    llvm::SmallSet<size_t, 5> set{};
+    // collect all uses 
+    findArgPositions(inputs, resultRoot, set);
+
+    llvm::errs() << "Gradient " << i << " uses: ";
+
+    for (auto position : set) {
+      llvm::errs() << position <<" ";
+      llvm::SmallSet<size_t, 5> val = argUsers.lookup(position);
+      val.insert(posActArgs[i]);
+      // assert(val.size() != 2);
+      // if posActArgs[i] is active, 
+      // then it will need to use the argument at position
+      auto newVal = std::make_pair<>(position, val);
+      argUsers.erase(position);
+      argUsers.insert(newVal);
+    }
+  }
+  return argUsers;
+}
+
+void emit_new_vars(Record *pattern, std::vector<size_t> actArgs,
+                   raw_ostream &os) {
+  DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
+
+  for (auto act : actArgs) {
+    auto name = argOps->getArgNameStr(act);
+    llvm::errs() << " auto new_" << name
+                 << " = lookup(gutils->getNewFromOriginal(arg_" << name
+                 << "), Builder2),\n";
+  }
+}
+
+void emit_blas_call(Record *pattern, std::vector<size_t> actArgs,
+                    raw_ostream &os) {
+  DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
+  // auto blassCall = gutils->oldFunc->getParent()->getOrInsertFunction(
+  //     axpyName, Builder2.getVoidTy(), type_n, innerType, type_y, type_incy,
+  //     type_x, type_incx);
+  // SmallVector<Value *, 6> args = {new_n,  ConstantFP::get(innerType, 1.0),
+  //                                 diff_y, new_incy,
+  //                                 diff_x, new_incx};
+  // Builder2.CreateCall(axpyCall, args,
+  //                     gutils->getInvertedBundles(
+  //                         &call,
+  //                         {ValueType::None, ValueType::Shadow,
+  //                         ValueType::None,
+  //                          ValueType::Shadow, ValueType::None},
+  //                         Builder2, true));
+}
+
+void emit_helper(Record *pattern, std::vector<size_t> actArgs,
+                 raw_ostream &os) {
+  DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
+  llvm::errs() << "auto *called = call.getCalledFunction();\n";
+  for (size_t i = 0; i < argOps->getNumArgs(); i++) {
+    auto name = argOps->getArgNameStr(i);
+    llvm::errs() << "auto arg_" << name << " = call.getArgOperand(" << i << ");\n";
+    llvm::errs() << "auto type_" << name << " = arg_" << name << "->getType();\n";
+    llvm::errs() << "bool uncacheable_" << name 
+      << " = uncacheable_args.find(called->getArg("  << i << "))->second;\n\n";
+  }
+  for (auto act : actArgs) {
+    auto name = argOps->getArgNameStr(act);
+    llvm::errs() << "bool active_" << name << " = !gutils->isConstantValue(arg_"
+                 << name << ");\n";
+  }
+}
+
+void emitBlasDerivatives(const std::vector<Record *> &blasPatterns,
+                         const std::vector<Record *> &blas_modes,
+                         raw_ostream &os) {
+  // emitEnumMatcher(blas_modes, os);
+  for (auto pattern : blasPatterns) {
+    if (pattern->getName() != "dot") 
+      continue;
+    // TODO: assert unique input names.
+    std::vector<size_t> posActArgs = getPossiblyActiveArgs(pattern);
+
+    // For each input arg, we store a set including all users (by index).
+    llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers = getUsedInputs(pattern, posActArgs);
+
+    // std::vector<std::vector<size_t>> cacheArgPos =
+    //     getToCachePos(pattern, posActArgs);
+    //  For each active arg we want to have a list of input args required.
+    //  We use it to find out if we need to cache them.
+    // assert(posActArgs.size() == cacheArgPos.size());
+
+    emit_beginning(pattern, os);
+    emit_castvals(pattern, posActArgs, os);
+    emit_inttype(pattern, os);
+    emit_helper(pattern, posActArgs, os);
+
+    // new:
+    emit_caching(pattern, posActArgs, argUsers, os);
+    emit_extract_calls(pattern, posActArgs, argUsers, os);
+
+    // emit_new_vars(pattern, posActArgs, os);
+    // emit_blas_call(pattern, posActArgs, os);
+
+    // emit_ending(pattern, os);
+    // writeEnums(pattern, blas_modes, os);
+    emit_free(pattern, posActArgs, os);
+  }
+}
+
+static void checkBlasCallsInDag(const RecordKeeper &RK,
+                                const std::vector<Record *> blasPatterns,
+                                const StringRef blasName,
+                                const DagInit *toSearch) {
+
+  for (size_t i = 0; i < toSearch->getNumArgs(); i++) {
+    if (DagInit *arg = dyn_cast<DagInit>(toSearch->getArg(i))) {
+      checkBlasCallsInDag(RK, blasPatterns, blasName, arg);
+    }
+  }
+
+  auto Def = cast<DefInit>(toSearch->getOperator())->getDef();
+  if (Def->isSubClassOf("b")) {
+    auto numArgs = toSearch->getNumArgs();
+
+    auto opName = Def->getValueAsString("s");
+    auto CalledBlas = RK.getDef(opName);
+    assert(CalledBlas);
+    auto expectedNumArgs =
+        CalledBlas->getValueAsDag("PatternToMatch")->getNumArgs();
+    if (expectedNumArgs != numArgs) {
+      llvm::errs() << "failed calling " << opName << " in the derivative of "
+                   << blasName << " incorrect number of params. Expected "
+                   << expectedNumArgs << " but got " << numArgs << "\n";
+      assert(expectedNumArgs == numArgs);
+    }
+  }
+}
+
+/// Here we check that all the Blas derivatives who call another
+/// blas function will use the correct amount of args
+/// Later we might check for "types" too.
+static void checkBlasCalls(const RecordKeeper &RK,
+                           std::vector<Record *> blasPatterns) {
+  for (auto pattern : blasPatterns) {
+    ListInit *argOps = pattern->getValueAsListInit("ArgDerivatives");
+    // for each possibly active parameter
+    for (auto argOp : *argOps) {
+      DagInit *resultRoot = cast<DagInit>(argOp);
+      checkBlasCallsInDag(RK, blasPatterns, pattern->getName(), resultRoot);
+    }
+  }
+}
+
+static void emitDerivatives(RecordKeeper &RK, raw_ostream &os) {
+  emitSourceFileHeader("Rewriters", os);
+  const auto &patterns = RK.getAllDerivedDefinitions("CallPattern");
+  const auto &blasPatterns = RK.getAllDerivedDefinitions("CallBlasPattern");
+  const auto &blas_modes = RK.getAllDerivedDefinitions("blas_modes");
+  Record *attrClass = RK.getClass("Attr");
+
+  // Make sure that we only call blass function b for calculating the derivative
+  // of a iff we have defined b and pass the right amount of parameters.
+  // TODO: type check params, as far as possible
+  checkBlasCalls(RK, blasPatterns);
+
+  // We have full access to the source code to differentiate it
+  // emitFullDerivatives(patterns, os);
+
+  // Improve UX / comp-time by handling Blas calls extra.
+  emitBlasDerivatives(blasPatterns, blas_modes, os);
 }
 
 static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {

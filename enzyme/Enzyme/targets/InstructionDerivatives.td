@@ -102,3 +102,6 @@ def : CallPattern<(Op $x),
 def : CallPattern<(Op $x),
                   ["sinhf"],
                   [(FMul (DiffeRet<"">), (Call<(SameTypesFunc<"coshf">), [ReadNone,NoUnwind]> $x))]>;
+
+include "targets/BlasDerivatives.td"
+                  
