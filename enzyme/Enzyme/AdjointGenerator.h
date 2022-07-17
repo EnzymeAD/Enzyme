@@ -3138,7 +3138,13 @@ public:
       case Intrinsic::x86_sse_min_ss:
       case Intrinsic::x86_sse_min_ps:
 #endif
+      case Intrinsic::nvvm_fmax_f:
+      case Intrinsic::nvvm_fmax_d:
+      case Intrinsic::nvvm_fmax_ftz_f:
       case Intrinsic::maxnum:
+      case Intrinsic::nvvm_fmin_f:
+      case Intrinsic::nvvm_fmin_d:
+      case Intrinsic::nvvm_fmin_ftz_f:
       case Intrinsic::minnum:
       case Intrinsic::log:
       case Intrinsic::log2:
@@ -3366,6 +3372,9 @@ public:
       case Intrinsic::x86_sse_max_ss:
       case Intrinsic::x86_sse_max_ps:
 #endif
+      case Intrinsic::nvvm_fmax_f:
+      case Intrinsic::nvvm_fmax_d:
+      case Intrinsic::nvvm_fmax_ftz_f:
       case Intrinsic::maxnum: {
         if (vdiff && !gutils->isConstantValue(orig_ops[0])) {
           Value *cmp = Builder2.CreateFCmpOLT(
@@ -3397,6 +3406,9 @@ public:
       case Intrinsic::x86_sse_min_ss:
       case Intrinsic::x86_sse_min_ps:
 #endif
+      case Intrinsic::nvvm_fmin_f:
+      case Intrinsic::nvvm_fmin_d:
+      case Intrinsic::nvvm_fmin_ftz_f:
       case Intrinsic::minnum: {
         if (vdiff && !gutils->isConstantValue(orig_ops[0])) {
           Value *cmp = Builder2.CreateFCmpOLT(
@@ -3855,6 +3867,9 @@ public:
       case Intrinsic::x86_sse_max_ss:
       case Intrinsic::x86_sse_max_ps:
 #endif
+      case Intrinsic::nvvm_fmax_f:
+      case Intrinsic::nvvm_fmax_d:
+      case Intrinsic::nvvm_fmax_ftz_f:
       case Intrinsic::maxnum: {
         if (gutils->isConstantInstruction(&I))
           return;
@@ -3886,6 +3901,9 @@ public:
       case Intrinsic::x86_sse_min_ss:
       case Intrinsic::x86_sse_min_ps:
 #endif
+      case Intrinsic::nvvm_fmin_f:
+      case Intrinsic::nvvm_fmin_d:
+      case Intrinsic::nvvm_fmin_ftz_f:
       case Intrinsic::minnum: {
         if (gutils->isConstantInstruction(&I))
           return;

@@ -3097,6 +3097,12 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
   case Intrinsic::copysign:
   case Intrinsic::maxnum:
   case Intrinsic::minnum:
+  case Intrinsic::nvvm_fmax_f:
+  case Intrinsic::nvvm_fmax_d:
+  case Intrinsic::nvvm_fmax_ftz_f:
+  case Intrinsic::nvvm_fmin_f:
+  case Intrinsic::nvvm_fmin_d:
+  case Intrinsic::nvvm_fmin_ftz_f:
   case Intrinsic::pow:
     // No direction check as always valid
     updateAnalysis(
