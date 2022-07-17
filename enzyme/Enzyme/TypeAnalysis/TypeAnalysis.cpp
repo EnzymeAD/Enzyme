@@ -3027,6 +3027,9 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
   case Intrinsic::nearbyint:
   case Intrinsic::round:
   case Intrinsic::sqrt:
+  case Intrinsic::nvvm_fabs_f:
+  case Intrinsic::nvvm_fabs_d:
+  case Intrinsic::nvvm_fabs_ftz_f:
   case Intrinsic::fabs:
     // No direction check as always valid
     updateAnalysis(

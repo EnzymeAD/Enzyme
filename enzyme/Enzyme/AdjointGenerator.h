@@ -3129,6 +3129,9 @@ public:
       case Intrinsic::lifetime_start:
       case Intrinsic::assume:
       case Intrinsic::fabs:
+      case Intrinsic::nvvm_fabs_f:
+      case Intrinsic::nvvm_fabs_d:
+      case Intrinsic::nvvm_fabs_ftz_f:
 #if LLVM_VERSION_MAJOR < 10
       case Intrinsic::x86_sse_max_ss:
       case Intrinsic::x86_sse_max_ps:
@@ -3336,6 +3339,9 @@ public:
         return;
       }
 
+      case Intrinsic::nvvm_fabs_f:
+      case Intrinsic::nvvm_fabs_d:
+      case Intrinsic::nvvm_fabs_ftz_f:
       case Intrinsic::fabs: {
         if (vdiff && !gutils->isConstantValue(orig_ops[0])) {
           Value *cmp = Builder2.CreateFCmpOLT(
@@ -3820,6 +3826,9 @@ public:
         return;
       }
 
+      case Intrinsic::nvvm_fabs_f:
+      case Intrinsic::nvvm_fabs_d:
+      case Intrinsic::nvvm_fabs_ftz_f:
       case Intrinsic::fabs: {
         if (gutils->isConstantInstruction(&I))
           return;
