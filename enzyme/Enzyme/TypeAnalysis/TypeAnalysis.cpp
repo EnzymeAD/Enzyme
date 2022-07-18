@@ -1368,6 +1368,28 @@ void TypeAnalyzer::visitGetElementPtrInst(GetElementPtrInst &gep) {
     updateAnalysis(&gep, TypeTree(BaseType::Anything).Only(-1), &gep);
     return;
   }
+  if (isa<ConstantPointerNull>(gep.getPointerOperand())) {
+    bool nonZero = false;
+    bool legal = true;
+    for (auto &ind : gep.indices()) {
+      if (auto CI = dyn_cast<ConstantInt>(ind)) {
+        if (!CI->isZero()) {
+          nonZero = true;
+          continue;
+        }
+      }
+      auto CT = getAnalysis(ind).Inner0();
+      if (CT == BaseType::Integer) {
+        continue;
+      }
+      legal = false;
+      break;
+    }
+    if (legal && nonZero) {
+      updateAnalysis(&gep, TypeTree(BaseType::Integer).Only(-1), &gep);
+      return;
+    }
+  }
 
   auto &DL = fntypeinfo.Function->getParent()->getDataLayout();
 
@@ -2266,10 +2288,18 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
       // these are equal ptr - int => ptr and int - ptr => ptr; thus
       // howerver we do not want to propagate underlying ptr types since it's
       // legal to subtract unrelated pointer
-      if (AnalysisRet[{}] == BaseType::Integer) {
-        if (direction & UP) {
+      if (direction & UP) {
+        if (AnalysisRet[{}] == BaseType::Integer) {
           LHS |= TypeTree(AnalysisRHS[{}]).PurgeAnything().Only(-1);
           RHS |= TypeTree(AnalysisLHS[{}]).PurgeAnything().Only(-1);
+        }
+        if (AnalysisRet[{}] == BaseType::Pointer) {
+          if (AnalysisLHS[{}] == BaseType::Pointer) {
+            RHS |= TypeTree(BaseType::Integer).Only(-1);
+          }
+          if (AnalysisRHS[{}] == BaseType::Integer) {
+            LHS |= TypeTree(BaseType::Pointer).Only(-1);
+          }
         }
       }
       break;
@@ -2448,6 +2478,13 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
           // integer
           if (Args[i] && isa<ConstantInt>(Args[i]) &&
               (i == 0 ? AnalysisRHS : AnalysisLHS)[{}] == BaseType::Integer) {
+            Result = TypeTree(BaseType::Integer);
+          }
+        }
+      } else if (Opcode == BinaryOperator::URem) {
+        if (auto CI = dyn_cast_or_null<ConstantInt>(Args[1])) {
+          // If rem with a small integer, the result is also a small integer
+          if (CI->getLimitedValue() <= 4096) {
             Result = TypeTree(BaseType::Integer);
           }
         }
@@ -3027,6 +3064,9 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
   case Intrinsic::nearbyint:
   case Intrinsic::round:
   case Intrinsic::sqrt:
+  case Intrinsic::nvvm_fabs_f:
+  case Intrinsic::nvvm_fabs_d:
+  case Intrinsic::nvvm_fabs_ftz_f:
   case Intrinsic::fabs:
     // No direction check as always valid
     updateAnalysis(
@@ -3094,6 +3134,12 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
   case Intrinsic::copysign:
   case Intrinsic::maxnum:
   case Intrinsic::minnum:
+  case Intrinsic::nvvm_fmax_f:
+  case Intrinsic::nvvm_fmax_d:
+  case Intrinsic::nvvm_fmax_ftz_f:
+  case Intrinsic::nvvm_fmin_f:
+  case Intrinsic::nvvm_fmin_d:
+  case Intrinsic::nvvm_fmin_ftz_f:
   case Intrinsic::pow:
     // No direction check as always valid
     updateAnalysis(
