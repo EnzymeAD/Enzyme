@@ -835,12 +835,23 @@ public:
       }
     }
     if (!gutils->isConstantInstruction(&I) || !gutils->isConstantValue(&I)) {
+      if (looseTypeAnalysis) {
+        auto &DL = gutils->newFunc->getParent()->getDataLayout();
+        auto valType = I.getValOperand()->getType();
+        auto storeSize = DL.getTypeSizeInBits(valType) / 8;
+        auto fp = TR.firstPointer(storeSize, I.getPointerOperand(),
+                                  /*errifnotfound*/ false,
+                                  /*pointerIntSame*/ true);
+        if (!fp.isKnown() && valType->isIntOrIntVectorTy()) {
+          goto noerror;
+        }
+      }
       TR.dump();
       llvm::errs() << "oldFunc: " << *gutils->newFunc << "\n";
       llvm::errs() << "I: " << I << "\n";
+      assert(0 && "Active atomic inst not handled");
     }
-    assert(gutils->isConstantInstruction(&I));
-    assert(gutils->isConstantValue(&I));
+  noerror:;
 
     if (Mode == DerivativeMode::ReverseModeGradient) {
       eraseIfUnused(I, /*erase*/ true, /*check*/ false);
@@ -1721,7 +1732,7 @@ public:
   template <typename Func, typename... Args>
   Value *applyChainRule(Type *diffType, IRBuilder<> &Builder, Func rule,
                         Args... args) {
-    return ((DiffeGradientUtils *)gutils)
+    return ((GradientUtils *)gutils)
         ->applyChainRule(diffType, Builder, rule, args...);
   }
 
@@ -1729,7 +1740,7 @@ public:
   /// function f to each element.
   template <typename Func, typename... Args>
   void applyChainRule(IRBuilder<> &Builder, Func rule, Args... args) {
-    ((DiffeGradientUtils *)gutils)->applyChainRule(Builder, rule, args...);
+    ((GradientUtils *)gutils)->applyChainRule(Builder, rule, args...);
   }
 
   /// Unwraps an collection of constant vector derivatives from their internal
@@ -1737,7 +1748,7 @@ public:
   template <typename Func>
   void applyChainRule(ArrayRef<Value *> diffs, IRBuilder<> &Builder,
                       Func rule) {
-    ((DiffeGradientUtils *)gutils)->applyChainRule(diffs, Builder, rule);
+    ((GradientUtils *)gutils)->applyChainRule(diffs, Builder, rule);
   }
 
   bool shouldFree() {
@@ -3118,13 +3129,22 @@ public:
       case Intrinsic::lifetime_start:
       case Intrinsic::assume:
       case Intrinsic::fabs:
+      case Intrinsic::nvvm_fabs_f:
+      case Intrinsic::nvvm_fabs_d:
+      case Intrinsic::nvvm_fabs_ftz_f:
 #if LLVM_VERSION_MAJOR < 10
       case Intrinsic::x86_sse_max_ss:
       case Intrinsic::x86_sse_max_ps:
       case Intrinsic::x86_sse_min_ss:
       case Intrinsic::x86_sse_min_ps:
 #endif
+      case Intrinsic::nvvm_fmax_f:
+      case Intrinsic::nvvm_fmax_d:
+      case Intrinsic::nvvm_fmax_ftz_f:
       case Intrinsic::maxnum:
+      case Intrinsic::nvvm_fmin_f:
+      case Intrinsic::nvvm_fmin_d:
+      case Intrinsic::nvvm_fmin_ftz_f:
       case Intrinsic::minnum:
       case Intrinsic::log:
       case Intrinsic::log2:
@@ -3325,6 +3345,9 @@ public:
         return;
       }
 
+      case Intrinsic::nvvm_fabs_f:
+      case Intrinsic::nvvm_fabs_d:
+      case Intrinsic::nvvm_fabs_ftz_f:
       case Intrinsic::fabs: {
         if (vdiff && !gutils->isConstantValue(orig_ops[0])) {
           Value *cmp = Builder2.CreateFCmpOLT(
@@ -3349,6 +3372,9 @@ public:
       case Intrinsic::x86_sse_max_ss:
       case Intrinsic::x86_sse_max_ps:
 #endif
+      case Intrinsic::nvvm_fmax_f:
+      case Intrinsic::nvvm_fmax_d:
+      case Intrinsic::nvvm_fmax_ftz_f:
       case Intrinsic::maxnum: {
         if (vdiff && !gutils->isConstantValue(orig_ops[0])) {
           Value *cmp = Builder2.CreateFCmpOLT(
@@ -3380,6 +3406,9 @@ public:
       case Intrinsic::x86_sse_min_ss:
       case Intrinsic::x86_sse_min_ps:
 #endif
+      case Intrinsic::nvvm_fmin_f:
+      case Intrinsic::nvvm_fmin_d:
+      case Intrinsic::nvvm_fmin_ftz_f:
       case Intrinsic::minnum: {
         if (vdiff && !gutils->isConstantValue(orig_ops[0])) {
           Value *cmp = Builder2.CreateFCmpOLT(
@@ -3809,6 +3838,9 @@ public:
         return;
       }
 
+      case Intrinsic::nvvm_fabs_f:
+      case Intrinsic::nvvm_fabs_d:
+      case Intrinsic::nvvm_fabs_ftz_f:
       case Intrinsic::fabs: {
         if (gutils->isConstantInstruction(&I))
           return;
@@ -3835,6 +3867,9 @@ public:
       case Intrinsic::x86_sse_max_ss:
       case Intrinsic::x86_sse_max_ps:
 #endif
+      case Intrinsic::nvvm_fmax_f:
+      case Intrinsic::nvvm_fmax_d:
+      case Intrinsic::nvvm_fmax_ftz_f:
       case Intrinsic::maxnum: {
         if (gutils->isConstantInstruction(&I))
           return;
@@ -3866,6 +3901,9 @@ public:
       case Intrinsic::x86_sse_min_ss:
       case Intrinsic::x86_sse_min_ps:
 #endif
+      case Intrinsic::nvvm_fmin_f:
+      case Intrinsic::nvvm_fmin_d:
+      case Intrinsic::nvvm_fmin_ftz_f:
       case Intrinsic::minnum: {
         if (gutils->isConstantInstruction(&I))
           return;
@@ -11345,11 +11383,9 @@ public:
         auto ft =
             cast<FunctionType>(callval->getType()->getPointerElementType());
 
-        DIFFE_TYPE subretType = orig->getType()->isFPOrFPVectorTy()
-                                    ? DIFFE_TYPE::OUT_DIFF
-                                    : DIFFE_TYPE::DUP_ARG;
-        if (orig->getType()->isVoidTy() || orig->getType()->isEmptyTy())
-          subretType = DIFFE_TYPE::CONSTANT;
+        std::set<llvm::Type *> seen;
+        DIFFE_TYPE subretType = whatType(orig->getType(), Mode,
+                                         /*intAreConstant*/ false, seen);
         auto res = getDefaultFunctionTypeForAugmentation(
             ft, /*returnUsed*/ true, /*subretType*/ subretType);
         auto fptype = PointerType::getUnqual(FunctionType::get(
@@ -11764,11 +11800,6 @@ public:
 
       auto ft = cast<FunctionType>(callval->getType()->getPointerElementType());
 
-      DIFFE_TYPE subretType = orig->getType()->isFPOrFPVectorTy()
-                                  ? DIFFE_TYPE::OUT_DIFF
-                                  : DIFFE_TYPE::DUP_ARG;
-      if (orig->getType()->isVoidTy() || orig->getType()->isEmptyTy())
-        subretType = DIFFE_TYPE::CONSTANT;
       auto res =
           getDefaultFunctionTypeForGradient(ft, /*subretType*/ subretType);
       // TODO Note there is empty tape added here, replace with generic
