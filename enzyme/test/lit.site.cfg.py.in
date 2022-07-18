@@ -49,7 +49,7 @@ config.substitutions.append(('%loadEnzyme', ''
                                  + (" --enzyme-attributor=0" if int(config.llvm_ver) >= 13 else "")
                                  ))
 config.substitutions.append(('%loadBC', ''
-                                 + ' @ENZYME_BINARY_DIR@/BCLoad/BCPass-' + config.llvm_ver + config.llvm_shlib_ext
+                                 + '@ENZYME_BINARY_DIR@/BCLoad/BCPass-' + config.llvm_ver + config.llvm_shlib_ext
                                  ))
 config.substitutions.append(('%BClibdir', '@ENZYME_SOURCE_DIR@/bclib/'))
 config.substitutions.append(('%loadClangEnzyme', ''
