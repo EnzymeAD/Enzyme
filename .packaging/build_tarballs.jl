@@ -44,8 +44,8 @@ ninja -C build-native -j ${nproc} blasheaders enzyme-tblgen
 # 2. Cross-compile
 CMAKE_FLAGS=()
 CMAKE_FLAGS+=(-DENZYME_EXTERNAL_SHARED_LIB=ON)
-CMAKE_FLAGS+=(-DBC_LOAD_HEADER=${WORKSPACE}/Enzyme/build-native/BCLoad/gsl/blas_headers.h)
-CMAKE_FLAGS+=(-DEnzyme_TABLEGEN_EXE=${WORKSPACE}/Enzyme/build-native/tools/enzyme-tblgen/enzyme-tblgen)
+CMAKE_FLAGS+=(-DBC_LOAD_HEADER=`pwd`/build-native/BCLoad/gsl/blas_headers.h)
+CMAKE_FLAGS+=(-DEnzyme_TABLEGEN_EXE=`pwd`/build-native/tools/enzyme-tblgen/enzyme-tblgen)
 CMAKE_FLAGS+=(-DENZYME_CLANG=OFF)
 # RelWithDebInfo for decent performance, with debugability
 CMAKE_FLAGS+=(-DCMAKE_BUILD_TYPE=RelWithDebInfo)
