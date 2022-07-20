@@ -13,14 +13,14 @@ define void @_Z18wrapper_1body_intsv()  {
   ret void
 }
 
-; CHECK: define internal { i8*, i8*, i8* } @augmented__ZNK4implIdE4typeEv() #1 {
-; CHECK-NEXT:   %1 = alloca { i8*, i8*, i8* }, align 8
+; CHECK: define internal { i8*, i8*, i8* } @augmented__ZNK4implIdE4typeEv()
+; CHECK-NEXT:   %1 = alloca { i8*, i8*, i8* }
 ; CHECK-NEXT:   %2 = getelementptr inbounds { i8*, i8*, i8* }, { i8*, i8*, i8* }* %1, i32 0, i32 0
-; CHECK-NEXT:   store i8* null, i8** %2, align 8
+; CHECK-NEXT:   store i8* null, i8** %2
 ; CHECK-NEXT:   %3 = getelementptr inbounds { i8*, i8*, i8* }, { i8*, i8*, i8* }* %1, i32 0, i32 1
-; CHECK-NEXT:   store i8* bitcast (i8** @_ZTId to i8*), i8** %3, align 8
+; CHECK-NEXT:   store i8* bitcast (i8** @_ZTId to i8*), i8** %3
 ; CHECK-NEXT:   %4 = getelementptr inbounds { i8*, i8*, i8* }, { i8*, i8*, i8* }* %1, i32 0, i32 2
-; CHECK-NEXT:   store i8* bitcast (i8** @_ZTId_shadow to i8*), i8** %4, align 8
-; CHECK-NEXT:   %5 = load { i8*, i8*, i8* }, { i8*, i8*, i8* }* %1, align 8
+; CHECK-NEXT:   store i8* bitcast (i8** @_ZTId_shadow to i8*), i8** %4
+; CHECK-NEXT:   %5 = load { i8*, i8*, i8* }, { i8*, i8*, i8* }* %1
 ; CHECK-NEXT:   ret { i8*, i8*, i8* } %5
 ; CHECK-NEXT: }
