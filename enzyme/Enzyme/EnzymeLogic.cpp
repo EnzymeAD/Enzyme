@@ -2412,22 +2412,21 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   Function *NewF = Function::Create(
       FTy, nf->getLinkage(), "augmented_" + todiff->getName(), nf->getParent());
 
-  unsigned ii = 0, jj = 0;
+  unsigned attrIndex = 0;
   auto i = nf->arg_begin(), j = NewF->arg_begin();
-  for (; i != nf->arg_end();) {
+  while (i != nf->arg_end()) {
     VMap[i] = j;
-    if (nf->hasParamAttribute(ii, Attribute::NoCapture)) {
-      NewF->addParamAttr(jj, Attribute::NoCapture);
+    if (nf->hasParamAttribute(attrIndex, Attribute::NoCapture)) {
+      NewF->addParamAttr(attrIndex, Attribute::NoCapture);
     }
-    if (nf->hasParamAttribute(ii, Attribute::NoAlias)) {
-      NewF->addParamAttr(jj, Attribute::NoAlias);
+    if (nf->hasParamAttribute(attrIndex, Attribute::NoAlias)) {
+      NewF->addParamAttr(attrIndex, Attribute::NoAlias);
     }
 
     j->setName(i->getName());
     ++j;
-    ++jj;
     ++i;
-    ++ii;
+    ++attrIndex;
   }
 
   SmallVector<ReturnInst *, 4> Returns;
@@ -2617,9 +2616,10 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         if (auto ggep = dyn_cast<GetElementPtrInst>(gep)) {
           ggep->setIsInBounds(true);
         }
-        if (isa<ConstantData>(invertedRetPs[ri]))
+        if (isa<ConstantExpr>(invertedRetPs[ri]) ||
+            isa<ConstantData>(invertedRetPs[ri])) {
           ib.CreateStore(invertedRetPs[ri], gep);
-        else {
+        } else {
           assert(VMap[invertedRetPs[ri]]);
           ib.CreateStore(VMap[invertedRetPs[ri]], gep);
         }
