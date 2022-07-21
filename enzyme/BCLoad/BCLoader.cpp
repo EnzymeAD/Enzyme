@@ -139,6 +139,15 @@ llvmGetPassPluginInfo() {
   return {
     LLVM_PLUGIN_API_VERSION, "BCLoaderNew", "v0.1",
     [](llvm::PassBuilder &PB) {
+
+/*
+        PB.registerOptimizerEarlyEPCallback(
+                [](ModulePassManager &MPM, OptimizationLevel  ){
+                    MPM.addPass(BCLoaderNew());
+                }
+                );
+*/
+
       PB.registerPipelineParsingCallback(
         [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
            llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
