@@ -2232,6 +2232,20 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         gutils->newFunc->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
   }
 
+  //! Keep track of inverted pointers we may need to return
+  ValueToValueMapTy invertedRetPs;
+  if (shadowReturnUsed) {
+    for (BasicBlock &BB : *gutils->oldFunc) {
+      if (auto ri = dyn_cast<ReturnInst>(BB.getTerminator())) {
+        if (Value *orig_oldval = ri->getReturnValue()) {
+          auto newri = gutils->getNewFromOriginal(ri);
+          IRBuilder<> BuilderZ(newri);
+          invertedRetPs[newri] = gutils->invertPointerM(orig_oldval, BuilderZ);
+        }
+      }
+    }
+  }
+
   (IRBuilder<>(gutils->inversionAllocs)).CreateUnreachable();
   DeleteDeadBlock(gutils->inversionAllocs);
 
@@ -2288,20 +2302,6 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       gutils->newFunc->removeAttribute(llvm::AttributeList::ReturnIndex, attr);
     }
 #endif
-  }
-
-  //! Keep track of inverted pointers we may need to return
-  ValueToValueMapTy invertedRetPs;
-  if (shadowReturnUsed) {
-    for (BasicBlock &BB : *gutils->oldFunc) {
-      if (auto ri = dyn_cast<ReturnInst>(BB.getTerminator())) {
-        if (Value *orig_oldval = ri->getReturnValue()) {
-          auto newri = gutils->getNewFromOriginal(ri);
-          IRBuilder<> BuilderZ(newri);
-          invertedRetPs[newri] = gutils->invertPointerM(orig_oldval, BuilderZ);
-        }
-      }
-    }
   }
 
   gutils->eraseFictiousPHIs();
