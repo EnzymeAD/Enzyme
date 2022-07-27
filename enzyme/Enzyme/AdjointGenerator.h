@@ -9946,7 +9946,6 @@ public:
 
             if (args.size() == 2) {
               Value *op0 = diffe(orig->getArgOperand(0), Builder2);
-
               Value *op1 = diffe(orig->getArgOperand(1), Builder2);
 
               auto rule = [&](Value *op0, Value *op1) {
@@ -9961,10 +9960,30 @@ public:
                   applyChainRule(call.getType(), Builder2, rule, op0, op1);
               setDiffe(orig, dif, Builder2);
               return;
-            } else {
-              llvm::errs() << *orig << "\n";
-              llvm_unreachable("unknown calling convention found for cabs");
+            } else if (args.size() == 1) {
+              if (auto AT = dyn_cast<ArrayType>(args[0]->getType())) {
+                if (AT->getNumElements() == 2) {
+                  Value *op0 = diffe(orig->getArgOperand(0), Builder2);
+
+                  auto rule = [&](Value *op0) {
+                    Value *dif1 = Builder2.CreateFMul(
+                        args[0], Builder2.CreateFDiv(
+                                     Builder2.CreateExtractValue(op0, 0), d));
+                    Value *dif2 = Builder2.CreateFMul(
+                        args[0], Builder2.CreateFDiv(
+                                     Builder2.CreateExtractValue(op0, 1), d));
+                    return Builder2.CreateFAdd(dif1, dif2);
+                  };
+
+                  Value *dif =
+                      applyChainRule(call.getType(), Builder2, rule, op0);
+                  setDiffe(orig, dif, Builder2);
+                  return;
+                }
+              }
             }
+            llvm::errs() << *orig << "\n";
+            llvm_unreachable("unknown calling convention found for cabs");
           }
           case DerivativeMode::ReverseModeGradient:
           case DerivativeMode::ReverseModeCombined: {
@@ -9998,10 +10017,31 @@ public:
                              Builder2.CreateFMul(args[i], div), Builder2,
                              orig->getType());
               return;
-            } else {
-              llvm::errs() << *orig << "\n";
-              llvm_unreachable("unknown calling convention found for cabs");
+            } else if (args.size() == 1) {
+              if (auto AT = dyn_cast<ArrayType>(args[0]->getType())) {
+                if (AT->getNumElements() == 2) {
+                  if (!gutils->isConstantValue(orig->getArgOperand(0))) {
+                    Value *agg = UndefValue::get(args[0]->getType());
+                    agg = Builder2.CreateInsertValue(
+                        agg,
+                        Builder2.CreateFMul(
+                            Builder2.CreateExtractValue(args[0], 0), div),
+                        0);
+                    agg = Builder2.CreateInsertValue(
+                        agg,
+                        Builder2.CreateFMul(
+                            Builder2.CreateExtractValue(args[0], 1), div),
+                        1);
+
+                    addToDiffe(orig->getArgOperand(0), agg, Builder2,
+                               orig->getType());
+                    return;
+                  }
+                }
+              }
             }
+            llvm::errs() << *orig << "\n";
+            llvm_unreachable("unknown calling convention found for cabs");
           }
           case DerivativeMode::ReverseModePrimal: {
             return;
