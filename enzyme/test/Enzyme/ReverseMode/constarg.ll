@@ -29,7 +29,7 @@ bb3:
   %c1 = call double (...) @__enzyme_autodiff(i8* bitcast (double (double*)* @callable to i8*), i32 %a3, double* %a)
   ret void
 }
-declare dso_local noundef double @__enzyme_autodiff(...)
+declare dso_local double @__enzyme_autodiff(...)
 
 ; CHECK: define internal void @diffecallable(double* %0, double %differeturn) #0 {
 ; CHECK-NEXT: invert:
