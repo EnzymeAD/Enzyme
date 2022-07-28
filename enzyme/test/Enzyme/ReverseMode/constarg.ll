@@ -7,7 +7,7 @@ target triple = "x86_64-unknown-linux-gnu"
 
 @enzyme_const = internal global i32 0, align 4
 
-define internal noundef double @callable(double* %0) {
+define internal double @callable(double* %0) {
   ret double 1.000000e+00
 }
 
@@ -26,7 +26,7 @@ bb3:
   %a3 = phi i32 [ %a1, %bb1 ], [ %a2, %bb2 ]
   ;%a3 = load i32, i32* @enzyme_const, align 4
 
-  %c1 = call noundef double (...) @__enzyme_autodiff(i8* noundef bitcast (double (double*)* @callable to i8*), i32 %a3, double* %a)
+  %c1 = call double (...) @__enzyme_autodiff(i8* bitcast (double (double*)* @callable to i8*), i32 %a3, double* %a)
   ret void
 }
 declare dso_local noundef double @__enzyme_autodiff(...)
