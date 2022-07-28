@@ -26,7 +26,7 @@ bb3:
   %a3 = phi i32 [ %a1, %bb1 ], [ %a2, %bb2 ]
   ;%a3 = load i32, i32* @enzyme_const, align 4
 
-  %c1 = call noundef double (...) @__enzyme_autodiff(i8* noundef bitcast (double (double*)* @callable to i8*), i32 %a3, double* nonnull %a)
+  %c1 = call noundef double (...) @__enzyme_autodiff(i8* noundef bitcast (double (double*)* @callable to i8*), i32 %a3, double* %a)
   ret void
 }
 declare dso_local noundef double @__enzyme_autodiff(...)

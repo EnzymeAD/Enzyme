@@ -944,6 +944,36 @@ public:
     return true;
   }
 
+  // if all phi arms are (recursively) based on the same metaString, use that
+  Optional<StringRef> recursePhiReads(PHINode *val) {
+    Optional<StringRef> finalMetadata;
+    SmallVector<PHINode *, 1> todo = {val};
+    SmallSet<PHINode *, 1> done;
+    while (todo.size()) {
+      auto phiInst = todo.back();
+      todo.pop_back();
+      if (done.count(phiInst))
+        continue;
+      done.insert(phiInst);
+      for (unsigned j = 0; j < phiInst->getNumIncomingValues(); ++j) {
+        auto newVal = phiInst->getIncomingValue(j);
+        if (auto phi = dyn_cast<PHINode>(newVal)) {
+          todo.push_back(phi);
+        } else {
+          Optional<StringRef> metaString = getMetadataName(newVal);
+          if (metaString) {
+            if (!finalMetadata) {
+              finalMetadata = metaString;
+            } else if (finalMetadata != metaString) {
+              return None;
+            }
+          }
+        }
+      }
+    }
+    return finalMetadata;
+  }
+
   /// Return whether successful
   bool HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI, DerivativeMode mode,
                       bool sizeOnly) {
@@ -1080,6 +1110,10 @@ public:
       Value *res = CI->getArgOperand(i);
       Optional<DIFFE_TYPE> opt_ty;
       Optional<StringRef> metaString = getMetadataName(res);
+
+      if (!metaString && isa<PHINode>(res)) {
+        metaString = recursePhiReads(cast<PHINode>(res));
+      }
 
       // handle metadata
       if (metaString && metaString.getValue().startswith("enzyme_")) {
