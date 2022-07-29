@@ -2463,8 +2463,8 @@ public:
       changed = true;
     }
 
-    for (const auto &pair : Logic.PPC.cache)
-      pair.second->eraseFromParent();
+    // for (const auto &pair : Logic.PPC.cache)
+    //  pair.second->eraseFromParent();
     Logic.clear();
 
     if (changed && Logic.PostOpt) {
