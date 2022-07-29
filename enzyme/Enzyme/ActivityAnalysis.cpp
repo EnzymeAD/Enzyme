@@ -251,6 +251,9 @@ const std::set<std::string> KnownInactiveFunctions = {
     "logb",
     "logbf",
     "logbl",
+    "pthread_mutex_lock",
+    "pthread_mutex_trylock",
+    "pthread_mutex_unlock",
 };
 
 const char *DemangledKnownInactiveFunctionsStartingWith[] = {
