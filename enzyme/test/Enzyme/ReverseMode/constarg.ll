@@ -7,7 +7,7 @@ target triple = "x86_64-unknown-linux-gnu"
 
 @enzyme_const = internal global i32 0, align 4
 
-define internal double @callable(double* %0) {
+define internal double @callable(double* %x) {
   ret double 1.000000e+00
 }
 
@@ -31,7 +31,7 @@ bb3:
 }
 declare dso_local double @__enzyme_autodiff(...)
 
-; CHECK: define internal void @diffecallable(double* %0, double %differeturn) #0 {
+; CHECK: define internal void @diffecallable(double* %x, double %differeturn)
 ; CHECK-NEXT: invert:
 ; CHECK-NEXT:  ret void
 ; CHECK-NEXT: }
