@@ -1540,14 +1540,31 @@ void TypeAnalyzer::visitPHINode(PHINode &phi) {
     TypeTree upVal = getAnalysis(&phi);
     // only propagate anything's up if there is one
     // incoming value
-    if (phi.getNumIncomingValues() >= 2) {
+    Value *seen = phi.getIncomingValue(0);
+    for (size_t i = 0, end = phi.getNumIncomingValues(); i < end; ++i) {
+      if (seen != phi.getIncomingValue(i)) {
+        seen = nullptr;
+        break;
+      }
+    }
+
+    if (!seen) {
       upVal = upVal.PurgeAnything();
     }
-    auto L = LI.getLoopFor(phi.getParent());
-    bool isHeader = L && L->getHeader() == phi.getParent();
-    for (size_t i = 0, end = phi.getNumIncomingValues(); i < end; ++i) {
-      if (!isHeader || !L->contains(phi.getIncomingBlock(i))) {
-        updateAnalysis(phi.getIncomingValue(i), upVal, &phi);
+
+    if (EnzymeStrictAliasing || seen) {
+      auto L = LI.getLoopFor(phi.getParent());
+      bool isHeader = L && L->getHeader() == phi.getParent();
+      for (size_t i = 0, end = phi.getNumIncomingValues(); i < end; ++i) {
+        if (!isHeader || !L->contains(phi.getIncomingBlock(i))) {
+          updateAnalysis(phi.getIncomingValue(i), upVal, &phi);
+        }
+      }
+    } else {
+      if (EnzymePrintType) {
+        for (size_t i = 0, end = phi.getNumIncomingValues(); i < end; ++i)
+          llvm::errs() << " skipping update into " << *phi.getIncomingValue(i)
+                       << " of " << upVal.str() << " from " << phi << "\n";
       }
     }
   }
