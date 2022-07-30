@@ -1491,7 +1491,8 @@ void TypeAnalyzer::visitGetElementPtrInst(GetElementPtrInst &gep) {
 #else
     APInt ai(DL.getPointerSize(gep.getPointerAddressSpace()) * 8, 0);
 #endif
-    g2->accumulateConstantOffset(DL, ai);
+    bool valid = g2->accumulateConstantOffset(DL, ai);
+    assert(valid);
     // Using destructor rather than eraseFromParent
     //   as g2 has no parent
     delete g2;
@@ -1840,11 +1841,20 @@ void TypeAnalyzer::visitBitCastInst(BitCastInst &I) {
 }
 
 void TypeAnalyzer::visitSelectInst(SelectInst &I) {
-  if (direction & UP)
-    updateAnalysis(I.getTrueValue(), getAnalysis(&I).PurgeAnything(), &I);
-  if (direction & UP)
-    updateAnalysis(I.getFalseValue(), getAnalysis(&I).PurgeAnything(), &I);
-
+  if (direction & UP) {
+    auto Data = getAnalysis(&I).PurgeAnything();
+    if (EnzymeStrictAliasing || (I.getTrueValue() == I.getFalseValue())) {
+      updateAnalysis(I.getTrueValue(), Data, &I);
+      updateAnalysis(I.getFalseValue(), Data, &I);
+    } else {
+      if (EnzymePrintType) {
+        llvm::errs() << " skipping update into " << *I.getTrueValue() << " of "
+                     << Data.str() << " from " << I << "\n";
+        llvm::errs() << " skipping update into " << *I.getFalseValue() << " of "
+                     << Data.str() << " from " << I << "\n";
+      }
+    }
+  }
   if (direction & DOWN) {
     // special case for min/max result is still that operand [even if something
     // is 0]
