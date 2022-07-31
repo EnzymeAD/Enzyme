@@ -2794,6 +2794,9 @@ public:
           }
           if (isa<ConstantPointerNull>(cur))
             continue;
+          if (auto CI = dyn_cast<ConstantInt>(cur))
+            if (CI->isZero())
+              continue;
           auto curTT = TR.query(cur).Data0().ShiftIndices(DL, 0, size, 0);
           if (!set)
             vd2 = curTT;
