@@ -2347,6 +2347,10 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
     if (UA == UseActivity::OnlyStores && isa<LoadInst>(a))
       continue;
 
+    if (EnzymePrintActivity)
+      llvm::errs() << "      considering use of " << *val << " - " << *a
+                   << "\n";
+
     // Only ignore stores to the operand, not storing the operand
     // somewhere
     if (auto SI = dyn_cast<StoreInst>(a)) {
@@ -2358,7 +2362,6 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
             isa<ConstantInt>(SI->getValueOperand()))
           continue;
         if (UA == UseActivity::None) {
-          auto TmpOrig = SI->getValueOperand();
           // If storing into itself, all potential uses are taken care of
           // elsewhere in the recursion.
           bool shouldContinue = true;
@@ -2398,13 +2401,20 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
               TmpOrig = TmpOrig_2;
               continue;
             }
+            shouldContinue = false;
             break;
           }
           if (shouldContinue) {
+            if (EnzymePrintActivity)
+              llvm::errs() << "      -- continuing indirect store from " << *val
+                           << " into:\n";
             done.insert(std::make_tuple((User *)SI, SI->getValueOperand(), UA));
             for (auto TmpOrig : newAllocaSet) {
+
               for (const auto a : TmpOrig->users()) {
                 todo.push_back(std::make_tuple(a, TmpOrig, UA));
+                if (EnzymePrintActivity)
+                  llvm::errs() << "         ** " << *a << "\n";
               }
               AllocaSet.insert(TmpOrig);
               shouldContinue = true;
@@ -2452,8 +2462,12 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
           }
           break;
         }
-        if (shouldContinue)
+        if (shouldContinue) {
+          if (EnzymePrintActivity)
+            llvm::errs() << "      -- continuing indirect store2 from " << *val
+                         << " via " << *TmpOrig << "\n";
           continue;
+        }
       }
       if (PUA == UseActivity::OnlyLoads) {
         auto TmpOrig =
@@ -2469,10 +2483,6 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         }
       }
     }
-
-    if (EnzymePrintActivity)
-      llvm::errs() << "      considering use of " << *val << " - " << *a
-                   << "\n";
 
     if (!isa<Instruction>(a)) {
       if (auto CE = dyn_cast<ConstantExpr>(a)) {
@@ -2631,7 +2641,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
 #endif
 
         bool toContinue = false;
-        if (auto ldc = dyn_cast<LoadInst>(operand)) {
+        if (isa<LoadInst>(operand)) {
           if (isa<AllocaInst>(val)) {
             bool legal = true;
 
