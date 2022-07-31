@@ -1403,23 +1403,31 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         // have active memory stored into it [e.g. not just top level pointer
         // that matters]
         if (directions == DOWN) {
-          if (isValueInactiveFromUsers(TR, TmpOrig, UseActivity::OnlyLoads)) {
-            InsertConstantValue(TR, Val);
-            return true;
+          for (auto UA : {UseActivity::OnlyLoads, UseActivity::None}) {
+            Instruction *LoadReval = nullptr;
+            if (isValueInactiveFromUsers(TR, TmpOrig, UA, &LoadReval)) {
+              InsertConstantValue(TR, Val);
+              return true;
+            }
+            if (LoadReval) {
+              ReEvaluateValueIfInactiveInst[LoadReval].insert(TmpOrig);
+            }
           }
         } else if (directions & DOWN) {
-          Instruction *LoadReval = nullptr;
           auto DownHypothesis = std::shared_ptr<ActivityAnalyzer>(
               new ActivityAnalyzer(*this, DOWN));
           DownHypothesis->ConstantValues.insert(TmpOrig);
-          if (DownHypothesis->isValueInactiveFromUsers(
-                  TR, TmpOrig, UseActivity::OnlyLoads, &LoadReval)) {
-            insertConstantsFrom(TR, *DownHypothesis);
-            InsertConstantValue(TR, Val);
-            return true;
-          } else {
-            if (LoadReval) {
-              ReEvaluateValueIfInactiveInst[LoadReval].insert(TmpOrig);
+          for (auto UA : {UseActivity::OnlyLoads, UseActivity::None}) {
+            Instruction *LoadReval = nullptr;
+            if (DownHypothesis->isValueInactiveFromUsers(TR, TmpOrig, UA,
+                                                         &LoadReval)) {
+              insertConstantsFrom(TR, *DownHypothesis);
+              InsertConstantValue(TR, Val);
+              return true;
+            } else {
+              if (LoadReval) {
+                ReEvaluateValueIfInactiveInst[LoadReval].insert(TmpOrig);
+              }
             }
           }
         }
@@ -1761,6 +1769,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           potentialStore = true;
           if (cop)
             potentiallyActiveStore = true;
+        } else if (isa<MemSetInst>(I)) {
+          potentialStore = true;
         } else {
           // Otherwise fallback and check if the instruction is active
           // TODO: note that this can be optimized (especially for function
@@ -2297,7 +2307,7 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
 
 /// Is the value free of any active uses
 bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
-                                                llvm::Value *val,
+                                                llvm::Value *const val,
                                                 UseActivity PUA,
                                                 Instruction **FoundInst) {
   assert(directions & DOWN);
@@ -2358,6 +2368,21 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
             }
             continue;
           }
+        }
+      }
+      if (SI->getPointerOperand() != parent) {
+        auto TmpOrig =
+#if LLVM_VERSION_MAJOR >= 12
+            getUnderlyingObject(SI->getPointerOperand(), 100);
+#else
+            GetUnderlyingObject(SI->getPointerOperand(),
+                                TR.getFunction()->getParent()->getDataLayout(),
+                                100);
+#endif
+        // If storing into itself, all potential uses are taken care of
+        // elsewhere in the recursion.
+        if (TmpOrig == val && isa<AllocaInst>(TmpOrig)) {
+          continue;
         }
       }
       if (PUA == UseActivity::OnlyLoads) {
@@ -2480,6 +2505,71 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
             }
           }
         }
+      } else if (PUA == UseActivity::None || PUA == UseActivity::OnlyStores) {
+        // If calling a function derived from an alloca of this value,
+        // the function is only active if the function stored into
+        // the allocation is active (all functions not explicitly marked
+        // inactive), or one of the args to the call is active
+#if LLVM_VERSION_MAJOR >= 11
+        Value *operand = call->getCalledOperand();
+#else
+        Value *operand = call->getCalledValue();
+#endif
+
+        bool toContinue = false;
+        while (auto ldc = dyn_cast<LoadInst>(operand)) {
+          auto TmpOrig =
+#if LLVM_VERSION_MAJOR >= 12
+              getUnderlyingObject(ldc->getPointerOperand(), 100);
+#else
+              GetUnderlyingObject(
+                  ldc->getPointerOperand(),
+                  TR.getFunction()->getParent()->getDataLayout(), 100);
+#endif
+          operand = TmpOrig;
+          if (TmpOrig == val && isa<AllocaInst>(val)) {
+            bool legal = true;
+            for (auto &a : call->args()) {
+              if (isa<ConstantInt>(a))
+                continue;
+
+              Value *ptr = a;
+              bool subValue = false;
+              while (ptr) {
+                auto TmpOrig2 =
+#if LLVM_VERSION_MAJOR >= 12
+                    getUnderlyingObject(ptr, 100);
+#else
+                    GetUnderlyingObject(
+                        ptr, TR.getFunction()->getParent()->getDataLayout(),
+                        100);
+#endif
+                if (TmpOrig2 == val) {
+                  subValue = true;
+                  break;
+                }
+
+                if (PUA == UseActivity::None) {
+                  if (auto L = dyn_cast<LoadInst>(ptr)) {
+                    ptr = L->getPointerOperand();
+                  } else
+                    ptr = nullptr;
+                } else
+                  ptr = nullptr;
+              }
+              if (subValue)
+                continue;
+              legal = false;
+              break;
+            }
+            if (legal) {
+              toContinue = true;
+              break;
+            }
+          }
+        }
+        if (toContinue)
+          continue;
       }
     }
 
