@@ -6818,7 +6818,8 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
     // pass with the copy
     if ((allowForward && (mode == DerivativeMode::ReverseModePrimal ||
                           mode == DerivativeMode::ReverseModeCombined)) ||
-        (backwardsShadow && mode == DerivativeMode::ReverseModeGradient)) {
+        (backwardsShadow && (mode == DerivativeMode::ReverseModeGradient ||
+                             mode == DerivativeMode::ForwardModeSplit))) {
       assert(!shadowsLookedUp);
 
       // It is questionable how the following case would even occur, but if
