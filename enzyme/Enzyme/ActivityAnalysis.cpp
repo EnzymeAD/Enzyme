@@ -29,6 +29,7 @@
 
 #include <llvm/Config/llvm-config.h>
 
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/InstrTypes.h"
@@ -2328,6 +2329,11 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
   }
   std::set<std::tuple<User *, Value *, UseActivity>> done = {};
 
+  SmallSet<Value *, 1> AllocaSet;
+
+  if (isa<AllocaInst>(val))
+    AllocaSet.insert(val);
+
   while (todo.size()) {
     auto pair = todo.front();
     todo.pop_front();
@@ -2352,38 +2358,102 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
             isa<ConstantInt>(SI->getValueOperand()))
           continue;
         if (UA == UseActivity::None) {
-          auto TmpOrig =
+          auto TmpOrig = SI->getValueOperand();
+          // If storing into itself, all potential uses are taken care of
+          // elsewhere in the recursion.
+          bool shouldContinue = true;
+          SmallVector<Value *, 1> vtodo = {SI->getValueOperand()};
+          SmallSet<Value *, 1> seen;
+          SmallSet<Value *, 1> newAllocaSet;
+          while (vtodo.size()) {
+            auto TmpOrig = vtodo.back();
+            vtodo.pop_back();
+            if (seen.count(TmpOrig))
+              continue;
+            seen.insert(TmpOrig);
+            if (AllocaSet.count(TmpOrig)) {
+              continue;
+            }
+            if (isa<AllocaInst>(TmpOrig)) {
+              newAllocaSet.insert(TmpOrig);
+              continue;
+            }
+            if (isa<UndefValue>(TmpOrig) || isa<ConstantInt>(TmpOrig) ||
+                isa<ConstantPointerNull>(TmpOrig)) {
+              continue;
+            }
+            if (auto LI = dyn_cast<LoadInst>(TmpOrig)) {
+              TmpOrig = LI->getPointerOperand();
+              continue;
+            }
+            auto TmpOrig_2 =
 #if LLVM_VERSION_MAJOR >= 12
-              getUnderlyingObject(SI->getPointerOperand(), 100);
+                getUnderlyingObject(TmpOrig, 100);
 #else
-              GetUnderlyingObject(
-                  SI->getPointerOperand(),
-                  TR.getFunction()->getParent()->getDataLayout(), 100);
+                GetUnderlyingObject(
+                    TmpOrig, TR.getFunction()->getParent()->getDataLayout(),
+                    100);
 #endif
-          if (isa<AllocaInst>(TmpOrig)) {
-            done.insert(
-                std::make_tuple((User *)SI, SI->getPointerOperand(), UA));
-            for (const auto a : TmpOrig->users()) {
-              todo.push_back(std::make_tuple(a, TmpOrig, UA));
+            if (TmpOrig != TmpOrig_2) {
+              TmpOrig = TmpOrig_2;
+              continue;
+            }
+            break;
+          }
+          if (shouldContinue) {
+            done.insert(std::make_tuple((User *)SI, SI->getValueOperand(), UA));
+            for (auto TmpOrig : newAllocaSet) {
+              for (const auto a : TmpOrig->users()) {
+                todo.push_back(std::make_tuple(a, TmpOrig, UA));
+              }
+              AllocaSet.insert(TmpOrig);
+              shouldContinue = true;
             }
             continue;
           }
         }
       }
       if (SI->getPointerOperand() != parent) {
-        auto TmpOrig =
-#if LLVM_VERSION_MAJOR >= 12
-            getUnderlyingObject(SI->getPointerOperand(), 100);
-#else
-            GetUnderlyingObject(SI->getPointerOperand(),
-                                TR.getFunction()->getParent()->getDataLayout(),
-                                100);
-#endif
+        auto TmpOrig = SI->getPointerOperand();
         // If storing into itself, all potential uses are taken care of
         // elsewhere in the recursion.
-        if (TmpOrig == val && isa<AllocaInst>(TmpOrig)) {
-          continue;
+        bool shouldContinue = false;
+        while (1) {
+          if (AllocaSet.count(TmpOrig)) {
+            shouldContinue = true;
+            break;
+          }
+          if (isa<AllocaInst>(TmpOrig)) {
+            done.insert(
+                std::make_tuple((User *)SI, SI->getPointerOperand(), UA));
+            for (const auto a : TmpOrig->users()) {
+              todo.push_back(std::make_tuple(a, TmpOrig, UA));
+            }
+            AllocaSet.insert(TmpOrig);
+            shouldContinue = true;
+            break;
+          }
+          if (PUA == UseActivity::None) {
+            if (auto LI = dyn_cast<LoadInst>(TmpOrig)) {
+              TmpOrig = LI->getPointerOperand();
+              continue;
+            }
+          }
+          auto TmpOrig_2 =
+#if LLVM_VERSION_MAJOR >= 12
+              getUnderlyingObject(TmpOrig, 100);
+#else
+              GetUnderlyingObject(
+                  TmpOrig, TR.getFunction()->getParent()->getDataLayout(), 100);
+#endif
+          if (TmpOrig != TmpOrig_2) {
+            TmpOrig = TmpOrig_2;
+            continue;
+          }
+          break;
         }
+        if (shouldContinue)
+          continue;
       }
       if (PUA == UseActivity::OnlyLoads) {
         auto TmpOrig =
@@ -2478,6 +2548,22 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
       if (Function *F = getFunctionFromCall(call)) {
         if (F->getIntrinsicID() == Intrinsic::memcpy ||
             F->getIntrinsicID() == Intrinsic::memmove) {
+
+          // copies of constant string data do not impact activity.
+          if (auto cexpr = dyn_cast<ConstantExpr>(call->getArgOperand(1))) {
+            if (cexpr->getOpcode() == Instruction::GetElementPtr) {
+              if (auto GV = dyn_cast<GlobalVariable>(cexpr->getOperand(0))) {
+                if (GV->hasInitializer() && GV->isConstant()) {
+                  if (auto CDA =
+                          dyn_cast<ConstantDataArray>(GV->getInitializer())) {
+                    if (CDA->getType()->getElementType()->isIntegerTy(8))
+                      continue;
+                  }
+                }
+              }
+            }
+          }
+
           // Only need to care about loads from
           if (UA == UseActivity::OnlyLoads && call->getArgOperand(1) != parent)
             continue;
@@ -2486,24 +2572,52 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
           if (UA == UseActivity::OnlyStores && call->getArgOperand(0) != parent)
             continue;
 
-          if (call->getArgOperand(0) != parent) {
-            auto TmpOrig =
+          bool shouldContinue = false;
+          for (int arg = 0; arg < 2; arg++)
+            if (call->getArgOperand(arg) != parent &&
+                (arg == 0 || (PUA == UseActivity::None))) {
+              Value *TmpOrig = call->getOperand(arg);
+              while (1) {
+                if (AllocaSet.count(TmpOrig)) {
+                  shouldContinue = true;
+                  break;
+                }
+                if (isa<AllocaInst>(TmpOrig)) {
+                  done.insert(std::make_tuple((User *)call,
+                                              call->getArgOperand(arg), UA));
+                  for (const auto a : TmpOrig->users()) {
+                    todo.push_back(std::make_tuple(a, TmpOrig, UA));
+                  }
+                  AllocaSet.insert(TmpOrig);
+                  shouldContinue = true;
+                  break;
+                }
+                if (PUA == UseActivity::None) {
+                  if (auto LI = dyn_cast<LoadInst>(TmpOrig)) {
+                    TmpOrig = LI->getPointerOperand();
+                    continue;
+                  }
+                }
+                auto TmpOrig_2 =
 #if LLVM_VERSION_MAJOR >= 12
-                getUnderlyingObject(call->getArgOperand(0), 100);
+                    getUnderlyingObject(TmpOrig, 100);
 #else
-                GetUnderlyingObject(
-                    call->getArgOperand(0),
-                    TR.getFunction()->getParent()->getDataLayout(), 100);
+                    GetUnderlyingObject(
+                        TmpOrig, TR.getFunction()->getParent()->getDataLayout(),
+                        100);
 #endif
-            if (isa<AllocaInst>(TmpOrig)) {
-              done.insert(
-                  std::make_tuple((User *)call, call->getArgOperand(0), UA));
-              for (const auto a : TmpOrig->users()) {
-                todo.push_back(std::make_tuple(a, TmpOrig, UA));
+                if (TmpOrig != TmpOrig_2) {
+                  TmpOrig = TmpOrig_2;
+                  continue;
+                }
+                break;
               }
-              continue;
+              if (shouldContinue)
+                break;
             }
-          }
+
+          if (shouldContinue)
+            continue;
         }
       } else if (PUA == UseActivity::None || PUA == UseActivity::OnlyStores) {
         // If calling a function derived from an alloca of this value,
@@ -2517,26 +2631,17 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
 #endif
 
         bool toContinue = false;
-        while (auto ldc = dyn_cast<LoadInst>(operand)) {
-          auto TmpOrig =
-#if LLVM_VERSION_MAJOR >= 12
-              getUnderlyingObject(ldc->getPointerOperand(), 100);
-#else
-              GetUnderlyingObject(
-                  ldc->getPointerOperand(),
-                  TR.getFunction()->getParent()->getDataLayout(), 100);
-#endif
-          operand = TmpOrig;
-          if (TmpOrig == val && isa<AllocaInst>(val)) {
+        if (auto ldc = dyn_cast<LoadInst>(operand)) {
+          if (isa<AllocaInst>(val)) {
             bool legal = true;
 
 #if LLVM_VERSION_MAJOR >= 14
-            for (unsigned i = 0; i < call->arg_size(); ++i)
+            for (unsigned i = 0; i < call->arg_size() + 1; ++i)
 #else
-            for (unsigned i = 0; i < call->getNumArgOperands(); ++i)
+            for (unsigned i = 0; i < call->getNumArgOperands() + 1; ++i)
 #endif
             {
-              Value *a = call->getArgOperand(i);
+              Value *a = call->getOperand(i);
 
               if (isa<ConstantInt>(a))
                 continue;
@@ -2552,13 +2657,22 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
                         ptr, TR.getFunction()->getParent()->getDataLayout(),
                         100);
 #endif
-                if (TmpOrig2 == val) {
+                if (AllocaSet.count(TmpOrig2)) {
+                  subValue = true;
+                  break;
+                }
+                if (isa<AllocaInst>(TmpOrig2)) {
+                  done.insert(std::make_tuple((User *)call, a, UA));
+                  for (const auto a : TmpOrig2->users()) {
+                    todo.push_back(std::make_tuple(a, TmpOrig2, UA));
+                  }
+                  AllocaSet.insert(TmpOrig2);
                   subValue = true;
                   break;
                 }
 
                 if (PUA == UseActivity::None) {
-                  if (auto L = dyn_cast<LoadInst>(ptr)) {
+                  if (auto L = dyn_cast<LoadInst>(TmpOrig2)) {
                     ptr = L->getPointerOperand();
                   } else
                     ptr = nullptr;
