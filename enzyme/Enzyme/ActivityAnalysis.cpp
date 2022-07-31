@@ -2529,7 +2529,15 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
           operand = TmpOrig;
           if (TmpOrig == val && isa<AllocaInst>(val)) {
             bool legal = true;
-            for (auto &a : call->args()) {
+
+#if LLVM_VERSION_MAJOR >= 14
+            for (unsigned i = 0; i < call->arg_size(); ++i)
+#else
+            for (unsigned i = 0; i < call->getNumArgOperands(); ++i)
+#endif
+            {
+              Value *a = call->getArgOperand(i);
+
               if (isa<ConstantInt>(a))
                 continue;
 

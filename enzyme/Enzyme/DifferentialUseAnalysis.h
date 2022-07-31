@@ -397,6 +397,16 @@ static inline bool is_value_needed_in_reverse(
           goto endShadow;
       }
 
+      if (auto MS = dyn_cast<MemSetInst>(user)) {
+        if (MS->getArgOperand(0) != inst)
+          goto endShadow;
+
+        if (!gutils->isConstantValue(const_cast<Value *>(MS->getArgOperand(0))))
+          return seen[idx] = true;
+        else
+          goto endShadow;
+      }
+
       if (auto CI = dyn_cast<CallInst>(user)) {
         {
           SmallVector<OperandBundleDef, 2> OrigDefs;
