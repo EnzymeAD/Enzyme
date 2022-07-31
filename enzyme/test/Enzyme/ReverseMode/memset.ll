@@ -32,7 +32,7 @@ define void @df(double* %x, double* %xp, double* %y, double* %dy) {
 ; CHECK-NEXT:   store double %x2, double* %x
 ; CHECK-NEXT:   store double %x2, double* %y
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* %yptr, i8 0, i64 8, i1 false)
-; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* %"yptr'ipc", i8 0, i64 8, i1 false) #1
+; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* %"yptr'ipc", i8 0, i64 8, i1 false)
 ; CHECK-NEXT:   %0 = load double, double* %"y'"
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"y'"
 ; CHECK-NEXT:   %1 = fadd fast double 0.000000e+00, %0
@@ -46,7 +46,7 @@ define void @df(double* %x, double* %xp, double* %y, double* %dy) {
 ; CHECK-NEXT:   %6 = load double, double* %"y'"
 ; CHECK-NEXT:   %7 = fadd fast double %6, %5
 ; CHECK-NEXT:   store double %7, double* %"y'"
-; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* %"yptr'ipc", i8 0, i64 8, i1 false) #1
+; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* %"yptr'ipc", i8 0, i64 8, i1 false)
 ; CHECK-NEXT:   %8 = load double, double* %"x'"
 ; CHECK-NEXT:   %9 = fadd fast double %8, %4
 ; CHECK-NEXT:   store double %9, double* %"x'"

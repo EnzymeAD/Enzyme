@@ -2768,6 +2768,41 @@ public:
     auto vd = TR.query(MS.getOperand(0)).Data0().ShiftIndices(DL, 0, size, 0);
 
     if (!vd.isKnownPastPointer()) {
+      // If unknown type results, consider the intersection of all incoming.
+      if (isa<PHINode>(MS.getOperand(0)) || isa<SelectInst>(MS.getOperand(0))) {
+        SmallVector<Value *, 2> todo = {MS.getOperand(0)};
+        bool set = false;
+        SmallSet<Value *, 2> seen;
+        TypeTree vd2;
+        while (todo.size()) {
+          Value *cur = todo.back();
+          todo.pop_back();
+          if (seen.count(cur))
+            continue;
+          seen.insert(cur);
+          if (auto PN = dyn_cast<PHINode>(cur)) {
+            for (size_t i = 0, end = PN->getNumIncomingValues(); i < end; i++) {
+              todo.push_back(PN->getIncomingValue(i));
+            }
+            continue;
+          }
+          if (auto S = dyn_cast<SelectInst>(cur)) {
+            todo.push_back(S->getTrueValue());
+            todo.push_back(S->getFalseValue());
+            continue;
+          }
+          if (isa<ConstantPointerNull>(cur))
+            continue;
+          auto curTT = TR.query(cur).Data0().ShiftIndices(DL, 0, size, 0);
+          if (!set)
+            vd2 = curTT;
+          else
+            vd2 &= curTT;
+        }
+        vd = vd2;
+      }
+    }
+    if (!vd.isKnownPastPointer()) {
       if (looseTypeAnalysis) {
         if (auto CI = dyn_cast<CastInst>(MS.getOperand(0))) {
           if (auto PT = dyn_cast<PointerType>(CI->getSrcTy())) {
