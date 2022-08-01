@@ -100,7 +100,7 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   %mul = fmul double %i10, %rho0
 ; CHECK-NEXT:   %arrayidx5 = getelementptr inbounds double, double* %i4, i64 %iv.next2
 ; CHECK-NEXT:   store double %mul, double* %arrayidx5, align 8
-; CHECK-NEXT:   %inc = add i64 %iv.next2, 1
+; CHECK-NEXT:   %inc = add {{(nuw nsw )?}}i64 %iv.next2, 1
 ; CHECK-NEXT:   %cmp2 = icmp ult i64 %inc, 1000000
 ; CHECK-NEXT:   br i1 %cmp2, label %for.body3, label %for.end, !llvm.loop !4
 
@@ -119,7 +119,7 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %remat_call)
 ; CHECK-NEXT:   %[[a1:.+]] = icmp eq i64 %"iv'ac.0", 0
 ; CHECK-NEXT:   %[[i3:.+]] = fadd fast double %8, %differeturn
-; CHECK-NEXT:   %[[i4]] = select i1 %[[a1]], double %[[i3]], double %8
+; CHECK-NEXT:   %[[i4]] = select {{(fast )?}}i1 %[[a1]], double %[[i3]], double %8
 ; CHECK-NEXT:   br i1 %[[a1]], label %invertentry, label %incinvertfor.body
 
 ; CHECK: incinvertfor.body:                                ; preds = %invertfor.body
@@ -163,11 +163,11 @@ attributes #3 = { nounwind }
 ; CHECK: remat_for.body_for.body3:                         ; preds = %remat_for.body_for.body3, %remat_enter
 ; CHECK-NEXT:   %i10_unwrap = phi double [ %mul_unwrap, %remat_for.body_for.body3 ], [ 1.000000e+00, %remat_enter ]
 ; CHECK-NEXT:   %fiv = phi i64 [ %[[p9:.+]], %remat_for.body_for.body3 ], [ 0, %remat_enter ]
-; CHECK-NEXT:   %[[p9:.+]] = add i64 %fiv, 1
+; CHECK-NEXT:   %[[p9:.+]] = add {{(nsw )?}}i64 %fiv, 1
 ; CHECK-DAG:    %arrayidx5_unwrap = getelementptr inbounds double, double* %i4_unwrap, i64 %[[p9]]
 ; CHECK-DAG:    %mul_unwrap = fmul double %i10_unwrap, %rho0
 ; CHECK-NEXT:   store double %mul_unwrap, double* %arrayidx5_unwrap, align 8
-; CHECK-NEXT:   %inc_unwrap = add i64 %[[p9]], 1
+; CHECK-NEXT:   %inc_unwrap = add {{(nuw nsw )?}}i64 %[[p9]], 1
 ; CHECK-NEXT:   %cmp2_unwrap = icmp ult i64 %inc_unwrap, 1000000
 ; CHECK-NEXT:   br i1 %cmp2_unwrap, label %remat_for.body_for.body3, label %remat_for.body_for.end
 

@@ -129,9 +129,9 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   %"val'de.0" = phi double [ %17, %invertfor.body ], [ %"val'de.1", %remat_enter ]
 ; CHECK-NEXT:   %[[i1:.+]] = icmp eq i64 %"iv'ac.0", 0
 ; CHECK-NEXT:   %[[i2:.+]] = fadd fast double %"fadd'de.0", %"val'de.0"
-; CHECK-NEXT:   %3 = select i1 %[[i1]], double %"fadd'de.0", double %[[i2]]
+; CHECK-NEXT:   %3 = select {{(fast )?}}i1 %[[i1]], double %"fadd'de.0", double %[[i2]]
 ; CHECK-NEXT:   %[[i4:.+]] = fadd fast double %"rho0'de.0", %"val'de.0"
-; CHECK-NEXT:   %[[i5]] = select i1 %[[i1]], double %[[i4]], double %"rho0'de.0"
+; CHECK-NEXT:   %[[i5]] = select {{(fast )?}}i1 %[[i1]], double %[[i4]], double %"rho0'de.0"
 ; CHECK-NEXT:   br i1 %[[i1]], label %invertentry, label %incinvertfor.cond
 
 ; CHECK: incinvertfor.cond:
