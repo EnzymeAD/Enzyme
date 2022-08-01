@@ -100,7 +100,7 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
 #else
       AttrBuilder B;
 #endif
-      B.addDereferenceableOrNullAttr(ci->getLimitedValue() * Align);
+      B.addDereferenceableOrNullAttr(ci->getLimitedValue() * AlignI);
       malloccall->setAttributes(malloccall->getAttributes().addRetAttributes(
           malloccall->getContext(), B));
 #else
