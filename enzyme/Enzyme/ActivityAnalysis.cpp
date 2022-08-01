@@ -119,6 +119,7 @@ const char *KnownInactiveFunctionsStartingWith[] = {
     "_ZNSi7getline",
     "_ZNSirsER",
     "_ZNSt7__cxx1115basic_stringbuf",
+    "_ZNKSt7__cxx1115basic_stringbuf",
     "_ZNSi6ignore",
     "_ZNSt8ios_base",
     "_ZNKSt9basic_ios",
@@ -158,6 +159,10 @@ const std::set<std::string> InactiveGlobals = {
     // stringstream
     "_ZTVNSt7__cxx1118basic_stringstreamIcSt11char_traitsIcESaIcEEE",
     "_ZTTNSt7__cxx1118basic_stringstreamIcSt11char_traitsIcESaIcEEE",
+    // ifstream
+    "_ZTTSt14basic_ifstreamIcSt11char_traitsIcEE",
+    // ofstream
+    "_ZTTSt14basic_ofstreamIcSt11char_traitsIcEE",
     // vtable for __cxxabiv1::__si_class_type_info
     "_ZTVN10__cxxabiv120__si_class_type_infoE",
     "_ZTVN10__cxxabiv117__class_type_infoE",
@@ -1396,6 +1401,39 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
             insertConstantsFrom(TR, *UpHypothesis);
             return true;
           }
+          if (isAllocationFunction(*called, TLI)) {
+            // This pointer is inactive if it is either not actively stored to
+            // and not actively loaded from.
+            if (directions == DOWN) {
+              for (auto UA : {UseActivity::None}) {
+                Instruction *LoadReval = nullptr;
+                if (isValueInactiveFromUsers(TR, TmpOrig, UA, &LoadReval)) {
+                  InsertConstantValue(TR, Val);
+                  return true;
+                }
+                if (LoadReval) {
+                  ReEvaluateValueIfInactiveInst[LoadReval].insert(TmpOrig);
+                }
+              }
+            } else if (directions & DOWN) {
+              auto DownHypothesis = std::shared_ptr<ActivityAnalyzer>(
+                  new ActivityAnalyzer(*this, DOWN));
+              DownHypothesis->ConstantValues.insert(TmpOrig);
+              for (auto UA : {UseActivity::None}) {
+                Instruction *LoadReval = nullptr;
+                if (DownHypothesis->isValueInactiveFromUsers(TR, TmpOrig, UA,
+                                                             &LoadReval)) {
+                  insertConstantsFrom(TR, *DownHypothesis);
+                  InsertConstantValue(TR, Val);
+                  return true;
+                } else {
+                  if (LoadReval) {
+                    ReEvaluateValueIfInactiveInst[LoadReval].insert(TmpOrig);
+                  }
+                }
+              }
+            }
+          }
         }
       } else if (isa<AllocaInst>(Val)) {
         // This pointer is inactive if it is either not actively stored to or
@@ -2334,6 +2372,10 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
   if (isa<AllocaInst>(val))
     AllocaSet.insert(val);
 
+  if (PUA == UseActivity::None && isCalledFunction(val) &&
+      isAllocationFunction(*isCalledFunction(val), TLI))
+    AllocaSet.insert(val);
+
   while (todo.size()) {
     auto pair = todo.front();
     todo.pop_front();
@@ -2381,13 +2423,41 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
               newAllocaSet.insert(TmpOrig);
               continue;
             }
+            if (auto CF = isCalledFunction(TmpOrig)) {
+              if (isAllocationFunction(*CF, TLI)) {
+                newAllocaSet.insert(TmpOrig);
+                continue;
+              }
+            }
             if (isa<UndefValue>(TmpOrig) || isa<ConstantInt>(TmpOrig) ||
-                isa<ConstantPointerNull>(TmpOrig)) {
+                isa<ConstantPointerNull>(TmpOrig) || isa<ConstantFP>(TmpOrig)) {
               continue;
             }
             if (auto LI = dyn_cast<LoadInst>(TmpOrig)) {
-              TmpOrig = LI->getPointerOperand();
+              vtodo.push_back(LI->getPointerOperand());
               continue;
+            }
+            if (auto CD = dyn_cast<ConstantDataSequential>(TmpOrig)) {
+              for (size_t i = 0, len = CD->getNumElements(); i < len; i++)
+                vtodo.push_back(CD->getElementAsConstant(i));
+              continue;
+            }
+            if (auto CD = dyn_cast<ConstantAggregate>(TmpOrig)) {
+              for (size_t i = 0, len = CD->getNumOperands(); i < len; i++)
+                vtodo.push_back(CD->getOperand(i));
+              continue;
+            }
+            if (auto GV = dyn_cast<GlobalVariable>(TmpOrig)) {
+              // If operating under the assumption globals are inactive unless
+              // explicitly marked as active, this is inactive
+              if (!hasMetadata(GV, "enzyme_shadow") &&
+                  EnzymeNonmarkedGlobalsInactive) {
+                continue;
+              }
+              if (GV->getName().contains("enzyme_const") ||
+                  InactiveGlobals.count(GV->getName().str())) {
+                continue;
+              }
             }
             auto TmpOrig_2 =
 #if LLVM_VERSION_MAJOR >= 12
@@ -2398,9 +2468,12 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
                     100);
 #endif
             if (TmpOrig != TmpOrig_2) {
-              TmpOrig = TmpOrig_2;
+              vtodo.push_back(TmpOrig_2);
               continue;
             }
+            if (EnzymePrintActivity)
+              llvm::errs() << "      -- cannot continuing indirect store from "
+                           << *val << " due to " << *TmpOrig << "\n";
             shouldContinue = false;
             break;
           }
@@ -2447,6 +2520,18 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
             if (auto LI = dyn_cast<LoadInst>(TmpOrig)) {
               TmpOrig = LI->getPointerOperand();
               continue;
+            }
+            if (auto CF = isCalledFunction(TmpOrig)) {
+              if (isAllocationFunction(*CF, TLI)) {
+                done.insert(
+                    std::make_tuple((User *)SI, SI->getPointerOperand(), UA));
+                for (const auto a : TmpOrig->users()) {
+                  todo.push_back(std::make_tuple(a, TmpOrig, UA));
+                }
+                AllocaSet.insert(TmpOrig);
+                shouldContinue = true;
+                break;
+              }
             }
           }
           auto TmpOrig_2 =
@@ -2607,6 +2692,18 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
                     TmpOrig = LI->getPointerOperand();
                     continue;
                   }
+                  if (auto CF = isCalledFunction(TmpOrig)) {
+                    if (isAllocationFunction(*CF, TLI)) {
+                      done.insert(std::make_tuple(
+                          (User *)call, call->getArgOperand(arg), UA));
+                      for (const auto a : TmpOrig->users()) {
+                        todo.push_back(std::make_tuple(a, TmpOrig, UA));
+                      }
+                      AllocaSet.insert(TmpOrig);
+                      shouldContinue = true;
+                      break;
+                    }
+                  }
                 }
                 auto TmpOrig_2 =
 #if LLVM_VERSION_MAJOR >= 12
@@ -2642,62 +2739,70 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
 
         bool toContinue = false;
         if (isa<LoadInst>(operand)) {
-          if (isa<AllocaInst>(val)) {
-            bool legal = true;
+          bool legal = true;
 
 #if LLVM_VERSION_MAJOR >= 14
-            for (unsigned i = 0; i < call->arg_size() + 1; ++i)
+          for (unsigned i = 0; i < call->arg_size() + 1; ++i)
 #else
-            for (unsigned i = 0; i < call->getNumArgOperands() + 1; ++i)
+          for (unsigned i = 0; i < call->getNumArgOperands() + 1; ++i)
 #endif
-            {
-              Value *a = call->getOperand(i);
+          {
+            Value *a = call->getOperand(i);
 
-              if (isa<ConstantInt>(a))
-                continue;
+            if (isa<ConstantInt>(a))
+              continue;
 
-              Value *ptr = a;
-              bool subValue = false;
-              while (ptr) {
-                auto TmpOrig2 =
+            Value *ptr = a;
+            bool subValue = false;
+            while (ptr) {
+              auto TmpOrig2 =
 #if LLVM_VERSION_MAJOR >= 12
-                    getUnderlyingObject(ptr, 100);
+                  getUnderlyingObject(ptr, 100);
 #else
-                    GetUnderlyingObject(
-                        ptr, TR.getFunction()->getParent()->getDataLayout(),
-                        100);
+                  GetUnderlyingObject(
+                      ptr, TR.getFunction()->getParent()->getDataLayout(), 100);
 #endif
-                if (AllocaSet.count(TmpOrig2)) {
-                  subValue = true;
-                  break;
+              if (AllocaSet.count(TmpOrig2)) {
+                subValue = true;
+                break;
+              }
+              if (isa<AllocaInst>(TmpOrig2)) {
+                done.insert(std::make_tuple((User *)call, a, UA));
+                for (const auto a : TmpOrig2->users()) {
+                  todo.push_back(std::make_tuple(a, TmpOrig2, UA));
                 }
-                if (isa<AllocaInst>(TmpOrig2)) {
-                  done.insert(std::make_tuple((User *)call, a, UA));
-                  for (const auto a : TmpOrig2->users()) {
-                    todo.push_back(std::make_tuple(a, TmpOrig2, UA));
-                  }
-                  AllocaSet.insert(TmpOrig2);
-                  subValue = true;
-                  break;
-                }
+                AllocaSet.insert(TmpOrig2);
+                subValue = true;
+                break;
+              }
 
-                if (PUA == UseActivity::None) {
-                  if (auto L = dyn_cast<LoadInst>(TmpOrig2)) {
-                    ptr = L->getPointerOperand();
-                  } else
-                    ptr = nullptr;
+              if (PUA == UseActivity::None) {
+                if (auto CF = isCalledFunction(TmpOrig2)) {
+                  if (isAllocationFunction(*CF, TLI)) {
+                    done.insert(std::make_tuple((User *)call, a, UA));
+                    for (const auto a : TmpOrig2->users()) {
+                      todo.push_back(std::make_tuple(a, TmpOrig2, UA));
+                    }
+                    AllocaSet.insert(TmpOrig2);
+                    subValue = true;
+                    break;
+                  }
+                }
+                if (auto L = dyn_cast<LoadInst>(TmpOrig2)) {
+                  ptr = L->getPointerOperand();
                 } else
                   ptr = nullptr;
-              }
-              if (subValue)
-                continue;
-              legal = false;
-              break;
+              } else
+                ptr = nullptr;
             }
-            if (legal) {
-              toContinue = true;
-              break;
-            }
+            if (subValue)
+              continue;
+            legal = false;
+            break;
+          }
+          if (legal) {
+            toContinue = true;
+            break;
           }
         }
         if (toContinue)
