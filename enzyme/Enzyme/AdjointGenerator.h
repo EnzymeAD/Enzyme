@@ -5181,20 +5181,9 @@ public:
 
         if (tape && shouldFree()) {
           for (auto idx : subdata->tapeIndiciesToFree) {
-            auto ci = cast<CallInst>(CallInst::CreateFree(
-                Builder2.CreatePointerCast(
-                    idx == -1 ? tape : Builder2.CreateExtractValue(tape, idx),
-                    Type::getInt8PtrTy(Builder2.getContext())),
-                Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 14
-            ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                    Attribute::NonNull);
-#else
-            ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
-#endif
-            if (ci->getParent() == nullptr) {
-              Builder2.Insert(ci);
-            }
+            CreateDealloc(Builder2,
+                          idx == -1 ? tape
+                                    : Builder2.CreateExtractValue(tape, idx));
           }
         }
       } else {
@@ -5537,8 +5526,6 @@ public:
           byRef = true;
         }
 
-        auto &DL = gutils->oldFunc->getParent()->getDataLayout();
-
         Value *cacheval;
         auto in_arg = call.getCalledFunction()->arg_begin();
         Argument *countarg = in_arg;
@@ -5613,8 +5600,6 @@ public:
             cachetype) {
 
           SmallVector<Value *, 2> cacheValues;
-          auto size =
-              ConstantInt::get(intType, DL.getTypeSizeInBits(innerType) / 8);
 
           Value *count = gutils->getNewFromOriginal(call.getArgOperand(0));
 
@@ -5659,10 +5644,8 @@ public:
           if (xcache) {
             auto dmemcpy = getOrInsertMemcpyStrided(
                 *gutils->oldFunc->getParent(), cast<PointerType>(castvals[0]),
-                size->getType(), 0, 0);
-            auto malins = CallInst::CreateMalloc(
-                gutils->getNewFromOriginal(&call), size->getType(), innerType,
-                size, count, nullptr, "");
+                count->getType(), 0, 0);
+            auto malins = CreateAllocation(BuilderZ, innerType, count);
             Value *arg = BuilderZ.CreateBitCast(malins, castvals[0]);
             Value *args[4] = {arg,
                               gutils->getNewFromOriginal(call.getArgOperand(1)),
@@ -5684,10 +5667,8 @@ public:
           if (ycache) {
             auto dmemcpy = getOrInsertMemcpyStrided(
                 *gutils->oldFunc->getParent(), cast<PointerType>(castvals[1]),
-                size->getType(), 0, 0);
-            auto malins = CallInst::CreateMalloc(
-                gutils->getNewFromOriginal(&call), size->getType(), innerType,
-                size, count, nullptr, "");
+                count->getType(), 0, 0);
+            auto malins = CreateAllocation(BuilderZ, innerType, count);
             Value *arg = BuilderZ.CreateBitCast(malins, castvals[1]);
             Value *args[4] = {arg,
                               gutils->getNewFromOriginal(call.getArgOperand(3)),
@@ -6034,36 +6015,10 @@ public:
             Mode == DerivativeMode::ForwardModeSplit) {
           if (shouldFree()) {
             if (xcache) {
-              auto ci = cast<CallInst>(CallInst::CreateFree(
-                  Builder2.CreatePointerCast(
-                      xdata_ptr, Type::getInt8PtrTy(xdata_ptr->getContext())),
-                  Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 14
-              ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                      Attribute::NonNull);
-#else
-              ci->addAttribute(AttributeList::FirstArgIndex,
-                               Attribute::NonNull);
-#endif
-              if (ci->getParent() == nullptr) {
-                Builder2.Insert(ci);
-              }
+              CreateDealloc(Builder2, xdata_ptr);
             }
             if (ycache) {
-              auto ci = cast<CallInst>(CallInst::CreateFree(
-                  Builder2.CreatePointerCast(
-                      ydata_ptr, Type::getInt8PtrTy(ydata_ptr->getContext())),
-                  Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 14
-              ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                      Attribute::NonNull);
-#else
-              ci->addAttribute(AttributeList::FirstArgIndex,
-                               Attribute::NonNull);
-#endif
-              if (ci->getParent() == nullptr) {
-                Builder2.Insert(ci);
-              }
+              CreateDealloc(Builder2, ydata_ptr);
             }
           }
         }
@@ -6113,14 +6068,8 @@ public:
           auto i64 = Type::getInt64Ty(call.getContext());
           auto impi = getMPIHelper(call.getContext());
 
-          Value *impialloc = CallInst::CreateMalloc(
-              gutils->getNewFromOriginal(&call), i64, impi,
-              ConstantInt::get(
-                  i64,
-                  called->getParent()->getDataLayout().getTypeAllocSizeInBits(
-                      impi) /
-                      8),
-              nullptr, nullptr, "");
+          Value *impialloc =
+              CreateAllocation(BuilderZ, impi, ConstantInt::get(i64, 1));
           BuilderZ.SetInsertPoint(gutils->getNewFromOriginal(&call));
 
           d_req = BuilderZ.CreateBitCast(
@@ -6150,11 +6099,9 @@ public:
                                            Type::getInt64Ty(call.getContext())),
                 "", true, true);
 
-            Value *firstallocation = CallInst::CreateMalloc(
-                &*BuilderZ.GetInsertPoint(), len_arg->getType(),
-                Type::getInt8Ty(call.getContext()),
-                ConstantInt::get(Type::getInt64Ty(len_arg->getContext()), 1),
-                len_arg, nullptr, "mpirecv_malloccache");
+            Value *firstallocation =
+                CreateAllocation(BuilderZ, Type::getInt8Ty(call.getContext()),
+                                 len_arg, "mpirecv_malloccache");
             BuilderZ.CreateStore(
                 firstallocation,
                 getMPIMemberPtr<MPI_Elem::Buf>(BuilderZ, impialloc));
@@ -6401,36 +6348,12 @@ public:
                                         Builder2, BufferDefs);
 
             if (shouldFree()) {
-              auto ci = cast<CallInst>(CallInst::CreateFree(
-                  firstallocation, Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 14
-              ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                      Attribute::NonNull);
-#else
-              ci->addAttribute(AttributeList::FirstArgIndex,
-                               Attribute::NonNull);
-#endif
-              if (ci->getParent() == nullptr) {
-                Builder2.Insert(ci);
-              }
+              CreateDealloc(Builder2, firstallocation);
             }
           } else
             assert(0 && "illegal mpi");
 
-          CallInst *freecall = cast<CallInst>(CallInst::CreateFree(
-              Builder2.CreatePointerCast(helper,
-                                         Type::getInt8PtrTy(call.getContext())),
-              Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 14
-          freecall->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                        Attribute::NonNull);
-#else
-          freecall->addAttribute(AttributeList::FirstArgIndex,
-                                 Attribute::NonNull);
-#endif
-          if (freecall->getParent() == nullptr) {
-            Builder2.Insert(freecall);
-          }
+          CreateDealloc(Builder2, helper);
         }
         if (Mode == DerivativeMode::ForwardMode) {
           IRBuilder<> Builder2(&call);
@@ -6812,19 +6735,7 @@ public:
         }
         Builder2.SetInsertPoint(endBlock);
         if (shouldFree()) {
-          auto ci = cast<CallInst>(CallInst::CreateFree(
-              Builder2.CreatePointerCast(
-                  d_reqp, Type::getInt8PtrTy(d_reqp->getContext())),
-              Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 14
-          ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                  Attribute::NonNull);
-#else
-          ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
-#endif
-          if (ci->getParent() == nullptr) {
-            Builder2.Insert(ci);
-          }
+          CreateDealloc(Builder2, d_reqp);
         }
       } else if (Mode == DerivativeMode::ForwardMode) {
         IRBuilder<> Builder2(&call);
@@ -6980,14 +6891,9 @@ public:
                                    tysize, Type::getInt64Ty(call.getContext())),
                                "", true, true);
 
-        Value *firstallocation = CallInst::CreateMalloc(
-            Builder2.GetInsertBlock(), len_arg->getType(),
-            Type::getInt8Ty(call.getContext()),
-            ConstantInt::get(Type::getInt64Ty(len_arg->getContext()), 1),
-            len_arg, nullptr, "mpirecv_malloccache");
-        if (cast<Instruction>(firstallocation)->getParent() == nullptr) {
-          Builder2.Insert(cast<Instruction>(firstallocation));
-        }
+        Value *firstallocation =
+            CreateAllocation(Builder2, Type::getInt8Ty(call.getContext()),
+                             len_arg, "mpirecv_malloccache");
         args[0] = firstallocation;
 
         Type *types[sizeof(args) / sizeof(*args)];
@@ -7012,17 +6918,7 @@ public:
                                     shadow, len_arg, Builder2, BufferDefs);
 
         if (shouldFree()) {
-          auto ci = cast<CallInst>(
-              CallInst::CreateFree(firstallocation, Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 14
-          ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                  Attribute::NonNull);
-#else
-          ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
-#endif
-          if (ci->getParent() == nullptr) {
-            Builder2.Insert(ci);
-          }
+          CreateDealloc(Builder2, firstallocation);
         }
       }
       if (Mode == DerivativeMode::ReverseModeGradient)
@@ -7246,15 +7142,9 @@ public:
 
           Builder2.SetInsertPoint(rootBlock);
 
-          Value *rootbuf = CallInst::CreateMalloc(
-              Builder2.GetInsertBlock(), len_arg->getType(),
-              Type::getInt8Ty(call.getContext()),
-              ConstantInt::get(Type::getInt64Ty(len_arg->getContext()), 1),
-              len_arg, nullptr, "mpireduce_malloccache");
-          if (cast<Instruction>(rootbuf)->getParent() == nullptr) {
-            Builder2.Insert(cast<Instruction>(rootbuf));
-          }
-          Builder2.SetInsertPoint(rootBlock);
+          Value *rootbuf =
+              CreateAllocation(Builder2, Type::getInt8Ty(call.getContext()),
+                               len_arg, "mpireduce_malloccache");
           Builder2.CreateBr(mergeBlock);
 
           Builder2.SetInsertPoint(mergeBlock);
@@ -7328,17 +7218,7 @@ public:
 
           // Free up the memory of the buffer
           if (shouldFree()) {
-            auto ci = cast<CallInst>(
-                CallInst::CreateFree(buf, Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 14
-            ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                    Attribute::NonNull);
-#else
-            ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
-#endif
-            if (ci->getParent() == nullptr) {
-              Builder2.Insert(ci);
-            }
+            CreateDealloc(Builder2, buf);
           }
         }
 
@@ -7522,14 +7402,9 @@ public:
                                "", true, true);
 
         // 1. Alloc intermediate buffer
-        Value *buf = CallInst::CreateMalloc(
-            Builder2.GetInsertBlock(), len_arg->getType(),
-            Type::getInt8Ty(call.getContext()),
-            ConstantInt::get(Type::getInt64Ty(len_arg->getContext()), 1),
-            len_arg, nullptr, "mpireduce_malloccache");
-        if (cast<Instruction>(buf)->getParent() == nullptr) {
-          Builder2.Insert(cast<Instruction>(buf));
-        }
+        Value *buf =
+            CreateAllocation(Builder2, Type::getInt8Ty(call.getContext()),
+                             len_arg, "mpireduce_malloccache");
 
         // 1.5 if root, set intermediate = diff(recvbuffer)
         {
@@ -7620,17 +7495,7 @@ public:
 
         // Free up intermediate buffer
         if (shouldFree()) {
-          auto ci = cast<CallInst>(
-              CallInst::CreateFree(buf, Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 14
-          ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                  Attribute::NonNull);
-#else
-          ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
-#endif
-          if (ci->getParent() == nullptr) {
-            Builder2.Insert(ci);
-          }
+          CreateDealloc(Builder2, buf);
         }
       }
       if (Mode == DerivativeMode::ReverseModeGradient)
@@ -7779,14 +7644,9 @@ public:
                                "", true, true);
 
         // 1. Alloc intermediate buffer
-        Value *buf = CallInst::CreateMalloc(
-            Builder2.GetInsertBlock(), len_arg->getType(),
-            Type::getInt8Ty(call.getContext()),
-            ConstantInt::get(Type::getInt64Ty(len_arg->getContext()), 1),
-            len_arg, nullptr, "mpireduce_malloccache");
-        if (cast<Instruction>(buf)->getParent() == nullptr) {
-          Builder2.Insert(cast<Instruction>(buf));
-        }
+        Value *buf =
+            CreateAllocation(Builder2, Type::getInt8Ty(call.getContext()),
+                             len_arg, "mpireduce_malloccache");
 
         // 2. MPI_Allreduce (sum) of diff(recvbuffer) to intermediate
         {
@@ -7827,17 +7687,7 @@ public:
 
         // Free up intermediate buffer
         if (shouldFree()) {
-          auto ci = cast<CallInst>(
-              CallInst::CreateFree(buf, Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 14
-          ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                  Attribute::NonNull);
-#else
-          ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
-#endif
-          if (ci->getParent() == nullptr) {
-            Builder2.Insert(ci);
-          }
+          CreateDealloc(Builder2, buf);
         }
       }
       if (Mode == DerivativeMode::ReverseModeGradient)
@@ -7972,14 +7822,9 @@ public:
             Builder2, /*lookup*/ true);
 
         // 1. Alloc intermediate buffer
-        Value *buf = CallInst::CreateMalloc(
-            Builder2.GetInsertBlock(), sendlen_arg->getType(),
-            Type::getInt8Ty(call.getContext()),
-            ConstantInt::get(Type::getInt64Ty(sendlen_arg->getContext()), 1),
-            sendlen_arg, nullptr, "mpireduce_malloccache");
-        if (cast<Instruction>(buf)->getParent() == nullptr) {
-          Builder2.Insert(cast<Instruction>(buf));
-        }
+        Value *buf =
+            CreateAllocation(Builder2, Type::getInt8Ty(call.getContext()),
+                             sendlen_arg, "mpireduce_malloccache");
 
         // 2. Scatter diff(recvbuffer) to intermediate buffer
         {
@@ -8055,17 +7900,7 @@ public:
 
         // Free up intermediate buffer
         if (shouldFree()) {
-          auto ci = cast<CallInst>(
-              CallInst::CreateFree(buf, Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 14
-          ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                  Attribute::NonNull);
-#else
-          ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
-#endif
-          if (ci->getParent() == nullptr) {
-            Builder2.Insert(ci);
-          }
+          CreateDealloc(Builder2, buf);
         }
       }
       if (Mode == DerivativeMode::ReverseModeGradient)
@@ -8228,14 +8063,9 @@ public:
                   Type::getInt64Ty(call.getContext())),
               "", true, true);
 
-          Value *rootbuf = CallInst::CreateMalloc(
-              Builder2.GetInsertBlock(), sendlen_arg->getType(),
-              Type::getInt8Ty(call.getContext()),
-              ConstantInt::get(Type::getInt64Ty(sendlen_arg->getContext()), 1),
-              sendlen_arg, nullptr, "mpireduce_malloccache");
-          if (cast<Instruction>(rootbuf)->getParent() == nullptr) {
-            Builder2.Insert(cast<Instruction>(rootbuf));
-          }
+          Value *rootbuf =
+              CreateAllocation(Builder2, Type::getInt8Ty(call.getContext()),
+                               sendlen_arg, "mpireduce_malloccache");
 
           Builder2.CreateBr(mergeBlock);
 
@@ -8312,17 +8142,7 @@ public:
 
           // Free up intermediate buffer
           if (shouldFree()) {
-            auto ci = cast<CallInst>(
-                CallInst::CreateFree(buf, Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 14
-            ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                    Attribute::NonNull);
-#else
-            ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
-#endif
-            if (ci->getParent() == nullptr) {
-              Builder2.Insert(ci);
-            }
+            CreateDealloc(Builder2, buf);
           }
 
           Builder2.CreateBr(mergeBlock);
@@ -8457,14 +8277,9 @@ public:
             Builder2, /*lookup*/ true);
 
         // 1. Alloc intermediate buffer
-        Value *buf = CallInst::CreateMalloc(
-            Builder2.GetInsertBlock(), sendlen_arg->getType(),
-            Type::getInt8Ty(call.getContext()),
-            ConstantInt::get(Type::getInt64Ty(sendlen_arg->getContext()), 1),
-            sendlen_arg, nullptr, "mpireduce_malloccache");
-        if (cast<Instruction>(buf)->getParent() == nullptr) {
-          Builder2.Insert(cast<Instruction>(buf));
-        }
+        Value *buf =
+            CreateAllocation(Builder2, Type::getInt8Ty(call.getContext()),
+                             sendlen_arg, "mpireduce_malloccache");
 
         ConcreteType CT = TR.firstPointer(1, orig_sendbuf);
         Type *MPI_OP_Ptr_type =
@@ -8533,17 +8348,7 @@ public:
 
         // Free up intermediate buffer
         if (shouldFree()) {
-          auto ci = cast<CallInst>(
-              CallInst::CreateFree(buf, Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 14
-          ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                  Attribute::NonNull);
-#else
-          ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
-#endif
-          if (ci->getParent() == nullptr) {
-            Builder2.Insert(ci);
-          }
+          CreateDealloc(Builder2, buf);
         }
       }
       if (Mode == DerivativeMode::ReverseModeGradient)
@@ -12033,14 +11838,7 @@ public:
         truetape->setMetadata("enzyme_mustcache",
                               MDNode::get(truetape->getContext(), {}));
 
-        CallInst *ci = cast<CallInst>(
-            CallInst::CreateFree(tape, &*BuilderZ.GetInsertPoint()));
-#if LLVM_VERSION_MAJOR >= 14
-        ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                Attribute::NonNull);
-#else
-        ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
-#endif
+        CreateDealloc(BuilderZ, tape);
         tape = truetape;
       }
     } else {

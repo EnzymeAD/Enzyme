@@ -260,7 +260,6 @@ const std::set<std::string> KnownInactiveFunctions = {
 };
 
 const char *DemangledKnownInactiveFunctionsStartingWith[] = {
-    "fprintf",
     "std::allocator",
     "std::string",
     "std::cerr",
