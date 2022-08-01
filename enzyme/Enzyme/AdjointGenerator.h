@@ -2792,6 +2792,12 @@ public:
             todo.push_back(S->getFalseValue());
             continue;
           }
+          if (auto CE = dyn_cast<ConstantExpr>(cur)) {
+            if (CE->isCast()) {
+              todo.push_back(CE->getOperand(0));
+              continue;
+            }
+          }
           if (isa<ConstantPointerNull>(cur))
             continue;
           if (auto CI = dyn_cast<ConstantInt>(cur))
