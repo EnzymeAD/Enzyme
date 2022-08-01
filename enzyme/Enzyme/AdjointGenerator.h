@@ -2802,6 +2802,7 @@ public:
             vd2 = curTT;
           else
             vd2 &= curTT;
+          set = true;
         }
         vd = vd2;
       }
