@@ -2798,6 +2798,10 @@ public:
               continue;
             }
           }
+          if (auto CI = dyn_cast<CastInst>(cur)) {
+            todo.push_back(CI->getOperand(0));
+            continue;
+          }
           if (isa<ConstantPointerNull>(cur))
             continue;
           if (auto CI = dyn_cast<ConstantInt>(cur))
