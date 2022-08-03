@@ -21,3 +21,6 @@ lstm.o: lstm-opt.ll
 
 results.txt: lstm.o
 	./$^ | tee $@
+
+results.json: lstm.o
+	./$^

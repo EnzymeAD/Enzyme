@@ -1,9 +1,11 @@
 #pragma once
 
+#include "../../json.hpp"
 #include "../mshared/defs.h"
 #include <vector>
 #include <string>
 #include <iostream>
+#include <fstream>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,6 +17,7 @@ float tdiff(struct timeval *start, struct timeval *end) {
 }
 
 using namespace std;
+using json = nlohmann::json;
 
 class HandModelLightMatrix
 {
@@ -548,9 +551,13 @@ int main(const int argc, const char* argv[]) {
 
     const HandParameters params = { false }; // true or false
 
+    std::ofstream jsonfile("results.json", std::ofstream::trunc);
+    json test_results;
+
     for (auto path : paths) {
         printf("starting path %s\n", path.c_str());
-
+        json test_suite;
+        test_suite["name"] = path;
     {
 
     struct HandInput input;
@@ -591,10 +598,14 @@ int main(const int argc, const char* argv[]) {
       gettimeofday(&start, NULL);
       calculate_jacobian<hand_objective_d, hand_objective_complicated_d>(objective_input, input, result, params.is_complicated, theta_d, us_d, us_jacobian_column);
       gettimeofday(&end, NULL);
-      printf("Tapenade combined %0.6f\n", tdiff(&start, &end));
-      for(unsigned i=0; i<5; i++) {
+      json tapenade;
+      tapenade["name"] = "Tapenade combined";
+      tapenade["runtime"] = tdiff(&start, &end);
+      for (unsigned i = 0; i < 5; i++) {
         printf("%f ", result.jacobian[i]);
+        tapenade["result"].push_back(result.jacobian[i]);
       }
+      test_suite["tools"].push_back(tapenade);
       printf("\n");
     }
 
@@ -641,13 +652,19 @@ int main(const int argc, const char* argv[]) {
       calculate_jacobian<dhand_objective, dhand_objective_complicated>(objective_input, input, result, params.is_complicated, theta_d, us_d, us_jacobian_column);
       gettimeofday(&end, NULL);
       printf("Enzyme combined %0.6f\n", tdiff(&start, &end));
-      for(unsigned i=0; i<5; i++) {
+      json enzyme;
+      enzyme["name"] = "Enzyme combined";
+      enzyme["runtime"] = tdiff(&start, &end);
+      for (unsigned i = 0; i < 5; i++) {
         printf("%f ", result.jacobian[i]);
+        enzyme["result"].push_back(result.jacobian[i]);
       }
+      test_suite["tools"].push_back(enzyme);
       printf("\n");
     }
 
     }
-
-    }
+    test_results.push_back(test_suite);
+   }
+   jsonfile << std::setw(4) << test_results;
 }
