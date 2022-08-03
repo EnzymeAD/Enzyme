@@ -660,10 +660,13 @@ static Optional<StringRef> getMetadataName(llvm::Value *res) {
 }
 
 class EnzymeBase {
+private:
+  ModuleAnalysisManager &MAM;
+  FunctionAnalysisManager &FAM;
 public:
   EnzymeLogic Logic;
 
-  EnzymeBase(bool PostOpt) : Logic(PostOpt | EnzymePostOpt) {}
+  EnzymeBase(bool PostOpt, ModuleAnalysisManager &MAM, FunctionAnalysisManager &FAM) :  MAM(MAM), FAM(FAM), Logic(PostOpt | EnzymePostOpt, MAM, FAM) {}
 
   Optional<Function *> parseFunctionParameter(CallInst *CI) {
     Value *fn = CI->getArgOperand(0);
@@ -1601,7 +1604,7 @@ public:
 
   bool
   lowerEnzymeCalls(Function &F, bool &successful, std::set<Function *> &done,
-                   std::function<TargetLibraryInfo &(Function &F)> &getTLI) {
+                   TargetLibraryInfo &TLI) {
     if (done.count(&F))
       return false;
     done.insert(&F);
@@ -1614,8 +1617,6 @@ public:
     //#else
     //        auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
     //#endif
-
-    TargetLibraryInfo tli = getTLI(F);
 
     bool Changed = false;
 
@@ -1972,7 +1973,7 @@ public:
             // AD case.
             bool tmp = Logic.PostOpt;
             Logic.PostOpt = true;
-            Changed |= lowerEnzymeCalls(*dc, successful, done, getTLI);
+            Changed |= lowerEnzymeCalls(*dc, successful, done, TLI);
             Logic.PostOpt = tmp;
           }
         }
@@ -2007,14 +2008,14 @@ public:
 
     // Perform all the size replacements first to create constants
     for (auto pair : toSize) {
-      successful &= HandleAutoDiff(pair.first, tli, pair.second,
+      successful &= HandleAutoDiff(pair.first, TLI, pair.second,
                                    /*sizeOnly*/ true);
       Changed = true;
       if (!successful)
         break;
     }
     for (auto pair : toLower) {
-      successful &= HandleAutoDiff(pair.first, tli, pair.second,
+      successful &= HandleAutoDiff(pair.first, TLI, pair.second,
                                    /*sizeOnly*/ false);
       Changed = true;
       if (!successful)
@@ -2041,7 +2042,7 @@ public:
                        Arch == Triple::amdgcn;
 
       auto val = GradientUtils::GetOrCreateShadowConstant(
-          Logic, tli, TA, fn, pair.second, /*width*/ 1, AtomicAdd);
+          Logic, TLI, TA, fn, pair.second, /*width*/ 1, AtomicAdd);
       CI->replaceAllUsesWith(ConstantExpr::getPointerCast(val, CI->getType()));
       CI->eraseFromParent();
       Changed = true;
@@ -2216,8 +2217,8 @@ public:
       ///getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
       //#endif
       ///
-      //            auto TLI = getTLI(F);
-      changed |= lowerEnzymeCalls(F, successful, done, getTLI);
+      auto TLI = getTLI(F);
+      changed |= lowerEnzymeCalls(F, successful, done, TLI);
 
       if (!successful) {
         M.getContext().diagnose(
@@ -2310,10 +2311,13 @@ public:
   }
 };
 
-class EnzymeLegacy : public ModulePass, EnzymeBase {
+class EnzymeLegacy final : public ModulePass {
+private:
+  ModuleAnalysisManager MAM;
 public:
   static char ID;
-  EnzymeLegacy(bool PostOpt = false) : ModulePass(ID), EnzymeBase(PostOpt) {
+  
+  EnzymeLegacy(bool PostOpt = false) : ModulePass(ID) {
     // initializeLowerAutodiffIntrinsicPass(*PassRegistry::getPassRegistry());
   }
   void getAnalysisUsage(AnalysisUsage &AU) const override {
@@ -2338,34 +2342,42 @@ public:
       ///
       return TLI;
     };
-    return implementation(M, getTLI);
+    llvm::ModuleAnalysisManager MAM;
+    llvm::FunctionAnalysisManager &FAM = MAM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
+    EnzymeBase pass(false, MAM, FAM);
+    return pass.implementation(M, getTLI);
   }
 };
+  
+char EnzymeLegacy::ID;
 
-class Enzyme : public AnalysisInfoMixin<Enzyme>, EnzymeBase {
+class Enzyme final : public AnalysisInfoMixin<Enzyme> {
+  friend struct llvm::AnalysisInfoMixin<Enzyme>;
+private:
+  static llvm::AnalysisKey Key;
 public:
   using Result = llvm::PreservedAnalyses;
 
-  Enzyme(bool PostOpt = false) : EnzymeBase(PostOpt) {}
+//  Enzyme(bool PostOpt = false) : pass(PostOpt) {}
 
   Result run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
+    auto &FAM =
+        MAM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
     std::function<TargetLibraryInfo &(Function & F)> getTLI =
         [&](Function &F) -> TargetLibraryInfo & {
-      auto &FAM =
-          MAM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
       auto &TLI = FAM.getResult<TargetLibraryAnalysis>(F);
       return TLI;
     };
-    return implementation(M, getTLI) ? PreservedAnalyses::none()
+    
+    EnzymeBase pass = EnzymeBase(false, MAM, FAM);
+    return pass.implementation(M, getTLI) ? PreservedAnalyses::none()
                                      : PreservedAnalyses::all();
   }
 
   static bool isRequired() { return true; }
-
-private:
-  static llvm::AnalysisKey Key;
-  friend struct llvm::AnalysisInfoMixin<Enzyme>;
 };
+  
+AnalysisKey Enzyme::Key;
 
 class EnzymePrinter : public PassInfoMixin<EnzymePrinter> {
 public:
@@ -2383,8 +2395,6 @@ private:
 
 } // namespace
 
-char EnzymeLegacy::ID = 0;
-
 static RegisterPass<EnzymeLegacy> X("enzyme", "Enzyme Pass");
 
 ModulePass *createEnzymePass(bool PostOpt) { return new EnzymeLegacy(PostOpt); }
@@ -2392,9 +2402,6 @@ ModulePass *createEnzymePass(bool PostOpt) { return new EnzymeLegacy(PostOpt); }
 extern "C" void AddEnzymePass(LLVMPassManagerRef PM) {
   unwrap(PM)->add(createEnzymePass(/*PostOpt*/ false));
 }
-
-// TODO why this?
-AnalysisKey Enzyme::Key;
 
 extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
 llvmGetPassPluginInfo() {

@@ -43,14 +43,12 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
-//;
-
-class PreProcessCache {
+class PreProcessCache final {
 public:
-  PreProcessCache();
-
-  llvm::FunctionAnalysisManager FAM;
-  llvm::ModuleAnalysisManager MAM;
+  PreProcessCache(llvm::ModuleAnalysisManager &MAM, llvm::FunctionAnalysisManager &FAM);
+  
+  llvm::ModuleAnalysisManager &MAM;
+  llvm::FunctionAnalysisManager &FAM;
 
   std::map<std::pair<llvm::Function *, DerivativeMode>, llvm::Function *> cache;
   std::map<llvm::Function *, llvm::Function *> CloneOrigin;
