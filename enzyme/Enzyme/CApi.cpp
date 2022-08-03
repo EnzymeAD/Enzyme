@@ -168,9 +168,9 @@ int64_t EnzymeGetCLInteger(void *ptr) {
   return (int64_t)cl->getValue();
 }
 
-EnzymeLogicRef CreateEnzymeLogic(uint8_t PostOpt) {
-  return (EnzymeLogicRef)(new EnzymeLogic((bool)PostOpt));
-}
+//EnzymeLogicRef CreateEnzymeLogic(uint8_t PostOpt) {
+//  return (EnzymeLogicRef)(new EnzymeLogic((bool)PostOpt));
+//}
 
 void ClearEnzymeLogic(EnzymeLogicRef Ref) { eunwrap(Ref).clear(); }
 
