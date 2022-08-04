@@ -388,8 +388,7 @@ int main(const int argc, const char* argv[]) {
       json tapenade;
       tapenade["name"] = "Tapenade combined";
       tapenade["runtime"] = tdiff(&start, &end);
-      for (unsigned i = result.gradient.size() - 5;
-           i < result.gradient.size(); i++) {
+      for(unsigned i=0; i<5; i++) {
         printf("%f ", result.J.vals[i]);
         tapenade["result"].push_back(result.J.vals[i]);
       }
@@ -440,13 +439,12 @@ int main(const int argc, const char* argv[]) {
       json adept;
       adept["name"] = "Adept combined";
       adept["runtime"] = tdiff(&start, &end);
-      for (unsigned i = result.gradient.size() - 5;
-           i < result.gradient.size(); i++) {
-        printf("%f ", result.gradient[i]);
+      for(unsigned i=0; i<5; i++) {
+        printf("%f ", result.J.vals[i]);
         adept["result"].push_back(result.J.vals[i]);
       }
       printf("\n");
-      test_suite["tools"].push_back(adept);z
+      test_suite["tools"].push_back(adept);
     }
 
     }
