@@ -16,7 +16,7 @@
 double __enzyme_autodiff(void*, ...);
 
 double log1p_like_function(double a) {
-  return a;
+  return 2*a;
 }
 
 double test(double a) {

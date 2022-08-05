@@ -133,7 +133,8 @@ public:
           }
           if (V == &F) {
             changed = true;
-            if (Begin) {
+            if (Begin && !F.hasFnAttribute("prev_fixup")) {
+              F.addFnAttr("prev_fixup");
               if (F.hasFnAttribute(Attribute::AlwaysInline))
                 F.addFnAttr("prev_always_inline");
               if (F.hasFnAttribute(Attribute::NoInline))
@@ -142,26 +143,27 @@ public:
               F.setLinkage(Function::LinkageTypes::ExternalLinkage);
               F.addFnAttr(Attribute::NoInline);
               F.removeFnAttr(Attribute::AlwaysInline);
-            } else {
-              if (F.hasFnAttribute("prev_always_inline")) {
-                F.addFnAttr(Attribute::AlwaysInline);
-                F.removeFnAttr("prev_always_inline");
-              }
-              if (F.hasFnAttribute("prev_no_inline")) {
-                F.removeFnAttr("prev_no_inline");
-              } else {
-                F.removeFnAttr(Attribute::NoInline);
-              }
-              int64_t val;
-              F.getFnAttribute("prev_linkage")
-                  .getValueAsString()
-                  .getAsInteger(10, val);
-              F.setLinkage((Function::LinkageTypes)val);
             }
             break;
           }
         }
       }
+    }
+    if (!Begin && F.hasFnAttribute("prev_fixup")) {
+      changed = true;
+      F.removeFnAttr("prev_fixup");
+      if (F.hasFnAttribute("prev_always_inline")) {
+        F.addFnAttr(Attribute::AlwaysInline);
+        F.removeFnAttr("prev_always_inline");
+      }
+      if (F.hasFnAttribute("prev_no_inline")) {
+        F.removeFnAttr("prev_no_inline");
+      } else {
+        F.removeFnAttr(Attribute::NoInline);
+      }
+      int64_t val;
+      F.getFnAttribute("prev_linkage").getValueAsString().getAsInteger(10, val);
+      F.setLinkage((Function::LinkageTypes)val);
     }
     return changed;
   }
