@@ -29,10 +29,10 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 
-#include "llvm/IR/Constants.h" 
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GlobalVariable.h"
-#include "llvm/IR/Module.h" 
+#include "llvm/IR/Module.h"
 
 #include "llvm/Pass.h"
 
@@ -59,38 +59,36 @@ public:
   bool runOnModule(Module &M) override {
     bool changed = false;
     std::map<std::string, std::pair<std::string, std::string>> Implements;
-    for (Function &F : M.functions()) {
-      for (std::string T : {"", "f"}) {
-        // sincos, sinpi, cospi, sincospi, cyl_bessel_i1
-        for (std::string name :
-             {"sin",       "cos",     "tan",        "log2",    "exp",
-              "exp2",      "exp10",   "cosh",       "sinh",    "tanh",
-              "atan2",     "atan",    "asin",       "acos",    "log",
-              "log10",     "log1p",   "acosh",      "asinh",   "atanh",
-              "expm1",     "hypot",   "rhypot",     "norm3d",  "rnorm3d",
-              "norm4d",    "rnorm4d", "norm",       "rnorm",   "cbrt",
-              "rcbrt",     "j0",      "j1",         "y0",      "y1",
-              "yn",        "jn",      "erf",        "erfinv",  "erfc",
-              "erfcx",     "erfcinv", "normcdfinv", "normcdf", "lgamma",
-              "ldexp",     "scalbn",  "frexp",      "modf",    "fmod",
-              "remainder", "remquo",  "powi",       "tgamma",  "round",
-              "fdim",      "ilogb",   "logb",       "isinf",   "pow",
-              "sqrt"}) {
-          std::string nvname = "__nv_" + name;
-          std::string llname = "llvm." + name + ".";
-          std::string mathname = name;
+    for (std::string T : {"", "f"}) {
+      // sincos, sinpi, cospi, sincospi, cyl_bessel_i1
+      for (std::string name :
+           {"sin",        "cos",     "tan",       "log2",   "exp",    "exp2",
+            "exp10",      "cosh",    "sinh",      "tanh",   "atan2",  "atan",
+            "asin",       "acos",    "log",       "log10",  "log1p",  "acosh",
+            "asinh",      "atanh",   "expm1",     "hypot",  "rhypot", "norm3d",
+            "rnorm3d",    "norm4d",  "rnorm4d",   "norm",   "rnorm",  "cbrt",
+            "rcbrt",      "j0",      "j1",        "y0",     "y1",     "yn",
+            "jn",         "erf",     "erfinv",    "erfc",   "erfcx",  "erfcinv",
+            "normcdfinv", "normcdf", "lgamma",    "ldexp",  "scalbn", "frexp",
+            "modf",       "fmod",    "remainder", "remquo", "powi",   "tgamma",
+            "round",      "fdim",    "ilogb",     "logb",   "isinf",  "pow",
+            "sqrt"}) {
+        std::string nvname = "__nv_" + name;
+        std::string llname = "llvm." + name + ".";
+        std::string mathname = name;
 
-          if (T == "f") {
-            mathname += "f";
-            nvname += "f";
-            llname += "f32";
-          } else {
-            llname += "f64";
-          }
-
-          Implements[nvname] = std::make_pair(mathname, llname);
+        if (T == "f") {
+          mathname += "f";
+          nvname += "f";
+          llname += "f32";
+        } else {
+          llname += "f64";
         }
+
+        Implements[nvname] = std::make_pair(mathname, llname);
       }
+    }
+    for (Function &F : M.functions()) {
       auto found = Implements.find(F.getName().str());
       if (found != Implements.end()) {
         if (Begin) {
