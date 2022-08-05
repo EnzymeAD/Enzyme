@@ -29,7 +29,10 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 
+#include "llvm/IR/Constants.h" 
 #include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/Module.h" 
 
 #include "llvm/Pass.h"
 
@@ -45,62 +48,114 @@ using namespace llvm;
 
 namespace {
 
-class PreserveNVVM : public FunctionPass {
+class PreserveNVVM : public ModulePass {
 public:
   static char ID;
   bool Begin;
-  PreserveNVVM(bool Begin = true) : FunctionPass(ID), Begin(Begin) {}
+  PreserveNVVM(bool Begin = true) : ModulePass(ID), Begin(Begin) {}
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {}
 
-  bool runOnFunction(Function &F) override {
+  bool runOnModule(Module &M) override {
     bool changed = false;
     std::map<std::string, std::pair<std::string, std::string>> Implements;
-    for (std::string T : {"", "f"}) {
-      // sincos, sinpi, cospi, sincospi, cyl_bessel_i1
-      for (std::string name :
-           {"sin",        "cos",     "tan",       "log2",   "exp",    "exp2",
-            "exp10",      "cosh",    "sinh",      "tanh",   "atan2",  "atan",
-            "asin",       "acos",    "log",       "log10",  "log1p",  "acosh",
-            "asinh",      "atanh",   "expm1",     "hypot",  "rhypot", "norm3d",
-            "rnorm3d",    "norm4d",  "rnorm4d",   "norm",   "rnorm",  "cbrt",
-            "rcbrt",      "j0",      "j1",        "y0",     "y1",     "yn",
-            "jn",         "erf",     "erfinv",    "erfc",   "erfcx",  "erfcinv",
-            "normcdfinv", "normcdf", "lgamma",    "ldexp",  "scalbn", "frexp",
-            "modf",       "fmod",    "remainder", "remquo", "powi",   "tgamma",
-            "round",      "fdim",    "ilogb",     "logb",   "isinf",  "pow",
-            "sqrt"}) {
-        std::string nvname = "__nv_" + name;
-        std::string llname = "llvm." + name + ".";
-        std::string mathname = name;
+    for (Function &F : M.functions()) {
+      for (std::string T : {"", "f"}) {
+        // sincos, sinpi, cospi, sincospi, cyl_bessel_i1
+        for (std::string name :
+             {"sin",       "cos",     "tan",        "log2",    "exp",
+              "exp2",      "exp10",   "cosh",       "sinh",    "tanh",
+              "atan2",     "atan",    "asin",       "acos",    "log",
+              "log10",     "log1p",   "acosh",      "asinh",   "atanh",
+              "expm1",     "hypot",   "rhypot",     "norm3d",  "rnorm3d",
+              "norm4d",    "rnorm4d", "norm",       "rnorm",   "cbrt",
+              "rcbrt",     "j0",      "j1",         "y0",      "y1",
+              "yn",        "jn",      "erf",        "erfinv",  "erfc",
+              "erfcx",     "erfcinv", "normcdfinv", "normcdf", "lgamma",
+              "ldexp",     "scalbn",  "frexp",      "modf",    "fmod",
+              "remainder", "remquo",  "powi",       "tgamma",  "round",
+              "fdim",      "ilogb",   "logb",       "isinf",   "pow",
+              "sqrt"}) {
+          std::string nvname = "__nv_" + name;
+          std::string llname = "llvm." + name + ".";
+          std::string mathname = name;
 
-        if (T == "f") {
-          mathname += "f";
-          nvname += "f";
-          llname += "f32";
-        } else {
-          llname += "f64";
+          if (T == "f") {
+            mathname += "f";
+            nvname += "f";
+            llname += "f32";
+          } else {
+            llname += "f64";
+          }
+
+          Implements[nvname] = std::make_pair(mathname, llname);
         }
-
-        Implements[nvname] = std::make_pair(mathname, llname);
+      }
+      auto found = Implements.find(F.getName().str());
+      if (found != Implements.end()) {
+        if (Begin) {
+          F.removeFnAttr(Attribute::AlwaysInline);
+          F.addFnAttr(Attribute::NoInline);
+          // As a side effect, enforces arguments
+          // cannot be erased.
+          F.setLinkage(Function::LinkageTypes::ExternalLinkage);
+          F.addFnAttr("implements", found->second.second);
+          F.addFnAttr("implements2", found->second.first);
+          F.addFnAttr("enzyme_math", found->second.first);
+          changed = true;
+        } else {
+          F.addFnAttr(Attribute::AlwaysInline);
+          F.removeFnAttr(Attribute::NoInline);
+          F.setLinkage(Function::LinkageTypes::InternalLinkage);
+        }
       }
     }
-    auto found = Implements.find(F.getName().str());
-    if (found != Implements.end()) {
-      if (Begin) {
-        F.removeFnAttr(Attribute::AlwaysInline);
-        F.addFnAttr(Attribute::NoInline);
-        // As a side effect, enforces arguments
-        // cannot be erased.
-        F.setLinkage(Function::LinkageTypes::ExternalLinkage);
-        F.addFnAttr("implements", found->second.second);
-        F.addFnAttr("implements2", found->second.first);
-        F.addFnAttr("enzyme_math", found->second.first);
-        changed = true;
-      } else {
-        F.addFnAttr(Attribute::AlwaysInline);
-        F.removeFnAttr(Attribute::NoInline);
-        F.setLinkage(Function::LinkageTypes::InternalLinkage);
+    constexpr static const char gradient_handler_name[] =
+        "__enzyme_register_gradient";
+    constexpr static const char derivative_handler_name[] =
+        "__enzyme_register_derivative";
+    constexpr static const char splitderivative_handler_name[] =
+        "__enzyme_register_splitderivative";
+    for (GlobalVariable &g : M.globals()) {
+      if (g.getName().contains(gradient_handler_name) ||
+          g.getName().contains(derivative_handler_name) ||
+          g.getName().contains(splitderivative_handler_name) ||
+          g.getName().contains("__enzyme_inactivefn") ||
+          g.getName().contains("__enzyme_function_like")) {
+        if (g.hasInitializer()) {
+          Value *V = g.getInitializer();
+          while (auto CE = dyn_cast<ConstantExpr>(V)) {
+            V = CE->getOperand(0);
+          }
+          if (auto F = dyn_cast<Function>(V)) {
+            if (Begin) {
+              if (F->hasFnAttribute(Attribute::AlwaysInline))
+                F->addFnAttr("prev_always_inline");
+              if (F->hasFnAttribute(Attribute::NoInline))
+                F->addFnAttr("prev_no_inline");
+              F->addFnAttr("prev_linkage", std::to_string(F->getLinkage()));
+              F->setLinkage(Function::LinkageTypes::ExternalLinkage);
+              F->addFnAttr(Attribute::NoInline);
+              F->removeFnAttr(Attribute::AlwaysInline);
+              changed = true;
+            } else {
+              if (F->hasFnAttribute("prev_always_inline")) {
+                F->addFnAttr(Attribute::AlwaysInline);
+                F->removeFnAttr("prev_always_inline");
+              }
+              if (F->hasFnAttribute("prev_no_inline")) {
+                F->removeFnAttr("prev_no_inline");
+              } else {
+                F->removeFnAttr(Attribute::NoInline);
+              }
+              int64_t val;
+              F->getFnAttribute("prev_linkage")
+                  .getValueAsString()
+                  .getAsInteger(10, val);
+              F->setLinkage((Function::LinkageTypes)val);
+            }
+          }
+        }
       }
     }
     return changed;
@@ -113,7 +168,7 @@ char PreserveNVVM::ID = 0;
 
 static RegisterPass<PreserveNVVM> X("preserve-nvvm", "Preserve NVVM Pass");
 
-FunctionPass *createPreserveNVVMPass(bool Begin) {
+ModulePass *createPreserveNVVMPass(bool Begin) {
   return new PreserveNVVM(Begin);
 }
 
