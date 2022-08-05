@@ -48,15 +48,15 @@ using namespace llvm;
 
 namespace {
 
-class PreserveNVVM : public ModulePass {
+class PreserveNVVM : public FunctionPass {
 public:
   static char ID;
   bool Begin;
-  PreserveNVVM(bool Begin = true) : ModulePass(ID), Begin(Begin) {}
+  PreserveNVVM(bool Begin = true) : FunctionPass(ID), Begin(Begin) {}
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {}
 
-  bool runOnModule(Module &M) override {
+  bool runOnFunction(Function &F) override {
     bool changed = false;
     std::map<std::string, std::pair<std::string, std::string>> Implements;
     for (std::string T : {"", "f"}) {
@@ -88,24 +88,22 @@ public:
         Implements[nvname] = std::make_pair(mathname, llname);
       }
     }
-    for (Function &F : M.functions()) {
-      auto found = Implements.find(F.getName().str());
-      if (found != Implements.end()) {
-        if (Begin) {
-          F.removeFnAttr(Attribute::AlwaysInline);
-          F.addFnAttr(Attribute::NoInline);
-          // As a side effect, enforces arguments
-          // cannot be erased.
-          F.setLinkage(Function::LinkageTypes::ExternalLinkage);
-          F.addFnAttr("implements", found->second.second);
-          F.addFnAttr("implements2", found->second.first);
-          F.addFnAttr("enzyme_math", found->second.first);
-          changed = true;
-        } else {
-          F.addFnAttr(Attribute::AlwaysInline);
-          F.removeFnAttr(Attribute::NoInline);
-          F.setLinkage(Function::LinkageTypes::InternalLinkage);
-        }
+    auto found = Implements.find(F.getName().str());
+    if (found != Implements.end()) {
+      changed = true;
+      if (Begin) {
+        F.removeFnAttr(Attribute::AlwaysInline);
+        F.addFnAttr(Attribute::NoInline);
+        // As a side effect, enforces arguments
+        // cannot be erased.
+        F.setLinkage(Function::LinkageTypes::ExternalLinkage);
+        F.addFnAttr("implements", found->second.second);
+        F.addFnAttr("implements2", found->second.first);
+        F.addFnAttr("enzyme_math", found->second.first);
+      } else {
+        F.addFnAttr(Attribute::AlwaysInline);
+        F.removeFnAttr(Attribute::NoInline);
+        F.setLinkage(Function::LinkageTypes::InternalLinkage);
       }
     }
     constexpr static const char gradient_handler_name[] =
@@ -114,7 +112,7 @@ public:
         "__enzyme_register_derivative";
     constexpr static const char splitderivative_handler_name[] =
         "__enzyme_register_splitderivative";
-    for (GlobalVariable &g : M.globals()) {
+    for (GlobalVariable &g : F.getParent()->globals()) {
       if (g.getName().contains(gradient_handler_name) ||
           g.getName().contains(derivative_handler_name) ||
           g.getName().contains(splitderivative_handler_name) ||
@@ -125,33 +123,34 @@ public:
           while (auto CE = dyn_cast<ConstantExpr>(V)) {
             V = CE->getOperand(0);
           }
-          if (auto F = dyn_cast<Function>(V)) {
+          if (V == &F) {
+            changed = true;
             if (Begin) {
-              if (F->hasFnAttribute(Attribute::AlwaysInline))
-                F->addFnAttr("prev_always_inline");
-              if (F->hasFnAttribute(Attribute::NoInline))
-                F->addFnAttr("prev_no_inline");
-              F->addFnAttr("prev_linkage", std::to_string(F->getLinkage()));
-              F->setLinkage(Function::LinkageTypes::ExternalLinkage);
-              F->addFnAttr(Attribute::NoInline);
-              F->removeFnAttr(Attribute::AlwaysInline);
-              changed = true;
+              if (F.hasFnAttribute(Attribute::AlwaysInline))
+                F.addFnAttr("prev_always_inline");
+              if (F.hasFnAttribute(Attribute::NoInline))
+                F.addFnAttr("prev_no_inline");
+              F.addFnAttr("prev_linkage", std::to_string(F.getLinkage()));
+              F.setLinkage(Function::LinkageTypes::ExternalLinkage);
+              F.addFnAttr(Attribute::NoInline);
+              F.removeFnAttr(Attribute::AlwaysInline);
             } else {
-              if (F->hasFnAttribute("prev_always_inline")) {
-                F->addFnAttr(Attribute::AlwaysInline);
-                F->removeFnAttr("prev_always_inline");
+              if (F.hasFnAttribute("prev_always_inline")) {
+                F.addFnAttr(Attribute::AlwaysInline);
+                F.removeFnAttr("prev_always_inline");
               }
-              if (F->hasFnAttribute("prev_no_inline")) {
-                F->removeFnAttr("prev_no_inline");
+              if (F.hasFnAttribute("prev_no_inline")) {
+                F.removeFnAttr("prev_no_inline");
               } else {
-                F->removeFnAttr(Attribute::NoInline);
+                F.removeFnAttr(Attribute::NoInline);
               }
               int64_t val;
-              F->getFnAttribute("prev_linkage")
+              F.getFnAttribute("prev_linkage")
                   .getValueAsString()
                   .getAsInteger(10, val);
-              F->setLinkage((Function::LinkageTypes)val);
+              F.setLinkage((Function::LinkageTypes)val);
             }
+            break;
           }
         }
       }
@@ -166,7 +165,7 @@ char PreserveNVVM::ID = 0;
 
 static RegisterPass<PreserveNVVM> X("preserve-nvvm", "Preserve NVVM Pass");
 
-ModulePass *createPreserveNVVMPass(bool Begin) {
+FunctionPass *createPreserveNVVMPass(bool Begin) {
   return new PreserveNVVM(Begin);
 }
 
