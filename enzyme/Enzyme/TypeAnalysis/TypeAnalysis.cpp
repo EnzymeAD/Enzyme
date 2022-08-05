@@ -91,7 +91,7 @@ const std::map<std::string, llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"exp10", Intrinsic::not_intrinsic},
     {"log", Intrinsic::log},
     {"log10", Intrinsic::log10},
-    {"expm1", Intrinsic::not_intrinsic},
+    {"expm1", Intrinsic::exp},
     {"log1p", Intrinsic::not_intrinsic},
     {"log2", Intrinsic::log2},
     {"logb", Intrinsic::not_intrinsic},
