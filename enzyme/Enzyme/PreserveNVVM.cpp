@@ -120,8 +120,16 @@ public:
           g.getName().contains("__enzyme_function_like")) {
         if (g.hasInitializer()) {
           Value *V = g.getInitializer();
-          while (auto CE = dyn_cast<ConstantExpr>(V)) {
-            V = CE->getOperand(0);
+          while (1) {
+            if (auto CE = dyn_cast<ConstantExpr>(V)) {
+              V = CE->getOperand(0);
+              continue;
+            }
+            if (auto CA = dyn_cast<ConstantAggregate>(V)) {
+              V = CA->getOperand(0);
+              continue;
+            }
+            break;
           }
           if (V == &F) {
             changed = true;
