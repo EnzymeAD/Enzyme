@@ -309,7 +309,7 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
     }
     if (auto GEP = dyn_cast<GetElementPtrInst>(inst)) {
       IRBuilder<> B(GEP);
-      SmallVector<Value *> ind(GEP->indices());
+      SmallVector<Value *, 1> ind(GEP->indices());
 #if LLVM_VERSION_MAJOR > 7
       auto nGEP = cast<GetElementPtrInst>(
           B.CreateGEP(GEP->getSourceElementType(), rep, ind));
@@ -336,7 +336,16 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
     }
     if (auto MS = dyn_cast<MemSetInst>(inst)) {
       IRBuilder<> B(MS);
-      auto nMS = B.CreateMemSet(rep, MS->getValue(), MS->getVolatile());
+#if LLVM_VERSION_MAJOR >= 13
+      auto nMS = B.CreateMemSet(rep, MS->getValue(), MS->getLength(),
+                                MS->getDestAlign(), MS->getVolatile());
+#elif LLVM_VERSION_MAJOR >= 10
+      auto nMS = B.CreateMemSet(rep, MS->getValue(), MS->getLength(),
+                                MS->getDestAlign());
+#else
+      auto nMS = B.CreateMemSet(rep, MS->getValue(), MS->getLength(),
+                                MS->getDestAlignment());
+#endif
       cast<MemSetInst>(nMS)->copyIRFlags(MS);
       toErase.push_back(MS);
       continue;
