@@ -342,11 +342,11 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
 
       Type *tys[] = {nargs[0]->getType(), nargs[2]->getType()};
 
-            auto nMS = cast<CallInst>(Builder2.CreateCall(
-                Intrinsic::getDeclaration(called->getParent(),
-                                          Intrinsic::memset, tys),
-                nargs);
-      cast<MemSetInst>(nMS)->copyIRFlags(MS);
+      auto nMS = cast<CallInst>(B.CreateCall(
+          Intrinsic::getDeclaration(MS->getParent()->getParent()->getParent(),
+                                    Intrinsic::memset, tys),
+          nargs));
+      nMS->copyIRFlags(MS);
       toErase.push_back(MS);
       continue;
     }
