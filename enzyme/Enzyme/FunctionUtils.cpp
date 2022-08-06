@@ -336,16 +336,16 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
     }
     if (auto MS = dyn_cast<MemSetInst>(inst)) {
       IRBuilder<> B(MS);
-#if LLVM_VERSION_MAJOR >= 14
-      auto nMS = B.CreateMemSet(rep, MS->getValue(), MS->getLength(),
-                                MS->getDestAlign(), MS->getVolatile());
-#elif LLVM_VERSION_MAJOR >= 10
-      auto nMS = B.CreateMemSet(rep, MS->getValue(), MS->getLength(),
-                                MS->getDestAlign());
-#else
-      auto nMS = B.CreateMemSet(rep, MS->getValue(), MS->getLength(),
-                                MS->getDestAlignment());
-#endif
+
+      Value *nargs[] = {rep, MS->getArgOperand(1), MS->getArgOperand(2),
+                        MS->getArgOperand(3)};
+
+      Type *tys[] = {nargs[0]->getType(), nargs[2]->getType()};
+
+            auto nMS = cast<CallInst>(Builder2.CreateCall(
+                Intrinsic::getDeclaration(called->getParent(),
+                                          Intrinsic::memset, tys),
+                nargs);
       cast<MemSetInst>(nMS)->copyIRFlags(MS);
       toErase.push_back(MS);
       continue;
