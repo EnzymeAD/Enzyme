@@ -11302,10 +11302,11 @@ public:
           newcalled = BuilderZ.CreateExtractValue(newcalled, {0});
         }
 
-        ErrorIfRuntimeInactive(BuilderZ, gutils->getNewFromOriginal(callval),
-                               newcalled,
-                               "Attempting to call an indirect active function "
-                               "whose runtime value is inactive");
+        ErrorIfRuntimeInactive(
+            BuilderZ, gutils->getNewFromOriginal(callval), newcalled,
+            "Attempting to call an indirect active function "
+            "whose runtime value is inactive",
+            gutils->getNewFromOriginal(orig->getDebugLoc()), orig);
 
         auto ft =
             cast<FunctionType>(callval->getType()->getPointerElementType());
@@ -11554,7 +11555,8 @@ public:
           ErrorIfRuntimeInactive(
               BuilderZ, gutils->getNewFromOriginal(callval), newcalled,
               "Attempting to call an indirect active function "
-              "whose runtime value is inactive");
+              "whose runtime value is inactive",
+              gutils->getNewFromOriginal(orig->getDebugLoc()), orig);
 
         auto ft =
             cast<FunctionType>(callval->getType()->getPointerElementType());
