@@ -336,7 +336,7 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
     }
     if (auto MS = dyn_cast<MemSetInst>(inst)) {
       IRBuilder<> B(MS);
-#if LLVM_VERSION_MAJOR >= 13
+#if LLVM_VERSION_MAJOR >= 14
       auto nMS = B.CreateMemSet(rep, MS->getValue(), MS->getLength(),
                                 MS->getDestAlign(), MS->getVolatile());
 #elif LLVM_VERSION_MAJOR >= 10
