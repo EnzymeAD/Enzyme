@@ -2434,10 +2434,13 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
     Value *parent = std::get<1>(pair);
     UseActivity UA = std::get<2>(pair);
 
-    if ((UA == UseActivity::OnlyStores ||
-         UA == UseActivity::OnlyNonPointerStores) &&
-        isa<LoadInst>(a))
-      continue;
+    if (auto LI = dyn_cast<LoadInst>(a)) {
+      if (UA == UseActivity::OnlyStores)
+        continue;
+      if (UA == UseActivity::OnlyNonPointerStores &&
+          !TR.query(LI)[{-1}].isPossiblePointer())
+        continue;
+    }
 
     if (EnzymePrintActivity)
       llvm::errs() << "      considering use of " << *val << " - " << *a
@@ -2453,10 +2456,6 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         if (ConstantValues.count(SI->getValueOperand()) ||
             isa<ConstantInt>(SI->getValueOperand()))
           continue;
-        if (UA == UseActivity::OnlyNonPointerStores) {
-          if (!TR.query(SI->getValueOperand())[{-1}].isPossiblePointer())
-            continue;
-        }
         if (UA == UseActivity::None) {
           // If storing into itself, all potential uses are taken care of
           // elsewhere in the recursion.
@@ -2718,9 +2717,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
             continue;
 
           // Only need to care about store from
-          if ((UA == UseActivity::OnlyStores ||
-               UA == UseActivity::OnlyNonPointerStores) &&
-              call->getArgOperand(0) != parent)
+          if (UA == UseActivity::OnlyStores && call->getArgOperand(0) != parent)
             continue;
 
           bool shouldContinue = false;
@@ -2894,7 +2891,8 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         continue;
       }
       if (!I->mayWriteToMemory()) {
-        if (TR.intType(1, I, /*errIfNotFound*/ false).isIntegral()) {
+        auto C = TR.query(I)[{-1}];
+        if (C.isIntegral()) {
           continue;
         }
         UseActivity NU = UA;
