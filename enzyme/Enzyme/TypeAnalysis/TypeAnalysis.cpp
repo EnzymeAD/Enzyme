@@ -87,9 +87,10 @@ const std::map<std::string, llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"asinh", Intrinsic::not_intrinsic},
     {"atanh", Intrinsic::not_intrinsic},
     {"exp", Intrinsic::exp},
+    {"exp2", Intrinsic::exp2},
+    {"exp10", Intrinsic::not_intrinsic},
     {"log", Intrinsic::log},
     {"log10", Intrinsic::log10},
-    {"exp2", Intrinsic::exp2},
     {"expm1", Intrinsic::not_intrinsic},
     {"log1p", Intrinsic::not_intrinsic},
     {"log2", Intrinsic::log2},
@@ -3698,6 +3699,13 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
     if (funcName == "omp_get_max_threads" || funcName == "omp_get_thread_num" ||
         funcName == "omp_get_num_threads") {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1), &call);
+      return;
+    }
+    if (funcName == "_ZNSt6localeC1Ev") {
+      TypeTree ptrint;
+      ptrint.insert({-1}, BaseType::Pointer);
+      ptrint.insert({-1, 0}, BaseType::Integer);
+      updateAnalysis(call.getOperand(0), ptrint, &call);
       return;
     }
     if (funcName == "__dynamic_cast" ||

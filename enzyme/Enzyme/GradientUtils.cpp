@@ -2207,17 +2207,9 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
                 8,
             false);
 
-        auto firstallocation = cast<Instruction>(CallInst::CreateMalloc(
-            inversionAllocs, numThreads->getType(), malloc->getType(),
-            byteSizeOfType, numThreads, nullptr,
-            malloc->getName() + "_malloccache"));
-        if (firstallocation->getParent() == nullptr) {
-          inversionAllocs->getInstList().push_back(firstallocation);
-        }
-
-        if (auto inst = dyn_cast<Instruction>(malloc)) {
-          entryBuilder.SetInsertPoint(inst->getNextNode());
-        }
+        auto firstallocation =
+            CreateAllocation(entryBuilder, malloc->getType(), numThreads,
+                             malloc->getName() + "_malloccache");
 #if LLVM_VERSION_MAJOR > 7
         Value *tPtr = entryBuilder.CreateInBoundsGEP(
             firstallocation->getType()->getPointerElementType(),
@@ -2226,6 +2218,9 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
         Value *tPtr = entryBuilder.CreateInBoundsGEP(firstallocation,
                                                      ArrayRef<Value *>(tid));
 #endif
+        if (auto inst = dyn_cast<Instruction>(malloc)) {
+          entryBuilder.SetInsertPoint(inst->getNextNode());
+        }
         entryBuilder.CreateStore(malloc, tPtr);
         toStoreInTape = firstallocation;
       }
@@ -6818,7 +6813,8 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
     // pass with the copy
     if ((allowForward && (mode == DerivativeMode::ReverseModePrimal ||
                           mode == DerivativeMode::ReverseModeCombined)) ||
-        (backwardsShadow && mode == DerivativeMode::ReverseModeGradient)) {
+        (backwardsShadow && (mode == DerivativeMode::ReverseModeGradient ||
+                             mode == DerivativeMode::ForwardModeSplit))) {
       assert(!shadowsLookedUp);
 
       // It is questionable how the following case would even occur, but if
