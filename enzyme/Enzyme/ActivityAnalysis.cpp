@@ -1415,7 +1415,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
             // This pointer is inactive if it is either not actively stored to
             // and not actively loaded from.
             if (directions == DOWN) {
-              for (auto UA : {UseActivity::None}) {
+              for (auto UA :
+                   {UseActivity::OnlyLoads, UseActivity::OnlyNonPointerStores,
+                    UseActivity::None}) {
                 Instruction *LoadReval = nullptr;
                 if (isValueInactiveFromUsers(TR, TmpOrig, UA, &LoadReval)) {
                   InsertConstantValue(TR, Val);
@@ -1429,7 +1431,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
               auto DownHypothesis = std::shared_ptr<ActivityAnalyzer>(
                   new ActivityAnalyzer(*this, DOWN));
               DownHypothesis->ConstantValues.insert(TmpOrig);
-              for (auto UA : {UseActivity::None}) {
+              for (auto UA :
+                   {UseActivity::OnlyLoads, UseActivity::OnlyNonPointerStores,
+                    UseActivity::None}) {
                 Instruction *LoadReval = nullptr;
                 if (DownHypothesis->isValueInactiveFromUsers(TR, TmpOrig, UA,
                                                              &LoadReval)) {
@@ -1444,6 +1448,33 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
               }
             }
           }
+          if (called->getName() == "jl_array_copy" ||
+              called->getName() == "ijl_array_copy") {
+            // This pointer is inactive if it is either not actively stored to
+            // and not actively loaded from.
+            if (directions & DOWN && directions & UP) {
+              if (UpHypothesis->isConstantValue(TR, op->getOperand(0))) {
+                auto DownHypothesis = std::shared_ptr<ActivityAnalyzer>(
+                    new ActivityAnalyzer(*this, DOWN));
+                DownHypothesis->ConstantValues.insert(TmpOrig);
+                for (auto UA :
+                     {UseActivity::OnlyLoads, UseActivity::OnlyNonPointerStores,
+                      UseActivity::None}) {
+                  Instruction *LoadReval = nullptr;
+                  if (DownHypothesis->isValueInactiveFromUsers(TR, TmpOrig, UA,
+                                                               &LoadReval)) {
+                    insertConstantsFrom(TR, *DownHypothesis);
+                    InsertConstantValue(TR, Val);
+                    return true;
+                  } else {
+                    if (LoadReval) {
+                      ReEvaluateValueIfInactiveInst[LoadReval].insert(TmpOrig);
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       } else if (isa<AllocaInst>(Val)) {
         // This pointer is inactive if it is either not actively stored to or
@@ -1452,7 +1483,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         // have active memory stored into it [e.g. not just top level pointer
         // that matters]
         if (directions == DOWN) {
-          for (auto UA : {UseActivity::OnlyLoads, UseActivity::None}) {
+          for (auto UA :
+               {UseActivity::OnlyLoads, UseActivity::OnlyNonPointerStores,
+                UseActivity::None}) {
             Instruction *LoadReval = nullptr;
             if (isValueInactiveFromUsers(TR, TmpOrig, UA, &LoadReval)) {
               InsertConstantValue(TR, Val);
@@ -1466,7 +1499,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           auto DownHypothesis = std::shared_ptr<ActivityAnalyzer>(
               new ActivityAnalyzer(*this, DOWN));
           DownHypothesis->ConstantValues.insert(TmpOrig);
-          for (auto UA : {UseActivity::OnlyLoads, UseActivity::None}) {
+          for (auto UA :
+               {UseActivity::OnlyLoads, UseActivity::OnlyNonPointerStores,
+                UseActivity::None}) {
             Instruction *LoadReval = nullptr;
             if (DownHypothesis->isValueInactiveFromUsers(TR, TmpOrig, UA,
                                                          &LoadReval)) {
@@ -2399,7 +2434,9 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
     Value *parent = std::get<1>(pair);
     UseActivity UA = std::get<2>(pair);
 
-    if (UA == UseActivity::OnlyStores && isa<LoadInst>(a))
+    if ((UA == UseActivity::OnlyStores ||
+         UA == UseActivity::OnlyNonPointerStores) &&
+        isa<LoadInst>(a))
       continue;
 
     if (EnzymePrintActivity)
@@ -2416,6 +2453,10 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         if (ConstantValues.count(SI->getValueOperand()) ||
             isa<ConstantInt>(SI->getValueOperand()))
           continue;
+        if (UA == UseActivity::OnlyNonPointerStores) {
+          if (!TR.query(SI->getValueOperand())[{-1}].isPossiblePointer())
+            continue;
+        }
         if (UA == UseActivity::None) {
           // If storing into itself, all potential uses are taken care of
           // elsewhere in the recursion.
@@ -2677,7 +2718,9 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
             continue;
 
           // Only need to care about store from
-          if (UA == UseActivity::OnlyStores && call->getArgOperand(0) != parent)
+          if ((UA == UseActivity::OnlyStores ||
+               UA == UseActivity::OnlyNonPointerStores) &&
+              call->getArgOperand(0) != parent)
             continue;
 
           bool shouldContinue = false;
@@ -2855,7 +2898,8 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
           continue;
         }
         UseActivity NU = UA;
-        if (UA == UseActivity::OnlyLoads || UA == UseActivity::OnlyStores) {
+        if (UA == UseActivity::OnlyLoads || UA == UseActivity::OnlyStores ||
+            UA == UseActivity::OnlyNonPointerStores) {
           if (!isa<PHINode>(I) && !isa<CastInst>(I) &&
               !isa<GetElementPtrInst>(I) && !isa<BinaryOperator>(I))
             NU = UseActivity::None;
