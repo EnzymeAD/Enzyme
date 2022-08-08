@@ -3707,7 +3707,10 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       IRBuilder<> BuilderZ(gutils->inversionAllocs);
       if (!augmenteddata->tapeType->isEmptyTy()) {
         auto tapep = BuilderZ.CreatePointerCast(
-            additionalValue, PointerType::getUnqual(augmenteddata->tapeType));
+            additionalValue,
+            PointerType::get(augmenteddata->tapeType,
+                             cast<PointerType>(additionalValue->getType())
+                                 ->getAddressSpace()));
 #if LLVM_VERSION_MAJOR > 7
         LoadInst *truetape =
             BuilderZ.CreateLoad(augmenteddata->tapeType, tapep, "truetape");
@@ -3718,7 +3721,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                               MDNode::get(truetape->getContext(), {}));
 
         if (!omp && gutils->FreeMemory) {
-          CreateDealloc(BuilderZ, tapep);
+          CreateDealloc(BuilderZ, additionalValue);
         }
         additionalValue = truetape;
       } else {
