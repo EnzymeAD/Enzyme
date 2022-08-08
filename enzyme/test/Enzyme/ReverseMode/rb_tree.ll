@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s
+; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -correlated-propagation -simplifycfg -S | FileCheck %s
 
 ; ModuleID = 'ld-temp.o'
 source_filename = "ld-temp.o"
@@ -30,4 +30,9 @@ define dso_local noundef i32 @main(%"struct.std::_Rb_tree_node_base"* %i0, %"str
   ret i32 0
 }
 
-; CHECK: define dso_local { double } @foo()
+; CHECK: define internal void @diffecallable(%"struct.std::_Rb_tree_node_base"* %i0, %"struct.std::_Rb_tree_node_base"* %"i0'")
+; CHECK-NEXT: invert:
+; CHECK-NEXT:   %i1 = call noundef %"struct.std::_Rb_tree_node_base"* @_ZSt18_Rb_tree_incrementPKSt18_Rb_tree_node_base(%"struct.std::_Rb_tree_node_base"* noundef %i0) #0
+; CHECK-NEXT:   %i2 = call noundef %"struct.std::_Rb_tree_node_base"* @_ZSt18_Rb_tree_decrementPKSt18_Rb_tree_node_base(%"struct.std::_Rb_tree_node_base"* noundef %i1) #0
+; CHECK-NEXT:   ret void
+; CHECK-NEXT: }
