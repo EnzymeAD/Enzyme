@@ -10,7 +10,7 @@ target triple = "x86_64-unknown-linux-gnu"
 @enzyme_dup = external dso_local local_unnamed_addr global i32, align 4
 @enzyme_const = external dso_local local_unnamed_addr global i32, align 4
 
-declare dso_local noundef i32 @_Z17__enzyme_autodiff(...)
+declare dso_local i32 @_Z17__enzyme_autodiff(...)
 
 ; Function Attrs: mustprogress nofree nounwind readonly willreturn
 declare dso_local noundef %"struct.std::_Rb_tree_node_base"* @_ZSt18_Rb_tree_incrementPKSt18_Rb_tree_node_base(%"struct.std::_Rb_tree_node_base"* noundef) local_unnamed_addr
