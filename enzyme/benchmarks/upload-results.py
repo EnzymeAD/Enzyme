@@ -3,7 +3,6 @@ import datetime
 import subprocess
 import requests
 import argparse
-import os
 
 def get_git_revision_short_hash():
     try:
@@ -14,7 +13,7 @@ def get_git_revision_short_hash():
 def extract_results(json):
     result = []
     githash = get_git_revision_short_hash()
-    time = datetime.datetime.now().isoformat()
+    time = datetime.datetime.now().replace(microsecond=0).isoformat()
     metadata = {}
     if githash is not None:
         metadata["githash"] = githash
