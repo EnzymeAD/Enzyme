@@ -1417,7 +1417,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
             if (directions == DOWN) {
               for (auto UA :
                    {UseActivity::OnlyLoads, UseActivity::OnlyNonPointerStores,
-                   UseActivity::AllStores, UseActivity::None}) {
+                    UseActivity::AllStores, UseActivity::None}) {
                 Instruction *LoadReval = nullptr;
                 if (isValueInactiveFromUsers(TR, TmpOrig, UA, &LoadReval)) {
                   InsertConstantValue(TR, Val);
