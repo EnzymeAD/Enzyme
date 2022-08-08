@@ -32,7 +32,7 @@ define dso_local i32 @main(%"struct.std::_Rb_tree_node_base"* %i0, %"struct.std:
 
 ; CHECK: define internal void @diffecallable(%"struct.std::_Rb_tree_node_base"* %i0, %"struct.std::_Rb_tree_node_base"* %"i0'")
 ; CHECK-NEXT: invert:
-; CHECK-NEXT:   %i1 = call %"struct.std::_Rb_tree_node_base"* @_ZSt18_Rb_tree_incrementPKSt18_Rb_tree_node_base(%"struct.std::_Rb_tree_node_base"* %i0) #0
-; CHECK-NEXT:   %i2 = call %"struct.std::_Rb_tree_node_base"* @_ZSt18_Rb_tree_decrementPKSt18_Rb_tree_node_base(%"struct.std::_Rb_tree_node_base"* %i1) #0
+; CHECK-NEXT:   %i1 = call %"struct.std::_Rb_tree_node_base"* @_ZSt18_Rb_tree_incrementPKSt18_Rb_tree_node_base(%"struct.std::_Rb_tree_node_base"* %i0)
+; CHECK-NEXT:   %i2 = call %"struct.std::_Rb_tree_node_base"* @_ZSt18_Rb_tree_decrementPKSt18_Rb_tree_node_base(%"struct.std::_Rb_tree_node_base"* %i1)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
