@@ -1415,13 +1415,15 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
             // This pointer is inactive if it is either not actively stored to
             // and not actively loaded from.
             if (directions == DOWN) {
-              for (auto UA : {UseActivity::None}) {
+              for (auto UA :
+                   {UseActivity::OnlyLoads, UseActivity::OnlyNonPointerStores,
+                    UseActivity::AllStores, UseActivity::None}) {
                 Instruction *LoadReval = nullptr;
                 if (isValueInactiveFromUsers(TR, TmpOrig, UA, &LoadReval)) {
                   InsertConstantValue(TR, Val);
                   return true;
                 }
-                if (LoadReval) {
+                if (LoadReval && UA != UseActivity::AllStores) {
                   ReEvaluateValueIfInactiveInst[LoadReval].insert(TmpOrig);
                 }
               }
@@ -1429,7 +1431,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
               auto DownHypothesis = std::shared_ptr<ActivityAnalyzer>(
                   new ActivityAnalyzer(*this, DOWN));
               DownHypothesis->ConstantValues.insert(TmpOrig);
-              for (auto UA : {UseActivity::None}) {
+              for (auto UA :
+                   {UseActivity::OnlyLoads, UseActivity::OnlyNonPointerStores,
+                    UseActivity::AllStores, UseActivity::None}) {
                 Instruction *LoadReval = nullptr;
                 if (DownHypothesis->isValueInactiveFromUsers(TR, TmpOrig, UA,
                                                              &LoadReval)) {
@@ -1437,8 +1441,35 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                   InsertConstantValue(TR, Val);
                   return true;
                 } else {
-                  if (LoadReval) {
+                  if (LoadReval && UA != UseActivity::AllStores) {
                     ReEvaluateValueIfInactiveInst[LoadReval].insert(TmpOrig);
+                  }
+                }
+              }
+            }
+          }
+          if (called->getName() == "jl_array_copy" ||
+              called->getName() == "ijl_array_copy") {
+            // This pointer is inactive if it is either not actively stored to
+            // and not actively loaded from.
+            if (directions & DOWN && directions & UP) {
+              if (UpHypothesis->isConstantValue(TR, op->getOperand(0))) {
+                auto DownHypothesis = std::shared_ptr<ActivityAnalyzer>(
+                    new ActivityAnalyzer(*this, DOWN));
+                DownHypothesis->ConstantValues.insert(TmpOrig);
+                for (auto UA :
+                     {UseActivity::OnlyLoads, UseActivity::OnlyNonPointerStores,
+                      UseActivity::AllStores, UseActivity::None}) {
+                  Instruction *LoadReval = nullptr;
+                  if (DownHypothesis->isValueInactiveFromUsers(TR, TmpOrig, UA,
+                                                               &LoadReval)) {
+                    insertConstantsFrom(TR, *DownHypothesis);
+                    InsertConstantValue(TR, Val);
+                    return true;
+                  } else {
+                    if (LoadReval && UA != UseActivity::AllStores) {
+                      ReEvaluateValueIfInactiveInst[LoadReval].insert(TmpOrig);
+                    }
                   }
                 }
               }
@@ -1452,13 +1483,15 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         // have active memory stored into it [e.g. not just top level pointer
         // that matters]
         if (directions == DOWN) {
-          for (auto UA : {UseActivity::OnlyLoads, UseActivity::None}) {
+          for (auto UA :
+               {UseActivity::OnlyLoads, UseActivity::OnlyNonPointerStores,
+                UseActivity::AllStores, UseActivity::None}) {
             Instruction *LoadReval = nullptr;
             if (isValueInactiveFromUsers(TR, TmpOrig, UA, &LoadReval)) {
               InsertConstantValue(TR, Val);
               return true;
             }
-            if (LoadReval) {
+            if (LoadReval && UA != UseActivity::AllStores) {
               ReEvaluateValueIfInactiveInst[LoadReval].insert(TmpOrig);
             }
           }
@@ -1466,7 +1499,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           auto DownHypothesis = std::shared_ptr<ActivityAnalyzer>(
               new ActivityAnalyzer(*this, DOWN));
           DownHypothesis->ConstantValues.insert(TmpOrig);
-          for (auto UA : {UseActivity::OnlyLoads, UseActivity::None}) {
+          for (auto UA :
+               {UseActivity::OnlyLoads, UseActivity::OnlyNonPointerStores,
+                UseActivity::AllStores, UseActivity::None}) {
             Instruction *LoadReval = nullptr;
             if (DownHypothesis->isValueInactiveFromUsers(TR, TmpOrig, UA,
                                                          &LoadReval)) {
@@ -1474,7 +1509,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
               InsertConstantValue(TR, Val);
               return true;
             } else {
-              if (LoadReval) {
+              if (LoadReval && UA != UseActivity::AllStores) {
                 ReEvaluateValueIfInactiveInst[LoadReval].insert(TmpOrig);
               }
             }
@@ -2399,8 +2434,14 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
     Value *parent = std::get<1>(pair);
     UseActivity UA = std::get<2>(pair);
 
-    if (UA == UseActivity::OnlyStores && isa<LoadInst>(a))
-      continue;
+    if (auto LI = dyn_cast<LoadInst>(a)) {
+      if (UA == UseActivity::OnlyStores || UA == UseActivity::AllStores)
+        continue;
+      if (UA == UseActivity::OnlyNonPointerStores) {
+        if (!TR.query(LI)[{-1}].isPossiblePointer())
+          continue;
+      }
+    }
 
     if (EnzymePrintActivity)
       llvm::errs() << "      considering use of " << *val << " - " << *a
@@ -2413,8 +2454,9 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         if (UA == UseActivity::OnlyLoads) {
           continue;
         }
-        if (ConstantValues.count(SI->getValueOperand()) ||
-            isa<ConstantInt>(SI->getValueOperand()))
+        if (UA != UseActivity::AllStores &&
+            (ConstantValues.count(SI->getValueOperand()) ||
+             isa<ConstantInt>(SI->getValueOperand())))
           continue;
         if (UA == UseActivity::None) {
           // If storing into itself, all potential uses are taken care of
@@ -2637,7 +2679,8 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
 
     // This use is only active if specified
     if (isa<ReturnInst>(a)) {
-      if (ActiveReturns == DIFFE_TYPE::CONSTANT) {
+      if (ActiveReturns == DIFFE_TYPE::CONSTANT &&
+          UA != UseActivity::AllStores) {
         continue;
       } else {
         return false;
@@ -2646,14 +2689,18 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
 
     if (auto call = dyn_cast<CallInst>(a)) {
       bool ConstantArg = isFunctionArgumentConstant(call, parent);
-      if (ConstantArg) {
+      if (ConstantArg && UA != UseActivity::AllStores) {
         if (EnzymePrintActivity) {
           llvm::errs() << "Value found constant callinst use:" << *val
                        << " user " << *call << "\n";
         }
         continue;
       }
+
       if (Function *F = getFunctionFromCall(call)) {
+        if (UA == UseActivity::AllStores &&
+            F->getName() == "julia.write_barrier")
+          continue;
         if (F->getIntrinsicID() == Intrinsic::memcpy ||
             F->getIntrinsicID() == Intrinsic::memmove) {
 
@@ -2677,64 +2724,66 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
             continue;
 
           // Only need to care about store from
-          if (UA == UseActivity::OnlyStores && call->getArgOperand(0) != parent)
+          if ((UA == UseActivity::OnlyStores || UA == UseActivity::AllStores) &&
+              call->getArgOperand(0) != parent)
             continue;
 
           bool shouldContinue = false;
-          for (int arg = 0; arg < 2; arg++)
-            if (call->getArgOperand(arg) != parent &&
-                (arg == 0 || (PUA == UseActivity::None))) {
-              Value *TmpOrig = call->getOperand(arg);
-              while (1) {
-                if (AllocaSet.count(TmpOrig)) {
-                  shouldContinue = true;
-                  break;
-                }
-                if (isa<AllocaInst>(TmpOrig)) {
-                  done.insert(std::make_tuple((User *)call,
-                                              call->getArgOperand(arg), UA));
-                  for (const auto a : TmpOrig->users()) {
-                    todo.push_back(std::make_tuple(a, TmpOrig, UA));
+          if (UA != UseActivity::AllStores)
+            for (int arg = 0; arg < 2; arg++)
+              if (call->getArgOperand(arg) != parent &&
+                  (arg == 0 || (PUA == UseActivity::None))) {
+                Value *TmpOrig = call->getOperand(arg);
+                while (1) {
+                  if (AllocaSet.count(TmpOrig)) {
+                    shouldContinue = true;
+                    break;
                   }
-                  AllocaSet.insert(TmpOrig);
-                  shouldContinue = true;
-                  break;
-                }
-                if (PUA == UseActivity::None) {
-                  if (auto LI = dyn_cast<LoadInst>(TmpOrig)) {
-                    TmpOrig = LI->getPointerOperand();
-                    continue;
+                  if (isa<AllocaInst>(TmpOrig)) {
+                    done.insert(std::make_tuple((User *)call,
+                                                call->getArgOperand(arg), UA));
+                    for (const auto a : TmpOrig->users()) {
+                      todo.push_back(std::make_tuple(a, TmpOrig, UA));
+                    }
+                    AllocaSet.insert(TmpOrig);
+                    shouldContinue = true;
+                    break;
                   }
-                  if (auto CF = isCalledFunction(TmpOrig)) {
-                    if (isAllocationFunction(*CF, TLI)) {
-                      done.insert(std::make_tuple(
-                          (User *)call, call->getArgOperand(arg), UA));
-                      for (const auto a : TmpOrig->users()) {
-                        todo.push_back(std::make_tuple(a, TmpOrig, UA));
+                  if (PUA == UseActivity::None) {
+                    if (auto LI = dyn_cast<LoadInst>(TmpOrig)) {
+                      TmpOrig = LI->getPointerOperand();
+                      continue;
+                    }
+                    if (auto CF = isCalledFunction(TmpOrig)) {
+                      if (isAllocationFunction(*CF, TLI)) {
+                        done.insert(std::make_tuple(
+                            (User *)call, call->getArgOperand(arg), UA));
+                        for (const auto a : TmpOrig->users()) {
+                          todo.push_back(std::make_tuple(a, TmpOrig, UA));
+                        }
+                        AllocaSet.insert(TmpOrig);
+                        shouldContinue = true;
+                        break;
                       }
-                      AllocaSet.insert(TmpOrig);
-                      shouldContinue = true;
-                      break;
                     }
                   }
-                }
-                auto TmpOrig_2 =
+                  auto TmpOrig_2 =
 #if LLVM_VERSION_MAJOR >= 12
-                    getUnderlyingObject(TmpOrig, 100);
+                      getUnderlyingObject(TmpOrig, 100);
 #else
-                    GetUnderlyingObject(
-                        TmpOrig, TR.getFunction()->getParent()->getDataLayout(),
-                        100);
+                      GetUnderlyingObject(
+                          TmpOrig,
+                          TR.getFunction()->getParent()->getDataLayout(), 100);
 #endif
-                if (TmpOrig != TmpOrig_2) {
-                  TmpOrig = TmpOrig_2;
-                  continue;
+                  if (TmpOrig != TmpOrig_2) {
+                    TmpOrig = TmpOrig_2;
+                    continue;
+                  }
+                  break;
                 }
-                break;
+                if (shouldContinue)
+                  break;
               }
-              if (shouldContinue)
-                break;
-            }
 
           if (shouldContinue)
             continue;
@@ -2841,7 +2890,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         }
         continue;
       }
-      if (ConstantInstructions.count(I) &&
+      if (UA != UseActivity::AllStores && ConstantInstructions.count(I) &&
           (I->getType()->isVoidTy() || I->getType()->isTokenTy() ||
            ConstantValues.count(I))) {
         if (EnzymePrintActivity) {
@@ -2851,11 +2900,12 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         continue;
       }
       if (!I->mayWriteToMemory()) {
-        if (TR.intType(1, I, /*errIfNotFound*/ false).isIntegral()) {
+        if (TR.query(I)[{-1}].isIntegral()) {
           continue;
         }
         UseActivity NU = UA;
-        if (UA == UseActivity::OnlyLoads || UA == UseActivity::OnlyStores) {
+        if (UA == UseActivity::OnlyLoads || UA == UseActivity::OnlyStores ||
+            UA == UseActivity::OnlyNonPointerStores) {
           if (!isa<PHINode>(I) && !isa<CastInst>(I) &&
               !isa<GetElementPtrInst>(I) && !isa<BinaryOperator>(I))
             NU = UseActivity::None;
