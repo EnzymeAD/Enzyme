@@ -50,10 +50,10 @@ static inline bool is_use_directly_needed_in_reverse(
     return false;
   }
 
-  if (isa<LoadInst>(user) &&
-      !gutils->isConstantInstruction(const_cast<llvm::Instruction *>(user))) {
+  if (isa<LoadInst>(user)) {
     if (EnzymeRuntimeActivityCheck &&
-        TR.query(const_cast<llvm::Instruction *>(user))[{-1}].isFloat()) {
+        TR.query(const_cast<llvm::Instruction *>(user))[{-1}].isFloat() &&
+        !gutils->isConstantInstruction(const_cast<llvm::Instruction *>(user))) {
       return true;
     }
     return false;
