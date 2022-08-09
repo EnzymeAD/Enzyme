@@ -1392,7 +1392,7 @@ void TypeAnalyzer::visitGetElementPtrInst(GetElementPtrInst &gep) {
     }
   }
 
-  if (gep.indices().empty()) {
+  if (gep.indices().begin() == gep.indices().end()) {
     if (direction & DOWN)
       updateAnalysis(&gep, getAnalysis(gep.getPointerOperand()), &gep);
     if (direction & UP)
