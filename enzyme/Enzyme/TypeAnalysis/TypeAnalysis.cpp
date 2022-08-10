@@ -4580,29 +4580,33 @@ FnTypeInfo::knownIntegralValues(llvm::Value *val, const DominatorTree &DT,
               uint64_t istart = 0;
 
               if (S->isAffine()) {
-                APInt StartI = StartC->getAPInt();
-                APInt A = cast<SCEVConstant>(S->getOperand(1))->getAPInt();
+                if (auto StepC = dyn_cast<SCEVConstant>(S->getOperand(1))) {
+                  APInt StartI = StartC->getAPInt();
+                  APInt A = StepC->getAPInt();
 
-                if (A.sle(-1)) {
-                  A = -A;
-                  StartI = -StartI;
-                }
+                  if (A.sle(-1)) {
+                    A = -A;
+                    StartI = -StartI;
+                  }
 
-                if (A.sge(1)) {
-                  if (StartI.sge(MaxIntOffset)) {
-                    ival = std::min(ival, (uint64_t)0);
+                  if (A.sge(1)) {
+                    if (StartI.sge(MaxIntOffset)) {
+                      ival = std::min(ival, (uint64_t)0);
+                    } else {
+                      ival = std::min(
+                          ival,
+                          (MaxIntOffset - StartI + A).udiv(A).getZExtValue());
+                    }
+
+                    if (StartI.slt(-MaxIntOffset)) {
+                      istart = std::max(
+                          istart,
+                          (-MaxIntOffset - StartI).udiv(A).getZExtValue());
+                    }
+
                   } else {
-                    ival = std::min(
-                        ival,
-                        (MaxIntOffset - StartI + A).udiv(A).getZExtValue());
+                    ival = std::min(ival, (uint64_t)0);
                   }
-
-                  if (StartI.slt(-MaxIntOffset)) {
-                    istart = std::max(
-                        istart,
-                        (-MaxIntOffset - StartI).udiv(A).getZExtValue());
-                  }
-
                 } else {
                   ival = std::min(ival, (uint64_t)0);
                 }
