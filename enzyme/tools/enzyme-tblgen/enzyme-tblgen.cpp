@@ -481,15 +481,18 @@ void emitEnumMatcher(const std::vector<Record *> &blas_modes, raw_ostream &os) {
   for (auto mode : blas_modes) {
     auto name = mode->getName();
     auto sub_modes = mode->getValueAsListOfStrings("modes");
-    os << "std::string read_" << name
-                 << "(llvm::CallInst &call, size_t pos) {\n"
-                 << "  std::string s = call.getArgOperand(pos)->getValue();\n";
+    os 
+<< "std::string read_" << name
+<< "(llvm::CallInst &call, size_t pos) {\n"
+<< "  std::string s = call.getArgOperand(pos)->getValue();\n";
     for (auto sub_mode : sub_modes) {
-      os << "  if (s == \"" << sub_mode << "\")\n"
-                   << "    return \"" << sub_mode << "\";\n";
+      os 
+<< "  if (s == \"" << sub_mode << "\")\n"
+<< "    return \"" << sub_mode << "\";\n";
     }
-    os << "  assert(false && \"failed reading " << name << "\");\n"
-                 << "}\n\n";
+    os 
+<< "  assert(false && \"failed reading " << name << "\");\n"
+<< "}\n\n";
   }
 }
 
@@ -518,23 +521,23 @@ void writeEnums(Record *pattern, const std::vector<Record *> &blas_modes,
 
 void emit_castvals(Record *pattern, std::vector<size_t> activeArgs,
                    raw_ostream &os) {
-  os << "Type *castvals[" << activeArgs.size() << "];\n";
+  os 
+<< "Type *castvals[" << activeArgs.size() << "];\n";
   
   DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
 
   for (auto argPos : llvm::enumerate(activeArgs)) {
     auto name = argOps->getArgNameStr(argPos.value());
     size_t argIdx = argPos.index();
-    os << "if (auto PT = dyn_cast<PointerType>(type_" << name << "))\n"
-    //os << "if (auto PT = dyn_cast<PointerType>(call.getArgOperand("
-    //             << argPos.value() << ")->getType()))\n"
-                 << "  castvals[" << argIdx << "] = PT;\n"
-                 << "else\n"
-                 << "  castvals[" << argIdx
-                 << "] = PointerType::getUnqual(innerType);\n";
+    os 
+<< "if (auto PT = dyn_cast<PointerType>(type_" << name << "))\n"
+<< "  castvals[" << argIdx << "] = PT;\n"
+<< "else\n"
+<< "  castvals[" << argIdx
+<< "] = PointerType::getUnqual(innerType);\n";
   }
-  //              << "Value *undefinit = UndefValue::get(cachetype);\n"
-  os << "Value *cacheval;\n\n";
+  os 
+<< "Value *cacheval;\n\n";
 }
 
 void emit_inttype(Record *pattern, raw_ostream &os) {
@@ -557,20 +560,16 @@ void emit_inttype(Record *pattern, raw_ostream &os) {
   assert(found && "no int type found in blas call");
 
   os
-      << "IntegerType *intType = dyn_cast<IntegerType>(type_" << name << ");\n"
-    //  << "IntegerType *intType = dyn_cast<IntegerType>(call.getOperand("
-    //  << firstIntPos << ")->getType());\n"
-      << "bool byRef = false;\n" // Fortran Abi?
-      << "if (!intType) {\n"
-      << "  auto PT = cast<PointerType>(type_" << name << ");\n"
-    //<< "  auto PT = cast<PointerType>(call.getOperand(" << firstIntPos
-    //<< ")->getType());\n"
-      << "  if (blas.suffix.contains(\"64\"))\n"
-      << "    intType = IntegerType::get(PT->getContext(), 64);\n"
-      << "  else\n"
-      << "    intType = IntegerType::get(PT->getContext(), 32);\n"
-      << "  byRef = true;\n"
-      << "}\n\n";
+<< "IntegerType *intType = dyn_cast<IntegerType>(type_" << name << ");\n"
+<< "bool byRef = false;\n" // Fortran Abi?
+<< "if (!intType) {\n"
+<< "  auto PT = cast<PointerType>(type_" << name << ");\n"
+<< "  if (blas.suffix.contains(\"64\"))\n"
+<< "    intType = IntegerType::get(PT->getContext(), 64);\n"
+<< "  else\n"
+<< "    intType = IntegerType::get(PT->getContext(), 32);\n"
+<< "  byRef = true;\n"
+<< "}\n\n";
 }
 
 
@@ -581,12 +580,12 @@ void emit_beginning(Record *pattern, raw_ostream &os) {
 << "(BlasInfo blas, llvm::CallInst &call, Function *called,\n"
 << "const std::map<Argument *, bool> &uncacheable_args,\n"
 << "Type *innerType) {\n"
-<< "    CallInst *const newCall = cast<CallInst>(gutils->getNewFromOriginal(&call));\n"
-<< "    IRBuilder<> BuilderZ(newCall);\n"
-<< "    BuilderZ.setFastMathFlags(getFast());\n"
-<< "    IRBuilder<> allocationBuilder(gutils->inversionAllocs);\n"
-<< "    allocationBuilder.setFastMathFlags(getFast());\n\n"
-<< "    auto &DL = gutils->oldFunc->getParent()->getDataLayout();\n\n";
+<< "  CallInst *const newCall = cast<CallInst>(gutils->getNewFromOriginal(&call));\n"
+<< "  IRBuilder<> BuilderZ(newCall);\n"
+<< "  BuilderZ.setFastMathFlags(getFast());\n"
+<< "  IRBuilder<> allocationBuilder(gutils->inversionAllocs);\n"
+<< "  allocationBuilder.setFastMathFlags(getFast());\n\n"
+<< "  auto &DL = gutils->oldFunc->getParent()->getDataLayout();\n\n";
 }
 
 std::vector<size_t> getPossiblyActiveArgs(Record *pattern) {
@@ -613,31 +612,31 @@ std::vector<size_t> getPossiblyActiveArgs(Record *pattern) {
 #include "llvm/IR/Type.h"
 
 void emit_ending(Record *pattern, raw_ostream &os) {
-
-  os << "if (gutils->knownRecomputeHeuristic.find(&call) !=\n"
-               << "gutils->knownRecomputeHeuristic.end()) {\n"
-               << "if (!gutils->knownRecomputeHeuristic[&call]) {\n"
-               << "gutils->cacheForReverse(BuilderZ, newCall,\n"
-               << " getIndex(&call, CacheType::Self));\n"
-               << "}\n"
-               << "}\n";
-
-  os << "if (Mode == DerivativeMode::ReverseModeGradient) {\n"
-               << "  eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);\n"
-               << "} else {\n"
-               << "  eraseIfUnused(*orig);\n"
-               << "}\n"
-               << "return true;\n"
-               << "}\n\n";
+  os 
+<< "    if (gutils->knownRecomputeHeuristic.find(&call) !=\n"
+<< "      gutils->knownRecomputeHeuristic.end()) {\n"
+<< "      if (!gutils->knownRecomputeHeuristic[&call]) {\n"
+<< "      gutils->cacheForReverse(BuilderZ, newCall,\n"
+<< "       getIndex(&call, CacheType::Self));\n"
+<< "      }\n"
+<< "    }\n"
+<< "  }\n"
+<< "  if (Mode == DerivativeMode::ReverseModeGradient) {\n"
+<< "    eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);\n"
+<< "  } else {\n"
+<< "    eraseIfUnused(*orig);\n"
+<< "  }\n"
+<< "  return true;\n"
+<< "}\n\n";
 }
 
 void emit_free(Record *pattern, std::vector<size_t> actArgs,
                   raw_ostream &os) {
     os
-      << "          if (Mode == DerivativeMode::ReverseModeCombined ||\n"
-      << "            Mode == DerivativeMode::ReverseModeGradient ||\n"
-      << "            Mode == DerivativeMode::ForwardModeSplit) {\n"
-      << "          if (shouldFree()) {\n";
+<< "    if (Mode == DerivativeMode::ReverseModeCombined ||\n"
+<< "      Mode == DerivativeMode::ReverseModeGradient ||\n"
+<< "      Mode == DerivativeMode::ForwardModeSplit) {\n"
+<< "    if (shouldFree()) {\n";
   size_t argPosition = 0;
   std::vector<Record *> inputTypes =
       pattern->getValueAsListOfDefs("inputTypes");
@@ -646,29 +645,16 @@ void emit_free(Record *pattern, std::vector<size_t> actArgs,
     if (inputType->getName() == "vinc") {
       auto name = argOps->getArgNameStr(argPosition);
       os
-        << "            if (cache_" << name << ") {\n"
-        << "              auto ci = cast<CallInst>(CallInst::CreateFree(\n"
-        << "                  Builder2.CreatePointerCast(\n"
-        << "                      data_ptr_" << name <<", Type::getInt8PtrTy(data_ptr_" << name << "->getContext())),\n"
-        << "                  Builder2.GetInsertBlock()));\n"
-        << "#if LLVM_VERSION_MAJOR >= 14\n"
-        << "              ci->addAttributeAtIndex(AttributeList::FirstArgIndex,\n"
-        << "                                      Attribute::NonNull);\n"
-        << "#else\n"
-        << "              ci->addAttribute(AttributeList::FirstArgIndex,\n"
-        << "                               Attribute::NonNull);\n"
-        << "#endif\n"
-        << "              if (ci->getParent() == nullptr) {\n"
-        << "                Builder2.Insert(ci);\n"
-        << "              }\n"
-        << "            }\n";
+<< "      if (cache_" << name << ") {\n"
+<< "        CreateDealloc(Builder2, data_ptr_" << name << ");\n"
+<< "      }\n";
     }
     argPosition += inputType->getValueAsInt("nelem");
 
-    }
-    os
-        << "          }\n"
-        << "        }\n";
+  }
+  os
+<< "    }\n"
+<< "  }\n";
 }
 
 void emit_extract_calls(Record *pattern, std::vector<size_t> actArgs, 
@@ -802,27 +788,6 @@ void emit_extract_calls(Record *pattern, std::vector<size_t> actArgs,
     }
     argPosition += inputType->getValueAsInt("nelem");
   }
-
-// << "        if (ycache) {\n"
-// << "          ydata_ptr = ydata =\n"
-// << "              (cacheTypes.size() == 1)\n"
-// << "                  ? cacheval\n"
-// << "                  : Builder2.CreateExtractValue(cacheval, {cacheidx});\n"
-// << "          cacheidx++;\n"
-// << "          yinc = ConstantInt::get(intType, 1);\n"
-// << "          if (byRef) {\n"
-// << "            auto alloc = allocationBuilder.CreateAlloca(intType);\n"
-// << "            Builder2.CreateStore(yinc, alloc);\n"
-// << "            yinc = Builder2.CreatePointerCast(\n"
-// << "                alloc, call.getArgOperand(0)->getType());\n"
-// << "          }\n"
-// << "          if (call.getArgOperand(3)->getType()->isIntegerTy())\n"
-// << "            ydata = Builder2.CreatePtrToInt(ydata,\n"
-// << "                                            call.getArgOperand(3)->getType());\n"
-// << "        } else if (!gutils->isConstantValue(call.getArgOperand(1))) {\n"
-// << "          ydata = lookup(gutils->getNewFromOriginal(call.getArgOperand(3)),\n"
-// << "                         Builder2);\n"
-// << "        }\n"
   os << "        } else {\n";
   argPosition = 0;
   for (auto inputType : inputTypes) {
@@ -846,9 +811,9 @@ void emit_extract_calls(Record *pattern, std::vector<size_t> actArgs,
       auto vecName = argOps->getArgNameStr(argPosition);
       auto incName = argOps->getArgNameStr(argPosition + 1);
   os
-    << "          if (type_" << vecName << "->isIntegerTy())\n"
-    << "            data_" << vecName << " = Builder2.CreatePtrToInt(data_" << vecName << ",\n"
-    << "                                           type_" << vecName << ");\n";
+<< "          if (type_" << vecName << "->isIntegerTy())\n"
+<< "            data_" << vecName << " = Builder2.CreatePtrToInt(data_" << vecName << ",\n"
+<< "                                           type_" << vecName << ");\n";
     }
     argPosition += inputType->getValueAsInt("nelem");
   }
@@ -917,9 +882,8 @@ void emit_new_vars(Record *pattern, std::vector<size_t> actArgs,
 
   for (auto act : actArgs) {
     auto name = argOps->getArgNameStr(act);
-    os << " auto new_" << name
-                 << " = lookup(gutils->getNewFromOriginal(arg_" << name
-                 << "), Builder2),\n";
+    os 
+<< " auto new_" << name << " = lookup(gutils->getNewFromOriginal(arg_" << name << "), Builder2),\n";
   }
 }
 
@@ -947,15 +911,17 @@ void emit_helper(Record *pattern, std::vector<size_t> actArgs,
   os << "auto *called = call.getCalledFunction();\n";
   for (size_t i = 0; i < argOps->getNumArgs(); i++) {
     auto name = argOps->getArgNameStr(i);
-    os << "auto arg_" << name << " = call.getArgOperand(" << i << ");\n";
-    os << "auto type_" << name << " = arg_" << name << "->getType();\n";
-    os << "bool uncacheable_" << name 
-      << " = uncacheable_args.find(called->getArg("  << i << "))->second;\n\n";
+    os 
+<< "auto arg_" << name << " = call.getArgOperand(" << i << ");\n"
+<< "auto type_" << name << " = arg_" << name << "->getType();\n"
+<< "bool uncacheable_" << name 
+<< " = uncacheable_args.find(called->getArg("  << i << "))->second;\n\n";
   }
   for (auto act : actArgs) {
     auto name = argOps->getArgNameStr(act);
-    os << "bool active_" << name << " = !gutils->isConstantValue(arg_"
-                 << name << ");\n";
+    os 
+<< "bool active_" << name << " = !gutils->isConstantValue(arg_"
+<< name << ");\n";
   }
 }
 
@@ -992,73 +958,80 @@ void emit_fwd_rewrite_rules(Record *pattern, std::vector<size_t> actArgs,
 << "Value *dres = applyChainRule(\n"
 << "    call.getType(), Builder2,\n"
 << "    [&](";
-bool first = true;
-for (auto act : actArgs) {
-  if (!first) 
-    os << ", ";
-  auto name = argOps->getArgNameStr(act);
-  os << "Value *d_" << name; 
-  first = false;
-}
-os
+  bool first = true;
+  for (auto act : actArgs) {
+    if (!first) 
+      os << ", ";
+    auto name = argOps->getArgNameStr(act);
+    os << "Value *d_" << name; 
+    first = false;
+  }
+  os
 << ") {\n"
 << "    value *dres = nullptr;\n";
 
-std::vector<llvm::Twine> d_args{}; // TODO inc from active vec becomes trueXinc
-for (auto act : actArgs) {
-  auto actName = argOps->getArgNameStr(act);
-  d_args.push_back("d_" + actName);
-}
-
-first = true;
-for (auto act : actArgs) {
-  auto actName = argOps->getArgNameStr(act);
-  os
+  std::vector<llvm::Twine> d_args{}; // TODO inc from active vec becomes trueXinc
+  for (auto act : actArgs) {
+    auto actName = argOps->getArgNameStr(act);
+    d_args.push_back("d_" + actName);
+  }
+  
+  first = true;
+  for (auto act : actArgs) {
+    auto actName = argOps->getArgNameStr(act);
+    os
 << "    if(active_" << actName << ") {\n"
 << "            Value *args1[] = {";
   bool first2 = true;
   for (auto arg : d_args) {
     if (!first2) 
       os << ", ";
-    os << arg; 
+    os 
+<< arg; 
     first2 = false;
   }
-  os << "}\n\n";
-  os << "auto Defs = gutils->getInvertedBundles(\n"
-    << "&call, {/* currently unused, to be fixed */}, "
-    << "Builder2, /* lookup */ false);\n";
+  os 
+<< "}\n\n"
+<< "auto Defs = gutils->getInvertedBundles(\n"
+<< "&call, {/* currently unused, to be fixed */}, "
+<< "Builder2, /* lookup */ false);\n";
   if (first) {
-    os << "#if LLVM_VERSION_MAJOR > 7\n"
-    << "                  dres = Builder2.CreateCall(call.getFunctionType(), callval, args1, Defs);\n"
-    << "#else\n"
-    << "                  dres = Builder2.CreateCall(callval, args1, Defs);\n"
-    << "#endif\n";
+    os 
+<< "#if LLVM_VERSION_MAJOR > 7\n"
+<< "                  dres = Builder2.CreateCall(call.getFunctionType(), callval, args1, Defs);\n"
+<< "#else\n"
+<< "                  dres = Builder2.CreateCall(callval, args1, Defs);\n"
+<< "#endif\n";
   } else {
-    os << "#if LLVM_VERSION_MAJOR > 7\n"
-      << "Value *nextCall = Builder2.CreateCall(\n"
-      << "call.getFunctionType(), callval, args1, Defs);\n"
-      << "#else\n"
-      << "Value *secondcall = Builder2.CreateCall(callval, args1, Defs);\n"
-      << "#endif\n"
-      << "if (dres)\n"
-      << "  dres = Builder2.CreateFAdd(dres, secondcall);\n"
-      << "else\n"
-      << "dres = secondcall;\n";
+    os 
+<< "#if LLVM_VERSION_MAJOR > 7\n"
+<< "Value *nextCall = Builder2.CreateCall(\n"
+<< "call.getFunctionType(), callval, args1, Defs);\n"
+<< "#else\n"
+<< "Value *secondcall = Builder2.CreateCall(callval, args1, Defs);\n"
+<< "#endif\n"
+<< "if (dres)\n"
+<< "  dres = Builder2.CreateFAdd(dres, secondcall);\n"
+<< "else\n"
+<< "dres = secondcall;\n";
   }
-  os  << "}\n";
+  os  
+<< "}\n";
   first = false;
-}
-os 
+  }
+  os 
 << "return dres;\n"
 << "},\n";
-first = true;
-for (auto arg : d_args) {
-  if (!first)
-    os << ", ";
-  os << arg;
-  first = false;
-}
-os << ");\n"
+  first = true;
+  for (auto arg : d_args) {
+    if (!first)
+      os << ", ";
+    os 
+<< arg;
+    first = false;
+  }
+  os 
+<< ");\n"
 << "setDiffe(&call, dres, Builder2);\n"
 << "}\n";
 }
