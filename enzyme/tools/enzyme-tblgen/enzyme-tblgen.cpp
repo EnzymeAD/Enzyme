@@ -522,7 +522,8 @@ void writeEnums(Record *pattern, const std::vector<Record *> &blas_modes,
 void emit_castvals(Record *pattern, std::vector<size_t> activeArgs,
                    raw_ostream &os) {
   os 
-<< "Type *castvals[" << activeArgs.size() << "];\n";
+<< "  /* beginning castvalls */\n"
+<< "  Type *castvals[" << activeArgs.size() << "];\n";
   
   DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
 
@@ -530,14 +531,15 @@ void emit_castvals(Record *pattern, std::vector<size_t> activeArgs,
     auto name = argOps->getArgNameStr(argPos.value());
     size_t argIdx = argPos.index();
     os 
-<< "if (auto PT = dyn_cast<PointerType>(type_" << name << "))\n"
-<< "  castvals[" << argIdx << "] = PT;\n"
-<< "else\n"
-<< "  castvals[" << argIdx
-<< "] = PointerType::getUnqual(innerType);\n";
+<< "  if (auto PT = dyn_cast<PointerType>(type_" << name << "))\n"
+<< "    castvals[" << argIdx << "] = PT;\n"
+<< "  else\n"
+<< "    castvals[" << argIdx
+<< "  ] = PointerType::getUnqual(innerType);\n";
   }
   os 
-<< "Value *cacheval;\n\n";
+<< "  Value *cacheval;\n\n"
+<< "  /* ending castvalls */\n";
 }
 
 void emit_inttype(Record *pattern, raw_ostream &os) {
@@ -560,16 +562,16 @@ void emit_inttype(Record *pattern, raw_ostream &os) {
   assert(found && "no int type found in blas call");
 
   os
-<< "IntegerType *intType = dyn_cast<IntegerType>(type_" << name << ");\n"
-<< "bool byRef = false;\n" // Fortran Abi?
-<< "if (!intType) {\n"
-<< "  auto PT = cast<PointerType>(type_" << name << ");\n"
-<< "  if (blas.suffix.contains(\"64\"))\n"
-<< "    intType = IntegerType::get(PT->getContext(), 64);\n"
-<< "  else\n"
-<< "    intType = IntegerType::get(PT->getContext(), 32);\n"
-<< "  byRef = true;\n"
-<< "}\n\n";
+<< "  IntegerType *intType = dyn_cast<IntegerType>(type_" << name << ");\n"
+<< "  bool byRef = false;\n" // Fortran Abi?
+<< "  if (!intType) {\n"
+<< "    auto PT = cast<PointerType>(type_" << name << ");\n"
+<< "    if (blas.suffix.contains(\"64\"))\n"
+<< "      intType = IntegerType::get(PT->getContext(), 64);\n"
+<< "    else\n"
+<< "      intType = IntegerType::get(PT->getContext(), 32);\n"
+<< "    byRef = true;\n"
+<< "  }\n\n";
 }
 
 
@@ -578,14 +580,15 @@ void emit_beginning(Record *pattern, raw_ostream &os) {
   os
 << "\nbool handle_" << name
 << "(BlasInfo blas, llvm::CallInst &call, Function *called,\n"
-<< "const std::map<Argument *, bool> &uncacheable_args,\n"
-<< "Type *innerType) {\n"
+<< "    const std::map<Argument *, bool> &uncacheable_args, Type *innerType) {\n"
+<< "  \n"
 << "  CallInst *const newCall = cast<CallInst>(gutils->getNewFromOriginal(&call));\n"
 << "  IRBuilder<> BuilderZ(newCall);\n"
 << "  BuilderZ.setFastMathFlags(getFast());\n"
 << "  IRBuilder<> allocationBuilder(gutils->inversionAllocs);\n"
-<< "  allocationBuilder.setFastMathFlags(getFast());\n\n"
-<< "  auto &DL = gutils->oldFunc->getParent()->getDataLayout();\n\n";
+<< "  allocationBuilder.setFastMathFlags(getFast());\n"
+<< "  auto &DL = gutils->oldFunc->getParent()->getDataLayout();\n"
+<< "  auto *called = call.getCalledFunction();\n\n";
 }
 
 std::vector<size_t> getPossiblyActiveArgs(Record *pattern) {
@@ -611,31 +614,13 @@ std::vector<size_t> getPossiblyActiveArgs(Record *pattern) {
 // only for testing
 #include "llvm/IR/Type.h"
 
-void emit_ending(Record *pattern, raw_ostream &os) {
-  os 
-<< "    if (gutils->knownRecomputeHeuristic.find(&call) !=\n"
-<< "      gutils->knownRecomputeHeuristic.end()) {\n"
-<< "      if (!gutils->knownRecomputeHeuristic[&call]) {\n"
-<< "      gutils->cacheForReverse(BuilderZ, newCall,\n"
-<< "       getIndex(&call, CacheType::Self));\n"
-<< "      }\n"
-<< "    }\n"
-<< "  }\n"
-<< "  if (Mode == DerivativeMode::ReverseModeGradient) {\n"
-<< "    eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);\n"
-<< "  } else {\n"
-<< "    eraseIfUnused(*orig);\n"
-<< "  }\n"
-<< "  return true;\n"
-<< "}\n\n";
-}
 
-void emit_free(Record *pattern, std::vector<size_t> actArgs,
+void emit_free_and_ending(Record *pattern, std::vector<size_t> actArgs,
                   raw_ostream &os) {
     os
-<< "    if (Mode == DerivativeMode::ReverseModeCombined ||\n"
-<< "      Mode == DerivativeMode::ReverseModeGradient ||\n"
-<< "      Mode == DerivativeMode::ForwardModeSplit) {\n"
+<< "  if (Mode == DerivativeMode::ReverseModeCombined ||\n"
+<< "            Mode == DerivativeMode::ReverseModeGradient ||\n"
+<< "            Mode == DerivativeMode::ForwardModeSplit) {\n"
 << "    if (shouldFree()) {\n";
   size_t argPosition = 0;
   std::vector<Record *> inputTypes =
@@ -654,7 +639,16 @@ void emit_free(Record *pattern, std::vector<size_t> actArgs,
   }
   os
 << "    }\n"
-<< "  }\n";
+<< "  }\n"
+<< "  if (gutils->knownRecomputeHeuristic.find(&call) !=\n"
+<< "    gutils->knownRecomputeHeuristic.end()) {\n"
+<< "    if (!gutils->knownRecomputeHeuristic[&call]) {\n"
+<< "    gutils->cacheForReverse(BuilderZ, newCall,\n"
+<< "     getIndex(&call, CacheType::Self));\n"
+<< "    }\n"
+<< "  }\n"
+<< "  return true;\n"
+<< "}\n\n";
 }
 
 void emit_extract_calls(Record *pattern, std::vector<size_t> actArgs, 
@@ -665,74 +659,75 @@ void emit_extract_calls(Record *pattern, std::vector<size_t> actArgs,
   DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
   os 
     // TODO: adjust count / getArgOperand(0) based on first int?
-<< "        if (Mode == DerivativeMode::ReverseModeCombined ||\n"
-<< "            Mode == DerivativeMode::ReverseModeGradient ||\n"
-<< "            Mode == DerivativeMode::ForwardModeSplit) {\n"
+<< "  if (Mode == DerivativeMode::ReverseModeCombined ||\n"
+<< "      Mode == DerivativeMode::ReverseModeGradient ||\n"
+<< "      Mode == DerivativeMode::ForwardModeSplit) {\n"
 << "\n"
-<< "        if (cachetype) {\n"
-<< "          if (Mode != DerivativeMode::ReverseModeCombined) {\n"
-<< "            cacheval = BuilderZ.CreatePHI(cachetype, 0);\n"
-<< "          }\n"
-<< "          cacheval = gutils->cacheForReverse(\n"
-<< "              BuilderZ, cacheval, getIndex(&call, CacheType::Tape));\n"
-<< "          if (Mode != DerivativeMode::ForwardModeSplit)\n"
-<< "            cacheval = lookup(cacheval, Builder2);\n"
-<< "        }\n"
+<< "    if (cachetype) {\n"
+<< "      if (Mode != DerivativeMode::ReverseModeCombined) {\n"
+<< "        cacheval = BuilderZ.CreatePHI(cachetype, 0);\n"
+<< "      }\n"
+<< "      cacheval = gutils->cacheForReverse(\n"
+<< "          BuilderZ, cacheval, getIndex(&call, CacheType::Tape));\n"
+<< "      if (Mode != DerivativeMode::ForwardModeSplit)\n"
+<< "        cacheval = lookup(cacheval, Builder2);\n"
+<< "    }\n"
 << "\n"
-<< "        if (byRef) {\n"
-<< "          if (countcache) {\n"
-<< "            count = (cacheTypes.size() == 1)\n"
-<< "                        ? cacheval\n"
-<< "                        : Builder2.CreateExtractValue(cacheval, {cacheidx});\n"
-<< "            auto alloc = allocationBuilder.CreateAlloca(intType);\n"
-<< "            Builder2.CreateStore(count, alloc);\n"
-<< "            count = Builder2.CreatePointerCast(\n"
-<< "                alloc, call.getArgOperand(0)->getType());\n"
-<< "            cacheidx++;\n"
-<< "          } else {\n"
-<< "            if (Mode != DerivativeMode::ForwardModeSplit)\n"
-<< "              count = lookup(count, Builder2);\n"
-<< "          }\n"
-<< "\n";
-  argPosition = 0;
-  for (auto inputType : inputTypes) {
-    if (inputType->getName() == "vinc") {
-      auto incName = argOps->getArgNameStr(argPosition + 1);
-  os
-<< "          if (cache_" << incName << ") {\n"
-<< "            true_" << incName << " =\n"
-<< "                (cacheTypes.size() == 1)\n"
+<< "    if (byRef) {\n"
+<< "      if (countcache) {\n"
+<< "        count = (cacheTypes.size() == 1)\n"
 << "                    ? cacheval\n"
 << "                    : Builder2.CreateExtractValue(cacheval, {cacheidx});\n"
-<< "            auto alloc = allocationBuilder.CreateAlloca(intType);\n"
-<< "            Builder2.CreateStore(true_" << incName << ", alloc);\n"
-<< "            true_" << incName << " = Builder2.CreatePointerCast(\n"
-<< "                alloc, call.getArgOperand(0)->getType());\n"
-<< "            cacheidx++;\n"
-<< "          } else if (need_" << incName << ") {\n"
-<< "            if (Mode != DerivativeMode::ForwardModeSplit)\n"
-<< "              true_" << incName <<" = lookup(true_" << incName << ", Builder2);\n"
-<< "          }\n"
-<< "\n";
-    }
-    argPosition += inputType->getValueAsInt("nelem");
-  }
-  os
-<< "        } else if (Mode != DerivativeMode::ForwardModeSplit) {\n"
+<< "        auto alloc = allocationBuilder.CreateAlloca(intType);\n"
+<< "        Builder2.CreateStore(count, alloc);\n"
+<< "        count = Builder2.CreatePointerCast(\n"
+<< "            alloc, call.getArgOperand(0)->getType());\n"
+<< "        cacheidx++;\n"
+<< "      } else {\n"
+<< "        if (Mode != DerivativeMode::ForwardModeSplit)\n"
 << "          count = lookup(count, Builder2);\n"
+<< "      }\n"
 << "\n";
   argPosition = 0;
   for (auto inputType : inputTypes) {
     if (inputType->getName() == "vinc") {
       auto incName = argOps->getArgNameStr(argPosition + 1);
   os
-<< "          if (cache_" << incName << ") \n"
-<< "            true_" << incName << " = lookup(true_" << incName <<", Builder2);\n"
+<< "      if (cache_" << incName << ") {\n"
+<< "        true_" << incName << " =\n"
+<< "            (cacheTypes.size() == 1)\n"
+<< "                ? cacheval\n"
+<< "                : Builder2.CreateExtractValue(cacheval, {cacheidx});\n"
+<< "        auto alloc = allocationBuilder.CreateAlloca(intType);\n"
+<< "        Builder2.CreateStore(true_" << incName << ", alloc);\n"
+<< "        true_" << incName << " = Builder2.CreatePointerCast(\n"
+<< "            alloc, call.getArgOperand(0)->getType());\n"
+<< "        cacheidx++;\n"
+<< "      } else if (need_" << incName << ") {\n"
+<< "        if (Mode != DerivativeMode::ForwardModeSplit)\n"
+<< "          true_" << incName <<" = lookup(true_" << incName << ", Builder2);\n"
+<< "      }\n"
 << "\n";
     }
     argPosition += inputType->getValueAsInt("nelem");
   }
-  os << "        }\n" << "\n";
+  os
+<< "    } else if (Mode != DerivativeMode::ForwardModeSplit) {\n"
+<< "      count = lookup(count, Builder2);\n"
+<< "\n";
+  argPosition = 0;
+  for (auto inputType : inputTypes) {
+    if (inputType->getName() == "vinc") {
+      auto incName = argOps->getArgNameStr(argPosition + 1);
+  os
+<< "      if (cache_" << incName << ") \n"
+<< "        true_" << incName << " = lookup(true_" << incName <<", Builder2);\n"
+<< "\n";
+    }
+    argPosition += inputType->getValueAsInt("nelem");
+  }
+  os 
+<< "    }\n" << "\n";
 
   argPosition = 0;
   for (auto inputType : inputTypes) {
@@ -740,9 +735,9 @@ void emit_extract_calls(Record *pattern, std::vector<size_t> actArgs,
       auto vecName = argOps->getArgNameStr(argPosition);
       auto incName = argOps->getArgNameStr(argPosition + 1);
   os
-<< "        Value *data_" << vecName << " = gutils->getNewFromOriginal(arg_" << vecName << ");\n"
-<< "        Value *data_ptr_" << vecName << " = nullptr;\n"
-<< "        Value *" << incName << " = true_" << incName << ";\n"
+<< "    Value *data_" << vecName << " = gutils->getNewFromOriginal(arg_" << vecName << ");\n"
+<< "    Value *data_ptr_" << vecName << " = nullptr;\n"
+<< "    Value *" << incName << " = true_" << incName << ";\n"
 << "\n";
     }
     argPosition += inputType->getValueAsInt("nelem");
@@ -756,48 +751,50 @@ void emit_extract_calls(Record *pattern, std::vector<size_t> actArgs,
       auto vecUsers = argUsers.lookup(vecPosition);
       auto incName = argOps->getArgNameStr(argPosition + 1);
       os // todo update numbers
-<< "        if (cache_" << vecName << ") {\n"
-<< "          data_ptr_" << vecName << " = data_" << vecName << " =\n"
-<< "              (cacheTypes.size() == 1)\n"
-<< "                  ? cacheval\n"
-<< "                  : Builder2.CreateExtractValue(cacheval, {cacheidx});\n"
-<< "          cacheidx++;\n"
-<< "          " << incName << " = ConstantInt::get(intType, 1);\n"
-<< "          if (byRef) {\n"
-<< "            auto alloc = allocationBuilder.CreateAlloca(intType);\n"
-<< "            Builder2.CreateStore(" << incName << ", alloc);\n"
-<< "            " << incName << " = Builder2.CreatePointerCast(\n"
-<< "                alloc, call.getArgOperand(0)->getType());\n"
-<< "          }\n"
-<< "          if (type_" << vecName << "->isIntegerTy())\n"
-<< "            data_" << vecName << " = Builder2.CreatePtrToInt(data_" 
+<< "    if (cache_" << vecName << ") {\n"
+<< "      data_ptr_" << vecName << " = data_" << vecName << " =\n"
+<< "          (cacheTypes.size() == 1)\n"
+<< "              ? cacheval\n"
+<< "              : Builder2.CreateExtractValue(cacheval, {cacheidx});\n"
+<< "      cacheidx++;\n"
+<< "      " << incName << " = ConstantInt::get(intType, 1);\n"
+<< "      if (byRef) {\n"
+<< "        auto alloc = allocationBuilder.CreateAlloca(intType);\n"
+<< "        Builder2.CreateStore(" << incName << ", alloc);\n"
+<< "        " << incName << " = Builder2.CreatePointerCast(\n"
+<< "            alloc, call.getArgOperand(0)->getType());\n"
+<< "      }\n"
+<< "      if (type_" << vecName << "->isIntegerTy())\n"
+<< "        data_" << vecName << " = Builder2.CreatePtrToInt(data_" 
 << vecName << ", type_" << vecName << ");\n"
-<< "        }";
+<< "    }";
 
       if (vecUsers.size() > 0) {
-        os << " else if (";
+        os 
+<< "   else if (";
         for (auto user: vecUsers) {
           auto name = argOps->getArgNameStr(user);
           os << "active_" << name;
         }
         os << ") {\n"
-<< "          data_" << vecName << " = lookup(gutils->getNewFromOriginal(arg_" 
+<< "      data_" << vecName << " = lookup(gutils->getNewFromOriginal(arg_" 
 << vecName << "), Builder2);\n"
-<< "        }\n";
+<< "    }\n";
       }
     }
     argPosition += inputType->getValueAsInt("nelem");
   }
-  os << "        } else {\n";
+  os 
+<< "    } else {\n";
   argPosition = 0;
   for (auto inputType : inputTypes) {
     if (inputType->getName() == "vinc") {
       auto vecName = argOps->getArgNameStr(argPosition);
       auto incName = argOps->getArgNameStr(argPosition + 1);
-  os
-<< "        Value *data_" << vecName << " = gutils->getNewFromOriginal(arg_" << vecName << ");\n"
-<< "        Value *data_ptr_" << vecName << " = nullptr;\n"
-<< "        Value *" << incName << " = true_" << incName << ";\n"
+      os
+<< "      Value *data_" << vecName << " = gutils->getNewFromOriginal(arg_" << vecName << ");\n"
+<< "      Value *data_ptr_" << vecName << " = nullptr;\n"
+<< "      Value *" << incName << " = true_" << incName << ";\n"
 << "\n";
     }
     argPosition += inputType->getValueAsInt("nelem");
@@ -809,16 +806,15 @@ void emit_extract_calls(Record *pattern, std::vector<size_t> actArgs,
   for (auto inputType : inputTypes) {
     if (inputType->getName() == "vinc") {
       auto vecName = argOps->getArgNameStr(argPosition);
-      auto incName = argOps->getArgNameStr(argPosition + 1);
   os
-<< "          if (type_" << vecName << "->isIntegerTy())\n"
-<< "            data_" << vecName << " = Builder2.CreatePtrToInt(data_" << vecName << ",\n"
-<< "                                           type_" << vecName << ");\n";
+<< "      if (type_" << vecName << "->isIntegerTy())\n"
+<< "        data_" << vecName << " = Builder2.CreatePtrToInt(data_" << vecName << ", type_" << vecName << ");\n";
     }
     argPosition += inputType->getValueAsInt("nelem");
   }
 
-  os << "        }\n";
+  os 
+<< "    }\n";
 }
 
 void findArgPositions(const std::vector<StringRef> toFind,
@@ -883,7 +879,7 @@ void emit_new_vars(Record *pattern, std::vector<size_t> actArgs,
   for (auto act : actArgs) {
     auto name = argOps->getArgNameStr(act);
     os 
-<< " auto new_" << name << " = lookup(gutils->getNewFromOriginal(arg_" << name << "), Builder2),\n";
+<< "  auto new_" << name << " = lookup(gutils->getNewFromOriginal(arg_" << name << "), Builder2),\n";
   }
 }
 
@@ -908,20 +904,19 @@ void emit_blas_call(Record *pattern, std::vector<size_t> actArgs,
 void emit_helper(Record *pattern, std::vector<size_t> actArgs,
                  raw_ostream &os) {
   DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
-  os << "auto *called = call.getCalledFunction();\n";
   for (size_t i = 0; i < argOps->getNumArgs(); i++) {
     auto name = argOps->getArgNameStr(i);
     os 
-<< "auto arg_" << name << " = call.getArgOperand(" << i << ");\n"
-<< "auto type_" << name << " = arg_" << name << "->getType();\n"
-<< "bool uncacheable_" << name 
-<< " = uncacheable_args.find(called->getArg("  << i << "))->second;\n\n";
-  }
-  for (auto act : actArgs) {
-    auto name = argOps->getArgNameStr(act);
-    os 
-<< "bool active_" << name << " = !gutils->isConstantValue(arg_"
+<< "  auto arg_" << name << " = call.getArgOperand(" << i << ");\n"
+<< "  auto type_" << name << " = arg_" << name << "->getType();\n"
+<< "  bool uncacheable_" << name << " = uncacheable_args.find(called->getArg("  << i << "))->second;\n";
+    if (std::count(actArgs.begin(), actArgs.end(), i)) {
+      os 
+<< "  bool active_" << name << " = !gutils->isConstantValue(arg_"
 << name << ");\n";
+    }
+    os 
+<< "\n";
   }
 }
 
@@ -929,13 +924,13 @@ void emit_fwd_rewrite_rules(Record *pattern, std::vector<size_t> actArgs,
     llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, 
                  raw_ostream &os) {
   os 
-<< "if (Mode == DerivativeMode::ForwardMode ||\n"
-<< "            Mode == DerivativeMode::ForwardModeSplit) {"
-<< "\n"
+<< "  if (Mode == DerivativeMode::ForwardMode ||\n"
+<< "              Mode == DerivativeMode::ForwardModeSplit) {"
+<< "  \n"
 << "#if LLVM_VERSION_MAJOR >= 11\n"
-<< "          auto callval = call.getCalledOperand();\n"
+<< "    auto callval = call.getCalledOperand();\n"
 << "#else\n"
-<< "          auto callval = call.getCalledValue();\n"
+<< "    auto callval = call.getCalledValue();\n"
 << "#endif\n\n";
 
 // TODO
@@ -947,17 +942,17 @@ void emit_fwd_rewrite_rules(Record *pattern, std::vector<size_t> actArgs,
     if (inputType->getName() == "vinc") {
       auto vecName = argOps->getArgNameStr(argPosition);
   os
-<< "Value *d_" << vecName << " = active_" << vecName << "\n"
-<< " ? gutils->invertPointerM(arg_" << vecName << ", Builder2)\n"
-<< " : nullptr;\n";
+<< "  Value *d_" << vecName << " = active_" << vecName << "\n"
+<< "   ? gutils->invertPointerM(arg_" << vecName << ", Builder2)\n"
+<< "   : nullptr;\n";
     }
     argPosition += inputType->getValueAsInt("nelem");
   }
 
   os
-<< "Value *dres = applyChainRule(\n"
-<< "    call.getType(), Builder2,\n"
-<< "    [&](";
+<< "  Value *dres = applyChainRule(\n"
+<< "      call.getType(), Builder2,\n"
+<< "      [&](";
   bool first = true;
   for (auto act : actArgs) {
     if (!first) 
@@ -967,7 +962,7 @@ void emit_fwd_rewrite_rules(Record *pattern, std::vector<size_t> actArgs,
     first = false;
   }
   os
-<< ") {\n"
+<< "  ) {\n"
 << "    value *dres = nullptr;\n";
 
   std::vector<llvm::Twine> d_args{}; // TODO inc from active vec becomes trueXinc
@@ -1036,6 +1031,56 @@ void emit_fwd_rewrite_rules(Record *pattern, std::vector<size_t> actArgs,
 << "}\n";
 }
 
+
+
+void emit_handleBLAS(const std::vector<Record *> &blasPatterns, raw_ostream &os) {
+  os 
+<< "bool handleBLAS(llvm::CallInst &call, Function *called, BlasInfo blas,\n"
+<< "                const std::map<Argument *, bool> &uncacheable_args) { \n"
+<< "                                                                      \n"
+<< "  bool result = true;                                                 \n"
+<< "  if (!gutils->isConstantInstruction(&call)) {                        \n"
+<< "    Type *innerType;                                                  \n"
+<< "    if (blas.floatType == \"d\") {                                    \n"
+<< "      innerType = Type::getDoubleTy(call.getContext());               \n"
+<< "    } else if (blas.floatType == \"s\") {                             \n"
+<< "      innerType = Type::getFloatTy(call.getContext());                \n"
+<< "    } else {                                                          \n"
+<< "      assert(false && \"Unreachable\");                               \n"
+<< "    }                                                                 \n";
+  bool first = true;
+  for (auto pattern : blasPatterns) {
+    auto name = pattern->getName();
+    if (!first) {
+      os 
+<< "    } else if (blas.function == \"" << name << "\") {                 \n";
+    } else {
+      os 
+<< "    if (blas.function == \"" << name << "\") {                        \n";
+    }
+    os 
+<< "      result = handle" << name 
+<< "(blas, call, called, uncacheable_args, innerType);\n";
+    first = false;
+  }
+  os 
+<< "    } else {                                                          \n"
+<< "      llvm::errs() << \" fallback?\\n\";                              \n"
+<< "      return false;                                                   \n"
+<< "    }                                                                 \n"
+<< "  }                                                                   \n"
+<< "                                                                      \n"
+<< "  if (Mode == DerivativeMode::ReverseModeGradient) {                  \n"
+<< "    eraseIfUnused(call, /*erase*/ true, /*check*/ false);             \n"
+<< "  } else {                                                            \n"
+<< "    eraseIfUnused(call);                                              \n"
+<< "  }                                                                   \n"
+<< "                                                                      \n"
+<< "  return result;                                                      \n"
+<< "}                                                                     \n";
+}
+
+
 /*
  * We create the following variables:
  *
@@ -1057,6 +1102,7 @@ void emit_fwd_rewrite_rules(Record *pattern, std::vector<size_t> actArgs,
 void emitBlasDerivatives(const std::vector<Record *> &blasPatterns,
                          const std::vector<Record *> &blas_modes,
                          raw_ostream &os) {
+  emit_handleBLAS(blasPatterns, os);
   // emitEnumMatcher(blas_modes, os);
   for (auto pattern : blasPatterns) {
     if (pattern->getName() != "dot") 
@@ -1086,8 +1132,7 @@ void emitBlasDerivatives(const std::vector<Record *> &blasPatterns,
     //emit_rev_rewrite_rules(pattern, posActArgs, argUsers, os);
 
     // writeEnums(pattern, blas_modes, os);
-    emit_free(pattern, posActArgs, os);
-    emit_ending(pattern, os);
+    emit_free_and_ending(pattern, posActArgs, os);
   }
 }
 
@@ -1157,8 +1202,7 @@ static void emitDerivatives(RecordKeeper &RK, raw_ostream &os) {
 static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
   switch (action) {
   case GenDerivatives:
-    emitDerivatives(records, os);
-    return false;
+    emitDerivatives(records, os); return false;
   }
 }
 
