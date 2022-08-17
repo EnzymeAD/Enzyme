@@ -619,8 +619,8 @@ void emit_free_and_ending(Record *pattern, std::vector<size_t> actArgs,
                   raw_ostream &os) {
     os
 << "  if (Mode == DerivativeMode::ReverseModeCombined ||\n"
-<< "            Mode == DerivativeMode::ReverseModeGradient ||\n"
-<< "            Mode == DerivativeMode::ForwardModeSplit) {\n"
+<< "      Mode == DerivativeMode::ReverseModeGradient ||\n"
+<< "      Mode == DerivativeMode::ForwardModeSplit) {\n"
 << "    if (shouldFree()) {\n";
   size_t argPosition = 0;
   std::vector<Record *> inputTypes =
@@ -785,16 +785,16 @@ void emit_extract_calls(Record *pattern, std::vector<size_t> actArgs,
     argPosition += inputType->getValueAsInt("nelem");
   }
   os 
-<< "    } else {\n";
+<< "  } else {\n";
   argPosition = 0;
   for (auto inputType : inputTypes) {
     if (inputType->getName() == "vinc") {
       auto vecName = argOps->getArgNameStr(argPosition);
       auto incName = argOps->getArgNameStr(argPosition + 1);
       os
-<< "      Value *data_" << vecName << " = gutils->getNewFromOriginal(arg_" << vecName << ");\n"
-<< "      Value *data_ptr_" << vecName << " = nullptr;\n"
-<< "      Value *" << incName << " = true_" << incName << ";\n"
+<< "    Value *data_" << vecName << " = gutils->getNewFromOriginal(arg_" << vecName << ");\n"
+<< "    Value *data_ptr_" << vecName << " = nullptr;\n"
+<< "    Value *" << incName << " = true_" << incName << ";\n"
 << "\n";
     }
     argPosition += inputType->getValueAsInt("nelem");
@@ -807,14 +807,14 @@ void emit_extract_calls(Record *pattern, std::vector<size_t> actArgs,
     if (inputType->getName() == "vinc") {
       auto vecName = argOps->getArgNameStr(argPosition);
   os
-<< "      if (type_" << vecName << "->isIntegerTy())\n"
-<< "        data_" << vecName << " = Builder2.CreatePtrToInt(data_" << vecName << ", type_" << vecName << ");\n";
+<< "    if (type_" << vecName << "->isIntegerTy())\n"
+<< "      data_" << vecName << " = Builder2.CreatePtrToInt(data_" << vecName << ", type_" << vecName << ");\n";
     }
     argPosition += inputType->getValueAsInt("nelem");
   }
 
   os 
-<< "    }\n";
+<< "  }\n";
 }
 
 void findArgPositions(const std::vector<StringRef> toFind,
@@ -924,14 +924,15 @@ void emit_fwd_rewrite_rules(Record *pattern, std::vector<size_t> actArgs,
     llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, 
                  raw_ostream &os) {
   os 
-<< "  if (Mode == DerivativeMode::ForwardMode ||\n"
-<< "              Mode == DerivativeMode::ForwardModeSplit) {"
-<< "  \n"
-<< "#if LLVM_VERSION_MAJOR >= 11\n"
-<< "    auto callval = call.getCalledOperand();\n"
-<< "#else\n"
-<< "    auto callval = call.getCalledValue();\n"
-<< "#endif\n\n";
+<< "  /* fwd-rewrite */                                 \n"
+<< "  if (Mode == DerivativeMode::ForwardMode ||        \n"
+<< "      Mode == DerivativeMode::ForwardModeSplit) {   \n"
+<< "                                                    \n"
+<< "#if LLVM_VERSION_MAJOR >= 11                        \n"
+<< "    auto callval = call.getCalledOperand();         \n"
+<< "#else                                               \n"
+<< "    auto callval = call.getCalledValue();           \n"
+<< "#endif                                            \n\n";
 
 // TODO
   DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
@@ -942,17 +943,17 @@ void emit_fwd_rewrite_rules(Record *pattern, std::vector<size_t> actArgs,
     if (inputType->getName() == "vinc") {
       auto vecName = argOps->getArgNameStr(argPosition);
   os
-<< "  Value *d_" << vecName << " = active_" << vecName << "\n"
-<< "   ? gutils->invertPointerM(arg_" << vecName << ", Builder2)\n"
-<< "   : nullptr;\n";
+<< "    Value *d_" << vecName << " = active_" << vecName << "\n"
+<< "     ? gutils->invertPointerM(arg_" << vecName << ", Builder2)\n"
+<< "     : nullptr;\n";
     }
     argPosition += inputType->getValueAsInt("nelem");
   }
 
   os
-<< "  Value *dres = applyChainRule(\n"
-<< "      call.getType(), Builder2,\n"
-<< "      [&](";
+<< "    Value *dres = applyChainRule(\n"
+<< "        call.getType(), Builder2,\n"
+<< "        [&](";
   bool first = true;
   for (auto act : actArgs) {
     if (!first) 
@@ -963,7 +964,7 @@ void emit_fwd_rewrite_rules(Record *pattern, std::vector<size_t> actArgs,
   }
   os
 << "  ) {\n"
-<< "    value *dres = nullptr;\n";
+<< "      value *dres = nullptr;\n";
 
   std::vector<llvm::Twine> d_args{}; // TODO inc from active vec becomes trueXinc
   for (auto act : actArgs) {
@@ -975,8 +976,8 @@ void emit_fwd_rewrite_rules(Record *pattern, std::vector<size_t> actArgs,
   for (auto act : actArgs) {
     auto actName = argOps->getArgNameStr(act);
     os
-<< "    if(active_" << actName << ") {\n"
-<< "            Value *args1[] = {";
+<< "      if(active_" << actName << ") {\n"
+<< "        Value *args1[] = {";
   bool first2 = true;
   for (auto arg : d_args) {
     if (!first2) 
@@ -986,37 +987,36 @@ void emit_fwd_rewrite_rules(Record *pattern, std::vector<size_t> actArgs,
     first2 = false;
   }
   os 
-<< "}\n\n"
-<< "auto Defs = gutils->getInvertedBundles(\n"
-<< "&call, {/* currently unused, to be fixed */}, "
-<< "Builder2, /* lookup */ false);\n";
+<< "};\n\n"
+<< "        auto Defs = gutils->getInvertedBundles(\n"
+<< "          &call, {/* currently unused, to be fixed */}, Builder2, /* lookup */ false);\n";
   if (first) {
     os 
 << "#if LLVM_VERSION_MAJOR > 7\n"
-<< "                  dres = Builder2.CreateCall(call.getFunctionType(), callval, args1, Defs);\n"
+<< "          dres = Builder2.CreateCall(call.getFunctionType(), callval, args1, Defs);\n"
 << "#else\n"
-<< "                  dres = Builder2.CreateCall(callval, args1, Defs);\n"
+<< "          dres = Builder2.CreateCall(callval, args1, Defs);\n"
 << "#endif\n";
   } else {
     os 
 << "#if LLVM_VERSION_MAJOR > 7\n"
-<< "Value *nextCall = Builder2.CreateCall(\n"
-<< "call.getFunctionType(), callval, args1, Defs);\n"
+<< "        Value *nextCall = Builder2.CreateCall(\n"
+<< "          call.getFunctionType(), callval, args1, Defs);\n"
 << "#else\n"
-<< "Value *secondcall = Builder2.CreateCall(callval, args1, Defs);\n"
+<< "        Value *nextCall = Builder2.CreateCall(callval, args1, Defs);\n"
 << "#endif\n"
-<< "if (dres)\n"
-<< "  dres = Builder2.CreateFAdd(dres, secondcall);\n"
-<< "else\n"
-<< "dres = secondcall;\n";
+<< "        if (dres)\n"
+<< "          dres = Builder2.CreateFAdd(dres, nextCall);\n"
+<< "        else\n"
+<< "          dres = nextCall;\n";
   }
   os  
-<< "}\n";
+<< "      }\n";
   first = false;
   }
   os 
-<< "return dres;\n"
-<< "},\n";
+<< "      return dres;\n"
+<< "    },\n";
   first = true;
   for (auto arg : d_args) {
     if (!first)
@@ -1027,8 +1027,8 @@ void emit_fwd_rewrite_rules(Record *pattern, std::vector<size_t> actArgs,
   }
   os 
 << ");\n"
-<< "setDiffe(&call, dres, Builder2);\n"
-<< "}\n";
+<< "    setDiffe(&call, dres, Builder2);\n"
+<< "  }\n";
 }
 
 
