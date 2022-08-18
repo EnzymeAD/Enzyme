@@ -753,7 +753,7 @@ static bool replaceOriginalCall(CallInst *CI, Function *fn, Value *diffret,
   return true;
 }
 
-class Enzyme : public ModulePass {
+class Enzyme final : public ModulePass {
 public:
   EnzymeLogic Logic;
   static char ID;
