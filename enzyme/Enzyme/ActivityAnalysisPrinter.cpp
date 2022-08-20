@@ -211,17 +211,22 @@ static RegisterPass<ActivityAnalysisPrinter>
 
 class ActivityAnalysisPrinterNew : public PassInfoMixin<ActivityAnalysisPrinterNew>{
 public:
-    llvm::PreservedAnalyses run(Function &F, FunctionAnalysisManager & FAM){
-
-        std::function<TargetLibraryInfo& (Function &F)> getTLI =  [&](Function& F) -> TargetLibraryInfo& {
-            auto &TLI = FAM.getResult<TargetLibraryAnalysis>(F);
-            return TLI;
-        };
-
-        return implementation(F,getTLI) ? llvm::PreservedAnalyses::none() : llvm::PreservedAnalyses::all();
-    }
+    llvm::PreservedAnalyses run(Function &F,
+                                llvm::FunctionAnalysisManager & FAM);
 };
 
+llvm::PreservedAnalyses ActivityAnalysisPrinterNew::run(Function &F,
+                                                        llvm::FunctionAnalysisManager & FAM){
+
+    std::function<TargetLibraryInfo& (Function &F)> getTLI =  [&](Function& F) -> TargetLibraryInfo& {
+        auto &TLI = FAM.getResult<TargetLibraryAnalysis>(F);
+        return TLI;
+    };
+
+    return implementation(F,getTLI) ? llvm::PreservedAnalyses::none() : llvm::PreservedAnalyses::all();
+}
+
+/*
 extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
 llvmGetPassPluginInfo(){
     return {
@@ -239,4 +244,4 @@ llvmGetPassPluginInfo(){
                 );
             }
     };
-};
+};*/
