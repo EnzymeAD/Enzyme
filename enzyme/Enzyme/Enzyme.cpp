@@ -2526,7 +2526,7 @@ llvmGetPassPluginInfo() {
                         [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
                            llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
                             if(Name == "enzyme"){
-                                MPM.addPass(RequireAnalysisPass<Enzyme,Module>()/*EnzymePrinter(llvm::errs())*/);
+                                MPM.addPass(EnzymePrinter(llvm::errs()));
                                 return true;
                             }
                             return false;
