@@ -109,7 +109,9 @@ bool implementation(Function &F){
         dt = ConcreteType(BaseType::Integer);
     }
     type_args.Return = dt.Only(-1);
-    PreProcessCache PPC;
+    llvm::ModuleAnalysisManager MAM;
+    llvm::FunctionAnalysisManager FAM;
+    PreProcessCache PPC(MAM, FAM);
     TypeAnalysis TA(PPC.FAM);
     TA.analyzeFunction(type_args);
     for (Function &f : *F.getParent()) {
