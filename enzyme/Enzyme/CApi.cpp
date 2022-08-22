@@ -588,16 +588,36 @@ const char *EnzymeGradientUtilsInvertedPointersToString(GradientUtils *gutils,
 
 void EnzymeStringFree(const char *cstr) { delete[] cstr; }
 
-void EnzymeMoveBefore(LLVMValueRef inst1, LLVMValueRef inst2) {
+void EnzymeMoveBefore(LLVMValueRef inst1, LLVMValueRef inst2,
+                      LLVMBuilderRef B) {
   Instruction *I1 = cast<Instruction>(unwrap(inst1));
   Instruction *I2 = cast<Instruction>(unwrap(inst2));
-  if (I1 != I2)
+  if (I1 != I2) {
+    if (B != nullptr) {
+      IRBuilder<> &BR = *unwrap(B);
+      if (I1->getIterator() == BR.GetInsertPoint()) {
+        if (I2->getNextNode() == nullptr)
+          BR.SetInsertPoint(I1->getParent());
+        else
+          BR.SetInsertPoint(I1->getNextNode());
+      }
+    }
     I1->moveBefore(I2);
+  }
 }
 
 void EnzymeSetMustCache(LLVMValueRef inst1) {
   Instruction *I1 = cast<Instruction>(unwrap(inst1));
   I1->setMetadata("enzyme_mustcache", MDNode::get(I1->getContext(), {}));
+}
+
+uint8_t EnzymeHasFromStack(LLVMValueRef inst1) {
+  Instruction *I1 = cast<Instruction>(unwrap(inst1));
+  return hasMetadata(I1, "enzyme_fromstack") != 0;
+}
+
+void EnzymeReplaceFunctionImplementation(LLVMModuleRef M) {
+  ReplaceFunctionImplementation(*unwrap(M));
 }
 
 #if LLVM_VERSION_MAJOR >= 9

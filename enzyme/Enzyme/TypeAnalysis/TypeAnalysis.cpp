@@ -87,9 +87,10 @@ const std::map<std::string, llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"asinh", Intrinsic::not_intrinsic},
     {"atanh", Intrinsic::not_intrinsic},
     {"exp", Intrinsic::exp},
+    {"exp2", Intrinsic::exp2},
+    {"exp10", Intrinsic::not_intrinsic},
     {"log", Intrinsic::log},
     {"log10", Intrinsic::log10},
-    {"exp2", Intrinsic::exp2},
     {"expm1", Intrinsic::not_intrinsic},
     {"log1p", Intrinsic::not_intrinsic},
     {"log2", Intrinsic::log2},
@@ -475,7 +476,7 @@ void getConstantAnalysis(Constant *Val, TypeAnalyzer &TA,
     }
     if (!isa<StructType>(GV->getValueType()) ||
         !cast<StructType>(GV->getValueType())->isOpaque()) {
-      auto globalSize = DL.getTypeSizeInBits(GV->getValueType()) / 8;
+      auto globalSize = (DL.getTypeSizeInBits(GV->getValueType()) + 7) / 8;
       // Since halfs are 16bit (2 byte) and pointers are >=32bit (4 byte) any
       // Single byte object must be integral
       if (globalSize == 1) {
@@ -678,7 +679,7 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
 
     if (auto GV = dyn_cast<GlobalVariable>(Val)) {
       if (GV->getValueType()->isSized()) {
-        auto Size = DL.getTypeSizeInBits(GV->getValueType()) / 8;
+        auto Size = (DL.getTypeSizeInBits(GV->getValueType()) + 7) / 8;
         Data = analysis[Val].Lookup(Size, DL).Only(-1);
         Data.insert({-1}, BaseType::Pointer);
         analysis[Val] = Data;
@@ -1368,6 +1369,36 @@ void TypeAnalyzer::visitGetElementPtrInst(GetElementPtrInst &gep) {
     updateAnalysis(&gep, TypeTree(BaseType::Anything).Only(-1), &gep);
     return;
   }
+  if (isa<ConstantPointerNull>(gep.getPointerOperand())) {
+    bool nonZero = false;
+    bool legal = true;
+    for (auto &ind : gep.indices()) {
+      if (auto CI = dyn_cast<ConstantInt>(ind)) {
+        if (!CI->isZero()) {
+          nonZero = true;
+          continue;
+        }
+      }
+      auto CT = getAnalysis(ind).Inner0();
+      if (CT == BaseType::Integer) {
+        continue;
+      }
+      legal = false;
+      break;
+    }
+    if (legal && nonZero) {
+      updateAnalysis(&gep, TypeTree(BaseType::Integer).Only(-1), &gep);
+      return;
+    }
+  }
+
+  if (gep.indices().begin() == gep.indices().end()) {
+    if (direction & DOWN)
+      updateAnalysis(&gep, getAnalysis(gep.getPointerOperand()), &gep);
+    if (direction & UP)
+      updateAnalysis(gep.getPointerOperand(), getAnalysis(&gep), &gep);
+    return;
+  }
 
   auto &DL = fntypeinfo.Function->getParent()->getDataLayout();
 
@@ -1469,7 +1500,8 @@ void TypeAnalyzer::visitGetElementPtrInst(GetElementPtrInst &gep) {
 #else
     APInt ai(DL.getPointerSize(gep.getPointerAddressSpace()) * 8, 0);
 #endif
-    g2->accumulateConstantOffset(DL, ai);
+    bool valid = g2->accumulateConstantOffset(DL, ai);
+    assert(valid);
     // Using destructor rather than eraseFromParent
     //   as g2 has no parent
     delete g2;
@@ -1517,14 +1549,31 @@ void TypeAnalyzer::visitPHINode(PHINode &phi) {
     TypeTree upVal = getAnalysis(&phi);
     // only propagate anything's up if there is one
     // incoming value
-    if (phi.getNumIncomingValues() >= 2) {
+    Value *seen = phi.getIncomingValue(0);
+    for (size_t i = 0, end = phi.getNumIncomingValues(); i < end; ++i) {
+      if (seen != phi.getIncomingValue(i)) {
+        seen = nullptr;
+        break;
+      }
+    }
+
+    if (!seen) {
       upVal = upVal.PurgeAnything();
     }
-    auto L = LI.getLoopFor(phi.getParent());
-    bool isHeader = L && L->getHeader() == phi.getParent();
-    for (size_t i = 0, end = phi.getNumIncomingValues(); i < end; ++i) {
-      if (!isHeader || !L->contains(phi.getIncomingBlock(i))) {
-        updateAnalysis(phi.getIncomingValue(i), upVal, &phi);
+
+    if (EnzymeStrictAliasing || seen) {
+      auto L = LI.getLoopFor(phi.getParent());
+      bool isHeader = L && L->getHeader() == phi.getParent();
+      for (size_t i = 0, end = phi.getNumIncomingValues(); i < end; ++i) {
+        if (!isHeader || !L->contains(phi.getIncomingBlock(i))) {
+          updateAnalysis(phi.getIncomingValue(i), upVal, &phi);
+        }
+      }
+    } else {
+      if (EnzymePrintType) {
+        for (size_t i = 0, end = phi.getNumIncomingValues(); i < end; ++i)
+          llvm::errs() << " skipping update into " << *phi.getIncomingValue(i)
+                       << " of " << upVal.str() << " from " << phi << "\n";
       }
     }
   }
@@ -1532,135 +1581,140 @@ void TypeAnalyzer::visitPHINode(PHINode &phi) {
   assert(phi.getNumIncomingValues() > 0);
 
   // TODO generalize this (and for recursive, etc)
-  std::deque<Value *> vals;
-  std::set<Value *> seen{&phi};
-  for (auto &op : phi.incoming_values()) {
-    vals.push_back(op);
-  }
 
-  SmallVector<BinaryOperator *, 4> bos;
+  for (int i = 0; i < 2; i++) {
 
-  // Unique values that propagate into this phi
-  SmallVector<Value *, 4> UniqueValues;
-
-  while (vals.size()) {
-    Value *todo = vals.front();
-    vals.pop_front();
-
-    if (auto bo = dyn_cast<BinaryOperator>(todo)) {
-      if (bo->getOpcode() == BinaryOperator::Add) {
-        if (isa<Constant>(bo->getOperand(0))) {
-          bos.push_back(bo);
-          todo = bo->getOperand(1);
-        }
-        if (isa<Constant>(bo->getOperand(1))) {
-          bos.push_back(bo);
-          todo = bo->getOperand(0);
-        }
-      }
+    std::deque<Value *> vals;
+    std::set<Value *> seen{&phi};
+    for (auto &op : phi.incoming_values()) {
+      vals.push_back(op);
     }
+    SmallVector<BinaryOperator *, 4> bos;
 
-    if (seen.count(todo))
-      continue;
-    seen.insert(todo);
+    // Unique values that propagate into this phi
+    SmallVector<Value *, 4> UniqueValues;
 
-    if (auto nphi = dyn_cast<PHINode>(todo)) {
-      for (auto &op : nphi->incoming_values()) {
-        vals.push_back(op);
-      }
-      continue;
-    }
-    if (auto sel = dyn_cast<SelectInst>(todo)) {
-      vals.push_back(sel->getOperand(1));
-      vals.push_back(sel->getOperand(2));
-      continue;
-    }
-    UniqueValues.push_back(todo);
-  }
+    while (vals.size()) {
+      Value *todo = vals.front();
+      vals.pop_front();
 
-  TypeTree PhiTypes;
-  bool set = false;
-
-  for (size_t i = 0, size = UniqueValues.size(); i < size; ++i) {
-    TypeTree newData = getAnalysis(UniqueValues[i]);
-    if (UniqueValues.size() == 2) {
-      if (auto BO = dyn_cast<BinaryOperator>(UniqueValues[i])) {
-        if (BO->getOpcode() == BinaryOperator::Add ||
-            BO->getOpcode() == BinaryOperator::Mul) {
-          TypeTree otherData = getAnalysis(UniqueValues[1 - i]);
-          // If we are adding/muling to a constant to derive this, we can assume
-          // it to be an integer rather than Anything
-          if (isa<Constant>(UniqueValues[1 - i])) {
-            otherData = TypeTree(BaseType::Integer).Only(-1);
+      if (auto bo = dyn_cast<BinaryOperator>(todo)) {
+        if (bo->getOpcode() == BinaryOperator::Add) {
+          if (isa<Constant>(bo->getOperand(0))) {
+            bos.push_back(bo);
+            todo = bo->getOperand(1);
           }
-          if (BO->getOperand(0) == &phi) {
-            set = true;
-            PhiTypes = otherData;
-            PhiTypes.binopIn(getAnalysis(BO->getOperand(1)), BO->getOpcode());
-            break;
-          } else if (BO->getOperand(1) == &phi) {
-            set = true;
-            PhiTypes = getAnalysis(BO->getOperand(0));
-            PhiTypes.binopIn(otherData, BO->getOpcode());
-            break;
-          }
-        } else if (BO->getOpcode() == BinaryOperator::Sub) {
-          // Repeated subtraction from a type X yields the type X back
-          TypeTree otherData = getAnalysis(UniqueValues[1 - i]);
-          // If we are subtracting from a constant to derive this, we can assume
-          // it to be an integer rather than Anything
-          if (isa<Constant>(UniqueValues[1 - i])) {
-            otherData = TypeTree(BaseType::Integer).Only(-1);
-          }
-          if (BO->getOperand(0) == &phi) {
-            set = true;
-            PhiTypes = otherData;
-            break;
+          if (isa<Constant>(bo->getOperand(1))) {
+            bos.push_back(bo);
+            todo = bo->getOperand(0);
           }
         }
       }
-    }
-    if (set) {
-      PhiTypes &= newData;
-      // TODO consider the or of anything (see selectinst)
-      // however, this cannot be done yet for risk of turning
-      // phi's that add floats into anything
-      // PhiTypes |= newData.JustAnything();
-    } else {
-      set = true;
-      PhiTypes = newData;
-    }
-  }
 
-  assert(set);
-  // If we are only add / sub / etc to derive a value based off 0
-  // we can start by assuming the type of 0 is integer rather
-  // than assuming it could be anything (per null)
-  if (bos.size() > 0 && UniqueValues.size() == 1 &&
-      isa<ConstantInt>(UniqueValues[0]) &&
-      (cast<ConstantInt>(UniqueValues[0])->isZero() ||
-       cast<ConstantInt>(UniqueValues[0])->isOne())) {
-    PhiTypes = TypeTree(BaseType::Integer).Only(-1);
-  }
-  for (BinaryOperator *bo : bos) {
-    TypeTree vd1 = isa<Constant>(bo->getOperand(0))
-                       ? getAnalysis(bo->getOperand(0)).Data0()
-                       : PhiTypes.Data0();
-    TypeTree vd2 = isa<Constant>(bo->getOperand(1))
-                       ? getAnalysis(bo->getOperand(1)).Data0()
-                       : PhiTypes.Data0();
-    vd1.binopIn(vd2, bo->getOpcode());
-    PhiTypes &= vd1.Only(bo->getType()->isIntegerTy() ? -1 : 0);
-  }
+      if (seen.count(todo))
+        continue;
+      seen.insert(todo);
 
-  if (direction & DOWN) {
-    if (phi.getType()->isIntOrIntVectorTy() &&
-        PhiTypes.Inner0() == BaseType::Anything) {
-      if (mustRemainInteger(&phi)) {
-        PhiTypes = TypeTree(BaseType::Integer).Only(-1);
+      if (auto nphi = dyn_cast<PHINode>(todo)) {
+        if (i == 0) {
+          for (auto &op : nphi->incoming_values()) {
+            vals.push_back(op);
+          }
+          continue;
+        }
+      }
+      if (auto sel = dyn_cast<SelectInst>(todo)) {
+        vals.push_back(sel->getOperand(1));
+        vals.push_back(sel->getOperand(2));
+        continue;
+      }
+      UniqueValues.push_back(todo);
+    }
+
+    TypeTree PhiTypes;
+    bool set = false;
+
+    for (size_t i = 0, size = UniqueValues.size(); i < size; ++i) {
+      TypeTree newData = getAnalysis(UniqueValues[i]);
+      if (UniqueValues.size() == 2) {
+        if (auto BO = dyn_cast<BinaryOperator>(UniqueValues[i])) {
+          if (BO->getOpcode() == BinaryOperator::Add ||
+              BO->getOpcode() == BinaryOperator::Mul) {
+            TypeTree otherData = getAnalysis(UniqueValues[1 - i]);
+            // If we are adding/muling to a constant to derive this, we can
+            // assume it to be an integer rather than Anything
+            if (isa<Constant>(UniqueValues[1 - i])) {
+              otherData = TypeTree(BaseType::Integer).Only(-1);
+            }
+            if (BO->getOperand(0) == &phi) {
+              set = true;
+              PhiTypes = otherData;
+              PhiTypes.binopIn(getAnalysis(BO->getOperand(1)), BO->getOpcode());
+              break;
+            } else if (BO->getOperand(1) == &phi) {
+              set = true;
+              PhiTypes = getAnalysis(BO->getOperand(0));
+              PhiTypes.binopIn(otherData, BO->getOpcode());
+              break;
+            }
+          } else if (BO->getOpcode() == BinaryOperator::Sub) {
+            // Repeated subtraction from a type X yields the type X back
+            TypeTree otherData = getAnalysis(UniqueValues[1 - i]);
+            // If we are subtracting from a constant to derive this, we can
+            // assume it to be an integer rather than Anything
+            if (isa<Constant>(UniqueValues[1 - i])) {
+              otherData = TypeTree(BaseType::Integer).Only(-1);
+            }
+            if (BO->getOperand(0) == &phi) {
+              set = true;
+              PhiTypes = otherData;
+              break;
+            }
+          }
+        }
+      }
+      if (set) {
+        PhiTypes &= newData;
+        // TODO consider the or of anything (see selectinst)
+        // however, this cannot be done yet for risk of turning
+        // phi's that add floats into anything
+        // PhiTypes |= newData.JustAnything();
+      } else {
+        set = true;
+        PhiTypes = newData;
       }
     }
-    updateAnalysis(&phi, PhiTypes, &phi);
+
+    assert(set);
+    // If we are only add / sub / etc to derive a value based off 0
+    // we can start by assuming the type of 0 is integer rather
+    // than assuming it could be anything (per null)
+    if (bos.size() > 0 && UniqueValues.size() == 1 &&
+        isa<ConstantInt>(UniqueValues[0]) &&
+        (cast<ConstantInt>(UniqueValues[0])->isZero() ||
+         cast<ConstantInt>(UniqueValues[0])->isOne())) {
+      PhiTypes = TypeTree(BaseType::Integer).Only(-1);
+    }
+    for (BinaryOperator *bo : bos) {
+      TypeTree vd1 = isa<Constant>(bo->getOperand(0))
+                         ? getAnalysis(bo->getOperand(0)).Data0()
+                         : PhiTypes.Data0();
+      TypeTree vd2 = isa<Constant>(bo->getOperand(1))
+                         ? getAnalysis(bo->getOperand(1)).Data0()
+                         : PhiTypes.Data0();
+      vd1.binopIn(vd2, bo->getOpcode());
+      PhiTypes &= vd1.Only(bo->getType()->isIntegerTy() ? -1 : 0);
+    }
+
+    if (direction & DOWN) {
+      if (phi.getType()->isIntOrIntVectorTy() &&
+          PhiTypes.Inner0() == BaseType::Anything) {
+        if (mustRemainInteger(&phi)) {
+          PhiTypes = TypeTree(BaseType::Integer).Only(-1);
+        }
+      }
+      updateAnalysis(&phi, PhiTypes, &phi);
+    }
   }
 }
 
@@ -1813,11 +1867,20 @@ void TypeAnalyzer::visitBitCastInst(BitCastInst &I) {
 }
 
 void TypeAnalyzer::visitSelectInst(SelectInst &I) {
-  if (direction & UP)
-    updateAnalysis(I.getTrueValue(), getAnalysis(&I).PurgeAnything(), &I);
-  if (direction & UP)
-    updateAnalysis(I.getFalseValue(), getAnalysis(&I).PurgeAnything(), &I);
-
+  if (direction & UP) {
+    auto Data = getAnalysis(&I).PurgeAnything();
+    if (EnzymeStrictAliasing || (I.getTrueValue() == I.getFalseValue())) {
+      updateAnalysis(I.getTrueValue(), Data, &I);
+      updateAnalysis(I.getFalseValue(), Data, &I);
+    } else {
+      if (EnzymePrintType) {
+        llvm::errs() << " skipping update into " << *I.getTrueValue() << " of "
+                     << Data.str() << " from " << I << "\n";
+        llvm::errs() << " skipping update into " << *I.getFalseValue() << " of "
+                     << Data.str() << " from " << I << "\n";
+      }
+    }
+  }
   if (direction & DOWN) {
     // special case for min/max result is still that operand [even if something
     // is 0]
@@ -2266,10 +2329,18 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
       // these are equal ptr - int => ptr and int - ptr => ptr; thus
       // howerver we do not want to propagate underlying ptr types since it's
       // legal to subtract unrelated pointer
-      if (AnalysisRet[{}] == BaseType::Integer) {
-        if (direction & UP) {
+      if (direction & UP) {
+        if (AnalysisRet[{}] == BaseType::Integer) {
           LHS |= TypeTree(AnalysisRHS[{}]).PurgeAnything().Only(-1);
           RHS |= TypeTree(AnalysisLHS[{}]).PurgeAnything().Only(-1);
+        }
+        if (AnalysisRet[{}] == BaseType::Pointer) {
+          if (AnalysisLHS[{}] == BaseType::Pointer) {
+            RHS |= TypeTree(BaseType::Integer).Only(-1);
+          }
+          if (AnalysisRHS[{}] == BaseType::Integer) {
+            LHS |= TypeTree(BaseType::Pointer).Only(-1);
+          }
         }
       }
       break;
@@ -2448,6 +2519,13 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
           // integer
           if (Args[i] && isa<ConstantInt>(Args[i]) &&
               (i == 0 ? AnalysisRHS : AnalysisLHS)[{}] == BaseType::Integer) {
+            Result = TypeTree(BaseType::Integer);
+          }
+        }
+      } else if (Opcode == BinaryOperator::URem) {
+        if (auto CI = dyn_cast_or_null<ConstantInt>(Args[1])) {
+          // If rem with a small integer, the result is also a small integer
+          if (CI->getLimitedValue() <= 4096) {
             Result = TypeTree(BaseType::Integer);
           }
         }
@@ -3027,6 +3105,9 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
   case Intrinsic::nearbyint:
   case Intrinsic::round:
   case Intrinsic::sqrt:
+  case Intrinsic::nvvm_fabs_f:
+  case Intrinsic::nvvm_fabs_d:
+  case Intrinsic::nvvm_fabs_ftz_f:
   case Intrinsic::fabs:
     // No direction check as always valid
     updateAnalysis(
@@ -3094,6 +3175,12 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
   case Intrinsic::copysign:
   case Intrinsic::maxnum:
   case Intrinsic::minnum:
+  case Intrinsic::nvvm_fmax_f:
+  case Intrinsic::nvvm_fmax_d:
+  case Intrinsic::nvvm_fmax_ftz_f:
+  case Intrinsic::nvvm_fmin_f:
+  case Intrinsic::nvvm_fmin_d:
+  case Intrinsic::nvvm_fmin_ftz_f:
   case Intrinsic::pow:
     // No direction check as always valid
     updateAnalysis(
@@ -3622,7 +3709,16 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1), &call);
       return;
     }
+    if (funcName == "_ZNSt6localeC1Ev") {
+      TypeTree ptrint;
+      ptrint.insert({-1}, BaseType::Pointer);
+      ptrint.insert({-1, 0}, BaseType::Integer);
+      updateAnalysis(call.getOperand(0), ptrint, &call);
+      return;
+    }
     if (funcName == "__dynamic_cast" ||
+        funcName == "_ZSt18_Rb_tree_decrementPKSt18_Rb_tree_node_base" ||
+        funcName == "_ZSt18_Rb_tree_incrementPKSt18_Rb_tree_node_base" ||
         funcName == "_ZSt18_Rb_tree_decrementPSt18_Rb_tree_node_base" ||
         funcName == "_ZSt18_Rb_tree_incrementPSt18_Rb_tree_node_base") {
       updateAnalysis(&call, TypeTree(BaseType::Pointer).Only(-1), &call);
@@ -4194,7 +4290,21 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
             llvm::errs() << *T << " - " << call << "\n";
             llvm_unreachable("Unknown type for libm");
           }
-
+        } else if (auto AT = dyn_cast<ArrayType>(T)) {
+          assert(AT->getNumElements() >= 1);
+          if (AT->getElementType()->isFloatingPointTy())
+            updateAnalysis(
+                call.getArgOperand(i),
+                TypeTree(ConcreteType(AT->getElementType()->getScalarType()))
+                    .Only(-1),
+                &call);
+          else if (AT->getElementType()->isIntegerTy()) {
+            updateAnalysis(call.getArgOperand(i),
+                           TypeTree(BaseType::Integer).Only(-1), &call);
+          } else {
+            llvm::errs() << *T << " - " << call << "\n";
+            llvm_unreachable("Unknown type for libm");
+          }
         } else {
           llvm::errs() << *T << " - " << call << "\n";
           llvm_unreachable("Unknown type for libm");
@@ -4447,7 +4557,7 @@ FnTypeInfo::knownIntegralValues(llvm::Value *val, const DominatorTree &DT,
   if (auto pn = dyn_cast<PHINode>(val)) {
     if (SE.isSCEVable(pn->getType()))
       if (auto S = dyn_cast<SCEVAddRecExpr>(SE.getSCEV(pn))) {
-        if (isa<SCEVConstant>(S->getStart())) {
+        if (auto StartC = dyn_cast<SCEVConstant>(S->getStart())) {
           auto L = S->getLoop();
           auto BE = SE.getBackedgeTakenCount(L);
           if (BE != SE.getCouldNotCompute()) {
@@ -4466,7 +4576,43 @@ FnTypeInfo::knownIntegralValues(llvm::Value *val, const DominatorTree &DT,
                     ival--;
                 }
               }
-              for (uint64_t i = 0; i <= ival; i++) {
+
+              uint64_t istart = 0;
+
+              if (S->isAffine()) {
+                if (auto StepC = dyn_cast<SCEVConstant>(S->getOperand(1))) {
+                  APInt StartI = StartC->getAPInt();
+                  APInt A = StepC->getAPInt();
+
+                  if (A.sle(-1)) {
+                    A = -A;
+                    StartI = -StartI;
+                  }
+
+                  if (A.sge(1)) {
+                    if (StartI.sge(MaxIntOffset)) {
+                      ival = std::min(ival, (uint64_t)0);
+                    } else {
+                      ival = std::min(
+                          ival,
+                          (MaxIntOffset - StartI + A).udiv(A).getZExtValue());
+                    }
+
+                    if (StartI.slt(-MaxIntOffset)) {
+                      istart = std::max(
+                          istart,
+                          (-MaxIntOffset - StartI).udiv(A).getZExtValue());
+                    }
+
+                  } else {
+                    ival = std::min(ival, (uint64_t)0);
+                  }
+                } else {
+                  ival = std::min(ival, (uint64_t)0);
+                }
+              }
+
+              for (uint64_t i = istart; i <= ival; i++) {
                 if (auto Val = dyn_cast<SCEVConstant>(S->evaluateAtIteration(
                         SE.getConstant(Iters->getType(), i, /*signed*/ false),
                         SE))) {

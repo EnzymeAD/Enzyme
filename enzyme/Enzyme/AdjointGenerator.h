@@ -24,6 +24,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Constants.h"
@@ -530,9 +531,17 @@ public:
           }
         } else {
           Value *newip = gutils->invertPointerM(&I, BuilderZ);
+          if (EnzymeRuntimeActivityCheck && TR.query(&I)[{-1}].isFloat()) {
+            Value *shadow = BuilderZ.CreateICmpNE(
+                gutils->getNewFromOriginal(I.getOperand(0)),
+                gutils->invertPointerM(I.getOperand(0), BuilderZ));
+            newip = BuilderZ.CreateSelect(
+                shadow, newip, Constant::getNullValue(newip->getType()));
+          }
           assert(newip->getType() == type);
           placeholder->replaceAllUsesWith(newip);
           gutils->erase(placeholder);
+          gutils->invertedPointers.erase(&I);
           gutils->invertedPointers.insert(std::make_pair(
               (const Value *)&I, InvertedPointerVH(gutils, newip)));
         }
@@ -940,25 +949,27 @@ public:
     if (valType->isFPOrFPVectorTy()) {
       FT = valType->getScalarType();
     } else if (!valType->isPointerTy()) {
-      if (looseTypeAnalysis) {
-        auto fp = TR.firstPointer(storeSize, orig_ptr, /*errifnotfound*/ false,
-                                  /*pointerIntSame*/ true);
-        if (fp.isKnown()) {
-          FT = fp.isFloat();
-        } else if (isa<ConstantInt>(orig_val) ||
-                   valType->isIntOrIntVectorTy()) {
-          llvm::errs() << "assuming type as integral for store: " << I << "\n";
-          FT = nullptr;
-        } else {
-          TR.firstPointer(storeSize, orig_ptr, /*errifnotfound*/ true,
-                          /*pointerIntSame*/ true);
-          llvm::errs() << "cannot deduce type of store " << I << "\n";
-          assert(0 && "cannot deduce");
-        }
+      auto fp = TR.firstPointer(storeSize, orig_ptr, /*errifnotfound*/ false,
+                                /*pointerIntSame*/ true);
+      if (fp.isKnown()) {
+        FT = fp.isFloat();
+      } else if (looseTypeAnalysis && (isa<ConstantInt>(orig_val) ||
+                                       valType->isIntOrIntVectorTy())) {
+        llvm::errs() << "assuming type as integral for store: " << I << "\n";
+        FT = nullptr;
       } else {
-        FT = TR.firstPointer(storeSize, orig_ptr, /*errifnotfound*/ true,
-                             /*pointerIntSame*/ true)
-                 .isFloat();
+
+        if (CustomErrorHandler) {
+          std::string str;
+          raw_string_ostream ss(str);
+          ss << "Cannot deduce type of store " << I;
+          CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
+                             &TR.analyzer);
+        }
+        EmitFailure("CannotDeduceType", I.getDebugLoc(), &I,
+                    "failed to deduce type of store ", I);
+        TR.firstPointer(storeSize, orig_ptr, /*errifnotfound*/ true,
+                        /*pointerIntSame*/ true);
       }
     }
 
@@ -2659,18 +2670,18 @@ public:
   void visitMemSetInst(llvm::MemSetInst &MS) { visitMemSetCommon(MS); }
 
   void visitMemSetCommon(llvm::CallInst &MS) {
+    IRBuilder<> BuilderZ(&MS);
+    getForwardBuilder(BuilderZ);
+
+    IRBuilder<> Builder2(&MS);
+    if (Mode == DerivativeMode::ReverseModeGradient ||
+        Mode == DerivativeMode::ReverseModeCombined)
+      getReverseBuilder(Builder2);
+
     eraseIfUnused(MS);
 
     Value *orig_op0 = MS.getArgOperand(0);
     Value *orig_op1 = MS.getArgOperand(1);
-
-    // TODO this should 1) assert that the value being meset is constant
-    //                 2) duplicate the memset for the inverted pointer
-
-    if (gutils->isConstantInstruction(&MS) &&
-        Mode != DerivativeMode::ForwardMode) {
-      return;
-    }
 
     // If constant destination then no operation needs doing
     if (gutils->isConstantValue(orig_op0)) {
@@ -2691,36 +2702,10 @@ public:
       report_fatal_error("non constant in memset");
     }
 
-    bool backwardsShadow = false;
-    bool forwardsShadow = true;
-    for (auto pair : gutils->backwardsOnlyShadows) {
-      if (pair.second.stores.count(&MS)) {
-        backwardsShadow = true;
-        forwardsShadow = pair.second.primalInitialize;
-        if (auto inst = dyn_cast<Instruction>(pair.first))
-          if (!forwardsShadow && pair.second.LI &&
-              pair.second.LI->contains(inst->getParent()))
-            backwardsShadow = false;
-      }
-    }
-
-    if ((Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
-        (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow) ||
-        (Mode == DerivativeMode::ReverseModeCombined &&
-         (forwardsShadow && backwardsShadow)) ||
-        Mode == DerivativeMode::ForwardMode) {
-      IRBuilder<> BuilderZ(&MS);
-      getForwardBuilder(BuilderZ);
-
-      bool forwardMode = Mode == DerivativeMode::ForwardMode;
-
+    if (Mode == DerivativeMode::ForwardMode) {
       Value *op0 = gutils->invertPointerM(orig_op0, BuilderZ);
       Value *op1 = gutils->getNewFromOriginal(MS.getArgOperand(1));
-      if (!forwardMode)
-        op1 = gutils->lookupM(op1, BuilderZ);
       Value *op2 = gutils->getNewFromOriginal(MS.getArgOperand(2));
-      if (!forwardMode)
-        op2 = gutils->lookupM(op2, BuilderZ);
       Value *op3 = nullptr;
 #if LLVM_VERSION_MAJOR >= 14
       if (3 < MS.arg_size())
@@ -2729,8 +2714,6 @@ public:
 #endif
       {
         op3 = gutils->getNewFromOriginal(MS.getOperand(3));
-        if (!forwardMode)
-          op3 = gutils->lookupM(op3, BuilderZ);
       }
 
       auto Defs =
@@ -2753,6 +2736,296 @@ public:
             cal->setDebugLoc(gutils->getNewFromOriginal(MS.getDebugLoc()));
           },
           op0);
+      return;
+    }
+
+    bool backwardsShadow = false;
+    bool forwardsShadow = true;
+    for (auto pair : gutils->backwardsOnlyShadows) {
+      if (pair.second.stores.count(&MS)) {
+        backwardsShadow = true;
+        forwardsShadow = pair.second.primalInitialize;
+        if (auto inst = dyn_cast<Instruction>(pair.first))
+          if (!forwardsShadow && pair.second.LI &&
+              pair.second.LI->contains(inst->getParent()))
+            backwardsShadow = false;
+      }
+    }
+
+    size_t size = 1;
+    if (auto ci = dyn_cast<ConstantInt>(MS.getOperand(2))) {
+      size = ci->getLimitedValue();
+    }
+
+    // TODO note that we only handle memset of ONE type (aka memset of {int,
+    // double} not allowed)
+
+    if (size == 0) {
+      llvm::errs() << MS << "\n";
+    }
+    assert(size != 0);
+
+    auto &DL = gutils->newFunc->getParent()->getDataLayout();
+    auto vd = TR.query(MS.getOperand(0)).Data0().ShiftIndices(DL, 0, size, 0);
+
+    if (!vd.isKnownPastPointer()) {
+      // If unknown type results, consider the intersection of all incoming.
+      if (isa<PHINode>(MS.getOperand(0)) || isa<SelectInst>(MS.getOperand(0))) {
+        SmallVector<Value *, 2> todo = {MS.getOperand(0)};
+        bool set = false;
+        SmallSet<Value *, 2> seen;
+        TypeTree vd2;
+        while (todo.size()) {
+          Value *cur = todo.back();
+          todo.pop_back();
+          if (seen.count(cur))
+            continue;
+          seen.insert(cur);
+          if (auto PN = dyn_cast<PHINode>(cur)) {
+            for (size_t i = 0, end = PN->getNumIncomingValues(); i < end; i++) {
+              todo.push_back(PN->getIncomingValue(i));
+            }
+            continue;
+          }
+          if (auto S = dyn_cast<SelectInst>(cur)) {
+            todo.push_back(S->getTrueValue());
+            todo.push_back(S->getFalseValue());
+            continue;
+          }
+          if (auto CE = dyn_cast<ConstantExpr>(cur)) {
+            if (CE->isCast()) {
+              todo.push_back(CE->getOperand(0));
+              continue;
+            }
+          }
+          if (auto CI = dyn_cast<CastInst>(cur)) {
+            todo.push_back(CI->getOperand(0));
+            continue;
+          }
+          if (isa<ConstantPointerNull>(cur))
+            continue;
+          if (auto CI = dyn_cast<ConstantInt>(cur))
+            if (CI->isZero())
+              continue;
+          auto curTT = TR.query(cur).Data0().ShiftIndices(DL, 0, size, 0);
+          if (!set)
+            vd2 = curTT;
+          else
+            vd2 &= curTT;
+          set = true;
+        }
+        vd = vd2;
+      }
+    }
+    if (!vd.isKnownPastPointer()) {
+      if (looseTypeAnalysis) {
+        if (auto CI = dyn_cast<CastInst>(MS.getOperand(0))) {
+          if (auto PT = dyn_cast<PointerType>(CI->getSrcTy())) {
+            auto ET = PT->getPointerElementType();
+            while (1) {
+              if (auto ST = dyn_cast<StructType>(ET)) {
+                if (ST->getNumElements()) {
+                  ET = ST->getElementType(0);
+                  continue;
+                }
+              }
+              if (auto AT = dyn_cast<ArrayType>(ET)) {
+                ET = AT->getElementType();
+                continue;
+              }
+              break;
+            }
+            if (ET->isFPOrFPVectorTy()) {
+              vd = TypeTree(ConcreteType(ET->getScalarType())).Only(0);
+              goto known;
+            }
+            if (ET->isPointerTy()) {
+              vd = TypeTree(BaseType::Pointer).Only(0);
+              goto known;
+            }
+            if (ET->isIntOrIntVectorTy()) {
+              vd = TypeTree(BaseType::Integer).Only(0);
+              goto known;
+            }
+          }
+        }
+        if (auto gep = dyn_cast<GetElementPtrInst>(MS.getOperand(0))) {
+          if (auto AT = dyn_cast<ArrayType>(gep->getSourceElementType())) {
+            if (AT->getElementType()->isIntegerTy()) {
+              vd = TypeTree(BaseType::Integer).Only(0);
+              goto known;
+            }
+          }
+        }
+        EmitWarning("CannotDeduceType", MS.getDebugLoc(), gutils->oldFunc,
+                    MS.getParent(), &MS, "failed to deduce type of memset ",
+                    MS);
+        vd = TypeTree(BaseType::Pointer).Only(0);
+        goto known;
+      }
+      if (CustomErrorHandler) {
+        std::string str;
+        raw_string_ostream ss(str);
+        ss << "Cannot deduce type of memset " << MS;
+        CustomErrorHandler(str.c_str(), wrap(&MS), ErrorType::NoType,
+                           &TR.analyzer);
+      }
+      EmitFailure("CannotDeduceType", MS.getDebugLoc(), &MS,
+                  "failed to deduce type of memset ", MS);
+
+      TR.firstPointer(size, MS.getOperand(0), /*errifnotfound*/ true,
+                      /*pointerIntSame*/ true);
+      llvm_unreachable("bad msi");
+    }
+  known:;
+
+#if 0
+#if LLVM_VERSION_MAJOR >= 10
+    unsigned dstalign = dstAlign.valueOrOne().value();
+    unsigned srcalign = srcAlign.valueOrOne().value();
+#else
+    unsigned dstalign = dstAlign;
+    unsigned srcalign = srcAlign;
+#endif
+#endif
+
+    unsigned start = 0;
+
+    Value *op1 = gutils->getNewFromOriginal(MS.getArgOperand(1));
+    Value *new_size = gutils->getNewFromOriginal(MS.getArgOperand(2));
+    Value *op3 = nullptr;
+#if LLVM_VERSION_MAJOR >= 14
+    if (3 < MS.arg_size())
+#else
+    if (3 < MS.getNumArgOperands())
+#endif
+    {
+      op3 = gutils->getNewFromOriginal(MS.getOperand(3));
+    }
+
+    while (1) {
+      unsigned nextStart = size;
+
+      auto dt = vd[{-1}];
+      for (size_t i = start; i < size; ++i) {
+        bool Legal = true;
+        dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
+        if (!Legal) {
+          nextStart = i;
+          break;
+        }
+      }
+      if (!dt.isKnown()) {
+        TR.dump();
+        llvm::errs() << " vd:" << vd.str() << " start:" << start
+                     << " size: " << size << " dt:" << dt.str() << "\n";
+      }
+      assert(dt.isKnown());
+
+      Value *length = new_size;
+      if (nextStart != size) {
+        length = ConstantInt::get(new_size->getType(), nextStart);
+      }
+      if (start != 0)
+        length = BuilderZ.CreateSub(
+            length, ConstantInt::get(new_size->getType(), start));
+
+#if 0
+      unsigned subdstalign = dstalign;
+      // todo make better alignment calculation
+      if (dstalign != 0) {
+        if (start % dstalign != 0) {
+          dstalign = 1;
+        }
+      }
+      unsigned subsrcalign = srcalign;
+      // todo make better alignment calculation
+      if (srcalign != 0) {
+        if (start % srcalign != 0) {
+          srcalign = 1;
+        }
+      }
+#endif
+
+      Value *shadow_dst = gutils->invertPointerM(MS.getOperand(0), BuilderZ);
+
+      // TODO ponder forward split mode
+      Type *secretty = dt.isFloat();
+      if (!secretty &&
+          ((Mode == DerivativeMode::ReverseModePrimal && forwardsShadow) ||
+           (Mode == DerivativeMode::ReverseModeCombined && forwardsShadow) ||
+           (Mode == DerivativeMode::ReverseModeGradient && backwardsShadow) ||
+           (Mode == DerivativeMode::ForwardModeSplit && backwardsShadow))) {
+        auto Defs =
+            gutils->getInvertedBundles(&MS,
+                                       {ValueType::Shadow, ValueType::Primal,
+                                        ValueType::Primal, ValueType::Primal},
+                                       BuilderZ, /*lookup*/ false);
+        auto rule = [&](Value *op0) {
+          if (start != 0) {
+            Value *idxs[] = {
+                ConstantInt::get(Type::getInt32Ty(op0->getContext()), start)};
+#if LLVM_VERSION_MAJOR > 7
+            op0 = BuilderZ.CreateInBoundsGEP(
+                op0->getType()->getPointerElementType(), op0, idxs);
+#else
+            op0 = BuilderZ.CreateInBoundsGEP(op0, idxs);
+#endif
+          }
+          SmallVector<Value *, 4> args = {op0, op1, length};
+          if (op3)
+            args.push_back(op3);
+          auto cal = BuilderZ.CreateCall(MS.getCalledFunction(), args, Defs);
+          cal->copyMetadata(MS, MD_ToCopy);
+          cal->setAttributes(MS.getAttributes());
+          cal->setCallingConv(MS.getCallingConv());
+          cal->setTailCallKind(MS.getTailCallKind());
+          cal->setDebugLoc(gutils->getNewFromOriginal(MS.getDebugLoc()));
+        };
+
+        applyChainRule(BuilderZ, rule, shadow_dst);
+      }
+      if (secretty && (Mode == DerivativeMode::ReverseModeGradient ||
+                       Mode == DerivativeMode::ReverseModeCombined)) {
+
+        auto Defs =
+            gutils->getInvertedBundles(&MS,
+                                       {ValueType::Shadow, ValueType::Primal,
+                                        ValueType::Primal, ValueType::Primal},
+                                       BuilderZ, /*lookup*/ true);
+        Value *op1l = gutils->lookupM(op1, Builder2);
+        Value *op3l = op3;
+        if (op3l)
+          op3l = gutils->lookupM(op3l, BuilderZ);
+        length = gutils->lookupM(length, Builder2);
+        auto rule = [&](Value *op0) {
+          if (start != 0) {
+            Value *idxs[] = {
+                ConstantInt::get(Type::getInt32Ty(op0->getContext()), start)};
+#if LLVM_VERSION_MAJOR > 7
+            op0 = Builder2.CreateInBoundsGEP(
+                op0->getType()->getPointerElementType(), op0, idxs);
+#else
+            op0 = Builder2.CreateInBoundsGEP(op0, idxs);
+#endif
+          }
+          SmallVector<Value *, 4> args = {op0, op1l, length};
+          if (op3l)
+            args.push_back(op3l);
+          auto cal = Builder2.CreateCall(MS.getCalledFunction(), args, Defs);
+          cal->copyMetadata(MS, MD_ToCopy);
+          cal->setAttributes(MS.getAttributes());
+          cal->setCallingConv(MS.getCallingConv());
+          cal->setTailCallKind(MS.getTailCallKind());
+          cal->setDebugLoc(gutils->getNewFromOriginal(MS.getDebugLoc()));
+        };
+
+        applyChainRule(Builder2, rule, gutils->lookupM(shadow_dst, Builder2));
+      }
+
+      if (nextStart == size)
+        break;
+      start = nextStart;
     }
   }
 
@@ -3129,13 +3402,22 @@ public:
       case Intrinsic::lifetime_start:
       case Intrinsic::assume:
       case Intrinsic::fabs:
+      case Intrinsic::nvvm_fabs_f:
+      case Intrinsic::nvvm_fabs_d:
+      case Intrinsic::nvvm_fabs_ftz_f:
 #if LLVM_VERSION_MAJOR < 10
       case Intrinsic::x86_sse_max_ss:
       case Intrinsic::x86_sse_max_ps:
       case Intrinsic::x86_sse_min_ss:
       case Intrinsic::x86_sse_min_ps:
 #endif
+      case Intrinsic::nvvm_fmax_f:
+      case Intrinsic::nvvm_fmax_d:
+      case Intrinsic::nvvm_fmax_ftz_f:
       case Intrinsic::maxnum:
+      case Intrinsic::nvvm_fmin_f:
+      case Intrinsic::nvvm_fmin_d:
+      case Intrinsic::nvvm_fmin_ftz_f:
       case Intrinsic::minnum:
       case Intrinsic::log:
       case Intrinsic::log2:
@@ -3336,6 +3618,9 @@ public:
         return;
       }
 
+      case Intrinsic::nvvm_fabs_f:
+      case Intrinsic::nvvm_fabs_d:
+      case Intrinsic::nvvm_fabs_ftz_f:
       case Intrinsic::fabs: {
         if (vdiff && !gutils->isConstantValue(orig_ops[0])) {
           Value *cmp = Builder2.CreateFCmpOLT(
@@ -3360,6 +3645,9 @@ public:
       case Intrinsic::x86_sse_max_ss:
       case Intrinsic::x86_sse_max_ps:
 #endif
+      case Intrinsic::nvvm_fmax_f:
+      case Intrinsic::nvvm_fmax_d:
+      case Intrinsic::nvvm_fmax_ftz_f:
       case Intrinsic::maxnum: {
         if (vdiff && !gutils->isConstantValue(orig_ops[0])) {
           Value *cmp = Builder2.CreateFCmpOLT(
@@ -3391,6 +3679,9 @@ public:
       case Intrinsic::x86_sse_min_ss:
       case Intrinsic::x86_sse_min_ps:
 #endif
+      case Intrinsic::nvvm_fmin_f:
+      case Intrinsic::nvvm_fmin_d:
+      case Intrinsic::nvvm_fmin_ftz_f:
       case Intrinsic::minnum: {
         if (vdiff && !gutils->isConstantValue(orig_ops[0])) {
           Value *cmp = Builder2.CreateFCmpOLT(
@@ -3820,6 +4111,9 @@ public:
         return;
       }
 
+      case Intrinsic::nvvm_fabs_f:
+      case Intrinsic::nvvm_fabs_d:
+      case Intrinsic::nvvm_fabs_ftz_f:
       case Intrinsic::fabs: {
         if (gutils->isConstantInstruction(&I))
           return;
@@ -3846,6 +4140,9 @@ public:
       case Intrinsic::x86_sse_max_ss:
       case Intrinsic::x86_sse_max_ps:
 #endif
+      case Intrinsic::nvvm_fmax_f:
+      case Intrinsic::nvvm_fmax_d:
+      case Intrinsic::nvvm_fmax_ftz_f:
       case Intrinsic::maxnum: {
         if (gutils->isConstantInstruction(&I))
           return;
@@ -3877,6 +4174,9 @@ public:
       case Intrinsic::x86_sse_min_ss:
       case Intrinsic::x86_sse_min_ps:
 #endif
+      case Intrinsic::nvvm_fmin_f:
+      case Intrinsic::nvvm_fmin_d:
+      case Intrinsic::nvvm_fmin_ftz_f:
       case Intrinsic::minnum: {
         if (gutils->isConstantInstruction(&I))
           return;
@@ -4892,20 +5192,9 @@ public:
 
         if (tape && shouldFree()) {
           for (auto idx : subdata->tapeIndiciesToFree) {
-            auto ci = cast<CallInst>(CallInst::CreateFree(
-                Builder2.CreatePointerCast(
-                    idx == -1 ? tape : Builder2.CreateExtractValue(tape, idx),
-                    Type::getInt8PtrTy(Builder2.getContext())),
-                Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 14
-            ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                    Attribute::NonNull);
-#else
-            ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
-#endif
-            if (ci->getParent() == nullptr) {
-              Builder2.Insert(ci);
-            }
+            CreateDealloc(Builder2,
+                          idx == -1 ? tape
+                                    : Builder2.CreateExtractValue(tape, idx));
           }
         }
       } else {
@@ -5248,8 +5537,6 @@ public:
           byRef = true;
         }
 
-        auto &DL = gutils->oldFunc->getParent()->getDataLayout();
-
         Value *cacheval;
         auto in_arg = call.getCalledFunction()->arg_begin();
         Argument *countarg = in_arg;
@@ -5324,8 +5611,6 @@ public:
             cachetype) {
 
           SmallVector<Value *, 2> cacheValues;
-          auto size =
-              ConstantInt::get(intType, DL.getTypeSizeInBits(innerType) / 8);
 
           Value *count = gutils->getNewFromOriginal(call.getArgOperand(0));
 
@@ -5370,10 +5655,8 @@ public:
           if (xcache) {
             auto dmemcpy = getOrInsertMemcpyStrided(
                 *gutils->oldFunc->getParent(), cast<PointerType>(castvals[0]),
-                size->getType(), 0, 0);
-            auto malins = CallInst::CreateMalloc(
-                gutils->getNewFromOriginal(&call), size->getType(), innerType,
-                size, count, nullptr, "");
+                count->getType(), 0, 0);
+            auto malins = CreateAllocation(BuilderZ, innerType, count);
             Value *arg = BuilderZ.CreateBitCast(malins, castvals[0]);
             Value *args[4] = {arg,
                               gutils->getNewFromOriginal(call.getArgOperand(1)),
@@ -5395,10 +5678,8 @@ public:
           if (ycache) {
             auto dmemcpy = getOrInsertMemcpyStrided(
                 *gutils->oldFunc->getParent(), cast<PointerType>(castvals[1]),
-                size->getType(), 0, 0);
-            auto malins = CallInst::CreateMalloc(
-                gutils->getNewFromOriginal(&call), size->getType(), innerType,
-                size, count, nullptr, "");
+                count->getType(), 0, 0);
+            auto malins = CreateAllocation(BuilderZ, innerType, count);
             Value *arg = BuilderZ.CreateBitCast(malins, castvals[1]);
             Value *args[4] = {arg,
                               gutils->getNewFromOriginal(call.getArgOperand(3)),
@@ -5510,7 +5791,7 @@ public:
                        (!ycache &&
                         !gutils->isConstantValue(call.getArgOperand(1)))) {
               if (Mode != DerivativeMode::ForwardModeSplit)
-                trueXinc = lookup(trueXinc, Builder2);
+                trueYinc = lookup(trueYinc, Builder2);
             }
           } else if (Mode != DerivativeMode::ForwardModeSplit) {
             count = lookup(count, Builder2);
@@ -5745,36 +6026,10 @@ public:
             Mode == DerivativeMode::ForwardModeSplit) {
           if (shouldFree()) {
             if (xcache) {
-              auto ci = cast<CallInst>(CallInst::CreateFree(
-                  Builder2.CreatePointerCast(
-                      xdata_ptr, Type::getInt8PtrTy(xdata_ptr->getContext())),
-                  Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 14
-              ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                      Attribute::NonNull);
-#else
-              ci->addAttribute(AttributeList::FirstArgIndex,
-                               Attribute::NonNull);
-#endif
-              if (ci->getParent() == nullptr) {
-                Builder2.Insert(ci);
-              }
+              CreateDealloc(Builder2, xdata_ptr);
             }
             if (ycache) {
-              auto ci = cast<CallInst>(CallInst::CreateFree(
-                  Builder2.CreatePointerCast(
-                      ydata_ptr, Type::getInt8PtrTy(ydata_ptr->getContext())),
-                  Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 14
-              ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                      Attribute::NonNull);
-#else
-              ci->addAttribute(AttributeList::FirstArgIndex,
-                               Attribute::NonNull);
-#endif
-              if (ci->getParent() == nullptr) {
-                Builder2.Insert(ci);
-              }
+              CreateDealloc(Builder2, ydata_ptr);
             }
           }
         }
@@ -5824,14 +6079,8 @@ public:
           auto i64 = Type::getInt64Ty(call.getContext());
           auto impi = getMPIHelper(call.getContext());
 
-          Value *impialloc = CallInst::CreateMalloc(
-              gutils->getNewFromOriginal(&call), i64, impi,
-              ConstantInt::get(
-                  i64,
-                  called->getParent()->getDataLayout().getTypeAllocSizeInBits(
-                      impi) /
-                      8),
-              nullptr, nullptr, "");
+          Value *impialloc =
+              CreateAllocation(BuilderZ, impi, ConstantInt::get(i64, 1));
           BuilderZ.SetInsertPoint(gutils->getNewFromOriginal(&call));
 
           d_req = BuilderZ.CreateBitCast(
@@ -5861,11 +6110,9 @@ public:
                                            Type::getInt64Ty(call.getContext())),
                 "", true, true);
 
-            Value *firstallocation = CallInst::CreateMalloc(
-                &*BuilderZ.GetInsertPoint(), len_arg->getType(),
-                Type::getInt8Ty(call.getContext()),
-                ConstantInt::get(Type::getInt64Ty(len_arg->getContext()), 1),
-                len_arg, nullptr, "mpirecv_malloccache");
+            Value *firstallocation =
+                CreateAllocation(BuilderZ, Type::getInt8Ty(call.getContext()),
+                                 len_arg, "mpirecv_malloccache");
             BuilderZ.CreateStore(
                 firstallocation,
                 getMPIMemberPtr<MPI_Elem::Buf>(BuilderZ, impialloc));
@@ -6112,36 +6359,12 @@ public:
                                         Builder2, BufferDefs);
 
             if (shouldFree()) {
-              auto ci = cast<CallInst>(CallInst::CreateFree(
-                  firstallocation, Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 14
-              ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                      Attribute::NonNull);
-#else
-              ci->addAttribute(AttributeList::FirstArgIndex,
-                               Attribute::NonNull);
-#endif
-              if (ci->getParent() == nullptr) {
-                Builder2.Insert(ci);
-              }
+              CreateDealloc(Builder2, firstallocation);
             }
           } else
             assert(0 && "illegal mpi");
 
-          CallInst *freecall = cast<CallInst>(CallInst::CreateFree(
-              Builder2.CreatePointerCast(helper,
-                                         Type::getInt8PtrTy(call.getContext())),
-              Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 14
-          freecall->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                        Attribute::NonNull);
-#else
-          freecall->addAttribute(AttributeList::FirstArgIndex,
-                                 Attribute::NonNull);
-#endif
-          if (freecall->getParent() == nullptr) {
-            Builder2.Insert(freecall);
-          }
+          CreateDealloc(Builder2, helper);
         }
         if (Mode == DerivativeMode::ForwardMode) {
           IRBuilder<> Builder2(&call);
@@ -6523,19 +6746,7 @@ public:
         }
         Builder2.SetInsertPoint(endBlock);
         if (shouldFree()) {
-          auto ci = cast<CallInst>(CallInst::CreateFree(
-              Builder2.CreatePointerCast(
-                  d_reqp, Type::getInt8PtrTy(d_reqp->getContext())),
-              Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 14
-          ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                  Attribute::NonNull);
-#else
-          ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
-#endif
-          if (ci->getParent() == nullptr) {
-            Builder2.Insert(ci);
-          }
+          CreateDealloc(Builder2, d_reqp);
         }
       } else if (Mode == DerivativeMode::ForwardMode) {
         IRBuilder<> Builder2(&call);
@@ -6691,14 +6902,9 @@ public:
                                    tysize, Type::getInt64Ty(call.getContext())),
                                "", true, true);
 
-        Value *firstallocation = CallInst::CreateMalloc(
-            Builder2.GetInsertBlock(), len_arg->getType(),
-            Type::getInt8Ty(call.getContext()),
-            ConstantInt::get(Type::getInt64Ty(len_arg->getContext()), 1),
-            len_arg, nullptr, "mpirecv_malloccache");
-        if (cast<Instruction>(firstallocation)->getParent() == nullptr) {
-          Builder2.Insert(cast<Instruction>(firstallocation));
-        }
+        Value *firstallocation =
+            CreateAllocation(Builder2, Type::getInt8Ty(call.getContext()),
+                             len_arg, "mpirecv_malloccache");
         args[0] = firstallocation;
 
         Type *types[sizeof(args) / sizeof(*args)];
@@ -6723,17 +6929,7 @@ public:
                                     shadow, len_arg, Builder2, BufferDefs);
 
         if (shouldFree()) {
-          auto ci = cast<CallInst>(
-              CallInst::CreateFree(firstallocation, Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 14
-          ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                  Attribute::NonNull);
-#else
-          ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
-#endif
-          if (ci->getParent() == nullptr) {
-            Builder2.Insert(ci);
-          }
+          CreateDealloc(Builder2, firstallocation);
         }
       }
       if (Mode == DerivativeMode::ReverseModeGradient)
@@ -6957,15 +7153,9 @@ public:
 
           Builder2.SetInsertPoint(rootBlock);
 
-          Value *rootbuf = CallInst::CreateMalloc(
-              Builder2.GetInsertBlock(), len_arg->getType(),
-              Type::getInt8Ty(call.getContext()),
-              ConstantInt::get(Type::getInt64Ty(len_arg->getContext()), 1),
-              len_arg, nullptr, "mpireduce_malloccache");
-          if (cast<Instruction>(rootbuf)->getParent() == nullptr) {
-            Builder2.Insert(cast<Instruction>(rootbuf));
-          }
-          Builder2.SetInsertPoint(rootBlock);
+          Value *rootbuf =
+              CreateAllocation(Builder2, Type::getInt8Ty(call.getContext()),
+                               len_arg, "mpireduce_malloccache");
           Builder2.CreateBr(mergeBlock);
 
           Builder2.SetInsertPoint(mergeBlock);
@@ -7039,17 +7229,7 @@ public:
 
           // Free up the memory of the buffer
           if (shouldFree()) {
-            auto ci = cast<CallInst>(
-                CallInst::CreateFree(buf, Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 14
-            ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                    Attribute::NonNull);
-#else
-            ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
-#endif
-            if (ci->getParent() == nullptr) {
-              Builder2.Insert(ci);
-            }
+            CreateDealloc(Builder2, buf);
           }
         }
 
@@ -7233,14 +7413,9 @@ public:
                                "", true, true);
 
         // 1. Alloc intermediate buffer
-        Value *buf = CallInst::CreateMalloc(
-            Builder2.GetInsertBlock(), len_arg->getType(),
-            Type::getInt8Ty(call.getContext()),
-            ConstantInt::get(Type::getInt64Ty(len_arg->getContext()), 1),
-            len_arg, nullptr, "mpireduce_malloccache");
-        if (cast<Instruction>(buf)->getParent() == nullptr) {
-          Builder2.Insert(cast<Instruction>(buf));
-        }
+        Value *buf =
+            CreateAllocation(Builder2, Type::getInt8Ty(call.getContext()),
+                             len_arg, "mpireduce_malloccache");
 
         // 1.5 if root, set intermediate = diff(recvbuffer)
         {
@@ -7331,17 +7506,7 @@ public:
 
         // Free up intermediate buffer
         if (shouldFree()) {
-          auto ci = cast<CallInst>(
-              CallInst::CreateFree(buf, Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 14
-          ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                  Attribute::NonNull);
-#else
-          ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
-#endif
-          if (ci->getParent() == nullptr) {
-            Builder2.Insert(ci);
-          }
+          CreateDealloc(Builder2, buf);
         }
       }
       if (Mode == DerivativeMode::ReverseModeGradient)
@@ -7490,14 +7655,9 @@ public:
                                "", true, true);
 
         // 1. Alloc intermediate buffer
-        Value *buf = CallInst::CreateMalloc(
-            Builder2.GetInsertBlock(), len_arg->getType(),
-            Type::getInt8Ty(call.getContext()),
-            ConstantInt::get(Type::getInt64Ty(len_arg->getContext()), 1),
-            len_arg, nullptr, "mpireduce_malloccache");
-        if (cast<Instruction>(buf)->getParent() == nullptr) {
-          Builder2.Insert(cast<Instruction>(buf));
-        }
+        Value *buf =
+            CreateAllocation(Builder2, Type::getInt8Ty(call.getContext()),
+                             len_arg, "mpireduce_malloccache");
 
         // 2. MPI_Allreduce (sum) of diff(recvbuffer) to intermediate
         {
@@ -7538,17 +7698,7 @@ public:
 
         // Free up intermediate buffer
         if (shouldFree()) {
-          auto ci = cast<CallInst>(
-              CallInst::CreateFree(buf, Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 14
-          ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                  Attribute::NonNull);
-#else
-          ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
-#endif
-          if (ci->getParent() == nullptr) {
-            Builder2.Insert(ci);
-          }
+          CreateDealloc(Builder2, buf);
         }
       }
       if (Mode == DerivativeMode::ReverseModeGradient)
@@ -7683,14 +7833,9 @@ public:
             Builder2, /*lookup*/ true);
 
         // 1. Alloc intermediate buffer
-        Value *buf = CallInst::CreateMalloc(
-            Builder2.GetInsertBlock(), sendlen_arg->getType(),
-            Type::getInt8Ty(call.getContext()),
-            ConstantInt::get(Type::getInt64Ty(sendlen_arg->getContext()), 1),
-            sendlen_arg, nullptr, "mpireduce_malloccache");
-        if (cast<Instruction>(buf)->getParent() == nullptr) {
-          Builder2.Insert(cast<Instruction>(buf));
-        }
+        Value *buf =
+            CreateAllocation(Builder2, Type::getInt8Ty(call.getContext()),
+                             sendlen_arg, "mpireduce_malloccache");
 
         // 2. Scatter diff(recvbuffer) to intermediate buffer
         {
@@ -7766,17 +7911,7 @@ public:
 
         // Free up intermediate buffer
         if (shouldFree()) {
-          auto ci = cast<CallInst>(
-              CallInst::CreateFree(buf, Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 14
-          ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                  Attribute::NonNull);
-#else
-          ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
-#endif
-          if (ci->getParent() == nullptr) {
-            Builder2.Insert(ci);
-          }
+          CreateDealloc(Builder2, buf);
         }
       }
       if (Mode == DerivativeMode::ReverseModeGradient)
@@ -7939,14 +8074,9 @@ public:
                   Type::getInt64Ty(call.getContext())),
               "", true, true);
 
-          Value *rootbuf = CallInst::CreateMalloc(
-              Builder2.GetInsertBlock(), sendlen_arg->getType(),
-              Type::getInt8Ty(call.getContext()),
-              ConstantInt::get(Type::getInt64Ty(sendlen_arg->getContext()), 1),
-              sendlen_arg, nullptr, "mpireduce_malloccache");
-          if (cast<Instruction>(rootbuf)->getParent() == nullptr) {
-            Builder2.Insert(cast<Instruction>(rootbuf));
-          }
+          Value *rootbuf =
+              CreateAllocation(Builder2, Type::getInt8Ty(call.getContext()),
+                               sendlen_arg, "mpireduce_malloccache");
 
           Builder2.CreateBr(mergeBlock);
 
@@ -8023,17 +8153,7 @@ public:
 
           // Free up intermediate buffer
           if (shouldFree()) {
-            auto ci = cast<CallInst>(
-                CallInst::CreateFree(buf, Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 14
-            ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                    Attribute::NonNull);
-#else
-            ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
-#endif
-            if (ci->getParent() == nullptr) {
-              Builder2.Insert(ci);
-            }
+            CreateDealloc(Builder2, buf);
           }
 
           Builder2.CreateBr(mergeBlock);
@@ -8168,14 +8288,9 @@ public:
             Builder2, /*lookup*/ true);
 
         // 1. Alloc intermediate buffer
-        Value *buf = CallInst::CreateMalloc(
-            Builder2.GetInsertBlock(), sendlen_arg->getType(),
-            Type::getInt8Ty(call.getContext()),
-            ConstantInt::get(Type::getInt64Ty(sendlen_arg->getContext()), 1),
-            sendlen_arg, nullptr, "mpireduce_malloccache");
-        if (cast<Instruction>(buf)->getParent() == nullptr) {
-          Builder2.Insert(cast<Instruction>(buf));
-        }
+        Value *buf =
+            CreateAllocation(Builder2, Type::getInt8Ty(call.getContext()),
+                             sendlen_arg, "mpireduce_malloccache");
 
         ConcreteType CT = TR.firstPointer(1, orig_sendbuf);
         Type *MPI_OP_Ptr_type =
@@ -8244,17 +8359,7 @@ public:
 
         // Free up intermediate buffer
         if (shouldFree()) {
-          auto ci = cast<CallInst>(
-              CallInst::CreateFree(buf, Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 14
-          ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                  Attribute::NonNull);
-#else
-          ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
-#endif
-          if (ci->getParent() == nullptr) {
-            Builder2.Insert(ci);
-          }
+          CreateDealloc(Builder2, buf);
         }
       }
       if (Mode == DerivativeMode::ReverseModeGradient)
@@ -8907,8 +9012,11 @@ public:
       // if constant instruction and readonly (thus must be pointer return)
       // and shadow return recomputable from shadow arguments.
       if (funcName == "__dynamic_cast" ||
+          funcName == "_ZSt18_Rb_tree_decrementPKSt18_Rb_tree_node_base" ||
+          funcName == "_ZSt18_Rb_tree_incrementPKSt18_Rb_tree_node_base" ||
           funcName == "_ZSt18_Rb_tree_decrementPSt18_Rb_tree_node_base" ||
-          funcName == "_ZSt18_Rb_tree_incrementPSt18_Rb_tree_node_base") {
+          funcName == "_ZSt18_Rb_tree_incrementPSt18_Rb_tree_node_base" ||
+          funcName == "jl_ptr_to_array" || funcName == "jl_ptr_to_array_1d") {
         bool shouldCache = false;
         if (gutils->knownRecomputeHeuristic.find(orig) !=
             gutils->knownRecomputeHeuristic.end()) {
@@ -8942,7 +9050,9 @@ public:
 #endif
                 {
                   if (gutils->isConstantValue(arg) ||
-                      (funcName == "__dynamic_cast" && i > 0))
+                      (funcName == "__dynamic_cast" && i > 0) ||
+                      (funcName == "jl_ptr_to_array_1d" && i != 1) ||
+                      (funcName == "jl_ptr_to_array" && i != 1))
                     args.push_back(gutils->getNewFromOriginal(arg));
                   else
                     args.push_back(gutils->invertPointerM(arg, BuilderZ));
@@ -9908,11 +10018,18 @@ public:
             Value *d = Builder2.CreateCall(called, args);
 
             if (args.size() == 2) {
-              Value *op0 = diffe(orig->getArgOperand(0), Builder2);
+              Value *op0 = gutils->isConstantValue(orig->getArgOperand(0))
+                               ? nullptr
+                               : diffe(orig->getArgOperand(0), Builder2);
+              Value *op1 = gutils->isConstantValue(orig->getArgOperand(1))
+                               ? nullptr
+                               : diffe(orig->getArgOperand(1), Builder2);
 
-              Value *op1 = diffe(orig->getArgOperand(1), Builder2);
+              auto rule1 = [&](Value *op) {
+                return Builder2.CreateFMul(args[0], Builder2.CreateFDiv(op, d));
+              };
 
-              auto rule = [&](Value *op0, Value *op1) {
+              auto rule2 = [&](Value *op0, Value *op1) {
                 Value *dif1 =
                     Builder2.CreateFMul(args[0], Builder2.CreateFDiv(op0, d));
                 Value *dif2 =
@@ -9920,14 +10037,46 @@ public:
                 return Builder2.CreateFAdd(dif1, dif2);
               };
 
-              Value *dif =
-                  applyChainRule(call.getType(), Builder2, rule, op0, op1);
+              Value *dif;
+              if (op0 && op1)
+                dif = applyChainRule(call.getType(), Builder2, rule2, op0, op1);
+              else if (op0)
+                dif = applyChainRule(call.getType(), Builder2, rule1, op0);
+              else if (op1)
+                dif = applyChainRule(call.getType(), Builder2, rule1, op1);
+              else
+                llvm_unreachable(
+                    "trying to differentiate a constant instruction");
+
               setDiffe(orig, dif, Builder2);
               return;
-            } else {
-              llvm::errs() << *orig << "\n";
-              llvm_unreachable("unknown calling convention found for cabs");
+            } else if (args.size() == 1) {
+              if (auto AT = dyn_cast<ArrayType>(args[0]->getType())) {
+                if (AT->getNumElements() == 2) {
+                  Value *op = diffe(orig->getArgOperand(0), Builder2);
+                  Value *args0 = Builder2.CreateExtractValue(args[0], 0);
+                  Value *args1 = Builder2.CreateExtractValue(args[0], 1);
+
+                  auto rule = [&](Value *op) {
+                    Value *op0 = Builder2.CreateExtractValue(op, 0);
+                    Value *op1 = Builder2.CreateExtractValue(op, 1);
+
+                    Value *dif1 =
+                        Builder2.CreateFMul(args0, Builder2.CreateFDiv(op0, d));
+                    Value *dif2 =
+                        Builder2.CreateFMul(args1, Builder2.CreateFDiv(op1, d));
+                    return Builder2.CreateFAdd(dif1, dif2);
+                  };
+
+                  Value *dif =
+                      applyChainRule(call.getType(), Builder2, rule, op);
+                  setDiffe(orig, dif, Builder2);
+                  return;
+                }
+              }
             }
+            llvm::errs() << *orig << "\n";
+            llvm_unreachable("unknown calling convention found for cabs");
           }
           case DerivativeMode::ReverseModeGradient:
           case DerivativeMode::ReverseModeCombined: {
@@ -9961,10 +10110,31 @@ public:
                              Builder2.CreateFMul(args[i], div), Builder2,
                              orig->getType());
               return;
-            } else {
-              llvm::errs() << *orig << "\n";
-              llvm_unreachable("unknown calling convention found for cabs");
+            } else if (args.size() == 1) {
+              if (auto AT = dyn_cast<ArrayType>(args[0]->getType())) {
+                if (AT->getNumElements() == 2) {
+                  if (!gutils->isConstantValue(orig->getArgOperand(0))) {
+                    Value *agg = UndefValue::get(args[0]->getType());
+                    agg = Builder2.CreateInsertValue(
+                        agg,
+                        Builder2.CreateFMul(
+                            Builder2.CreateExtractValue(args[0], 0), div),
+                        0);
+                    agg = Builder2.CreateInsertValue(
+                        agg,
+                        Builder2.CreateFMul(
+                            Builder2.CreateExtractValue(args[0], 1), div),
+                        1);
+
+                    addToDiffe(orig->getArgOperand(0), agg, Builder2,
+                               orig->getType());
+                    return;
+                  }
+                }
+              }
             }
+            llvm::errs() << *orig << "\n";
+            llvm_unreachable("unknown calling convention found for cabs");
           }
           case DerivativeMode::ReverseModePrimal: {
             return;
@@ -10201,56 +10371,59 @@ public:
                 cast<CallInst>(anti)->setTailCallKind(orig->getTailCallKind());
                 cast<CallInst>(anti)->setDebugLoc(dbgLoc);
 
+                if (anti->getType()->isPointerTy()) {
 #if LLVM_VERSION_MAJOR >= 14
-                cast<CallInst>(anti)->addAttributeAtIndex(
-                    AttributeList::ReturnIndex, Attribute::NoAlias);
-                cast<CallInst>(anti)->addAttributeAtIndex(
-                    AttributeList::ReturnIndex, Attribute::NonNull);
+                  cast<CallInst>(anti)->addAttributeAtIndex(
+                      AttributeList::ReturnIndex, Attribute::NoAlias);
+                  cast<CallInst>(anti)->addAttributeAtIndex(
+                      AttributeList::ReturnIndex, Attribute::NonNull);
 #else
-                cast<CallInst>(anti)->addAttribute(AttributeList::ReturnIndex,
-                                                   Attribute::NoAlias);
-                cast<CallInst>(anti)->addAttribute(AttributeList::ReturnIndex,
-                                                   Attribute::NonNull);
+                  cast<CallInst>(anti)->addAttribute(AttributeList::ReturnIndex,
+                                                     Attribute::NoAlias);
+                  cast<CallInst>(anti)->addAttribute(AttributeList::ReturnIndex,
+                                                     Attribute::NonNull);
 #endif
 
-                if (called->getName() == "malloc" ||
-                    called->getName() == "_Znwm") {
-                  if (auto ci = dyn_cast<ConstantInt>(args[0])) {
-                    unsigned derefBytes = ci->getLimitedValue();
-                    CallInst *cal =
-                        cast<CallInst>(gutils->getNewFromOriginal(orig));
+                  if (funcName == "malloc" || funcName == "_Znwm") {
+                    if (auto ci = dyn_cast<ConstantInt>(args[0])) {
+                      unsigned derefBytes = ci->getLimitedValue();
+                      CallInst *cal =
+                          cast<CallInst>(gutils->getNewFromOriginal(orig));
 #if LLVM_VERSION_MAJOR >= 14
-                    cast<CallInst>(anti)->addDereferenceableRetAttr(derefBytes);
-                    cal->addDereferenceableRetAttr(derefBytes);
+                      cast<CallInst>(anti)->addDereferenceableRetAttr(
+                          derefBytes);
+                      cal->addDereferenceableRetAttr(derefBytes);
 #if !defined(FLANG) && !defined(ROCM)
-                    AttrBuilder B(called->getContext());
+                      AttrBuilder B(called->getContext());
 #else
-                    AttrBuilder B;
+                      AttrBuilder B;
 #endif
-                    B.addDereferenceableOrNullAttr(derefBytes);
-                    cast<CallInst>(anti)->setAttributes(
-                        cast<CallInst>(anti)->getAttributes().addRetAttributes(
-                            orig->getContext(), B));
-                    cal->setAttributes(cal->getAttributes().addRetAttributes(
-                        orig->getContext(), B));
-                    cal->addAttributeAtIndex(AttributeList::ReturnIndex,
-                                             Attribute::NoAlias);
-                    cal->addAttributeAtIndex(AttributeList::ReturnIndex,
-                                             Attribute::NonNull);
+                      B.addDereferenceableOrNullAttr(derefBytes);
+                      cast<CallInst>(anti)->setAttributes(
+                          cast<CallInst>(anti)
+                              ->getAttributes()
+                              .addRetAttributes(orig->getContext(), B));
+                      cal->setAttributes(cal->getAttributes().addRetAttributes(
+                          orig->getContext(), B));
+                      cal->addAttributeAtIndex(AttributeList::ReturnIndex,
+                                               Attribute::NoAlias);
+                      cal->addAttributeAtIndex(AttributeList::ReturnIndex,
+                                               Attribute::NonNull);
 #else
-                    cast<CallInst>(anti)->addDereferenceableAttr(
-                        llvm::AttributeList::ReturnIndex, derefBytes);
-                    cal->addDereferenceableAttr(
-                        llvm::AttributeList::ReturnIndex, derefBytes);
-                    cast<CallInst>(anti)->addDereferenceableOrNullAttr(
-                        llvm::AttributeList::ReturnIndex, derefBytes);
-                    cal->addDereferenceableOrNullAttr(
-                        llvm::AttributeList::ReturnIndex, derefBytes);
-                    cal->addAttribute(AttributeList::ReturnIndex,
-                                      Attribute::NoAlias);
-                    cal->addAttribute(AttributeList::ReturnIndex,
-                                      Attribute::NonNull);
+                      cast<CallInst>(anti)->addDereferenceableAttr(
+                          llvm::AttributeList::ReturnIndex, derefBytes);
+                      cal->addDereferenceableAttr(
+                          llvm::AttributeList::ReturnIndex, derefBytes);
+                      cast<CallInst>(anti)->addDereferenceableOrNullAttr(
+                          llvm::AttributeList::ReturnIndex, derefBytes);
+                      cal->addDereferenceableOrNullAttr(
+                          llvm::AttributeList::ReturnIndex, derefBytes);
+                      cal->addAttribute(AttributeList::ReturnIndex,
+                                        Attribute::NoAlias);
+                      cal->addAttribute(AttributeList::ReturnIndex,
+                                        Attribute::NonNull);
 #endif
+                    }
                   }
                 }
                 return anti;
@@ -10269,18 +10442,37 @@ public:
                     bb, anti, getIndex(orig, CacheType::Shadow));
               else {
                 if (auto MD = hasMetadata(orig, "enzyme_fromstack")) {
-                  AllocaInst *replacement = bb.CreateAlloca(
-                      Type::getInt8Ty(orig->getContext()), args[0]);
+                  Value *Size;
+                  if (funcName == "malloc")
+                    Size = args[0];
+                  else if (funcName == "julia.gc_alloc_obj")
+                    Size = args[1];
+                  else
+                    llvm_unreachable("Unknown allocation to upgrade");
+                  Value *replacement = bb.CreateAlloca(
+                      Type::getInt8Ty(orig->getContext()), Size);
                   replacement->takeName(anti);
                   auto Alignment = cast<ConstantInt>(cast<ConstantAsMetadata>(
                                                          MD->getOperand(0))
                                                          ->getValue())
                                        ->getLimitedValue();
 #if LLVM_VERSION_MAJOR >= 10
-                  replacement->setAlignment(Align(Alignment));
+                  cast<AllocaInst>(replacement)->setAlignment(Align(Alignment));
 #else
-                  replacement->setAlignment(Alignment);
+                  cast<AllocaInst>(replacement)->setAlignment(Alignment);
 #endif
+                  if (!anti->getType()->getPointerElementType()->isIntegerTy(8))
+                    replacement = bb.CreatePointerCast(
+                        replacement,
+                        PointerType::getUnqual(
+                            anti->getType()->getPointerElementType()));
+
+                  if (int AS =
+                          cast<PointerType>(anti->getType())->getAddressSpace())
+                    replacement = bb.CreateAddrSpaceCast(
+                        replacement,
+                        PointerType::get(
+                            anti->getType()->getPointerElementType(), AS));
 
                   gutils->replaceAWithB(cast<Instruction>(anti), replacement);
                   gutils->erase(cast<Instruction>(anti));
@@ -10328,10 +10520,6 @@ public:
             Value *tofree = lookup(anti, Builder2);
             assert(tofree);
             assert(tofree->getType());
-            assert(Type::getInt8Ty(tofree->getContext()));
-            assert(
-                PointerType::getUnqual(Type::getInt8Ty(tofree->getContext())));
-            assert(Type::getInt8PtrTy(tofree->getContext()));
             auto rule = [&](Value *tofree) {
               auto CI = freeKnownAllocation(Builder2, tofree, *called, dbgLoc,
                                             gutils->TLI);
@@ -10418,23 +10606,43 @@ public:
             // allocation where possible.
             if (auto MD = hasMetadata(orig, "enzyme_fromstack")) {
               IRBuilder<> B(newCall);
-              if (auto CI = dyn_cast<ConstantInt>(orig->getArgOperand(0))) {
+
+              Value *Size;
+              if (funcName == "malloc")
+                Size = orig->getArgOperand(0);
+              else if (funcName == "julia.gc_alloc_obj")
+                Size = orig->getArgOperand(1);
+              else
+                llvm_unreachable("Unknown allocation to upgrade");
+              Size = gutils->getNewFromOriginal(Size);
+
+              if (auto CI = dyn_cast<ConstantInt>(Size)) {
                 B.SetInsertPoint(gutils->inversionAllocs);
               }
-
               auto rule = [&]() {
-                auto replacement = B.CreateAlloca(
-                    Type::getInt8Ty(orig->getContext()),
-                    gutils->getNewFromOriginal(orig->getArgOperand(0)));
+                Value *replacement =
+                    B.CreateAlloca(Type::getInt8Ty(orig->getContext()), Size);
                 auto Alignment =
                     cast<ConstantInt>(
                         cast<ConstantAsMetadata>(MD->getOperand(0))->getValue())
                         ->getLimitedValue();
 #if LLVM_VERSION_MAJOR >= 10
-                replacement->setAlignment(Align(Alignment));
+                cast<AllocaInst>(replacement)->setAlignment(Align(Alignment));
 #else
-                replacement->setAlignment(Alignment);
+                cast<AllocaInst>(replacement)->setAlignment(Alignment);
 #endif
+                if (!orig->getType()->getPointerElementType()->isIntegerTy(8))
+                  replacement = B.CreatePointerCast(
+                      replacement,
+                      PointerType::getUnqual(
+                          orig->getType()->getPointerElementType()));
+
+                if (int AS =
+                        cast<PointerType>(orig->getType())->getAddressSpace())
+                  replacement = B.CreateAddrSpaceCast(
+                      replacement,
+                      PointerType::get(orig->getType()->getPointerElementType(),
+                                       AS));
                 return replacement;
               };
 
@@ -11099,10 +11307,11 @@ public:
           newcalled = BuilderZ.CreateExtractValue(newcalled, {0});
         }
 
-        ErrorIfRuntimeInactive(BuilderZ, gutils->getNewFromOriginal(callval),
-                               newcalled,
-                               "Attempting to call an indirect active function "
-                               "whose runtime value is inactive");
+        ErrorIfRuntimeInactive(
+            BuilderZ, gutils->getNewFromOriginal(callval), newcalled,
+            "Attempting to call an indirect active function "
+            "whose runtime value is inactive",
+            gutils->getNewFromOriginal(orig->getDebugLoc()), orig);
 
         auto ft =
             cast<FunctionType>(callval->getType()->getPointerElementType());
@@ -11351,7 +11560,8 @@ public:
           ErrorIfRuntimeInactive(
               BuilderZ, gutils->getNewFromOriginal(callval), newcalled,
               "Attempting to call an indirect active function "
-              "whose runtime value is inactive");
+              "whose runtime value is inactive",
+              gutils->getNewFromOriginal(orig->getDebugLoc()), orig);
 
         auto ft =
             cast<FunctionType>(callval->getType()->getPointerElementType());
@@ -11684,14 +11894,7 @@ public:
         truetape->setMetadata("enzyme_mustcache",
                               MDNode::get(truetape->getContext(), {}));
 
-        CallInst *ci = cast<CallInst>(
-            CallInst::CreateFree(tape, &*BuilderZ.GetInsertPoint()));
-#if LLVM_VERSION_MAJOR >= 14
-        ci->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                Attribute::NonNull);
-#else
-        ci->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
-#endif
+        CreateDealloc(BuilderZ, tape);
         tape = truetape;
       }
     } else {

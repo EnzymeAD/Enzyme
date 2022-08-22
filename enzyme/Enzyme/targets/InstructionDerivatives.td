@@ -103,5 +103,15 @@ def : CallPattern<(Op $x),
                   ["sinhf"],
                   [(FMul (DiffeRet<"">), (Call<(SameTypesFunc<"coshf">), [ReadNone,NoUnwind]> $x))]>;
 
+def : CallPattern<(Op $x),
+                  ["exp10"],
+                  [(FMul (FMul (DiffeRet<"">), (Call<(SameFunc), [ReadNone,NoUnwind]> $x) ), (ConstantFP<"2.30258509299404568401799145468"> $x))]
+                  >;
+
+// TODO replace with intrinsic call to exp
+def : CallPattern<(Op $x),
+                  ["expm1"],
+                  [(FMul (FAdd (ConstantFP<"1.0"> $x), (Call<(SameFunc), [ReadNone,NoUnwind]> $x) ), (DiffeRet<"">))]
+                  >;
+
 include "targets/BlasDerivatives.td"
-                  

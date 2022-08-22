@@ -265,15 +265,128 @@ static inline bool OnlyUsedInOMP(AllocaInst *AI) {
   return true;
 }
 
+void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
+  SmallVector<std::tuple<Value *, Value *, Instruction *>, 1> Todo;
+  for (auto U : AI->users()) {
+    Todo.push_back(
+        std::make_tuple((Value *)rep, (Value *)AI, cast<Instruction>(U)));
+  }
+  SmallVector<Instruction *, 1> toErase;
+  if (auto I = dyn_cast<Instruction>(AI))
+    toErase.push_back(I);
+  while (Todo.size()) {
+    auto cur = Todo.back();
+    Todo.pop_back();
+    Value *rep = std::get<0>(cur);
+    Value *prev = std::get<1>(cur);
+    Value *inst = std::get<2>(cur);
+    if (auto ASC = dyn_cast<AddrSpaceCastInst>(inst)) {
+      auto AS = cast<PointerType>(rep->getType())->getAddressSpace();
+      if (AS == ASC->getDestAddressSpace()) {
+        ASC->replaceAllUsesWith(rep);
+        continue;
+      }
+      ASC->setOperand(0, rep);
+      continue;
+    }
+    if (auto CI = dyn_cast<CastInst>(inst)) {
+      if (!CI->getType()->isPointerTy()) {
+        CI->setOperand(0, rep);
+        continue;
+      }
+      IRBuilder<> B(CI);
+      auto nCI = cast<CastInst>(B.CreateCast(
+          CI->getOpcode(), rep,
+          PointerType::get(
+              CI->getType()->getPointerElementType(),
+              cast<PointerType>(rep->getType())->getAddressSpace())));
+      nCI->takeName(CI);
+      for (auto U : CI->users()) {
+        Todo.push_back(
+            std::make_tuple((Value *)nCI, (Value *)CI, cast<Instruction>(U)));
+      }
+      continue;
+    }
+    if (auto GEP = dyn_cast<GetElementPtrInst>(inst)) {
+      IRBuilder<> B(GEP);
+      SmallVector<Value *, 1> ind(GEP->indices());
+#if LLVM_VERSION_MAJOR > 7
+      auto nGEP = cast<GetElementPtrInst>(
+          B.CreateGEP(GEP->getSourceElementType(), rep, ind));
+#else
+      auto nGEP = cast<GetElementPtrInst>(B.CreateGEP(rep, ind));
+#endif
+      nGEP->takeName(GEP);
+      for (auto U : GEP->users()) {
+        Todo.push_back(
+            std::make_tuple((Value *)nGEP, (Value *)GEP, cast<Instruction>(U)));
+      }
+      toErase.push_back(GEP);
+      continue;
+    }
+    if (auto LI = dyn_cast<LoadInst>(inst)) {
+      LI->setOperand(0, rep);
+      continue;
+    }
+    if (auto SI = dyn_cast<StoreInst>(inst)) {
+      if (SI->getPointerOperand() == prev) {
+        SI->setOperand(1, rep);
+        continue;
+      }
+    }
+    if (auto MS = dyn_cast<MemSetInst>(inst)) {
+      IRBuilder<> B(MS);
+
+      Value *nargs[] = {rep, MS->getArgOperand(1), MS->getArgOperand(2),
+                        MS->getArgOperand(3)};
+
+      Type *tys[] = {nargs[0]->getType(), nargs[2]->getType()};
+
+      auto nMS = cast<CallInst>(B.CreateCall(
+          Intrinsic::getDeclaration(MS->getParent()->getParent()->getParent(),
+                                    Intrinsic::memset, tys),
+          nargs));
+      nMS->copyIRFlags(MS);
+      toErase.push_back(MS);
+      continue;
+    }
+    if (auto CI = dyn_cast<CallInst>(inst)) {
+      if (auto F = CI->getCalledFunction()) {
+        if (F->getName() == "julia.write_barrier" && legal) {
+          toErase.push_back(CI);
+          continue;
+        }
+      }
+    }
+    if (legal) {
+      IRBuilder<> B(cast<Instruction>(rep)->getNextNode());
+      rep = B.CreateAddrSpaceCast(
+          rep, PointerType::get(
+                   rep->getType()->getPointerElementType(),
+                   cast<PointerType>(prev->getType())->getAddressSpace()));
+      prev->replaceAllUsesWith(rep);
+      continue;
+    }
+    llvm::errs() << " rep: " << *rep << " prev: " << *prev << " inst: " << *inst
+                 << "\n";
+    llvm_unreachable("Illegal address space propagation");
+  }
+  for (auto I : llvm::reverse(toErase))
+    I->eraseFromParent();
+}
+
 /// Convert necessary stack allocations into mallocs for use in the reverse
 /// pass. Specifically if we're not topLevel all allocations must be upgraded
 /// Even if topLevel any allocations that aren't in the entry block (and
 /// therefore may not be reachable in the reverse pass) must be upgraded.
-static inline void UpgradeAllocasToMallocs(Function *NewF,
-                                           DerivativeMode mode) {
+static inline void
+UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
+                        SmallPtrSetImpl<llvm::BasicBlock *> &Unreachable) {
   SmallVector<AllocaInst *, 4> ToConvert;
 
   for (auto &BB : *NewF) {
+    if (Unreachable.count(&BB))
+      continue;
     for (auto &I : BB) {
       if (auto AI = dyn_cast<AllocaInst>(&I)) {
         bool UsableEverywhere = AI->getParent() == &NewF->getEntryBlock();
@@ -299,50 +412,26 @@ static inline void UpgradeAllocasToMallocs(Function *NewF,
     }
 
     auto i64 = Type::getInt64Ty(NewF->getContext());
-    auto rep = CallInst::CreateMalloc(
-        insertBefore, i64, AI->getAllocatedType(),
-        ConstantInt::get(
-            i64, NewF->getParent()->getDataLayout().getTypeAllocSizeInBits(
-                     AI->getAllocatedType()) /
-                     8),
-        IRBuilder<>(insertBefore).CreateZExtOrTrunc(AI->getArraySize(), i64),
-        nullptr, nam);
-    CallInst *CI = dyn_cast<CallInst>(rep);
-    if (auto C = dyn_cast<CastInst>(rep))
-      CI = cast<CallInst>(C->getOperand(0));
+    IRBuilder<> B(insertBefore);
+    CallInst *CI = nullptr;
+    auto rep = CreateAllocation(B, AI->getAllocatedType(),
+                                B.CreateZExtOrTrunc(AI->getArraySize(), i64),
+                                nam, &CI);
     CI->setMetadata("enzyme_fromstack",
                     MDNode::get(CI->getContext(),
                                 {ConstantAsMetadata::get(ConstantInt::get(
                                     IntegerType::get(AI->getContext(), 64),
                                     AI->getAlignment()))}));
 
-#if LLVM_VERSION_MAJOR >= 14
-    if (ConstantInt *size = dyn_cast<ConstantInt>(CI->getOperand(0))) {
-      CI->addDereferenceableRetAttr(size->getLimitedValue());
-#if !defined(FLANG) && !defined(ROCM)
-      AttrBuilder B(CI->getContext());
-#else
-      AttrBuilder B;
-#endif
-      B.addDereferenceableOrNullAttr(size->getLimitedValue());
-      CI->setAttributes(
-          CI->getAttributes().addRetAttributes(CI->getContext(), B));
+    auto PT0 = cast<PointerType>(rep->getType());
+    auto PT1 = cast<PointerType>(AI->getType());
+    if (PT0->getAddressSpace() != PT1->getAddressSpace()) {
+      RecursivelyReplaceAddressSpace(AI, rep, /*legal*/ false);
+    } else {
+      assert(rep->getType() == AI->getType());
+      AI->replaceAllUsesWith(rep);
+      AI->eraseFromParent();
     }
-    CI->addAttributeAtIndex(AttributeList::ReturnIndex, Attribute::NoAlias);
-    CI->addAttributeAtIndex(AttributeList::ReturnIndex, Attribute::NonNull);
-#else
-    if (ConstantInt *size = dyn_cast<ConstantInt>(CI->getOperand(0))) {
-      CI->addDereferenceableAttr(llvm::AttributeList::ReturnIndex,
-                                 size->getLimitedValue());
-      CI->addDereferenceableOrNullAttr(llvm::AttributeList::ReturnIndex,
-                                       size->getLimitedValue());
-    }
-    CI->addAttribute(AttributeList::ReturnIndex, Attribute::NoAlias);
-    CI->addAttribute(AttributeList::ReturnIndex, Attribute::NonNull);
-#endif
-    assert(rep->getType() == AI->getType());
-    AI->replaceAllUsesWith(rep);
-    AI->eraseFromParent();
   }
 }
 
@@ -1567,7 +1656,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       mode == DerivativeMode::ReverseModeCombined) {
     // For subfunction calls upgrade stack allocations to mallocs
     // to ensure availability in the reverse pass
-    UpgradeAllocasToMallocs(NewF, mode);
+    auto unreachable = getGuaranteedUnreachable(NewF);
+    UpgradeAllocasToMallocs(NewF, mode, unreachable);
   }
 
   CanonicalizeLoops(NewF, FAM);
@@ -2070,42 +2160,16 @@ void SelectOptimization(Function *F) {
     }
   }
 }
-void PreProcessCache::optimizeIntermediate(Function *F) {
-  PromotePass().run(*F, FAM);
-#if LLVM_VERSION_MAJOR >= 14 && !defined(FLANG)
-  GVNPass().run(*F, FAM);
-#else
-  GVN().run(*F, FAM);
-#endif
-#if LLVM_VERSION_MAJOR >= 14 && !defined(FLANG)
-  SROAPass().run(*F, FAM);
-#else
-  SROA().run(*F, FAM);
-#endif
 
-  if (EnzymeSelectOpt) {
-#if LLVM_VERSION_MAJOR >= 12
-    SimplifyCFGOptions scfgo;
-#else
-    SimplifyCFGOptions scfgo(
-        /*unsigned BonusThreshold=*/1, /*bool ForwardSwitchCond=*/false,
-        /*bool SwitchToLookup=*/false, /*bool CanonicalLoops=*/true,
-        /*bool SinkCommon=*/true, /*AssumptionCache *AssumpCache=*/nullptr);
-#endif
-    SimplifyCFGPass(scfgo).run(*F, FAM);
-    CorrelatedValuePropagationPass().run(*F, FAM);
-    SelectOptimization(F);
-  }
-  // EarlyCSEPass(/*memoryssa*/ true).run(*F, FAM);
-
-  for (Function &Impl : *F->getParent()) {
+void ReplaceFunctionImplementation(Module &M) {
+  for (Function &Impl : M) {
     for (auto attr : {"implements", "implements2"}) {
       if (!Impl.hasFnAttribute(attr))
         continue;
       const Attribute &A = Impl.getFnAttribute(attr);
 
       const StringRef SpecificationName = A.getValueAsString();
-      Function *Specification = F->getParent()->getFunction(SpecificationName);
+      Function *Specification = M.getFunction(SpecificationName);
       if (!Specification) {
         LLVM_DEBUG(dbgs() << "Found implementation '" << Impl.getName()
                           << "' but no matching specification with name '"
@@ -2139,9 +2203,40 @@ void PreProcessCache::optimizeIntermediate(Function *F) {
       }
     }
   }
+}
+
+void PreProcessCache::optimizeIntermediate(Function *F) {
+  PromotePass().run(*F, FAM);
+#if LLVM_VERSION_MAJOR >= 14 && !defined(FLANG)
+  GVNPass().run(*F, FAM);
+#else
+  GVN().run(*F, FAM);
+#endif
+#if LLVM_VERSION_MAJOR >= 14 && !defined(FLANG)
+  SROAPass().run(*F, FAM);
+#else
+  SROA().run(*F, FAM);
+#endif
+
+  if (EnzymeSelectOpt) {
+#if LLVM_VERSION_MAJOR >= 12
+    SimplifyCFGOptions scfgo;
+#else
+    SimplifyCFGOptions scfgo(
+        /*unsigned BonusThreshold=*/1, /*bool ForwardSwitchCond=*/false,
+        /*bool SwitchToLookup=*/false, /*bool CanonicalLoops=*/true,
+        /*bool SinkCommon=*/true, /*AssumptionCache *AssumpCache=*/nullptr);
+#endif
+    SimplifyCFGPass(scfgo).run(*F, FAM);
+    CorrelatedValuePropagationPass().run(*F, FAM);
+    SelectOptimization(F);
+  }
+  // EarlyCSEPass(/*memoryssa*/ true).run(*F, FAM);
 
   if (EnzymeCoalese)
     CoaleseTrivialMallocs(*F, FAM.getResult<DominatorTreeAnalysis>(*F));
+
+  ReplaceFunctionImplementation(*F->getParent());
 
   PreservedAnalyses PA;
   FAM.invalidate(*F, PA);
