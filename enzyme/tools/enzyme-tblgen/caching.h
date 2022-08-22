@@ -226,7 +226,7 @@ void emit_cache_for_reverse(Record *pattern, std::vector<size_t> actArgs,
       //<< "                                           ValueType::None, ValueType::None,\n"
       //<< "                                           ValueType::None\n"
       os
-<< "          },\n"
+<< "},\n"
 << "          BuilderZ, /*lookup*/ false));\n"
 << "      cacheValues.push_back(arg);\n"
 << "    }\n";

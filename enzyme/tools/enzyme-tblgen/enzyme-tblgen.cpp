@@ -657,8 +657,8 @@ void emit_extract_calls(Record *pattern, std::vector<size_t> actArgs,
   std::vector<Record *> inputTypes =
       pattern->getValueAsListOfDefs("inputTypes");
   DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
-  os 
     // TODO: adjust count / getArgOperand(0) based on first int?
+  os 
 << "  if (Mode == DerivativeMode::ReverseModeCombined ||\n"
 << "      Mode == DerivativeMode::ReverseModeGradient ||\n"
 << "      Mode == DerivativeMode::ForwardModeSplit) {\n"
@@ -727,21 +727,27 @@ void emit_extract_calls(Record *pattern, std::vector<size_t> actArgs,
     argPosition += inputType->getValueAsInt("nelem");
   }
   os 
-<< "    }\n" << "\n";
-
+<< "    }\n" 
+<< "  }\n\n";
   argPosition = 0;
   for (auto inputType : inputTypes) {
     if (inputType->getName() == "vinc") {
       auto vecName = argOps->getArgNameStr(argPosition);
       auto incName = argOps->getArgNameStr(argPosition + 1);
-  os
-<< "    Value *data_" << vecName << " = gutils->getNewFromOriginal(arg_" << vecName << ");\n"
-<< "    Value *data_ptr_" << vecName << " = nullptr;\n"
-<< "    Value *" << incName << " = true_" << incName << ";\n"
+      os
+<< "  Value *data_" << vecName << " = gutils->getNewFromOriginal(arg_" << vecName << ");\n"
+<< "  Value *data_ptr_" << vecName << " = nullptr;\n"
+<< "  Value *" << incName << " = true_" << incName << ";\n"
 << "\n";
     }
     argPosition += inputType->getValueAsInt("nelem");
   }
+
+  os
+<< "  if (Mode == DerivativeMode::ReverseModeCombined ||\n"
+<< "      Mode == DerivativeMode::ReverseModeGradient ||\n"
+<< "      Mode == DerivativeMode::ForwardModeSplit) {\n"
+<< "\n";
 
   argPosition = 0;
   for (auto inputType : inputTypes) {
@@ -750,7 +756,7 @@ void emit_extract_calls(Record *pattern, std::vector<size_t> actArgs,
       auto vecPosition = argPosition;
       auto vecUsers = argUsers.lookup(vecPosition);
       auto incName = argOps->getArgNameStr(argPosition + 1);
-      os // todo update numbers
+      os
 << "    if (cache_" << vecName << ") {\n"
 << "      data_ptr_" << vecName << " = data_" << vecName << " =\n"
 << "          (cacheTypes.size() == 1)\n"
@@ -785,22 +791,8 @@ void emit_extract_calls(Record *pattern, std::vector<size_t> actArgs,
     argPosition += inputType->getValueAsInt("nelem");
   }
   os 
-<< "  } else {\n";
-  argPosition = 0;
-  for (auto inputType : inputTypes) {
-    if (inputType->getName() == "vinc") {
-      auto vecName = argOps->getArgNameStr(argPosition);
-      auto incName = argOps->getArgNameStr(argPosition + 1);
-      os
-<< "    Value *data_" << vecName << " = gutils->getNewFromOriginal(arg_" << vecName << ");\n"
-<< "    Value *data_ptr_" << vecName << " = nullptr;\n"
-<< "    Value *" << incName << " = true_" << incName << ";\n"
+<< "  } else {\n"
 << "\n";
-    }
-    argPosition += inputType->getValueAsInt("nelem");
-  }
-
-  os << "\n";
   
   argPosition = 0;
   for (auto inputType : inputTypes) {
@@ -872,16 +864,6 @@ llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> getUsedInputs(
   return argUsers;
 }
 
-void emit_new_vars(Record *pattern, std::vector<size_t> actArgs,
-                   raw_ostream &os) {
-  DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
-
-  for (auto act : actArgs) {
-    auto name = argOps->getArgNameStr(act);
-    os 
-<< "  auto new_" << name << " = lookup(gutils->getNewFromOriginal(arg_" << name << "), Builder2),\n";
-  }
-}
 
 void emit_blas_call(Record *pattern, std::vector<size_t> actArgs,
                     raw_ostream &os) {
@@ -920,6 +902,45 @@ void emit_helper(Record *pattern, std::vector<size_t> actArgs,
   }
 }
 
+std::pair<llvm::SmallString<40>, llvm::SmallString<80>> fwd_call_helper(DagInit *argOps, std::vector<Record *> inputTypes, 
+    std::vector<size_t> actArgs, size_t actPos) {
+  llvm::SmallString<40> result{};
+  llvm::SmallString<80> valueTypes{};
+  size_t pos = 0;
+  for (auto inputType : inputTypes) {
+    auto typeName = inputType->getName();
+    llvm::errs() << "typeName: " << typeName << " ";
+    if (pos > 0) {
+      result.append(", ");
+      valueTypes.append(", ");
+    }
+    if (typeName == "len") {
+      // should be once we have multi-len support
+      //result.append(argOps->getArgNameStr(pos));
+      result.append("count");
+      valueTypes.append("ValueType::None");
+    } else if (typeName == "fp") {
+    } else if (typeName == "vinc") {
+      auto vecName = argOps->getArgNameStr(pos);
+      auto incName = argOps->getArgNameStr(pos+1);
+      if (pos == actPos) {
+        result.append({"d_", vecName, ", true_", incName});
+        valueTypes.append("ValueType::Shadow, ValueType::None");
+      } else {
+        result.append({"data_", vecName, ", ", incName});
+        valueTypes.append({"cache_", vecName, " ? ValueType::None : ValueType::Primal, ValueType::None"});
+      }
+    } else {
+      llvm::errs() << "unknown type\n";
+      1/0;
+    }
+    pos += inputType->getValueAsInt("nelem");
+  }
+  return {result, valueTypes};
+}
+
+
+
 void emit_fwd_rewrite_rules(Record *pattern, std::vector<size_t> actArgs,
     llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, 
                  raw_ostream &os) {
@@ -934,7 +955,6 @@ void emit_fwd_rewrite_rules(Record *pattern, std::vector<size_t> actArgs,
 << "    auto callval = call.getCalledValue();           \n"
 << "#endif                                            \n\n";
 
-// TODO
   DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
   std::vector<Record *> inputTypes =
       pattern->getValueAsListOfDefs("inputTypes");
@@ -966,7 +986,7 @@ void emit_fwd_rewrite_rules(Record *pattern, std::vector<size_t> actArgs,
 << "  ) {\n"
 << "      value *dres = nullptr;\n";
 
-  std::vector<llvm::Twine> d_args{}; // TODO inc from active vec becomes trueXinc
+  std::vector<llvm::Twine> d_args{};
   for (auto act : actArgs) {
     auto actName = argOps->getArgNameStr(act);
     d_args.push_back("d_" + actName);
@@ -974,22 +994,15 @@ void emit_fwd_rewrite_rules(Record *pattern, std::vector<size_t> actArgs,
   
   first = true;
   for (auto act : actArgs) {
+    auto args = fwd_call_helper(argOps, inputTypes, actArgs, act);
     auto actName = argOps->getArgNameStr(act);
     os
 << "      if(active_" << actName << ") {\n"
-<< "        Value *args1[] = {";
-  bool first2 = true;
-  for (auto arg : d_args) {
-    if (!first2) 
-      os << ", ";
-    os 
-<< arg; 
-    first2 = false;
-  }
-  os 
+<< "        Value *args1[] = {"
+<< args.first
 << "};\n\n"
 << "        auto Defs = gutils->getInvertedBundles(\n"
-<< "          &call, {/* currently unused, to be fixed */}, Builder2, /* lookup */ false);\n";
+<< "          &call, {" << args.second << "}, Builder2, /* lookup */ false);\n";
   if (first) {
     os 
 << "#if LLVM_VERSION_MAJOR > 7\n"
@@ -1016,7 +1029,8 @@ void emit_fwd_rewrite_rules(Record *pattern, std::vector<size_t> actArgs,
   }
   os 
 << "      return dres;\n"
-<< "    },\n";
+<< "    },\n"
+<< "    ";
   first = true;
   for (auto arg : d_args) {
     if (!first)
