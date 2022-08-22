@@ -1048,7 +1048,46 @@ void emit_fwd_rewrite_rules(Record *pattern, std::vector<size_t> actArgs,
 
 
 void emit_handleBLAS(const std::vector<Record *> &blasPatterns, raw_ostream &os) {
+  std::string handledBlasFunctions = "";
+  bool first = true;
+  for (auto blasPattern : blasPatterns) {
+    if (!first)
+      handledBlasFunctions.append(", ");
+    handledBlasFunctions.append(blasPattern->getName());
+    first = false;
+  }
   os 
+<<"struct BlasInfo {\n"
+<<"  StringRef floatType;\n"
+<<"  StringRef prefix;\n"
+<<"  StringRef suffix;\n"
+<<"  StringRef function;\n"
+<<"};\n"
+<<"\n"
+<<"llvm::Optional<BlasInfo> extractBLAS(StringRef in) {\n"
+<<"  llvm::Twine floatType[] = {\"s\", \"d\"}; // c, z\n"
+<<"  llvm::Twine extractable[] = {" << handledBlasFunctions << "};\n"
+<<"  llvm::Twine prefixes[] = {\"\", \"cblas_\", \"cublas_\"};\n"
+<<"  llvm::Twine suffixes[] = {\"\", \"_\", \"_64_\"};\n"
+<<"  for (auto t : floatType) {\n"
+<<"    for (auto f : extractable) {\n"
+<<"      for (auto p : prefixes) {\n"
+<<"        for (auto s : suffixes) {\n"
+<<"          if (in == (p + t + f + s).str()) {\n"
+<<"            return llvm::Optional<BlasInfo>(BlasInfo{\n"
+<<"                t.getSingleStringRef(),\n"
+<<"                p.getSingleStringRef(),\n"
+<<"                s.getSingleStringRef(),\n"
+<<"                f.getSingleStringRef(),\n"
+<<"            });\n"
+<<"          }\n"
+<<"        }\n"
+<<"      }\n"
+<<"    }\n"
+<<"  }\n"
+<<"  return llvm::NoneType();\n"
+<<"}\n"
+<<"\n"
 << "bool handleBLAS(llvm::CallInst &call, Function *called, BlasInfo blas,\n"
 << "                const std::map<Argument *, bool> &uncacheable_args) { \n"
 << "                                                                      \n"
@@ -1062,7 +1101,7 @@ void emit_handleBLAS(const std::vector<Record *> &blasPatterns, raw_ostream &os)
 << "    } else {                                                          \n"
 << "      assert(false && \"Unreachable\");                               \n"
 << "    }                                                                 \n";
-  bool first = true;
+  first = true;
   for (auto pattern : blasPatterns) {
     auto name = pattern->getName();
     if (!first) {
@@ -1109,7 +1148,6 @@ void emit_handleBLAS(const std::vector<Record *> &blasPatterns, raw_ostream &os)
  * type_<Name>
  * active_<Name>
  * uncacheable_<Name>
- * new_<Name>
  * d_<Name>
  *
  */
@@ -1119,20 +1157,11 @@ void emitBlasDerivatives(const std::vector<Record *> &blasPatterns,
   emit_handleBLAS(blasPatterns, os);
   // emitEnumMatcher(blas_modes, os);
   for (auto pattern : blasPatterns) {
-    if (pattern->getName() != "dot") 
-      continue;
     // TODO: assert unique input names.
     std::vector<size_t> posActArgs = getPossiblyActiveArgs(pattern);
 
     // For each input arg, we store a set including all users (by index).
     llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers = getUsedInputs(pattern, posActArgs);
-
-    // std::vector<std::vector<size_t>> cacheArgPos =
-    //     getToCachePos(pattern, posActArgs);
-    //  For each active arg we want to have a list of input args required.
-    //  We use it to find out if we need to cache them.
-    // assert(posActArgs.size() == cacheArgPos.size());
-    
 
     emit_beginning(pattern, os);
     emit_helper(pattern, posActArgs, os);
