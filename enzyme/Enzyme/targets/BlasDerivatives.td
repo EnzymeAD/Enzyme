@@ -57,6 +57,9 @@ def noop : MagicInst; // gradient is zero
 class b<string _s> {
   string s = _s;
 }
+class d<string _d> {
+  string d = _d;
+}
 
 // TODO:
 // we can improve the next defs by integrating
@@ -72,11 +75,6 @@ def scal : CallBlasPattern<(Op $n, $alpha, $x, $incx),
                   ]
                   >;
 
-// def asum : CallBlasPattern<(Op $n, $x, $incx),
-//                   [len, vinc],
-//                   [(b<"scal"> $n, DiffeRet<"">, (sgn $x), $incx)]
-//                   >;
-
 def axpy : CallBlasPattern<(Op $n, $alpha, $x, $incx, $y, $incy),
                   [len, fp, vinc, vinc],
                   [
@@ -85,6 +83,20 @@ def axpy : CallBlasPattern<(Op $n, $alpha, $x, $incx, $y, $incy),
                   (DiffeRet<"">)
                   ]
                   >;
+
+def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
+                  [len, vinc, vinc],
+                  [
+                  (b<"axpy"> $n, DiffeRet<"">, $y, $incy, $x, $incx), 
+                  (b<"axpy"> $n, DiffeRet<"">, $x, $incx, $y, $incy)
+                  ]
+                  >;
+
+// def nrm2 : CallBlasPattern<(Op $n, $x, $incx),
+//                   [len, vinc],
+//                   [(FDiv (b<"scal"> $n, DiffeRet<"">, $x, $incx), Ret<"">)]
+//                   >;
+
 
 // def copy : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
 //                   [len, vinc, vinc],
@@ -99,18 +111,11 @@ def axpy : CallBlasPattern<(Op $n, $alpha, $x, $incx, $y, $incy),
 //                   []
 //                   >;
 
-def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
-                  [len, vinc, vinc],
-                  [
-                  (b<"scal"> $n, DiffeRet<"">, $y, $incy), 
-                  (b<"scal"> $n, DiffeRet<"">, $x, $incx)
-                  ]
-                  >;
-
-// def nrm2 : CallBlasPattern<(Op $n, $x, $incx),
+// def asum : CallBlasPattern<(Op $n, $x, $incx),
 //                   [len, vinc],
-//                   [(FDiv (b<"scal"> $n, DiffeRet<"">, $x, $incx), Ret<"">)]
+//                   [(b<"scal"> $n, DiffeRet<"">, (sgn $x), $incx)]
 //                   >;
+
 
 // Lv 2
 

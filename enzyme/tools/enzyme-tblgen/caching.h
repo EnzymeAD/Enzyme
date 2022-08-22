@@ -86,7 +86,7 @@ void emit_vinc_caching(Record *pattern, std::vector<size_t> actArgs,
           first = false;
         }
         os 
-<< ")";
+<< "))";
       }
       os 
 << ");\n"
@@ -294,7 +294,7 @@ void emit_caching(Record *pattern, std::vector<size_t> actArgs,
   for (auto actEn : llvm::enumerate(actArgs)) {
     auto name = argOps->getArgNameStr(actEn.value());
     os 
-<< "  if (" << name << "cache)\n"
+<< "  if (cache_" << name << ")\n"
 << "    cacheTypes.push_back(castvals[" << actEn.index() << "]);\n";
   }
   os

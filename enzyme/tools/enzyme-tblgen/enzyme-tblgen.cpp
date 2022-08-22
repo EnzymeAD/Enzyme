@@ -587,8 +587,9 @@ void emit_beginning(Record *pattern, raw_ostream &os) {
 << "  BuilderZ.setFastMathFlags(getFast());\n"
 << "  IRBuilder<> allocationBuilder(gutils->inversionAllocs);\n"
 << "  allocationBuilder.setFastMathFlags(getFast());\n"
-<< "  auto &DL = gutils->oldFunc->getParent()->getDataLayout();\n"
-<< "  auto *called = call.getCalledFunction();\n\n";
+<< "  auto &DL = gutils->oldFunc->getParent()->getDataLayout();\n";
+  // next already passed as args now
+//<< "  auto *called = call.getCalledFunction();\n\n";
 }
 
 std::vector<size_t> getPossiblyActiveArgs(Record *pattern) {
@@ -778,6 +779,7 @@ void emit_extract_calls(Record *pattern, std::vector<size_t> actArgs,
       if (vecUsers.size() > 0) {
         os 
 << "   else if (";
+        // TODO: fix this, probably one else if for each possible user?
         for (auto user: vecUsers) {
           auto name = argOps->getArgNameStr(user);
           os << "active_" << name;
@@ -924,7 +926,7 @@ std::pair<llvm::SmallString<40>, llvm::SmallString<80>> fwd_call_helper(DagInit 
       auto vecName = argOps->getArgNameStr(pos);
       auto incName = argOps->getArgNameStr(pos+1);
       if (pos == actPos) {
-        result.append({"d_", vecName, ", true_", incName});
+        result.append((Twine("d_") + vecName + ", true_" + incName).str());
         valueTypes.append("ValueType::Shadow, ValueType::None");
       } else {
         result.append({"data_", vecName, ", ", incName});
@@ -984,7 +986,7 @@ void emit_fwd_rewrite_rules(Record *pattern, std::vector<size_t> actArgs,
   }
   os
 << "  ) {\n"
-<< "      value *dres = nullptr;\n";
+<< "      Value *dres = nullptr;\n";
 
   std::vector<llvm::Twine> d_args{};
   for (auto act : actArgs) {
@@ -1112,7 +1114,7 @@ void emit_handleBLAS(const std::vector<Record *> &blasPatterns, raw_ostream &os)
 << "    if (blas.function == \"" << name << "\") {                        \n";
     }
     os 
-<< "      result = handle" << name 
+<< "      result = handle_" << name 
 << "(blas, call, called, uncacheable_args, innerType);\n";
     first = false;
   }

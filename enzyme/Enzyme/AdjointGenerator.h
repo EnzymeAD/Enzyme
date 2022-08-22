@@ -5323,6 +5323,8 @@ public:
     }
   }
 
+#include "InstructionDerivatives.inc"
+
   void handleMPI(llvm::CallInst &call, Function *called, StringRef funcName) {
     assert(called);
     assert(gutils->getWidth() == 1);
@@ -8213,8 +8215,6 @@ public:
         }
         }
       }
-
-#include "InstructionDerivatives.inc"
 
       // Functions that only modify pointers and don't allocate memory,
       // needs to be run on shadow in primal
