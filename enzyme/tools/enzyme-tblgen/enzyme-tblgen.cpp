@@ -769,10 +769,12 @@ void emit_extract_calls(Record *pattern, std::vector<size_t> actArgs,
       if (vecUsers.size() > 0) {
         os 
 << "   else if (";
+        bool first = true;
         // TODO: fix this, probably one else if for each possible user?
         for (auto user: vecUsers) {
           auto name = argOps->getArgNameStr(user);
-          os << "active_" << name;
+          os << ((first) ? "" : " || ") << "active_" << name;
+          first = false;
         }
         os << ") {\n"
 << "      data_" << vecName << " = lookup(gutils->getNewFromOriginal(arg_" 
