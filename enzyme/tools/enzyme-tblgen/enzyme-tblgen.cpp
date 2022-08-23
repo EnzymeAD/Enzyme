@@ -534,7 +534,7 @@ void emit_castvals(Record *pattern, std::vector<size_t> activeArgs,
 << "  if (auto PT = dyn_cast<PointerType>(type_" << name << "))\n"
 << "    castvals[" << argIdx << "] = PT;\n"
 << "  else\n"
-<< "    castvals[" << argIdx << "] = PointerType::getUnqual(innerType);\n";
+<< "    castvals[" << argIdx << "] = PointerType::getUnqual(fpType);\n";
   }
   os 
 << "  Value *cacheval;\n\n"
@@ -561,7 +561,7 @@ void emit_scalar_types(Record *pattern, raw_ostream &os) {
   assert(foundInt && "no int type found in blas call");
 
   os
-<< "  Type *fpType = innerType;\n" // already given by blas type (s, d, c, z)
+//<< "  Type *fpType = fpType;\n" // already given by blas type (s, d, c, z)
 << "  IntegerType *intType = dyn_cast<IntegerType>(type_" << name << ");\n"
 << "  bool byRef = false;\n" // Fortran Abi?
 << "  if (!intType) {\n"
@@ -580,7 +580,7 @@ void emit_beginning(Record *pattern, raw_ostream &os) {
   os
 << "\nbool handle_" << name
 << "(BlasInfo blas, llvm::CallInst &call, Function *called,\n"
-<< "    const std::map<Argument *, bool> &uncacheable_args, Type *innerType) {\n"
+<< "    const std::map<Argument *, bool> &uncacheable_args, Type *fpType) {\n"
 << "  \n"
 << "  CallInst *const newCall = cast<CallInst>(gutils->getNewFromOriginal(&call));\n"
 << "  IRBuilder<> BuilderZ(newCall);\n"
@@ -863,9 +863,9 @@ void emit_blas_call(Record *pattern, std::vector<size_t> actArgs,
                     raw_ostream &os) {
   DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
   // auto blassCall = gutils->oldFunc->getParent()->getOrInsertFunction(
-  //     axpyName, Builder2.getVoidTy(), type_n, innerType, type_y, type_incy,
+  //     axpyName, Builder2.getVoidTy(), type_n, fpType, type_y, type_incy,
   //     type_x, type_incx);
-  // SmallVector<Value *, 6> args = {new_n,  ConstantFP::get(innerType, 1.0),
+  // SmallVector<Value *, 6> args = {new_n,  ConstantFP::get(fpType, 1.0),
   //                                 diff_y, new_incy,
   //                                 diff_x, new_incx};
   // Builder2.CreateCall(axpyCall, args,
@@ -1096,11 +1096,11 @@ void emit_handleBLAS(const std::vector<Record *> &blasPatterns, raw_ostream &os)
 << "                                                                      \n"
 << "  bool result = true;                                                 \n"
 << "  if (!gutils->isConstantInstruction(&call)) {                        \n"
-<< "    Type *innerType;                                                  \n"
+<< "    Type *fpType;                                                  \n"
 << "    if (blas.floatType == \"d\") {                                    \n"
-<< "      innerType = Type::getDoubleTy(call.getContext());               \n"
+<< "      fpType = Type::getDoubleTy(call.getContext());               \n"
 << "    } else if (blas.floatType == \"s\") {                             \n"
-<< "      innerType = Type::getFloatTy(call.getContext());                \n"
+<< "      fpType = Type::getFloatTy(call.getContext());                \n"
 << "    } else {                                                          \n"
 << "      assert(false && \"Unreachable\");                               \n"
 << "    }                                                                 \n";
@@ -1111,7 +1111,7 @@ void emit_handleBLAS(const std::vector<Record *> &blasPatterns, raw_ostream &os)
 << "    " << ((first) ? "" : "} else ") 
 << " if (blas.function == \"" << name << "\") {                           \n"
 << "      result = handle_" << name 
-<< "(blas, call, called, uncacheable_args, innerType);                    \n";
+<< "(blas, call, called, uncacheable_args, fpType);                    \n";
     first = false;
   }
   os 

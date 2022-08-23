@@ -194,7 +194,7 @@ void emit_cache_for_reverse(Record *pattern, std::vector<size_t> actArgs,
 << "      auto dmemcpy = getOrInsertMemcpyStrided(\n"
 << "          *gutils->oldFunc->getParent(), cast<PointerType>(castvals[" << i << "]),\n"
 << "          type_n, 0, 0);\n"
-<< "      auto malins = CreateAllocation(BuilderZ, innerType, len_n);\n"
+<< "      auto malins = CreateAllocation(BuilderZ, fpType, len_n);\n"
 << "      Value *arg = BuilderZ.CreateBitCast(malins, castvals[" << i << "]);\n"
 << "      Value *args[4] = {arg,\n"
 << "                         gutils->getNewFromOriginal(arg_" << vecName << "),\n"
