@@ -79,10 +79,8 @@ void emit_vinc_caching(Record *pattern, std::vector<size_t> actArgs,
         bool first = true;
         for (size_t user: incUsers) {
           auto name = argOps->getArgNameStr(user);
-          if (!first)
-            os << " || ";
           os 
-<< "active_" << name;
+<< ((first) ? "" : " || ") << "active_" << name;
           first = false;
         }
         os 
@@ -100,25 +98,23 @@ void emit_vinc_caching(Record *pattern, std::vector<size_t> actArgs,
   os 
 << "  int numCached = ";
   for (size_t i = 0; i < cacheVars.size(); i++) {
-    if (i > 0)
-      os << " + ";
-    os << "(int) " << cacheVars[i];
+    os << ((i > 0) ? " + " : "" ) << "(int) " << cacheVars[i];
   }
   os 
 << ";\n"
 << "  bool anyCache = (numCached > 0);\n";
 }
 
-void emit_count_caching(Record *pattern, std::vector<size_t> actArgs,
+void emit_scalar_caching(Record *pattern, std::vector<size_t> actArgs,
                         raw_ostream &os) {
   os 
-<< "  // count must be preserved if overwritten\n";
+<< "  // len, fp must be preserved if overwritten\n";
   std::vector<Record *> inputTypes =
       pattern->getValueAsListOfDefs("inputTypes");
   DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
   size_t argPosition = 0;
   for (auto val : inputTypes) {
-    if (val->getName() == "len") {
+    if (val->getName() == "len" || val->getName() == "fp") {
       auto name = argOps->getArgNameStr(argPosition);
       os 
 << "  bool cache_" << name << " = false;\n"
@@ -144,37 +140,25 @@ void emit_cache_for_reverse(Record *pattern, std::vector<size_t> actArgs,
 
   size_t argPosition = 0;
   for (auto inputType : inputTypes) {
-    if (inputType->getName() == "len") {
+    auto typeName = inputType->getName();
+
+    if (typeName == "len") {
       auto name = argOps->getArgNameStr(argPosition);
-      os 
-<< "    Value *count = gutils->getNewFromOriginal(arg_" << name << ");\n";
-      break;
-    }
-    argPosition += inputType->getValueAsInt("nelem");
-  }
-
-  argPosition = 0;
-  for (auto inputType : inputTypes) {
-
-    // cache count if needed
-    if (inputType->getName() == "len") {
+      auto lenName = "len_" + name;
       os
+<< "    Value *" << lenName << " = gutils->getNewFromOriginal(arg_" << name <<");\n"
 << "    if (byRef) {\n"
-<< "      count = BuilderZ.CreatePointerCast(count, PointerType::getUnqual(intType));\n"
+<< "      " << lenName << " = BuilderZ.CreatePointerCast(" << lenName <<", PointerType::getUnqual(intType));\n"
 << "#if LLVM_VERSION_MAJOR > 7\n"
-<< "      count = BuilderZ.CreateLoad(intType, count);\n"
+<< "      " << lenName << " = BuilderZ.CreateLoad(intType, " << lenName << ");\n"
 << "#else\n"
-<< "      count = BuilderZ.CreateLoad(count);\n"
+<< "      " << lenName << " = BuilderZ.CreateLoad(" << lenName << ");\n"
 << "#endif\n"
-<< "      if (countcache)\n"
-<< "        cacheValues.push_back(count);\n"
+<< "      if (cache_" << name << ")\n"
+<< "        cacheValues.push_back(" << lenName << ");\n"
 << "    }\n";
-    } else if (inputType->getName() == "vinc") {
-      //auto vecName = argOps->getArgNameStr(argPosition);
+    } else if (typeName == "vinc") {
       auto incName = argOps->getArgNameStr(argPosition + 1);
-      //auto incPosition = argPosition + 1;
-
-      // cache vinc's if needed.
       os 
 << "    Value *" << incName << " = gutils->getNewFromOriginal(arg_" << incName <<");\n"
 << "    if (byRef) {\n"
@@ -187,9 +171,11 @@ void emit_cache_for_reverse(Record *pattern, std::vector<size_t> actArgs,
 << "      if (cache_" << incName << ")\n"
 << "        cacheValues.push_back(" << incName << ");\n"
 << "    }\n";
-    } else {
-      // handle fp
-      continue;
+    } else if (typeName == "fp") {
+      // TODO: finish fp
+      auto fpName = argOps->getArgNameStr(argPosition);
+      os 
+<< "    Value *" << fpName << " = gutils->getNewFromOriginal(arg_" << fpName <<");\n";
     }
     argPosition += inputType->getValueAsInt("nelem");
   }
@@ -200,31 +186,28 @@ void emit_cache_for_reverse(Record *pattern, std::vector<size_t> actArgs,
     if (inputType->getName() == "vinc") {
       auto vecName = argOps->getArgNameStr(argPosition);
       auto incName = argOps->getArgNameStr(argPosition + 1);
+      // TODO: remove last hardcoded len_n, type_n usages to support blas lv2/3 
       os
 << "    if (cache_" << vecName << ") {\n"
 << "      auto dmemcpy = getOrInsertMemcpyStrided(\n"
 << "          *gutils->oldFunc->getParent(), cast<PointerType>(castvals[" << i << "]),\n"
-<< "          count->getType(), 0, 0);\n"
-<< "      auto malins = CreateAllocation(BuilderZ, innerType, count);\n"
+<< "          type_n, 0, 0);\n"
+<< "      auto malins = CreateAllocation(BuilderZ, innerType, len_n);\n"
 << "      Value *arg = BuilderZ.CreateBitCast(malins, castvals[" << i << "]);\n"
 << "      Value *args[4] = {arg,\n"
 << "                         gutils->getNewFromOriginal(arg_" << vecName << "),\n"
-<< "                         count, " << incName << "};\n"
+<< "                         len_n, " << incName << "};\n"
 << "      if (args[1]->getType()->isIntegerTy())\n"
 << "        args[1] = BuilderZ.CreateIntToPtr(args[1], castvals[" << i << "]);\n"
 << "      BuilderZ.CreateCall(dmemcpy, args,\n"
 << "          gutils->getInvertedBundles(&call,{\n";
       bool first = true;
       for (size_t j = 0; j < argOps->arg_size(); j++) {
-        if (!first)
-          os << ", ";
         os 
+<< ((first) ? "" : ", ")
 << ((j == argPosition) ? "ValueType::Shadow" : "ValueType::None");
         first = false;
       }
-      //<< "                                          ValueType::None, ValueType::Shadow,\n"
-      //<< "                                           ValueType::None, ValueType::None,\n"
-      //<< "                                           ValueType::None\n"
       os
 << "},\n"
 << "          BuilderZ, /*lookup*/ false));\n"
@@ -246,15 +229,27 @@ void emit_cache_for_reverse(Record *pattern, std::vector<size_t> actArgs,
 << "    gutils->cacheForReverse(BuilderZ, cacheval,\n"
 << "                            getIndex(&call, CacheType::Tape));\n"
 << "  }\n"
-<< "  unsigned cacheidx = 0;\n"
-<< "  Value *count = gutils->getNewFromOriginal(call.getArgOperand(0));\n"; // todo adjust idx
+<< "  unsigned cacheidx = 0;\n";
  
   argPosition = 0;
   for (auto inputType : inputTypes) {
-    if (inputType->getName() == "vinc") {
+    auto typeName = inputType->getName();
+    if (typeName == "vinc") {
+      auto vecName = argOps->getArgNameStr(argPosition);
       auto incName = argOps->getArgNameStr(argPosition + 1);
       os 
-<< "  Value *true_" << incName << " = gutils->getNewFromOriginal(arg_" << incName << ");\n";
+<< "  Value *true_" << incName << " = gutils->getNewFromOriginal(arg_" << incName << ");\n"
+<< "  Value *" << incName << " = true_" << incName << ";\n"
+<< "  Value *data_" << vecName << " = gutils->getNewFromOriginal(arg_" << vecName << ");\n"
+<< "  Value *data_ptr_" << vecName << " = nullptr;\n";
+    } else if (typeName == "len") {
+      auto lenName = argOps->getArgNameStr(argPosition);
+      os
+<< "  Value *len_" << lenName << " = gutils->getNewFromOriginal(arg_" << lenName << ");\n";
+    } else if (typeName == "fp") {
+      auto fpName = argOps->getArgNameStr(argPosition);
+      os
+<< " Value *fp_" << fpName << " = gutils->getNewFromOriginal(arg_" << fpName << ");\n"; 
     }
     argPosition += inputType->getValueAsInt("nelem");
   }
@@ -286,8 +281,7 @@ void emit_caching(Record *pattern, std::vector<size_t> actArgs,
   os 
 << "  SmallVector<Type *, 2> cacheTypes;\n\n";
 
-  emit_count_caching(pattern, actArgs, os);
-  // emit_fp_caching(pattern, actArgs, os);
+  emit_scalar_caching(pattern, actArgs, os);
   emit_vinc_caching(pattern, actArgs, argUsers, os);
 
   DagInit *argOps = pattern->getValueAsDag("PatternToMatch");

@@ -534,34 +534,34 @@ void emit_castvals(Record *pattern, std::vector<size_t> activeArgs,
 << "  if (auto PT = dyn_cast<PointerType>(type_" << name << "))\n"
 << "    castvals[" << argIdx << "] = PT;\n"
 << "  else\n"
-<< "    castvals[" << argIdx
-<< "  ] = PointerType::getUnqual(innerType);\n";
+<< "    castvals[" << argIdx << "] = PointerType::getUnqual(innerType);\n";
   }
   os 
 << "  Value *cacheval;\n\n"
 << "  /* ending castvalls */\n";
 }
 
-void emit_inttype(Record *pattern, raw_ostream &os) {
+void emit_scalar_types(Record *pattern, raw_ostream &os) {
   // We only look at the type of the first integer showing up.
   // This allows to learn if we use Fortran abi (byRef) or cabi
-  size_t firstIntPos = 0;
-  bool found = false;
+  size_t pos = 0;
+  bool foundInt = false;
   std::vector<Record *> inputTypes =
       pattern->getValueAsListOfDefs("inputTypes");
   DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
+
   for (auto val : inputTypes) {
     if (val->getName() == "len") {
-      found = true;
-      // os << "first integer at: " << firstIntPos << "\n";
+      foundInt = true;
       break;
     }
-    firstIntPos += val->getValueAsInt("nelem");
+    pos += val->getValueAsInt("nelem");
   }
-  auto name = argOps->getArgNameStr(firstIntPos);
-  assert(found && "no int type found in blas call");
+  auto name = argOps->getArgNameStr(pos);
+  assert(foundInt && "no int type found in blas call");
 
   os
+<< "  Type *fpType = innerType;\n" // already given by blas type (s, d, c, z)
 << "  IntegerType *intType = dyn_cast<IntegerType>(type_" << name << ");\n"
 << "  bool byRef = false;\n" // Fortran Abi?
 << "  if (!intType) {\n"
@@ -674,26 +674,12 @@ void emit_extract_calls(Record *pattern, std::vector<size_t> actArgs,
 << "        cacheval = lookup(cacheval, Builder2);\n"
 << "    }\n"
 << "\n"
-<< "    if (byRef) {\n"
-<< "      if (countcache) {\n"
-<< "        count = (cacheTypes.size() == 1)\n"
-<< "                    ? cacheval\n"
-<< "                    : Builder2.CreateExtractValue(cacheval, {cacheidx});\n"
-<< "        auto alloc = allocationBuilder.CreateAlloca(intType);\n"
-<< "        Builder2.CreateStore(count, alloc);\n"
-<< "        count = Builder2.CreatePointerCast(\n"
-<< "            alloc, call.getArgOperand(0)->getType());\n"
-<< "        cacheidx++;\n"
-<< "      } else {\n"
-<< "        if (Mode != DerivativeMode::ForwardModeSplit)\n"
-<< "          count = lookup(count, Builder2);\n"
-<< "      }\n"
-<< "\n";
+<< "    if (byRef) {\n";
   argPosition = 0;
   for (auto inputType : inputTypes) {
     if (inputType->getName() == "vinc") {
       auto incName = argOps->getArgNameStr(argPosition + 1);
-  os
+      os
 << "      if (cache_" << incName << ") {\n"
 << "        true_" << incName << " =\n"
 << "            (cacheTypes.size() == 1)\n"
@@ -703,53 +689,57 @@ void emit_extract_calls(Record *pattern, std::vector<size_t> actArgs,
 << "        Builder2.CreateStore(true_" << incName << ", alloc);\n"
 << "        true_" << incName << " = Builder2.CreatePointerCast(\n"
 << "            alloc, call.getArgOperand(0)->getType());\n"
+<< "        " << incName << " = true_" << incName << ";\n"
 << "        cacheidx++;\n"
 << "      } else if (need_" << incName << ") {\n"
-<< "        if (Mode != DerivativeMode::ForwardModeSplit)\n"
+<< "        if (Mode != DerivativeMode::ForwardModeSplit) {\n"
 << "          true_" << incName <<" = lookup(true_" << incName << ", Builder2);\n"
+<< "          " << incName << " = true_" << incName << ";\n"
+<< "        }\n"
+<< "      }\n"
+<< "\n";
+    } else if (inputType->getName() == "len") {
+      auto lenName = argOps->getArgNameStr(argPosition);
+      os
+<< "      if (cache_" << lenName << ") {\n"
+<< "        len_" << lenName << " = (cacheTypes.size() == 1)\n"
+<< "                    ? cacheval\n"
+<< "                    : Builder2.CreateExtractValue(cacheval, {cacheidx});\n"
+<< "        auto alloc = allocationBuilder.CreateAlloca(intType);\n"
+<< "        Builder2.CreateStore(len_" << lenName << ", alloc);\n"
+<< "        len_" << lenName << " = Builder2.CreatePointerCast(\n"
+<< "            alloc, call.getArgOperand(0)->getType());\n"
+<< "        cacheidx++;\n"
+<< "      } else {\n"
+<< "        if (Mode != DerivativeMode::ForwardModeSplit)\n"
+<< "          len_" << lenName << " = lookup(len_" << lenName << ", Builder2);\n"
 << "      }\n"
 << "\n";
     }
     argPosition += inputType->getValueAsInt("nelem");
   }
   os
-<< "    } else if (Mode != DerivativeMode::ForwardModeSplit) {\n"
-<< "      count = lookup(count, Builder2);\n"
-<< "\n";
+<< "    } else if (Mode != DerivativeMode::ForwardModeSplit) {\n";
   argPosition = 0;
   for (auto inputType : inputTypes) {
     if (inputType->getName() == "vinc") {
       auto incName = argOps->getArgNameStr(argPosition + 1);
   os
-<< "      if (cache_" << incName << ") \n"
+<< "      if (cache_" << incName << ") {\n"
 << "        true_" << incName << " = lookup(true_" << incName <<", Builder2);\n"
+<< "        " << incName << " = true_" << incName << ";\n"
+<< "      }\n";
+    } else if (inputType->getName() == "len") {
+      auto lenName = argOps->getArgNameStr(argPosition);
+      os
+<< "      len_" << lenName << " = lookup(len_" << lenName << ", Builder2);\n"
 << "\n";
     }
     argPosition += inputType->getValueAsInt("nelem");
   }
   os 
-<< "    }\n" 
-<< "  }\n\n";
-  argPosition = 0;
-  for (auto inputType : inputTypes) {
-    if (inputType->getName() == "vinc") {
-      auto vecName = argOps->getArgNameStr(argPosition);
-      auto incName = argOps->getArgNameStr(argPosition + 1);
-      os
-<< "  Value *data_" << vecName << " = gutils->getNewFromOriginal(arg_" << vecName << ");\n"
-<< "  Value *data_ptr_" << vecName << " = nullptr;\n"
-<< "  Value *" << incName << " = true_" << incName << ";\n"
-<< "\n";
-    }
-    argPosition += inputType->getValueAsInt("nelem");
-  }
-
-  os
-<< "  if (Mode == DerivativeMode::ReverseModeCombined ||\n"
-<< "      Mode == DerivativeMode::ReverseModeGradient ||\n"
-<< "      Mode == DerivativeMode::ForwardModeSplit) {\n"
-<< "\n";
-
+<< "    }\n";
+  
   argPosition = 0;
   for (auto inputType : inputTypes) {
     if (inputType->getName() == "vinc") {
@@ -917,11 +907,18 @@ std::pair<llvm::SmallString<40>, llvm::SmallString<80>> fwd_call_helper(DagInit 
       valueTypes.append(", ");
     }
     if (typeName == "len") {
-      // should be once we have multi-len support
-      //result.append(argOps->getArgNameStr(pos));
-      result.append("count");
+      auto lenName = argOps->getArgNameStr(pos);
+      result.append((Twine("len_") + lenName).str());
       valueTypes.append("ValueType::None");
     } else if (typeName == "fp") {
+      auto floatName = argOps->getArgNameStr(pos);
+      if (pos == actPos) {
+        result.append((Twine("d_") + floatName).str());
+        valueTypes.append("ValueType::Shadow");
+      } else {
+        result.append((Twine("data_") + floatName).str());
+        valueTypes.append((Twine("cache_") + floatName + " ? ValueType::None : ValueType::Primal").str());
+      }
     } else if (typeName == "vinc") {
       auto vecName = argOps->getArgNameStr(pos);
       auto incName = argOps->getArgNameStr(pos+1);
@@ -929,8 +926,8 @@ std::pair<llvm::SmallString<40>, llvm::SmallString<80>> fwd_call_helper(DagInit 
         result.append((Twine("d_") + vecName + ", true_" + incName).str());
         valueTypes.append("ValueType::Shadow, ValueType::None");
       } else {
-        result.append({"data_", vecName, ", ", incName});
-        valueTypes.append({"cache_", vecName, " ? ValueType::None : ValueType::Primal, ValueType::None"});
+        result.append((Twine("data_") + vecName + ", " + incName).str());
+        valueTypes.append((Twine("cache_") + vecName + " ? ValueType::None : ValueType::Primal, ValueType::None").str());
       }
     } else {
       llvm::errs() << "unknown type\n";
@@ -968,6 +965,12 @@ void emit_fwd_rewrite_rules(Record *pattern, std::vector<size_t> actArgs,
 << "    Value *d_" << vecName << " = active_" << vecName << "\n"
 << "     ? gutils->invertPointerM(arg_" << vecName << ", Builder2)\n"
 << "     : nullptr;\n";
+    } else if (inputType->getName() == "fp") {
+      auto floatName = argOps->getArgNameStr(argPosition);
+  os
+<< "    Value *d_" << floatName << " = active_" << floatName << "\n"
+<< "     ? gutils->invertPointerM(arg_" << floatName << ", Builder2)\n"
+<< "     : nullptr;\n";
     }
     argPosition += inputType->getValueAsInt("nelem");
   }
@@ -978,10 +981,9 @@ void emit_fwd_rewrite_rules(Record *pattern, std::vector<size_t> actArgs,
 << "        [&](";
   bool first = true;
   for (auto act : actArgs) {
-    if (!first) 
-      os << ", ";
     auto name = argOps->getArgNameStr(act);
-    os << "Value *d_" << name; 
+    os 
+<< ((first) ? "" : ", ") << "Value *d_" << name; 
     first = false;
   }
   os
@@ -1035,10 +1037,8 @@ void emit_fwd_rewrite_rules(Record *pattern, std::vector<size_t> actArgs,
 << "    ";
   first = true;
   for (auto arg : d_args) {
-    if (!first)
-      os << ", ";
     os 
-<< arg;
+<< ((first) ? "" : ", ") << arg;
     first = false;
   }
   os 
@@ -1053,9 +1053,8 @@ void emit_handleBLAS(const std::vector<Record *> &blasPatterns, raw_ostream &os)
   std::string handledBlasFunctions = "";
   bool first = true;
   for (auto blasPattern : blasPatterns) {
-    if (!first)
-      handledBlasFunctions.append(", ");
-    handledBlasFunctions.append(blasPattern->getName());
+    auto newName = Twine((first) ? "" : ", ") + "\"" + blasPattern->getName() + "\"";
+    handledBlasFunctions.append(newName.str());
     first = false;
   }
   os 
@@ -1106,16 +1105,11 @@ void emit_handleBLAS(const std::vector<Record *> &blasPatterns, raw_ostream &os)
   first = true;
   for (auto pattern : blasPatterns) {
     auto name = pattern->getName();
-    if (!first) {
-      os 
-<< "    } else if (blas.function == \"" << name << "\") {                 \n";
-    } else {
-      os 
-<< "    if (blas.function == \"" << name << "\") {                        \n";
-    }
-    os 
+    os
+<< "    " << ((first) ? "" : "} else ") 
+<< " if (blas.function == \"" << name << "\") {                           \n"
 << "      result = handle_" << name 
-<< "(blas, call, called, uncacheable_args, innerType);\n";
+<< "(blas, call, called, uncacheable_args, innerType);                    \n";
     first = false;
   }
   os 
@@ -1168,7 +1162,7 @@ void emitBlasDerivatives(const std::vector<Record *> &blasPatterns,
     emit_beginning(pattern, os);
     emit_helper(pattern, posActArgs, os);
     emit_castvals(pattern, posActArgs, os);
-    emit_inttype(pattern, os);
+    emit_scalar_types(pattern, os);
 
     emit_caching(pattern, posActArgs, argUsers, os);
     emit_extract_calls(pattern, posActArgs, argUsers, os);
