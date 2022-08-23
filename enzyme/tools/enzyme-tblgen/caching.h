@@ -114,12 +114,14 @@ void emit_scalar_caching(Record *pattern, std::vector<size_t> actArgs,
   DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
   size_t argPosition = 0;
   for (auto val : inputTypes) {
-    if (val->getName() == "len" || val->getName() == "fp") {
+    auto typeName = val->getName();
+    if (typeName == "len" || typeName == "fp") {
+      auto scalarType = (typeName == "len") ? "intType" : "fpType";
       auto name = argOps->getArgNameStr(argPosition);
       os 
 << "  bool cache_" << name << " = false;\n"
 << "  if (byRef && uncacheable_" << name << ") {\n"
-<< "    cacheTypes.push_back(intType);\n"
+<< "    cacheTypes.push_back(" << scalarType << ");\n"
 << "    cache_" << name << " = true;\n"
 << "  }\n";
     }
