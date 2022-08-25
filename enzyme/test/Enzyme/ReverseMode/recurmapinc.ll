@@ -80,7 +80,7 @@ declare void @_Z17__enzyme_autodiffPviS_S_(...)
 ; CHECK-NEXT:   %18 = fadd fast double %17, %differeturn
 ; CHECK-NEXT:   store double %18, double* %16, align 8
 ; CHECK-NEXT:   %19 = icmp eq i64 %"iv'ac.0", 0
-; CHECK-NEXT:   %20 = select fast i1 %19, double 0.000000e+00, double %differeturn
+; CHECK-NEXT:   %20 = select {{(fast )?}}i1 %19, double 0.000000e+00, double %differeturn
 ; CHECK-NEXT:   br i1 %19, label %invertentry, label %incinvertfor.body
 
 ; CHECK: incinvertfor.body:                                ; preds = %invertfor.body
