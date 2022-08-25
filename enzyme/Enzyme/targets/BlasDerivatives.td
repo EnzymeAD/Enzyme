@@ -31,18 +31,12 @@ def side          : blas_modes<["L", "R"]> ;
 def cblas_side    : blas_modes<["CblasLeft","CblasRight"]>;
 
 
-class BlasNames {
-  list<string> types = ["s", "d"]; // float, double, TODO: C, Z
-  list<string> prefixes = ["", "cblas_", "cublas_"];
-  list<string> suffixes = ["", "_", "_64_"];
-  list<string> names = []; // auto-filled
-}
-
-class CallBlasPattern<dag patternToMatch, list<BLASType> paramTypes, 
+class CallBlasPattern<dag patternToMatch, list<string> mutables, list<BLASType> paramTypes, 
                       list<dag> resultOps> {
   dag PatternToMatch = patternToMatch;
   list<BLASType> inputTypes = paramTypes;
   list<dag> ArgDerivatives = resultOps;
+  list<string> mutable = mutables;
 }
 
 
@@ -57,26 +51,18 @@ def noop : MagicInst; // gradient is zero
 class b<string _s> {
   string s = _s;
 }
-class d<string _d> {
-  string d = _d;
-}
-
-// TODO:
-// we can improve the next defs by integrating
-// the final value to which we add into the dag, 
-// e.g. if we can use axpy instead of scal.
 
 // Lv 1 \wo rotations
 def scal : CallBlasPattern<(Op $n, $alpha, $x, $incx),
-                  [len, fp, vinc],
+                  [],[len, fp, vinc],
                   [
                   (b<"dot"> $n, $x, $incx, DiffeRet<"">, $incy), 
-                  (b<"axpy"> $n, $alpha, DiffeRet<"">, $incx, DiffeRet<"">, $incx)
+                  (b<"axpy"> $n, $alpha, DiffeRet<"">, $incy, $x, $incx)
                   ]
                   >;
 
 def axpy : CallBlasPattern<(Op $n, $alpha, $x, $incx, $y, $incy),
-                  [len, fp, vinc, vinc],
+                  ["y"],[len, fp, vinc, vinc],
                   [
                   (b<"dot"> $n, $x, $incx, DiffeRet<"">, $incy), 
                   (b<"scal"> $n, $alpha, DiffeRet<"">, $incy),
@@ -85,7 +71,7 @@ def axpy : CallBlasPattern<(Op $n, $alpha, $x, $incx, $y, $incy),
                   >;
 
 def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
-                  [len, vinc, vinc],
+                  [],[len, vinc, vinc],
                   [
                   (b<"axpy"> $n, DiffeRet<"">, $y, $incy, $x, $incx), 
                   (b<"axpy"> $n, DiffeRet<"">, $x, $incx, $y, $incy)
