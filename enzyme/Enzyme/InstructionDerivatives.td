@@ -110,6 +110,13 @@ def : CallPattern<(Op $x),
 def : CallPattern<(Op $x),
                   ["tan", "tanf", "tanl"],
                   [(FMul (DiffeRet<"">), (FAdd (ConstantFP<"1.0"> $x), (FMul(Call<(SameFunc), [ReadNone,NoUnwind]> $x):$c, $c)))]>;
+def : CallPattern<(Op $x, $y),
+                  ["remainder"],
+                  [
+                    (ConstantFP<"1.0"> $x),
+                    (FMul (ConstantFP<"-1.0"> $x), (Call<(SameTypesFunc<"floor">), [ReadNone,NoUnwind]> (FDiv $x, $y)))
+                  ]
+                  >;
 
 // TODO replace with intrinsic call to exp
 def : CallPattern<(Op $x),
