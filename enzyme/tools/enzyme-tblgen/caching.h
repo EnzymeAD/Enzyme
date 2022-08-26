@@ -131,10 +131,12 @@ void emit_scalar_caching(Record *pattern, std::vector<size_t> actArgs,
 
 void emit_cache_for_reverse(Record *pattern, std::vector<size_t> actArgs, 
     llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, raw_ostream &os) {
+  llvm::errs() << "AAAA\n";
   os 
 << "  if ((Mode == DerivativeMode::ReverseModeCombined ||\n"
 << "       Mode == DerivativeMode::ReverseModePrimal) && cachetype) {\n"
 << "    SmallVector<Value *, 2> cacheValues;\n";
+  llvm::errs() << "AAAA\n";
   
   std::vector<Record *> inputTypes =
       pattern->getValueAsListOfDefs("inputTypes");
@@ -181,6 +183,7 @@ void emit_cache_for_reverse(Record *pattern, std::vector<size_t> actArgs,
     }
     argPosition += inputType->getValueAsInt("nelem");
   }
+  llvm::errs() << "AAAA\n";
 
   size_t i = 0;
   argPosition = 0;
@@ -219,6 +222,7 @@ void emit_cache_for_reverse(Record *pattern, std::vector<size_t> actArgs,
     }
     argPosition += inputType->getValueAsInt("nelem");
   }
+  llvm::errs() << "AAAA\n";
 
   os
 << "    if (cacheValues.size() == 1) {\n"
@@ -251,10 +255,11 @@ void emit_cache_for_reverse(Record *pattern, std::vector<size_t> actArgs,
     } else if (typeName == "fp") {
       auto fpName = argOps->getArgNameStr(argPosition);
       os
-<< " Value *fp_" << fpName << " = gutils->getNewFromOriginal(arg_" << fpName << ");\n"; 
+<< "  Value *fp_" << fpName << " = gutils->getNewFromOriginal(arg_" << fpName << ");\n"; 
     }
     argPosition += inputType->getValueAsInt("nelem");
   }
+  llvm::errs() << "AAAA\n";
 
   os
 << "  IRBuilder<> Builder2(call.getParent());\n"

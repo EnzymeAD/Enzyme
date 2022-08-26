@@ -56,8 +56,8 @@ class b<string _s> {
 def scal : CallBlasPattern<(Op $n, $alpha, $x, $incx),
                   [],[len, fp, vinc],
                   [
-                  (b<"dot"> $n, $x, $incx, DiffeRet<"">, $incy), 
-                  (b<"axpy"> $n, $alpha, DiffeRet<"">, $incy, $x, $incx)
+                  (b<"dot"> $n, $x, $incx, DiffeRet<"">, $incx), 
+                  (b<"axpy"> $n, $alpha, DiffeRet<"">, $incx, $x, $incx)
                   ]
                   >;
 
