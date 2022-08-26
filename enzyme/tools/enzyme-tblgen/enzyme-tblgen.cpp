@@ -981,6 +981,7 @@ void emit_deriv_fnc(DagInit *resultTree, llvm::DenseMap<StringRef, StringRef> ty
   auto Def = cast<DefInit>(resultTree->getOperator())->getDef();
   if (Def->isSubClassOf("b")) {
     auto dfnc_name = Def->getValueAsString("s");
+    auto full_dfnc_name = "(blas.prefix + \"" + dfnc_name + "\" + blas.suffix).str()";
     llvm::errs() << "found blas fnc: " << dfnc_name << "\n";
     if (handled.contains(dfnc_name))
       return;
@@ -988,7 +989,7 @@ void emit_deriv_fnc(DagInit *resultTree, llvm::DenseMap<StringRef, StringRef> ty
       handled.insert(dfnc_name);
     os 
 << "    auto derivcall_" << dfnc_name << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
-<< "      " << dfnc_name << ", Builder2.getVoidTy(),\n";
+<< "      " << full_dfnc_name << ", Builder2.getVoidTy(),\n";
       // insert arg types based on .td file 
       bool first = true;
       std::vector<StringRef> usedArgStrs{};
@@ -1076,7 +1077,7 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
       auto name = argOps->getArgNameStr(argPosition);
   os
 << "    Value *d_" << name << " = active_" << name << "\n"
-<< "     ? lookup(gutils->invertPointerM(arg_" << name << ", Builder2), Builder2);\n"
+<< "     ? lookup(gutils->invertPointerM(arg_" << name << ", Builder2), Builder2)\n"
 << "     : nullptr;\n";
     }
     argPosition += inputType->getValueAsInt("nelem");
@@ -1119,19 +1120,21 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
     if (!Def->isSubClassOf("b"))
       continue;// check
     auto dfnc_name = Def->getValueAsString("s");
+    auto full_dfnc_name = "(blas.prefix + \"" + dfnc_name + "\" + blas.suffix).str()";
     os
-<< "    if (active_" << actName << ") {\n"
-<< "      Value *args1[] = {" << args << "};\n"
-//  len_nn, data_x, incxx, dif, incxincx
-//  len_nn, dif, data_y, incyy, d_x, true_incxx
-<< "      Builder2.CreateCall(\n"
-<< "        " << dfnc_name << ", args1,\n"
-<< "        gutils->getInvertedBundles(\n"
-<< "          &call,\n"
-<< "          {" << valueTypes << "},\n"
-<< "          Builder2, /* lookup */ true));\n"
-<< "    }\n";
+<< "      if (active_" << actName << ") {\n"
+<< "        Value *args1[] = {" << args << "};\n"
+<< "        Builder2.CreateCall(\n"
+<< "          " << full_dfnc_name << ", args1,\n"
+<< "          gutils->getInvertedBundles(\n"
+<< "            &call,\n"
+<< "            {" << valueTypes << "},\n"
+<< "            Builder2, /* lookup */ true));\n"
+<< "      }\n";
   }
+  os 
+<< "    },\n"
+<< "    ";
 
   first = true;
   for (auto d_arg : d_args) {
@@ -1139,8 +1142,11 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
     first = false;
   }
   os 
-<< "    }\n\n"
-<< "  );\n"
+<< "    );\n"
+<< "  setDiffe(\n"
+<< "    &call,\n"
+<< "    Constant::getNullValue(gutils->getShadowType(call.getType())),\n"
+<< "    Builder2);\n"
 << "  }\n";
 }
 
