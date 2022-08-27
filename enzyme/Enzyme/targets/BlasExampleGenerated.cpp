@@ -167,7 +167,6 @@ bool handle_axpy(BlasInfo blas, llvm::CallInst &call, Function *called,
    }
 
   int numCached = (int) cache_x + (int) cache_y;
-  bool anyCache = (numCached > 0);
   if (cache_alpha)
     cacheTypes.push_back(castvals[0]);
   if (cache_x)
@@ -200,7 +199,17 @@ bool handle_axpy(BlasInfo blas, llvm::CallInst &call, Function *called,
       if (cache_n)
         cacheValues.push_back(len_n);
     }
-    Value *alpha = gutils->getNewFromOriginal(arg_alpha);
+    Value *fp_alpha = gutils->getNewFromOriginal(arg_alpha);
+    if (byRef) {
+      fp_alpha = BuilderZ.CreatePointerCast(fp_alpha, PointerType::getUnqual(fpType));
+#if LLVM_VERSION_MAJOR > 7
+      fp_alpha = BuilderZ.CreateLoad(fpType, fp_alpha);
+#else
+      fp_alpha = BuilderZ.CreateLoad(fp_alpha);
+#endif
+      if (cache_alpha)
+        cacheValues.push_back(fp_alpha);
+    }
     Value *incx = gutils->getNewFromOriginal(arg_incx);
     if (byRef) {
       incx = BuilderZ.CreatePointerCast(incx, PointerType::getUnqual(intType));
@@ -269,7 +278,7 @@ ValueType::None, ValueType::None, ValueType::None, ValueType::None, ValueType::S
   }
   unsigned cacheidx = 0;
   Value *len_n = gutils->getNewFromOriginal(arg_n);
- Value *fp_alpha = gutils->getNewFromOriginal(arg_alpha);
+  Value *fp_alpha = gutils->getNewFromOriginal(arg_alpha);
   Value *true_incx = gutils->getNewFromOriginal(arg_incx);
   Value *incx = true_incx;
   Value *data_x = gutils->getNewFromOriginal(arg_x);
@@ -446,7 +455,7 @@ ValueType::None, ValueType::None, ValueType::None, ValueType::None, ValueType::S
 #endif
       }
       if(active_x) {
-        Value *args1[] = {len_n, data_alpha, d_x, true_incx, data_y, incy};
+        Value *args1[] = {len_n, fp_alpha, d_x, true_incx, data_y, incy};
 
         auto Defs = gutils->getInvertedBundles(
           &call, {ValueType::None, cache_alpha ? ValueType::None : ValueType::Primal, ValueType::Shadow, ValueType::None, cache_y ? ValueType::None : ValueType::Primal, ValueType::None}, Builder2, /* lookup */ false);
@@ -462,7 +471,7 @@ ValueType::None, ValueType::None, ValueType::None, ValueType::None, ValueType::S
           dres = nextCall;
       }
       if(active_y) {
-        Value *args1[] = {len_n, data_alpha, data_x, incx, d_y, true_incy};
+        Value *args1[] = {len_n, fp_alpha, data_x, incx, d_y, true_incy};
 
         auto Defs = gutils->getInvertedBundles(
           &call, {ValueType::None, cache_alpha ? ValueType::None : ValueType::Primal, cache_x ? ValueType::None : ValueType::Primal, ValueType::None, ValueType::Shadow, ValueType::None}, Builder2, /* lookup */ false);
@@ -481,6 +490,97 @@ ValueType::None, ValueType::None, ValueType::None, ValueType::None, ValueType::S
     },
     d_alpha, d_x, d_y);
     setDiffe(&call, dres, Builder2);
+  }
+  /* rev-rewrite */                                 
+  if (Mode == DerivativeMode::ReverseModeCombined ||
+      Mode == DerivativeMode::ReverseModeGradient) {
+    Value *dif = diffe(&call, Builder2);
+    Value *alloc = nullptr;
+    if (byRef) {
+      alloc = allocationBuilder.CreateAlloca(fpType);
+    }
+
+    auto derivcall_dot = gutils->oldFunc->getParent()->getOrInsertFunction(
+      (blas.prefix + "dot" + blas.suffix).str(), Builder2.getVoidTy(),
+type_n, type_x, type_incx, byRef ? PointerType::getUnqual(call.getType()) : call.getType()
+, type_incy);
+#if LLVM_VERSION_MAJOR >= 9
+    if (auto F = dyn_cast<Function>(derivcall_dot.getCallee()))
+#else
+    if (auto F = dyn_cast<Function>(derivcall_dot))
+#endif
+    {
+      F->addFnAttr(Attribute::ArgMemOnly);
+      if (byRef) {
+        F->addParamAttr(0, Attribute::ReadOnly);
+        F->addParamAttr(0, Attribute::NoCapture);
+        F->addParamAttr(2, Attribute::ReadOnly);
+        F->addParamAttr(2, Attribute::NoCapture);
+        F->addParamAttr(4, Attribute::ReadOnly);
+        F->addParamAttr(4, Attribute::NoCapture);
+      }
+    }
+
+    auto derivcall_scal = gutils->oldFunc->getParent()->getOrInsertFunction(
+      (blas.prefix + "scal" + blas.suffix).str(), Builder2.getVoidTy(),
+type_n, type_alpha, byRef ? PointerType::getUnqual(call.getType()) : call.getType()
+, type_incy);
+#if LLVM_VERSION_MAJOR >= 9
+    if (auto F = dyn_cast<Function>(derivcall_scal.getCallee()))
+#else
+    if (auto F = dyn_cast<Function>(derivcall_scal))
+#endif
+    {
+      F->addFnAttr(Attribute::ArgMemOnly);
+      if (byRef) {
+        F->addParamAttr(0, Attribute::ReadOnly);
+        F->addParamAttr(0, Attribute::NoCapture);
+        F->addParamAttr(3, Attribute::ReadOnly);
+        F->addParamAttr(3, Attribute::NoCapture);
+      }
+    }
+
+    // Vector Mode not handled yet
+    Value *d_alpha = active_alpha
+     ? lookup(gutils->invertPointerM(arg_alpha, Builder2), Builder2)
+     : nullptr;
+    Value *d_x = active_x
+     ? lookup(gutils->invertPointerM(arg_x, Builder2), Builder2)
+     : nullptr;
+    Value *d_y = active_y
+     ? lookup(gutils->invertPointerM(arg_y, Builder2), Builder2)
+     : nullptr;
+    applyChainRule(
+      Builder2,
+      [&](Value *d_alpha, Value *d_x, Value *d_y) {
+        if (byRef) {
+          Builder2.CreateStore(dif, alloc);
+          dif = alloc;
+        }
+      if (active_alpha) {
+        Value *args1[] = {len_n, data_x, incx, dif, incy};
+        Builder2.CreateCall(
+          (blas.prefix + "dot" + blas.suffix).str(), args1,
+          gutils->getInvertedBundles(
+            &call,
+            {ValueType::None, ValueType::Shadow, cache_x ? ValueType::None : ValueType::Primal, ValueType::None, cache_y ? ValueType::None : ValueType::Primal, ValueType::None},
+            Builder2, /* lookup */ true));
+      }
+      if (active_x) {
+        Value *args1[] = {len_n, fp_alpha, dif, incy};
+        Builder2.CreateCall(
+          (blas.prefix + "scal" + blas.suffix).str(), args1,
+          gutils->getInvertedBundles(
+            &call,
+            {ValueType::None, cache_alpha ? ValueType::None : ValueType::Primal, ValueType::Shadow, ValueType::None, cache_y ? ValueType::None : ValueType::Primal, ValueType::None},
+            Builder2, /* lookup */ true));
+      }
+    },
+    d_alpha, d_x, d_y    );
+  setDiffe(
+    &call,
+    Constant::getNullValue(gutils->getShadowType(call.getType())),
+    Builder2);
   }
   if (Mode == DerivativeMode::ReverseModeCombined ||
       Mode == DerivativeMode::ReverseModeGradient ||
@@ -587,7 +687,6 @@ bool handle_dot(BlasInfo blas, llvm::CallInst &call, Function *called,
    }
 
   int numCached = (int) cache_x + (int) cache_y;
-  bool anyCache = (numCached > 0);
   if (cache_x)
     cacheTypes.push_back(castvals[0]);
   if (cache_y)
@@ -882,6 +981,75 @@ ValueType::None, ValueType::None, ValueType::None, ValueType::Shadow, ValueType:
     d_x, d_y);
     setDiffe(&call, dres, Builder2);
   }
+  /* rev-rewrite */                                 
+  if (Mode == DerivativeMode::ReverseModeCombined ||
+      Mode == DerivativeMode::ReverseModeGradient) {
+    Value *dif = diffe(&call, Builder2);
+    Value *alloc = nullptr;
+    if (byRef) {
+      alloc = allocationBuilder.CreateAlloca(fpType);
+    }
+
+    auto derivcall_axpy = gutils->oldFunc->getParent()->getOrInsertFunction(
+      (blas.prefix + "axpy" + blas.suffix).str(), Builder2.getVoidTy(),
+type_n, byRef ? PointerType::getUnqual(call.getType()) : call.getType()
+, type_y, type_incy, type_x, type_incx);
+#if LLVM_VERSION_MAJOR >= 9
+    if (auto F = dyn_cast<Function>(derivcall_axpy.getCallee()))
+#else
+    if (auto F = dyn_cast<Function>(derivcall_axpy))
+#endif
+    {
+      F->addFnAttr(Attribute::ArgMemOnly);
+      if (byRef) {
+        F->addParamAttr(0, Attribute::ReadOnly);
+        F->addParamAttr(0, Attribute::NoCapture);
+        F->addParamAttr(3, Attribute::ReadOnly);
+        F->addParamAttr(3, Attribute::NoCapture);
+        F->addParamAttr(5, Attribute::ReadOnly);
+        F->addParamAttr(5, Attribute::NoCapture);
+      }
+    }
+
+    // Vector Mode not handled yet
+    Value *d_x = active_x
+     ? lookup(gutils->invertPointerM(arg_x, Builder2), Builder2)
+     : nullptr;
+    Value *d_y = active_y
+     ? lookup(gutils->invertPointerM(arg_y, Builder2), Builder2)
+     : nullptr;
+    applyChainRule(
+      Builder2,
+      [&](Value *d_x, Value *d_y) {
+        if (byRef) {
+          Builder2.CreateStore(dif, alloc);
+          dif = alloc;
+        }
+      if (active_x) {
+        Value *args1[] = {len_n, dif, data_y, incy, d_x, true_incx};
+        Builder2.CreateCall(
+          (blas.prefix + "axpy" + blas.suffix).str(), args1,
+          gutils->getInvertedBundles(
+            &call,
+            {ValueType::None, ValueType::Shadow, ValueType::None, cache_y ? ValueType::None : ValueType::Primal, ValueType::None},
+            Builder2, /* lookup */ true));
+      }
+      if (active_y) {
+        Value *args1[] = {len_n, dif, data_x, incx, d_y, true_incy};
+        Builder2.CreateCall(
+          (blas.prefix + "axpy" + blas.suffix).str(), args1,
+          gutils->getInvertedBundles(
+            &call,
+            {ValueType::None, cache_x ? ValueType::None : ValueType::Primal, ValueType::None, ValueType::Shadow, ValueType::None},
+            Builder2, /* lookup */ true));
+      }
+    },
+    d_x, d_y    );
+  setDiffe(
+    &call,
+    Constant::getNullValue(gutils->getShadowType(call.getType())),
+    Builder2);
+  }
   if (Mode == DerivativeMode::ReverseModeCombined ||
       Mode == DerivativeMode::ReverseModeGradient ||
       Mode == DerivativeMode::ForwardModeSplit) {
@@ -970,7 +1138,7 @@ bool handle_scal(BlasInfo blas, llvm::CallInst &call, Function *called,
     cache_alpha = true;
   }
   bool cache_x  = Mode != DerivativeMode::ForwardMode &&
-          uncacheable_x && active_alpha;
+          uncacheable_x && active_alpha && active_x;
   bool cache_incx = false;
   bool need_incx = (active_x  || (!cache_x && (active_alpha || active_x)));
   if (byRef && uncacheable_incx && need_incx) {
@@ -979,7 +1147,6 @@ bool handle_scal(BlasInfo blas, llvm::CallInst &call, Function *called,
    }
 
   int numCached = (int) cache_x;
-  bool anyCache = (numCached > 0);
   if (cache_alpha)
     cacheTypes.push_back(castvals[0]);
   if (cache_x)
@@ -1010,7 +1177,17 @@ bool handle_scal(BlasInfo blas, llvm::CallInst &call, Function *called,
       if (cache_n)
         cacheValues.push_back(len_n);
     }
-    Value *alpha = gutils->getNewFromOriginal(arg_alpha);
+    Value *fp_alpha = gutils->getNewFromOriginal(arg_alpha);
+    if (byRef) {
+      fp_alpha = BuilderZ.CreatePointerCast(fp_alpha, PointerType::getUnqual(fpType));
+#if LLVM_VERSION_MAJOR > 7
+      fp_alpha = BuilderZ.CreateLoad(fpType, fp_alpha);
+#else
+      fp_alpha = BuilderZ.CreateLoad(fp_alpha);
+#endif
+      if (cache_alpha)
+        cacheValues.push_back(fp_alpha);
+    }
     Value *incx = gutils->getNewFromOriginal(arg_incx);
     if (byRef) {
       incx = BuilderZ.CreatePointerCast(incx, PointerType::getUnqual(intType));
@@ -1051,7 +1228,7 @@ ValueType::None, ValueType::None, ValueType::Shadow, ValueType::None},
   }
   unsigned cacheidx = 0;
   Value *len_n = gutils->getNewFromOriginal(arg_n);
- Value *fp_alpha = gutils->getNewFromOriginal(arg_alpha);
+  Value *fp_alpha = gutils->getNewFromOriginal(arg_alpha);
   Value *true_incx = gutils->getNewFromOriginal(arg_incx);
   Value *incx = true_incx;
   Value *data_x = gutils->getNewFromOriginal(arg_x);
@@ -1142,7 +1319,7 @@ ValueType::None, ValueType::None, ValueType::Shadow, ValueType::None},
       }
       if (type_x->isIntegerTy())
         data_x = Builder2.CreatePtrToInt(data_x, type_x);
-    }   else if (active_alpha) {
+    }   else if (active_alpha || active_x) {
       data_x = lookup(gutils->getNewFromOriginal(arg_x), Builder2);
     }
   } else {
@@ -1182,7 +1359,7 @@ ValueType::None, ValueType::None, ValueType::Shadow, ValueType::None},
 #endif
       }
       if(active_x) {
-        Value *args1[] = {len_n, data_alpha, d_x, true_incx};
+        Value *args1[] = {len_n, fp_alpha, d_x, true_incx};
 
         auto Defs = gutils->getInvertedBundles(
           &call, {ValueType::None, cache_alpha ? ValueType::None : ValueType::Primal, ValueType::Shadow, ValueType::None}, Builder2, /* lookup */ false);
@@ -1201,6 +1378,96 @@ ValueType::None, ValueType::None, ValueType::Shadow, ValueType::None},
     },
     d_alpha, d_x);
     setDiffe(&call, dres, Builder2);
+  }
+  /* rev-rewrite */                                 
+  if (Mode == DerivativeMode::ReverseModeCombined ||
+      Mode == DerivativeMode::ReverseModeGradient) {
+    Value *dif = diffe(&call, Builder2);
+    Value *alloc = nullptr;
+    if (byRef) {
+      alloc = allocationBuilder.CreateAlloca(fpType);
+    }
+
+    auto derivcall_dot = gutils->oldFunc->getParent()->getOrInsertFunction(
+      (blas.prefix + "dot" + blas.suffix).str(), Builder2.getVoidTy(),
+type_n, type_x, type_incx, byRef ? PointerType::getUnqual(call.getType()) : call.getType()
+, type_incx);
+#if LLVM_VERSION_MAJOR >= 9
+    if (auto F = dyn_cast<Function>(derivcall_dot.getCallee()))
+#else
+    if (auto F = dyn_cast<Function>(derivcall_dot))
+#endif
+    {
+      F->addFnAttr(Attribute::ArgMemOnly);
+      if (byRef) {
+        F->addParamAttr(0, Attribute::ReadOnly);
+        F->addParamAttr(0, Attribute::NoCapture);
+        F->addParamAttr(2, Attribute::ReadOnly);
+        F->addParamAttr(2, Attribute::NoCapture);
+        F->addParamAttr(4, Attribute::ReadOnly);
+        F->addParamAttr(4, Attribute::NoCapture);
+      }
+    }
+
+    auto derivcall_axpy = gutils->oldFunc->getParent()->getOrInsertFunction(
+      (blas.prefix + "axpy" + blas.suffix).str(), Builder2.getVoidTy(),
+type_n, type_alpha, byRef ? PointerType::getUnqual(call.getType()) : call.getType()
+, type_incx, type_x, type_incx);
+#if LLVM_VERSION_MAJOR >= 9
+    if (auto F = dyn_cast<Function>(derivcall_axpy.getCallee()))
+#else
+    if (auto F = dyn_cast<Function>(derivcall_axpy))
+#endif
+    {
+      F->addFnAttr(Attribute::ArgMemOnly);
+      if (byRef) {
+        F->addParamAttr(0, Attribute::ReadOnly);
+        F->addParamAttr(0, Attribute::NoCapture);
+        F->addParamAttr(3, Attribute::ReadOnly);
+        F->addParamAttr(3, Attribute::NoCapture);
+        F->addParamAttr(5, Attribute::ReadOnly);
+        F->addParamAttr(5, Attribute::NoCapture);
+      }
+    }
+
+    // Vector Mode not handled yet
+    Value *d_alpha = active_alpha
+     ? lookup(gutils->invertPointerM(arg_alpha, Builder2), Builder2)
+     : nullptr;
+    Value *d_x = active_x
+     ? lookup(gutils->invertPointerM(arg_x, Builder2), Builder2)
+     : nullptr;
+    applyChainRule(
+      Builder2,
+      [&](Value *d_alpha, Value *d_x) {
+        if (byRef) {
+          Builder2.CreateStore(dif, alloc);
+          dif = alloc;
+        }
+      if (active_alpha) {
+        Value *args1[] = {len_n, data_x, incx, dif, incx};
+        Builder2.CreateCall(
+          (blas.prefix + "dot" + blas.suffix).str(), args1,
+          gutils->getInvertedBundles(
+            &call,
+            {ValueType::None, ValueType::Shadow, cache_x ? ValueType::None : ValueType::Primal, ValueType::None},
+            Builder2, /* lookup */ true));
+      }
+      if (active_x) {
+        Value *args1[] = {len_n, fp_alpha, dif, incx, d_x, true_incx};
+        Builder2.CreateCall(
+          (blas.prefix + "axpy" + blas.suffix).str(), args1,
+          gutils->getInvertedBundles(
+            &call,
+            {ValueType::None, cache_alpha ? ValueType::None : ValueType::Primal, ValueType::Shadow, ValueType::None},
+            Builder2, /* lookup */ true));
+      }
+    },
+    d_alpha, d_x    );
+  setDiffe(
+    &call,
+    Constant::getNullValue(gutils->getShadowType(call.getType())),
+    Builder2);
   }
   if (Mode == DerivativeMode::ReverseModeCombined ||
       Mode == DerivativeMode::ReverseModeGradient ||
