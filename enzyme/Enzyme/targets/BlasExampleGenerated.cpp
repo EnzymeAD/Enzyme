@@ -1,3 +1,5 @@
+// clang-format off
+//
 /*===- TableGen'erated file -------------------------------------*- C++ -*-===*\
 |*                                                                            *|
 |* Rewriters                                                                  *|
