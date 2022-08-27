@@ -2358,17 +2358,15 @@ private:
 public:
   using Result = llvm::PreservedAnalyses;
 
-//  Enzyme(bool PostOpt = false) : pass(PostOpt) {}
-
   Result run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
     auto &FAM =
-        MAM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
+            MAM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
     std::function<TargetLibraryInfo &(Function & F)> getTLI =
-        [&](Function &F) -> TargetLibraryInfo & {
-      auto &TLI = FAM.getResult<TargetLibraryAnalysis>(F);
-      return TLI;
-    };
-    
+            [&](Function &F) -> TargetLibraryInfo & {
+                auto &TLI = FAM.getResult<TargetLibraryAnalysis>(F);
+                return TLI;
+            };
+
     EnzymeBase pass = EnzymeBase(false, MAM, FAM);
     return pass.implementation(M, getTLI) ? PreservedAnalyses::none()
                                      : PreservedAnalyses::all();
@@ -2379,19 +2377,6 @@ public:
   
 AnalysisKey Enzyme::Key;
 
-class EnzymePrinter : public PassInfoMixin<EnzymePrinter> {
-public:
-  explicit EnzymePrinter(raw_fd_ostream &ostream) : OS(ostream) {}
-
-  PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM) {
-    auto res = MAM.getResult<Enzyme>(M);
-    return res;
-  }
-  static bool isRequired() { return true; }
-
-private:
-  llvm::raw_ostream &OS;
-};
 
 } // namespace
 
@@ -2411,14 +2396,10 @@ llvmGetPassPluginInfo() {
             [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
                llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
               if (Name == "enzyme") {
-                MPM.addPass(RequireAnalysisPass<
-                            Enzyme, Module>() /*EnzymePrinter(llvm::errs())*/);
+                MPM.addPass(Enzyme());
                 return true;
               }
               return false;
             });
-        PB.registerAnalysisRegistrationCallback([](ModuleAnalysisManager &MAM) {
-          MAM.registerPass([&] { return Enzyme(); });
-        });
       }};
 }

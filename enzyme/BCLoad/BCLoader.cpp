@@ -155,6 +155,18 @@ llvmGetPassPluginInfo() {
           return false;
         }
       );
+#if LLVM_VERSION_MAJOR >= 15
+        PB.registerOptimizerEarlyEPCallback(
+        [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
+           llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
+          if(Name == "bcloader"){
+            MPM.addPass(BCLoaderNew());
+            return true;
+          }
+          return false;
+        }
+        );
+#endif
     }
   };
 }
