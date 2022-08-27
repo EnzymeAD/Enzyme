@@ -2012,6 +2012,12 @@ public:
             }
           }
         }
+      if (looseTypeAnalysis) {
+        llvm::errs() << "warning: binary operator is integer and constant: "
+                     << BO << "\n";
+        // if loose type analysis, assume this integer and is constant
+        return;
+      }
       goto def;
     }
     case Instruction::Xor: {
@@ -2223,6 +2229,12 @@ public:
             }
           }
         }
+      if (looseTypeAnalysis) {
+        llvm::errs() << "warning: binary operator is integer and constant: "
+                     << BO << "\n";
+        // if loose type analysis, assume this integer or is constant
+        return;
+      }
       goto def;
     }
     case Instruction::Shl:
@@ -2419,6 +2431,13 @@ public:
             }
           }
         }
+      if (looseTypeAnalysis) {
+        forwardModeInvertedPointerFallback(BO);
+        llvm::errs() << "warning: binary operator is integer and constant: "
+                     << BO << "\n";
+        // if loose type analysis, assume this integer and is constant
+        return;
+      }
       goto def;
     }
     case Instruction::Xor: {
@@ -2621,6 +2640,13 @@ public:
             }
           }
         }
+      if (looseTypeAnalysis) {
+        forwardModeInvertedPointerFallback(BO);
+        llvm::errs() << "warning: binary operator is integer and constant: "
+                     << BO << "\n";
+        // if loose type analysis, assume this integer or is constant
+        return;
+      }
       goto def;
     }
     case Instruction::Shl:
@@ -8299,7 +8325,6 @@ public:
           auto ifound = gutils->invertedPointers.find(orig);
           assert(ifound != gutils->invertedPointers.end());
           auto placeholder = cast<PHINode>(&*ifound->second);
-          gutils->invertedPointers.erase(ifound);
 
           if (subretType == DIFFE_TYPE::DUP_ARG) {
             Value *shadow = placeholder;
@@ -8338,6 +8363,7 @@ public:
               if (Mode == DerivativeMode::ReverseModeGradient)
                 needsReplacement = false;
             }
+            gutils->invertedPointers.erase((const Value *)orig);
             gutils->invertedPointers.insert(std::make_pair(
                 (const Value *)orig, InvertedPointerVH(gutils, shadow)));
             if (needsReplacement) {
@@ -8346,6 +8372,7 @@ public:
               gutils->erase(placeholder);
             }
           } else {
+            gutils->invertedPointers.erase((const Value *)orig);
             gutils->erase(placeholder);
           }
         }
@@ -10822,6 +10849,27 @@ public:
 #else
         auto callval = orig->getCalledValue();
 #endif
+        Value *uncast = callval;
+        while (auto CE = dyn_cast<ConstantExpr>(uncast)) {
+          if (CE->isCast()) {
+            uncast = CE->getOperand(0);
+            continue;
+          }
+          break;
+        }
+        if (isa<ConstantInt>(uncast)) {
+          std::string str;
+          raw_string_ostream ss(str);
+          ss << "cannot find shadow for " << *callval;
+          if (CustomErrorHandler) {
+            CustomErrorHandler(ss.str().c_str(), wrap(orig),
+                               ErrorType::NoDerivative, nullptr);
+          }
+
+          llvm::errs() << *gutils->oldFunc << "\n";
+          llvm::errs() << ss.str() << "\n";
+          report_fatal_error("cannot call active int operand");
+        }
         newcalled = gutils->invertPointerM(callval, BuilderZ);
 
         if (Mode != DerivativeMode::ReverseModeGradient)
@@ -10858,7 +10906,6 @@ public:
             differetIdx = 2;
           }
         }
-
       } else {
         if (Mode == DerivativeMode::ReverseModePrimal ||
             Mode == DerivativeMode::ReverseModeCombined) {
@@ -10889,11 +10936,15 @@ public:
         auto found = subdata->returns.find(AugmentedStruct::DifferentialReturn);
         if (found != subdata->returns.end()) {
           differetIdx = found->second;
+        } else {
+          assert(!shadowReturnUsed);
         }
 
         found = subdata->returns.find(AugmentedStruct::Return);
         if (found != subdata->returns.end()) {
           returnIdx = found->second;
+        } else {
+          assert(!subretused);
         }
 
         found = subdata->returns.find(AugmentedStruct::Tape);
