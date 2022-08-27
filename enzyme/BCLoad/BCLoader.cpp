@@ -133,6 +133,7 @@ llvmGetPassPluginInfo() {
   return {
     LLVM_PLUGIN_API_VERSION, "BCLoaderNew", "v0.1",
     [](llvm::PassBuilder &PB) {
+
       PB.registerPipelineParsingCallback(
         [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
            llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
@@ -143,6 +144,18 @@ llvmGetPassPluginInfo() {
           return false;
         }
       );
+#if LLVM_VERSION_MAJOR >= 15
+        PB.registerOptimizerEarlyEPCallback(
+        [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
+           llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
+          if(Name == "bcloader"){
+            MPM.addPass(BCLoaderNew());
+            return true;
+          }
+          return false;
+        }
+        );
+#endif
     }
   };
 }

@@ -20,7 +20,7 @@
 //
 // This file contains the declaration of Activity Analysis -- an AD-specific
 // analysis that deduces if a given instruction or value can impact the
-// calculation of a derivative. This file consists of two mutually recurive
+// calculation of a derivative. This file consists of two mutually recursive
 // functions that compute this for values and instructions, respectively.
 //
 //===----------------------------------------------------------------------===//
