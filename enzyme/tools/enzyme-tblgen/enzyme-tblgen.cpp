@@ -949,7 +949,7 @@ llvm::SmallString<40> call_arg_helper(DagInit *argOps,
         if (name == actArg) {
           result.append((Twine("d_") + name).str());
         } else {
-          result.append((Twine("data_") + name).str());
+          result.append((Twine("fp_") + name).str());
         }
       } else if (typeName == "vincData") {
         auto nextName = argOps->getArgNameStr(pos+1);

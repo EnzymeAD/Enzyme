@@ -101,8 +101,7 @@ void emit_vinc_caching(Record *pattern, std::vector<size_t> actArgs,
     os << ((i > 0) ? " + " : "" ) << "(int) " << cacheVars[i];
   }
   os 
-<< ";\n"
-<< "  bool anyCache = (numCached > 0);\n";
+<< ";\n";
 }
 
 void emit_scalar_caching(Record *pattern, std::vector<size_t> actArgs,
@@ -176,10 +175,20 @@ void emit_cache_for_reverse(Record *pattern, std::vector<size_t> actArgs,
 << "        cacheValues.push_back(" << incName << ");\n"
 << "    }\n";
     } else if (typeName == "fp") {
-      // TODO: finish fp
-      auto fpName = argOps->getArgNameStr(argPosition);
+      auto name = argOps->getArgNameStr(argPosition);
+      auto fpName = "fp_" + name;
       os 
-<< "    Value *" << fpName << " = gutils->getNewFromOriginal(arg_" << fpName <<");\n";
+<< "    Value *" << fpName << " = gutils->getNewFromOriginal(arg_" << name <<");\n"
+<< "    if (byRef) {\n"
+<< "      " << fpName << " = BuilderZ.CreatePointerCast(" << fpName <<", PointerType::getUnqual(fpType));\n"
+<< "#if LLVM_VERSION_MAJOR > 7\n"
+<< "      " << fpName << " = BuilderZ.CreateLoad(fpType, " << fpName << ");\n"
+<< "#else\n"
+<< "      " << fpName << " = BuilderZ.CreateLoad(" << fpName << ");\n"
+<< "#endif\n"
+<< "      if (cache_" << name << ")\n"
+<< "        cacheValues.push_back(" << fpName << ");\n"
+<< "    }\n";
     }
     argPosition += inputType->getValueAsInt("nelem");
   }
