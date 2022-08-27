@@ -1356,11 +1356,38 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           prevIdx = prevAvailable[ctx.var];
         else {
           if (!isOriginalBlock(*BuilderM.GetInsertBlock())) {
+            // If we are using the phi in the reverse pass of a block inside the
+            // loop itself the previous index variable (aka the previous inc) is
+            // equivalent to the current load of antivaralloc
+            if (LI.getLoopFor(ctx.header)->contains(fwd)) {
 #if LLVM_VERSION_MAJOR > 7
-            prevIdx = BuilderM.CreateLoad(ctx.var->getType(), ctx.antivaralloc);
+              prevIdx =
+                  BuilderM.CreateLoad(ctx.var->getType(), ctx.antivaralloc);
 #else
-            prevIdx = BuilderM.CreateLoad(ctx.antivaralloc);
+              prevIdx = BuilderM.CreateLoad(ctx.antivaralloc);
 #endif
+            } else {
+              // However, if we are using the phi of the reverse pass of a block
+              // outside the loop we must be in the reverse pass of a block
+              // after the loop. In which case, the previous index variable (aka
+              // previous inc) is the total loop iteration count-1, aka the
+              // trueLimit.
+              Value *lim = nullptr;
+              if (ctx.dynamic) {
+                // Must be in a reverse pass fashion for a lookup to index bound
+                // to be legal
+                assert(/*ReverseLimit*/ reverseBlocks.size() > 0);
+                LimitContext lctx(/*ReverseLimit*/ reverseBlocks.size() > 0,
+                                  ctx.preheader);
+                lim = lookupValueFromCache(
+                    /*forwardPass*/ false, BuilderM, lctx,
+                    getDynamicLoopLimit(LI.getLoopFor(ctx.header)),
+                    /*isi1*/ false, /*available*/ prevAvailable);
+              } else {
+                lim = lookupM(ctx.trueLimit, BuilderM, prevAvailable);
+              }
+              prevIdx = lim;
+            }
           } else {
             prevIdx = ctx.var;
           }
@@ -1402,7 +1429,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           if (auto inst =
                   dyn_cast<Instruction>(phi->getIncomingValueForBlock(PB))) {
             // Recompute the phi computation with the conditional if:
-            // 1) the instruction may reat from memory AND does not dominate
+            // 1) the instruction may read from memory AND does not dominate
             //    the current insertion point (thereby potentially making such
             //    recomputation without the condition illegal)
             // 2) the value is a call or load and option is set to not
@@ -2180,17 +2207,9 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
                 8,
             false);
 
-        auto firstallocation = cast<Instruction>(CallInst::CreateMalloc(
-            inversionAllocs, numThreads->getType(), malloc->getType(),
-            byteSizeOfType, numThreads, nullptr,
-            malloc->getName() + "_malloccache"));
-        if (firstallocation->getParent() == nullptr) {
-          inversionAllocs->getInstList().push_back(firstallocation);
-        }
-
-        if (auto inst = dyn_cast<Instruction>(malloc)) {
-          entryBuilder.SetInsertPoint(inst->getNextNode());
-        }
+        auto firstallocation =
+            CreateAllocation(entryBuilder, malloc->getType(), numThreads,
+                             malloc->getName() + "_malloccache");
 #if LLVM_VERSION_MAJOR > 7
         Value *tPtr = entryBuilder.CreateInBoundsGEP(
             firstallocation->getType()->getPointerElementType(),
@@ -2199,6 +2218,9 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
         Value *tPtr = entryBuilder.CreateInBoundsGEP(firstallocation,
                                                      ArrayRef<Value *>(tid));
 #endif
+        if (auto inst = dyn_cast<Instruction>(malloc)) {
+          entryBuilder.SetInsertPoint(inst->getNextNode());
+        }
         entryBuilder.CreateStore(malloc, tPtr);
         toStoreInTape = firstallocation;
       }
@@ -6791,7 +6813,8 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
     // pass with the copy
     if ((allowForward && (mode == DerivativeMode::ReverseModePrimal ||
                           mode == DerivativeMode::ReverseModeCombined)) ||
-        (backwardsShadow && mode == DerivativeMode::ReverseModeGradient)) {
+        (backwardsShadow && (mode == DerivativeMode::ReverseModeGradient ||
+                             mode == DerivativeMode::ForwardModeSplit))) {
       assert(!shadowsLookedUp);
 
       // It is questionable how the following case would even occur, but if

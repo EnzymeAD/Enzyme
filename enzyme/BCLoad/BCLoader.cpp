@@ -6,8 +6,9 @@
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 
-#include "llvm/Passes/PassPlugin.h"
+
 #include "llvm/Passes/PassBuilder.h"
+#include "llvm/Passes/PassPlugin.h"
 
 #include "BCLoader.h"
 
@@ -111,7 +112,7 @@ class BCLoader : public ModulePass {
 public:
   static char ID;
   BCLoader() : ModulePass(ID) {}
-  
+
   bool runOnModule(Module &M) override { return provideDefinitions(M); }
 };
 } // namespace

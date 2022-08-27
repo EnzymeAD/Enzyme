@@ -37,11 +37,142 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 
+#include "llvm-c/Core.h"
+
 using namespace llvm;
 
 extern "C" {
 void (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
                            void *) = nullptr;
+LLVMValueRef (*CustomAllocator)(LLVMBuilderRef, LLVMTypeRef,
+                                /*Count*/ LLVMValueRef,
+                                /*Align*/ LLVMValueRef) = nullptr;
+LLVMValueRef (*CustomDeallocator)(LLVMBuilderRef, LLVMValueRef) = nullptr;
+void (*CustomRuntimeInactiveError)(LLVMBuilderRef, LLVMValueRef,
+                                   LLVMValueRef) = nullptr;
+}
+
+Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
+                        Twine Name, CallInst **caller, Instruction **ZeroMem) {
+  Value *res;
+  auto &M = *Builder.GetInsertBlock()->getParent()->getParent();
+  auto AlignI = M.getDataLayout().getTypeAllocSizeInBits(T) / 8;
+  auto Align = ConstantInt::get(Count->getType(), AlignI);
+  CallInst *malloccall = nullptr;
+  if (CustomAllocator) {
+    res = unwrap(
+        CustomAllocator(wrap(&Builder), wrap(T), wrap(Count), wrap(Align)));
+    if (auto I = dyn_cast<Instruction>(res))
+      I->setName(Name);
+
+    malloccall = dyn_cast<CallInst>(res);
+    if (malloccall == nullptr) {
+      malloccall = cast<CallInst>(cast<Instruction>(res)->getOperand(0));
+    }
+  } else {
+    if (Builder.GetInsertPoint() == Builder.GetInsertBlock()->end()) {
+      res = CallInst::CreateMalloc(Builder.GetInsertBlock(), Count->getType(),
+                                   T, Align, Count, nullptr, Name);
+      Builder.SetInsertPoint(Builder.GetInsertBlock());
+    } else {
+      res = CallInst::CreateMalloc(&*Builder.GetInsertPoint(), Count->getType(),
+                                   T, Align, Count, nullptr, Name);
+    }
+    if (!cast<Instruction>(res)->getParent())
+      Builder.Insert(cast<Instruction>(res));
+
+    malloccall = dyn_cast<CallInst>(res);
+    if (malloccall == nullptr) {
+      malloccall = cast<CallInst>(cast<Instruction>(res)->getOperand(0));
+    }
+
+    // Assert computation of size of array doesn't wrap
+    if (auto BI = dyn_cast<BinaryOperator>(malloccall->getArgOperand(0))) {
+      if ((BI->getOperand(0) == Align && BI->getOperand(1) == Count) ||
+          (BI->getOperand(1) == Align && BI->getOperand(0) == Count))
+        BI->setHasNoSignedWrap(true);
+      BI->setHasNoUnsignedWrap(true);
+    }
+
+    if (auto ci = dyn_cast<ConstantInt>(Count)) {
+#if LLVM_VERSION_MAJOR >= 14
+      malloccall->addDereferenceableRetAttr(ci->getLimitedValue() * AlignI);
+#if !defined(FLANG) && !defined(ROCM)
+      AttrBuilder B(ci->getContext());
+#else
+      AttrBuilder B;
+#endif
+      B.addDereferenceableOrNullAttr(ci->getLimitedValue() * AlignI);
+      malloccall->setAttributes(malloccall->getAttributes().addRetAttributes(
+          malloccall->getContext(), B));
+#else
+      malloccall->addDereferenceableAttr(llvm::AttributeList::ReturnIndex,
+                                         ci->getLimitedValue() * AlignI);
+      malloccall->addDereferenceableOrNullAttr(llvm::AttributeList::ReturnIndex,
+                                               ci->getLimitedValue() * AlignI);
+#endif
+      // malloccall->removeAttribute(llvm::AttributeList::ReturnIndex,
+      // Attribute::DereferenceableOrNull);
+    }
+#if LLVM_VERSION_MAJOR >= 14
+    malloccall->addAttributeAtIndex(AttributeList::ReturnIndex,
+                                    Attribute::NoAlias);
+    malloccall->addAttributeAtIndex(AttributeList::ReturnIndex,
+                                    Attribute::NonNull);
+#else
+    malloccall->addAttribute(AttributeList::ReturnIndex, Attribute::NoAlias);
+    malloccall->addAttribute(AttributeList::ReturnIndex, Attribute::NonNull);
+#endif
+  }
+  if (caller) {
+    *caller = malloccall;
+  }
+  if (ZeroMem) {
+    auto PT = cast<PointerType>(malloccall->getType());
+    Value *tozero = malloccall;
+    if (!PT->getElementType()->isIntegerTy(8))
+      tozero = Builder.CreatePointerCast(
+          tozero, PointerType::get(Type::getInt8Ty(PT->getContext()),
+                                   PT->getAddressSpace()));
+    Value *args[] = {
+        tozero, ConstantInt::get(Type::getInt8Ty(malloccall->getContext()), 0),
+        Builder.CreateMul(Align, Count, "", true, true),
+        ConstantInt::getFalse(malloccall->getContext())};
+    Type *tys[] = {args[0]->getType(), args[2]->getType()};
+
+    *ZeroMem = Builder.CreateCall(
+        Intrinsic::getDeclaration(&M, Intrinsic::memset, tys), args);
+  }
+  return res;
+}
+
+CallInst *CreateDealloc(llvm::IRBuilder<> &Builder, llvm::Value *ToFree) {
+  CallInst *res = nullptr;
+
+  if (CustomDeallocator) {
+    res = dyn_cast_or_null<CallInst>(
+        unwrap(CustomDeallocator(wrap(&Builder), wrap(ToFree))));
+  } else {
+
+    ToFree = Builder.CreatePointerCast(
+        ToFree, Type::getInt8PtrTy(ToFree->getContext()));
+    if (Builder.GetInsertPoint() == Builder.GetInsertBlock()->end()) {
+      res = cast<CallInst>(
+          CallInst::CreateFree(ToFree, Builder.GetInsertBlock()));
+      Builder.SetInsertPoint(Builder.GetInsertBlock());
+    } else {
+      res = cast<CallInst>(
+          CallInst::CreateFree(ToFree, &*Builder.GetInsertPoint()));
+    }
+    if (!cast<Instruction>(res)->getParent())
+      Builder.Insert(cast<Instruction>(res));
+#if LLVM_VERSION_MAJOR >= 14
+    res->addAttributeAtIndex(AttributeList::FirstArgIndex, Attribute::NonNull);
+#else
+    res->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
+#endif
+  }
+  return res;
 }
 
 EnzymeFailure::EnzymeFailure(llvm::StringRef RemarkName,
@@ -90,9 +221,15 @@ Constant *getString(Module &M, StringRef Str) {
 }
 
 void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
-                            llvm::Value *shadow, const char *Message) {
+                            llvm::Value *shadow, const char *Message,
+                            llvm::DebugLoc &&loc, llvm::Instruction *orig) {
   Module &M = *B.GetInsertBlock()->getParent()->getParent();
   std::string name = "__enzyme_runtimeinactiveerr";
+  if (CustomRuntimeInactiveError) {
+    static int count = 0;
+    name += std::to_string(count);
+    count++;
+  }
   FunctionType *FT = FunctionType::get(Type::getVoidTy(M.getContext()),
                                        {Type::getInt8PtrTy(M.getContext()),
                                         Type::getInt8PtrTy(M.getContext()),
@@ -126,27 +263,33 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
     EB.CreateCondBr(EB.CreateICmpEQ(prim, shadow), error, end);
 
     EB.SetInsertPoint(error);
-    FunctionType *FT =
-        FunctionType::get(Type::getInt32Ty(M.getContext()),
-                          {Type::getInt8PtrTy(M.getContext())}, false);
+
+    if (CustomRuntimeInactiveError) {
+      CustomRuntimeInactiveError(wrap(&EB), wrap(msg), wrap(orig));
+    } else {
+      FunctionType *FT =
+          FunctionType::get(Type::getInt32Ty(M.getContext()),
+                            {Type::getInt8PtrTy(M.getContext())}, false);
 
 #if LLVM_VERSION_MAJOR >= 9
-    auto PutsF = M.getOrInsertFunction("puts", FT);
+      auto PutsF = M.getOrInsertFunction("puts", FT);
 #else
-    auto PutsF = M.getOrInsertFunction("puts", FT);
+      auto PutsF = M.getOrInsertFunction("puts", FT);
 #endif
-    EB.CreateCall(PutsF, msg);
+      EB.CreateCall(PutsF, msg);
 
-    FunctionType *FT2 =
-        FunctionType::get(Type::getVoidTy(M.getContext()),
-                          {Type::getInt32Ty(M.getContext())}, false);
+      FunctionType *FT2 =
+          FunctionType::get(Type::getVoidTy(M.getContext()),
+                            {Type::getInt32Ty(M.getContext())}, false);
 
 #if LLVM_VERSION_MAJOR >= 9
-    auto ExitF = M.getOrInsertFunction("exit", FT2);
+      auto ExitF = M.getOrInsertFunction("exit", FT2);
 #else
-    auto ExitF = M.getOrInsertFunction("exit", FT2);
+      auto ExitF = M.getOrInsertFunction("exit", FT2);
 #endif
-    EB.CreateCall(ExitF, ConstantInt::get(Type::getInt32Ty(M.getContext()), 1));
+      EB.CreateCall(ExitF,
+                    ConstantInt::get(Type::getInt32Ty(M.getContext()), 1));
+    }
     EB.CreateUnreachable();
 
     EB.SetInsertPoint(end);
@@ -157,7 +300,8 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
       B.CreatePointerCast(primal, Type::getInt8PtrTy(M.getContext())),
       B.CreatePointerCast(shadow, Type::getInt8PtrTy(M.getContext())),
       getString(M, Message)};
-  B.CreateCall(F, args);
+  auto call = B.CreateCall(F, args);
+  call->setDebugLoc(loc);
 }
 
 /// Create function for type that is equivalent to memcpy but adds to
@@ -522,15 +666,7 @@ llvm::Function *getOrInsertDifferentialWaitallSave(llvm::Module &M,
   IRBuilder<> B(entry);
   count = B.CreateZExtOrTrunc(count, Type::getInt64Ty(entry->getContext()));
 
-  Instruction *ret = CallInst::CreateMalloc(
-      entry, count->getType(), reqType,
-      ConstantInt::get(count->getType(),
-                       M.getDataLayout().getTypeAllocSizeInBits(reqType) / 8),
-      count, nullptr, "");
-
-  B.SetInsertPoint(entry);
-  if (!ret->getParent())
-    B.Insert(ret);
+  auto ret = CreateAllocation(B, reqType, count);
 
   BasicBlock *loopBlock = BasicBlock::Create(M.getContext(), "loop", F);
   BasicBlock *endBlock = BasicBlock::Create(M.getContext(), "end", F);
@@ -1315,7 +1451,8 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::Instruction *maybeReader,
     if (called && isMemFreeLibMFunction(called->getName())) {
       return false;
     }
-    if (called && called->getName() == "jl_array_copy")
+    if (called && (called->getName() == "jl_array_copy" ||
+                   called->getName() == "ijl_array_copy"))
       return false;
 
     // Isend only writes to inaccessible mem only
@@ -1472,7 +1609,8 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::Instruction *maybeReader,
     if (called && isMemFreeLibMFunction(called->getName())) {
       return false;
     }
-    if (called && called->getName() == "jl_array_copy")
+    if (called && (called->getName() == "jl_array_copy" ||
+                   called->getName() == "ijl_array_copy"))
       return false;
 
 #if LLVM_VERSION_MAJOR >= 11

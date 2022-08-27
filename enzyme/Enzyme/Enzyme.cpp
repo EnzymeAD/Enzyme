@@ -348,6 +348,67 @@ handleInactiveFunction(llvm::Module &M, llvm::GlobalVariable &g,
   globalsToErase.push_back(&g);
 }
 
+static void
+handleFunctionLike(llvm::Module &M, llvm::GlobalVariable &g,
+                   SmallVectorImpl<GlobalVariable *> &globalsToErase) {
+  if (g.hasInitializer()) {
+    if (auto CA = dyn_cast<ConstantAggregate>(g.getInitializer())) {
+      if (CA->getNumOperands() < 2) {
+        llvm::errs() << M << "\n";
+        llvm::errs() << "Use of "
+                     << "enzyme_function_like"
+                     << " must be a "
+                        "constant of size at least "
+                     << 2 << " " << g << "\n";
+        llvm_unreachable("enzyme_function_like");
+      }
+      Value *V = CA->getOperand(0);
+      Value *name = CA->getOperand(1);
+      while (auto CE = dyn_cast<ConstantExpr>(V)) {
+        V = CE->getOperand(0);
+      }
+      while (auto CE = dyn_cast<ConstantExpr>(name)) {
+        name = CE->getOperand(0);
+      }
+      StringRef nameVal;
+      if (auto GV = dyn_cast<GlobalVariable>(name))
+        if (GV->isConstant())
+          if (auto C = GV->getInitializer())
+            if (auto CA = dyn_cast<ConstantDataArray>(C))
+              if (CA->getType()->getElementType()->isIntegerTy(8) &&
+                  CA->isCString())
+                nameVal = CA->getAsCString();
+
+      if (nameVal == "") {
+        llvm::errs() << *name << "\n";
+        llvm::errs() << "Use of "
+                     << "enzyme_function_like"
+                     << "requires a non-empty function name"
+                     << "\n";
+        llvm_unreachable("enzyme_function_like");
+      }
+      if (auto F = dyn_cast<Function>(V)) {
+        F->addAttribute(AttributeList::FunctionIndex,
+                        Attribute::get(g.getContext(), "enzyme_math", nameVal));
+      } else {
+        llvm::errs() << M << "\n";
+        llvm::errs() << "Param of __enzyme_inactivefn must be a "
+                        "function"
+                     << g << "\n"
+                     << *V << "\n";
+        llvm_unreachable("__enzyme_inactivefn");
+      }
+    } else {
+      llvm::errs() << M << "\n";
+      llvm::errs() << "Use of __enzyme_inactivefn must be a "
+                      "constant function "
+                   << g << "\n";
+      llvm_unreachable("__enzyme_register_gradient");
+    }
+    globalsToErase.push_back(&g);
+  }
+}
+
 static void handleKnownFunctions(llvm::Function &F) {
   if (F.getName() == "MPI_Irecv" || F.getName() == "PMPI_Irecv") {
     F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
@@ -498,6 +559,38 @@ castToDiffeFunctionArgType(IRBuilder<> &Builder, llvm::CallInst *CI,
   return Builder.CreateBitCast(value, destType);
 }
 
+static Optional<StringRef> getMetadataName(llvm::Value *res);
+
+// if all phi arms are (recursively) based on the same metaString, use that
+static Optional<StringRef> recursePhiReads(PHINode *val) {
+  Optional<StringRef> finalMetadata;
+  SmallVector<PHINode *, 1> todo = {val};
+  SmallSet<PHINode *, 1> done;
+  while (todo.size()) {
+    auto phiInst = todo.back();
+    todo.pop_back();
+    if (done.count(phiInst))
+      continue;
+    done.insert(phiInst);
+    for (unsigned j = 0; j < phiInst->getNumIncomingValues(); ++j) {
+      auto newVal = phiInst->getIncomingValue(j);
+      if (auto phi = dyn_cast<PHINode>(newVal)) {
+        todo.push_back(phi);
+      } else {
+        Optional<StringRef> metaString = getMetadataName(newVal);
+        if (metaString) {
+          if (!finalMetadata) {
+            finalMetadata = metaString;
+          } else if (finalMetadata != metaString) {
+            return None;
+          }
+        }
+      }
+    }
+  }
+  return finalMetadata;
+}
+
 static Optional<StringRef> getMetadataName(llvm::Value *res) {
   if (auto av = dyn_cast<MetadataAsValue>(res)) {
     return cast<MDString>(av->getMetadata())->getString();
@@ -528,6 +621,9 @@ static Optional<StringRef> getMetadataName(llvm::Value *res) {
   } else if (auto gv = dyn_cast<AllocaInst>(res)) {
     return gv->getName();
   } else {
+    if (isa<PHINode>(res)) {
+      return recursePhiReads(cast<PHINode>(res));
+    }
     return Optional<StringRef>();
   }
 }
@@ -2302,6 +2398,8 @@ public:
             M, g, globalsToErase);
       } else if (g.getName().contains("__enzyme_inactivefn")) {
         handleInactiveFunction(M, g, globalsToErase);
+      } else if (g.getName().contains("__enzyme_function_like")) {
+        handleFunctionLike(M, g, globalsToErase);
       }
     }
     for (auto g : globalsToErase) {
