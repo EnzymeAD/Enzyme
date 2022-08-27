@@ -6,9 +6,8 @@
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 
-
-#include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
+#include "llvm/Passes/PassBuilder.h"
 
 #include "BCLoader.h"
 
@@ -134,15 +133,6 @@ llvmGetPassPluginInfo() {
   return {
     LLVM_PLUGIN_API_VERSION, "BCLoaderNew", "v0.1",
     [](llvm::PassBuilder &PB) {
-
-/*
-        PB.registerOptimizerEarlyEPCallback(
-                [](ModulePassManager &MPM, OptimizationLevel  ){
-                    MPM.addPass(BCLoaderNew());
-                }
-                );
-*/
-
       PB.registerPipelineParsingCallback(
         [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
            llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
@@ -153,6 +143,18 @@ llvmGetPassPluginInfo() {
           return false;
         }
       );
+#if LLVM_VERSION_MAJOR >= 15
+        PB.registerOptimizerEarlyEPCallback(
+        [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
+           llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
+          if(Name == "bcloader"){
+            MPM.addPass(BCLoaderNew());
+            return true;
+          }
+          return false;
+        }
+        );
+#endif
     }
   };
 }

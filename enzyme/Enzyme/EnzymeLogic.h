@@ -242,7 +242,7 @@ public:
   ///  optimization of the function after synthesis
   bool PostOpt;
 
-  EnzymeLogic(bool PostOpt) : PostOpt(PostOpt) {}
+  EnzymeLogic(bool PostOpt, llvm::ModuleAnalysisManager &MAM, llvm::FunctionAnalysisManager &FAM) : PPC(MAM,FAM), PostOpt(PostOpt) {}
 
   struct AugmentedCacheKey {
     llvm::Function *fn;

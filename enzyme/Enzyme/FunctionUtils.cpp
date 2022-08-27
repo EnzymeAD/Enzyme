@@ -1056,7 +1056,7 @@ void RemoveRedundantPHI(Function *F, FunctionAnalysisManager &FAM) {
   }
 }
 
-PreProcessCache::PreProcessCache() {
+PreProcessCache::PreProcessCache(ModuleAnalysisManager &MAM, FunctionAnalysisManager &FAM) : MAM(MAM), FAM(FAM) {
   MAM.registerPass([&] { return FunctionAnalysisManagerModuleProxy(FAM); });
   FAM.registerPass([&] { return ModuleAnalysisManagerFunctionProxy(MAM); });
   FAM.registerPass([] { return AssumptionAnalysis(); });
