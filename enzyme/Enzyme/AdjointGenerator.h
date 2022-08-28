@@ -4588,6 +4588,8 @@ public:
     }
   }
 
+#include "BlasDerivatives.inc"
+
   void visitOMPCall(llvm::CallInst &call) {
     Function *kmpc = call.getCalledFunction();
 
@@ -5348,8 +5350,6 @@ public:
       start = nextStart;
     }
   }
-
-#include "InstructionDerivatives.inc"
 
   void handleMPI(llvm::CallInst &call, Function *called, StringRef funcName) {
     assert(called);
@@ -8172,6 +8172,8 @@ public:
         }
         }
       }
+
+#include "InstructionDerivatives.inc"
 
       if (funcName == "asin" || funcName == "asinf" || funcName == "asinl") {
         if (gutils->knownRecomputeHeuristic.find(orig) !=

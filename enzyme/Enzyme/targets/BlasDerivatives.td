@@ -66,7 +66,7 @@ def axpy : CallBlasPattern<(Op $n, $alpha, $x, $incx, $y, $incy),
                   [
                   (b<"dot"> $n, $x, $incx, DiffeRet<"">, $incy), 
                   (b<"scal"> $n, $alpha, DiffeRet<"">, $incy),
-                  (DiffeRet<"">)
+                  (b<"scal"> $n, $alpha, DiffeRet<"">, $incy) // TODO: fix
                   ]
                   >;
 
