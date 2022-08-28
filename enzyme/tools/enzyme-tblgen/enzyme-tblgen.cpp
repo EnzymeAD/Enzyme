@@ -30,10 +30,12 @@
 
 using namespace llvm;
 
-enum ActionType { GenDerivatives };
+enum ActionType { GenDerivatives, GenBlasDerivatives };
 
 static cl::opt<ActionType>
     action(cl::desc("Action to perform:"),
+           cl::values(clEnumValN(GenBlasDerivatives, "gen-blas-derivatives",
+                                 "Generate BLAS derivatives")),
            cl::values(clEnumValN(GenDerivatives, "gen-derivatives",
                                  "Generate instruction derivative")));
 
@@ -304,8 +306,10 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
   PrintFatalError(pattern->getLoc(), Twine("unknown dag"));
 }
 
-void emitFullDerivatives(const std::vector<Record *> &patterns,
+void emitFullDerivatives(const RecordKeeper &RK,
                          raw_ostream &os) {
+  emitSourceFileHeader("Rewriters", os);
+  const auto &patterns = RK.getAllDerivedDefinitions("CallPattern");
   // Ensure unique patterns simply by appending unique suffix.
   unsigned rewritePatternCount = 0;
   std::string baseRewriteName = "GeneratedConvert";
@@ -332,7 +336,7 @@ void emitFullDerivatives(const std::vector<Record *> &patterns,
     os << "  if (";
 
     bool prev = false;
-    for (auto *nameI : *cast<ListInit>(pattern->getValueAsListInit("name"))) {
+    for (auto *nameI : *cast<ListInit>(pattern->getValueAsListInit("names"))) {
       if (prev)
         os << " ||\n      ";
       os << "funcName == " << cast<StringInit>(nameI)->getAsString() << "";
@@ -608,7 +612,6 @@ std::vector<size_t> getPossiblyActiveArgs(Record *pattern) {
   auto name = pattern->getName();
   DagInit *tree = pattern->getValueAsDag("PatternToMatch");
   int lenDagArgs = tree->getNumArgs();
-  //llvm::errs() << activeArgs.size() << name;
   assert(numTypes == lenDagArgs);
   return activeArgs;
 }
@@ -902,7 +905,6 @@ llvm::SmallString<80> ValueType_helper(DagInit *argOps,
     } else if (typeName == "vincData") {
       auto nextName = argOps->getArgNameStr(pos + 1);
       auto nextTypeName = typeOfArgName.lookup(nextName);
-      //llvm::errs() << "vicData: " << nextName << " " << nextTypeName << "\n";
       assert(nextTypeName == "vincInc");
       auto vecName = argOps->getArgNameStr(pos);
       if (pos == actPos) {
@@ -1036,7 +1038,7 @@ void emit_deriv_fnc(DagInit *resultTree, llvm::DenseMap<StringRef, StringRef> ty
 << "      }\n"
 << "    }\n\n";
  } else {
-   llvm::errs() << "BBBB\n";
+   PrintFatalError("Unhandled deriv Rule!");
  }
 }
 
@@ -1063,9 +1065,7 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
   llvm::errs() << "Number of grad defs: " << derivOps->size() << "\n";
   for (auto derivOp : *derivOps) {
     DagInit *resultTree = cast<DagInit>(derivOp); // correct
-    llvm::errs() << "for loop1\n";
     emit_deriv_fnc(resultTree, typeOfArgName, handled, os);
-    llvm::errs() << "for loop2\n";
   }
   os
 << "    // Vector Mode not handled yet\n";
@@ -1120,12 +1120,12 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
     if (!Def->isSubClassOf("b"))
       continue;// check
     auto dfnc_name = Def->getValueAsString("s");
-    auto full_dfnc_name = "(blas.prefix + \"" + dfnc_name + "\" + blas.suffix).str()";
+    //auto full_dfnc_name = "(blas.prefix + \"" + dfnc_name + "\" + blas.suffix).str()";
     os
 << "      if (active_" << actName << ") {\n"
 << "        Value *args1[] = {" << args << "};\n"
 << "        Builder2.CreateCall(\n"
-<< "          " << full_dfnc_name << ", args1,\n"
+<< "          derivcall_" << dfnc_name << ", args1,\n"
 << "          gutils->getInvertedBundles(\n"
 << "            &call,\n"
 << "            {" << valueTypes << "},\n"
@@ -1361,50 +1361,6 @@ llvm::DenseMap<StringRef, StringRef> getArgTypes(const Record *pattern) {
   return res;
 }
 
-/*
- * We create the following variables:
- *
- * vec: 
- * data_<vecName>
- * data_ptr_<vecName>
- * inc_<vecName>
- * true_<incName>
- * need_<incName>
- *
- * arg_<Name>
- * type_<Name>
- * active_<Name>
- * uncacheable_<Name>
- * d_<Name>
- *
- */
-void emitBlasDerivatives(const std::vector<Record *> &blasPatterns,
-                         const std::vector<Record *> &blas_modes,
-                         raw_ostream &os) {
-  emit_handleBLAS(blasPatterns, os);
-  // emitEnumMatcher(blas_modes, os);
-  for (auto pattern : blasPatterns) {
-    std::vector<size_t> posActArgs = getPossiblyActiveArgs(pattern);
-
-    // For each input arg, we store a set including all users (by index).
-    llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers = getUsedInputs(pattern, posActArgs);
-    llvm::DenseMap<StringRef, StringRef> typeOfArgName = getArgTypes(pattern);
-
-    emit_beginning(pattern, os);
-    emit_helper(pattern, posActArgs, os);
-    emit_castvals(pattern, posActArgs, os);
-    emit_scalar_types(pattern, os);
-
-    emit_caching(pattern, posActArgs, argUsers, os);
-    emit_extract_calls(pattern, posActArgs, argUsers, os);
-
-    emit_fwd_rewrite_rules(pattern, typeOfArgName, posActArgs, argUsers, os);
-    emit_rev_rewrite_rules(pattern, typeOfArgName, posActArgs, argUsers, os);
-
-    // writeEnums(pattern, blas_modes, os);
-    emit_free_and_ending(pattern, posActArgs, os);
-  }
-}
 
 static void checkBlasCallsInDag(const RecordKeeper &RK,
                                 const std::vector<Record *> blasPatterns,
@@ -1450,7 +1406,24 @@ static void checkBlasCalls(const RecordKeeper &RK,
   }
 }
 
-static void emitDerivatives(RecordKeeper &RK, raw_ostream &os) {
+/*
+ * We create the following variables:
+ *
+ * vec: 
+ * data_<vecName>
+ * data_ptr_<vecName>
+ * inc_<vecName>
+ * true_<incName>
+ * need_<incName>
+ *
+ * arg_<Name>
+ * type_<Name>
+ * active_<Name>
+ * uncacheable_<Name>
+ * d_<Name>
+ *
+ */
+void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
   emitSourceFileHeader("Rewriters", os);
   const auto &patterns = RK.getAllDerivedDefinitions("CallPattern");
   const auto &blasPatterns = RK.getAllDerivedDefinitions("CallBlasPattern");
@@ -1464,19 +1437,51 @@ static void emitDerivatives(RecordKeeper &RK, raw_ostream &os) {
   // TODO: assert mutable args are input names.
   // TODO: assert args in deriv defs exist
   checkBlasCalls(RK, blasPatterns);
+  emit_handleBLAS(blasPatterns, os);
+  // emitEnumMatcher(blas_modes, os);
+  for (auto pattern : blasPatterns) {
+    std::vector<size_t> posActArgs = getPossiblyActiveArgs(pattern);
 
-  // We have full access to the source code to differentiate it
-  // emitFullDerivatives(patterns, os);
+    // For each input arg, we store a set including all users (by index).
+    llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers = getUsedInputs(pattern, posActArgs);
+    llvm::DenseMap<StringRef, StringRef> typeOfArgName = getArgTypes(pattern);
 
-  // Improve UX / comp-time by handling Blas calls extra.
-  emitBlasDerivatives(blasPatterns, blas_modes, os);
+    emit_beginning(pattern, os);
+    emit_helper(pattern, posActArgs, os);
+    emit_castvals(pattern, posActArgs, os);
+    emit_scalar_types(pattern, os);
+
+    emit_caching(pattern, posActArgs, argUsers, os);
+    emit_extract_calls(pattern, posActArgs, argUsers, os);
+
+    emit_fwd_rewrite_rules(pattern, typeOfArgName, posActArgs, argUsers, os);
+    emit_rev_rewrite_rules(pattern, typeOfArgName, posActArgs, argUsers, os);
+
+    // writeEnums(pattern, blas_modes, os);
+    emit_free_and_ending(pattern, posActArgs, os);
+  }
 }
+
+//static void emitDerivatives(RecordKeeper &RK, raw_ostream &os) {
+//  emitSourceFileHeader("Rewriters", os);
+//  const auto &patterns = RK.getAllDerivedDefinitions("CallPattern");
+//  const auto &blasPatterns = RK.getAllDerivedDefinitions("CallBlasPattern");
+//  const auto &blas_modes = RK.getAllDerivedDefinitions("blas_modes");
+//  Record *attrClass = RK.getClass("Attr");
+//
+//  emitFullDerivatives(patterns, os);
+//}
 
 static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
   switch (action) {
-  case GenDerivatives:
-    emitDerivatives(records, os); return false;
+    case GenDerivatives:
+      emitFullDerivatives(records, os); 
+      return false;
+    case GenBlasDerivatives:
+      emitBlasDerivatives(records, os); 
+      return false;
   }
+  return true; // Not sure here?
 }
 
 int main(int argc, char **argv) {
