@@ -4683,7 +4683,6 @@ public:
         assert(TR.query(call.getArgOperand(i)).Inner0().isFloat());
         OutTypes.push_back(call.getArgOperand(i));
         OutFPTypes.push_back(argType);
-        argsInverted.push_back(DIFFE_TYPE::OUT_DIFF);
         assert(whatType(argType, Mode) == DIFFE_TYPE::OUT_DIFF ||
                whatType(argType, Mode) == DIFFE_TYPE::CONSTANT);
       }
