@@ -864,12 +864,15 @@ llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> getUsedInputs(
 void emit_helper(Record *pattern, std::vector<size_t> actArgs,
                  raw_ostream &os) {
   DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
+  os 
+<< "  auto calledArg = called->arg_begin();\n";
   for (size_t i = 0; i < argOps->getNumArgs(); i++) {
     auto name = argOps->getArgNameStr(i);
     os 
 << "  auto arg_" << name << " = call.getArgOperand(" << i << ");\n"
 << "  auto type_" << name << " = arg_" << name << "->getType();\n"
-<< "  bool uncacheable_" << name << " = uncacheable_args.find(called->getArg("  << i << "))->second;\n";
+<< "  bool uncacheable_" << name << " = uncacheable_args.find(calledArg)->second;\n"
+<< "  calledArg++;\n";
     if (std::count(actArgs.begin(), actArgs.end(), i)) {
       os 
 << "  bool active_" << name << " = !gutils->isConstantValue(arg_"
