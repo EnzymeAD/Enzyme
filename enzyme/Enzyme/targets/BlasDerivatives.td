@@ -7,16 +7,16 @@ class BLASType<int _n, bit _active> {
   bit active = _active;
 }
 
-def len   : BLASType<1, false>; // num of elements
-def hbw   : BLASType<1, false>; // half matrix-bandwith}
-def bw    : BLASType<1, false>; // matrix-bandwith}
-def fp    : BLASType<1, true>;  // floating point
-def ap    : BLASType<1, true>;  // packed array, alternative to vld
-def vinc  : BLASType<2, true>;  // {vector, increment}
-def vld   : BLASType<2, true>;  // {vector, leading dim}
-def mld   : BLASType<2, true>;  // {matrix, leading dim}
+def len   : BLASType<1, 0>; // num of elements
+def hbw   : BLASType<1, 0>; // half matrix-bandwith}
+def bw    : BLASType<1, 0>; // matrix-bandwith}
+def fp    : BLASType<1, 1>;  // floating point
+def ap    : BLASType<1, 1>;  // packed array, alternative to vld
+def vinc  : BLASType<2, 1>;  // {vector, increment}
+def vld   : BLASType<2, 1>;  // {vector, leading dim}
+def mld   : BLASType<2, 1>;  // {matrix, leading dim}
 
-class blas_modes<list<string> _modes> : BLASType<1, false> {
+class blas_modes<list<string> _modes> : BLASType<1, 0> {
   list<string> modes = _modes;
 }
 

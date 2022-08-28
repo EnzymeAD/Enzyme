@@ -1082,11 +1082,11 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
     }
     argPosition += inputType->getValueAsInt("nelem");
   }
-  
-  std::vector<llvm::Twine> d_args{};
+
+  std::vector<std::string> d_args{};
   for (auto act : actArgs) {
     auto actName = argOps->getArgNameStr(act);
-    d_args.push_back("d_" + actName);
+    d_args.push_back(("d_" + actName).str());
   }
 
   os 
@@ -1111,9 +1111,7 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
     auto actName = argOps->getArgNameStr(actArg);
     auto derivOp = derivOps->getElement(i);
     DagInit *resultTree = cast<DagInit>(derivOp); // correct
-    llvm::errs() << "before call_arg_helper" << i << "\n";
     auto args = call_arg_helper(resultTree, typeOfArgName, actName);
-    llvm::errs() << "after call_arg_helper" << i << "\n";
     auto valueTypes = ValueType_helper(argOps, typeOfArgName, actArg);
     auto opName = resultTree->getOperator()->getAsString();
     auto Def = cast<DefInit>(resultTree->getOperator())->getDef();
