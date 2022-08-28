@@ -981,7 +981,7 @@ void emit_deriv_fnc(DagInit *resultTree, llvm::DenseMap<StringRef, StringRef> ty
   auto Def = cast<DefInit>(resultTree->getOperator())->getDef();
   if (Def->isSubClassOf("b")) {
     auto dfnc_name = Def->getValueAsString("s");
-    auto full_dfnc_name = "(blas.prefix + \"" + dfnc_name + "\" + blas.suffix).str()";
+    auto full_dfnc_name = llvm::Twine("(blas.prefix + \"") + dfnc_name + "\" + blas.suffix).str()";
     llvm::errs() << "found blas fnc: " << dfnc_name << "\n";
     if (handled.find(dfnc_name) != handled.end())
       return;
@@ -989,7 +989,7 @@ void emit_deriv_fnc(DagInit *resultTree, llvm::DenseMap<StringRef, StringRef> ty
       handled.insert(dfnc_name);
     os 
 << "    auto derivcall_" << dfnc_name << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
-<< "      " << full_dfnc_name << ", Builder2.getVoidTy(),\n";
+<< "      (blas.prefix +\"" << dfnc_name << "\" + blas.suffix).str(), Builder2.getVoidTy(),\n";
       // insert arg types based on .td file 
       bool first = true;
       std::vector<StringRef> usedArgStrs{};
