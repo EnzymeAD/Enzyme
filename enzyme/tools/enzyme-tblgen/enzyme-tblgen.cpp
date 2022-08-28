@@ -985,7 +985,7 @@ void emit_deriv_fnc(DagInit *resultTree, llvm::DenseMap<StringRef, StringRef> ty
     auto dfnc_name = Def->getValueAsString("s");
     auto full_dfnc_name = "(blas.prefix + \"" + dfnc_name + "\" + blas.suffix).str()";
     llvm::errs() << "found blas fnc: " << dfnc_name << "\n";
-    if (handled.contains(dfnc_name))
+    if (handled.find(dfnc_name) != handled.end())
       return;
     else 
       handled.insert(dfnc_name);
