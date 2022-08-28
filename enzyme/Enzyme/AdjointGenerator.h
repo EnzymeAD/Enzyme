@@ -8630,7 +8630,8 @@ public:
             gutils->replaceAWithB(newCall, normalReturn);
             BuilderZ.SetInsertPoint(newCall->getNextNode());
             gutils->erase(newCall);
-          } else if (Mode == DerivativeMode::ReverseModeGradient)
+          } else if (Mode == DerivativeMode::ReverseModeGradient &&
+                     !orig->getType()->isTokenTy())
             eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
         }
         return;
