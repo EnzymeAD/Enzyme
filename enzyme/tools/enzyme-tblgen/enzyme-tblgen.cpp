@@ -593,8 +593,6 @@ void emit_beginning(Record *pattern, raw_ostream &os) {
 << "  IRBuilder<> allocationBuilder(gutils->inversionAllocs);\n"
 << "  allocationBuilder.setFastMathFlags(getFast());\n"
 << "  auto &DL = gutils->oldFunc->getParent()->getDataLayout();\n";
-  // next already passed as args now
-//<< "  auto *called = call.getCalledFunction();\n\n";
 }
 
 std::vector<size_t> getPossiblyActiveArgs(Record *pattern) {
@@ -1083,19 +1081,14 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
     argPosition += inputType->getValueAsInt("nelem");
   }
 
-  std::vector<std::string> d_args{};
-  for (auto act : actArgs) {
-    auto actName = argOps->getArgNameStr(act);
-    d_args.push_back(("d_" + actName).str());
-  }
-
   os 
 << "    applyChainRule(\n"
 << "      Builder2,\n"
 << "      [&](";
   bool first = true;
-  for (auto d_arg : d_args) {
-    os << ((first) ? "" : ", ") << "Value *" << d_arg;
+  for (auto act : actArgs) {
+    os 
+<< ((first) ? "" : ", ") << "Value *" << "d_" + argOps->getArgNameStr(act);
     first = false;
   }
   os 
@@ -1118,7 +1111,6 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
     if (!Def->isSubClassOf("b"))
       continue;// check
     auto dfnc_name = Def->getValueAsString("s");
-    //auto full_dfnc_name = "(blas.prefix + \"" + dfnc_name + "\" + blas.suffix).str()";
     os
 << "      if (active_" << actName << ") {\n"
 << "        Value *args1[] = {" << args << "};\n"
@@ -1135,8 +1127,8 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
 << "    ";
 
   first = true;
-  for (auto d_arg : d_args) {
-    os << ((first) ? "" : ", ") << d_arg;
+  for (auto act : actArgs) {
+    os << ((first) ? "" : ", ") << "d_" + argOps->getArgNameStr(act);
     first = false;
   }
   os 
@@ -1148,9 +1140,9 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
 << "  }\n";
 }
 
-void emit_fwd_rewrite_rules(Record *pattern, 
-    llvm::DenseMap<StringRef, StringRef> typeOfArgName, std::vector<size_t> actArgs,
-    llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, 
+void emit_fwd_rewrite_rules(const Record *pattern, 
+    const llvm::DenseMap<StringRef, StringRef> typeOfArgName, const std::vector<size_t> actArgs,
+    const llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, 
                  raw_ostream &os) {
   os 
 << "  /* fwd-rewrite */                                 \n"
@@ -1168,6 +1160,7 @@ void emit_fwd_rewrite_rules(Record *pattern,
       pattern->getValueAsListOfDefs("inputTypes");
   auto argPosition = 0;
   for (auto inputType : inputTypes) {
+    llvm::errs() << "LOOPING\n";
     auto typeName = inputType->getName();
     if (typeName == "vinc" || typeName == "fp") {
       auto name = argOps->getArgNameStr(argPosition);
@@ -1194,11 +1187,6 @@ void emit_fwd_rewrite_rules(Record *pattern,
 << "  ) {\n"
 << "      Value *dres = nullptr;\n";
 
-  std::vector<llvm::Twine> d_args{};
-  for (auto act : actArgs) {
-    auto actName = argOps->getArgNameStr(act);
-    d_args.push_back("d_" + actName);
-  }
   
   first = true;
   for (auto act : actArgs) {
@@ -1238,10 +1226,11 @@ void emit_fwd_rewrite_rules(Record *pattern,
 << "      return dres;\n"
 << "    },\n"
 << "    ";
+
   first = true;
-  for (auto arg : d_args) {
+  for (auto act : actArgs) {
     os 
-<< ((first) ? "" : ", ") << arg;
+<< ((first) ? "" : ", ") << "d_" + argOps->getArgNameStr(act);
     first = false;
   }
   os 
