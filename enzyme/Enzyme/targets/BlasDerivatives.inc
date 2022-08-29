@@ -1,5 +1,4 @@
 // clang-format off
-//
 /*===- TableGen'erated file -------------------------------------*- C++ -*-===*\
 |*                                                                            *|
 |* Rewriters                                                                  *|
@@ -82,32 +81,40 @@ bool handle_axpy(BlasInfo blas, llvm::CallInst &call, Function *called,
   IRBuilder<> allocationBuilder(gutils->inversionAllocs);
   allocationBuilder.setFastMathFlags(getFast());
   auto &DL = gutils->oldFunc->getParent()->getDataLayout();
+  auto calledArg = called->arg_begin();
+
   auto arg_n = call.getArgOperand(0);
   auto type_n = arg_n->getType();
-  bool uncacheable_n = uncacheable_args.find(called->getArg(0))->second;
+  bool uncacheable_n = uncacheable_args.find(calledArg)->second;
+  calledArg++;
 
   auto arg_alpha = call.getArgOperand(1);
   auto type_alpha = arg_alpha->getType();
-  bool uncacheable_alpha = uncacheable_args.find(called->getArg(1))->second;
+  bool uncacheable_alpha = uncacheable_args.find(calledArg)->second;
+  calledArg++;
   bool active_alpha = !gutils->isConstantValue(arg_alpha);
 
   auto arg_x = call.getArgOperand(2);
   auto type_x = arg_x->getType();
-  bool uncacheable_x = uncacheable_args.find(called->getArg(2))->second;
+  bool uncacheable_x = uncacheable_args.find(calledArg)->second;
+  calledArg++;
   bool active_x = !gutils->isConstantValue(arg_x);
 
   auto arg_incx = call.getArgOperand(3);
   auto type_incx = arg_incx->getType();
-  bool uncacheable_incx = uncacheable_args.find(called->getArg(3))->second;
+  bool uncacheable_incx = uncacheable_args.find(calledArg)->second;
+  calledArg++;
 
   auto arg_y = call.getArgOperand(4);
   auto type_y = arg_y->getType();
-  bool uncacheable_y = uncacheable_args.find(called->getArg(4))->second;
+  bool uncacheable_y = uncacheable_args.find(calledArg)->second;
+  calledArg++;
   bool active_y = !gutils->isConstantValue(arg_y);
 
   auto arg_incy = call.getArgOperand(5);
   auto type_incy = arg_incy->getType();
-  bool uncacheable_incy = uncacheable_args.find(called->getArg(5))->second;
+  bool uncacheable_incy = uncacheable_args.find(calledArg)->second;
+  calledArg++;
 
   /* beginning castvalls */
   Type *castvals[3];
@@ -162,7 +169,7 @@ bool handle_axpy(BlasInfo blas, llvm::CallInst &call, Function *called,
   bool cache_y  = Mode != DerivativeMode::ForwardMode &&
           uncacheable_y;
   bool cache_incy = false;
-  bool need_incy = (active_y  || (!cache_y && (active_alpha || active_x)));
+  bool need_incy = (active_y  || (!cache_y && (active_alpha || active_x || active_y)));
   if (byRef && uncacheable_incy && need_incy) {
     cacheTypes.push_back(intType);
     cache_incy = true;
@@ -503,7 +510,7 @@ ValueType::None, ValueType::None, ValueType::None, ValueType::None, ValueType::S
     }
 
     auto derivcall_dot = gutils->oldFunc->getParent()->getOrInsertFunction(
-      (blas.prefix + "dot" + blas.suffix).str(), Builder2.getVoidTy(),
+      (blas.prefix +"dot" + blas.suffix).str(), Builder2.getVoidTy(),
 type_n, type_x, type_incx, byRef ? PointerType::getUnqual(call.getType()) : call.getType()
 , type_incy);
 #if LLVM_VERSION_MAJOR >= 9
@@ -524,7 +531,7 @@ type_n, type_x, type_incx, byRef ? PointerType::getUnqual(call.getType()) : call
     }
 
     auto derivcall_scal = gutils->oldFunc->getParent()->getOrInsertFunction(
-      (blas.prefix + "scal" + blas.suffix).str(), Builder2.getVoidTy(),
+      (blas.prefix +"scal" + blas.suffix).str(), Builder2.getVoidTy(),
 type_n, type_alpha, byRef ? PointerType::getUnqual(call.getType()) : call.getType()
 , type_incy);
 #if LLVM_VERSION_MAJOR >= 9
@@ -562,7 +569,7 @@ type_n, type_alpha, byRef ? PointerType::getUnqual(call.getType()) : call.getTyp
       if (active_alpha) {
         Value *args1[] = {len_n, data_x, incx, dif, incy};
         Builder2.CreateCall(
-          (blas.prefix + "dot" + blas.suffix).str(), args1,
+          derivcall_dot, args1,
           gutils->getInvertedBundles(
             &call,
             {ValueType::None, ValueType::Shadow, cache_x ? ValueType::None : ValueType::Primal, ValueType::None, cache_y ? ValueType::None : ValueType::Primal, ValueType::None},
@@ -571,10 +578,19 @@ type_n, type_alpha, byRef ? PointerType::getUnqual(call.getType()) : call.getTyp
       if (active_x) {
         Value *args1[] = {len_n, fp_alpha, dif, incy};
         Builder2.CreateCall(
-          (blas.prefix + "scal" + blas.suffix).str(), args1,
+          derivcall_scal, args1,
           gutils->getInvertedBundles(
             &call,
             {ValueType::None, cache_alpha ? ValueType::None : ValueType::Primal, ValueType::Shadow, ValueType::None, cache_y ? ValueType::None : ValueType::Primal, ValueType::None},
+            Builder2, /* lookup */ true));
+      }
+      if (active_y) {
+        Value *args1[] = {len_n, fp_alpha, dif, incy};
+        Builder2.CreateCall(
+          derivcall_scal, args1,
+          gutils->getInvertedBundles(
+            &call,
+            {ValueType::None, cache_alpha ? ValueType::None : ValueType::Primal, cache_x ? ValueType::None : ValueType::Primal, ValueType::None, ValueType::Shadow, ValueType::None},
             Builder2, /* lookup */ true));
       }
     },
@@ -616,27 +632,34 @@ bool handle_dot(BlasInfo blas, llvm::CallInst &call, Function *called,
   IRBuilder<> allocationBuilder(gutils->inversionAllocs);
   allocationBuilder.setFastMathFlags(getFast());
   auto &DL = gutils->oldFunc->getParent()->getDataLayout();
+  auto calledArg = called->arg_begin();
+
   auto arg_n = call.getArgOperand(0);
   auto type_n = arg_n->getType();
-  bool uncacheable_n = uncacheable_args.find(called->getArg(0))->second;
+  bool uncacheable_n = uncacheable_args.find(calledArg)->second;
+  calledArg++;
 
   auto arg_x = call.getArgOperand(1);
   auto type_x = arg_x->getType();
-  bool uncacheable_x = uncacheable_args.find(called->getArg(1))->second;
+  bool uncacheable_x = uncacheable_args.find(calledArg)->second;
+  calledArg++;
   bool active_x = !gutils->isConstantValue(arg_x);
 
   auto arg_incx = call.getArgOperand(2);
   auto type_incx = arg_incx->getType();
-  bool uncacheable_incx = uncacheable_args.find(called->getArg(2))->second;
+  bool uncacheable_incx = uncacheable_args.find(calledArg)->second;
+  calledArg++;
 
   auto arg_y = call.getArgOperand(3);
   auto type_y = arg_y->getType();
-  bool uncacheable_y = uncacheable_args.find(called->getArg(3))->second;
+  bool uncacheable_y = uncacheable_args.find(calledArg)->second;
+  calledArg++;
   bool active_y = !gutils->isConstantValue(arg_y);
 
   auto arg_incy = call.getArgOperand(4);
   auto type_incy = arg_incy->getType();
-  bool uncacheable_incy = uncacheable_args.find(called->getArg(4))->second;
+  bool uncacheable_incy = uncacheable_args.find(calledArg)->second;
+  calledArg++;
 
   /* beginning castvalls */
   Type *castvals[2];
@@ -993,7 +1016,7 @@ ValueType::None, ValueType::None, ValueType::None, ValueType::Shadow, ValueType:
     }
 
     auto derivcall_axpy = gutils->oldFunc->getParent()->getOrInsertFunction(
-      (blas.prefix + "axpy" + blas.suffix).str(), Builder2.getVoidTy(),
+      (blas.prefix +"axpy" + blas.suffix).str(), Builder2.getVoidTy(),
 type_n, byRef ? PointerType::getUnqual(call.getType()) : call.getType()
 , type_y, type_incy, type_x, type_incx);
 #if LLVM_VERSION_MAJOR >= 9
@@ -1030,7 +1053,7 @@ type_n, byRef ? PointerType::getUnqual(call.getType()) : call.getType()
       if (active_x) {
         Value *args1[] = {len_n, dif, data_y, incy, d_x, true_incx};
         Builder2.CreateCall(
-          (blas.prefix + "axpy" + blas.suffix).str(), args1,
+          derivcall_axpy, args1,
           gutils->getInvertedBundles(
             &call,
             {ValueType::None, ValueType::Shadow, ValueType::None, cache_y ? ValueType::None : ValueType::Primal, ValueType::None},
@@ -1039,7 +1062,7 @@ type_n, byRef ? PointerType::getUnqual(call.getType()) : call.getType()
       if (active_y) {
         Value *args1[] = {len_n, dif, data_x, incx, d_y, true_incy};
         Builder2.CreateCall(
-          (blas.prefix + "axpy" + blas.suffix).str(), args1,
+          derivcall_axpy, args1,
           gutils->getInvertedBundles(
             &call,
             {ValueType::None, cache_x ? ValueType::None : ValueType::Primal, ValueType::None, ValueType::Shadow, ValueType::None},
@@ -1084,23 +1107,29 @@ bool handle_scal(BlasInfo blas, llvm::CallInst &call, Function *called,
   IRBuilder<> allocationBuilder(gutils->inversionAllocs);
   allocationBuilder.setFastMathFlags(getFast());
   auto &DL = gutils->oldFunc->getParent()->getDataLayout();
+  auto calledArg = called->arg_begin();
+
   auto arg_n = call.getArgOperand(0);
   auto type_n = arg_n->getType();
-  bool uncacheable_n = uncacheable_args.find(called->getArg(0))->second;
+  bool uncacheable_n = uncacheable_args.find(calledArg)->second;
+  calledArg++;
 
   auto arg_alpha = call.getArgOperand(1);
   auto type_alpha = arg_alpha->getType();
-  bool uncacheable_alpha = uncacheable_args.find(called->getArg(1))->second;
+  bool uncacheable_alpha = uncacheable_args.find(calledArg)->second;
+  calledArg++;
   bool active_alpha = !gutils->isConstantValue(arg_alpha);
 
   auto arg_x = call.getArgOperand(2);
   auto type_x = arg_x->getType();
-  bool uncacheable_x = uncacheable_args.find(called->getArg(2))->second;
+  bool uncacheable_x = uncacheable_args.find(calledArg)->second;
+  calledArg++;
   bool active_x = !gutils->isConstantValue(arg_x);
 
   auto arg_incx = call.getArgOperand(3);
   auto type_incx = arg_incx->getType();
-  bool uncacheable_incx = uncacheable_args.find(called->getArg(3))->second;
+  bool uncacheable_incx = uncacheable_args.find(calledArg)->second;
+  calledArg++;
 
   /* beginning castvalls */
   Type *castvals[2];
@@ -1391,7 +1420,7 @@ ValueType::None, ValueType::None, ValueType::Shadow, ValueType::None},
     }
 
     auto derivcall_dot = gutils->oldFunc->getParent()->getOrInsertFunction(
-      (blas.prefix + "dot" + blas.suffix).str(), Builder2.getVoidTy(),
+      (blas.prefix +"dot" + blas.suffix).str(), Builder2.getVoidTy(),
 type_n, type_x, type_incx, byRef ? PointerType::getUnqual(call.getType()) : call.getType()
 , type_incx);
 #if LLVM_VERSION_MAJOR >= 9
@@ -1412,7 +1441,7 @@ type_n, type_x, type_incx, byRef ? PointerType::getUnqual(call.getType()) : call
     }
 
     auto derivcall_axpy = gutils->oldFunc->getParent()->getOrInsertFunction(
-      (blas.prefix + "axpy" + blas.suffix).str(), Builder2.getVoidTy(),
+      (blas.prefix +"axpy" + blas.suffix).str(), Builder2.getVoidTy(),
 type_n, type_alpha, byRef ? PointerType::getUnqual(call.getType()) : call.getType()
 , type_incx, type_x, type_incx);
 #if LLVM_VERSION_MAJOR >= 9
@@ -1449,7 +1478,7 @@ type_n, type_alpha, byRef ? PointerType::getUnqual(call.getType()) : call.getTyp
       if (active_alpha) {
         Value *args1[] = {len_n, data_x, incx, dif, incx};
         Builder2.CreateCall(
-          (blas.prefix + "dot" + blas.suffix).str(), args1,
+          derivcall_dot, args1,
           gutils->getInvertedBundles(
             &call,
             {ValueType::None, ValueType::Shadow, cache_x ? ValueType::None : ValueType::Primal, ValueType::None},
@@ -1458,7 +1487,7 @@ type_n, type_alpha, byRef ? PointerType::getUnqual(call.getType()) : call.getTyp
       if (active_x) {
         Value *args1[] = {len_n, fp_alpha, dif, incx, d_x, true_incx};
         Builder2.CreateCall(
-          (blas.prefix + "axpy" + blas.suffix).str(), args1,
+          derivcall_axpy, args1,
           gutils->getInvertedBundles(
             &call,
             {ValueType::None, cache_alpha ? ValueType::None : ValueType::Primal, ValueType::Shadow, ValueType::None},

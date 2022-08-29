@@ -865,7 +865,7 @@ void emit_helper(Record *pattern, std::vector<size_t> actArgs,
                  raw_ostream &os) {
   DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
   os 
-<< "  auto calledArg = called->arg_begin();\n";
+<< "  auto calledArg = called->arg_begin();\n\n";
   for (size_t i = 0; i < argOps->getNumArgs(); i++) {
     auto name = argOps->getArgNameStr(i);
     os 
