@@ -34,7 +34,6 @@ void emit_vinc_caching(Record *pattern, std::vector<size_t> actArgs,
       pattern->getValueAsListOfDefs("inputTypes");
   DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
   size_t argPosition = 0;
-  std::vector<std::string> cacheVars{};
 
   // Debug
   // for (size_t i = 0; i < 6; i++) {
@@ -65,7 +64,6 @@ void emit_vinc_caching(Record *pattern, std::vector<size_t> actArgs,
       os 
 << ";\n"
 << "  bool cache_" << incName << " = false;\n";
-      cacheVars.push_back("cache_" + vecName.str());
       // xinc is needed to be preserved if
       // 1) it is potentially overwritten AND EITHER
       //     a) x is active (for performing the shadow increment) or
@@ -95,13 +93,6 @@ void emit_vinc_caching(Record *pattern, std::vector<size_t> actArgs,
     } // end vinc
     argPosition += val->getValueAsInt("nelem");
   }
-  os 
-<< "  int numCached = ";
-  for (size_t i = 0; i < cacheVars.size(); i++) {
-    os << ((i > 0) ? " + " : "" ) << "(int) " << cacheVars[i];
-  }
-  os 
-<< ";\n";
 }
 
 void emit_scalar_caching(Record *pattern, std::vector<size_t> actArgs,

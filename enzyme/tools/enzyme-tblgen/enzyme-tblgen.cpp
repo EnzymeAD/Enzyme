@@ -1019,12 +1019,17 @@ llvm::SmallString<40> call_arg_helper(DagInit *argOps,
 }
 
 void emit_deriv_fnc(DagInit *resultTree, llvm::DenseMap<StringRef, StringRef> typeOfArgName,
-    llvm::StringSet<> &handled, raw_ostream &os) {
+    llvm::StringSet<> &handled, llvm::DenseMap<StringRef, llvm::SmallSet<size_t, 3>> mutables, raw_ostream &os) {
   auto opName = resultTree->getOperator()->getAsString();
   auto Def = cast<DefInit>(resultTree->getOperator())->getDef();
   if (Def->isSubClassOf("b")) {
     auto dfnc_name = Def->getValueAsString("s");
-    auto full_dfnc_name = llvm::Twine("(blas.prefix + \"") + dfnc_name + "\" + blas.suffix).str()";
+    llvm::SmallSet<size_t, 3> mutableArgs{};
+    if (mutables.find(dfnc_name) == mutables.end()) {
+      PrintFatalError("calling unknown Blas function");
+    } else {
+      mutableArgs = mutables.lookup(dfnc_name);
+    }
     llvm::errs() << "found blas fnc: " << dfnc_name << "\n";
     if (handled.find(dfnc_name) != handled.end())
       return;
@@ -1032,7 +1037,7 @@ void emit_deriv_fnc(DagInit *resultTree, llvm::DenseMap<StringRef, StringRef> ty
       handled.insert(dfnc_name);
     os 
 << "    auto derivcall_" << dfnc_name << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
-<< "      (blas.prefix +\"" << dfnc_name << "\" + blas.suffix).str(), Builder2.getVoidTy(),\n";
+<< "      (blas.prefix + blas.floatType + \"" << dfnc_name << "\" + blas.suffix).str(), Builder2.getVoidTy(),\n";
       // insert arg types based on .td file 
       bool first = true;
       std::vector<StringRef> usedArgStrs{};
@@ -1064,6 +1069,7 @@ void emit_deriv_fnc(DagInit *resultTree, llvm::DenseMap<StringRef, StringRef> ty
 << "    {\n"
 << "      F->addFnAttr(Attribute::ArgMemOnly);\n"
 << "      if (byRef) {\n";
+  size_t vecPos;
   for (size_t argPos = 0; argPos < usedArgStrs.size(); argPos++) {
     StringRef argName = usedArgStrs[argPos];
     auto argType = typeOfArgName.lookup(argName);
@@ -1071,10 +1077,27 @@ void emit_deriv_fnc(DagInit *resultTree, llvm::DenseMap<StringRef, StringRef> ty
       os 
 << "        F->addParamAttr(" << argPos << ", Attribute::ReadOnly);\n"
 << "        F->addParamAttr(" << argPos << ", Attribute::NoCapture);\n";
+    } else if(argType == "vincData") {
+      // used to decide next if we have Julia decl (Int64) or the default double*
+      vecPos = argPos;
     }
   }
-
-
+  os
+<< "      }\n"
+<< "      if (type_" << usedArgStrs[vecPos] << "->isPointerTy()) {\n";
+  for (size_t argPos = 0; argPos < usedArgStrs.size(); argPos++) {
+    StringRef argName = usedArgStrs[argPos];
+    auto argType = typeOfArgName.lookup(argName);
+    if (argType == "vincData") {
+      os 
+<< "        F->addParamAttr(" << argPos << ", Attribute::NoCapture);\n";
+        if (!mutableArgs.contains(argPos)) {
+          // Only emit ReadOnly if the arg isn't mutable
+          os 
+<< "        F->addParamAttr(" << argPos << ", Attribute::ReadOnly);\n";
+      }
+    }
+  }
   os
 << "      }\n"
 << "    }\n\n";
@@ -1085,7 +1108,8 @@ void emit_deriv_fnc(DagInit *resultTree, llvm::DenseMap<StringRef, StringRef> ty
 
 void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef> typeOfArgName,
     std::vector<size_t> actArgs,
-    llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, raw_ostream &os) {
+    llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, 
+    llvm::DenseMap<StringRef, llvm::SmallSet<size_t, 3>> mutables, raw_ostream &os) {
   
   ListInit *derivOps = pattern->getValueAsListInit("ArgDerivatives"); // correct
   DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
@@ -1106,7 +1130,7 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
   llvm::errs() << "Number of grad defs: " << derivOps->size() << "\n";
   for (auto derivOp : *derivOps) {
     DagInit *resultTree = cast<DagInit>(derivOp); // correct
-    emit_deriv_fnc(resultTree, typeOfArgName, handled, os);
+    emit_deriv_fnc(resultTree, typeOfArgName, handled, mutables, os);
   }
   os
 << "    // Vector Mode not handled yet\n";
@@ -1381,7 +1405,6 @@ llvm::DenseMap<StringRef, StringRef> getArgTypes(const Record *pattern) {
       res.insert(std::make_pair(argOps->getArgNameStr(pos+1), "vincInc"));
     } else {
       PrintFatalError("Unknown type!");
-      //TODO: panic
     }
     pos += val->getValueAsInt("nelem");
   }
@@ -1436,6 +1459,32 @@ static void checkBlasCalls(const RecordKeeper &RK,
   }
 }
 
+
+llvm::DenseMap<StringRef, llvm::SmallSet<size_t, 3>> getMutableArgs(const std::vector<Record *> blasPatterns) {
+  llvm::DenseMap<StringRef, llvm::SmallSet<size_t, 3>> res{};
+  for (auto pattern : blasPatterns) {
+    auto name = pattern->getName();
+    auto args = pattern->getValueAsDag("PatternToMatch");
+    llvm::SmallSet<size_t, 3> mutArgs{};
+    auto mutableArgs = pattern->getValueAsListOfStrings("mutable");
+    // We must replace their names by their position
+    for (auto mutableArg : mutableArgs) {
+      size_t pos = 0;
+      while (args->getArgNameStr(pos) != mutableArg) {
+        pos++;
+        if (pos == args->getNumArgs()) {
+            PrintFatalError("mutable arg isn't an input Arg!");
+        }
+      }
+      llvm::errs() << "Mutable: " << name << " : " << pos << "\n";
+      mutArgs.insert(pos);
+    }
+
+    res.insert(std::pair<StringRef, llvm::SmallSet<size_t, 3>>(name, mutArgs));
+  }
+  return res;
+}
+
 /*
  * We create the following variables:
  *
@@ -1469,6 +1518,7 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
   checkBlasCalls(RK, blasPatterns);
   emit_handleBLAS(blasPatterns, os);
   // emitEnumMatcher(blas_modes, os);
+  llvm::DenseMap<StringRef, llvm::SmallSet<size_t, 3>> mutables = getMutableArgs(blasPatterns);
   for (auto pattern : blasPatterns) {
     std::vector<size_t> posActArgs = getPossiblyActiveArgs(pattern);
 
@@ -1485,7 +1535,7 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
     emit_extract_calls(pattern, posActArgs, argUsers, os);
 
     emit_fwd_rewrite_rules(pattern, typeOfArgName, posActArgs, argUsers, os);
-    emit_rev_rewrite_rules(pattern, typeOfArgName, posActArgs, argUsers, os);
+    emit_rev_rewrite_rules(pattern, typeOfArgName, posActArgs, argUsers, mutables, os);
 
     // writeEnums(pattern, blas_modes, os);
     emit_free_and_ending(pattern, posActArgs, os);
