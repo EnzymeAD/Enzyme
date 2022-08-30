@@ -570,7 +570,8 @@ uint8_t EnzymeMergeTypeTree(CTypeTreeRef dst, CTypeTreeRef src) {
 }
 
 void EnzymeTypeTreeOnlyEq(CTypeTreeRef CTT, int64_t x) {
-  *(TypeTree *)CTT = ((TypeTree *)CTT)->Only(x);
+  // TODO only inst
+  *(TypeTree *)CTT = ((TypeTree *)CTT)->Only(x, nullptr);
 }
 void EnzymeTypeTreeData0Eq(CTypeTreeRef CTT) {
   *(TypeTree *)CTT = ((TypeTree *)CTT)->Data0();
