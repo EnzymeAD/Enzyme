@@ -88,7 +88,6 @@ void getIntrinsic(raw_ostream &os, std::string callval, std::string FT,
     auto name = arg->getArgNameStr(0);
     auto num = nameToOrdinal.lookup(name);
     os << ((first) ? "" : ", ") << num << "->getType()";
-    // os << ((first) ? "" : ", ") << "args[" << num << "]->getType()";
     first = false;
   }
   os << "};\n"
@@ -224,7 +223,6 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
       getFunction(os, "callval", "FT", "cconv", Def->getValueInit("func"));
     } else if (isIntr) {
       auto intrName = Def->getValueAsString("name");
-      // auto intrTypes = Def->getValueAsListOfStrings("types");
       auto intrTypes = Def->getValueAsListInit("types");
       getIntrinsic(os, "callval", "FT", "cconv", intrName, intrTypes,
                    nameToOrdinal);
