@@ -4101,7 +4101,7 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
                      &call);
       return;
     }
-    if (isDeallocationFunction(*ci, TLI)) {
+    if (isDeallocationFunction(ci->getName(), TLI)) {
       size_t Idx = 0;
       for (auto &Arg : ci->args()) {
         if (Arg.getType()->isIntegerTy()) {

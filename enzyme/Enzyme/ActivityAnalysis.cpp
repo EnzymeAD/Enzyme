@@ -338,7 +338,7 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
 
   // Allocations, deallocations, and c++ guards don't impact the activity
   // of arguments
-  if (isAllocationFunction(Name, TLI) || isDeallocationFunction(*F, TLI))
+  if (isAllocationFunction(Name, TLI) || isDeallocationFunction(Name, TLI))
     return true;
   if (Name == "posix_memalign")
     return true;
@@ -497,7 +497,7 @@ static inline void propagateArgumentInformation(
     }
 
     // Allocations, deallocations, and c++ guards are fully inactive
-    if (isAllocationFunction(Name, TLI) || isDeallocationFunction(*F, TLI) ||
+    if (isAllocationFunction(Name, TLI) || isDeallocationFunction(Name, TLI) ||
         Name == "__cxa_guard_acquire" || Name == "__cxa_guard_release" ||
         Name == "__cxa_guard_abort")
       return;
@@ -1415,7 +1415,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
               !hasMetadata(called, "enzyme_gradient") &&
               !hasMetadata(called, "enzyme_derivative") &&
               !isAllocationFunction(called->getName(), TLI) &&
-              !isDeallocationFunction(*called, TLI) &&
+              !isDeallocationFunction(called->getName(), TLI) &&
               !isa<IntrinsicInst>(op)) {
             InsertConstantValue(TR, Val);
             insertConstantsFrom(TR, *UpHypothesis);
@@ -1629,7 +1629,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
             return false;
           }
           if (isAllocationFunction(F->getName(), TLI) ||
-              isDeallocationFunction(*F, TLI)) {
+              isDeallocationFunction(F->getName(), TLI)) {
             return false;
           }
           if (KnownInactiveFunctions.count(F->getName().str()) ||
@@ -2261,7 +2261,8 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
           !hasMetadata(called, "enzyme_gradient") &&
           !hasMetadata(called, "enzyme_derivative") &&
           !isAllocationFunction(called->getName(), TLI) &&
-          !isDeallocationFunction(*called, TLI) && !isa<IntrinsicInst>(op)) {
+          !isDeallocationFunction(called->getName(), TLI) &&
+          !isa<IntrinsicInst>(op)) {
         if (EnzymePrintActivity)
           llvm::errs() << "constant(" << (int)directions << ") up-emptyconst "
                        << *inst << "\n";
@@ -2340,10 +2341,26 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
     });
     if (EnzymeGlobalActivity) {
       if (!ci->onlyAccessesArgMemory() && !ci->doesNotAccessMemory()) {
+        bool legalUse = false;
 
-        Function *called = getFunctionFromCall(ci);
-        if (!called || (!isCertainPrintMallocOrFree(called) &&
-                        !isMemFreeLibMFunction(called->getName()))) {
+        StringRef funcName = "";
+        if (Function *called = getFunctionFromCall(ci)) {
+          if (called->hasFnAttribute("enzyme_math"))
+            funcName = called->getFnAttribute("enzyme_math").getValueAsString();
+          else
+            funcName = called->getName();
+        }
+
+        if (funcName == "") {
+        } else if (isMemFreeLibMFunction(funcName) ||
+                   isDebugFunction(ci->getCalledFunction()) ||
+                   isCertainPrint(funcName) ||
+                   isAllocationFunction(funcName, TLI) ||
+                   isDeallocationFunction(funcName, TLI)) {
+          legalUse = true;
+        }
+
+        if (!legalUse) {
           if (EnzymePrintActivity)
             llvm::errs() << "nonconstant(" << (int)directions << ")  up-global "
                          << *inst << "\n";
@@ -3082,7 +3099,7 @@ bool ActivityAnalyzer::isValueActivelyStoredOrReturned(TypeResults const &TR,
         if (!isValueActivelyStoredOrReturned(TR, a, outside)) {
           continue;
         }
-      } else if (isDeallocationFunction(*F, TLI)) {
+      } else if (isDeallocationFunction(F->getName(), TLI)) {
         // freeing memory never counts
         continue;
       }

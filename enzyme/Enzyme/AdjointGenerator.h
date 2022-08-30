@@ -10106,7 +10106,7 @@ public:
       }
     }
 
-    if (called && isAllocationFunction(funcName, gutils->TLI)) {
+    if (isAllocationFunction(funcName, gutils->TLI)) {
 
       bool constval = gutils->isConstantValue(orig);
 
@@ -10171,8 +10171,7 @@ public:
               }
             }
             placeholder->setName("");
-            if (shadowHandlers.find(called->getName().str()) !=
-                shadowHandlers.end()) {
+            if (shadowHandlers.find(funcName.str()) != shadowHandlers.end()) {
               bb.SetInsertPoint(placeholder);
 
               if (Mode == DerivativeMode::ReverseModeCombined ||
@@ -10181,8 +10180,7 @@ public:
                   (Mode == DerivativeMode::ReverseModeGradient &&
                    backwardsShadow)) {
                 anti = applyChainRule(call.getType(), bb, [&]() {
-                  return shadowHandlers[called->getName().str()](bb, orig,
-                                                                 args);
+                  return shadowHandlers[funcName.str()](bb, orig, args);
                 });
                 if (anti->getType() != placeholder->getType()) {
                   llvm::errs() << "orig: " << *orig << "\n";
@@ -10240,7 +10238,7 @@ public:
                           derefBytes);
                       cal->addDereferenceableRetAttr(derefBytes);
 #if !defined(FLANG) && !defined(ROCM)
-                      AttrBuilder B(called->getContext());
+                      AttrBuilder B(ci->getContext());
 #else
                       AttrBuilder B;
 #endif
@@ -10835,7 +10833,7 @@ public:
 
     // Remove free's in forward pass so the memory can be used in the reverse
     // pass
-    if (called && isDeallocationFunction(*called, gutils->TLI)) {
+    if (isDeallocationFunction(funcName, gutils->TLI)) {
       assert(gutils->invertedPointers.find(orig) ==
              gutils->invertedPointers.end());
 

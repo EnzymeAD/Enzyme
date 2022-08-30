@@ -2198,14 +2198,6 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
         Value *tid = ompThreadId();
         IRBuilder<> entryBuilder(inversionAllocs);
 
-        Constant *byteSizeOfType = ConstantInt::get(
-            numThreads->getType(),
-            (newFunc->getParent()->getDataLayout().getTypeAllocSizeInBits(
-                 malloc->getType()) +
-             7) /
-                8,
-            false);
-
         auto firstallocation =
             CreateAllocation(entryBuilder, malloc->getType(), numThreads,
                              malloc->getName() + "_malloccache");
@@ -2451,9 +2443,15 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                   ts->setSyncScopeID(SI->getSyncScopeID());
                   ts->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
                 } else if (auto CI = dyn_cast<CallInst>(&I)) {
-                  Function *called = getFunctionFromCall(CI);
-                  assert(called);
-                  if (called->getName() == "julia.write_barrier" ||
+                  StringRef funcName = "";
+                  if (Function *called = getFunctionFromCall(CI)) {
+                    if (called->hasFnAttribute("enzyme_math"))
+                      funcName = called->getFnAttribute("enzyme_math")
+                                     .getValueAsString();
+                    else
+                      funcName = called->getName();
+                  }
+                  if (funcName == "julia.write_barrier" ||
                       isa<MemSetInst>(&I) || isa<MemTransferInst>(&I)) {
 
                     // TODO
@@ -2471,13 +2469,19 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
 
                     auto Defs = getInvertedBundles(CI, BundleTypes, NB,
                                                    /*lookup*/ true, available);
-                    auto cal = NB.CreateCall(called, args, Defs);
+#if LLVM_VERSION_MAJOR >= 11
+                    auto cal =
+                        NB.CreateCall(CI->getFunctionType(),
+                                      CI->getCalledOperand(), args, Defs);
+#else
+                    auto cal = NB.CreateCall(CI->getCalledValue(), args, Defs);
+#endif
                     cal->setAttributes(CI->getAttributes());
                     cal->setCallingConv(CI->getCallingConv());
                     cal->setTailCallKind(CI->getTailCallKind());
                     cal->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
                   } else {
-                    assert(isDeallocationFunction(*called, TLI));
+                    assert(isDeallocationFunction(funcName, TLI));
                     continue;
                   }
                 } else {
@@ -2647,9 +2651,15 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                     cal->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
                   }
                 } else if (auto CI = dyn_cast<CallInst>(&I)) {
-                  Function *called = getFunctionFromCall(CI);
-                  assert(called);
-                  if (called->getName() == "julia.write_barrier") {
+                  StringRef funcName = "";
+                  if (Function *called = getFunctionFromCall(CI)) {
+                    if (called->hasFnAttribute("enzyme_math"))
+                      funcName = called->getFnAttribute("enzyme_math")
+                                     .getValueAsString();
+                    else
+                      funcName = called->getName();
+                  }
+                  if (funcName == "julia.write_barrier") {
 
                     // TODO
                     SmallVector<Value *, 2> args;
@@ -2669,14 +2679,21 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                       auto Defs =
                           getInvertedBundles(CI, BundleTypes, NB,
                                              /*lookup*/ true, available);
-                      auto cal = NB.CreateCall(called, args, Defs);
+#if LLVM_VERSION_MAJOR >= 11
+                      auto cal =
+                          NB.CreateCall(CI->getFunctionType(),
+                                        CI->getCalledOperand(), args, Defs);
+#else
+                      auto cal =
+                          NB.CreateCall(CI->getCalledValue(), args, Defs);
+#endif
                       cal->setAttributes(CI->getAttributes());
                       cal->setCallingConv(CI->getCallingConv());
                       cal->setTailCallKind(CI->getTailCallKind());
                       cal->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
                     }
                   } else {
-                    assert(isDeallocationFunction(*called, TLI));
+                    assert(isDeallocationFunction(funcName, TLI));
                     continue;
                   }
                 } else {
@@ -3118,7 +3135,7 @@ bool GradientUtils::legalRecompute(const Value *val,
                 const_cast<Instruction *>(orig), [&](Instruction *I) -> bool {
                   if (I->mayWriteToMemory() &&
                       writesToMemoryReadBy(
-                          OrigAA,
+                          OrigAA, TLI,
                           /*maybeReader*/ const_cast<Instruction *>(orig),
                           /*maybeWriter*/ I)) {
                     failed = true;
@@ -3150,7 +3167,7 @@ bool GradientUtils::legalRecompute(const Value *val,
                   const_cast<Instruction *>(orig), [&](Instruction *I) -> bool {
                     if (I->mayWriteToMemory() &&
                         writesToMemoryReadBy(
-                            OrigAA,
+                            OrigAA, TLI,
                             /*maybeReader*/ const_cast<Instruction *>(orig),
                             /*maybeWriter*/ I)) {
                       failed = true;
@@ -4349,7 +4366,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           goto end;
         }
       }
-      if (auto C = dyn_cast<Constant>(ip)) {
+      if (isa<Constant>(ip)) {
         auto rule = [&arg](Value *ip) {
           return ConstantExpr::getCast(arg->getOpcode(), cast<Constant>(ip),
                                        arg->getType());
@@ -5189,7 +5206,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               allInstructionsBetween(
                   OrigLI, orig2, origInst, [&](Instruction *I) -> bool {
                     if (I->mayWriteToMemory() &&
-                        writesToMemoryReadBy(OrigAA, /*maybeReader*/ origInst,
+                        writesToMemoryReadBy(OrigAA, TLI,
+                                             /*maybeReader*/ origInst,
                                              /*maybeWriter*/ I)) {
                       failed = true;
                       // llvm::errs() << "FAILED: " << *I << "\n";
@@ -5271,7 +5289,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                   OrigLI, SI, origInst, [&](Instruction *potentialAlias) {
                     if (!potentialAlias->mayWriteToMemory())
                       return false;
-                    if (!writesToMemoryReadBy(OrigAA, origInst, potentialAlias))
+                    if (!writesToMemoryReadBy(OrigAA, TLI, origInst,
+                                              potentialAlias))
                       return false;
 
                     if (auto II = dyn_cast<IntrinsicInst>(potentialAlias)) {
@@ -5288,7 +5307,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                               if (mid == SI)
                                 return false;
 
-                              if (!writesToMemoryReadBy(OrigAA, origInst,
+                              if (!writesToMemoryReadBy(OrigAA, TLI, origInst,
                                                         mid)) {
                                 return false;
                               }
@@ -5489,7 +5508,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                       OrigLI, &*origTerm, origInst,
                       [&](Instruction *I) -> bool {
                         if (I->mayWriteToMemory() &&
-                            writesToMemoryReadBy(OrigAA,
+                            writesToMemoryReadBy(OrigAA, TLI,
                                                  /*maybeReader*/ tmpload,
                                                  /*maybeWriter*/ I)) {
                           failed = true;
@@ -5515,7 +5534,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                         OrigLI, &*origTerm, origInst,
                         [&](Instruction *I) -> bool {
                           if (I->mayWriteToMemory() &&
-                              writesToMemoryReadBy(OrigAA,
+                              writesToMemoryReadBy(OrigAA, TLI,
                                                    /*maybeReader*/ tmpload,
                                                    /*maybeWriter*/ I)) {
                             failed = true;
@@ -5698,7 +5717,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               allInstructionsBetween(
                   OrigLI, &*origTerm, origInst, [&](Instruction *I) -> bool {
                     if (I->mayWriteToMemory() &&
-                        writesToMemoryReadBy(OrigAA, /*maybeReader*/ origInst,
+                        writesToMemoryReadBy(OrigAA, TLI,
+                                             /*maybeReader*/ origInst,
                                              /*maybeWriter*/ I)) {
                       failed = true;
                       return /*earlyBreak*/ true;
@@ -5726,7 +5746,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               allInstructionsBetween(
                   OrigLI, &*origTerm, origInst, [&](Instruction *I) -> bool {
                     if (I->mayWriteToMemory() &&
-                        writesToMemoryReadBy(OrigAA, /*maybeReader*/ origInst,
+                        writesToMemoryReadBy(OrigAA, TLI,
+                                             /*maybeReader*/ origInst,
                                              /*maybeWriter*/ I)) {
                       failed = true;
                       return /*earlyBreak*/ true;
@@ -6579,8 +6600,15 @@ void GradientUtils::computeMinCache() {
             }
           }
         } else if (auto CI = dyn_cast<CallInst>(&I)) {
-          Function *F = getFunctionFromCall(CI);
-          if (F && isAllocationFunction(F->getName(), TLI))
+          StringRef funcName = "";
+          if (Function *called = getFunctionFromCall(CI)) {
+            if (called->hasFnAttribute("enzyme_math"))
+              funcName =
+                  called->getFnAttribute("enzyme_math").getValueAsString();
+            else
+              funcName = called->getName();
+          }
+          if (isAllocationFunction(funcName, TLI))
             Available[CI] = CI;
         }
       }

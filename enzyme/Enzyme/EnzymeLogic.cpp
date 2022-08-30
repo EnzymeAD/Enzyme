@@ -305,7 +305,8 @@ struct CacheAnalysis {
           }
         }
 
-        if (!overwritesToMemoryReadBy(AA, SE, OrigLI, OrigDT, &li, inst2)) {
+        if (!overwritesToMemoryReadBy(AA, TLI, SE, OrigLI, OrigDT, &li,
+                                      inst2)) {
           return false;
         }
 
@@ -322,7 +323,7 @@ struct CacheAnalysis {
                     return false;
                   }
 
-                  if (!writesToMemoryReadBy(AA, &li, mid)) {
+                  if (!writesToMemoryReadBy(AA, TLI, &li, mid)) {
                     return false;
                   }
 
@@ -398,20 +399,30 @@ struct CacheAnalysis {
 
   std::map<Argument *, bool>
   compute_uncacheable_args_for_one_callsite(CallInst *callsite_op) {
+    StringRef funcName = "";
     Function *Fn = getFunctionFromCall(callsite_op);
-
     if (!Fn)
       return {};
 
-    if (isMemFreeLibMFunction(Fn->getName())) {
+    if (Fn->hasFnAttribute("enzyme_math"))
+      funcName = Fn->getFnAttribute("enzyme_math").getValueAsString();
+    else
+      funcName = Fn->getName();
+
+    if (funcName == "")
+      return {};
+
+    if (isMemFreeLibMFunction(funcName)) {
       return {};
     }
 
-    if (isCertainPrintMallocOrFree(Fn) || isAllocationFunction(Fn->getName(), TLI)) {
+    if (isDebugFunction(callsite_op->getCalledFunction()))
+      return {};
+
+    if (isCertainPrint(funcName) || isAllocationFunction(funcName, TLI) ||
+        isDeallocationFunction(funcName, TLI)) {
       return {};
     }
-
-    StringRef funcName = Fn->getName();
 
     if (funcName.startswith("MPI_") || funcName.startswith("enzyme_wrapmpi$$"))
       return {};
@@ -470,14 +481,28 @@ struct CacheAnalysis {
     allFollowersOf(callsite_op, [&](Instruction *inst2) {
       // Don't consider modref from malloc/free as a need to cache
       if (auto obj_op = dyn_cast<CallInst>(inst2)) {
-        Function *called = getFunctionFromCall(obj_op);
-        if (called && isCertainPrintMallocOrFree(called)) {
+        StringRef sfuncName = "";
+        if (Function *called = getFunctionFromCall(obj_op)) {
+          if (called->hasFnAttribute("enzyme_math"))
+            sfuncName =
+                called->getFnAttribute("enzyme_math").getValueAsString();
+          else
+            sfuncName = called->getName();
+        }
+
+        if (isMemFreeLibMFunction(funcName)) {
           return false;
         }
-        if (called && isMemFreeLibMFunction(called->getName())) {
+
+        if (isDebugFunction(obj_op->getCalledFunction()))
+          return false;
+
+        if (isCertainPrint(funcName) || isAllocationFunction(funcName, TLI) ||
+            isDeallocationFunction(funcName, TLI)) {
           return false;
         }
-        if (called && called->getName() == "__kmpc_for_static_fini") {
+
+        if (funcName == "__kmpc_for_static_fini") {
           return false;
         }
 
@@ -746,7 +771,7 @@ void calculateUnusedValuesInFunction(
         bool isLibMFn = false;
         if (auto obj_op = dyn_cast<CallInst>(inst)) {
           Function *called = getFunctionFromCall((CallInst *)obj_op);
-          if (called && isDeallocationFunction(*called, TLI)) {
+          if (called && isDeallocationFunction(called->getName(), TLI)) {
             if (mode == DerivativeMode::ForwardMode ||
                 mode == DerivativeMode::ForwardModeSplit ||
                 ((mode == DerivativeMode::ReverseModePrimal ||
@@ -810,7 +835,7 @@ void calculateUnusedValuesInFunction(
                     return /*earlyBreak*/ false;
 
                   if (writesToMemoryReadBy(
-                          gutils->OrigAA,
+                          gutils->OrigAA, TLI,
                           /*maybeReader*/ const_cast<MemTransferInst *>(mti),
                           /*maybeWriter*/ I)) {
                     foundStore = true;
@@ -933,7 +958,7 @@ void calculateUnusedStoresInFunction(
 
               // if (I == &MTI) return;
               if (writesToMemoryReadBy(
-                      gutils->OrigAA,
+                      gutils->OrigAA, TLI,
                       /*maybeReader*/ const_cast<MemTransferInst *>(mti),
                       /*maybeWriter*/ I)) {
                 foundStore = true;
@@ -1231,7 +1256,7 @@ bool legalCombinedForwardReverse(
     if (auto op = dyn_cast<CallInst>(I)) {
       Function *called = getFunctionFromCall(op);
       if (called && (isAllocationFunction(called->getName(), gutils->TLI) ||
-                     isDeallocationFunction(*called, gutils->TLI)))
+                     isDeallocationFunction(called->getName(), gutils->TLI)))
         return;
     }
 
@@ -1309,7 +1334,8 @@ bool legalCombinedForwardReverse(
       auto consider = [&](Instruction *user) {
         if (!user->mayReadFromMemory())
           return false;
-        if (writesToMemoryReadBy(gutils->OrigAA, /*maybeReader*/ user,
+        if (writesToMemoryReadBy(gutils->OrigAA, gutils->TLI,
+                                 /*maybeReader*/ user,
                                  /*maybeWriter*/ inst)) {
           propagate(user);
           // Fast return if not legal
@@ -1339,7 +1365,8 @@ bool legalCombinedForwardReverse(
         return false;
       if (!post->mayWriteToMemory())
         return false;
-      if (writesToMemoryReadBy(gutils->OrigAA, /*maybeReader*/ inst,
+      if (writesToMemoryReadBy(gutils->OrigAA, gutils->TLI,
+                               /*maybeReader*/ inst,
                                /*maybeWriter*/ post)) {
         if (EnzymePrintPerf) {
           if (called)

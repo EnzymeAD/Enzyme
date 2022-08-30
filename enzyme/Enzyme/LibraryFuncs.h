@@ -39,7 +39,7 @@ extern std::map<std::string, std::function<llvm::CallInst *(llvm::IRBuilder<> &,
 
 /// Return whether a given function is a known C/C++ memory allocation function
 /// For updating below one should read MemoryBuiltins.cpp, TargetLibraryInfo.cpp
-static inline bool isAllocationFunction(llvm::StringRef name,
+static inline bool isAllocationFunction(const llvm::StringRef name,
                                         const llvm::TargetLibraryInfo &TLI) {
   if (name == "calloc" || name == "malloc")
     return true;
@@ -117,16 +117,16 @@ static inline bool isAllocationFunction(llvm::StringRef name,
 /// Return whether a given function is a known C/C++ memory deallocation
 /// function For updating below one should read MemoryBuiltins.cpp,
 /// TargetLibraryInfo.cpp
-static inline bool isDeallocationFunction(const llvm::Function &F,
+static inline bool isDeallocationFunction(const llvm::StringRef name,
                                           const llvm::TargetLibraryInfo &TLI) {
   using namespace llvm;
   llvm::LibFunc libfunc;
-  if (!TLI.getLibFunc(F, libfunc)) {
-    if (F.getName() == "free")
+  if (!TLI.getLibFunc(name, libfunc)) {
+    if (name == "free")
       return true;
-    if (F.getName() == "__rust_dealloc")
+    if (name == "__rust_dealloc")
       return true;
-    if (F.getName() == "swift_release")
+    if (name == "swift_release")
       return true;
     return false;
   }
@@ -198,7 +198,7 @@ static inline bool isDeallocationFunction(const llvm::Function &F,
 static inline void zeroKnownAllocation(llvm::IRBuilder<> &bb,
                                        llvm::Value *toZero,
                                        llvm::ArrayRef<llvm::Value *> argValues,
-                                       llvm::StringRef funcName,
+                                       const llvm::StringRef funcName,
                                        const llvm::TargetLibraryInfo &TLI) {
   using namespace llvm;
   assert(isAllocationFunction(funcName, TLI));
@@ -269,7 +269,7 @@ static inline void zeroKnownAllocation(llvm::IRBuilder<> &bb,
 // For updating below one should read MemoryBuiltins.cpp, TargetLibraryInfo.cpp
 static inline llvm::CallInst *
 freeKnownAllocation(llvm::IRBuilder<> &builder, llvm::Value *tofree,
-                    llvm::StringRef allocationfn,
+                    const llvm::StringRef allocationfn,
                     const llvm::DebugLoc &debuglocation,
                     const llvm::TargetLibraryInfo &TLI) {
   using namespace llvm;
@@ -427,7 +427,8 @@ freeKnownAllocation(llvm::IRBuilder<> &builder, llvm::Value *tofree,
                          .getCallee();
 #else
   Value *freevalue =
-      builder.GetInsertBlock()->getParent()->getOrInsertFunction(freename, FT);
+      builder.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
+          freename, FT);
 #endif
   CallInst *freecall = cast<CallInst>(
 #if LLVM_VERSION_MAJOR >= 8
