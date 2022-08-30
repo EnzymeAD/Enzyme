@@ -55,7 +55,7 @@ static inline bool isAllocationFunction(const llvm::Function &F,
 
   using namespace llvm;
   llvm::LibFunc libfunc;
-  if (!TLI.getLibFunc(F, libfunc))
+  if (!TLI.getLibFunc(F.getName(), libfunc))
     return false;
 
   switch (libfunc) {
