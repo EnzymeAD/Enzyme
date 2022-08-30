@@ -27,10 +27,11 @@ declare double @__enzyme_fwddiff(double (double, double)*, ...)
 
 ; CHECK: define internal double @fwddiffetester(double %x, double %y, double %"y'") #0 {
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = fdiv fast double %x, %y
-; CHECK-NEXT:   %1 = call fast double @llvm.round.f64(double %0)
-; CHECK-NEXT:   %2 = fmul fast double %"y'", %1
-; CHECK-NEXT:   ret double %2
+; CHECK-NEXT:   %0 = fneg fast double %"y'"
+; CHECK-NEXT:   %1 = fdiv fast double %x, %y
+; CHECK-NEXT:   %2 = call fast double @llvm.round.f64(double %1)
+; CHECK-NEXT:   %3 = fmul fast double %0, %2
+; CHECK-NEXT:   ret double %3
 ; CHECK-NEXT: }
 
 ; CHECK: define internal double @fwddiffetester.1(double %x, double %"x'", double %y) #0 {

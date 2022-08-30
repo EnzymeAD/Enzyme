@@ -34,9 +34,17 @@ class Attribute<string name_> {
   string name = name_;
 }
 
-class Intrinsic<string name_, list<string> types_> {
+// So we can also extend it by not input related 
+// types, eg. for mem related Intrinsics
+class TypeInfo {
+}
+
+class TypeOf : TypeInfo {
+}
+
+class Intrinsic<string name_, list<dag> types_> {
   string name = name_;
-  list<string> types = types_;
+  list<dag> types = types_;
 }
 
 def ReadNone : Attribute<"ReadNone">;
@@ -119,12 +127,12 @@ def : CallPattern<(Op $x, $y),
                   ["remainder"],
                   [
                     (DiffeRet<"">),
-                    (FMul (DiffeRet<"">), (Intrinsic<"round", ["orig->getOperand(0)->getType()"]> (FDiv $x, $y)))
+                    (FMul (FNeg (DiffeRet<"">)), (Intrinsic<"round", [(TypeOf<> $x)]> (FDiv $x, $y)))
                   ]
                   >;
 def : CallPattern<(Op $x),
                   ["asin", "asinf", "asinl"],
-                  [(FDiv (DiffeRet<"">), (Intrinsic<"sqrt", ["args[0]->getType()"]> (FSub (ConstantFP<"1.0"> $x), (FMul $x, $x)))  )]                  
+                  [(FDiv (DiffeRet<"">), (Intrinsic<"sqrt", [(TypeOf<> $x)]> (FSub (ConstantFP<"1.0"> $x), (FMul $x, $x)))  )]                  
                   >;
 def : CallPattern<(Op $x),
                   ["log1p", "log1pf", "log1pl"],
@@ -132,5 +140,5 @@ def : CallPattern<(Op $x),
                   >;
 def : CallPattern<(Op $x),
                   ["expm1"],
-                  [(FMul (Intrinsic<"exp", ["args[0]->getType()"]> $x), (DiffeRet<"">))]
+                  [(FMul (Intrinsic<"exp", [(TypeOf<> $x)]> $x), (DiffeRet<"">))]
                   >;

@@ -78,12 +78,18 @@ void getFunction(raw_ostream &os, std::string callval, std::string FT,
   assert(0 && "Unhandled function");
 }
 void getIntrinsic(raw_ostream &os, std::string callval, std::string FT,
-                  std::string cconv, StringRef intrName,
-                  std::vector<StringRef> intrTypes) {
+                  std::string cconv, StringRef intrName, ListInit *typeInit,
+                  StringMap<std::string> &nameToOrdinal) {
   os << " Type *tys[] = {";
   bool first = true;
-  for (auto intrType : intrTypes) {
-    os << ((first) ? "" : ", ") << intrType;
+  for (auto intrType : *typeInit) {
+    auto arg = cast<DagInit>(intrType);
+    assert(arg->getNumArgs() == 1 && "Only one arg allowed");
+    auto name = arg->getArgNameStr(0);
+    auto num = nameToOrdinal.lookup(name);
+    os << ((first) ? "" : ", ") << num << "->getType()";
+    // os << ((first) ? "" : ", ") << "args[" << num << "]->getType()";
+    first = false;
   }
   os << "};\n"
      << " Function *" << callval
@@ -218,8 +224,10 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
       getFunction(os, "callval", "FT", "cconv", Def->getValueInit("func"));
     } else if (isIntr) {
       auto intrName = Def->getValueAsString("name");
-      auto intrTypes = Def->getValueAsListOfStrings("types");
-      getIntrinsic(os, "callval", "FT", "cconv", intrName, intrTypes);
+      // auto intrTypes = Def->getValueAsListOfStrings("types");
+      auto intrTypes = Def->getValueAsListInit("types");
+      getIntrinsic(os, "callval", "FT", "cconv", intrName, intrTypes,
+                   nameToOrdinal);
     }
 
     os << " Value *res = nullptr;\n";
