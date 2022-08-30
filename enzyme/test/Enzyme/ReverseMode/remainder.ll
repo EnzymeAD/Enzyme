@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -O3 -S | FileCheck %s
+; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
 
 ; Function Attrs: nounwind readnone uwtable
 define double @tester(double %x, double %y) {
@@ -25,14 +25,18 @@ declare double @remainder(double, double)
 ; Function Attrs: nounwind
 declare double @__enzyme_autodiff(double (double, double)*, ...)
 
-; CHECK: define double @test_derivative1(double %x, double %y)
+; CHECK: define internal { double } @diffetester(double %x, double %y, double %differeturn)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = fdiv fast double %x, %y
-; CHECK-NEXT:   %1 = tail call fast double @llvm.round.f64(double %0)
-; CHECK-NEXT:   ret double %1
+; CHECK-NEXT:   %1 = call fast double @llvm.round.f64(double %0)
+; CHECK-NEXT:   %2 = fmul fast double %differeturn, %1
+; CHECK-NEXT:   %3 = insertvalue { double } undef, double %2, 0
+; CHECK-NEXT:   ret { double } %3
 ; CHECK-NEXT: }
 
-; CHECK: define double @test_derivative2(double %x, double %y)
+; CHECK: define internal { double } @diffetester.1(double %x, double %y, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   ret double 1.000000e+00
+; CHECK-NEXT:   %0 = insertvalue { double } undef, double %differeturn, 0
+; CHECK-NEXT:   ret { double } %0
 ; CHECK-NEXT: }
+
