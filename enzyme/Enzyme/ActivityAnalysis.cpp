@@ -927,6 +927,17 @@ bool isAllocationCall(Value *TmpOrig, TargetLibraryInfo &TLI) {
   }
   return false;
 }
+bool isDeallocationCall(Value *TmpOrig, TargetLibraryInfo &TLI) {
+  if (auto called = isCalledFunction(TmpOrig)) {
+    StringRef funcName = "";
+    if (called->hasFnAttribute("enzyme_math"))
+      funcName = called->getFnAttribute("enzyme_math").getValueAsString();
+    else
+      funcName = called->getName();
+    return isDeallocationFunction(funcName, TLI);
+  }
+  return false;
+}
 
 bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
   // This analysis may only be called by instructions corresponding to
@@ -2469,8 +2480,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
   if (isa<AllocaInst>(val))
     AllocaSet.insert(val);
 
-  if (PUA == UseActivity::None && isCalledFunction(val) &&
-      isAllocationFunction(isCalledFunction(val)->getName(), TLI))
+  if (PUA == UseActivity::None && isAllocationCall(val, TLI))
     AllocaSet.insert(val);
 
   while (todo.size()) {
@@ -2528,11 +2538,9 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
               newAllocaSet.insert(TmpOrig);
               continue;
             }
-            if (auto CF = isCalledFunction(TmpOrig)) {
-              if (isAllocationFunction(CF->getName(), TLI)) {
-                newAllocaSet.insert(TmpOrig);
-                continue;
-              }
+            if (isAllocationCall(TmpOrig, TLI)) {
+              newAllocaSet.insert(TmpOrig);
+              continue;
             }
             if (isa<UndefValue>(TmpOrig) || isa<ConstantInt>(TmpOrig) ||
                 isa<ConstantPointerNull>(TmpOrig) || isa<ConstantFP>(TmpOrig)) {
@@ -2626,17 +2634,15 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
               TmpOrig = LI->getPointerOperand();
               continue;
             }
-            if (auto CF = isCalledFunction(TmpOrig)) {
-              if (isAllocationFunction(CF->getName(), TLI)) {
-                done.insert(
-                    std::make_tuple((User *)SI, SI->getPointerOperand(), UA));
-                for (const auto a : TmpOrig->users()) {
-                  todo.push_back(std::make_tuple(a, TmpOrig, UA));
-                }
-                AllocaSet.insert(TmpOrig);
-                shouldContinue = true;
-                break;
+            if (isAllocationCall(TmpOrig, TLI)) {
+              done.insert(
+                  std::make_tuple((User *)SI, SI->getPointerOperand(), UA));
+              for (const auto a : TmpOrig->users()) {
+                todo.push_back(std::make_tuple(a, TmpOrig, UA));
               }
+              AllocaSet.insert(TmpOrig);
+              shouldContinue = true;
+              break;
             }
           }
           auto TmpOrig_2 =
@@ -2813,17 +2819,15 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
                       TmpOrig = LI->getPointerOperand();
                       continue;
                     }
-                    if (auto CF = isCalledFunction(TmpOrig)) {
-                      if (isAllocationFunction(CF->getName(), TLI)) {
-                        done.insert(std::make_tuple(
-                            (User *)call, call->getArgOperand(arg), UA));
-                        for (const auto a : TmpOrig->users()) {
-                          todo.push_back(std::make_tuple(a, TmpOrig, UA));
-                        }
-                        AllocaSet.insert(TmpOrig);
-                        shouldContinue = true;
-                        break;
+                    if (isAllocationCall(TmpOrig, TLI)) {
+                      done.insert(std::make_tuple(
+                          (User *)call, call->getArgOperand(arg), UA));
+                      for (const auto a : TmpOrig->users()) {
+                        todo.push_back(std::make_tuple(a, TmpOrig, UA));
                       }
+                      AllocaSet.insert(TmpOrig);
+                      shouldContinue = true;
+                      break;
                     }
                   }
                   auto TmpOrig_2 =
@@ -2898,16 +2902,14 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
               }
 
               if (PUA == UseActivity::None) {
-                if (auto CF = isCalledFunction(TmpOrig2)) {
-                  if (isAllocationFunction(CF->getName(), TLI)) {
-                    done.insert(std::make_tuple((User *)call, a, UA));
-                    for (const auto a : TmpOrig2->users()) {
-                      todo.push_back(std::make_tuple(a, TmpOrig2, UA));
-                    }
-                    AllocaSet.insert(TmpOrig2);
-                    subValue = true;
-                    break;
+                if (isAllocationCall(TmpOrig2, TLI)) {
+                  done.insert(std::make_tuple((User *)call, a, UA));
+                  for (const auto a : TmpOrig2->users()) {
+                    todo.push_back(std::make_tuple(a, TmpOrig2, UA));
                   }
+                  AllocaSet.insert(TmpOrig2);
+                  subValue = true;
+                  break;
                 }
                 if (auto L = dyn_cast<LoadInst>(TmpOrig2)) {
                   ptr = L->getPointerOperand();
@@ -3108,23 +3110,21 @@ bool ActivityAnalyzer::isValueActivelyStoredOrReturned(TypeResults const &TR,
       }
     }
 
-    if (auto F = isCalledFunction(a)) {
-      if (isAllocationFunction(F->getName(), TLI)) {
-        // if not written to memory and returning a known constant, this
-        // cannot be actively returned/stored
-        if (isConstantValue(TR, a)) {
-          continue;
-        }
-        // if not written to memory and returning a value itself
-        // not actively stored or returned, this is not actively
-        // stored or returned
-        if (!isValueActivelyStoredOrReturned(TR, a, outside)) {
-          continue;
-        }
-      } else if (isDeallocationFunction(F->getName(), TLI)) {
-        // freeing memory never counts
+    if (isAllocationCall(a, TLI)) {
+      // if not written to memory and returning a known constant, this
+      // cannot be actively returned/stored
+      if (isConstantValue(TR, a)) {
         continue;
       }
+      // if not written to memory and returning a value itself
+      // not actively stored or returned, this is not actively
+      // stored or returned
+      if (!isValueActivelyStoredOrReturned(TR, a, outside)) {
+        continue;
+      }
+    } else if (isDeallocationCall(a, TLI)) {
+      // freeing memory never counts
+      continue;
     }
     // fallback and conservatively assume that if the value is written to
     // it is written to active memory
