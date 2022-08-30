@@ -4007,7 +4007,7 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
                      &call);
       return;
     }
-    if (isAllocationFunction(*ci, TLI)) {
+    if (isAllocationFunction(ci->getName(), TLI)) {
       size_t Idx = 0;
       for (auto &Arg : ci->args()) {
         if (Arg.getType()->isIntegerTy()) {

@@ -48,8 +48,7 @@
 std::map<std::string, std::function<llvm::Value *(IRBuilder<> &, CallInst *,
                                                   ArrayRef<Value *>)>>
     shadowHandlers;
-std::map<std::string,
-         std::function<llvm::CallInst *(IRBuilder<> &, Value *, Function *)>>
+std::map<std::string, std::function<llvm::CallInst *(IRBuilder<> &, Value *)>>
     shadowErasers;
 
 std::map<
@@ -2794,7 +2793,8 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                     applyChainRule(
                         NB,
                         [&](Value *anti) {
-                          zeroKnownAllocation(NB, anti, args, *called, TLI);
+                          zeroKnownAllocation(NB, anti, args, called->getName(),
+                                              TLI);
                         },
                         anti);
                   }
@@ -6580,7 +6580,7 @@ void GradientUtils::computeMinCache() {
           }
         } else if (auto CI = dyn_cast<CallInst>(&I)) {
           Function *F = getFunctionFromCall(CI);
-          if (F && isAllocationFunction(*F, TLI))
+          if (F && isAllocationFunction(F->getName(), TLI))
             Available[CI] = CI;
         }
       }

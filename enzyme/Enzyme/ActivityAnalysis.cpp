@@ -338,7 +338,7 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
 
   // Allocations, deallocations, and c++ guards don't impact the activity
   // of arguments
-  if (isAllocationFunction(*F, TLI) || isDeallocationFunction(*F, TLI))
+  if (isAllocationFunction(Name, TLI) || isDeallocationFunction(*F, TLI))
     return true;
   if (Name == "posix_memalign")
     return true;
@@ -497,7 +497,7 @@ static inline void propagateArgumentInformation(
     }
 
     // Allocations, deallocations, and c++ guards are fully inactive
-    if (isAllocationFunction(*F, TLI) || isDeallocationFunction(*F, TLI) ||
+    if (isAllocationFunction(Name, TLI) || isDeallocationFunction(*F, TLI) ||
         Name == "__cxa_guard_acquire" || Name == "__cxa_guard_release" ||
         Name == "__cxa_guard_abort")
       return;
@@ -1414,14 +1414,14 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           if (EnzymeEmptyFnInactive && called->empty() &&
               !hasMetadata(called, "enzyme_gradient") &&
               !hasMetadata(called, "enzyme_derivative") &&
-              !isAllocationFunction(*called, TLI) &&
+              !isAllocationFunction(called->getName(), TLI) &&
               !isDeallocationFunction(*called, TLI) &&
               !isa<IntrinsicInst>(op)) {
             InsertConstantValue(TR, Val);
             insertConstantsFrom(TR, *UpHypothesis);
             return true;
           }
-          if (isAllocationFunction(*called, TLI)) {
+          if (isAllocationFunction(called->getName(), TLI)) {
             // This pointer is inactive if it is either not actively stored to
             // and not actively loaded from.
             if (directions == DOWN) {
@@ -1628,7 +1628,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           if (F->hasFnAttribute("enzyme_inactive")) {
             return false;
           }
-          if (isAllocationFunction(*F, TLI) ||
+          if (isAllocationFunction(F->getName(), TLI) ||
               isDeallocationFunction(*F, TLI)) {
             return false;
           }
@@ -1986,7 +1986,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         if (isa<Argument>(TmpOrig) || isa<GlobalVariable>(TmpOrig) ||
             isa<AllocaInst>(TmpOrig) ||
             (isCalledFunction(TmpOrig) &&
-             isAllocationFunction(*isCalledFunction(TmpOrig), TLI))) {
+             isAllocationFunction(isCalledFunction(TmpOrig)->getName(), TLI))) {
           std::shared_ptr<ActivityAnalyzer> DownHypothesis2 =
               std::shared_ptr<ActivityAnalyzer>(
                   new ActivityAnalyzer(*DownHypothesis, DOWN));
@@ -2260,7 +2260,7 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
       if (EnzymeEmptyFnInactive && called->empty() &&
           !hasMetadata(called, "enzyme_gradient") &&
           !hasMetadata(called, "enzyme_derivative") &&
-          !isAllocationFunction(*called, TLI) &&
+          !isAllocationFunction(called->getName(), TLI) &&
           !isDeallocationFunction(*called, TLI) && !isa<IntrinsicInst>(op)) {
         if (EnzymePrintActivity)
           llvm::errs() << "constant(" << (int)directions << ") up-emptyconst "
@@ -2431,7 +2431,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
     AllocaSet.insert(val);
 
   if (PUA == UseActivity::None && isCalledFunction(val) &&
-      isAllocationFunction(*isCalledFunction(val), TLI))
+      isAllocationFunction(isCalledFunction(val)->getName(), TLI))
     AllocaSet.insert(val);
 
   while (todo.size()) {
@@ -2490,7 +2490,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
               continue;
             }
             if (auto CF = isCalledFunction(TmpOrig)) {
-              if (isAllocationFunction(*CF, TLI)) {
+              if (isAllocationFunction(CF->getName(), TLI)) {
                 newAllocaSet.insert(TmpOrig);
                 continue;
               }
@@ -2588,7 +2588,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
               continue;
             }
             if (auto CF = isCalledFunction(TmpOrig)) {
-              if (isAllocationFunction(*CF, TLI)) {
+              if (isAllocationFunction(CF->getName(), TLI)) {
                 done.insert(
                     std::make_tuple((User *)SI, SI->getPointerOperand(), UA));
                 for (const auto a : TmpOrig->users()) {
@@ -2775,7 +2775,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
                       continue;
                     }
                     if (auto CF = isCalledFunction(TmpOrig)) {
-                      if (isAllocationFunction(*CF, TLI)) {
+                      if (isAllocationFunction(CF->getName(), TLI)) {
                         done.insert(std::make_tuple(
                             (User *)call, call->getArgOperand(arg), UA));
                         for (const auto a : TmpOrig->users()) {
@@ -2860,7 +2860,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
 
               if (PUA == UseActivity::None) {
                 if (auto CF = isCalledFunction(TmpOrig2)) {
-                  if (isAllocationFunction(*CF, TLI)) {
+                  if (isAllocationFunction(CF->getName(), TLI)) {
                     done.insert(std::make_tuple((User *)call, a, UA));
                     for (const auto a : TmpOrig2->users()) {
                       todo.push_back(std::make_tuple(a, TmpOrig2, UA));
@@ -3070,7 +3070,7 @@ bool ActivityAnalyzer::isValueActivelyStoredOrReturned(TypeResults const &TR,
     }
 
     if (auto F = isCalledFunction(a)) {
-      if (isAllocationFunction(*F, TLI)) {
+      if (isAllocationFunction(F->getName(), TLI)) {
         // if not written to memory and returning a known constant, this
         // cannot be actively returned/stored
         if (isConstantValue(TR, a)) {

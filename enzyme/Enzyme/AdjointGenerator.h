@@ -10106,7 +10106,7 @@ public:
       }
     }
 
-    if (called && isAllocationFunction(*called, gutils->TLI)) {
+    if (called && isAllocationFunction(funcName, gutils->TLI)) {
 
       bool constval = gutils->isConstantValue(orig);
 
@@ -10337,7 +10337,7 @@ public:
                   applyChainRule(
                       bb,
                       [&](Value *anti) {
-                        zeroKnownAllocation(bb, anti, args, *called,
+                        zeroKnownAllocation(bb, anti, args, funcName,
                                             gutils->TLI);
                       },
                       anti);
@@ -10367,7 +10367,7 @@ public:
             assert(tofree);
             assert(tofree->getType());
             auto rule = [&](Value *tofree) {
-              auto CI = freeKnownAllocation(Builder2, tofree, *called, dbgLoc,
+              auto CI = freeKnownAllocation(Builder2, tofree, funcName, dbgLoc,
                                             gutils->TLI);
               if (CI)
 #if LLVM_VERSION_MAJOR >= 14
@@ -10518,7 +10518,7 @@ public:
               IRBuilder<> Builder2(call.getParent());
               getReverseBuilder(Builder2);
               auto dbgLoc = gutils->getNewFromOriginal(orig->getDebugLoc());
-              freeKnownAllocation(Builder2, lookup(newCall, Builder2), *called,
+              freeKnownAllocation(Builder2, lookup(newCall, Builder2), funcName,
                                   dbgLoc, gutils->TLI);
               return;
             }
@@ -10646,7 +10646,7 @@ public:
           IRBuilder<> Builder2(call.getParent());
           getReverseBuilder(Builder2);
           auto dbgLoc = gutils->getNewFromOriginal(orig->getDebugLoc());
-          freeKnownAllocation(Builder2, lookup(nop, Builder2), *called, dbgLoc,
+          freeKnownAllocation(Builder2, lookup(nop, Builder2), funcName, dbgLoc,
                               gutils->TLI);
         }
       } else if (Mode == DerivativeMode::ReverseModeGradient ||

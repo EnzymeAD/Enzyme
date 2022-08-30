@@ -407,7 +407,7 @@ struct CacheAnalysis {
       return {};
     }
 
-    if (isCertainPrintMallocOrFree(Fn) || isAllocationFunction(*Fn, TLI)) {
+    if (isCertainPrintMallocOrFree(Fn) || isAllocationFunction(Fn->getName(), TLI)) {
       return {};
     }
 
@@ -796,7 +796,7 @@ void calculateUnusedValuesInFunction(
             newMemory = true;
           else if (auto CI = dyn_cast<CallInst>(at))
             if (Function *F = getFunctionFromCall(CI))
-              if (isAllocationFunction(*F, TLI))
+              if (isAllocationFunction(F->getName(), TLI))
                 newMemory = true;
           if (newMemory) {
             bool foundStore = false;
@@ -919,7 +919,7 @@ void calculateUnusedStoresInFunction(
         newMemory = true;
       else if (auto CI = dyn_cast<CallInst>(at))
         if (Function *F = getFunctionFromCall(CI))
-          if (isAllocationFunction(*F, TLI))
+          if (isAllocationFunction(F->getName(), TLI))
             newMemory = true;
       if (newMemory) {
         bool foundStore = false;
@@ -1230,7 +1230,7 @@ bool legalCombinedForwardReverse(
 
     if (auto op = dyn_cast<CallInst>(I)) {
       Function *called = getFunctionFromCall(op);
-      if (called && (isAllocationFunction(*called, gutils->TLI) ||
+      if (called && (isAllocationFunction(called->getName(), gutils->TLI) ||
                      isDeallocationFunction(*called, gutils->TLI)))
         return;
     }

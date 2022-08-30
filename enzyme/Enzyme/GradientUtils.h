@@ -937,7 +937,7 @@ public:
 
           if (auto dc = dyn_cast<CallInst>(val)) {
             if (dc->getCalledFunction() &&
-                isAllocationFunction(*dc->getCalledFunction(), TLI)) {
+                isAllocationFunction(dc->getCalledFunction()->getName(), TLI)) {
 
               bool hasPDFree = false;
               if (dc->getParent() == CI->getParent() ||
@@ -951,7 +951,7 @@ public:
             }
           }
         }
-        if (isAllocationFunction(*called, TLI)) {
+        if (isAllocationFunction(called->getName(), TLI)) {
           allocsToPromote.insert(CI);
           if (hasMetadata(CI, "enzyme_fromstack")) {
             allocationsWithGuaranteedFree[CI].insert(CI);
@@ -1562,7 +1562,7 @@ public:
         invertedPointers.insert(
             std::make_pair((const Value *)inst, InvertedPointerVH(this, anti)));
 
-        if (called && isAllocationFunction(*called, TLI)) {
+        if (called && isAllocationFunction(called->getName(), TLI)) {
           anti->setName(op->getName() + "'mi");
         }
       }

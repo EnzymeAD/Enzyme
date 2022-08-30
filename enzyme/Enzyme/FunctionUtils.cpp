@@ -1268,7 +1268,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
             if (isa<ConstantPointerNull>(IC->getOperand(1 - i)))
               if (auto CI = dyn_cast<CallInst>(IC->getOperand(i))) {
                 if (CI->getCalledFunction() &&
-                    isAllocationFunction(*CI->getCalledFunction(), TLI)) {
+                    isAllocationFunction(CI->getCalledFunction()->getName(),
+                                         TLI)) {
                   for (auto U : IC->users()) {
                     if (auto BI = dyn_cast<BranchInst>(U))
                       BranchesToErase.push_back(BI->getParent());
