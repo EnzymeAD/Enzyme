@@ -27,7 +27,7 @@ declare double @__enzyme_autodiff(double (double, double)*, ...)
 
 ; CHECK: define internal { double } @diffetester(double %x, double %y, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = fneg fast double %differeturn
+; CHECK-NEXT:   %0 = {{(fneg fast double|fsub fast double \-0\.000000e\+00,)}} %differeturn
 ; CHECK-NEXT:   %1 = fdiv fast double %x, %y
 ; CHECK-NEXT:   %2 = call fast double @llvm.round.f64(double %1)
 ; CHECK-NEXT:   %3 = fmul fast double %0, %2
@@ -42,4 +42,3 @@ declare double @__enzyme_autodiff(double (double, double)*, ...)
 ; CHECK-NEXT:   %0 = insertvalue { double } undef, double %differeturn, 0
 ; CHECK-NEXT:   ret { double } %0
 ; CHECK-NEXT: }
-
