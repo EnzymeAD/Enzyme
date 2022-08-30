@@ -90,7 +90,7 @@ void getIntrinsic(raw_ostream &os, std::string callval, std::string FT,
      << " = Intrinsic::getDeclaration(called->getParent(), "
         "Intrinsic::"
      << intrName << ", tys);\n";
-  os << "  auto " << FT << " = orig->getFunctionType();\n";
+  os << "  auto " << FT << " = " << callval << "->getFunctionType();\n";
   os << "  auto " << cconv << " = orig->getCallingConv();\n";
 }
 

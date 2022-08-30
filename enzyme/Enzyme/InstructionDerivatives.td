@@ -119,7 +119,7 @@ def : CallPattern<(Op $x, $y),
                   ["remainder"],
                   [
                     (DiffeRet<"">),
-                    (FMul (DiffeRet<"">), (Call<(SameTypesFunc<"round">), [ReadNone,NoUnwind]> (FDiv $x, $y)))
+                    (FMul (DiffeRet<"">), (Intrinsic<"round", ["orig->getOperand(0)->getType()"]> (FDiv $x, $y)))
                   ]
                   >;
 def : CallPattern<(Op $x),
