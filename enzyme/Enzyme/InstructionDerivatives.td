@@ -34,6 +34,11 @@ class Attribute<string name_> {
   string name = name_;
 }
 
+class Intrinsic<string name_, list<string> types_> {
+  string name = name_;
+  list<string> types = types_;
+}
+
 def ReadNone : Attribute<"ReadNone">;
 def ReadOnly : Attribute<"ReadOnly">;
 def NoUnwind : Attribute<"NoUnwind">;
@@ -113,13 +118,16 @@ def : CallPattern<(Op $x),
 def : CallPattern<(Op $x, $y),
                   ["remainder"],
                   [
-                    (ConstantFP<"1.0"> $x),
-                    (FMul (ConstantFP<"-1.0"> $x), (Call<(SameTypesFunc<"floor">), [ReadNone,NoUnwind]> (FDiv $x, $y)))
+                    (DiffeRet<"">),
+                    (FMul (DiffeRet<"">), (Call<(SameTypesFunc<"round">), [ReadNone,NoUnwind]> (FDiv $x, $y)))
                   ]
                   >;
+def : CallPattern<(Op $x),
+                  ["asin", "asinf", "asinl"],
+                  [(FDiv (DiffeRet<"">), (Intrinsic<"sqrt", ["args[0]->getType()"]> (FSub (ConstantFP<"1.0"> $x), (FMul $x, $x)))  )]                  
+                  >;
 
-// TODO replace with intrinsic call to exp
 def : CallPattern<(Op $x),
                   ["expm1"],
-                  [(FMul (FAdd (ConstantFP<"1.0"> $x), (Call<(SameFunc), [ReadNone,NoUnwind]> $x) ), (DiffeRet<"">))]
+                  [(FMul (Intrinsic<"exp", ["args[0]->getType()"]> $x), (DiffeRet<"">))]
                   >;
