@@ -25,7 +25,7 @@ declare double @remainder(double, double)
 ; Function Attrs: nounwind
 declare double @__enzyme_fwddiff(double (double, double)*, ...)
 
-; CHECK: define internal double @fwddiffetester(double %x, double %y, double %"y'") #0 {
+; CHECK: define internal double @fwddiffetester(double %x, double %y, double %"y'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = {{(fneg fast double|fsub fast double \-0\.000000e\+00,)}} %"y'"
 ; CHECK-NEXT:   %1 = fdiv fast double %x, %y
@@ -34,7 +34,7 @@ declare double @__enzyme_fwddiff(double (double, double)*, ...)
 ; CHECK-NEXT:   ret double %3
 ; CHECK-NEXT: }
 
-; CHECK: define internal double @fwddiffetester.1(double %x, double %"x'", double %y) #0 {
+; CHECK: define internal double @fwddiffetester.1(double %x, double %"x'", double %y)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   ret double %"x'"
 ; CHECK-NEXT: }
