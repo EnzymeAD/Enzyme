@@ -4657,32 +4657,16 @@ public:
         args.push_back(lookup(argi, Builder2));
       }
 
-      if (gutils->isConstantValue(call.getArgOperand(i)) && !foreignFunction) {
-        argsInverted.push_back(DIFFE_TYPE::CONSTANT);
+      auto argTy = gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
+      argsInverted.push_back(argTy);
+
+      if (argTy == DIFFE_TYPE::CONSTANT) {
         continue;
       }
 
       auto argType = argi->getType();
 
-      if (!argType->isFPOrFPVectorTy() &&
-          TR.query(call.getArgOperand(i)).Inner0().isPossiblePointer()) {
-        DIFFE_TYPE ty = DIFFE_TYPE::DUP_ARG;
-        if (argType->isPointerTy()) {
-#if LLVM_VERSION_MAJOR >= 12
-          auto at = getUnderlyingObject(call.getArgOperand(i), 100);
-#else
-          auto at = GetUnderlyingObject(
-              call.getArgOperand(i),
-              gutils->oldFunc->getParent()->getDataLayout(), 100);
-#endif
-          if (auto arg = dyn_cast<Argument>(at)) {
-            if (constant_args[arg->getArgNo()] == DIFFE_TYPE::DUP_NONEED) {
-              ty = DIFFE_TYPE::DUP_NONEED;
-            }
-          }
-        }
-        argsInverted.push_back(ty);
-
+      if (argTy == DIFFE_TYPE::DUP_ARG || argTy == DIFFE_TYPE::DUP_NONEED) {
         if (Mode != DerivativeMode::ReverseModePrimal) {
           IRBuilder<> Builder2(call.getParent());
           getReverseBuilder(Builder2);
@@ -4701,7 +4685,6 @@ public:
         assert(TR.query(call.getArgOperand(i)).Inner0().isFloat());
         OutTypes.push_back(call.getArgOperand(i));
         OutFPTypes.push_back(argType);
-        argsInverted.push_back(DIFFE_TYPE::OUT_DIFF);
         assert(whatType(argType, Mode) == DIFFE_TYPE::OUT_DIFF ||
                whatType(argType, Mode) == DIFFE_TYPE::CONSTANT);
       }
@@ -7755,37 +7738,10 @@ public:
         funcName = called->getName();
     }
 
-    bool subretused = unnecessaryValues.find(orig) == unnecessaryValues.end();
-    if (gutils->knownRecomputeHeuristic.find(orig) !=
-        gutils->knownRecomputeHeuristic.end()) {
-      if (!gutils->knownRecomputeHeuristic[orig]) {
-        subretused = true;
-      }
-    }
+    bool subretused = false;
     bool shadowReturnUsed = false;
-
-    DIFFE_TYPE subretType;
-    if (gutils->isConstantValue(orig)) {
-      subretType = DIFFE_TYPE::CONSTANT;
-    } else {
-      if (Mode == DerivativeMode::ForwardMode ||
-          Mode == DerivativeMode::ForwardModeSplit) {
-        subretType = DIFFE_TYPE::DUP_ARG;
-        shadowReturnUsed = true;
-      } else {
-        if (!orig->getType()->isFPOrFPVectorTy() &&
-            TR.query(orig).Inner0().isPossiblePointer()) {
-          if (is_value_needed_in_reverse<ValueType::Shadow>(gutils, orig, Mode,
-                                                            oldUnreachable)) {
-            subretType = DIFFE_TYPE::DUP_ARG;
-            shadowReturnUsed = true;
-          } else
-            subretType = DIFFE_TYPE::CONSTANT;
-        } else {
-          subretType = DIFFE_TYPE::OUT_DIFF;
-        }
-      }
-    }
+    DIFFE_TYPE subretType =
+        gutils->getReturnDiffeType(orig, &subretused, &shadowReturnUsed);
 
     if (Mode == DerivativeMode::ForwardMode) {
       auto found = customFwdCallHandlers.find(funcName.str());
@@ -7847,22 +7803,9 @@ public:
           getReverseBuilder(Builder2);
 
         Value *invertedReturn = nullptr;
-        bool hasNonReturnUse = false;
         auto ifound = gutils->invertedPointers.find(orig);
         if (ifound != gutils->invertedPointers.end()) {
-          //! We only need the shadow pointer for non-forward Mode if it is used
-          //! in a non return setting
-          if (!gutils->isConstantValue(orig)) {
-            if (!orig->getType()->isFPOrFPVectorTy() &&
-                TR.query(orig).Inner0().isPossiblePointer()) {
-              if (is_value_needed_in_reverse<ValueType::Shadow>(
-                      gutils, orig, DerivativeMode::ReverseModePrimal,
-                      oldUnreachable)) {
-                hasNonReturnUse = true;
-              }
-            }
-          }
-          if (hasNonReturnUse)
+          if (shadowReturnUsed)
             invertedReturn = cast<PHINode>(&*ifound->second);
         }
 
@@ -7898,7 +7841,7 @@ public:
 
         if (ifound != gutils->invertedPointers.end()) {
           auto placeholder = cast<PHINode>(&*ifound->second);
-          if (!hasNonReturnUse) {
+          if (!shadowReturnUsed) {
             gutils->invertedPointers.erase(ifound);
             gutils->erase(placeholder);
           } else {
@@ -7958,8 +7901,7 @@ public:
             gutils->replaceAWithB(newCall, normalReturn);
             BuilderZ.SetInsertPoint(newCall->getNextNode());
             gutils->erase(newCall);
-          } else if ((!orig->mayWriteToMemory() ||
-                      Mode == DerivativeMode::ReverseModeGradient) &&
+          } else if (Mode == DerivativeMode::ReverseModeGradient &&
                      !orig->getType()->isTokenTy())
             eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
         }
@@ -8119,130 +8061,7 @@ public:
         llvm_unreachable("unhandled openmp function");
       }
 
-      if (funcName == "log1p" || funcName == "log1pf" || funcName == "log1pl") {
-        if (gutils->knownRecomputeHeuristic.find(orig) !=
-            gutils->knownRecomputeHeuristic.end()) {
-          if (!gutils->knownRecomputeHeuristic[orig]) {
-            gutils->cacheForReverse(BuilderZ, newCall,
-                                    getIndex(orig, CacheType::Self));
-          }
-        }
-        eraseIfUnused(*orig);
-        if (gutils->isConstantInstruction(orig))
-          return;
-
-        switch (Mode) {
-        case DerivativeMode::ForwardModeSplit:
-        case DerivativeMode::ForwardMode: {
-          IRBuilder<> Builder2(&call);
-          getForwardBuilder(Builder2);
-          Value *x = gutils->getNewFromOriginal(orig->getArgOperand(0));
-          Value *onePx =
-              Builder2.CreateFAdd(ConstantFP::get(x->getType(), 1.0), x);
-
-          Value *op = diffe(orig->getArgOperand(0), Builder2);
-
-          auto rule = [&](Value *op) { return Builder2.CreateFDiv(op, onePx); };
-          Value *dif0 = applyChainRule(call.getType(), Builder2, rule, op);
-          setDiffe(orig, dif0, Builder2);
-          return;
-        }
-        case DerivativeMode::ReverseModeGradient:
-        case DerivativeMode::ReverseModeCombined: {
-          IRBuilder<> Builder2(call.getParent());
-          getReverseBuilder(Builder2);
-          Value *x = lookup(gutils->getNewFromOriginal(orig->getArgOperand(0)),
-                            Builder2);
-          Value *onePx =
-              Builder2.CreateFAdd(ConstantFP::get(x->getType(), 1.0), x);
-
-          auto rule = [&](Value *dorig) {
-            return Builder2.CreateFDiv(dorig, onePx);
-          };
-
-          Value *dorig = diffe(orig, Builder2);
-          Value *dif0 = applyChainRule(orig->getArgOperand(0)->getType(),
-                                       Builder2, rule, dorig);
-
-          addToDiffe(orig->getArgOperand(0), dif0, Builder2, x->getType());
-          return;
-        }
-        case DerivativeMode::ReverseModePrimal: {
-          return;
-        }
-        }
-      }
-
 #include "InstructionDerivatives.inc"
-
-      if (funcName == "asin" || funcName == "asinf" || funcName == "asinl") {
-        if (gutils->knownRecomputeHeuristic.find(orig) !=
-            gutils->knownRecomputeHeuristic.end()) {
-          if (!gutils->knownRecomputeHeuristic[orig]) {
-            gutils->cacheForReverse(BuilderZ, newCall,
-                                    getIndex(orig, CacheType::Self));
-          }
-        }
-        eraseIfUnused(*orig);
-        if (gutils->isConstantInstruction(orig))
-          return;
-
-        switch (Mode) {
-        case DerivativeMode::ForwardModeSplit:
-        case DerivativeMode::ForwardMode: {
-          IRBuilder<> Builder2(&call);
-          getForwardBuilder(Builder2);
-          Value *x = gutils->getNewFromOriginal(orig->getArgOperand(0));
-          Value *oneMx2 = Builder2.CreateFSub(
-              ConstantFP::get(x->getType(), 1.0), Builder2.CreateFMul(x, x));
-
-          SmallVector<Value *, 1> args = {oneMx2};
-          Type *tys[] = {x->getType()};
-          auto cal = cast<CallInst>(Builder2.CreateCall(
-              Intrinsic::getDeclaration(called->getParent(), Intrinsic::sqrt,
-                                        tys),
-              args));
-
-          Value *op = diffe(orig->getArgOperand(0), Builder2);
-
-          auto rule = [&](Value *op) { return Builder2.CreateFDiv(op, cal); };
-
-          Value *dif0 = applyChainRule(call.getType(), Builder2, rule, op);
-          setDiffe(orig, dif0, Builder2);
-          return;
-        }
-        case DerivativeMode::ReverseModeGradient:
-        case DerivativeMode::ReverseModeCombined: {
-          IRBuilder<> Builder2(call.getParent());
-          getReverseBuilder(Builder2);
-          Value *x = lookup(gutils->getNewFromOriginal(orig->getArgOperand(0)),
-                            Builder2);
-          Value *oneMx2 = Builder2.CreateFSub(
-              ConstantFP::get(x->getType(), 1.0), Builder2.CreateFMul(x, x));
-
-          SmallVector<Value *, 1> args = {oneMx2};
-          Type *tys[] = {x->getType()};
-          auto cal = cast<CallInst>(Builder2.CreateCall(
-              Intrinsic::getDeclaration(called->getParent(), Intrinsic::sqrt,
-                                        tys),
-              args));
-
-          auto rule = [&](Value *dorig) {
-            return Builder2.CreateFDiv(dorig, cal);
-          };
-
-          Value *dorig = diffe(orig, Builder2);
-          Value *dif0 = applyChainRule(orig->getArgOperand(0)->getType(),
-                                       Builder2, rule, dorig);
-
-          addToDiffe(orig->getArgOperand(0), dif0, Builder2, x->getType());
-          return;
-        }
-        case DerivativeMode::ReverseModePrimal: {
-          return;
-        }
-        }
-      }
 
       // Functions that only modify pointers and don't allocate memory,
       // needs to be run on shadow in primal
@@ -10514,47 +10333,18 @@ public:
 #endif
         args.push_back(argi);
 
-        if (gutils->isConstantValue(orig->getArgOperand(i)) &&
-            !foreignFunction) {
-          argsInverted.push_back(DIFFE_TYPE::CONSTANT);
+        auto argTy =
+            gutils->getDiffeType(orig->getArgOperand(i), foreignFunction);
+        argsInverted.push_back(argTy);
+
+        if (argTy == DIFFE_TYPE::CONSTANT) {
           continue;
         }
 
-        auto argType = argi->getType();
+        assert(argTy == DIFFE_TYPE::DUP_ARG || argTy == DIFFE_TYPE::DUP_NONEED);
 
-        if (!argType->isFPOrFPVectorTy() &&
-            (TR.query(orig->getArgOperand(i)).Inner0().isPossiblePointer() ||
-             foreignFunction)) {
-          DIFFE_TYPE ty = DIFFE_TYPE::DUP_ARG;
-          if (argType->isPointerTy()) {
-#if LLVM_VERSION_MAJOR >= 12
-            auto at = getUnderlyingObject(orig->getArgOperand(i), 100);
-#else
-            auto at = GetUnderlyingObject(
-                orig->getArgOperand(i),
-                gutils->oldFunc->getParent()->getDataLayout(), 100);
-#endif
-            if (auto arg = dyn_cast<Argument>(at)) {
-              if (constant_args[arg->getArgNo()] == DIFFE_TYPE::DUP_NONEED) {
-                ty = DIFFE_TYPE::DUP_NONEED;
-              }
-            }
-          }
-          args.push_back(
-              gutils->invertPointerM(orig->getArgOperand(i), Builder2));
-          argsInverted.push_back(ty);
-
-          // Note sometimes whattype mistakenly says something should be
-          // constant [because composed of integer pointers alone]
-          assert(whatType(argType, Mode) == DIFFE_TYPE::DUP_ARG ||
-                 whatType(argType, Mode) == DIFFE_TYPE::CONSTANT);
-        } else {
-          if (foreignFunction)
-            assert(!argType->isIntOrIntVectorTy());
-
-          args.push_back(diffe(orig->getArgOperand(i), Builder2));
-          argsInverted.push_back(DIFFE_TYPE::DUP_ARG);
-        }
+        args.push_back(
+            gutils->invertPointerM(orig->getArgOperand(i), Builder2));
       }
 
       Optional<int> tapeIdx;
@@ -10748,33 +10538,18 @@ public:
         args.push_back(lookup(argi, Builder2));
       }
 
-      if (gutils->isConstantValue(orig->getArgOperand(i)) && !foreignFunction) {
-        argsInverted.push_back(DIFFE_TYPE::CONSTANT);
+      auto argTy =
+          gutils->getDiffeType(orig->getArgOperand(i), foreignFunction);
+
+      argsInverted.push_back(argTy);
+
+      if (argTy == DIFFE_TYPE::CONSTANT) {
         continue;
       }
 
       auto argType = argi->getType();
 
-      if (!argType->isFPOrFPVectorTy() &&
-          (TR.query(orig->getArgOperand(i)).Inner0().isPossiblePointer() ||
-           foreignFunction)) {
-        DIFFE_TYPE ty = DIFFE_TYPE::DUP_ARG;
-        if (argType->isPointerTy()) {
-#if LLVM_VERSION_MAJOR >= 12
-          auto at = getUnderlyingObject(orig->getArgOperand(i), 100);
-#else
-          auto at = GetUnderlyingObject(
-              orig->getArgOperand(i),
-              gutils->oldFunc->getParent()->getDataLayout(), 100);
-#endif
-          if (auto arg = dyn_cast<Argument>(at)) {
-            if (constant_args[arg->getArgNo()] == DIFFE_TYPE::DUP_NONEED) {
-              ty = DIFFE_TYPE::DUP_NONEED;
-            }
-          }
-        }
-        argsInverted.push_back(ty);
-
+      if (argTy == DIFFE_TYPE::DUP_ARG || argTy == DIFFE_TYPE::DUP_NONEED) {
         if (Mode != DerivativeMode::ReverseModePrimal) {
           IRBuilder<> Builder2(call.getParent());
           getReverseBuilder(Builder2);
@@ -10792,7 +10567,6 @@ public:
       } else {
         if (foreignFunction)
           assert(!argType->isIntOrIntVectorTy());
-        argsInverted.push_back(DIFFE_TYPE::OUT_DIFF);
         assert(whatType(argType, Mode) == DIFFE_TYPE::OUT_DIFF ||
                whatType(argType, Mode) == DIFFE_TYPE::CONSTANT);
       }
