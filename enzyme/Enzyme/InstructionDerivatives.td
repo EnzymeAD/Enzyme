@@ -126,7 +126,10 @@ def : CallPattern<(Op $x),
                   ["asin", "asinf", "asinl"],
                   [(FDiv (DiffeRet<"">), (Intrinsic<"sqrt", ["args[0]->getType()"]> (FSub (ConstantFP<"1.0"> $x), (FMul $x, $x)))  )]                  
                   >;
-
+def : CallPattern<(Op $x),
+                  ["log1p", "log1pf", "log1pl"],
+                  [(FDiv (DiffeRet<"">), (FAdd (ConstantFP<"1.0"> $x), $x))]
+                  >;
 def : CallPattern<(Op $x),
                   ["expm1"],
                   [(FMul (Intrinsic<"exp", ["args[0]->getType()"]> $x), (DiffeRet<"">))]
