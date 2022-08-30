@@ -8791,7 +8791,6 @@ public:
         llvm_unreachable("unhandled openmp function");
       }
 
-
 #include "InstructionDerivatives.inc"
 
       // Functions that only modify pointers and don't allocate memory,
