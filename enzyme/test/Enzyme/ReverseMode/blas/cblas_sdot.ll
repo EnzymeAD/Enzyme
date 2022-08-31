@@ -86,8 +86,8 @@ entry:
 
 ; CHECK: define internal void @[[active]](i32 %len, float* noalias %m, float* %"m'", i32 %incm, float* noalias %n, float* %"n'", i32 %incn, float %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   call void @cblas_saxpy(i32 %len, float %differeturn, float* %m, i32 %incm, float* %"n'", i32 %incn)
 ; CHECK-NEXT:   call void @cblas_saxpy(i32 %len, float %differeturn, float* %n, i32 %incn, float* %"m'", i32 %incm)
+; CHECK-NEXT:   call void @cblas_saxpy(i32 %len, float %differeturn, float* %m, i32 %incm, float* %"n'", i32 %incn)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
@@ -159,8 +159,8 @@ entry:
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %1 = extractvalue { float*, float* } %0, 0
 ; CHECK-NEXT:   %2 = extractvalue { float*, float* } %0, 1
-; CHECK-NEXT:   call void @cblas_saxpy(i32 %len, float %differeturn, float* %1, i32 1, float* %"n'", i32 %incn)
 ; CHECK-NEXT:   call void @cblas_saxpy(i32 %len, float %differeturn, float* %2, i32 1, float* %"m'", i32 %incm)
+; CHECK-NEXT:   call void @cblas_saxpy(i32 %len, float %differeturn, float* %1, i32 1, float* %"n'", i32 %incn)
 ; CHECK-NEXT:   %3 = bitcast float* %1 to i8*
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %3)
 ; CHECK-NEXT:   %4 = bitcast float* %2 to i8*
