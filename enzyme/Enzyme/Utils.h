@@ -990,11 +990,10 @@ template <typename T> static inline llvm::Function *getFunctionFromCall(T *op) {
 }
 
 template <typename T> static inline llvm::StringRef getFuncNameFromCall(T *op) {
-  llvm::Attribute Attr = op->getAttributes()
-                             .getAttributes(llvm::AttributeList::FunctionIndex)
-                             .getAttribute("enzyme_math");
-  if (Attr.isValid())
-    return Attr.getValueAsString();
+  auto AttrList =
+      op->getAttributes().getAttributes(llvm::AttributeList::FunctionIndex);
+  if (AttrList.hasAttribute("enzyme_math"))
+    return AttrList.getAttribute("enzyme_math").getValueAsString();
 
   if (auto called = getFunctionFromCall(op)) {
     if (called->hasFnAttribute("enzyme_math"))

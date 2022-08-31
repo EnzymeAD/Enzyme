@@ -199,6 +199,7 @@ const std::set<std::string> KnownInactiveFunctionInsts = {
 const std::set<std::string> KnownInactiveFunctions = {
     "abort",
     "time",
+    "memcmp",
     "gettimeofday",
     "stat",
     "mkdir",
