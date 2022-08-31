@@ -759,7 +759,8 @@ void calculateUnusedValuesInFunction(
 
         bool isLibMFn = false;
         if (auto obj_op = dyn_cast<CallInst>(inst)) {
-          StringRef funcName = getFuncNameFromCall(obj_op);
+          StringRef funcName =
+              getFuncNameFromCall(const_cast<CallInst *>(obj_op));
           if (isDeallocationFunction(funcName, TLI)) {
             if (mode == DerivativeMode::ForwardMode ||
                 mode == DerivativeMode::ForwardModeSplit ||

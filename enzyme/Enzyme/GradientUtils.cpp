@@ -3186,7 +3186,7 @@ bool GradientUtils::legalRecompute(const Value *val,
   }
 
   if (auto ci = dyn_cast<CallInst>(val)) {
-    auto n = getFuncNameFromCall(ci);
+    auto n = getFuncNameFromCall(const_cast<CallInst *>(ci));
     auto called = ci->getCalledFunction();
     Intrinsic::ID ID = Intrinsic::not_intrinsic;
     if ((called && called->hasFnAttribute("enzyme_shouldrecompute")) ||
@@ -3329,7 +3329,7 @@ bool GradientUtils::shouldRecompute(const Value *val,
 
   if (auto ci = dyn_cast<CallInst>(val)) {
     auto called = ci->getCalledFunction();
-    auto n = getFuncNameFromCall(ci);
+    auto n = getFuncNameFromCall(const_cast<CallInst *>(ci));
     Intrinsic::ID ID = Intrinsic::not_intrinsic;
     if ((called && called->hasFnAttribute("enzyme_shouldrecompute")) ||
         isMemFreeLibMFunction(n, &ID) || n == "lgamma_r" || n == "lgammaf_r" ||
