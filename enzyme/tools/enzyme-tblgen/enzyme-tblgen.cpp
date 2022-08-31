@@ -1019,16 +1019,16 @@ llvm::SmallString<40> call_arg_helper(DagInit *argOps,
 }
 
 void emit_deriv_fnc(DagInit *resultTree, llvm::DenseMap<StringRef, StringRef> typeOfArgName,
-    llvm::StringSet<> &handled, llvm::DenseMap<StringRef, llvm::SmallSet<size_t, 3>> mutables, raw_ostream &os) {
+    llvm::StringSet<> &handled, llvm::StringMap<llvm::SmallSet<size_t, 3>> mutables, raw_ostream &os) {
   auto opName = resultTree->getOperator()->getAsString();
   auto Def = cast<DefInit>(resultTree->getOperator())->getDef();
   if (Def->isSubClassOf("b")) {
     auto dfnc_name = Def->getValueAsString("s");
     llvm::SmallSet<size_t, 3> mutableArgs{};
-    if (mutables.find(dfnc_name) == mutables.end()) {
+    if (mutables.find(dfnc_name.str()) == mutables.end()) {
       PrintFatalError("calling unknown Blas function");
     } else {
-      mutableArgs = mutables.lookup(dfnc_name);
+      mutableArgs = mutables.lookup(dfnc_name.str());
     }
     llvm::errs() << "found blas fnc: " << dfnc_name << "\n";
     if (handled.find(dfnc_name) != handled.end())
@@ -1109,7 +1109,7 @@ void emit_deriv_fnc(DagInit *resultTree, llvm::DenseMap<StringRef, StringRef> ty
 void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef> typeOfArgName,
     std::vector<size_t> actArgs,
     llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, 
-    llvm::DenseMap<StringRef, llvm::SmallSet<size_t, 3>> mutables, raw_ostream &os) {
+    llvm::StringMap<llvm::SmallSet<size_t, 3>> mutables, raw_ostream &os) {
   
   ListInit *derivOps = pattern->getValueAsListInit("ArgDerivatives"); // correct
   DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
@@ -1460,8 +1460,8 @@ static void checkBlasCalls(const RecordKeeper &RK,
 }
 
 
-llvm::DenseMap<StringRef, llvm::SmallSet<size_t, 3>> getMutableArgs(const std::vector<Record *> blasPatterns) {
-  llvm::DenseMap<StringRef, llvm::SmallSet<size_t, 3>> res{};
+llvm::StringMap<llvm::SmallSet<size_t, 3>> getMutableArgs(const std::vector<Record *> blasPatterns) {
+  llvm::StringMap<llvm::SmallSet<size_t, 3>> res{};
   for (auto pattern : blasPatterns) {
     auto name = pattern->getName();
     auto args = pattern->getValueAsDag("PatternToMatch");
@@ -1480,7 +1480,7 @@ llvm::DenseMap<StringRef, llvm::SmallSet<size_t, 3>> getMutableArgs(const std::v
       mutArgs.insert(pos);
     }
 
-    res.insert(std::pair<StringRef, llvm::SmallSet<size_t, 3>>(name, mutArgs));
+    res.insert(std::pair<std::string, llvm::SmallSet<size_t, 3>>(name.str(), mutArgs));
   }
   return res;
 }
@@ -1518,7 +1518,7 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
   checkBlasCalls(RK, blasPatterns);
   emit_handleBLAS(blasPatterns, os);
   // emitEnumMatcher(blas_modes, os);
-  llvm::DenseMap<StringRef, llvm::SmallSet<size_t, 3>> mutables = getMutableArgs(blasPatterns);
+  llvm::StringMap<llvm::SmallSet<size_t, 3>> mutables = getMutableArgs(blasPatterns);
   for (auto pattern : blasPatterns) {
     std::vector<size_t> posActArgs = getPossiblyActiveArgs(pattern);
 
