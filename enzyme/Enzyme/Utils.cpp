@@ -1448,13 +1448,7 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
          maybeWriter->getParent()->getParent());
   using namespace llvm;
   if (auto call = dyn_cast<CallInst>(maybeWriter)) {
-    StringRef funcName = "";
-    if (Function *called = getFunctionFromCall(call)) {
-      if (called->hasFnAttribute("enzyme_math"))
-        funcName = called->getFnAttribute("enzyme_math").getValueAsString();
-      else
-        funcName = called->getName();
-    }
+    StringRef funcName = getFuncNameFromCall(call);
 
     if (isDebugFunction(call->getCalledFunction()))
       return false;
@@ -1585,13 +1579,7 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
     }
   }
   if (auto call = dyn_cast<CallInst>(maybeReader)) {
-    StringRef funcName = "";
-    if (Function *called = getFunctionFromCall(call)) {
-      if (called->hasFnAttribute("enzyme_math"))
-        funcName = called->getFnAttribute("enzyme_math").getValueAsString();
-      else
-        funcName = called->getName();
-    }
+    StringRef funcName = getFuncNameFromCall(call);
 
     if (isDebugFunction(call->getCalledFunction()))
       return false;
@@ -1619,13 +1607,7 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
     }
   }
   if (auto call = dyn_cast<InvokeInst>(maybeWriter)) {
-    StringRef funcName = "";
-    if (Function *called = getFunctionFromCall(call)) {
-      if (called->hasFnAttribute("enzyme_math"))
-        funcName = called->getFnAttribute("enzyme_math").getValueAsString();
-      else
-        funcName = called->getName();
-    }
+    StringRef funcName = getFuncNameFromCall(call);
 
     if (isDebugFunction(call->getCalledFunction()))
       return false;
@@ -1652,13 +1634,7 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
     }
   }
   if (auto call = dyn_cast<InvokeInst>(maybeReader)) {
-    StringRef funcName = "";
-    if (Function *called = getFunctionFromCall(call)) {
-      if (called->hasFnAttribute("enzyme_math"))
-        funcName = called->getFnAttribute("enzyme_math").getValueAsString();
-      else
-        funcName = called->getName();
-    }
+    StringRef funcName = getFuncNameFromCall(call);
 
     if (isDebugFunction(call->getCalledFunction()))
       return false;

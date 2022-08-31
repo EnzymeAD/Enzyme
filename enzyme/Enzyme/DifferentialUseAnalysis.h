@@ -209,14 +209,8 @@ static inline bool is_use_directly_needed_in_reverse(
   if (auto II = dyn_cast<IntrinsicInst>(user)) {
     ID = II->getIntrinsicID();
   } else if (auto CI = dyn_cast<CallInst>(user)) {
-    if (auto called = getFunctionFromCall(const_cast<CallInst *>(CI))) {
-      StringRef funcName;
-      if (called->hasFnAttribute("enzyme_math"))
-        funcName = called->getFnAttribute("enzyme_math").getValueAsString();
-      else
-        funcName = called->getName();
-      isMemFreeLibMFunction(funcName, &ID);
-    }
+    StringRef funcName = getFuncNameFromCall(const_cast<CallInst *>(CI));
+    isMemFreeLibMFunction(funcName, &ID);
   }
 
   if (ID != Intrinsic::not_intrinsic) {
@@ -275,10 +269,7 @@ static inline bool is_use_directly_needed_in_reverse(
   }
 
   if (auto CI = dyn_cast<CallInst>(user)) {
-    if (auto F = getFunctionFromCall(const_cast<CallInst *>(CI))) {
-      auto funcName = F->getName();
-      if (F->hasFnAttribute("enzyme_math"))
-        funcName = F->getFnAttribute("enzyme_math").getValueAsString();
+      auto funcName = getFuncNameFromCall(const_cast<CallInst *>(CI));
 
       // Only need primal (and shadow) request for reverse
       if (funcName == "MPI_Isend" || funcName == "MPI_Irecv" ||
@@ -306,7 +297,6 @@ static inline bool is_use_directly_needed_in_reverse(
       // we still need even if instruction is inactive
       if (funcName == "llvm.julia.gc_preserve_begin")
         return true;
-    }
   }
 
   return !gutils->isConstantInstruction(user) ||
@@ -428,10 +418,7 @@ static inline bool is_value_needed_in_reverse(
             }
           }
         }
-        if (auto F = getFunctionFromCall(const_cast<CallInst *>(CI))) {
-          StringRef funcName = F->getName();
-          if (F->hasFnAttribute("enzyme_math"))
-            funcName = F->getFnAttribute("enzyme_math").getValueAsString();
+          StringRef funcName = getFuncNameFromCall(const_cast<CallInst *>(CI));
 
           // Only need shadow request for reverse
           if (funcName == "MPI_Irecv" || funcName == "PMPI_Irecv") {
@@ -488,7 +475,7 @@ static inline bool is_value_needed_in_reverse(
               funcName == "julia.write_barrier") {
             return seen[idx] = true;
           }
-        }
+
 #if LLVM_VERSION_MAJOR >= 11
         const Value *F = CI->getCalledOperand();
 #else

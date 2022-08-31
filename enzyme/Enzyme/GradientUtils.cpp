@@ -2443,14 +2443,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                   ts->setSyncScopeID(SI->getSyncScopeID());
                   ts->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
                 } else if (auto CI = dyn_cast<CallInst>(&I)) {
-                  StringRef funcName = "";
-                  if (Function *called = getFunctionFromCall(CI)) {
-                    if (called->hasFnAttribute("enzyme_math"))
-                      funcName = called->getFnAttribute("enzyme_math")
-                                     .getValueAsString();
-                    else
-                      funcName = called->getName();
-                  }
+                  StringRef funcName = getFuncNameFromCall(CI);
                   if (funcName == "julia.write_barrier" ||
                       isa<MemSetInst>(&I) || isa<MemTransferInst>(&I)) {
 
@@ -2651,14 +2644,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                     cal->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
                   }
                 } else if (auto CI = dyn_cast<CallInst>(&I)) {
-                  StringRef funcName = "";
-                  if (Function *called = getFunctionFromCall(CI)) {
-                    if (called->hasFnAttribute("enzyme_math"))
-                      funcName = called->getFnAttribute("enzyme_math")
-                                     .getValueAsString();
-                    else
-                      funcName = called->getName();
-                  }
+                  StringRef funcName = getFuncNameFromCall(CI);
                   if (funcName == "julia.write_barrier") {
 
                     // TODO
@@ -2723,8 +2709,8 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                 Value *anti = nullptr;
 
                 if (auto orig = dyn_cast<CallInst>(&I)) {
-                  Function *called = getFunctionFromCall(orig);
-                  assert(called);
+                  StringRef funcName = getFuncNameFromCall(orig);
+                  assert(funcName.size());
 
                   auto dbgLoc = getNewFromOriginal(orig)->getDebugLoc();
 
@@ -2739,11 +2725,10 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                   }
 
                   placeholder->setName("");
-                  if (shadowHandlers.find(called->getName().str()) !=
+                  if (shadowHandlers.find(funcName.str()) !=
                       shadowHandlers.end()) {
 
-                    anti =
-                        shadowHandlers[called->getName().str()](NB, orig, args);
+                    anti = shadowHandlers[funcName.str()](NB, orig, args);
                   } else {
                     auto rule = [&]() {
 #if LLVM_VERSION_MAJOR >= 11
@@ -2810,8 +2795,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                     applyChainRule(
                         NB,
                         [&](Value *anti) {
-                          zeroKnownAllocation(NB, anti, args, called->getName(),
-                                              TLI);
+                          zeroKnownAllocation(NB, anti, args, funcName, TLI);
                         },
                         anti);
                   }
@@ -3202,21 +3186,17 @@ bool GradientUtils::legalRecompute(const Value *val,
   }
 
   if (auto ci = dyn_cast<CallInst>(val)) {
-    if (auto called = ci->getCalledFunction()) {
-      auto n = called->getName();
-      if (called->hasFnAttribute("enzyme_math"))
-        n = called->getFnAttribute("enzyme_math").getValueAsString();
-      Intrinsic::ID ID = Intrinsic::not_intrinsic;
-      if (called->hasFnAttribute("enzyme_shouldrecompute") ||
-          isMemFreeLibMFunction(n, &ID) || n == "lgamma_r" ||
-          n == "lgammaf_r" || n == "lgammal_r" || n == "__lgamma_r_finite" ||
-          n == "__lgammaf_r_finite" || n == "__lgammal_r_finite" ||
-          n == "tanh" || n == "tanhf" || n == "__pow_finite" ||
-          n == "__fd_sincos_1" || n == "julia.pointer_from_objref" ||
-          n.startswith("enzyme_wrapmpi$$") || n == "omp_get_thread_num" ||
-          n == "omp_get_max_threads") {
-        return true;
-      }
+    auto n = getFuncNameFromCall(ci);
+    auto called = ci->getCalledFunction();
+    Intrinsic::ID ID = Intrinsic::not_intrinsic;
+    if ((called && called->hasFnAttribute("enzyme_shouldrecompute")) ||
+        isMemFreeLibMFunction(n, &ID) || n == "lgamma_r" || n == "lgammaf_r" ||
+        n == "lgammal_r" || n == "__lgamma_r_finite" ||
+        n == "__lgammaf_r_finite" || n == "__lgammal_r_finite" || n == "tanh" ||
+        n == "tanhf" || n == "__pow_finite" || n == "__fd_sincos_1" ||
+        n == "julia.pointer_from_objref" || n.startswith("enzyme_wrapmpi$$") ||
+        n == "omp_get_thread_num" || n == "omp_get_max_threads") {
+      return true;
     }
   }
 
@@ -3348,21 +3328,17 @@ bool GradientUtils::shouldRecompute(const Value *val,
   }
 
   if (auto ci = dyn_cast<CallInst>(val)) {
-    if (auto called = ci->getCalledFunction()) {
-      auto n = called->getName();
-      if (called->hasFnAttribute("enzyme_math"))
-        n = called->getFnAttribute("enzyme_math").getValueAsString();
-      Intrinsic::ID ID = Intrinsic::not_intrinsic;
-      if (called->hasFnAttribute("enzyme_shouldrecompute") ||
-          isMemFreeLibMFunction(n, &ID) || n == "lgamma_r" ||
-          n == "lgammaf_r" || n == "lgammal_r" || n == "__lgamma_r_finite" ||
-          n == "__lgammaf_r_finite" || n == "__lgammal_r_finite" ||
-          n == "tanh" || n == "tanhf" || n == "__pow_finite" ||
-          n == "__fd_sincos_1" || n == "julia.pointer_from_objref" ||
-          n.startswith("enzyme_wrapmpi$$") || n == "omp_get_thread_num" ||
-          n == "omp_get_max_threads") {
-        return true;
-      }
+    auto called = ci->getCalledFunction();
+    auto n = getFuncNameFromCall(ci);
+    Intrinsic::ID ID = Intrinsic::not_intrinsic;
+    if ((called && called->hasFnAttribute("enzyme_shouldrecompute")) ||
+        isMemFreeLibMFunction(n, &ID) || n == "lgamma_r" || n == "lgammaf_r" ||
+        n == "lgammal_r" || n == "__lgamma_r_finite" ||
+        n == "__lgammaf_r_finite" || n == "__lgammal_r_finite" || n == "tanh" ||
+        n == "tanhf" || n == "__pow_finite" || n == "__fd_sincos_1" ||
+        n == "julia.pointer_from_objref" || n.startswith("enzyme_wrapmpi$$") ||
+        n == "omp_get_thread_num" || n == "omp_get_max_threads") {
+      return true;
     }
   }
 
@@ -6600,14 +6576,7 @@ void GradientUtils::computeMinCache() {
             }
           }
         } else if (auto CI = dyn_cast<CallInst>(&I)) {
-          StringRef funcName = "";
-          if (Function *called = getFunctionFromCall(CI)) {
-            if (called->hasFnAttribute("enzyme_math"))
-              funcName =
-                  called->getFnAttribute("enzyme_math").getValueAsString();
-            else
-              funcName = called->getName();
-          }
+          StringRef funcName = getFuncNameFromCall(CI);
           if (isAllocationFunction(funcName, TLI))
             Available[CI] = CI;
         }

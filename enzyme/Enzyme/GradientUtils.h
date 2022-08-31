@@ -716,13 +716,7 @@ public:
           break;
         }
       } else if (auto CI = dyn_cast<CallInst>(cur)) {
-        StringRef funcName = "";
-        if (Function *called = getFunctionFromCall(CI)) {
-          if (called->hasFnAttribute("enzyme_math"))
-            funcName = called->getFnAttribute("enzyme_math").getValueAsString();
-          else
-            funcName = called->getName();
-        }
+        StringRef funcName = getFuncNameFromCall(CI);
         if (isDeallocationFunction(funcName, TLI)) {
           frees.insert(CI);
           continue;
@@ -932,13 +926,7 @@ public:
         if (!CI)
           continue;
 
-        StringRef funcName = "";
-        if (Function *called = getFunctionFromCall(CI)) {
-          if (called->hasFnAttribute("enzyme_math"))
-            funcName = called->getFnAttribute("enzyme_math").getValueAsString();
-          else
-            funcName = called->getName();
-        }
+        StringRef funcName = getFuncNameFromCall(CI);
 
         if (isDeallocationFunction(funcName, TLI)) {
 
@@ -947,15 +935,7 @@ public:
             val = cast->getOperand(0);
 
           if (auto dc = dyn_cast<CallInst>(val)) {
-            StringRef sfuncName = "";
-            if (Function *called = getFunctionFromCall(dc)) {
-              if (called->hasFnAttribute("enzyme_math"))
-                sfuncName =
-                    called->getFnAttribute("enzyme_math").getValueAsString();
-              else
-                sfuncName = called->getName();
-            }
-
+            StringRef sfuncName = getFuncNameFromCall(dc);
             if (isAllocationFunction(sfuncName, TLI)) {
 
               bool hasPDFree = false;

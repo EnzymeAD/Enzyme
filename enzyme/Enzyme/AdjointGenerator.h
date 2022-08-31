@@ -8459,13 +8459,7 @@ public:
 
     Function *called = getFunctionFromCall(orig);
 
-    StringRef funcName = "";
-    if (called) {
-      if (called->hasFnAttribute("enzyme_math"))
-        funcName = called->getFnAttribute("enzyme_math").getValueAsString();
-      else
-        funcName = called->getName();
-    }
+    StringRef funcName = getFuncNameFromCall(orig);
 
     bool subretused = false;
     bool shadowReturnUsed = false;

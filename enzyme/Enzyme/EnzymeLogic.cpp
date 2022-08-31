@@ -399,15 +399,11 @@ struct CacheAnalysis {
 
   std::map<Argument *, bool>
   compute_uncacheable_args_for_one_callsite(CallInst *callsite_op) {
-    StringRef funcName = "";
     Function *Fn = getFunctionFromCall(callsite_op);
     if (!Fn)
       return {};
 
-    if (Fn->hasFnAttribute("enzyme_math"))
-      funcName = Fn->getFnAttribute("enzyme_math").getValueAsString();
-    else
-      funcName = Fn->getName();
+    StringRef funcName = getFuncNameFromCall(callsite_op);
 
     if (funcName == "")
       return {};
@@ -481,28 +477,21 @@ struct CacheAnalysis {
     allFollowersOf(callsite_op, [&](Instruction *inst2) {
       // Don't consider modref from malloc/free as a need to cache
       if (auto obj_op = dyn_cast<CallInst>(inst2)) {
-        StringRef sfuncName = "";
-        if (Function *called = getFunctionFromCall(obj_op)) {
-          if (called->hasFnAttribute("enzyme_math"))
-            sfuncName =
-                called->getFnAttribute("enzyme_math").getValueAsString();
-          else
-            sfuncName = called->getName();
-        }
+        StringRef sfuncName = getFuncNameFromCall(obj_op);
 
-        if (isMemFreeLibMFunction(funcName)) {
+        if (isMemFreeLibMFunction(sfuncName)) {
           return false;
         }
 
         if (isDebugFunction(obj_op->getCalledFunction()))
           return false;
 
-        if (isCertainPrint(funcName) || isAllocationFunction(funcName, TLI) ||
-            isDeallocationFunction(funcName, TLI)) {
+        if (isCertainPrint(sfuncName) || isAllocationFunction(sfuncName, TLI) ||
+            isDeallocationFunction(sfuncName, TLI)) {
           return false;
         }
 
-        if (funcName == "__kmpc_for_static_fini") {
+        if (sfuncName == "__kmpc_for_static_fini") {
           return false;
         }
 
@@ -770,8 +759,8 @@ void calculateUnusedValuesInFunction(
 
         bool isLibMFn = false;
         if (auto obj_op = dyn_cast<CallInst>(inst)) {
-          Function *called = getFunctionFromCall((CallInst *)obj_op);
-          if (called && isDeallocationFunction(called->getName(), TLI)) {
+          StringRef funcName = getFuncNameFromCall(obj_op);
+          if (isDeallocationFunction(funcName, TLI)) {
             if (mode == DerivativeMode::ForwardMode ||
                 mode == DerivativeMode::ForwardModeSplit ||
                 ((mode == DerivativeMode::ReverseModePrimal ||
@@ -781,7 +770,7 @@ void calculateUnusedValuesInFunction(
             return UseReq::Recur;
           }
           Intrinsic::ID ID = Intrinsic::not_intrinsic;
-          if (called && isMemFreeLibMFunction(called->getName(), &ID)) {
+          if (isMemFreeLibMFunction(funcName, &ID)) {
             isLibMFn = true;
           }
         }
@@ -819,10 +808,8 @@ void calculateUnusedValuesInFunction(
           bool newMemory = false;
           if (isa<AllocaInst>(at))
             newMemory = true;
-          else if (auto CI = dyn_cast<CallInst>(at))
-            if (Function *F = getFunctionFromCall(CI))
-              if (isAllocationFunction(F->getName(), TLI))
-                newMemory = true;
+          else if (isAllocationCall(at, TLI))
+            newMemory = true;
           if (newMemory) {
             bool foundStore = false;
             allInstructionsBetween(
@@ -942,10 +929,8 @@ void calculateUnusedStoresInFunction(
       bool newMemory = false;
       if (isa<AllocaInst>(at))
         newMemory = true;
-      else if (auto CI = dyn_cast<CallInst>(at))
-        if (Function *F = getFunctionFromCall(CI))
-          if (isAllocationFunction(F->getName(), TLI))
-            newMemory = true;
+      else if (isAllocationCall(at, TLI))
+        newMemory = true;
       if (newMemory) {
         bool foundStore = false;
         allInstructionsBetween(
@@ -1253,11 +1238,9 @@ bool legalCombinedForwardReverse(
       }
     }
 
-    if (auto op = dyn_cast<CallInst>(I)) {
-      Function *called = getFunctionFromCall(op);
-      if (called && (isAllocationFunction(called->getName(), gutils->TLI) ||
-                     isDeallocationFunction(called->getName(), gutils->TLI)))
-        return;
+    if (isAllocationCall(I, gutils->TLI) ||
+        isDeallocationCall(I, gutils->TLI)) {
+      return;
     }
 
     if (isa<BranchInst>(I)) {

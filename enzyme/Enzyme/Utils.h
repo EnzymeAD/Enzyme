@@ -989,6 +989,22 @@ template <typename T> static inline llvm::Function *getFunctionFromCall(T *op) {
   return called;
 }
 
+template <typename T> static inline llvm::StringRef getFuncNameFromCall(T *op) {
+  llvm::Attribute Attr = op->getAttributes()
+                             .getAttributes(llvm::AttributeList::FunctionIndex)
+                             .getAttribute("enzyme_math");
+  if (Attr.isValid())
+    return Attr.getValueAsString();
+
+  if (auto called = getFunctionFromCall(op)) {
+    if (called->hasFnAttribute("enzyme_math"))
+      return called->getFnAttribute("enzyme_math").getValueAsString();
+    else
+      return called->getName();
+  }
+  return "";
+}
+
 llvm::Function *
 getOrInsertDifferentialWaitallSave(llvm::Module &M,
                                    llvm::ArrayRef<llvm::Type *> T,

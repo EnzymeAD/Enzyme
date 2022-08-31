@@ -916,29 +916,6 @@ bool isValuePotentiallyUsedAsPointer(llvm::Value *val) {
   return false;
 }
 
-bool isAllocationCall(Value *TmpOrig, TargetLibraryInfo &TLI) {
-  if (auto called = isCalledFunction(TmpOrig)) {
-    StringRef funcName = "";
-    if (called->hasFnAttribute("enzyme_math"))
-      funcName = called->getFnAttribute("enzyme_math").getValueAsString();
-    else
-      funcName = called->getName();
-    return isAllocationFunction(funcName, TLI);
-  }
-  return false;
-}
-bool isDeallocationCall(Value *TmpOrig, TargetLibraryInfo &TLI) {
-  if (auto called = isCalledFunction(TmpOrig)) {
-    StringRef funcName = "";
-    if (called->hasFnAttribute("enzyme_math"))
-      funcName = called->getFnAttribute("enzyme_math").getValueAsString();
-    else
-      funcName = called->getName();
-    return isDeallocationFunction(funcName, TLI);
-  }
-  return false;
-}
-
 bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
   // This analysis may only be called by instructions corresponding to
   // the function analyzed by TypeInfo -- however if the Value
@@ -1378,13 +1355,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         }
         Function *called = getFunctionFromCall(op);
 
-        StringRef funcName = "";
-        if (called) {
-          if (called->hasFnAttribute("enzyme_math"))
-            funcName = called->getFnAttribute("enzyme_math").getValueAsString();
-          else
-            funcName = called->getName();
-        }
+        StringRef funcName = getFuncNameFromCall(op);
 
         if (called && called->hasFnAttribute("enzyme_inactive")) {
           InsertConstantValue(TR, Val);
@@ -1650,13 +1621,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         }
 
         Function *F = getFunctionFromCall(CI);
-        StringRef funcName = "";
-        if (F) {
-          if (F->hasFnAttribute("enzyme_math"))
-            funcName = F->getFnAttribute("enzyme_math").getValueAsString();
-          else
-            funcName = F->getName();
-        }
+        StringRef funcName = getFuncNameFromCall(CI);
 
         if (F && F->hasFnAttribute("enzyme_inactive")) {
           return false;
@@ -2239,14 +2204,8 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
 #else
     callVal = op->getCalledValue();
 #endif
-    StringRef funcName = "";
+    StringRef funcName = getFuncNameFromCall(op);
     Function *called = getFunctionFromCall(op);
-    if (called) {
-      if (called->hasFnAttribute("enzyme_math"))
-        funcName = called->getFnAttribute("enzyme_math").getValueAsString();
-      else
-        funcName = called->getName();
-    }
 
     if (called && called->hasFnAttribute("enzyme_inactive")) {
       return true;
@@ -2376,13 +2335,7 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
       if (!ci->onlyAccessesArgMemory() && !ci->doesNotAccessMemory()) {
         bool legalUse = false;
 
-        StringRef funcName = "";
-        if (Function *called = getFunctionFromCall(ci)) {
-          if (called->hasFnAttribute("enzyme_math"))
-            funcName = called->getFnAttribute("enzyme_math").getValueAsString();
-          else
-            funcName = called->getName();
-        }
+        StringRef funcName = getFuncNameFromCall(ci);
 
         if (funcName == "") {
         } else if (isMemFreeLibMFunction(funcName) ||

@@ -463,4 +463,24 @@ freeKnownAllocation(llvm::IRBuilder<> &builder, llvm::Value *tofree,
   return freecall;
 }
 
+static inline bool isAllocationCall(llvm::Value *TmpOrig, llvm::TargetLibraryInfo &TLI) {
+  if (auto *CI = llvm::dyn_cast<llvm::CallInst>(TmpOrig)) {
+    return isAllocationFunction(getFuncNameFromCall(CI), TLI);
+  }
+  if (auto *CI = llvm::dyn_cast<llvm::InvokeInst>(TmpOrig)) {
+    return isAllocationFunction(getFuncNameFromCall(CI), TLI);
+  }
+  return false;
+}
+
+static inline bool isDeallocationCall(llvm::Value *TmpOrig, llvm::TargetLibraryInfo &TLI) {
+  if (auto *CI = llvm::dyn_cast<llvm::CallInst>(TmpOrig)) {
+    return isDeallocationFunction(getFuncNameFromCall(CI), TLI);
+  }
+  if (auto *CI = llvm::dyn_cast<llvm::InvokeInst>(TmpOrig)) {
+    return isDeallocationFunction(getFuncNameFromCall(CI), TLI);
+  }
+  return false;
+}
+
 #endif
