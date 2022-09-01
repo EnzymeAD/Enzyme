@@ -33,6 +33,9 @@ class SameTypesFunc<string name_> {
 class Attribute<string name_> {
   string name = name_;
 }
+def ReadNone : Attribute<"ReadNone">;
+def ReadOnly : Attribute<"ReadOnly">;
+def NoUnwind : Attribute<"NoUnwind">;
 
 // So we can also extend it by not input related 
 // types, eg. for mem related Intrinsics
@@ -42,18 +45,21 @@ class TypeInfo {
 class TypeOf<string val> : TypeInfo {
 }
 
-class Intrinsic<string name_, list<dag> types_> {
+class Intrinsic<string name_, list<dag> types_, list<Attribute> _fnattrs=[]> {
   string name = name_;
   list<dag> types = types_;
+  list<Attribute> fnattrs = _fnattrs;
 }
-
-def ReadNone : Attribute<"ReadNone">;
-def ReadOnly : Attribute<"ReadOnly">;
-def NoUnwind : Attribute<"NoUnwind">;
+class IntrinsicR<string name_, list<dag> types_> 
+  : Intrinsic<name_, types_, !listconcat([ReadNone], _fnattrs)> {
+}
 
 class Call<dag mnemonic, list<Attribute> _fnattrs=[]> {
   dag func = mnemonic;
   list<Attribute> fnattrs = _fnattrs;
+}
+class CallRN<dag mnemonic, list<Attribute> _fnattrs=[]> 
+  : Call<mnemonic, !listconcat([ReadNone,NoUnwind], _fnattrs)> {
 }
 
 def Op {
@@ -83,51 +89,51 @@ def : CallPattern<(Op $y, $x),
                   >;
 def : CallPattern<(Op $x),
                   ["cbrt"],
-                  [(FDiv (FMul (DiffeRet<"">), (Call<(SameFunc), [ReadNone,NoUnwind]> $x) ), (FMul (ConstantFP<"3.0"> $x), $x))]
+                  [(FDiv (FMul (DiffeRet<"">), (CallRN<(SameFunc)> $x) ), (FMul (ConstantFP<"3.0"> $x), $x))]
                   >;
 
 def : CallPattern<(Op $x, $y),
                   ["hypot", "hypotf", "hypotl"],
                   [
-                    (FDiv (FMul (DiffeRet<"">), $x), (Call<(SameFunc), [ReadNone,NoUnwind]> $x, $y)),
-                    (FDiv (FMul (DiffeRet<"">), $y), (Call<(SameFunc), [ReadNone,NoUnwind]> $x, $y))
+                    (FDiv (FMul (DiffeRet<"">), $x), (CallRN<(SameFunc)> $x, $y)),
+                    (FDiv (FMul (DiffeRet<"">), $y), (CallRN<(SameFunc)> $x, $y))
                   ]
                   >;
 
 def : CallPattern<(Op $x),
                   ["tanh"],
-                  [(FDiv (DiffeRet<"">), (FMul(Call<(SameTypesFunc<"cosh">), [ReadNone,NoUnwind]> $x):$c, $c))]>;
+                  [(FDiv (DiffeRet<"">), (FMul(CallRN<(SameTypesFunc<"cosh">)> $x):$c, $c))]>;
 
 def : CallPattern<(Op $x),
                   ["tanhf"],
-                  [(FDiv (DiffeRet<"">), (FMul(Call<(SameTypesFunc<"coshf">), [ReadNone,NoUnwind]> $x):$c, $c))]>;
+                  [(FDiv (DiffeRet<"">), (FMul(CallRN<(SameTypesFunc<"coshf">)> $x):$c, $c))]>;
 
 def : CallPattern<(Op $x),
                   ["cosh"],
-                  [(FMul (DiffeRet<"">), (Call<(SameTypesFunc<"sinh">), [ReadNone,NoUnwind]> $x))]>;
+                  [(FMul (DiffeRet<"">), (CallRN<(SameTypesFunc<"sinh">)> $x))]>;
 def : CallPattern<(Op $x),
                   ["coshf"],
-                  [(FMul (DiffeRet<"">), (Call<(SameTypesFunc<"sinhf">), [ReadNone,NoUnwind]> $x))]>;
+                  [(FMul (DiffeRet<"">), (CallRN<(SameTypesFunc<"sinhf">)> $x))]>;
 
 def : CallPattern<(Op $x),
                   ["sinh"],
-                  [(FMul (DiffeRet<"">), (Call<(SameTypesFunc<"cosh">), [ReadNone,NoUnwind]> $x))]>;
+                  [(FMul (DiffeRet<"">), (CallRN<(SameTypesFunc<"cosh">)> $x))]>;
 def : CallPattern<(Op $x),
                   ["sinhf"],
-                  [(FMul (DiffeRet<"">), (Call<(SameTypesFunc<"coshf">), [ReadNone,NoUnwind]> $x))]>;
+                  [(FMul (DiffeRet<"">), (CallRN<(SameTypesFunc<"coshf">)> $x))]>;
 
 def : CallPattern<(Op $x),
                   ["exp10"],
-                  [(FMul (FMul (DiffeRet<"">), (Call<(SameFunc), [ReadNone,NoUnwind]> $x) ), (ConstantFP<"2.30258509299404568401799145468"> $x))]
+                  [(FMul (FMul (DiffeRet<"">), (CallRN<(SameFunc)> $x) ), (ConstantFP<"2.30258509299404568401799145468"> $x))]
                   >;
 def : CallPattern<(Op $x),
                   ["tan", "tanf", "tanl"],
-                  [(FMul (DiffeRet<"">), (FAdd (ConstantFP<"1.0"> $x), (FMul(Call<(SameFunc), [ReadNone,NoUnwind]> $x):$c, $c)))]>;
+                  [(FMul (DiffeRet<"">), (FAdd (ConstantFP<"1.0"> $x), (FMul(CallRN<(SameFunc)> $x):$c, $c)))]>;
 def : CallPattern<(Op $x, $y),
                   ["remainder"],
                   [
                     (DiffeRet<"">),
-                    (FMul (FNeg (DiffeRet<"">)), (Intrinsic<"round", [(TypeOf<""> $x)]> (FDiv $x, $y)))
+                    (FMul (FNeg (DiffeRet<"">)), (Intrinsic<"roundeven", [(TypeOf<""> $x)]> (FDiv $x, $y)))
                   ]
                   >;
 def : CallPattern<(Op $x),
