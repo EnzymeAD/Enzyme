@@ -45,13 +45,9 @@ class TypeInfo {
 class TypeOf<string val> : TypeInfo {
 }
 
-class Intrinsic<string name_, list<dag> types_, list<Attribute> _fnattrs=[]> {
+class Intrinsic<string name_, list<dag> types_> {
   string name = name_;
   list<dag> types = types_;
-  list<Attribute> fnattrs = _fnattrs;
-}
-class IntrinsicR<string name_, list<dag> types_> 
-  : Intrinsic<name_, types_, !listconcat([ReadNone], _fnattrs)> {
 }
 
 class Call<dag mnemonic, list<Attribute> _fnattrs=[]> {
