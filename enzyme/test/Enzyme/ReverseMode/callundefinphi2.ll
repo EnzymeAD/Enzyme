@@ -381,12 +381,9 @@ attributes #22 = { readnone speculatable }
 ; CHECK-NEXT:   %[[m2a:.+]] = fadd fast double %m0diffe, %m0diffe
 ; CHECK-NEXT:   %[[dessa:.+]] = bitcast double %[[m2a]] to i64
 ; CHECK-NEXT:   %"arrayidx.i.i'ipg_unwrap" = getelementptr inbounds double, double* %[[ipc8]], i64 %[[iv35a]]
-; CHECK-NEXT:   %[[ipc16:.+]] = bitcast double* %"arrayidx.i.i'ipg_unwrap" to i64*
-; CHECK-NEXT:   %[[prepc:.+]] = load i64, i64* %[[ipc16]], align 8
-; CHECK-NEXT:   %[[ddpc:.+]] = bitcast i64 %[[prepc]] to double
+; CHECK-NEXT:   %[[ddpc:.+]] = load double, double* %"arrayidx.i.i'ipg_unwrap", align 8
 ; CHECK-NEXT:   %[[ddpost:.+]] = fadd fast double %[[ddpc]], %[[fad]]
-; CHECK-NEXT:   %[[iipost:.+]] = bitcast double %[[ddpost]] to i64
-; CHECK-NEXT:   store i64 %[[iipost]], i64* %[[ipc16]], align 8
+; CHECK-NEXT:   store double %[[ddpost]], double* %"arrayidx.i.i'ipg_unwrap", align 8
 ; CHECK-NEXT:   %[[iv5cmp:.+]] = icmp eq i64 %"iv5'ac.0", 0
 ; CHECK-NEXT:   %[[nivcmp:.+]] = xor i1 %[[iv5cmp]], true
 ; CHECK-NEXT:   %[[g29:.+]] = select i1 %[[nivcmp]], i64 %[[dessa]], i64 0
