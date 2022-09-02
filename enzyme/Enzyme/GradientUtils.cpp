@@ -112,7 +112,7 @@ SmallVector<unsigned int, 9> MD_ToCopy = {
     LLVMContext::MD_tbaa_struct,
     LLVMContext::MD_range,
     LLVMContext::MD_nonnull,
-#if LLVM_VERSION_MAJOR >= 13
+#if LLVM_VERSION_MAJOR >= 15
     LLVMContext::align,
     LLVMContext::noundef,
 #endif
