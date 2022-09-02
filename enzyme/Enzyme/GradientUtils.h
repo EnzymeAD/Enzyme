@@ -2417,7 +2417,7 @@ public:
         }
         return ptr;
       };
-      ptr = applyChainRule(addingType, BuilderM, rule, ptr);
+      ptr = applyChainRule(PointerType::get(addingType, cast<PointerType>(origptr->getType())->getAddressSpace()), BuilderM, rule, ptr);
     }
 
     if (start != 0 ||
