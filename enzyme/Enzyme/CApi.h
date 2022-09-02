@@ -70,6 +70,13 @@ struct CTypeTree {
 };
 */
 
+typedef enum {
+  VT_None = 0,
+  VT_Primal = 1,
+  VT_Shadow = 2,
+  VT_Both = VT_Primal | VT_Shadow,
+} CValueType;
+
 struct EnzymeTypeTree;
 typedef struct EnzymeTypeTree *CTypeTreeRef;
 CTypeTreeRef EnzymeNewTypeTree();
@@ -166,8 +173,7 @@ LLVMTypeRef EnzymeExtractTapeTypeFromAugmentation(EnzymeAugmentedReturnPtr ret);
 
 typedef LLVMValueRef (*CustomShadowAlloc)(LLVMBuilderRef, LLVMValueRef,
                                           size_t /*numArgs*/, LLVMValueRef *);
-typedef LLVMValueRef (*CustomShadowFree)(LLVMBuilderRef, LLVMValueRef,
-                                         LLVMValueRef);
+typedef LLVMValueRef (*CustomShadowFree)(LLVMBuilderRef, LLVMValueRef);
 
 void EnzymeRegisterAllocationHandler(char *Name, CustomShadowAlloc AHandle,
                                      CustomShadowFree FHandle);

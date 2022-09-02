@@ -305,7 +305,8 @@ struct CacheAnalysis {
           }
         }
 
-        if (!overwritesToMemoryReadBy(AA, SE, OrigLI, OrigDT, &li, inst2)) {
+        if (!overwritesToMemoryReadBy(AA, TLI, SE, OrigLI, OrigDT, &li,
+                                      inst2)) {
           return false;
         }
 
@@ -322,7 +323,7 @@ struct CacheAnalysis {
                     return false;
                   }
 
-                  if (!writesToMemoryReadBy(AA, &li, mid)) {
+                  if (!writesToMemoryReadBy(AA, TLI, &li, mid)) {
                     return false;
                   }
 
@@ -399,19 +400,25 @@ struct CacheAnalysis {
   std::map<Argument *, bool>
   compute_uncacheable_args_for_one_callsite(CallInst *callsite_op) {
     Function *Fn = getFunctionFromCall(callsite_op);
-
     if (!Fn)
       return {};
 
-    if (isMemFreeLibMFunction(Fn->getName())) {
+    StringRef funcName = getFuncNameFromCall(callsite_op);
+
+    if (funcName == "")
+      return {};
+
+    if (isMemFreeLibMFunction(funcName)) {
       return {};
     }
 
-    if (isCertainPrintMallocOrFree(Fn) || isAllocationFunction(*Fn, TLI)) {
+    if (isDebugFunction(callsite_op->getCalledFunction()))
+      return {};
+
+    if (isCertainPrint(funcName) || isAllocationFunction(funcName, TLI) ||
+        isDeallocationFunction(funcName, TLI)) {
       return {};
     }
-
-    StringRef funcName = Fn->getName();
 
     if (funcName.startswith("MPI_") || funcName.startswith("enzyme_wrapmpi$$"))
       return {};
@@ -470,14 +477,21 @@ struct CacheAnalysis {
     allFollowersOf(callsite_op, [&](Instruction *inst2) {
       // Don't consider modref from malloc/free as a need to cache
       if (auto obj_op = dyn_cast<CallInst>(inst2)) {
-        Function *called = getFunctionFromCall(obj_op);
-        if (called && isCertainPrintMallocOrFree(called)) {
+        StringRef sfuncName = getFuncNameFromCall(obj_op);
+
+        if (isMemFreeLibMFunction(sfuncName)) {
           return false;
         }
-        if (called && isMemFreeLibMFunction(called->getName())) {
+
+        if (isDebugFunction(obj_op->getCalledFunction()))
+          return false;
+
+        if (isCertainPrint(sfuncName) || isAllocationFunction(sfuncName, TLI) ||
+            isDeallocationFunction(sfuncName, TLI)) {
           return false;
         }
-        if (called && called->getName() == "__kmpc_for_static_fini") {
+
+        if (sfuncName == "__kmpc_for_static_fini") {
           return false;
         }
 
@@ -745,8 +759,9 @@ void calculateUnusedValuesInFunction(
 
         bool isLibMFn = false;
         if (auto obj_op = dyn_cast<CallInst>(inst)) {
-          Function *called = getFunctionFromCall((CallInst *)obj_op);
-          if (called && isDeallocationFunction(*called, TLI)) {
+          StringRef funcName =
+              getFuncNameFromCall(const_cast<CallInst *>(obj_op));
+          if (isDeallocationFunction(funcName, TLI)) {
             if (mode == DerivativeMode::ForwardMode ||
                 mode == DerivativeMode::ForwardModeSplit ||
                 ((mode == DerivativeMode::ReverseModePrimal ||
@@ -756,7 +771,7 @@ void calculateUnusedValuesInFunction(
             return UseReq::Recur;
           }
           Intrinsic::ID ID = Intrinsic::not_intrinsic;
-          if (called && isMemFreeLibMFunction(called->getName(), &ID)) {
+          if (isMemFreeLibMFunction(funcName, &ID)) {
             isLibMFn = true;
           }
         }
@@ -794,10 +809,8 @@ void calculateUnusedValuesInFunction(
           bool newMemory = false;
           if (isa<AllocaInst>(at))
             newMemory = true;
-          else if (auto CI = dyn_cast<CallInst>(at))
-            if (Function *F = getFunctionFromCall(CI))
-              if (isAllocationFunction(*F, TLI))
-                newMemory = true;
+          else if (isAllocationCall(at, TLI))
+            newMemory = true;
           if (newMemory) {
             bool foundStore = false;
             allInstructionsBetween(
@@ -810,7 +823,7 @@ void calculateUnusedValuesInFunction(
                     return /*earlyBreak*/ false;
 
                   if (writesToMemoryReadBy(
-                          gutils->OrigAA,
+                          gutils->OrigAA, TLI,
                           /*maybeReader*/ const_cast<MemTransferInst *>(mti),
                           /*maybeWriter*/ I)) {
                     foundStore = true;
@@ -917,10 +930,8 @@ void calculateUnusedStoresInFunction(
       bool newMemory = false;
       if (isa<AllocaInst>(at))
         newMemory = true;
-      else if (auto CI = dyn_cast<CallInst>(at))
-        if (Function *F = getFunctionFromCall(CI))
-          if (isAllocationFunction(*F, TLI))
-            newMemory = true;
+      else if (isAllocationCall(at, TLI))
+        newMemory = true;
       if (newMemory) {
         bool foundStore = false;
         allInstructionsBetween(
@@ -933,7 +944,7 @@ void calculateUnusedStoresInFunction(
 
               // if (I == &MTI) return;
               if (writesToMemoryReadBy(
-                      gutils->OrigAA,
+                      gutils->OrigAA, TLI,
                       /*maybeReader*/ const_cast<MemTransferInst *>(mti),
                       /*maybeWriter*/ I)) {
                 foundStore = true;
@@ -1228,11 +1239,9 @@ bool legalCombinedForwardReverse(
       }
     }
 
-    if (auto op = dyn_cast<CallInst>(I)) {
-      Function *called = getFunctionFromCall(op);
-      if (called && (isAllocationFunction(*called, gutils->TLI) ||
-                     isDeallocationFunction(*called, gutils->TLI)))
-        return;
+    if (isAllocationCall(I, gutils->TLI) ||
+        isDeallocationCall(I, gutils->TLI)) {
+      return;
     }
 
     if (isa<BranchInst>(I)) {
@@ -1309,7 +1318,8 @@ bool legalCombinedForwardReverse(
       auto consider = [&](Instruction *user) {
         if (!user->mayReadFromMemory())
           return false;
-        if (writesToMemoryReadBy(gutils->OrigAA, /*maybeReader*/ user,
+        if (writesToMemoryReadBy(gutils->OrigAA, gutils->TLI,
+                                 /*maybeReader*/ user,
                                  /*maybeWriter*/ inst)) {
           propagate(user);
           // Fast return if not legal
@@ -1339,7 +1349,8 @@ bool legalCombinedForwardReverse(
         return false;
       if (!post->mayWriteToMemory())
         return false;
-      if (writesToMemoryReadBy(gutils->OrigAA, /*maybeReader*/ inst,
+      if (writesToMemoryReadBy(gutils->OrigAA, gutils->TLI,
+                               /*maybeReader*/ inst,
                                /*maybeWriter*/ post)) {
         if (EnzymePrintPerf) {
           if (called)
@@ -1832,7 +1843,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
           if (!foundcalled->hasParamAttribute(i, Attribute::StructRet))
             args.push_back(arg.getType());
           else {
-            sretTy = cast<PointerType>(arg.getType())->getElementType();
+            sretTy = arg.getType()->getPointerElementType();
             //  sretTy = foundcalled->getParamStructRetType(i);
           }
           i++;
@@ -2071,7 +2082,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   }
 
   gutils->forceActiveDetection();
-  gutils->forceAugmentedReturns(guaranteedUnreachable);
+  gutils->forceAugmentedReturns();
 
   // TODO actually populate unnecessaryInstructions with what can be
   // derived without activity info
@@ -2080,7 +2091,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     for (auto &I : *BB)
       unnecessaryInstructionsTmp.insert(&I);
   }
-  gutils->computeGuaranteedFrees(guaranteedUnreachable);
+  gutils->computeGuaranteedFrees();
 
   CacheAnalysis CA(gutils->allocationsWithGuaranteedFree,
                    gutils->rematerializableAllocations, gutils->TR,
@@ -2091,12 +2102,13 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                    DerivativeMode::ReverseModePrimal, omp);
   const std::map<CallInst *, const std::map<Argument *, bool>>
       uncacheable_args_map = CA.compute_uncacheable_args_for_callsites();
+  gutils->uncacheable_args_map_ptr = &uncacheable_args_map;
 
   const std::map<Instruction *, bool> can_modref_map =
       CA.compute_uncacheable_load_map();
   gutils->can_modref_map = &can_modref_map;
 
-  gutils->computeMinCache(guaranteedUnreachable);
+  gutils->computeMinCache();
 
   SmallPtrSet<const Value *, 4> unnecessaryValues;
   SmallPtrSet<const Instruction *, 4> unnecessaryInstructions;
@@ -2104,6 +2116,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
                                   unnecessaryInstructions, returnUsed,
                                   DerivativeMode::ReverseModePrimal, gutils,
                                   TLI, constant_args, guaranteedUnreachable);
+  gutils->unnecessaryValuesP = &unnecessaryValues;
 
   SmallPtrSet<const Instruction *, 4> unnecessaryStores;
   calculateUnusedStoresInFunction(*gutils->oldFunc, unnecessaryStores,
@@ -2788,8 +2801,9 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
       toret =
           nBuilder.CreateInsertValue(toret, gutils->diffe(ret, nBuilder), 1);
     } else {
-      toret = nBuilder.CreateInsertValue(
-          toret, Constant::getNullValue(ret->getType()), 1);
+      Type *retTy = gutils->getShadowType(ret->getType());
+      toret =
+          nBuilder.CreateInsertValue(toret, Constant::getNullValue(retTy), 1);
     }
     break;
   }
@@ -3644,9 +3658,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   }
 
   gutils->forceActiveDetection();
-  gutils->forceAugmentedReturns(guaranteedUnreachable);
+  gutils->forceAugmentedReturns();
 
-  gutils->computeGuaranteedFrees(guaranteedUnreachable);
+  gutils->computeGuaranteedFrees();
 
   // TODO populate with actual unnecessaryInstructions once the dependency
   // cycle with activity analysis is removed
@@ -3666,6 +3680,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       uncacheable_args_map =
           (augmenteddata) ? augmenteddata->uncacheable_args_map
                           : CA.compute_uncacheable_args_for_callsites();
+  gutils->uncacheable_args_map_ptr = &uncacheable_args_map;
 
   const std::map<Instruction *, bool> can_modref_map =
       augmenteddata ? augmenteddata->can_modref_map
@@ -3680,7 +3695,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     return gutils->getIndex(std::make_pair(I, u), mapping);
   };
 
-  gutils->computeMinCache(guaranteedUnreachable);
+  gutils->computeMinCache();
 
   SmallPtrSet<const Value *, 4> unnecessaryValues;
   SmallPtrSet<const Instruction *, 4> unnecessaryInstructions;
@@ -3688,6 +3703,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                                   unnecessaryInstructions, key.returnUsed,
                                   key.mode, gutils, TLI, key.constant_args,
                                   guaranteedUnreachable);
+  gutils->unnecessaryValuesP = &unnecessaryValues;
 
   SmallPtrSet<const Instruction *, 4> unnecessaryStores;
   calculateUnusedStoresInFunction(*gutils->oldFunc, unnecessaryStores,
@@ -4240,7 +4256,7 @@ Function *EnzymeLogic::CreateForwardDiff(
       getGuaranteedUnreachable(gutils->oldFunc);
 
   gutils->forceActiveDetection();
-  gutils->forceAugmentedReturns(guaranteedUnreachable);
+  gutils->forceAugmentedReturns();
 
   // TODO populate with actual unnecessaryInstructions once the dependency
   // cycle with activity analysis is removed
@@ -4250,13 +4266,14 @@ Function *EnzymeLogic::CreateForwardDiff(
       unnecessaryInstructionsTmp.insert(&I);
   }
   if (mode == DerivativeMode::ForwardModeSplit)
-    gutils->computeGuaranteedFrees(guaranteedUnreachable);
+    gutils->computeGuaranteedFrees();
 
   SmallPtrSet<const Value *, 4> unnecessaryValues;
   SmallPtrSet<const Instruction *, 4> unnecessaryInstructions;
   calculateUnusedValuesInFunction(
       *gutils->oldFunc, unnecessaryValues, unnecessaryInstructions, returnUsed,
       mode, gutils, TLI, constant_args, guaranteedUnreachable);
+  gutils->unnecessaryValuesP = &unnecessaryValues;
 
   SmallPtrSet<const Instruction *, 4> unnecessaryStores;
   calculateUnusedStoresInFunction(*gutils->oldFunc, unnecessaryStores,
@@ -4277,7 +4294,7 @@ Function *EnzymeLogic::CreateForwardDiff(
       }
     }
 
-    gutils->computeGuaranteedFrees(guaranteedUnreachable);
+    gutils->computeGuaranteedFrees();
     CacheAnalysis CA(
         gutils->allocationsWithGuaranteedFree,
         gutils->rematerializableAllocations, gutils->TR, gutils->OrigAA,
@@ -4287,6 +4304,7 @@ Function *EnzymeLogic::CreateForwardDiff(
         _uncacheable_argsPP, mode, omp);
     const std::map<CallInst *, const std::map<Argument *, bool>>
         uncacheable_args_map = CA.compute_uncacheable_args_for_callsites();
+    gutils->uncacheable_args_map_ptr = &uncacheable_args_map;
     can_modref_map = std::make_unique<const std::map<Instruction *, bool>>(
         CA.compute_uncacheable_load_map());
     gutils->can_modref_map = can_modref_map.get();
@@ -4296,7 +4314,7 @@ Function *EnzymeLogic::CreateForwardDiff(
       return gutils->getIndex(std::make_pair(I, u), augmenteddata->tapeIndices);
     };
 
-    gutils->computeMinCache(guaranteedUnreachable);
+    gutils->computeMinCache();
 
     maker = new AdjointGenerator<const AugmentedReturn *>(
         mode, gutils, constant_args, retType, getIndex, uncacheable_args_map,

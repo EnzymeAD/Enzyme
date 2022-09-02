@@ -191,6 +191,9 @@ public:
   SmallPtrSet<Instruction *, 4> unnecessaryIntermediates;
 
   const std::map<Instruction *, bool> *can_modref_map;
+  const std::map<CallInst *, const std::map<Argument *, bool>>
+      *uncacheable_args_map_ptr;
+  const SmallPtrSetImpl<const Value *> *unnecessaryValuesP;
 
   SmallVector<OperandBundleDef, 2>
   getInvertedBundles(CallInst *orig, ArrayRef<ValueType> types,
@@ -713,12 +716,12 @@ public:
           break;
         }
       } else if (auto CI = dyn_cast<CallInst>(cur)) {
-        Function *called = getFunctionFromCall(CI);
-        if (called && isDeallocationFunction(*called, TLI)) {
+        StringRef funcName = getFuncNameFromCall(CI);
+        if (isDeallocationFunction(funcName, TLI)) {
           frees.insert(CI);
           continue;
         }
-        if (called && called->getName() == "julia.write_barrier") {
+        if (funcName == "julia.write_barrier") {
           stores.insert(CI);
           continue;
         }
@@ -736,7 +739,7 @@ public:
             continue;
           }
 #if LLVM_VERSION_MAJOR <= 7
-          auto F = CI->getCalledFunction();
+          auto F = getFunctionFromCall(CI);
 #endif
           auto TT = TR.query(prev)[{-1, -1}];
           // If it either could capture, or could have a int/pointer written to
@@ -878,7 +881,7 @@ public:
       SmallVector<Instruction *, 2> results;
       mayExecuteAfter(results, LI, stores, outer);
       for (auto res : results) {
-        if (overwritesToMemoryReadBy(OrigAA, SE, OrigLI, OrigDT, LI, res,
+        if (overwritesToMemoryReadBy(OrigAA, TLI, SE, OrigLI, OrigDT, LI, res,
                                      outer)) {
           EmitWarning("NotPromotable", LI->getDebugLoc(), oldFunc,
                       LI->getParent(), " Could not promote allocation ", *V,
@@ -895,8 +898,8 @@ public:
       SmallVector<Instruction *, 2> results;
       mayExecuteAfter(results, LI.loadCall, stores, outer);
       for (auto res : results) {
-        if (overwritesToMemoryReadBy(OrigAA, SE, OrigLI, OrigDT, LI.loadCall,
-                                     res, outer)) {
+        if (overwritesToMemoryReadBy(OrigAA, TLI, SE, OrigLI, OrigDT,
+                                     LI.loadCall, res, outer)) {
           EmitWarning("NotPromotable", LI.loadCall->getDebugLoc(), oldFunc,
                       LI.loadCall->getParent(),
                       " Could not promote allocation ", *V,
@@ -910,11 +913,10 @@ public:
         Rematerializer(loads, loadLikeCalls, stores, frees, outer);
   }
 
-  void computeGuaranteedFrees(
-      const llvm::SmallPtrSetImpl<BasicBlock *> &oldUnreachable) {
+  void computeGuaranteedFrees() {
     SmallPtrSet<CallInst *, 2> allocsToPromote;
     for (auto &BB : *oldFunc) {
-      if (oldUnreachable.count(&BB))
+      if (notForAnalysis.count(&BB))
         continue;
       for (auto &I : BB) {
         if (auto AI = dyn_cast<AllocaInst>(&I))
@@ -924,18 +926,17 @@ public:
         if (!CI)
           continue;
 
-        Function *called = getFunctionFromCall(CI);
-        if (!called)
-          continue;
-        if (isDeallocationFunction(*called, TLI)) {
+        StringRef funcName = getFuncNameFromCall(CI);
+
+        if (isDeallocationFunction(funcName, TLI)) {
 
           llvm::Value *val = CI->getArgOperand(0);
           while (auto cast = dyn_cast<CastInst>(val))
             val = cast->getOperand(0);
 
           if (auto dc = dyn_cast<CallInst>(val)) {
-            if (dc->getCalledFunction() &&
-                isAllocationFunction(*dc->getCalledFunction(), TLI)) {
+            StringRef sfuncName = getFuncNameFromCall(dc);
+            if (isAllocationFunction(sfuncName, TLI)) {
 
               bool hasPDFree = false;
               if (dc->getParent() == CI->getParent() ||
@@ -949,12 +950,11 @@ public:
             }
           }
         }
-        if (isAllocationFunction(*called, TLI)) {
+        if (isAllocationFunction(funcName, TLI)) {
           allocsToPromote.insert(CI);
           if (hasMetadata(CI, "enzyme_fromstack")) {
             allocationsWithGuaranteedFree[CI].insert(CI);
           }
-          auto funcName = called->getName();
           if (funcName == "jl_alloc_array_1d" ||
               funcName == "jl_alloc_array_2d" ||
               funcName == "jl_alloc_array_3d" || funcName == "jl_array_copy" ||
@@ -1167,14 +1167,17 @@ private:
 public:
   unsigned getWidth() { return width; }
 
+  ArrayRef<DIFFE_TYPE> ArgDiffeTypes;
+
 public:
   GradientUtils(EnzymeLogic &Logic, Function *newFunc_, Function *oldFunc_,
                 TargetLibraryInfo &TLI_, TypeAnalysis &TA_, TypeResults TR_,
                 ValueToValueMapTy &invertedPointers_,
                 const SmallPtrSetImpl<Value *> &constantvalues_,
                 const SmallPtrSetImpl<Value *> &activevals_,
-                DIFFE_TYPE ReturnActivity, ValueToValueMapTy &originalToNewFn_,
-                DerivativeMode mode, unsigned width, bool omp)
+                DIFFE_TYPE ReturnActivity, ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
+                ValueToValueMapTy &originalToNewFn_, DerivativeMode mode,
+                unsigned width, bool omp)
       : CacheUtility(TLI_, newFunc_), Logic(Logic), mode(mode),
         oldFunc(oldFunc_), invertedPointers(),
         OrigDT(Logic.PPC.FAM.getResult<llvm::DominatorTreeAnalysis>(*oldFunc_)),
@@ -1190,7 +1193,7 @@ public:
                                  activevals_, ReturnActivity)),
         tid(nullptr), numThreads(nullptr),
         OrigAA(Logic.PPC.getAAResultsFromFunction(oldFunc_)), TA(TA_), TR(TR_),
-        omp(omp), width(width) {
+        omp(omp), width(width), ArgDiffeTypes(ArgDiffeTypes_) {
     if (oldFunc_->getSubprogram()) {
       assert(originalToNewFn_.hasMD());
     }
@@ -1251,6 +1254,11 @@ public:
   }
 
 public:
+  DIFFE_TYPE getDiffeType(llvm::Value *v, bool foreignFunction);
+
+  DIFFE_TYPE getReturnDiffeType(llvm::CallInst *orig, bool *primalReturnUsedP,
+                                bool *shadowReturnUsedP);
+
   static GradientUtils *
   CreateFromClone(EnzymeLogic &Logic, unsigned width, Function *todiff,
                   TargetLibraryInfo &TLI, TypeAnalysis &TA,
@@ -1343,8 +1351,7 @@ public:
 
   void forceContexts();
 
-  void
-  computeMinCache(const SmallPtrSetImpl<BasicBlock *> &guaranteedUnreachable);
+  void computeMinCache();
 
   bool isOriginalBlock(const BasicBlock &BB) const {
     for (auto A : originalBlocks) {
@@ -1476,13 +1483,12 @@ public:
                                     /*ReverseLimit*/ reverseBlocks.size() > 0);
   }
 
-  void forceAugmentedReturns(
-      const SmallPtrSetImpl<BasicBlock *> &guaranteedUnreachable) {
+  void forceAugmentedReturns() {
     assert(TR.getFunction() == oldFunc);
 
     for (BasicBlock &oBB : *oldFunc) {
       // Don't create derivatives for code that results in termination
-      if (guaranteedUnreachable.find(&oBB) != guaranteedUnreachable.end())
+      if (notForAnalysis.find(&oBB) != notForAnalysis.end())
         continue;
 
       LoopContext loopContext;
@@ -1541,10 +1547,6 @@ public:
         CallInst *op = cast<CallInst>(inst);
         Function *called = op->getCalledFunction();
 
-        if (called && isCertainPrintOrFree(called)) {
-          continue;
-        }
-
         IRBuilder<> BuilderZ(inst);
         getForwardBuilder(BuilderZ);
         Type *antiTy = getShadowType(inst->getType());
@@ -1554,7 +1556,7 @@ public:
         invertedPointers.insert(
             std::make_pair((const Value *)inst, InvertedPointerVH(this, anti)));
 
-        if (called && isAllocationFunction(*called, TLI)) {
+        if (called && isAllocationFunction(called->getName(), TLI)) {
           anti->setName(op->getName() + "'mi");
         }
       }
@@ -1910,11 +1912,13 @@ class DiffeGradientUtils final : public GradientUtils {
                      ValueToValueMapTy &invertedPointers_,
                      const SmallPtrSetImpl<Value *> &constantvalues_,
                      const SmallPtrSetImpl<Value *> &returnvals_,
-                     DIFFE_TYPE ActiveReturn, ValueToValueMapTy &origToNew_,
-                     DerivativeMode mode, unsigned width, bool omp)
+                     DIFFE_TYPE ActiveReturn,
+                     ArrayRef<DIFFE_TYPE> constant_values,
+                     ValueToValueMapTy &origToNew_, DerivativeMode mode,
+                     unsigned width, bool omp)
       : GradientUtils(Logic, newFunc_, oldFunc_, TLI, TA, TR, invertedPointers_,
-                      constantvalues_, returnvals_, ActiveReturn, origToNew_,
-                      mode, width, omp) {
+                      constantvalues_, returnvals_, ActiveReturn,
+                      constant_values, origToNew_, mode, width, omp) {
     assert(reverseBlocks.size() == 0);
     if (mode == DerivativeMode::ForwardMode ||
         mode == DerivativeMode::ForwardModeSplit) {
