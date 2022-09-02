@@ -2355,8 +2355,12 @@ public:
     auto addingSize = (DL.getTypeSizeInBits(addingType) + 1) / 8;
     if (addingSize != size) {
       assert(size > addingSize);
+#if LLVM_VERSION_MAJOR >= 12
       addingType =
           VectorType::get(addingType, size / addingSize, /*isScalable*/ false);
+#else
+      addingType = VectorType::get(addingType, size / addingSize);
+#endif
       size = (size / addingSize) * addingSize;
     }
 
@@ -2650,8 +2654,13 @@ public:
                 alignv = 1;
               }
             }
+#if LLVM_VERSION_MAJOR >= 10
             LI->setAlignment(Align(alignv));
             st->setAlignment(Align(alignv));
+#else
+            LI->setAlignment(alignv);
+            st->setAlignment(alignv);
+#endif
           }
         }
       };
