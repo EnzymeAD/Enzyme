@@ -845,7 +845,7 @@ public:
               if (premask)
                 assert(start == 0 && nextStart == LoadSize);
               ((DiffeGradientUtils *)gutils)
-                  ->addToInvertedPtrDiffe(isfloat, start, nextStart - start,
+                  ->addToInvertedPtrDiffe(&I, isfloat, start, nextStart - start,
                                           I.getOperand(0), prediff, Builder2,
                                           alignment, OrigOffset, premask);
             }
@@ -1089,8 +1089,8 @@ public:
       else
         diff = gutils->invertPointerM(orig_val, Builder2, /*nullShadow*/ true);
 
-      gutils->setPtrDiffe(orig_ptr, diff, Builder2, align, isVolatile, ordering,
-                          syncScope, mask);
+      gutils->setPtrDiffe(&I, orig_ptr, diff, Builder2, align, isVolatile,
+                          ordering, syncScope, mask);
       return;
     }
 
@@ -1139,8 +1139,9 @@ public:
 
         if (constantval) {
           gutils->setPtrDiffe(
-              orig_ptr, Constant::getNullValue(gutils->getShadowType(valType)),
-              Builder2, align, isVolatile, ordering, syncScope, mask);
+              &I, orig_ptr,
+              Constant::getNullValue(gutils->getShadowType(valType)), Builder2,
+              align, isVolatile, ordering, syncScope, mask);
         } else {
           Value *diff;
           if (!mask) {
@@ -1194,8 +1195,9 @@ public:
           }
 
           gutils->setPtrDiffe(
-              orig_ptr, Constant::getNullValue(gutils->getShadowType(valType)),
-              Builder2, align, isVolatile, ordering, syncScope, mask);
+              &I, orig_ptr,
+              Constant::getNullValue(gutils->getShadowType(valType)), Builder2,
+              align, isVolatile, ordering, syncScope, mask);
           addToDiffe(orig_val, diff, Builder2, FT, mask);
         }
         break;
@@ -1209,7 +1211,7 @@ public:
 
         Value *diff = constantval ? Constant::getNullValue(diffeTy)
                                   : diffe(orig_val, Builder2);
-        gutils->setPtrDiffe(orig_ptr, diff, Builder2, align, isVolatile,
+        gutils->setPtrDiffe(&I, orig_ptr, diff, Builder2, align, isVolatile,
                             ordering, syncScope, mask);
 
         break;
@@ -1269,8 +1271,8 @@ public:
         } else {
           valueop = gutils->invertPointerM(orig_val, storeBuilder);
         }
-        gutils->setPtrDiffe(orig_ptr, valueop, storeBuilder, align, isVolatile,
-                            ordering, syncScope, mask);
+        gutils->setPtrDiffe(&I, orig_ptr, valueop, storeBuilder, align,
+                            isVolatile, ordering, syncScope, mask);
       }
     }
   }

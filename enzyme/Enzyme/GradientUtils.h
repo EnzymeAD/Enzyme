@@ -102,7 +102,7 @@ extern llvm::cl::opt<bool> EnzymeInactiveDynamic;
 extern llvm::cl::opt<bool> EnzymeFreeInternalAllocations;
 extern llvm::cl::opt<bool> EnzymeRematerialize;
 }
-extern unsigned int MD_ToCopy[5];
+extern llvm::SmallVector<unsigned int, 9> MD_ToCopy;
 
 struct InvertedPointerConfig : ValueMapConfig<const llvm::Value *> {
   typedef GradientUtils *ExtraData;
@@ -1299,13 +1299,15 @@ public:
   }
 
 #if LLVM_VERSION_MAJOR >= 10
-  void setPtrDiffe(Value *ptr, Value *newval, IRBuilder<> &BuilderM,
-                   MaybeAlign align, bool isVolatile, AtomicOrdering ordering,
-                   SyncScope::ID syncScope, Value *mask = nullptr)
+  void setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
+                   IRBuilder<> &BuilderM, MaybeAlign align, bool isVolatile,
+                   AtomicOrdering ordering, SyncScope::ID syncScope,
+                   Value *mask = nullptr)
 #else
-  void setPtrDiffe(Value *ptr, Value *newval, IRBuilder<> &BuilderM,
-                   unsigned align, bool isVolatile, AtomicOrdering ordering,
-                   SyncScope::ID syncScope, Value *mask = nullptr)
+  void setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
+                   IRBuilder<> &BuilderM, unsigned align, bool isVolatile,
+                   AtomicOrdering ordering, SyncScope::ID syncScope,
+                   Value *mask = nullptr)
 #endif
   {
     if (auto inst = dyn_cast<Instruction>(ptr)) {
@@ -1344,10 +1346,21 @@ public:
         auto scope = MDNode::get(ts->getContext(), scopeMD);
         ts->setMetadata(LLVMContext::MD_alias_scope, scope);
 
+        ts->setMetadata(LLVMContext::MD_tbaa,
+                        orig->getMetadata(LLVMContext::MD_tbaa));
+        ts->setMetadata(LLVMContext::MD_tbaa_struct,
+                        orig->getMetadata(LLVMContext::MD_tbaa_struct));
+        ts->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
+
         SmallVector<Metadata *, 1> MDs;
         for (ssize_t j = -1; j < getWidth(); j++) {
           if (j != (ssize_t)idx)
             MDs.push_back(getDerivativeAliasScope(origptr, j));
+        }
+        if (auto MD = orig->getMetadata(LLVMContext::MD_noalias)) {
+          auto MDN = cast<MDNode>(MD);
+          for (auto &o : MDN->operands())
+            MDs.push_back(o);
         }
         auto noscope = MDNode::get(ptr->getContext(), MDs);
         ts->setMetadata(LLVMContext::MD_noalias, noscope);
@@ -1364,7 +1377,13 @@ public:
             ConstantInt::get(Type::getInt32Ty(ptr->getContext()), align);
 #endif
         Value *args[] = {newval, ptr, alignv, mask};
-        BuilderM.CreateCall(F, args)->setCallingConv(F->getCallingConv());
+        auto ts = BuilderM.CreateCall(F, args);
+        ts->setCallingConv(F->getCallingConv());
+        ts->setMetadata(LLVMContext::MD_tbaa,
+                        orig->getMetadata(LLVMContext::MD_tbaa));
+        ts->setMetadata(LLVMContext::MD_tbaa_struct,
+                        orig->getMetadata(LLVMContext::MD_tbaa_struct));
+        ts->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
       }
       idx++;
     };
@@ -2386,15 +2405,16 @@ public:
 
 //! align is the alignment that should be specified for load/store to pointer
 #if LLVM_VERSION_MAJOR >= 10
-  void addToInvertedPtrDiffe(Type *addingType, unsigned start, unsigned size,
-                             Value *origptr, Value *dif, IRBuilder<> &BuilderM,
+  void addToInvertedPtrDiffe(Instruction *orig, Type *addingType,
+                             unsigned start, unsigned size, Value *origptr,
+                             Value *dif, IRBuilder<> &BuilderM,
                              MaybeAlign align, Value *OrigOffset = nullptr,
                              Value *mask = nullptr)
 #else
-  void addToInvertedPtrDiffe(Type *addingType, unsigned start, unsigned size,
-                             Value *origptr, Value *dif, IRBuilder<> &BuilderM,
-                             unsigned align, Value *OrigOffset = nullptr,
-                             Value *mask = nullptr)
+  void addToInvertedPtrDiffe(Instruction *orig, Type *addingType,
+                             unsigned start, unsigned size, Value *origptr,
+                             Value *dif, IRBuilder<> &BuilderM, unsigned align,
+                             Value *OrigOffset = nullptr, Value *mask = nullptr)
 #endif
   {
     auto &DL = oldFunc->getParent()->getDataLayout();
@@ -2705,10 +2725,26 @@ public:
           if (j != (ssize_t)idx)
             MDs.push_back(getDerivativeAliasScope(origptr, j));
         }
+        if (auto MD = orig->getMetadata(LLVMContext::MD_noalias)) {
+          auto MDN = cast<MDNode>(MD);
+          for (auto &o : MDN->operands())
+            MDs.push_back(o);
+        }
         idx++;
         auto noscope = MDNode::get(ptr->getContext(), MDs);
         LI->setMetadata(LLVMContext::MD_noalias, noscope);
         st->setMetadata(LLVMContext::MD_noalias, noscope);
+
+        if (start == 0 &&
+            size == (DL.getTypeSizeInBits(orig->getType()) + 7) / 8) {
+          LI->copyMetadata(*orig, MD_ToCopy);
+          LI->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
+          unsigned int StoreData[] = {LLVMContext::MD_tbaa,
+                                      LLVMContext::MD_tbaa_struct};
+          for (auto MD : StoreData)
+            st->setMetadata(MD, orig->getMetadata(MD));
+          st->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
+        }
 
         if (align) {
 #if LLVM_VERSION_MAJOR >= 10
