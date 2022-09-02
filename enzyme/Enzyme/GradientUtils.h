@@ -2232,7 +2232,11 @@ public:
         Type *tys[] = {res->getType(), ptr->getType()};
         auto F = Intrinsic::getDeclaration(oldFunc->getParent(),
                                            Intrinsic::masked_store, tys);
+#if LLVM_VERSION_MAJOR > 10
+        auto align = cast<AllocaInst>(ptr)->getAlign().value();
+#else
         auto align = cast<AllocaInst>(ptr)->getAlignment();
+#endif
         assert(align);
         Value *alignv =
             ConstantInt::get(Type::getInt32Ty(mask->getContext()), align);
@@ -2251,7 +2255,11 @@ public:
         Type *tys[] = {res->getType(), ptr->getType()};
         auto F = Intrinsic::getDeclaration(oldFunc->getParent(),
                                            Intrinsic::masked_store, tys);
+#if LLVM_VERSION_MAJOR > 10
+        auto align = cast<AllocaInst>(ptr)->getAlign().value();
+#else
         auto align = cast<AllocaInst>(ptr)->getAlignment();
+#endif
         assert(align);
         Value *alignv =
             ConstantInt::get(Type::getInt32Ty(mask->getContext()), align);
@@ -2626,9 +2634,9 @@ public:
             MaybeAlign alignv = align;
             if (alignv) {
               if (start != 0) {
-                assert(alignv.getValue() != 0);
+                assert(alignv.getValue().value() != 0);
                 // todo make better alignment calculation
-                if (start % alignv.getValue() != 0) {
+                if (start % alignv.getValue().value() != 0) {
                   alignv = Align(1);
                 }
               }
@@ -2663,9 +2671,9 @@ public:
           MaybeAlign alignv = align;
           if (alignv) {
             if (start != 0) {
-              assert(alignv.getValue() != 0);
+              assert(alignv.getValue().value() != 0);
               // todo make better alignment calculation
-              if (start % alignv.getValue() != 0) {
+              if (start % alignv.getValue().value() != 0) {
                 alignv = Align(1);
               }
             }
