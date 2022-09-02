@@ -16,7 +16,6 @@ entry:
 
 declare void @__enzyme_autodiff(void (double*)*, ...)
 
-
 ; CHECK: define void @test_derivative(double* %x, double* %xp1, double* %xp2, double* %xp3)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"add'de.i" = alloca [3 x double]

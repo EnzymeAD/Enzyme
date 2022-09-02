@@ -1061,6 +1061,18 @@ public:
       return;
     }
 
+    auto scopeMD = gutils->getDerivativeAliasScope(orig_ptr, -1);
+    auto scope = MDNode::get(I.getContext(), scopeMD);
+    auto NewI = gutils->getNewFromOriginal(&I);
+    NewI->setMetadata(LLVMContext::MD_alias_scope, scope);
+
+    SmallVector<Metadata *, 1> MDs;
+    for (size_t j = 0; j < gutils->getWidth(); j++) {
+      MDs.push_back(gutils->getDerivativeAliasScope(orig_ptr, j));
+    }
+    auto noscope = MDNode::get(I.getContext(), MDs);
+    NewI->setMetadata(LLVMContext::MD_noalias, noscope);
+
     bool constantval = gutils->isConstantValue(orig_val) ||
                        parseTBAA(I, DL).Inner0().isIntegral();
 

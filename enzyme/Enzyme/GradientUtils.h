@@ -53,6 +53,7 @@
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/MDBuilder.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
 
@@ -1267,6 +1268,36 @@ public:
                   bool shadowReturnUsed,
                   std::map<AugmentedStruct, int> &returnMapping, bool omp);
 
+  ValueMap<const Value *, MDNode *> differentialAliasScopeDomains;
+  DenseMap<ssize_t, MDNode *> differentialAliasScope;
+  MDNode *getDerivativeAliasScope(const Value *origptr, ssize_t newptr) {
+    auto found = differentialAliasScopeDomains.find(origptr);
+    if (found == differentialAliasScopeDomains.end()) {
+      MDBuilder MDB(oldFunc->getContext());
+      MDNode *scope = MDB.createAnonymousAliasScopeDomain(
+          (" diff: %" + origptr->getName()).str());
+      // vec.first = scope;
+      // found = differentialAliasScope.find(origptr);
+      found =
+          differentialAliasScopeDomains.insert(std::make_pair(origptr, scope))
+              .first;
+    }
+    auto found2 = differentialAliasScope.find(newptr);
+    if (found2 == differentialAliasScope.end()) {
+      MDBuilder MDB(oldFunc->getContext());
+      std::string name;
+      if (newptr == -1)
+        name = "primal";
+      else
+        name = "shadow_" + std::to_string(newptr);
+      found2 = differentialAliasScope
+                   .insert(std::make_pair(newptr, MDB.createAnonymousAliasScope(
+                                                      found->second, name)))
+                   .first;
+    }
+    return found2->second;
+  }
+
 #if LLVM_VERSION_MAJOR >= 10
   void setPtrDiffe(Value *ptr, Value *newval, IRBuilder<> &BuilderM,
                    MaybeAlign align, bool isVolatile, AtomicOrdering ordering,
@@ -1284,6 +1315,8 @@ public:
       assert(arg->getParent() == oldFunc);
     }
 
+    Value *origptr = ptr;
+
     ptr = invertPointerM(ptr, BuilderM);
     if (!isOriginalBlock(*BuilderM.GetInsertBlock()) &&
         mode != DerivativeMode::ForwardMode)
@@ -1292,6 +1325,8 @@ public:
     if (mask && !isOriginalBlock(*BuilderM.GetInsertBlock()) &&
         mode != DerivativeMode::ForwardMode)
       mask = lookupM(mask, BuilderM);
+
+    size_t idx = 0;
 
     auto rule = [&](Value *ptr, Value *newval) {
       if (!mask) {
@@ -1305,6 +1340,17 @@ public:
         ts->setVolatile(isVolatile);
         ts->setOrdering(ordering);
         ts->setSyncScopeID(syncScope);
+        auto scopeMD = getDerivativeAliasScope(origptr, idx);
+        auto scope = MDNode::get(ts->getContext(), scopeMD);
+        ts->setMetadata(LLVMContext::MD_alias_scope, scope);
+
+        SmallVector<Metadata *, 1> MDs;
+        for (ssize_t j = -1; j < getWidth(); j++) {
+          if (j != (ssize_t)idx)
+            MDs.push_back(getDerivativeAliasScope(origptr, j));
+        }
+        auto noscope = MDNode::get(ptr->getContext(), MDs);
+        ts->setMetadata(LLVMContext::MD_noalias, noscope);
       } else {
         Type *tys[] = {newval->getType(), ptr->getType()};
         auto F = Intrinsic::getDeclaration(oldFunc->getParent(),
@@ -1320,6 +1366,7 @@ public:
         Value *args[] = {newval, ptr, alignv, mask};
         BuilderM.CreateCall(F, args)->setCallingConv(F->getCallingConv());
       }
+      idx++;
     };
 
     applyChainRule(BuilderM, rule, ptr, newval);
@@ -2417,7 +2464,11 @@ public:
         }
         return ptr;
       };
-      ptr = applyChainRule(PointerType::get(addingType, cast<PointerType>(origptr->getType())->getAddressSpace()), BuilderM, rule, ptr);
+      ptr = applyChainRule(
+          PointerType::get(
+              addingType,
+              cast<PointerType>(origptr->getType())->getAddressSpace()),
+          BuilderM, rule, ptr);
     }
 
     if (start != 0 ||
@@ -2632,14 +2683,32 @@ public:
     }
 
     if (!mask) {
+
+      size_t idx = 0;
       auto rule = [&](Value *ptr, Value *dif) {
 #if LLVM_VERSION_MAJOR > 7
         auto LI = BuilderM.CreateLoad(addingType, ptr);
 #else
         auto LI = BuilderM.CreateLoad(ptr);
 #endif
+
         Value *res = BuilderM.CreateFAdd(LI, dif);
         StoreInst *st = BuilderM.CreateStore(res, ptr);
+
+        auto scopeMD = getDerivativeAliasScope(origptr, idx);
+        auto scope = MDNode::get(LI->getContext(), scopeMD);
+        LI->setMetadata(LLVMContext::MD_alias_scope, scope);
+        st->setMetadata(LLVMContext::MD_alias_scope, scope);
+
+        SmallVector<Metadata *, 1> MDs;
+        for (ssize_t j = -1; j < getWidth(); j++) {
+          if (j != (ssize_t)idx)
+            MDs.push_back(getDerivativeAliasScope(origptr, j));
+        }
+        idx++;
+        auto noscope = MDNode::get(ptr->getContext(), MDs);
+        LI->setMetadata(LLVMContext::MD_noalias, noscope);
+        st->setMetadata(LLVMContext::MD_noalias, noscope);
 
         if (align) {
 #if LLVM_VERSION_MAJOR >= 10
