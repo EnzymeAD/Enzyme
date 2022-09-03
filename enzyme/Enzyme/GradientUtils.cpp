@@ -104,11 +104,24 @@ llvm::cl::opt<bool>
     EnzymeRematerialize("enzyme-rematerialize", cl::init(true), cl::Hidden,
                         cl::desc("Rematerialize allocations/shadows in the "
                                  "reverse rather than caching"));
+
+llvm::cl::opt<bool>
+    EnzymeVectorSplitPhi("enzyme-vector-split-phi", cl::init(true), cl::Hidden,
+                         cl::desc("Split phis according to vector size"));
 }
 
-unsigned int MD_ToCopy[5] = {LLVMContext::MD_dbg, LLVMContext::MD_tbaa,
-                             LLVMContext::MD_tbaa_struct, LLVMContext::MD_range,
-                             LLVMContext::MD_nonnull};
+SmallVector<unsigned int, 9> MD_ToCopy = {
+    LLVMContext::MD_dbg,
+    LLVMContext::MD_tbaa,
+    LLVMContext::MD_tbaa_struct,
+    LLVMContext::MD_range,
+    LLVMContext::MD_nonnull,
+#if LLVM_VERSION_MAJOR >= 15
+    LLVMContext::align,
+    LLVMContext::noundef,
+#endif
+    LLVMContext::MD_dereferenceable,
+    LLVMContext::MD_dereferenceable_or_null};
 
 Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                               const ValueToValueMapTy &available,
@@ -2613,8 +2626,9 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
 #else
                     auto align = SI->getAlignment();
 #endif
-                    setPtrDiffe(orig_ptr, valueop, NB, align, SI->isVolatile(),
-                                SI->getOrdering(), SI->getSyncScopeID(),
+                    setPtrDiffe(SI, orig_ptr, valueop, NB, align,
+                                SI->isVolatile(), SI->getOrdering(),
+                                SI->getSyncScopeID(),
                                 /*mask*/ nullptr);
                   }
                   // TODO shadow memtransfer
@@ -4763,22 +4777,63 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         bb.SetInsertPoint(bb.GetInsertBlock(), bb.GetInsertBlock()->begin());
       }
 
-      Type *shadowTy = getShadowType(phi->getType());
-      PHINode *which = bb.CreatePHI(shadowTy, phi->getNumIncomingValues());
-      which->setDebugLoc(getNewFromOriginal(phi->getDebugLoc()));
+      if (EnzymeVectorSplitPhi && width > 1) {
+        IRBuilder<> postPhi(NewV->getParent()->getFirstNonPHI());
+        Type *shadowTy = getShadowType(phi->getType());
+        PHINode *tmp = bb.CreatePHI(shadowTy, phi->getNumIncomingValues());
 
-      invertedPointers.insert(
-          std::make_pair((const Value *)oval, InvertedPointerVH(this, which)));
+        invertedPointers.insert(
+            std::make_pair((const Value *)oval, InvertedPointerVH(this, tmp)));
 
-      for (unsigned int i = 0; i < phi->getNumIncomingValues(); ++i) {
-        IRBuilder<> pre(
-            cast<BasicBlock>(getNewFromOriginal(phi->getIncomingBlock(i)))
-                ->getTerminator());
-        Value *val = invertPointerM(phi->getIncomingValue(i), pre, nullShadow);
-        which->addIncoming(val, cast<BasicBlock>(getNewFromOriginal(
-                                    phi->getIncomingBlock(i))));
+        Type *wrappedType = ArrayType::get(phi->getType(), width);
+        Value *res = UndefValue::get(wrappedType);
+
+        for (unsigned int i = 0; i < getWidth(); ++i) {
+          PHINode *which =
+              bb.CreatePHI(phi->getType(), phi->getNumIncomingValues());
+          which->setDebugLoc(getNewFromOriginal(phi->getDebugLoc()));
+
+          for (unsigned int j = 0; j < phi->getNumIncomingValues(); ++j) {
+            IRBuilder<> pre(
+                cast<BasicBlock>(getNewFromOriginal(phi->getIncomingBlock(j)))
+                    ->getTerminator());
+            Value *val =
+                invertPointerM(phi->getIncomingValue(j), pre, nullShadow);
+            auto extracted_diff = extractMeta(pre, val, i);
+            which->addIncoming(
+                extracted_diff,
+                cast<BasicBlock>(getNewFromOriginal(phi->getIncomingBlock(j))));
+          }
+
+          res = postPhi.CreateInsertValue(res, which, {i});
+        }
+        invertedPointers.erase((const Value *)oval);
+        replaceAWithB(tmp, res);
+        erase(tmp);
+
+        invertedPointers.insert(
+            std::make_pair((const Value *)oval, InvertedPointerVH(this, res)));
+
+        return res;
+      } else {
+        Type *shadowTy = getShadowType(phi->getType());
+        PHINode *which = bb.CreatePHI(shadowTy, phi->getNumIncomingValues());
+        which->setDebugLoc(getNewFromOriginal(phi->getDebugLoc()));
+
+        invertedPointers.insert(std::make_pair((const Value *)oval,
+                                               InvertedPointerVH(this, which)));
+
+        for (unsigned int i = 0; i < phi->getNumIncomingValues(); ++i) {
+          IRBuilder<> pre(
+              cast<BasicBlock>(getNewFromOriginal(phi->getIncomingBlock(i)))
+                  ->getTerminator());
+          Value *val =
+              invertPointerM(phi->getIncomingValue(i), pre, nullShadow);
+          which->addIncoming(val, cast<BasicBlock>(getNewFromOriginal(
+                                      phi->getIncomingBlock(i))));
+        }
+        return which;
       }
-      return which;
     }
   }
 
