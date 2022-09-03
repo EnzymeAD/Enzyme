@@ -25,6 +25,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(ENZYME_CLANG "Build enzyme clang plugin" ON)
 option(ENZYME_EXTERNAL_SHARED_LIB "Build external shared library" OFF)
+option(ENZYME_BUILD_STATIC_ONLY "Build Enzyme as a static library" OFF)
 set(ENZYME_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(ENZYME_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR})
 list(APPEND CMAKE_MODULE_PATH "${ENZYME_SOURCE_DIR}/cmake/modules")
@@ -210,8 +211,10 @@ export(TARGETS ClangEnzyme-${LLVM_VERSION_MAJOR}
     APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
 endif()
 
-export(TARGETS LLDEnzyme-${LLVM_VERSION_MAJOR}
-    APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
+if (NOT ${ENZYME_BUILD_STATIC_ONLY})
+  export(TARGETS LLDEnzyme-${LLVM_VERSION_MAJOR}
+      APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
+endif()
 
 export(PACKAGE Enzyme)
 
@@ -231,12 +234,14 @@ configure_file(cmake/EnzymeConfig.cmake.in
 
 configure_file(cmake/EnzymeConfigVersion.cmake.in
      "${PROJECT_BINARY_DIR}/EnzymeConfigVersion.cmake" @ONLY)
-   
-install(FILES
-     "${PROJECT_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/EnzymeConfig.cmake"
-     "${PROJECT_BINARY_DIR}/EnzymeConfigVersion.cmake"
-     DESTINATION "${INSTALL_CMAKE_DIR}" COMPONENT dev)
-   
-install(EXPORT EnzymeTargets DESTINATION
-    "${INSTALL_CMAKE_DIR}" COMPONENT dev)
+
+if (NOT ${ENZYME_BUILD_STATIC_ONLY})
+  install(FILES
+      "${PROJECT_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/EnzymeConfig.cmake"
+      "${PROJECT_BINARY_DIR}/EnzymeConfigVersion.cmake"
+      DESTINATION "${INSTALL_CMAKE_DIR}" COMPONENT dev)
+
+  install(EXPORT EnzymeTargets DESTINATION
+      "${INSTALL_CMAKE_DIR}" COMPONENT dev)
+endif()
    

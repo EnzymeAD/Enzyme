@@ -163,6 +163,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 list(APPEND ENZYME_SRC SCEV/ScalarEvolutionExpander.cpp)
 list(APPEND ENZYME_SRC  TypeAnalysis/TypeTree.cpp TypeAnalysis/TypeAnalysis.cpp TypeAnalysis/TypeAnalysisPrinter.cpp TypeAnalysis/RustDebugInfo.cpp)
 
+if (ENZYME_BUILD_STATIC_ONLY)
+  add_llvm_library( LLVMEnzyme-${LLVM_VERSION_MAJOR}
+    ${ENZYME_SRC}
+    DEPENDS
+    intrinsics_gen
+    )
+  return()
+endif()
+
 if (${LLVM_VERSION_MAJOR} LESS 8)
     add_llvm_loadable_module( LLVMEnzyme-${LLVM_VERSION_MAJOR}
         ${ENZYME_SRC}
