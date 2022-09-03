@@ -104,6 +104,10 @@ llvm::cl::opt<bool>
     EnzymeRematerialize("enzyme-rematerialize", cl::init(true), cl::Hidden,
                         cl::desc("Rematerialize allocations/shadows in the "
                                  "reverse rather than caching"));
+
+llvm::cl::opt<bool>
+    EnzymeVectorSplitPhi("enzyme-split-phi", cl::init(true), cl::Hidden,
+                         cl::desc("Split phis according to vector size"));
 }
 
 SmallVector<unsigned int, 9> MD_ToCopy = {
@@ -4772,23 +4776,74 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           cast<PHINode>(NewV)->getNumIncomingValues() == 0) {
         bb.SetInsertPoint(bb.GetInsertBlock(), bb.GetInsertBlock()->begin());
       }
+      
+      if (EnzymeVectorSplitPhi) {
+        IRBuilder<> postPhi(NewV->getParent()->getFirstNonPHI());
+        if (width > 1) {
+          Type *wrappedType = ArrayType::get(phi->getType(), width);
+          Value *res = UndefValue::get(wrappedType);
 
-      Type *shadowTy = getShadowType(phi->getType());
-      PHINode *which = bb.CreatePHI(shadowTy, phi->getNumIncomingValues());
-      which->setDebugLoc(getNewFromOriginal(phi->getDebugLoc()));
+          for (unsigned int i = 0; i < getWidth(); ++i) {
+            PHINode *which = bb.CreatePHI(
+                phi->getType(), phi->getNumIncomingValues());
+            which->setDebugLoc(getNewFromOriginal(phi->getDebugLoc()));
 
-      invertedPointers.insert(
-          std::make_pair((const Value *)oval, InvertedPointerVH(this, which)));
+            for (unsigned int j = 0; j < phi->getNumIncomingValues(); ++j) {
+              IRBuilder<> pre(
+                  cast<BasicBlock>(getNewFromOriginal(phi->getIncomingBlock(j)))
+                      ->getTerminator());
+              Value *val =
+                  invertPointerM(phi->getIncomingValue(j), pre, nullShadow);
+              auto extracted_diff = extractMeta(pre, val, i);
+              which->addIncoming(extracted_diff,
+                                 cast<BasicBlock>(getNewFromOriginal(
+                                     phi->getIncomingBlock(j))));
+            }
 
-      for (unsigned int i = 0; i < phi->getNumIncomingValues(); ++i) {
-        IRBuilder<> pre(
-            cast<BasicBlock>(getNewFromOriginal(phi->getIncomingBlock(i)))
-                ->getTerminator());
-        Value *val = invertPointerM(phi->getIncomingValue(i), pre, nullShadow);
-        which->addIncoming(val, cast<BasicBlock>(getNewFromOriginal(
-                                    phi->getIncomingBlock(i))));
+            res = postPhi.CreateInsertValue(res, which, {i});
+          }
+
+          invertedPointers.insert(std::make_pair((const Value *)oval,
+                                                 InvertedPointerVH(this, res)));
+
+          return res;
+        } else {
+          PHINode *which =
+              bb.CreatePHI(phi->getType(), phi->getNumIncomingValues());
+          which->setDebugLoc(getNewFromOriginal(phi->getDebugLoc()));
+          for (unsigned int i = 0; i < phi->getNumIncomingValues(); ++i) {
+            IRBuilder<> pre(
+                cast<BasicBlock>(getNewFromOriginal(phi->getIncomingBlock(i)))
+                    ->getTerminator());
+            Value *val =
+                invertPointerM(phi->getIncomingValue(i), pre, nullShadow);
+            which->addIncoming(val, cast<BasicBlock>(getNewFromOriginal(
+                                        phi->getIncomingBlock(i))));
+          }
+
+          invertedPointers.insert(std::make_pair(
+              (const Value *)oval, InvertedPointerVH(this, which)));
+
+          return which;
+        }
+      } else {
+        Type *shadowTy = getShadowType(phi->getType());
+        PHINode *which = bb.CreatePHI(shadowTy, phi->getNumIncomingValues());
+        which->setDebugLoc(getNewFromOriginal(phi->getDebugLoc()));
+
+        invertedPointers.insert(std::make_pair((const Value *)oval,
+                                               InvertedPointerVH(this, which)));
+
+        for (unsigned int i = 0; i < phi->getNumIncomingValues(); ++i) {
+          IRBuilder<> pre(
+              cast<BasicBlock>(getNewFromOriginal(phi->getIncomingBlock(i)))
+                  ->getTerminator());
+          Value *val =
+              invertPointerM(phi->getIncomingValue(i), pre, nullShadow);
+          which->addIncoming(val, cast<BasicBlock>(getNewFromOriginal(
+                                      phi->getIncomingBlock(i))));
+        }
       }
-      return which;
     }
   }
 
