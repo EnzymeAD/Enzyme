@@ -4607,8 +4607,12 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       AllocaInst *antialloca = bb.CreateAlloca(
           inst->getAllocatedType(), inst->getType()->getPointerAddressSpace(),
           asize, inst->getName() + "'ipa");
-#if LLVM_VERSION_MAJOR >= 10
+#if LLVM_VERSION_MAJOR >= 11
       antialloca->setAlignment(inst->getAlign());
+#elif LLVM_VERSION_MAJOR == 10
+      if (inst->getAlignment()) {
+        antialloca->setAlignment(Align(inst->getAlignment()));
+      }
 #else
       if (inst->getAlignment()) {
         antialloca->setAlignment(inst->getAlignment());
@@ -4628,8 +4632,12 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         auto rule = [&](Value *antialloca) {
           StoreInst *st = bb.CreateStore(
               Constant::getNullValue(inst->getAllocatedType()), antialloca);
-#if LLVM_VERSION_MAJOR >= 10
+#if LLVM_VERSION_MAJOR >= 11
           cast<StoreInst>(st)->setAlignment(inst->getAlign());
+#elif LLVM_VERSION_MAJOR == 10
+          if (inst->getAlignment()) {
+            cast<StoreInst>(st)->setAlignment(Align(inst->getAlignment()));
+          }
 #else
           if (inst->getAlignment()) {
             cast<StoreInst>(st)->setAlignment(inst->getAlignment());
@@ -4668,9 +4676,15 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       Type *tys[] = {dst_arg->getType(), len_arg->getType()};
       auto memset = cast<CallInst>(bb.CreateCall(
           Intrinsic::getDeclaration(M, Intrinsic::memset, tys), args));
-#if LLVM_VERSION_MAJOR >= 10
+#if LLVM_VERSION_MAJOR >= 11
       memset->addParamAttr(
           0, Attribute::getWithAlignment(inst->getContext(), inst->getAlign()));
+#elif LLVM_VERSION_MAJOR == 10
+      if (inst->getAlignment() != 0) {
+        memset->addParamAttr(
+            0, Attribute::getWithAlignment(inst->getContext(),
+                                           Align(inst->getAlignment())));
+      }
 #else
       if (inst->getAlignment() != 0) {
         memset->addParamAttr(0, Attribute::getWithAlignment(
@@ -5607,8 +5621,12 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                         /*extraSize*/ nullptr);
 
                     auto ld = v.CreateLoad(AT, AI);
-#if LLVM_VERSION_MAJOR >= 10
+#if LLVM_VERSION_MAJOR >= 11
                     ld->setAlignment(AI->getAlign());
+#elif LLVM_VERSION_MAJOR == 10
+                    if (AI->getAlignment()) {
+                      ld->setAlignment(Align(AI->getAlignment()));
+                    }
 #else
                     if (AI->getAlignment()) {
                       ld->setAlignment(AI->getAlignment());
