@@ -1091,11 +1091,7 @@ void emit_deriv_fnc(DagInit *resultTree, llvm::DenseMap<StringRef, StringRef> ty
     if (argType == "vincData") {
       os 
 << "        F->addParamAttr(" << argPos << ", Attribute::NoCapture);\n";
-#if LLVM_VERSION_MAJOR >= 12      
-        if (!mutableArgs.contains(argPos)) {
-#else
-        if (mutableArgs.find(argPos) == mutableArgs.end()) {
-#endif
+        if (mutableArgs.count(argPos) == 0) {
           // Only emit ReadOnly if the arg isn't mutable
           os 
 << "        F->addParamAttr(" << argPos << ", Attribute::ReadOnly);\n";
