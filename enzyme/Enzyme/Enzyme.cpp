@@ -2607,8 +2607,9 @@ public:
       ///
       return TLI;
     };
-    llvm::ModuleAnalysisManager MAM;
-    llvm::FunctionAnalysisManager &FAM = MAM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
+    //llvm::ModuleAnalysisManager MAM;
+    //llvm::FunctionAnalysisManager &FAM = MAM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
+    llvm::FunctionAnalysisManager FAM;
     EnzymeBase pass(false, MAM, FAM);
     return pass.implementation(M, getTLI);
   }
