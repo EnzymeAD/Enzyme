@@ -12,7 +12,7 @@ add_tablegen(enzyme-tblgen Enzyme
 
 get_target_property(TBL_LINKED_LIBS LLVMSupport INTERFACE_LINK_LIBRARIES)
 if (NOT TBL_LINKED_LIBS)
-    target_link_libraries(enzyme-tblgen "stdc++")
+    target_link_libraries(enzyme-tblgen PUBLIC "stdc++")
 endif()
 
 set_target_properties(enzyme-tblgen PROPERTIES FOLDER "Tablegenning")
