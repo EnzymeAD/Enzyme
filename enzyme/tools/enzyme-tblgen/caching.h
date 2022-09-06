@@ -58,6 +58,8 @@ void emit_vinc_caching(Record *pattern, std::vector<size_t> actArgs,
 << "          uncacheable_" << vecName;
       for (size_t user: vecUsers) {
         auto name = argOps->getArgNameStr(user);
+        if (name == vecName)
+          continue; // adjoint of x won't need x
         os 
 << " && active_" << name;
       }

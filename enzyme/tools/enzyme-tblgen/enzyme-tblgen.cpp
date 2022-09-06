@@ -812,13 +812,17 @@ void emit_extract_calls(Record *pattern, std::vector<size_t> actArgs,
         os 
 << "   else if (";
         bool first = true;
-        // TODO: fix this, probably one else if for each possible user?
+        // TODO: verify x isn't user from data_x (as only adjoint of x will be used)
         for (auto user: vecUsers) {
           auto name = argOps->getArgNameStr(user);
-          os << ((first) ? "" : " || ") << "active_" << name;
+          if (vecName == name)
+            continue; // see above
+          os 
+<< ((first) ? "" : " || ") << "active_" << name;
           first = false;
         }
-        os << ") {\n"
+        os 
+<< ") {\n"
 << "      data_" << vecName << " = lookup(gutils->getNewFromOriginal(arg_" 
 << vecName << "), Builder2);\n"
 << "    }\n";
