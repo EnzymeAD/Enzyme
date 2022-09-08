@@ -305,7 +305,8 @@ struct CacheAnalysis {
           }
         }
 
-        if (!overwritesToMemoryReadBy(AA, SE, OrigLI, OrigDT, &li, inst2)) {
+        if (!overwritesToMemoryReadBy(AA, TLI, SE, OrigLI, OrigDT, &li,
+                                      inst2)) {
           return false;
         }
 
@@ -322,7 +323,7 @@ struct CacheAnalysis {
                     return false;
                   }
 
-                  if (!writesToMemoryReadBy(AA, &li, mid)) {
+                  if (!writesToMemoryReadBy(AA, TLI, &li, mid)) {
                     return false;
                   }
 
@@ -399,19 +400,25 @@ struct CacheAnalysis {
   std::map<Argument *, bool>
   compute_uncacheable_args_for_one_callsite(CallInst *callsite_op) {
     Function *Fn = getFunctionFromCall(callsite_op);
-
     if (!Fn)
       return {};
 
-    if (isMemFreeLibMFunction(Fn->getName())) {
+    StringRef funcName = getFuncNameFromCall(callsite_op);
+
+    if (funcName == "")
+      return {};
+
+    if (isMemFreeLibMFunction(funcName)) {
       return {};
     }
 
-    if (isCertainPrintMallocOrFree(Fn) || isAllocationFunction(*Fn, TLI)) {
+    if (isDebugFunction(callsite_op->getCalledFunction()))
+      return {};
+
+    if (isCertainPrint(funcName) || isAllocationFunction(funcName, TLI) ||
+        isDeallocationFunction(funcName, TLI)) {
       return {};
     }
-
-    StringRef funcName = Fn->getName();
 
     if (funcName.startswith("MPI_") || funcName.startswith("enzyme_wrapmpi$$"))
       return {};
@@ -470,14 +477,21 @@ struct CacheAnalysis {
     allFollowersOf(callsite_op, [&](Instruction *inst2) {
       // Don't consider modref from malloc/free as a need to cache
       if (auto obj_op = dyn_cast<CallInst>(inst2)) {
-        Function *called = getFunctionFromCall(obj_op);
-        if (called && isCertainPrintMallocOrFree(called)) {
+        StringRef sfuncName = getFuncNameFromCall(obj_op);
+
+        if (isMemFreeLibMFunction(sfuncName)) {
           return false;
         }
-        if (called && isMemFreeLibMFunction(called->getName())) {
+
+        if (isDebugFunction(obj_op->getCalledFunction()))
+          return false;
+
+        if (isCertainPrint(sfuncName) || isAllocationFunction(sfuncName, TLI) ||
+            isDeallocationFunction(sfuncName, TLI)) {
           return false;
         }
-        if (called && called->getName() == "__kmpc_for_static_fini") {
+
+        if (sfuncName == "__kmpc_for_static_fini") {
           return false;
         }
 
@@ -745,8 +759,9 @@ void calculateUnusedValuesInFunction(
 
         bool isLibMFn = false;
         if (auto obj_op = dyn_cast<CallInst>(inst)) {
-          Function *called = getFunctionFromCall((CallInst *)obj_op);
-          if (called && isDeallocationFunction(*called, TLI)) {
+          StringRef funcName =
+              getFuncNameFromCall(const_cast<CallInst *>(obj_op));
+          if (isDeallocationFunction(funcName, TLI)) {
             if (mode == DerivativeMode::ForwardMode ||
                 mode == DerivativeMode::ForwardModeSplit ||
                 ((mode == DerivativeMode::ReverseModePrimal ||
@@ -756,7 +771,7 @@ void calculateUnusedValuesInFunction(
             return UseReq::Recur;
           }
           Intrinsic::ID ID = Intrinsic::not_intrinsic;
-          if (called && isMemFreeLibMFunction(called->getName(), &ID)) {
+          if (isMemFreeLibMFunction(funcName, &ID)) {
             isLibMFn = true;
           }
         }
@@ -794,10 +809,8 @@ void calculateUnusedValuesInFunction(
           bool newMemory = false;
           if (isa<AllocaInst>(at))
             newMemory = true;
-          else if (auto CI = dyn_cast<CallInst>(at))
-            if (Function *F = getFunctionFromCall(CI))
-              if (isAllocationFunction(*F, TLI))
-                newMemory = true;
+          else if (isAllocationCall(at, TLI))
+            newMemory = true;
           if (newMemory) {
             bool foundStore = false;
             allInstructionsBetween(
@@ -810,7 +823,7 @@ void calculateUnusedValuesInFunction(
                     return /*earlyBreak*/ false;
 
                   if (writesToMemoryReadBy(
-                          gutils->OrigAA,
+                          gutils->OrigAA, TLI,
                           /*maybeReader*/ const_cast<MemTransferInst *>(mti),
                           /*maybeWriter*/ I)) {
                     foundStore = true;
@@ -917,10 +930,8 @@ void calculateUnusedStoresInFunction(
       bool newMemory = false;
       if (isa<AllocaInst>(at))
         newMemory = true;
-      else if (auto CI = dyn_cast<CallInst>(at))
-        if (Function *F = getFunctionFromCall(CI))
-          if (isAllocationFunction(*F, TLI))
-            newMemory = true;
+      else if (isAllocationCall(at, TLI))
+        newMemory = true;
       if (newMemory) {
         bool foundStore = false;
         allInstructionsBetween(
@@ -933,7 +944,7 @@ void calculateUnusedStoresInFunction(
 
               // if (I == &MTI) return;
               if (writesToMemoryReadBy(
-                      gutils->OrigAA,
+                      gutils->OrigAA, TLI,
                       /*maybeReader*/ const_cast<MemTransferInst *>(mti),
                       /*maybeWriter*/ I)) {
                 foundStore = true;
@@ -1228,11 +1239,9 @@ bool legalCombinedForwardReverse(
       }
     }
 
-    if (auto op = dyn_cast<CallInst>(I)) {
-      Function *called = getFunctionFromCall(op);
-      if (called && (isAllocationFunction(*called, gutils->TLI) ||
-                     isDeallocationFunction(*called, gutils->TLI)))
-        return;
+    if (isAllocationCall(I, gutils->TLI) ||
+        isDeallocationCall(I, gutils->TLI)) {
+      return;
     }
 
     if (isa<BranchInst>(I)) {
@@ -1309,7 +1318,8 @@ bool legalCombinedForwardReverse(
       auto consider = [&](Instruction *user) {
         if (!user->mayReadFromMemory())
           return false;
-        if (writesToMemoryReadBy(gutils->OrigAA, /*maybeReader*/ user,
+        if (writesToMemoryReadBy(gutils->OrigAA, gutils->TLI,
+                                 /*maybeReader*/ user,
                                  /*maybeWriter*/ inst)) {
           propagate(user);
           // Fast return if not legal
@@ -1339,7 +1349,8 @@ bool legalCombinedForwardReverse(
         return false;
       if (!post->mayWriteToMemory())
         return false;
-      if (writesToMemoryReadBy(gutils->OrigAA, /*maybeReader*/ inst,
+      if (writesToMemoryReadBy(gutils->OrigAA, gutils->TLI,
+                               /*maybeReader*/ inst,
                                /*maybeWriter*/ post)) {
         if (EnzymePrintPerf) {
           if (called)
@@ -2114,7 +2125,6 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   insert_or_assign(AugmentedCachedFunctions, tup,
                    AugmentedReturn(gutils->newFunc, nullptr, {}, returnMapping,
                                    uncacheable_args_map, can_modref_map));
-  AugmentedCachedFinished[tup] = false;
 
   auto getIndex = [&](Instruction *I, CacheType u) -> unsigned {
     return gutils->getIndex(
@@ -2697,7 +2707,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   AugmentedCachedFunctions.find(tup)->second.fn = NewF;
   if (recursive || (omp && !noTape))
     AugmentedCachedFunctions.find(tup)->second.tapeType = tapeType;
-  insert_or_assign(AugmentedCachedFinished, tup, true);
+  AugmentedCachedFunctions.find(tup)->second.isComplete = true;
 
   for (auto pair : gfnusers) {
     auto GV = pair.first;
@@ -2790,8 +2800,9 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
       toret =
           nBuilder.CreateInsertValue(toret, gutils->diffe(ret, nBuilder), 1);
     } else {
-      toret = nBuilder.CreateInsertValue(
-          toret, Constant::getNullValue(ret->getType()), 1);
+      Type *retTy = gutils->getShadowType(ret->getType());
+      toret =
+          nBuilder.CreateInsertValue(toret, Constant::getNullValue(retTy), 1);
     }
     break;
   }
@@ -3214,8 +3225,14 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
   if (key.retType != DIFFE_TYPE::CONSTANT)
     assert(!key.todiff->getReturnType()->isVoidTy());
+
+  Function *prevFunction = nullptr;
   if (ReverseCachedFunctions.find(key) != ReverseCachedFunctions.end()) {
-    return ReverseCachedFunctions.find(key)->second;
+    prevFunction = ReverseCachedFunctions.find(key)->second;
+    if (!hasMetadata(prevFunction, "enzyme_placeholder"))
+      return prevFunction;
+    if (augmenteddata && !augmenteddata->isComplete)
+      return prevFunction;
   }
 
   if (key.returnUsed)
@@ -3629,6 +3646,14 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   insert_or_assign2<ReverseCacheKey, Function *>(ReverseCachedFunctions, key,
                                                  gutils->newFunc);
 
+  if (augmenteddata && !augmenteddata->isComplete) {
+    auto nf = gutils->newFunc;
+    delete gutils;
+    assert(!prevFunction);
+    nf->setMetadata("enzyme_placeholder", MDTuple::get(nf->getContext(), {}));
+    return nf;
+  }
+
   const SmallPtrSet<BasicBlock *, 4> guaranteedUnreachable =
       getGuaranteedUnreachable(gutils->oldFunc);
 
@@ -4007,6 +4032,11 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   PPC.AlwaysInline(nf);
   if (Arch == Triple::nvptx || Arch == Triple::nvptx64)
     PPC.ReplaceReallocs(nf, /*mem2reg*/ true);
+
+  if (prevFunction) {
+    prevFunction->replaceAllUsesWith(nf);
+    prevFunction->eraseFromParent();
+  }
 
   // Do not run post processing optimizations if the body of an openmp
   // parallel so the adjointgenerator can successfully extract the allocation
@@ -4702,6 +4732,5 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
 void EnzymeLogic::clear() {
   PPC.clear();
   AugmentedCachedFunctions.clear();
-  AugmentedCachedFinished.clear();
   ReverseCachedFunctions.clear();
 }

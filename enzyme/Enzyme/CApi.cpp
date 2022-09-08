@@ -174,6 +174,12 @@ EnzymeLogicRef CreateEnzymeLogic(uint8_t PostOpt) {
 
 void ClearEnzymeLogic(EnzymeLogicRef Ref) { eunwrap(Ref).clear(); }
 
+void EnzymeLogicErasePreprocessedFunctions(EnzymeLogicRef Ref) {
+  auto &Logic = eunwrap(Ref);
+  for (const auto &pair : Logic.PPC.cache)
+    pair.second->eraseFromParent();
+}
+
 void FreeEnzymeLogic(EnzymeLogicRef Ref) { delete (EnzymeLogic *)Ref; }
 
 EnzymeTypeAnalysisRef CreateTypeAnalysis(EnzymeLogicRef Log,
@@ -240,27 +246,9 @@ void EnzymeRegisterAllocationHandler(char *Name, CustomShadowAlloc AHandle,
       refs.push_back(wrap(a));
     return unwrap(AHandle(wrap(&B), wrap(CI), Args.size(), refs.data()));
   };
-  shadowErasers[std::string(Name)] = [=](IRBuilder<> &B, Value *ToFree,
-                                         Function *AllocF) -> llvm::CallInst * {
-    return cast_or_null<CallInst>(
-        unwrap(FHandle(wrap(&B), wrap(ToFree), wrap(AllocF))));
-  };
-}
-
-void EnzymeRegisterFunctionHandler(char *Name, CustomShadowAlloc AHandle,
-                                   CustomShadowFree FHandle) {
-  shadowHandlers[std::string(Name)] =
-      [=](IRBuilder<> &B, CallInst *CI,
-          ArrayRef<Value *> Args) -> llvm::Value * {
-    SmallVector<LLVMValueRef, 3> refs;
-    for (auto a : Args)
-      refs.push_back(wrap(a));
-    return unwrap(AHandle(wrap(&B), wrap(CI), Args.size(), refs.data()));
-  };
-  shadowErasers[std::string(Name)] = [=](IRBuilder<> &B, Value *ToFree,
-                                         Function *AllocF) -> llvm::CallInst * {
-    return cast_or_null<CallInst>(
-        unwrap(FHandle(wrap(&B), wrap(ToFree), wrap(AllocF))));
+  shadowErasers[std::string(Name)] = [=](IRBuilder<> &B,
+                                         Value *ToFree) -> llvm::CallInst * {
+    return cast_or_null<CallInst>(unwrap(FHandle(wrap(&B), wrap(ToFree))));
   };
 }
 
@@ -709,7 +697,9 @@ LLVMMetadataRef EnzymeMakeNonConstTBAA(LLVMMetadataRef MD) {
     return MD;
   if (!CAM->getValue()->isOneValue())
     return MD;
-  SmallVector<Metadata *, 4> MDs(M->operands());
+  SmallVector<Metadata *, 4> MDs;
+  for (auto &M : M->operands())
+    MDs.push_back(M);
   MDs[3] =
       ConstantAsMetadata::get(ConstantInt::get(CAM->getValue()->getType(), 0));
   return wrap(MDNode::get(M->getContext(), MDs));

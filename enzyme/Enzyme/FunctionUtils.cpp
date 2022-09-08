@@ -417,11 +417,16 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
     auto rep = CreateAllocation(B, AI->getAllocatedType(),
                                 B.CreateZExtOrTrunc(AI->getArraySize(), i64),
                                 nam, &CI);
-    CI->setMetadata("enzyme_fromstack",
-                    MDNode::get(CI->getContext(),
-                                {ConstantAsMetadata::get(ConstantInt::get(
-                                    IntegerType::get(AI->getContext(), 64),
-                                    AI->getAlignment()))}));
+#if LLVM_VERSION_MAJOR > 10
+    auto align = AI->getAlign().value();
+#else
+    auto align = AI->getAlignment();
+#endif
+    CI->setMetadata(
+        "enzyme_fromstack",
+        MDNode::get(CI->getContext(),
+                    {ConstantAsMetadata::get(ConstantInt::get(
+                        IntegerType::get(AI->getContext(), 64), align))}));
 
     auto PT0 = cast<PointerType>(rep->getType());
     auto PT1 = cast<PointerType>(AI->getType());
@@ -1266,20 +1271,17 @@ Function *PreProcessCache::preprocessForClone(Function *F,
             continue;
           for (int i = 0; i < 2; i++) {
             if (isa<ConstantPointerNull>(IC->getOperand(1 - i)))
-              if (auto CI = dyn_cast<CallInst>(IC->getOperand(i))) {
-                if (CI->getCalledFunction() &&
-                    isAllocationFunction(*CI->getCalledFunction(), TLI)) {
-                  for (auto U : IC->users()) {
-                    if (auto BI = dyn_cast<BranchInst>(U))
-                      BranchesToErase.push_back(BI->getParent());
-                  }
-                  IC->replaceAllUsesWith(
-                      IC->getPredicate() == ICmpInst::ICMP_NE
-                          ? ConstantInt::getTrue(I.getContext())
-                          : ConstantInt::getFalse(I.getContext()));
-                  CmpsToErase.push_back(&I);
-                  break;
+              if (isAllocationCall(IC->getOperand(i), TLI)) {
+                for (auto U : IC->users()) {
+                  if (auto BI = dyn_cast<BranchInst>(U))
+                    BranchesToErase.push_back(BI->getParent());
                 }
+                IC->replaceAllUsesWith(
+                    IC->getPredicate() == ICmpInst::ICMP_NE
+                        ? ConstantInt::getTrue(I.getContext())
+                        : ConstantInt::getFalse(I.getContext()));
+                CmpsToErase.push_back(&I);
+                break;
               }
           }
         }

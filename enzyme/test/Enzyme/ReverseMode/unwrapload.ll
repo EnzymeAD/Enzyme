@@ -95,7 +95,7 @@ declare dso_local double @__enzyme_autodiff(i8*, double*, double*, i64*)
 ; SHARED-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
 ; SHARED-NEXT:   %a19 = load i64, i64* %a4, align 4
 ; SHARED-NEXT:   %0 = getelementptr inbounds i64, i64* %a19_malloccache, i64 %iv
-; SHARED-NEXT:   store i64 %a19, i64* %0, align 8, !invariant.group !0
+; SHARED-NEXT:   store i64 %a19, i64* %0, align 8, !invariant.group !
 ; SHARED-NEXT:   store i64 %iv.next, i64* %a4, align 4
 ; SHARED-NEXT:   br label %loop2
 
@@ -169,7 +169,7 @@ declare dso_local double @__enzyme_autodiff(i8*, double*, double*, i64*)
 ; SHARED-NEXT:   %[[eq:.+]] = icmp eq i64 %"iv1'ac.0", 0
 ; SHARED-NEXT:   %[[dadd]] = select{{( fast)?}} i1 %[[eq]], double 0.000000e+00, double %"add'de.0"
 ; LLVM13-NEXT:   %[[fdadd:.+]] = fadd fast double %"res1'de.0", %"add'de.0"
-; LLVM14-NEXT:   %[[fdadd:.+]] = select i1 %[[eq]], double %"add'de.0", double -0.000000e+00
+; LLVM14-NEXT:   %[[fdadd:.+]] = select {{(fast )?}}i1 %[[eq]], double %"add'de.0", double {{\-?}}0.000000e+00
 ; LLVM13-NEXT:   %[[dres]] = select{{( fast)?}} i1 %[[eq]], double %[[fdadd]], double %"res1'de.0"
 ; LLVM14-NEXT:   %[[dres]] = fadd fast double %"res1'de.0", %[[fdadd]]
 ; SHARED-NEXT:   br i1 %[[eq]], label %invertloop1, label %invertloop2

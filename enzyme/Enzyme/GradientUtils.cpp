@@ -48,8 +48,7 @@
 std::map<std::string, std::function<llvm::Value *(IRBuilder<> &, CallInst *,
                                                   ArrayRef<Value *>)>>
     shadowHandlers;
-std::map<std::string,
-         std::function<llvm::CallInst *(IRBuilder<> &, Value *, Function *)>>
+std::map<std::string, std::function<llvm::CallInst *(IRBuilder<> &, Value *)>>
     shadowErasers;
 
 std::map<
@@ -105,11 +104,20 @@ llvm::cl::opt<bool>
     EnzymeRematerialize("enzyme-rematerialize", cl::init(true), cl::Hidden,
                         cl::desc("Rematerialize allocations/shadows in the "
                                  "reverse rather than caching"));
+
+llvm::cl::opt<bool>
+    EnzymeVectorSplitPhi("enzyme-vector-split-phi", cl::init(true), cl::Hidden,
+                         cl::desc("Split phis according to vector size"));
 }
 
-unsigned int MD_ToCopy[5] = {LLVMContext::MD_dbg, LLVMContext::MD_tbaa,
-                             LLVMContext::MD_tbaa_struct, LLVMContext::MD_range,
-                             LLVMContext::MD_nonnull};
+SmallVector<unsigned int, 9> MD_ToCopy = {
+    LLVMContext::MD_dbg,
+    LLVMContext::MD_tbaa,
+    LLVMContext::MD_tbaa_struct,
+    LLVMContext::MD_range,
+    LLVMContext::MD_nonnull,
+    LLVMContext::MD_dereferenceable,
+    LLVMContext::MD_dereferenceable_or_null};
 
 Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                               const ValueToValueMapTy &available,
@@ -2158,8 +2166,13 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
       if (!ignoreType && replace)
         cast<Instruction>(malloc)->replaceAllUsesWith(ret);
       ret->takeName(malloc);
-      if (replace)
-        erase(cast<Instruction>(malloc));
+      if (replace) {
+        auto malloci = cast<Instruction>(malloc);
+        if (malloci == &*BuilderQ.GetInsertPoint()) {
+          BuilderQ.SetInsertPoint(malloci->getNextNode());
+        }
+        erase(malloci);
+      }
     }
     return ret;
   } else {
@@ -2198,14 +2211,6 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
         Value *numThreads = ompNumThreads();
         Value *tid = ompThreadId();
         IRBuilder<> entryBuilder(inversionAllocs);
-
-        Constant *byteSizeOfType = ConstantInt::get(
-            numThreads->getType(),
-            (newFunc->getParent()->getDataLayout().getTypeAllocSizeInBits(
-                 malloc->getType()) +
-             7) /
-                8,
-            false);
 
         auto firstallocation =
             CreateAllocation(entryBuilder, malloc->getType(), numThreads,
@@ -2452,9 +2457,8 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                   ts->setSyncScopeID(SI->getSyncScopeID());
                   ts->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
                 } else if (auto CI = dyn_cast<CallInst>(&I)) {
-                  Function *called = getFunctionFromCall(CI);
-                  assert(called);
-                  if (called->getName() == "julia.write_barrier" ||
+                  StringRef funcName = getFuncNameFromCall(CI);
+                  if (funcName == "julia.write_barrier" ||
                       isa<MemSetInst>(&I) || isa<MemTransferInst>(&I)) {
 
                     // TODO
@@ -2472,13 +2476,19 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
 
                     auto Defs = getInvertedBundles(CI, BundleTypes, NB,
                                                    /*lookup*/ true, available);
-                    auto cal = NB.CreateCall(called, args, Defs);
+#if LLVM_VERSION_MAJOR >= 11
+                    auto cal =
+                        NB.CreateCall(CI->getFunctionType(),
+                                      CI->getCalledOperand(), args, Defs);
+#else
+                    auto cal = NB.CreateCall(CI->getCalledValue(), args, Defs);
+#endif
                     cal->setAttributes(CI->getAttributes());
                     cal->setCallingConv(CI->getCallingConv());
                     cal->setTailCallKind(CI->getTailCallKind());
                     cal->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
                   } else {
-                    assert(isDeallocationFunction(*called, TLI));
+                    assert(isDeallocationFunction(funcName, TLI));
                     continue;
                   }
                 } else {
@@ -2617,8 +2627,9 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
 #else
                     auto align = SI->getAlignment();
 #endif
-                    setPtrDiffe(orig_ptr, valueop, NB, align, SI->isVolatile(),
-                                SI->getOrdering(), SI->getSyncScopeID(),
+                    setPtrDiffe(SI, orig_ptr, valueop, NB, align,
+                                SI->isVolatile(), SI->getOrdering(),
+                                SI->getSyncScopeID(),
                                 /*mask*/ nullptr);
                   }
                   // TODO shadow memtransfer
@@ -2648,9 +2659,8 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                     cal->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
                   }
                 } else if (auto CI = dyn_cast<CallInst>(&I)) {
-                  Function *called = getFunctionFromCall(CI);
-                  assert(called);
-                  if (called->getName() == "julia.write_barrier") {
+                  StringRef funcName = getFuncNameFromCall(CI);
+                  if (funcName == "julia.write_barrier") {
 
                     // TODO
                     SmallVector<Value *, 2> args;
@@ -2670,14 +2680,21 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                       auto Defs =
                           getInvertedBundles(CI, BundleTypes, NB,
                                              /*lookup*/ true, available);
-                      auto cal = NB.CreateCall(called, args, Defs);
+#if LLVM_VERSION_MAJOR >= 11
+                      auto cal =
+                          NB.CreateCall(CI->getFunctionType(),
+                                        CI->getCalledOperand(), args, Defs);
+#else
+                      auto cal =
+                          NB.CreateCall(CI->getCalledValue(), args, Defs);
+#endif
                       cal->setAttributes(CI->getAttributes());
                       cal->setCallingConv(CI->getCallingConv());
                       cal->setTailCallKind(CI->getTailCallKind());
                       cal->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
                     }
                   } else {
-                    assert(isDeallocationFunction(*called, TLI));
+                    assert(isDeallocationFunction(funcName, TLI));
                     continue;
                   }
                 } else {
@@ -2707,8 +2724,8 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                 Value *anti = nullptr;
 
                 if (auto orig = dyn_cast<CallInst>(&I)) {
-                  Function *called = getFunctionFromCall(orig);
-                  assert(called);
+                  StringRef funcName = getFuncNameFromCall(orig);
+                  assert(funcName.size());
 
                   auto dbgLoc = getNewFromOriginal(orig)->getDebugLoc();
 
@@ -2723,11 +2740,10 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                   }
 
                   placeholder->setName("");
-                  if (shadowHandlers.find(called->getName().str()) !=
+                  if (shadowHandlers.find(funcName.str()) !=
                       shadowHandlers.end()) {
 
-                    anti =
-                        shadowHandlers[called->getName().str()](NB, orig, args);
+                    anti = shadowHandlers[funcName.str()](NB, orig, args);
                   } else {
                     auto rule = [&]() {
 #if LLVM_VERSION_MAJOR >= 11
@@ -2794,7 +2810,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                     applyChainRule(
                         NB,
                         [&](Value *anti) {
-                          zeroKnownAllocation(NB, anti, args, *called, TLI);
+                          zeroKnownAllocation(NB, anti, args, funcName, TLI);
                         },
                         anti);
                   }
@@ -3118,7 +3134,7 @@ bool GradientUtils::legalRecompute(const Value *val,
                 const_cast<Instruction *>(orig), [&](Instruction *I) -> bool {
                   if (I->mayWriteToMemory() &&
                       writesToMemoryReadBy(
-                          OrigAA,
+                          OrigAA, TLI,
                           /*maybeReader*/ const_cast<Instruction *>(orig),
                           /*maybeWriter*/ I)) {
                     failed = true;
@@ -3150,7 +3166,7 @@ bool GradientUtils::legalRecompute(const Value *val,
                   const_cast<Instruction *>(orig), [&](Instruction *I) -> bool {
                     if (I->mayWriteToMemory() &&
                         writesToMemoryReadBy(
-                            OrigAA,
+                            OrigAA, TLI,
                             /*maybeReader*/ const_cast<Instruction *>(orig),
                             /*maybeWriter*/ I)) {
                       failed = true;
@@ -3185,21 +3201,17 @@ bool GradientUtils::legalRecompute(const Value *val,
   }
 
   if (auto ci = dyn_cast<CallInst>(val)) {
-    if (auto called = ci->getCalledFunction()) {
-      auto n = called->getName();
-      if (called->hasFnAttribute("enzyme_math"))
-        n = called->getFnAttribute("enzyme_math").getValueAsString();
-      Intrinsic::ID ID = Intrinsic::not_intrinsic;
-      if (called->hasFnAttribute("enzyme_shouldrecompute") ||
-          isMemFreeLibMFunction(n, &ID) || n == "lgamma_r" ||
-          n == "lgammaf_r" || n == "lgammal_r" || n == "__lgamma_r_finite" ||
-          n == "__lgammaf_r_finite" || n == "__lgammal_r_finite" ||
-          n == "tanh" || n == "tanhf" || n == "__pow_finite" ||
-          n == "__fd_sincos_1" || n == "julia.pointer_from_objref" ||
-          n.startswith("enzyme_wrapmpi$$") || n == "omp_get_thread_num" ||
-          n == "omp_get_max_threads") {
-        return true;
-      }
+    auto n = getFuncNameFromCall(const_cast<CallInst *>(ci));
+    auto called = ci->getCalledFunction();
+    Intrinsic::ID ID = Intrinsic::not_intrinsic;
+    if ((called && called->hasFnAttribute("enzyme_shouldrecompute")) ||
+        isMemFreeLibMFunction(n, &ID) || n == "lgamma_r" || n == "lgammaf_r" ||
+        n == "lgammal_r" || n == "__lgamma_r_finite" ||
+        n == "__lgammaf_r_finite" || n == "__lgammal_r_finite" || n == "tanh" ||
+        n == "tanhf" || n == "__pow_finite" || n == "__fd_sincos_1" ||
+        n == "julia.pointer_from_objref" || n.startswith("enzyme_wrapmpi$$") ||
+        n == "omp_get_thread_num" || n == "omp_get_max_threads") {
+      return true;
     }
   }
 
@@ -3331,21 +3343,17 @@ bool GradientUtils::shouldRecompute(const Value *val,
   }
 
   if (auto ci = dyn_cast<CallInst>(val)) {
-    if (auto called = ci->getCalledFunction()) {
-      auto n = called->getName();
-      if (called->hasFnAttribute("enzyme_math"))
-        n = called->getFnAttribute("enzyme_math").getValueAsString();
-      Intrinsic::ID ID = Intrinsic::not_intrinsic;
-      if (called->hasFnAttribute("enzyme_shouldrecompute") ||
-          isMemFreeLibMFunction(n, &ID) || n == "lgamma_r" ||
-          n == "lgammaf_r" || n == "lgammal_r" || n == "__lgamma_r_finite" ||
-          n == "__lgammaf_r_finite" || n == "__lgammal_r_finite" ||
-          n == "tanh" || n == "tanhf" || n == "__pow_finite" ||
-          n == "__fd_sincos_1" || n == "julia.pointer_from_objref" ||
-          n.startswith("enzyme_wrapmpi$$") || n == "omp_get_thread_num" ||
-          n == "omp_get_max_threads") {
-        return true;
-      }
+    auto called = ci->getCalledFunction();
+    auto n = getFuncNameFromCall(const_cast<CallInst *>(ci));
+    Intrinsic::ID ID = Intrinsic::not_intrinsic;
+    if ((called && called->hasFnAttribute("enzyme_shouldrecompute")) ||
+        isMemFreeLibMFunction(n, &ID) || n == "lgamma_r" || n == "lgammaf_r" ||
+        n == "lgammal_r" || n == "__lgamma_r_finite" ||
+        n == "__lgammaf_r_finite" || n == "__lgammal_r_finite" || n == "tanh" ||
+        n == "tanhf" || n == "__pow_finite" || n == "__fd_sincos_1" ||
+        n == "julia.pointer_from_objref" || n.startswith("enzyme_wrapmpi$$") ||
+        n == "omp_get_thread_num" || n == "omp_get_max_threads") {
+      return true;
     }
   }
 
@@ -4349,7 +4357,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           goto end;
         }
       }
-      if (auto C = dyn_cast<Constant>(ip)) {
+      if (isa<Constant>(ip)) {
         auto rule = [&arg](Value *ip) {
           return ConstantExpr::getCast(arg->getOpcode(), cast<Constant>(ip),
                                        arg->getType());
@@ -4604,13 +4612,17 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       AllocaInst *antialloca = bb.CreateAlloca(
           inst->getAllocatedType(), inst->getType()->getPointerAddressSpace(),
           asize, inst->getName() + "'ipa");
+#if LLVM_VERSION_MAJOR >= 11
+      antialloca->setAlignment(inst->getAlign());
+#elif LLVM_VERSION_MAJOR == 10
       if (inst->getAlignment()) {
-#if LLVM_VERSION_MAJOR >= 10
         antialloca->setAlignment(Align(inst->getAlignment()));
-#else
-        antialloca->setAlignment(inst->getAlignment());
-#endif
       }
+#else
+      if (inst->getAlignment()) {
+        antialloca->setAlignment(inst->getAlignment());
+      }
+#endif
       return antialloca;
     };
 
@@ -4625,13 +4637,17 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         auto rule = [&](Value *antialloca) {
           StoreInst *st = bb.CreateStore(
               Constant::getNullValue(inst->getAllocatedType()), antialloca);
+#if LLVM_VERSION_MAJOR >= 11
+          cast<StoreInst>(st)->setAlignment(inst->getAlign());
+#elif LLVM_VERSION_MAJOR == 10
           if (inst->getAlignment()) {
-#if LLVM_VERSION_MAJOR >= 10
             cast<StoreInst>(st)->setAlignment(Align(inst->getAlignment()));
-#else
-            cast<StoreInst>(st)->setAlignment(inst->getAlignment());
-#endif
           }
+#else
+          if (inst->getAlignment()) {
+            cast<StoreInst>(st)->setAlignment(inst->getAlignment());
+          }
+#endif
         };
 
         applyChainRule(bb, rule, antialloca);
@@ -4665,8 +4681,11 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       Type *tys[] = {dst_arg->getType(), len_arg->getType()};
       auto memset = cast<CallInst>(bb.CreateCall(
           Intrinsic::getDeclaration(M, Intrinsic::memset, tys), args));
-#if LLVM_VERSION_MAJOR >= 10
-      if (inst->getAlignment()) {
+#if LLVM_VERSION_MAJOR >= 11
+      memset->addParamAttr(
+          0, Attribute::getWithAlignment(inst->getContext(), inst->getAlign()));
+#elif LLVM_VERSION_MAJOR == 10
+      if (inst->getAlignment() != 0) {
         memset->addParamAttr(
             0, Attribute::getWithAlignment(inst->getContext(),
                                            Align(inst->getAlignment())));
@@ -4770,22 +4789,63 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         bb.SetInsertPoint(bb.GetInsertBlock(), bb.GetInsertBlock()->begin());
       }
 
-      Type *shadowTy = getShadowType(phi->getType());
-      PHINode *which = bb.CreatePHI(shadowTy, phi->getNumIncomingValues());
-      which->setDebugLoc(getNewFromOriginal(phi->getDebugLoc()));
+      if (EnzymeVectorSplitPhi && width > 1) {
+        IRBuilder<> postPhi(NewV->getParent()->getFirstNonPHI());
+        Type *shadowTy = getShadowType(phi->getType());
+        PHINode *tmp = bb.CreatePHI(shadowTy, phi->getNumIncomingValues());
 
-      invertedPointers.insert(
-          std::make_pair((const Value *)oval, InvertedPointerVH(this, which)));
+        invertedPointers.insert(
+            std::make_pair((const Value *)oval, InvertedPointerVH(this, tmp)));
 
-      for (unsigned int i = 0; i < phi->getNumIncomingValues(); ++i) {
-        IRBuilder<> pre(
-            cast<BasicBlock>(getNewFromOriginal(phi->getIncomingBlock(i)))
-                ->getTerminator());
-        Value *val = invertPointerM(phi->getIncomingValue(i), pre, nullShadow);
-        which->addIncoming(val, cast<BasicBlock>(getNewFromOriginal(
-                                    phi->getIncomingBlock(i))));
+        Type *wrappedType = ArrayType::get(phi->getType(), width);
+        Value *res = UndefValue::get(wrappedType);
+
+        for (unsigned int i = 0; i < getWidth(); ++i) {
+          PHINode *which =
+              bb.CreatePHI(phi->getType(), phi->getNumIncomingValues());
+          which->setDebugLoc(getNewFromOriginal(phi->getDebugLoc()));
+
+          for (unsigned int j = 0; j < phi->getNumIncomingValues(); ++j) {
+            IRBuilder<> pre(
+                cast<BasicBlock>(getNewFromOriginal(phi->getIncomingBlock(j)))
+                    ->getTerminator());
+            Value *val =
+                invertPointerM(phi->getIncomingValue(j), pre, nullShadow);
+            auto extracted_diff = extractMeta(pre, val, i);
+            which->addIncoming(
+                extracted_diff,
+                cast<BasicBlock>(getNewFromOriginal(phi->getIncomingBlock(j))));
+          }
+
+          res = postPhi.CreateInsertValue(res, which, {i});
+        }
+        invertedPointers.erase((const Value *)oval);
+        replaceAWithB(tmp, res);
+        erase(tmp);
+
+        invertedPointers.insert(
+            std::make_pair((const Value *)oval, InvertedPointerVH(this, res)));
+
+        return res;
+      } else {
+        Type *shadowTy = getShadowType(phi->getType());
+        PHINode *which = bb.CreatePHI(shadowTy, phi->getNumIncomingValues());
+        which->setDebugLoc(getNewFromOriginal(phi->getDebugLoc()));
+
+        invertedPointers.insert(std::make_pair((const Value *)oval,
+                                               InvertedPointerVH(this, which)));
+
+        for (unsigned int i = 0; i < phi->getNumIncomingValues(); ++i) {
+          IRBuilder<> pre(
+              cast<BasicBlock>(getNewFromOriginal(phi->getIncomingBlock(i)))
+                  ->getTerminator());
+          Value *val =
+              invertPointerM(phi->getIncomingValue(i), pre, nullShadow);
+          which->addIncoming(val, cast<BasicBlock>(getNewFromOriginal(
+                                      phi->getIncomingBlock(i))));
+        }
+        return which;
       }
-      return which;
     }
   }
 
@@ -5189,7 +5249,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               allInstructionsBetween(
                   OrigLI, orig2, origInst, [&](Instruction *I) -> bool {
                     if (I->mayWriteToMemory() &&
-                        writesToMemoryReadBy(OrigAA, /*maybeReader*/ origInst,
+                        writesToMemoryReadBy(OrigAA, TLI,
+                                             /*maybeReader*/ origInst,
                                              /*maybeWriter*/ I)) {
                       failed = true;
                       // llvm::errs() << "FAILED: " << *I << "\n";
@@ -5271,7 +5332,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                   OrigLI, SI, origInst, [&](Instruction *potentialAlias) {
                     if (!potentialAlias->mayWriteToMemory())
                       return false;
-                    if (!writesToMemoryReadBy(OrigAA, origInst, potentialAlias))
+                    if (!writesToMemoryReadBy(OrigAA, TLI, origInst,
+                                              potentialAlias))
                       return false;
 
                     if (auto II = dyn_cast<IntrinsicInst>(potentialAlias)) {
@@ -5288,7 +5350,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                               if (mid == SI)
                                 return false;
 
-                              if (!writesToMemoryReadBy(OrigAA, origInst,
+                              if (!writesToMemoryReadBy(OrigAA, TLI, origInst,
                                                         mid)) {
                                 return false;
                               }
@@ -5489,7 +5551,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                       OrigLI, &*origTerm, origInst,
                       [&](Instruction *I) -> bool {
                         if (I->mayWriteToMemory() &&
-                            writesToMemoryReadBy(OrigAA,
+                            writesToMemoryReadBy(OrigAA, TLI,
                                                  /*maybeReader*/ tmpload,
                                                  /*maybeWriter*/ I)) {
                           failed = true;
@@ -5515,7 +5577,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                         OrigLI, &*origTerm, origInst,
                         [&](Instruction *I) -> bool {
                           if (I->mayWriteToMemory() &&
-                              writesToMemoryReadBy(OrigAA,
+                              writesToMemoryReadBy(OrigAA, TLI,
                                                    /*maybeReader*/ tmpload,
                                                    /*maybeWriter*/ I)) {
                             failed = true;
@@ -5564,13 +5626,17 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                         /*extraSize*/ nullptr);
 
                     auto ld = v.CreateLoad(AT, AI);
+#if LLVM_VERSION_MAJOR >= 11
+                    ld->setAlignment(AI->getAlign());
+#elif LLVM_VERSION_MAJOR == 10
                     if (AI->getAlignment()) {
-#if LLVM_VERSION_MAJOR >= 10
                       ld->setAlignment(Align(AI->getAlignment()));
-#else
-                      ld->setAlignment(AI->getAlignment());
-#endif
                     }
+#else
+                    if (AI->getAlignment()) {
+                      ld->setAlignment(AI->getAlignment());
+                    }
+#endif
                     scopeInstructions[cache].push_back(ld);
                     auto st = v.CreateStore(ld, outer);
                     auto bsize = newFunc->getParent()
@@ -5698,7 +5764,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               allInstructionsBetween(
                   OrigLI, &*origTerm, origInst, [&](Instruction *I) -> bool {
                     if (I->mayWriteToMemory() &&
-                        writesToMemoryReadBy(OrigAA, /*maybeReader*/ origInst,
+                        writesToMemoryReadBy(OrigAA, TLI,
+                                             /*maybeReader*/ origInst,
                                              /*maybeWriter*/ I)) {
                       failed = true;
                       return /*earlyBreak*/ true;
@@ -5726,7 +5793,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               allInstructionsBetween(
                   OrigLI, &*origTerm, origInst, [&](Instruction *I) -> bool {
                     if (I->mayWriteToMemory() &&
-                        writesToMemoryReadBy(OrigAA, /*maybeReader*/ origInst,
+                        writesToMemoryReadBy(OrigAA, TLI,
+                                             /*maybeReader*/ origInst,
                                              /*maybeWriter*/ I)) {
                       failed = true;
                       return /*earlyBreak*/ true;
@@ -6579,8 +6647,8 @@ void GradientUtils::computeMinCache() {
             }
           }
         } else if (auto CI = dyn_cast<CallInst>(&I)) {
-          Function *F = getFunctionFromCall(CI);
-          if (F && isAllocationFunction(*F, TLI))
+          StringRef funcName = getFuncNameFromCall(CI);
+          if (isAllocationFunction(funcName, TLI))
             Available[CI] = CI;
         }
       }
