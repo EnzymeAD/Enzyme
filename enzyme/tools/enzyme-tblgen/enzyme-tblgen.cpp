@@ -631,8 +631,9 @@ void emit_beginning(Record *pattern, raw_ostream &os) {
 << "  IRBuilder<> BuilderZ(newCall);\n"
 << "  BuilderZ.setFastMathFlags(getFast());\n"
 << "  IRBuilder<> allocationBuilder(gutils->inversionAllocs);\n"
-<< "  allocationBuilder.setFastMathFlags(getFast());\n"
-<< "  auto &DL = gutils->oldFunc->getParent()->getDataLayout();\n";
+<< "  allocationBuilder.setFastMathFlags(getFast());\n";
+  // not yet needed for lv-1
+//<< "  auto &DL = gutils->oldFunc->getParent()->getDataLayout();\n";
 }
 
 std::vector<size_t> getPossiblyActiveArgs(Record *pattern) {
@@ -647,7 +648,7 @@ std::vector<size_t> getPossiblyActiveArgs(Record *pattern) {
   }
 
   // verify correctness of declarations in td file
-  auto name = pattern->getName();
+  // auto name = pattern->getName();
   DagInit *tree = pattern->getValueAsDag("PatternToMatch");
   int lenDagArgs = tree->getNumArgs();
   assert(numTypes == lenDagArgs);
@@ -1105,6 +1106,8 @@ void emit_deriv_fnc(DagInit *resultTree, llvm::DenseMap<StringRef, StringRef> ty
   os
 << "      }\n"
 << "    }\n\n";
+ } else if (Def->isSubClassOf("DiffeRet")) {
+   // nothing to prepare
  } else {
    PrintFatalError("Unhandled deriv Rule!");
  }
@@ -1136,8 +1139,6 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
     DagInit *resultTree = cast<DagInit>(derivOp); // correct
     emit_deriv_fnc(resultTree, typeOfArgName, handled, mutables, os);
   }
-  os
-<< "    // Vector Mode not handled yet\n";
  
   auto argPosition = 0;
   for (auto inputType : inputTypes) {
@@ -1174,15 +1175,20 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
     auto actArg = actArgs[i];
     auto actName = argOps->getArgNameStr(actArg);
     auto derivOp = derivOps->getElement(i);
-    DagInit *resultTree = cast<DagInit>(derivOp); // correct
+    DagInit *resultTree = cast<DagInit>(derivOp);
     auto args = call_arg_helper(resultTree, typeOfArgName, actName);
     auto valueTypes = ValueType_helper(argOps, typeOfArgName, actArg);
     auto opName = resultTree->getOperator()->getAsString();
     auto Def = cast<DefInit>(resultTree->getOperator())->getDef();
-    if (!Def->isSubClassOf("b"))
-      continue;// check
-    auto dfnc_name = Def->getValueAsString("s");
-    os
+    if (Def->isSubClassOf("DiffeRet")) {
+      os
+<< "      if (active_" << actName << ") {\n"
+<< "        Value *toadd = dif;\n"
+<< "        addToDiffe(arg_" << actName <<", toadd, Builder2, type_" << actName << ");\n"
+<< "      }\n";
+    } else if (Def->isSubClassOf("b")) {
+      auto dfnc_name = Def->getValueAsString("s");
+      os
 << "      if (active_" << actName << ") {\n"
 << "        Value *args1[] = {" << args << "};\n"
 << "        Builder2.CreateCall(\n"
@@ -1192,6 +1198,9 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
 << "            {" << valueTypes << "},\n"
 << "            Builder2, /* lookup */ true));\n"
 << "      }\n";
+    } else {
+      PrintFatalError("Unhandled blas-rev case!");
+    }
   }
   os 
 << "    },\n"
