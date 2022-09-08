@@ -44,6 +44,7 @@ jobs:
       run: |
           cd enzyme/build 
           cmake .. -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=`which lit` -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm
+          export LLVM_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer-${{ matrix.llvm }}
     - name: make
       run: cd enzyme/build && make -j`nproc`
     - name: make check-typeanalysis
