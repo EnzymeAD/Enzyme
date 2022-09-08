@@ -160,7 +160,7 @@ def : CallPattern<(Op $x),
                   ["sincn", "sincnf", "sincnl"],
                   [(FMul (DiffeRet<"">), (FDiv (FSub (Intrinsic<"cos", [(TypeOf<""> $x)]> (FMul (ConstantFP<"3.1415926535897962684626433"> $x), $x)), (Call<(SameFunc), [ReadNone,NoUnwind]> $x)), $x))]>;
 
-def : SimplePattern<["_ZSt29_Rb_tree_insert_and_rebalancebPSt18_Rb_tree_", "node_baseS0_RS_"], 
+def : SimplePattern<["_ZSt29_Rb_tree_insert_and_rebalancebPSt18_Rb_tree_", "node_baseS0_RS_", "_ZNSt8__detail15_List_node_base7_M_hookEPS0_"], 
                     ["ReverseModeGradient"], 3, /* all */ [-1] >;
 
 def : SimplePattern<["_ZNSt8ios_baseC2Ev", "_ZNSt8ios_baseD2Ev", "_ZNSt6localeC1Ev", "_ZNSt6localeD1Ev", "_ZNKSt5ctypeIcE13_M_widen_initEv"], 
