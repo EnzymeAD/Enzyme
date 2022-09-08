@@ -337,8 +337,66 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
   PrintFatalError(pattern->getLoc(), Twine("unknown dag"));
 }
 
+static void emitSimpleRules(const RecordKeeper &recordKeeper, raw_ostream &os) {
+  const auto &patterns = recordKeeper.getAllDerivedDefinitions("SimplePattern");
+  for (auto pattern : patterns) {
+    auto fncNames = pattern->getValueAsListOfStrings("funcNames");
+    auto modes = pattern->getValueAsListOfStrings("eraseIfModes");
+    auto reqActArg = pattern->getValueAsInt("reqActArg");
+    auto reuseArgs = pattern->getValueAsListOfInts("reuseArgs");
+    bool first = true;
+    os << "if (";
+    for (auto fncName : fncNames) {
+      os << ((first) ? "" : " ||\n") << "funcName == \"" << fncName << "\"";
+      first = false;
+    }
+    os << ") {\n";
+    os << "  if (";
+    first = true;
+    for (auto mode : modes) {
+      os << ((first) ? "" : " ||\n") << "Mode == DerivativeMode::" << mode;
+      first = false;
+    }
+    os << ") {\n";
+    os << "    eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);\n";
+    os << "    return;\n";
+    os << "  }\n";
+    os << "  if (gutils->isConstantValue(orig->getArgOperand(" << reqActArg
+       << ")))\n";
+    os << "    return;\n";
+    if (reuseArgs.size() == 1 && reuseArgs[0] == -1) {
+      os << "  SmallVector<Value *, 2> args;\n";
+      os << "#if LLVM_VERSION_MAJOR >= 14\n";
+      os << "  for (auto &arg : call.args())\n";
+      os << "#else\n";
+      os << "  for (auto &arg : call.arg_operands())\n";
+      os << "#endif\n";
+      os << "  {\n";
+      os << "    if (gutils->isConstantValue(arg))\n";
+      os << "      args.push_back(gutils->getNewFromOriginal(arg));\n";
+      os << "    else\n";
+      os << "      args.push_back(gutils->invertPointerM(arg, BuilderZ));\n";
+      os << "  }\n";
+    } else {
+      os << "  Value *args[] = {\n";
+      first = true;
+      for (auto reuseArg : reuseArgs) {
+        os << ((first) ? "" : ",\n");
+        os << "    gutils->invertPointerM(orig->getArgOperand(" << reuseArg
+           << "), BuilderZ)";
+        first = false;
+      }
+      os << "\n  };\n";
+    }
+    os << "  BuilderZ.CreateCall(called, args);\n";
+    os << "  return;\n";
+    os << "}\n\n";
+  }
+}
+
 static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
   emitSourceFileHeader("Rewriters", os);
+  emitSimpleRules(recordKeeper, os);
   const auto &patterns = recordKeeper.getAllDerivedDefinitions("CallPattern");
   Record *attrClass = recordKeeper.getClass("Attr");
 

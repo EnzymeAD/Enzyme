@@ -5,6 +5,13 @@ class CallPattern<dag patternToMatch, list<string> funcNames, list<dag> resultOp
   list<dag> ArgDerivatives = resultOps;
 }
 
+class SimplePattern<list<string> _funcNames, list<string> _eraseIfModes, int _reqActArg, list<int> _reuseArgs> {
+    list<string> funcNames = _funcNames; 
+    list<string> eraseIfModes = _eraseIfModes;
+    int reqActArg = _reqActArg; // return if this one isn't active
+    list<int> reuseArgs = _reuseArgs;
+}
+
 class Inst<string mnemonic> {
   string name = mnemonic;
 }
@@ -152,3 +159,15 @@ def : CallPattern<(Op $x),
 def : CallPattern<(Op $x),
                   ["sincn", "sincnf", "sincnl"],
                   [(FMul (DiffeRet<"">), (FDiv (FSub (Intrinsic<"cos", [(TypeOf<""> $x)]> (FMul (ConstantFP<"3.1415926535897962684626433"> $x), $x)), (Call<(SameFunc), [ReadNone,NoUnwind]> $x)), $x))]>;
+
+def : SimplePattern<["_ZSt29_Rb_tree_insert_and_rebalancebPSt18_Rb_tree_", "node_baseS0_RS_"], 
+                    ["ReverseModeGradient"], 3, /* all */ [-1] >;
+
+def : SimplePattern<["_ZNSt8ios_baseC2Ev", "_ZNSt8ios_baseD2Ev", "_ZNSt6localeC1Ev", "_ZNSt6localeD1Ev", "_ZNKSt5ctypeIcE13_M_widen_initEv"], 
+                    ["ReverseModeGradient","ForwardModeSplit"], 0, [0]>;
+
+def : SimplePattern<["_ZNSt9basic_iosIcSt11char_traitsIcEE4initEPSt15basic_", "streambufIcS1_E"], 
+                    ["ReverseModeGradient","ForwardModeSplit"], 0, [0,1]>;
+
+
+
