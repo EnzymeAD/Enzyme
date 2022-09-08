@@ -160,14 +160,13 @@ def : CallPattern<(Op $x),
                   ["sincn", "sincnf", "sincnl"],
                   [(FMul (DiffeRet<"">), (FDiv (FSub (Intrinsic<"cos", [(TypeOf<""> $x)]> (FMul (ConstantFP<"3.1415926535897962684626433"> $x), $x)), (Call<(SameFunc), [ReadNone,NoUnwind]> $x)), $x))]>;
 
+// Functions that only modify pointers and don't allocate memory, needs to be run on shadow in primal
 def : SimplePattern<["_ZSt29_Rb_tree_insert_and_rebalancebPSt18_Rb_tree_", "node_baseS0_RS_", "_ZNSt8__detail15_List_node_base7_M_hookEPS0_"], 
                     ["ReverseModeGradient"], 3, /* all */ [-1] >;
 
+// Functions that initialize a shadow data structure (with n other arguments) needs to be run on shadow in primal.
 def : SimplePattern<["_ZNSt8ios_baseC2Ev", "_ZNSt8ios_baseD2Ev", "_ZNSt6localeC1Ev", "_ZNSt6localeD1Ev", "_ZNKSt5ctypeIcE13_M_widen_initEv"], 
                     ["ReverseModeGradient","ForwardModeSplit"], 0, [0]>;
 
 def : SimplePattern<["_ZNSt9basic_iosIcSt11char_traitsIcEE4initEPSt15basic_", "streambufIcS1_E"], 
                     ["ReverseModeGradient","ForwardModeSplit"], 0, [0,1]>;
-
-
-

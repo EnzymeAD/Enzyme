@@ -8944,67 +8944,6 @@ public:
 
 #include "InstructionDerivatives.inc"
 
-      // Functions that only modify pointers and don't allocate memory,
-      // needs to be run on shadow in primal
-      if (funcName == "_ZSt29_Rb_tree_insert_and_rebalancebPSt18_Rb_tree_"
-                      "node_baseS0_RS_") {
-        if (Mode == DerivativeMode::ReverseModeGradient) {
-          eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
-          return;
-        }
-        if (gutils->isConstantValue(orig->getArgOperand(3)))
-          return;
-        SmallVector<Value *, 2> args;
-#if LLVM_VERSION_MAJOR >= 14
-        for (auto &arg : call.args())
-#else
-        for (auto &arg : call.arg_operands())
-#endif
-        {
-          if (gutils->isConstantValue(arg))
-            args.push_back(gutils->getNewFromOriginal(arg));
-          else
-            args.push_back(gutils->invertPointerM(arg, BuilderZ));
-        }
-        BuilderZ.CreateCall(called, args);
-        return;
-      }
-
-      // Functions that initialize a shadow data structure (with no
-      // other arguments) needs to be run on shadow in primal.
-      if (funcName == "_ZNSt8ios_baseC2Ev" ||
-          funcName == "_ZNSt8ios_baseD2Ev" || funcName == "_ZNSt6localeC1Ev" ||
-          funcName == "_ZNSt6localeD1Ev" ||
-          funcName == "_ZNKSt5ctypeIcE13_M_widen_initEv") {
-        if (Mode == DerivativeMode::ReverseModeGradient ||
-            Mode == DerivativeMode::ForwardModeSplit) {
-          eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
-          return;
-        }
-        if (gutils->isConstantValue(orig->getArgOperand(0)))
-          return;
-        Value *args[] = {
-            gutils->invertPointerM(orig->getArgOperand(0), BuilderZ)};
-        BuilderZ.CreateCall(called, args);
-        return;
-      }
-
-      if (funcName == "_ZNSt9basic_iosIcSt11char_traitsIcEE4initEPSt15basic_"
-                      "streambufIcS1_E") {
-        if (Mode == DerivativeMode::ReverseModeGradient ||
-            Mode == DerivativeMode::ForwardModeSplit) {
-          eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
-          return;
-        }
-        if (gutils->isConstantValue(orig->getArgOperand(0)))
-          return;
-        Value *args[] = {
-            gutils->invertPointerM(orig->getArgOperand(0), BuilderZ),
-            gutils->invertPointerM(orig->getArgOperand(1), BuilderZ)};
-        BuilderZ.CreateCall(called, args);
-        return;
-      }
-
       // if constant instruction and readonly (thus must be pointer return)
       // and shadow return recomputable from shadow arguments.
       if (funcName == "__dynamic_cast" ||
