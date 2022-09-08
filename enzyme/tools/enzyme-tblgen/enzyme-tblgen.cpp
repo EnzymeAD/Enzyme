@@ -981,7 +981,6 @@ llvm::SmallString<80> ValueType_helper(DagInit *argOps,
 llvm::SmallString<40> call_arg_helper(DagInit *argOps,
     llvm::DenseMap<StringRef, StringRef> typeOfArgName, llvm::StringRef actArg) {
   llvm::SmallString<40> result{};
-  llvm::errs() << "call_arg_helper: " << argOps->getNumArgs() << "\n";
   for (size_t pos = 0; pos < argOps->getNumArgs();) {
     if (pos > 0) {
       result.append(", ");
@@ -997,11 +996,9 @@ llvm::SmallString<40> call_arg_helper(DagInit *argOps,
       }
     } else {
       auto name = argOps->getArgNameStr(pos);
-      llvm::errs() << "call_arg_helper: name: " << name << "\n";
       auto typeName = typeOfArgName.lookup(name);
       if (typeName == "len") {
         auto out = (Twine("len_") + name).str();
-        llvm::errs() << "call_arg_helper: len: " << out << "\n";
         result.append((Twine("len_") + name).str());
       } else if (typeName == "fp") {
         if (name == actArg) {
@@ -1045,7 +1042,6 @@ void emit_deriv_fnc(DagInit *resultTree, llvm::DenseMap<StringRef, StringRef> ty
     } else {
       mutableArgs = mutables.lookup(dfnc_name.str());
     }
-    llvm::errs() << "found blas fnc: " << dfnc_name << "\n";
     if (handled.find(dfnc_name) != handled.end())
       return;
     else 
@@ -1142,7 +1138,6 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
 << "    }\n\n";
 
   llvm::StringSet handled{}; // We only emit one derivcall per blass call type
-  llvm::errs() << "Number of grad defs: " << derivOps->size() << "\n";
   for (auto derivOp : *derivOps) {
     DagInit *resultTree = cast<DagInit>(derivOp); // correct
     emit_deriv_fnc(resultTree, typeOfArgName, handled, mutables, os);
@@ -1248,7 +1243,6 @@ void emit_fwd_rewrite_rules(const Record *pattern,
       pattern->getValueAsListOfDefs("inputTypes");
   auto argPosition = 0;
   for (auto inputType : inputTypes) {
-    llvm::errs() << "LOOPING\n";
     auto typeName = inputType->getName();
     if (typeName == "vinc" || typeName == "fp") {
       auto name = argOps->getArgNameStr(argPosition);
@@ -1429,9 +1423,6 @@ llvm::DenseMap<StringRef, StringRef> getArgTypes(const Record *pattern) {
     }
     pos += val->getValueAsInt("nelem");
   }
-  for (auto en : res) {
-    llvm::errs() << " key: " << en.getFirst() << " val: " << en.getSecond() << "\n";
-  }
   return res;
 }
 
@@ -1497,7 +1488,6 @@ llvm::StringMap<llvm::SmallSet<size_t, 3>> getMutableArgs(const std::vector<Reco
             PrintFatalError("mutable arg isn't an input Arg!");
         }
       }
-      llvm::errs() << "Mutable: " << name << " : " << pos << "\n";
       mutArgs.insert(pos);
     }
 
