@@ -907,7 +907,7 @@ llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> getUsedInputs(
 
 
 void emit_helper(Record *pattern, std::vector<size_t> actArgs,
-                 raw_ostream &os) {
+    llvm::DenseMap<StringRef, StringRef> typeOfArgName, raw_ostream &os) {
   DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
   os 
 << "  auto calledArg = called->arg_begin();\n\n";
@@ -926,6 +926,16 @@ void emit_helper(Record *pattern, std::vector<size_t> actArgs,
     os 
 << "\n";
   }
+  for (size_t i = 0; i < argOps->getNumArgs(); i++) {
+    auto name = argOps->getArgNameStr(i);
+    auto type = typeOfArgName.lookup(name);
+    if (type == "vincData") {
+      os 
+<< "  bool julia_decl = !type_" << name << "->isPointerTy();\n";
+      return;
+    }
+  }
+  PrintFatalError("Blas function without vector?");
 }
 
 llvm::SmallString<80> ValueType_helper(DagInit *argOps, 
@@ -1074,7 +1084,6 @@ void emit_deriv_fnc(DagInit *resultTree, llvm::DenseMap<StringRef, StringRef> ty
 << "    {\n"
 << "      F->addFnAttr(Attribute::ArgMemOnly);\n"
 << "      if (byRef) {\n";
-  size_t vecPos;
   for (size_t argPos = 0; argPos < usedArgStrs.size(); argPos++) {
     StringRef argName = usedArgStrs[argPos];
     auto argType = typeOfArgName.lookup(argName);
@@ -1082,14 +1091,13 @@ void emit_deriv_fnc(DagInit *resultTree, llvm::DenseMap<StringRef, StringRef> ty
       os 
 << "        F->addParamAttr(" << argPos << ", Attribute::ReadOnly);\n"
 << "        F->addParamAttr(" << argPos << ", Attribute::NoCapture);\n";
-    } else if(argType == "vincData") {
-      // used to decide next if we have Julia decl (Int64) or the default double*
-      vecPos = argPos;
     }
   }
-  os
+  os    
 << "      }\n"
-<< "      if (type_" << usedArgStrs[vecPos] << "->isPointerTy()) {\n";
+<< "      // Julia declares double* pointers as Int64,\n"
+<< "      //  so LLVM won't let us add these Attributes.\n"
+<< "      if (!julia_decl) {\n";
   for (size_t argPos = 0; argPos < usedArgStrs.size(); argPos++) {
     StringRef argName = usedArgStrs[argPos];
     auto argType = typeOfArgName.lookup(argName);
@@ -1540,7 +1548,7 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
     llvm::DenseMap<StringRef, StringRef> typeOfArgName = getArgTypes(pattern);
 
     emit_beginning(pattern, os);
-    emit_helper(pattern, posActArgs, os);
+    emit_helper(pattern, posActArgs, typeOfArgName, os);
     emit_castvals(pattern, posActArgs, os);
     emit_scalar_types(pattern, os);
 
