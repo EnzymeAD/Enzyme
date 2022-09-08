@@ -89,13 +89,13 @@ entry:
 ; CHECK-NEXT:   %0 = extractvalue [2 x double*] %"m'", 0
 ; CHECK-NEXT:   %1 = extractvalue [2 x double*] %"n'", 0
 ; CHECK-NEXT:   %2 = extractvalue [2 x double] %differeturn, 0
-; CHECK-NEXT:   call void @cblas_daxpy(i32 %len, double %2, double* %m, i32 %incm, double* %1, i32 %incn)
 ; CHECK-NEXT:   call void @cblas_daxpy(i32 %len, double %2, double* %n, i32 %incn, double* %0, i32 %incm)
+; CHECK-NEXT:   call void @cblas_daxpy(i32 %len, double %2, double* %m, i32 %incm, double* %1, i32 %incn)
 ; CHECK-NEXT:   %3 = extractvalue [2 x double*] %"m'", 1
 ; CHECK-NEXT:   %4 = extractvalue [2 x double*] %"n'", 1
 ; CHECK-NEXT:   %5 = extractvalue [2 x double] %differeturn, 1
-; CHECK-NEXT:   call void @cblas_daxpy(i32 %len, double %5, double* %m, i32 %incm, double* %4, i32 %incn)
 ; CHECK-NEXT:   call void @cblas_daxpy(i32 %len, double %5, double* %n, i32 %incn, double* %3, i32 %incm)
+; CHECK-NEXT:   call void @cblas_daxpy(i32 %len, double %5, double* %m, i32 %incm, double* %4, i32 %incn)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
@@ -180,13 +180,13 @@ entry:
 ; CHECK-NEXT:   %3 = extractvalue [2 x double*] %"m'", 0
 ; CHECK-NEXT:   %4 = extractvalue [2 x double*] %"n'", 0
 ; CHECK-NEXT:   %5 = extractvalue [2 x double] %differeturn, 0
-; CHECK-NEXT:   call void @cblas_daxpy(i32 %len, double %5, double* %1, i32 1, double* %4, i32 %incn)
 ; CHECK-NEXT:   call void @cblas_daxpy(i32 %len, double %5, double* %2, i32 1, double* %3, i32 %incm)
+; CHECK-NEXT:   call void @cblas_daxpy(i32 %len, double %5, double* %1, i32 1, double* %4, i32 %incn)
 ; CHECK-NEXT:   %6 = extractvalue [2 x double*] %"m'", 1
 ; CHECK-NEXT:   %7 = extractvalue [2 x double*] %"n'", 1
 ; CHECK-NEXT:   %8 = extractvalue [2 x double] %differeturn, 1
-; CHECK-NEXT:   call void @cblas_daxpy(i32 %len, double %8, double* %1, i32 1, double* %7, i32 %incn)
 ; CHECK-NEXT:   call void @cblas_daxpy(i32 %len, double %8, double* %2, i32 1, double* %6, i32 %incm)
+; CHECK-NEXT:   call void @cblas_daxpy(i32 %len, double %8, double* %1, i32 1, double* %7, i32 %incn)
 ; CHECK-NEXT:   %9 = bitcast double* %1 to i8*
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %9)
 ; CHECK-NEXT:   %10 = bitcast double* %2 to i8*

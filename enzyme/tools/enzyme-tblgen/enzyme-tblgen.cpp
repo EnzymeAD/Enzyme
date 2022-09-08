@@ -1163,7 +1163,7 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
     first = false;
   }
   os 
-<< ") {\n"
+<< ((first) ? "" : ", ") << "Value *dif) {\n"
 << "        if (byRef) {\n"
 << "          Builder2.CreateStore(dif, alloc);\n"
 << "          dif = alloc;\n"
@@ -1203,7 +1203,7 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
     first = false;
   }
   os 
-<< "    );\n"
+<< ((first) ? "" : ", ") << "dif);\n"
 << "  setDiffe(\n"
 << "    &call,\n"
 << "    Constant::getNullValue(gutils->getShadowType(call.getType())),\n"
