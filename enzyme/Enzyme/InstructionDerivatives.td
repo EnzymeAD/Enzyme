@@ -168,5 +168,5 @@ def : OMPCallPattern<["__kmpc_for_static_init_4", "__kmpc_for_static_init_4u", "
 
 def : OMPCallPattern<["__kmpc_barrier"], ["ReverseModeGradient", "ReverseModeCombined"], "" /* default is callval */, [0,1]>;
 
-def : OMPCallPattern<["__kmpc_critical"], ["ReverseModePrimal"], "__kmpc_end_critical", [0,1,2]>;
-def : OMPCallPattern<["__kmpc_end_critical"], ["ReverseModePrimal"], "__kmpc_critical", [0,1,2]>;
+def : OMPCallPattern<["__kmpc_critical"], ["NOT", "ReverseModePrimal"], "__kmpc_end_critical", [0,1,2]>;
+def : OMPCallPattern<["__kmpc_end_critical"], ["NOT", "ReverseModePrimal"], "__kmpc_critical", [0,1,2]>;
