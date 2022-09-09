@@ -337,8 +337,78 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
   PrintFatalError(pattern->getLoc(), Twine("unknown dag"));
 }
 
+static void emitOMPDerivatives(const RecordKeeper &recordKeeper,
+                               raw_ostream &os) {
+  auto patterns = recordKeeper.getAllDerivedDefinitions("OMPCallPattern");
+  for (auto pattern : patterns) {
+    auto fncNames = pattern->getValueAsListOfStrings("funcNames");
+    auto modes = pattern->getValueAsListOfStrings("modes");
+    auto newCall = pattern->getValueAsString("replaceCall");
+    auto reuseArgs = pattern->getValueAsListOfInts("reuseArgs");
+    bool first = true;
+    os << "if (called && (";
+    for (auto fncName : fncNames) {
+      os << ((first) ? "" : " ||\n") << "funcName == \"" << fncName << "\"";
+      first = false;
+    }
+    os << ")) {\n";
+    os << "  if (";
+    if (modes.size() == 2 && modes[0] == "NOT") {
+      os << "Mode != DerivativeMode::" << modes[1];
+    } else {
+      first = true;
+      for (auto mode : modes) {
+        os << ((first) ? "" : " ||\n") << "Mode == DerivativeMode::" << mode;
+        first = false;
+      }
+    }
+    os << ") {\n";
+    os << "   IRBuilder<> Builder2(call.getParent());\n";
+    os << "   getReverseBuilder(Builder2);\n";
+    if (newCall != "") {
+      os << "    auto fini = called->getParent()->getFunction(\"" << newCall
+         << "\");\n";
+      os << "    assert(fini);\n";
+      os << "    Value *args[] = {\n";
+      first = true;
+      for (auto reuseArg : reuseArgs) {
+        os << ((first) ? "" : ",\n");
+        // getArgOperand
+        os << "    lookup(gutils->getNewFromOriginal(call.getArgOperand("
+           << reuseArg << ")), Builder2)";
+        first = false;
+      }
+      os << "};\n";
+      os << "    auto fcall = Builder2.CreateCall(fini->getFunctionType(), "
+            "fini, args);\n";
+      os << "    fcall->setCallingConv(fini->getCallingConv());\n";
+    } else {
+      os << "#if LLVM_VERSION_MAJOR >= 11\n";
+      os << "    auto callval = call.getCalledOperand();\n";
+      os << "#else\n";
+      os << "    auto callval = call.getCalledValue();\n";
+      os << "#endif\n";
+      os << "    Value *args[] = {\n";
+      first = true;
+      for (auto reuseArg : reuseArgs) {
+        os << ((first) ? "" : ",\n");
+        // getOperand
+        os << "    lookup(gutils->getNewFromOriginal(call.getOperand("
+           << reuseArg << ")), Builder2)";
+        first = false;
+      }
+      os << "};\n";
+      os << "Builder2.CreateCall(call.getFunctionType(), callval, args);\n";
+    }
+    os << "\n  };\n";
+    os << "  return;\n";
+    os << "}\n\n";
+  }
+}
+
 static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
   emitSourceFileHeader("Rewriters", os);
+  emitOMPDerivatives(recordKeeper, os);
   const auto &patterns = recordKeeper.getAllDerivedDefinitions("CallPattern");
   Record *attrClass = recordKeeper.getClass("Attr");
 

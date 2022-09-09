@@ -8789,25 +8789,6 @@ public:
       }
     }
 
-    if (Mode != DerivativeMode::ReverseModePrimal && called) {
-      if (funcName == "__kmpc_for_static_init_4" ||
-          funcName == "__kmpc_for_static_init_4u" ||
-          funcName == "__kmpc_for_static_init_8" ||
-          funcName == "__kmpc_for_static_init_8u") {
-        IRBuilder<> Builder2(call.getParent());
-        getReverseBuilder(Builder2);
-        auto fini = called->getParent()->getFunction("__kmpc_for_static_fini");
-        assert(fini);
-        Value *args[] = {
-            lookup(gutils->getNewFromOriginal(call.getArgOperand(0)), Builder2),
-            lookup(gutils->getNewFromOriginal(call.getArgOperand(1)),
-                   Builder2)};
-        auto fcall = Builder2.CreateCall(fini->getFunctionType(), fini, args);
-        fcall->setCallingConv(fini->getCallingConv());
-        return;
-      }
-    }
-
     if ((funcName.startswith("MPI_") || funcName.startswith("PMPI_")) &&
         (!gutils->isConstantInstruction(&call) || funcName == "MPI_Barrier" ||
          funcName == "MPI_Comm_free" || funcName == "MPI_Comm_disconnect" ||
@@ -8844,92 +8825,16 @@ public:
 
     // Handle lgamma, safe to recompute so no store/change to forward
     if (called) {
+#include "InstructionDerivatives.inc"
+
       if (funcName == "__kmpc_fork_call") {
         visitOMPCall(call);
         return;
       }
 
-      if (funcName == "__kmpc_for_static_init_4" ||
-          funcName == "__kmpc_for_static_init_4u" ||
-          funcName == "__kmpc_for_static_init_8" ||
-          funcName == "__kmpc_for_static_init_8u") {
-        if (Mode != DerivativeMode::ReverseModePrimal) {
-          IRBuilder<> Builder2(call.getParent());
-          getReverseBuilder(Builder2);
-          auto fini =
-              called->getParent()->getFunction("__kmpc_for_static_fini");
-          assert(fini);
-          Value *args[] = {
-              lookup(gutils->getNewFromOriginal(call.getArgOperand(0)),
-                     Builder2),
-              lookup(gutils->getNewFromOriginal(call.getArgOperand(1)),
-                     Builder2)};
-          auto fcall = Builder2.CreateCall(fini->getFunctionType(), fini, args);
-          fcall->setCallingConv(fini->getCallingConv());
-        }
-        return;
-      }
       if (funcName == "__kmpc_for_static_fini") {
         if (Mode != DerivativeMode::ReverseModePrimal) {
           eraseIfUnused(call, /*erase*/ true, /*check*/ false);
-        }
-        return;
-      }
-      // TODO check
-      // Adjoint of barrier is to place a barrier at the corresponding
-      // location in the reverse.
-      if (funcName == "__kmpc_barrier") {
-        if (Mode == DerivativeMode::ReverseModeGradient ||
-            Mode == DerivativeMode::ReverseModeCombined) {
-          IRBuilder<> Builder2(call.getParent());
-          getReverseBuilder(Builder2);
-#if LLVM_VERSION_MAJOR >= 11
-          auto callval = call.getCalledOperand();
-#else
-          auto callval = call.getCalledValue();
-#endif
-          Value *args[] = {
-              lookup(gutils->getNewFromOriginal(call.getOperand(0)), Builder2),
-              lookup(gutils->getNewFromOriginal(call.getOperand(1)), Builder2)};
-          Builder2.CreateCall(call.getFunctionType(), callval, args);
-        }
-        return;
-      }
-      if (funcName == "__kmpc_critical") {
-        if (Mode != DerivativeMode::ReverseModePrimal) {
-          IRBuilder<> Builder2(call.getParent());
-          getReverseBuilder(Builder2);
-          auto crit2 = called->getParent()->getFunction("__kmpc_end_critical");
-          assert(crit2);
-          Value *args[] = {
-              lookup(gutils->getNewFromOriginal(call.getArgOperand(0)),
-                     Builder2),
-              lookup(gutils->getNewFromOriginal(call.getArgOperand(1)),
-                     Builder2),
-              lookup(gutils->getNewFromOriginal(call.getArgOperand(2)),
-                     Builder2)};
-          auto fcall =
-              Builder2.CreateCall(crit2->getFunctionType(), crit2, args);
-          fcall->setCallingConv(crit2->getCallingConv());
-        }
-        return;
-      }
-      if (funcName == "__kmpc_end_critical") {
-        if (Mode != DerivativeMode::ReverseModePrimal) {
-          IRBuilder<> Builder2(call.getParent());
-          getReverseBuilder(Builder2);
-          auto crit2 = called->getParent()->getFunction("__kmpc_critical");
-          assert(crit2);
-          Value *args[] = {
-              lookup(gutils->getNewFromOriginal(call.getArgOperand(0)),
-                     Builder2),
-              lookup(gutils->getNewFromOriginal(call.getArgOperand(1)),
-                     Builder2),
-              lookup(gutils->getNewFromOriginal(call.getArgOperand(2)),
-                     Builder2)};
-          auto fcall =
-              Builder2.CreateCall(crit2->getFunctionType(), crit2, args);
-          fcall->setCallingConv(crit2->getCallingConv());
         }
         return;
       }
@@ -8941,8 +8846,6 @@ public:
         assert(0 && "unhandled openmp function");
         llvm_unreachable("unhandled openmp function");
       }
-
-#include "InstructionDerivatives.inc"
 
       // Functions that only modify pointers and don't allocate memory,
       // needs to be run on shadow in primal

@@ -4,6 +4,12 @@ class CallPattern<dag patternToMatch, list<string> funcNames, list<dag> resultOp
   list<string> names = funcNames;
   list<dag> ArgDerivatives = resultOps;
 }
+class OMPCallPattern<list<string> _funcNames, list<string> _modes, string _replaceCall, list<int> _reuseArgs> {
+    list<string> funcNames = _funcNames;
+    list<string> modes = _modes;
+    string replaceCall = _replaceCall;
+    list<int> reuseArgs = _reuseArgs;
+}
 
 class Inst<string mnemonic> {
   string name = mnemonic;
@@ -152,3 +158,15 @@ def : CallPattern<(Op $x),
 def : CallPattern<(Op $x),
                   ["sincn", "sincnf", "sincnl"],
                   [(FMul (DiffeRet<"">), (FDiv (FSub (Intrinsic<"cos", [(TypeOf<""> $x)]> (FMul (ConstantFP<"3.1415926535897962684626433"> $x), $x)), (Call<(SameFunc), [ReadNone,NoUnwind]> $x)), $x))]>;
+
+
+// TODO check
+// Adjoint of barrier is to place a barrier at the corresponding
+// location in the reverse.
+def : OMPCallPattern<["__kmpc_for_static_init_4", "__kmpc_for_static_init_4u", "__kmpc_for_static_init_8", "__kmpc_for_static_init_8u"], 
+                     ["NOT", "ReverseModePrimal"], "__kmpc_for_static_fini", [0,1]>;
+
+def : OMPCallPattern<["__kmpc_barrier"], ["ReverseModeGradient", "ReverseModeCombined"], "" /* default is callval */, [0,1]>;
+
+def : OMPCallPattern<["__kmpc_critical"], ["ReverseModePrimal"], "__kmpc_end_critical", [0,1,2]>;
+def : OMPCallPattern<["__kmpc_end_critical"], ["ReverseModePrimal"], "__kmpc_critical", [0,1,2]>;
