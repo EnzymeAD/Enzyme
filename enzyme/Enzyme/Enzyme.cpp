@@ -61,6 +61,7 @@
 #include "ActivityAnalysis.h"
 #include "EnzymeLogic.h"
 #include "GradientUtils.h"
+#include "TraceUtils.h"
 #include "Utils.h"
 
 #include "InstructionBatcher.h"
@@ -704,15 +705,8 @@ public:
       fn = CI->getArgOperand(1);
     }
 
-    while (auto ci = dyn_cast<CastInst>(fn)) {
-      fn = ci->getOperand(0);
-    }
-    while (auto ci = dyn_cast<BlockAddress>(fn)) {
-      fn = ci->getFunction();
-    }
-    while (auto ci = dyn_cast<ConstantExpr>(fn)) {
-      fn = ci->getOperand(0);
-    }
+    fn = GetFunctionFromValue(fn);
+    
     if (!isa<Function>(fn)) {
       EmitFailure("NoFunctionToDifferentiate", CI->getDebugLoc(), CI,
                   "failed to find fn to differentiate", *CI, " - found - ",
@@ -1797,6 +1791,89 @@ public:
     }
     return true;
   }
+  
+  bool HandleProbProg(CallInst *CI, ProbProgMode mode, TraceInterface interface) {
+    IRBuilder<> Builder(CI);
+    Function *F;
+    auto parsedFunction = parseFunctionParameter(CI);
+    if (parsedFunction.hasValue()) {
+      F = parsedFunction.getValue();
+    } else {
+      return false;
+    }
+
+    assert(F);
+    
+    bool sret = false;
+    SmallVector<Value*, 4> args;
+    TraceInterface custom_interface = interface;
+    Value *conditioning_trace = nullptr;
+    
+#if LLVM_VERSION_MAJOR >= 14
+    for (unsigned i = 1 + sret; i < CI->arg_size(); ++i)
+#else
+    for (unsigned i = 1 + sret; i < CI->getNumArgOperands(); ++i)
+#endif
+    {
+      Value *res = CI->getArgOperand(i);
+      Optional<StringRef> metaString = getMetadataName(res);
+
+      // handle metadata
+      if (metaString && metaString.getValue().startswith("enzyme_")) {
+        if (*metaString == "enzyme_interface") {
+          ++i;
+          Value *interface = CI->getArgOperand(i);
+          // TODO:
+          continue;
+        } else if (*metaString == "enzyme_condition") {
+          ++i;
+          conditioning_trace = CI->getArgOperand(i);
+          continue;
+        } else {
+          EmitFailure("IllegalDiffeType", CI->getDebugLoc(), CI,
+                      "illegal enzyme metadata classification ", *CI,
+                      *metaString);
+          return false;
+        }
+      }
+      
+      args.push_back(res);
+    }
+    
+    // Determine generative functions
+    SmallPtrSet<Function*, 4> generativeFunctions;
+    SetVector<Function*, std::deque<Function*>> workList;
+    workList.insert(interface.sample);
+    generativeFunctions.insert(interface.sample);
+    
+    while (!workList.empty()) {
+      auto todo = *workList.begin();
+      workList.erase(workList.begin());
+      
+      for (auto&& U : todo->uses()) {
+        if (auto ACS = AbstractCallSite(&U)) {
+          auto fun = ACS.getInstruction()->getParent()->getParent();
+          auto [it, inserted] = generativeFunctions.insert(fun);
+          if (inserted)
+            workList.insert(fun);
+        }
+      }
+    }
+      
+    auto newFunc = Logic.CreateTrace(F, interface, generativeFunctions, mode, conditioning_trace);
+
+    Value *traceCall = Builder.CreateCall(newFunc->getFunctionType(), newFunc, args);
+    Value *trace = Builder.CreateExtractValue(traceCall, {1});
+    
+    // try to cast i8* returned from trace to CI->getRetType....
+    if (CI->getType() != trace->getType())
+      trace = Builder.CreatePointerCast(trace, CI->getType());
+    
+    CI->replaceAllUsesWith(trace);
+    CI->eraseFromParent();
+    
+    return true;
+  }
 
   bool lowerEnzymeCalls(Function &F, std::set<Function *> &done) {
     if (done.count(&F))
@@ -1838,7 +1915,10 @@ public:
               Fn->getName().contains("__enzyme_augmentfwd") ||
               Fn->getName().contains("__enzyme_augmentsize") ||
               Fn->getName().contains("__enzyme_reverse") ||
-              Fn->getName().contains("__enzyme_batch")))
+              Fn->getName().contains("__enzyme_batch") ||
+              Fn->getName().contains("__enzyme_trace") ||
+              Fn->getName().contains("__enzyme_replay") ||
+              Fn->getName().contains("__enzyme_condition")))
           continue;
 
         SmallVector<Value *, 16> CallArgs(II->arg_begin(), II->arg_end());
@@ -1875,6 +1955,7 @@ public:
     MapVector<CallInst *, DerivativeMode> toVirtual;
     MapVector<CallInst *, DerivativeMode> toSize;
     SmallVector<CallInst *, 4> toBatch;
+    MapVector<CallInst *, std::pair<ProbProgMode, TraceInterface>> toProbProg;
     SetVector<CallInst *> InactiveCalls;
     SetVector<CallInst *> IterCalls;
   retry:;
@@ -2094,33 +2175,47 @@ public:
         bool virtualCall = false;
         bool sizeOnly = false;
         bool batch = false;
-        DerivativeMode mode;
+        bool probProg = false;
+        DerivativeMode derivativeMode;
+        ProbProgMode probProgMode;
         if (Fn->getName().contains("__enzyme_autodiff")) {
           enableEnzyme = true;
-          mode = DerivativeMode::ReverseModeCombined;
+          derivativeMode = DerivativeMode::ReverseModeCombined;
         } else if (Fn->getName().contains("__enzyme_fwddiff")) {
           enableEnzyme = true;
-          mode = DerivativeMode::ForwardMode;
+          derivativeMode = DerivativeMode::ForwardMode;
         } else if (Fn->getName().contains("__enzyme_fwdsplit")) {
           enableEnzyme = true;
-          mode = DerivativeMode::ForwardModeSplit;
+          derivativeMode = DerivativeMode::ForwardModeSplit;
         } else if (Fn->getName().contains("__enzyme_augmentfwd")) {
           enableEnzyme = true;
-          mode = DerivativeMode::ReverseModePrimal;
+          derivativeMode = DerivativeMode::ReverseModePrimal;
         } else if (Fn->getName().contains("__enzyme_augmentsize")) {
           enableEnzyme = true;
           sizeOnly = true;
-          mode = DerivativeMode::ReverseModePrimal;
+          derivativeMode = DerivativeMode::ReverseModePrimal;
         } else if (Fn->getName().contains("__enzyme_reverse")) {
           enableEnzyme = true;
-          mode = DerivativeMode::ReverseModeGradient;
+          derivativeMode = DerivativeMode::ReverseModeGradient;
         } else if (Fn->getName().contains("__enzyme_virtualreverse")) {
           enableEnzyme = true;
           virtualCall = true;
-          mode = DerivativeMode::ReverseModeCombined;
+          derivativeMode = DerivativeMode::ReverseModeCombined;
         } else if (Fn->getName().contains("__enzyme_batch")) {
           enableEnzyme = true;
           batch = true;
+        } else if (Fn->getName().contains("__enzyme_trace")) {
+          enableEnzyme = true;
+          probProgMode = ProbProgMode::Trace;
+          probProg = true;
+        } else if (Fn->getName().contains("__enzyme_replay")) {
+          enableEnzyme = true;
+          probProgMode = ProbProgMode::Replay;
+          probProg = true;
+        } else if (Fn->getName().contains("__enzyme_condition")) {
+          enableEnzyme = true;
+          probProgMode = ProbProgMode::Condition;
+          probProg = true;
         }
 
         if (enableEnzyme) {
@@ -2161,13 +2256,51 @@ public:
             goto retry;
           }
           if (virtualCall)
-            toVirtual[CI] = mode;
+            toVirtual[CI] = derivativeMode;
           else if (sizeOnly)
-            toSize[CI] = mode;
+            toSize[CI] = derivativeMode;
           else if (batch)
             toBatch.push_back(CI);
+          else if (probProg) {
+            
+            TraceInterface trace_interface = {};
+            
+            for (auto&& F: F.getParent()->functions()) {
+              if (F.getName().contains("__enzyme_newtrace")) {
+                assert(F.getFunctionType()->getNumParams() == 0);
+                trace_interface.newTrace = &F;
+              } else if (F.getName().contains("__enzyme_freetrace")) {
+                assert(F.getFunctionType()->getNumParams() == 1);
+                trace_interface.freeTrace = &F;
+              } else if (F.getName().contains("__enzyme_get_trace")) {
+                assert(F.getFunctionType()->getNumParams() == 2);
+                trace_interface.getTrace = &F;
+              } else if (F.getName().contains("__enzyme_get_choice")) {
+                assert(F.getFunctionType()->getNumParams() == 2);
+                trace_interface.getChoice = &F;
+              } else if (F.getName().contains("__enzyme_insert_call")) {
+                assert(F.getFunctionType()->getNumParams() == 5);
+                trace_interface.insertCall = &F;
+              } else if (F.getName().contains("__enzyme_insert_choice")) {
+                assert(F.getFunctionType()->getNumParams() == 4);
+                trace_interface.insertChoice = &F;
+              } else if (F.getName().contains("__enzyme_sample")) {
+                assert(F.getFunctionType()->getNumParams() >= 3);
+                trace_interface.sample = &F;
+              }
+            }
+            
+            assert(trace_interface.newTrace != nullptr &&
+                   trace_interface.freeTrace != nullptr &&
+                   trace_interface.getTrace != nullptr &&
+                   trace_interface.getChoice != nullptr &&
+                   trace_interface.insertCall != nullptr &&
+                   trace_interface.insertChoice != nullptr);
+            
+            toProbProg[CI] = {probProgMode, trace_interface};
+          }
           else
-            toLower[CI] = mode;
+            toLower[CI] = derivativeMode;
 
           if (auto dc = dyn_cast<Function>(fn)) {
             // Force postopt on any inner functions in the nested
@@ -2253,7 +2386,12 @@ public:
     for (auto call : toBatch) {
       HandleBatch(call);
     }
-
+    
+    for (auto&& [call, ModeInterfacePair] : toProbProg) {
+      auto&& [mode, interface] = ModeInterfacePair;
+      HandleProbProg(call, mode, interface);
+    }
+    
     if (Changed && EnzymeAttributor) {
       // TODO consider enabling when attributor does not delete
       // dead internal functions, which invalidates Enzyme's cache

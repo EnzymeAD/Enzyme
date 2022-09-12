@@ -61,6 +61,7 @@
 #include "InstructionBatcher.h"
 #include "LibraryFuncs.h"
 #include "Utils.h"
+#include "TraceGenerator.h"
 
 #if LLVM_VERSION_MAJOR >= 14
 #define addAttribute addAttributeAtIndex
@@ -4804,6 +4805,57 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
 
   return BatchCachedFunctions[tup] = NewF;
 };
+
+llvm::Function *EnzymeLogic::CreateTrace(llvm::Function *totrace, TraceInterface trace_interface, SmallPtrSetImpl<Function*> &GenerativeFunctions, ProbProgMode mode, Value *conditioning_trace) {
+  TraceCacheKey tup = std::make_tuple(totrace);
+  if (TraceCachedFunctions.find(tup) != TraceCachedFunctions.end()) {
+    return TraceCachedFunctions.find(tup)->second;
+  }
+
+  TraceUtils *tutils = new TraceUtils(mode, trace_interface, totrace, GenerativeFunctions, conditioning_trace);
+
+  TraceGenerator *tracer = new TraceGenerator(*this, nullptr, tutils);
+  
+  for (auto&& BB: *totrace) {
+    for (auto &&Inst: BB) {
+      tracer->visit(Inst);
+    }
+  }
+  
+  SmallVector<CallInst*, 4> sample_calls;
+  for (auto&& BB: *totrace) {
+    for (auto &&Inst: BB) {
+      if (auto CI = dyn_cast<CallInst>(&Inst)) {
+        if (CI->getCalledFunction() == trace_interface.sample)
+          sample_calls.push_back(CI);
+      }
+    }
+  }
+  
+  for (auto call : sample_calls) {
+      Function *samplefn = GetFunctionFromValue(call->getArgOperand(0));
+    
+      SmallVector<Value*, 2> args;
+      for (auto it = call->arg_begin() + 3; it != call->arg_end(); it++) {
+        args.push_back(*it);
+      }
+      Instruction* choice = CallInst::Create(samplefn->getFunctionType(), samplefn, args);
+      ReplaceInstWithInst(call, choice);
+  }
+
+  if (llvm::verifyFunction(*tutils->newFunc, &llvm::errs())) {
+    llvm::errs() << *totrace << "\n";
+    llvm::errs() << *tutils->newFunc << "\n";
+    report_fatal_error("function failed verification (4)");
+  }
+
+  Function *NewF = tutils->newFunc;
+  
+  delete tracer;
+  delete tutils;
+
+  return NewF;
+}
 
 llvm::Value *EnzymeLogic::CreateNoFree(llvm::Value *todiff) {
   if (auto F = dyn_cast<Function>(todiff))

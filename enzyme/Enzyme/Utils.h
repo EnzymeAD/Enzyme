@@ -311,6 +311,12 @@ enum class DerivativeMode {
   ForwardModeSplit = 4,
 };
 
+enum class ProbProgMode {
+  Trace = 0,
+  Replay = 1,
+  Condition = 2,
+};
+
 /// Classification of value as an original program
 /// variable, a derivative variable, neither, or both.
 /// This type is used both in differential use analysis
@@ -1126,4 +1132,9 @@ getOrInsertDifferentialWaitallSave(llvm::Module &M,
 void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
                             llvm::Value *shadow, const char *Message,
                             llvm::DebugLoc &&loc, llvm::Instruction *orig);
+
+
+llvm::Function * GetFunctionFromValue(llvm::Value *fn);
+
+
 #endif

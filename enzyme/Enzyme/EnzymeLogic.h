@@ -50,6 +50,7 @@
 #include "FunctionUtils.h"
 #include "TypeAnalysis/TypeAnalysis.h"
 #include "Utils.h"
+#include "TraceUtils.h"
 
 extern "C" {
 extern llvm::cl::opt<bool> EnzymePrint;
@@ -431,6 +432,9 @@ public:
   using BatchCacheKey = std::tuple<llvm::Function *, unsigned,
                                    std::vector<BATCH_TYPE>, BATCH_TYPE>;
   std::map<BatchCacheKey, llvm::Function *> BatchCachedFunctions;
+  
+  using TraceCacheKey = std::tuple<llvm::Function *>;
+  std::map<TraceCacheKey, llvm::Function *> TraceCachedFunctions;
 
   /// Create the derivative function itself.
   ///  \p todiff is the function to differentiate
@@ -462,6 +466,8 @@ public:
   llvm::Function *CreateBatch(llvm::Function *tobatch, unsigned width,
                               llvm::ArrayRef<BATCH_TYPE> arg_types,
                               BATCH_TYPE ret_type);
+  
+  llvm::Function *CreateTrace(llvm::Function *totrace, TraceInterface trace_interface, SmallPtrSetImpl<Function*> &GenerativeFunctions, ProbProgMode mode, Value *conditioning_trace = nullptr);
 
   void clear();
 };
