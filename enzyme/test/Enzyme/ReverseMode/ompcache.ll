@@ -48,9 +48,9 @@ bb56:                                             ; preds = %bb55, %bb15
 ; CHECK-NEXT:   br i1 %i14, label %bb56, label %bb17
 
 ; CHECK: bb17:                                             ; preds = %bb
-; CHECK-NEXT:   %"i33'ipl" = load double*, double** %"arg4'", align 8
-; CHECK-NEXT:   store double* %"i33'ipl", double** %3, align 8
-; CHECK-NEXT:   %i33 = load double*, double** %arg4, align 8
+; CHECK-NEXT:   %"i33'ipl" = load double*, double** %"arg4'"
+; CHECK-NEXT:   store double* %"i33'ipl", double** %3
+; CHECK-NEXT:   %i33 = load double*, double** %arg4
 ; CHECK-NEXT:   store double 0.000000e+00, double* %i33, align 8
 ; CHECK-NEXT:   br label %bb56
 
@@ -70,7 +70,7 @@ bb56:                                             ; preds = %bb55, %bb15
 
 ; CHECK: invertbb17:                                       ; preds = %bb
 ; CHECK-NEXT:   %1 = getelementptr inbounds double*, double** %"i33'il_phi_fromtape", i64 %0
-; CHECK-NEXT:   %2 = load double*, double** %1, align 8
-; CHECK-NEXT:   store double 0.000000e+00, double* %2, align 8
+; CHECK-NEXT:   %2 = load double*, double** %1
+; CHECK-NEXT:   store double 0.000000e+00, double* %2
 ; CHECK-NEXT:   br label %invertbb
 ; CHECK-NEXT: }
