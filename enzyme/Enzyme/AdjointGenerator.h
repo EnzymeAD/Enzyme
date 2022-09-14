@@ -540,8 +540,7 @@ public:
           vd = TypeTree(BaseType::Pointer).Only(-1);
           goto known;
         }
-        EmitWarning("CannotDeduceType", I.getDebugLoc(), gutils->oldFunc,
-                    I.getParent(), "failed to deduce type of load ", I);
+        EmitWarning("CannotDeduceType", I, "failed to deduce type of load ", I);
         vd = TypeTree(BaseType::Pointer).Only(-1);
         goto known;
       }
@@ -3126,8 +3125,8 @@ public:
             }
           }
         }
-        EmitWarning("CannotDeduceType", MS.getDebugLoc(), gutils->oldFunc,
-                    MS.getParent(), "failed to deduce type of memset ", MS);
+        EmitWarning("CannotDeduceType", MS, "failed to deduce type of memset ",
+                    MS);
         vd = TypeTree(BaseType::Pointer).Only(0);
         goto known;
       }
@@ -3446,8 +3445,8 @@ public:
             }
           }
         }
-        EmitWarning("CannotDeduceType", MTI.getDebugLoc(), gutils->oldFunc,
-                    MTI.getParent(), "failed to deduce type of copy ", MTI);
+        EmitWarning("CannotDeduceType", MTI, "failed to deduce type of copy ",
+                    MTI);
         vd = TypeTree(BaseType::Pointer).Only(0);
         goto known;
       }

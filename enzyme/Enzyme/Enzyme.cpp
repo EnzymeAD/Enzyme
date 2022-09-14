@@ -1280,6 +1280,7 @@ public:
         if (sizeOnly) {
           assert(opt_ty);
           constants.push_back(*opt_ty);
+          truei++;
           continue;
         }
         ++i;

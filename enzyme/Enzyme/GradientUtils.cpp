@@ -714,10 +714,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     if (!legalMove) {
       auto &warnMap = UnwrappedWarnings[load];
       if (!warnMap.count(BuilderM.GetInsertBlock())) {
-        EmitWarning("UncacheableUnwrap", load->getDebugLoc(),
-                    load->getParent()->getParent(), load->getParent(),
-                    "Load cannot be unwrapped ", *load, " in ",
-                    BuilderM.GetInsertBlock()->getName(), " - ",
+        EmitWarning("UncacheableUnwrap", *load, "Load cannot be unwrapped ",
+                    *load, " in ", BuilderM.GetInsertBlock()->getName(), " - ",
                     BuilderM.GetInsertBlock()->getParent()->getName(), " mode ",
                     unwrapMode);
         warnMap.insert(BuilderM.GetInsertBlock());
@@ -838,8 +836,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         if (!legalMove) {
           auto &warnMap = UnwrappedWarnings[phi];
           if (!warnMap.count(BuilderM.GetInsertBlock())) {
-            EmitWarning("UncacheableUnwrap", dli->getDebugLoc(),
-                        dli->getParent()->getParent(), dli->getParent(),
+            EmitWarning("UncacheableUnwrap", *dli,
                         "Differential Load cannot be unwrapped ", *dli, " in ",
                         BuilderM.GetInsertBlock()->getName(), " mode ",
                         unwrapMode);
@@ -1784,8 +1781,7 @@ endCheck:
     assert(val->getName() != "<badref>");
     auto &warnMap = UnwrappedWarnings[inst];
     if (!warnMap.count(BuilderM.GetInsertBlock())) {
-      EmitWarning("NoUnwrap", inst->getDebugLoc(), oldFunc, inst->getParent(),
-                  "Cannot unwrap ", *val, " in ",
+      EmitWarning("NoUnwrap", *inst, "Cannot unwrap ", *val, " in ",
                   BuilderM.GetInsertBlock()->getName());
       warnMap.insert(BuilderM.GetInsertBlock());
     }
@@ -3161,11 +3157,10 @@ bool GradientUtils::legalRecompute(const Value *val,
                           /*maybeReader*/ const_cast<Instruction *>(orig),
                           /*maybeWriter*/ I)) {
                     failed = true;
-                    EmitWarning("UncacheableLoad", orig->getDebugLoc(), oldFunc,
-                                orig->getParent(), "Load must be recomputed ",
-                                *orig, " in reverse_",
-                                BuilderM->GetInsertBlock()->getName(),
-                                " due to ", *I);
+                    EmitWarning(
+                        "UncacheableLoad", *orig, "Load must be recomputed ",
+                        *orig, " in reverse_",
+                        BuilderM->GetInsertBlock()->getName(), " due to ", *I);
                     return /*earlyBreak*/ true;
                   }
                   return /*earlyBreak*/ false;
@@ -3193,8 +3188,7 @@ bool GradientUtils::legalRecompute(const Value *val,
                             /*maybeReader*/ const_cast<Instruction *>(orig),
                             /*maybeWriter*/ I)) {
                       failed = true;
-                      EmitWarning("UncacheableLoad", orig->getDebugLoc(),
-                                  oldFunc, orig->getParent(),
+                      EmitWarning("UncacheableLoad", *orig,
                                   "Load must be recomputed ", *orig, " in ",
                                   BuilderM->GetInsertBlock()->getName(),
                                   " due to ", *I);
@@ -3338,8 +3332,7 @@ bool GradientUtils::shouldRecompute(const Value *val,
           }
         }
       forceCache:;
-        EmitWarning("ChosenCache", inst->getDebugLoc(), oldFunc,
-                    inst->getParent(), "Choosing to cache use ", *inst,
+        EmitWarning("ChosenCache", *inst, "Choosing to cache use ", *inst,
                     " due to ", *op);
         return false;
       }
@@ -5969,22 +5962,20 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
             assert(result->getType() == inst->getType());
             lookup_cache[BuilderM.GetInsertBlock()][val] = result;
 
-            if (scopeMap.find(inst) == scopeMap.end())
-              EmitWarning("Uncacheable", inst->getDebugLoc(), newFunc,
-                          inst->getParent(), "Caching instruction ", *inst,
-                          " legalRecompute: ", lrc, " shouldRecompute: ", src,
-                          " tryLegalRecomputeCheck: ", tryLegalRecomputeCheck);
+            EmitWarning("Uncacheable", *inst, "Caching instruction ", *inst,
+                        " legalRecompute: ", lrc, " shouldRecompute: ", src,
+                        " tryLegalRecomputeCheck: ", tryLegalRecomputeCheck);
             return result;
           }
         }
     noSpeedCache:;
     }
 
-  if (scopeMap.find(inst) == scopeMap.end())
-    EmitWarning("Uncacheable", inst->getDebugLoc(), newFunc, inst->getParent(),
-                "Caching instruction ", *inst, " legalRecompute: ", lrc,
-                " shouldRecompute: ", src,
+  if (scopeMap.find(inst) == scopeMap.end()) {
+    EmitWarning("Uncacheable", *inst, "Caching instruction ", *inst,
+                " legalRecompute: ", lrc, " shouldRecompute: ", src,
                 " tryLegalRecomputeCheck: ", tryLegalRecomputeCheck);
+  }
 
   BasicBlock *scope = inst->getParent();
   if (auto origInst = isOriginal(inst)) {

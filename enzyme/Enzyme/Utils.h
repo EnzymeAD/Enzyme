@@ -104,39 +104,41 @@ extern std::map<std::string, std::function<llvm::Value *(
     shadowHandlers;
 
 template <typename... Args>
-void EmitWarning(llvm::OptimizationRemarkEmitter &ORE,
-                 llvm::StringRef RemarkName,
-                 const llvm::DiagnosticLocation &Loc, const llvm::Function *F,
+void EmitWarning(llvm::StringRef RemarkName,
+                 const llvm::DiagnosticLocation &Loc,
                  const llvm::BasicBlock *BB, const Args &...args) {
-  ORE.emit([&]() {
+
+  llvm::LLVMContext &Ctx = BB->getContext();
+  if (Ctx.getDiagHandlerPtr()->isPassedOptRemarkEnabled("enzyme")) {
     std::string str;
     llvm::raw_string_ostream ss(str);
     (ss << ... << args);
-    return llvm::OptimizationRemark("enzyme", RemarkName, Loc, BB) << ss.str();
-  });
+    auto R = llvm::OptimizationRemark("enzyme", RemarkName, Loc, BB)
+             << ss.str();
+    Ctx.diagnose(R);
+  }
+
   if (EnzymePrintPerf)
     (llvm::errs() << ... << args) << "\n";
 }
 
 template <typename... Args>
-void EmitWarning(llvm::StringRef RemarkName,
-                 const llvm::DiagnosticLocation &Loc, const llvm::Function *F,
-                 const llvm::BasicBlock *BB, const Args &...args) {
-  llvm::OptimizationRemarkEmitter ORE(F);
-  EmitWarning(ORE, RemarkName, Loc, F, BB, args...);
+void EmitWarning(llvm::StringRef RemarkName, const llvm::Instruction &I,
+                 const Args &...args) {
+  EmitWarning(RemarkName, I.getDebugLoc(), I.getParent(), args...);
 }
 
 template <typename... Args>
-void EmitWarning(llvm::StringRef RemarkName, const llvm::Function *F,
+void EmitWarning(llvm::StringRef RemarkName, const llvm::Function &F,
                  const Args &...args) {
-
-  llvm::OptimizationRemarkEmitter ORE(F);
-  ORE.emit([&]() {
+  llvm::LLVMContext &Ctx = F.getContext();
+  if (Ctx.getDiagHandlerPtr()->isPassedOptRemarkEnabled("enzyme")) {
     std::string str;
     llvm::raw_string_ostream ss(str);
     (ss << ... << args);
-    return llvm::OptimizationRemark("enzyme", RemarkName, F) << ss.str();
-  });
+    auto R = llvm::OptimizationRemark("enzyme", RemarkName, &F) << ss.str();
+    Ctx.diagnose(R);
+  }
   if (EnzymePrintPerf)
     (llvm::errs() << ... << args) << "\n";
 }
