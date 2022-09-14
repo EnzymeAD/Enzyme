@@ -1,4 +1,4 @@
-; RUN: if [ %llvmver -ge 9 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -adce -simplifycfg -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 9 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
 
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-gnu"
@@ -37,3 +37,40 @@ bb17:                                             ; preds = %bb
 bb56:                                             ; preds = %bb55, %bb15
   ret void
 }
+
+; CHECK: define internal void @augmented_outlined.1(i32* noalias %arg, i32* noalias %arg1, i64 %i10, double** %arg4, double** %"arg4'", double*** %tape)
+; CHECK-NEXT: bb:
+; CHECK-NEXT:   %0 = load double**, double*** %tape
+; CHECK-NEXT:   %1 = call i64 @omp_get_max_threads()
+; CHECK-NEXT:   %2 = call i64 @omp_get_thread_num()
+; CHECK-NEXT:   %3 = getelementptr inbounds double*, double** %0, i64 %2
+; CHECK-NEXT:   %i14 = icmp eq i64 %i10, 0
+; CHECK-NEXT:   br i1 %i14, label %bb56, label %bb17
+
+; CHECK: bb17:                                             ; preds = %bb
+; CHECK-NEXT:   %"i33'ipl" = load double*, double** %"arg4'", align 8
+; CHECK-NEXT:   store double* %"i33'ipl", double** %3, align 8
+; CHECK-NEXT:   %i33 = load double*, double** %arg4, align 8
+; CHECK-NEXT:   store double 0.000000e+00, double* %i33, align 8
+; CHECK-NEXT:   br label %bb56
+
+; CHECK: bb56:                                             ; preds = %bb17, %bb
+; CHECK-NEXT:   ret void
+; CHECK-NEXT: }
+
+; CHECK: define internal void @diffeoutlined(i32* noalias %arg, i32* noalias %arg1, i64 %i10, double** %arg4, double** %"arg4'", double*** %tapeArg)
+; CHECK-NEXT: bb:
+; CHECK-NEXT:   %"i33'il_phi_fromtape" = load double**, double*** %tapeArg
+; CHECK-NEXT:   %0 = call i64 @omp_get_thread_num() 
+; CHECK-NEXT:   %i14 = icmp eq i64 %i10, 0
+; CHECK-NEXT:   br i1 %i14, label %invertbb, label %invertbb17
+
+; CHECK: invertbb:                                         ; preds = %bb, %invertbb17
+; CHECK-NEXT:   ret void
+
+; CHECK: invertbb17:                                       ; preds = %bb
+; CHECK-NEXT:   %1 = getelementptr inbounds double*, double** %"i33'il_phi_fromtape", i64 %0
+; CHECK-NEXT:   %2 = load double*, double** %1, align 8
+; CHECK-NEXT:   store double 0.000000e+00, double* %2, align 8
+; CHECK-NEXT:   br label %invertbb
+; CHECK-NEXT: }
