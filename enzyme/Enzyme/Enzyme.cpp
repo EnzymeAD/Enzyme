@@ -1491,6 +1491,14 @@ public:
 
       ++truei;
     }
+    if (truei < FT->getNumParams()) {
+      auto numParams = FT->getNumParams();
+      EmitFailure(
+          "EnzymeInsufficientArgs", CI->getDebugLoc(), CI,
+          "Insufficient number of args passed to derivative call required ",
+          numParams, " primal args, found ", truei);
+      return true;
+    }
 
     std::map<Argument *, bool> volatile_args;
     FnTypeInfo type_args(fn);
@@ -2485,11 +2493,11 @@ public:
       changed |= lowerEnzymeCalls(F, successful, done);
 
       if (!successful) {
-        M.getContext().diagnose(
-            (EnzymeFailure("FailedToDifferentiate", F.getSubprogram(),
-                           &*F.getEntryBlock().begin())
-             << "EnzymeFailure when replacing __enzyme_autodiff calls in "
-             << F.getName()));
+        StringRef n = F.getName();
+        EmitFailure("FailedToDifferentiate", F.getSubprogram(),
+                    &*F.getEntryBlock().begin(),
+                    "EnzymeFailure when replacing __enzyme_autodiff calls in ",
+                    n);
       }
     }
 

@@ -104,25 +104,10 @@ extern std::map<std::string, std::function<llvm::Value *(
     shadowHandlers;
 
 template <typename... Args>
-void EmitFailure(llvm::StringRef RemarkName,
-                 const llvm::DiagnosticLocation &Loc,
-                 const llvm::Instruction *CodeRegion, Args &...args) {
-
-  llvm::OptimizationRemarkEmitter ORE(CodeRegion->getParent()->getParent());
-  std::string str;
-  llvm::raw_string_ostream ss(str);
-  (ss << ... << args);
-  ORE.emit(llvm::DiagnosticInfoOptimizationFailure("enzyme", RemarkName, Loc,
-                                                   CodeRegion->getParent())
-           << ss.str());
-}
-
-template <typename... Args>
-void EmitWarning(llvm::StringRef RemarkName,
+void EmitWarning(llvm::OptimizationRemarkEmitter &ORE,
+                 llvm::StringRef RemarkName,
                  const llvm::DiagnosticLocation &Loc, const llvm::Function *F,
                  const llvm::BasicBlock *BB, const Args &...args) {
-
-  llvm::OptimizationRemarkEmitter ORE(F);
   ORE.emit([&]() {
     std::string str;
     llvm::raw_string_ostream ss(str);
@@ -131,6 +116,14 @@ void EmitWarning(llvm::StringRef RemarkName,
   });
   if (EnzymePrintPerf)
     (llvm::errs() << ... << args) << "\n";
+}
+
+template <typename... Args>
+void EmitWarning(llvm::StringRef RemarkName,
+                 const llvm::DiagnosticLocation &Loc, const llvm::Function *F,
+                 const llvm::BasicBlock *BB, const Args &...args) {
+  llvm::OptimizationRemarkEmitter ORE(F);
+  EmitWarning(ORE, RemarkName, Loc, F, BB, args...);
 }
 
 template <typename... Args>
@@ -148,19 +141,22 @@ void EmitWarning(llvm::StringRef RemarkName, const llvm::Function *F,
     (llvm::errs() << ... << args) << "\n";
 }
 
-class EnzymeFailure final : public llvm::DiagnosticInfoIROptimization {
+class EnzymeFailure final : public llvm::DiagnosticInfoUnsupported {
 public:
-  EnzymeFailure(llvm::StringRef RemarkName, const llvm::DiagnosticLocation &Loc,
+  EnzymeFailure(llvm::Twine Msg, const llvm::DiagnosticLocation &Loc,
                 const llvm::Instruction *CodeRegion);
-
-  static llvm::DiagnosticKind ID();
-  static bool classof(const DiagnosticInfo *DI) {
-    return DI->getKind() == ID();
-  }
-
-  /// \see DiagnosticInfoOptimizationBase::isEnabled.
-  bool isEnabled() const override;
 };
+
+template <typename... Args>
+void EmitFailure(llvm::StringRef RemarkName,
+                 const llvm::DiagnosticLocation &Loc,
+                 const llvm::Instruction *CodeRegion, Args &...args) {
+  std::string *str = new std::string();
+  llvm::raw_string_ostream ss(*str);
+  (ss << ... << args);
+  CodeRegion->getContext().diagnose(
+      (EnzymeFailure(llvm::Twine("Enzyme: ", *str), Loc, CodeRegion)));
+}
 
 static inline llvm::Function *isCalledFunction(llvm::Value *val) {
   if (llvm::CallInst *CI = llvm::dyn_cast<llvm::CallInst>(val)) {

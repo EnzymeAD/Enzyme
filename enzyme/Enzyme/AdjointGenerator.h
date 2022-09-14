@@ -473,6 +473,7 @@ public:
       return;
     }
   }
+
   void visitICmpInst(llvm::ICmpInst &I) { eraseIfUnused(I); }
 
   void visitFCmpInst(llvm::FCmpInst &I) { eraseIfUnused(I); }
@@ -540,7 +541,7 @@ public:
           goto known;
         }
         EmitWarning("CannotDeduceType", I.getDebugLoc(), gutils->oldFunc,
-                    I.getParent(), &I, "failed to deduce type of load ", I);
+                    I.getParent(), "failed to deduce type of load ", I);
         vd = TypeTree(BaseType::Pointer).Only(-1);
         goto known;
       }
@@ -3126,8 +3127,7 @@ public:
           }
         }
         EmitWarning("CannotDeduceType", MS.getDebugLoc(), gutils->oldFunc,
-                    MS.getParent(), &MS, "failed to deduce type of memset ",
-                    MS);
+                    MS.getParent(), "failed to deduce type of memset ", MS);
         vd = TypeTree(BaseType::Pointer).Only(0);
         goto known;
       }
@@ -3447,8 +3447,7 @@ public:
           }
         }
         EmitWarning("CannotDeduceType", MTI.getDebugLoc(), gutils->oldFunc,
-                    MTI.getParent(), &MTI, "failed to deduce type of copy ",
-                    MTI);
+                    MTI.getParent(), "failed to deduce type of copy ", MTI);
         vd = TypeTree(BaseType::Pointer).Only(0);
         goto known;
       }
