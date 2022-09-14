@@ -12,7 +12,7 @@ declare dso_local void @_Z17__enzyme_autodiffIdEvPFdPKT_mEiS2_PS0_m(...)
 
 define void @caller(double* %a, double* %da, i64 %b) {
 entry:
-  tail call void (...) @_Z17__enzyme_autodiffIdEvPFdPKT_mEiS2_PS0_m(void (double**, i64)* noundef nonnull @f, double* %a, double* %da, i64 %b)
+  tail call void (...) @_Z17__enzyme_autodiffIdEvPFdPKT_mEiS2_PS0_m(void (double**, i64)* nonnull @f, double* %a, double* %da, i64 %b)
   ret void
 }
 
