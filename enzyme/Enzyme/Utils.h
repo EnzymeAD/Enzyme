@@ -157,7 +157,7 @@ void EmitFailure(llvm::StringRef RemarkName,
   llvm::raw_string_ostream ss(*str);
   (ss << ... << args);
   CodeRegion->getContext().diagnose(
-      (EnzymeFailure(llvm::Twine("Enzyme: ", *str), Loc, CodeRegion)));
+      (EnzymeFailure(llvm::Twine("Enzyme: ") + ss.str(), Loc, CodeRegion)));
 }
 
 static inline llvm::Function *isCalledFunction(llvm::Value *val) {
