@@ -378,8 +378,12 @@ static inline bool is_value_needed_in_reverse(
     // If inst is a constant value, the primal may be used in its place and
     // thus required.
     if (VT == ValueType::Shadow ||
-        (gutils->isConstantValue(const_cast<Value *>(inst)) &&
-         !TR.query(const_cast<Value *>(inst))[{-1}].isFloat())) {
+        gutils->isConstantValue(const_cast<Value *>(inst))) {
+
+      // Floating point numbers cannot be used as a shadow pointer/etc
+      if (TR.query(const_cast<Value *>(inst))[{-1}].isFloat())
+        goto endShadow;
+
       if (!user)
         return seen[idx] = true;
 
@@ -574,7 +578,7 @@ static inline bool is_value_needed_in_reverse(
           goto endShadow;
       }
 
-      // Assume active instructions require the operand.
+      // Assume active instructions require the shadow of the operand.
       if (!gutils->isConstantInstruction(const_cast<Instruction *>(user))) {
         return seen[idx] = true;
       }

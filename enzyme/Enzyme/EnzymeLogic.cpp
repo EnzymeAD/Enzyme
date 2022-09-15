@@ -1243,13 +1243,21 @@ bool legalCombinedForwardReverse(
       return;
     }
 
-    // Even though there is a dependency on this value here, we can ignore it if
-    // it isn't going to be used Unless this is a call that could have a
-    // combined forward-reverse
+    // Even though the value `I` depends on (perhaps indirectly) the call being
+    // checked for, if neither `I` nor its pointer-valued shadow are used in the
+    // reverse pass, we can ignore the dependency as long as `I` is not going to
+    // have a combined forward and reverse pass.
     if (I != origop && unnecessaryInstructions.count(I)) {
-      if (gutils->isConstantInstruction(I) || !isa<CallInst>(I)) {
-        userReplace.push_back(I);
-        return;
+      bool needShadow = false;
+      if (!gutils->isConstantValue(I)) {
+        needShadow = is_value_needed_in_reverse<ValueType::Shadow>(
+            gutils, I, DerivativeMode::ReverseModeCombined, oldUnreachable);
+      }
+      if (!needShadow) {
+        if (gutils->isConstantInstruction(I) || !isa<CallInst>(I)) {
+          userReplace.push_back(I);
+          return;
+        }
       }
     }
 
@@ -1275,7 +1283,8 @@ bool legalCombinedForwardReverse(
       }
       return;
     }
-    if (is_value_needed_in_reverse<ValueType::Primal>(
+    if (!I->getType()->isVoidTy() &&
+        is_value_needed_in_reverse<ValueType::Primal>(
             gutils, I, DerivativeMode::ReverseModeCombined, oldUnreachable)) {
       legal = false;
       if (EnzymePrintPerf) {
@@ -1284,6 +1293,21 @@ bool legalCombinedForwardReverse(
                        << (called->getName()) << " due to " << *I << "\n";
         else
           llvm::errs() << " [nv] failed to replace function " << (*calledValue)
+                       << " due to " << *I << "\n";
+      }
+      return;
+    }
+    if (!I->getType()->isVoidTy() &&
+        gutils->TR.query(I)[{-1}].isPossiblePointer() &&
+        is_value_needed_in_reverse<ValueType::Shadow>(
+            gutils, I, DerivativeMode::ReverseModeCombined, oldUnreachable)) {
+      legal = false;
+      if (EnzymePrintPerf) {
+        if (called)
+          llvm::errs() << " [ns] failed to replace function "
+                       << (called->getName()) << " due to " << *I << "\n";
+        else
+          llvm::errs() << " [ns] failed to replace function " << (*calledValue)
                        << " due to " << *I << "\n";
       }
       return;
@@ -1335,6 +1359,7 @@ bool legalCombinedForwardReverse(
         if (writesToMemoryReadBy(gutils->OrigAA, gutils->TLI,
                                  /*maybeReader*/ user,
                                  /*maybeWriter*/ inst)) {
+
           propagate(user);
           // Fast return if not legal
           if (!legal)
