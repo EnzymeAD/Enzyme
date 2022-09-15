@@ -409,6 +409,32 @@ handleFunctionLike(llvm::Module &M, llvm::GlobalVariable &g,
 }
 
 static void handleKnownFunctions(llvm::Function &F) {
+  if (F.getName() == "memcmp") {
+    F.addFnAttr(Attribute::ReadOnly);
+    F.addFnAttr(Attribute::ArgMemOnly);
+    F.addFnAttr(Attribute::NoUnwind);
+    F.addFnAttr(Attribute::NoRecurse);
+#if LLVM_VERSION_MAJOR >= 9
+    F.addFnAttr(Attribute::WillReturn);
+    F.addFnAttr(Attribute::NoFree);
+    F.addFnAttr(Attribute::NoSync);
+#else
+    F.addFnAttr("nofree");
+#endif
+    for (int i = 0; i < 2; i++)
+      if (F.getFunctionType()->getParamType(i)->isPointerTy()) {
+        F.addParamAttr(i, Attribute::NoCapture);
+        F.addParamAttr(i, Attribute::WriteOnly);
+      }
+  }
+  if (F.getName() ==
+      "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_createERmm") {
+#if LLVM_VERSION_MAJOR >= 9
+    F.addFnAttr(Attribute::NoFree);
+#else
+    F.addFnAttr("nofree");
+#endif
+  }
   if (F.getName() == "MPI_Irecv" || F.getName() == "PMPI_Irecv") {
     F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
     F.addFnAttr(Attribute::NoUnwind);
