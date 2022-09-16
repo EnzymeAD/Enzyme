@@ -1,33 +1,90 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s
+; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
 
-; Function Attrs: norecurse nounwind readonly uwtable
-define dso_local double @sum(i64* nocapture %n, double %x) #0 {
-entry:
-  %res = atomicrmw add i64* %n, i64 1 monotonic
-  %fp = uitofp i64 %res to double
-  %mul = fmul double %fp, %x
-  ret double %mul
+; ModuleID = '<source>'
+source_filename = "<source>"
+target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
+target triple = "x86_64-unknown-linux-gnu"
+
+define dso_local void @foo1(double* %p, double %v) {
+  %a10 = atomicrmw volatile fadd double* %p, double %v monotonic
+  ret void
 }
-
-; Function Attrs: nounwind uwtable
-define dso_local void @dsum(i64* %x, i64* %xp, double %n) local_unnamed_addr #1 {
-entry:
-  %0 = tail call double (double (i64*, double)*, ...) @__enzyme_autodiff(double (i64*, double)* nonnull @sum, i64* %x, double %n)
+define dso_local void @foo2(double* %p, double %v) {
+  %a10 = atomicrmw volatile fadd double* %p, double %v acquire
+  ret void
+}
+define dso_local void @foo3(double* %p, double %v) {
+  %a10 = atomicrmw volatile fadd double* %p, double %v release
+  ret void
+}
+define dso_local void @foo4(double* %p, double %v) {
+  %a10 = atomicrmw volatile fadd double* %p, double %v acq_rel
+  ret void
+}
+define dso_local void @foo5(double* %p, double %v) {
+  %a10 = atomicrmw volatile fadd double* %p, double %v seq_cst
+  ret void
+}
+define dso_local void @foo6(double* %p, double %v) {
+  %a10 = atomicrmw volatile fadd double* %p, double 1.000000e+00 seq_cst
   ret void
 }
 
-; Function Attrs: nounwind
-declare double @__enzyme_autodiff(double (i64*, double)*, ...) #2
+define void @caller(double* %a, double* %b, double %v) {
+  %r1 = call double @_Z17__enzyme_autodiffPviRdS0_(i8* bitcast (void (double*, double)* @foo1 to i8*), double* %a, double* %b, double %v)
+  %r2 = call double @_Z17__enzyme_autodiffPviRdS0_(i8* bitcast (void (double*, double)* @foo2 to i8*), double* %a, double* %b, double %v)
+  %r3 = call double @_Z17__enzyme_autodiffPviRdS0_(i8* bitcast (void (double*, double)* @foo3 to i8*), double* %a, double* %b, double %v)
+  %r4 = call double @_Z17__enzyme_autodiffPviRdS0_(i8* bitcast (void (double*, double)* @foo4 to i8*), double* %a, double* %b, double %v)
+  %r5 = call double @_Z17__enzyme_autodiffPviRdS0_(i8* bitcast (void (double*, double)* @foo5 to i8*), double* %a, double* %b, double %v)
+  %r6 = call double @_Z17__enzyme_autodiffPviRdS0_(i8* bitcast (void (double*, double)* @foo6 to i8*), double* %a, double* %b, double %v)
+  ret void
+}
 
-attributes #0 = { norecurse nounwind readonly uwtable }
-attributes #1 = { nounwind uwtable }
-attributes #2 = { nounwind }
+declare double @_Z17__enzyme_autodiffPviRdS0_(i8*, double*, double*, double)
 
-; CHECK: define internal { double } @diffesum(i64* nocapture %n, double %x, double %differeturn)
-; CHECK-NEXT: entry:
-; CHECK-NEXT:   %res = atomicrmw add i64* %n, i64 1 monotonic
-; CHECK-NEXT:   %fp = uitofp i64 %res to double
-; CHECK-NEXT:   %m1diffex = fmul fast double %differeturn, %fp
-; CHECK-NEXT:   %0 = insertvalue { double } undef, double %m1diffex, 0
-; CHECK-NEXT:   ret { double } %0
+
+; CHECK: define internal { double } @diffefoo1(double* %p, double* %"p'", double %v)
+; CHECK-NEXT: invert:
+; CHECK-NEXT:   %a10 = atomicrmw volatile fadd double* %p, double %v monotonic
+; CHECK-NEXT:   %0 = load atomic volatile double, double* %"p'" monotonic, align 8
+; CHECK-NEXT:   %1 = insertvalue { double } {{(undef|poison)}}, double %0, 0
+; CHECK-NEXT:   ret { double } %1
+; CHECK-NEXT: }
+
+; CHECK: define internal { double } @diffefoo2(double* %p, double* %"p'", double %v)
+; CHECK-NEXT: invert:
+; CHECK-NEXT:   %a10 = atomicrmw volatile fadd double* %p, double %v acquire
+; CHECK-NEXT:   %0 = load atomic volatile double, double* %"p'" acquire, align 8
+; CHECK-NEXT:   %1 = insertvalue { double } {{(undef|poison)}}, double %0, 0
+; CHECK-NEXT:   ret { double } %1
+; CHECK-NEXT: }
+
+; CHECK: define internal { double } @diffefoo3(double* %p, double* %"p'", double %v)
+; CHECK-NEXT: invert:
+; CHECK-NEXT:   %a10 = atomicrmw volatile fadd double* %p, double %v release
+; CHECK-NEXT:   %0 = load atomic volatile double, double* %"p'" monotonic, align 8
+; CHECK-NEXT:   %1 = insertvalue { double } {{(undef|poison)}}, double %0, 0
+; CHECK-NEXT:   ret { double } %1
+; CHECK-NEXT: }
+
+; CHECK: define internal { double } @diffefoo4(double* %p, double* %"p'", double %v)
+; CHECK-NEXT: invert:
+; CHECK-NEXT:   %a10 = atomicrmw volatile fadd double* %p, double %v acq_rel
+; CHECK-NEXT:   %0 = load atomic volatile double, double* %"p'" acquire, align 8
+; CHECK-NEXT:   %1 = insertvalue { double } {{(undef|poison)}}, double %0, 0
+; CHECK-NEXT:   ret { double } %1
+; CHECK-NEXT: }
+
+; CHECK: define internal { double } @diffefoo5(double* %p, double* %"p'", double %v)
+; CHECK-NEXT: invert:
+; CHECK-NEXT:   %a10 = atomicrmw volatile fadd double* %p, double %v seq_cst
+; CHECK-NEXT:   %0 = load atomic volatile double, double* %"p'" seq_cst, align 8
+; CHECK-NEXT:   %1 = insertvalue { double } {{(undef|poison)}}, double %0, 0
+; CHECK-NEXT:   ret { double } %1
+; CHECK-NEXT: }
+
+; CHECK: define internal { double } @diffefoo6(double* %p, double* %"p'", double %v)
+; CHECK-NEXT: invert:
+; CHECK-NEXT:   %a10 = atomicrmw volatile fadd double* %p, double 1.000000e+00 seq_cst
+; CHECK-NEXT:   ret { double } zeroinitializer
 ; CHECK-NEXT: }
