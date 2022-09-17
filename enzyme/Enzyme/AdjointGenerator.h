@@ -1017,9 +1017,16 @@ public:
             LoadInst *dif1 =
                 Builder2.CreateLoad(I.getType(), ip, I.isVolatile());
 #else
-            LoadInst *dif1 = Builder2.CreateLoad(dif1Ptr, I.isVolatile());
+            LoadInst *dif1 = Builder2.CreateLoad(ip, I.isVolatile());
 #endif
+
+#if LLVM_VERSION_MAJOR >= 11
             dif1->setAlignment(I.getAlign());
+#else
+            const DataLayout &DL = I.getModule()->getDataLayout();
+            auto tmpAlign = DL.getTypeStoreSize(I.getValOperand()->getType());
+            dif1->setAlignment(tmpAlign);
+#endif
             dif1->setOrdering(order);
             dif1->setSyncScopeID(I.getSyncScopeID());
             return dif1;
