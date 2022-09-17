@@ -1025,7 +1025,11 @@ public:
 #else
             const DataLayout &DL = I.getModule()->getDataLayout();
             auto tmpAlign = DL.getTypeStoreSize(I.getValOperand()->getType());
+#if LLVM_VERSION_MAJOR >= 10
+            dif1->setAlignment(tmpAlign.getFixedSize());
+#else
             dif1->setAlignment(tmpAlign);
+#endif
 #endif
             dif1->setOrdering(order);
             dif1->setSyncScopeID(I.getSyncScopeID());
