@@ -4773,8 +4773,125 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
   return BatchCachedFunctions[tup] = NewF;
 };
 
+llvm::Value *EnzymeLogic::CreateNoFree(llvm::Value *todiff) {
+  if (auto F = dyn_cast<Function>(todiff))
+    return CreateNoFree(F);
+  llvm::errs() << " unhandled, create no free of: " << *todiff << "\n";
+  llvm_unreachable("unhandled, create no free");
+}
+
+llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
+  if (NoFreeCachedFunctions.find(F) != NoFreeCachedFunctions.end()) {
+    return NoFreeCachedFunctions.find(F)->second;
+  }
+  bool hasNoFree = false;
+#if LLVM_VERSION_MAJOR >= 9
+  hasNoFree |= F->hasFnAttribute(Attribute::NoFree);
+#endif
+  hasNoFree |= F->hasFnAttribute("nofree");
+  if (hasNoFree)
+    return F;
+
+  if (F->empty()) {
+    llvm::errs() << " unhandled, create no free of empty function: " << *F
+                 << "\n";
+    llvm_unreachable("unhandled, create no free");
+  }
+
+  Function *NewF = Function::Create(F->getFunctionType(), F->getLinkage(),
+                                    "nofree_" + F->getName(), F->getParent());
+  NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
+  NewF->setAttributes(F->getAttributes());
+#if LLVM_VERSION_MAJOR >= 9
+  NewF->addAttribute(AttributeList::FunctionIndex, Attribute::NoFree);
+#else
+  NewF->addAttribute(AttributeList::FunctionIndex, "nofree");
+#endif
+
+  NoFreeCachedFunctions[F] = NewF;
+
+  ValueToValueMapTy VMap;
+
+  for (auto i = F->arg_begin(), j = NewF->arg_begin(); i != F->arg_end();) {
+    VMap[i] = j;
+    j->setName(i->getName());
+    ++j;
+    ++i;
+  }
+
+  SmallVector<ReturnInst *, 4> Returns;
+#if LLVM_VERSION_MAJOR >= 13
+  CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
+                    Returns, "", nullptr);
+#else
+  CloneFunctionInto(NewF, F, VMap, true, Returns, "", nullptr);
+#endif
+
+  TargetLibraryInfo &TLI = PPC.FAM.getResult<TargetLibraryAnalysis>(*F);
+
+  SmallVector<Instruction *, 2> toErase;
+  for (BasicBlock &BB : *NewF) {
+    for (Instruction &I : BB) {
+      StringRef funcName = "";
+      if (auto CI = dyn_cast<CallInst>(&I)) {
+#if LLVM_VERSION_MAJOR >= 9
+        if (CI->hasFnAttr(Attribute::NoFree))
+          continue;
+#endif
+        if (CI->hasFnAttr("nofree"))
+          continue;
+        funcName = getFuncNameFromCall(CI);
+      }
+      if (auto CI = dyn_cast<InvokeInst>(&I)) {
+#if LLVM_VERSION_MAJOR >= 9
+        if (CI->hasFnAttr(Attribute::NoFree))
+          continue;
+#endif
+        if (CI->hasFnAttr("nofree"))
+          continue;
+        funcName = getFuncNameFromCall(CI);
+      }
+      if (isDeallocationFunction(funcName, TLI))
+        toErase.push_back(&I);
+      else {
+        if (auto CI = dyn_cast<CallInst>(&I)) {
+#if LLVM_VERSION_MAJOR >= 11
+          auto callval = CI->getCalledOperand();
+#else
+          auto callval = CI->getCalledValue();
+#endif
+          CI->setCalledOperand(CreateNoFree(callval));
+        }
+        if (auto CI = dyn_cast<InvokeInst>(&I)) {
+#if LLVM_VERSION_MAJOR >= 11
+          auto callval = CI->getCalledOperand();
+#else
+          auto callval = CI->getCalledValue();
+#endif
+          CI->setCalledOperand(CreateNoFree(callval));
+        }
+      }
+    }
+  }
+
+  if (llvm::verifyFunction(*NewF, &llvm::errs())) {
+    llvm::errs() << *F << "\n";
+    llvm::errs() << *NewF << "\n";
+    report_fatal_error("function failed verification (4)");
+  }
+
+  for (auto E : toErase) {
+    E->eraseFromParent();
+  }
+
+  return NewF;
+}
+
 void EnzymeLogic::clear() {
   PPC.clear();
   AugmentedCachedFunctions.clear();
   ReverseCachedFunctions.clear();
+  NoFreeCachedFunctions.clear();
+  ForwardCachedFunctions.clear();
+  BatchCachedFunctions.clear();
 }

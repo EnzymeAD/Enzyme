@@ -68,13 +68,13 @@ declare dso_local noalias nonnull i8* @_Znwm(i64)
 ; CHECK-NEXT:   ret { double } %2
 ; CHECK-NEXT: }
 
-; CHECK: define internal void @diffem(double* %__p, double* %"__p'") 
+; CHECK: define internal void @diffem(double* %__p, double* %"__p'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   call void @diffe_ZNSt16allocator_traitsISaIdEE10deallocateERS0_Pdm(double* %__p, double* %"__p'")
+; CHECK-NEXT:   call void @nofree__ZNSt16allocator_traitsISaIdEE10deallocateERS0_Pdm(double* %__p)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
-; CHECK: define internal void @diffe_ZNSt16allocator_traitsISaIdEE10deallocateERS0_Pdm(double* %__p, double* %"__p'") 
+; CHECK: define internal void @nofree__ZNSt16allocator_traitsISaIdEE10deallocateERS0_Pdm(double* %__p)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

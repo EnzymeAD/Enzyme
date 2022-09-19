@@ -1232,7 +1232,7 @@ public:
               LoadInst *dif1 = Builder2.CreateLoad(dif1Ptr, isVolatile);
 #endif
               if (align)
-#if LLVM_VERSION_MAJOR >= 10
+#if LLVM_VERSION_MAJOR >= 11
                 dif1->setAlignment(*align);
 #else
                 dif1->setAlignment(align);
@@ -11457,12 +11457,12 @@ public:
 
     if (gutils->isConstantInstruction(orig) && gutils->isConstantValue(orig)) {
       bool noFree = false;
-#if LLVM_VERSION_MAJOR >= 14
+#if LLVM_VERSION_MAJOR >= 9
       noFree |= orig->hasFnAttr(Attribute::NoFree);
 #endif
       noFree |= orig->hasFnAttr("nofree");
       if (!noFree && called) {
-#if LLVM_VERSION_MAJOR >= 14
+#if LLVM_VERSION_MAJOR >= 9
         noFree |= called->hasFnAttribute(Attribute::NoFree);
 #endif
         noFree |= called->hasFnAttribute("nofree");
@@ -11486,73 +11486,79 @@ public:
         if (!mayActiveFree)
           noFree = true;
       }
-      if (noFree) {
-        if (gutils->knownRecomputeHeuristic.find(orig) !=
-            gutils->knownRecomputeHeuristic.end()) {
-          if (!gutils->knownRecomputeHeuristic[orig]) {
-            gutils->cacheForReverse(BuilderZ, newCall,
-                                    getIndex(orig, CacheType::Self));
-            eraseIfUnused(*orig);
-            return;
-          }
-        }
-
-        // If we need this value and it is illegal to recompute it (it writes or
-        // may load uncacheable data)
-        //    Store and reload it
-        if (Mode != DerivativeMode::ReverseModeCombined &&
-            Mode != DerivativeMode::ForwardMode && subretused &&
-            (orig->mayWriteToMemory() ||
-             !gutils->legalRecompute(orig, ValueToValueMapTy(), nullptr))) {
-          if (!gutils->unnecessaryIntermediates.count(orig)) {
-
-            std::map<UsageKey, bool> Seen;
-            bool primalNeededInReverse = false;
-            for (auto pair : gutils->knownRecomputeHeuristic)
-              if (!pair.second) {
-                if (pair.first == orig) {
-                  primalNeededInReverse = true;
-                  break;
-                } else {
-                  Seen[UsageKey(pair.first, ValueType::Primal)] = false;
-                }
-              }
-            if (!primalNeededInReverse) {
-
-              auto minCutMode = (Mode == DerivativeMode::ReverseModePrimal)
-                                    ? DerivativeMode::ReverseModeGradient
-                                    : Mode;
-              primalNeededInReverse =
-                  is_value_needed_in_reverse<ValueType::Primal>(
-                      gutils, orig, minCutMode, Seen, oldUnreachable);
-            }
-            if (primalNeededInReverse)
-              gutils->cacheForReverse(BuilderZ, newCall,
-                                      getIndex(orig, CacheType::Self));
-          }
+      if (!noFree) {
+#if LLVM_VERSION_MAJOR >= 11
+        auto callval = orig->getCalledOperand();
+#else
+        auto callval = orig->getCalledValue();
+#endif
+        newCall->setCalledOperand(gutils->Logic.CreateNoFree(callval));
+      }
+      if (gutils->knownRecomputeHeuristic.find(orig) !=
+          gutils->knownRecomputeHeuristic.end()) {
+        if (!gutils->knownRecomputeHeuristic[orig]) {
+          gutils->cacheForReverse(BuilderZ, newCall,
+                                  getIndex(orig, CacheType::Self));
           eraseIfUnused(*orig);
           return;
         }
+      }
 
-        // If this call may write to memory and is a copy (in the just reverse
-        // pass), erase it
-        //  Any uses of it should be handled by the case above so it is safe to
-        //  RAUW
-        if (orig->mayWriteToMemory() &&
-            (Mode == DerivativeMode::ReverseModeGradient ||
-             Mode == DerivativeMode::ForwardModeSplit)) {
-          eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
-          return;
+      // If we need this value and it is illegal to recompute it (it writes or
+      // may load uncacheable data)
+      //    Store and reload it
+      if (Mode != DerivativeMode::ReverseModeCombined &&
+          Mode != DerivativeMode::ForwardMode && subretused &&
+          (orig->mayWriteToMemory() ||
+           !gutils->legalRecompute(orig, ValueToValueMapTy(), nullptr))) {
+        if (!gutils->unnecessaryIntermediates.count(orig)) {
+
+          std::map<UsageKey, bool> Seen;
+          bool primalNeededInReverse = false;
+          for (auto pair : gutils->knownRecomputeHeuristic)
+            if (!pair.second) {
+              if (pair.first == orig) {
+                primalNeededInReverse = true;
+                break;
+              } else {
+                Seen[UsageKey(pair.first, ValueType::Primal)] = false;
+              }
+            }
+          if (!primalNeededInReverse) {
+
+            auto minCutMode = (Mode == DerivativeMode::ReverseModePrimal)
+                                  ? DerivativeMode::ReverseModeGradient
+                                  : Mode;
+            primalNeededInReverse =
+                is_value_needed_in_reverse<ValueType::Primal>(
+                    gutils, orig, minCutMode, Seen, oldUnreachable);
+          }
+          if (primalNeededInReverse)
+            gutils->cacheForReverse(BuilderZ, newCall,
+                                    getIndex(orig, CacheType::Self));
         }
-
-        // if call does not write memory and isn't used, we can erase it
-        if (!orig->mayWriteToMemory() && !subretused) {
-          eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
-          return;
-        }
-
+        eraseIfUnused(*orig);
         return;
       }
+
+      // If this call may write to memory and is a copy (in the just reverse
+      // pass), erase it
+      //  Any uses of it should be handled by the case above so it is safe to
+      //  RAUW
+      if (orig->mayWriteToMemory() &&
+          (Mode == DerivativeMode::ReverseModeGradient ||
+           Mode == DerivativeMode::ForwardModeSplit)) {
+        eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
+        return;
+      }
+
+      // if call does not write memory and isn't used, we can erase it
+      if (!orig->mayWriteToMemory() && !subretused) {
+        eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
+        return;
+      }
+
+      return;
     }
 
     bool foreignFunction = called == nullptr;
