@@ -871,6 +871,7 @@ llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> getUsedInputs(
     Record *pattern, std::vector<size_t> posActArgs) {
 
   DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
+  // TODO: verify StringRef here is no ub.
   std::vector<StringRef> inputs;
   for (size_t i = 0; i < argOps->getNumArgs(); i++) {
     inputs.push_back(argOps->getArgNameStr(i));
@@ -908,6 +909,7 @@ llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> getUsedInputs(
 
 void emit_helper(Record *pattern, std::vector<size_t> actArgs,
     llvm::DenseMap<StringRef, StringRef> typeOfArgName, raw_ostream &os) {
+  std::vector<size_t> fp_pos{};
   DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
   os 
 << "  auto calledArg = called->arg_begin();\n\n";
@@ -926,6 +928,19 @@ void emit_helper(Record *pattern, std::vector<size_t> actArgs,
     os 
 << "\n";
   }
+
+  os 
+<< "  int num_active_fp = 0;\n";
+  for (size_t i = 0; i < argOps->getNumArgs(); i++) {
+    auto name = argOps->getArgNameStr(i);
+    auto type = typeOfArgName.lookup(name);
+    if (type == "fp") {
+      os
+<< "  if (active_" << name << ")\n"
+<< "    num_active_fp++;\n";
+    }
+  }
+
   for (size_t i = 0; i < argOps->getNumArgs(); i++) {
     auto name = argOps->getArgNameStr(i);
     auto type = typeOfArgName.lookup(name);
@@ -1030,8 +1045,8 @@ llvm::SmallString<40> call_arg_helper(DagInit *argOps,
   return result;
 }
 
-void emit_deriv_fnc(DagInit *resultTree, llvm::DenseMap<StringRef, StringRef> typeOfArgName,
-    llvm::StringSet<> &handled, llvm::StringMap<llvm::SmallSet<size_t, 3>> mutables, raw_ostream &os) {
+void emit_deriv_fnc(DagInit *resultTree, const llvm::DenseMap<StringRef, StringRef> typeOfArgName,
+    llvm::StringSet<> &handled, const llvm::StringMap<llvm::SmallSet<size_t, 3>> mutables, raw_ostream &os) {
   auto opName = resultTree->getOperator()->getAsString();
   auto Def = cast<DefInit>(resultTree->getOperator())->getDef();
   if (Def->isSubClassOf("b")) {
@@ -1110,11 +1125,14 @@ void emit_deriv_fnc(DagInit *resultTree, llvm::DenseMap<StringRef, StringRef> ty
   os
 << "      }\n"
 << "    }\n\n";
- } else if (Def->isSubClassOf("DiffeRet")) {
-   // nothing to prepare
- } else {
-   PrintFatalError("Unhandled deriv Rule!");
- }
+  } else if (Def->isSubClassOf("DiffeRet")) {
+    // nothing to prepare
+  } else if (Def->isSubClassOf("Inst")) {
+//TODO:
+    PrintFatalError("Unhandled Inst Rule!");
+  } else {
+    PrintFatalError("Unhandled deriv Rule!");
+  }
 }
 
 void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef> typeOfArgName,
@@ -1133,6 +1151,15 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
 << "      Mode == DerivativeMode::ReverseModeGradient) {\n"
 << "    Value *dif = diffe(&call, Builder2);\n"
 << "    Value *alloc = nullptr;\n"
+<< "    StructType *fp_struct_return_type = nullptr;\n"
+<< "    Value *fp_struct_return = nullptr;\n"
+<< "    std::vector<Type *> init_tmp(num_active_fp, fpType);\n"
+<< "    if (num_active_fp > 0) {\n"
+<< "      //ArrayRef<Type *> structElementTypes(init_tmp);\n"
+<< "      //fp_struct_return_type = StructType::create(structElementTypes);\n"
+<< "      fp_struct_return_type = StructType::create(init_tmp);\n"
+<< "      fp_struct_return = allocationBuilder.CreateAlloca(fp_struct_return_type);\n"
+<< "    }\n"
 << "    if (byRef) {\n"
 << "      alloc = allocationBuilder.CreateAlloca(fpType);\n"
 << "    }\n\n";
@@ -1162,8 +1189,14 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
 << "      [&](";
   bool first = true;
   for (auto act : actArgs) {
+    auto actName = argOps->getArgNameStr(act);
+    auto actType = typeOfArgName.lookup(actName);
+    // We don't pass in shaddows of fp values, 
+    // we just create and struct-return the shaddows
+    if (actType == "fp")
+      continue;
     os 
-<< ((first) ? "" : ", ") << "Value *" << "d_" + argOps->getArgNameStr(act);
+<< ((first) ? "" : ", ") << "Value *" << "d_" + actName;
     first = false;
   }
   os 
@@ -1171,12 +1204,13 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
 << "        if (byRef) {\n"
 << "          Builder2.CreateStore(dif, alloc);\n"
 << "          dif = alloc;\n"
-<< "        }\n";
-
+<< "        }\n"
+<< "        unsigned int idx = 0;\n";
 
   for (size_t i = 0; i < derivOps->size(); i++) {
     auto actArg = actArgs[i];
     auto actName = argOps->getArgNameStr(actArg);
+    auto actType = typeOfArgName.lookup(actName);
     auto derivOp = derivOps->getElement(i);
     DagInit *resultTree = cast<DagInit>(derivOp);
     auto args = call_arg_helper(resultTree, typeOfArgName, actName);
@@ -1193,14 +1227,30 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
       auto dfnc_name = Def->getValueAsString("s");
       os
 << "      if (active_" << actName << ") {\n"
-<< "        Value *args1[] = {" << args << "};\n"
+<< "        Value *args1[] = {" << args << "};\n";
+      if (actType == "fp") {
+        // extra handling, since we will update only a fp scalar as part of the return struct
+        // it's presumably done by setting it to the value returned by this call
+        os
+<< "        CallInst *cubcall = cast<CallInst>(\n";
+      }
+      os
 << "        Builder2.CreateCall(\n"
 << "          derivcall_" << dfnc_name << ", args1,\n"
 << "          gutils->getInvertedBundles(\n"
 << "            &call,\n"
 << "            {" << valueTypes << "},\n"
-<< "            Builder2, /* lookup */ true));\n"
+<< "            Builder2, /* lookup */ true))";
+      if (actType == "fp") {
+        os
+<< ");\n"
+<< "        fp_struct_return = Builder2.CreateInsertValue(fp_struct_return, cubcall, {idx});\n"
+<< "        idx++;\n"
 << "      }\n";
+      } else {
+      os
+<< ";\n}\n";
+      }
     } else {
       PrintFatalError("Unhandled blas-rev case!");
     }
@@ -1211,6 +1261,12 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
 
   first = true;
   for (auto act : actArgs) {
+    auto actName = argOps->getArgNameStr(act);
+    auto actType = typeOfArgName.lookup(actName);
+    // We don't pass in shaddows of fp values, 
+    // we just create and struct-return the shaddows
+    if (actType == "fp")
+      continue;
     os << ((first) ? "" : ", ") << "d_" + argOps->getArgNameStr(act);
     first = false;
   }
@@ -1432,6 +1488,7 @@ static void checkBlasCallsInDag(const RecordKeeper &RK,
                                 const StringRef blasName,
                                 const DagInit *toSearch) {
 
+  // For nested FAdd, ... rules which don't directly call a blass fnc
   for (size_t i = 0; i < toSearch->getNumArgs(); i++) {
     if (DagInit *arg = dyn_cast<DagInit>(toSearch->getArg(i))) {
       checkBlasCallsInDag(RK, blasPatterns, blasName, arg);
@@ -1441,7 +1498,6 @@ static void checkBlasCallsInDag(const RecordKeeper &RK,
   auto Def = cast<DefInit>(toSearch->getOperator())->getDef();
   if (Def->isSubClassOf("b")) {
     auto numArgs = toSearch->getNumArgs();
-
     auto opName = Def->getValueAsString("s");
     auto CalledBlas = RK.getDef(opName);
     assert(CalledBlas);
@@ -1466,6 +1522,7 @@ static void checkBlasCalls(const RecordKeeper &RK,
     // for each possibly active parameter
     for (auto argOp : *argOps) {
       DagInit *resultRoot = cast<DagInit>(argOp);
+      llvm::errs() << pattern->getName() << "\n";
       checkBlasCallsInDag(RK, blasPatterns, pattern->getName(), resultRoot);
     }
   }
@@ -1552,16 +1609,6 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
     emit_free_and_ending(pattern, posActArgs, os);
   }
 }
-
-//static void emitDerivatives(RecordKeeper &RK, raw_ostream &os) {
-//  emitSourceFileHeader("Rewriters", os);
-//  const auto &patterns = RK.getAllDerivedDefinitions("CallPattern");
-//  const auto &blasPatterns = RK.getAllDerivedDefinitions("CallBlasPattern");
-//  const auto &blas_modes = RK.getAllDerivedDefinitions("blas_modes");
-//  Record *attrClass = RK.getClass("Attr");
-//
-//  emitFullDerivatives(patterns, os);
-//}
 
 static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
   switch (action) {

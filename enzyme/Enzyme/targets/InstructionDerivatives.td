@@ -18,8 +18,6 @@ def FSub : Inst<"FSub">;
 def FMul : Inst<"FMul">;
 def FNeg : Inst<"FNeg">;
 
-def DifR : Inst<"DifR">;
-
 // Same function as the one being called
 def SameFunc {
 }

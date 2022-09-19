@@ -54,10 +54,11 @@ class b<string _s> {
 
 // Lv 1 \wo rotations
 def scal : CallBlasPattern<(Op $n, $alpha, $x, $incx),
-                  [],[len, fp, vinc],
+                  ["x"],[len, fp, vinc],
                   [
                   (b<"dot"> $n, $x, $incx, DiffeRet<"">, $incx), 
-                  (b<"axpy"> $n, $alpha, DiffeRet<"">, $incx, $x, $incx)
+                  (b<"scal"> $n, $alpha, DiffeRet<"">, $incx)
+                  //(b<"axpy"> $n, $alpha, DiffeRet<"">, $incx)
                   ]
                   >;
 
@@ -65,6 +66,7 @@ def axpy : CallBlasPattern<(Op $n, $alpha, $x, $incx, $y, $incy),
                   ["y"],[len, fp, vinc, vinc],
                   [
                   (b<"dot"> $n, $x, $incx, DiffeRet<"">, $incy), 
+                  //(FAdd ($alpha, (b<"dot"> $n, $x, $incx, DiffeRet<"">, $incy)), 
                   (b<"scal"> $n, $alpha, DiffeRet<"">, $incy),
                   (DiffeRet<"">)
                   ]
@@ -79,7 +81,7 @@ def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
                   >;
 
 // def nrm2 : CallBlasPattern<(Op $n, $x, $incx),
-//                   [len, vinc],
+//                   [],[len, vinc],
 //                   [(FDiv (b<"scal"> $n, DiffeRet<"">, $x, $incx), Ret<"">)]
 //                   >;
 
