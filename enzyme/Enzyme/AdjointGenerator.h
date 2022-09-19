@@ -1026,7 +1026,7 @@ public:
             const DataLayout &DL = I.getModule()->getDataLayout();
             auto tmpAlign = DL.getTypeStoreSize(I.getValOperand()->getType());
 #if LLVM_VERSION_MAJOR >= 10
-            dif1->setAlignment(tmpAlign.getFixedSize());
+            dif1->setAlignment(MaybeAlign(tmpAlign.getFixedSize()));
 #else
             dif1->setAlignment(tmpAlign);
 #endif
