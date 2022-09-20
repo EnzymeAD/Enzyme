@@ -88,6 +88,7 @@ const char *KnownInactiveFunctionsStartingWith[] = {
     "$ss5print",
     "_ZTv0_n24_NSoD", //"1Ev, 0Ev
 #if LLVM_VERSION_MAJOR <= 8
+    "_ZNSt16allocator_traits",
     "_ZN4core3fmt",
     "_ZN3std2io5stdio6_print",
     "_ZNSt7__cxx1112basic_string",

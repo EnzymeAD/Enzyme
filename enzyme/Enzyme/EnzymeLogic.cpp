@@ -4803,7 +4803,8 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
   NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
   NewF->setAttributes(F->getAttributes());
 #if LLVM_VERSION_MAJOR >= 9
-  NewF->addAttribute(AttributeList::FunctionIndex, Attribute::NoFree);
+  NewF->addAttribute(AttributeList::FunctionIndex,
+                     Attribute::get(NewF->getContext(), Attribute::NoFree));
 #else
   NewF->addAttribute(AttributeList::FunctionIndex,
                      Attribute::get(NewF->getContext(), "nofree"));
