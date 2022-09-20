@@ -11492,7 +11492,11 @@ public:
 #else
         auto callval = orig->getCalledValue();
 #endif
+#if LLVM_VERSION_MAJOR >= 9
         newCall->setCalledOperand(gutils->Logic.CreateNoFree(callval));
+#else
+        newCall->setCalledFunction(gutils->Logic.CreateNoFree(callval));
+#endif
       }
       if (gutils->knownRecomputeHeuristic.find(orig) !=
           gutils->knownRecomputeHeuristic.end()) {

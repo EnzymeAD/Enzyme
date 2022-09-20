@@ -4805,7 +4805,8 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
 #if LLVM_VERSION_MAJOR >= 9
   NewF->addAttribute(AttributeList::FunctionIndex, Attribute::NoFree);
 #else
-  NewF->addAttribute(AttributeList::FunctionIndex, "nofree");
+  NewF->addAttribute(AttributeList::FunctionIndex,
+                     Attribute::get(NewF->getContext(), "nofree"));
 #endif
 
   NoFreeCachedFunctions[F] = NewF;
@@ -4860,7 +4861,11 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
 #else
           auto callval = CI->getCalledValue();
 #endif
+#if LLVM_VERSION_MAJOR >= 9
           CI->setCalledOperand(CreateNoFree(callval));
+#else
+          CI->setCalledFunction(CreateNoFree(callval));
+#endif
         }
         if (auto CI = dyn_cast<InvokeInst>(&I)) {
 #if LLVM_VERSION_MAJOR >= 11
@@ -4868,7 +4873,11 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
 #else
           auto callval = CI->getCalledValue();
 #endif
+#if LLVM_VERSION_MAJOR >= 9
           CI->setCalledOperand(CreateNoFree(callval));
+#else
+          CI->setCalledFunction(CreateNoFree(callval));
+#endif
         }
       }
     }
