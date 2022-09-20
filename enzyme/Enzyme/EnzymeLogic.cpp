@@ -4792,6 +4792,14 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
   if (hasNoFree)
     return F;
 
+  TargetLibraryInfo &TLI = PPC.FAM.getResult<TargetLibraryAnalysis>(*F);
+
+  if (isAllocationFunction(F->getName(), TLI))
+    return F;
+
+  if (F->getName().startswith("_ZNSolsE"))
+    return F;
+
   if (F->empty()) {
     llvm::errs() << " unhandled, create no free of empty function: " << *F
                  << "\n";
@@ -4829,10 +4837,13 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
   CloneFunctionInto(NewF, F, VMap, true, Returns, "", nullptr);
 #endif
 
-  TargetLibraryInfo &TLI = PPC.FAM.getResult<TargetLibraryAnalysis>(*F);
+  const SmallPtrSet<BasicBlock *, 4> guaranteedUnreachable =
+      getGuaranteedUnreachable(NewF);
 
   SmallVector<Instruction *, 2> toErase;
   for (BasicBlock &BB : *NewF) {
+    if (guaranteedUnreachable.count(&BB))
+      continue;
     for (Instruction &I : BB) {
       StringRef funcName = "";
       if (auto CI = dyn_cast<CallInst>(&I)) {
