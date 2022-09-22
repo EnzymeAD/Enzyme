@@ -1,12 +1,12 @@
-// RUN: %clang -std=c11 -g -O0 %s -S -emit-llvm -o /dev/null %loadClangEnzyme -Xclang -verify -Rpass=enzyme
-// RUN: %clang -std=c11 -g -O1 %s -S -emit-llvm -o /dev/null %loadClangEnzyme -Xclang -verify -Rpass=enzyme
-// RUN: %clang -std=c11 -g -O2 %s -S -emit-llvm -o /dev/null %loadClangEnzyme -Xclang -verify -Rpass=enzyme
-// RUN: %clang -std=c11 -g -O3 %s -S -emit-llvm -o /dev/null %loadClangEnzyme -Xclang -verify -Rpass=enzyme
+// RUN: %clang -std=c11 -g -O0 %s -S -emit-llvm -o /dev/null %loadClangEnzyme -Xclang -verify -Rpass=enzyme -mllvm -enzyme-postopt=0
+// RUN: %clang -std=c11 -g -O1 %s -S -emit-llvm -o /dev/null %loadClangEnzyme -Xclang -verify -Rpass=enzyme -mllvm -enzyme-postopt=0
+// RUN: %clang -std=c11 -g -O2 %s -S -emit-llvm -o /dev/null %loadClangEnzyme -Xclang -verify -Rpass=enzyme -mllvm -enzyme-postopt=0
+// RUN: %clang -std=c11 -g -O3 %s -S -emit-llvm -o /dev/null %loadClangEnzyme -Xclang -verify -Rpass=enzyme -mllvm -enzyme-postopt=0
 
-// RUN: %clang -std=c11 -g0 -O0 %s -S -emit-llvm -o /dev/null %loadClangEnzyme -Xclang -verify -Rpass=enzyme
-// RUN: %clang -std=c11 -g0 -O1 %s -S -emit-llvm -o /dev/null %loadClangEnzyme -Xclang -verify -Rpass=enzyme
-// RUN: %clang -std=c11 -g0 -O2 %s -S -emit-llvm -o /dev/null %loadClangEnzyme -Xclang -verify -Rpass=enzyme
-// RUN: %clang -std=c11 -g0 -O3 %s -S -emit-llvm -o /dev/null %loadClangEnzyme -Xclang -verify -Rpass=enzyme
+// RUN: %clang -std=c11 -g0 -O0 %s -S -emit-llvm -o /dev/null %loadClangEnzyme -Xclang -verify -Rpass=enzyme -mllvm -enzyme-postopt=0
+// RUN: %clang -std=c11 -g0 -O1 %s -S -emit-llvm -o /dev/null %loadClangEnzyme -Xclang -verify -Rpass=enzyme -mllvm -enzyme-postopt=0
+// RUN: %clang -std=c11 -g0 -O2 %s -S -emit-llvm -o /dev/null %loadClangEnzyme -Xclang -verify -Rpass=enzyme -mllvm -enzyme-postopt=0
+// RUN: %clang -std=c11 -g0 -O3 %s -S -emit-llvm -o /dev/null %loadClangEnzyme -Xclang -verify -Rpass=enzyme -mllvm -enzyme-postopt=0
 
 extern void __enzyme_autodiff(void*, ...);
 

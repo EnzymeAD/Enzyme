@@ -4797,8 +4797,22 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
   if (isAllocationFunction(F->getName(), TLI))
     return F;
 
-  if (F->getName().startswith("_ZNSolsE"))
+  std::set<std::string> NoFrees = {
+      "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEC1EPKcRKS3_",
+      "_ZNSaIcED1Ev", "_ZNSaIcEC1Ev"};
+
+  if (F->getName().startswith("_ZNSolsE") || NoFrees.count(F->getName().str()))
     return F;
+
+  switch (F->getIntrinsicID()) {
+  case Intrinsic::lifetime_start:
+  case Intrinsic::lifetime_end:
+  case Intrinsic::memcpy:
+  case Intrinsic::memmove:
+  case Intrinsic::memset:
+    return F;
+  default:;
+  }
 
   if (F->empty()) {
     llvm::errs() << " unhandled, create no free of empty function: " << *F

@@ -783,7 +783,8 @@ public:
   EnzymeLogic Logic;
   static char ID;
   Enzyme(bool PostOpt = false)
-      : ModulePass(ID), Logic(PostOpt | EnzymePostOpt) {
+      : ModulePass(ID),
+        Logic(EnzymePostOpt.getNumOccurrences() ? EnzymePostOpt : PostOpt) {
     // initializeLowerAutodiffIntrinsicPass(*PassRegistry::getPassRegistry());
   }
 

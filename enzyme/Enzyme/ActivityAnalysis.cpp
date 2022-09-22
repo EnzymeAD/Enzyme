@@ -88,6 +88,8 @@ const char *KnownInactiveFunctionsStartingWith[] = {
     "$ss5print",
     "_ZTv0_n24_NSoD", //"1Ev, 0Ev
     "_ZNSt16allocator_traitsISaIdEE10deallocate",
+    "_ZNSaIcED1Ev",
+    "_ZNSaIcEC1Ev",
 #if LLVM_VERSION_MAJOR <= 8
     // TODO this returns allocated memory and thus can be an active value
     // "_ZNSt16allocator_traits",
