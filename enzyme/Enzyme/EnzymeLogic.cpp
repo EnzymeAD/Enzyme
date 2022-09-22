@@ -4799,7 +4799,12 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
 
   std::set<std::string> NoFrees = {
       "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEC1EPKcRKS3_",
-      "_ZNSaIcED1Ev", "_ZNSaIcEC1Ev"};
+      "_ZSt16__ostream_insertIcSt11char_traitsIcEERSt13basic_ostreamIT_T0_ES6_"
+      "PKS3_l",
+      "_ZNSo3putEc",
+      "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_assignERKS4_",
+      "_ZNSaIcED1Ev",
+      "_ZNSaIcEC1Ev"};
 
   if (F->getName().startswith("_ZNSolsE") || NoFrees.count(F->getName().str()))
     return F;
@@ -4815,6 +4820,14 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
   }
 
   if (F->empty()) {
+    if (CustomErrorHandler) {
+      std::string s;
+      llvm::raw_string_ostream ss(s);
+      ss << "No create nofree of empty function " << F->getName() << "\n";
+      ss << *F << "\n";
+      CustomErrorHandler(ss.str().c_str(), wrap(F), ErrorType::NoDerivative,
+                         nullptr);
+    }
     llvm::errs() << " unhandled, create no free of empty function: " << *F
                  << "\n";
     llvm_unreachable("unhandled, create no free");
