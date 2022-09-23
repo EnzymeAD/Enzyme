@@ -1,0 +1,16 @@
+get_property(dialect_libs GLOBAL PROPERTY MLIR_DIALECT_LIBS)
+get_property(conversion_libs GLOBAL PROPERTY MLIR_CONVERSION_LIBS)
+set(LIBS
+        ${dialect_libs}
+        ${conversion_libs}
+        MLIROptLib
+        )
+add_llvm_executable(enzymemlir-opt enzymemlir-opt.cpp)
+
+install(TARGETS enzymemlir-opt
+    EXPORT EnzymeTargets
+RUNTIME DESTINATION ${LLVM_TOOLS_INSTALL_DIR}
+COMPONENT enzymemlir-opt)
+
+llvm_update_compile_flags(enzymemlir-opt)
+target_link_libraries(enzymemlir-opt PRIVATE ${LIBS})
