@@ -45,7 +45,5 @@ jobs:
           cmake .. -DLLVM_EXTERNAL_LIT=`which lit` -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm
     - name: make
       run: cd enzyme/build && make -j`nproc` LLVMEnzyme-${{ matrix.llvm }}
-    - name: Setup upterm session
-      uses: wsmoses/action-upterm@main
     - name: make check-enzyme-integration
       run: cd enzyme/build && make check-enzyme-integration -j`nproc`
