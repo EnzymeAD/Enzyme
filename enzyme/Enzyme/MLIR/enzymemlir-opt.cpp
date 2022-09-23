@@ -29,6 +29,9 @@
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 #include "mlir/Transforms/Passes.h"
 
+#include "Passes/Passes.h"
+#include "Dialect/Dialect.h"
+
 using namespace mlir;
 
 class MemRefInsider
@@ -56,9 +59,9 @@ int main(int argc, char **argv) {
   registry.insert<mlir::math::MathDialect>();
   registry.insert<DLTIDialect>();
 
-  //registry.insert<mlir::polygeist::PolygeistDialect>();
+  registry.insert<mlir::enzyme::EnzymeDialect>();
 
-  //mlir::registerpolygeistPasses();
+  mlir::registerenzymePasses();
 
   // Register the standard passes we want.
   mlir::registerCSEPass();

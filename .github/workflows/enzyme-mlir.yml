@@ -20,11 +20,6 @@ jobs:
         llbuild: ["RelWithDebInfo"]
         os: [ubuntu-22.04]
   
-        exclude:
-          - os: ubuntu-20.04
-            llvm: 7
-          - os: ubuntu-20.04
-            llvm: 8
     timeout-minutes: 240 
     steps:
     - name: add llvm 
@@ -75,10 +70,6 @@ jobs:
           cmake .. -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=`pwd`/../mlir-build -DENZYME_MLIR=ON
     - name: make
       run: cd enzyme/build && make -j`nproc`
-    - name: make check-typeanalysis
-      run: cd enzyme/build && make check-typeanalysis -j`nproc`
-    - name: make check-activityanalysis
-      run: cd enzyme/build && make check-activityanalysis -j`nproc`
-    - name: make check-enzyme
-      run: cd enzyme/build && make check-enzyme -j`nproc`
+    - name: make check-enzymemlir
+      run: cd enzyme/build && make check-enzymemlir -j`nproc`
   
