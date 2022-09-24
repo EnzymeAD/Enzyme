@@ -17,9 +17,9 @@
 #ifndef DIALECT_ENZYME_TRANSFORMS_PASSDETAILS_H
 #define DIALECT_ENZYME_TRANSFORMS_PASSDETAILS_H
 
-#include "mlir/Pass/Pass.h"
 #include "Dialect/Ops.h"
 #include "Passes/Passes.h"
+#include "mlir/Pass/Pass.h"
 
 namespace mlir {
 class FunctionOpInterface;

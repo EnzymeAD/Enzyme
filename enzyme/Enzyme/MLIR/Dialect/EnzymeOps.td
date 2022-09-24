@@ -35,6 +35,11 @@ def ActivityAttr : EnumAttr<Enzyme_Dialect, Activity, "activity">;
 def ActivityArrayAttr : TypedArrayAttrBase<
     ActivityAttr, "SPIR-V extension array attribute">;
 
+def PlaceholderOp : Enzyme_Op<"placeholder",
+    [NoSideEffect]> {
+  let results = (outs AnyType:$output);
+}
+
 def ForwardDiffOp : Enzyme_Op<"fwddiff",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Perform forward mode AD on a funcop";

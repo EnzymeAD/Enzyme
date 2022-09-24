@@ -25,7 +25,15 @@
 using namespace mlir;
 using namespace enzyme;
 
-class MFnTypeInfo {};
+inline bool operator<(const mlir::Type lhs, mlir::Type rhs) {
+  return lhs.getImpl() < rhs.getImpl();
+}
+
+class MFnTypeInfo {
+public:
+  inline bool operator<(const MFnTypeInfo &rhs) const { return false; }
+};
+
 class MTypeAnalysis {
 public:
   MFnTypeInfo getAnalyzedTypeInfo(FunctionOpInterface op) const {}
@@ -97,7 +105,9 @@ mlir::FunctionType getFunctionTypeForClone(
 
 mlir::func::FuncOp CloneFunctionWithReturns(
     DerivativeMode mode, unsigned width, FunctionOpInterface F,
-    ArrayRef<DIFFE_TYPE> constant_args,
+    BlockAndValueMapping &ptrInputs, ArrayRef<DIFFE_TYPE> constant_args,
+    SmallPtrSetImpl<mlir::Value> &constants,
+    SmallPtrSetImpl<mlir::Value> &nonconstants,
     SmallPtrSetImpl<mlir::Value> &returnvals, ReturnType returnValue,
     DIFFE_TYPE returnType, Twine name, BlockAndValueMapping &VMap,
     bool diffeReturnArg, mlir::Type additionalArg) {
@@ -126,18 +136,23 @@ mlir::func::FuncOp CloneFunctionWithReturns(
   F.getBody().cloneInto(&NewF.getBody(), VMap);
 
   {
-    unsigned ii = 0;
     auto &blk = NewF.getBody().front();
     for (ssize_t i = constant_args.size() - 1; i >= 0; i--) {
+      mlir::Value oval = F.getBody().front().getArgument(i);
+      if (constant_args[i] == DIFFE_TYPE::CONSTANT)
+        constants.insert(oval);
+      else
+        nonconstants.insert(oval);
       if (constant_args[i] == DIFFE_TYPE::DUP_ARG ||
           constant_args[i] == DIFFE_TYPE::DUP_NONEED) {
+        mlir::Value val = blk.getArgument(i);
+        mlir::Value dval;
         if (i == constant_args.size() - 1)
-          blk.addArgument(blk.getArgument(i).getType(),
-                          blk.getArgument(i).getLoc());
+          dval = blk.addArgument(val.getType(), val.getLoc());
         else
-          blk.insertArgument(blk.args_begin() + i + 1,
-                             blk.getArgument(i).getType(),
-                             blk.getArgument(i).getLoc());
+          dval = blk.insertArgument(blk.args_begin() + i + 1, val.getType(),
+                                    val.getLoc());
+        ptrInputs.map(oval, dval);
       }
     }
   }
@@ -145,19 +160,253 @@ mlir::func::FuncOp CloneFunctionWithReturns(
   return NewF;
 }
 
-class MEnzymeLogic {
+class MTypeResults {
 public:
-  mlir::func::FuncOp
-  CreateForwardDiff(FunctionOpInterface fn, DIFFE_TYPE retType,
-                    std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
-                    bool returnUsed, DerivativeMode mode, bool freeMemory,
-                    size_t width, mlir::Type addedType, MFnTypeInfo type_args,
-                    std::vector<bool> volatile_args, void *augmented) {
-    if (fn.getBody().empty()) {
-      llvm::errs() << fn << "\n";
-      llvm_unreachable("Differentiating empty function");
-    }
+  // TODO
+  TypeTree getReturnAnalysis() { return TypeTree(); }
+};
 
+class MEnzymeLogic;
+
+class MGradientUtils {
+public:
+  // From CacheUtility
+  mlir::func::FuncOp newFunc;
+
+  MEnzymeLogic &Logic;
+  bool AtomicAdd;
+  DerivativeMode mode;
+  FunctionOpInterface oldFunc;
+  BlockAndValueMapping invertedPointers;
+  BlockAndValueMapping originalToNewFn;
+
+  MTypeAnalysis &TA;
+  MTypeResults TR;
+  bool omp;
+
+  unsigned width;
+  ArrayRef<DIFFE_TYPE> ArgDiffeTypes;
+
+  mlir::Value getNewFromOriginal(const mlir::Value originst) const {
+    if (!originalToNewFn.contains(originst)) {
+      llvm::errs() << oldFunc << "\n";
+      llvm::errs() << newFunc << "\n";
+      llvm::errs() << originst << "\n";
+      llvm_unreachable("Could not get new from original");
+    }
+    return originalToNewFn.lookupOrNull(originst);
+  }
+  mlir::Block *getNewFromOriginal(mlir::Block *originst) const {
+    if (!originalToNewFn.contains(originst)) {
+      llvm::errs() << oldFunc << "\n";
+      llvm::errs() << newFunc << "\n";
+      llvm::errs() << originst << "\n";
+      llvm_unreachable("Could not get new from original");
+    }
+    return originalToNewFn.lookupOrNull(originst);
+  }
+  Operation *getNewFromOriginal(Operation *originst) const {
+    // TODO
+    llvm_unreachable("getNewFromOriginal op not handled");
+    /*
+    if (!originalToNewFn.contains(originst)) {
+        llvm::errs() << oldFunc << "\n";
+        llvm::errs() << newFunc << "\n";
+        llvm::errs() << originst << "\n";
+        llvm_unreachable("Could not get new from original");
+    }
+    return originalToNewFn.lookupOrNull(originst);
+    */
+  }
+  mlir::Type getShadowType(mlir::Type T) const {
+    return ::getShadowType(T, width);
+  }
+  MGradientUtils(MEnzymeLogic &Logic, mlir::func::FuncOp newFunc_,
+                 FunctionOpInterface oldFunc_, MTypeAnalysis &TA_,
+                 MTypeResults TR_, BlockAndValueMapping &invertedPointers_,
+                 const SmallPtrSetImpl<mlir::Value> &constantvalues_,
+                 const SmallPtrSetImpl<mlir::Value> &activevals_,
+                 DIFFE_TYPE ReturnActivity, ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
+                 BlockAndValueMapping &originalToNewFn_, DerivativeMode mode,
+                 unsigned width, bool omp)
+      : newFunc(newFunc_), Logic(Logic), mode(mode), oldFunc(oldFunc_), TA(TA_),
+        TR(TR_), omp(omp), width(width), ArgDiffeTypes(ArgDiffeTypes_),
+        originalToNewFn(originalToNewFn_), invertedPointers(invertedPointers_) {
+
+    /*
+    for (BasicBlock &BB : *oldFunc) {
+      for (Instruction &I : BB) {
+        if (auto CI = dyn_cast<CallInst>(&I)) {
+          originalCalls.push_back(CI);
+        }
+      }
+    }
+    */
+
+    /*
+    for (BasicBlock &oBB : *oldFunc) {
+      for (Instruction &oI : oBB) {
+        newToOriginalFn[originalToNewFn[&oI]] = &oI;
+      }
+      newToOriginalFn[originalToNewFn[&oBB]] = &oBB;
+    }
+    for (Argument &oArg : oldFunc->args()) {
+      newToOriginalFn[originalToNewFn[&oArg]] = &oArg;
+    }
+    */
+    /*
+    for (BasicBlock &BB : *newFunc) {
+      originalBlocks.emplace_back(&BB);
+    }
+    tape = nullptr;
+    tapeidx = 0;
+    assert(originalBlocks.size() > 0);
+
+    SmallVector<BasicBlock *, 4> ReturningBlocks;
+    for (BasicBlock &BB : *oldFunc) {
+      if (isa<ReturnInst>(BB.getTerminator()))
+        ReturningBlocks.push_back(&BB);
+    }
+    for (BasicBlock &BB : *oldFunc) {
+      bool legal = true;
+      for (auto BRet : ReturningBlocks) {
+        if (!(BRet == &BB || OrigDT.dominates(&BB, BRet))) {
+          legal = false;
+          break;
+        }
+      }
+      if (legal)
+        BlocksDominatingAllReturns.insert(&BB);
+    }
+    */
+  }
+  void erase(Operation *op) { op->erase(); }
+  bool isConstantValue(mlir::Value v) const {
+    // TODO
+    return false;
+  }
+  mlir::Value invertPointerM(mlir::Value v, OpBuilder &BuilderZ) {
+    // TODO
+    if (invertedPointers.contains(v))
+      return invertedPointers.lookupOrNull(v);
+    return getNewFromOriginal(v);
+  }
+  void forceAugmentedReturns() {
+    // assert(TR.getFunction() == oldFunc);
+
+    for (mlir::Block &oBB : oldFunc.getBody().getBlocks()) {
+      // Don't create derivatives for code that results in termination
+      // if (notForAnalysis.find(&oBB) != notForAnalysis.end())
+      //  continue;
+
+      // LoopContext loopContext;
+      // getContext(cast<BasicBlock>(getNewFromOriginal(&oBB)), loopContext);
+
+      for (Operation &inst : oBB) {
+        if (mode == DerivativeMode::ForwardMode ||
+            mode == DerivativeMode::ForwardModeSplit) {
+          OpBuilder BuilderZ(getNewFromOriginal(&inst));
+          for (auto res : inst.getResults()) {
+            if (!isConstantValue(res)) {
+              mlir::Type antiTy = getShadowType(res.getType());
+              auto anti = BuilderZ.create<enzyme::PlaceholderOp>(res.getLoc(),
+                                                                 res.getType());
+              invertedPointers.map(res, anti);
+            }
+          }
+          continue;
+        }
+        /*
+
+        if (inst->getType()->isFPOrFPVectorTy())
+          continue; //! op->getType()->isPointerTy() &&
+                    //! !op->getType()->isIntegerTy()) {
+
+        if (!TR.query(inst)[{-1}].isPossiblePointer())
+          continue;
+
+        if (isa<LoadInst>(inst)) {
+          IRBuilder<> BuilderZ(inst);
+          getForwardBuilder(BuilderZ);
+          Type *antiTy = getShadowType(inst->getType());
+          PHINode *anti =
+              BuilderZ.CreatePHI(antiTy, 1, inst->getName() + "'il_phi");
+          invertedPointers.insert(std::make_pair(
+              (const Value *)inst, InvertedPointerVH(this, anti)));
+          continue;
+        }
+
+        if (!isa<CallInst>(inst)) {
+          continue;
+        }
+
+        if (isa<IntrinsicInst>(inst)) {
+          continue;
+        }
+
+        if (isConstantValue(inst)) {
+          continue;
+        }
+
+        CallInst *op = cast<CallInst>(inst);
+        Function *called = op->getCalledFunction();
+
+        IRBuilder<> BuilderZ(inst);
+        getForwardBuilder(BuilderZ);
+        Type *antiTy = getShadowType(inst->getType());
+
+        PHINode *anti =
+            BuilderZ.CreatePHI(antiTy, 1, op->getName() + "'ip_phi");
+        invertedPointers.insert(
+            std::make_pair((const Value *)inst, InvertedPointerVH(this, anti)));
+
+        if (called && isAllocationFunction(called->getName(), TLI)) {
+          anti->setName(op->getName() + "'mi");
+        }
+        */
+      }
+    }
+  }
+};
+class MDiffeGradientUtils : public MGradientUtils {
+public:
+  MDiffeGradientUtils(MEnzymeLogic &Logic, mlir::func::FuncOp newFunc_,
+                      FunctionOpInterface oldFunc_, MTypeAnalysis &TA,
+                      MTypeResults TR, BlockAndValueMapping &invertedPointers_,
+                      const SmallPtrSetImpl<mlir::Value> &constantvalues_,
+                      const SmallPtrSetImpl<mlir::Value> &returnvals_,
+                      DIFFE_TYPE ActiveReturn,
+                      ArrayRef<DIFFE_TYPE> constant_values,
+                      BlockAndValueMapping &origToNew_, DerivativeMode mode,
+                      unsigned width, bool omp)
+      : MGradientUtils(Logic, newFunc_, oldFunc_, TA, TR, invertedPointers_,
+                       constantvalues_, returnvals_, ActiveReturn,
+                       constant_values, origToNew_, mode, width, omp) {
+    /* TODO
+    assert(reverseBlocks.size() == 0);
+    if (mode == DerivativeMode::ForwardMode ||
+        mode == DerivativeMode::ForwardModeSplit) {
+      return;
+    }
+    for (BasicBlock *BB : originalBlocks) {
+      if (BB == inversionAllocs)
+        continue;
+      BasicBlock *RBB = BasicBlock::Create(BB->getContext(),
+                                           "invert" + BB->getName(), newFunc);
+      reverseBlocks[BB].push_back(RBB);
+      reverseBlockToPrimal[RBB] = BB;
+    }
+    assert(reverseBlocks.size() != 0);
+    */
+  }
+
+  // Technically diffe constructor
+  static MDiffeGradientUtils *
+  CreateFromClone(MEnzymeLogic &Logic, DerivativeMode mode, unsigned width,
+                  FunctionOpInterface todiff, MTypeAnalysis &TA,
+                  MFnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
+                  bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
+                  ReturnType returnValue, mlir::Type additionalArg, bool omp) {
     std::string prefix;
 
     switch (mode) {
@@ -176,25 +425,320 @@ public:
     if (width > 1)
       prefix += std::to_string(width);
 
-    bool diffeReturnArg = false;
-    mlir::Type additionalArg = nullptr;
     BlockAndValueMapping originalToNew;
 
+    SmallPtrSet<mlir::Value, 1> returnvals;
+    SmallPtrSet<mlir::Value, 1> constant_values;
+    SmallPtrSet<mlir::Value, 1> nonconstant_values;
+    BlockAndValueMapping invertedPointers;
+    auto newFunc = CloneFunctionWithReturns(
+        mode, width, todiff, invertedPointers, constant_args, constant_values,
+        nonconstant_values, returnvals, returnValue, retType,
+        prefix + todiff.getName(), originalToNew, diffeReturnArg,
+        additionalArg);
+    MTypeResults TR; // TODO
+    return new MDiffeGradientUtils(Logic, newFunc, todiff, TA, TR,
+                                   invertedPointers, constant_values,
+                                   nonconstant_values, retType, constant_args,
+                                   originalToNew, mode, width, omp);
+  }
+};
+
+class MAdjointGenerator {
+public:
+  MGradientUtils *gutils;
+  MAdjointGenerator(MGradientUtils *gutils) : gutils(gutils) {}
+
+  void eraseIfUnused(Operation &op, bool erase, bool check) {
+    // TODO
+  }
+  void visit(Operation *op) {
+    // TODO
+  }
+};
+
+void createTerminator(MDiffeGradientUtils *gutils, mlir::Block *oBB,
+                      DIFFE_TYPE retType, ReturnType retVal) {
+  MTypeResults &TR = gutils->TR;
+  auto inst = dyn_cast<func::ReturnOp>(oBB->getTerminator());
+  // In forward mode we only need to update the return value
+  if (inst == nullptr)
+    return;
+
+  mlir::Block *nBB = gutils->getNewFromOriginal(inst->getBlock());
+  assert(nBB);
+  auto newInst = nBB->getTerminator();
+  OpBuilder nBuilder(inst);
+  nBuilder.setInsertionPointToEnd(nBB);
+
+  SmallVector<mlir::Value, 2> retargs;
+
+  switch (retVal) {
+  case ReturnType::Return: {
+    auto ret = inst->getOperand(0);
+
+    mlir::Value toret;
+    if (retType == DIFFE_TYPE::CONSTANT) {
+      toret = gutils->getNewFromOriginal(ret);
+    } else if (!isa<mlir::FloatType>(ret.getType()) &&
+               TR.getReturnAnalysis().Inner0().isPossiblePointer()) {
+      toret = gutils->invertPointerM(ret, nBuilder);
+    } else if (!gutils->isConstantValue(ret)) {
+      toret = gutils->invertPointerM(ret, nBuilder);
+    } else {
+      auto retTy = gutils->getShadowType(ret.getType()).cast<mlir::FloatType>();
+      toret = nBuilder.create<arith::ConstantFloatOp>(
+          ret.getLoc(), APFloat(retTy.getFloatSemantics(), "0"), retTy);
+    }
+    retargs.push_back(toret);
+
+    break;
+  }
+  case ReturnType::TwoReturns: {
+    if (retType == DIFFE_TYPE::CONSTANT)
+      assert(false && "Invalid return type");
+    auto ret = inst->getOperand(0);
+
+    retargs.push_back(gutils->getNewFromOriginal(ret));
+
+    mlir::Value toret;
+    if (retType == DIFFE_TYPE::CONSTANT) {
+      toret = gutils->getNewFromOriginal(ret);
+    } else if (!isa<mlir::FloatType>(ret.getType()) &&
+               TR.getReturnAnalysis().Inner0().isPossiblePointer()) {
+      toret = gutils->invertPointerM(ret, nBuilder);
+    } else if (!gutils->isConstantValue(ret)) {
+      toret = gutils->invertPointerM(ret, nBuilder);
+    } else {
+      auto retTy = gutils->getShadowType(ret.getType()).cast<mlir::FloatType>();
+      toret = nBuilder.create<arith::ConstantFloatOp>(
+          ret.getLoc(), APFloat(retTy.getFloatSemantics(), "0"), retTy);
+    }
+    retargs.push_back(toret);
+    break;
+  }
+  case ReturnType::Void: {
+    break;
+  }
+  default: {
+    llvm::errs() << "Invalid return type: " << to_string(retVal)
+                 << "for function: \n"
+                 << gutils->newFunc << "\n";
+    assert(false && "Invalid return type for function");
+    return;
+  }
+  }
+
+  nBuilder.create<func::ReturnOp>(inst.getLoc(), retargs);
+  gutils->erase(newInst);
+  return;
+}
+
+class MEnzymeLogic {
+public:
+  struct MForwardCacheKey {
+    FunctionOpInterface todiff;
+    DIFFE_TYPE retType;
+    const std::vector<DIFFE_TYPE> constant_args;
+    // std::map<llvm::Argument *, bool> uncacheable_args;
+    bool returnUsed;
+    DerivativeMode mode;
+    unsigned width;
+    mlir::Type additionalType;
+    const MFnTypeInfo typeInfo;
+
+    inline bool operator<(const MForwardCacheKey &rhs) const {
+      if (todiff < rhs.todiff)
+        return true;
+      if (rhs.todiff < todiff)
+        return false;
+
+      if (retType < rhs.retType)
+        return true;
+      if (rhs.retType < retType)
+        return false;
+
+      if (std::lexicographical_compare(
+              constant_args.begin(), constant_args.end(),
+              rhs.constant_args.begin(), rhs.constant_args.end()))
+        return true;
+      if (std::lexicographical_compare(
+              rhs.constant_args.begin(), rhs.constant_args.end(),
+              constant_args.begin(), constant_args.end()))
+        return false;
+
+      /*
+      for (auto &arg : todiff->args()) {
+        auto foundLHS = uncacheable_args.find(&arg);
+        auto foundRHS = rhs.uncacheable_args.find(&arg);
+        if (foundLHS->second < foundRHS->second)
+          return true;
+        if (foundRHS->second < foundLHS->second)
+          return false;
+      }
+      */
+
+      if (returnUsed < rhs.returnUsed)
+        return true;
+      if (rhs.returnUsed < returnUsed)
+        return false;
+
+      if (mode < rhs.mode)
+        return true;
+      if (rhs.mode < mode)
+        return false;
+
+      if (width < rhs.width)
+        return true;
+      if (rhs.width < width)
+        return false;
+
+      if (additionalType < rhs.additionalType)
+        return true;
+      if (rhs.additionalType < additionalType)
+        return false;
+
+      if (typeInfo < rhs.typeInfo)
+        return true;
+      if (rhs.typeInfo < typeInfo)
+        return false;
+      // equal
+      return false;
+    }
+  };
+
+  std::map<MForwardCacheKey, mlir::func::FuncOp> ForwardCachedFunctions;
+  mlir::func::FuncOp
+  CreateForwardDiff(FunctionOpInterface fn, DIFFE_TYPE retType,
+                    std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
+                    bool returnUsed, DerivativeMode mode, bool freeMemory,
+                    size_t width, mlir::Type addedType, MFnTypeInfo type_args,
+                    std::vector<bool> volatile_args, void *augmented) {
+    if (fn.getBody().empty()) {
+      llvm::errs() << fn << "\n";
+      llvm_unreachable("Differentiating empty function");
+    }
+
+    MForwardCacheKey tup = {
+        fn, retType, constants,
+        // std::map<Argument *, bool>(_uncacheable_args.begin(),
+        //                           _uncacheable_args.end()),
+        returnUsed, mode, width, addedType, type_args};
+
+    if (ForwardCachedFunctions.find(tup) != ForwardCachedFunctions.end()) {
+      return ForwardCachedFunctions.find(tup)->second;
+    }
     bool retActive = retType != DIFFE_TYPE::CONSTANT;
     ReturnType returnValue =
         returnUsed ? (retActive ? ReturnType::TwoReturns : ReturnType::Return)
                    : (retActive ? ReturnType::Return : ReturnType::Void);
+    auto gutils = MDiffeGradientUtils::CreateFromClone(
+        *this, mode, width, fn, TA, type_args, retType,
+        /*diffeReturnArg*/ false, constants, returnValue, addedType,
+        /*omp*/ false);
+    ForwardCachedFunctions[tup] = gutils->newFunc;
 
-    SmallPtrSet<mlir::Value, 1> returnvals;
-    auto newFunc = CloneFunctionWithReturns(
-        mode, width, fn, /*invertedPointers, */ constants, /* constant_values,*/
-        /*nonconstant_values,*/ returnvals, returnValue, retType,
-        prefix + fn.getName(), originalToNew,
-        /*diffeReturnArg*/ diffeReturnArg, additionalArg);
+    insert_or_assign2<MForwardCacheKey, func::FuncOp>(ForwardCachedFunctions,
+                                                      tup, gutils->newFunc);
 
-    // TODO derivative internal handling
+    // gutils->FreeMemory = freeMemory;
 
-    return newFunc;
+    const SmallPtrSet<mlir::Block *, 4> guaranteedUnreachable;
+    // = getGuaranteedUnreachable(gutils->oldFunc);
+
+    // gutils->forceActiveDetection();
+    gutils->forceAugmentedReturns();
+    /*
+
+    // TODO populate with actual unnecessaryInstructions once the dependency
+    // cycle with activity analysis is removed
+    SmallPtrSet<const Instruction *, 4> unnecessaryInstructionsTmp;
+    for (auto BB : guaranteedUnreachable) {
+      for (auto &I : *BB)
+        unnecessaryInstructionsTmp.insert(&I);
+    }
+    if (mode == DerivativeMode::ForwardModeSplit)
+      gutils->computeGuaranteedFrees();
+
+    SmallPtrSet<const Value *, 4> unnecessaryValues;
+    SmallPtrSet<const Instruction *, 4> unnecessaryInstructions;
+    calculateUnusedValuesInFunction(
+        *gutils->oldFunc, unnecessaryValues, unnecessaryInstructions,
+    returnUsed, mode, gutils, TLI, constant_args, guaranteedUnreachable);
+    gutils->unnecessaryValuesP = &unnecessaryValues;
+
+    SmallPtrSet<const Instruction *, 4> unnecessaryStores;
+    calculateUnusedStoresInFunction(*gutils->oldFunc, unnecessaryStores,
+                                    unnecessaryInstructions, gutils, TLI);
+                                    */
+
+    MAdjointGenerator *maker;
+
+    // TODO split
+    maker = new MAdjointGenerator(gutils);
+    //, constant_args, retType, nullptr, {},
+    //    /*returnuses*/ nullptr, nullptr, nullptr, unnecessaryValues,
+    //    unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
+    //    nullptr);
+
+    for (Block &oBB : gutils->oldFunc.getBody().getBlocks()) {
+      // Don't create derivatives for code that results in termination
+      if (guaranteedUnreachable.find(&oBB) != guaranteedUnreachable.end()) {
+        auto newBB = gutils->getNewFromOriginal(&oBB);
+
+        SmallVector<Operation *, 4> toerase;
+        for (auto &I : oBB) {
+          toerase.push_back(&I);
+        }
+        for (auto I : llvm::reverse(toerase)) {
+          maker->eraseIfUnused(*I, /*erase*/ true, /*check*/ false);
+        }
+        OpBuilder builder(gutils->oldFunc.getContext());
+        builder.setInsertionPointToEnd(newBB);
+        builder.create<LLVM::UnreachableOp>(gutils->oldFunc.getLoc());
+        continue;
+      }
+
+      auto term = oBB.getTerminator();
+      assert(term);
+
+      auto first = oBB.begin();
+      auto last = oBB.empty() ? oBB.end() : std::prev(oBB.end());
+      for (auto it = first; it != last; ++it) {
+        maker->visit(&*it);
+      }
+
+      createTerminator(gutils, &oBB, retType, returnValue);
+    }
+
+    // if (mode == DerivativeMode::ForwardModeSplit && augmenteddata)
+    //  restoreCache(gutils, augmenteddata->tapeIndices, guaranteedUnreachable);
+
+    // gutils->eraseFictiousPHIs();
+
+    mlir::Block *entry = &gutils->newFunc.getBody().front();
+
+    // cleanupInversionAllocs(gutils, entry);
+    // clearFunctionAttributes(gutils->newFunc);
+
+    /*
+    if (llvm::verifyFunction(*gutils->newFunc, &llvm::errs())) {
+      llvm::errs() << *gutils->oldFunc << "\n";
+      llvm::errs() << *gutils->newFunc << "\n";
+      report_fatal_error("function failed verification (4)");
+    }
+    */
+
+    auto nf = gutils->newFunc;
+    delete gutils;
+    delete maker;
+
+    // if (PostOpt)
+    //  PPC.optimizeIntermediate(nf);
+    // if (EnzymePrint) {
+    //  llvm::errs() << nf << "\n";
+    //}
+    return nf;
   }
 };
 

@@ -29,8 +29,8 @@
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 #include "mlir/Transforms/Passes.h"
 
-#include "Passes/Passes.h"
 #include "Dialect/Dialect.h"
+#include "Passes/Passes.h"
 
 using namespace mlir;
 
@@ -105,7 +105,7 @@ int main(int argc, char **argv) {
         *ctx);
   });
 
-  return mlir::failed(mlir::MlirOptMain(
-      argc, argv, "Enzyme modular optimizer driver", registry,
-      /*preloadDialectsInContext=*/true));
+  return mlir::failed(
+      mlir::MlirOptMain(argc, argv, "Enzyme modular optimizer driver", registry,
+                        /*preloadDialectsInContext=*/true));
 }

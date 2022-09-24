@@ -7,8 +7,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "Dialect.h"
-#include "mlir/IR/DialectImplementation.h"
 #include "Ops.h"
+#include "mlir/IR/DialectImplementation.h"
 
 #include "llvm/ADT/TypeSwitch.h"
 
