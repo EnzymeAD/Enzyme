@@ -765,6 +765,8 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
   auto sublimits =
       getSubLimits(/*inForwardPass*/ true, nullptr, ctx, extraSize);
 
+  auto i64 = Type::getInt64Ty(T->getContext());
+
   // List of types stored in the cache for each Loop-Chunk
   // This is stored from innner-most chunk to outermost
   // Thus it begins with the underlying type, and adds pointers
@@ -774,7 +776,26 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
   if (EfficientBoolCache && isi1 && sublimits.size() != 0)
     types[0] = Type::getInt8Ty(T->getContext());
   for (size_t i = 0; i < sublimits.size(); ++i) {
-    types.push_back(PointerType::getUnqual(types.back()));
+    Type *allocType;
+    {
+      BasicBlock *BB =
+          BasicBlock::Create(newFunc->getContext(), "entry", newFunc);
+      IRBuilder<> B(BB);
+      auto P = B.CreatePHI(i64, 1);
+
+      CallInst *malloccall;
+      allocType = cast<PointerType>(CreateAllocation(B, types.back(), P,
+                                                     "tmpfortypecalc",
+                                                     &malloccall, nullptr)
+                                        ->getType());
+      SmallVector<Instruction *, 2> toErase;
+      for (auto &I : *BB)
+        toErase.push_back(&I);
+      for (auto I : llvm::reverse(toErase))
+        I->eraseFromParent();
+      BB->eraseFromParent();
+    }
+    types.push_back(allocType);
   }
 
   // Allocate the outermost type on the stack
@@ -784,10 +805,9 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
       entryBuilder.CreateAlloca(types.back(), nullptr, name + "_cache");
   {
     ConstantInt *byteSizeOfType = ConstantInt::get(
-        Type::getInt64Ty(T->getContext()),
-        newFunc->getParent()->getDataLayout().getTypeAllocSizeInBits(
-            types.back()) /
-            8);
+        i64, newFunc->getParent()->getDataLayout().getTypeAllocSizeInBits(
+                 types.back()) /
+                 8);
     unsigned align =
         getCacheAlignment((unsigned)byteSizeOfType->getZExtValue());
 #if LLVM_VERSION_MAJOR >= 10
@@ -799,8 +819,6 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
   if (EnzymeZeroCache && sublimits.size() == 0)
     scopeInstructions[alloc].push_back(
         entryBuilder.CreateStore(Constant::getNullValue(types.back()), alloc));
-
-  Type *BPTy = Type::getInt8PtrTy(T->getContext());
 
   Value *storeInto = alloc;
 
@@ -888,11 +906,12 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
           scopeInstructions[alloc].push_back(post);
         }
       } else {
+        llvm::PointerType *allocType = cast<PointerType>(types[i + 1]);
+
         // Reallocate memory dynamically as a fallback
         // TODO change this to a power-of-two allocation strategy
         auto zerostore = allocationBuilder.CreateStore(
-            ConstantPointerNull::get(PointerType::getUnqual(myType)),
-            storeInto);
+            ConstantPointerNull::get(allocType), storeInto);
         scopeInstructions[alloc].push_back(zerostore);
 
         IRBuilder<> build(containedloops.back().first.incvar->getNextNode());
@@ -903,30 +922,13 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
         Value *allocation = build.CreateLoad(storeInto);
 #endif
 
-        Value *tsize = ConstantInt::get(
-            size->getType(),
-            newFunc->getParent()->getDataLayout().getTypeAllocSizeInBits(
-                myType) /
-                8);
+        CallInst *realloccall = nullptr;
+        allocation = CreateReAllocation(
+            build, allocation, myType, containedloops.back().first.incvar, size,
+            name + "_realloccache", &realloccall, EnzymeZeroCache && i == 0);
 
-        Value *idxs[] = {
-            /*ptr*/
-            build.CreatePointerCast(allocation, BPTy),
-            /*incrementing value to increase when it goes past a power of two*/
-            containedloops.back().first.incvar,
-            /*buffer size (element x subloops)*/
-            build.CreateMul(tsize, size, "", /*NUW*/ true,
-                            /*NSW*/ true)};
+        scopeAllocs[alloc].push_back(realloccall);
 
-        assert(allocation->getType()->getPointerElementType() == myType);
-        Value *realloccall = nullptr;
-
-        realloccall = build.CreateCall(
-            getOrInsertExponentialAllocator(*newFunc->getParent(),
-                                            EnzymeZeroCache && i == 0),
-            idxs, name + "_realloccache");
-        scopeAllocs[alloc].push_back(cast<CallInst>(realloccall));
-        allocation = build.CreateBitCast(realloccall, allocation->getType());
         storealloc = build.CreateStore(allocation, storeInto);
         // Unlike the static case we can not mark the memory as invariant
         // since we are reloading/storing based off the number of loop
