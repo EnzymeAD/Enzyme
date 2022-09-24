@@ -24,6 +24,11 @@
 #define GET_OP_CLASSES
 #include "Dialect/EnzymeOps.h.inc"
 
+#include "Dialect/EnzymeEnums.h.inc"
+
+#define GET_ATTRDEF_CLASSES
+#include "Dialect/EnzymeAttributes.h.inc"
+
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Matchers.h"

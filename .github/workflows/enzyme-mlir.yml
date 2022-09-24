@@ -20,7 +20,7 @@ jobs:
         llbuild: ["RelWithDebInfo"]
         os: [ubuntu-22.04]
   
-    timeout-minutes: 240 
+    timeout-minutes: 500 
     steps:
     - name: add llvm 
       run: |

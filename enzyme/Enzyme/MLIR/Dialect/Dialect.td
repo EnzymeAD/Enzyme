@@ -19,6 +19,7 @@ def Enzyme_Dialect : Dialect {
   let name = "enzyme";
   let description = [{}];
   let cppNamespace = "::mlir::enzyme";
+  let useDefaultAttributePrinterParser = 1;
 }
 
 //===----------------------------------------------------------------------===//

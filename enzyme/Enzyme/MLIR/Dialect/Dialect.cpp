@@ -10,6 +10,11 @@
 #include "mlir/IR/DialectImplementation.h"
 #include "Ops.h"
 
+#include "llvm/ADT/TypeSwitch.h"
+
+#include "Dialect/EnzymeEnums.cpp.inc"
+#include "Dialect/EnzymeOpsDialect.cpp.inc"
+
 using namespace mlir;
 using namespace mlir::enzyme;
 
@@ -22,6 +27,11 @@ void EnzymeDialect::initialize() {
 #define GET_OP_LIST
 #include "Dialect/EnzymeOps.cpp.inc"
       >();
+  addAttributes<
+#define GET_ATTRDEF_LIST
+#include "Dialect/EnzymeAttributes.cpp.inc"
+      >();
 }
 
-#include "Dialect/EnzymeOpsDialect.cpp.inc"
+#define GET_ATTRDEF_CLASSES
+#include "Dialect/EnzymeAttributes.cpp.inc"
