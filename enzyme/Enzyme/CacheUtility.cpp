@@ -937,6 +937,9 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
       storealloc->setAlignment(alignSize);
 #endif
       scopeInstructions[alloc].push_back(storealloc);
+      if (auto post = PostCacheStore(storealloc, build)) {
+        scopeInstructions[alloc].push_back(post);
+      }
     }
 
     // Free the memory, if requested
@@ -1396,6 +1399,9 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
   storeinst->setAlignment(align);
 #endif
   scopeInstructions[cache].push_back(storeinst);
+  if (auto post = PostCacheStore(storeinst, v)) {
+    scopeInstructions[cache].push_back(post);
+  }
 }
 
 /// Given an allocation defined at a particular ctx, store the instruction

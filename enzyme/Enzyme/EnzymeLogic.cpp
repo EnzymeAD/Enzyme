@@ -2509,7 +2509,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 #endif
         cast<GetElementPtrInst>(gep)->setIsInBounds(true);
       }
-      ib.CreateStore(memory, gep);
+      auto storeinst = ib.CreateStore(memory, gep);
+      PostCacheStore(storeinst, ib);
     } else if (omp) {
       j->setName("tape");
       tapeMemory = j;
@@ -2552,7 +2553,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
 #endif
           cast<GetElementPtrInst>(gep)->setIsInBounds(true);
         }
-        ib.CreateStore(VMap[v], gep);
+        auto storeinst = ib.CreateStore(VMap[v], gep);
+        PostCacheStore(storeinst, ib);
       }
       ++i;
     }
@@ -2588,7 +2590,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       if (auto ggep = dyn_cast<GetElementPtrInst>(gep)) {
         ggep->setIsInBounds(true);
       }
-      ib.CreateStore(actualrv, gep);
+      auto storeinst = ib.CreateStore(actualrv, gep);
+      PostCacheStore(storeinst, ib);
     }
 
     if (shadowReturnUsed) {
@@ -2607,10 +2610,12 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         }
         if (isa<ConstantExpr>(invertedRetPs[ri]) ||
             isa<ConstantData>(invertedRetPs[ri])) {
-          ib.CreateStore(invertedRetPs[ri], gep);
+          auto storeinst = ib.CreateStore(invertedRetPs[ri], gep);
+          PostCacheStore(storeinst, ib);
         } else {
           assert(VMap[invertedRetPs[ri]]);
-          ib.CreateStore(VMap[invertedRetPs[ri]], gep);
+          auto storeinst = ib.CreateStore(VMap[invertedRetPs[ri]], gep);
+          PostCacheStore(storeinst, ib);
         }
       }
     }

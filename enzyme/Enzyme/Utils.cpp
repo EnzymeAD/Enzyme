@@ -52,6 +52,14 @@ LLVMValueRef (*CustomAllocator)(LLVMBuilderRef, LLVMTypeRef,
 LLVMValueRef (*CustomDeallocator)(LLVMBuilderRef, LLVMValueRef) = nullptr;
 void (*CustomRuntimeInactiveError)(LLVMBuilderRef, LLVMValueRef,
                                    LLVMValueRef) = nullptr;
+LLVMValueRef (*EnzymePostCacheStore)(LLVMValueRef, LLVMBuilderRef) = nullptr;
+}
+
+llvm::Instruction *PostCacheStore(llvm::StoreInst *SI, llvm::IRBuilder<> &B) {
+  if (EnzymePostCacheStore) {
+    return unwrap(EnzymePostCacheStore(wrap(SI), wrap(&B)));
+  }
+  return nullptr;
 }
 
 Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,

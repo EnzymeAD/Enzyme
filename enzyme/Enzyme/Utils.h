@@ -80,6 +80,8 @@ extern void (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
                                   void *);
 }
 
+llvm::Instruction *PostCacheStore(llvm::StoreInst *SI, llvm::IRBuilder<> &B);
+
 llvm::Value *CreateAllocation(llvm::IRBuilder<> &B, llvm::Type *T,
                               llvm::Value *Count, llvm::Twine Name = "",
                               llvm::CallInst **caller = nullptr,
