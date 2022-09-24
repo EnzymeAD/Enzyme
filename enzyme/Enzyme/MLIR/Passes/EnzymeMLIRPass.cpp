@@ -17,6 +17,7 @@
 #include "Passes/Passes.h"
 #include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 
@@ -316,7 +317,7 @@ public:
       llvm::errs() << oldFunc << "\n";
       llvm::errs() << newFunc << "\n";
       llvm::errs() << originst << "\n";
-      llvm_unreachable("Could not get new from original");
+      llvm_unreachable("Could not get new val from original");
     }
     return originalToNewFn.lookupOrNull(originst);
   }
@@ -325,7 +326,7 @@ public:
       llvm::errs() << oldFunc << "\n";
       llvm::errs() << newFunc << "\n";
       llvm::errs() << originst << "\n";
-      llvm_unreachable("Could not get new from original");
+      llvm_unreachable("Could not get new blk from original");
     }
     return originalToNewFn.lookupOrNull(originst);
   }
@@ -334,8 +335,8 @@ public:
     if (found == originalToNewFnOps.end()) {
       llvm::errs() << oldFunc << "\n";
       llvm::errs() << newFunc << "\n";
-      llvm::errs() << originst << "\n";
-      llvm_unreachable("Could not get new from original");
+      llvm::errs() << *originst << "\n";
+      llvm_unreachable("Could not get new op from original");
     }
     return found->second;
   }
@@ -406,6 +407,8 @@ public:
   }
   void erase(Operation *op) { op->erase(); }
   bool isConstantValue(mlir::Value v) const {
+    if (isa<mlir::IntegerType>(v.getType()))
+      return true;
     // TODO
     return false;
   }
@@ -454,78 +457,98 @@ public:
     // TODO also block arguments
     // assert(TR.getFunction() == oldFunc);
 
-    for (mlir::Block &oBB : oldFunc.getBody().getBlocks()) {
-      // Don't create derivatives for code that results in termination
-      // if (notForAnalysis.find(&oBB) != notForAnalysis.end())
-      //  continue;
+    // Don't create derivatives for code that results in termination
+    // if (notForAnalysis.find(&oBB) != notForAnalysis.end())
+    //  continue;
 
-      // LoopContext loopContext;
-      // getContext(cast<BasicBlock>(getNewFromOriginal(&oBB)), loopContext);
+    // LoopContext loopContext;
+    // getContext(cast<BasicBlock>(getNewFromOriginal(&oBB)), loopContext);
 
-      for (Operation &inst : oBB) {
-        if (mode == DerivativeMode::ForwardMode ||
-            mode == DerivativeMode::ForwardModeSplit) {
-          OpBuilder BuilderZ(getNewFromOriginal(&inst));
-          for (auto res : inst.getResults()) {
-            if (!isConstantValue(res)) {
-              mlir::Type antiTy = getShadowType(res.getType());
-              auto anti = BuilderZ.create<enzyme::PlaceholderOp>(res.getLoc(),
-                                                                 res.getType());
-              invertedPointers.map(res, anti);
-            }
+    oldFunc.walk([&](Block *blk) {
+      if (blk == &oldFunc.getBody().getBlocks().front())
+        return;
+      auto nblk = getNewFromOriginal(blk);
+      for (auto val : llvm::reverse(blk->getArguments())) {
+        if (isConstantValue(val))
+          continue;
+        auto i = val.getArgNumber();
+        mlir::Value dval;
+        if (i == blk->getArguments().size() - 1)
+          dval = nblk->addArgument(getShadowType(val.getType()), val.getLoc());
+        else
+          dval =
+              nblk->insertArgument(nblk->args_begin() + i + 1,
+                                   getShadowType(val.getType()), val.getLoc());
+
+        invertedPointers.map(val, dval);
+      }
+    });
+
+    oldFunc.walk([&](Operation *inst) {
+      if (inst == oldFunc)
+        return;
+      if (mode == DerivativeMode::ForwardMode ||
+          mode == DerivativeMode::ForwardModeSplit) {
+        OpBuilder BuilderZ(getNewFromOriginal(inst));
+        for (auto res : inst->getResults()) {
+          if (!isConstantValue(res)) {
+            mlir::Type antiTy = getShadowType(res.getType());
+            auto anti = BuilderZ.create<enzyme::PlaceholderOp>(res.getLoc(),
+                                                               res.getType());
+            invertedPointers.map(res, anti);
           }
-          continue;
         }
-        /*
+        return;
+      }
+      /*
 
-        if (inst->getType()->isFPOrFPVectorTy())
-          continue; //! op->getType()->isPointerTy() &&
-                    //! !op->getType()->isIntegerTy()) {
+      if (inst->getType()->isFPOrFPVectorTy())
+        continue; //! op->getType()->isPointerTy() &&
+                  //! !op->getType()->isIntegerTy()) {
 
-        if (!TR.query(inst)[{-1}].isPossiblePointer())
-          continue;
+      if (!TR.query(inst)[{-1}].isPossiblePointer())
+        continue;
 
-        if (isa<LoadInst>(inst)) {
-          IRBuilder<> BuilderZ(inst);
-          getForwardBuilder(BuilderZ);
-          Type *antiTy = getShadowType(inst->getType());
-          PHINode *anti =
-              BuilderZ.CreatePHI(antiTy, 1, inst->getName() + "'il_phi");
-          invertedPointers.insert(std::make_pair(
-              (const Value *)inst, InvertedPointerVH(this, anti)));
-          continue;
-        }
-
-        if (!isa<CallInst>(inst)) {
-          continue;
-        }
-
-        if (isa<IntrinsicInst>(inst)) {
-          continue;
-        }
-
-        if (isConstantValue(inst)) {
-          continue;
-        }
-
-        CallInst *op = cast<CallInst>(inst);
-        Function *called = op->getCalledFunction();
-
+      if (isa<LoadInst>(inst)) {
         IRBuilder<> BuilderZ(inst);
         getForwardBuilder(BuilderZ);
         Type *antiTy = getShadowType(inst->getType());
-
         PHINode *anti =
-            BuilderZ.CreatePHI(antiTy, 1, op->getName() + "'ip_phi");
-        invertedPointers.insert(
-            std::make_pair((const Value *)inst, InvertedPointerVH(this, anti)));
-
-        if (called && isAllocationFunction(called->getName(), TLI)) {
-          anti->setName(op->getName() + "'mi");
-        }
-        */
+            BuilderZ.CreatePHI(antiTy, 1, inst->getName() + "'il_phi");
+        invertedPointers.insert(std::make_pair(
+            (const Value *)inst, InvertedPointerVH(this, anti)));
+        continue;
       }
-    }
+
+      if (!isa<CallInst>(inst)) {
+        continue;
+      }
+
+      if (isa<IntrinsicInst>(inst)) {
+        continue;
+      }
+
+      if (isConstantValue(inst)) {
+        continue;
+      }
+
+      CallInst *op = cast<CallInst>(inst);
+      Function *called = op->getCalledFunction();
+
+      IRBuilder<> BuilderZ(inst);
+      getForwardBuilder(BuilderZ);
+      Type *antiTy = getShadowType(inst->getType());
+
+      PHINode *anti =
+          BuilderZ.CreatePHI(antiTy, 1, op->getName() + "'ip_phi");
+      invertedPointers.insert(
+          std::make_pair((const Value *)inst, InvertedPointerVH(this, anti)));
+
+      if (called && isAllocationFunction(called->getName(), TLI)) {
+        anti->setName(op->getName() + "'mi");
+      }
+      */
+    });
   }
 };
 class MDiffeGradientUtils : public MGradientUtils {
@@ -647,16 +670,54 @@ public:
 void createTerminator(MDiffeGradientUtils *gutils, mlir::Block *oBB,
                       DIFFE_TYPE retType, ReturnType retVal) {
   MTypeResults &TR = gutils->TR;
-  auto inst = dyn_cast<func::ReturnOp>(oBB->getTerminator());
-  // In forward mode we only need to update the return value
-  if (inst == nullptr)
-    return;
+  auto inst = oBB->getTerminator();
 
   mlir::Block *nBB = gutils->getNewFromOriginal(inst->getBlock());
   assert(nBB);
   auto newInst = nBB->getTerminator();
+
   OpBuilder nBuilder(inst);
   nBuilder.setInsertionPointToEnd(nBB);
+
+  if (auto binst = dyn_cast<BranchOpInterface>(inst)) {
+    // TODO generalize to cloneWithNewBlockArgs interface
+    SmallVector<Value> newVals;
+
+    SmallVector<int32_t> segSizes;
+    for (size_t i = 0, len = binst.getSuccessorOperands(0)
+                                 .getForwardedOperands()
+                                 .getBeginOperandIndex();
+         i < len; i++)
+      newVals.push_back(gutils->getNewFromOriginal(binst->getOperand(i)));
+    segSizes.push_back(newVals.size());
+    for (size_t i = 0; i < newInst->getNumSuccessors(); i++) {
+      size_t cur = newVals.size();
+      for (auto op : binst.getSuccessorOperands(i).getForwardedOperands()) {
+        newVals.push_back(gutils->getNewFromOriginal(op));
+        if (!gutils->isConstantValue(op)) {
+          newVals.push_back(gutils->invertPointerM(op, nBuilder));
+        }
+      }
+      cur = newVals.size() - cur;
+      segSizes.push_back(cur);
+    }
+
+    SmallVector<NamedAttribute> attrs(newInst->getAttrs());
+    for (auto &attr : attrs) {
+      if (attr.getName() == "operand_segment_sizes")
+        attr.setValue(nBuilder.getDenseI32ArrayAttr(segSizes));
+    }
+
+    nBB->push_back(newInst->create(
+        newInst->getLoc(), newInst->getName(), TypeRange(), newVals, attrs,
+        newInst->getSuccessors(), newInst->getNumRegions()));
+    gutils->erase(newInst);
+    return;
+  }
+
+  // In forward mode we only need to update the return value
+  if (!inst->hasTrait<OpTrait::ReturnLike>())
+    return;
 
   SmallVector<mlir::Value, 2> retargs;
 
@@ -716,7 +777,9 @@ void createTerminator(MDiffeGradientUtils *gutils, mlir::Block *oBB,
   }
   }
 
-  nBuilder.create<func::ReturnOp>(inst.getLoc(), retargs);
+  nBB->push_back(newInst->create(
+      newInst->getLoc(), newInst->getName(), TypeRange(), retargs,
+      newInst->getAttrs(), newInst->getSuccessors(), newInst->getNumRegions()));
   gutils->erase(newInst);
   return;
 }
