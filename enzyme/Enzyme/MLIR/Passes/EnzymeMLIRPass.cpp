@@ -103,6 +103,128 @@ mlir::FunctionType getFunctionTypeForClone(
   return builder.getFunctionType(ArgTypes, RetTypes);
 }
 
+void cloneInto(Region *src, Region *dest, Region::iterator destPos,
+               BlockAndValueMapping &mapper,
+               std::map<Operation *, Operation *> &opMap);
+void cloneInto(Region *src, Region *dest, BlockAndValueMapping &mapper,
+               std::map<Operation *, Operation *> &opMap) {
+  cloneInto(src, dest, dest->end(), mapper, opMap);
+}
+Operation *clone(Operation *src, BlockAndValueMapping &mapper,
+                 Operation::CloneOptions options,
+                 std::map<Operation *, Operation *> &opMap) {
+  SmallVector<Value, 8> operands;
+  SmallVector<Block *, 2> successors;
+
+  // Remap the operands.
+  if (options.shouldCloneOperands()) {
+    operands.reserve(src->getNumOperands());
+    for (auto opValue : src->getOperands())
+      operands.push_back(mapper.lookupOrDefault(opValue));
+  }
+
+  // Remap the successors.
+  successors.reserve(src->getNumSuccessors());
+  for (Block *successor : src->getSuccessors())
+    successors.push_back(mapper.lookupOrDefault(successor));
+
+  // Create the new operation.
+  auto *newOp =
+      src->create(src->getLoc(), src->getName(), src->getResultTypes(),
+                  operands, src->getAttrs(), successors, src->getNumRegions());
+
+  // Clone the regions.
+  if (options.shouldCloneRegions()) {
+    for (unsigned i = 0; i != src->getNumRegions(); ++i)
+      cloneInto(&src->getRegion(i), &newOp->getRegion(i), mapper, opMap);
+  }
+
+  // Remember the mapping of any results.
+  for (unsigned i = 0, e = src->getNumResults(); i != e; ++i)
+    mapper.map(src->getResult(i), newOp->getResult(i));
+
+  opMap[src] = newOp;
+  return newOp;
+}
+/// Clone this region into 'dest' before the given position in 'dest'.
+void cloneInto(Region *src, Region *dest, Region::iterator destPos,
+               BlockAndValueMapping &mapper,
+               std::map<Operation *, Operation *> &opMap) {
+  assert(src);
+  assert(dest && "expected valid region to clone into");
+  assert(src != dest && "cannot clone region into itself");
+
+  // If the list is empty there is nothing to clone.
+  if (src->empty())
+    return;
+
+  // The below clone implementation takes special care to be read only for the
+  // sake of multi threading. That essentially means not adding any uses to any
+  // of the blocks or operation results contained within this region as that
+  // would lead to a write in their use-def list. This is unavoidable for
+  // 'Value's from outside the region however, in which case it is not read
+  // only. Using the BlockAndValueMapper it is possible to remap such 'Value's
+  // to ones owned by the calling thread however, making it read only once
+  // again.
+
+  // First clone all the blocks and block arguments and map them, but don't yet
+  // clone the operations, as they may otherwise add a use to a block that has
+  // not yet been mapped
+  for (Block &block : *src) {
+    Block *newBlock = new Block();
+    mapper.map(&block, newBlock);
+
+    // Clone the block arguments. The user might be deleting arguments to the
+    // block by specifying them in the mapper. If so, we don't add the
+    // argument to the cloned block.
+    for (auto arg : block.getArguments())
+      if (!mapper.contains(arg))
+        mapper.map(arg, newBlock->addArgument(arg.getType(), arg.getLoc()));
+
+    dest->getBlocks().insert(destPos, newBlock);
+  }
+
+  auto newBlocksRange =
+      llvm::make_range(Region::iterator(mapper.lookup(&src->front())), destPos);
+
+  // Now follow up with creating the operations, but don't yet clone their
+  // regions, nor set their operands. Setting the successors is safe as all have
+  // already been mapped. We are essentially just creating the operation results
+  // to be able to map them.
+  // Cloning the operands and region as well would lead to uses of operations
+  // not yet mapped.
+  auto cloneOptions =
+      Operation::CloneOptions::all().cloneRegions(false).cloneOperands(false);
+  for (auto zippedBlocks : llvm::zip(*src, newBlocksRange)) {
+    Block &sourceBlock = std::get<0>(zippedBlocks);
+    Block &clonedBlock = std::get<1>(zippedBlocks);
+    // Clone and remap the operations within this block.
+    for (Operation &op : sourceBlock) {
+      clonedBlock.push_back(clone(&op, mapper, cloneOptions, opMap));
+    }
+  }
+
+  // Finally now that all operation results have been mapped, set the operands
+  // and clone the regions.
+  SmallVector<Value> operands;
+  for (auto zippedBlocks : llvm::zip(*src, newBlocksRange)) {
+    for (auto ops :
+         llvm::zip(std::get<0>(zippedBlocks), std::get<1>(zippedBlocks))) {
+      Operation &source = std::get<0>(ops);
+      Operation &clone = std::get<1>(ops);
+
+      operands.resize(source.getNumOperands());
+      llvm::transform(
+          source.getOperands(), operands.begin(),
+          [&](Value operand) { return mapper.lookupOrDefault(operand); });
+      clone.setOperands(operands);
+
+      for (auto regions : llvm::zip(source.getRegions(), clone.getRegions()))
+        cloneInto(&std::get<0>(regions), &std::get<1>(regions), mapper, opMap);
+    }
+  }
+}
+
 mlir::func::FuncOp CloneFunctionWithReturns(
     DerivativeMode mode, unsigned width, FunctionOpInterface F,
     BlockAndValueMapping &ptrInputs, ArrayRef<DIFFE_TYPE> constant_args,
@@ -110,7 +232,8 @@ mlir::func::FuncOp CloneFunctionWithReturns(
     SmallPtrSetImpl<mlir::Value> &nonconstants,
     SmallPtrSetImpl<mlir::Value> &returnvals, ReturnType returnValue,
     DIFFE_TYPE returnType, Twine name, BlockAndValueMapping &VMap,
-    bool diffeReturnArg, mlir::Type additionalArg) {
+    std::map<Operation *, Operation *> &OpMap, bool diffeReturnArg,
+    mlir::Type additionalArg) {
   assert(!F.getBody().empty());
   // F = preprocessForClone(F, mode);
   // llvm::ValueToValueMapTy VMap;
@@ -133,7 +256,7 @@ mlir::func::FuncOp CloneFunctionWithReturns(
   ((Operation *)F)->getParentOfType<ModuleOp>().push_back(NewF);
   SymbolTable::setSymbolVisibility(NewF, SymbolTable::Visibility::Private);
 
-  F.getBody().cloneInto(&NewF.getBody(), VMap);
+  cloneInto(&F.getBody(), &NewF.getBody(), VMap, OpMap);
 
   {
     auto &blk = NewF.getBody().front();
@@ -179,6 +302,7 @@ public:
   FunctionOpInterface oldFunc;
   BlockAndValueMapping invertedPointers;
   BlockAndValueMapping originalToNewFn;
+  std::map<Operation *, Operation *> originalToNewFnOps;
 
   MTypeAnalysis &TA;
   MTypeResults TR;
@@ -206,17 +330,14 @@ public:
     return originalToNewFn.lookupOrNull(originst);
   }
   Operation *getNewFromOriginal(Operation *originst) const {
-    // TODO
-    llvm_unreachable("getNewFromOriginal op not handled");
-    /*
-    if (!originalToNewFn.contains(originst)) {
-        llvm::errs() << oldFunc << "\n";
-        llvm::errs() << newFunc << "\n";
-        llvm::errs() << originst << "\n";
-        llvm_unreachable("Could not get new from original");
+    auto found = originalToNewFnOps.find(originst);
+    if (found == originalToNewFnOps.end()) {
+      llvm::errs() << oldFunc << "\n";
+      llvm::errs() << newFunc << "\n";
+      llvm::errs() << originst << "\n";
+      llvm_unreachable("Could not get new from original");
     }
-    return originalToNewFn.lookupOrNull(originst);
-    */
+    return found->second;
   }
   mlir::Type getShadowType(mlir::Type T) const {
     return ::getShadowType(T, width);
@@ -227,11 +348,14 @@ public:
                  const SmallPtrSetImpl<mlir::Value> &constantvalues_,
                  const SmallPtrSetImpl<mlir::Value> &activevals_,
                  DIFFE_TYPE ReturnActivity, ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
-                 BlockAndValueMapping &originalToNewFn_, DerivativeMode mode,
-                 unsigned width, bool omp)
+                 BlockAndValueMapping &originalToNewFn_,
+                 std::map<Operation *, Operation *> &originalToNewFnOps_,
+                 DerivativeMode mode, unsigned width, bool omp)
       : newFunc(newFunc_), Logic(Logic), mode(mode), oldFunc(oldFunc_), TA(TA_),
         TR(TR_), omp(omp), width(width), ArgDiffeTypes(ArgDiffeTypes_),
-        originalToNewFn(originalToNewFn_), invertedPointers(invertedPointers_) {
+        originalToNewFn(originalToNewFn_),
+        originalToNewFnOps(originalToNewFnOps_),
+        invertedPointers(invertedPointers_) {
 
     /*
     for (BasicBlock &BB : *oldFunc) {
@@ -291,7 +415,43 @@ public:
       return invertedPointers.lookupOrNull(v);
     return getNewFromOriginal(v);
   }
+  void setDiffe(mlir::Value val, mlir::Value toset, OpBuilder &BuilderM) {
+    /*
+  if (auto arg = dyn_cast<Argument>(val))
+    assert(arg->getParent() == oldFunc);
+  if (auto inst = dyn_cast<Instruction>(val))
+    assert(inst->getParent()->getParent() == oldFunc);
+    */
+    if (isConstantValue(val)) {
+      llvm::errs() << newFunc << "\n";
+      llvm::errs() << val << "\n";
+    }
+    assert(!isConstantValue(val));
+    if (mode == DerivativeMode::ForwardMode ||
+        mode == DerivativeMode::ForwardModeSplit) {
+      assert(getShadowType(val.getType()) == toset.getType());
+      auto found = invertedPointers.lookupOrNull(val);
+      assert(found != nullptr);
+      auto placeholder = found.getDefiningOp<enzyme::PlaceholderOp>();
+      invertedPointers.erase(val);
+      // replaceAWithB(placeholder, toset);
+      placeholder.replaceAllUsesWith(toset);
+      erase(placeholder);
+      invertedPointers.map(val, toset);
+      return;
+    }
+    /*
+    Value *tostore = getDifferential(val);
+    if (toset->getType() != tostore->getType()->getPointerElementType()) {
+      llvm::errs() << "toset:" << *toset << "\n";
+      llvm::errs() << "tostore:" << *tostore << "\n";
+    }
+    assert(toset->getType() == tostore->getType()->getPointerElementType());
+    BuilderM.CreateStore(toset, tostore);
+    */
+  }
   void forceAugmentedReturns() {
+    // TODO also block arguments
     // assert(TR.getFunction() == oldFunc);
 
     for (mlir::Block &oBB : oldFunc.getBody().getBlocks()) {
@@ -377,11 +537,13 @@ public:
                       const SmallPtrSetImpl<mlir::Value> &returnvals_,
                       DIFFE_TYPE ActiveReturn,
                       ArrayRef<DIFFE_TYPE> constant_values,
-                      BlockAndValueMapping &origToNew_, DerivativeMode mode,
-                      unsigned width, bool omp)
+                      BlockAndValueMapping &origToNew_,
+                      std::map<Operation *, Operation *> &origToNewOps_,
+                      DerivativeMode mode, unsigned width, bool omp)
       : MGradientUtils(Logic, newFunc_, oldFunc_, TA, TR, invertedPointers_,
                        constantvalues_, returnvals_, ActiveReturn,
-                       constant_values, origToNew_, mode, width, omp) {
+                       constant_values, origToNew_, origToNewOps_, mode, width,
+                       omp) {
     /* TODO
     assert(reverseBlocks.size() == 0);
     if (mode == DerivativeMode::ForwardMode ||
@@ -426,6 +588,7 @@ public:
       prefix += std::to_string(width);
 
     BlockAndValueMapping originalToNew;
+    std::map<Operation *, Operation *> originalToNewOps;
 
     SmallPtrSet<mlir::Value, 1> returnvals;
     SmallPtrSet<mlir::Value, 1> constant_values;
@@ -434,13 +597,13 @@ public:
     auto newFunc = CloneFunctionWithReturns(
         mode, width, todiff, invertedPointers, constant_args, constant_values,
         nonconstant_values, returnvals, returnValue, retType,
-        prefix + todiff.getName(), originalToNew, diffeReturnArg,
-        additionalArg);
+        prefix + todiff.getName(), originalToNew, originalToNewOps,
+        diffeReturnArg, additionalArg);
     MTypeResults TR; // TODO
-    return new MDiffeGradientUtils(Logic, newFunc, todiff, TA, TR,
-                                   invertedPointers, constant_values,
-                                   nonconstant_values, retType, constant_args,
-                                   originalToNew, mode, width, omp);
+    return new MDiffeGradientUtils(
+        Logic, newFunc, todiff, TA, TR, invertedPointers, constant_values,
+        nonconstant_values, retType, constant_args, originalToNew,
+        originalToNewOps, mode, width, omp);
   }
 };
 
@@ -449,10 +612,34 @@ public:
   MGradientUtils *gutils;
   MAdjointGenerator(MGradientUtils *gutils) : gutils(gutils) {}
 
-  void eraseIfUnused(Operation &op, bool erase, bool check) {
+  void eraseIfUnused(Operation &op, bool erase = true, bool check = true) {
     // TODO
   }
   void visit(Operation *op) {
+    if (gutils->mode == DerivativeMode::ForwardMode) {
+      if (auto mulOp = dyn_cast<arith::MulFOp>(op)) {
+        // Derivative of r = a * b -> dr = a * db + da * b
+        if (!gutils->isConstantValue(mulOp)) {
+          mlir::Value res = nullptr;
+          OpBuilder Builder2(gutils->getNewFromOriginal(op));
+          for (int i = 0; i < 2; i++) {
+            if (!gutils->isConstantValue(mulOp.getOperand(i))) {
+              Value tmp = Builder2.create<arith::MulFOp>(
+                  mulOp.getLoc(),
+                  gutils->invertPointerM(mulOp.getOperand(i), Builder2),
+                  gutils->getNewFromOriginal(mulOp.getOperand(1 - i)));
+              if (res == nullptr)
+                res = tmp;
+              else
+                res = Builder2.create<arith::AddFOp>(mulOp.getLoc(), res, tmp);
+            }
+          }
+          gutils->setDiffe(mulOp, res, Builder2);
+        }
+        eraseIfUnused(*op);
+        return;
+      }
+    }
     // TODO
   }
 };

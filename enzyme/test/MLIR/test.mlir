@@ -16,6 +16,9 @@ module {
 // CHECK-NEXT:     return %0 : f64
 // CHECK-NEXT:   }
 // CHECK:   func.func private @fwddiffesquare(%arg0: f64, %arg1: f64) -> f64 {
-// CHECK-NEXT:     %0 = arith.mulf %arg0, %arg0 : f64
-// CHECK-NEXT:     return %0 : f64
+// CHECK-NEXT:     %0 = arith.mulf %arg1, %arg0 : f64
+// CHECK-NEXT:     %1 = arith.mulf %arg1, %arg0 : f64
+// CHECK-NEXT:     %2 = arith.addf %0, %1 : f64
+// CHECK-NEXT:     %3 = arith.mulf %arg0, %arg0 : f64
+// CHECK-NEXT:     return %2 : f64
 // CHECK-NEXT:   }
