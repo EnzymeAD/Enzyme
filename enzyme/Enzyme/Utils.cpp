@@ -57,7 +57,8 @@ LLVMValueRef (*EnzymePostCacheStore)(LLVMValueRef, LLVMBuilderRef) = nullptr;
 
 llvm::Instruction *PostCacheStore(llvm::StoreInst *SI, llvm::IRBuilder<> &B) {
   if (EnzymePostCacheStore) {
-    return unwrap(EnzymePostCacheStore(wrap(SI), wrap(&B)));
+    return cast_or_null<Instruction>(
+        unwrap(EnzymePostCacheStore(wrap(SI), wrap(&B))));
   }
   return nullptr;
 }

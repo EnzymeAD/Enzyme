@@ -883,6 +883,10 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
         storealloc->setMetadata(
             LLVMContext::MD_invariant_group,
             CachePointerInvariantGroups[std::make_pair((Value *)alloc, i)]);
+        scopeInstructions[alloc].push_back(storealloc);
+        if (auto post = PostCacheStore(storealloc, allocationBuilder)) {
+          scopeInstructions[alloc].push_back(post);
+        }
       } else {
         // Reallocate memory dynamically as a fallback
         // TODO change this to a power-of-two allocation strategy
@@ -927,6 +931,10 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
         // Unlike the static case we can not mark the memory as invariant
         // since we are reloading/storing based off the number of loop
         // iterations
+        scopeInstructions[alloc].push_back(storealloc);
+        if (auto post = PostCacheStore(storealloc, build)) {
+          scopeInstructions[alloc].push_back(post);
+        }
       }
 
       // Regardless of how allocated (dynamic vs static), mark it
@@ -936,10 +944,6 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
 #else
       storealloc->setAlignment(alignSize);
 #endif
-      scopeInstructions[alloc].push_back(storealloc);
-      if (auto post = PostCacheStore(storealloc, build)) {
-        scopeInstructions[alloc].push_back(post);
-      }
     }
 
     // Free the memory, if requested
