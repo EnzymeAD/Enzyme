@@ -137,6 +137,11 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
 
   Value *gVal;
 
+  Value *prevSize =
+      B.CreateSelect(B.CreateICmpEQ(size, ConstantInt::get(size->getType(), 1)),
+                     ConstantInt::get(next->getType(), 0),
+                     B.CreateLShr(next, ConstantInt::get(next->getType(), 1)));
+
   if (!custom) {
     auto reallocF = M.getOrInsertFunction("realloc", allocType, allocType,
                                           Type::getInt64Ty(M.getContext()));
@@ -149,14 +154,22 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
         newFunc->getParent()->getDataLayout().getTypeAllocSizeInBits(RT) / 8);
     auto elSize = B.CreateUDiv(next, tsize, "", /*isExact*/ true);
     gVal = CreateAllocation(B, RT, elSize, "", nullptr, nullptr);
-  }
-  gVal = B.CreatePointerCast(gVal, ptr->getType());
-  if (ZeroInit) {
-    Value *prevSize = B.CreateSelect(
-        B.CreateICmpEQ(size, ConstantInt::get(size->getType(), 1)),
-        ConstantInt::get(next->getType(), 0),
-        B.CreateLShr(next, ConstantInt::get(next->getType(), 1)));
 
+    gVal = B.CreatePointerCast(
+        gVal, PointerType::get(
+                  Type::getInt8Ty(gVal->getContext()),
+                  cast<PointerType>(gVal->getType())->getAddressSpace()));
+    auto pVal = B.CreatePointerCast(ptr, gVal->getType());
+
+    Value *margs[] = {gVal, pVal, prevSize,
+                      ConstantInt::getFalse(M.getContext())};
+    Type *tys[] = {margs[0]->getType(), margs[1]->getType(),
+                   margs[2]->getType()};
+    auto memsetF = Intrinsic::getDeclaration(&M, Intrinsic::memcpy, tys);
+    B.CreateCall(memsetF, margs);
+  }
+
+  if (ZeroInit && !custom) {
     Value *zeroSize = B.CreateSub(next, prevSize);
 
     Value *margs[] = {
@@ -174,6 +187,7 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
     auto memsetF = Intrinsic::getDeclaration(&M, Intrinsic::memset, tys);
     B.CreateCall(memsetF, margs);
   }
+  gVal = B.CreatePointerCast(gVal, ptr->getType());
 
   B.CreateBr(ok);
   B.SetInsertPoint(ok);
