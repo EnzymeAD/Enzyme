@@ -11,9 +11,9 @@
 
 // TODO: this shouldn't depend on specific dialects except Enzyme.
 #include "mlir/Dialect/Arithmetic/IR/Arithmetic.h"
-#include "mlir/IR/BuiltinOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/BuiltinOps.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;

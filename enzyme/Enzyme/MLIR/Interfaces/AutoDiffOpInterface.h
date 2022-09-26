@@ -27,7 +27,7 @@ class MGradientUtils;
 } // namespace enzyme
 } // namespace mlir
 
-#include "mlir/IR/OpDefinition.h"
 #include "MLIR/Interfaces/AutoDiffOpInterface.h.inc"
+#include "mlir/IR/OpDefinition.h"
 
 #endif // ENZYME_MLIR_INTERFACES_AUTODIFFOPINTERFACE_H

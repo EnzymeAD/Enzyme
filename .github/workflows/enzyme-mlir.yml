@@ -24,6 +24,7 @@ jobs:
     steps:
     - name: add llvm 
       run: |
+          sudo rm -f /etc/apt/sources.list.d/*llvm*.list
           sudo apt-get update
           sudo apt-get install -y ninja-build git autoconf cmake gcc g++ libtool gfortran python3 
     - uses: actions/checkout@v2
