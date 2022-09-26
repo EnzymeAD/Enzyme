@@ -18,7 +18,7 @@ jobs:
       matrix:
         build: ["Release", "Debug"] # "RelWithDebInfo"
         llbuild: ["RelWithDebInfo"]
-        os: [self-hosted]
+        os: [openstack22]
   
     timeout-minutes: 500 
     steps:
@@ -31,6 +31,7 @@ jobs:
       with:
         repository: 'llvm/Polygeist'
         path: 'Polygeist'
+        submodules: true
 
     - name: Cache MLIR
       id: cache-mlir
@@ -42,9 +43,6 @@ jobs:
     - name: MLIR build
       if: steps.cache-mlir.outputs.cache-hit != 'true'
       run: |
-        cd Polygeist
-        git submodule update --init --recursive
-        cd ..
         mkdir mlir-build
         cd mlir-build
         cmake ../Polygeist/llvm-project/llvm -GNinja -DLLVM_ENABLE_PROJECTS="llvm;clang;mlir;openmp" -DCMAKE_BUILD_TYPE=${{ matrix.llbuild }} -DLLVM_ENABLE_ASSERTIONS=ON -DLLVM_TARGETS_TO_BUILD=X86
