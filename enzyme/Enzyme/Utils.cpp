@@ -81,8 +81,11 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
     auto P = B.CreatePHI(i64, 1);
     CallInst *malloccall;
     CreateAllocation(B, RT, P, "tapemem", &malloccall, nullptr)->getType();
-    if (auto F = getFunctionFromCall(malloccall))
+    if (auto F = getFunctionFromCall(malloccall)) {
       custom = F->getName() != "malloc";
+      if (F->getName() == "julia.gc_alloc_obj")
+        ZeroInit = false;
+    }
     allocType = cast<PointerType>(malloccall->getType());
     BB->eraseFromParent();
   }
@@ -176,7 +179,7 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
     B.CreateCall(memsetF, margs);
   }
 
-  if (ZeroInit && !custom) {
+  if (ZeroInit) {
     Value *zeroSize = B.CreateSub(next, prevSize);
 
     Value *margs[] = {
@@ -310,6 +313,9 @@ Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,
   if (caller) {
     *caller = malloccall;
   }
+  if (auto F = getFunctionFromCall(malloccall))
+    if (F->getName() == "julia.gc_alloc_obj")
+      ZeroMem = nullptr;
   if (ZeroMem) {
     auto PT = cast<PointerType>(malloccall->getType());
     Value *tozero = malloccall;
