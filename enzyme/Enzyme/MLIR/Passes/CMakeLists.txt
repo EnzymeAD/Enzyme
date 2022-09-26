@@ -30,4 +30,6 @@ add_mlir_dialect_library(MLIREnzymeTransforms
   MLIRSideEffectInterfaces
   MLIRSCFToControlFlow
   MLIRTransformUtils
+
+  MLIREnzymeAutoDiffInterface
 )
