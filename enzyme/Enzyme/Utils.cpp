@@ -52,15 +52,22 @@ LLVMValueRef (*CustomAllocator)(LLVMBuilderRef, LLVMTypeRef,
 LLVMValueRef (*CustomDeallocator)(LLVMBuilderRef, LLVMValueRef) = nullptr;
 void (*CustomRuntimeInactiveError)(LLVMBuilderRef, LLVMValueRef,
                                    LLVMValueRef) = nullptr;
-LLVMValueRef (*EnzymePostCacheStore)(LLVMValueRef, LLVMBuilderRef) = nullptr;
+LLVMValueRef (*EnzymePostCacheStore)(LLVMValueRef, LLVMBuilderRef,
+                                     LLVMValueRef *) = nullptr;
 }
 
-llvm::Instruction *PostCacheStore(llvm::StoreInst *SI, llvm::IRBuilder<> &B) {
+llvm::SmallVector<llvm::Instruction *, 2> PostCacheStore(llvm::StoreInst *SI,
+                                                         llvm::IRBuilder<> &B) {
+  SmallVector<llvm::Instruction *, 2> res;
   if (EnzymePostCacheStore) {
-    return cast_or_null<Instruction>(
-        unwrap(EnzymePostCacheStore(wrap(SI), wrap(&B))));
+    LLVMValueRef V2 = nullptr;
+    auto I = EnzymePostCacheStore(wrap(SI), wrap(&B), &V2);
+    if (V2)
+      res.push_back(cast<Instruction>(unwrap(V2)));
+    if (I)
+      res.push_back(cast<Instruction>(unwrap(I)));
   }
-  return nullptr;
+  return res;
 }
 
 Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
@@ -208,21 +215,9 @@ llvm::Value *CreateReAllocation(llvm::IRBuilder<> &B, llvm::Value *prev,
       InnerCount->getType(),
       newFunc->getParent()->getDataLayout().getTypeAllocSizeInBits(T) / 8);
 
-  llvm::PointerType *allocType;
-  {
-    auto i64 = Type::getInt64Ty(newFunc->getContext());
-    BasicBlock *BB = BasicBlock::Create(B.getContext(), "entry", newFunc);
-    IRBuilder<> B(BB);
-    auto P = B.CreatePHI(i64, 1);
-    CallInst *malloccall;
-    CreateAllocation(B, T, P, "tapemem", &malloccall, nullptr)->getType();
-    allocType = cast<PointerType>(malloccall->getType());
-    BB->eraseFromParent();
-  }
-
   Value *idxs[] = {
       /*ptr*/
-      B.CreatePointerCast(prev, allocType),
+      prev,
       /*incrementing value to increase when it goes past a power of two*/
       OuterCount,
       /*buffer size (element x subloops)*/
@@ -235,13 +230,7 @@ llvm::Value *CreateReAllocation(llvm::IRBuilder<> &B, llvm::Value *prev,
                    idxs, Name);
   if (caller)
     *caller = realloccall;
-  Value *allocation = realloccall;
-  if (allocation->getType()->getPointerElementType() != T)
-    allocation = B.CreateBitCast(
-        allocation,
-        PointerType::get(
-            T, cast<PointerType>(allocation->getType())->getAddressSpace()));
-  return allocation;
+  return realloccall;
 }
 
 Value *CreateAllocation(IRBuilder<> &Builder, llvm::Type *T, Value *Count,

@@ -772,6 +772,7 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
   // Thus it begins with the underlying type, and adds pointers
   // to the previous type.
   SmallVector<Type *, 4> types = {T};
+  SmallVector<PointerType *, 4> malloctypes;
   bool isi1 = T->isIntegerTy() && cast<IntegerType>(T)->getBitWidth() == 1;
   if (EfficientBoolCache && isi1 && sublimits.size() != 0)
     types[0] = Type::getInt8Ty(T->getContext());
@@ -788,6 +789,7 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
                                                      "tmpfortypecalc",
                                                      &malloccall, nullptr)
                                         ->getType());
+      malloctypes.push_back(cast<PointerType>(malloccall->getType()));
       SmallVector<Instruction *, 2> toErase;
       for (auto &I : *BB)
         toErase.push_back(&I);
@@ -876,6 +878,11 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
             allocationBuilder, myType, size, name + "_malloccache", &malloccall,
             /*ZeroMem*/ (EnzymeZeroCache && i == 0) ? &ZeroInst : nullptr);
 
+        scopeInstructions[alloc].push_back(malloccall);
+        if (firstallocation != malloccall)
+          scopeInstructions[alloc].push_back(
+              cast<Instruction>(firstallocation));
+
         for (auto &actx : sublimits[i].second) {
           if (actx.first.offset) {
             malloccall->setMetadata("enzyme_ompfor",
@@ -902,11 +909,12 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
             LLVMContext::MD_invariant_group,
             CachePointerInvariantGroups[std::make_pair((Value *)alloc, i)]);
         scopeInstructions[alloc].push_back(storealloc);
-        if (auto post = PostCacheStore(storealloc, allocationBuilder)) {
+        for (auto post : PostCacheStore(storealloc, allocationBuilder)) {
           scopeInstructions[alloc].push_back(post);
         }
       } else {
         llvm::PointerType *allocType = cast<PointerType>(types[i + 1]);
+        llvm::PointerType *mallocType = malloctypes[i];
 
         // Reallocate memory dynamically as a fallback
         // TODO change this to a power-of-two allocation strategy
@@ -922,19 +930,35 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
         Value *allocation = build.CreateLoad(storeInto);
 #endif
 
+        if (allocation->getType() != mallocType) {
+          auto I =
+              cast<Instruction>(build.CreateBitCast(allocation, mallocType));
+          scopeInstructions[alloc].push_back(I);
+          allocation = I;
+        }
+
         CallInst *realloccall = nullptr;
-        allocation = CreateReAllocation(
+        auto reallocation = CreateReAllocation(
             build, allocation, myType, containedloops.back().first.incvar, size,
             name + "_realloccache", &realloccall, EnzymeZeroCache && i == 0);
 
+        scopeInstructions[alloc].push_back(cast<Instruction>(reallocation));
+
+        if (reallocation->getType() != allocType) {
+          auto I =
+              cast<Instruction>(build.CreateBitCast(reallocation, allocType));
+          scopeInstructions[alloc].push_back(I);
+          reallocation = I;
+        }
+
         scopeAllocs[alloc].push_back(realloccall);
 
-        storealloc = build.CreateStore(allocation, storeInto);
+        storealloc = build.CreateStore(reallocation, storeInto);
         // Unlike the static case we can not mark the memory as invariant
         // since we are reloading/storing based off the number of loop
         // iterations
         scopeInstructions[alloc].push_back(storealloc);
-        if (auto post = PostCacheStore(storealloc, build)) {
+        for (auto post : PostCacheStore(storealloc, build)) {
           scopeInstructions[alloc].push_back(post);
         }
       }
@@ -1405,7 +1429,7 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
   storeinst->setAlignment(align);
 #endif
   scopeInstructions[cache].push_back(storeinst);
-  if (auto post = PostCacheStore(storeinst, v)) {
+  for (auto post : PostCacheStore(storeinst, v)) {
     scopeInstructions[cache].push_back(post);
   }
 }
