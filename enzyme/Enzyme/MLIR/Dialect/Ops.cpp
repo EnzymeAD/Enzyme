@@ -1,4 +1,4 @@
-//===- EnzymeOps.cpp - Enzyme dialect ops ---------------*- C++ -*-===//
+//===- EnzymeOps.cpp - Enzyme dialect ops -----------------------*- C++ -*-===//
 //
 // This file is licensed under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -16,9 +16,6 @@
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
-#define GET_OP_CLASSES
-#include "Dialect/EnzymeOps.cpp.inc"
-
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arithmetic/Utils/Utils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -30,6 +27,9 @@
 
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Support/Debug.h"
+
+#define GET_OP_CLASSES
+#include "Dialect/EnzymeOps.cpp.inc"
 
 #define DEBUG_TYPE "enzyme"
 

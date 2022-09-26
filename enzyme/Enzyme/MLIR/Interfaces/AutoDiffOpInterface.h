@@ -17,6 +17,8 @@
 namespace mlir {
 
 class OpBuilder;
+class Operation;
+class LogicalResult;
 
 namespace enzyme {
 
@@ -25,6 +27,7 @@ class MGradientUtils;
 } // namespace enzyme
 } // namespace mlir
 
+#include "mlir/IR/OpDefinition.h"
 #include "MLIR/Interfaces/AutoDiffOpInterface.h.inc"
 
 #endif // ENZYME_MLIR_INTERFACES_AUTODIFFOPINTERFACE_H

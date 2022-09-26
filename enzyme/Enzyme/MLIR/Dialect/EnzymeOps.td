@@ -1,4 +1,4 @@
-//===- EnzymeOps.td - Enzyme dialect ops ----------------*- tablegen -*-===//
+//===- EnzymeOps.td - Enzyme dialect ops ------------------*- tablegen -*-===//
 //
 // This file is licensed under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -19,7 +19,7 @@ include "mlir/Dialect/LLVMIR/LLVMOpBase.td"
 include "mlir/Dialect/LLVMIR/LLVMOpsInterfaces.td"
 
 def Activity : I32EnumAttr<"Activity",
-    "The possible permutations of the lanes storing B available in an MFMA",
+    "Possible activity states for variables",
     [
       I32EnumAttrCase<"enzyme_out",  0>,
       I32EnumAttrCase<"enzyme_dup",  1>,
@@ -33,7 +33,7 @@ def Activity : I32EnumAttr<"Activity",
 def ActivityAttr : EnumAttr<Enzyme_Dialect, Activity, "activity">;
 
 def ActivityArrayAttr : TypedArrayAttrBase<
-    ActivityAttr, "SPIR-V extension array attribute">;
+    ActivityAttr, "Array of argument activity states">;
 
 def PlaceholderOp : Enzyme_Op<"placeholder",
     [NoSideEffect]> {

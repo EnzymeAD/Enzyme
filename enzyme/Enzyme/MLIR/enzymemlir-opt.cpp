@@ -1,4 +1,4 @@
-//===- polygeist-opt.cpp - The polygeist-opt driver -----------------------===//
+//===- enzymemlir-opt.cpp - The enzymemlir-opt driver ---------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,7 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements the 'polygeist-opt' tool, which is the polygeist analog
+// This file implements the 'enzymemlir-opt' tool, which is the enzyme analog
 // of mlir-opt, used to drive compiler passes, e.g. for testing.
 //
 //===----------------------------------------------------------------------===//
@@ -73,34 +73,17 @@ int main(int argc, char **argv) {
   mlir::registerLoopInvariantCodeMotionPass();
   mlir::registerConvertSCFToOpenMPPass();
   mlir::registerAffinePasses();
-
+  
   registry.addExtension(+[](MLIRContext *ctx, LLVM::LLVMDialect *dialect) {
     LLVM::LLVMFunctionType::attachInterface<MemRefInsider>(*ctx);
-  });
-  registry.addExtension(+[](MLIRContext *ctx, LLVM::LLVMDialect *dialect) {
     LLVM::LLVMArrayType::attachInterface<MemRefInsider>(*ctx);
-  });
-  registry.addExtension(+[](MLIRContext *ctx, LLVM::LLVMDialect *dialect) {
     LLVM::LLVMPointerType::attachInterface<MemRefInsider>(*ctx);
-  });
-  registry.addExtension(+[](MLIRContext *ctx, LLVM::LLVMDialect *dialect) {
     LLVM::LLVMStructType::attachInterface<MemRefInsider>(*ctx);
-  });
-  registry.addExtension(+[](MLIRContext *ctx, memref::MemRefDialect *dialect) {
     MemRefType::attachInterface<PtrElementModel<MemRefType>>(*ctx);
-  });
-
-  registry.addExtension(+[](MLIRContext *ctx, LLVM::LLVMDialect *dialect) {
     LLVM::LLVMStructType::attachInterface<
         PtrElementModel<LLVM::LLVMStructType>>(*ctx);
-  });
-
-  registry.addExtension(+[](MLIRContext *ctx, LLVM::LLVMDialect *dialect) {
     LLVM::LLVMPointerType::attachInterface<
         PtrElementModel<LLVM::LLVMPointerType>>(*ctx);
-  });
-
-  registry.addExtension(+[](MLIRContext *ctx, LLVM::LLVMDialect *dialect) {
     LLVM::LLVMArrayType::attachInterface<PtrElementModel<LLVM::LLVMArrayType>>(
         *ctx);
   });

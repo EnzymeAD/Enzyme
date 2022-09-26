@@ -1,4 +1,4 @@
-//===- EnzymeMLIRPass.cpp - //
+//===- EnzymeMLIRPass.cpp - Replace calls with their derivatives ------------ //
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -9,7 +9,6 @@
 // This file implements a pass to lower gpu kernels in NVVM/gpu dialects into
 // a generic parallel for representation
 //===----------------------------------------------------------------------===//
-//#include "PassDetails.h"
 
 #include "../../EnzymeLogic.h"
 #include "Dialect/Ops.h"
