@@ -2632,6 +2632,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   }
 
   clearFunctionAttributes(NewF);
+  PPC.LowerAllocAddr(NewF);
 
   if (llvm::verifyFunction(*NewF, &llvm::errs())) {
     llvm::errs() << *gutils->oldFunc << "\n";
@@ -4030,6 +4031,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   auto nf = gutils->newFunc;
   delete gutils;
 
+  PPC.LowerAllocAddr(nf);
+
   {
     PreservedAnalyses PA;
     PPC.FAM.invalidate(*nf, PA);
@@ -4469,6 +4472,8 @@ Function *EnzymeLogic::CreateForwardDiff(
   auto nf = gutils->newFunc;
   delete gutils;
   delete maker;
+
+  PPC.LowerAllocAddr(nf);
 
   {
     PreservedAnalyses PA;
