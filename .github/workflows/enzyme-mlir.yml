@@ -68,7 +68,7 @@ jobs:
       run: |
           cd enzyme && mkdir build
           cd build 
-          cmake .. -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=`pwd`/../mlir-build -DENZYME_MLIR=ON
+          cmake .. -GNinja -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=`pwd`/../../mlir-build -DENZYME_MLIR=ON
     - name: make
       run: cd enzyme/build && ninja
     - name: make check-enzymemlir
