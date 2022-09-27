@@ -10,11 +10,12 @@
 #include "Dialect/Ops.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
+#include "mlir/IR/FunctionInterfaces.h"
 #include "mlir/IR/Matchers.h"
+#include "mlir/IR/SymbolTable.h"
 
 // TODO: this shouldn't depend on specific dialects except Enzyme.
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
-#include "mlir/IR/BuiltinOps.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -24,7 +25,7 @@ static inline Type getShadowType(Type type, unsigned width = 1) {
 }
 
 mlir::enzyme::MGradientUtils::MGradientUtils(
-    MEnzymeLogic &Logic, mlir::func::FuncOp newFunc_,
+    MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
     FunctionOpInterface oldFunc_, MTypeAnalysis &TA_, MTypeResults TR_,
     BlockAndValueMapping &invertedPointers_,
     const SmallPtrSetImpl<mlir::Value> &constantvalues_,
@@ -492,7 +493,7 @@ void cloneInto(Region *src, Region *dest, Region::iterator destPos,
   }
 }
 
-mlir::func::FuncOp CloneFunctionWithReturns(
+FunctionOpInterface CloneFunctionWithReturns(
     DerivativeMode mode, unsigned width, FunctionOpInterface F,
     BlockAndValueMapping &ptrInputs, ArrayRef<DIFFE_TYPE> constant_args,
     SmallPtrSetImpl<mlir::Value> &constants,
@@ -518,9 +519,15 @@ mlir::func::FuncOp CloneFunctionWithReturns(
   }
   */
 
-  // Create the new function...
-  auto NewF = mlir::func::FuncOp::create(F.getLoc(), name.str(), FTy);
-  ((Operation *)F)->getParentOfType<ModuleOp>().push_back(NewF);
+  // Create the new function. This needs to go through the raw Operation API
+  // instead of a concrete builder for genericity.
+  auto NewF = cast<FunctionOpInterface>(F->cloneWithoutRegions());
+  SymbolTable::setSymbolName(NewF, name.str());
+  NewF.setType(FTy);
+
+  Operation *parent = F->getParentWithTrait<OpTrait::SymbolTable>();
+  SymbolTable table(parent);
+  table.insert(NewF);
   SymbolTable::setSymbolVisibility(NewF, SymbolTable::Visibility::Private);
 
   cloneInto(&F.getBody(), &NewF.getBody(), VMap, OpMap);
@@ -552,7 +559,7 @@ mlir::func::FuncOp CloneFunctionWithReturns(
 
 class MDiffeGradientUtils : public MGradientUtils {
 public:
-  MDiffeGradientUtils(MEnzymeLogic &Logic, mlir::func::FuncOp newFunc_,
+  MDiffeGradientUtils(MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
                       FunctionOpInterface oldFunc_, MTypeAnalysis &TA,
                       MTypeResults TR, BlockAndValueMapping &invertedPointers_,
                       const SmallPtrSetImpl<mlir::Value> &constantvalues_,
@@ -616,7 +623,7 @@ public:
     SmallPtrSet<mlir::Value, 1> constant_values;
     SmallPtrSet<mlir::Value, 1> nonconstant_values;
     BlockAndValueMapping invertedPointers;
-    auto newFunc = CloneFunctionWithReturns(
+    FunctionOpInterface newFunc = CloneFunctionWithReturns(
         mode, width, todiff, invertedPointers, constant_args, constant_values,
         nonconstant_values, returnvals, returnValue, retType,
         prefix + todiff.getName(), originalToNew, originalToNewOps,
@@ -751,7 +758,7 @@ void createTerminator(MDiffeGradientUtils *gutils, mlir::Block *oBB,
 //===----------------------------------------------------------------------===//
 //===----------------------------------------------------------------------===//
 
-func::FuncOp mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
+FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
     FunctionOpInterface fn, DIFFE_TYPE retType,
     std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA, bool returnUsed,
     DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType,
@@ -780,8 +787,8 @@ func::FuncOp mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
       /*omp*/ false);
   ForwardCachedFunctions[tup] = gutils->newFunc;
 
-  insert_or_assign2<MForwardCacheKey, func::FuncOp>(ForwardCachedFunctions, tup,
-                                                    gutils->newFunc);
+  insert_or_assign2<MForwardCacheKey, FunctionOpInterface>(
+      ForwardCachedFunctions, tup, gutils->newFunc);
 
   // gutils->FreeMemory = freeMemory;
 

@@ -9,9 +9,6 @@
 #include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/IR/FunctionInterfaces.h"
 
-// TODO: this dependency should be dropped.
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-
 // TODO: no relative includes.
 #include "../../EnzymeLogic.h"
 
@@ -41,7 +38,7 @@ class MEnzymeLogic;
 class MGradientUtils {
 public:
   // From CacheUtility
-  mlir::func::FuncOp newFunc;
+  FunctionOpInterface newFunc;
 
   MEnzymeLogic &Logic;
   bool AtomicAdd;
@@ -62,7 +59,7 @@ public:
   mlir::Block *getNewFromOriginal(mlir::Block *originst) const;
   Operation *getNewFromOriginal(Operation *originst) const;
 
-  MGradientUtils(MEnzymeLogic &Logic, mlir::func::FuncOp newFunc_,
+  MGradientUtils(MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
                  FunctionOpInterface oldFunc_, MTypeAnalysis &TA_,
                  MTypeResults TR_, BlockAndValueMapping &invertedPointers_,
                  const SmallPtrSetImpl<mlir::Value> &constantvalues_,
@@ -156,8 +153,9 @@ public:
     }
   };
 
-  std::map<MForwardCacheKey, mlir::func::FuncOp> ForwardCachedFunctions;
-  mlir::func::FuncOp
+  std::map<MForwardCacheKey, FunctionOpInterface> ForwardCachedFunctions;
+
+  FunctionOpInterface
   CreateForwardDiff(FunctionOpInterface fn, DIFFE_TYPE retType,
                     std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
                     bool returnUsed, DerivativeMode mode, bool freeMemory,

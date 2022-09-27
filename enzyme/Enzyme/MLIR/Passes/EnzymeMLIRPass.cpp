@@ -17,6 +17,7 @@
 #include "Passes/Passes.h"
 #include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/FunctionInterfaces.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -76,14 +77,15 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
       volatile_args.push_back(!(mode == DerivativeMode::ReverseModeCombined));
     }
 
-    auto newFunc = Logic.CreateForwardDiff(
+    FunctionOpInterface newFunc = Logic.CreateForwardDiff(
         fn, retType, constants, TA,
         /*should return*/ false, mode, freeMemory, width,
         /*addedType*/ nullptr, type_args, volatile_args,
         /*augmented*/ nullptr);
 
     OpBuilder builder(CI);
-    auto dCI = builder.create<func::CallOp>(CI.getLoc(), newFunc, args);
+    auto dCI = builder.create<func::CallOp>(CI.getLoc(), newFunc.getName(),
+                                            newFunc.getResultTypes(), args);
     CI.replaceAllUsesWith(dCI);
     CI->erase();
   }
