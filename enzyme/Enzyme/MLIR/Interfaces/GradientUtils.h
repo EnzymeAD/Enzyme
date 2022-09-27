@@ -25,7 +25,9 @@ public:
 
 class MTypeAnalysis {
 public:
-  MFnTypeInfo getAnalyzedTypeInfo(FunctionOpInterface op) const {}
+  MFnTypeInfo getAnalyzedTypeInfo(FunctionOpInterface op) const {
+    return MFnTypeInfo();
+  }
 };
 
 class MTypeResults {

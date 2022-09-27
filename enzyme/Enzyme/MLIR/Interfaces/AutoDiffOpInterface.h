@@ -14,11 +14,13 @@
 #ifndef ENZYME_MLIR_INTERFACES_AUTODIFFOPINTERFACE_H
 #define ENZYME_MLIR_INTERFACES_AUTODIFFOPINTERFACE_H
 
+#include "mlir/IR/OpDefinition.h"
+
 namespace mlir {
 
 class OpBuilder;
 class Operation;
-class LogicalResult;
+struct LogicalResult;
 
 namespace enzyme {
 
@@ -28,6 +30,5 @@ class MGradientUtils;
 } // namespace mlir
 
 #include "MLIR/Interfaces/AutoDiffOpInterface.h.inc"
-#include "mlir/IR/OpDefinition.h"
 
 #endif // ENZYME_MLIR_INTERFACES_AUTODIFFOPINTERFACE_H
