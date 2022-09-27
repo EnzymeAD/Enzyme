@@ -4254,6 +4254,24 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
             llvm::errs() << *T << " - " << call << "\n";
             llvm_unreachable("Unknown type for libm");
           }
+        } else if (auto VT = dyn_cast<VectorType>(T)) {
+          // AFAICT there is no equivalent for VectorType?
+          // getElementCount only exposes isScalar and isVector
+          // both of which are len >= 1 by construction?
+          // assert(VT->getElementCount() >= 1);
+          if (VT->getElementType()->isFloatingPointTy())
+            updateAnalysis(
+                call.getArgOperand(i),
+                TypeTree(ConcreteType(VT->getElementType()->getScalarType()))
+                    .Only(-1),
+                &call);
+          else if (VT->getElementType()->isIntegerTy()) {
+            updateAnalysis(call.getArgOperand(i),
+                           TypeTree(BaseType::Integer).Only(-1), &call);
+          } else {
+            llvm::errs() << *T << " - " << call << "\n";
+            llvm_unreachable("Unknown type for libm");
+          }
         } else {
           llvm::errs() << *T << " - " << call << "\n";
           llvm_unreachable("Unknown type for libm");
