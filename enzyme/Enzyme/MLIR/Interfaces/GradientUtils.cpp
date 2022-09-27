@@ -9,10 +9,10 @@
 #include "Interfaces/GradientUtils.h"
 #include "Dialect/Ops.h"
 #include "Interfaces/AutoDiffOpInterface.h"
+#include "Interfaces/AutoDiffTypeInterface.h"
+#include "mlir/IR/Matchers.h"
 
 // TODO: this shouldn't depend on specific dialects except Enzyme.
-#include "Interfaces/AutoDiffTypeInterface.h"
-#include "mlir/Dialect/Arithmetic/IR/Arithmetic.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/BuiltinOps.h"
 
@@ -131,7 +131,7 @@ bool mlir::enzyme::MGradientUtils::isConstantValue(Value v) const {
   if (isa<mlir::IndexType>(v.getType()))
     return true;
 
-  if (v.getDefiningOp<arith::ConstantOp>())
+  if (matchPattern(v, m_Constant()))
     return true;
 
   // TODO
