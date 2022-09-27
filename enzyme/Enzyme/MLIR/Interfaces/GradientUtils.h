@@ -73,10 +73,15 @@ public:
                  std::map<Operation *, Operation *> &originalToNewFnOps_,
                  DerivativeMode mode, unsigned width, bool omp);
   void erase(Operation *op) { op->erase(); }
+  void eraseIfUnused(Operation *op, bool erase = true, bool check = true) {
+    // TODO
+  }
   bool isConstantValue(mlir::Value v) const;
   mlir::Value invertPointerM(mlir::Value v, OpBuilder &Builder2);
   void setDiffe(mlir::Value val, mlir::Value toset, OpBuilder &BuilderM);
   void forceAugmentedReturns();
+
+  LogicalResult visitChild(Operation *op);
 };
 
 class MEnzymeLogic {

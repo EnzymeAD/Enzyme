@@ -8,11 +8,11 @@
 
 #include "Interfaces/GradientUtils.h"
 #include "Dialect/Ops.h"
+#include "Interfaces/AutoDiffOpInterface.h"
 
 // TODO: this shouldn't depend on specific dialects except Enzyme.
 #include "mlir/Dialect/Arithmetic/IR/Arithmetic.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 
 using namespace mlir;
@@ -291,6 +291,16 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
     }
     */
   });
+}
+
+LogicalResult MGradientUtils::visitChild(Operation *op) {
+  if (mode == DerivativeMode::ForwardMode) {
+    if (auto iface = dyn_cast<AutoDiffOpInterface>(op)) {
+      OpBuilder builder(op->getContext());
+      return iface.createForwardModeAdjoint(builder, this);
+    }
+  }
+  return failure();
 }
 
 //===----------------------------------------------------------------------===//
@@ -619,125 +629,6 @@ public:
   }
 };
 
-class MAdjointGenerator {
-public:
-  MGradientUtils *gutils;
-  MAdjointGenerator(MGradientUtils *gutils) : gutils(gutils) {}
-
-  void eraseIfUnused(Operation &op, bool erase = true, bool check = true) {
-    // TODO
-  }
-  void visit(Operation *op) {
-    if (gutils->mode == DerivativeMode::ForwardMode) {
-      if (auto mulOp = dyn_cast<arith::MulFOp>(op)) {
-        // Derivative of r = a * b -> dr = a * db + da * b
-        if (!gutils->isConstantValue(mulOp)) {
-          mlir::Value res = nullptr;
-          OpBuilder Builder2(gutils->getNewFromOriginal(op));
-          for (int i = 0; i < 2; i++) {
-            if (!gutils->isConstantValue(mulOp.getOperand(i))) {
-              Value tmp = Builder2.create<arith::MulFOp>(
-                  mulOp.getLoc(),
-                  gutils->invertPointerM(mulOp.getOperand(i), Builder2),
-                  gutils->getNewFromOriginal(mulOp.getOperand(1 - i)));
-              if (res == nullptr)
-                res = tmp;
-              else
-                res = Builder2.create<arith::AddFOp>(mulOp.getLoc(), res, tmp);
-            }
-          }
-          gutils->setDiffe(mulOp, res, Builder2);
-        }
-        eraseIfUnused(*op);
-        return;
-      }
-      if (auto addOp = dyn_cast<arith::AddFOp>(op)) {
-        // Derivative of r = a + b -> dr = da + db
-        if (!gutils->isConstantValue(addOp)) {
-          mlir::Value res = nullptr;
-          OpBuilder Builder2(gutils->getNewFromOriginal(op));
-          for (int i = 0; i < 2; i++) {
-            if (!gutils->isConstantValue(addOp.getOperand(i))) {
-              Value tmp = gutils->invertPointerM(addOp.getOperand(i), Builder2);
-              if (res == nullptr)
-                res = tmp;
-              else
-                res = Builder2.create<arith::AddFOp>(addOp.getLoc(), res, tmp);
-            }
-          }
-          gutils->setDiffe(addOp, res, Builder2);
-        }
-        eraseIfUnused(*op);
-        return;
-      }
-      if (auto forOp = dyn_cast<scf::ForOp>(op)) {
-        auto nFor = cast<scf::ForOp>(gutils->getNewFromOriginal(op));
-        OpBuilder Builder2(nFor);
-        SmallVector<Type> nTypes;
-        for (auto r : forOp->getResults()) {
-          // TODO only if used
-          nTypes.push_back(r.getType());
-          if (!gutils->isConstantValue(r))
-            nTypes.push_back(gutils->getShadowType(r.getType()));
-        }
-        SmallVector<Value> nArgs;
-        for (auto r :
-             llvm::zip(forOp.getIterOperands(), forOp.getRegionIterArgs())) {
-          // TODO only if used
-          nArgs.push_back(gutils->getNewFromOriginal(std::get<0>(r)));
-          if (!gutils->isConstantValue(std::get<1>(r)))
-            nArgs.push_back(gutils->invertPointerM(std::get<0>(r), Builder2));
-        }
-        auto repFor = Builder2.create<scf::ForOp>(
-            forOp.getLoc(), gutils->getNewFromOriginal(forOp.getLowerBound()),
-            gutils->getNewFromOriginal(forOp.getUpperBound()),
-            gutils->getNewFromOriginal(forOp.getStep()), nArgs);
-        repFor.getRegion().takeBody(nFor.getRegion());
-
-        SmallVector<Value> reps;
-        size_t idx = 0;
-        for (auto r : forOp.getResults()) {
-          // TODO only if used
-          reps.push_back(repFor.getResult(idx));
-          idx++;
-          if (!gutils->isConstantValue(r)) {
-            auto inverted = gutils->invertedPointers.lookupOrNull(r);
-            assert(inverted);
-            gutils->invertedPointers.map(r, repFor.getResult(idx));
-            inverted.replaceAllUsesWith(repFor.getResult(idx));
-            gutils->erase(inverted.getDefiningOp());
-            idx++;
-          }
-        }
-        nFor.replaceAllUsesWith(reps);
-        gutils->erase(nFor);
-        for (auto &o : llvm::make_early_inc_range(
-                 forOp.getBody()->without_terminator())) {
-          visit(&o);
-        }
-        auto oldYield = repFor.getBody()->getTerminator();
-        Builder2.setInsertionPointToEnd(repFor.getBody());
-        SmallVector<Value> nYields;
-        for (auto r :
-             llvm::zip(forOp.getResults(),
-                       forOp.getBody()->getTerminator()->getOperands())) {
-          // TODO only if used
-          nYields.push_back(gutils->getNewFromOriginal(std::get<1>(r)));
-          if (!gutils->isConstantValue(std::get<0>(r)))
-            nYields.push_back(gutils->invertPointerM(std::get<1>(r), Builder2));
-        }
-        repFor.getBody()->push_back(oldYield->create(
-            oldYield->getLoc(), oldYield->getName(), TypeRange(), nYields,
-            oldYield->getAttrs(), oldYield->getSuccessors(),
-            oldYield->getNumRegions()));
-        gutils->erase(oldYield);
-        return;
-      }
-    }
-    // TODO
-  }
-};
-
 void createTerminator(MDiffeGradientUtils *gutils, mlir::Block *oBB,
                       DIFFE_TYPE retType, ReturnType retVal) {
   MTypeResults &TR = gutils->TR;
@@ -923,15 +814,6 @@ func::FuncOp mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
                                   unnecessaryInstructions, gutils, TLI);
                                   */
 
-  MAdjointGenerator *maker;
-
-  // TODO split
-  maker = new MAdjointGenerator(gutils);
-  //, constant_args, retType, nullptr, {},
-  //    /*returnuses*/ nullptr, nullptr, nullptr, unnecessaryValues,
-  //    unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
-  //    nullptr);
-
   for (Block &oBB : gutils->oldFunc.getBody().getBlocks()) {
     // Don't create derivatives for code that results in termination
     if (guaranteedUnreachable.find(&oBB) != guaranteedUnreachable.end()) {
@@ -942,7 +824,7 @@ func::FuncOp mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
         toerase.push_back(&I);
       }
       for (auto I : llvm::reverse(toerase)) {
-        maker->eraseIfUnused(*I, /*erase*/ true, /*check*/ false);
+        gutils->eraseIfUnused(I, /*erase*/ true, /*check*/ false);
       }
       OpBuilder builder(gutils->oldFunc.getContext());
       builder.setInsertionPointToEnd(newBB);
@@ -956,7 +838,8 @@ func::FuncOp mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
     auto first = oBB.begin();
     auto last = oBB.empty() ? oBB.end() : std::prev(oBB.end());
     for (auto it = first; it != last; ++it) {
-      maker->visit(&*it);
+      // TODO: propagate errors.
+      (void)gutils->visitChild(&*it);
     }
 
     createTerminator(gutils, &oBB, retType, returnValue);
@@ -982,7 +865,6 @@ func::FuncOp mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
 
   auto nf = gutils->newFunc;
   delete gutils;
-  delete maker;
 
   // if (PostOpt)
   //  PPC.optimizeIntermediate(nf);

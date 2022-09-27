@@ -30,6 +30,7 @@
 #include "mlir/Transforms/Passes.h"
 
 #include "Dialect/Dialect.h"
+#include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Passes/Passes.h"
 
 using namespace mlir;
@@ -87,6 +88,10 @@ int main(int argc, char **argv) {
     LLVM::LLVMArrayType::attachInterface<PtrElementModel<LLVM::LLVMArrayType>>(
         *ctx);
   });
+
+  // Register the autodiff interface implementations for upstream dialects.
+  enzyme::registerArithDialectAutoDiffInterface(registry);
+  enzyme::registerSCFDialectAutoDiffInterface(registry);
 
   return mlir::failed(
       mlir::MlirOptMain(argc, argv, "Enzyme modular optimizer driver", registry,
