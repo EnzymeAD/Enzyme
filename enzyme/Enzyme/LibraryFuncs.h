@@ -211,13 +211,6 @@ static inline void zeroKnownAllocation(llvm::IRBuilder<> &bb,
   Value *allocSize = argValues[0];
   if (funcName == "julia.gc_alloc_obj" || funcName == "jl_gc_alloc_typed" ||
       funcName == "ijl_gc_alloc_typed") {
-    Type *tys[] = {PointerType::get(StructType::get(toZero->getContext()), 10)};
-    FunctionType *FT =
-        FunctionType::get(Type::getVoidTy(toZero->getContext()), tys, true);
-    bb.CreateCall(
-        bb.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
-            "julia.write_barrier", FT),
-        toZero);
     allocSize = argValues[1];
   }
   Value *dst_arg = toZero;
