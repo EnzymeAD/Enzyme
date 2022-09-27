@@ -47,7 +47,7 @@ jobs:
         mkdir mlir-build
         cd mlir-build
         cmake ../Polygeist/llvm-project/llvm -GNinja -DLLVM_ENABLE_PROJECTS="llvm;clang;mlir;openmp" -DCMAKE_BUILD_TYPE=${{ matrix.llbuild }} -DLLVM_ENABLE_ASSERTIONS=ON -DLLVM_TARGETS_TO_BUILD=X86 -DLLVM_PARALLEL_LINK_JOBS=2
-        ninja
+        ninja -j2
     
     - name: Cache Polygeist
       id: cache-polygeist
