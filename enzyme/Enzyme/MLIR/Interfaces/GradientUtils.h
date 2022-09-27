@@ -72,6 +72,7 @@ public:
   void eraseIfUnused(Operation *op, bool erase = true, bool check = true) {
     // TODO
   }
+  bool isConstantOperation(mlir::Operation *op) const;
   bool isConstantValue(mlir::Value v) const;
   mlir::Value invertPointerM(mlir::Value v, OpBuilder &Builder2);
   void setDiffe(mlir::Value val, mlir::Value toset, OpBuilder &BuilderM);

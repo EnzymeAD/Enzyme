@@ -16,6 +16,7 @@
 
 // TODO: this shouldn't depend on specific dialects except Enzyme.
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -124,6 +125,15 @@ mlir::enzyme::MGradientUtils::getNewFromOriginal(Operation *originst) const {
     llvm_unreachable("Could not get new op from original");
   }
   return found->second;
+}
+
+bool mlir::enzyme::MGradientUtils::isConstantOperation(Operation *op) const {
+  // In absence of proper activity analysis, approximate it by checking that the
+  // operation doesn't write into memory.
+  auto iface = dyn_cast<MemoryEffectOpInterface>(op);
+  if (!iface)
+    return false;
+  return iface.hasNoEffect();
 }
 
 bool mlir::enzyme::MGradientUtils::isConstantValue(Value v) const {
@@ -295,13 +305,21 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
 
 LogicalResult MGradientUtils::visitChild(Operation *op) {
   if (mode == DerivativeMode::ForwardMode) {
+    // No need to differentiate operations that are operating on inactive values
+    // and are inactive themselves.
+    if (isConstantOperation(op) &&
+        llvm::all_of(op->getResults(),
+                     [this](Value v) { return isConstantValue(v); })) {
+      return success();
+    }
+
     if (auto iface = dyn_cast<AutoDiffOpInterface>(op)) {
       OpBuilder builder(op->getContext());
       builder.setInsertionPoint(getNewFromOriginal(op));
       return iface.createForwardModeAdjoint(builder, this);
     }
   }
-  return failure();
+  return op->emitError() << "could not compute the adjoint for this operation";
 }
 
 //===----------------------------------------------------------------------===//
@@ -845,8 +863,8 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
     auto first = oBB.begin();
     auto last = oBB.empty() ? oBB.end() : std::prev(oBB.end());
     for (auto it = first; it != last; ++it) {
-      // TODO: propagate errors.
-      (void)gutils->visitChild(&*it);
+      if (failed(gutils->visitChild(&*it)))
+        return nullptr;
     }
 
     createTerminator(gutils, &oBB, retType, returnValue);

@@ -35,7 +35,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
   void runOnOperation() override;
 
   template <typename T>
-  void HandleAutoDiff(SymbolTableCollection &symbolTable, T CI) {
+  LogicalResult HandleAutoDiff(SymbolTableCollection &symbolTable, T CI) {
     std::vector<DIFFE_TYPE> constants;
     SmallVector<mlir::Value, 2> args;
 
@@ -82,12 +82,15 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
         /*should return*/ false, mode, freeMemory, width,
         /*addedType*/ nullptr, type_args, volatile_args,
         /*augmented*/ nullptr);
+    if (!newFunc)
+      return failure();
 
     OpBuilder builder(CI);
     auto dCI = builder.create<func::CallOp>(CI.getLoc(), newFunc.getName(),
                                             newFunc.getResultTypes(), args);
     CI.replaceAllUsesWith(dCI);
     CI->erase();
+    return success();
   }
 
   void lowerEnzymeCalls(SymbolTableCollection &symbolTable,
@@ -104,7 +107,10 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
 
     for (auto T : toLower) {
       if (auto F = dyn_cast<enzyme::ForwardDiffOp>(T)) {
-        HandleAutoDiff(symbolTable, F);
+        if (failed(HandleAutoDiff(symbolTable, F))) {
+          signalPassFailure();
+          return;
+        }
       } else {
         llvm_unreachable("Illegal type");
       }
