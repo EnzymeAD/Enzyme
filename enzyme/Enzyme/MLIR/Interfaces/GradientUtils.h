@@ -61,7 +61,6 @@ public:
   mlir::Value getNewFromOriginal(const mlir::Value originst) const;
   mlir::Block *getNewFromOriginal(mlir::Block *originst) const;
   Operation *getNewFromOriginal(Operation *originst) const;
-  mlir::Type getShadowType(mlir::Type T) const;
 
   MGradientUtils(MEnzymeLogic &Logic, mlir::func::FuncOp newFunc_,
                  FunctionOpInterface oldFunc_, MTypeAnalysis &TA_,

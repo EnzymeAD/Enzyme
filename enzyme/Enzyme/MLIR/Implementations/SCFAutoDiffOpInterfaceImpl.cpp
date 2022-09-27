@@ -13,6 +13,7 @@
 
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Interfaces/AutoDiffOpInterface.h"
+#include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -33,8 +34,12 @@ struct ForOpInterface
     for (auto r : forOp->getResults()) {
       // TODO only if used
       nTypes.push_back(r.getType());
-      if (!gutils->isConstantValue(r))
-        nTypes.push_back(gutils->getShadowType(r.getType()));
+      if (!gutils->isConstantValue(r)) {
+        auto adTypeIface = r.getType().dyn_cast<AutoDiffTypeInterface>();
+        if (!adTypeIface)
+          return failure();
+        nTypes.push_back(adTypeIface.getShadowType());
+      }
     }
     SmallVector<Value> nArgs;
     for (auto r :

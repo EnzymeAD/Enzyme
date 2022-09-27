@@ -11,6 +11,7 @@
 #include "Interfaces/AutoDiffOpInterface.h"
 
 // TODO: this shouldn't depend on specific dialects except Enzyme.
+#include "Interfaces/AutoDiffTypeInterface.h"
 #include "mlir/Dialect/Arithmetic/IR/Arithmetic.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -18,7 +19,9 @@
 using namespace mlir;
 using namespace mlir::enzyme;
 
-static Type getShadowType(Type T, unsigned width) { return T; }
+static inline Type getShadowType(Type type, unsigned width = 1) {
+  return type.cast<AutoDiffTypeInterface>().getShadowType(width);
+}
 
 mlir::enzyme::MGradientUtils::MGradientUtils(
     MEnzymeLogic &Logic, mlir::func::FuncOp newFunc_,
@@ -122,10 +125,6 @@ mlir::enzyme::MGradientUtils::getNewFromOriginal(Operation *originst) const {
   return found->second;
 }
 
-Type mlir::enzyme::MGradientUtils::getShadowType(Type T) const {
-  return ::getShadowType(T, width);
-}
-
 bool mlir::enzyme::MGradientUtils::isConstantValue(Value v) const {
   if (isa<mlir::IntegerType>(v.getType()))
     return true;
@@ -146,10 +145,10 @@ Value mlir::enzyme::MGradientUtils::invertPointerM(Value v,
     return invertedPointers.lookupOrNull(v);
 
   if (isConstantValue(v)) {
-    if (auto FT = dyn_cast<mlir::FloatType>(v.getType())) {
-      OpBuilder Builder2(getNewFromOriginal(v.getDefiningOp()));
-      Value dv = Builder2.create<arith::ConstantFloatOp>(
-          v.getLoc(), APFloat(FT.getFloatSemantics(), "0"), FT);
+    if (auto iface = v.getType().cast<AutoDiffTypeInterface>()) {
+      OpBuilder::InsertionGuard guard(Builder2);
+      Builder2.setInsertionPoint(getNewFromOriginal(v.getDefiningOp()));
+      Value dv = iface.createNullValue(Builder2, v.getLoc());
       invertedPointers.map(v, dv);
       return dv;
     }
@@ -696,9 +695,9 @@ void createTerminator(MDiffeGradientUtils *gutils, mlir::Block *oBB,
     } else if (!gutils->isConstantValue(ret)) {
       toret = gutils->invertPointerM(ret, nBuilder);
     } else {
-      auto retTy = gutils->getShadowType(ret.getType()).cast<mlir::FloatType>();
-      toret = nBuilder.create<arith::ConstantFloatOp>(
-          ret.getLoc(), APFloat(retTy.getFloatSemantics(), "0"), retTy);
+      Type retTy = ret.getType().cast<AutoDiffTypeInterface>().getShadowType();
+      toret = retTy.cast<AutoDiffTypeInterface>().createNullValue(nBuilder,
+                                                                  ret.getLoc());
     }
     retargs.push_back(toret);
 
@@ -720,9 +719,9 @@ void createTerminator(MDiffeGradientUtils *gutils, mlir::Block *oBB,
     } else if (!gutils->isConstantValue(ret)) {
       toret = gutils->invertPointerM(ret, nBuilder);
     } else {
-      auto retTy = gutils->getShadowType(ret.getType()).cast<mlir::FloatType>();
-      toret = nBuilder.create<arith::ConstantFloatOp>(
-          ret.getLoc(), APFloat(retTy.getFloatSemantics(), "0"), retTy);
+      Type retTy = ret.getType().cast<AutoDiffTypeInterface>().getShadowType();
+      toret = retTy.cast<AutoDiffTypeInterface>().createNullValue(nBuilder,
+                                                                  ret.getLoc());
     }
     retargs.push_back(toret);
     break;
