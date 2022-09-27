@@ -29,7 +29,6 @@ struct ForOpInterface
                                          MGradientUtils *gutils) const {
     auto forOp = cast<scf::ForOp>(op);
     auto nFor = cast<scf::ForOp>(gutils->getNewFromOriginal(op));
-    builder.setInsertionPoint(nFor);
     SmallVector<Type> nTypes;
     for (auto r : forOp->getResults()) {
       // TODO only if used

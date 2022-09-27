@@ -31,7 +31,6 @@ struct MulFOpInterface
     auto mulOp = cast<arith::MulFOp>(op);
     if (!gutils->isConstantValue(mulOp)) {
       mlir::Value res = nullptr;
-      builder.setInsertionPoint(gutils->getNewFromOriginal(op));
       for (int i = 0; i < 2; i++) {
         if (!gutils->isConstantValue(mulOp.getOperand(i))) {
           Value tmp = builder.create<arith::MulFOp>(
@@ -60,7 +59,6 @@ struct AddFOpInterface
     auto addOp = cast<arith::AddFOp>(op);
     if (!gutils->isConstantValue(addOp)) {
       mlir::Value res = nullptr;
-      builder.setInsertionPoint(gutils->getNewFromOriginal(op));
       for (int i = 0; i < 2; i++) {
         if (!gutils->isConstantValue(addOp.getOperand(i))) {
           Value tmp = gutils->invertPointerM(addOp.getOperand(i), builder);

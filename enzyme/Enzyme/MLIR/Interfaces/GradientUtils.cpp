@@ -296,6 +296,7 @@ LogicalResult MGradientUtils::visitChild(Operation *op) {
   if (mode == DerivativeMode::ForwardMode) {
     if (auto iface = dyn_cast<AutoDiffOpInterface>(op)) {
       OpBuilder builder(op->getContext());
+      builder.setInsertionPoint(getNewFromOriginal(op));
       return iface.createForwardModeAdjoint(builder, this);
     }
   }
