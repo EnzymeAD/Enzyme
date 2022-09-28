@@ -360,6 +360,14 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
           continue;
         }
       }
+      IRBuilder<> B(CI);
+      auto Addr = B.CreateAddrSpaceCast(rep, prev->getType());
+      for (size_t i=0; i<CI->getNumArgOperands(); i++) {
+          if (CI->getArgOperand(i) == prev) {
+              CI->setArgOperand(i, Addr);
+          }
+      }
+      continue;
     }
     llvm::errs() << " rep: " << *rep << " prev: " << *prev << " inst: " << *inst
                  << "\n";
