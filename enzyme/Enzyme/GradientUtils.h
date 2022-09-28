@@ -599,8 +599,7 @@ public:
   // (for use) as a structure which carries data.
   ValueMap<Value *, ShadowRematerializer> backwardsOnlyShadows;
 
-  void computeForwardingProperties(Instruction *V,
-                                   std::map<UsageKey, bool> &Seen);
+  void computeForwardingProperties(Instruction *V);
   void computeGuaranteedFrees();
 
 private:

@@ -7046,13 +7046,10 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
   }
 }
 
-void GradientUtils::computeForwardingProperties(
-    Instruction *V, std::map<UsageKey, bool> &Seen) {
+void GradientUtils::computeForwardingProperties(Instruction *V) {
   if (!EnzymeRematerialize)
     return;
 
-  bool primalNeededInReverse = is_value_needed_in_reverse<ValueType::Primal>(
-      this, V, mode, Seen, notForAnalysis);
   SmallVector<LoadInst *, 1> loads;
   SmallVector<LoadLikeCall, 1> loadLikeCalls;
   SmallPtrSet<Instruction *, 1> stores;
@@ -7263,10 +7260,9 @@ void GradientUtils::computeForwardingProperties(
             }
           }
 #if LLVM_VERSION_MAJOR >= 14
-          else if (primalNeededInReverse || !CI->onlyWritesMemory(idx))
+          else if (!CI->onlyWritesMemory(idx))
 #else
-          else if (primalNeededInReverse ||
-                   !(CI->dataOperandHasImpliedAttr(idx + 1,
+          else if (!(CI->dataOperandHasImpliedAttr(idx + 1,
                                                    Attribute::WriteOnly) ||
                      CI->dataOperandHasImpliedAttr(idx + 1,
                                                    Attribute::ReadNone) ||
@@ -7274,11 +7270,11 @@ void GradientUtils::computeForwardingProperties(
                             F->hasParamAttribute(idx, Attribute::ReadNone)))))
 #endif
           {
-              promotable = false;
-              EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
-                          cur->getParent(), " Could not promote allocation ",
-                          *V, " due to unknown writing call ", *cur);
-            }
+            promotable = false;
+            EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
+                        cur->getParent(), " Could not promote allocation ", *V,
+                        " due to unknown writing call ", *cur);
+          }
 
           if (TT.isFloat()) {
             // all floats ok
@@ -7393,13 +7389,12 @@ void GradientUtils::computeForwardingProperties(
 
 void GradientUtils::computeGuaranteedFrees() {
   SmallPtrSet<CallInst *, 2> allocsToPromote;
-  std::map<UsageKey, bool> Seen;
   for (auto &BB : *oldFunc) {
     if (notForAnalysis.count(&BB))
       continue;
     for (auto &I : BB) {
       if (auto AI = dyn_cast<AllocaInst>(&I))
-        computeForwardingProperties(AI, Seen);
+        computeForwardingProperties(AI);
 
       auto CI = dyn_cast<CallInst>(&I);
       if (!CI)
@@ -7457,6 +7452,6 @@ void GradientUtils::computeGuaranteedFrees() {
     // the derivative of store needs to redo the store,
     // isValueNeededInReverse needs to know to preserve the
     // store operands in this case, etc
-    computeForwardingProperties(V, Seen);
+    computeForwardingProperties(V);
   }
 }
