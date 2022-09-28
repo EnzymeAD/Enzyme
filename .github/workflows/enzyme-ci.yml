@@ -86,6 +86,7 @@ jobs:
     - name: make check-activityanalysis
       run: cd enzyme/build && make check-activityanalysis -j 3
     - name: make check-enzyme
+      if: matrix.llvm != '15'
       run: cd enzyme/build && make check-enzyme -j 3
 
   build-xcode:
