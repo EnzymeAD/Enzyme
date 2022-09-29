@@ -646,8 +646,7 @@ LLVMValueRef EnzymeGradientUtilsCallWithInvertedBundles(
   auto callval = unwrap(func);
 
 #if LLVM_VERSION_MAJOR > 7
-  auto res = BR.CreateCall(
-      cast<FunctionType>(callval->getType()->getPointerElementType()), callval,
+  auto res = BR.CreateCall(isa<CallBase>(callval)->getFunctionType(), callval,
       args, Defs);
 #else
   auto res = BR.CreateCall(callval, args, Defs);
