@@ -924,8 +924,7 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
 
         IRBuilder<> build(containedloops.back().first.incvar->getNextNode());
 #if LLVM_VERSION_MAJOR > 7
-        Value *allocation = build.CreateLoad(
-            storeInto->getType()->getPointerElementType(), storeInto);
+        Value *allocation = build.CreateLoad(allocType, storeInto);
 #else
         Value *allocation = build.CreateLoad(storeInto);
 #endif
@@ -1394,12 +1393,18 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
     }
   }
 
+#if LLVM_VERSION_MAJOR >= 15
+  if (tostore->getContext().supportsTypedPointers()) {
+#endif
   if (tostore->getType() != loc->getType()->getPointerElementType()) {
     llvm::errs() << "val: " << *val << "\n";
     llvm::errs() << "tostore: " << *tostore << "\n";
     llvm::errs() << "loc: " << *loc << "\n";
   }
   assert(tostore->getType() == loc->getType()->getPointerElementType());
+#if LLVM_VERSION_MAJOR >= 15
+  }
+#endif
   StoreInst *storeinst = v.CreateStore(tostore, loc);
 
   // If the value stored doesnt change (per efficient bool cache),

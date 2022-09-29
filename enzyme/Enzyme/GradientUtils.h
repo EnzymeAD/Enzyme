@@ -1656,7 +1656,13 @@ public:
       entryBuilder.CreateStore(Constant::getNullValue(type),
                                differentials[val]);
     }
+#if LLVM_VERSION_MAJOR >= 15
+    if (val->getContext().supportsTypedPointers()) {
+#endif
     assert(differentials[val]->getType()->getPointerElementType() == type);
+#if LLVM_VERSION_MAJOR >= 15
+    }
+#endif
     return differentials[val];
   }
 
@@ -1790,7 +1796,7 @@ public:
         sv.push_back(i);
 #if LLVM_VERSION_MAJOR > 7
       ptr =
-          BuilderM.CreateGEP(ptr->getType()->getPointerElementType(), ptr, sv);
+          BuilderM.CreateGEP(getShadowType(val->getType()), ptr, sv);
 #else
       ptr = BuilderM.CreateGEP(ptr, sv);
 #endif
@@ -1798,7 +1804,7 @@ public:
     }
 #if LLVM_VERSION_MAJOR > 7
     Value *old =
-        BuilderM.CreateLoad(ptr->getType()->getPointerElementType(), ptr);
+        BuilderM.CreateLoad(dif->getType(), ptr);
 #else
     Value *old = BuilderM.CreateLoad(ptr);
 #endif
@@ -1964,11 +1970,17 @@ public:
       return;
     }
     Value *tostore = getDifferential(val);
+#if LLVM_VERSION_MAJOR >= 15
+    if (toset->getContext().supportsTypedPointers()) {
+#endif
     if (toset->getType() != tostore->getType()->getPointerElementType()) {
       llvm::errs() << "toset:" << *toset << "\n";
       llvm::errs() << "tostore:" << *tostore << "\n";
     }
     assert(toset->getType() == tostore->getType()->getPointerElementType());
+#if LLVM_VERSION_MAJOR >= 15
+    }
+#endif
     BuilderM.CreateStore(toset, tostore);
   }
 

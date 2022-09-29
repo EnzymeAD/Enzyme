@@ -1215,8 +1215,7 @@ public:
 
             auto rule = [&](Value *dif1Ptr) {
 #if LLVM_VERSION_MAJOR > 7
-              LoadInst *dif1 = Builder2.CreateLoad(
-                  dif1Ptr->getType()->getPointerElementType(), dif1Ptr,
+              LoadInst *dif1 = Builder2.CreateLoad(valType, dif1Ptr,
                   isVolatile);
 #else
               LoadInst *dif1 = Builder2.CreateLoad(dif1Ptr, isVolatile);
@@ -10524,6 +10523,9 @@ public:
 
                   Type *elTy = Type::getInt8Ty(orig->getContext());
                   std::string name = "";
+#if LLVM_VERSION_MAJOR >= 15
+                  if (orig->getContext().supportsTypedPointers()) {
+#endif
                   for (auto U : orig->users()) {
                     if (hasMetadata(cast<Instruction>(U), "enzyme_caststack")) {
                       elTy = U->getType()->getPointerElementType();
@@ -10538,6 +10540,9 @@ public:
                       break;
                     }
                   }
+#if LLVM_VERSION_MAJOR >= 15
+                  }
+#endif
                   Value *replacement = bb.CreateAlloca(elTy, Size, name);
                   if (name.size() == 0)
                     replacement->takeName(anti);
@@ -10555,18 +10560,33 @@ public:
                     cast<AllocaInst>(replacement)->setAlignment(Alignment);
 #endif
                   }
+#if LLVM_VERSION_MAJOR >= 15
+                  if (orig->getContext().supportsTypedPointers()) {
+#endif
                   if (anti->getType()->getPointerElementType() != elTy)
                     replacement = bb.CreatePointerCast(
                         replacement,
                         PointerType::getUnqual(
                             anti->getType()->getPointerElementType()));
+#if LLVM_VERSION_MAJOR >= 15
+                  }
+#endif
 
                   if (int AS = cast<PointerType>(anti->getType())
                                    ->getAddressSpace()) {
+                    llvm::PointerType *PT;
+#if LLVM_VERSION_MAJOR >= 15
+                    if (orig->getContext().supportsTypedPointers()) {
+#endif
+                        PT = PointerType::get(
+                            anti->getType()->getPointerElementType(), AS);
+#if LLVM_VERSION_MAJOR >= 15
+                    } else {
+                        PT = PointerType::get(anti->getContext(), AS);
+                    }
+#endif
                     replacement = bb.CreateAddrSpaceCast(
-                        replacement,
-                        PointerType::get(
-                            anti->getType()->getPointerElementType(), AS));
+                        replacement, PT);
                     cast<Instruction>(replacement)
                         ->setMetadata(
                             "enzyme_backstack",
@@ -10715,6 +10735,9 @@ public:
 
               Type *elTy = Type::getInt8Ty(orig->getContext());
               Instruction *I = nullptr;
+#if LLVM_VERSION_MAJOR >= 15
+              if (orig->getContext().supportsTypedPointers()) {
+#endif
               for (auto U : orig->users()) {
                 if (hasMetadata(cast<Instruction>(U), "enzyme_caststack")) {
                   elTy = U->getType()->getPointerElementType();
@@ -10729,6 +10752,9 @@ public:
                   break;
                 }
               }
+#if LLVM_VERSION_MAJOR >= 15
+              }
+#endif
 
               Value *replacement = B.CreateAlloca(elTy, Size);
               if (I)
@@ -10748,17 +10774,34 @@ public:
                 cast<AllocaInst>(replacement)->setAlignment(Alignment);
 #endif
               }
+#if LLVM_VERSION_MAJOR >= 15
+              if (orig->getContext().supportsTypedPointers()) {
+#endif
               if (orig->getType()->getPointerElementType() != elTy)
                 replacement = B.CreatePointerCast(
                     replacement, PointerType::getUnqual(
                                      orig->getType()->getPointerElementType()));
 
+#if LLVM_VERSION_MAJOR >= 15
+              }
+#endif
+
               if (int AS =
                       cast<PointerType>(orig->getType())->getAddressSpace()) {
-                replacement = B.CreateAddrSpaceCast(
-                    replacement,
-                    PointerType::get(orig->getType()->getPointerElementType(),
-                                     AS));
+
+                    llvm::PointerType *PT;
+#if LLVM_VERSION_MAJOR >= 15
+                    if (orig->getContext().supportsTypedPointers()) {
+#endif
+                        PT = PointerType::get(
+                            orig->getType()->getPointerElementType(), AS);
+#if LLVM_VERSION_MAJOR >= 15
+                    } else {
+                        PT = PointerType::get(orig->getContext(), AS);
+                    }
+#endif
+                    replacement = B.CreateAddrSpaceCast(
+                        replacement, PT);
                 cast<Instruction>(replacement)
                     ->setMetadata("enzyme_backstack",
                                   MDNode::get(replacement->getContext(), {}));
@@ -10823,6 +10866,9 @@ public:
 
               Type *elTy = Type::getInt8Ty(orig->getContext());
               Instruction *I = nullptr;
+#if LLVM_VERSION_MAJOR >= 15
+              if (orig->getContext().supportsTypedPointers()) {
+#endif
               for (auto U : orig->users()) {
                 if (hasMetadata(cast<Instruction>(U), "enzyme_caststack")) {
                   elTy = U->getType()->getPointerElementType();
@@ -10837,6 +10883,9 @@ public:
                   break;
                 }
               }
+#if LLVM_VERSION_MAJOR >= 15
+              }
+#endif
 
               Value *replacement = B.CreateAlloca(elTy, Size);
               if (I)
@@ -10855,16 +10904,33 @@ public:
                 cast<AllocaInst>(replacement)->setAlignment(Alignment);
 #endif
               }
+
+#if LLVM_VERSION_MAJOR >= 15
+              if (orig->getContext().supportsTypedPointers()) {
+#endif
               if (orig->getType()->getPointerElementType() != elTy)
                 replacement = B.CreatePointerCast(
                     replacement, PointerType::getUnqual(
                                      orig->getType()->getPointerElementType()));
+
+#if LLVM_VERSION_MAJOR >= 15
+              }
+#endif
               if (int AS =
                       cast<PointerType>(orig->getType())->getAddressSpace()) {
-                replacement = B.CreateAddrSpaceCast(
-                    replacement,
-                    PointerType::get(orig->getType()->getPointerElementType(),
-                                     AS));
+                    llvm::PointerType *PT;
+#if LLVM_VERSION_MAJOR >= 15
+                    if (orig->getContext().supportsTypedPointers()) {
+#endif
+                        PT = PointerType::get(
+                            orig->getType()->getPointerElementType(), AS);
+#if LLVM_VERSION_MAJOR >= 15
+                    } else {
+                        PT = PointerType::get(orig->getContext(), AS);
+                    }
+#endif
+                    replacement = B.CreateAddrSpaceCast(
+                        replacement, PT);
                 cast<Instruction>(replacement)
                     ->setMetadata("enzyme_backstack",
                                   MDNode::get(replacement->getContext(), {}));
@@ -10906,6 +10972,9 @@ public:
             }
             Type *elTy = Type::getInt8Ty(orig->getContext());
             Instruction *I = nullptr;
+#if LLVM_VERSION_MAJOR >= 15
+              if (orig->getContext().supportsTypedPointers()) {
+#endif
             for (auto U : orig->users()) {
               if (hasMetadata(cast<Instruction>(U), "enzyme_caststack")) {
                 elTy = U->getType()->getPointerElementType();
@@ -10920,6 +10989,9 @@ public:
                 break;
               }
             }
+#if LLVM_VERSION_MAJOR >= 15
+             }
+#endif
             Value *replacement = B.CreateAlloca(elTy, Size);
             if (I)
               replacement->takeName(I);
@@ -10937,16 +11009,33 @@ public:
               cast<AllocaInst>(replacement)->setAlignment(Alignment);
 #endif
             }
+#if LLVM_VERSION_MAJOR >= 15
+              if (orig->getContext().supportsTypedPointers()) {
+#endif
             if (orig->getType()->getPointerElementType() != elTy)
               replacement = B.CreatePointerCast(
                   replacement, PointerType::getUnqual(
                                    orig->getType()->getPointerElementType()));
+
+#if LLVM_VERSION_MAJOR >= 15
+              }
+#endif
             if (int AS =
                     cast<PointerType>(orig->getType())->getAddressSpace()) {
-              replacement = B.CreateAddrSpaceCast(
-                  replacement,
-                  PointerType::get(orig->getType()->getPointerElementType(),
-                                   AS));
+
+                    llvm::PointerType *PT;
+#if LLVM_VERSION_MAJOR >= 15
+                    if (orig->getContext().supportsTypedPointers()) {
+#endif
+                        PT = PointerType::get(
+                            orig->getType()->getPointerElementType(), AS);
+#if LLVM_VERSION_MAJOR >= 15
+                    } else {
+                        PT = PointerType::get(orig->getContext(), AS);
+                    }
+#endif
+                    replacement = B.CreateAddrSpaceCast(
+                        replacement, PT);
               cast<Instruction>(replacement)
                   ->setMetadata("enzyme_backstack",
                                 MDNode::get(replacement->getContext(), {}));
