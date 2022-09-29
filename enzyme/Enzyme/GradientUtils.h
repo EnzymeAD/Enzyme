@@ -1659,7 +1659,7 @@ public:
 #if LLVM_VERSION_MAJOR >= 15
     if (val->getContext().supportsTypedPointers()) {
 #endif
-    assert(differentials[val]->getType()->getPointerElementType() == type);
+      assert(differentials[val]->getType()->getPointerElementType() == type);
 #if LLVM_VERSION_MAJOR >= 15
     }
 #endif
@@ -1795,16 +1795,14 @@ public:
       for (auto i : idxs)
         sv.push_back(i);
 #if LLVM_VERSION_MAJOR > 7
-      ptr =
-          BuilderM.CreateGEP(getShadowType(val->getType()), ptr, sv);
+      ptr = BuilderM.CreateGEP(getShadowType(val->getType()), ptr, sv);
 #else
       ptr = BuilderM.CreateGEP(ptr, sv);
 #endif
       cast<GetElementPtrInst>(ptr)->setIsInBounds(true);
     }
 #if LLVM_VERSION_MAJOR > 7
-    Value *old =
-        BuilderM.CreateLoad(dif->getType(), ptr);
+    Value *old = BuilderM.CreateLoad(dif->getType(), ptr);
 #else
     Value *old = BuilderM.CreateLoad(ptr);
 #endif
@@ -1973,11 +1971,11 @@ public:
 #if LLVM_VERSION_MAJOR >= 15
     if (toset->getContext().supportsTypedPointers()) {
 #endif
-    if (toset->getType() != tostore->getType()->getPointerElementType()) {
-      llvm::errs() << "toset:" << *toset << "\n";
-      llvm::errs() << "tostore:" << *tostore << "\n";
-    }
-    assert(toset->getType() == tostore->getType()->getPointerElementType());
+      if (toset->getType() != tostore->getType()->getPointerElementType()) {
+        llvm::errs() << "toset:" << *toset << "\n";
+        llvm::errs() << "tostore:" << *tostore << "\n";
+      }
+      assert(toset->getType() == tostore->getType()->getPointerElementType());
 #if LLVM_VERSION_MAJOR >= 15
     }
 #endif

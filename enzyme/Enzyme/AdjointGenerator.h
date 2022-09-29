@@ -1215,8 +1215,8 @@ public:
 
             auto rule = [&](Value *dif1Ptr) {
 #if LLVM_VERSION_MAJOR > 7
-              LoadInst *dif1 = Builder2.CreateLoad(valType, dif1Ptr,
-                  isVolatile);
+              LoadInst *dif1 =
+                  Builder2.CreateLoad(valType, dif1Ptr, isVolatile);
 #else
               LoadInst *dif1 = Builder2.CreateLoad(dif1Ptr, isVolatile);
 #endif
@@ -10526,20 +10526,22 @@ public:
 #if LLVM_VERSION_MAJOR >= 15
                   if (orig->getContext().supportsTypedPointers()) {
 #endif
-                  for (auto U : orig->users()) {
-                    if (hasMetadata(cast<Instruction>(U), "enzyme_caststack")) {
-                      elTy = U->getType()->getPointerElementType();
-                      Value *tsize = ConstantInt::get(
-                          Size->getType(), (gutils->newFunc->getParent()
-                                                ->getDataLayout()
-                                                .getTypeAllocSizeInBits(elTy) +
-                                            7) /
-                                               8);
-                      Size = bb.CreateUDiv(Size, tsize, "", /*exact*/ true);
-                      name = (U->getName() + "'ai").str();
-                      break;
+                    for (auto U : orig->users()) {
+                      if (hasMetadata(cast<Instruction>(U),
+                                      "enzyme_caststack")) {
+                        elTy = U->getType()->getPointerElementType();
+                        Value *tsize = ConstantInt::get(
+                            Size->getType(),
+                            (gutils->newFunc->getParent()
+                                 ->getDataLayout()
+                                 .getTypeAllocSizeInBits(elTy) +
+                             7) /
+                                8);
+                        Size = bb.CreateUDiv(Size, tsize, "", /*exact*/ true);
+                        name = (U->getName() + "'ai").str();
+                        break;
+                      }
                     }
-                  }
 #if LLVM_VERSION_MAJOR >= 15
                   }
 #endif
@@ -10563,11 +10565,11 @@ public:
 #if LLVM_VERSION_MAJOR >= 15
                   if (orig->getContext().supportsTypedPointers()) {
 #endif
-                  if (anti->getType()->getPointerElementType() != elTy)
-                    replacement = bb.CreatePointerCast(
-                        replacement,
-                        PointerType::getUnqual(
-                            anti->getType()->getPointerElementType()));
+                    if (anti->getType()->getPointerElementType() != elTy)
+                      replacement = bb.CreatePointerCast(
+                          replacement,
+                          PointerType::getUnqual(
+                              anti->getType()->getPointerElementType()));
 #if LLVM_VERSION_MAJOR >= 15
                   }
 #endif
@@ -10578,15 +10580,14 @@ public:
 #if LLVM_VERSION_MAJOR >= 15
                     if (orig->getContext().supportsTypedPointers()) {
 #endif
-                        PT = PointerType::get(
-                            anti->getType()->getPointerElementType(), AS);
+                      PT = PointerType::get(
+                          anti->getType()->getPointerElementType(), AS);
 #if LLVM_VERSION_MAJOR >= 15
                     } else {
-                        PT = PointerType::get(anti->getContext(), AS);
+                      PT = PointerType::get(anti->getContext(), AS);
                     }
 #endif
-                    replacement = bb.CreateAddrSpaceCast(
-                        replacement, PT);
+                    replacement = bb.CreateAddrSpaceCast(replacement, PT);
                     cast<Instruction>(replacement)
                         ->setMetadata(
                             "enzyme_backstack",
@@ -10738,20 +10739,20 @@ public:
 #if LLVM_VERSION_MAJOR >= 15
               if (orig->getContext().supportsTypedPointers()) {
 #endif
-              for (auto U : orig->users()) {
-                if (hasMetadata(cast<Instruction>(U), "enzyme_caststack")) {
-                  elTy = U->getType()->getPointerElementType();
-                  Value *tsize = ConstantInt::get(
-                      Size->getType(), (gutils->newFunc->getParent()
-                                            ->getDataLayout()
-                                            .getTypeAllocSizeInBits(elTy) +
-                                        7) /
-                                           8);
-                  Size = B.CreateUDiv(Size, tsize, "", /*exact*/ true);
-                  I = gutils->getNewFromOriginal(cast<Instruction>(U));
-                  break;
+                for (auto U : orig->users()) {
+                  if (hasMetadata(cast<Instruction>(U), "enzyme_caststack")) {
+                    elTy = U->getType()->getPointerElementType();
+                    Value *tsize = ConstantInt::get(
+                        Size->getType(), (gutils->newFunc->getParent()
+                                              ->getDataLayout()
+                                              .getTypeAllocSizeInBits(elTy) +
+                                          7) /
+                                             8);
+                    Size = B.CreateUDiv(Size, tsize, "", /*exact*/ true);
+                    I = gutils->getNewFromOriginal(cast<Instruction>(U));
+                    break;
+                  }
                 }
-              }
 #if LLVM_VERSION_MAJOR >= 15
               }
 #endif
@@ -10777,10 +10778,11 @@ public:
 #if LLVM_VERSION_MAJOR >= 15
               if (orig->getContext().supportsTypedPointers()) {
 #endif
-              if (orig->getType()->getPointerElementType() != elTy)
-                replacement = B.CreatePointerCast(
-                    replacement, PointerType::getUnqual(
-                                     orig->getType()->getPointerElementType()));
+                if (orig->getType()->getPointerElementType() != elTy)
+                  replacement = B.CreatePointerCast(
+                      replacement,
+                      PointerType::getUnqual(
+                          orig->getType()->getPointerElementType()));
 
 #if LLVM_VERSION_MAJOR >= 15
               }
@@ -10789,19 +10791,18 @@ public:
               if (int AS =
                       cast<PointerType>(orig->getType())->getAddressSpace()) {
 
-                    llvm::PointerType *PT;
+                llvm::PointerType *PT;
 #if LLVM_VERSION_MAJOR >= 15
-                    if (orig->getContext().supportsTypedPointers()) {
+                if (orig->getContext().supportsTypedPointers()) {
 #endif
-                        PT = PointerType::get(
-                            orig->getType()->getPointerElementType(), AS);
+                  PT = PointerType::get(
+                      orig->getType()->getPointerElementType(), AS);
 #if LLVM_VERSION_MAJOR >= 15
-                    } else {
-                        PT = PointerType::get(orig->getContext(), AS);
-                    }
+                } else {
+                  PT = PointerType::get(orig->getContext(), AS);
+                }
 #endif
-                    replacement = B.CreateAddrSpaceCast(
-                        replacement, PT);
+                replacement = B.CreateAddrSpaceCast(replacement, PT);
                 cast<Instruction>(replacement)
                     ->setMetadata("enzyme_backstack",
                                   MDNode::get(replacement->getContext(), {}));
@@ -10869,20 +10870,20 @@ public:
 #if LLVM_VERSION_MAJOR >= 15
               if (orig->getContext().supportsTypedPointers()) {
 #endif
-              for (auto U : orig->users()) {
-                if (hasMetadata(cast<Instruction>(U), "enzyme_caststack")) {
-                  elTy = U->getType()->getPointerElementType();
-                  Value *tsize = ConstantInt::get(
-                      Size->getType(), (gutils->newFunc->getParent()
-                                            ->getDataLayout()
-                                            .getTypeAllocSizeInBits(elTy) +
-                                        7) /
-                                           8);
-                  Size = B.CreateUDiv(Size, tsize, "", /*exact*/ true);
-                  I = gutils->getNewFromOriginal(cast<Instruction>(U));
-                  break;
+                for (auto U : orig->users()) {
+                  if (hasMetadata(cast<Instruction>(U), "enzyme_caststack")) {
+                    elTy = U->getType()->getPointerElementType();
+                    Value *tsize = ConstantInt::get(
+                        Size->getType(), (gutils->newFunc->getParent()
+                                              ->getDataLayout()
+                                              .getTypeAllocSizeInBits(elTy) +
+                                          7) /
+                                             8);
+                    Size = B.CreateUDiv(Size, tsize, "", /*exact*/ true);
+                    I = gutils->getNewFromOriginal(cast<Instruction>(U));
+                    break;
+                  }
                 }
-              }
 #if LLVM_VERSION_MAJOR >= 15
               }
 #endif
@@ -10908,29 +10909,29 @@ public:
 #if LLVM_VERSION_MAJOR >= 15
               if (orig->getContext().supportsTypedPointers()) {
 #endif
-              if (orig->getType()->getPointerElementType() != elTy)
-                replacement = B.CreatePointerCast(
-                    replacement, PointerType::getUnqual(
-                                     orig->getType()->getPointerElementType()));
+                if (orig->getType()->getPointerElementType() != elTy)
+                  replacement = B.CreatePointerCast(
+                      replacement,
+                      PointerType::getUnqual(
+                          orig->getType()->getPointerElementType()));
 
 #if LLVM_VERSION_MAJOR >= 15
               }
 #endif
               if (int AS =
                       cast<PointerType>(orig->getType())->getAddressSpace()) {
-                    llvm::PointerType *PT;
+                llvm::PointerType *PT;
 #if LLVM_VERSION_MAJOR >= 15
-                    if (orig->getContext().supportsTypedPointers()) {
+                if (orig->getContext().supportsTypedPointers()) {
 #endif
-                        PT = PointerType::get(
-                            orig->getType()->getPointerElementType(), AS);
+                  PT = PointerType::get(
+                      orig->getType()->getPointerElementType(), AS);
 #if LLVM_VERSION_MAJOR >= 15
-                    } else {
-                        PT = PointerType::get(orig->getContext(), AS);
-                    }
+                } else {
+                  PT = PointerType::get(orig->getContext(), AS);
+                }
 #endif
-                    replacement = B.CreateAddrSpaceCast(
-                        replacement, PT);
+                replacement = B.CreateAddrSpaceCast(replacement, PT);
                 cast<Instruction>(replacement)
                     ->setMetadata("enzyme_backstack",
                                   MDNode::get(replacement->getContext(), {}));
@@ -10973,24 +10974,24 @@ public:
             Type *elTy = Type::getInt8Ty(orig->getContext());
             Instruction *I = nullptr;
 #if LLVM_VERSION_MAJOR >= 15
-              if (orig->getContext().supportsTypedPointers()) {
+            if (orig->getContext().supportsTypedPointers()) {
 #endif
-            for (auto U : orig->users()) {
-              if (hasMetadata(cast<Instruction>(U), "enzyme_caststack")) {
-                elTy = U->getType()->getPointerElementType();
-                Value *tsize = ConstantInt::get(
-                    Size->getType(), (gutils->newFunc->getParent()
-                                          ->getDataLayout()
-                                          .getTypeAllocSizeInBits(elTy) +
-                                      7) /
-                                         8);
-                Size = B.CreateUDiv(Size, tsize, "", /*exact*/ true);
-                I = gutils->getNewFromOriginal(cast<Instruction>(U));
-                break;
+              for (auto U : orig->users()) {
+                if (hasMetadata(cast<Instruction>(U), "enzyme_caststack")) {
+                  elTy = U->getType()->getPointerElementType();
+                  Value *tsize = ConstantInt::get(
+                      Size->getType(), (gutils->newFunc->getParent()
+                                            ->getDataLayout()
+                                            .getTypeAllocSizeInBits(elTy) +
+                                        7) /
+                                           8);
+                  Size = B.CreateUDiv(Size, tsize, "", /*exact*/ true);
+                  I = gutils->getNewFromOriginal(cast<Instruction>(U));
+                  break;
+                }
               }
-            }
 #if LLVM_VERSION_MAJOR >= 15
-             }
+            }
 #endif
             Value *replacement = B.CreateAlloca(elTy, Size);
             if (I)
@@ -11010,32 +11011,31 @@ public:
 #endif
             }
 #if LLVM_VERSION_MAJOR >= 15
-              if (orig->getContext().supportsTypedPointers()) {
+            if (orig->getContext().supportsTypedPointers()) {
 #endif
-            if (orig->getType()->getPointerElementType() != elTy)
-              replacement = B.CreatePointerCast(
-                  replacement, PointerType::getUnqual(
-                                   orig->getType()->getPointerElementType()));
+              if (orig->getType()->getPointerElementType() != elTy)
+                replacement = B.CreatePointerCast(
+                    replacement, PointerType::getUnqual(
+                                     orig->getType()->getPointerElementType()));
 
 #if LLVM_VERSION_MAJOR >= 15
-              }
+            }
 #endif
             if (int AS =
                     cast<PointerType>(orig->getType())->getAddressSpace()) {
 
-                    llvm::PointerType *PT;
+              llvm::PointerType *PT;
 #if LLVM_VERSION_MAJOR >= 15
-                    if (orig->getContext().supportsTypedPointers()) {
+              if (orig->getContext().supportsTypedPointers()) {
 #endif
-                        PT = PointerType::get(
-                            orig->getType()->getPointerElementType(), AS);
+                PT = PointerType::get(orig->getType()->getPointerElementType(),
+                                      AS);
 #if LLVM_VERSION_MAJOR >= 15
-                    } else {
-                        PT = PointerType::get(orig->getContext(), AS);
-                    }
+              } else {
+                PT = PointerType::get(orig->getContext(), AS);
+              }
 #endif
-                    replacement = B.CreateAddrSpaceCast(
-                        replacement, PT);
+              replacement = B.CreateAddrSpaceCast(replacement, PT);
               cast<Instruction>(replacement)
                   ->setMetadata("enzyme_backstack",
                                 MDNode::get(replacement->getContext(), {}));

@@ -1396,12 +1396,12 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
 #if LLVM_VERSION_MAJOR >= 15
   if (tostore->getContext().supportsTypedPointers()) {
 #endif
-  if (tostore->getType() != loc->getType()->getPointerElementType()) {
-    llvm::errs() << "val: " << *val << "\n";
-    llvm::errs() << "tostore: " << *tostore << "\n";
-    llvm::errs() << "loc: " << *loc << "\n";
-  }
-  assert(tostore->getType() == loc->getType()->getPointerElementType());
+    if (tostore->getType() != loc->getType()->getPointerElementType()) {
+      llvm::errs() << "val: " << *val << "\n";
+      llvm::errs() << "tostore: " << *tostore << "\n";
+      llvm::errs() << "loc: " << *loc << "\n";
+    }
+    assert(tostore->getType() == loc->getType()->getPointerElementType());
 #if LLVM_VERSION_MAJOR >= 15
   }
 #endif
