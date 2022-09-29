@@ -298,7 +298,12 @@ static inline bool is_use_directly_needed_in_reverse(
 
     bool writeOnlyNoCapture = true;
     auto F = getFunctionFromCall(const_cast<CallInst *>(CI));
-    for (size_t i = 0; i < CI->getNumArgOperands(); i++) {
+#if LLVM_VERSION_MAJOR >= 14
+    for (size_t i = 0; i < CI->arg_size(); i++)
+#else
+    for (size_t i = 0; i < CI->getNumArgOperands(); i++)
+#endif
+    {
       if (val == CI->getArgOperand(i)) {
 #if LLVM_VERSION_MAJOR >= 8
         if (!CI->doesNotCapture(i))
