@@ -363,7 +363,12 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
       }
       IRBuilder<> B(CI);
       auto Addr = B.CreateAddrSpaceCast(rep, prev->getType());
-      for (size_t i = 0; i < CI->getNumArgOperands(); i++) {
+#if LLVM_VERSION_MAJOR >= 14
+      for (size_t i = 0; i < CI->arg_size(); i++)
+#else
+      for (size_t i = 0; i < CI->getNumArgOperands(); i++)
+#endif
+      {
         if (CI->getArgOperand(i) == prev) {
           CI->setArgOperand(i, Addr);
         }

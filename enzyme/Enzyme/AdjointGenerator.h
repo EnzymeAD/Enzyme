@@ -11626,7 +11626,7 @@ public:
         if (!orig->doesNotCapture(i))
 #else
         if (!(orig->dataOperandHasImpliedAttr(i + 1, Attribute::NoCapture) ||
-              (F && F->hasParamAttribute(i, Attribute::NoCapture))))
+              (called && called->hasParamAttribute(i, Attribute::NoCapture))))
 #endif
         {
           writeOnlyNoCapture = false;
