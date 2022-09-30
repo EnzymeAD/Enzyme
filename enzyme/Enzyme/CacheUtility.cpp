@@ -1485,11 +1485,25 @@ Value *CacheUtility::getCachePointer(bool inForwardPass, IRBuilder<> &BuilderM,
   // Iterate from outermost loop to innermost loop
   for (int i = sublimits.size() - 1; i >= 0; i--) {
     // Lookup the next allocation pointer
+    {
 #if LLVM_VERSION_MAJOR > 7
-    next = BuilderM.CreateLoad(next->getType()->getPointerElementType(), next);
-#else
-    next = BuilderM.CreateLoad(next);
+      llvm::Type *loadT;
+#if LLVM_VERSION_MAJOR >= 15
+      if (next->getContext().supportsTypedPointers()) {
 #endif
+        loadT = next->getType()->getPointerElementType();
+#if LLVM_VERSION_MAJOR >= 15
+      } else {
+        loadT = PointerType::get(
+            next->getContext(),
+            cast<PointerType>(next->getType())->getAddressSpace());
+      }
+#endif
+      next = BuilderM.CreateLoad(loadT, next);
+#else
+      next = BuilderM.CreateLoad(next);
+#endif
+    }
     if (storeInInstructionsMap && isa<AllocaInst>(cache))
       scopeInstructions[cast<AllocaInst>(cache)].push_back(
           cast<Instruction>(next));
@@ -1543,12 +1557,25 @@ Value *CacheUtility::getCachePointer(bool inForwardPass, IRBuilder<> &BuilderM,
         assert(es);
         idx = BuilderM.CreateMul(idx, es, "", /*NUW*/ true, /*NSW*/ true);
       }
+      {
 #if LLVM_VERSION_MAJOR > 7
-      next = BuilderM.CreateGEP(next->getType()->getPointerElementType(), next,
-                                idx);
-#else
-      next = BuilderM.CreateGEP(next, idx);
+        llvm::Type *loadT;
+#if LLVM_VERSION_MAJOR >= 15
+        if (next->getContext().supportsTypedPointers()) {
 #endif
+          loadT = next->getType()->getPointerElementType();
+#if LLVM_VERSION_MAJOR >= 15
+        } else {
+          loadT = PointerType::get(
+              next->getContext(),
+              cast<PointerType>(next->getType())->getAddressSpace());
+        }
+#endif
+        next = BuilderM.CreateGEP(loadT, next, idx);
+#else
+        next = BuilderM.CreateGEP(next, idx);
+#endif
+      }
       cast<GetElementPtrInst>(next)->setIsInBounds(true);
       if (storeInInstructionsMap && isa<AllocaInst>(cache))
         scopeInstructions[cast<AllocaInst>(cache)].push_back(

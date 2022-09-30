@@ -479,10 +479,9 @@ public:
 
 #if LLVM_VERSION_MAJOR >= 10
   void visitLoadLike(llvm::Instruction &I, MaybeAlign alignment,
-                     bool constantval, Value *OrigOffset = nullptr,
+                     bool constantval,
 #else
   void visitLoadLike(llvm::Instruction &I, unsigned alignment, bool constantval,
-                     Value *OrigOffset = nullptr,
 #endif
                      Value *mask = nullptr, Value *orig_maskInit = nullptr) {
     auto &DL = gutils->newFunc->getParent()->getDataLayout();
@@ -847,7 +846,7 @@ public:
               ((DiffeGradientUtils *)gutils)
                   ->addToInvertedPtrDiffe(&I, isfloat, start, nextStart - start,
                                           I.getOperand(0), prediff, Builder2,
-                                          alignment, OrigOffset, premask);
+                                          alignment, premask);
             }
           }
 
@@ -3620,7 +3619,7 @@ public:
 #endif
       auto &DL = gutils->newFunc->getParent()->getDataLayout();
       bool constantval = parseTBAA(I, DL).Inner0().isIntegral();
-      visitLoadLike(I, align, constantval, /*OrigOffset*/ nullptr,
+      visitLoadLike(I, align, constantval,
                     /*mask*/ gutils->getNewFromOriginal(I.getOperand(2)),
                     /*orig_maskInit*/ I.getOperand(3));
       return;
