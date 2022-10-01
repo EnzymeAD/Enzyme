@@ -19,9 +19,10 @@ __attribute__((noinline))
 void set(double *a, double x){
     a[0] = x;
 }
-void msg(double* in) {
+void msg(double& inn) {
     #pragma omp parallel for
     for (unsigned long long i=0; i<20; i++) {
+        double* in = &inn;
         double m;
         set(&m, in[i]);
         in[i] = m * m;

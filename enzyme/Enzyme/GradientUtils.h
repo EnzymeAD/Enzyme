@@ -1047,11 +1047,11 @@ public:
     return false;
   }
 
-  SmallVector<PHINode *, 1> rematerializedShadowPHIs;
+  SmallVector<llvm::Instruction *, 1> rematerializedPrimalOrShadowAllocations;
 
   void eraseFictiousPHIs() {
     {
-      for (auto P : rematerializedShadowPHIs) {
+      for (auto P : rematerializedPrimalOrShadowAllocations) {
         Value *replacement;
         if (EnzymeZeroCache)
           replacement =
