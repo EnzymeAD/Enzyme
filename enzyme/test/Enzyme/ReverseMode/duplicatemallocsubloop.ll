@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -instsimplify -adce -dse -S | FileCheck %s
+; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -instsimplify -adce -S | FileCheck %s
 
 @.str = private unnamed_addr constant [28 x i8] c"original =%f derivative=%f\0A\00", align 1
 
@@ -122,6 +122,7 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   %"a6'ipc_unwrap" = bitcast i8* %"a5'mi" to double*
 ; CHECK-NEXT:   call void @diffef(double* %a6_unwrap, double* %"a6'ipc_unwrap", double %2)
 ; CHECK-NEXT:   %3 = load double, double* %"a6'ipc_unwrap", align 8
+; CHECK-NEXT:   store double 0.000000e+00, double* %"a6'ipc_unwrap"
 ; CHECK-NEXT:   %"a10'ipg_unwrap" = getelementptr inbounds double, double* %"a1'", i32 %_unwrap
 ; CHECK-NEXT:   %4 = load double, double* %"a10'ipg_unwrap", align 8
 ; CHECK-NEXT:   %5 = fadd fast double %4, %3

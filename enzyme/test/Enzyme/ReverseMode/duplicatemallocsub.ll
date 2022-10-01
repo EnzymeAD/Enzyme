@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -instsimplify -adce -dse -S | FileCheck %s
+; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -instsimplify -adce -S | FileCheck %s
 
 @.str = private unnamed_addr constant [28 x i8] c"original =%f derivative=%f\0A\00", align 1
 
@@ -84,6 +84,7 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   store double %a0, double* %a3, align 8
 ; CHECK-NEXT:   call void @diffef(double* %a3, double* %"a3'ipc", double %differeturn)
 ; CHECK-NEXT:   %0 = load double, double* %"a3'ipc", align 8
+; CHECK-NEXT:   store double 0.000000e+00, double* %"a3'ipc"
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %"a2'mi")
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %a2)
 ; CHECK-NEXT:   %1 = insertvalue { double } undef, double %0, 0

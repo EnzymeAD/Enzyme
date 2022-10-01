@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -instsimplify -adce -dse -S | FileCheck %s
+; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -instsimplify -adce -S | FileCheck %s
 
 define dso_local double @f(double* nocapture readonly %a0) local_unnamed_addr #0 {
 entry:
@@ -6,6 +6,10 @@ entry:
   %m2 = fmul double %a2, %a2
   ret double %m2
 }
+
+declare void @llvm.lifetime.start.p0i8(i64, i8* nocapture)
+
+declare void @llvm.lifetime.end.p0i8(i64, i8* nocapture)
 
 define dso_local void @malloced(double* noalias nocapture %a0, double* noalias nocapture readonly %a1, i32 %a2) #1 {
 entry:
@@ -15,6 +19,7 @@ entry:
 
 loop:  
   %a9 = phi i32 [ 0, %entry ], [ %a14, %loop ]
+  call void @llvm.lifetime.start.p0i8(i64 8, i8* nonnull %a5)
   %a10 = getelementptr inbounds double, double* %a1, i32 %a9
   %a11 = load double, double* %a10, align 8
   store double %a11, double* %a6, align 8
@@ -23,6 +28,7 @@ loop:
   store double %a12, double* %a13, align 8
   %a14 = add nuw nsw i32 %a9, 1
   %a15 = icmp eq i32 %a14, 10
+  call void @llvm.lifetime.end.p0i8(i64 8, i8* nonnull %a5)
   br i1 %a15, label %exit, label %loop
 
 exit:                                                ; preds = %8
@@ -68,30 +74,35 @@ attributes #6 = { nounwind }
 ; CHECK-NEXT:   store double %a12, double* %a13, align 8
 ; CHECK-NEXT:   %a14 = add nuw nsw i32 %0, 1
 ; CHECK-NEXT:   %a15 = icmp eq i32 %a14, 10
-; CHECK-NEXT:   br i1 %a15, label %invertloop, label %loop
+; CHECK-NEXT:   br i1 %a15, label %remat_enter, label %loop
 
-; CHECK: invertentry:                                      ; preds = %invertloop
+; CHECK: invertentry:     
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %"a5'mi")
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %a5)
 ; CHECK-NEXT:   ret void
 
-; CHECK: invertloop:                                       ; preds = %loop, %incinvertloop
-; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %6, %incinvertloop ], [ 9, %loop ]
+; CHECK: incinvertloop: 
+; CHECK-NEXT:   %[[a6:.+]] = add nsw i64 %"iv'ac.0", -1
+; CHECK-NEXT:   br label %remat_enter
+
+; CHECK: remat_enter:
+; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %[[a6]], %incinvertloop ], [ 9, %loop ]
+; CHECK-NEXT:   %_unwrap1 = trunc i64 %"iv'ac.0" to i32
+; CHECK-NEXT:   %a10_unwrap = getelementptr inbounds double, double* %a1, i32 %_unwrap1
+; CHECK-NEXT:   %a11_unwrap = load double, double* %a10_unwrap, align 8
+; CHECK-NEXT:   store double %a11_unwrap, double* %a6, align 8
 ; CHECK-NEXT:   %_unwrap = trunc i64 %"iv'ac.0" to i32
 ; CHECK-NEXT:   %"a13'ipg_unwrap" = getelementptr inbounds double, double* %"a0'", i32 %_unwrap
-; CHECK-NEXT:   %1 = load double, double* %"a13'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i1:.+]] = load double, double* %"a13'ipg_unwrap", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"a13'ipg_unwrap", align 8
-; CHECK-NEXT:   call void @diffef(double* %a6, double* %"a6'ipc", double %1)
-; CHECK-NEXT:   %2 = load double, double* %"a6'ipc", align 8
+; CHECK-NEXT:   call void @diffef(double* %a6, double* %"a6'ipc", double %[[i1]])
+; CHECK-NEXT:   %[[i2:.+]] = load double, double* %"a6'ipc", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"a6'ipc", align 8
 ; CHECK-NEXT:   %"a10'ipg_unwrap" = getelementptr inbounds double, double* %"a1'", i32 %_unwrap
-; CHECK-NEXT:   %3 = load double, double* %"a10'ipg_unwrap", align 8
-; CHECK-NEXT:   %4 = fadd fast double %3, %2
-; CHECK-NEXT:   store double %4, double* %"a10'ipg_unwrap", align 8
-; CHECK-NEXT:   %5 = icmp eq i64 %"iv'ac.0", 0
-; CHECK-NEXT:   br i1 %5, label %invertentry, label %incinvertloop
+; CHECK-NEXT:   %[[i3:.+]] = load double, double* %"a10'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i4:.+]] = fadd fast double %[[i3]], %[[i2]]
+; CHECK-NEXT:   store double %[[i4]], double* %"a10'ipg_unwrap", align 8
+; CHECK-NEXT:   %[[i5:.+]] = icmp eq i64 %"iv'ac.0", 0
+; CHECK-NEXT:   br i1 %[[i5:.+]], label %invertentry, label %incinvertloop
 
-; CHECK: incinvertloop:                                    ; preds = %invertloop
-; CHECK-NEXT:   %6 = add nsw i64 %"iv'ac.0", -1
-; CHECK-NEXT:   br label %invertloop
 ; CHECK-NEXT: }

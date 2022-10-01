@@ -10400,7 +10400,7 @@ public:
               backwardsShadow = true;
               forwardsShadow = found->second.primalInitialize;
               // If in a loop context, maintain the same free behavior.
-              if (!forwardsShadow && found->second.LI &&
+              if (found->second.LI &&
                   found->second.LI->contains(orig->getParent()))
                 inLoop = true;
             }
@@ -10883,7 +10883,7 @@ public:
               freeKnownAllocation(Builder2, lookup(newCall, Builder2), funcName,
                                   dbgLoc, gutils->TLI);
               if (Mode == DerivativeMode::ReverseModeGradient &&
-                  found->second.LI)
+                  found->second.LI && found->second.LI->contains(orig))
                 gutils->rematerializedPrimalOrShadowAllocations.push_back(
                     newCall);
               return;
@@ -11363,17 +11363,24 @@ public:
 #endif
 
       for (auto rmat : gutils->backwardsOnlyShadows) {
-        if (rmat.second.frees.count(orig) && rmat.second.primalInitialize &&
-            Mode != DerivativeMode::ReverseModeCombined && !rmat.second.LI) {
-          IRBuilder<> Builder2(&call);
-          getForwardBuilder(Builder2);
-          auto origfree = orig->getArgOperand(0);
-          auto tofree = gutils->invertPointerM(origfree, Builder2);
-          if (tofree != origfree) {
-            SmallVector<Value *, 2> args = {tofree};
-            CallInst *CI =
-                Builder2.CreateCall(orig->getFunctionType(), callval, args);
-            CI->setAttributes(orig->getAttributes());
+        if (rmat.second.frees.count(orig)) {
+          bool shouldFree = false;
+          if (rmat.second.primalInitialize) {
+            if (Mode == DerivativeMode::ReverseModePrimal)
+              shouldFree = true;
+          }
+
+          if (shouldFree) {
+            IRBuilder<> Builder2(&call);
+            getForwardBuilder(Builder2);
+            auto origfree = orig->getArgOperand(0);
+            auto tofree = gutils->invertPointerM(origfree, Builder2);
+            if (tofree != origfree) {
+              SmallVector<Value *, 2> args = {tofree};
+              CallInst *CI =
+                  Builder2.CreateCall(orig->getFunctionType(), callval, args);
+              CI->setAttributes(orig->getAttributes());
+            }
           }
           break;
         }

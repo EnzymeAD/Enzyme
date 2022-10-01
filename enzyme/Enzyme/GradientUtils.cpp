@@ -2300,6 +2300,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
       SmallPtrSet<Instruction *, 1> loopRematerializations;
       SmallPtrSet<Instruction *, 1> loopReallocations;
       SmallPtrSet<Instruction *, 1> loopShadowReallocations;
+      SmallPtrSet<Instruction *, 1> loopShadowZeroInits;
       SmallPtrSet<Instruction *, 1> loopShadowRematerializations;
       Loop *origLI = nullptr;
       for (auto pair : rematerializableAllocations) {
@@ -2329,22 +2330,35 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
       for (auto pair : backwardsOnlyShadows) {
         if (pair.second.LI &&
             getNewFromOriginal(pair.second.LI->getHeader()) == L->getHeader()) {
-          if (!pair.second.primalInitialize) {
-            if (auto inst = dyn_cast<Instruction>(pair.first)) {
-              if (pair.second.LI->contains(inst->getParent())) {
+          if (auto inst = dyn_cast<Instruction>(pair.first)) {
+            bool restoreStores = false;
+            if (pair.second.LI->contains(inst->getParent())) {
+              // TODO later make it so primalInitialize can be restored
+              // rather than cached from primal
+              if (!pair.second.primalInitialize) {
                 loopShadowReallocations.insert(inst);
-                for (auto I : pair.second.stores)
-                  loopShadowRematerializations.insert(I);
-                origLI = pair.second.LI;
+                restoreStores = true;
+              }
+            } else {
+              // if (pair.second.primalInitialize) {
+              //  loopShadowZeroInits.insert(inst);
+              //}
+              restoreStores = true;
+            }
+            if (restoreStores) {
+              for (auto I : pair.second.stores) {
+                loopShadowRematerializations.insert(I);
               }
             }
+            origLI = pair.second.LI;
           }
         }
       }
       BasicBlock *resumeblock = reverseBlocks[BB].front();
       if (loopRematerializations.size() != 0 || loopReallocations.size() != 0 ||
           loopShadowRematerializations.size() != 0 ||
-          loopShadowReallocations.size() != 0) {
+          loopShadowReallocations.size() != 0 ||
+          loopShadowZeroInits.size() != 0) {
         auto found = rematerializedLoops_cache.find(L);
         if (found != rematerializedLoops_cache.end()) {
           resumeblock = found->second;
@@ -2360,6 +2374,47 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                 BB->getParent());
             origToNewForward[B] = newB;
             reverseBlockToPrimal[newB] = getNewFromOriginal(B);
+            if (B == origLI->getHeader()) {
+              IRBuilder<> NB(newB);
+              for (auto inst : loopShadowZeroInits) {
+                auto anti = lookupM(invertPointerM(inst, NB), NB);
+                StringRef funcName;
+                SmallVector<Value *, 8> args;
+                if (auto orig = dyn_cast<CallInst>(inst)) {
+#if LLVM_VERSION_MAJOR >= 14
+                  for (auto &arg : orig->args())
+#else
+                  for (auto &arg : orig->arg_operands())
+#endif
+                  {
+                    args.push_back(lookupM(getNewFromOriginal(arg), NB));
+                  }
+                  funcName = getFuncNameFromCall(orig);
+                } else if (auto AI = dyn_cast<AllocaInst>(inst)) {
+                  funcName = "malloc";
+                  Value *sz =
+                      lookupM(getNewFromOriginal(AI->getArraySize()), NB);
+
+                  auto ci = ConstantInt::get(
+                      sz->getType(),
+                      B->getParent()
+                              ->getParent()
+                              ->getDataLayout()
+                              .getTypeAllocSizeInBits(AI->getAllocatedType()) /
+                          8);
+                  sz = NB.CreateMul(sz, ci);
+                  args.push_back(sz);
+                }
+                assert(funcName.size());
+
+                applyChainRule(
+                    NB,
+                    [&](Value *anti) {
+                      zeroKnownAllocation(NB, anti, args, funcName, TLI);
+                    },
+                    anti);
+              }
+            }
           }
 
           ValueToValueMapTy available;
@@ -7089,11 +7144,14 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
   SmallVector<LoadInst *, 1> loads;
   SmallVector<LoadLikeCall, 1> loadLikeCalls;
   SmallPtrSet<Instruction *, 1> stores;
+  SmallPtrSet<Instruction *, 1> storingOps;
   SmallPtrSet<Instruction *, 1> frees;
   SmallPtrSet<IntrinsicInst *, 1> LifetimeStarts;
   bool promotable = true;
   bool shadowpromotable = true;
-  bool primalInitializationOfShadow = false;
+
+  SmallVector<Instruction *, 1> shadowPointerLoads;
+
   std::set<std::pair<Instruction *, Value *>> seen;
   SmallVector<std::pair<Instruction *, Value *>, 1> todo;
   for (auto U : V->users())
@@ -7118,17 +7176,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
       // to preserve initialization within the primal.
       auto TT = TR.query(load)[{-1}];
       if (!TT.isFloat()) {
-        // ok to duplicate in forward /
-        // reverse if it is a stack or GC allocation.
-        // Said memory will still be shadow initialized.
-        if (stackOrGC) {
-          primalInitializationOfShadow = true;
-        } else {
-          shadowpromotable = false;
-          EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
-                      cur->getParent(), " Could not promote allocation ", *V,
-                      " due to non-floating load ", *load);
-        }
+        shadowPointerLoads.push_back(cur);
       }
       loads.push_back(load);
     } else if (auto store = dyn_cast<StoreInst>(cur)) {
@@ -7140,8 +7188,10 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         promotable = false;
         shadowpromotable = false;
         break;
-      } else
+      } else {
         stores.insert(store);
+        storingOps.insert(store);
+      }
     } else if (auto II = dyn_cast<IntrinsicInst>(cur)) {
       switch (II->getIntrinsicID()) {
       case Intrinsic::lifetime_start:
@@ -7178,6 +7228,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
           break;
         }
         stores.insert(II);
+        storingOps.insert(II);
         break;
       }
       // TODO memtransfer(cpy/move)
@@ -7279,6 +7330,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
                         cur->getParent(), " Could not promote allocation ", *V,
                         " due to unknown writing call ", *cur);
           }
+          storingOps.insert(cur);
         }
 
         // Consider shadow memory now.
@@ -7291,9 +7343,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
           // fwd pass), and as isFloat above described does not prevent the
           // shadow
         } else {
-          // May now read pointers for storing into other pointers. Therefore we
-          // need to pre initialize the shadow.
-          primalInitializationOfShadow = true;
+          shadowPointerLoads.push_back(cur);
         }
 
         idx++;
@@ -7318,9 +7368,33 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
     outer = getAncestor(outer, OrigLI.getLoopFor(S->getParent()));
   }
 
+  // May now read pointers for storing into other pointers. Therefore we
+  // need to pre initialize the shadow.
+  bool primalInitializationOfShadow = shadowPointerLoads.size() > 0;
+
   if (shadowpromotable && !isConstantValue(V)) {
-    backwardsOnlyShadows[V] = ShadowRematerializer(
-        stores, frees, primalInitializationOfShadow, outer);
+    for (auto LI : shadowPointerLoads) {
+      // Is there a store which could occur after the load.
+      // In other words
+      SmallVector<Instruction *, 2> results;
+      mayExecuteAfter(results, LI, storingOps, outer);
+      for (auto res : results) {
+        if (overwritesToMemoryReadBy(OrigAA, TLI, SE, OrigLI, OrigDT, LI, res,
+                                     outer)) {
+          EmitWarning("NotPromotable", LI->getDebugLoc(), oldFunc,
+                      LI->getParent(), " Could not promote shadow allocation ",
+                      *V, " due to pointer load ", *LI,
+                      " which does not postdominates store ", *res);
+          shadowpromotable = false;
+          goto exitL;
+        }
+      }
+    }
+  exitL:;
+    if (shadowpromotable) {
+      backwardsOnlyShadows[V] = ShadowRematerializer(
+          stores, frees, primalInitializationOfShadow, outer);
+    }
   }
 
   if (!promotable)
@@ -7336,7 +7410,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
     // Is there a store which could occur after the load.
     // In other words
     SmallVector<Instruction *, 2> results;
-    mayExecuteAfter(results, LI, stores, outer);
+    mayExecuteAfter(results, LI, storingOps, outer);
     for (auto res : results) {
       if (overwritesToMemoryReadBy(OrigAA, TLI, SE, OrigLI, OrigDT, LI, res,
                                    outer)) {
@@ -7353,7 +7427,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
     // Is there a store which could occur after the load.
     // In other words
     SmallVector<Instruction *, 2> results;
-    mayExecuteAfter(results, LI.loadCall, stores, outer);
+    mayExecuteAfter(results, LI.loadCall, storingOps, outer);
     for (auto res : results) {
       if (overwritesToMemoryReadBy(OrigAA, TLI, SE, OrigLI, OrigDT, LI.loadCall,
                                    res, outer)) {
