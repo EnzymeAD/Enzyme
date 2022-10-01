@@ -11,7 +11,7 @@ entry:
   %p3 = alloca double*, align 8
   store double* %a0, double** %p3, align 8
   %a4 = call double* @f(double** nonnull %p3)
-  %r = load double, double* %a4
+  %r = load double, double* %a4, align 8
   ret double %r
 }
 
@@ -20,5 +20,5 @@ entry:
 ; CHECK-NEXT:   %p3 = alloca double*, align 8: icv:0 ici:1
 ; CHECK-NEXT:   store double* %a0, double** %p3, align 8: icv:1 ici:0
 ; CHECK-NEXT:   %a4 = call double* @f(double** nonnull %p3): icv:0 ici:1
-; CHECK-NEXT:   %r = load double, double* %a4: icv:0 ici:0
+; CHECK-NEXT:   %r = load double, double* %a4, align 8: icv:0 ici:0
 ; CHECK-NEXT:   ret double %r: icv:1 ici:1
