@@ -2658,7 +2658,13 @@ extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
 llvmGetPassPluginInfo() {
   return {
       LLVM_PLUGIN_API_VERSION, "EnzymeNew", "v0.1", [](llvm::PassBuilder &PB) {
-        PB.registerPipelineParsingCallback(
+          /*PB.registerOptimizerLastEPCallback(
+                  [&PB](ModulePassManager &PM, llvm::PassBuilder::OptimizationLevel OptLevel) {
+                      if (OptLevel == llvm::PassBuilder::OptimizationLevel::O3)
+                          PM.addPass(OptimizationRemarkEmitterWrapperPass());
+                  });*/
+
+          PB.registerPipelineParsingCallback(
             [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
                llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
               if (Name == "enzyme") {
