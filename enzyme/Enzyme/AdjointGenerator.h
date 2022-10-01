@@ -11568,6 +11568,33 @@ public:
           gradByVal[args.size()] = orig->getParamByValType(i);
         }
 #endif
+        bool writeOnlyNoCapture = true;
+#if LLVM_VERSION_MAJOR >= 8
+        if (!orig->doesNotCapture(i))
+#else
+        if (!(orig->dataOperandHasImpliedAttr(i + 1, Attribute::NoCapture) ||
+              (called && called->hasParamAttribute(i, Attribute::NoCapture))))
+#endif
+        {
+          writeOnlyNoCapture = false;
+        }
+#if LLVM_VERSION_MAJOR >= 14
+        if (!orig->onlyWritesMemory(i))
+#else
+        if (!(orig->dataOperandHasImpliedAttr(i + 1, Attribute::WriteOnly) ||
+              orig->dataOperandHasImpliedAttr(i + 1, Attribute::ReadNone) ||
+              (called && (called->hasParamAttribute(i, Attribute::WriteOnly) ||
+                          called->hasParamAttribute(i, Attribute::ReadNone)))))
+#endif
+        {
+          writeOnlyNoCapture = false;
+        }
+        if (writeOnlyNoCapture && Mode == DerivativeMode::ForwardModeSplit) {
+          if (EnzymeZeroCache)
+            argi = ConstantPointerNull::get(cast<PointerType>(argi->getType()));
+          else
+            argi = UndefValue::get(argi->getType());
+        }
         args.push_back(argi);
 
         auto argTy =

@@ -157,19 +157,19 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"a13'ipg_unwrap", align 8, !alias.scope !7, !noalias !10
 ; CHECK-NEXT:   %8 = extractvalue { double**, double* } %tapeArg, 1
 ; CHECK-NEXT:   %9 = getelementptr inbounds double, double* %8, i64 %"iv'ac.0"
-; CHECK-NEXT:   %10 = load double, double* %9, align 8, !invariant.group !13
+; CHECK-NEXT:   %10 = load double, double* %9, align 8
 ; CHECK-NEXT:   %m0differ = fmul fast double %7, %10
 ; CHECK-NEXT:   %m1differ = fmul fast double %7, %10
 ; CHECK-NEXT:   %11 = fadd fast double %m0differ, %m1differ
 ; CHECK-NEXT:   %12 = extractvalue { double**, double* } %tapeArg, 0
 ; CHECK-NEXT:   %13 = getelementptr inbounds double*, double** %12, i64 %"iv'ac.0"
-; CHECK-NEXT:   %14 = load double*, double** %13, align 8, !invariant.group !14
-; CHECK-NEXT:   %15 = load double, double* %14, !alias.scope !7, !noalias !10
+; CHECK-NEXT:   %14 = load double*, double** %13, align 8
+; CHECK-NEXT:   %15 = load double, double* %14
 ; CHECK-NEXT:   %16 = fadd fast double %15, %11
-; CHECK-NEXT:   store double %16, double* %14, !alias.scope !7, !noalias !10
+; CHECK-NEXT:   store double %16, double* %14
 ; CHECK-NEXT:   %p3_unwrap = bitcast i8* %remat_p2 to double**
 ; CHECK-NEXT:   %17 = getelementptr inbounds i8*, i8** %"p2'mi_malloccache", i64 %"iv'ac.0"
-; CHECK-NEXT:   %18 = load i8*, i8** %17, align 8, !invariant.group !12
+; CHECK-NEXT:   %18 = load i8*, i8** %17, align 8
 ; CHECK-NEXT:   %"p3'ipc_unwrap" = bitcast i8* %18 to double**
 ; CHECK-NEXT:   call void @diffef(double** %p3_unwrap, double** %"p3'ipc_unwrap")
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %18)

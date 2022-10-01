@@ -45,7 +45,7 @@ declare double @llvm.ceil.f64(double)
 
 declare dso_local noalias i8* @malloc(i64)
 
-define internal fastcc void @evaluate_integrand(double* nocapture %a0) {
+define internal fastcc void @evaluate_integrand(double* nocapture writeonly %a0) {
 bb:
   store double 0.000000e+00, double* %a0, align 8, !tbaa !2
   ret void
@@ -150,7 +150,6 @@ declare dso_local double @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   %"i14'de.2" = phi double [ %"i14'de.1", %invertbb7.loopexit ], [ 0.000000e+00, %incinvertbb12 ]
 ; CHECK-NEXT:   %"i17'de.2" = phi double [ %"i17'de.1", %invertbb7.loopexit ], [ 0.000000e+00, %incinvertbb12 ]
 ; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ %_unwrap2, %invertbb7.loopexit ], [ %[[i18]], %incinvertbb12 ]
-; CHECK-NEXT:   %remat_i15 = tail call noalias dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   %"i15'mi" = tail call noalias nonnull dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"i15'mi", i8 0, i64 8, i1 false)
 ; CHECK-NEXT:   %[[i19]] = fadd fast double %"i14'de.2", %"i18'de.2"
@@ -159,10 +158,8 @@ declare dso_local double @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   %[[i21:.+]] = load double, double* %"i16'ipc_unwrap", align 8
 ; CHECK-NEXT:   %[[i22:.+]] = fadd fast double %[[i21]], %[[i20]]
 ; CHECK-NEXT:   store double %[[i22]], double* %"i16'ipc_unwrap", align 8
-; CHECK-NEXT:   %i16_unwrap = bitcast i8* %remat_i15 to double*
-; CHECK-NEXT:   call fastcc void @diffeevaluate_integrand(double* %i16_unwrap, double* nonnull %"i16'ipc_unwrap")
+; CHECK-NEXT:   call fastcc void @diffeevaluate_integrand(double* {{(undef|poison)?}}, double* nonnull %"i16'ipc_unwrap")
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %"i15'mi")
-; CHECK-NEXT:   tail call void @free(i8* %remat_i15)
 ; CHECK-NEXT:   %[[i27:.+]] = icmp eq i64 %"iv1'ac.0", 0
 ; CHECK-NEXT:   br i1 %[[i27]], label %invertbb2, label %incinvertbb12
 ; CHECK-NEXT: }

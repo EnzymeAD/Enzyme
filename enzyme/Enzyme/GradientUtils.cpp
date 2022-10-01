@@ -7324,7 +7324,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         // If we may write to memory, we cannot promote if any values
         // need the allocation or any descendants for the reverse pass.
         if (!ReadOnly) {
-          if (!primalNeededInReverse) {
+          if (primalNeededInReverse) {
             promotable = false;
             EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
                         cur->getParent(), " Could not promote allocation ", *V,

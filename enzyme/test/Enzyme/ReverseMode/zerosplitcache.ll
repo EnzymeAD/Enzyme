@@ -1,6 +1,6 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instsimplify -gvn -adce -S | FileCheck %s
 
-define void @set(double* nocapture %a, double %x) {
+define void @set(double* nocapture writeonly %a, double %x) {
 entry:
   store double %x, double* %a, align 8
   ret void
@@ -40,7 +40,7 @@ declare dso_local double @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   ret { double } %[[i2]]
 ; CHECK-NEXT: }
 
-; CHECK: define internal void @augmented_set(double* nocapture %a, double* nocapture %"a'", double %x) 
+; CHECK: define internal void @augmented_set(double* nocapture writeonly %a, double* nocapture %"a'", double %x) 
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   store double %x, double* %a, align 8
 ; CHECK-NEXT:   ret void
@@ -56,16 +56,15 @@ declare dso_local double @__enzyme_autodiff(i8*, ...)
  
 ; CHECK: define internal { double } @diffeabove(double %i10, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %m = alloca double, i64 1, align 8
 ; CHECK-NEXT:   %"m'ai" = alloca double, i64 1, align 8
 ; CHECK-NEXT:   %0 = bitcast double* %"m'ai" to i8*
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %0, i8 0, i64 8, i1 false)
 ; CHECK-NEXT:   store double %differeturn, double* %"m'ai", align 8
-; CHECK-NEXT:   %1 = call { double } @diffeset(double* %m, double* %"m'ai", double %i10)
+; CHECK-NEXT:   %1 = call { double } @diffeset(double* undef, double* %"m'ai", double %i10)
 ; CHECK-NEXT:   ret { double } %1
 ; CHECK-NEXT: }
 
-; CHECK: define internal { double } @diffeset(double* nocapture %a, double* nocapture %"a'", double %x) 
+; CHECK: define internal { double } @diffeset(double* nocapture writeonly %a, double* nocapture %"a'", double %x) 
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = load double, double* %"a'", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"a'", align 8
