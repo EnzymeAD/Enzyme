@@ -11305,17 +11305,23 @@ public:
           return;
         }
       }
+#if LLVM_VERSION_MAJOR >= 11
+      auto callval = orig->getCalledOperand();
+#else
+      auto callval = orig->getCalledValue();
+#endif
 
       for (auto rmat : gutils->backwardsOnlyShadows) {
-        if (rmat.second.frees.count(orig) && rmat.second.primalInitialize) {
+        if (rmat.second.frees.count(orig) && rmat.second.primalInitialize &&
+            Mode != DerivativeMode::ReverseModeCombined && !rmat.second.LI) {
           IRBuilder<> Builder2(&call);
           getForwardBuilder(Builder2);
           auto origfree = orig->getArgOperand(0);
           auto tofree = gutils->invertPointerM(origfree, Builder2);
           if (tofree != origfree) {
             SmallVector<Value *, 2> args = {tofree};
-            CallInst *CI = Builder2.CreateCall(orig->getFunctionType(),
-                                               orig->getCalledFunction(), args);
+            CallInst *CI =
+                Builder2.CreateCall(orig->getFunctionType(), callval, args);
             CI->setAttributes(orig->getAttributes());
           }
           break;
@@ -11710,6 +11716,28 @@ public:
 
       pre_args.push_back(argi);
 
+      bool writeOnlyNoCapture = true;
+#if LLVM_VERSION_MAJOR >= 8
+      if (!orig->doesNotCapture(i))
+#else
+      if (!(orig->dataOperandHasImpliedAttr(i + 1, Attribute::NoCapture) ||
+            (called && called->hasParamAttribute(i, Attribute::NoCapture))))
+#endif
+      {
+        writeOnlyNoCapture = false;
+      }
+#if LLVM_VERSION_MAJOR >= 14
+      if (!orig->onlyWritesMemory(i))
+#else
+      if (!(orig->dataOperandHasImpliedAttr(i + 1, Attribute::WriteOnly) ||
+            orig->dataOperandHasImpliedAttr(i + 1, Attribute::ReadNone) ||
+            (called && (called->hasParamAttribute(i, Attribute::WriteOnly) ||
+                        called->hasParamAttribute(i, Attribute::ReadNone)))))
+#endif
+      {
+        writeOnlyNoCapture = false;
+      }
+
       if (Mode != DerivativeMode::ReverseModePrimal) {
         IRBuilder<> Builder2(call.getParent());
         getReverseBuilder(Builder2);
@@ -11719,27 +11747,6 @@ public:
         }
 #endif
 
-        bool writeOnlyNoCapture = true;
-#if LLVM_VERSION_MAJOR >= 8
-        if (!orig->doesNotCapture(i))
-#else
-        if (!(orig->dataOperandHasImpliedAttr(i + 1, Attribute::NoCapture) ||
-              (called && called->hasParamAttribute(i, Attribute::NoCapture))))
-#endif
-        {
-          writeOnlyNoCapture = false;
-        }
-#if LLVM_VERSION_MAJOR >= 14
-        if (!orig->onlyWritesMemory(i))
-#else
-        if (!(orig->dataOperandHasImpliedAttr(i + 1, Attribute::WriteOnly) ||
-              orig->dataOperandHasImpliedAttr(i + 1, Attribute::ReadNone) ||
-              (called && (called->hasParamAttribute(i, Attribute::WriteOnly) ||
-                          called->hasParamAttribute(i, Attribute::ReadNone)))))
-#endif
-        {
-          writeOnlyNoCapture = false;
-        }
         if (writeOnlyNoCapture && !replaceFunction) {
           if (EnzymeZeroCache)
             argi = ConstantPointerNull::get(cast<PointerType>(argi->getType()));
@@ -11764,9 +11771,20 @@ public:
         if (Mode != DerivativeMode::ReverseModePrimal) {
           IRBuilder<> Builder2(call.getParent());
           getReverseBuilder(Builder2);
-          args.push_back(
-              lookup(gutils->invertPointerM(orig->getArgOperand(i), Builder2),
-                     Builder2));
+
+          Value *darg = nullptr;
+
+          if (writeOnlyNoCapture && !replaceFunction &&
+              TR.query(orig->getArgOperand(i))[{-1, -1}] == BaseType::Pointer) {
+            if (EnzymeZeroCache)
+              darg =
+                  ConstantPointerNull::get(cast<PointerType>(argi->getType()));
+            else
+              darg = UndefValue::get(argi->getType());
+          } else {
+            darg = gutils->invertPointerM(orig->getArgOperand(i), Builder2);
+          }
+          args.push_back(lookup(darg, Builder2));
         }
         pre_args.push_back(
             gutils->invertPointerM(orig->getArgOperand(i), BuilderZ));

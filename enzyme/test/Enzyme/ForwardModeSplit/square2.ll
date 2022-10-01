@@ -60,16 +60,16 @@ attributes #3 = { "correctly-rounded-divide-sqrt-fp-math"="false" "disable-tail-
 attributes #4 = { nounwind }
 
 
-; CHECK: define internal double @fwddiffesquare(double %x, double %"x'", i8* %malloccall1)
+; CHECK: define internal double @fwddiffesquare(double %x, double %"x'", i8* %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %x.addr = alloca double, i64 1, align 8
+; CHECK-NEXT:   %y = alloca double, i64 1, align 8
 ; CHECK-NEXT:   %"x.addr'ai" = alloca double, i64 1, align 8
 ; CHECK-NEXT:   %[[q1:.+]] = bitcast double* %"x.addr'ai" to i8*
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %[[q1]], i8 0, i64 8, i1 false)
 ; CHECK-NEXT:   %"y'ai" = alloca double, i64 1, align 8
 ; CHECK-NEXT:   %[[q2:.]] = bitcast double* %"y'ai" to i8*
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %[[q2]], i8 0, i64 8, i1 false)
-; CHECK-NEXT:   %y = bitcast i8* %malloccall1 to double*
 ; CHECK-NEXT:   store double %x, double* %x.addr, align 8
 ; CHECK-NEXT:   store double %"x'", double* %"x.addr'ai", align 8
 ; CHECK-NEXT:   call void @fwddiffesquare_(double* %x.addr, double* %"x.addr'ai", double* %y, double* %"y'ai")

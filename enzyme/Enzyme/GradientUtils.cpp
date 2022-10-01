@@ -7043,6 +7043,49 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
   if (!EnzymeRematerialize)
     return;
 
+  // If promoted, stack or GC allocations don't need to be preserved
+  // for an explicit free
+  bool stackOrGC = false;
+  {
+    auto TmpOrig =
+#if LLVM_VERSION_MAJOR >= 12
+        getUnderlyingObject(V, 100);
+#else
+        GetUnderlyingObject(V, newFunc->getParent()->getDataLayout(), 100);
+#endif
+    StringRef funcName = "";
+    if (auto CI = dyn_cast<CallInst>(TmpOrig))
+      if (Function *originCall = getFunctionFromCall(CI))
+        funcName = originCall->getName();
+    if (isa<AllocaInst>(TmpOrig) ||
+        (isa<Instruction>(TmpOrig) &&
+         hasMetadata(cast<Instruction>(TmpOrig), "enzyme_fromstack")) ||
+        funcName == "jl_alloc_array_1d" || funcName == "jl_alloc_array_2d" ||
+        funcName == "jl_alloc_array_3d" || funcName == "jl_array_copy" ||
+        funcName == "ijl_alloc_array_1d" || funcName == "ijl_alloc_array_2d" ||
+        funcName == "ijl_alloc_array_3d" || funcName == "ijl_array_copy" ||
+        funcName == "julia.gc_alloc_obj" || funcName == "jl_gc_alloc_typed" ||
+        funcName == "ijl_gc_alloc_typed")
+      stackOrGC = true;
+  }
+
+  // For the piece of memory V allocated within this scope, it will be
+  // initialized in some way by the (augmented) forward pass. Loads and other
+  // load-like operations will either require the allocation V itself to be
+  // preserved for the reverse pass, or alternatively the tape for those
+  // operations.
+  //
+  // Instead, we ask here whether or not we can restore the memory state of V in
+  // the reverse pass by recreating all of the stores and store-like operations
+  // into the V prior to their load-like uses.
+  //
+  // Notably, we only need to preserve the ability to reload any values actually
+  // used in the reverse pass.
+
+  std::map<UsageKey, bool> Seen;
+  bool primalNeededInReverse = is_value_needed_in_reverse<ValueType::Primal>(
+      this, V, DerivativeMode::ReverseModeGradient, Seen, notForAnalysis);
+
   SmallVector<LoadInst *, 1> loads;
   SmallVector<LoadLikeCall, 1> loadLikeCalls;
   SmallPtrSet<Instruction *, 1> stores;
@@ -7078,20 +7121,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         // ok to duplicate in forward /
         // reverse if it is a stack or GC allocation.
         // Said memory will still be shadow initialized.
-        StringRef funcName = "";
-        if (auto CI = dyn_cast<CallInst>(V))
-          if (Function *originCall = getFunctionFromCall(CI))
-            funcName = originCall->getName();
-        if (isa<AllocaInst>(V) || hasMetadata(V, "enzyme_fromstack") ||
-            funcName == "jl_alloc_array_1d" ||
-            funcName == "jl_alloc_array_2d" ||
-            funcName == "jl_alloc_array_3d" || funcName == "jl_array_copy" ||
-            funcName == "ijl_alloc_array_1d" ||
-            funcName == "ijl_alloc_array_2d" ||
-            funcName == "ijl_alloc_array_3d" || funcName == "ijl_array_copy" ||
-            funcName == "julia.gc_alloc_obj" ||
-            funcName == "jl_gc_alloc_typed" ||
-            funcName == "ijl_gc_alloc_typed") {
+        if (stackOrGC) {
           primalInitializationOfShadow = true;
         } else {
           shadowpromotable = false;
@@ -7186,127 +7216,86 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         }
         auto F = getFunctionFromCall(CI);
         auto TT = TR.query(prev)[{-1, -1}];
-        // If it either could capture, or could have a int/pointer written to
-        // it it is not promotable
-#if LLVM_VERSION_MAJOR >= 8
-        if (CI->doesNotCapture(idx))
-#else
-        if (CI->dataOperandHasImpliedAttr(idx + 1, Attribute::NoCapture) ||
-            (F && F->hasParamAttribute(idx, Attribute::NoCapture)))
-#endif
-        {
-
-          auto TmpOrig =
-#if LLVM_VERSION_MAJOR >= 12
-              getUnderlyingObject(V, 100);
-#else
-              GetUnderlyingObject(V, newFunc->getParent()->getDataLayout(),
-                                  100);
-#endif
-
-          bool stackOrGC = false;
-          StringRef funcName = "";
-          if (auto CI = dyn_cast<CallInst>(TmpOrig))
-            if (Function *originCall = getFunctionFromCall(CI))
-              funcName = originCall->getName();
-          if (isa<AllocaInst>(TmpOrig) ||
-              (isa<Instruction>(TmpOrig) &&
-               hasMetadata(cast<Instruction>(TmpOrig), "enzyme_fromstack")) ||
-              funcName == "jl_alloc_array_1d" ||
-              funcName == "jl_alloc_array_2d" ||
-              funcName == "jl_alloc_array_3d" || funcName == "jl_array_copy" ||
-              funcName == "ijl_alloc_array_1d" ||
-              funcName == "ijl_alloc_array_2d" ||
-              funcName == "ijl_alloc_array_3d" ||
-              funcName == "ijl_array_copy" ||
-              funcName == "julia.gc_alloc_obj" ||
-              funcName == "jl_gc_alloc_typed" ||
-              funcName == "ijl_gc_alloc_typed")
-            stackOrGC = true;
 
 #if LLVM_VERSION_MAJOR >= 8
-          if (CI->onlyReadsMemory(idx))
+        bool NoCapture = CI->doesNotCapture(idx);
 #else
-          if (CI->dataOperandHasImpliedAttr(idx + 1, Attribute::ReadOnly) ||
-              CI->dataOperandHasImpliedAttr(idx + 1, Attribute::ReadNone) ||
-              (F && (F->hasParamAttribute(idx, Attribute::ReadOnly) ||
-                     F->hasParamAttribute(idx, Attribute::ReadNone))))
+        bool NoCapture =
+            CI->dataOperandHasImpliedAttr(idx + 1, Attribute::NoCapture) ||
+            (F && F->hasParamAttribute(idx, Attribute::NoCapture));
 #endif
-          {
-            // if only reading memory, ok to duplicate in forward /
-            // reverse if it is a stack or GC allocation.
-            // Said memory will still be primal initialized.
-            StringRef funcName = "";
-            if (auto CI = dyn_cast<CallInst>(TmpOrig))
-              if (Function *originCall = getFunctionFromCall(CI))
-                funcName = originCall->getName();
-            if (stackOrGC) {
-              if (!seenLoadLikeCall) {
-                loadLikeCalls.push_back(LoadLikeCall(CI, prev));
-                seenLoadLikeCall = true;
-              }
-            } else {
-              promotable = false;
-              EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
-                          cur->getParent(), " Could not promote allocation ",
-                          *V, " due to unknown non-local call ", *cur);
-            }
-          }
+
+#if LLVM_VERSION_MAJOR >= 8
+        bool ReadOnly = CI->onlyReadsMemory(idx);
+#else
+        bool ReadOnly =
+            CI->dataOperandHasImpliedAttr(idx + 1, Attribute::ReadOnly) ||
+            CI->dataOperandHasImpliedAttr(idx + 1, Attribute::ReadNone) ||
+            (F && (F->hasParamAttribute(idx, Attribute::ReadOnly) ||
+                   F->hasParamAttribute(idx, Attribute::ReadNone)));
+#endif
+
 #if LLVM_VERSION_MAJOR >= 14
-          else if (!CI->onlyWritesMemory(idx))
+        bool WriteOnly = CI->onlyWritesMemory(idx);
 #else
-          else if (!(CI->dataOperandHasImpliedAttr(idx + 1,
-                                                   Attribute::WriteOnly) ||
-                     CI->dataOperandHasImpliedAttr(idx + 1,
-                                                   Attribute::ReadNone) ||
-                     (F && (F->hasParamAttribute(idx, Attribute::WriteOnly) ||
-                            F->hasParamAttribute(idx, Attribute::ReadNone)))))
+        bool WriteOnly =
+            CI->dataOperandHasImpliedAttr(idx + 1, Attribute::WriteOnly) ||
+            CI->dataOperandHasImpliedAttr(idx + 1, Attribute::ReadNone) ||
+            (F && (F->hasParamAttribute(idx, Attribute::WriteOnly) ||
+                   F->hasParamAttribute(idx, Attribute::ReadNone)));
 #endif
-          {
-            promotable = false;
-            EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
-                        cur->getParent(), " Could not promote allocation ", *V,
-                        " due to unknown writing call ", *cur);
-          }
 
-          if (TT.isFloat()) {
-            // all floats ok
-          }
-#if LLVM_VERSION_MAJOR >= 8
-          else if (CI->onlyReadsMemory(idx))
-#else
-          else if (CI->dataOperandHasImpliedAttr(idx + 1,
-                                                 Attribute::ReadOnly) ||
-                   CI->dataOperandHasImpliedAttr(idx + 1,
-                                                 Attribute::ReadNone) ||
-                   (F && (F->hasParamAttribute(idx, Attribute::ReadOnly) ||
-                          F->hasParamAttribute(idx, Attribute::ReadNone))))
-#endif
-          {
-            // if only reading memory, ok to duplicate in forward /
-            // reverse if it is a stack or GC allocation.
-            // Said memory will still be shadow initialized.
-            if (stackOrGC) {
-              primalInitializationOfShadow = true;
-            } else {
-              shadowpromotable = false;
-              EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
-                          cur->getParent(), " Could not promote allocation ",
-                          *V, " due to unknown readonly non float call ", *cur);
-            }
-          } else {
-            shadowpromotable = false;
-            EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
-                        cur->getParent(), " Could not promote allocation ", *V,
-                        " due to unknown writing non float call ", *cur);
-          }
-        } else {
+        // If the pointer is captured, conservatively assume it is used in
+        // nontrivial ways that make both the primal and shadow not promotable.
+        if (!NoCapture) {
           shadowpromotable = false;
           promotable = false;
           EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
                       cur->getParent(), " Could not promote allocation ", *V,
                       " due to unknown capturing call ", *cur);
+          idx++;
+          continue;
         }
+
+        // From here on out we can assume the pointer is not captured, and only
+        // written to or read from.
+
+        // If we may read from the memory, consider this a load-like call
+        // that must have all writes done in preparation for any reverse-pass
+        // users.
+        if (!WriteOnly) {
+          if (!seenLoadLikeCall) {
+            loadLikeCalls.push_back(LoadLikeCall(CI, prev));
+            seenLoadLikeCall = true;
+          }
+        }
+
+        // If we may write to memory, we cannot promote if any values
+        // need the allocation or any descendants for the reverse pass.
+        if (!ReadOnly) {
+          if (!primalNeededInReverse) {
+            promotable = false;
+            EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
+                        cur->getParent(), " Could not promote allocation ", *V,
+                        " due to unknown writing call ", *cur);
+          }
+        }
+
+        // Consider shadow memory now.
+        //
+        // If the memory is all floats, there's no issue, since besides zero
+        // initialization nothing should occur for them in the forward pass
+        if (TT.isFloat()) {
+        } else if (WriteOnly) {
+          // Don't need in the case of int/pointer stores, (should be done by
+          // fwd pass), and as isFloat above described does not prevent the
+          // shadow
+        } else {
+          // May now read pointers for storing into other pointers. Therefore we
+          // need to pre initialize the shadow.
+          primalInitializationOfShadow = true;
+        }
+
         idx++;
       }
 
