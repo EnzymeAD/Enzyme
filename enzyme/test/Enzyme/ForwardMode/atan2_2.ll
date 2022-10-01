@@ -1,5 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -early-cse -instsimplify -simplifycfg -adce -S | FileCheck %s
-
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,sroa,early-cse,instsimplify,simplifycfg,adce"  -enzyme-preopt=false -S | FileCheck %s
 define double @tester2(double %y) {
 entry:
   %call = call double @atan2(double %y, double 2.000000e+00)

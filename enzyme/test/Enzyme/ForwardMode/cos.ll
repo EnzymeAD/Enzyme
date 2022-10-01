@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -O3 -S | FileCheck %s
+; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -adce -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,instsimplify,simplifycfg,adce"  --debug-pass-manager -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: nounwind readnone uwtable
 define double @tester(double %x) {
@@ -22,9 +23,10 @@ declare double @llvm.sin.f64(double)
 ; Function Attrs: nounwind
 declare double @__enzyme_fwddiff(double (double)*, ...)
 
-; CHECK: define double @test_derivative(double %x)
+; CHECK: define internal double @fwddiffetester(double %x, double %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = tail call fast double @llvm.sin.f64(double %x)
+; CHECK-NEXT:   %0 = call fast double @llvm.sin.f64(double %x)
 ; CHECK-NEXT:   %1 = {{(fsub fast double -0.000000e\+00,|fneg fast double)}} %0
-; CHECK-NEXT:   ret double %1
+; CHECK-NEXT:   %2 = fmul fast double %"x'", %1
+; CHECK-NEXT:   ret double %2
 ; CHECK-NEXT: }

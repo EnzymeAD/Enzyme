@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,simplifycfg"  -enzyme-preopt=false -S | FileCheck %s
 
 declare double @__enzyme_fwddiff(i8*, ...)
 declare double @logb(double)
