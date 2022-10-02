@@ -65,14 +65,13 @@ class ActivityAnalyzer {
   // Blocks not to be analyzed
   const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &notForAnalysis;
 
+public:
   /// Library Information
   llvm::TargetLibraryInfo &TLI;
 
-public:
   /// Whether the returns of the function being analyzed are active
   const DIFFE_TYPE ActiveReturns;
 
-private:
   /// Direction of current analysis
   const uint8_t directions;
   /// Analyze up based off of operands
@@ -80,6 +79,7 @@ private:
   /// Analyze down based off uses
   static constexpr uint8_t DOWN = 2;
 
+private:
   /// Instructions that don't propagate adjoints
   /// These instructions could return an active pointer, but
   /// do not propagate adjoints themselves
