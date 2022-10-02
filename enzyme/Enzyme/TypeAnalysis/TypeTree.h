@@ -38,9 +38,9 @@
 #include <string>
 #include <vector>
 
+#include "../Utils.h"
 #include "BaseType.h"
 #include "ConcreteType.h"
-#include "../Utils.h"
 
 /// Maximum offset for type trees to keep
 extern "C" {
@@ -363,7 +363,7 @@ public:
   }
 
   /// Prepend an offset to all mappings
-  TypeTree Only(int Off, llvm::Instruction* orig) const {
+  TypeTree Only(int Off, llvm::Instruction *orig) const {
     TypeTree Result;
     Result.minIndices.reserve(1 + minIndices.size());
     Result.minIndices.push_back(Off);
@@ -374,12 +374,14 @@ public:
       Result.minIndices.pop_back();
       if (EnzymeTypeWarning) {
         if (orig) {
-          EmitWarning("TypeAnalysisDepthLimit", orig->getDebugLoc(), orig->getParent()->getParent(),
-                      orig->getParent(), orig, " not handling more than ", EnzymeMaxTypeDepth, " pointer lookups deep dt: " ,str(), " only(", Off, ")");
+          EmitWarning("TypeAnalysisDepthLimit", *orig, *orig,
+                      " not handling more than ", EnzymeMaxTypeDepth,
+                      " pointer lookups deep dt: ", str(), " only(", Off, ")");
         } else {
           llvm::errs() << "not handling more than " << EnzymeMaxTypeDepth
-                       << " pointer lookups deep dt:" << str() << " only(" << Off
-                       << "): " << "\n";
+                       << " pointer lookups deep dt:" << str() << " only("
+                       << Off << "): "
+                       << "\n";
         }
       }
     }
