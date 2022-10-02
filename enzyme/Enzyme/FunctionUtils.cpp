@@ -669,11 +669,11 @@ void PreProcessCache::AlwaysInline(Function *NewF) {
 }
 
 void PreProcessCache::LowerAllocAddr(Function *NewF) {
-  SmallVector<Instruction *, 1> Todo;
+  SmallVector<AllocaInst *, 1> Todo;
   for (auto &BB : *NewF) {
     for (auto &I : BB) {
       if (hasMetadata(&I, "enzyme_backstack")) {
-        Todo.push_back(&I);
+        Todo.push_back(isa<AllocaInst>(&I));
         // TODO
         // I.eraseMetadata("enzyme_backstack");
       }
@@ -685,12 +685,11 @@ void PreProcessCache::LowerAllocAddr(Function *NewF) {
       T0 = CI->getOperand(0);
     auto AI = cast<AllocaInst>(T0);
     llvm::Value *AIV = AI;
-    if (AIV->getType()->getPointerElementType() !=
-        T->getType()->getPointerElementType()) {
+    if (AI->getAllocatedType() != T->getAllocatedType()) {
       IRBuilder<> B(AI->getNextNode());
       AIV = B.CreateBitCast(
           AIV, PointerType::get(
-                   T->getType()->getPointerElementType(),
+                   T->getAllocatedType(),
                    cast<PointerType>(AI->getType())->getAddressSpace()));
     }
     RecursivelyReplaceAddressSpace(T, AIV, /*legal*/ true);
@@ -918,7 +917,8 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
     B.SetInsertPoint(res);
 
     if (auto PT = dyn_cast<PointerType>(storePointer->getType())) {
-      if (PT->getPointerElementType() != res->getType())
+      auto A = isa<AllocaInst>(storePointer);
+      if (A->getAllocatedType() != res->getType())
         storePointer = B.CreateBitCast(
             storePointer,
             PointerType::get(res->getType(), PT->getAddressSpace()));
