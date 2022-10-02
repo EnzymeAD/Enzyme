@@ -14,7 +14,7 @@
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/GradientUtils.h"
-#include "mlir/Dialect/Arithmetic/IR/Arithmetic.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Support/LogicalResult.h"
 
@@ -78,7 +78,7 @@ struct AddFOpInterface
 
 void mlir::enzyme::registerArithDialectAutoDiffInterface(
     DialectRegistry &registry) {
-  registry.addExtension(+[](MLIRContext *context, arith::ArithmeticDialect *) {
+  registry.addExtension(+[](MLIRContext *context, arith::ArithDialect *) {
     arith::AddFOp::attachInterface<AddFOpInterface>(*context);
     arith::MulFOp::attachInterface<MulFOpInterface>(*context);
   });

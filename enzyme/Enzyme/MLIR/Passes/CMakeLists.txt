@@ -14,7 +14,7 @@ add_mlir_dialect_library(MLIREnzymeTransforms
 
   LINK_LIBS PUBLIC
   MLIRAffineDialect
-  MLIRArithmeticDialect
+  MLIRArithDialect
   MLIRAsyncDialect
   MLIRAffineUtils
   MLIRFuncDialect

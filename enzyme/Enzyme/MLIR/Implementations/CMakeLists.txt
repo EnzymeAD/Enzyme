@@ -7,7 +7,7 @@ add_mlir_library(MLIREnzymeImplementations
   MLIRAutoDiffOpInterfaceIncGen
 
   LINK_LIBS PUBLIC
-  MLIRArithmeticDialect
+  MLIRArithDialect
   MLIREnzymeAutoDiffInterface
   MLIRIR
   MLIRSCFDialect
