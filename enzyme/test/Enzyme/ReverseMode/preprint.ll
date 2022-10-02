@@ -17,7 +17,6 @@ source_filename = "multivecmax.cpp"
 
 @.str = private unnamed_addr constant [15 x i8] c"reduce_max=%f\0A\00", align 1
 @.str.1 = private unnamed_addr constant [21 x i8] c"d_reduce_max(%i)=%f\0A\00", align 1
-@stderr = external dso_local local_unnamed_addr global %struct._IO_FILE*, align 8
 @.str.2 = private unnamed_addr constant [68 x i8] c"Assertion Failed: fabs( [%s = %g] - [%s = %g] ) > %g at %s:%d (%s)\0A\00", align 1
 @.str.3 = private unnamed_addr constant [9 x i8] c"d_vec[i]\00", align 1
 @.str.4 = private unnamed_addr constant [7 x i8] c"ans[i]\00", align 1
@@ -129,8 +128,7 @@ for.cond7:                                        ; preds = %entry
 if.then:                                          ; preds = %for.cond7.3, %for.cond7.2, %for.cond7.1, %for.cond7, %entry
   %.lcssa5 = phi double [ %tmp12, %entry ], [ %tmp14, %for.cond7 ], [ %tmp17, %for.cond7.1 ], [ %tmp19, %for.cond7.2 ], [ %tmp21, %for.cond7.3 ]
   %.lcssa = phi double [ 0.000000e+00, %entry ], [ 5.000000e-01, %for.cond7 ], [ 0.000000e+00, %for.cond7.1 ], [ 5.000000e-01, %for.cond7.2 ], [ 0.000000e+00, %for.cond7.3 ]
-  %tmp16 = load %struct._IO_FILE*, %struct._IO_FILE** @stderr, align 8, !tbaa !9
-  %call20 = call i32 (%struct._IO_FILE*, i8*, ...) @fprintf(%struct._IO_FILE* %tmp16, i8* getelementptr inbounds ([68 x i8], [68 x i8]* @.str.2, i64 0, i64 0), i8* getelementptr inbounds ([9 x i8], [9 x i8]* @.str.3, i64 0, i64 0), double %.lcssa5, i8* getelementptr inbounds ([7 x i8], [7 x i8]* @.str.4, i64 0, i64 0), double %.lcssa, double 1.000000e-10, i8* getelementptr inbounds ([16 x i8], [16 x i8]* @.str.5, i64 0, i64 0), i32 48, i8* getelementptr inbounds ([11 x i8], [11 x i8]* @__PRETTY_FUNCTION__.main, i64 0, i64 0)) #10
+  %call20 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([68 x i8], [68 x i8]* @.str.2, i64 0, i64 0), i8* getelementptr inbounds ([9 x i8], [9 x i8]* @.str.3, i64 0, i64 0), double %.lcssa5, i8* getelementptr inbounds ([7 x i8], [7 x i8]* @.str.4, i64 0, i64 0), double %.lcssa, double 1.000000e-10, i8* getelementptr inbounds ([16 x i8], [16 x i8]* @.str.5, i64 0, i64 0), i32 48, i8* getelementptr inbounds ([11 x i8], [11 x i8]* @__PRETTY_FUNCTION__.main, i64 0, i64 0)) #10
   call void @abort() #11
   unreachable
 

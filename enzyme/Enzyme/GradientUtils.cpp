@@ -7173,8 +7173,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
     } else if (auto store = dyn_cast<StoreInst>(cur)) {
       // TODO only add store to shadow iff non float type
       if (store->getValueOperand() == prev) {
-        EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
-                    cur->getParent(), " Could not promote allocation ", *V,
+        EmitWarning("NotPromotable", *cur, " Could not promote allocation ", *V,
                     " due to capturing store ", *cur);
         promotable = false;
         shadowpromotable = false;
@@ -7211,9 +7210,8 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
           if (arg == prev) {
             promotable = false;
             shadowpromotable = false;
-            EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
-                        cur->getParent(), " Could not promote allocation ", *V,
-                        " due to memset use ", *cur);
+            EmitWarning("NotPromotable", *cur, " Could not promote allocation ",
+                        *V, " due to memset use ", *cur);
             break;
           }
           break;
@@ -7228,8 +7226,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
       default:
         promotable = false;
         shadowpromotable = false;
-        EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
-                    cur->getParent(), " Could not promote allocation ", *V,
+        EmitWarning("NotPromotable", *cur, " Could not promote allocation ", *V,
                     " due to unknown intrinsic ", *cur);
         break;
       }
@@ -7292,9 +7289,8 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         if (!NoCapture) {
           shadowpromotable = false;
           promotable = false;
-          EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
-                      cur->getParent(), " Could not promote allocation ", *V,
-                      " due to unknown capturing call ", *cur);
+          EmitWarning("NotPromotable", *cur, " Could not promote allocation ",
+                      *V, " due to unknown capturing call ", *cur);
           idx++;
           continue;
         }
@@ -7317,9 +7313,8 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         if (!ReadOnly) {
           if (primalNeededInReverse) {
             promotable = false;
-            EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
-                        cur->getParent(), " Could not promote allocation ", *V,
-                        " due to unknown writing call ", *cur);
+            EmitWarning("NotPromotable", *cur, " Could not promote allocation ",
+                        *V, " due to unknown writing call ", *cur);
           }
           storingOps.insert(cur);
         }
@@ -7343,8 +7338,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
     } else {
       promotable = false;
       shadowpromotable = false;
-      EmitWarning("NotPromotable", cur->getDebugLoc(), oldFunc,
-                  cur->getParent(), " Could not promote allocation ", *V,
+      EmitWarning("NotPromotable", *cur, " Could not promote allocation ", *V,
                   " due to unknown instruction ", *cur);
     }
   }
@@ -7372,9 +7366,9 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
       for (auto res : results) {
         if (overwritesToMemoryReadBy(OrigAA, TLI, SE, OrigLI, OrigDT, LI, res,
                                      outer)) {
-          EmitWarning("NotPromotable", LI->getDebugLoc(), oldFunc,
-                      LI->getParent(), " Could not promote shadow allocation ",
-                      *V, " due to pointer load ", *LI,
+          EmitWarning("NotPromotable", *LI,
+                      " Could not promote shadow allocation ", *V,
+                      " due to pointer load ", *LI,
                       " which does not postdominates store ", *res);
           shadowpromotable = false;
           goto exitL;
@@ -7405,8 +7399,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
     for (auto res : results) {
       if (overwritesToMemoryReadBy(OrigAA, TLI, SE, OrigLI, OrigDT, LI, res,
                                    outer)) {
-        EmitWarning("NotPromotable", LI->getDebugLoc(), oldFunc,
-                    LI->getParent(), " Could not promote allocation ", *V,
+        EmitWarning("NotPromotable", *LI, " Could not promote allocation ", *V,
                     " due to load ", *LI,
                     " which does not postdominates store ", *res);
         return;
@@ -7422,9 +7415,9 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
     for (auto res : results) {
       if (overwritesToMemoryReadBy(OrigAA, TLI, SE, OrigLI, OrigDT, LI.loadCall,
                                    res, outer)) {
-        EmitWarning("NotPromotable", LI.loadCall->getDebugLoc(), oldFunc,
-                    LI.loadCall->getParent(), " Could not promote allocation ",
-                    *V, " due to load-like call ", *LI.loadCall,
+        EmitWarning("NotPromotable", *LI.loadCall,
+                    " Could not promote allocation ", *V,
+                    " due to load-like call ", *LI.loadCall,
                     " which does not postdominates store ", *res);
         return;
       }
