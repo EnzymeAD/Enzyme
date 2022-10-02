@@ -121,11 +121,11 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* %"a5'mi", i8 0, i64 8, i1 false)
 ; CHECK-NEXT:   call void @julia.write_barrier(i8* %remat_a5)
 ; CHECK-NEXT:   call void @julia.write_barrier(i8* %"a5'mi")
-; CHECK-NEXT:   %a6_unwrap1 = bitcast i8* %remat_a5 to double*
-; CHECK-NEXT:   %_unwrap2 = trunc i64 %"iv'ac.0" to i32
-; CHECK-NEXT:   %a10_unwrap = getelementptr inbounds double, double* %a1, i32 %_unwrap2
-; CHECK-NEXT:   %a11_unwrap = load double, double* %a10_unwrap, align 8, !invariant.group !5
-; CHECK-NEXT:   store double %a11_unwrap, double* %a6_unwrap1, align 8
+; CHECK-DAG:   %[[a6_unwrap1:.+]] = bitcast i8* %remat_a5 to double*
+; CHECK-DAG:   %[[_unwrap2:.+]] = trunc i64 %"iv'ac.0" to i32
+; CHECK-DAG:   %[[a10_unwrap:.+]] = getelementptr inbounds double, double* %a1, i32 %[[_unwrap2]]
+; CHECK-DAG:   %[[a11_unwrap:.+]] = load double, double* %[[a10_unwrap]], align 8, !invariant.group !5
+; CHECK-NEXT:   store double %[[a11_unwrap]], double* %[[a6_unwrap1]], align 8
 ; CHECK-NEXT:   %_unwrap = trunc i64 %"iv'ac.0" to i32
 ; CHECK-NEXT:   %"a13'ipg_unwrap" = getelementptr inbounds double, double* %"a0'", i32 %_unwrap
 ; CHECK-NEXT:   %2 = load double, double* %"a13'ipg_unwrap", align 8

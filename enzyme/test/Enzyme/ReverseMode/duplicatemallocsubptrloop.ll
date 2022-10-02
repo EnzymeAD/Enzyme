@@ -147,10 +147,10 @@ attributes #9 = { nounwind }
 ; CHECK: remat_enter:                                      ; preds = %loop, %incinvertloop
 ; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %6, %incinvertloop ], [ 9, %loop ]
 ; CHECK-NEXT:   %remat_p2 = call noalias i8* @malloc(i32 8)
-; CHECK-NEXT:   %p3_unwrap13 = bitcast i8* %remat_p2 to double**
-; CHECK-NEXT:   %_unwrap14 = trunc i64 %"iv'ac.0" to i32
-; CHECK-NEXT:   %a10_unwrap = getelementptr inbounds double, double* %a0, i32 %_unwrap14
-; CHECK-NEXT:   store double* %a10_unwrap, double** %p3_unwrap13, align 8
+; CHECK-DAG:   %[[p3_unwrap13:.+]] = bitcast i8* %remat_p2 to double**
+; CHECK-DAG:   %[[_unwrap14:.+]] = trunc i64 %"iv'ac.0" to i32
+; CHECK-DAG:   %a10_unwrap = getelementptr inbounds double, double* %a0, i32 %[[_unwrap14]]
+; CHECK-NEXT:   store double* %a10_unwrap, double** %[[p3_unwrap13]], align 8
 ; CHECK-NEXT:   %_unwrap = trunc i64 %"iv'ac.0" to i32
 ; CHECK-NEXT:   %"a13'ipg_unwrap" = getelementptr inbounds double, double* %"out'", i32 %_unwrap
 ; CHECK-NEXT:   %7 = load double, double* %"a13'ipg_unwrap", align 8

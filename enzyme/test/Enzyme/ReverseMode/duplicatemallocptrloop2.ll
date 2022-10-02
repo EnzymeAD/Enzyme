@@ -108,11 +108,11 @@ attributes #9 = { nounwind }
 
 ; CHECK: remat_enter:                                      ; preds = %loop, %incinvertloop
 ; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %3, %incinvertloop ], [ 9, %loop ]
-; CHECK-NEXT:   %p3_unwrap6 = bitcast i8* %p2 to double**
-; CHECK-NEXT:   %_unwrap7 = trunc i64 %"iv'ac.0" to i32
-; CHECK-NEXT:   %a10_unwrap = getelementptr inbounds double, double* %a0, i32 %_unwrap7
-; CHECK-NEXT:   store double* %a10_unwrap, double** %p3_unwrap6, align 8
-; CHECK-NEXT:   %"a10'ipg_unwrap" = getelementptr inbounds double, double* %"a0'", i32 %_unwrap7
+; CHECK-DAG:   %[[p3_unwrap6:.+]] = bitcast i8* %p2 to double**
+; CHECK-DAG:   %[[_unwrap7:.+]] = trunc i64 %"iv'ac.0" to i32
+; CHECK-DAG:   %[[a10_unwrap:.+]] = getelementptr inbounds double, double* %a0, i32 %[[_unwrap7]]
+; CHECK-NEXT:   store double* %[[a10_unwrap]], double** %[[p3_unwrap6]], align 8
+; CHECK-NEXT:   %"a10'ipg_unwrap" = getelementptr inbounds double, double* %"a0'", i32 %[[_unwrap7]]
 ; CHECK-NEXT:   %"p3'ipc_unwrap8" = bitcast i8* %"p2'mi" to double**
 ; CHECK-NEXT:   store double* %"a10'ipg_unwrap", double** %"p3'ipc_unwrap8", align 8
 ; CHECK-NEXT:   %_unwrap = trunc i64 %"iv'ac.0" to i32

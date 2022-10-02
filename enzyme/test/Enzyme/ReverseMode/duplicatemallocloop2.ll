@@ -82,19 +82,19 @@ attributes #6 = { nounwind }
 ; CHECK-NEXT:   %remat_a5 = call noalias i8* @malloc(i32 8) 
 ; CHECK-NEXT:   %"a5'mi" = call noalias nonnull i8* @malloc(i32 8) 
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"a5'mi", i8 0, i64 8, i1 false)
-; CHECK-NEXT:   %a6_unwrap1 = bitcast i8* %remat_a5 to double*
-; CHECK-NEXT:   %_unwrap2 = trunc i64 %"iv'ac.0" to i32
-; CHECK-NEXT:   %a10_unwrap = getelementptr inbounds double, double* %a1, i32 %_unwrap2
-; CHECK-NEXT:   %a11_unwrap = load double, double* %a10_unwrap, align 8
-; CHECK-NEXT:   store double %a11_unwrap, double* %a6_unwrap1, align 8
-; CHECK-NEXT:   %"a13'ipg_unwrap" = getelementptr inbounds double, double* %"a0'", i32 %_unwrap2
+; CHECK-DAG:   %[[a6_unwrap1:.+]] = bitcast i8* %remat_a5 to double*
+; CHECK-DAG:   %[[_unwrap2:.+]] = trunc i64 %"iv'ac.0" to i32
+; CHECK-DAG:   %[[a10_unwrap:.+]] = getelementptr inbounds double, double* %a1, i32 %[[_unwrap2]]
+; CHECK-DAG:   %[[a11_unwrap:.+]] = load double, double* %[[a10_unwrap]], align 8
+; CHECK-NEXT:   store double %[[a11_unwrap]], double* %[[a6_unwrap1]], align 8
+; CHECK-NEXT:   %"a13'ipg_unwrap" = getelementptr inbounds double, double* %"a0'", i32 %[[_unwrap2]]
 ; CHECK-NEXT:   %2 = load double, double* %"a13'ipg_unwrap", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"a13'ipg_unwrap", align 8
 ; CHECK-NEXT:   %"a6'ipc_unwrap" = bitcast i8* %"a5'mi" to double*
-; CHECK-NEXT:   call void @diffef(double* %a6_unwrap1, double* %"a6'ipc_unwrap", double %2)
+; CHECK-NEXT:   call void @diffef(double* %[[a6_unwrap1]], double* %"a6'ipc_unwrap", double %2)
 ; CHECK-NEXT:   %3 = load double, double* %"a6'ipc_unwrap", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"a6'ipc_unwrap", align 8
-; CHECK-NEXT:   %"a10'ipg_unwrap" = getelementptr inbounds double, double* %"a1'", i32 %_unwrap2
+; CHECK-NEXT:   %"a10'ipg_unwrap" = getelementptr inbounds double, double* %"a1'", i32 %[[_unwrap2]]
 ; CHECK-NEXT:   %4 = load double, double* %"a10'ipg_unwrap", align 8
 ; CHECK-NEXT:   %5 = fadd fast double %4, %3
 ; CHECK-NEXT:   store double %5, double* %"a10'ipg_unwrap", align 8
