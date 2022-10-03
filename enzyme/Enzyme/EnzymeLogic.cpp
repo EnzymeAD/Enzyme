@@ -4781,6 +4781,11 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
 llvm::Value *EnzymeLogic::CreateNoFree(llvm::Value *todiff) {
   if (auto F = dyn_cast<Function>(todiff))
     return CreateNoFree(F);
+  if (auto castinst = dyn_cast<ConstantExpr>(todiff))
+    if (castinst->isCast()) {
+      llvm::Constant* reps[] = {cast<llvm::Constant>(CreateNoFree(castinst->getOperand(0)))};
+      return castinst->getWithOperands(reps);
+    }
   llvm::errs() << " unhandled, create no free of: " << *todiff << "\n";
   llvm_unreachable("unhandled, create no free");
 }
