@@ -69,6 +69,16 @@ void CacheUtility::erase(Instruction *I) {
   SE.eraseValueFromMap(I);
 
   if (!I->use_empty()) {
+    if (CustomErrorHandler) {
+      std::string str;
+      raw_string_ostream ss(str);
+      ss << "Erased value with a use:\n";
+      ss << *newFunc->getParent() << "\n";
+      ss << *newFunc << "\n";
+      ss << *I << "\n";
+      CustomErrorHandler(str.c_str(), wrap(I), ErrorType::InternalError,
+                         nullptr);
+    }
     llvm::errs() << *newFunc->getParent() << "\n";
     llvm::errs() << *newFunc << "\n";
     llvm::errs() << *I << "\n";
@@ -891,8 +901,13 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
           }
         }
 
-        if (ZeroInst)
+        if (ZeroInst) {
+          if (ZeroInst->getOperand(0) != malloccall) {
+            scopeInstructions[alloc].push_back(
+                cast<Instruction>(ZeroInst->getOperand(0)));
+          }
           scopeInstructions[alloc].push_back(ZeroInst);
+        }
         storealloc = allocationBuilder.CreateStore(firstallocation, storeInto);
 
         scopeAllocs[alloc].push_back(malloccall);

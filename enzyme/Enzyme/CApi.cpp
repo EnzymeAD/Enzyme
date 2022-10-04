@@ -675,6 +675,11 @@ void EnzymeMoveBefore(LLVMValueRef inst1, LLVMValueRef inst2,
   }
 }
 
+void EnzymeSetForMemSet(LLVMValueRef inst1) {
+  Instruction *I1 = cast<Instruction>(unwrap(inst1));
+  I1->setMetadata("enzyme_formemset", MDNode::get(I1->getContext(), {}));
+}
+
 void EnzymeSetMustCache(LLVMValueRef inst1) {
   Instruction *I1 = cast<Instruction>(unwrap(inst1));
   I1->setMetadata("enzyme_mustcache", MDNode::get(I1->getContext(), {}));
@@ -709,5 +714,9 @@ LLVMMetadataRef EnzymeMakeNonConstTBAA(LLVMMetadataRef MD) {
   MDs[3] =
       ConstantAsMetadata::get(ConstantInt::get(CAM->getValue()->getType(), 0));
   return wrap(MDNode::get(M->getContext(), MDs));
+}
+void EnzymeCopyMetadata(LLVMValueRef inst1, LLVMValueRef inst2) {
+  cast<Instruction>(unwrap(inst1))
+      ->copyMetadata(*cast<Instruction>(unwrap(inst2)));
 }
 }

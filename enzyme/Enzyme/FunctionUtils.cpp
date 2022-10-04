@@ -350,8 +350,33 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
           Intrinsic::getDeclaration(MS->getParent()->getParent()->getParent(),
                                     Intrinsic::memset, tys),
           nargs));
-      nMS->copyIRFlags(MS);
+      nMS->copyMetadata(*MS);
+      nMS->setAttributes(MS->getAttributes());
       toErase.push_back(MS);
+      continue;
+    }
+    if (auto MTI = dyn_cast<MemTransferInst>(inst)) {
+      IRBuilder<> B(MTI);
+
+      Value *nargs[4] = {MTI->getArgOperand(0), MTI->getArgOperand(1),
+                         MTI->getArgOperand(2), MTI->getArgOperand(3)};
+
+      if (nargs[0] == prev)
+        nargs[0] = rep;
+
+      if (nargs[1] == prev)
+        nargs[1] = rep;
+
+      Type *tys[] = {nargs[0]->getType(), nargs[1]->getType(),
+                     nargs[2]->getType()};
+
+      auto nMTI = cast<CallInst>(B.CreateCall(
+          Intrinsic::getDeclaration(MTI->getParent()->getParent()->getParent(),
+                                    MTI->getIntrinsicID(), tys),
+          nargs));
+      nMTI->copyMetadata(*MTI);
+      nMTI->setAttributes(MTI->getAttributes());
+      toErase.push_back(MTI);
       continue;
     }
     if (auto CI = dyn_cast<CallInst>(inst)) {
@@ -2063,6 +2088,17 @@ Function *PreProcessCache::CloneFunctionWithReturns(
   bool hasPtrInput = false;
   unsigned ii = 0, jj = 0;
   for (auto i = F->arg_begin(), j = NewF->arg_begin(); i != F->arg_end();) {
+    if (F->hasParamAttribute(ii, Attribute::StructRet)) {
+      // TODO persist types
+      NewF->addParamAttr(jj, Attribute::get(F->getContext(), "enzyme_sret"));
+      /*
+#if LLVM_VERSION_MAJOR >= 12
+      NewF->addParamAttr(jj, Attribute::get(F->getContext(), "enzyme_sret",
+F->getParamAttribute(ii, Attribute::StructRet).getValueAsType())); #else
+      NewF->addParamAttr(jj, Attribute::get(F->getContext(), "enzyme_sret"));
+#endif
+      */
+    }
     if (constant_args[ii] == DIFFE_TYPE::CONSTANT) {
       if (!i->hasByValAttr())
         constants.insert(i);
@@ -2083,6 +2119,35 @@ Function *PreProcessCache::CloneFunctionWithReturns(
       // TODO: find a way to keep the attributes in vector mode.
       if (F->hasParamAttribute(ii, Attribute::NoCapture) && width == 1) {
         NewF->addParamAttr(jj + 1, Attribute::NoCapture);
+      }
+      // TODO: find a way to keep sret for shadow
+      if (F->hasParamAttribute(ii, Attribute::StructRet)) {
+        if (width == 1) {
+#if LLVM_VERSION_MAJOR >= 12
+          // TODO persist types
+          NewF->addParamAttr(jj + 1,
+                             Attribute::get(F->getContext(), "enzyme_sret"));
+          // NewF->addParamAttr(jj + 1, Attribute::get(F->getContext(),
+          // "enzyme_sret", F->getParamAttribute(ii,
+          // Attribute::StructRet).getValueAsType()));
+#else
+          NewF->addParamAttr(jj + 1,
+                             Attribute::get(F->getContext(), "enzyme_sret"));
+#endif
+        } else {
+#if LLVM_VERSION_MAJOR >= 12
+          // TODO persist types
+          NewF->addParamAttr(jj + 1,
+                             Attribute::get(F->getContext(), "enzyme_sret_v"));
+          // NewF->addParamAttr(jj + 1, Attribute::get(F->getContext(),
+          // "enzyme_sret_v",
+          // GradientUtils::getShadowType(F->getParamAttribute(ii,
+          // Attribute::StructRet).getValueAsType(), width)));
+#else
+          NewF->addParamAttr(jj + 1,
+                             Attribute::get(F->getContext(), "enzyme_sret_v"));
+#endif
+        }
       }
 
       j->setName(i->getName());

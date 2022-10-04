@@ -108,6 +108,10 @@ llvm::cl::opt<bool>
 llvm::cl::opt<bool>
     EnzymeVectorSplitPhi("enzyme-vector-split-phi", cl::init(true), cl::Hidden,
                          cl::desc("Split phis according to vector size"));
+
+llvm::cl::opt<bool>
+    EnzymePrintDiffUse("enzyme-print-diffuse", cl::init(false), cl::Hidden,
+                       cl::desc("Print differential use analysis"));
 }
 
 SmallVector<unsigned int, 9> MD_ToCopy = {
@@ -2210,6 +2214,8 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
     toadd = scopeAllocs[found2->second.first][0];
     for (auto u : toadd->users()) {
       if (auto ci = dyn_cast<CastInst>(u)) {
+        if (hasMetadata(ci, "enzyme_formemset"))
+          continue;
         toadd = ci;
       }
     }
@@ -2597,7 +2603,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                     FT = valType->getScalarType();
                   } else if (!valType->isPointerTy()) {
                     if (looseTypeAnalysis) {
-                      auto fp = TR.firstPointer(storeSize, orig_ptr,
+                      auto fp = TR.firstPointer(storeSize, orig_ptr, &I,
                                                 /*errifnotfound*/ false,
                                                 /*pointerIntSame*/ true);
                       if (fp.isKnown()) {
@@ -2609,7 +2615,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                             << "\n";
                         FT = nullptr;
                       } else {
-                        TR.firstPointer(storeSize, orig_ptr,
+                        TR.firstPointer(storeSize, orig_ptr, &I,
                                         /*errifnotfound*/ true,
                                         /*pointerIntSame*/ true);
                         llvm::errs()
@@ -2617,7 +2623,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                         assert(0 && "cannot deduce");
                       }
                     } else {
-                      FT = TR.firstPointer(storeSize, orig_ptr,
+                      FT = TR.firstPointer(storeSize, orig_ptr, &I,
                                            /*errifnotfound*/ true,
                                            /*pointerIntSame*/ true)
                                .isFloat();
@@ -6150,9 +6156,13 @@ void GradientUtils::branchToCorrespondingTarget(
     }
   }
 
-  IntegerType *T = (targetToPreds.size() == 2)
-                       ? Type::getInt1Ty(BuilderM.getContext())
-                       : Type::getInt8Ty(BuilderM.getContext());
+  IntegerType *T;
+  if (targetToPreds.size() == 2)
+    T = Type::getInt1Ty(BuilderM.getContext());
+  else if (targetToPreds.size() < 256)
+    T = Type::getInt8Ty(BuilderM.getContext());
+  else
+    T = Type::getInt32Ty(BuilderM.getContext());
 
   Instruction *equivalentTerminator = nullptr;
 
