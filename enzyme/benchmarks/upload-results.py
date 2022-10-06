@@ -15,7 +15,7 @@ def extract_results(json):
     result = []
     githash = get_git_revision_short_hash()
     time = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    cpu = platform.processor()
+    arch = platform.platform()
 
     for test_suite in json:
         llvm = test_suite["llvm-version"]
@@ -33,7 +33,7 @@ def extract_results(json):
                     "name": series,
                     "elapsed": value,
                     "timestamp": time,
-                    "platform": cpu
+                    "platform": arch
                 }
                 result.append(res)
     return result
