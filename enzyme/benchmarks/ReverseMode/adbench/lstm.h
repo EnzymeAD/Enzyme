@@ -286,10 +286,13 @@ int main(const int argc, const char* argv[]) {
          enzyme["result"].push_back(result.gradient[i]);
        }
        test_suite["tools"].push_back(enzyme);
+       
        printf("\n");
     }
 
     }
+    test_suite["llvm-version"] = __clang_version__;
+    test_suite["mode"] = "ReverseMode";
     test_results.push_back(test_suite);
    }
    jsonfile << std::setw(4) << test_results;

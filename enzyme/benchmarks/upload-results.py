@@ -11,23 +11,26 @@ def get_git_revision_short_hash():
     except:
         return None
 
-def extract_results(json, llvm, mode):
+def extract_results(json):
     result = []
     githash = get_git_revision_short_hash()
-    time = datetime.datetime.now().replace(microsecond=0).isoformat()
+    time = datetime.datetime.now(datetime.timezone.utc).isoformat()
     cpu = platform.processor()
-    
+
     for test_suite in json:
+        llvm = test_suite["llvm-version"]
+        mode = test_suite["mode"]
         series = test_suite["name"]
         for tool in test_suite["tools"]:
-            if "enzyme" in tool["name"].lower():
+            name = tool["name"].lower()
+            if "enzyme" in name:
                 value = tool["runtime"]
                 res = {
                     "mode": mode,
-                    "llvm_version": llvm,
-                    "testsuite": series,
+                    "llvm-version": llvm,
+                    "test-suite": "ADBench",
                     "commit": githash,
-                    "name": tool,
+                    "name": series,
                     "elapsed": value,
                     "timestamp": time,
                     "platform": cpu
@@ -40,16 +43,14 @@ parser.add_argument('file', type=argparse.FileType('r'), help="JSON file contain
 parser.add_argument('-t', '--token', type=str, required=False, help="Token to authorize at graphing backend")
 parser.add_argument('-u', '--url', type=str, required=True, help="URL of the graphing backend")
 
-parser.add_argument('--llvm', type=str, required=True, help="LLVM Version")
-parser.add_argument('--mode', type=str, required=True, help="Derivative Mode")
-
-
 args = parser.parse_args()
 
 json = json.load(args.file)
-results = extract_results(json, args.llvm, args.mode)
+results = extract_results(json)
 
 if args.token:
-    requests.post(args.url, json=results, headers={"TOKEN": args.token})
+    response = requests.post(args.url, json=results, headers={"X-TOKEN": args.token})
+    response.raise_for_status()
 else:
-    requests.post(args.url, json=results)
+    response = requests.post(args.url, json=results)
+    response.raise_for_status()
