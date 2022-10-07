@@ -795,10 +795,10 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
       auto P = B.CreatePHI(i64, 1);
 
       CallInst *malloccall;
-      allocType = cast<PointerType>(CreateAllocation(B, types.back(), P,
+      Value *A = CreateAllocation(B, types.back(), P,
                                                      "tmpfortypecalc",
-                                                     &malloccall, nullptr)
-                                        ->getType());
+                                                     &malloccall, nullptr);
+      allocType = cast<PointerType>(A->getType());
       malloctypes.push_back(cast<PointerType>(malloccall->getType()));
       SmallVector<Instruction *, 2> toErase;
       for (auto &I : *BB)
@@ -908,6 +908,7 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
           }
           scopeInstructions[alloc].push_back(ZeroInst);
         }
+
         storealloc = allocationBuilder.CreateStore(firstallocation, storeInto);
 
         scopeAllocs[alloc].push_back(malloccall);
@@ -1016,11 +1017,21 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
 #else
       cast<LoadInst>(storeInto)->setAlignment(alignSize);
 #endif
-      storeInto = v.CreateGEP(storeInto->getType()->getPointerElementType(),
-                              storeInto, idx);
 #else
       storeInto = v.CreateLoad(storeInto);
       cast<LoadInst>(storeInto)->setAlignment(alignSize);
+#endif
+
+      Value *storeIntoN = GetAddressableFromAllocation(v, storeInto);
+      if (storeInto != storeIntoN) {
+        scopeInstructions[alloc].push_back(cast<Instruction>(storeIntoN));
+      }
+      storeInto = storeIntoN;
+
+#if LLVM_VERSION_MAJOR > 7
+      storeInto = v.CreateGEP(storeInto->getType()->getPointerElementType(),
+                              storeInto, idx);
+#else
       storeInto = v.CreateGEP(storeInto, idx);
 #endif
       cast<GetElementPtrInst>(storeInto)->setIsInBounds(true);
@@ -1557,6 +1568,13 @@ Value *CacheUtility::getCachePointer(bool inForwardPass, IRBuilder<> &BuilderM,
 #else
     cast<LoadInst>(next)->setAlignment(align);
 #endif
+      
+    Value *nextN = GetAddressableFromAllocation(BuilderM, next);
+      if (next != nextN) {
+        scopeInstructions[cast<AllocaInst>(cache)].push_back(
+          cast<Instruction>(nextN));
+      }
+      next = nextN;
 
     const auto &containedloops = sublimits[i].second;
 

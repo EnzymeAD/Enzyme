@@ -2525,6 +2525,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         tapeMemory = CreateAllocation(
             ib, tapeType, ConstantInt::get(i64, 1), "tapemem", &malloccall,
             EnzymeZeroCache ? &zero : nullptr, /*isDefault*/ true);
+        tapeMemory = GetAddressableFromAllocation(ib, tapeMemory);
         memory = malloccall;
       } else {
         memory = ConstantPointerNull::get(
