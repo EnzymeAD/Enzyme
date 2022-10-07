@@ -66,7 +66,6 @@ def axpy : CallBlasPattern<(Op $n, $alpha, $x, $incx, $y, $incy),
                   ["y"],[len, fp, vinc, vinc],
                   [
                   (b<"dot"> $n, $x, $incx, DiffeRet<"">, $incy), 
-                  //(FAdd ($alpha, (b<"dot"> $n, $x, $incx, DiffeRet<"">, $incy)), 
                   (b<"scal"> $n, $alpha, DiffeRet<"">, $incy),
                   (DiffeRet<"">)
                   ]
@@ -96,7 +95,10 @@ def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
 // 
 // def swap : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
 //                   [len, vinc, vinc],
-//                   []
+//                   [
+//                   (b<"swap"> $n, diffe<"x">, incx, diffe<"y">, incy),
+//                   (noop),// one swap is enough, will only be used iff x and y active anyway
+//                   ]
 //                   >;
 
 // def asum : CallBlasPattern<(Op $n, $x, $incx),
