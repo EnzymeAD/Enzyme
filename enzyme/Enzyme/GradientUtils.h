@@ -2217,6 +2217,15 @@ public:
     if (backwardsOnlyShadows.find(TmpOrig) != backwardsOnlyShadows.end())
       Atomic = false;
 
+    // No need to atomic on writeonly args
+    if (auto arg = dyn_cast<Argument>(TmpOrig)) {
+      if (arg->getParent()->hasParamAttribute(arg->getArgNo(),
+                                              Attribute::ReadNone) ||
+          arg->getParent()->hasParamAttribute(arg->getArgNo(),
+                                              Attribute::WriteOnly))
+        Atomic = false;
+    }
+
     if (Atomic) {
       // For amdgcn constant AS is 4 and if the primal is in it we need to cast
       // the derivative value to AS 1
