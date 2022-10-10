@@ -472,6 +472,8 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
                                           MDNode::get(CI->getContext(), {}));
     }
 
+    rep = GetAddressableFromAllocation(B, rep);
+
     auto PT0 = cast<PointerType>(rep->getType());
     auto PT1 = cast<PointerType>(AI->getType());
     if (PT0->getAddressSpace() != PT1->getAddressSpace()) {

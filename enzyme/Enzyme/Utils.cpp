@@ -72,6 +72,13 @@ llvm::SmallVector<llvm::Instruction *, 2> PostCacheStore(llvm::StoreInst *SI,
   return res;
 }
 
+Value *GetAddressableFromAllocation(IRBuilder <>&B, Value* gVal) {
+  auto PT = cast<PointerType>(gVal->getType());
+  if (PT->getAddressSpace() == 10)
+      return B.CreateAddrSpaceCast(gVal, PointerType::get(PT->getPointerElementType(), 11));
+  return gVal;
+}
+
 llvm::PointerType *getDefaultAnonymousTapeType(llvm::LLVMContext &C) {
   if (EnzymeDefaultTapeType)
     return cast<PointerType>(unwrap(EnzymeDefaultTapeType(wrap(&C))));
@@ -164,6 +171,24 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
 
     Value *args[] = {B.CreatePointerCast(ptr, allocType), next};
     gVal = B.CreateCall(reallocF, args);
+    if (ZeroInit) {
+        Value *zeroSize = B.CreateSub(next, prevSize);
+
+        Value *margs[] = {
+#if LLVM_VERSION_MAJOR > 7
+          B.CreateInBoundsGEP(gVal->getType()->getPointerElementType(), gVal,
+                              prevSize),
+#else
+          B.CreateInBoundsGEP(gVal, prevSize),
+#endif
+          ConstantInt::get(Type::getInt8Ty(M.getContext()), 0),
+          zeroSize,
+          ConstantInt::getFalse(M.getContext())
+        };
+        Type *tys[] = {margs[0]->getType(), margs[2]->getType()};
+        auto memsetF = Intrinsic::getDeclaration(&M, Intrinsic::memset, tys);
+        B.CreateCall(memsetF, margs);
+      }
   } else {
     Value *tsize = ConstantInt::get(
         next->getType(),
@@ -171,21 +196,21 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
     auto elSize = B.CreateUDiv(next, tsize, "", /*isExact*/ true);
     Instruction *SubZero = nullptr;
     gVal = CreateAllocation(B, RT, elSize, "", nullptr, &SubZero);
+    Value *tmp = GetAddressableFromAllocation(B, gVal);
 
-    gVal = B.CreatePointerCast(
-        gVal, PointerType::get(
-                  Type::getInt8Ty(gVal->getContext()),
-                  cast<PointerType>(gVal->getType())->getAddressSpace()));
-    auto pVal = B.CreatePointerCast(ptr, gVal->getType());
+    tmp = B.CreatePointerCast(
+        tmp, PointerType::get(
+                  Type::getInt8Ty(tmp->getContext()),
+                  cast<PointerType>(tmp->getType())->getAddressSpace()));
+    auto pVal = B.CreatePointerCast(ptr, tmp->getType());
 
-    Value *margs[] = {gVal, pVal, prevSize,
+    Value *margs[] = {tmp, pVal, prevSize,
                       ConstantInt::getFalse(M.getContext())};
     Type *tys[] = {margs[0]->getType(), margs[1]->getType(),
                    margs[2]->getType()};
     auto memsetF = Intrinsic::getDeclaration(&M, Intrinsic::memcpy, tys);
     B.CreateCall(memsetF, margs);
     if (SubZero) {
-      ZeroInit = false;
       IRBuilder<> BB(SubZero);
       Value *zeroSize = BB.CreateSub(next, prevSize);
       Value *tmp = SubZero->getOperand(0);
@@ -199,25 +224,6 @@ Function *getOrInsertExponentialAllocator(Module &M, Function *newFunc,
       SubZero->setOperand(0, tmp);
       SubZero->setOperand(2, zeroSize);
     }
-  }
-
-  if (ZeroInit) {
-    Value *zeroSize = B.CreateSub(next, prevSize);
-
-    Value *margs[] = {
-#if LLVM_VERSION_MAJOR > 7
-      B.CreateInBoundsGEP(gVal->getType()->getPointerElementType(), gVal,
-                          prevSize),
-#else
-      B.CreateInBoundsGEP(gVal, prevSize),
-#endif
-      ConstantInt::get(Type::getInt8Ty(M.getContext()), 0),
-      zeroSize,
-      ConstantInt::getFalse(M.getContext())
-    };
-    Type *tys[] = {margs[0]->getType(), margs[2]->getType()};
-    auto memsetF = Intrinsic::getDeclaration(&M, Intrinsic::memset, tys);
-    B.CreateCall(memsetF, margs);
   }
   gVal = B.CreatePointerCast(gVal, ptr->getType());
 

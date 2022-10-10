@@ -92,6 +92,8 @@ llvm::Value *CreateAllocation(llvm::IRBuilder<> &B, llvm::Type *T,
                               bool isDefault = false);
 llvm::CallInst *CreateDealloc(llvm::IRBuilder<> &B, llvm::Value *ToFree);
 
+llvm::Value *GetAddressableFromAllocation(llvm::IRBuilder <>&B, llvm::Value* gVal);
+
 llvm::Value *CreateReAllocation(llvm::IRBuilder<> &B, llvm::Value *prev,
                                 llvm::Type *T, llvm::Value *OuterCount,
                                 llvm::Value *InnerCount, llvm::Twine Name = "",
