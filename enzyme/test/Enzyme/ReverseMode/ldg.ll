@@ -1,4 +1,5 @@
 ; RUN: if [ %llvmver -ge 9 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -adce -simplifycfg -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 12 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,adce,simplifycfg"  -enzyme-preopt=false -S | FileCheck %s; fi
 
 ; ModuleID = 'text'
 source_filename = "text"

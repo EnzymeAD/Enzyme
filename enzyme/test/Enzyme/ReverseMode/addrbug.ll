@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -loop-deletion -simplifycfg -correlated-propagation -gvn -adce -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,instsimplify,loop-deletion,simplifycfg,correlated-propagation,gvn,adce"  -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: nounwind
 declare void @__enzyme_autodiff(i8*, ...)

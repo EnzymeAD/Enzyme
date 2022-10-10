@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,instsimplify,adce,loop-deletion,correlated-propagation"  -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: norecurse nounwind readonly uwtable
 define dso_local double @sum(double* nocapture readonly %x, i64 %n) #0 {
@@ -39,21 +40,38 @@ attributes #2 = { nounwind }
 
 ; CHECK: define dso_local void @dsum(double* %x, double* %xp, i64 %n)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   br label %invertfor.body.i
-
-; CHECK: invertfor.body.i:
-; CHECK-NEXT:   %[[antivar:.+]] = phi i64 [ %n, %entry ], [ %[[sub:.+]], %incinvertfor.body.i ]
-; CHECK-NEXT:   %[[arrayidxipgi:.+]] = getelementptr inbounds double, double* %xp, i64 %[[antivar]]
-; CHECK-NEXT:   %[[load:.+]] = load double, double* %[[arrayidxipgi]]
-; CHECK-NEXT:   %[[fadd:.+]] = fadd fast double %[[load]], 1.000000e+00
-; CHECK-NEXT:   store double %[[fadd]], double* %[[arrayidxipgi]]
-; CHECK-NEXT:   %[[cmp:.+]] = icmp eq i64 %[[antivar]], 0
-; CHECK-NEXT:   br i1 %[[cmp]], label %diffesum.exit, label %incinvertfor.body.i
-
-; CHECK: incinvertfor.body.i:
-; CHECK-NEXT:   %[[sub]] = add nsw i64 %[[antivar]], -1
-; CHECK-NEXT:   br label %invertfor.body.i
-
-; CHECK: diffesum.exit:                                    ; preds = %invertfor.body.i
+; CHECK-NEXT:   call void @diffesum(double* %x, double* %xp, i64 %n, double 1.000000e+00)
 ; CHECK-NEXT:   ret void
+; CHECK-NEXT: }
+
+
+; CHECK: define internal void @diffesum(double* nocapture readonly %x, double* nocapture %"x'", i64 %n, double %differeturn)
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   br label %for.cond.cleanup
+
+; CHECK: for.cond.cleanup:                                 ; preds = %entry
+; CHECK-NEXT:   br label %invertfor.cond.cleanup
+
+; CHECK: invertentry:                                      ; preds = %invertfor.body
+; CHECK-NEXT:   ret void
+
+; CHECK-NEXT: invertfor.cond.cleanup:                           ; preds = %for.cond.cleanup
+; CHECK-NEXT:   br label %mergeinvertfor.body_for.cond.cleanup
+
+; CHECK: mergeinvertfor.body_for.cond.cleanup:             ; preds = %invertfor.cond.cleanup
+; CHECK-NEXT:   br label %invertfor.body
+
+; CHECK: invertfor.body:                                   ; preds = %incinvertfor.body, %mergeinvertfor.body_for.cond.cleanup
+; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %n, %mergeinvertfor.body_for.cond.cleanup ], [ %4, %incinvertfor.body ]
+; CHECK-NEXT:   %"arrayidx'ipg_unwrap" = getelementptr inbounds double, double* %"x'", i64 %"iv'ac.0"
+; CHECK-NEXT:   %0 = load double, double* %"arrayidx'ipg_unwrap", align 8
+; CHECK-NEXT:   %1 = fadd fast double %0, %differeturn
+; CHECK-NEXT:   store double %1, double* %"arrayidx'ipg_unwrap", align 8
+; CHECK-NEXT:   %2 = icmp eq i64 %"iv'ac.0", 0
+; CHECK-NEXT:   %3 = select fast i1 %2, double 0.000000e+00, double %differeturn
+; CHECK-NEXT:   br i1 %2, label %invertentry, label %incinvertfor.body
+
+; CHECK: incinvertfor.body:                                ; preds = %invertfor.body
+; CHECK-NEXT:   %4 = add nsw i64 %"iv'ac.0", -1
+; CHECK-NEXT:   br label %invertfor.body
 ; CHECK-NEXT: }

@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,instsimplify"  -enzyme-preopt=false -S | FileCheck %s
 
 define float @f(float %this) {
 entry:

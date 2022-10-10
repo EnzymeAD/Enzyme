@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -early-cse -simplifycfg -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,early-cse,simplifycfg"  -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: noinline
 define dso_local void @compute_sumabs(float* %a, float* %b, float* %ret) #1 {

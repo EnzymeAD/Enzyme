@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,sroa,instsimplify,simplifycfg"  -enzyme-preopt=false -S | FileCheck %s
 
 ; ModuleID = '/mnt/Data/git/Enzyme/enzyme/test/Integration/vecmax.c'
 source_filename = "/mnt/Data/git/Enzyme/enzyme/test/Integration/vecmax.c"

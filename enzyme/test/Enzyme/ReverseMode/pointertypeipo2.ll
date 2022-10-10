@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instsimplify -adce -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,sroa,simplifycfg,instsimplify,adce"  -enzyme-preopt=false -S | FileCheck %s
 
 declare void @__enzyme_autodiff(...)
 

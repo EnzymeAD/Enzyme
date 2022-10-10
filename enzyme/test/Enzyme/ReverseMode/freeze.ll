@@ -1,4 +1,5 @@
 ; RUN: if [ %llvmver -ge 10 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 10 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,instsimplify,simplifycfg"  -enzyme-preopt=false -S | FileCheck %s; fi
 
 ; Function Attrs: nounwind readnone uwtable
 define double @tester(double %x) {

@@ -1,5 +1,7 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -S | FileCheck %s --check-prefixes SHARED,MEMSET
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -S | FileCheck %s --check-prefixes SHARED,STORE
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,simplifycfg"  -enzyme-preopt=false -S | FileCheck %s --check-prefixes SHARED,MEMSET
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,simplifycfg"  -enzyme-preopt=false -S | FileCheck %s --check-prefixes SHARED,STORE
 
 
 declare void @__enzyme_autodiff(i8*, double*, double*, double*, double*)

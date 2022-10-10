@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -O3 -S | FileCheck %s
+; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false  -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme"  -enzyme-preopt=false -S | FileCheck %s
 
 %struct.Gradients = type { double, double }
 
@@ -22,12 +23,16 @@ entry:
 declare double @llvm.exp2.f64(double)
 
 
-; CHECK: define %struct.Gradients @test_derivative(double %x)
+; CHECK: define internal [2 x double] @fwddiffe2tester(double %x, [2 x double] %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = tail call fast double @llvm.exp2.f64(double %x)
-; CHECK-NEXT:   %1 = fmul fast double %0, 0x3FE62E42FEFA39EF
-; CHECK-NEXT:   %2 = fmul fast double %0, 0x3FFBB9D3BEB8C86B
-; CHECK-NEXT:   %3 = insertvalue %struct.Gradients zeroinitializer, double %1, 0
-; CHECK-NEXT:   %4 = insertvalue %struct.Gradients %3, double %2, 1
-; CHECK-NEXT:   ret %struct.Gradients %4
+; CHECK-NEXT:   %0 = call fast double @llvm.exp2.f64(double %x)
+; CHECK-NEXT:   %1 = extractvalue [2 x double] %"x'", 0
+; CHECK-NEXT:   %2 = fmul fast double %1, %0
+; CHECK-NEXT:   %3 = fmul fast double %2, 0x3FE62E42FEFA39EF
+; CHECK-NEXT:   %4 = insertvalue [2 x double] undef, double %3, 0
+; CHECK-NEXT:   %5 = extractvalue [2 x double] %"x'", 1
+; CHECK-NEXT:   %6 = fmul fast double %5, %0
+; CHECK-NEXT:   %7 = fmul fast double %6, 0x3FE62E42FEFA39EF
+; CHECK-NEXT:   %8 = insertvalue [2 x double] %4, double %7, 1
+; CHECK-NEXT:   ret [2 x double] %8
 ; CHECK-NEXT: }

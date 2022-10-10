@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -loop-deletion -correlated-propagation -adce -simplifycfg -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,instsimplify,loop-deletion,correlated-propagation,adce,simplifycfg"  -enzyme-preopt=false -S | FileCheck %s
 
 ; This requires the additional optimization to create memcpy's
 

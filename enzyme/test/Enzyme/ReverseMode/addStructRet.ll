@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,inline,mem2reg,instsimplify,simplifycfg"  -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: noinline nounwind readnone uwtable
 define double @tester(double %x, double %y) {

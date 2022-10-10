@@ -1,4 +1,5 @@
 ; RUN: if [ %llvmver -ge 9 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 12 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,instsimplify,simplifycfg"  -enzyme-preopt=false -S | FileCheck %s; fi
 
 source_filename = "cudaMM.cu"
 target datalayout = "e-i64:64-i128:128-v16:16-v32:32-n16:32:64"

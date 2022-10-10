@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,instsimplify,adce,loop-deletion,correlated-propagation,simplifycfg"  -enzyme-preopt=false -S | FileCheck %s
 
 %"class.Eigen::Matrix" = type { %"class.Eigen::PlainObjectBase" }
 %"class.Eigen::PlainObjectBase" = type { %"class.Eigen::DenseStorage" }

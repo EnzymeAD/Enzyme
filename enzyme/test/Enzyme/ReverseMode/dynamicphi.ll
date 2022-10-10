@@ -1,5 +1,6 @@
 ; RUN: if [ %llvmver -lt 15 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -gvn -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -licm -early-cse -simplifycfg -instsimplify -S | FileCheck %s -check-prefixes LL14,CHECK; fi
 ; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -gvn -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -licm -early-cse -simplifycfg -instsimplify -S | FileCheck %s -check-prefixes LL15,CHECK; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,inline,mem2reg,gvn,instsimplify,adce,loop-deletion,correlated-propagation,simplifycfg,licm,early-cse,simplifycfg,instsimplify"  -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: noinline norecurse nounwind uwtable
 define dso_local double @get(double* nocapture %x, i64 %i) local_unnamed_addr #0 {

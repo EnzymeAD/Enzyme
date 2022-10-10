@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -correlated-propagation -simplifycfg -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,instsimplify,adce,correlated-propagation,simplifycfg"  -enzyme-preopt=false -S | FileCheck %s
 
 ; XFAIL: *
 ; a function returning a float with no arguments is mistakenly marked as constant in spite of accessing a global

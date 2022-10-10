@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S -gvn | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,instsimplify,simplifycfg,gvn,dse,dse"  -enzyme-preopt=false -S | FileCheck %s
 
 ; ModuleID = 'bout.ll'
 source_filename = "/home/runner/work/Enzyme/Enzyme/enzyme/test/Integration/multivecmax.cpp"

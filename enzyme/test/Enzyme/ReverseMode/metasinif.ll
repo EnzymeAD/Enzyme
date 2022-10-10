@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -correlated-propagation -early-cse -instsimplify -adce -loop-deletion -simplifycfg -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,correlated-propagation,early-cse,instsimplify,adce,loop-deletion,simplifycfg"  -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: nounwind readnone speculatable
 declare double @llvm.fabs.f64(double) #1

@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -simplifycfg -instsimplify -adce -S | FileCheck %s
+; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -simplifycfg -instsimplify -adce dse -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,inline,mem2reg,simplifycfg,instsimplify,adce,dse"  -enzyme-preopt=false -S | FileCheck %s
 
 ; #include <stdlib.h>
 ; #include <stdio.h>
@@ -80,6 +81,17 @@ attributes #4 = { nounwind }
 
 ; CHECK: define dso_local void @derivative(double %x, i64 %n)
 ; CHECK-NEXT: entry:
+; CHECK-NEXT:   %"mul3'de.i" = alloca double, align 8
+; CHECK-NEXT:   %"call1'de.i" = alloca double, align 8
+; CHECK-NEXT:   %"x'de.i" = alloca double, align 8
+; CHECK-NEXT:   %0 = bitcast double* %"mul3'de.i" to i8*
+; CHECK-NEXT:   call void @llvm.lifetime.start.p0i8(i64 8, i8* %0)
+; CHECK-NEXT:   %1 = bitcast double* %"call1'de.i" to i8*
+; CHECK-NEXT:   call void @llvm.lifetime.start.p0i8(i64 8, i8* %1)
+; CHECK-NEXT:   %2 = bitcast double* %"x'de.i" to i8*
+; CHECK-NEXT:   call void @llvm.lifetime.start.p0i8(i64 8, i8* %2)
+; CHECK-NEXT:   store double 0.000000e+00, double* %"call1'de.i", align 8
+; CHECK-NEXT:   store double 0.000000e+00, double* %"x'de.i", align 8
 ; CHECK-NEXT:   %mul.i = shl i64 %n, 3
 ; CHECK-NEXT:   %call.i = call i8* @malloc(i64 %mul.i)
 ; CHECK-NEXT:   %[[dcall:.+]] = {{(call noalias nonnull i8\* @malloc\(i64 %mul.i\) (#[0-9]+)?[[:space:]].*call void @llvm.memset.p0i8.i64\(i8\* nonnull (align 1 )?%"call'mi.i", i8 0, i64 %mul.i, (i32 1, )?i1 false\)|call i8\* @calloc\(i64 1, i64 %mul.i\))}}
@@ -100,8 +112,14 @@ attributes #4 = { nounwind }
 
 ; CHECK: define internal {{(dso_local )?}}void @diffef(double* nocapture readonly %x, double* nocapture %"x'", double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = load double, double* %"x'", align 8
-; CHECK-NEXT:   %1 = fadd fast double %0, %differeturn
-; CHECK-NEXT:   store double %1, double* %"x'", align 8
+; CHECK-NEXT:   %"'de" = alloca double, align 8
+; CHECK-NEXT:   br label %invertentry
+
+; CHECK:  invertentry:                                      ; preds = %entry
+; CHECK-NEXT:   store double %differeturn, double* %"'de", align 8
+; CHECK-NEXT:   %0 = load double, double* %"'de", align 8
+; CHECK-NEXT:   %1 = load double, double* %"x'", align 8
+; CHECK-NEXT:   %2 = fadd fast double %1, %0
+; CHECK-NEXT:   store double %2, double* %"x'", align 8
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

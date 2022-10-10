@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg"  -enzyme-preopt=false -S | FileCheck %s
 
 define void @outer(i8* %tmp71, i8* %tmp72, i8* %tmp73, i8* %tmp74) {
 bb:

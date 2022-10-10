@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -early-cse -simplifycfg -instsimplify -correlated-propagation -instsimplify -adce -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,early-cse,simplifycfg,instsimplify,correlated-propagation,instsimplify,adce"  -enzyme-preopt=false -S | FileCheck %s
 
 ; ModuleID = '../test/Integration/rwrloop.c'
 source_filename = "../test/Integration/rwrloop.c"

@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -early-cse -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,early-cse,instsimplify,simplifycfg"  -enzyme-preopt=false -S | FileCheck %s
 
 %struct.Gradients = type { double, double }
 

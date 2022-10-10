@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -adce -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,sroa,simplifycfg,adce"  -enzyme-preopt=false -S | FileCheck %s
 
 define void @derivative(i64* %ptr, i64* %ptrp) {
 entry:

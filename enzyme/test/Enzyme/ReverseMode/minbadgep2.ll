@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -early-cse -instsimplify -adce -simplifycfg -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,early-cse,instsimplify,adce,simplifycfg"  -enzyme-preopt=false -S | FileCheck %s
 
 ;; TODO MAKE TEST WHERE gep of known constant pointer is returned or would otherwise be deduced active
 

@@ -1,5 +1,8 @@
 ; RUN: if [ %llvmver -le 12 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S -gvn -dse -dse | FileCheck %s ; fi
 ; RUN: if [ %llvmver -ge 13 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S -gvn -dse -dse | FileCheck %s --check-prefix=POST ; fi
+; RUN: if [ %llvmver -ge 13 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,instsimplify,simplifycfg,gvn,dse,dse"  -enzyme-preopt=false -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 13 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,instsimplify,simplifycfg,gvn,dse,dse"  -enzyme-preopt=false -S | FileCheck %s --check-prefix=POST ; fi
+
 
 declare double @__enzyme_autodiff(...)
 
