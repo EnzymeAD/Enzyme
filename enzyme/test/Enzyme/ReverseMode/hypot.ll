@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -early-cse -instsimplify -simplifycfg -adce -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,sroa,early-cse,instsimplify,simplifycfg,adce"  -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: nounwind readnone uwtable
 define double @tester(double %x, double %y) {

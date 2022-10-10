@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instcombine -adce -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,sroa,instsimplify,simplifycfg,instcombine,adce"  -enzyme-preopt=false -S | FileCheck %s
 
 %"class.Eigen::Matrix" = type { [4 x double] }
 

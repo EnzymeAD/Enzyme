@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,instsimplify,simplifycfg"  -enzyme-preopt=false -S | FileCheck %s
 
 source_filename = "readwriteread.c"
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"

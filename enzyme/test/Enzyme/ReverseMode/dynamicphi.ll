@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -gvn -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -licm -early-cse -simplifycfg -instsimplify -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,inline,mem2reg,gvn,instsimplify,adce,loop-deletion,correlated-propagation,simplifycfg,licm,early-cse,simplifycfg,instsimplify"  -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: noinline norecurse nounwind uwtable
 define dso_local double @get(double* nocapture %x, i64 %i) local_unnamed_addr #0 {

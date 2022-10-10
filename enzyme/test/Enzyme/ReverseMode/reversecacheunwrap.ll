@@ -1,5 +1,6 @@
 ; RUN: if [ %llvmver -lt 14 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -correlated-propagation -adce -instsimplify -early-cse-memssa -simplifycfg -correlated-propagation -adce -jump-threading -instsimplify -early-cse -simplifycfg -S | FileCheck %s -check-prefixes LLVM13,SHARED; fi
 ; RUN: if [ %llvmver -ge 14 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -correlated-propagation -adce -instsimplify -early-cse-memssa -simplifycfg -correlated-propagation -adce -jump-threading -instsimplify -early-cse -simplifycfg -S | FileCheck %s -check-prefixes LLVM14,SHARED; fi
+; RUN: if [ %llvmver -ge 14 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,correlated-propagation,adce,instsimplify,early-cse-memssa,simplifycfg,correlated-propagation,adce,jump-threading,instsimplify,early-cse,simplifycfg"  -enzyme-preopt=false -S | FileCheck %s -check-prefixes LLVM14,SHARED; fi
 
 
 ; ModuleID = 'orig.ll'

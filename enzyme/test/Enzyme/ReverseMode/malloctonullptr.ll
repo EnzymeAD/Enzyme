@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instsimplify -early-cse -adce -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,sroa,simplifycfg,instsimplify,early-cse,adce"  -enzyme-preopt=false -S | FileCheck %s
 
 source_filename = "/mnt/Data/git/Enzyme/enzyme/test/Integration/eigentensor.cpp"
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"

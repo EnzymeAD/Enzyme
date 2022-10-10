@@ -1,5 +1,6 @@
 ; RUN: if [ %llvmver -lt 14 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -adce -correlated-propagation -simplifycfg -early-cse -S | FileCheck %s -check-prefixes STORE,SHARED; fi
 ; RUN: if [ %llvmver -ge 14 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -adce -correlated-propagation -simplifycfg -early-cse -S | FileCheck %s -check-prefixes MEMCPY,SHARED; fi
+; RUN: if [ %llvmver -ge 14 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,adce,correlated-propagation,simplifycfg,early-cse"  -enzyme-preopt=false -S | FileCheck %s; fi
 
 ; void __enzyme_autodiff(void*, ...);
 

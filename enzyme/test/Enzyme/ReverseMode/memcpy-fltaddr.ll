@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -dce -instcombine -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,simplifycfg,dce,instcombine"  -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: nounwind uwtable
 define dso_local void @memcpy_float(double addrspace(13)* nocapture %dst, double addrspace(10)* nocapture readonly %src, i64 %num) #0 {

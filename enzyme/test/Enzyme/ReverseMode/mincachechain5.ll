@@ -1,5 +1,7 @@
 ; TODO handle llvm 13
 ; RUN: if [ %llvmver -lt 13 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -early-cse -adce -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 12 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,sroa,simplifycfg,early-cse,adce"  -enzyme-preopt=false -S | FileCheck %s; fi
+
 ; ModuleID = 'inp.ll'
 
 declare dso_local void @_Z17__enzyme_autodiffPvPdS0_i(i8*, double*, double*, i64*) local_unnamed_addr #4

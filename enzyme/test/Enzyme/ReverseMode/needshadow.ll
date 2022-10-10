@@ -1,4 +1,6 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S -mem2reg -instsimplify -simplifycfg | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,instsimplify,simplifycfg"  -enzyme-preopt=false -S | FileCheck %s
+
 ; ModuleID = 'inp.ll'
 source_filename = "/mnt/Data/git/Enzyme/enzyme/test/Integration/simpleeigen-made.cpp"
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"

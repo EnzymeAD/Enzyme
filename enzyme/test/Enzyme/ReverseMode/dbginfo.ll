@@ -1,4 +1,5 @@
 ; RUN: if [ %llvmver -ge 9 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 12 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,instsimplify,simplifycfg"  -enzyme-preopt=false -S | FileCheck %s; fi
 
 ; ModuleID = '/workspaces/Enzyme/enzyme/test/Integration/ReverseMode/dbginfo2.c'
 source_filename = "/workspaces/Enzyme/enzyme/test/Integration/ReverseMode/dbginfo2.c"

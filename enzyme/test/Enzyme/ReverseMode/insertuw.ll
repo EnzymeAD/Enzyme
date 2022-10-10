@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg"  -enzyme-preopt=false -S | FileCheck %s
 
 define void @tester(double* %in0, double* %in1, i1 %c) {
 entry:

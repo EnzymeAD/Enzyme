@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instcombine -adce -instsimplify -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,sroa,simplifycfg,instcombine,adce,instsimplify"  -enzyme-preopt=false -S | FileCheck %s
 
 declare dso_local double @__enzyme_autodiff(i8*, double)
 

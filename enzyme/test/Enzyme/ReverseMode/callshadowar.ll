@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -simplifycfg -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,instsimplify,adce,simplifycfg"  -enzyme-preopt=false -S | FileCheck %s
 
 ; ModuleID = 'ode-unopt.ll'
 source_filename = "ode.cpp"

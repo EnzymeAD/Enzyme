@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -O3 -dse -S | FileCheck %s
+; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -dse -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,inline,dse"  -enzyme-preopt=false -S | FileCheck %s
 
 ; #include <stdlib.h>
 ; #include <stdio.h>
@@ -79,28 +80,66 @@ attributes #4 = { nounwind }
 
 ; CHECK: define dso_local void @derivative(double %x, i64 %n)
 ; CHECK-NEXT: entry:
+; CHECK-NEXT:   %"mul3'de.i" = alloca double, align 8
+; CHECK-NEXT:   %"call1'de.i" = alloca double, align 8
+; CHECK-NEXT:   %"x'de.i" = alloca double, align 8
+; CHECK-NEXT:   %0 = bitcast double* %"mul3'de.i" to i8*
+; CHECK-NEXT:   call void @llvm.lifetime.start.p0i8(i64 8, i8* %0)
+; CHECK-NEXT:   %1 = bitcast double* %"call1'de.i" to i8*
+; CHECK-NEXT:   call void @llvm.lifetime.start.p0i8(i64 8, i8* %1)
+; CHECK-NEXT:   %2 = bitcast double* %"x'de.i" to i8*
+; CHECK-NEXT:   call void @llvm.lifetime.start.p0i8(i64 8, i8* %2)
+; CHECK-NEXT:   store double 0.000000e+00, double* %"call1'de.i", align 8
+; CHECK-NEXT:   store double 0.000000e+00, double* %"x'de.i", align 8
 ; CHECK-NEXT:   %mul.i = shl i64 %n, 3
-; CHECK-NEXT:   %call.i = tail call i8* @malloc(i64 %mul.i)
-; CHECK-NEXT:   %[[dcall:.+]] = {{(tail call noalias nonnull i8\* @malloc\(i64 %mul.i\) (#[0-9]+)?[[:space:]].*tail call void @llvm.memset.p0i8.i64\(i8\* nonnull (align 1 )?%"call'mi.i", i8 0, i64 %mul.i, (i32 1, )?i1 false\)|call i8\* @calloc\(i64 1, i64 %mul.i\))}}
-; CHECK-NEXT:   %[[ipci:.+]] = bitcast i8* %[[dcall]] to double*
-; CHECK-NEXT:   %[[bccall:.+]] = bitcast i8* %call.i to double*
-; CHECK-NEXT:   store double %x, double* %[[bccall]], align 8, !tbaa !2
-; CHECK-NEXT:   %[[fresult:.+]] = tail call fastcc double @augmented_f(double %x)
-;; TODO MAKE NON AUGMENTED:   %[[fresult:.+]] = tail call fast double @f(double* %0)
-; CHECK-NEXT:   %factor = fmul fast double %[[fresult]], 2.000000e+00
-; CHECK-NEXT:   tail call fastcc void @diffef(double* nonnull %[[ipci]], double %factor)
-; NOTE BETTER 03 / dead store elimination can get rid of the next line which is optional
-;   since its being free'd next
-; CHECK-NEXT:   store double 0.000000e+00, double* %[[ipci]], align 8
-; CHECK-NEXT:   tail call void bitcast (i32 (...)* @free to void (i8*)*)(i8* nonnull %[[dcall]])
-; CHECK-NEXT:   tail call void bitcast (i32 (...)* @free to void (i8*)*)(i8* %call.i)
+; CHECK-NEXT:   %call.i = call i8* @malloc(i64 %mul.i) #8
+; CHECK-NEXT:   %"call'mi.i" = call noalias nonnull i8* @malloc(i64 %mul.i) #8
+; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull %"call'mi.i", i8 0, i64 %mul.i, i1 false) #4
+; CHECK-NEXT:   %"'ipc.i" = bitcast i8* %"call'mi.i" to double*
+; CHECK-NEXT:   %3 = bitcast i8* %call.i to double*
+; CHECK-NEXT:   store double %x, double* %3, align 8, !tbaa !2
+; CHECK-NEXT:   %call1.i = call fast double @augmented_f(double* %3, double* %"'ipc.i") #4
+; CHECK-NEXT:   store double 1.000000e+00, double* %"mul3'de.i", align 8
+; CHECK-NEXT:   %4 = load double, double* %"mul3'de.i", align 8
+; CHECK-NEXT:   %m0diffecall1.i = fmul fast double %4, %call1.i
+; CHECK-NEXT:   %m1diffecall1.i = fmul fast double %4, %call1.i
+; CHECK-NEXT:   %5 = load double, double* %"call1'de.i", align 8
+; CHECK-NEXT:   %6 = fadd fast double %5, %m0diffecall1.i
+; CHECK-NEXT:   store double %6, double* %"call1'de.i", align 8
+; CHECK-NEXT:   %7 = load double, double* %"call1'de.i", align 8
+; CHECK-NEXT:   %8 = fadd fast double %7, %m1diffecall1.i
+; CHECK-NEXT:   store double %8, double* %"call1'de.i", align 8
+; CHECK-NEXT:   %9 = load double, double* %"call1'de.i", align 8
+; CHECK-NEXT:   call void @diffef(double* %3, double* %"'ipc.i", double %9) #4
+; CHECK-NEXT:   %10 = load double, double* %"'ipc.i", align 8
+; CHECK-NEXT:   store double 0.000000e+00, double* %"'ipc.i", align 8
+; CHECK-NEXT:   %11 = load double, double* %"x'de.i", align 8
+; CHECK-NEXT:   %12 = fadd fast double %11, %10
+; CHECK-NEXT:   store double %12, double* %"x'de.i", align 8
+; CHECK-NEXT:   call void bitcast (i32 (...)* @free to void (i8*)*)(i8* nonnull %"call'mi.i") #4
+; CHECK-NEXT:   call void bitcast (i32 (...)* @free to void (i8*)*)(i8* %call.i) #4
+; CHECK-NEXT:   %13 = load double, double* %"x'de.i", align 8
+; CHECK-NEXT:   %14 = insertvalue { double } undef, double %13, 0
+; CHECK-NEXT:   %15 = bitcast double* %"mul3'de.i" to i8*
+; CHECK-NEXT:   call void @llvm.lifetime.end.p0i8(i64 8, i8* %15)
+; CHECK-NEXT:   %16 = bitcast double* %"call1'de.i" to i8*
+; CHECK-NEXT:   call void @llvm.lifetime.end.p0i8(i64 8, i8* %16)
+; CHECK-NEXT:   %17 = bitcast double* %"x'de.i" to i8*
+; CHECK-NEXT:   call void @llvm.lifetime.end.p0i8(i64 8, i8* %17)
+; CHECK-NEXT:   %18 = extractvalue { double } %14, 0
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
-; CHECK: define internal {{(dso_local )?}}fastcc void @diffef(double* nocapture %"x'", double %differeturn)
+; CHECK: define internal void @diffef(double* nocapture readonly %x, double* nocapture %"x'", double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = load double, double* %"x'", align 8
-; CHECK-NEXT:   %1 = fadd fast double %0, %differeturn
-; CHECK-NEXT:   store double %1, double* %"x'", align 8
+; CHECK-NEXT:   %"'de" = alloca double, align 8
+; CHECK-NEXT:   br label %invertentry
+
+; CHECK:  invertentry:                                      ; preds = %entry
+; CHECK-NEXT:   store double %differeturn, double* %"'de", align 8
+; CHECK-NEXT:   %0 = load double, double* %"'de", align 8
+; CHECK-NEXT:   %1 = load double, double* %"x'", align 8
+; CHECK-NEXT:   %2 = fadd fast double %1, %0
+; CHECK-NEXT:   store double %2, double* %"x'", align 8
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

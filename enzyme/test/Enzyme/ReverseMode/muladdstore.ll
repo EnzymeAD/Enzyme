@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S -gvn -dse -dse | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,instsimplify,simplifycfg,gvn,dse,dse"  -enzyme-preopt=false -S | FileCheck %s
 
 ; __attribute__((noinline))
 ; void function(double y, double z, double *x) {

@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -adce -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,simplifycfg,adce"  -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: noinline nounwind uwtable
 define dso_local float @man_max(float* %a, float* %b) #0 {

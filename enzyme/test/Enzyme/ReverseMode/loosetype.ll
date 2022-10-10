@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -mem2reg -instsimplify -simplifycfg -S -enzyme-loose-types | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,mem2reg,instsimplify,simplifycfg" -enzyme-loose-types -enzyme-preopt=false -S | FileCheck %s
 
 
 %struct.tensor2 = type { %struct.tensor1 }

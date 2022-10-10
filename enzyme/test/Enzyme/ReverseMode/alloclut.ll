@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -adce -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,instsimplify,adce,loop-deletion,correlated-propagation,simplifycfg,adce"  -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: inlinehint nounwind uwtable
 define double @f(double %x, i32* %z) {
