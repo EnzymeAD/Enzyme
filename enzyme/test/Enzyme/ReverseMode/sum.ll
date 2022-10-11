@@ -1,5 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,instsimplify,simplifycfg"  -enzyme-preopt=false -S | FileCheck %s
+; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,instsimplify,adce,loop-deletion,correlated-propagation,simplifycfg" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: norecurse nounwind readonly uwtable
 define dso_local double @sum(double* nocapture readonly %x, i64 %n) #0 {
@@ -35,24 +35,24 @@ attributes #1 = { nounwind uwtable }
 attributes #2 = { nounwind }
 
 
-; CHECK: define dso_local void @dsum(double* %x, double* %xp, i64 %n)
+; CHECK: define internal void @diffesum(double* nocapture readonly %x, double* nocapture %"x'", i64 %n, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   br label %invertfor.body.i
+; CHECK-NEXT:   br label %invertfor.body
 
-; CHECK: invertfor.body.i:
-
-; CHECK-NEXT:   %[[antiiv:.+]] = phi i64 [ %n, %entry ], [ %[[antiivnext:.+]], %incinvertfor.body.i ]
-; CHECK-NEXT:   %[[arrayidxipgi:.+]] = getelementptr inbounds double, double* %xp, i64 %[[antiiv]]
-; CHECK-NEXT:   %[[load:.+]] = load double, double* %[[arrayidxipgi]]
-; CHECK-NEXT:   %[[tostore:.+]] = fadd fast double %[[load]], 1.000000e+00
-; CHECK-NEXT:   store double %[[tostore]], double* %[[arrayidxipgi]]
-; CHECK-NEXT:   %[[cmp:.+]] = icmp eq i64 %[[antiiv]], 0
-; CHECK-NEXT:   br i1 %[[cmp]], label %diffesum.exit, label %incinvertfor.body.i
-
-; CHECK: incinvertfor.body.i:
-; CHECK-NEXT:   %[[antiivnext]] = add nsw i64 %[[antiiv]], -1
-; CHECK-NEXT:   br label %invertfor.body.i
-
-; CHECK: diffesum.exit:
+; CHECK: invertentry:                                      ; preds = %invertfor.body
 ; CHECK-NEXT:   ret void
+
+; CHECK: invertfor.body:                                   ; preds = %incinvertfor.body, %entry
+; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %n, %entry ], [ %4, %incinvertfor.body ]
+; CHECK-NEXT:   %"arrayidx'ipg_unwrap" = getelementptr inbounds double, double* %"x'", i64 %"iv'ac.0"
+; CHECK-NEXT:   %0 = load double, double* %"arrayidx'ipg_unwrap", align 8
+; CHECK-NEXT:   %1 = fadd fast double %0, %differeturn
+; CHECK-NEXT:   store double %1, double* %"arrayidx'ipg_unwrap", align 8
+; CHECK-NEXT:   %2 = icmp eq i64 %"iv'ac.0", 0
+; CHECK-NEXT:   %3 = select fast i1 %2, double 0.000000e+00, double %differeturn
+; CHECK-NEXT:   br i1 %2, label %invertentry, label %incinvertfor.body
+
+; CHECK: incinvertfor.body:                                ; preds = %invertfor.body
+; CHECK-NEXT:   %4 = add nsw i64 %"iv'ac.0", -1
+; CHECK-NEXT:   br label %invertfor.body
 ; CHECK-NEXT: }
