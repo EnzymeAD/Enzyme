@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -S | FileCheck %s
+; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -S | FileCheck %s
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,instsimplify,adce,loop-deletion,correlated-propagation"  -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: norecurse nounwind readonly uwtable
@@ -38,13 +38,6 @@ attributes #1 = { nounwind uwtable }
 attributes #2 = { nounwind }
 
 
-; CHECK: define dso_local void @dsum(double* %x, double* %xp, i64 %n)
-; CHECK-NEXT: entry:
-; CHECK-NEXT:   call void @diffesum(double* %x, double* %xp, i64 %n, double 1.000000e+00)
-; CHECK-NEXT:   ret void
-; CHECK-NEXT: }
-
-
 ; CHECK: define internal void @diffesum(double* nocapture readonly %x, double* nocapture %"x'", i64 %n, double %differeturn)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   br label %for.cond.cleanup
@@ -55,14 +48,14 @@ attributes #2 = { nounwind }
 ; CHECK: invertentry:                                      ; preds = %invertfor.body
 ; CHECK-NEXT:   ret void
 
-; CHECK-NEXT: invertfor.cond.cleanup:                           ; preds = %for.cond.cleanup
+; CHECK: invertfor.cond.cleanup:                           ; preds = %for.cond.cleanup
 ; CHECK-NEXT:   br label %mergeinvertfor.body_for.cond.cleanup
 
 ; CHECK: mergeinvertfor.body_for.cond.cleanup:             ; preds = %invertfor.cond.cleanup
 ; CHECK-NEXT:   br label %invertfor.body
 
-; CHECK: invertfor.body:                                   ; preds = %incinvertfor.body, %mergeinvertfor.body_for.cond.cleanup
-; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %n, %mergeinvertfor.body_for.cond.cleanup ], [ %4, %incinvertfor.body ]
+; CHECK: invertfor.body:                                   ; preds = %invertextra, %mergeinvertfor.body_for.cond.cleanup
+; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %n, %mergeinvertfor.body_for.cond.cleanup ], [ %4, %invertextra ]
 ; CHECK-NEXT:   %"arrayidx'ipg_unwrap" = getelementptr inbounds double, double* %"x'", i64 %"iv'ac.0"
 ; CHECK-NEXT:   %0 = load double, double* %"arrayidx'ipg_unwrap", align 8
 ; CHECK-NEXT:   %1 = fadd fast double %0, %differeturn
@@ -73,5 +66,8 @@ attributes #2 = { nounwind }
 
 ; CHECK: incinvertfor.body:                                ; preds = %invertfor.body
 ; CHECK-NEXT:   %4 = add nsw i64 %"iv'ac.0", -1
+; CHECK-NEXT:   br label %invertextra
+
+; CHECK: invertextra:                                      ; preds = %incinvertfor.body
 ; CHECK-NEXT:   br label %invertfor.body
 ; CHECK-NEXT: }

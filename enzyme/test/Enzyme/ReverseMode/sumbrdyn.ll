@@ -1,5 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -S | FileCheck %s
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,inline,mem2reg,instsimplify,adce,loop-deletion,correlated-propagation"  -enzyme-preopt=false -S | FileCheck %s
+; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,instsimplify,adce,loop-deletion,correlated-propagation"  -enzyme-preopt=false -S | FileCheck %s
 
 declare i1 @exitcond();
 
@@ -39,35 +39,46 @@ attributes #0 = { norecurse nounwind readonly uwtable }
 attributes #1 = { nounwind uwtable }
 attributes #2 = { nounwind }
 
-; CHECK: define dso_local void @dsum(double* %x, double* %xp, i64 %n)
+
+; CHECK: define internal void @diffesum(double* nocapture readonly %x, double* nocapture %"x'", i64 %n, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   br label %for.body.i
+; CHECK-NEXT:   br label %for.body
 
-; CHECK: for.cond.cleanup.i:                               ; preds = %for.body.i
-; CHECK-NEXT:   br label %invertfor.body.i
+; CHECK: for.cond.cleanup:                                 ; preds = %for.body
+; CHECK-NEXT:   br label %invertfor.cond.cleanup
 
-; CHECK: for.body.i:
-; CHECK-NEXT:   %[[iv:.+]] = phi i64 [ %[[ivnext:.+]], %extra.i ], [ 0, %entry ]
-; CHECK-NEXT:   %[[ivnext]] = add nuw nsw i64 %[[iv]], 1
-; CHECK-NEXT:   %exitcond.i = call i1 @exitcond()
-; CHECK-NEXT:   br i1 %exitcond.i, label %for.cond.cleanup.i, label %extra.i
+; CHECK: for.body:                                         ; preds = %extra, %entry
+; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %extra ], [ 0, %entry ]
+; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
+; CHECK-NEXT:   %exitcond = call i1 @exitcond()
+; CHECK-NEXT:   br i1 %exitcond, label %for.cond.cleanup, label %extra
 
-; CHECK: extra.i:
-; CHECK-NEXT:   br label %for.body.i
+; CHECK: extra:                                            ; preds = %for.body
+; CHECK-NEXT:   br label %for.body
 
-; CHECK: invertfor.body.i:
-; CHECK-NEXT:   %[[antivar:.+]] = phi i64 [ %[[iv]], %for.cond.cleanup.i ], [ %[[sub:.+]], %incinvertfor.body.i ]
-; CHECK-NEXT:   %[[arrayidxipgi:.+]] = getelementptr inbounds double, double* %xp, i64 %[[antivar]]
-; CHECK-NEXT:   %[[load:.+]] = load double, double* %[[arrayidxipgi]]
-; CHECK-NEXT:   %[[add:.+]] = fadd fast double %[[load]], 1.000000e+00
-; CHECK-NEXT:   store double %[[add]], double* %[[arrayidxipgi]]
-; CHECK-NEXT:   %[[cmp:.+]] = icmp eq i64 %[[antivar]], 0
-; CHECK-NEXT:   br i1 %[[cmp]], label %diffesum.exit, label %incinvertfor.body.i
-
-; CHECK: incinvertfor.body.i:
-; CHECK-NEXT:   %[[sub]] = add nsw i64 %[[antivar]], -1
-; CHECK-NEXT:   br label %invertfor.body.i
-
-; CHECK: diffesum.exit:                                    ; preds = %invertfor.body.i
+; CHECK: invertentry:                                      ; preds = %invertfor.body
 ; CHECK-NEXT:   ret void
+
+; CHECK: invertfor.cond.cleanup:                           ; preds = %for.cond.cleanup
+; CHECK-NEXT:   br label %mergeinvertfor.body_for.cond.cleanup
+
+; CHECK: mergeinvertfor.body_for.cond.cleanup:             ; preds = %invertfor.cond.cleanup
+; CHECK-NEXT:   br label %invertfor.body
+
+; CHECK: invertfor.body:                                   ; preds = %invertextra, %mergeinvertfor.body_for.cond.cleanup
+; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %iv, %mergeinvertfor.body_for.cond.cleanup ], [ %4, %invertextra ]
+; CHECK-NEXT:   %"arrayidx'ipg_unwrap" = getelementptr inbounds double, double* %"x'", i64 %"iv'ac.0"
+; CHECK-NEXT:   %0 = load double, double* %"arrayidx'ipg_unwrap", align 8
+; CHECK-NEXT:   %1 = fadd fast double %0, %differeturn
+; CHECK-NEXT:   store double %1, double* %"arrayidx'ipg_unwrap", align 8
+; CHECK-NEXT:   %2 = icmp eq i64 %"iv'ac.0", 0
+; CHECK-NEXT:   %3 = select fast i1 %2, double 0.000000e+00, double %differeturn
+; CHECK-NEXT:   br i1 %2, label %invertentry, label %incinvertfor.body
+
+; CHECK: incinvertfor.body:                                ; preds = %invertfor.body
+; CHECK-NEXT:   %4 = add nsw i64 %"iv'ac.0", -1
+; CHECK-NEXT:   br label %invertextra
+
+; CHECK: invertextra:                                      ; preds = %incinvertfor.body
+; CHECK-NEXT:   br label %invertfor.body
 ; CHECK-NEXT: }

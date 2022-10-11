@@ -51,17 +51,29 @@ attributes #3 = { nounwind }
 ; CHECK: define dso_local double @dsqrelu(double %x)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %cmp.i = fcmp fast ogt double %x, 0.000000e+00
-; CHECK-NEXT:   %0 = call fast double @llvm.sin.f64(double %x) #5
-; CHECK-NEXT:   %mul.i = fmul fast double %0, %x
-; CHECK-NEXT:   %1 = call fast double @llvm.sqrt.f64(double %mul.i) #3
-; CHECK-NEXT:   %2 = select i1 %cmp.i, double 5.000000e-01, double 0.000000e+00
-; CHECK-NEXT:   %3 = fdiv fast double %2, %1
-; CHECK-NEXT:   %4 = fcmp fast oeq double %mul.i, 0.000000e+00
-; CHECK-NEXT:   %5 = select fast i1 %4, double 0.000000e+00, double %3
-; CHECK-NEXT:   %m0diffe.i = fmul fast double %5, %x
-; CHECK-NEXT:   %m1diffex.i = fmul fast double %5, %0
-; CHECK-NEXT:   %6 = call fast double @llvm.cos.f64(double %x) #3
-; CHECK-NEXT:   %7 = fmul fast double %m0diffe.i, %6
-; CHECK-NEXT:   %8 = fadd fast double %m1diffex.i, %7
-; CHECK-NEXT:   ret double %8
-; CHECK-NEXT: }
+; CHECK-NEXT:   br label %cond.end.i
+
+; CHECK: cond.true.i:                                      ; No predecessors!
+; CHECK-NEXT:  br label %cond.end.i
+
+; CHECK: cond.end.i:                                       ; preds = %entry, %cond.true.i
+; CHECK-NEXT:  br i1 %cmp.i, label %invertcond.true.i, label %diffesqrelu.exit
+
+; CHECK: invertcond.true.i:                                ; preds = %cond.end.i
+; CHECK-NEXT:  %0 = call fast double @llvm.sin.f64(double %x)
+; CHECK-NEXT:  %mul_unwrap.i = fmul fast double %0, %x
+; CHECK-NEXT:  %1 = call fast double @llvm.sqrt.f64(double %mul_unwrap.i)
+; CHECK-NEXT:  %2 = fdiv fast double 5.000000e-01, %1
+; CHECK-NEXT:  %3 = fcmp fast oeq double %mul_unwrap.i, 0.000000e+00
+; CHECK-NEXT:  %4 = select fast i1 %3, double 0.000000e+00, double %2
+; CHECK-NEXT:  %m0diffe.i = fmul fast double %4, %x
+; CHECK-NEXT:  %m1diffex.i = fmul fast double %4, %0
+; CHECK-NEXT:  %5 = call fast double @llvm.cos.f64(double %x)
+; CHECK-NEXT:  %6 = fmul fast double %m0diffe.i, %5
+; CHECK-NEXT:  %7 = fadd fast double %m1diffex.i, %6
+; CHECK-NEXT:  br label %diffesqrelu.exit
+
+; CHECK: diffesqrelu.exit:                                 ; preds = %invertcond.true.i, %cond.end.i
+; CHECK-NEXT:  %"x'de.i.0" = phi double [ %7, %invertcond.true.i ], [ 0.000000e+00, %cond.end.i ]
+; CHECK-NEXT:  ret double %"x'de.i.0"
+; CHECK-NEXT:}
