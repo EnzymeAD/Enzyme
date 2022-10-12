@@ -373,6 +373,10 @@ public:
     if (Result.minIndices.size() > EnzymeMaxTypeDepth) {
       Result.minIndices.pop_back();
       if (EnzymeTypeWarning) {
+        if (CustomErrorHandler) {
+          CustomErrorHandler("TypeAnalysisDepthLimit", wrap(orig),
+                             ErrorType::TypeDepthExceeded, this);
+        }
         if (orig) {
           EmitWarning("TypeAnalysisDepthLimit", *orig, *orig,
                       " not handling more than ", EnzymeMaxTypeDepth,
