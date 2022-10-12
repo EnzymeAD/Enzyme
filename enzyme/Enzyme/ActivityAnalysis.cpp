@@ -87,7 +87,12 @@ const char *KnownInactiveFunctionsStartingWith[] = {
     "f90io",
     "$ss5print",
     "_ZTv0_n24_NSoD", //"1Ev, 0Ev
+    "_ZNSt16allocator_traitsISaIdEE10deallocate",
+    "_ZNSaIcED1Ev",
+    "_ZNSaIcEC1Ev",
 #if LLVM_VERSION_MAJOR <= 8
+    // TODO this returns allocated memory and thus can be an active value
+    // "_ZNSt16allocator_traits",
     "_ZN4core3fmt",
     "_ZN3std2io5stdio6_print",
     "_ZNSt7__cxx1112basic_string",
@@ -278,7 +283,8 @@ const std::set<std::string> KnownInactiveFunctions = {
 };
 
 const char *DemangledKnownInactiveFunctionsStartingWith[] = {
-    "std::allocator",
+    // TODO this returns allocated memory and thus can be an active value
+    // "std::allocator",
     "std::string",
     "std::cerr",
     "std::istream",
@@ -566,6 +572,18 @@ static inline void propagateArgumentInformation(
       for (size_t i = 0; i < CI.arg_size() - 1; i++)
 #else
       for (size_t i = 0; i < CI.getNumArgOperands() - 1; i++)
+#endif
+      {
+        propagateFromOperand(CI.getOperand(i));
+      }
+      return;
+    }
+
+    if (Name == "julia.call" || Name == "julia.call2") {
+#if LLVM_VERSION_MAJOR >= 14
+      for (size_t i = 1; i < CI.arg_size(); i++)
+#else
+      for (size_t i = 1; i < CI.getNumArgOperands(); i++)
 #endif
       {
         propagateFromOperand(CI.getOperand(i));
@@ -1588,7 +1606,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
     Hypothesis->ActiveValues.insert(Val);
     if (auto VI = dyn_cast<Instruction>(Val)) {
       for (auto V : DeducingPointers) {
-        UpHypothesis->InsertConstantValue(TR, V);
+        // UpHypothesis->InsertConstantValue(TR, V);
       }
       if (UpHypothesis->isInstructionInactiveFromOrigin(TR, VI)) {
         Hypothesis->DeducingPointers.insert(Val);
@@ -1784,13 +1802,37 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           // active
           if (!Hypothesis->isConstantValue(TR, I)) {
             potentiallyActiveLoad = true;
-            if (TR.query(I)[{-1}].isPossiblePointer()) {
-              if (EnzymePrintActivity)
-                llvm::errs()
-                    << "potential active store via pointer in load: " << *I
-                    << " of " << *Val << "\n";
-              potentiallyActiveStore = true;
-            }
+            // returns whether seen
+            std::function<bool(Value * V, SmallPtrSetImpl<Value *> &)>
+                loadCheck = [&](Value *V, SmallPtrSetImpl<Value *> &Seen) {
+                  if (Seen.count(V))
+                    return false;
+                  Seen.insert(V);
+                  if (TR.query(V)[{-1}].isPossiblePointer()) {
+                    for (auto UU : V->users()) {
+                      auto U = cast<Instruction>(UU);
+                      if (U->mayWriteToMemory()) {
+                        if (!Hypothesis->isConstantInstruction(TR, U)) {
+                          if (EnzymePrintActivity)
+                            llvm::errs() << "potential active store via "
+                                            "pointer in load: "
+                                         << *I << " of " << *Val << " via "
+                                         << *U << "\n";
+                          potentiallyActiveStore = true;
+                          return true;
+                        }
+                      }
+
+                      if (U != Val && !Hypothesis->isConstantValue(TR, U)) {
+                        if (loadCheck(U, Seen))
+                          return true;
+                      }
+                    }
+                  }
+                  return false;
+                };
+            SmallPtrSet<Value *, 2> Seen;
+            loadCheck(I, Seen);
           }
         } else if (auto MTI = dyn_cast<MemTransferInst>(I)) {
           if (!Hypothesis->isConstantValue(TR, MTI->getArgOperand(0))) {
@@ -1959,7 +2001,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       if (DeducingPointers.size() == 0)
         UpHypothesis->insertConstantsFrom(TR, *Hypothesis);
       for (auto V : DeducingPointers) {
-        UpHypothesis->InsertConstantValue(TR, V);
+        // UpHypothesis->InsertConstantValue(TR, V);
       }
       assert(directions & UP);
       bool ActiveUp = !isa<Argument>(Val) &&
@@ -2931,7 +2973,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         }
         continue;
       }
-      if (!I->mayWriteToMemory()) {
+      if (!I->mayWriteToMemory() || isa<LoadInst>(I)) {
         if (TR.query(I)[{-1}].isIntegral()) {
           continue;
         }

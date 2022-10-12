@@ -473,6 +473,7 @@ public:
       return;
     }
   }
+
   void visitICmpInst(llvm::ICmpInst &I) { eraseIfUnused(I); }
 
   void visitFCmpInst(llvm::FCmpInst &I) { eraseIfUnused(I); }
@@ -539,8 +540,7 @@ public:
           vd = TypeTree(BaseType::Pointer).Only(-1);
           goto known;
         }
-        EmitWarning("CannotDeduceType", I.getDebugLoc(), gutils->oldFunc,
-                    I.getParent(), &I, "failed to deduce type of load ", I);
+        EmitWarning("CannotDeduceType", I, "failed to deduce type of load ", I);
         vd = TypeTree(BaseType::Pointer).Only(-1);
         goto known;
       }
@@ -1055,7 +1055,7 @@ public:
       auto &DL = gutils->newFunc->getParent()->getDataLayout();
       auto valType = I.getValOperand()->getType();
       auto storeSize = DL.getTypeSizeInBits(valType) / 8;
-      auto fp = TR.firstPointer(storeSize, I.getPointerOperand(),
+      auto fp = TR.firstPointer(storeSize, I.getPointerOperand(), &I,
                                 /*errifnotfound*/ false,
                                 /*pointerIntSame*/ true);
       if (!fp.isKnown() && valType->isIntOrIntVectorTy()) {
@@ -1097,7 +1097,19 @@ public:
     visitCommonStore(SI, SI.getPointerOperand(), SI.getValueOperand(), align,
                      SI.isVolatile(), SI.getOrdering(), SI.getSyncScopeID(),
                      /*mask=*/nullptr);
-    eraseIfUnused(SI);
+
+    bool forceErase = false;
+    if (Mode == DerivativeMode::ReverseModeGradient) {
+      for (const auto &pair : gutils->rematerializableAllocations) {
+        if (pair.second.stores.count(&SI) && pair.second.LI) {
+          forceErase = true;
+        }
+      }
+    }
+    if (forceErase)
+      eraseIfUnused(SI, /*erase*/ true, /*check*/ false);
+    else
+      eraseIfUnused(SI);
   }
 
 #if LLVM_VERSION_MAJOR >= 10
@@ -1167,8 +1179,9 @@ public:
     if (valType->isFPOrFPVectorTy()) {
       FT = valType->getScalarType();
     } else if (!valType->isPointerTy()) {
-      auto fp = TR.firstPointer(storeSize, orig_ptr, /*errifnotfound*/ false,
-                                /*pointerIntSame*/ true);
+      auto fp =
+          TR.firstPointer(storeSize, orig_ptr, &I, /*errifnotfound*/ false,
+                          /*pointerIntSame*/ true);
       if (fp.isKnown()) {
         FT = fp.isFloat();
       } else if (looseTypeAnalysis && (isa<ConstantInt>(orig_val) ||
@@ -1186,7 +1199,7 @@ public:
         }
         EmitFailure("CannotDeduceType", I.getDebugLoc(), &I,
                     "failed to deduce type of store ", I);
-        TR.firstPointer(storeSize, orig_ptr, /*errifnotfound*/ true,
+        TR.firstPointer(storeSize, orig_ptr, &I, /*errifnotfound*/ true,
                         /*pointerIntSame*/ true);
       }
     }
@@ -1220,7 +1233,7 @@ public:
               LoadInst *dif1 = Builder2.CreateLoad(dif1Ptr, isVolatile);
 #endif
               if (align)
-#if LLVM_VERSION_MAJOR >= 10
+#if LLVM_VERSION_MAJOR >= 11
                 dif1->setAlignment(*align);
 #else
                 dif1->setAlignment(align);
@@ -2923,7 +2936,18 @@ public:
         Mode == DerivativeMode::ReverseModeCombined)
       getReverseBuilder(Builder2);
 
-    eraseIfUnused(MS);
+    bool forceErase = false;
+    if (Mode == DerivativeMode::ReverseModeGradient) {
+      for (const auto &pair : gutils->rematerializableAllocations) {
+        if (pair.second.stores.count(&MS) && pair.second.LI) {
+          forceErase = true;
+        }
+      }
+    }
+    if (forceErase)
+      eraseIfUnused(MS, /*erase*/ true, /*check*/ false);
+    else
+      eraseIfUnused(MS);
 
     Value *orig_op0 = MS.getArgOperand(0);
     Value *orig_op1 = MS.getArgOperand(1);
@@ -3102,8 +3126,7 @@ public:
             }
           }
         }
-        EmitWarning("CannotDeduceType", MS.getDebugLoc(), gutils->oldFunc,
-                    MS.getParent(), &MS, "failed to deduce type of memset ",
+        EmitWarning("CannotDeduceType", MS, "failed to deduce type of memset ",
                     MS);
         vd = TypeTree(BaseType::Pointer).Only(0);
         goto known;
@@ -3118,7 +3141,7 @@ public:
       EmitFailure("CannotDeduceType", MS.getDebugLoc(), &MS,
                   "failed to deduce type of memset ", MS);
 
-      TR.firstPointer(size, MS.getOperand(0), /*errifnotfound*/ true,
+      TR.firstPointer(size, MS.getOperand(0), &MS, /*errifnotfound*/ true,
                       /*pointerIntSame*/ true);
       llvm_unreachable("bad msi");
     }
@@ -3423,8 +3446,7 @@ public:
             }
           }
         }
-        EmitWarning("CannotDeduceType", MTI.getDebugLoc(), gutils->oldFunc,
-                    MTI.getParent(), &MTI, "failed to deduce type of copy ",
+        EmitWarning("CannotDeduceType", MTI, "failed to deduce type of copy ",
                     MTI);
         vd = TypeTree(BaseType::Pointer).Only(0);
         goto known;
@@ -3439,7 +3461,7 @@ public:
       EmitFailure("CannotDeduceType", MTI.getDebugLoc(), &MTI,
                   "failed to deduce type of copy ", MTI);
 
-      TR.firstPointer(size, orig_dst, /*errifnotfound*/ true,
+      TR.firstPointer(size, orig_dst, &MTI, /*errifnotfound*/ true,
                       /*pointerIntSame*/ true);
       llvm_unreachable("bad mti");
     }
@@ -5460,7 +5482,7 @@ public:
       EmitFailure("CannotDeduceType", call.getDebugLoc(), &call,
                   "failed to deduce type of copy ", call);
 
-      TR.firstPointer(size, origArg, /*errifnotfound*/ true,
+      TR.firstPointer(size, origArg, &call, /*errifnotfound*/ true,
                       /*pointerIntSame*/ true);
       llvm_unreachable("bad mti");
     }
@@ -7308,7 +7330,7 @@ public:
           shadow = Builder2.CreateIntToPtr(
               shadow, Type::getInt8PtrTy(call.getContext()));
 
-        ConcreteType CT = TR.firstPointer(1, call.getOperand(0));
+        ConcreteType CT = TR.firstPointer(1, call.getOperand(0), &call);
         Type *MPI_OP_Ptr_type =
             PointerType::getUnqual(Type::getInt8PtrTy(call.getContext()));
 
@@ -8520,7 +8542,7 @@ public:
             CreateAllocation(Builder2, Type::getInt8Ty(call.getContext()),
                              sendlen_arg, "mpireduce_malloccache");
 
-        ConcreteType CT = TR.firstPointer(1, orig_sendbuf);
+        ConcreteType CT = TR.firstPointer(1, orig_sendbuf, &call);
         Type *MPI_OP_Ptr_type =
             PointerType::getUnqual(Type::getInt8PtrTy(call.getContext()));
 
@@ -9926,7 +9948,19 @@ public:
             }
           }
 
-          eraseIfUnused(*orig);
+          bool forceErase = false;
+          if (Mode == DerivativeMode::ReverseModeGradient) {
+            for (const auto &pair : gutils->rematerializableAllocations) {
+              if (pair.second.stores.count(orig) && pair.second.LI) {
+                forceErase = true;
+              }
+            }
+          }
+          if (forceErase)
+            eraseIfUnused(*orig, /*erase*/ true, /*check*/ false);
+          else
+            eraseIfUnused(*orig);
+
           return;
         }
         Intrinsic::ID ID = Intrinsic::not_intrinsic;
@@ -10266,24 +10300,6 @@ public:
           }
         }
       }
-
-      if (funcName == "lgamma" || funcName == "lgammaf" ||
-          funcName == "lgammal" || funcName == "lgamma_r" ||
-          funcName == "lgammaf_r" || funcName == "lgammal_r" ||
-          funcName == "__lgamma_r_finite" || funcName == "__lgammaf_r_finite" ||
-          funcName == "__lgammal_r_finite") {
-        if (gutils->knownRecomputeHeuristic.find(orig) !=
-            gutils->knownRecomputeHeuristic.end()) {
-          if (!gutils->knownRecomputeHeuristic[orig]) {
-            gutils->cacheForReverse(BuilderZ, newCall,
-                                    getIndex(orig, CacheType::Self));
-          }
-        }
-        if (Mode == DerivativeMode::ReverseModePrimal ||
-            gutils->isConstantInstruction(orig)) {
-          return;
-        }
-      }
     }
 #if LLVM_VERSION_MAJOR >= 11
     if (auto assembly = dyn_cast<InlineAsm>(orig->getCalledOperand()))
@@ -10365,7 +10381,7 @@ public:
               backwardsShadow = true;
               forwardsShadow = found->second.primalInitialize;
               // If in a loop context, maintain the same free behavior.
-              if (!forwardsShadow && found->second.LI &&
+              if (found->second.LI &&
                   found->second.LI->contains(orig->getParent()))
                 inLoop = true;
             }
@@ -10389,7 +10405,8 @@ public:
                 anti = nullptr;
                 goto endAnti;
               } else if (inLoop) {
-                gutils->rematerializedShadowPHIs.push_back(placeholder);
+                gutils->rematerializedPrimalOrShadowAllocations.push_back(
+                    placeholder);
                 goto endAnti;
               }
             }
@@ -10716,99 +10733,105 @@ public:
             // if rematerialize, don't ever cache and downgrade to stack
             // allocation where possible.
             if (auto MD = hasMetadata(orig, "enzyme_fromstack")) {
-              IRBuilder<> B(newCall);
+              if (Mode == DerivativeMode::ReverseModeGradient &&
+                  found->second.LI) {
+                gutils->rematerializedPrimalOrShadowAllocations.push_back(
+                    newCall);
+              } else {
+                IRBuilder<> B(newCall);
 
-              Value *Size;
-              if (funcName == "malloc")
-                Size = orig->getArgOperand(0);
-              else if (funcName == "julia.gc_alloc_obj" ||
-                       funcName == "jl_gc_alloc_typed" ||
-                       funcName == "ijl_gc_alloc_typed")
-                Size = orig->getArgOperand(1);
-              else
-                llvm_unreachable("Unknown allocation to upgrade");
-              Size = gutils->getNewFromOriginal(Size);
+                Value *Size;
+                if (funcName == "malloc")
+                  Size = orig->getArgOperand(0);
+                else if (funcName == "julia.gc_alloc_obj" ||
+                         funcName == "jl_gc_alloc_typed" ||
+                         funcName == "ijl_gc_alloc_typed")
+                  Size = orig->getArgOperand(1);
+                else
+                  llvm_unreachable("Unknown allocation to upgrade");
+                Size = gutils->getNewFromOriginal(Size);
 
-              if (auto CI = dyn_cast<ConstantInt>(Size)) {
-                B.SetInsertPoint(gutils->inversionAllocs);
-              }
-
-              Type *elTy = Type::getInt8Ty(orig->getContext());
-              Instruction *I = nullptr;
-#if LLVM_VERSION_MAJOR >= 15
-              if (orig->getContext().supportsTypedPointers()) {
-#endif
-                for (auto U : orig->users()) {
-                  if (hasMetadata(cast<Instruction>(U), "enzyme_caststack")) {
-                    elTy = U->getType()->getPointerElementType();
-                    Value *tsize = ConstantInt::get(
-                        Size->getType(), (gutils->newFunc->getParent()
-                                              ->getDataLayout()
-                                              .getTypeAllocSizeInBits(elTy) +
-                                          7) /
-                                             8);
-                    Size = B.CreateUDiv(Size, tsize, "", /*exact*/ true);
-                    I = gutils->getNewFromOriginal(cast<Instruction>(U));
-                    break;
-                  }
+                if (auto CI = dyn_cast<ConstantInt>(Size)) {
+                  B.SetInsertPoint(gutils->inversionAllocs);
                 }
-#if LLVM_VERSION_MAJOR >= 15
-              }
-#endif
 
-              Value *replacement = B.CreateAlloca(elTy, Size);
-              if (I)
-                replacement->takeName(I);
-              else
-                replacement->takeName(newCall);
-
-              auto Alignment =
-                  cast<ConstantInt>(
-                      cast<ConstantAsMetadata>(MD->getOperand(0))->getValue())
-                      ->getLimitedValue();
-              // Don't set zero alignment
-              if (Alignment) {
-#if LLVM_VERSION_MAJOR >= 10
-                cast<AllocaInst>(replacement)->setAlignment(Align(Alignment));
-#else
-                cast<AllocaInst>(replacement)->setAlignment(Alignment);
-#endif
-              }
-#if LLVM_VERSION_MAJOR >= 15
-              if (orig->getContext().supportsTypedPointers()) {
-#endif
-                if (orig->getType()->getPointerElementType() != elTy)
-                  replacement = B.CreatePointerCast(
-                      replacement,
-                      PointerType::getUnqual(
-                          orig->getType()->getPointerElementType()));
-
-#if LLVM_VERSION_MAJOR >= 15
-              }
-#endif
-
-              if (int AS =
-                      cast<PointerType>(orig->getType())->getAddressSpace()) {
-
-                llvm::PointerType *PT;
+                Type *elTy = Type::getInt8Ty(orig->getContext());
+                Instruction *I = nullptr;
 #if LLVM_VERSION_MAJOR >= 15
                 if (orig->getContext().supportsTypedPointers()) {
 #endif
-                  PT = PointerType::get(
-                      orig->getType()->getPointerElementType(), AS);
+                  for (auto U : orig->users()) {
+                    if (hasMetadata(cast<Instruction>(U), "enzyme_caststack")) {
+                      elTy = U->getType()->getPointerElementType();
+                      Value *tsize = ConstantInt::get(
+                          Size->getType(), (gutils->newFunc->getParent()
+                                                ->getDataLayout()
+                                                .getTypeAllocSizeInBits(elTy) +
+                                            7) /
+                                               8);
+                      Size = B.CreateUDiv(Size, tsize, "", /*exact*/ true);
+                      I = gutils->getNewFromOriginal(cast<Instruction>(U));
+                      break;
+                    }
+                  }
 #if LLVM_VERSION_MAJOR >= 15
-                } else {
-                  PT = PointerType::get(orig->getContext(), AS);
                 }
 #endif
-                replacement = B.CreateAddrSpaceCast(replacement, PT);
-                cast<Instruction>(replacement)
-                    ->setMetadata("enzyme_backstack",
-                                  MDNode::get(replacement->getContext(), {}));
-              }
 
-              gutils->replaceAWithB(newCall, replacement);
-              gutils->erase(newCall);
+                Value *replacement = B.CreateAlloca(elTy, Size);
+                if (I)
+                  replacement->takeName(I);
+                else
+                  replacement->takeName(newCall);
+
+                auto Alignment =
+                    cast<ConstantInt>(
+                        cast<ConstantAsMetadata>(MD->getOperand(0))->getValue())
+                        ->getLimitedValue();
+                // Don't set zero alignment
+                if (Alignment) {
+#if LLVM_VERSION_MAJOR >= 10
+                  cast<AllocaInst>(replacement)->setAlignment(Align(Alignment));
+#else
+                  cast<AllocaInst>(replacement)->setAlignment(Alignment);
+#endif
+                }
+#if LLVM_VERSION_MAJOR >= 15
+                if (orig->getContext().supportsTypedPointers()) {
+#endif
+                  if (orig->getType()->getPointerElementType() != elTy)
+                    replacement = B.CreatePointerCast(
+                        replacement,
+                        PointerType::getUnqual(
+                            orig->getType()->getPointerElementType()));
+
+#if LLVM_VERSION_MAJOR >= 15
+                }
+#endif
+
+                if (int AS =
+                        cast<PointerType>(orig->getType())->getAddressSpace()) {
+
+                  llvm::PointerType *PT;
+#if LLVM_VERSION_MAJOR >= 15
+                  if (orig->getContext().supportsTypedPointers()) {
+#endif
+                    PT = PointerType::get(
+                        orig->getType()->getPointerElementType(), AS);
+#if LLVM_VERSION_MAJOR >= 15
+                  } else {
+                    PT = PointerType::get(orig->getContext(), AS);
+                  }
+#endif
+                  replacement = B.CreateAddrSpaceCast(replacement, PT);
+                  cast<Instruction>(replacement)
+                      ->setMetadata("enzyme_backstack",
+                                    MDNode::get(replacement->getContext(), {}));
+                }
+
+                gutils->replaceAWithB(newCall, replacement);
+                gutils->erase(newCall);
+              }
               return;
             }
 
@@ -10823,8 +10846,13 @@ public:
                 funcName == "jl_array_copy" ||
                 funcName == "julia.gc_alloc_obj" ||
                 funcName == "jl_gc_alloc_typed" ||
-                funcName == "ijl_gc_alloc_typed")
+                funcName == "ijl_gc_alloc_typed") {
+              if (Mode == DerivativeMode::ReverseModeGradient &&
+                  found->second.LI)
+                gutils->rematerializedPrimalOrShadowAllocations.push_back(
+                    newCall);
               return;
+            }
 
             // Otherwise if in reverse pass, free the newly created allocation.
             if (Mode == DerivativeMode::ReverseModeGradient ||
@@ -10835,6 +10863,10 @@ public:
               auto dbgLoc = gutils->getNewFromOriginal(orig->getDebugLoc());
               freeKnownAllocation(Builder2, lookup(newCall, Builder2), funcName,
                                   dbgLoc, gutils->TLI);
+              if (Mode == DerivativeMode::ReverseModeGradient &&
+                  found->second.LI && found->second.LI->contains(orig))
+                gutils->rematerializedPrimalOrShadowAllocations.push_back(
+                    newCall);
               return;
             }
             // If in primal, do nothing (keeping the original caching behavior)
@@ -11305,18 +11337,31 @@ public:
           return;
         }
       }
+#if LLVM_VERSION_MAJOR >= 11
+      auto callval = orig->getCalledOperand();
+#else
+      auto callval = orig->getCalledValue();
+#endif
 
       for (auto rmat : gutils->backwardsOnlyShadows) {
-        if (rmat.second.frees.count(orig) && rmat.second.primalInitialize) {
-          IRBuilder<> Builder2(&call);
-          getForwardBuilder(Builder2);
-          auto origfree = orig->getArgOperand(0);
-          auto tofree = gutils->invertPointerM(origfree, Builder2);
-          if (tofree != origfree) {
-            SmallVector<Value *, 2> args = {tofree};
-            CallInst *CI = Builder2.CreateCall(orig->getFunctionType(),
-                                               orig->getCalledFunction(), args);
-            CI->setAttributes(orig->getAttributes());
+        if (rmat.second.frees.count(orig)) {
+          bool shouldFree = false;
+          if (rmat.second.primalInitialize) {
+            if (Mode == DerivativeMode::ReverseModePrimal)
+              shouldFree = true;
+          }
+
+          if (shouldFree) {
+            IRBuilder<> Builder2(&call);
+            getForwardBuilder(Builder2);
+            auto origfree = orig->getArgOperand(0);
+            auto tofree = gutils->invertPointerM(origfree, Builder2);
+            if (tofree != origfree) {
+              SmallVector<Value *, 2> args = {tofree};
+              CallInst *CI =
+                  Builder2.CreateCall(orig->getFunctionType(), callval, args);
+              CI->setAttributes(orig->getAttributes());
+            }
           }
           break;
         }
@@ -11394,6 +11439,48 @@ public:
     }
 
     if (gutils->isConstantInstruction(orig) && gutils->isConstantValue(orig)) {
+      bool noFree = false;
+#if LLVM_VERSION_MAJOR >= 9
+      noFree |= orig->hasFnAttr(Attribute::NoFree);
+#endif
+      noFree |= orig->hasFnAttr("nofree");
+      if (!noFree && called) {
+#if LLVM_VERSION_MAJOR >= 9
+        noFree |= called->hasFnAttribute(Attribute::NoFree);
+#endif
+        noFree |= called->hasFnAttribute("nofree");
+      }
+      if (!noFree && !EnzymeGlobalActivity) {
+        bool mayActiveFree = false;
+#if LLVM_VERSION_MAJOR >= 14
+        for (unsigned i = 0; i < orig->arg_size(); ++i)
+#else
+        for (unsigned i = 0; i < orig->getNumArgOperands(); ++i)
+#endif
+        {
+          Value *a = orig->getOperand(i);
+          if (gutils->isConstantValue(a))
+            continue;
+          if (!TR.query(a)[{-1}].isPossiblePointer())
+            continue;
+          mayActiveFree = true;
+          break;
+        }
+        if (!mayActiveFree)
+          noFree = true;
+      }
+      if (!noFree) {
+#if LLVM_VERSION_MAJOR >= 11
+        auto callval = orig->getCalledOperand();
+#else
+        auto callval = orig->getCalledValue();
+#endif
+#if LLVM_VERSION_MAJOR >= 9
+        newCall->setCalledOperand(gutils->Logic.CreateNoFree(callval));
+#else
+        newCall->setCalledFunction(gutils->Logic.CreateNoFree(callval));
+#endif
+      }
       if (gutils->knownRecomputeHeuristic.find(orig) !=
           gutils->knownRecomputeHeuristic.end()) {
         if (!gutils->knownRecomputeHeuristic[orig]) {
@@ -11489,6 +11576,7 @@ public:
       SmallVector<Value *, 8> args;
       std::vector<DIFFE_TYPE> argsInverted;
       std::map<int, Type *> gradByVal;
+      std::map<int, Attribute> structAttrs;
 
 #if LLVM_VERSION_MAJOR >= 14
       for (unsigned i = 0; i < orig->arg_size(); ++i)
@@ -11497,6 +11585,18 @@ public:
 #endif
       {
 
+        if (orig->paramHasAttr(i, Attribute::StructRet)) {
+          structAttrs[args.size()] =
+#if LLVM_VERSION_MAJOR >= 12
+              // TODO persist types
+              Attribute::get(orig->getContext(), "enzyme_sret");
+          // Attribute::get(orig->getContext(), "enzyme_sret",
+          // orig->getParamAttr(i, Attribute::StructRet).getValueAsType());
+#else
+              Attribute::get(orig->getContext(), "enzyme_sret");
+#endif
+        }
+
         auto argi = gutils->getNewFromOriginal(orig->getArgOperand(i));
 
 #if LLVM_VERSION_MAJOR >= 9
@@ -11504,6 +11604,33 @@ public:
           gradByVal[args.size()] = orig->getParamByValType(i);
         }
 #endif
+        bool writeOnlyNoCapture = true;
+#if LLVM_VERSION_MAJOR >= 8
+        if (!orig->doesNotCapture(i))
+#else
+        if (!(orig->dataOperandHasImpliedAttr(i + 1, Attribute::NoCapture) ||
+              (called && called->hasParamAttribute(i, Attribute::NoCapture))))
+#endif
+        {
+          writeOnlyNoCapture = false;
+        }
+#if LLVM_VERSION_MAJOR >= 14
+        if (!orig->onlyWritesMemory(i))
+#else
+        if (!(orig->dataOperandHasImpliedAttr(i + 1, Attribute::WriteOnly) ||
+              orig->dataOperandHasImpliedAttr(i + 1, Attribute::ReadNone) ||
+              (called && (called->hasParamAttribute(i, Attribute::WriteOnly) ||
+                          called->hasParamAttribute(i, Attribute::ReadNone)))))
+#endif
+        {
+          writeOnlyNoCapture = false;
+        }
+        if (writeOnlyNoCapture && Mode == DerivativeMode::ForwardModeSplit) {
+          if (EnzymeZeroCache)
+            argi = ConstantPointerNull::get(cast<PointerType>(argi->getType()));
+          else
+            argi = UndefValue::get(argi->getType());
+        }
         args.push_back(argi);
 
         auto argTy =
@@ -11512,6 +11639,33 @@ public:
 
         if (argTy == DIFFE_TYPE::CONSTANT) {
           continue;
+        }
+
+        if (orig->paramHasAttr(i, Attribute::StructRet)) {
+          structAttrs[args.size()] =
+              Attribute::get(orig->getContext(), "enzyme_sret");
+          if (gutils->getWidth() == 1) {
+            structAttrs[args.size()] =
+#if LLVM_VERSION_MAJOR >= 12
+                // TODO persist types
+                Attribute::get(orig->getContext(), "enzyme_sret");
+            // Attribute::get(orig->getContext(), "enzyme_sret",
+            // orig->getParamAttr(i, Attribute::StructRet).getValueAsType());
+#else
+                Attribute::get(orig->getContext(), "enzyme_sret");
+#endif
+          } else {
+            structAttrs[args.size()] =
+#if LLVM_VERSION_MAJOR >= 12
+                // TODO persist types
+                Attribute::get(orig->getContext(), "enzyme_sret");
+            // Attribute::get(orig->getContext(), "enzyme_sret_v",
+            // gutils->getShadowType(orig->getParamAttr(ii,
+            // Attribute::StructRet).getValueAsType()));
+#else
+                Attribute::get(orig->getContext(), "enzyme_sret_v");
+#endif
+          }
         }
 
         assert(argTy == DIFFE_TYPE::DUP_ARG || argTy == DIFFE_TYPE::DUP_NONEED);
@@ -11623,6 +11777,9 @@ public:
             Attribute::getWithByValType(diffes->getContext(), pair.second));
       }
 #endif
+      for (auto pair : structAttrs) {
+        diffes->addParamAttr(pair.first, pair.second);
+      }
 
       auto newcall = gutils->getNewFromOriginal(orig);
       auto ifound = gutils->invertedPointers.find(orig);
@@ -11682,6 +11839,7 @@ public:
     SmallVector<Instruction *, 4> userReplace;
     std::map<int, Type *> preByVal;
     std::map<int, Type *> gradByVal;
+    std::map<int, Attribute> structAttrs;
 
     bool replaceFunction = false;
 
@@ -11707,8 +11865,43 @@ public:
         preByVal[pre_args.size()] = orig->getParamByValType(i);
       }
 #endif
+      if (orig->paramHasAttr(i, Attribute::StructRet)) {
+        structAttrs[pre_args.size()] =
+#if LLVM_VERSION_MAJOR >= 12
+            // TODO persist types
+            Attribute::get(orig->getContext(), "enzyme_sret");
+        // Attribute::get(orig->getContext(), "enzyme_sret",
+        // orig->getParamAttr(ii, Attribute::StructRet).getValueAsType());
+#else
+            // TODO persist types
+            Attribute::get(orig->getContext(), "enzyme_sret");
+        // Attribute::get(orig->getContext(), "enzyme_sret");
+#endif
+      }
 
       pre_args.push_back(argi);
+
+      bool writeOnlyNoCapture = true;
+#if LLVM_VERSION_MAJOR >= 8
+      if (!orig->doesNotCapture(i))
+#else
+      if (!(orig->dataOperandHasImpliedAttr(i + 1, Attribute::NoCapture) ||
+            (called && called->hasParamAttribute(i, Attribute::NoCapture))))
+#endif
+      {
+        writeOnlyNoCapture = false;
+      }
+#if LLVM_VERSION_MAJOR >= 14
+      if (!orig->onlyWritesMemory(i))
+#else
+      if (!(orig->dataOperandHasImpliedAttr(i + 1, Attribute::WriteOnly) ||
+            orig->dataOperandHasImpliedAttr(i + 1, Attribute::ReadNone) ||
+            (called && (called->hasParamAttribute(i, Attribute::WriteOnly) ||
+                        called->hasParamAttribute(i, Attribute::ReadNone)))))
+#endif
+      {
+        writeOnlyNoCapture = false;
+      }
 
       if (Mode != DerivativeMode::ReverseModePrimal) {
         IRBuilder<> Builder2(call.getParent());
@@ -11719,27 +11912,6 @@ public:
         }
 #endif
 
-        bool writeOnlyNoCapture = true;
-#if LLVM_VERSION_MAJOR >= 8
-        if (!orig->doesNotCapture(i))
-#else
-        if (!(orig->dataOperandHasImpliedAttr(i + 1, Attribute::NoCapture) ||
-              (called && called->hasParamAttribute(i, Attribute::NoCapture))))
-#endif
-        {
-          writeOnlyNoCapture = false;
-        }
-#if LLVM_VERSION_MAJOR >= 14
-        if (!orig->onlyWritesMemory(i))
-#else
-        if (!(orig->dataOperandHasImpliedAttr(i + 1, Attribute::WriteOnly) ||
-              orig->dataOperandHasImpliedAttr(i + 1, Attribute::ReadNone) ||
-              (called && (called->hasParamAttribute(i, Attribute::WriteOnly) ||
-                          called->hasParamAttribute(i, Attribute::ReadNone)))))
-#endif
-        {
-          writeOnlyNoCapture = false;
-        }
         if (writeOnlyNoCapture && !replaceFunction) {
           if (EnzymeZeroCache)
             argi = ConstantPointerNull::get(cast<PointerType>(argi->getType()));
@@ -11761,12 +11933,47 @@ public:
       auto argType = argi->getType();
 
       if (argTy == DIFFE_TYPE::DUP_ARG || argTy == DIFFE_TYPE::DUP_NONEED) {
+        if (orig->paramHasAttr(i, Attribute::StructRet)) {
+          if (gutils->getWidth() == 1) {
+            structAttrs[pre_args.size()] =
+#if LLVM_VERSION_MAJOR >= 12
+                // TODO persist types
+                Attribute::get(orig->getContext(), "enzyme_sret");
+            // Attribute::get(orig->getContext(), "enzyme_sret",
+            // orig->getParamAttr(ii, Attribute::StructRet).getValueAsType());
+#else
+                Attribute::get(orig->getContext(), "enzyme_sret");
+#endif
+          } else {
+            structAttrs[pre_args.size()] =
+#if LLVM_VERSION_MAJOR >= 12
+                // TODO persist types
+                Attribute::get(orig->getContext(), "enzyme_sret_v");
+            // Attribute::get(orig->getContext(), "enzyme_sret_v",
+            // gutils->getShadowType(orig->getParamAttr(ii,
+            // Attribute::StructRet).getValueAsType()));
+#else
+                Attribute::get(orig->getContext(), "enzyme_sret_v");
+#endif
+          }
+        }
         if (Mode != DerivativeMode::ReverseModePrimal) {
           IRBuilder<> Builder2(call.getParent());
           getReverseBuilder(Builder2);
-          args.push_back(
-              lookup(gutils->invertPointerM(orig->getArgOperand(i), Builder2),
-                     Builder2));
+
+          Value *darg = nullptr;
+
+          if (writeOnlyNoCapture && !replaceFunction &&
+              TR.query(orig->getArgOperand(i))[{-1, -1}] == BaseType::Pointer) {
+            if (EnzymeZeroCache)
+              darg =
+                  ConstantPointerNull::get(cast<PointerType>(argi->getType()));
+            else
+              darg = UndefValue::get(argi->getType());
+          } else {
+            darg = gutils->invertPointerM(orig->getArgOperand(i), Builder2);
+          }
+          args.push_back(lookup(darg, Builder2));
         }
         pre_args.push_back(
             gutils->invertPointerM(orig->getArgOperand(i), BuilderZ));
@@ -11996,6 +12203,9 @@ public:
                                                       pair.second));
         }
 #endif
+        for (auto pair : structAttrs) {
+          augmentcall->addParamAttr(pair.first, pair.second);
+        }
 
         if (!augmentcall->getType()->isVoidTy())
           augmentcall->setName(orig->getName() + "_augmented");
@@ -12364,6 +12574,9 @@ public:
                                            diffes->getContext(), pair.second));
     }
 #endif
+    for (auto pair : structAttrs) {
+      diffes->addParamAttr(pair.first, pair.second);
+    }
 
     unsigned structidx = 0;
     if (replaceFunction) {

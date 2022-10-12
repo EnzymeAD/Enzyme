@@ -69,6 +69,16 @@ void CacheUtility::erase(Instruction *I) {
   SE.eraseValueFromMap(I);
 
   if (!I->use_empty()) {
+    if (CustomErrorHandler) {
+      std::string str;
+      raw_string_ostream ss(str);
+      ss << "Erased value with a use:\n";
+      ss << *newFunc->getParent() << "\n";
+      ss << *newFunc << "\n";
+      ss << *I << "\n";
+      CustomErrorHandler(str.c_str(), wrap(I), ErrorType::InternalError,
+                         nullptr);
+    }
     llvm::errs() << *newFunc->getParent() << "\n";
     llvm::errs() << *newFunc << "\n";
     llvm::errs() << *I << "\n";
@@ -715,7 +725,7 @@ bool CacheUtility::getContext(BasicBlock *BB, LoopContext &loopContext,
         break;
       loc = I.getDebugLoc();
     }
-    EmitWarning("NoLimit", loc, newFunc, L->getHeader(),
+    EmitWarning("NoLimit", loc, L->getHeader(),
                 "SE could not compute loop limit of ",
                 L->getHeader()->getName(), " of ",
                 L->getHeader()->getParent()->getName(), "lim: ", *Limit,
@@ -891,8 +901,13 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
           }
         }
 
-        if (ZeroInst)
+        if (ZeroInst) {
+          if (ZeroInst->getOperand(0) != malloccall) {
+            scopeInstructions[alloc].push_back(
+                cast<Instruction>(ZeroInst->getOperand(0)));
+          }
           scopeInstructions[alloc].push_back(ZeroInst);
+        }
         storealloc = allocationBuilder.CreateStore(firstallocation, storeInto);
 
         scopeAllocs[alloc].push_back(malloccall);
@@ -1188,8 +1203,7 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
       // loop of triangular iteration domain) Handle this case like a dynamic
       // loop and create a new chunk.
       if (limitMinus1 == nullptr) {
-        EmitWarning("NoOuterLimit", cast<Instruction>(&*limit)->getDebugLoc(),
-                    newFunc, cast<Instruction>(&*limit)->getParent(),
+        EmitWarning("NoOuterLimit", *cast<Instruction>(&*limit),
                     "Could not compute outermost loop limit by moving value ",
                     *limit, " computed at block", contexts[i].header->getName(),
                     " function ", contexts[i].header->getParent()->getName());
@@ -1207,8 +1221,8 @@ CacheUtility::SubLimitType CacheUtility::getSubLimits(bool inForwardPass,
                  unwrapM(extraSize, allocationBuilder, prevMap,
                          UnwrapMode::AttemptFullUnwrap) == nullptr) {
         EmitWarning(
-            "NoOuterLimit", cast<Instruction>(extraSize)->getDebugLoc(),
-            newFunc, cast<Instruction>(extraSize)->getParent(),
+            "NoOuterLimit", *cast<Instruction>(extraSize), newFunc,
+            cast<Instruction>(extraSize)->getParent(),
             "Could not compute outermost loop limit by moving extraSize value ",
             *extraSize, " computed at block", contexts[i].header->getName(),
             " function ", contexts[i].header->getParent()->getName());
