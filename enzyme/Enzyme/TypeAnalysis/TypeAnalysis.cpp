@@ -606,10 +606,25 @@ void TypeAnalyzer::updateAnalysis(Value *Val, TypeTree Data, Value *Origin) {
       if (auto OI = dyn_cast<Instruction>(Origin)) {
         if (OI->getParent() != I->getParent() &&
             !PDT.dominates(OI->getParent(), I->getParent())) {
-          if (EnzymePrintType)
-            llvm::errs() << " skipping update into " << *I << " of "
-                         << Data.str() << " from " << *OI << "\n";
-          return;
+          bool allocationWithAllUsersInBlock = false;
+          if (auto AI = dyn_cast<AllocaInst>(I)) {
+            allocationWithAllUsersInBlock = true;
+            for (auto U : AI->users()) {
+              auto P = cast<Instruction>(U)->getParent();
+              if (P == OI->getParent())
+                continue;
+              if (PDT.dominates(OI->getParent(), P))
+                continue;
+              allocationWithAllUsersInBlock = false;
+              break;
+            }
+          }
+          if (!allocationWithAllUsersInBlock) {
+            if (EnzymePrintType)
+              llvm::errs() << " skipping update into " << *I << " of "
+                           << Data.str() << " from " << *OI << "\n";
+            return;
+          }
         }
       }
     }
@@ -3560,7 +3575,7 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
       }
 
       bool err = customrule->second(direction, returnAnalysis, args,
-                                    knownValues, &call);
+                                    knownValues, &call, this);
       if (err) {
         Invalid = true;
         return;
