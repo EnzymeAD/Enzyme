@@ -5202,6 +5202,80 @@ void TypeAnalyzer::considerRustDebugInfo() {
   }
 }
 
+TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
+                                bool intIsPointer) {
+  if (ET->isIntOrIntVectorTy()) {
+    if (intIsPointer)
+      return TypeTree(BaseType::Pointer).Only(-1, I);
+    else
+      return TypeTree(BaseType::Integer).Only(-1, I);
+  }
+  if (ET->isFPOrFPVectorTy()) {
+    return TypeTree(ConcreteType(ET->getScalarType())).Only(-1, I);
+  }
+  if (ET->isPointerTy()) {
+    return TypeTree(BaseType::Pointer).Only(-1, I);
+  }
+  if (auto ST = dyn_cast<StructType>(ET)) {
+    auto &DL = I->getParent()->getParent()->getParent()->getDataLayout();
+
+    TypeTree Out;
+
+    for (size_t i = 0; i < ST->getNumElements(); i++) {
+      auto SubT =
+          defaultTypeTreeForLLVM(ST->getElementType(i), I, intIsPointer);
+      Value *vec[2] = {
+          ConstantInt::get(Type::getInt64Ty(I->getContext()), 0),
+          ConstantInt::get(Type::getInt32Ty(I->getContext()), i),
+      };
+      auto g2 = GetElementPtrInst::Create(
+          ST, UndefValue::get(PointerType::getUnqual(ST)), vec);
+#if LLVM_VERSION_MAJOR > 6
+      APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
+#else
+      APInt ai(DL.getPointerSize(g2->getPointerAddressSpace()) * 8, 0);
+#endif
+      g2->accumulateConstantOffset(DL, ai);
+      // Using destructor rather than eraseFromParent
+      //   as g2 has no parent
+      delete g2;
+
+      auto size = (DL.getTypeSizeInBits(ST->getElementType(i)) + 7) / 8;
+      int Off = (int)ai.getLimitedValue();
+      Out |= SubT.ShiftIndices(DL, 0, size, Off);
+    }
+    return Out;
+  }
+  if (auto AT = dyn_cast<ArrayType>(ET)) {
+    auto SubT = defaultTypeTreeForLLVM(AT->getElementType(), I, intIsPointer);
+    auto &DL = I->getParent()->getParent()->getParent()->getDataLayout();
+
+    TypeTree Out;
+    for (size_t i = 0; i < AT->getNumElements(); i++) {
+      Value *vec[2] = {
+          ConstantInt::get(Type::getInt64Ty(I->getContext()), 0),
+          ConstantInt::get(Type::getInt32Ty(I->getContext()), i),
+      };
+      auto g2 = GetElementPtrInst::Create(
+          AT, UndefValue::get(PointerType::getUnqual(AT)), vec);
+#if LLVM_VERSION_MAJOR > 6
+      APInt ai(DL.getIndexSizeInBits(g2->getPointerAddressSpace()), 0);
+#else
+      APInt ai(DL.getPointerSize(g2->getPointerAddressSpace()) * 8, 0);
+#endif
+      g2->accumulateConstantOffset(DL, ai);
+      // Using destructor rather than eraseFromParent
+      //   as g2 has no parent
+      delete g2;
+
+      int Off = (int)ai.getLimitedValue();
+      auto size = (DL.getTypeSizeInBits(AT->getElementType()) + 7) / 8;
+      Out |= SubT.ShiftIndices(DL, 0, size, Off);
+    }
+    return Out;
+  }
+}
+
 Function *TypeResults::getFunction() const {
   return analyzer.fntypeinfo.Function;
 }

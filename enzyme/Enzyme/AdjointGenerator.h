@@ -506,42 +506,9 @@ public:
 
     if (!vd.isKnown()) {
       auto ET = I.getType();
-      if (ET->isIntOrIntVectorTy()) {
-        vd = TypeTree(BaseType::Pointer).Only(-1, &I);
-        goto known;
-      }
-      if (ET->isFPOrFPVectorTy()) {
-        vd = TypeTree(ConcreteType(ET->getScalarType())).Only(-1, &I);
-        goto known;
-      }
       if (looseTypeAnalysis || true) {
-        while (1) {
-          if (auto ST = dyn_cast<StructType>(ET)) {
-            if (ST->getNumElements()) {
-              ET = ST->getElementType(0);
-              continue;
-            }
-          }
-          if (auto AT = dyn_cast<ArrayType>(ET)) {
-            ET = AT->getElementType();
-            continue;
-          }
-          break;
-        }
-        if (ET->isFPOrFPVectorTy()) {
-          vd = TypeTree(ConcreteType(ET->getScalarType())).Only(-1, &I);
-          goto known;
-        }
-        if (ET->isPointerTy()) {
-          vd = TypeTree(BaseType::Pointer).Only(-1, &I);
-          goto known;
-        }
-        if (ET->isIntOrIntVectorTy()) {
-          vd = TypeTree(BaseType::Pointer).Only(-1, &I);
-          goto known;
-        }
+        vd = defaultTypeTreeForLLVM(ET, &I);
         EmitWarning("CannotDeduceType", I, "failed to deduce type of load ", I);
-        vd = TypeTree(BaseType::Pointer).Only(-1, &I);
         goto known;
       }
       if (CustomErrorHandler) {
