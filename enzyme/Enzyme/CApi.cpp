@@ -568,6 +568,15 @@ uint8_t EnzymeSetTypeTree(CTypeTreeRef dst, CTypeTreeRef src) {
 uint8_t EnzymeMergeTypeTree(CTypeTreeRef dst, CTypeTreeRef src) {
   return ((TypeTree *)dst)->orIn(*(TypeTree *)src, /*PointerIntSame*/ false);
 }
+uint8_t EnzymeCheckedMergeTypeTree(CTypeTreeRef dst, CTypeTreeRef src,
+                                   uint8_t *legalP) {
+  bool legal = true;
+  bool res =
+      ((TypeTree *)dst)
+          ->checkedOrIn(*(TypeTree *)src, /*PointerIntSame*/ false, legal);
+  *legalP = legal;
+  return res;
+}
 
 void EnzymeTypeTreeOnlyEq(CTypeTreeRef CTT, int64_t x) {
   // TODO only inst
