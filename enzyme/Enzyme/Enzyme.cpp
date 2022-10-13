@@ -2276,13 +2276,13 @@ public:
                 assert(F.getFunctionType()->getNumParams() == 2);
                 trace_interface.getTrace = &F;
               } else if (F.getName().contains("__enzyme_get_choice")) {
-                assert(F.getFunctionType()->getNumParams() == 2);
+                assert(F.getFunctionType()->getNumParams() == 4);
                 trace_interface.getChoice = &F;
               } else if (F.getName().contains("__enzyme_insert_call")) {
-                assert(F.getFunctionType()->getNumParams() == 5);
+                assert(F.getFunctionType()->getNumParams() == 3);
                 trace_interface.insertCall = &F;
               } else if (F.getName().contains("__enzyme_insert_choice")) {
-                assert(F.getFunctionType()->getNumParams() == 4);
+                assert(F.getFunctionType()->getNumParams() == 5);
                 trace_interface.insertChoice = &F;
               } else if (F.getName().contains("__enzyme_sample")) {
                 assert(F.getFunctionType()->getNumParams() >= 3);

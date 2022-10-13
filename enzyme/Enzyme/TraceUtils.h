@@ -61,7 +61,7 @@ public:
     originalToNewFn.getMDMap() = vmap.getMDMap();
   }
   
-  TraceUtils(ProbProgMode mode, TraceInterface interface, Function* F, SmallPtrSetImpl<Function*> &generativeFunctions, Value *conditioning_trace) : mode(mode), interface(interface), conditioning_trace(conditioning_trace), oldFunc(F), generativeFunctions(generativeFunctions) {
+  TraceUtils(ProbProgMode mode, TraceInterface interface, Function* F, SmallPtrSetImpl<Function*> &generativeFunctions, Value *conditioning_trace) : interface(interface), mode(mode), oldFunc(F), conditioning_trace(conditioning_trace), generativeFunctions(generativeFunctions) {
     FunctionType *orig_FTy = oldFunc->getFunctionType();
     SmallVector<Type *, 4> params;
 
@@ -103,8 +103,11 @@ public:
     
     IRBuilder<> Builder(newFunc->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
     trace = CreateTrace(Builder);
-    DILocation *L = DILocation::get(newFunc->getContext(), 0, 0, newFunc->getSubprogram());
-    trace->setDebugLoc(DebugLoc(L));
+    
+    if (newFunc->getSubprogram()) {
+      DILocation *L = DILocation::get(newFunc->getContext(), 0, 0, newFunc->getSubprogram());
+      trace->setDebugLoc(DebugLoc(L));
+    }
     
     // Replace returns with ret trace
     
@@ -141,45 +144,77 @@ public:
   }
 
   CallInst* InsertChoice(IRBuilder<> &Builder, Value* address, Value *score, Value *choice) {
+    auto size = choice->getType()->getPrimitiveSizeInBits() / 8;
+    Type *size_type = interface.getChoice->getFunctionType()->getParamType(3);
+
+    auto M = interface.insertChoice->getParent();
+    auto &DL = M->getDataLayout();
+    auto pointersize = DL.getPointerSizeInBits();
+    
+    Value *retval;
+    if (choice->getType()->isPointerTy()) {
+      retval = Builder.CreatePointerCast(choice, Builder.getInt8PtrTy());
+    } else {
+      auto alloca = Builder.CreateAlloca(choice->getType());
+      Builder.CreateStore(choice, alloca);
+      bool fitsInPointer = choice->getType()->getPrimitiveSizeInBits() == pointersize;
+      if (fitsInPointer) {
+        auto dblptr = PointerType::get(Builder.getInt8PtrTy(), DL.getAllocaAddrSpace());
+        retval = Builder.CreateLoad(Builder.getInt8PtrTy(), Builder.CreatePointerCast(alloca, dblptr));
+      } else {
+        retval = alloca;
+      }
+    }
+    
     Value *args[] = {
         trace,
         address,
         score,
-        choice
+        retval,
+        ConstantInt::get(size_type, size)
     };
+    
     auto call = Builder.CreateCall(interface.insertChoice->getFunctionType(), interface.insertChoice, args);
     return call;
     }
 
-  CallInst* InsertCall(IRBuilder<> &Builder, Value *address, Value *subtrace, Value *score, Value *noise) {
+  CallInst* InsertCall(IRBuilder<> &Builder, Value *address, Value *subtrace) {
     Value *args[] = {
       trace,
       address,
-      subtrace,
-      score,
-      noise
+      subtrace
     };
+    
     auto call = Builder.CreateCall(interface.insertCall->getFunctionType(), interface.insertCall, args);
     return call;
     }
   
   CallInst *GetTrace(IRBuilder<> &Builder, Value *address) {
+    assert(address->getType()->isPointerTy());
+    
     Value *args[] = {
       conditioning_trace,
       address
     };
+    
     auto call = Builder.CreateCall(interface.getTrace->getFunctionType(), interface.getTrace, args);
     return call;
   }
   
-  CallInst *GetChoice(IRBuilder<> &Builder, Value *address) {
+  AllocaInst *GetChoice(IRBuilder<> &Builder, Value *address, Type *choiceType) {
+    AllocaInst *store_dest = Builder.CreateAlloca(choiceType);
+    auto preallocated_size = choiceType->getPrimitiveSizeInBits() / 8;
+    Type *size_type = interface.getChoice->getFunctionType()->getParamType(3);
+    
     Value *args[] = {
       conditioning_trace,
-      address
+      address,
+      store_dest,
+      ConstantInt::get(size_type, preallocated_size)
     };
-                                                                                  //TODO getChoice
-    auto call = Builder.CreateCall(interface.getTrace->getFunctionType(), interface.getTrace, args);
-    return call;
+
+    Builder.CreateCall(interface.getTrace->getFunctionType(), interface.getTrace, args);
+    return store_dest;
   }
 };
 

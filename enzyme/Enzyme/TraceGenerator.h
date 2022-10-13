@@ -49,7 +49,7 @@ public:
           choice = Builder.CreateCall(samplefn->getFunctionType(), samplefn, sample_args, "sample." + call.getName());
           break;
         case ProbProgMode::Replay:
-          choice = tutils->GetChoice(Builder, address);
+          choice = tutils->GetChoice(Builder, address, samplefn->getType());
       }
           
       SmallVector<Value*, 3> loglikelihood_args;
@@ -62,16 +62,16 @@ public:
       new_call->replaceAllUsesWith(choice);
       new_call->eraseFromParent();
     } else {
-      
-      // do it in tutils initalizer ...
+      auto address = Builder.CreateGlobalStringPtr(call.getCalledFunction()->getName());
+
       Function *samplefn;
       switch (mode) {
         case ProbProgMode::Trace:
-          samplefn = Logic.CreateTrace(call.getCalledFunction(), tutils->getTraceInterface(), tutils->generativeFunctions);
+          samplefn = Logic.CreateTrace(call.getCalledFunction(), tutils->getTraceInterface(), tutils->generativeFunctions, tutils->mode);
           break;
         case ProbProgMode::Replay:
           auto conditioning_trace = tutils->GetTrace(Builder, address);
-          samplefn = Logic.CreateTrace(call.getCalledFunction(), tutils->getTraceInterface(), tutils->generativeFunctions);
+          samplefn = Logic.CreateTrace(call.getCalledFunction(), tutils->getTraceInterface(), tutils->generativeFunctions, tutils->mode, conditioning_trace);
           break;
       }
       
@@ -84,10 +84,7 @@ public:
       Value *ret = Builder.CreateExtractValue(tracecall, {0});
       Value *subtrace = Builder.CreateExtractValue(tracecall, {1});
       
-      auto address = Builder.CreateGlobalStringPtr(tracecall->getCalledFunction()->getName());
-      auto score = ConstantFP::getNullValue(Builder.getDoubleTy());
-      auto noise = ConstantFP::getNullValue(Builder.getDoubleTy());
-      tutils->InsertCall(Builder, address, subtrace, score, noise);
+      tutils->InsertCall(Builder, address, subtrace);
       
       new_call->replaceAllUsesWith(ret);
       new_call->eraseFromParent();
