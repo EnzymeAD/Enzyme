@@ -1870,10 +1870,20 @@ public:
           assert(looseTypeAnalysis);
           if (orig_inserted->getType()->isFPOrFPVectorTy())
             flt = orig_inserted->getType()->getScalarType();
-          else if (orig_inserted->getType()->isIntOrIntVectorTy())
+          else if (orig_inserted->getType()->isIntOrIntVectorTy() ||
+                   orig_inserted->getType()->isPointerTy())
             flt = nullptr;
-          else
-            TR.intType(size0, orig_inserted);
+          else {
+            if (CustomErrorHandler) {
+              std::string str;
+              raw_string_ostream ss(str);
+              ss << "Cannot deduce type of insertvalue " << IVI;
+              CustomErrorHandler(str.c_str(), wrap(&IVI), ErrorType::NoType,
+                                 &TR.analyzer);
+            }
+            EmitFailure("CannotDeduceType", IVI.getDebugLoc(), &IVI,
+                        "failed to deduce type of insertvalue ", IVI);
+          }
         }
         if (flt) {
           auto rule = [&](Value *prediff) {
