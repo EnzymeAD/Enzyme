@@ -34,6 +34,8 @@ struct TraceInterface {
   Function *insertChoice;
   Function *newTrace;
   Function *freeTrace;
+  Function *hasCall;
+  Function *hasChoice;
   // implemented by enzyme
   Function *sample;
 };
@@ -56,20 +58,24 @@ public:
   SmallPtrSetImpl<Function*> &generativeFunctions;
 
 public:
-  TraceUtils(ProbProgMode mode, TraceInterface interface, Function *newFunc, Function *oldFunc, ValueToValueMapTy vmap, SmallPtrSetImpl<Function*> &generativeFunctions, Value *conditioning_trace) : mode(mode), interface(interface), conditioning_trace(conditioning_trace), newFunc(newFunc), oldFunc(oldFunc), generativeFunctions(generativeFunctions) {
+  TraceUtils(ProbProgMode mode, TraceInterface interface, Function *newFunc, Function *oldFunc, ValueToValueMapTy vmap, SmallPtrSetImpl<Function*> &generativeFunctions) : mode(mode), interface(interface), newFunc(newFunc), oldFunc(oldFunc), generativeFunctions(generativeFunctions) {
     originalToNewFn.insert(vmap.begin(), vmap.end());
     originalToNewFn.getMDMap() = vmap.getMDMap();
   }
   
-  TraceUtils(ProbProgMode mode, TraceInterface interface, Function* F, SmallPtrSetImpl<Function*> &generativeFunctions, Value *conditioning_trace) : interface(interface), mode(mode), oldFunc(F), conditioning_trace(conditioning_trace), generativeFunctions(generativeFunctions) {
+  TraceUtils(ProbProgMode mode, TraceInterface interface, Function* F, SmallPtrSetImpl<Function*> &generativeFunctions) : interface(interface), mode(mode), oldFunc(F), conditioning_trace(conditioning_trace), generativeFunctions(generativeFunctions) {
     FunctionType *orig_FTy = oldFunc->getFunctionType();
+    Type *traceType = interface.newTrace->getReturnType();
     SmallVector<Type *, 4> params;
 
     for (unsigned i = 0; i < orig_FTy->getNumParams(); ++i) {
         params.push_back(orig_FTy->getParamType(i));
     }
     
-    Type *NewTy = StructType::get(oldFunc->getContext(), {oldFunc->getReturnType(), interface.newTrace->getReturnType()});
+    if (mode == ProbProgMode::Condition)
+      params.push_back(traceType);
+    
+    Type *NewTy = StructType::get(oldFunc->getContext(), {oldFunc->getReturnType(), traceType});
 
     FunctionType *FTy = FunctionType::get(NewTy, params, oldFunc->isVarArg());
     newFunc = Function::Create(FTy, oldFunc->getLinkage(),
@@ -103,6 +109,8 @@ public:
     
     IRBuilder<> Builder(newFunc->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
     trace = CreateTrace(Builder);
+    
+    conditioning_trace = newFunc->getArg(newFunc->getFunctionType()->getNumParams() - 1);
     
     if (newFunc->getSubprogram()) {
       DILocation *L = DILocation::get(newFunc->getContext(), 0, 0, newFunc->getSubprogram());
@@ -201,7 +209,7 @@ public:
     return call;
   }
   
-  AllocaInst *GetChoice(IRBuilder<> &Builder, Value *address, Type *choiceType) {
+  Value *GetChoice(IRBuilder<> &Builder, Value *address, Type *choiceType) {
     AllocaInst *store_dest = Builder.CreateAlloca(choiceType);
     auto preallocated_size = choiceType->getPrimitiveSizeInBits() / 8;
     Type *size_type = interface.getChoice->getFunctionType()->getParamType(3);
@@ -209,13 +217,32 @@ public:
     Value *args[] = {
       conditioning_trace,
       address,
-      store_dest,
+      Builder.CreatePointerCast(store_dest, Builder.getInt8PtrTy()),
       ConstantInt::get(size_type, preallocated_size)
     };
 
-    Builder.CreateCall(interface.getTrace->getFunctionType(), interface.getTrace, args);
-    return store_dest;
+    Builder.CreateCall(interface.getChoice->getFunctionType(), interface.getChoice, args);
+    return Builder.CreateLoad(choiceType, store_dest);
   }
+  
+  Value *HasChoice(IRBuilder<> &Builder, Value *address) {
+    Value *args[] {
+      conditioning_trace,
+      address
+    };
+    
+    return Builder.CreateCall(interface.hasChoice->getFunctionType(), interface.hasChoice, args);
+  }
+  
+  Value *HasCall(IRBuilder<> &Builder, Value *address) {
+    Value *args[] {
+      conditioning_trace,
+      address
+    };
+    
+    return Builder.CreateCall(interface.hasCall->getFunctionType(), interface.hasCall, args);
+  }
+  
 };
 
 #endif /* TraceUtils_h */

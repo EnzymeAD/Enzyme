@@ -313,8 +313,7 @@ enum class DerivativeMode {
 
 enum class ProbProgMode {
   Trace = 0,
-  Replay = 1,
-  Condition = 2,
+  Condition = 1,
 };
 
 /// Classification of value as an original program

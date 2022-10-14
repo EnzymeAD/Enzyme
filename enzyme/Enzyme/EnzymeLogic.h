@@ -467,7 +467,7 @@ public:
                               llvm::ArrayRef<BATCH_TYPE> arg_types,
                               BATCH_TYPE ret_type);
   
-  llvm::Function *CreateTrace(llvm::Function *totrace, TraceInterface trace_interface, SmallPtrSetImpl<Function*> &GenerativeFunctions, ProbProgMode mode, Value *conditioning_trace = nullptr);
+  llvm::Function *CreateTrace(llvm::Function *totrace, TraceInterface trace_interface, SmallPtrSetImpl<Function*> &GenerativeFunctions, ProbProgMode mode);
 
   void clear();
 };

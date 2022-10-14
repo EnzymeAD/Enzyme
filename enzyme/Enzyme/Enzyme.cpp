@@ -1840,6 +1840,9 @@ public:
       args.push_back(res);
     }
     
+    if (mode == ProbProgMode::Condition)
+      args.push_back(conditioning_trace);
+    
     // Determine generative functions
     SmallPtrSet<Function*, 4> generativeFunctions;
     SetVector<Function*, std::deque<Function*>> workList;
@@ -1860,7 +1863,7 @@ public:
       }
     }
       
-    auto newFunc = Logic.CreateTrace(F, interface, generativeFunctions, mode, conditioning_trace);
+    auto newFunc = Logic.CreateTrace(F, interface, generativeFunctions, mode);
 
     Value *traceCall = Builder.CreateCall(newFunc->getFunctionType(), newFunc, args);
     Value *trace = Builder.CreateExtractValue(traceCall, {1});
@@ -1917,7 +1920,6 @@ public:
               Fn->getName().contains("__enzyme_reverse") ||
               Fn->getName().contains("__enzyme_batch") ||
               Fn->getName().contains("__enzyme_trace") ||
-              Fn->getName().contains("__enzyme_replay") ||
               Fn->getName().contains("__enzyme_condition")))
           continue;
 
@@ -2208,10 +2210,6 @@ public:
           enableEnzyme = true;
           probProgMode = ProbProgMode::Trace;
           probProg = true;
-        } else if (Fn->getName().contains("__enzyme_replay")) {
-          enableEnzyme = true;
-          probProgMode = ProbProgMode::Replay;
-          probProg = true;
         } else if (Fn->getName().contains("__enzyme_condition")) {
           enableEnzyme = true;
           probProgMode = ProbProgMode::Condition;
@@ -2284,6 +2282,12 @@ public:
               } else if (F.getName().contains("__enzyme_insert_choice")) {
                 assert(F.getFunctionType()->getNumParams() == 5);
                 trace_interface.insertChoice = &F;
+              } else if (F.getName().contains("__enzyme_has_call")) {
+                assert(F.getFunctionType()->getNumParams() == 2);
+                trace_interface.hasCall = &F;
+              } else if (F.getName().contains("__enzyme_has_choice")) {
+                assert(F.getFunctionType()->getNumParams() == 2);
+                trace_interface.hasChoice = &F;
               } else if (F.getName().contains("__enzyme_sample")) {
                 assert(F.getFunctionType()->getNumParams() >= 3);
                 trace_interface.sample = &F;
@@ -2295,7 +2299,9 @@ public:
                    trace_interface.getTrace != nullptr &&
                    trace_interface.getChoice != nullptr &&
                    trace_interface.insertCall != nullptr &&
-                   trace_interface.insertChoice != nullptr);
+                   trace_interface.insertChoice != nullptr &&
+                   trace_interface.hasCall != nullptr &&
+                   trace_interface.hasChoice != nullptr);
             
             toProbProg[CI] = {probProgMode, trace_interface};
           }
@@ -2387,9 +2393,39 @@ public:
       HandleBatch(call);
     }
     
+    TraceInterface *trace_interface = nullptr;
     for (auto&& [call, ModeInterfacePair] : toProbProg) {
       auto&& [mode, interface] = ModeInterfacePair;
       HandleProbProg(call, mode, interface);
+      trace_interface = &interface;
+    }
+    
+    // Post processing for ProbProg
+    
+    if (trace_interface != nullptr) {
+      
+      SmallPtrSet<CallInst*, 4> sample_calls;
+      for (auto&& func : *F.getParent()) {
+        for (auto&& BB: func) {
+          for (auto &&Inst: BB) {
+            if (auto CI = dyn_cast<CallInst>(&Inst)) {
+              if (CI->getCalledFunction() == trace_interface->sample)
+                sample_calls.insert(CI);
+            }
+          }
+        }
+      }
+      
+      for (auto call : sample_calls) {
+        Function *samplefn = GetFunctionFromValue(call->getArgOperand(0));
+        
+        SmallVector<Value*, 2> args;
+        for (auto it = call->arg_begin() + 3; it != call->arg_end(); it++) {
+          args.push_back(*it);
+        }
+        Instruction* choice = CallInst::Create(samplefn->getFunctionType(), samplefn, args);
+        ReplaceInstWithInst(call, choice);
+      }
     }
     
     if (Changed && EnzymeAttributor) {
