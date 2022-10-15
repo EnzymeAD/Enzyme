@@ -2976,7 +2976,9 @@ public:
             if (op3)
               args.push_back(op3);
             auto cal = BuilderZ.CreateCall(MS.getCalledFunction(), args, Defs);
-            cal->copyMetadata(MS, MD_ToCopy);
+            llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
+            ToCopy2.push_back(LLVMContext::MD_noalias);
+            cal->copyMetadata(MS, ToCopy2);
             cal->setAttributes(MS.getAttributes());
             cal->setCallingConv(MS.getCallingConv());
             cal->setTailCallKind(MS.getTailCallKind());
@@ -3222,7 +3224,9 @@ public:
           if (op3)
             args.push_back(op3);
           auto cal = BuilderZ.CreateCall(MS.getCalledFunction(), args, Defs);
-          cal->copyMetadata(MS, MD_ToCopy);
+          llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
+          ToCopy2.push_back(LLVMContext::MD_noalias);
+          cal->copyMetadata(MS, ToCopy2);
           cal->setAttributes(MS.getAttributes());
           cal->setCallingConv(MS.getCallingConv());
           cal->setTailCallKind(MS.getTailCallKind());
@@ -3259,7 +3263,9 @@ public:
           if (op3l)
             args.push_back(op3l);
           auto cal = Builder2.CreateCall(MS.getCalledFunction(), args, Defs);
-          cal->copyMetadata(MS, MD_ToCopy);
+          llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
+          ToCopy2.push_back(LLVMContext::MD_noalias);
+          cal->copyMetadata(MS, ToCopy2);
           cal->setAttributes(MS.getAttributes());
           cal->setCallingConv(MS.getCallingConv());
           cal->setTailCallKind(MS.getTailCallKind());
