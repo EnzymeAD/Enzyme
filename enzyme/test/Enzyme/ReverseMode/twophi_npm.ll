@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,inline,mem2reg,instsimplify,adce,loop-deletion,correlated-propagation,simplifycfg,adce" -enzyme-preopt=false -S | FileCheck %s
 
 define void @sum(i64* %x, i64 %n) {
 entry:
@@ -41,18 +41,22 @@ attributes #2 = { nounwind }
 ; CHECK-NEXT:   br i1 %cmp.i, label %one.i, label %two.i
 
 ; CHECK: one.i:                                            ; preds = %two.i, %entry
-; CHECK:   %phi1.i = phi i64 [ 0, %entry ], [ %phi2.i, %two.i ]
+; CHECK-NEXT:   %phi1.i = phi i64 [ 0, %entry ], [ %phi2.i, %two.i ]
 ; CHECK-NEXT:   %cmp1.i = icmp eq i64 %n, 1
-; CHECK-NEXT:   br i1 %cmp1.i, label %diffesum.exit, label %two.i
+; CHECK-NEXT:   br i1 %cmp1.i, label %invertone.i.critedge, label %two.i
 
 ; CHECK: two.i:                                            ; preds = %one.i, %entry
-; CHECK:   %phi2.i = phi i64 [ 12, %entry ], [ %phi1.i, %one.i ]
+; CHECK-NEXT:   %phi2.i = phi i64 [ 12, %entry ], [ %phi1.i, %one.i ]
 ; CHECK-NEXT:   %cmp2.i = icmp eq i64 %n, 2
-; CHECK-NEXT:   br i1 %cmp2.i, label %diffesum.exit, label %one.i
+; CHECK-NEXT:   br i1 %cmp2.i, label %end.i, label %one.i
 
-; CHECK: diffesum.exit:
-; CHECK-NEXT:   %phi3.i = phi i64 [ %phi1.i, %one.i ], [ %phi2.i, %two.i ]
-; CHECK-NEXT:   store i64 %phi3.i, i64* %xp
-; CHECK-NEXT:   store i64 %phi3.i, i64* %x
+; CHECK: end.i:                                            ; preds = %two.i
+; CHECK-NEXT:   store i64 %phi2.i, i64* %xp, align 4
+; CHECK-NEXT:   store i64 %phi2.i, i64* %x, align 4
+; CHECK-NEXT:   ret void
+
+; CHECK: invertone.i.critedge:                             ; preds = %one.i
+; CHECK-NEXT:   store i64 %phi1.i, i64* %xp, align 4
+; CHECK-NEXT:   store i64 %phi1.i, i64* %x, align 4
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
