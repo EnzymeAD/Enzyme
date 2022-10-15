@@ -1,5 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,inline,mem2reg,instsimplify,adce,loop-deletion,correlated-propagation,simplifycfg" -enzyme-preopt=false -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,inline,mem2reg,instsimplify,adce,loop-deletion,correlated-propagation,simplifycfg,dce" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: nounwind uwtable
 define dso_local double @unknowniters(double* nocapture readonly %x) #0 {

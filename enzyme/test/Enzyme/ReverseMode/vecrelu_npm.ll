@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -inline -early-cse -instcombine -simplifycfg -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,inline,early-cse,instcombine,simplifycfg" -enzyme-preopt=false -S | FileCheck %s
 
 ; __attribute__((noinline))
 ; double f(double x) {
@@ -56,7 +56,7 @@ attributes #1 = { nounwind readnone noinline }
 ; CHECK-NEXT:   %[[diffef:.+]] = call { <4 x double> } @diffef(<4 x double> %x, <4 x double> <double 1.000000e+00, double 1.000000e+00, double 1.000000e+00, double 1.000000e+00>)
 ; CHECK-NEXT:   %[[result:.+]] = extractvalue { <4 x double> } %[[diffef]], 0
 ; CHECK-NEXT:   br label %differelu.exit
-; CHECK: differelu.exit:                                   ; preds = %entry, %invertcond.true.i
+; CHECK: differelu.exit:                                   ; preds = %invertcond.true.i, %entry
 ; CHECK-NEXT:   %"x'de.0.i" = phi <4 x double> [ %[[result]], %invertcond.true.i ], [ zeroinitializer, %entry ]
 ; CHECK-NEXT:   ret <4 x double> %"x'de.0.i"
 ; CHECK-NEXT: }
