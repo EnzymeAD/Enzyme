@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,simplifycfg" -enzyme-preopt=false -S | FileCheck %s
 
 define double @caller(double* %data, i64* %a4) {
 entry:

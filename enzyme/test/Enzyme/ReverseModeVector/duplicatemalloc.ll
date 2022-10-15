@@ -1,5 +1,7 @@
 ; RUN: if [ %llvmver -lt 14 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -sroa -simplifycfg -instsimplify -early-cse -adce -dse -S | FileCheck %s -check-prefixes MALLOC,SHARED; fi
 ; RUN: if [ %llvmver -ge 14 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -sroa -simplifycfg -instsimplify -early-cse -adce -dse -S | FileCheck %s -check-prefixes CALLOC,SHARED; fi
+; RUN: if [ %llvmver -lt 14 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,inline,mem2reg,sroa,simplifycfg,instsimplify,early-cse,adce,dse" -enzyme-preopt=false -S | FileCheck %s -check-prefixes MALLOC,SHARED; fi
+
 
 ; Function Attrs: noinline norecurse nounwind readonly uwtable
 define dso_local double @f(double* nocapture readonly %x) local_unnamed_addr #0 {

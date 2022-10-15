@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -correlated-propagation -adce -instcombine -loop-unroll -instcombine -simplifycfg -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,instsimplify,simplifycfg,correlated-propagation,adce,instcombine,loop-unroll,instcombine,simplifycfg" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: noinline nounwind uwtable
 define dso_local double @f(double* %x, i64 %n) #0 {

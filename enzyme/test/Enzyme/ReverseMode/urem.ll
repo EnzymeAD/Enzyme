@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,instsimplify,simplifycfg" -enzyme-preopt=false -S | FileCheck %s
 
 define void @caller(float* %tmp6, float* %tmp7) {
   call void (i8*, ...) @_Z17__enzyme_autodiffPvz(i8* bitcast (float (float*)* @kernel_main_wrapped to i8*), float* %tmp6, float* %tmp7)

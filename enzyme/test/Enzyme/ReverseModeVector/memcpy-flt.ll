@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -dce -instcombine -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,simplifycfg,dce,instcombine" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: nounwind
 declare void @__enzyme_autodiff.f64(...)
