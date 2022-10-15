@@ -1,6 +1,8 @@
 ; RUN: if [ %llvmver -lt 14 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -gvn -early-cse-memssa -instcombine -instsimplify -simplifycfg -adce -licm -correlated-propagation -instcombine -correlated-propagation -adce -instsimplify -correlated-propagation -jump-threading -instsimplify -early-cse -simplifycfg -adce -S | FileCheck %s -check-prefixes LLVM13,SHARED; fi
 ; RUN: if [ %llvmver -ge 14 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -gvn -early-cse-memssa -instcombine -instsimplify -simplifycfg -adce -licm -correlated-propagation -instcombine -correlated-propagation -adce -instsimplify -correlated-propagation -jump-threading -instsimplify -early-cse -simplifycfg -adce -S | FileCheck %s -check-prefixes LLVM14,SHARED; fi
 
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,gvn,early-cse-memssa,instcombine,instsimplify,simplifycfg,adce,licm,correlated-propagation,instcombine,correlated-propagation,adce,instsimplify,correlated-propagation,jump-threading,instsimplify,early-cse,simplifycfg,adce"  -enzyme-preopt=false -S | FileCheck %s -check-prefixes LLVM13,SHARED
+
 
 ; #include <stdlib.h>
 ; #include <stdio.h>

@@ -1,5 +1,6 @@
 ; RUN: if [ %llvmver -lt 14 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s -check-prefixes LLVM13,SHARED; fi
 ; RUN: if [ %llvmver -ge 14 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s -check-prefixes LLVM14,SHARED; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,instsimplify,adce,loop-deletion,correlated-propagation,simplifycfg" -enzyme-preopt=false -S | FileCheck %s -check-prefixes LLVM13,SHARED
 
 source_filename = "/mnt/Data/git/Enzyme/enzyme/test/Integration/taylorlog.c"
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"

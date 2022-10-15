@@ -1,5 +1,7 @@
 ; RUN: if [ %llvmver -ge 12 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -gvn -early-cse -instsimplify -simplifycfg -adce -S | FileCheck %s; fi
 ; RUN: if [ %llvmver -lt 12 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -gvn -early-cse -instsimplify -simplifycfg -adce -S | FileCheck %s --check-prefix=BEFORE; fi
+; RUN: if [ %llvmver -ge 12 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,gvn,early-cse,instsimplify,simplifycfg,adce" -enzyme-preopt=false -S | FileCheck %s; fi
+; RUN: if [ %llvmver -lt 12 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,gvn,early-cse,instsimplify,simplifycfg,adce" -enzyme-preopt=false -S | FileCheck %s --check-prefix=BEFORE; fi
 
 define void @foo(float* noalias %out, float* noalias %in, i64* %x2.i.i, i1 %a9) {
 entry:

@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -sroa -simplifycfg -instsimplify -adce -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,inline,mem2reg,sroa,simplifycfg,instsimplify,adce" -enzyme-preopt=false -S | FileCheck %s
 
 
 ; Function Attrs: noinline nounwind uwtable

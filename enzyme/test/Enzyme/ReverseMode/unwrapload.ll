@@ -1,5 +1,6 @@
 ; RUN: if [ %llvmver -lt 14 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -early-cse -instcombine -simplifycfg -adce -S | FileCheck %s -check-prefixes LLVM13,SHARED; fi
 ; RUN: if [ %llvmver -ge 14 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -early-cse -instcombine -simplifycfg -adce -S | FileCheck %s -check-prefixes LLVM14,SHARED; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,sroa,early-cse,instcombine,simplifycfg,adce" -enzyme-preopt=false -S | FileCheck %s -check-prefixes LLVM13,SHARED
 
 
 define double @caller(double* %data, i64* %a4) {
