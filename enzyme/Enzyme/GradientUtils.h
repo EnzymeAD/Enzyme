@@ -932,12 +932,12 @@ public:
   void setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
                    IRBuilder<> &BuilderM, MaybeAlign align, bool isVolatile,
                    AtomicOrdering ordering, SyncScope::ID syncScope,
-                   Value *mask = nullptr)
+                   Value *mask, ArrayRef<Metadata *> noAlias)
 #else
   void setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
                    IRBuilder<> &BuilderM, unsigned align, bool isVolatile,
                    AtomicOrdering ordering, SyncScope::ID syncScope,
-                   Value *mask = nullptr)
+                   Value *mask, ArrayRef<Metadata *> noAlias)
 #endif
   {
     if (auto inst = dyn_cast<Instruction>(ptr)) {
@@ -987,11 +987,8 @@ public:
           if (j != (ssize_t)idx)
             MDs.push_back(getDerivativeAliasScope(origptr, j));
         }
-        if (auto MD = orig->getMetadata(LLVMContext::MD_noalias)) {
-          auto MDN = cast<MDNode>(MD);
-          for (auto &o : MDN->operands())
-            MDs.push_back(o);
-        }
+        for (auto M : noAlias)
+          MDs.push_back(M);
         auto noscope = MDNode::get(ptr->getContext(), MDs);
         ts->setMetadata(LLVMContext::MD_noalias, noscope);
       } else {

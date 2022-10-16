@@ -777,6 +777,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     if (permitCache)
       unwrap_cache[BuilderM.GetInsertBlock()][idx.first][idx.second] = toreturn;
     assert(val->getType() == toreturn->getType());
+    llvm::errs() << "  toret: " << *toreturn << " prev: " << *load << "\n";
     return toreturn;
   } else if (auto op = dyn_cast<CallInst>(val)) {
 
@@ -894,8 +895,10 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
               toreturn->setOrdering(dli->getOrdering());
               toreturn->setSyncScopeID(dli->getSyncScopeID());
               toreturn->setDebugLoc(getNewFromOriginal(dli->getDebugLoc()));
-              toreturn->setMetadata(LLVMContext::MD_tbaa,
-                                    dli->getMetadata(LLVMContext::MD_tbaa));
+
+              llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
+              ToCopy2.push_back(LLVMContext::MD_noalias);
+              toreturn->copyMetadata(*dli, ToCopy2);
               return toreturn;
             },
             pidx);
@@ -2656,6 +2659,12 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                       valueop =
                           lookupM(invertPointerM(orig_val, NB), NB, available);
                     }
+                    SmallVector<Metadata *, 1> prevNoAlias;
+                    if (auto prev = SI->getMetadata(LLVMContext::MD_noalias)) {
+                      for (auto &M : cast<MDNode>(prev)->operands()) {
+                        prevNoAlias.push_back(M);
+                      }
+                    }
 #if LLVM_VERSION_MAJOR >= 10
                     auto align = SI->getAlign();
 #else
@@ -2664,7 +2673,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                     setPtrDiffe(SI, orig_ptr, valueop, NB, align,
                                 SI->isVolatile(), SI->getOrdering(),
                                 SI->getSyncScopeID(),
-                                /*mask*/ nullptr);
+                                /*mask*/ nullptr, prevNoAlias);
                   }
                   // TODO shadow memtransfer
                 } else if (auto MS = dyn_cast<MemSetInst>(&I)) {
