@@ -777,7 +777,6 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     if (permitCache)
       unwrap_cache[BuilderM.GetInsertBlock()][idx.first][idx.second] = toreturn;
     assert(val->getType() == toreturn->getType());
-    llvm::errs() << "  toret: " << *toreturn << " prev: " << *load << "\n";
     return toreturn;
   } else if (auto op = dyn_cast<CallInst>(val)) {
 
@@ -894,11 +893,10 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
               toreturn->setVolatile(dli->isVolatile());
               toreturn->setOrdering(dli->getOrdering());
               toreturn->setSyncScopeID(dli->getSyncScopeID());
-              toreturn->setDebugLoc(getNewFromOriginal(dli->getDebugLoc()));
-
               llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
               ToCopy2.push_back(LLVMContext::MD_noalias);
               toreturn->copyMetadata(*dli, ToCopy2);
+              toreturn->setDebugLoc(getNewFromOriginal(dli->getDebugLoc()));
               return toreturn;
             },
             pidx);
