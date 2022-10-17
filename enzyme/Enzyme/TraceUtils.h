@@ -177,50 +177,58 @@ public:
   Value *getTrace(IRBuilder<> &Builder) {
     Builder.getContext();
     auto ptr = Builder.CreateInBoundsGEP(PointerType::getInt8PtrTy(C), dynamicInterface, Builder.getInt32(0));
-    return Builder.CreatePointerCast(ptr, PointerType::getUnqual(getTraceTy()));
+    auto load = Builder.CreateLoad(PointerType::getInt8PtrTy(C), ptr);
+    return Builder.CreatePointerCast(load, PointerType::getUnqual(getTraceTy()));
   }
   FunctionType *getTraceTy() { return FunctionType::get(PointerType::getInt8PtrTy(C), {PointerType::getInt8PtrTy(C), stringType() }, false); }
   
   Value *getChoice(IRBuilder<> &Builder) {
     auto ptr = Builder.CreateInBoundsGEP(PointerType::getInt8PtrTy(C), dynamicInterface, Builder.getInt32(1));
-    return Builder.CreatePointerCast(ptr, PointerType::getUnqual(getChoiceTy()));
+    auto load = Builder.CreateLoad(PointerType::getInt8PtrTy(C), ptr);
+    return Builder.CreatePointerCast(load, PointerType::getUnqual(getChoiceTy()));
   }
   FunctionType *getChoiceTy() { return FunctionType::get(sizeType(), {PointerType::getInt8PtrTy(C), stringType(), PointerType::getInt8PtrTy(C), sizeType()}, false); }
   
   Value *insertCall(IRBuilder<> &Builder) {
     auto ptr = Builder.CreateInBoundsGEP(PointerType::getInt8PtrTy(C), dynamicInterface, Builder.getInt32(2));
-    return Builder.CreatePointerCast(ptr, PointerType::getUnqual(insertCallTy()));
+    auto load = Builder.CreateLoad(PointerType::getInt8PtrTy(C), ptr);
+    return Builder.CreatePointerCast(load, PointerType::getUnqual(insertCallTy()));
   }
   FunctionType *insertCallTy() { return FunctionType::get(Type::getVoidTy(C), {PointerType::getInt8PtrTy(C), stringType(), PointerType::getInt8PtrTy(C)}, false); }
   
   Value *insertChoice(IRBuilder<> &Builder) {
     auto ptr = Builder.CreateInBoundsGEP(PointerType::getInt8PtrTy(C), dynamicInterface, Builder.getInt32(3));
-    return Builder.CreatePointerCast(ptr, PointerType::getUnqual(insertChoiceTy()));
+    auto load = Builder.CreateLoad(PointerType::getInt8PtrTy(C), ptr);
+    return Builder.CreatePointerCast(load, PointerType::getUnqual(insertChoiceTy()));
   }
   FunctionType *insertChoiceTy() { return FunctionType::get(Type::getVoidTy(C), {PointerType::getInt8PtrTy(C), stringType(), Type::getDoubleTy(C), PointerType::getInt8PtrTy(C), sizeType()}, false); }
   
   Value *newTrace(IRBuilder<> &Builder) {
     auto ptr = Builder.CreateInBoundsGEP(PointerType::getInt8PtrTy(C), dynamicInterface, Builder.getInt32(4));
-    return Builder.CreatePointerCast(ptr, PointerType::getUnqual(newTraceTy()));
+    auto load = Builder.CreateLoad(PointerType::getInt8PtrTy(C), ptr);
+    return Builder.CreatePointerCast(load, PointerType::getUnqual(newTraceTy()));
   }
   FunctionType *newTraceTy() { return FunctionType::get(PointerType::getInt8PtrTy(C), {}, false); }
   
   Value *freeTrace(IRBuilder<> &Builder) {
     auto ptr = Builder.CreateInBoundsGEP(PointerType::getInt8PtrTy(C), dynamicInterface, Builder.getInt32(5));
-    return Builder.CreatePointerCast(ptr, PointerType::getUnqual(freeTraceTy()));
+    auto load = Builder.CreateLoad(PointerType::getInt8PtrTy(C), ptr);
+    return Builder.CreatePointerCast(load, PointerType::getUnqual(freeTraceTy()));
     
   }
   FunctionType *freeTraceTy() { return FunctionType::get(Type::getVoidTy(C), {PointerType::getInt8PtrTy(C)}, false); }
   
   Value *hasCall(IRBuilder<> &Builder) {
     auto ptr = Builder.CreateInBoundsGEP(PointerType::getInt8PtrTy(C), dynamicInterface, Builder.getInt32(6));
-    return Builder.CreatePointerCast(ptr, PointerType::getUnqual(hasCallTy()));
+    auto load = Builder.CreateLoad(PointerType::getInt8PtrTy(C), ptr);
+    return Builder.CreatePointerCast(load, PointerType::getUnqual(hasCallTy()));
   }
   FunctionType *hasCallTy() { return FunctionType::get(Type::getInt1Ty(C), {PointerType::getInt8PtrTy(C), stringType()}, false); }
   
   Value *hasChoice(IRBuilder<> &Builder) {
     auto ptr = Builder.CreateInBoundsGEP(PointerType::getInt8PtrTy(C), dynamicInterface, Builder.getInt32(7));
-    return Builder.CreatePointerCast(ptr, PointerType::getUnqual(hasChoiceTy()));
+    auto load = Builder.CreateLoad(PointerType::getInt8PtrTy(C), ptr);
+    return Builder.CreatePointerCast(load, PointerType::getUnqual(hasChoiceTy()));
   }
   FunctionType *hasChoiceTy() { return FunctionType::get(Type::getInt1Ty(C), {PointerType::getInt8PtrTy(C), stringType()}, false); }
 };
