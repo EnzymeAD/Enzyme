@@ -27,14 +27,14 @@ public:
   TraceGenerator(EnzymeLogic &Logic, GradientUtils *const gutils, TraceUtils *const tutils) : Logic(Logic), gutils(gutils), tutils(tutils) {};
 
   void visitCallInst(llvm::CallInst &call) {
-        
+    
     if (!tutils->generativeFunctions.contains(call.getCalledFunction()))
       return;
     
     CallInst* new_call = dyn_cast<CallInst>(tutils->originalToNewFn[&call]);
     IRBuilder<> Builder(new_call);
     
-    if (call.getCalledFunction() == tutils->getTraceInterface().sample) {
+    if (call.getCalledFunction() == tutils->getTraceInterface()->getSampleFunction()) {
       Function *samplefn = GetFunctionFromValue(new_call->getArgOperand(0));
       Function *loglikelihoodfn = GetFunctionFromValue(new_call->getArgOperand(1));
       Value *address = new_call->getArgOperand(2);
@@ -55,7 +55,7 @@ public:
           Instruction *ThenTerm, *ElseTerm;
           Value *ThenChoice, *ElseChoice;
           SplitBlockAndInsertIfThenElse(hasChoice, new_call, &ThenTerm, &ElseTerm);
-            
+          
           Builder.SetInsertPoint(ThenTerm); {
             ThenChoice = tutils->GetChoice(Builder, address, samplefn->getFunctionType()->getReturnType());
           }
@@ -82,18 +82,20 @@ public:
       new_call->eraseFromParent();
     } else {
       auto address = Builder.CreateGlobalStringPtr(call.getCalledFunction()->getName());
-
+      
       SmallVector<Value*, 2> args;
       for (auto it = new_call->arg_begin(); it != new_call->arg_end(); it++) {
         args.push_back(*it);
       }
       
-      Function *samplefn = Logic.CreateTrace(call.getCalledFunction(), tutils->getTraceInterface(), tutils->generativeFunctions, tutils->mode);
+      if (tutils->hasDynamicTraceInterface())
+        args.push_back(tutils->getDynamicTraceInterface());
+      
+      Function *samplefn = Logic.CreateTrace(call.getCalledFunction(), tutils->generativeFunctions, tutils->mode, tutils->hasDynamicTraceInterface());
 
       Value *tracecall;
       switch (mode) {
         case ProbProgMode::Trace: {
-          Function *samplefn = Logic.CreateTrace(call.getCalledFunction(), tutils->getTraceInterface(), tutils->generativeFunctions, tutils->mode);
           tracecall = Builder.CreateCall(samplefn->getFunctionType(), samplefn, args, call.getName());
           break;
         }
@@ -112,7 +114,7 @@ public:
 
           Builder.SetInsertPoint(ElseTerm); {
             SmallVector<Value*, 2> args_and_null = SmallVector(args);
-            auto trace = ConstantPointerNull::get(cast<PointerType>(tutils->getTraceInterface().newTrace->getFunctionType()->getReturnType()));
+            auto trace = ConstantPointerNull::get(cast<PointerType>(tutils->getTraceInterface()->newTraceTy()->getReturnType()));
             args_and_null.push_back(trace);
             ElseTracecall = Builder.CreateCall(samplefn->getFunctionType(), samplefn, args_and_null, call.getName());
           }

@@ -1792,7 +1792,7 @@ public:
     return true;
   }
   
-  bool HandleProbProg(CallInst *CI, ProbProgMode mode, TraceInterface interface) {
+  bool HandleProbProg(CallInst *CI, ProbProgMode mode) {
     IRBuilder<> Builder(CI);
     Function *F;
     auto parsedFunction = parseFunctionParameter(CI);
@@ -1806,8 +1806,8 @@ public:
     
     bool sret = false;
     SmallVector<Value*, 4> args;
-    TraceInterface custom_interface = interface;
     Value *conditioning_trace = nullptr;
+    Value *dynamic_interface = nullptr;
     
 #if LLVM_VERSION_MAJOR >= 14
     for (unsigned i = 1 + sret; i < CI->arg_size(); ++i)
@@ -1822,8 +1822,7 @@ public:
       if (metaString && metaString.getValue().startswith("enzyme_")) {
         if (*metaString == "enzyme_interface") {
           ++i;
-          Value *interface = CI->getArgOperand(i);
-          // TODO:
+          dynamic_interface = CI->getArgOperand(i);
           continue;
         } else if (*metaString == "enzyme_condition") {
           ++i;
@@ -1840,14 +1839,29 @@ public:
       args.push_back(res);
     }
     
+    // Interface
+      
+    Function *sample = nullptr;
+    for (auto&& interface_func: F->getParent()->functions()) {
+        if (interface_func.getName().contains("__enzyme_sample")) {
+          assert(interface_func.getFunctionType()->getNumParams() >= 3);
+          sample = &interface_func;
+        }
+      }
+    
+    assert(sample);
+    
+    if (dynamic_interface)
+      args.push_back(dynamic_interface);
+    
     if (mode == ProbProgMode::Condition)
       args.push_back(conditioning_trace);
     
     // Determine generative functions
     SmallPtrSet<Function*, 4> generativeFunctions;
     SetVector<Function*, std::deque<Function*>> workList;
-    workList.insert(interface.sample);
-    generativeFunctions.insert(interface.sample);
+    workList.insert(sample);
+    generativeFunctions.insert(sample);
     
     while (!workList.empty()) {
       auto todo = *workList.begin();
@@ -1863,7 +1877,7 @@ public:
       }
     }
       
-    auto newFunc = Logic.CreateTrace(F, interface, generativeFunctions, mode);
+    auto newFunc = Logic.CreateTrace(F, generativeFunctions, mode, dynamic_interface != nullptr);
 
     Value *traceCall = Builder.CreateCall(newFunc->getFunctionType(), newFunc, args);
     Value *trace = Builder.CreateExtractValue(traceCall, {1});
@@ -1957,7 +1971,7 @@ public:
     MapVector<CallInst *, DerivativeMode> toVirtual;
     MapVector<CallInst *, DerivativeMode> toSize;
     SmallVector<CallInst *, 4> toBatch;
-    MapVector<CallInst *, std::pair<ProbProgMode, TraceInterface>> toProbProg;
+    MapVector<CallInst *, ProbProgMode> toProbProg;
     SetVector<CallInst *> InactiveCalls;
     SetVector<CallInst *> IterCalls;
   retry:;
@@ -2260,50 +2274,7 @@ public:
           else if (batch)
             toBatch.push_back(CI);
           else if (probProg) {
-            
-            TraceInterface trace_interface = {};
-            
-            for (auto&& F: F.getParent()->functions()) {
-              if (F.getName().contains("__enzyme_newtrace")) {
-                assert(F.getFunctionType()->getNumParams() == 0);
-                trace_interface.newTrace = &F;
-              } else if (F.getName().contains("__enzyme_freetrace")) {
-                assert(F.getFunctionType()->getNumParams() == 1);
-                trace_interface.freeTrace = &F;
-              } else if (F.getName().contains("__enzyme_get_trace")) {
-                assert(F.getFunctionType()->getNumParams() == 2);
-                trace_interface.getTrace = &F;
-              } else if (F.getName().contains("__enzyme_get_choice")) {
-                assert(F.getFunctionType()->getNumParams() == 4);
-                trace_interface.getChoice = &F;
-              } else if (F.getName().contains("__enzyme_insert_call")) {
-                assert(F.getFunctionType()->getNumParams() == 3);
-                trace_interface.insertCall = &F;
-              } else if (F.getName().contains("__enzyme_insert_choice")) {
-                assert(F.getFunctionType()->getNumParams() == 5);
-                trace_interface.insertChoice = &F;
-              } else if (F.getName().contains("__enzyme_has_call")) {
-                assert(F.getFunctionType()->getNumParams() == 2);
-                trace_interface.hasCall = &F;
-              } else if (F.getName().contains("__enzyme_has_choice")) {
-                assert(F.getFunctionType()->getNumParams() == 2);
-                trace_interface.hasChoice = &F;
-              } else if (F.getName().contains("__enzyme_sample")) {
-                assert(F.getFunctionType()->getNumParams() >= 3);
-                trace_interface.sample = &F;
-              }
-            }
-            
-            assert(trace_interface.newTrace != nullptr &&
-                   trace_interface.freeTrace != nullptr &&
-                   trace_interface.getTrace != nullptr &&
-                   trace_interface.getChoice != nullptr &&
-                   trace_interface.insertCall != nullptr &&
-                   trace_interface.insertChoice != nullptr &&
-                   trace_interface.hasCall != nullptr &&
-                   trace_interface.hasChoice != nullptr);
-            
-            toProbProg[CI] = {probProgMode, trace_interface};
+            toProbProg[CI] = probProgMode;
           }
           else
             toLower[CI] = derivativeMode;
@@ -2393,23 +2364,29 @@ public:
       HandleBatch(call);
     }
     
-    TraceInterface *trace_interface = nullptr;
-    for (auto&& [call, ModeInterfacePair] : toProbProg) {
-      auto&& [mode, interface] = ModeInterfacePair;
-      HandleProbProg(call, mode, interface);
-      trace_interface = &interface;
+    for (auto&& [call, mode] : toProbProg) {
+      HandleProbProg(call, mode);
     }
     
     // Post processing for ProbProg
     
-    if (trace_interface != nullptr) {
+    if (toProbProg.size() > 0) {
+      
+      Function *sample = nullptr;
+      
+      for (auto&& interface_func: *F.getParent()) {
+        if (interface_func.getName().contains("__enzyme_sample")) {
+          assert(interface_func.getFunctionType()->getNumParams() >= 3);
+          sample = &interface_func;
+        }
+      }
       
       SmallPtrSet<CallInst*, 4> sample_calls;
       for (auto&& func : *F.getParent()) {
         for (auto&& BB: func) {
           for (auto &&Inst: BB) {
             if (auto CI = dyn_cast<CallInst>(&Inst)) {
-              if (CI->getCalledFunction() == trace_interface->sample)
+              if (CI->getCalledFunction() == sample)
                 sample_calls.insert(CI);
             }
           }

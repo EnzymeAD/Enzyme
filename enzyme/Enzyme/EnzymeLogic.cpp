@@ -4806,13 +4806,13 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
   return BatchCachedFunctions[tup] = NewF;
 };
 
-llvm::Function *EnzymeLogic::CreateTrace(llvm::Function *totrace, TraceInterface trace_interface, SmallPtrSetImpl<Function*> &GenerativeFunctions, ProbProgMode mode) {
+llvm::Function *EnzymeLogic::CreateTrace(llvm::Function *totrace, SmallPtrSetImpl<Function*> &GenerativeFunctions, ProbProgMode mode, bool dynamic_interface) {
   TraceCacheKey tup = std::make_tuple(totrace);
   if (TraceCachedFunctions.find(tup) != TraceCachedFunctions.end()) {
     return TraceCachedFunctions.find(tup)->second;
   }
   
-  TraceUtils *tutils = new TraceUtils(mode, trace_interface, totrace, GenerativeFunctions);
+  TraceUtils *tutils = new TraceUtils(mode, dynamic_interface, totrace, GenerativeFunctions);
 
   TraceGenerator *tracer = new TraceGenerator(*this, nullptr, tutils);
   
