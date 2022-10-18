@@ -3,3 +3,6 @@
 *.out
 build
 .vscode
+enzyme/cmake-build-release
+enzyme/cmake-build-debug
+enzyme/.idea
