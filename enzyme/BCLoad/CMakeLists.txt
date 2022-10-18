@@ -44,7 +44,7 @@ ExternalProject_Add(openblas
     PREFIX openblas
     BUILD_IN_SOURCE 1
     INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/openblas/install
-    CONFIGURE_COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/fixopenblas.sh $<TARGET_FILE:clang> 
+    CONFIGURE_COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/fixopenblas.sh $<TARGET_FILE:clang>
     BUILD_COMMAND  sh -c "NO_CBLAS=1 GEMM_MULTITHREAD_THRESHOLD=4 COMMON_OPT=\"\" CC=\"$<TARGET_FILE:clang> -DDTB_DEFAULT_ENTRIES=64 -DGEMM_DEFAULT_ALIGN=\"0UL\" -DGEMM_DEFAULT_OFFSET_A=0 -DGEMM_DEFAULT_OFFSET_B=0 -DGEMM_P=0 -DGEMM_Q=0 -DGEMM_MULTITHREAD_THRESHOLD=4 -Dnthreads=1 -S -emit-llvm -O1\" AR=\"echo\" make -C interface VERBOSE=1 NUM_THREADS=1"
     INSTALL_COMMAND ""
     UPDATE_COMMAND ""
@@ -118,7 +118,7 @@ set_target_properties(BCPass-${LLVM_VERSION_MAJOR} PROPERTIES EXCLUDE_FROM_ALL T
 if (${ENZYME_EXTERNAL_SHARED_LIB})
     add_library( EnzymeBCLoad-${LLVM_VERSION_MAJOR}
         SHARED
-        BCLoader.cpp 
+        BCLoader.cpp
     )
     add_dependencies(EnzymeBCLoad-${LLVM_VERSION_MAJOR} blasheaders)
     target_include_directories(EnzymeBCLoad-${LLVM_VERSION_MAJOR} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/gsl)
