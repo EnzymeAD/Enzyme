@@ -6,6 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Analysis/ActivityAnalysis.h"
 #include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/IR/FunctionInterfaces.h"
 
@@ -47,6 +48,9 @@ public:
   BlockAndValueMapping invertedPointers;
   BlockAndValueMapping originalToNewFn;
   std::map<Operation *, Operation *> originalToNewFnOps;
+
+  SmallPtrSet<Block *, 4> blocksNotForAnalysis;
+  std::unique_ptr<enzyme::ActivityAnalyzer> activityAnalyzer;
 
   MTypeAnalysis &TA;
   MTypeResults TR;

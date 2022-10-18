@@ -34,7 +34,10 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
     std::map<Operation *, Operation *> &originalToNewFnOps_,
     DerivativeMode mode, unsigned width, bool omp)
     : newFunc(newFunc_), Logic(Logic), mode(mode), oldFunc(oldFunc_), TA(TA_),
-      TR(TR_), omp(omp), width(width), ArgDiffeTypes(ArgDiffeTypes_),
+      TR(TR_), omp(omp), blocksNotForAnalysis(),
+      activityAnalyzer(std::make_unique<enzyme::ActivityAnalyzer>(
+          blocksNotForAnalysis, constantvalues_, activevals_, ReturnActivity)),
+      width(width), ArgDiffeTypes(ArgDiffeTypes_),
       originalToNewFn(originalToNewFn_),
       originalToNewFnOps(originalToNewFnOps_),
       invertedPointers(invertedPointers_) {
@@ -135,6 +138,7 @@ Operation *mlir::enzyme::MGradientUtils::cloneWithNewOperands(OpBuilder &B,
 }
 
 bool mlir::enzyme::MGradientUtils::isConstantValue(Value v) const {
+  
   if (isa<mlir::IntegerType>(v.getType()))
     return true;
   if (isa<mlir::IndexType>(v.getType()))
@@ -143,8 +147,10 @@ bool mlir::enzyme::MGradientUtils::isConstantValue(Value v) const {
   if (matchPattern(v, m_Constant()))
     return true;
 
-  // TODO
-  return false;
+  return activityAnalyzer->isConstantValue(TypeResults(), v);
+
+  // // TODO
+  // return false;
 }
 
 Value mlir::enzyme::MGradientUtils::invertPointerM(Value v,
@@ -154,7 +160,7 @@ Value mlir::enzyme::MGradientUtils::invertPointerM(Value v,
     return invertedPointers.lookupOrNull(v);
 
   if (isConstantValue(v)) {
-    if (auto iface = v.getType().cast<AutoDiffTypeInterface>()) {
+    if (auto iface = v.getType().dyn_cast<AutoDiffTypeInterface>()) {
       OpBuilder::InsertionGuard guard(Builder2);
       Builder2.setInsertionPoint(getNewFromOriginal(v.getDefiningOp()));
       Value dv = iface.createNullValue(Builder2, v.getLoc());
