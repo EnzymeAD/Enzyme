@@ -81,7 +81,8 @@ public:
       new_call->replaceAllUsesWith(choice);
       new_call->eraseFromParent();
     } else {
-      auto address = Builder.CreateGlobalStringPtr(call.getCalledFunction()->getName());
+      auto str = call.getName() + "." + call.getCalledFunction()->getName();
+      auto address = Builder.CreateGlobalStringPtr(str.str());
       
       SmallVector<Value*, 2> args;
       for (auto it = new_call->arg_begin(); it != new_call->arg_end(); it++) {
