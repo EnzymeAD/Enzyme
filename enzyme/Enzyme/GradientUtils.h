@@ -932,12 +932,12 @@ public:
   void setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
                    IRBuilder<> &BuilderM, MaybeAlign align, bool isVolatile,
                    AtomicOrdering ordering, SyncScope::ID syncScope,
-                   Value *mask = nullptr)
+                   unsigned start, unsigned size, Value *mask = nullptr)
 #else
   void setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
                    IRBuilder<> &BuilderM, unsigned align, bool isVolatile,
                    AtomicOrdering ordering, SyncScope::ID syncScope,
-                   Value *mask = nullptr)
+                   unsigned start, unsigned size, Value *mask = nullptr)
 #endif
   {
     if (auto inst = dyn_cast<Instruction>(ptr)) {
@@ -946,6 +946,8 @@ public:
     if (auto arg = dyn_cast<Argument>(ptr)) {
       assert(arg->getParent() == oldFunc);
     }
+
+    auto &DL = newFunc->getParent()->getDataLayout();
 
     Value *origptr = ptr;
 
@@ -961,7 +963,61 @@ public:
     size_t idx = 0;
 
     auto rule = [&](Value *ptr, Value *newval) {
+      bool needsCast = false;
+#if LLVM_VERSION_MAJOR >= 15
+      if (orig->getContext().supportsTypedPointers()) {
+#endif
+        needsCast = origptr->getType()->getPointerElementType() != addingType;
+#if LLVM_VERSION_MAJOR >= 15
+      }
+#endif
+
+      auto totalStoreSize = (DL.getTypeSizeInBits(newval->getType()) + 7) / 8;
+
+      if (start != 0 || size != totalStoreSize) {
+        IRBuilder<> IV(inverionAllocas);
+        auto tmp = IV.CreateAlloca(newval->getType());
+
+        BuilderM.CreateStore(newval, tmp);
+        if (start != 0) {
+          auto i8 = Type::getInt8Ty(ptr->getContext());
+          ptr = BuilderM.CreatePointerCast(
+              ptr,
+              PointerType::get(
+                  i8, cast<PointerType>(ptr->getType())->getAddressSpace()));
+          auto off =
+              ConstantInt::get(Type::getInt64Ty(ptr->getContext()), start);
+#if LLVM_VERSION_MAJOR > 7
+          ptr = BuilderM.CreateInBoundsGEP(i8, ptr, off);
+          tmp = BuilderM.CreateInBoundsGEP(i8, tmp, off);
+#else
+          ptr = BuilderM.CreateInBoundsGEP(ptr, off);
+          tmp = BuilderM.CreateInBoundsGEP(tmp, off);
+#endif
+        }
+        if (size != totalStoreSize) {
+          auto T = ArrayType::get(size, Type::getInt8Ty(ptr->getContext()));
+          ptr = BuilderM.CreatePointerCast(
+              ptr,
+              PointerType::get(
+                  T, cast<PointerType>(ptr->getType())->getAddressSpace()));
+          tmp = BuilderM.CreatePointerCast(
+              tmp,
+              PointerType::get(
+                  T, cast<PointerType>(tmp->getType())->getAddressSpace()));
+
+          newval = CreateLoad(tmp);
+#if LLVM_VERSION_MAJOR > 7
+          newval = BuilderM.CreateLoad(T, tmp);
+#else
+          newval = BuilderM.CreateLoad(tmp);
+#endif
+        }
+      }
       if (!mask) {
+        auto totalStoreSize = (DL.getTypeSizeInBits(newval->getType()) + 7) / 8;
+        assert(start == 0);
+        assert(size == totalStoreSize);
         auto ts = BuilderM.CreateStore(newval, ptr);
         if (align)
 #if LLVM_VERSION_MAJOR >= 10
@@ -995,6 +1051,8 @@ public:
         auto noscope = MDNode::get(ptr->getContext(), MDs);
         ts->setMetadata(LLVMContext::MD_noalias, noscope);
       } else {
+        assert(start == 0);
+        assert(size == totalStoreSize);
         Type *tys[] = {newval->getType(), ptr->getType()};
         auto F = Intrinsic::getDeclaration(oldFunc->getParent(),
                                            Intrinsic::masked_store, tys);
@@ -1693,10 +1751,19 @@ public:
 #endif
   }
 
-  // Returns created select instructions, if any
   SmallVector<SelectInst *, 4>
   addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM, Type *addingType,
              ArrayRef<Value *> idxs = {}, Value *mask = nullptr) {
+    return addToDiffe(val, dif, BuilderM, TypeTree(addingType).Only(-1), idxs,
+                      mask);
+  }
+
+  // Returns created select instructions, if any
+  SmallVector<SelectInst *, 4> addToDiffe(Value *val, Value *dif,
+                                          IRBuilder<> &BuilderM,
+                                          TypeTree addingTypeTree,
+                                          ArrayRef<Value *> idxs = {},
+                                          Value *mask = nullptr) {
     assert(mode == DerivativeMode::ReverseModeGradient ||
            mode == DerivativeMode::ReverseModeCombined);
 
@@ -1928,7 +1995,7 @@ public:
         SmallVector<Value *, 2> idx2(idxs.begin(), idxs.end());
         idx2.push_back(v);
         auto selects = addToDiffe(val, extractMeta(BuilderM, dif, i), BuilderM,
-                                  addingType, idx2);
+                                  addingTypeTree, idx2);
         for (auto select : selects) {
           addedSelects.push_back(select);
         }

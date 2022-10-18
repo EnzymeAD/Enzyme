@@ -2428,6 +2428,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
 
           std::function<void(Loop *, bool)> handleLoop = [&](Loop *OL,
                                                              bool subLoop) {
+            llvm::errs() << " OL: " << *OL << " subLoop: " << subLoop << "\n";
             if (subLoop) {
               auto Header = OL->getHeader();
               IRBuilder<> NB(origToNewForward[Header]);
