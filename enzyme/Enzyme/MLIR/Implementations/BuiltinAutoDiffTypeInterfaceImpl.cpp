@@ -39,6 +39,20 @@ public:
     return self;
   }
 };
+
+template <typename T>
+class IntegerTypeInterface
+    : public AutoDiffTypeInterface::ExternalModel<IntegerTypeInterface<T>, T> {
+public:
+  Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
+    return builder.create<arith::ConstantIntOp>(loc, 0, self);
+  }
+
+  Type getShadowType(Type self, unsigned width) const {
+    assert(width == 1 && "unsupported width != 1");
+    return self;
+  }
+};
 } // namespace
 
 void mlir::enzyme::registerBuiltinDialectAutoDiffInterface(
@@ -48,5 +62,7 @@ void mlir::enzyme::registerBuiltinDialectAutoDiffInterface(
     Float16Type::attachInterface<FloatTypeInterface>(*context);
     Float32Type::attachInterface<FloatTypeInterface>(*context);
     Float64Type::attachInterface<FloatTypeInterface>(*context);
+    IntegerType::attachInterface<IntegerTypeInterface<IntegerType>>(*context);
+    IndexType::attachInterface<IntegerTypeInterface<IndexType>>(*context);
   });
 }
