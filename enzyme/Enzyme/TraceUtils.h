@@ -279,9 +279,11 @@ public:
     
     Type *NewTy = StructType::get(oldFunc->getContext(), {oldFunc->getReturnType(), traceType});
 
+    StringRef prefix = mode == ProbProgMode::Condition ? "condition_" : "trace_";
+    
     FunctionType *FTy = FunctionType::get(NewTy, params, oldFunc->isVarArg());
     newFunc = Function::Create(FTy, oldFunc->getLinkage(),
-                         "simulate_" + oldFunc->getName(), oldFunc->getParent());
+                         prefix + oldFunc->getName(), oldFunc->getParent());
 
     newFunc->setLinkage(Function::LinkageTypes::InternalLinkage);
     
