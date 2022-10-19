@@ -2368,43 +2368,6 @@ public:
       HandleProbProg(call, mode);
     }
     
-    // Post processing for ProbProg
-    
-    if (toProbProg.size() > 0) {
-      
-      Function *sample = nullptr;
-      
-      for (auto&& interface_func: *F.getParent()) {
-        if (interface_func.getName().contains("__enzyme_sample")) {
-          assert(interface_func.getFunctionType()->getNumParams() >= 3);
-          sample = &interface_func;
-        }
-      }
-      
-      SmallPtrSet<CallInst*, 4> sample_calls;
-      for (auto&& func : *F.getParent()) {
-        for (auto&& BB: func) {
-          for (auto &&Inst: BB) {
-            if (auto CI = dyn_cast<CallInst>(&Inst)) {
-              if (CI->getCalledFunction() == sample)
-                sample_calls.insert(CI);
-            }
-          }
-        }
-      }
-      
-      for (auto call : sample_calls) {
-        Function *samplefn = GetFunctionFromValue(call->getArgOperand(0));
-        
-        SmallVector<Value*, 2> args;
-        for (auto it = call->arg_begin() + 3; it != call->arg_end(); it++) {
-          args.push_back(*it);
-        }
-        Instruction* choice = CallInst::Create(samplefn->getFunctionType(), samplefn, args);
-        ReplaceInstWithInst(call, choice);
-      }
-    }
-    
     if (Changed && EnzymeAttributor) {
       // TODO consider enabling when attributor does not delete
       // dead internal functions, which invalidates Enzyme's cache
@@ -2603,6 +2566,40 @@ public:
       I->eraseFromParent();
       changed = true;
     }
+    
+    
+    // Post processing for ProbProg
+    Function *sample = nullptr;
+    for (auto&& interface_func: M) {
+      if (interface_func.getName().contains("__enzyme_sample")) {
+        assert(interface_func.getFunctionType()->getNumParams() >= 3);
+        sample = &interface_func;
+      }
+    }
+      
+    SmallPtrSet<CallInst*, 4> sample_calls;
+    for (auto&& func : M) {
+      for (auto&& BB: func) {
+        for (auto &&Inst: BB) {
+          if (auto CI = dyn_cast<CallInst>(&Inst)) {
+            if (CI->getCalledFunction() == sample)
+              sample_calls.insert(CI);
+            }
+          }
+        }
+      }
+      
+      for (auto call : sample_calls) {
+        Function *samplefn = GetFunctionFromValue(call->getArgOperand(0));
+        
+        SmallVector<Value*, 2> args;
+        for (auto it = call->arg_begin() + 3; it != call->arg_end(); it++) {
+          args.push_back(*it);
+        }
+        Instruction* choice = CallInst::Create(samplefn->getFunctionType(), samplefn, args);
+        ReplaceInstWithInst(call, choice);
+      }
+    
 
     for (const auto &pair : Logic.PPC.cache)
       pair.second->eraseFromParent();
