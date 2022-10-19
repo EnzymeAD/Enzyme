@@ -433,7 +433,7 @@ public:
                                    std::vector<BATCH_TYPE>, BATCH_TYPE>;
   std::map<BatchCacheKey, llvm::Function *> BatchCachedFunctions;
   
-  using TraceCacheKey = std::tuple<llvm::Function *>;
+  using TraceCacheKey = std::tuple<llvm::Function *, ProbProgMode, bool>;
   std::map<TraceCacheKey, llvm::Function *> TraceCachedFunctions;
 
   /// Create the derivative function itself.

@@ -4807,7 +4807,7 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
 };
 
 llvm::Function *EnzymeLogic::CreateTrace(llvm::Function *totrace, SmallPtrSetImpl<Function*> &GenerativeFunctions, ProbProgMode mode, bool dynamic_interface) {
-  TraceCacheKey tup = std::make_tuple(totrace);
+  TraceCacheKey tup = std::make_tuple(totrace, mode, dynamic_interface);
   if (TraceCachedFunctions.find(tup) != TraceCachedFunctions.end()) {
     return TraceCachedFunctions.find(tup)->second;
   }
@@ -4833,7 +4833,7 @@ llvm::Function *EnzymeLogic::CreateTrace(llvm::Function *totrace, SmallPtrSetImp
   delete tracer;
   delete tutils;
 
-  return NewF;
+  return TraceCachedFunctions[tup] = NewF;
 }
 
 llvm::Value *EnzymeLogic::CreateNoFree(llvm::Value *todiff) {
