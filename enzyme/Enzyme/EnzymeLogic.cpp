@@ -2571,10 +2571,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         cast<GetElementPtrInst>(tapeMemory)->setIsInBounds(true);
       }
       if (EnzymeZeroCache) {
-        ZeroMemory(
-            ib, tapeType, tapeMemory,
-            ConstantInt::get(Type::getInt64Ty(tapeType->getContext()), 1),
-            /*isTape*/ true);
+        ZeroMemory(ib, tapeType, tapeMemory,
+                   /*isTape*/ true);
       }
     }
 

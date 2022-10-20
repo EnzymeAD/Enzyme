@@ -1651,7 +1651,6 @@ public:
       differentials[val]->setAlignment(Alignment);
 #endif
       ZeroMemory(entryBuilder, type, differentials[val],
-                 ConstantInt::get(Type::getInt64Type(type->getContext()), 1),
                  /*isTape*/ false);
     }
 #if LLVM_VERSION_MAJOR >= 15
