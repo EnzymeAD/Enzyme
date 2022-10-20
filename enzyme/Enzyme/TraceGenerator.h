@@ -57,10 +57,12 @@ public:
           SplitBlockAndInsertIfThenElse(hasChoice, new_call, &ThenTerm, &ElseTerm);
           
           Builder.SetInsertPoint(ThenTerm); {
+            ThenTerm->getParent()->setName("condition." + call.getName() + ".with.trace");
             ThenChoice = tutils->GetChoice(Builder, address, samplefn->getFunctionType()->getReturnType());
           }
           
           Builder.SetInsertPoint(ElseTerm); {
+            ElseTerm->getParent()->setName("condition." + call.getName() + ".without.trace");
             ElseChoice = Builder.CreateCall(samplefn->getFunctionType(), samplefn, sample_args, "sample." + call.getName());
           }
           
@@ -107,6 +109,7 @@ public:
           SplitBlockAndInsertIfThenElse(hasCall, new_call, &ThenTerm, &ElseTerm);
           
           Builder.SetInsertPoint(ThenTerm); {
+            ThenTerm->getParent()->setName("condition." + call.getName() + ".with.trace");
             SmallVector<Value*, 2> args_and_cond = SmallVector(args);
             auto trace = tutils->GetTrace(Builder, address);
             args_and_cond.push_back(trace);
@@ -114,6 +117,7 @@ public:
           }
 
           Builder.SetInsertPoint(ElseTerm); {
+            ElseTerm->getParent()->setName("condition." + call.getName() + ".without.trace");
             SmallVector<Value*, 2> args_and_null = SmallVector(args);
             auto trace = ConstantPointerNull::get(cast<PointerType>(tutils->getTraceInterface()->newTraceTy()->getReturnType()));
             args_and_null.push_back(trace);

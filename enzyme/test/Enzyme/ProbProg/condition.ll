@@ -106,72 +106,72 @@ attributes #6 = { nounwind }
 ; CHECK-NEXT:   %6 = bitcast i8** %5 to i1 (i8*, i8*)**
 ; CHECK-NEXT:   %7 = load i1 (i8*, i8*)*, i1 (i8*, i8*)** %6, align 8
 ; CHECK-NEXT:   %8 = call i1 %7(i8* %1, i8* getelementptr inbounds ([2 x i8], [2 x i8]* @.str.1, i64 0, i64 0)) #6
-; CHECK-NEXT:   br i1 %8, label %9, label %17
+; CHECK-NEXT:   br i1 %8, label %condition.call.with.trace, label %condition.call.without.trace
 
-; CHECK: 9:
-; CHECK-NEXT:   %10 = alloca double, align 8
-; CHECK-NEXT:   %11 = bitcast double* %10 to i8*
-; CHECK-NEXT:   %12 = getelementptr inbounds i8*, i8** %0, i64 1
-; CHECK-NEXT:   %13 = bitcast i8** %12 to i64 (i8*, i8*, i8*, i64)**
-; CHECK-NEXT:   %14 = load i64 (i8*, i8*, i8*, i64)*, i64 (i8*, i8*, i8*, i64)** %13, align 8
-; CHECK-NEXT:   %15 = call i64 %14(i8* %1, i8* getelementptr inbounds ([2 x i8], [2 x i8]* @.str.1, i64 0, i64 0), i8* nonnull %11, i64 8) #6
-; CHECK-NEXT:   %16 = load double, double* %10, align 8
-; CHECK-NEXT:   br label %17
+; CHECK: condition.call.with.trace:                        ; preds = %entry
+; CHECK-NEXT:   %9 = alloca double, align 8
+; CHECK-NEXT:   %10 = bitcast double* %9 to i8*
+; CHECK-NEXT:   %11 = getelementptr inbounds i8*, i8** %0, i64 1
+; CHECK-NEXT:   %12 = bitcast i8** %11 to i64 (i8*, i8*, i8*, i64)**
+; CHECK-NEXT:   %13 = load i64 (i8*, i8*, i8*, i64)*, i64 (i8*, i8*, i8*, i64)** %12, align 8
+; CHECK-NEXT:   %14 = call i64 %13(i8* %1, i8* getelementptr inbounds ([2 x i8], [2 x i8]* @.str.1, i64 0, i64 0), i8* nonnull %10, i64 8) #6
+; CHECK-NEXT:   %15 = load double, double* %9, align 8
+; CHECK-NEXT:   br label %condition.call.without.trace
 
-; CHECK: 17:
-; CHECK-NEXT:   %18 = phi double [ %16, %9 ], [ 4.000000e+00, %entry ]
-; CHECK-NEXT:   %likelihood.call = call double @normal_logpdf(double 0.000000e+00, double 1.000000e+00, double %18)
-; CHECK-NEXT:   %19 = alloca double, align 8
-; CHECK-NEXT:   store double %18, double* %19, align 8
-; CHECK-NEXT:   %20 = bitcast double* %19 to i8**
-; CHECK-NEXT:   %21 = load i8*, i8** %20, align 8
-; CHECK-NEXT:   %22 = getelementptr inbounds i8*, i8** %0, i64 3
-; CHECK-NEXT:   %23 = bitcast i8** %22 to void (i8*, i8*, double, i8*, i64)**
-; CHECK-NEXT:   %24 = load void (i8*, i8*, double, i8*, i64)*, void (i8*, i8*, double, i8*, i64)** %23, align 8
-; CHECK-NEXT:   call void %24(i8* %trace, i8* getelementptr inbounds ([2 x i8], [2 x i8]* @.str.1, i64 0, i64 0), double %likelihood.call, i8* %21, i64 8) #6
-; CHECK-NEXT:   %25 = load i1 (i8*, i8*)*, i1 (i8*, i8*)** %6, align 8
-; CHECK-NEXT:   %26 = call i1 %25(i8* %1, i8* getelementptr inbounds ([2 x i8], [2 x i8]* @.str.2, i64 0, i64 0)) #6
-; CHECK-NEXT:   br i1 %26, label %27, label %35
+; CHECK: condition.call.without.trace:                     ; preds = %entry, %condition.call.with.trace
+; CHECK-NEXT:   %16 = phi double [ %15, %condition.call.with.trace ], [ 4.000000e+00, %entry ]
+; CHECK-NEXT:   %likelihood.call = call double @normal_logpdf(double 0.000000e+00, double 1.000000e+00, double %16)
+; CHECK-NEXT:   %17 = alloca double, align 8
+; CHECK-NEXT:   store double %16, double* %17, align 8
+; CHECK-NEXT:   %18 = bitcast double* %17 to i8**
+; CHECK-NEXT:   %19 = load i8*, i8** %18, align 8
+; CHECK-NEXT:   %20 = getelementptr inbounds i8*, i8** %0, i64 3
+; CHECK-NEXT:   %21 = bitcast i8** %20 to void (i8*, i8*, double, i8*, i64)**
+; CHECK-NEXT:   %22 = load void (i8*, i8*, double, i8*, i64)*, void (i8*, i8*, double, i8*, i64)** %21, align 8
+; CHECK-NEXT:   call void %22(i8* %trace, i8* getelementptr inbounds ([2 x i8], [2 x i8]* @.str.1, i64 0, i64 0), double %likelihood.call, i8* %19, i64 8) #6
+; CHECK-NEXT:   %23 = load i1 (i8*, i8*)*, i1 (i8*, i8*)** %6, align 8
+; CHECK-NEXT:   %24 = call i1 %23(i8* %1, i8* getelementptr inbounds ([2 x i8], [2 x i8]* @.str.2, i64 0, i64 0)) #6
+; CHECK-NEXT:   br i1 %24, label %condition.call1.with.trace, label %condition.call1.without.trace
 
-; CHECK: 27:
-; CHECK-NEXT:   %28 = alloca double, align 8
-; CHECK-NEXT:   %29 = bitcast double* %28 to i8*
-; CHECK-NEXT:   %30 = getelementptr inbounds i8*, i8** %0, i64 1
-; CHECK-NEXT:   %31 = bitcast i8** %30 to i64 (i8*, i8*, i8*, i64)**
-; CHECK-NEXT:   %32 = load i64 (i8*, i8*, i8*, i64)*, i64 (i8*, i8*, i8*, i64)** %31, align 8
-; CHECK-NEXT:   %33 = call i64 %32(i8* %1, i8* getelementptr inbounds ([2 x i8], [2 x i8]* @.str.2, i64 0, i64 0), i8* nonnull %29, i64 8) #6
-; CHECK-NEXT:   %34 = load double, double* %28, align 8
-; CHECK-NEXT:   br label %35
+; CHECK: condition.call1.with.trace:                       ; preds = %condition.call.without.trace
+; CHECK-NEXT:   %25 = alloca double, align 8
+; CHECK-NEXT:   %26 = bitcast double* %25 to i8*
+; CHECK-NEXT:   %27 = getelementptr inbounds i8*, i8** %0, i64 1
+; CHECK-NEXT:   %28 = bitcast i8** %27 to i64 (i8*, i8*, i8*, i64)**
+; CHECK-NEXT:   %29 = load i64 (i8*, i8*, i8*, i64)*, i64 (i8*, i8*, i8*, i64)** %28, align 8
+; CHECK-NEXT:   %30 = call i64 %29(i8* %1, i8* getelementptr inbounds ([2 x i8], [2 x i8]* @.str.2, i64 0, i64 0), i8* nonnull %26, i64 8) #6
+; CHECK-NEXT:   %31 = load double, double* %25, align 8
+; CHECK-NEXT:   br label %condition.call1.without.trace
 
-; CHECK: 35:
-; CHECK-NEXT:   %36 = phi double [ %34, %27 ], [ 4.000000e+00, %17 ]
-; CHECK-NEXT:   %likelihood.call1 = call double @normal_logpdf(double 0.000000e+00, double 1.000000e+00, double %36)
-; CHECK-NEXT:   %37 = alloca double, align 8
-; CHECK-NEXT:   store double %36, double* %37, align 8
-; CHECK-NEXT:   %38 = bitcast double* %37 to i8**
-; CHECK-NEXT:   %39 = load i8*, i8** %38, align 8
-; CHECK-NEXT:   %40 = load void (i8*, i8*, double, i8*, i64)*, void (i8*, i8*, double, i8*, i64)** %23, align 8
-; CHECK-NEXT:   call void %40(i8* %trace, i8* getelementptr inbounds ([2 x i8], [2 x i8]* @.str.2, i64 0, i64 0), double %likelihood.call1, i8* %39, i64 8) #6
-; CHECK-NEXT:   %41 = getelementptr inbounds i8*, i8** %0, i64 6
-; CHECK-NEXT:   %42 = bitcast i8** %41 to i1 (i8*, i8*)**
-; CHECK-NEXT:   %43 = load i1 (i8*, i8*)*, i1 (i8*, i8*)** %42, align 8
-; CHECK-NEXT:   %44 = call i1 %43(i8* %1, i8* getelementptr inbounds ([21 x i8], [21 x i8]* @0, i64 0, i64 0)) #6
-; CHECK-NEXT:   br i1 %44, label %45, label %49
+; CHECK: condition.call1.without.trace:                    ; preds = %condition.call.without.trace, %condition.call1.with.trace
+; CHECK-NEXT:   %32 = phi double [ %31, %condition.call1.with.trace ], [ 4.000000e+00, %condition.call.without.trace ]
+; CHECK-NEXT:   %likelihood.call1 = call double @normal_logpdf(double 0.000000e+00, double 1.000000e+00, double %32)
+; CHECK-NEXT:   %33 = alloca double, align 8
+; CHECK-NEXT:   store double %32, double* %33, align 8
+; CHECK-NEXT:   %34 = bitcast double* %33 to i8**
+; CHECK-NEXT:   %35 = load i8*, i8** %34, align 8
+; CHECK-NEXT:   %36 = load void (i8*, i8*, double, i8*, i64)*, void (i8*, i8*, double, i8*, i64)** %21, align 8
+; CHECK-NEXT:   call void %36(i8* %trace, i8* getelementptr inbounds ([2 x i8], [2 x i8]* @.str.2, i64 0, i64 0), double %likelihood.call1, i8* %35, i64 8) #6
+; CHECK-NEXT:   %37 = getelementptr inbounds i8*, i8** %0, i64 6
+; CHECK-NEXT:   %38 = bitcast i8** %37 to i1 (i8*, i8*)**
+; CHECK-NEXT:   %39 = load i1 (i8*, i8*)*, i1 (i8*, i8*)** %38, align 8
+; CHECK-NEXT:   %40 = call i1 %39(i8* %1, i8* getelementptr inbounds ([21 x i8], [21 x i8]* @0, i64 0, i64 0)) #6
+; CHECK-NEXT:   br i1 %40, label %condition.call2.with.trace, label %condition.call2.without.trace
 
-; CHECK: 45:
-; CHECK-NEXT:   %46 = bitcast i8** %0 to i8* (i8*, i8*)**
-; CHECK-NEXT:   %47 = load i8* (i8*, i8*)*, i8* (i8*, i8*)** %46, align 8
-; CHECK-NEXT:   %48 = call i8* %47(i8* %1, i8* getelementptr inbounds ([21 x i8], [21 x i8]* @0, i64 0, i64 0)) #6
-; CHECK-NEXT:   br label %49
+; CHECK: condition.call2.with.trace:                       ; preds = %condition.call1.without.trace
+; CHECK-NEXT:   %41 = bitcast i8** %0 to i8* (i8*, i8*)**
+; CHECK-NEXT:   %42 = load i8* (i8*, i8*)*, i8* (i8*, i8*)** %41, align 8
+; CHECK-NEXT:   %43 = call i8* %42(i8* %1, i8* getelementptr inbounds ([21 x i8], [21 x i8]* @0, i64 0, i64 0)) #6
+; CHECK-NEXT:   br label %condition.call2.without.trace
 
-; CHECK: 49:
-; CHECK-NEXT:   %.sink = phi i8* [ %48, %45 ], [ null, %35 ]
-; CHECK-NEXT:   %call26 = call fastcc { double, i8* } @condition_calculate_loss(double %18, double %36, double* %data, i32 %n, i8** %0, i8* %.sink)
-; CHECK-NEXT:   %50 = extractvalue { double, i8* } %call26, 1
-; CHECK-NEXT:   %51 = getelementptr inbounds i8*, i8** %0, i64 2
-; CHECK-NEXT:   %52 = bitcast i8** %51 to void (i8*, i8*, i8*)**
-; CHECK-NEXT:   %53 = load void (i8*, i8*, i8*)*, void (i8*, i8*, i8*)** %52, align 8
-; CHECK-NEXT:   call void %53(i8* %trace, i8* getelementptr inbounds ([21 x i8], [21 x i8]* @0, i64 0, i64 0), i8* %50) #6
+; CHECK: condition.call2.without.trace:                    ; preds = %condition.call1.without.trace, %condition.call2.with.trace
+; CHECK-NEXT:   %.sink = phi i8* [ %43, %condition.call2.with.trace ], [ null, %condition.call1.without.trace ]
+; CHECK-NEXT:   %call26 = call fastcc { double, i8* } @condition_calculate_loss(double %16, double %32, double* %data, i32 %n, i8** %0, i8* %.sink)
+; CHECK-NEXT:   %44 = extractvalue { double, i8* } %call26, 1
+; CHECK-NEXT:   %45 = getelementptr inbounds i8*, i8** %0, i64 2
+; CHECK-NEXT:   %46 = bitcast i8** %45 to void (i8*, i8*, i8*)**
+; CHECK-NEXT:   %47 = load void (i8*, i8*, i8*)*, void (i8*, i8*, i8*)** %46, align 8
+; CHECK-NEXT:   call void %47(i8* %trace, i8* getelementptr inbounds ([21 x i8], [21 x i8]* @0, i64 0, i64 0), i8* %44) #6
 ; CHECK-NEXT:   ret i8* %trace
 ; CHECK-NEXT: }
 
@@ -195,43 +195,43 @@ attributes #6 = { nounwind }
 ; CHECK-NEXT:   %10 = bitcast i8** %9 to void (i8*, i8*, double, i8*, i64)**
 ; CHECK-NEXT:   br label %for.body
 
-; CHECK: for.cond.cleanup:                                 ; preds = %21, %entry
-; CHECK-NEXT:   %loss.0.lcssa = phi double [ 0.000000e+00, %entry ], [ %28, %21 ]
+; CHECK: for.cond.cleanup:                                 ; preds = %condition.call.without.trace, %entry
+; CHECK-NEXT:   %loss.0.lcssa = phi double [ 0.000000e+00, %entry ], [ %26, %condition.call.without.trace ]
 ; CHECK-NEXT:   %mrv = insertvalue { double, i8* } undef, double %loss.0.lcssa, 0
 ; CHECK-NEXT:   %mrv1 = insertvalue { double, i8* } %mrv, i8* %trace, 1
 ; CHECK-NEXT:   ret { double, i8* } %mrv1
 
-; CHECK: for.body:                                         ; preds = %21, %for.body.preheader
-; CHECK-NEXT:   %indvars.iv = phi i64 [ 0, %for.body.preheader ], [ %indvars.iv.next, %21 ]
-; CHECK-NEXT:   %loss.021 = phi double [ 0.000000e+00, %for.body.preheader ], [ %28, %21 ]
+; CHECK: for.body:                                         ; preds = %condition.call.without.trace, %for.body.preheader
+; CHECK-NEXT:   %indvars.iv = phi i64 [ 0, %for.body.preheader ], [ %indvars.iv.next, %condition.call.without.trace ]
+; CHECK-NEXT:   %loss.021 = phi double [ 0.000000e+00, %for.body.preheader ], [ %26, %condition.call.without.trace ]
 ; CHECK-NEXT:   %11 = trunc i64 %indvars.iv to i32
 ; CHECK-NEXT:   %conv2 = sitofp i32 %11 to double
 ; CHECK-NEXT:   %12 = tail call double @llvm.fmuladd.f64(double %conv2, double %m, double %b)
 ; CHECK-NEXT:   %13 = load i1 (i8*, i8*)*, i1 (i8*, i8*)** %6, align 8
 ; CHECK-NEXT:   %14 = call i1 %13(i8* %1, i8* getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i64 0, i64 0)) #6
-; CHECK-NEXT:   br i1 %14, label %15, label %21
+; CHECK-NEXT:   br i1 %14, label %condition.call.with.trace, label %condition.call.without.trace
 
-; CHECK: 15:
-; CHECK-NEXT:   %16 = alloca double, align 8
-; CHECK-NEXT:   %17 = bitcast double* %16 to i8*
-; CHECK-NEXT:   %18 = load i64 (i8*, i8*, i8*, i64)*, i64 (i8*, i8*, i8*, i64)** %8, align 8
-; CHECK-NEXT:   %19 = call i64 %18(i8* %1, i8* getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i64 0, i64 0), i8* nonnull %17, i64 8) #6
-; CHECK-NEXT:   %20 = load double, double* %16, align 8
-; CHECK-NEXT:   br label %21
+; CHECK: condition.call.with.trace:                        ; preds = %for.body
+; CHECK-NEXT:   %15 = alloca double, align 8
+; CHECK-NEXT:   %16 = bitcast double* %15 to i8*
+; CHECK-NEXT:   %17 = load i64 (i8*, i8*, i8*, i64)*, i64 (i8*, i8*, i8*, i64)** %8, align 8
+; CHECK-NEXT:   %18 = call i64 %17(i8* %1, i8* getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i64 0, i64 0), i8* nonnull %16, i64 8) #6
+; CHECK-NEXT:   %19 = load double, double* %15, align 8
+; CHECK-NEXT:   br label %condition.call.without.trace
 
-; CHECK: 21:
-; CHECK-NEXT:   %22 = phi double [ %20, %15 ], [ 4.000000e+00, %for.body ]
-; CHECK-NEXT:   %likelihood.call = call double @normal_logpdf(double %12, double 1.000000e+00, double %22)
-; CHECK-NEXT:   %23 = alloca double, align 8
-; CHECK-NEXT:   store double %22, double* %23, align 8
-; CHECK-NEXT:   %24 = bitcast double* %23 to i8**
-; CHECK-NEXT:   %25 = load i8*, i8** %24, align 8
-; CHECK-NEXT:   %26 = load void (i8*, i8*, double, i8*, i64)*, void (i8*, i8*, double, i8*, i64)** %10, align 8
-; CHECK-NEXT:   call void %26(i8* %trace, i8* getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i64 0, i64 0), double %likelihood.call, i8* %25, i64 8) #6
+; CHECK: condition.call.without.trace:                     ; preds = %for.body, %condition.call.with.trace
+; CHECK-NEXT:   %20 = phi double [ %19, %condition.call.with.trace ], [ 4.000000e+00, %for.body ]
+; CHECK-NEXT:   %likelihood.call = call double @normal_logpdf(double %12, double 1.000000e+00, double %20)
+; CHECK-NEXT:   %21 = alloca double, align 8
+; CHECK-NEXT:   store double %20, double* %21, align 8
+; CHECK-NEXT:   %22 = bitcast double* %21 to i8**
+; CHECK-NEXT:   %23 = load i8*, i8** %22, align 8
+; CHECK-NEXT:   %24 = load void (i8*, i8*, double, i8*, i64)*, void (i8*, i8*, double, i8*, i64)** %10, align 8
+; CHECK-NEXT:   call void %24(i8* %trace, i8* getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i64 0, i64 0), double %likelihood.call, i8* %23, i64 8) #6
 ; CHECK-NEXT:   %arrayidx3 = getelementptr inbounds double, double* %data, i64 %indvars.iv
-; CHECK-NEXT:   %27 = load double, double* %arrayidx3, align 8
-; CHECK-NEXT:   %sub = fsub double %22, %27
-; CHECK-NEXT:   %28 = tail call double @llvm.fmuladd.f64(double %sub, double %sub, double %loss.021)
+; CHECK-NEXT:   %25 = load double, double* %arrayidx3, align 8
+; CHECK-NEXT:   %sub = fsub double %20, %25
+; CHECK-NEXT:   %26 = tail call double @llvm.fmuladd.f64(double %sub, double %sub, double %loss.021)
 ; CHECK-NEXT:   %indvars.iv.next = add nuw nsw i64 %indvars.iv, 1
 ; CHECK-NEXT:   %exitcond.not = icmp eq i64 %indvars.iv.next, %wide.trip.count
 ; CHECK-NEXT:   br i1 %exitcond.not, label %for.cond.cleanup, label %for.body
