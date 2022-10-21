@@ -92,6 +92,7 @@ int main(int argc, char **argv) {
   // Register the autodiff interface implementations for upstream dialects.
   enzyme::registerArithDialectAutoDiffInterface(registry);
   enzyme::registerBuiltinDialectAutoDiffInterface(registry);
+  enzyme::registerMemRefDialectAutoDiffInterface(registry);
   enzyme::registerSCFDialectAutoDiffInterface(registry);
 
   return mlir::failed(
