@@ -138,19 +138,7 @@ Operation *mlir::enzyme::MGradientUtils::cloneWithNewOperands(OpBuilder &B,
 }
 
 bool mlir::enzyme::MGradientUtils::isConstantValue(Value v) const {
-  
-  if (isa<mlir::IntegerType>(v.getType()))
-    return true;
-  if (isa<mlir::IndexType>(v.getType()))
-    return true;
-
-  if (matchPattern(v, m_Constant()))
-    return true;
-
-  return activityAnalyzer->isConstantValue(TypeResults(), v);
-
-  // // TODO
-  // return false;
+  return activityAnalyzer->isConstantValue(TR, v);
 }
 
 Value mlir::enzyme::MGradientUtils::invertPointerM(Value v,
@@ -309,6 +297,15 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
 
 LogicalResult MGradientUtils::visitChild(Operation *op) {
   if (mode == DerivativeMode::ForwardMode) {
+    // In absence of a proper activity analysis, approximate it by treating any
+    // side effect-free operation producing constants as inactive.
+    // if (auto iface = dyn_cast<MemoryEffectOpInterface>(op)) {
+      if (llvm::all_of(op->getResults(),
+                       [this](Value v) { return isConstantValue(v); }) &&
+          /*iface.hasNoEffect()*/ activityAnalyzer->isConstantOperation(TR, op)) {
+        return success();
+      }
+    // }
     if (auto iface = dyn_cast<AutoDiffOpInterface>(op)) {
       OpBuilder builder(op->getContext());
       builder.setInsertionPoint(getNewFromOriginal(op));

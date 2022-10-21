@@ -32,6 +32,16 @@ class MTypeResults {
 public:
   // TODO
   TypeTree getReturnAnalysis() { return TypeTree(); }
+  ConcreteType intType(size_t num, Value val, bool errIfNotFound = true,
+                       bool pointerIntSame = false) const {
+    if (val.getType().isa<IntegerType, IndexType>()) {
+      return BaseType::Integer;
+    }
+    if (errIfNotFound) {
+      llvm_unreachable("something happened");
+    }
+    return BaseType::Unknown;
+  }
 };
 
 class MEnzymeLogic;
