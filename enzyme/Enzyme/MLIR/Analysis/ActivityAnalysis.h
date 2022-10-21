@@ -10,7 +10,9 @@ class CallOpInterface;
 
 namespace enzyme {
 
-class TypeResults {};
+// class TypeResults {};
+
+class MTypeResults;
 
 /// Helper class to analyze the differential activity
 class ActivityAnalyzer {
@@ -78,11 +80,11 @@ public:
   /// Return whether this operation is known not to propagate adjoints
   /// Note that operations could return an active pointer, but
   /// do not propagate adjoints themselves
-  bool isConstantOperation(TypeResults const &TR, Operation *op);
+  bool isConstantOperation(MTypeResults const &TR, Operation *op);
 
   /// Return whether this values is known not to contain derivative
   /// information, either directly or as a pointer to
-  bool isConstantValue(TypeResults const &TR, Value val);
+  bool isConstantValue(MTypeResults const &TR, Value val);
 
 private:
   DenseMap<Operation *, llvm::SmallPtrSet<Value, 4>>
@@ -91,8 +93,8 @@ private:
   DenseMap<Value, llvm::SmallPtrSet<Operation *, 4>>
       ReEvaluateOpIfInactiveValue;
 
-  void InsertConstantOperation(TypeResults const &TR, Operation *op);
-  void InsertConstantValue(TypeResults const &TR, Value V);
+  void InsertConstantOperation(MTypeResults const &TR, Operation *op);
+  void InsertConstantValue(MTypeResults const &TR, Value V);
 
   /// Create a new analyzer starting from an existing Analyzer
   /// This is used to perform inductive assumptions
@@ -110,7 +112,7 @@ private:
   }
 
   /// Import known constants from an existing analyzer
-  void insertConstantsFrom(TypeResults const &TR,
+  void insertConstantsFrom(MTypeResults const &TR,
                            ActivityAnalyzer &Hypothesis) {
     for (auto I : Hypothesis.ConstantOperations) {
       InsertConstantOperation(TR, I);
@@ -121,7 +123,7 @@ private:
   }
 
   /// Import known data from an existing analyzer
-  void insertAllFrom(TypeResults const &TR, ActivityAnalyzer &Hypothesis,
+  void insertAllFrom(MTypeResults const &TR, ActivityAnalyzer &Hypothesis,
                      Value Orig) {
     insertConstantsFrom(TR, Hypothesis);
     for (auto I : Hypothesis.ActiveOperations) {
@@ -141,8 +143,13 @@ private:
   /// Is the use of value val as an argument of call CI known to be inactive
   bool isFunctionArgumentConstant(mlir::CallOpInterface CI, Value val);
 
-  /// Is the instruction guaranteed to be inactive because of its operands
-  bool isInstructionInactiveFromOrigin(TypeResults const &TR, Operation *op);
+  /// Is the value guaranteed to be inactive because of how it's produced.
+  bool isValueInactiveFromOrigin(MTypeResults const &TR, Value val);
+  /// Is the operation guaranteed to be inactive because of how its operands are
+  /// produced.
+  bool
+  isOperationInactiveFromOrigin(MTypeResults const &TR, Operation *op,
+                                llvm::Optional<unsigned> resultNo = llvm::None);
 
 public:
   enum class UseActivity {
@@ -162,12 +169,12 @@ public:
     AllStores = 4
   };
   /// Is the value free of any active uses
-  bool isValueInactiveFromUsers(TypeResults const &TR, Value val,
+  bool isValueInactiveFromUsers(MTypeResults const &TR, Value val,
                                 UseActivity UA,
                                 Operation **FoundInst = nullptr);
 
   /// Is the value potentially actively returned or stored
-  bool isValueActivelyStoredOrReturned(TypeResults const &TR, Value val,
+  bool isValueActivelyStoredOrReturned(MTypeResults const &TR, Value val,
                                        bool outside = false);
 
 private:
