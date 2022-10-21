@@ -1,4 +1,4 @@
-//===- MemRefAutoDiffOpInterfaceImpl.cpp - Interface external model -------===//
+//===- LLVMAutoDiffOpInterfaceImpl.cpp - Interface external model  --------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -7,7 +7,7 @@
 //===----------------------------------------------------------------------===//
 //
 // This file contains the external model implementation of the automatic
-// differentiation op interfaces for the upstream MLIR memref dialect.
+// differentiation op interfaces for the upstream LLVM dialect.
 //
 //===----------------------------------------------------------------------===//
 
@@ -15,7 +15,7 @@
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
-#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Support/LogicalResult.h"
 
@@ -24,18 +24,13 @@ using namespace mlir::enzyme;
 
 namespace {
 struct LoadOpInterface
-    : public AutoDiffOpInterface::ExternalModel<LoadOpInterface,
-                                                memref::LoadOp> {
+    : public AutoDiffOpInterface::ExternalModel<LoadOpInterface, LLVM::LoadOp> {
   LogicalResult createForwardModeAdjoint(Operation *op, OpBuilder &builder,
                                          MGradientUtils *gutils) const {
-    auto loadOp = cast<memref::LoadOp>(op);
+    auto loadOp = cast<LLVM::LoadOp>(op);
     if (!gutils->isConstantValue(loadOp)) {
-      SmallVector<Value> inds;
-      for (auto ind : loadOp.getIndices())
-        inds.push_back(gutils->getNewFromOriginal(ind));
-      mlir::Value res = builder.create<memref::LoadOp>(
-          loadOp.getLoc(), gutils->invertPointerM(loadOp.getMemref(), builder),
-          inds);
+      mlir::Value res = builder.create<LLVM::LoadOp>(
+          loadOp.getLoc(), gutils->invertPointerM(loadOp.getAddr(), builder));
       gutils->setDiffe(loadOp, res, builder);
     }
     gutils->eraseIfUnused(op);
@@ -45,29 +40,26 @@ struct LoadOpInterface
 
 struct StoreOpInterface
     : public AutoDiffOpInterface::ExternalModel<StoreOpInterface,
-                                                memref::StoreOp> {
+                                                LLVM::StoreOp> {
   LogicalResult createForwardModeAdjoint(Operation *op, OpBuilder &builder,
                                          MGradientUtils *gutils) const {
-    auto storeOp = cast<memref::StoreOp>(op);
-    if (!gutils->isConstantValue(storeOp.getMemref())) {
-      SmallVector<Value> inds;
-      for (auto ind : storeOp.getIndices())
-        inds.push_back(gutils->getNewFromOriginal(ind));
-      builder.create<memref::StoreOp>(
+    auto storeOp = cast<LLVM::StoreOp>(op);
+    if (!gutils->isConstantValue(storeOp.getAddr())) {
+      builder.create<LLVM::StoreOp>(
           storeOp.getLoc(), gutils->invertPointerM(storeOp.getValue(), builder),
-          gutils->invertPointerM(storeOp.getMemref(), builder), inds);
+          gutils->invertPointerM(storeOp.getAddr(), builder));
     }
     gutils->eraseIfUnused(op);
     return success();
   }
 };
 
-struct AllocOpInterface
-    : public AutoDiffOpInterface::ExternalModel<AllocOpInterface,
-                                                memref::AllocOp> {
+struct AllocaOpInterface
+    : public AutoDiffOpInterface::ExternalModel<AllocaOpInterface,
+                                                LLVM::AllocaOp> {
   LogicalResult createForwardModeAdjoint(Operation *op, OpBuilder &builder,
                                          MGradientUtils *gutils) const {
-    auto allocOp = cast<memref::AllocOp>(op);
+    auto allocOp = cast<LLVM::AllocaOp>(op);
     if (!gutils->isConstantValue(allocOp)) {
       BlockAndValueMapping map;
       for (auto op : allocOp->getOperands())
@@ -80,9 +72,9 @@ struct AllocOpInterface
   }
 };
 
-class MemRefTypeInterface
-    : public AutoDiffTypeInterface::ExternalModel<MemRefTypeInterface,
-                                                  MemRefType> {
+class PointerTypeInterface
+    : public AutoDiffTypeInterface::ExternalModel<PointerTypeInterface,
+                                                  LLVM::LLVMPointerType> {
 public:
   Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
     llvm_unreachable("Cannot create null  of memref (todo polygeist null)");
@@ -95,12 +87,12 @@ public:
 };
 } // namespace
 
-void mlir::enzyme::registerMemRefDialectAutoDiffInterface(
+void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
     DialectRegistry &registry) {
-  registry.addExtension(+[](MLIRContext *context, memref::MemRefDialect *) {
-    memref::LoadOp::attachInterface<LoadOpInterface>(*context);
-    memref::StoreOp::attachInterface<StoreOpInterface>(*context);
-    memref::AllocOp::attachInterface<AllocOpInterface>(*context);
-    MemRefType::attachInterface<MemRefTypeInterface>(*context);
+  registry.addExtension(+[](MLIRContext *context, LLVM::LLVMDialect *) {
+    LLVM::LoadOp::attachInterface<LoadOpInterface>(*context);
+    LLVM::StoreOp::attachInterface<StoreOpInterface>(*context);
+    LLVM::AllocaOp::attachInterface<AllocaOpInterface>(*context);
+    LLVM::LLVMPointerType::attachInterface<PointerTypeInterface>(*context);
   });
 }
