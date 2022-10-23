@@ -755,10 +755,10 @@ static inline bool is_value_needed_in_reverse(
       if (user->getType()->isVoidTy())
         goto endShadow;
 
-      if (!TR.query(const_cast<Instruction *>(user))
-               .Inner0()
-               .isPossiblePointer())
+      if (!TR.query(const_cast<Instruction *>(user))[{-1}]
+               .isPossiblePointer()) {
         goto endShadow;
+      }
 
       if (!OneLevel && is_value_needed_in_reverse<ValueType::Shadow>(
                            gutils, user, mode, seen, oldUnreachable)) {
@@ -884,6 +884,12 @@ static inline bool is_value_needed_in_reverse(
       bool valueIsIndex = false;
       for (unsigned i = 2; i < IVI->getNumOperands(); ++i) {
         if (IVI->getOperand(i) == inst) {
+          if (inst == IVI->getInsertedValueOperand() &&
+              TR.query(
+                    const_cast<Value *>(IVI->getInsertedValueOperand()))[{-1}]
+                  .isFloat()) {
+            continue;
+          }
           valueIsIndex = true;
         }
       }
@@ -891,7 +897,7 @@ static inline bool is_value_needed_in_reverse(
     }
     if (auto EVI = dyn_cast<ExtractValueInst>(user)) {
       bool valueIsIndex = false;
-      for (unsigned i = 2; i < EVI->getNumOperands(); ++i) {
+      for (unsigned i = 1; i < EVI->getNumOperands(); ++i) {
         if (EVI->getOperand(i) == inst) {
           valueIsIndex = true;
         }
