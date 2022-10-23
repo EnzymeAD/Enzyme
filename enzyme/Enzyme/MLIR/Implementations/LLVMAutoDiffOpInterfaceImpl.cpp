@@ -77,7 +77,7 @@ class PointerTypeInterface
                                                   LLVM::LLVMPointerType> {
 public:
   Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
-    llvm_unreachable("Cannot create null  of memref (todo polygeist null)");
+    llvm_unreachable("Cannot create null of memref (todo polygeist null)");
   }
 
   Type getShadowType(Type self, unsigned width) const {
