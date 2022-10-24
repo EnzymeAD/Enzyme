@@ -722,8 +722,10 @@ static inline bool is_value_needed_in_reverse(
       }
 
       if (isa<ReturnInst>(user)) {
-        if (gutils->ATA->ActiveReturns == DIFFE_TYPE::DUP_ARG ||
-            gutils->ATA->ActiveReturns == DIFFE_TYPE::DUP_NONEED) {
+        if ((gutils->ATA->ActiveReturns == DIFFE_TYPE::DUP_ARG ||
+             gutils->ATA->ActiveReturns == DIFFE_TYPE::DUP_NONEED) &&
+            ((inst_cv && VT == ValueType::Primal) ||
+             (!inst_cv && VT == ValueType::Shadow))) {
           if (EnzymePrintDiffUse)
             llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
                          << " in reverse as shadow return " << *user << "\n";
