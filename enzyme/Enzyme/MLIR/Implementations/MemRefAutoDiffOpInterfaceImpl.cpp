@@ -69,10 +69,7 @@ struct AllocOpInterface
                                          MGradientUtils *gutils) const {
     auto allocOp = cast<memref::AllocOp>(op);
     if (!gutils->isConstantValue(allocOp)) {
-      BlockAndValueMapping map;
-      for (auto op : allocOp->getOperands())
-        map.map(op, gutils->getNewFromOriginal(op));
-      auto nop = builder.clone(*allocOp, map);
+      Operation *nop = gutils->cloneWithNewOperands(builder, op);
       gutils->setDiffe(allocOp, nop->getResult(0), builder);
     }
     gutils->eraseIfUnused(op);
@@ -85,7 +82,7 @@ class MemRefTypeInterface
                                                   MemRefType> {
 public:
   Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
-    llvm_unreachable("Cannot create null  of memref (todo polygeist null)");
+    llvm_unreachable("Cannot create null of memref (todo polygeist null)");
   }
 
   Type getShadowType(Type self, unsigned width) const {

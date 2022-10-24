@@ -15,17 +15,17 @@ module {
   }
 }
 
-// CHECK:   func.func private @fwddiffesquare(%arg0: f64, %arg1: f64) -> f64 {
-// CHECK-NEXT:     %c0 = arith.constant 0 : index
-// CHECK-NEXT:     %0 = memref.alloc() : memref<1xf64>
-// CHECK-NEXT:     %1 = memref.alloc() : memref<1xf64>
-// CHECK-NEXT:     %2 = arith.mulf %arg1, %arg0 : f64
-// CHECK-NEXT:     %3 = arith.mulf %arg1, %arg0 : f64
-// CHECK-NEXT:     %4 = arith.addf %2, %3 : f64
-// CHECK-NEXT:     %5 = arith.mulf %arg0, %arg0 : f64
-// CHECK-NEXT:     memref.store %4, %0[%c0] : memref<1xf64>
-// CHECK-NEXT:     memref.store %5, %1[%c0] : memref<1xf64>
-// CHECK-NEXT:     %6 = memref.load %0[%c0] : memref<1xf64>
-// CHECK-NEXT:     %7 = memref.load %1[%c0] : memref<1xf64>
-// CHECK-NEXT:     return %6 : f64
+// CHECK:   func.func private @fwddiffesquare(%[[arg0:.+]]: f64, %[[arg1:.+]]: f64) -> f64 {
+// CHECK-NEXT:     %[[c0:.+]] = arith.constant 0 : index
+// CHECK-NEXT:     %[[i0:.+]] = memref.alloc() : memref<1xf64>
+// CHECK-NEXT:     %[[i1:.+]] = memref.alloc() : memref<1xf64>
+// CHECK-NEXT:     %[[i2:.+]] = arith.mulf %[[arg1]], %[[arg0]] : f64
+// CHECK-NEXT:     %[[i3:.+]] = arith.mulf %[[arg1]], %[[arg0]] : f64
+// CHECK-NEXT:     %[[i4:.+]] = arith.addf %[[i2]], %[[i3]] : f64
+// CHECK-NEXT:     %[[i5:.+]] = arith.mulf %[[arg0]], %[[arg0]] : f64
+// CHECK-NEXT:     memref.store %[[i4]], %[[i0]][%[[c0]]] : memref<1xf64>
+// CHECK-NEXT:     memref.store %[[i5]], %[[i1]][%[[c0]]] : memref<1xf64>
+// CHECK-NEXT:     %[[i6:.+]] = memref.load %[[i0]][%[[c0]]] : memref<1xf64>
+// CHECK-NEXT:     %[[i7:.+]] = memref.load %[[i1]][%[[c0]]] : memref<1xf64>
+// CHECK-NEXT:     return %[[i6]] : f64
 // CHECK-NEXT:   }
