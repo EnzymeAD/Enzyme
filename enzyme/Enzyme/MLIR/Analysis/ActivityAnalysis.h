@@ -57,8 +57,7 @@ private:
   /// Intermediate pointers which are created by inactive instructions
   /// but are marked as active values to inductively determine their
   /// activity.
-  // TODO: support pointers
-  // llvm::SmallPtrSet<llvm::Value *, 1> DeducingPointers;
+  llvm::SmallPtrSet<Value, 1> DeducingPointers;
 
 public:
   /// Construct the analyzer from the a previous set of constant and active
