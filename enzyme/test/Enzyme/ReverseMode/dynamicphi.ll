@@ -91,7 +91,7 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK-NEXT:   %13 = bitcast i64* %[[loopLimit_cache3]] to i8*
 ; CHECK-NEXT:   br i1 %6, label %[[growi7:.+]], label %[[nouterbody:.+]]
 
-; CHECK: [[growi7]]:  
+; CHECK: [[growi7]]:
 ; CHECK-NEXT:   %14 = call i64 @llvm.ctlz.i64(i64 %iv.next, i1 true)
 ; CHECK-NEXT:   %15 = sub nuw nsw i64 64, %14
 ; CHECK-NEXT:   %16 = shl i64 8, %15
@@ -136,8 +136,8 @@ attributes #1 = { noinline nounwind uwtable }
 ; LL14-NEXT:   br label %[[exit10]]
 ; LL15-NEXT:   br label %[[crit]]
 
-; LL14: [[exit10]]: 
-; LL15: [[crit]]: 
+; LL14: [[exit10]]:
+; LL15: [[crit]]:
 ; CHECK-NEXT:   %[[phi_realloccache4:.+]] = phi i8* [ %31, %[[growi9]] ], [ %22, %for.body ]
 ; CHECK-NEXT:   %[[phi_realloccast5:.+]] = bitcast i8* %[[phi_realloccache4]] to double*
 

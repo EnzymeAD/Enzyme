@@ -90,7 +90,7 @@ exit:                                        ; preds = %.lr.ph
 ; CHECK-NEXT:    %g_malloccache = bitcast i8* %malloccall to double*
 ; CHECK-NEXT:    br label %loop2
 
-; CHECK: loop2:  
+; CHECK: loop2:
 ; CHECK-NEXT:   %iv1 = phi i64 [ %iv.next2, %loop2 ], [ 0, %mid ]
 ; CHECK-NEXT:   %iv.next2 = add nuw nsw i64 %iv1, 1
 ; CHECK-NEXT:   %g = call double @get()

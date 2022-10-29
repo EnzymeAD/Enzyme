@@ -882,6 +882,7 @@ public:
     llvm::Value *tape = nullptr;
     bool tapeIsPointer = false;
     int allocatedTapeSize = -1;
+    unsigned byRefSize = 0;
 
 #if LLVM_VERSION_MAJOR >= 14
     for (unsigned i = 1 + sret; i < CI->arg_size(); ++i)
@@ -2316,7 +2317,7 @@ private:
   ModuleAnalysisManager MAM;
 public:
   static char ID;
-  
+
   EnzymeLegacy(bool PostOpt = false) : ModulePass(ID) {
     // initializeLowerAutodiffIntrinsicPass(*PassRegistry::getPassRegistry());
   }
@@ -2349,7 +2350,7 @@ public:
     return pass.implementation(M, getTLI);
   }
 };
-  
+
 char EnzymeLegacy::ID;
 
 class Enzyme final : public AnalysisInfoMixin<Enzyme> {
@@ -2375,7 +2376,7 @@ public:
 
   static bool isRequired() { return true; }
 };
-  
+
 AnalysisKey Enzyme::Key;
 
 

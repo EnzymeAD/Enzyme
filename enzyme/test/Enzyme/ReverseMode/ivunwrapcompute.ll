@@ -76,7 +76,7 @@ exit:                                        ; preds = %loop2
 ; CHECK: bb:                                               ; preds = %loop1
 ; CHECK-NEXT:   br i1 %tmp16, label %mid, label %loop1
 
-; CHECK: mid:  
+; CHECK: mid:
 ; CHECK-NEXT:   %tmp28 = phi i32 [ %tmp27, %.split.loop.exit ], [ 15, %bb ]
 ; CHECK-NEXT:   %tmp29 = sext i32 %tmp28 to i64
 ; CHECK-NEXT:   %tmp30 = add nsw i64 %tmp29, 1
@@ -95,7 +95,7 @@ exit:                                        ; preds = %loop2
 ; CHECK-NEXT:   %tmp35_malloccache = bitcast i8* %malloccall to double*
 ; CHECK-NEXT:   br label %loop2
 
-; CHECK: loop2: 
+; CHECK: loop2:
 ; CHECK-NEXT:   %iv1 = phi i64 [ %iv.next2, %loop2 ], [ 0, %mid ]
 ; CHECK-NEXT:   %tmp35 = phi double [ %tmp38, %loop2 ], [ 1.000000e+00, %mid ]
 ; CHECK-NEXT:   %[[a2:.+]] = getelementptr inbounds double, double* %tmp35_malloccache, i64 %iv1

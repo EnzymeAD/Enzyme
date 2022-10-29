@@ -72,6 +72,10 @@ static llvm::cl::opt<bool>
     InactiveArgs("activity-analysis-inactive-args", cl::init(false), cl::Hidden,
                  cl::desc("Whether all args are inactive"));
 
+static llvm::cl::opt<bool>
+        DuplicatedRet("activity-analysis-duplicated-ret", cl::init(false),
+                      cl::Hidden, cl::desc("Whether the return is duplicated"));
+
 bool implementation(Function &F,std::function<TargetLibraryInfo& (Function &F)> &getTLI){
     if (F.getName() != FunctionToAnalyze)
         return /*changed*/ false;
