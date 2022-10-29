@@ -53,7 +53,7 @@ attributes #0 = { noinline nounwind uwtable }
 ; CHECK: for.body:                                         ; preds = %for.cond
 ; CHECK-NEXT:   %[[i2:.+]] = load double, double* %"x'"
 ; CHECK-NEXT:   %2 = getelementptr inbounds double*, double** %truetape, i64 %iv
-; CHECK-NEXT:   %[[il_phi:.+]] = load double*, double** %2, align 8, !invariant.group !2
+; CHECK-NEXT:   %[[il_phi:.+]] = load double*, double** %2, align 8, !invariant.group !7
 ; CHECK-NEXT:   %[[i4:.+]] = load double, double* %[[il_phi]]
 ; CHECK-NEXT:   %[[i5:.+]] = fadd fast double %[[i4]], %[[i2]]
 ; CHECK-NEXT:   store double %[[i5]], double* %[[il_phi]]

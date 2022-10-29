@@ -79,16 +79,16 @@ bool implementation(Function &F){
         } else if (a.getType()->isPointerTy()) {
             auto et = cast<PointerType>(a.getType())->getPointerElementType();
             if (et->isFPOrFPVectorTy()) {
-                dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1);
+                dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1,nullptr);
             } else if (et->isPointerTy()) {
-                dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1);
+                dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1,nullptr);
             }
             dt.insert({}, BaseType::Pointer);
         } else if (a.getType()->isIntOrIntVectorTy()) {
             dt = ConcreteType(BaseType::Integer);
         }
         type_args.Arguments.insert(
-                std::pair<Argument *, TypeTree>(&a, dt.Only(-1)));
+                std::pair<Argument *, TypeTree>(&a, dt.Only(-1,nullptr)));
         // TODO note that here we do NOT propagate constants in type info (and
         // should consider whether we should)
         type_args.KnownValues.insert(
@@ -101,15 +101,17 @@ bool implementation(Function &F){
     } else if (F.getReturnType()->isPointerTy()) {
         auto et = cast<PointerType>(F.getReturnType())->getPointerElementType();
         if (et->isFPOrFPVectorTy()) {
-            dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1);
+            dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1,nullptr);
         } else if (et->isPointerTy()) {
-            dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1);
+            dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1,nullptr);
         }
     } else if (F.getReturnType()->isIntOrIntVectorTy()) {
         dt = ConcreteType(BaseType::Integer);
     }
-    type_args.Return = dt.Only(-1);
-    PreProcessCache PPC;
+    type_args.Return = dt.Only(-1,nullptr);
+    llvm::ModuleAnalysisManager MAM;
+    llvm::FunctionAnalysisManager FAM;
+    PreProcessCache PPC(MAM, FAM);
     TypeAnalysis TA(PPC.FAM);
     TA.analyzeFunction(type_args);
     for (Function &f : *F.getParent()) {
@@ -154,80 +156,7 @@ public:
   }
 
   bool runOnFunction(Function &F) override {
-    if (F.getName() != FunctionToAnalyze)
-      return /*changed*/ false;
-
-    FnTypeInfo type_args(&F);
-    for (auto &a : type_args.Function->args()) {
-      TypeTree dt;
-      if (a.getType()->isFPOrFPVectorTy()) {
-        dt = ConcreteType(a.getType()->getScalarType());
-      } else if (a.getType()->isPointerTy()) {
-        auto et = cast<PointerType>(a.getType())->getPointerElementType();
-        if (et->isFPOrFPVectorTy()) {
-          dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1);
-        } else if (et->isPointerTy()) {
-          dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1);
-        }
-        dt.insert({}, BaseType::Pointer);
-      } else if (a.getType()->isIntOrIntVectorTy()) {
-        dt = ConcreteType(BaseType::Integer);
-      }
-      type_args.Arguments.insert(
-          std::pair<Argument *, TypeTree>(&a, dt.Only(-1)));
-      // TODO note that here we do NOT propagate constants in type info (and
-      // should consider whether we should)
-      type_args.KnownValues.insert(
-          std::pair<Argument *, std::set<int64_t>>(&a, {}));
-    }
-
-    TypeTree dt;
-    if (F.getReturnType()->isFPOrFPVectorTy()) {
-      dt = ConcreteType(F.getReturnType()->getScalarType());
-    } else if (F.getReturnType()->isPointerTy()) {
-      auto et = cast<PointerType>(F.getReturnType())->getPointerElementType();
-      if (et->isFPOrFPVectorTy()) {
-        dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1);
-      } else if (et->isPointerTy()) {
-        dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1);
-      }
-    } else if (F.getReturnType()->isIntOrIntVectorTy()) {
-      dt = ConcreteType(BaseType::Integer);
-    }
-    type_args.Return = dt.Only(-1);
-    llvm::ModuleAnalysisManager MAM;
-    llvm::FunctionAnalysisManager FAM;
-    PreProcessCache PPC(MAM, FAM);
-    TypeAnalysis TA(PPC.FAM);
-    TA.analyzeFunction(type_args);
-    for (Function &f : *F.getParent()) {
-
-      for (auto &analysis : TA.analyzedFunctions) {
-        if (analysis.first.Function != &f)
-          continue;
-        auto &ta = *analysis.second;
-        llvm::outs() << f.getName() << " - " << analysis.first.Return.str()
-                     << " |";
-
-        for (auto &a : f.args()) {
-          llvm::outs() << analysis.first.Arguments.find(&a)->second.str() << ":"
-                       << to_string(analysis.first.KnownValues.find(&a)->second)
-                       << " ";
-        }
-        llvm::outs() << "\n";
-
-        for (auto &a : f.args()) {
-          llvm::outs() << a << ": " << ta.getAnalysis(&a).str() << "\n";
-        }
-        for (auto &BB : f) {
-          llvm::outs() << BB.getName() << "\n";
-          for (auto &I : BB) {
-            llvm::outs() << I << ": " << ta.getAnalysis(&I).str() << "\n";
-          }
-        }
-      }
-    }
-    return /*changed*/ false;
+    return implementation(F);
   }
 };
 

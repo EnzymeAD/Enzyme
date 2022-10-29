@@ -31,7 +31,7 @@ declare double @__enzyme_autodiff(double (double)*, ...)
 ; CHECK-NEXT:   store double %differeturn, double* %"'de", align 8
 ; CHECK-NEXT:   %0 = load double, double* %"'de", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"'de", align 8
-; CHECK-NEXT:   %1 = call fast double @expm1(double %x) #1
+; CHECK-NEXT:   %1 = call fast double @llvm.exp.f64(double %x)
 ; CHECK-NEXT:   %2 = fadd fast double 1.000000e+00, %1
 ; CHECK-NEXT:   %3 = fmul fast double %2, %0
 ; CHECK-NEXT:   %4 = load double, double* %"x'de", align 8

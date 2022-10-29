@@ -1155,16 +1155,16 @@ public:
       } else if (a.getType()->isPointerTy()) {
         auto et = a.getType()->getPointerElementType();
         if (et->isFPOrFPVectorTy()) {
-          dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1);
+          dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1, nullptr);
         } else if (et->isPointerTy()) {
-          dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1);
+          dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1, nullptr);
         }
         dt.insert({}, BaseType::Pointer);
       } else if (a.getType()->isIntOrIntVectorTy()) {
         dt = ConcreteType(BaseType::Integer);
       }
       type_args.Arguments.insert(
-          std::pair<Argument *, TypeTree>(&a, dt.Only(-1)));
+          std::pair<Argument *, TypeTree>(&a, dt.Only(-1, nullptr)));
       // TODO note that here we do NOT propagate constants in type info (and
       // should consider whether we should)
       type_args.KnownValues.insert(
@@ -2220,13 +2220,13 @@ public:
       auto TLI = getTLI(F);
       changed |= lowerEnzymeCalls(F, successful, done, TLI);
 
-      if (!successful) {
+      /*if (!successful) {
         M.getContext().diagnose(
             (EnzymeFailure("FailedToDifferentiate", F.getSubprogram(),
                            &*F.getEntryBlock().begin())
              << "EnzymeFailure when replacing __enzyme_autodiff calls in "
              << F.getName()));
-      }
+      }*/
     }
 
     SmallVector<CallInst *, 4> toErase;

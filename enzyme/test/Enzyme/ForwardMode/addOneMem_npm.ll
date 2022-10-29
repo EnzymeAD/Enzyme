@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -instsimplify -gvn -dse -dse -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,inline,mem2reg,instsimplify,gvn,dse,dse"  -enzyme-preopt=false -S | FileCheck %s
 
 ; __attribute__((noinline))
 ; void addOneMem(double *x) {
@@ -39,12 +39,10 @@ declare double @__enzyme_fwddiff(void (double*)*, ...)
 !5 = !{!"Simple C/C++ TBAA"}
 
 
-; CHECK: define {{(dso_local )?}}void @test_derivative(double* %x, double* %xp) 
+; CHECK: define dso_local void @test_derivative(double* %x, double* %xp)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[i1:.+]] = load double, double* %xp, align 8, !tbaa !2
-; CHECK-NEXT:   %[[i0:.+]] = load double, double* %x, align 8, !tbaa !2
-; CHECK-NEXT:   %add.i = fadd fast double %[[i0]], 1.000000e+00
-; CHECK-NEXT:   store double %add.i, double* %x, align 8, !tbaa !2
-; CHECK-NEXT:   store double %[[i1]], double* %xp, align 8
-; CHECK-NEXT:   ret void
+; CHECK-NEXT:    %0 = load double, double* %x, align 8, !tbaa !2
+; CHECK-NEXT:    %add.i = fadd fast double %0, 1.000000e+00
+; CHECK-NEXT:    store double %add.i, double* %x, align 8, !tbaa !2, !alias.scope !6, !noalias !9
+; CHECK-NEXT:    ret void
 ; CHECK-NEXT: }
