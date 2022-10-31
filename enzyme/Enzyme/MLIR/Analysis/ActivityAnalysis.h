@@ -1,8 +1,8 @@
 #ifndef ENZYME_MLIR_ANALYSIS_ACTIVITYANALYSIS_H
 #define ENZYME_MLIR_ANALYSIS_ACTIVITYANALYSIS_H
 
-#include "mlir/IR/Block.h"
 #include "../../Utils.h"
+#include "mlir/IR/Block.h"
 
 namespace mlir {
 
@@ -71,8 +71,8 @@ public:
       const llvm::SmallPtrSetImpl<Value> &ConstantValues,
       const llvm::SmallPtrSetImpl<Value> &ActiveValues,
       DIFFE_TYPE ActiveReturns)
-      : notForAnalysis(notForAnalysis_),
-        ActiveReturns(ActiveReturns), directions(UP | DOWN),
+      : notForAnalysis(notForAnalysis_), ActiveReturns(ActiveReturns),
+        directions(UP | DOWN),
         ConstantValues(ConstantValues.begin(), ConstantValues.end()),
         ActiveValues(ActiveValues.begin(), ActiveValues.end()) {}
 
@@ -98,13 +98,12 @@ private:
   /// Create a new analyzer starting from an existing Analyzer
   /// This is used to perform inductive assumptions
   ActivityAnalyzer(ActivityAnalyzer &Other, uint8_t directions)
-      :  notForAnalysis(Other.notForAnalysis),
-        ActiveReturns(Other.ActiveReturns),
-        directions(directions),
+      : notForAnalysis(Other.notForAnalysis),
+        ActiveReturns(Other.ActiveReturns), directions(directions),
         ConstantOperations(Other.ConstantOperations),
         ActiveOperations(Other.ActiveOperations),
         ConstantValues(Other.ConstantValues), ActiveValues(Other.ActiveValues) {
-        // DeducingPointers(Other.DeducingPointers) {
+    // DeducingPointers(Other.DeducingPointers) {
     assert(directions != 0);
     assert((directions & Other.directions) == directions);
     assert((directions & Other.directions) != 0);
