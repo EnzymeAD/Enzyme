@@ -70,79 +70,102 @@ enum class ErrorType {
   NoDerivative = 0,
   NoShadow = 1,
   IllegalTypeAnalysis = 2,
-  NoType = 3
+  NoType = 3,
+  IllegalFirstPointer = 4,
+  InternalError = 5,
+  TypeDepthExceeded = 6
 };
 
 extern "C" {
 /// Print additional debug info relevant to performance
 extern llvm::cl::opt<bool> EnzymePrintPerf;
 extern void (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
-                                  void *);
+                                  const void *);
 }
 
-extern std::map<std::string, std::function<llvm::Value *(
-                                 llvm::IRBuilder<> &, llvm::CallInst *,
-                                 llvm::ArrayRef<llvm::Value *>)>>
+llvm::SmallVector<llvm::Instruction *, 2> PostCacheStore(llvm::StoreInst *SI,
+                                                         llvm::IRBuilder<> &B);
+
+llvm::Value *CreateAllocation(llvm::IRBuilder<> &B, llvm::Type *T,
+                              llvm::Value *Count, llvm::Twine Name = "",
+                              llvm::CallInst **caller = nullptr,
+                              llvm::Instruction **ZeroMem = nullptr,
+                              bool isDefault = false);
+llvm::CallInst *CreateDealloc(llvm::IRBuilder<> &B, llvm::Value *ToFree);
+void ZeroMemory(llvm::IRBuilder<> &Builder, llvm::Type *T, llvm::Value *obj,
+                bool isTape);
+
+llvm::Value *CreateReAllocation(llvm::IRBuilder<> &B, llvm::Value *prev,
+                                llvm::Type *T, llvm::Value *OuterCount,
+                                llvm::Value *InnerCount, llvm::Twine Name = "",
+                                llvm::CallInst **caller = nullptr,
+                                bool ZeroMem = false);
+
+llvm::PointerType *getDefaultAnonymousTapeType(llvm::LLVMContext &C);
+
+class GradientUtils;
+extern std::map<std::string,
+                std::function<llvm::Value *(
+                    llvm::IRBuilder<> &, llvm::CallInst *,
+                    llvm::ArrayRef<llvm::Value *>, GradientUtils *)>>
     shadowHandlers;
+
+template <typename... Args>
+void EmitWarning(llvm::StringRef RemarkName,
+                 const llvm::DiagnosticLocation &Loc,
+                 const llvm::BasicBlock *BB, const Args &...args) {
+
+  llvm::LLVMContext &Ctx = BB->getContext();
+  if (Ctx.getDiagHandlerPtr()->isPassedOptRemarkEnabled("enzyme")) {
+    std::string str;
+    llvm::raw_string_ostream ss(str);
+    (ss << ... << args);
+    auto R = llvm::OptimizationRemark("enzyme", RemarkName, Loc, BB)
+             << ss.str();
+    Ctx.diagnose(R);
+  }
+
+  if (EnzymePrintPerf)
+    (llvm::errs() << ... << args) << "\n";
+}
+
+template <typename... Args>
+void EmitWarning(llvm::StringRef RemarkName, const llvm::Instruction &I,
+                 const Args &...args) {
+  EmitWarning(RemarkName, I.getDebugLoc(), I.getParent(), args...);
+}
+
+template <typename... Args>
+void EmitWarning(llvm::StringRef RemarkName, const llvm::Function &F,
+                 const Args &...args) {
+  llvm::LLVMContext &Ctx = F.getContext();
+  if (Ctx.getDiagHandlerPtr()->isPassedOptRemarkEnabled("enzyme")) {
+    std::string str;
+    llvm::raw_string_ostream ss(str);
+    (ss << ... << args);
+    auto R = llvm::OptimizationRemark("enzyme", RemarkName, &F) << ss.str();
+    Ctx.diagnose(R);
+  }
+  if (EnzymePrintPerf)
+    (llvm::errs() << ... << args) << "\n";
+}
+
+class EnzymeFailure final : public llvm::DiagnosticInfoUnsupported {
+public:
+  EnzymeFailure(llvm::Twine Msg, const llvm::DiagnosticLocation &Loc,
+                const llvm::Instruction *CodeRegion);
+};
 
 template <typename... Args>
 void EmitFailure(llvm::StringRef RemarkName,
                  const llvm::DiagnosticLocation &Loc,
                  const llvm::Instruction *CodeRegion, Args &...args) {
-
-  llvm::OptimizationRemarkEmitter ORE(CodeRegion->getParent()->getParent());
-  std::string str;
-  llvm::raw_string_ostream ss(str);
+  std::string *str = new std::string();
+  llvm::raw_string_ostream ss(*str);
   (ss << ... << args);
-  ORE.emit(llvm::DiagnosticInfoOptimizationFailure("enzyme", RemarkName, Loc,
-                                                   CodeRegion->getParent())
-           << ss.str());
+  CodeRegion->getContext().diagnose(
+      (EnzymeFailure(llvm::Twine("Enzyme: ") + ss.str(), Loc, CodeRegion)));
 }
-
-template <typename... Args>
-void EmitWarning(llvm::StringRef RemarkName,
-                 const llvm::DiagnosticLocation &Loc, const llvm::Function *F,
-                 const llvm::BasicBlock *BB, const Args &...args) {
-
-  llvm::OptimizationRemarkEmitter ORE(F);
-  ORE.emit([&]() {
-    std::string str;
-    llvm::raw_string_ostream ss(str);
-    (ss << ... << args);
-    return llvm::OptimizationRemark("enzyme", RemarkName, Loc, BB) << ss.str();
-  });
-  if (EnzymePrintPerf)
-    (llvm::errs() << ... << args) << "\n";
-}
-
-template <typename... Args>
-void EmitWarning(llvm::StringRef RemarkName, const llvm::Function *F,
-                 const Args &...args) {
-
-  llvm::OptimizationRemarkEmitter ORE(F);
-  ORE.emit([&]() {
-    std::string str;
-    llvm::raw_string_ostream ss(str);
-    (ss << ... << args);
-    return llvm::OptimizationRemark("enzyme", RemarkName, F) << ss.str();
-  });
-  if (EnzymePrintPerf)
-    (llvm::errs() << ... << args) << "\n";
-}
-
-class EnzymeFailure : public llvm::DiagnosticInfoIROptimization {
-public:
-  EnzymeFailure(llvm::StringRef RemarkName, const llvm::DiagnosticLocation &Loc,
-                const llvm::Instruction *CodeRegion);
-
-  static llvm::DiagnosticKind ID();
-  static bool classof(const DiagnosticInfo *DI) {
-    return DI->getKind() == ID();
-  }
-
-  /// \see DiagnosticInfoOptimizationBase::isEnabled.
-  bool isEnabled() const override;
-};
 
 static inline llvm::Function *isCalledFunction(llvm::Value *val) {
   if (llvm::CallInst *CI = llvm::dyn_cast<llvm::CallInst>(val)) {
@@ -304,6 +327,22 @@ enum class ValueType {
   Both = Primal | Shadow,
 };
 
+static inline std::string to_string(ValueType mode) {
+  switch (mode) {
+  case ValueType::None:
+    return "None";
+  case ValueType::Primal:
+    return "Primal";
+  case ValueType::Shadow:
+    return "Shadow";
+  case ValueType::Both:
+    return "Both";
+  }
+  llvm_unreachable("illegal valuetype");
+}
+
+typedef std::pair<const llvm::Value *, ValueType> UsageKey;
+
 static inline std::string to_string(DerivativeMode mode) {
   switch (mode) {
   case DerivativeMode::ForwardMode:
@@ -379,6 +418,11 @@ static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode,
   }
 
   if (arg->isPointerTy()) {
+#if LLVM_VERSION_MAJOR >= 15
+    if (!arg->getContext().supportsTypedPointers()) {
+      return DIFFE_TYPE::DUP_ARG;
+    }
+#endif
     switch (whatType(arg->getPointerElementType(), mode, integersAreConstant,
                      seen)) {
     case DIFFE_TYPE::OUT_DIFF:
@@ -518,59 +562,9 @@ static inline llvm::Type *IntToFloatTy(llvm::Type *T) {
   return nullptr;
 }
 
-// TODO replace/rename
-/// Determine whether this function is a certain malloc free
-/// debug or lifetime
-static inline bool isCertainMallocOrFree(llvm::Function *called) {
-  if (called == nullptr)
+static inline bool isDebugFunction(llvm::Function *called) {
+  if (!called)
     return false;
-  if (called->getName() == "printf" || called->getName() == "puts" ||
-      called->getName() == "malloc" || called->getName() == "_Znwm" ||
-      called->getName() == "_ZdlPv" || called->getName() == "_ZdlPvm" ||
-      called->getName() == "free" || called->getName() == "swift_allocObject" ||
-      called->getName() == "swift_release" ||
-      shadowHandlers.find(called->getName().str()) != shadowHandlers.end())
-    return true;
-  switch (called->getIntrinsicID()) {
-  case llvm::Intrinsic::dbg_declare:
-  case llvm::Intrinsic::dbg_value:
-#if LLVM_VERSION_MAJOR > 6
-  case llvm::Intrinsic::dbg_label:
-#endif
-  case llvm::Intrinsic::dbg_addr:
-  case llvm::Intrinsic::lifetime_start:
-  case llvm::Intrinsic::lifetime_end:
-    return true;
-  default:
-    break;
-  }
-
-  return false;
-}
-
-// TODO replace/rename
-/// Determine whether this function is a certain print free
-/// debug or lifetime
-static inline bool isCertainPrintOrFree(llvm::Function *called) {
-  if (called == nullptr)
-    return false;
-
-  if (called->getName() == "printf" || called->getName() == "puts" ||
-      called->getName() == "fprintf" || called->getName() == "putchar" ||
-      called->getName().startswith(
-          "_ZStlsISt11char_traitsIcEERSt13basic_ostreamIcT_ES5_") ||
-      called->getName().startswith("_ZNSolsE") ||
-      called->getName().startswith("_ZNSo9_M_insert") ||
-      called->getName().startswith("_ZSt16__ostream_insert") ||
-      called->getName().startswith("_ZNSo3put") ||
-      called->getName().startswith("_ZSt4endl") ||
-      called->getName().startswith("_ZN3std2io5stdio6_print") ||
-      called->getName().startswith("_ZNSo5flushEv") ||
-      called->getName().startswith("_ZN4core3fmt") ||
-      called->getName() == "vprintf" || called->getName() == "_ZdlPv" ||
-      called->getName() == "_ZdlPvm" || called->getName() == "free" ||
-      called->getName() == "swift_release")
-    return true;
   switch (called->getIntrinsicID()) {
   case llvm::Intrinsic::dbg_declare:
   case llvm::Intrinsic::dbg_value:
@@ -587,19 +581,17 @@ static inline bool isCertainPrintOrFree(llvm::Function *called) {
   return false;
 }
 
-// TODO replace/rename
-/// Determine whether this function is a certain print malloc free
-/// debug or lifetime
-static inline bool isCertainPrintMallocOrFree(llvm::Function *called) {
-  if (called == nullptr)
-    return false;
-
-  if (isCertainPrintOrFree(called))
+static inline bool isCertainPrint(const llvm::StringRef name) {
+  if (name == "printf" || name == "puts" || name == "fprintf" ||
+      name == "putchar" ||
+      name.startswith("_ZStlsISt11char_traitsIcEERSt13basic_ostreamIcT_ES5_") ||
+      name.startswith("_ZNSolsE") || name.startswith("_ZNSo9_M_insert") ||
+      name.startswith("_ZSt16__ostream_insert") ||
+      name.startswith("_ZNSo3put") || name.startswith("_ZSt4endl") ||
+      name.startswith("_ZN3std2io5stdio6_print") ||
+      name.startswith("_ZNSo5flushEv") || name.startswith("_ZN4core3fmt") ||
+      name == "vprintf")
     return true;
-
-  if (isCertainMallocOrFree(called))
-    return true;
-
   return false;
 }
 
@@ -856,7 +848,8 @@ void mayExecuteAfter(llvm::SmallVectorImpl<llvm::Instruction *> &results,
                      const llvm::Loop *region);
 
 /// Return whether maybeReader can read from memory written to by maybeWriter
-bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::Instruction *maybeReader,
+bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
+                          llvm::Instruction *maybeReader,
                           llvm::Instruction *maybeWriter);
 
 // A more advanced version of writesToMemoryReadBy, where the writing
@@ -870,8 +863,9 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::Instruction *maybeReader,
 //      load A[i-1]
 //      store A[i] = ...
 //   }
-bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::ScalarEvolution &SE,
-                              llvm::LoopInfo &LI, llvm::DominatorTree &DT,
+bool overwritesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
+                              llvm::ScalarEvolution &SE, llvm::LoopInfo &LI,
+                              llvm::DominatorTree &DT,
                               llvm::Instruction *maybeReader,
                               llvm::Instruction *maybeWriter,
                               llvm::Loop *scope = nullptr);
@@ -983,9 +977,8 @@ static inline llvm::Value *getMPIMemberPtr(llvm::IRBuilder<> &B,
 llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
                                    ConcreteType CT, llvm::Type *intType,
                                    llvm::IRBuilder<> &B2);
-llvm::Function *getOrInsertExponentialAllocator(llvm::Module &M, bool ZeroInit);
 
-class AssertingReplacingVH : public llvm::CallbackVH {
+class AssertingReplacingVH final : public llvm::CallbackVH {
 public:
   AssertingReplacingVH() = default;
 
@@ -1033,11 +1026,27 @@ template <typename T> static inline llvm::Function *getFunctionFromCall(T *op) {
   return called;
 }
 
+template <typename T> static inline llvm::StringRef getFuncNameFromCall(T *op) {
+  auto AttrList =
+      op->getAttributes().getAttributes(llvm::AttributeList::FunctionIndex);
+  if (AttrList.hasAttribute("enzyme_math"))
+    return AttrList.getAttribute("enzyme_math").getValueAsString();
+
+  if (auto called = getFunctionFromCall(op)) {
+    if (called->hasFnAttribute("enzyme_math"))
+      return called->getFnAttribute("enzyme_math").getValueAsString();
+    else
+      return called->getName();
+  }
+  return "";
+}
+
 llvm::Function *
 getOrInsertDifferentialWaitallSave(llvm::Module &M,
                                    llvm::ArrayRef<llvm::Type *> T,
                                    llvm::PointerType *reqType);
 
 void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
-                            llvm::Value *shadow, const char *Message);
+                            llvm::Value *shadow, const char *Message,
+                            llvm::DebugLoc &&loc, llvm::Instruction *orig);
 #endif

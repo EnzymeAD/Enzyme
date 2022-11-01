@@ -206,11 +206,10 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
                   if (!byref.count(realidx))
                     args.push_back(arg.getType());
                   else
-                    args.push_back(
-                        cast<PointerType>(arg.getType())->getElementType());
+                    args.push_back(arg.getType()->getPointerElementType());
                   realidx++;
                 } else {
-                  sretTy = cast<PointerType>(arg.getType())->getElementType();
+                  sretTy = arg.getType()->getPointerElementType();
                 }
                 i++;
               }
@@ -348,7 +347,94 @@ handleInactiveFunction(llvm::Module &M, llvm::GlobalVariable &g,
   globalsToErase.push_back(&g);
 }
 
+static void
+handleFunctionLike(llvm::Module &M, llvm::GlobalVariable &g,
+                   SmallVectorImpl<GlobalVariable *> &globalsToErase) {
+  if (g.hasInitializer()) {
+    if (auto CA = dyn_cast<ConstantAggregate>(g.getInitializer())) {
+      if (CA->getNumOperands() < 2) {
+        llvm::errs() << M << "\n";
+        llvm::errs() << "Use of "
+                     << "enzyme_function_like"
+                     << " must be a "
+                        "constant of size at least "
+                     << 2 << " " << g << "\n";
+        llvm_unreachable("enzyme_function_like");
+      }
+      Value *V = CA->getOperand(0);
+      Value *name = CA->getOperand(1);
+      while (auto CE = dyn_cast<ConstantExpr>(V)) {
+        V = CE->getOperand(0);
+      }
+      while (auto CE = dyn_cast<ConstantExpr>(name)) {
+        name = CE->getOperand(0);
+      }
+      StringRef nameVal;
+      if (auto GV = dyn_cast<GlobalVariable>(name))
+        if (GV->isConstant())
+          if (auto C = GV->getInitializer())
+            if (auto CA = dyn_cast<ConstantDataArray>(C))
+              if (CA->getType()->getElementType()->isIntegerTy(8) &&
+                  CA->isCString())
+                nameVal = CA->getAsCString();
+
+      if (nameVal == "") {
+        llvm::errs() << *name << "\n";
+        llvm::errs() << "Use of "
+                     << "enzyme_function_like"
+                     << "requires a non-empty function name"
+                     << "\n";
+        llvm_unreachable("enzyme_function_like");
+      }
+      if (auto F = dyn_cast<Function>(V)) {
+        F->addAttribute(AttributeList::FunctionIndex,
+                        Attribute::get(g.getContext(), "enzyme_math", nameVal));
+      } else {
+        llvm::errs() << M << "\n";
+        llvm::errs() << "Param of __enzyme_inactivefn must be a "
+                        "function"
+                     << g << "\n"
+                     << *V << "\n";
+        llvm_unreachable("__enzyme_inactivefn");
+      }
+    } else {
+      llvm::errs() << M << "\n";
+      llvm::errs() << "Use of __enzyme_inactivefn must be a "
+                      "constant function "
+                   << g << "\n";
+      llvm_unreachable("__enzyme_register_gradient");
+    }
+    globalsToErase.push_back(&g);
+  }
+}
+
 static void handleKnownFunctions(llvm::Function &F) {
+  if (F.getName() == "memcmp") {
+    F.addFnAttr(Attribute::ReadOnly);
+    F.addFnAttr(Attribute::ArgMemOnly);
+    F.addFnAttr(Attribute::NoUnwind);
+    F.addFnAttr(Attribute::NoRecurse);
+#if LLVM_VERSION_MAJOR >= 9
+    F.addFnAttr(Attribute::WillReturn);
+    F.addFnAttr(Attribute::NoFree);
+    F.addFnAttr(Attribute::NoSync);
+#else
+    F.addFnAttr("nofree");
+#endif
+    for (int i = 0; i < 2; i++)
+      if (F.getFunctionType()->getParamType(i)->isPointerTy()) {
+        F.addParamAttr(i, Attribute::NoCapture);
+        F.addParamAttr(i, Attribute::WriteOnly);
+      }
+  }
+  if (F.getName() ==
+      "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_createERmm") {
+#if LLVM_VERSION_MAJOR >= 9
+    F.addFnAttr(Attribute::NoFree);
+#else
+    F.addFnAttr("nofree");
+#endif
+  }
   if (F.getName() == "MPI_Irecv" || F.getName() == "PMPI_Irecv") {
     F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
     F.addFnAttr(Attribute::NoUnwind);
@@ -619,7 +705,7 @@ static bool replaceOriginalCall(CallInst *CI, Function *fn, Value *diffret,
     } else if (CI->hasStructRetAttr()) {
       Value *sret = CI->getArgOperand(0);
       PointerType *stype = cast<PointerType>(sret->getType());
-      StructType *st = dyn_cast<StructType>(stype->getElementType());
+      StructType *st = dyn_cast<StructType>(stype->getPointerElementType());
 
       // Assign results to struct allocated at the call site.
       if (st && st->isLayoutIdentical(diffretsty)) {
@@ -634,12 +720,12 @@ static bool replaceOriginalCall(CallInst *CI, Function *fn, Value *diffret,
         }
       } else {
         auto &DL = fn->getParent()->getDataLayout();
-        if (DL.getTypeSizeInBits(stype->getElementType()) !=
+        if (DL.getTypeSizeInBits(stype->getPointerElementType()) !=
             DL.getTypeSizeInBits(diffret->getType())) {
           EmitFailure("IllegalReturnCast", CI->getDebugLoc(), CI,
                       "Cannot cast return type of gradient ",
                       *diffret->getType(), *diffret, ", to desired type ",
-                      *stype->getElementType());
+                      *stype->getPointerElementType());
           return false;
         }
         Builder.CreateStore(
@@ -692,12 +778,13 @@ static bool replaceOriginalCall(CallInst *CI, Function *fn, Value *diffret,
   return true;
 }
 
-class Enzyme : public ModulePass {
+class Enzyme final : public ModulePass {
 public:
   EnzymeLogic Logic;
   static char ID;
   Enzyme(bool PostOpt = false)
-      : ModulePass(ID), Logic(PostOpt | EnzymePostOpt) {
+      : ModulePass(ID),
+        Logic(EnzymePostOpt.getNumOccurrences() ? EnzymePostOpt : PostOpt) {
     // initializeLowerAutodiffIntrinsicPass(*PassRegistry::getPassRegistry());
   }
 
@@ -969,6 +1056,9 @@ public:
 
     auto newFunc = Logic.CreateBatch(F, width, arg_types, ret_type);
 
+    if (!newFunc)
+      return false;
+
     Value *batch =
         Builder.CreateCall(newFunc->getFunctionType(), newFunc, args);
 
@@ -1217,6 +1307,7 @@ public:
         if (sizeOnly) {
           assert(opt_ty);
           constants.push_back(*opt_ty);
+          truei++;
           continue;
         }
         ++i;
@@ -1224,7 +1315,7 @@ public:
       }
 
       if (byRefSize) {
-        Type *subTy = cast<PointerType>(res->getType())->getElementType();
+        Type *subTy = res->getType()->getPointerElementType();
         auto &DL = fn->getParent()->getDataLayout();
         auto BitSize = DL.getTypeSizeInBits(subTy);
         if (BitSize / 8 != byRefSize) {
@@ -1396,6 +1487,10 @@ public:
 #endif
               element = Builder.CreateBitCast(element, elementPtrTy);
             } else {
+              EmitFailure(
+                  "NonPointerBatch", CI->getDebugLoc(), CI,
+                  "Batched argument at index ", i,
+                  " must be of pointer type, found: ", *element->getType());
               return false;
             }
           }
@@ -1428,6 +1523,14 @@ public:
 
       ++truei;
     }
+    if (truei < FT->getNumParams()) {
+      auto numParams = FT->getNumParams();
+      EmitFailure(
+          "EnzymeInsufficientArgs", CI->getDebugLoc(), CI,
+          "Insufficient number of args passed to derivative call required ",
+          numParams, " primal args, found ", truei);
+      return false;
+    }
 
     std::map<Argument *, bool> volatile_args;
     FnTypeInfo type_args(fn);
@@ -1437,18 +1540,24 @@ public:
       if (a.getType()->isFPOrFPVectorTy()) {
         dt = ConcreteType(a.getType()->getScalarType());
       } else if (a.getType()->isPointerTy()) {
-        auto et = a.getType()->getPointerElementType();
-        if (et->isFPOrFPVectorTy()) {
-          dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1);
-        } else if (et->isPointerTy()) {
-          dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1);
+#if LLVM_VERSION_MAJOR >= 15
+        if (a.getContext().supportsTypedPointers()) {
+#endif
+          auto et = a.getType()->getPointerElementType();
+          if (et->isFPOrFPVectorTy()) {
+            dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1, nullptr);
+          } else if (et->isPointerTy()) {
+            dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1, nullptr);
+          }
+#if LLVM_VERSION_MAJOR >= 15
         }
+#endif
         dt.insert({}, BaseType::Pointer);
       } else if (a.getType()->isIntOrIntVectorTy()) {
         dt = ConcreteType(BaseType::Integer);
       }
       type_args.Arguments.insert(
-          std::pair<Argument *, TypeTree>(&a, dt.Only(-1)));
+          std::pair<Argument *, TypeTree>(&a, dt.Only(-1, nullptr)));
       // TODO note that here we do NOT propagate constants in type info (and
       // should consider whether we should)
       type_args.KnownValues.insert(
@@ -1592,8 +1701,13 @@ public:
     }
     }
 
-    if (!newFunc)
+    if (!newFunc) {
+      StringRef n = fn->getName();
+      EmitFailure("FailedToDifferentiate", fn->getSubprogram(),
+                  &*fn->getEntryBlock().begin(),
+                  "Could not generate derivative function of ", n);
       return false;
+    }
 
     if (differentialReturn) {
       if (differet)
@@ -1648,7 +1762,6 @@ public:
       assert(tape->getType() == tapeType);
       args.push_back(tape);
     }
-    assert(newFunc);
 
     if (EnzymePrint) {
       llvm::errs() << "postfn:\n" << *newFunc << "\n";
@@ -2337,6 +2450,8 @@ public:
             M, g, globalsToErase);
       } else if (g.getName().contains("__enzyme_inactivefn")) {
         handleInactiveFunction(M, g, globalsToErase);
+      } else if (g.getName().contains("__enzyme_function_like")) {
+        handleFunctionLike(M, g, globalsToErase);
       }
     }
     for (auto g : globalsToErase) {
@@ -2412,14 +2527,6 @@ public:
 
       bool successful = true;
       changed |= lowerEnzymeCalls(F, successful, done);
-
-      if (!successful) {
-        M.getContext().diagnose(
-            (EnzymeFailure("FailedToDifferentiate", F.getSubprogram(),
-                           &*F.getEntryBlock().begin())
-             << "EnzymeFailure when replacing __enzyme_autodiff calls in "
-             << F.getName()));
-      }
     }
 
     SmallVector<CallInst *, 4> toErase;

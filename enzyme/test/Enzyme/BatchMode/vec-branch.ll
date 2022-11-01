@@ -21,5 +21,5 @@ entry:
 
 declare [4 x double] @__enzyme_batch(...)
 
-
-; XFAIL: -
+; XFAIL: *
+; CHECK:  branch conditions have to be scalar values

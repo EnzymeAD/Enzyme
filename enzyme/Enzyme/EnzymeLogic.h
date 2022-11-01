@@ -117,6 +117,8 @@ public:
 
   std::set<ssize_t> tapeIndiciesToFree;
 
+  bool isComplete;
+
   AugmentedReturn(
       llvm::Function *fn, llvm::Type *tapeType,
       std::map<std::pair<llvm::Instruction *, CacheType>, int> tapeIndices,
@@ -126,7 +128,7 @@ public:
       std::map<llvm::Instruction *, bool> can_modref_map)
       : fn(fn), tapeType(tapeType), tapeIndices(tapeIndices), returns(returns),
         uncacheable_args_map(uncacheable_args_map),
-        can_modref_map(can_modref_map) {}
+        can_modref_map(can_modref_map), isComplete(false) {}
 };
 
 struct ReverseCacheKey {
@@ -328,8 +330,11 @@ public:
     }
   };
 
+  std::map<llvm::Function *, llvm::Function *> NoFreeCachedFunctions;
+  llvm::Function *CreateNoFree(llvm::Function *todiff);
+  llvm::Value *CreateNoFree(llvm::Value *todiff);
+
   std::map<AugmentedCacheKey, AugmentedReturn> AugmentedCachedFunctions;
-  std::map<AugmentedCacheKey, bool> AugmentedCachedFinished;
 
   /// Create an augmented forward pass.
   ///  \p todiff is the function to differentiate

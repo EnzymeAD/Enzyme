@@ -43,15 +43,17 @@
 
 using namespace llvm;
 
-class InstructionBatcher : public llvm::InstVisitor<InstructionBatcher> {
+class InstructionBatcher final : public llvm::InstVisitor<InstructionBatcher> {
 public:
+  bool hasError;
   InstructionBatcher(
       Function *oldFunc, Function *newFunc, unsigned width,
       ValueMap<const Value *, std::vector<Value *>> &vectorizedValues,
       ValueToValueMapTy &originalToNewFn, SmallPtrSetImpl<Value *> &toVectorize,
       EnzymeLogic &Logic)
-      : vectorizedValues(vectorizedValues), originalToNewFn(originalToNewFn),
-        toVectorize(toVectorize), width(width), Logic(Logic) {}
+      : hasError(false), vectorizedValues(vectorizedValues),
+        originalToNewFn(originalToNewFn), toVectorize(toVectorize),
+        width(width), Logic(Logic) {}
 
 private:
   ValueMap<const Value *, std::vector<Value *>> &vectorizedValues;
@@ -107,9 +109,10 @@ public:
         if (isa<GlobalValue>(op) && !isa<ConstantData>(op) &&
             inst.mayWriteToMemory() && toVectorize.count(op) != 0) {
           // TODO: handle buffer access
+          hasError = true;
           EmitFailure("GlobalValueCannotBeVectorized", inst.getDebugLoc(),
                       &inst, "global variables have to be scalar values", inst);
-          llvm_unreachable("vectorized control flow is not allowed");
+          return;
         }
 
         if (auto meta = dyn_cast<MetadataAsValue>(op))
@@ -177,16 +180,18 @@ public:
 
   void visitSwitchInst(llvm::SwitchInst &inst) {
     // TODO: runtime check
+    hasError = true;
     EmitFailure("SwitchConditionCannotBeVectorized", inst.getDebugLoc(), &inst,
                 "switch conditions have to be scalar values", inst);
-    llvm_unreachable("vectorized control flow is not allowed");
+    return;
   }
 
   void visitBranchInst(llvm::BranchInst &branch) {
     // TODO: runtime check
+    hasError = true;
     EmitFailure("BranchConditionCannotBeVectorized", branch.getDebugLoc(),
                 &branch, "branch conditions have to be scalar values", branch);
-    llvm_unreachable("vectorized control flow is not allowed");
+    return;
   }
 
   void visitReturnInst(llvm::ReturnInst &ret) {

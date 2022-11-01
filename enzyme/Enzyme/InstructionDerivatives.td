@@ -10,13 +10,14 @@ class Inst<string mnemonic> {
 }
 
 // Define ops to rewrite.
-def T1: Type;
 
 def FDiv : Inst<"FDiv">;
 def FAdd : Inst<"FAdd">;
 def FSub : Inst<"FSub">;
 def FMul : Inst<"FMul">;
 def FNeg : Inst<"FNeg">;
+def Select : Inst<"Select">;
+def FCmpOEQ : Inst<"FCmpOEQ">;
 
 def DifR : Inst<"DifR">;
 
@@ -32,6 +33,19 @@ class SameTypesFunc<string name_> {
 
 class Attribute<string name_> {
   string name = name_;
+}
+
+// So we can also extend it by not input related 
+// types, eg. for mem related Intrinsics
+class TypeInfo {
+}
+
+class TypeOf<string val> : TypeInfo {
+}
+
+class Intrinsic<string name_, list<dag> types_> {
+  string name = name_;
+  list<dag> types = types_;
 }
 
 def ReadNone : Attribute<"ReadNone">;
@@ -69,7 +83,7 @@ def : CallPattern<(Op $y, $x),
                   ]
                   >;
 def : CallPattern<(Op $x),
-                  ["cbrt"],
+                  ["cbrt", "cbrtf", "cbrtl"],
                   [(FDiv (FMul (DiffeRet<"">), (Call<(SameFunc), [ReadNone,NoUnwind]> $x) ), (FMul (ConstantFP<"3.0"> $x), $x))]
                   >;
 
@@ -102,3 +116,51 @@ def : CallPattern<(Op $x),
 def : CallPattern<(Op $x),
                   ["sinhf"],
                   [(FMul (DiffeRet<"">), (Call<(SameTypesFunc<"coshf">), [ReadNone,NoUnwind]> $x))]>;
+
+def : CallPattern<(Op $x),
+                  ["exp10"],
+                  [(FMul (FMul (DiffeRet<"">), (Call<(SameFunc), [ReadNone,NoUnwind]> $x) ), (ConstantFP<"2.30258509299404568401799145468"> $x))]
+                  >;
+def : CallPattern<(Op $x),
+                  ["tan", "tanf", "tanl"],
+                  [(FMul (DiffeRet<"">), (FAdd (ConstantFP<"1.0"> $x), (FMul(Call<(SameFunc), [ReadNone,NoUnwind]> $x):$c, $c)))]>;
+def : CallPattern<(Op $x, $y),
+                  ["remainder"],
+                  [
+                    (DiffeRet<"">),
+                    (FMul (FNeg (DiffeRet<"">)), (Intrinsic<"round", [(TypeOf<""> $x)]> (FDiv $x, $y)))
+                  ]
+                  >;
+def : CallPattern<(Op $x),
+                  ["asin", "asinf", "asinl"],
+                  [(FDiv (DiffeRet<"">), (Intrinsic<"sqrt", [(TypeOf<""> $x)]> (FSub (ConstantFP<"1.0"> $x), (FMul $x, $x)))  )]                  
+                  >;
+def : CallPattern<(Op $x),
+                  ["acos", "acosf", "acosl"],
+                  [(FNeg (FDiv (DiffeRet<"">), (Intrinsic<"sqrt", [(TypeOf<""> $x)]> (FSub (ConstantFP<"1.0"> $x), (FMul $x, $x)))  ))]                  
+                  >;
+def : CallPattern<(Op $x),
+                  ["log1p", "log1pf", "log1pl"],
+                  [(FDiv (DiffeRet<"">), (FAdd (ConstantFP<"1.0"> $x), $x))]
+                  >;
+def : CallPattern<(Op $x),
+                  ["expm1"],
+                  [(FMul (Intrinsic<"exp", [(TypeOf<""> $x)]> $x), (DiffeRet<"">))]
+                  >;
+
+def : CallPattern<(Op $x), ["jl_rem2pi", "jl_rem2pif", "jl_rem2pil"],[(DiffeRet<"">)]>;
+
+// Unnormalized sinc(x) = sin(x)/x
+def : CallPattern<(Op $x),
+                  ["sinc", "sincf", "sincl"],
+                  [(Select (FCmpOEQ $x, (ConstantFP<"0"> $x)),
+                        (ConstantFP<"0"> $x),
+                  (FMul (DiffeRet<"">), (FDiv (FSub (Intrinsic<"cos", [(TypeOf<""> $x)]> $x), (Call<(SameFunc), [ReadNone,NoUnwind]> $x)), $x)))]>;
+
+// Normalized sinc(x) = sin(pi x)/(pi x)
+def : CallPattern<(Op $x),
+                  ["sincn", "sincnf", "sincnl"],
+                  [
+                    (Select (FCmpOEQ $x, (ConstantFP<"0"> $x)),
+                        (ConstantFP<"0"> $x),
+                  (FMul (DiffeRet<"">), (FDiv (FSub (Intrinsic<"cos", [(TypeOf<""> $x)]> (FMul (ConstantFP<"3.1415926535897962684626433"> $x), $x)), (Call<(SameFunc), [ReadNone,NoUnwind]> $x)), $x)))]>;

@@ -159,7 +159,7 @@ public:
   /// Returns whether in the first num bytes there is pointer, int, float, or
   /// none If pointerIntSame is set to true, then consider either as the same
   /// (and thus mergable)
-  ConcreteType firstPointer(size_t num, llvm::Value *val,
+  ConcreteType firstPointer(size_t num, llvm::Value *val, llvm::Instruction *I,
                             bool errIfNotFound = true,
                             bool pointerIntSame = false) const;
 
@@ -364,7 +364,7 @@ public:
            std::function<bool(int /*direction*/, TypeTree & /*returnTree*/,
                               llvm::ArrayRef<TypeTree> /*argTrees*/,
                               llvm::ArrayRef<std::set<int64_t>> /*knownValues*/,
-                              llvm::CallInst * /*call*/)>>
+                              llvm::CallInst * /*call*/, TypeAnalyzer *)>>
       CustomRules;
 
   /// Map of possible query states to TypeAnalyzer intermediate results
@@ -377,4 +377,6 @@ public:
   void clear();
 };
 
+TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
+                                bool intIsPointer = true);
 #endif

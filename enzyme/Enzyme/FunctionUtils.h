@@ -70,6 +70,7 @@ public:
       bool diffeReturnArg, llvm::Type *additionalArg = nullptr);
 
   void ReplaceReallocs(llvm::Function *NewF, bool mem2reg = false);
+  void LowerAllocAddr(llvm::Function *NewF);
   void AlwaysInline(llvm::Function *NewF);
   void optimizeIntermediate(llvm::Function *F);
 
@@ -345,6 +346,9 @@ static inline void calculateUnusedStores(
     unnecessaryStores.insert(inst);
   }
 }
+
+void RecursivelyReplaceAddressSpace(llvm::Value *AI, llvm::Value *rep,
+                                    bool legal);
 
 void ReplaceFunctionImplementation(llvm::Module &M);
 

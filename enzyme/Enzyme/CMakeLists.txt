@@ -7,8 +7,11 @@ if ("${Enzyme_TABLEGEN_EXE}" STREQUAL "")
 endif()
 
 get_target_property(TBL_LINKED_LIBS LLVMSupport INTERFACE_LINK_LIBRARIES)
+if (NOT TBL_LINKED_LIBS)
+else()
 list(REMOVE_ITEM TBL_LINKED_LIBS "ZLIB::ZLIB")
 set_property(TARGET LLVMSupport PROPERTY INTERFACE_LINK_LIBRARIES ${TBL_LINKED_LIBS})
+endif()
 
 function(enzyme_tablegen ofn)
   if (${LLVM_VERSION_MAJOR} GREATER 11)
@@ -294,3 +297,7 @@ install(TARGETS LLDEnzyme-${LLVM_VERSION_MAJOR}
     LIBRARY DESTINATION lib COMPONENT shlib
     PUBLIC_HEADER DESTINATION "${INSTALL_INCLUDE_DIR}/Enzyme"
     COMPONENT dev)
+
+if (ENZYME_MLIR)
+    add_subdirectory(MLIR)
+endif()
