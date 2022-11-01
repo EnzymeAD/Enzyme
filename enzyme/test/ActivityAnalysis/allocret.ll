@@ -13,9 +13,9 @@ entry:
 
 ; CHECK: float %tmp1: icv:0
 ; CHECK-NEXT: entry
-; CHECK-NEXT:   %tmp11 = call i8* @malloc(i64 4): icv:0 ici:1
-; CHECK-NEXT:   %tmp12 = bitcast i8* %tmp11 to float*: icv:0 ici:1
-; CHECK-NEXT:   store float %tmp1, float* %tmp12, align 4: icv:1 ici:0
+; CHECK-NEXT:   %tmp11 = call i8* @malloc(i64 4): icv:1 ici:1
+; CHECK-NEXT:   %tmp12 = bitcast i8* %tmp11 to float*: icv:1 ici:1
+; CHECK-NEXT:   store float %tmp1, float* %tmp12, align 4: icv:1 ici:1
 ; CHECK-NEXT:   ret float* %tmp12: icv:1 ici:1
 
 ; INCHECK: float %tmp1: icv:0
