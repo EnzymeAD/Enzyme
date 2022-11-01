@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -correlated-propagation -adce -instsimplify -early-cse-memssa -simplifycfg -correlated-propagation -adce -instsimplify -early-cse -simplifycfg -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,correlated-propagation,adce,instsimplify,early-cse-memssa,simplifycfg,correlated-propagation,adce,jump-threading,instsimplify,early-cse,simplifycfg"  -enzyme-preopt=false -S | FileCheck %s
 
 ; ModuleID = 'q2.ll'
 source_filename = "text"

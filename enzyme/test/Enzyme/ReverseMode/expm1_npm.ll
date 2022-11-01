@@ -32,12 +32,11 @@ declare double @__enzyme_autodiff(double (double)*, ...)
 ; CHECK-NEXT:   %0 = load double, double* %"'de", align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"'de", align 8
 ; CHECK-NEXT:   %1 = call fast double @llvm.exp.f64(double %x)
-; CHECK-NEXT:   %2 = fadd fast double 1.000000e+00, %1
-; CHECK-NEXT:   %3 = fmul fast double %2, %0
-; CHECK-NEXT:   %4 = load double, double* %"x'de", align 8
-; CHECK-NEXT:   %5 = fadd fast double %4, %3
-; CHECK-NEXT:   store double %5, double* %"x'de", align 8
-; CHECK-NEXT:   %6 = load double, double* %"x'de", align 8
-; CHECK-NEXT:   %7 = insertvalue { double } undef, double %6, 0
-; CHECK-NEXT:   ret { double } %7
+; CHECK-NEXT:   %2 = fmul fast double %1, %0
+; CHECK-NEXT:   %3 = load double, double* %"x'de", align 8
+; CHECK-NEXT:   %4 = fadd fast double %3, %2
+; CHECK-NEXT:   store double %4, double* %"x'de", align 8
+; CHECK-NEXT:   %5 = load double, double* %"x'de", align 8
+; CHECK-NEXT:   %6 = insertvalue { double } undef, double %5, 0
+; CHECK-NEXT:   ret { double } %6
 ; CHECK-NEXT: }

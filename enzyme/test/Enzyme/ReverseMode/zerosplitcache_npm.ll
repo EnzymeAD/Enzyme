@@ -50,7 +50,7 @@ declare dso_local double @__enzyme_autodiff(i8*, ...)
 
 ; CHECK: define internal { i8*, double } @augmented_above(double %i10) 
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8), !enzyme_fromstack !0
+; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8), !enzyme_fromstack !5
 ; CHECK-NEXT:   %m = bitcast i8* %malloccall to double*
 ; CHECK-NEXT:   call void @augmented_set(double* nonnull %m, double* undef, double %i10)
 ; CHECK-NEXT:   %i12 = load double, double* %m, align 8
@@ -62,14 +62,14 @@ declare dso_local double @__enzyme_autodiff(i8*, ...)
 ; TODO not need to cache the primal
 ; CHECK: define internal { double } @diffeabove(double %i10, double %differeturn, i8* %malloccall) 
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %"malloccall'mi1" = alloca double, align 8
-; CHECK-NEXT:   %tmpcast = bitcast double* %"malloccall'mi1" to i64*
-; CHECK-NEXT:   store i64 0, i64* %tmpcast, align 8
-; CHECK-NEXT:   %m = bitcast i8* %malloccall to double*
-; CHECK-NEXT:   store double %differeturn, double* %"malloccall'mi1", align 8
-; CHECK-NEXT:   %0 = call { double } @diffeset(double* %m, double* nonnull %"malloccall'mi1", double %i10)
-; CHECK-NEXT:   tail call void @free(i8* %malloccall)
-; CHECK-NEXT:   ret { double } %0
+; CHECK-NEXT:    %"m'ai" = alloca double, align 8
+; CHECK-NEXT:    %0 = bitcast double* %"m'ai" to i64*
+; CHECK-NEXT:    store i64 0, i64* %0, align 8
+; CHECK-NEXT:    %m = bitcast i8* %malloccall to double*, !enzyme_caststack !6
+; CHECK-NEXT:    store double %differeturn, double* %"m'ai", align 8, !alias.scope !7, !noalias !10
+; CHECK-NEXT:    %1 = call { double } @diffeset(double* %m, double* nonnull %"m'ai", double %i10)
+; CHECK-NEXT:    tail call void @free(i8* %malloccall)
+; CHECK-NEXT:    ret { double } %1
 ; CHECK-NEXT: }
 
 ; CHECK: define internal { double } @diffeset(double* nocapture %a, double* nocapture %"a'", double %x) 

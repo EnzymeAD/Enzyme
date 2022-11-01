@@ -200,12 +200,12 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %mallocsize.i = add i64 %0, 8
 ; CHECK-NEXT:   %malloccall.i = call noalias nonnull i8* @malloc(i64 %mallocsize.i) #4
 ; CHECK-NEXT:   %"call2'mi_malloccache.i" = bitcast i8* %malloccall.i to i8**
-; CHECK-NEXT:   %malloccall3.i = call noalias nonnull i8* @malloc(i64 %mallocsize.i) #4
-; CHECK-NEXT:   %call2_malloccache.i = bitcast i8* %malloccall3.i to i8**
 ; CHECK-NEXT:   %malloccall7.i = call noalias nonnull i8* @malloc(i64 %mallocsize.i) #4
-; CHECK-NEXT:   %"call'mi_malloccache.i" = bitcast i8* %malloccall7.i to i8**
-; CHECK-NEXT:   %malloccall10.i = call noalias nonnull i8* @malloc(i64 %mallocsize.i) #4
-; CHECK-NEXT:   %call_malloccache.i = bitcast i8* %malloccall10.i to i8**
+; CHECK-NEXT:   %call2_malloccache.i = bitcast i8* %malloccall7.i to i8**
+; CHECK-NEXT:   %malloccall14.i = call noalias nonnull i8* @malloc(i64 %mallocsize.i) #4
+; CHECK-NEXT:   %"call'mi_malloccache.i" = bitcast i8* %malloccall14.i to i8**
+; CHECK-NEXT:   %malloccall20.i = call noalias nonnull i8* @malloc(i64 %mallocsize.i) #4
+; CHECK-NEXT:   %call_malloccache.i = bitcast i8* %malloccall20.i to i8**
 ; CHECK-NEXT:   br label %for.body.i
 
 ; CHECK: for.cond.cleanup.i:                               ; preds = %for.cond.cleanup7.i
@@ -222,13 +222,13 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull align 1 dereferenceable(16) dereferenceable_or_null(16) %"call'mi.i", i8 0, i64 16, i1 false) #4
 ; CHECK-NEXT:   %"next'ipg.i" = getelementptr inbounds i8, i8* %"call'mi.i", i64 8
 ; CHECK-NEXT:   %next.i = getelementptr inbounds i8, i8* %call.i, i64 8
-; CHECK-NEXT:   %"'ipc5.i" = bitcast i8* %"next'ipg.i" to %struct.n**
+; CHECK-NEXT:   %"'ipc9.i" = bitcast i8* %"next'ipg.i" to %struct.n**
 ; CHECK-NEXT:   %2 = bitcast i8* %next.i to %struct.n**
-; CHECK-NEXT:   store %struct.n* %1, %struct.n** %"'ipc5.i", align 8
+; CHECK-NEXT:   store %struct.n* %1, %struct.n** %"'ipc9.i", align 8
 ; CHECK-NEXT:   %3 = getelementptr inbounds i8*, i8** %call_malloccache.i, i64 %iv.i
-; CHECK-NEXT:   store i8* %call.i, i8** %3, align 8, !invariant.group !10
+; CHECK-NEXT:   store i8* %call.i, i8** %3, align 8, !invariant.group !15
 ; CHECK-NEXT:   %4 = getelementptr inbounds i8*, i8** %"call'mi_malloccache.i", i64 %iv.i
-; CHECK-NEXT:   store i8* %"call'mi.i", i8** %4, align 8, !invariant.group !11
+; CHECK-NEXT:   store i8* %"call'mi.i", i8** %4, align 8, !invariant.group !16
 ; CHECK-NEXT:   store %struct.n* %list.029.i, %struct.n** %2, align 8, !tbaa !7
 ; CHECK-NEXT:   %call2.i = call noalias i8* @malloc(i64 %mul.i) #10
 ; CHECK-NEXT:   %"call2'mi.i" = call noalias nonnull i8* @malloc(i64 %mul.i) #10
@@ -237,9 +237,9 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %5 = bitcast i8* %call.i to i8**
 ; CHECK-NEXT:   store i8* %"call2'mi.i", i8** %"'ipc1.i", align 8
 ; CHECK-NEXT:   %6 = getelementptr inbounds i8*, i8** %call2_malloccache.i, i64 %iv.i
-; CHECK-NEXT:   store i8* %call2.i, i8** %6, align 8, !invariant.group !12
+; CHECK-NEXT:   store i8* %call2.i, i8** %6, align 8, !invariant.group !22
 ; CHECK-NEXT:   %7 = getelementptr inbounds i8*, i8** %"call2'mi_malloccache.i", i64 %iv.i
-; CHECK-NEXT:   store i8* %"call2'mi.i", i8** %7, align 8, !invariant.group !13
+; CHECK-NEXT:   store i8* %"call2'mi.i", i8** %7, align 8, !invariant.group !23
 ; CHECK-NEXT:   store i8* %call2.i, i8** %5, align 8, !tbaa !2
 ; CHECK-NEXT:   %.cast.i = bitcast i8* %call2.i to double*
 ; CHECK-NEXT:   br label %for.body8.i
@@ -261,13 +261,13 @@ attributes #4 = { nounwind }
 ; CHECK: invertfor.body.i:                                 ; preds = %invertfor.body8.i
 ; CHECK-NEXT:   call void @free(i8* nonnull %.pre) #4
 ; CHECK-NEXT:   %9 = getelementptr inbounds i8*, i8** %call2_malloccache.i, i64 %"iv'ac.i.0"
-; CHECK-NEXT:   %10 = load i8*, i8** %9, align 8, !invariant.group !12
+; CHECK-NEXT:   %10 = load i8*, i8** %9, align 8, !invariant.group !22
 ; CHECK-NEXT:   call void @free(i8* %10) #4
 ; CHECK-NEXT:   %11 = getelementptr inbounds i8*, i8** %"call'mi_malloccache.i", i64 %"iv'ac.i.0"
-; CHECK-NEXT:   %12 = load i8*, i8** %11, align 8, !invariant.group !11
+; CHECK-NEXT:   %12 = load i8*, i8** %11, align 8, !invariant.group !16
 ; CHECK-NEXT:   call void @free(i8* nonnull %12) #4
 ; CHECK-NEXT:   %13 = getelementptr inbounds i8*, i8** %call_malloccache.i, i64 %"iv'ac.i.0"
-; CHECK-NEXT:   %14 = load i8*, i8** %13, align 8, !invariant.group !10
+; CHECK-NEXT:   %14 = load i8*, i8** %13, align 8, !invariant.group !15
 ; CHECK-NEXT:   call void @free(i8* %14) #4
 ; CHECK-NEXT:   %15 = icmp eq i64 %"iv'ac.i.0", 0
 ; CHECK-NEXT:   br i1 %15, label %diffelist_creator.exit, label %incinvertfor.body.i
@@ -280,7 +280,7 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %"x'de.i.0" = phi double [ 0.000000e+00, %for.cond.cleanup.i ], [ %18, %incinvertfor.body.i ]
 ; CHECK-NEXT:   %"iv'ac.i.0" = phi i64 [ %n, %for.cond.cleanup.i ], [ %16, %incinvertfor.body.i ]
 ; CHECK-NEXT:   %.phi.trans.insert = getelementptr inbounds i8*, i8** %"call2'mi_malloccache.i", i64 %"iv'ac.i.0"
-; CHECK-NEXT:   %.pre = load i8*, i8** %.phi.trans.insert, align 8, !invariant.group !13
+; CHECK-NEXT:   %.pre = load i8*, i8** %.phi.trans.insert, align 8, !invariant.group !23
 ; CHECK-NEXT:   %".cast'ipc_unwrap.i" = bitcast i8* %.pre to double*
 ; CHECK-NEXT:   br label %invertfor.body8.i
 
@@ -300,9 +300,9 @@ attributes #4 = { nounwind }
 
 ; CHECK: diffelist_creator.exit:                           ; preds = %invertfor.body.i
 ; CHECK-NEXT:   call void @free(i8* nonnull %malloccall.i) #4
-; CHECK-NEXT:   call void @free(i8* nonnull %malloccall3.i) #4
 ; CHECK-NEXT:   call void @free(i8* nonnull %malloccall7.i) #4
-; CHECK-NEXT:   call void @free(i8* nonnull %malloccall10.i) #4
+; CHECK-NEXT:   call void @free(i8* nonnull %malloccall14.i) #4
+; CHECK-NEXT:   call void @free(i8* nonnull %malloccall20.i) #4
 ; CHECK-NEXT:   ret double %18
 ; CHECK-NEXT: }
 
@@ -319,13 +319,13 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
 ; CHECK-NEXT:   %2 = and i64 %iv.next, 1
 ; CHECK-NEXT:   %3 = icmp ne i64 %2, 0
-; CHECK-NEXT:   %4 = call i64 @llvm.ctpop.i64(i64 %iv.next) #4, !range !15
+; CHECK-NEXT:   %4 = call i64 @llvm.ctpop.i64(i64 %iv.next) #4, !range !31
 ; CHECK-NEXT:   %5 = icmp ult i64 %4, 3
 ; CHECK-NEXT:   %6 = and i1 %5, %3
 ; CHECK-NEXT:   br i1 %6, label %grow.i, label %__enzyme_exponentialallocation.exit
 
 ; CHECK: grow.i:                                           ; preds = %for.cond1.preheader
-; CHECK-NEXT:   %7 = call i64 @llvm.ctlz.i64(i64 %iv.next, i1 true) #4, !range !16
+; CHECK-NEXT:   %7 = call i64 @llvm.ctlz.i64(i64 %iv.next, i1 true) #4, !range !32
 ; CHECK-NEXT:   %8 = sub nuw nsw i64 64, %7
 ; CHECK-NEXT:   %9 = shl i64 8, %8
 ; CHECK-NEXT:   %10 = call i8* @realloc(i8* %0, i64 %9) #4
@@ -335,7 +335,7 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %11 = phi i8* [ %10, %grow.i ], [ %0, %for.cond1.preheader ]
 ; CHECK-NEXT:   %12 = bitcast i8* %11 to %struct.n**
 ; CHECK-NEXT:   %13 = getelementptr inbounds %struct.n*, %struct.n** %12, i64 %iv
-; CHECK-NEXT:   store %struct.n* %1, %struct.n** %13, align 8, !invariant.group !17
+; CHECK-NEXT:   store %struct.n* %1, %struct.n** %13, align 8, !invariant.group !33
 ; CHECK-NEXT:   br label %for.body5
 
 ; CHECK: for.cond.cleanup4:                                ; preds = %for.body5
@@ -374,9 +374,9 @@ attributes #4 = { nounwind }
 
 ; CHECK: invertfor.body5:                                  ; preds = %incinvertfor.body5, %invertfor.cond.cleanup4
 ; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ %times, %invertfor.cond.cleanup4 ], [ %22, %incinvertfor.body5 ]
-; CHECK-NEXT:   %18 = load %struct.n*, %struct.n** %17, align 8, !invariant.group !17
+; CHECK-NEXT:   %18 = load %struct.n*, %struct.n** %17, align 8, !invariant.group !33
 ; CHECK-NEXT:   %"values'ipg_unwrap" = getelementptr inbounds %struct.n, %struct.n* %18, i64 0, i32 0
-; CHECK-NEXT:   %"'ipl_unwrap" = load double*, double** %"values'ipg_unwrap", align 8, !tbaa !2, !invariant.group !18
+; CHECK-NEXT:   %"'ipl_unwrap" = load double*, double** %"values'ipg_unwrap", align 8, !tbaa !2
 ; CHECK-NEXT:   %"arrayidx'ipg_unwrap" = getelementptr inbounds double, double* %"'ipl_unwrap", i64 %"iv1'ac.0"
 ; CHECK-NEXT:   %19 = load double, double* %"arrayidx'ipg_unwrap", align 8
 ; CHECK-NEXT:   %20 = fadd fast double %19, %differeturn
