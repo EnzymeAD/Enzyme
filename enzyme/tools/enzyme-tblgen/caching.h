@@ -27,7 +27,7 @@
 //
 
 using namespace llvm;
-void emit_vinc_caching(Record *pattern, std::vector<size_t> actArgs, 
+void emit_vec_caching(Record *pattern, std::vector<size_t> actArgs, 
     llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, raw_ostream &os) {
 
   std::vector<Record *> inputTypes =
@@ -112,9 +112,13 @@ void emit_scalar_caching(Record *pattern, std::vector<size_t> actArgs,
       auto name = argOps->getArgNameStr(argPosition);
       os 
 << "  bool cache_" << name << " = false;\n"
-<< "  if (byRef && uncacheable_" << name << ") {\n"
+<< "  if (byRef && uncacheable_" << name << ") {\n";
+      if (typeName == "len") {
+      os
 << "    cacheTypes.push_back(" << scalarType << ");\n"
-<< "    cache_" << name << " = true;\n"
+<< "    cache_" << name << " = true;\n";
+      }
+      os
 << "  }\n";
     }
     argPosition += val->getValueAsInt("nelem");
@@ -166,20 +170,21 @@ void emit_cache_for_reverse(Record *pattern, std::vector<size_t> actArgs,
 << "        cacheValues.push_back(" << incName << ");\n"
 << "    }\n";
     } else if (typeName == "fp") {
-      auto name = argOps->getArgNameStr(argPosition);
-      auto fpName = "fp_" + name;
-      os 
-<< "    Value *" << fpName << " = gutils->getNewFromOriginal(arg_" << name <<");\n"
-<< "    if (byRef) {\n"
-<< "      " << fpName << " = BuilderZ.CreatePointerCast(" << fpName <<", PointerType::getUnqual(fpType));\n"
-<< "#if LLVM_VERSION_MAJOR > 7\n"
-<< "      " << fpName << " = BuilderZ.CreateLoad(fpType, " << fpName << ");\n"
-<< "#else\n"
-<< "      " << fpName << " = BuilderZ.CreateLoad(" << fpName << ");\n"
-<< "#endif\n"
-<< "      if (cache_" << name << ")\n"
-<< "        cacheValues.push_back(" << fpName << ");\n"
-<< "    }\n";
+      // TODO: verify
+//       auto name = argOps->getArgNameStr(argPosition);
+//       auto fpName = "fp_" + name;
+//       os 
+// << "    Value *" << fpName << " = gutils->getNewFromOriginal(arg_" << name <<");\n";
+//<< "    if (byRef) {\n"
+//<< "      " << fpName << " = BuilderZ.CreatePointerCast(" << fpName <<", PointerType::getUnqual(fpType));\n"
+//<< "#if LLVM_VERSION_MAJOR > 7\n"
+//<< "      " << fpName << " = BuilderZ.CreateLoad(fpType, " << fpName << ");\n"
+//<< "#else\n"
+//<< "      " << fpName << " = BuilderZ.CreateLoad(" << fpName << ");\n"
+//<< "#endif\n"
+//<< "      if (cache_" << name << ")\n"
+//<< "        cacheValues.push_back(" << fpName << ");\n"
+//<< "    }\n";
     }
     argPosition += inputType->getValueAsInt("nelem");
   }
@@ -190,12 +195,13 @@ void emit_cache_for_reverse(Record *pattern, std::vector<size_t> actArgs,
     if (inputType->getName() == "vinc") {
       auto vecName = argOps->getArgNameStr(argPosition);
       auto incName = argOps->getArgNameStr(argPosition + 1);
-      // TODO: remove last hardcoded len_n, type_n usages to support blas lv2/3 
+      // (new) replace type_n by intType, let's see if it works
+      // TODO: remove last hardcoded len_n usages to support blas lv2/3 
       os
 << "    if (cache_" << vecName << ") {\n"
 << "      auto dmemcpy = getOrInsertMemcpyStrided(\n"
 << "          *gutils->oldFunc->getParent(), cast<PointerType>(castvals[" << i << "]),\n"
-<< "          type_n, 0, 0);\n"
+<< "          intType, 0, 0);\n"
 << "      auto malins = CreateAllocation(BuilderZ, fpType, len_n);\n"
 << "      Value *arg = BuilderZ.CreateBitCast(malins, castvals[" << i << "]);\n"
 << "      Value *args[4] = {arg,\n"
@@ -251,6 +257,7 @@ void emit_cache_for_reverse(Record *pattern, std::vector<size_t> actArgs,
       os
 << "  Value *len_" << lenName << " = gutils->getNewFromOriginal(arg_" << lenName << ");\n";
     } else if (typeName == "fp") {
+      //TODO: verify
       auto fpName = argOps->getArgNameStr(argPosition);
       os
 << "  Value *fp_" << fpName << " = gutils->getNewFromOriginal(arg_" << fpName << ");\n"; 
@@ -282,11 +289,12 @@ void emit_caching(Record *pattern, std::vector<size_t> actArgs,
   // 1. No caching for fwd-mode
   // 2. Deactivate caching for uncacheable_args
   // 3. Only caching if we do need the primary for an active gradient.
+  // 4. (New) Cache vec if it is overwritten but the input vec is required.
   os 
 << "  SmallVector<Type *, 2> cacheTypes;\n\n";
 
   emit_scalar_caching(pattern, actArgs, os);
-  emit_vinc_caching(pattern, actArgs, argUsers, os);
+  emit_vec_caching(pattern, actArgs, argUsers, os);
 
   DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
   for (auto actEn : llvm::enumerate(actArgs)) {

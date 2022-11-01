@@ -52,22 +52,35 @@ class b<string _s> {
   string s = _s;
 }
 
+// only applicable to arguments being modified
+// will cache the input values to be used later
+class input<string _name> {
+  string name = _name;
+}
+
+class adj<string _name> {
+  string name = _name;
+}
+
+class Constant<string _value> {
+  string value = _value;
+}
+
 // Lv 1 \wo rotations
 def scal : CallBlasPattern<(Op $n, $alpha, $x, $incx),
                   ["x"],[len, fp, vinc],
                   [
-                  (b<"dot"> $n, $x, $incx, DiffeRet<"">, $incx), 
-                  (b<"scal"> $n, $alpha, DiffeRet<"">, $incx)
-                  //(b<"axpy"> $n, $alpha, DiffeRet<"">, $incx)
+                  (b<"dot"> $n, input<"x">, $incx, adj<"x">, $incx),
+                  (b<"scal"> $n, $alpha, adj<"x">, $incx)
                   ]
                   >;
 
 def axpy : CallBlasPattern<(Op $n, $alpha, $x, $incx, $y, $incy),
                   ["y"],[len, fp, vinc, vinc],
                   [
-                  (b<"dot"> $n, $x, $incx, DiffeRet<"">, $incy), 
-                  (b<"scal"> $n, $alpha, DiffeRet<"">, $incy),
-                  (DiffeRet<"">)
+                  (b<"dot"> $n, $x, $incx, adj<"y">, $incy),
+                  (b<"scal"> $n, $alpha, adj<"x">, $incy),
+                  (noop)
                   ]
                   >;
 
@@ -86,17 +99,17 @@ def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
 
 
 // def copy : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
-//                   [len, vinc, vinc],
+//                   ["y"],[len, vinc, vinc],
 //                   [
-//                   (noop),
-//                   (todo)
+//                   (noop),// copy moves x into y, so x is never modified.
+//                   (b<"axpy"> $n, Constant<"1.0">, adj<"y">, $incy, adj<"x">, $incx),
 //                   ]
 //                   >;
-// 
+
 // def swap : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
-//                   [len, vinc, vinc],
+//                   ["x","y"],[len, vinc, vinc],
 //                   [
-//                   (b<"swap"> $n, diffe<"x">, incx, diffe<"y">, incy),
+//                   (b<"swap"> $n, adj<"x">, incx, adj<"y">, incy),
 //                   (noop),// one swap is enough, will only be used iff x and y active anyway
 //                   ]
 //                   >;

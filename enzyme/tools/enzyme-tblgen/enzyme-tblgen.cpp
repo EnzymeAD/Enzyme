@@ -46,6 +46,10 @@ bool hasDiffeRet(Init *resultTree) {
     if (opName == "DiffeRet" || Def->isSubClassOf("DiffeRet")) {
       return true;
     }
+    for (auto arg : resultRoot->getArgs()) {
+      if (hasDiffeRet(arg))
+        return true;
+    }
     for (auto zp :
          llvm::zip(resultRoot->getArgs(), resultRoot->getArgNames())) {
       if (hasDiffeRet(std::get<0>(zp)))
@@ -1006,8 +1010,22 @@ llvm::SmallString<40> call_arg_helper(DagInit *argOps,
       auto Def = DefArg->getDef();
       if (Def->isSubClassOf("DiffeRet")) {
         result.append("dif");
+      } else if (Def->isSubClassOf("adj")) {
+        auto name = Def->getValueAsString("name");
+        result.append((Twine("d_") + name).str());
+      } else if (Def->isSubClassOf("input")) {
+        auto name = Def->getValueAsString("name");
+        // maybe it should be data_ptr_ ??
+        result.append((Twine("data_") + name).str());
+        //result.append((Twine("input_") + name).str());
+      } else if (Def->isSubClassOf("MagicInst")) {
+        llvm::errs() << "MagicInst\n";
+      } else if (Def->isSubClassOf("Constant")) {
+        auto val = Def->getValueAsString("value");
+        result.append((Twine("ConstantFP::get(innerType, ") + val + ")").str());
       } else {
-      PrintFatalError("Def that isn't a DiffeRet!");
+        llvm::errs() << Def->getName() << "\n";
+        PrintFatalError("Def that isn't a DiffeRet!");
       }
     } else {
       auto name = argOps->getArgNameStr(pos);
@@ -1030,7 +1048,7 @@ llvm::SmallString<40> call_arg_helper(DagInit *argOps,
         } else {
           result.append((Twine("data_") + name + ", " + nextName).str());
         }
-        pos++; // extra ++ due to also handlinc vincInc
+        pos++; // extra ++ due to also handling vincInc
       } else if (typeName == "vincInc") {
         // might come without vincData, e.g. after DiffeRet
         result.append(name);
@@ -1061,22 +1079,44 @@ void emit_deriv_fnc(DagInit *resultTree, const llvm::DenseMap<StringRef, StringR
       return;
     else 
       handled.insert(dfnc_name);
+    auto retTy = "Builder2.getVoidTy()";
+    if (dfnc_name == "dot") {
+      retTy = "fpType";
+    }
     os 
 << "    auto derivcall_" << dfnc_name << " = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
-<< "      (blas.prefix + blas.floatType + \"" << dfnc_name << "\" + blas.suffix).str(), Builder2.getVoidTy(),\n";
+<< "      (blas.prefix + blas.floatType + \"" << dfnc_name << "\" + blas.suffix).str(), " << retTy << ",\n";
       // insert arg types based on .td file 
       bool first = true;
       std::vector<StringRef> usedArgStrs{};
       for (size_t i = 0; i < resultTree->getNumArgs(); i++) {
         Init* subArg = resultTree->getArg(i);
         if (DefInit *def = dyn_cast<DefInit>(subArg)) {
+          auto Def = def->getDef();
           usedArgStrs.push_back(""); // no need to process later
-          if (def->getDef()->isSubClassOf("DiffeRet")) {
-            os 
-<< ((first) ? "" : ", ") << "byRef ? PointerType::getUnqual(call.getType()) : call.getType()\n";
+          std::string typeToAdd = "";                           
+          if (Def->isSubClassOf("DiffeRet")) {
+            typeToAdd = "byRef ? PointerType::getUnqual(call.getType()) : call.getType()\n";
+          } else if (Def->isSubClassOf("input")) {
+            auto argStr = Def->getValueAsString("name");
+            llvm::errs() << argStr << " : argStr: " << mutables.count(argStr) << "\n";
+            //assert(mutableArgs.count(i) == 1);
+            // primary and adj have the same type
+            typeToAdd = (Twine("type_") + argStr).str();
+            usedArgStrs.push_back((Twine("input_") + argStr).str());
+          } else if (Def->isSubClassOf("adj")) {
+            auto argStr = Def->getValueAsString("name");
+            // primary and adj have the same type
+            typeToAdd = (Twine("type_") + argStr).str();
+            //assert(mutables.count(argStr) == 1);
+            usedArgStrs.push_back((Twine("adj_") + argStr).str());
+          } else if (Def->isSubClassOf("Constant")) {
+            typeToAdd = "fpType";
           } else {
             PrintFatalError(Def->getLoc(), "PANIC! Unsupported Definit");
           }
+          os
+<< ((first) ? "" : ", ") << typeToAdd;
         } else {
           auto argStr = resultTree->getArgNameStr(i);
           os 
@@ -1086,7 +1126,12 @@ void emit_deriv_fnc(DagInit *resultTree, const llvm::DenseMap<StringRef, StringR
         first = false;
         }
       os 
-<< ");\n"
+<< ");\n";
+    if (dfnc_name == "dot") {
+      os 
+<< "    assert(derivcall_dot.getFunctionType()->getReturnType() == fpType);\n";
+    }
+    os
 << "#if LLVM_VERSION_MAJOR >= 9\n"
 << "    if (auto F = dyn_cast<Function>(derivcall_" << dfnc_name << ".getCallee()))\n"
 << "#else\n"
@@ -1125,6 +1170,8 @@ void emit_deriv_fnc(DagInit *resultTree, const llvm::DenseMap<StringRef, StringR
   os
 << "      }\n"
 << "    }\n\n";
+  } else if (Def->isSubClassOf("MagicInst") && Def->getName() == "noop") {
+    // nothing to prepare
   } else if (Def->isSubClassOf("DiffeRet")) {
     // nothing to prepare
   } else if (Def->isSubClassOf("Inst")) {
@@ -1136,33 +1183,59 @@ void emit_deriv_fnc(DagInit *resultTree, const llvm::DenseMap<StringRef, StringR
 }
 
 void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef> typeOfArgName,
-    std::vector<size_t> actArgs,
-    llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, 
+    std::vector<size_t> actArgs, llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, 
     llvm::StringMap<llvm::SmallSet<size_t, 3>> mutables, raw_ostream &os) {
-  
+
   ListInit *derivOps = pattern->getValueAsListInit("ArgDerivatives"); // correct
   DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
-  std::vector<Record *> inputTypes =
-    pattern->getValueAsListOfDefs("inputTypes");
+  std::vector<Record *> inputTypes = pattern->getValueAsListOfDefs("inputTypes");
+  
+  // If any of the rule uses DiffeRet, the primary function has a ret val 
+  // and we should emit the code for handling it.
+  bool hasDiffeRetVal = false;
+  for (auto derivOp : *derivOps) {
+    DagInit *resultRoot = cast<DagInit>(derivOp); // correct
+    for (size_t pos = 0; pos < resultRoot->getNumArgs(); pos++) {
+      Init *arg = resultRoot->getArg(pos);
+      if (DefInit *DefArg = dyn_cast<DefInit>(arg)) {
+        auto Def = DefArg->getDef();
+        if (Def->isSubClassOf("DiffeRet")) {
+          hasDiffeRetVal = true;
+        }
+      //DagInit *dagArg = cast<DagInit>(arg);
+      //llvm::errs() << "argName: " << dagArg->getName() << "\n";
+      //hasDiffeRetVal |= hasDiffeRet(dagArg);
+      }
+    }
+    auto opName = resultRoot->getOperator()->getAsString();
+    auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
+    if (opName == "DiffeRet" || Def->isSubClassOf("DiffeRet")) {
+      hasDiffeRetVal = true;
+    }
+    for (auto arg : resultRoot->getArgs()) {
+      hasDiffeRetVal |= hasDiffeRet(arg);
+    }
+  }
+  llvm::errs() << "\n\n" << pattern->getName() << hasDiffeRetVal << "\n\n";
 
   os 
 << "  /* rev-rewrite */                                 \n"
 << "  if (Mode == DerivativeMode::ReverseModeCombined ||\n"
 << "      Mode == DerivativeMode::ReverseModeGradient) {\n"
-<< "    Value *dif = diffe(&call, Builder2);\n"
 << "    Value *alloc = nullptr;\n"
-<< "    StructType *fp_struct_return_type = nullptr;\n"
-<< "    Value *fp_struct_return = nullptr;\n"
-<< "    std::vector<Type *> init_tmp(num_active_fp, fpType);\n"
-<< "    if (num_active_fp > 0) {\n"
-<< "      //ArrayRef<Type *> structElementTypes(init_tmp);\n"
-<< "      //fp_struct_return_type = StructType::create(structElementTypes);\n"
-<< "      fp_struct_return_type = StructType::create(init_tmp);\n"
-<< "      fp_struct_return = allocationBuilder.CreateAlloca(fp_struct_return_type);\n"
-<< "    }\n"
+//<< "    std::vector<Type *> init_tmp(num_active_fp, fpType);\n"
+//<< "    Value *fp_struct_return = UndefValue::get(StructType::get(call.getContext(), init_tmp));\n"
 << "    if (byRef) {\n"
 << "      alloc = allocationBuilder.CreateAlloca(fpType);\n"
 << "    }\n\n";
+  if (hasDiffeRetVal) {
+    os
+<< "    Value *dif = diffe(&call, Builder2);\n";
+  }
+
+  // TODO: adj_ args
+//  os
+//<< "    Value *adj_" << name << " = lookup(gutils->invertPointerM(call.getArgOperand(arg_" << name << "), Builder2))\n";
 
   llvm::StringSet handled{}; // We only emit one derivcall per blass call type
   for (auto derivOp : *derivOps) {
@@ -1173,12 +1246,18 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
   auto argPosition = 0;
   for (auto inputType : inputTypes) {
     auto typeName = inputType->getName();
-    if (typeName == "vinc" || typeName == "fp") {
+    if (typeName == "vinc") {
       auto name = argOps->getArgNameStr(argPosition);
   os
 << "    Value *d_" << name << " = active_" << name << "\n"
 << "     ? lookup(gutils->invertPointerM(arg_" << name << ", Builder2), Builder2)\n"
 << "     : nullptr;\n";
+    }
+    if (typeName == "fp") {
+      auto name = argOps->getArgNameStr(argPosition);
+  os
+<< "    Value *d_" << name << " = UndefValue::get(fpType);\n";
+//<< "    Value *d_" << name << " = llvm::ConstantFP::get(fpType, 0.0);\n";
     }
     argPosition += inputType->getValueAsInt("nelem");
   }
@@ -1199,6 +1278,8 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
 << ((first) ? "" : ", ") << "Value *" << "d_" + actName;
     first = false;
   }
+
+  if (hasDiffeRetVal) {
   os 
 << ((first) ? "" : ", ") << "Value *dif) {\n"
 << "        if (byRef) {\n"
@@ -1206,6 +1287,11 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
 << "          dif = alloc;\n"
 << "        }\n"
 << "        unsigned int idx = 0;\n";
+  } else {
+  os 
+<< ") {\n"
+<< "        unsigned int idx = 0;\n";
+  }
 
   for (size_t i = 0; i < derivOps->size(); i++) {
     auto actArg = actArgs[i];
@@ -1224,34 +1310,42 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
 << "        addToDiffe(arg_" << actName <<", toadd, Builder2, type_" << actName << ");\n"
 << "      }\n";
     } else if (Def->isSubClassOf("b")) {
+      auto actCondition = "active_" + actName.str();
+      for (size_t pos = 0; pos < resultTree->getNumArgs();) {
+        auto arg = resultTree->getArg(pos);
+        if (DefInit *DefArg = dyn_cast<DefInit>(arg)) {
+          auto Def = DefArg->getDef();
+          if (Def->isSubClassOf("adj")) {
+            auto name = Def->getValueAsString("name");
+            actCondition.append((Twine(" && d_") + name).str());
+          }
+        }
+        pos++;
+      }
       auto dfnc_name = Def->getValueAsString("s");
       os
-<< "      if (active_" << actName << ") {\n"
-<< "        Value *args1[] = {" << args << "};\n";
+<< "      if (" << actCondition << ") {\n"
+<< "        Value *args1[] = {" << args << "};\n"
+<< "        auto Defs = gutils->getInvertedBundles(&call, {" << valueTypes << "}, Builder2, /* lookup */ true);\n";
+
       if (actType == "fp") {
         // extra handling, since we will update only a fp scalar as part of the return struct
         // it's presumably done by setting it to the value returned by this call
         os
-<< "        CallInst *cubcall = cast<CallInst>(\n";
-      }
-      os
-<< "        Builder2.CreateCall(\n"
-<< "          derivcall_" << dfnc_name << ", args1,\n"
-<< "          gutils->getInvertedBundles(\n"
-<< "            &call,\n"
-<< "            {" << valueTypes << "},\n"
-<< "            Builder2, /* lookup */ true))";
-      if (actType == "fp") {
-        os
-<< ");\n"
-<< "        fp_struct_return = Builder2.CreateInsertValue(fp_struct_return, cubcall, {idx});\n"
+<< "        CallInst *cubcall = cast<CallInst>(Builder2.CreateCall(derivcall_" << dfnc_name << ", args1, Defs));\n"
+<< "        addToDiffe(arg_" << actName << ", cubcall, Builder2, fpType);\n"
 << "        idx++;\n"
 << "      }\n";
       } else {
       os
-<< ";\n}\n";
+<< "        Builder2.CreateCall(derivcall_" << dfnc_name << ", args1, Defs);\n"
+<< "      }\n";
       }
+    } else if (Def->isSubClassOf("adj")) {
+    } else if (Def->isSubClassOf("MagicInst") && Def->getName() == "noop") {
+    } else if (Def->isSubClassOf("Constant")) {
     } else {
+      llvm::errs() << Def->getName() << "\n";
       PrintFatalError("Unhandled blas-rev case!");
     }
   }
@@ -1270,6 +1364,7 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
     os << ((first) ? "" : ", ") << "d_" + argOps->getArgNameStr(act);
     first = false;
   }
+  if (hasDiffeRetVal) {
   os 
 << ((first) ? "" : ", ") << "dif);\n"
 << "  setDiffe(\n"
@@ -1277,6 +1372,13 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
 << "    Constant::getNullValue(gutils->getShadowType(call.getType())),\n"
 << "    Builder2);\n"
 << "  }\n";
+  } else {
+  os
+<< "  );\n"
+// new, test it? 
+//<< "  Builder2.CreateRet(fp_struct_return);\n"
+<< "  }\n";
+  }
 }
 
 void emit_fwd_rewrite_rules(const Record *pattern, 
@@ -1300,12 +1402,20 @@ void emit_fwd_rewrite_rules(const Record *pattern,
   auto argPosition = 0;
   for (auto inputType : inputTypes) {
     auto typeName = inputType->getName();
-    if (typeName == "vinc" || typeName == "fp") {
+    //if (typeName == "vinc" || typeName == "fp") {
+    if (typeName == "vinc") {
       auto name = argOps->getArgNameStr(argPosition);
   os
 << "    Value *d_" << name << " = active_" << name << "\n"
 << "     ? gutils->invertPointerM(arg_" << name << ", Builder2)\n"
 << "     : nullptr;\n";
+    }
+    if (typeName == "fp") {
+      auto name = argOps->getArgNameStr(argPosition);
+  os
+    // Done: revert Undef to ConstantFP
+//<< "    Value *d_" << name << " = UndefValue::get(fpType);\n";
+<< "    Value *d_" << name << " = llvm::ConstantFP::get(fpType, 0.0);\n";
     }
     argPosition += inputType->getValueAsInt("nelem");
   }
