@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S -gvn | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,instsimplify,simplifycfg,gvn,dse,dse"  -enzyme-preopt=false -S | FileCheck %s
 
 ; ModuleID = 'bout.ll'
 source_filename = "/home/runner/work/Enzyme/Enzyme/enzyme/test/Integration/multivecmax.cpp"
@@ -333,8 +333,7 @@ attributes #10 = { noreturn nounwind }
 ; CHECK-NEXT:   br i1 %3, label %__enzyme_memcpyadd_doubleda8sa8.exit, label %for.body.i
 
 ; CHECK: __enzyme_memcpyadd_doubleda8sa8.exit:             ; preds = %bb, %for.body.i
-; CHECK-NEXT:   %4 = load double, double* %"insertptr'ipg"
-; CHECK-NEXT:   store double 0.000000e+00, double* %"insertptr'ipg", align 8
+; CHECK-NEXT:   %4 = load double, double* %"insertptr'ipg", align 8, !tbaa !7, !noalias !35
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %"alloc'mi")
 ; CHECK-NEXT:   tail call void @free(i8* %alloc)
 ; CHECK-NEXT:   %5 = insertvalue { double } undef, double %4, 0

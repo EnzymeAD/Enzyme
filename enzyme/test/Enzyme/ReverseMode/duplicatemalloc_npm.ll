@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -simplifycfg -instsimplify -adce -dse -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,inline,mem2reg,simplifycfg,instsimplify,adce,dse"  -enzyme-preopt=false -S | FileCheck %s
 
 ; #include <stdlib.h>
 ; #include <stdio.h>
@@ -81,8 +81,8 @@ attributes #4 = { nounwind }
 ; CHECK: define dso_local void @derivative(double %x, i64 %n)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:    %mul.i = shl i64 %n, 3
-; CHECK-NEXT:    %call.i = call i8* @malloc(i64 %mul.i) #7
-; CHECK-NEXT:    %"call'mi.i" = call noalias nonnull i8* @malloc(i64 %mul.i) #7
+; CHECK-NEXT:    %call.i = call i8* @malloc(i64 %mul.i) #8
+; CHECK-NEXT:    %"call'mi.i" = call noalias nonnull i8* @malloc(i64 %mul.i) #8
 ; CHECK-NEXT:    call void @llvm.memset.p0i8.i64(i8* nonnull %"call'mi.i", i8 0, i64 %mul.i, i1 false) #4
 ; CHECK-NEXT:    %"'ipc.i" = bitcast i8* %"call'mi.i" to double*
 ; CHECK-NEXT:    %0 = bitcast i8* %call.i to double*

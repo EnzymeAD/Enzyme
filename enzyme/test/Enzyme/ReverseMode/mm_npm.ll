@@ -137,7 +137,7 @@ attributes #3 = { argmemonly nounwind }
 ; CHECK-NEXT:   %L_lhs_ki = load float, float* %lhs_ki, align 8, !tbaa !6
 ; CHECK-NEXT:   %[[iv41:.+]] = add nsw i64 %iv.next4, %[[ivrows]]
 ; CHECK-NEXT:   %rhs_kk = getelementptr inbounds float, float* %rhs_data, i64 %[[iv41]]
-; CHECK-NEXT:   %L_rhs_kk = load float, float* %rhs_kk, align 8, !tbaa !6, !invariant.group !
+; CHECK-NEXT:   %L_rhs_kk = load float, float* %rhs_kk, align 8, !tbaa !6
 ; CHECK-NEXT:   %mul2 = fmul fast float %L_rhs_kk, %L_lhs_ki
 ; CHECK-NEXT:   %add = fadd fast float %[[fphi]], %mul2
 ; CHECK-NEXT:   %add_ext = fpext float %add to double
@@ -165,63 +165,61 @@ attributes #3 = { argmemonly nounwind }
 ; CHECK-NEXT:   br label %invertfor.inc47
 
 ; CHECK: invertfor.body5:                                  ; preds = %invertfor.body23
-; CHECK-NEXT:   %[[oiji:.+]] = load double, double* %[[dout_iji8:.+]], align 8
-; CHECK-NEXT:   store double 0.000000e+00, double* %[[dout_iji8:.+]], align 8
-; CHECK-NEXT:   %[[ptrunc:.+]] = fptrunc double %[[oiji]] to float
-; CHECK-NEXT:   %[[a10:.+]] = fadd fast float %[[a18:.+]], %[[ptrunc]]
+; CHECK-NEXT:   store double 0.000000e+00, double* %"out_iji'ipg_unwrap4", align 8, !tbaa !8, !alias.scope !13, !noalias !10
 ; CHECK-NEXT:   %lhs_i_unwrap = getelementptr inbounds float, float* %lhs_data, i64 %"iv'ac.0"
-; CHECK-NEXT:   %L_lhs_i_unwrap = load float, float* %lhs_i_unwrap, align 8, !tbaa !6, !invariant.group ![[lhsiv]]
-; CHECK-NEXT:   %m0diffeL_rhs_ij = fmul fast float %[[a10]], %L_lhs_i_unwrap
-; CHECK-NEXT:   %rhs_ij_unwrap = getelementptr inbounds float, float* %rhs_data, i64 %[[unwrap7:.+]]
-; CHECK-NEXT:   %L_rhs_ij_unwrap = load float, float* %rhs_ij_unwrap, align 8, !tbaa !6, !invariant.group ![[rhsiv]]
-; CHECK-NEXT:   %m1diffeL_lhs_i = fmul fast float %[[a10]], %L_rhs_ij_unwrap
-; CHECK-NEXT:   %"rhs_ij'ipg_unwrap" = getelementptr inbounds float, float* %[[drhs_data]], i64 %[[unwrap7]]
-; CHECK-NEXT:   %[[a11:.+]] = load float, float* %"rhs_ij'ipg_unwrap", align 8
-; CHECK-NEXT:   %[[a12:.+]] = fadd fast float %[[a11]], %m0diffeL_rhs_ij
-; CHECK-NEXT:   store float %[[a12]], float* %"rhs_ij'ipg_unwrap", align 8
-; CHECK-NEXT:   %"lhs_i'ipg_unwrap" = getelementptr inbounds float, float* %[[dlhs_data]], i64 %"iv'ac.0"
-; CHECK-NEXT:   %[[a13:.+]] = load float, float* %"lhs_i'ipg_unwrap", align 8
-; CHECK-NEXT:   %[[a14:.+]] = fadd fast float %[[a13]], %m1diffeL_lhs_i
-; CHECK-NEXT:   store float %[[a14]], float* %"lhs_i'ipg_unwrap", align 8
-; CHECK-NEXT:   %[[a15:.+]] = icmp eq i64 %"iv1'ac.0", 0
-; CHECK-NEXT:   br i1 %[[a15]], label %invertfor.cond2.preheader, label %incinvertfor.body5
+; CHECK-NEXT:   %L_lhs_i_unwrap = load float, float* %lhs_i_unwrap, align 8, !tbaa !6
+; CHECK-NEXT:   %m0diffeL_rhs_ij = fmul fast float %22, %L_lhs_i_unwrap
+; CHECK-NEXT:   %rhs_ij_unwrap = getelementptr inbounds float, float* %rhs_data, i64 %_unwrap2
+; CHECK-NEXT:   %L_rhs_ij_unwrap = load float, float* %rhs_ij_unwrap, align 8, !tbaa !6
+; CHECK-NEXT:   %m1diffeL_lhs_i = fmul fast float %22, %L_rhs_ij_unwrap
+; CHECK-NEXT:   %"rhs_ij'ipg_unwrap" = getelementptr inbounds float, float* %"rhs_data'ipl", i64 %_unwrap2
+; CHECK-NEXT:   %9 = load float, float* %"rhs_ij'ipg_unwrap", align 8, !tbaa !6, !alias.scope !15, !noalias !18
+; CHECK-NEXT:   %10 = fadd fast float %9, %m0diffeL_rhs_ij
+; CHECK-NEXT:   store float %10, float* %"rhs_ij'ipg_unwrap", align 8, !tbaa !6, !alias.scope !15, !noalias !18
+; CHECK-NEXT:   %"lhs_i'ipg_unwrap" = getelementptr inbounds float, float* %"lhs_data'ipl", i64 %"iv'ac.0"
+; CHECK-NEXT:   %11 = load float, float* %"lhs_i'ipg_unwrap", align 8, !tbaa !6, !alias.scope !20, !noalias !23
+; CHECK-NEXT:   %12 = fadd fast float %11, %m1diffeL_lhs_i
+; CHECK-NEXT:   store float %12, float* %"lhs_i'ipg_unwrap", align 8, !tbaa !6, !alias.scope !20, !noalias !23
+; CHECK-NEXT:   %13 = icmp eq i64 %"iv1'ac.0", 0
+; CHECK-NEXT:   br i1 %13, label %invertfor.cond2.preheader, label %incinvertfor.body5
 
 ; CHECK: incinvertfor.body5:                               ; preds = %invertfor.body5
 ; CHECK-NEXT:   br label %invertfor.inc44
 
 ; CHECK: invertfor.body23:                                 ; preds = %invertfor.inc44, %incinvertfor.body23
-; CHECK-NEXT:   %"add'de.0" = phi float [ 0.000000e+00, %invertfor.inc44 ], [ %[[a18]], %incinvertfor.body23 ]
-; CHECK-NEXT:   %"iv3'ac.0" = phi i64 [ %[[smaxm2]], %invertfor.inc44 ], [ %[[a24:.+]], %incinvertfor.body23 ]
-; CHECK-NEXT:   %[[unwrap7]] = mul nsw i64 %"iv1'ac.0", %rows
-; CHECK-NEXT:   %[[unwrap8:.+]] = add nsw i64 %[[unwrap7]], %"iv'ac.0"
-; CHECK-NEXT:   %[[dout_iji8]] = getelementptr inbounds double, double* %[[dout_data]], i64 %[[unwrap8]]
-; CHECK-NEXT:   %[[a16:.+]] = load double, double* %[[dout_iji8]], align 8
-; CHECK-NEXT:   store double 0.000000e+00, double* %[[dout_iji8]], align 8
-; CHECK-NEXT:   %[[a17:.+]] = fptrunc double %[[a16]] to float
-; CHECK-NEXT:   %[[a18]] = fadd fast float %"add'de.0", %[[a17]]
+; CHECK-NEXT:   %"add'de.0" = phi float [ 0.000000e+00, %invertfor.inc44 ], [ %16, %incinvertfor.body23 ]
+; CHECK-NEXT:   %"iv3'ac.0" = phi i64 [ %[[smaxm2]], %invertfor.inc44 ], [ %23, %incinvertfor.body23 ]
+; CHECK-NEXT:   %_unwrap2 = mul nsw i64 %"iv1'ac.0", %rows
+; CHECK-NEXT:   %_unwrap3 = add nsw i64 %_unwrap2, %"iv'ac.0"
+; CHECK-NEXT:   %"out_iji'ipg_unwrap4" = getelementptr inbounds double, double* %"out_data'ipl", i64 %_unwrap3
+; CHECK-NEXT:   %14 = load double, double* %"out_iji'ipg_unwrap4", align 8, !tbaa !8, !noalias !25
+; CHECK-NEXT:   store double 0.000000e+00, double* %"out_iji'ipg_unwrap4", align 8, !tbaa !8, !alias.scope !13, !noalias !10
+; CHECK-NEXT:   %15 = fptrunc double %14 to float
+; CHECK-NEXT:   %16 = fadd fast float %"add'de.0", %15
 ; CHECK-NEXT:   %iv.next4_unwrap = add nuw nsw i64 %"iv3'ac.0", 1
-; CHECK-NEXT:   %[[unwrap11:.+]] = mul nsw i64 %iv.next4_unwrap, %rows
-; CHECK-NEXT:   %[[unwrap12:.+]] = add nsw i64 %[[unwrap11]], %"iv'ac.0"
-; CHECK-NEXT:   %lhs_ki_unwrap = getelementptr inbounds float, float* %lhs_data, i64 %[[unwrap12]]
-; CHECK-NEXT:   %L_lhs_ki_unwrap = load float, float* %lhs_ki_unwrap, align 8, !tbaa !6, !invariant.group !
-; CHECK-NEXT:   %m0diffeL_rhs_kk = fmul fast float %[[a18]], %L_lhs_ki_unwrap
-; CHECK-NEXT:   %[[unwrap14:.+]] = add nsw i64 %iv.next4_unwrap, %[[unwrap7]]
-; CHECK-NEXT:   %rhs_kk_unwrap = getelementptr inbounds float, float* %rhs_data, i64 %[[unwrap14]]
-; CHECK-NEXT:   %L_rhs_kk_unwrap = load float, float* %rhs_kk_unwrap, align 8, !tbaa !6, !invariant.group !
-; CHECK-NEXT:   %m1diffeL_lhs_ki = fmul fast float %[[a18]], %L_rhs_kk_unwrap
-; CHECK-NEXT:   %"rhs_kk'ipg_unwrap" = getelementptr inbounds float, float* %[[drhs_data]], i64 %[[unwrap14]]
-; CHECK-NEXT:   %[[a19:.+]] = load float, float* %"rhs_kk'ipg_unwrap", align 8
-; CHECK-NEXT:   %[[a20:.+]] = fadd fast float %[[a19]], %m0diffeL_rhs_kk
-; CHECK-NEXT:   store float %[[a20]], float* %"rhs_kk'ipg_unwrap", align 8
-; CHECK-NEXT:   %"lhs_ki'ipg_unwrap" = getelementptr inbounds float, float* %[[dlhs_data]], i64 %[[unwrap12]]
-; CHECK-NEXT:   %[[a21:.+]] = load float, float* %"lhs_ki'ipg_unwrap", align 8
-; CHECK-NEXT:   %[[a22:.+]] = fadd fast float %[[a21]], %m1diffeL_lhs_ki
-; CHECK-NEXT:   store float %[[a22]], float* %"lhs_ki'ipg_unwrap", align 8
-; CHECK-NEXT:   %[[iv3cmp:.+]] = icmp eq i64 %"iv3'ac.0", 0
-; CHECK-NEXT:   br i1 %[[iv3cmp]], label %invertfor.body5, label %incinvertfor.body23
+; CHECK-NEXT:   %_unwrap5 = mul nsw i64 %iv.next4_unwrap, %rows
+; CHECK-NEXT:   %_unwrap6 = add nsw i64 %_unwrap5, %"iv'ac.0"
+; CHECK-NEXT:   %lhs_ki_unwrap = getelementptr inbounds float, float* %lhs_data, i64 %_unwrap6
+; CHECK-NEXT:   %L_lhs_ki_unwrap = load float, float* %lhs_ki_unwrap, align 8, !tbaa !6
+; CHECK-NEXT:   %m0diffeL_rhs_kk = fmul fast float %16, %L_lhs_ki_unwrap
+; CHECK-NEXT:   %_unwrap7 = add nsw i64 %iv.next4_unwrap, %_unwrap2
+; CHECK-NEXT:   %rhs_kk_unwrap = getelementptr inbounds float, float* %rhs_data, i64 %_unwrap7
+; CHECK-NEXT:   %L_rhs_kk_unwrap = load float, float* %rhs_kk_unwrap, align 8, !tbaa !6
+; CHECK-NEXT:   %m1diffeL_lhs_ki = fmul fast float %16, %L_rhs_kk_unwrap
+; CHECK-NEXT:   %"rhs_kk'ipg_unwrap" = getelementptr inbounds float, float* %"rhs_data'ipl", i64 %_unwrap7
+; CHECK-NEXT:   %17 = load float, float* %"rhs_kk'ipg_unwrap", align 8, !tbaa !6, !alias.scope !26, !noalias !29
+; CHECK-NEXT:   %18 = fadd fast float %17, %m0diffeL_rhs_kk
+; CHECK-NEXT:   store float %18, float* %"rhs_kk'ipg_unwrap", align 8, !tbaa !6, !alias.scope !26, !noalias !29
+; CHECK-NEXT:   %"lhs_ki'ipg_unwrap" = getelementptr inbounds float, float* %"lhs_data'ipl", i64 %_unwrap6
+; CHECK-NEXT:   %19 = load float, float* %"lhs_ki'ipg_unwrap", align 8, !tbaa !6, !alias.scope !31, !noalias !34
+; CHECK-NEXT:   %20 = fadd fast float %19, %m1diffeL_lhs_ki
+; CHECK-NEXT:   store float %20, float* %"lhs_ki'ipg_unwrap", align 8, !tbaa !6, !alias.scope !31, !noalias !34
+; CHECK-NEXT:   %21 = icmp eq i64 %"iv3'ac.0", 0
+; CHECK-NEXT:   %22 = select fast i1 %21, float %16, float 0.000000e+00
+; CHECK-NEXT:   br i1 %21, label %invertfor.body5, label %incinvertfor.body23
 
 ; CHECK: incinvertfor.body23:                              ; preds = %invertfor.body23
-; CHECK-NEXT:   %[[a24]] = add nsw i64 %"iv3'ac.0", -1
+; CHECK-NEXT:   %23 = add nsw i64 %"iv3'ac.0", -1
 ; CHECK-NEXT:   br label %invertfor.body23
 
 ; CHECK: invertfor.inc44:                                  ; preds = %invertfor.inc47, %incinvertfor.body5
@@ -229,7 +227,7 @@ attributes #3 = { argmemonly nounwind }
 ; CHECK-NEXT:   %"iv1'ac.0" = add i64 %"iv1'ac.0.in", -1
 ; CHECK-NEXT:   br label %invertfor.body23
 
-; CHECK: invertfor.inc47:
+; CHECK: invertfor.inc47:                                  ; preds = %for.inc47, %incinvertfor.cond2.preheader
 ; CHECK-NEXT:   %"iv'ac.0.in" = phi i64 [ %"iv'ac.0", %incinvertfor.cond2.preheader ], [ %rows, %for.inc47 ]
 ; CHECK-NEXT:   %"iv'ac.0" = add i64 %"iv'ac.0.in", -1
 ; CHECK-NEXT:   br label %invertfor.inc44
