@@ -95,9 +95,9 @@ public:
 void mlir::enzyme::registerMemRefDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, memref::MemRefDialect *) {
-    memref::LoadOp::attachInterface<LoadOpInterface>(*context);
-    memref::StoreOp::attachInterface<StoreOpInterface>(*context);
-    memref::AllocOp::attachInterface<AllocOpInterface>(*context);
-    MemRefType::attachInterface<MemRefTypeInterface>(*context);
+    //memref::LoadOp::attachInterface<LoadOpInterface>(*context);
+    //memref::StoreOp::attachInterface<StoreOpInterface>(*context);
+    //memref::AllocOp::attachInterface<AllocOpInterface>(*context);
+    //MemRefType::attachInterface<MemRefTypeInterface>(*context);
   });
 }

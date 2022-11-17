@@ -15,6 +15,7 @@
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/GradientUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Support/LogicalResult.h"
 
@@ -50,6 +51,61 @@ struct MulFOpInterface
   }
 };
 
+struct DivFOpInterface
+    : public AutoDiffOpInterface::ExternalModel<DivFOpInterface,
+                                                arith::DivFOp> {
+  LogicalResult createForwardModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    // Derivative of r = a / b -> dr = (a * db - da * b) / (b * b)
+    auto divOp = cast<arith::DivFOp>(op);
+    if (!gutils->isConstantValue(divOp)) {
+      mlir::Value res = nullptr;
+      for (int i = 0; i < 2; i++) {
+        if (!gutils->isConstantValue(divOp.getOperand(i))) {
+          Value tmp = builder.create<arith::MulFOp>(
+              divOp.getLoc(),
+              gutils->invertPointerM(divOp.getOperand(i), builder),
+              gutils->getNewFromOriginal(divOp.getOperand(1 - i)));
+          if (res == nullptr)
+            res = tmp;
+          else
+            res = builder.create<arith::SubFOp>(divOp.getLoc(), res, tmp);
+        }
+      }
+      Value tmp = builder.create<arith::MulFOp>(divOp.getLoc(), gutils->getNewFromOriginal(divOp.getOperand(0)), gutils->getNewFromOriginal(divOp.getOperand(1)));
+      res = builder.create<arith::DivFOp>(divOp.getLoc(), res, tmp);
+      gutils->setDiffe(divOp, res, builder);
+    }
+    gutils->eraseIfUnused(op);
+    return success();
+  }
+};
+
+struct SubFOpInterface
+    : public AutoDiffOpInterface::ExternalModel<SubFOpInterface,
+                                                arith::SubFOp> {
+  LogicalResult createForwardModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    // Derivative of r = a - b -> dr = da - db
+    auto addOp = cast<arith::SubFOp>(op);
+    if (!gutils->isConstantValue(addOp)) {
+      mlir::Value res = nullptr;
+      for (int i = 0; i < 2; i++) {
+        if (!gutils->isConstantValue(addOp.getOperand(i))) {
+          Value tmp = gutils->invertPointerM(addOp.getOperand(i), builder);
+          if (res == nullptr)
+            res = tmp;
+          else
+            res = builder.create<arith::SubFOp>(addOp.getLoc(), res, tmp);
+        }
+      }
+      gutils->setDiffe(addOp, res, builder);
+    }
+    gutils->eraseIfUnused(op);
+    return success();
+  }
+};
+
 struct AddFOpInterface
     : public AutoDiffOpInterface::ExternalModel<AddFOpInterface,
                                                 arith::AddFOp> {
@@ -73,13 +129,118 @@ struct AddFOpInterface
     gutils->eraseIfUnused(op);
     return success();
   }
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    // Derivative of r = a + b -> dr = da + db
+    auto addOp = cast<arith::AddFOp>(op);
+    if (!gutils->isConstantValue(addOp)) {
+      for (int i = 0; i < 2; i++) {
+        if (!gutils->isConstantValue(addOp.getOperand(i))) {
+          assert(gutils->invertedPointers.contains(addOp));
+          Value own_gradient = gutils->invertPointerM(addOp, builder);
+          
+          if(gutils->invertedPointers.contains(addOp.getOperand(i))){
+            Value other_gradient = gutils->invertPointerM(addOp.getOperand(i), builder);
+              
+            Value tmp = builder.create<arith::AddFOp>(addOp.getLoc(), own_gradient, other_gradient);
+            gutils->invertedPointers.map(addOp.getOperand(i), tmp);
+          }
+          else{
+            gutils->invertedPointers.map(addOp.getOperand(i), own_gradient);
+          }
+        }
+      }
+      //gutils->setDiffe(addOp, tmp, builder);
+    }
+    gutils->eraseIfUnused(op);
+    return success();
+  }
 };
-} // namespace
+
+struct MaxFOpInterface
+    : public AutoDiffOpInterface::ExternalModel<MaxFOpInterface,
+                                                arith::MaxFOp> {
+  LogicalResult createForwardModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    
+    auto maxOp = cast<arith::MaxFOp>(op);
+
+    Value tmp0 = gutils->getNewFromOriginal(maxOp.getOperand(0));
+    Value tmp1 = gutils->getNewFromOriginal(maxOp.getOperand(1));
+
+    if (!gutils->isConstantValue(maxOp.getOperand(0)) || !gutils->isConstantValue(maxOp.getOperand(1))){
+      Value invert0 = gutils->invertPointerM(maxOp.getOperand(0), builder);
+      Value invert1 = gutils->invertPointerM(maxOp.getOperand(1), builder);
+      
+      auto thenBuilder = [&](OpBuilder &nested, Location loc) {
+        nested.create<scf::YieldOp>(loc, invert1);
+      };
+
+      auto elseBuilder = [&](OpBuilder &nested, Location loc) {
+        nested.create<scf::YieldOp>(loc, invert0);
+      };
+
+      Value condition = builder.create<arith::CmpFOp>(maxOp.getLoc(), arith::CmpFPredicate::OLT, tmp0, tmp1);
+      auto res = builder.create<scf::IfOp>(maxOp.getLoc(), tmp0.getType(), condition, thenBuilder, elseBuilder).getResults()[0];
+      gutils->setDiffe(maxOp, res, builder);
+    }
+    else{
+      Value res = gutils->invertPointerM(maxOp.getOperand(0), builder);
+      gutils->setDiffe(maxOp, res, builder);
+    }
+
+    gutils->eraseIfUnused(op);
+    return success();
+  }
+};
+
+struct MinFOpInterface
+    : public AutoDiffOpInterface::ExternalModel<MinFOpInterface,
+                                                arith::MinFOp> {
+  LogicalResult createForwardModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtils *gutils) const {
+    
+    auto minOp = cast<arith::MinFOp>(op);
+
+    Value tmp0 = gutils->getNewFromOriginal(minOp.getOperand(0));
+    Value tmp1 = gutils->getNewFromOriginal(minOp.getOperand(1));
+
+    if (!gutils->isConstantValue(minOp.getOperand(0)) || !gutils->isConstantValue(minOp.getOperand(1))){
+      Value invert0 = gutils->invertPointerM(minOp.getOperand(0), builder);
+      Value invert1 = gutils->invertPointerM(minOp.getOperand(1), builder);
+      
+      auto thenBuilder = [&](OpBuilder &nested, Location loc) {
+        nested.create<scf::YieldOp>(loc, invert0);
+      };
+
+      auto elseBuilder = [&](OpBuilder &nested, Location loc) {
+        nested.create<scf::YieldOp>(loc, invert1);
+      };
+
+      Value condition = builder.create<arith::CmpFOp>(minOp.getLoc(), arith::CmpFPredicate::OLT, tmp0, tmp1);
+      auto res = builder.create<scf::IfOp>(minOp.getLoc(), tmp0.getType(), condition, thenBuilder, elseBuilder).getResults()[0];
+      gutils->setDiffe(minOp, res, builder);
+    }
+    else{
+      Value res = gutils->invertPointerM(minOp.getOperand(0), builder);
+      gutils->setDiffe(minOp, res, builder);
+    }
+
+    gutils->eraseIfUnused(op);
+    return success();
+  }
+};
+
+} 
 
 void mlir::enzyme::registerArithDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, arith::ArithDialect *) {
     arith::AddFOp::attachInterface<AddFOpInterface>(*context);
-    arith::MulFOp::attachInterface<MulFOpInterface>(*context);
+    //arith::SubFOp::attachInterface<SubFOpInterface>(*context);
+    //arith::MulFOp::attachInterface<MulFOpInterface>(*context);
+    //arith::DivFOp::attachInterface<DivFOpInterface>(*context);
+    //arith::MaxFOp::attachInterface<MaxFOpInterface>(*context);
+    //arith::MinFOp::attachInterface<MinFOpInterface>(*context);
   });
 }

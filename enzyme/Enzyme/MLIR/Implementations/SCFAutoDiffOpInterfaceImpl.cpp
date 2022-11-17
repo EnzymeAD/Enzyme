@@ -99,6 +99,6 @@ struct ForOpInterface
 void mlir::enzyme::registerSCFDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, scf::SCFDialect *) {
-    scf::ForOp::attachInterface<ForOpInterface>(*context);
+    //scf::ForOp::attachInterface<ForOpInterface>(*context);
   });
 }

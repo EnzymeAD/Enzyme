@@ -76,9 +76,11 @@ public:
   mlir::Value invertPointerM(mlir::Value v, OpBuilder &Builder2);
   void setDiffe(mlir::Value val, mlir::Value toset, OpBuilder &BuilderM);
   void forceAugmentedReturns();
+  void forceAugmentedReturnsReverse();
 
   Operation *cloneWithNewOperands(OpBuilder &B, Operation *op);
-
+  
+  LogicalResult visitChildReverse(Operation *op, OpBuilder& builder);
   LogicalResult visitChild(Operation *op);
 };
 
@@ -159,6 +161,13 @@ public:
 
   FunctionOpInterface
   CreateForwardDiff(FunctionOpInterface fn, DIFFE_TYPE retType,
+                    std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
+                    bool returnUsed, DerivativeMode mode, bool freeMemory,
+                    size_t width, mlir::Type addedType, MFnTypeInfo type_args,
+                    std::vector<bool> volatile_args, void *augmented);
+
+  FunctionOpInterface
+  CreateReverseDiff(FunctionOpInterface fn, DIFFE_TYPE retType,
                     std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
                     bool returnUsed, DerivativeMode mode, bool freeMemory,
                     size_t width, mlir::Type addedType, MFnTypeInfo type_args,

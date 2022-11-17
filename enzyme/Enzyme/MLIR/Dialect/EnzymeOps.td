@@ -51,4 +51,15 @@ def ForwardDiffOp : Enzyme_Op<"fwddiff",
   }];
 }
 
+def ReverseDiffOp : Enzyme_Op<"diff",
+    [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
+  let summary = "Perform reverse mode AD on a funcop";
+  let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity);
+  let results = (outs Variadic<AnyType>:$outputs);
+
+  let assemblyFormat = [{
+    $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
+  }];
+}
+
 #endif // ENZYME_OPS
