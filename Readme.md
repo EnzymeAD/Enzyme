@@ -42,7 +42,7 @@ spack install enzyme
 
 To get involved or if you have questions, please join our [mailing list](https://groups.google.com/d/forum/enzyme-dev).
 
-If using this code in an academic setting, please cite the following two papers (first for Enzyme as a whole, second for GPU+optimizations, and third for the AD of Parallel Paradigms):
+If using this code in an academic setting, please cite the following three papers (first for Enzyme as a whole, second for GPU+optimizations, and third for AD of all other parallel programs (OpenMP, MPI, Julia Tasks, etc.)):
 ```
 @inproceedings{NEURIPS2020_9332c513,
  author = {Moses, William and Churavy, Valentin},
