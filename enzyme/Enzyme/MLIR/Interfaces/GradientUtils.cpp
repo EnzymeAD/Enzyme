@@ -14,8 +14,12 @@
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
 
+
 // TODO: this shouldn't depend on specific dialects except Enzyme.
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -192,8 +196,7 @@ void mlir::enzyme::MGradientUtils::setDiffe(mlir::Value val, mlir::Value toset,
     erase(placeholder);
     invertedPointers.map(val, toset);
     return;
-  }
-  else if (mode == DerivativeMode::ReverseModeGradient) {
+  } else if (mode == DerivativeMode::ReverseModeGradient) {
     assert(getShadowType(val.getType()) == toset.getType());
     auto found = invertedPointers.lookupOrNull(val);
     assert(found != nullptr);
@@ -237,16 +240,13 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturnsReverse() {
       invertedPointers.map(val, dval);
     }
   });
-  
-  
+
+  int index = oldFunc.getNumArguments() - 1;
+  auto argument = oldFunc.getArgument(index);
   oldFunc.walk([&](Block *blk) {
     auto terminator = blk->getTerminator();
-    if (terminator->hasTrait<OpTrait::ReturnLike>()){
+    if (terminator->hasTrait<OpTrait::ReturnLike>()) {
       auto nblk = getNewFromOriginal(blk);
-      int index = nblk->getNumArguments() - 1;
-      auto argument = nblk->getArgument(index);
-      llvm::errs() << "argument";
-      argument.dump();
       invertedPointers.map(terminator->getOperand(0), argument);
     }
   });
@@ -349,9 +349,16 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
   });
 }
 
-LogicalResult MGradientUtils::visitChildReverse(Operation *op, OpBuilder& builder) {
+LogicalResult MGradientUtils::visitChildReverse(Operation *op,
+                                                OpBuilder &builder) {
   if (mode == DerivativeMode::ReverseModeGradient) {
-    if (auto iface = dyn_cast<AutoDiffOpInterface>(op)) {
+    if (auto binst = dyn_cast<BranchOpInterface>(op)) {
+      op->dump();
+    }
+    else if (auto binst = dyn_cast<func::ReturnOp>(op)) {
+      op->dump();
+    }
+    else if (auto iface = dyn_cast<AutoDiffOpInterface>(op)) {
       return iface.createReverseModeAdjoint(builder, this);
     }
   }
@@ -417,7 +424,7 @@ mlir::FunctionType getFunctionTypeForClone(
     ++argno;
   }
 
-  //TODO: Expand for multiple returns
+  // TODO: Expand for multiple returns
   if (diffeReturnArg) {
     ArgTypes.push_back(getShadowType(FTy.getResult(0), width));
   }
@@ -428,9 +435,9 @@ mlir::FunctionType getFunctionTypeForClone(
   OpBuilder builder(FTy.getContext());
   if (returnValue == ReturnType::TapeAndTwoReturns ||
       returnValue == ReturnType::TapeAndReturn) {
-    RetTypes.insert(RetTypes.begin(), LLVM::LLVMPointerType::get(builder.getIntegerType(8)));
-  }
-  else if(returnValue == ReturnType::Tape){
+    RetTypes.insert(RetTypes.begin(),
+                    LLVM::LLVMPointerType::get(builder.getIntegerType(8)));
+  } else if (returnValue == ReturnType::Tape) {
     for (auto I : FTy.getInputs()) {
       RetTypes.push_back(I);
     }
@@ -621,9 +628,9 @@ FunctionOpInterface CloneFunctionWithReturns(
         ptrInputs.map(oval, dval);
       }
     }
-    //TODO: Add support for mulitple outputs?
-    if (diffeReturnArg){
-      auto location = blk.getArgument(blk.getNumArguments()-1).getLoc();
+    // TODO: Add support for mulitple outputs?
+    if (diffeReturnArg) {
+      auto location = blk.getArgument(blk.getNumArguments() - 1).getLoc();
       auto val = F.getFunctionType().cast<mlir::FunctionType>().getResult(0);
       mlir::Value dval = blk.addArgument(val, location);
     }
@@ -727,12 +734,16 @@ void createTerminator(MDiffeGradientUtils *gutils, mlir::Block *oBB,
     // TODO generalize to cloneWithNewBlockArgs interface
     SmallVector<Value> newVals;
 
+    llvm::errs() << oBB->getNumSuccessors() << "oBB->getNumSuccessors() \n";
+
     SmallVector<int32_t> segSizes;
-    for (size_t i = 0, len = binst.getSuccessorOperands(0)
-                                 .getForwardedOperands()
-                                 .getBeginOperandIndex();
-         i < len; i++)
-      newVals.push_back(gutils->getNewFromOriginal(binst->getOperand(i)));
+    auto successors = binst.getSuccessorOperands(0);
+    if (successors.size() > 0) {
+      size_t len = successors.getForwardedOperands().getBeginOperandIndex();
+      for (size_t i = 0; i < len; i++) {
+        newVals.push_back(gutils->getNewFromOriginal(binst->getOperand(i)));
+      }
+    }
     segSizes.push_back(newVals.size());
     for (size_t i = 0; i < newInst->getNumSuccessors(); i++) {
       size_t cur = newVals.size();
@@ -813,7 +824,7 @@ void createTerminator(MDiffeGradientUtils *gutils, mlir::Block *oBB,
     break;
   }
   case ReturnType::Tape: {
-    for (auto attribute : gutils->oldFunc.getBody().getArguments()){
+    for (auto attribute : gutils->oldFunc.getBody().getArguments()) {
       auto attributeGradient = gutils->invertPointerM(attribute, nBuilder);
       retargs.push_back(attributeGradient);
     }
@@ -963,7 +974,6 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
   return nf;
 }
 
-
 //===----------------------------------------------------------------------===//
 
 FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
@@ -978,10 +988,22 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
 
   bool retActive = retType != DIFFE_TYPE::CONSTANT;
   ReturnType returnValue = ReturnType::Tape;
-  auto gutils = MDiffeGradientUtils::CreateFromClone(*this, mode, width, fn, TA, type_args, retType,/*diffeReturnArg*/ true, constants, returnValue, addedType, /*omp*/ false);
+  auto gutils = MDiffeGradientUtils::CreateFromClone(
+      *this, mode, width, fn, TA, type_args, retType, /*diffeReturnArg*/ true,
+      constants, returnValue, addedType, /*omp*/ false);
+
 
   const SmallPtrSet<mlir::Block *, 4> guaranteedUnreachable;
   gutils->forceAugmentedReturnsReverse();
+
+  BlockAndValueMapping mapReverseModeBlocks;
+  for (auto it = gutils->oldFunc.getBody().getBlocks().rbegin(); it != gutils->oldFunc.getBody().getBlocks().rend(); ++it) {
+    Block &block = * it;
+    Block *newBlock = new Block();
+    mapReverseModeBlocks.map(&block, newBlock);
+    auto regionPos = gutils->newFunc.getBody().end();
+    gutils->newFunc.getBody().getBlocks().insert(regionPos, newBlock);
+  }
 
   for (Block &oBB : gutils->oldFunc.getBody().getBlocks()) {
     // Don't create derivatives for code that results in termination
@@ -1001,27 +1023,56 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
       continue;
     }
 
-    auto term = oBB.getTerminator();
-    assert(term);
+    OpBuilder revBuilder(mapReverseModeBlocks.lookupOrNull(&oBB), mapReverseModeBlocks.lookupOrNull(&oBB)->begin());
 
-    OpBuilder revBuilder(&*(oBB.rbegin())->getContext());
-    revBuilder.setInsertionPoint(gutils->getNewFromOriginal(&*(oBB.rbegin())));
+    if (!oBB.empty()){
+      auto term = oBB.getTerminator();
 
-    auto first = oBB.rbegin();
-    auto last = oBB.empty() ? oBB.rend() : std::prev(oBB.rend());
-    for (auto it = first; it != last; ++it) {
-      // TODO: propagate errors.
-      (void)gutils->visitChildReverse(&*it, revBuilder);
+      auto first = oBB.rbegin();
+      auto last = oBB.rend();
+      for (auto it = first; it != last; ++it) {
+        (void)gutils->visitChildReverse(&*it, revBuilder);
+      }
     }
-    
-    createTerminator(gutils, &oBB, retType, returnValue);
+
+    auto newBB = gutils->getNewFromOriginal(&oBB);
+    if (oBB.getNumSuccessors() == 0) {
+
+      gutils->oldFunc.getBody().getBlocks().front();
+      OpBuilder forwardToBackwardBuilder(&*(newBB->rbegin())->getContext());
+      forwardToBackwardBuilder.setInsertionPoint(gutils->getNewFromOriginal(&*(oBB.rbegin())));
+      auto revBlock = mapReverseModeBlocks.lookupOrNull(&oBB);
+      forwardToBackwardBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB.rbegin()))->getLoc(), revBlock);
+      
+      auto returnStatement = newBB->getTerminator();
+      gutils->erase(returnStatement);
+    }
+    if (oBB.hasNoPredecessors()){
+      auto revBlock = mapReverseModeBlocks.lookupOrNull(&oBB);
+
+      OpBuilder revBuilder(revBlock, revBlock->end());
+      SmallVector<mlir::Value, 2> retargs;
+      for (auto attribute : gutils->oldFunc.getBody().getArguments()) {
+        auto attributeGradient = gutils->invertPointerM(attribute, revBuilder);
+        retargs.push_back(attributeGradient);
+      }
+      
+      //auto returnStatement = newBB->getTerminator();
+      //gutils->erase(returnStatement);
+
+      llvm::errs() << "attention\n";
+      revBlock->dump();
+      revBuilder.create<func::ReturnOp>((revBlock->rbegin())->getLoc(), retargs);
+      revBlock->dump();
+      llvm::errs() << "attention\n";
+    }
   }
-  mlir::Block *entry = &gutils->newFunc.getBody().front();
 
   auto nf = gutils->newFunc;
 
   llvm::errs() << "nf\n";
   nf.dump();
+  llvm::errs() << "nf end\n";
   delete gutils;
   return nf;
 }

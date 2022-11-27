@@ -131,7 +131,7 @@ struct AddFOpInterface
   }
   LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
                                          MGradientUtils *gutils) const {
-    // Derivative of r = a + b -> dr = da + db
+    // Derivative of r = a + b -> dr = da + db]
     auto addOp = cast<arith::AddFOp>(op);
     if (!gutils->isConstantValue(addOp)) {
       for (int i = 0; i < 2; i++) {
