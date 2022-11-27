@@ -353,10 +353,10 @@ LogicalResult MGradientUtils::visitChildReverse(Operation *op,
                                                 OpBuilder &builder) {
   if (mode == DerivativeMode::ReverseModeGradient) {
     if (auto binst = dyn_cast<BranchOpInterface>(op)) {
-      op->dump();
+      
     }
     else if (auto binst = dyn_cast<func::ReturnOp>(op)) {
-      op->dump();
+      
     }
     else if (auto iface = dyn_cast<AutoDiffOpInterface>(op)) {
       return iface.createReverseModeAdjoint(builder, this);
@@ -1025,9 +1025,21 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
 
     OpBuilder revBuilder(mapReverseModeBlocks.lookupOrNull(&oBB), mapReverseModeBlocks.lookupOrNull(&oBB)->begin());
 
-    if (!oBB.empty()){
-      auto term = oBB.getTerminator();
+    auto newBB = gutils->getNewFromOriginal(&oBB);
+    if (oBB.getNumSuccessors() == 0) {
+      gutils->oldFunc.getBody().getBlocks().front();
+      OpBuilder forwardToBackwardBuilder(&*(newBB->rbegin())->getContext());
+      forwardToBackwardBuilder.setInsertionPoint(gutils->getNewFromOriginal(&*(oBB.rbegin())));
+      auto revBlock = mapReverseModeBlocks.lookupOrNull(&oBB);
+      forwardToBackwardBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB.rbegin()))->getLoc(), revBlock);
 
+      auto returnStatement = newBB->getTerminator();
+      gutils->invertedPointers.map(oBB.getTerminator()->getOperand(0), gutils->newFunc.getArgument(gutils->newFunc.getNumArguments() - 1)); //TODOreturnStatement->getOperand(0)
+
+      gutils->erase(returnStatement);
+    }
+
+    if (!oBB.empty()){
       auto first = oBB.rbegin();
       auto last = oBB.rend();
       for (auto it = first; it != last; ++it) {
@@ -1035,18 +1047,6 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
       }
     }
 
-    auto newBB = gutils->getNewFromOriginal(&oBB);
-    if (oBB.getNumSuccessors() == 0) {
-
-      gutils->oldFunc.getBody().getBlocks().front();
-      OpBuilder forwardToBackwardBuilder(&*(newBB->rbegin())->getContext());
-      forwardToBackwardBuilder.setInsertionPoint(gutils->getNewFromOriginal(&*(oBB.rbegin())));
-      auto revBlock = mapReverseModeBlocks.lookupOrNull(&oBB);
-      forwardToBackwardBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB.rbegin()))->getLoc(), revBlock);
-      
-      auto returnStatement = newBB->getTerminator();
-      gutils->erase(returnStatement);
-    }
     if (oBB.hasNoPredecessors()){
       auto revBlock = mapReverseModeBlocks.lookupOrNull(&oBB);
 
@@ -1056,15 +1056,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
         auto attributeGradient = gutils->invertPointerM(attribute, revBuilder);
         retargs.push_back(attributeGradient);
       }
-      
-      //auto returnStatement = newBB->getTerminator();
-      //gutils->erase(returnStatement);
-
-      llvm::errs() << "attention\n";
-      revBlock->dump();
       revBuilder.create<func::ReturnOp>((revBlock->rbegin())->getLoc(), retargs);
-      revBlock->dump();
-      llvm::errs() << "attention\n";
     }
   }
 
