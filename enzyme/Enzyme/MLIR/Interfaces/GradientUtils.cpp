@@ -20,6 +20,8 @@
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "llvm/ADT/BreadthFirstIterator.h"
+#include "mlir/IR/Dominance.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -995,6 +997,19 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
 
   const SmallPtrSet<mlir::Block *, 4> guaranteedUnreachable;
   gutils->forceAugmentedReturnsReverse();
+
+  /// Get dominator tree
+  auto dInfo = mlir::detail::DominanceInfoBase<false>(nullptr);
+  llvm::DominatorTreeBase<Block, false> & dt = dInfo.getDomTree(&(gutils->oldFunc.getBody()));
+  dt.print(llvm::errs());
+  auto root = dt.getNode(&*(gutils->oldFunc.getBody().begin()));
+  for(llvm::DomTreeNodeBase<mlir::Block> * node : llvm::breadth_first(root)){
+    node->getBlock()->dump();
+  }
+  //for (auto node = llvm::GraphTraits::nodes_begin(dt); node != llvm::GraphTraits<llvm::DominatorTreeBase<Block, false> *>::nodes_end(dt); ++node) {
+    // whatever you want to do with BB
+  //}
+  ///
 
   BlockAndValueMapping mapReverseModeBlocks;
   for (auto it = gutils->oldFunc.getBody().getBlocks().rbegin(); it != gutils->oldFunc.getBody().getBlocks().rend(); ++it) {
