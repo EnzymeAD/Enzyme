@@ -998,19 +998,6 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
   const SmallPtrSet<mlir::Block *, 4> guaranteedUnreachable;
   gutils->forceAugmentedReturnsReverse();
 
-  /// Get dominator tree
-  auto dInfo = mlir::detail::DominanceInfoBase<false>(nullptr);
-  llvm::DominatorTreeBase<Block, false> & dt = dInfo.getDomTree(&(gutils->oldFunc.getBody()));
-  dt.print(llvm::errs());
-  auto root = dt.getNode(&*(gutils->oldFunc.getBody().begin()));
-  for(llvm::DomTreeNodeBase<mlir::Block> * node : llvm::breadth_first(root)){
-    node->getBlock()->dump();
-  }
-  //for (auto node = llvm::GraphTraits::nodes_begin(dt); node != llvm::GraphTraits<llvm::DominatorTreeBase<Block, false> *>::nodes_end(dt); ++node) {
-    // whatever you want to do with BB
-  //}
-  ///
-
   BlockAndValueMapping mapReverseModeBlocks;
   for (auto it = gutils->oldFunc.getBody().getBlocks().rbegin(); it != gutils->oldFunc.getBody().getBlocks().rend(); ++it) {
     Block &block = * it;
@@ -1020,7 +1007,20 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
     gutils->newFunc.getBody().getBlocks().insert(regionPos, newBlock);
   }
 
-  for (Block &oBB : gutils->oldFunc.getBody().getBlocks()) {
+  /// Get dominator tree
+  auto dInfo = mlir::detail::DominanceInfoBase<false>(nullptr);
+  llvm::DominatorTreeBase<Block, false> & dt = dInfo.getDomTree(&(gutils->oldFunc.getBody()));
+  auto root = dt.getNode(&*(gutils->oldFunc.getBody().begin()));
+
+  SmallVector<mlir::Block*> dominatorToposortBlocks;
+  for(llvm::DomTreeNodeBase<mlir::Block> * node : llvm::breadth_first(root)){
+    dominatorToposortBlocks.push_back(node->getBlock());
+  }
+
+  //for (Block &oBB : gutils->oldFunc.getBody().getBlocks()) {
+  for (auto it = dominatorToposortBlocks.rbegin(); it != dominatorToposortBlocks.rend(); ++it){
+    Block& oBB = **it;
+
     // Don't create derivatives for code that results in termination
     if (guaranteedUnreachable.find(&oBB) != guaranteedUnreachable.end()) {
       auto newBB = gutils->getNewFromOriginal(&oBB);
