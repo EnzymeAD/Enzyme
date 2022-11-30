@@ -1017,7 +1017,6 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
     dominatorToposortBlocks.push_back(node->getBlock());
   }
 
-  //for (Block &oBB : gutils->oldFunc.getBody().getBlocks()) {
   for (auto it = dominatorToposortBlocks.rbegin(); it != dominatorToposortBlocks.rend(); ++it){
     Block& oBB = **it;
 
@@ -1038,11 +1037,9 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
       continue;
     }
 
-    OpBuilder revBuilder(mapReverseModeBlocks.lookupOrNull(&oBB), mapReverseModeBlocks.lookupOrNull(&oBB)->begin());
-
     auto newBB = gutils->getNewFromOriginal(&oBB);
-    if (oBB.getNumSuccessors() == 0) {
-      gutils->oldFunc.getBody().getBlocks().front();
+    if (oBB.getNumSuccessors() == 0){
+      //gutils->oldFunc.getBody().getBlocks().front();
       OpBuilder forwardToBackwardBuilder(&*(newBB->rbegin())->getContext());
       forwardToBackwardBuilder.setInsertionPoint(gutils->getNewFromOriginal(&*(oBB.rbegin())));
       auto revBlock = mapReverseModeBlocks.lookupOrNull(&oBB);
@@ -1053,6 +1050,8 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
 
       gutils->erase(returnStatement);
     }
+
+    OpBuilder revBuilder(mapReverseModeBlocks.lookupOrNull(&oBB), mapReverseModeBlocks.lookupOrNull(&oBB)->begin());
 
     if (!oBB.empty()){
       auto first = oBB.rbegin();
@@ -1072,6 +1071,12 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
         retargs.push_back(attributeGradient);
       }
       revBuilder.create<func::ReturnOp>((revBlock->rbegin())->getLoc(), retargs);
+    }
+    else {
+      // TODO
+      auto predecessor = oBB.getPredecessors().begin();
+      auto predecessor_revMode = mapReverseModeBlocks.lookupOrNull(*predecessor);
+      revBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB.rbegin()))->getLoc(), predecessor_revMode);
     }
   }
 
