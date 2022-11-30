@@ -80,3 +80,79 @@ public:
 // register the PluginASTAction in the registry.
 static clang::FrontendPluginRegistry::Add<EnzymeAction<EnzymePlugin>>
     X("enzyme", "Enzyme Plugin");
+
+
+#include "clang/AST/ASTContext.h"
+#include "clang/AST/Attr.h"
+#include "clang/Sema/ParsedAttr.h"
+#include "clang/Sema/Sema.h"
+#include "clang/Sema/SemaDiagnostic.h"
+#include "llvm/IR/Attributes.h"
+using namespace clang;
+
+namespace {
+
+struct EnzymeAttrInfo : public ParsedAttrInfo {
+  EnzymeAttrInfo() {
+    OptArgs = 2;
+    // GNU-style __attribute__(("example")) and C++-style [[example]]
+    static constexpr Spelling S[] = {{ParsedAttr::AS_GNU, "enzyme_allocator"},
+                                     {ParsedAttr::AS_CXX11, "enzyme_allocator"}};
+    Spellings = S;
+  }
+
+  bool diagAppertainsToDecl(Sema &S, const ParsedAttr &Attr,
+                            const Decl *D) const override {
+    // This attribute appertains to functions only.
+    if (!isa<FunctionDecl>(D)) {
+      S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type_str)
+          << Attr << "functions";
+      return false;
+    }
+    return true;
+  }
+
+  AttrHandling handleDeclAttribute(Sema &S, Decl *D,
+                                   const ParsedAttr &Attr) const override {
+    // Check if the decl is at file scope.
+    if (!D->getDeclContext()->isFileContext()) {
+      unsigned ID = S.getDiagnostics().getCustomDiagID(
+          DiagnosticsEngine::Error,
+          "'enzyme_allocator' attribute only allowed at file scope");
+      S.Diag(Attr.getLoc(), ID);
+      return AttributeNotApplied;
+    }
+
+    if (Attr.getNumArgs() == 0) {
+      unsigned ID = S.getDiagnostics().getCustomDiagID(
+          DiagnosticsEngine::Error,
+          "'enzyme_allocator' attribute requires argument of allocation size");
+      S.Diag(Attr.getLoc(), ID);
+      return AttributeNotApplied;
+    }
+
+    auto *Arg0 = Attr.getArgAsExpr(0);
+    IntegerLiteral *Literal =
+        dyn_cast<IntegerLiteral>(Arg0->IgnoreParenCasts());
+    if (!Literal) {
+      unsigned ID = S.getDiagnostics().getCustomDiagID(
+          DiagnosticsEngine::Error, "first argument to the 'enzyme_allocator' "
+                                    "attribute must be a integer literal");
+      S.Diag(Attr.getLoc(), ID);
+      return AttributeNotApplied;
+    }
+      SmallVector<Expr *, 16> ArgsBuf;
+      for (unsigned i = 0; i < Attr.getNumArgs(); i++) {
+        ArgsBuf.push_back(Attr.getArgAsExpr(i));
+      }
+    D->addAttr(AnnotateAttr::Create(S.Context, "enzyme", ArgsBuf.data(),
+                                    ArgsBuf.size(), Attr.getRange()));
+    D->addAttr(Attribute::NoInline);
+    return AttributeApplied;
+  }
+};
+
+} // namespace
+
+static ParsedAttrInfoRegistry::Add<EnzymeAttrInfo> X("enzyme", "Enzyme Plugin");
+
