@@ -2416,7 +2416,8 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                 applyChainRule(
                     NB,
                     [&](Value *anti) {
-                      zeroKnownAllocation(NB, anti, args, funcName, TLI, dyn_cast<CallInst>(inst));
+                      zeroKnownAllocation(NB, anti, args, funcName, TLI,
+                                          dyn_cast<CallInst>(inst));
                     },
                     anti);
               }
@@ -2854,7 +2855,8 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                     applyChainRule(
                         NB,
                         [&](Value *anti) {
-                          zeroKnownAllocation(NB, anti, args, funcName, TLI, orig);
+                          zeroKnownAllocation(NB, anti, args, funcName, TLI,
+                                              orig);
                         },
                         anti);
                   }
@@ -7482,13 +7484,13 @@ void GradientUtils::computeGuaranteedFrees() {
 /// Perform the corresponding deallocation of tofree, given it was allocated by
 /// allocationfn
 // For updating below one should read MemoryBuiltins.cpp, TargetLibraryInfo.cpp
-llvm::CallInst *
-freeKnownAllocation(llvm::IRBuilder<> &builder, llvm::Value *tofree,
-                    const llvm::StringRef allocationfn,
-                    const llvm::DebugLoc &debuglocation,
-                    const llvm::TargetLibraryInfo &TLI,
-                    llvm::CallInst *orig,
-                    GradientUtils *gutils) {
+llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
+                                    llvm::Value *tofree,
+                                    const llvm::StringRef allocationfn,
+                                    const llvm::DebugLoc &debuglocation,
+                                    const llvm::TargetLibraryInfo &TLI,
+                                    llvm::CallInst *orig,
+                                    GradientUtils *gutils) {
   using namespace llvm;
   assert(isAllocationFunction(allocationfn, TLI));
 
@@ -7499,15 +7501,16 @@ freeKnownAllocation(llvm::IRBuilder<> &builder, llvm::Value *tofree,
       allocationfn == "jl_gc_alloc_typed" ||
       allocationfn == "ijl_gc_alloc_typed")
     return nullptr;
-  
+
   if (allocationfn == "enzyme_allocator") {
     auto inds = getDeallocationIndicesFromCall(orig);
-    SmallVector<Value*, 2> vals;
+    SmallVector<Value *, 2> vals;
     for (auto ind : inds) {
-        if (ind == -1)
-            vals.push_back(tofree);
-        else
-            vals.push_back(gutils->lookupM(gutils->getNewFromOriginal(orig->getArgOperand(ind)), builder));
+      if (ind == -1)
+        vals.push_back(tofree);
+      else
+        vals.push_back(gutils->lookupM(
+            gutils->getNewFromOriginal(orig->getArgOperand(ind)), builder));
     }
     auto tocall = getDeallocatorFnFromCall(orig);
     auto freecall = builder.CreateCall(tocall, vals);

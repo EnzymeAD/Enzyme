@@ -271,13 +271,13 @@ static inline void zeroKnownAllocation(llvm::IRBuilder<> &bb,
 /// Perform the corresponding deallocation of tofree, given it was allocated by
 /// allocationfn
 // For updating below one should read MemoryBuiltins.cpp, TargetLibraryInfo.cpp
-llvm::CallInst *
-freeKnownAllocation(llvm::IRBuilder<> &builder, llvm::Value *tofree,
-                    const llvm::StringRef allocationfn,
-                    const llvm::DebugLoc &debuglocation,
-                    const llvm::TargetLibraryInfo &TLI,
-                    llvm::CallInst *orig,
-                    GradientUtils *gutils);
+llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
+                                    llvm::Value *tofree,
+                                    const llvm::StringRef allocationfn,
+                                    const llvm::DebugLoc &debuglocation,
+                                    const llvm::TargetLibraryInfo &TLI,
+                                    llvm::CallInst *orig,
+                                    GradientUtils *gutils);
 
 static inline bool isAllocationCall(llvm::Value *TmpOrig,
                                     llvm::TargetLibraryInfo &TLI) {
