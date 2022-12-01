@@ -1043,17 +1043,20 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
       OpBuilder forwardToBackwardBuilder(&*(newBB->rbegin())->getContext());
       forwardToBackwardBuilder.setInsertionPoint(gutils->getNewFromOriginal(&*(oBB.rbegin())));
       auto revBlock = mapReverseModeBlocks.lookupOrNull(&oBB);
-      forwardToBackwardBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB.rbegin()))->getLoc(), revBlock);
-
-      auto returnStatement = newBB->getTerminator();
-      gutils->invertedPointers.map(oBB.getTerminator()->getOperand(0), gutils->newFunc.getArgument(gutils->newFunc.getNumArguments() - 1)); //TODOreturnStatement->getOperand(0)
-
+      Operation * newBranchOp = forwardToBackwardBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB.rbegin()))->getLoc(), revBlock);
+      
+      Operation * returnStatement = newBB->getTerminator();
+      gutils->invertedPointers.map(oBB.getTerminator()->getOperand(0), gutils->newFunc.getArgument(gutils->newFunc.getNumArguments() - 1)); 
+      
+      Operation * retVal = oBB.getTerminator();
+      gutils->originalToNewFnOps[retVal] = newBranchOp;
+      newBranchOp->dump();
       gutils->erase(returnStatement);
     }
-
-    OpBuilder revBuilder(mapReverseModeBlocks.lookupOrNull(&oBB), mapReverseModeBlocks.lookupOrNull(&oBB)->begin());
+    auto x = gutils->getNewFromOriginal(&*(oBB.rbegin()));
+    x->dump();
     
-    gutils->getNewFromOriginal(&*(oBB.rbegin()))->dump();
+    OpBuilder revBuilder(mapReverseModeBlocks.lookupOrNull(&oBB), mapReverseModeBlocks.lookupOrNull(&oBB)->begin());
     if (!oBB.empty()){
       auto first = oBB.rbegin();
       auto last = oBB.rend();
@@ -1072,10 +1075,9 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
         auto attributeGradient = gutils->invertPointerM(attribute, revBuilder);
         retargs.push_back(attributeGradient);
       }
-      //revBuilder.create<enzyme::CreateCacheOp>((revBlock->rbegin())->getLoc(), revBuilder.getF64Type()); TODO!!!
-      //auto x = builder.create<enzyme::CreateCacheOp>(addOp.getLoc(), builder.getF64Type());
-      revBuilder.create<func::ReturnOp>((revBlock->rbegin())->getLoc(), retargs);
       
+      //revBuilder.create<enzyme::CreateCacheOp>((revBlock->rbegin())->getLoc(), revBuilder.getF64Type()); //TODO!!!
+      revBuilder.create<func::ReturnOp>((revBlock->rbegin())->getLoc(), retargs);
     }
     else {
       auto predecessor = oBB.getPredecessors().begin();

@@ -154,6 +154,7 @@ struct AddFOpInterface
           }
         }
       }
+      auto x = builder.create<enzyme::CreateCacheOp>(addOp.getLoc(), builder.getF64Type());
       //gutils->setDiffe(addOp, tmp, builder);
     }
     gutils->eraseIfUnused(op);
