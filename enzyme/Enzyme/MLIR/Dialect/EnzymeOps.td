@@ -15,6 +15,11 @@ include "mlir/Interfaces/ViewLikeInterface.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/IR/EnumAttr.td"
 
+include "mlir/IR/OpBase.td"
+include "mlir/IR/FunctionInterfaces.td"
+include "mlir/IR/SymbolInterfaces.td"
+include "mlir/Interfaces/SideEffectInterfaces.td"
+
 include "mlir/Dialect/LLVMIR/LLVMOpBase.td"
 include "mlir/Dialect/LLVMIR/LLVMOpsInterfaces.td"
 
@@ -61,5 +66,35 @@ def ReverseDiffOp : Enzyme_Op<"diff",
     $fn `(` $inputs `)` attr-dict `:` functional-type($inputs, results)
   }];
 }
+
+def AddCacheOp : Enzyme_Op<"add"> {
+  let summary = "Store information for the reverse mode pass.";
+  let arguments = (ins AnyType : $cache, AnyType : $value);
+  let results = (outs AnyType:$output);
+}
+
+def GetCacheOp : Enzyme_Op<"get"> {
+  let summary = "Retrieve information for the reverse mode pass.";
+  let arguments = (ins AnyType : $cache, AnyType : $value);
+  let results = (outs AnyType:$output);
+}
+
+def CreateCacheOp : Enzyme_Op<"init"> {
+  let summary = "Creat cache for reverse pass.";
+  let arguments = (ins );
+  let results = (outs AnyType);
+}
+
+def CacheType : Enzyme_Type<"cache"> {
+  let summary = "Cache for reverse pass";
+  let description = [{
+    "Cache for reverse pass"
+  }];
+  let parameters = (ins "Type":$type);
+  let assemblyFormat = "`<` $type `>`";
+  let genVerifyDecl = 1;
+}
+
+
 
 #endif // ENZYME_OPS

@@ -16,6 +16,7 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
 #define GET_OP_CLASSES
+#include "Dialect/EnzymeOpsTypes.h.inc"
 #include "Dialect/EnzymeOps.h.inc"
 
 #include "Dialect/EnzymeEnums.h.inc"

@@ -26,6 +26,7 @@ using namespace mlir::enzyme;
 void EnzymeDialect::initialize() {
   addOperations<
 #define GET_OP_LIST
+#include "Dialect/EnzymeOpsTypes.cpp.inc"
 #include "Dialect/EnzymeOps.cpp.inc"
       >();
   addAttributes<

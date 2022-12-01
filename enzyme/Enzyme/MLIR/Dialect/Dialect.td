@@ -10,6 +10,7 @@
 #define ENZYME_DIALECT
 
 include "mlir/IR/OpBase.td"
+include "mlir/IR/AttrTypeBase.td"
 
 //===----------------------------------------------------------------------===//
 // Enzyme dialect definition.
@@ -28,5 +29,10 @@ def Enzyme_Dialect : Dialect {
 
 class Enzyme_Op<string mnemonic, list<Trait> traits = []>
     : Op<Enzyme_Dialect, mnemonic, traits>;
+
+class Enzyme_Type<string typeMnemonic, list<Trait> traits = []>
+    : TypeDef<Enzyme_Dialect, typeMnemonic, traits> {
+      let mnemonic = typeMnemonic;
+}
 
 #endif // ENZYME_DIALECT

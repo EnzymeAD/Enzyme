@@ -1052,7 +1052,8 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
     }
 
     OpBuilder revBuilder(mapReverseModeBlocks.lookupOrNull(&oBB), mapReverseModeBlocks.lookupOrNull(&oBB)->begin());
-
+    
+    gutils->getNewFromOriginal(&*(oBB.rbegin()))->dump();
     if (!oBB.empty()){
       auto first = oBB.rbegin();
       auto last = oBB.rend();
@@ -1060,6 +1061,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
         (void)gutils->visitChildReverse(&*it, revBuilder);
       }
     }
+    gutils->getNewFromOriginal(&*(oBB.rbegin()))->dump();
 
     if (oBB.hasNoPredecessors()){
       auto revBlock = mapReverseModeBlocks.lookupOrNull(&oBB);
@@ -1070,13 +1072,20 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
         auto attributeGradient = gutils->invertPointerM(attribute, revBuilder);
         retargs.push_back(attributeGradient);
       }
+      //revBuilder.create<enzyme::CreateCacheOp>((revBlock->rbegin())->getLoc(), revBuilder.getF64Type()); TODO!!!
+      //auto x = builder.create<enzyme::CreateCacheOp>(addOp.getLoc(), builder.getF64Type());
       revBuilder.create<func::ReturnOp>((revBlock->rbegin())->getLoc(), retargs);
+      
     }
     else {
-      // TODO
       auto predecessor = oBB.getPredecessors().begin();
-      auto predecessor_revMode = mapReverseModeBlocks.lookupOrNull(*predecessor);
-      revBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB.rbegin()))->getLoc(), predecessor_revMode);
+      if (std::next(oBB.getPredecessors().begin()) == oBB.getPredecessors().end()){
+        auto predecessor_revMode = mapReverseModeBlocks.lookupOrNull(*predecessor);
+        revBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB.rbegin()))->getLoc(), predecessor_revMode);
+      }
+      else{
+        //TODO Implement
+      }
     }
   }
 

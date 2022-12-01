@@ -29,6 +29,7 @@
 #include "llvm/Support/Debug.h"
 
 #define GET_OP_CLASSES
+#include "Dialect/EnzymeOpsTypes.cpp.inc"
 #include "Dialect/EnzymeOps.cpp.inc"
 
 #define DEBUG_TYPE "enzyme"
