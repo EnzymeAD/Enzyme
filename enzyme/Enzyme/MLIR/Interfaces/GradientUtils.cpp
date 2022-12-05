@@ -998,6 +998,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
   const SmallPtrSet<mlir::Block *, 4> guaranteedUnreachable;
   gutils->forceAugmentedReturnsReverse();
 
+  // Insert reversemode blocks
   BlockAndValueMapping mapReverseModeBlocks;
   for (auto it = gutils->oldFunc.getBody().getBlocks().rbegin(); it != gutils->oldFunc.getBody().getBlocks().rend(); ++it) {
     Block &block = * it;
@@ -1006,6 +1007,25 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
     auto regionPos = gutils->newFunc.getBody().end();
     gutils->newFunc.getBody().getBlocks().insert(regionPos, newBlock);
   }
+
+  // Insert initialization for caches TODO 
+  Block *initializationBlock = new Block();
+  int numArgs = gutils->newFunc.getNumArguments();
+  for (int i = 0; i < numArgs; i++){
+    BlockArgument oldArg = gutils->newFunc.getArgument(i);
+    BlockArgument newArg = initializationBlock->addArgument(oldArg.getType(), oldArg.getLoc());
+    oldArg.replaceAllUsesWith(newArg);
+  }
+  for (int i = 0; i < (numArgs-1) / 2; i++){
+    gutils->invertedPointers.map(gutils->oldFunc.getArgument(i), initializationBlock->getArgument(2*i+1));
+  }
+  Block * oldEntry = &*(gutils->newFunc.getBody().begin());
+  gutils->newFunc.getBody().begin()->eraseArguments(0,numArgs);
+  auto initializationPos = gutils->newFunc.getBody().begin();
+  gutils->newFunc.getBody().getBlocks().insert(initializationPos, initializationBlock);
+  OpBuilder initializationBuilder(&*(gutils->newFunc.getBody().begin()), gutils->newFunc.getBody().begin()->begin());
+  initializationBuilder.create<cf::BranchOp>(oldEntry->begin()->getLoc(), oldEntry);
+
 
   /// Get dominator tree
   auto dInfo = mlir::detail::DominanceInfoBase<false>(nullptr);
@@ -1050,11 +1070,8 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
       
       Operation * retVal = oBB.getTerminator();
       gutils->originalToNewFnOps[retVal] = newBranchOp;
-      newBranchOp->dump();
       gutils->erase(returnStatement);
     }
-    auto x = gutils->getNewFromOriginal(&*(oBB.rbegin()));
-    x->dump();
     
     OpBuilder revBuilder(mapReverseModeBlocks.lookupOrNull(&oBB), mapReverseModeBlocks.lookupOrNull(&oBB)->begin());
     if (!oBB.empty()){
@@ -1064,7 +1081,6 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
         (void)gutils->visitChildReverse(&*it, revBuilder);
       }
     }
-    gutils->getNewFromOriginal(&*(oBB.rbegin()))->dump();
 
     if (oBB.hasNoPredecessors()){
       auto revBlock = mapReverseModeBlocks.lookupOrNull(&oBB);
