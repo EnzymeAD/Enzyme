@@ -555,9 +555,11 @@ void cloneInto(Region *src, Region *dest, Region::iterator destPos,
     // Clone the block arguments. The user might be deleting arguments to the
     // block by specifying them in the mapper. If so, we don't add the
     // argument to the cloned block.
-    for (auto arg : block.getArguments())
-      if (!mapper.contains(arg))
-        mapper.map(arg, newBlock->addArgument(arg.getType(), arg.getLoc()));
+    if (&block == &*(src->getBlocks().begin())){
+      for (auto arg : block.getArguments())
+        if (!mapper.contains(arg))
+          mapper.map(arg, newBlock->addArgument(arg.getType(), arg.getLoc()));
+    }
 
     dest->getBlocks().insert(destPos, newBlock);
   }
