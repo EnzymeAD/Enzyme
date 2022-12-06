@@ -141,16 +141,17 @@ struct AddFOpInterface
       for (int i = 0; i < 2; i++) {
         if (!gutils->isConstantValue(addOp.getOperand(i))) {
           assert(gutils->invertedPointers.contains(addOp));
-          Value own_gradient = gutils->invertPointerM(addOp, builder);
+          Block * insertionBlock = builder.getInsertionBlock();
+          Value own_gradient = gutils->invertPointerReverseM(addOp, insertionBlock);
           
           if(gutils->invertedPointers.contains(addOp.getOperand(i))){
-            Value other_gradient = gutils->invertPointerM(addOp.getOperand(i), builder);
+            Value other_gradient = gutils->invertPointerReverseM(addOp.getOperand(i), insertionBlock);
               
             Value tmp = builder.create<arith::AddFOp>(addOp.getLoc(), own_gradient, other_gradient);
-            gutils->invertedPointers.map(addOp.getOperand(i), tmp);
+            gutils->mapInvertPointer(addOp.getOperand(i), tmp);
           }
           else{
-            gutils->invertedPointers.map(addOp.getOperand(i), own_gradient);
+            gutils->mapInvertPointer(addOp.getOperand(i), own_gradient);
           }
         }
       }

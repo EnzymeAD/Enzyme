@@ -45,6 +45,7 @@ public:
   DerivativeMode mode;
   FunctionOpInterface oldFunc;
   BlockAndValueMapping invertedPointers;
+  DenseMap<Value, SmallVector<mlir::Value, 4>> invertedPointersReverse;
   BlockAndValueMapping originalToNewFn;
   std::map<Operation *, Operation *> originalToNewFnOps;
 
@@ -74,6 +75,8 @@ public:
   }
   bool isConstantValue(mlir::Value v) const;
   mlir::Value invertPointerM(mlir::Value v, OpBuilder &Builder2);
+  mlir::Value invertPointerReverseM(Value v, Block * askingOp);
+  void mapInvertPointer(mlir::Value v, mlir::Value invertValue);
   void setDiffe(mlir::Value val, mlir::Value toset, OpBuilder &BuilderM);
   void forceAugmentedReturns();
   void forceAugmentedReturnsReverse();

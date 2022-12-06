@@ -44,6 +44,12 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
       originalToNewFn(originalToNewFn_),
       originalToNewFnOps(originalToNewFnOps_),
       invertedPointers(invertedPointers_) {
+  
+  auto valueMap = invertedPointers.getValueMap();
+  assert(invertedPointers.getBlockMap().begin() == invertedPointers.getBlockMap().end());
+  for(auto it = valueMap.begin(); it != valueMap.end(); it++){
+    mapInvertPointer(it->first, it->second);
+  }
 
   /*
   for (BasicBlock &BB : *oldFunc) {
@@ -164,13 +170,34 @@ Value mlir::enzyme::MGradientUtils::invertPointerM(Value v,
       OpBuilder::InsertionGuard guard(Builder2);
       Builder2.setInsertionPoint(getNewFromOriginal(v.getDefiningOp()));
       Value dv = iface.createNullValue(Builder2, v.getLoc());
-      invertedPointers.map(v, dv);
+      mapInvertPointer(v, dv);
       return dv;
     }
     return getNewFromOriginal(v);
   }
   llvm::errs() << " could not invert pointer v " << v << "\n";
   llvm_unreachable("could not invert pointer");
+}
+
+Value mlir::enzyme::MGradientUtils::invertPointerReverseM(Value v, Block * askingOp) {
+  if (invertedPointersReverse.count(v) != 0){
+    auto values = (invertedPointersReverse.find(v))->second;
+    for (auto it = values.rbegin(); it != values.rend(); it++){
+      if(mlir::DominanceInfo().dominates(it->getParentBlock(), askingOp)){
+        return *it;
+      }
+    }
+  }
+  llvm::errs() << " could not invert pointer v " << v << "\n";
+  llvm_unreachable("could not invert pointer");
+}
+
+void mlir::enzyme::MGradientUtils::mapInvertPointer(mlir::Value v, mlir::Value invertValue){
+  invertedPointers.map(v, invertValue);
+  if (invertedPointersReverse.count(v) == 0){
+    invertedPointersReverse[v] = SmallVector<mlir::Value, 4>();
+  }
+  invertedPointersReverse[v].push_back(invertValue);
 }
 
 void mlir::enzyme::MGradientUtils::setDiffe(mlir::Value val, mlir::Value toset,
@@ -196,7 +223,7 @@ void mlir::enzyme::MGradientUtils::setDiffe(mlir::Value val, mlir::Value toset,
     // replaceAWithB(placeholder, toset);
     placeholder.replaceAllUsesWith(toset);
     erase(placeholder);
-    invertedPointers.map(val, toset);
+    mapInvertPointer(val, toset);
     return;
   } else if (mode == DerivativeMode::ReverseModeGradient) {
     assert(getShadowType(val.getType()) == toset.getType());
@@ -207,7 +234,7 @@ void mlir::enzyme::MGradientUtils::setDiffe(mlir::Value val, mlir::Value toset,
     // replaceAWithB(placeholder, toset);
     placeholder.replaceAllUsesWith(toset);
     erase(placeholder);
-    invertedPointers.map(val, toset);
+    mapInvertPointer(val, toset);
     return;
   }
   /*
@@ -239,7 +266,7 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturnsReverse() {
         dval = nblk->insertArgument(nblk->args_begin() + i + 1,
                                     getShadowType(val.getType()), val.getLoc());
 
-      invertedPointers.map(val, dval);
+      mapInvertPointer(val, dval);
     }
   });
 
@@ -249,7 +276,7 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturnsReverse() {
     auto terminator = blk->getTerminator();
     if (terminator->hasTrait<OpTrait::ReturnLike>()) {
       auto nblk = getNewFromOriginal(blk);
-      invertedPointers.map(terminator->getOperand(0), argument);
+      mapInvertPointer(terminator->getOperand(0), argument);
     }
   });
 }
@@ -280,7 +307,7 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
         dval = nblk->insertArgument(nblk->args_begin() + i + 1,
                                     getShadowType(val.getType()), val.getLoc());
 
-      invertedPointers.map(val, dval);
+      mapInvertPointer(val, dval);
     }
   });
 
@@ -295,7 +322,7 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
           mlir::Type antiTy = getShadowType(res.getType());
           auto anti = BuilderZ.create<enzyme::PlaceholderOp>(res.getLoc(),
                                                              res.getType());
-          invertedPointers.map(res, anti);
+          mapInvertPointer(res, anti);
         }
       }
       return;
@@ -364,7 +391,7 @@ LogicalResult MGradientUtils::visitChildReverse(Operation *op,
       return iface.createReverseModeAdjoint(builder, this);
     }
   }
-  return failure();
+  return success();
 }
 
 LogicalResult MGradientUtils::visitChild(Operation *op) {
@@ -978,6 +1005,50 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
 
 //===----------------------------------------------------------------------===//
 
+BlockAndValueMapping createReverseModeBlocks(MGradientUtils *gutils){
+  BlockAndValueMapping mapReverseModeBlocks;
+  for (auto it = gutils->oldFunc.getBody().getBlocks().rbegin(); it != gutils->oldFunc.getBody().getBlocks().rend(); ++it) {
+    Block &block = * it;
+    Block *newBlock = new Block();
+    mapReverseModeBlocks.map(&block, newBlock);
+    auto regionPos = gutils->newFunc.getBody().end();
+    gutils->newFunc.getBody().getBlocks().insert(regionPos, newBlock);
+  }
+  return mapReverseModeBlocks;
+}
+
+Block * insertInitializationBlock(MGradientUtils *gutils){
+  Block *initializationBlock = new Block();
+  int numArgs = gutils->newFunc.getNumArguments();
+  for (int i = 0; i < numArgs; i++){
+    BlockArgument oldArg = gutils->newFunc.getArgument(i);
+    BlockArgument newArg = initializationBlock->addArgument(oldArg.getType(), oldArg.getLoc());
+    oldArg.replaceAllUsesWith(newArg);
+  }
+  for (int i = 0; i < (numArgs-1) / 2; i++){
+    gutils->mapInvertPointer(gutils->oldFunc.getArgument(i), initializationBlock->getArgument(2*i+1));
+  }
+  Block * oldEntry = &*(gutils->newFunc.getBody().begin());
+  gutils->newFunc.getBody().begin()->eraseArguments(0,numArgs);
+  auto initializationPos = gutils->newFunc.getBody().begin();
+  gutils->newFunc.getBody().getBlocks().insert(initializationPos, initializationBlock);
+  OpBuilder initializationBuilder(&*(gutils->newFunc.getBody().begin()), gutils->newFunc.getBody().begin()->begin());
+  initializationBuilder.create<cf::BranchOp>(oldEntry->begin()->getLoc(), oldEntry);
+  return initializationBlock;
+}
+
+SmallVector<mlir::Block*> getDominatorToposort(MGradientUtils *gutils){
+  auto dInfo = mlir::detail::DominanceInfoBase<false>(nullptr);
+  llvm::DominatorTreeBase<Block, false> & dt = dInfo.getDomTree(&(gutils->oldFunc.getBody()));
+  auto root = dt.getNode(&*(gutils->oldFunc.getBody().begin()));
+
+  SmallVector<mlir::Block*> dominatorToposortBlocks;
+  for(llvm::DomTreeNodeBase<mlir::Block> * node : llvm::breadth_first(root)){
+    dominatorToposortBlocks.push_back(node->getBlock());
+  }
+  return dominatorToposortBlocks;
+}
+
 FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
     FunctionOpInterface fn, DIFFE_TYPE retType,
     std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA, bool returnUsed,
@@ -999,44 +1070,15 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
   gutils->forceAugmentedReturnsReverse();
 
   // Insert reversemode blocks
-  BlockAndValueMapping mapReverseModeBlocks;
-  for (auto it = gutils->oldFunc.getBody().getBlocks().rbegin(); it != gutils->oldFunc.getBody().getBlocks().rend(); ++it) {
-    Block &block = * it;
-    Block *newBlock = new Block();
-    mapReverseModeBlocks.map(&block, newBlock);
-    auto regionPos = gutils->newFunc.getBody().end();
-    gutils->newFunc.getBody().getBlocks().insert(regionPos, newBlock);
-  }
+  BlockAndValueMapping mapReverseModeBlocks = createReverseModeBlocks(gutils);
 
   // Insert initialization for caches TODO 
-  Block *initializationBlock = new Block();
-  int numArgs = gutils->newFunc.getNumArguments();
-  for (int i = 0; i < numArgs; i++){
-    BlockArgument oldArg = gutils->newFunc.getArgument(i);
-    BlockArgument newArg = initializationBlock->addArgument(oldArg.getType(), oldArg.getLoc());
-    oldArg.replaceAllUsesWith(newArg);
-  }
-  for (int i = 0; i < (numArgs-1) / 2; i++){
-    gutils->invertedPointers.map(gutils->oldFunc.getArgument(i), initializationBlock->getArgument(2*i+1));
-  }
-  Block * oldEntry = &*(gutils->newFunc.getBody().begin());
-  gutils->newFunc.getBody().begin()->eraseArguments(0,numArgs);
-  auto initializationPos = gutils->newFunc.getBody().begin();
-  gutils->newFunc.getBody().getBlocks().insert(initializationPos, initializationBlock);
-  OpBuilder initializationBuilder(&*(gutils->newFunc.getBody().begin()), gutils->newFunc.getBody().begin()->begin());
-  initializationBuilder.create<cf::BranchOp>(oldEntry->begin()->getLoc(), oldEntry);
+  Block *initializationBlock = insertInitializationBlock(gutils);
 
+  /// Get dominator tree and create topological sorting
+  SmallVector<mlir::Block*> dominatorToposortBlocks = getDominatorToposort(gutils);
 
-  /// Get dominator tree
-  auto dInfo = mlir::detail::DominanceInfoBase<false>(nullptr);
-  llvm::DominatorTreeBase<Block, false> & dt = dInfo.getDomTree(&(gutils->oldFunc.getBody()));
-  auto root = dt.getNode(&*(gutils->oldFunc.getBody().begin()));
-
-  SmallVector<mlir::Block*> dominatorToposortBlocks;
-  for(llvm::DomTreeNodeBase<mlir::Block> * node : llvm::breadth_first(root)){
-    dominatorToposortBlocks.push_back(node->getBlock());
-  }
-
+  //Iterate blocks and create reverse mode blocks
   for (auto it = dominatorToposortBlocks.rbegin(); it != dominatorToposortBlocks.rend(); ++it){
     Block& oBB = **it;
 
@@ -1066,7 +1108,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
       Operation * newBranchOp = forwardToBackwardBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB.rbegin()))->getLoc(), revBlock);
       
       Operation * returnStatement = newBB->getTerminator();
-      gutils->invertedPointers.map(oBB.getTerminator()->getOperand(0), gutils->newFunc.getArgument(gutils->newFunc.getNumArguments() - 1)); 
+      gutils->mapInvertPointer(oBB.getTerminator()->getOperand(0), gutils->newFunc.getArgument(gutils->newFunc.getNumArguments() - 1)); 
       
       Operation * retVal = oBB.getTerminator();
       gutils->originalToNewFnOps[retVal] = newBranchOp;
@@ -1088,7 +1130,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
       OpBuilder revBuilder(revBlock, revBlock->end());
       SmallVector<mlir::Value, 2> retargs;
       for (auto attribute : gutils->oldFunc.getBody().getArguments()) {
-        auto attributeGradient = gutils->invertPointerM(attribute, revBuilder);
+        auto attributeGradient = gutils->invertPointerReverseM(attribute, revBlock->rbegin()->getBlock());
         retargs.push_back(attributeGradient);
       }
       
@@ -1096,13 +1138,17 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
       revBuilder.create<func::ReturnOp>((revBlock->rbegin())->getLoc(), retargs);
     }
     else {
-      auto predecessor = oBB.getPredecessors().begin();
       if (std::next(oBB.getPredecessors().begin()) == oBB.getPredecessors().end()){
+        auto predecessor = oBB.getPredecessors().begin();
         auto predecessor_revMode = mapReverseModeBlocks.lookupOrNull(*predecessor);
         revBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB.rbegin()))->getLoc(), predecessor_revMode);
       }
       else{
         //TODO Implement
+        auto predecessor = oBB.getPredecessors().begin();
+        auto predecessor_revMode = mapReverseModeBlocks.lookupOrNull(*predecessor);
+        revBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB.rbegin()))->getLoc(), predecessor_revMode);
+        //THIS is a placeholder
       }
     }
   }
