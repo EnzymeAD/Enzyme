@@ -187,6 +187,7 @@ Value mlir::enzyme::MGradientUtils::invertPointerReverseM(Value v, Block * askin
         return *it;
       }
     }
+    llvm::errs() << "could not find in vector " << v << "\n";
   }
   llvm::errs() << " could not invert pointer v " << v << "\n";
   llvm_unreachable("could not invert pointer");
@@ -198,6 +199,10 @@ void mlir::enzyme::MGradientUtils::mapInvertPointer(mlir::Value v, mlir::Value i
     invertedPointersReverse[v] = SmallVector<mlir::Value, 4>();
   }
   invertedPointersReverse[v].push_back(invertValue);
+}
+
+bool mlir::enzyme::MGradientUtils::hasInvertPointer(mlir::Value v){
+  return invertedPointersReverse.count(v) != 0;
 }
 
 void mlir::enzyme::MGradientUtils::setDiffe(mlir::Value val, mlir::Value toset,

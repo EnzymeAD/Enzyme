@@ -137,14 +137,13 @@ struct AddFOpInterface
     // Derivative of r = a + b -> dr = da + db
     auto addOp = cast<arith::AddFOp>(op);
 
-    if (!gutils->isConstantValue(addOp)) {
+    if(gutils->hasInvertPointer(addOp)){
       for (int i = 0; i < 2; i++) {
         if (!gutils->isConstantValue(addOp.getOperand(i))) {
-          assert(gutils->invertedPointers.contains(addOp));
           Block * insertionBlock = builder.getInsertionBlock();
           Value own_gradient = gutils->invertPointerReverseM(addOp, insertionBlock);
           
-          if(gutils->invertedPointers.contains(addOp.getOperand(i))){
+          if(gutils->hasInvertPointer(addOp.getOperand(i))){
             Value other_gradient = gutils->invertPointerReverseM(addOp.getOperand(i), insertionBlock);
               
             Value tmp = builder.create<arith::AddFOp>(addOp.getLoc(), own_gradient, other_gradient);
@@ -155,10 +154,9 @@ struct AddFOpInterface
           }
         }
       }
-      auto x = builder.create<enzyme::CreateCacheOp>(addOp.getLoc(), builder.getF64Type());
+      //auto x = builder.create<enzyme::CreateCacheOp>(addOp.getLoc(), builder.getF64Type());
       //gutils->setDiffe(addOp, tmp, builder);
     }
-    gutils->eraseIfUnused(op);
     return success();
   }
 };

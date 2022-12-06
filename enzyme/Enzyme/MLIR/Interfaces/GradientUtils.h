@@ -74,6 +74,7 @@ public:
     // TODO
   }
   bool isConstantValue(mlir::Value v) const;
+  bool hasInvertPointer(mlir::Value v);
   mlir::Value invertPointerM(mlir::Value v, OpBuilder &Builder2);
   mlir::Value invertPointerReverseM(Value v, Block * askingOp);
   void mapInvertPointer(mlir::Value v, mlir::Value invertValue);
