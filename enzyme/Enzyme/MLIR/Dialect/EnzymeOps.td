@@ -20,8 +20,9 @@ include "mlir/IR/FunctionInterfaces.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 
-include "mlir/Dialect/LLVMIR/LLVMOpBase.td"
-include "mlir/Dialect/LLVMIR/LLVMOpsInterfaces.td"
+//include "mlir/Dialect/LLVMIR/LLVMOpBase.td"
+//include "mlir/Dialect/LLVMIR/LLVMOpsInterfaces.td"
+include "mlir/IR/AttrTypeBase.td"
 
 def Activity : I32EnumAttr<"Activity",
     "Possible activity states for variables",
@@ -85,7 +86,7 @@ def CreateCacheOp : Enzyme_Op<"init"> {
   let results = (outs AnyType);
 }
 
-def CacheType : Enzyme_Type<"cache"> {
+def ReverseCache : Enzyme_Type<"cache"> {
   let summary = "Cache for reverse pass";
   let description = [{
     "Cache for reverse pass"

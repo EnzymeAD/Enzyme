@@ -1012,16 +1012,45 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
 
 //===----------------------------------------------------------------------===//
 
-BlockAndValueMapping createReverseModeBlocks(MGradientUtils *gutils){
+std::pair<BlockAndValueMapping, DenseMap<Block *, SmallVector<Value>>> createReverseModeBlocks(MGradientUtils *gutils){
   BlockAndValueMapping mapReverseModeBlocks;
+  DenseMap<Block *, SmallVector<Value>> mapReverseBlockArguments;
   for (auto it = gutils->oldFunc.getBody().getBlocks().rbegin(); it != gutils->oldFunc.getBody().getBlocks().rend(); ++it) {
-    Block &block = * it;
+    Block *block = &*it;
     Block *newBlock = new Block();
-    mapReverseModeBlocks.map(&block, newBlock);
+
+    //Add reverse mode Arguments to Block
+    Operation * term = block->getTerminator();
+    mlir::BranchOpInterface brOp = dyn_cast<mlir::BranchOpInterface>(term);
+    SmallVector<Value> reverseModeArguments;
+    if(brOp){
+      DenseMap<Value, int> valueToIndex;
+      int index = 0;
+      // Taking the number of successors might be a false assumtpion on the BranchOpInterface
+      // TODO make nicer algorithm for this!
+      for (int i = 0; i < term->getNumSuccessors(); i++){
+        SuccessorOperands sOps = brOp.getSuccessorOperands(i);
+        for (int j = 0; j < sOps.size(); j++){
+          if (valueToIndex.count(sOps[i]) == 0){
+            valueToIndex[sOps[i]] = index;
+            index++;
+          }
+        }
+      }
+      reverseModeArguments.resize(index);
+      for (auto it : valueToIndex){
+        reverseModeArguments[it.second] = it.first;
+        newBlock->addArgument(it.first.getType(), it.first.getLoc());
+      }
+      mapReverseBlockArguments[block] = reverseModeArguments;
+    }
+    //
+
+    mapReverseModeBlocks.map(block, newBlock);
     auto regionPos = gutils->newFunc.getBody().end();
     gutils->newFunc.getBody().getBlocks().insert(regionPos, newBlock);
   }
-  return mapReverseModeBlocks;
+  return std::pair<BlockAndValueMapping, DenseMap<Block *, SmallVector<Value>>> (mapReverseModeBlocks, mapReverseBlockArguments);
 }
 
 Block * insertInitializationBlock(MGradientUtils *gutils){
@@ -1042,6 +1071,11 @@ Block * insertInitializationBlock(MGradientUtils *gutils){
   OpBuilder initializationBuilder(&*(gutils->newFunc.getBody().begin()), gutils->newFunc.getBody().begin()->begin());
   initializationBuilder.create<cf::BranchOp>(oldEntry->begin()->getLoc(), oldEntry);
   return initializationBlock;
+}
+
+Value initializeBackwardCacheValue(Type t, Block * initializationBlock){
+  OpBuilder builder(initializationBlock, initializationBlock->begin());
+  return builder.create<enzyme::CreateCacheOp>((initializationBlock->rbegin())->getLoc(), t);
 }
 
 SmallVector<mlir::Block*> getDominatorToposort(MGradientUtils *gutils){
@@ -1077,12 +1111,14 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
   gutils->forceAugmentedReturnsReverse();
 
   // Insert reversemode blocks
-  BlockAndValueMapping mapReverseModeBlocks = createReverseModeBlocks(gutils);
-
+  auto reverseModeStore = createReverseModeBlocks(gutils);
+  BlockAndValueMapping mapReverseModeBlocks = reverseModeStore.first;
+  DenseMap<Block *, SmallVector<Value>> mapBlockArguments = reverseModeStore.second;
+  
   // Insert initialization for caches TODO 
   Block *initializationBlock = insertInitializationBlock(gutils);
 
-  /// Get dominator tree and create topological sorting
+  // Get dominator tree and create topological sorting
   SmallVector<mlir::Block*> dominatorToposortBlocks = getDominatorToposort(gutils);
 
   //Iterate blocks and create reverse mode blocks
@@ -1141,21 +1177,32 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
         retargs.push_back(attributeGradient);
       }
       
-      //revBuilder.create<enzyme::CreateCacheOp>((revBlock->rbegin())->getLoc(), revBuilder.getF64Type()); //TODO!!!
       revBuilder.create<func::ReturnOp>((revBlock->rbegin())->getLoc(), retargs);
     }
     else {
       if (std::next(oBB.getPredecessors().begin()) == oBB.getPredecessors().end()){
-        auto predecessor = oBB.getPredecessors().begin();
-        auto predecessor_revMode = mapReverseModeBlocks.lookupOrNull(*predecessor);
-        revBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB.rbegin()))->getLoc(), predecessor_revMode);
+        Block * predecessor = *(oBB.getPredecessors().begin());
+        Block * predecessorRevMode = mapReverseModeBlocks.lookupOrNull(predecessor);
+        // Create op operands
+        SmallVector<Value> operands;
+        auto argumentsIt = mapBlockArguments.find(predecessor);
+        if (argumentsIt != mapBlockArguments.end()){
+          for(auto operandOld : argumentsIt->second){
+            //TODO Create canonical null value if not found!
+            operands.push_back(gutils->invertPointerReverseM(operandOld, mapReverseModeBlocks.lookupOrNull(&oBB)));
+          }
+        }
+        ValueRange operandsValueRange(operands);
+        revBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB.rbegin()))->getLoc(), predecessorRevMode, operandsValueRange);
       }
       else{
-        //TODO Implement
-        auto predecessor = oBB.getPredecessors().begin();
-        auto predecessor_revMode = mapReverseModeBlocks.lookupOrNull(*predecessor);
-        revBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB.rbegin()))->getLoc(), predecessor_revMode);
-        //THIS is a placeholder
+        Type indexType = (Type)IndexType::get(initializationBlock->begin()->getContext());
+        Value cache = initializeBackwardCacheValue(indexType, initializationBlock);
+        //Value flag = revBuilder.create<enzyme::GetCacheOp>()
+        for (Block * predecessor : oBB.getPredecessors()){
+
+        }
+        //revBuilder.create<cf::SwitchOp>(gutils->getNewFromOriginal(&*(oBB.rbegin()))->getLoc(), predecessor_revMode);
       }
     }
   }
