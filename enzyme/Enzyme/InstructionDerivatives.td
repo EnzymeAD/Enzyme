@@ -83,7 +83,7 @@ def : CallPattern<(Op $y, $x),
                   ]
                   >;
 def : CallPattern<(Op $x),
-                  ["cbrt"],
+                  ["cbrt", "cbrtf", "cbrtl"],
                   [(FDiv (FMul (DiffeRet<"">), (Call<(SameFunc), [ReadNone,NoUnwind]> $x) ), (FMul (ConstantFP<"3.0"> $x), $x))]
                   >;
 
@@ -147,6 +147,8 @@ def : CallPattern<(Op $x),
                   ["expm1"],
                   [(FMul (Intrinsic<"exp", [(TypeOf<""> $x)]> $x), (DiffeRet<"">))]
                   >;
+
+def : CallPattern<(Op $x), ["jl_rem2pi", "jl_rem2pif", "jl_rem2pil"],[(DiffeRet<"">)]>;
 
 // Unnormalized sinc(x) = sin(x)/x
 def : CallPattern<(Op $x),

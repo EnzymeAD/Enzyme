@@ -639,6 +639,13 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
     return true;
   }
 
+  if (isa<FenceInst>(I)) {
+    if (EnzymePrintActivity)
+      llvm::errs() << " constant fence instruction " << *I << "\n";
+    InsertConstantInstruction(TR, I);
+    return true;
+  }
+
   if (auto CI = dyn_cast<CallInst>(I)) {
     if (CI->hasFnAttr("enzyme_active")) {
       if (EnzymePrintActivity)
@@ -1082,6 +1089,10 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
     // If operating under the assumption globals are inactive unless
     // explicitly marked as active, this is inactive
     if (!hasMetadata(GI, "enzyme_shadow") && EnzymeNonmarkedGlobalsInactive) {
+      InsertConstantValue(TR, Val);
+      return true;
+    }
+    if (hasMetadata(GI, "enzyme_inactive")) {
       InsertConstantValue(TR, Val);
       return true;
     }
@@ -1620,6 +1631,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       if (notForAnalysis.count(I->getParent()))
         return false;
 
+      if (isa<FenceInst>(I))
+        return false;
+
       // If this is a malloc or free, this doesn't impact the activity
       if (auto CI = dyn_cast<CallInst>(I)) {
         if (CI->hasFnAttr("enzyme_inactive"))
@@ -1756,7 +1770,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       if (!memval->getType()->isPointerTy()) {
         if (auto CB = dyn_cast<CallInst>(I)) {
 #if LLVM_VERSION_MAJOR >= 16
-          AARes = AA.getModRefBehavior(CB).getModRef();
+          AARes = AA.getMemoryEffects(CB).getModRef();
 #else
           AARes = createModRefInfo(AA.getModRefBehavior(CB));
 #endif
@@ -2559,6 +2573,9 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
               // explicitly marked as active, this is inactive
               if (!hasMetadata(GV, "enzyme_shadow") &&
                   EnzymeNonmarkedGlobalsInactive) {
+                continue;
+              }
+              if (hasMetadata(GV, "enzyme_inactive")) {
                 continue;
               }
               if (GV->getName().contains("enzyme_const") ||
