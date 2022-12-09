@@ -1197,7 +1197,8 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
       }
       else{
         Type indexType = (Type)IndexType::get(initializationBlock->begin()->getContext());
-        Value cache = initializeBackwardCacheValue(indexType, initializationBlock);
+        Type cacheType = CacheType::get(initializationBlock->begin()->getContext(), indexType);
+        //Value cache = initializeBackwardCacheValue(cacheType, initializationBlock);
         //Value flag = revBuilder.create<enzyme::GetCacheOp>()
         for (Block * predecessor : oBB.getPredecessors()){
 

@@ -30,9 +30,6 @@ def Enzyme_Dialect : Dialect {
 class Enzyme_Op<string mnemonic, list<Trait> traits = []>
     : Op<Enzyme_Dialect, mnemonic, traits>;
 
-class Enzyme_Type<string typeMnemonic, list<Trait> traits = []>
-    : TypeDef<Enzyme_Dialect, typeMnemonic, traits> {
-      let mnemonic = typeMnemonic;
-}
+class Enzyme_Type<string name> : TypeDef<Enzyme_Dialect, name>;
 
 #endif // ENZYME_DIALECT

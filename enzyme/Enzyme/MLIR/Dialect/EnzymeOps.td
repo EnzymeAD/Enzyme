@@ -86,16 +86,14 @@ def CreateCacheOp : Enzyme_Op<"init"> {
   let results = (outs AnyType);
 }
 
-def ReverseCache : Enzyme_Type<"cache"> {
+def ReverseCache : Enzyme_Type<"Cache"> {
   let summary = "Cache for reverse pass";
   let description = [{
     "Cache for reverse pass"
   }];
   let parameters = (ins "Type":$type);
+  let mnemonic = "Cache";
   let assemblyFormat = "`<` $type `>`";
-  let genVerifyDecl = 1;
 }
-
-
 
 #endif // ENZYME_OPS

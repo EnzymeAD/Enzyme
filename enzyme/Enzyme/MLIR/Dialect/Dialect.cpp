@@ -16,6 +16,9 @@
 #include "Dialect/EnzymeEnums.cpp.inc"
 #include "Dialect/EnzymeOpsDialect.cpp.inc"
 
+#define GET_TYPEDEF_CLASSES
+#include "Dialect/EnzymeOpsTypes.cpp.inc"
+
 using namespace mlir;
 using namespace mlir::enzyme;
 
@@ -26,12 +29,15 @@ using namespace mlir::enzyme;
 void EnzymeDialect::initialize() {
   addOperations<
 #define GET_OP_LIST
-#include "Dialect/EnzymeOpsTypes.cpp.inc"
 #include "Dialect/EnzymeOps.cpp.inc"
       >();
   addAttributes<
 #define GET_ATTRDEF_LIST
 #include "Dialect/EnzymeAttributes.cpp.inc"
+      >();
+  addTypes<
+#define GET_TYPEDEF_LIST
+#include "Dialect/EnzymeOpsTypes.cpp.inc"
       >();
 }
 

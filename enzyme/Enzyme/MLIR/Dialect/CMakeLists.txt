@@ -7,6 +7,8 @@ mlir_tablegen(EnzymeEnums.h.inc -gen-enum-decls)
 mlir_tablegen(EnzymeEnums.cpp.inc -gen-enum-defs)
 mlir_tablegen(EnzymeAttributes.h.inc -gen-attrdef-decls -attrdefs-dialect=enzyme)
 mlir_tablegen(EnzymeAttributes.cpp.inc -gen-attrdef-defs -attrdefs-dialect=enzyme)
+# mlir_tablegen(EnzymeTypes.h.inc -gen-typedef-decls -attrdefs-dialect=enzyme)
+# mlir_tablegen(EnzymeTypes.cpp.inc -gen-typedef-defs -attrdefs-dialect=enzyme)
 add_public_tablegen_target(MLIREnzymeEnumsIncGen)
 
 add_mlir_dialect_library(MLIREnzyme

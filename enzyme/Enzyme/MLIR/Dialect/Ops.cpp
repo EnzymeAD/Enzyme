@@ -28,8 +28,9 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Support/Debug.h"
 
+#include "llvm/ADT/TypeSwitch.h"
+
 #define GET_OP_CLASSES
-#include "Dialect/EnzymeOpsTypes.cpp.inc"
 #include "Dialect/EnzymeOps.cpp.inc"
 
 #define DEBUG_TYPE "enzyme"
