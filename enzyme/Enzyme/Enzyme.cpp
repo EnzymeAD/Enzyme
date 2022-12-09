@@ -975,8 +975,7 @@ public:
   }
 
   /// Return whether successful
-  bool HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI, DerivativeMode mode,
-                      bool sizeOnly) {
+  bool HandleAutoDiff(CallInst *CI, DerivativeMode mode, bool sizeOnly) {
 
     // determine function to differentiate
     Function *fn;
@@ -1705,7 +1704,7 @@ public:
                                    : cast<StructType>(aug->fn->getReturnType())
                                          ->getElementType(tapeIdx);
         unsigned idxs[] = {(unsigned)tapeIdx};
-        Value *tapeRes = (tapeIdx == -1)
+        Value *tapeRes = (tapeIdx = -1)
                              ? diffret
                              : Builder.CreateExtractValue(diffret, idxs);
         Builder.CreateStore(
@@ -1754,8 +1753,6 @@ public:
 
       llvm::SetVector<CallInst *> Q;
       Q.insert(diffretc);
-      TargetLibraryInfoWrapperPass TLIWP(
-          Triple(newFunc->getParent()->getTargetTriple()));
       while (Q.size()) {
         auto cur = *Q.begin();
         Function *outerFunc = cur->getParent()->getParent();
@@ -1772,7 +1769,7 @@ public:
             };
             auto GetTLI =
                 [&](llvm::Function &F) -> const llvm::TargetLibraryInfo & {
-              return TLIWP.getTLI(F);
+              return Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(F);
             };
 
             auto GetInlineCost = [&](CallBase &CB) {
@@ -1809,20 +1806,13 @@ public:
     return true;
   }
 
-  bool lowerEnzymeCalls(Function &F, bool &successful,
-                        std::set<Function *> &done) {
+  bool lowerEnzymeCalls(Function &F, std::set<Function *> &done) {
     if (done.count(&F))
       return false;
     done.insert(&F);
 
     if (F.empty())
       return false;
-
-#if LLVM_VERSION_MAJOR >= 10
-    auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
-#else
-    auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
-#endif
 
     bool Changed = false;
 
@@ -2192,7 +2182,7 @@ public:
             // AD case.
             bool tmp = Logic.PostOpt;
             Logic.PostOpt = true;
-            Changed |= lowerEnzymeCalls(*dc, successful, done);
+            Changed |= lowerEnzymeCalls(*dc, done);
             Logic.PostOpt = tmp;
           }
         }
@@ -2227,15 +2217,15 @@ public:
 
     // Perform all the size replacements first to create constants
     for (auto pair : toSize) {
-      successful &= HandleAutoDiff(pair.first, TLI, pair.second,
-                                   /*sizeOnly*/ true);
+      bool successful = HandleAutoDiff(pair.first, pair.second,
+                                       /*sizeOnly*/ true);
       Changed = true;
       if (!successful)
         break;
     }
     for (auto pair : toLower) {
-      successful &= HandleAutoDiff(pair.first, TLI, pair.second,
-                                   /*sizeOnly*/ false);
+      bool successful = HandleAutoDiff(pair.first, pair.second,
+                                       /*sizeOnly*/ false);
       Changed = true;
       if (!successful)
         break;
@@ -2261,7 +2251,8 @@ public:
                        Arch == Triple::amdgcn;
 
       auto val = GradientUtils::GetOrCreateShadowConstant(
-          Logic, TLI, TA, fn, pair.second, /*width*/ 1, AtomicAdd);
+          Logic, Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(F), TA, fn,
+          pair.second, /*width*/ 1, AtomicAdd);
       CI->replaceAllUsesWith(ConstantExpr::getPointerCast(val, CI->getType()));
       CI->eraseFromParent();
       Changed = true;
@@ -2426,8 +2417,7 @@ public:
       if (F.empty())
         continue;
 
-      bool successful = true;
-      changed |= lowerEnzymeCalls(F, successful, done);
+      changed |= lowerEnzymeCalls(F, done);
     }
 
     SmallVector<CallInst *, 4> toErase;
