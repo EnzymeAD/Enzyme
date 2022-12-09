@@ -19,8 +19,5 @@ clean:
 ba.o: ba-opt.ll
 	clang++ -O2 $^ -o $@ -lblas $(BENCHLINK)
 
-results.txt: ba.o
-	./$^ | tee $@
-
 results.json: ba.o
 	./$^

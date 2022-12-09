@@ -18,8 +18,5 @@ clean:
 hand.o: hand-opt.ll
 	clang++ $^ -o $@ -lblas $(BENCHLINK)
 
-results.txt: hand.o
-	./$^ | tee $@
-
 results.json: hand.o
 	./$^

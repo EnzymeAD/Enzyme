@@ -272,6 +272,7 @@ int main(const int argc, const char* argv[]) {
     }
     test_suite["llvm-version"] = __clang_version__;
     test_suite["mode"] = "ReverseMode";
+    test_suite["batch-size"] = 1;
     test_results.push_back(test_suite);
    }
    jsonfile << std::setw(4) << test_results;

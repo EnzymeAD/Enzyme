@@ -20,6 +20,7 @@ def extract_results(json):
     for test_suite in json:
         llvm = test_suite["llvm-version"]
         mode = test_suite["mode"]
+        width = test_suite["batch-size"]
         series = test_suite["name"]
         for tool in test_suite["tools"]:
             name = tool["name"].lower()
@@ -27,11 +28,12 @@ def extract_results(json):
                 value = tool["runtime"]
                 res = {
                     "mode": mode,
+                    "batch-size": width,
                     "llvm-version": llvm,
                     "test-suite": "ADBench",
                     "commit": githash,
-                    "name": series,
-                    "elapsed": value,
+                    "test-name": series,
+                    "runtime": value,
                     "timestamp": time,
                     "platform": arch
                 }
@@ -48,9 +50,3 @@ args = parser.parse_args()
 json = json.load(args.file)
 results = extract_results(json)
 
-if args.token:
-    response = requests.post(args.url, json=results, headers={"X-TOKEN": args.token})
-    response.raise_for_status()
-else:
-    response = requests.post(args.url, json=results)
-    response.raise_for_status()

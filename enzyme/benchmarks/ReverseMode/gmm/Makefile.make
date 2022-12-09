@@ -19,8 +19,5 @@ clean:
 gmm.o: gmm-opt.ll
 	clang++ -O2 $^ -o $@ -lblas $(BENCHLINK) -lm
 
-results.txt: gmm.o
-	./$^ | tee $@
-
 results.json: gmm.o
 	./$^
