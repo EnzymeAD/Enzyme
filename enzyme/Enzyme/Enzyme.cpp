@@ -683,26 +683,13 @@ static bool replaceOriginalCall(CallInst *CI, Function *fn, Value *diffret,
   return true;
 }
 
-class Enzyme final : public ModulePass {
+class EnzymeBase {
 public:
   EnzymeLogic Logic;
-  static char ID;
-  Enzyme(bool PostOpt = false)
-      : ModulePass(ID),
-        Logic(EnzymePostOpt.getNumOccurrences() ? EnzymePostOpt : PostOpt) {
+  EnzymeBase(bool PostOpt) : Logic(EnzymePostOpt.getNumOccurrences() ? EnzymePostOpt : PostOpt) {
     // initializeLowerAutodiffIntrinsicPass(*PassRegistry::getPassRegistry());
   }
 
-  void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.addRequired<TargetLibraryInfoWrapperPass>();
-
-    // AU.addRequiredID(LCSSAID);
-
-    // LoopInfo is required to ensure that all loops have preheaders
-    // AU.addRequired<LoopInfoWrapperPass>();
-
-    // AU.addRequiredID(llvm::LoopSimplifyID);//<LoopSimplifyWrapperPass>();
-  }
 
   Optional<Function *> parseFunctionParameter(CallInst *CI) {
     Value *fn = CI->getArgOperand(0);
@@ -1704,7 +1691,7 @@ public:
                                    : cast<StructType>(aug->fn->getReturnType())
                                          ->getElementType(tapeIdx);
         unsigned idxs[] = {(unsigned)tapeIdx};
-        Value *tapeRes = (tapeIdx = -1)
+        Value *tapeRes = (tapeIdx == -1)
                              ? diffret
                              : Builder.CreateExtractValue(diffret, idxs);
         Builder.CreateStore(
@@ -2319,7 +2306,7 @@ public:
     return Changed;
   }
 
-  bool runOnModule(Module &M) override {
+  bool run(Module &M) {
     constexpr static const char gradient_handler_name[] =
         "__enzyme_register_gradient";
     constexpr static const char derivative_handler_name[] =
@@ -2502,13 +2489,34 @@ public:
   }
 };
 
+class EnzymeOldPM : public EnzymeBase, public ModulePass {
+public:
+  static char ID;
+  EnzymeOldPM(bool PostOpt = false) : EnzymeBase(PostOpt), ModulePass(ID) {}
+  
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AU.addRequired<TargetLibraryInfoWrapperPass>();
+
+    // AU.addRequiredID(LCSSAID);
+
+    // LoopInfo is required to ensure that all loops have preheaders
+    // AU.addRequired<LoopInfoWrapperPass>();
+
+    // AU.addRequiredID(llvm::LoopSimplifyID);//<LoopSimplifyWrapperPass>();
+  }
+  bool runOnModule(Module &M) override {
+    return run(M);
+  }
+};
+
+
 } // namespace
 
-char Enzyme::ID = 0;
+char EnzymeOldPM::ID = 0;
 
-static RegisterPass<Enzyme> X("enzyme", "Enzyme Pass");
+static RegisterPass<EnzymeOldPM> X("enzyme", "Enzyme Pass");
 
-ModulePass *createEnzymePass(bool PostOpt) { return new Enzyme(PostOpt); }
+ModulePass *createEnzymePass(bool PostOpt) { return new EnzymeOldPM(PostOpt); }
 
 #include <llvm-c/Core.h>
 #include <llvm-c/Types.h>
@@ -2517,4 +2525,39 @@ ModulePass *createEnzymePass(bool PostOpt) { return new Enzyme(PostOpt); }
 
 extern "C" void AddEnzymePass(LLVMPassManagerRef PM) {
   unwrap(PM)->add(createEnzymePass(/*PostOpt*/ false));
+}
+
+#include "llvm/Passes/PassPlugin.h"
+
+class EnzymeNewPM final : public EnzymeBase, public AnalysisInfoMixin<EnzymeNewPM> {
+  friend struct llvm::AnalysisInfoMixin<EnzymeNewPM>;
+private:
+  static llvm::AnalysisKey Key;
+public:
+  using Result = llvm::PreservedAnalyses;
+  EnzymeNewPM(bool PostOpt = false) : EnzymeBase(PostOpt) {}
+
+  Result run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
+    return EnzymeBase::run(M) ? PreservedAnalyses::none() : PreservedAnalyses::all();
+  }
+
+  static bool isRequired() { return true; }
+};
+
+AnalysisKey EnzymeNewPM::Key;
+
+extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
+llvmGetPassPluginInfo() {
+  return {
+      LLVM_PLUGIN_API_VERSION, "EnzymeNewPM", "v0.1", [](llvm::PassBuilder &PB) {
+          PB.registerPipelineParsingCallback(
+            [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
+               llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
+              if (Name == "enzyme") {
+                MPM.addPass(EnzymeNewPM());
+                return true;
+              }
+              return false;
+            });
+      }};
 }
