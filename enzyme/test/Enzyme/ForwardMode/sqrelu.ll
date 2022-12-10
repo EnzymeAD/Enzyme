@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -instcombine -early-cse -adce -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,inline,mem2reg,instcombine,early-cse,adce" -enzyme-preopt=false -S | FileCheck %s
 
 ; #include <math.h>
 ; 

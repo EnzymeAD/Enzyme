@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -inline -early-cse -instcombine -simplifycfg -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,inline,early-cse,instcombine,simplifycfg" -enzyme-preopt=false -S | FileCheck %s
 
 ; __attribute__((noinline))
 ; double f(double x) {

@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -early-cse -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,instsimplify,adce,loop-deletion,correlated-propagation,simplifycfg,early-cse" -enzyme-preopt=false -S | FileCheck %s
 
 ; void __enzyme_autodiff(void*, ...);
 

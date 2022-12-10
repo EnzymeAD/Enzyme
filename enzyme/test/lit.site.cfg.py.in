@@ -53,6 +53,7 @@ config.substitutions.append(('%loadEnzyme', ''
 config.substitutions.append(('%newLoadEnzyme', ''
                                  + (" --enable-new-pm=1" if int(config.llvm_ver) < 13 else "")
                                  + ' -load-pass-plugin=@ENZYME_BINARY_DIR@/Enzyme/LLVMEnzyme-' + config.llvm_ver + config.llvm_shlib_ext 
+                                 + ' -load=@ENZYME_BINARY_DIR@/Enzyme/LLVMEnzyme-' + config.llvm_ver + config.llvm_shlib_ext 
                                  + (" --enzyme-attributor=0" if int(config.llvm_ver) >= 13 else "")
                                  ))
 config.substitutions.append(('%loadBC', ''

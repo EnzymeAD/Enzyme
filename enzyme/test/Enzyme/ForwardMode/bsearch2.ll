@@ -1,4 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -gvn -instsimplify -adce -correlated-propagation -simplifycfg -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,inline,mem2reg,gvn,instsimplify,adce,correlated-propagation,simplifycfg" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: noinline norecurse nounwind uwtable
 define  double @f(double* nocapture %x, i64 %n) #0 {
