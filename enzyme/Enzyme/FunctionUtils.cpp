@@ -1162,7 +1162,7 @@ PreProcessCache::PreProcessCache() {
 
   if (EnzymeAggressiveAA)
     FAM.registerPass([] { return CFLSteensAA(); });
-  
+
   MAM.registerPass([&] { return FunctionAnalysisManagerModuleProxy(FAM); });
   FAM.registerPass([&] { return ModuleAnalysisManagerFunctionProxy(MAM); });
 
@@ -1199,9 +1199,6 @@ PreProcessCache::PreProcessCache() {
 
 llvm::AAResults &
 PreProcessCache::getAAResultsFromFunction(llvm::Function *NewF) {
-  MAM.getResult<GlobalsAA>(*NewF->getParent());
-  auto &P = FAM.getResult<ModuleAnalysisManagerFunctionProxy>(*NewF);
-  P.getCachedResult<GlobalsAA>(*NewF->getParent());
   return FAM.getResult<AAManager>(*NewF);
 }
 

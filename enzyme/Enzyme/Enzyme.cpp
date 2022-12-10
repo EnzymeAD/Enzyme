@@ -686,10 +686,10 @@ static bool replaceOriginalCall(CallInst *CI, Function *fn, Value *diffret,
 class EnzymeBase {
 public:
   EnzymeLogic Logic;
-  EnzymeBase(bool PostOpt) : Logic(EnzymePostOpt.getNumOccurrences() ? EnzymePostOpt : PostOpt) {
+  EnzymeBase(bool PostOpt)
+      : Logic(EnzymePostOpt.getNumOccurrences() ? EnzymePostOpt : PostOpt) {
     // initializeLowerAutodiffIntrinsicPass(*PassRegistry::getPassRegistry());
   }
-
 
   Optional<Function *> parseFunctionParameter(CallInst *CI) {
     Value *fn = CI->getArgOperand(0);
@@ -2493,7 +2493,7 @@ class EnzymeOldPM : public EnzymeBase, public ModulePass {
 public:
   static char ID;
   EnzymeOldPM(bool PostOpt = false) : EnzymeBase(PostOpt), ModulePass(ID) {}
-  
+
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<TargetLibraryInfoWrapperPass>();
 
@@ -2504,11 +2504,8 @@ public:
 
     // AU.addRequiredID(llvm::LoopSimplifyID);//<LoopSimplifyWrapperPass>();
   }
-  bool runOnModule(Module &M) override {
-    return run(M);
-  }
+  bool runOnModule(Module &M) override { return run(M); }
 };
-
 
 } // namespace
 
@@ -2529,16 +2526,20 @@ extern "C" void AddEnzymePass(LLVMPassManagerRef PM) {
 
 #include "llvm/Passes/PassPlugin.h"
 
-class EnzymeNewPM final : public EnzymeBase, public AnalysisInfoMixin<EnzymeNewPM> {
+class EnzymeNewPM final : public EnzymeBase,
+                          public AnalysisInfoMixin<EnzymeNewPM> {
   friend struct llvm::AnalysisInfoMixin<EnzymeNewPM>;
+
 private:
   static llvm::AnalysisKey Key;
+
 public:
   using Result = llvm::PreservedAnalyses;
   EnzymeNewPM(bool PostOpt = false) : EnzymeBase(PostOpt) {}
 
   Result run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
-    return EnzymeBase::run(M) ? PreservedAnalyses::none() : PreservedAnalyses::all();
+    return EnzymeBase::run(M) ? PreservedAnalyses::none()
+                              : PreservedAnalyses::all();
   }
 
   static bool isRequired() { return true; }
@@ -2548,16 +2549,16 @@ AnalysisKey EnzymeNewPM::Key;
 
 extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
 llvmGetPassPluginInfo() {
-  return {
-      LLVM_PLUGIN_API_VERSION, "EnzymeNewPM", "v0.1", [](llvm::PassBuilder &PB) {
-          PB.registerPipelineParsingCallback(
-            [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
-               llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
-              if (Name == "enzyme") {
-                MPM.addPass(EnzymeNewPM());
-                return true;
-              }
-              return false;
-            });
-      }};
+  return {LLVM_PLUGIN_API_VERSION, "EnzymeNewPM", "v0.1",
+          [](llvm::PassBuilder &PB) {
+            PB.registerPipelineParsingCallback(
+                [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
+                   llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
+                  if (Name == "enzyme") {
+                    MPM.addPass(EnzymeNewPM());
+                    return true;
+                  }
+                  return false;
+                });
+          }};
 }
