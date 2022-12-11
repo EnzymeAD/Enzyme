@@ -41,6 +41,7 @@
 #include "../Utils.h"
 #include "BaseType.h"
 #include "ConcreteType.h"
+#include "Trie.h"
 
 /// Maximum offset for type trees to keep
 extern "C" {
@@ -64,15 +65,13 @@ static inline std::string to_string(const std::vector<int> x) {
 class TypeTree;
 
 typedef std::shared_ptr<const TypeTree> TypeResult;
-typedef std::map<const std::vector<int>, ConcreteType> ConcreteTypeMapType;
-typedef std::map<const std::vector<int>, const TypeResult> TypeTreeMapType;
 
 /// Class representing the underlying types of values as
 /// sequences of offsets to a ConcreteType
 class TypeTree : public std::enable_shared_from_this<TypeTree> {
 private:
   // mapping of known indices to type if one exists
-  ConcreteTypeMapType mapping;
+  trie<std::vector<int>, ConcreteType> mapping;
   std::vector<int> minIndices;
 
 public:
@@ -84,7 +83,9 @@ public:
   }
 
   /// Utility helper to lookup the mapping
-  const ConcreteTypeMapType &getMapping() const { return mapping; }
+  const trie<std::vector<int>, ConcreteType> &getMapping() const {
+    return mapping;
+  }
 
   /// Lookup the underlying ConcreteType at a given offset sequence
   /// or Unknown if none exists
@@ -858,7 +859,7 @@ public:
     minIndices = RHS.minIndices;
     mapping.clear();
     for (const auto &elems : RHS.mapping) {
-      mapping.emplace(elems);
+      mapping.insert(elems);
     }
     return true;
   }
@@ -1121,7 +1122,7 @@ public:
         continue;
       }
 
-      if (mapping.find(pair.first) == RHS.mapping.end()) {
+      if (RHS.mapping.end() == mapping.find(pair.first)) {
         ConcreteType CT = BaseType::Unknown;
         bool SubLegal = true;
         changed |= CT.binopIn(SubLegal, pair.second, Op);
