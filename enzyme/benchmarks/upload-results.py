@@ -5,16 +5,24 @@ import requests
 import argparse
 import platform
 
-def get_git_revision_short_hash():
+def get_git_revision_hash():
     try:
         return subprocess.check_output(['git', 'rev-parse', 'HEAD'], stderr=subprocess.STDOUT).decode('ascii').strip()
     except:
-        return None
+        return "N/A"
+
+def get_git_revision_date():
+    try:
+        time = subprocess.check_output(['git', 'show', '--quiet', '--format=%ct', 'HEAD'], stderr=subprocess.STDOUT).decode('ascii').strip()
+        dt = datetime.datetime.fromtimestamp(int(time), tz=datetime.timezone.utc)
+        return dt
+    except:
+        return datetime.datetime.now(datetime.timezone.utc)
 
 def extract_results(json):
     result = []
-    githash = get_git_revision_short_hash()
-    time = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    githash = get_git_revision_hash()
+    time = get_git_revision_date().isoformat()
     arch = platform.platform()
 
     for test_suite in json:
