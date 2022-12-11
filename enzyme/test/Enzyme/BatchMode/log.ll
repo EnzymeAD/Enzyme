@@ -1,5 +1,5 @@
 ; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,simplify-cfg)" -enzyme-preopt=false -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify)" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: nounwind
 declare [4 x double] @__enzyme_batch(...)

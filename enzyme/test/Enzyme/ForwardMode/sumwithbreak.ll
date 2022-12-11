@@ -1,5 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -adce -S | FileCheck %s
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,simplify-cfg,adce)" -enzyme-preopt=false -S | FileCheck %s
+; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -adce -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,adce)" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: noinline nounwind uwtable
 define dso_local double @f(double* nocapture readonly %x, i64 %n) #0 {
@@ -70,9 +70,12 @@ attributes #0 = { noinline nounwind uwtable }
 ; CHECK-NEXT:   %add5 = fadd fast double %[[i2]], %data.016
 ; CHECK-NEXT:   %[[i4]] = fadd fast double %[[i3]], %[[data016]]
 ; CHECK-NEXT:   %cmp = icmp ult i64 %iv, %n
-; CHECK-NEXT:   br i1 %cmp, label %for.body, label %cleanup
+; CHECK-NEXT:   br i1 %cmp, label %for.body, label %cleanup.loopexit
 
-; CHECK: cleanup:                                          ; preds = %if.end, %if.then
-; CHECK-NEXT:   %[[data1:.+]] = phi {{(fast )?}}double [ %[[i1]], %if.then ], [ %[[i4]], %if.end ]
+; CHECK: cleanup.loopexit:                                 ; preds = %if.end
+; CHECK-NEXT:   br label %cleanup
+
+; CHECK: cleanup:  
+; CHECK-NEXT:   %[[data1:.+]] = phi {{(fast )?}}double [ %[[i1]], %if.then ], [ %[[i4]], %cleanup.loopexit ]
 ; CHECK-NEXT:   ret double %[[data1]]
 ; CHECK-NEXT: }
