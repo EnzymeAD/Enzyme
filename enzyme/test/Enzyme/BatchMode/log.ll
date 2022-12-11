@@ -30,7 +30,7 @@ entry:
 ; CHECK-NEXT:   %1 = tail call fast double @llvm.log.f64(double %unwrap.x1)
 ; CHECK-NEXT:   %2 = tail call fast double @llvm.log.f64(double %unwrap.x2)
 ; CHECK-NEXT:   %3 = tail call fast double @llvm.log.f64(double %unwrap.x3)
-; CHECK-NEXT:   %mrv = insertvalue [4 x double] undef, double %0, 0
+; CHECK-NEXT:   %mrv = insertvalue [4 x double] {{(undef|poison)}}, double %0, 0
 ; CHECK-NEXT:   %mrv1 = insertvalue [4 x double] %mrv, double %1, 1
 ; CHECK-NEXT:   %mrv2 = insertvalue [4 x double] %mrv1, double %2, 2
 ; CHECK-NEXT:   %mrv3 = insertvalue [4 x double] %mrv2, double %3, 3

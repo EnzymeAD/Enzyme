@@ -1,5 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -gvn -early-cse-memssa -instcombine -instsimplify -simplifycfg -adce -licm -correlated-propagation -instcombine -correlated-propagation -adce -instsimplify -correlated-propagation -jump-threading -instsimplify -early-cse -simplifycfg -S | FileCheck %s
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,gvn,early-cse-memssa,instcombine,instsimplify,simplifycfg,adce,licm,correlated-propagation,instcombine,correlated-propagation,adce,instsimplify,correlated-propagation,jump-threading,instsimplify,early-cse,simplifycfg" -enzyme-preopt=false -S | FileCheck %s
+; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -adce -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,simplify-cfg,adce)" -enzyme-preopt=false -S | FileCheck %s
 
 ; #include <stdlib.h>
 ; #include <stdio.h>
@@ -119,7 +119,7 @@ attributes #4 = { nounwind }
 
 ; CHECK: for.body5:                                        ; preds = %for.body5, %for.cond1.preheader
 ; CHECK-NEXT:   %[[sum116:.+]] = phi {{(fast )?}}double [ %[[sum019]], %for.cond1.preheader ], [ %[[i3]], %for.body5 ]
-; CHECK-NEXT:   %iv1 = phi i64 [ 0, %for.cond1.preheader ], [ %iv.next2, %for.body5 ]
+; CHECK-NEXT:   %iv1 = phi i64 [ %iv.next2, %for.body5 ], [ 0, %for.cond1.preheader ]
 ; CHECK-NEXT:   %iv.next2 = add nuw nsw i64 %iv1, 1
 ; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds double, double* %"'ipl", i64 %iv1
 ; CHECK-NEXT:   %[[i2:.+]] = load double, double* %"arrayidx'ipg", align 8

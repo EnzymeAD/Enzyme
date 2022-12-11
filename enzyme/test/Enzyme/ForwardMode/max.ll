@@ -1,5 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,mem2reg,instsimplify,simplifycfg" -enzyme-preopt=false -S | FileCheck %s
+; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: norecurse nounwind readnone uwtable
 define dso_local double @max(double %x, double %y) #0 {
