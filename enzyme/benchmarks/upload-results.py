@@ -7,7 +7,7 @@ import platform
 
 def get_git_revision_short_hash():
     try:
-        output = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], stderr=subprocess.STDOUT).decode('ascii').strip()
+        return subprocess.check_output(['git', 'rev-parse', 'HEAD'], stderr=subprocess.STDOUT).decode('ascii').strip()
     except:
         return None
 
@@ -50,3 +50,9 @@ args = parser.parse_args()
 json = json.load(args.file)
 results = extract_results(json)
 
+if args.token:
+    response = requests.post(args.url, json=results, headers={"X-TOKEN": args.token})
+    response.raise_for_status()
+else:
+    response = requests.post(args.url, json=results)
+    response.raise_for_status()
