@@ -112,3 +112,6 @@ jobs:
       run: |
           cd enzyme/build
           cmake .. -GXcode -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=`which lit` -DLLVM_DIR=`brew --prefix llvm@${{ matrix.llvm }}`/lib/cmake/llvm
+    - name: graph results
+      run: python3 enzyme/benchmarks/upload-results.py enzyme/test/Enzyme/results.json --url https://enzyme.mit.edu/cibench/api --token ${{ secrets.GRAPH_TOKEN }}
+      if: github.event_name != 'pull_request' && matrix.build == 'Release'
