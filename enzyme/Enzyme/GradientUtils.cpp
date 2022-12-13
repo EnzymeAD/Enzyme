@@ -1291,9 +1291,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                 // phi->getParent();
                 if (prevIteration.count(PB)) {
                   assert(0 && "tri block prev iteration unhandled");
-                } else if ((inst->mayReadFromMemory() &&
-                            !DT.dominates(inst->getParent(),
-                                          phi->getParent())) ||
+                } else if (!DT.dominates(inst->getParent(), phi->getParent()) ||
                            (!EnzymeSpeculatePHIs &&
                             (isa<CallInst>(inst) || isa<LoadInst>(inst))))
                   vals.push_back(getOpFull(B, inst, nextScope));
@@ -1487,8 +1485,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                   assert(___res->getType() == inst->getType() && "lu");
               }
               vals.push_back(___res);
-            } else if ((inst->mayReadFromMemory() &&
-                        !DT.dominates(inst->getParent(), phi->getParent())) ||
+            } else if (!DT.dominates(inst->getParent(), phi->getParent()) ||
                        (!EnzymeSpeculatePHIs &&
                         (isa<CallInst>(inst) || isa<LoadInst>(inst))))
               vals.push_back(getOpFull(B, inst, nextScope));
@@ -1662,8 +1659,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           // 3) the value comes from a previous iteration.
           BasicBlock *nextScope = PB;
           // if (inst->getParent() == nextScope) nextScope = phi->getParent();
-          if ((inst->mayReadFromMemory() &&
-               !DT.dominates(inst->getParent(), phi->getParent())) ||
+          if (!DT.dominates(inst->getParent(), phi->getParent()) ||
               (!EnzymeSpeculatePHIs &&
                (isa<CallInst>(inst) || isa<LoadInst>(inst))))
             vals.push_back(getOpFull(B, inst, nextScope));
@@ -3248,6 +3244,7 @@ bool GradientUtils::legalRecompute(const Value *val,
     auto n = getFuncNameFromCall(const_cast<CallInst *>(ci));
     auto called = ci->getCalledFunction();
     Intrinsic::ID ID = Intrinsic::not_intrinsic;
+
     if (ci->hasFnAttr("enzyme_shouldrecompute") ||
         (called && called->hasFnAttribute("enzyme_shouldrecompute")) ||
         isMemFreeLibMFunction(n, &ID) || n == "lgamma_r" || n == "lgammaf_r" ||
