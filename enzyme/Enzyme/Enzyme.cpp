@@ -2547,54 +2547,10 @@ public:
 
 AnalysisKey EnzymeNewPM::Key;
 
-#ifdef ENZYME_RUNPASS
-#include "PreserveNVVM.h"
-#endif
-
 extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
 llvmGetPassPluginInfo() {
   return {LLVM_PLUGIN_API_VERSION, "EnzymeNewPM", "v0.1",
           [](llvm::PassBuilder &PB) {
-#ifdef ENZYME_RUNPASS
-            PB.registerPipelineEarlyEPCallback(
-                [](ModulePassManager &MPM, OptimizationLevel) {
-                  MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
-                  FunctionPassManager OptimizerPM;
-                  FunctionPassManager OptimizerPM2;
-                  /*
-     OptimizePM.addPass(Float2IntPass());
-     OptimizePM.addPass(LowerConstantIntrinsicsPass());
-
-     if (EnableMatrix) {
-       OptimizePM.addPass(LowerMatrixIntrinsicsPass());
-       OptimizePM.addPass(EarlyCSEPass());
-     }
-     */
-                  OptimizerPM.addPass(GVNPass());
-                  OptimizerPM.addPass(SROAPass());
-                  MPM.addPass(createModuleToFunctionPassAdaptor(
-                      std::move(OptimizerPM), PTO.EagerlyInvalidateAnalyses));
-                  MPM.addPass(EnzymeNewPM(/*PostOpt=*/true));
-                  MPM.addPass(PreserveNVVMNewPM(/*Begin*/ false));
-                  OptimizerPM2.addPass(GVNPass());
-                  OptimizerPM2.addPass(SROAPass());
-                  OptimizerPM2.addPass(LoopDeletionPass());
-                  OptimizerPM2.addPass(GlobalOptPass());
-
-                  MPM.addPass(createModuleToFunctionPassAdaptor(
-                      std::move(OptimizerPM2), PTO.EagerlyInvalidateAnalyses));
-                });
-            PB.registerPipelineStartEPCallback(
-                [](ModulePassManager &MPM, OptimizationLevel) {
-                  MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
-                });
-            PB.registerFullLinkTimeOptimizationEarlyEPCallback(
-                [](ModulePassManager &MPM, OptimizationLevel) {
-                  MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
-                });
-            PB.registerVectorizerStartEPCallback(
-                [](FunctionPassManager &, OptimizationLevel) {});
-#endif
             PB.registerPipelineParsingCallback(
                 [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
                    llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
