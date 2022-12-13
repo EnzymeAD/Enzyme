@@ -1515,17 +1515,22 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                                        ConstantInt::get(prevIdx->getType(), 0));
 
         if (blocks[0]->size() == 1 && blocks[1]->size() == 1) {
-          eraseBlocks(blocks, bret);
-          Value *toret = BuilderM.CreateSelect(cond, vals[0], vals[1],
-                                               phi->getName() + "_unwrap");
-          if (permitCache) {
-            unwrap_cache[BuilderM.GetInsertBlock()][idx.first][idx.second] =
-                toret;
-          }
-          if (auto instRet = dyn_cast<Instruction>(toret)) {
-            unwrappedLoads[instRet] = val;
-          }
-          return toret;
+          if (auto B1 = dyn_cast<BranchInst>(blocks[0]->getTerminator()))
+            if (auto B2 = dyn_cast<BranchInst>(blocks[1]->getTerminator()))
+              if (B1->isUnconditional() && B2->isUnconditional() &&
+                  B1->getSuccessor(0) == bret && B2->getSuccessor(0) == bret) {
+                eraseBlocks(blocks, bret);
+                Value *toret = BuilderM.CreateSelect(
+                    cond, vals[0], vals[1], phi->getName() + "_unwrap");
+                if (permitCache) {
+                  unwrap_cache[BuilderM.GetInsertBlock()][idx.first]
+                              [idx.second] = toret;
+                }
+                if (auto instRet = dyn_cast<Instruction>(toret)) {
+                  unwrappedLoads[instRet] = val;
+                }
+                return toret;
+              }
         }
 
         bret->moveAfter(last);
@@ -1682,17 +1687,22 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       // were made in the two blocks
       if (isa<BranchInst>(equivalentTerminator) && blocks[0]->size() == 1 &&
           blocks[1]->size() == 1) {
-        eraseBlocks(blocks, bret);
-        Value *toret = BuilderM.CreateSelect(cond, vals[0], vals[1],
-                                             phi->getName() + "_unwrap");
-        if (permitCache) {
-          unwrap_cache[BuilderM.GetInsertBlock()][idx.first][idx.second] =
-              toret;
-        }
-        if (auto instRet = dyn_cast<Instruction>(toret)) {
-          unwrappedLoads[instRet] = val;
-        }
-        return toret;
+        if (auto B1 = dyn_cast<BranchInst>(blocks[0]->getTerminator()))
+          if (auto B2 = dyn_cast<BranchInst>(blocks[1]->getTerminator()))
+            if (B1->isUnconditional() && B2->isUnconditional() &&
+                B1->getSuccessor(0) == bret && B2->getSuccessor(0) == bret) {
+              eraseBlocks(blocks, bret);
+              Value *toret = BuilderM.CreateSelect(cond, vals[0], vals[1],
+                                                   phi->getName() + "_unwrap");
+              if (permitCache) {
+                unwrap_cache[BuilderM.GetInsertBlock()][idx.first][idx.second] =
+                    toret;
+              }
+              if (auto instRet = dyn_cast<Instruction>(toret)) {
+                unwrappedLoads[instRet] = val;
+              }
+              return toret;
+            }
       }
 
       if (BuilderM.GetInsertPoint() != oldB->end()) {
