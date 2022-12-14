@@ -76,7 +76,7 @@ def AddCacheOp : Enzyme_Op<"add"> {
 
 def GetCacheOp : Enzyme_Op<"get"> {
   let summary = "Retrieve information for the reverse mode pass.";
-  let arguments = (ins AnyType : $cache, AnyType : $value);
+  let arguments = (ins AnyType : $cache);
   let results = (outs AnyType:$output);
 }
 

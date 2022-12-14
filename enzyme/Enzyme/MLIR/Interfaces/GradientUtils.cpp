@@ -193,6 +193,18 @@ Value mlir::enzyme::MGradientUtils::invertPointerReverseM(Value v, Block * askin
   llvm_unreachable("could not invert pointer");
 }
 
+Optional<Value> mlir::enzyme::MGradientUtils::invertPointerReverseMOptional(Value v, Block * askingOp) {
+  if (invertedPointersReverse.count(v) != 0){
+    auto values = (invertedPointersReverse.find(v))->second;
+    for (auto it = values.rbegin(); it != values.rend(); it++){
+      if(mlir::DominanceInfo().dominates(it->getParentBlock(), askingOp)){
+        return *it;
+      }
+    }
+  }
+  return Optional<Value>();
+}
+
 void mlir::enzyme::MGradientUtils::mapInvertPointer(mlir::Value v, mlir::Value invertValue){
   invertedPointers.map(v, invertValue);
   if (invertedPointersReverse.count(v) == 0){
@@ -1106,7 +1118,6 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
       *this, mode, width, fn, TA, type_args, retType, /*diffeReturnArg*/ true,
       constants, returnValue, addedType, /*omp*/ false);
 
-
   const SmallPtrSet<mlir::Block *, 4> guaranteedUnreachable;
   gutils->forceAugmentedReturnsReverse();
 
@@ -1188,22 +1199,66 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
         auto argumentsIt = mapBlockArguments.find(predecessor);
         if (argumentsIt != mapBlockArguments.end()){
           for(auto operandOld : argumentsIt->second){
-            //TODO Create canonical null value if not found!
-            operands.push_back(gutils->invertPointerReverseM(operandOld, mapReverseModeBlocks.lookupOrNull(&oBB)));
+            Optional<Value> invertPointer = gutils->invertPointerReverseMOptional(operandOld, mapReverseModeBlocks.lookupOrNull(&oBB));
+            if (invertPointer.has_value()){
+              operands.push_back(invertPointer.value());
+            }
+            else{
+              if (auto iface = operandOld.getType().cast<AutoDiffTypeInterface>()) {
+                Value nullValue = iface.createNullValue(revBuilder, oBB.rbegin()->getLoc());
+                operands.push_back(nullValue);
+              }
+            }
           }
         }
         ValueRange operandsValueRange(operands);
         revBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB.rbegin()))->getLoc(), predecessorRevMode, operandsValueRange);
       }
       else{
-        Type indexType = (Type)IndexType::get(initializationBlock->begin()->getContext());
+        Type indexType = mlir::IntegerType::get(initializationBlock->begin()->getContext(), 32);
         Type cacheType = CacheType::get(initializationBlock->begin()->getContext(), indexType);
         Value cache = initializeBackwardCacheValue(cacheType, initializationBlock);
-        //Value flag = revBuilder.create<enzyme::GetCacheOp>()
-        for (Block * predecessor : oBB.getPredecessors()){
+        
+        Value flag = revBuilder.create<enzyme::GetCacheOp>(oBB.rbegin()->getLoc(), indexType, cache);
+        SmallVector<Block *> blocks;
+        SmallVector<APInt> indices;
+        SmallVector<ValueRange> arguments;
+        ValueRange defaultArguments;
+        Block * defaultBlock;
+        int i = 0;
+        for (auto it = oBB.getPredecessors().begin(); it != oBB.getPredecessors().end(); it++){
+          Block * predecessor = *it;
+          predecessor = mapReverseModeBlocks.lookupOrNull(predecessor);
 
+          SmallVector<Value> operands;
+          auto argumentsIt = mapBlockArguments.find(predecessor);
+          if (argumentsIt != mapBlockArguments.end()){
+            for(auto operandOld : argumentsIt->second){
+              //TODO Create canonical null value if not found!
+              Optional<Value> invertPointer = gutils->invertPointerReverseMOptional(operandOld, mapReverseModeBlocks.lookupOrNull(&oBB));
+              if (invertPointer.has_value()){
+                operands.push_back(invertPointer.value());
+              }
+              else{
+                if (auto iface = operandOld.getType().cast<AutoDiffTypeInterface>()) {
+                  Value nullValue = iface.createNullValue(revBuilder, oBB.rbegin()->getLoc());
+                  operands.push_back(nullValue);
+                }
+              }
+            }
+          }
+
+          if (it != oBB.getPredecessors().begin()){
+            blocks.push_back(predecessor);
+            indices.push_back(APInt(32, i++));
+            arguments.push_back(ValueRange(operands));
+          }
+          else{
+            defaultBlock = predecessor;
+            defaultArguments = ValueRange(operands);
+          }
         }
-        //revBuilder.create<cf::SwitchOp>(gutils->getNewFromOriginal(&*(oBB.rbegin()))->getLoc(), predecessor_revMode);
+        revBuilder.create<cf::SwitchOp>(oBB.rbegin()->getLoc(), flag, defaultBlock, defaultArguments, ArrayRef<APInt>(indices), ArrayRef<Block *>(blocks), ArrayRef<ValueRange>(arguments));
       }
     }
   }
