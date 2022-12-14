@@ -1316,6 +1316,9 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
             BasicBlock *bsplit = BasicBlock::Create(
                 val->getContext(), oldB->getName() + "_phisplt", newFunc);
             bsplit->moveAfter(oldB);
+            if (inReverseBlocks)
+              reverseBlocks[fwd].push_back(bsplit);
+            reverseBlockToPrimal[bsplit] = fwd;
             BuilderM.CreateCondBr(
                 cond1,
                 (done[std::make_pair(block, bi1->getSuccessor(0))].size() == 1)
