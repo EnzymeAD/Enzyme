@@ -26,15 +26,14 @@ def get_git_revision_date():
 
 def extract_results(json):
     result = []
-    githash = "hash"
-    time = "time"
+    githash = get_git_revision_hash()
+    time = get_git_revision_date().isoformat()
     arch = platform.platform()
     llvm = ".".join(str(json["__version__"]))
 
     for test in json["tests"]:
         if test["code"] == "PASS":
             compiletime = test["elapsed"]
-            testsuite = ""
             name = test["name"]
             pathstr = name.split(" :: ")[1]
             comps = pathstr.split("/")
