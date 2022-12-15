@@ -1,4 +1,4 @@
-name: MLIR
+name: Reverse-Mode MLIR
 
 on:
   push:
