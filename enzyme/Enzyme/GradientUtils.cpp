@@ -362,24 +362,16 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
             if (!DT.dominates(opinst, &*Builder.GetInsertPoint()))             \
               noLookup = true;                                                 \
           }                                                                    \
-        if (origParent)                                                        \
-          if (auto opinst = dyn_cast<Instruction>(v)) {                        \
-            v = fixLCSSA(opinst, origParent);                                  \
-          }                                                                    \
         if (!noLookup)                                                         \
-          ___res = lookupM(v, Builder, available, v != val);                   \
+          ___res = lookupM(v, Builder, available, v != val, origParent);       \
       }                                                                        \
       if (___res)                                                              \
         assert(___res->getType() == v->getType() && "uw");                     \
     } else {                                                                   \
-      if (origParent)                                                          \
-        if (auto opinst = dyn_cast<Instruction>(v)) {                          \
-          v = fixLCSSA(opinst, origParent);                                    \
-        }                                                                      \
       assert(unwrapMode == UnwrapMode::AttemptSingleUnwrap);                   \
       auto found = available.find(v);                                          \
       assert(found == available.end() || found->second);                       \
-      ___res = lookupM(v, Builder, available, v != val);                       \
+      ___res = lookupM(v, Builder, available, v != val, origParent);           \
       if (___res && ___res->getType() != v->getType()) {                       \
         llvm::errs() << *newFunc << "\n";                                      \
         llvm::errs() << " v = " << *v << " res = " << *___res << "\n";         \
@@ -1470,19 +1462,19 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                     if (!DT.dominates(inst, &*B.GetInsertPoint()))
                       noLookup = true;
                   }
-                  Value *v = fixLCSSA(inst, nextScope);
                   if (!noLookup)
-                    ___res = lookupM(v, B, prevAvailable, v != val);
+                    ___res =
+                        lookupM(inst, B, prevAvailable, inst != val, nextScope);
                 }
                 if (___res)
                   assert(___res->getType() == inst->getType() && "uw");
               } else {
-                Value *v = fixLCSSA(inst, nextScope);
-                assert(unwrapMode == UnwrapMode::AttemptSingleUnwrap);
-                ___res = lookupM(v, B, prevAvailable, v != val);
-                if (___res && ___res->getType() != v->getType()) {
+                ___res =
+                    lookupM(inst, B, prevAvailable, inst != val, nextScope);
+                if (___res && ___res->getType() != inst->getType()) {
                   llvm::errs() << *newFunc << "\n";
-                  llvm::errs() << " v = " << *v << " res = " << *___res << "\n";
+                  llvm::errs()
+                      << " inst = " << *inst << " res = " << *___res << "\n";
                 }
                 if (___res)
                   assert(___res->getType() == inst->getType() && "lu");
@@ -1771,12 +1763,8 @@ endCheck:
           return nullptr;
         }
       }
-    if (scope)
-      if (auto opinst = dyn_cast<Instruction>(nval)) {
-        nval = fixLCSSA(opinst, scope);
-      }
-    auto toreturn =
-        lookupM(nval, BuilderM, available, /*tryLegalRecomputeCheck*/ false);
+    auto toreturn = lookupM(nval, BuilderM, available,
+                            /*tryLegalRecomputeCheck*/ false, scope);
     assert(val->getType() == toreturn->getType());
     return toreturn;
   }
@@ -4951,7 +4939,7 @@ end:;
 
 Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                               const ValueToValueMapTy &incoming_available,
-                              bool tryLegalRecomputeCheck) {
+                              bool tryLegalRecomputeCheck, BasicBlock *scope) {
 
   assert(mode == DerivativeMode::ReverseModePrimal ||
          mode == DerivativeMode::ReverseModeGradient ||
@@ -4991,6 +4979,9 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
   }
   assert(inst->getParent()->getParent() == newFunc);
   assert(BuilderM.GetInsertBlock()->getParent() == newFunc);
+  if (scope == nullptr)
+    scope = BuilderM.GetInsertBlock();
+  assert(scope->getParent() == newFunc);
 
   bool reduceRegister = false;
 
@@ -5218,11 +5209,12 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
   Instruction *prelcssaInst = inst;
 
   assert(inst->getName() != "<badref>");
-  val = fixLCSSA(inst, BuilderM.GetInsertBlock());
+  val = fixLCSSA(inst, scope);
   if (isa<UndefValue>(val)) {
     llvm::errs() << *oldFunc << "\n";
     llvm::errs() << *newFunc << "\n";
     llvm::errs() << *BuilderM.GetInsertBlock() << "\n";
+    llvm::errs() << *scope << "\n";
     llvm::errs() << *val << " inst " << *inst << "\n";
   }
   inst = cast<Instruction>(val);
@@ -5250,7 +5242,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
       (lrc = legalRecompute(prelcssaInst, available, &BuilderM))) {
     if ((src = shouldRecompute(prelcssaInst, available, &BuilderM))) {
       auto op = unwrapM(prelcssaInst, BuilderM, available,
-                        UnwrapMode::AttemptSingleUnwrap);
+                        UnwrapMode::AttemptSingleUnwrap, scope);
       if (op) {
         assert(op);
         assert(op->getType());
@@ -5548,8 +5540,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                         }
                         Value *recomp = unwrapM(
                             getNewFromOriginal(SI->getValueOperand()), BuilderM,
-                            ThreadLookup, UnwrapMode::AttemptFullUnwrap,
-                            /*scope*/ nullptr,
+                            ThreadLookup, UnwrapMode::AttemptFullUnwrap, scope,
                             /*permitCache*/ false);
                         if (recomp) {
                           resultValue = recomp;
