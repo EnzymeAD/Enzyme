@@ -1184,11 +1184,11 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
       OpBuilder revBuilder(revBlock, revBlock->end());
       SmallVector<mlir::Value, 2> retargs;
       for (auto attribute : gutils->oldFunc.getBody().getArguments()) {
-        auto attributeGradient = gutils->invertPointerReverseM(attribute, revBlock->rbegin()->getBlock());
+        auto attributeGradient = gutils->invertPointerReverseM(attribute, revBlock);
         retargs.push_back(attributeGradient);
       }
       
-      revBuilder.create<func::ReturnOp>((revBlock->rbegin())->getLoc(), retargs);
+      revBuilder.create<func::ReturnOp>(oBB.rbegin()->getLoc(), retargs);
     }
     else {
       if (std::next(oBB.getPredecessors().begin()) == oBB.getPredecessors().end()){
