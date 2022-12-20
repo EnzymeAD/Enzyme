@@ -23,7 +23,8 @@ jobs:
           path: ygg
 
     - uses: actions/checkout@v3
-          path: enz
+      with:
+        path: enz
     - name: replace
       run: |
           cd ygg
