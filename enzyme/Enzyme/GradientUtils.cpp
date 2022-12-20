@@ -1371,6 +1371,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
 #else
               prevIdx = BuilderM.CreateLoad(ctx.antivaralloc);
 #endif
+      llvm::errs() << " vi2: " << *prevIdx << " - b: " << BuilderM.GetInsertBlock()->getName() << "\n";
             } else {
               // However, if we are using the phi of the reverse pass of a block
               // outside the loop we must be in the reverse pass of a block
@@ -5160,6 +5161,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 #else
             available[idx.var] = BuilderM.CreateLoad(idx.antivaralloc);
 #endif
+            llvm::errs() << " vi3: " << *available[idx.var] << " - b: " << BuilderM.GetInsertBlock()->getName() << "\n";
           } else {
             available[idx.var] = idx.var;
           }
@@ -6024,7 +6026,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                 " tryLegalRecomputeCheck: ", tryLegalRecomputeCheck);
   }
 
-  BasicBlock *scope = inst->getParent();
+  BasicBlock *scopeI = inst->getParent();
   if (auto origInst = isOriginal(inst)) {
     auto found = rematerializableAllocations.find(origInst);
     if (found != rematerializableAllocations.end())
@@ -6039,7 +6041,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
         // within the loop, force an entry-level scope so there is no need
         // to cache.
         if (!cacheWholeAllocation)
-          scope = &newFunc->getEntryBlock();
+          scopeI = &newFunc->getEntryBlock();
       }
   } else {
     for (auto pair : backwardsOnlyShadows) {
@@ -6048,13 +6050,13 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
             pair.second.LI->contains(pinst->getParent())) {
           auto found = invertedPointers.find(pair.first);
           if (found != invertedPointers.end() && found->second == inst) {
-            scope = &newFunc->getEntryBlock();
+            scopeI = &newFunc->getEntryBlock();
 
             // Prevent the phi node from being stored into the cache by creating
             // it before the ensureLookupCached.
             if (scopeMap.find(inst) == scopeMap.end()) {
               LimitContext lctx(/*ReverseLimit*/ reverseBlocks.size() > 0,
-                                scope);
+                                scopeI);
 
               AllocaInst *cache = createCacheForScope(
                   lctx, inst->getType(), inst->getName(), /*shouldFree*/ true);
@@ -6069,7 +6071,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
     }
   }
 
-  ensureLookupCached(inst, /*shouldFree*/ true, scope,
+  ensureLookupCached(inst, /*shouldFree*/ true, scopeI,
                      inst->getMetadata(LLVMContext::MD_tbaa));
   bool isi1 = inst->getType()->isIntegerTy() &&
               cast<IntegerType>(inst->getType())->getBitWidth() == 1;
