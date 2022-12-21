@@ -66,11 +66,13 @@ class Constant<string _value> {
   string value = _value;
 }
 
+// General note: If return is scalar, return it. If return is vec, update it.
+
 // Lv 1 \wo rotations
 def scal : CallBlasPattern<(Op $n, $alpha, $x, $incx),
                   ["x"],[len, fp, vinc],
                   [
-                  (b<"dot"> $n, input<"x">, $incx, adj<"x">, $incx),
+                  (b<"asum"> $n, input<"x">, $incx),
                   (b<"scal"> $n, $alpha, adj<"x">, $incx)
                   ]
                   >;
@@ -78,7 +80,7 @@ def scal : CallBlasPattern<(Op $n, $alpha, $x, $incx),
 def axpy : CallBlasPattern<(Op $n, $alpha, $x, $incx, $y, $incy),
                   ["y"],[len, fp, vinc, vinc],
                   [
-                  (b<"dot"> $n, $x, $incx, adj<"y">, $incy),
+                  (b<"asum"> $n, $x, $incx),
                   (b<"scal"> $n, $alpha, adj<"x">, $incy),
                   (noop)
                   ]
@@ -98,26 +100,26 @@ def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
 //                   >;
 
 
-// def copy : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
-//                   ["y"],[len, vinc, vinc],
-//                   [
-//                   (noop),// copy moves x into y, so x is never modified.
-//                   (b<"axpy"> $n, Constant<"1.0">, adj<"y">, $incy, adj<"x">, $incx),
-//                   ]
-//                   >;
+def copy : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
+                  ["y"],[len, vinc, vinc],
+                  [
+                  (noop),// copy moves x into y, so x is never modified.
+                  (b<"axpy"> $n, Constant<"1.0">, adj<"y">, $incy, adj<"x">, $incx),
+                  ]
+                  >;
 
 // def swap : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
 //                   ["x","y"],[len, vinc, vinc],
 //                   [
-//                   (b<"swap"> $n, adj<"x">, incx, adj<"y">, incy),
+//                   (b<"swap"> $n, adj<"x">, $incx, adj<"y">, $incy),
 //                   (noop),// one swap is enough, will only be used iff x and y active anyway
 //                   ]
 //                   >;
 
-// def asum : CallBlasPattern<(Op $n, $x, $incx),
-//                   [len, vinc],
-//                   [(b<"scal"> $n, DiffeRet<"">, (sgn $x), $incx)]
-//                   >;
+def asum : CallBlasPattern<(Op $n, $x, $incx),
+                  [],[len, vinc],
+                  [(noop)]// sum(abs(x))
+                  >;
 
 
 // Lv 2
