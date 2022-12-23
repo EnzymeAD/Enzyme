@@ -1059,8 +1059,6 @@ Value *CacheUtility::computeIndexOfChunk(
 #else
       var = v.CreateLoad(idx.antivaralloc);
 #endif
-      llvm::errs() << " v: " << *var << " - b: " << v.GetInsertBlock()->getName() << "\n";
-      assert(v.GetInsertBlock()->getName() != "invertfor.cond.cleanup17");
     } else {
       var = idx.var;
     }

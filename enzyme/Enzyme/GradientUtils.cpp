@@ -362,19 +362,15 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
             if (!DT.dominates(opinst, &*Builder.GetInsertPoint()))             \
               noLookup = true;                                                 \
           }                                                                    \
-        origParent = lookupInst; \
-          llvm::errs() << " v: " << *v << "\n"; \
-          llvm::errs() << " lookupInst: " << *lookupInst << "\n"; \
+        origParent = lookupInst;                                               \
         if (BasicBlock *forwardBlock = origParent)                             \
           if (auto opinst = dyn_cast<Instruction>(v)) {                        \
             if (!isOriginalBlock(*forwardBlock)) {                             \
               forwardBlock = originalForReverseBlock(*forwardBlock);           \
             }                                                                  \
-            llvm::errs() <<  " fwd: " << *forwardBlock << "\n"; \
             if (isPotentialLastLoopValue(opinst, forwardBlock, LI)) {          \
               v = fixLCSSA(opinst, forwardBlock);                              \
               origParent = nullptr;                                            \
-            llvm::errs() <<  " last: " << *v << "\n";\
             }                                                                  \
           }                                                                    \
         if (!noLookup)                                                         \
@@ -383,7 +379,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       if (___res)                                                              \
         assert(___res->getType() == v->getType() && "uw");                     \
     } else {                                                                   \
-      origParent = lookupInst; \
+      origParent = lookupInst;                                                 \
       if (BasicBlock *forwardBlock = origParent)                               \
         if (auto opinst = dyn_cast<Instruction>(v)) {                          \
           if (!isOriginalBlock(*forwardBlock)) {                               \
@@ -407,18 +403,18 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     }                                                                          \
     ___res;                                                                    \
   })
-#define getOpFull(Builder, vtmp, frominst) \
- ({\
+#define getOpFull(Builder, vtmp, frominst)                                     \
+  ({                                                                           \
     BasicBlock *parent = scope;                                                \
     if (parent == nullptr)                                                     \
       if (auto originst = dyn_cast<Instruction>(val))                          \
         parent = originst->getParent();                                        \
-  getOpFullest(Builder, vtmp, frominst, parent, true);\
+    getOpFullest(Builder, vtmp, frominst, parent, true);                       \
   })
 #define getOpUnchecked(vtmp)                                                   \
   ({                                                                           \
     BasicBlock *parent = scope;                                                \
-    getOpFullest(BuilderM, vtmp, parent, parent, false);                               \
+    getOpFullest(BuilderM, vtmp, parent, parent, false);                       \
   })
 #define getOp(vtmp)                                                            \
   ({                                                                           \
@@ -426,7 +422,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     if (parent == nullptr)                                                     \
       if (auto originst = dyn_cast<Instruction>(val))                          \
         parent = originst->getParent();                                        \
-    getOpFullest(BuilderM, vtmp, parent, parent, true);                                \
+    getOpFullest(BuilderM, vtmp, parent, parent, true);                        \
   })
 
   if (isa<Argument>(val) || isa<Constant>(val)) {
@@ -1403,7 +1399,6 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
 #else
               prevIdx = BuilderM.CreateLoad(ctx.antivaralloc);
 #endif
-      llvm::errs() << " vi2: " << *prevIdx << " - b: " << BuilderM.GetInsertBlock()->getName() << "\n";
             } else {
               // However, if we are using the phi of the reverse pass of a block
               // outside the loop we must be in the reverse pass of a block
@@ -5227,7 +5222,6 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 #else
             available[idx.var] = BuilderM.CreateLoad(idx.antivaralloc);
 #endif
-            llvm::errs() << " vi3: " << *available[idx.var] << " - b: " << BuilderM.GetInsertBlock()->getName() << "\n";
           } else {
             available[idx.var] = idx.var;
           }
@@ -5301,7 +5295,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 
   assert(inst->getName() != "<badref>");
   val = fixLCSSA(inst, scope);
-  if (isa<UndefValue>(val) || inst->getName() == "a14") {
+  if (isa<UndefValue>(val)) {
     llvm::errs() << *oldFunc << "\n";
     llvm::errs() << *newFunc << "\n";
     llvm::errs() << *BuilderM.GetInsertBlock() << "\n";
