@@ -26,8 +26,8 @@ namespace enzyme {
 
 class MGradientUtils;
 
-} // namespace enzyme
-} // namespace mlir
+}; // namespace enzyme
+}; // namespace mlir
 
 #include "MLIR/Interfaces/AutoDiffOpInterface.h.inc"
 

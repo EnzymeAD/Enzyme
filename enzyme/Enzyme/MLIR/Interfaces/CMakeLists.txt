@@ -8,7 +8,10 @@ add_public_tablegen_target(MLIRAutoDiffTypeInterfaceIncGen)
 add_mlir_library(MLIREnzymeAutoDiffInterface
   AutoDiffOpInterface.cpp
   AutoDiffTypeInterface.cpp
+  CloneFunction.cpp
   GradientUtils.cpp
+  GradientUtilsReverse.cpp
+  EnzymeLogic.cpp
 
   DEPENDS
   MLIRAutoDiffOpInterfaceIncGen

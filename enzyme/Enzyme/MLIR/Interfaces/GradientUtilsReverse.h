@@ -1,22 +1,22 @@
-//===- GradientUtils.h - Utilities for gradient interfaces -------* C++ -*-===//
+//===- GradientUtilsReverse.h - Utilities for gradient interfaces -------* C++ -*-===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
-#pragma once
-
-#include "Interfaces/EnzymeLogic.h"
-#include "Interfaces/CloneFunction.h"
 
 #include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/IR/FunctionInterfaces.h"
 
+#include "EnzymeLogic.h"
+#include "CloneFunction.h"
+
 namespace mlir {
 namespace enzyme {
 
-class MGradientUtils {
+
+class MGradientUtilsReverse {
 public:
   // From CacheUtility
   FunctionOpInterface newFunc;
@@ -41,7 +41,7 @@ public:
   mlir::Block *getNewFromOriginal(mlir::Block *originst) const;
   Operation *getNewFromOriginal(Operation *originst) const;
 
-  MGradientUtils(MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
+  MGradientUtilsReverse(MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
                  FunctionOpInterface oldFunc_, MTypeAnalysis &TA_,
                  MTypeResults TR_, BlockAndValueMapping &invertedPointers_,
                  const SmallPtrSetImpl<mlir::Value> &constantvalues_,
@@ -70,9 +70,9 @@ public:
   LogicalResult visitChild(Operation *op);
 };
 
-class MDiffeGradientUtils : public MGradientUtils {
+class MDiffeGradientUtilsReverse : public MGradientUtilsReverse {
 public:
-  MDiffeGradientUtils(MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
+  MDiffeGradientUtilsReverse(MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
                       FunctionOpInterface oldFunc_, MTypeAnalysis &TA,
                       MTypeResults TR, BlockAndValueMapping &invertedPointers_,
                       const SmallPtrSetImpl<mlir::Value> &constantvalues_,
@@ -82,15 +82,12 @@ public:
                       BlockAndValueMapping &origToNew_,
                       std::map<Operation *, Operation *> &origToNewOps_,
                       DerivativeMode mode, unsigned width, bool omp)
-      : MGradientUtils(Logic, newFunc_, oldFunc_, TA, TR, invertedPointers_,
+      : MGradientUtilsReverse(Logic, newFunc_, oldFunc_, TA, TR, invertedPointers_,
                        constantvalues_, returnvals_, ActiveReturn,
                        constant_values, origToNew_, origToNewOps_, mode, width,
                        omp) {
   }
-
-  // Technically diffe constructor
-  static MDiffeGradientUtils *
-  CreateFromClone(MEnzymeLogic &Logic, DerivativeMode mode, unsigned width,
+  static MDiffeGradientUtilsReverse * CreateFromClone(MEnzymeLogic &Logic, DerivativeMode mode, unsigned width,
                   FunctionOpInterface todiff, MTypeAnalysis &TA,
                   MFnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
                   bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
@@ -126,13 +123,12 @@ public:
         prefix + todiff.getName(), originalToNew, originalToNewOps,
         diffeReturnArg, additionalArg);
     MTypeResults TR; // TODO
-    return new MDiffeGradientUtils(
+    return new MDiffeGradientUtilsReverse(
         Logic, newFunc, todiff, TA, TR, invertedPointers, constant_values,
         nonconstant_values, retType, constant_args, originalToNew,
         originalToNewOps, mode, width, omp);
   }
 };
 
-
-}; // namespace enzyme
-}; // namespace mlir
+} // namespace enzyme
+} // namespace mlir

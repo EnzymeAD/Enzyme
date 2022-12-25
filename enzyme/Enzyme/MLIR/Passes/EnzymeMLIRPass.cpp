@@ -13,6 +13,7 @@
 #include "../../EnzymeLogic.h"
 #include "Dialect/Ops.h"
 #include "Interfaces/GradientUtils.h"
+#include "Interfaces/GradientUtilsReverse.h"
 #include "PassDetails.h"
 #include "Passes/Passes.h"
 #include "mlir/IR/BlockAndValueMapping.h"
