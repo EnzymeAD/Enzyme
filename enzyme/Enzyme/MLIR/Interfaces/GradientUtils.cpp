@@ -1091,13 +1091,18 @@ Value initializeBackwardCacheValue(Type t, Block * initializationBlock){
 }
 
 SmallVector<mlir::Block*> getDominatorToposort(MGradientUtils *gutils){
-  auto dInfo = mlir::detail::DominanceInfoBase<false>(nullptr);
-  llvm::DominatorTreeBase<Block, false> & dt = dInfo.getDomTree(&(gutils->oldFunc.getBody()));
-  auto root = dt.getNode(&*(gutils->oldFunc.getBody().begin()));
-
   SmallVector<mlir::Block*> dominatorToposortBlocks;
-  for(llvm::DomTreeNodeBase<mlir::Block> * node : llvm::breadth_first(root)){
-    dominatorToposortBlocks.push_back(node->getBlock());
+  if (gutils->oldFunc.hasOneBlock()){
+    dominatorToposortBlocks.push_back(&*(gutils->oldFunc.getBody()->begin()));
+  }
+  else{
+    auto dInfo = mlir::detail::DominanceInfoBase<false>(nullptr);
+    llvm::DominatorTreeBase<Block, false> & dt = dInfo.getDomTree(&(gutils->oldFunc.getBody()));
+    auto root = dt.getNode(&*(gutils->oldFunc.getBody().begin()));
+
+    for(llvm::DomTreeNodeBase<mlir::Block> * node : llvm::breadth_first(root)){
+      dominatorToposortBlocks.push_back(node->getBlock());
+    }
   }
   return dominatorToposortBlocks;
 }
