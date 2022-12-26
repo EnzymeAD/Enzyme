@@ -96,4 +96,14 @@ def ReverseCache : Enzyme_Type<"Cache"> {
   let assemblyFormat = "`<` $type `>`";
 }
 
+def Gradient : Enzyme_Type<"Gradient"> {
+  let summary = "Gradient storage";
+  let description = [{
+    "Cache for reverse pass"
+  }];
+  let parameters = (ins "Type":$type);
+  let mnemonic = "Gradient";
+  let assemblyFormat = "`<` $type `>`";
+}
+
 #endif // ENZYME_OPS
