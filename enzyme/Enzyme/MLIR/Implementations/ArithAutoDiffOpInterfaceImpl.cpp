@@ -14,6 +14,7 @@
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/GradientUtils.h"
+#include "Interfaces/GradientUtilsReverse.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -109,9 +110,7 @@ struct SubFOpInterface
   }
 };
 
-struct AddFOpInterface
-    : public AutoDiffOpInterface::ExternalModel<AddFOpInterface,
-                                                arith::AddFOp> {
+struct AddFOpInterface : public AutoDiffOpInterface::ExternalModel<AddFOpInterface, arith::AddFOp> {
   LogicalResult createForwardModeAdjoint(Operation *op, OpBuilder &builder,
                                          MGradientUtils *gutils) const {
     // Derivative of r = a + b -> dr = da + db
@@ -132,8 +131,11 @@ struct AddFOpInterface
     gutils->eraseIfUnused(op);
     return success();
   }
+};
+
+struct AddFOpInterfaceReverse : public AutoDiffOpInterfaceReverse::ExternalModel<AddFOpInterfaceReverse, arith::AddFOp> {
   LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
-                                         MGradientUtils *gutils) const {
+                                         MGradientUtilsReverse *gutils) const {
     // Derivative of r = a + b -> dr = da + db
     auto addOp = cast<arith::AddFOp>(op);
 
@@ -237,10 +239,9 @@ struct MinFOpInterface
 
 } 
 
-void mlir::enzyme::registerArithDialectAutoDiffInterface(
-    DialectRegistry &registry) {
+void mlir::enzyme::registerArithDialectAutoDiffInterface(DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, arith::ArithDialect *) {
-    arith::AddFOp::attachInterface<AddFOpInterface>(*context);
+    arith::AddFOp::attachInterface<AddFOpInterfaceReverse>(*context);
     //arith::SubFOp::attachInterface<SubFOpInterface>(*context);
     //arith::MulFOp::attachInterface<MulFOpInterface>(*context);
     //arith::DivFOp::attachInterface<DivFOpInterface>(*context);

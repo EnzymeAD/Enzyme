@@ -25,6 +25,7 @@ struct LogicalResult;
 namespace enzyme {
 
 class MGradientUtils;
+class MGradientUtilsReverse;
 
 }; // namespace enzyme
 }; // namespace mlir

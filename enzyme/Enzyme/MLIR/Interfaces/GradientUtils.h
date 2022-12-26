@@ -57,16 +57,11 @@ public:
   bool isConstantValue(mlir::Value v) const;
   bool hasInvertPointer(mlir::Value v);
   mlir::Value invertPointerM(mlir::Value v, OpBuilder &Builder2);
-  mlir::Value invertPointerReverseM(Value v, Block * askingOp);
-  Optional<mlir::Value> invertPointerReverseMOptional(Value v, Block * askingOp);
-  void mapInvertPointer(mlir::Value v, mlir::Value invertValue);
   void setDiffe(mlir::Value val, mlir::Value toset, OpBuilder &BuilderM);
   void forceAugmentedReturns();
-  void forceAugmentedReturnsReverse();
 
   Operation *cloneWithNewOperands(OpBuilder &B, Operation *op);
   
-  LogicalResult visitChildReverse(Operation *op, OpBuilder& builder);
   LogicalResult visitChild(Operation *op);
 };
 

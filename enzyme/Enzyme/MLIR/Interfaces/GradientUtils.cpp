@@ -42,12 +42,6 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
       originalToNewFnOps(originalToNewFnOps_),
       invertedPointers(invertedPointers_) {
   
-  auto valueMap = invertedPointers.getValueMap();
-  assert(invertedPointers.getBlockMap().begin() == invertedPointers.getBlockMap().end());
-  for(auto it = valueMap.begin(); it != valueMap.end(); it++){
-    mapInvertPointer(it->first, it->second);
-  }
-
   /*
   for (BasicBlock &BB : *oldFunc) {
     for (Instruction &I : BB) {
@@ -167,51 +161,12 @@ Value mlir::enzyme::MGradientUtils::invertPointerM(Value v,
       OpBuilder::InsertionGuard guard(Builder2);
       Builder2.setInsertionPoint(getNewFromOriginal(v.getDefiningOp()));
       Value dv = iface.createNullValue(Builder2, v.getLoc());
-      mapInvertPointer(v, dv);
       return dv;
     }
     return getNewFromOriginal(v);
   }
   llvm::errs() << " could not invert pointer v " << v << "\n";
   llvm_unreachable("could not invert pointer");
-}
-
-Value mlir::enzyme::MGradientUtils::invertPointerReverseM(Value v, Block * askingOp) {
-  if (invertedPointersReverse.count(v) != 0){
-    auto values = (invertedPointersReverse.find(v))->second;
-    for (auto it = values.rbegin(); it != values.rend(); it++){
-      if(mlir::DominanceInfo().dominates(it->getParentBlock(), askingOp)){
-        return *it;
-      }
-    }
-    llvm::errs() << "could not find in vector " << v << "\n";
-  }
-  llvm::errs() << " could not invert pointer v " << v << "\n";
-  llvm_unreachable("could not invert pointer");
-}
-
-Optional<Value> mlir::enzyme::MGradientUtils::invertPointerReverseMOptional(Value v, Block * askingOp) {
-  if (invertedPointersReverse.count(v) != 0){
-    auto values = (invertedPointersReverse.find(v))->second;
-    for (auto it = values.rbegin(); it != values.rend(); it++){
-      if(mlir::DominanceInfo().dominates(it->getParentBlock(), askingOp)){
-        return *it;
-      }
-    }
-  }
-  return Optional<Value>();
-}
-
-void mlir::enzyme::MGradientUtils::mapInvertPointer(mlir::Value v, mlir::Value invertValue){
-  invertedPointers.map(v, invertValue);
-  if (invertedPointersReverse.count(v) == 0){
-    invertedPointersReverse[v] = SmallVector<mlir::Value, 4>();
-  }
-  invertedPointersReverse[v].push_back(invertValue);
-}
-
-bool mlir::enzyme::MGradientUtils::hasInvertPointer(mlir::Value v){
-  return invertedPointersReverse.count(v) != 0;
 }
 
 void mlir::enzyme::MGradientUtils::setDiffe(mlir::Value val, mlir::Value toset,
@@ -237,7 +192,6 @@ void mlir::enzyme::MGradientUtils::setDiffe(mlir::Value val, mlir::Value toset,
     // replaceAWithB(placeholder, toset);
     placeholder.replaceAllUsesWith(toset);
     erase(placeholder);
-    mapInvertPointer(val, toset);
     return;
   } else if (mode == DerivativeMode::ReverseModeGradient) {
     assert(getShadowType(val.getType()) == toset.getType());
@@ -248,7 +202,6 @@ void mlir::enzyme::MGradientUtils::setDiffe(mlir::Value val, mlir::Value toset,
     // replaceAWithB(placeholder, toset);
     placeholder.replaceAllUsesWith(toset);
     erase(placeholder);
-    mapInvertPointer(val, toset);
     return;
   }
   /*
@@ -260,39 +213,6 @@ void mlir::enzyme::MGradientUtils::setDiffe(mlir::Value val, mlir::Value toset,
   assert(toset->getType() == tostore->getType()->getPointerElementType());
   BuilderM.CreateStore(toset, tostore);
   */
-}
-
-void mlir::enzyme::MGradientUtils::forceAugmentedReturnsReverse() {
-  assert(mode == DerivativeMode::ReverseModeGradient);
-
-  oldFunc.walk([&](Block *blk) {
-    if (blk == &oldFunc.getBody().getBlocks().front())
-      return;
-    auto nblk = getNewFromOriginal(blk);
-    for (auto val : llvm::reverse(blk->getArguments())) {
-      if (isConstantValue(val))
-        continue;
-      auto i = val.getArgNumber();
-      mlir::Value dval;
-      if (i == blk->getArguments().size() - 1)
-        dval = nblk->addArgument(getShadowType(val.getType()), val.getLoc());
-      else
-        dval = nblk->insertArgument(nblk->args_begin() + i + 1,
-                                    getShadowType(val.getType()), val.getLoc());
-
-      mapInvertPointer(val, dval);
-    }
-  });
-
-  int index = oldFunc.getNumArguments() - 1;
-  auto argument = oldFunc.getArgument(index);
-  oldFunc.walk([&](Block *blk) {
-    auto terminator = blk->getTerminator();
-    if (terminator->hasTrait<OpTrait::ReturnLike>()) {
-      auto nblk = getNewFromOriginal(blk);
-      mapInvertPointer(terminator->getOperand(0), argument);
-    }
-  });
 }
 
 void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
@@ -320,8 +240,6 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
       else
         dval = nblk->insertArgument(nblk->args_begin() + i + 1,
                                     getShadowType(val.getType()), val.getLoc());
-
-      mapInvertPointer(val, dval);
     }
   });
 
@@ -336,7 +254,6 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
           mlir::Type antiTy = getShadowType(res.getType());
           auto anti = BuilderZ.create<enzyme::PlaceholderOp>(res.getLoc(),
                                                              res.getType());
-          mapInvertPointer(res, anti);
         }
       }
       return;
@@ -390,22 +307,6 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
     }
     */
   });
-}
-
-LogicalResult MGradientUtils::visitChildReverse(Operation *op,
-                                                OpBuilder &builder) {
-  if (mode == DerivativeMode::ReverseModeGradient) {
-    if (auto binst = dyn_cast<BranchOpInterface>(op)) {
-      
-    }
-    else if (auto binst = dyn_cast<func::ReturnOp>(op)) {
-      
-    }
-    else if (auto iface = dyn_cast<AutoDiffOpInterface>(op)) {
-      return iface.createReverseModeAdjoint(builder, this);
-    }
-  }
-  return success();
 }
 
 LogicalResult MGradientUtils::visitChild(Operation *op) {

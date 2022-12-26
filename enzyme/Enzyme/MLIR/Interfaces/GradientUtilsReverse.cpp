@@ -344,8 +344,7 @@ void mlir::enzyme::MGradientUtilsReverse::forceAugmentedReturns() {
   });
 }
 
-LogicalResult MGradientUtilsReverse::visitChildReverse(Operation *op,
-                                                OpBuilder &builder) {
+LogicalResult MGradientUtilsReverse::visitChildReverse(Operation *op, OpBuilder &builder) {
   if (mode == DerivativeMode::ReverseModeGradient) {
     if (auto binst = dyn_cast<BranchOpInterface>(op)) {
       
@@ -353,8 +352,8 @@ LogicalResult MGradientUtilsReverse::visitChildReverse(Operation *op,
     else if (auto binst = dyn_cast<func::ReturnOp>(op)) {
       
     }
-    else if (auto iface = dyn_cast<AutoDiffOpInterface>(op)) {
-      //return iface.createReverseModeAdjoint(builder, this);
+    else if (auto iface = dyn_cast<AutoDiffOpInterfaceReverse>(op)) {
+      return iface.createReverseModeAdjoint(builder, this);
     }
   }
   return success();

@@ -18,8 +18,7 @@ include "mlir/IR/OpBase.td"
 
 def AutoDiffOpInterface : OpInterface<"AutoDiffOpInterface"> {
   let description = [{
-    A differetiable MLIR operation that is able to emit forward and reverse
-    mode adjoints for itself.
+    A differetiable MLIR operation that is able to emit forward mode adjoints for itself.
   }];
   let cppNamespace = "::mlir::enzyme";
 
@@ -37,14 +36,24 @@ def AutoDiffOpInterface : OpInterface<"AutoDiffOpInterface"> {
     /*retTy=*/"::mlir::LogicalResult",
     /*methodName=*/"createForwardModeAdjoint",
     /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::enzyme::MGradientUtils *":$gutils)
-    >,
+    >
+  ];
+}
+
+def AutoDiffOpInterfaceReverse : OpInterface<"AutoDiffOpInterfaceReverse"> {
+  let description = [{
+    A differetiable MLIR operation that is able to emit reverse mode adjoints for itself.
+  }];
+  let cppNamespace = "::mlir::enzyme";
+
+  let methods = [
     InterfaceMethod<
     /*desc=*/[{
       Emits a reverse-mode adjoint of the given function.
     }],
     /*retTy=*/"::mlir::LogicalResult",
     /*methodName=*/"createReverseModeAdjoint",
-    /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::enzyme::MGradientUtils *":$gutils)
+    /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::enzyme::MGradientUtilsReverse *":$gutils)
     >
   ];
 }

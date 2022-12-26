@@ -22,6 +22,10 @@
 using namespace mlir;
 using namespace mlir::enzyme;
 
+bool onlyUsedInParentBlock(Value v){
+  return v.isUsedOutsideOfBlock(v.getParentBlock());
+}
+
 std::pair<BlockAndValueMapping, DenseMap<Block *, SmallVector<Value>>> createReverseModeBlocks(MGradientUtilsReverse *gutils){
   BlockAndValueMapping mapReverseModeBlocks;
   DenseMap<Block *, SmallVector<Value>> mapReverseBlockArguments;
