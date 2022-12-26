@@ -30,7 +30,7 @@ namespace {
 struct MulFOpInterface
     : public AutoDiffOpInterface::ExternalModel<MulFOpInterface,
                                                 arith::MulFOp> {
-  LogicalResult createForwardModeAdjoint(Operation *op, OpBuilder &builder,
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
                                          MGradientUtils *gutils) const {
     // Derivative of r = a * b -> dr = a * db + da * b
     auto mulOp = cast<arith::MulFOp>(op);
@@ -58,7 +58,7 @@ struct MulFOpInterface
 struct DivFOpInterface
     : public AutoDiffOpInterface::ExternalModel<DivFOpInterface,
                                                 arith::DivFOp> {
-  LogicalResult createForwardModeAdjoint(Operation *op, OpBuilder &builder,
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
                                          MGradientUtils *gutils) const {
     // Derivative of r = a / b -> dr = (a * db - da * b) / (b * b)
     auto divOp = cast<arith::DivFOp>(op);
@@ -88,7 +88,7 @@ struct DivFOpInterface
 struct SubFOpInterface
     : public AutoDiffOpInterface::ExternalModel<SubFOpInterface,
                                                 arith::SubFOp> {
-  LogicalResult createForwardModeAdjoint(Operation *op, OpBuilder &builder,
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
                                          MGradientUtils *gutils) const {
     // Derivative of r = a - b -> dr = da - db
     auto addOp = cast<arith::SubFOp>(op);
@@ -111,7 +111,7 @@ struct SubFOpInterface
 };
 
 struct AddFOpInterface : public AutoDiffOpInterface::ExternalModel<AddFOpInterface, arith::AddFOp> {
-  LogicalResult createForwardModeAdjoint(Operation *op, OpBuilder &builder,
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
                                          MGradientUtils *gutils) const {
     // Derivative of r = a + b -> dr = da + db
     auto addOp = cast<arith::AddFOp>(op);
@@ -166,7 +166,7 @@ struct AddFOpInterfaceReverse : public AutoDiffOpInterfaceReverse::ExternalModel
 struct MaxFOpInterface
     : public AutoDiffOpInterface::ExternalModel<MaxFOpInterface,
                                                 arith::MaxFOp> {
-  LogicalResult createForwardModeAdjoint(Operation *op, OpBuilder &builder,
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
                                          MGradientUtils *gutils) const {
     
     auto maxOp = cast<arith::MaxFOp>(op);
@@ -203,7 +203,7 @@ struct MaxFOpInterface
 struct MinFOpInterface
     : public AutoDiffOpInterface::ExternalModel<MinFOpInterface,
                                                 arith::MinFOp> {
-  LogicalResult createForwardModeAdjoint(Operation *op, OpBuilder &builder,
+  LogicalResult createForwardModeTangent(Operation *op, OpBuilder &builder,
                                          MGradientUtils *gutils) const {
     
     auto minOp = cast<arith::MinFOp>(op);

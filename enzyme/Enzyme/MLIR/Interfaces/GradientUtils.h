@@ -13,6 +13,9 @@
 #include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/IR/FunctionInterfaces.h"
 
+// TODO: no relative includes.
+#include "../../EnzymeLogic.h"
+
 namespace mlir {
 namespace enzyme {
 
@@ -26,7 +29,6 @@ public:
   DerivativeMode mode;
   FunctionOpInterface oldFunc;
   BlockAndValueMapping invertedPointers;
-  DenseMap<Value, SmallVector<mlir::Value, 4>> invertedPointersReverse;
   BlockAndValueMapping originalToNewFn;
   std::map<Operation *, Operation *> originalToNewFnOps;
 
@@ -55,7 +57,6 @@ public:
     // TODO
   }
   bool isConstantValue(mlir::Value v) const;
-  bool hasInvertPointer(mlir::Value v);
   mlir::Value invertPointerM(mlir::Value v, OpBuilder &Builder2);
   void setDiffe(mlir::Value val, mlir::Value toset, OpBuilder &BuilderM);
   void forceAugmentedReturns();

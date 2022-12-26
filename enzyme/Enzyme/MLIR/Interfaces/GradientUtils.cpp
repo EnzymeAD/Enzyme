@@ -161,6 +161,7 @@ Value mlir::enzyme::MGradientUtils::invertPointerM(Value v,
       OpBuilder::InsertionGuard guard(Builder2);
       Builder2.setInsertionPoint(getNewFromOriginal(v.getDefiningOp()));
       Value dv = iface.createNullValue(Builder2, v.getLoc());
+      invertedPointers.map(v, dv);
       return dv;
     }
     return getNewFromOriginal(v);
@@ -192,16 +193,7 @@ void mlir::enzyme::MGradientUtils::setDiffe(mlir::Value val, mlir::Value toset,
     // replaceAWithB(placeholder, toset);
     placeholder.replaceAllUsesWith(toset);
     erase(placeholder);
-    return;
-  } else if (mode == DerivativeMode::ReverseModeGradient) {
-    assert(getShadowType(val.getType()) == toset.getType());
-    auto found = invertedPointers.lookupOrNull(val);
-    assert(found != nullptr);
-    auto placeholder = found.getDefiningOp<enzyme::PlaceholderOp>();
-    invertedPointers.erase(val);
-    // replaceAWithB(placeholder, toset);
-    placeholder.replaceAllUsesWith(toset);
-    erase(placeholder);
+    invertedPointers.map(val, toset);
     return;
   }
   /*
@@ -240,6 +232,8 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
       else
         dval = nblk->insertArgument(nblk->args_begin() + i + 1,
                                     getShadowType(val.getType()), val.getLoc());
+
+invertedPointers.map(val, dval);
     }
   });
 
@@ -254,6 +248,7 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
           mlir::Type antiTy = getShadowType(res.getType());
           auto anti = BuilderZ.create<enzyme::PlaceholderOp>(res.getLoc(),
                                                              res.getType());
+          invertedPointers.map(res, anti);
         }
       }
       return;
@@ -314,7 +309,7 @@ LogicalResult MGradientUtils::visitChild(Operation *op) {
     if (auto iface = dyn_cast<AutoDiffOpInterface>(op)) {
       OpBuilder builder(op->getContext());
       builder.setInsertionPoint(getNewFromOriginal(op));
-      return iface.createForwardModeAdjoint(builder, this);
+      return iface.createForwardModeTangent(builder, this);
     }
   }
   return failure();

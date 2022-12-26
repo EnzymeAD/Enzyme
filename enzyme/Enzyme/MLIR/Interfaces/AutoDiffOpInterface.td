@@ -34,7 +34,7 @@ def AutoDiffOpInterface : OpInterface<"AutoDiffOpInterface"> {
       was successful.
     }],
     /*retTy=*/"::mlir::LogicalResult",
-    /*methodName=*/"createForwardModeAdjoint",
+    /*methodName=*/"createForwardModeTangent",
     /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::enzyme::MGradientUtils *":$gutils)
     >
   ];
