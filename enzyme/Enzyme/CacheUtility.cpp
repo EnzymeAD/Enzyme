@@ -1010,13 +1010,13 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
           /*available*/ ValueToValueMapTy());
 
 #if LLVM_VERSION_MAJOR > 7
-      storeInto = v.CreateLoad(types[i], storeInto);
+      storeInto = v.CreateLoad(types[i + 1], storeInto);
 #if LLVM_VERSION_MAJOR >= 10
       cast<LoadInst>(storeInto)->setAlignment(Align(alignSize));
 #else
       cast<LoadInst>(storeInto)->setAlignment(alignSize);
 #endif
-      storeInto = v.CreateGEP(types[i - 1], storeInto, idx);
+      storeInto = v.CreateGEP(types[i], storeInto, idx);
 #else
       storeInto = v.CreateLoad(storeInto);
       cast<LoadInst>(storeInto)->setAlignment(alignSize);

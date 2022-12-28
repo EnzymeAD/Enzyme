@@ -609,9 +609,13 @@ static bool replaceOriginalCall(CallInst *CI, Function *fn, Value *diffret,
       CI->replaceAllUsesWith(newStruct);
     } else if (CI->hasStructRetAttr()) {
       Value *sret = CI->getArgOperand(0);
-      // PointerType *stype = cast<PointerType>(sret->getType());
-      // StructType *st = dyn_cast<StructType>(stype->getPointerElementType());
-      StructType *st = dyn_cast<StructType>(CI->getParamStructRetType(0));
+      PointerType *stype = cast<PointerType>(sret->getType());
+#if LLVM_VERSION_MAJOR >= 14
+      auto sret_ty = CI->getParamStructRetType(0);
+#else
+      auto sret_ty = stype->getPointerElementType();
+#endif
+      StructType *st = dyn_cast<StructType>(sret_ty);
 
       // Assign results to struct allocated at the call site.
       if (st && st->isLayoutIdentical(diffretsty)) {
@@ -626,7 +630,7 @@ static bool replaceOriginalCall(CallInst *CI, Function *fn, Value *diffret,
         }
       } else {
         auto &DL = fn->getParent()->getDataLayout();
-        if (DL.getTypeSizeInBits(stype->getPointerElementType()) !=
+        if (DL.getTypeSizeInBits(sret_ty) !=
             DL.getTypeSizeInBits(diffret->getType())) {
           EmitFailure("IllegalReturnCast", CI->getDebugLoc(), CI,
                       "Cannot cast return type of gradient ",
@@ -2569,35 +2573,40 @@ llvmGetPassPluginInfo() {
               MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
               FunctionPassManager OptimizerPM;
               FunctionPassManager OptimizerPM2;
+#if LLVM_VERSION_MAJOR >= 14
               OptimizerPM.addPass(llvm::GVNPass());
               OptimizerPM.addPass(llvm::SROAPass());
-#if LLVM_VERSION_MAJOR >= 14
+#else
+              OptimizerPM.addPass(llvm::GVN());
+              OptimizerPM.addPass(llvm::SROA());
+#endif
               MPM.addPass(
                   createModuleToFunctionPassAdaptor(std::move(OptimizerPM)));
-#else
-              MPM.addPass(createModuleToFunctionPassAdaptor(
-                  std::move(OptimizerPM), PTO.EagerlyInvalidateAnalyses));
-#endif
               MPM.addPass(EnzymeNewPM(/*PostOpt=*/true));
               MPM.addPass(PreserveNVVMNewPM(/*Begin*/ false));
+#if LLVM_VERSION_MAJOR >= 14
               OptimizerPM2.addPass(llvm::GVNPass());
               OptimizerPM2.addPass(llvm::SROAPass());
+#else
+              OptimizerPM2.addPass(llvm::GVN());
+              OptimizerPM2.addPass(llvm::SROA());
+#endif
 
               LoopPassManager LPM1;
               LPM1.addPass(LoopDeletionPass());
               OptimizerPM2.addPass(
                   createFunctionToLoopPassAdaptor(std::move(LPM1)));
 
-#if LLVM_VERSION_MAJOR >= 14
               MPM.addPass(
                   createModuleToFunctionPassAdaptor(std::move(OptimizerPM2)));
-#else
-              MPM.addPass(createModuleToFunctionPassAdaptor(
-                  std::move(OptimizerPM2), PTO.EagerlyInvalidateAnalyses));
-#endif
               MPM.addPass(GlobalOptPass());
             };
+// TODO need for perf reasons to move Enzyme pass to the pre vectorization.
+#if LLVM_VERSION_MAJOR >= 12
             PB.registerPipelineEarlySimplificationEPCallback(loadPass);
+#else
+            PB.registerPipelineStartEPCallback(loadPass);
+#endif
             // We should register at vectorizer start for consistency, however,
             // that requires a functionpass, and we have a modulepass.
             // PB.registerVectorizerStartEPCallback(loadPass);
@@ -2605,10 +2614,12 @@ llvmGetPassPluginInfo() {
                 [](ModulePassManager &MPM, OptimizationLevel) {
                   MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
                 });
+#if LLVM_VERSION_MAJOR >= 15
             PB.registerFullLinkTimeOptimizationEarlyEPCallback(
                 [](ModulePassManager &MPM, OptimizationLevel) {
                   MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
                 });
+#endif
 #endif
             PB.registerPipelineParsingCallback(
                 [](llvm::StringRef Name, llvm::ModulePassManager &MPM,

@@ -5828,7 +5828,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                   cast<GetElementPtrInst>(cptr)->setIsInBounds(true);
 
                   // Retrieve the actual result
-                  auto result = loadFromCachePointer(OT, BuilderM, cptr, cache);
+                  auto result = loadFromCachePointer(val->getType(), BuilderM,
+                                                     cptr, cache);
 
                   assert(result->getType() == inst->getType());
                   lookup_cache[BuilderM.GetInsertBlock()][val] = result;
