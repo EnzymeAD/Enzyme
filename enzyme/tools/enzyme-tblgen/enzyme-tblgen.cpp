@@ -449,11 +449,11 @@ void emit_helper(TGPattern &pattern, raw_ostream &os) {
 
   os 
 << "  int num_active_fp = 0;\n";
-  for (auto name : llvm::enumerate(nameVec)) {
-    std::string type = argTypeMap.lookup(name.index());
-    if (type == "fp") {
+  for (size_t i = 0; i < nameVec.size(); i++) {
+    argType type = argTypeMap.lookup(i);
+    if (type == argType::fp) {
       os
-<< "  if (active_" << name.value() << ")\n"
+<< "  if (active_" << nameVec[i] << ")\n"
 << "    num_active_fp++;\n";
     }
   }
@@ -461,7 +461,7 @@ void emit_helper(TGPattern &pattern, raw_ostream &os) {
   for (auto name : llvm::enumerate(nameVec)) {
     assert(argTypeMap.count(name.index()) == 1);
     auto type = argTypeMap.lookup(name.index());
-    if (type == "vincData") {
+    if (type == argType::vincData) {
       os 
 << "  bool julia_decl = !type_" << name.value() << "->isPointerTy();\n";
       return;

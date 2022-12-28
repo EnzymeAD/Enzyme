@@ -14,8 +14,7 @@
 
 using namespace llvm;
 
-
-enum argType {fp=1, len=1, vinc=2, vincData=1, vincInc=1};
+enum argType { fp, len, vinc, vincData, vincInc };
 
 class Arg {
   public:
@@ -45,19 +44,19 @@ class Rule {
   private: 
     DagInit *rewriteRule;
     DenseMap<StringRef, size_t> argNameToPos;
-    DenseMap<size_t, std::string> argTypes;
+    DenseMap<size_t, argType> argTypes;
     DenseSet<size_t> mutables;
     // Eventually also add posActArg ?
 
   public:
     Rule(DagInit *dag, DenseMap<StringRef, size_t> &patternArgs,
-         DenseMap<size_t, std::string> &patternTypes,
+         DenseMap<size_t, argType> &patternTypes,
          DenseSet<size_t> &patternMutables) {
 
       rewriteRule = dag;
 
       argNameToPos = DenseMap<StringRef, size_t>();
-      argTypes = DenseMap<size_t, std::string>();
+      argTypes = DenseMap<size_t, argType>();
       mutables = DenseSet<size_t>();
 
       // For each arg found in the dag: 
@@ -84,15 +83,14 @@ class Rule {
     }
 };
 
-void fillActiveArgSet(const Record *pattern,
-                      DenseSet<size_t> &activeArgs) {
+void fillActiveArgSet(const Record *pattern, SmallVector<size_t> &activeArgs) {
 
   std::vector<Record *> inputTypes =
       pattern->getValueAsListOfDefs("inputTypes");
   size_t numTypes = 0;
   for (auto val : inputTypes) {
     if (val->getValueAsBit("active")) {
-      activeArgs.insert(numTypes);
+      activeArgs.push_back(numTypes);
     }
     numTypes += val->getValueAsInt("nelem");
   }
@@ -118,20 +116,19 @@ void fillMutableArgSet(const Record *pattern,
   assert(mutables.size() == mutableArgs.size());
 }
 
-void fillArgTypes(const Record *pattern,
-                  DenseMap<size_t, std::string> &argTypes) {
+void fillArgTypes(const Record *pattern, DenseMap<size_t, argType> &argTypes) {
 
   std::vector<Record *> inputTypes =
     pattern->getValueAsListOfDefs("inputTypes");
   size_t pos = 0;
   for (auto val : inputTypes) {
     if (val->getName() == "len") {
-      argTypes.insert(std::make_pair(pos, "len"));
+      argTypes.insert(std::make_pair(pos, argType::len));
     } else if (val->getName() == "fp") {
-      argTypes.insert(std::make_pair(pos, "fp"));
+      argTypes.insert(std::make_pair(pos, argType::fp));
     } else if (val->getName() == "vinc") {
-      argTypes.insert(std::make_pair(pos, "vincData"));
-      argTypes.insert(std::make_pair(pos + 1, "vincInc"));
+      argTypes.insert(std::make_pair(pos, argType::vincData));
+      argTypes.insert(std::make_pair(pos + 1, argType::vincInc));
     } else {
       PrintFatalError("Unknown type!");
     }
@@ -161,9 +158,10 @@ private:
   // Map arg name to their position (in primary fnc)
   DenseMap<StringRef, size_t> argNameToPos;
   // Type of these args, e.g. FP-scalar, int, FP-vec, ..
-  DenseMap<size_t, std::string> argTypes;
+  DenseMap<size_t, argType> argTypes;
   // Args that could be set to active (thus fp based)
-  DenseSet<size_t> posActArgs;
+  // Vector, since insertion order is important
+  SmallVector<size_t> posActArgs;
   // Args that will be modified by primary function (e.g. x in scal)
   DenseSet<size_t> mutables;
   // One rule for each possibly active arg
@@ -180,10 +178,10 @@ public:
     argNameToPos = DenseMap<StringRef, size_t>{};
     fillArgs(&r, args, argNameToPos);
 
-    argTypes = DenseMap<size_t, std::string>();
+    argTypes = DenseMap<size_t, argType>();
     fillArgTypes(&r, argTypes);
 
-    posActArgs = DenseSet<size_t>();
+    posActArgs = SmallVector<size_t>();
     fillActiveArgSet(&r, posActArgs);
 
     mutables = DenseSet<size_t>();
@@ -202,9 +200,15 @@ public:
     // argUsers = DenseMap<StringRef, DenseSet<size_t>>();
     // TODO: fill
   }
+  static int elemPerArgType(argType a) {
+    if (a == argType::vinc)
+      return 2;
+    return 1;
+    // TODO: adjust later for blas 2 and so on
+  }
   std::string getName() { return blasName; }
   SmallVector<std::string, 6> getArgNames() { return args; }
   DenseMap<StringRef, size_t> getArgNameMap() { return argNameToPos; }
-  DenseMap<size_t, std::string> getArgTypeMap() { return argTypes; }
-  DenseSet<size_t> getActiveArgs() { return posActArgs; }
+  DenseMap<size_t, argType> getArgTypeMap() { return argTypes; }
+  SmallVector<size_t> getActiveArgs() { return posActArgs; }
 };
