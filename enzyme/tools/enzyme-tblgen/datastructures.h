@@ -83,14 +83,15 @@ class Rule {
     }
 };
 
-void fillActiveArgSet(const Record *pattern, DenseSet<size_t> &activeArgs) {
+void fillActiveArgSet(const Record *pattern,
+                      SmallVector<size_t, 4> &activeArgs) {
 
   std::vector<Record *> inputTypes =
       pattern->getValueAsListOfDefs("inputTypes");
   size_t numTypes = 0;
   for (auto val : inputTypes) {
     if (val->getValueAsBit("active")) {
-      activeArgs.insert(numTypes);
+      activeArgs.push_back(numTypes);
     }
     numTypes += val->getValueAsInt("nelem");
   }
@@ -160,7 +161,7 @@ private:
   // Type of these args, e.g. FP-scalar, int, FP-vec, ..
   DenseMap<size_t, argType> argTypes;
   // Args that could be set to active (thus fp based)
-  DenseSet<size_t> posActArgs;
+  SmallVector<size_t, 4> posActArgs;
   // Args that will be modified by primary function (e.g. x in scal)
   DenseSet<size_t> mutables;
   // One rule for each possibly active arg
@@ -180,7 +181,7 @@ public:
     argTypes = DenseMap<size_t, argType>();
     fillArgTypes(&r, argTypes);
 
-    posActArgs = DenseSet<size_t>();
+    posActArgs = SmallVector<size_t, 4>();
     fillActiveArgSet(&r, posActArgs);
 
     mutables = DenseSet<size_t>();
@@ -209,5 +210,5 @@ public:
   SmallVector<std::string, 6> getArgNames() { return args; }
   DenseMap<StringRef, size_t> getArgNameMap() { return argNameToPos; }
   DenseMap<size_t, argType> getArgTypeMap() { return argTypes; }
-  DenseSet<size_t> getActiveArgs() { return posActArgs; }
+  SmallVector<size_t, 4> getActiveArgs() { return posActArgs; }
 };

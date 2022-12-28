@@ -74,17 +74,16 @@ void writeEnums(Record *pattern, const std::vector<Record *> &blas_modes,
   }
 }
 
-void emit_castvals(Record *pattern, std::vector<size_t> activeArgs,
-                   raw_ostream &os) {
+void emit_castvals(TGPattern &pattern, raw_ostream &os) {
+  auto activeArgs = pattern.getActiveArgs();
+  auto nameVec = pattern.getArgNames();
   os 
 << "  /* beginning castvalls */\n"
 << "  Type *castvals[" << activeArgs.size() << "];\n";
-  
-  DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
 
-  for (auto argPos : llvm::enumerate(activeArgs)) {
-    auto name = argOps->getArgNameStr(argPos.value());
-    size_t argIdx = argPos.index();
+  for (size_t i = 0; i < activeArgs.size(); i++) {
+    size_t argIdx = activeArgs[i];
+    auto name = nameVec[argIdx];
     os 
 << "  if (auto PT = dyn_cast<PointerType>(type_" << name << "))\n"
 << "    castvals[" << argIdx << "] = PT;\n"
@@ -96,23 +95,22 @@ void emit_castvals(Record *pattern, std::vector<size_t> activeArgs,
 << "  /* ending castvalls */\n";
 }
 
-void emit_scalar_types(Record *pattern, raw_ostream &os) {
+void emit_scalar_types(TGPattern &pattern, raw_ostream &os) {
   // We only look at the type of the first integer showing up.
   // This allows to learn if we use Fortran abi (byRef) or cabi
-  size_t pos = 0;
+  std::string name = "";
   bool foundInt = false;
-  std::vector<Record *> inputTypes =
-      pattern->getValueAsListOfDefs("inputTypes");
-  DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
+
+  auto inputTypes = pattern.getArgTypeMap();
+  auto nameVec = pattern.getArgNames();
 
   for (auto val : inputTypes) {
-    if (val->getName() == "len") {
+    if (val.second == argType::len) {
       foundInt = true;
+      name = nameVec[val.first];
       break;
     }
-    pos += val->getValueAsInt("nelem");
   }
-  auto name = argOps->getArgNameStr(pos);
   assert(foundInt && "no int type found in blas call");
 
   os
@@ -1229,8 +1227,8 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
 
     emit_beginning(newPattern, os);
     emit_helper(newPattern, os);
-    emit_castvals(pattern, posActArgs, os);
-    emit_scalar_types(pattern, os);
+    emit_castvals(newPattern, os);
+    emit_scalar_types(newPattern, os);
 
     emit_caching(pattern, posActArgs, argUsers, os);
     emit_extract_calls(pattern, posActArgs, argUsers, os);
