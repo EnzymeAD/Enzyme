@@ -1228,7 +1228,6 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
     llvm::DenseMap<StringRef, StringRef> typeOfArgName = getArgTypes(pattern);
 
     emit_beginning(newPattern, os);
-    //emit_helper(pattern, posActArgs, typeOfArgName, os);
     emit_helper(newPattern, os);
     emit_castvals(pattern, posActArgs, os);
     emit_scalar_types(pattern, os);
