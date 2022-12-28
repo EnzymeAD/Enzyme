@@ -1147,6 +1147,11 @@ static void checkBlasCalls(const RecordKeeper &RK,
   }
 }
 
+static void checkBlasCalls2(std::vector<TGPattern> blasPatterns) {
+  for (auto pattern : blasPatterns) {
+  }
+}
+
 
 llvm::StringMap<llvm::SmallSet<size_t, 3>> getMutableArgs(const std::vector<Record *> blasPatterns) {
   llvm::StringMap<llvm::SmallSet<size_t, 3>> res{};
@@ -1196,10 +1201,8 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
   // Make sure that we only call blass function b for calculating the derivative
   // of a iff we have defined b and pass the right amount of parameters.
   // TODO: type check params, as far as possible
-  // TODO: assert unique input names.
-  // TODO: assert mutable args are input names.
-  // TODO: assert args in deriv defs exist
   checkBlasCalls(RK, blasPatterns);
+  //checkBlasCalls2(newBlasPatterns);
   emit_handleBLAS(blasPatterns, os);
   // emitEnumMatcher(blas_modes, os);
   llvm::StringMap<llvm::SmallSet<size_t, 3>> mutables = getMutableArgs(blasPatterns);
