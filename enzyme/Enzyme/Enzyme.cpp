@@ -610,7 +610,7 @@ static bool replaceOriginalCall(CallInst *CI, Function *fn, Value *diffret,
     } else if (CI->hasStructRetAttr()) {
       Value *sret = CI->getArgOperand(0);
       PointerType *stype = cast<PointerType>(sret->getType());
-#if LLVM_VERSION_MAJOR >= 14
+#if LLVM_VERSION_MAJOR >= 15
       auto sret_ty = CI->getParamStructRetType(0);
 #else
       auto sret_ty = stype->getPointerElementType();
@@ -2569,7 +2569,12 @@ llvmGetPassPluginInfo() {
 #if LLVM_VERSION_MAJOR < 14
             using OptimizationLevel = llvm::PassBuilder::OptimizationLevel;
 #endif
-            auto loadPass = [](ModulePassManager &MPM, OptimizationLevel) {
+#if LLVM_VERSION_MAJOR >= 12
+            auto loadPass = [](ModulePassManager &MPM, OptimizationLevel)
+#else
+            auto loadPass = [](ModulePassManager &MPM)
+#endif
+            {
               MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
               FunctionPassManager OptimizerPM;
               FunctionPassManager OptimizerPM2;
@@ -2607,18 +2612,20 @@ llvmGetPassPluginInfo() {
 #else
             PB.registerPipelineStartEPCallback(loadPass);
 #endif
+
+#if LLVM_VERSION_MAJOR >= 12
+            auto loadNVVM = [](ModulePassManager &MPM, OptimizationLevel)
+#else
+            auto loadNVVM = [](ModulePassManager &MPM)
+#endif
+            { MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true)); };
+
             // We should register at vectorizer start for consistency, however,
             // that requires a functionpass, and we have a modulepass.
             // PB.registerVectorizerStartEPCallback(loadPass);
-            PB.registerPipelineStartEPCallback(
-                [](ModulePassManager &MPM, OptimizationLevel) {
-                  MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
-                });
+            PB.registerPipelineStartEPCallback(loadNVVM);
 #if LLVM_VERSION_MAJOR >= 15
-            PB.registerFullLinkTimeOptimizationEarlyEPCallback(
-                [](ModulePassManager &MPM, OptimizationLevel) {
-                  MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
-                });
+            PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadNVVM);
 #endif
 #endif
             PB.registerPipelineParsingCallback(
