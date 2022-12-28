@@ -130,8 +130,8 @@ void emit_scalar_types(Record *pattern, raw_ostream &os) {
 }
 
 
-void emit_beginning(Record *pattern, raw_ostream &os) {
-  auto name = pattern->getName();
+void emit_beginning(TGPattern &pattern, raw_ostream &os) {
+  auto name = pattern.getName();
   os
 << "\nbool handle_" << name
 << "(BlasInfo blas, llvm::CallInst &call, Function *called,\n"
@@ -416,15 +416,22 @@ llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> getUsedInputs(
   return argUsers;
 }
 
+#include <sstream>
 
-void emit_helper(Record *pattern, std::vector<size_t> actArgs,
-    llvm::DenseMap<StringRef, StringRef> typeOfArgName, raw_ostream &os) {
+
+void emit_helper(TGPattern &pattern, raw_ostream &os) {
+  PrintNote("function: " + pattern.getName());
+
   std::vector<size_t> fp_pos{};
-  DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
+  auto nameVec = pattern.getArgNames();
+  assert(nameVec.size() > 0);
+  auto argTypeMap = pattern.getArgTypeMap();
+
+  auto actArgs = pattern.getActiveArgs();
   os 
 << "  auto calledArg = called->arg_begin();\n\n";
-  for (size_t i = 0; i < argOps->getNumArgs(); i++) {
-    auto name = argOps->getArgNameStr(i);
+  for (size_t i = 0; i < nameVec.size(); i++) {
+    auto name = nameVec[i];
     os 
 << "  auto arg_" << name << " = call.getArgOperand(" << i << ");\n"
 << "  auto type_" << name << " = arg_" << name << "->getType();\n"
@@ -442,25 +449,25 @@ void emit_helper(Record *pattern, std::vector<size_t> actArgs,
 
   os 
 << "  int num_active_fp = 0;\n";
-  for (size_t i = 0; i < argOps->getNumArgs(); i++) {
-    auto name = argOps->getArgNameStr(i);
-    auto type = typeOfArgName.lookup(name);
+  for (auto name : llvm::enumerate(nameVec)) {
+    std::string type = argTypeMap.lookup(name.index());
     if (type == "fp") {
       os
-<< "  if (active_" << name << ")\n"
+<< "  if (active_" << name.value() << ")\n"
 << "    num_active_fp++;\n";
     }
   }
 
-  for (size_t i = 0; i < argOps->getNumArgs(); i++) {
-    auto name = argOps->getArgNameStr(i);
-    auto type = typeOfArgName.lookup(name);
+  for (auto name : llvm::enumerate(nameVec)) {
+    assert(argTypeMap.count(name.index()) == 1);
+    auto type = argTypeMap.lookup(name.index());
     if (type == "vincData") {
       os 
-<< "  bool julia_decl = !type_" << name << "->isPointerTy();\n";
+<< "  bool julia_decl = !type_" << name.value() << "->isPointerTy();\n";
       return;
     }
   }
+ 
   PrintFatalError("Blas function without vector?");
 }
 
@@ -998,11 +1005,11 @@ void emit_fwd_rewrite_rules(const Record *pattern,
 
 
 
-void emit_handleBLAS(const std::vector<Record *> &blasPatterns, raw_ostream &os) {
+void emit_handleBLAS(const std::vector<TGPattern> &blasPatterns, raw_ostream &os) {
   std::string handledBlasFunctions = "";
   bool first = true;
   for (auto blasPattern : blasPatterns) {
-    auto newName = Twine((first) ? "" : ", ") + "\"" + blasPattern->getName() + "\"";
+    auto newName = Twine((first) ? "" : ", ") + "\"" + blasPattern.getName() + "\"";
     handledBlasFunctions.append(newName.str());
     first = false;
   }
@@ -1053,7 +1060,7 @@ void emit_handleBLAS(const std::vector<Record *> &blasPatterns, raw_ostream &os)
 << "    }                                                                 \n";
   first = true;
   for (auto pattern : blasPatterns) {
-    auto name = pattern->getName();
+    auto name = pattern.getName();
     os
 << "    " << ((first) ? "" : "} else ") 
 << " if (blas.function == \"" << name << "\") {                           \n"
@@ -1203,18 +1210,26 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
   // TODO: type check params, as far as possible
   checkBlasCalls(RK, blasPatterns);
   //checkBlasCalls2(newBlasPatterns);
-  emit_handleBLAS(blasPatterns, os);
+  emit_handleBLAS(newBlasPatterns, os);
   // emitEnumMatcher(blas_modes, os);
+  
+
   llvm::StringMap<llvm::SmallSet<size_t, 3>> mutables = getMutableArgs(blasPatterns);
-  for (auto pattern : blasPatterns) {
+  for (size_t i = 0; i < blasPatterns.size(); i++) {
+  //for (auto pattern : blasPatterns) {
+    auto pattern = blasPatterns[i];
+    auto newPattern = newBlasPatterns[i];
+
+
     std::vector<size_t> posActArgs = getPossiblyActiveArgs(pattern);
 
     // For each input arg, we store a set including all users (by index).
     llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers = getUsedInputs(pattern, posActArgs);
     llvm::DenseMap<StringRef, StringRef> typeOfArgName = getArgTypes(pattern);
 
-    emit_beginning(pattern, os);
-    emit_helper(pattern, posActArgs, typeOfArgName, os);
+    emit_beginning(newPattern, os);
+    //emit_helper(pattern, posActArgs, typeOfArgName, os);
+    emit_helper(newPattern, os);
     emit_castvals(pattern, posActArgs, os);
     emit_scalar_types(pattern, os);
 

@@ -45,98 +45,93 @@ class Rule {
   private: 
     DagInit *rewriteRule;
     DenseMap<StringRef, size_t> argNameToPos;
-    DenseMap<StringRef, std::string> argTypes;
-    DenseSet<StringRef> mutables;
+    DenseMap<size_t, std::string> argTypes;
+    DenseSet<size_t> mutables;
     // Eventually also add posActArg ?
 
   public:
-    Rule(DagInit * dag, 
-        DenseMap<StringRef, size_t> &patternArgs, 
-        DenseMap<StringRef, std::string> &patternTypes,
-        DenseSet<StringRef> &patternMutables) {
+    Rule(DagInit *dag, DenseMap<StringRef, size_t> &patternArgs,
+         DenseMap<size_t, std::string> &patternTypes,
+         DenseSet<size_t> &patternMutables) {
 
       rewriteRule = dag;
 
       argNameToPos = DenseMap<StringRef, size_t>();
-      argTypes = DenseMap<StringRef, std::string>();
-      mutables = DenseSet<StringRef>();
+      argTypes = DenseMap<size_t, std::string>();
+      mutables = DenseSet<size_t>();
 
       // For each arg found in the dag: 
       //        1) copy patternArgs to ruleArgs if arg shows up in this rule
       for (auto patternArg : patternArgs) {
         StringRef argName = patternArg.first;
+        size_t argPos = patternArg.second;
         bool argUsedInRule = isArgUsed(argName, rewriteRule);
         if (argUsedInRule) {
           argNameToPos.insert(patternArg);
           //        2) look up and copy the corresponding argType
-          assert(patternTypes.find(argName) != patternTypes.end() &&
+          assert(patternTypes.find(argPos) != patternTypes.end() &&
                  "arg without corresponding type");
-          argTypes.insert(*patternTypes.find(argName));
+          argTypes.insert(*patternTypes.find(argPos));
         }
       }
 
       for (auto ruleArg : argNameToPos) {
         //        3) look up and eventually copy mutable
-        if (patternMutables.find(ruleArg.first) != patternMutables.end()) {
-          mutables.insert(*patternMutables.find(ruleArg.first));
+        if (patternMutables.find(ruleArg.second) != patternMutables.end()) {
+          mutables.insert(*patternMutables.find(ruleArg.second));
         }
-
       }
-
     }
 };
 
-void fillActiveArgSet(const Record *pattern, 
-    const SmallVector<std::string, 6>  &patternArgs, 
-    DenseSet<StringRef> &activeArgs ) {
+void fillActiveArgSet(const Record *pattern,
+                      DenseSet<size_t> &activeArgs) {
 
   std::vector<Record *> inputTypes =
       pattern->getValueAsListOfDefs("inputTypes");
   size_t numTypes = 0;
   for (auto val : inputTypes) {
     if (val->getValueAsBit("active")) {
-      activeArgs.insert(StringRef(patternArgs[numTypes]));
+      activeArgs.insert(numTypes);
     }
     numTypes += val->getValueAsInt("nelem");
   }
 }
 
-void fillMutableArgSet(const Record *pattern, 
-    const SmallVector<std::string, 6>  &patternArgs, 
-    DenseSet<StringRef> &mutables ) {
+void fillMutableArgSet(const Record *pattern,
+                       DenseSet<size_t> &mutables) {
 
-    auto args = pattern->getValueAsDag("PatternToMatch");
-    auto mutableArgs = pattern->getValueAsListOfStrings("mutable");
-    // We must replace their names by their position
-    for (auto mutableArg : mutableArgs) {
-      size_t pos = 0;
-      while (args->getArgNameStr(pos) != mutableArg) {
-        pos++;
-        if (pos == args->getNumArgs()) {
-            PrintFatalError("mutable arg isn't an input Arg!");
-        }
+  auto args = pattern->getValueAsDag("PatternToMatch");
+  auto mutableArgs = pattern->getValueAsListOfStrings("mutable");
+  // We must replace their names by their position
+  for (auto mutableArg : mutableArgs) {
+    size_t pos = 0;
+    while (args->getArgNameStr(pos) != mutableArg) {
+      pos++;
+      if (pos == args->getNumArgs()) {
+        PrintFatalError("mutable arg isn't an input Arg!");
       }
-      mutables.insert(StringRef(patternArgs[pos]));
     }
+    mutables.insert(pos);
+  }
 
-    assert(mutables.size() == mutableArgs.size());
+  assert(mutables.size() == mutableArgs.size());
 }
 
-void fillArgTypes(const Record *pattern, 
-    const SmallVector<std::string, 6> &args,
-    DenseMap<StringRef, std::string> &argTypes) {
+void fillArgTypes(const Record *pattern,
+                  DenseMap<size_t, std::string> &argTypes) {
 
   std::vector<Record *> inputTypes =
     pattern->getValueAsListOfDefs("inputTypes");
   size_t pos = 0;
   for (auto val : inputTypes) {
     if (val->getName() == "len") {
-      argTypes.insert(std::make_pair(StringRef(args[pos]), "len"));
+      argTypes.insert(std::make_pair(pos, "len"));
     } else if (val->getName() == "fp") {
-      argTypes.insert(std::make_pair(StringRef(args[pos]), "fp"));
+      argTypes.insert(std::make_pair(pos, "fp"));
     } else if (val->getName() == "vinc") {
-      argTypes.insert(std::make_pair(StringRef(args[pos]), "vincData"));
-      argTypes.insert(std::make_pair(StringRef(args[pos + 1]), "vincInc"));
+      argTypes.insert(std::make_pair(pos, "vincData"));
+      argTypes.insert(std::make_pair(pos + 1, "vincInc"));
     } else {
       PrintFatalError("Unknown type!");
     }
@@ -149,14 +144,10 @@ void fillArgs(const Record *r, SmallVector<std::string, 6> &args,
   DagInit *argOps = r->getValueAsDag("PatternToMatch");
   size_t numArgs = argOps->getNumArgs();
   args.reserve(numArgs);
-  // Just fill a set with the names to assert uniquenes
-  DenseSet<std::string> uniqueNames;
   for (size_t i = 0; i < numArgs; i++) {
     args.push_back(argOps->getArgNameStr(i).str());
-    uniqueNames.insert(args[i]);
     argNameToPos.insert(std::pair<StringRef, size_t>(StringRef(args[i]), i));
   }
-  assert(uniqueNames.size() == numArgs);
   assert(args.size() == numArgs);
   assert(argNameToPos.size() == numArgs);
 }
@@ -170,15 +161,15 @@ private:
   // Map arg name to their position (in primary fnc)
   DenseMap<StringRef, size_t> argNameToPos;
   // Type of these args, e.g. FP-scalar, int, FP-vec, ..
-  DenseMap<StringRef, std::string> argTypes;
+  DenseMap<size_t, std::string> argTypes;
   // Args that could be set to active (thus fp based)
-  DenseSet<StringRef> posActArgs;
+  DenseSet<size_t> posActArgs;
   // Args that will be modified by primary function (e.g. x in scal)
-  DenseSet<StringRef> mutables;
+  DenseSet<size_t> mutables;
   // One rule for each possibly active arg
   SmallVector<Rule, 3> rules;
   // Based on an argument name, which rules use this argument?
-  DenseMap<StringRef, DenseSet<size_t>> argUsers;
+  // DenseMap<StringRef, DenseSet<size_t>> argUsers;
 
 public:
   TGPattern(Record &r) {
@@ -189,14 +180,14 @@ public:
     argNameToPos = DenseMap<StringRef, size_t>{};
     fillArgs(&r, args, argNameToPos);
 
-    argTypes = DenseMap<StringRef, std::string>();
-    fillArgTypes(&r, args, argTypes);
+    argTypes = DenseMap<size_t, std::string>();
+    fillArgTypes(&r, argTypes);
 
-    posActArgs = DenseSet<StringRef>();
-    fillActiveArgSet(&r, args, posActArgs);
+    posActArgs = DenseSet<size_t>();
+    fillActiveArgSet(&r, posActArgs);
 
-    mutables = DenseSet<StringRef>();
-    fillMutableArgSet(&r, args, mutables);
+    mutables = DenseSet<size_t>();
+    fillMutableArgSet(&r, mutables);
 
     // Now create the rules for this pattern
     {
@@ -208,7 +199,12 @@ public:
       }
     }
 
-    argUsers = DenseMap<StringRef, DenseSet<size_t>>();
+    // argUsers = DenseMap<StringRef, DenseSet<size_t>>();
     // TODO: fill
   }
+  std::string getName() { return blasName; }
+  SmallVector<std::string, 6> getArgNames() { return args; }
+  DenseMap<StringRef, size_t> getArgNameMap() { return argNameToPos; }
+  DenseMap<size_t, std::string> getArgTypeMap() { return argTypes; }
+  DenseSet<size_t> getActiveArgs() { return posActArgs; }
 };
