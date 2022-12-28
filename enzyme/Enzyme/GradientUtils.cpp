@@ -2252,8 +2252,7 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
                              malloc->getName() + "_malloccache");
 #if LLVM_VERSION_MAJOR > 7
         Value *tPtr = entryBuilder.CreateInBoundsGEP(
-            firstallocation->getType()->getPointerElementType(),
-            firstallocation, ArrayRef<Value *>(tid));
+            malloc->getType(), firstallocation, ArrayRef<Value *>(tid));
 #else
         Value *tPtr = entryBuilder.CreateInBoundsGEP(firstallocation,
                                                      ArrayRef<Value *>(tid));

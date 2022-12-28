@@ -609,8 +609,9 @@ static bool replaceOriginalCall(CallInst *CI, Function *fn, Value *diffret,
       CI->replaceAllUsesWith(newStruct);
     } else if (CI->hasStructRetAttr()) {
       Value *sret = CI->getArgOperand(0);
-      PointerType *stype = cast<PointerType>(sret->getType());
-      StructType *st = dyn_cast<StructType>(stype->getPointerElementType());
+      // PointerType *stype = cast<PointerType>(sret->getType());
+      // StructType *st = dyn_cast<StructType>(stype->getPointerElementType());
+      StructType *st = dyn_cast<StructType>(CI->getParamStructRetType(0));
 
       // Assign results to struct allocated at the call site.
       if (st && st->isLayoutIdentical(diffretsty)) {
