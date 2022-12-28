@@ -29,6 +29,10 @@
 // clang-format off
 //
 
+using llvm::SmallVector;
+using llvm::DenseMap;
+using llvm::DenseSet;
+
 
 void emitEnumMatcher(const std::vector<Record *> &blas_modes, raw_ostream &os) {
   for (auto mode : blas_modes) {
@@ -1170,22 +1174,11 @@ llvm::StringMap<llvm::SmallSet<size_t, 3>> getMutableArgs(const std::vector<Reco
   return res;
 }
 
+// NEXT TODO: for input args (vectors) being overwritten.
+// Cache them and use the cache later
+
 /*
  * We create the following variables:
- *
- * vec: 
- * data_<vecName>
- * data_ptr_<vecName>
- * inc_<vecName>
- * true_<incName>
- * need_<incName>
- *
- * arg_<Name>
- * type_<Name>
- * active_<Name>
- * uncacheable_<Name>
- * d_<Name>
- *
  */
 void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
   emitSourceFileHeader("Rewriters", os);
@@ -1226,6 +1219,184 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
     emit_free_and_ending(pattern, posActArgs, os);
   }
 }
+
+
+enum argType {fp=1, len=1, vinc=2, vincData=1, vincInc=1};
+
+class Arg {
+  public:
+    size_t pos;
+    std::string name;
+};
+
+
+void fillRuleNameMap(const DenseMap<StringRef, size_t> &lookup,
+                      const DagInit *toSearch,
+                      DenseMap<StringRef, size_t> &toInsert) {
+  for (size_t i = 0; i < toSearch->getNumArgs(); i++) {
+    if (DagInit *arg = dyn_cast<DagInit>(toSearch->getArg(i))) {
+      fillRuleNameMap(lookup, arg, toInsert);
+    } else {
+      auto name = toSearch->getArgNameStr(i);
+      assert(lookup.find(name) != lookup.end() && "Unknown var name in tblgen rule");
+      toInsert.insert(*lookup.find(name));
+    }
+  }
+}
+
+// Subset of the general pattern info, 
+// but only the part that affects the specific argument being active.
+class Rule {
+  private: 
+    DagInit *rewriteRule;
+    DenseMap<StringRef, size_t> argNameToPos;
+    DenseMap<StringRef, std::string> argTypes;
+    DenseSet<StringRef> mutables;
+    // Eventually also add posActArg ?
+
+  public:
+    Rule(DagInit * dag, 
+        DenseMap<StringRef, size_t> &patternArgs, 
+        DenseMap<StringRef, std::string> &patternTypes,
+        DenseSet<StringRef> &patternMutables) {
+      rewriteRule = dag;
+
+      argNameToPos = DenseMap<StringRef, size_t>();
+      argTypes = DenseMap<StringRef, std::string>();
+      mutables = DenseSet<StringRef>();
+
+      // For each arg found in the dag: 
+      //        1) copy patternArgs to ruleArgs if arg shows up in this rule
+      fillRuleNameMap(patternArgs, rewriteRule, argNameToPos);
+      for (auto ruleArg : argNameToPos) {
+        //        2) look up and copy argType 
+        if (patternTypes.find(ruleArg.first) != patternTypes.end()) {
+          argTypes.insert(*patternTypes.find(ruleArg.first));
+        }
+        //        3) look up and eventually copy mutable
+        if (patternMutables.find(ruleArg.first) != patternMutables.end()) {
+          mutables.insert(*patternMutables.find(ruleArg.first));
+        }
+
+      }
+
+    }
+};
+
+void fillActiveArgSet(const Record *pattern, 
+    const SmallVector<std::string, 6>  &patternArgs, 
+    DenseSet<StringRef> &activeArgs ) {
+
+  std::vector<Record *> inputTypes =
+      pattern->getValueAsListOfDefs("inputTypes");
+  size_t numTypes = 0;
+  for (auto val : inputTypes) {
+    if (val->getValueAsBit("active")) {
+      activeArgs.insert(StringRef(patternArgs[numTypes]));
+    }
+    numTypes += val->getValueAsInt("nelem");
+  }
+}
+
+void fillMutableArgSet(const Record *pattern, 
+    const SmallVector<std::string, 6>  &patternArgs, 
+    DenseSet<StringRef> &mutables ) {
+
+    auto args = pattern->getValueAsDag("PatternToMatch");
+    auto mutableArgs = pattern->getValueAsListOfStrings("mutable");
+    // We must replace their names by their position
+    for (auto mutableArg : mutableArgs) {
+      size_t pos = 0;
+      while (args->getArgNameStr(pos) != mutableArg) {
+        pos++;
+        if (pos == args->getNumArgs()) {
+            PrintFatalError("mutable arg isn't an input Arg!");
+        }
+      }
+      mutables.insert(StringRef(patternArgs[pos]));
+    }
+}
+
+void fillArgTypes(const Record *pattern, 
+    const SmallVector<std::string, 6> &args,
+    DenseMap<StringRef, std::string> &argTypes) {
+
+  std::vector<Record *> inputTypes =
+    pattern->getValueAsListOfDefs("inputTypes");
+  //DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
+  size_t pos = 0;
+  for (auto val : inputTypes) {
+    if (val->getName() == "len") {
+      argTypes.insert(std::make_pair(args[pos], "len"));
+    } else if (val->getName() == "fp") {
+      argTypes.insert(std::make_pair(args[pos], "fp"));
+    } else if (val->getName() == "vinc") {
+      argTypes.insert(std::make_pair(args[pos], "vincData"));
+      argTypes.insert(std::make_pair(args[pos+1], "vincInc"));
+    } else {
+      PrintFatalError("Unknown type!");
+    }
+    pos += val->getValueAsInt("nelem");
+  }
+}
+
+
+// A single Blas function, including replacement rules. E.g. scal, axpy, ...
+class Pattern {
+  private: 
+    std::string blasName;
+    // All args from the primary blas function
+    SmallVector<std::string, 6> args;
+    // Map arg name to their position (in primary fnc)
+    DenseMap<StringRef, size_t> argNameToPos;
+    // Type of these args, e.g. FP-scalar, int, FP-vec, ..
+    DenseMap<StringRef, std::string> argTypes;
+    // Args that could be set to active (thus fp based)
+    DenseSet<StringRef> posActArgs;
+    // Args that will be modified by primary function (e.g. x in scal)
+    DenseSet<StringRef> mutables;
+    // One rule for each possibly active arg
+    SmallVector<Rule, 3> rules;
+    // TODO: next (update) and create
+    //llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers = getUsedInputs(pattern, posActArgs);
+
+  public:
+    Pattern(Record &r) {
+      blasName = r.getNameInitAsString();
+
+      {
+        DagInit *argOps = r.getValueAsDag("PatternToMatch");
+        args = llvm::SmallVector<std::string, 6>();
+        size_t numArgs = argOps->getNumArgs();
+        args.resize(numArgs);
+        argNameToPos = DenseMap<StringRef, size_t>{};
+        for (size_t i = 0; i < numArgs; i++) {
+          args.push_back(argOps->getArgNameStr(i).str());
+          argNameToPos.insert(std::pair<StringRef, size_t>(StringRef(args[i]), i));
+        }
+      }
+
+      argTypes = DenseMap<StringRef, std::string>();
+      fillArgTypes(&r, args, argTypes);
+
+      posActArgs = DenseSet<StringRef>();
+      fillActiveArgSet(&r, args, posActArgs);
+
+      mutables = DenseSet<StringRef>();
+      fillMutableArgSet(&r, args, mutables);
+
+      {
+        rules = llvm::SmallVector<Rule, 3>{};
+        ListInit *argOps = r.getValueAsListInit("ArgDerivatives");
+        for (auto argOp : *argOps) {
+          DagInit *derivRule = cast<DagInit>(argOp);
+          rules.push_back(Rule(derivRule, argNameToPos, argTypes, mutables));
+        }
+      }
+    }
+};
+
+
 
 static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
   switch (action) {
