@@ -2547,10 +2547,68 @@ public:
 
 AnalysisKey EnzymeNewPM::Key;
 
+#ifdef ENZYME_RUNPASS
+#include "PreserveNVVM.h"
+#include "llvm/Passes/PassBuilder.h"
+#include "llvm/Transforms/IPO/GlobalOpt.h"
+#include "llvm/Transforms/Scalar/GVN.h"
+#include "llvm/Transforms/Scalar/LoopDeletion.h"
+#include "llvm/Transforms/Scalar/SROA.h"
+#endif
+
 extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
 llvmGetPassPluginInfo() {
   return {LLVM_PLUGIN_API_VERSION, "EnzymeNewPM", "v0.1",
           [](llvm::PassBuilder &PB) {
+#ifdef ENZYME_RUNPASS
+#if LLVM_VERSION_MAJOR < 14
+            using OptimizationLevel = llvm::PassBuilder::OptimizationLevel;
+#endif
+            auto loadPass = [](ModulePassManager &MPM, OptimizationLevel) {
+              MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
+              FunctionPassManager OptimizerPM;
+              FunctionPassManager OptimizerPM2;
+              OptimizerPM.addPass(llvm::GVNPass());
+              OptimizerPM.addPass(llvm::SROAPass());
+#if LLVM_VERSION_MAJOR >= 14
+              MPM.addPass(
+                  createModuleToFunctionPassAdaptor(std::move(OptimizerPM)));
+#else
+              MPM.addPass(createModuleToFunctionPassAdaptor(
+                  std::move(OptimizerPM), PTO.EagerlyInvalidateAnalyses));
+#endif
+              MPM.addPass(EnzymeNewPM(/*PostOpt=*/true));
+              MPM.addPass(PreserveNVVMNewPM(/*Begin*/ false));
+              OptimizerPM2.addPass(llvm::GVNPass());
+              OptimizerPM2.addPass(llvm::SROAPass());
+
+              LoopPassManager LPM1;
+              LPM1.addPass(LoopDeletionPass());
+              OptimizerPM2.addPass(
+                  createFunctionToLoopPassAdaptor(std::move(LPM1)));
+
+#if LLVM_VERSION_MAJOR >= 14
+              MPM.addPass(
+                  createModuleToFunctionPassAdaptor(std::move(OptimizerPM2)));
+#else
+              MPM.addPass(createModuleToFunctionPassAdaptor(
+                  std::move(OptimizerPM2), PTO.EagerlyInvalidateAnalyses));
+#endif
+              MPM.addPass(GlobalOptPass());
+            };
+            PB.registerPipelineEarlySimplificationEPCallback(loadPass);
+            // We should register at vectorizer start for consistency, however,
+            // that requires a functionpass, and we have a modulepass.
+            // PB.registerVectorizerStartEPCallback(loadPass);
+            PB.registerPipelineStartEPCallback(
+                [](ModulePassManager &MPM, OptimizationLevel) {
+                  MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
+                });
+            PB.registerFullLinkTimeOptimizationEarlyEPCallback(
+                [](ModulePassManager &MPM, OptimizationLevel) {
+                  MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
+                });
+#endif
             PB.registerPipelineParsingCallback(
                 [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
                    llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
