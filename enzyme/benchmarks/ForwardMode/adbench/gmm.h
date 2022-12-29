@@ -249,7 +249,8 @@ int main(const int argc, const char *argv[]) {
       if (path == "10k/gmm_d128_K200.txt" || path == "10k/gmm_d128_K100.txt" ||
           path == "10k/gmm_d128_K25.txt" || path == "10k/gmm_d128_K50.txt" ||
           path == "10k/gmm_d64_K200.txt" || path == "10k/gmm_d64_K100.txt" ||
-          path == "10k/gmm_d64_K50.txt" || path == "1k/gmm_d128_K200.txt")
+          path == "10k/gmm_d64_K50.txt" || path == "10k/gmm_d32_K200.txt"
+          || path == "1k/gmm_d128_K200.txt")
         continue;
       printf("starting path %s\n", path.c_str());
 
