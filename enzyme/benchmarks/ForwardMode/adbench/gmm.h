@@ -241,9 +241,9 @@ int main(const int argc, const char *argv[]) {
 
   std::vector<std::string> paths; // = { "1k/gmm_d10_K100.txt" };
 
-  getTests(paths, "data/1k", "1k/");
-  getTests(paths, "data/2.5k", "2.5k/");
-  getTests(paths, "data/10k", "10k/");
+  getTests(paths, "../../data/gmm/1k", "1k/");
+  getTests(paths, "../../data/gmm/2.5k", "2.5k/");
+  getTests(paths, "../../data/gmm/10k", "10k/");
 
   for (auto path : paths) {
     if (path == "10k/gmm_d128_K200.txt" || path == "10k/gmm_d128_K100.txt" ||
@@ -255,7 +255,7 @@ int main(const int argc, const char *argv[]) {
     {
 
       struct GMMInput input;
-      read_gmm_instance("data/" + path, &input.d, &input.k, &input.n,
+      read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
                         input.alphas, input.means, input.icf, input.x,
                         input.wishart, params.replicate_point);
 
@@ -278,7 +278,7 @@ int main(const int argc, const char *argv[]) {
 
     {
       struct GMMInput input;
-      read_gmm_instance("data/" + path, &input.d, &input.k, &input.n,
+      read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
                         input.alphas, input.means, input.icf, input.x,
                         input.wishart, params.replicate_point);
 
@@ -301,7 +301,7 @@ int main(const int argc, const char *argv[]) {
 
       {
       struct GMMInput input;
-      read_gmm_instance("data/" + path, &input.d, &input.k, &input.n,
+      read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
                         input.alphas, input.means, input.icf, input.x,
                         input.wishart, params.replicate_point);
 
@@ -324,7 +324,7 @@ int main(const int argc, const char *argv[]) {
 
       {
       struct GMMInput input;
-      read_gmm_instance("data/" + path, &input.d, &input.k, &input.n,
+      read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
                         input.alphas, input.means, input.icf, input.x,
                         input.wishart, params.replicate_point);
 
@@ -347,7 +347,7 @@ int main(const int argc, const char *argv[]) {
 
       {
       struct GMMInput input;
-      read_gmm_instance("data/" + path, &input.d, &input.k, &input.n,
+      read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
                         input.alphas, input.means, input.icf, input.x,
                         input.wishart, params.replicate_point);
 
@@ -370,7 +370,7 @@ int main(const int argc, const char *argv[]) {
 
       {
       struct GMMInput input;
-      read_gmm_instance("data/" + path, &input.d, &input.k, &input.n,
+      read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
                         input.alphas, input.means, input.icf, input.x,
                         input.wishart, params.replicate_point);
 
@@ -394,7 +394,7 @@ int main(const int argc, const char *argv[]) {
     // {
 
     //   struct GMMInput input;
-    //   read_gmm_instance("data/" + path, &input.d, &input.k, &input.n,
+    //   read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
     //                     input.alphas, input.means, input.icf, input.x,
     //                     input.wishart, params.replicate_point);
 
@@ -420,7 +420,7 @@ int main(const int argc, const char *argv[]) {
     {
 
       struct GMMInput input;
-      read_gmm_instance("data/" + path, &input.d, &input.k, &input.n,
+      read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
                         input.alphas, input.means, input.icf, input.x,
                         input.wishart, params.replicate_point);
 
@@ -444,7 +444,7 @@ int main(const int argc, const char *argv[]) {
     // Enzyme Forward-Vector
     {
       struct GMMInput input;
-      read_gmm_instance("data/" + path, &input.d, &input.k, &input.n,
+      read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
                         input.alphas, input.means, input.icf, input.x,
                         input.wishart, params.replicate_point);
 
@@ -467,7 +467,7 @@ int main(const int argc, const char *argv[]) {
 
     {
       struct GMMInput input;
-      read_gmm_instance("data/" + path, &input.d, &input.k, &input.n,
+      read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
                         input.alphas, input.means, input.icf, input.x,
                         input.wishart, params.replicate_point);
 
@@ -490,7 +490,7 @@ int main(const int argc, const char *argv[]) {
 
     {
       struct GMMInput input;
-      read_gmm_instance("data/" + path, &input.d, &input.k, &input.n,
+      read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
                         input.alphas, input.means, input.icf, input.x,
                         input.wishart, params.replicate_point);
 
@@ -513,7 +513,7 @@ int main(const int argc, const char *argv[]) {
 
     {
       struct GMMInput input;
-      read_gmm_instance("data/" + path, &input.d, &input.k, &input.n,
+      read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
                         input.alphas, input.means, input.icf, input.x,
                         input.wishart, params.replicate_point);
 
@@ -536,7 +536,7 @@ int main(const int argc, const char *argv[]) {
 
     {
       struct GMMInput input;
-      read_gmm_instance("data/" + path, &input.d, &input.k, &input.n,
+      read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
                         input.alphas, input.means, input.icf, input.x,
                         input.wishart, params.replicate_point);
 

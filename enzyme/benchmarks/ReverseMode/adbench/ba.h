@@ -350,7 +350,7 @@ int main(const int argc, const char* argv[]) {
     {
 
     struct BAInput input;
-    read_ba_instance("data/" + path, input.n, input.m, input.p, input.cams, input.X, input.w, input.obs, input.feats);
+    read_ba_instance("../../data/ba/" + path, input.n, input.m, input.p, input.cams, input.X, input.w, input.obs, input.feats);
 
     struct BAOutput result = {
         std::vector<double>(2 * input.p),
@@ -401,7 +401,7 @@ int main(const int argc, const char* argv[]) {
     {
 
     struct BAInput input;
-    read_ba_instance("data/" + path, input.n, input.m, input.p, input.cams, input.X, input.w, input.obs, input.feats);
+    read_ba_instance("../../data/ba/" + path, input.n, input.m, input.p, input.cams, input.X, input.w, input.obs, input.feats);
 
     struct BAOutput result = {
         std::vector<double>(2 * input.p),
@@ -452,7 +452,7 @@ int main(const int argc, const char* argv[]) {
     {
 
     struct BAInput input;
-    read_ba_instance("data/" + path, input.n, input.m, input.p, input.cams, input.X, input.w, input.obs, input.feats);
+    read_ba_instance("../../data/ba/" + path, input.n, input.m, input.p, input.cams, input.X, input.w, input.obs, input.feats);
 
     struct BAOutput result = {
         std::vector<double>(2 * input.p),

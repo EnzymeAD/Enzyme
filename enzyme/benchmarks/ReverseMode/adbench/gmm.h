@@ -183,7 +183,7 @@ int main(const int argc, const char* argv[]) {
     {
 
     struct GMMInput input;
-    read_gmm_instance("data/" + path, &input.d, &input.k, &input.n,
+    read_gmm_instance("../../data/gmm" + path, &input.d, &input.k, &input.n,
         input.alphas, input.means, input.icf, input.x, input.wishart, params.replicate_point);
 
     int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;

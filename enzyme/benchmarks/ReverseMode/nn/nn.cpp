@@ -855,10 +855,10 @@ float neural_network_training_step_tapenade(mnist_dataset_t * dataset, neural_ne
 /**
  * Downloaded from: http://yann.lecun.com/exdb/mnist/
  */
-const char * train_images_file = "data/train-images-idx3-ubyte";
-const char * train_labels_file = "data/train-labels-idx1-ubyte";
-const char * test_images_file = "data/t10k-images-idx3-ubyte";
-const char * test_labels_file = "data/t10k-labels-idx1-ubyte";
+const char * train_images_file = "../../data/nn/train-images-idx3-ubyte";
+const char * train_labels_file = "../../data/nn/train-labels-idx1-ubyte";
+const char * test_images_file = "../../data/nn/t10k-images-idx3-ubyte";
+const char * test_labels_file = "../../data/nn/t10k-labels-idx1-ubyte";
 
 /**
  * Calculate the accuracy of the predictions of a neural network on a dataset.

@@ -615,13 +615,13 @@ int main(const int argc, const char* argv[]) {
 
     struct HandInput input;
 
-    const auto model_dir = filepath_to_dirname("data/" + path) + "model/";
+    const auto model_dir = filepath_to_dirname("../../data/hand/" + path) + "model/";
     // Read instance
     if (params.is_complicated) {
-        read_hand_instance(model_dir, "data/" + path, &input.theta, &input.data, &input.us);
+        read_hand_instance(model_dir, "../../data/hand/" + path, &input.theta, &input.data, &input.us);
     }
     else {
-        read_hand_instance(model_dir, "data/" + path, &input.theta, &input.data);
+        read_hand_instance(model_dir, "../../data/hand/" + path, &input.theta, &input.data);
     }
 
     //assert( (input.us.size() > 0) == params.is_complicated );

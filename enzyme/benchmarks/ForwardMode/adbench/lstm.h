@@ -250,7 +250,7 @@ int main(const int argc, const char *argv[]) {
       struct LSTMInput input;
 
       // Read instance
-      read_lstm_instance("data/" + path, &input.l, &input.c, &input.b,
+      read_lstm_instance("../../data/lstm/" + path, &input.l, &input.c, &input.b,
                          input.main_params, input.extra_params, input.state,
                          input.sequence);
 
@@ -280,7 +280,7 @@ int main(const int argc, const char *argv[]) {
       struct LSTMInput input;
 
       // Read instance
-      read_lstm_instance("data/" + path, &input.l, &input.c, &input.b,
+      read_lstm_instance("../../data/lstm/" + path, &input.l, &input.c, &input.b,
                          input.main_params, input.extra_params, input.state,
                          input.sequence);
 
@@ -307,7 +307,7 @@ int main(const int argc, const char *argv[]) {
       struct LSTMInput input;
 
       // Read instance
-      read_lstm_instance("data/" + path, &input.l, &input.c, &input.b,
+      read_lstm_instance("../../data/lstm/" + path, &input.l, &input.c, &input.b,
                          input.main_params, input.extra_params, input.state,
                          input.sequence);
 
@@ -334,7 +334,7 @@ int main(const int argc, const char *argv[]) {
       struct LSTMInput input;
 
       // Read instance
-      read_lstm_instance("data/" + path, &input.l, &input.c, &input.b,
+      read_lstm_instance("../../data/lstm/" + path, &input.l, &input.c, &input.b,
                          input.main_params, input.extra_params, input.state,
                          input.sequence);
 
@@ -361,7 +361,7 @@ int main(const int argc, const char *argv[]) {
       struct LSTMInput input;
 
       // Read instance
-      read_lstm_instance("data/" + path, &input.l, &input.c, &input.b,
+      read_lstm_instance("../../data/lstm/" + path, &input.l, &input.c, &input.b,
                          input.main_params, input.extra_params, input.state,
                          input.sequence);
 
@@ -388,7 +388,7 @@ int main(const int argc, const char *argv[]) {
       struct LSTMInput input;
 
       // Read instance
-      read_lstm_instance("data/" + path, &input.l, &input.c, &input.b,
+      read_lstm_instance("../../data/lstm/" + path, &input.l, &input.c, &input.b,
                          input.main_params, input.extra_params, input.state,
                          input.sequence);
 
@@ -415,7 +415,7 @@ int main(const int argc, const char *argv[]) {
       struct LSTMInput input;
 
       // Read instance
-      read_lstm_instance("data/" + path, &input.l, &input.c, &input.b,
+      read_lstm_instance("../../data/lstm/" + path, &input.l, &input.c, &input.b,
                          input.main_params, input.extra_params, input.state,
                          input.sequence);
 
@@ -443,7 +443,7 @@ int main(const int argc, const char *argv[]) {
 //      struct LSTMInput input = {};
 //
 //      // Read instance
-//      read_lstm_instance("data/" + path, &input.l, &input.c, &input.b,
+//      read_lstm_instance("../../data/lstm" + path, &input.l, &input.c, &input.b,
 //                         input.main_params, input.extra_params, input.state,
 //                         input.sequence);
 //
@@ -472,7 +472,7 @@ int main(const int argc, const char *argv[]) {
       struct LSTMInput input = {};
 
       // Read instance
-      read_lstm_instance("data/" + path, &input.l, &input.c, &input.b,
+      read_lstm_instance("../../data/lstm/" + path, &input.l, &input.c, &input.b,
                          input.main_params, input.extra_params, input.state,
                          input.sequence);
 
@@ -500,7 +500,7 @@ int main(const int argc, const char *argv[]) {
       struct LSTMInput input = {};
 
       // Read instance
-      read_lstm_instance("data/" + path, &input.l, &input.c, &input.b,
+      read_lstm_instance("../../data/lstm/" + path, &input.l, &input.c, &input.b,
                          input.main_params, input.extra_params, input.state,
                          input.sequence);
 
@@ -527,7 +527,7 @@ int main(const int argc, const char *argv[]) {
       struct LSTMInput input = {};
 
       // Read instance
-      read_lstm_instance("data/" + path, &input.l, &input.c, &input.b,
+      read_lstm_instance("../../data/lstm/" + path, &input.l, &input.c, &input.b,
                          input.main_params, input.extra_params, input.state,
                          input.sequence);
 
@@ -554,7 +554,7 @@ int main(const int argc, const char *argv[]) {
       struct LSTMInput input = {};
 
       // Read instance
-      read_lstm_instance("data/" + path, &input.l, &input.c, &input.b,
+      read_lstm_instance("../../data/lstm/" + path, &input.l, &input.c, &input.b,
                          input.main_params, input.extra_params, input.state,
                          input.sequence);
 
@@ -581,7 +581,7 @@ int main(const int argc, const char *argv[]) {
       struct LSTMInput input = {};
 
       // Read instance
-      read_lstm_instance("data/" + path, &input.l, &input.c, &input.b,
+      read_lstm_instance("../../data/lstm/" + path, &input.l, &input.c, &input.b,
                          input.main_params, input.extra_params, input.state,
                          input.sequence);
 
@@ -608,7 +608,7 @@ int main(const int argc, const char *argv[]) {
       struct LSTMInput input = {};
 
       // Read instance
-      read_lstm_instance("data/" + path, &input.l, &input.c, &input.b,
+      read_lstm_instance("../../data/lstm/" + path, &input.l, &input.c, &input.b,
                          input.main_params, input.extra_params, input.state,
                          input.sequence);
 
@@ -635,7 +635,7 @@ int main(const int argc, const char *argv[]) {
       struct LSTMInput input = {};
 
       // Read instance
-      read_lstm_instance("data/" + path, &input.l, &input.c, &input.b,
+      read_lstm_instance("../../data/lstm/" + path, &input.l, &input.c, &input.b,
                          input.main_params, input.extra_params, input.state,
                          input.sequence);
 
