@@ -3,11 +3,11 @@
 *.out
 build
 .vscode
-enzyme/benchmarks/ReverseMode/*/*.ll
-enzyme/benchmarks/ReverseMode/*/*.bc
-enzyme/benchmarks/ReverseMode/*/*.o
-enzyme/benchmarks/ReverseMode/*/*.exe
-enzyme/benchmarks/ReverseMode/*/results.txt
-enzyme/benchmarks/ReverseMode/*/results.json
+enzyme/benchmarks/*/*/*.ll
+enzyme/benchmarks/*/*/*.bc
+enzyme/benchmarks/*/*/*.o
+enzyme/benchmarks/*/*/*.exe
+enzyme/benchmarks/*/*/results.txt
+enzyme/benchmarks/*/*/results.json
 
 .DS_Store
