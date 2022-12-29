@@ -241,7 +241,7 @@ int main(const int argc, const char *argv[]) {
   printf("starting main\n");
 
   std::vector<std::string> paths = {"lstm_l2_c1024.txt", "lstm_l4_c1024.txt",
-                                    "lstm_l2_c4096.txt", "lstm_l4_c4096.txt"};
+                                    "lstm_l2_c4096.txt", /*"lstm_l4_c4096.txt"*/};
 
   for (auto path : paths) {
     printf("starting path %s\n", path.c_str());
