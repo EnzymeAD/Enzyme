@@ -420,76 +420,76 @@ int main(const int argc, const char *argv[]) {
     //   }
     // }
 
-    {
+    // {
 
-      struct GMMInput input;
-      read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
-                        input.alphas, input.means, input.icf, input.x,
-                        input.wishart, params.replicate_point);
+    //   struct GMMInput input;
+    //   read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
+    //                     input.alphas, input.means, input.icf, input.x,
+    //                     input.wishart, params.replicate_point);
 
-      int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
+    //   int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
 
-      struct GMMOutput result = {0, std::vector<double>(Jcols)};
+    //   struct GMMOutput result = {0, std::vector<double>(Jcols)};
 
-      {
-        struct timeval start, end;
-        gettimeofday(&start, NULL);
-        calculate_jacobian<dgmm_objective>(input, result);
-        gettimeofday(&end, NULL);
-        printf("Enzyme forward mode combined %0.6f\n", tdiff(&start, &end));
-        for (unsigned i = 0; i < 5; i++) {
-          printf("%f ", result.gradient[i]);
-        }
-        printf("\n");
-      }
-    }
+    //   {
+    //     struct timeval start, end;
+    //     gettimeofday(&start, NULL);
+    //     calculate_jacobian<dgmm_objective>(input, result);
+    //     gettimeofday(&end, NULL);
+    //     printf("Enzyme forward mode combined %0.6f\n", tdiff(&start, &end));
+    //     for (unsigned i = 0; i < 5; i++) {
+    //       printf("%f ", result.gradient[i]);
+    //     }
+    //     printf("\n");
+    //   }
+    // }
 
-    // Enzyme Forward-Vector
-    {
-      struct GMMInput input;
-      read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
-                        input.alphas, input.means, input.icf, input.x,
-                        input.wishart, params.replicate_point);
+    // // Enzyme Forward-Vector
+    // {
+    //   struct GMMInput input;
+    //   read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
+    //                     input.alphas, input.means, input.icf, input.x,
+    //                     input.wishart, params.replicate_point);
 
-      int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
+    //   int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
 
-      struct GMMOutput result = {0, std::vector<double>(Jcols)};
+    //   struct GMMOutput result = {0, std::vector<double>(Jcols)};
 
-      {
-        struct timeval start, end;
-        gettimeofday(&start, NULL);
-        calculate_jacobian_vec<2, dgmm_objective, dgmm_objective_vec<2>>(input, result);
-        gettimeofday(&end, NULL);
-        printf("Enzyme Forward-Vector 2 combined %0.6f\n", tdiff(&start, &end));
-        for (unsigned i = 0; i < 5; i++) {
-          printf("%f ", result.gradient[i]);
-        }
-        printf("\n");
-      }
-    }
+    //   {
+    //     struct timeval start, end;
+    //     gettimeofday(&start, NULL);
+    //     calculate_jacobian_vec<2, dgmm_objective, dgmm_objective_vec<2>>(input, result);
+    //     gettimeofday(&end, NULL);
+    //     printf("Enzyme Forward-Vector 2 combined %0.6f\n", tdiff(&start, &end));
+    //     for (unsigned i = 0; i < 5; i++) {
+    //       printf("%f ", result.gradient[i]);
+    //     }
+    //     printf("\n");
+    //   }
+    // }
 
-    {
-      struct GMMInput input;
-      read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
-                        input.alphas, input.means, input.icf, input.x,
-                        input.wishart, params.replicate_point);
+    // {
+    //   struct GMMInput input;
+    //   read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
+    //                     input.alphas, input.means, input.icf, input.x,
+    //                     input.wishart, params.replicate_point);
 
-      int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
+    //   int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
 
-      struct GMMOutput result = {0, std::vector<double>(Jcols)};
+    //   struct GMMOutput result = {0, std::vector<double>(Jcols)};
 
-      {
-        struct timeval start, end;
-        gettimeofday(&start, NULL);
-        calculate_jacobian_vec<4, dgmm_objective, dgmm_objective_vec<4>>(input, result);
-        gettimeofday(&end, NULL);
-        printf("Enzyme Forward-Vector 4 combined %0.6f\n", tdiff(&start, &end));
-        for (unsigned i = 0; i < 5; i++) {
-          printf("%f ", result.gradient[i]);
-        }
-        printf("\n");
-      }
-    }
+    //   {
+    //     struct timeval start, end;
+    //     gettimeofday(&start, NULL);
+    //     calculate_jacobian_vec<4, dgmm_objective, dgmm_objective_vec<4>>(input, result);
+    //     gettimeofday(&end, NULL);
+    //     printf("Enzyme Forward-Vector 4 combined %0.6f\n", tdiff(&start, &end));
+    //     for (unsigned i = 0; i < 5; i++) {
+    //       printf("%f ", result.gradient[i]);
+    //     }
+    //     printf("\n");
+    //   }
+    // }
 
     {
       struct GMMInput input;
@@ -514,50 +514,50 @@ int main(const int argc, const char *argv[]) {
       }
     }
 
-    {
-      struct GMMInput input;
-      read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
-                        input.alphas, input.means, input.icf, input.x,
-                        input.wishart, params.replicate_point);
+    // {
+    //   struct GMMInput input;
+    //   read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
+    //                     input.alphas, input.means, input.icf, input.x,
+    //                     input.wishart, params.replicate_point);
 
-      int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
+    //   int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
 
-      struct GMMOutput result = {0, std::vector<double>(Jcols)};
+    //   struct GMMOutput result = {0, std::vector<double>(Jcols)};
 
-      {
-        struct timeval start, end;
-        gettimeofday(&start, NULL);
-        calculate_jacobian_vec<16, dgmm_objective, dgmm_objective_vec<16>>(input, result);
-        gettimeofday(&end, NULL);
-        printf("Enzyme Forward-Vector 16 combined %0.6f\n", tdiff(&start, &end));
-        for (unsigned i = 0; i < 5; i++) {
-          printf("%f ", result.gradient[i]);
-        }
-        printf("\n");
-      }
-    }
+    //   {
+    //     struct timeval start, end;
+    //     gettimeofday(&start, NULL);
+    //     calculate_jacobian_vec<16, dgmm_objective, dgmm_objective_vec<16>>(input, result);
+    //     gettimeofday(&end, NULL);
+    //     printf("Enzyme Forward-Vector 16 combined %0.6f\n", tdiff(&start, &end));
+    //     for (unsigned i = 0; i < 5; i++) {
+    //       printf("%f ", result.gradient[i]);
+    //     }
+    //     printf("\n");
+    //   }
+    // }
 
-    {
-      struct GMMInput input;
-      read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
-                        input.alphas, input.means, input.icf, input.x,
-                        input.wishart, params.replicate_point);
+    // {
+    //   struct GMMInput input;
+    //   read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
+    //                     input.alphas, input.means, input.icf, input.x,
+    //                     input.wishart, params.replicate_point);
 
-      int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
+    //   int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
 
-      struct GMMOutput result = {0, std::vector<double>(Jcols)};
+    //   struct GMMOutput result = {0, std::vector<double>(Jcols)};
 
-      {
-        struct timeval start, end;
-        gettimeofday(&start, NULL);
-        calculate_jacobian_vec<32, dgmm_objective, dgmm_objective_vec<32>>(input, result);
-        gettimeofday(&end, NULL);
-        printf("Enzyme Forward-Vector 32 combined %0.6f\n", tdiff(&start, &end));
-        for (unsigned i = 0; i < 5; i++) {
-          printf("%f ", result.gradient[i]);
-        }
-        printf("\n");
-      }
-    }
+    //   {
+    //     struct timeval start, end;
+    //     gettimeofday(&start, NULL);
+    //     calculate_jacobian_vec<32, dgmm_objective, dgmm_objective_vec<32>>(input, result);
+    //     gettimeofday(&end, NULL);
+    //     printf("Enzyme Forward-Vector 32 combined %0.6f\n", tdiff(&start, &end));
+    //     for (unsigned i = 0; i < 5; i++) {
+    //       printf("%f ", result.gradient[i]);
+    //     }
+    //     printf("\n");
+    //   }
+    // }
   }
 }

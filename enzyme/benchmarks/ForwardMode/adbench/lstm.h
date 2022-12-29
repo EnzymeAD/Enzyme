@@ -467,169 +467,169 @@ int main(const int argc, const char *argv[]) {
 //    }
 
     // Enzyme Forward-Mode
-    {
+    // {
 
-      struct LSTMInput input = {};
+    //   struct LSTMInput input = {};
 
-      // Read instance
-      read_lstm_instance("../../data/lstm/" + path, &input.l, &input.c, &input.b,
-                         input.main_params, input.extra_params, input.state,
-                         input.sequence);
+    //   // Read instance
+    //   read_lstm_instance("../../data/lstm/" + path, &input.l, &input.c, &input.b,
+    //                      input.main_params, input.extra_params, input.state,
+    //                      input.sequence);
 
-      std::vector<double> state = std::vector<double>(input.state.size());
+    //   std::vector<double> state = std::vector<double>(input.state.size());
 
-      int Jcols = 8 * input.l * input.b + 3 * input.b;
-      struct LSTMOutput result = {0, std::vector<double>(Jcols)};
+    //   int Jcols = 8 * input.l * input.b + 3 * input.b;
+    //   struct LSTMOutput result = {0, std::vector<double>(Jcols)};
 
-      {
-        struct timeval start, end;
-        gettimeofday(&start, NULL);
-        calculate_jacobian<dlstm_objective>(input, result);
-        gettimeofday(&end, NULL);
-        printf("Enzyme Forward combined %0.6f\n", tdiff(&start, &end));
-        for (unsigned i = result.gradient.size() - 5;
-             i < result.gradient.size(); i++) {
-          printf("%f ", result.gradient[i]);
-        }
-        printf("\n");
-      }
-    }
+    //   {
+    //     struct timeval start, end;
+    //     gettimeofday(&start, NULL);
+    //     calculate_jacobian<dlstm_objective>(input, result);
+    //     gettimeofday(&end, NULL);
+    //     printf("Enzyme Forward combined %0.6f\n", tdiff(&start, &end));
+    //     for (unsigned i = result.gradient.size() - 5;
+    //          i < result.gradient.size(); i++) {
+    //       printf("%f ", result.gradient[i]);
+    //     }
+    //     printf("\n");
+    //   }
+    // }
 
-    // Enzyme Forward-Vector Mode
-    {
-      struct LSTMInput input = {};
+    // // Enzyme Forward-Vector Mode
+    // {
+    //   struct LSTMInput input = {};
 
-      // Read instance
-      read_lstm_instance("../../data/lstm/" + path, &input.l, &input.c, &input.b,
-                         input.main_params, input.extra_params, input.state,
-                         input.sequence);
+    //   // Read instance
+    //   read_lstm_instance("../../data/lstm/" + path, &input.l, &input.c, &input.b,
+    //                      input.main_params, input.extra_params, input.state,
+    //                      input.sequence);
 
-      std::vector<double> state = std::vector<double>(input.state.size());
+    //   std::vector<double> state = std::vector<double>(input.state.size());
 
-      int Jcols = 8 * input.l * input.b + 3 * input.b;
-      struct LSTMOutput result = {0, std::vector<double>(Jcols)};
+    //   int Jcols = 8 * input.l * input.b + 3 * input.b;
+    //   struct LSTMOutput result = {0, std::vector<double>(Jcols)};
 
-      {
-        struct timeval start, end;
-        gettimeofday(&start, NULL);
-        calculate_jacobian_vec<2, dlstm_objective, dlstm_objective_vec<2>>(input, result);
-        gettimeofday(&end, NULL);
-        printf("Enzyme Forward-Vector 2 combined %0.6f\n", tdiff(&start, &end));
-        for (unsigned i = result.gradient.size() - 5;
-             i < result.gradient.size(); i++) {
-          printf("%f ", result.gradient[i]);
-        }
-        printf("\n");
-      }
-    }
+    //   {
+    //     struct timeval start, end;
+    //     gettimeofday(&start, NULL);
+    //     calculate_jacobian_vec<2, dlstm_objective, dlstm_objective_vec<2>>(input, result);
+    //     gettimeofday(&end, NULL);
+    //     printf("Enzyme Forward-Vector 2 combined %0.6f\n", tdiff(&start, &end));
+    //     for (unsigned i = result.gradient.size() - 5;
+    //          i < result.gradient.size(); i++) {
+    //       printf("%f ", result.gradient[i]);
+    //     }
+    //     printf("\n");
+    //   }
+    // }
     
-    {
-      struct LSTMInput input = {};
+    // {
+    //   struct LSTMInput input = {};
 
-      // Read instance
-      read_lstm_instance("../../data/lstm/" + path, &input.l, &input.c, &input.b,
-                         input.main_params, input.extra_params, input.state,
-                         input.sequence);
+    //   // Read instance
+    //   read_lstm_instance("../../data/lstm/" + path, &input.l, &input.c, &input.b,
+    //                      input.main_params, input.extra_params, input.state,
+    //                      input.sequence);
 
-      std::vector<double> state = std::vector<double>(input.state.size());
+    //   std::vector<double> state = std::vector<double>(input.state.size());
 
-      int Jcols = 8 * input.l * input.b + 3 * input.b;
-      struct LSTMOutput result = {0, std::vector<double>(Jcols)};
+    //   int Jcols = 8 * input.l * input.b + 3 * input.b;
+    //   struct LSTMOutput result = {0, std::vector<double>(Jcols)};
 
-      {
-        struct timeval start, end;
-        gettimeofday(&start, NULL);
-        calculate_jacobian_vec<4, dlstm_objective, dlstm_objective_vec<4>>(input, result);
-        gettimeofday(&end, NULL);
-        printf("Enzyme Forward-Vector 4 combined %0.6f\n", tdiff(&start, &end));
-        for (unsigned i = result.gradient.size() - 5;
-             i < result.gradient.size(); i++) {
-          printf("%f ", result.gradient[i]);
-        }
-        printf("\n");
-      }
-    }
+    //   {
+    //     struct timeval start, end;
+    //     gettimeofday(&start, NULL);
+    //     calculate_jacobian_vec<4, dlstm_objective, dlstm_objective_vec<4>>(input, result);
+    //     gettimeofday(&end, NULL);
+    //     printf("Enzyme Forward-Vector 4 combined %0.6f\n", tdiff(&start, &end));
+    //     for (unsigned i = result.gradient.size() - 5;
+    //          i < result.gradient.size(); i++) {
+    //       printf("%f ", result.gradient[i]);
+    //     }
+    //     printf("\n");
+    //   }
+    // }
     
-    {
-      struct LSTMInput input = {};
+    // {
+    //   struct LSTMInput input = {};
 
-      // Read instance
-      read_lstm_instance("../../data/lstm/" + path, &input.l, &input.c, &input.b,
-                         input.main_params, input.extra_params, input.state,
-                         input.sequence);
+    //   // Read instance
+    //   read_lstm_instance("../../data/lstm/" + path, &input.l, &input.c, &input.b,
+    //                      input.main_params, input.extra_params, input.state,
+    //                      input.sequence);
 
-      std::vector<double> state = std::vector<double>(input.state.size());
+    //   std::vector<double> state = std::vector<double>(input.state.size());
 
-      int Jcols = 8 * input.l * input.b + 3 * input.b;
-      struct LSTMOutput result = {0, std::vector<double>(Jcols)};
+    //   int Jcols = 8 * input.l * input.b + 3 * input.b;
+    //   struct LSTMOutput result = {0, std::vector<double>(Jcols)};
 
-      {
-        struct timeval start, end;
-        gettimeofday(&start, NULL);
-        calculate_jacobian_vec<8, dlstm_objective, dlstm_objective_vec<8>>(input, result);
-        gettimeofday(&end, NULL);
-        printf("Enzyme Forward-Vector 8 combined %0.6f\n", tdiff(&start, &end));
-        for (unsigned i = result.gradient.size() - 5;
-             i < result.gradient.size(); i++) {
-          printf("%f ", result.gradient[i]);
-        }
-        printf("\n");
-      }
-    }
+    //   {
+    //     struct timeval start, end;
+    //     gettimeofday(&start, NULL);
+    //     calculate_jacobian_vec<8, dlstm_objective, dlstm_objective_vec<8>>(input, result);
+    //     gettimeofday(&end, NULL);
+    //     printf("Enzyme Forward-Vector 8 combined %0.6f\n", tdiff(&start, &end));
+    //     for (unsigned i = result.gradient.size() - 5;
+    //          i < result.gradient.size(); i++) {
+    //       printf("%f ", result.gradient[i]);
+    //     }
+    //     printf("\n");
+    //   }
+    // }
     
-    {
-      struct LSTMInput input = {};
+    // {
+    //   struct LSTMInput input = {};
 
-      // Read instance
-      read_lstm_instance("../../data/lstm/" + path, &input.l, &input.c, &input.b,
-                         input.main_params, input.extra_params, input.state,
-                         input.sequence);
+    //   // Read instance
+    //   read_lstm_instance("../../data/lstm/" + path, &input.l, &input.c, &input.b,
+    //                      input.main_params, input.extra_params, input.state,
+    //                      input.sequence);
 
-      std::vector<double> state = std::vector<double>(input.state.size());
+    //   std::vector<double> state = std::vector<double>(input.state.size());
 
-      int Jcols = 8 * input.l * input.b + 3 * input.b;
-      struct LSTMOutput result = {0, std::vector<double>(Jcols)};
+    //   int Jcols = 8 * input.l * input.b + 3 * input.b;
+    //   struct LSTMOutput result = {0, std::vector<double>(Jcols)};
 
-      {
-        struct timeval start, end;
-        gettimeofday(&start, NULL);
-        calculate_jacobian_vec<16, dlstm_objective, dlstm_objective_vec<16>>(input, result);
-        gettimeofday(&end, NULL);
-        printf("Enzyme Forward-Vector 16 combined %0.6f\n", tdiff(&start, &end));
-        for (unsigned i = result.gradient.size() - 5;
-             i < result.gradient.size(); i++) {
-          printf("%f ", result.gradient[i]);
-        }
-        printf("\n");
-      }
-    }
+    //   {
+    //     struct timeval start, end;
+    //     gettimeofday(&start, NULL);
+    //     calculate_jacobian_vec<16, dlstm_objective, dlstm_objective_vec<16>>(input, result);
+    //     gettimeofday(&end, NULL);
+    //     printf("Enzyme Forward-Vector 16 combined %0.6f\n", tdiff(&start, &end));
+    //     for (unsigned i = result.gradient.size() - 5;
+    //          i < result.gradient.size(); i++) {
+    //       printf("%f ", result.gradient[i]);
+    //     }
+    //     printf("\n");
+    //   }
+    // }
     
-    {
-      struct LSTMInput input = {};
+    // {
+    //   struct LSTMInput input = {};
 
-      // Read instance
-      read_lstm_instance("../../data/lstm/" + path, &input.l, &input.c, &input.b,
-                         input.main_params, input.extra_params, input.state,
-                         input.sequence);
+    //   // Read instance
+    //   read_lstm_instance("../../data/lstm/" + path, &input.l, &input.c, &input.b,
+    //                      input.main_params, input.extra_params, input.state,
+    //                      input.sequence);
 
-      std::vector<double> state = std::vector<double>(input.state.size());
+    //   std::vector<double> state = std::vector<double>(input.state.size());
 
-      int Jcols = 8 * input.l * input.b + 3 * input.b;
-      struct LSTMOutput result = {0, std::vector<double>(Jcols)};
+    //   int Jcols = 8 * input.l * input.b + 3 * input.b;
+    //   struct LSTMOutput result = {0, std::vector<double>(Jcols)};
 
-      {
-        struct timeval start, end;
-        gettimeofday(&start, NULL);
-        calculate_jacobian_vec<32, dlstm_objective, dlstm_objective_vec<32>>(input, result);
-        gettimeofday(&end, NULL);
-        printf("Enzyme Forward-Vector 32 combined %0.6f\n", tdiff(&start, &end));
-        for (unsigned i = result.gradient.size() - 5;
-             i < result.gradient.size(); i++) {
-          printf("%f ", result.gradient[i]);
-        }
-        printf("\n");
-      }
-    }
+    //   {
+    //     struct timeval start, end;
+    //     gettimeofday(&start, NULL);
+    //     calculate_jacobian_vec<32, dlstm_objective, dlstm_objective_vec<32>>(input, result);
+    //     gettimeofday(&end, NULL);
+    //     printf("Enzyme Forward-Vector 32 combined %0.6f\n", tdiff(&start, &end));
+    //     for (unsigned i = result.gradient.size() - 5;
+    //          i < result.gradient.size(); i++) {
+    //       printf("%f ", result.gradient[i]);
+    //     }
+    //     printf("\n");
+    //   }
+    // }
     
     {
       struct LSTMInput input = {};
