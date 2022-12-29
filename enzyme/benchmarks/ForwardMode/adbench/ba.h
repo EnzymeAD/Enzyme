@@ -262,7 +262,7 @@ int main(const int argc, const char *argv[]) {
       "ba16_n1544_m942409_p4750193.txt",   "ba1_n49_m7776_p31843.txt",
       "ba4_n372_m47423_p204472.txt",       "ba8_n88_m64298_p383937.txt",
       "ba13_n245_m198739_p1091386.txt",    "ba17_n1778_m993923_p5001946.txt",
-      "ba20_n13682_m4456117_p2987644.txt", "ba5_n257_m65132_p225911.txt",
+      /*"ba20_n13682_m4456117_p2987644.txt",*/ "ba5_n257_m65132_p225911.txt",
       "ba9_n810_m88814_p393775.txt",
   };
   for (auto path : paths) {
