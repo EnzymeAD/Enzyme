@@ -26,67 +26,6 @@ bool onlyUsedInParentBlock(Value v){
   return v.isUsedOutsideOfBlock(v.getParentBlock());
 }
 
-std::pair<BlockAndValueMapping, DenseMap<Block *, SmallVector<Value>>> createReverseModeBlocks(MGradientUtilsReverse *gutils){
-  BlockAndValueMapping mapReverseModeBlocks;
-  DenseMap<Block *, SmallVector<Value>> mapReverseBlockArguments;
-  for (auto it = gutils->oldFunc.getBody().getBlocks().rbegin(); it != gutils->oldFunc.getBody().getBlocks().rend(); ++it) {
-    Block *block = &*it;
-    Block *newBlock = new Block();
-
-    //Add reverse mode Arguments to Block
-    Operation * term = block->getTerminator();
-    mlir::BranchOpInterface brOp = dyn_cast<mlir::BranchOpInterface>(term);
-    SmallVector<Value> reverseModeArguments;
-    if(brOp){
-      DenseMap<Value, int> valueToIndex;
-      int index = 0;
-      // Taking the number of successors might be a false assumtpion on the BranchOpInterface
-      // TODO make nicer algorithm for this!
-      for (int i = 0; i < term->getNumSuccessors(); i++){
-        SuccessorOperands sOps = brOp.getSuccessorOperands(i);
-        for (int j = 0; j < sOps.size(); j++){
-          if (valueToIndex.count(sOps[i]) == 0){
-            valueToIndex[sOps[i]] = index;
-            index++;
-          }
-        }
-      }
-      reverseModeArguments.resize(index);
-      for (auto it : valueToIndex){
-        reverseModeArguments[it.second] = it.first;
-        newBlock->addArgument(it.first.getType(), it.first.getLoc());
-      }
-      mapReverseBlockArguments[block] = reverseModeArguments;
-    }
-    //
-
-    mapReverseModeBlocks.map(block, newBlock);
-    auto regionPos = gutils->newFunc.getBody().end();
-    gutils->newFunc.getBody().getBlocks().insert(regionPos, newBlock);
-  }
-  return std::pair<BlockAndValueMapping, DenseMap<Block *, SmallVector<Value>>> (mapReverseModeBlocks, mapReverseBlockArguments);
-}
-
-Block * insertInitializationBlock(MGradientUtilsReverse *gutils){
-  Block *initializationBlock = new Block();
-  int numArgs = gutils->newFunc.getNumArguments();
-  for (int i = 0; i < numArgs; i++){
-    BlockArgument oldArg = gutils->newFunc.getArgument(i);
-    BlockArgument newArg = initializationBlock->addArgument(oldArg.getType(), oldArg.getLoc());
-    oldArg.replaceAllUsesWith(newArg);
-  }
-  for (int i = 0; i < (numArgs-1) / 2; i++){
-    gutils->mapInvertPointer(gutils->oldFunc.getArgument(i), initializationBlock->getArgument(2*i+1));
-  }
-  Block * oldEntry = &*(gutils->newFunc.getBody().begin());
-  gutils->newFunc.getBody().begin()->eraseArguments(0,numArgs);
-  auto initializationPos = gutils->newFunc.getBody().begin();
-  gutils->newFunc.getBody().getBlocks().insert(initializationPos, initializationBlock);
-  OpBuilder initializationBuilder(&*(gutils->newFunc.getBody().begin()), gutils->newFunc.getBody().begin()->begin());
-  initializationBuilder.create<cf::BranchOp>(oldEntry->begin()->getLoc(), oldEntry);
-  return initializationBlock;
-}
-
 Value initializeBackwardCacheValue(Type t, Block * initializationBlock){
   OpBuilder builder(initializationBlock, initializationBlock->begin());
   return builder.create<enzyme::CreateCacheOp>((initializationBlock->rbegin())->getLoc(), t);
@@ -124,14 +63,6 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
   const SmallPtrSet<mlir::Block *, 4> guaranteedUnreachable;
   gutils->forceAugmentedReturnsReverse();
 
-  // Insert reversemode blocks
-  auto reverseModeStore = createReverseModeBlocks(gutils);
-  BlockAndValueMapping mapReverseModeBlocks = reverseModeStore.first;
-  DenseMap<Block *, SmallVector<Value>> mapBlockArguments = reverseModeStore.second;
-  
-  // Insert initialization for caches TODO 
-  Block *initializationBlock = insertInitializationBlock(gutils);
-
   // Get dominator tree and create topological sorting
   SmallVector<mlir::Block*> dominatorToposortBlocks = getDominatorToposort(gutils);
 
@@ -161,7 +92,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
       //gutils->oldFunc.getBody().getBlocks().front();
       OpBuilder forwardToBackwardBuilder(&*(newBB->rbegin())->getContext());
       forwardToBackwardBuilder.setInsertionPoint(gutils->getNewFromOriginal(&*(oBB.rbegin())));
-      auto revBlock = mapReverseModeBlocks.lookupOrNull(&oBB);
+      auto revBlock = gutils->mapReverseModeBlocks.lookupOrNull(&oBB);
       Operation * newBranchOp = forwardToBackwardBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB.rbegin()))->getLoc(), revBlock);
       
       Operation * returnStatement = newBB->getTerminator();
@@ -172,7 +103,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
       gutils->erase(returnStatement);
     }
     
-    OpBuilder revBuilder(mapReverseModeBlocks.lookupOrNull(&oBB), mapReverseModeBlocks.lookupOrNull(&oBB)->begin());
+    OpBuilder revBuilder(gutils->mapReverseModeBlocks.lookupOrNull(&oBB), gutils->mapReverseModeBlocks.lookupOrNull(&oBB)->begin());
     if (!oBB.empty()){
       auto first = oBB.rbegin();
       auto last = oBB.rend();
@@ -182,7 +113,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
     }
 
     if (oBB.hasNoPredecessors()){
-      auto revBlock = mapReverseModeBlocks.lookupOrNull(&oBB);
+      auto revBlock = gutils->mapReverseModeBlocks.lookupOrNull(&oBB);
 
       OpBuilder revBuilder(revBlock, revBlock->end());
       SmallVector<mlir::Value, 2> retargs;
@@ -196,13 +127,13 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
     else {
       if (std::next(oBB.getPredecessors().begin()) == oBB.getPredecessors().end()){
         Block * predecessor = *(oBB.getPredecessors().begin());
-        Block * predecessorRevMode = mapReverseModeBlocks.lookupOrNull(predecessor);
+        Block * predecessorRevMode = gutils->mapReverseModeBlocks.lookupOrNull(predecessor);
         // Create op operands
         SmallVector<Value> operands;
-        auto argumentsIt = mapBlockArguments.find(predecessor);
-        if (argumentsIt != mapBlockArguments.end()){
+        auto argumentsIt = gutils->mapBlockArguments.find(predecessor);
+        if (argumentsIt != gutils->mapBlockArguments.end()){
           for(auto operandOld : argumentsIt->second){
-            Optional<Value> invertPointer = gutils->invertPointerReverseMOptional(operandOld, mapReverseModeBlocks.lookupOrNull(&oBB));
+            Optional<Value> invertPointer = gutils->invertPointerReverseMOptional(operandOld, gutils->mapReverseModeBlocks.lookupOrNull(&oBB));
             if (invertPointer.has_value()){
               operands.push_back(invertPointer.value());
             }
@@ -218,9 +149,9 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
         revBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB.rbegin()))->getLoc(), predecessorRevMode, operandsValueRange);
       }
       else{
-        Type indexType = mlir::IntegerType::get(initializationBlock->begin()->getContext(), 32);
-        Type cacheType = CacheType::get(initializationBlock->begin()->getContext(), indexType);
-        Value cache = initializeBackwardCacheValue(cacheType, initializationBlock);
+        Type indexType = mlir::IntegerType::get(gutils->initializationBlock->begin()->getContext(), 32);
+        Type cacheType = CacheType::get(gutils->initializationBlock->begin()->getContext(), indexType);
+        Value cache = initializeBackwardCacheValue(cacheType, gutils->initializationBlock);
         
         Value flag = revBuilder.create<enzyme::GetCacheOp>(oBB.rbegin()->getLoc(), indexType, cache);
         SmallVector<Block *> blocks;
@@ -231,14 +162,14 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
         int i = 0;
         for (auto it = oBB.getPredecessors().begin(); it != oBB.getPredecessors().end(); it++){
           Block * predecessor = *it;
-          predecessor = mapReverseModeBlocks.lookupOrNull(predecessor);
+          predecessor = gutils->mapReverseModeBlocks.lookupOrNull(predecessor);
 
           SmallVector<Value> operands;
-          auto argumentsIt = mapBlockArguments.find(predecessor);
-          if (argumentsIt != mapBlockArguments.end()){
+          auto argumentsIt = gutils->mapBlockArguments.find(predecessor);
+          if (argumentsIt != gutils->mapBlockArguments.end()){
             for(auto operandOld : argumentsIt->second){
               //TODO Create canonical null value if not found!
-              Optional<Value> invertPointer = gutils->invertPointerReverseMOptional(operandOld, mapReverseModeBlocks.lookupOrNull(&oBB));
+              Optional<Value> invertPointer = gutils->invertPointerReverseMOptional(operandOld, gutils->mapReverseModeBlocks.lookupOrNull(&oBB));
               if (invertPointer.has_value()){
                 operands.push_back(invertPointer.value());
               }
