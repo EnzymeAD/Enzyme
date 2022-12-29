@@ -57,7 +57,7 @@ jobs:
     - name: make check-enzyme
       run: cd enzyme/build && make check-enzyme-bench -j`nproc`
     - name: graph results
-      run: python3 enzyme/test/upload-results.py enzyme/build/test/Enzyme/results.json --url https://enzyme.mit.edu/cibench/api --token ${{ secrets.GRAPH_TOKEN }}
+      run: python3 enzyme/test/Enzyme/upload-results.py enzyme/build/test/Enzyme/results.json --url https://enzyme.mit.edu/cibench/api --token ${{ secrets.GRAPH_TOKEN }}
       if: github.event_name != 'pull_request' && matrix.build == 'Release'
   
   build-macos:
@@ -95,7 +95,7 @@ jobs:
     - name: make check-enzyme
       run: cd enzyme/build && make check-enzyme-bench -j 3
     - name: graph results
-      run: python3 enzyme/test/upload-results.py enzyme/build/test/Enzyme/results.json --url https://enzyme.mit.edu/cibench/api --token ${{ secrets.GRAPH_TOKEN }}
+      run: python3 enzyme/test/Enzyme/upload-results.py enzyme/build/test/Enzyme/results.json --url https://enzyme.mit.edu/cibench/api --token ${{ secrets.GRAPH_TOKEN }}
       if: github.event_name != 'pull_request' && matrix.build == 'Release'
 
   build-xcode:

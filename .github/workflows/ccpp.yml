@@ -44,4 +44,7 @@ jobs:
     - name: make
       run: cd enzyme/build && make -j`nproc` LLVMEnzyme-${{ matrix.llvm }}
     - name: make check-enzyme-integration
-      run: cd enzyme/build && make check-enzyme-integration -j`nproc`
+      run: cd enzyme/build && make check-enzyme-integration-bench -j`nproc`
+    - name: graph results
+      run: python3 enzyme/test/Integration/upload-results.py enzyme/build/test/Integration/results.json --url https://enzyme.mit.edu/cibench/api --token ${{ secrets.GRAPH_TOKEN }}
+      if: github.event_name != 'pull_request' && matrix.build == 'Release'
