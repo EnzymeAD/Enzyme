@@ -246,24 +246,25 @@ int main(const int argc, const char *argv[]) {
   getTests(paths, "../../data/gmm/10k", "10k/");
 
   for (auto path : paths) {
-    if (path == "10k/gmm_d128_K200.txt" || path == "10k/gmm_d128_K100.txt" ||
-        path == "10k/gmm_d64_K200.txt" || path == "10k/gmm_d128_K50.txt" ||
-        path == "10k/gmm_d64_K100.txt")
-      continue;
-    printf("starting path %s\n", path.c_str());
-
-    {
-
-      struct GMMInput input;
-      read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
-                        input.alphas, input.means, input.icf, input.x,
-                        input.wishart, params.replicate_point);
-
-      int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
-
-      struct GMMOutput result = {0, std::vector<double>(Jcols)};
+      if (path == "10k/gmm_d128_K200.txt" || path == "10k/gmm_d128_K100.txt" ||
+          path == "10k/gmm_d128_K25.txt" || path == "10k/gmm_d128_K50.txt" ||
+          path == "10k/gmm_d64_K200.txt" || path == "10k/gmm_d64_K100.txt" ||
+          path == "10k/gmm_d64_K50.txt")
+        continue;
+      printf("starting path %s\n", path.c_str());
 
       {
+
+        struct GMMInput input;
+        read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k,
+                          &input.n, input.alphas, input.means, input.icf,
+                          input.x, input.wishart, params.replicate_point);
+
+        int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
+
+        struct GMMOutput result = {0, std::vector<double>(Jcols)};
+
+        {
         struct timeval start, end;
         gettimeofday(&start, NULL);
         calculate_jacobian<gmm_objective_d>(input, result);
