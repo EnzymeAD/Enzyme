@@ -239,20 +239,13 @@ int main(const int argc, const char *argv[]) {
   const auto replicate_point = (argc > 9 && string(argv[9]) == "-rep");
   const GMMParameters params = {replicate_point};
 
-  std::vector<std::string> paths; // = { "1k/gmm_d10_K100.txt" };
+  std::vector<std::string> paths = { "1k/gmm_d10_K100.txt" };
 
-  getTests(paths, "../../data/gmm/1k", "1k/");
-  getTests(paths, "../../data/gmm/2.5k", "2.5k/");
-  getTests(paths, "../../data/gmm/10k", "10k/");
+  // getTests(paths, "../../data/gmm/1k", "1k/");
+  // getTests(paths, "../../data/gmm/2.5k", "2.5k/");
+  // getTests(paths, "../../data/gmm/10k", "10k/");
 
   for (auto path : paths) {
-      if (path == "10k/gmm_d128_K200.txt" || path == "10k/gmm_d128_K100.txt" ||
-          path == "10k/gmm_d128_K25.txt" || path == "10k/gmm_d128_K50.txt" ||
-          path == "10k/gmm_d64_K200.txt" || path == "10k/gmm_d64_K100.txt" ||
-          path == "10k/gmm_d64_K50.txt" || path == "10k/gmm_d32_K200.txt" ||
-          path == "10k/gmm_d128_K10.txt" || path == "10k/gmm_d64_K25.txt" ||
-          path == "1k/gmm_d128_K200.txt" || path == "1k/gmm_d128_K100.txt")
-        continue;
       printf("starting path %s\n", path.c_str());
 
     //   {
