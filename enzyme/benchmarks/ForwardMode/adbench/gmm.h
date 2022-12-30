@@ -255,75 +255,75 @@ int main(const int argc, const char *argv[]) {
         continue;
       printf("starting path %s\n", path.c_str());
 
-      {
+    //   {
 
-        struct GMMInput input;
-        read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k,
-                          &input.n, input.alphas, input.means, input.icf,
-                          input.x, input.wishart, params.replicate_point);
+    //     struct GMMInput input;
+    //     read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k,
+    //                       &input.n, input.alphas, input.means, input.icf,
+    //                       input.x, input.wishart, params.replicate_point);
 
-        int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
+    //     int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
 
-        struct GMMOutput result = {0, std::vector<double>(Jcols)};
+    //     struct GMMOutput result = {0, std::vector<double>(Jcols)};
 
-        {
-        struct timeval start, end;
-        gettimeofday(&start, NULL);
-        calculate_jacobian<gmm_objective_d>(input, result);
-        gettimeofday(&end, NULL);
-        printf("Tapenade combined %0.6f\n", tdiff(&start, &end));
-        for (unsigned i = 0; i < 5; i++) {
-          printf("%f ", result.gradient[i]);
-        }
-        printf("\n");
-      }
-    }
+    //     {
+    //     struct timeval start, end;
+    //     gettimeofday(&start, NULL);
+    //     calculate_jacobian<gmm_objective_d>(input, result);
+    //     gettimeofday(&end, NULL);
+    //     printf("Tapenade combined %0.6f\n", tdiff(&start, &end));
+    //     for (unsigned i = 0; i < 5; i++) {
+    //       printf("%f ", result.gradient[i]);
+    //     }
+    //     printf("\n");
+    //   }
+    // }
 
-    {
-      struct GMMInput input;
-      read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
-                        input.alphas, input.means, input.icf, input.x,
-                        input.wishart, params.replicate_point);
+    // {
+    //   struct GMMInput input;
+    //   read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
+    //                     input.alphas, input.means, input.icf, input.x,
+    //                     input.wishart, params.replicate_point);
 
-      int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
+    //   int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
 
-      struct GMMOutput result = {0, std::vector<double>(Jcols)};
+    //   struct GMMOutput result = {0, std::vector<double>(Jcols)};
 
-      {
-        struct timeval start, end;
-        gettimeofday(&start, NULL);
-        calculate_jacobian_vec<2, gmm_objective_d, gmm_objective_dv<2>>(input, result);
-        gettimeofday(&end, NULL);
-        printf("Tapenade vector 2 combined %0.6f\n", tdiff(&start, &end));
-        for (unsigned i = 0; i < 5; i++) {
-          printf("%f ", result.gradient[i]);
-        }
-        printf("\n");
-      }
-    }
+    //   {
+    //     struct timeval start, end;
+    //     gettimeofday(&start, NULL);
+    //     calculate_jacobian_vec<2, gmm_objective_d, gmm_objective_dv<2>>(input, result);
+    //     gettimeofday(&end, NULL);
+    //     printf("Tapenade vector 2 combined %0.6f\n", tdiff(&start, &end));
+    //     for (unsigned i = 0; i < 5; i++) {
+    //       printf("%f ", result.gradient[i]);
+    //     }
+    //     printf("\n");
+    //   }
+    // }
 
-      {
-      struct GMMInput input;
-      read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
-                        input.alphas, input.means, input.icf, input.x,
-                        input.wishart, params.replicate_point);
+    //   {
+    //   struct GMMInput input;
+    //   read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
+    //                     input.alphas, input.means, input.icf, input.x,
+    //                     input.wishart, params.replicate_point);
 
-      int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
+    //   int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
 
-      struct GMMOutput result = {0, std::vector<double>(Jcols)};
+    //   struct GMMOutput result = {0, std::vector<double>(Jcols)};
 
-      {
-        struct timeval start, end;
-        gettimeofday(&start, NULL);
-        calculate_jacobian_vec<4, gmm_objective_d, gmm_objective_dv<4>>(input, result);
-        gettimeofday(&end, NULL);
-        printf("Tapenade vector 4 combined %0.6f\n", tdiff(&start, &end));
-        for (unsigned i = 0; i < 5; i++) {
-          printf("%f ", result.gradient[i]);
-        }
-        printf("\n");
-      }
-    }
+    //   {
+    //     struct timeval start, end;
+    //     gettimeofday(&start, NULL);
+    //     calculate_jacobian_vec<4, gmm_objective_d, gmm_objective_dv<4>>(input, result);
+    //     gettimeofday(&end, NULL);
+    //     printf("Tapenade vector 4 combined %0.6f\n", tdiff(&start, &end));
+    //     for (unsigned i = 0; i < 5; i++) {
+    //       printf("%f ", result.gradient[i]);
+    //     }
+    //     printf("\n");
+    //   }
+    // }
 
       {
       struct GMMInput input;
@@ -348,51 +348,51 @@ int main(const int argc, const char *argv[]) {
       }
     }
 
-      {
-      struct GMMInput input;
-      read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
-                        input.alphas, input.means, input.icf, input.x,
-                        input.wishart, params.replicate_point);
+    //   {
+    //   struct GMMInput input;
+    //   read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
+    //                     input.alphas, input.means, input.icf, input.x,
+    //                     input.wishart, params.replicate_point);
 
-      int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
+    //   int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
 
-      struct GMMOutput result = {0, std::vector<double>(Jcols)};
+    //   struct GMMOutput result = {0, std::vector<double>(Jcols)};
 
-      {
-        struct timeval start, end;
-        gettimeofday(&start, NULL);
-        calculate_jacobian_vec<16, gmm_objective_d, gmm_objective_dv<16>>(input, result);
-        gettimeofday(&end, NULL);
-        printf("Tapenade vector 16 combined %0.6f\n", tdiff(&start, &end));
-        for (unsigned i = 0; i < 5; i++) {
-          printf("%f ", result.gradient[i]);
-        }
-        printf("\n");
-      }
-    }
+    //   {
+    //     struct timeval start, end;
+    //     gettimeofday(&start, NULL);
+    //     calculate_jacobian_vec<16, gmm_objective_d, gmm_objective_dv<16>>(input, result);
+    //     gettimeofday(&end, NULL);
+    //     printf("Tapenade vector 16 combined %0.6f\n", tdiff(&start, &end));
+    //     for (unsigned i = 0; i < 5; i++) {
+    //       printf("%f ", result.gradient[i]);
+    //     }
+    //     printf("\n");
+    //   }
+    // }
 
-      {
-      struct GMMInput input;
-      read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
-                        input.alphas, input.means, input.icf, input.x,
-                        input.wishart, params.replicate_point);
+    //   {
+    //   struct GMMInput input;
+    //   read_gmm_instance("../../data/gmm/" + path, &input.d, &input.k, &input.n,
+    //                     input.alphas, input.means, input.icf, input.x,
+    //                     input.wishart, params.replicate_point);
 
-      int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
+    //   int Jcols = (input.k * (input.d + 1) * (input.d + 2)) / 2;
 
-      struct GMMOutput result = {0, std::vector<double>(Jcols)};
+    //   struct GMMOutput result = {0, std::vector<double>(Jcols)};
 
-      {
-        struct timeval start, end;
-        gettimeofday(&start, NULL);
-        calculate_jacobian_vec<32, gmm_objective_d, gmm_objective_dv<32>>(input, result);
-        gettimeofday(&end, NULL);
-        printf("Tapenade vector 32 combined %0.6f\n", tdiff(&start, &end));
-        for (unsigned i = 0; i < 5; i++) {
-          printf("%f ", result.gradient[i]);
-        }
-        printf("\n");
-      }
-    }
+    //   {
+    //     struct timeval start, end;
+    //     gettimeofday(&start, NULL);
+    //     calculate_jacobian_vec<32, gmm_objective_d, gmm_objective_dv<32>>(input, result);
+    //     gettimeofday(&end, NULL);
+    //     printf("Tapenade vector 32 combined %0.6f\n", tdiff(&start, &end));
+    //     for (unsigned i = 0; i < 5; i++) {
+    //       printf("%f ", result.gradient[i]);
+    //     }
+    //     printf("\n");
+    //   }
+    // }
 
     // {
 
