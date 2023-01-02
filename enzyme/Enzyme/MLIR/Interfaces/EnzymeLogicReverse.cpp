@@ -49,7 +49,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
   ReturnType returnValue = ReturnType::Tape;
   auto gutils = MDiffeGradientUtilsReverse::CreateFromClone(
       *this, mode, width, fn, TA, type_args, retType, /*diffeReturnArg*/ true,
-      constants, returnValue, addedType, /*omp*/ false);
+      constants, returnValue, addedType);
 
   const SmallPtrSet<mlir::Block *, 4> guaranteedUnreachable;
   gutils->forceAugmentedReturnsReverse();

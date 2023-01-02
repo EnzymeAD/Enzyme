@@ -38,7 +38,6 @@ public:
 
   MTypeAnalysis &TA;
   MTypeResults TR;
-  bool omp;
 
   unsigned width;
   ArrayRef<DIFFE_TYPE> ArgDiffeTypes;
@@ -52,7 +51,6 @@ public:
                 FunctionOpInterface oldFunc_, 
                 MTypeAnalysis &TA_,
                 MTypeResults TR_, 
-                BlockAndValueMapping &invertedPointers_,
                 const SmallPtrSetImpl<mlir::Value> &constantvalues_,
                 const SmallPtrSetImpl<mlir::Value> &activevals_,
                 DIFFE_TYPE ReturnActivity, 
@@ -61,7 +59,6 @@ public:
                 std::map<Operation *, Operation *> &originalToNewFnOps_,
                 DerivativeMode mode, 
                 unsigned width, 
-                bool omp,
                 BlockAndValueMapping mapReverseModeBlocks_, 
                 DenseMap<Block *, SmallVector<Value>> mapBlockArguments_);
   void erase(Operation *op) { op->erase(); }
@@ -80,7 +77,7 @@ public:
   Type getCacheType(Type t);
   Type getGradientType(Value t);
 
-  void insertInitializationBlock();
+  void initInitializationBlock();
 
   Operation *cloneWithNewOperands(OpBuilder &B, Operation *op);
   
@@ -93,7 +90,7 @@ public:
                       FunctionOpInterface newFunc_,
                       FunctionOpInterface oldFunc_, 
                       MTypeAnalysis &TA,
-                      MTypeResults TR, BlockAndValueMapping &invertedPointers_,
+                      MTypeResults TR, 
                       const SmallPtrSetImpl<mlir::Value> &constantvalues_,
                       const SmallPtrSetImpl<mlir::Value> &returnvals_,
                       DIFFE_TYPE ActiveReturn,
@@ -102,7 +99,6 @@ public:
                       std::map<Operation *, Operation *> &origToNewOps_,
                       DerivativeMode mode, 
                       unsigned width, 
-                      bool omp,
                       BlockAndValueMapping mapReverseModeBlocks_, 
                       DenseMap<Block *, SmallVector<Value>> mapBlockArguments_);
 
@@ -116,8 +112,7 @@ public:
                   bool diffeReturnArg, 
                   ArrayRef<DIFFE_TYPE> constant_args,
                   ReturnType returnValue, 
-                  mlir::Type additionalArg, 
-                  bool omp);
+                  mlir::Type additionalArg);
 };
 
 } // namespace enzyme

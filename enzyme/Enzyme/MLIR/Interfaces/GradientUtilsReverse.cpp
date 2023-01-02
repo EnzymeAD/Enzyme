@@ -33,7 +33,6 @@ mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
     FunctionOpInterface oldFunc_, 
     MTypeAnalysis &TA_, 
     MTypeResults TR_,
-    BlockAndValueMapping &invertedPointers_,
     const SmallPtrSetImpl<mlir::Value> &constantvalues_,
     const SmallPtrSetImpl<mlir::Value> &activevals_, 
     DIFFE_TYPE ReturnActivity,
@@ -42,7 +41,6 @@ mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
     std::map<Operation *, Operation *> &originalToNewFnOps_,
     DerivativeMode mode, 
     unsigned width, 
-    bool omp, 
     BlockAndValueMapping mapReverseModeBlocks_, 
     DenseMap<Block *, SmallVector<Value>> mapBlockArguments_)
     : newFunc(newFunc_), 
@@ -51,12 +49,10 @@ mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
       oldFunc(oldFunc_), 
       TA(TA_),
       TR(TR_), 
-      omp(omp), 
       width(width), 
       ArgDiffeTypes(ArgDiffeTypes_),
       originalToNewFn(originalToNewFn_),
       originalToNewFnOps(originalToNewFnOps_),
-      //invertedPointers(invertedPointers_),
       mapReverseModeBlocks(mapReverseModeBlocks_),
       mapBlockArguments(mapBlockArguments_){
   
@@ -66,7 +62,8 @@ mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
   //for(auto it = valueMap.begin(); it != valueMap.end(); it++){
   //  mapInvertPointer(it->first, it->second);
   //}
-  insertInitializationBlock();
+  
+  initInitializationBlock();
   //for(auto x : invertedPointers_.getValueMap()){
   //  mapInvertPointer()
   //}
@@ -194,10 +191,6 @@ void mlir::enzyme::MGradientUtilsReverse::mapInvertPointer(mlir::Value v, mlir::
     }
     Value gradient = invertedPointersGlobal.lookupOrNull(v);
     builder.create<enzyme::AddGradientOp>(v.getLoc(), gradient, invertValue);
-    llvm::errs()<<"summary:\n";
-    llvm::errs()<<v.getParentRegion()<<"\n";
-    llvm::errs()<<gradient.getParentRegion()<<"\n";
-    llvm::errs()<<invertValue.getParentRegion()<<"\n";
   }
 }
 
@@ -258,31 +251,16 @@ LogicalResult MGradientUtilsReverse::visitChildReverse(Operation *op, OpBuilder 
   return success();
 }
 
-void MGradientUtilsReverse::insertInitializationBlock(){
-  initializationBlock = new Block();
+void MGradientUtilsReverse::initInitializationBlock(){
   int numArgs = this->newFunc.getNumArguments();
-  for (int i = 0; i < numArgs; i++){
-    BlockArgument prevArg = this->newFunc.getArgument(i);
-    BlockArgument newArg = initializationBlock->addArgument(prevArg.getType(), prevArg.getLoc());
-    prevArg.replaceAllUsesWith(newArg);
-    
-    if ((i) % 2 == 0 && i < numArgs-1){ // TODO add proper logic here
-      BlockArgument oldArg = this->oldFunc.getArgument((int)(i/2));
-      originalToNewFnOps[oldArg.getDefiningOp()] = newArg.getDefiningOp();
-      originalToNewFn.map((Value)oldArg, (Value)newArg);
-    }
-  }
-  Block * oldEntry = &*(this->newFunc.getBody().begin());
-  this->newFunc.getBody().begin()->eraseArguments(0,numArgs);
-  auto initializationPos = this->newFunc.getBody().begin();
-  this->newFunc.getBody().getBlocks().insert(initializationPos, initializationBlock);
+  initializationBlock = &*(this->newFunc.getBody().begin());
+
   OpBuilder initializationBuilder(&*(this->newFunc.getBody().begin()), this->newFunc.getBody().begin()->begin());
   
   for (int i = 0; i < (numArgs-1) / 2; i++){
     this->mapInvertPointer(this->oldFunc.getArgument(i), initializationBlock->getArgument(2*i+1), initializationBuilder);
   }
 
-  initializationBuilder.create<cf::BranchOp>(oldEntry->begin()->getLoc(), oldEntry);
 }
 
 std::pair<BlockAndValueMapping, DenseMap<Block *, SmallVector<Value>>> createReverseModeBlocks(FunctionOpInterface & oldFunc, FunctionOpInterface & newFunc){
@@ -332,7 +310,6 @@ MDiffeGradientUtilsReverse::MDiffeGradientUtilsReverse(MEnzymeLogic &Logic,
                       FunctionOpInterface oldFunc_, 
                       MTypeAnalysis &TA,
                       MTypeResults TR, 
-                      BlockAndValueMapping &invertedPointers_,
                       const SmallPtrSetImpl<mlir::Value> &constantvalues_,
                       const SmallPtrSetImpl<mlir::Value> &returnvals_,
                       DIFFE_TYPE ActiveReturn,
@@ -341,16 +318,11 @@ MDiffeGradientUtilsReverse::MDiffeGradientUtilsReverse(MEnzymeLogic &Logic,
                       std::map<Operation *, Operation *> &origToNewOps_,
                       DerivativeMode mode, 
                       unsigned width, 
-                      bool omp,
                       BlockAndValueMapping mapReverseModeBlocks_, 
                       DenseMap<Block *, SmallVector<Value>> mapBlockArguments_)
-      : MGradientUtilsReverse(Logic, newFunc_, oldFunc_, TA, TR, invertedPointers_, constantvalues_, returnvals_, ActiveReturn, constant_values, origToNew_, origToNewOps_, mode, width, omp, mapReverseModeBlocks_, mapBlockArguments_) {}
+      : MGradientUtilsReverse(Logic, newFunc_, oldFunc_, TA, TR, constantvalues_, returnvals_, ActiveReturn, constant_values, origToNew_, origToNewOps_, mode, width, mapReverseModeBlocks_, mapBlockArguments_) {}
 
-MDiffeGradientUtilsReverse * MDiffeGradientUtilsReverse::CreateFromClone(MEnzymeLogic &Logic, DerivativeMode mode, unsigned width,
-                  FunctionOpInterface todiff, MTypeAnalysis &TA,
-                  MFnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
-                  bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
-                  ReturnType returnValue, mlir::Type additionalArg, bool omp) {
+MDiffeGradientUtilsReverse * MDiffeGradientUtilsReverse::CreateFromClone(MEnzymeLogic &Logic, DerivativeMode mode, unsigned width, FunctionOpInterface todiff, MTypeAnalysis &TA, MFnTypeInfo &oldTypeInfo, DIFFE_TYPE retType, bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args, ReturnType returnValue, mlir::Type additionalArg) {
     std::string prefix;
 
     switch (mode) {
@@ -388,5 +360,5 @@ MDiffeGradientUtilsReverse * MDiffeGradientUtilsReverse::CreateFromClone(MEnzyme
 
     MTypeResults TR; // TODO
     return new MDiffeGradientUtilsReverse(
-        Logic, newFunc, todiff, TA, TR, invertedPointers, constant_values, nonconstant_values, retType, constant_args, originalToNew, originalToNewOps, mode, width, omp, mapReverseModeBlocks, mapBlockArguments);
+        Logic, newFunc, todiff, TA, TR, constant_values, nonconstant_values, retType, constant_args, originalToNew, originalToNewOps, mode, width, mapReverseModeBlocks, mapBlockArguments);
   }
