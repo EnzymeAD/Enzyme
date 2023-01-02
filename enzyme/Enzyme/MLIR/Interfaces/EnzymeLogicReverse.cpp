@@ -22,15 +22,6 @@
 using namespace mlir;
 using namespace mlir::enzyme;
 
-bool onlyUsedInParentBlock(Value v){
-  return v.isUsedOutsideOfBlock(v.getParentBlock());
-}
-
-Value initializeBackwardCacheValue(Type t, Block * initializationBlock){
-  OpBuilder builder(initializationBlock, initializationBlock->begin());
-  return builder.create<enzyme::CreateCacheOp>((initializationBlock->rbegin())->getLoc(), t);
-}
-
 SmallVector<mlir::Block*> getDominatorToposort(MGradientUtilsReverse *gutils){
   SmallVector<mlir::Block*> dominatorToposortBlocks;
   auto dInfo = mlir::detail::DominanceInfoBase<false>(nullptr);
@@ -90,14 +81,14 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
     auto newBB = gutils->getNewFromOriginal(&oBB);
     if (oBB.getNumSuccessors() == 0){
       //gutils->oldFunc.getBody().getBlocks().front();
-      OpBuilder forwardToBackwardBuilder(&*(newBB->rbegin())->getContext());
+      OpBuilder forwardToBackwardBuilder(&*(newBB->rbegin())->getContext()); //TODO
       forwardToBackwardBuilder.setInsertionPoint(gutils->getNewFromOriginal(&*(oBB.rbegin())));
       auto revBlock = gutils->mapReverseModeBlocks.lookupOrNull(&oBB);
+      gutils->mapInvertPointer(oBB.getTerminator()->getOperand(0), gutils->newFunc.getArgument(gutils->newFunc.getNumArguments() - 1), forwardToBackwardBuilder); 
       Operation * newBranchOp = forwardToBackwardBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB.rbegin()))->getLoc(), revBlock);
       
-      Operation * returnStatement = newBB->getTerminator();
-      gutils->mapInvertPointer(oBB.getTerminator()->getOperand(0), gutils->newFunc.getArgument(gutils->newFunc.getNumArguments() - 1)); 
       
+      Operation * returnStatement = newBB->getTerminator();
       Operation * retVal = oBB.getTerminator();
       gutils->originalToNewFnOps[retVal] = newBranchOp;
       gutils->erase(returnStatement);
@@ -113,12 +104,12 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
     }
 
     if (oBB.hasNoPredecessors()){
-      auto revBlock = gutils->mapReverseModeBlocks.lookupOrNull(&oBB);
+      Block * revBlock = gutils->mapReverseModeBlocks.lookupOrNull(&oBB);
 
       OpBuilder revBuilder(revBlock, revBlock->end());
       SmallVector<mlir::Value, 2> retargs;
-      for (auto attribute : gutils->oldFunc.getBody().getArguments()) {
-        auto attributeGradient = gutils->invertPointerReverseM(attribute, revBlock);
+      for (Value attribute : gutils->oldFunc.getBody().getArguments()) {
+        Value attributeGradient = gutils->invertPointerM(attribute, revBuilder);
         retargs.push_back(attributeGradient);
       }
       
@@ -133,27 +124,25 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
         auto argumentsIt = gutils->mapBlockArguments.find(predecessor);
         if (argumentsIt != gutils->mapBlockArguments.end()){
           for(auto operandOld : argumentsIt->second){
-            Optional<Value> invertPointer = gutils->invertPointerReverseMOptional(operandOld, gutils->mapReverseModeBlocks.lookupOrNull(&oBB));
-            if (invertPointer.has_value()){
-              operands.push_back(invertPointer.value());
-            }
-            else{
+            //TEMPORARY
+            //Optional<Value> invertPointer = gutils->invertPointerReverseMOptional(operandOld, gutils->mapReverseModeBlocks.lookupOrNull(&oBB));
+            //if (invertPointer.has_value()){
+            //  operands.push_back(invertPointer.value());
+            //}
+            //else{
               if (auto iface = operandOld.getType().cast<AutoDiffTypeInterface>()) {
                 Value nullValue = iface.createNullValue(revBuilder, oBB.rbegin()->getLoc());
                 operands.push_back(nullValue);
               }
-            }
+            //}
           }
         }
         ValueRange operandsValueRange(operands);
         revBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB.rbegin()))->getLoc(), predecessorRevMode, operandsValueRange);
       }
       else{
-        Type indexType = mlir::IntegerType::get(gutils->initializationBlock->begin()->getContext(), 32);
-        Type cacheType = CacheType::get(gutils->initializationBlock->begin()->getContext(), indexType);
-        Value cache = initializeBackwardCacheValue(cacheType, gutils->initializationBlock);
-        
-        Value flag = revBuilder.create<enzyme::GetCacheOp>(oBB.rbegin()->getLoc(), indexType, cache);
+        Value cache = gutils->insertInitBackwardCache(gutils->getIndexCacheType());
+        Value flag = revBuilder.create<enzyme::PopCacheOp>(oBB.rbegin()->getLoc(), gutils->getIndexCacheType(), cache);
         SmallVector<Block *> blocks;
         SmallVector<APInt> indices;
         SmallVector<ValueRange> arguments;
@@ -169,16 +158,18 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
           if (argumentsIt != gutils->mapBlockArguments.end()){
             for(auto operandOld : argumentsIt->second){
               //TODO Create canonical null value if not found!
-              Optional<Value> invertPointer = gutils->invertPointerReverseMOptional(operandOld, gutils->mapReverseModeBlocks.lookupOrNull(&oBB));
-              if (invertPointer.has_value()){
-                operands.push_back(invertPointer.value());
-              }
-              else{
+              
+              //TEMPORARY
+              //Optional<Value> invertPointer = gutils->invertPointerReverseMOptional(operandOld, gutils->mapReverseModeBlocks.lookupOrNull(&oBB));
+              //if (invertPointer.has_value()){
+              //  operands.push_back(invertPointer.value());
+              //}
+              //else{
                 if (auto iface = operandOld.getType().cast<AutoDiffTypeInterface>()) {
                   Value nullValue = iface.createNullValue(revBuilder, oBB.rbegin()->getLoc());
                   operands.push_back(nullValue);
                 }
-              }
+              //}
             }
           }
 

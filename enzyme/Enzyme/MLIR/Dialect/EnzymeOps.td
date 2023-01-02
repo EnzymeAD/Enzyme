@@ -68,13 +68,13 @@ def ReverseDiffOp : Enzyme_Op<"diff",
   }];
 }
 
-def AddCacheOp : Enzyme_Op<"add"> {
+def PushCacheOp : Enzyme_Op<"push"> {
   let summary = "Store information for the reverse mode pass.";
   let arguments = (ins AnyType : $cache, AnyType : $value);
   let results = (outs AnyType:$output);
 }
 
-def GetCacheOp : Enzyme_Op<"get"> {
+def PopCacheOp : Enzyme_Op<"pop"> {
   let summary = "Retrieve information for the reverse mode pass.";
   let arguments = (ins AnyType : $cache);
   let results = (outs AnyType:$output);
@@ -96,14 +96,26 @@ def ReverseCache : Enzyme_Type<"Cache"> {
   let assemblyFormat = "`<` $type `>`";
 }
 
+def AddGradientOp : Enzyme_Op<"add"> {
+  let summary = "Write to gradient";
+  let arguments = (ins AnyType : $gradient, AnyType : $value);
+  let results = (outs );
+}
+
+def GetGradientOp : Enzyme_Op<"get"> {
+  let summary = "Load value of gradient";
+  let arguments = (ins AnyType : $gradient);
+  let results = (outs AnyType);
+}
+
 def Gradient : Enzyme_Type<"Gradient"> {
   let summary = "Gradient storage";
   let description = [{
     "Cache for reverse pass"
   }];
-  let parameters = (ins "Type":$type);
+  let parameters = (ins "Type":$basetype);
   let mnemonic = "Gradient";
-  let assemblyFormat = "`<` $type `>`";
+  let assemblyFormat = "`<` $basetype `>`";
 }
 
 #endif // ENZYME_OPS

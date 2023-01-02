@@ -26,6 +26,7 @@ public:
   bool AtomicAdd;
   DerivativeMode mode;
   BlockAndValueMapping invertedPointers;
+  BlockAndValueMapping invertedPointersGlobal;
   DenseMap<Value, SmallVector<mlir::Value, 4>> invertedPointersReverse;
   Block *initializationBlock;
 
@@ -69,15 +70,17 @@ public:
   }
   bool isConstantValue(mlir::Value v) const;
   bool hasInvertPointer(mlir::Value v);
-  mlir::Value invertPointerM(mlir::Value v, OpBuilder &Builder2);
-  mlir::Value invertPointerReverseM(Value v, Block * askingOp);
-  Optional<mlir::Value> invertPointerReverseMOptional(Value v, Block * askingOp);
-  void mapInvertPointer(mlir::Value v, mlir::Value invertValue);
+  mlir::Value invertPointerM(mlir::Value v, OpBuilder &builder);
+  void mapInvertPointer(mlir::Value v, mlir::Value invertValue, OpBuilder &builder);
   void setDiffe(mlir::Value val, mlir::Value toset, OpBuilder &BuilderM);
-  void forceAugmentedReturns();
   void forceAugmentedReturnsReverse();
+  Value insertInitBackwardCache(Type t);
+  Value insertInitGradient(mlir::Value v);
+  Type getIndexCacheType();
+  Type getCacheType(Type t);
+  Type getGradientType(Value t);
 
-  Block * insertInitializationBlock();
+  void insertInitializationBlock();
 
   Operation *cloneWithNewOperands(OpBuilder &B, Operation *op);
   

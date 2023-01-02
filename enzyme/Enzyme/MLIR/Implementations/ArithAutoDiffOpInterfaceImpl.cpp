@@ -142,18 +142,8 @@ struct AddFOpInterfaceReverse : public AutoDiffOpInterfaceReverse::ExternalModel
     if(gutils->hasInvertPointer(addOp)){
       for (int i = 0; i < 2; i++) {
         if (!gutils->isConstantValue(addOp.getOperand(i))) {
-          Block * insertionBlock = builder.getInsertionBlock();
-          Value own_gradient = gutils->invertPointerReverseM(addOp, insertionBlock);
-          
-          if(gutils->hasInvertPointer(addOp.getOperand(i))){
-            Value other_gradient = gutils->invertPointerReverseM(addOp.getOperand(i), insertionBlock);
-              
-            Value tmp = builder.create<arith::AddFOp>(addOp.getLoc(), own_gradient, other_gradient);
-            gutils->mapInvertPointer(addOp.getOperand(i), tmp);
-          }
-          else{
-            gutils->mapInvertPointer(addOp.getOperand(i), own_gradient);
-          }
+          Value own_gradient = gutils->invertPointerM(addOp, builder);
+          gutils->mapInvertPointer(addOp.getOperand(i), own_gradient, builder);
         }
       }
       //auto x = builder.create<enzyme::CreateCacheOp>(addOp.getLoc(), builder.getF64Type());
