@@ -75,6 +75,7 @@ public:
   Value insertInitBackwardCache(Type t);
   Value insertInitGradient(mlir::Value v);
   Type getIndexCacheType();
+  Type getIndexType();
   Type getCacheType(Type t);
   Type getGradientType(Value t);
 

@@ -75,8 +75,12 @@ bool onlyUsedInParentBlock(Value v){
 }
 
 Type mlir::enzyme::MGradientUtilsReverse::getIndexCacheType(){
-  Type indexType = mlir::IntegerType::get(initializationBlock->begin()->getContext(), 32);
+  Type indexType = getIndexType();
   return getCacheType(indexType);
+}
+
+Type mlir::enzyme::MGradientUtilsReverse::getIndexType(){
+  return mlir::IntegerType::get(initializationBlock->begin()->getContext(), 32);
 }
 
 Type mlir::enzyme::MGradientUtilsReverse::getCacheType(Type t){
@@ -201,40 +205,6 @@ bool mlir::enzyme::MGradientUtilsReverse::hasInvertPointer(mlir::Value v){
 
 void mlir::enzyme::MGradientUtilsReverse::forceAugmentedReturnsReverse() {
   assert(mode == DerivativeMode::ReverseModeGradient);
-
-  oldFunc.walk([&](Block *blk) {
-    if (blk == &oldFunc.getBody().getBlocks().front())
-      return;
-    auto nblk = getNewFromOriginal(blk);
-    for (auto val : llvm::reverse(blk->getArguments())) {
-      if (isConstantValue(val))
-        continue;
-      auto i = val.getArgNumber();
-      mlir::Value dval;
-      if (i == blk->getArguments().size() - 1){
-        dval = nblk->addArgument(getShadowType(val.getType()), val.getLoc());
-      }
-      else{
-        dval = nblk->insertArgument(nblk->args_begin() + i + 1, getShadowType(val.getType()), val.getLoc());
-      }
-
-      OpBuilder builder = OpBuilder(nblk, nblk->begin());
-      mapInvertPointer(val, dval, builder);
-    }
-  });
-
-  int index = oldFunc.getNumArguments() - 1;
-  auto argument = oldFunc.getArgument(index);
-  oldFunc.walk([&](Block *blk) {
-    auto terminator = blk->getTerminator();
-    if (terminator->hasTrait<OpTrait::ReturnLike>()) {
-      auto nblk = getNewFromOriginal(blk);
-      
-      OpBuilder builder = OpBuilder(nblk, nblk->begin());
-      Value newArgument = getNewFromOriginal(argument);
-      mapInvertPointer(terminator->getOperand(0), newArgument, builder);
-    }
-  });
 }
 
 LogicalResult MGradientUtilsReverse::visitChildReverse(Operation *op, OpBuilder &builder) {
@@ -282,8 +252,8 @@ std::pair<BlockAndValueMapping, DenseMap<Block *, SmallVector<Value>>> createRev
       for (int i = 0; i < term->getNumSuccessors(); i++){
         SuccessorOperands sOps = brOp.getSuccessorOperands(i);
         for (int j = 0; j < sOps.size(); j++){
-          if (valueToIndex.count(sOps[i]) == 0){
-            valueToIndex[sOps[i]] = index;
+          if (valueToIndex.count(sOps[j]) == 0){
+            valueToIndex[sOps[j]] = index;
             index++;
           }
         }
@@ -355,11 +325,13 @@ MDiffeGradientUtilsReverse * MDiffeGradientUtilsReverse::CreateFromClone(MEnzyme
         prefix + todiff.getName(), originalToNew, originalToNewOps,
         diffeReturnArg, additionalArg);
 
+
     auto reverseModeBlockMapPair = createReverseModeBlocks(todiff, newFunc);
     BlockAndValueMapping mapReverseModeBlocks = reverseModeBlockMapPair.first;
     DenseMap<Block *, SmallVector<Value>> mapBlockArguments = reverseModeBlockMapPair.second;
 
     MTypeResults TR; // TODO
+
     return new MDiffeGradientUtilsReverse(
         Logic, newFunc, todiff, TA, TR, invertedPointers, constant_values, nonconstant_values, retType, constant_args, originalToNew, originalToNewOps, mode, width, mapReverseModeBlocks, mapBlockArguments);
   }

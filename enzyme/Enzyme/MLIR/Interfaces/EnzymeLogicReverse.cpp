@@ -142,7 +142,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
       }
       else{
         Value cache = gutils->insertInitBackwardCache(gutils->getIndexCacheType());
-        Value flag = revBuilder.create<enzyme::PopCacheOp>(oBB.rbegin()->getLoc(), gutils->getIndexCacheType(), cache);
+        Value flag = revBuilder.create<enzyme::PopCacheOp>(oBB.rbegin()->getLoc(), gutils->getIndexType(), cache);
         SmallVector<Block *> blocks;
         SmallVector<APInt> indices;
         SmallVector<ValueRange> arguments;

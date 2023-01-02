@@ -73,13 +73,6 @@ mlir::FunctionType getFunctionTypeForClone(
   return builder.getFunctionType(ArgTypes, RetTypes);
 }
 
-void cloneInto(Region *src, Region *dest, Region::iterator destPos,
-               BlockAndValueMapping &mapper,
-               std::map<Operation *, Operation *> &opMap);
-void cloneInto(Region *src, Region *dest, BlockAndValueMapping &mapper,
-               std::map<Operation *, Operation *> &opMap) {
-  cloneInto(src, dest, dest->end(), mapper, opMap);
-}
 Operation *clone(Operation *src, BlockAndValueMapping &mapper,
                  Operation::CloneOptions options,
                  std::map<Operation *, Operation *> &opMap) {
@@ -116,10 +109,13 @@ Operation *clone(Operation *src, BlockAndValueMapping &mapper,
   opMap[src] = newOp;
   return newOp;
 }
+
+void cloneInto(Region *src, Region *dest, BlockAndValueMapping &mapper, std::map<Operation *, Operation *> &opMap) {
+  cloneInto(src, dest, dest->end(), mapper, opMap);
+}
+
 /// Clone this region into 'dest' before the given position in 'dest'.
-void cloneInto(Region *src, Region *dest, Region::iterator destPos,
-               BlockAndValueMapping &mapper,
-               std::map<Operation *, Operation *> &opMap) {
+void cloneInto(Region *src, Region *dest, Region::iterator destPos, BlockAndValueMapping &mapper, std::map<Operation *, Operation *> &opMap) {
   assert(src);
   assert(dest && "expected valid region to clone into");
   assert(src != dest && "cannot clone region into itself");
@@ -152,12 +148,15 @@ void cloneInto(Region *src, Region *dest, Region::iterator destPos,
         if (!mapper.contains(arg))
           mapper.map(arg, newBlock->addArgument(arg.getType(), arg.getLoc()));
     }
+    else{
+      for (auto arg : block.getArguments())
+        mapper.map(arg, newBlock->addArgument(arg.getType(), arg.getLoc()));
+    }
 
     dest->getBlocks().insert(destPos, newBlock);
   }
 
-  auto newBlocksRange =
-      llvm::make_range(Region::iterator(mapper.lookup(&src->front())), destPos);
+  auto newBlocksRange = llvm::make_range(Region::iterator(mapper.lookup(&src->front())), destPos);
 
   // Now follow up with creating the operations, but don't yet clone their
   // regions, nor set their operands. Setting the successors is safe as all have
@@ -165,8 +164,7 @@ void cloneInto(Region *src, Region *dest, Region::iterator destPos,
   // to be able to map them.
   // Cloning the operands and region as well would lead to uses of operations
   // not yet mapped.
-  auto cloneOptions =
-      Operation::CloneOptions::all().cloneRegions(false).cloneOperands(false);
+  auto cloneOptions = Operation::CloneOptions::all().cloneRegions(false).cloneOperands(false);
   for (auto zippedBlocks : llvm::zip(*src, newBlocksRange)) {
     Block &sourceBlock = std::get<0>(zippedBlocks);
     Block &clonedBlock = std::get<1>(zippedBlocks);
