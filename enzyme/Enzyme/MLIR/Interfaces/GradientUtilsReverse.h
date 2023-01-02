@@ -51,6 +51,7 @@ public:
                 FunctionOpInterface oldFunc_, 
                 MTypeAnalysis &TA_,
                 MTypeResults TR_, 
+                BlockAndValueMapping invertedPointers_,
                 const SmallPtrSetImpl<mlir::Value> &constantvalues_,
                 const SmallPtrSetImpl<mlir::Value> &activevals_,
                 DIFFE_TYPE ReturnActivity, 
@@ -77,7 +78,7 @@ public:
   Type getCacheType(Type t);
   Type getGradientType(Value t);
 
-  void initInitializationBlock();
+  void initInitializationBlock(BlockAndValueMapping invertedPointers_);
 
   Operation *cloneWithNewOperands(OpBuilder &B, Operation *op);
   
@@ -91,6 +92,7 @@ public:
                       FunctionOpInterface oldFunc_, 
                       MTypeAnalysis &TA,
                       MTypeResults TR, 
+                      BlockAndValueMapping invertedPointers_,
                       const SmallPtrSetImpl<mlir::Value> &constantvalues_,
                       const SmallPtrSetImpl<mlir::Value> &returnvals_,
                       DIFFE_TYPE ActiveReturn,
