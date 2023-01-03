@@ -10,6 +10,7 @@
 
 // TODO: this shouldn't depend on specific dialects except Enzyme.
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -126,8 +127,15 @@ void handlePredecessors(Block * oBB, Block * reverseBB, MDiffeGradientUtilsRever
     }
     else{
       revBuilder.create<cf::SwitchOp>(oBB->rbegin()->getLoc(), flag, defaultBlock, defaultArguments, ArrayRef<APInt>(indices), ArrayRef<Block *>(blocks), ArrayRef<ValueRange>(arguments));
+      
+      int j = 0;
+      for (Block * predecessor : oBB->getPredecessors()){
+        Block * newPredecessor = gutils->getNewFromOriginal(predecessor);
+        OpBuilder predecessorBuilder(newPredecessor, std::prev(newPredecessor->end()));
 
-
+        Value indicator = predecessorBuilder.create<arith::ConstantIntOp>(oBB->rbegin()->getLoc(), j++, 32);
+        predecessorBuilder.create<enzyme::PushCacheOp>(oBB->rbegin()->getLoc(), cache, indicator);
+      }
     }
   }
 }

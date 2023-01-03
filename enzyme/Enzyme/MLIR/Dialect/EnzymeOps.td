@@ -71,7 +71,7 @@ def ReverseDiffOp : Enzyme_Op<"diff",
 def PushCacheOp : Enzyme_Op<"push"> {
   let summary = "Store information for the reverse mode pass.";
   let arguments = (ins AnyType : $cache, AnyType : $value);
-  let results = (outs AnyType:$output);
+  let results = (outs );
 }
 
 def PopCacheOp : Enzyme_Op<"pop"> {
