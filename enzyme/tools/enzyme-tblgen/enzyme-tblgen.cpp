@@ -86,9 +86,9 @@ void emit_castvals(TGPattern &pattern, raw_ostream &os) {
     auto name = nameVec[argIdx];
     os 
 << "  if (auto PT = dyn_cast<PointerType>(type_" << name << "))\n"
-<< "    castvals[" << argIdx << "] = PT;\n"
+<< "    castvals[" << i << "] = PT;\n"
 << "  else\n"
-<< "    castvals[" << argIdx << "] = PointerType::getUnqual(fpType);\n";
+<< "    castvals[" << i << "] = PointerType::getUnqual(fpType);\n";
   }
   os 
 << "  Value *cacheval;\n\n"
@@ -167,28 +167,24 @@ std::vector<size_t> getPossiblyActiveArgs(Record *pattern) {
 #include "llvm/IR/Type.h"
 
 
-void emit_free_and_ending(Record *pattern, std::vector<size_t> actArgs,
-                  raw_ostream &os) {
+void emit_free_and_ending(TGPattern &pattern, raw_ostream &os) {
     os
 << "  if (Mode == DerivativeMode::ReverseModeCombined ||\n"
 << "      Mode == DerivativeMode::ReverseModeGradient ||\n"
 << "      Mode == DerivativeMode::ForwardModeSplit) {\n"
 << "    if (shouldFree()) {\n";
-  size_t argPosition = 0;
-  std::vector<Record *> inputTypes =
-      pattern->getValueAsListOfDefs("inputTypes");
-  DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
-  for (auto inputType : inputTypes) {
-    if (inputType->getName() == "vinc") {
-      auto name = argOps->getArgNameStr(argPosition);
-      os
+
+    auto nameVec = pattern.getArgNames();
+    auto typeMap = pattern.getArgTypeMap();
+    for (size_t i = 0; i < nameVec.size(); i++) {
+      if (typeMap.lookup(i) == argType::vincData) {
+        auto name = nameVec[i];
+        os
 << "      if (cache_" << name << ") {\n"
 << "        CreateDealloc(Builder2, data_ptr_" << name << ");\n"
 << "      }\n";
+      }
     }
-    argPosition += inputType->getValueAsInt("nelem");
-
-  }
   os
 << "    }\n"
 << "  }\n"
@@ -469,31 +465,33 @@ void emit_helper(TGPattern &pattern, raw_ostream &os) {
   PrintFatalError("Blas function without vector?");
 }
 
-llvm::SmallString<80> ValueType_helper(DagInit *argOps, 
-    llvm::DenseMap<StringRef, StringRef> typeOfArgName, size_t actPos) {
+llvm::SmallString<80> ValueType_helper(TGPattern &pattern, size_t actPos) {
+  auto nameVec = pattern.getArgNames();
+  auto typeMap = pattern.getArgTypeMap();
   llvm::SmallString<80> valueTypes{};
-  for (size_t pos = 0; pos < argOps->getNumArgs();) {
-    auto name = argOps->getArgNameStr(pos);
-    auto typeName = typeOfArgName.lookup(name);
+
+  for (size_t pos = 0; pos < nameVec.size();) {
+    auto name = nameVec[pos];
+    auto type = typeMap.lookup(pos);
     
     if (pos > 0) {
       valueTypes.append(", ");
     }
 
-    if (typeName == "len") {
+    if (type == argType::len) {
       valueTypes.append("ValueType::None");
-    } else if (typeName == "fp") {
-      auto floatName = argOps->getArgNameStr(pos);
+    } else if (type == argType::fp) {
+      auto floatName = nameVec[pos];
       if (pos == actPos) {
         valueTypes.append("ValueType::Shadow");
       } else {
         valueTypes.append((Twine("cache_") + floatName + " ? ValueType::None : ValueType::Primal").str());
       }
-    } else if (typeName == "vincData") {
-      auto nextName = argOps->getArgNameStr(pos + 1);
-      auto nextTypeName = typeOfArgName.lookup(nextName);
-      assert(nextTypeName == "vincInc");
-      auto vecName = argOps->getArgNameStr(pos);
+    } else if (type == argType::vincData) {
+      auto nextName = nameVec[pos + 1];
+      auto nextType = typeMap.lookup(pos + 1);
+      assert(nextType == argType::vincInc);
+      auto vecName = nameVec[pos];
       if (pos == actPos) {
         valueTypes.append("ValueType::Shadow, ValueType::None");
       } else {
@@ -501,23 +499,85 @@ llvm::SmallString<80> ValueType_helper(DagInit *argOps,
       }
       pos++; // extra inc, since vector cover two args
     } else {
-      llvm::errs() << typeName << "\n";
-      PrintFatalError("Unknown type!");
+      llvm::errs() << "type: " << type << "\n";
+      PrintFatalError("Unhandled type!");
     }
     pos++;
   }
   return valueTypes;
 }
 
-llvm::SmallString<40> call_arg_helper(DagInit *argOps,
-    llvm::DenseMap<StringRef, StringRef> typeOfArgName, llvm::StringRef actArg) {
-  llvm::SmallString<40> result{};
-  for (size_t pos = 0; pos < argOps->getNumArgs();) {
+
+// TODO: think about how to handle nested rules which aren't simple calling another BLAS fnc.
+
+size_t pattern_call_args(TGPattern &pattern, size_t actArg, llvm::SmallString<40> &result) {
+  auto nameVec = pattern.getArgNames();
+  auto nameMap = pattern.getArgNameMap();
+  auto typeMap = pattern.getArgTypeMap();
+
+  // just replace argOps with rule
+  for (size_t pos = 0; pos < nameVec.size();) {
     if (pos > 0) {
       result.append(", ");
     }
 
-    auto arg = argOps->getArg(pos);
+    auto name = nameVec[pos];
+    // get the position of the argument in the primary blas call
+    assert(typeMap.count(pos) == 1);
+    // and based on that get the fp/int + scalar/vector type
+    auto typeOfArg = typeMap.lookup(pos);
+    if (typeOfArg == argType::len) {
+      PrintNote("call_arg_helper_len. Pos: " + std::to_string(pos) + ", name: " + name + ", argPosition: "+ std::to_string(pos));
+      auto out = (Twine("len_") + name).str();
+      result.append((Twine("len_") + name).str());
+    } else if (typeOfArg == argType::fp) {
+      PrintNote("call_arg_helper_fp. Pos: " + std::to_string(pos) + ", name: " + name + ", argPosition: "+ std::to_string(pos));
+      if (pos == actArg) {
+        result.append((Twine("d_") + name).str());
+      } else {
+        result.append((Twine("fp_") + name).str());
+      }
+    } else if (typeOfArg == argType::vincData) {
+      auto nextName = nameVec[pos+1];
+      // get the position of the argument in the primary blas call
+      auto nextArgPosition = nameMap.lookup(nextName);
+      // and based on that get the fp/int + scalar/vector type
+      auto typeOfNextArg = typeMap.lookup(nextArgPosition);
+      assert(typeOfNextArg == argType::vincInc);
+      if (pos == actArg) {
+        result.append((Twine("d_") + name + ", true_" + nextName).str());
+      } else {
+        result.append((Twine("data_") + name + ", " + nextName).str());
+      }
+      pos++; // extra ++ due to also handling vincInc
+    } else if (typeOfArg == argType::vincInc) {
+      PrintNote("call_arg_helper_vincInc. Pos: " + std::to_string(pos) + ", name: " + name + ", argPosition: "+ std::to_string(pos));
+      // might come without vincData, e.g. after DiffeRet
+      result.append(name);
+    } else {
+      llvm::errs() << "name: " << name << " typename: " << typeOfArg << "\n";
+      llvm_unreachable("unimplemented input type!");
+    }
+    pos++;
+  }
+
+  return nameVec.size(); 
+}
+size_t rule_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
+
+  auto nameMap = rule.getArgNameMap();
+  auto typeMap = rule.getArgTypeMap();
+  auto ruleDag = rule.getRuleDag();
+  size_t numArgs = ruleDag->getNumArgs();
+
+  // just replace argOps with rule
+  for (size_t pos = 0; pos < ruleDag->getNumArgs();) {
+    if (pos > 0) {
+      result.append(", ");
+    }
+
+    auto arg = ruleDag->getArg(pos);
+    PrintNote("call_arg_helper: " + ruleDag->getArgNameStr(pos));
     if (DefInit *DefArg = dyn_cast<DefInit>(arg)) {
       auto Def = DefArg->getDef();
       if (Def->isSubClassOf("DiffeRet")) {
@@ -534,64 +594,78 @@ llvm::SmallString<40> call_arg_helper(DagInit *argOps,
         llvm::errs() << "MagicInst\n";
       } else if (Def->isSubClassOf("Constant")) {
         auto val = Def->getValueAsString("value");
-        //result.append((Twine("ConstantFP::get(innerType, ") + val + ")").str());
         result.append((Twine("ConstantFP::get(fpType, ") + val + ")").str());
       } else {
         llvm::errs() << Def->getName() << "\n";
         PrintFatalError("Def that isn't a DiffeRet!");
       }
     } else {
-      auto name = argOps->getArgNameStr(pos);
-      auto typeName = typeOfArgName.lookup(name);
-      if (typeName == "len") {
+      auto name = ruleDag->getArgNameStr(pos);
+      // get the position of the argument in the primary blas call
+      assert(nameMap.count(name) == 1);
+      auto argPosition = nameMap.lookup(name);
+      // and based on that get the fp/int + scalar/vector type
+      auto typeOfArg = typeMap.lookup(argPosition);
+      if (typeOfArg == argType::len) {
+        PrintNote("call_arg_helper_len. Pos: " + std::to_string(pos) + ", name: " + name + ", argPosition: "+ std::to_string(argPosition));
         auto out = (Twine("len_") + name).str();
         result.append((Twine("len_") + name).str());
-      } else if (typeName == "fp") {
-        if (name == actArg) {
+      } else if (typeOfArg == argType::fp) {
+        PrintNote("call_arg_helper_fp. Pos: " + std::to_string(pos) + ", name: " + name + ", argPosition: "+ std::to_string(argPosition));
+        if (argPosition == actArg) {
           result.append((Twine("d_") + name).str());
         } else {
           result.append((Twine("fp_") + name).str());
         }
-      } else if (typeName == "vincData") {
-        auto nextName = argOps->getArgNameStr(pos+1);
-        auto nextType = typeOfArgName.lookup(nextName);
-        assert(nextType == "vincInc");
-        if (name == actArg) {
+      } else if (typeOfArg == argType::vincData) {
+        auto nextName = ruleDag->getArgNameStr(pos+1);
+        // get the position of the argument in the primary blas call
+        auto nextArgPosition = nameMap.lookup(nextName);
+        // and based on that get the fp/int + scalar/vector type
+        auto typeOfNextArg = typeMap.lookup(nextArgPosition);
+        assert(typeOfNextArg == argType::vincInc);
+        if (argPosition == actArg) {
           result.append((Twine("d_") + name + ", true_" + nextName).str());
         } else {
           result.append((Twine("data_") + name + ", " + nextName).str());
         }
         pos++; // extra ++ due to also handling vincInc
-      } else if (typeName == "vincInc") {
+      } else if (typeOfArg == argType::vincInc) {
+        PrintNote("call_arg_helper_vincInc. Pos: " + std::to_string(pos) + ", name: " + name + ", argPosition: "+ std::to_string(argPosition));
         // might come without vincData, e.g. after DiffeRet
         result.append(name);
       } else {
-        llvm::errs() << "name: " << name << " typename: " << typeName << "\n";
+        llvm::errs() << "name: " << name << " typename: " << typeOfArg << "\n";
         llvm_unreachable("unimplemented input type!");
       }
     }
     pos++;
   }
 
-  return result;
+  return numArgs; 
 }
 
-void emit_deriv_fnc(DagInit *resultTree, const llvm::DenseMap<StringRef, StringRef> typeOfArgName,
-    llvm::StringSet<> &handled, const llvm::StringMap<llvm::SmallSet<size_t, 3>> mutables, raw_ostream &os) {
-  auto opName = resultTree->getOperator()->getAsString();
-  auto Def = cast<DefInit>(resultTree->getOperator())->getDef();
+//void emit_deriv_fnc(DagInit *resultTree, const llvm::DenseMap<StringRef, StringRef> typeOfArgName,
+//    llvm::StringSet<> &handled, const llvm::StringMap<llvm::SmallSet<size_t, 3>> mutables, raw_ostream &os) {
+void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule, llvm::StringSet<> &handled, raw_ostream &os) {
+  auto ruleDag = rule.getRuleDag();
+  auto typeMap = rule.getArgTypeMap();
+  auto opName = ruleDag->getOperator()->getAsString();
+  auto nameMap = rule.getArgNameMap();
+  auto Def = cast<DefInit>(ruleDag->getOperator())->getDef();
   if (Def->isSubClassOf("b")) {
     auto dfnc_name = Def->getValueAsString("s");
-    llvm::SmallSet<size_t, 3> mutableArgs{};
-    if (mutables.find(dfnc_name.str()) == mutables.end()) {
+    if (patternMap.find(dfnc_name.str()) == patternMap.end()) {
       PrintFatalError("calling unknown Blas function");
-    } else {
-      mutableArgs = mutables.lookup(dfnc_name.str());
     }
+    TGPattern calledPattern = patternMap.find(dfnc_name.str())->getValue();
+    DenseSet<size_t> mutableArgs = calledPattern.getMutableArgs();
+    
     if (handled.find(dfnc_name) != handled.end())
       return;
     else 
       handled.insert(dfnc_name);
+
     auto retTy = "Builder2.getVoidTy()";
     // TODO: add this to .td file and generate it based on that
     if (dfnc_name == "dot" || dfnc_name == "asum") {
@@ -603,8 +677,8 @@ void emit_deriv_fnc(DagInit *resultTree, const llvm::DenseMap<StringRef, StringR
       // insert arg types based on .td file 
       bool first = true;
       std::vector<StringRef> usedArgStrs{};
-      for (size_t i = 0; i < resultTree->getNumArgs(); i++) {
-        Init* subArg = resultTree->getArg(i);
+      for (size_t i = 0; i < ruleDag->getNumArgs(); i++) {
+        Init* subArg = ruleDag->getArg(i);
         if (DefInit *def = dyn_cast<DefInit>(subArg)) {
           auto Def = def->getDef();
           usedArgStrs.push_back(""); // no need to process later
@@ -613,7 +687,8 @@ void emit_deriv_fnc(DagInit *resultTree, const llvm::DenseMap<StringRef, StringR
             typeToAdd = "byRef ? PointerType::getUnqual(call.getType()) : call.getType()\n";
           } else if (Def->isSubClassOf("input")) {
             auto argStr = Def->getValueAsString("name");
-            llvm::errs() << argStr << " : argStr: " << mutables.count(argStr) << "\n";
+            size_t argPos = nameMap.lookup(argStr);
+            llvm::errs() << argStr << " : argStr: " << mutableArgs.count(argPos) << "\n";
             //assert(mutableArgs.count(i) == 1);
             // primary and adj have the same type
             typeToAdd = (Twine("type_") + argStr).str();
@@ -632,7 +707,7 @@ void emit_deriv_fnc(DagInit *resultTree, const llvm::DenseMap<StringRef, StringR
           os
 << ((first) ? "" : ", ") << typeToAdd;
         } else {
-          auto argStr = resultTree->getArgNameStr(i);
+          auto argStr = ruleDag->getArgNameStr(i);
           os 
 << ((first) ? "" : ", ") << "type_" << argStr; 
           usedArgStrs.push_back(argStr);
@@ -655,9 +730,8 @@ void emit_deriv_fnc(DagInit *resultTree, const llvm::DenseMap<StringRef, StringR
 << "      F->addFnAttr(Attribute::ArgMemOnly);\n"
 << "      if (byRef) {\n";
   for (size_t argPos = 0; argPos < usedArgStrs.size(); argPos++) {
-    StringRef argName = usedArgStrs[argPos];
-    auto argType = typeOfArgName.lookup(argName);
-    if (argType == "len" || argType == "vincInc") {
+    auto typeOfArg = typeMap.lookup(argPos);
+    if (typeOfArg == argType::len || typeOfArg == argType::vincInc) {
       os 
 << "        F->addParamAttr(" << argPos << ", Attribute::ReadOnly);\n"
 << "        F->addParamAttr(" << argPos << ", Attribute::NoCapture);\n";
@@ -669,9 +743,8 @@ void emit_deriv_fnc(DagInit *resultTree, const llvm::DenseMap<StringRef, StringR
 << "      //  so LLVM won't let us add these Attributes.\n"
 << "      if (!julia_decl) {\n";
   for (size_t argPos = 0; argPos < usedArgStrs.size(); argPos++) {
-    StringRef argName = usedArgStrs[argPos];
-    auto argType = typeOfArgName.lookup(argName);
-    if (argType == "vincData") {
+    auto typeOfArg = typeMap.lookup(argPos);
+    if (typeOfArg == argType::vincData) {
       os 
 << "        F->addParamAttr(" << argPos << ", Attribute::NoCapture);\n";
         if (mutableArgs.count(argPos) == 0) {
@@ -696,19 +769,22 @@ void emit_deriv_fnc(DagInit *resultTree, const llvm::DenseMap<StringRef, StringR
   }
 }
 
-void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef> typeOfArgName,
-    std::vector<size_t> actArgs, llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, 
-    llvm::StringMap<llvm::SmallSet<size_t, 3>> mutables, raw_ostream &os) {
+void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern, raw_ostream &os) {
 
-  ListInit *derivOps = pattern->getValueAsListInit("ArgDerivatives"); // correct
-  DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
-  std::vector<Record *> inputTypes = pattern->getValueAsListOfDefs("inputTypes");
+  auto nameVec = pattern.getArgNames();
+  auto typeMap = pattern.getArgTypeMap();
+  auto rules   = pattern.getRules();
+  auto activeArgs = pattern.getActiveArgs();
+
+  //ListInit *derivOps = pattern->getValueAsListInit("ArgDerivatives"); // correct
+  //DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
+  //std::vector<Record *> inputTypes = pattern->getValueAsListOfDefs("inputTypes");
   
   // If any of the rule uses DiffeRet, the primary function has a ret val 
   // and we should emit the code for handling it.
   bool hasDiffeRetVal = false;
-  for (auto derivOp : *derivOps) {
-    DagInit *resultRoot = cast<DagInit>(derivOp); // correct
+  for (auto derivOp : rules) {
+    DagInit *resultRoot = derivOp.getRuleDag(); // correct
     for (size_t pos = 0; pos < resultRoot->getNumArgs(); pos++) {
       Init *arg = resultRoot->getArg(pos);
       if (DefInit *DefArg = dyn_cast<DefInit>(arg)) {
@@ -730,15 +806,13 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
       hasDiffeRetVal |= hasDiffeRet(arg);
     }
   }
-  llvm::errs() << "\n\n" << pattern->getName() << hasDiffeRetVal << "\n\n";
+  llvm::errs() << "\n\n" << pattern.getName() << hasDiffeRetVal << "\n\n";
 
   os 
 << "  /* rev-rewrite */                                 \n"
 << "  if (Mode == DerivativeMode::ReverseModeCombined ||\n"
 << "      Mode == DerivativeMode::ReverseModeGradient) {\n"
 << "    Value *alloc = nullptr;\n"
-//<< "    std::vector<Type *> init_tmp(num_active_fp, fpType);\n"
-//<< "    Value *fp_struct_return = UndefValue::get(StructType::get(call.getContext(), init_tmp));\n"
 << "    if (byRef) {\n"
 << "      alloc = allocationBuilder.CreateAlloca(fpType);\n"
 << "    }\n\n";
@@ -752,28 +826,23 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
 //<< "    Value *adj_" << name << " = lookup(gutils->invertPointerM(call.getArgOperand(arg_" << name << "), Builder2))\n";
 
   llvm::StringSet handled{}; // We only emit one derivcall per blass call type
-  for (auto derivOp : *derivOps) {
-    DagInit *resultTree = cast<DagInit>(derivOp); // correct
-    emit_deriv_fnc(resultTree, typeOfArgName, handled, mutables, os);
+  for (auto rule : rules) {
+    emit_deriv_fnc(patternMap, rule, handled, os);
   }
  
-  auto argPosition = 0;
-  for (auto inputType : inputTypes) {
-    auto typeName = inputType->getName();
-    if (typeName == "vinc") {
-      auto name = argOps->getArgNameStr(argPosition);
+  for (size_t i = 0; i < nameVec.size(); i++) {
+    auto name = nameVec[i];
+    auto typeOfArg = typeMap.lookup(i);
+    if (typeOfArg == argType::vincData) {
   os
 << "    Value *d_" << name << " = active_" << name << "\n"
 << "     ? lookup(gutils->invertPointerM(arg_" << name << ", Builder2), Builder2)\n"
 << "     : nullptr;\n";
     }
-    if (typeName == "fp") {
-      auto name = argOps->getArgNameStr(argPosition);
+    else if (typeOfArg == argType::fp) {
   os
 << "    Value *d_" << name << " = UndefValue::get(fpType);\n";
-//<< "    Value *d_" << name << " = llvm::ConstantFP::get(fpType, 0.0);\n";
     }
-    argPosition += inputType->getValueAsInt("nelem");
   }
 
   os 
@@ -781,15 +850,15 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
 << "      Builder2,\n"
 << "      [&](";
   bool first = true;
-  for (auto act : actArgs) {
-    auto actName = argOps->getArgNameStr(act);
-    auto actType = typeOfArgName.lookup(actName);
+  for (auto arg : activeArgs) {
+    auto name = nameVec[arg];
+    auto typeOfArg = typeMap.lookup(arg);
     // We don't pass in shaddows of fp values, 
     // we just create and struct-return the shaddows
-    if (actType == "fp")
+    if (typeOfArg == argType::fp)
       continue;
     os 
-<< ((first) ? "" : ", ") << "Value *" << "d_" + actName;
+<< ((first) ? "" : ", ") << "Value *" << "d_" + name;
     first = false;
   }
 
@@ -807,26 +876,27 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
 << "        unsigned int idx = 0;\n";
   }
 
-  for (size_t i = 0; i < derivOps->size(); i++) {
-    auto actArg = actArgs[i];
-    auto actName = argOps->getArgNameStr(actArg);
-    auto actType = typeOfArgName.lookup(actName);
-    auto derivOp = derivOps->getElement(i);
-    DagInit *resultTree = cast<DagInit>(derivOp);
-    auto args = call_arg_helper(resultTree, typeOfArgName, actName);
-    auto valueTypes = ValueType_helper(argOps, typeOfArgName, actArg);
-    auto opName = resultTree->getOperator()->getAsString();
-    auto Def = cast<DefInit>(resultTree->getOperator())->getDef();
+  for (Rule rule : rules) {
+    size_t actArg = rule.getHandledArgIdx();
+    auto ruleDag = rule.getRuleDag();
+    auto name = nameVec[actArg];
+    auto nameMap = rule.getArgNameMap();
+    auto typeOfArg = typeMap.lookup(actArg);
+    auto args = llvm::SmallString<40>();
+    size_t numArgs = rule_call_args(rule, actArg, args);
+    auto valueTypes = ValueType_helper(pattern, actArg);
+    auto opName = ruleDag->getOperator()->getAsString();
+    auto Def = cast<DefInit>(ruleDag->getOperator())->getDef();
     if (Def->isSubClassOf("DiffeRet")) {
       os
-<< "      if (active_" << actName << ") {\n"
+<< "      if (active_" << name << ") {\n"
 << "        Value *toadd = dif;\n"
-<< "        addToDiffe(arg_" << actName <<", toadd, Builder2, type_" << actName << ");\n"
+<< "        addToDiffe(arg_" << name <<", toadd, Builder2, type_" << name << ");\n"
 << "      }\n";
     } else if (Def->isSubClassOf("b")) {
-      auto actCondition = "active_" + actName.str();
-      for (size_t pos = 0; pos < resultTree->getNumArgs();) {
-        auto arg = resultTree->getArg(pos);
+      auto actCondition = "active_" + name;
+      for (size_t pos = 0; pos < ruleDag->getNumArgs();) {
+        auto arg = ruleDag->getArg(pos);
         if (DefInit *DefArg = dyn_cast<DefInit>(arg)) {
           auto Def = DefArg->getDef();
           if (Def->isSubClassOf("adj")) {
@@ -839,15 +909,15 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
       auto dfnc_name = Def->getValueAsString("s");
       os
 << "      if (" << actCondition << ") {\n"
-<< "        Value *args1[] = {" << args << "};\n"
+<< "        Value *args1[" << numArgs << "] = {" << args << "};\n"
 << "        auto Defs = gutils->getInvertedBundles(&call, {" << valueTypes << "}, Builder2, /* lookup */ true);\n";
 
-      if (actType == "fp") {
+      if (typeOfArg == argType::fp) {
         // extra handling, since we will update only a fp scalar as part of the return struct
         // it's presumably done by setting it to the value returned by this call
         os
 << "        CallInst *cubcall = cast<CallInst>(Builder2.CreateCall(derivcall_" << dfnc_name << ", args1, Defs));\n"
-<< "        addToDiffe(arg_" << actName << ", cubcall, Builder2, fpType);\n"
+<< "        addToDiffe(arg_" << name << ", cubcall, Builder2, fpType);\n"
 << "        idx++;\n"
 << "      }\n";
       } else {
@@ -868,14 +938,14 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
 << "    ";
 
   first = true;
-  for (auto act : actArgs) {
-    auto actName = argOps->getArgNameStr(act);
-    auto actType = typeOfArgName.lookup(actName);
+  for (auto arg : activeArgs) {
+    auto name = nameVec[arg];
+    auto typeOfArg = typeMap.lookup(arg);
     // We don't pass in shaddows of fp values, 
     // we just create and struct-return the shaddows
-    if (actType == "fp")
+    if (typeOfArg == argType::fp)
       continue;
-    os << ((first) ? "" : ", ") << "d_" + argOps->getArgNameStr(act);
+    os << ((first) ? "" : ", ") << "d_" + name;
     first = false;
   }
   if (hasDiffeRetVal) {
@@ -889,16 +959,12 @@ void emit_rev_rewrite_rules(Record *pattern, llvm::DenseMap<StringRef, StringRef
   } else {
   os
 << "  );\n"
-// new, test it? 
-//<< "  Builder2.CreateRet(fp_struct_return);\n"
 << "  }\n";
   }
 }
 
-void emit_fwd_rewrite_rules(const Record *pattern, 
-    const llvm::DenseMap<StringRef, StringRef> typeOfArgName, const std::vector<size_t> actArgs,
-    const llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, 
-                 raw_ostream &os) {
+void emit_fwd_rewrite_rules(TGPattern &pattern, raw_ostream &os) {
+  auto rules = pattern.getRules();
   os 
 << "  /* fwd-rewrite */                                 \n"
 << "  if (Mode == DerivativeMode::ForwardMode ||        \n"
@@ -910,28 +976,24 @@ void emit_fwd_rewrite_rules(const Record *pattern,
 << "    auto callval = call.getCalledValue();           \n"
 << "#endif                                            \n\n";
 
-  DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
-  std::vector<Record *> inputTypes =
-      pattern->getValueAsListOfDefs("inputTypes");
-  auto argPosition = 0;
+  auto nameVec = pattern.getArgNames();
+  auto inputTypes = pattern.getArgTypeMap();
+  auto activeArgs = pattern.getActiveArgs();
   for (auto inputType : inputTypes) {
-    auto typeName = inputType->getName();
-    //if (typeName == "vinc" || typeName == "fp") {
-    if (typeName == "vinc") {
-      auto name = argOps->getArgNameStr(argPosition);
+    if (inputType.second == argType::vincData) {
+      auto name = nameVec[inputType.first];
   os
 << "    Value *d_" << name << " = active_" << name << "\n"
 << "     ? gutils->invertPointerM(arg_" << name << ", Builder2)\n"
 << "     : nullptr;\n";
     }
-    if (typeName == "fp") {
-      auto name = argOps->getArgNameStr(argPosition);
+    if (inputType.second == argType::fp) {
+      auto name = nameVec[inputType.first];
   os
     // Done: revert Undef to ConstantFP
 //<< "    Value *d_" << name << " = UndefValue::get(fpType);\n";
 << "    Value *d_" << name << " = llvm::ConstantFP::get(fpType, 0.0);\n";
     }
-    argPosition += inputType->getValueAsInt("nelem");
   }
 
   os
@@ -939,8 +1001,8 @@ void emit_fwd_rewrite_rules(const Record *pattern,
 << "        call.getType(), Builder2,\n"
 << "        [&](";
   bool first = true;
-  for (auto act : actArgs) {
-    auto name = argOps->getArgNameStr(act);
+  for (auto activeArg : activeArgs) {
+    auto name = nameVec[activeArg];
     os 
 << ((first) ? "" : ", ") << "Value *d_" << name; 
     first = false;
@@ -949,18 +1011,20 @@ void emit_fwd_rewrite_rules(const Record *pattern,
 << "  ) {\n"
 << "      Value *dres = nullptr;\n";
 
-  
-  first = true;
-  for (auto act : actArgs) {
-    auto actName = argOps->getArgNameStr(act);
-    auto dcallArgs = call_arg_helper(argOps, typeOfArgName, actName);
-    auto valueTypes = ValueType_helper(argOps, typeOfArgName, act);
+ 
+  for (size_t i = 0; i < activeArgs.size(); i++) {
+    auto activeArg = activeArgs[i];
+    auto rule = rules[i];
+    auto actName = nameVec[activeArg];
+    auto dcallArgs = llvm::SmallString<40>();
+    size_t numArgs = pattern_call_args(pattern, activeArg, dcallArgs);
+    auto valueTypes = ValueType_helper(pattern, activeArg);
     os
 << "      if(active_" << actName << ") {\n"
-<< "        Value *args1[] = {" << dcallArgs << "};\n\n"
+<< "        Value *args1[" << numArgs << "] = {" << dcallArgs << "};\n\n"
 << "        auto Defs = gutils->getInvertedBundles(\n"
 << "          &call, {" << valueTypes << "}, Builder2, /* lookup */ false);\n";
-  if (first) {
+  if (i == 0) {
     os 
 << "#if LLVM_VERSION_MAJOR > 7\n"
 << "          dres = Builder2.CreateCall(call.getFunctionType(), callval, args1, Defs);\n"
@@ -982,7 +1046,6 @@ void emit_fwd_rewrite_rules(const Record *pattern,
   }
   os  
 << "      }\n";
-  first = false;
   }
   os 
 << "      return dres;\n"
@@ -990,9 +1053,9 @@ void emit_fwd_rewrite_rules(const Record *pattern,
 << "    ";
 
   first = true;
-  for (auto act : actArgs) {
+  for (auto activeArg : activeArgs) {
     os 
-<< ((first) ? "" : ", ") << "d_" + argOps->getArgNameStr(act);
+<< ((first) ? "" : ", ") << "d_" + nameVec[activeArg];
     first = false;
   }
   os 
@@ -1198,8 +1261,12 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
 
   // NEW //////////////////// 
   std::vector<TGPattern> newBlasPatterns{};
+  StringMap<TGPattern> patternMap;
   for (auto pattern : blasPatterns) {
+    auto parsedPattern = TGPattern(*pattern);
     newBlasPatterns.push_back(TGPattern(*pattern));
+    auto newEntry = std::pair<std::string, TGPattern>(parsedPattern.getName(), parsedPattern);
+    patternMap.insert(newEntry);
   }
 
 
@@ -1211,8 +1278,7 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
   emit_handleBLAS(newBlasPatterns, os);
   // emitEnumMatcher(blas_modes, os);
   
-
-  llvm::StringMap<llvm::SmallSet<size_t, 3>> mutables = getMutableArgs(blasPatterns);
+  //llvm::StringMap<llvm::SmallSet<size_t, 3>> mutables = getMutableArgs(blasPatterns);
   for (size_t i = 0; i < blasPatterns.size(); i++) {
   //for (auto pattern : blasPatterns) {
     auto pattern = blasPatterns[i];
@@ -1233,11 +1299,11 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
     emit_caching(pattern, posActArgs, argUsers, os);
     emit_extract_calls(pattern, posActArgs, argUsers, os);
 
-    emit_fwd_rewrite_rules(pattern, typeOfArgName, posActArgs, argUsers, os);
-    emit_rev_rewrite_rules(pattern, typeOfArgName, posActArgs, argUsers, mutables, os);
+    emit_fwd_rewrite_rules(newPattern, os);
+    emit_rev_rewrite_rules(patternMap, newPattern, os);
 
     // writeEnums(pattern, blas_modes, os);
-    emit_free_and_ending(pattern, posActArgs, os);
+    emit_free_and_ending(newPattern, os);
   }
 }
 
