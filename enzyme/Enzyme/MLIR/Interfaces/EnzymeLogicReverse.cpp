@@ -45,14 +45,15 @@ void mapInvertArguments(Block * oBB, Block * reverseBB, MDiffeGradientUtilsRever
 
 void handleReturns(Block * oBB, Block * newBB, Block * reverseBB, MDiffeGradientUtilsReverse * gutils){
   if (oBB->getNumSuccessors() == 0){
+    Operation * returnStatement = newBB->getTerminator();
+    gutils->erase(returnStatement);
+
     OpBuilder forwardToBackwardBuilder(newBB, newBB->end());
     gutils->mapInvertPointer(oBB->getTerminator()->getOperand(0), gutils->newFunc.getArgument(gutils->newFunc.getNumArguments() - 1), forwardToBackwardBuilder); //TODO handle multiple return values
-    Operation * newBranchOp = forwardToBackwardBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB->rbegin()))->getLoc(), reverseBB);
+    Operation * newBranchOp = forwardToBackwardBuilder.create<cf::BranchOp>(oBB->getTerminator()->getLoc(), reverseBB);
     
-    Operation * returnStatement = newBB->getTerminator();
     Operation * retVal = oBB->getTerminator();
     gutils->originalToNewFnOps[retVal] = newBranchOp;
-    gutils->erase(returnStatement);
   }
 }
 
@@ -86,8 +87,7 @@ void handlePredecessors(Block * oBB, Block * reverseBB, MDiffeGradientUtilsRever
     ValueRange defaultArguments;
     Block * defaultBlock;
     int i = 1;
-    for (auto it = oBB->getPredecessors().begin(); it != oBB->getPredecessors().end(); it++){
-      Block * predecessor = *it;
+    for (Block * predecessor : oBB->getPredecessors()){
       Block * predecessorRevMode = gutils->mapReverseModeBlocks.lookupOrNull(predecessor);
 
       SmallVector<Value> operands;
@@ -109,7 +109,7 @@ void handlePredecessors(Block * oBB, Block * reverseBB, MDiffeGradientUtilsRever
         }
       }
 
-      if (it != oBB->getPredecessors().begin()){
+      if (predecessor != *(oBB->getPredecessors().begin())){
         blocks.push_back(predecessorRevMode);
         indices.push_back(APInt(32, i++));
         arguments.push_back(ValueRange(operands));
@@ -126,6 +126,8 @@ void handlePredecessors(Block * oBB, Block * reverseBB, MDiffeGradientUtilsRever
     }
     else{
       revBuilder.create<cf::SwitchOp>(oBB->rbegin()->getLoc(), flag, defaultBlock, defaultArguments, ArrayRef<APInt>(indices), ArrayRef<Block *>(blocks), ArrayRef<ValueRange>(arguments));
+
+
     }
   }
 }
