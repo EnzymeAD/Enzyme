@@ -43,6 +43,19 @@ void mapInvertArguments(Block * oBB, Block * reverseBB, MDiffeGradientUtilsRever
   }
 }
 
+void handleReturns(Block * oBB, Block * newBB, Block * reverseBB, MDiffeGradientUtilsReverse * gutils){
+  if (oBB->getNumSuccessors() == 0){
+    OpBuilder forwardToBackwardBuilder(newBB, newBB->begin());
+    gutils->mapInvertPointer(oBB->getTerminator()->getOperand(0), gutils->newFunc.getArgument(gutils->newFunc.getNumArguments() - 1), forwardToBackwardBuilder); //TODO handle multiple return values
+    Operation * newBranchOp = forwardToBackwardBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB->rbegin()))->getLoc(), reverseBB);
+    
+    Operation * returnStatement = newBB->getTerminator();
+    Operation * retVal = oBB->getTerminator();
+    gutils->originalToNewFnOps[retVal] = newBranchOp;
+    gutils->erase(returnStatement);
+  }
+}
+
 FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(FunctionOpInterface fn, DIFFE_TYPE retType, std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA, bool returnUsed, DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType, MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented) {
   if (fn.getBody().empty()) {
     llvm::errs() << fn << "\n";
@@ -64,21 +77,9 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(FunctionOpInte
 
     mapInvertArguments(oBB, reverseBB, gutils);
 
-    if (oBB->getNumSuccessors() == 0){
-      //gutils->oldFunc.getBody().getBlocks().front();
-      OpBuilder forwardToBackwardBuilder(&*(newBB->rbegin())->getContext()); //TODO
-      forwardToBackwardBuilder.setInsertionPoint(gutils->getNewFromOriginal(&*(oBB->rbegin())));
-      auto revBlock = gutils->mapReverseModeBlocks.lookupOrNull(oBB);
-      gutils->mapInvertPointer(oBB->getTerminator()->getOperand(0), gutils->newFunc.getArgument(gutils->newFunc.getNumArguments() - 1), forwardToBackwardBuilder); 
-      Operation * newBranchOp = forwardToBackwardBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB->rbegin()))->getLoc(), revBlock);
-      
-      Operation * returnStatement = newBB->getTerminator();
-      Operation * retVal = oBB->getTerminator();
-      gutils->originalToNewFnOps[retVal] = newBranchOp;
-      gutils->erase(returnStatement);
-    }
+    handleReturns(oBB, newBB, reverseBB, gutils);
     
-    OpBuilder revBuilder(gutils->mapReverseModeBlocks.lookupOrNull(oBB), gutils->mapReverseModeBlocks.lookupOrNull(oBB)->end());
+    OpBuilder revBuilder(reverseBB, reverseBB->end());
     if (!oBB->empty()){
       auto first = oBB->rbegin();
       auto last = oBB->rend();
@@ -88,9 +89,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(FunctionOpInte
     }
 
     if (oBB->hasNoPredecessors()){
-      Block * revBlock = gutils->mapReverseModeBlocks.lookupOrNull(oBB);
-
-      OpBuilder revBuilder(revBlock, revBlock->end());
+      OpBuilder revBuilder(reverseBB, reverseBB->end());
       SmallVector<mlir::Value, 2> retargs;
       for (Value attribute : gutils->oldFunc.getBody().getArguments()) {
         Value attributeGradient = gutils->invertPointerM(attribute, revBuilder);
@@ -141,6 +140,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(FunctionOpInte
           defaultArguments = ValueRange(operands);
         }
       }
+      //Remove Dependency to CF dialect
       if (std::next(oBB->getPredecessors().begin()) == oBB->getPredecessors().end()){
         //If there is only one block we can directly create a branch for simplicity sake
         revBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB->rbegin()))->getLoc(), defaultBlock, defaultArguments);
