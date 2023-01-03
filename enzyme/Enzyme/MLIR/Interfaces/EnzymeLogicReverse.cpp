@@ -56,20 +56,93 @@ void handleReturns(Block * oBB, Block * newBB, Block * reverseBB, MDiffeGradient
   }
 }
 
+void visitChildren(Block * oBB, Block * reverseBB, MDiffeGradientUtilsReverse * gutils){
+  OpBuilder revBuilder(reverseBB, reverseBB->end());
+  if (!oBB->empty()){
+    auto first = oBB->rbegin();
+    auto last = oBB->rend();
+    for (auto it = first; it != last; ++it) {
+      (void)gutils->visitChildReverse(&*it, revBuilder);
+    }
+  }
+}
+
+void handlePredecessors(Block * oBB, Block * reverseBB, MDiffeGradientUtilsReverse * gutils){
+  OpBuilder revBuilder(reverseBB, reverseBB->end());
+  if (oBB->hasNoPredecessors()){
+    SmallVector<mlir::Value, 2> retargs;
+    for (Value attribute : gutils->oldFunc.getBody().getArguments()) {
+      Value attributeGradient = gutils->invertPointerM(attribute, revBuilder);
+      retargs.push_back(attributeGradient);
+    }
+    revBuilder.create<func::ReturnOp>(oBB->rbegin()->getLoc(), retargs);
+  }
+  else {
+    Value cache = gutils->insertInitBackwardCache(gutils->getIndexCacheType());
+    Value flag = revBuilder.create<enzyme::PopCacheOp>(oBB->rbegin()->getLoc(), gutils->getIndexType(), cache);
+    SmallVector<Block *> blocks;
+    SmallVector<APInt> indices;
+    SmallVector<ValueRange> arguments;
+    ValueRange defaultArguments;
+    Block * defaultBlock;
+    int i = 1;
+    for (auto it = oBB->getPredecessors().begin(); it != oBB->getPredecessors().end(); it++){
+      Block * predecessor = *it;
+      Block * predecessorRevMode = gutils->mapReverseModeBlocks.lookupOrNull(predecessor);
+
+      SmallVector<Value> operands;
+      auto argumentsIt = gutils->mapBlockArguments.find(predecessor);
+      if (argumentsIt != gutils->mapBlockArguments.end()){
+        for(auto operandOld : argumentsIt->second){
+          if (oBB == operandOld.first.getParentBlock() && gutils->hasInvertPointer(operandOld.second)){
+            operands.push_back(gutils->invertPointerM(operandOld.second, revBuilder));
+          }
+          else{
+            if (auto iface = operandOld.second.getType().cast<AutoDiffTypeInterface>()) {
+              Value nullValue = iface.createNullValue(revBuilder, oBB->rbegin()->getLoc());
+              operands.push_back(nullValue);
+            }
+            else{
+              llvm_unreachable("non canonial null value found");
+            }
+          }
+        }
+      }
+
+      if (it != oBB->getPredecessors().begin()){
+        blocks.push_back(predecessorRevMode);
+        indices.push_back(APInt(32, i++));
+        arguments.push_back(ValueRange(operands));
+      }
+      else{
+        defaultBlock = predecessorRevMode;
+        defaultArguments = ValueRange(operands);
+      }
+    }
+    //Remove Dependency to CF dialect
+    if (std::next(oBB->getPredecessors().begin()) == oBB->getPredecessors().end()){
+      //If there is only one block we can directly create a branch for simplicity sake
+      revBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB->rbegin()))->getLoc(), defaultBlock, defaultArguments);
+    }
+    else{
+      revBuilder.create<cf::SwitchOp>(oBB->rbegin()->getLoc(), flag, defaultBlock, defaultArguments, ArrayRef<APInt>(indices), ArrayRef<Block *>(blocks), ArrayRef<ValueRange>(arguments));
+    }
+  }
+}
+
 FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(FunctionOpInterface fn, DIFFE_TYPE retType, std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA, bool returnUsed, DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType, MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented) {
+  
   if (fn.getBody().empty()) {
     llvm::errs() << fn << "\n";
     llvm_unreachable("Differentiating empty function");
   }
 
-  bool retActive = retType != DIFFE_TYPE::CONSTANT;
   ReturnType returnValue = ReturnType::Tape;
   MDiffeGradientUtilsReverse * gutils = MDiffeGradientUtilsReverse::CreateFromClone(*this, mode, width, fn, TA, type_args, retType, /*diffeReturnArg*/ true, constants, returnValue, addedType);
 
-  // Get dominator tree and create topological sorting
+
   SmallVector<mlir::Block*> dominatorToposortBlocks = getDominatorToposort(gutils);
 
-  //Iterate blocks and create reverse mode blocks
   for (auto it = dominatorToposortBlocks.rbegin(); it != dominatorToposortBlocks.rend(); ++it){
     Block * oBB = *it;
     Block * newBB = gutils->getNewFromOriginal(oBB);
@@ -79,76 +152,9 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(FunctionOpInte
 
     handleReturns(oBB, newBB, reverseBB, gutils);
     
-    OpBuilder revBuilder(reverseBB, reverseBB->end());
-    if (!oBB->empty()){
-      auto first = oBB->rbegin();
-      auto last = oBB->rend();
-      for (auto it = first; it != last; ++it) {
-        (void)gutils->visitChildReverse(&*it, revBuilder);
-      }
-    }
-
-    if (oBB->hasNoPredecessors()){
-      OpBuilder revBuilder(reverseBB, reverseBB->end());
-      SmallVector<mlir::Value, 2> retargs;
-      for (Value attribute : gutils->oldFunc.getBody().getArguments()) {
-        Value attributeGradient = gutils->invertPointerM(attribute, revBuilder);
-        retargs.push_back(attributeGradient);
-      }
-      
-      revBuilder.create<func::ReturnOp>(oBB->rbegin()->getLoc(), retargs);
-    }
-    else {
-      Value cache = gutils->insertInitBackwardCache(gutils->getIndexCacheType());
-      Value flag = revBuilder.create<enzyme::PopCacheOp>(oBB->rbegin()->getLoc(), gutils->getIndexType(), cache);
-      SmallVector<Block *> blocks;
-      SmallVector<APInt> indices;
-      SmallVector<ValueRange> arguments;
-      ValueRange defaultArguments;
-      Block * defaultBlock;
-      int i = 1;
-      for (auto it = oBB->getPredecessors().begin(); it != oBB->getPredecessors().end(); it++){
-        Block * predecessor = *it;
-        Block * predecessorRevMode = gutils->mapReverseModeBlocks.lookupOrNull(predecessor);
-
-        SmallVector<Value> operands;
-        auto argumentsIt = gutils->mapBlockArguments.find(predecessor);
-        if (argumentsIt != gutils->mapBlockArguments.end()){
-          for(auto operandOld : argumentsIt->second){
-            if (oBB == operandOld.first.getParentBlock() && gutils->hasInvertPointer(operandOld.second)){
-              operands.push_back(gutils->invertPointerM(operandOld.second, revBuilder));
-            }
-            else{
-              if (auto iface = operandOld.second.getType().cast<AutoDiffTypeInterface>()) {
-                Value nullValue = iface.createNullValue(revBuilder, oBB->rbegin()->getLoc());
-                operands.push_back(nullValue);
-              }
-              else{
-                llvm_unreachable("non canonial null value found");
-              }
-            }
-          }
-        }
-
-        if (it != oBB->getPredecessors().begin()){
-          blocks.push_back(predecessorRevMode);
-          indices.push_back(APInt(32, i++));
-          arguments.push_back(ValueRange(operands));
-        }
-        else{
-          defaultBlock = predecessorRevMode;
-          defaultArguments = ValueRange(operands);
-        }
-      }
-      //Remove Dependency to CF dialect
-      if (std::next(oBB->getPredecessors().begin()) == oBB->getPredecessors().end()){
-        //If there is only one block we can directly create a branch for simplicity sake
-        revBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB->rbegin()))->getLoc(), defaultBlock, defaultArguments);
-      }
-      else{
-        revBuilder.create<cf::SwitchOp>(oBB->rbegin()->getLoc(), flag, defaultBlock, defaultArguments, ArrayRef<APInt>(indices), ArrayRef<Block *>(blocks), ArrayRef<ValueRange>(arguments));
-      }
-    }
+    visitChildren(oBB, reverseBB, gutils);
+    
+    handlePredecessors(oBB, reverseBB, gutils);
   }
 
   auto nf = gutils->newFunc;
