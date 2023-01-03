@@ -242,15 +242,13 @@ FunctionOpInterface CloneFunctionWithReturns(
         constants.insert(oval);
       else
         nonconstants.insert(oval);
-      if (constant_args[i] == DIFFE_TYPE::DUP_ARG ||
-          constant_args[i] == DIFFE_TYPE::DUP_NONEED) {
+      if (constant_args[i] == DIFFE_TYPE::DUP_ARG || constant_args[i] == DIFFE_TYPE::DUP_NONEED) {
         mlir::Value val = blk.getArgument(i);
         mlir::Value dval;
         if (i == constant_args.size() - 1)
           dval = blk.addArgument(val.getType(), val.getLoc());
         else
-          dval = blk.insertArgument(blk.args_begin() + i + 1, val.getType(),
-                                    val.getLoc());
+          dval = blk.insertArgument(blk.args_begin() + i + 1, val.getType(), val.getLoc());
         ptrInputs.map(oval, dval);
       }
     }

@@ -47,9 +47,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
 
   bool retActive = retType != DIFFE_TYPE::CONSTANT;
   ReturnType returnValue = ReturnType::Tape;
-  auto gutils = MDiffeGradientUtilsReverse::CreateFromClone(
-      *this, mode, width, fn, TA, type_args, retType, /*diffeReturnArg*/ true,
-      constants, returnValue, addedType);
+  auto gutils = MDiffeGradientUtilsReverse::CreateFromClone(*this, mode, width, fn, TA, type_args, retType, /*diffeReturnArg*/ true, constants, returnValue, addedType);
 
   const SmallPtrSet<mlir::Block *, 4> guaranteedUnreachable;
   gutils->forceAugmentedReturnsReverse();
@@ -124,17 +122,18 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
         auto argumentsIt = gutils->mapBlockArguments.find(predecessor);
         if (argumentsIt != gutils->mapBlockArguments.end()){
           for(auto operandOld : argumentsIt->second){
-            //TEMPORARY
-            //Optional<Value> invertPointer = gutils->invertPointerReverseMOptional(operandOld, gutils->mapReverseModeBlocks.lookupOrNull(&oBB));
-            //if (invertPointer.has_value()){
-            //  operands.push_back(invertPointer.value());
-            //}
-            //else{
-              if (auto iface = operandOld.getType().cast<AutoDiffTypeInterface>()) {
+            if (&oBB == operandOld.first.getParentBlock()){
+              operands.push_back(gutils->invertPointerM(operandOld.first, revBuilder));
+            }
+            else{
+              if (auto iface = operandOld.first.getType().cast<AutoDiffTypeInterface>()) {
                 Value nullValue = iface.createNullValue(revBuilder, oBB.rbegin()->getLoc());
                 operands.push_back(nullValue);
               }
-            //}
+              else{
+                llvm_unreachable("non cannonial null value found");
+              }
+            }
           }
         }
         ValueRange operandsValueRange(operands);
@@ -157,19 +156,18 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
           auto argumentsIt = gutils->mapBlockArguments.find(predecessor);
           if (argumentsIt != gutils->mapBlockArguments.end()){
             for(auto operandOld : argumentsIt->second){
-              //TODO Create canonical null value if not found!
-              
-              //TEMPORARY
-              //Optional<Value> invertPointer = gutils->invertPointerReverseMOptional(operandOld, gutils->mapReverseModeBlocks.lookupOrNull(&oBB));
-              //if (invertPointer.has_value()){
-              //  operands.push_back(invertPointer.value());
-              //}
-              //else{
+              /*if (gutils->hasInvertPointer(operandOld)){
+                operands.push_back(gutils->invertPointerM(operandOld, revBuilder));
+              }
+              else{
                 if (auto iface = operandOld.getType().cast<AutoDiffTypeInterface>()) {
                   Value nullValue = iface.createNullValue(revBuilder, oBB.rbegin()->getLoc());
                   operands.push_back(nullValue);
                 }
-              //}
+                else{
+                  llvm_unreachable("non cannonial null value found");
+                }
+              }*/
             }
           }
 

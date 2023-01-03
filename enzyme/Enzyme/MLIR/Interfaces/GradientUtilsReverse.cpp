@@ -43,7 +43,7 @@ mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
     DerivativeMode mode, 
     unsigned width, 
     BlockAndValueMapping mapReverseModeBlocks_, 
-    DenseMap<Block *, SmallVector<Value>> mapBlockArguments_)
+    DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapBlockArguments_)
     : newFunc(newFunc_), 
       Logic(Logic), 
       mode(mode), 
@@ -233,45 +233,39 @@ void MGradientUtilsReverse::initInitializationBlock(BlockAndValueMapping inverte
   }
 }
 
-std::pair<BlockAndValueMapping, DenseMap<Block *, SmallVector<Value>>> createReverseModeBlocks(FunctionOpInterface & oldFunc, FunctionOpInterface & newFunc){
+std::pair<BlockAndValueMapping, DenseMap<Block *, SmallVector<std::pair<Value, Value>>>> createReverseModeBlocks(FunctionOpInterface & oldFunc, FunctionOpInterface & newFunc){
   BlockAndValueMapping mapReverseModeBlocks;
-  DenseMap<Block *, SmallVector<Value>> mapReverseBlockArguments;
+  DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapReverseBlockArguments;
   for (auto it = oldFunc.getBody().getBlocks().rbegin(); it != oldFunc.getBody().getBlocks().rend(); ++it) {
     Block *block = &*it;
     Block *newBlock = new Block();
 
+    SmallVector<std::pair<Value, Value>> reverseModeArguments; // Argument, Assigned value (2. is technically not necessary but simplifies code a lot)
+
     //Add reverse mode Arguments to Block
     Operation * term = block->getTerminator();
     mlir::BranchOpInterface brOp = dyn_cast<mlir::BranchOpInterface>(term);
-    SmallVector<Value> reverseModeArguments;
     if(brOp){
-      DenseMap<Value, int> valueToIndex;
-      int index = 0;
-      // Taking the number of successors might be a false assumtpion on the BranchOpInterface
-      // TODO make nicer algorithm for this!
       for (int i = 0; i < term->getNumSuccessors(); i++){
         SuccessorOperands sOps = brOp.getSuccessorOperands(i);
+        Block * successorBlock = term->getSuccessor(i);
+        
+        assert(successorBlock->getNumArguments() == sOps.size());
         for (int j = 0; j < sOps.size(); j++){
-          if (valueToIndex.count(sOps[j]) == 0){
-            valueToIndex[sOps[j]] = index;
-            index++;
-          }
+          reverseModeArguments.push_back(std::pair<Value,Value>(successorBlock->getArgument(j), sOps[j]));
         }
       }
-      reverseModeArguments.resize(index);
-      for (auto it : valueToIndex){
-        reverseModeArguments[it.second] = it.first;
-        newBlock->addArgument(it.first.getType(), it.first.getLoc());
+      for (auto it : reverseModeArguments){
+        newBlock->addArgument(it.second.getType(), it.second.getLoc());
       }
+
       mapReverseBlockArguments[block] = reverseModeArguments;
     }
-    //
 
     mapReverseModeBlocks.map(block, newBlock);
-    auto regionPos = newFunc.getBody().end();
-    newFunc.getBody().getBlocks().insert(regionPos, newBlock);
+    newFunc.getBody().getBlocks().insert(newFunc.getBody().end(), newBlock);
   }
-  return std::pair<BlockAndValueMapping, DenseMap<Block *, SmallVector<Value>>> (mapReverseModeBlocks, mapReverseBlockArguments);
+  return std::pair<BlockAndValueMapping, DenseMap<Block *, SmallVector<std::pair<Value, Value>>>> (mapReverseModeBlocks, mapReverseBlockArguments);
 }
 
 
@@ -290,7 +284,7 @@ MDiffeGradientUtilsReverse::MDiffeGradientUtilsReverse(MEnzymeLogic &Logic,
                       DerivativeMode mode, 
                       unsigned width, 
                       BlockAndValueMapping mapReverseModeBlocks_, 
-                      DenseMap<Block *, SmallVector<Value>> mapBlockArguments_)
+                      DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapBlockArguments_)
       : MGradientUtilsReverse(Logic, newFunc_, oldFunc_, TA, TR, invertedPointers_, constantvalues_, returnvals_, ActiveReturn, constant_values, origToNew_, origToNewOps_, mode, width, mapReverseModeBlocks_, mapBlockArguments_) {}
 
 MDiffeGradientUtilsReverse * MDiffeGradientUtilsReverse::CreateFromClone(MEnzymeLogic &Logic, DerivativeMode mode, unsigned width, FunctionOpInterface todiff, MTypeAnalysis &TA, MFnTypeInfo &oldTypeInfo, DIFFE_TYPE retType, bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args, ReturnType returnValue, mlir::Type additionalArg) {
@@ -325,13 +319,12 @@ MDiffeGradientUtilsReverse * MDiffeGradientUtilsReverse::CreateFromClone(MEnzyme
         prefix + todiff.getName(), originalToNew, originalToNewOps,
         diffeReturnArg, additionalArg);
 
-
     auto reverseModeBlockMapPair = createReverseModeBlocks(todiff, newFunc);
     BlockAndValueMapping mapReverseModeBlocks = reverseModeBlockMapPair.first;
-    DenseMap<Block *, SmallVector<Value>> mapBlockArguments = reverseModeBlockMapPair.second;
+    DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapBlockArguments = reverseModeBlockMapPair.second;
+
 
     MTypeResults TR; // TODO
-
     return new MDiffeGradientUtilsReverse(
         Logic, newFunc, todiff, TA, TR, invertedPointers, constant_values, nonconstant_values, retType, constant_args, originalToNew, originalToNewOps, mode, width, mapReverseModeBlocks, mapBlockArguments);
   }

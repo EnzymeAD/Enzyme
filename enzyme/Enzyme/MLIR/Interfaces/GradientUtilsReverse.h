@@ -31,7 +31,7 @@ public:
   Block *initializationBlock;
 
   BlockAndValueMapping mapReverseModeBlocks;
-  DenseMap<Block *, SmallVector<Value>> mapBlockArguments;
+  DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapBlockArguments;
 
   BlockAndValueMapping originalToNewFn;
   std::map<Operation *, Operation *> originalToNewFnOps;
@@ -61,7 +61,7 @@ public:
                 DerivativeMode mode, 
                 unsigned width, 
                 BlockAndValueMapping mapReverseModeBlocks_, 
-                DenseMap<Block *, SmallVector<Value>> mapBlockArguments_);
+                DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapBlockArguments_);
   void erase(Operation *op) { op->erase(); }
   void eraseIfUnused(Operation *op, bool erase = true, bool check = true) {
     // TODO
@@ -103,7 +103,7 @@ public:
                       DerivativeMode mode, 
                       unsigned width, 
                       BlockAndValueMapping mapReverseModeBlocks_, 
-                      DenseMap<Block *, SmallVector<Value>> mapBlockArguments_);
+                      DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapBlockArguments_);
 
   static MDiffeGradientUtilsReverse * CreateFromClone(MEnzymeLogic &Logic, 
                   DerivativeMode mode, 
