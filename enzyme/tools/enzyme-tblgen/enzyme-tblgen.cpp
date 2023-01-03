@@ -23,10 +23,10 @@
 #include "llvm/TableGen/Record.h"
 #include "llvm/TableGen/TableGenBackend.h"
 
+#include "datastructures.h"
+
 #include "caching.h"
 #include "general.h"
-
-#include "datastructures.h"
 
 // clang-format off
 //
@@ -1146,30 +1146,6 @@ void emit_handleBLAS(const std::vector<TGPattern> &blasPatterns, raw_ostream &os
 << "}                                                                     \n";
 }
 
-llvm::DenseMap<StringRef, StringRef> getArgTypes(const Record *pattern) {
-  llvm::DenseMap<StringRef, StringRef> res{};
-  std::vector<Record *> inputTypes =
-    pattern->getValueAsListOfDefs("inputTypes");
-  DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
-  size_t pos = 0;
-  for (auto val : inputTypes) {
-    auto argName = argOps->getArgNameStr(pos);
-    if (val->getName() == "len") {
-      res.insert(std::make_pair(argName, "len"));
-    } else if (val->getName() == "fp") {
-      res.insert(std::make_pair(argName, "fp"));
-    } else if (val->getName() == "vinc") {
-      res.insert(std::make_pair(argName, "vincData"));
-      res.insert(std::make_pair(argOps->getArgNameStr(pos+1), "vincInc"));
-    } else {
-      PrintFatalError("Unknown type!");
-    }
-    pos += val->getValueAsInt("nelem");
-  }
-  return res;
-}
-
-
 static void checkBlasCallsInDag(const RecordKeeper &RK,
                                 const std::vector<Record *> blasPatterns,
                                 const StringRef blasName,
@@ -1278,7 +1254,6 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
   emit_handleBLAS(newBlasPatterns, os);
   // emitEnumMatcher(blas_modes, os);
   
-  //llvm::StringMap<llvm::SmallSet<size_t, 3>> mutables = getMutableArgs(blasPatterns);
   for (size_t i = 0; i < blasPatterns.size(); i++) {
   //for (auto pattern : blasPatterns) {
     auto pattern = blasPatterns[i];
@@ -1289,14 +1264,14 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
 
     // For each input arg, we store a set including all users (by index).
     llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers = getUsedInputs(pattern, posActArgs);
-    llvm::DenseMap<StringRef, StringRef> typeOfArgName = getArgTypes(pattern);
 
     emit_beginning(newPattern, os);
     emit_helper(newPattern, os);
     emit_castvals(newPattern, os);
     emit_scalar_types(newPattern, os);
 
-    emit_caching(pattern, posActArgs, argUsers, os);
+    emit_caching(newPattern, argUsers, os);
+    //emit_caching(pattern, posActArgs, argUsers, os);
     emit_extract_calls(pattern, posActArgs, argUsers, os);
 
     emit_fwd_rewrite_rules(newPattern, os);
