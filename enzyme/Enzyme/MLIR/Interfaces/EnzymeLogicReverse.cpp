@@ -25,14 +25,19 @@ using namespace mlir::enzyme;
 
 SmallVector<mlir::Block*> getDominatorToposort(MGradientUtilsReverse *gutils){
   SmallVector<mlir::Block*> dominatorToposortBlocks;
-  auto dInfo = mlir::detail::DominanceInfoBase<false>(nullptr);
-  llvm::DominatorTreeBase<Block, false> & dt = dInfo.getDomTree(&(gutils->oldFunc.getBody()));
-  auto root = dt.getNode(&*(gutils->oldFunc.getBody().begin()));
-
-  for(llvm::DomTreeNodeBase<mlir::Block> * node : llvm::breadth_first(root)){
-    dominatorToposortBlocks.push_back(node->getBlock());
+  if (gutils->oldFunc.getBody().hasOneBlock()){
+    dominatorToposortBlocks.push_back(&*(gutils->oldFunc.getBody().begin()));
   }
-  
+  else{
+    auto dInfo = mlir::detail::DominanceInfoBase<false>(nullptr);
+    llvm::DominatorTreeBase<Block, false> & dt = dInfo.getDomTree(&(gutils->oldFunc.getBody()));
+    auto root = dt.getNode(&*(gutils->oldFunc.getBody().begin()));
+
+    for(llvm::DomTreeNodeBase<mlir::Block> * node : llvm::breadth_first(root)){
+      dominatorToposortBlocks.push_back(node->getBlock());
+    }
+    
+  }
   return dominatorToposortBlocks;
 }
 
