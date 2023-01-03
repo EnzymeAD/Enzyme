@@ -119,10 +119,18 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
       revBuilder.create<func::ReturnOp>(oBB->rbegin()->getLoc(), retargs);
     }
     else {
-      if (std::next(oBB->getPredecessors().begin()) == oBB->getPredecessors().end()){
-        Block * predecessor = *(oBB->getPredecessors().begin());
+      Value cache = gutils->insertInitBackwardCache(gutils->getIndexCacheType());
+      Value flag = revBuilder.create<enzyme::PopCacheOp>(oBB->rbegin()->getLoc(), gutils->getIndexType(), cache);
+      SmallVector<Block *> blocks;
+      SmallVector<APInt> indices;
+      SmallVector<ValueRange> arguments;
+      ValueRange defaultArguments;
+      Block * defaultBlock;
+      int i = 1;
+      for (auto it = oBB->getPredecessors().begin(); it != oBB->getPredecessors().end(); it++){
+        Block * predecessor = *it;
         Block * predecessorRevMode = gutils->mapReverseModeBlocks.lookupOrNull(predecessor);
-        // Create op operands
+
         SmallVector<Value> operands;
         auto argumentsIt = gutils->mapBlockArguments.find(predecessor);
         if (argumentsIt != gutils->mapBlockArguments.end()){
@@ -141,51 +149,22 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
             }
           }
         }
-        ValueRange operandsValueRange(operands);
-        revBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB->rbegin()))->getLoc(), predecessorRevMode, operandsValueRange);
+
+        if (it != oBB->getPredecessors().begin()){
+          blocks.push_back(predecessorRevMode);
+          indices.push_back(APInt(32, i++));
+          arguments.push_back(ValueRange(operands));
+        }
+        else{
+          defaultBlock = predecessorRevMode;
+          defaultArguments = ValueRange(operands);
+        }
+      }
+      if (std::next(oBB->getPredecessors().begin()) == oBB->getPredecessors().end()){
+        //If there is only one block we can directly create a branch for simplicity sake
+        revBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB->rbegin()))->getLoc(), defaultBlock, defaultArguments);
       }
       else{
-        Value cache = gutils->insertInitBackwardCache(gutils->getIndexCacheType());
-        Value flag = revBuilder.create<enzyme::PopCacheOp>(oBB->rbegin()->getLoc(), gutils->getIndexType(), cache);
-        SmallVector<Block *> blocks;
-        SmallVector<APInt> indices;
-        SmallVector<ValueRange> arguments;
-        ValueRange defaultArguments;
-        Block * defaultBlock;
-        int i = 1;
-        for (auto it = oBB->getPredecessors().begin(); it != oBB->getPredecessors().end(); it++){
-          Block * predecessor = *it;
-          Block * predecessorRevMode = gutils->mapReverseModeBlocks.lookupOrNull(predecessor);
-
-          SmallVector<Value> operands;
-          auto argumentsIt = gutils->mapBlockArguments.find(predecessor);
-          if (argumentsIt != gutils->mapBlockArguments.end()){
-            for(auto operandOld : argumentsIt->second){
-              if (oBB == operandOld.first.getParentBlock() && gutils->hasInvertPointer(operandOld.second)){
-                operands.push_back(gutils->invertPointerM(operandOld.second, revBuilder));
-              }
-              else{
-                if (auto iface = operandOld.second.getType().cast<AutoDiffTypeInterface>()) {
-                  Value nullValue = iface.createNullValue(revBuilder, oBB->rbegin()->getLoc());
-                  operands.push_back(nullValue);
-                }
-                else{
-                  llvm_unreachable("non canonial null value found");
-                }
-              }
-            }
-          }
-
-          if (it != oBB->getPredecessors().begin()){
-            blocks.push_back(predecessorRevMode);
-            indices.push_back(APInt(32, i++));
-            arguments.push_back(ValueRange(operands));
-          }
-          else{
-            defaultBlock = predecessorRevMode;
-            defaultArguments = ValueRange(operands);
-          }
-        }
         revBuilder.create<cf::SwitchOp>(oBB->rbegin()->getLoc(), flag, defaultBlock, defaultArguments, ArrayRef<APInt>(indices), ArrayRef<Block *>(blocks), ArrayRef<ValueRange>(arguments));
       }
     }
