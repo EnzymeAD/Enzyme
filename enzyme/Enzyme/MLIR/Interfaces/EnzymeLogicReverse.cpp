@@ -35,11 +35,15 @@ SmallVector<mlir::Block*> getDominatorToposort(MGradientUtilsReverse *gutils){
   return dominatorToposortBlocks;
 }
 
-FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
-    FunctionOpInterface fn, DIFFE_TYPE retType,
-    std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA, bool returnUsed,
-    DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType,
-    MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented) {
+void mapInvertArguments(Block * oBB, Block * reverseBB, MDiffeGradientUtilsReverse * gutils){
+  for (int i = 0; i < gutils->mapBlockArguments[oBB].size(); i++){
+    auto x = gutils->mapBlockArguments[oBB][i];
+    OpBuilder builder(reverseBB, reverseBB->begin());
+    gutils->mapInvertPointer(x.second, reverseBB->getArgument(i), builder);
+  }
+}
+
+FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(FunctionOpInterface fn, DIFFE_TYPE retType, std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA, bool returnUsed, DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType, MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented) {
   if (fn.getBody().empty()) {
     llvm::errs() << fn << "\n";
     llvm_unreachable("Differentiating empty function");
@@ -47,9 +51,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
 
   bool retActive = retType != DIFFE_TYPE::CONSTANT;
   ReturnType returnValue = ReturnType::Tape;
-  auto gutils = MDiffeGradientUtilsReverse::CreateFromClone(*this, mode, width, fn, TA, type_args, retType, /*diffeReturnArg*/ true, constants, returnValue, addedType);
-
-  const SmallPtrSet<mlir::Block *, 4> guaranteedUnreachable;
+  MDiffeGradientUtilsReverse * gutils = MDiffeGradientUtilsReverse::CreateFromClone(*this, mode, width, fn, TA, type_args, retType, /*diffeReturnArg*/ true, constants, returnValue, addedType);
 
   // Get dominator tree and create topological sorting
   SmallVector<mlir::Block*> dominatorToposortBlocks = getDominatorToposort(gutils);
@@ -57,32 +59,11 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
   //Iterate blocks and create reverse mode blocks
   for (auto it = dominatorToposortBlocks.rbegin(); it != dominatorToposortBlocks.rend(); ++it){
     Block * oBB = *it;
+    Block * newBB = gutils->getNewFromOriginal(oBB);
     Block * reverseBB = gutils->mapReverseModeBlocks.lookupOrNull(oBB);
 
-    // Don't create derivatives for code that results in termination
-    if (guaranteedUnreachable.find(oBB) != guaranteedUnreachable.end()) {
-      auto newBB = gutils->getNewFromOriginal(oBB);
+    mapInvertArguments(oBB, reverseBB, gutils);
 
-      SmallVector<Operation *, 4> toerase;
-      for (auto &I : *oBB) {
-        toerase.push_back(&I);
-      }
-      for (auto I : llvm::reverse(toerase)) {
-        gutils->eraseIfUnused(I, true, false);
-      }
-      OpBuilder builder(gutils->oldFunc.getContext());
-      builder.setInsertionPointToEnd(newBB);
-      builder.create<LLVM::UnreachableOp>(gutils->oldFunc.getLoc());
-      continue;
-    }
-    
-    for (int i = 0; i < gutils->mapBlockArguments[oBB].size(); i++){
-      auto x = gutils->mapBlockArguments[oBB][i];
-      OpBuilder builder(reverseBB, reverseBB->begin());
-      gutils->mapInvertPointer(x.second, reverseBB->getArgument(i), builder);
-    }
-
-    auto newBB = gutils->getNewFromOriginal(oBB);
     if (oBB->getNumSuccessors() == 0){
       //gutils->oldFunc.getBody().getBlocks().front();
       OpBuilder forwardToBackwardBuilder(&*(newBB->rbegin())->getContext()); //TODO
