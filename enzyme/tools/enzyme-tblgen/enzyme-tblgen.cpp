@@ -199,13 +199,13 @@ void emit_free_and_ending(TGPattern &pattern, raw_ostream &os) {
 << "}\n\n";
 }
 
-void emit_extract_calls(Record *pattern, std::vector<size_t> actArgs, 
+void emit_extract_calls(TGPattern &pattern, 
     llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, raw_ostream &os) {
-  size_t argPosition = 0;
-  std::vector<Record *> inputTypes =
-      pattern->getValueAsListOfDefs("inputTypes");
-  DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
-    // TODO: adjust count / getArgOperand(0) based on first int?
+  auto actArgs = pattern.getActiveArgs();
+  auto typeMap = pattern.getArgTypeMap();
+  auto nameVec = pattern.getArgNames();
+
+  // TODO: adjust count / getArgOperand(0) based on first int?
   os 
 << "  if (Mode == DerivativeMode::ReverseModeCombined ||\n"
 << "      Mode == DerivativeMode::ReverseModeGradient ||\n"
@@ -222,79 +222,78 @@ void emit_extract_calls(Record *pattern, std::vector<size_t> actArgs,
 << "    }\n"
 << "\n"
 << "    if (byRef) {\n";
-  argPosition = 0;
-  for (auto inputType : inputTypes) {
-    if (inputType->getName() == "vinc") {
-      auto incName = argOps->getArgNameStr(argPosition + 1);
+
+  for (size_t i = 0; i < nameVec.size(); i++) {
+    auto typeOfArg = typeMap.lookup(i);
+    auto name = nameVec[i];
+    if (typeOfArg == argType::vincInc) {
       os
-<< "      if (cache_" << incName << ") {\n"
-<< "        true_" << incName << " =\n"
+<< "      if (cache_" << name << ") {\n"
+<< "        true_" << name << " =\n"
 << "            (cacheTypes.size() == 1)\n"
 << "                ? cacheval\n"
 << "                : Builder2.CreateExtractValue(cacheval, {cacheidx});\n"
 << "        auto alloc = allocationBuilder.CreateAlloca(intType);\n"
-<< "        Builder2.CreateStore(true_" << incName << ", alloc);\n"
-<< "        true_" << incName << " = Builder2.CreatePointerCast(\n"
+<< "        Builder2.CreateStore(true_" << name << ", alloc);\n"
+<< "        true_" << name << " = Builder2.CreatePointerCast(\n"
 << "            alloc, call.getArgOperand(0)->getType());\n"
-<< "        " << incName << " = true_" << incName << ";\n"
+<< "        " << name << " = true_" << name << ";\n"
 << "        cacheidx++;\n"
-<< "      } else if (need_" << incName << ") {\n"
+<< "      } else if (need_" << name << ") {\n"
 << "        if (Mode != DerivativeMode::ForwardModeSplit) {\n"
-<< "          true_" << incName <<" = lookup(true_" << incName << ", Builder2);\n"
-<< "          " << incName << " = true_" << incName << ";\n"
+<< "          true_" << name <<" = lookup(true_" << name << ", Builder2);\n"
+<< "          " << name << " = true_" << name << ";\n"
 << "        }\n"
 << "      }\n"
 << "\n";
-    } else if (inputType->getName() == "len") {
-      auto lenName = argOps->getArgNameStr(argPosition);
+    } else if (typeOfArg == argType::len) {
       os
-<< "      if (cache_" << lenName << ") {\n"
-<< "        len_" << lenName << " = (cacheTypes.size() == 1)\n"
+<< "      if (cache_" << name << ") {\n"
+<< "        len_" << name << " = (cacheTypes.size() == 1)\n"
 << "                    ? cacheval\n"
 << "                    : Builder2.CreateExtractValue(cacheval, {cacheidx});\n"
 << "        auto alloc = allocationBuilder.CreateAlloca(intType);\n"
-<< "        Builder2.CreateStore(len_" << lenName << ", alloc);\n"
-<< "        len_" << lenName << " = Builder2.CreatePointerCast(\n"
+<< "        Builder2.CreateStore(len_" << name << ", alloc);\n"
+<< "        len_" << name << " = Builder2.CreatePointerCast(\n"
 << "            alloc, call.getArgOperand(0)->getType());\n"
 << "        cacheidx++;\n"
 << "      } else {\n"
 << "        if (Mode != DerivativeMode::ForwardModeSplit)\n"
-<< "          len_" << lenName << " = lookup(len_" << lenName << ", Builder2);\n"
+<< "          len_" << name << " = lookup(len_" << name << ", Builder2);\n"
 << "      }\n"
 << "\n";
     }
-    argPosition += inputType->getValueAsInt("nelem");
   }
+
   os
 << "    } else if (Mode != DerivativeMode::ForwardModeSplit) {\n";
-  argPosition = 0;
-  for (auto inputType : inputTypes) {
-    if (inputType->getName() == "vinc") {
-      auto incName = argOps->getArgNameStr(argPosition + 1);
+  for (size_t i = 0; i < nameVec.size(); i++) {
+    auto typeOfArg = typeMap.lookup(i);
+    auto name = nameVec[i];
+    if (typeOfArg == argType::vincInc) {
   os
-<< "      if (cache_" << incName << ") {\n"
-<< "        true_" << incName << " = lookup(true_" << incName <<", Builder2);\n"
-<< "        " << incName << " = true_" << incName << ";\n"
+<< "      if (cache_" << name << ") {\n"
+<< "        true_" << name << " = lookup(true_" << name <<", Builder2);\n"
+<< "        " << name << " = true_" << name << ";\n"
 << "      }\n";
-    } else if (inputType->getName() == "len") {
-      auto lenName = argOps->getArgNameStr(argPosition);
+    } else if (typeOfArg == argType::len) {
       os
-<< "      len_" << lenName << " = lookup(len_" << lenName << ", Builder2);\n"
+<< "      len_" << name << " = lookup(len_" << name << ", Builder2);\n"
 << "\n";
     }
-    argPosition += inputType->getValueAsInt("nelem");
   }
   os 
 << "    }\n";
-  
-  argPosition = 0;
-  for (auto inputType : inputTypes) {
-    if (inputType->getName() == "vinc") {
-      auto vecName = argOps->getArgNameStr(argPosition);
-      auto vecPosition = argPosition;
-      auto vecUsers = argUsers.lookup(vecPosition);
-      auto incName = argOps->getArgNameStr(argPosition + 1);
-      os
+ 
+  for (size_t i = 0; i < nameVec.size(); i++) {
+    if (typeMap.lookup(i) != argType::vincData) 
+      continue;
+
+    auto vecName = nameVec[i];
+    auto vecPosition = i;
+    auto vecUsers = argUsers.lookup(vecPosition);
+    auto incName = nameVec[i + 1];
+    os
 << "    if (cache_" << vecName << ") {\n"
 << "      data_ptr_" << vecName << " = data_" << vecName << " =\n"
 << "          (cacheTypes.size() == 1)\n"
@@ -319,7 +318,7 @@ void emit_extract_calls(Record *pattern, std::vector<size_t> actArgs,
         bool first = true;
         // TODO: verify x isn't user from data_x (as only adjoint of x will be used)
         for (auto user: vecUsers) {
-          auto name = argOps->getArgNameStr(user);
+          auto name = nameVec[user];
           if (vecName == name)
             continue; // see above
           os 
@@ -332,22 +331,18 @@ void emit_extract_calls(Record *pattern, std::vector<size_t> actArgs,
 << vecName << "), Builder2);\n"
 << "    }\n";
       }
-    }
-    argPosition += inputType->getValueAsInt("nelem");
   }
   os 
 << "  } else {\n"
 << "\n";
-  
-  argPosition = 0;
-  for (auto inputType : inputTypes) {
-    if (inputType->getName() == "vinc") {
-      auto vecName = argOps->getArgNameStr(argPosition);
+ 
+  for (size_t i = 0; i < nameVec.size(); i++) {
+    if (typeMap.lookup(i) != vincData) 
+      continue;
+    auto vecName = nameVec[i];
   os
 << "    if (type_" << vecName << "->isIntegerTy())\n"
 << "      data_" << vecName << " = Builder2.CreatePtrToInt(data_" << vecName << ", type_" << vecName << ");\n";
-    }
-    argPosition += inputType->getValueAsInt("nelem");
   }
 
   os 
@@ -1271,8 +1266,7 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
     emit_scalar_types(newPattern, os);
 
     emit_caching(newPattern, argUsers, os);
-    //emit_caching(pattern, posActArgs, argUsers, os);
-    emit_extract_calls(pattern, posActArgs, argUsers, os);
+    emit_extract_calls(newPattern, argUsers, os);
 
     emit_fwd_rewrite_rules(newPattern, os);
     emit_rev_rewrite_rules(patternMap, newPattern, os);
