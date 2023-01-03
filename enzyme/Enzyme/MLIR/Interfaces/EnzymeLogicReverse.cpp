@@ -46,6 +46,7 @@ void mapInvertArguments(Block * oBB, Block * reverseBB, MDiffeGradientUtilsRever
     auto x = gutils->mapBlockArguments[oBB][i];
     OpBuilder builder(reverseBB, reverseBB->begin());
     gutils->mapInvertPointer(x.second, reverseBB->getArgument(i), builder);
+    reverseBB->dump();
   }
 }
 
@@ -58,8 +59,7 @@ void handleReturns(Block * oBB, Block * newBB, Block * reverseBB, MDiffeGradient
     gutils->mapInvertPointer(oBB->getTerminator()->getOperand(0), gutils->newFunc.getArgument(gutils->newFunc.getNumArguments() - 1), forwardToBackwardBuilder); //TODO handle multiple return values
     Operation * newBranchOp = forwardToBackwardBuilder.create<cf::BranchOp>(oBB->getTerminator()->getLoc(), reverseBB);
     
-    Operation * retVal = oBB->getTerminator();
-    gutils->originalToNewFnOps[retVal] = newBranchOp;
+    gutils->originalToNewFnOps[oBB->getTerminator()] = newBranchOp;
   }
 }
 
@@ -85,8 +85,6 @@ void handlePredecessors(Block * oBB, Block * reverseBB, MDiffeGradientUtilsRever
     revBuilder.create<func::ReturnOp>(oBB->rbegin()->getLoc(), retargs);
   }
   else {
-    Value cache = gutils->insertInitBackwardCache(gutils->getIndexCacheType());
-    Value flag = revBuilder.create<enzyme::PopCacheOp>(oBB->rbegin()->getLoc(), gutils->getIndexType(), cache);
     SmallVector<Block *> blocks;
     SmallVector<APInt> indices;
     SmallVector<ValueRange> arguments;
@@ -100,11 +98,11 @@ void handlePredecessors(Block * oBB, Block * reverseBB, MDiffeGradientUtilsRever
       auto argumentsIt = gutils->mapBlockArguments.find(predecessor);
       if (argumentsIt != gutils->mapBlockArguments.end()){
         for(auto operandOld : argumentsIt->second){
-          if (oBB == operandOld.first.getParentBlock() && gutils->hasInvertPointer(operandOld.second)){
-            operands.push_back(gutils->invertPointerM(operandOld.second, revBuilder));
+          if (oBB == operandOld.first.getParentBlock() && gutils->hasInvertPointer(operandOld.first)){
+            operands.push_back(gutils->invertPointerM(operandOld.first, revBuilder));
           }
           else{
-            if (auto iface = operandOld.second.getType().cast<AutoDiffTypeInterface>()) {
+            if (auto iface = operandOld.first.getType().cast<AutoDiffTypeInterface>()) {
               Value nullValue = iface.createNullValue(revBuilder, oBB->rbegin()->getLoc());
               operands.push_back(nullValue);
             }
@@ -131,6 +129,9 @@ void handlePredecessors(Block * oBB, Block * reverseBB, MDiffeGradientUtilsRever
       revBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB->rbegin()))->getLoc(), defaultBlock, defaultArguments);
     }
     else{
+      Value cache = gutils->insertInitBackwardCache(gutils->getIndexCacheType());
+      Value flag = revBuilder.create<enzyme::PopCacheOp>(oBB->rbegin()->getLoc(), gutils->getIndexType(), cache);
+
       revBuilder.create<cf::SwitchOp>(oBB->rbegin()->getLoc(), flag, defaultBlock, defaultArguments, ArrayRef<APInt>(indices), ArrayRef<Block *>(blocks), ArrayRef<ValueRange>(arguments));
       
       int j = 0;

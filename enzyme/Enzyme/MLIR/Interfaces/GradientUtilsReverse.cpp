@@ -181,8 +181,8 @@ void mlir::enzyme::MGradientUtilsReverse::mapInvertPointer(mlir::Value v, mlir::
   // This may be a performance bottleneck! TODO
   if (!invertedPointersGlobal.contains(v) && onlyUsedInParentBlock(v)){
     if(invertedPointers.contains(v)){
-      Value vNew = getNewFromOriginal(v);
-      invertValue = v.getType().cast<AutoDiffTypeInterface>().createAddOp(builder, v.getLoc(), vNew, invertValue);
+      Value vInvert = invertedPointers.lookupOrNull(v);
+      invertValue = v.getType().cast<AutoDiffTypeInterface>().createAddOp(builder, v.getLoc(), vInvert, invertValue);
     }
     invertedPointers.map(v, invertValue);
   }
@@ -231,8 +231,8 @@ std::pair<BlockAndValueMapping, DenseMap<Block *, SmallVector<std::pair<Value, V
   BlockAndValueMapping mapReverseModeBlocks;
   DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapReverseBlockArguments;
   for (auto it = oldFunc.getBody().getBlocks().rbegin(); it != oldFunc.getBody().getBlocks().rend(); ++it) {
-    Block *block = &*it;
-    Block *newBlock = new Block();
+    Block * block = &*it;
+    Block * reverseBlock = new Block();
 
     SmallVector<std::pair<Value, Value>> reverseModeArguments; // Argument, Assigned value (2. is technically not necessary but simplifies code a lot)
 
@@ -250,14 +250,14 @@ std::pair<BlockAndValueMapping, DenseMap<Block *, SmallVector<std::pair<Value, V
         }
       }
       for (auto it : reverseModeArguments){
-        newBlock->addArgument(it.second.getType(), it.second.getLoc());
+        reverseBlock->addArgument(it.second.getType(), it.second.getLoc());
       }
 
       mapReverseBlockArguments[block] = reverseModeArguments;
     }
 
-    mapReverseModeBlocks.map(block, newBlock);
-    newFunc.getBody().getBlocks().insert(newFunc.getBody().end(), newBlock);
+    mapReverseModeBlocks.map(block, reverseBlock);
+    newFunc.getBody().getBlocks().insert(newFunc.getBody().end(), reverseBlock);
   }
   return std::pair<BlockAndValueMapping, DenseMap<Block *, SmallVector<std::pair<Value, Value>>>> (mapReverseModeBlocks, mapReverseBlockArguments);
 }
