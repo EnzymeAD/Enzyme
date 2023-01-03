@@ -45,7 +45,7 @@ void mapInvertArguments(Block * oBB, Block * reverseBB, MDiffeGradientUtilsRever
 
 void handleReturns(Block * oBB, Block * newBB, Block * reverseBB, MDiffeGradientUtilsReverse * gutils){
   if (oBB->getNumSuccessors() == 0){
-    OpBuilder forwardToBackwardBuilder(newBB, newBB->begin());
+    OpBuilder forwardToBackwardBuilder(newBB, newBB->end());
     gutils->mapInvertPointer(oBB->getTerminator()->getOperand(0), gutils->newFunc.getArgument(gutils->newFunc.getNumArguments() - 1), forwardToBackwardBuilder); //TODO handle multiple return values
     Operation * newBranchOp = forwardToBackwardBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB->rbegin()))->getLoc(), reverseBB);
     
