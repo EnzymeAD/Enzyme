@@ -56,22 +56,14 @@ mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
       originalToNewFnOps(originalToNewFnOps_),
       mapReverseModeBlocks(mapReverseModeBlocks_),
       mapBlockArguments(mapBlockArguments_){
-  
-  // TODO
-  //auto valueMap = invertedPointers.getValueMap();
-  //assert(invertedPointers.getBlockMap().begin() == invertedPointers.getBlockMap().end());
-  //for(auto it = valueMap.begin(); it != valueMap.end(); it++){
-  //  mapInvertPointer(it->first, it->second);
-  //}
 
   initInitializationBlock(invertedPointers_);
-  //for(auto x : invertedPointers_.getValueMap()){
-  //  mapInvertPointer()
-  //}
 }
 
+//for(auto x : v.getUsers()){x->dump();}
+
 bool onlyUsedInParentBlock(Value v){
-  return v.isUsedOutsideOfBlock(v.getParentBlock());
+  return !v.isUsedOutsideOfBlock(v.getParentBlock());
 }
 
 Type mlir::enzyme::MGradientUtilsReverse::getIndexCacheType(){
@@ -98,8 +90,10 @@ Value mlir::enzyme::MGradientUtilsReverse::insertInitBackwardCache(Type t){
 }
 
 Value mlir::enzyme::MGradientUtilsReverse::insertInitGradient(mlir::Value v, OpBuilder &builder){
-  Type gradientType = getGradientType(v);  
-  Value gradient = builder.create<enzyme::CreateCacheOp>(v.getLoc(), gradientType);
+  Type gradientType = getGradientType(v);
+  OpBuilder initBuilder(initializationBlock, initializationBlock->begin());
+  Value gradient = initBuilder.create<enzyme::CreateCacheOp>(v.getLoc(), gradientType);
+  builder.create<enzyme::ClearGradientOp>(v.getLoc(), gradient);
   return gradient;
 }
 
@@ -185,7 +179,11 @@ Value mlir::enzyme::MGradientUtilsReverse::invertPointerM(Value v, OpBuilder &bu
 
 void mlir::enzyme::MGradientUtilsReverse::mapInvertPointer(mlir::Value v, mlir::Value invertValue, OpBuilder &builder){
   // This may be a performance bottleneck! TODO
-  if (false && onlyUsedInParentBlock(v)){
+  if (!invertedPointersGlobal.contains(v) && onlyUsedInParentBlock(v)){
+    if(invertedPointers.contains(v)){
+      Value vNew = getNewFromOriginal(v);
+      invertValue = v.getType().cast<AutoDiffTypeInterface>().createAddOp(builder, v.getLoc(), vNew, invertValue);
+    }
     invertedPointers.map(v, invertValue);
   }
   else{

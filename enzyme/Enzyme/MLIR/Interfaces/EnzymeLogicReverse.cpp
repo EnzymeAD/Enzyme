@@ -127,16 +127,16 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
         auto argumentsIt = gutils->mapBlockArguments.find(predecessor);
         if (argumentsIt != gutils->mapBlockArguments.end()){
           for(auto operandOld : argumentsIt->second){
-            if (oBB == operandOld.first.getParentBlock()){
-              operands.push_back(gutils->invertPointerM(operandOld.first, revBuilder));
+            if (oBB == operandOld.first.getParentBlock() && gutils->hasInvertPointer(operandOld.second)){
+              operands.push_back(gutils->invertPointerM(operandOld.second, revBuilder));
             }
             else{
-              if (auto iface = operandOld.first.getType().cast<AutoDiffTypeInterface>()) {
+              if (auto iface = operandOld.second.getType().cast<AutoDiffTypeInterface>()) {
                 Value nullValue = iface.createNullValue(revBuilder, oBB->rbegin()->getLoc());
                 operands.push_back(nullValue);
               }
               else{
-                llvm_unreachable("non cannonial null value found");
+                llvm_unreachable("non canonial null value found");
               }
             }
           }
@@ -152,37 +152,37 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
         SmallVector<ValueRange> arguments;
         ValueRange defaultArguments;
         Block * defaultBlock;
-        int i = 0;
+        int i = 1;
         for (auto it = oBB->getPredecessors().begin(); it != oBB->getPredecessors().end(); it++){
           Block * predecessor = *it;
-          predecessor = gutils->mapReverseModeBlocks.lookupOrNull(predecessor);
+          Block * predecessorRevMode = gutils->mapReverseModeBlocks.lookupOrNull(predecessor);
 
           SmallVector<Value> operands;
           auto argumentsIt = gutils->mapBlockArguments.find(predecessor);
           if (argumentsIt != gutils->mapBlockArguments.end()){
             for(auto operandOld : argumentsIt->second){
-              /*if (gutils->hasInvertPointer(operandOld)){
-                operands.push_back(gutils->invertPointerM(operandOld, revBuilder));
+              if (oBB == operandOld.first.getParentBlock() && gutils->hasInvertPointer(operandOld.second)){
+                operands.push_back(gutils->invertPointerM(operandOld.second, revBuilder));
               }
               else{
-                if (auto iface = operandOld.getType().cast<AutoDiffTypeInterface>()) {
+                if (auto iface = operandOld.second.getType().cast<AutoDiffTypeInterface>()) {
                   Value nullValue = iface.createNullValue(revBuilder, oBB->rbegin()->getLoc());
                   operands.push_back(nullValue);
                 }
                 else{
-                  llvm_unreachable("non cannonial null value found");
+                  llvm_unreachable("non canonial null value found");
                 }
-              }*/
+              }
             }
           }
 
           if (it != oBB->getPredecessors().begin()){
-            blocks.push_back(predecessor);
+            blocks.push_back(predecessorRevMode);
             indices.push_back(APInt(32, i++));
             arguments.push_back(ValueRange(operands));
           }
           else{
-            defaultBlock = predecessor;
+            defaultBlock = predecessorRevMode;
             defaultArguments = ValueRange(operands);
           }
         }

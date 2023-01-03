@@ -108,6 +108,12 @@ def GetGradientOp : Enzyme_Op<"get"> {
   let results = (outs AnyType);
 }
 
+def ClearGradientOp : Enzyme_Op<"clear"> {
+  let summary = "Clear gradient";
+  let arguments = (ins AnyType : $gradient);
+  let results = (outs );
+}
+
 def Gradient : Enzyme_Type<"Gradient"> {
   let summary = "Gradient storage";
   let description = [{

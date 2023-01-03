@@ -85,6 +85,10 @@ public:
     llvm_unreachable("Cannot create null of memref (todo polygeist null)");
   }
 
+  Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a, Value b) const {
+    llvm_unreachable("TODO");
+  }
+
   Type getShadowType(Type self, unsigned width) const {
     assert(width == 1 && "unsupported width != 1");
     return self;

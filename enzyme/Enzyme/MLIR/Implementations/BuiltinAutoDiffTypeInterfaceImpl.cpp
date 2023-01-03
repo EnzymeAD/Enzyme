@@ -34,6 +34,10 @@ public:
         loc, APFloat(fltType.getFloatSemantics(), 0), fltType);
   }
 
+  Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a, Value b) const {
+    return builder.create<arith::AddFOp>(loc, a, b);
+  }
+
   Type getShadowType(Type self, unsigned width) const {
     assert(width == 1 && "unsupported width != 1");
     return self;

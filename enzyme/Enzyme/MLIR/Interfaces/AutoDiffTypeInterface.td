@@ -35,6 +35,14 @@ def AutoDiffTypeInterface : TypeInterface<"AutoDiffTypeInterface"> {
     >,
     InterfaceMethod<
       /*desc=*/[{
+        Construct addition operation for the given type.
+      }],
+      /*retTy=*/"::mlir::Value",
+      /*methodName=*/"createAddOp",
+      /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::Location":$loc, "::mlir::Value":$a, "::mlir::Value":$b)
+    >,
+    InterfaceMethod<
+      /*desc=*/[{
         Returns the type that can contain the adjoint value for this type. If
         `width` is provided, returns the type that can store `width` instances
         of the adjoint.
