@@ -27,7 +27,6 @@ public:
   DerivativeMode mode;
   BlockAndValueMapping invertedPointers;
   BlockAndValueMapping invertedPointersGlobal;
-  DenseMap<Value, SmallVector<mlir::Value, 4>> invertedPointersReverse;
   Block *initializationBlock;
 
   BlockAndValueMapping mapReverseModeBlocks;
@@ -71,9 +70,8 @@ public:
   mlir::Value invertPointerM(mlir::Value v, OpBuilder &builder);
   void mapInvertPointer(mlir::Value v, mlir::Value invertValue, OpBuilder &builder);
   void setDiffe(mlir::Value val, mlir::Value toset, OpBuilder &BuilderM);
-  void forceAugmentedReturnsReverse();
   Value insertInitBackwardCache(Type t);
-  Value insertInitGradient(mlir::Value v);
+  Value insertInitGradient(mlir::Value v, OpBuilder &builder);
   Type getIndexCacheType();
   Type getIndexType();
   Type getCacheType(Type t);

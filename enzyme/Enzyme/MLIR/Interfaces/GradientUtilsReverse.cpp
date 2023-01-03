@@ -97,9 +97,8 @@ Value mlir::enzyme::MGradientUtilsReverse::insertInitBackwardCache(Type t){
   return builder.create<enzyme::CreateCacheOp>((initializationBlock->rbegin())->getLoc(), t);
 }
 
-Value mlir::enzyme::MGradientUtilsReverse::insertInitGradient(mlir::Value v){
+Value mlir::enzyme::MGradientUtilsReverse::insertInitGradient(mlir::Value v, OpBuilder &builder){
   Type gradientType = getGradientType(v);  
-  OpBuilder builder(initializationBlock, initializationBlock->begin());
   Value gradient = builder.create<enzyme::CreateCacheOp>(v.getLoc(), gradientType);
   return gradient;
 }
@@ -191,7 +190,7 @@ void mlir::enzyme::MGradientUtilsReverse::mapInvertPointer(mlir::Value v, mlir::
   }
   else{
     if(!invertedPointersGlobal.contains(v)){
-      Value g = insertInitGradient(v);
+      Value g = insertInitGradient(v, builder);
       invertedPointersGlobal.map(v, g);
     }
     Value gradient = invertedPointersGlobal.lookupOrNull(v);
@@ -203,9 +202,6 @@ bool mlir::enzyme::MGradientUtilsReverse::hasInvertPointer(mlir::Value v){
   return (invertedPointers.contains(v)) || (invertedPointersGlobal.contains(v));
 }
 
-void mlir::enzyme::MGradientUtilsReverse::forceAugmentedReturnsReverse() {
-  assert(mode == DerivativeMode::ReverseModeGradient);
-}
 
 LogicalResult MGradientUtilsReverse::visitChildReverse(Operation *op, OpBuilder &builder) {
   if (mode == DerivativeMode::ReverseModeGradient) {

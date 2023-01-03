@@ -50,21 +50,21 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
   auto gutils = MDiffeGradientUtilsReverse::CreateFromClone(*this, mode, width, fn, TA, type_args, retType, /*diffeReturnArg*/ true, constants, returnValue, addedType);
 
   const SmallPtrSet<mlir::Block *, 4> guaranteedUnreachable;
-  gutils->forceAugmentedReturnsReverse();
 
   // Get dominator tree and create topological sorting
   SmallVector<mlir::Block*> dominatorToposortBlocks = getDominatorToposort(gutils);
 
   //Iterate blocks and create reverse mode blocks
   for (auto it = dominatorToposortBlocks.rbegin(); it != dominatorToposortBlocks.rend(); ++it){
-    Block& oBB = **it;
+    Block * oBB = *it;
+    Block * reverseBB = gutils->mapReverseModeBlocks.lookupOrNull(oBB);
 
     // Don't create derivatives for code that results in termination
-    if (guaranteedUnreachable.find(&oBB) != guaranteedUnreachable.end()) {
-      auto newBB = gutils->getNewFromOriginal(&oBB);
+    if (guaranteedUnreachable.find(oBB) != guaranteedUnreachable.end()) {
+      auto newBB = gutils->getNewFromOriginal(oBB);
 
       SmallVector<Operation *, 4> toerase;
-      for (auto &I : oBB) {
+      for (auto &I : *oBB) {
         toerase.push_back(&I);
       }
       for (auto I : llvm::reverse(toerase)) {
@@ -75,34 +75,39 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
       builder.create<LLVM::UnreachableOp>(gutils->oldFunc.getLoc());
       continue;
     }
+    
+    for (int i = 0; i < gutils->mapBlockArguments[oBB].size(); i++){
+      auto x = gutils->mapBlockArguments[oBB][i];
+      OpBuilder builder(reverseBB, reverseBB->begin());
+      gutils->mapInvertPointer(x.second, reverseBB->getArgument(i), builder);
+    }
 
-    auto newBB = gutils->getNewFromOriginal(&oBB);
-    if (oBB.getNumSuccessors() == 0){
+    auto newBB = gutils->getNewFromOriginal(oBB);
+    if (oBB->getNumSuccessors() == 0){
       //gutils->oldFunc.getBody().getBlocks().front();
       OpBuilder forwardToBackwardBuilder(&*(newBB->rbegin())->getContext()); //TODO
-      forwardToBackwardBuilder.setInsertionPoint(gutils->getNewFromOriginal(&*(oBB.rbegin())));
-      auto revBlock = gutils->mapReverseModeBlocks.lookupOrNull(&oBB);
-      gutils->mapInvertPointer(oBB.getTerminator()->getOperand(0), gutils->newFunc.getArgument(gutils->newFunc.getNumArguments() - 1), forwardToBackwardBuilder); 
-      Operation * newBranchOp = forwardToBackwardBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB.rbegin()))->getLoc(), revBlock);
-      
+      forwardToBackwardBuilder.setInsertionPoint(gutils->getNewFromOriginal(&*(oBB->rbegin())));
+      auto revBlock = gutils->mapReverseModeBlocks.lookupOrNull(oBB);
+      gutils->mapInvertPointer(oBB->getTerminator()->getOperand(0), gutils->newFunc.getArgument(gutils->newFunc.getNumArguments() - 1), forwardToBackwardBuilder); 
+      Operation * newBranchOp = forwardToBackwardBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB->rbegin()))->getLoc(), revBlock);
       
       Operation * returnStatement = newBB->getTerminator();
-      Operation * retVal = oBB.getTerminator();
+      Operation * retVal = oBB->getTerminator();
       gutils->originalToNewFnOps[retVal] = newBranchOp;
       gutils->erase(returnStatement);
     }
     
-    OpBuilder revBuilder(gutils->mapReverseModeBlocks.lookupOrNull(&oBB), gutils->mapReverseModeBlocks.lookupOrNull(&oBB)->begin());
-    if (!oBB.empty()){
-      auto first = oBB.rbegin();
-      auto last = oBB.rend();
+    OpBuilder revBuilder(gutils->mapReverseModeBlocks.lookupOrNull(oBB), gutils->mapReverseModeBlocks.lookupOrNull(oBB)->end());
+    if (!oBB->empty()){
+      auto first = oBB->rbegin();
+      auto last = oBB->rend();
       for (auto it = first; it != last; ++it) {
         (void)gutils->visitChildReverse(&*it, revBuilder);
       }
     }
 
-    if (oBB.hasNoPredecessors()){
-      Block * revBlock = gutils->mapReverseModeBlocks.lookupOrNull(&oBB);
+    if (oBB->hasNoPredecessors()){
+      Block * revBlock = gutils->mapReverseModeBlocks.lookupOrNull(oBB);
 
       OpBuilder revBuilder(revBlock, revBlock->end());
       SmallVector<mlir::Value, 2> retargs;
@@ -111,23 +116,23 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
         retargs.push_back(attributeGradient);
       }
       
-      revBuilder.create<func::ReturnOp>(oBB.rbegin()->getLoc(), retargs);
+      revBuilder.create<func::ReturnOp>(oBB->rbegin()->getLoc(), retargs);
     }
     else {
-      if (std::next(oBB.getPredecessors().begin()) == oBB.getPredecessors().end()){
-        Block * predecessor = *(oBB.getPredecessors().begin());
+      if (std::next(oBB->getPredecessors().begin()) == oBB->getPredecessors().end()){
+        Block * predecessor = *(oBB->getPredecessors().begin());
         Block * predecessorRevMode = gutils->mapReverseModeBlocks.lookupOrNull(predecessor);
         // Create op operands
         SmallVector<Value> operands;
         auto argumentsIt = gutils->mapBlockArguments.find(predecessor);
         if (argumentsIt != gutils->mapBlockArguments.end()){
           for(auto operandOld : argumentsIt->second){
-            if (&oBB == operandOld.first.getParentBlock()){
+            if (oBB == operandOld.first.getParentBlock()){
               operands.push_back(gutils->invertPointerM(operandOld.first, revBuilder));
             }
             else{
               if (auto iface = operandOld.first.getType().cast<AutoDiffTypeInterface>()) {
-                Value nullValue = iface.createNullValue(revBuilder, oBB.rbegin()->getLoc());
+                Value nullValue = iface.createNullValue(revBuilder, oBB->rbegin()->getLoc());
                 operands.push_back(nullValue);
               }
               else{
@@ -137,18 +142,18 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
           }
         }
         ValueRange operandsValueRange(operands);
-        revBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB.rbegin()))->getLoc(), predecessorRevMode, operandsValueRange);
+        revBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB->rbegin()))->getLoc(), predecessorRevMode, operandsValueRange);
       }
       else{
         Value cache = gutils->insertInitBackwardCache(gutils->getIndexCacheType());
-        Value flag = revBuilder.create<enzyme::PopCacheOp>(oBB.rbegin()->getLoc(), gutils->getIndexType(), cache);
+        Value flag = revBuilder.create<enzyme::PopCacheOp>(oBB->rbegin()->getLoc(), gutils->getIndexType(), cache);
         SmallVector<Block *> blocks;
         SmallVector<APInt> indices;
         SmallVector<ValueRange> arguments;
         ValueRange defaultArguments;
         Block * defaultBlock;
         int i = 0;
-        for (auto it = oBB.getPredecessors().begin(); it != oBB.getPredecessors().end(); it++){
+        for (auto it = oBB->getPredecessors().begin(); it != oBB->getPredecessors().end(); it++){
           Block * predecessor = *it;
           predecessor = gutils->mapReverseModeBlocks.lookupOrNull(predecessor);
 
@@ -161,7 +166,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
               }
               else{
                 if (auto iface = operandOld.getType().cast<AutoDiffTypeInterface>()) {
-                  Value nullValue = iface.createNullValue(revBuilder, oBB.rbegin()->getLoc());
+                  Value nullValue = iface.createNullValue(revBuilder, oBB->rbegin()->getLoc());
                   operands.push_back(nullValue);
                 }
                 else{
@@ -171,7 +176,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
             }
           }
 
-          if (it != oBB.getPredecessors().begin()){
+          if (it != oBB->getPredecessors().begin()){
             blocks.push_back(predecessor);
             indices.push_back(APInt(32, i++));
             arguments.push_back(ValueRange(operands));
@@ -181,7 +186,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(
             defaultArguments = ValueRange(operands);
           }
         }
-        revBuilder.create<cf::SwitchOp>(oBB.rbegin()->getLoc(), flag, defaultBlock, defaultArguments, ArrayRef<APInt>(indices), ArrayRef<Block *>(blocks), ArrayRef<ValueRange>(arguments));
+        revBuilder.create<cf::SwitchOp>(oBB->rbegin()->getLoc(), flag, defaultBlock, defaultArguments, ArrayRef<APInt>(indices), ArrayRef<Block *>(blocks), ArrayRef<ValueRange>(arguments));
       }
     }
   }
