@@ -1474,24 +1474,23 @@ public:
     
     return true;
   }
-
-  static Type *getShadowTypeVectorizedAtLeafNodes(Module &M, Type *ty, unsigned width) {
+  
+  static Type *createShadowTypeFor(Type *ty, unsigned width, std::map<StructType*, StructType*> &under_construction) {
     if (auto sty = dyn_cast<StructType>(ty)) {
-      // look for exisiting vectorized type
-      auto&& AllStructTypes = M.getIdentifiedStructTypes();
-      for (auto&& elem: AllStructTypes) {
-        SmallPtrSet<StructType*, 16> visited;
-        if (isVectorizedStructFor(sty, elem, visited, width, M))
-          return elem;
-      }
-
+      auto found = under_construction.find(sty);
+      
+      if (found != under_construction.end())
+        return found->second;
+      
       // create new vectorized type
       auto name = ty->getStructName() + ".Vec." + Twine(width);
       StructType *new_sty = StructType::create(ty->getContext(), name.str());
+      under_construction[sty] = new_sty;
+      
       SmallVector<Type *, 3> subtys;
 
       for (auto sety : sty->subtypes()) {
-        Type *subty = getShadowTypeVectorizedAtLeafNodes(M, sety, width);
+        Type *subty = createShadowTypeFor(sety, width, under_construction);
         subtys.push_back(subty);
       }
 
@@ -1504,21 +1503,33 @@ public:
         return StructType::get(sty->getContext(), subtys);
       }
     } else if (auto aty = dyn_cast<ArrayType>(ty)) {
-      return ArrayType::get(
-          getShadowTypeVectorizedAtLeafNodes(M, aty->getElementType(), width),
+      return ArrayType::get(createShadowTypeFor(aty->getElementType(), width, under_construction),
           aty->getNumElements());
     } else if (auto pty = dyn_cast<PointerType>(ty)) {
       if (pty->getElementType()->isFunctionTy())
         return VectorType::get(pty, width, false);
       
-      return PointerType::get(
-                              getShadowTypeVectorizedAtLeafNodes(M, pty->getElementType(), width),
-                              pty->getAddressSpace());
+      return PointerType::get(createShadowTypeFor(pty->getElementType(), width, under_construction), pty->getAddressSpace());
     } else if (auto vty = dyn_cast<VectorType>(ty)) {
       return VectorType::get(vty->getElementType(), vty->getElementCount() * width);
     } else {
       return VectorType::get(ty, width, false);
     }
+  }
+
+  static Type *getShadowTypeVectorizedAtLeafNodes(Module &M, Type *ty, unsigned width) {
+    if (auto sty = dyn_cast<StructType>(ty)) {
+      // look for exisiting vectorized type
+      auto&& AllStructTypes = M.getIdentifiedStructTypes();
+      for (auto&& elem: AllStructTypes) {
+        SmallPtrSet<StructType*, 16> visited;
+        if (isVectorizedStructFor(sty, elem, visited, width, M))
+          return elem;
+      }
+    }
+    
+    std::map<StructType*, StructType*> under_construction;
+    return createShadowTypeFor(ty, width, under_construction);
   }
 
   static Type *getShadowTypeVectorizedAtRootNode(Type *ty, unsigned width) {
