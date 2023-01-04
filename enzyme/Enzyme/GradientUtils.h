@@ -1444,8 +1444,8 @@ public:
     
     auto sit = sty->element_begin();
     auto vsit = vsty->element_begin();
-        
-    for (;sit != sty->element_end() && vsit != vsty->element_end(); sit++ && sit++) {
+    
+    for (;sit != sty->element_end() && vsit != vsty->element_end(); sit++, vsit++) {
       Type *Ty = *sit;
       Type *VTy = *vsit;
       
@@ -1467,10 +1467,9 @@ public:
       if (peeledStructType && peeledVectorType) {
         if (!visited.contains(peeledStructType) && !isVectorizedStructFor(peeledStructType, peeledVectorStructType, visited, width, M))
           return false;
-      }
-      
-      if (getShadowTypeVectorizedAtLeafNodes(M, Ty, width) != VTy)
+      } else if (getShadowTypeVectorizedAtLeafNodes(M, Ty, width) != VTy) {
         return false;
+      }
     }
     
     return true;
