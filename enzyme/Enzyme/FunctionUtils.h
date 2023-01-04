@@ -365,6 +365,7 @@ void ReplaceFunctionImplementation(llvm::Module &M);
 bool couldFunctionArgumentCapture(llvm::CallInst *CI, llvm::Value *val);
 
 llvm::FunctionType *getFunctionTypeForClone(
+    llvm::Module &M,
     llvm::FunctionType *FTy, DerivativeMode mode,
     VectorModeMemoryLayout memoryLayout, unsigned width,
     llvm::Type *additionalArg, llvm::ArrayRef<DIFFE_TYPE> constant_args,

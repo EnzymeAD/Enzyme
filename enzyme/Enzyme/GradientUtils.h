@@ -1435,23 +1435,63 @@ public:
         getNewFromOriginal(Builder2.getCurrentDebugLocation()));
     Builder2.setFastMathFlags(getFast());
   }
+  
+  static bool isVectorizedStructFor(StructType *sty, StructType *vsty, SmallPtrSetImpl<StructType*> &visited, unsigned width, Module &M) {
+    visited.insert(sty);
+    
+    if (sty->getStructNumElements() != vsty->getStructNumElements())
+      return false;
+    
+    auto sit = sty->element_begin();
+    auto vsit = vsty->element_begin();
+        
+    for (;sit != sty->element_end() && vsit != vsty->element_end(); sit++ && sit++) {
+      Type *Ty = *sit;
+      Type *VTy = *vsit;
+      
+      Type *peeledType = *sit;
+      Type *peeledVectorType = *vsit;
+      
+      while (auto foo = dyn_cast<PointerType>(peeledType)) {
+        if (auto bar = dyn_cast<PointerType>(peeledVectorType)) {
+          peeledType = foo->getPointerElementType();
+          peeledVectorType = bar->getPointerElementType();
+        } else {
+          return false;
+        }
+      }
+      
+      auto peeledStructType = dyn_cast<StructType>(peeledType);
+      auto peeledVectorStructType = dyn_cast<StructType>(peeledVectorType);
+      
+      if (peeledStructType && peeledVectorType) {
+        if (!visited.contains(peeledStructType) && !isVectorizedStructFor(peeledStructType, peeledVectorStructType, visited, width, M))
+          return false;
+      }
+      
+      if (getShadowTypeVectorizedAtLeafNodes(M, Ty, width) != VTy)
+        return false;
+    }
+    
+    return true;
+  }
 
-  static Type *getShadowTypeVectorizedAtLeafNodes(Type *ty, unsigned width) {
-    static std::map<Type *, Type *> visited;
-
+  static Type *getShadowTypeVectorizedAtLeafNodes(Module &M, Type *ty, unsigned width) {
     if (auto sty = dyn_cast<StructType>(ty)) {
+      // look for exisiting vectorized type
+      auto&& AllStructTypes = M.getIdentifiedStructTypes();
+      for (auto&& elem: AllStructTypes) {
+        SmallPtrSet<StructType*, 16> visited;
+        if (isVectorizedStructFor(sty, elem, visited, width, M))
+          return elem;
+      }
 
-      auto found = visited.find(sty);
-      if (found != visited.end())
-        return found->second;
-
+      // create new vectorized type
       StructType *new_sty = StructType::create(ty->getContext());
       SmallVector<Type *, 3> subtys;
 
-      visited[sty] = new_sty;
-
       for (auto sety : sty->subtypes()) {
-        Type *subty = getShadowTypeVectorizedAtLeafNodes(sety, width);
+        Type *subty = getShadowTypeVectorizedAtLeafNodes(M, sety, width);
         subtys.push_back(subty);
       }
 
@@ -1461,19 +1501,18 @@ public:
         new_sty->setName(name.str());
         return new_sty;
       } else {
-        visited.erase(sty);
         return StructType::get(sty->getContext(), subtys);
       }
     } else if (auto aty = dyn_cast<ArrayType>(ty)) {
       return ArrayType::get(
-          getShadowTypeVectorizedAtLeafNodes(aty->getElementType(), width),
+          getShadowTypeVectorizedAtLeafNodes(M, aty->getElementType(), width),
           aty->getNumElements());
     } else if (auto pty = dyn_cast<PointerType>(ty)) {
       if (pty->getElementType()->isFunctionTy())
         return VectorType::get(pty, width, false);
       
       return PointerType::get(
-                              getShadowTypeVectorizedAtLeafNodes(pty->getElementType(), width),
+                              getShadowTypeVectorizedAtLeafNodes(M, pty->getElementType(), width),
                               pty->getAddressSpace());
     } else if (auto vty = dyn_cast<VectorType>(ty)) {
       return VectorType::get(vty->getElementType(), vty->getElementCount() * width);
@@ -1486,7 +1525,7 @@ public:
     return ArrayType::get(ty, width);
   }
 
-  static inline Type *getShadowType(Type *ty, unsigned width,
+  static inline Type *getShadowType(Module &M, Type *ty, unsigned width,
                              VectorModeMemoryLayout memoryLayout) {
     if (width == 1)
       return ty;
@@ -1498,12 +1537,13 @@ public:
     case VectorModeMemoryLayout::VectorizeAtRootNode:
       return getShadowTypeVectorizedAtRootNode(ty, width);
     case VectorModeMemoryLayout::VectorizeAtLeafNodes:
-      return getShadowTypeVectorizedAtLeafNodes(ty, width);
+      return getShadowTypeVectorizedAtLeafNodes(M, ty, width);
     }
   }
 
   Type *getShadowType(Type *ty) {
-    return getShadowType(ty, width, memoryLayout);
+    auto &M = *oldFunc->getParent();
+    return getShadowType(M, ty, width, memoryLayout);
   }
 
   static inline Value *extractMeta(IRBuilder<> &Builder, Value *Agg,
