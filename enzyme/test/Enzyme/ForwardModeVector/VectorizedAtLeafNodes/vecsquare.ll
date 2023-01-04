@@ -45,8 +45,7 @@ entry:
 ; CHECK-NEXT:   %.subvector.1 = shufflevector <8 x float> %2, <8 x float> poison, <4 x i32> <i32 4, i32 5, i32 6, i32 7>
 ; CHECK-NEXT:   %.subvector.14 = shufflevector <8 x float> %5, <8 x float> poison, <4 x i32> <i32 4, i32 5, i32 6, i32 7>
 ; CHECK-NEXT:   %"id'ipsv5" = shufflevector <4 x float> %.subvector.1, <4 x float> %.subvector.14, <4 x i32> <i32 0, i32 1, i32 4, i32 5>
-; CHECK-NEXT:   %"id'ipsv5.vecpad" = shufflevector <4 x float> %"id'ipsv", <4 x float> poison, <4 x i32> <i32 0, i32 1, i32 2, i32 3>
-; CHECK-NEXT:   %"id'ipsv5.vecconcat" = shufflevector <4 x float> %"id'ipsv", <4 x float> %"id'ipsv5.vecpad", <8 x i32> <i32 0, i32 1, i32 2, i32 3, i32 4, i32 5, i32 6, i32 7>
+; CHECK-NEXT:   %"id'ipsv5.vecconcat" = shufflevector <4 x float> %"id'ipsv", <4 x float> %"id'ipsv5", <8 x i32> <i32 0, i32 1, i32 2, i32 3, i32 4, i32 5, i32 6, i32 7>
 ; CHECK-NEXT:   %"id'ipsv5.vecconcat.subvector.0" = shufflevector <8 x float> %"id'ipsv5.vecconcat", <8 x float> poison, <4 x i32> <i32 0, i32 1, i32 2, i32 3>
 ; CHECK-NEXT:   %"res1'ipee" = extractelement <4 x float> %"id'ipsv5.vecconcat.subvector.0", i32 1
 ; CHECK-NEXT:   %6 = insertelement <2 x float> undef, float %"res1'ipee", i32 0
