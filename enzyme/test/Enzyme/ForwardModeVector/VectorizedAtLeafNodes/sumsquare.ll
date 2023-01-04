@@ -42,21 +42,29 @@ attributes #2 = { nounwind }
 ; CHECK-NEXT:   br label %for.body.i
 
 ; CHECK: for.body.i:                                       ; preds = %for.body.i, %entry
-; CHECK-NEXT:   %0 = phi fast <3 x double> [ zeroinitializer, %entry ], [ %4, %for.body.i ]
+; CHECK-NEXT:   %0 = phi fast double [ 0.000000e+00, %entry ], [ %10, %for.body.i ]
+; CHECK-NEXT:   %1 = phi fast double [ 0.000000e+00, %entry ], [ %11, %for.body.i ]
+; CHECK-NEXT:   %2 = phi fast double [ 0.000000e+00, %entry ], [ %12, %for.body.i ]
 ; CHECK-NEXT:   %iv.i = phi i64 [ %iv.next.i, %for.body.i ], [ 0, %entry ]
+; CHECK-NEXT:   %3 = insertelement <3 x double> undef, double %0, i32 0
+; CHECK-NEXT:   %4 = insertelement <3 x double> %3, double %1, i32 1
+; CHECK-NEXT:   %5 = insertelement <3 x double> %4, double %2, i32 2
 ; CHECK-NEXT:   %iv.next.i = add nuw nsw i64 %iv.i, 1
 ; CHECK-NEXT:   %"arrayidx'ipg.i" = getelementptr inbounds <3 x double>, <3 x double>* %xp, i64 %iv.i
 ; CHECK-NEXT:   %arrayidx.i = getelementptr inbounds double, double* %x, i64 %iv.i
 ; CHECK-NEXT:   %"'ipl.i" = load <3 x double>, <3 x double>* %"arrayidx'ipg.i", align 8
-; CHECK-NEXT:   %1 = load double, double* %arrayidx.i, align 8
-; CHECK-NEXT:   %.splatinsert.i = insertelement <3 x double> poison, double %1, i32 0
+; CHECK-NEXT:   %6 = load double, double* %arrayidx.i, align 8
+; CHECK-NEXT:   %.splatinsert.i = insertelement <3 x double> poison, double %6, i32 0
 ; CHECK-NEXT:   %.splat.i = shufflevector <3 x double> %.splatinsert.i, <3 x double> poison, <3 x i32> zeroinitializer
-; CHECK-NEXT:   %2 = fmul fast <3 x double> %"'ipl.i", %.splat.i
-; CHECK-NEXT:   %3 = fadd fast <3 x double> %2, %2
-; CHECK-NEXT:   %4 = fadd fast <3 x double> %3, %0
+; CHECK-NEXT:   %7 = fmul fast <3 x double> %"'ipl.i", %.splat.i
+; CHECK-NEXT:   %8 = fadd fast <3 x double> %7, %7
+; CHECK-NEXT:   %9 = fadd fast <3 x double> %8, %5
 ; CHECK-NEXT:   %exitcond.i = icmp eq i64 %iv.i, %n
+; CHECK-NEXT:   %10 = extractelement <3 x double> %9, i64 0
+; CHECK-NEXT:   %11 = extractelement <3 x double> %9, i64 1
+; CHECK-NEXT:   %12 = extractelement <3 x double> %9, i64 2
 ; CHECK-NEXT:   br i1 %exitcond.i, label %fwddiffe3sumsquare.exit, label %for.body.i
 
 ; CHECK: fwddiffe3sumsquare.exit:                          ; preds = %for.body.i
-; CHECK-NEXT:   ret <3 x double> %4
+; CHECK-NEXT:   ret <3 x double> %9
 ; CHECK-NEXT: }

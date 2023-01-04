@@ -51,8 +51,13 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK-NEXT:   br label %loop
 
 ; CHECK: loop:                                             ; preds = %end, %entry
-; CHECK-NEXT:   %0 = phi fast <3 x double> [ %1, %end ], [ zeroinitializer, %entry ]
+; CHECK-NEXT:   %0 = phi fast double [ %7, %end ], [ 0.000000e+00, %entry ]
+; CHECK-NEXT:   %1 = phi fast double [ %8, %end ], [ 0.000000e+00, %entry ]
+; CHECK-NEXT:   %2 = phi fast double [ %9, %end ], [ 0.000000e+00, %entry ]
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %end ], [ 0, %entry ]
+; CHECK-NEXT:   %3 = insertelement <3 x double> undef, double %0, i32 0
+; CHECK-NEXT:   %4 = insertelement <3 x double> %3, double %1, i32 1
+; CHECK-NEXT:   %5 = insertelement <3 x double> %4, double %2, i32 2
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
 ; CHECK-NEXT:   %g0 = getelementptr inbounds double, double* %x, i64 %iv
 ; CHECK-NEXT:   br label %body
@@ -68,10 +73,13 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK: end:                                              ; preds = %body
 ; CHECK-NEXT:   %"gep2'ipg" = getelementptr inbounds <3 x double>, <3 x double>* %"x'", i64 %iv1
 ; CHECK-NEXT:   %"ld2'ipl" = load <3 x double>, <3 x double>* %"gep2'ipg", align 8
-; CHECK-NEXT:   %1 = fadd fast <3 x double> %"ld2'ipl", %0
+; CHECK-NEXT:   %6 = fadd fast <3 x double> %"ld2'ipl", %5
 ; CHECK-NEXT:   %cmp2 = icmp ne i64 %iv.next, 10
+; CHECK-NEXT:   %7 = extractelement <3 x double> %6, i64 0
+; CHECK-NEXT:   %8 = extractelement <3 x double> %6, i64 1
+; CHECK-NEXT:   %9 = extractelement <3 x double> %6, i64 2
 ; CHECK-NEXT:   br i1 %cmp2, label %loop, label %exit
 
 ; CHECK: exit:                                             ; preds = %end
-; CHECK-NEXT:   ret <3 x double> %1
+; CHECK-NEXT:   ret <3 x double> %6
 ; CHECK-NEXT: }

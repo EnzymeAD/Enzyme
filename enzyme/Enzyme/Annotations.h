@@ -289,6 +289,15 @@ public:
             return Builder.CreateExtractElement(value, i);
           }
         } else if (auto pty = dyn_cast<PointerType>(value->getType())) {
+          if (auto vty = dyn_cast<VectorType>(pty->getElementType())) {
+            unsigned vector_width = vty->getElementCount().getKnownMinValue();
+            if (vector_width / width > 1) {
+              Type* res_type = FixedVectorType::get(vty->getElementType(), vector_width / width);
+              Type* gep_type = PointerType::get(res_type, pty->getAddressSpace());
+              auto gep = Builder.CreateInBoundsGEP(value, {Builder.getInt32(0), Builder.getInt32(i * vector_width / width)});
+              return Builder.CreatePointerCast(gep, gep_type);
+            }
+          }
           return Builder.CreateInBoundsGEP(value, {Builder.getInt32(0), Builder.getInt32(i)});
         }
         return value;

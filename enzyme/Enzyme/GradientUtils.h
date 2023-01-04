@@ -1623,13 +1623,15 @@ public:
       if (diffType->isVectorTy()) {
         Value *res = nullptr;
         for (unsigned int i = 0; i < width; ++i) {
-          auto diff = std::apply(rule, std::move(eval_tuple(Builder, memoryLayout, width, i, args...)));
+          Value* diff = std::apply(rule, std::move(eval_tuple(Builder, memoryLayout, width, i, args...)));
           if (res) {
             VectorType *rvty = cast<VectorType>(res->getType());
             VectorType *dvty = cast<VectorType>(diff->getType());
+            if (dvty->getElementCount().getKnownMinValue() < rvty->getElementCount().getKnownMinValue()) {
+              diff = Builder.CreateShuffleVector(diff, CreateVectorConcatenationMask(rvty->getElementCount().getKnownMinValue(), 0), diff->getName() + ".vecpad");
+            }
             SmallVector<int,0> Mask = CreateVectorConcatenationMask(rvty->getElementCount().getKnownMinValue(), dvty->getElementCount().getKnownMinValue());
-            auto extended = Builder.CreateShuffleVector(res, CreateVectorConcatenationMask(rvty->getElementCount().getKnownMinValue(), 0), diff->getName() + ".vecpad");
-            res = Builder.CreateShuffleVector(res, extended, Mask, diff->getName() + ".vecconcat");
+            res = Builder.CreateShuffleVector(res, diff, Mask, diff->getName() + ".vecconcat");
           } else {
             res = diff;
           }

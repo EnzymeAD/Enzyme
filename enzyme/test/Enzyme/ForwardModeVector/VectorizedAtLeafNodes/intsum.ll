@@ -40,24 +40,32 @@ entry:
 
 ; CHECK: do.body:                                          ; preds = %do.body, %entry
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %do.body ], [ 0, %entry ]
-; CHECK-NEXT:   %0 = phi <3 x i32> [ zeroinitializer, %entry ], [ %"intadd'ipc", %do.body ]
+; CHECK-NEXT:   %0 = phi i32 [ 0, %entry ], [ %7, %do.body ]
+; CHECK-NEXT:   %1 = phi i32 [ 0, %entry ], [ %8, %do.body ]
+; CHECK-NEXT:   %2 = phi i32 [ 0, %entry ], [ %9, %do.body ]
 ; CHECK-NEXT:   %intsum = phi i32 [ 0, %entry ], [ %intadd, %do.body ]
+; CHECK-NEXT:   %3 = insertelement <3 x i32> undef, i32 %0, i32 0
+; CHECK-NEXT:   %4 = insertelement <3 x i32> %3, i32 %1, i32 1
+; CHECK-NEXT:   %5 = insertelement <3 x i32> %4, i32 %2, i32 2
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
 ; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds <3 x float>, <3 x float>* %"array'", i64 %iv
 ; CHECK-NEXT:   %arrayidx = getelementptr inbounds float, float* %array, i64 %iv
 ; CHECK-NEXT:   %"loaded'ipl" = load <3 x float>, <3 x float>* %"arrayidx'ipg", align 4
 ; CHECK-NEXT:   %loaded = load float, float* %arrayidx, align 4
-; CHECK-NEXT:   %"fltload'ipc" = bitcast <3 x i32> %0 to <3 x float>
+; CHECK-NEXT:   %"fltload'ipc" = bitcast <3 x i32> %5 to <3 x float>
 ; CHECK-NEXT:   %fltload = bitcast i32 %intsum to float
 ; CHECK-NEXT:   %add = fadd float %fltload, %loaded
-; CHECK-NEXT:   %1 = fadd fast <3 x float> %"fltload'ipc", %"loaded'ipl"
-; CHECK-NEXT:   %"intadd'ipc" = bitcast <3 x float> %1 to <3 x i32>
+; CHECK-NEXT:   %6 = fadd fast <3 x float> %"fltload'ipc", %"loaded'ipl"
+; CHECK-NEXT:   %"intadd'ipc" = bitcast <3 x float> %6 to <3 x i32>
 ; CHECK-NEXT:   %intadd = bitcast float %add to i32
 ; CHECK-NEXT:   %cmp = icmp eq i64 %iv.next, 5
+; CHECK-NEXT:   %7 = extractelement <3 x i32> %"intadd'ipc", i64 0
+; CHECK-NEXT:   %8 = extractelement <3 x i32> %"intadd'ipc", i64 1
+; CHECK-NEXT:   %9 = extractelement <3 x i32> %"intadd'ipc", i64 2
 ; CHECK-NEXT:   br i1 %cmp, label %do.end, label %do.body
 
 ; CHECK: do.end:                                           ; preds = %do.body
-; CHECK-NEXT:   store float %add, float* %ret, align 4
-; CHECK-NEXT:   store <3 x float> %1, <3 x float>* %"ret'", align 4
+; CHECK-NEXT:   store float %add, float* %ret, align 4, !alias.scope !0, !noalias !3
+; CHECK-NEXT:   store <3 x float> %6, <3 x float>* %"ret'", align 4, !alias.scope !7, !noalias !8
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

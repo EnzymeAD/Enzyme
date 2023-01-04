@@ -619,7 +619,7 @@ SmallVector<unsigned int, 9> MD_ToCopy = {
         Value *sargs[] = {res, ptr, alignv, mask};
         BuilderM.CreateCall(SF, sargs);
       };
-      applyChainRule(BuilderM, rule, Gradient(ptr), Gradient(dif));
+      applyChainRule<ResultType::UNWRAPPED>(BuilderM, rule, Gradient(ptr), Gradient(dif));
     }
   }
 
@@ -5378,24 +5378,22 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         return applyChainRule(II->getType(), bb, rule, Gradient(invertPointerM(II->getArgOperand(0), bb)));
       }
     case Intrinsic::masked_load: {
-      auto rule = [&](Value *ptr, Value *align, Value *mask, Value *defaultV, Type* diffType) {
-        Value *args[] = {ptr, getNewFromOriginal(II->getArgOperand(1)),
-          getNewFromOriginal(II->getArgOperand(2)),
-          defaultV};
-        llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
-        ToCopy2.push_back(LLVMContext::MD_noalias);
-        auto li = bb.CreateCall(II->getCalledFunction(), args);
-        li->copyMetadata(*II, ToCopy2);
-        li->setDebugLoc(getNewFromOriginal(II->getDebugLoc()));
-        return li;
-      };
-
       auto ptr = invertPointerM(II->getArgOperand(0), bb);
       auto align = getNewFromOriginal(II->getArgOperand(1));
       auto mask = getNewFromOriginal(II->getArgOperand(2));
       auto defaultV = invertPointerM(II->getArgOperand(3), bb, nullShadow);
-            
-      return applyChainRule(II->getType(), bb, rule, Gradient(ptr), Primal(align), Primal(mask), Gradient(defaultV), Primal(II->getType()));
+      auto loc = getNewFromOriginal(II->getDebugLoc());
+      
+      auto rule = [&](Value *ptr, Value *align, Value *mask, Value *defaultV) {
+        llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
+        ToCopy2.push_back(LLVMContext::MD_noalias);
+        auto li = bb.CreateCall(II->getCalledFunction(), {ptr, align, mask, defaultV});
+        li->copyMetadata(*II, ToCopy2);
+        li->setDebugLoc(loc);
+        return li;
+      };
+    
+      return applyChainRule<ResultType::UNWRAPPED>(II->getType(), bb, rule, Gradient(ptr), Primal(align), Primal(mask), Gradient(defaultV));
     }
     }
   } else if (auto phi = dyn_cast<PHINode>(oval)) {

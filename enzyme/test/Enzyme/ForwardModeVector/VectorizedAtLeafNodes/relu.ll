@@ -36,15 +36,20 @@ attributes #1 = { nounwind readnone noinline }
 
 
 ; CHECK: define dso_local <2 x double> @drelu(double %x)
-; CHECK-NEXT:  entry:
+; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %cmp.i = fcmp fast ogt double %x, 0.000000e+00
 ; CHECK-NEXT:   br i1 %cmp.i, label %cond.true.i, label %fwddiffe2relu.exit
 
 ; CHECK: cond.true.i:                                      ; preds = %entry
 ; CHECK-NEXT:   %0 = call fast <2 x double> @fwddiffe2f(double %x, <2 x double> <double 0.000000e+00, double 1.000000e+00>)
+; CHECK-NEXT:   %1 = extractelement <2 x double> %0, i64 0
+; CHECK-NEXT:   %2 = extractelement <2 x double> %0, i64 1
 ; CHECK-NEXT:   br label %fwddiffe2relu.exit
 
 ; CHECK: fwddiffe2relu.exit:                               ; preds = %entry, %cond.true.i
-; CHECK-NEXT:   %1 = phi fast <2 x double> [ %0, %cond.true.i ], [ zeroinitializer, %entry ]
-; CHECK-NEXT:   ret <2 x double> %1
+; CHECK-NEXT:   %3 = phi fast double [ %1, %cond.true.i ], [ 0.000000e+00, %entry ]
+; CHECK-NEXT:   %4 = phi fast double [ %2, %cond.true.i ], [ 0.000000e+00, %entry ]
+; CHECK-NEXT:   %5 = insertelement <2 x double> undef, double %3, i32 0
+; CHECK-NEXT:   %6 = insertelement <2 x double> %5, double %4, i32 1
+; CHECK-NEXT:   ret <2 x double> %6
 ; CHECK-NEXT: }
