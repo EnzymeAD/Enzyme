@@ -1486,7 +1486,8 @@ public:
       }
 
       // create new vectorized type
-      StructType *new_sty = StructType::create(ty->getContext());
+      auto name = ty->getStructName() + ".Vec." + Twine(width);
+      StructType *new_sty = StructType::create(ty->getContext(), name.str());
       SmallVector<Type *, 3> subtys;
 
       for (auto sety : sty->subtypes()) {
