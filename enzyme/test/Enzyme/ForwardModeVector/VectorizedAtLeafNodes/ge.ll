@@ -69,31 +69,39 @@ attributes #3 = { nounwind }
 !5 = !{!"Simple C/C++ TBAA"}
 
 
-; CHECK: define internal <3 x double> @fwddiffe3cache(double* nocapture %x, <3 x double>* %"x'", i32 %N) #2 {
+; CHECK: define internal <3 x double> @fwddiffe3cache(double* nocapture %x, <3 x double>* %"x'", i32 %N)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   br label %for.body
 
 ; CHECK: for.cond.cleanup:                                 ; preds = %for.body
-; CHECK-NEXT:   store double 0.000000e+00, double* %x, align 8, !tbaa !2
-; CHECK-NEXT:   store <3 x double> zeroinitializer, <3 x double>* %"x'", align 8
-; CHECK-NEXT:   ret <3 x double> %5
+; CHECK-NEXT:   store double 0.000000e+00, double* %x, align 8, !tbaa !2, !alias.scope !6, !noalias !9
+; CHECK-NEXT:   store <3 x double> zeroinitializer, <3 x double>* %"x'", align 8, !tbaa !2, !alias.scope !13, !noalias !14
+; CHECK-NEXT:   ret <3 x double> %10
 
 ; CHECK: for.body:                                         ; preds = %for.body, %entry
-; CHECK-NEXT:   %0 = phi fast <3 x double> [ zeroinitializer, %entry ], [ %5, %for.body ]
+; CHECK-NEXT:   %0 = phi fast double [ 0.000000e+00, %entry ], [ %11, %for.body ]
+; CHECK-NEXT:   %1 = phi fast double [ 0.000000e+00, %entry ], [ %12, %for.body ]
+; CHECK-NEXT:   %2 = phi fast double [ 0.000000e+00, %entry ], [ %13, %for.body ]
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %for.body ], [ 0, %entry ]
+; CHECK-NEXT:   %3 = insertelement <3 x double> undef, double %0, i32 0
+; CHECK-NEXT:   %4 = insertelement <3 x double> %3, double %1, i32 1
+; CHECK-NEXT:   %5 = insertelement <3 x double> %4, double %2, i32 2
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
-; CHECK-NEXT:   %1 = trunc i64 %iv to i32
-; CHECK-NEXT:   %idxprom = zext i32 %1 to i64
+; CHECK-NEXT:   %6 = trunc i64 %iv to i32
+; CHECK-NEXT:   %idxprom = zext i32 %6 to i64
 ; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds <3 x double>, <3 x double>* %"x'", i64 %idxprom
 ; CHECK-NEXT:   %arrayidx = getelementptr inbounds double, double* %x, i64 %idxprom
 ; CHECK-NEXT:   %"'ipl" = load <3 x double>, <3 x double>* %"arrayidx'ipg", align 8, !tbaa !2
-; CHECK-NEXT:   %2 = load double, double* %arrayidx, align 8, !tbaa !2
-; CHECK-NEXT:   %.splatinsert = insertelement <3 x double> poison, double %2, i32 0
+; CHECK-NEXT:   %7 = load double, double* %arrayidx, align 8, !tbaa !2
+; CHECK-NEXT:   %.splatinsert = insertelement <3 x double> poison, double %7, i32 0
 ; CHECK-NEXT:   %.splat = shufflevector <3 x double> %.splatinsert, <3 x double> poison, <3 x i32> zeroinitializer
-; CHECK-NEXT:   %3 = fmul fast <3 x double> %"'ipl", %.splat
-; CHECK-NEXT:   %4 = fadd fast <3 x double> %3, %3
-; CHECK-NEXT:   %5 = fadd fast <3 x double> %0, %4
-; CHECK-NEXT:   %inc = add i32 %1, 1
+; CHECK-NEXT:   %8 = fmul fast <3 x double> %"'ipl", %.splat
+; CHECK-NEXT:   %9 = fadd fast <3 x double> %8, %8
+; CHECK-NEXT:   %10 = fadd fast <3 x double> %5, %9
+; CHECK-NEXT:   %inc = add i32 %6, 1
 ; CHECK-NEXT:   %cmp = icmp ugt i32 %inc, %N
+; CHECK-NEXT:   %11 = extractelement <3 x double> %10, i64 0
+; CHECK-NEXT:   %12 = extractelement <3 x double> %10, i64 1
+; CHECK-NEXT:   %13 = extractelement <3 x double> %10, i64 2
 ; CHECK-NEXT:   br i1 %cmp, label %for.cond.cleanup, label %for.body
 ; CHECK-NEXT: }

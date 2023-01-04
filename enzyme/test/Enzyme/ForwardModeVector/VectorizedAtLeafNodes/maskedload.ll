@@ -23,9 +23,21 @@ entry:
 }
 
 
-; CHECK: define internal <6 x double> @fwddiffe3loader(<2 x double>* %ptr, <6 x double>* %"ptr'", <2 x i1> %mask, <2 x double> %other, <6 x double> %"other'")
+; CHECK: define internal <6 x double> @fwddiffe3loader(<2 x double>* %ptr, <6 x double>* %"ptr'", <2 x i1> %mask, <2 x double> %other, <6 x double> %"other'") #2 {
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %mask.vecsplat = shufflevector <2 x i1> %mask, <2 x i1> poison, <6 x i32> <i32 0, i32 1, i32 0, i32 1, i32 0, i32 1>
-; CHECK-NEXT:   %0 = call fast <6 x double> @llvm.masked.load.v6f64.p0v6f64(<6 x double>* %"ptr'", i32 16, <6 x i1> %mask.vecsplat, <6 x double> %"other'")
-; CHECK-NEXT:   ret <6 x double> %0
+; CHECK-NEXT:   %0 = bitcast <6 x double>* %"ptr'" to <2 x double>*
+; CHECK-NEXT:   %"other'.subvector.0" = shufflevector <6 x double> %"other'", <6 x double> poison, <2 x i32> <i32 0, i32 1>
+; CHECK-NEXT:   %1 = call fast <2 x double> @llvm.masked.load.v2f64.p0v2f64(<2 x double>* %0, i32 16, <2 x i1> %mask, <2 x double> %"other'.subvector.0")
+; CHECK-NEXT:   %2 = getelementptr inbounds <6 x double>, <6 x double>* %"ptr'", i64 0, i64 2
+; CHECK-NEXT:   %3 = bitcast double* %2 to <2 x double>*
+; CHECK-NEXT:   %"other'.subvector.1" = shufflevector <6 x double> %"other'", <6 x double> poison, <2 x i32> <i32 2, i32 3>
+; CHECK-NEXT:   %4 = call fast <2 x double> @llvm.masked.load.v2f64.p0v2f64(<2 x double>* nonnull %3, i32 16, <2 x i1> %mask, <2 x double> %"other'.subvector.1")
+; CHECK-NEXT:   %.vecconcat = shufflevector <2 x double> %1, <2 x double> %4, <4 x i32> <i32 0, i32 1, i32 2, i32 3>
+; CHECK-NEXT:   %5 = getelementptr inbounds <6 x double>, <6 x double>* %"ptr'", i64 0, i64 4
+; CHECK-NEXT:   %6 = bitcast double* %5 to <2 x double>*
+; CHECK-NEXT:   %"other'.subvector.2" = shufflevector <6 x double> %"other'", <6 x double> poison, <2 x i32> <i32 4, i32 5>
+; CHECK-NEXT:   %7 = call fast <2 x double> @llvm.masked.load.v2f64.p0v2f64(<2 x double>* nonnull %6, i32 16, <2 x i1> %mask, <2 x double> %"other'.subvector.2")
+; CHECK-NEXT:   %.vecpad = shufflevector <2 x double> %7, <2 x double> poison, <4 x i32> <i32 0, i32 1, i32 undef, i32 undef>
+; CHECK-NEXT:   %.vecpad.vecconcat = shufflevector <4 x double> %.vecconcat, <4 x double> %.vecpad, <6 x i32> <i32 0, i32 1, i32 2, i32 3, i32 4, i32 5>
+; CHECK-NEXT:   ret <6 x double> %.vecpad.vecconcat
 ; CHECK-NEXT: }

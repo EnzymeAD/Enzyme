@@ -3492,8 +3492,11 @@ public:
       getForwardBuilder(Builder2);
       auto ddst = gutils->invertPointerM(orig_dst, Builder2);
       auto dsrc = gutils->invertPointerM(orig_src, Builder2);
+      
+      if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
+        new_size = Builder2.CreateMul(new_size, ConstantInt::get(new_size->getType(), gutils->getWidth()), new_size->getName() + ".vecsize");
 
-      auto rule = [&](Value *ddst, Value *dsrc, Value *new_size) {
+      auto rule = [&](Value *ddst, Value *dsrc) {
         if (ddst->getType()->isIntegerTy())
           ddst = Builder2.CreateIntToPtr(
               ddst, Type::getInt8PtrTy(ddst->getContext()));
@@ -3517,9 +3520,8 @@ public:
                           MTI.getMetadata(LLVMContext::MD_invariant_group));
         call->setTailCallKind(MTI.getTailCallKind());
       };
-
-      applyChainRule<ResultType::UNWRAPPED>(Builder2, rule, Gradient(ddst), Gradient(dsrc),
-                     Primal(new_size));
+      
+      applyChainRule(Builder2, rule, Gradient(ddst), Gradient(dsrc));
       eraseIfUnused(MTI);
       return;
     }

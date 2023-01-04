@@ -124,42 +124,57 @@ attributes #9 = { noreturn nounwind }
 ; CHECK-NEXT:   br label %for.cond1.preheader
 
 ; CHECK: for.cond1.preheader:                              ; preds = %for.cond.cleanup3, %entry
-; CHECK-NEXT:   %1 = phi fast <3 x double> [ zeroinitializer, %entry ], [ %11, %for.cond.cleanup3 ]
+; CHECK-NEXT:   %1 = phi fast double [ 0.000000e+00, %entry ], [ %21, %for.cond.cleanup3 ]
+; CHECK-NEXT:   %2 = phi fast double [ 0.000000e+00, %entry ], [ %22, %for.cond.cleanup3 ]
+; CHECK-NEXT:   %3 = phi fast double [ 0.000000e+00, %entry ], [ %23, %for.cond.cleanup3 ]
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %for.cond.cleanup3 ], [ 0, %entry ]
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
 ; CHECK-NEXT:   br i1 %cmp233, label %for.body4.lr.ph, label %for.cond.cleanup3
 
 ; CHECK: for.body4.lr.ph:                                  ; preds = %for.cond1.preheader
-; CHECK-NEXT:   %2 = mul nuw nsw i64 %iv, 10
-; CHECK-NEXT:   %3 = load i32, i32* %N, align 4, !tbaa !2
-; CHECK-NEXT:   %4 = sext i32 %3 to i64
+; CHECK-NEXT:   %4 = mul nuw nsw i64 %iv, 10
+; CHECK-NEXT:   %5 = load i32, i32* %N, align 4, !tbaa !2
+; CHECK-NEXT:   %6 = sext i32 %5 to i64
 ; CHECK-NEXT:   br label %for.body4
 
 ; CHECK: for.body4:                                        ; preds = %for.body4, %for.body4.lr.ph
-; CHECK-NEXT:   %5 = phi fast <3 x double> [ %1, %for.body4.lr.ph ], [ %10, %for.body4 ]
+; CHECK-NEXT:   %7 = phi fast double [ %1, %for.body4.lr.ph ], [ %18, %for.body4 ]
+; CHECK-NEXT:   %8 = phi fast double [ %2, %for.body4.lr.ph ], [ %19, %for.body4 ]
+; CHECK-NEXT:   %9 = phi fast double [ %3, %for.body4.lr.ph ], [ %20, %for.body4 ]
 ; CHECK-NEXT:   %iv1 = phi i64 [ %iv.next2, %for.body4 ], [ 0, %for.body4.lr.ph ]
+; CHECK-NEXT:   %10 = insertelement <3 x double> undef, double %7, i32 0
+; CHECK-NEXT:   %11 = insertelement <3 x double> %10, double %8, i32 1
+; CHECK-NEXT:   %12 = insertelement <3 x double> %11, double %9, i32 2
 ; CHECK-NEXT:   %iv.next2 = add nuw nsw i64 %iv1, 1
-; CHECK-NEXT:   %6 = add nuw nsw i64 %iv1, %2
-; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds <3 x double>, <3 x double>* %"a'", i64 %6
-; CHECK-NEXT:   %arrayidx = getelementptr inbounds double, double* %a, i64 %6
+; CHECK-NEXT:   %13 = add nuw nsw i64 %iv1, %4
+; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds <3 x double>, <3 x double>* %"a'", i64 %13
+; CHECK-NEXT:   %arrayidx = getelementptr inbounds double, double* %a, i64 %13
 ; CHECK-NEXT:   %"'ipl" = load <3 x double>, <3 x double>* %"arrayidx'ipg", align 8, !tbaa !6
-; CHECK-NEXT:   %7 = load double, double* %arrayidx, align 8, !tbaa !6
-; CHECK-NEXT:   %.splatinsert = insertelement <3 x double> poison, double %7, i32 0
+; CHECK-NEXT:   %14 = load double, double* %arrayidx, align 8, !tbaa !6
+; CHECK-NEXT:   %.splatinsert = insertelement <3 x double> poison, double %14, i32 0
 ; CHECK-NEXT:   %.splat = shufflevector <3 x double> %.splatinsert, <3 x double> poison, <3 x i32> zeroinitializer
-; CHECK-NEXT:   %8 = fmul fast <3 x double> %"'ipl", %.splat
-; CHECK-NEXT:   %9 = fadd fast <3 x double> %8, %8
-; CHECK-NEXT:   %10 = fadd fast <3 x double> %5, %9
-; CHECK-NEXT:   store double 0.000000e+00, double* %arrayidx, align 8, !tbaa !6
-; CHECK-NEXT:   store <3 x double> zeroinitializer, <3 x double>* %"arrayidx'ipg", align 8
-; CHECK-NEXT:   %cmp2 = icmp slt i64 %iv.next2, %4
+; CHECK-NEXT:   %15 = fmul fast <3 x double> %"'ipl", %.splat
+; CHECK-NEXT:   %16 = fadd fast <3 x double> %15, %15
+; CHECK-NEXT:   %17 = fadd fast <3 x double> %12, %16
+; CHECK-NEXT:   store double 0.000000e+00, double* %arrayidx, align 8, !tbaa !6, !alias.scope !8, !noalias !11
+; CHECK-NEXT:   store <3 x double> zeroinitializer, <3 x double>* %"arrayidx'ipg", align 8, !tbaa !6, !alias.scope !15, !noalias !16
+; CHECK-NEXT:   %cmp2 = icmp slt i64 %iv.next2, %6
+; CHECK-NEXT:   %18 = extractelement <3 x double> %17, i64 0
+; CHECK-NEXT:   %19 = extractelement <3 x double> %17, i64 1
+; CHECK-NEXT:   %20 = extractelement <3 x double> %17, i64 2
 ; CHECK-NEXT:   br i1 %cmp2, label %for.body4, label %for.cond.cleanup3
 
 ; CHECK: for.cond.cleanup3:                                ; preds = %for.body4, %for.cond1.preheader
-; CHECK-NEXT:   %11 = phi fast <3 x double> [ %1, %for.cond1.preheader ], [ %10, %for.body4 ]
+; CHECK-NEXT:   %21 = phi fast double [ %1, %for.cond1.preheader ], [ %18, %for.body4 ]
+; CHECK-NEXT:   %22 = phi fast double [ %2, %for.cond1.preheader ], [ %19, %for.body4 ]
+; CHECK-NEXT:   %23 = phi fast double [ %3, %for.cond1.preheader ], [ %20, %for.body4 ]
+; CHECK-NEXT:   %24 = insertelement <3 x double> undef, double %21, i32 0
+; CHECK-NEXT:   %25 = insertelement <3 x double> %24, double %22, i32 1
+; CHECK-NEXT:   %26 = insertelement <3 x double> %25, double %23, i32 2
 ; CHECK-NEXT:   %exitcond = icmp eq i64 %iv.next, 10
 ; CHECK-NEXT:   br i1 %exitcond, label %for.cond.cleanup, label %for.cond1.preheader
 
 ; CHECK: for.cond.cleanup:                                 ; preds = %for.cond.cleanup3
 ; CHECK-NEXT:   store i32 7, i32* %N, align 4, !tbaa !2
-; CHECK-NEXT:   ret <3 x double> %11
+; CHECK-NEXT:   ret <3 x double> %26
 ; CHECK-NEXT: }
