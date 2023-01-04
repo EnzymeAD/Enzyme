@@ -97,9 +97,9 @@ attributes #5 = { nofree nounwind "frame-pointer"="none" "no-trapping-math"="tru
 attributes #6 = { nounwind }
 
 
-; CHECK: define internal void @fwddiffe4_Z6squarePd(%"struct.std::array"* noalias nocapture writeonly align 8 %agg.result, %"struct.std::array.Vec.4"* %"agg.result'", double* nocapture noundef readonly %x, <4 x double>* %"x'")
+; CHECK: define internal void @fwddiffe4_Z6squarePd(%"struct.std::array"* noalias nocapture writeonly align 8 "enzyme_sret" %agg.result, %"struct.std::array.0"* "enzyme_sret_v" %"agg.result'", double* nocapture noundef readonly %x, <4 x double>* %"x'")
 ; CHECK-NEXT:  entry:
-; CHECK-NEXT:   %"arrayinit.begin'ipg" = getelementptr inbounds %"struct.std::array.Vec.4", %"struct.std::array.Vec.4"* %"agg.result'", i64 0, i32 0, i64 0
+; CHECK-NEXT:   %"arrayinit.begin'ipg" = getelementptr inbounds %"struct.std::array.0", %"struct.std::array.0"* %"agg.result'", i64 0, i32 0, i64 0
 ; CHECK-NEXT:   %arrayinit.begin = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %agg.result, i64 0, i32 0, i64 0
 ; CHECK-NEXT:   %"'ipl" = load <4 x double>, <4 x double>* %"x'", align 8
 ; CHECK-NEXT:   %0 = load double, double* %x, align 8
@@ -108,9 +108,9 @@ attributes #6 = { nounwind }
 ; CHECK-NEXT:   %.splat = shufflevector <4 x double> %.splatinsert, <4 x double> poison, <4 x i32> zeroinitializer
 ; CHECK-NEXT:   %1 = fmul fast <4 x double> %"'ipl", %.splat
 ; CHECK-NEXT:   %2 = fadd fast <4 x double> %1, %1
-; CHECK-NEXT:   store double %mul, double* %arrayinit.begin, align 8
-; CHECK-NEXT:   store <4 x double> %2, <4 x double>* %"arrayinit.begin'ipg", align 8
-; CHECK-NEXT:   %"arrayinit.element'ipg" = getelementptr inbounds %"struct.std::array.Vec.4", %"struct.std::array.Vec.4"* %"agg.result'", i64 0, i32 0, i64 1
+; CHECK-NEXT:   store double %mul, double* %arrayinit.begin, align 8, !alias.scope !0, !noalias !3
+; CHECK-NEXT:   store <4 x double> %2, <4 x double>* %"arrayinit.begin'ipg", align 8, !alias.scope !8, !noalias !9
+; CHECK-NEXT:   %"arrayinit.element'ipg" = getelementptr inbounds %"struct.std::array.0", %"struct.std::array.0"* %"agg.result'", i64 0, i32 0, i64 1
 ; CHECK-NEXT:   %arrayinit.element = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %agg.result, i64 0, i32 0, i64 1
 ; CHECK-NEXT:   %mul2 = fmul double %0, %mul
 ; CHECK-NEXT:   %.splatinsert5 = insertelement <4 x double> poison, double %mul, i32 0
@@ -118,11 +118,11 @@ attributes #6 = { nounwind }
 ; CHECK-NEXT:   %3 = fmul fast <4 x double> %"'ipl", %.splat6
 ; CHECK-NEXT:   %4 = fmul fast <4 x double> %2, %.splat
 ; CHECK-NEXT:   %5 = fadd fast <4 x double> %3, %4
-; CHECK-NEXT:   store double %mul2, double* %arrayinit.element, align 8
-; CHECK-NEXT:   store <4 x double> %5, <4 x double>* %"arrayinit.element'ipg", align 8
-; CHECK-NEXT:   %"arrayinit.element3'ipg" = getelementptr inbounds %"struct.std::array.Vec.4", %"struct.std::array.Vec.4"* %"agg.result'", i64 0, i32 0, i64 2
+; CHECK-NEXT:   store double %mul2, double* %arrayinit.element, align 8, !alias.scope !10, !noalias !13
+; CHECK-NEXT:   store <4 x double> %5, <4 x double>* %"arrayinit.element'ipg", align 8, !alias.scope !18, !noalias !19
+; CHECK-NEXT:   %"arrayinit.element3'ipg" = getelementptr inbounds %"struct.std::array.0", %"struct.std::array.0"* %"agg.result'", i64 0, i32 0, i64 2
 ; CHECK-NEXT:   %arrayinit.element3 = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %agg.result, i64 0, i32 0, i64 2
-; CHECK-NEXT:   store double %0, double* %arrayinit.element3, align 8
-; CHECK-NEXT:   store <4 x double> %"'ipl", <4 x double>* %"arrayinit.element3'ipg", align 8
+; CHECK-NEXT:   store double %0, double* %arrayinit.element3, align 8, !alias.scope !20, !noalias !23
+; CHECK-NEXT:   store <4 x double> %"'ipl", <4 x double>* %"arrayinit.element3'ipg", align 8, !alias.scope !28, !noalias !29
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
