@@ -15,7 +15,6 @@
 using namespace llvm;
 
 enum argType { fp, len, vincData, vincInc };
-// enum argType { fp, len, vinc, vincData, vincInc };
 
 class Arg {
   public:
@@ -164,6 +163,26 @@ void fillArgs(const Record *r, SmallVector<std::string, 6> &args,
   assert(argNameToPos.size() == numArgs);
 }
 
+void fillArgUserMap(SmallVector<Rule, 3> &rules,
+                    const SmallVector<std::string, 6> &nameVec,
+                    const SmallVector<size_t, 4> &activeArgs,
+                    DenseMap<size_t, DenseSet<size_t>> &argUsers) {
+
+  for (size_t i = 0; i < nameVec.size(); i++) {
+    auto name = nameVec[i];
+    DenseSet<size_t> set{};
+    for (auto rule : llvm::enumerate(rules)) {
+      auto nameMap = rule.value().getArgNameMap();
+      if (nameMap.count(name) == 1) {
+        size_t val = activeArgs[rule.index()];
+        set.insert(val);
+      }
+    }
+    auto newVal = std::make_pair<>(i, set);
+    argUsers.insert(newVal);
+  }
+}
+
 // A single Blas function, including replacement rules. E.g. scal, axpy, ...
 class TGPattern {
 private:
@@ -171,7 +190,6 @@ private:
   // All args from the primary blas function
   SmallVector<std::string, 6> args;
   // Map arg name to their position (in primary fnc)
-  // TODO: check MapVector to keep order between uses
   StringMap<size_t> argNameToPos;
   // Type of these args, e.g. FP-scalar, int, FP-vec, ..
   DenseMap<size_t, argType> argTypes;
@@ -182,7 +200,7 @@ private:
   // One rule for each possibly active arg
   SmallVector<Rule, 3> rules;
   // Based on an argument name, which rules use this argument?
-  // DenseMap<StringRef, DenseSet<size_t>> argUsers;
+  DenseMap<size_t, DenseSet<size_t>> argUsers;
 
 public:
   TGPattern(Record &r) {
@@ -214,15 +232,10 @@ public:
       }
     }
 
-    // argUsers = DenseMap<StringRef, DenseSet<size_t>>();
-    // TODO: fill
+    argUsers = DenseMap<size_t, DenseSet<size_t>>();
+    fillArgUserMap(rules, args, posActArgs, argUsers);
   }
-  static int elemPerArgType(argType a) {
-    // if (a == argType::vinc)
-    //   return 2;
-    return 1;
-    // TODO: adjust later for blas 2 and so on
-  }
+  DenseMap<size_t, DenseSet<size_t>> getArgUsers() { return argUsers; }
   std::string getName() { return blasName; }
   SmallVector<std::string, 6> getArgNames() { return args; }
   StringMap<size_t> getArgNameMap() { return argNameToPos; }

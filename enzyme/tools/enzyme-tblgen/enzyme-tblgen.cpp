@@ -199,11 +199,12 @@ void emit_free_and_ending(TGPattern &pattern, raw_ostream &os) {
 << "}\n\n";
 }
 
-void emit_extract_calls(TGPattern &pattern, 
-    llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, raw_ostream &os) {
+void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
+    //llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, raw_ostream &os) {
   auto actArgs = pattern.getActiveArgs();
   auto typeMap = pattern.getArgTypeMap();
   auto nameVec = pattern.getArgNames();
+  auto argUsers = pattern.getArgUsers();
 
   // TODO: adjust count / getArgOperand(0) based on first int?
   os 
@@ -367,7 +368,7 @@ void findArgPositions(const std::vector<StringRef> toFind,
 }
 
 llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> getUsedInputs(
-    Record *pattern, std::vector<size_t> posActArgs) {
+    Record *pattern, SmallVector<size_t, 4> posActArgs) {
 
   DagInit *argOps = pattern->getValueAsDag("PatternToMatch");
   // TODO: verify StringRef here is no ub.
@@ -409,8 +410,6 @@ llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> getUsedInputs(
 
 
 void emit_helper(TGPattern &pattern, raw_ostream &os) {
-  PrintNote("function: " + pattern.getName());
-
   std::vector<size_t> fp_pos{};
   auto nameVec = pattern.getArgNames();
   assert(nameVec.size() > 0);
@@ -522,11 +521,11 @@ size_t pattern_call_args(TGPattern &pattern, size_t actArg, llvm::SmallString<40
     // and based on that get the fp/int + scalar/vector type
     auto typeOfArg = typeMap.lookup(pos);
     if (typeOfArg == argType::len) {
-      PrintNote("call_arg_helper_len. Pos: " + std::to_string(pos) + ", name: " + name + ", argPosition: "+ std::to_string(pos));
+      //PrintNote("call_arg_helper_len. Pos: " + std::to_string(pos) + ", name: " + name + ", argPosition: "+ std::to_string(pos));
       auto out = (Twine("len_") + name).str();
       result.append((Twine("len_") + name).str());
     } else if (typeOfArg == argType::fp) {
-      PrintNote("call_arg_helper_fp. Pos: " + std::to_string(pos) + ", name: " + name + ", argPosition: "+ std::to_string(pos));
+      //PrintNote("call_arg_helper_fp. Pos: " + std::to_string(pos) + ", name: " + name + ", argPosition: "+ std::to_string(pos));
       if (pos == actArg) {
         result.append((Twine("d_") + name).str());
       } else {
@@ -546,7 +545,7 @@ size_t pattern_call_args(TGPattern &pattern, size_t actArg, llvm::SmallString<40
       }
       pos++; // extra ++ due to also handling vincInc
     } else if (typeOfArg == argType::vincInc) {
-      PrintNote("call_arg_helper_vincInc. Pos: " + std::to_string(pos) + ", name: " + name + ", argPosition: "+ std::to_string(pos));
+      //PrintNote("call_arg_helper_vincInc. Pos: " + std::to_string(pos) + ", name: " + name + ", argPosition: "+ std::to_string(pos));
       // might come without vincData, e.g. after DiffeRet
       result.append(name);
     } else {
@@ -572,7 +571,7 @@ size_t rule_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) 
     }
 
     auto arg = ruleDag->getArg(pos);
-    PrintNote("call_arg_helper: " + ruleDag->getArgNameStr(pos));
+    //PrintNote("call_arg_helper: " + ruleDag->getArgNameStr(pos));
     if (DefInit *DefArg = dyn_cast<DefInit>(arg)) {
       auto Def = DefArg->getDef();
       if (Def->isSubClassOf("DiffeRet")) {
@@ -602,11 +601,11 @@ size_t rule_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) 
       // and based on that get the fp/int + scalar/vector type
       auto typeOfArg = typeMap.lookup(argPosition);
       if (typeOfArg == argType::len) {
-        PrintNote("call_arg_helper_len. Pos: " + std::to_string(pos) + ", name: " + name + ", argPosition: "+ std::to_string(argPosition));
+        //PrintNote("call_arg_helper_len. Pos: " + std::to_string(pos) + ", name: " + name + ", argPosition: "+ std::to_string(argPosition));
         auto out = (Twine("len_") + name).str();
         result.append((Twine("len_") + name).str());
       } else if (typeOfArg == argType::fp) {
-        PrintNote("call_arg_helper_fp. Pos: " + std::to_string(pos) + ", name: " + name + ", argPosition: "+ std::to_string(argPosition));
+        //PrintNote("call_arg_helper_fp. Pos: " + std::to_string(pos) + ", name: " + name + ", argPosition: "+ std::to_string(argPosition));
         if (argPosition == actArg) {
           result.append((Twine("d_") + name).str());
         } else {
@@ -626,7 +625,7 @@ size_t rule_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) 
         }
         pos++; // extra ++ due to also handling vincInc
       } else if (typeOfArg == argType::vincInc) {
-        PrintNote("call_arg_helper_vincInc. Pos: " + std::to_string(pos) + ", name: " + name + ", argPosition: "+ std::to_string(argPosition));
+        //PrintNote("call_arg_helper_vincInc. Pos: " + std::to_string(pos) + ", name: " + name + ", argPosition: "+ std::to_string(argPosition));
         // might come without vincData, e.g. after DiffeRet
         result.append(name);
       } else {
@@ -1240,7 +1239,6 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
     patternMap.insert(newEntry);
   }
 
-
   // Make sure that we only call blass function b for calculating the derivative
   // of a iff we have defined b and pass the right amount of parameters.
   // TODO: type check params, as far as possible
@@ -1251,22 +1249,23 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
   
   for (size_t i = 0; i < blasPatterns.size(); i++) {
   //for (auto pattern : blasPatterns) {
-    auto pattern = blasPatterns[i];
     auto newPattern = newBlasPatterns[i];
 
+    //auto posActArgs = newPattern.getActiveArgs();
 
-    std::vector<size_t> posActArgs = getPossiblyActiveArgs(pattern);
-
-    // For each input arg, we store a set including all users (by index).
-    llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers = getUsedInputs(pattern, posActArgs);
+    //auto pattern = blasPatterns[i];
+    //DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers = getUsedInputs(pattern, posActArgs);
+    //DenseMap<size_t, DenseSet<size_t>> argUsers2 = newPattern.getArgUsers();
+    //auto nameVec = newPattern.getArgNames();
+    llvm::errs() << "\nhandling: " + newPattern.getName() + "\n";
 
     emit_beginning(newPattern, os);
     emit_helper(newPattern, os);
     emit_castvals(newPattern, os);
     emit_scalar_types(newPattern, os);
 
-    emit_caching(newPattern, argUsers, os);
-    emit_extract_calls(newPattern, argUsers, os);
+    emit_caching(newPattern, os);
+    emit_extract_calls(newPattern, os);
 
     emit_fwd_rewrite_rules(newPattern, os);
     emit_rev_rewrite_rules(patternMap, newPattern, os);

@@ -29,9 +29,10 @@
 //
 
 using namespace llvm;
-void emit_vec_caching(TGPattern &pattern, 
-    llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, raw_ostream &os) {
+void emit_vec_caching(TGPattern &pattern, raw_ostream &os) {
+    //llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, raw_ostream &os) {
 
+  auto argUsers = pattern.getArgUsers();
   auto actArgs = pattern.getActiveArgs();
   auto typeMap = pattern.getArgTypeMap();
   auto nameVec = pattern.getArgNames();
@@ -115,11 +116,12 @@ void emit_scalar_caching(TGPattern &pattern, raw_ostream &os) {
   }
 }
 
-void emit_cache_for_reverse(TGPattern &pattern,
-    llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, raw_ostream &os) {
+void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
+    //llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, raw_ostream &os) {
   auto actArgs = pattern.getActiveArgs();
   auto typeMap = pattern.getArgTypeMap();
   auto nameVec = pattern.getArgNames();
+  auto argUsers = pattern.getArgUsers();
 
   os 
 << "  if ((Mode == DerivativeMode::ReverseModeCombined ||\n"
@@ -264,11 +266,12 @@ void emit_cache_for_reverse(TGPattern &pattern,
 << "  }\n\n";
 }
 
-void emit_caching(TGPattern &pattern,
-    llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, raw_ostream &os) {
+void emit_caching(TGPattern &pattern, raw_ostream &os) {
+//    llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, raw_ostream &os) {
 
   auto actArgs = pattern.getActiveArgs();
   auto nameVec = pattern.getArgNames();
+
   // 1. No caching for fwd-mode
   // 2. Deactivate caching for uncacheable_args
   // 3. Only caching if we do need the primary for an active gradient.
@@ -277,7 +280,7 @@ void emit_caching(TGPattern &pattern,
 << "  SmallVector<Type *, 2> cacheTypes;\n\n";
 
   emit_scalar_caching(pattern, os);
-  emit_vec_caching(pattern, argUsers, os);
+  emit_vec_caching(pattern, os);
 
   for (auto actEn : llvm::enumerate(actArgs)) {
     auto name = nameVec[actEn.value()];
@@ -298,6 +301,6 @@ void emit_caching(TGPattern &pattern,
 << "    break;\n"
 << "  }\n\n";
 
-  emit_cache_for_reverse(pattern, argUsers, os);
+  emit_cache_for_reverse(pattern, os);
 }
 
