@@ -1932,7 +1932,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
   return NewF;
 }
 
-FunctionType *getFunctionTypeForClone(
+FunctionType *getFunctionTypeForClone(llvm::Module &M,
     llvm::FunctionType *FTy, DerivativeMode mode,
     VectorModeMemoryLayout memoryLayout, unsigned width,
     llvm::Type *additionalArg, llvm::ArrayRef<DIFFE_TYPE> constant_args,
@@ -1942,7 +1942,7 @@ FunctionType *getFunctionTypeForClone(
       returnValue == ReturnType::Return) {
     if (returnType != DIFFE_TYPE::CONSTANT &&
         returnType != DIFFE_TYPE::OUT_DIFF) {
-      RetTypes.push_back(GradientUtils::getShadowType(FTy->getReturnType(),
+      RetTypes.push_back(GradientUtils::getShadowType(M, FTy->getReturnType(),
                                                       width, memoryLayout));
     } else {
       RetTypes.push_back(FTy->getReturnType());
@@ -1952,7 +1952,7 @@ FunctionType *getFunctionTypeForClone(
     RetTypes.push_back(FTy->getReturnType());
     if (returnType != DIFFE_TYPE::CONSTANT &&
         returnType != DIFFE_TYPE::OUT_DIFF) {
-      RetTypes.push_back(GradientUtils::getShadowType(FTy->getReturnType(),
+      RetTypes.push_back(GradientUtils::getShadowType(M, FTy->getReturnType(),
                                                       width, memoryLayout));
     } else {
       RetTypes.push_back(FTy->getReturnType());
@@ -1968,16 +1968,16 @@ FunctionType *getFunctionTypeForClone(
     ArgTypes.push_back(I);
     if (constant_args[argno] == DIFFE_TYPE::DUP_ARG ||
         constant_args[argno] == DIFFE_TYPE::DUP_NONEED) {
-      ArgTypes.push_back(GradientUtils::getShadowType(I, width, memoryLayout));
+      ArgTypes.push_back(GradientUtils::getShadowType(M, I, width, memoryLayout));
     } else if (constant_args[argno] == DIFFE_TYPE::OUT_DIFF) {
-      RetTypes.push_back(GradientUtils::getShadowType(I, width, memoryLayout));
+      RetTypes.push_back(GradientUtils::getShadowType(M, I, width, memoryLayout));
     }
     ++argno;
   }
 
   if (diffeReturnArg) {
     assert(!FTy->getReturnType()->isVoidTy());
-    ArgTypes.push_back(GradientUtils::getShadowType(FTy->getReturnType(), width,
+    ArgTypes.push_back(GradientUtils::getShadowType(M, FTy->getReturnType(), width,
                                                     memoryLayout));
   }
   if (additionalArg) {
@@ -1991,12 +1991,12 @@ FunctionType *getFunctionTypeForClone(
     RetTypes.push_back(getDefaultAnonymousTapeType(FTy->getContext()));
     if (returnValue == ReturnType::TapeAndTwoReturns) {
       RetTypes.push_back(FTy->getReturnType());
-      RetTypes.push_back(GradientUtils::getShadowType(FTy->getReturnType(),
+      RetTypes.push_back(GradientUtils::getShadowType(M, FTy->getReturnType(),
                                                       width, memoryLayout));
     } else if (returnValue == ReturnType::TapeAndReturn) {
       if (returnType != DIFFE_TYPE::CONSTANT &&
           returnType != DIFFE_TYPE::OUT_DIFF)
-        RetTypes.push_back(GradientUtils::getShadowType(FTy->getReturnType(),
+        RetTypes.push_back(GradientUtils::getShadowType(M, FTy->getReturnType(),
                                                         width, memoryLayout));
       else
         RetTypes.push_back(FTy->getReturnType());
@@ -2027,7 +2027,7 @@ Function *PreProcessCache::CloneFunctionWithReturns(
   assert(!F->empty());
   F = preprocessForClone(F, mode);
   llvm::ValueToValueMapTy VMap;
-  llvm::FunctionType *FTy = getFunctionTypeForClone(
+  llvm::FunctionType *FTy = getFunctionTypeForClone(*F->getParent(),
       F->getFunctionType(), mode, memoryLayout, width, additionalArg,
       constant_args, diffeReturnArg, returnValue, returnType);
 

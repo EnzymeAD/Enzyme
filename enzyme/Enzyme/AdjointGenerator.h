@@ -11885,7 +11885,7 @@ public:
                 : (retActive ? ReturnType::Return : ReturnType::Void);
 
         FunctionType *FTy =
-            getFunctionTypeForClone(ft, Mode, MemoryLayout, gutils->getWidth(),
+            getFunctionTypeForClone(*BuilderZ.GetInsertBlock()->getModule(), ft, Mode, MemoryLayout, gutils->getWidth(),
                                     tape ? tape->getType() : nullptr,
                                     argsInverted, false, subretVal, subretType);
         PointerType *fptype = PointerType::getUnqual(FTy);

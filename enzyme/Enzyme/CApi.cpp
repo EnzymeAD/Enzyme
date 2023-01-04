@@ -294,9 +294,8 @@ LLVMTypeRef EnzymeGradientUtilsGetShadowType(GradientUtils *gutils,
   return wrap(gutils->getShadowType(unwrap(T)));
 }
 
-LLVMTypeRef EnzymeGetShadowType(uint64_t width, LLVMTypeRef T) {
-  return wrap(GradientUtils::getShadowType(
-      unwrap(T), width, VectorModeMemoryLayout::VectorizeAtRootNode));
+LLVMTypeRef EnzymeGetShadowType(uint64_t width, LLVMTypeRef T, LLVMModuleRef M) {
+  return wrap(GradientUtils::getShadowType(*unwrap(M), unwrap(T), width, VectorModeMemoryLayout::VectorizeAtRootNode));
 }
 
 LLVMValueRef EnzymeGradientUtilsNewFromOriginal(GradientUtils *gutils,

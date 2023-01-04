@@ -64,7 +64,7 @@ public:
           unsigned vector_width = vty->getElementCount().getKnownMinValue();
           return Builder.CreateShuffleVector(value, GradientUtils::CreateVectorSplatMask(vector_width, width), value->getName() + ".vecsplat");
         } else if (auto sty = dyn_cast<StructType>(value->getType())) {
-          auto vsty = GradientUtils::getShadowType(sty, width, memoryLayout);
+          auto vsty = GradientUtils::getShadowType(*Builder.GetInsertBlock()->getModule(), sty, width, memoryLayout);
           Value *vecstruct = UndefValue::get(vsty);
           for (unsigned i = 0; i < sty->getNumElements(); ++i) {
             auto elem = Builder.CreateExtractValue(value, {i});
@@ -100,7 +100,7 @@ public:
     case VectorModeMemoryLayout::VectorizeAtRootNode:
       return type;
     case VectorModeMemoryLayout::VectorizeAtLeafNodes:
-        return GradientUtils::getShadowType(type, width, memoryLayout);
+        return GradientUtils::getShadowType(*Builder.GetInsertBlock()->getModule(), type, width, memoryLayout);
     }
   }
 
@@ -126,7 +126,7 @@ public:
     case VectorModeMemoryLayout::VectorizeAtRootNode:
       return type;
       case VectorModeMemoryLayout::VectorizeAtLeafNodes: {
-        Type *ty = GradientUtils::getShadowType(type->getElementType(), width, memoryLayout);
+        Type *ty = GradientUtils::getShadowType(*Builder.GetInsertBlock()->getModule(), type->getElementType(), width, memoryLayout);
         return ArrayType::get(ty, type->getNumElements());
       }
     }

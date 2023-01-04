@@ -242,7 +242,7 @@ public:
       Value *op = call.getArgOperand(j);
 
       if (toVectorize.count(op) != 0) {
-        Type *aggTy = GradientUtils::getShadowType(op->getType(), width, VectorModeMemoryLayout::VectorizeAtRootNode);
+        Type *aggTy = GradientUtils::getShadowType(*call.getModule(), op->getType(), width, VectorModeMemoryLayout::VectorizeAtRootNode);
         Value *agg = UndefValue::get(aggTy);
         for (unsigned i = 0; i < width; i++) {
           auto found = vectorizedValues.find(op);

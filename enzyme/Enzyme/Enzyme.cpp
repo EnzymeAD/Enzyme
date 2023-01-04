@@ -1089,7 +1089,7 @@ public:
             return false;
           }
         } else if (width > 1) {
-          shadow = Builder.CreatePointerCast(sretPt, GradientUtils::getShadowType(primal->getType(), width, VectorModeMemoryLayout::VectorizeAtLeafNodes));
+          shadow = Builder.CreatePointerCast(sretPt, GradientUtils::getShadowType(*CI->getModule(), primal->getType(), width, VectorModeMemoryLayout::VectorizeAtLeafNodes));
         } else {
           shadow = sretPt;
         }
@@ -1434,7 +1434,7 @@ public:
             }
           }
 
-          auto expectedType = GradientUtils::getShadowType(
+          auto expectedType = GradientUtils::getShadowType(*CI->getModule(),
               PTy, width, VectorModeMemoryLayout::VectorizeAtLeafNodes);
           if (EnzymeVectorizeAtLeafNodes &&
               expectedType != element->getType()) {
