@@ -22,6 +22,7 @@
 #include "llvm/TableGen/Main.h"
 #include "llvm/TableGen/Record.h"
 #include "llvm/TableGen/TableGenBackend.h"
+
 // TODO: remove or ifndef it
 //#include "datastructures.h"
 
@@ -30,7 +31,6 @@
 
 using namespace llvm;
 void emit_vec_caching(TGPattern &pattern, raw_ostream &os) {
-    //llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, raw_ostream &os) {
 
   auto argUsers = pattern.getArgUsers();
   auto actArgs = pattern.getActiveArgs();
@@ -117,7 +117,6 @@ void emit_scalar_caching(TGPattern &pattern, raw_ostream &os) {
 }
 
 void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
-    //llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, raw_ostream &os) {
   auto actArgs = pattern.getActiveArgs();
   auto typeMap = pattern.getArgTypeMap();
   auto nameVec = pattern.getArgNames();
@@ -267,7 +266,6 @@ void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
 }
 
 void emit_caching(TGPattern &pattern, raw_ostream &os) {
-//    llvm::DenseMap<size_t, llvm::SmallSet<size_t, 5>> argUsers, raw_ostream &os) {
 
   auto actArgs = pattern.getActiveArgs();
   auto nameVec = pattern.getArgNames();

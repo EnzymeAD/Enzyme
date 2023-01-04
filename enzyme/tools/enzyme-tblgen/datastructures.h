@@ -45,11 +45,9 @@ class Rule {
     DagInit *rewriteRule;
     // which argument from the primary function do we handle here?
     size_t activeArg;
-    // DenseSet<Arg> args;
     StringMap<size_t> argNameToPos;
     DenseMap<size_t, argType> argTypes;
     DenseSet<size_t> mutables;
-    // Eventually also add posActArg ?
 
   public:
     Rule(DagInit *dag, size_t activeArgIdx, StringMap<size_t> &patternArgs,
@@ -67,7 +65,6 @@ class Rule {
       //        1) copy patternArgs to ruleArgs if arg shows up in this rule
       for (auto argName : patternArgs.keys()) {
         assert(patternArgs.count(argName) == 1);
-        // StringRef argName = patternArg.first;
         size_t argPos = patternArgs.lookup(argName);
         bool argUsedInRule = isArgUsed(argName, rewriteRule);
         if (argUsedInRule) {
@@ -87,13 +84,10 @@ class Rule {
         }
       }
     }
-    // DenseSet<Arg> getArgs() { return args; }
     DagInit *getRuleDag() { return rewriteRule; }
     size_t getHandledArgIdx() { return activeArg; }
-    // SmallVector<std::string, 6> getArgNames() { return args; }
     StringMap<size_t> getArgNameMap() { return argNameToPos; }
     DenseMap<size_t, argType> getArgTypeMap() { return argTypes; }
-    // SmallVector<size_t, 4> getActiveArgs() { return posActArgs; }
 };
 
 void fillActiveArgSet(const Record *pattern,
@@ -205,7 +199,6 @@ private:
 public:
   TGPattern(Record &r) {
     blasName = r.getNameInitAsString();
-    PrintNote("blasName: " + blasName);
 
     args = llvm::SmallVector<std::string, 6>();
     argNameToPos = StringMap<size_t>{};
