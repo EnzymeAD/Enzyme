@@ -42,6 +42,6 @@ entry:
 ; CHECK-NEXT:   %1 = fmul fast <3 x double> %0, %.splat6
 ; CHECK-NEXT:   %2 = fmul fast <3 x double> %0, %.splat4
 ; CHECK-NEXT:   %3 = fadd fast <3 x double> %1, %2
-; CHECK-NEXT:   store double %mul2, double* @global, align 8
+; CHECK-NEXT:   store double %mul2, double* @global, align 8, !alias.scope !0, !noalias !3
 ; CHECK-NEXT:   ret <3 x double> %3
 ; CHECK-NEXT: }

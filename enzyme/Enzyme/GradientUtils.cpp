@@ -4799,10 +4799,13 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             
             Type *ty = Type::getInt8PtrTy(arg->getContext());
             ConstantInt *val_arg = ConstantInt::get(Type::getInt8Ty(arg->getContext()), 0);
-            ConstantInt *len_arg = ConstantInt::get(Type::getInt64Ty(arg->getContext()), M->getDataLayout().getTypeAllocSizeInBits(
+            Value *len_arg = ConstantInt::get(Type::getInt64Ty(arg->getContext()), M->getDataLayout().getTypeAllocSizeInBits(
                                      arg->getValueType()) / 8);
+            
+            if (memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
+              len_arg = bb.CreateMul(len_arg, ConstantInt::get(len_arg->getType(), width));
 
-            auto rule2 = [&bb, &arg, &M, &oval, &ty](Value *antialloca, Constant *val_arg, Constant *len_arg) {
+            auto rule2 = [&bb, &arg, &M, &oval, &len_arg, &val_arg](Value *antialloca, Type *ty) {
               auto dst_arg = bb.CreateBitCast(antialloca, ty);
               
               
@@ -4837,7 +4840,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               return antialloca;
             };
             
-            antialloca = applyChainRule<ResultType::UNWRAPPED>(arg->getType(), bb, rule2, Gradient(antialloca), Primal(val_arg), Primal(len_arg));
+            antialloca = applyChainRule(arg->getType(), bb, rule2, Gradient(antialloca), Primal(ty));
             
             assert(antialloca->getType() == getShadowType(arg->getType()));
 
@@ -5259,7 +5262,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     IRBuilder<> bb(getNewFromOriginal(inst));
     Value *asize = getNewFromOriginal(inst->getArraySize());
 
-    auto rule1 = [&bb, &inst](Type *ty, Value *asize) {
+    auto rule1 = [&bb, &inst, &asize](Type *ty) {
       AllocaInst *antialloca = bb.CreateAlloca(
           ty, inst->getType()->getPointerAddressSpace(),
           asize, inst->getName() + "'ipa");
@@ -5277,7 +5280,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       return antialloca;
     };
 
-    Value *antialloca = applyChainRule<ResultType::UNWRAPPED>(oval->getType(), bb, rule1, Primal(inst->getAllocatedType()), Primal(asize));
+    Value *antialloca = applyChainRule(oval->getType(), bb, rule1, Primal(inst->getAllocatedType()));
 
     invertedPointers.insert(std::make_pair(
         (const Value *)oval, InvertedPointerVH(this, antialloca)));
