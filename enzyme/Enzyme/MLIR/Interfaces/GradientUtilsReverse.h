@@ -22,6 +22,8 @@ public:
   FunctionOpInterface newFunc;
   FunctionOpInterface oldFunc;
 
+  SymbolTableCollection &symbolTable;
+
   MEnzymeLogic &Logic;
   bool AtomicAdd;
   DerivativeMode mode;
@@ -60,7 +62,8 @@ public:
                 DerivativeMode mode, 
                 unsigned width, 
                 BlockAndValueMapping mapReverseModeBlocks_, 
-                DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapBlockArguments_);
+                DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapBlockArguments_,
+                SymbolTableCollection &symbolTable_);
   void erase(Operation *op) { op->erase(); }
   void eraseIfUnused(Operation *op, bool erase = true, bool check = true) {
     // TODO
@@ -82,6 +85,7 @@ public:
   Operation *cloneWithNewOperands(OpBuilder &B, Operation *op);
   
   LogicalResult visitChildReverse(Operation *op, OpBuilder& builder);
+  bool visitChildCustom(Operation * op, OpBuilder &builder);
 };
 
 class MDiffeGradientUtilsReverse : public MGradientUtilsReverse {
@@ -101,7 +105,8 @@ public:
                       DerivativeMode mode, 
                       unsigned width, 
                       BlockAndValueMapping mapReverseModeBlocks_, 
-                      DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapBlockArguments_);
+                      DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapBlockArguments_,
+                      SymbolTableCollection &symbolTable_);
 
   static MDiffeGradientUtilsReverse * CreateFromClone(MEnzymeLogic &Logic, 
                   DerivativeMode mode, 
@@ -113,7 +118,8 @@ public:
                   bool diffeReturnArg, 
                   ArrayRef<DIFFE_TYPE> constant_args,
                   ReturnType returnValue, 
-                  mlir::Type additionalArg);
+                  mlir::Type additionalArg,
+                  SymbolTableCollection &symbolTable_);
 };
 
 } // namespace enzyme

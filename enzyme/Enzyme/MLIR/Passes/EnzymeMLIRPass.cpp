@@ -142,7 +142,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
         fn, retType, constants, TA,
         /*should return*/ false, mode, freeMemory, width,
         /*addedType*/ nullptr, type_args, volatile_args,
-        /*augmented*/ nullptr);
+        /*augmented*/ nullptr, symbolTable);
 
     OpBuilder builder(CI);
     auto dCI = builder.create<func::CallOp>(CI.getLoc(), newFunc.getName(),

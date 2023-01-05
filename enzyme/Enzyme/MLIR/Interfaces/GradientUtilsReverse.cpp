@@ -14,7 +14,6 @@
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
 
-
 // TODO: this shouldn't depend on specific dialects except Enzyme.
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 
@@ -43,7 +42,8 @@ mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
     DerivativeMode mode, 
     unsigned width, 
     BlockAndValueMapping mapReverseModeBlocks_, 
-    DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapBlockArguments_)
+    DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapBlockArguments_,
+    SymbolTableCollection &symbolTable_)
     : newFunc(newFunc_), 
       Logic(Logic), 
       mode(mode), 
@@ -55,12 +55,13 @@ mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
       originalToNewFn(originalToNewFn_),
       originalToNewFnOps(originalToNewFnOps_),
       mapReverseModeBlocks(mapReverseModeBlocks_),
-      mapBlockArguments(mapBlockArguments_){
+      mapBlockArguments(mapBlockArguments_),
+      symbolTable(symbolTable_){
 
   initInitializationBlock(invertedPointers_);
 }
 
-//for(auto x : v.getUsers()){x->dump();}
+//for(auto x : v.getUsers()){x->dump();} DEBUG
 
 bool onlyUsedInParentBlock(Value v){
   return !v.isUsedOutsideOfBlock(v.getParentBlock());
@@ -200,6 +201,43 @@ bool mlir::enzyme::MGradientUtilsReverse::hasInvertPointer(mlir::Value v){
   return (invertedPointers.contains(v)) || (invertedPointersGlobal.contains(v));
 }
 
+bool MGradientUtilsReverse::visitChildCustom(Operation * op, OpBuilder &builder){
+  std::string nameDiffe = "diffe_" + op->getName().getDialectNamespace().str() + "_" + op->getName().stripDialect().str();
+  std::string nameStore = "store_" + op->getName().getDialectNamespace().str() + "_" + op->getName().stripDialect().str();
+
+  StringRef srDiffe(nameDiffe);
+  StringRef srStore(nameStore);
+  
+  OperationName opNameDiffe(srDiffe, op->getContext());
+  OperationName opNameStore(srStore, op->getContext());
+
+  Operation * symbolDiffe = symbolTable.lookupNearestSymbolFrom(op, opNameDiffe.getIdentifier());
+  Operation * symbolStore = symbolTable.lookupNearestSymbolFrom(op, opNameStore.getIdentifier());
+  
+  if (symbolDiffe != nullptr && symbolStore != nullptr){
+    //symbolDiffe->dump();
+    //symbolStore->dump();
+    Value opResult = op->getResult(0);
+    func::FuncOp funcDiffe = cast<func::FuncOp>(symbolDiffe);
+    if(hasInvertPointer(opResult)){
+      SmallVector<Value, 2> args;
+      Value invertValue = invertPointerM(opResult, builder);
+      args.push_back(invertValue); //TODO
+
+      SmallVector<Type, 2> resultTypes;
+      for (auto x : op->getOperands()){
+        resultTypes.push_back(x.getType());
+      }
+
+      func::CallOp dCI = builder.create<func::CallOp>(op->getLoc(), srDiffe, resultTypes, args);
+      for (int i = 0; i < op->getNumOperands(); i++){
+        mapInvertPointer(op->getOperand(i), dCI.getResult(i), builder);
+      }
+      return true;
+    }
+  }
+  return false;
+}
 
 LogicalResult MGradientUtilsReverse::visitChildReverse(Operation *op, OpBuilder &builder) {
   if (mode == DerivativeMode::ReverseModeGradient) {
@@ -278,16 +316,17 @@ MDiffeGradientUtilsReverse::MDiffeGradientUtilsReverse(MEnzymeLogic &Logic,
                       DerivativeMode mode, 
                       unsigned width, 
                       BlockAndValueMapping mapReverseModeBlocks_, 
-                      DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapBlockArguments_)
-      : MGradientUtilsReverse(Logic, newFunc_, oldFunc_, TA, TR, invertedPointers_, constantvalues_, returnvals_, ActiveReturn, constant_values, origToNew_, origToNewOps_, mode, width, mapReverseModeBlocks_, mapBlockArguments_) {}
+                      DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapBlockArguments_,
+                      SymbolTableCollection &symbolTable_)
+      : MGradientUtilsReverse(Logic, newFunc_, oldFunc_, TA, TR, invertedPointers_, constantvalues_, returnvals_, ActiveReturn, constant_values, origToNew_, origToNewOps_, mode, width, mapReverseModeBlocks_, mapBlockArguments_, symbolTable_) {}
 
-MDiffeGradientUtilsReverse * MDiffeGradientUtilsReverse::CreateFromClone(MEnzymeLogic &Logic, DerivativeMode mode, unsigned width, FunctionOpInterface todiff, MTypeAnalysis &TA, MFnTypeInfo &oldTypeInfo, DIFFE_TYPE retType, bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args, ReturnType returnValue, mlir::Type additionalArg) {
+MDiffeGradientUtilsReverse * MDiffeGradientUtilsReverse::CreateFromClone(MEnzymeLogic &Logic, DerivativeMode mode, unsigned width, FunctionOpInterface todiff, MTypeAnalysis &TA, MFnTypeInfo &oldTypeInfo, DIFFE_TYPE retType, bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args, ReturnType returnValue, mlir::Type additionalArg, SymbolTableCollection &symbolTable_) {
     std::string prefix;
 
     switch (mode) {
     case DerivativeMode::ForwardMode:
     case DerivativeMode::ForwardModeSplit:
-      prefix = "fwddiffe";
+      assert(false);
       break;
     case DerivativeMode::ReverseModeCombined:
     case DerivativeMode::ReverseModeGradient:
@@ -320,5 +359,5 @@ MDiffeGradientUtilsReverse * MDiffeGradientUtilsReverse::CreateFromClone(MEnzyme
 
     MTypeResults TR; // TODO
     return new MDiffeGradientUtilsReverse(
-        Logic, newFunc, todiff, TA, TR, invertedPointers, constant_values, nonconstant_values, retType, constant_args, originalToNew, originalToNewOps, mode, width, mapReverseModeBlocks, mapBlockArguments);
+        Logic, newFunc, todiff, TA, TR, invertedPointers, constant_values, nonconstant_values, retType, constant_args, originalToNew, originalToNewOps, mode, width, mapReverseModeBlocks, mapBlockArguments, symbolTable_);
   }

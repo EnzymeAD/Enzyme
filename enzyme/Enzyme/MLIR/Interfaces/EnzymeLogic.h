@@ -61,17 +61,6 @@ public:
               constant_args.begin(), constant_args.end()))
         return false;
 
-      /*
-      for (auto &arg : todiff->args()) {
-        auto foundLHS = uncacheable_args.find(&arg);
-        auto foundRHS = rhs.uncacheable_args.find(&arg);
-        if (foundLHS->second < foundRHS->second)
-          return true;
-        if (foundRHS->second < foundLHS->second)
-          return false;
-      }
-      */
-
       if (returnUsed < rhs.returnUsed)
         return true;
       if (rhs.returnUsed < returnUsed)
@@ -110,12 +99,7 @@ public:
                     size_t width, mlir::Type addedType, MFnTypeInfo type_args,
                     std::vector<bool> volatile_args, void *augmented);
 
-  FunctionOpInterface
-  CreateReverseDiff(FunctionOpInterface fn, DIFFE_TYPE retType,
-                    std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
-                    bool returnUsed, DerivativeMode mode, bool freeMemory,
-                    size_t width, mlir::Type addedType, MFnTypeInfo type_args,
-                    std::vector<bool> volatile_args, void *augmented);
+  FunctionOpInterface CreateReverseDiff(FunctionOpInterface fn, DIFFE_TYPE retType, std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA, bool returnUsed, DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType, MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented, SymbolTableCollection &symbolTable);
 };
 
 } // Namespace enzyme

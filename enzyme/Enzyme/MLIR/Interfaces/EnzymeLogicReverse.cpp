@@ -46,7 +46,6 @@ void mapInvertArguments(Block * oBB, Block * reverseBB, MDiffeGradientUtilsRever
     auto x = gutils->mapBlockArguments[oBB][i];
     OpBuilder builder(reverseBB, reverseBB->begin());
     gutils->mapInvertPointer(x.second, reverseBB->getArgument(i), builder);
-    reverseBB->dump();
   }
 }
 
@@ -69,7 +68,11 @@ void visitChildren(Block * oBB, Block * reverseBB, MDiffeGradientUtilsReverse * 
     auto first = oBB->rbegin();
     auto last = oBB->rend();
     for (auto it = first; it != last; ++it) {
-      (void)gutils->visitChildReverse(&*it, revBuilder);
+      Operation * op = &*it;
+      bool customFound = gutils->visitChildCustom(op, revBuilder);
+      if(!customFound){
+        (void)gutils->visitChildReverse(op, revBuilder);
+      }
     }
   }
 }
@@ -146,7 +149,7 @@ void handlePredecessors(Block * oBB, Block * reverseBB, MDiffeGradientUtilsRever
   }
 }
 
-FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(FunctionOpInterface fn, DIFFE_TYPE retType, std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA, bool returnUsed, DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType, MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented) {
+FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(FunctionOpInterface fn, DIFFE_TYPE retType, std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA, bool returnUsed, DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType, MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented, SymbolTableCollection &symbolTable) {
   
   if (fn.getBody().empty()) {
     llvm::errs() << fn << "\n";
@@ -154,7 +157,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(FunctionOpInte
   }
 
   ReturnType returnValue = ReturnType::Tape;
-  MDiffeGradientUtilsReverse * gutils = MDiffeGradientUtilsReverse::CreateFromClone(*this, mode, width, fn, TA, type_args, retType, /*diffeReturnArg*/ true, constants, returnValue, addedType);
+  MDiffeGradientUtilsReverse * gutils = MDiffeGradientUtilsReverse::CreateFromClone(*this, mode, width, fn, TA, type_args, retType, /*diffeReturnArg*/ true, constants, returnValue, addedType, symbolTable);
 
 
   SmallVector<mlir::Block*> dominatorToposortBlocks = getDominatorToposort(gutils);
