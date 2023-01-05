@@ -217,24 +217,30 @@ bool MGradientUtilsReverse::visitChildCustom(Operation * op, OpBuilder &builder)
   if (symbolDiffe != nullptr && symbolStore != nullptr){
     //symbolDiffe->dump();
     //symbolStore->dump();
-    Value opResult = op->getResult(0);
+    
     func::FuncOp funcDiffe = cast<func::FuncOp>(symbolDiffe);
-    if(hasInvertPointer(opResult)){
-      SmallVector<Value, 2> args;
-      Value invertValue = invertPointerM(opResult, builder);
-      args.push_back(invertValue); //TODO
-
-      SmallVector<Type, 2> resultTypes;
-      for (auto x : op->getOperands()){
-        resultTypes.push_back(x.getType());
+    SmallVector<Value, 2> args;
+    
+    bool hasGradient = false;
+    for (Value opResult : op->getResults()){
+      if(hasInvertPointer(opResult)){
+        hasGradient = true;
+        Value invertValue = invertPointerM(opResult, builder);
+        args.push_back(invertValue);
       }
-
-      func::CallOp dCI = builder.create<func::CallOp>(op->getLoc(), srDiffe, resultTypes, args);
-      for (int i = 0; i < op->getNumOperands(); i++){
-        mapInvertPointer(op->getOperand(i), dCI.getResult(i), builder);
-      }
-      return true;
     }
+
+    SmallVector<Type, 2> resultTypes;
+    for (auto x : op->getOperands()){
+      resultTypes.push_back(x.getType());
+    }
+
+    func::CallOp dCI = builder.create<func::CallOp>(op->getLoc(), srDiffe, resultTypes, args);
+    for (int i = 0; i < op->getNumOperands(); i++){
+      mapInvertPointer(op->getOperand(i), dCI.getResult(i), builder);
+    }
+
+    return true;
   }
   return false;
 }
