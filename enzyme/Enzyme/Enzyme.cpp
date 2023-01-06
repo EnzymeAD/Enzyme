@@ -969,7 +969,7 @@ public:
 
     return true;
   }
-  
+
   Type *getTypeVectorizedAtLeafNodes(Type *ty, unsigned width) {
     if (auto sty = dyn_cast<StructType>(ty)) {
       return getTypeVectorizedAtLeafNodes(sty, width);
@@ -1089,7 +1089,10 @@ public:
             return false;
           }
         } else if (width > 1) {
-          shadow = Builder.CreatePointerCast(sretPt, GradientUtils::getShadowType(*CI->getModule(), primal->getType(), width, VectorModeMemoryLayout::VectorizeAtLeafNodes));
+          shadow = Builder.CreatePointerCast(
+              sretPt, GradientUtils::getShadowType(
+                          *CI->getModule(), primal->getType(), width,
+                          VectorModeMemoryLayout::VectorizeAtLeafNodes));
         } else {
           shadow = sretPt;
         }
@@ -1434,8 +1437,9 @@ public:
             }
           }
 
-          auto expectedType = GradientUtils::getShadowType(*CI->getModule(),
-              PTy, width, VectorModeMemoryLayout::VectorizeAtLeafNodes);
+          auto expectedType = GradientUtils::getShadowType(
+              *CI->getModule(), PTy, width,
+              VectorModeMemoryLayout::VectorizeAtLeafNodes);
           if (EnzymeVectorizeAtLeafNodes &&
               expectedType != element->getType()) {
             element = castToDiffeFunctionArgType(Builder, CI, FT, expectedType,
@@ -2302,8 +2306,9 @@ public:
                        Arch == Triple::amdgcn;
 
       auto val = GradientUtils::GetOrCreateShadowConstant(
-          Logic, Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(F), TA, fn, pair.second,
-          VectorModeMemoryLayout::VectorizeAtRootNode, /*width*/ 1, AtomicAdd);
+          Logic, Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(F), TA, fn,
+          pair.second, VectorModeMemoryLayout::VectorizeAtRootNode, /*width*/ 1,
+          AtomicAdd);
       CI->replaceAllUsesWith(ConstantExpr::getPointerCast(val, CI->getType()));
       CI->eraseFromParent();
       Changed = true;

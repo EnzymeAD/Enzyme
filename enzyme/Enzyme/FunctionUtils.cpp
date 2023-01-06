@@ -1932,8 +1932,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
   return NewF;
 }
 
-FunctionType *getFunctionTypeForClone(llvm::Module &M,
-    llvm::FunctionType *FTy, DerivativeMode mode,
+FunctionType *getFunctionTypeForClone(
+    llvm::Module &M, llvm::FunctionType *FTy, DerivativeMode mode,
     VectorModeMemoryLayout memoryLayout, unsigned width,
     llvm::Type *additionalArg, llvm::ArrayRef<DIFFE_TYPE> constant_args,
     bool diffeReturnArg, ReturnType returnValue, DIFFE_TYPE returnType) {
@@ -1968,17 +1968,19 @@ FunctionType *getFunctionTypeForClone(llvm::Module &M,
     ArgTypes.push_back(I);
     if (constant_args[argno] == DIFFE_TYPE::DUP_ARG ||
         constant_args[argno] == DIFFE_TYPE::DUP_NONEED) {
-      ArgTypes.push_back(GradientUtils::getShadowType(M, I, width, memoryLayout));
+      ArgTypes.push_back(
+          GradientUtils::getShadowType(M, I, width, memoryLayout));
     } else if (constant_args[argno] == DIFFE_TYPE::OUT_DIFF) {
-      RetTypes.push_back(GradientUtils::getShadowType(M, I, width, memoryLayout));
+      RetTypes.push_back(
+          GradientUtils::getShadowType(M, I, width, memoryLayout));
     }
     ++argno;
   }
 
   if (diffeReturnArg) {
     assert(!FTy->getReturnType()->isVoidTy());
-    ArgTypes.push_back(GradientUtils::getShadowType(M, FTy->getReturnType(), width,
-                                                    memoryLayout));
+    ArgTypes.push_back(GradientUtils::getShadowType(M, FTy->getReturnType(),
+                                                    width, memoryLayout));
   }
   if (additionalArg) {
     ArgTypes.push_back(additionalArg);
@@ -2027,9 +2029,9 @@ Function *PreProcessCache::CloneFunctionWithReturns(
   assert(!F->empty());
   F = preprocessForClone(F, mode);
   llvm::ValueToValueMapTy VMap;
-  llvm::FunctionType *FTy = getFunctionTypeForClone(*F->getParent(),
-      F->getFunctionType(), mode, memoryLayout, width, additionalArg,
-      constant_args, diffeReturnArg, returnValue, returnType);
+  llvm::FunctionType *FTy = getFunctionTypeForClone(
+      *F->getParent(), F->getFunctionType(), mode, memoryLayout, width,
+      additionalArg, constant_args, diffeReturnArg, returnValue, returnType);
 
   for (BasicBlock &BB : *F) {
     if (auto ri = dyn_cast<ReturnInst>(BB.getTerminator())) {
