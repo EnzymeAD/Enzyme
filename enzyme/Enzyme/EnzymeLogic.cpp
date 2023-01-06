@@ -4574,14 +4574,18 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
 
   for (unsigned i = 0; i < orig_FTy->getNumParams(); ++i) {
     if (arg_types[i] == BATCH_TYPE::VECTOR) {
-      Type *ty = GradientUtils::getShadowType(*tobatch->getParent(), orig_FTy->getParamType(i), width, VectorModeMemoryLayout::VectorizeAtRootNode);
+      Type *ty = GradientUtils::getShadowType(
+          *tobatch->getParent(), orig_FTy->getParamType(i), width,
+          VectorModeMemoryLayout::VectorizeAtRootNode);
       params.push_back(ty);
     } else {
       params.push_back(orig_FTy->getParamType(i));
     }
   }
 
-  Type *NewTy = GradientUtils::getShadowType(*tobatch->getParent(), tobatch->getReturnType(), width, VectorModeMemoryLayout::VectorizeAtRootNode);
+  Type *NewTy = GradientUtils::getShadowType(
+      *tobatch->getParent(), tobatch->getReturnType(), width,
+      VectorModeMemoryLayout::VectorizeAtRootNode);
 
   FunctionType *FTy = FunctionType::get(NewTy, params, tobatch->isVarArg());
   Function *NewF =

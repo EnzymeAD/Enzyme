@@ -1,4 +1,5 @@
-//===- Annotations.h - Wrappers determining the context in which a LLVM value is used
+//===- Annotations.h - Wrappers determining the context in which a LLVM value is
+// used
 //---===//
 //
 //                             Enzyme Project
@@ -27,7 +28,6 @@
 #ifndef ANNOTATIONS_H
 #define ANNOTATIONS_H
 
-
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Triple.h"
 
@@ -52,28 +52,31 @@ public:
 
   Value *getValue(IRBuilder<> &Builder, VectorModeMemoryLayout memoryLayout,
                   unsigned width) {
-    
+
     if (width == 1)
       return value;
-    
+
     switch (memoryLayout) {
     case VectorModeMemoryLayout::VectorizeAtRootNode:
       return value;
     case VectorModeMemoryLayout::VectorizeAtLeafNodes:
-        if (auto vty = dyn_cast<VectorType>(value->getType())) {
-          unsigned vector_width = vty->getElementCount().getKnownMinValue();
-          return Builder.CreateShuffleVector(value, GradientUtils::CreateVectorSplatMask(vector_width, width), value->getName() + ".vecsplat");
-        } else if (auto sty = dyn_cast<StructType>(value->getType())) {
-          auto vsty = GradientUtils::getShadowType(*Builder.GetInsertBlock()->getModule(), sty, width, memoryLayout);
-          Value *vecstruct = UndefValue::get(vsty);
-          for (unsigned i = 0; i < sty->getNumElements(); ++i) {
-            auto elem = Builder.CreateExtractValue(value, {i});
-            auto splat = Builder.CreateVectorSplat(width, elem);
-            vecstruct = Builder.CreateInsertValue(vecstruct, splat, {i});
-          }
-          return vecstruct;
+      if (auto vty = dyn_cast<VectorType>(value->getType())) {
+        unsigned vector_width = vty->getElementCount().getKnownMinValue();
+        return Builder.CreateShuffleVector(
+            value, GradientUtils::CreateVectorSplatMask(vector_width, width),
+            value->getName() + ".vecsplat");
+      } else if (auto sty = dyn_cast<StructType>(value->getType())) {
+        auto vsty = GradientUtils::getShadowType(
+            *Builder.GetInsertBlock()->getModule(), sty, width, memoryLayout);
+        Value *vecstruct = UndefValue::get(vsty);
+        for (unsigned i = 0; i < sty->getNumElements(); ++i) {
+          auto elem = Builder.CreateExtractValue(value, {i});
+          auto splat = Builder.CreateVectorSplat(width, elem);
+          vecstruct = Builder.CreateInsertValue(vecstruct, splat, {i});
         }
-        return Builder.CreateVectorSplat(width, value);
+        return vecstruct;
+      }
+      return Builder.CreateVectorSplat(width, value);
     }
   }
 
@@ -92,15 +95,16 @@ public:
 
   Type *getValue(IRBuilder<> &Builder, VectorModeMemoryLayout memoryLayout,
                  unsigned width) {
-    
+
     if (width == 1)
       return type;
-    
+
     switch (memoryLayout) {
     case VectorModeMemoryLayout::VectorizeAtRootNode:
       return type;
     case VectorModeMemoryLayout::VectorizeAtLeafNodes:
-        return GradientUtils::getShadowType(*Builder.GetInsertBlock()->getModule(), type, width, memoryLayout);
+      return GradientUtils::getShadowType(
+          *Builder.GetInsertBlock()->getModule(), type, width, memoryLayout);
     }
   }
 
@@ -121,14 +125,16 @@ public:
                       unsigned width) {
     if (width == 1)
       return type;
-    
+
     switch (memoryLayout) {
     case VectorModeMemoryLayout::VectorizeAtRootNode:
       return type;
-      case VectorModeMemoryLayout::VectorizeAtLeafNodes: {
-        Type *ty = GradientUtils::getShadowType(*Builder.GetInsertBlock()->getModule(), type->getElementType(), width, memoryLayout);
-        return ArrayType::get(ty, type->getNumElements());
-      }
+    case VectorModeMemoryLayout::VectorizeAtLeafNodes: {
+      Type *ty = GradientUtils::getShadowType(
+          *Builder.GetInsertBlock()->getModule(), type->getElementType(), width,
+          memoryLayout);
+      return ArrayType::get(ty, type->getNumElements());
+    }
     }
   }
 
@@ -150,7 +156,7 @@ public:
                             unsigned width) {
     if (width == 1)
       return type;
-    
+
     switch (memoryLayout) {
     case VectorModeMemoryLayout::VectorizeAtRootNode:
       return type;
@@ -178,7 +184,7 @@ public:
                      unsigned width) {
     if (width == 1)
       return c;
-    
+
     switch (memoryLayout) {
     case VectorModeMemoryLayout::VectorizeAtRootNode:
       return c;
@@ -205,7 +211,7 @@ public:
                      unsigned width) {
     if (width == 1)
       return c;
-    
+
     switch (memoryLayout) {
     case VectorModeMemoryLayout::VectorizeAtRootNode:
       return c;
@@ -272,35 +278,42 @@ public:
               unsigned width, unsigned i) {
     if (width == 1 || !value)
       return value;
-    
+
     if (!value)
       return nullptr;
-  
+
     switch (memoryLayout) {
-      case VectorModeMemoryLayout::VectorizeAtRootNode:
-        assert(cast<ArrayType>(value->getType())->getNumElements() == width);
-        return GradientUtils::extractMeta(Builder, value, i);
-      case VectorModeMemoryLayout::VectorizeAtLeafNodes:
-        if (auto vty = dyn_cast<VectorType>(value->getType())) {
+    case VectorModeMemoryLayout::VectorizeAtRootNode:
+      assert(cast<ArrayType>(value->getType())->getNumElements() == width);
+      return GradientUtils::extractMeta(Builder, value, i);
+    case VectorModeMemoryLayout::VectorizeAtLeafNodes:
+      if (auto vty = dyn_cast<VectorType>(value->getType())) {
+        unsigned vector_width = vty->getElementCount().getKnownMinValue();
+        if (vector_width / width > 1) {
+          return Builder.CreateShuffleVector(
+              value,
+              GradientUtils::CreateExtractSubvectorMask(vector_width, width, i),
+              value->getName() + ".subvector." + Twine(i));
+        } else {
+          return Builder.CreateExtractElement(value, i);
+        }
+      } else if (auto pty = dyn_cast<PointerType>(value->getType())) {
+        if (auto vty = dyn_cast<VectorType>(pty->getElementType())) {
           unsigned vector_width = vty->getElementCount().getKnownMinValue();
           if (vector_width / width > 1) {
-            return Builder.CreateShuffleVector(value, GradientUtils::CreateExtractSubvectorMask(vector_width, width, i), value->getName() + ".subvector." + Twine(i));
-          } else {
-            return Builder.CreateExtractElement(value, i);
+            Type *res_type = FixedVectorType::get(vty->getElementType(),
+                                                  vector_width / width);
+            Type *gep_type = PointerType::get(res_type, pty->getAddressSpace());
+            auto gep = Builder.CreateInBoundsGEP(
+                value, {Builder.getInt32(0),
+                        Builder.getInt32(i * vector_width / width)});
+            return Builder.CreatePointerCast(gep, gep_type);
           }
-        } else if (auto pty = dyn_cast<PointerType>(value->getType())) {
-          if (auto vty = dyn_cast<VectorType>(pty->getElementType())) {
-            unsigned vector_width = vty->getElementCount().getKnownMinValue();
-            if (vector_width / width > 1) {
-              Type* res_type = FixedVectorType::get(vty->getElementType(), vector_width / width);
-              Type* gep_type = PointerType::get(res_type, pty->getAddressSpace());
-              auto gep = Builder.CreateInBoundsGEP(value, {Builder.getInt32(0), Builder.getInt32(i * vector_width / width)});
-              return Builder.CreatePointerCast(gep, gep_type);
-            }
-          }
-          return Builder.CreateInBoundsGEP(value, {Builder.getInt32(0), Builder.getInt32(i)});
         }
-        return value;
+        return Builder.CreateInBoundsGEP(
+            value, {Builder.getInt32(0), Builder.getInt32(i)});
+      }
+      return value;
     }
 
     return value;
@@ -310,10 +323,10 @@ public:
               unsigned width) {
     if (width == 1 || !value)
       return value;
-    
+
     if (!value)
       return nullptr;
-    
+
     if (value && memoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode)
       assert(cast<ArrayType>(value->getType())->getNumElements() == width);
 
@@ -329,29 +342,30 @@ public:
   Gradient(ArrayRef<Constant *> values) : values(values) {}
 
   std::vector<Constant *> getValue(IRBuilder<> &Builder,
-                                VectorModeMemoryLayout memoryLayout,
-                                unsigned width, unsigned i) {
+                                   VectorModeMemoryLayout memoryLayout,
+                                   unsigned width, unsigned i) {
     if (width == 1)
       return values;
-    
+
     switch (memoryLayout) {
-      case VectorModeMemoryLayout::VectorizeAtRootNode: {
-        std::vector<Constant*> vals;
-        for (auto &&val : values) {
-          if (val)
-            vals.push_back(cast<Constant>(GradientUtils::extractMeta(Builder, val, i)));
-          else
-            vals.push_back(nullptr);
-        }
-        return vals;
+    case VectorModeMemoryLayout::VectorizeAtRootNode: {
+      std::vector<Constant *> vals;
+      for (auto &&val : values) {
+        if (val)
+          vals.push_back(
+              cast<Constant>(GradientUtils::extractMeta(Builder, val, i)));
+        else
+          vals.push_back(nullptr);
       }
-      case VectorModeMemoryLayout::VectorizeAtLeafNodes: {
-        std::vector<Constant*> vals;
-        for (auto &&val : values) {
-          vals.push_back(cast_or_null<Constant>(val));
-        }
-        return vals;
+      return vals;
+    }
+    case VectorModeMemoryLayout::VectorizeAtLeafNodes: {
+      std::vector<Constant *> vals;
+      for (auto &&val : values) {
+        vals.push_back(cast_or_null<Constant>(val));
       }
+      return vals;
+    }
     }
 
     return values;
@@ -362,20 +376,19 @@ public:
                                 unsigned width) {
     if (width == 1)
       return values;
-    
+
     switch (memoryLayout) {
-      case VectorModeMemoryLayout::VectorizeAtLeafNodes:
-        break;
-      case VectorModeMemoryLayout::VectorizeAtRootNode:
-        for (auto &&val : values) {
-          assert(cast<ArrayType>(val->getType())->getNumElements() == width);
-        }
-        break;
+    case VectorModeMemoryLayout::VectorizeAtLeafNodes:
+      break;
+    case VectorModeMemoryLayout::VectorizeAtRootNode:
+      for (auto &&val : values) {
+        assert(cast<ArrayType>(val->getType())->getNumElements() == width);
+      }
+      break;
     }
 
     return values;
   }
 };
-
 
 #endif

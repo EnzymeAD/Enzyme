@@ -72,24 +72,33 @@
 #include "llvm/Support/ErrorHandling.h"
 
 using namespace llvm;
-  
-  template<typename T, typename... Args>
-  inline auto eval_tuple(llvm::IRBuilder<> &Builder, VectorModeMemoryLayout memoryLayout, unsigned width, T i, Args... args);
 
-  template<typename T>
-  inline auto eval_tuple(llvm::IRBuilder<> &Builder, VectorModeMemoryLayout memoryLayout, unsigned width, T) {
-      return std::tuple<>();
-  }
-  template<typename Arg0, typename... Args>
-  inline auto eval_tuple(llvm::IRBuilder<> &Builder, VectorModeMemoryLayout memoryLayout, unsigned width, unsigned int i, Arg0 arg0, Args... args) {
-      auto &&v = arg0.getValue(Builder, memoryLayout, width, i);
-      return std::tuple_cat(std::make_tuple(v), eval_tuple(Builder, memoryLayout, width, i, args...));
-  }
-  template<typename Arg0, typename... Args>
-  inline auto eval_tuple(llvm::IRBuilder<> &Builder, VectorModeMemoryLayout memoryLayout, unsigned width, std::nullptr_t i, Arg0 arg0, Args... args) {
-      auto &&v = arg0.getValue(Builder, memoryLayout, width);
-      return std::tuple_cat(std::make_tuple(v), eval_tuple(Builder, memoryLayout, width, i, args...));
-  }
+template <typename T, typename... Args>
+inline auto eval_tuple(llvm::IRBuilder<> &Builder,
+                       VectorModeMemoryLayout memoryLayout, unsigned width, T i,
+                       Args... args);
+
+template <typename T>
+inline auto eval_tuple(llvm::IRBuilder<> &Builder,
+                       VectorModeMemoryLayout memoryLayout, unsigned width, T) {
+  return std::tuple<>();
+}
+template <typename Arg0, typename... Args>
+inline auto eval_tuple(llvm::IRBuilder<> &Builder,
+                       VectorModeMemoryLayout memoryLayout, unsigned width,
+                       unsigned int i, Arg0 arg0, Args... args) {
+  auto &&v = arg0.getValue(Builder, memoryLayout, width, i);
+  return std::tuple_cat(std::make_tuple(v),
+                        eval_tuple(Builder, memoryLayout, width, i, args...));
+}
+template <typename Arg0, typename... Args>
+inline auto eval_tuple(llvm::IRBuilder<> &Builder,
+                       VectorModeMemoryLayout memoryLayout, unsigned width,
+                       std::nullptr_t i, Arg0 arg0, Args... args) {
+  auto &&v = arg0.getValue(Builder, memoryLayout, width);
+  return std::tuple_cat(std::make_tuple(v),
+                        eval_tuple(Builder, memoryLayout, width, i, args...));
+}
 
 #include "llvm-c/Core.h"
 
@@ -835,8 +844,7 @@ public:
                 const SmallPtrSetImpl<Value *> &activevals_,
                 DIFFE_TYPE ReturnActivity, ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
                 ValueToValueMapTy &originalToNewFn_, DerivativeMode mode,
-                VectorModeMemoryLayout memoryLayout,
-                unsigned width, bool omp)
+                VectorModeMemoryLayout memoryLayout, unsigned width, bool omp)
       : CacheUtility(TLI_, newFunc_), Logic(Logic), mode(mode),
         memoryLayout(memoryLayout), oldFunc(oldFunc_), invertedPointers(),
         OrigDT(Logic.PPC.FAM.getResult<llvm::DominatorTreeAnalysis>(*oldFunc_)),
@@ -1435,23 +1443,26 @@ public:
         getNewFromOriginal(Builder2.getCurrentDebugLocation()));
     Builder2.setFastMathFlags(getFast());
   }
-  
-  static bool isVectorizedStructFor(StructType *sty, StructType *vsty, SmallPtrSetImpl<StructType*> &visited, unsigned width, Module &M) {
+
+  static bool isVectorizedStructFor(StructType *sty, StructType *vsty,
+                                    SmallPtrSetImpl<StructType *> &visited,
+                                    unsigned width, Module &M) {
     visited.insert(sty);
-    
+
     if (sty->getStructNumElements() != vsty->getStructNumElements())
       return false;
-    
+
     auto sit = sty->element_begin();
     auto vsit = vsty->element_begin();
-    
-    for (;sit != sty->element_end() && vsit != vsty->element_end(); sit++, vsit++) {
+
+    for (; sit != sty->element_end() && vsit != vsty->element_end();
+         sit++, vsit++) {
       Type *Ty = *sit;
       Type *VTy = *vsit;
-      
+
       Type *peeledType = *sit;
       Type *peeledVectorType = *vsit;
-      
+
       while (auto foo = dyn_cast<PointerType>(peeledType)) {
         if (auto bar = dyn_cast<PointerType>(peeledVectorType)) {
           peeledType = foo->getPointerElementType();
@@ -1460,28 +1471,33 @@ public:
           return false;
         }
       }
-      
+
       auto peeledStructType = dyn_cast<StructType>(peeledType);
       auto peeledVectorStructType = dyn_cast<StructType>(peeledVectorType);
-      
+
       if (peeledStructType && peeledVectorType) {
-        if (!visited.contains(peeledStructType) && !isVectorizedStructFor(peeledStructType, peeledVectorStructType, visited, width, M))
+        if (!visited.contains(peeledStructType) &&
+            !isVectorizedStructFor(peeledStructType, peeledVectorStructType,
+                                   visited, width, M))
           return false;
       } else if (getShadowTypeVectorizedAtLeafNodes(M, Ty, width) != VTy) {
         return false;
       }
     }
-    
+
     return true;
   }
-  
-  static Type *createShadowTypeFor(Type *ty, unsigned width, std::map<StructType*, StructType*> &under_construction, Module &M) {
+
+  static Type *
+  createShadowTypeFor(Type *ty, unsigned width,
+                      std::map<StructType *, StructType *> &under_construction,
+                      Module &M) {
     if (auto sty = dyn_cast<StructType>(ty)) {
       auto found = under_construction.find(sty);
-      
+
       if (found != under_construction.end())
         return found->second;
-      
+
       // create new vectorized type
       StructType *new_sty = StructType::create(ty->getContext());
       if (sty->hasName()) {
@@ -1489,11 +1505,12 @@ public:
         new_sty->setName(name.str());
       }
       under_construction[sty] = new_sty;
-      
+
       SmallVector<Type *, 3> subtys;
 
       for (auto sety : sty->subtypes()) {
-        Type *subty = getShadowTypeVectorizedAtLeafNodes(sety, width, under_construction, M);
+        Type *subty = getShadowTypeVectorizedAtLeafNodes(sety, width,
+                                                         under_construction, M);
         subtys.push_back(subty);
       }
 
@@ -1506,26 +1523,34 @@ public:
         return StructType::get(sty->getContext(), subtys);
       }
     } else if (auto aty = dyn_cast<ArrayType>(ty)) {
-      return ArrayType::get(getShadowTypeVectorizedAtLeafNodes(aty->getElementType(), width, under_construction, M),
+      return ArrayType::get(
+          getShadowTypeVectorizedAtLeafNodes(aty->getElementType(), width,
+                                             under_construction, M),
           aty->getNumElements());
     } else if (auto pty = dyn_cast<PointerType>(ty)) {
       if (pty->getElementType()->isFunctionTy())
         return VectorType::get(pty, width, false);
-      
-      return PointerType::get(getShadowTypeVectorizedAtLeafNodes(pty->getElementType(), width, under_construction, M), pty->getAddressSpace());
+
+      return PointerType::get(
+          getShadowTypeVectorizedAtLeafNodes(pty->getElementType(), width,
+                                             under_construction, M),
+          pty->getAddressSpace());
     } else if (auto vty = dyn_cast<VectorType>(ty)) {
-      return VectorType::get(vty->getElementType(), vty->getElementCount() * width);
+      return VectorType::get(vty->getElementType(),
+                             vty->getElementCount() * width);
     } else {
       return VectorType::get(ty, width, false);
     }
   }
-  
-  static Type *getShadowTypeVectorizedAtLeafNodes(Type *ty, unsigned width, std::map<StructType*, StructType*> &under_construction, Module &M) {
+
+  static Type *getShadowTypeVectorizedAtLeafNodes(
+      Type *ty, unsigned width,
+      std::map<StructType *, StructType *> &under_construction, Module &M) {
     if (auto sty = dyn_cast<StructType>(ty)) {
       // look for exisiting vectorized type
-      auto&& AllStructTypes = M.getIdentifiedStructTypes();
-      for (auto&& elem: AllStructTypes) {
-        SmallPtrSet<StructType*, 16> visited;
+      auto &&AllStructTypes = M.getIdentifiedStructTypes();
+      for (auto &&elem : AllStructTypes) {
+        SmallPtrSet<StructType *, 16> visited;
         if (isVectorizedStructFor(sty, elem, visited, width, M))
           return elem;
       }
@@ -1533,8 +1558,9 @@ public:
     return createShadowTypeFor(ty, width, under_construction, M);
   }
 
-  static Type *getShadowTypeVectorizedAtLeafNodes(Module &M, Type *ty, unsigned width) {
-    std::map<StructType*, StructType*> under_construction;
+  static Type *getShadowTypeVectorizedAtLeafNodes(Module &M, Type *ty,
+                                                  unsigned width) {
+    std::map<StructType *, StructType *> under_construction;
     return getShadowTypeVectorizedAtLeafNodes(ty, width, under_construction, M);
   }
 
@@ -1543,7 +1569,7 @@ public:
   }
 
   static inline Type *getShadowType(Module &M, Type *ty, unsigned width,
-                             VectorModeMemoryLayout memoryLayout) {
+                                    VectorModeMemoryLayout memoryLayout) {
     if (width == 1)
       return ty;
 
@@ -1567,27 +1593,27 @@ public:
                                    unsigned off) {
     while (true) {
       if (auto Ins = dyn_cast<InsertValueInst>(Agg)) {
-          if (Ins->getNumIndices() != 1)
-            break;
-          if (Ins->getIndices()[0] == off)
-            return Ins->getInsertedValueOperand();
-          else
-            Agg = Ins->getAggregateOperand();
-          continue;
+        if (Ins->getNumIndices() != 1)
+          break;
+        if (Ins->getIndices()[0] == off)
+          return Ins->getInsertedValueOperand();
+        else
+          Agg = Ins->getAggregateOperand();
+        continue;
       }
       if (auto Ins = dyn_cast<InsertElementInst>(Agg)) {
-          if (Ins->getNumOperands() != 3)
-            break;
-          size_t cur;
-          if (auto CI = dyn_cast<ConstantInt>(Ins->getOperand(2)))
-              cur = CI->getValue().getZExtValue();
-          else
-              break;
-          if (cur == off)
-            return Ins->getOperand(1);
-          else
-            Agg = Ins->getOperand(0);
-          continue;
+        if (Ins->getNumOperands() != 3)
+          break;
+        size_t cur;
+        if (auto CI = dyn_cast<ConstantInt>(Ins->getOperand(2)))
+          cur = CI->getValue().getZExtValue();
+        else
+          break;
+        if (cur == off)
+          return Ins->getOperand(1);
+        else
+          Agg = Ins->getOperand(0);
+        continue;
       }
       break;
     }
@@ -1597,58 +1623,76 @@ public:
 
     return Builder.CreateExtractValue(Agg, {off});
   }
-  
-  static inline SmallVector<int,0> CreateVectorSplatMask(unsigned vector_length, unsigned width) {
-    SmallVector<int,0> Mask;
+
+  static inline SmallVector<int, 0>
+  CreateVectorSplatMask(unsigned vector_length, unsigned width) {
+    SmallVector<int, 0> Mask;
     for (int i = 0; i < vector_length * width; ++i)
       Mask.push_back(i % vector_length);
-    
+
     return Mask;
   }
-  
-  static inline SmallVector<int,0> CreateVectorConcatenationMask(unsigned length1, unsigned length2) {
-    SmallVector<int,0> Mask;
+
+  static inline SmallVector<int, 0>
+  CreateVectorConcatenationMask(unsigned length1, unsigned length2) {
+    SmallVector<int, 0> Mask;
     for (int i = 0; i < length1 + length2; ++i)
       Mask.push_back(i);
-    
+
     return Mask;
   }
-  
-  static inline SmallVector<int,0> CreateExtractSubvectorMask(unsigned vector_length, unsigned width, unsigned index) {
-    SmallVector<int,0> Mask;
+
+  static inline SmallVector<int, 0>
+  CreateExtractSubvectorMask(unsigned vector_length, unsigned width,
+                             unsigned index) {
+    SmallVector<int, 0> Mask;
     assert(vector_length / width > 1);
-    for (int i = 0; i < vector_length / width ; ++i)
+    for (int i = 0; i < vector_length / width; ++i)
       Mask.push_back(index * (vector_length / width) + i);
-    
+
     return Mask;
   }
 
   /// Unwraps a vector derivative from its internal representation and applies a
   /// function f to each element. Return values of f are collected and wrapped.
-  template <ResultType resTy = ResultType::WRAPPED, typename Func, typename... Args>
+  template <ResultType resTy = ResultType::WRAPPED, typename Func,
+            typename... Args>
   Value *applyChainRule(Type *diffType, IRBuilder<> &Builder, Func rule,
                         Args... args) {
-    if (width > 1 && memoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode) {
+    if (width > 1 &&
+        memoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode) {
       Type *wrappedType = ArrayType::get(diffType, width);
       Value *res = UndefValue::get(wrappedType);
       for (unsigned int i = 0; i < width; ++i) {
-        auto diff = std::apply(rule, std::move(eval_tuple(Builder, memoryLayout, width, i, args...)));
+        auto diff = std::apply(rule, std::move(eval_tuple(Builder, memoryLayout,
+                                                          width, i, args...)));
         res = Builder.CreateInsertValue(res, diff, {i});
       }
       return res;
-    } else if (width > 1 && resTy == ResultType::UNWRAPPED && memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes) {
+    } else if (width > 1 && resTy == ResultType::UNWRAPPED &&
+               memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes) {
       if (diffType->isVectorTy()) {
         Value *res = nullptr;
         for (unsigned int i = 0; i < width; ++i) {
-          Value* diff = std::apply(rule, std::move(eval_tuple(Builder, memoryLayout, width, i, args...)));
+          Value *diff = std::apply(
+              rule,
+              std::move(eval_tuple(Builder, memoryLayout, width, i, args...)));
           if (res) {
             VectorType *rvty = cast<VectorType>(res->getType());
             VectorType *dvty = cast<VectorType>(diff->getType());
-            if (dvty->getElementCount().getKnownMinValue() < rvty->getElementCount().getKnownMinValue()) {
-              diff = Builder.CreateShuffleVector(diff, CreateVectorConcatenationMask(rvty->getElementCount().getKnownMinValue(), 0), diff->getName() + ".vecpad");
+            if (dvty->getElementCount().getKnownMinValue() <
+                rvty->getElementCount().getKnownMinValue()) {
+              diff = Builder.CreateShuffleVector(
+                  diff,
+                  CreateVectorConcatenationMask(
+                      rvty->getElementCount().getKnownMinValue(), 0),
+                  diff->getName() + ".vecpad");
             }
-            SmallVector<int,0> Mask = CreateVectorConcatenationMask(rvty->getElementCount().getKnownMinValue(), dvty->getElementCount().getKnownMinValue());
-            res = Builder.CreateShuffleVector(res, diff, Mask, diff->getName() + ".vecconcat");
+            SmallVector<int, 0> Mask = CreateVectorConcatenationMask(
+                rvty->getElementCount().getKnownMinValue(),
+                dvty->getElementCount().getKnownMinValue());
+            res = Builder.CreateShuffleVector(res, diff, Mask,
+                                              diff->getName() + ".vecconcat");
           } else {
             res = diff;
           }
@@ -1658,26 +1702,34 @@ public:
         Type *wrappedType = FixedVectorType::get(diffType, width);
         Value *res = UndefValue::get(wrappedType);
         for (unsigned int i = 0; i < width; ++i) {
-          auto diff = std::apply(rule, std::move(eval_tuple(Builder, memoryLayout, width, i, args...)));
+          auto diff = std::apply(
+              rule,
+              std::move(eval_tuple(Builder, memoryLayout, width, i, args...)));
           res = Builder.CreateInsertElement(res, diff, Builder.getInt32(i));
         }
         return res;
       }
     }
-    return std::apply(rule, std::move(eval_tuple(Builder, memoryLayout, width, nullptr, args...)));
+    return std::apply(rule, std::move(eval_tuple(Builder, memoryLayout, width,
+                                                 nullptr, args...)));
   }
 
   /// Unwraps a vector derivative from its internal representation and applies a
   /// function f to each element. Return values of f are collected and wrapped.
-  template <ResultType resTy = ResultType::WRAPPED, typename Func, typename... Args>
+  template <ResultType resTy = ResultType::WRAPPED, typename Func,
+            typename... Args>
   void applyChainRule(IRBuilder<> &Builder, Func rule, Args... args) {
-    
-    if (width > 1 && (resTy == ResultType::UNWRAPPED || memoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode)) {
+
+    if (width > 1 &&
+        (resTy == ResultType::UNWRAPPED ||
+         memoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode)) {
       for (unsigned int i = 0; i < width; ++i) {
-        std::apply(rule, std::move(eval_tuple(Builder, memoryLayout, width, i, args...)));
+        std::apply(rule, std::move(eval_tuple(Builder, memoryLayout, width, i,
+                                              args...)));
       }
     } else {
-      std::apply(rule, std::move(eval_tuple(Builder, memoryLayout, width, nullptr, args...)));
+      std::apply(rule, std::move(eval_tuple(Builder, memoryLayout, width,
+                                            nullptr, args...)));
     }
   }
 };
@@ -1691,11 +1743,12 @@ class DiffeGradientUtils final : public GradientUtils {
                      DIFFE_TYPE ActiveReturn,
                      ArrayRef<DIFFE_TYPE> constant_values,
                      ValueToValueMapTy &origToNew_, DerivativeMode mode,
-                     VectorModeMemoryLayout memoryLayout,
-                     unsigned width, bool omp)
+                     VectorModeMemoryLayout memoryLayout, unsigned width,
+                     bool omp)
       : GradientUtils(Logic, newFunc_, oldFunc_, TLI, TA, TR, invertedPointers_,
                       constantvalues_, returnvals_, ActiveReturn,
-                      constant_values, origToNew_, mode, memoryLayout, width, omp) {
+                      constant_values, origToNew_, mode, memoryLayout, width,
+                      omp) {
     assert(reverseBlocks.size() == 0);
     if (mode == DerivativeMode::ForwardMode ||
         mode == DerivativeMode::ForwardModeSplit) {

@@ -754,7 +754,8 @@ Function *getOrInsertDifferentialFloatMemmove(Module &M, Type *T,
 }
 
 Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
-                                 unsigned width, VectorModeMemoryLayout memoryLayout) {
+                                 unsigned width,
+                                 VectorModeMemoryLayout memoryLayout) {
   FunctionType *FreeTy = call->getFunctionType();
 #if LLVM_VERSION_MAJOR >= 11
   Value *Free = call->getCalledOperand();
@@ -769,9 +770,11 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
 
   SmallVector<Type *, 3> types;
   types.push_back(Ty);
-  
-  unsigned actual_width = (memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes) ? 1 : width;
-  
+
+  unsigned actual_width =
+      (memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes) ? 1
+                                                                     : width;
+
   for (unsigned i = 0; i < actual_width; i++) {
     types.push_back(Ty);
   }
