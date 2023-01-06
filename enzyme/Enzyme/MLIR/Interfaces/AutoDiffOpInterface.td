@@ -25,7 +25,7 @@ def AutoDiffOpInterface : OpInterface<"AutoDiffOpInterface"> {
   let methods = [
     InterfaceMethod<
     /*desc=*/[{
-      Emits a forward-mode adjoint of the given function. All IR manipulation
+      Emits a forward-mode tangent of the given function. All IR manipulation
       must go through the supplied arguments: `builder` is preset to insert new
       IR in the correct location and should be used to construct any new IR;
       `gutils` provides the mapping between main and derivative computation for

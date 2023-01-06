@@ -91,9 +91,9 @@ public:
 void mlir::enzyme::registerLLVMDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, LLVM::LLVMDialect *) {
-    //LLVM::LoadOp::attachInterface<LoadOpInterface>(*context);
-    //LLVM::StoreOp::attachInterface<StoreOpInterface>(*context);
-    //LLVM::AllocaOp::attachInterface<AllocaOpInterface>(*context);
-    //LLVM::LLVMPointerType::attachInterface<PointerTypeInterface>(*context);
+    LLVM::LoadOp::attachInterface<LoadOpInterface>(*context);
+    LLVM::StoreOp::attachInterface<StoreOpInterface>(*context);
+    LLVM::AllocaOp::attachInterface<AllocaOpInterface>(*context);
+    LLVM::LLVMPointerType::attachInterface<PointerTypeInterface>(*context);
   });
 }

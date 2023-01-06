@@ -262,9 +262,9 @@ LogicalResult MGradientUtilsReverse::visitChildReverse(Operation *op, OpBuilder 
 
 void MGradientUtilsReverse::initInitializationBlock(BlockAndValueMapping invertedPointers_){
   int numArgs = this->newFunc.getNumArguments();
-  initializationBlock = &*(this->newFunc.getBody().begin());
+  initializationBlock = &*(this->newFunc.getFunctionBody().begin());
 
-  OpBuilder initializationBuilder(&*(this->newFunc.getBody().begin()), this->newFunc.getBody().begin()->begin());
+  OpBuilder initializationBuilder(&*(this->newFunc.getFunctionBody().begin()), this->newFunc.getFunctionBody().begin()->begin());
   
   for (auto const& x : invertedPointers_.getValueMap()){
     this->mapInvertPointer(x.first, x.second, initializationBuilder);
@@ -274,7 +274,7 @@ void MGradientUtilsReverse::initInitializationBlock(BlockAndValueMapping inverte
 std::pair<BlockAndValueMapping, DenseMap<Block *, SmallVector<std::pair<Value, Value>>>> createReverseModeBlocks(FunctionOpInterface & oldFunc, FunctionOpInterface & newFunc){
   BlockAndValueMapping mapReverseModeBlocks;
   DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapReverseBlockArguments;
-  for (auto it = oldFunc.getBody().getBlocks().rbegin(); it != oldFunc.getBody().getBlocks().rend(); ++it) {
+  for (auto it = oldFunc.getFunctionBody().getBlocks().rbegin(); it != oldFunc.getFunctionBody().getBlocks().rend(); ++it) {
     Block * block = &*it;
     Block * reverseBlock = new Block();
 
@@ -301,7 +301,7 @@ std::pair<BlockAndValueMapping, DenseMap<Block *, SmallVector<std::pair<Value, V
     }
 
     mapReverseModeBlocks.map(block, reverseBlock);
-    newFunc.getBody().getBlocks().insert(newFunc.getBody().end(), reverseBlock);
+    newFunc.getFunctionBody().getBlocks().insert(newFunc.getFunctionBody().end(), reverseBlock);
   }
   return std::pair<BlockAndValueMapping, DenseMap<Block *, SmallVector<std::pair<Value, Value>>>> (mapReverseModeBlocks, mapReverseBlockArguments);
 }

@@ -143,15 +143,9 @@ void cloneInto(Region *src, Region *dest, Region::iterator destPos, BlockAndValu
     // Clone the block arguments. The user might be deleting arguments to the
     // block by specifying them in the mapper. If so, we don't add the
     // argument to the cloned block.
-    if (&block == &*(src->getBlocks().begin())){
-      for (auto arg : block.getArguments())
-        if (!mapper.contains(arg))
-          mapper.map(arg, newBlock->addArgument(arg.getType(), arg.getLoc()));
-    }
-    else{
-      for (auto arg : block.getArguments())
+    for (auto arg : block.getArguments())
+      if (!mapper.contains(arg))
         mapper.map(arg, newBlock->addArgument(arg.getType(), arg.getLoc()));
-    }
 
     dest->getBlocks().insert(destPos, newBlock);
   }
@@ -204,7 +198,7 @@ FunctionOpInterface CloneFunctionWithReturns(
     DIFFE_TYPE returnType, Twine name, BlockAndValueMapping &VMap,
     std::map<Operation *, Operation *> &OpMap, bool diffeReturnArg,
     mlir::Type additionalArg) {
-  assert(!F.getBody().empty());
+  assert(!F.getFunctionBody().empty());
   // F = preprocessForClone(F, mode);
   // llvm::ValueToValueMapTy VMap;
   auto FTy = getFunctionTypeForClone(
@@ -212,7 +206,7 @@ FunctionOpInterface CloneFunctionWithReturns(
       additionalArg, constant_args, diffeReturnArg, returnValue, returnType);
 
   /*
-  for (Block &BB : F.getBody().getBlocks()) {
+  for (Block &BB : F.getFunctionBody().getBlocks()) {
     if (auto ri = dyn_cast<ReturnInst>(BB.getTerminator())) {
       if (auto rv = ri->getReturnValue()) {
         returnvals.insert(rv);
@@ -232,12 +226,12 @@ FunctionOpInterface CloneFunctionWithReturns(
   table.insert(NewF);
   SymbolTable::setSymbolVisibility(NewF, SymbolTable::Visibility::Private);
 
-  cloneInto(&F.getBody(), &NewF.getBody(), VMap, OpMap);
+  cloneInto(&F.getFunctionBody(), &NewF.getFunctionBody(), VMap, OpMap);
 
   {
-    auto &blk = NewF.getBody().front();
+    auto &blk = NewF.getFunctionBody().front();
     for (ssize_t i = constant_args.size() - 1; i >= 0; i--) {
-      mlir::Value oval = F.getBody().front().getArgument(i);
+      mlir::Value oval = F.getFunctionBody().front().getArgument(i);
       if (constant_args[i] == DIFFE_TYPE::CONSTANT)
         constants.insert(oval);
       else

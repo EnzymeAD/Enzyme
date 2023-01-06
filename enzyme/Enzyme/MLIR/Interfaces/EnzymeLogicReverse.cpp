@@ -25,13 +25,13 @@ using namespace mlir::enzyme;
 
 SmallVector<mlir::Block*> getDominatorToposort(MGradientUtilsReverse *gutils){
   SmallVector<mlir::Block*> dominatorToposortBlocks;
-  if (gutils->oldFunc.getBody().hasOneBlock()){
-    dominatorToposortBlocks.push_back(&*(gutils->oldFunc.getBody().begin()));
+  if (gutils->oldFunc.getFunctionBody().hasOneBlock()){
+    dominatorToposortBlocks.push_back(&*(gutils->oldFunc.getFunctionBody().begin()));
   }
   else{
     auto dInfo = mlir::detail::DominanceInfoBase<false>(nullptr);
-    llvm::DominatorTreeBase<Block, false> & dt = dInfo.getDomTree(&(gutils->oldFunc.getBody()));
-    auto root = dt.getNode(&*(gutils->oldFunc.getBody().begin()));
+    llvm::DominatorTreeBase<Block, false> & dt = dInfo.getDomTree(&(gutils->oldFunc.getFunctionBody()));
+    auto root = dt.getNode(&*(gutils->oldFunc.getFunctionBody().begin()));
 
     for(llvm::DomTreeNodeBase<mlir::Block> * node : llvm::breadth_first(root)){
       dominatorToposortBlocks.push_back(node->getBlock());
@@ -81,7 +81,7 @@ void handlePredecessors(Block * oBB, Block * reverseBB, MDiffeGradientUtilsRever
   OpBuilder revBuilder(reverseBB, reverseBB->end());
   if (oBB->hasNoPredecessors()){
     SmallVector<mlir::Value, 2> retargs;
-    for (Value attribute : gutils->oldFunc.getBody().getArguments()) {
+    for (Value attribute : gutils->oldFunc.getFunctionBody().getArguments()) {
       Value attributeGradient = gutils->invertPointerM(attribute, revBuilder);
       retargs.push_back(attributeGradient);
     }
@@ -151,7 +151,7 @@ void handlePredecessors(Block * oBB, Block * reverseBB, MDiffeGradientUtilsRever
 
 FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(FunctionOpInterface fn, DIFFE_TYPE retType, std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA, bool returnUsed, DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType, MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented, SymbolTableCollection &symbolTable) {
   
-  if (fn.getBody().empty()) {
+  if (fn.getFunctionBody().empty()) {
     llvm::errs() << fn << "\n";
     llvm_unreachable("Differentiating empty function");
   }

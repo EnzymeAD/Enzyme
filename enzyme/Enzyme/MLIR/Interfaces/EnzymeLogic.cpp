@@ -40,16 +40,12 @@ void createTerminator(MDiffeGradientUtils *gutils, mlir::Block *oBB,
     // TODO generalize to cloneWithNewBlockArgs interface
     SmallVector<Value> newVals;
 
-    llvm::errs() << oBB->getNumSuccessors() << "oBB->getNumSuccessors() \n";
-
     SmallVector<int32_t> segSizes;
-    auto successors = binst.getSuccessorOperands(0);
-    if (successors.size() > 0) {
-      size_t len = successors.getForwardedOperands().getBeginOperandIndex();
-      for (size_t i = 0; i < len; i++) {
-        newVals.push_back(gutils->getNewFromOriginal(binst->getOperand(i)));
-      }
-    }
+    for (size_t i = 0, len = binst.getSuccessorOperands(0)
+                                 .getForwardedOperands()
+                                 .getBeginOperandIndex();
+         i < len; i++)
+      newVals.push_back(gutils->getNewFromOriginal(binst->getOperand(i)));
     segSizes.push_back(newVals.size());
     for (size_t i = 0; i < newInst->getNumSuccessors(); i++) {
       size_t cur = newVals.size();
@@ -129,13 +125,6 @@ void createTerminator(MDiffeGradientUtils *gutils, mlir::Block *oBB,
   case ReturnType::Void: {
     break;
   }
-  case ReturnType::Tape: {
-    for (auto attribute : gutils->oldFunc.getBody().getArguments()) {
-      auto attributeGradient = gutils->invertPointerM(attribute, nBuilder);
-      retargs.push_back(attributeGradient);
-    }
-    break;
-  }
   default: {
     llvm::errs() << "Invalid return type: " << to_string(retVal)
                  << "for function: \n"
@@ -160,7 +149,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
     std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA, bool returnUsed,
     DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType,
     MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented) {
-  if (fn.getBody().empty()) {
+  if (fn.getFunctionBody().empty()) {
     llvm::errs() << fn << "\n";
     llvm_unreachable("Differentiating empty function");
   }
@@ -218,7 +207,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
                                   unnecessaryInstructions, gutils, TLI);
                                   */
 
-  for (Block &oBB : gutils->oldFunc.getBody().getBlocks()) {
+  for (Block &oBB : gutils->oldFunc.getFunctionBody().getBlocks()) {
     // Don't create derivatives for code that results in termination
     if (guaranteedUnreachable.find(&oBB) != guaranteedUnreachable.end()) {
       auto newBB = gutils->getNewFromOriginal(&oBB);
@@ -254,7 +243,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
 
   // gutils->eraseFictiousPHIs();
 
-  mlir::Block *entry = &gutils->newFunc.getBody().front();
+  mlir::Block *entry = &gutils->newFunc.getFunctionBody().front();
 
   // cleanupInversionAllocs(gutils, entry);
   // clearFunctionAttributes(gutils->newFunc);

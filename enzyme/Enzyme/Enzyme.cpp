@@ -313,101 +313,6 @@ handleCustomDerivative(llvm::Module &M, llvm::GlobalVariable &g,
   globalsToErase.push_back(&g);
 }
 
-static void
-handleInactiveFunction(llvm::Module &M, llvm::GlobalVariable &g,
-                       SmallVectorImpl<GlobalVariable *> &globalsToErase) {
-  if (g.hasInitializer()) {
-    Value *V = g.getInitializer();
-    while (auto CE = dyn_cast<ConstantExpr>(V)) {
-      V = CE->getOperand(0);
-    }
-    if (auto CA = dyn_cast<ConstantAggregate>(V))
-      V = CA->getOperand(0);
-    while (auto CE = dyn_cast<ConstantExpr>(V)) {
-      V = CE->getOperand(0);
-    }
-    if (auto F = dyn_cast<Function>(V)) {
-      F->addAttribute(AttributeList::FunctionIndex,
-                      Attribute::get(g.getContext(), "enzyme_inactive"));
-    } else {
-      llvm::errs() << M << "\n";
-      llvm::errs() << "Param of __enzyme_inactivefn must be a "
-                      "function"
-                   << g << "\n"
-                   << *V << "\n";
-      llvm_unreachable("__enzyme_inactivefn");
-    }
-  } else {
-    llvm::errs() << M << "\n";
-    llvm::errs() << "Use of __enzyme_inactivefn must be a "
-                    "constant function "
-                 << g << "\n";
-    llvm_unreachable("__enzyme_register_gradient");
-  }
-  globalsToErase.push_back(&g);
-}
-
-static void
-handleFunctionLike(llvm::Module &M, llvm::GlobalVariable &g,
-                   SmallVectorImpl<GlobalVariable *> &globalsToErase) {
-  if (g.hasInitializer()) {
-    if (auto CA = dyn_cast<ConstantAggregate>(g.getInitializer())) {
-      if (CA->getNumOperands() < 2) {
-        llvm::errs() << M << "\n";
-        llvm::errs() << "Use of "
-                     << "enzyme_function_like"
-                     << " must be a "
-                        "constant of size at least "
-                     << 2 << " " << g << "\n";
-        llvm_unreachable("enzyme_function_like");
-      }
-      Value *V = CA->getOperand(0);
-      Value *name = CA->getOperand(1);
-      while (auto CE = dyn_cast<ConstantExpr>(V)) {
-        V = CE->getOperand(0);
-      }
-      while (auto CE = dyn_cast<ConstantExpr>(name)) {
-        name = CE->getOperand(0);
-      }
-      StringRef nameVal;
-      if (auto GV = dyn_cast<GlobalVariable>(name))
-        if (GV->isConstant())
-          if (auto C = GV->getInitializer())
-            if (auto CA = dyn_cast<ConstantDataArray>(C))
-              if (CA->getType()->getElementType()->isIntegerTy(8) &&
-                  CA->isCString())
-                nameVal = CA->getAsCString();
-
-      if (nameVal == "") {
-        llvm::errs() << *name << "\n";
-        llvm::errs() << "Use of "
-                     << "enzyme_function_like"
-                     << "requires a non-empty function name"
-                     << "\n";
-        llvm_unreachable("enzyme_function_like");
-      }
-      if (auto F = dyn_cast<Function>(V)) {
-        F->addAttribute(AttributeList::FunctionIndex,
-                        Attribute::get(g.getContext(), "enzyme_math", nameVal));
-      } else {
-        llvm::errs() << M << "\n";
-        llvm::errs() << "Param of __enzyme_inactivefn must be a "
-                        "function"
-                     << g << "\n"
-                     << *V << "\n";
-        llvm_unreachable("__enzyme_inactivefn");
-      }
-    } else {
-      llvm::errs() << M << "\n";
-      llvm::errs() << "Use of __enzyme_inactivefn must be a "
-                      "constant function "
-                   << g << "\n";
-      llvm_unreachable("__enzyme_register_gradient");
-    }
-    globalsToErase.push_back(&g);
-  }
-}
-
 static void handleKnownFunctions(llvm::Function &F) {
   if (F.getName() == "memcmp") {
     F.addFnAttr(Attribute::ReadOnly);
@@ -705,7 +610,12 @@ static bool replaceOriginalCall(CallInst *CI, Function *fn, Value *diffret,
     } else if (CI->hasStructRetAttr()) {
       Value *sret = CI->getArgOperand(0);
       PointerType *stype = cast<PointerType>(sret->getType());
-      StructType *st = dyn_cast<StructType>(stype->getPointerElementType());
+#if LLVM_VERSION_MAJOR >= 15
+      auto sret_ty = CI->getParamStructRetType(0);
+#else
+      auto sret_ty = stype->getPointerElementType();
+#endif
+      StructType *st = dyn_cast<StructType>(sret_ty);
 
       // Assign results to struct allocated at the call site.
       if (st && st->isLayoutIdentical(diffretsty)) {
@@ -720,7 +630,7 @@ static bool replaceOriginalCall(CallInst *CI, Function *fn, Value *diffret,
         }
       } else {
         auto &DL = fn->getParent()->getDataLayout();
-        if (DL.getTypeSizeInBits(stype->getPointerElementType()) !=
+        if (DL.getTypeSizeInBits(sret_ty) !=
             DL.getTypeSizeInBits(diffret->getType())) {
           EmitFailure("IllegalReturnCast", CI->getDebugLoc(), CI,
                       "Cannot cast return type of gradient ",
@@ -778,25 +688,12 @@ static bool replaceOriginalCall(CallInst *CI, Function *fn, Value *diffret,
   return true;
 }
 
-class Enzyme final : public ModulePass {
+class EnzymeBase {
 public:
   EnzymeLogic Logic;
-  static char ID;
-  Enzyme(bool PostOpt = false)
-      : ModulePass(ID),
-        Logic(EnzymePostOpt.getNumOccurrences() ? EnzymePostOpt : PostOpt) {
+  EnzymeBase(bool PostOpt)
+      : Logic(EnzymePostOpt.getNumOccurrences() ? EnzymePostOpt : PostOpt) {
     // initializeLowerAutodiffIntrinsicPass(*PassRegistry::getPassRegistry());
-  }
-
-  void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.addRequired<TargetLibraryInfoWrapperPass>();
-
-    // AU.addRequiredID(LCSSAID);
-
-    // LoopInfo is required to ensure that all loops have preheaders
-    // AU.addRequired<LoopInfoWrapperPass>();
-
-    // AU.addRequiredID(llvm::LoopSimplifyID);//<LoopSimplifyWrapperPass>();
   }
 
   Optional<Function *> parseFunctionParameter(CallInst *CI) {
@@ -1070,8 +967,7 @@ public:
   }
 
   /// Return whether successful
-  bool HandleAutoDiff(CallInst *CI, TargetLibraryInfo &TLI, DerivativeMode mode,
-                      bool sizeOnly) {
+  bool HandleAutoDiff(CallInst *CI, DerivativeMode mode, bool sizeOnly) {
 
     // determine function to differentiate
     Function *fn;
@@ -1849,8 +1745,6 @@ public:
 
       llvm::SetVector<CallInst *> Q;
       Q.insert(diffretc);
-      TargetLibraryInfoWrapperPass TLIWP(
-          Triple(newFunc->getParent()->getTargetTriple()));
       while (Q.size()) {
         auto cur = *Q.begin();
         Function *outerFunc = cur->getParent()->getParent();
@@ -1867,7 +1761,7 @@ public:
             };
             auto GetTLI =
                 [&](llvm::Function &F) -> const llvm::TargetLibraryInfo & {
-              return TLIWP.getTLI(F);
+              return Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(F);
             };
 
             auto GetInlineCost = [&](CallBase &CB) {
@@ -1904,20 +1798,13 @@ public:
     return true;
   }
 
-  bool lowerEnzymeCalls(Function &F, bool &successful,
-                        std::set<Function *> &done) {
+  bool lowerEnzymeCalls(Function &F, std::set<Function *> &done) {
     if (done.count(&F))
       return false;
     done.insert(&F);
 
     if (F.empty())
       return false;
-
-#if LLVM_VERSION_MAJOR >= 10
-    auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
-#else
-    auto &TLI = getAnalysis<TargetLibraryInfoWrapperPass>().getTLI();
-#endif
 
     bool Changed = false;
 
@@ -2287,7 +2174,7 @@ public:
             // AD case.
             bool tmp = Logic.PostOpt;
             Logic.PostOpt = true;
-            Changed |= lowerEnzymeCalls(*dc, successful, done);
+            Changed |= lowerEnzymeCalls(*dc, done);
             Logic.PostOpt = tmp;
           }
         }
@@ -2322,15 +2209,15 @@ public:
 
     // Perform all the size replacements first to create constants
     for (auto pair : toSize) {
-      successful &= HandleAutoDiff(pair.first, TLI, pair.second,
-                                   /*sizeOnly*/ true);
+      bool successful = HandleAutoDiff(pair.first, pair.second,
+                                       /*sizeOnly*/ true);
       Changed = true;
       if (!successful)
         break;
     }
     for (auto pair : toLower) {
-      successful &= HandleAutoDiff(pair.first, TLI, pair.second,
-                                   /*sizeOnly*/ false);
+      bool successful = HandleAutoDiff(pair.first, pair.second,
+                                       /*sizeOnly*/ false);
       Changed = true;
       if (!successful)
         break;
@@ -2356,7 +2243,8 @@ public:
                        Arch == Triple::amdgcn;
 
       auto val = GradientUtils::GetOrCreateShadowConstant(
-          Logic, TLI, TA, fn, pair.second, /*width*/ 1, AtomicAdd);
+          Logic, Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(F), TA, fn,
+          pair.second, /*width*/ 1, AtomicAdd);
       CI->replaceAllUsesWith(ConstantExpr::getPointerCast(val, CI->getType()));
       CI->eraseFromParent();
       Changed = true;
@@ -2423,7 +2311,7 @@ public:
     return Changed;
   }
 
-  bool runOnModule(Module &M) override {
+  bool run(Module &M) {
     constexpr static const char gradient_handler_name[] =
         "__enzyme_register_gradient";
     constexpr static const char derivative_handler_name[] =
@@ -2448,10 +2336,6 @@ public:
         handleCustomDerivative<splitderivative_handler_name,
                                DerivativeMode::ForwardModeSplit, 3>(
             M, g, globalsToErase);
-      } else if (g.getName().contains("__enzyme_inactivefn")) {
-        handleInactiveFunction(M, g, globalsToErase);
-      } else if (g.getName().contains("__enzyme_function_like")) {
-        handleFunctionLike(M, g, globalsToErase);
       }
     }
     for (auto g : globalsToErase) {
@@ -2525,8 +2409,7 @@ public:
       if (F.empty())
         continue;
 
-      bool successful = true;
-      changed |= lowerEnzymeCalls(F, successful, done);
+      changed |= lowerEnzymeCalls(F, done);
     }
 
     SmallVector<CallInst *, 4> toErase;
@@ -2611,13 +2494,31 @@ public:
   }
 };
 
+class EnzymeOldPM : public EnzymeBase, public ModulePass {
+public:
+  static char ID;
+  EnzymeOldPM(bool PostOpt = false) : EnzymeBase(PostOpt), ModulePass(ID) {}
+
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AU.addRequired<TargetLibraryInfoWrapperPass>();
+
+    // AU.addRequiredID(LCSSAID);
+
+    // LoopInfo is required to ensure that all loops have preheaders
+    // AU.addRequired<LoopInfoWrapperPass>();
+
+    // AU.addRequiredID(llvm::LoopSimplifyID);//<LoopSimplifyWrapperPass>();
+  }
+  bool runOnModule(Module &M) override { return run(M); }
+};
+
 } // namespace
 
-char Enzyme::ID = 0;
+char EnzymeOldPM::ID = 0;
 
-static RegisterPass<Enzyme> X("enzyme", "Enzyme Pass");
+static RegisterPass<EnzymeOldPM> X("enzyme", "Enzyme Pass");
 
-ModulePass *createEnzymePass(bool PostOpt) { return new Enzyme(PostOpt); }
+ModulePass *createEnzymePass(bool PostOpt) { return new EnzymeOldPM(PostOpt); }
 
 #include <llvm-c/Core.h>
 #include <llvm-c/Types.h>
@@ -2626,4 +2527,115 @@ ModulePass *createEnzymePass(bool PostOpt) { return new Enzyme(PostOpt); }
 
 extern "C" void AddEnzymePass(LLVMPassManagerRef PM) {
   unwrap(PM)->add(createEnzymePass(/*PostOpt*/ false));
+}
+
+#include "llvm/Passes/PassPlugin.h"
+
+class EnzymeNewPM final : public EnzymeBase,
+                          public AnalysisInfoMixin<EnzymeNewPM> {
+  friend struct llvm::AnalysisInfoMixin<EnzymeNewPM>;
+
+private:
+  static llvm::AnalysisKey Key;
+
+public:
+  using Result = llvm::PreservedAnalyses;
+  EnzymeNewPM(bool PostOpt = false) : EnzymeBase(PostOpt) {}
+
+  Result run(llvm::Module &M, llvm::ModuleAnalysisManager &MAM) {
+    return EnzymeBase::run(M) ? PreservedAnalyses::none()
+                              : PreservedAnalyses::all();
+  }
+
+  static bool isRequired() { return true; }
+};
+
+AnalysisKey EnzymeNewPM::Key;
+
+#ifdef ENZYME_RUNPASS
+#include "PreserveNVVM.h"
+#include "llvm/Passes/PassBuilder.h"
+#include "llvm/Transforms/IPO/GlobalOpt.h"
+#include "llvm/Transforms/Scalar/GVN.h"
+#include "llvm/Transforms/Scalar/LoopDeletion.h"
+#include "llvm/Transforms/Scalar/SROA.h"
+#endif
+
+extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
+llvmGetPassPluginInfo() {
+  return {LLVM_PLUGIN_API_VERSION, "EnzymeNewPM", "v0.1",
+          [](llvm::PassBuilder &PB) {
+#ifdef ENZYME_RUNPASS
+#if LLVM_VERSION_MAJOR < 14
+            using OptimizationLevel = llvm::PassBuilder::OptimizationLevel;
+#endif
+#if LLVM_VERSION_MAJOR >= 12
+            auto loadPass = [](ModulePassManager &MPM, OptimizationLevel)
+#else
+            auto loadPass = [](ModulePassManager &MPM)
+#endif
+            {
+              MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
+              FunctionPassManager OptimizerPM;
+              FunctionPassManager OptimizerPM2;
+#if LLVM_VERSION_MAJOR >= 14
+              OptimizerPM.addPass(llvm::GVNPass());
+              OptimizerPM.addPass(llvm::SROAPass());
+#else
+              OptimizerPM.addPass(llvm::GVN());
+              OptimizerPM.addPass(llvm::SROA());
+#endif
+              MPM.addPass(
+                  createModuleToFunctionPassAdaptor(std::move(OptimizerPM)));
+              MPM.addPass(EnzymeNewPM(/*PostOpt=*/true));
+              MPM.addPass(PreserveNVVMNewPM(/*Begin*/ false));
+#if LLVM_VERSION_MAJOR >= 14
+              OptimizerPM2.addPass(llvm::GVNPass());
+              OptimizerPM2.addPass(llvm::SROAPass());
+#else
+              OptimizerPM2.addPass(llvm::GVN());
+              OptimizerPM2.addPass(llvm::SROA());
+#endif
+
+              LoopPassManager LPM1;
+              LPM1.addPass(LoopDeletionPass());
+              OptimizerPM2.addPass(
+                  createFunctionToLoopPassAdaptor(std::move(LPM1)));
+
+              MPM.addPass(
+                  createModuleToFunctionPassAdaptor(std::move(OptimizerPM2)));
+              MPM.addPass(GlobalOptPass());
+            };
+// TODO need for perf reasons to move Enzyme pass to the pre vectorization.
+#if LLVM_VERSION_MAJOR >= 12
+            PB.registerPipelineEarlySimplificationEPCallback(loadPass);
+#else
+            PB.registerPipelineStartEPCallback(loadPass);
+#endif
+
+#if LLVM_VERSION_MAJOR >= 12
+            auto loadNVVM = [](ModulePassManager &MPM, OptimizationLevel)
+#else
+            auto loadNVVM = [](ModulePassManager &MPM)
+#endif
+            { MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true)); };
+
+            // We should register at vectorizer start for consistency, however,
+            // that requires a functionpass, and we have a modulepass.
+            // PB.registerVectorizerStartEPCallback(loadPass);
+            PB.registerPipelineStartEPCallback(loadNVVM);
+#if LLVM_VERSION_MAJOR >= 15
+            PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadNVVM);
+#endif
+#endif
+            PB.registerPipelineParsingCallback(
+                [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
+                   llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
+                  if (Name == "enzyme") {
+                    MPM.addPass(EnzymeNewPM());
+                    return true;
+                  }
+                  return false;
+                });
+          }};
 }

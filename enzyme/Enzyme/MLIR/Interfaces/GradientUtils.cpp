@@ -219,7 +219,7 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
   // getContext(cast<BasicBlock>(getNewFromOriginal(&oBB)), loopContext);
 
   oldFunc.walk([&](Block *blk) {
-    if (blk == &oldFunc.getBody().getBlocks().front())
+    if (blk == &oldFunc.getFunctionBody().getBlocks().front())
       return;
     auto nblk = getNewFromOriginal(blk);
     for (auto val : llvm::reverse(blk->getArguments())) {

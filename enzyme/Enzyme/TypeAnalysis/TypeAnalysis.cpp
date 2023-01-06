@@ -1151,6 +1151,22 @@ void TypeAnalyzer::visitValue(Value &val) {
   if (!isa<Argument>(&val) && !isa<Instruction>(&val))
     return;
 
+#if LLVM_VERSION_MAJOR >= 10
+  if (auto *FPMO = dyn_cast<FPMathOperator>(&val)) {
+    if (FPMO->getOpcode() == Instruction::FNeg) {
+      Value *op = FPMO->getOperand(0);
+      auto ty = op->getType()->getScalarType();
+      assert(ty->isFloatingPointTy());
+      ConcreteType dt(ty);
+      updateAnalysis(op, TypeTree(ty).Only(-1, nullptr),
+                     cast<Instruction>(&val));
+      updateAnalysis(FPMO, TypeTree(ty).Only(-1, nullptr),
+                     cast<Instruction>(&val));
+      return;
+    }
+  }
+#endif
+
   if (auto inst = dyn_cast<Instruction>(&val)) {
     visit(*inst);
   }
@@ -2232,6 +2248,21 @@ void TypeAnalyzer::visitAtomicRMWInst(llvm::AtomicRMWInst &I) {
     auto tmp = LHS;
     LHS = RHS;
     RHS = tmp;
+    bool Legal = true;
+    LHS.checkedOrIn(Ret, /*PointerIntSame*/ false, Legal);
+    if (!Legal) {
+      dump();
+      llvm::errs() << I << "\n";
+      llvm::errs() << "Illegal orIn: " << LHS.str() << " right: " << Ret.str()
+                   << "\n";
+      llvm::errs() << *I.getOperand(0) << " "
+                   << getAnalysis(I.getOperand(0)).str() << "\n";
+      llvm::errs() << *I.getOperand(1) << " "
+                   << getAnalysis(I.getOperand(1)).str() << "\n";
+      assert(0 && "Performed illegal visitAtomicRMWInst::orIn");
+      llvm_unreachable("Performed illegal visitAtomicRMWInst::orIn");
+    }
+    Ret = tmp;
     break;
   }
   case AtomicRMWInst::Add:
@@ -3992,6 +4023,25 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
       updateAnalysis(call.getOperand(0),
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
       updateAnalysis(call.getOperand(1),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (auto opidx = getAllocationIndexFromCall(&call)) {
+      auto ptr = TypeTree(BaseType::Pointer);
+#if LLVM_VERSION_MAJOR >= 15
+      unsigned index = (size_t)opidx.value();
+#else
+      unsigned index = (size_t)opidx.getValue();
+#endif
+      if (auto CI = dyn_cast<ConstantInt>(call.getOperand(index))) {
+        auto &DL = call.getParent()->getParent()->getParent()->getDataLayout();
+        auto LoadSize = CI->getZExtValue();
+        // Only propagate mappings in range that aren't "Anything" into the
+        // pointer
+        ptr |= getAnalysis(&call).Lookup(LoadSize, DL);
+      }
+      updateAnalysis(&call, ptr.Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(index),
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
