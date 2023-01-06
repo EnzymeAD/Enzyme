@@ -1682,17 +1682,18 @@ public:
             VectorType *dvty = cast<VectorType>(diff->getType());
 #if LLVM_VERSION_MAJOR >= 12
             unsigned rvty_count = rvty->getElementCount().getKnownMinValue();
-              unsigned dvty_count = dvty->getElementCount().getKnownMinValue();
+            unsigned dvty_count = dvty->getElementCount().getKnownMinValue();
 #else
             unsigned rvty_count = rvty->getNumElements();
             unsigned dvty_count = dvty->getNumElements();
 #endif
             if (dvty_count < rvty_count) {
               diff = Builder.CreateShuffleVector(
-                  diff,
-                  CreateVectorConcatenationMask(rvty_count, 0), diff->getName() + ".vecpad");
+                  diff, CreateVectorConcatenationMask(rvty_count, 0),
+                  diff->getName() + ".vecpad");
             }
-            SmallVector<int, 4> Mask = CreateVectorConcatenationMask(rvty_count, dvty_count);
+            SmallVector<int, 4> Mask =
+                CreateVectorConcatenationMask(rvty_count, dvty_count);
             res = Builder.CreateShuffleVector(res, diff, Mask,
                                               diff->getName() + ".vecconcat");
           } else {
