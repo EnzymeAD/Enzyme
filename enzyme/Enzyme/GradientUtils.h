@@ -1476,7 +1476,7 @@ public:
       auto peeledVectorStructType = dyn_cast<StructType>(peeledVectorType);
 
       if (peeledStructType && peeledVectorType) {
-        if (!visited.contains(peeledStructType) &&
+        if (!visited.count(peeledStructType) &&
             !isVectorizedStructFor(peeledStructType, peeledVectorStructType,
                                    visited, width, M))
           return false;
@@ -1633,7 +1633,7 @@ public:
     return Mask;
   }
 
-  static inline SmallVector<int, 0>
+  static inline SmallVector<int, 4>
   CreateVectorConcatenationMask(unsigned length1, unsigned length2) {
     SmallVector<int, 0> Mask;
     for (int i = 0; i < length1 + length2; ++i)
@@ -1680,17 +1680,19 @@ public:
           if (res) {
             VectorType *rvty = cast<VectorType>(res->getType());
             VectorType *dvty = cast<VectorType>(diff->getType());
-            if (dvty->getElementCount().getKnownMinValue() <
-                rvty->getElementCount().getKnownMinValue()) {
+#if LLVM_VERSION_MAJOR >= 12
+            unsigned rvty_count = rvty->getElementCount().getKnownMinValue();
+              unsigned dvty_count = dvty->getElementCount().getKnownMinValue();
+#else
+            unsigned rvty_count = rvty->getNumElements();
+            unsigned dvty_count = dvty->getNumElements();
+#endif
+            if (dvty_count < rvty_count) {
               diff = Builder.CreateShuffleVector(
                   diff,
-                  CreateVectorConcatenationMask(
-                      rvty->getElementCount().getKnownMinValue(), 0),
-                  diff->getName() + ".vecpad");
+                  CreateVectorConcatenationMask(rvty_count, 0), diff->getName() + ".vecpad");
             }
-            SmallVector<int, 0> Mask = CreateVectorConcatenationMask(
-                rvty->getElementCount().getKnownMinValue(),
-                dvty->getElementCount().getKnownMinValue());
+            SmallVector<int, 4> Mask = CreateVectorConcatenationMask(rvty_count, dvty_count);
             res = Builder.CreateShuffleVector(res, diff, Mask,
                                               diff->getName() + ".vecconcat");
           } else {
@@ -1699,7 +1701,11 @@ public:
         }
         return res;
       } else {
+#if LLVM_VERSION_MAJOR >= 12
         Type *wrappedType = FixedVectorType::get(diffType, width);
+#else
+        Type *wrappedType = VectorType::get(diffType, width);
+#endif
         Value *res = UndefValue::get(wrappedType);
         for (unsigned int i = 0; i < width; ++i) {
           auto diff = std::apply(
