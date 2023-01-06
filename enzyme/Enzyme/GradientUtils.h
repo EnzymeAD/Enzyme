@@ -1619,37 +1619,46 @@ public:
     }
 
     if (Agg->getType()->isVectorTy())
-      return Builder.CreateExtractElement(Agg, {off});
+      return Builder.CreateExtractElement(Agg, off);
 
     return Builder.CreateExtractValue(Agg, {off});
   }
 
-  static inline SmallVector<int, 0>
-  CreateVectorSplatMask(unsigned vector_length, unsigned width) {
-    SmallVector<int, 0> Mask;
+  static inline auto CreateVectorSplatMask(unsigned vector_length,
+                                           unsigned width) {
+#if LLVM_VERSION_MAJOR >= 12
+    SmallVector<int, 4> Mask;
+#else
+    SmallVector<unsigned, 4> Mask;
+#endif
     for (int i = 0; i < vector_length * width; ++i)
       Mask.push_back(i % vector_length);
-
     return Mask;
   }
 
-  static inline SmallVector<int, 4>
-  CreateVectorConcatenationMask(unsigned length1, unsigned length2) {
-    SmallVector<int, 0> Mask;
+  static inline auto CreateVectorConcatenationMask(unsigned length1,
+                                                   unsigned length2) {
+#if LLVM_VERSION_MAJOR >= 12
+    SmallVector<int, 4> Mask;
+#else
+    SmallVector<unsigned, 4> Mask;
+#endif
     for (int i = 0; i < length1 + length2; ++i)
       Mask.push_back(i);
-
     return Mask;
   }
 
-  static inline SmallVector<int, 0>
-  CreateExtractSubvectorMask(unsigned vector_length, unsigned width,
-                             unsigned index) {
-    SmallVector<int, 0> Mask;
+  static inline auto CreateExtractSubvectorMask(unsigned vector_length,
+                                                unsigned width,
+                                                unsigned index) {
+#if LLVM_VERSION_MAJOR >= 12
+    SmallVector<int, 4> Mask;
+#else
+    SmallVector<unsigned, 4> Mask;
+#endif
     assert(vector_length / width > 1);
     for (int i = 0; i < vector_length / width; ++i)
       Mask.push_back(index * (vector_length / width) + i);
-
     return Mask;
   }
 
@@ -1688,13 +1697,13 @@ public:
             unsigned dvty_count = dvty->getNumElements();
 #endif
             if (dvty_count < rvty_count) {
-              diff = Builder.CreateShuffleVector(
-                  diff, CreateVectorConcatenationMask(rvty_count, 0),
-                  diff->getName() + ".vecpad");
+              auto PadMask = CreateVectorConcatenationMask(rvty_count, 0);
+              diff = Builder.CreateShuffleVector(diff, PadMask,
+                                                 diff->getName() + ".vecpad");
             }
-            SmallVector<int, 4> Mask =
+            auto ConcatMask =
                 CreateVectorConcatenationMask(rvty_count, dvty_count);
-            res = Builder.CreateShuffleVector(res, diff, Mask,
+            res = Builder.CreateShuffleVector(res, diff, ConcatMask,
                                               diff->getName() + ".vecconcat");
           } else {
             res = diff;

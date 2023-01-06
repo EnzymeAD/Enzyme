@@ -61,7 +61,11 @@ public:
       return value;
     case VectorModeMemoryLayout::VectorizeAtLeafNodes:
       if (auto vty = dyn_cast<VectorType>(value->getType())) {
+#if LLVM_VERSION_MAJOR >= 12
         unsigned vector_width = vty->getElementCount().getKnownMinValue();
+#else
+        unsigned vector_width = vty->getNumElements();
+#endif
         return Builder.CreateShuffleVector(
             value, GradientUtils::CreateVectorSplatMask(vector_width, width),
             value->getName() + ".vecsplat");
@@ -288,7 +292,11 @@ public:
       return GradientUtils::extractMeta(Builder, value, i);
     case VectorModeMemoryLayout::VectorizeAtLeafNodes:
       if (auto vty = dyn_cast<VectorType>(value->getType())) {
+#if LLVM_VERSION_MAJOR >= 12
         unsigned vector_width = vty->getElementCount().getKnownMinValue();
+#else
+        unsigned vector_width = vty->getNumElements();
+#endif
         if (vector_width / width > 1) {
           return Builder.CreateShuffleVector(
               value,
@@ -299,7 +307,11 @@ public:
         }
       } else if (auto pty = dyn_cast<PointerType>(value->getType())) {
         if (auto vty = dyn_cast<VectorType>(pty->getElementType())) {
+#if LLVM_VERSION_MAJOR >= 12
           unsigned vector_width = vty->getElementCount().getKnownMinValue();
+#else
+          unsigned vector_width = vty->getNumElements();
+#endif
           if (vector_width / width > 1) {
             Type *res_type = FixedVectorType::get(vty->getElementType(),
                                                   vector_width / width);
