@@ -42,9 +42,9 @@ attributes #2 = { nounwind }
 ; CHECK-NEXT:   br label %for.body.i
 
 ; CHECK: for.body.i:                                       ; preds = %for.body.i, %entry
-; CHECK-NEXT:   %0 = phi fast double [ 0.000000e+00, %entry ], [ %10, %for.body.i ]
-; CHECK-NEXT:   %1 = phi fast double [ 0.000000e+00, %entry ], [ %11, %for.body.i ]
-; CHECK-NEXT:   %2 = phi fast double [ 0.000000e+00, %entry ], [ %12, %for.body.i ]
+; CHECK-NEXT:   %0 = phi {{(fast )?}}double [ 0.000000e+00, %entry ], [ %10, %for.body.i ]
+; CHECK-NEXT:   %1 = phi {{(fast )?}}double [ 0.000000e+00, %entry ], [ %11, %for.body.i ]
+; CHECK-NEXT:   %2 = phi {{(fast )?}}double [ 0.000000e+00, %entry ], [ %12, %for.body.i ]
 ; CHECK-NEXT:   %iv.i = phi i64 [ %iv.next.i, %for.body.i ], [ 0, %entry ]
 ; CHECK-NEXT:   %3 = insertelement <3 x double> undef, double %0, i32 0
 ; CHECK-NEXT:   %4 = insertelement <3 x double> %3, double %1, i32 1
@@ -52,10 +52,10 @@ attributes #2 = { nounwind }
 ; CHECK-NEXT:   %iv.next.i = add nuw nsw i64 %iv.i, 1
 ; CHECK-NEXT:   %"arrayidx'ipg.i" = getelementptr inbounds <3 x double>, <3 x double>* %xp, i64 %iv.i
 ; CHECK-NEXT:   %arrayidx.i = getelementptr inbounds double, double* %x, i64 %iv.i
-; CHECK-NEXT:   %"'ipl.i" = load <3 x double>, <3 x double>* %"arrayidx'ipg.i", align 8
-; CHECK-NEXT:   %6 = load double, double* %arrayidx.i, align 8
-; CHECK-NEXT:   %.splatinsert.i = insertelement <3 x double> poison, double %6, i32 0
-; CHECK-NEXT:   %.splat.i = shufflevector <3 x double> %.splatinsert.i, <3 x double> poison, <3 x i32> zeroinitializer
+; CHECK-NEXT:   %"'ipl.i" = load <3 x double>, <3 x double>* %"arrayidx'ipg.i"
+; CHECK-NEXT:   %6 = load double, double* %arrayidx.i
+; CHECK-NEXT:   %.splatinsert.i = insertelement <3 x double> {{(poison|undef)}}, double %6, i32 0
+; CHECK-NEXT:   %.splat.i = shufflevector <3 x double> %.splatinsert.i, <3 x double> {{(poison|undef)}}, <3 x i32> zeroinitializer
 ; CHECK-NEXT:   %7 = fmul fast <3 x double> %"'ipl.i", %.splat.i
 ; CHECK-NEXT:   %8 = fadd fast <3 x double> %7, %7
 ; CHECK-NEXT:   %9 = fadd fast <3 x double> %8, %5

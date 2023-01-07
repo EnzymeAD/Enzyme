@@ -23,6 +23,6 @@ attributes #0 = { "enzyme_inactive" }
 
 ; CHECK: define internal <3 x double> @fwddiffe3tester(double %x, <3 x double> %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   tail call void @myprint(double %x) #1
+; CHECK-NEXT:   tail call void @myprint(double %x)
 ; CHECK-NEXT:   ret <3 x double> %"x'"
 ; CHECK-NEXT: }

@@ -76,15 +76,15 @@ attributes #4 = { nounwind "correctly-rounded-divide-sqrt-fp-math"="false" "disa
 
 ; CHECK: define internal <3 x double> @fwddiffe3mulglobal(double %x, <3 x double> %"x'", i64 %idx)
 ; CHECK-NEXT:  entry:
-; CHECK-NEXT:   %"alloc'ipa" = alloca <3 x double>, align 8
-; CHECK-NEXT:   store <3 x double> zeroinitializer, <3 x double>* %"alloc'ipa", align 8
-; CHECK-NEXT:   %alloc = alloca double, align 8
-; CHECK-NEXT:   store double %x, double* %alloc, align 8
-; CHECK-NEXT:   store <3 x double> %"x'", <3 x double>* %"alloc'ipa", align 8
+; CHECK-NEXT:   %"alloc'ipa" = alloca <3 x double>
+; CHECK-NEXT:   store <3 x double> zeroinitializer, <3 x double>* %"alloc'ipa"
+; CHECK-NEXT:   %alloc = alloca double
+; CHECK-NEXT:   store double %x, double* %alloc
+; CHECK-NEXT:   store <3 x double> %"x'", <3 x double>* %"alloc'ipa"
 ; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds [1 x <3 x void (double*)*>], [1 x <3 x void (double*)*>]* @global_shadow, i64 0, i64 %idx
 ; CHECK-NEXT:   %arrayidx = getelementptr inbounds [1 x void (double*)*], [1 x void (double*)*]* @global, i64 0, i64 %idx
-; CHECK-NEXT:   %"fp'ipl" = load <3 x void (double*)*>, <3 x void (double*)*>* %"arrayidx'ipg", align 8
-; CHECK-NEXT:   %fp = load void (double*)*, void (double*)** %arrayidx, align 8
+; CHECK-NEXT:   %"fp'ipl" = load <3 x void (double*)*>, <3 x void (double*)*>* %"arrayidx'ipg"
+; CHECK-NEXT:   %fp = load void (double*)*, void (double*)** %arrayidx
 ; CHECK-NEXT:   %0 = extractelement <3 x void (double*)*> %"fp'ipl", i32 0
 ; CHECK-NEXT:   %1 = bitcast void (double*)* %fp to i8*
 ; CHECK-NEXT:   %2 = bitcast void (double*)* %0 to i8*
@@ -98,26 +98,26 @@ attributes #4 = { nounwind "correctly-rounded-divide-sqrt-fp-math"="false" "disa
 
 ; CHECK: __enzyme_runtimeinactiveerr.exit:                 ; preds = %entry
 ; CHECK-NEXT:   %5 = bitcast void (double*)* %0 to void (double*, <3 x double>*)**
-; CHECK-NEXT:   %6 = load void (double*, <3 x double>*)*, void (double*, <3 x double>*)** %5, align 8
+; CHECK-NEXT:   %6 = load void (double*, <3 x double>*)*, void (double*, <3 x double>*)** %5
 ; CHECK-NEXT:   call void %6(double* %alloc, <3 x double>* %"alloc'ipa")
-; CHECK-NEXT:   %"ret'ipl" = load <3 x double>, <3 x double>* %"alloc'ipa", align 8, !tbaa !3
+; CHECK-NEXT:   %"ret'ipl" = load <3 x double>, <3 x double>* %"alloc'ipa"
 ; CHECK-NEXT:   ret <3 x double> %"ret'ipl"
 ; CHECK-NEXT: }
 
 
 ; CHECK: define internal void @fwddiffe3ipmul(double* %x, <3 x double>* %"x'")
 ; CHECK-NEXT:  entry:
-; CHECK-NEXT:   %"'ipl" = load <3 x double>, <3 x double>* %"x'", align 8, !tbaa !3
-; CHECK-NEXT:   %0 = load double, double* %x, align 8, !tbaa !3
+; CHECK-NEXT:   %"'ipl" = load <3 x double>, <3 x double>* %"x'"
+; CHECK-NEXT:   %0 = load double, double* %x
 ; CHECK-NEXT:   %mul = fmul fast double %0, %0
-; CHECK-NEXT:   %.splatinsert = insertelement <3 x double> poison, double %0, i32 0
-; CHECK-NEXT:   %.splat = shufflevector <3 x double> %.splatinsert, <3 x double> poison, <3 x i32> zeroinitializer
-; CHECK-NEXT:   %.splatinsert1 = insertelement <3 x double> poison, double %0, i32 0
-; CHECK-NEXT:   %.splat2 = shufflevector <3 x double> %.splatinsert1, <3 x double> poison, <3 x i32> zeroinitializer
+; CHECK-NEXT:   %.splatinsert = insertelement <3 x double> {{(poison|undef)}}, double %0, i32 0
+; CHECK-NEXT:   %.splat = shufflevector <3 x double> %.splatinsert, <3 x double> {{(poison|undef)}}, <3 x i32> zeroinitializer
+; CHECK-NEXT:   %.splatinsert1 = insertelement <3 x double> {{(poison|undef)}}, double %0, i32 0
+; CHECK-NEXT:   %.splat2 = shufflevector <3 x double> %.splatinsert1, <3 x double> {{(poison|undef)}}, <3 x i32> zeroinitializer
 ; CHECK-NEXT:   %1 = fmul fast <3 x double> %"'ipl", %.splat2
 ; CHECK-NEXT:   %2 = fmul fast <3 x double> %"'ipl", %.splat
 ; CHECK-NEXT:   %3 = fadd fast <3 x double> %1, %2
-; CHECK-NEXT:   store double %mul, double* %x, align 8
-; CHECK-NEXT:   store <3 x double> %3, <3 x double>* %"x'", align 8
+; CHECK-NEXT:   store double %mul, double* %x
+; CHECK-NEXT:   store <3 x double> %3, <3 x double>* %"x'"
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

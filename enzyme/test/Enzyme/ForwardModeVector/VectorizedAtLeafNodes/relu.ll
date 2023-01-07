@@ -47,8 +47,8 @@ attributes #1 = { nounwind readnone noinline }
 ; CHECK-NEXT:   br label %fwddiffe2relu.exit
 
 ; CHECK: fwddiffe2relu.exit:                               ; preds = %entry, %cond.true.i
-; CHECK-NEXT:   %3 = phi fast double [ %1, %cond.true.i ], [ 0.000000e+00, %entry ]
-; CHECK-NEXT:   %4 = phi fast double [ %2, %cond.true.i ], [ 0.000000e+00, %entry ]
+; CHECK-NEXT:   %3 = phi {{(fast )?}}double [ %1, %cond.true.i ], [ 0.000000e+00, %entry ]
+; CHECK-NEXT:   %4 = phi {{(fast )?}}double [ %2, %cond.true.i ], [ 0.000000e+00, %entry ]
 ; CHECK-NEXT:   %5 = insertelement <2 x double> undef, double %3, i32 0
 ; CHECK-NEXT:   %6 = insertelement <2 x double> %5, double %4, i32 1
 ; CHECK-NEXT:   ret <2 x double> %6

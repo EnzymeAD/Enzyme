@@ -23,6 +23,6 @@ entry:
 ; CHECK: define internal <2 x double> @fwddiffe2max(double %x, <2 x double> %"x'", double %y, <2 x double> %"y'")
 ; CHECK-NEXT:  entry:
 ; CHECK-NEXT:   %cmp = fcmp fast ogt double %x, %y
-; CHECK-NEXT:   %"cond'ipse" = select fast i1 %cmp, <2 x double> %"x'", <2 x double> %"y'"
+; CHECK-NEXT:   %"cond'ipse" = select {{(fast )?}}i1 %cmp, <2 x double> %"x'", <2 x double> %"y'"
 ; CHECK-NEXT:   ret <2 x double> %"cond'ipse"
 ; CHECK-NEXT: }

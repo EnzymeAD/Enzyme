@@ -124,9 +124,9 @@ attributes #9 = { noreturn nounwind }
 ; CHECK-NEXT:   br label %for.cond1.preheader
 
 ; CHECK: for.cond1.preheader:                              ; preds = %for.cond.cleanup3, %entry
-; CHECK-NEXT:   %1 = phi fast double [ 0.000000e+00, %entry ], [ %21, %for.cond.cleanup3 ]
-; CHECK-NEXT:   %2 = phi fast double [ 0.000000e+00, %entry ], [ %22, %for.cond.cleanup3 ]
-; CHECK-NEXT:   %3 = phi fast double [ 0.000000e+00, %entry ], [ %23, %for.cond.cleanup3 ]
+; CHECK-NEXT:   %1 = phi {{(fast )?}}double [ 0.000000e+00, %entry ], [ %21, %for.cond.cleanup3 ]
+; CHECK-NEXT:   %2 = phi {{(fast )?}}double [ 0.000000e+00, %entry ], [ %22, %for.cond.cleanup3 ]
+; CHECK-NEXT:   %3 = phi {{(fast )?}}double [ 0.000000e+00, %entry ], [ %23, %for.cond.cleanup3 ]
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %for.cond.cleanup3 ], [ 0, %entry ]
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
 ; CHECK-NEXT:   br i1 %cmp233, label %for.body4.lr.ph, label %for.cond.cleanup3
@@ -138,9 +138,9 @@ attributes #9 = { noreturn nounwind }
 ; CHECK-NEXT:   br label %for.body4
 
 ; CHECK: for.body4:                                        ; preds = %for.body4, %for.body4.lr.ph
-; CHECK-NEXT:   %7 = phi fast double [ %1, %for.body4.lr.ph ], [ %18, %for.body4 ]
-; CHECK-NEXT:   %8 = phi fast double [ %2, %for.body4.lr.ph ], [ %19, %for.body4 ]
-; CHECK-NEXT:   %9 = phi fast double [ %3, %for.body4.lr.ph ], [ %20, %for.body4 ]
+; CHECK-NEXT:   %7 = phi {{(fast )?}}double [ %1, %for.body4.lr.ph ], [ %18, %for.body4 ]
+; CHECK-NEXT:   %8 = phi {{(fast )?}}double [ %2, %for.body4.lr.ph ], [ %19, %for.body4 ]
+; CHECK-NEXT:   %9 = phi {{(fast )?}}double [ %3, %for.body4.lr.ph ], [ %20, %for.body4 ]
 ; CHECK-NEXT:   %iv1 = phi i64 [ %iv.next2, %for.body4 ], [ 0, %for.body4.lr.ph ]
 ; CHECK-NEXT:   %10 = insertelement <3 x double> undef, double %7, i32 0
 ; CHECK-NEXT:   %11 = insertelement <3 x double> %10, double %8, i32 1
@@ -151,13 +151,13 @@ attributes #9 = { noreturn nounwind }
 ; CHECK-NEXT:   %arrayidx = getelementptr inbounds double, double* %a, i64 %13
 ; CHECK-NEXT:   %"'ipl" = load <3 x double>, <3 x double>* %"arrayidx'ipg", align 8, !tbaa !6
 ; CHECK-NEXT:   %14 = load double, double* %arrayidx, align 8, !tbaa !6
-; CHECK-NEXT:   %.splatinsert = insertelement <3 x double> poison, double %14, i32 0
-; CHECK-NEXT:   %.splat = shufflevector <3 x double> %.splatinsert, <3 x double> poison, <3 x i32> zeroinitializer
+; CHECK-NEXT:   %.splatinsert = insertelement <3 x double> {{(poison|undef)}}, double %14, i32 0
+; CHECK-NEXT:   %.splat = shufflevector <3 x double> %.splatinsert, <3 x double> {{(poison|undef)}}, <3 x i32> zeroinitializer
 ; CHECK-NEXT:   %15 = fmul fast <3 x double> %"'ipl", %.splat
 ; CHECK-NEXT:   %16 = fadd fast <3 x double> %15, %15
 ; CHECK-NEXT:   %17 = fadd fast <3 x double> %12, %16
-; CHECK-NEXT:   store double 0.000000e+00, double* %arrayidx, align 8, !tbaa !6, !alias.scope !8, !noalias !11
-; CHECK-NEXT:   store <3 x double> zeroinitializer, <3 x double>* %"arrayidx'ipg", align 8, !tbaa !6, !alias.scope !15, !noalias !16
+; CHECK-NEXT:   store double 0.000000e+00, double* %arrayidx
+; CHECK-NEXT:   store <3 x double> zeroinitializer, <3 x double>* %"arrayidx'ipg"
 ; CHECK-NEXT:   %cmp2 = icmp slt i64 %iv.next2, %6
 ; CHECK-NEXT:   %18 = extractelement <3 x double> %17, i64 0
 ; CHECK-NEXT:   %19 = extractelement <3 x double> %17, i64 1
@@ -165,9 +165,9 @@ attributes #9 = { noreturn nounwind }
 ; CHECK-NEXT:   br i1 %cmp2, label %for.body4, label %for.cond.cleanup3
 
 ; CHECK: for.cond.cleanup3:                                ; preds = %for.body4, %for.cond1.preheader
-; CHECK-NEXT:   %21 = phi fast double [ %1, %for.cond1.preheader ], [ %18, %for.body4 ]
-; CHECK-NEXT:   %22 = phi fast double [ %2, %for.cond1.preheader ], [ %19, %for.body4 ]
-; CHECK-NEXT:   %23 = phi fast double [ %3, %for.cond1.preheader ], [ %20, %for.body4 ]
+; CHECK-NEXT:   %21 = phi {{(fast )?}}double [ %1, %for.cond1.preheader ], [ %18, %for.body4 ]
+; CHECK-NEXT:   %22 = phi {{(fast )?}}double [ %2, %for.cond1.preheader ], [ %19, %for.body4 ]
+; CHECK-NEXT:   %23 = phi {{(fast )?}}double [ %3, %for.cond1.preheader ], [ %20, %for.body4 ]
 ; CHECK-NEXT:   %24 = insertelement <3 x double> undef, double %21, i32 0
 ; CHECK-NEXT:   %25 = insertelement <3 x double> %24, double %22, i32 1
 ; CHECK-NEXT:   %26 = insertelement <3 x double> %25, double %23, i32 2

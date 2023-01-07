@@ -23,11 +23,11 @@ declare <3 x double> @__enzyme_fwddiff(double (double)*, ...)
 ; CHECK: define <3 x double> @test_derivative(double %x)
 ; CHECK-NEXT: entry
 ; CHECK-NEXT:   %0 = fcmp fast oeq double %x, 0.000000e+00
-; CHECK-NEXT:   %1 = tail call fast double @llvm.sqrt.f64(double %x) #2
-; CHECK-NEXT:   %2 = insertelement <2 x double> poison, double %1, i32 0
+; CHECK-NEXT:   %1 = tail call fast double @llvm.sqrt.f64(double %x)
+; CHECK-NEXT:   %2 = insertelement <2 x double> {{(poison|undef)}}, double %1, i32 0
 ; CHECK-NEXT:   %3 = shufflevector <2 x double> %2, <2 x double> undef, <2 x i32> zeroinitializer
 ; CHECK-NEXT:   %4 = fdiv fast <2 x double> <double 5.000000e-01, double 1.000000e+00>, %3
-; CHECK-NEXT:   %5 = insertelement <2 x i1> poison, i1 %0, i32 0
+; CHECK-NEXT:   %5 = insertelement <2 x i1> {{(poison|undef)}}, i1 %0, i32 0
 ; CHECK-NEXT:   %6 = shufflevector <2 x i1> %5, <2 x i1> undef, <2 x i32> zeroinitializer
 ; CHECK-NEXT:   %7 = select <2 x i1> %6, <2 x double> zeroinitializer, <2 x double> %4
 ; CHECK-NEXT:   %8 = extractelement <2 x double> %7, i32 0
@@ -35,7 +35,7 @@ declare <3 x double> @__enzyme_fwddiff(double (double)*, ...)
 ; CHECK-NEXT:   %10 = extractelement <2 x double> %7, i32 1
 ; CHECK-NEXT:   %11 = insertelement <3 x double> %9, double %10, i32 1
 ; CHECK-NEXT:   %12 = fdiv fast double 1.500000e+00, %1
-; CHECK-NEXT:   %13 = select fast i1 %0, double 0.000000e+00, double %12
+; CHECK-NEXT:   %13 = select {{(fast )?}}i1 %0, double 0.000000e+00, double %12
 ; CHECK-NEXT:   %14 = insertelement <3 x double> %11, double %13, i32 2
 ; CHECK-NEXT:   ret <3 x double> %14
 ; CHECK-NEXT: }

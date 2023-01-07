@@ -22,19 +22,19 @@ entry:
 
 ; CHECK: define internal void @fwddiffe3f(double* %x, <3 x double>* %"x'", double* %y, <3 x double>* %"y'")
 ; CHECK-NEXT:  entry:
-; CHECK-NEXT:   %"val'ipl" = load <3 x double>, <3 x double>* %"x'", align 8
-; CHECK-NEXT:   %val = load double, double* %x, align 8
-; CHECK-NEXT:   store double %val, double* %y, align 8
-; CHECK-NEXT:   store <3 x double> %"val'ipl", <3 x double>* %"y'", align 8
+; CHECK-NEXT:   %"val'ipl" = load <3 x double>, <3 x double>* %"x'"
+; CHECK-NEXT:   %val = load double, double* %x
+; CHECK-NEXT:   store double %val, double* %y
+; CHECK-NEXT:   store <3 x double> %"val'ipl", <3 x double>* %"y'"
 ; CHECK-NEXT:   %"ptr'ipc" = bitcast <3 x double>* %"x'" to <3 x i8>*
 ; CHECK-NEXT:   %ptr = bitcast double* %x to i8*
-; CHECK-NEXT:   call void @free(i8* %ptr) #0
+; CHECK-NEXT:   call void @free(i8* %ptr)
 ; CHECK-NEXT:   %0 = bitcast <3 x i8>* %"ptr'ipc" to i8*
 ; CHECK-NEXT:   %1 = icmp ne i8* %ptr, %0
 ; CHECK-NEXT:   br i1 %1, label %free0.i, label %__enzyme_checked_free_3.exit
 
 ; CHECK: free0.i:                                          ; preds = %entry
-; CHECK-NEXT:   call void @free(i8* %0) #2
+; CHECK-NEXT:   call void @free(i8* %0)
 ; CHECK-NEXT:   br label %__enzyme_checked_free_3.exit
 
 ; CHECK: __enzyme_checked_free_3.exit:                     ; preds = %entry, %free0.i

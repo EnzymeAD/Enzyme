@@ -33,7 +33,7 @@ declare <3 x double> @__enzyme_fwddiff(...)
 ; CHECK-NEXT:   %3 = fmul fast double %2, %x
 ; CHECK-NEXT:   %4 = extractelement <3 x double> %"x'", i32 2
 ; CHECK-NEXT:   %5 = fmul fast double %4, %x
-; CHECK-NEXT:   %6 = call fast double @hypot(double %x, double %y) #1
+; CHECK-NEXT:   %6 = call fast double @hypot(double %x, double %y)
 ; CHECK-NEXT:   %7 = fdiv fast double %1, %6
 ; CHECK-NEXT:   %8 = fdiv fast double %3, %6
 ; CHECK-NEXT:   %9 = fdiv fast double %5, %6
@@ -43,7 +43,7 @@ declare <3 x double> @__enzyme_fwddiff(...)
 ; CHECK-NEXT:   %13 = fmul fast double %12, %y
 ; CHECK-NEXT:   %14 = extractelement <3 x double> %"y'", i32 2
 ; CHECK-NEXT:   %15 = fmul fast double %14, %y
-; CHECK-NEXT:   %16 = call fast double @hypot(double %x, double %y) #1
+; CHECK-NEXT:   %16 = call fast double @hypot(double %x, double %y)
 ; CHECK-NEXT:   %17 = fdiv fast double %11, %16
 ; CHECK-NEXT:   %18 = fdiv fast double %13, %16
 ; CHECK-NEXT:   %19 = fdiv fast double %15, %16
@@ -64,7 +64,7 @@ declare <3 x double> @__enzyme_fwddiff(...)
 ; CHECK-NEXT:   %3 = fmul fast double %2, %x
 ; CHECK-NEXT:   %4 = extractelement <3 x double> %"x'", i32 2
 ; CHECK-NEXT:   %5 = fmul fast double %4, %x
-; CHECK-NEXT:   %6 = call fast double @hypot(double %x, double 2.000000e+00) #1
+; CHECK-NEXT:   %6 = call fast double @hypot(double %x, double 2.000000e+00)
 ; CHECK-NEXT:   %7 = fdiv fast double %1, %6
 ; CHECK-NEXT:   %8 = insertelement <3 x double> undef, double %7, i32 0
 ; CHECK-NEXT:   %9 = fdiv fast double %3, %6

@@ -85,7 +85,7 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"mat'ipl" = load <3 x double>*, <3 x double>** %"m_data.i.i.i'", align 8, !tbaa !8
 ; CHECK-NEXT:   %mat = load double*, double** %m_data.i.i.i, align 8, !tbaa !8
-; CHECK-NEXT:   %cols = call i64 @_ZNK5Eigen9EigenBaseINS_6MatrixIdLin1ELin1ELi0ELin1ELin1EEEE4colsEv(i64* %i7) #6
+; CHECK-NEXT:   %cols = call i64 @_ZNK5Eigen9EigenBaseINS_6MatrixIdLin1ELin1ELi0ELin1ELin1EEEE4colsEv(i64* %i7)
 ; CHECK-NEXT:   br label %for.body
 
 ; CHECK: for.body:                                         ; preds = %for.body, %entry
@@ -96,10 +96,10 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   %"ld'ipl" = load <3 x double>, <3 x double>* %"call'ipg", align 8
 ; CHECK-NEXT:   %ld = load double, double* %call, align 8
 ; CHECK-NEXT:   %fmul = fmul double %ld, %ld
-; CHECK-NEXT:   %.splatinsert = insertelement <3 x double> poison, double %ld, i32 0
-; CHECK-NEXT:   %.splat = shufflevector <3 x double> %.splatinsert, <3 x double> poison, <3 x i32> zeroinitializer
-; CHECK-NEXT:   %.splatinsert1 = insertelement <3 x double> poison, double %ld, i32 0
-; CHECK-NEXT:   %.splat2 = shufflevector <3 x double> %.splatinsert1, <3 x double> poison, <3 x i32> zeroinitializer
+; CHECK-NEXT:   %.splatinsert = insertelement <3 x double> {{(poison|undef)}}, double %ld, i32 0
+; CHECK-NEXT:   %.splat = shufflevector <3 x double> %.splatinsert, <3 x double> {{(poison|undef)}}, <3 x i32> zeroinitializer
+; CHECK-NEXT:   %.splatinsert1 = insertelement <3 x double> {{(poison|undef)}}, double %ld, i32 0
+; CHECK-NEXT:   %.splat2 = shufflevector <3 x double> %.splatinsert1, <3 x double> {{(poison|undef)}}, <3 x i32> zeroinitializer
 ; CHECK-NEXT:   %0 = fmul fast <3 x double> %"ld'ipl", %.splat2
 ; CHECK-NEXT:   %1 = fmul fast <3 x double> %"ld'ipl", %.splat
 ; CHECK-NEXT:   %2 = fadd fast <3 x double> %0, %1

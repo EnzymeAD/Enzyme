@@ -79,9 +79,9 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   ret <3 x double> %10
 
 ; CHECK: for.body:                                         ; preds = %for.body, %entry
-; CHECK-NEXT:   %0 = phi fast double [ 0.000000e+00, %entry ], [ %11, %for.body ]
-; CHECK-NEXT:   %1 = phi fast double [ 0.000000e+00, %entry ], [ %12, %for.body ]
-; CHECK-NEXT:   %2 = phi fast double [ 0.000000e+00, %entry ], [ %13, %for.body ]
+; CHECK-NEXT:   %0 = phi {{(fast )?}}double [ 0.000000e+00, %entry ], [ %11, %for.body ]
+; CHECK-NEXT:   %1 = phi {{(fast )?}}double [ 0.000000e+00, %entry ], [ %12, %for.body ]
+; CHECK-NEXT:   %2 = phi {{(fast )?}}double [ 0.000000e+00, %entry ], [ %13, %for.body ]
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %for.body ], [ 0, %entry ]
 ; CHECK-NEXT:   %3 = insertelement <3 x double> undef, double %0, i32 0
 ; CHECK-NEXT:   %4 = insertelement <3 x double> %3, double %1, i32 1
@@ -93,8 +93,8 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   %arrayidx = getelementptr inbounds double, double* %x, i64 %idxprom
 ; CHECK-NEXT:   %"'ipl" = load <3 x double>, <3 x double>* %"arrayidx'ipg", align 8, !tbaa !2
 ; CHECK-NEXT:   %7 = load double, double* %arrayidx, align 8, !tbaa !2
-; CHECK-NEXT:   %.splatinsert = insertelement <3 x double> poison, double %7, i32 0
-; CHECK-NEXT:   %.splat = shufflevector <3 x double> %.splatinsert, <3 x double> poison, <3 x i32> zeroinitializer
+; CHECK-NEXT:   %.splatinsert = insertelement <3 x double> {{(poison|undef)}}, double %7, i32 0
+; CHECK-NEXT:   %.splat = shufflevector <3 x double> %.splatinsert, <3 x double> {{(poison|undef)}}, <3 x i32> zeroinitializer
 ; CHECK-NEXT:   %8 = fmul fast <3 x double> %"'ipl", %.splat
 ; CHECK-NEXT:   %9 = fadd fast <3 x double> %8, %8
 ; CHECK-NEXT:   %10 = fadd fast <3 x double> %5, %9

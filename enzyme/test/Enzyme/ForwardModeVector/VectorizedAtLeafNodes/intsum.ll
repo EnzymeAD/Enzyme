@@ -50,8 +50,8 @@ entry:
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
 ; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds <3 x float>, <3 x float>* %"array'", i64 %iv
 ; CHECK-NEXT:   %arrayidx = getelementptr inbounds float, float* %array, i64 %iv
-; CHECK-NEXT:   %"loaded'ipl" = load <3 x float>, <3 x float>* %"arrayidx'ipg", align 4
-; CHECK-NEXT:   %loaded = load float, float* %arrayidx, align 4
+; CHECK-NEXT:   %"loaded'ipl" = load <3 x float>, <3 x float>* %"arrayidx'ipg"
+; CHECK-NEXT:   %loaded = load float, float* %arrayidx
 ; CHECK-NEXT:   %"fltload'ipc" = bitcast <3 x i32> %5 to <3 x float>
 ; CHECK-NEXT:   %fltload = bitcast i32 %intsum to float
 ; CHECK-NEXT:   %add = fadd float %fltload, %loaded

@@ -50,9 +50,9 @@ attributes #0 = { noinline nounwind uwtable }
 
 ; CHECK: for.body:                                         ; preds = %if.end, %entry
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %if.end ], [ 0, %entry ]
-; CHECK-NEXT:   %0 = phi fast double [ %12, %if.end ], [ 0.000000e+00, %entry ]
-; CHECK-NEXT:   %1 = phi fast double [ %13, %if.end ], [ 0.000000e+00, %entry ]
-; CHECK-NEXT:   %2 = phi fast double [ %14, %if.end ], [ 0.000000e+00, %entry ]
+; CHECK-NEXT:   %0 = phi {{(fast )?}}double [ %12, %if.end ], [ 0.000000e+00, %entry ]
+; CHECK-NEXT:   %1 = phi {{(fast )?}}double [ %13, %if.end ], [ 0.000000e+00, %entry ]
+; CHECK-NEXT:   %2 = phi {{(fast )?}}double [ %14, %if.end ], [ 0.000000e+00, %entry ]
 ; CHECK-NEXT:   %data.016 = phi double [ %add5, %if.end ], [ 0.000000e+00, %entry ]
 ; CHECK-NEXT:   %3 = insertelement <3 x double> undef, double %0, i32 0
 ; CHECK-NEXT:   %4 = insertelement <3 x double> %3, double %1, i32 1
@@ -84,9 +84,9 @@ attributes #0 = { noinline nounwind uwtable }
 ; CHECK-NEXT:   br i1 %cmp, label %for.body, label %cleanup
 
 ; CHECK: cleanup:                                          ; preds = %if.end, %if.then
-; CHECK-NEXT:   %15 = phi fast double [ %7, %if.then ], [ %12, %if.end ]
-; CHECK-NEXT:   %16 = phi fast double [ %8, %if.then ], [ %13, %if.end ]
-; CHECK-NEXT:   %17 = phi fast double [ %9, %if.then ], [ %14, %if.end ]
+; CHECK-NEXT:   %15 = phi {{(fast )?}}double [ %7, %if.then ], [ %12, %if.end ]
+; CHECK-NEXT:   %16 = phi {{(fast )?}}double [ %8, %if.then ], [ %13, %if.end ]
+; CHECK-NEXT:   %17 = phi {{(fast )?}}double [ %9, %if.then ], [ %14, %if.end ]
 ; CHECK-NEXT:   %18 = insertelement <3 x double> undef, double %15, i32 0
 ; CHECK-NEXT:   %19 = insertelement <3 x double> %18, double %16, i32 1
 ; CHECK-NEXT:   %20 = insertelement <3 x double> %19, double %17, i32 2

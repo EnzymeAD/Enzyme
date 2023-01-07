@@ -23,6 +23,6 @@ entry:
 ; CHECK: define internal <2 x double> @fwddiffe2fun2(double %x, <2 x double> %"x'")
 ; CHECK-NEXT:  entry:
 ; CHECK-NEXT:   %cmp.inv = fcmp oge double %x, 0.000000e+00
-; CHECK-NEXT:   %".x'ipse" = select fast i1 %cmp.inv, <2 x double> %"x'", <2 x double> zeroinitializer
+; CHECK-NEXT:   %".x'ipse" = select {{(fast )?}}i1 %cmp.inv, <2 x double> %"x'", <2 x double> zeroinitializer
 ; CHECK-NEXT:   ret <2 x double> %".x'ipse"
 ; CHECK-NEXT: }

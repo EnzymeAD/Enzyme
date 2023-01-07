@@ -51,9 +51,9 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK-NEXT:   br label %loop
 
 ; CHECK: loop:                                             ; preds = %end, %entry
-; CHECK-NEXT:   %0 = phi fast double [ %7, %end ], [ 0.000000e+00, %entry ]
-; CHECK-NEXT:   %1 = phi fast double [ %8, %end ], [ 0.000000e+00, %entry ]
-; CHECK-NEXT:   %2 = phi fast double [ %9, %end ], [ 0.000000e+00, %entry ]
+; CHECK-NEXT:   %0 = phi {{(fast )?}}double [ %7, %end ], [ 0.000000e+00, %entry ]
+; CHECK-NEXT:   %1 = phi {{(fast )?}}double [ %8, %end ], [ 0.000000e+00, %entry ]
+; CHECK-NEXT:   %2 = phi {{(fast )?}}double [ %9, %end ], [ 0.000000e+00, %entry ]
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %end ], [ 0, %entry ]
 ; CHECK-NEXT:   %3 = insertelement <3 x double> undef, double %0, i32 0
 ; CHECK-NEXT:   %4 = insertelement <3 x double> %3, double %1, i32 1

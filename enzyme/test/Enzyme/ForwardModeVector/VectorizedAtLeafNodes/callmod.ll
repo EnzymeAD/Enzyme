@@ -90,8 +90,8 @@ attributes #4 = { nounwind }
 ; CHECK: define internal <3 x double> @fwddiffe3sub(double %x, <3 x double> %"x'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %call = tail call fast double @readDouble()
-; CHECK-NEXT:   %.splatinsert = insertelement <3 x double> poison, double %call, i32 0
-; CHECK-NEXT:   %.splat = shufflevector <3 x double> %.splatinsert, <3 x double> poison, <3 x i32> zeroinitializer
+; CHECK-NEXT:   %.splatinsert = insertelement <3 x double> {{(poison|undef)}}, double %call, i32 0
+; CHECK-NEXT:   %.splat = shufflevector <3 x double> %.splatinsert, <3 x double> {{(poison|undef)}}, <3 x i32> zeroinitializer
 ; CHECK-NEXT:   %0 = fmul fast <3 x double> %"x'", %.splat
 ; CHECK-NEXT:   ret <3 x double> %0
 ; CHECK-NEXT: }

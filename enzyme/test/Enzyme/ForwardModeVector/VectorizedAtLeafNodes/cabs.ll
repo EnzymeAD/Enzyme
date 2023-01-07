@@ -22,12 +22,12 @@ declare <3 x double> @__enzyme_fwddiff(double (double, double)*, ...)
 ; CHECK: define internal <3 x double> @fwddiffe3tester(double %x, <3 x double> %"x'", double %y, <3 x double> %"y'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = call fast double @cabs(double %x, double %y)
-; CHECK-NEXT:   %.splatinsert = insertelement <3 x double> poison, double %x, i32 0
-; CHECK-NEXT:   %.splat = shufflevector <3 x double> %.splatinsert, <3 x double> poison, <3 x i32> zeroinitializer
-; CHECK-NEXT:   %.splatinsert1 = insertelement <3 x double> poison, double %y, i32 0
-; CHECK-NEXT:   %.splat2 = shufflevector <3 x double> %.splatinsert1, <3 x double> poison, <3 x i32> zeroinitializer
-; CHECK-NEXT:   %.splatinsert3 = insertelement <3 x double> poison, double %0, i32 0
-; CHECK-NEXT:   %.splat4 = shufflevector <3 x double> %.splatinsert3, <3 x double> poison, <3 x i32> zeroinitializer
+; CHECK-NEXT:   %.splatinsert = insertelement <3 x double> {{(poison|undef)}}, double %x, i32 0
+; CHECK-NEXT:   %.splat = shufflevector <3 x double> %.splatinsert, <3 x double> {{(poison|undef)}}, <3 x i32> zeroinitializer
+; CHECK-NEXT:   %.splatinsert1 = insertelement <3 x double> {{(poison|undef)}}, double %y, i32 0
+; CHECK-NEXT:   %.splat2 = shufflevector <3 x double> %.splatinsert1, <3 x double> {{(poison|undef)}}, <3 x i32> zeroinitializer
+; CHECK-NEXT:   %.splatinsert3 = insertelement <3 x double> {{(poison|undef)}}, double %0, i32 0
+; CHECK-NEXT:   %.splat4 = shufflevector <3 x double> %.splatinsert3, <3 x double> {{(poison|undef)}}, <3 x i32> zeroinitializer
 ; CHECK-NEXT:   %1 = fdiv fast <3 x double> %"x'", %.splat4
 ; CHECK-NEXT:   %2 = fmul fast <3 x double> %.splat, %1
 ; CHECK-NEXT:   %3 = fdiv fast <3 x double> %"y'", %.splat4

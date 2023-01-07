@@ -46,16 +46,16 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   br i1 %cmp, label %cond.true, label %cond.end
 
 ; CHECK: cond.true:                                        ; preds = %entry
-; CHECK-NEXT:   %0 = tail call fast double @llvm.sin.f64(double %x) #4
+; CHECK-NEXT:   %0 = tail call fast double @llvm.sin.f64(double %x)
 ; CHECK-NEXT:   %1 = call fast double @llvm.cos.f64(double %x)
-; CHECK-NEXT:   %.splatinsert = insertelement <2 x double> poison, double %1, i32 0
-; CHECK-NEXT:   %.splat = shufflevector <2 x double> %.splatinsert, <2 x double> poison, <2 x i32> zeroinitializer
+; CHECK-NEXT:   %.splatinsert = insertelement <2 x double> {{(poison|undef)}}, double %1, i32 0
+; CHECK-NEXT:   %.splat = shufflevector <2 x double> %.splatinsert, <2 x double> {{(poison|undef)}}, <2 x i32> zeroinitializer
 ; CHECK-NEXT:   %2 = fmul fast <2 x double> %"x'", %.splat
 ; CHECK-NEXT:   %mul = fmul fast double %0, %x
-; CHECK-NEXT:   %.splatinsert2 = insertelement <2 x double> poison, double %0, i32 0
-; CHECK-NEXT:   %.splat3 = shufflevector <2 x double> %.splatinsert2, <2 x double> poison, <2 x i32> zeroinitializer
-; CHECK-NEXT:   %.splatinsert4 = insertelement <2 x double> poison, double %x, i32 0
-; CHECK-NEXT:   %.splat5 = shufflevector <2 x double> %.splatinsert4, <2 x double> poison, <2 x i32> zeroinitializer
+; CHECK-NEXT:   %.splatinsert2 = insertelement <2 x double> {{(poison|undef)}}, double %0, i32 0
+; CHECK-NEXT:   %.splat3 = shufflevector <2 x double> %.splatinsert2, <2 x double> {{(poison|undef)}}, <2 x i32> zeroinitializer
+; CHECK-NEXT:   %.splatinsert4 = insertelement <2 x double> {{(poison|undef)}}, double %x, i32 0
+; CHECK-NEXT:   %.splat5 = shufflevector <2 x double> %.splatinsert4, <2 x double> {{(poison|undef)}}, <2 x i32> zeroinitializer
 ; CHECK-NEXT:   %3 = fmul fast <2 x double> %2, %.splat5
 ; CHECK-NEXT:   %4 = fmul fast <2 x double> %"x'", %.splat3
 ; CHECK-NEXT:   %5 = fadd fast <2 x double> %3, %4
@@ -64,16 +64,16 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   %8 = extractelement <2 x double> %5, i64 0
 ; CHECK-NEXT:   %9 = fmul fast double 5.000000e-01, %8
 ; CHECK-NEXT:   %10 = fdiv fast double %9, %7
-; CHECK-NEXT:   %11 = select fast i1 %6, double 0.000000e+00, double %10
+; CHECK-NEXT:   %11 = select {{(fast )?}}i1 %6, double 0.000000e+00, double %10
 ; CHECK-NEXT:   %12 = extractelement <2 x double> %5, i64 1
 ; CHECK-NEXT:   %13 = fmul fast double 5.000000e-01, %12
 ; CHECK-NEXT:   %14 = fdiv fast double %13, %7
-; CHECK-NEXT:   %15 = select fast i1 %6, double 0.000000e+00, double %14
+; CHECK-NEXT:   %15 = select {{(fast )?}}i1 %6, double 0.000000e+00, double %14
 ; CHECK-NEXT:   br label %cond.end
 
 ; CHECK: cond.end:                                         ; preds = %cond.true, %entry
-; CHECK-NEXT:   %16 = phi fast double [ %11, %cond.true ], [ 0.000000e+00, %entry ]
-; CHECK-NEXT:   %17 = phi fast double [ %15, %cond.true ], [ 0.000000e+00, %entry ]
+; CHECK-NEXT:   %16 = phi {{(fast )?}}double [ %11, %cond.true ], [ 0.000000e+00, %entry ]
+; CHECK-NEXT:   %17 = phi {{(fast )?}}double [ %15, %cond.true ], [ 0.000000e+00, %entry ]
 ; CHECK-NEXT:   %18 = insertelement <2 x double> undef, double %16, i32 0
 ; CHECK-NEXT:   %19 = insertelement <2 x double> %18, double %17, i32 1
 ; CHECK-NEXT:   ret <2 x double> %19

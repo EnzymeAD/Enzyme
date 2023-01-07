@@ -25,7 +25,7 @@ entry:
 
 ; CHECK: define internal void @fwddiffe3loader(<2 x double>* %ptr, <6 x double>* %"ptr'", <2 x i1> %mask, <2 x double> %val, <6 x double> %"val'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   call void @llvm.masked.store.v2f64.p0v2f64(<2 x double> %val, <2 x double>* %ptr, i32 16, <2 x i1> %mask) #2, !alias.scope !0, !noalias !3
+; CHECK-NEXT:   call void @llvm.masked.store.v2f64.p0v2f64(<2 x double> %val, <2 x double>* %ptr, i32 16, <2 x i1> %mask)
 ; CHECK-NEXT:   %0 = bitcast <6 x double>* %"ptr'" to <2 x double>*
 ; CHECK-NEXT:   %"val'.subvector.0" = shufflevector <6 x double> %"val'", <6 x double> undef, <2 x i32> <i32 0, i32 1>
 ; CHECK-NEXT:   call void @llvm.masked.store.v2f64.p0v2f64(<2 x double> %"val'.subvector.0", <2 x double>* %0, i32 16, <2 x i1> %mask)
