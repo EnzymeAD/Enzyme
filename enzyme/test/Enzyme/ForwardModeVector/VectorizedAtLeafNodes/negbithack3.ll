@@ -23,7 +23,7 @@ declare <6 x double> @__enzyme_fwddiff(<2 x double> (<2 x double>)*, ...)
 ; CHECK: define internal <6 x double> @fwddiffe3tester(<2 x double> %x, <6 x double> %"x'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"cstx'ipc" = bitcast <6 x double> %"x'" to <6 x i64>
-; CHECK-NEXT:   %"cstx'ipc.subvector.0" = shufflevector <6 x i64> %"cstx'ipc", <6 x i64> poison, <2 x i32> <i32 0, i32 1>
+; CHECK-NEXT:   %"cstx'ipc.subvector.0" = shufflevector <6 x i64> %"cstx'ipc", <6 x i64> undef, <2 x i32> <i32 0, i32 1>
 ; CHECK-NEXT:   %0 = extractelement <2 x i64> %"cstx'ipc.subvector.0", i64 0
 ; CHECK-NEXT:   %1 = bitcast i64 %0 to double
 ; CHECK-NEXT:   %2 = fneg fast double %1
@@ -31,7 +31,7 @@ declare <6 x double> @__enzyme_fwddiff(<2 x double> (<2 x double>)*, ...)
 ; CHECK-NEXT:   %4 = insertelement <2 x i64> undef, i64 %3, i64 0
 ; CHECK-NEXT:   %5 = extractelement <2 x i64> %"cstx'ipc.subvector.0", i64 1
 ; CHECK-NEXT:   %6 = insertelement <2 x i64> %4, i64 %5, i64 1
-; CHECK-NEXT:   %"cstx'ipc.subvector.1" = shufflevector <6 x i64> %"cstx'ipc", <6 x i64> poison, <2 x i32> <i32 2, i32 3>
+; CHECK-NEXT:   %"cstx'ipc.subvector.1" = shufflevector <6 x i64> %"cstx'ipc", <6 x i64> undef, <2 x i32> <i32 2, i32 3>
 ; CHECK-NEXT:   %7 = extractelement <2 x i64> %"cstx'ipc.subvector.1", i64 0
 ; CHECK-NEXT:   %8 = bitcast i64 %7 to double
 ; CHECK-NEXT:   %9 = fneg fast double %8
@@ -40,7 +40,7 @@ declare <6 x double> @__enzyme_fwddiff(<2 x double> (<2 x double>)*, ...)
 ; CHECK-NEXT:   %12 = extractelement <2 x i64> %"cstx'ipc.subvector.1", i64 1
 ; CHECK-NEXT:   %13 = insertelement <2 x i64> %11, i64 %12, i64 1
 ; CHECK-NEXT:   %.vecconcat = shufflevector <2 x i64> %6, <2 x i64> %13, <4 x i32> <i32 0, i32 1, i32 2, i32 3>
-; CHECK-NEXT:   %"cstx'ipc.subvector.2" = shufflevector <6 x i64> %"cstx'ipc", <6 x i64> poison, <2 x i32> <i32 4, i32 5>
+; CHECK-NEXT:   %"cstx'ipc.subvector.2" = shufflevector <6 x i64> %"cstx'ipc", <6 x i64> undef, <2 x i32> <i32 4, i32 5>
 ; CHECK-NEXT:   %14 = extractelement <2 x i64> %"cstx'ipc.subvector.2", i64 0
 ; CHECK-NEXT:   %15 = bitcast i64 %14 to double
 ; CHECK-NEXT:   %16 = fneg fast double %15
@@ -48,7 +48,7 @@ declare <6 x double> @__enzyme_fwddiff(<2 x double> (<2 x double>)*, ...)
 ; CHECK-NEXT:   %18 = insertelement <2 x i64> undef, i64 %17, i64 0
 ; CHECK-NEXT:   %19 = extractelement <2 x i64> %"cstx'ipc.subvector.2", i64 1
 ; CHECK-NEXT:   %20 = insertelement <2 x i64> %18, i64 %19, i64 1
-; CHECK-NEXT:   %.vecpad = shufflevector <2 x i64> %20, <2 x i64> poison, <4 x i32> <i32 0, i32 1, i32 2, i32 3>
+; CHECK-NEXT:   %.vecpad = shufflevector <2 x i64> %20, <2 x i64> undef, <4 x i32> <i32 0, i32 1, i32 2, i32 3>
 ; CHECK-NEXT:   %.vecpad.vecconcat = shufflevector <4 x i64> %.vecconcat, <4 x i64> %.vecpad, <6 x i32> <i32 0, i32 1, i32 2, i32 3, i32 4, i32 5>
 ; CHECK-NEXT:   %"csty'ipc" = bitcast <6 x i64> %.vecpad.vecconcat to <6 x double>
 ; CHECK-NEXT:   ret <6 x double> %"csty'ipc"
