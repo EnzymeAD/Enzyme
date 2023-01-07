@@ -21,11 +21,11 @@ declare float @llvm.vector.reduce.fadd.v4f32(float, <4 x float>)
 ; CHECK: define internal <2 x float> @fwddiffe2tester(float %start_value, <2 x float> %"start_value'", <4 x float> %input, <8 x float> %"input'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = extractelement <2 x float> %"start_value'", i64 0
-; CHECK-NEXT:   %"input'.subvector.0" = shufflevector <8 x float> %"input'", <8 x float> poison, <4 x i32> <i32 0, i32 1, i32 2, i32 3>
+; CHECK-NEXT:   %"input'.subvector.0" = shufflevector <8 x float> %"input'", <8 x float> undef, <4 x i32> <i32 0, i32 1, i32 2, i32 3>
 ; CHECK-NEXT:   %1 = call fast float @llvm.vector.reduce.fadd.v4f32(float %0, <4 x float> %"input'.subvector.0")
 ; CHECK-NEXT:   %2 = insertelement <2 x float> undef, float %1, i32 0
 ; CHECK-NEXT:   %3 = extractelement <2 x float> %"start_value'", i64 1
-; CHECK-NEXT:   %"input'.subvector.1" = shufflevector <8 x float> %"input'", <8 x float> poison, <4 x i32> <i32 4, i32 5, i32 6, i32 7>
+; CHECK-NEXT:   %"input'.subvector.1" = shufflevector <8 x float> %"input'", <8 x float> undef, <4 x i32> <i32 4, i32 5, i32 6, i32 7>
 ; CHECK-NEXT:   %4 = call fast float @llvm.vector.reduce.fadd.v4f32(float %3, <4 x float> %"input'.subvector.1")
 ; CHECK-NEXT:   %5 = insertelement <2 x float> %2, float %4, i32 1
 ; CHECK-NEXT:   ret <2 x float> %5
