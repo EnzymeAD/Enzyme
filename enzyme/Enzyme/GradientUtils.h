@@ -1528,18 +1528,32 @@ public:
                                              under_construction, M),
           aty->getNumElements());
     } else if (auto pty = dyn_cast<PointerType>(ty)) {
-      if (pty->getElementType()->isFunctionTy())
-        return VectorType::get(pty, width, false);
+      if (pty->getElementType()->isFunctionTy()) {
+#if LLVM_VERSION_MAJOR >= 12
+        return FixedVectorType::get(pty, width);
+#else
+        return VectorType::get(pty, width);
+#endif
+      }
 
       return PointerType::get(
           getShadowTypeVectorizedAtLeafNodes(pty->getElementType(), width,
                                              under_construction, M),
           pty->getAddressSpace());
     } else if (auto vty = dyn_cast<VectorType>(ty)) {
+#if LLVM_VERSION_MAJOR >= 12
       return VectorType::get(vty->getElementType(),
                              vty->getElementCount() * width);
+#else
+      return VectorType::get(vty->getElementType(),
+                             vty->getNumElements() * width);
+#endif
     } else {
-      return VectorType::get(ty, width, false);
+#if LLVM_VERSION_MAJOR >= 12
+        return FixedVectorType::get(ty, width);
+#else
+        return VectorType::get(ty, width);
+#endif
     }
   }
 
