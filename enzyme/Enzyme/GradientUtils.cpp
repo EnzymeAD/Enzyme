@@ -5178,7 +5178,11 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     auto ip1 = invertPointerM(op1, bb);
 
     auto rule = [&bb, &arg](Value *ip0, Value *ip1) {
-      auto mask = arg->getShuffleMask();
+      #if LLVM_VERSION_MAJOR >= 11
+        auto mask = arg->getShuffleMaskForBitcode();
+      #else
+        auto mask = arg->getOperand(2);
+      #endif
       return bb.CreateShuffleVector(ip0, ip1, mask, arg->getName() + "'ipsv");
     };
 
