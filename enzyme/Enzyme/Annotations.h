@@ -148,68 +148,12 @@ public:
   }
 };
 
-template <> struct Primal<FixedVectorType> {
-private:
-  FixedVectorType *type;
-
-public:
-  Primal(FixedVectorType *type) : type(type) {}
-
-  FixedVectorType *getValue(IRBuilder<> &Builder,
-                            VectorModeMemoryLayout memoryLayout,
-                            unsigned width) {
-    if (width == 1)
-      return type;
-
-    switch (memoryLayout) {
-    case VectorModeMemoryLayout::VectorizeAtRootNode:
-      return type;
-    case VectorModeMemoryLayout::VectorizeAtLeafNodes:
-      return FixedVectorType::get(type->getElementType(),
-                                  width * type->getNumElements());
-    }
-  }
-
-  FixedVectorType *getValue(IRBuilder<> &Builder,
-                            VectorModeMemoryLayout memoryLayout, unsigned width,
-                            unsigned i) {
-    return type;
-  }
-};
-
 template <> struct Primal<Constant> {
 private:
   Constant *c;
 
 public:
   Primal(Constant *c) : c(c) {}
-
-  Constant *getValue(IRBuilder<> &Builder, VectorModeMemoryLayout memoryLayout,
-                     unsigned width) {
-    if (width == 1)
-      return c;
-
-    switch (memoryLayout) {
-    case VectorModeMemoryLayout::VectorizeAtRootNode:
-      return c;
-    case VectorModeMemoryLayout::VectorizeAtLeafNodes:
-      std::vector<Constant *> cs(width, c);
-      return ConstantVector::get(cs);
-    }
-  }
-
-  Constant *getValue(IRBuilder<> &Builder, VectorModeMemoryLayout memoryLayout,
-                     unsigned width, unsigned i) {
-    return c;
-  }
-};
-
-template <> struct Primal<ConstantInt> {
-private:
-  ConstantInt *c;
-
-public:
-  Primal(ConstantInt *c) : c(c) {}
 
   Constant *getValue(IRBuilder<> &Builder, VectorModeMemoryLayout memoryLayout,
                      unsigned width) {
@@ -309,12 +253,13 @@ public:
         if (auto vty = dyn_cast<VectorType>(pty->getElementType())) {
 #if LLVM_VERSION_MAJOR >= 12
           unsigned vector_width = vty->getElementCount().getKnownMinValue();
+          Type *res_type = FixedVectorType::get(vty->getElementType(),
+                                                vector_width / width);
 #else
           unsigned vector_width = vty->getNumElements();
+          Type *res_type = VectorType::get(vty->getElementType(), vector_width / width);
 #endif
           if (vector_width / width > 1) {
-            Type *res_type = FixedVectorType::get(vty->getElementType(),
-                                                  vector_width / width);
             Type *gep_type = PointerType::get(res_type, pty->getAddressSpace());
             auto gep = Builder.CreateInBoundsGEP(
                 value, {Builder.getInt32(0),
