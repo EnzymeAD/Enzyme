@@ -1698,7 +1698,7 @@ public:
 #endif
             if (dvty_count < rvty_count) {
               auto PadMask = CreateVectorConcatenationMask(rvty_count, 0);
-              diff = Builder.CreateShuffleVector(diff, PadMask,
+              diff = Builder.CreateShuffleVector(diff, UndefValue::get(diff->getType()), PadMask,
                                                  diff->getName() + ".vecpad");
             }
             auto ConcatMask =

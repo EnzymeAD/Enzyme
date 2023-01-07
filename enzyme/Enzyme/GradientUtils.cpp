@@ -5178,7 +5178,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     auto ip1 = invertPointerM(op1, bb);
 
     auto rule = [&bb, &arg](Value *ip0, Value *ip1) {
-      ArrayRef<int> mask = arg->getShuffleMask();
+      auto mask = arg->getShuffleMask();
       return bb.CreateShuffleVector(ip0, ip1, mask, arg->getName() + "'ipsv");
     };
 
