@@ -20,8 +20,8 @@ entry:
 declare <3 x double> @__enzyme_fwddiff(double (double)*, ...)
 
 
-; CHECK: define internal <3 x double> @fwddiffe3tester(double %x, <3 x double> %"x'") #0 {
+; CHECK: define internal <3 x double> @fwddiffe3tester(double %x, <3 x double> %"x'")
 ; CHECK-NEXT:  entry:
-; CHECK-NEXT:   %0 = fneg fast <3 x double> %"x'"
+; CHECK-NEXT:   %0 = {{(fsub fast <3 x double> <double -0.000000e\+00, double -0.000000e\+00, double -0.000000e\+00>,|fneg fast <3 x double>)}} %"x'"
 ; CHECK-NEXT:   ret <3 x double> %0
 ; CHECK-NEXT: }

@@ -50,16 +50,16 @@ attributes #0 = { noinline nounwind uwtable }
 ; CHECK-NEXT:   br i1 %cmp, label %for.body, label %for.end
 
 ; CHECK: for.body:                                         ; preds = %for.cond
-; CHECK-NEXT:   %"'ipl" = load <3 x double>, <3 x double>* %"x'", align 8
-; CHECK-NEXT:   %1 = load double, double* %x, align 8
-; CHECK-NEXT:   %"'ipl3" = load <3 x double>*, <3 x double>** %"y'", align 8
-; CHECK-NEXT:   %2 = load double*, double** %y, align 8
-; CHECK-NEXT:   %"'ipl4" = load <3 x double>, <3 x double>* %"'ipl3", align 8
-; CHECK-NEXT:   %3 = load double, double* %2, align 8
+; CHECK-NEXT:   %"'ipl" = load <3 x double>, <3 x double>* %"x'"
+; CHECK-NEXT:   %1 = load double, double* %x
+; CHECK-NEXT:   %"'ipl3" = load <3 x double>*, <3 x double>** %"y'"
+; CHECK-NEXT:   %2 = load double*, double** %y
+; CHECK-NEXT:   %"'ipl4" = load <3 x double>, <3 x double>* %"'ipl3"
+; CHECK-NEXT:   %3 = load double, double* %2
 ; CHECK-NEXT:   %add = fadd fast double %3, %1
 ; CHECK-NEXT:   %4 = fadd fast <3 x double> %"'ipl4", %"'ipl"
-; CHECK-NEXT:   store double %add, double* %2, align 8
-; CHECK-NEXT:   store <3 x double> %4, <3 x double>* %"'ipl3", align 8
+; CHECK-NEXT:   store double %add, double* %2
+; CHECK-NEXT:   store <3 x double> %4, <3 x double>* %"'ipl3"
 ; CHECK-NEXT:   br label %for.cond
 
 ; CHECK: for.end:                                          ; preds = %for.cond

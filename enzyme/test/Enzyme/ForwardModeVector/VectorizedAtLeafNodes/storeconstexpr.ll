@@ -21,7 +21,7 @@ entry:
 
 ; CHECK: define internal void @fwddiffe3callee(i64* %from, <3 x i64>* %"from'", i64* %to, <3 x i64>* %"to'")
 ; CHECK-NEXT:  entry:
-; CHECK-NEXT:   store i64 ptrtoint ([18 x i8]* @.str to i64), i64* %to, align 4
-; CHECK-NEXT:   store <3 x i64> <i64 ptrtoint ([18 x i8]* @.str to i64), i64 ptrtoint ([18 x i8]* @.str to i64), i64 ptrtoint ([18 x i8]* @.str to i64)>, <3 x i64>* %"to'", align 4
+; CHECK-NEXT:   store i64 ptrtoint ([18 x i8]* @.str to i64), i64* %to
+; CHECK-NEXT:   store <3 x i64> <i64 ptrtoint ([18 x i8]* @.str to i64), i64 ptrtoint ([18 x i8]* @.str to i64), i64 ptrtoint ([18 x i8]* @.str to i64)>, <3 x i64>* %"to'"
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

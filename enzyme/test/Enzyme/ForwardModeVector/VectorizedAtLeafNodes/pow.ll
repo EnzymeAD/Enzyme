@@ -25,14 +25,14 @@ declare double @llvm.pow.f64(double, double)
 ; CHECK-NEXT:   %0 = fsub fast double %y, 1.000000e+00
 ; CHECK-NEXT:   %1 = call fast double @llvm.pow.f64(double %x, double %0)
 ; CHECK-NEXT:   %2 = fmul fast double %y, %1
-; CHECK-NEXT:   %.splatinsert = insertelement <2 x double> poison, double %2, i32 0
-; CHECK-NEXT:   %.splat = shufflevector <2 x double> %.splatinsert, <2 x double> poison, <2 x i32> zeroinitializer
+; CHECK-NEXT:   %.splatinsert = insertelement <2 x double> {{(poison|undef)}}, double %2, i32 0
+; CHECK-NEXT:   %.splat = shufflevector <2 x double> %.splatinsert, <2 x double> {{(poison|undef)}}, <2 x i32> zeroinitializer
 ; CHECK-NEXT:   %3 = fmul fast <2 x double> %.splat, %"x'"
 ; CHECK-NEXT:   %4 = call fast double @llvm.pow.f64(double %x, double %y)
 ; CHECK-NEXT:   %5 = call fast double @llvm.log.f64(double %x)
 ; CHECK-NEXT:   %6 = fmul fast double %4, %5
-; CHECK-NEXT:   %.splatinsert1 = insertelement <2 x double> poison, double %6, i32 0
-; CHECK-NEXT:   %.splat2 = shufflevector <2 x double> %.splatinsert1, <2 x double> poison, <2 x i32> zeroinitializer
+; CHECK-NEXT:   %.splatinsert1 = insertelement <2 x double> {{(poison|undef)}}, double %6, i32 0
+; CHECK-NEXT:   %.splat2 = shufflevector <2 x double> %.splatinsert1, <2 x double> {{(poison|undef)}}, <2 x i32> zeroinitializer
 ; CHECK-NEXT:   %7 = fmul fast <2 x double> %.splat2, %"y'"
 ; CHECK-NEXT:   %8 = fadd fast <2 x double> %3, %7
 ; CHECK-NEXT:   ret <2 x double> %8

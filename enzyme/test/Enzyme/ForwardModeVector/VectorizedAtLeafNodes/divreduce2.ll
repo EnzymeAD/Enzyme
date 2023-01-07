@@ -56,9 +56,9 @@ define <3 x double> @main(double* %A, <3 x double>* %dA, i64 %N, double %start) 
 
 ; CHECK: loop:                                             ; preds = %body, %entry
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %body ], [ 0, %entry ]
-; CHECK-NEXT:   %3 = phi fast double [ %0, %entry ], [ %14, %body ]
-; CHECK-NEXT:   %4 = phi fast double [ %1, %entry ], [ %15, %body ]
-; CHECK-NEXT:   %5 = phi fast double [ %2, %entry ], [ %16, %body ]
+; CHECK-NEXT:   %3 = phi {{(fast )?}}double [ %0, %entry ], [ %14, %body ]
+; CHECK-NEXT:   %4 = phi {{(fast )?}}double [ %1, %entry ], [ %15, %body ]
+; CHECK-NEXT:   %5 = phi {{(fast )?}}double [ %2, %entry ], [ %16, %body ]
 ; CHECK-NEXT:   %reduce = phi double [ %start, %entry ], [ %div, %body ]
 ; CHECK-NEXT:   %6 = insertelement <3 x double> undef, double %3, i32 0
 ; CHECK-NEXT:   %7 = insertelement <3 x double> %6, double %4, i32 1
@@ -73,16 +73,16 @@ define <3 x double> @main(double* %A, <3 x double>* %dA, i64 %N, double %start) 
 ; CHECK-NEXT:   %"ld'ipl" = load <3 x double>, <3 x double>* %"gep'ipg", align 8, !tbaa !2
 ; CHECK-NEXT:   %ld = load double, double* %gep, align 8, !tbaa !2
 ; CHECK-NEXT:   %div = fdiv double %reduce, %ld
-; CHECK-NEXT:   %.splatinsert = insertelement <3 x double> poison, double %reduce, i32 0
-; CHECK-NEXT:   %.splat = shufflevector <3 x double> %.splatinsert, <3 x double> poison, <3 x i32> zeroinitializer
-; CHECK-NEXT:   %.splatinsert1 = insertelement <3 x double> poison, double %ld, i32 0
-; CHECK-NEXT:   %.splat2 = shufflevector <3 x double> %.splatinsert1, <3 x double> poison, <3 x i32> zeroinitializer
+; CHECK-NEXT:   %.splatinsert = insertelement <3 x double> {{(poison|undef)}}, double %reduce, i32 0
+; CHECK-NEXT:   %.splat = shufflevector <3 x double> %.splatinsert, <3 x double> {{(poison|undef)}}, <3 x i32> zeroinitializer
+; CHECK-NEXT:   %.splatinsert1 = insertelement <3 x double> {{(poison|undef)}}, double %ld, i32 0
+; CHECK-NEXT:   %.splat2 = shufflevector <3 x double> %.splatinsert1, <3 x double> {{(poison|undef)}}, <3 x i32> zeroinitializer
 ; CHECK-NEXT:   %9 = fmul fast <3 x double> %8, %.splat2
 ; CHECK-NEXT:   %10 = fmul fast <3 x double> %.splat, %"ld'ipl"
 ; CHECK-NEXT:   %11 = fsub fast <3 x double> %9, %10
 ; CHECK-NEXT:   %12 = fmul fast double %ld, %ld
-; CHECK-NEXT:   %.splatinsert3 = insertelement <3 x double> poison, double %12, i32 0
-; CHECK-NEXT:   %.splat4 = shufflevector <3 x double> %.splatinsert3, <3 x double> poison, <3 x i32> zeroinitializer
+; CHECK-NEXT:   %.splatinsert3 = insertelement <3 x double> {{(poison|undef)}}, double %12, i32 0
+; CHECK-NEXT:   %.splat4 = shufflevector <3 x double> %.splatinsert3, <3 x double> {{(poison|undef)}}, <3 x i32> zeroinitializer
 ; CHECK-NEXT:   %13 = fdiv fast <3 x double> %11, %.splat4
 ; CHECK-NEXT:   %14 = extractelement <3 x double> %13, i64 0
 ; CHECK-NEXT:   %15 = extractelement <3 x double> %13, i64 1

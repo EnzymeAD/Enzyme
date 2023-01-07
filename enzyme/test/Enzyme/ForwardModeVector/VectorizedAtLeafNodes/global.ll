@@ -24,10 +24,10 @@ entry:
 ; CHECK-NEXT:  entry:
 ; CHECK-NEXT:   %"'ipl" = load <3 x double>, <3 x double>* @dglobal, align 8
 ; CHECK-NEXT:   %0 = load double, double* @global, align 8
-; CHECK-NEXT:   %.splatinsert = insertelement <3 x double> poison, double %0, i32 0
-; CHECK-NEXT:   %.splat = shufflevector <3 x double> %.splatinsert, <3 x double> poison, <3 x i32> zeroinitializer
-; CHECK-NEXT:   %.splatinsert1 = insertelement <3 x double> poison, double %x, i32 0
-; CHECK-NEXT:   %.splat2 = shufflevector <3 x double> %.splatinsert1, <3 x double> poison, <3 x i32> zeroinitializer
+; CHECK-NEXT:   %.splatinsert = insertelement <3 x double> {{(poison|undef)}}, double %0, i32 0
+; CHECK-NEXT:   %.splat = shufflevector <3 x double> %.splatinsert, <3 x double> {{(poison|undef)}}, <3 x i32> zeroinitializer
+; CHECK-NEXT:   %.splatinsert1 = insertelement <3 x double> {{(poison|undef)}}, double %x, i32 0
+; CHECK-NEXT:   %.splat2 = shufflevector <3 x double> %.splatinsert1, <3 x double> {{(poison|undef)}}, <3 x i32> zeroinitializer
 ; CHECK-NEXT:   %1 = fmul fast <3 x double> %"'ipl", %.splat2
 ; CHECK-NEXT:   %2 = fmul fast <3 x double> %"x'", %.splat
 ; CHECK-NEXT:   %3 = fadd fast <3 x double> %1, %2

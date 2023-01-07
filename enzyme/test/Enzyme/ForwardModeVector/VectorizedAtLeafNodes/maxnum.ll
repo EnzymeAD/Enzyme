@@ -23,6 +23,6 @@ declare double @llvm.maxnum.f64(double, double)
 ; CHECK: define internal <2 x double> @fwddiffe2tester(double %x, <2 x double> %"x'", double %y, <2 x double> %"y'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = fcmp fast olt double %x, %y
-; CHECK-NEXT:   %1 = select fast i1 %0, <2 x double> %"x'", <2 x double> %"y'"
+; CHECK-NEXT:   %1 = select {{(fast )?}}i1 %0, <2 x double> %"x'", <2 x double> %"y'"
 ; CHECK-NEXT:   ret <2 x double> %1
 ; CHECK-NEXT: }

@@ -26,12 +26,12 @@ declare double @llvm.powi.f64.i32(double, i32)
 ; CHECK-NEXT:   %1 = call fast double @llvm.powi.f64(double %x, i32 %0)
 ; CHECK-NEXT:   %2 = sitofp i32 %y to double
 ; CHECK-NEXT:   %3 = icmp eq i32 0, %y
-; CHECK-NEXT:   %.splatinsert = insertelement <3 x double> poison, double %1, i32 0
-; CHECK-NEXT:   %.splat = shufflevector <3 x double> %.splatinsert, <3 x double> poison, <3 x i32> zeroinitializer
-; CHECK-NEXT:   %.splatinsert1 = insertelement <3 x double> poison, double %2, i32 0
-; CHECK-NEXT:   %.splat2 = shufflevector <3 x double> %.splatinsert1, <3 x double> poison, <3 x i32> zeroinitializer
+; CHECK-NEXT:   %.splatinsert = insertelement <3 x double> {{(poison|undef)}}, double %1, i32 0
+; CHECK-NEXT:   %.splat = shufflevector <3 x double> %.splatinsert, <3 x double> {{(poison|undef)}}, <3 x i32> zeroinitializer
+; CHECK-NEXT:   %.splatinsert1 = insertelement <3 x double> {{(poison|undef)}}, double %2, i32 0
+; CHECK-NEXT:   %.splat2 = shufflevector <3 x double> %.splatinsert1, <3 x double> {{(poison|undef)}}, <3 x i32> zeroinitializer
 ; CHECK-NEXT:   %4 = fmul fast <3 x double> %"x'", %.splat
 ; CHECK-NEXT:   %5 = fmul fast <3 x double> %4, %.splat2
-; CHECK-NEXT:   %6 = select fast i1 %3, <3 x double> zeroinitializer, <3 x double> %5
+; CHECK-NEXT:   %6 = select {{(fast )?}}i1 %3, <3 x double> zeroinitializer, <3 x double> %5
 ; CHECK-NEXT:   ret <3 x double> %6
 ; CHECK-NEXT: }

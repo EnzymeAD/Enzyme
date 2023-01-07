@@ -22,8 +22,8 @@ declare double @llvm.log.f64(double)
 
 ; CHECK: define <3 x double> @test_derivative(double %x)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %.splatinsert.i = insertelement <3 x double> poison, double %x, i32 0
-; CHECK-NEXT:   %.splat.i = shufflevector <3 x double> %.splatinsert.i, <3 x double> poison, <3 x i32> zeroinitializer
+; CHECK-NEXT:   %.splatinsert.i = insertelement <3 x double> {{(poison|undef)}}, double %x, i32 0
+; CHECK-NEXT:   %.splat.i = shufflevector <3 x double> %.splatinsert.i, <3 x double> {{(poison|undef)}}, <3 x i32> zeroinitializer
 ; CHECK-NEXT:   %0 = fdiv fast <3 x double> <double 1.000000e+00, double 2.000000e+00, double 3.000000e+00>, %.splat.i
 ; CHECK-NEXT:   ret <3 x double> %0
 ; CHECK-NEXT: }

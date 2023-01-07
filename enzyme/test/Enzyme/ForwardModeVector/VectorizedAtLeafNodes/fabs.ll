@@ -23,9 +23,9 @@ declare double @llvm.fabs.f64(double)
 ; CHECK: define internal <2 x double> @fwddiffe2tester(double %x, <2 x double> %"x'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = fcmp fast olt double %x, 0.000000e+00
-; CHECK-NEXT:   %1 = select fast i1 %0, double -1.000000e+00, double 1.000000e+00
-; CHECK-NEXT:   %.splatinsert = insertelement <2 x double> poison, double %1, i32 0
-; CHECK-NEXT:   %.splat = shufflevector <2 x double> %.splatinsert, <2 x double> poison, <2 x i32> zeroinitializer
+; CHECK-NEXT:   %1 = select {{(fast )?}}i1 %0, double -1.000000e+00, double 1.000000e+00
+; CHECK-NEXT:   %.splatinsert = insertelement <2 x double> {{(poison|undef)}}, double %1, i32 0
+; CHECK-NEXT:   %.splat = shufflevector <2 x double> %.splatinsert, <2 x double> {{(poison|undef)}}, <2 x i32> zeroinitializer
 ; CHECK-NEXT:   %2 = fmul fast <2 x double> %.splat, %"x'"
 ; CHECK-NEXT:   ret <2 x double> %2
 ; CHECK-NEXT: }

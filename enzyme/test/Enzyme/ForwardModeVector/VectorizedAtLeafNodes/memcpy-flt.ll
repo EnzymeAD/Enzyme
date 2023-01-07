@@ -32,10 +32,10 @@ attributes #2 = { noinline nounwind uwtable }
 ; CHECK-NEXT:  entry:
 ; CHECK-NEXT:   %0 = bitcast double* %dst to i8*
 ; CHECK-NEXT:   %1 = bitcast double* %src to i8*
-; CHECK-NEXT:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %0, i8* align 1 %1, i64 %num, i1 false) #3
+; CHECK-NEXT:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %0, i8* align 1 %1, i64 %num, i1 false)
 ; CHECK-NEXT:   %num.vecsize = mul i64 %num, 3
 ; CHECK-NEXT:   %2 = bitcast <3 x double>* %"dst'" to i8*
 ; CHECK-NEXT:   %3 = bitcast <3 x double>* %"src'" to i8*
-; CHECK-NEXT:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %2, i8* align 1 %3, i64 %num.vecsize, i1 false) #3
+; CHECK-NEXT:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %2, i8* align 1 %3, i64 %num.vecsize, i1 false)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
