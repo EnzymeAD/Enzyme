@@ -326,9 +326,17 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
               "\n";
         os << "   V->setCallingConv(cconv);\n";
       }
+      
+      os << "#if LLVM_VERSION_MAJOR >= 11\n";
       os << "   if (res == nullptr) res = "
             "UndefValue::get(FixedVectorType::get(V->getType(), "
             "gutils->getWidth()));\n";
+      os <<"#else\n";
+      os << "   if (res == nullptr) res = "
+            "UndefValue::get(VectorType::get(V->getType(), "
+            "gutils->getWidth()));\n";
+      os << "#endif\n";
+      
       os << "   res = " << builder << ".CreateInsertElement(res, V, "<< builder << ".getInt32(idx))" << ";\n";
       
       os << " } else if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode) {\n";
