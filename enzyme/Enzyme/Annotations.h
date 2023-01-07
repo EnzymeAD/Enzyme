@@ -67,7 +67,7 @@ public:
         unsigned vector_width = vty->getNumElements();
 #endif
         return Builder.CreateShuffleVector(
-            value, GradientUtils::CreateVectorSplatMask(vector_width, width),
+            value, UndefValue::get(value->getType()), GradientUtils::CreateVectorSplatMask(vector_width, width),
             value->getName() + ".vecsplat");
       } else if (auto sty = dyn_cast<StructType>(value->getType())) {
         auto vsty = GradientUtils::getShadowType(
@@ -299,7 +299,7 @@ public:
 #endif
         if (vector_width / width > 1) {
           return Builder.CreateShuffleVector(
-              value,
+              value, UndefValue::get(value->getType()),
               GradientUtils::CreateExtractSubvectorMask(vector_width, width, i),
               value->getName() + ".subvector." + Twine(i));
         } else {
