@@ -1550,9 +1550,9 @@ public:
 #endif
     } else {
 #if LLVM_VERSION_MAJOR >= 12
-        return FixedVectorType::get(ty, width);
+      return FixedVectorType::get(ty, width);
 #else
-        return VectorType::get(ty, width);
+      return VectorType::get(ty, width);
 #endif
     }
   }
@@ -1712,8 +1712,9 @@ public:
 #endif
             if (dvty_count < rvty_count) {
               auto PadMask = CreateVectorConcatenationMask(rvty_count, 0);
-              diff = Builder.CreateShuffleVector(diff, UndefValue::get(diff->getType()), PadMask,
-                                                 diff->getName() + ".vecpad");
+              diff = Builder.CreateShuffleVector(
+                  diff, UndefValue::get(diff->getType()), PadMask,
+                  diff->getName() + ".vecpad");
             }
             auto ConcatMask =
                 CreateVectorConcatenationMask(rvty_count, dvty_count);
