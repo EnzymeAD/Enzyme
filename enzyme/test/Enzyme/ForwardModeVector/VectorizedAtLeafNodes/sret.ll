@@ -64,15 +64,9 @@ entry:
   %0 = bitcast %"struct.std::array.vec"* %ref.tmp to i8*
   call void @llvm.lifetime.start.p0i8(i64 72, i8* nonnull %0) #7
   call void @_Z7dsquared(%"struct.std::array.vec"* nonnull sret align 8 %ref.tmp, double 3.000000e+00)
-  %dx1 = getelementptr inbounds %"struct.std::array.vec", %"struct.std::array.vec"* %ref.tmp, i64 0, i32 0
-  %call = call nonnull align 8 dereferenceable(8) double* @_ZNSt5arrayIdLm3EEixEm(%"struct.std::array"* nonnull %dx1, i64 0) #7
-  %1 = load double, double* %call, align 8
-  %call1 = call i32 (i8*, ...) @printf(i8* nonnull dereferenceable(1) getelementptr inbounds ([5 x i8], [5 x i8]* @.str, i64 0, i64 0), double %1)
   call void @llvm.lifetime.end.p0i8(i64 72, i8* nonnull %0) #7
   ret i32 0
 }
-
-declare dso_local i32 @printf(i8* nocapture readonly, ...) local_unnamed_addr #4
 
 declare void @llvm.lifetime.start.p0i8(i64, i8* nocapture) #5
 
@@ -99,64 +93,31 @@ attributes #4 = { nounwind "correctly-rounded-divide-sqrt-fp-math"="false" "disa
 attributes #5 = { argmemonly nounwind }
 attributes #6 = { nounwind }
 
-; CHECK: define internal void @fwddiffe3_Z6squared(%"struct.std::array"* noalias nocapture align 8 %agg.result, [3 x %"struct.std::array"*] %"agg.result'", double %x, [3 x double] %"x'")
+
+; CHECK: define internal void @fwddiffe3_Z6squared(%"struct.std::array"* noalias nocapture align 8 "enzyme_sret" %agg.result, %"struct.std::array.vec"* "enzyme_sret_v" %"agg.result'", double %x, <3 x double> %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = extractvalue [3 x %"struct.std::array"*] %"agg.result'", 0
-; CHECK-NEXT:   %"arrayinit.begin'ipg" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %0, i64 0, i32 0, i64 0
-; CHECK-NEXT:   %1 = insertvalue [3 x double*] undef, double* %"arrayinit.begin'ipg", 0
-; CHECK-NEXT:   %2 = extractvalue [3 x %"struct.std::array"*] %"agg.result'", 1
-; CHECK-NEXT:   %"arrayinit.begin'ipg1" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %2, i64 0, i32 0, i64 0
-; CHECK-NEXT:   %3 = insertvalue [3 x double*] %1, double* %"arrayinit.begin'ipg1", 1
-; CHECK-NEXT:   %4 = extractvalue [3 x %"struct.std::array"*] %"agg.result'", 2
-; CHECK-NEXT:   %"arrayinit.begin'ipg2" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %4, i64 0, i32 0, i64 0
+; CHECK-NEXT:   %"arrayinit.begin'ipg" = getelementptr inbounds %"struct.std::array.vec", %"struct.std::array.vec"* %"agg.result'", i64 0, i32 0, i64 0
 ; CHECK-NEXT:   %arrayinit.begin = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %agg.result, i64 0, i32 0, i64 0
 ; CHECK-NEXT:   %mul = fmul double %x, %x
-; CHECK-NEXT:   %[[i6:.+]] = extractvalue [3 x double] %"x'", 0
-; CHECK-NEXT:   %[[i7:.+]] = fmul fast double %[[i6]], %x
-; CHECK-NEXT:   %[[i8:.+]] = fadd fast double %[[i7]], %[[i7]]
-; CHECK-NEXT:   %[[i9:.+]] = insertvalue [3 x double] undef, double %[[i8]], 0
-; CHECK-NEXT:   %[[i10:.+]] = extractvalue [3 x double] %"x'", 1
-; CHECK-NEXT:   %[[i11:.+]] = fmul fast double %[[i10]], %x
-; CHECK-NEXT:   %[[i12:.+]] = fadd fast double %[[i11]], %[[i11]]
-; CHECK-NEXT:   %[[i13:.+]] = insertvalue [3 x double] %[[i9]], double %[[i12]], 1
-; CHECK-NEXT:   %[[i14:.+]] = extractvalue [3 x double] %"x'", 2
-; CHECK-NEXT:   %[[i15:.+]] = fmul fast double %[[i14]], %x
-; CHECK-NEXT:   %[[i16:.+]] = fadd fast double %[[i15]], %[[i15]]
-; CHECK-NEXT:   store double %mul, double* %arrayinit.begin, align 8
-; CHECK-NEXT:   store double %[[i8]], double* %"arrayinit.begin'ipg", align 8
-; CHECK-NEXT:   store double %[[i12]], double* %"arrayinit.begin'ipg1", align 8
-; CHECK-NEXT:   store double %[[i16]], double* %"arrayinit.begin'ipg2", align 8
-; CHECK-NEXT:   %"arrayinit.element'ipg" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %0, i64 0, i32 0, i64 1
-; CHECK-NEXT:   %[[i18:.+]] = insertvalue [3 x double*] undef, double* %"arrayinit.element'ipg", 0
-; CHECK-NEXT:   %"arrayinit.element'ipg3" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %2, i64 0, i32 0, i64 1
-; CHECK-NEXT:   %[[i19:.+]] = insertvalue [3 x double*] %[[i18]], double* %"arrayinit.element'ipg3", 1
-; CHECK-NEXT:   %"arrayinit.element'ipg4" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %4, i64 0, i32 0, i64 1
+; CHECK-NEXT:   %.splatinsert = insertelement <3 x double> undef, double %x, i32 0
+; CHECK-NEXT:   %.splat = shufflevector <3 x double> %.splatinsert, <3 x double> undef, <3 x i32> zeroinitializer
+; CHECK-NEXT:   %0 = fmul fast <3 x double> %"x'", %.splat
+; CHECK-NEXT:   %1 = fadd fast <3 x double> %0, %0
+; CHECK-NEXT:   store double %mul, double* %arrayinit.begin, align 8, !alias.scope !0, !noalias !3
+; CHECK-NEXT:   store <3 x double> %1, <3 x double>* %"arrayinit.begin'ipg", align 8, !alias.scope !7, !noalias !8
+; CHECK-NEXT:   %"arrayinit.element'ipg" = getelementptr inbounds %"struct.std::array.vec", %"struct.std::array.vec"* %"agg.result'", i64 0, i32 0, i64 1
 ; CHECK-NEXT:   %arrayinit.element = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %agg.result, i64 0, i32 0, i64 1
 ; CHECK-NEXT:   %mul2 = fmul double %mul, %x
-; CHECK-NEXT:   %[[i21:.+]] = fmul fast double %[[i8]], %x
-; CHECK-NEXT:   %[[i22:.+]] = fmul fast double %[[i6]], %mul
-; CHECK-NEXT:   %[[i23:.+]] = fadd fast double %[[i21]], %[[i22]]
-; CHECK-NEXT:   %[[i24:.+]] = insertvalue [3 x double] undef, double %[[i23]], 0
-; CHECK-NEXT:   %[[i25:.+]] = fmul fast double %[[i12]], %x
-; CHECK-NEXT:   %[[i26:.+]] = fmul fast double %[[i10]], %mul
-; CHECK-NEXT:   %[[i27:.+]] = fadd fast double %[[i25]], %[[i26]]
-; CHECK-NEXT:   %[[i28:.+]] = insertvalue [3 x double] %[[i24]], double %[[i27]], 1
-; CHECK-NEXT:   %[[i29:.+]] = fmul fast double %[[i16]], %x
-; CHECK-NEXT:   %[[i30:.+]] = fmul fast double %[[i14]], %mul
-; CHECK-NEXT:   %[[i31:.+]] = fadd fast double %[[i29]], %[[i30]]
-; CHECK-NEXT:   store double %mul2, double* %arrayinit.element, align 8
-; CHECK-NEXT:   store double %[[i23]], double* %"arrayinit.element'ipg", align 8
-; CHECK-NEXT:   store double %[[i27]], double* %"arrayinit.element'ipg3", align 8
-; CHECK-NEXT:   store double %[[i31]], double* %"arrayinit.element'ipg4", align 8
-; CHECK-NEXT:   %"arrayinit.element3'ipg" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %0, i64 0, i32 0, i64 2
-; CHECK-NEXT:   %[[i33:.+]] = insertvalue [3 x double*] undef, double* %"arrayinit.element3'ipg", 0
-; CHECK-NEXT:   %"arrayinit.element3'ipg5" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %2, i64 0, i32 0, i64 2
-; CHECK-NEXT:   %[[i34:.+]] = insertvalue [3 x double*] %[[i33]], double* %"arrayinit.element3'ipg5", 1
-; CHECK-NEXT:   %"arrayinit.element3'ipg6" = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %4, i64 0, i32 0, i64 2
+; CHECK-NEXT:   %.splatinsert3 = insertelement <3 x double> undef, double %mul, i32 0
+; CHECK-NEXT:   %.splat4 = shufflevector <3 x double> %.splatinsert3, <3 x double> undef, <3 x i32> zeroinitializer
+; CHECK-NEXT:   %2 = fmul fast <3 x double> %1, %.splat
+; CHECK-NEXT:   %3 = fmul fast <3 x double> %"x'", %.splat4
+; CHECK-NEXT:   %4 = fadd fast <3 x double> %2, %3
+; CHECK-NEXT:   store double %mul2, double* %arrayinit.element, align 8, !alias.scope !9, !noalias !12
+; CHECK-NEXT:   store <3 x double> %4, <3 x double>* %"arrayinit.element'ipg", align 8, !alias.scope !16, !noalias !17
+; CHECK-NEXT:   %"arrayinit.element3'ipg" = getelementptr inbounds %"struct.std::array.vec", %"struct.std::array.vec"* %"agg.result'", i64 0, i32 0, i64 2
 ; CHECK-NEXT:   %arrayinit.element3 = getelementptr inbounds %"struct.std::array", %"struct.std::array"* %agg.result, i64 0, i32 0, i64 2
-; CHECK-NEXT:   store double %x, double* %arrayinit.element3, align 8
-; CHECK-NEXT:   store double %[[i6]], double* %"arrayinit.element3'ipg", align 8
-; CHECK-NEXT:   store double %[[i10]], double* %"arrayinit.element3'ipg5", align 8
-; CHECK-NEXT:   store double %[[i14]], double* %"arrayinit.element3'ipg6", align 8
+; CHECK-NEXT:   store double %x, double* %arrayinit.element3, align 8, !alias.scope !18, !noalias !21
+; CHECK-NEXT:   store <3 x double> %"x'", <3 x double>* %"arrayinit.element3'ipg", align 8, !alias.scope !25, !noalias !26
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
