@@ -263,14 +263,13 @@ public:
 #endif
           if (vector_width / width > 1) {
             Type *gep_type = PointerType::get(res_type, pty->getAddressSpace());
-            auto gep = Builder.CreateInBoundsGEP(
-                value, {Builder.getInt32(0),
-                        Builder.getInt32(i * vector_width / width)});
+            Value* idx[2] = {Builder.getInt32(0), Builder.getInt32(i * vector_width / width)};
+            auto gep = Builder.CreateInBoundsGEP(vty, value, idx);
             return Builder.CreatePointerCast(gep, gep_type);
           }
         }
-        return Builder.CreateInBoundsGEP(
-            value, {Builder.getInt32(0), Builder.getInt32(i)});
+        Value* idx[2] = {Builder.getInt32(0), Builder.getInt32(i)};
+        return Builder.CreateInBoundsGEP(pty->getElementType(), value, idx);
       }
       return value;
     }
