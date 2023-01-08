@@ -67,7 +67,8 @@ public:
         unsigned vector_width = vty->getNumElements();
 #endif
         return Builder.CreateShuffleVector(
-            value, UndefValue::get(value->getType()), GradientUtils::CreateVectorSplatMask(vector_width, width),
+            value, UndefValue::get(value->getType()),
+            GradientUtils::CreateVectorSplatMask(vector_width, width),
             value->getName() + ".vecsplat");
       } else if (auto sty = dyn_cast<StructType>(value->getType())) {
         auto vsty = GradientUtils::getShadowType(
@@ -253,11 +254,12 @@ public:
         if (auto vty = dyn_cast<VectorType>(pty->getElementType())) {
 #if LLVM_VERSION_MAJOR >= 12
           unsigned vector_width = vty->getElementCount().getKnownMinValue();
-          Type *res_type = FixedVectorType::get(vty->getElementType(),
-                                                vector_width / width);
+          Type *res_type =
+              FixedVectorType::get(vty->getElementType(), vector_width / width);
 #else
           unsigned vector_width = vty->getNumElements();
-          Type *res_type = VectorType::get(vty->getElementType(), vector_width / width);
+          Type *res_type =
+              VectorType::get(vty->getElementType(), vector_width / width);
 #endif
           if (vector_width / width > 1) {
             Type *gep_type = PointerType::get(res_type, pty->getAddressSpace());
