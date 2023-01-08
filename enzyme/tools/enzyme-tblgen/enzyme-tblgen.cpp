@@ -290,7 +290,7 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
         if (i > 0)
           os << ", ";
         if (vectorValued[i])
-          os << builder << ".CreateExtractElement(args[" << i << "], " << builder << ".getInt32(idx))";
+          os << builder << ".CreateExtractElement(args[" << i << "], idx)";
         else
           os << "args[" << i << "]";
       }
@@ -337,7 +337,7 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
             "gutils->getWidth()));\n";
       os << "#endif\n";
       
-      os << "   res = " << builder << ".CreateInsertElement(res, V, "<< builder << ".getInt32(idx))" << ";\n";
+      os << "   res = " << builder << ".CreateInsertElement(res, V, idx)" << ";\n";
       
       os << " } else if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode) {\n";
       
@@ -489,14 +489,14 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
       os << "            for(unsigned int idx=0, W=gutils->getWidth(); idx<W; "
             "idx++) {\n";
       os << "              Value *V = "
-            "Builder2.CreateFAdd(MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes ? Builder2.CreateExtractElement(res, Builder2.getInt32(idx)) : Builder2.CreateExtractValue(res, {idx}), ";
+            "Builder2.CreateFAdd(MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes ? Builder2.CreateExtractElement(res, Builder2.getInt64(idx)) : Builder2.CreateExtractValue(res, {idx}), ";
       if (vectorValued)
-        os << "MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes ? Builder2.CreateExtractElement(tmp, Builder2.getInt32(idx)) : Builder2.CreateExtractValue(tmp, {idx})";
+        os << "MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes ? Builder2.CreateExtractElement(tmp, Builder2.getInt64(idx)) : Builder2.CreateExtractValue(tmp, {idx})";
       else
         os << "tmp";
       os << ");\n";
       os << "            if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)";
-      os << "              out = Builder2.CreateInsertElement(out, V, Builder2.getInt32(idx));\n";
+      os << "              out = Builder2.CreateInsertElement(out, V, idx);\n";
       os << "            else";
       os << "              out = Builder2.CreateInsertValue(out, V, {idx});\n";
       os << "            }\n";

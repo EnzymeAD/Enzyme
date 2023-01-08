@@ -85,7 +85,7 @@ attributes #4 = { nounwind "correctly-rounded-divide-sqrt-fp-math"="false" "disa
 ; CHECK-NEXT:   %arrayidx = getelementptr inbounds [1 x void (double*)*], [1 x void (double*)*]* @global, i64 0, i64 %idx
 ; CHECK-NEXT:   %"fp'ipl" = load <3 x void (double*)*>, <3 x void (double*)*>* %"arrayidx'ipg"
 ; CHECK-NEXT:   %fp = load void (double*)*, void (double*)** %arrayidx
-; CHECK-NEXT:   %0 = extractelement <3 x void (double*)*> %"fp'ipl", i32 0
+; CHECK-NEXT:   %0 = extractelement <3 x void (double*)*> %"fp'ipl", i64 0
 ; CHECK-NEXT:   %1 = bitcast void (double*)* %fp to i8*
 ; CHECK-NEXT:   %2 = bitcast void (double*)* %0 to i8*
 ; CHECK-NEXT:   %3 = icmp eq i8* %1, %2

@@ -23,7 +23,7 @@ declare double @llvm.powi.f64.i32(double, i32)
 ; CHECK: define internal <3 x double> @fwddiffe3tester(double %x, <3 x double> %"x'", i32 %y)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = sub i32 %y, 1
-; CHECK-NEXT:   %1 = call fast double @llvm.powi.f64(double %x, i32 %0)
+; CHECK-NEXT:   %1 = call fast double @llvm.powi.f64{{(\.i32)?}}(double %x, i32 %0)
 ; CHECK-NEXT:   %2 = sitofp i32 %y to double
 ; CHECK-NEXT:   %3 = icmp eq i32 0, %y
 ; CHECK-NEXT:   %.splatinsert = insertelement <3 x double> {{(poison|undef)}}, double %1, i32 0

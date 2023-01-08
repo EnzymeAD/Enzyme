@@ -22,10 +22,10 @@ declare double @exp10(double)
 
 ; CHECK: define <2 x double> @test_derivative(double %x)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = tail call fast double @exp10(double %x) #0
+; CHECK-NEXT:   %0 = tail call fast double @exp10(double %x)
 ; CHECK-NEXT:   %1 = fmul fast double %0, 0x40026BB1BBB55516
-; CHECK-NEXT:   %2 = insertelement <2 x double> undef, double %1, i32 0
+; CHECK-NEXT:   %2 = insertelement <2 x double> undef, double %1, i64 0
 ; CHECK-NEXT:   %3 = fmul fast double %0, 0x4017069E2AA2AA5C
-; CHECK-NEXT:   %4 = insertelement <2 x double> %2, double %3, i32 1
+; CHECK-NEXT:   %4 = insertelement <2 x double> %2, double %3, i64 1
 ; CHECK-NEXT:   ret <2 x double> %4
 ; CHECK-NEXT: }
