@@ -90,6 +90,18 @@ Value mlir::enzyme::MGradientUtilsReverse::insertInitBackwardCache(Type t){
   return builder.create<enzyme::CreateCacheOp>((initializationBlock->rbegin())->getLoc(), t);
 }
 
+Value MGradientUtilsReverse::cacheForReverse(Value v){
+  OpBuilder builder(v.getDefiningOp());
+  builder.setInsertionPointAfter(v.getDefiningOp());
+  Value cache = insertInitBackwardCache(getCacheType(v.getType()));
+  builder.create<enzyme::PushCacheOp>(v.getLoc(), cache, v);
+  return cache;
+}
+
+Value MGradientUtilsReverse::popCache(Value cache, OpBuilder& builder){
+  return builder.create<enzyme::PopCacheOp>(cache.getLoc(), cast<enzyme::CacheType>(cache.getType()).getType(), cache);
+}
+
 Value mlir::enzyme::MGradientUtilsReverse::insertInitGradient(mlir::Value v, OpBuilder &builder){
   Type gradientType = getGradientType(v);
   OpBuilder initBuilder(initializationBlock, initializationBlock->begin());
@@ -214,11 +226,30 @@ bool MGradientUtilsReverse::visitChildCustom(Operation * op, OpBuilder &builder)
   Operation * symbolDiffe = symbolTable.lookupNearestSymbolFrom(op, opNameDiffe.getIdentifier());
   Operation * symbolStore = symbolTable.lookupNearestSymbolFrom(op, opNameStore.getIdentifier());
   
-  if (symbolDiffe != nullptr && symbolStore != nullptr){
-    //symbolDiffe->dump();
-    //symbolStore->dump();
+  if (symbolDiffe != nullptr){
+    SmallVector<Value> caches;
+    if(symbolStore != nullptr){
+      Operation * newOp = getNewFromOriginal(op);
+
+      func::FuncOp funcStore = cast<func::FuncOp>(symbolStore);
+      
+      SmallVector<Type, 2> storeResultTypes;
+      for (auto x : funcStore.getFunctionType().getResults()){
+        storeResultTypes.push_back(x);
+      }
+
+      SmallVector<Value, 2> storeArgs;
+      for (auto x : newOp->getOperands()){
+        storeArgs.push_back(x);
+      }
+
+      OpBuilder storeBuilder(newOp);
+      func::CallOp storeCI = storeBuilder.create<func::CallOp>(op->getLoc(), srStore, storeResultTypes, storeArgs);
+      for (auto x : storeCI.getResults()){
+        caches.push_back(cacheForReverse(x));
+      }
+    }
     
-    func::FuncOp funcDiffe = cast<func::FuncOp>(symbolDiffe);
     SmallVector<Value, 2> args;
     
     bool hasGradient = false;
@@ -228,6 +259,9 @@ bool MGradientUtilsReverse::visitChildCustom(Operation * op, OpBuilder &builder)
         Value invertValue = invertPointerM(opResult, builder);
         args.push_back(invertValue);
       }
+    }
+    for (Value cache : caches){
+      args.push_back(popCache(cache, builder));
     }
 
     SmallVector<Type, 2> resultTypes;
