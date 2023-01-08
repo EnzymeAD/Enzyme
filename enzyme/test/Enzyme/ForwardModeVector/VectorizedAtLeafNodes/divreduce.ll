@@ -74,9 +74,9 @@ define <3 x double> @main(double* %A, <3 x double>* %dA, i64 %N, double %start) 
 ; CHECK-NEXT:   %4 = phi {{(fast )?}}double [ %1, %entry ], [ %15, %loop ]
 ; CHECK-NEXT:   %5 = phi {{(fast )?}}double [ %2, %entry ], [ %16, %loop ]
 ; CHECK-NEXT:   %reduce = phi double [ %start, %entry ], [ %div, %loop ]
-; CHECK-NEXT:   %6 = insertelement <3 x double> undef, double %3, i32 0
-; CHECK-NEXT:   %7 = insertelement <3 x double> %6, double %4, i32 1
-; CHECK-NEXT:   %8 = insertelement <3 x double> %7, double %5, i32 2
+; CHECK-NEXT:   %6 = insertelement <3 x double> undef, double %3, i64 0
+; CHECK-NEXT:   %7 = insertelement <3 x double> %6, double %4, i64 1
+; CHECK-NEXT:   %8 = insertelement <3 x double> %7, double %5, i64 2
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
 ; CHECK-NEXT:   %"gep'ipg" = getelementptr inbounds <3 x double>, <3 x double>* %"A'", i64 %iv
 ; CHECK-NEXT:   %gep = getelementptr inbounds double, double* %A, i64 %iv
@@ -114,9 +114,9 @@ define <3 x double> @main(double* %A, <3 x double>* %dA, i64 %N, double %start) 
 ; CHECK-NEXT:   %1 = phi {{(fast )?}}double [ 0.000000e+00, %entry ], [ %12, %loop ]
 ; CHECK-NEXT:   %2 = phi {{(fast )?}}double [ 0.000000e+00, %entry ], [ %13, %loop ]
 ; CHECK-NEXT:   %reduce = phi double [ 2.000000e+00, %entry ], [ %div, %loop ]
-; CHECK-NEXT:   %3 = insertelement <3 x double> undef, double %0, i32 0
-; CHECK-NEXT:   %4 = insertelement <3 x double> %3, double %1, i32 1
-; CHECK-NEXT:   %5 = insertelement <3 x double> %4, double %2, i32 2
+; CHECK-NEXT:   %3 = insertelement <3 x double> undef, double %0, i64 0
+; CHECK-NEXT:   %4 = insertelement <3 x double> %3, double %1, i64 1
+; CHECK-NEXT:   %5 = insertelement <3 x double> %4, double %2, i64 2
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
 ; CHECK-NEXT:   %"gep'ipg" = getelementptr inbounds <3 x double>, <3 x double>* %"A'", i64 %iv
 ; CHECK-NEXT:   %gep = getelementptr inbounds double, double* %A, i64 %iv

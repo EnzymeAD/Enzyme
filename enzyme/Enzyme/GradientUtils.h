@@ -1736,7 +1736,7 @@ public:
           auto diff = std::apply(
               rule,
               std::move(eval_tuple(Builder, memoryLayout, width, i, args...)));
-          res = Builder.CreateInsertElement(res, diff, Builder.getInt32(i));
+          res = Builder.CreateInsertElement(res, diff, i);
         }
         return res;
       }

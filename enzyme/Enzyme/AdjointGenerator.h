@@ -11875,7 +11875,7 @@ public:
             break;
           case VectorModeMemoryLayout::VectorizeAtLeafNodes:
             newcalled =
-                BuilderZ.CreateExtractElement(newcalled, BuilderZ.getInt32(0));
+                BuilderZ.CreateExtractElement(newcalled, BuilderZ.getInt64(0));
             break;
           }
         }

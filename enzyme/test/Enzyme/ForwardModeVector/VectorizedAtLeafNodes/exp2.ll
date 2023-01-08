@@ -23,7 +23,7 @@ declare double @llvm.exp2.f64(double)
 ; CHECK: define <2 x double> @test_derivative(double %x) 
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = tail call fast double @llvm.exp2.f64(double %x) #2
-; CHECK-NEXT:   %.splatinsert.i = insertelement <2 x double> {{(poison|undef)}}, double %0, i32 0
+; CHECK-NEXT:   %.splatinsert.i = insertelement <2 x double> {{(poison|undef)}}, double %0, {{(i32|i64)}} 0
 ; CHECK-NEXT:   %.splat.i = shufflevector <2 x double> %.splatinsert.i, <2 x double> {{(poison|undef)}}, <2 x i32> zeroinitializer
 ; CHECK-NEXT:   %1 = fmul fast <2 x double> %.splat.i, <double 0x3FE62E42FEFA39EF, double 0x3FFBB9D3BEB8C86B>
 ; CHECK-NEXT:   ret <2 x double> %1

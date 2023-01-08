@@ -74,7 +74,7 @@ attributes #3 = { nounwind }
 ; CHECK: cond.end:                                         ; preds = %cond.true, %entry
 ; CHECK-NEXT:   %16 = phi {{(fast )?}}double [ %11, %cond.true ], [ 0.000000e+00, %entry ]
 ; CHECK-NEXT:   %17 = phi {{(fast )?}}double [ %15, %cond.true ], [ 0.000000e+00, %entry ]
-; CHECK-NEXT:   %18 = insertelement <2 x double> undef, double %16, i32 0
-; CHECK-NEXT:   %19 = insertelement <2 x double> %18, double %17, i32 1
+; CHECK-NEXT:   %18 = insertelement <2 x double> undef, double %16, i64 0
+; CHECK-NEXT:   %19 = insertelement <2 x double> %18, double %17, i64 1
 ; CHECK-NEXT:   ret <2 x double> %19
 ; CHECK-NEXT: }

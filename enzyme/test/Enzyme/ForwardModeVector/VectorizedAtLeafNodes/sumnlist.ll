@@ -110,9 +110,9 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %4 = phi {{(fast )?}}double [ 0.000000e+00, %entry ], [ %18, %for.cond.cleanup4 ]
 ; CHECK-NEXT:   %5 = phi {{(fast )?}}double [ 0.000000e+00, %entry ], [ %19, %for.cond.cleanup4 ]
 ; CHECK-NEXT:   %6 = phi {{(fast )?}}double [ 0.000000e+00, %entry ], [ %20, %for.cond.cleanup4 ]
-; CHECK-NEXT:   %7 = insertelement <3 x double> undef, double %4, i32 0
-; CHECK-NEXT:   %8 = insertelement <3 x double> %7, double %5, i32 1
-; CHECK-NEXT:   %9 = insertelement <3 x double> %8, double %6, i32 2
+; CHECK-NEXT:   %7 = insertelement <3 x double> undef, double %4, i64 0
+; CHECK-NEXT:   %8 = insertelement <3 x double> %7, double %5, i64 1
+; CHECK-NEXT:   %9 = insertelement <3 x double> %8, double %6, i64 2
 ; CHECK-NEXT:   ret <3 x double> %9
 
 ; CHECK: for.cond.cleanup4:                                ; preds = %for.body5
@@ -128,9 +128,9 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %12 = phi {{(fast )?}}double [ %1, %for.cond1.preheader ], [ %19, %for.body5 ]
 ; CHECK-NEXT:   %13 = phi {{(fast )?}}double [ %2, %for.cond1.preheader ], [ %20, %for.body5 ]
 ; CHECK-NEXT:   %iv1 = phi i64 [ 0, %for.cond1.preheader ], [ %iv.next2, %for.body5 ]
-; CHECK-NEXT:   %14 = insertelement <3 x double> undef, double %11, i32 0
-; CHECK-NEXT:   %15 = insertelement <3 x double> %14, double %12, i32 1
-; CHECK-NEXT:   %16 = insertelement <3 x double> %15, double %13, i32 2
+; CHECK-NEXT:   %14 = insertelement <3 x double> undef, double %11, i64 0
+; CHECK-NEXT:   %15 = insertelement <3 x double> %14, double %12, i64 1
+; CHECK-NEXT:   %16 = insertelement <3 x double> %15, double %13, i64 2
 ; CHECK-NEXT:   %iv.next2 = add nuw nsw i64 %iv1, 1
 ; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds <3 x double>, <3 x double>* %"'ipl", i64 %iv1
 ; CHECK-NEXT:   %"'ipl4" = load <3 x double>, <3 x double>* %"arrayidx'ipg", align 8, !tbaa !8

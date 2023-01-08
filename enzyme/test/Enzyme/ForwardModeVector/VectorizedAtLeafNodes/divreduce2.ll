@@ -60,9 +60,9 @@ define <3 x double> @main(double* %A, <3 x double>* %dA, i64 %N, double %start) 
 ; CHECK-NEXT:   %4 = phi {{(fast )?}}double [ %1, %entry ], [ %15, %body ]
 ; CHECK-NEXT:   %5 = phi {{(fast )?}}double [ %2, %entry ], [ %16, %body ]
 ; CHECK-NEXT:   %reduce = phi double [ %start, %entry ], [ %div, %body ]
-; CHECK-NEXT:   %6 = insertelement <3 x double> undef, double %3, i32 0
-; CHECK-NEXT:   %7 = insertelement <3 x double> %6, double %4, i32 1
-; CHECK-NEXT:   %8 = insertelement <3 x double> %7, double %5, i32 2
+; CHECK-NEXT:   %6 = insertelement <3 x double> undef, double %3, i64 0
+; CHECK-NEXT:   %7 = insertelement <3 x double> %6, double %4, i64 1
+; CHECK-NEXT:   %8 = insertelement <3 x double> %7, double %5, i64 2
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
 ; CHECK-NEXT:   %cmp = icmp ne i64 %iv, %N
 ; CHECK-NEXT:   br i1 %cmp, label %body, label %end

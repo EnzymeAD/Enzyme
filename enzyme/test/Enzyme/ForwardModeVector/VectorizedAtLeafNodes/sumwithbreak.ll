@@ -54,9 +54,9 @@ attributes #0 = { noinline nounwind uwtable }
 ; CHECK-NEXT:   %1 = phi {{(fast )?}}double [ %13, %if.end ], [ 0.000000e+00, %entry ]
 ; CHECK-NEXT:   %2 = phi {{(fast )?}}double [ %14, %if.end ], [ 0.000000e+00, %entry ]
 ; CHECK-NEXT:   %data.016 = phi double [ %add5, %if.end ], [ 0.000000e+00, %entry ]
-; CHECK-NEXT:   %3 = insertelement <3 x double> undef, double %0, i32 0
-; CHECK-NEXT:   %4 = insertelement <3 x double> %3, double %1, i32 1
-; CHECK-NEXT:   %5 = insertelement <3 x double> %4, double %2, i32 2
+; CHECK-NEXT:   %3 = insertelement <3 x double> undef, double %0, i64 0
+; CHECK-NEXT:   %4 = insertelement <3 x double> %3, double %1, i64 1
+; CHECK-NEXT:   %5 = insertelement <3 x double> %4, double %2, i64 2
 ; CHECK-NEXT:   %cmp2 = fcmp fast ogt double %data.016, 1.000000e+01
 ; CHECK-NEXT:   br i1 %cmp2, label %if.then, label %if.end
 
@@ -87,8 +87,8 @@ attributes #0 = { noinline nounwind uwtable }
 ; CHECK-NEXT:   %15 = phi {{(fast )?}}double [ %7, %if.then ], [ %12, %if.end ]
 ; CHECK-NEXT:   %16 = phi {{(fast )?}}double [ %8, %if.then ], [ %13, %if.end ]
 ; CHECK-NEXT:   %17 = phi {{(fast )?}}double [ %9, %if.then ], [ %14, %if.end ]
-; CHECK-NEXT:   %18 = insertelement <3 x double> undef, double %15, i32 0
-; CHECK-NEXT:   %19 = insertelement <3 x double> %18, double %16, i32 1
-; CHECK-NEXT:   %20 = insertelement <3 x double> %19, double %17, i32 2
+; CHECK-NEXT:   %18 = insertelement <3 x double> undef, double %15, i64 0
+; CHECK-NEXT:   %19 = insertelement <3 x double> %18, double %16, i64 1
+; CHECK-NEXT:   %20 = insertelement <3 x double> %19, double %17, i64 2
 ; CHECK-NEXT:   ret <3 x double> %20
 ; CHECK-NEXT: }

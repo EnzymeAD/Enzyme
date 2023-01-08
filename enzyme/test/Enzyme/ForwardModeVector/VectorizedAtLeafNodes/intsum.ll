@@ -44,9 +44,9 @@ entry:
 ; CHECK-NEXT:   %1 = phi i32 [ 0, %entry ], [ %8, %do.body ]
 ; CHECK-NEXT:   %2 = phi i32 [ 0, %entry ], [ %9, %do.body ]
 ; CHECK-NEXT:   %intsum = phi i32 [ 0, %entry ], [ %intadd, %do.body ]
-; CHECK-NEXT:   %3 = insertelement <3 x i32> undef, i32 %0, i32 0
-; CHECK-NEXT:   %4 = insertelement <3 x i32> %3, i32 %1, i32 1
-; CHECK-NEXT:   %5 = insertelement <3 x i32> %4, i32 %2, i32 2
+; CHECK-NEXT:   %3 = insertelement <3 x i32> undef, i32 %0, i64 0
+; CHECK-NEXT:   %4 = insertelement <3 x i32> %3, i32 %1, i64 1
+; CHECK-NEXT:   %5 = insertelement <3 x i32> %4, i32 %2, i64 2
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
 ; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds <3 x float>, <3 x float>* %"array'", i64 %iv
 ; CHECK-NEXT:   %arrayidx = getelementptr inbounds float, float* %array, i64 %iv

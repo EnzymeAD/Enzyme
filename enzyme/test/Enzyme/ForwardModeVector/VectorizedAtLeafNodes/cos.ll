@@ -24,7 +24,7 @@ declare double @llvm.cos.f64(double)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = tail call fast double @llvm.sin.f64(double %x)
 ; CHECK-NEXT:   %1 = {{(fsub fast double -0.000000e\+00,|fneg fast double)}} %0
-; CHECK-NEXT:   %.splatinsert.i = insertelement <2 x double> {{(poison|undef)}}, double %1, i32 0
+; CHECK-NEXT:   %.splatinsert.i = insertelement <2 x double> {{(poison|undef)}}, double %1, {{(i32|i64)}} 0
 ; CHECK-NEXT:   %.splat.i = shufflevector <2 x double> %.splatinsert.i, <2 x double> {{(poison|undef)}}, <2 x i32> zeroinitializer
 ; CHECK-NEXT:   %2 = fmul fast <2 x double> %.splat.i, <double 0.000000e+00, double 1.000000e+00>
 ; CHECK-NEXT:   ret <2 x double> %2

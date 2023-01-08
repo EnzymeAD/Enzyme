@@ -5526,7 +5526,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           }
 
           if (shadowTy->isVectorTy())
-            res = postPhi.CreateInsertElement(res, which, postPhi.getInt32(i));
+            res = postPhi.CreateInsertElement(res, which, i);
           else
             res = postPhi.CreateInsertValue(res, which, {i});
         }
