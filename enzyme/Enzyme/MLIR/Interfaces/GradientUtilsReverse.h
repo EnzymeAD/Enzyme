@@ -86,7 +86,7 @@ public:
   
   LogicalResult visitChildReverse(Operation *op, OpBuilder& builder);
   bool visitChildCustom(Operation * op, OpBuilder &builder);
-  Value cacheForReverse(Value v);
+  Value cacheForReverse(Value v, OpBuilder& builder);
   Value popCache(Value cache, OpBuilder& builder);
 };
 

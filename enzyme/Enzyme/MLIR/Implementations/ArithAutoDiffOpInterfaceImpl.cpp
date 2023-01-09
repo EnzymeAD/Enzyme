@@ -100,11 +100,34 @@ struct AddFOpInterfaceReverse : public AutoDiffOpInterfaceReverse::ExternalModel
   }
 };
 
+struct MulFOpInterfaceReverse : public AutoDiffOpInterfaceReverse::ExternalModel<MulFOpInterfaceReverse, arith::MulFOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                         MGradientUtilsReverse *gutils) const {
+    auto mulOp = cast<arith::MulFOp>(op);
+    OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
+
+    if(gutils->hasInvertPointer(mulOp)){
+      Value own_gradient = gutils->invertPointerM(mulOp, builder);
+      for (int i = 0; i < 2; i++) {
+        if (!gutils->isConstantValue(mulOp.getOperand(i))) {
+          Value otherOperand = mulOp.getOperand((i+1) % 2);
+          Value cache = gutils->cacheForReverse(gutils->getNewFromOriginal(otherOperand), cacheBuilder);
+          Value retrievedValue = gutils->popCache(cache, builder);
+          Value gradient = builder.create<arith::MulFOp>(mulOp.getLoc(), own_gradient, retrievedValue);
+          gutils->mapInvertPointer(mulOp.getOperand(i), gradient, builder);
+        }
+      }
+    }
+    return success();
+  }
+};
+
 } 
 
 void mlir::enzyme::registerArithDialectAutoDiffInterface(DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, arith::ArithDialect *) {
     arith::AddFOp::attachInterface<AddFOpInterfaceReverse>(*context);
+    arith::MulFOp::attachInterface<MulFOpInterfaceReverse>(*context);
     
     arith::AddFOp::attachInterface<AddFOpInterface>(*context);
     arith::MulFOp::attachInterface<MulFOpInterface>(*context);

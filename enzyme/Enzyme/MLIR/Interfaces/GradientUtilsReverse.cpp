@@ -90,9 +90,7 @@ Value mlir::enzyme::MGradientUtilsReverse::insertInitBackwardCache(Type t){
   return builder.create<enzyme::CreateCacheOp>((initializationBlock->rbegin())->getLoc(), t);
 }
 
-Value MGradientUtilsReverse::cacheForReverse(Value v){
-  OpBuilder builder(v.getDefiningOp());
-  builder.setInsertionPointAfter(v.getDefiningOp());
+Value MGradientUtilsReverse::cacheForReverse(Value v, OpBuilder& builder){
   Value cache = insertInitBackwardCache(getCacheType(v.getType()));
   builder.create<enzyme::PushCacheOp>(v.getLoc(), cache, v);
   return cache;
@@ -246,7 +244,7 @@ bool MGradientUtilsReverse::visitChildCustom(Operation * op, OpBuilder &builder)
       OpBuilder storeBuilder(newOp);
       func::CallOp storeCI = storeBuilder.create<func::CallOp>(op->getLoc(), srStore, storeResultTypes, storeArgs);
       for (auto x : storeCI.getResults()){
-        caches.push_back(cacheForReverse(x));
+        caches.push_back(cacheForReverse(x, storeBuilder));
       }
     }
     
