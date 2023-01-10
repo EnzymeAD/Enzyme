@@ -73,33 +73,6 @@
 
 using namespace llvm;
 
-template <typename T, typename... Args>
-inline auto eval_tuple(llvm::IRBuilder<> &Builder,
-                       VectorModeMemoryLayout memoryLayout, unsigned width, T i,
-                       Args... args);
-
-template <typename T>
-inline auto eval_tuple(llvm::IRBuilder<> &Builder,
-                       VectorModeMemoryLayout memoryLayout, unsigned width, T) {
-  return std::tuple<>();
-}
-template <typename Arg0, typename... Args>
-inline auto eval_tuple(llvm::IRBuilder<> &Builder,
-                       VectorModeMemoryLayout memoryLayout, unsigned width,
-                       unsigned int i, Arg0 arg0, Args... args) {
-  auto &&v = arg0.getValue(Builder, memoryLayout, width, i);
-  return std::tuple_cat(std::make_tuple(v),
-                        eval_tuple(Builder, memoryLayout, width, i, args...));
-}
-template <typename Arg0, typename... Args>
-inline auto eval_tuple(llvm::IRBuilder<> &Builder,
-                       VectorModeMemoryLayout memoryLayout, unsigned width,
-                       std::nullptr_t i, Arg0 arg0, Args... args) {
-  auto &&v = arg0.getValue(Builder, memoryLayout, width);
-  return std::tuple_cat(std::make_tuple(v),
-                        eval_tuple(Builder, memoryLayout, width, i, args...));
-}
-
 #include "llvm-c/Core.h"
 
 class GradientUtils;
@@ -1747,6 +1720,29 @@ public:
       Mask.push_back(index * (vector_length / width) + i);
     return Mask;
   }
+  
+  template <typename T, typename... Args>
+  inline auto eval_tuple(llvm::IRBuilder<> &Builder, T i, Args... args);
+
+  template <typename T>
+  inline auto eval_tuple(llvm::IRBuilder<> &Builder, T) {
+    return std::tuple<>();
+  }
+  
+  template <typename Arg0, typename... Args>
+  inline auto eval_tuple(llvm::IRBuilder<> &Builder,
+                         unsigned int i, Arg0 arg0, Args... args) {
+    auto &&v = arg0.getValue(Builder, this, i);
+    return std::tuple_cat(std::make_tuple(v),
+                          eval_tuple(Builder, i, args...));
+  }
+  template <typename Arg0, typename... Args>
+  inline auto eval_tuple(llvm::IRBuilder<> &Builder,
+                         std::nullptr_t i, Arg0 arg0, Args... args) {
+    auto &&v = arg0.getValue(Builder, this);
+    return std::tuple_cat(std::make_tuple(v),
+                          eval_tuple(Builder, i, args...));
+  }
 
   /// Unwraps a vector derivative from its internal representation and applies a
   /// function f to each element. Return values of f are collected and wrapped.
@@ -1759,8 +1755,7 @@ public:
       Type *wrappedType = ArrayType::get(diffType, width);
       Value *res = UndefValue::get(wrappedType);
       for (unsigned int i = 0; i < width; ++i) {
-        auto diff = std::apply(rule, std::move(eval_tuple(Builder, memoryLayout,
-                                                          width, i, args...)));
+        auto diff = std::apply(rule, std::move(eval_tuple(Builder, i, args...)));
         res = Builder.CreateInsertValue(res, diff, {i});
       }
       return res;
@@ -1771,7 +1766,7 @@ public:
         for (unsigned int i = 0; i < width; ++i) {
           Value *diff = std::apply(
               rule,
-              std::move(eval_tuple(Builder, memoryLayout, width, i, args...)));
+              std::move(eval_tuple(Builder, i, args...)));
           if (res) {
             VectorType *rvty = cast<VectorType>(res->getType());
             VectorType *dvty = cast<VectorType>(diff->getType());
@@ -1807,14 +1802,13 @@ public:
         for (unsigned int i = 0; i < width; ++i) {
           auto diff = std::apply(
               rule,
-              std::move(eval_tuple(Builder, memoryLayout, width, i, args...)));
+              std::move(eval_tuple(Builder, i, args...)));
           res = Builder.CreateInsertElement(res, diff, i);
         }
         return res;
       }
     }
-    return std::apply(rule, std::move(eval_tuple(Builder, memoryLayout, width,
-                                                 nullptr, args...)));
+    return std::apply(rule, std::move(eval_tuple(Builder, nullptr, args...)));
   }
 
   /// Unwraps a vector derivative from its internal representation and applies a
@@ -1827,12 +1821,10 @@ public:
         (resTy == ResultType::UNWRAPPED ||
          memoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode)) {
       for (unsigned int i = 0; i < width; ++i) {
-        std::apply(rule, std::move(eval_tuple(Builder, memoryLayout, width, i,
-                                              args...)));
+        std::apply(rule, std::move(eval_tuple(Builder, i, args...)));
       }
     } else {
-      std::apply(rule, std::move(eval_tuple(Builder, memoryLayout, width,
-                                            nullptr, args...)));
+      std::apply(rule, std::move(eval_tuple(Builder, nullptr, args...)));
     }
   }
 };
