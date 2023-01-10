@@ -18,7 +18,7 @@ include "mlir/IR/OpBase.td"
 
 def AutoDiffOpInterface : OpInterface<"AutoDiffOpInterface"> {
   let description = [{
-    A differetiable MLIR operation that is able to emit forward mode adjoints for itself.
+    A differentiable MLIR operation that is able to emit forward mode adjoints for itself.
   }];
   let cppNamespace = "::mlir::enzyme";
 
@@ -42,7 +42,7 @@ def AutoDiffOpInterface : OpInterface<"AutoDiffOpInterface"> {
 
 def AutoDiffOpInterfaceReverse : OpInterface<"AutoDiffOpInterfaceReverse"> {
   let description = [{
-    A differetiable MLIR operation that is able to emit reverse mode adjoints for itself.
+    A differentiable MLIR operation that is able to emit reverse mode adjoints for itself.
   }];
   let cppNamespace = "::mlir::enzyme";
 
