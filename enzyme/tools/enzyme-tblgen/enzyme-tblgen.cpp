@@ -484,7 +484,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
         os << "            Value *out = UndefValue::get(res->getType());\n";
       else
         os << "            Value *out = "
-              "UndefValue::get(gutils->getShadowType(res->getType()));\n";
+              "UndefValue::get(gutils->getShadowType(res));\n";
 
       os << "            for(unsigned int idx=0, W=gutils->getWidth(); idx<W; "
             "idx++) {\n";
@@ -530,7 +530,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
       if (hasDiffeRet(resultTree)) {
         os << "          dif = diffe(orig, Builder2);\n";
         os << "          setDiffe(orig, "
-              "Constant::getNullValue(gutils->getShadowType(orig->getType())), "
+              "Constant::getNullValue(gutils->getShadowType(orig)), "
               "Builder2);\n";
       }
     }
@@ -552,7 +552,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
       if (!vectorValued) {
         os << "          if (gutils->getWidth() > 1) {\n";
         os << "            toadd = "
-              "UndefValue::get(gutils->getShadowType(tmp->getType()));\n";
+              "UndefValue::get(gutils->getShadowType(tmp));\n";
         os << "            for(unsigned int idx=0, W=gutils->getWidth(); "
               "idx<W; idx++) {\n";
         os << "              toadd = Builder2.CreateInsertValue(toadd, tmp, "

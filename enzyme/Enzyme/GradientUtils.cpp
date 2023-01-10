@@ -1387,12 +1387,12 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         if (pidx == nullptr)
           goto endCheck;
 
-        if (pidx->getType() != getShadowType(dli->getOperand(0)->getType())) {
+        if (pidx->getType() != getShadowType(dli->getOperand(0))) {
           llvm::errs() << "dli: " << *dli << "\n";
           llvm::errs() << "dli->getOperand(0): " << *dli->getOperand(0) << "\n";
           llvm::errs() << "pidx: " << *pidx << "\n";
         }
-        assert(pidx->getType() == getShadowType(dli->getOperand(0)->getType()));
+        assert(pidx->getType() == getShadowType(dli->getOperand(0)));
 
         auto rule = [&](Value *pidx) {
 #if LLVM_VERSION_MAJOR > 7
@@ -3214,8 +3214,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                           lookupM(getNewFromOriginal(orig_val), NB, available);
                       valueop = val;
                       if (getWidth() > 1) {
-                        Value *array =
-                            UndefValue::get(getShadowType(val->getType()));
+                        Value *array = UndefValue::get(getShadowType(orig_val));
                         for (unsigned i = 0; i < getWidth(); ++i) {
                           array = NB.CreateInsertValue(array, val, {i});
                         }
@@ -4612,13 +4611,13 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         Primal(oval));
   } else if (isa<UndefValue>(oval)) {
     if (nullShadow)
-      return Constant::getNullValue(getShadowType(oval->getType()));
+      return Constant::getNullValue(getShadowType(oval));
     return applyChainRule(
         oval->getType(), BuilderM, [](Value *oval) { return oval; },
         Primal(oval));
   } else if (isa<ConstantInt>(oval)) {
     if (nullShadow)
-      return Constant::getNullValue(getShadowType(oval->getType()));
+      return Constant::getNullValue(getShadowType(oval));
     return applyChainRule(
         oval->getType(), BuilderM, [](Value *oval) { return oval; },
         Primal(oval));
@@ -4692,7 +4691,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     if (nullShadow) {
       auto CT = TR.query(oval)[{-1}];
       if (!CT.isKnown() || CT.isFloat()) {
-        return Constant::getNullValue(getShadowType(oval->getType()));
+        return Constant::getNullValue(getShadowType(oval));
       }
     }
 
@@ -4870,7 +4869,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             antialloca = applyChainRule(arg->getType(), bb, rule2,
                                         Gradient(antialloca), Primal(ty));
 
-            assert(antialloca->getType() == getShadowType(arg->getType()));
+            assert(antialloca->getType() == getShadowType(arg));
 
             return antialloca;
           }
@@ -5000,8 +4999,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         Vals.push_back(elem);
       }
 
-      auto agg = ConstantArray::get(
-          cast<ArrayType>(getShadowType(arg->getType())), Vals);
+      auto agg = ConstantArray::get(cast<ArrayType>(getShadowType(arg)), Vals);
 
       invertedPointers.insert(
           std::make_pair((const Value *)oval, InvertedPointerVH(this, agg)));
@@ -5496,7 +5494,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         bb.SetInsertPoint(bb.GetInsertBlock(), bb.GetInsertBlock()->begin());
       }
 
-      Type *shadowTy = getShadowType(phi->getType());
+      Type *shadowTy = getShadowType(phi);
 
       if (EnzymeVectorSplitPhi && width > 1 &&
           (shadowTy->isVectorTy() || shadowTy->isAggregateType())) {
