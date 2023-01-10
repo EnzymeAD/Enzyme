@@ -33,6 +33,9 @@
 
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/IR/Type.h"
+#include "llvm/Support/Casting.h"
+
 #include <map>
 #include <set>
 #include <string>
@@ -74,6 +77,34 @@ private:
   // mapping of known indices to type if one exists
   ConcreteTypeMapType mapping;
   std::vector<int> minIndices;
+  
+//  static void helper(llvm::Type *ty, const std::vector<int> offset, const llvm::DataLayout &DL, ConcreteTypeMapType mapping) {
+//      if (auto pty = llvm::dyn_cast<llvm::PointerType>(ty)) {
+//        mapping.insert({offset, ConcreteType(BaseType::Pointer)});
+//        auto new_offset = std::vector<int>(offset);
+//        new_offset.push_back(0);
+//        helper(pty->getElementType(), new_offset, DL, mapping);
+//      } else if (auto vty = llvm::dyn_cast<llvm::VectorType>(ty)) {
+//
+//      } else if (auto sty = llvm::dyn_cast<llvm::StructType>(ty)) {
+//        auto align = DL.getStructLayout(sty);
+//
+//        for (unsigned i=0; i<sty->getNumElements(); ++i) {
+//          auto new_offset = std::vector<int>(offset);
+//          new_offset.push_back(align->getElementOffset(i));
+//          helper(sty->getElementType(i), new_offset, DL, mapping);
+//        }
+//      } else if (auto aty = llvm::dyn_cast<llvm::ArrayType>(ty)) {
+//        for (int i=0; i< aty->getNumElements(); ++i) {
+//          auto new_offset = std::vector<int>(offset);
+//          auto size = DL.getTypeSizeInBits(aty->getElementType()) / 8;
+//          new_offset.push_back(i*size);
+//          helper(aty->getElementType(), new_offset, DL, mapping);
+//        }
+//      } else {
+//        mapping.insert({offset, ConcreteType(ty)});
+//      }
+//  }
 
 public:
   TypeTree() {}
@@ -82,6 +113,14 @@ public:
       mapping.insert(std::pair<const std::vector<int>, ConcreteType>({}, dat));
     }
   }
+  
+//  TypeTree(llvm::Type *ty, const llvm::DataLayout &DL) {
+//    if (auto pty = llvm::dyn_cast<llvm::PointerType>(ty)) {
+//      helper(pty, {-1}, DL, mapping);
+//    } else {
+//      helper(ty, {}, DL, mapping);
+//    }
+//  }
 
   /// Utility helper to lookup the mapping
   const ConcreteTypeMapType &getMapping() const { return mapping; }
@@ -438,6 +477,40 @@ public:
 
     return Result;
   }
+  
+  TypeTree DataN(uint64_t N) const {
+    TypeTree Result;
+
+    for (const auto &pair : mapping) {
+      if (pair.first.size() == 0) {
+        llvm::errs() << str() << "\n";
+      }
+      assert(pair.first.size() != 0);
+
+      if (pair.first[0] == -1) {
+        std::vector<int> next(pair.first.begin() + 1, pair.first.end());
+        Result.mapping.insert(
+            std::pair<const std::vector<int>, ConcreteType>(next, pair.second));
+        for (size_t i = 0, Len = next.size(); i < Len; ++i) {
+          if (i == Result.minIndices.size())
+            Result.minIndices.push_back(next[i]);
+          else if (next[i] < Result.minIndices[i])
+            Result.minIndices[i] = next[i];
+        }
+      }
+    }
+    for (const auto &pair : mapping) {
+      if (pair.first[0] == N) {
+        std::vector<int> next(pair.first.begin() + 1, pair.first.end());
+        // We do insertion like this to force an error
+        // on the orIn operation if there is an incompatible
+        // merge. The insert operation does not error.
+        Result.orIn(next, pair.second);
+      }
+    }
+
+    return Result;
+  }
 
   /// Optimized version of Data0()[{}]
   ConcreteType Inner0() const {
@@ -482,7 +555,43 @@ public:
     // TODO canonicalize this
     return Result;
   }
+  
+  /// Select all submappings whose first index is in range [0, len) and remove
+  /// the first index. This is the inverse of the `Only` operation
+  TypeTree Dereference() const {
+    TypeTree Result;
 
+    for (const auto &pair : mapping) {
+      if (pair.first.size() == 0)
+        continue;
+        
+      if (pair.first[0] == -1) {
+        std::vector<int> next(pair.first.begin() + 1, pair.first.end());
+        Result.mapping.insert(
+            std::pair<const std::vector<int>, ConcreteType>(next, pair.second));
+        for (size_t i = 0, Len = next.size(); i < Len; ++i) {
+          if (i == Result.minIndices.size())
+            Result.minIndices.push_back(next[i]);
+          else if (next[i] < Result.minIndices[i])
+            Result.minIndices[i] = next[i];
+        }
+      }
+    }
+    
+    for (const auto &pair : mapping) {
+      if (pair.first.size() == 0)
+        continue;
+      
+      if (pair.first[0] == 0) {
+        std::vector<int> next(pair.first.begin() + 1, pair.first.end());
+        // We do insertion like this to force an error
+        // on the orIn operation if there is an incompatible
+        // merge. The insert operation does not error.
+        Result.orIn(next, pair.second);
+      }
+    }
+    return Result;
+  }
   /// Select all submappings whose first index is in range [0, len) and remove
   /// the first index. This is the inverse of the `Only` operation
   TypeTree Lookup(size_t len, const llvm::DataLayout &dl) const {

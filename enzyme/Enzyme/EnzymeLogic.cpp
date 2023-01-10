@@ -3148,8 +3148,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
 
     if (!handled) {
       gutils->setDiffe(
-          orig, Constant::getNullValue(gutils->getShadowType(orig->getType())),
-          Builder);
+          orig, Constant::getNullValue(gutils->getShadowType(orig)), Builder);
 
       for (BasicBlock *opred : predecessors(oBB)) {
         auto oval = orig->getIncomingValueForBlock(opred);
@@ -3842,13 +3841,11 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     differetval = endarg;
 
     if (!key.todiff->getReturnType()->isVoidTy()) {
-      if (!(differetval->getType() ==
-            gutils->getShadowType(key.todiff->getReturnType()))) {
+      if (!(differetval->getType() == gutils->getShadowType(key.todiff))) {
         llvm::errs() << *gutils->oldFunc << "\n";
         llvm::errs() << *gutils->newFunc << "\n";
       }
-      assert(differetval->getType() ==
-             gutils->getShadowType(key.todiff->getReturnType()));
+      assert(differetval->getType() == gutils->getShadowType(key.todiff));
     }
   }
 

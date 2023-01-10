@@ -1143,7 +1143,7 @@ public:
           if (!isConstantValue(inst)) {
             IRBuilder<> BuilderZ(inst);
             getForwardBuilder(BuilderZ);
-            Type *antiTy = getShadowType(inst->getType());
+            Type *antiTy = getShadowType(inst);
             PHINode *anti =
                 BuilderZ.CreatePHI(antiTy, 1, inst->getName() + "'dual_phi");
             invertedPointers.insert(std::make_pair(
@@ -1162,7 +1162,7 @@ public:
         if (isa<LoadInst>(inst)) {
           IRBuilder<> BuilderZ(inst);
           getForwardBuilder(BuilderZ);
-          Type *antiTy = getShadowType(inst->getType());
+          Type *antiTy = getShadowType(inst);
           PHINode *anti =
               BuilderZ.CreatePHI(antiTy, 1, inst->getName() + "'il_phi");
           invertedPointers.insert(std::make_pair(
@@ -1187,7 +1187,7 @@ public:
 
         IRBuilder<> BuilderZ(inst);
         getForwardBuilder(BuilderZ);
-        Type *antiTy = getShadowType(inst->getType());
+        Type *antiTy = getShadowType(inst);
 
         PHINode *anti =
             BuilderZ.CreatePHI(antiTy, 1, op->getName() + "'ip_phi");
@@ -1446,31 +1446,39 @@ public:
 
   static bool isVectorizedStructFor(StructType *sty, StructType *vsty,
                                     SmallPtrSetImpl<StructType *> &visited,
-                                    unsigned width, Module &M) {
+                                    const TypeTree TT, unsigned width,
+                                    Module &M) {
     visited.insert(sty);
 
     if (sty->getStructNumElements() != vsty->getStructNumElements())
       return false;
 
-    auto sit = sty->element_begin();
-    auto vsit = vsty->element_begin();
+    auto &DL = M.getDataLayout();
+    auto Align = DL.getStructLayout(sty);
 
-    for (; sit != sty->element_end() && vsit != vsty->element_end();
-         sit++, vsit++) {
-      Type *Ty = *sit;
-      Type *VTy = *vsit;
+    for (unsigned i = 0;
+         i < sty->getNumElements() && i < vsty->getNumElements(); ++i) {
+      Type *Ty = sty->getElementType(i);
+      Type *VTy = vsty->getElementType(i);
 
-      Type *peeledType = *sit;
-      Type *peeledVectorType = *vsit;
+      Type *peeledType = Ty;
+      Type *peeledVectorType = VTy;
+
+      uint64_t offset = Align->getElementOffset(i);
+
+      auto peeledTT = TT.DataN(offset);
 
       while (auto foo = dyn_cast<PointerType>(peeledType)) {
         if (auto bar = dyn_cast<PointerType>(peeledVectorType)) {
           peeledType = foo->getPointerElementType();
           peeledVectorType = bar->getPointerElementType();
+          peeledTT = peeledTT.Dereference();
         } else {
           return false;
         }
       }
+
+      auto DT = TypeTree(Type::getDoubleTy(M.getContext()));
 
       auto peeledStructType = dyn_cast<StructType>(peeledType);
       auto peeledVectorStructType = dyn_cast<StructType>(peeledVectorType);
@@ -1478,9 +1486,9 @@ public:
       if (peeledStructType && peeledVectorType) {
         if (!visited.count(peeledStructType) &&
             !isVectorizedStructFor(peeledStructType, peeledVectorStructType,
-                                   visited, width, M))
+                                   visited, peeledTT, width, M))
           return false;
-      } else if (getShadowTypeVectorizedAtLeafNodes(M, Ty, width) != VTy) {
+      } else if (getShadowTypeVectorizedAtLeafNodes(M, Ty, TT, width) != VTy) {
         return false;
       }
     }
@@ -1489,10 +1497,13 @@ public:
   }
 
   static Type *
-  createShadowTypeFor(Type *ty, unsigned width,
+  createShadowTypeFor(Type *ty, const TypeTree TT, unsigned width,
                       std::map<StructType *, StructType *> &under_construction,
                       Module &M) {
     if (auto sty = dyn_cast<StructType>(ty)) {
+      auto &DL = M.getDataLayout();
+      auto Align = DL.getStructLayout(sty);
+
       auto found = under_construction.find(sty);
 
       if (found != under_construction.end())
@@ -1508,8 +1519,11 @@ public:
 
       SmallVector<Type *, 3> subtys;
 
-      for (auto sety : sty->subtypes()) {
-        Type *subty = getShadowTypeVectorizedAtLeafNodes(sety, width,
+      for (unsigned i = 0; i < sty->getNumElements(); ++i) {
+        Type *sety = sty->getElementType(i);
+        int offset = Align->getElementOffset(i);
+        auto subTT = TT.DataN(offset);
+        Type *subty = getShadowTypeVectorizedAtLeafNodes(sety, subTT, width,
                                                          under_construction, M);
         subtys.push_back(subty);
       }
@@ -1524,7 +1538,7 @@ public:
       }
     } else if (auto aty = dyn_cast<ArrayType>(ty)) {
       return ArrayType::get(
-          getShadowTypeVectorizedAtLeafNodes(aty->getElementType(), width,
+          getShadowTypeVectorizedAtLeafNodes(aty->getElementType(), TT, width,
                                              under_construction, M),
           aty->getNumElements());
     } else if (auto pty = dyn_cast<PointerType>(ty)) {
@@ -1537,8 +1551,9 @@ public:
       }
 
       return PointerType::get(
-          getShadowTypeVectorizedAtLeafNodes(pty->getElementType(), width,
-                                             under_construction, M),
+          getShadowTypeVectorizedAtLeafNodes(pty->getElementType(),
+                                             TT.Lookup(-1, M.getDataLayout()),
+                                             width, under_construction, M),
           pty->getAddressSpace());
     } else if (auto vty = dyn_cast<VectorType>(ty)) {
 #if LLVM_VERSION_MAJOR >= 12
@@ -1549,37 +1564,82 @@ public:
                              vty->getNumElements() * width);
 #endif
     } else {
+      if (TT.Inner0().isPossibleFloat()) {
 #if LLVM_VERSION_MAJOR >= 12
-      return FixedVectorType::get(ty, width);
+        return FixedVectorType::get(ty, width);
 #else
-      return VectorType::get(ty, width);
+        return VectorType::get(ty, width);
 #endif
+      }
+      return ty;
     }
   }
 
   static Type *getShadowTypeVectorizedAtLeafNodes(
-      Type *ty, unsigned width,
+      Type *ty, const TypeTree TT, unsigned width,
       std::map<StructType *, StructType *> &under_construction, Module &M) {
     if (auto sty = dyn_cast<StructType>(ty)) {
       // look for exisiting vectorized type
       auto &&AllStructTypes = M.getIdentifiedStructTypes();
       for (auto &&elem : AllStructTypes) {
         SmallPtrSet<StructType *, 16> visited;
-        if (isVectorizedStructFor(sty, elem, visited, width, M))
+        if (isVectorizedStructFor(sty, elem, visited, TT, width, M))
           return elem;
       }
     }
-    return createShadowTypeFor(ty, width, under_construction, M);
+    return createShadowTypeFor(ty, TT, width, under_construction, M);
   }
 
   static Type *getShadowTypeVectorizedAtLeafNodes(Module &M, Type *ty,
-                                                  unsigned width) {
+                                                  TypeTree TT, unsigned width) {
     std::map<StructType *, StructType *> under_construction;
-    return getShadowTypeVectorizedAtLeafNodes(ty, width, under_construction, M);
+    return getShadowTypeVectorizedAtLeafNodes(ty, TT, width, under_construction,
+                                              M);
   }
 
   static Type *getShadowTypeVectorizedAtRootNode(Type *ty, unsigned width) {
     return ArrayType::get(ty, width);
+  }
+
+  inline Type *getShadowType(Module &M, Value *val, unsigned width,
+                             VectorModeMemoryLayout memoryLayout) {
+    Type *ty = val->getType();
+
+    if (width == 1)
+      return ty;
+
+    if (ty->isVoidTy())
+      return ty;
+
+    switch (memoryLayout) {
+    case VectorModeMemoryLayout::VectorizeAtRootNode:
+      return getShadowTypeVectorizedAtRootNode(ty, width);
+    case VectorModeMemoryLayout::VectorizeAtLeafNodes: {
+      auto TT = TR.query(val);
+      return getShadowTypeVectorizedAtLeafNodes(M, ty, TT, width);
+    }
+    }
+  }
+
+  inline Type *getShadowType(Module &M, Function *fn, unsigned width,
+                             VectorModeMemoryLayout memoryLayout) {
+    Type *ty = fn->getReturnType();
+
+    if (width == 1)
+      return ty;
+
+    if (ty->isVoidTy())
+      return ty;
+
+    switch (memoryLayout) {
+    case VectorModeMemoryLayout::VectorizeAtRootNode:
+      return getShadowTypeVectorizedAtRootNode(ty, width);
+    case VectorModeMemoryLayout::VectorizeAtLeafNodes: {
+      auto TT = TR.getReturnAnalysis();
+      assert(TR.getFunction() == fn);
+      return getShadowTypeVectorizedAtLeafNodes(M, ty, TT, width);
+    }
+    }
   }
 
   static inline Type *getShadowType(Module &M, Type *ty, unsigned width,
@@ -1593,14 +1653,26 @@ public:
     switch (memoryLayout) {
     case VectorModeMemoryLayout::VectorizeAtRootNode:
       return getShadowTypeVectorizedAtRootNode(ty, width);
-    case VectorModeMemoryLayout::VectorizeAtLeafNodes:
-      return getShadowTypeVectorizedAtLeafNodes(M, ty, width);
+    case VectorModeMemoryLayout::VectorizeAtLeafNodes: {
+      TypeTree TT = TypeTree();
+      return getShadowTypeVectorizedAtLeafNodes(M, ty, TT, width);
+    }
     }
   }
 
-  Type *getShadowType(Type *ty) {
+  Type *getShadowType(Instruction &Inst) {
     auto &M = *oldFunc->getParent();
-    return getShadowType(M, ty, width, memoryLayout);
+    return getShadowType(M, &Inst, width, memoryLayout);
+  }
+
+  Type *getShadowType(Function *fn) {
+    auto &M = *oldFunc->getParent();
+    return getShadowType(M, fn, width, memoryLayout);
+  }
+
+  Type *getShadowType(Value *val) {
+    auto &M = *oldFunc->getParent();
+    return getShadowType(M, val, width, memoryLayout);
   }
 
   static inline Value *extractMeta(IRBuilder<> &Builder, Value *Agg,
@@ -1816,7 +1888,7 @@ public:
       assert(inst->getParent()->getParent() == oldFunc);
     assert(inversionAllocs);
 
-    Type *type = getShadowType(val->getType());
+    Type *type = getShadowType(val);
     if (differentials.find(val) == differentials.end()) {
       IRBuilder<> entryBuilder(inversionAllocs);
       entryBuilder.setFastMathFlags(getFast());
@@ -1864,7 +1936,7 @@ public:
     assert(!val->getType()->isPointerTy());
     assert(!val->getType()->isVoidTy());
 #if LLVM_VERSION_MAJOR > 7
-    Type *ty = getShadowType(val->getType());
+    Type *ty = getShadowType(val);
     return BuilderM.CreateLoad(ty, getDifferential(val));
 #else
     return BuilderM.CreateLoad(getDifferential(val));
@@ -1971,7 +2043,7 @@ public:
       for (auto i : idxs)
         sv.push_back(i);
 #if LLVM_VERSION_MAJOR > 7
-      ptr = BuilderM.CreateGEP(getShadowType(val->getType()), ptr, sv);
+      ptr = BuilderM.CreateGEP(getShadowType(val), ptr, sv);
 #else
       ptr = BuilderM.CreateGEP(ptr, sv);
 #endif
@@ -2130,7 +2202,7 @@ public:
     assert(!isConstantValue(val));
     if (mode == DerivativeMode::ForwardMode ||
         mode == DerivativeMode::ForwardModeSplit) {
-      assert(getShadowType(val->getType()) == toset->getType());
+      assert(getShadowType(val) == toset->getType());
       auto found = invertedPointers.find(val);
       assert(found != invertedPointers.end());
       auto placeholder0 = &*found->second;
