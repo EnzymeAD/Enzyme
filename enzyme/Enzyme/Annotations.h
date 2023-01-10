@@ -50,9 +50,10 @@ private:
 public:
   Primal(T *value) : value(value) {}
 
-  Value *getValue(IRBuilder<> &Builder, VectorModeMemoryLayout memoryLayout,
-                  unsigned width) {
-
+  Value *getValue(IRBuilder<> &Builder, GradientUtils *gutils) {
+    VectorModeMemoryLayout memoryLayout = gutils->memoryLayout;
+    unsigned width = gutils->getWidth();
+    
     if (width == 1)
       return value;
 
@@ -85,8 +86,7 @@ public:
     }
   }
 
-  Value *getValue(IRBuilder<> &Builder, VectorModeMemoryLayout memoryLayout,
-                  unsigned width, unsigned i) {
+  Value *getValue(IRBuilder<> &Builder, GradientUtils *gutils, unsigned i) {
     return value;
   }
 };
@@ -98,8 +98,9 @@ private:
 public:
   Primal(Type *type) : type(type) {}
 
-  Type *getValue(IRBuilder<> &Builder, VectorModeMemoryLayout memoryLayout,
-                 unsigned width) {
+  Type *getValue(IRBuilder<> &Builder, GradientUtils *gutils) {
+    VectorModeMemoryLayout memoryLayout = gutils->memoryLayout;
+    unsigned width = gutils->getWidth();
 
     if (width == 1)
       return type;
@@ -113,8 +114,7 @@ public:
     }
   }
 
-  Type *getValue(IRBuilder<> &Builder, VectorModeMemoryLayout memoryLayout,
-                 unsigned width, unsigned i) {
+  Type *getValue(IRBuilder<> &Builder, GradientUtils *gutils, unsigned i) {
     return type;
   }
 };
@@ -126,8 +126,10 @@ private:
 public:
   Primal(ArrayType *type) : type(type) {}
 
-  ArrayType *getValue(IRBuilder<> &Builder, VectorModeMemoryLayout memoryLayout,
-                      unsigned width) {
+  ArrayType *getValue(IRBuilder<> &Builder, GradientUtils *gutils) {
+    VectorModeMemoryLayout memoryLayout = gutils->memoryLayout;
+    unsigned width = gutils->getWidth();
+    
     if (width == 1)
       return type;
 
@@ -143,8 +145,7 @@ public:
     }
   }
 
-  ArrayType *getValue(IRBuilder<> &Builder, VectorModeMemoryLayout memoryLayout,
-                      unsigned width, unsigned i) {
+  ArrayType *getValue(IRBuilder<> &Builder, GradientUtils *gutils, unsigned i) {
     return type;
   }
 };
@@ -156,8 +157,10 @@ private:
 public:
   Primal(Constant *c) : c(c) {}
 
-  Constant *getValue(IRBuilder<> &Builder, VectorModeMemoryLayout memoryLayout,
-                     unsigned width) {
+  Constant *getValue(IRBuilder<> &Builder, GradientUtils *gutils) {
+    VectorModeMemoryLayout memoryLayout = gutils->memoryLayout;
+    unsigned width = gutils->getWidth();
+    
     if (width == 1)
       return c;
 
@@ -170,8 +173,7 @@ public:
     }
   }
 
-  Constant *getValue(IRBuilder<> &Builder, VectorModeMemoryLayout memoryLayout,
-                     unsigned width, unsigned i) {
+  Constant *getValue(IRBuilder<> &Builder, GradientUtils *gutils, unsigned i) {
     return c;
   }
 };
@@ -184,13 +186,11 @@ public:
   Primal(ConstantVector *cv) : cv(cv) {}
 
   ConstantVector *getValue(IRBuilder<> &Builder,
-                           VectorModeMemoryLayout memoryLayout,
-                           unsigned width) {
+                           GradientUtils *gutils) {
     return cv;
   }
 
-  ConstantVector *getValue(IRBuilder<> &Builder,
-                           VectorModeMemoryLayout memoryLayout, unsigned width,
+  ConstantVector *getValue(IRBuilder<> &Builder, GradientUtils *gutils,
                            unsigned i) {
     return cv;
   }
@@ -203,15 +203,11 @@ private:
 public:
   Primal(ConstantDataVector *cv) : cv(cv) {}
 
-  ConstantDataVector *getValue(IRBuilder<> &Builder,
-                               VectorModeMemoryLayout memoryLayout,
-                               unsigned width) {
+  ConstantDataVector *getValue(IRBuilder<> &Builder, GradientUtils *gutils) {
     return cv;
   }
 
-  ConstantDataVector *getValue(IRBuilder<> &Builder,
-                               VectorModeMemoryLayout memoryLayout,
-                               unsigned width, unsigned i) {
+  ConstantDataVector *getValue(IRBuilder<> &Builder, GradientUtils *gutils, unsigned i) {
     return cv;
   }
 };
@@ -223,8 +219,10 @@ private:
 public:
   Gradient(T *value) : value(value) {}
 
-  T *getValue(IRBuilder<> &Builder, VectorModeMemoryLayout memoryLayout,
-              unsigned width, unsigned i) {
+  T *getValue(IRBuilder<> &Builder, GradientUtils *gutils, unsigned i) {
+    VectorModeMemoryLayout memoryLayout = gutils->memoryLayout;
+    unsigned width = gutils->getWidth();
+    
     if (width == 1 || !value)
       return value;
 
@@ -278,8 +276,10 @@ public:
     return value;
   }
 
-  T *getValue(IRBuilder<> &Builder, VectorModeMemoryLayout memoryLayout,
-              unsigned width) {
+  T *getValue(IRBuilder<> &Builder, GradientUtils *gutils) {
+    VectorModeMemoryLayout memoryLayout = gutils->memoryLayout;
+    unsigned width = gutils->getWidth();
+    
     if (width == 1 || !value)
       return value;
 
@@ -301,8 +301,10 @@ public:
   Gradient(ArrayRef<Constant *> values) : values(values) {}
 
   std::vector<Constant *> getValue(IRBuilder<> &Builder,
-                                   VectorModeMemoryLayout memoryLayout,
-                                   unsigned width, unsigned i) {
+                                   GradientUtils *gutils, unsigned i) {
+    VectorModeMemoryLayout memoryLayout = gutils->memoryLayout;
+    unsigned width = gutils->getWidth();
+    
     if (width == 1)
       return values;
 
@@ -330,9 +332,10 @@ public:
     return values;
   }
 
-  ArrayRef<Constant *> getValue(IRBuilder<> &Builder,
-                                VectorModeMemoryLayout memoryLayout,
-                                unsigned width) {
+  ArrayRef<Constant *> getValue(IRBuilder<> &Builder, GradientUtils *gutils) {
+    VectorModeMemoryLayout memoryLayout = gutils->memoryLayout;
+    unsigned width = gutils->getWidth();
+    
     if (width == 1)
       return values;
 
