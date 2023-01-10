@@ -31,14 +31,12 @@ attributes #3 = { nounwind }
 
 ; CHECK: define internal void @fwddiffe3memcpy_ptr(double** nocapture %dst, <3 x double>** %"dst'", double** nocapture readonly %src, <3 x double>** %"src'", i64 %num)
 ; CHECK-NEXT:  entry:
-; CHECK-NEXT:   %"'ipc" = bitcast <3 x double>** %"dst'" to <3 x i8>*
+; CHECK-NEXT:   %"'ipc" = bitcast <3 x double>** %"dst'" to i8*
 ; CHECK-NEXT:   %0 = bitcast double** %dst to i8*
-; CHECK-NEXT:   %"'ipc2" = bitcast <3 x double>** %"src'" to <3 x i8>*
+; CHECK-NEXT:   %"'ipc2" = bitcast <3 x double>** %"src'" to i8*
 ; CHECK-NEXT:   %1 = bitcast double** %src to i8*
-; CHECK-NEXT:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %0, i8* align 1 %1, i64 %num, i1 false)
+; CHECK-NEXT:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %0, i8* align 1 %1, i64 %num, i1 false) #3
 ; CHECK-NEXT:   %num.vecsize = mul i64 %num, 3
-; CHECK-NEXT:   %2 = bitcast <3 x i8>* %"'ipc" to i8*
-; CHECK-NEXT:   %3 = bitcast <3 x i8>* %"'ipc2" to i8*
-; CHECK-NEXT:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %2, i8* align 1 %3, i64 %num.vecsize, i1 false)
+; CHECK-NEXT:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %"'ipc", i8* align 1 %"'ipc2", i64 %num.vecsize, i1 false) #3
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

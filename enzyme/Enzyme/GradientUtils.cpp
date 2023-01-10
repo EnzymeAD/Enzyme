@@ -5021,14 +5021,16 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     IRBuilder<> bb(getNewFromOriginal(arg));
     Value *invertOp = invertPointerM(arg->getOperand(0), bb);
     Type *shadowTy = arg->getDestTy();
+    
+    if (memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
+      shadowTy = getShadowType(arg);
 
-    auto rule = [&bb, &arg](Value *invertOp, Type *shadowTy) {
+    auto rule = [&bb, &arg, &shadowTy](Value *invertOp) {
       return bb.CreateCast(arg->getOpcode(), invertOp, shadowTy,
                            arg->getName() + "'ipc");
     };
 
-    Value *shadow = applyChainRule(shadowTy, bb, rule, Gradient(invertOp),
-                                   Primal(shadowTy));
+    Value *shadow = applyChainRule(shadowTy, bb, rule, Gradient(invertOp));
 
     invertedPointers.insert(
         std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
