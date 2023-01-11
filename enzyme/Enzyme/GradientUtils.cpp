@@ -4488,6 +4488,8 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
     }
   }
 
+  Constant *res;
+  
   switch (mode) {
   case DerivativeMode::ForwardMode: {
     Constant *newf = Logic.CreateForwardDiff(
@@ -4510,8 +4512,9 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
                               GlobalValue::LinkageTypes::InternalLinkage, newf,
                               globalname);
     }
-
-    return ConstantExpr::getPointerCast(GV, fn->getType());
+    
+    res = ConstantExpr::getPointerCast(GV, fn->getType());
+    break;
   }
   case DerivativeMode::ForwardModeSplit: {
     auto &augdata = Logic.CreateAugmentedPrimal(
@@ -4546,7 +4549,8 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
                               globalname);
     }
 
-    return ConstantExpr::getPointerCast(GV, fn->getType());
+    res = ConstantExpr::getPointerCast(GV, fn->getType());
+    break;
   }
   case DerivativeMode::ReverseModeCombined:
   case DerivativeMode::ReverseModeGradient:
@@ -4590,9 +4594,20 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
                               GlobalValue::LinkageTypes::InternalLinkage, cdata,
                               globalname);
     }
-    return ConstantExpr::getPointerCast(GV, fn->getType());
+    
+    res = ConstantExpr::getPointerCast(GV, fn->getType());
+    break;
   }
   }
+  
+  if (width > 1 && memoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode) {
+    SmallVector<Constant*, 8> Elements;
+    for (unsigned i = 0; i < width; ++i)
+      Elements.push_back(res);
+    return ConstantArray::get(ArrayType::get(res->getType(), width), Elements);
+  }
+  
+  return res;
 }
 
 Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
@@ -5012,11 +5027,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   } else if (auto fn = dyn_cast<Function>(oval)) {
     Constant *shadow = GetOrCreateShadowFunction(
         Logic, TLI, TA, fn, mode, memoryLayout, width, AtomicAdd);
-
-    auto rule = [](Constant *shadow) { return shadow; };
-
-    return applyChainRule(oval->getType(), BuilderM, rule, Primal(shadow));
-
+    return shadow;
   } else if (auto arg = dyn_cast<CastInst>(oval)) {
     IRBuilder<> bb(getNewFromOriginal(arg));
     Value *invertOp = invertPointerM(arg->getOperand(0), bb);

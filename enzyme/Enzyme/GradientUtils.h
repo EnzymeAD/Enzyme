@@ -1515,26 +1515,26 @@ public:
                                              under_construction, M),
           aty->getNumElements());
     } else if (auto pty = dyn_cast<PointerType>(ty)) {
-      if (pty->getElementType()->isFunctionTy()) {
-#if LLVM_VERSION_MAJOR >= 12
-        return FixedVectorType::get(pty, width);
+#if LLVM_VERSION_MAJOR >= 15
+      return pty;
 #else
-        return VectorType::get(pty, width);
-#endif
-      }
+        if (pty->getElementType()->isFunctionTy()) {
+          return pty;
+        }
 
-      return PointerType::get(
-          getShadowTypeVectorizedAtLeafNodes(pty->getElementType(),
-                                             TT.Lookup(-1, M.getDataLayout()),
-                                             width, under_construction, M),
-          pty->getAddressSpace());
-    } else if (auto vty = dyn_cast<VectorType>(ty)) {
-#if LLVM_VERSION_MAJOR >= 12
-      return VectorType::get(vty->getElementType(),
-                             vty->getElementCount() * width);
-#else
-      return VectorType::get(vty->getElementType(),
-                             vty->getNumElements() * width);
+        return PointerType::get(
+            getShadowTypeVectorizedAtLeafNodes(pty->getElementType(),
+                                               TT.Lookup(-1, M.getDataLayout()),
+                                               width, under_construction, M),
+            pty->getAddressSpace());
+      } else if (auto vty = dyn_cast<VectorType>(ty)) {
+  #if LLVM_VERSION_MAJOR >= 12
+        return VectorType::get(vty->getElementType(),
+                               vty->getElementCount() * width);
+  #else
+        return VectorType::get(vty->getElementType(),
+                               vty->getNumElements() * width);
+  #endif
 #endif
     } else {
       if (TT.Inner0().isPossibleFloat()) {

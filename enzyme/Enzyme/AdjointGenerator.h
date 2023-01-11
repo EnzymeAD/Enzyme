@@ -11820,8 +11820,6 @@ public:
             newcalled = BuilderZ.CreateExtractValue(newcalled, {0});
             break;
           case VectorModeMemoryLayout::VectorizeAtLeafNodes:
-            newcalled =
-                BuilderZ.CreateExtractElement(newcalled, BuilderZ.getInt64(0));
             break;
           }
         }

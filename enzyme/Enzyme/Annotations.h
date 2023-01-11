@@ -249,7 +249,7 @@ public:
           return Builder.CreateExtractElement(value, i);
         }
       } else if (auto pty = dyn_cast<PointerType>(value->getType())) {
-        if (auto vty = dyn_cast<VectorType>(pty->getElementType())) {
+        if (auto vty = dyn_cast<VectorType>(pty->getElementType())) { // FIXME: PET
 #if LLVM_VERSION_MAJOR >= 12
           unsigned vector_width = vty->getElementCount().getKnownMinValue();
           Type *res_type =
@@ -268,7 +268,7 @@ public:
           }
         }
         Value *idx[2] = {Builder.getInt32(0), Builder.getInt32(i)};
-        return Builder.CreateInBoundsGEP(pty->getElementType(), value, idx);
+        return Builder.CreateInBoundsGEP(pty->getElementType(), value, idx); // FIXME: PET
       }
       return value;
     }
@@ -277,6 +277,84 @@ public:
   }
 
   T *getValue(IRBuilder<> &Builder, GradientUtils *gutils) {
+    VectorModeMemoryLayout memoryLayout = gutils->memoryLayout;
+    unsigned width = gutils->getWidth();
+    
+    if (width == 1 || !value)
+      return value;
+
+    if (!value)
+      return nullptr;
+
+    if (value && memoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode)
+      assert(cast<ArrayType>(value->getType())->getNumElements() == width);
+
+    return value;
+  }
+};
+
+template <> struct Gradient<Constant> {
+private:
+  Constant *value;
+  
+public:
+  Gradient(Constant *value) : value(value) {}
+  
+  Constant *getValue(IRBuilder<> &Builder, GradientUtils *gutils, unsigned i) {
+    VectorModeMemoryLayout memoryLayout = gutils->memoryLayout;
+    unsigned width = gutils->getWidth();
+    
+    if (width == 1 || !value)
+      return value;
+    
+    if (!value)
+      return nullptr;
+    
+    switch (memoryLayout) {
+      case VectorModeMemoryLayout::VectorizeAtRootNode:
+        return value;
+      case VectorModeMemoryLayout::VectorizeAtLeafNodes:
+        if (auto vty = dyn_cast<VectorType>(value->getType())) {
+#if LLVM_VERSION_MAJOR >= 12
+          unsigned vector_width = vty->getElementCount().getKnownMinValue();
+#else
+          unsigned vector_width = vty->getNumElements();
+#endif
+          if (vector_width / width > 1) {
+            Constant* res = ConstantExpr::getShuffleVector(value, UndefValue::get(value->getType()), GradientUtils::CreateExtractSubvectorMask(vector_width, width, i));
+            res->setName(value->getName() + ".subvector." + Twine(i));
+            return res;
+          } else {
+            return ConstantExpr::getExtractElement(value, Builder.getInt64(i));
+          }
+        } else if (auto pty = dyn_cast<PointerType>(value->getType())) {
+          if (auto vty = dyn_cast<VectorType>(pty->getElementType())) { // FIXME: PET
+#if LLVM_VERSION_MAJOR >= 12
+            unsigned vector_width = vty->getElementCount().getKnownMinValue();
+            Type *res_type =
+            FixedVectorType::get(vty->getElementType(), vector_width / width);
+#else
+            unsigned vector_width = vty->getNumElements();
+            Type *res_type =
+            VectorType::get(vty->getElementType(), vector_width / width);
+#endif
+            if (vector_width / width > 1) {
+              Type *gep_type = PointerType::get(res_type, pty->getAddressSpace());
+              Constant *idx[2] = {Builder.getInt32(0), Builder.getInt32(i * vector_width / width)};
+              auto gep = ConstantExpr::getInBoundsGetElementPtr(vty, value, idx);
+              return ConstantExpr::getPointerCast(gep, gep_type);
+            }
+          }
+          Constant *idx[2] = {Builder.getInt32(0), Builder.getInt32(i)};
+          return ConstantExpr::getInBoundsGetElementPtr(pty->getElementType(), value, idx); // FIXME: PET
+        }
+        return value;
+    }
+    
+    return value;
+  }
+  
+  Constant *getValue(IRBuilder<> &Builder, GradientUtils *gutils) {
     VectorModeMemoryLayout memoryLayout = gutils->memoryLayout;
     unsigned width = gutils->getWidth();
     
