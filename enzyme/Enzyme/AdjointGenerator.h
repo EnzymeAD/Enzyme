@@ -2330,19 +2330,19 @@ public:
             if (CI->isNegative() && CI->isMinValue(/*signed*/ true)) {
               setDiffe(&BO, Constant::getNullValue(gutils->getShadowType(BO)),
                        Builder2);
-              
+
               Type *BOTy = BO.getType();
               if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
                 BOTy = gutils->getShadowType(BO);
-              
+
               auto rule = [&Builder2, &BOTy](Value *idiff, Type *FT) {
                 auto neg =
                     Builder2.CreateFNeg(Builder2.CreateBitCast(idiff, FT));
                 return Builder2.CreateBitCast(neg, BOTy);
               };
-              auto bc = applyChainRule(BO.getOperand(1 - i)->getType(),
-                                       Builder2, rule, Gradient(idiff),
-                                       Primal(FT));
+              auto bc =
+                  applyChainRule(BO.getOperand(1 - i)->getType(), Builder2,
+                                 rule, Gradient(idiff), Primal(FT));
               addToDiffe(BO.getOperand(1 - i), bc, Builder2, FT);
               return;
             }
@@ -2811,11 +2811,11 @@ public:
                         dl.getTypeSizeInBits(CI->getType())) {
             if (CI->isNegative() && CI->isMinValue(/*signed*/ true)) {
               assert(dif[1 - i]);
-              
+
               Type *BOTy = BO.getType();
               if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
                 BOTy = gutils->getShadowType(BO);
-              
+
               auto rule = [&Builder2, &BOTy](Value *difi, Type *FT) {
                 auto neg =
                     Builder2.CreateFNeg(Builder2.CreateBitCast(difi, FT));

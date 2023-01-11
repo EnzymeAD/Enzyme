@@ -2215,11 +2215,10 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   }
 
   AdjointGenerator<AugmentedReturn *> maker(
-      gutils, constant_args,
-      retType, getIndex, uncacheable_args_map, &returnuses,
-      &AugmentedCachedFunctions.find(tup)->second, nullptr, unnecessaryValues,
-      unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
-      nullptr);
+      gutils, constant_args, retType, getIndex, uncacheable_args_map,
+      &returnuses, &AugmentedCachedFunctions.find(tup)->second, nullptr,
+      unnecessaryValues, unnecessaryInstructions, unnecessaryStores,
+      guaranteedUnreachable, nullptr);
 
   for (BasicBlock &oBB : *gutils->oldFunc) {
     auto term = oBB.getTerminator();
@@ -4404,8 +4403,7 @@ Function *EnzymeLogic::CreateForwardDiff(
     gutils->computeMinCache();
 
     maker = new AdjointGenerator<const AugmentedReturn *>(
-        gutils, constant_args, retType, getIndex,
-        uncacheable_args_map,
+        gutils, constant_args, retType, getIndex, uncacheable_args_map,
         /*returnuses*/ nullptr, augmenteddata, nullptr, unnecessaryValues,
         unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
         nullptr);
