@@ -89,7 +89,7 @@ struct LoadOpInterfaceReverse : public AutoDiffOpInterfaceReverse::ExternalModel
         Value addedGradient = iface.createAddOp(builder, loadOp.getLoc(), loadedGradient, gradient);
         builder.create<memref::StoreOp>(loadOp.getLoc(), addedGradient, memrefGradient, ArrayRef<Value>(retrievedArguments));
       }   
-    } 
+    }
     return success();
   }
 
@@ -100,6 +100,33 @@ struct LoadOpInterfaceReverse : public AutoDiffOpInterfaceReverse::ExternalModel
 struct StoreOpInterfaceReverse : public AutoDiffOpInterfaceReverse::ExternalModel<StoreOpInterfaceReverse, memref::StoreOp> {
   LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils) const {
     auto storeOp = cast<memref::StoreOp>(op);
+    Value val = storeOp.getValue();
+    Value memref = storeOp.getMemref();
+    ValueRange vr = storeOp.getIndices();
+    
+    if (auto iface = val.getType().cast<AutoDiffTypeInterface>()){
+      if(gutils->hasInvertPointer(memref)){
+        OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
+        
+        Value memrefGradient = gutils->invertPointerM(memref, builder);
+
+        SmallVector<Value> retrievedArguments;
+        for (Value v : vr){
+          Value cache = gutils->cacheForReverse(gutils->getNewFromOriginal(v), cacheBuilder);
+          Value retrievedValue = gutils->popCache(cache, builder);
+          retrievedArguments.push_back(retrievedValue);
+        }
+
+        Value loadedGradient = builder.create<memref::LoadOp>(storeOp.getLoc(), memrefGradient, ArrayRef<Value>(retrievedArguments));
+        Value addedGradient = loadedGradient;
+        if(gutils->hasInvertPointer(val)){
+          Value gradient = gutils->invertPointerM(val, builder);
+          addedGradient = iface.createAddOp(builder, storeOp.getLoc(), gradient, loadedGradient);
+        }
+        gutils->mapInvertPointer(val, addedGradient, builder);
+      }   
+    }
+
     return success();
   }
 
