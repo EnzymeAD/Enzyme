@@ -4848,7 +4848,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                   len_arg, ConstantInt::get(len_arg->getType(), width));
 
             auto rule2 = [&bb, &arg, &M, &oval, &len_arg,
-                          &val_arg](Value *antialloca, Type *ty) {
+                          &val_arg, &ty](Value *antialloca) {
               auto dst_arg = bb.CreateBitCast(antialloca, ty);
 
               auto volatile_arg = ConstantInt::getFalse(oval->getContext());
@@ -4882,8 +4882,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               return antialloca;
             };
 
-            antialloca = applyChainRule(arg->getType(), bb, rule2,
-                                        Gradient(antialloca), Primal(ty));
+            antialloca = applyChainRule(arg->getType(), bb, rule2, Gradient(antialloca));
 
             assert(antialloca->getType() == getShadowType(arg));
 

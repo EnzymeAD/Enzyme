@@ -2331,14 +2331,19 @@ public:
             if (CI->isNegative() && CI->isMinValue(/*signed*/ true)) {
               setDiffe(&BO, Constant::getNullValue(gutils->getShadowType(BO)),
                        Builder2);
-              auto rule = [&Builder2](Value *idiff, Type *FT, Type *BOTy) {
+              
+              Type *BOTy = BO.getType();
+              if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
+                BOTy = gutils->getShadowType(BO);
+              
+              auto rule = [&Builder2, &BOTy](Value *idiff, Type *FT) {
                 auto neg =
                     Builder2.CreateFNeg(Builder2.CreateBitCast(idiff, FT));
                 return Builder2.CreateBitCast(neg, BOTy);
               };
               auto bc = applyChainRule(BO.getOperand(1 - i)->getType(),
                                        Builder2, rule, Gradient(idiff),
-                                       Primal(FT), Primal(BO.getType()));
+                                       Primal(FT));
               addToDiffe(BO.getOperand(1 - i), bc, Builder2, FT);
               return;
             }
@@ -2807,15 +2812,19 @@ public:
                         dl.getTypeSizeInBits(CI->getType())) {
             if (CI->isNegative() && CI->isMinValue(/*signed*/ true)) {
               assert(dif[1 - i]);
-              auto rule = [&Builder2](Value *difi, Type *FT, Type *BOTy) {
+              
+              Type *BOTy = BO.getType();
+              if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
+                BOTy = gutils->getShadowType(BO);
+              
+              auto rule = [&Builder2, &BOTy](Value *difi, Type *FT) {
                 auto neg =
                     Builder2.CreateFNeg(Builder2.CreateBitCast(difi, FT));
                 return Builder2.CreateBitCast(neg, BOTy);
               };
 
               auto diffe = applyChainRule(BO.getType(), Builder2, rule,
-                                          Gradient(dif[1 - i]), Primal(FT),
-                                          Primal(BO.getType()));
+                                          Gradient(dif[1 - i]), Primal(FT));
               setDiffe(&BO, diffe, Builder2);
               return;
             }
