@@ -4489,7 +4489,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
   }
 
   Constant *res;
-  
+
   switch (mode) {
   case DerivativeMode::ForwardMode: {
     Constant *newf = Logic.CreateForwardDiff(
@@ -4512,7 +4512,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
                               GlobalValue::LinkageTypes::InternalLinkage, newf,
                               globalname);
     }
-    
+
     res = ConstantExpr::getPointerCast(GV, fn->getType());
     break;
   }
@@ -4594,19 +4594,20 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
                               GlobalValue::LinkageTypes::InternalLinkage, cdata,
                               globalname);
     }
-    
+
     res = ConstantExpr::getPointerCast(GV, fn->getType());
     break;
   }
   }
-  
-  if (width > 1 && memoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode) {
-    SmallVector<Constant*, 8> Elements;
+
+  if (width > 1 &&
+      memoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode) {
+    SmallVector<Constant *, 8> Elements;
     for (unsigned i = 0; i < width; ++i)
       Elements.push_back(res);
     return ConstantArray::get(ArrayType::get(res->getType(), width), Elements);
   }
-  
+
   return res;
 }
 
@@ -5032,7 +5033,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     IRBuilder<> bb(getNewFromOriginal(arg));
     Value *invertOp = invertPointerM(arg->getOperand(0), bb);
     Type *shadowTy = arg->getDestTy();
-    
+
     if (memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
       shadowTy = getShadowType(arg);
 

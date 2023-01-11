@@ -1518,23 +1518,23 @@ public:
 #if LLVM_VERSION_MAJOR >= 15
       return pty;
 #else
-        if (pty->getElementType()->isFunctionTy()) {
-          return pty;
-        }
+      if (pty->getElementType()->isFunctionTy()) {
+        return pty;
+      }
 
-        return PointerType::get(
-            getShadowTypeVectorizedAtLeafNodes(pty->getElementType(),
-                                               TT.Lookup(-1, M.getDataLayout()),
-                                               width, under_construction, M),
-            pty->getAddressSpace());
-      } else if (auto vty = dyn_cast<VectorType>(ty)) {
-  #if LLVM_VERSION_MAJOR >= 12
-        return VectorType::get(vty->getElementType(),
-                               vty->getElementCount() * width);
-  #else
-        return VectorType::get(vty->getElementType(),
-                               vty->getNumElements() * width);
-  #endif
+      return PointerType::get(
+          getShadowTypeVectorizedAtLeafNodes(pty->getElementType(),
+                                             TT.Lookup(-1, M.getDataLayout()),
+                                             width, under_construction, M),
+          pty->getAddressSpace());
+    } else if (auto vty = dyn_cast<VectorType>(ty)) {
+#if LLVM_VERSION_MAJOR >= 12
+      return VectorType::get(vty->getElementType(),
+                             vty->getElementCount() * width);
+#else
+      return VectorType::get(vty->getElementType(),
+                             vty->getNumElements() * width);
+#endif
 #endif
     } else {
       if (TT.Inner0().isPossibleFloat()) {
@@ -1720,28 +1720,25 @@ public:
       Mask.push_back(index * (vector_length / width) + i);
     return Mask;
   }
-  
+
   template <typename T, typename... Args>
   inline auto eval_tuple(llvm::IRBuilder<> &Builder, T i, Args... args);
 
-  template <typename T>
-  inline auto eval_tuple(llvm::IRBuilder<> &Builder, T) {
+  template <typename T> inline auto eval_tuple(llvm::IRBuilder<> &Builder, T) {
     return std::tuple<>();
   }
-  
+
   template <typename Arg0, typename... Args>
-  inline auto eval_tuple(llvm::IRBuilder<> &Builder,
-                         unsigned int i, Arg0 arg0, Args... args) {
+  inline auto eval_tuple(llvm::IRBuilder<> &Builder, unsigned int i, Arg0 arg0,
+                         Args... args) {
     auto &&v = arg0.getValue(Builder, this, i);
-    return std::tuple_cat(std::make_tuple(v),
-                          eval_tuple(Builder, i, args...));
+    return std::tuple_cat(std::make_tuple(v), eval_tuple(Builder, i, args...));
   }
   template <typename Arg0, typename... Args>
-  inline auto eval_tuple(llvm::IRBuilder<> &Builder,
-                         std::nullptr_t i, Arg0 arg0, Args... args) {
+  inline auto eval_tuple(llvm::IRBuilder<> &Builder, std::nullptr_t i,
+                         Arg0 arg0, Args... args) {
     auto &&v = arg0.getValue(Builder, this);
-    return std::tuple_cat(std::make_tuple(v),
-                          eval_tuple(Builder, i, args...));
+    return std::tuple_cat(std::make_tuple(v), eval_tuple(Builder, i, args...));
   }
 
   /// Unwraps a vector derivative from its internal representation and applies a
@@ -1755,7 +1752,8 @@ public:
       Type *wrappedType = ArrayType::get(diffType, width);
       Value *res = UndefValue::get(wrappedType);
       for (unsigned int i = 0; i < width; ++i) {
-        auto diff = std::apply(rule, std::move(eval_tuple(Builder, i, args...)));
+        auto diff =
+            std::apply(rule, std::move(eval_tuple(Builder, i, args...)));
         res = Builder.CreateInsertValue(res, diff, {i});
       }
       return res;
@@ -1764,9 +1762,8 @@ public:
       if (diffType->isVectorTy()) {
         Value *res = nullptr;
         for (unsigned int i = 0; i < width; ++i) {
-          Value *diff = std::apply(
-              rule,
-              std::move(eval_tuple(Builder, i, args...)));
+          Value *diff =
+              std::apply(rule, std::move(eval_tuple(Builder, i, args...)));
           if (res) {
             VectorType *rvty = cast<VectorType>(res->getType());
             VectorType *dvty = cast<VectorType>(diff->getType());
@@ -1800,9 +1797,8 @@ public:
 #endif
         Value *res = UndefValue::get(wrappedType);
         for (unsigned int i = 0; i < width; ++i) {
-          auto diff = std::apply(
-              rule,
-              std::move(eval_tuple(Builder, i, args...)));
+          auto diff =
+              std::apply(rule, std::move(eval_tuple(Builder, i, args...)));
           res = Builder.CreateInsertElement(res, diff, i);
         }
         return res;
