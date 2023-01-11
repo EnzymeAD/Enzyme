@@ -78,34 +78,6 @@ private:
   ConcreteTypeMapType mapping;
   std::vector<int> minIndices;
   
-//  static void helper(llvm::Type *ty, const std::vector<int> offset, const llvm::DataLayout &DL, ConcreteTypeMapType mapping) {
-//      if (auto pty = llvm::dyn_cast<llvm::PointerType>(ty)) {
-//        mapping.insert({offset, ConcreteType(BaseType::Pointer)});
-//        auto new_offset = std::vector<int>(offset);
-//        new_offset.push_back(0);
-//        helper(pty->getElementType(), new_offset, DL, mapping);
-//      } else if (auto vty = llvm::dyn_cast<llvm::VectorType>(ty)) {
-//
-//      } else if (auto sty = llvm::dyn_cast<llvm::StructType>(ty)) {
-//        auto align = DL.getStructLayout(sty);
-//
-//        for (unsigned i=0; i<sty->getNumElements(); ++i) {
-//          auto new_offset = std::vector<int>(offset);
-//          new_offset.push_back(align->getElementOffset(i));
-//          helper(sty->getElementType(i), new_offset, DL, mapping);
-//        }
-//      } else if (auto aty = llvm::dyn_cast<llvm::ArrayType>(ty)) {
-//        for (int i=0; i< aty->getNumElements(); ++i) {
-//          auto new_offset = std::vector<int>(offset);
-//          auto size = DL.getTypeSizeInBits(aty->getElementType()) / 8;
-//          new_offset.push_back(i*size);
-//          helper(aty->getElementType(), new_offset, DL, mapping);
-//        }
-//      } else {
-//        mapping.insert({offset, ConcreteType(ty)});
-//      }
-//  }
-
 public:
   TypeTree() {}
   TypeTree(ConcreteType dat) {
@@ -113,14 +85,6 @@ public:
       mapping.insert(std::pair<const std::vector<int>, ConcreteType>({}, dat));
     }
   }
-  
-//  TypeTree(llvm::Type *ty, const llvm::DataLayout &DL) {
-//    if (auto pty = llvm::dyn_cast<llvm::PointerType>(ty)) {
-//      helper(pty, {-1}, DL, mapping);
-//    } else {
-//      helper(ty, {}, DL, mapping);
-//    }
-//  }
 
   /// Utility helper to lookup the mapping
   const ConcreteTypeMapType &getMapping() const { return mapping; }
