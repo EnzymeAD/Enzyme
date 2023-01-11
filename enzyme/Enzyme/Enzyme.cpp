@@ -970,43 +970,6 @@ public:
     return true;
   }
 
-  Type *getTypeVectorizedAtLeafNodes(Type *ty, unsigned width) {
-    if (auto sty = dyn_cast<StructType>(ty)) {
-      return getTypeVectorizedAtLeafNodes(sty, width);
-    } else if (auto aty = dyn_cast<ArrayType>(ty)) {
-      return ArrayType::get(
-          getTypeVectorizedAtLeafNodes(aty->getElementType(), width),
-          aty->getNumElements());
-    } else if (auto pty = dyn_cast<PointerType>(ty)) {
-      return PointerType::get(
-          getTypeVectorizedAtLeafNodes(pty->getElementType(), width),
-          pty->getAddressSpace());
-    } else {
-      return ArrayType::get(ty, width);
-    }
-  }
-
-  std::vector<std::tuple<Type *, std::vector<Value *>>>
-  getLeafNodeIndices(Type *ScalarTy, ArrayRef<Value *> idx) {
-    std::vector<std::tuple<Type *, std::vector<Value *>>> result;
-
-    if (ScalarTy->getNumContainedTypes() == 0) {
-      result.push_back({ScalarTy, idx});
-      return result;
-    }
-
-    for (unsigned i = 0; i < ScalarTy->getNumContainedTypes(); ++i) {
-      Type *Ty = ScalarTy->getContainedType(i);
-      auto vec = idx.vec();
-      vec.push_back(
-          ConstantInt::get(IntegerType::getInt32Ty(ScalarTy->getContext()), i));
-      auto idxs = getLeafNodeIndices(Ty, vec);
-      result.insert(result.end(), idxs.begin(), idxs.end());
-    }
-
-    return result;
-  }
-
   /// Return whether successful
   bool HandleAutoDiff(CallInst *CI, DerivativeMode mode, bool sizeOnly) {
 
