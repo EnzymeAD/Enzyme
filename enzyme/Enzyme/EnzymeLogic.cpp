@@ -2215,8 +2215,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   }
 
   AdjointGenerator<AugmentedReturn *> maker(
-      DerivativeMode::ReverseModePrimal,
-      VectorModeMemoryLayout::VectorizeAtRootNode, gutils, constant_args,
+      gutils, constant_args,
       retType, getIndex, uncacheable_args_map, &returnuses,
       &AugmentedCachedFunctions.find(tup)->second, nullptr, unnecessaryValues,
       unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
@@ -3907,8 +3906,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   }
 
   AdjointGenerator<const AugmentedReturn *> maker(
-      key.mode, VectorModeMemoryLayout::VectorizeAtRootNode, gutils,
-      key.constant_args, key.retType, getIndex, uncacheable_args_map,
+      gutils, key.constant_args, key.retType, getIndex, uncacheable_args_map,
       /*returnuses*/ nullptr, augmenteddata, &replacedReturns,
       unnecessaryValues, unnecessaryInstructions, unnecessaryStores,
       guaranteedUnreachable, dretAlloca);
@@ -4406,7 +4404,7 @@ Function *EnzymeLogic::CreateForwardDiff(
     gutils->computeMinCache();
 
     maker = new AdjointGenerator<const AugmentedReturn *>(
-        mode, memoryLayout, gutils, constant_args, retType, getIndex,
+        gutils, constant_args, retType, getIndex,
         uncacheable_args_map,
         /*returnuses*/ nullptr, augmenteddata, nullptr, unnecessaryValues,
         unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
@@ -4457,7 +4455,7 @@ Function *EnzymeLogic::CreateForwardDiff(
   } else {
 
     maker = new AdjointGenerator<const AugmentedReturn *>(
-        mode, memoryLayout, gutils, constant_args, retType, nullptr, {},
+        gutils, constant_args, retType, nullptr, {},
         /*returnuses*/ nullptr, nullptr, nullptr, unnecessaryValues,
         unnecessaryInstructions, unnecessaryStores, guaranteedUnreachable,
         nullptr);

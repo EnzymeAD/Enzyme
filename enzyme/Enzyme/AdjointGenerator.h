@@ -72,7 +72,6 @@ private:
 
 public:
   AdjointGenerator(
-      DerivativeMode Mode, VectorModeMemoryLayout MemoryLayout,
       GradientUtils *gutils, ArrayRef<DIFFE_TYPE> constant_args,
       DIFFE_TYPE retType,
       std::function<unsigned(Instruction *, CacheType)> getIndex,
@@ -86,7 +85,7 @@ public:
       const SmallPtrSetImpl<const Instruction *> &unnecessaryStores,
       const SmallPtrSetImpl<BasicBlock *> &oldUnreachable,
       AllocaInst *dretAlloca)
-      : Mode(Mode), MemoryLayout(MemoryLayout), gutils(gutils),
+      : Mode(gutils->mode), MemoryLayout(gutils->memoryLayout), gutils(gutils),
         constant_args(constant_args), retType(retType), getIndex(getIndex),
         uncacheable_args_map(uncacheable_args_map), returnuses(returnuses),
         augmentedReturn(augmentedReturn), replacedReturns(replacedReturns),
