@@ -50,6 +50,14 @@ def AutoDiffTypeInterface : TypeInterface<"AutoDiffTypeInterface"> {
       /*retTy=*/"::mlir::Type",
       /*methodName=*/"getShadowType",
       /*args=*/(ins "unsigned":$width)
+    >,
+    InterfaceMethod<
+      /*desc=*/[{
+        Returns if the Type is a pointer like type.
+      }],
+      /*retTy=*/"bool",
+      /*methodName=*/"isPointerType",
+      /*args=*/(ins )
     >
   ];
 

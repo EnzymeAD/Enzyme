@@ -15,6 +15,8 @@
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
+#include "Interfaces/GradientUtilsReverse.h"
+
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Support/LogicalResult.h"
@@ -43,6 +45,7 @@ struct LoadOpInterface
   }
 };
 
+
 struct StoreOpInterface
     : public AutoDiffOpInterface::ExternalModel<StoreOpInterface,
                                                 memref::StoreOp> {
@@ -59,6 +62,48 @@ struct StoreOpInterface
     }
     gutils->eraseIfUnused(op);
     return success();
+  }
+};
+
+struct LoadOpInterfaceReverse : public AutoDiffOpInterfaceReverse::ExternalModel<LoadOpInterfaceReverse, memref::LoadOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils) const {
+    auto loadOp = cast<memref::LoadOp>(op);
+    Value memref = loadOp.getMemref();
+    ValueRange vr = loadOp.getIndices();
+    
+    if (auto iface = loadOp.getType().cast<AutoDiffTypeInterface>()) {      
+      if(gutils->hasInvertPointer(loadOp) && gutils->hasInvertPointer(memref)){
+        OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
+        
+        Value gradient = gutils->invertPointerM(loadOp, builder);
+        Value memrefGradient = gutils->invertPointerM(memref, builder);
+
+        SmallVector<Value> retrievedArguments;
+        for (Value v : vr){
+          Value cache = gutils->cacheForReverse(gutils->getNewFromOriginal(v), cacheBuilder);
+          Value retrievedValue = gutils->popCache(cache, builder);
+          retrievedArguments.push_back(retrievedValue);
+        }
+
+        Value loadedGradient = builder.create<memref::LoadOp>(loadOp.getLoc(), memrefGradient, ArrayRef<Value>(retrievedArguments));
+        Value addedGradient = iface.createAddOp(builder, loadOp.getLoc(), loadedGradient, gradient);
+        builder.create<memref::StoreOp>(loadOp.getLoc(), addedGradient, memrefGradient, ArrayRef<Value>(retrievedArguments));
+      }   
+    } 
+    return success();
+  }
+
+  void clearGradient(Operation *op, SmallVector<OpBuilder *>builders, MGradientUtilsReverse *gutils) const {
+  }
+};
+
+struct StoreOpInterfaceReverse : public AutoDiffOpInterfaceReverse::ExternalModel<StoreOpInterfaceReverse, memref::StoreOp> {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils) const {
+    auto storeOp = cast<memref::StoreOp>(op);
+    return success();
+  }
+
+  void clearGradient(Operation *op, SmallVector<OpBuilder *>builders, MGradientUtilsReverse *gutils) const {
   }
 };
 
@@ -93,6 +138,10 @@ public:
     assert(width == 1 && "unsupported width != 1");
     return self;
   }
+
+  bool isPointerType(Type self) const{
+    return true;
+  }
 };
 } // namespace
 
@@ -103,5 +152,8 @@ void mlir::enzyme::registerMemRefDialectAutoDiffInterface(
     memref::StoreOp::attachInterface<StoreOpInterface>(*context);
     memref::AllocOp::attachInterface<AllocOpInterface>(*context);
     MemRefType::attachInterface<MemRefTypeInterface>(*context);
+
+    memref::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
+    memref::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
   });
 }

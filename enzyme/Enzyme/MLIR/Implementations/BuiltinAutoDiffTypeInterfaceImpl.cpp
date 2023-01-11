@@ -42,6 +42,10 @@ public:
     assert(width == 1 && "unsupported width != 1");
     return self;
   }
+
+  bool isPointerType(Type self) const{
+    return false;
+  }
 };
 } // namespace
 

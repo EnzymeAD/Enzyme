@@ -96,7 +96,7 @@ def ReverseCache : Enzyme_Type<"Cache"> {
   let assemblyFormat = "`<` $type `>`";
 }
 
-def AddGradientOp : Enzyme_Op<"add"> {
+def SetGradientOp : Enzyme_Op<"set"> {
   let summary = "Write to gradient";
   let arguments = (ins AnyType : $gradient, AnyType : $value);
   let results = (outs );

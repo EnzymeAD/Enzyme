@@ -54,6 +54,15 @@ def AutoDiffOpInterfaceReverse : OpInterface<"AutoDiffOpInterfaceReverse"> {
     /*retTy=*/"::mlir::LogicalResult",
     /*methodName=*/"createReverseModeAdjoint",
     /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::enzyme::MGradientUtilsReverse *":$gutils)
+    >,
+
+    InterfaceMethod<
+    /*desc=*/[{
+      Clear the value of the gradient. If needed cache values to do so.
+    }],
+    /*retTy=*/"void",
+    /*methodName=*/"clearGradient",
+    /*args=*/(ins "SmallVector<::mlir::OpBuilder *>":$builders, "::mlir::enzyme::MGradientUtilsReverse *":$gutils)
     >
   ];
 }

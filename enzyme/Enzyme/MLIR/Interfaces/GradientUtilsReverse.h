@@ -72,6 +72,8 @@ public:
   bool hasInvertPointer(mlir::Value v);
   mlir::Value invertPointerM(mlir::Value v, OpBuilder &builder);
   void mapInvertPointer(mlir::Value v, mlir::Value invertValue, OpBuilder &builder);
+  void clearInvertPointer(Operation * op, OpBuilder &initBuilder, OpBuilder &revBuilder);
+
   void setDiffe(mlir::Value val, mlir::Value toset, OpBuilder &BuilderM);
   Value insertInitBackwardCache(Type t);
   Value insertInitGradient(mlir::Value v, OpBuilder &builder);

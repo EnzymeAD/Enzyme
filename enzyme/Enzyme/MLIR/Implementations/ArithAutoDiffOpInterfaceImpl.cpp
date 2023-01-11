@@ -80,23 +80,44 @@ struct AddFOpInterface
   }
 };
 
+Value addToGradient(Value oldGradient, Value addedGradient, OpBuilder & builder, MGradientUtilsReverse *gutils){
+  Value gradient = addedGradient;
+  if(gutils->hasInvertPointer(oldGradient)){
+    Value operandGradient = gutils->invertPointerM(oldGradient, builder);
+    gradient = builder.create<arith::AddFOp>(oldGradient.getLoc(), operandGradient, addedGradient);
+  }
+  gutils->mapInvertPointer(oldGradient, gradient, builder);
+}
+
+void defaultClearGradient(Operation *op, SmallVector<OpBuilder *>builders, MGradientUtilsReverse *gutils){
+  Value result = op->getOpResult(0);
+  if (gutils->invertedPointersGlobal.contains(result)){
+    FloatType floatType = result.getType().cast<FloatType>();
+    APFloat apf(floatType.getFloatSemantics(), 0);
+
+    for (OpBuilder * b : builders){
+      Value gradient = b->create<arith::ConstantFloatOp>(op->getLoc(), apf, floatType);
+      gutils->mapInvertPointer(result, gradient, *b);
+    }
+  }
+}
+
 struct AddFOpInterfaceReverse : public AutoDiffOpInterfaceReverse::ExternalModel<AddFOpInterfaceReverse, arith::AddFOp> {
-  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder,
-                                         MGradientUtilsReverse *gutils) const {
+  LogicalResult createReverseModeAdjoint(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils) const {
     // Derivative of r = a + b -> dr = da + db
     auto addOp = cast<arith::AddFOp>(op);
 
     if(gutils->hasInvertPointer(addOp)){
+      Value addedGradient = gutils->invertPointerM(addOp, builder);
       for (int i = 0; i < 2; i++) {
-        if (!gutils->isConstantValue(addOp.getOperand(i))) {
-          Value own_gradient = gutils->invertPointerM(addOp, builder);
-          gutils->mapInvertPointer(addOp.getOperand(i), own_gradient, builder);
-        }
+        addToGradient(addOp.getOperand(i), addedGradient, builder, gutils);
       }
-      //auto x = builder.create<enzyme::CreateCacheOp>(addOp.getLoc(), builder.getF64Type());
-      //gutils->setDiffe(addOp, tmp, builder);
     }
     return success();
+  }
+
+  void clearGradient(Operation *op, SmallVector<OpBuilder *>builders, MGradientUtilsReverse *gutils) const {
+    defaultClearGradient(op, builders, gutils);
   }
 };
 
@@ -113,12 +134,18 @@ struct MulFOpInterfaceReverse : public AutoDiffOpInterfaceReverse::ExternalModel
           Value otherOperand = mulOp.getOperand((i+1) % 2);
           Value cache = gutils->cacheForReverse(gutils->getNewFromOriginal(otherOperand), cacheBuilder);
           Value retrievedValue = gutils->popCache(cache, builder);
-          Value gradient = builder.create<arith::MulFOp>(mulOp.getLoc(), own_gradient, retrievedValue);
-          gutils->mapInvertPointer(mulOp.getOperand(i), gradient, builder);
+          
+          Value addedGradient = builder.create<arith::MulFOp>(mulOp.getLoc(), own_gradient, retrievedValue);
+          
+          addToGradient(mulOp.getOperand(i), addedGradient, builder, gutils);
         }
       }
     }
     return success();
+  }
+
+  void clearGradient(Operation *op, SmallVector<OpBuilder *>builders, MGradientUtilsReverse *gutils) const {
+    defaultClearGradient(op, builders, gutils);
   }
 };
 

@@ -73,6 +73,10 @@ void visitChildren(Block * oBB, Block * reverseBB, MDiffeGradientUtilsReverse * 
       if(!customFound){
         (void)gutils->visitChildReverse(op, revBuilder);
       }
+
+      Block * initBlock = gutils->initializationBlock;
+      OpBuilder initBuilder(initBlock->getTerminator());
+      gutils->clearInvertPointer(op, initBuilder, revBuilder);
     }
   }
 }
