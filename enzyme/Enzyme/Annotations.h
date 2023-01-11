@@ -249,7 +249,10 @@ public:
           return Builder.CreateExtractElement(value, i);
         }
       } else if (auto pty = dyn_cast<PointerType>(value->getType())) {
-        if (auto vty = dyn_cast<VectorType>(pty->getElementType())) { // FIXME: PET
+#if LLVM_VERSION_MAJOR >= 15
+      return value;
+#else
+        if (auto vty = dyn_cast<VectorType>(pty->getElementType())) {
 #if LLVM_VERSION_MAJOR >= 12
           unsigned vector_width = vty->getElementCount().getKnownMinValue();
           Type *res_type =
@@ -268,7 +271,8 @@ public:
           }
         }
         Value *idx[2] = {Builder.getInt32(0), Builder.getInt32(i)};
-        return Builder.CreateInBoundsGEP(pty->getElementType(), value, idx); // FIXME: PET
+        return Builder.CreateInBoundsGEP(pty->getElementType(), value, idx);
+#endif
       }
       return value;
     }
@@ -328,7 +332,10 @@ public:
             return ConstantExpr::getExtractElement(value, Builder.getInt64(i));
           }
         } else if (auto pty = dyn_cast<PointerType>(value->getType())) {
-          if (auto vty = dyn_cast<VectorType>(pty->getElementType())) { // FIXME: PET
+#if LLVM_VERSION_MAJOR >= 15
+      return value;
+#else
+          if (auto vty = dyn_cast<VectorType>(pty->getElementType())) {
 #if LLVM_VERSION_MAJOR >= 12
             unsigned vector_width = vty->getElementCount().getKnownMinValue();
             Type *res_type =
@@ -346,7 +353,8 @@ public:
             }
           }
           Constant *idx[2] = {Builder.getInt32(0), Builder.getInt32(i)};
-          return ConstantExpr::getInBoundsGetElementPtr(pty->getElementType(), value, idx); // FIXME: PET
+          return ConstantExpr::getInBoundsGetElementPtr(pty->getElementType(), value, idx);
+#endif
         }
         return value;
     }
