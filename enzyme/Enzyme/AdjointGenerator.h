@@ -1107,6 +1107,10 @@ public:
     Value *val = gutils->getNewFromOriginal(orig_val);
     Type *valType = orig_val->getType();
     Type *ptrType = orig_ptr->getType();
+    Type *shadowTy = orig_val->getType();
+
+    if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
+      shadowTy = gutils->getShadowType(orig_val);
 
     auto &DL = gutils->newFunc->getParent()->getDataLayout();
 
@@ -1271,18 +1275,18 @@ public:
             Value *ip =
                 lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
 
-            auto rule = [&](Type *valType, Type *ptrType, Value *ip) {
+            auto rule = [&](Type *ptrType, Value *ip) {
               Value *args[] = {ip, alignv, mask,
-                               Constant::getNullValue(valType)};
-              Type *tys[] = {valType, ptrType};
+                               Constant::getNullValue(shadowTy)};
+              Type *tys[] = {shadowTy, ptrType};
               auto F = Intrinsic::getDeclaration(gutils->oldFunc->getParent(),
                                                  Intrinsic::masked_load, tys);
               diff = Builder2.CreateCall(F, args);
               return diff;
             };
 
-            diff = applyChainRule(valType, Builder2, rule, Primal(valType),
-                                  Primal(ptrType), Gradient(ip));
+            diff = applyChainRule(valType, Builder2, rule, Primal(ptrType),
+                                  Gradient(ip));
           }
 
           gutils->setPtrDiffe(
@@ -1435,15 +1439,19 @@ public:
         }
         assert(FT);
 
-        auto rule = [&](Type *op0Ty, Value *dif) {
+        Type *shadowTy = op0->getType();
+        if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
+          shadowTy = gutils->getShadowType(op0);
+
+        auto rule = [&](Value *dif) {
           if (I.getOpcode() == CastInst::CastOps::FPTrunc ||
               I.getOpcode() == CastInst::CastOps::FPExt) {
-            return Builder2.CreateFPCast(dif, op0Ty);
+            return Builder2.CreateFPCast(dif, shadowTy);
           } else if (I.getOpcode() == CastInst::CastOps::BitCast) {
-            return Builder2.CreateBitCast(dif, op0Ty);
+            return Builder2.CreateBitCast(dif, shadowTy);
           } else if (I.getOpcode() == CastInst::CastOps::Trunc) {
             // TODO CHECK THIS
-            return Builder2.CreateZExt(dif, op0Ty);
+            return Builder2.CreateZExt(dif, shadowTy);
           } else {
             std::string s;
             llvm::raw_string_ostream ss(s);
@@ -1460,8 +1468,8 @@ public:
         };
 
         Value *dif = diffe(&I, Builder2);
-        Value *diff = applyChainRule(op0->getType(), Builder2, rule,
-                                     Primal(op0->getType()), Gradient(dif));
+        Value *diff =
+            applyChainRule(op0->getType(), Builder2, rule, Gradient(dif));
 
         addToDiffe(orig_op0, diff, Builder2, FT);
       }
@@ -1947,14 +1955,18 @@ public:
             8;
 
       if (!gutils->isConstantValue(orig_agg)) {
-        auto rule = [&](Type *insertedTy, Value *prediff) {
+        Type *shadowTy = orig_inserted->getType();
+
+        if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
+          shadowTy = gutils->getShadowType(orig_inserted);
+
+        auto rule = [&](Value *prediff) {
           return Builder2.CreateInsertValue(
-              prediff, Constant::getNullValue(insertedTy), IVI.getIndices());
+              prediff, Constant::getNullValue(shadowTy), IVI.getIndices());
         };
         auto prediff = diffe(&IVI, Builder2);
-        auto dindex =
-            applyChainRule(orig_agg->getType(), Builder2, rule,
-                           Primal(orig_inserted->getType()), Gradient(prediff));
+        auto dindex = applyChainRule(orig_agg->getType(), Builder2, rule,
+                                     Gradient(prediff));
         addToDiffe(orig_agg, dindex, Builder2, TR.addingType(size1, orig_agg));
       }
 
@@ -4878,24 +4890,27 @@ public:
 
           Value *mul = Builder2.CreateFMul(op1, powcall1);
           Value *op = diffe(orig_ops[0], Builder2);
+          Type *shadowTy = CI.getType();
 
-          auto rule = [&Builder2, &DL](Value *op, Value *res, Value *mul,
-                                       Type *CITy) {
+          if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
+            shadowTy = gutils->getShadowType(CI);
+
+          auto rule = [&Builder2, &DL, &shadowTy](Value *op, Value *res,
+                                                  Value *mul) {
             Value *out = Builder2.CreateFMul(mul, op);
 
-            if (out->getType() != CITy) {
+            if (out->getType() != shadowTy) {
               if (DL.getTypeSizeInBits(out->getType()) <
-                  DL.getTypeSizeInBits(CITy))
-                out = Builder2.CreateFPExt(out, CITy);
+                  DL.getTypeSizeInBits(shadowTy))
+                out = Builder2.CreateFPExt(out, shadowTy);
               else
-                out = Builder2.CreateFPTrunc(out, CITy);
+                out = Builder2.CreateFPTrunc(out, shadowTy);
             }
             return Builder2.CreateFAdd(res, out);
           };
 
-          res =
-              applyChainRule(I.getType(), Builder2, rule, Gradient(op),
-                             Gradient(res), Primal(mul), Primal(CI.getType()));
+          res = applyChainRule(I.getType(), Builder2, rule, Gradient(op),
+                               Gradient(res), Primal(mul));
         }
         if (!gutils->isConstantValue(orig_ops[1])) {
           Value *powcall = Builder2.CreateCall(FT, PowF, {op0, op1});
@@ -4917,24 +4932,27 @@ public:
 
           Value *mul = Builder2.CreateFMul(powcall, logcall);
           Value *op = diffe(orig_ops[1], Builder2);
+          Type *shadowTy =
+              MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes
+                  ? gutils->getShadowType(CI)
+                  : CI.getType();
 
-          auto rule = [&Builder2, &DL](Value *op, Value *res, Value *mul,
-                                       Type *CITy) {
+          auto rule = [&Builder2, &DL, &shadowTy](Value *op, Value *res,
+                                                  Value *mul) {
             Value *out = Builder2.CreateFMul(mul, op);
 
-            if (out->getType() != CITy) {
+            if (out->getType() != shadowTy) {
               if (DL.getTypeSizeInBits(out->getType()) <
-                  DL.getTypeSizeInBits(CITy))
-                out = Builder2.CreateFPExt(out, CITy);
+                  DL.getTypeSizeInBits(shadowTy))
+                out = Builder2.CreateFPExt(out, shadowTy);
               else
-                out = Builder2.CreateFPTrunc(out, CITy);
+                out = Builder2.CreateFPTrunc(out, shadowTy);
             }
             return Builder2.CreateFAdd(res, out);
           };
 
-          res =
-              applyChainRule(I.getType(), Builder2, rule, Gradient(op),
-                             Gradient(res), Primal(mul), Primal(CI.getType()));
+          res = applyChainRule(I.getType(), Builder2, rule, Gradient(op),
+                               Gradient(res), Primal(mul));
         }
 
         setDiffe(&I, res, Builder2);
@@ -10299,9 +10317,14 @@ public:
                                           Intrinsic::sin, tys),
                 args));
 
-            auto rule = [&Builder2](Value *vdiff, Value *dsin, Value *dcos,
-                                    Type *orig_ty) {
-              Value *res = UndefValue::get(orig_ty);
+            Type *shadowTy = orig->getType();
+
+            if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
+              shadowTy = gutils->getShadowType(orig);
+
+            auto rule = [&Builder2, &shadowTy](Value *vdiff, Value *dsin,
+                                               Value *dcos) {
+              Value *res = UndefValue::get(shadowTy);
               res = Builder2.CreateInsertValue(
                   res, Builder2.CreateFMul(vdiff, dsin), {0});
               return Builder2.CreateInsertValue(
@@ -10309,9 +10332,9 @@ public:
                   {1});
             };
 
-            Value *dif0 = applyChainRule(call.getType(), Builder2, rule,
-                                         Gradient(vdiff), Primal(dsin),
-                                         Primal(dcos), Primal(orig->getType()));
+            Value *dif0 =
+                applyChainRule(call.getType(), Builder2, rule, Gradient(vdiff),
+                               Primal(dsin), Primal(dcos));
             setDiffe(orig, dif0, Builder2);
             return;
           }
