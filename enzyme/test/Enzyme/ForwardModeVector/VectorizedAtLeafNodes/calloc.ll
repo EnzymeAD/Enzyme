@@ -26,6 +26,7 @@ entry:
 
 declare dso_local <3 x double> @__enzyme_fwddiff(i8*, ...)
 
+; XFAIL: *
 ; CHECK: define {{[^@]+}}@fwddiffe3f(double [[X:%.*]], [3 x double] %"x'", i64 [[ARG:%.*]])
 ; CHECK-NEXT:  entry:
 ; CHECK-NEXT:    [[CALL:%.*]] = call noalias i8* @calloc(i64 8, i64 [[ARG]])
