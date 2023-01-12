@@ -325,10 +325,16 @@ public:
         unsigned vector_width = vty->getNumElements();
 #endif
         if (vector_width / width > 1) {
-          Constant *res = ConstantExpr::getShuffleVector(
-              value, UndefValue::get(value->getType()),
-              GradientUtils::CreateExtractSubvectorMask(vector_width, width,
-                                                        i));
+#if LLVM_VERSION_MAJOR >= 11
+          auto Mask = GradientUtils::CreateExtractSubvectorMask(vector_width, width, i);
+#else
+          auto MaskArray = GradientUtils::CreateExtractSubvectorMask(vector_width, width, i);
+          SmallVector<Constant*, 8> ConstantArray;
+          for (auto elem: MaskArray)
+            ConstantArray.push_back(Builder.getInt32(elem));
+          auto Mask = ConstantVector::get(ConstantArray);
+#endif
+          Constant *res = ConstantExpr::getShuffleVector(value, UndefValue::get(value->getType()), Mask);
           res->setName(value->getName() + ".subvector." + Twine(i));
           return res;
         } else {
