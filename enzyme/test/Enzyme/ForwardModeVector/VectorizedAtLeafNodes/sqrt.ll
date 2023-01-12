@@ -27,12 +27,12 @@ declare <3 x double> @__enzyme_fwddiff(double (double)*, ...)
 ; CHECK-NEXT:   %2 = extractelement <3 x double> %"x'", i64 0
 ; CHECK-NEXT:   %3 = fmul fast double %2, 5.000000e-01
 ; CHECK-NEXT:   %4 = fdiv fast double %3, %1
-; CHECK-NEXT:   %5 = select fast i1 %0, double 0.000000e+00, double %4
+; CHECK-NEXT:   %5 = select {{(fast )?}}i1 %0, double 0.000000e+00, double %4
 ; CHECK-NEXT:   %6 = insertelement <3 x double> undef, double %5, i64 0
 ; CHECK-NEXT:   %7 = extractelement <3 x double> %"x'", i64 1
 ; CHECK-NEXT:   %8 = fmul fast double %7, 5.000000e-01
 ; CHECK-NEXT:   %9 = fdiv fast double %8, %1
-; CHECK-NEXT:   %10 = select fast i1 %0, double 0.000000e+00, double %9
+; CHECK-NEXT:   %10 = select {{(fast )?}}i1 %0, double 0.000000e+00, double %9
 ; CHECK-NEXT:   %11 = insertelement <3 x double> %6, double %10, i64 1
 ; CHECK-NEXT:   %12 = extractelement <3 x double> %"x'", i64 2
 ; CHECK-NEXT:   %13 = fmul fast double %12, 5.000000e-01
