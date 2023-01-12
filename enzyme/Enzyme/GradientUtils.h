@@ -1710,7 +1710,7 @@ public:
   static inline auto CreateExtractSubvectorMask(unsigned vector_length,
                                                 unsigned width,
                                                 unsigned index) {
-#if LLVM_VERSION_MAJOR >= 12
+#if LLVM_VERSION_MAJOR >= 11
     SmallVector<int, 4> Mask;
 #else
     SmallVector<unsigned, 4> Mask;
