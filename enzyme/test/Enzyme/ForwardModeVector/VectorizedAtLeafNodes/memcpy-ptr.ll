@@ -35,8 +35,8 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   %0 = bitcast double** %dst to i8*
 ; CHECK-NEXT:   %"'ipc2" = bitcast <3 x double>** %"src'" to i8*
 ; CHECK-NEXT:   %1 = bitcast double** %src to i8*
-; CHECK-NEXT:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %0, i8* align 1 %1, i64 %num, i1 false) #3
+; CHECK-NEXT:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %0, i8* align 1 %1, i64 %num, i1 false)
 ; CHECK-NEXT:   %num.vecsize = mul i64 %num, 3
-; CHECK-NEXT:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %"'ipc", i8* align 1 %"'ipc2", i64 %num.vecsize, i1 false) #3
+; CHECK-NEXT:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %"'ipc", i8* align 1 %"'ipc2", i64 %num.vecsize, i1 false)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
