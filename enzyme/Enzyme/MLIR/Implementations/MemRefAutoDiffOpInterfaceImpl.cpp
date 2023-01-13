@@ -71,7 +71,7 @@ struct LoadOpInterfaceReverse : public AutoDiffOpInterfaceReverse::ExternalModel
     Value memref = loadOp.getMemref();
     ValueRange vr = loadOp.getIndices();
     
-    if (auto iface = loadOp.getType().cast<AutoDiffTypeInterface>()) {      
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType())){  
       if(gutils->hasInvertPointer(loadOp) && gutils->hasInvertPointer(memref)){
         OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
         
@@ -102,16 +102,16 @@ struct StoreOpInterfaceReverse : public AutoDiffOpInterfaceReverse::ExternalMode
     auto storeOp = cast<memref::StoreOp>(op);
     Value val = storeOp.getValue();
     Value memref = storeOp.getMemref();
-    ValueRange vr = storeOp.getIndices();
+    ValueRange indices = storeOp.getIndices();
     
-    if (auto iface = val.getType().cast<AutoDiffTypeInterface>()){
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType())){
       if(gutils->hasInvertPointer(memref)){
         OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
         
         Value memrefGradient = gutils->invertPointerM(memref, builder);
 
         SmallVector<Value> retrievedArguments;
-        for (Value v : vr){
+        for (Value v : indices){
           Value cache = gutils->cacheForReverse(gutils->getNewFromOriginal(v), cacheBuilder);
           Value retrievedValue = gutils->popCache(cache, builder);
           retrievedArguments.push_back(retrievedValue);

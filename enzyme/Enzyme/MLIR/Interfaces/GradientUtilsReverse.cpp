@@ -161,14 +161,15 @@ bool mlir::enzyme::MGradientUtilsReverse::isConstantValue(Value v) const {
   return false;
 }
 
+/*
+The value v must have an invert pointer
+*/
 Value mlir::enzyme::MGradientUtilsReverse::invertPointerM(Value v, OpBuilder &builder){
-  // TODO
   if (invertedPointers.contains(v)){
     assert(onlyUsedInParentBlock(v));
     return invertedPointers.lookupOrNull(v);
   }
-
-  if(invertedPointersGlobal.contains(v)){
+  else if(invertedPointersGlobal.contains(v)){
     Value gradient = invertedPointersGlobal.lookupOrNull(v);
     Type type = gradient.getType();
     if (GradientType gType = dyn_cast<GradientType>(type)) {
@@ -180,9 +181,6 @@ Value mlir::enzyme::MGradientUtilsReverse::invertPointerM(Value v, OpBuilder &bu
     }
   }
 
-  if (isConstantValue(v)) {
-    llvm_unreachable("invert pointer of constant value");
-  }
   llvm::errs() << " could not invert pointer v " << v << "\n";
   llvm_unreachable("could not invert pointer");
 }
@@ -282,16 +280,8 @@ bool MGradientUtilsReverse::visitChildCustom(Operation * op, OpBuilder &builder)
 }
 
 LogicalResult MGradientUtilsReverse::visitChildReverse(Operation *op, OpBuilder &builder) {
-  if (mode == DerivativeMode::ReverseModeGradient) {
-    if (auto binst = dyn_cast<BranchOpInterface>(op)) {
-      
-    }
-    else if (auto binst = dyn_cast<func::ReturnOp>(op)) {
-      
-    }
-    else if (auto iface = dyn_cast<AutoDiffOpInterfaceReverse>(op)) {
-      return iface.createReverseModeAdjoint(builder, this);
-    }
+  if (auto iface = dyn_cast<AutoDiffOpInterfaceReverse>(op)) {
+    return iface.createReverseModeAdjoint(builder, this);
   }
   return success();
 }

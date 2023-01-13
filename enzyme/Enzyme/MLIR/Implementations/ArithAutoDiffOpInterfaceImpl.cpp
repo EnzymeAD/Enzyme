@@ -109,9 +109,8 @@ struct AddFOpInterfaceReverse : public AutoDiffOpInterfaceReverse::ExternalModel
 
     if(gutils->hasInvertPointer(addOp)){
       Value addedGradient = gutils->invertPointerM(addOp, builder);
-      for (int i = 0; i < 2; i++) {
-        addToGradient(addOp.getOperand(i), addedGradient, builder, gutils);
-      }
+      addToGradient(addOp.getLhs(), addedGradient, builder, gutils);
+      addToGradient(addOp.getRhs(), addedGradient, builder, gutils);
     }
     return success();
   }

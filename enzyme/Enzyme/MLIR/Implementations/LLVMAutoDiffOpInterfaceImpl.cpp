@@ -87,7 +87,7 @@ public:
   }
 
   bool isPointerType(Type self) const{
-    return false;
+    return true;
   }
 };
 } // namespace

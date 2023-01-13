@@ -20,8 +20,6 @@ include "mlir/IR/FunctionInterfaces.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 
-//include "mlir/Dialect/LLVMIR/LLVMOpBase.td"
-//include "mlir/Dialect/LLVMIR/LLVMOpsInterfaces.td"
 include "mlir/IR/AttrTypeBase.td"
 
 def Activity : I32EnumAttr<"Activity",
@@ -57,7 +55,7 @@ def ForwardDiffOp : Enzyme_Op<"fwddiff",
   }];
 }
 
-def ReverseDiffOp : Enzyme_Op<"diff",
+def DiffOp : Enzyme_Op<"diff",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Perform reverse mode AD on a funcop";
   let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity);

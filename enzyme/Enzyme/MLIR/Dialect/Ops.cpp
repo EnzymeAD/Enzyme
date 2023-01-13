@@ -56,7 +56,7 @@ ForwardDiffOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 
 
 LogicalResult
-ReverseDiffOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+DiffOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // TODO: Verify that the result type is same as the type of the referenced
   // func.func op.
   auto global =
