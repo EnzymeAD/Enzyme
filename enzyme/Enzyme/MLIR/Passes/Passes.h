@@ -17,6 +17,8 @@ class RewritePatternSet;
 class DominanceInfo;
 namespace enzyme {
 std::unique_ptr<Pass> createDifferentiatePass();
+
+std::unique_ptr<Pass> createEnzymeToMemRefPass();
 } // namespace enzyme
 } // namespace mlir
 
