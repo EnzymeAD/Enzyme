@@ -2705,7 +2705,7 @@ public:
             applyChainRule(orig_op1->getType(), Builder2, rule, dif[0], dif[1]),
             Builder2);
       } else if (!constantval0) {
-        setDiffe(&BO, dif[1], Builder2);
+        setDiffe(&BO, dif[0], Builder2);
       } else if (!constantval1) {
         auto rule = [&](Value *dif1) {
           return Builder2.CreateFMul(dif1, round);
@@ -4278,7 +4278,11 @@ public:
         auto *PowF = CI.getCalledValue();
 #endif
         assert(PowF);
-        auto FT = cast<FunctionType>(PowF->getType()->getPointerElementType());
+        FunctionType *FT = nullptr;
+        if (auto F = dyn_cast<Function>(PowF))
+          FT = F->getFunctionType();
+        else
+          cast<FunctionType>(PowF->getType()->getPointerElementType());
 
         if (vdiff && !gutils->isConstantValue(orig_ops[0])) {
 
@@ -9553,6 +9557,90 @@ public:
         }
       }
 
+      if (funcName == "frexp" || funcName == "frexpf" || funcName == "frexpl") {
+        eraseIfUnused(*orig);
+        Value *orig_op0 = call.getOperand(0);
+
+        if (gutils->isConstantValue(orig) ||
+            gutils->isConstantValue(orig_op0)) {
+          return;
+        }
+
+        // d/dx frexp(x, ...) = 2^{-exp} =
+
+        Value *op0 = gutils->getNewFromOriginal(orig_op0);
+
+        auto ty = orig->getType();
+        unsigned low = 0;
+        unsigned high = 0;
+        unsigned tsize = 0;
+        if (ty->isHalfTy()) {
+          tsize = 16;
+          high = tsize - 1;
+          low = high - 5;
+        } else if (ty->isFloatTy()) {
+          tsize = 32;
+          high = tsize - 1;
+          low = high - 8;
+        } else if (ty->isDoubleTy()) {
+          tsize = 64;
+          high = tsize - 1;
+          low = high - 11;
+        } else if (ty->isFP128Ty()) {
+          tsize = 128;
+          high = tsize - 1;
+          low = high - 15;
+        } else {
+          llvm_unreachable("Unknown type within frexp");
+        }
+
+        APInt eval = APInt::getBitsSet(tsize, low, high);
+        auto ity = IntegerType::get(ty->getContext(), tsize);
+        auto mask = ConstantInt::get(ity, eval);
+
+        switch (Mode) {
+        case DerivativeMode::ForwardModeSplit:
+        case DerivativeMode::ForwardMode: {
+          IRBuilder<> Builder2(&call);
+          getForwardBuilder(Builder2);
+
+          Value *exp =
+              Builder2.CreateAnd(Builder2.CreateBitCast(op0, ity), mask);
+          exp = Builder2.CreateBitCast(exp, ty);
+          exp = Builder2.CreateFMul(exp, ConstantFP::get(ty, 2.0));
+
+          Value *diff0 = diffe(orig_op0, Builder2);
+          Value *diff = Builder2.CreateFDiv(diff0, exp);
+
+          setDiffe(&call, diff, Builder2);
+          return;
+        }
+        case DerivativeMode::ReverseModeGradient:
+        case DerivativeMode::ReverseModeCombined: {
+          IRBuilder<> Builder2(call.getParent());
+          getReverseBuilder(Builder2);
+
+          Value *idiff = diffe(&call, Builder2);
+          setDiffe(&call, ConstantFP::get(ty, 0.0), Builder2);
+
+          op0 = lookup(op0, Builder2);
+
+          Value *exp =
+              Builder2.CreateAnd(Builder2.CreateBitCast(op0, ity), mask);
+          exp = Builder2.CreateBitCast(exp, ty);
+          exp = Builder2.CreateFMul(exp, ConstantFP::get(ty, 2.0));
+
+          Value *diff = Builder2.CreateFDiv(idiff, exp);
+
+          addToDiffe(orig_op0, diff, Builder2, ty);
+
+          return;
+        }
+        case DerivativeMode::ReverseModePrimal:;
+          return;
+        }
+      }
+
       if (funcName == "scalbn" || funcName == "scalbnf" ||
           funcName == "scalbnl" || funcName == "scalbln" ||
           funcName == "scalblnf" || funcName == "scalblnl") {
@@ -9596,6 +9684,7 @@ public:
           getReverseBuilder(Builder2);
 
           Value *idiff = diffe(&call, Builder2);
+          setDiffe(&call, ConstantFP::get(call.getType(), 0.0), Builder2);
 
           if (idiff && !constantval0) {
             op1 = lookup(op1, Builder2);
@@ -12004,8 +12093,11 @@ public:
               "whose runtime value is inactive",
               gutils->getNewFromOriginal(orig->getDebugLoc()), orig);
 
-        auto ft =
-            cast<FunctionType>(callval->getType()->getPointerElementType());
+        FunctionType *ft = nullptr;
+        if (auto F = dyn_cast<Function>(callval))
+          ft = F->getFunctionType();
+        else
+          ft = cast<FunctionType>(callval->getType()->getPointerElementType());
 
         std::set<llvm::Type *> seen;
         DIFFE_TYPE subretType = whatType(orig->getType(), Mode,
@@ -12080,8 +12172,11 @@ public:
       // sub_index_map = fnandtapetype.tapeIndices;
 
       assert(newcalled);
-      FunctionType *FT =
-          cast<FunctionType>(newcalled->getType()->getPointerElementType());
+      FunctionType *FT = nullptr;
+      if (auto F = dyn_cast<Function>(newcalled))
+        FT = F->getFunctionType();
+      else
+        FT = cast<FunctionType>(newcalled->getType()->getPointerElementType());
 
       // llvm::errs() << "seeing sub_index_map of " << sub_index_map->size()
       // << " in ap " << cast<Function>(called)->getName() << "\n";
@@ -12460,8 +12555,12 @@ public:
 
     assert(newcalled);
     // if (auto NC = dyn_cast<Function>(newcalled)) {
-    FunctionType *FT =
-        cast<FunctionType>(newcalled->getType()->getPointerElementType());
+    FunctionType *FT = nullptr;
+    if (auto F = dyn_cast<Function>(newcalled))
+      FT = F->getFunctionType();
+    else {
+      FT = cast<FunctionType>(newcalled->getType()->getPointerElementType());
+    }
 
     if (false) {
     badfn:;
