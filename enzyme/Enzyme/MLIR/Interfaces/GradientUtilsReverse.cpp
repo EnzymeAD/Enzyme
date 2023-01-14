@@ -88,7 +88,7 @@ Type mlir::enzyme::MGradientUtilsReverse::getGradientType(Value v){
 
 Value mlir::enzyme::MGradientUtilsReverse::insertInitBackwardCache(Type t){
   OpBuilder builder(initializationBlock, initializationBlock->begin());
-  return builder.create<enzyme::CreateCacheOp>((initializationBlock->rbegin())->getLoc(), t);
+  return builder.create<enzyme::InitOp>((initializationBlock->rbegin())->getLoc(), t);
 }
 
 Value MGradientUtilsReverse::cacheForReverse(Value v, OpBuilder& builder){
@@ -104,7 +104,7 @@ Value MGradientUtilsReverse::popCache(Value cache, OpBuilder& builder){
 Value mlir::enzyme::MGradientUtilsReverse::insertInitGradient(mlir::Value v, OpBuilder &builder){
   Type gradientType = getGradientType(v);
   OpBuilder initBuilder(initializationBlock, initializationBlock->begin());
-  Value gradient = initBuilder.create<enzyme::CreateCacheOp>(v.getLoc(), gradientType);
+  Value gradient = initBuilder.create<enzyme::InitOp>(v.getLoc(), gradientType);
   return gradient;
 }
 

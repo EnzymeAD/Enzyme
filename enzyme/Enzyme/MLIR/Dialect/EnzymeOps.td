@@ -78,8 +78,8 @@ def PopCacheOp : Enzyme_Op<"pop"> {
   let results = (outs AnyType:$output);
 }
 
-def CreateCacheOp : Enzyme_Op<"init"> {
-  let summary = "Creat cache for reverse pass.";
+def InitOp : Enzyme_Op<"init"> {
+  let summary = "Creat enzyme.gradient and enzyme.cache";
   let arguments = (ins );
   let results = (outs AnyType);
 }
@@ -104,12 +104,6 @@ def GetGradientOp : Enzyme_Op<"get"> {
   let summary = "Load value of gradient";
   let arguments = (ins AnyType : $gradient);
   let results = (outs AnyType);
-}
-
-def ClearGradientOp : Enzyme_Op<"clear"> {
-  let summary = "Clear gradient";
-  let arguments = (ins AnyType : $gradient);
-  let results = (outs );
 }
 
 def Gradient : Enzyme_Type<"Gradient"> {
