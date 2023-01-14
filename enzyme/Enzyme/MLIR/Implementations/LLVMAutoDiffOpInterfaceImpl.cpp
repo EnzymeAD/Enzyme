@@ -86,7 +86,7 @@ public:
     return self;
   }
 
-  bool isPointerType(Type self) const{
+  bool needsClearing(Type self) const{
     return true;
   }
 };

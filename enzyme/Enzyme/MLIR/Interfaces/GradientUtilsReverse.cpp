@@ -59,11 +59,12 @@ mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
       symbolTable(symbolTable_){
 
   initInitializationBlock(invertedPointers_);
+  initReturnBlocks();
 }
 
 //for(auto x : v.getUsers()){x->dump();} DEBUG
 
-bool onlyUsedInParentBlock(Value v){
+bool MGradientUtilsReverse::onlyUsedInParentBlock(Value v){
   return !v.isUsedOutsideOfBlock(v.getParentBlock());
 }
 
@@ -170,6 +171,7 @@ Value mlir::enzyme::MGradientUtilsReverse::invertPointerM(Value v, OpBuilder &bu
     return invertedPointers.lookupOrNull(v);
   }
   else if(invertedPointersGlobal.contains(v)){
+    assert(!onlyUsedInParentBlock(v));
     Value gradient = invertedPointersGlobal.lookupOrNull(v);
     Type type = gradient.getType();
     if (GradientType gType = dyn_cast<GradientType>(type)) {
@@ -202,88 +204,9 @@ void mlir::enzyme::MGradientUtilsReverse::mapInvertPointer(mlir::Value v, mlir::
   }
 }
 
-void MGradientUtilsReverse::clearInvertPointer(Operation * op, OpBuilder &initBuilder, OpBuilder &revBuilder){
-  SmallVector<OpBuilder *> builders = {&initBuilder, &revBuilder};
-  if (auto iface = dyn_cast<AutoDiffOpInterfaceReverse>(op)) {
-    return iface.clearGradient(builders, this);
-  }
-}
 
 bool mlir::enzyme::MGradientUtilsReverse::hasInvertPointer(mlir::Value v){
   return (invertedPointers.contains(v)) || (invertedPointersGlobal.contains(v));
-}
-
-bool MGradientUtilsReverse::visitChildCustom(Operation * op, OpBuilder &builder){
-  std::string nameDiffe = "diffe_" + op->getName().getDialectNamespace().str() + "_" + op->getName().stripDialect().str();
-  std::string nameStore = "store_" + op->getName().getDialectNamespace().str() + "_" + op->getName().stripDialect().str();
-
-  StringRef srDiffe(nameDiffe);
-  StringRef srStore(nameStore);
-  
-  OperationName opNameDiffe(srDiffe, op->getContext());
-  OperationName opNameStore(srStore, op->getContext());
-
-  Operation * symbolDiffe = symbolTable.lookupNearestSymbolFrom(op, opNameDiffe.getIdentifier());
-  Operation * symbolStore = symbolTable.lookupNearestSymbolFrom(op, opNameStore.getIdentifier());
-  
-  if (symbolDiffe != nullptr){
-    SmallVector<Value> caches;
-    if(symbolStore != nullptr){
-      Operation * newOp = getNewFromOriginal(op);
-
-      func::FuncOp funcStore = cast<func::FuncOp>(symbolStore);
-      
-      SmallVector<Type, 2> storeResultTypes;
-      for (auto x : funcStore.getFunctionType().getResults()){
-        storeResultTypes.push_back(x);
-      }
-
-      SmallVector<Value, 2> storeArgs;
-      for (auto x : newOp->getOperands()){
-        storeArgs.push_back(x);
-      }
-
-      OpBuilder storeBuilder(newOp);
-      func::CallOp storeCI = storeBuilder.create<func::CallOp>(op->getLoc(), srStore, storeResultTypes, storeArgs);
-      for (auto x : storeCI.getResults()){
-        caches.push_back(cacheForReverse(x, storeBuilder));
-      }
-    }
-    
-    SmallVector<Value, 2> args;
-    
-    bool hasGradient = false;
-    for (Value opResult : op->getResults()){
-      if(hasInvertPointer(opResult)){
-        hasGradient = true;
-        Value invertValue = invertPointerM(opResult, builder);
-        args.push_back(invertValue);
-      }
-    }
-    for (Value cache : caches){
-      args.push_back(popCache(cache, builder));
-    }
-
-    SmallVector<Type, 2> resultTypes;
-    for (auto x : op->getOperands()){
-      resultTypes.push_back(x.getType());
-    }
-
-    func::CallOp dCI = builder.create<func::CallOp>(op->getLoc(), srDiffe, resultTypes, args);
-    for (int i = 0; i < op->getNumOperands(); i++){
-      mapInvertPointer(op->getOperand(i), dCI.getResult(i), builder);
-    }
-
-    return true;
-  }
-  return false;
-}
-
-LogicalResult MGradientUtilsReverse::visitChildReverse(Operation *op, OpBuilder &builder) {
-  if (auto iface = dyn_cast<AutoDiffOpInterfaceReverse>(op)) {
-    return iface.createReverseModeAdjoint(builder, this);
-  }
-  return success();
 }
 
 void MGradientUtilsReverse::initInitializationBlock(BlockAndValueMapping invertedPointers_){
@@ -294,6 +217,16 @@ void MGradientUtilsReverse::initInitializationBlock(BlockAndValueMapping inverte
   
   for (auto const& x : invertedPointers_.getValueMap()){
     this->mapInvertPointer(x.first, x.second, initializationBuilder);
+  }
+}
+
+void MGradientUtilsReverse::initReturnBlocks(){
+  returnBlocks.clear();
+  for(auto it = oldFunc.getFunctionBody().getBlocks().begin(); it != oldFunc.getFunctionBody().getBlocks().end(); it++){
+    Block * b = &*it;
+    if(b->getNumSuccessors() == 0){
+      returnBlocks.push_back(b);
+    }
   }
 }
 

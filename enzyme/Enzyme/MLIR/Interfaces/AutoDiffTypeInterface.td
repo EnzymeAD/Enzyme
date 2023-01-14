@@ -53,10 +53,10 @@ def AutoDiffTypeInterface : TypeInterface<"AutoDiffTypeInterface"> {
     >,
     InterfaceMethod<
       /*desc=*/[{
-        Returns if the Type is a pointer like type.
+        Returns if the Type needs to be cleared.
       }],
       /*retTy=*/"bool",
-      /*methodName=*/"isPointerType",
+      /*methodName=*/"needsClearing",
       /*args=*/(ins )
     >
   ];

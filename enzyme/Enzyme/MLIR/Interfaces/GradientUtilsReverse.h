@@ -30,6 +30,7 @@ public:
   BlockAndValueMapping invertedPointers;
   BlockAndValueMapping invertedPointersGlobal;
   Block *initializationBlock;
+  SmallVector<Block *> returnBlocks;
 
   BlockAndValueMapping mapReverseModeBlocks;
   DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapBlockArguments;
@@ -72,7 +73,6 @@ public:
   bool hasInvertPointer(mlir::Value v);
   mlir::Value invertPointerM(mlir::Value v, OpBuilder &builder);
   void mapInvertPointer(mlir::Value v, mlir::Value invertValue, OpBuilder &builder);
-  void clearInvertPointer(Operation * op, OpBuilder &initBuilder, OpBuilder &revBuilder);
 
   void setDiffe(mlir::Value val, mlir::Value toset, OpBuilder &BuilderM);
   Value insertInitBackwardCache(Type t);
@@ -83,11 +83,12 @@ public:
   Type getGradientType(Value t);
 
   void initInitializationBlock(BlockAndValueMapping invertedPointers_);
+  void initReturnBlocks();
+
+  bool onlyUsedInParentBlock(Value v);
 
   Operation *cloneWithNewOperands(OpBuilder &B, Operation *op);
   
-  LogicalResult visitChildReverse(Operation *op, OpBuilder& builder);
-  bool visitChildCustom(Operation * op, OpBuilder &builder);
   Value cacheForReverse(Value v, OpBuilder& builder);
   Value popCache(Value cache, OpBuilder& builder);
 };
