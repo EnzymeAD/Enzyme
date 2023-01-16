@@ -40,7 +40,7 @@ def AutoDiffOpInterface : OpInterface<"AutoDiffOpInterface"> {
   ];
 }
 
-def AutoDiffOpInterfaceReverse : OpInterface<"AutoDiffOpInterfaceReverse"> {
+def ReverseAutoDiffOpInterface : OpInterface<"ReverseAutoDiffOpInterface"> {
   let description = [{
     A differentiable MLIR operation that is able to emit reverse mode adjoints for itself.
   }];
@@ -51,18 +51,27 @@ def AutoDiffOpInterfaceReverse : OpInterface<"AutoDiffOpInterfaceReverse"> {
     /*desc=*/[{
       Emits a reverse-mode adjoint of the given function.
     }],
-    /*retTy=*/"::mlir::LogicalResult",
+    /*retTy=*/"void",
     /*methodName=*/"createReverseModeAdjoint",
-    /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::enzyme::MGradientUtilsReverse *":$gutils)
+    /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::enzyme::MGradientUtilsReverse *":$gutils, "::mlir::ValueRange":$caches)
     >,
 
     InterfaceMethod<
     /*desc=*/[{
-      Clear the value of the gradient. If needed cache values to do so.
+      Caches values to create the adjoint.
+    }],
+    /*retTy=*/"::mlir::ValueRange",
+    /*methodName=*/"cacheValues",
+    /*args=*/(ins "::mlir::enzyme::MGradientUtilsReverse *":$gutils)
+    >,
+
+    InterfaceMethod<
+    /*desc=*/[{
+      Clear the value of the gradient.
     }],
     /*retTy=*/"void",
     /*methodName=*/"clearGradient",
-    /*args=*/(ins "SmallVector<::mlir::OpBuilder *>":$builders, "::mlir::enzyme::MGradientUtilsReverse *":$gutils)
+    /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::enzyme::MGradientUtilsReverse *":$gutils, "::mlir::ValueRange":$caches, "unsigned":$resultIndex)
     >
   ];
 }

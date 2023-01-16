@@ -62,6 +62,102 @@ void handleReturns(Block * oBB, Block * newBB, Block * reverseBB, MDiffeGradient
   }
 }
 
+bool visitChildCustom(Operation * op, OpBuilder &builder, MDiffeGradientUtilsReverse * gutils){
+  std::string nameDiffe = "diffe_" + op->getName().getDialectNamespace().str() + "_" + op->getName().stripDialect().str();
+  std::string nameStore = "store_" + op->getName().getDialectNamespace().str() + "_" + op->getName().stripDialect().str();
+
+  StringRef srDiffe(nameDiffe);
+  StringRef srStore(nameStore);
+  
+  OperationName opNameDiffe(srDiffe, op->getContext());
+  OperationName opNameStore(srStore, op->getContext());
+
+  Operation * symbolDiffe = gutils->symbolTable.lookupNearestSymbolFrom(op, opNameDiffe.getIdentifier());
+  Operation * symbolStore = gutils->symbolTable.lookupNearestSymbolFrom(op, opNameStore.getIdentifier());
+  
+  if (symbolDiffe != nullptr){
+    SmallVector<Value> caches;
+    if(symbolStore != nullptr){
+      Operation * newOp = gutils->getNewFromOriginal(op);
+
+      func::FuncOp funcStore = cast<func::FuncOp>(symbolStore);
+      
+      SmallVector<Type, 2> storeResultTypes;
+      for (auto x : funcStore.getFunctionType().getResults()){
+        storeResultTypes.push_back(x);
+      }
+
+      SmallVector<Value, 2> storeArgs;
+      for (auto x : newOp->getOperands()){
+        storeArgs.push_back(x);
+      }
+
+      OpBuilder storeBuilder(newOp);
+      func::CallOp storeCI = storeBuilder.create<func::CallOp>(op->getLoc(), srStore, storeResultTypes, storeArgs);
+      for (auto x : storeCI.getResults()){
+        caches.push_back(gutils->cacheForReverse(x, storeBuilder));
+      }
+    }
+    
+    SmallVector<Value> args;
+    for (Value opResult : op->getResults()){
+      if(gutils->hasInvertPointer(opResult)){
+        Value invertValue = gutils->invertPointerM(opResult, builder);
+        args.push_back(invertValue);
+      }
+    }
+    for (Value cache : caches){
+      args.push_back(gutils->popCache(cache, builder));
+    }
+
+    SmallVector<Type, 2> resultTypes;
+    for (auto x : op->getOperands()){
+      resultTypes.push_back(x.getType());
+    }
+
+    func::CallOp dCI = builder.create<func::CallOp>(op->getLoc(), srDiffe, resultTypes, args);
+    for (int i = 0; i < op->getNumOperands(); i++){
+      gutils->mapInvertPointer(op->getOperand(i), dCI.getResult(i), builder);
+    }
+
+    return true;
+  }
+  return false;
+}
+
+/*
+Create reverse mode adjoint for an operation.
+*/
+void visitChild(Operation * op, OpBuilder &builder, MDiffeGradientUtilsReverse * gutils){
+  if (auto ifaceOp = dyn_cast<ReverseAutoDiffOpInterface>(op)) {
+    ValueRange caches = ifaceOp.cacheValues(gutils);
+    ifaceOp.createReverseModeAdjoint(builder, gutils, caches);
+
+    for (int indexResult = 0; indexResult < op->getNumResults(); indexResult++){
+      Value result = op->getResult(indexResult);
+      
+      if(!gutils->onlyUsedInParentBlock(result)){
+        ifaceOp.clearGradient(builder, gutils, caches, indexResult);
+        for(Block * returnBlockOld : gutils->returnBlocks){
+          //TODO check if returnBlockOld already gives gradient to result. This currently works because we clear the gradient before the gradient is assigned by the return op. Might cause issues later on.
+          Block * returnBlock = gutils->mapReverseModeBlocks.lookupOrNull(returnBlockOld);
+          OpBuilder returnBlockBuilder(returnBlock, returnBlock->begin());
+          ifaceOp.clearGradient(returnBlockBuilder, gutils, caches, indexResult);
+        }
+      }
+      else{
+        if(auto ifaceType = dyn_cast<AutoDiffTypeInterface>(result.getType())){
+          if(ifaceType.needsClearing()){
+            Block * opBlock = gutils->mapReverseModeBlocks.lookupOrNull(op->getBlock());
+            OpBuilder opBlockBuilder(opBlock, opBlock->begin());
+            ifaceOp.clearGradient(opBlockBuilder, gutils, caches, indexResult);
+          }
+        }
+      }
+    }
+  }
+}
+
 void visitChildren(Block * oBB, Block * reverseBB, MDiffeGradientUtilsReverse * gutils){
   OpBuilder revBuilder(reverseBB, reverseBB->end());
   if (!oBB->empty()){
@@ -69,14 +165,10 @@ void visitChildren(Block * oBB, Block * reverseBB, MDiffeGradientUtilsReverse * 
     auto last = oBB->rend();
     for (auto it = first; it != last; ++it) {
       Operation * op = &*it;
-      bool customFound = gutils->visitChildCustom(op, revBuilder);
+      bool customFound = visitChildCustom(op, revBuilder, gutils);
       if(!customFound){
-        (void)gutils->visitChildReverse(op, revBuilder);
+        visitChild(op, revBuilder, gutils);
       }
-
-      Block * initBlock = gutils->initializationBlock;
-      OpBuilder initBuilder(initBlock->getTerminator());
-      gutils->clearInvertPointer(op, initBuilder, revBuilder);
     }
   }
 }
@@ -162,7 +254,6 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(FunctionOpInte
 
   ReturnType returnValue = ReturnType::Tape;
   MDiffeGradientUtilsReverse * gutils = MDiffeGradientUtilsReverse::CreateFromClone(*this, mode, width, fn, TA, type_args, retType, /*diffeReturnArg*/ true, constants, returnValue, addedType, symbolTable);
-
 
   SmallVector<mlir::Block*> dominatorToposortBlocks = getDominatorToposort(gutils);
 
