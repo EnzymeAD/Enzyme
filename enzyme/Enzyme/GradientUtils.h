@@ -155,55 +155,55 @@ public:
   PostDominatorTree &OrigPDT;
   LoopInfo &OrigLI;
   ScalarEvolution &OrigSE;
-  
+
   // (Original) Blocks which dominate all returns
   SmallPtrSet<BasicBlock *, 4> BlocksDominatingAllReturns;
-  
+
   SmallPtrSet<BasicBlock *, 4> notForAnalysis;
   std::shared_ptr<ActivityAnalyzer> ATA;
   SmallVector<BasicBlock *, 12> originalBlocks;
-  
+
   // Allocations which are known to always be freed before the
   // reverse, to the list of frees that must apply to this allocation.
   ValueMap<const CallInst *, SmallPtrSet<const CallInst *, 1>>
-  allocationsWithGuaranteedFree;
-  
+      allocationsWithGuaranteedFree;
+
   // Frees which can always be eliminated as the post dominate
   // an allocation (which will itself be freed).
   SmallPtrSet<const CallInst *, 1> postDominatingFrees;
-  
+
   // Deallocations that should be kept in the forward pass because
   // they deallocation memory which isn't necessary for the reverse
   // pass
   SmallPtrSet<const CallInst *, 1> forwardDeallocations;
-  
+
   // Map of primal block to corresponding block(s) in reverse
   std::map<BasicBlock *, SmallVector<BasicBlock *, 4>> reverseBlocks;
   // Map of block in reverse to corresponding primal block
   std::map<BasicBlock *, BasicBlock *> reverseBlockToPrimal;
-  
+
   // A set of tape extractions to enforce a cache of
   // rather than attempting to recompute.
   SmallPtrSet<Instruction *, 4> TapesToPreventRecomputation;
-  
+
   ValueMap<PHINode *, WeakTrackingVH> fictiousPHIs;
   ValueToValueMapTy originalToNewFn;
   ValueToValueMapTy newToOriginalFn;
   SmallVector<CallInst *, 4> originalCalls;
-  
+
   SmallPtrSet<Instruction *, 4> unnecessaryIntermediates;
-  
+
   const std::map<Instruction *, bool> *can_modref_map;
   const std::map<CallInst *, const std::map<Argument *, bool>>
-  *uncacheable_args_map_ptr;
+      *uncacheable_args_map_ptr;
   const SmallPtrSetImpl<const Value *> *unnecessaryValuesP;
-  
+
   SmallVector<OperandBundleDef, 2>
   getInvertedBundles(CallInst *orig, ArrayRef<ValueType> types,
                      IRBuilder<> &Builder2, bool lookup,
                      const ValueToValueMapTy &available = ValueToValueMapTy()) {
     assert(!(lookup && mode == DerivativeMode::ForwardMode));
-    
+
     SmallVector<OperandBundleDef, 2> OrigDefs;
     orig->getOperandBundlesAsDefs(OrigDefs);
     SmallVector<OperandBundleDef, 2> Defs;
@@ -219,7 +219,7 @@ public:
       // Only handle jl_roots tag (for now).
       if (bund.getTag() != "jl_roots") {
         llvm::errs() << "unsupported tag " << bund.getTag() << " for " << *orig
-        << "\n";
+                     << "\n";
         llvm_unreachable("unsupported tag");
       }
       SmallVector<Value *, 2> bunds;
@@ -246,7 +246,7 @@ public:
     }
     return Defs;
   }
-  
+
   Value *getNewIfOriginal(Value *originst) const {
     assert(originst);
     auto f = originalToNewFn.find(originst);
@@ -262,13 +262,13 @@ public:
     assert(f->second);
     return f->second;
   }
-  
+
   Value *tid;
   Value *ompThreadId() {
     if (tid)
       return tid;
     IRBuilder<> B(inversionAllocs);
-    
+
     auto FT = FunctionType::get(Type::getInt64Ty(B.getContext()),
                                 ArrayRef<Type *>(), false);
     AttributeList AL;
@@ -280,14 +280,14 @@ public:
                          Attribute::AttrKind::ReadOnly);
 #endif
     return tid = B.CreateCall(newFunc->getParent()->getOrInsertFunction(
-                                                                        "omp_get_thread_num", FT, AL));
+               "omp_get_thread_num", FT, AL));
   }
   Value *numThreads;
   Value *ompNumThreads() {
     if (numThreads)
       return numThreads;
     IRBuilder<> B(inversionAllocs);
-    
+
     auto FT = FunctionType::get(Type::getInt64Ty(B.getContext()),
                                 ArrayRef<Type *>(), false);
     AttributeList AL;
@@ -299,9 +299,9 @@ public:
                          Attribute::AttrKind::ReadOnly);
 #endif
     return numThreads = B.CreateCall(newFunc->getParent()->getOrInsertFunction(
-                                                                               "omp_get_max_threads", FT, AL));
+               "omp_get_max_threads", FT, AL));
   }
-  
+
   Value *getOrInsertTotalMultiplicativeProduct(Value *val, LoopContext &lc) {
     // TODO optimize if val is invariant to loopContext
     assert(val->getType()->isFPOrFPVectorTy());
@@ -316,17 +316,17 @@ public:
         }
         if (auto C = dyn_cast<ConstantFP>(ival)) {
           if (!C->isExactlyValue(
-                                 APFloat(C->getType()->getFltSemantics(), "1"))) {
-                                   continue;
-                                 }
+                  APFloat(C->getType()->getFltSemantics(), "1"))) {
+            continue;
+          }
         } else
           continue;
         for (auto IB : PN->blocks()) {
           if (IB == lc.preheader)
             continue;
-          
+
           if (auto BO =
-              dyn_cast<BinaryOperator>(PN->getIncomingValueForBlock(IB))) {
+                  dyn_cast<BinaryOperator>(PN->getIncomingValueForBlock(IB))) {
             if (BO->getOpcode() != BinaryOperator::FMul)
               goto continueOutermost;
             if (BO->getOperand(0) == PN && BO->getOperand(1) == val)
@@ -340,7 +340,7 @@ public:
         break;
     continueOutermost:;
     }
-    
+
     IRBuilder<> lbuilder(lc.header, lc.header->begin());
     auto PN = lbuilder.CreatePHI(val->getType(), 2);
     Constant *One = ConstantFP::get(val->getType()->getScalarType(), "1");
@@ -365,7 +365,7 @@ public:
     }
     return red;
   }
-  
+
   Value *getOrInsertConditionalIndex(Value *val, LoopContext &lc,
                                      bool pickTrue) {
     assert(val->getType()->isIntOrIntVectorTy(1));
@@ -386,9 +386,9 @@ public:
         for (auto IB : PN->blocks()) {
           if (IB == lc.preheader)
             continue;
-          
+
           if (auto SI =
-              dyn_cast<SelectInst>(PN->getIncomingValueForBlock(IB))) {
+                  dyn_cast<SelectInst>(PN->getIncomingValueForBlock(IB))) {
             if (SI->getCondition() != val)
               goto continueOutermost;
             if (pickTrue && SI->getFalseValue() == PN) {
@@ -408,11 +408,11 @@ public:
         break;
     continueOutermost:;
     }
-    
+
     IRBuilder<> lbuilder(lc.header, lc.header->begin());
     auto PN = lbuilder.CreatePHI(lc.incvar->getType(), 2);
     Constant *Zero =
-    Constant::getNullValue(lc.incvar->getType()->getScalarType());
+        Constant::getNullValue(lc.incvar->getType()->getScalarType());
     PN->addIncoming(Zero, lc.preheader);
     lbuilder.SetInsertPoint(lc.incvar->getNextNode());
     Value *red = lc.incvar;
@@ -436,7 +436,7 @@ public:
     }
     return red;
   }
-  
+
   bool assumeDynamicLoopOfSizeOne(llvm::Loop *L) const override {
     if (!EnzymeInactiveDynamic)
       return false;
@@ -450,7 +450,7 @@ public:
     }
     return true;
   }
-  
+
   llvm::DebugLoc getNewFromOriginal(const llvm::DebugLoc L) const {
     if (L.get() == nullptr)
       return nullptr;
@@ -463,7 +463,7 @@ public:
     assert(opt.hasValue());
     return llvm::DebugLoc(cast<MDNode>(*opt.getPointer()));
   }
-  
+
   Value *getNewFromOriginal(const Value *originst) const {
     assert(originst);
     if (isa<ConstantData>(originst))
@@ -508,7 +508,7 @@ public:
   BasicBlock *getNewFromOriginal(const BasicBlock *newinst) const {
     return cast<BasicBlock>(getNewFromOriginal((Value *)newinst));
   }
-  
+
   Value *hasUninverted(const Value *inverted) const {
     for (auto v : invertedPointers) {
       if (v.second == inverted)
@@ -522,7 +522,7 @@ public:
     assert(found != newToOriginalFn.end());
     return cast<BasicBlock>(found->second);
   }
-  
+
   Value *isOriginal(const Value *newinst) const {
     if (isa<Constant>(newinst) || isa<UndefValue>(newinst))
       return const_cast<Value *>(newinst);
@@ -537,106 +537,106 @@ public:
       return nullptr;
     return found->second;
   }
-  
+
   Instruction *isOriginal(const Instruction *newinst) const {
     return cast_or_null<Instruction>(isOriginal((const Value *)newinst));
   }
   BasicBlock *isOriginal(const BasicBlock *newinst) const {
     return cast_or_null<BasicBlock>(isOriginal((const Value *)newinst));
   }
-  
+
   struct LoadLikeCall {
     CallInst *loadCall;
     Value *operand;
     LoadLikeCall() = default;
     LoadLikeCall(CallInst *a, Value *b) : loadCall(a), operand(b) {}
   };
-  
+
   struct Rematerializer {
     // Loads which may need to be rematerialized.
     SmallVector<LoadInst *, 1> loads;
-    
+
     // Loads-like calls which need the memory initialized for the reverse.
     SmallVector<LoadLikeCall, 1> loadLikeCalls;
-    
+
     // Operations which must be rerun to rematerialize
     // the value.
     SmallPtrSet<Instruction *, 1> stores;
-    
+
     // Operations which deallocate the value.
     SmallPtrSet<Instruction *, 1> frees;
-    
+
     // Loop scope (null if not loop scoped).
     Loop *LI;
-    
+
     Rematerializer() : loads(), stores(), frees(), LI(nullptr) {}
     Rematerializer(const SmallVectorImpl<LoadInst *> &loads,
                    const SmallVectorImpl<LoadLikeCall> &loadLikeCalls,
                    const SmallPtrSetImpl<Instruction *> &stores,
                    const SmallPtrSetImpl<Instruction *> &frees, Loop *LI)
-    : loads(loads.begin(), loads.end()),
-    loadLikeCalls(loadLikeCalls.begin(), loadLikeCalls.end()),
-    stores(stores.begin(), stores.end()),
-    frees(frees.begin(), frees.end()), LI(LI) {}
+        : loads(loads.begin(), loads.end()),
+          loadLikeCalls(loadLikeCalls.begin(), loadLikeCalls.end()),
+          stores(stores.begin(), stores.end()),
+          frees(frees.begin(), frees.end()), LI(LI) {}
   };
-  
+
   struct ShadowRematerializer {
     // Operations which must be rerun to rematerialize
     // the original value.
     SmallPtrSet<Instruction *, 1> stores;
-    
+
     // Operations which deallocate the value.
     SmallPtrSet<Instruction *, 1> frees;
-    
+
     // Whether the shadow must be initialized in the primal.
     bool primalInitialize;
-    
+
     // Loop scope (null if not loop scoped).
     Loop *LI;
-    
+
     ShadowRematerializer()
-    : stores(), frees(), primalInitialize(), LI(nullptr) {}
+        : stores(), frees(), primalInitialize(), LI(nullptr) {}
     ShadowRematerializer(const SmallPtrSetImpl<Instruction *> &stores,
                          const SmallPtrSetImpl<Instruction *> &frees,
                          bool primalInitialize, Loop *LI)
-    : stores(stores.begin(), stores.end()),
-    frees(frees.begin(), frees.end()), primalInitialize(primalInitialize),
-    LI(LI) {}
+        : stores(stores.begin(), stores.end()),
+          frees(frees.begin(), frees.end()), primalInitialize(primalInitialize),
+          LI(LI) {}
   };
-  
+
   ValueMap<Value *, Rematerializer> rematerializableAllocations;
-  
+
   // Only loaded from and stored to (not captured), mapped to the stores (and
   // memset). Boolean denotes whether the primal initializes the shadow as well
   // (for use) as a structure which carries data.
   ValueMap<Value *, ShadowRematerializer> backwardsOnlyShadows;
-  
+
   void computeForwardingProperties(Instruction *V);
   void computeGuaranteedFrees();
-  
+
 private:
   SmallVector<WeakTrackingVH, 4> addedTapeVals;
   unsigned tapeidx;
   Value *tape;
-  
+
   std::map<BasicBlock *,
-  ValueMap<Value *, std::map<BasicBlock *, WeakTrackingVH>>>
-  unwrap_cache;
+           ValueMap<Value *, std::map<BasicBlock *, WeakTrackingVH>>>
+      unwrap_cache;
   std::map<BasicBlock *, ValueMap<Value *, WeakTrackingVH>> lookup_cache;
-  
+
 public:
   BasicBlock *addReverseBlock(BasicBlock *currentBlock, Twine name,
                               bool forkCache = true, bool push = true) {
     assert(reverseBlocks.size());
     auto found = reverseBlockToPrimal.find(currentBlock);
     assert(found != reverseBlockToPrimal.end());
-    
+
     SmallVector<BasicBlock *, 4> &vec = reverseBlocks[found->second];
     assert(vec.size());
     assert(vec.back() == currentBlock);
-    
+
     BasicBlock *rev =
-    BasicBlock::Create(currentBlock->getContext(), name, newFunc);
+        BasicBlock::Create(currentBlock->getContext(), name, newFunc);
     rev->moveAfter(currentBlock);
     if (push)
       vec.push_back(rev);
@@ -649,7 +649,7 @@ public:
     }
     return rev;
   }
-  
+
 public:
   bool legalRecompute(const Value *val, const ValueToValueMapTy &available,
                       IRBuilder<> *BuilderM, bool reverse = false,
@@ -657,13 +657,13 @@ public:
   std::map<const Value *, bool> knownRecomputeHeuristic;
   bool shouldRecompute(const Value *val, const ValueToValueMapTy &available,
                        IRBuilder<> *BuilderM);
-  
+
   ValueMap<const Instruction *, AssertingReplacingVH> unwrappedLoads;
   void replaceAWithB(Value *A, Value *B, bool storeInCache = false) override {
     if (A == B)
       return;
     assert(A->getType() == B->getType());
-    
+
     if (auto iA = dyn_cast<Instruction>(A)) {
       if (unwrappedLoads.find(iA) != unwrappedLoads.end()) {
         auto iB = cast<Instruction>(B);
@@ -671,7 +671,7 @@ public:
         unwrappedLoads.erase(iA);
       }
     }
-    
+
     // Check that the replacement doesn't already exist in the mapping
     // thereby resulting in a conflict.
     {
@@ -681,10 +681,10 @@ public:
         assert(foundB == newToOriginalFn.end());
       }
     }
-    
+
     CacheUtility::replaceAWithB(A, B, storeInCache);
   }
-  
+
   void erase(Instruction *I) override {
     assert(I);
     if (I->getParent()->getParent() != newFunc) {
@@ -693,12 +693,12 @@ public:
       llvm::errs() << "I: " << *I << "\n";
     }
     assert(I->getParent()->getParent() == newFunc);
-    
+
     // not original, should not contain
     assert(!invertedPointers.count(I));
     // not original, should not contain
     assert(!originalToNewFn.count(I));
-    
+
     originalToNewFn.erase(I);
     {
       auto found = newToOriginalFn.find(I);
@@ -715,12 +715,12 @@ public:
       }
     }
     unwrappedLoads.erase(I);
-    
+
     for (auto &pair : unwrap_cache) {
       if (pair.second.find(I) != pair.second.end())
         pair.second.erase(I);
     }
-    
+
     for (auto &pair : lookup_cache) {
       if (pair.second.find(I) != pair.second.end())
         pair.second.erase(I);
@@ -728,7 +728,7 @@ public:
     CacheUtility::erase(I);
   }
   // TODO consider invariant group and/or valueInvariant group
-  
+
   void setTape(Value *newtape) {
     assert(tape == nullptr);
     assert(newtape != nullptr);
@@ -736,19 +736,19 @@ public:
     assert(addedTapeVals.size() == 0);
     tape = newtape;
   }
-  
+
   void dumpPointers() {
     llvm::errs() << "invertedPointers:\n";
     for (auto a : invertedPointers) {
       llvm::errs() << "   invertedPointers[" << *a.first << "] = " << *a.second
-      << "\n";
+                   << "\n";
     }
     llvm::errs() << "end invertedPointers\n";
   }
-  
+
   int getIndex(
-               std::pair<Instruction *, CacheType> idx,
-               const std::map<std::pair<Instruction *, CacheType>, int> &mapping) {
+      std::pair<Instruction *, CacheType> idx,
+      const std::map<std::pair<Instruction *, CacheType>, int> &mapping) {
     assert(tape);
     auto found = mapping.find(idx);
     if (found == mapping.end()) {
@@ -757,22 +757,22 @@ public:
       llvm::errs() << " <mapping>\n";
       for (auto &p : mapping) {
         llvm::errs() << "   idx: " << *p.first.first << ", " << p.first.second
-        << " pos=" << p.second << "\n";
+                     << " pos=" << p.second << "\n";
       }
       llvm::errs() << " </mapping>\n";
-      
+
       llvm::errs() << "idx: " << *idx.first << ", " << idx.second << "\n";
       assert(0 && "could not find index in mapping");
     }
     return found->second;
   }
-  
+
   int getIndex(std::pair<Instruction *, CacheType> idx,
                std::map<std::pair<Instruction *, CacheType>, int> &mapping) {
     if (tape) {
       return getIndex(
-                      idx,
-                      (const std::map<std::pair<Instruction *, CacheType>, int> &)mapping);
+          idx,
+          (const std::map<std::pair<Instruction *, CacheType>, int> &)mapping);
     } else {
       if (mapping.find(idx) != mapping.end()) {
         return mapping[idx];
@@ -782,26 +782,26 @@ public:
       return mapping[idx];
     }
   }
-  
+
   Value *cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc, int idx,
                          bool ignoreType = false, bool replace = true);
-  
+
   ArrayRef<WeakTrackingVH> getTapeValues() const { return addedTapeVals; }
-  
+
 public:
   AAResults &OrigAA;
   TypeAnalysis &TA;
   TypeResults TR;
   bool omp;
-  
+
 private:
   unsigned width;
-  
+
 public:
   unsigned getWidth() { return width; }
-  
+
   ArrayRef<DIFFE_TYPE> ArgDiffeTypes;
-  
+
 public:
   GradientUtils(EnzymeLogic &Logic, Function *newFunc_, Function *oldFunc_,
                 TargetLibraryInfo &TLI_, TypeAnalysis &TA_, TypeResults TR_,
@@ -811,26 +811,26 @@ public:
                 DIFFE_TYPE ReturnActivity, ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
                 ValueToValueMapTy &originalToNewFn_, DerivativeMode mode,
                 VectorModeMemoryLayout memoryLayout, unsigned width, bool omp)
-  : CacheUtility(TLI_, newFunc_), Logic(Logic), mode(mode),
-  memoryLayout(memoryLayout), oldFunc(oldFunc_), invertedPointers(),
-  OrigDT(Logic.PPC.FAM.getResult<llvm::DominatorTreeAnalysis>(*oldFunc_)),
-  OrigPDT(Logic.PPC.FAM.getResult<llvm::PostDominatorTreeAnalysis>(
-                                                                   *oldFunc_)),
-  OrigLI(Logic.PPC.FAM.getResult<llvm::LoopAnalysis>(*oldFunc_)),
-  OrigSE(
-         Logic.PPC.FAM.getResult<llvm::ScalarEvolutionAnalysis>(*oldFunc_)),
-  notForAnalysis(getGuaranteedUnreachable(oldFunc_)),
-  ATA(new ActivityAnalyzer(Logic.PPC,
-                           Logic.PPC.getAAResultsFromFunction(oldFunc_),
-                           notForAnalysis, TLI_, constantvalues_,
-                           activevals_, ReturnActivity)),
-  tid(nullptr), numThreads(nullptr),
-  OrigAA(Logic.PPC.getAAResultsFromFunction(oldFunc_)), TA(TA_), TR(TR_),
-  omp(omp), width(width), ArgDiffeTypes(ArgDiffeTypes_) {
+      : CacheUtility(TLI_, newFunc_), Logic(Logic), mode(mode),
+        memoryLayout(memoryLayout), oldFunc(oldFunc_), invertedPointers(),
+        OrigDT(Logic.PPC.FAM.getResult<llvm::DominatorTreeAnalysis>(*oldFunc_)),
+        OrigPDT(Logic.PPC.FAM.getResult<llvm::PostDominatorTreeAnalysis>(
+            *oldFunc_)),
+        OrigLI(Logic.PPC.FAM.getResult<llvm::LoopAnalysis>(*oldFunc_)),
+        OrigSE(
+            Logic.PPC.FAM.getResult<llvm::ScalarEvolutionAnalysis>(*oldFunc_)),
+        notForAnalysis(getGuaranteedUnreachable(oldFunc_)),
+        ATA(new ActivityAnalyzer(Logic.PPC,
+                                 Logic.PPC.getAAResultsFromFunction(oldFunc_),
+                                 notForAnalysis, TLI_, constantvalues_,
+                                 activevals_, ReturnActivity)),
+        tid(nullptr), numThreads(nullptr),
+        OrigAA(Logic.PPC.getAAResultsFromFunction(oldFunc_)), TA(TA_), TR(TR_),
+        omp(omp), width(width), ArgDiffeTypes(ArgDiffeTypes_) {
     if (oldFunc_->getSubprogram()) {
       assert(originalToNewFn_.hasMD());
     }
-    
+
     for (BasicBlock &BB : *oldFunc) {
       for (Instruction &I : BB) {
         if (auto CI = dyn_cast<CallInst>(&I)) {
@@ -838,9 +838,9 @@ public:
         }
       }
     }
-    
+
     originalToNewFn.getMDMap() = originalToNewFn_.getMDMap();
-    
+
     if (oldFunc_->getSubprogram()) {
       assert(originalToNewFn.hasMD());
     }
@@ -849,7 +849,7 @@ public:
 #endif
     for (auto pair : invertedPointers_) {
       invertedPointers.insert(std::make_pair(
-                                             (const Value *)pair.first, InvertedPointerVH(this, pair.second)));
+          (const Value *)pair.first, InvertedPointerVH(this, pair.second)));
     }
     originalToNewFn.insert(originalToNewFn_.begin(), originalToNewFn_.end());
     for (BasicBlock &oBB : *oldFunc) {
@@ -867,7 +867,7 @@ public:
     tape = nullptr;
     tapeidx = 0;
     assert(originalBlocks.size() > 0);
-    
+
     SmallVector<BasicBlock *, 4> ReturningBlocks;
     for (BasicBlock &BB : *oldFunc) {
       if (isa<ReturnInst>(BB.getTerminator()))
@@ -885,13 +885,13 @@ public:
         BlocksDominatingAllReturns.insert(&BB);
     }
   }
-  
+
 public:
   DIFFE_TYPE getDiffeType(llvm::Value *v, bool foreignFunction);
-  
+
   DIFFE_TYPE getReturnDiffeType(llvm::CallInst *orig, bool *primalReturnUsedP,
                                 bool *shadowReturnUsedP);
-  
+
   static GradientUtils *
   CreateFromClone(EnzymeLogic &Logic, VectorModeMemoryLayout memoryLayout,
                   unsigned width, Function *todiff, TargetLibraryInfo &TLI,
@@ -899,7 +899,7 @@ public:
                   ArrayRef<DIFFE_TYPE> constant_args, bool returnUsed,
                   bool shadowReturnUsed,
                   std::map<AugmentedStruct, int> &returnMapping, bool omp);
-  
+
   ValueMap<const Value *, MDNode *> differentialAliasScopeDomains;
   ValueMap<const Value *, DenseMap<ssize_t, MDNode *>> differentialAliasScope;
   MDNode *getDerivativeAliasScope(const Value *origptr, ssize_t newptr) {
@@ -907,12 +907,12 @@ public:
     if (found == differentialAliasScopeDomains.end()) {
       MDBuilder MDB(oldFunc->getContext());
       MDNode *scope = MDB.createAnonymousAliasScopeDomain(
-                                                          (" diff: %" + origptr->getName()).str());
+          (" diff: %" + origptr->getName()).str());
       // vec.first = scope;
       // found = differentialAliasScope.find(origptr);
       found =
-      differentialAliasScopeDomains.insert(std::make_pair(origptr, scope))
-        .first;
+          differentialAliasScopeDomains.insert(std::make_pair(origptr, scope))
+              .first;
     }
     auto &mp = differentialAliasScope[origptr];
     auto found2 = mp.find(newptr);
@@ -924,12 +924,12 @@ public:
       else
         name = "shadow_" + std::to_string(newptr);
       found2 = mp.insert(std::make_pair(newptr, MDB.createAnonymousAliasScope(
-                                                                              found->second, name)))
-      .first;
+                                                    found->second, name)))
+                   .first;
     }
     return found2->second;
   }
-  
+
 #if LLVM_VERSION_MAJOR >= 10
   void setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
                    IRBuilder<> &BuilderM, MaybeAlign align, bool isVolatile,
@@ -941,7 +941,7 @@ public:
                    AtomicOrdering ordering, SyncScope::ID syncScope,
                    Value *mask, ArrayRef<Metadata *> noAlias);
 #endif
-  
+
 private:
   BasicBlock *originalForReverseBlock(BasicBlock &BB2) const {
     auto found = reverseBlockToPrimal.find(&BB2);
@@ -952,24 +952,24 @@ private:
     assert(found != reverseBlockToPrimal.end());
     return found->second;
   }
-  
+
 public:
   //! This cache stores blocks we may insert as part of getReverseOrLatchMerge
   //! to handle inverse iv iteration
   //  As we don't want to create redundant blocks, we use this convenient cache
   std::map<std::tuple<BasicBlock *, BasicBlock *>, BasicBlock *>
-  newBlocksForLoop_cache;
-  
+      newBlocksForLoop_cache;
+
   //! This cache stores a rematerialized forward pass in the loop
   //! specified
   std::map<llvm::Loop *, llvm::BasicBlock *> rematerializedLoops_cache;
   BasicBlock *getReverseOrLatchMerge(BasicBlock *BB,
                                      BasicBlock *branchingBlock);
-  
+
   void forceContexts();
-  
+
   void computeMinCache();
-  
+
   bool isOriginalBlock(const BasicBlock &BB) const {
     for (auto A : originalBlocks) {
       if (A == &BB)
@@ -977,16 +977,16 @@ public:
     }
     return false;
   }
-  
+
   SmallVector<llvm::Instruction *, 1> rematerializedPrimalOrShadowAllocations;
-  
+
   void eraseFictiousPHIs() {
     {
       for (auto P : rematerializedPrimalOrShadowAllocations) {
         Value *replacement;
         if (EnzymeZeroCache)
           replacement =
-          ConstantPointerNull::get(cast<PointerType>(P->getType()));
+              ConstantPointerNull::get(cast<PointerType>(P->getType()));
         else
           replacement = UndefValue::get(P->getType());
         P->replaceAllUsesWith(replacement);
@@ -997,7 +997,7 @@ public:
     for (auto pair : fictiousPHIs)
       phis.emplace_back(pair.first, pair.second);
     fictiousPHIs.clear();
-    
+
     for (auto pair : phis) {
       auto pp = pair.first;
       if (pp->getNumUses() != 0) {
@@ -1011,35 +1011,35 @@ public:
       erase(pp);
     }
   }
-  
+
   void forceActiveDetection() {
     for (auto &Arg : oldFunc->args()) {
       ATA->isConstantValue(TR, &Arg);
     }
-    
+
     for (BasicBlock &BB : *oldFunc) {
       for (Instruction &I : BB) {
         bool const_inst = ATA->isConstantInstruction(TR, &I);
         bool const_value = ATA->isConstantValue(TR, &I);
-        
+
         if (EnzymePrintActivity)
           llvm::errs() << I << " cv=" << const_value << " ci=" << const_inst
-          << "\n";
+                       << "\n";
       }
     }
   }
-  
+
   bool isConstantValue(Value *val) const {
     if (auto inst = dyn_cast<Instruction>(val)) {
       assert(inst->getParent()->getParent() == oldFunc);
       return ATA->isConstantValue(TR, val);
     }
-    
+
     if (auto arg = dyn_cast<Argument>(val)) {
       assert(arg->getParent() == oldFunc);
       return ATA->isConstantValue(TR, val);
     }
-    
+
     //! Functions must be false so we can replace function with augmentation,
     //! fallback to analysis
     if (isa<Function>(val) || isa<InlineAsm>(val) || isa<Constant>(val) ||
@@ -1047,7 +1047,7 @@ public:
       // llvm::errs() << "calling icv on: " << *val << "\n";
       return ATA->isConstantValue(TR, val);
     }
-    
+
     if (auto gv = dyn_cast<GlobalVariable>(val)) {
       if (hasMetadata(gv, "enzyme_shadow"))
         return false;
@@ -1067,7 +1067,7 @@ public:
         return true;
       goto err;
     }
-    
+
   err:;
     llvm::errs() << *oldFunc << "\n";
     llvm::errs() << *newFunc << "\n";
@@ -1076,34 +1076,34 @@ public:
     assert(0 && "bad");
     exit(1);
   }
-  
+
   bool isConstantInstruction(const Instruction *inst) const {
     assert(inst->getParent()->getParent() == oldFunc);
     return ATA->isConstantInstruction(TR, const_cast<Instruction *>(inst));
   }
-  
+
   bool getContext(llvm::BasicBlock *BB, LoopContext &lc) {
     return CacheUtility::getContext(BB, lc,
                                     /*ReverseLimit*/ reverseBlocks.size() > 0);
   }
-  
+
   void forceAugmentedReturns() {
     assert(TR.getFunction() == oldFunc);
-    
+
     for (BasicBlock &oBB : *oldFunc) {
       // Don't create derivatives for code that results in termination
       if (notForAnalysis.find(&oBB) != notForAnalysis.end())
         continue;
-      
+
       LoopContext loopContext;
       getContext(cast<BasicBlock>(getNewFromOriginal(&oBB)), loopContext);
-      
+
       for (Instruction &I : oBB) {
         Instruction *inst = &I;
-        
+
         if (inst->getType()->isEmptyTy() || inst->getType()->isVoidTy())
           continue;
-        
+
         if (mode == DerivativeMode::ForwardMode ||
             mode == DerivativeMode::ForwardModeSplit) {
           if (!isConstantValue(inst)) {
@@ -1111,68 +1111,68 @@ public:
             getForwardBuilder(BuilderZ);
             Type *antiTy = getShadowType(inst);
             PHINode *anti =
-            BuilderZ.CreatePHI(antiTy, 1, inst->getName() + "'dual_phi");
+                BuilderZ.CreatePHI(antiTy, 1, inst->getName() + "'dual_phi");
             invertedPointers.insert(std::make_pair(
-                                                   (const Value *)inst, InvertedPointerVH(this, anti)));
+                (const Value *)inst, InvertedPointerVH(this, anti)));
           }
           continue;
         }
-        
+
         if (inst->getType()->isFPOrFPVectorTy())
           continue; //! op->getType()->isPointerTy() &&
                     //! !op->getType()->isIntegerTy()) {
-        
+
         if (!TR.query(inst)[{-1}].isPossiblePointer())
           continue;
-        
+
         if (isa<LoadInst>(inst)) {
           IRBuilder<> BuilderZ(inst);
           getForwardBuilder(BuilderZ);
           Type *antiTy = getShadowType(inst);
           PHINode *anti =
-          BuilderZ.CreatePHI(antiTy, 1, inst->getName() + "'il_phi");
+              BuilderZ.CreatePHI(antiTy, 1, inst->getName() + "'il_phi");
           invertedPointers.insert(std::make_pair(
-                                                 (const Value *)inst, InvertedPointerVH(this, anti)));
+              (const Value *)inst, InvertedPointerVH(this, anti)));
           continue;
         }
-        
+
         if (!isa<CallInst>(inst)) {
           continue;
         }
-        
+
         if (isa<IntrinsicInst>(inst)) {
           continue;
         }
-        
+
         if (isConstantValue(inst)) {
           continue;
         }
-        
+
         CallInst *op = cast<CallInst>(inst);
         Function *called = op->getCalledFunction();
-        
+
         IRBuilder<> BuilderZ(inst);
         getForwardBuilder(BuilderZ);
         Type *antiTy = getShadowType(inst);
-        
+
         PHINode *anti =
-        BuilderZ.CreatePHI(antiTy, 1, op->getName() + "'ip_phi");
+            BuilderZ.CreatePHI(antiTy, 1, op->getName() + "'ip_phi");
         anti->setDebugLoc(getNewFromOriginal(op->getDebugLoc()));
         invertedPointers.insert(
-                                std::make_pair((const Value *)inst, InvertedPointerVH(this, anti)));
-        
+            std::make_pair((const Value *)inst, InvertedPointerVH(this, anti)));
+
         if (called && isAllocationFunction(called->getName(), TLI)) {
           anti->setName(op->getName() + "'mi");
         }
       }
     }
   }
-  
+
 private:
   // For a given value, a list of basic blocks where an unwrap to has already
   // produced a warning.
   std::map<llvm::Instruction *, std::set<llvm::BasicBlock *>> UnwrappedWarnings;
-  
+
 public:
   /// if full unwrap, don't just unwrap this instruction, but also its operands,
   /// etc
@@ -1180,7 +1180,7 @@ public:
                  const ValueToValueMapTy &available, UnwrapMode unwrapMode,
                  BasicBlock *scope = nullptr,
                  bool permitCache = true) override final;
-  
+
   void ensureLookupCached(Instruction *inst, bool shouldFree = true,
                           BasicBlock *scope = nullptr,
                           llvm::MDNode *TBAA = nullptr) {
@@ -1189,44 +1189,44 @@ public:
       return;
     if (shouldFree)
       assert(reverseBlocks.size());
-    
+
     if (scope == nullptr)
       scope = inst->getParent();
-    
+
     LimitContext lctx(/*ReverseLimit*/ reverseBlocks.size() > 0, scope);
-    
+
     AllocaInst *cache =
-    createCacheForScope(lctx, inst->getType(), inst->getName(), shouldFree);
+        createCacheForScope(lctx, inst->getType(), inst->getName(), shouldFree);
     assert(cache);
     Value *Val = inst;
     insert_or_assign(
-                     scopeMap, Val,
-                     std::pair<AssertingVH<AllocaInst>, LimitContext>(cache, lctx));
+        scopeMap, Val,
+        std::pair<AssertingVH<AllocaInst>, LimitContext>(cache, lctx));
     storeInstructionInCache(lctx, inst, cache, TBAA);
   }
-  
+
   std::map<Instruction *, ValueMap<BasicBlock *, WeakTrackingVH>> lcssaFixes;
   std::map<PHINode *, WeakTrackingVH> lcssaPHIToOrig;
   Value *fixLCSSA(Instruction *inst, BasicBlock *forwardBlock,
                   bool legalInBlock = false) {
     assert(inst->getName() != "<badref>");
-    
+
     if (auto lcssaPHI = dyn_cast<PHINode>(inst)) {
       auto found = lcssaPHIToOrig.find(lcssaPHI);
       if (found != lcssaPHIToOrig.end())
         inst = cast<Instruction>(found->second);
     }
-    
+
     if (inst->getParent() == inversionAllocs)
       return inst;
-    
+
     if (!isOriginalBlock(*forwardBlock)) {
       forwardBlock = originalForReverseBlock(*forwardBlock);
     }
-    
+
     bool containsLastLoopValue =
-    isPotentialLastLoopValue(inst, forwardBlock, LI);
-    
+        isPotentialLastLoopValue(inst, forwardBlock, LI);
+
     // If the instruction cannot represent a loop value, return the original
     // instruction if it either is guaranteed to be available within the block,
     // or it is not needed to guaranteed availability.
@@ -1236,12 +1236,12 @@ public:
       if (forwardBlock == inst->getParent() || DT.dominates(inst, forwardBlock))
         return inst;
     }
-    
+
     // llvm::errs() << " inst: " << *inst << "\n";
     // llvm::errs() << " seen: " << *inst->getParent() << "\n";
     assert(inst->getParent() != inversionAllocs);
     assert(isOriginalBlock(*inst->getParent()));
-    
+
     if (lcssaFixes.find(inst) == lcssaFixes.end()) {
       lcssaFixes[inst][inst->getParent()] = inst;
       SmallPtrSet<BasicBlock *, 4> seen;
@@ -1265,16 +1265,16 @@ public:
         }
       }
     }
-    
+
     if (lcssaFixes[inst].find(forwardBlock) != lcssaFixes[inst].end()) {
       return lcssaFixes[inst][forwardBlock];
     }
-    
+
     // TODO replace forwardBlock with the first block dominated by inst,
     // that dominates (or is) forwardBlock to ensuring maximum reuse
     IRBuilder<> lcssa(&forwardBlock->front());
     auto lcssaPHI =
-    lcssa.CreatePHI(inst->getType(), 1, inst->getName() + "!manual_lcssa");
+        lcssa.CreatePHI(inst->getType(), 1, inst->getName() + "!manual_lcssa");
     lcssaFixes[inst][forwardBlock] = lcssaPHI;
     lcssaPHIToOrig[lcssaPHI] = inst;
     for (auto pred : predecessors(forwardBlock)) {
@@ -1289,7 +1289,7 @@ public:
       assert(val->getType() == inst->getType());
       lcssaPHI->addIncoming(val, pred);
     }
-    
+
     SmallPtrSet<Value *, 2> vals;
     SmallVector<Value *, 2> todo(lcssaPHI->incoming_values().begin(),
                                  lcssaPHI->incoming_values().end());
@@ -1301,14 +1301,14 @@ public:
       vals.insert(v);
     }
     assert(vals.size() > 0);
-    
+
     if (vals.size() > 1) {
       todo.append(vals.begin(), vals.end());
       vals.clear();
       while (todo.size()) {
         Value *v = todo.back();
         todo.pop_back();
-        
+
         if (auto PN = dyn_cast<PHINode>(v))
           if (lcssaPHIToOrig.find(PN) != lcssaPHIToOrig.end()) {
             v = lcssaPHIToOrig[PN];
@@ -1320,10 +1320,10 @@ public:
     Value *val = nullptr;
     if (vals.size() == 1)
       val = *vals.begin();
-    
+
     if (val && (!legalInBlock || !isa<Instruction>(val) ||
                 DT.dominates(cast<Instruction>(val), lcssaPHI))) {
-      
+
       if (!isPotentialLastLoopValue(val, forwardBlock, LI)) {
         bool nonSelfUse = false;
         for (auto u : lcssaPHI->users()) {
@@ -1345,36 +1345,36 @@ public:
     }
     return lcssaPHI;
   }
-  
+
   Value *
   lookupM(Value *val, IRBuilder<> &BuilderM,
           const ValueToValueMapTy &incoming_availalble = ValueToValueMapTy(),
           bool tryLegalRecomputeCheck = true,
           llvm::BasicBlock *scope = nullptr) override;
-  
+
   Value *invertPointerM(Value *val, IRBuilder<> &BuilderM,
                         bool nullShadow = false);
-  
+
   static Constant *
   GetOrCreateShadowConstant(EnzymeLogic &Logic, TargetLibraryInfo &TLI,
                             TypeAnalysis &TA, Constant *F, DerivativeMode mode,
                             VectorModeMemoryLayout memoryLayout, unsigned width,
                             bool AtomicAdd);
-  
+
   static Constant *
   GetOrCreateShadowFunction(EnzymeLogic &Logic, TargetLibraryInfo &TLI,
                             TypeAnalysis &TA, Function *F, DerivativeMode mode,
                             VectorModeMemoryLayout memoryLayout, unsigned width,
                             bool AtomicAdd);
-  
+
   void branchToCorrespondingTarget(
-                                   BasicBlock *ctx, IRBuilder<> &BuilderM,
-                                   const std::map<BasicBlock *,
-                                   std::vector<std::pair</*pred*/ BasicBlock *,
-                                   /*successor*/ BasicBlock *>>>
-                                   &targetToPreds,
-                                   const std::map<BasicBlock *, PHINode *> *replacePHIs = nullptr);
-  
+      BasicBlock *ctx, IRBuilder<> &BuilderM,
+      const std::map<BasicBlock *,
+                     std::vector<std::pair</*pred*/ BasicBlock *,
+                                           /*successor*/ BasicBlock *>>>
+          &targetToPreds,
+      const std::map<BasicBlock *, PHINode *> *replacePHIs = nullptr);
+
   void getReverseBuilder(IRBuilder<> &Builder2, bool original = true) {
     assert(reverseBlocks.size());
     BasicBlock *BB = Builder2.GetInsertBlock();
@@ -1388,52 +1388,52 @@ public:
       llvm::errs() << "could not invert " << *BB;
     }
     assert(BB2);
-    
+
     if (BB2->getTerminator())
       Builder2.SetInsertPoint(BB2->getTerminator());
     else
       Builder2.SetInsertPoint(BB2);
     Builder2.SetCurrentDebugLocation(
-                                     getNewFromOriginal(Builder2.getCurrentDebugLocation()));
+        getNewFromOriginal(Builder2.getCurrentDebugLocation()));
     Builder2.setFastMathFlags(getFast());
   }
-  
+
   void getForwardBuilder(IRBuilder<> &Builder2) {
     Instruction *insert = &*Builder2.GetInsertPoint();
     Instruction *nInsert = getNewFromOriginal(insert);
-    
+
     assert(nInsert);
-    
+
     Builder2.SetInsertPoint(getNextNonDebugInstruction(nInsert));
     Builder2.SetCurrentDebugLocation(
-                                     getNewFromOriginal(Builder2.getCurrentDebugLocation()));
+        getNewFromOriginal(Builder2.getCurrentDebugLocation()));
     Builder2.setFastMathFlags(getFast());
   }
-  
+
   static bool isVectorizedStructFor(StructType *sty, StructType *vsty,
                                     SmallPtrSetImpl<StructType *> &visited,
                                     const TypeTree TT, unsigned width,
                                     Module &M) {
     visited.insert(sty);
-    
+
     if (sty->getStructNumElements() != vsty->getStructNumElements())
       return false;
-    
+
     auto &DL = M.getDataLayout();
     auto Align = DL.getStructLayout(sty);
-    
+
     for (unsigned i = 0;
          i < sty->getNumElements() && i < vsty->getNumElements(); ++i) {
       Type *Ty = sty->getElementType(i);
       Type *VTy = vsty->getElementType(i);
-      
+
       Type *peeledType = Ty;
       Type *peeledVectorType = VTy;
-      
+
       uint64_t offset = Align->getElementOffset(i);
-      
+
       auto peeledTT = TT.DataN(offset);
-      
+
       while (auto foo = dyn_cast<PointerType>(peeledType)) {
         if (auto bar = dyn_cast<PointerType>(peeledVectorType)) {
           peeledType = foo->getPointerElementType();
@@ -1443,12 +1443,12 @@ public:
           return false;
         }
       }
-      
+
       auto DT = TypeTree(Type::getDoubleTy(M.getContext()));
-      
+
       auto peeledStructType = dyn_cast<StructType>(peeledType);
       auto peeledVectorStructType = dyn_cast<StructType>(peeledVectorType);
-      
+
       if (peeledStructType && peeledVectorType) {
         if (!visited.count(peeledStructType) &&
             !isVectorizedStructFor(peeledStructType, peeledVectorStructType,
@@ -1458,10 +1458,10 @@ public:
         return false;
       }
     }
-    
+
     return true;
   }
-  
+
   static Type *
   createShadowTypeFor(Type *ty, const TypeTree TT, unsigned width,
                       std::map<StructType *, StructType *> &under_construction,
@@ -1469,12 +1469,12 @@ public:
     if (auto sty = dyn_cast<StructType>(ty)) {
       auto &DL = M.getDataLayout();
       auto Align = DL.getStructLayout(sty);
-      
+
       auto found = under_construction.find(sty);
-      
+
       if (found != under_construction.end())
         return found->second;
-      
+
       // create new vectorized type
       StructType *new_sty = StructType::create(ty->getContext());
       if (sty->hasName()) {
@@ -1482,9 +1482,9 @@ public:
         new_sty->setName(name.str());
       }
       under_construction[sty] = new_sty;
-      
+
       SmallVector<Type *, 3> subtys;
-      
+
       for (unsigned i = 0; i < sty->getNumElements(); ++i) {
         Type *sety = sty->getElementType(i);
         int offset = Align->getElementOffset(i);
@@ -1493,7 +1493,7 @@ public:
                                                          under_construction, M);
         subtys.push_back(subty);
       }
-      
+
       if (sty->hasName()) {
         auto name = sty->getName() + ".Vec." + Twine(width);
         new_sty->setBody(subtys);
@@ -1504,9 +1504,9 @@ public:
       }
     } else if (auto aty = dyn_cast<ArrayType>(ty)) {
       return ArrayType::get(
-                            getShadowTypeVectorizedAtLeafNodes(aty->getElementType(), TT, width,
-                                                               under_construction, M),
-                            aty->getNumElements());
+          getShadowTypeVectorizedAtLeafNodes(aty->getElementType(), TT, width,
+                                             under_construction, M),
+          aty->getNumElements());
     } else if (auto pty = dyn_cast<PointerType>(ty)) {
 #if LLVM_VERSION_MAJOR >= 15
       return pty;
@@ -1514,12 +1514,12 @@ public:
       if (pty->getElementType()->isFunctionTy()) {
         return pty;
       }
-      
+
       return PointerType::get(
-                              getShadowTypeVectorizedAtLeafNodes(pty->getElementType(),
-                                                                 TT.Lookup(-1, M.getDataLayout()),
-                                                                 width, under_construction, M),
-                              pty->getAddressSpace());
+          getShadowTypeVectorizedAtLeafNodes(pty->getElementType(),
+                                             TT.Lookup(-1, M.getDataLayout()),
+                                             width, under_construction, M),
+          pty->getAddressSpace());
     } else if (auto vty = dyn_cast<VectorType>(ty)) {
       return ArrayType::get(vty, width);
 #endif
@@ -1530,10 +1530,10 @@ public:
       return ty;
     }
   }
-  
+
   static Type *getShadowTypeVectorizedAtLeafNodes(
-                                                  Type *ty, const TypeTree TT, unsigned width,
-                                                  std::map<StructType *, StructType *> &under_construction, Module &M) {
+      Type *ty, const TypeTree TT, unsigned width,
+      std::map<StructType *, StructType *> &under_construction, Module &M) {
     if (auto sty = dyn_cast<StructType>(ty)) {
       // look for exisiting vectorized type
       auto &&AllStructTypes = M.getIdentifiedStructTypes();
@@ -1545,91 +1545,92 @@ public:
     }
     return createShadowTypeFor(ty, TT, width, under_construction, M);
   }
-  
+
   static Type *getShadowTypeVectorizedAtLeafNodes(Module &M, Type *ty,
                                                   TypeTree TT, unsigned width) {
     std::map<StructType *, StructType *> under_construction;
-    return getShadowTypeVectorizedAtLeafNodes(ty, TT, width, under_construction, M);
+    return getShadowTypeVectorizedAtLeafNodes(ty, TT, width, under_construction,
+                                              M);
   }
-  
+
   static Type *getShadowTypeVectorizedAtRootNode(Type *ty, unsigned width) {
     return ArrayType::get(ty, width);
   }
-  
+
   inline Type *getShadowType(Module &M, Value *val, unsigned width,
                              VectorModeMemoryLayout memoryLayout) {
     Type *ty = val->getType();
-    
+
     if (width == 1)
       return ty;
-    
+
     if (ty->isVoidTy())
       return ty;
-    
+
     switch (memoryLayout) {
-      case VectorModeMemoryLayout::VectorizeAtRootNode:
-        return getShadowTypeVectorizedAtRootNode(ty, width);
-      case VectorModeMemoryLayout::VectorizeAtLeafNodes: {
-        auto TT = TR.query(val);
-        return getShadowTypeVectorizedAtLeafNodes(M, ty, TT, width);
-      }
+    case VectorModeMemoryLayout::VectorizeAtRootNode:
+      return getShadowTypeVectorizedAtRootNode(ty, width);
+    case VectorModeMemoryLayout::VectorizeAtLeafNodes: {
+      auto TT = TR.query(val);
+      return getShadowTypeVectorizedAtLeafNodes(M, ty, TT, width);
+    }
     }
   }
-  
+
   inline Type *getShadowType(Module &M, Function *fn, unsigned width,
                              VectorModeMemoryLayout memoryLayout) {
     Type *ty = fn->getReturnType();
-    
+
     if (width == 1)
       return ty;
-    
+
     if (ty->isVoidTy())
       return ty;
-    
+
     switch (memoryLayout) {
-      case VectorModeMemoryLayout::VectorizeAtRootNode:
-        return getShadowTypeVectorizedAtRootNode(ty, width);
-      case VectorModeMemoryLayout::VectorizeAtLeafNodes: {
-        auto TT = TR.getReturnAnalysis();
-        assert(TR.getFunction() == fn);
-        return getShadowTypeVectorizedAtLeafNodes(M, ty, TT, width);
-      }
+    case VectorModeMemoryLayout::VectorizeAtRootNode:
+      return getShadowTypeVectorizedAtRootNode(ty, width);
+    case VectorModeMemoryLayout::VectorizeAtLeafNodes: {
+      auto TT = TR.getReturnAnalysis();
+      assert(TR.getFunction() == fn);
+      return getShadowTypeVectorizedAtLeafNodes(M, ty, TT, width);
+    }
     }
   }
-  
+
   static inline Type *getShadowType(Module &M, Type *ty, unsigned width,
                                     VectorModeMemoryLayout memoryLayout) {
     if (width == 1)
       return ty;
-    
+
     if (ty->isVoidTy())
       return ty;
-    
+
     switch (memoryLayout) {
-      case VectorModeMemoryLayout::VectorizeAtRootNode:
-        return getShadowTypeVectorizedAtRootNode(ty, width);
-      case VectorModeMemoryLayout::VectorizeAtLeafNodes: {
-        TypeTree TT = TypeTree();
-        return getShadowTypeVectorizedAtLeafNodes(M, ty, TT, width);
-      }
+    case VectorModeMemoryLayout::VectorizeAtRootNode:
+      return getShadowTypeVectorizedAtRootNode(ty, width);
+    case VectorModeMemoryLayout::VectorizeAtLeafNodes: {
+      TypeTree TT = TypeTree();
+      return getShadowTypeVectorizedAtLeafNodes(M, ty, TT, width);
+    }
     }
   }
-  
+
   Type *getShadowType(Instruction &Inst) {
     auto &M = *oldFunc->getParent();
     return getShadowType(M, &Inst, width, memoryLayout);
   }
-  
+
   Type *getShadowType(Function *fn) {
     auto &M = *oldFunc->getParent();
     return getShadowType(M, fn, width, memoryLayout);
   }
-  
+
   Type *getShadowType(Value *val) {
     auto &M = *oldFunc->getParent();
     return getShadowType(M, val, width, memoryLayout);
   }
-  
+
   static inline Value *extractMeta(IRBuilder<> &Builder, Value *Agg,
                                    unsigned off) {
     while (true) {
@@ -1658,13 +1659,13 @@ public:
       }
       break;
     }
-    
+
     if (Agg->getType()->isVectorTy())
       return Builder.CreateExtractElement(Agg, off);
-    
+
     return Builder.CreateExtractValue(Agg, {off});
   }
-  
+
   static inline auto CreateVectorSplatMask(unsigned vector_length,
                                            unsigned width) {
 #if LLVM_VERSION_MAJOR >= 12
@@ -1676,7 +1677,7 @@ public:
       Mask.push_back(i % vector_length);
     return Mask;
   }
-  
+
   static inline auto CreateVectorConcatenationMask(unsigned length1,
                                                    unsigned length2) {
 #if LLVM_VERSION_MAJOR >= 12
@@ -1688,7 +1689,7 @@ public:
       Mask.push_back(i);
     return Mask;
   }
-  
+
   static inline auto CreateExtractSubvectorMask(unsigned vector_length,
                                                 unsigned width,
                                                 unsigned index) {
@@ -1704,58 +1705,69 @@ public:
   }
 
   template <typename T, typename... Args>
-  inline auto eval_tuple(llvm::IRBuilder<> &Builder, std::map<Value*, Value*> &map, T i, Args... args);
+  inline auto eval_tuple(llvm::IRBuilder<> &Builder,
+                         std::map<Value *, Value *> &map, T i, Args... args);
 
-  template <typename T> inline auto eval_tuple(llvm::IRBuilder<> &Builder, std::map<Value*, Value*> &map, T) {
+  template <typename T>
+  inline auto eval_tuple(llvm::IRBuilder<> &Builder,
+                         std::map<Value *, Value *> &map, T) {
     return std::tuple<>();
   }
-  
+
   template <typename Arg0, typename... Args>
-  inline auto eval_tuple(llvm::IRBuilder<> &Builder, std::map<Value*, Value*> &map, Value *i, Arg0 arg0,
+  inline auto eval_tuple(llvm::IRBuilder<> &Builder,
+                         std::map<Value *, Value *> &map, Value *i, Arg0 arg0,
                          Args... args) {
     auto &&v = arg0.getValue(Builder, map, this, i);
-    return std::tuple_cat(std::make_tuple(v), eval_tuple(Builder, map, i, args...));
+    return std::tuple_cat(std::make_tuple(v),
+                          eval_tuple(Builder, map, i, args...));
   }
   template <typename Arg0, typename... Args>
-  inline auto eval_tuple(llvm::IRBuilder<> &Builder, std::map<Value*, Value*> &map, std::nullptr_t i,
+  inline auto eval_tuple(llvm::IRBuilder<> &Builder,
+                         std::map<Value *, Value *> &map, std::nullptr_t i,
                          Arg0 arg0, Args... args) {
     auto &&v = arg0.getValue(Builder, this);
-    return std::tuple_cat(std::make_tuple(v), eval_tuple(Builder, map, i, args...));
+    return std::tuple_cat(std::make_tuple(v),
+                          eval_tuple(Builder, map, i, args...));
   }
-  
-  
-  static std::tuple<Function*, BasicBlock*, Value*, std::map<Value*,Value*>> CreateVectorLoop(unsigned width, ArrayRef<Value*> Args, Module &M, const Twine &Name) {
-    SmallVector<Type*, 4> ArgTypes;
-    for (auto Arg: Args) {
+
+  static std::tuple<Function *, BasicBlock *, Value *,
+                    std::map<Value *, Value *>>
+  CreateVectorLoop(unsigned width, ArrayRef<Value *> Args, Module &M,
+                   const Twine &Name) {
+    SmallVector<Type *, 4> ArgTypes;
+    for (auto Arg : Args) {
       ArgTypes.push_back(Arg->getType());
     }
-    
-    FunctionType *FT = FunctionType::get(Type::getVoidTy(M.getContext()), ArgTypes, false);
-    Function *F = Function::Create(FT, Function::LinkageTypes::InternalLinkage, Name, M);
+
+    FunctionType *FT =
+        FunctionType::get(Type::getVoidTy(M.getContext()), ArgTypes, false);
+    Function *F =
+        Function::Create(FT, Function::LinkageTypes::InternalLinkage, Name, M);
 
     F->addFnAttr(Attribute::NoUnwind);
     F->addFnAttr(Attribute::AlwaysInline);
-    
+
     BasicBlock *Entry = BasicBlock::Create(M.getContext(), "entry", F);
     BasicBlock *Condition = BasicBlock::Create(M.getContext(), "for.cond", F);
     BasicBlock *Body = BasicBlock::Create(M.getContext(), "for.body", F);
     BasicBlock *Increment = BasicBlock::Create(M.getContext(), "for.inc", F);
     BasicBlock *Exit = BasicBlock::Create(M.getContext(), "exit", F);
-    
+
     IRBuilder<> EntryBuilder(Entry);
     IRBuilder<> ConditionBuilder(Condition);
     IRBuilder<> IncrementBuilder(Increment);
     IRBuilder<> BodyBuilder(Body);
     IRBuilder<> ExitBuilder(Exit);
-    
+
     EntryBuilder.setFastMathFlags(getFast());
     ConditionBuilder.setFastMathFlags(getFast());
     IncrementBuilder.setFastMathFlags(getFast());
     BodyBuilder.setFastMathFlags(getFast());
     ExitBuilder.setFastMathFlags(getFast());
-    
-    std::map<Value*, Value*> ArgMap;
-    SmallVector<Value*, 4> ArgAllocas;
+
+    std::map<Value *, Value *> ArgMap;
+    SmallVector<Value *, 4> ArgAllocas;
     for (int i = 0; i < Args.size(); ++i) {
       auto Arg = Args[i];
       F->getArg(i)->setName(Arg->getName());
@@ -1765,63 +1777,70 @@ public:
       ArgMap[Arg] = Alloca;
       ArgAllocas.push_back(Alloca);
     }
-    
-    PHINode *InductionVar = ConditionBuilder.CreatePHI(ConditionBuilder.getInt32Ty(), 2, "i");
-    
-    Value* InductionVarInc = IncrementBuilder.CreateAdd(InductionVar, IncrementBuilder.getInt32(1), "i.inc");
+
+    PHINode *InductionVar =
+        ConditionBuilder.CreatePHI(ConditionBuilder.getInt32Ty(), 2, "i");
+
+    Value *InductionVarInc = IncrementBuilder.CreateAdd(
+        InductionVar, IncrementBuilder.getInt32(1), "i.inc");
     IncrementBuilder.CreateBr(Condition);
 
     Constant *VectorWidth = ConditionBuilder.getInt32(width);
-    Value* LoopCondition = ConditionBuilder.CreateICmpULE(InductionVar, VectorWidth, "loop.cond");
+    Value *LoopCondition =
+        ConditionBuilder.CreateICmpULE(InductionVar, VectorWidth, "loop.cond");
     ConditionBuilder.CreateCondBr(LoopCondition, Body, Exit);
-    
+
     BodyBuilder.CreateBr(Increment);
-        
+
     EntryBuilder.CreateBr(Condition);
-        
+
     InductionVar->addIncoming(InductionVarInc, Increment);
     InductionVar->addIncoming(EntryBuilder.getInt32(0), Entry);
-    
+
     ExitBuilder.CreateRetVoid();
-        
+
     return {F, Body, InductionVar, ArgMap};
   }
-  
-  static std::tuple<Function*, BasicBlock*, Value*, Value*, std::map<Value*,Value*>> CreateVectorLoop(unsigned width, Type *RetType, ArrayRef<Value*> Args, Module &M, const Twine &Name) {
-    SmallVector<Type*, 4> ArgTypes;
-    for (auto Arg: Args) {
+
+  static std::tuple<Function *, BasicBlock *, Value *, Value *,
+                    std::map<Value *, Value *>>
+  CreateVectorLoop(unsigned width, Type *RetType, ArrayRef<Value *> Args,
+                   Module &M, const Twine &Name) {
+    SmallVector<Type *, 4> ArgTypes;
+    for (auto Arg : Args) {
       ArgTypes.push_back(Arg->getType());
     }
-    
+
     FunctionType *FT = FunctionType::get(RetType, ArgTypes, false);
-    Function *F = Function::Create(FT, Function::LinkageTypes::InternalLinkage, Name, M);
-    
+    Function *F =
+        Function::Create(FT, Function::LinkageTypes::InternalLinkage, Name, M);
+
     F->addFnAttr(Attribute::NoUnwind);
     F->addFnAttr(Attribute::AlwaysInline);
-    
+
     BasicBlock *Entry = BasicBlock::Create(M.getContext(), "entry", F);
     BasicBlock *Condition = BasicBlock::Create(M.getContext(), "for.cond", F);
     BasicBlock *Body = BasicBlock::Create(M.getContext(), "for.body", F);
     BasicBlock *Increment = BasicBlock::Create(M.getContext(), "for.inc", F);
     BasicBlock *Exit = BasicBlock::Create(M.getContext(), "exit", F);
-    
+
     IRBuilder<> EntryBuilder(Entry);
     IRBuilder<> ConditionBuilder(Condition);
     IRBuilder<> IncrementBuilder(Increment);
     IRBuilder<> BodyBuilder(Body);
     IRBuilder<> ExitBuilder(Exit);
-    
+
     EntryBuilder.setFastMathFlags(getFast());
     ConditionBuilder.setFastMathFlags(getFast());
     IncrementBuilder.setFastMathFlags(getFast());
     BodyBuilder.setFastMathFlags(getFast());
     ExitBuilder.setFastMathFlags(getFast());
-    
+
     Value *ResultAccumulator = EntryBuilder.CreateAlloca(RetType);
     ResultAccumulator->setName("res");
-    
-    std::map<Value*, Value*> ArgMap;
-    SmallVector<Value*, 4> ArgAllocas;
+
+    std::map<Value *, Value *> ArgMap;
+    SmallVector<Value *, 4> ArgAllocas;
     for (int i = 0; i < Args.size(); ++i) {
       auto Arg = Args[i];
       F->getArg(i)->setName(Arg->getName());
@@ -1831,58 +1850,72 @@ public:
       ArgMap[Arg] = Alloca;
       ArgAllocas.push_back(Alloca);
     }
-    
-    PHINode *InductionVar = ConditionBuilder.CreatePHI(ConditionBuilder.getInt32Ty(), 2, "i");
-    
-    Value* InductionVarInc = IncrementBuilder.CreateAdd(InductionVar, IncrementBuilder.getInt32(1), "i.inc");
+
+    PHINode *InductionVar =
+        ConditionBuilder.CreatePHI(ConditionBuilder.getInt32Ty(), 2, "i");
+
+    Value *InductionVarInc = IncrementBuilder.CreateAdd(
+        InductionVar, IncrementBuilder.getInt32(1), "i.inc");
     IncrementBuilder.CreateBr(Condition);
 
     Constant *VectorWidth = ConditionBuilder.getInt32(width);
-    Value* LoopCondition = ConditionBuilder.CreateICmpULE(InductionVar, VectorWidth, "loop.cond");
+    Value *LoopCondition =
+        ConditionBuilder.CreateICmpULE(InductionVar, VectorWidth, "loop.cond");
     ConditionBuilder.CreateCondBr(LoopCondition, Body, Exit);
-    
+
     BodyBuilder.CreateBr(Increment);
-        
+
     EntryBuilder.CreateBr(Condition);
-        
+
     InductionVar->addIncoming(InductionVarInc, Increment);
     InductionVar->addIncoming(EntryBuilder.getInt32(0), Entry);
-    
+
     auto Ret = ExitBuilder.CreateLoad(RetType, ResultAccumulator);
     ExitBuilder.CreateRet(Ret);
-        
+
     return {F, Body, ResultAccumulator, InductionVar, ArgMap};
   }
-  
 
   /// Unwraps a vector derivative from its internal representation and applies a
   /// function f to each element. Return values of f are collected and wrapped.
   template <typename Func, typename... Args>
-  Value *applyChainRule(Type *diffType, IRBuilder<> &Builder, Func rule, Args... args) {
+  Value *applyChainRule(Type *diffType, IRBuilder<> &Builder, Func rule,
+                        Args... args) {
     if (width > 1) {
-      SmallVector<Type*, sizeof...(args)> ArgTypes = { args.getType()... };
-      SmallVector<Value*, sizeof...(args)> ArgValues = { args.getValue()... };
+      SmallVector<Type *, sizeof...(args)> ArgTypes = {args.getType()...};
+      SmallVector<Value *, sizeof...(args)> ArgValues = {args.getValue()...};
       Type *wrappedType = ArrayType::get(diffType, width);
 
-      auto [LoopF, Body, ResultAcc, i, ArgMap] = CreateVectorLoop(width, wrappedType, ArgValues, *Builder.GetInsertBlock()->getModule(), "vec.loop");
-          
-      IRBuilder<> RuleBuilder = IRBuilder<>(Body->getFirstNonPHIOrDbgOrLifetime());
+      auto [LoopF, Body, ResultAcc, i, ArgMap] =
+          CreateVectorLoop(width, wrappedType, ArgValues,
+                           *Builder.GetInsertBlock()->getModule(), "vec.loop");
+
+      IRBuilder<> RuleBuilder =
+          IRBuilder<>(Body->getFirstNonPHIOrDbgOrLifetime());
       RuleBuilder.setFastMathFlags(getFast());
-      
-      if (width > 1 && memoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode) {
-        auto diff = std::apply(rule, std::move(std::tuple_cat(std::forward_as_tuple(RuleBuilder), eval_tuple(RuleBuilder, ArgMap, i, args...))));
-        
-        auto gep = RuleBuilder.CreateInBoundsGEP(ResultAcc, {RuleBuilder.getInt64(0), i}, "res.idx");
+
+      if (width > 1 &&
+          memoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode) {
+        auto diff =
+            std::apply(rule, std::move(std::tuple_cat(
+                                 std::forward_as_tuple(RuleBuilder),
+                                 eval_tuple(RuleBuilder, ArgMap, i, args...))));
+
+        auto gep = RuleBuilder.CreateInBoundsGEP(
+            ResultAcc, {RuleBuilder.getInt64(0), i}, "res.idx");
         RuleBuilder.CreateStore(diff, gep);
-        
+
         return Builder.CreateCall(LoopF->getFunctionType(), LoopF, ArgValues);
-      } else if (width > 1 && memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes) {
+      } else if (width > 1 &&
+                 memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes) {
         // TODO
       }
     } else {
       Value *i = nullptr;
-      std::map<Value*,Value*> map;
-      return std::apply(rule, std::move(std::tuple_cat(std::forward_as_tuple(Builder), eval_tuple(Builder, map, i, args...))));
+      std::map<Value *, Value *> map;
+      return std::apply(rule, std::move(std::tuple_cat(
+                                  std::forward_as_tuple(Builder),
+                                  eval_tuple(Builder, map, i, args...))));
     }
   }
 
@@ -1891,23 +1924,31 @@ public:
   template <typename Func, typename... Args>
   void applyChainRule(IRBuilder<> &Builder, Func rule, Args... args) {
     if (width > 1) {
-      SmallVector<Type*, sizeof...(args)> ArgTypes = { args.getType()... };
-      SmallVector<Value*, sizeof...(args)> ArgValues = { args.getValue()... };
+      SmallVector<Type *, sizeof...(args)> ArgTypes = {args.getType()...};
+      SmallVector<Value *, sizeof...(args)> ArgValues = {args.getValue()...};
 
-      auto [LoopF, Body, i, ArgMap] = CreateVectorLoop(width, ArgValues, *Builder.GetInsertBlock()->getModule(), "vec.loop");
-      
-      IRBuilder<> RuleBuilder = IRBuilder<>(Body->getFirstNonPHIOrDbgOrLifetime());
+      auto [LoopF, Body, i, ArgMap] = CreateVectorLoop(
+          width, ArgValues, *Builder.GetInsertBlock()->getModule(), "vec.loop");
+
+      IRBuilder<> RuleBuilder =
+          IRBuilder<>(Body->getFirstNonPHIOrDbgOrLifetime());
       RuleBuilder.setFastMathFlags(getFast());
-      
-      if (width > 1 && memoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode) {
-        std::apply(rule, std::move(std::tuple_cat(std::forward_as_tuple(RuleBuilder), eval_tuple(RuleBuilder, ArgMap, i, args...))));
-      } else if (width > 1 && memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes) {
+
+      if (width > 1 &&
+          memoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode) {
+        std::apply(rule, std::move(std::tuple_cat(
+                             std::forward_as_tuple(RuleBuilder),
+                             eval_tuple(RuleBuilder, ArgMap, i, args...))));
+      } else if (width > 1 &&
+                 memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes) {
         // TODO
       }
     } else {
       Value *i = nullptr;
-      std::map<Value*,Value*> map;
-      std::apply(rule, std::move(std::tuple_cat(std::forward_as_tuple(Builder), eval_tuple(Builder, map, i, args...))));
+      std::map<Value *, Value *> map;
+      std::apply(rule, std::move(std::tuple_cat(
+                           std::forward_as_tuple(Builder),
+                           eval_tuple(Builder, map, i, args...))));
     }
   }
 };

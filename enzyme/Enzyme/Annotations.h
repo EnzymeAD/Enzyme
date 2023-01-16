@@ -50,23 +50,19 @@ private:
 public:
   Primal(T *value) : value(value) {}
 
-  Value *getValue(IRBuilder<> &Builder, std::map<Value*, Value*> &map, GradientUtils *gutils, Value *i) {
+  Value *getValue(IRBuilder<> &Builder, std::map<Value *, Value *> &map,
+                  GradientUtils *gutils, Value *i) {
     unsigned width = gutils->getWidth();
     if (width == 1)
       return value;
-      
+
     return Builder.CreateLoad(value->getType(), map[value]);
   }
-  
-  Value *getValue() {
-    return value;
-  }
-  
-  Type *getType() {
-    return value->getType();
-  }
-};
 
+  Value *getValue() { return value; }
+
+  Type *getType() { return value->getType(); }
+};
 
 template <> struct Primal<Constant> {
 private:
@@ -75,17 +71,14 @@ private:
 public:
   Primal(Constant *c) : c(c) {}
 
-  Constant *getValue(IRBuilder<> &Builder, std::map<Value*, Value*> &map, GradientUtils *gutils, Value *i) {
+  Constant *getValue(IRBuilder<> &Builder, std::map<Value *, Value *> &map,
+                     GradientUtils *gutils, Value *i) {
     return c;
   }
-  
-  Value *getValue() {
-    return c;
-  }
-  
-  Type *getType() {
-    return c->getType();
-  }
+
+  Value *getValue() { return c; }
+
+  Type *getType() { return c->getType(); }
 };
 
 template <> struct Primal<ConstantVector> {
@@ -95,17 +88,15 @@ private:
 public:
   Primal(ConstantVector *cv) : cv(cv) {}
 
-  ConstantVector *getValue(IRBuilder<> &Builder, std::map<Value*, Value*> &map, GradientUtils *gutils, Value *i) {
+  ConstantVector *getValue(IRBuilder<> &Builder,
+                           std::map<Value *, Value *> &map,
+                           GradientUtils *gutils, Value *i) {
     return cv;
   }
-  
-  Value *getValue() {
-    return cv;
-  }
-  
-  Type *getType() {
-    return cv->getType();
-  }
+
+  Value *getValue() { return cv; }
+
+  Type *getType() { return cv->getType(); }
 };
 
 template <> struct Primal<ConstantDataVector> {
@@ -115,17 +106,15 @@ private:
 public:
   Primal(ConstantDataVector *cv) : cv(cv) {}
 
-  ConstantDataVector *getValue(IRBuilder<> &Builder, std::map<Value*, Value*> &map, GradientUtils *gutils, Value *i) {
+  ConstantDataVector *getValue(IRBuilder<> &Builder,
+                               std::map<Value *, Value *> &map,
+                               GradientUtils *gutils, Value *i) {
     return cv;
   }
-  
-  Value *getValue() {
-    return cv;
-  }
-  
-  Type *getType() {
-    return cv->getType();
-  }
+
+  Value *getValue() { return cv; }
+
+  Type *getType() { return cv->getType(); }
 };
 
 template <typename T> struct Gradient {
@@ -135,7 +124,8 @@ private:
 public:
   Gradient(T *value) : value(value) {}
 
-  T *getValue(IRBuilder<> &Builder, std::map<Value*, Value*> &map, GradientUtils *gutils, Value *i) {
+  T *getValue(IRBuilder<> &Builder, std::map<Value *, Value *> &map,
+              GradientUtils *gutils, Value *i) {
     VectorModeMemoryLayout memoryLayout = gutils->memoryLayout;
     unsigned width = gutils->getWidth();
 
@@ -143,25 +133,22 @@ public:
       return value;
 
     switch (memoryLayout) {
-      case VectorModeMemoryLayout::VectorizeAtRootNode: {
-        assert(cast<ArrayType>(value->getType())->getNumElements() == width);
-        auto gep = Builder.CreateInBoundsGEP(map[value], {Builder.getInt64(0), i});
-        auto aty = cast<ArrayType>(value->getType());
-        return Builder.CreateLoad(aty->getElementType(), gep);
-      }
-      case VectorModeMemoryLayout::VectorizeAtLeafNodes:
-        // TODO: compute the correct offset!!!
-        return Builder.CreateInBoundsGEP(map[value], {i});
+    case VectorModeMemoryLayout::VectorizeAtRootNode: {
+      assert(cast<ArrayType>(value->getType())->getNumElements() == width);
+      auto gep =
+          Builder.CreateInBoundsGEP(map[value], {Builder.getInt64(0), i});
+      auto aty = cast<ArrayType>(value->getType());
+      return Builder.CreateLoad(aty->getElementType(), gep);
+    }
+    case VectorModeMemoryLayout::VectorizeAtLeafNodes:
+      // TODO: compute the correct offset!!!
+      return Builder.CreateInBoundsGEP(map[value], {i});
     }
   }
-  
-  Value *getValue() {
-    return value;
-  }
-  
-  Type *getType() {
-    return value->getType();
-  }
+
+  Value *getValue() { return value; }
+
+  Type *getType() { return value->getType(); }
 };
 
 template <> struct Gradient<Constant> {
@@ -171,20 +158,17 @@ private:
 public:
   Gradient(Constant *value) : value(value) {}
 
-  Constant *getValue(IRBuilder<> &Builder, std::map<Value*, Value*> &map, GradientUtils *gutils, Value *i) {
+  Constant *getValue(IRBuilder<> &Builder, std::map<Value *, Value *> &map,
+                     GradientUtils *gutils, Value *i) {
     VectorModeMemoryLayout memoryLayout = gutils->memoryLayout;
     unsigned width = gutils->getWidth();
 
     return value;
   }
-  
-  Value *getValue() {
-    return value;
-  }
-  
-  Type *getType() {
-    return value->getType();
-  }
+
+  Value *getValue() { return value; }
+
+  Type *getType() { return value->getType(); }
 };
 
 template <> struct Gradient<ArrayRef<Constant *>> {
@@ -194,21 +178,18 @@ private:
 public:
   Gradient(ArrayRef<Constant *> values) : values(values) {}
 
-  std::vector<Constant *> getValue(IRBuilder<> &Builder, std::map<Value*, Value*> &map, GradientUtils *gutils, Value *i) {
+  std::vector<Constant *> getValue(IRBuilder<> &Builder,
+                                   std::map<Value *, Value *> &map,
+                                   GradientUtils *gutils, Value *i) {
     VectorModeMemoryLayout memoryLayout = gutils->memoryLayout;
     unsigned width = gutils->getWidth();
 
-
     return values;
   }
-  
-  Value *getValue() {
-    return nullptr;
-  }
-  
-  Type *getType() {
-    return nullptr;
-  }
+
+  Value *getValue() { return nullptr; }
+
+  Type *getType() { return nullptr; }
 };
 
 #endif
