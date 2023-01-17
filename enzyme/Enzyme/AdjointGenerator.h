@@ -351,11 +351,12 @@ public:
       IRBuilder<> BuilderZ(&inst);
       getForwardBuilder(BuilderZ);
 
-      auto rule = [](IRBuilder<> &BuilderZ,Value *idiff) {
+      auto rule = [](IRBuilder<> &BuilderZ, Value *idiff) {
         return BuilderZ.CreateFreeze(idiff);
       };
       Value *idiff = diffe(orig_op0, BuilderZ);
-      Value *dif1 = applyChainRule(inst.getType(), BuilderZ, rule, Gradient(idiff));
+      Value *dif1 =
+          applyChainRule(inst.getType(), BuilderZ, rule, Gradient(idiff));
       setDiffe(&inst, dif1, BuilderZ);
       return;
     }
@@ -927,8 +928,11 @@ public:
           Mode == DerivativeMode::ForwardModeSplit) {
         IRBuilder<> BuilderZ(&I);
         getForwardBuilder(BuilderZ);
-        auto rule = [&](IRBuilder<> &Builder2, Value *ptr, Value *dif) -> Value * {
-          if (!gutils->isConstantInstruction(&I)) {
+        auto constantInstruction = gutils->isConstantInstruction(&I);
+
+        auto rule = [constantInstruction, &I](IRBuilder<> &BuilderZ, Value *ptr,
+                                              Value *dif) -> Value * {
+          if (!constantInstruction) {
             assert(ptr);
             AtomicRMWInst *rmw = nullptr;
 #if LLVM_VERSION_MAJOR >= 13
@@ -945,12 +949,12 @@ public:
                                    I.getSyncScopeID());
 #endif
             rmw->setVolatile(I.isVolatile());
-            if (gutils->isConstantValue(&I))
+            if (constantInstruction)
               return Constant::getNullValue(dif->getType());
             else
               return rmw;
           } else {
-            assert(gutils->isConstantValue(&I));
+            assert(constantInstruction);
             return Constant::getNullValue(dif->getType());
           }
         };
@@ -989,7 +993,7 @@ public:
           else if (order == AtomicOrdering::AcquireRelease)
             order = AtomicOrdering::Acquire;
 
-          auto rule = [&](IRBuilder<> &Builder2, Value *ip) -> Value * {
+          auto rule = [order, &I](IRBuilder<> &Builder2, Value *ip) -> Value * {
 #if LLVM_VERSION_MAJOR > 7
             LoadInst *dif1 =
                 Builder2.CreateLoad(I.getType(), ip, I.isVolatile());
@@ -1235,7 +1239,9 @@ public:
             Value *dif1Ptr =
                 lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
 
-            auto rule = [&](IRBuilder<> &Builder2, Value *dif1Ptr) {
+            auto rule = [valType, isVolatile, align, ordering, syncScope,
+                         prevNoAlias,
+                         &I](IRBuilder<> &Builder2, Value *dif1Ptr) {
 #if LLVM_VERSION_MAJOR > 7
               LoadInst *dif1 =
                   Builder2.CreateLoad(valType, dif1Ptr, isVolatile);
@@ -1274,18 +1280,19 @@ public:
             Value *ip =
                 lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
 
-            auto rule = [&](IRBuilder<> &Builder2, Value *ip) {
+            auto rule = [alignv, shadowTy, ptrType,
+                         M = gutils->oldFunc->getParent()](
+                            IRBuilder<> &Builder2, Value *ip, Value *mask) {
               Value *args[] = {ip, alignv, mask,
                                Constant::getNullValue(shadowTy)};
               Type *tys[] = {shadowTy, ptrType};
-              auto F = Intrinsic::getDeclaration(gutils->oldFunc->getParent(),
-                                                 Intrinsic::masked_load, tys);
-              diff = Builder2.CreateCall(F, args);
-              return diff;
+              auto F =
+                  Intrinsic::getDeclaration(M, Intrinsic::masked_load, tys);
+              return Builder2.CreateCall(F, args);
             };
 
-            diff = applyChainRule(valType, Builder2, rule,
-                                  Gradient(ip));
+            diff = applyChainRule(valType, Builder2, rule, Gradient(ip),
+                                  Primal(mask));
           }
 
           gutils->setPtrDiffe(
@@ -1442,33 +1449,39 @@ public:
         if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
           shadowTy = gutils->getShadowType(op0);
 
-        auto rule = [&](IRBuilder<> &Builder2, Value *dif) {
-          if (I.getOpcode() == CastInst::CastOps::FPTrunc ||
-              I.getOpcode() == CastInst::CastOps::FPExt) {
-            return Builder2.CreateFPCast(dif, shadowTy);
-          } else if (I.getOpcode() == CastInst::CastOps::BitCast) {
-            return Builder2.CreateBitCast(dif, shadowTy);
-          } else if (I.getOpcode() == CastInst::CastOps::Trunc) {
-            // TODO CHECK THIS
-            return Builder2.CreateZExt(dif, shadowTy);
-          } else {
-            std::string s;
-            llvm::raw_string_ostream ss(s);
-            ss << *I.getParent()->getParent() << "\n" << *I.getParent() << "\n";
-            ss << "cannot handle above cast " << I << "\n";
-            if (CustomErrorHandler) {
-              CustomErrorHandler(ss.str().c_str(), wrap(&I),
-                                 ErrorType::NoDerivative, nullptr);
-            }
-            TR.dump();
-            llvm::errs() << ss.str() << "\n";
-            report_fatal_error("unknown instruction");
-          }
-        };
-
         Value *dif = diffe(&I, Builder2);
-        Value *diff =
-            applyChainRule(op0->getType(), Builder2, rule, Gradient(dif));
+        Value *diff;
+
+        if (I.getOpcode() == CastInst::CastOps::FPTrunc ||
+            I.getOpcode() == CastInst::CastOps::FPExt) {
+          auto rule = [shadowTy](IRBuilder<> &Builder2, Value *dif) {
+            return Builder2.CreateFPCast(dif, shadowTy);
+          };
+          diff = applyChainRule(op0->getType(), Builder2, rule, Gradient(dif));
+        } else if (I.getOpcode() == CastInst::CastOps::BitCast) {
+          auto rule = [shadowTy](IRBuilder<> &Builder2, Value *dif) {
+            return Builder2.CreateBitCast(dif, shadowTy);
+          };
+          diff = applyChainRule(op0->getType(), Builder2, rule, Gradient(dif));
+        } else if (I.getOpcode() == CastInst::CastOps::Trunc) {
+          // TODO CHECK THIS
+          auto rule = [shadowTy](IRBuilder<> &Builder2, Value *dif) {
+            return Builder2.CreateZExt(dif, shadowTy);
+          };
+          diff = applyChainRule(op0->getType(), Builder2, rule, Gradient(dif));
+        } else {
+          std::string s;
+          llvm::raw_string_ostream ss(s);
+          ss << *I.getParent()->getParent() << "\n" << *I.getParent() << "\n";
+          ss << "cannot handle above cast " << I << "\n";
+          if (CustomErrorHandler) {
+            CustomErrorHandler(ss.str().c_str(), wrap(&I),
+                               ErrorType::NoDerivative, nullptr);
+          }
+          TR.dump();
+          llvm::errs() << ss.str() << "\n";
+          report_fatal_error("unknown instruction");
+        }
 
         addToDiffe(orig_op0, diff, Builder2, FT);
       }
@@ -1933,8 +1946,9 @@ public:
           }
         }
         if (flt) {
-          auto rule = [&](IRBuilder<> &Builder2, Value *prediff) {
-            return Builder2.CreateExtractValue(prediff, IVI.getIndices());
+          auto rule = [idx = IVI.getIndices()](IRBuilder<> &Builder2,
+                                               Value *prediff) {
+            return Builder2.CreateExtractValue(prediff, idx);
           };
           auto prediff = diffe(&IVI, Builder2);
           auto dindex = applyChainRule(orig_inserted->getType(), Builder2, rule,
@@ -1959,9 +1973,10 @@ public:
         if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
           shadowTy = gutils->getShadowType(orig_inserted);
 
-        auto rule = [&](IRBuilder<> &Builder2, Value *prediff) {
+        auto rule = [idx = IVI.getIndices(), shadowTy](IRBuilder<> &Builder2,
+                                                       Value *prediff) {
           return Builder2.CreateInsertValue(
-              prediff, Constant::getNullValue(shadowTy), IVI.getIndices());
+              prediff, Constant::getNullValue(shadowTy), idx);
         };
         auto prediff = diffe(&IVI, Builder2);
         auto dindex = applyChainRule(orig_agg->getType(), Builder2, rule,
@@ -2081,16 +2096,17 @@ public:
     case Instruction::FMul: {
       if (!constantval0) {
         Value *op1 = lookup(gutils->getNewFromOriginal(orig_op1), Builder2);
-        auto rule = [&](IRBuilder<> &Builder2, Value *idiff, Value *op1) {
-          return Builder2.CreateFMul(idiff, op1,
-                                     "m0diffe" + orig_op0->getName());
+        auto rule = [Name = orig_op0->getName()](IRBuilder<> &Builder2,
+                                                 Value *idiff, Value *op1) {
+          return Builder2.CreateFMul(idiff, op1, "m0diffe" + Name);
         };
         dif0 = applyChainRule(orig_op0->getType(), Builder2, rule,
                               Gradient(idiff), Primal(op1));
       }
       if (!constantval1) {
         Value *op0 = lookup(gutils->getNewFromOriginal(orig_op0), Builder2);
-        auto rule = [&orig_op1](IRBuilder<> &Builder2, Value *idiff, Value *op0) {
+        auto rule = [&orig_op1](IRBuilder<> &Builder2, Value *idiff,
+                                Value *op0) {
           return Builder2.CreateFMul(idiff, op0,
                                      "m1diffe" + orig_op1->getName());
         };
@@ -2158,7 +2174,7 @@ public:
                 Value *lop1 =
                     lookup(gutils->getNewFromOriginal(orig_op1), Builder2);
                 auto rule = [](IRBuilder<> &Builder2, Value *idiff, Value *lop0,
-                                        Value *lop1) {
+                               Value *lop1) {
                   return Builder2.CreateFDiv(
                       Builder2.CreateFNeg(Builder2.CreateFMul(idiff, lop0)),
                       lop1);
@@ -2175,8 +2191,8 @@ public:
                 Value *lop0 = lookup(product, EB);
                 Value *lop1 =
                     lookup(gutils->getNewFromOriginal(orig_op1), Builder2);
-                auto rule = [](IRBuilder<> &Builder2, Value *idiff, Value *lop0, Value *lop1,
-                                        Value *s) {
+                auto rule = [](IRBuilder<> &Builder2, Value *idiff, Value *lop0,
+                               Value *lop1, Value *s) {
                   return Builder2.CreateFDiv(
                       Builder2.CreateFNeg(Builder2.CreateFMul(
                           s, Builder2.CreateFDiv(idiff, lop0))),
@@ -2194,7 +2210,8 @@ public:
       }
       if (!constantval0) {
         Value *op1 = lookup(gutils->getNewFromOriginal(orig_op1), Builder2);
-        auto rule = [&orig_op0](IRBuilder<> &Builder2, Value *idiff, Value *op1) {
+        auto rule = [&orig_op0](IRBuilder<> &Builder2, Value *idiff,
+                                Value *op1) {
           return Builder2.CreateFDiv(idiff, op1,
                                      "d0diffe" + orig_op0->getName());
         };
@@ -2205,7 +2222,8 @@ public:
         Value *lop1 = lookup(gutils->getNewFromOriginal(orig_op1), Builder2);
         Value *lastdiv = lookup(gutils->getNewFromOriginal(&BO), Builder2);
 
-        auto rule = [](IRBuilder<> &Builder2, Value *idiff, Value *lop1, Value *lastdiv) {
+        auto rule = [](IRBuilder<> &Builder2, Value *idiff, Value *lop1,
+                       Value *lastdiv) {
           return Builder2.CreateFNeg(
               Builder2.CreateFMul(lastdiv, Builder2.CreateFDiv(idiff, lop1)));
         };
@@ -2235,7 +2253,7 @@ public:
             Intrinsic::getDeclaration(M, Intrinsic::copysign, tys), args2);
         args[0] = Builder2.CreateFNeg(args[0]);
 
-        auto rule = [&](IRBuilder<> &Builder2, Value *arg, Value *idiff) {
+        auto rule = [](IRBuilder<> &Builder2, Value *arg, Value *idiff) {
           return Builder2.CreateFMul(idiff, arg);
         };
         dif1 = applyChainRule(orig_op1->getType(), Builder2, rule,
@@ -2349,9 +2367,8 @@ public:
                     Builder2.CreateFNeg(Builder2.CreateBitCast(idiff, FT));
                 return Builder2.CreateBitCast(neg, BOTy);
               };
-              auto bc =
-                  applyChainRule(BO.getOperand(1 - i)->getType(), Builder2,
-                                 rule, Gradient(idiff));
+              auto bc = applyChainRule(BO.getOperand(1 - i)->getType(),
+                                       Builder2, rule, Gradient(idiff));
               addToDiffe(BO.getOperand(1 - i), bc, Builder2, FT);
               return;
             }
@@ -2371,7 +2388,8 @@ public:
             if (validXor) {
               setDiffe(&BO, Constant::getNullValue(gutils->getShadowType(BO)),
                        Builder2);
-              auto rule = [&eFT](IRBuilder<> &Builder2, Value *idiff, ConstantVector *CV) {
+              auto rule = [&eFT](IRBuilder<> &Builder2, Value *idiff,
+                                 ConstantVector *CV) {
                 Value *V = UndefValue::get(CV->getType());
                 for (size_t i = 0, end = CV->getNumOperands(); i < end; ++i) {
                   auto CI =
@@ -2390,9 +2408,9 @@ public:
                 }
                 return V;
               };
-              Value *V = applyChainRule(BO.getOperand(1 - i)->getType(),
-                                        Builder2, rule, Gradient(idiff),
-                                        Primal(CV));
+              Value *V =
+                  applyChainRule(BO.getOperand(1 - i)->getType(), Builder2,
+                                 rule, Gradient(idiff), Primal(CV));
               addToDiffe(BO.getOperand(1 - i), V, Builder2, FT);
               return;
             }
@@ -2411,7 +2429,8 @@ public:
               setDiffe(&BO, Constant::getNullValue(gutils->getShadowType(BO)),
                        Builder2);
 
-              auto rule = [&eFT](IRBuilder<> &Builder2, Value *idiff, ConstantDataVector *CV) {
+              auto rule = [&eFT](IRBuilder<> &Builder2, Value *idiff,
+                                 ConstantDataVector *CV) {
                 Value *V = UndefValue::get(CV->getType());
                 for (size_t i = 0, end = CV->getNumElements(); i < end; ++i) {
                   auto CI = CV->getElementAsAPInt(i);
@@ -2429,9 +2448,9 @@ public:
                 }
                 return V;
               };
-              Value *V = applyChainRule(BO.getOperand(1 - i)->getType(),
-                                        Builder2, rule, Gradient(idiff),
-                                        Primal(CV));
+              Value *V =
+                  applyChainRule(BO.getOperand(1 - i)->getType(), Builder2,
+                                 rule, Gradient(idiff), Primal(CV));
               addToDiffe(BO.getOperand(1 - i), V, Builder2, FT);
               return;
             }
@@ -2489,7 +2508,8 @@ public:
               auto arg = lookup(
                   gutils->getNewFromOriginal(BO.getOperand(1 - i)), Builder2);
 
-              auto rule = [&FT](IRBuilder<> &Builder2, Value *idiff, Value *arg, Value *BO_opi) {
+              auto rule = [&FT](IRBuilder<> &Builder2, Value *idiff, Value *arg,
+                                Value *BO_opi) {
                 auto prev = Builder2.CreateOr(arg, BO_opi);
                 prev = Builder2.CreateSub(prev, arg, "", /*NUW*/ true,
                                           /*NSW*/ false);
@@ -2510,10 +2530,9 @@ public:
                 return prev;
               };
 
-              Value *prev =
-                  applyChainRule(BO.getOperand(1 - i)->getType(), Builder2,
-                                 rule, Gradient(idiff), Primal(arg),
-                                 Primal(BO.getOperand(i)));
+              Value *prev = applyChainRule(
+                  BO.getOperand(1 - i)->getType(), Builder2, rule,
+                  Gradient(idiff), Primal(arg), Primal(BO.getOperand(i)));
               addToDiffe(BO.getOperand(1 - i), prev, Builder2, FT);
               return;
             }
@@ -2602,8 +2621,8 @@ public:
     switch (BO.getOpcode()) {
     case Instruction::FMul: {
       if (!constantval0 && !constantval1) {
-        auto rule = [](IRBuilder<> &Builder2, Value *op0, Value *op1, Value *dif0,
-                                Value *dif1) {
+        auto rule = [](IRBuilder<> &Builder2, Value *op0, Value *op1,
+                       Value *dif0, Value *dif1) {
           Value *idiff0 = Builder2.CreateFMul(dif0, op1);
           Value *idiff1 = Builder2.CreateFMul(dif1, op0);
           return Builder2.CreateFAdd(idiff0, idiff1);
@@ -2669,8 +2688,8 @@ public:
       if (!constantval0 && !constantval1) {
         Value *op0 = gutils->getNewFromOriginal(orig_op0);
         Value *op1 = gutils->getNewFromOriginal(orig_op1);
-        auto rule = [](IRBuilder<> &Builder2, Value *op0, Value *op1, Value *dif0,
-                                Value *dif1) {
+        auto rule = [](IRBuilder<> &Builder2, Value *op0, Value *op1,
+                       Value *dif0, Value *dif1) {
           Value *idiff1 = Builder2.CreateFMul(dif0, op1);
           Value *idiff2 = Builder2.CreateFMul(op0, dif1);
           return Builder2.CreateFSub(idiff1, idiff2);
@@ -2728,7 +2747,8 @@ public:
       }
 
       if (!constantval0 && !constantval1) {
-        auto rule = [&](IRBuilder<> &Builder2, Value *round, Value *dif0, Value *dif1) {
+        auto rule = [](IRBuilder<> &Builder2, Value *round, Value *dif0,
+                       Value *dif1) {
           return Builder2.CreateFAdd(dif0, Builder2.CreateFMul(dif1, round));
         };
         setDiffe(&BO,
@@ -2867,8 +2887,8 @@ public:
                 return V;
               };
 
-              auto diffe =
-                  applyChainRule(BO.getType(), Builder2, rule, Gradient(dif[1 - i]));
+              auto diffe = applyChainRule(BO.getType(), Builder2, rule,
+                                          Gradient(dif[1 - i]));
               setDiffe(&BO, diffe, Builder2);
               return;
             }
@@ -2903,8 +2923,8 @@ public:
                 return V;
               };
 
-              auto diffe = applyChainRule(
-                  BO.getType(), Builder2, rule, Gradient(dif[1 - i]));
+              auto diffe = applyChainRule(BO.getType(), Builder2, rule,
+                                          Gradient(dif[1 - i]));
               setDiffe(&BO, diffe, Builder2);
               return;
             }
@@ -2961,7 +2981,8 @@ public:
             if (validXor) {
               auto arg = gutils->getNewFromOriginal(BO.getOperand(1 - i));
               auto BO_opi = BO.getOperand(i);
-              auto rule = [&FT](IRBuilder<> &Builder2, Value *difi, Value *arg, Value *BO_opi) {
+              auto rule = [&FT](IRBuilder<> &Builder2, Value *difi, Value *arg,
+                                Value *BO_opi) {
                 auto prev = Builder2.CreateOr(arg, BO_opi);
                 prev = Builder2.CreateSub(prev, arg, "", /*NUW*/ true,
                                           /*NSW*/ false);
@@ -3112,22 +3133,23 @@ public:
 
       auto dbg = gutils->getNewFromOriginal(MS.getDebugLoc());
 
-      applyChainRule(
-          BuilderZ,
-          [&](IRBuilder<> &BuilderZ, Value *op0, Value *op1, Value *op2, Value *op3) {
-            SmallVector<Value *, 4> args = {op0, op1, op2};
-            if (op3)
-              args.push_back(op3);
-            auto cal = BuilderZ.CreateCall(MS.getCalledFunction(), args, Defs);
-            llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
-            ToCopy2.push_back(LLVMContext::MD_noalias);
-            cal->copyMetadata(MS, ToCopy2);
-            cal->setAttributes(MS.getAttributes());
-            cal->setCallingConv(MS.getCallingConv());
-            cal->setTailCallKind(MS.getTailCallKind());
-            cal->setDebugLoc(dbg);
-          },
-          Gradient(op0), Primal(op1), Primal(op2), Primal(op3));
+      auto rule = [dbg, &MS, &Defs](IRBuilder<> &BuilderZ, Value *op0,
+                                    Value *op1, Value *op2, Value *op3) {
+        SmallVector<Value *, 4> args = {op0, op1, op2};
+        if (op3)
+          args.push_back(op3);
+        auto cal = BuilderZ.CreateCall(MS.getCalledFunction(), args, Defs);
+        llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
+        ToCopy2.push_back(LLVMContext::MD_noalias);
+        cal->copyMetadata(MS, ToCopy2);
+        cal->setAttributes(MS.getAttributes());
+        cal->setCallingConv(MS.getCallingConv());
+        cal->setTailCallKind(MS.getTailCallKind());
+        cal->setDebugLoc(dbg);
+      };
+
+      applyChainRule(BuilderZ, rule, Gradient(op0), Primal(op1), Primal(op2),
+                     Primal(op3));
       return;
     }
 
@@ -3352,10 +3374,13 @@ public:
                                        {ValueType::Shadow, ValueType::Primal,
                                         ValueType::Primal, ValueType::Primal},
                                        BuilderZ, /*lookup*/ false);
-        auto rule = [&](IRBuilder<> &BuilderZ, Value *op0, Value *op1, Value *length) {
+        auto dbg = gutils->getNewFromOriginal(MS.getDebugLoc());
+
+        auto rule = [start, &Defs, &MS, dbg](IRBuilder<> &BuilderZ, Value *op0,
+                                             Value *op1, Value *op3,
+                                             Value *length) {
           if (start != 0) {
-            Value *idxs[] = {
-                ConstantInt::get(Type::getInt32Ty(op0->getContext()), start)};
+            Value *idxs[] = {BuilderZ.getInt32(start)};
 #if LLVM_VERSION_MAJOR > 7
             op0 = BuilderZ.CreateInBoundsGEP(
                 op0->getType()->getPointerElementType(), op0, idxs);
@@ -3373,10 +3398,11 @@ public:
           cal->setAttributes(MS.getAttributes());
           cal->setCallingConv(MS.getCallingConv());
           cal->setTailCallKind(MS.getTailCallKind());
-          cal->setDebugLoc(gutils->getNewFromOriginal(MS.getDebugLoc()));
+          cal->setDebugLoc(dbg);
         };
 
-        applyChainRule(BuilderZ, rule, Gradient(shadow_dst), Primal(op1), Primal(length));
+        applyChainRule(BuilderZ, rule, Gradient(shadow_dst), Primal(op1),
+                       Primal(op3), Primal(length));
       }
       if (secretty && (Mode == DerivativeMode::ReverseModeGradient ||
                        Mode == DerivativeMode::ReverseModeCombined)) {
@@ -3388,13 +3414,15 @@ public:
                                        BuilderZ, /*lookup*/ true);
         Value *op1l = gutils->lookupM(op1, Builder2);
         Value *op3l = op3;
+        auto dbg = gutils->getNewFromOriginal(MS.getDebugLoc());
         if (op3l)
           op3l = gutils->lookupM(op3l, BuilderZ);
         length = gutils->lookupM(length, Builder2);
-        auto rule = [&](IRBuilder<> &Builder2, Value *op0, Value *op1l, Value *op3l, Value *length) {
+        auto rule = [start, dbg, &MS, &Defs](IRBuilder<> &Builder2, Value *op0,
+                                             Value *op1l, Value *op3l,
+                                             Value *length) {
           if (start != 0) {
-            Value *idxs[] = {
-                ConstantInt::get(Type::getInt32Ty(op0->getContext()), start)};
+            Value *idxs[] = {Builder2.getInt32(start)};
 #if LLVM_VERSION_MAJOR > 7
             op0 = Builder2.CreateInBoundsGEP(
                 op0->getType()->getPointerElementType(), op0, idxs);
@@ -3412,10 +3440,12 @@ public:
           cal->setAttributes(MS.getAttributes());
           cal->setCallingConv(MS.getCallingConv());
           cal->setTailCallKind(MS.getTailCallKind());
-          cal->setDebugLoc(gutils->getNewFromOriginal(MS.getDebugLoc()));
+          cal->setDebugLoc(dbg);
         };
 
-        applyChainRule(Builder2, rule, Gradient(gutils->lookupM(shadow_dst, Builder2)), Primal(op1l), Primal(op3l), Primal(length));
+        applyChainRule(Builder2, rule,
+                       Gradient(gutils->lookupM(shadow_dst, Builder2)),
+                       Primal(op1l), Primal(op3l), Primal(length));
       }
 
       if (nextStart == size)
@@ -3484,13 +3514,12 @@ public:
             new_size, ConstantInt::get(new_size->getType(), gutils->getWidth()),
             new_size->getName() + ".vecsize");
 
-      auto rule = [&](IRBuilder<> &Builder2, Value *ddst, Value *dsrc) {
+      auto rule = [dstAlign, srcAlign, new_size, ID,
+                   &MTI](IRBuilder<> &Builder2, Value *ddst, Value *dsrc) {
         if (ddst->getType()->isIntegerTy())
-          ddst = Builder2.CreateIntToPtr(
-              ddst, Type::getInt8PtrTy(ddst->getContext()));
+          ddst = Builder2.CreateIntToPtr(ddst, Builder2.getInt8PtrTy());
         if (dsrc->getType()->isIntegerTy())
-          dsrc = Builder2.CreateIntToPtr(
-              dsrc, Type::getInt8PtrTy(dsrc->getContext()));
+          dsrc = Builder2.CreateIntToPtr(dsrc, Builder2.getInt8PtrTy());
         CallInst *call;
         if (ID == Intrinsic::memmove) {
           call =
@@ -3673,7 +3702,11 @@ public:
                               ? gutils->getNewFromOriginal(orig_src)
                               : gutils->invertPointerM(orig_src, BuilderZ);
 
-      auto rule = [&](IRBuilder<> &BuilderZ, Value *shadow_dst, Value *shadow_src, Value *length) {
+      auto rule = [start, forwardsShadow, backwardsShadow, orig_dst, orig_src,
+                   isVolatile, &MTI, gutils = this->gutils, ID, subdstalign,
+                   subsrcalign, Mode = this->Mode,
+                   &dt](IRBuilder<> &BuilderZ, Value *shadow_dst,
+                        Value *shadow_src, Value *length) { // TODO: fix this!
         SubTransferHelper(
             gutils, Mode, dt.isFloat(), ID, subdstalign, subsrcalign,
             /*offset*/ start, gutils->isConstantValue(orig_dst), shadow_dst,
@@ -3973,14 +4006,14 @@ public:
 #else
               cast<VectorType>(und->getType())->getNumElements()));
 #endif
-          auto rule = [](IRBuilder<> &Builder2, Value *vdiff, Value *und, Value *mask) {
+          auto rule = [](IRBuilder<> &Builder2, Value *vdiff, Value *und,
+                         Value *mask) {
             return Builder2.CreateShuffleVector(
                 Builder2.CreateInsertElement(und, vdiff, (uint64_t)0), und,
                 mask);
           };
-          auto vec = applyChainRule(
-              orig_ops[1]->getType(), Builder2, rule, Gradient(vdiff),
-              Primal(und), Primal(mask));
+          auto vec = applyChainRule(orig_ops[1]->getType(), Builder2, rule,
+                                    Gradient(vdiff), Primal(und), Primal(mask));
           addToDiffe(orig_ops[1], vec, Builder2, orig_ops[0]->getType());
         }
         return;
@@ -4024,7 +4057,8 @@ public:
 
           auto c = ConstantFP::get(I.getType(), 0.5);
 
-          auto rule = [](IRBuilder<> &Builder2, Value *vdiff, Constant *c, Value *cal) {
+          auto rule = [](IRBuilder<> &Builder2, Value *vdiff, Constant *c,
+                         Value *cal) {
             return Builder2.CreateFDiv(Builder2.CreateFMul(c, vdiff), cal);
           };
 
@@ -4055,7 +4089,7 @@ public:
           auto pc = ConstantFP::get(orig_ops[0]->getType(), 1);
 
           auto rule = [&cmp](IRBuilder<> &Builder2, Value *vdiff, Constant *nc,
-                                        Constant *pc) {
+                             Constant *pc) {
             return Builder2.CreateFMul(Builder2.CreateSelect(cmp, nc, pc),
                                        vdiff);
           };
@@ -4176,7 +4210,8 @@ public:
           Value *op0 =
               lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2);
           Constant *c = ConstantFP::get(I.getType(), 0.6931471805599453);
-          auto rule = [](IRBuilder<> &Builder2, Value *vdiff, Constant *c, Value *op0) {
+          auto rule = [](IRBuilder<> &Builder2, Value *vdiff, Constant *c,
+                         Value *op0) {
             return Builder2.CreateFDiv(vdiff, Builder2.CreateFMul(c, op0));
           };
           Value *dif0 = applyChainRule(orig_ops[0]->getType(), Builder2, rule,
@@ -4190,7 +4225,8 @@ public:
           Value *op0 =
               lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2);
           Constant *c = ConstantFP::get(I.getType(), 2.302585092994046);
-          auto rule = [](IRBuilder<> &Builder2, Value *vdiff, Constant *c, Value *op0) {
+          auto rule = [](IRBuilder<> &Builder2, Value *vdiff, Constant *c,
+                         Value *op0) {
             return Builder2.CreateFDiv(vdiff, Builder2.CreateFMul(c, op0));
           };
           Value *dif0 = applyChainRule(orig_ops[0]->getType(), Builder2, rule,
@@ -4216,7 +4252,8 @@ public:
           cal->setCallingConv(ExpF->getCallingConv());
           cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
           Constant *c = ConstantFP::get(I.getType(), 0.6931471805599453);
-          auto rule = [&ID](IRBuilder<> &Builder2, Value *vdiff, Constant *c, Value *cal) {
+          auto rule = [&ID](IRBuilder<> &Builder2, Value *vdiff, Constant *c,
+                            Value *cal) {
             Value *dif0 = Builder2.CreateFMul(vdiff, cal);
             if (ID != Intrinsic::exp) {
               dif0 = Builder2.CreateFMul(dif0, c);
@@ -4290,10 +4327,12 @@ public:
 
           cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
           Value *op1Lookup = lookup(op1, Builder2);
-          auto rule = [&op0](IRBuilder<> &Builder2, Value *vdiff, Value *cal, Value *op1Lookup) {
+          auto rule = [&op0](IRBuilder<> &Builder2, Value *vdiff, Value *cal,
+                             Value *op1Lookup) {
             return Builder2.CreateFMul(
                 Builder2.CreateFMul(vdiff, cal),
-                Builder2.CreateSIToFP(op1Lookup, op0->getType()->getScalarType()));
+                Builder2.CreateSIToFP(op1Lookup,
+                                      op0->getType()->getScalarType()));
           };
           Value *dif0 =
               applyChainRule(orig_ops[0]->getType(), Builder2, rule,
@@ -4340,7 +4379,8 @@ public:
           cal->setCallingConv(CI.getCallingConv());
           cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
           Value *op1Lookup = lookup(op1, Builder2);
-          auto rule = [](IRBuilder<> &Builder2, Value *vdiff, Value *cal, Value *op1Lookup) {
+          auto rule = [](IRBuilder<> &Builder2, Value *vdiff, Value *cal,
+                         Value *op1Lookup) {
             return Builder2.CreateFMul(Builder2.CreateFMul(vdiff, cal),
                                        op1Lookup);
           };
@@ -4367,7 +4407,8 @@ public:
           Value *op0l =
               lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2);
 
-          auto rule = [&M](IRBuilder<> &Builder2, Value *vdiff, Value *cal, Value *op0l) {
+          auto rule = [&M](IRBuilder<> &Builder2, Value *vdiff, Value *cal,
+                           Value *op0l) {
             return Builder2.CreateFMul(
                 Builder2.CreateFMul(vdiff, cal),
                 Builder2.CreateCall(Intrinsic::getDeclaration(
@@ -4474,7 +4515,8 @@ public:
                           ? Constant::getNullValue(vectype)
                           : diffe(orig_ops[1], Builder2);
 
-        auto rule = [&](IRBuilder<> &Builder2, Value *accdif, Value *vecdif) {
+        auto rule = [M, ID, dbg = gutils->getNewFromOriginal(I.getDebugLoc())](
+                        IRBuilder<> &Builder2, Value *accdif, Value *vecdif) {
 #if LLVM_VERSION_MAJOR < 12
           auto vfra = Intrinsic::getDeclaration(
               M, ID, {accdif->getType(), vecdif->getType()});
@@ -4483,12 +4525,12 @@ public:
 #endif
           auto cal = Builder2.CreateCall(vfra, {accdif, vecdif});
           cal->setCallingConv(vfra->getCallingConv());
-          cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
+          cal->setDebugLoc(dbg);
           return cal;
         };
 
-        Value *dif = applyChainRule(
-            I.getType(), Builder2, rule, Gradient(accdif), Gradient(vecdif));
+        Value *dif = applyChainRule(I.getType(), Builder2, rule,
+                                    Gradient(accdif), Gradient(vecdif));
         setDiffe(&I, dif, Builder2);
         return;
       }
@@ -4519,14 +4561,15 @@ public:
         cal->setCallingConv(CI.getCallingConv());
         cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
 
-        auto rule = [&](IRBuilder<> &Builder2, Value *op) {
+        auto rule = [half](IRBuilder<> &Builder2, Value *op, Value *cal,
+                           Value *cmp) {
           Value *dif0 = Builder2.CreateFDiv(Builder2.CreateFMul(half, op), cal);
           return Builder2.CreateSelect(
               cmp, Constant::getNullValue(dif0->getType()), dif0);
         };
 
-        Value *dif0 = applyChainRule(
-            I.getType(), Builder2, rule, Gradient(op));
+        Value *dif0 = applyChainRule(I.getType(), Builder2, rule, Gradient(op),
+                                     Primal(cal), Primal(cmp));
         setDiffe(&I, dif0, Builder2);
         return;
       }
@@ -4581,7 +4624,8 @@ public:
                             ? Constant::getNullValue(opType1)
                             : diffe(orig_ops[1], Builder2);
 
-        auto rule = [&cmp](IRBuilder<> &Builder2, Value *diffe0, Value *diffe1) {
+        auto rule = [&cmp](IRBuilder<> &Builder2, Value *diffe0,
+                           Value *diffe1) {
           return Builder2.CreateSelect(cmp, diffe0, diffe1);
         };
 
@@ -4615,7 +4659,8 @@ public:
                             ? Constant::getNullValue(opType1)
                             : diffe(orig_ops[1], Builder2);
 
-        auto rule = [&cmp](IRBuilder<> &Builder2, Value *diffe0, Value *diffe1) {
+        auto rule = [&cmp](IRBuilder<> &Builder2, Value *diffe0,
+                           Value *diffe1) {
           return Builder2.CreateSelect(cmp, diffe0, diffe1);
         };
 
@@ -4648,15 +4693,17 @@ public:
                           ? Constant::getNullValue(opType2)
                           : diffe(orig_ops[2], Builder2);
 
-        auto rule = [&](IRBuilder<> &Builder2, Value *dif0, Value *dif1, Value *dif2, Value *op0,
-                        Value *op1) {
-          Value *dif =
-              Builder2.CreateFAdd(gutils->isConstantValue(orig_ops[1])
-                                      ? Constant::getNullValue(dif1->getType())
-                                      : Builder2.CreateFMul(op0, dif1),
-                                  gutils->isConstantValue(orig_ops[0])
-                                      ? Constant::getNullValue(dif0->getType())
-                                      : Builder2.CreateFMul(op1, dif0));
+        bool constantOp0 = gutils->isConstantValue(orig_ops[0]);
+        bool constantOp1 = gutils->isConstantValue(orig_ops[1]);
+
+        auto rule = [constantOp0, constantOp1](
+                        IRBuilder<> &Builder2, Value *dif0, Value *dif1,
+                        Value *dif2, Value *op0, Value *op1) {
+          Value *dif = Builder2.CreateFAdd(
+              constantOp1 ? Constant::getNullValue(dif1->getType())
+                          : Builder2.CreateFMul(op0, dif1),
+              constantOp0 ? Constant::getNullValue(dif0->getType())
+                          : Builder2.CreateFMul(op1, dif0));
           return Builder2.CreateFAdd(dif, dif2);
         };
 
@@ -4741,7 +4788,8 @@ public:
 
         Constant *c = ConstantFP::get(I.getType(), 0.6931471805599453);
 
-        auto rule = [ID](IRBuilder<> &Builder2, Value *op, Value *cal, Constant *c) {
+        auto rule = [ID](IRBuilder<> &Builder2, Value *op, Value *cal,
+                         Constant *c) {
           Value *dif0 = Builder2.CreateFMul(op, cal);
           if (ID != Intrinsic::exp)
             dif0 = Builder2.CreateFMul(dif0, c);
@@ -4823,7 +4871,8 @@ public:
 
           Value *cmp = Builder2.CreateICmpEQ(
               ConstantInt::get(args[1]->getType(), 0), op1);
-          auto rule = [&cmp](IRBuilder<> &Builder2, Value *op, Value *cal, Value *cast) {
+          auto rule = [&cmp](IRBuilder<> &Builder2, Value *op, Value *cal,
+                             Value *cast) {
             return Builder2.CreateSelect(
                 cmp, Constant::getNullValue(op->getType()),
                 Builder2.CreateFMul(Builder2.CreateFMul(op, cal), cast));
@@ -4879,8 +4928,8 @@ public:
           if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
             shadowTy = gutils->getShadowType(CI);
 
-          auto rule = [&DL, &shadowTy](IRBuilder<> &Builder2, Value *op, Value *res,
-                                                  Value *mul) {
+          auto rule = [&DL, &shadowTy](IRBuilder<> &Builder2, Value *op,
+                                       Value *res, Value *mul) {
             Value *out = Builder2.CreateFMul(mul, op);
 
             if (out->getType() != shadowTy) {
@@ -4921,8 +4970,8 @@ public:
                   ? gutils->getShadowType(CI)
                   : CI.getType();
 
-          auto rule = [&DL, &shadowTy](IRBuilder<> &Builder2, Value *op, Value *res,
-                                                  Value *mul) {
+          auto rule = [&DL, &shadowTy](IRBuilder<> &Builder2, Value *op,
+                                       Value *res, Value *mul) {
             Value *out = Builder2.CreateFMul(mul, op);
 
             if (out->getType() != shadowTy) {
@@ -5859,7 +5908,7 @@ public:
                        Constant::getNullValue(gutils->getShadowType(call)),
                        BuilderZ);
             } else {
-              auto Defs = gutils->getInvertedBundles(
+              auto Defs1 = gutils->getInvertedBundles(
                   &call,
                   {ValueType::Primal, ValueType::Primal, ValueType::Primal},
                   BuilderZ, /*lookup*/ false);
@@ -5891,25 +5940,25 @@ public:
 
 #if LLVM_VERSION_MAJOR > 7
               auto norm = BuilderZ.CreateCall(call.getFunctionType(), callval,
-                                              args, Defs);
+                                              args, Defs1);
 #else
-              auto norm = BuilderZ.CreateCall(callval, args, Defs);
+              auto norm = BuilderZ.CreateCall(callval, args, Defs1);
 #endif
               Value *op0 = gutils->getNewFromOriginal(call.getOperand(0));
               Value *op1 = gutils->getNewFromOriginal(call.getOperand(1));
               Value *op2 = gutils->getNewFromOriginal(call.getOperand(2));
 
-              auto rule = [&](IRBuilder<> &BuilderZ, Value *ip, Value *op0, Value *op1, Value *op2,
-                              Value *norm) {
+              auto Defs2 = gutils->getInvertedBundles(
+                  &call,
+                  {ValueType::Primal, ValueType::Both, ValueType::Primal},
+                  BuilderZ, /*lookup*/ false);
+
+              auto rule = [derivcall, &Defs2](IRBuilder<> &BuilderZ, Value *ip,
+                                              Value *op0, Value *op1,
+                                              Value *op2, Value *norm) {
                 Value *args[] = {op0, op1, op2, ip, op2};
                 return BuilderZ.CreateFDiv(
-                    BuilderZ.CreateCall(derivcall, args,
-                                        gutils->getInvertedBundles(
-                                            &call,
-                                            {ValueType::Primal, ValueType::Both,
-                                             ValueType::Primal},
-                                            BuilderZ, /*lookup*/ false)),
-                    norm);
+                    BuilderZ.CreateCall(derivcall, args, Defs2), norm);
               };
 
               Value *ip = gutils->invertPointerM(call.getOperand(1), BuilderZ);
@@ -6313,49 +6362,54 @@ public:
           auto callval = call.getCalledValue();
 #endif
 
+          bool constantOp1 = gutils->isConstantValue(call.getArgOperand(1));
+          bool constantOp3 = gutils->isConstantValue(call.getArgOperand(3));
+
           Value *dx =
-              gutils->isConstantValue(call.getArgOperand(1))
+              constantOp1
                   ? nullptr
                   : gutils->invertPointerM(call.getArgOperand(1), Builder2);
           Value *dy =
-              gutils->isConstantValue(call.getArgOperand(3))
+              constantOp3
                   ? nullptr
                   : gutils->invertPointerM(call.getArgOperand(3), Builder2);
 
-          auto rule = [&](IRBuilder<> &Builder2, Value *dx, Value *dy) {
+          auto Defs1 = gutils->getInvertedBundles(
+              &call,
+              {ValueType::None, xcache ? ValueType::None : ValueType::Primal,
+               ValueType::None, ValueType::Shadow, ValueType::None},
+              Builder2, /*lookup*/ false);
+
+          auto Defs2 = gutils->getInvertedBundles(
+              &call,
+              {ValueType::None, ValueType::Shadow, ValueType::None,
+               ycache ? ValueType::None : ValueType::Primal, ValueType::None},
+              Builder2, /*lookup*/ false);
+
+          auto rule = [constantOp1, constantOp3, &Defs1, &Defs2,
+                       FT = call.getFunctionType()](
+                          IRBuilder<> &Builder2, Value *dx, Value *dy,
+                          Value *count, Value *xdata, Value *ydata, Value *xinc,
+                          Value *yinc, Value *trueXinc, Value *trueYinc,
+                          Value *callval) {
             Value *dres = nullptr;
-            if (!gutils->isConstantValue(call.getArgOperand(3))) {
+            if (!constantOp3) {
               Value *args1[] = {count, xdata, xinc, dy, trueYinc};
 
-              auto Defs = gutils->getInvertedBundles(
-                  &call,
-                  {ValueType::None,
-                   xcache ? ValueType::None : ValueType::Primal,
-                   ValueType::None, ValueType::Shadow, ValueType::None},
-                  Builder2, /*lookup*/ false);
-
 #if LLVM_VERSION_MAJOR > 7
-              dres = Builder2.CreateCall(call.getFunctionType(), callval, args1,
-                                         Defs);
+              dres = Builder2.CreateCall(FT, callval, args1, Defs1);
 #else
-              dres = Builder2.CreateCall(callval, args1, Defs);
+              dres = Builder2.CreateCall(callval, args1, Defs1);
 #endif
             }
-            if (!gutils->isConstantValue(call.getArgOperand(1))) {
+            if (!constantOp1) {
               Value *args1[] = {count, ydata, yinc, dx, trueXinc};
 
-              auto Defs = gutils->getInvertedBundles(
-                  &call,
-                  {ValueType::None, ValueType::Shadow, ValueType::None,
-                   ycache ? ValueType::None : ValueType::Primal,
-                   ValueType::None},
-                  Builder2, /*lookup*/ false);
-
 #if LLVM_VERSION_MAJOR > 7
-              Value *secondcall = Builder2.CreateCall(call.getFunctionType(),
-                                                      callval, args1, Defs);
+              Value *secondcall =
+                  Builder2.CreateCall(FT, callval, args1, Defs2);
 #else
-              Value *secondcall = Builder2.CreateCall(callval, args1, Defs);
+              Value *secondcall = Builder2.CreateCall(callval, args1, Defs2);
 #endif
               if (dres)
                 dres = Builder2.CreateFAdd(dres, secondcall);
@@ -6365,7 +6419,11 @@ public:
             return dres;
           };
 
-          Value *dres = applyChainRule(call.getType(), Builder2, rule, Gradient(dx), Gradient(dy));
+          Value *dres = applyChainRule(
+              call.getType(), Builder2, rule, Gradient(dx), Gradient(dy),
+              Primal(count), Primal(xdata), Primal(ydata), Primal(xinc),
+              Primal(yinc), Primal(trueXinc), Primal(trueYinc),
+              Primal(callval));
           setDiffe(&call, dres, Builder2);
         }
 
@@ -6407,48 +6465,56 @@ public:
             }
           }
 
-          // Vector Mode not handled yet
-          Value *dx = gutils->isConstantValue(call.getArgOperand(1))
-                          ? nullptr
-                          : lookup(gutils->invertPointerM(call.getArgOperand(1),
-                                                          Builder2),
-                                   Builder2);
-          Value *dy = gutils->isConstantValue(call.getArgOperand(3))
-                          ? nullptr
-                          : lookup(gutils->invertPointerM(call.getArgOperand(3),
-                                                          Builder2),
-                                   Builder2);
+          bool constantOp1 = gutils->isConstantValue(call.getArgOperand(1));
+          bool constantOp3 = gutils->isConstantValue(call.getArgOperand(3));
 
-          auto rule = [&](IRBuilder<> &Builder2, Value *dx, Value *dy, Value *dif) {
+          // Vector Mode not handled yet
+          Value *dx = constantOp1 ? nullptr
+                                  : lookup(gutils->invertPointerM(
+                                               call.getArgOperand(1), Builder2),
+                                           Builder2);
+          Value *dy = constantOp3 ? nullptr
+                                  : lookup(gutils->invertPointerM(
+                                               call.getArgOperand(3), Builder2),
+                                           Builder2);
+
+          auto Defs1 = gutils->getInvertedBundles(
+              &call,
+              {ValueType::None, xcache ? ValueType::None : ValueType::Primal,
+               ValueType::None, ValueType::Shadow, ValueType::None},
+              Builder2, /*lookup*/ true);
+
+          auto Defs2 = gutils->getInvertedBundles(
+              &call,
+              {ValueType::None, ValueType::Shadow, ValueType::None,
+               ycache ? ValueType::None : ValueType::Primal, ValueType::None},
+              Builder2, /*lookup*/ true);
+
+          auto rule = [derivcall, byRef, constantOp1, constantOp3, &Defs1,
+                       &Defs2](IRBuilder<> &Builder2, Value *dx, Value *dy,
+                               Value *dif, Value *alloc, Value *count,
+                               Value *xdata, Value *ydata, Value *xinc,
+                               Value *yinc, Value *trueXinc, Value *trueYinc) {
             if (byRef) {
               Builder2.CreateStore(dif, alloc);
               dif = alloc;
             }
-            if (!gutils->isConstantValue(call.getArgOperand(3))) {
+
+            if (!constantOp3) {
               Value *args1[6] = {count, dif, xdata, xinc, dy, trueYinc};
-              Builder2.CreateCall(
-                  derivcall, args1,
-                  gutils->getInvertedBundles(
-                      &call,
-                      {ValueType::None,
-                       xcache ? ValueType::None : ValueType::Primal,
-                       ValueType::None, ValueType::Shadow, ValueType::None},
-                      Builder2, /*lookup*/ true));
+              Builder2.CreateCall(derivcall, args1, Defs1);
             }
-            if (!gutils->isConstantValue(call.getArgOperand(1))) {
+
+            if (!constantOp1) {
               Value *args2[6] = {count, dif, ydata, yinc, dx, trueXinc};
-              Builder2.CreateCall(
-                  derivcall, args2,
-                  gutils->getInvertedBundles(
-                      &call,
-                      {ValueType::None, ValueType::Shadow, ValueType::None,
-                       ycache ? ValueType::None : ValueType::Primal,
-                       ValueType::None},
-                      Builder2, /*lookup*/ true));
+              Builder2.CreateCall(derivcall, args2, Defs2);
             }
           };
 
-          applyChainRule(Builder2, rule, Gradient(dx), Gradient(dy), Gradient(dif));
+          applyChainRule(Builder2, rule, Gradient(dx), Gradient(dy),
+                         Gradient(dif), Primal(alloc), Primal(count),
+                         Primal(xdata), Primal(ydata), Primal(xinc),
+                         Primal(yinc), Primal(trueXinc), Primal(trueYinc));
 
           setDiffe(&call, Constant::getNullValue(gutils->getShadowType(call)),
                    Builder2);
@@ -9885,8 +9951,8 @@ public:
                                  ? diffe(orig->getArgOperand(0), Builder2)
                                  : diffe(orig, Builder2);
 
-            auto rule1 = [](IRBuilder<> &Builder2, Value *dfactor, Value *cal, Value *re,
-                                     Value *im) {
+            auto rule1 = [](IRBuilder<> &Builder2, Value *dfactor, Value *cal,
+                            Value *re, Value *im) {
               Value *fac_re = Builder2.CreateExtractValue(dfactor, 0);
               Value *fac_im = Builder2.CreateExtractValue(dfactor, 1);
 
@@ -10209,7 +10275,9 @@ public:
                 Value *ptrshadow = gutils->invertPointerM(arg, BuilderZ);
                 applyChainRule(
                     BuilderZ,
-                    [&](IRBuilder<> &Builder2, Value *ptrshadow) { iargs.push_back(ptrshadow); },
+                    [&](IRBuilder<> &Builder2, Value *ptrshadow) {
+                      iargs.push_back(ptrshadow);
+                    },
                     Gradient(ptrshadow));
               }
             }
@@ -10304,8 +10372,8 @@ public:
             if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
               shadowTy = gutils->getShadowType(orig);
 
-            auto rule = [&shadowTy](IRBuilder<> &Builder2, Value *vdiff, Value *dsin,
-                                               Value *dcos) {
+            auto rule = [&shadowTy](IRBuilder<> &Builder2, Value *vdiff,
+                                    Value *dsin, Value *dcos) {
               Value *res = UndefValue::get(shadowTy);
               res = Builder2.CreateInsertValue(
                   res, Builder2.CreateFMul(vdiff, dsin), {0});
@@ -10339,7 +10407,8 @@ public:
                 Intrinsic::getDeclaration(gutils->oldFunc->getParent(),
                                           Intrinsic::sin, tys),
                 args));
-            auto rule = [](IRBuilder<> &Builder2, Value *vdiff, Value *dcos, Value *dsin) {
+            auto rule = [](IRBuilder<> &Builder2, Value *vdiff, Value *dcos,
+                           Value *dsin) {
               return Builder2.CreateFSub(
                   Builder2.CreateFMul(Builder2.CreateExtractValue(vdiff, {0}),
                                       dsin),
@@ -10399,12 +10468,13 @@ public:
                                ? nullptr
                                : diffe(orig->getArgOperand(1), Builder2);
 
-              auto rule1 = [](IRBuilder<> &Builder2, Value *op, Value *arg0, Value *d) {
+              auto rule1 = [](IRBuilder<> &Builder2, Value *op, Value *arg0,
+                              Value *d) {
                 return Builder2.CreateFMul(arg0, Builder2.CreateFDiv(op, d));
               };
 
-              auto rule2 = [](IRBuilder<> &Builder2, Value *op0, Value *op1, Value *arg0,
-                                       Value *arg1, Value *d) {
+              auto rule2 = [](IRBuilder<> &Builder2, Value *op0, Value *op1,
+                              Value *arg0, Value *arg1, Value *d) {
                 Value *dif1 =
                     Builder2.CreateFMul(arg0, Builder2.CreateFDiv(op0, d));
                 Value *dif2 =
@@ -10436,8 +10506,8 @@ public:
                   Value *arg0 = Builder2.CreateExtractValue(args[0], 0);
                   Value *arg1 = Builder2.CreateExtractValue(args[0], 1);
 
-                  auto rule = [](IRBuilder<> &Builder2, Value *op, Value *arg0, Value *arg1,
-                                          Value *d) {
+                  auto rule = [](IRBuilder<> &Builder2, Value *op, Value *arg0,
+                                 Value *arg1, Value *d) {
                     Value *op0 = Builder2.CreateExtractValue(op, 0);
                     Value *op1 = Builder2.CreateExtractValue(op, 1);
 
@@ -10544,11 +10614,13 @@ public:
             Value *vdiff = diffe(orig->getArgOperand(0), Builder2);
             Value *exp = gutils->getNewFromOriginal(orig->getArgOperand(1));
 
-            auto rule = [&called](IRBuilder<> &Builder2, Value *vdiff, Value *exp) {
+            auto rule = [&called](IRBuilder<> &Builder2, Value *vdiff,
+                                  Value *exp) {
               return Builder2.CreateCall(called, {vdiff, exp});
             };
 
-            Value *darg = applyChainRule(call.getType(), Builder2, rule, Gradient(vdiff), Primal(exp));
+            Value *darg = applyChainRule(call.getType(), Builder2, rule,
+                                         Gradient(vdiff), Primal(exp));
             setDiffe(orig, darg, Builder2);
             return;
           }
@@ -10560,13 +10632,14 @@ public:
             Value *exponent = lookup(
                 gutils->getNewFromOriginal(orig->getArgOperand(1)), Builder2);
 
-            auto rule = [&called](IRBuilder<> &Builder2, Value *vdiff, Value *exponent) {
+            auto rule = [&called](IRBuilder<> &Builder2, Value *vdiff,
+                                  Value *exponent) {
               return Builder2.CreateCall(called, {vdiff, exponent});
             };
             Value *vdiff = diffe(orig, Builder2);
-            Value *darg = applyChainRule(
-                orig->getArgOperand(0)->getType(), Builder2, rule,
-                Gradient(vdiff), Primal(exponent));
+            Value *darg =
+                applyChainRule(orig->getArgOperand(0)->getType(), Builder2,
+                               rule, Gradient(vdiff), Primal(exponent));
             setDiffe(orig, Constant::getNullValue(gutils->getShadowType(orig)),
                      Builder2);
             addToDiffe(orig->getArgOperand(0), darg, Builder2, orig->getType());
@@ -10720,14 +10793,17 @@ public:
                 anti = gutils->cacheForReverse(
                     bb, anti, getIndex(orig, CacheType::Shadow));
             } else {
-              auto rule = [&](IRBuilder<> &bb) {
+
+              Value *new_orig = gutils->getNewFromOriginal(orig);
+
+              auto rule = [orig, &args, dbgLoc,
+                           funcName](IRBuilder<> &bb, Value *callee,
+                                     Value *new_orig) { // TODO: fix args!!!
 #if LLVM_VERSION_MAJOR >= 11
-                Value *anti = bb.CreateCall(orig->getFunctionType(),
-                                            orig->getCalledOperand(), args,
-                                            orig->getName() + "'mi");
+                Value *anti = bb.CreateCall(orig->getFunctionType(), callee,
+                                            args, orig->getName() + "'mi");
 #else
-                anti = bb.CreateCall(orig->getCalledValue(), args,
-                                     orig->getName() + "'mi");
+                anti = bb.CreateCall(callee, args, orig->getName() + "'mi");
 #endif
                 cast<CallInst>(anti)->setAttributes(orig->getAttributes());
                 cast<CallInst>(anti)->setCallingConv(orig->getCallingConv());
@@ -10750,8 +10826,7 @@ public:
                   if (funcName == "malloc" || funcName == "_Znwm") {
                     if (auto ci = dyn_cast<ConstantInt>(args[0])) {
                       unsigned derefBytes = ci->getLimitedValue();
-                      CallInst *cal =
-                          cast<CallInst>(gutils->getNewFromOriginal(orig));
+                      CallInst *cal = cast<CallInst>(new_orig);
 #if LLVM_VERSION_MAJOR >= 14
                       cast<CallInst>(anti)->addDereferenceableRetAttr(
                           derefBytes);
@@ -10792,7 +10867,9 @@ public:
                 return anti;
               };
 
-              anti = applyChainRule(orig->getType(), bb, rule);
+              anti = applyChainRule(orig->getType(), bb, rule,
+                                    Primal(orig->getCalledOperand()),
+                                    Primal(new_orig));
 
               gutils->invertedPointers.erase(found);
               if (&*bb.GetInsertPoint() == placeholder)
@@ -10904,7 +10981,8 @@ public:
                    backwardsShadow)) {
                 if (!inLoop) {
 
-                  auto rule = [&](IRBuilder<> &bb, Value *orig, Value *anti) {
+                  auto rule = [&](IRBuilder<> &bb, Value *orig,
+                                  Value *anti) { // TODO: fix args!
                     zeroKnownAllocation(bb, anti, args, funcName, gutils->TLI,
                                         cast<CallInst>(orig));
                   };
@@ -10926,7 +11004,8 @@ public:
             Value *tofree = lookup(anti, Builder2);
             assert(tofree);
             assert(tofree->getType());
-            auto rule = [&](IRBuilder<> &Builder2, Value *tofree) {
+            auto rule = [&](IRBuilder<> &Builder2,
+                            Value *tofree) { // TODO fix this!
               auto CI = freeKnownAllocation(Builder2, tofree, funcName, dbgLoc,
                                             gutils->TLI, orig, gutils);
               if (CI)
@@ -10948,7 +11027,8 @@ public:
           auto Defs = gutils->getInvertedBundles(orig, BundleTypes, Builder2,
                                                  /*lookup*/ false);
 
-          auto rule = [&](IRBuilder<> &Builder2) {
+          auto rule = [&args, orig, dbgLoc,
+                       &Defs](IRBuilder<> &Builder2) { // TODO: fix args
 #if LLVM_VERSION_MAJOR > 7
             CallInst *CI = Builder2.CreateCall(
                 orig->getFunctionType(), orig->getCalledFunction(), args, Defs);
@@ -11266,7 +11346,8 @@ public:
         return BuilderZ.CreateCall(called, {v});
       };
 
-      Value *val = applyChainRule(call.getType(), BuilderZ, rule, Gradient(ptrshadow));
+      Value *val =
+          applyChainRule(call.getType(), BuilderZ, rule, Gradient(ptrshadow));
 
       gutils->replaceAWithB(placeholder, val);
       gutils->erase(placeholder);
@@ -11426,10 +11507,11 @@ public:
           SmallVector<Value *, 3> args;
           args.push_back(newfree);
 
-          auto rule = [&](IRBuilder<> &Builder2, Value *tofree) {
+          auto rule = [&](IRBuilder<> &Builder2,
+                          Value *tofree) { // TODO: fix this!!!!
             if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
-              tofree = Builder2.CreatePointerCast(
-                  tofree, PointerType::getInt8PtrTy(tofree->getContext()));
+              tofree =
+                  Builder2.CreatePointerCast(tofree, Builder2.getInt8PtrTy());
 
             args.push_back(tofree);
           };

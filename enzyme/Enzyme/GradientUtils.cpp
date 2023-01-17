@@ -147,6 +147,8 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
   }
 
   Value *origptr = ptr;
+  DebugLoc dbg = getNewFromOriginal(orig->getDebugLoc());
+  Module *M = oldFunc->getParent();
 
   ptr = invertPointerM(ptr, BuilderM);
   if (!isOriginalBlock(*BuilderM.GetInsertBlock()) &&
@@ -159,7 +161,8 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
 
   size_t idx = 0;
 
-  auto rule = [&](IRBuilder<> &BuilderM, Value *ptr, Value *newval) {
+  auto rule = [&, align, isVolatile, ordering, syncScope, orig,
+               dbg](IRBuilder<> &BuilderM, Value *ptr, Value *newval) {
     auto ts = BuilderM.CreateStore(newval, ptr);
     if (align)
 #if LLVM_VERSION_MAJOR >= 10
@@ -178,10 +181,10 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
                     orig->getMetadata(LLVMContext::MD_tbaa));
     ts->setMetadata(LLVMContext::MD_tbaa_struct,
                     orig->getMetadata(LLVMContext::MD_tbaa_struct));
-    ts->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
+    ts->setDebugLoc(dbg);
 
     SmallVector<Metadata *, 1> MDs;
-    for (ssize_t j = -1; j < getWidth(); j++) {
+    for (ssize_t j = -1; j < getWidth(); j++) { // TODO: fix this!
       if (j != (ssize_t)idx)
         MDs.push_back(getDerivativeAliasScope(origptr, j));
     }
@@ -195,10 +198,11 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
     idx++;
   };
 
-  auto rule_mask = [&](IRBuilder<> &BuilderM, Value *ptr, Value *newval, Value *mask) {
+  auto rule_mask = [M, align, orig, &idx, dbg](IRBuilder<> &BuilderM,
+                                               Value *ptr, Value *newval,
+                                               Value *mask) {
     Type *tys[] = {newval->getType(), ptr->getType()};
-    auto F = Intrinsic::getDeclaration(oldFunc->getParent(),
-                                       Intrinsic::masked_store, tys);
+    auto F = Intrinsic::getDeclaration(M, Intrinsic::masked_store, tys);
     assert(align);
 #if LLVM_VERSION_MAJOR >= 10
     Value *alignv =
@@ -214,7 +218,7 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
                     orig->getMetadata(LLVMContext::MD_tbaa));
     ts->setMetadata(LLVMContext::MD_tbaa_struct,
                     orig->getMetadata(LLVMContext::MD_tbaa_struct));
-    ts->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
+    ts->setDebugLoc(dbg);
 
     idx++;
   };
@@ -222,8 +226,8 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
   if (!mask) {
     applyChainRule(BuilderM, rule, Gradient(ptr), Gradient(newval));
   } else {
-    applyChainRule(BuilderM, rule_mask, Gradient(ptr),
-                                          Gradient(newval), Primal(mask));
+    applyChainRule(BuilderM, rule_mask, Gradient(ptr), Gradient(newval),
+                   Primal(mask));
   }
 }
 
@@ -284,7 +288,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
 
   assert(ptr);
   if (start != 0 || needsCast) {
-    auto rule = [&](IRBuilder<> &BuilderM, Value *ptr) {
+    auto rule = [start, needsCast, &addingType](IRBuilder<> &BuilderM,
+                                                Value *ptr) {
       if (start != 0) {
         auto i8 = Type::getInt8Ty(ptr->getContext());
         ptr = BuilderM.CreatePointerCast(
@@ -319,10 +324,11 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
         cast<VectorType>(dif->getType())->getElementType() != addingType;
 
   if (start != 0 || needsCast) {
-    auto rule = [&](IRBuilder<> &BuilderM, Value *dif) {
+    auto rule = [&inversionAllocs = this->inversionAllocs, start, size,
+                 addingType, &DL](IRBuilder<> &BuilderM, Value *dif) {
       if (start != 0) {
-        IRBuilder<> A(inversionAllocs);
-        auto i8 = Type::getInt8Ty(ptr->getContext());
+        IRBuilder<> A(inversionAllocs); // TODO: fix this!!
+        auto i8 = BuilderM.getInt8Ty();
         auto prevSize = (DL.getTypeSizeInBits(dif->getType()) + 1) / 8;
         Type *tys[] = {ArrayType::get(i8, start), addingType,
                        ArrayType::get(i8, prevSize - start - size)};
@@ -331,9 +337,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
         BuilderM.CreateStore(dif,
                              BuilderM.CreatePointerCast(
                                  Al, PointerType::getUnqual(dif->getType())));
-        Value *idxs[] = {
-            ConstantInt::get(Type::getInt64Ty(ptr->getContext()), 0),
-            ConstantInt::get(Type::getInt32Ty(ptr->getContext()), 1)};
+        Value *idxs[] = {BuilderM.getInt64(0), BuilderM.getInt32(1)};
 
 #if LLVM_VERSION_MAJOR > 7
         auto difp = BuilderM.CreateInBoundsGEP(ST, Al, idxs);
@@ -355,7 +359,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
                                   addingType))
           dif = BuilderM.CreateBitCast(dif, addingType);
         else {
-          IRBuilder<> A(inversionAllocs);
+          IRBuilder<> A(inversionAllocs); // TODO: fix this!!!
           auto Al = A.CreateAlloca(addingType);
           BuilderM.CreateStore(dif,
                                BuilderM.CreatePointerCast(
@@ -401,7 +405,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
     // the derivative value to AS 1
     if (Arch == Triple::amdgcn &&
         cast<PointerType>(origptr->getType())->getAddressSpace() == 4) {
-      auto rule = [&](IRBuilder<> &BuilderM, Value *ptr) {
+      auto rule = [addingType](IRBuilder<> &BuilderM, Value *ptr) {
         return BuilderM.CreateAddrSpaceCast(ptr,
                                             PointerType::get(addingType, 1));
       };
@@ -435,7 +439,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
 #else
       size_t numElems = vt->getNumElements();
 #endif
-      auto rule = [&](IRBuilder<> &BuilderM, Value *dif, Value *ptr) {
+      auto rule = [numElems, vt, addingType, op, start,
+                   align](IRBuilder<> &BuilderM, Value *dif, Value *ptr) {
         for (size_t i = 0; i < numElems; ++i) {
           auto vdif = BuilderM.CreateExtractElement(dif, i);
           Value *Idxs[] = {
@@ -482,7 +487,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       };
       applyChainRule(BuilderM, rule, Gradient(dif), Gradient(ptr));
     } else {
-      auto rule = [&](IRBuilder<> &BuilderM, Value *dif, Value *ptr) {
+      auto rule = [align, op, start](IRBuilder<> &BuilderM, Value *dif,
+                                     Value *ptr) {
 #if LLVM_VERSION_MAJOR >= 13
         MaybeAlign alignv = align;
         if (alignv) {
@@ -528,7 +534,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
   if (!mask) {
 
     size_t idx = 0;
-    auto rule = [&](IRBuilder<> &BuilderM, Value *ptr, Value *dif) {
+    auto rule = [&, addingType, start](IRBuilder<> &BuilderM, Value *ptr,
+                                       Value *dif) {
 #if LLVM_VERSION_MAJOR > 7
       auto LI = BuilderM.CreateLoad(addingType, ptr);
 #else
@@ -538,7 +545,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       Value *res = BuilderM.CreateFAdd(LI, dif);
       StoreInst *st = BuilderM.CreateStore(res, ptr);
 
-      Metadata *scopeMD[1] = {getDerivativeAliasScope(origptr, idx)};
+      Metadata *scopeMD[1] = {
+          getDerivativeAliasScope(origptr, idx)}; // TODO: fix this!!!!
       auto scope = MDNode::get(LI->getContext(), scopeMD);
       LI->setMetadata(LLVMContext::MD_alias_scope, scope);
       st->setMetadata(LLVMContext::MD_alias_scope, scope);
@@ -611,9 +619,11 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
           aligni = 1;
         }
       }
-    Value *alignv =
-        ConstantInt::get(Type::getInt32Ty(mask->getContext()), aligni);
-    auto rule = [&](IRBuilder<> &BuilderM, Value *ptr, Value *dif) {
+
+    Constant *alignv = BuilderM.getInt32(aligni);
+
+    auto rule = [alignv, LF, SF](IRBuilder<> &BuilderM, Value *ptr, Value *dif,
+                                 Value *mask) {
       Value *largs[] = {ptr, alignv, mask,
                         Constant::getNullValue(dif->getType())};
       Value *LI = BuilderM.CreateCall(LF, largs);
@@ -621,8 +631,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       Value *sargs[] = {res, ptr, alignv, mask};
       BuilderM.CreateCall(SF, sargs);
     };
-    applyChainRule(BuilderM, rule, Gradient(ptr),
-                                          Gradient(dif));
+    applyChainRule(BuilderM, rule, Gradient(ptr), Gradient(dif), Primal(mask));
   }
 }
 
@@ -1393,8 +1402,10 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           llvm::errs() << "pidx: " << *pidx << "\n";
         }
         assert(pidx->getType() == getShadowType(dli->getOperand(0)));
+        auto dbg = getNewFromOriginal(dli->getDebugLoc());
 
-        auto rule = [&](IRBuilder<> &BuilderM, Value *pidx) {
+        auto rule = [dli, phi, dbg, &unwrappedLoads = this->unwrappedLoads](
+                        IRBuilder<> &BuilderM, Value *pidx) {
 #if LLVM_VERSION_MAJOR > 7
           auto toreturn = BuilderM.CreateLoad(dli->getType(), pidx,
                                               phi->getName() + "_unwrap");
@@ -1416,11 +1427,12 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
           ToCopy2.push_back(LLVMContext::MD_noalias);
           toreturn->copyMetadata(*dli, ToCopy2);
-          toreturn->setDebugLoc(getNewFromOriginal(dli->getDebugLoc()));
+          toreturn->setDebugLoc(dbg);
           return toreturn;
         };
 
-        Value *toreturn = applyChainRule(dli->getType(), BuilderM, rule, Gradient(pidx));
+        Value *toreturn =
+            applyChainRule(dli->getType(), BuilderM, rule, Gradient(pidx));
 
         // TODO adding to cache only legal if no alias of any future writes
         if (permitCache)
@@ -2980,9 +2992,13 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                 }
                 assert(funcName.size());
 
-                auto rule = [&](IRBuilder<> &NB, Value *inst, Value *anti) {
-                  zeroKnownAllocation(NB, anti, args, funcName, TLI,
-                                      dyn_cast<CallInst>(inst));
+                auto rule = [&args, funcName, &TLI = this->TLI](
+                                IRBuilder<> &NB, Value *inst,
+                                Value *anti) { // TODO: fix args!!!!
+                  zeroKnownAllocation(
+                      NB, anti, args, funcName, TLI,
+                      dyn_cast<CallInst>(inst)); // maybe come up with a
+                                                 // vectorized version of this?
                 };
 
                 applyChainRule(NB, rule, Primal(inst), Gradient(anti));
@@ -3355,7 +3371,11 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
 
                     anti = shadowHandlers[funcName.str()](NB, orig, args, this);
                   } else {
-                    auto rule = [&](IRBuilder<> &NB) {
+                    auto dbg = getNewFromOriginal(I.getDebugLoc());
+
+                    auto rule = [orig, dbg,
+                                 &args](IRBuilder<> &NB,
+                                        Value *op) { // TODO: fix args!
 #if LLVM_VERSION_MAJOR >= 11
                       Value *anti = NB.CreateCall(
                           orig->getFunctionType(), orig->getCalledOperand(),
@@ -3370,8 +3390,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                           orig->getCallingConv());
                       cast<CallInst>(anti)->setTailCallKind(
                           orig->getTailCallKind());
-                      cast<CallInst>(anti)->setDebugLoc(
-                          getNewFromOriginal(I.getDebugLoc()));
+                      cast<CallInst>(anti)->setDebugLoc(dbg);
 
 #if LLVM_VERSION_MAJOR >= 14
                       cast<CallInst>(anti)->addAttributeAtIndex(
@@ -3387,37 +3406,45 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                       return anti;
                     };
 
-                    anti = applyChainRule(orig->getType(), NB, rule);
+                    anti = applyChainRule(orig->getType(), NB, rule,
+                                          Primal(orig->getCalledOperand()));
 
                     if (auto MD = hasMetadata(orig, "enzyme_fromstack")) {
-                      auto rule1 = [&](IRBuilder<> &NB, Value *anti) {
-                        AllocaInst *replacement = NB.CreateAlloca(
-                            Type::getInt8Ty(orig->getContext()), args[0]);
-                        replacement->takeName(anti);
-                        auto Alignment =
-                            cast<ConstantInt>(
-                                cast<ConstantAsMetadata>(MD->getOperand(0))
-                                    ->getValue())
-                                ->getLimitedValue();
-#if LLVM_VERSION_MAJOR >= 10
-                        replacement->setAlignment(Align(Alignment));
-#else
-                        replacement->setAlignment(Alignment);
-#endif
-                        replacement->setDebugLoc(
-                            getNewFromOriginal(I.getDebugLoc()));
-                        return replacement;
-                      };
 
-                      Value *replacement =
-                          applyChainRule(Type::getInt8Ty(orig->getContext()), NB, rule1, Gradient(anti));
+                      auto count = args[0];
+
+                      auto rule1 =
+                          [MD, dbg = getNewFromOriginal(I.getDebugLoc())](
+                              IRBuilder<> &NB, Value *anti, Value *count) {
+                            AllocaInst *replacement =
+                                NB.CreateAlloca(NB.getInt8Ty(), count);
+                            replacement->takeName(anti);
+                            auto Alignment =
+                                cast<ConstantInt>(
+                                    cast<ConstantAsMetadata>(MD->getOperand(0))
+                                        ->getValue())
+                                    ->getLimitedValue();
+#if LLVM_VERSION_MAJOR >= 10
+                            replacement->setAlignment(Align(Alignment));
+#else
+                            replacement->setAlignment(Alignment);
+#endif
+                            replacement->setDebugLoc(dbg);
+                            return replacement;
+                          };
+
+                      Value *replacement = applyChainRule(
+                          Type::getInt8Ty(orig->getContext()), NB, rule1,
+                          Gradient(anti), Primal(count));
 
                       replaceAWithB(cast<Instruction>(anti), replacement);
                       erase(cast<Instruction>(anti));
                       anti = replacement;
                     }
 
-                    auto rule2 = [&](IRBuilder<> &NB, Value *orig, Value *anti) {
+                    auto rule2 = [&args, funcName, TLI = this->TLI](
+                                     IRBuilder<> &NB, Value *orig,
+                                     Value *anti) { // TODO: fix args!!!
                       zeroKnownAllocation(NB, anti, args, funcName, TLI,
                                           cast<CallInst>(orig));
                     };
@@ -4618,20 +4645,20 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
   if (isa<ConstantPointerNull>(oval)) {
     return applyChainRule(
-        oval->getType(), BuilderM, [](IRBuilder<> &BuilderM, Value *oval) { return oval; },
-        Primal(oval));
+        oval->getType(), BuilderM,
+        [](IRBuilder<> &BuilderM, Value *oval) { return oval; }, Primal(oval));
   } else if (isa<UndefValue>(oval)) {
     if (nullShadow)
       return Constant::getNullValue(getShadowType(oval));
     return applyChainRule(
-        oval->getType(), BuilderM, [](IRBuilder<> &BuilderM, Value *oval) { return oval; },
-        Primal(oval));
+        oval->getType(), BuilderM,
+        [](IRBuilder<> &BuilderM, Value *oval) { return oval; }, Primal(oval));
   } else if (isa<ConstantInt>(oval)) {
     if (nullShadow)
       return Constant::getNullValue(getShadowType(oval));
     return applyChainRule(
-        oval->getType(), BuilderM, [](IRBuilder<> &BuilderM, Value *oval) { return oval; },
-        Primal(oval));
+        oval->getType(), BuilderM,
+        [](IRBuilder<> &BuilderM, Value *oval) { return oval; }, Primal(oval));
   } else if (auto CD = dyn_cast<ConstantDataArray>(oval)) {
     SmallVector<Constant *, 1> Vals;
     for (size_t i = 0, len = CD->getNumElements(); i < len; i++) {
@@ -4651,12 +4678,13 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       Vals.push_back(cast<Constant>(val));
     }
 
-    auto rule = [&CD](IRBuilder<> &BuilderM, ArrayRef<Constant *> Vals, ArrayType *ty) {
+    auto rule = [&CD](IRBuilder<> &BuilderM, ArrayRef<Constant *> Vals,
+                      ArrayType *ty) {
       return ConstantArray::get(CD->getType(), Vals);
     };
     return nullptr;
-//    return applyChainRule(CD->getType(), BuilderM, rule,
-//                          Gradient<ArrayRef<Constant *>>(Vals));
+    //    return applyChainRule(CD->getType(), BuilderM, rule,
+    //                          Gradient<ArrayRef<Constant *>>(Vals));
   } else if (auto CD = dyn_cast<ConstantStruct>(oval)) {
     SmallVector<Constant *, 1> Vals;
     for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
@@ -4711,7 +4739,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
     Value *newval = getNewFromOriginal(oval);
 
-    auto rule = [&](IRBuilder<> &BuilderM, Value *newval) { return newval; };
+    auto rule = [](IRBuilder<> &BuilderM, Value *newval) { return newval; };
 
     return applyChainRule(oval->getType(), BuilderM, rule, Primal(newval));
   }
@@ -4729,7 +4757,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   if (isa<Argument>(oval) && cast<Argument>(oval)->hasByValAttr()) {
     IRBuilder<> bb(inversionAllocs);
 
-    auto rule1 = [&](IRBuilder<> &bb) {
+    auto rule1 = [oval, M](IRBuilder<> &bb) {
       AllocaInst *antialloca = bb.CreateAlloca(
           oval->getType()->getPointerElementType(),
           cast<PointerType>(oval->getType())->getPointerAddressSpace(), nullptr,
@@ -4933,7 +4961,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         Type *elemTy = arg->getType()->getPointerElementType();
         IRBuilder<> B(inversionAllocs);
 
-        auto rule = [&](IRBuilder<> &BuilderM) {
+        auto rule = [elemTy, arg](IRBuilder<> &BuilderM) {
           auto c = Constant::getNullValue(elemTy);
           auto shadow = new GlobalVariable(
               *arg->getParent(), elemTy, arg->isConstant(), arg->getLinkage(),
@@ -4953,11 +4981,10 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           return shadow;
         };
 
-        Value *shadow =
-            applyChainRule(oval->getType(), BuilderM, rule);
+        Value *shadow = applyChainRule(oval->getType(), BuilderM, rule);
 
         if (arg->hasInitializer()) {
-          auto rule = [&](IRBuilder<> &BuilderM, Value *shadow, Value *ip) {
+          auto rule = [](IRBuilder<> &BuilderM, Value *shadow, Value *ip) {
             cast<GlobalVariable>(shadow)->setInitializer(cast<Constant>(ip));
           };
 
@@ -5059,7 +5086,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         return applyChainRule(arg->getType(), bb, rule, Gradient(ip));
 
       } else {
-        auto rule = [&](IRBuilder<> &bb, Value *ip) {
+        auto rule = [arg](IRBuilder<> &bb, Value *ip) {
           return bb.CreateCast((Instruction::CastOps)arg->getOpcode(), ip,
                                arg->getType(), arg->getName() + "'ipc");
         };
@@ -5149,7 +5176,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       ;
     };
 
-    Value *shadow = applyChainRule(arg->getType(), bb, rule, Gradient(ip), Primal(index));
+    Value *shadow =
+        applyChainRule(arg->getType(), bb, rule, Gradient(ip), Primal(index));
 
     invertedPointers.insert(
         std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
@@ -5161,14 +5189,15 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     Value *op2 = arg->getOperand(2);
     auto ip0 = invertPointerM(op0, bb, nullShadow);
     auto ip1 = invertPointerM(op1, bb, nullShadow);
+    auto new_op2 = getNewFromOriginal(op2);
 
-    auto rule = [&](IRBuilder<> &bb, Value *ip0, Value *ip1) {
-      return bb.CreateInsertElement(ip0, ip1, getNewFromOriginal(op2),
-                                    arg->getName() + "'ipie");
+    auto rule = [Name = arg->getName()](IRBuilder<> &bb, Value *ip0, Value *ip1,
+                                        Value *op2) {
+      return bb.CreateInsertElement(ip0, ip1, op2, Name + "'ipie");
     };
 
-    Value *shadow =
-        applyChainRule(arg->getType(), bb, rule, Gradient(ip0), Gradient(ip1));
+    Value *shadow = applyChainRule(arg->getType(), bb, rule, Gradient(ip0),
+                                   Gradient(ip1), Primal(new_op2));
 
     invertedPointers.insert(
         std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
@@ -5189,7 +5218,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       return bb.CreateShuffleVector(ip0, ip1, mask, arg->getName() + "'ipsv");
     };
 
-    Value *shadow = applyChainRule(arg->getType(), bb, rule, Gradient(ip0), Gradient(ip1));
+    Value *shadow =
+        applyChainRule(arg->getType(), bb, rule, Gradient(ip0), Gradient(ip1));
 
     invertedPointers.insert(
         std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
@@ -5197,10 +5227,11 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   } else if (auto arg = dyn_cast<SelectInst>(oval)) {
     IRBuilder<> bb(getNewFromOriginal(arg));
     bb.setFastMathFlags(getFast());
+    auto cond = getNewFromOriginal(arg->getCondition());
 
-    auto rule = [&](IRBuilder<> &bb, Value *tv, Value *fv) {
-      return bb.CreateSelect(getNewFromOriginal(arg->getCondition()), tv, fv,
-                             arg->getName() + "'ipse");
+    auto rule = [cond, Name = arg->getName()](IRBuilder<> &bb, Value *tv,
+                                              Value *fv) {
+      return bb.CreateSelect(cond, tv, fv, Name + "'ipse");
     };
 
     Value *shadow = applyChainRule(
@@ -5216,7 +5247,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     Value *op0 = arg->getOperand(0);
     Value *ip = invertPointerM(op0, bb);
 
-    auto rule = [&](IRBuilder<> &bb, Value *ip) {
+    auto rule = [arg, dbg = getNewFromOriginal(arg->getDebugLoc())](
+                    IRBuilder<> &bb, Value *ip) {
 #if LLVM_VERSION_MAJOR > 7
       auto li = bb.CreateLoad(arg->getType(), ip, arg->getName() + "'ipl");
 #else
@@ -5231,15 +5263,14 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 #else
       li->setAlignment(arg->getAlignment());
 #endif
-      li->setDebugLoc(getNewFromOriginal(arg->getDebugLoc()));
+      li->setDebugLoc(dbg);
       li->setVolatile(arg->isVolatile());
       li->setOrdering(arg->getOrdering());
       li->setSyncScopeID(arg->getSyncScopeID());
       return li;
     };
 
-    Value *li = applyChainRule(arg->getType(), bb, rule,
-                               Gradient(ip));
+    Value *li = applyChainRule(arg->getType(), bb, rule, Gradient(ip));
 
     invertedPointers.insert(
         std::make_pair((const Value *)oval, InvertedPointerVH(this, li)));
@@ -5283,9 +5314,11 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     }
     Value *ip = invertPointerM(arg->getPointerOperand(), bb);
 
-    auto rule = [&](IRBuilder<> &bb, Value *ip) {
+    auto rule = [arg, &invertargs](IRBuilder<> &bb,
+                                   Value *ip) { // TODO fix invertargs!!!
 #if LLVM_VERSION_MAJOR > 7
-      auto shadow = bb.CreateGEP(arg->getSourceElementType(), ip, invertargs, arg->getName() + "'ipg");
+      auto shadow = bb.CreateGEP(arg->getSourceElementType(), ip, invertargs,
+                                 arg->getName() + "'ipg");
 #else
       auto shadow = bb.CreateGEP(ip, invertargs, arg->getName() + "'ipg");
 #endif
@@ -5296,8 +5329,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       return shadow;
     };
 
-    Value *shadow =
-        applyChainRule(arg->getType(), bb, rule, Gradient(ip));
+    Value *shadow = applyChainRule(arg->getType(), bb, rule, Gradient(ip));
 
     invertedPointers.insert(
         std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
@@ -5307,9 +5339,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     Value *asize = getNewFromOriginal(inst->getArraySize());
 
     auto rule1 = [&inst, &asize](IRBuilder<> &bb) {
-      AllocaInst *antialloca =
-          bb.CreateAlloca(inst->getAllocatedType(), inst->getType()->getPointerAddressSpace(), asize,
-                          inst->getName() + "'ipa");
+      AllocaInst *antialloca = bb.CreateAlloca(
+          inst->getAllocatedType(), inst->getType()->getPointerAddressSpace(),
+          asize, inst->getName() + "'ipa");
 #if LLVM_VERSION_MAJOR >= 11
       antialloca->setAlignment(inst->getAlign());
 #elif LLVM_VERSION_MAJOR == 10
@@ -5334,10 +5366,11 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
         Constant *c = Constant::getNullValue(inst->getAllocatedType());
 
-        auto rule = [&](IRBuilder<> &bb, Constant *c, Value *antialloca) {
+        auto rule = [align = inst->getAlign()](IRBuilder<> &bb, Constant *c,
+                                               Value *antialloca) {
           StoreInst *st = bb.CreateStore(c, antialloca);
 #if LLVM_VERSION_MAJOR >= 11
-          cast<StoreInst>(st)->setAlignment(inst->getAlign());
+          cast<StoreInst>(st)->setAlignment(align);
 #elif LLVM_VERSION_MAJOR == 10
           if (inst->getAlignment()) {
             cast<StoreInst>(st)->setAlignment(Align(inst->getAlignment()));
@@ -5357,18 +5390,16 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       }
     }
 
-    auto rule2 = [&](IRBuilder<> &bb, Value *antialloca) {
-      auto dst_arg =
-          bb.CreateBitCast(antialloca, Type::getInt8PtrTy(oval->getContext()));
-      auto val_arg = ConstantInt::get(Type::getInt8Ty(oval->getContext()), 0);
-      auto len_arg = bb.CreateMul(
-          bb.CreateZExtOrTrunc(asize, Type::getInt64Ty(oval->getContext())),
-          ConstantInt::get(Type::getInt64Ty(oval->getContext()),
-                           M->getDataLayout().getTypeAllocSizeInBits(
-                               inst->getAllocatedType()) /
-                               8),
-          "", true, true);
-      auto volatile_arg = ConstantInt::getFalse(oval->getContext());
+    auto rule2 = [asize, M, inst](IRBuilder<> &bb, Value *antialloca) {
+      auto dst_arg = bb.CreateBitCast(antialloca, bb.getInt8PtrTy());
+      auto val_arg = bb.getInt8(0);
+      auto len_arg =
+          bb.CreateMul(bb.CreateZExtOrTrunc(asize, bb.getInt64Ty()),
+                       bb.getInt64(M->getDataLayout().getTypeAllocSizeInBits(
+                                       inst->getAllocatedType()) /
+                                   8),
+                       "", true, true);
+      auto volatile_arg = bb.getFalse();
 
 #if LLVM_VERSION_MAJOR == 6
       auto align_arg = ConstantInt::get(Type::getInt32Ty(oval->getContext()),
@@ -5413,13 +5444,14 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     case Intrinsic::nvvm_ldg_global_i:
     case Intrinsic::nvvm_ldg_global_p:
     case Intrinsic::nvvm_ldg_global_f: {
-      auto rule = [&](IRBuilder<> &bb, Value *ptr) {
+      auto rule = [II, dbg = getNewFromOriginal(II->getDebugLoc())](
+                      IRBuilder<> &bb, Value *ptr) {
         Value *args[] = {ptr};
         auto li = bb.CreateCall(II->getCalledFunction(), args);
         llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
         ToCopy2.push_back(LLVMContext::MD_noalias);
         li->copyMetadata(*II, ToCopy2);
-        li->setDebugLoc(getNewFromOriginal(II->getDebugLoc()));
+        li->setDebugLoc(dbg);
         return li;
       };
       return applyChainRule(II->getType(), bb, rule,
@@ -5432,7 +5464,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       auto defaultV = invertPointerM(II->getArgOperand(3), bb, nullShadow);
       auto loc = getNewFromOriginal(II->getDebugLoc());
 
-      auto rule = [&](IRBuilder<> &bb, Value *ptr, Value *align, Value *mask, Value *defaultV) {
+      auto rule = [II, loc](IRBuilder<> &bb, Value *ptr, Value *align,
+                            Value *mask, Value *defaultV) {
         llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
         ToCopy2.push_back(LLVMContext::MD_noalias);
         auto li = bb.CreateCall(II->getCalledFunction(),
@@ -5442,7 +5475,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         return li;
       };
 
-      return applyChainRule(II->getType(), bb, rule, Gradient(ptr), Primal(align), Primal(mask), Gradient(defaultV));
+      return applyChainRule(II->getType(), bb, rule, Gradient(ptr),
+                            Primal(align), Primal(mask), Gradient(defaultV));
     }
     }
   } else if (auto phi = dyn_cast<PHINode>(oval)) {
