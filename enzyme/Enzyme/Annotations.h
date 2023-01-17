@@ -186,7 +186,7 @@ public:
     case VectorModeMemoryLayout::VectorizeAtRootNode: {
       assert(cast<ArrayType>(value->getType())->getNumElements() == width);
       auto gep =
-          Builder.CreateInBoundsGEP(map[value], {Builder.getInt64(0), i});
+          Builder.CreateInBoundsGEP(map[value], {Builder.getInt64(0), i}, value->getName() + ".vec.idx");
       auto aty = cast<ArrayType>(value->getType());
       return Builder.CreateLoad(aty->getElementType(), gep);
     }
@@ -280,7 +280,7 @@ public:
 
       for (auto &&value : values) {
         auto gep =
-            Builder.CreateInBoundsGEP(map[value], {Builder.getInt64(0), i});
+            Builder.CreateInBoundsGEP(map[value], {Builder.getInt64(0), i}, value->getName() + ".vec.idx");
         auto aty = cast<ArrayType>(value->getType());
         auto ld = Builder.CreateLoad(aty->getElementType(), gep);
         res.push_back(ld);

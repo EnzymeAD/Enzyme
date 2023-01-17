@@ -1849,7 +1849,8 @@ public:
     }
 
     PHINode *InductionVar =
-        ConditionBuilder.CreatePHI(ConditionBuilder.getInt32Ty(), 2, "i");
+    BodyBuilder.CreatePHI(BodyBuilder.getInt32Ty(), 2, "i");
+    BodyBuilder.CreateBr(Increment);
 
     Value *InductionVarInc = IncrementBuilder.CreateAdd(
         InductionVar, IncrementBuilder.getInt32(1), "i.inc");
@@ -1857,14 +1858,12 @@ public:
 
     Constant *VectorWidth = ConditionBuilder.getInt32(width);
     Value *LoopCondition =
-        ConditionBuilder.CreateICmpULE(InductionVar, VectorWidth, "loop.cond");
+        ConditionBuilder.CreateICmpULT(InductionVar, VectorWidth, "loop.cond");
     ConditionBuilder.CreateCondBr(LoopCondition, Body, Exit);
 
-    BodyBuilder.CreateBr(Increment);
+    EntryBuilder.CreateBr(Body);
 
-    EntryBuilder.CreateBr(Condition);
-
-    InductionVar->addIncoming(InductionVarInc, Increment);
+    InductionVar->addIncoming(InductionVarInc, Condition);
     InductionVar->addIncoming(EntryBuilder.getInt32(0), Entry);
 
     auto Ret = ExitBuilder.CreateLoad(RetType, ResultAccumulator);

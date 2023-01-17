@@ -909,7 +909,7 @@ public:
                                             elementPtrTy->getAddressSpace()));
 #if LLVM_VERSION_MAJOR >= 7
               element = Builder.CreateGEP(
-                  Type::getInt8Ty(CI->getContext()), element,
+                  Builder.getInt8Ty(), element,
                   Builder.CreateMul(
                       batchOffset[i - 1],
                       ConstantInt::get(batchOffset[i - 1]->getType(), v)));
@@ -1371,15 +1371,13 @@ public:
           Value *element = CI->getArgOperand(i);
           if (batch) {
             if (auto elementPtrTy = dyn_cast<PointerType>(element->getType())) {
-              element = Builder.CreateBitCast(
-                  element, PointerType::get(Type::getInt8Ty(CI->getContext()),
-                                            elementPtrTy->getAddressSpace()));
+              element = Builder.CreateBitCast(element, Builder.getInt8PtrTy());
 #if LLVM_VERSION_MAJOR >= 7
               element = Builder.CreateGEP(
-                  Type::getInt8Ty(CI->getContext()), element,
+                  Builder.getInt8Ty(), element,
                   Builder.CreateMul(
                       batchOffset[i - 1],
-                      ConstantInt::get(batchOffset[i - 1]->getType(), v)));
+                      ConstantInt::get(batchOffset[i - 1]->getType(), v)),  CI->getArgOperand(i)->getName() + ".vec.idx");
 #else
               element = Builder.CreateGEP(
 #if LLVM_VERSION_MAJOR >= 14
@@ -1388,7 +1386,7 @@ public:
                   element,
                   Builder.CreateMul(
                       batchOffset[i - 1],
-                      ConstantInt::get(batchOffset[i - 1]->getType(), v)));
+                      ConstantInt::get(batchOffset[i - 1]->getType(), v)), CI->getArgOperand(i)->getName() + ".vec.idx");
 #endif
               element = Builder.CreateBitCast(element, elementPtrTy);
             } else {
