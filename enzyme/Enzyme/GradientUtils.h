@@ -38,6 +38,7 @@
 #include "SCEV/ScalarEvolution.h"
 #include "SCEV/ScalarEvolutionExpander.h"
 #include "Utils.h"
+#include "Annotations.h"
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Triple.h"
@@ -1514,81 +1515,222 @@ public:
     return Builder.CreateExtractValue(Agg, {off});
   }
 
+  template <typename T, typename... Args>
+  inline auto eval_tuple(llvm::IRBuilder<> &Builder,
+                         std::map<Value *, Value *> &map, T i, Args... args);
+
+  template <typename T>
+  inline auto eval_tuple(llvm::IRBuilder<> &Builder,
+                         std::map<Value *, Value *> &map, T) {
+    return std::tuple<>();
+  }
+
+  template <typename Arg0, typename... Args>
+  inline auto eval_tuple(llvm::IRBuilder<> &Builder,
+                         std::map<Value *, Value *> &map, Value *i, Arg0 arg0,
+                         Args... args) {
+    auto &&v = arg0.getValue(Builder, map, this, i);
+    return std::tuple_cat(std::make_tuple(v),
+                          eval_tuple(Builder, map, i, args...));
+  }
+  template <typename Arg0, typename... Args>
+  inline auto eval_tuple(llvm::IRBuilder<> &Builder,
+                         std::map<Value *, Value *> &map, std::nullptr_t i,
+                         Arg0 arg0, Args... args) {
+    auto &&v = arg0.getValue(Builder, this);
+    return std::tuple_cat(std::make_tuple(v),
+                          eval_tuple(Builder, map, i, args...));
+  }
+
+  static std::tuple<Function *, BasicBlock *, Value *,
+                    std::map<Value *, Value *>>
+  CreateVectorLoop(unsigned width, ArrayRef<Value *> Args, Module &M,
+                   const Twine &Name) {
+    SmallVector<Type *, 4> ArgTypes;
+    for (auto Arg : Args) {
+      ArgTypes.push_back(Arg->getType());
+    }
+
+    FunctionType *FT =
+        FunctionType::get(Type::getVoidTy(M.getContext()), ArgTypes, false);
+    Function *F =
+        Function::Create(FT, Function::LinkageTypes::InternalLinkage, Name, M);
+
+    F->addFnAttr(Attribute::NoUnwind);
+    F->addFnAttr(Attribute::AlwaysInline);
+
+    BasicBlock *Entry = BasicBlock::Create(M.getContext(), "entry", F);
+    BasicBlock *Condition = BasicBlock::Create(M.getContext(), "for.cond", F);
+    BasicBlock *Body = BasicBlock::Create(M.getContext(), "for.body", F);
+    BasicBlock *Increment = BasicBlock::Create(M.getContext(), "for.inc", F);
+    BasicBlock *Exit = BasicBlock::Create(M.getContext(), "exit", F);
+
+    IRBuilder<> EntryBuilder(Entry);
+    IRBuilder<> ConditionBuilder(Condition);
+    IRBuilder<> IncrementBuilder(Increment);
+    IRBuilder<> BodyBuilder(Body);
+    IRBuilder<> ExitBuilder(Exit);
+
+    EntryBuilder.setFastMathFlags(getFast());
+    ConditionBuilder.setFastMathFlags(getFast());
+    IncrementBuilder.setFastMathFlags(getFast());
+    BodyBuilder.setFastMathFlags(getFast());
+    ExitBuilder.setFastMathFlags(getFast());
+
+    std::map<Value *, Value *> ArgMap;
+    for (int i = 0; i < Args.size(); ++i) {
+      auto Arg = Args[i];
+      F->getArg(i)->setName(Arg->getName());
+      AllocaInst *Alloca = EntryBuilder.CreateAlloca(Arg->getType());
+      Alloca->setName(Arg->getName() + ".tmp");
+      EntryBuilder.CreateStore(F->getArg(i), Alloca);
+      ArgMap[Arg] = Alloca;
+    }
+
+    PHINode *InductionVar =
+        ConditionBuilder.CreatePHI(ConditionBuilder.getInt32Ty(), 2, "i");
+
+    Value *InductionVarInc = IncrementBuilder.CreateAdd(
+        InductionVar, IncrementBuilder.getInt32(1), "i.inc");
+    IncrementBuilder.CreateBr(Condition);
+
+    Constant *VectorWidth = ConditionBuilder.getInt32(width);
+    Value *LoopCondition =
+        ConditionBuilder.CreateICmpULE(InductionVar, VectorWidth, "loop.cond");
+    ConditionBuilder.CreateCondBr(LoopCondition, Body, Exit);
+
+    BodyBuilder.CreateBr(Increment);
+
+    EntryBuilder.CreateBr(Condition);
+
+    InductionVar->addIncoming(InductionVarInc, Increment);
+    InductionVar->addIncoming(EntryBuilder.getInt32(0), Entry);
+
+    ExitBuilder.CreateRetVoid();
+
+    return {F, Body, InductionVar, ArgMap};
+  }
+
+  static std::tuple<Function *, BasicBlock *, Value *, Value *,
+                    std::map<Value *, Value *>>
+  CreateVectorLoop(unsigned width, Type *RetType, ArrayRef<Value *> Args,
+                   Module &M, const Twine &Name) {
+    SmallVector<Type *, 4> ArgTypes;
+    for (auto Arg : Args) {
+      ArgTypes.push_back(Arg->getType());
+    }
+
+    FunctionType *FT = FunctionType::get(RetType, ArgTypes, false);
+    Function *F =
+        Function::Create(FT, Function::LinkageTypes::InternalLinkage, Name, M);
+
+    F->addFnAttr(Attribute::NoUnwind);
+    F->addFnAttr(Attribute::AlwaysInline);
+
+    BasicBlock *Entry = BasicBlock::Create(M.getContext(), "entry", F);
+    BasicBlock *Condition = BasicBlock::Create(M.getContext(), "for.cond", F);
+    BasicBlock *Body = BasicBlock::Create(M.getContext(), "for.body", F);
+    BasicBlock *Increment = BasicBlock::Create(M.getContext(), "for.inc", F);
+    BasicBlock *Exit = BasicBlock::Create(M.getContext(), "exit", F);
+
+    IRBuilder<> EntryBuilder(Entry);
+    IRBuilder<> ConditionBuilder(Condition);
+    IRBuilder<> IncrementBuilder(Increment);
+    IRBuilder<> BodyBuilder(Body);
+    IRBuilder<> ExitBuilder(Exit);
+
+    EntryBuilder.setFastMathFlags(getFast());
+    ConditionBuilder.setFastMathFlags(getFast());
+    IncrementBuilder.setFastMathFlags(getFast());
+    BodyBuilder.setFastMathFlags(getFast());
+    ExitBuilder.setFastMathFlags(getFast());
+
+    Value *ResultAccumulator = EntryBuilder.CreateAlloca(RetType);
+    ResultAccumulator->setName("res");
+
+    std::map<Value *, Value *> ArgMap;
+    for (int i = 0; i < Args.size(); ++i) {
+      auto Arg = Args[i];
+      F->getArg(i)->setName(Arg->getName());
+      AllocaInst *Alloca = EntryBuilder.CreateAlloca(Arg->getType());
+      Alloca->setName(Arg->getName() + ".tmp");
+      EntryBuilder.CreateStore(F->getArg(i), Alloca);
+      ArgMap[Arg] = Alloca;
+    }
+
+    PHINode *InductionVar =
+        ConditionBuilder.CreatePHI(ConditionBuilder.getInt32Ty(), 2, "i");
+
+    Value *InductionVarInc = IncrementBuilder.CreateAdd(
+        InductionVar, IncrementBuilder.getInt32(1), "i.inc");
+    IncrementBuilder.CreateBr(Condition);
+
+    Constant *VectorWidth = ConditionBuilder.getInt32(width);
+    Value *LoopCondition =
+        ConditionBuilder.CreateICmpULE(InductionVar, VectorWidth, "loop.cond");
+    ConditionBuilder.CreateCondBr(LoopCondition, Body, Exit);
+
+    BodyBuilder.CreateBr(Increment);
+
+    EntryBuilder.CreateBr(Condition);
+
+    InductionVar->addIncoming(InductionVarInc, Increment);
+    InductionVar->addIncoming(EntryBuilder.getInt32(0), Entry);
+
+    auto Ret = ExitBuilder.CreateLoad(RetType, ResultAccumulator);
+    ExitBuilder.CreateRet(Ret);
+
+    return {F, Body, ResultAccumulator, InductionVar, ArgMap};
+  }
+
   /// Unwraps a vector derivative from its internal representation and applies a
   /// function f to each element. Return values of f are collected and wrapped.
   template <typename Func, typename... Args>
   Value *applyChainRule(Type *diffType, IRBuilder<> &Builder, Func rule,
                         Args... args) {
     if (width > 1) {
-      const int size = sizeof...(args);
-      Value *vals[size] = {args...};
-
-      for (size_t i = 0; i < size; ++i)
-        if (vals[i])
-          assert(cast<ArrayType>(vals[i]->getType())->getNumElements() ==
-                 width);
-
       Type *wrappedType = ArrayType::get(diffType, width);
-      Value *res = UndefValue::get(wrappedType);
-      for (unsigned int i = 0; i < getWidth(); ++i) {
-        auto tup = std::tuple<Args...>{
-            (args ? extractMeta(Builder, args, i) : nullptr)...};
-        auto diff = std::apply(rule, std::move(tup));
-        res = Builder.CreateInsertValue(res, diff, {i});
+
+      std::vector<Type *> ArgTypeVectors[] = {args.getType()...};
+      std::vector<Value *> ArgValueVectors[] = {args.getValue()...};
+
+      SmallVector<Type *, sizeof...(args)> ArgTypes;
+      SmallVector<Value *, sizeof...(args)> ArgValues;
+
+      for (auto &&TypeVector : ArgTypeVectors) {
+        ArgTypes.insert(ArgTypes.end(), TypeVector.begin(), TypeVector.end());
       }
-      return res;
+
+      for (auto &&ValueVector : ArgValueVectors) {
+        ArgValues.insert(ArgValues.end(), ValueVector.begin(),
+                         ValueVector.end());
+      }
+
+      auto [LoopF, Body, ResultAcc, i, ArgMap] =
+          CreateVectorLoop(width, wrappedType, ArgValues,
+                           *Builder.GetInsertBlock()->getModule(), "vec.loop");
+
+      IRBuilder<> RuleBuilder =
+          IRBuilder<>(Body->getFirstNonPHIOrDbgOrLifetime());
+      RuleBuilder.setFastMathFlags(getFast());
+
+        auto diff =
+            std::apply(rule, std::move(std::tuple_cat(
+                                 std::forward_as_tuple(RuleBuilder),
+                                 eval_tuple(RuleBuilder, ArgMap, i, args...))));
+
+        auto gep = RuleBuilder.CreateInBoundsGEP(
+            ResultAcc, {RuleBuilder.getInt64(0), i}, "res.idx");
+        RuleBuilder.CreateStore(diff, gep);
+
+        return Builder.CreateCall(LoopF->getFunctionType(), LoopF, ArgValues);
+      
     } else {
-      return rule(args...);
-    }
-  }
-
-  /// Unwraps a vector derivative from its internal representation and applies a
-  /// function f to each element. Return values of f are collected and wrapped.
-  template <typename Func, typename... Args>
-  void applyChainRule(IRBuilder<> &Builder, Func rule, Args... args) {
-    if (width > 1) {
-      const int size = sizeof...(args);
-      Value *vals[size] = {args...};
-
-      for (size_t i = 0; i < size; ++i)
-        if (vals[i])
-          assert(cast<ArrayType>(vals[i]->getType())->getNumElements() ==
-                 width);
-
-      for (unsigned int i = 0; i < getWidth(); ++i) {
-        auto tup = std::tuple<Args...>{
-            (args ? extractMeta(Builder, args, i) : nullptr)...};
-        std::apply(rule, std::move(tup));
-      }
-    } else {
-      rule(args...);
-    }
-  }
-
-  /// Unwraps an collection of constant vector derivatives from their internal
-  /// representations and applies a function f to each element.
-  template <typename Func>
-  Value *applyChainRule(Type *diffType, ArrayRef<Constant *> diffs,
-                        IRBuilder<> &Builder, Func rule) {
-    if (width > 1) {
-      for (auto diff : diffs) {
-        assert(diff);
-        assert(cast<ArrayType>(diff->getType())->getNumElements() == width);
-      }
-      Type *wrappedType = ArrayType::get(diffType, width);
-      Value *res = UndefValue::get(wrappedType);
-      for (unsigned int i = 0; i < getWidth(); ++i) {
-        SmallVector<Constant *, 3> extracted_diffs;
-        for (auto diff : diffs) {
-          extracted_diffs.push_back(
-              cast<Constant>(extractMeta(Builder, diff, i)));
-        }
-        auto diff = rule(extracted_diffs);
-        res = Builder.CreateInsertValue(res, diff, {i});
-      }
-      return res;
-    } else {
-      return rule(diffs);
+      Value *i = nullptr;
+      std::map<Value *, Value *> map;
+      return std::apply(rule, std::move(std::tuple_cat(
+                                  std::forward_as_tuple(Builder),
+                                  eval_tuple(Builder, map, i, args...))));
     }
   }
 };
