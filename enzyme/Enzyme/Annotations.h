@@ -43,6 +43,8 @@
 
 using namespace llvm;
 
+// MARK: - Primal
+
 template <typename T> struct Primal {
 private:
   T *value;
@@ -59,9 +61,9 @@ public:
     return Builder.CreateLoad(value->getType(), map[value]);
   }
 
-  Value *getValue() { return value; }
+  std::vector<Value *> getValue() { return {value}; }
 
-  Type *getType() { return value->getType(); }
+  std::vector<Type *> getType() { return {value->getType()}; }
 };
 
 template <> struct Primal<Constant> {
@@ -76,9 +78,9 @@ public:
     return c;
   }
 
-  Value *getValue() { return c; }
+  std::vector<Value *> getValue() { return {c}; }
 
-  Type *getType() { return c->getType(); }
+  std::vector<Type *> getType() { return {c->getType()}; }
 };
 
 template <> struct Primal<ConstantVector> {
@@ -94,9 +96,9 @@ public:
     return cv;
   }
 
-  Value *getValue() { return cv; }
+  std::vector<Value *> getValue() { return {cv}; }
 
-  Type *getType() { return cv->getType(); }
+  std::vector<Type *> getType() { return {cv->getType()}; }
 };
 
 template <> struct Primal<ConstantDataVector> {
@@ -112,10 +114,58 @@ public:
     return cv;
   }
 
-  Value *getValue() { return cv; }
+  std::vector<Value *> getValue() { return {cv}; }
 
-  Type *getType() { return cv->getType(); }
+  std::vector<Type *> getType() { return {cv->getType()}; }
 };
+
+template <> struct Primal<ArrayRef<Value *>> {
+private:
+  ArrayRef<Value *> values;
+
+public:
+  Primal(ArrayRef<Value *> values) : values(values) {}
+
+  std::vector<Value *> getValue(IRBuilder<> &Builder,
+                                std::map<Value *, Value *> &map,
+                                GradientUtils *gutils, Value *i) {
+    VectorModeMemoryLayout memoryLayout = gutils->memoryLayout;
+    unsigned width = gutils->getWidth();
+
+    if (width == 1)
+      return values;
+
+    switch (memoryLayout) {
+    case VectorModeMemoryLayout::VectorizeAtRootNode: {
+      std::vector<Value *> res;
+
+      for (auto &&value : values) {
+        auto ld = Builder.CreateLoad(value->getType(), map[value]);
+        res.push_back(ld);
+      }
+
+      return res;
+    }
+    case VectorModeMemoryLayout::VectorizeAtLeafNodes:
+      // TODO: compute the correct offset!!!
+      return {}; // Builder.CreateInBoundsGEP(map[value], {i});
+    }
+  }
+
+  std::vector<Value *> getValue() { return values; }
+
+  std::vector<Type *> getType() {
+    std::vector<Type *> res;
+
+    for (auto &&value : values) {
+      res.push_back(value->getType());
+    }
+
+    return res;
+  }
+};
+
+// MARK: - Gradient
 
 template <typename T> struct Gradient {
 private:
@@ -146,9 +196,9 @@ public:
     }
   }
 
-  Value *getValue() { return value; }
+  std::vector<Value *> getValue() { return {value}; }
 
-  Type *getType() { return value->getType(); }
+  std::vector<Type *> getType() { return {value->getType()}; }
 };
 
 template <> struct Gradient<Constant> {
@@ -166,9 +216,9 @@ public:
     return value;
   }
 
-  Value *getValue() { return value; }
+  std::vector<Value *> getValue() { return {value}; }
 
-  Type *getType() { return value->getType(); }
+  std::vector<Type *> getType() { return {value->getType()}; }
 };
 
 template <> struct Gradient<ArrayRef<Constant *>> {
@@ -187,9 +237,74 @@ public:
     return values;
   }
 
-  Value *getValue() { return nullptr; }
+  std::vector<Value *> getValue() {
+    std::vector<Value *> res;
 
-  Type *getType() { return nullptr; }
+    for (auto &&value : values) {
+      res.push_back(value);
+    }
+
+    return res;
+  }
+
+  std::vector<Type *> getType() {
+    std::vector<Type *> res;
+
+    for (auto &&value : values) {
+      res.push_back(value->getType());
+    }
+
+    return res;
+  }
+};
+
+template <> struct Gradient<ArrayRef<Value *>> {
+private:
+  ArrayRef<Value *> values;
+
+public:
+  Gradient(ArrayRef<Value *> values) : values(values) {}
+
+  std::vector<Value *> getValue(IRBuilder<> &Builder,
+                                std::map<Value *, Value *> &map,
+                                GradientUtils *gutils, Value *i) {
+    VectorModeMemoryLayout memoryLayout = gutils->memoryLayout;
+    unsigned width = gutils->getWidth();
+
+    if (width == 1)
+      return values;
+
+    switch (memoryLayout) {
+    case VectorModeMemoryLayout::VectorizeAtRootNode: {
+      std::vector<Value *> res;
+
+      for (auto &&value : values) {
+        auto gep =
+            Builder.CreateInBoundsGEP(map[value], {Builder.getInt64(0), i});
+        auto aty = cast<ArrayType>(value->getType());
+        auto ld = Builder.CreateLoad(aty->getElementType(), gep);
+        res.push_back(ld);
+      }
+
+      return res;
+    }
+    case VectorModeMemoryLayout::VectorizeAtLeafNodes:
+      // TODO: compute the correct offset!!!
+      return {}; // Builder.CreateInBoundsGEP(map[value], {i});
+    }
+  }
+
+  std::vector<Value *> getValue() { return values; }
+
+  std::vector<Type *> getType() {
+    std::vector<Type *> res;
+
+    for (auto &&value : values) {
+      res.push_back(value->getType());
+    }
+
+    return res;
+  }
 };
 
 #endif

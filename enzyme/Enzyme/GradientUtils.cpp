@@ -184,10 +184,10 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
     ts->setDebugLoc(dbg);
 
     SmallVector<Metadata *, 1> MDs;
-    for (ssize_t j = -1; j < getWidth(); j++) { // TODO: fix this!
-      if (j != (ssize_t)idx)
-        MDs.push_back(getDerivativeAliasScope(origptr, j));
-    }
+    //    for (ssize_t j = -1; j < getWidth(); j++) { // TODO: fix this!
+    //      if (j != (ssize_t)idx)
+    //        MDs.push_back(getDerivativeAliasScope(origptr, j));
+    //    }
     for (auto M : noAlias)
       MDs.push_back(M);
     if (MDs.size()) {
@@ -323,17 +323,18 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
     needsCast =
         cast<VectorType>(dif->getType())->getElementType() != addingType;
 
+  IRBuilder<> A(inversionAllocs);
+  auto i8 = BuilderM.getInt8Ty();
+  auto prevSize = (DL.getTypeSizeInBits(dif->getType()) + 1) / 8;
+  Type *tys[] = {ArrayType::get(i8, start), addingType,
+                 ArrayType::get(i8, prevSize - start - size)};
+  auto ST = StructType::get(i8->getContext(), tys, /*isPacked*/ true);
+  Value *Al1 = A.CreateAlloca(ST);
+
   if (start != 0 || needsCast) {
-    auto rule = [&inversionAllocs = this->inversionAllocs, start, size,
-                 addingType, &DL](IRBuilder<> &BuilderM, Value *dif) {
+    auto rule1 = [ST, start, size, addingType](IRBuilder<> &BuilderM,
+                                               Value *dif, Value *Al) {
       if (start != 0) {
-        IRBuilder<> A(inversionAllocs); // TODO: fix this!!
-        auto i8 = BuilderM.getInt8Ty();
-        auto prevSize = (DL.getTypeSizeInBits(dif->getType()) + 1) / 8;
-        Type *tys[] = {ArrayType::get(i8, start), addingType,
-                       ArrayType::get(i8, prevSize - start - size)};
-        auto ST = StructType::get(i8->getContext(), tys, /*isPacked*/ true);
-        auto Al = A.CreateAlloca(ST);
         BuilderM.CreateStore(dif,
                              BuilderM.CreatePointerCast(
                                  Al, PointerType::getUnqual(dif->getType())));
@@ -347,6 +348,16 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
         dif = BuilderM.CreateLoad(difp);
 #endif
       }
+      return dif;
+    };
+
+    dif = applyChainRule(addingType, BuilderM, rule1, Gradient(dif),
+                         Gradient(Al1));
+
+    Value *Al2 = A.CreateAlloca(addingType);
+
+    auto rule2 = [addingType, size, &DL](IRBuilder<> &BuilderM, Value *dif,
+                                         Value *Al) {
       if (dif->getType() != addingType) {
         auto difSize = (DL.getTypeSizeInBits(dif->getType()) + 1) / 8;
         if (difSize < size) {
@@ -356,11 +367,9 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
         }
         assert(difSize >= size);
         if (CastInst::castIsValid(Instruction::CastOps::BitCast, dif,
-                                  addingType))
+                                  addingType)) {
           dif = BuilderM.CreateBitCast(dif, addingType);
-        else {
-          IRBuilder<> A(inversionAllocs); // TODO: fix this!!!
-          auto Al = A.CreateAlloca(addingType);
+        } else {
           BuilderM.CreateStore(dif,
                                BuilderM.CreatePointerCast(
                                    Al, PointerType::getUnqual(dif->getType())));
@@ -373,7 +382,9 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       }
       return dif;
     };
-    dif = applyChainRule(addingType, BuilderM, rule, Gradient(dif));
+
+    dif = applyChainRule(addingType, BuilderM, rule2, Gradient(dif),
+                         Gradient(Al2));
   }
 
   auto TmpOrig =
@@ -532,10 +543,15 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
   }
 
   if (!mask) {
-
     size_t idx = 0;
-    auto rule = [&, addingType, start](IRBuilder<> &BuilderM, Value *ptr,
-                                       Value *dif) {
+
+    Metadata *scopeMD[1] = {
+        getDerivativeAliasScope(origptr, idx)}; // TODO: fix this!!!!
+    auto scope = MDNode::get(ptr->getContext(), scopeMD);
+    auto dbg = getNewFromOriginal(orig->getDebugLoc());
+
+    auto rule = [addingType, start, size, align, &idx, &scope, dbg, orig,
+                 &DL](IRBuilder<> &BuilderM, Value *ptr, Value *dif) {
 #if LLVM_VERSION_MAJOR > 7
       auto LI = BuilderM.CreateLoad(addingType, ptr);
 #else
@@ -545,17 +561,14 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       Value *res = BuilderM.CreateFAdd(LI, dif);
       StoreInst *st = BuilderM.CreateStore(res, ptr);
 
-      Metadata *scopeMD[1] = {
-          getDerivativeAliasScope(origptr, idx)}; // TODO: fix this!!!!
-      auto scope = MDNode::get(LI->getContext(), scopeMD);
       LI->setMetadata(LLVMContext::MD_alias_scope, scope);
       st->setMetadata(LLVMContext::MD_alias_scope, scope);
 
       SmallVector<Metadata *, 1> MDs;
-      for (ssize_t j = -1; j < getWidth(); j++) {
-        if (j != (ssize_t)idx)
-          MDs.push_back(getDerivativeAliasScope(origptr, j));
-      }
+      //      for (ssize_t j = -1; j < getWidth(); j++) {
+      //        if (j != (ssize_t)idx) // TODO: fix this
+      //          MDs.push_back(getDerivativeAliasScope(origptr, j));
+      //      }
       if (auto MD = orig->getMetadata(LLVMContext::MD_noalias)) {
         auto MDN = cast<MDNode>(MD);
         for (auto &o : MDN->operands())
@@ -569,12 +582,12 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       if (start == 0 &&
           size == (DL.getTypeSizeInBits(orig->getType()) + 7) / 8) {
         LI->copyMetadata(*orig, MD_ToCopy);
-        LI->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
+        LI->setDebugLoc(dbg);
         unsigned int StoreData[] = {LLVMContext::MD_tbaa,
                                     LLVMContext::MD_tbaa_struct};
         for (auto MD : StoreData)
           st->setMetadata(MD, orig->getMetadata(MD));
-        st->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
+        st->setDebugLoc(dbg);
       }
 
       if (align) {
@@ -2992,16 +3005,17 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                 }
                 assert(funcName.size());
 
-                auto rule = [&args, funcName, &TLI = this->TLI](
-                                IRBuilder<> &NB, Value *inst,
-                                Value *anti) { // TODO: fix args!!!!
+                auto rule = [funcName, &TLI = this->TLI](
+                                IRBuilder<> &NB, Value *inst, Value *anti,
+                                ArrayRef<Value *> args) {
                   zeroKnownAllocation(
                       NB, anti, args, funcName, TLI,
                       dyn_cast<CallInst>(inst)); // maybe come up with a
                                                  // vectorized version of this?
                 };
 
-                applyChainRule(NB, rule, Primal(inst), Gradient(anti));
+                applyChainRule(NB, rule, Primal(inst), Gradient(anti),
+                               Primal<ArrayRef<Value *>>(args));
               }
             }
           }
@@ -3373,9 +3387,8 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                   } else {
                     auto dbg = getNewFromOriginal(I.getDebugLoc());
 
-                    auto rule = [orig, dbg,
-                                 &args](IRBuilder<> &NB,
-                                        Value *op) { // TODO: fix args!
+                    auto rule = [orig, dbg](IRBuilder<> &NB, Value *op,
+                                            ArrayRef<Value *> args) {
 #if LLVM_VERSION_MAJOR >= 11
                       Value *anti = NB.CreateCall(
                           orig->getFunctionType(), orig->getCalledOperand(),
@@ -3407,7 +3420,8 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                     };
 
                     anti = applyChainRule(orig->getType(), NB, rule,
-                                          Primal(orig->getCalledOperand()));
+                                          Primal(orig->getCalledOperand()),
+                                          Primal<ArrayRef<Value *>>(args));
 
                     if (auto MD = hasMetadata(orig, "enzyme_fromstack")) {
 
@@ -3442,14 +3456,15 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                       anti = replacement;
                     }
 
-                    auto rule2 = [&args, funcName, TLI = this->TLI](
-                                     IRBuilder<> &NB, Value *orig,
-                                     Value *anti) { // TODO: fix args!!!
+                    auto rule2 = [funcName, TLI = this->TLI](
+                                     IRBuilder<> &NB, Value *orig, Value *anti,
+                                     ArrayRef<Value *>(args)) {
                       zeroKnownAllocation(NB, anti, args, funcName, TLI,
                                           cast<CallInst>(orig));
                     };
 
-                    applyChainRule(NB, rule2, Primal(orig), Gradient(anti));
+                    applyChainRule(NB, rule2, Primal(orig), Gradient(anti),
+                                   Primal<ArrayRef<Value *>>(args));
                   }
                 } else {
                   llvm_unreachable("Unknown shadow rematerialization value");
@@ -4678,13 +4693,13 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       Vals.push_back(cast<Constant>(val));
     }
 
-    auto rule = [&CD](IRBuilder<> &BuilderM, ArrayRef<Constant *> Vals,
-                      ArrayType *ty) {
-      return ConstantArray::get(CD->getType(), Vals);
+    auto rule = [ty = CD->getType()](IRBuilder<> &BuilderM,
+                                     ArrayRef<Constant *> Vals) {
+      return ConstantArray::get(ty, Vals);
     };
-    return nullptr;
-    //    return applyChainRule(CD->getType(), BuilderM, rule,
-    //                          Gradient<ArrayRef<Constant *>>(Vals));
+
+    return applyChainRule(CD->getType(), BuilderM, rule,
+                          Gradient<ArrayRef<Constant *>>(Vals));
   } else if (auto CD = dyn_cast<ConstantStruct>(oval)) {
     SmallVector<Constant *, 1> Vals;
     for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
@@ -5314,10 +5329,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     }
     Value *ip = invertPointerM(arg->getPointerOperand(), bb);
 
-    auto rule = [arg, &invertargs](IRBuilder<> &bb,
-                                   Value *ip) { // TODO fix invertargs!!!
+    auto rule = [arg](IRBuilder<> &bb, Value *ip, ArrayRef<Value *> args) {
 #if LLVM_VERSION_MAJOR > 7
-      auto shadow = bb.CreateGEP(arg->getSourceElementType(), ip, invertargs,
+      auto shadow = bb.CreateGEP(arg->getSourceElementType(), ip, args,
                                  arg->getName() + "'ipg");
 #else
       auto shadow = bb.CreateGEP(ip, invertargs, arg->getName() + "'ipg");
@@ -5329,7 +5343,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       return shadow;
     };
 
-    Value *shadow = applyChainRule(arg->getType(), bb, rule, Gradient(ip));
+    Value *shadow = applyChainRule(arg->getType(), bb, rule, Gradient(ip),
+                                   Primal<ArrayRef<Value *>>(invertargs));
 
     invertedPointers.insert(
         std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
@@ -7581,122 +7596,147 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
         // Don't zero in forward mode.
         if (mode != DerivativeMode::ForwardModeSplit) {
 
-          Value *args[] = {
-            shadowsLookedUp ? shadow_dst
-                            : gutils->lookupM(shadow_dst, Builder2),
-            ConstantInt::get(Type::getInt8Ty(MTI->getContext()), 0),
-            gutils->lookupM(length, Builder2),
+          auto lshadow_dst = shadowsLookedUp
+                                 ? shadow_dst
+                                 : gutils->lookupM(shadow_dst, Builder2);
+          auto llength = gutils->lookupM(length, Builder2);
+          auto M = MTI->getParent()->getParent()->getParent();
+
+          auto rule = [dstalign, M, &Context = MTI->getContext()](
+                          IRBuilder<> &Builder2, Value *shadow_dst,
+                          Value *length) {
+            Value *args[] = {
+              shadow_dst,
+              Builder2.getInt8(0),
+              length,
 #if LLVM_VERSION_MAJOR <= 6
-            ConstantInt::get(Type::getInt32Ty(MTI->getContext()),
-                             max(1U, dstalign)),
+              Builder2
+                  .getInt32(max(1U, dstalign))
 #endif
-            ConstantInt::getFalse(MTI->getContext())
+                      Builder2.getFalse()
+            };
+
+            if (args[0]->getType()->isIntegerTy())
+              args[0] =
+                  Builder2.CreateIntToPtr(args[0], Builder2.getInt8PtrTy());
+
+            Type *tys[] = {args[0]->getType(), args[2]->getType()};
+
+            auto memsetIntr =
+                Intrinsic::getDeclaration(M, Intrinsic::memset, tys);
+            auto cal = Builder2.CreateCall(memsetIntr, args);
+            cal->setCallingConv(memsetIntr->getCallingConv());
+
+            if (dstalign != 0) {
+#if LLVM_VERSION_MAJOR >= 10
+              cal->addParamAttr(
+                  0, Attribute::getWithAlignment(Context, Align(dstalign)));
+#else
+              cal->addParamAttr(0,
+                                Attribute::getWithAlignment(Context, dstalign));
+#endif
+            }
           };
 
-          if (args[0]->getType()->isIntegerTy())
-            args[0] = Builder2.CreateIntToPtr(
-                args[0], Type::getInt8PtrTy(MTI->getContext()));
-
-          Type *tys[] = {args[0]->getType(), args[2]->getType()};
-          auto memsetIntr = Intrinsic::getDeclaration(
-              MTI->getParent()->getParent()->getParent(), Intrinsic::memset,
-              tys);
-          auto cal = Builder2.CreateCall(memsetIntr, args);
-          cal->setCallingConv(memsetIntr->getCallingConv());
-          if (dstalign != 0) {
-#if LLVM_VERSION_MAJOR >= 10
-            cal->addParamAttr(0, Attribute::getWithAlignment(MTI->getContext(),
-                                                             Align(dstalign)));
-#else
-            cal->addParamAttr(
-                0, Attribute::getWithAlignment(MTI->getContext(), dstalign));
-#endif
-          }
+          gutils->applyChainRule(Builder2, rule, Gradient(lshadow_dst),
+                                 Primal(llength));
         }
-
       } else {
         auto dsto =
             (shadowsLookedUp || mode == DerivativeMode::ForwardModeSplit)
                 ? shadow_dst
                 : gutils->lookupM(shadow_dst, Builder2);
-        if (dsto->getType()->isIntegerTy())
-          dsto = Builder2.CreateIntToPtr(
-              dsto, Type::getInt8PtrTy(dsto->getContext()));
-        unsigned dstaddr =
-            cast<PointerType>(dsto->getType())->getAddressSpace();
-        if (offset != 0) {
-#if LLVM_VERSION_MAJOR > 7
-          dsto = Builder2.CreateConstInBoundsGEP1_64(
-              dsto->getType()->getPointerElementType(), dsto, offset);
-#else
-          dsto = Builder2.CreateConstInBoundsGEP1_64(dsto, offset);
-#endif
-        }
+
         auto srco =
             (shadowsLookedUp || mode == DerivativeMode::ForwardModeSplit)
                 ? shadow_src
                 : gutils->lookupM(shadow_src, Builder2);
-        if (mode != DerivativeMode::ForwardModeSplit)
-          dsto = Builder2.CreatePointerCast(
-              dsto, PointerType::get(secretty, dstaddr));
-        if (srco->getType()->isIntegerTy())
-          srco = Builder2.CreateIntToPtr(
-              srco, Type::getInt8PtrTy(srco->getContext()));
-        unsigned srcaddr =
-            cast<PointerType>(srco->getType())->getAddressSpace();
-        if (offset != 0) {
+
+        auto llength = gutils->lookupM(length, Builder2);
+        auto M = MTI->getParent()->getParent()->getParent();
+
+        auto rule = [offset, mode, secretty, dstalign, srcalign, intrinsic,
+                     M](IRBuilder<> &Builder2, Value *dsto, Value *srco,
+                        Value *length) {
+          if (dsto->getType()->isIntegerTy())
+            dsto = Builder2.CreateIntToPtr(
+                dsto, Type::getInt8PtrTy(dsto->getContext()));
+          unsigned dstaddr =
+              cast<PointerType>(dsto->getType())->getAddressSpace();
+          if (offset != 0) {
 #if LLVM_VERSION_MAJOR > 7
-          srco = Builder2.CreateConstInBoundsGEP1_64(
-              srco->getType()->getPointerElementType(), srco, offset);
+            dsto = Builder2.CreateConstInBoundsGEP1_64(
+                dsto->getType()->getPointerElementType(), dsto, offset);
 #else
-          srco = Builder2.CreateConstInBoundsGEP1_64(srco, offset);
+            dsto = Builder2.CreateConstInBoundsGEP1_64(dsto, offset);
 #endif
-        }
-        if (mode != DerivativeMode::ForwardModeSplit)
-          srco = Builder2.CreatePointerCast(
-              srco, PointerType::get(secretty, srcaddr));
-
-        if (mode == DerivativeMode::ForwardModeSplit) {
-#if LLVM_VERSION_MAJOR >= 11
-          MaybeAlign dalign;
-          if (dstalign)
-            dalign = MaybeAlign(dstalign);
-          MaybeAlign salign;
-          if (srcalign)
-            salign = MaybeAlign(srcalign);
-#else
-          auto dalign = dstalign;
-          auto salign = srcalign;
-#endif
-
-          if (intrinsic == Intrinsic::memmove) {
-            Builder2.CreateMemMove(dsto, dalign, srco, salign, length);
-          } else {
-            Builder2.CreateMemCpy(dsto, dalign, srco, salign, length);
           }
-        } else {
-          Value *args[]{
-              Builder2.CreatePointerCast(dsto,
-                                         PointerType::get(secretty, dstaddr)),
-              Builder2.CreatePointerCast(srco,
-                                         PointerType::get(secretty, srcaddr)),
-              Builder2.CreateUDiv(
-                  gutils->lookupM(length, Builder2),
-                  ConstantInt::get(length->getType(),
-                                   Builder2.GetInsertBlock()
-                                           ->getParent()
-                                           ->getParent()
-                                           ->getDataLayout()
-                                           .getTypeAllocSizeInBits(secretty) /
-                                       8))};
 
-          auto dmemcpy = ((intrinsic == Intrinsic::memcpy)
-                              ? getOrInsertDifferentialFloatMemcpy
-                              : getOrInsertDifferentialFloatMemmove)(
-              *MTI->getParent()->getParent()->getParent(), secretty, dstalign,
-              srcalign, dstaddr, srcaddr);
-          Builder2.CreateCall(dmemcpy, args);
-        }
+          if (mode != DerivativeMode::ForwardModeSplit)
+            dsto = Builder2.CreatePointerCast(
+                dsto, PointerType::get(secretty, dstaddr));
+
+          if (srco->getType()->isIntegerTy())
+            srco = Builder2.CreateIntToPtr(
+                srco, Type::getInt8PtrTy(srco->getContext()));
+          unsigned srcaddr =
+              cast<PointerType>(srco->getType())->getAddressSpace();
+          if (offset != 0) {
+#if LLVM_VERSION_MAJOR > 7
+            srco = Builder2.CreateConstInBoundsGEP1_64(
+                srco->getType()->getPointerElementType(), srco, offset);
+#else
+            srco = Builder2.CreateConstInBoundsGEP1_64(srco, offset);
+#endif
+          }
+          if (mode != DerivativeMode::ForwardModeSplit)
+            srco = Builder2.CreatePointerCast(
+                srco, PointerType::get(secretty, srcaddr));
+
+          if (mode == DerivativeMode::ForwardModeSplit) {
+#if LLVM_VERSION_MAJOR >= 11
+            MaybeAlign dalign;
+            if (dstalign)
+              dalign = MaybeAlign(dstalign);
+            MaybeAlign salign;
+            if (srcalign)
+              salign = MaybeAlign(srcalign);
+#else
+            auto dalign = dstalign;
+            auto salign = srcalign;
+#endif
+
+            if (intrinsic == Intrinsic::memmove) {
+              Builder2.CreateMemMove(dsto, dalign, srco, salign, length);
+            } else {
+              Builder2.CreateMemCpy(dsto, dalign, srco, salign, length);
+            }
+          } else {
+            Value *args[]{
+                Builder2.CreatePointerCast(dsto,
+                                           PointerType::get(secretty, dstaddr)),
+                Builder2.CreatePointerCast(srco,
+                                           PointerType::get(secretty, srcaddr)),
+                Builder2.CreateUDiv(
+                    length,
+                    ConstantInt::get(length->getType(),
+                                     Builder2.GetInsertBlock()
+                                             ->getParent()
+                                             ->getParent()
+                                             ->getDataLayout()
+                                             .getTypeAllocSizeInBits(secretty) /
+                                         8))};
+
+            auto dmemcpy = ((intrinsic == Intrinsic::memcpy)
+                                ? getOrInsertDifferentialFloatMemcpy
+                                : getOrInsertDifferentialFloatMemmove)(
+                *M, secretty, dstalign, srcalign, dstaddr, srcaddr);
+            Builder2.CreateCall(dmemcpy, args);
+          }
+        };
+
+        gutils->applyChainRule(Builder2, rule, Gradient(dsto), Gradient(srco),
+                               Primal(length));
       }
     }
   } else {
@@ -7727,72 +7767,82 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
       //  we may omit this copy.
       // no need to update pointers, even if dst is active
       auto dsto = shadow_dst;
-      if (dsto->getType()->isIntegerTy())
-        dsto = BuilderZ.CreateIntToPtr(dsto,
-                                       Type::getInt8PtrTy(MTI->getContext()));
-      if (offset != 0) {
-#if LLVM_VERSION_MAJOR > 7
-        dsto = BuilderZ.CreateConstInBoundsGEP1_64(
-            dsto->getType()->getPointerElementType(), dsto, offset);
-#else
-        dsto = BuilderZ.CreateConstInBoundsGEP1_64(dsto, offset);
-#endif
-      }
       auto srco = shadow_src;
-      if (srco->getType()->isIntegerTy())
-        srco = BuilderZ.CreateIntToPtr(srco,
-                                       Type::getInt8PtrTy(MTI->getContext()));
-      if (offset != 0) {
+      auto M = gutils->newFunc->getParent();
+
+      auto rule = [offset, dstalign, srcalign, isVolatile, intrinsic, M,
+                   &MTI](IRBuilder<> &BuilderZ, Value *dsto, Value *srco,
+                         Value *length) {
+        if (dsto->getType()->isIntegerTy())
+          dsto = BuilderZ.CreateIntToPtr(dsto, BuilderZ.getInt8PtrTy());
+
+        if (offset != 0) {
 #if LLVM_VERSION_MAJOR > 7
-        srco = BuilderZ.CreateConstInBoundsGEP1_64(
-            srco->getType()->getPointerElementType(), srco, offset);
+          dsto = BuilderZ.CreateConstInBoundsGEP1_64(
+              dsto->getType()->getPointerElementType(), dsto, offset);
 #else
-        srco = BuilderZ.CreateConstInBoundsGEP1_64(srco, offset);
+          dsto = BuilderZ.CreateConstInBoundsGEP1_64(dsto, offset);
 #endif
-      }
-      Value *args[] = {
-        dsto,
-        srco,
-        length,
+        }
+
+        if (srco->getType()->isIntegerTy())
+          srco = BuilderZ.CreateIntToPtr(srco, BuilderZ.getInt8PtrTy());
+
+        if (offset != 0) {
+#if LLVM_VERSION_MAJOR > 7
+          srco = BuilderZ.CreateConstInBoundsGEP1_64(
+              srco->getType()->getPointerElementType(), srco, offset);
+#else
+          srco = BuilderZ.CreateConstInBoundsGEP1_64(srco, offset);
+#endif
+        }
+
+        Value *args[] = {
+          dsto,
+          srco,
+          length,
 #if LLVM_VERSION_MAJOR <= 6
-        ConstantInt::get(Type::getInt32Ty(MTI->getContext()),
-                         max(1U, min(srcalign, dstalign))),
+          ConstantInt::get(Type::getInt32Ty(MTI->getContext()),
+                           max(1U, min(srcalign, dstalign))),
 #endif
-        isVolatile
+          isVolatile
+        };
+
+        // #if LLVM_VERSION_MAJOR >= 7
+        Type *tys[] = {args[0]->getType(), args[1]->getType(),
+                       args[2]->getType()};
+        // #else
+        //  Type *tys[] = {args[0]->getType(), args[1]->getType(),
+        //  args[2]->getType(), args[3]->getType()}; #endif
+
+        auto memtransIntr = Intrinsic::getDeclaration(M, intrinsic, tys);
+        auto cal = BuilderZ.CreateCall(memtransIntr, args);
+        cal->setAttributes(MTI->getAttributes());
+        cal->setCallingConv(memtransIntr->getCallingConv());
+        cal->setTailCallKind(MTI->getTailCallKind());
+
+        if (dstalign != 0) {
+#if LLVM_VERSION_MAJOR >= 10
+          cal->addParamAttr(0, Attribute::getWithAlignment(MTI->getContext(),
+                                                           Align(dstalign)));
+#else
+          cal->addParamAttr(
+              0, Attribute::getWithAlignment(MTI->getContext(), dstalign));
+#endif
+        }
+        if (srcalign != 0) {
+#if LLVM_VERSION_MAJOR >= 10
+          cal->addParamAttr(1, Attribute::getWithAlignment(MTI->getContext(),
+                                                           Align(srcalign)));
+#else
+          cal->addParamAttr(
+              1, Attribute::getWithAlignment(MTI->getContext(), srcalign));
+#endif
+        }
       };
 
-      // #if LLVM_VERSION_MAJOR >= 7
-      Type *tys[] = {args[0]->getType(), args[1]->getType(),
-                     args[2]->getType()};
-      // #else
-      //  Type *tys[] = {args[0]->getType(), args[1]->getType(),
-      //  args[2]->getType(), args[3]->getType()}; #endif
-
-      auto memtransIntr = Intrinsic::getDeclaration(
-          gutils->newFunc->getParent(), intrinsic, tys);
-      auto cal = BuilderZ.CreateCall(memtransIntr, args);
-      cal->setAttributes(MTI->getAttributes());
-      cal->setCallingConv(memtransIntr->getCallingConv());
-      cal->setTailCallKind(MTI->getTailCallKind());
-
-      if (dstalign != 0) {
-#if LLVM_VERSION_MAJOR >= 10
-        cal->addParamAttr(
-            0, Attribute::getWithAlignment(MTI->getContext(), Align(dstalign)));
-#else
-        cal->addParamAttr(
-            0, Attribute::getWithAlignment(MTI->getContext(), dstalign));
-#endif
-      }
-      if (srcalign != 0) {
-#if LLVM_VERSION_MAJOR >= 10
-        cal->addParamAttr(
-            1, Attribute::getWithAlignment(MTI->getContext(), Align(srcalign)));
-#else
-        cal->addParamAttr(
-            1, Attribute::getWithAlignment(MTI->getContext(), srcalign));
-#endif
-      }
+      gutils->applyChainRule(BuilderZ, rule, Gradient(dsto), Gradient(srco),
+                             Primal(length));
     }
   }
 }

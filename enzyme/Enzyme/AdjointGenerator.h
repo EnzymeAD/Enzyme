@@ -3702,22 +3702,13 @@ public:
                               ? gutils->getNewFromOriginal(orig_src)
                               : gutils->invertPointerM(orig_src, BuilderZ);
 
-      auto rule = [start, forwardsShadow, backwardsShadow, orig_dst, orig_src,
-                   isVolatile, &MTI, gutils = this->gutils, ID, subdstalign,
-                   subsrcalign, Mode = this->Mode,
-                   &dt](IRBuilder<> &BuilderZ, Value *shadow_dst,
-                        Value *shadow_src, Value *length) { // TODO: fix this!
-        SubTransferHelper(
-            gutils, Mode, dt.isFloat(), ID, subdstalign, subsrcalign,
-            /*offset*/ start, gutils->isConstantValue(orig_dst), shadow_dst,
-            gutils->isConstantValue(orig_src), shadow_src,
-            /*length*/ length, /*volatile*/ isVolatile, &MTI,
-            /*allowForward*/ forwardsShadow, /*shadowsLookedup*/ false,
-            /*backwardsShadow*/ backwardsShadow);
-      };
-
-      applyChainRule(BuilderZ, rule, Gradient(shadow_dst), Gradient(shadow_src),
-                     Primal(length));
+      SubTransferHelper(
+          gutils, Mode, dt.isFloat(), ID, subdstalign, subsrcalign,
+          /*offset*/ start, gutils->isConstantValue(orig_dst), shadow_dst,
+          gutils->isConstantValue(orig_src), shadow_src,
+          /*length*/ length, /*volatile*/ isVolatile, &MTI,
+          /*allowForward*/ forwardsShadow, /*shadowsLookedup*/ false,
+          /*backwardsShadow*/ backwardsShadow);
 
       if (nextStart == size)
         break;
@@ -10265,6 +10256,7 @@ public:
                backwardsShadow)) {
             SmallVector<Value *, 1> iargs;
             IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
+
 #if LLVM_VERSION_MAJOR >= 14
             for (auto &arg : orig->args())
 #else
@@ -10273,16 +10265,18 @@ public:
             {
               if (!gutils->isConstantValue(arg)) {
                 Value *ptrshadow = gutils->invertPointerM(arg, BuilderZ);
-                applyChainRule(
-                    BuilderZ,
-                    [&](IRBuilder<> &Builder2, Value *ptrshadow) {
-                      iargs.push_back(ptrshadow);
-                    },
-                    Gradient(ptrshadow));
+                iargs.push_back(ptrshadow);
               }
             }
+
             if (iargs.size()) {
-              BuilderZ.CreateCall(called, iargs);
+              auto rule = [called](IRBuilder<> &BuilderZ,
+                                   ArrayRef<Value *> Vals) {
+                BuilderZ.CreateCall(called, Vals);
+              };
+
+              applyChainRule(BuilderZ, rule,
+                             Gradient<ArrayRef<Value *>>(iargs));
             }
           }
 
@@ -10796,9 +10790,9 @@ public:
 
               Value *new_orig = gutils->getNewFromOriginal(orig);
 
-              auto rule = [orig, &args, dbgLoc,
+              auto rule = [orig, dbgLoc,
                            funcName](IRBuilder<> &bb, Value *callee,
-                                     Value *new_orig) { // TODO: fix args!!!
+                                     Value *new_orig, ArrayRef<Value *> args) {
 #if LLVM_VERSION_MAJOR >= 11
                 Value *anti = bb.CreateCall(orig->getFunctionType(), callee,
                                             args, orig->getName() + "'mi");
@@ -10867,9 +10861,9 @@ public:
                 return anti;
               };
 
-              anti = applyChainRule(orig->getType(), bb, rule,
-                                    Primal(orig->getCalledOperand()),
-                                    Primal(new_orig));
+              anti = applyChainRule(
+                  orig->getType(), bb, rule, Primal(orig->getCalledOperand()),
+                  Primal(new_orig), Primal<ArrayRef<Value *>>(args));
 
               gutils->invertedPointers.erase(found);
               if (&*bb.GetInsertPoint() == placeholder)
@@ -10981,12 +10975,14 @@ public:
                    backwardsShadow)) {
                 if (!inLoop) {
 
-                  auto rule = [&](IRBuilder<> &bb, Value *orig,
-                                  Value *anti) { // TODO: fix args!
-                    zeroKnownAllocation(bb, anti, args, funcName, gutils->TLI,
+                  auto rule = [funcName, TLI = gutils->TLI](
+                                  IRBuilder<> &bb, Value *orig, Value *anti,
+                                  ArrayRef<Value *> args) {
+                    zeroKnownAllocation(bb, anti, args, funcName, TLI,
                                         cast<CallInst>(orig));
                   };
-                  applyChainRule(bb, rule, Primal(orig), Gradient(anti));
+                  applyChainRule(bb, rule, Primal(orig), Gradient(anti),
+                                 Primal<ArrayRef<Value *>>(args));
                 }
               }
             }
@@ -11027,8 +11023,8 @@ public:
           auto Defs = gutils->getInvertedBundles(orig, BundleTypes, Builder2,
                                                  /*lookup*/ false);
 
-          auto rule = [&args, orig, dbgLoc,
-                       &Defs](IRBuilder<> &Builder2) { // TODO: fix args
+          auto rule = [orig, dbgLoc, &Defs](IRBuilder<> &Builder2,
+                                            ArrayRef<Value *> args) {
 #if LLVM_VERSION_MAJOR > 7
             CallInst *CI = Builder2.CreateCall(
                 orig->getFunctionType(), orig->getCalledFunction(), args, Defs);
@@ -11043,7 +11039,8 @@ public:
             return CI;
           };
 
-          Value *CI = applyChainRule(call.getType(), Builder2, rule);
+          Value *CI = applyChainRule(call.getType(), Builder2, rule,
+                                     Primal<ArrayRef<Value *>>(args));
 
           auto found = gutils->invertedPointers.find(orig);
           PHINode *placeholder = cast<PHINode>(&*found->second);
@@ -11504,22 +11501,16 @@ public:
               *orig->getModule(), orig, newfree->getType(), gutils->getWidth(),
               MemoryLayout);
 
-          SmallVector<Value *, 3> args;
-          args.push_back(newfree);
+          auto dbg = gutils->getNewFromOriginal(orig->getDebugLoc());
 
-          auto rule = [&](IRBuilder<> &Builder2,
-                          Value *tofree) { // TODO: fix this!!!!
-            if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
-              tofree =
-                  Builder2.CreatePointerCast(tofree, Builder2.getInt8PtrTy());
-
-            args.push_back(tofree);
+          auto rule = [free, dbg](IRBuilder<> &Builder2, Value *tofree,
+                                  Value *newfree) {
+            auto frees = Builder2.CreateCall(free->getFunctionType(), free,
+                                             {tofree, newfree});
+            frees->setDebugLoc(dbg);
           };
 
-          applyChainRule(Builder2, rule, Gradient(tofree));
-
-          auto frees = Builder2.CreateCall(free->getFunctionType(), free, args);
-          frees->setDebugLoc(gutils->getNewFromOriginal(orig->getDebugLoc()));
+          applyChainRule(Builder2, rule, Primal(newfree), Gradient(tofree));
 
           return;
         }

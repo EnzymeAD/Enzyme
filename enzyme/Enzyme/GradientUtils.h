@@ -902,6 +902,7 @@ public:
 
   ValueMap<const Value *, MDNode *> differentialAliasScopeDomains;
   ValueMap<const Value *, DenseMap<ssize_t, MDNode *>> differentialAliasScope;
+
   MDNode *getDerivativeAliasScope(const Value *origptr, ssize_t newptr) {
     auto found = differentialAliasScopeDomains.find(origptr);
     if (found == differentialAliasScopeDomains.end()) {
@@ -1767,7 +1768,6 @@ public:
     ExitBuilder.setFastMathFlags(getFast());
 
     std::map<Value *, Value *> ArgMap;
-    SmallVector<Value *, 4> ArgAllocas;
     for (int i = 0; i < Args.size(); ++i) {
       auto Arg = Args[i];
       F->getArg(i)->setName(Arg->getName());
@@ -1775,7 +1775,6 @@ public:
       Alloca->setName(Arg->getName() + ".tmp");
       EntryBuilder.CreateStore(F->getArg(i), Alloca);
       ArgMap[Arg] = Alloca;
-      ArgAllocas.push_back(Alloca);
     }
 
     PHINode *InductionVar =
@@ -1840,7 +1839,6 @@ public:
     ResultAccumulator->setName("res");
 
     std::map<Value *, Value *> ArgMap;
-    SmallVector<Value *, 4> ArgAllocas;
     for (int i = 0; i < Args.size(); ++i) {
       auto Arg = Args[i];
       F->getArg(i)->setName(Arg->getName());
@@ -1848,7 +1846,6 @@ public:
       Alloca->setName(Arg->getName() + ".tmp");
       EntryBuilder.CreateStore(F->getArg(i), Alloca);
       ArgMap[Arg] = Alloca;
-      ArgAllocas.push_back(Alloca);
     }
 
     PHINode *InductionVar =
@@ -1882,9 +1879,22 @@ public:
   Value *applyChainRule(Type *diffType, IRBuilder<> &Builder, Func rule,
                         Args... args) {
     if (width > 1) {
-      SmallVector<Type *, sizeof...(args)> ArgTypes = {args.getType()...};
-      SmallVector<Value *, sizeof...(args)> ArgValues = {args.getValue()...};
       Type *wrappedType = ArrayType::get(diffType, width);
+
+      std::vector<Type *> ArgTypeVectors[] = {args.getType()...};
+      std::vector<Value *> ArgValueVectors[] = {args.getValue()...};
+
+      SmallVector<Type *, sizeof...(args)> ArgTypes;
+      SmallVector<Value *, sizeof...(args)> ArgValues;
+
+      for (auto &&TypeVector : ArgTypeVectors) {
+        ArgTypes.insert(ArgTypes.end(), TypeVector.begin(), TypeVector.end());
+      }
+
+      for (auto &&ValueVector : ArgValueVectors) {
+        ArgValues.insert(ArgValues.end(), ValueVector.begin(),
+                         ValueVector.end());
+      }
 
       auto [LoopF, Body, ResultAcc, i, ArgMap] =
           CreateVectorLoop(width, wrappedType, ArgValues,
@@ -1924,8 +1934,20 @@ public:
   template <typename Func, typename... Args>
   void applyChainRule(IRBuilder<> &Builder, Func rule, Args... args) {
     if (width > 1) {
-      SmallVector<Type *, sizeof...(args)> ArgTypes = {args.getType()...};
-      SmallVector<Value *, sizeof...(args)> ArgValues = {args.getValue()...};
+      std::vector<Type *> ArgTypeVectors[] = {args.getType()...};
+      std::vector<Value *> ArgValueVectors[] = {args.getValue()...};
+
+      SmallVector<Type *, sizeof...(args)> ArgTypes;
+      SmallVector<Value *, sizeof...(args)> ArgValues;
+
+      for (auto &&TypeVector : ArgTypeVectors) {
+        ArgTypes.insert(ArgTypes.end(), TypeVector.begin(), TypeVector.end());
+      }
+
+      for (auto &&ValueVector : ArgValueVectors) {
+        ArgValues.insert(ArgValues.end(), ValueVector.begin(),
+                         ValueVector.end());
+      }
 
       auto [LoopF, Body, i, ArgMap] = CreateVectorLoop(
           width, ArgValues, *Builder.GetInsertBlock()->getModule(), "vec.loop");
@@ -1946,9 +1968,10 @@ public:
     } else {
       Value *i = nullptr;
       std::map<Value *, Value *> map;
-      std::apply(rule, std::move(std::tuple_cat(
-                           std::forward_as_tuple(Builder),
-                           eval_tuple(Builder, map, i, args...))));
+      //      std::apply(rule, std::move(std::tuple_cat(
+      //                                 std::forward_as_tuple(Builder),
+      //                                 eval_tuple(Builder, map, i,
+      //                                 args...))));
     }
   }
 };
