@@ -1961,6 +1961,8 @@ public:
         std::apply(rule, std::move(std::tuple_cat(
                              std::forward_as_tuple(RuleBuilder),
                              eval_tuple(RuleBuilder, ArgMap, i, args...))));
+        
+        Builder.CreateCall(LoopF->getFunctionType(), LoopF, ArgValues);
       } else if (width > 1 &&
                  memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes) {
         // TODO
@@ -1968,10 +1970,10 @@ public:
     } else {
       Value *i = nullptr;
       std::map<Value *, Value *> map;
-      //      std::apply(rule, std::move(std::tuple_cat(
-      //                                 std::forward_as_tuple(Builder),
-      //                                 eval_tuple(Builder, map, i,
-      //                                 args...))));
+      std::apply(rule, std::move(std::tuple_cat(
+                                                std::forward_as_tuple(Builder),
+                                                eval_tuple(Builder, map, i,
+                                                           args...))));
     }
   }
 };
