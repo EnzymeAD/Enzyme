@@ -20,20 +20,83 @@
 using namespace mlir;
 using llvm::errs;
 namespace {
+struct InitOpConversion : public OpConversionPattern<enzyme::InitOp> {
+  using OpConversionPattern<enzyme::InitOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(enzyme::InitOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    Value buffer = rewriter.create<memref::AllocOp>(
+        op.getLoc(),
+        getTypeConverter()->convertType(op.getType()).cast<MemRefType>());
+    rewriter.replaceOpWithNewOp<UnrealizedConversionCastOp>(op, op.getType(),
+                                                            buffer);
+    return success();
+  }
+};
+
+struct SetOpConversion : public OpConversionPattern<enzyme::SetGradientOp> {
+  using OpConversionPattern<enzyme::SetGradientOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(enzyme::SetGradientOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto memrefType = getTypeConverter()
+                          ->convertType(op.getGradient().getType())
+                          .cast<MemRefType>();
+    auto castedGradient = rewriter.create<UnrealizedConversionCastOp>(
+        op.getLoc(), memrefType, op.getGradient());
+    rewriter.replaceOpWithNewOp<memref::StoreOp>(op, op.getValue(),
+                                                 castedGradient.getResult(0));
+    return success();
+  }
+};
+
+struct GetOpConversion : public OpConversionPattern<enzyme::GetGradientOp> {
+  using OpConversionPattern<enzyme::GetGradientOp>::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(enzyme::GetGradientOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto memrefType = getTypeConverter()
+                          ->convertType(op.getGradient().getType())
+                          .cast<MemRefType>();
+    auto castedGradient = rewriter.create<UnrealizedConversionCastOp>(
+        op.getLoc(), memrefType, op.getGradient());
+    rewriter.replaceOpWithNewOp<memref::LoadOp>(op,
+                                                castedGradient.getResult(0));
+    return success();
+  }
+};
+
 struct EnzymeToMemRefPass
     : public enzyme::EnzymeOpsToMemRefPassBase<EnzymeToMemRefPass> {
   void runOnOperation() override {
     MLIRContext *context = &getContext();
     RewritePatternSet patterns(context);
     TypeConverter typeConverter;
+    typeConverter.addConversion([](Type type) -> llvm::Optional<Type> {
+      if (type.isIntOrIndexOrFloat()) {
+        return type;
+      }
+      return llvm::None;
+    });
+
     typeConverter.addConversion(
         [](enzyme::GradientType type) -> llvm::Optional<Type> {
           return MemRefType::get({}, type.getBasetype());
         });
 
+    patterns.add<InitOpConversion>(typeConverter, context);
+    patterns.add<SetOpConversion>(typeConverter, context);
+    patterns.add<GetOpConversion>(typeConverter, context);
+
     ConversionTarget target(*context);
     target.addLegalDialect<memref::MemRefDialect>();
-    target.addIllegalOp<enzyme::CreateCacheOp>();
+    target.addLegalOp<UnrealizedConversionCastOp>();
+    target.addIllegalOp<enzyme::InitOp>();
+    target.addIllegalOp<enzyme::SetGradientOp>();
+    target.addIllegalOp<enzyme::GetGradientOp>();
 
     if (failed(applyPartialConversion(getOperation(), target,
                                       std::move(patterns))))
