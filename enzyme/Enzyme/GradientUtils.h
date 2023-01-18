@@ -1849,7 +1849,7 @@ public:
     }
 
     PHINode *InductionVar =
-    BodyBuilder.CreatePHI(BodyBuilder.getInt32Ty(), 2, "i");
+        BodyBuilder.CreatePHI(BodyBuilder.getInt32Ty(), 2, "i");
     BodyBuilder.CreateBr(Increment);
 
     Value *InductionVarInc = IncrementBuilder.CreateAdd(
@@ -1911,8 +1911,9 @@ public:
                                  eval_tuple(RuleBuilder, ArgMap, i, args...))));
 
 #if LLVM_VERSION_MAJOR > 7
-        auto gep = RuleBuilder.CreateInBoundsGEP(diff->getType(),
-            ResultAcc, {RuleBuilder.getInt64(0), i}, "res.idx");
+        auto gep = RuleBuilder.CreateInBoundsGEP(diff->getType(), ResultAcc,
+                                                 {RuleBuilder.getInt64(0), i},
+                                                 "res.idx");
 #else
         auto gep = RuleBuilder.CreateInBoundsGEP(
             ResultAcc, {RuleBuilder.getInt64(0), i}, "res.idx");
@@ -1966,7 +1967,7 @@ public:
         std::apply(rule, std::move(std::tuple_cat(
                              std::forward_as_tuple(RuleBuilder),
                              eval_tuple(RuleBuilder, ArgMap, i, args...))));
-        
+
         Builder.CreateCall(LoopF->getFunctionType(), LoopF, ArgValues);
       } else if (width > 1 &&
                  memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes) {
@@ -1976,9 +1977,8 @@ public:
       Value *i = nullptr;
       std::map<Value *, Value *> map;
       std::apply(rule, std::move(std::tuple_cat(
-                                                std::forward_as_tuple(Builder),
-                                                eval_tuple(Builder, map, i,
-                                                           args...))));
+                           std::forward_as_tuple(Builder),
+                           eval_tuple(Builder, map, i, args...))));
     }
   }
 };

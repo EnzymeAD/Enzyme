@@ -1377,7 +1377,8 @@ public:
                   Builder.getInt8Ty(), element,
                   Builder.CreateMul(
                       batchOffset[i - 1],
-                      ConstantInt::get(batchOffset[i - 1]->getType(), v)),  CI->getArgOperand(i)->getName() + ".vec.idx");
+                      ConstantInt::get(batchOffset[i - 1]->getType(), v)),
+                  CI->getArgOperand(i)->getName() + ".vec.idx");
 #else
               element = Builder.CreateGEP(
 #if LLVM_VERSION_MAJOR >= 14
@@ -1386,7 +1387,8 @@ public:
                   element,
                   Builder.CreateMul(
                       batchOffset[i - 1],
-                      ConstantInt::get(batchOffset[i - 1]->getType(), v)), CI->getArgOperand(i)->getName() + ".vec.idx");
+                      ConstantInt::get(batchOffset[i - 1]->getType(), v)),
+                  CI->getArgOperand(i)->getName() + ".vec.idx");
 #endif
               element = Builder.CreateBitCast(element, elementPtrTy);
             } else {
