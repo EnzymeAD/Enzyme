@@ -185,8 +185,10 @@ public:
     switch (memoryLayout) {
     case VectorModeMemoryLayout::VectorizeAtRootNode: {
       assert(cast<ArrayType>(value->getType())->getNumElements() == width);
+      auto aty = cast<ArrayType>(value->getType());
+
 #if LLVM_VERSION_MAJOR > 7
-      auto gep = Builder.CreateInBoundsGEP(value->getType(), map[value],
+      auto gep = Builder.CreateInBoundsGEP(aty->getElementType(), map[value],
                                            {Builder.getInt64(0), i},
                                            value->getName() + ".vec.idx");
 #else
@@ -194,7 +196,6 @@ public:
                                            value->getName() + ".vec.idx");
 #endif
 
-      auto aty = cast<ArrayType>(value->getType());
       return Builder.CreateLoad(aty->getElementType(), gep);
     }
     case VectorModeMemoryLayout::VectorizeAtLeafNodes:
@@ -294,8 +295,9 @@ public:
       std::vector<Value *> res;
 
       for (auto &&value : values) {
+        auto aty = cast<ArrayType>(value->getType());
 #if LLVM_VERSION_MAJOR > 7
-        auto gep = Builder.CreateInBoundsGEP(value->getType(), map[value],
+        auto gep = Builder.CreateInBoundsGEP(aty->getElementType(), map[value],
                                              {Builder.getInt64(0), i},
                                              value->getName() + ".vec.idx");
 #else
@@ -303,7 +305,6 @@ public:
             Builder.CreateInBoundsGEP(map[value], {Builder.getInt64(0), i},
                                       value->getName() + ".vec.idx");
 #endif
-        auto aty = cast<ArrayType>(value->getType());
         auto ld = Builder.CreateLoad(aty->getElementType(), gep);
         res.push_back(ld);
       }
