@@ -188,7 +188,7 @@ public:
       auto aty = cast<ArrayType>(value->getType());
 
 #if LLVM_VERSION_MAJOR > 7
-      auto gep = Builder.CreateInBoundsGEP(aty->getElementType(), map[value],
+      auto gep = Builder.CreateInBoundsGEP(aty, map[value],
                                            {Builder.getInt64(0), i},
                                            value->getName() + ".vec.idx");
 #else
@@ -297,7 +297,7 @@ public:
       for (auto &&value : values) {
         auto aty = cast<ArrayType>(value->getType());
 #if LLVM_VERSION_MAJOR > 7
-        auto gep = Builder.CreateInBoundsGEP(aty->getElementType(), map[value],
+        auto gep = Builder.CreateInBoundsGEP(aty, map[value],
                                              {Builder.getInt64(0), i},
                                              value->getName() + ".vec.idx");
 #else
