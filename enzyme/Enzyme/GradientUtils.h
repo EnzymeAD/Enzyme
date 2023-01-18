@@ -1910,8 +1910,14 @@ public:
                                  std::forward_as_tuple(RuleBuilder),
                                  eval_tuple(RuleBuilder, ArgMap, i, args...))));
 
+#if LLVM_VERSION_MAJOR > 7
+        auto gep = RuleBuilder.CreateInBoundsGEP(diff->getType(),
+            ResultAcc, {RuleBuilder.getInt64(0), i}, "res.idx");
+#else
         auto gep = RuleBuilder.CreateInBoundsGEP(
             ResultAcc, {RuleBuilder.getInt64(0), i}, "res.idx");
+#endif
+
         RuleBuilder.CreateStore(diff, gep);
 
         return Builder.CreateCall(LoopF->getFunctionType(), LoopF, ArgValues);
