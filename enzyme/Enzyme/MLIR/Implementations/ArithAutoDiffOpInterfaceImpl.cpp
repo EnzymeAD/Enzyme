@@ -116,6 +116,10 @@ struct AddFOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalModel
 
   }
 
+  void createShadowValues(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils) const {
+    
+  }
+
   void clearGradient(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils, ValueRange caches, unsigned resultIndex) const {
     assert(resultIndex == 0);
     defaultClearGradient(op, builder, gutils);
@@ -147,12 +151,16 @@ struct MulFOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalModel
       SmallVector<Value> caches;
       for (int i = 0; i < 2; i++) {
         Value otherOperand = mulOp.getOperand((i+1)%2);
-        Value cache = gutils->cacheForReverse(gutils->getNewFromOriginal(otherOperand), cacheBuilder);
+        Value cache = gutils->initAndPushCache(gutils->getNewFromOriginal(otherOperand), cacheBuilder);
         caches.push_back(cache);
       }
       return ValueRange(ArrayRef<Value>(caches));
     }
     return ValueRange();
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils) const {
+    
   }
 
   void clearGradient(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils, ValueRange caches, unsigned resultIndex) const {

@@ -66,16 +66,22 @@ def DiffOp : Enzyme_Op<"diff",
   }];
 }
 
-def PushCacheOp : Enzyme_Op<"push"> {
-  let summary = "Store information for the reverse mode pass.";
+def PushOp : Enzyme_Op<"push"> {
+  let summary = "Push value to cache or ShadowGradient";
   let arguments = (ins AnyType : $cache, AnyType : $value);
   let results = (outs );
 }
 
-def PopCacheOp : Enzyme_Op<"pop"> {
+def PopOp : Enzyme_Op<"pop"> {
   let summary = "Retrieve information for the reverse mode pass.";
   let arguments = (ins AnyType : $cache);
   let results = (outs AnyType:$output);
+}
+
+def ClearOp : Enzyme_Op<"clear"> {
+  let summary = "Remove top element from ShadowGradient";
+  let arguments = (ins AnyType : $cache);
+  let results = (outs );
 }
 
 def InitOp : Enzyme_Op<"init"> {
@@ -84,7 +90,7 @@ def InitOp : Enzyme_Op<"init"> {
   let results = (outs AnyType);
 }
 
-def ReverseCache : Enzyme_Type<"Cache"> {
+def Cache : Enzyme_Type<"Cache"> {
   let summary = "Cache for reverse pass";
   let description = [{
     "Cache for reverse pass"
@@ -94,25 +100,35 @@ def ReverseCache : Enzyme_Type<"Cache"> {
   let assemblyFormat = "`<` $type `>`";
 }
 
-def SetGradientOp : Enzyme_Op<"set"> {
+def SetOp : Enzyme_Op<"set"> {
   let summary = "Write to gradient";
   let arguments = (ins AnyType : $gradient, AnyType : $value);
   let results = (outs );
 }
 
-def GetGradientOp : Enzyme_Op<"get"> {
+def GetOp : Enzyme_Op<"get"> {
   let summary = "Load value of gradient";
   let arguments = (ins AnyType : $gradient);
   let results = (outs AnyType);
 }
 
 def Gradient : Enzyme_Type<"Gradient"> {
-  let summary = "Gradient storage";
+  let summary = "Stores gradient if it cant be stroed in a value.";
   let description = [{
     "Cache for reverse pass"
   }];
   let parameters = (ins "Type":$basetype);
   let mnemonic = "Gradient";
+  let assemblyFormat = "`<` $basetype `>`";
+}
+
+def ShadowGradient : Enzyme_Type<"ShadowGradient"> {
+  let summary = "Stores gradients which need to be initialized with shadow values from the forward pass.";
+  let description = [{
+    "Cache for reverse pass"
+  }];
+  let parameters = (ins "Type":$basetype);
+  let mnemonic = "ShadowGradient";
   let assemblyFormat = "`<` $basetype `>`";
 }
 

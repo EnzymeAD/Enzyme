@@ -77,32 +77,47 @@ Type mlir::enzyme::MGradientUtilsReverse::getIndexType(){
   return mlir::IntegerType::get(initializationBlock->begin()->getContext(), 32);
 }
 
+//Cache
 Type mlir::enzyme::MGradientUtilsReverse::getCacheType(Type t){
   Type cacheType = CacheType::get(initializationBlock->begin()->getContext(), t);
 }
 
+Value mlir::enzyme::MGradientUtilsReverse::insertInitCache(Type t){
+  OpBuilder builder(initializationBlock, initializationBlock->begin());
+  return builder.create<enzyme::InitOp>((initializationBlock->rbegin())->getLoc(), t);
+}
+
+Value MGradientUtilsReverse::initAndPushCache(Value v, OpBuilder& builder){
+  Value cache = insertInitCache(getCacheType(v.getType()));
+  builder.create<enzyme::PushOp>(v.getLoc(), cache, v);
+  return cache;
+}
+
+Value MGradientUtilsReverse::popCache(Value cache, OpBuilder& builder){
+  return builder.create<enzyme::PopOp>(cache.getLoc(), cast<enzyme::CacheType>(cache.getType()).getType(), cache);
+}
+
+//Gradient
 Type mlir::enzyme::MGradientUtilsReverse::getGradientType(Value v){
   Type valueType = v.getType();
   return GradientType::get(v.getContext(), valueType);
 }
 
-Value mlir::enzyme::MGradientUtilsReverse::insertInitBackwardCache(Type t){
-  OpBuilder builder(initializationBlock, initializationBlock->begin());
-  return builder.create<enzyme::InitOp>((initializationBlock->rbegin())->getLoc(), t);
-}
-
-Value MGradientUtilsReverse::cacheForReverse(Value v, OpBuilder& builder){
-  Value cache = insertInitBackwardCache(getCacheType(v.getType()));
-  builder.create<enzyme::PushCacheOp>(v.getLoc(), cache, v);
-  return cache;
-}
-
-Value MGradientUtilsReverse::popCache(Value cache, OpBuilder& builder){
-  return builder.create<enzyme::PopCacheOp>(cache.getLoc(), cast<enzyme::CacheType>(cache.getType()).getType(), cache);
-}
-
 Value mlir::enzyme::MGradientUtilsReverse::insertInitGradient(mlir::Value v, OpBuilder &builder){
   Type gradientType = getGradientType(v);
+  OpBuilder initBuilder(initializationBlock, initializationBlock->begin());
+  Value gradient = initBuilder.create<enzyme::InitOp>(v.getLoc(), gradientType);
+  return gradient;
+}
+
+//Shadow Gradient
+Type mlir::enzyme::MGradientUtilsReverse::getShadowGradientType(Value v){
+  Type valueType = v.getType();
+  return ShadowGradientType::get(v.getContext(), valueType);
+}
+
+Value mlir::enzyme::MGradientUtilsReverse::insertInitShadowGradient(mlir::Value v, OpBuilder &builder){
+  Type gradientType = getShadowGradientType(v);
   OpBuilder initBuilder(initializationBlock, initializationBlock->begin());
   Value gradient = initBuilder.create<enzyme::InitOp>(v.getLoc(), gradientType);
   return gradient;
@@ -162,6 +177,13 @@ bool mlir::enzyme::MGradientUtilsReverse::isConstantValue(Value v) const {
   return false;
 }
 
+bool mlir::enzyme::MGradientUtilsReverse::requiresShadow(Type t){
+  if(auto iface = dyn_cast<AutoDiffTypeInterface>(t)){
+    return iface.requiresShadow();
+  }
+  return false;
+}
+
 /*
 The value v must have an invert pointer
 */
@@ -174,8 +196,21 @@ Value mlir::enzyme::MGradientUtilsReverse::invertPointerM(Value v, OpBuilder &bu
     assert(!onlyUsedInParentBlock(v));
     Value gradient = invertedPointersGlobal.lookupOrNull(v);
     Type type = gradient.getType();
+    
     if (GradientType gType = dyn_cast<GradientType>(type)) {
-      Value ret = builder.create<enzyme::GetGradientOp>(v.getLoc(), gType.getBasetype(), gradient);
+      Value ret = builder.create<enzyme::GetOp>(v.getLoc(), gType.getBasetype(), gradient);
+      return ret;
+    }
+    else{
+      llvm_unreachable("found invalid type");
+    }
+  }
+  else if(invertedPointersShadow.contains(v)){
+    Value gradient = invertedPointersShadow.lookupOrNull(v);
+    Type type = gradient.getType();
+    
+    if (ShadowGradientType gType = dyn_cast<enzyme::ShadowGradientType>(type)) {
+      Value ret = builder.create<enzyme::GetOp>(v.getLoc(), gType.getBasetype(), gradient);
       return ret;
     }
     else{
@@ -188,9 +223,7 @@ Value mlir::enzyme::MGradientUtilsReverse::invertPointerM(Value v, OpBuilder &bu
 }
 
 
-//Use this for assignable values
 void mlir::enzyme::MGradientUtilsReverse::mapInvertPointer(mlir::Value v, mlir::Value invertValue, OpBuilder &builder){
-  // This may be a performance bottleneck! TODO
   if (!invertedPointersGlobal.contains(v) && onlyUsedInParentBlock(v)){
     invertedPointers.map(v, invertValue);
   }
@@ -200,13 +233,49 @@ void mlir::enzyme::MGradientUtilsReverse::mapInvertPointer(mlir::Value v, mlir::
       invertedPointersGlobal.map(v, g);
     }
     Value gradient = invertedPointersGlobal.lookupOrNull(v);
-    builder.create<enzyme::SetGradientOp>(v.getLoc(), gradient, invertValue);
+    builder.create<enzyme::SetOp>(v.getLoc(), gradient, invertValue);
   }
 }
 
+Value mlir::enzyme::MGradientUtilsReverse::getShadowValue(mlir::Value v){
+  return shadowValues.lookupOrNull(v);
+}
+
+void mlir::enzyme::MGradientUtilsReverse::mapShadowValue(mlir::Value v, mlir::Value shadow, OpBuilder &builder){
+  assert(!invertedPointersShadow.contains(v)); //Shadow Values must only be mapped exactly once
+
+  Value cache = insertInitCache(getCacheType(v.getType()));
+  invertedPointersShadow.map(v, cache);
+
+  builder.create<enzyme::PushOp>(v.getLoc(), cache, shadow);
+
+  shadowValues.map(v, shadow);
+}
+
+void mlir::enzyme::MGradientUtilsReverse::clearValue(mlir::Value v, OpBuilder &builder){
+  if (invertedPointers.contains(v)){
+    // Do nothing
+  }
+  else if(invertedPointersGlobal.contains(v)){
+    Value gradient = invertedPointersGlobal.lookupOrNull(v);
+    Type type = cast<GradientType>(gradient.getType()).getBasetype();
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(type)){
+      Value zero = iface.createNullValue(builder, v.getLoc());
+      builder.create<enzyme::SetOp>(v.getLoc(), gradient, zero);
+    }
+    else{
+      llvm_unreachable("Type does not have an associated AutoDiffTypeInterface");
+    }
+  }
+  else if(invertedPointersShadow.contains(v)){
+    Value gradient = invertedPointersShadow.lookupOrNull(v);
+    Type type = cast<ShadowGradientType>(gradient.getType()).getBasetype();
+    builder.create<enzyme::ClearOp>(v.getLoc(), gradient);
+  }
+}
 
 bool mlir::enzyme::MGradientUtilsReverse::hasInvertPointer(mlir::Value v){
-  return (invertedPointers.contains(v)) || (invertedPointersGlobal.contains(v));
+  return (invertedPointers.contains(v)) || (invertedPointersGlobal.contains(v)) || (invertedPointersShadow.contains(v));
 }
 
 void MGradientUtilsReverse::initInitializationBlock(BlockAndValueMapping invertedPointers_){
@@ -216,7 +285,17 @@ void MGradientUtilsReverse::initInitializationBlock(BlockAndValueMapping inverte
   OpBuilder initializationBuilder(&*(this->newFunc.getFunctionBody().begin()), this->newFunc.getFunctionBody().begin()->begin());
   
   for (auto const& x : invertedPointers_.getValueMap()){
-    this->mapInvertPointer(x.first, x.second, initializationBuilder);
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(x.first.getType())){
+      if(iface.requiresShadow()){
+        mapShadowValue(x.first, x.second, initializationBuilder);
+      }
+      else{
+        mapInvertPointer(x.first, x.second, initializationBuilder);
+      }
+    }
+    else{
+      llvm_unreachable("TODO not implemented");
+    }
   }
 }
 

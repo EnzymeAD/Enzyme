@@ -66,21 +66,17 @@ struct StoreOpInterface
 };
 
 /*struct LoadOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalModel<LoadOpInterfaceReverse, memref::LoadOp> {
-  void createReverseModeAdjoint(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils) const {
+  void createReverseModeAdjoint(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils, ValueRange caches) const {
     auto loadOp = cast<memref::LoadOp>(op);
     Value memref = loadOp.getMemref();
-    ValueRange indices = loadOp.getIndices();
     
-    if (auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType())){  
-      if(gutils->hasInvertPointer(loadOp) && gutils->hasInvertPointer(memref)){
-        OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
-        
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType())){
+      if(gutils->hasInvertPointer(loadOp) && gutils->hasInvertPointer(memref)){        
         Value gradient = gutils->invertPointerM(loadOp, builder);
         Value memrefGradient = gutils->invertPointerM(memref, builder);
 
         SmallVector<Value> retrievedArguments;
-        for (Value v : indices){
-          Value cache = gutils->cacheForReverse(gutils->getNewFromOriginal(v), cacheBuilder);
+        for (Value cache : caches){
           Value retrievedValue = gutils->popCache(cache, builder);
           retrievedArguments.push_back(retrievedValue);
         }
@@ -91,8 +87,25 @@ struct StoreOpInterface
       }   
     }
   }
+  ValueRange cacheValues(Operation *op, MGradientUtilsReverse *gutils) const {
+    auto loadOp = cast<memref::LoadOp>(op);
+    Value memref = loadOp.getMemref();
+    ValueRange indices = loadOp.getIndices();
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType())){
+      if(gutils->hasInvertPointer(loadOp) && gutils->hasInvertPointer(memref)){
+        OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
+        SmallVector<Value> caches;
+        for (Value v : indices){
+          caches.push_back(gutils->initAndPushCache(gutils->getNewFromOriginal(v), cacheBuilder));
+        }
+        return ValueRange(ArrayRef<Value>(caches));
+      }
+    }
+    return ValueRange();
+  }
 
-  void clearGradient(Operation *op, SmallVector<OpBuilder *>builders, MGradientUtilsReverse *gutils) const {
+  void clearGradient(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils, ValueRange caches, unsigned resultIndex) const {
+    
   }
 };
 
@@ -111,7 +124,7 @@ struct StoreOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalMode
 
         SmallVector<Value> retrievedArguments;
         for (Value v : indices){
-          Value cache = gutils->cacheForReverse(gutils->getNewFromOriginal(v), cacheBuilder);
+          Value cache = gutils->initAndPushCache(gutils->getNewFromOriginal(v), cacheBuilder);
           Value retrievedValue = gutils->popCache(cache, builder);
           retrievedArguments.push_back(retrievedValue);
         }
@@ -163,7 +176,7 @@ public:
     return self;
   }
 
-  bool needsClearing(Type self) const{
+  bool requiresShadow(Type self) const{
     return true;
   }
 };

@@ -58,6 +58,15 @@ def ReverseAutoDiffOpInterface : OpInterface<"ReverseAutoDiffOpInterface"> {
 
     InterfaceMethod<
     /*desc=*/[{
+      Creates or alters shadow values.
+    }],
+    /*retTy=*/"void",
+    /*methodName=*/"createShadowValues",
+    /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::enzyme::MGradientUtilsReverse *":$gutils)
+    >,
+
+    InterfaceMethod<
+    /*desc=*/[{
       Caches values to create the adjoint.
     }],
     /*retTy=*/"::mlir::ValueRange",

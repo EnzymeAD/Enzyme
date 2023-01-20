@@ -29,6 +29,8 @@ public:
   DerivativeMode mode;
   BlockAndValueMapping invertedPointers;
   BlockAndValueMapping invertedPointersGlobal;
+  BlockAndValueMapping invertedPointersShadow;
+  BlockAndValueMapping shadowValues;
   Block *initializationBlock;
   SmallVector<Block *> returnBlocks;
 
@@ -74,13 +76,27 @@ public:
   mlir::Value invertPointerM(mlir::Value v, OpBuilder &builder);
   void mapInvertPointer(mlir::Value v, mlir::Value invertValue, OpBuilder &builder);
 
+  mlir::Value getShadowValue(mlir::Value v);
+  void mapShadowValue(mlir::Value v, mlir::Value invertValue, OpBuilder &builder);
+
+  void clearValue(mlir::Value v, OpBuilder &builder);
+
   void setDiffe(mlir::Value val, mlir::Value toset, OpBuilder &BuilderM);
-  Value insertInitBackwardCache(Type t);
-  Value insertInitGradient(mlir::Value v, OpBuilder &builder);
-  Type getIndexCacheType();
   Type getIndexType();
+  //Cache
   Type getCacheType(Type t);
+  Type getIndexCacheType();
+  Value insertInitCache(Type t);
+
+  //Gradient
   Type getGradientType(Value t);
+  Value insertInitGradient(mlir::Value v, OpBuilder &builder);
+
+  //ShadowGradient
+  Type getShadowGradientType(Value t);
+  Value insertInitShadowGradient(mlir::Value v, OpBuilder &builder);
+
+  bool requiresShadow(Type t);
 
   void initInitializationBlock(BlockAndValueMapping invertedPointers_);
   void initReturnBlocks();
@@ -89,7 +105,7 @@ public:
 
   Operation *cloneWithNewOperands(OpBuilder &B, Operation *op);
   
-  Value cacheForReverse(Value v, OpBuilder& builder);
+  Value initAndPushCache(Value v, OpBuilder& builder);
   Value popCache(Value cache, OpBuilder& builder);
 };
 
