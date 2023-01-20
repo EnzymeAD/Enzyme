@@ -43,7 +43,7 @@ public:
     return self;
   }
 
-  bool needsClearing(Type self) const{
+  bool requiresShadow(Type self) const{
     return false;
   }
 };

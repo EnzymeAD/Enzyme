@@ -56,7 +56,7 @@ def AutoDiffTypeInterface : TypeInterface<"AutoDiffTypeInterface"> {
         Returns if the Type needs to be cleared.
       }],
       /*retTy=*/"bool",
-      /*methodName=*/"needsClearing",
+      /*methodName=*/"requiresShadow",
       /*args=*/(ins )
     >
   ];

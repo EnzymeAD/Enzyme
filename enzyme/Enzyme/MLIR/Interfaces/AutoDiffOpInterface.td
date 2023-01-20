@@ -58,20 +58,20 @@ def ReverseAutoDiffOpInterface : OpInterface<"ReverseAutoDiffOpInterface"> {
 
     InterfaceMethod<
     /*desc=*/[{
+      Creates or alters shadow values.
+    }],
+    /*retTy=*/"void",
+    /*methodName=*/"createShadowValues",
+    /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::enzyme::MGradientUtilsReverse *":$gutils)
+    >,
+
+    InterfaceMethod<
+    /*desc=*/[{
       Caches values to create the adjoint.
     }],
     /*retTy=*/"::mlir::ValueRange",
     /*methodName=*/"cacheValues",
     /*args=*/(ins "::mlir::enzyme::MGradientUtilsReverse *":$gutils)
-    >,
-
-    InterfaceMethod<
-    /*desc=*/[{
-      Clear the value of the gradient.
-    }],
-    /*retTy=*/"void",
-    /*methodName=*/"clearGradient",
-    /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::enzyme::MGradientUtilsReverse *":$gutils, "::mlir::ValueRange":$caches, "unsigned":$resultIndex)
     >
   ];
 }

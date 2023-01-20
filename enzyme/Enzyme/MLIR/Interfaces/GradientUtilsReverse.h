@@ -18,17 +18,36 @@ namespace enzyme {
 
 class MGradientUtilsReverse {
 public:
+  MGradientUtilsReverse(MEnzymeLogic &Logic, 
+                FunctionOpInterface newFunc_,
+                FunctionOpInterface oldFunc_, 
+                MTypeAnalysis &TA_,
+                MTypeResults TR_, 
+                BlockAndValueMapping invertedPointers_,
+                const SmallPtrSetImpl<mlir::Value> &constantvalues_,
+                const SmallPtrSetImpl<mlir::Value> &activevals_,
+                DIFFE_TYPE ReturnActivity, 
+                ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
+                BlockAndValueMapping &originalToNewFn_,
+                std::map<Operation *, Operation *> &originalToNewFnOps_,
+                DerivativeMode mode_, 
+                unsigned width, 
+                BlockAndValueMapping mapReverseModeBlocks_, 
+                DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapBlockArguments_,
+                SymbolTableCollection &symbolTable_);
+
   // From CacheUtility
   FunctionOpInterface newFunc;
   FunctionOpInterface oldFunc;
 
-  SymbolTableCollection &symbolTable;
 
   MEnzymeLogic &Logic;
   bool AtomicAdd;
   DerivativeMode mode;
   BlockAndValueMapping invertedPointers;
   BlockAndValueMapping invertedPointersGlobal;
+  BlockAndValueMapping invertedPointersShadow;
+  BlockAndValueMapping shadowValues;
   Block *initializationBlock;
   SmallVector<Block *> returnBlocks;
 
@@ -43,28 +62,13 @@ public:
 
   unsigned width;
   ArrayRef<DIFFE_TYPE> ArgDiffeTypes;
+  
+  SymbolTableCollection &symbolTable;
 
   mlir::Value getNewFromOriginal(const mlir::Value originst) const;
   mlir::Block *getNewFromOriginal(mlir::Block *originst) const;
   Operation *getNewFromOriginal(Operation *originst) const;
 
-  MGradientUtilsReverse(MEnzymeLogic &Logic, 
-                FunctionOpInterface newFunc_,
-                FunctionOpInterface oldFunc_, 
-                MTypeAnalysis &TA_,
-                MTypeResults TR_, 
-                BlockAndValueMapping invertedPointers_,
-                const SmallPtrSetImpl<mlir::Value> &constantvalues_,
-                const SmallPtrSetImpl<mlir::Value> &activevals_,
-                DIFFE_TYPE ReturnActivity, 
-                ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
-                BlockAndValueMapping &originalToNewFn_,
-                std::map<Operation *, Operation *> &originalToNewFnOps_,
-                DerivativeMode mode, 
-                unsigned width, 
-                BlockAndValueMapping mapReverseModeBlocks_, 
-                DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapBlockArguments_,
-                SymbolTableCollection &symbolTable_);
   void erase(Operation *op) { op->erase(); }
   void eraseIfUnused(Operation *op, bool erase = true, bool check = true) {
     // TODO
@@ -74,13 +78,29 @@ public:
   mlir::Value invertPointerM(mlir::Value v, OpBuilder &builder);
   void mapInvertPointer(mlir::Value v, mlir::Value invertValue, OpBuilder &builder);
 
+  mlir::Value getShadowValue(mlir::Value v);
+  void mapShadowValue(mlir::Value v, mlir::Value invertValue, OpBuilder &builder);
+
+  void clearValue(mlir::Value v, OpBuilder &builder);
+
   void setDiffe(mlir::Value val, mlir::Value toset, OpBuilder &BuilderM);
-  Value insertInitBackwardCache(Type t);
-  Value insertInitGradient(mlir::Value v, OpBuilder &builder);
-  Type getIndexCacheType();
   Type getIndexType();
+  Value insertInit(Type t);
+
+  //Cache
   Type getCacheType(Type t);
+  Type getIndexCacheType();
+  Value initAndPushCache(Value v, OpBuilder& builder);
+
+  //Gradient
   Type getGradientType(Value t);
+  Value insertInitGradient(mlir::Value v, OpBuilder &builder);
+
+  //ShadowGradient
+  Type getShadowGradientType(Value t);
+  Value insertInitShadowGradient(mlir::Value v, OpBuilder &builder);
+
+  bool requiresShadow(Type t);
 
   void initInitializationBlock(BlockAndValueMapping invertedPointers_);
   void initReturnBlocks();
@@ -89,7 +109,6 @@ public:
 
   Operation *cloneWithNewOperands(OpBuilder &B, Operation *op);
   
-  Value cacheForReverse(Value v, OpBuilder& builder);
   Value popCache(Value cache, OpBuilder& builder);
 };
 
@@ -107,14 +126,14 @@ public:
                       ArrayRef<DIFFE_TYPE> constant_values,
                       BlockAndValueMapping &origToNew_,
                       std::map<Operation *, Operation *> &origToNewOps_,
-                      DerivativeMode mode, 
+                      DerivativeMode mode_, 
                       unsigned width, 
                       BlockAndValueMapping mapReverseModeBlocks_, 
                       DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapBlockArguments_,
                       SymbolTableCollection &symbolTable_);
 
   static MDiffeGradientUtilsReverse * CreateFromClone(MEnzymeLogic &Logic, 
-                  DerivativeMode mode, 
+                  DerivativeMode mode_, 
                   unsigned width,
                   FunctionOpInterface todiff, 
                   MTypeAnalysis &TA,
