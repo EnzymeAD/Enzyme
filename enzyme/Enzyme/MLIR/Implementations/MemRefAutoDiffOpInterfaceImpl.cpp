@@ -65,7 +65,7 @@ struct StoreOpInterface
   }
 };
 
-/*struct LoadOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalModel<LoadOpInterfaceReverse, memref::LoadOp> {
+struct LoadOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalModel<LoadOpInterfaceReverse, memref::LoadOp> {
   void createReverseModeAdjoint(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils, ValueRange caches) const {
     auto loadOp = cast<memref::LoadOp>(op);
     Value memref = loadOp.getMemref();
@@ -87,6 +87,7 @@ struct StoreOpInterface
       }   
     }
   }
+
   ValueRange cacheValues(Operation *op, MGradientUtilsReverse *gutils) const {
     auto loadOp = cast<memref::LoadOp>(op);
     Value memref = loadOp.getMemref();
@@ -104,13 +105,16 @@ struct StoreOpInterface
     return ValueRange();
   }
 
-  void clearGradient(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils, ValueRange caches, unsigned resultIndex) const {
-    
+  void createShadowValues(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils) const {
+    auto loadOp = cast<memref::LoadOp>(op);
+    Value memref = loadOp.getMemref();
+    Value shadow = gutils->getShadowValue(memref);
+    // Do nothing yet. In the future support memref<memref<...>>
   }
 };
 
 struct StoreOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalModel<StoreOpInterfaceReverse, memref::StoreOp> {
-  void createReverseModeAdjoint(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils) const {
+  void createReverseModeAdjoint(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils, ValueRange caches) const {
     auto storeOp = cast<memref::StoreOp>(op);
     Value val = storeOp.getValue();
     Value memref = storeOp.getMemref();
@@ -123,8 +127,7 @@ struct StoreOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalMode
         Value memrefGradient = gutils->invertPointerM(memref, builder);
 
         SmallVector<Value> retrievedArguments;
-        for (Value v : indices){
-          Value cache = gutils->initAndPushCache(gutils->getNewFromOriginal(v), cacheBuilder);
+        for (Value cache : caches){
           Value retrievedValue = gutils->popCache(cache, builder);
           retrievedArguments.push_back(retrievedValue);
         }
@@ -140,9 +143,50 @@ struct StoreOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalMode
     }
   }
 
-  void clearGradient(Operation *op, SmallVector<OpBuilder *>builders, MGradientUtilsReverse *gutils) const {
+  ValueRange cacheValues(Operation *op, MGradientUtilsReverse *gutils) const {
+    auto storeOp = cast<memref::StoreOp>(op);
+    Value memref = storeOp.getMemref();
+    ValueRange indices = storeOp.getIndices();
+    Value val = storeOp.getValue();
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType())){
+      if(gutils->hasInvertPointer(val) && gutils->hasInvertPointer(memref)){
+        OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
+        SmallVector<Value> caches;
+        for (Value v : indices){
+          caches.push_back(gutils->initAndPushCache(gutils->getNewFromOriginal(v), cacheBuilder));
+        }
+        return ValueRange(ArrayRef<Value>(caches));
+      }
+    }
+    return ValueRange();
   }
-};*/
+
+  void createShadowValues(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils) const {
+    auto storeOp = cast<memref::StoreOp>(op);
+    Value memref = storeOp.getMemref();
+    Value shadow = gutils->getShadowValue(memref);
+    // Do nothing yet. In the future support memref<memref<...>>
+  }
+};
+
+struct AllocOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalModel<AllocOpInterfaceReverse, memref::AllocOp> {
+  void createReverseModeAdjoint(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils, ValueRange caches) const {
+    auto allocOp = cast<memref::AllocOp>(op);
+    Value memref = allocOp.getMemref();
+  }
+
+  ValueRange cacheValues(Operation *op, MGradientUtilsReverse *gutils) const {
+    auto allocOp = cast<memref::AllocOp>(op);
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils) const {
+    auto allocOp = cast<memref::AllocOp>(op);
+    auto newAllocOp = cast<memref::AllocOp>(gutils->getNewFromOriginal(op));
+    
+    Value shadow = builder.create<memref::AllocOp>(op->getLoc(), newAllocOp.getType(), newAllocOp.getDynamicSizes());
+    gutils->mapShadowValue(allocOp, shadow, builder);
+  }
+};
 
 struct AllocOpInterface
     : public AutoDiffOpInterface::ExternalModel<AllocOpInterface,
@@ -190,7 +234,8 @@ void mlir::enzyme::registerMemRefDialectAutoDiffInterface(
     memref::AllocOp::attachInterface<AllocOpInterface>(*context);
     MemRefType::attachInterface<MemRefTypeInterface>(*context);
 
-    //memref::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
-    //memref::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
+    memref::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
+    memref::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
+    memref::AllocOp::attachInterface<AllocOpInterfaceReverse>(*context);
   });
 }

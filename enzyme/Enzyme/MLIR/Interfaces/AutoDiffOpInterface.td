@@ -72,15 +72,6 @@ def ReverseAutoDiffOpInterface : OpInterface<"ReverseAutoDiffOpInterface"> {
     /*retTy=*/"::mlir::ValueRange",
     /*methodName=*/"cacheValues",
     /*args=*/(ins "::mlir::enzyme::MGradientUtilsReverse *":$gutils)
-    >,
-
-    InterfaceMethod<
-    /*desc=*/[{
-      Clear the value of the gradient.
-    }],
-    /*retTy=*/"void",
-    /*methodName=*/"clearGradient",
-    /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::enzyme::MGradientUtilsReverse *":$gutils, "::mlir::ValueRange":$caches, "unsigned":$resultIndex)
     >
   ];
 }

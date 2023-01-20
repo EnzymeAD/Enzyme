@@ -119,11 +119,6 @@ struct AddFOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalModel
   void createShadowValues(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils) const {
     
   }
-
-  void clearGradient(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils, ValueRange caches, unsigned resultIndex) const {
-    assert(resultIndex == 0);
-    defaultClearGradient(op, builder, gutils);
-  }
 };
 
 struct MulFOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalModel<MulFOpInterfaceReverse, arith::MulFOp> {
@@ -161,11 +156,6 @@ struct MulFOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalModel
 
   void createShadowValues(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils) const {
     
-  }
-
-  void clearGradient(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils, ValueRange caches, unsigned resultIndex) const {
-    assert(resultIndex == 0);
-    defaultClearGradient(op, builder, gutils);
   }
 };
 

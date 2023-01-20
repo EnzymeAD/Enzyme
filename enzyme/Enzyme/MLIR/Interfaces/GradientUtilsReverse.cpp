@@ -39,14 +39,14 @@ mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
     ArrayRef<DIFFE_TYPE> ArgDiffeTypes_, 
     BlockAndValueMapping &originalToNewFn_,
     std::map<Operation *, Operation *> &originalToNewFnOps_,
-    DerivativeMode mode, 
+    DerivativeMode mode_, 
     unsigned width, 
     BlockAndValueMapping mapReverseModeBlocks_, 
     DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapBlockArguments_,
     SymbolTableCollection &symbolTable_)
     : newFunc(newFunc_), 
       Logic(Logic), 
-      mode(mode), 
+      mode(mode_), 
       oldFunc(oldFunc_), 
       TA(TA_),
       TR(TR_), 
@@ -77,18 +77,19 @@ Type mlir::enzyme::MGradientUtilsReverse::getIndexType(){
   return mlir::IntegerType::get(initializationBlock->begin()->getContext(), 32);
 }
 
-//Cache
-Type mlir::enzyme::MGradientUtilsReverse::getCacheType(Type t){
-  Type cacheType = CacheType::get(initializationBlock->begin()->getContext(), t);
-}
-
-Value mlir::enzyme::MGradientUtilsReverse::insertInitCache(Type t){
+Value mlir::enzyme::MGradientUtilsReverse::insertInit(Type t){
   OpBuilder builder(initializationBlock, initializationBlock->begin());
   return builder.create<enzyme::InitOp>((initializationBlock->rbegin())->getLoc(), t);
 }
 
+//Cache
+Type mlir::enzyme::MGradientUtilsReverse::getCacheType(Type t){
+  Type cacheType = CacheType::get(initializationBlock->begin()->getContext(), t);
+  return cacheType;
+}
+
 Value MGradientUtilsReverse::initAndPushCache(Value v, OpBuilder& builder){
-  Value cache = insertInitCache(getCacheType(v.getType()));
+  Value cache = insertInit(getCacheType(v.getType()));
   builder.create<enzyme::PushOp>(v.getLoc(), cache, v);
   return cache;
 }
@@ -244,7 +245,7 @@ Value mlir::enzyme::MGradientUtilsReverse::getShadowValue(mlir::Value v){
 void mlir::enzyme::MGradientUtilsReverse::mapShadowValue(mlir::Value v, mlir::Value shadow, OpBuilder &builder){
   assert(!invertedPointersShadow.contains(v)); //Shadow Values must only be mapped exactly once
 
-  Value cache = insertInitCache(getCacheType(v.getType()));
+  Value cache = insertInitShadowGradient(v, builder);
   invertedPointersShadow.map(v, cache);
 
   builder.create<enzyme::PushOp>(v.getLoc(), cache, shadow);
@@ -269,7 +270,6 @@ void mlir::enzyme::MGradientUtilsReverse::clearValue(mlir::Value v, OpBuilder &b
   }
   else if(invertedPointersShadow.contains(v)){
     Value gradient = invertedPointersShadow.lookupOrNull(v);
-    Type type = cast<ShadowGradientType>(gradient.getType()).getBasetype();
     builder.create<enzyme::ClearOp>(v.getLoc(), gradient);
   }
 }
@@ -279,7 +279,6 @@ bool mlir::enzyme::MGradientUtilsReverse::hasInvertPointer(mlir::Value v){
 }
 
 void MGradientUtilsReverse::initInitializationBlock(BlockAndValueMapping invertedPointers_){
-  int numArgs = this->newFunc.getNumArguments();
   initializationBlock = &*(this->newFunc.getFunctionBody().begin());
 
   OpBuilder initializationBuilder(&*(this->newFunc.getFunctionBody().begin()), this->newFunc.getFunctionBody().begin()->begin());
@@ -287,7 +286,7 @@ void MGradientUtilsReverse::initInitializationBlock(BlockAndValueMapping inverte
   for (auto const& x : invertedPointers_.getValueMap()){
     if (auto iface = dyn_cast<AutoDiffTypeInterface>(x.first.getType())){
       if(iface.requiresShadow()){
-        mapShadowValue(x.first, x.second, initializationBuilder);
+        mapShadowValue(x.first, x.second, initializationBuilder); //This may create an unnecessary ShadowGradient which could be avoidable TODO
       }
       else{
         mapInvertPointer(x.first, x.second, initializationBuilder);
@@ -322,12 +321,12 @@ std::pair<BlockAndValueMapping, DenseMap<Block *, SmallVector<std::pair<Value, V
     Operation * term = block->getTerminator();
     mlir::BranchOpInterface brOp = dyn_cast<mlir::BranchOpInterface>(term);
     if(brOp){
-      for (int i = 0; i < term->getNumSuccessors(); i++){
+      for (int i = 0; i < (int)term->getNumSuccessors(); i++){
         SuccessorOperands sOps = brOp.getSuccessorOperands(i);
         Block * successorBlock = term->getSuccessor(i);
         
         assert(successorBlock->getNumArguments() == sOps.size());
-        for (int j = 0; j < sOps.size(); j++){
+        for (int j = 0; j < (int)sOps.size(); j++){
           reverseModeArguments.push_back(std::pair<Value,Value>(successorBlock->getArgument(j), sOps[j]));
         }
       }
@@ -357,17 +356,17 @@ MDiffeGradientUtilsReverse::MDiffeGradientUtilsReverse(MEnzymeLogic &Logic,
                       ArrayRef<DIFFE_TYPE> constant_values,
                       BlockAndValueMapping &origToNew_,
                       std::map<Operation *, Operation *> &origToNewOps_,
-                      DerivativeMode mode, 
+                      DerivativeMode mode_, 
                       unsigned width, 
                       BlockAndValueMapping mapReverseModeBlocks_, 
                       DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapBlockArguments_,
                       SymbolTableCollection &symbolTable_)
       : MGradientUtilsReverse(Logic, newFunc_, oldFunc_, TA, TR, invertedPointers_, constantvalues_, returnvals_, ActiveReturn, constant_values, origToNew_, origToNewOps_, mode, width, mapReverseModeBlocks_, mapBlockArguments_, symbolTable_) {}
 
-MDiffeGradientUtilsReverse * MDiffeGradientUtilsReverse::CreateFromClone(MEnzymeLogic &Logic, DerivativeMode mode, unsigned width, FunctionOpInterface todiff, MTypeAnalysis &TA, MFnTypeInfo &oldTypeInfo, DIFFE_TYPE retType, bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args, ReturnType returnValue, mlir::Type additionalArg, SymbolTableCollection &symbolTable_) {
+MDiffeGradientUtilsReverse * MDiffeGradientUtilsReverse::CreateFromClone(MEnzymeLogic &Logic, DerivativeMode mode_, unsigned width, FunctionOpInterface todiff, MTypeAnalysis &TA, MFnTypeInfo &oldTypeInfo, DIFFE_TYPE retType, bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args, ReturnType returnValue, mlir::Type additionalArg, SymbolTableCollection &symbolTable_) {
     std::string prefix;
 
-    switch (mode) {
+    switch (mode_) {
     case DerivativeMode::ForwardMode:
     case DerivativeMode::ForwardModeSplit:
       assert(false);
@@ -391,7 +390,7 @@ MDiffeGradientUtilsReverse * MDiffeGradientUtilsReverse::CreateFromClone(MEnzyme
     SmallPtrSet<mlir::Value, 1> nonconstant_values;
     BlockAndValueMapping invertedPointers;
     FunctionOpInterface newFunc = CloneFunctionWithReturns(
-        mode, width, todiff, invertedPointers, constant_args, constant_values,
+        mode_, width, todiff, invertedPointers, constant_args, constant_values,
         nonconstant_values, returnvals, returnValue, retType,
         prefix + todiff.getName(), originalToNew, originalToNewOps,
         diffeReturnArg, additionalArg);
@@ -403,5 +402,5 @@ MDiffeGradientUtilsReverse * MDiffeGradientUtilsReverse::CreateFromClone(MEnzyme
 
     MTypeResults TR; // TODO
     return new MDiffeGradientUtilsReverse(
-        Logic, newFunc, todiff, TA, TR, invertedPointers, constant_values, nonconstant_values, retType, constant_args, originalToNew, originalToNewOps, mode, width, mapReverseModeBlocks, mapBlockArguments, symbolTable_);
+        Logic, newFunc, todiff, TA, TR, invertedPointers, constant_values, nonconstant_values, retType, constant_args, originalToNew, originalToNewOps, mode_, width, mapReverseModeBlocks, mapBlockArguments, symbolTable_);
   }

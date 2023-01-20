@@ -42,7 +42,7 @@ SmallVector<mlir::Block*> getDominatorToposort(MGradientUtilsReverse *gutils){
 }
 
 void mapInvertArguments(Block * oBB, Block * reverseBB, MDiffeGradientUtilsReverse * gutils){
-  for (int i = 0; i < gutils->mapBlockArguments[oBB].size(); i++){
+  for (int i = 0; i < (int)gutils->mapBlockArguments[oBB].size(); i++){
     auto x = gutils->mapBlockArguments[oBB][i];
     OpBuilder builder(reverseBB, reverseBB->begin());
     gutils->mapInvertPointer(x.second, reverseBB->getArgument(i), builder);
@@ -116,7 +116,7 @@ bool visitChildCustom(Operation * op, OpBuilder &builder, MDiffeGradientUtilsRev
     }
 
     func::CallOp dCI = builder.create<func::CallOp>(op->getLoc(), srDiffe, resultTypes, args);
-    for (int i = 0; i < op->getNumOperands(); i++){
+    for (int i = 0; i < (int)op->getNumOperands(); i++){
       gutils->mapInvertPointer(op->getOperand(i), dCI.getResult(i), builder);
     }
 
@@ -133,7 +133,7 @@ void visitChild(Operation * op, OpBuilder &builder, MDiffeGradientUtilsReverse *
     ValueRange caches = ifaceOp.cacheValues(gutils);
     ifaceOp.createReverseModeAdjoint(builder, gutils, caches);
 
-    for (int indexResult = 0; indexResult < op->getNumResults(); indexResult++){
+    for (int indexResult = 0; indexResult < (int)op->getNumResults(); indexResult++){
       Value result = op->getResult(indexResult);
       gutils->clearValue(result, builder);
     }
@@ -210,7 +210,7 @@ void handlePredecessors(Block * oBB, Block * reverseBB, MDiffeGradientUtilsRever
       revBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB->rbegin()))->getLoc(), defaultBlock, defaultArguments);
     }
     else{
-      Value cache = gutils->insertInitCache(gutils->getIndexCacheType());
+      Value cache = gutils->insertInit(gutils->getIndexCacheType());
       Value flag = revBuilder.create<enzyme::PopOp>(oBB->rbegin()->getLoc(), gutils->getIndexType(), cache);
 
       revBuilder.create<cf::SwitchOp>(oBB->rbegin()->getLoc(), flag, defaultBlock, defaultArguments, ArrayRef<APInt>(indices), ArrayRef<Block *>(blocks), ArrayRef<ValueRange>(arguments));
@@ -230,13 +230,14 @@ void handlePredecessors(Block * oBB, Block * reverseBB, MDiffeGradientUtilsRever
 void initializeShadowValues(SmallVector<mlir::Block*>& dominatorToposortBlocks, MDiffeGradientUtilsReverse * gutils){
   for (auto it = dominatorToposortBlocks.begin(); it != dominatorToposortBlocks.end(); ++it){
     Block * oBB = *it;
-    Block * newBB = gutils->getNewFromOriginal(oBB);
 
-    if (!newBB->empty()){
-      for (auto it = newBB->begin(); it != newBB->end(); ++it) {
+    if (!oBB->empty()){
+      for (auto it = oBB->begin(); it != oBB->end(); ++it) {
         Operation * op = &*it;
+        Operation * newOp = gutils->getNewFromOriginal(op);
+        
         if (auto ifaceOp = dyn_cast<ReverseAutoDiffOpInterface>(op)) {
-          OpBuilder builder(op);
+          OpBuilder builder(newOp);
           ifaceOp.createShadowValues(builder, gutils);
         }
       }
