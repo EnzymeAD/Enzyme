@@ -10968,6 +10968,11 @@ public:
           SmallVector<ValueType, 2> BundleTypes(args.size(), ValueType::Primal);
           auto Defs = gutils->getInvertedBundles(orig, BundleTypes, Builder2,
                                                  /*lookup*/ false);
+          
+          auto shadowTy = gutils->getShadowType(call);
+          
+          if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes && shadowTy != call.getType())
+            args[0] = Builder2.CreateMul(args[0], ConstantInt::get(args[0]->getType(), gutils->getWidth()));
 
           auto rule = [&]() {
 #if LLVM_VERSION_MAJOR > 7
@@ -10985,6 +10990,9 @@ public:
           };
 
           Value *CI = applyChainRule(call.getType(), Builder2, rule);
+          
+          if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes && shadowTy != call.getType())
+            CI = Builder2.CreatePointerCast(CI, shadowTy);
 
           auto found = gutils->invertedPointers.find(orig);
           PHINode *placeholder = cast<PHINode>(&*found->second);
