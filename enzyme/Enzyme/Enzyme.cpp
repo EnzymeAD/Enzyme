@@ -1351,8 +1351,9 @@ public:
 
         Value *res = nullptr;
         bool batch = batchOffset.count(i - 1) != 0;
+        unsigned actual_width = EnzymeVectorizeAtLeafNodes ? 1 : width;
 
-        for (unsigned v = 0; v < width; ++v) {
+        for (unsigned v = 0; v < actual_width; ++v) {
 #if LLVM_VERSION_MAJOR >= 14
           if (i >= CI->arg_size())
 #else
