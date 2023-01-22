@@ -222,8 +222,7 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
   if (!mask) {
     applyChainRule(BuilderM, rule, Gradient(ptr), Gradient(newval));
   } else {
-    applyChainRule<ResultType::UNWRAPPED>(BuilderM, rule_mask, Gradient(ptr),
-                                          Gradient(newval), Primal(mask));
+    applyChainRule(BuilderM, rule_mask, Gradient(ptr), Gradient(newval), Primal(mask));
   }
 }
 
@@ -621,8 +620,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       Value *sargs[] = {res, ptr, alignv, mask};
       BuilderM.CreateCall(SF, sargs);
     };
-    applyChainRule<ResultType::UNWRAPPED>(BuilderM, rule, Gradient(ptr),
-                                          Gradient(dif));
+    applyChainRule(BuilderM, rule, Gradient(ptr), Gradient(dif));
   }
 }
 
@@ -1420,8 +1418,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
           return toreturn;
         };
 
-        Value *toreturn = applyChainRule<ResultType::UNWRAPPED>(
-            dli->getType(), BuilderM, rule, Gradient(pidx));
+        Value *toreturn = applyChainRule(dli->getType(), BuilderM, rule, Gradient(pidx));
 
         // TODO adding to cache only legal if no alias of any future writes
         if (permitCache)
@@ -3388,8 +3385,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                       return anti;
                     };
 
-                    anti = applyChainRule<ResultType::UNWRAPPED>(
-                        orig->getType(), NB, rule);
+                    anti = applyChainRule(orig->getType(), NB, rule);
 
                     if (auto MD = hasMetadata(orig, "enzyme_fromstack")) {
                       auto rule1 = [&](Value *anti) {
@@ -3412,9 +3408,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                       };
 
                       Value *replacement =
-                          applyChainRule<ResultType::UNWRAPPED>(
-                              Type::getInt8Ty(orig->getContext()), NB, rule1,
-                              Gradient(anti));
+                          applyChainRule(Type::getInt8Ty(orig->getContext()), NB, rule1, Gradient(anti));
 
                       replaceAWithB(cast<Instruction>(anti), replacement);
                       erase(cast<Instruction>(anti));
@@ -3426,8 +3420,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                                           cast<CallInst>(orig));
                     };
 
-                    applyChainRule<ResultType::UNWRAPPED>(
-                        NB, rule2, Primal(orig), Gradient(anti));
+                    applyChainRule(NB, rule2, Primal(orig), Gradient(anti));
                   }
                 } else {
                   llvm_unreachable("Unknown shadow rematerialization value");
@@ -4843,10 +4836,6 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                 M->getDataLayout().getTypeAllocSizeInBits(arg->getValueType()) /
                     8);
 
-            if (memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
-              len_arg = bb.CreateMul(
-                  len_arg, ConstantInt::get(len_arg->getType(), width));
-
             auto rule2 = [&bb, &arg, &M, &oval, &len_arg, &val_arg,
                           &ty](Value *antialloca) {
               auto dst_arg = bb.CreateBitCast(antialloca, ty);
@@ -5034,9 +5023,6 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     Value *invertOp = invertPointerM(arg->getOperand(0), bb);
     Type *shadowTy = arg->getDestTy();
 
-    if (memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
-      shadowTy = getShadowType(arg);
-
     auto rule = [&bb, &arg, &shadowTy](Value *invertOp) {
       return bb.CreateCast(arg->getOpcode(), invertOp, shadowTy,
                            arg->getName() + "'ipc");
@@ -5157,8 +5143,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       ;
     };
 
-    Value *shadow = applyChainRule<ResultType::UNWRAPPED>(
-        arg->getType(), bb, rule, Gradient(ip), Primal(index));
+    Value *shadow = applyChainRule(arg->getType(), bb, rule, Gradient(ip), Primal(index));
 
     invertedPointers.insert(
         std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
@@ -5198,8 +5183,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       return bb.CreateShuffleVector(ip0, ip1, mask, arg->getName() + "'ipsv");
     };
 
-    Value *shadow = applyChainRule<ResultType::UNWRAPPED>(
-        arg->getType(), bb, rule, Gradient(ip0), Gradient(ip1));
+    Value *shadow = applyChainRule(arg->getType(), bb, rule, Gradient(ip0), Gradient(ip1));
 
     invertedPointers.insert(
         std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
@@ -5454,9 +5438,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         return li;
       };
 
-      return applyChainRule<ResultType::UNWRAPPED>(
-          II->getType(), bb, rule, Gradient(ptr), Primal(align), Primal(mask),
-          Gradient(defaultV));
+      return applyChainRule(II->getType(), bb, rule, Gradient(ptr), Primal(align), Primal(mask), Gradient(defaultV));
     }
     }
   } else if (auto phi = dyn_cast<PHINode>(oval)) {

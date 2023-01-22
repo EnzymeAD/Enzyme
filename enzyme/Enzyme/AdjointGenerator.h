@@ -1109,9 +1109,6 @@ public:
     Type *ptrType = orig_ptr->getType();
     Type *shadowTy = orig_val->getType();
 
-    if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
-      shadowTy = gutils->getShadowType(orig_val);
-
     auto &DL = gutils->newFunc->getParent()->getDataLayout();
 
     if (unnecessaryStores.count(&I)) {
@@ -1440,8 +1437,6 @@ public:
         assert(FT);
 
         Type *shadowTy = op0->getType();
-        if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
-          shadowTy = gutils->getShadowType(op0);
 
         auto rule = [&](Value *dif) {
           if (I.getOpcode() == CastInst::CastOps::FPTrunc ||
@@ -1957,9 +1952,6 @@ public:
       if (!gutils->isConstantValue(orig_agg)) {
         Type *shadowTy = orig_inserted->getType();
 
-        if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
-          shadowTy = gutils->getShadowType(orig_inserted);
-
         auto rule = [&](Value *prediff) {
           return Builder2.CreateInsertValue(
               prediff, Constant::getNullValue(shadowTy), IVI.getIndices());
@@ -2000,7 +1992,7 @@ public:
 
   /// Unwraps a vector derivative from its internal representation and applies a
   /// function f to each element. Return values of f are collected and wrapped.
-  template <ResultType resTy = ResultType::WRAPPED, typename Func,
+  template <ResultType resTy = ResultType::UNWRAPPED, typename Func,
             typename... Args>
   Value *applyChainRule(Type *diffType, IRBuilder<> &Builder, Func rule,
                         Args... args) {
@@ -2010,7 +2002,7 @@ public:
 
   /// Unwraps a vector derivative from its internal representation and applies a
   /// function f to each element.
-  template <ResultType resTy = ResultType::WRAPPED, typename Func,
+  template <ResultType resTy = ResultType::UNWRAPPED, typename Func,
             typename... Args>
   void applyChainRule(IRBuilder<> &Builder, Func rule, Args... args) {
     ((GradientUtils *)gutils)->applyChainRule<resTy>(Builder, rule, args...);
@@ -2344,8 +2336,6 @@ public:
                        Builder2);
 
               Type *BOTy = BO.getType();
-              if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
-                BOTy = gutils->getShadowType(BO);
 
               auto rule = [&Builder2, &BOTy](Value *idiff, Type *FT) {
                 auto neg =
@@ -2825,8 +2815,6 @@ public:
               assert(dif[1 - i]);
 
               Type *BOTy = BO.getType();
-              if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
-                BOTy = gutils->getShadowType(BO);
 
               auto rule = [&Builder2, &BOTy](Value *difi, Type *FT) {
                 auto neg =
@@ -2912,7 +2900,7 @@ public:
                 return V;
               };
 
-              auto diffe = applyChainRule<ResultType::UNWRAPPED>(
+              auto diffe = applyChainRule(
                   BO.getType(), Builder2, rule, Gradient(dif[1 - i]),
                   Primal(CV), Primal(eFT));
               setDiffe(&BO, diffe, Builder2);
@@ -3123,7 +3111,7 @@ public:
 
       auto dbg = gutils->getNewFromOriginal(MS.getDebugLoc());
 
-      applyChainRule<ResultType::UNWRAPPED>(
+      applyChainRule(
           BuilderZ,
           [&](Value *op0, Value *op1, Value *op2, Value *op3) {
             SmallVector<Value *, 4> args = {op0, op1, op2};
@@ -3387,7 +3375,7 @@ public:
           cal->setDebugLoc(gutils->getNewFromOriginal(MS.getDebugLoc()));
         };
 
-        applyChainRule<ResultType::UNWRAPPED>(
+        applyChainRule(
             BuilderZ, rule, Gradient(shadow_dst), Primal(op1), Primal(length));
       }
       if (secretty && (Mode == DerivativeMode::ReverseModeGradient ||
@@ -3427,7 +3415,7 @@ public:
           cal->setDebugLoc(gutils->getNewFromOriginal(MS.getDebugLoc()));
         };
 
-        applyChainRule<ResultType::UNWRAPPED>(
+        applyChainRule(
             Builder2, rule, Gradient(gutils->lookupM(shadow_dst, Builder2)),
             Primal(op1l), Primal(op3l), Primal(length));
       }
@@ -3492,11 +3480,6 @@ public:
       getForwardBuilder(Builder2);
       auto ddst = gutils->invertPointerM(orig_dst, Builder2);
       auto dsrc = gutils->invertPointerM(orig_src, Builder2);
-
-      if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
-        new_size = Builder2.CreateMul(
-            new_size, ConstantInt::get(new_size->getType(), gutils->getWidth()),
-            new_size->getName() + ".vecsize");
 
       auto rule = [&](Value *ddst, Value *dsrc) {
         if (ddst->getType()->isIntegerTy())
@@ -3992,7 +3975,7 @@ public:
                 Builder2.CreateInsertElement(und, vdiff, (uint64_t)0), und,
                 mask);
           };
-          auto vec = applyChainRule<ResultType::UNWRAPPED>(
+          auto vec = applyChainRule(
               orig_ops[1]->getType(), Builder2, rule, Gradient(vdiff),
               Primal(und), Primal(mask));
           addToDiffe(orig_ops[1], vec, Builder2, orig_ops[0]->getType());
@@ -4503,7 +4486,7 @@ public:
           return cal;
         };
 
-        Value *dif = applyChainRule<ResultType::UNWRAPPED>(
+        Value *dif = applyChainRule(
             I.getType(), Builder2, rule, Gradient(accdif), Gradient(vecdif));
         setDiffe(&I, dif, Builder2);
         return;
@@ -4541,7 +4524,7 @@ public:
               cmp, Constant::getNullValue(dif0->getType()), dif0);
         };
 
-        Value *dif0 = applyChainRule<ResultType::UNWRAPPED>(
+        Value *dif0 = applyChainRule(
             I.getType(), Builder2, rule, Gradient(op));
         setDiffe(&I, dif0, Builder2);
         return;
@@ -4891,9 +4874,6 @@ public:
           Value *mul = Builder2.CreateFMul(op1, powcall1);
           Value *op = diffe(orig_ops[0], Builder2);
           Type *shadowTy = CI.getType();
-
-          if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
-            shadowTy = gutils->getShadowType(CI);
 
           auto rule = [&Builder2, &DL, &shadowTy](Value *op, Value *res,
                                                   Value *mul) {
@@ -5930,7 +5910,7 @@ public:
 
               Value *ip = gutils->invertPointerM(call.getOperand(1), BuilderZ);
 
-              Value *dval = applyChainRule<ResultType::UNWRAPPED>(
+              Value *dval = applyChainRule(
                   call.getType(), BuilderZ, rule, Gradient(ip), Primal(op0),
                   Primal(op1), Primal(op2), Primal(norm));
               setDiffe(&call, dval, BuilderZ);
@@ -6381,7 +6361,7 @@ public:
             return dres;
           };
 
-          Value *dres = applyChainRule<ResultType::UNWRAPPED>(
+          Value *dres = applyChainRule(
               call.getType(), Builder2, rule, Gradient(dx), Gradient(dy));
           setDiffe(&call, dres, Builder2);
         }
@@ -6465,7 +6445,7 @@ public:
             }
           };
 
-          applyChainRule<ResultType::UNWRAPPED>(Builder2, rule, Gradient(dx),
+          applyChainRule(Builder2, rule, Gradient(dx),
                                                 Gradient(dy), Gradient(dif));
 
           setDiffe(&call, Constant::getNullValue(gutils->getShadowType(call)),
@@ -10319,9 +10299,6 @@ public:
 
             Type *shadowTy = orig->getType();
 
-            if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
-              shadowTy = gutils->getShadowType(orig);
-
             auto rule = [&Builder2, &shadowTy](Value *vdiff, Value *dsin,
                                                Value *dcos) {
               Value *res = UndefValue::get(shadowTy);
@@ -10566,7 +10543,7 @@ public:
               return Builder2.CreateCall(called, {vdiff, exp});
             };
 
-            Value *darg = applyChainRule<ResultType::UNWRAPPED>(
+            Value *darg = applyChainRule(
                 call.getType(), Builder2, rule, Gradient(vdiff), Primal(exp));
             setDiffe(orig, darg, Builder2);
             return;
@@ -10583,7 +10560,7 @@ public:
               return Builder2.CreateCall(called, {vdiff, exponent});
             };
             Value *vdiff = diffe(orig, Builder2);
-            Value *darg = applyChainRule<ResultType::UNWRAPPED>(
+            Value *darg = applyChainRule(
                 orig->getArgOperand(0)->getType(), Builder2, rule,
                 Gradient(vdiff), Primal(exponent));
             setDiffe(orig, Constant::getNullValue(gutils->getShadowType(orig)),
@@ -10719,7 +10696,7 @@ public:
                 auto rule = [&]() {
                   return shadowHandlers[funcName.str()](bb, orig, args, gutils);
                 };
-                anti = applyChainRule<ResultType::UNWRAPPED>(call.getType(), bb,
+                anti = applyChainRule(call.getType(), bb,
                                                              rule);
                 if (anti->getType() != placeholder->getType()) {
                   llvm::errs() << "orig: " << *orig << "\n";
@@ -10812,7 +10789,7 @@ public:
                 return anti;
               };
 
-              anti = applyChainRule<ResultType::UNWRAPPED>(orig->getType(), bb,
+              anti = applyChainRule(orig->getType(), bb,
                                                            rule);
 
               gutils->invertedPointers.erase(found);
@@ -11287,7 +11264,7 @@ public:
         return BuilderZ.CreateCall(called, {v});
       };
 
-      Value *val = applyChainRule<ResultType::UNWRAPPED>(
+      Value *val = applyChainRule(
           call.getType(), BuilderZ, rule, Gradient(ptrshadow));
 
       gutils->replaceAWithB(placeholder, val);
@@ -11449,10 +11426,6 @@ public:
           args.push_back(newfree);
 
           auto rule = [&](Value *tofree) {
-            if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
-              tofree = Builder2.CreatePointerCast(
-                  tofree, PointerType::getInt8PtrTy(tofree->getContext()));
-
             args.push_back(tofree);
           };
 

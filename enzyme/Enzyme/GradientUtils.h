@@ -1528,21 +1528,11 @@ public:
                                              width, under_construction, M),
           pty->getAddressSpace());
     } else if (auto vty = dyn_cast<VectorType>(ty)) {
-#if LLVM_VERSION_MAJOR >= 12
-      return VectorType::get(vty->getElementType(),
-                             vty->getElementCount() * width);
-#else
-      return VectorType::get(vty->getElementType(),
-                             vty->getNumElements() * width);
-#endif
+      return ArrayType::get(vty, width);
 #endif
     } else {
       if (TT.Inner0().isPossibleFloat()) {
-#if LLVM_VERSION_MAJOR >= 12
-        return FixedVectorType::get(ty, width);
-#else
-        return VectorType::get(ty, width);
-#endif
+        return ArrayType::get(ty, width);
       }
       return ty;
     }
@@ -1743,7 +1733,7 @@ public:
 
   /// Unwraps a vector derivative from its internal representation and applies a
   /// function f to each element. Return values of f are collected and wrapped.
-  template <ResultType resTy = ResultType::WRAPPED, typename Func,
+  template <ResultType resTy = ResultType::UNWRAPPED, typename Func,
             typename... Args>
   Value *applyChainRule(Type *diffType, IRBuilder<> &Builder, Func rule,
                         Args... args) {
@@ -1759,42 +1749,7 @@ public:
       return res;
     } else if (width > 1 && resTy == ResultType::UNWRAPPED &&
                memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes) {
-      if (diffType->isVectorTy()) {
-        Value *res = nullptr;
-        for (unsigned int i = 0; i < width; ++i) {
-          Value *diff =
-              std::apply(rule, std::move(eval_tuple(Builder, i, args...)));
-          if (res) {
-            VectorType *rvty = cast<VectorType>(res->getType());
-            VectorType *dvty = cast<VectorType>(diff->getType());
-#if LLVM_VERSION_MAJOR >= 12
-            unsigned rvty_count = rvty->getElementCount().getKnownMinValue();
-            unsigned dvty_count = dvty->getElementCount().getKnownMinValue();
-#else
-            unsigned rvty_count = rvty->getNumElements();
-            unsigned dvty_count = dvty->getNumElements();
-#endif
-            if (dvty_count < rvty_count) {
-              auto PadMask = CreateVectorConcatenationMask(rvty_count, 0);
-              diff = Builder.CreateShuffleVector(
-                  diff, UndefValue::get(diff->getType()), PadMask,
-                  diff->getName() + ".vecpad");
-            }
-            auto ConcatMask =
-                CreateVectorConcatenationMask(rvty_count, dvty_count);
-            res = Builder.CreateShuffleVector(res, diff, ConcatMask,
-                                              diff->getName() + ".vecconcat");
-          } else {
-            res = diff;
-          }
-        }
-        return res;
-      } else {
-#if LLVM_VERSION_MAJOR >= 12
-        Type *wrappedType = FixedVectorType::get(diffType, width);
-#else
-        Type *wrappedType = VectorType::get(diffType, width);
-#endif
+        Type *wrappedType = ArrayType::get(diffType, width);
         Value *res = UndefValue::get(wrappedType);
         for (unsigned int i = 0; i < width; ++i) {
           auto diff =
@@ -1803,13 +1758,12 @@ public:
         }
         return res;
       }
-    }
     return std::apply(rule, std::move(eval_tuple(Builder, nullptr, args...)));
   }
 
   /// Unwraps a vector derivative from its internal representation and applies a
   /// function f to each element. Return values of f are collected and wrapped.
-  template <ResultType resTy = ResultType::WRAPPED, typename Func,
+  template <ResultType resTy = ResultType::UNWRAPPED, typename Func,
             typename... Args>
   void applyChainRule(IRBuilder<> &Builder, Func rule, Args... args) {
 
