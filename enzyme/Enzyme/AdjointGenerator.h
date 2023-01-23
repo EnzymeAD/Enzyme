@@ -4651,36 +4651,37 @@ public:
         Value *op1 = gutils->getNewFromOriginal(orig_ops[1]);
 
         Type *opType0 = gutils->getShadowType(orig_ops[0]);
-        Type *opType1 = gutils->getShadowType(orig_ops[1]);
-        Type *opType2 = gutils->getShadowType(orig_ops[2]);
-
-        Value *dif0 = gutils->isConstantValue(orig_ops[0])
-                          ? Constant::getNullValue(opType0)
-                          : diffe(orig_ops[0], Builder2);
-        Value *dif1 = gutils->isConstantValue(orig_ops[1])
-                          ? Constant::getNullValue(opType1)
-                          : diffe(orig_ops[1], Builder2);
-        Value *dif2 = gutils->isConstantValue(orig_ops[2])
-                          ? Constant::getNullValue(opType2)
-                          : diffe(orig_ops[2], Builder2);
-
-        auto rule = [&](Value *dif0, Value *dif1, Value *dif2, Value *op0,
-                        Value *op1) {
-          Value *dif =
-              Builder2.CreateFAdd(gutils->isConstantValue(orig_ops[1])
-                                      ? Constant::getNullValue(dif1->getType())
-                                      : Builder2.CreateFMul(op0, dif1),
-                                  gutils->isConstantValue(orig_ops[0])
-                                      ? Constant::getNullValue(dif0->getType())
-                                      : Builder2.CreateFMul(op1, dif0));
-          return Builder2.CreateFAdd(dif, dif2);
-        };
-
-        Value *dif = applyChainRule(I.getType(), Builder2, rule, Gradient(dif0),
-                                    Gradient(dif1), Gradient(dif2), Primal(op0),
-                                    Primal(op1));
-        setDiffe(&I, dif, Builder2);
-
+        
+        bool op0Constant = gutils->isConstantValue(orig_ops[0]);
+        bool op1Constant = gutils->isConstantValue(orig_ops[1]);
+        bool op2Constant = gutils->isConstantValue(orig_ops[2]);
+        
+        Value *diff = Constant::getNullValue(opType0);
+        if (!op0Constant) {
+          auto rule = [&](Value *dif0, Value *op1) {
+            return Builder2.CreateFMul(op1, dif0);
+          };
+          Value *dif0 = diffe(orig_ops[0], Builder2);
+          diff = applyChainRule(I.getType(), Builder2, rule, Gradient(dif0), Primal(op1));
+        }
+        
+        if (!op1Constant) {
+          auto rule = [&](Value *diff, Value *op0, Value *dif1) {
+            return Builder2.CreateFAdd(diff, Builder2.CreateFMul(op0, dif1));
+          };
+          Value *dif1 = diffe(orig_ops[1], Builder2);
+          diff = applyChainRule(I.getType(), Builder2, rule, Gradient(diff), Primal(op0), Gradient(dif1));
+        }
+        
+        if (!op2Constant) {
+          auto rule = [&](Value *diff, Value *dif2) {
+            return Builder2.CreateFAdd(diff, dif2);
+          };
+          Value *dif2 = diffe(orig_ops[2], Builder2);
+          diff = applyChainRule(I.getType(), Builder2, rule, Gradient(diff), Gradient(dif2));
+        }
+      
+        setDiffe(&I, diff, Builder2);
         return;
       }
 
