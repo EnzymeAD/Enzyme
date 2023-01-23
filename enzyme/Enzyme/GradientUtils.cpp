@@ -4717,7 +4717,12 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     }
 
     Value *newval = getNewFromOriginal(oval);
-
+    Type *shadowType = getShadowType(oval);
+    
+    if (memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes) {
+      return BuilderM.CreatePointerCast(newval, shadowType);
+    }
+    
     auto rule = [&](Value *newval) { return newval; };
 
     return applyChainRule(oval->getType(), BuilderM, rule, Primal(newval));
@@ -5577,8 +5582,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           IRBuilder<> pre(
               cast<BasicBlock>(getNewFromOriginal(phi->getIncomingBlock(i)))
                   ->getTerminator());
-          Value *val =
-              invertPointerM(phi->getIncomingValue(i), pre, nullShadow);
+          Value *val = invertPointerM(phi->getIncomingValue(i), pre, nullShadow);
           which->addIncoming(val, cast<BasicBlock>(getNewFromOriginal(
                                       phi->getIncomingBlock(i))));
         }
