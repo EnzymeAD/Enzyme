@@ -5170,14 +5170,30 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     Value *op2 = arg->getOperand(2);
     auto ip0 = invertPointerM(op0, bb, nullShadow);
     auto ip1 = invertPointerM(op1, bb, nullShadow);
+    auto ip2 = getNewFromOriginal(op2);
 
-    auto rule = [&](Value *ip0, Value *ip1) {
-      return bb.CreateInsertElement(ip0, ip1, getNewFromOriginal(op2),
-                                    arg->getName() + "'ipie");
-    };
+    assert(!(isConstantValue(op1) && isConstantValue(op0)));
+    
+    Value *shadow;
+    if (width > 1 && memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes) {
+      auto rule = [&](Value *ip0, Value *ip1) {
+        auto c = cast<ConstantInt>(ip2);
+        auto vty = cast<FixedVectorType>(ip0->getType());
 
-    Value *shadow =
-        applyChainRule(arg->getType(), bb, rule, Gradient(ip0), Gradient(ip1));
+        auto PaddingMask = CreateVectorPaddingMask(vty->getNumElements(), 0);
+        auto padded = bb.CreateShuffleVector(ip1, UndefValue::get(ip1->getType()), PaddingMask, ip1->getName() + ".pad");
+        auto InsertMask = CreateInsertVectorMask(vty->getNumElements(), width, c->getZExtValue());
+      
+        return bb.CreateShuffleVector(ip0, padded, InsertMask, oval->getName() + ".insertvector");
+      };
+      shadow = applyChainRule(arg->getType(), bb, rule, Gradient(ip0), Gradient(ip1));
+    } else {
+      auto rule = [&](Value *ip0, Value *ip1) {
+        return bb.CreateInsertElement(ip0, ip1, ip2,
+                                      arg->getName() + "'ipie");
+      };
+      shadow = applyChainRule(arg->getType(), bb, rule, Gradient(ip0), Gradient(ip1));
+    }
 
     invertedPointers.insert(
         std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));

@@ -243,7 +243,7 @@ public:
         if (vector_width / width > 1) {
           return Builder.CreateShuffleVector(
               value, UndefValue::get(value->getType()),
-              GradientUtils::CreateExtractSubvectorMask(vector_width, width, i),
+              GradientUtils::CreateExtractVectorMask(vector_width, width, i),
               value->getName() + ".subvector." + Twine(i));
         } else {
           return Builder.CreateExtractElement(value, i);
@@ -327,10 +327,10 @@ public:
         if (vector_width / width > 1) {
 #if LLVM_VERSION_MAJOR >= 11
           auto Mask =
-              GradientUtils::CreateExtractSubvectorMask(vector_width, width, i);
+              GradientUtils::CreateExtractVectorMask(vector_width, width, i);
 #else
           auto MaskArray =
-              GradientUtils::CreateExtractSubvectorMask(vector_width, width, i);
+              GradientUtils::CreateExtractVectorMask(vector_width, width, i);
           SmallVector<Constant *, 8> ConstantArray;
           for (auto elem : MaskArray)
             ConstantArray.push_back(Builder.getInt32(elem));

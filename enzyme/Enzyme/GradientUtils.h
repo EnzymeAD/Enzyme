@@ -1695,7 +1695,7 @@ public:
     return Mask;
   }
 
-  static inline auto CreateVectorConcatenationMask(unsigned length1,
+  static inline auto CreateVectorPaddingMask(unsigned length1,
                                                    unsigned length2) {
 #if LLVM_VERSION_MAJOR >= 12
     SmallVector<int, 4> Mask;
@@ -1706,8 +1706,23 @@ public:
       Mask.push_back(i);
     return Mask;
   }
+  
+  static inline auto CreateInsertVectorMask(unsigned vector_length,
+                                               unsigned width,
+                                               unsigned index) {
+#if LLVM_VERSION_MAJOR >= 11
+    SmallVector<int, 4> Mask;
+#else
+    SmallVector<unsigned, 4> Mask;
+#endif
+    for (int i = 0; i < vector_length; ++i) {
+      bool insert = i >= index * width && i < index * width + width;      
+      Mask.push_back(insert ? vector_length + i : i);
+    }
+    return Mask;
+  }
 
-  static inline auto CreateExtractSubvectorMask(unsigned vector_length,
+  static inline auto CreateExtractVectorMask(unsigned vector_length,
                                                 unsigned width,
                                                 unsigned index) {
 #if LLVM_VERSION_MAJOR >= 11
@@ -1775,13 +1790,13 @@ public:
             unsigned dvty_count = dvty->getNumElements();
 #endif
             if (dvty_count < rvty_count) {
-              auto PadMask = CreateVectorConcatenationMask(rvty_count, 0);
+              auto PadMask = CreateVectorPaddingMask(rvty_count, 0);
               diff = Builder.CreateShuffleVector(
                   diff, UndefValue::get(diff->getType()), PadMask,
                   diff->getName() + ".vecpad");
             }
             auto ConcatMask =
-                CreateVectorConcatenationMask(rvty_count, dvty_count);
+                CreateVectorPaddingMask(rvty_count, dvty_count);
             res = Builder.CreateShuffleVector(res, diff, ConcatMask,
                                               diff->getName() + ".vecconcat");
           } else {
