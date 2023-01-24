@@ -767,6 +767,15 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
   DebugLoc DebugLoc = call->getDebugLoc();
 
   std::string name = "__enzyme_checked_free_" + std::to_string(width);
+    
+  switch (memoryLayout) {
+    case VectorModeMemoryLayout::VectorizeAtRootNode:
+      name += ".leaf";
+      break;
+    case VectorModeMemoryLayout::VectorizeAtLeafNodes:
+      name += ".root";
+      break;
+  }
 
   SmallVector<Type *, 3> types;
   types.push_back(Ty);

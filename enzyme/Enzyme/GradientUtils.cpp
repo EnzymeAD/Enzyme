@@ -4056,9 +4056,21 @@ GradientUtils *GradientUtils::CreateFromClone(
   SmallPtrSet<Value *, 4> nonconstant_values;
 
   std::string prefix = "fakeaugmented";
-  if (width > 1)
+  if (width > 1) {
     prefix += std::to_string(width);
-  prefix += "_";
+    prefix += "_";
+    switch (memoryLayout) {
+      case VectorModeMemoryLayout::VectorizeAtRootNode:
+        prefix += ".leaf";
+        break;
+      case VectorModeMemoryLayout::VectorizeAtLeafNodes:
+        prefix += ".root";
+        break;
+    }
+    prefix += "_";
+  }
+  
+
   prefix += todiff->getName().str();
 
   auto newFunc = Logic.PPC.CloneFunctionWithReturns(
@@ -4218,9 +4230,28 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
   case DerivativeMode::ReverseModePrimal:
     llvm_unreachable("invalid DerivativeMode: ReverseModePrimal\n");
   }
+  
+  switch (memoryLayout) {
+    case VectorModeMemoryLayout::VectorizeAtRootNode:
+      prefix += ".leaf";
+      break;
+    case VectorModeMemoryLayout::VectorizeAtLeafNodes:
+      prefix += ".root";
+      break;
+  }
 
-  if (width > 1)
+  if (width > 1) {
     prefix += std::to_string(width);
+    switch (memoryLayout) {
+      case VectorModeMemoryLayout::VectorizeAtRootNode:
+        prefix += ".leaf";
+        break;
+      case VectorModeMemoryLayout::VectorizeAtLeafNodes:
+        prefix += ".root";
+        break;
+    }
+  }
+  
 
   auto newFunc = Logic.PPC.CloneFunctionWithReturns(
       mode, memoryLayout, width, oldFunc, invertedPointers, constant_args,
@@ -4502,6 +4533,17 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
 
     if (width > 1) {
       prefix += std::to_string(width);
+      prefix += "_";
+      
+      switch (memoryLayout) {
+        case VectorModeMemoryLayout::VectorizeAtRootNode:
+          prefix += ".leaf";
+          break;
+        case VectorModeMemoryLayout::VectorizeAtLeafNodes:
+          prefix += ".root";
+          break;
+      }
+      prefix += "_";
     }
 
     std::string globalname = (prefix + "_" + fn->getName() + "'").str();
@@ -4533,6 +4575,17 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
 
     if (width > 1) {
       prefix += std::to_string(width);
+      prefix += "_";
+      
+      switch (memoryLayout) {
+        case VectorModeMemoryLayout::VectorizeAtRootNode:
+          prefix += ".leaf";
+          break;
+        case VectorModeMemoryLayout::VectorizeAtLeafNodes:
+          prefix += ".root";
+          break;
+      }
+      prefix += "_";
     }
 
     auto cdata = ConstantStruct::get(

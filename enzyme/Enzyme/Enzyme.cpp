@@ -91,10 +91,6 @@ llvm::cl::opt<bool> EnzymeAttributor("enzyme-attributor", cl::init(false),
 llvm::cl::opt<bool> EnzymeOMPOpt("enzyme-omp-opt", cl::init(false), cl::Hidden,
                                  cl::desc("Whether to enable openmp opt"));
 
-llvm::cl::opt<bool> EnzymeVectorizeAtLeafNodes(
-    "enzyme-vectorize-at-leaf-nodes", cl::init(false), cl::Hidden,
-    cl::desc("Run enzyme with an optimized memory layout for vector mode"));
-
 #if LLVM_VERSION_MAJOR >= 14
 #define addAttribute addAttributeAtIndex
 #endif
@@ -988,6 +984,7 @@ public:
     IRBuilder<> Builder(CI);
     unsigned truei = 0;
     unsigned width = 1;
+    VectorModeMemoryLayout MemoryLayout = VectorModeMemoryLayout::VectorizeAtRootNode;
     std::map<unsigned, Value *> batchOffset;
     bool returnUsed =
         !fn->getReturnType()->isVoidTy() && !fn->getReturnType()->isEmptyTy();
@@ -1027,7 +1024,7 @@ public:
       case DerivativeMode::ForwardModeSplit:
       case DerivativeMode::ForwardMode: {
         Value *sretPt = CI->getArgOperand(0);
-        if (width > 1 && !EnzymeVectorizeAtLeafNodes) {
+        if (width > 1 && MemoryLayout != VectorModeMemoryLayout::VectorizeAtLeafNodes) {
           PointerType *pty = cast<PointerType>(sretPt->getType());
           if (auto sty = dyn_cast<StructType>(pty->getPointerElementType())) {
             Value *acc = UndefValue::get(
@@ -1203,6 +1200,9 @@ public:
         } else if (*metaString == "enzyme_width") {
           ++i;
           continue;
+        } else if (*metaString == "enzyme_leaf") {
+          MemoryLayout = VectorModeMemoryLayout::VectorizeAtLeafNodes;
+          continue;
         } else {
           EmitFailure("IllegalDiffeType", CI->getDebugLoc(), CI,
                       "illegal enzyme metadata classification ", *CI,
@@ -1351,7 +1351,7 @@ public:
 
         Value *res = nullptr;
         bool batch = batchOffset.count(i - 1) != 0;
-        unsigned actual_width = EnzymeVectorizeAtLeafNodes ? 1 : width;
+        unsigned actual_width = MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes ? 1 : width;
 
         for (unsigned v = 0; v < actual_width; ++v) {
 #if LLVM_VERSION_MAJOR >= 14
@@ -1404,7 +1404,7 @@ public:
           auto expectedType = GradientUtils::getShadowType(
               *CI->getModule(), PTy, width,
               VectorModeMemoryLayout::VectorizeAtLeafNodes);
-          if (EnzymeVectorizeAtLeafNodes &&
+          if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes &&
               expectedType != element->getType()) {
             element = castToDiffeFunctionArgType(Builder, CI, FT, expectedType,
                                                  i, mode, element, truei);
@@ -1412,7 +1412,7 @@ public:
             if (!element) {
               return false;
             }
-          } else if (!EnzymeVectorizeAtLeafNodes && PTy != element->getType()) {
+          } else if (MemoryLayout != VectorModeMemoryLayout::VectorizeAtLeafNodes && PTy != element->getType()) {
             element = castToDiffeFunctionArgType(Builder, CI, FT, PTy, i, mode,
                                                  element, truei);
             if (!element) {
@@ -1420,7 +1420,7 @@ public:
             }
           }
 
-          if (width > 1 && !EnzymeVectorizeAtLeafNodes) {
+          if (width > 1 && MemoryLayout != VectorModeMemoryLayout::VectorizeAtLeafNodes) {
             res =
                 res ? Builder.CreateInsertValue(res, element, {v})
                     : Builder.CreateInsertValue(UndefValue::get(ArrayType::get(
@@ -1489,15 +1489,11 @@ public:
     Function *newFunc = nullptr;
     Type *tapeType = nullptr;
     const AugmentedReturn *aug;
-    VectorModeMemoryLayout memoryLayout =
-        EnzymeVectorizeAtLeafNodes
-            ? VectorModeMemoryLayout::VectorizeAtLeafNodes
-            : VectorModeMemoryLayout::VectorizeAtRootNode;
     switch (mode) {
     case DerivativeMode::ForwardMode:
       newFunc = Logic.CreateForwardDiff(
           fn, retType, constants, TA,
-          /*should return*/ false, mode, memoryLayout, freeMemory, width,
+          /*should return*/ false, mode, MemoryLayout, freeMemory, width,
           /*addedType*/ nullptr, type_args, volatile_args,
           /*augmented*/ nullptr);
       break;
@@ -1541,7 +1537,7 @@ public:
       }
       newFunc = Logic.CreateForwardDiff(
           fn, retType, constants, TA,
-          /*should return*/ false, mode, memoryLayout, freeMemory, width,
+          /*should return*/ false, mode, MemoryLayout, freeMemory, width,
           /*addedType*/ tapeType, type_args, volatile_args, aug);
       break;
     }
@@ -1757,7 +1753,7 @@ public:
     // convention.
     if (width > 1 && !diffret->getType()->isEmptyTy() &&
         !diffret->getType()->isVoidTy() &&
-        memoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode &&
+        MemoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode &&
         (mode == DerivativeMode::ForwardMode ||
          mode == DerivativeMode::ForwardModeSplit)) {
 
