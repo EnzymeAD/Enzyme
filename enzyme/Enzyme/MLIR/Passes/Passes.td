@@ -18,7 +18,12 @@ def DifferentiatePass : Pass<"enzyme"> {
 
 def EnzymeOpsToMemRefPass : Pass<"convert-enzyme-to-memref"> {
   let summary = "Lower custom Enzyme ops to the MemRef dialect";
-  let dependentDialects = ["memref::MemRefDialect"];
+  let dependentDialects = [
+    "memref::MemRefDialect",
+    "arith::ArithDialect",
+    "scf::SCFDialect",
+    "cf::ControlFlowDialect",
+  ];
   let constructor = "mlir::enzyme::createEnzymeToMemRefPass()";
 }
 
