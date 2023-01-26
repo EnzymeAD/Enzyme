@@ -65,6 +65,7 @@ static inline bool isAllocationFunction(const llvm::StringRef name,
   switch (libfunc) {
   case LibFunc_malloc: // malloc(unsigned int);
   case LibFunc_valloc: // valloc(unsigned int);
+  case LibFunc_calloc: // calloc(size_t count, size_t size);
 
   case LibFunc_Znwj:               // new(unsigned int);
   case LibFunc_ZnwjRKSt9nothrow_t: // new(unsigned int, nothrow);

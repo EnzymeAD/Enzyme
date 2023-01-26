@@ -290,12 +290,15 @@ uint64_t EnzymeGradientUtilsGetWidth(GradientUtils *gutils) {
 }
 
 LLVMTypeRef EnzymeGradientUtilsGetShadowType(GradientUtils *gutils,
-                                             LLVMTypeRef T) {
-  return wrap(gutils->getShadowType(unwrap(T)));
+                                             LLVMValueRef Val) {
+  return wrap(gutils->getShadowType(unwrap(Val)));
 }
 
-LLVMTypeRef EnzymeGetShadowType(uint64_t width, LLVMTypeRef T) {
-  return wrap(GradientUtils::getShadowType(unwrap(T), width));
+LLVMTypeRef EnzymeGetShadowType(uint64_t width, LLVMTypeRef T,
+                                LLVMModuleRef M) {
+  return wrap(GradientUtils::getShadowType(
+      *unwrap(M), unwrap(T), width,
+      VectorModeMemoryLayout::VectorizeAtRootNode));
 }
 
 LLVMValueRef EnzymeGradientUtilsNewFromOriginal(GradientUtils *gutils,
@@ -449,7 +452,8 @@ LLVMValueRef EnzymeCreateForwardDiff(
   }
   return wrap(eunwrap(Logic).CreateForwardDiff(
       cast<Function>(unwrap(todiff)), (DIFFE_TYPE)retType, nconstant_args,
-      eunwrap(TA), returnValue, (DerivativeMode)mode, freeMemory, width,
+      eunwrap(TA), returnValue, (DerivativeMode)mode,
+      VectorModeMemoryLayout::VectorizeAtRootNode, freeMemory, width,
       unwrap(additionalArg), eunwrap(typeInfo, cast<Function>(unwrap(todiff))),
       uncacheable_args, eunwrap(augmented)));
 }

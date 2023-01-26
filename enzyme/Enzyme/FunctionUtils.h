@@ -69,8 +69,8 @@ public:
   llvm::AAResults &getAAResultsFromFunction(llvm::Function *NewF);
 
   llvm::Function *CloneFunctionWithReturns(
-      DerivativeMode mode, unsigned width, llvm::Function *&F,
-      llvm::ValueToValueMapTy &ptrInputs,
+      DerivativeMode mode, VectorModeMemoryLayout memoryLayout, unsigned width,
+      llvm::Function *&F, llvm::ValueToValueMapTy &ptrInputs,
       llvm::ArrayRef<DIFFE_TYPE> constant_args,
       llvm::SmallPtrSetImpl<llvm::Value *> &constants,
       llvm::SmallPtrSetImpl<llvm::Value *> &nonconstant,
@@ -365,7 +365,8 @@ void ReplaceFunctionImplementation(llvm::Module &M);
 bool couldFunctionArgumentCapture(llvm::CallInst *CI, llvm::Value *val);
 
 llvm::FunctionType *getFunctionTypeForClone(
-    llvm::FunctionType *FTy, DerivativeMode mode, unsigned width,
+    llvm::Module &M, llvm::FunctionType *FTy, DerivativeMode mode,
+    VectorModeMemoryLayout memoryLayout, unsigned width,
     llvm::Type *additionalArg, llvm::ArrayRef<DIFFE_TYPE> constant_args,
     bool diffeReturnArg, ReturnType returnValue, DIFFE_TYPE returnType);
 

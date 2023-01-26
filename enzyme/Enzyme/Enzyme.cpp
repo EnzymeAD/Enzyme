@@ -984,6 +984,7 @@ public:
     IRBuilder<> Builder(CI);
     unsigned truei = 0;
     unsigned width = 1;
+    VectorModeMemoryLayout MemoryLayout = VectorModeMemoryLayout::VectorizeAtRootNode;
     std::map<unsigned, Value *> batchOffset;
     bool returnUsed =
         !fn->getReturnType()->isVoidTy() && !fn->getReturnType()->isEmptyTy();
@@ -1023,7 +1024,7 @@ public:
       case DerivativeMode::ForwardModeSplit:
       case DerivativeMode::ForwardMode: {
         Value *sretPt = CI->getArgOperand(0);
-        if (width > 1) {
+        if (width > 1 && MemoryLayout != VectorModeMemoryLayout::VectorizeAtLeafNodes) {
           PointerType *pty = cast<PointerType>(sretPt->getType());
           if (auto sty = dyn_cast<StructType>(pty->getPointerElementType())) {
             Value *acc = UndefValue::get(
@@ -1047,6 +1048,11 @@ public:
                 width, "elements of the same type.");
             return false;
           }
+        } else if (width > 1) {
+          shadow = Builder.CreatePointerCast(
+              sretPt, GradientUtils::getShadowType(
+                          *CI->getModule(), primal->getType(), width,
+                          VectorModeMemoryLayout::VectorizeAtLeafNodes));
         } else {
           shadow = sretPt;
         }
@@ -1193,6 +1199,9 @@ public:
           continue;
         } else if (*metaString == "enzyme_width") {
           ++i;
+          continue;
+        } else if (*metaString == "enzyme_leaf") {
+          MemoryLayout = VectorModeMemoryLayout::VectorizeAtLeafNodes;
           continue;
         } else {
           EmitFailure("IllegalDiffeType", CI->getDebugLoc(), CI,
@@ -1342,8 +1351,9 @@ public:
 
         Value *res = nullptr;
         bool batch = batchOffset.count(i - 1) != 0;
+        unsigned actual_width = MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes ? 1 : width;
 
-        for (unsigned v = 0; v < width; ++v) {
+        for (unsigned v = 0; v < actual_width; ++v) {
 #if LLVM_VERSION_MAJOR >= 14
           if (i >= CI->arg_size())
 #else
@@ -1390,7 +1400,19 @@ public:
               return false;
             }
           }
-          if (PTy != element->getType()) {
+
+          auto expectedType = GradientUtils::getShadowType(
+              *CI->getModule(), PTy, width,
+              VectorModeMemoryLayout::VectorizeAtLeafNodes);
+          if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes &&
+              expectedType != element->getType()) {
+            element = castToDiffeFunctionArgType(Builder, CI, FT, expectedType,
+                                                 i, mode, element, truei);
+
+            if (!element) {
+              return false;
+            }
+          } else if (MemoryLayout != VectorModeMemoryLayout::VectorizeAtLeafNodes && PTy != element->getType()) {
             element = castToDiffeFunctionArgType(Builder, CI, FT, PTy, i, mode,
                                                  element, truei);
             if (!element) {
@@ -1398,7 +1420,7 @@ public:
             }
           }
 
-          if (width > 1) {
+          if (width > 1 && MemoryLayout != VectorModeMemoryLayout::VectorizeAtLeafNodes) {
             res =
                 res ? Builder.CreateInsertValue(res, element, {v})
                     : Builder.CreateInsertValue(UndefValue::get(ArrayType::get(
@@ -1471,7 +1493,7 @@ public:
     case DerivativeMode::ForwardMode:
       newFunc = Logic.CreateForwardDiff(
           fn, retType, constants, TA,
-          /*should return*/ false, mode, freeMemory, width,
+          /*should return*/ false, mode, MemoryLayout, freeMemory, width,
           /*addedType*/ nullptr, type_args, volatile_args,
           /*augmented*/ nullptr);
       break;
@@ -1515,7 +1537,7 @@ public:
       }
       newFunc = Logic.CreateForwardDiff(
           fn, retType, constants, TA,
-          /*should return*/ false, mode, freeMemory, width,
+          /*should return*/ false, mode, MemoryLayout, freeMemory, width,
           /*addedType*/ tapeType, type_args, volatile_args, aug);
       break;
     }
@@ -1731,6 +1753,7 @@ public:
     // convention.
     if (width > 1 && !diffret->getType()->isEmptyTy() &&
         !diffret->getType()->isVoidTy() &&
+        MemoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode &&
         (mode == DerivativeMode::ForwardMode ||
          mode == DerivativeMode::ForwardModeSplit)) {
 
@@ -2244,7 +2267,8 @@ public:
 
       auto val = GradientUtils::GetOrCreateShadowConstant(
           Logic, Logic.PPC.FAM.getResult<TargetLibraryAnalysis>(F), TA, fn,
-          pair.second, /*width*/ 1, AtomicAdd);
+          pair.second, VectorModeMemoryLayout::VectorizeAtRootNode, /*width*/ 1,
+          AtomicAdd);
       CI->replaceAllUsesWith(ConstantExpr::getPointerCast(val, CI->getType()));
       CI->eraseFromParent();
       Changed = true;

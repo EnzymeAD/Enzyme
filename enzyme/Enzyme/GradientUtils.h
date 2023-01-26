@@ -142,12 +142,20 @@ static bool isPotentialLastLoopValue(Value *val, const BasicBlock *loc,
   return false;
 }
 
+enum class ResultType {
+  // LeafNodeVector mode behaves like scalar mode.
+  WRAPPED = 0,
+  // LeafNodeVector mode behaves lile RootNode vector mode.
+  UNWRAPPED = 1
+};
+
 enum class AugmentedStruct;
 class GradientUtils : public CacheUtility {
 public:
   EnzymeLogic &Logic;
   bool AtomicAdd;
   DerivativeMode mode;
+  VectorModeMemoryLayout memoryLayout;
   llvm::Function *oldFunc;
   llvm::ValueMap<const Value *, InvertedPointerVH> invertedPointers;
   DominatorTree &OrigDT;
@@ -809,9 +817,9 @@ public:
                 const SmallPtrSetImpl<Value *> &activevals_,
                 DIFFE_TYPE ReturnActivity, ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
                 ValueToValueMapTy &originalToNewFn_, DerivativeMode mode,
-                unsigned width, bool omp)
+                VectorModeMemoryLayout memoryLayout, unsigned width, bool omp)
       : CacheUtility(TLI_, newFunc_), Logic(Logic), mode(mode),
-        oldFunc(oldFunc_), invertedPointers(),
+        memoryLayout(memoryLayout), oldFunc(oldFunc_), invertedPointers(),
         OrigDT(Logic.PPC.FAM.getResult<llvm::DominatorTreeAnalysis>(*oldFunc_)),
         OrigPDT(Logic.PPC.FAM.getResult<llvm::PostDominatorTreeAnalysis>(
             *oldFunc_)),
@@ -892,9 +900,9 @@ public:
                                 bool *shadowReturnUsedP);
 
   static GradientUtils *
-  CreateFromClone(EnzymeLogic &Logic, unsigned width, Function *todiff,
-                  TargetLibraryInfo &TLI, TypeAnalysis &TA,
-                  FnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
+  CreateFromClone(EnzymeLogic &Logic, VectorModeMemoryLayout memoryLayout,
+                  unsigned width, Function *todiff, TargetLibraryInfo &TLI,
+                  TypeAnalysis &TA, FnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
                   ArrayRef<DIFFE_TYPE> constant_args, bool returnUsed,
                   bool shadowReturnUsed,
                   std::map<AugmentedStruct, int> &returnMapping, bool omp);
@@ -933,93 +941,13 @@ public:
   void setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
                    IRBuilder<> &BuilderM, MaybeAlign align, bool isVolatile,
                    AtomicOrdering ordering, SyncScope::ID syncScope,
-                   Value *mask, ArrayRef<Metadata *> noAlias)
+                   Value *mask, ArrayRef<Metadata *> noAlias);
 #else
   void setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
                    IRBuilder<> &BuilderM, unsigned align, bool isVolatile,
                    AtomicOrdering ordering, SyncScope::ID syncScope,
-                   Value *mask, ArrayRef<Metadata *> noAlias)
+                   Value *mask, ArrayRef<Metadata *> noAlias);
 #endif
-  {
-    if (auto inst = dyn_cast<Instruction>(ptr)) {
-      assert(inst->getParent()->getParent() == oldFunc);
-    }
-    if (auto arg = dyn_cast<Argument>(ptr)) {
-      assert(arg->getParent() == oldFunc);
-    }
-
-    Value *origptr = ptr;
-
-    ptr = invertPointerM(ptr, BuilderM);
-    if (!isOriginalBlock(*BuilderM.GetInsertBlock()) &&
-        mode != DerivativeMode::ForwardMode)
-      ptr = lookupM(ptr, BuilderM);
-
-    if (mask && !isOriginalBlock(*BuilderM.GetInsertBlock()) &&
-        mode != DerivativeMode::ForwardMode)
-      mask = lookupM(mask, BuilderM);
-
-    size_t idx = 0;
-
-    auto rule = [&](Value *ptr, Value *newval) {
-      if (!mask) {
-        auto ts = BuilderM.CreateStore(newval, ptr);
-        if (align)
-#if LLVM_VERSION_MAJOR >= 10
-          ts->setAlignment(*align);
-#else
-          ts->setAlignment(align);
-#endif
-        ts->setVolatile(isVolatile);
-        ts->setOrdering(ordering);
-        ts->setSyncScopeID(syncScope);
-        Metadata *scopeMD[1] = {getDerivativeAliasScope(origptr, idx)};
-        auto scope = MDNode::get(ts->getContext(), scopeMD);
-        ts->setMetadata(LLVMContext::MD_alias_scope, scope);
-
-        ts->setMetadata(LLVMContext::MD_tbaa,
-                        orig->getMetadata(LLVMContext::MD_tbaa));
-        ts->setMetadata(LLVMContext::MD_tbaa_struct,
-                        orig->getMetadata(LLVMContext::MD_tbaa_struct));
-        ts->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
-
-        SmallVector<Metadata *, 1> MDs;
-        for (ssize_t j = -1; j < getWidth(); j++) {
-          if (j != (ssize_t)idx)
-            MDs.push_back(getDerivativeAliasScope(origptr, j));
-        }
-        for (auto M : noAlias)
-          MDs.push_back(M);
-        if (MDs.size()) {
-          auto noscope = MDNode::get(ptr->getContext(), MDs);
-          ts->setMetadata(LLVMContext::MD_noalias, noscope);
-        }
-      } else {
-        Type *tys[] = {newval->getType(), ptr->getType()};
-        auto F = Intrinsic::getDeclaration(oldFunc->getParent(),
-                                           Intrinsic::masked_store, tys);
-        assert(align);
-#if LLVM_VERSION_MAJOR >= 10
-        Value *alignv = ConstantInt::get(Type::getInt32Ty(ptr->getContext()),
-                                         align->value());
-#else
-        Value *alignv =
-            ConstantInt::get(Type::getInt32Ty(ptr->getContext()), align);
-#endif
-        Value *args[] = {newval, ptr, alignv, mask};
-        auto ts = BuilderM.CreateCall(F, args);
-        ts->setCallingConv(F->getCallingConv());
-        ts->setMetadata(LLVMContext::MD_tbaa,
-                        orig->getMetadata(LLVMContext::MD_tbaa));
-        ts->setMetadata(LLVMContext::MD_tbaa_struct,
-                        orig->getMetadata(LLVMContext::MD_tbaa_struct));
-        ts->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
-      }
-      idx++;
-    };
-
-    applyChainRule(BuilderM, rule, ptr, newval);
-  }
 
 private:
   BasicBlock *originalForReverseBlock(BasicBlock &BB2) const {
@@ -1188,7 +1116,7 @@ public:
           if (!isConstantValue(inst)) {
             IRBuilder<> BuilderZ(inst);
             getForwardBuilder(BuilderZ);
-            Type *antiTy = getShadowType(inst->getType());
+            Type *antiTy = getShadowType(inst);
             PHINode *anti =
                 BuilderZ.CreatePHI(antiTy, 1, inst->getName() + "'dual_phi");
             invertedPointers.insert(std::make_pair(
@@ -1207,7 +1135,7 @@ public:
         if (isa<LoadInst>(inst)) {
           IRBuilder<> BuilderZ(inst);
           getForwardBuilder(BuilderZ);
-          Type *antiTy = getShadowType(inst->getType());
+          Type *antiTy = getShadowType(inst);
           PHINode *anti =
               BuilderZ.CreatePHI(antiTy, 1, inst->getName() + "'il_phi");
           invertedPointers.insert(std::make_pair(
@@ -1232,7 +1160,7 @@ public:
 
         IRBuilder<> BuilderZ(inst);
         getForwardBuilder(BuilderZ);
-        Type *antiTy = getShadowType(inst->getType());
+        Type *antiTy = getShadowType(inst);
 
         PHINode *anti =
             BuilderZ.CreatePHI(antiTy, 1, op->getName() + "'ip_phi");
@@ -1434,17 +1362,17 @@ public:
   Value *invertPointerM(Value *val, IRBuilder<> &BuilderM,
                         bool nullShadow = false);
 
-  static Constant *GetOrCreateShadowConstant(EnzymeLogic &Logic,
-                                             TargetLibraryInfo &TLI,
-                                             TypeAnalysis &TA, Constant *F,
-                                             DerivativeMode mode,
-                                             unsigned width, bool AtomicAdd);
+  static Constant *
+  GetOrCreateShadowConstant(EnzymeLogic &Logic, TargetLibraryInfo &TLI,
+                            TypeAnalysis &TA, Constant *F, DerivativeMode mode,
+                            VectorModeMemoryLayout memoryLayout, unsigned width,
+                            bool AtomicAdd);
 
-  static Constant *GetOrCreateShadowFunction(EnzymeLogic &Logic,
-                                             TargetLibraryInfo &TLI,
-                                             TypeAnalysis &TA, Function *F,
-                                             DerivativeMode mode,
-                                             unsigned width, bool AtomicAdd);
+  static Constant *
+  GetOrCreateShadowFunction(EnzymeLogic &Logic, TargetLibraryInfo &TLI,
+                            TypeAnalysis &TA, Function *F, DerivativeMode mode,
+                            VectorModeMemoryLayout memoryLayout, unsigned width,
+                            bool AtomicAdd);
 
   void branchToCorrespondingTarget(
       BasicBlock *ctx, IRBuilder<> &BuilderM,
@@ -1489,106 +1417,425 @@ public:
     Builder2.setFastMathFlags(getFast());
   }
 
-  static Type *getShadowType(Type *ty, unsigned width) {
-    if (width > 1) {
-      if (ty->isVoidTy())
-        return ty;
-      return ArrayType::get(ty, width);
+  static bool isVectorizedStructFor(StructType *sty, StructType *vsty,
+                                    SmallPtrSetImpl<StructType *> &visited,
+                                    const TypeTree TT, unsigned width,
+                                    Module &M) {
+    visited.insert(sty);
+
+    if (sty->getStructNumElements() != vsty->getStructNumElements())
+      return false;
+
+    auto &DL = M.getDataLayout();
+    auto Align = DL.getStructLayout(sty);
+
+    for (unsigned i = 0;
+         i < sty->getNumElements() && i < vsty->getNumElements(); ++i) {
+      Type *Ty = sty->getElementType(i);
+      Type *VTy = vsty->getElementType(i);
+
+      Type *peeledType = Ty;
+      Type *peeledVectorType = VTy;
+
+      uint64_t offset = Align->getElementOffset(i);
+
+      auto peeledTT = TT.DataN(offset);
+
+      while (auto foo = dyn_cast<PointerType>(peeledType)) {
+        if (auto bar = dyn_cast<PointerType>(peeledVectorType)) {
+          peeledType = foo->getPointerElementType();
+          peeledVectorType = bar->getPointerElementType();
+          peeledTT = peeledTT.Dereference();
+        } else {
+          return false;
+        }
+      }
+
+      auto DT = TypeTree(Type::getDoubleTy(M.getContext()));
+
+      auto peeledStructType = dyn_cast<StructType>(peeledType);
+      auto peeledVectorStructType = dyn_cast<StructType>(peeledVectorType);
+
+      if (peeledStructType && peeledVectorType) {
+        if (!visited.count(peeledStructType) &&
+            !isVectorizedStructFor(peeledStructType, peeledVectorStructType,
+                                   visited, peeledTT, width, M))
+          return false;
+      } else if (getShadowTypeVectorizedAtLeafNodes(M, Ty, TT, width) != VTy) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  static Type *
+  createShadowTypeFor(Type *ty, const TypeTree TT, unsigned width,
+                      std::map<StructType *, StructType *> &under_construction,
+                      Module &M) {
+    if (auto sty = dyn_cast<StructType>(ty)) {
+      auto &DL = M.getDataLayout();
+      auto Align = DL.getStructLayout(sty);
+
+      auto found = under_construction.find(sty);
+
+      if (found != under_construction.end())
+        return found->second;
+
+      // create new vectorized type
+      StructType *new_sty = StructType::create(ty->getContext());
+      if (sty->hasName()) {
+        auto name = sty->getName() + ".Vec." + Twine(width);
+        new_sty->setName(name.str());
+      }
+      under_construction[sty] = new_sty;
+
+      SmallVector<Type *, 3> subtys;
+
+      for (unsigned i = 0; i < sty->getNumElements(); ++i) {
+        Type *sety = sty->getElementType(i);
+        int offset = Align->getElementOffset(i);
+        auto subTT = TT.DataN(offset);
+        Type *subty = getShadowTypeVectorizedAtLeafNodes(sety, subTT, width,
+                                                         under_construction, M);
+        subtys.push_back(subty);
+      }
+
+      if (sty->hasName()) {
+        auto name = sty->getName() + ".Vec." + Twine(width);
+        new_sty->setBody(subtys);
+        new_sty->setName(name.str());
+        return new_sty;
+      } else {
+        return StructType::get(sty->getContext(), subtys);
+      }
+    } else if (auto aty = dyn_cast<ArrayType>(ty)) {
+      return ArrayType::get(
+          getShadowTypeVectorizedAtLeafNodes(aty->getElementType(), TT, width,
+                                             under_construction, M),
+          aty->getNumElements());
+    } else if (auto pty = dyn_cast<PointerType>(ty)) {
+#if LLVM_VERSION_MAJOR >= 15
+      return pty;
+#else
+      if (pty->getElementType()->isFunctionTy()) {
+        return pty;
+      }
+
+      return PointerType::get(
+          getShadowTypeVectorizedAtLeafNodes(pty->getElementType(),
+                                             TT.Lookup(-1, M.getDataLayout()),
+                                             width, under_construction, M),
+          pty->getAddressSpace());
+    } else if (auto vty = dyn_cast<VectorType>(ty)) {
+#if LLVM_VERSION_MAJOR >= 12
+      return VectorType::get(vty->getElementType(),
+                             vty->getElementCount() * width);
+#else
+      return VectorType::get(vty->getElementType(),
+                             vty->getNumElements() * width);
+#endif
+#endif
     } else {
+      if (TT.Inner0().isPossibleFloat()) {
+#if LLVM_VERSION_MAJOR >= 12
+        return FixedVectorType::get(ty, width);
+#else
+        return VectorType::get(ty, width);
+#endif
+      }
       return ty;
     }
   }
 
-  Type *getShadowType(Type *ty) { return getShadowType(ty, width); }
+  static Type *getShadowTypeVectorizedAtLeafNodes(
+      Type *ty, const TypeTree TT, unsigned width,
+      std::map<StructType *, StructType *> &under_construction, Module &M) {
+    if (auto sty = dyn_cast<StructType>(ty)) {
+      // look for exisiting vectorized type
+      auto &&AllStructTypes = M.getIdentifiedStructTypes();
+      for (auto &&elem : AllStructTypes) {
+        SmallPtrSet<StructType *, 16> visited;
+        if (isVectorizedStructFor(sty, elem, visited, TT, width, M))
+          return elem;
+      }
+    }
+    return createShadowTypeFor(ty, TT, width, under_construction, M);
+  }
+
+  static Type *getShadowTypeVectorizedAtLeafNodes(Module &M, Type *ty,
+                                                  TypeTree TT, unsigned width) {
+    std::map<StructType *, StructType *> under_construction;
+    return getShadowTypeVectorizedAtLeafNodes(ty, TT, width, under_construction,
+                                              M);
+  }
+
+  static Type *getShadowTypeVectorizedAtRootNode(Type *ty, unsigned width) {
+    return ArrayType::get(ty, width);
+  }
+
+  inline Type *getShadowType(Module &M, Value *val, unsigned width,
+                             VectorModeMemoryLayout memoryLayout) {
+    Type *ty = val->getType();
+
+    if (width == 1)
+      return ty;
+
+    if (ty->isVoidTy())
+      return ty;
+
+    switch (memoryLayout) {
+    case VectorModeMemoryLayout::VectorizeAtRootNode:
+      return getShadowTypeVectorizedAtRootNode(ty, width);
+    case VectorModeMemoryLayout::VectorizeAtLeafNodes: {
+      auto TT = TR.query(val);
+      return getShadowTypeVectorizedAtLeafNodes(M, ty, TT, width);
+    }
+    }
+  }
+
+  inline Type *getShadowType(Module &M, Function *fn, unsigned width,
+                             VectorModeMemoryLayout memoryLayout) {
+    Type *ty = fn->getReturnType();
+
+    if (width == 1)
+      return ty;
+
+    if (ty->isVoidTy())
+      return ty;
+
+    switch (memoryLayout) {
+    case VectorModeMemoryLayout::VectorizeAtRootNode:
+      return getShadowTypeVectorizedAtRootNode(ty, width);
+    case VectorModeMemoryLayout::VectorizeAtLeafNodes: {
+      auto TT = TR.getReturnAnalysis();
+      assert(TR.getFunction() == fn);
+      return getShadowTypeVectorizedAtLeafNodes(M, ty, TT, width);
+    }
+    }
+  }
+
+  static inline Type *getShadowType(Module &M, Type *ty, unsigned width,
+                                    VectorModeMemoryLayout memoryLayout) {
+    if (width == 1)
+      return ty;
+
+    if (ty->isVoidTy())
+      return ty;
+
+    switch (memoryLayout) {
+    case VectorModeMemoryLayout::VectorizeAtRootNode:
+      return getShadowTypeVectorizedAtRootNode(ty, width);
+    case VectorModeMemoryLayout::VectorizeAtLeafNodes: {
+      TypeTree TT = TypeTree();
+      return getShadowTypeVectorizedAtLeafNodes(M, ty, TT, width);
+    }
+    }
+  }
+
+  Type *getShadowType(Instruction &Inst) {
+    auto &M = *oldFunc->getParent();
+    return getShadowType(M, &Inst, width, memoryLayout);
+  }
+
+  Type *getShadowType(Function *fn) {
+    auto &M = *oldFunc->getParent();
+    return getShadowType(M, fn, width, memoryLayout);
+  }
+
+  Type *getShadowType(Value *val) {
+    auto &M = *oldFunc->getParent();
+    return getShadowType(M, val, width, memoryLayout);
+  }
 
   static inline Value *extractMeta(IRBuilder<> &Builder, Value *Agg,
                                    unsigned off) {
-    while (auto Ins = dyn_cast<InsertValueInst>(Agg)) {
-      if (Ins->getNumIndices() != 1)
-        break;
-      if (Ins->getIndices()[0] == off)
-        return Ins->getInsertedValueOperand();
-      else
-        Agg = Ins->getAggregateOperand();
+    while (true) {
+      if (auto Ins = dyn_cast<InsertValueInst>(Agg)) {
+        if (Ins->getNumIndices() != 1)
+          break;
+        if (Ins->getIndices()[0] == off)
+          return Ins->getInsertedValueOperand();
+        else
+          Agg = Ins->getAggregateOperand();
+        continue;
+      }
+      if (auto Ins = dyn_cast<InsertElementInst>(Agg)) {
+        if (Ins->getNumOperands() != 3)
+          break;
+        size_t cur;
+        if (auto CI = dyn_cast<ConstantInt>(Ins->getOperand(2)))
+          cur = CI->getValue().getZExtValue();
+        else
+          break;
+        if (cur == off)
+          return Ins->getOperand(1);
+        else
+          Agg = Ins->getOperand(0);
+        continue;
+      }
+      break;
     }
+
+    if (Agg->getType()->isVectorTy())
+      return Builder.CreateExtractElement(Agg, off);
+
     return Builder.CreateExtractValue(Agg, {off});
   }
 
+  static inline auto CreateVectorSplatMask(unsigned vector_length,
+                                           unsigned width) {
+#if LLVM_VERSION_MAJOR >= 12
+    SmallVector<int, 4> Mask;
+#else
+    SmallVector<unsigned, 4> Mask;
+#endif
+    for (int i = 0; i < vector_length * width; ++i)
+      Mask.push_back(i % vector_length);
+    return Mask;
+  }
+
+  static inline auto CreateVectorPaddingMask(unsigned length1,
+                                                   unsigned length2) {
+#if LLVM_VERSION_MAJOR >= 12
+    SmallVector<int, 4> Mask;
+#else
+    SmallVector<unsigned, 4> Mask;
+#endif
+    for (int i = 0; i < length1 + length2; ++i)
+      Mask.push_back(i);
+    return Mask;
+  }
+  
+  static inline auto CreateInsertVectorMask(unsigned vector_length,
+                                               unsigned width,
+                                               unsigned index) {
+#if LLVM_VERSION_MAJOR >= 11
+    SmallVector<int, 4> Mask;
+#else
+    SmallVector<unsigned, 4> Mask;
+#endif
+    for (int i = 0; i < vector_length; ++i) {
+      bool insert = i >= index * width && i < index * width + width;      
+      Mask.push_back(insert ? vector_length + i : i);
+    }
+    return Mask;
+  }
+
+  static inline auto CreateExtractVectorMask(unsigned vector_length,
+                                                unsigned width,
+                                                unsigned index) {
+#if LLVM_VERSION_MAJOR >= 11
+    SmallVector<int, 4> Mask;
+#else
+    SmallVector<unsigned, 4> Mask;
+#endif
+    assert(vector_length / width > 1);
+    for (int i = 0; i < vector_length / width; ++i)
+      Mask.push_back(index * (vector_length / width) + i);
+    return Mask;
+  }
+
+  template <typename T, typename... Args>
+  inline auto eval_tuple(llvm::IRBuilder<> &Builder, T i, Args... args);
+
+  template <typename T> inline auto eval_tuple(llvm::IRBuilder<> &Builder, T) {
+    return std::tuple<>();
+  }
+
+  template <typename Arg0, typename... Args>
+  inline auto eval_tuple(llvm::IRBuilder<> &Builder, unsigned int i, Arg0 arg0,
+                         Args... args) {
+    auto &&v = arg0.getValue(Builder, this, i);
+    return std::tuple_cat(std::make_tuple(v), eval_tuple(Builder, i, args...));
+  }
+  template <typename Arg0, typename... Args>
+  inline auto eval_tuple(llvm::IRBuilder<> &Builder, std::nullptr_t i,
+                         Arg0 arg0, Args... args) {
+    auto &&v = arg0.getValue(Builder, this);
+    return std::tuple_cat(std::make_tuple(v), eval_tuple(Builder, i, args...));
+  }
+
   /// Unwraps a vector derivative from its internal representation and applies a
   /// function f to each element. Return values of f are collected and wrapped.
-  template <typename Func, typename... Args>
+  template <ResultType resTy = ResultType::WRAPPED, typename Func,
+            typename... Args>
   Value *applyChainRule(Type *diffType, IRBuilder<> &Builder, Func rule,
                         Args... args) {
-    if (width > 1) {
-      const int size = sizeof...(args);
-      Value *vals[size] = {args...};
-
-      for (size_t i = 0; i < size; ++i)
-        if (vals[i])
-          assert(cast<ArrayType>(vals[i]->getType())->getNumElements() ==
-                 width);
-
+    if (width > 1 &&
+        memoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode) {
       Type *wrappedType = ArrayType::get(diffType, width);
       Value *res = UndefValue::get(wrappedType);
-      for (unsigned int i = 0; i < getWidth(); ++i) {
-        auto tup = std::tuple<Args...>{
-            (args ? extractMeta(Builder, args, i) : nullptr)...};
-        auto diff = std::apply(rule, std::move(tup));
+      for (unsigned int i = 0; i < width; ++i) {
+        auto diff =
+            std::apply(rule, std::move(eval_tuple(Builder, i, args...)));
         res = Builder.CreateInsertValue(res, diff, {i});
       }
       return res;
-    } else {
-      return rule(args...);
+    } else if (width > 1 && resTy == ResultType::UNWRAPPED &&
+               memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes) {
+      if (diffType->isVectorTy()) {
+        Value *res = nullptr;
+        for (unsigned int i = 0; i < width; ++i) {
+          Value *diff =
+              std::apply(rule, std::move(eval_tuple(Builder, i, args...)));
+          if (res) {
+            VectorType *rvty = cast<VectorType>(res->getType());
+            VectorType *dvty = cast<VectorType>(diff->getType());
+#if LLVM_VERSION_MAJOR >= 12
+            unsigned rvty_count = rvty->getElementCount().getKnownMinValue();
+            unsigned dvty_count = dvty->getElementCount().getKnownMinValue();
+#else
+            unsigned rvty_count = rvty->getNumElements();
+            unsigned dvty_count = dvty->getNumElements();
+#endif
+            if (dvty_count < rvty_count) {
+              auto PadMask = CreateVectorPaddingMask(rvty_count, 0);
+              diff = Builder.CreateShuffleVector(
+                  diff, UndefValue::get(diff->getType()), PadMask,
+                  diff->getName() + ".vecpad");
+            }
+            auto ConcatMask =
+                CreateVectorPaddingMask(rvty_count, dvty_count);
+            res = Builder.CreateShuffleVector(res, diff, ConcatMask,
+                                              diff->getName() + ".vecconcat");
+          } else {
+            res = diff;
+          }
+        }
+        return res;
+      } else {
+#if LLVM_VERSION_MAJOR >= 12
+        Type *wrappedType = FixedVectorType::get(diffType, width);
+#else
+        Type *wrappedType = VectorType::get(diffType, width);
+#endif
+        Value *res = UndefValue::get(wrappedType);
+        for (unsigned int i = 0; i < width; ++i) {
+          auto diff =
+              std::apply(rule, std::move(eval_tuple(Builder, i, args...)));
+          res = Builder.CreateInsertElement(res, diff, i);
+        }
+        return res;
+      }
     }
+    return std::apply(rule, std::move(eval_tuple(Builder, nullptr, args...)));
   }
 
   /// Unwraps a vector derivative from its internal representation and applies a
   /// function f to each element. Return values of f are collected and wrapped.
-  template <typename Func, typename... Args>
+  template <ResultType resTy = ResultType::WRAPPED, typename Func,
+            typename... Args>
   void applyChainRule(IRBuilder<> &Builder, Func rule, Args... args) {
-    if (width > 1) {
-      const int size = sizeof...(args);
-      Value *vals[size] = {args...};
 
-      for (size_t i = 0; i < size; ++i)
-        if (vals[i])
-          assert(cast<ArrayType>(vals[i]->getType())->getNumElements() ==
-                 width);
-
-      for (unsigned int i = 0; i < getWidth(); ++i) {
-        auto tup = std::tuple<Args...>{
-            (args ? extractMeta(Builder, args, i) : nullptr)...};
-        std::apply(rule, std::move(tup));
+    if (width > 1 &&
+        (resTy == ResultType::UNWRAPPED ||
+         memoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode)) {
+      for (unsigned int i = 0; i < width; ++i) {
+        std::apply(rule, std::move(eval_tuple(Builder, i, args...)));
       }
     } else {
-      rule(args...);
-    }
-  }
-
-  /// Unwraps an collection of constant vector derivatives from their internal
-  /// representations and applies a function f to each element.
-  template <typename Func>
-  Value *applyChainRule(Type *diffType, ArrayRef<Constant *> diffs,
-                        IRBuilder<> &Builder, Func rule) {
-    if (width > 1) {
-      for (auto diff : diffs) {
-        assert(diff);
-        assert(cast<ArrayType>(diff->getType())->getNumElements() == width);
-      }
-      Type *wrappedType = ArrayType::get(diffType, width);
-      Value *res = UndefValue::get(wrappedType);
-      for (unsigned int i = 0; i < getWidth(); ++i) {
-        SmallVector<Constant *, 3> extracted_diffs;
-        for (auto diff : diffs) {
-          extracted_diffs.push_back(
-              cast<Constant>(extractMeta(Builder, diff, i)));
-        }
-        auto diff = rule(extracted_diffs);
-        res = Builder.CreateInsertValue(res, diff, {i});
-      }
-      return res;
-    } else {
-      return rule(diffs);
+      std::apply(rule, std::move(eval_tuple(Builder, nullptr, args...)));
     }
   }
 };
@@ -1602,10 +1849,12 @@ class DiffeGradientUtils final : public GradientUtils {
                      DIFFE_TYPE ActiveReturn,
                      ArrayRef<DIFFE_TYPE> constant_values,
                      ValueToValueMapTy &origToNew_, DerivativeMode mode,
-                     unsigned width, bool omp)
+                     VectorModeMemoryLayout memoryLayout, unsigned width,
+                     bool omp)
       : GradientUtils(Logic, newFunc_, oldFunc_, TLI, TA, TR, invertedPointers_,
                       constantvalues_, returnvals_, ActiveReturn,
-                      constant_values, origToNew_, mode, width, omp) {
+                      constant_values, origToNew_, mode, memoryLayout, width,
+                      omp) {
     assert(reverseBlocks.size() == 0);
     if (mode == DerivativeMode::ForwardMode ||
         mode == DerivativeMode::ForwardModeSplit) {
@@ -1627,7 +1876,8 @@ public:
   bool FreeMemory;
   ValueMap<const Value *, TrackingVH<AllocaInst>> differentials;
   static DiffeGradientUtils *
-  CreateFromClone(EnzymeLogic &Logic, DerivativeMode mode, unsigned width,
+  CreateFromClone(EnzymeLogic &Logic, DerivativeMode mode,
+                  VectorModeMemoryLayout memoryLayout, unsigned width,
                   Function *todiff, TargetLibraryInfo &TLI, TypeAnalysis &TA,
                   FnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
                   bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
@@ -1641,7 +1891,7 @@ public:
       assert(inst->getParent()->getParent() == oldFunc);
     assert(inversionAllocs);
 
-    Type *type = getShadowType(val->getType());
+    Type *type = getShadowType(val);
     if (differentials.find(val) == differentials.end()) {
       IRBuilder<> entryBuilder(inversionAllocs);
       entryBuilder.setFastMathFlags(getFast());
@@ -1689,7 +1939,7 @@ public:
     assert(!val->getType()->isPointerTy());
     assert(!val->getType()->isVoidTy());
 #if LLVM_VERSION_MAJOR > 7
-    Type *ty = getShadowType(val->getType());
+    Type *ty = getShadowType(val);
     return BuilderM.CreateLoad(ty, getDifferential(val));
 #else
     return BuilderM.CreateLoad(getDifferential(val));
@@ -1796,7 +2046,7 @@ public:
       for (auto i : idxs)
         sv.push_back(i);
 #if LLVM_VERSION_MAJOR > 7
-      ptr = BuilderM.CreateGEP(getShadowType(val->getType()), ptr, sv);
+      ptr = BuilderM.CreateGEP(getShadowType(val), ptr, sv);
 #else
       ptr = BuilderM.CreateGEP(ptr, sv);
 #endif
@@ -1955,7 +2205,7 @@ public:
     assert(!isConstantValue(val));
     if (mode == DerivativeMode::ForwardMode ||
         mode == DerivativeMode::ForwardModeSplit) {
-      assert(getShadowType(val->getType()) == toset->getType());
+      assert(getShadowType(val) == toset->getType());
       auto found = invertedPointers.find(val);
       assert(found != invertedPointers.end());
       auto placeholder0 = &*found->second;
@@ -2064,401 +2314,13 @@ public:
   void addToInvertedPtrDiffe(Instruction *orig, Type *addingType,
                              unsigned start, unsigned size, Value *origptr,
                              Value *dif, IRBuilder<> &BuilderM,
-                             MaybeAlign align, Value *mask = nullptr)
+                             MaybeAlign align, Value *mask = nullptr);
 #else
   void addToInvertedPtrDiffe(Instruction *orig, Type *addingType,
                              unsigned start, unsigned size, Value *origptr,
                              Value *dif, IRBuilder<> &BuilderM, unsigned align,
-                             Value *mask = nullptr)
+                             Value *mask = nullptr);
 #endif
-  {
-    auto &DL = oldFunc->getParent()->getDataLayout();
-
-    auto addingSize = (DL.getTypeSizeInBits(addingType) + 1) / 8;
-    if (addingSize != size) {
-      assert(size > addingSize);
-#if LLVM_VERSION_MAJOR >= 12
-      addingType =
-          VectorType::get(addingType, size / addingSize, /*isScalable*/ false);
-#else
-      addingType = VectorType::get(addingType, size / addingSize);
-#endif
-      size = (size / addingSize) * addingSize;
-    }
-
-    Value *ptr;
-
-    switch (mode) {
-    case DerivativeMode::ForwardModeSplit:
-    case DerivativeMode::ForwardMode:
-      ptr = invertPointerM(origptr, BuilderM);
-      break;
-    case DerivativeMode::ReverseModePrimal:
-      assert(false && "Invalid derivative mode (ReverseModePrimal)");
-      break;
-    case DerivativeMode::ReverseModeGradient:
-    case DerivativeMode::ReverseModeCombined:
-      ptr = lookupM(invertPointerM(origptr, BuilderM), BuilderM);
-      break;
-    }
-
-    bool needsCast = false;
-#if LLVM_VERSION_MAJOR >= 15
-    if (orig->getContext().supportsTypedPointers()) {
-#endif
-      needsCast = origptr->getType()->getPointerElementType() != addingType;
-#if LLVM_VERSION_MAJOR >= 15
-    }
-#endif
-
-    assert(ptr);
-    if (start != 0 || needsCast) {
-      auto rule = [&](Value *ptr) {
-        if (start != 0) {
-          auto i8 = Type::getInt8Ty(ptr->getContext());
-          ptr = BuilderM.CreatePointerCast(
-              ptr,
-              PointerType::get(
-                  i8, cast<PointerType>(ptr->getType())->getAddressSpace()));
-          auto off =
-              ConstantInt::get(Type::getInt64Ty(ptr->getContext()), start);
-#if LLVM_VERSION_MAJOR > 7
-          ptr = BuilderM.CreateInBoundsGEP(i8, ptr, off);
-#else
-          ptr = BuilderM.CreateInBoundsGEP(ptr, off);
-#endif
-        }
-        if (needsCast) {
-          ptr = BuilderM.CreatePointerCast(
-              ptr, PointerType::get(
-                       addingType,
-                       cast<PointerType>(ptr->getType())->getAddressSpace()));
-        }
-        return ptr;
-      };
-      ptr = applyChainRule(
-          PointerType::get(
-              addingType,
-              cast<PointerType>(origptr->getType())->getAddressSpace()),
-          BuilderM, rule, ptr);
-    }
-
-    if (getWidth() == 1)
-      needsCast = dif->getType() != addingType;
-    else if (auto AT = cast<ArrayType>(dif->getType()))
-      needsCast = AT->getElementType() != addingType;
-    else
-      needsCast =
-          cast<VectorType>(dif->getType())->getElementType() != addingType;
-
-    if (start != 0 || needsCast) {
-      auto rule = [&](Value *dif) {
-        if (start != 0) {
-          IRBuilder<> A(inversionAllocs);
-          auto i8 = Type::getInt8Ty(ptr->getContext());
-          auto prevSize = (DL.getTypeSizeInBits(dif->getType()) + 1) / 8;
-          Type *tys[] = {ArrayType::get(i8, start), addingType,
-                         ArrayType::get(i8, prevSize - start - size)};
-          auto ST = StructType::get(i8->getContext(), tys, /*isPacked*/ true);
-          auto Al = A.CreateAlloca(ST);
-          BuilderM.CreateStore(dif,
-                               BuilderM.CreatePointerCast(
-                                   Al, PointerType::getUnqual(dif->getType())));
-          Value *idxs[] = {
-              ConstantInt::get(Type::getInt64Ty(ptr->getContext()), 0),
-              ConstantInt::get(Type::getInt32Ty(ptr->getContext()), 1)};
-
-#if LLVM_VERSION_MAJOR > 7
-          auto difp = BuilderM.CreateInBoundsGEP(ST, Al, idxs);
-          dif = BuilderM.CreateLoad(addingType, difp);
-#else
-          auto difp = BuilderM.CreateInBoundsGEP(Al, idxs);
-          dif = BuilderM.CreateLoad(difp);
-#endif
-        }
-        if (dif->getType() != addingType) {
-          auto difSize = (DL.getTypeSizeInBits(dif->getType()) + 1) / 8;
-          if (difSize < size) {
-            llvm::errs() << " ds: " << difSize << " as: " << size << "\n";
-            llvm::errs() << " dif: " << *dif << " adding: " << *addingType
-                         << "\n";
-          }
-          assert(difSize >= size);
-          if (CastInst::castIsValid(Instruction::CastOps::BitCast, dif,
-                                    addingType))
-            dif = BuilderM.CreateBitCast(dif, addingType);
-          else {
-            IRBuilder<> A(inversionAllocs);
-            auto Al = A.CreateAlloca(addingType);
-            BuilderM.CreateStore(
-                dif, BuilderM.CreatePointerCast(
-                         Al, PointerType::getUnqual(dif->getType())));
-#if LLVM_VERSION_MAJOR > 7
-            dif = BuilderM.CreateLoad(addingType, Al);
-#else
-            dif = BuilderM.CreateLoad(Al);
-#endif
-          }
-        }
-        return dif;
-      };
-      dif = applyChainRule(addingType, BuilderM, rule, dif);
-    }
-
-    auto TmpOrig =
-#if LLVM_VERSION_MAJOR >= 12
-        getUnderlyingObject(origptr, 100);
-#else
-        GetUnderlyingObject(origptr, oldFunc->getParent()->getDataLayout(),
-                            100);
-#endif
-
-    // atomics
-    bool Atomic = AtomicAdd;
-    auto Arch = llvm::Triple(newFunc->getParent()->getTargetTriple()).getArch();
-
-    // No need to do atomic on local memory for CUDA since it can't be raced
-    // upon
-    if (isa<AllocaInst>(TmpOrig) &&
-        (Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
-         Arch == Triple::amdgcn)) {
-      Atomic = false;
-    }
-    // Moreover no need to do atomic on local shadows regardless since they are
-    // not captured/escaping and created in this function. This assumes that
-    // all additional parallelism in this function is outlined.
-    if (backwardsOnlyShadows.find(TmpOrig) != backwardsOnlyShadows.end())
-      Atomic = false;
-
-    if (Atomic) {
-      // For amdgcn constant AS is 4 and if the primal is in it we need to cast
-      // the derivative value to AS 1
-      if (Arch == Triple::amdgcn &&
-          cast<PointerType>(origptr->getType())->getAddressSpace() == 4) {
-        auto rule = [&](Value *ptr) {
-          return BuilderM.CreateAddrSpaceCast(ptr,
-                                              PointerType::get(addingType, 1));
-        };
-        ptr = applyChainRule(PointerType::get(addingType, 1), BuilderM, rule,
-                             ptr);
-      }
-
-      assert(!mask);
-      if (mask) {
-        llvm::errs() << "unhandled masked atomic fadd on llvm version " << *ptr
-                     << " " << *dif << " mask: " << *mask << "\n";
-        llvm_unreachable("unhandled masked atomic fadd");
-      }
-
-      /*
-      while (auto ASC = dyn_cast<AddrSpaceCastInst>(ptr)) {
-        ptr = ASC->getOperand(0);
-      }
-      while (auto ASC = dyn_cast<ConstantExpr>(ptr)) {
-        if (!ASC->isCast()) break;
-        if (ASC->getOpcode() != Instruction::AddrSpaceCast) break;
-        ptr = ASC->getOperand(0);
-      }
-      */
-#if LLVM_VERSION_MAJOR >= 9
-      AtomicRMWInst::BinOp op = AtomicRMWInst::FAdd;
-      if (auto vt = dyn_cast<VectorType>(addingType)) {
-#if LLVM_VERSION_MAJOR >= 12
-        assert(!vt->getElementCount().isScalable());
-        size_t numElems = vt->getElementCount().getKnownMinValue();
-#else
-        size_t numElems = vt->getNumElements();
-#endif
-        auto rule = [&](Value *dif, Value *ptr) {
-          for (size_t i = 0; i < numElems; ++i) {
-            auto vdif = BuilderM.CreateExtractElement(dif, i);
-            Value *Idxs[] = {
-                ConstantInt::get(Type::getInt64Ty(vt->getContext()), 0),
-                ConstantInt::get(Type::getInt32Ty(vt->getContext()), i)};
-#if LLVM_VERSION_MAJOR > 7
-            auto vptr = BuilderM.CreateGEP(addingType, ptr, Idxs);
-#else
-            auto vptr = BuilderM.CreateGEP(ptr, Idxs);
-#endif
-#if LLVM_VERSION_MAJOR >= 13
-            MaybeAlign alignv = align;
-            if (alignv) {
-              if (start != 0) {
-                assert(alignv.getValue().value() != 0);
-                // todo make better alignment calculation
-                if (start % alignv.getValue().value() != 0) {
-                  alignv = Align(1);
-                }
-              }
-            }
-            BuilderM.CreateAtomicRMW(op, vptr, vdif, alignv,
-                                     AtomicOrdering::Monotonic,
-                                     SyncScope::System);
-#elif LLVM_VERSION_MAJOR >= 11
-            AtomicRMWInst *rmw = BuilderM.CreateAtomicRMW(
-                op, vptr, vdif, AtomicOrdering::Monotonic, SyncScope::System);
-            if (align) {
-              auto alignv = align.getValue().value();
-              if (start != 0) {
-                assert(alignv != 0);
-                // todo make better alignment calculation
-                if (start % alignv != 0) {
-                  alignv = 1;
-                }
-              }
-              rmw->setAlignment(Align(alignv));
-            }
-#else
-            BuilderM.CreateAtomicRMW(op, vptr, vdif, AtomicOrdering::Monotonic,
-                                     SyncScope::System);
-#endif
-          }
-        };
-        applyChainRule(BuilderM, rule, dif, ptr);
-      } else {
-        auto rule = [&](Value *dif, Value *ptr) {
-#if LLVM_VERSION_MAJOR >= 13
-          MaybeAlign alignv = align;
-          if (alignv) {
-            if (start != 0) {
-              assert(alignv.getValue().value() != 0);
-              // todo make better alignment calculation
-              if (start % alignv.getValue().value() != 0) {
-                alignv = Align(1);
-              }
-            }
-          }
-          BuilderM.CreateAtomicRMW(op, ptr, dif, alignv,
-                                   AtomicOrdering::Monotonic,
-                                   SyncScope::System);
-#elif LLVM_VERSION_MAJOR >= 11
-          AtomicRMWInst *rmw = BuilderM.CreateAtomicRMW(
-              op, ptr, dif, AtomicOrdering::Monotonic, SyncScope::System);
-          if (align) {
-            auto alignv = align.getValue().value();
-            if (start != 0) {
-              assert(alignv != 0);
-              // todo make better alignment calculation
-              if (start % alignv != 0) {
-                alignv = 1;
-              }
-            }
-            rmw->setAlignment(Align(alignv));
-          }
-#else
-          BuilderM.CreateAtomicRMW(op, ptr, dif, AtomicOrdering::Monotonic,
-                                   SyncScope::System);
-#endif
-        };
-        applyChainRule(BuilderM, rule, dif, ptr);
-      }
-#else
-      llvm::errs() << "unhandled atomic fadd on llvm version " << *ptr << " "
-                   << *dif << "\n";
-      llvm_unreachable("unhandled atomic fadd");
-#endif
-      return;
-    }
-
-    if (!mask) {
-
-      size_t idx = 0;
-      auto rule = [&](Value *ptr, Value *dif) {
-#if LLVM_VERSION_MAJOR > 7
-        auto LI = BuilderM.CreateLoad(addingType, ptr);
-#else
-        auto LI = BuilderM.CreateLoad(ptr);
-#endif
-
-        Value *res = BuilderM.CreateFAdd(LI, dif);
-        StoreInst *st = BuilderM.CreateStore(res, ptr);
-
-        Metadata *scopeMD[1] = {getDerivativeAliasScope(origptr, idx)};
-        auto scope = MDNode::get(LI->getContext(), scopeMD);
-        LI->setMetadata(LLVMContext::MD_alias_scope, scope);
-        st->setMetadata(LLVMContext::MD_alias_scope, scope);
-
-        SmallVector<Metadata *, 1> MDs;
-        for (ssize_t j = -1; j < getWidth(); j++) {
-          if (j != (ssize_t)idx)
-            MDs.push_back(getDerivativeAliasScope(origptr, j));
-        }
-        if (auto MD = orig->getMetadata(LLVMContext::MD_noalias)) {
-          auto MDN = cast<MDNode>(MD);
-          for (auto &o : MDN->operands())
-            MDs.push_back(o);
-        }
-        idx++;
-        auto noscope = MDNode::get(ptr->getContext(), MDs);
-        LI->setMetadata(LLVMContext::MD_noalias, noscope);
-        st->setMetadata(LLVMContext::MD_noalias, noscope);
-
-        if (start == 0 &&
-            size == (DL.getTypeSizeInBits(orig->getType()) + 7) / 8) {
-          LI->copyMetadata(*orig, MD_ToCopy);
-          LI->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
-          unsigned int StoreData[] = {LLVMContext::MD_tbaa,
-                                      LLVMContext::MD_tbaa_struct};
-          for (auto MD : StoreData)
-            st->setMetadata(MD, orig->getMetadata(MD));
-          st->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
-        }
-
-        if (align) {
-#if LLVM_VERSION_MAJOR >= 10
-          auto alignv = align ? align.getValue().value() : 0;
-#else
-          auto alignv = align;
-#endif
-          if (alignv != 0) {
-            if (start != 0) {
-              // todo make better alignment calculation
-              if (start % alignv != 0) {
-                alignv = 1;
-              }
-            }
-#if LLVM_VERSION_MAJOR >= 10
-            LI->setAlignment(Align(alignv));
-            st->setAlignment(Align(alignv));
-#else
-            LI->setAlignment(alignv);
-            st->setAlignment(alignv);
-#endif
-          }
-        }
-      };
-      applyChainRule(BuilderM, rule, ptr, dif);
-    } else {
-      Type *tys[] = {addingType, origptr->getType()};
-      auto LF = Intrinsic::getDeclaration(oldFunc->getParent(),
-                                          Intrinsic::masked_load, tys);
-      auto SF = Intrinsic::getDeclaration(oldFunc->getParent(),
-                                          Intrinsic::masked_store, tys);
-#if LLVM_VERSION_MAJOR >= 10
-      unsigned aligni = align ? align->value() : 0;
-#else
-      unsigned aligni = align;
-#endif
-      if (aligni != 0)
-        if (start != 0) {
-          // todo make better alignment calculation
-          if (start % aligni != 0) {
-            aligni = 1;
-          }
-        }
-      Value *alignv =
-          ConstantInt::get(Type::getInt32Ty(mask->getContext()), aligni);
-      auto rule = [&](Value *ptr, Value *dif) {
-        Value *largs[] = {ptr, alignv, mask,
-                          Constant::getNullValue(dif->getType())};
-        Value *LI = BuilderM.CreateCall(LF, largs);
-        Value *res = BuilderM.CreateFAdd(LI, dif);
-        Value *sargs[] = {res, ptr, alignv, mask};
-        BuilderM.CreateCall(SF, sargs);
-      };
-      applyChainRule(BuilderM, rule, ptr, dif);
-    }
-  }
 };
 
 void SubTransferHelper(GradientUtils *gutils, DerivativeMode Mode,

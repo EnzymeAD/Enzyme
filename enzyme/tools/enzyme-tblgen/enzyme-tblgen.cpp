@@ -278,6 +278,69 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
       os << " } else {\n";
       os << " for(unsigned int idx=0, W=gutils->getWidth(); idx<W; idx++) {\n";
 
+      os << "if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes) {\n";
+
+      if (isCall || isIntr) {
+        os << " CallInst *V = cast<CallInst>(" << builder
+           << ".CreateCall(FT, callval, ArrayRef<Value*>({";
+      } else {
+        os << "   Value *V = " << builder << ".Create" << opName << "(";
+      }
+      for (size_t i = 0; i < idx; i++) {
+        if (i > 0)
+          os << ", ";
+        if (vectorValued[i])
+          os << builder << ".CreateExtractElement(args[" << i << "], idx)";
+        else
+          os << "args[" << i << "]";
+      }
+      if (isCall || isIntr)
+        os << "})";
+      os << ")";
+      if (isCall || isIntr) {
+        os << ")";
+      }
+      os << ";\n";
+
+      if (isCall) {
+        os << "   "
+              "V->setDebugLoc(gutils->getNewFromOriginal(orig->getDebugLoc()));"
+              "\n";
+        os << "   V->setCallingConv(cconv);\n";
+        for (auto *attr : *cast<ListInit>(Def->getValueAsListInit("fnattrs"))) {
+          auto attrDef = cast<DefInit>(attr)->getDef();
+          os << "#if LLVM_VERSION_MAJOR >= 14\n"
+             << "   V->addAttributeAtIndex(AttributeList::FunctionIndex, "
+                "Attribute::"
+             << attrDef->getValueInit("name")->getAsUnquotedString() << ");\n";
+          os << "#else \n"
+             << "   V->addAttribute(AttributeList::FunctionIndex, "
+                "Attribute::"
+             << attrDef->getValueInit("name")->getAsUnquotedString() << ");\n";
+          os << "#endif \n";
+        }
+      }
+      if (isIntr) {
+        os << "   "
+              "V->setDebugLoc(gutils->getNewFromOriginal(orig->getDebugLoc()));"
+              "\n";
+        os << "   V->setCallingConv(cconv);\n";
+      }
+      
+      os << "#if LLVM_VERSION_MAJOR >= 11\n";
+      os << "   if (res == nullptr) res = "
+            "UndefValue::get(FixedVectorType::get(V->getType(), "
+            "gutils->getWidth()));\n";
+      os <<"#else\n";
+      os << "   if (res == nullptr) res = "
+            "UndefValue::get(VectorType::get(V->getType(), "
+            "gutils->getWidth()));\n";
+      os << "#endif\n";
+      
+      os << "   res = " << builder << ".CreateInsertElement(res, V, idx)" << ";\n";
+      
+      os << " } else if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtRootNode) {\n";
+      
       if (isCall || isIntr) {
         os << " CallInst *V = cast<CallInst>(" << builder
            << ".CreateCall(FT, callval, ArrayRef<Value*>({";
@@ -328,7 +391,10 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
             "UndefValue::get(ArrayType::get(V->getType(), "
             "gutils->getWidth()));\n";
       os << "   res = " << builder << ".CreateInsertValue(res, V, {idx});\n";
-      os << " }\n }\n";
+      
+      os << " }\n";
+      os << " }\n";
+      os << " }\n";
     }
     os << " res; })";
     return anyVector;
@@ -418,17 +484,20 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
         os << "            Value *out = UndefValue::get(res->getType());\n";
       else
         os << "            Value *out = "
-              "UndefValue::get(gutils->getShadowType(res->getType()));\n";
+              "UndefValue::get(gutils->getShadowType(res));\n";
 
       os << "            for(unsigned int idx=0, W=gutils->getWidth(); idx<W; "
             "idx++) {\n";
       os << "              Value *V = "
-            "Builder2.CreateFAdd(Builder2.CreateExtractValue(res, {idx}), ";
+            "Builder2.CreateFAdd(MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes ? Builder2.CreateExtractElement(res, Builder2.getInt64(idx)) : Builder2.CreateExtractValue(res, {idx}), ";
       if (vectorValued)
-        os << "Builder2.CreateExtractValue(tmp, {idx})";
+        os << "MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes ? Builder2.CreateExtractElement(tmp, Builder2.getInt64(idx)) : Builder2.CreateExtractValue(tmp, {idx})";
       else
         os << "tmp";
       os << ");\n";
+      os << "            if (MemoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)";
+      os << "              out = Builder2.CreateInsertElement(out, V, idx);\n";
+      os << "            else";
       os << "              out = Builder2.CreateInsertValue(out, V, {idx});\n";
       os << "            }\n";
       os << "            res = out;\n";
@@ -461,7 +530,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
       if (hasDiffeRet(resultTree)) {
         os << "          dif = diffe(orig, Builder2);\n";
         os << "          setDiffe(orig, "
-              "Constant::getNullValue(gutils->getShadowType(orig->getType())), "
+              "Constant::getNullValue(gutils->getShadowType(orig)), "
               "Builder2);\n";
       }
     }
@@ -483,7 +552,7 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
       if (!vectorValued) {
         os << "          if (gutils->getWidth() > 1) {\n";
         os << "            toadd = "
-              "UndefValue::get(gutils->getShadowType(tmp->getType()));\n";
+              "UndefValue::get(gutils->getShadowType(tmp));\n";
         os << "            for(unsigned int idx=0, W=gutils->getWidth(); "
               "idx<W; idx++) {\n";
         os << "              toadd = Builder2.CreateInsertValue(toadd, tmp, "

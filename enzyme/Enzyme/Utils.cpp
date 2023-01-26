@@ -754,7 +754,8 @@ Function *getOrInsertDifferentialFloatMemmove(Module &M, Type *T,
 }
 
 Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
-                                 unsigned width) {
+                                 unsigned width,
+                                 VectorModeMemoryLayout memoryLayout) {
   FunctionType *FreeTy = call->getFunctionType();
 #if LLVM_VERSION_MAJOR >= 11
   Value *Free = call->getCalledOperand();
@@ -766,10 +767,24 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
   DebugLoc DebugLoc = call->getDebugLoc();
 
   std::string name = "__enzyme_checked_free_" + std::to_string(width);
+    
+  switch (memoryLayout) {
+    case VectorModeMemoryLayout::VectorizeAtRootNode:
+      name += ".leaf";
+      break;
+    case VectorModeMemoryLayout::VectorizeAtLeafNodes:
+      name += ".root";
+      break;
+  }
 
   SmallVector<Type *, 3> types;
   types.push_back(Ty);
-  for (unsigned i = 0; i < width; i++) {
+
+  unsigned actual_width =
+      (memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes) ? 1
+                                                                     : width;
+
+  for (unsigned i = 0; i < actual_width; i++) {
     types.push_back(Ty);
   }
 
@@ -811,16 +826,16 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
   CI->setCallingConv(CallingConvention);
   CI->setDebugLoc(DebugLoc);
 
-  if (width > 1) {
+  if (actual_width > 1) {
     Value *checkResult = nullptr;
     BasicBlock *free1 = BasicBlock::Create(M.getContext(), "free1", F);
     IRBuilder<> Free1Builder(free1);
 
-    for (unsigned i = 0; i < width; i++) {
+    for (unsigned i = 0; i < actual_width; i++) {
       F->addParamAttr(i + 1, Attribute::NoCapture);
       Argument *shadow = F->arg_begin() + i + 1;
 
-      if (i < width - 1) {
+      if (i < actual_width - 1) {
         Argument *nextShadow = F->arg_begin() + i + 2;
         Value *isNotEqual = Free0Builder.CreateICmpNE(shadow, nextShadow);
         checkResult = checkResult
