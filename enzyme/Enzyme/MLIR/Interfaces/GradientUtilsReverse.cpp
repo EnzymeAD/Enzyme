@@ -327,7 +327,10 @@ std::pair<BlockAndValueMapping, DenseMap<Block *, SmallVector<std::pair<Value, V
         
         assert(successorBlock->getNumArguments() == sOps.size());
         for (int j = 0; j < (int)sOps.size(); j++){
-          reverseModeArguments.push_back(std::pair<Value,Value>(successorBlock->getArgument(j), sOps[j]));
+          // Check if the argument needs a gradient
+          if (auto iface = successorBlock->getArgument(j).getType().dyn_cast<AutoDiffTypeInterface>()) {
+            reverseModeArguments.push_back(std::pair<Value,Value>(successorBlock->getArgument(j), sOps[j]));
+          }
         }
       }
       for (auto it : reverseModeArguments){

@@ -183,7 +183,7 @@ void handlePredecessors(Block * oBB, Block * reverseBB, MDiffeGradientUtilsRever
             operands.push_back(gutils->invertPointerM(operandOld.first, revBuilder));
           }
           else{
-            if (auto iface = operandOld.first.getType().cast<AutoDiffTypeInterface>()) {
+            if (auto iface = operandOld.first.getType().dyn_cast<AutoDiffTypeInterface>()) {
               Value nullValue = iface.createNullValue(revBuilder, oBB->rbegin()->getLoc());
               operands.push_back(nullValue);
             }
