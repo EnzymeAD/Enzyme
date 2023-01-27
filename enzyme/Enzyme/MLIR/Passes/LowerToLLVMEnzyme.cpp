@@ -12,6 +12,7 @@
 
 #include "PassDetails.h"
 #include "Passes/Passes.h"
+#include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
 #include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -194,6 +195,7 @@ struct LowerToLLVMEnzymePass
     RewritePatternSet patterns(context);
     LLVMTypeConverter typeConverter(context);
     patterns.add<DiffOpLowering>(typeConverter, context);
+    cf::populateControlFlowToLLVMConversionPatterns(typeConverter, patterns);
     populateFuncToLLVMFuncOpConversionPattern(typeConverter, patterns);
     populateFuncToLLVMConversionPatterns(typeConverter, patterns);
 
