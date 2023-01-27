@@ -2491,7 +2491,7 @@ public:
       CGSCCAnalysisManager CGAM;
       ModuleAnalysisManager MAM;
       PB.registerModuleAnalyses(MAM);
-      PB.registerFunctionAnalyses(FAM);
+      PB.registerFunctionAnalysesC(FAM);
       PB.registerLoopAnalyses(LAM);
       PB.registerCGSCCAnalyses(CGAM);
       PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);

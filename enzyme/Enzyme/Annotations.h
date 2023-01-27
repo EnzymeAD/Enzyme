@@ -134,6 +134,9 @@ public:
 
     if (width == 1)
       return values;
+    
+    if (i == nullptr)
+      return values;
 
     switch (memoryLayout) {
     case VectorModeMemoryLayout::VectorizeAtRootNode: {
@@ -147,8 +150,14 @@ public:
       return res;
     }
     case VectorModeMemoryLayout::VectorizeAtLeafNodes:
-      // TODO: compute the correct offset!!!
-      return {}; // Builder.CreateInBoundsGEP(map[value], {i});
+        std::vector<Value *> res;
+
+        for (auto &&value : values) {
+          auto ld = Builder.CreateLoad(value->getType(), map[value]);
+          res.push_back(ld);
+        }
+
+        return res;
     }
   }
 
@@ -181,6 +190,9 @@ public:
 
     if (width == 1)
       return value;
+    
+    if (i == nullptr)
+      return value;
 
     switch (memoryLayout) {
     case VectorModeMemoryLayout::VectorizeAtRootNode: {
@@ -198,17 +210,20 @@ public:
 
       return Builder.CreateLoad(aty->getElementType(), gep);
     }
-    case VectorModeMemoryLayout::VectorizeAtLeafNodes:
-      // TODO: compute the correct offset!!!
+      case VectorModeMemoryLayout::VectorizeAtLeafNodes: {
+        if (value->getType()->isPointerTy())
+          return value;
+        // TODO: compute the correct offset!!!
 #if LLVM_VERSION_MAJOR > 7
-      auto gep = Builder.CreateInBoundsGEP(value->getType(), map[value],
-                                           {Builder.getInt64(0), i},
-                                           value->getName() + ".vec.idx");
+        auto gep = Builder.CreateInBoundsGEP(value->getType(), map[value],
+                                             {Builder.getInt64(0), i},
+                                             value->getName() + ".vec.idx");
 #else
-      auto gep = Builder.CreateInBoundsGEP(map[value], {Builder.getInt64(0), i},
-                                           value->getName() + ".vec.idx");
+        auto gep = Builder.CreateInBoundsGEP(map[value], {Builder.getInt64(0), i},
+                                             value->getName() + ".vec.idx");
 #endif
-      return gep;
+        return gep;
+      }
     }
   }
 

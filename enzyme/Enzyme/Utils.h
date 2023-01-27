@@ -311,6 +311,11 @@ enum class DerivativeMode {
   ForwardModeSplit = 4,
 };
 
+enum class VectorizationMode {
+  UnrolledLoop,
+  Loop,
+};
+
 enum class VectorModeMemoryLayout {
   VectorizeAtRootNode = 0,
   VectorizeAtLeafNodes = 1,

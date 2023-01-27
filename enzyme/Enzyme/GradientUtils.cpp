@@ -310,9 +310,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       }
       return ptr;
     };
-    auto pty = PointerType::get(
-        addingType, cast<PointerType>(origptr->getType())->getAddressSpace());
-    ptr = applyChainRule(pty, BuilderM, rule, Gradient(ptr));
+    Type* pty = PointerType::get(addingType, cast<PointerType>(origptr->getType())->getAddressSpace());
+    ptr = applyChainRule(getShadowType(pty), BuilderM, rule, Gradient(ptr));
   }
 
   if (getWidth() == 1)
@@ -351,8 +350,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       return dif;
     };
 
-    dif = applyChainRule(addingType, BuilderM, rule1, Gradient(dif),
-                         Gradient(Al1));
+    dif = applyChainRule(getShadowType(addingType), BuilderM, rule1, Gradient(dif), Gradient(Al1));
 
     Value *Al2 = A.CreateAlloca(addingType);
 
@@ -383,8 +381,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       return dif;
     };
 
-    dif = applyChainRule(addingType, BuilderM, rule2, Gradient(dif),
-                         Gradient(Al2));
+    dif = applyChainRule(getShadowType(addingType), BuilderM, rule2, Gradient(dif), Gradient(Al2));
   }
 
   auto TmpOrig =
@@ -420,8 +417,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
         return BuilderM.CreateAddrSpaceCast(ptr,
                                             PointerType::get(addingType, 1));
       };
-      ptr = applyChainRule(PointerType::get(addingType, 1), BuilderM, rule,
-                           Gradient(ptr));
+      auto pty = PointerType::get(addingType, 1);
+      ptr = applyChainRule(getShadowType(pty), BuilderM, rule, Gradient(ptr));
     }
 
     assert(!mask);
@@ -1445,7 +1442,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         };
 
         Value *toreturn =
-            applyChainRule(dli->getType(), BuilderM, rule, Gradient(pidx));
+            applyChainRule(getShadowType(dli), BuilderM, rule, Gradient(pidx));
 
         // TODO adding to cache only legal if no alias of any future writes
         if (permitCache)
@@ -3419,7 +3416,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                       return anti;
                     };
 
-                    anti = applyChainRule(orig->getType(), NB, rule,
+                    anti = applyChainRule(getShadowType(orig), NB, rule,
                                           Primal(orig->getCalledOperand()),
                                           Primal<ArrayRef<Value *>>(args));
 
@@ -3447,8 +3444,8 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                             return replacement;
                           };
 
-                      Value *replacement = applyChainRule(
-                          Type::getInt8Ty(orig->getContext()), NB, rule1,
+                      auto pty = Type::getInt8Ty(orig->getContext());
+                      Value *replacement = applyChainRule(getShadowType(pty), NB, rule1,
                           Gradient(anti), Primal(count));
 
                       replaceAWithB(cast<Instruction>(anti), replacement);
@@ -4659,20 +4656,17 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   }
 
   if (isa<ConstantPointerNull>(oval)) {
-    return applyChainRule(
-        oval->getType(), BuilderM,
+    return applyChainRule(getShadowType(oval), BuilderM,
         [](IRBuilder<> &BuilderM, Value *oval) { return oval; }, Primal(oval));
   } else if (isa<UndefValue>(oval)) {
     if (nullShadow)
       return Constant::getNullValue(getShadowType(oval));
-    return applyChainRule(
-        oval->getType(), BuilderM,
+    return applyChainRule(getShadowType(oval), BuilderM,
         [](IRBuilder<> &BuilderM, Value *oval) { return oval; }, Primal(oval));
   } else if (isa<ConstantInt>(oval)) {
     if (nullShadow)
       return Constant::getNullValue(getShadowType(oval));
-    return applyChainRule(
-        oval->getType(), BuilderM,
+    return applyChainRule(getShadowType(oval), BuilderM,
         [](IRBuilder<> &BuilderM, Value *oval) { return oval; }, Primal(oval));
   } else if (auto CD = dyn_cast<ConstantDataArray>(oval)) {
     SmallVector<Constant *, 1> Vals;
@@ -4684,7 +4678,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       return ConstantArray::get(CD->getType(), Vals);
     };
 
-    return applyChainRule(CD->getType(), BuilderM, rule,
+    return applyChainRule(getShadowType(CD), BuilderM, rule,
                           Gradient<ArrayRef<Constant *>>(Vals));
   } else if (auto CD = dyn_cast<ConstantArray>(oval)) {
     SmallVector<Constant *, 1> Vals;
@@ -4698,7 +4692,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       return ConstantArray::get(ty, Vals);
     };
 
-    return applyChainRule(CD->getType(), BuilderM, rule,
+    return applyChainRule(getShadowType(CD), BuilderM, rule,
                           Gradient<ArrayRef<Constant *>>(Vals));
   } else if (auto CD = dyn_cast<ConstantStruct>(oval)) {
     SmallVector<Constant *, 1> Vals;
@@ -4710,7 +4704,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     auto rule = [&CD](IRBuilder<> &BuilderM, ArrayRef<Constant *> Vals) {
       return ConstantStruct::get(CD->getType(), Vals);
     };
-    return applyChainRule(CD->getType(), BuilderM, rule,
+    return applyChainRule(getShadowType(CD), BuilderM, rule,
                           Gradient<ArrayRef<Constant *>>(Vals));
   } else if (auto CD = dyn_cast<ConstantVector>(oval)) {
     SmallVector<Constant *, 1> Vals;
@@ -4723,14 +4717,14 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       return ConstantVector::get(Vals);
     };
 
-    return applyChainRule(CD->getType(), BuilderM, rule,
+    return applyChainRule(getShadowType(CD), BuilderM, rule,
                           Gradient<ArrayRef<Constant *>>(Vals));
   } else if (isa<ConstantData>(oval) && nullShadow) {
     auto rule = [](IRBuilder<> &BuilderM, Value *oval) {
       return Constant::getNullValue(oval->getType());
     };
 
-    return applyChainRule(oval->getType(), BuilderM, rule, Primal(oval));
+    return applyChainRule(getShadowType(CD), BuilderM, rule, Primal(oval));
   }
 
   if (isConstantValue(oval) && !isa<InsertValueInst>(oval) &&
@@ -4749,14 +4743,14 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
     if (isa<ConstantExpr>(oval)) {
       auto rule = [](IRBuilder<> &BuilderM, Value *oval) { return oval; };
-      return applyChainRule(oval->getType(), BuilderM, rule, Primal(oval));
+      return applyChainRule(getShadowType(oval), BuilderM, rule, Primal(oval));
     }
 
     Value *newval = getNewFromOriginal(oval);
 
     auto rule = [](IRBuilder<> &BuilderM, Value *newval) { return newval; };
 
-    return applyChainRule(oval->getType(), BuilderM, rule, Primal(newval));
+    return applyChainRule(getShadowType(oval), BuilderM, rule, Primal(newval));
   }
 
   auto M = oldFunc->getParent();
@@ -4802,7 +4796,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       return antialloca;
     };
 
-    Value *antialloca = applyChainRule(oval->getType(), bb, rule1);
+    Value *antialloca = applyChainRule(getShadowType(oval), bb, rule1);
 
     invertedPointers.insert(std::make_pair(
         (const Value *)oval, InvertedPointerVH(this, antialloca)));
@@ -4865,7 +4859,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               return antialloca;
             };
 
-            Value *antialloca = applyChainRule(arg->getType(), bb, rule1);
+            Value *antialloca = applyChainRule(getShadowType(arg), bb, rule1);
 
             invertedPointers.insert(std::make_pair(
                 (const Value *)oval, InvertedPointerVH(this, antialloca)));
@@ -4918,7 +4912,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             };
 
             antialloca =
-                applyChainRule(arg->getType(), bb, rule2, Gradient(antialloca));
+                applyChainRule(getShadowType(arg), bb, rule2, Gradient(antialloca));
 
             assert(antialloca->getType() == getShadowType(arg));
 
@@ -4996,7 +4990,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           return shadow;
         };
 
-        Value *shadow = applyChainRule(oval->getType(), BuilderM, rule);
+        Value *shadow = applyChainRule(getShadowType(oval), BuilderM, rule);
 
         if (arg->hasInitializer()) {
           auto rule = [](IRBuilder<> &BuilderM, Value *shadow, Value *ip) {
@@ -5076,7 +5070,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
                            arg->getName() + "'ipc");
     };
 
-    Value *shadow = applyChainRule(shadowTy, bb, rule, Gradient(invertOp));
+    Value *shadow = applyChainRule(getShadowType(oval), bb, rule, Gradient(invertOp));
 
     invertedPointers.insert(
         std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
@@ -5261,11 +5255,15 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     IRBuilder<> bb(getNewFromOriginal(arg));
     Value *op0 = arg->getOperand(0);
     Value *ip = invertPointerM(op0, bb);
+    
+    auto shadowTy = arg->getType();
+    if (memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
+      shadowTy = getShadowType(arg);
 
-    auto rule = [arg, dbg = getNewFromOriginal(arg->getDebugLoc())](
+    auto rule = [shadowTy, arg, dbg = getNewFromOriginal(arg->getDebugLoc())](
                     IRBuilder<> &bb, Value *ip) {
 #if LLVM_VERSION_MAJOR > 7
-      auto li = bb.CreateLoad(arg->getType(), ip, arg->getName() + "'ipl");
+      auto li = bb.CreateLoad(shadowTy, ip, arg->getName() + "'ipl");
 #else
       auto li = bb.CreateLoad(ip, arg->getName() + "'ipl");
 #endif
@@ -5285,7 +5283,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       return li;
     };
 
-    Value *li = applyChainRule(arg->getType(), bb, rule, Gradient(ip));
+    Value *li = applyChainRule<VectorizationMode::UnrolledLoop>(getShadowType(oval), bb, rule, Gradient(ip));
 
     invertedPointers.insert(
         std::make_pair((const Value *)oval, InvertedPointerVH(this, li)));
@@ -5328,10 +5326,13 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       invertargs.push_back(b);
     }
     Value *ip = invertPointerM(arg->getPointerOperand(), bb);
+    Type* shadowTy = arg->getSourceElementType();
+    if (memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
+      shadowTy = getShadowType(arg->getSourceElementType());
 
-    auto rule = [arg](IRBuilder<> &bb, Value *ip, ArrayRef<Value *> args) {
+    auto rule = [arg, shadowTy](IRBuilder<> &bb, Value *ip, ArrayRef<Value *> args) {
 #if LLVM_VERSION_MAJOR > 7
-      auto shadow = bb.CreateGEP(arg->getSourceElementType(), ip, args,
+      auto shadow = bb.CreateGEP(shadowTy, ip, args,
                                  arg->getName() + "'ipg");
 #else
       auto shadow = bb.CreateGEP(ip, invertargs, arg->getName() + "'ipg");
@@ -5342,8 +5343,10 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
       return shadow;
     };
-
-    Value *shadow = applyChainRule(arg->getType(), bb, rule, Gradient(ip),
+    
+    auto TT = TR.query(oval);
+    
+    Value *shadow = applyChainRule<VectorizationMode::UnrolledLoop>(getShadowType(arg), bb, rule, Gradient(ip),
                                    Primal<ArrayRef<Value *>>(invertargs));
 
     invertedPointers.insert(
@@ -5352,10 +5355,14 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   } else if (auto inst = dyn_cast<AllocaInst>(oval)) {
     IRBuilder<> bb(getNewFromOriginal(inst));
     Value *asize = getNewFromOriginal(inst->getArraySize());
+    auto shadowTy = inst->getAllocatedType();
+    
+    if (memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
+      shadowTy = getShadowType(inst->getAllocatedType());
 
-    auto rule1 = [&inst, &asize](IRBuilder<> &bb) {
+    auto rule1 = [&inst, &asize, &shadowTy](IRBuilder<> &bb) {
       AllocaInst *antialloca = bb.CreateAlloca(
-          inst->getAllocatedType(), inst->getType()->getPointerAddressSpace(),
+          shadowTy, inst->getType()->getPointerAddressSpace(),
           asize, inst->getName() + "'ipa");
 #if LLVM_VERSION_MAJOR >= 11
       antialloca->setAlignment(inst->getAlign());
@@ -5371,18 +5378,21 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       return antialloca;
     };
 
-    Value *antialloca = applyChainRule(oval->getType(), bb, rule1);
+    Value *antialloca = applyChainRule<VectorizationMode::UnrolledLoop>(getShadowType(oval), bb, rule1);
 
     invertedPointers.insert(std::make_pair(
         (const Value *)oval, InvertedPointerVH(this, antialloca)));
 
     if (auto ci = dyn_cast<ConstantInt>(asize)) {
       if (ci->isOne()) {
+        
+        Type* shadowTy = inst->getAllocatedType();
+        if (memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes)
+          shadowTy = getShadowType(inst->getAllocatedType());
 
-        Constant *c = Constant::getNullValue(inst->getAllocatedType());
+        Constant *c = Constant::getNullValue(shadowTy);
 
-        auto rule = [align = inst->getAlign()](IRBuilder<> &bb, Constant *c,
-                                               Value *antialloca) {
+        auto rule = [align = inst->getAlign(), c](IRBuilder<> &bb, Value *antialloca) {
           StoreInst *st = bb.CreateStore(c, antialloca);
 #if LLVM_VERSION_MAJOR >= 11
           cast<StoreInst>(st)->setAlignment(align);
@@ -5397,7 +5407,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 #endif
         };
 
-        applyChainRule(bb, rule, Primal(c), Gradient(antialloca));
+        applyChainRule<VectorizationMode::UnrolledLoop>(bb, rule, Gradient(antialloca));
 
         return antialloca;
       } else {

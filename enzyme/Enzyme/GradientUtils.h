@@ -1478,10 +1478,6 @@ public:
 
       // create new vectorized type
       StructType *new_sty = StructType::create(ty->getContext());
-      if (sty->hasName()) {
-        auto name = sty->getName() + ".Vec." + Twine(width);
-        new_sty->setName(name.str());
-      }
       under_construction[sty] = new_sty;
 
       SmallVector<Type *, 3> subtys;
@@ -1630,6 +1626,11 @@ public:
   Type *getShadowType(Value *val) {
     auto &M = *oldFunc->getParent();
     return getShadowType(M, val, width, memoryLayout);
+  }
+  
+  Type *getShadowType(Type *ty) {
+    auto &M = *oldFunc->getParent();
+    return getShadowType(M, ty, width, memoryLayout);
   }
 
   static inline Value *extractMeta(IRBuilder<> &Builder, Value *Agg,
@@ -1875,12 +1876,11 @@ public:
 
   /// Unwraps a vector derivative from its internal representation and applies a
   /// function f to each element. Return values of f are collected and wrapped.
-  template <typename Func, typename... Args>
-  Value *applyChainRule(Type *diffType, IRBuilder<> &Builder, Func rule,
-                        Args... args) {
-    if (width > 1) {
-      Type *wrappedType = ArrayType::get(diffType, width);
-
+  template <VectorizationMode VectorizationMode = VectorizationMode::Loop,
+  typename Func, typename... Args>
+  Value *applyChainRule(Type *diffType, IRBuilder<> &Builder, Func rule, Args... args) {
+    if (width > 1 && !(memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes &&
+                      (VectorizationMode == VectorizationMode::UnrolledLoop || diffType->isPointerTy()))) {
       std::vector<Type *> ArgTypeVectors[] = {args.getType()...};
       std::vector<Value *> ArgValueVectors[] = {args.getValue()...};
 
@@ -1897,7 +1897,7 @@ public:
       }
 
       auto [LoopF, Body, ResultAcc, i, ArgMap] =
-          CreateVectorLoop(width, wrappedType, ArgValues,
+          CreateVectorLoop(width, diffType, ArgValues,
                            *Builder.GetInsertBlock()->getModule(), "vec.loop");
 
       IRBuilder<> RuleBuilder =
@@ -1912,7 +1912,7 @@ public:
                                  eval_tuple(RuleBuilder, ArgMap, i, args...))));
 
 #if LLVM_VERSION_MAJOR > 7
-        auto gep = RuleBuilder.CreateInBoundsGEP(wrappedType, ResultAcc,
+        auto gep = RuleBuilder.CreateInBoundsGEP(diffType, ResultAcc,
                                                  {RuleBuilder.getInt64(0), i},
                                                  "res.idx");
 #else
@@ -1938,9 +1938,11 @@ public:
 
   /// Unwraps a vector derivative from its internal representation and applies a
   /// function f to each element. Return values of f are collected and wrapped.
-  template <typename Func, typename... Args>
+  template <VectorizationMode VectorizationMode = VectorizationMode::Loop,
+  typename Func, typename... Args>
   void applyChainRule(IRBuilder<> &Builder, Func rule, Args... args) {
-    if (width > 1) {
+    if (width > 1 && !(memoryLayout == VectorModeMemoryLayout::VectorizeAtLeafNodes &&
+                       VectorizationMode == VectorizationMode::UnrolledLoop)) {
       std::vector<Type *> ArgTypeVectors[] = {args.getType()...};
       std::vector<Value *> ArgValueVectors[] = {args.getValue()...};
 

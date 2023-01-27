@@ -2014,18 +2014,20 @@ public:
 
   /// Unwraps a vector derivative from its internal representation and applies a
   /// function f to each element. Return values of f are collected and wrapped.
-  template <typename Func, typename... Args>
+  template <VectorizationMode VectorizationMode = VectorizationMode::Loop,
+            typename Func, typename... Args>
   Value *applyChainRule(Type *diffType, IRBuilder<> &Builder, Func rule,
                         Args... args) {
     return ((GradientUtils *)gutils)
-        ->applyChainRule(diffType, Builder, rule, args...);
+        ->applyChainRule<VectorizationMode>(diffType, Builder, rule, args...);
   }
 
   /// Unwraps a vector derivative from its internal representation and applies a
   /// function f to each element.
-  template <typename Func, typename... Args>
+  template <VectorizationMode VectorizationMode = VectorizationMode::Loop,
+      typename Func, typename... Args>
   void applyChainRule(IRBuilder<> &Builder, Func rule, Args... args) {
-    ((GradientUtils *)gutils)->applyChainRule(Builder, rule, args...);
+    ((GradientUtils *)gutils)->applyChainRule<VectorizationMode>(Builder, rule, args...);
   }
 
   bool shouldFree() {
