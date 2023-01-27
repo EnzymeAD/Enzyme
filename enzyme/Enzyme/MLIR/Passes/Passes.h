@@ -33,6 +33,10 @@ namespace arith {
 class ArithDialect;
 } // end namespace arith
 
+namespace cf {
+class ControlFlowDialect;
+} // end namespace cf
+
 namespace scf {
 class SCFDialect;
 } // end namespace scf
