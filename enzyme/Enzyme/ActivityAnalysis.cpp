@@ -815,10 +815,24 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
     }
   }
   if (noActiveWrite) {
+    bool possibleFloat = false;
+    if (!I->getType()->isVoidTy()) {
+      auto &DL = I->getParent()->getParent()->getParent()->getDataLayout();
+      auto Size = (DL.getTypeSizeInBits(I->getType()) + 7) / 8;
+      auto vd = TR.query(I);
+      if (vd[{-1}].isPossibleFloat()) {
+        for (unsigned i = 0; i < Size; i++) {
+          if (vd[{(int)i}].isPossibleFloat()) {
+            possibleFloat = true;
+            break;
+          }
+        }
+      }
+    }
     // Even if returning a pointer, this instruction is considered inactive
     // since the instruction doesn't prop gradients. Thus, so long as we don't
     // return an object containing a float, this instruction is inactive
-    if (!TR.intType(1, I, /*errifNotFound*/ false).isPossibleFloat()) {
+    if (!possibleFloat) {
       if (EnzymePrintActivity)
         llvm::errs()
             << " constant instruction from known non-float non-writing "
