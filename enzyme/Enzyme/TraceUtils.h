@@ -175,59 +175,58 @@ public:
 
   // user implemented
   Value *getTrace(IRBuilder<> &Builder) {
-    Builder.getContext();
-    auto ptr = Builder.CreateInBoundsGEP(PointerType::getInt8PtrTy(C), dynamicInterface, Builder.getInt32(0));
-    auto load = Builder.CreateLoad(PointerType::getInt8PtrTy(C), ptr);
+    auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(), dynamicInterface, Builder.getInt32(0));
+    auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
     return Builder.CreatePointerCast(load, PointerType::getUnqual(getTraceTy()), "get_trace");
   }
   FunctionType *getTraceTy() { return FunctionType::get(PointerType::getInt8PtrTy(C), {PointerType::getInt8PtrTy(C), stringType() }, false); }
   
   Value *getChoice(IRBuilder<> &Builder) {
-    auto ptr = Builder.CreateInBoundsGEP(PointerType::getInt8PtrTy(C), dynamicInterface, Builder.getInt32(1));
-    auto load = Builder.CreateLoad(PointerType::getInt8PtrTy(C), ptr);
+    auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(), dynamicInterface, Builder.getInt32(1));
+    auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
     return Builder.CreatePointerCast(load, PointerType::getUnqual(getChoiceTy()), "get_choice");
   }
   FunctionType *getChoiceTy() { return FunctionType::get(sizeType(), {PointerType::getInt8PtrTy(C), stringType(), PointerType::getInt8PtrTy(C), sizeType()}, false); }
   
   Value *insertCall(IRBuilder<> &Builder) {
-    auto ptr = Builder.CreateInBoundsGEP(PointerType::getInt8PtrTy(C), dynamicInterface, Builder.getInt32(2));
-    auto load = Builder.CreateLoad(PointerType::getInt8PtrTy(C), ptr);
+    auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(), dynamicInterface, Builder.getInt32(2));
+    auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
     return Builder.CreatePointerCast(load, PointerType::getUnqual(insertCallTy()), "insert_call");
   }
   FunctionType *insertCallTy() { return FunctionType::get(Type::getVoidTy(C), {PointerType::getInt8PtrTy(C), stringType(), PointerType::getInt8PtrTy(C)}, false); }
   
   Value *insertChoice(IRBuilder<> &Builder) {
-    auto ptr = Builder.CreateInBoundsGEP(PointerType::getInt8PtrTy(C), dynamicInterface, Builder.getInt32(3));
-    auto load = Builder.CreateLoad(PointerType::getInt8PtrTy(C), ptr);
+    auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(), dynamicInterface, Builder.getInt32(3));
+    auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
     return Builder.CreatePointerCast(load, PointerType::getUnqual(insertChoiceTy()), "insert_choice");
   }
   FunctionType *insertChoiceTy() { return FunctionType::get(Type::getVoidTy(C), {PointerType::getInt8PtrTy(C), stringType(), Type::getDoubleTy(C), PointerType::getInt8PtrTy(C), sizeType()}, false); }
   
   Value *newTrace(IRBuilder<> &Builder) {
-    auto ptr = Builder.CreateInBoundsGEP(PointerType::getInt8PtrTy(C), dynamicInterface, Builder.getInt32(4));
-    auto load = Builder.CreateLoad(PointerType::getInt8PtrTy(C), ptr);
+    auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(), dynamicInterface, Builder.getInt32(4));
+    auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
     return Builder.CreatePointerCast(load, PointerType::getUnqual(newTraceTy()), "new_trace");
   }
   FunctionType *newTraceTy() { return FunctionType::get(PointerType::getInt8PtrTy(C), {}, false); }
   
   Value *freeTrace(IRBuilder<> &Builder) {
-    auto ptr = Builder.CreateInBoundsGEP(PointerType::getInt8PtrTy(C), dynamicInterface, Builder.getInt32(5));
-    auto load = Builder.CreateLoad(PointerType::getInt8PtrTy(C), ptr);
+    auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(), dynamicInterface, Builder.getInt32(5));
+    auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
     return Builder.CreatePointerCast(load, PointerType::getUnqual(freeTraceTy()), "free_trace");
     
   }
   FunctionType *freeTraceTy() { return FunctionType::get(Type::getVoidTy(C), {PointerType::getInt8PtrTy(C)}, false); }
   
   Value *hasCall(IRBuilder<> &Builder) {
-    auto ptr = Builder.CreateInBoundsGEP(PointerType::getInt8PtrTy(C), dynamicInterface, Builder.getInt32(6));
-    auto load = Builder.CreateLoad(PointerType::getInt8PtrTy(C), ptr);
+    auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(), dynamicInterface, Builder.getInt32(6));
+    auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
     return Builder.CreatePointerCast(load, PointerType::getUnqual(hasCallTy()), "has_call");
   }
   FunctionType *hasCallTy() { return FunctionType::get(Type::getInt1Ty(C), {PointerType::getInt8PtrTy(C), stringType()}, false); }
   
   Value *hasChoice(IRBuilder<> &Builder) {
-    auto ptr = Builder.CreateInBoundsGEP(PointerType::getInt8PtrTy(C), dynamicInterface, Builder.getInt32(7));
-    auto load = Builder.CreateLoad(PointerType::getInt8PtrTy(C), ptr);
+    auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(), dynamicInterface, Builder.getInt32(7));
+    auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
     return Builder.CreatePointerCast(load, PointerType::getUnqual(hasChoiceTy()), "has_choice");
   }
   FunctionType *hasChoiceTy() { return FunctionType::get(Type::getInt1Ty(C), {PointerType::getInt8PtrTy(C), stringType()}, false); }
@@ -433,7 +432,7 @@ public:
     return call;
   }
   
-  Value *GetChoice(IRBuilder<> &Builder, Value *address, Type *choiceType) {
+  Instruction *GetChoice(IRBuilder<> &Builder, Value *address, Type *choiceType) {
     AllocaInst *store_dest = Builder.CreateAlloca(choiceType);
     auto preallocated_size = choiceType->getPrimitiveSizeInBits() / 8;
     Type *size_type = interface->getChoiceTy()->getParamType(3);
@@ -449,7 +448,7 @@ public:
     return Builder.CreateLoad(choiceType, store_dest);
   }
   
-  Value *HasChoice(IRBuilder<> &Builder, Value *address) {
+  Instruction *HasChoice(IRBuilder<> &Builder, Value *address) {
     Value *args[] {
       conditioning_trace,
       address
@@ -458,7 +457,7 @@ public:
     return Builder.CreateCall(interface->hasChoiceTy(), interface->hasChoice(Builder), args);
   }
   
-  Value *HasCall(IRBuilder<> &Builder, Value *address) {
+  Instruction *HasCall(IRBuilder<> &Builder, Value *address) {
     Value *args[] {
       conditioning_trace,
       address

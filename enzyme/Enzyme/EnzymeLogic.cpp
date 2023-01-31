@@ -4814,7 +4814,7 @@ llvm::Function *EnzymeLogic::CreateTrace(llvm::Function *totrace, SmallPtrSetImp
   
   TraceUtils *tutils = new TraceUtils(mode, dynamic_interface, totrace, GenerativeFunctions);
 
-  TraceGenerator *tracer = new TraceGenerator(*this, nullptr, tutils);
+  TraceGenerator *tracer = new TraceGenerator(*this, tutils);
   
   for (auto&& BB: *totrace) {
     for (auto &&Inst: BB) {

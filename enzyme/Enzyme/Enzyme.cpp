@@ -2572,7 +2572,8 @@ public:
     Function *sample = nullptr;
     for (auto&& interface_func: M) {
       if (interface_func.getName().contains("__enzyme_sample")) {
-        assert(interface_func.getFunctionType()->getNumParams() >= 3);
+        if (interface_func.getFunctionType()->getNumParams() < 3)
+        llvm::errs() << "Illegal number of paramters in function definition for __enzyme_sample: " << interface_func << "\n";
         sample = &interface_func;
       }
     }
@@ -2596,7 +2597,11 @@ public:
         for (auto it = call->arg_begin() + 3; it != call->arg_end(); it++) {
           args.push_back(*it);
         }
-        Instruction* choice = CallInst::Create(samplefn->getFunctionType(), samplefn, args);
+        CallInst* choice = CallInst::Create(samplefn->getFunctionType(), samplefn, args);
+        
+        choice->setDebugLoc(call->getDebugLoc());
+        choice->setName(call->getName());
+                
         ReplaceInstWithInst(call, choice);
       }
     

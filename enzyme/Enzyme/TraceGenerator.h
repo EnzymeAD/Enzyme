@@ -18,13 +18,11 @@ using namespace llvm;
 class TraceGenerator : public llvm::InstVisitor<TraceGenerator> {
 private:
   EnzymeLogic &Logic;
-  GradientUtils *const gutils;
   TraceUtils *const tutils;
   ProbProgMode mode = tutils->mode;
-//  Value *conditioning_trace = tutils->conditioning_trace;
 
 public:
-  TraceGenerator(EnzymeLogic &Logic, GradientUtils *const gutils, TraceUtils *const tutils) : Logic(Logic), gutils(gutils), tutils(tutils) {};
+  TraceGenerator(EnzymeLogic &Logic, TraceUtils *const tutils) : Logic(Logic), tutils(tutils) {};
 
   void visitCallInst(llvm::CallInst &call) {
     
@@ -51,10 +49,12 @@ public:
           break;
         }
         case ProbProgMode::Condition: {
-          Value *hasChoice = tutils->HasChoice(Builder, address);
+          Instruction *hasChoice = tutils->HasChoice(Builder, address);
           Instruction *ThenTerm, *ElseTerm;
           Value *ThenChoice, *ElseChoice;
           SplitBlockAndInsertIfThenElse(hasChoice, new_call, &ThenTerm, &ElseTerm);
+          
+          new_call->getParent()->setName(hasChoice->getParent()->getName() + ".cntd");
           
           Builder.SetInsertPoint(ThenTerm); {
             ThenTerm->getParent()->setName("condition." + call.getName() + ".with.trace");
@@ -103,10 +103,12 @@ public:
           break;
         }
         case ProbProgMode::Condition: {
-          Value *hasCall = tutils->HasCall(Builder, address);
+          Instruction *hasCall = tutils->HasCall(Builder, address);
           Instruction *ThenTerm, *ElseTerm;
           Value *ElseTracecall, *ThenTracecall;
           SplitBlockAndInsertIfThenElse(hasCall, new_call, &ThenTerm, &ElseTerm);
+          
+          new_call->getParent()->setName(hasCall->getParent()->getName() + ".cntd");
           
           Builder.SetInsertPoint(ThenTerm); {
             ThenTerm->getParent()->setName("condition." + call.getName() + ".with.trace");
