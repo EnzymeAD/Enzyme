@@ -1,21 +1,23 @@
 #ifndef TraceGenerator_h
 #define TraceGenerator_h
 
-#include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
+
 #include "llvm/IR/Constants.h"
-#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
+
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
-#include "EnzymeLogic.h"
 #include "FunctionUtils.h"
-#include "GradientUtils.h"
+#include "Utils.h"
 
 using namespace llvm;
 
-class TraceGenerator : public llvm::InstVisitor<TraceGenerator> {
+class TraceGenerator final : public llvm::InstVisitor<TraceGenerator> {
 private:
   EnzymeLogic &Logic;
   TraceUtils *const tutils;
