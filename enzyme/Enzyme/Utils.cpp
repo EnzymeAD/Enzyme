@@ -1820,7 +1820,7 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
   llvm_unreachable("unknown inst2");
 }
 
-Function * GetFunctionFromValue(Value *fn) {
+Function *GetFunctionFromValue(Value *fn) {
   while (auto ci = dyn_cast<CastInst>(fn)) {
     fn = ci->getOperand(0);
   }
@@ -1833,6 +1833,6 @@ Function * GetFunctionFromValue(Value *fn) {
   if (!isa<Function>(fn)) {
     return nullptr;
   }
-  
+
   return cast<Function>(fn);
 }

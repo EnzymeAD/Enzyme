@@ -48,9 +48,9 @@
 
 #include "ActivityAnalysis.h"
 #include "FunctionUtils.h"
+#include "TraceUtils.h"
 #include "TypeAnalysis/TypeAnalysis.h"
 #include "Utils.h"
-#include "TraceUtils.h"
 
 extern "C" {
 extern llvm::cl::opt<bool> EnzymePrint;
@@ -432,7 +432,7 @@ public:
   using BatchCacheKey = std::tuple<llvm::Function *, unsigned,
                                    std::vector<BATCH_TYPE>, BATCH_TYPE>;
   std::map<BatchCacheKey, llvm::Function *> BatchCachedFunctions;
-  
+
   using TraceCacheKey = std::tuple<llvm::Function *, ProbProgMode, bool>;
   std::map<TraceCacheKey, llvm::Function *> TraceCachedFunctions;
 
@@ -466,8 +466,10 @@ public:
   llvm::Function *CreateBatch(llvm::Function *tobatch, unsigned width,
                               llvm::ArrayRef<BATCH_TYPE> arg_types,
                               BATCH_TYPE ret_type);
-  
-  llvm::Function *CreateTrace(llvm::Function *totrace, SmallPtrSetImpl<Function*> &GenerativeFunctions, ProbProgMode mode, bool dynamic_interface);
+
+  llvm::Function *CreateTrace(llvm::Function *totrace,
+                              SmallPtrSetImpl<Function *> &GenerativeFunctions,
+                              ProbProgMode mode, bool dynamic_interface);
 
   void clear();
 };

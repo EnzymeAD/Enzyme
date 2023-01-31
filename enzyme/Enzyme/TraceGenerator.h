@@ -22,129 +22,157 @@ private:
   ProbProgMode mode = tutils->mode;
 
 public:
-  TraceGenerator(EnzymeLogic &Logic, TraceUtils *const tutils) : Logic(Logic), tutils(tutils) {};
+  TraceGenerator(EnzymeLogic &Logic, TraceUtils *const tutils)
+      : Logic(Logic), tutils(tutils){};
 
   void visitCallInst(llvm::CallInst &call) {
-    
+
     if (!tutils->generativeFunctions.contains(call.getCalledFunction()))
       return;
-    
-    CallInst* new_call = dyn_cast<CallInst>(tutils->originalToNewFn[&call]);
+
+    CallInst *new_call = dyn_cast<CallInst>(tutils->originalToNewFn[&call]);
     IRBuilder<> Builder(new_call);
-    
-    if (call.getCalledFunction() == tutils->getTraceInterface()->getSampleFunction()) {
+
+    if (call.getCalledFunction() ==
+        tutils->getTraceInterface()->getSampleFunction()) {
       Function *samplefn = GetFunctionFromValue(new_call->getArgOperand(0));
-      Function *loglikelihoodfn = GetFunctionFromValue(new_call->getArgOperand(1));
+      Function *loglikelihoodfn =
+          GetFunctionFromValue(new_call->getArgOperand(1));
       Value *address = new_call->getArgOperand(2);
-      
-      SmallVector<Value*, 2> sample_args;
-      for (auto it = new_call->arg_begin() + 3; it != new_call->arg_end(); it++) {
+
+      SmallVector<Value *, 2> sample_args;
+      for (auto it = new_call->arg_begin() + 3; it != new_call->arg_end();
+           it++) {
         sample_args.push_back(*it);
       }
-      
+
       Value *choice;
       switch (mode) {
-        case ProbProgMode::Trace: {
-          choice = Builder.CreateCall(samplefn->getFunctionType(), samplefn, sample_args, "sample." + call.getName());
-          break;
-        }
-        case ProbProgMode::Condition: {
-          Instruction *hasChoice = tutils->HasChoice(Builder, address);
-          Instruction *ThenTerm, *ElseTerm;
-          Value *ThenChoice, *ElseChoice;
-          SplitBlockAndInsertIfThenElse(hasChoice, new_call, &ThenTerm, &ElseTerm);
-          
-          new_call->getParent()->setName(hasChoice->getParent()->getName() + ".cntd");
-          
-          Builder.SetInsertPoint(ThenTerm); {
-            ThenTerm->getParent()->setName("condition." + call.getName() + ".with.trace");
-            ThenChoice = tutils->GetChoice(Builder, address, samplefn->getFunctionType()->getReturnType());
-          }
-          
-          Builder.SetInsertPoint(ElseTerm); {
-            ElseTerm->getParent()->setName("condition." + call.getName() + ".without.trace");
-            ElseChoice = Builder.CreateCall(samplefn->getFunctionType(), samplefn, sample_args, "sample." + call.getName());
-          }
-          
-          Builder.SetInsertPoint(new_call);
-          auto phi = Builder.CreatePHI(new_call->getType(), 2);
-          phi->addIncoming(ThenChoice, ThenTerm->getParent());
-          phi->addIncoming(ElseChoice, ElseTerm->getParent());
-          choice = phi;
-          break;
-        }
+      case ProbProgMode::Trace: {
+        choice = Builder.CreateCall(samplefn->getFunctionType(), samplefn,
+                                    sample_args, "sample." + call.getName());
+        break;
       }
-      
-      SmallVector<Value*, 3> loglikelihood_args = SmallVector(sample_args);
+      case ProbProgMode::Condition: {
+        Instruction *hasChoice = tutils->HasChoice(Builder, address);
+        Instruction *ThenTerm, *ElseTerm;
+        Value *ThenChoice, *ElseChoice;
+        SplitBlockAndInsertIfThenElse(hasChoice, new_call, &ThenTerm,
+                                      &ElseTerm);
+
+        new_call->getParent()->setName(hasChoice->getParent()->getName() +
+                                       ".cntd");
+
+        Builder.SetInsertPoint(ThenTerm);
+        {
+          ThenTerm->getParent()->setName("condition." + call.getName() +
+                                         ".with.trace");
+          ThenChoice = tutils->GetChoice(
+              Builder, address, samplefn->getFunctionType()->getReturnType());
+        }
+
+        Builder.SetInsertPoint(ElseTerm);
+        {
+          ElseTerm->getParent()->setName("condition." + call.getName() +
+                                         ".without.trace");
+          ElseChoice =
+              Builder.CreateCall(samplefn->getFunctionType(), samplefn,
+                                 sample_args, "sample." + call.getName());
+        }
+
+        Builder.SetInsertPoint(new_call);
+        auto phi = Builder.CreatePHI(new_call->getType(), 2);
+        phi->addIncoming(ThenChoice, ThenTerm->getParent());
+        phi->addIncoming(ElseChoice, ElseTerm->getParent());
+        choice = phi;
+        break;
+      }
+      }
+
+      SmallVector<Value *, 3> loglikelihood_args = SmallVector(sample_args);
       loglikelihood_args.push_back(choice);
-      auto score = Builder.CreateCall(loglikelihoodfn->getFunctionType(), loglikelihoodfn, loglikelihood_args, "likelihood." + call.getName());
+      auto score = Builder.CreateCall(loglikelihoodfn->getFunctionType(),
+                                      loglikelihoodfn, loglikelihood_args,
+                                      "likelihood." + call.getName());
       tutils->InsertChoice(Builder, address, score, choice);
-      
+
       new_call->replaceAllUsesWith(choice);
       new_call->eraseFromParent();
     } else {
       auto str = call.getName() + "." + call.getCalledFunction()->getName();
       auto address = Builder.CreateGlobalStringPtr(str.str());
-      
-      SmallVector<Value*, 2> args;
+
+      SmallVector<Value *, 2> args;
       for (auto it = new_call->arg_begin(); it != new_call->arg_end(); it++) {
         args.push_back(*it);
       }
-      
+
       if (tutils->hasDynamicTraceInterface())
         args.push_back(tutils->getDynamicTraceInterface());
-      
-      Function *samplefn = Logic.CreateTrace(call.getCalledFunction(), tutils->generativeFunctions, tutils->mode, tutils->hasDynamicTraceInterface());
+
+      Function *samplefn = Logic.CreateTrace(
+          call.getCalledFunction(), tutils->generativeFunctions, tutils->mode,
+          tutils->hasDynamicTraceInterface());
 
       Value *tracecall;
       switch (mode) {
-        case ProbProgMode::Trace: {
-          tracecall = Builder.CreateCall(samplefn->getFunctionType(), samplefn, args, call.getName());
-          break;
-        }
-        case ProbProgMode::Condition: {
-          Instruction *hasCall = tutils->HasCall(Builder, address);
-          Instruction *ThenTerm, *ElseTerm;
-          Value *ElseTracecall, *ThenTracecall;
-          SplitBlockAndInsertIfThenElse(hasCall, new_call, &ThenTerm, &ElseTerm);
-          
-          new_call->getParent()->setName(hasCall->getParent()->getName() + ".cntd");
-          
-          Builder.SetInsertPoint(ThenTerm); {
-            ThenTerm->getParent()->setName("condition." + call.getName() + ".with.trace");
-            SmallVector<Value*, 2> args_and_cond = SmallVector(args);
-            auto trace = tutils->GetTrace(Builder, address);
-            args_and_cond.push_back(trace);
-            ThenTracecall = Builder.CreateCall(samplefn->getFunctionType(), samplefn, args_and_cond, call.getName());
-          }
-
-          Builder.SetInsertPoint(ElseTerm); {
-            ElseTerm->getParent()->setName("condition." + call.getName() + ".without.trace");
-            SmallVector<Value*, 2> args_and_null = SmallVector(args);
-            auto trace = ConstantPointerNull::get(cast<PointerType>(tutils->getTraceInterface()->newTraceTy()->getReturnType()));
-            args_and_null.push_back(trace);
-            ElseTracecall = Builder.CreateCall(samplefn->getFunctionType(), samplefn, args_and_null, call.getName());
-          }
-
-          Builder.SetInsertPoint(new_call);
-          auto phi = Builder.CreatePHI(samplefn->getFunctionType()->getReturnType(), 2);
-          phi->addIncoming(ThenTracecall, ThenTerm->getParent());
-          phi->addIncoming(ElseTracecall, ElseTerm->getParent());
-          tracecall = phi;
-        }
+      case ProbProgMode::Trace: {
+        tracecall = Builder.CreateCall(samplefn->getFunctionType(), samplefn,
+                                       args, call.getName());
+        break;
       }
-     
+      case ProbProgMode::Condition: {
+        Instruction *hasCall = tutils->HasCall(Builder, address);
+        Instruction *ThenTerm, *ElseTerm;
+        Value *ElseTracecall, *ThenTracecall;
+        SplitBlockAndInsertIfThenElse(hasCall, new_call, &ThenTerm, &ElseTerm);
+
+        new_call->getParent()->setName(hasCall->getParent()->getName() +
+                                       ".cntd");
+
+        Builder.SetInsertPoint(ThenTerm);
+        {
+          ThenTerm->getParent()->setName("condition." + call.getName() +
+                                         ".with.trace");
+          SmallVector<Value *, 2> args_and_cond = SmallVector(args);
+          auto trace = tutils->GetTrace(Builder, address);
+          args_and_cond.push_back(trace);
+          ThenTracecall =
+              Builder.CreateCall(samplefn->getFunctionType(), samplefn,
+                                 args_and_cond, call.getName());
+        }
+
+        Builder.SetInsertPoint(ElseTerm);
+        {
+          ElseTerm->getParent()->setName("condition." + call.getName() +
+                                         ".without.trace");
+          SmallVector<Value *, 2> args_and_null = SmallVector(args);
+          auto trace = ConstantPointerNull::get(cast<PointerType>(
+              tutils->getTraceInterface()->newTraceTy()->getReturnType()));
+          args_and_null.push_back(trace);
+          ElseTracecall =
+              Builder.CreateCall(samplefn->getFunctionType(), samplefn,
+                                 args_and_null, call.getName());
+        }
+
+        Builder.SetInsertPoint(new_call);
+        auto phi =
+            Builder.CreatePHI(samplefn->getFunctionType()->getReturnType(), 2);
+        phi->addIncoming(ThenTracecall, ThenTerm->getParent());
+        phi->addIncoming(ElseTracecall, ElseTerm->getParent());
+        tracecall = phi;
+      }
+      }
+
       Value *ret = Builder.CreateExtractValue(tracecall, {0});
       Value *subtrace = Builder.CreateExtractValue(tracecall, {1});
-      
+
       tutils->InsertCall(Builder, address, subtrace);
-      
+
       new_call->replaceAllUsesWith(ret);
       new_call->eraseFromParent();
     }
   }
-  
-  };
-
+};
 
 #endif /* TraceGenerator_h */

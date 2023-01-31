@@ -706,7 +706,7 @@ public:
     }
 
     fn = GetFunctionFromValue(fn);
-    
+
     if (!isa<Function>(fn)) {
       EmitFailure("NoFunctionToDifferentiate", CI->getDebugLoc(), CI,
                   "failed to find fn to differentiate", *CI, " - found - ",
@@ -1791,7 +1791,7 @@ public:
     }
     return true;
   }
-  
+
   bool HandleProbProg(CallInst *CI, ProbProgMode mode) {
     IRBuilder<> Builder(CI);
     Function *F;
@@ -1803,12 +1803,12 @@ public:
     }
 
     assert(F);
-    
+
     bool sret = false;
-    SmallVector<Value*, 4> args;
+    SmallVector<Value *, 4> args;
     Value *conditioning_trace = nullptr;
     Value *dynamic_interface = nullptr;
-    
+
 #if LLVM_VERSION_MAJOR >= 14
     for (unsigned i = 1 + sret; i < CI->arg_size(); ++i)
 #else
@@ -1835,39 +1835,39 @@ public:
           return false;
         }
       }
-      
+
       args.push_back(res);
     }
-    
+
     // Interface
-      
+
     Function *sample = nullptr;
-    for (auto&& interface_func: F->getParent()->functions()) {
-        if (interface_func.getName().contains("__enzyme_sample")) {
-          assert(interface_func.getFunctionType()->getNumParams() >= 3);
-          sample = &interface_func;
-        }
+    for (auto &&interface_func : F->getParent()->functions()) {
+      if (interface_func.getName().contains("__enzyme_sample")) {
+        assert(interface_func.getFunctionType()->getNumParams() >= 3);
+        sample = &interface_func;
       }
-    
+    }
+
     assert(sample);
-    
+
     if (dynamic_interface)
       args.push_back(dynamic_interface);
-    
+
     if (mode == ProbProgMode::Condition)
       args.push_back(conditioning_trace);
-    
+
     // Determine generative functions
-    SmallPtrSet<Function*, 4> generativeFunctions;
-    SetVector<Function*, std::deque<Function*>> workList;
+    SmallPtrSet<Function *, 4> generativeFunctions;
+    SetVector<Function *, std::deque<Function *>> workList;
     workList.insert(sample);
     generativeFunctions.insert(sample);
-    
+
     while (!workList.empty()) {
       auto todo = *workList.begin();
       workList.erase(workList.begin());
-      
-      for (auto&& U : todo->uses()) {
+
+      for (auto &&U : todo->uses()) {
         if (auto ACS = AbstractCallSite(&U)) {
           auto fun = ACS.getInstruction()->getParent()->getParent();
           auto [it, inserted] = generativeFunctions.insert(fun);
@@ -1876,19 +1876,21 @@ public:
         }
       }
     }
-      
-    auto newFunc = Logic.CreateTrace(F, generativeFunctions, mode, dynamic_interface != nullptr);
 
-    Value *traceCall = Builder.CreateCall(newFunc->getFunctionType(), newFunc, args);
+    auto newFunc = Logic.CreateTrace(F, generativeFunctions, mode,
+                                     dynamic_interface != nullptr);
+
+    Value *traceCall =
+        Builder.CreateCall(newFunc->getFunctionType(), newFunc, args);
     Value *trace = Builder.CreateExtractValue(traceCall, {1});
-    
+
     // try to cast i8* returned from trace to CI->getRetType....
     if (CI->getType() != trace->getType())
       trace = Builder.CreatePointerCast(trace, CI->getType());
-    
+
     CI->replaceAllUsesWith(trace);
     CI->eraseFromParent();
-    
+
     return true;
   }
 
@@ -2275,8 +2277,7 @@ public:
             toBatch.push_back(CI);
           else if (probProg) {
             toProbProg[CI] = probProgMode;
-          }
-          else
+          } else
             toLower[CI] = derivativeMode;
 
           if (auto dc = dyn_cast<Function>(fn)) {
@@ -2363,11 +2364,11 @@ public:
     for (auto call : toBatch) {
       HandleBatch(call);
     }
-    
-    for (auto&& [call, mode] : toProbProg) {
+
+    for (auto &&[call, mode] : toProbProg) {
       HandleProbProg(call, mode);
     }
-    
+
     if (Changed && EnzymeAttributor) {
       // TODO consider enabling when attributor does not delete
       // dead internal functions, which invalidates Enzyme's cache
@@ -2566,40 +2567,70 @@ public:
       I->eraseFromParent();
       changed = true;
     }
-      
-    SmallPtrSet<CallInst*, 4> sample_calls;
-    for (auto&& func : M) {
-      for (auto&& BB: func) {
-        for (auto &&Inst: BB) {
+
+    SmallPtrSet<CallInst *, 4> sample_calls;
+    for (auto &&func : M) {
+      for (auto &&BB : func) {
+        for (auto &&Inst : BB) {
           if (auto CI = dyn_cast<CallInst>(&Inst)) {
-            Function *enzyme_sample = GetFunctionFromValue(CI->getCalledOperand());
-            if (enzyme_sample && enzyme_sample->getName().startswith("__enzyme_sample")) {
+            Function *enzyme_sample =
+                GetFunctionFromValue(CI->getCalledOperand());
+            if (enzyme_sample &&
+                enzyme_sample->getName().startswith("__enzyme_sample")) {
               if (CI->getNumOperands() < 3) {
-                EmitFailure("IllegalNumberOfArguments", CI->getDebugLoc(), CI, "Not enough arguments passed to call to __enzyme_sample");
+                EmitFailure(
+                    "IllegalNumberOfArguments", CI->getDebugLoc(), CI,
+                    "Not enough arguments passed to call to __enzyme_sample");
               }
-              Function* samplefn = GetFunctionFromValue(CI->getOperand(0));
-              unsigned expected = samplefn->getFunctionType()->getNumParams() + 3;
+              Function *samplefn = GetFunctionFromValue(CI->getOperand(0));
+              unsigned expected =
+                  samplefn->getFunctionType()->getNumParams() + 3;
               unsigned actual = CI->getNumArgOperands();
-              if (CI->getNumArgOperands() - 3 != samplefn->getFunctionType()->getNumParams()) {
-                EmitFailure("IllegalNumberOfArguments", CI->getDebugLoc(), CI, "Illegal number of arguments passed to call to __enzyme_sample.", " Expected: ", expected, " got: ", actual);
+              if (CI->getNumArgOperands() - 3 !=
+                  samplefn->getFunctionType()->getNumParams()) {
+                EmitFailure("IllegalNumberOfArguments", CI->getDebugLoc(), CI,
+                            "Illegal number of arguments passed to call to "
+                            "__enzyme_sample.",
+                            " Expected: ", expected, " got: ", actual);
               }
-              Function* pdf = GetFunctionFromValue(CI->getArgOperand(1));
-              
-              for (unsigned i = 0; i < samplefn->getFunctionType()->getNumParams(); ++i) {
-                Value* ci_arg = CI->getArgOperand(i + 3);
-                Value* sample_arg = samplefn->getArg(i);
+              Function *pdf = GetFunctionFromValue(CI->getArgOperand(1));
+
+              for (unsigned i = 0;
+                   i < samplefn->getFunctionType()->getNumParams(); ++i) {
+                Value *ci_arg = CI->getArgOperand(i + 3);
+                Value *sample_arg = samplefn->getArg(i);
                 Value *pdf_arg = pdf->getArg(i);
-                
+
                 if (ci_arg->getType() != sample_arg->getType()) {
-                  EmitFailure("IllegalSampleType", CI->getDebugLoc(), CI, "Type of: ", *ci_arg, " (", *ci_arg->getType(), ")", " does not match the argument type of the sample function: ", *samplefn, " at: ", i, " (", *sample_arg->getType(), ")");
+                  EmitFailure(
+                      "IllegalSampleType", CI->getDebugLoc(), CI,
+                      "Type of: ", *ci_arg, " (", *ci_arg->getType(), ")",
+                      " does not match the argument type of the sample "
+                      "function: ",
+                      *samplefn, " at: ", i, " (", *sample_arg->getType(), ")");
                 }
                 if (ci_arg->getType() != pdf_arg->getType()) {
-                  EmitFailure("IllegalSampleType", CI->getDebugLoc(), CI, "Type of: ", *ci_arg, " (", *ci_arg->getType(), ")", " does not match the argument type of the density function: ", *pdf, " at: ", i, " (", *pdf_arg->getType(), ")");
+                  EmitFailure("IllegalSampleType", CI->getDebugLoc(), CI,
+                              "Type of: ", *ci_arg, " (", *ci_arg->getType(),
+                              ")",
+                              " does not match the argument type of the "
+                              "density function: ",
+                              *pdf, " at: ", i, " (", *pdf_arg->getType(), ")");
                 }
               }
-              
-              if (pdf->getArg(pdf->getFunctionType()->getNumParams() - 1)->getType() != samplefn->getReturnType()) {
-                EmitFailure("IllegalSampleType", CI->getDebugLoc(), CI, "Return type of ", *samplefn, " (", *samplefn->getReturnType(), ")", " does not match the last argument type of the density function: ", *pdf, " (", *pdf->getArg(pdf->getFunctionType()->getNumParams() - 1)->getType(), ")");
+
+              if (pdf->getArg(pdf->getFunctionType()->getNumParams() - 1)
+                      ->getType() != samplefn->getReturnType()) {
+                EmitFailure(
+                    "IllegalSampleType", CI->getDebugLoc(), CI,
+                    "Return type of ", *samplefn, " (",
+                    *samplefn->getReturnType(), ")",
+                    " does not match the last argument type of the density "
+                    "function: ",
+                    *pdf, " (",
+                    *pdf->getArg(pdf->getFunctionType()->getNumParams() - 1)
+                         ->getType(),
+                    ")");
               }
               sample_calls.insert(CI);
             }
@@ -2607,22 +2638,22 @@ public:
         }
       }
     }
-      
-      for (auto call : sample_calls) {
-        Function *samplefn = GetFunctionFromValue(call->getArgOperand(0));
-        
-        SmallVector<Value*, 2> args;
-        for (auto it = call->arg_begin() + 3; it != call->arg_end(); it++) {
-          args.push_back(*it);
-        }
-        CallInst* choice = CallInst::Create(samplefn->getFunctionType(), samplefn, args);
-        
-        choice->setDebugLoc(call->getDebugLoc());
-        choice->setName(call->getName());
-                
-        ReplaceInstWithInst(call, choice);
+
+    for (auto call : sample_calls) {
+      Function *samplefn = GetFunctionFromValue(call->getArgOperand(0));
+
+      SmallVector<Value *, 2> args;
+      for (auto it = call->arg_begin() + 3; it != call->arg_end(); it++) {
+        args.push_back(*it);
       }
-    
+      CallInst *choice =
+          CallInst::Create(samplefn->getFunctionType(), samplefn, args);
+
+      choice->setDebugLoc(call->getDebugLoc());
+      choice->setName(call->getName());
+
+      ReplaceInstWithInst(call, choice);
+    }
 
     for (const auto &pair : Logic.PPC.cache)
       pair.second->eraseFromParent();

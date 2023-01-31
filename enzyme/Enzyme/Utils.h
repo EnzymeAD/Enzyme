@@ -1132,8 +1132,6 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
                             llvm::Value *shadow, const char *Message,
                             llvm::DebugLoc &&loc, llvm::Instruction *orig);
 
-
-llvm::Function * GetFunctionFromValue(llvm::Value *fn);
-
+llvm::Function *GetFunctionFromValue(llvm::Value *fn);
 
 #endif
