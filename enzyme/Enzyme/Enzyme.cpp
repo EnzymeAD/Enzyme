@@ -2566,29 +2566,47 @@ public:
       I->eraseFromParent();
       changed = true;
     }
-    
-    
-    // Post processing for ProbProg
-    Function *sample = nullptr;
-    for (auto&& interface_func: M) {
-      if (interface_func.getName().contains("__enzyme_sample")) {
-        if (interface_func.getFunctionType()->getNumParams() < 3)
-        llvm::errs() << "Illegal number of paramters in function definition for __enzyme_sample: " << interface_func << "\n";
-        sample = &interface_func;
-      }
-    }
       
     SmallPtrSet<CallInst*, 4> sample_calls;
     for (auto&& func : M) {
       for (auto&& BB: func) {
         for (auto &&Inst: BB) {
           if (auto CI = dyn_cast<CallInst>(&Inst)) {
-            if (CI->getCalledFunction() == sample)
+            Function *enzyme_sample = GetFunctionFromValue(CI->getCalledOperand());
+            if (enzyme_sample && enzyme_sample->getName().startswith("__enzyme_sample")) {
+              if (CI->getNumOperands() < 3) {
+                EmitFailure("IllegalNumberOfArguments", CI->getDebugLoc(), CI, "Not enough arguments passed to call to __enzyme_sample");
+              }
+              Function* samplefn = GetFunctionFromValue(CI->getOperand(0));
+              unsigned expected = samplefn->getFunctionType()->getNumParams() + 3;
+              unsigned actual = CI->getNumArgOperands();
+              if (CI->getNumArgOperands() - 3 != samplefn->getFunctionType()->getNumParams()) {
+                EmitFailure("IllegalNumberOfArguments", CI->getDebugLoc(), CI, "Illegal number of arguments passed to call to __enzyme_sample.", " Expected: ", expected, " got: ", actual);
+              }
+              Function* pdf = GetFunctionFromValue(CI->getArgOperand(1));
+              
+              for (unsigned i = 0; i < samplefn->getFunctionType()->getNumParams(); ++i) {
+                Value* ci_arg = CI->getArgOperand(i + 3);
+                Value* sample_arg = samplefn->getArg(i);
+                Value *pdf_arg = pdf->getArg(i);
+                
+                if (ci_arg->getType() != sample_arg->getType()) {
+                  EmitFailure("IllegalSampleType", CI->getDebugLoc(), CI, "Type of: ", *ci_arg, " (", *ci_arg->getType(), ")", " does not match the argument type of the sample function: ", *samplefn, " at: ", i, " (", *sample_arg->getType(), ")");
+                }
+                if (ci_arg->getType() != pdf_arg->getType()) {
+                  EmitFailure("IllegalSampleType", CI->getDebugLoc(), CI, "Type of: ", *ci_arg, " (", *ci_arg->getType(), ")", " does not match the argument type of the density function: ", *pdf, " at: ", i, " (", *pdf_arg->getType(), ")");
+                }
+              }
+              
+              if (pdf->getArg(pdf->getFunctionType()->getNumParams() - 1)->getType() != samplefn->getReturnType()) {
+                EmitFailure("IllegalSampleType", CI->getDebugLoc(), CI, "Return type of ", *samplefn, " (", *samplefn->getReturnType(), ")", " does not match the last argument type of the density function: ", *pdf, " (", *pdf->getArg(pdf->getFunctionType()->getNumParams() - 1)->getType(), ")");
+              }
               sample_calls.insert(CI);
             }
           }
         }
       }
+    }
       
       for (auto call : sample_calls) {
         Function *samplefn = GetFunctionFromValue(call->getArgOperand(0));
