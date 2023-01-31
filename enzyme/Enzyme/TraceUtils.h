@@ -296,6 +296,12 @@ public:
       DestArg++;
       SrcArg++;
     }
+        
+    if (has_dynamic_interface)
+      newFunc->getArg(orig_FTy->getNumParams())->setName("interface");
+    
+    if (mode == ProbProgMode::Condition)
+      newFunc->getArg(orig_FTy->getNumParams() + has_dynamic_interface)->setName("trace");
     
     SmallVector<ReturnInst *, 4> Returns;
   #if LLVM_VERSION_MAJOR >= 13
