@@ -610,12 +610,19 @@ bool isPossibleFloat(const TypeResults &TR, Value *I, const DataLayout &DL) {
   if (!I->getType()->isVoidTy()) {
     auto Size = (DL.getTypeSizeInBits(I->getType()) + 7) / 8;
     auto vd = TR.query(I);
-    if (vd[{-1}].isPossibleFloat()) {
-      for (unsigned i = 0; i < Size; i++) {
-        if (vd[{(int)i}].isPossibleFloat()) {
+    auto ct0 = vd[{-1}];
+    if (ct0.isPossibleFloat() && ct0 != BaseType::Anything) {
+      for (unsigned i = 0; i < Size;) {
+        auto ct = vd[{(int)i}];
+        if (ct.isPossibleFloat() && ct != BaseType::Anything) {
           possibleFloat = true;
           break;
         }
+        size_t chunk = 1;
+        // Implicit pointer
+        if (ct == BaseType::Pointer)
+          chunk = DL.getPointerSizeInBits() / 8;
+        i += chunk;
       }
     }
   }
