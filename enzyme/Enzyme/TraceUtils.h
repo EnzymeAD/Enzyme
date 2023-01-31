@@ -10,7 +10,6 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Triple.h"
 
-#include "llvm/IR/AbstractCallSite.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
@@ -306,6 +305,7 @@ public:
   TraceUtils(ProbProgMode mode, bool has_dynamic_interface, Function *F,
              SmallPtrSetImpl<Function *> &generativeFunctions)
       : mode(mode), oldFunc(F), generativeFunctions(generativeFunctions) {
+    auto &Context = oldFunc->getContext();
 
     if (!has_dynamic_interface) {
       interface = new StaticTraceInterface(F->getParent());
@@ -314,7 +314,7 @@ public:
     FunctionType *orig_FTy = oldFunc->getFunctionType();
     Type *traceType = !has_dynamic_interface
                           ? interface->newTraceTy()->getReturnType()
-                          : PointerType::getInt8PtrTy(oldFunc->getContext());
+                          : PointerType::getInt8PtrTy(Context);
     SmallVector<Type *, 4> params;
 
     for (unsigned i = 0; i < orig_FTy->getNumParams(); ++i) {
@@ -322,24 +322,21 @@ public:
     }
 
     if (has_dynamic_interface)
-      params.push_back(PointerType::getUnqual(
-          PointerType::getInt8PtrTy(oldFunc->getContext())));
+      params.push_back(
+          PointerType::getUnqual(PointerType::getInt8PtrTy(Context)));
 
     if (mode == ProbProgMode::Condition)
       params.push_back(traceType);
 
-    Type *NewTy = StructType::get(oldFunc->getContext(),
-                                  {oldFunc->getReturnType(), traceType});
-
-    StringRef prefix =
-        mode == ProbProgMode::Condition ? "condition_" : "trace_";
-
+    StructType *NewTy =
+        StructType::get(Context, {oldFunc->getReturnType(), traceType});
     FunctionType *FTy = FunctionType::get(NewTy, params, oldFunc->isVarArg());
-    newFunc =
-        Function::Create(FTy, oldFunc->getLinkage(),
-                         prefix + oldFunc->getName(), oldFunc->getParent());
 
-    newFunc->setLinkage(Function::LinkageTypes::InternalLinkage);
+    Twine Name = (mode == ProbProgMode::Condition ? "condition_" : "trace_") +
+                 Twine(oldFunc->getName());
+
+    newFunc = Function::Create(FTy, Function::LinkageTypes::InternalLinkage,
+                               Name, oldFunc->getParent());
 
     auto DestArg = newFunc->arg_begin();
     auto SrcArg = oldFunc->arg_begin();
@@ -352,12 +349,18 @@ public:
       SrcArg++;
     }
 
-    if (has_dynamic_interface)
-      newFunc->getArg(orig_FTy->getNumParams())->setName("interface");
+    if (has_dynamic_interface) {
+      dynamic_interface =
+          newFunc->getArg(newFunc->getFunctionType()->getNumParams() -
+                          (1 + (mode == ProbProgMode::Condition)));
+      dynamic_interface->setName("interface");
+    }
 
-    if (mode == ProbProgMode::Condition)
-      newFunc->getArg(orig_FTy->getNumParams() + has_dynamic_interface)
-          ->setName("trace");
+    if (mode == ProbProgMode::Condition) {
+      conditioning_trace =
+          newFunc->getArg(newFunc->getFunctionType()->getNumParams() - 1);
+      conditioning_trace->setName("trace");
+    }
 
     SmallVector<ReturnInst *, 4> Returns;
 #if LLVM_VERSION_MAJOR >= 13
@@ -374,14 +377,11 @@ public:
     if (has_dynamic_interface) {
       Function *sample = nullptr;
       for (auto &&interface_func : F->getParent()->functions()) {
-        if (interface_func.getName().contains("__enzyme_sample")) {
+        if (interface_func.getName().startswith("__enzyme_sample")) {
           assert(interface_func.getFunctionType()->getNumParams() >= 3);
           sample = &interface_func;
         }
       }
-      dynamic_interface =
-          newFunc->getArg(newFunc->getFunctionType()->getNumParams() -
-                          (1 + (mode == ProbProgMode::Condition)));
       interface = new DynamicTraceInterface(sample, dynamic_interface);
     }
 
@@ -389,16 +389,11 @@ public:
 
     IRBuilder<> Builder(
         newFunc->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+    Builder.SetCurrentDebugLocation(oldFunc->getEntryBlock()
+                                        .getFirstNonPHIOrDbgOrLifetime()
+                                        ->getDebugLoc());
+
     trace = CreateTrace(Builder);
-
-    conditioning_trace =
-        newFunc->getArg(newFunc->getFunctionType()->getNumParams() - 1);
-
-    if (newFunc->getSubprogram()) {
-      DILocation *L = DILocation::get(newFunc->getContext(), 0, 0,
-                                      newFunc->getSubprogram());
-      trace->setDebugLoc(DebugLoc(L));
-    }
 
     // Replace returns with ret trace
 

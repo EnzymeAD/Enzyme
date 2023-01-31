@@ -51,6 +51,7 @@
 #include "llvm/Transforms/Utils/Cloning.h"
 #if LLVM_VERSION_MAJOR >= 11
 #include "llvm/Analysis/InlineAdvisor.h"
+#include "llvm/IR/AbstractCallSite.h"
 #endif
 #include "llvm/Analysis/BasicAliasAnalysis.h"
 #include "llvm/Analysis/GlobalsModRef.h"
@@ -1867,6 +1868,7 @@ public:
       auto todo = *workList.begin();
       workList.erase(workList.begin());
 
+#if LLVM_VERSION_MAJOR > 10
       for (auto &&U : todo->uses()) {
         if (auto ACS = AbstractCallSite(&U)) {
           auto fun = ACS.getInstruction()->getParent()->getParent();
@@ -1875,6 +1877,16 @@ public:
             workList.insert(fun);
         }
       }
+#else
+      for (auto &&U : todo->uses()) {
+        if (auto &&call = dyn_cast<CallInst>(U.getUser())) {
+          auto &&fun = call->getParent()->getParent();
+          auto &&[it, inserted] = generativeFunctions.insert(fun);
+          if (inserted)
+            workList.insert(fun);
+        }
+      }
+#endif
     }
 
     auto newFunc = Logic.CreateTrace(F, generativeFunctions, mode,
