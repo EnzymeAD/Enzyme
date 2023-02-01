@@ -69,6 +69,15 @@ entry:
 }
 
 
+; CHECK: define i8* @condition(double* %data, i32 %n, i8* %trace)
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   %0 = load i32, i32* @enzyme_condition
+; CHECK-NEXT:   %1 = call { double, i8* } @condition_loss(double* %data, i32 %n, i8* %trace)
+; CHECK-NEXT:   %2 = extractvalue { double, i8* } %1, 1
+; CHECK-NEXT:   ret i8* %2
+; CHECK-NEXT: }
+
+
 ; CHECK: define internal { double, i8* } @condition_loss(double* %data, i32 %n, i8* %trace)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %trace1 = call i8* @__enzyme_newtrace()

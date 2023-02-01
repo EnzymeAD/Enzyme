@@ -31,6 +31,13 @@ entry:
 }
 
 
+; CHECK: define i8* @generate()
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   %0 = call i8* @trace_test()
+; CHECK-NEXT:   ret i8* %0
+; CHECK-NEXT: }
+
+
 ; CHECK: define internal i8* @trace_test()
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %trace = call i8* @__enzyme_newtrace()

@@ -65,6 +65,16 @@ entry:
 }
 
 
+; CHECK: define i8* @condition(double* %data, i32 %n, i8* %trace, i8** %interface)
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   %0 = load i32, i32* @enzyme_condition
+; CHECK-NEXT:   %1 = load i32, i32* @enzyme_interface
+; CHECK-NEXT:   %2 = call { double, i8* } @condition_loss(double* %data, i32 %n, i8** %interface, i8* %trace)
+; CHECK-NEXT:   %3 = extractvalue { double, i8* } %2, 1
+; CHECK-NEXT:   ret i8* %3
+; CHECK-NEXT: }
+
+
 ; CHECK: define internal { double, i8* } @condition_loss(double* %data, i32 %n, i8** %interface, i8* %trace)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = getelementptr inbounds i8*, i8** %interface, i32 4

@@ -116,3 +116,12 @@ entry:
 ; CHECK-NEXT:   %loss.0.lcssa.i = phi double [ 0.000000e+00, %entry ], [ %3, %for.body.i ]
 ; CHECK-NEXT:   ret double %loss.0.lcssa.i
 ; CHECK-NEXT: }
+
+
+; CHECK: define i8* @generate(double* %data, i32 %n, i8** %interface)
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   %0 = load i32, i32* @enzyme_interface
+; CHECK-NEXT:   %1 = call { double, i8* } @trace_loss(double* %data, i32 %n, i8** %interface)
+; CHECK-NEXT:   %2 = extractvalue { double, i8* } %1, 1
+; CHECK-NEXT:   ret i8* %2
+; CHECK-NEXT: }

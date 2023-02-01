@@ -41,6 +41,14 @@ entry:
 }
 
 
+; CHECK: define i8* @condition(i8* %trace)
+; CHECK-NEXT: entry:
+; CHECK-NEXT:   %0 = load i32, i32* @enzyme_condition
+; CHECK-NEXT:   %1 = call i8* @condition_test(i8* %trace)
+; CHECK-NEXT:   ret i8* %1
+; CHECK-NEXT: }
+
+
 ; CHECK: define internal i8* @condition_test(i8* %trace)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %trace1 = call i8* @__enzyme_newtrace()
