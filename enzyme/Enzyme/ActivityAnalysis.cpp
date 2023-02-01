@@ -2291,6 +2291,40 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
         return true;
       }
     }
+    if (auto PN = dyn_cast<PHINode>(inst)) {
+      std::deque<PHINode *> todo = {PN};
+      SmallPtrSet<PHINode *, 1> done;
+      SmallVector<Value *, 2> incoming;
+      while (todo.size()) {
+        auto cur = todo.back();
+        todo.pop_back();
+        if (done.count(cur))
+          continue;
+        done.insert(cur);
+        for (auto &V : cur->incoming_values()) {
+          if (auto P = dyn_cast<PHINode>(V)) {
+            todo.push_back(P);
+            continue;
+          }
+          incoming.push_back(V);
+        }
+      }
+      bool legal = true;
+      auto &DL = PN->getParent()->getParent()->getParent()->getDataLayout();
+      for (auto V : incoming) {
+        if (isPossibleFloat(TR, V, DL) && !isConstantValue(TR, V)) {
+          legal = true;
+          break;
+        }
+      }
+      if (legal) {
+        if (EnzymePrintActivity)
+          llvm::errs()
+              << " constant instruction as phi of known pointer or inactive"
+              << *inst << "\n";
+        return true;
+      }
+    }
   }
 
   if (auto MTI = dyn_cast<MemTransferInst>(inst)) {
