@@ -9,9 +9,6 @@
 declare double @normal(double, double)
 declare double @normal_logpdf(double, double, double)
 
-declare double @exp(double)
-declare double @log(double)
-
 declare double @__enzyme_sample(double (double, double)*, double (double, double, double)*, i8*, double, double)
 declare i8* @__enzyme_trace(double (double*, i32)*, double*, i32, i32, i8**)
 

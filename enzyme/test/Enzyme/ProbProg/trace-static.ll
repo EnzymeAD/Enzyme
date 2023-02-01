@@ -7,9 +7,6 @@
 declare double @normal(double, double)
 declare double @normal_logpdf(double, double, double)
 
-declare double @exp(double)
-declare double @log(double)
-
 declare i8* @__enzyme_newtrace()
 declare void @__enzyme_freetrace(i8*)
 declare i8* @__enzyme_get_trace(i8*, i8*)
