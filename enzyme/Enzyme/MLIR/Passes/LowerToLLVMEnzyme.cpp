@@ -14,11 +14,13 @@
 #include "Passes/Passes.h"
 #include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
 #include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"
+#include "mlir/Conversion/LLVMCommon/MemRefBuilder.h"
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Transforms/DialectConversion.h"
 
 using namespace mlir;
+using llvm::errs;
 
 namespace {
 void updatePrimalFunc(FunctionOpInterface fn,
@@ -71,6 +73,33 @@ void updatePrimalFunc(FunctionOpInterface fn,
   });
 }
 
+void convertMemRefArgument(Location loc, Value primal,
+                           llvm::Optional<Value> shadow,
+                           Value enzyme_const_addr, int64_t rank, OpBuilder &b,
+                           SmallVectorImpl<Value> &operands) {
+  MemRefDescriptor memrefPrimal(primal);
+  // Mark the allocated pointer as constant
+  operands.push_back(enzyme_const_addr);
+  operands.push_back(memrefPrimal.alignedPtr(b, loc));
+
+  if (shadow.has_value()) {
+    MemRefDescriptor memrefShadow(shadow.value());
+    // Shadow aligned pointer follows the primal aligned pointer
+    operands.push_back(memrefPrimal.allocatedPtr(b, loc));
+    operands.push_back(memrefShadow.allocatedPtr(b, loc));
+  } else {
+    operands.push_back(enzyme_const_addr);
+    operands.push_back(memrefPrimal.allocatedPtr(b, loc));
+  }
+
+  // Offset, sizes, and strides
+  operands.push_back(memrefPrimal.offset(b, loc));
+  for (int64_t pos = 0; pos < rank; ++pos)
+    operands.push_back(memrefPrimal.size(b, loc, pos));
+  for (int64_t pos = 0; pos < rank; ++pos)
+    operands.push_back(memrefPrimal.stride(b, loc, pos));
+}
+
 struct DiffOpLowering : public OpConversionPattern<enzyme::DiffOp> {
   using OpConversionPattern<enzyme::DiffOp>::OpConversionPattern;
 
@@ -81,6 +110,10 @@ struct DiffOpLowering : public OpConversionPattern<enzyme::DiffOp> {
     Location loc = op.getLoc();
     FlatSymbolRefAttr autodiffDecl =
         getOrInsertAutodiffDecl(moduleOp, rewriter);
+    auto const_global = getOrInsertEnzymeConstDecl(moduleOp, rewriter);
+    auto voidPtrType = LLVM::LLVMPointerType::get(rewriter.getI8Type());
+    auto enzyme_const_addr =
+        rewriter.create<LLVM::AddressOfOp>(loc, voidPtrType, const_global);
     auto fn = cast<FunctionOpInterface>(moduleOp.lookupSymbol(op.getFn()));
     if (fn.getNumResults() > 1) {
       op.emitError() << "Expected primal function to have at most one result";
@@ -99,29 +132,41 @@ struct DiffOpLowering : public OpConversionPattern<enzyme::DiffOp> {
     operands.push_back(Value());
 
     size_t operandIdx = 0;
-    for (Type argType : fn.getArgumentTypes()) {
-      Value argument = op.getInputs()[operandIdx++];
-      bool isActiveScalar = argType.isa<FloatType>();
+    for (auto activity :
+         op.getActivity()
+             .getAsValueRange<enzyme::ActivityAttr, enzyme::Activity>()) {
+      Value arg = op.getInputs()[operandIdx++];
+      bool isActiveScalar = activity != enzyme::Activity::enzyme_const &&
+                            arg.getType().isa<FloatType>();
       convertMask.push_back(isActiveScalar);
-      if (isActiveScalar) {
-        auto argPtrType = LLVM::LLVMPointerType::get(argType);
-        Value shadow = op.getInputs()[operandIdx++];
-        Value argSpace = rewriter.create<LLVM::AllocaOp>(loc, argPtrType, one);
-        Value argShadow = rewriter.create<LLVM::AllocaOp>(loc, argPtrType, one);
-        rewriter.create<LLVM::StoreOp>(loc, argument, argSpace);
-        rewriter.create<LLVM::StoreOp>(loc, shadow, argShadow);
+      switch (activity) {
+      case enzyme::Activity::enzyme_dup:
+      case enzyme::Activity::enzyme_dupnoneed:
+        if (arg.getType().isa<FloatType>()) {
+          auto argPtrType = LLVM::LLVMPointerType::get(arg.getType());
+          Value shadow = op.getInputs()[operandIdx++];
+          Value argSpace =
+              rewriter.create<LLVM::AllocaOp>(loc, argPtrType, one);
+          Value argShadow =
+              rewriter.create<LLVM::AllocaOp>(loc, argPtrType, one);
+          rewriter.create<LLVM::StoreOp>(loc, arg, argSpace);
+          rewriter.create<LLVM::StoreOp>(loc, shadow, argShadow);
 
-        operands.push_back(argSpace);
-        operands.push_back(argShadow);
-        shadows.push_back(argShadow);
-      } else if (argType.isa<MemRefType>()) {
-        llvm_unreachable("memref type not yet supported");
-      } else {
-        // Generic pointer type
-        Value shadow = op.getInputs()[operandIdx++];
-        operands.push_back(argument);
-        operands.push_back(shadow);
-        shadows.push_back(shadow);
+          operands.push_back(argSpace);
+          operands.push_back(argShadow);
+          shadows.push_back(argShadow);
+        } else if (auto memrefType = arg.getType().dyn_cast<MemRefType>()) {
+          Value casted = adaptor.getInputs()[operandIdx - 1];
+          Value shadowCasted = adaptor.getInputs()[operandIdx];
+          shadows.push_back(shadowCasted);
+          operandIdx++;
+          convertMemRefArgument(arg.getLoc(), casted, shadowCasted,
+                                enzyme_const_addr, memrefType.getRank(),
+                                rewriter, operands);
+        }
+        break;
+      default:
+        break;
       }
     }
 
@@ -168,6 +213,21 @@ private:
     Value primalAddr =
         b.create<LLVM::AddressOfOp>(loc, primalFuncPtrType, fn.getName());
     return b.create<LLVM::BitcastOp>(loc, voidPtrType, primalAddr);
+  }
+
+  static FlatSymbolRefAttr getOrInsertEnzymeConstDecl(ModuleOp moduleOp,
+                                                      OpBuilder &b) {
+    MLIRContext *context = b.getContext();
+    if (moduleOp.lookupSymbol<LLVM::GlobalOp>("enzyme_const")) {
+      return SymbolRefAttr::get(context, "enzyme_const");
+    }
+    PatternRewriter::InsertionGuard insertGuard(b);
+    b.setInsertionPointToStart(moduleOp.getBody());
+    auto shortTy = b.getI8Type();
+    b.create<LLVM::GlobalOp>(moduleOp.getLoc(), shortTy,
+                             /*isConstant=*/true, LLVM::Linkage::Linkonce,
+                             "enzyme_const", IntegerAttr::get(shortTy, 0));
+    return SymbolRefAttr::get(context, "enzyme_const");
   }
 
   static FlatSymbolRefAttr getOrInsertAutodiffDecl(ModuleOp moduleOp,
