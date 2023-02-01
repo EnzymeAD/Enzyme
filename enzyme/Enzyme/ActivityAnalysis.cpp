@@ -2313,7 +2313,7 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
       auto &DL = PN->getParent()->getParent()->getParent()->getDataLayout();
       for (auto V : incoming) {
         if (isPossibleFloat(TR, V, DL) && !isConstantValue(TR, V)) {
-          legal = true;
+          legal = false;
           break;
         }
       }
