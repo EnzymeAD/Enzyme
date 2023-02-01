@@ -92,7 +92,6 @@ void convertMemRefArgument(Location loc, Value primal,
     operands.push_back(memrefPrimal.alignedPtr(b, loc));
   }
 
-  // Offset, sizes, and strides
   operands.push_back(memrefPrimal.offset(b, loc));
   for (int64_t pos = 0; pos < rank; ++pos)
     operands.push_back(memrefPrimal.size(b, loc, pos));
@@ -110,16 +109,13 @@ struct DiffOpLowering : public OpConversionPattern<enzyme::DiffOp> {
     Location loc = op.getLoc();
     FlatSymbolRefAttr autodiffDecl =
         getOrInsertAutodiffDecl(moduleOp, rewriter);
-    auto const_global = getOrInsertEnzymeConstDecl(moduleOp, rewriter);
+    FlatSymbolRefAttr const_global =
+        getOrInsertEnzymeConstDecl(moduleOp, rewriter);
     auto voidPtrType = LLVM::LLVMPointerType::get(rewriter.getI8Type());
     auto enzyme_const_addr =
         rewriter.create<LLVM::AddressOfOp>(loc, voidPtrType, const_global);
-    auto fn = cast<FunctionOpInterface>(moduleOp.lookupSymbol(op.getFn()));
-    if (fn.getNumResults() > 1) {
-      op.emitError() << "Expected primal function to have at most one result";
-      return failure();
-    }
 
+    auto fn = cast<FunctionOpInterface>(moduleOp.lookupSymbol(op.getFn()));
     Value one =
         rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI64Type(), 1);
     SmallVector<Value> operands, shadows;
@@ -128,7 +124,7 @@ struct DiffOpLowering : public OpConversionPattern<enzyme::DiffOp> {
     // multiple inputs, so we need to convert the pointers back at the end.
     SmallVector<bool> convertMask;
     // The first operand is a function pointer. We use a null placeholder value
-    // because we will later mutate the function.
+    // because we might mutate the function type.
     operands.push_back(Value());
 
     size_t operandIdx = 0;
@@ -165,7 +161,13 @@ struct DiffOpLowering : public OpConversionPattern<enzyme::DiffOp> {
                                 rewriter, operands);
         }
         break;
-      default:
+      case enzyme::Activity::enzyme_out:
+        // TODO: There are API differences between MLIR Enzyme and LLVM Enzyme
+        // that make enzyme_out not well-defined.
+        op.emitError() << "'enzyme_out' activity not supported";
+        return failure();
+      case enzyme::Activity::enzyme_const:
+        operands.push_back(arg);
         break;
       }
     }
