@@ -29,7 +29,7 @@ public:
 
   void visitCallInst(llvm::CallInst &call) {
 
-    if (!tutils->generativeFunctions.contains(call.getCalledFunction()))
+    if (!tutils->generativeFunctions.count(call.getCalledFunction()))
       return;
 
     CallInst *new_call = dyn_cast<CallInst>(tutils->originalToNewFn[&call]);

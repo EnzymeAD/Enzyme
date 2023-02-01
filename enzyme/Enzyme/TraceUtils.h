@@ -345,15 +345,12 @@ public:
     }
 
     if (has_dynamic_interface) {
-      dynamic_interface =
-          newFunc->getArg(newFunc->getFunctionType()->getNumParams() -
-                          (1 + (mode == ProbProgMode::Condition)));
+      dynamic_interface = newFunc->arg_end() - (1 + (mode == ProbProgMode::Condition));
       dynamic_interface->setName("interface");
     }
 
     if (mode == ProbProgMode::Condition) {
-      conditioning_trace =
-          newFunc->getArg(newFunc->getFunctionType()->getNumParams() - 1);
+      conditioning_trace = newFunc->arg_end() - 1;
       conditioning_trace->setName("trace");
     }
 
