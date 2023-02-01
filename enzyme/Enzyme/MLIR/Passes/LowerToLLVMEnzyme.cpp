@@ -80,16 +80,16 @@ void convertMemRefArgument(Location loc, Value primal,
   MemRefDescriptor memrefPrimal(primal);
   // Mark the allocated pointer as constant
   operands.push_back(enzyme_const_addr);
-  operands.push_back(memrefPrimal.alignedPtr(b, loc));
+  operands.push_back(memrefPrimal.allocatedPtr(b, loc));
 
   if (shadow.has_value()) {
     MemRefDescriptor memrefShadow(shadow.value());
     // Shadow aligned pointer follows the primal aligned pointer
-    operands.push_back(memrefPrimal.allocatedPtr(b, loc));
-    operands.push_back(memrefShadow.allocatedPtr(b, loc));
+    operands.push_back(memrefPrimal.alignedPtr(b, loc));
+    operands.push_back(memrefShadow.alignedPtr(b, loc));
   } else {
     operands.push_back(enzyme_const_addr);
-    operands.push_back(memrefPrimal.allocatedPtr(b, loc));
+    operands.push_back(memrefPrimal.alignedPtr(b, loc));
   }
 
   // Offset, sizes, and strides
