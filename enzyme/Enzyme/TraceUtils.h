@@ -323,9 +323,11 @@ public:
     if (mode == ProbProgMode::Condition)
       params.push_back(traceType);
 
-    StructType *NewTy =
-        StructType::get(Context, {oldFunc->getReturnType(), traceType});
-    FunctionType *FTy = FunctionType::get(NewTy, params, oldFunc->isVarArg());
+    Type *RetTy = traceType;
+    if (!oldFunc->getReturnType()->isVoidTy())
+      RetTy = StructType::get(Context, {oldFunc->getReturnType(), traceType});
+
+    FunctionType *FTy = FunctionType::get(RetTy, params, oldFunc->isVarArg());
 
     Twine Name = (mode == ProbProgMode::Condition ? "condition_" : "trace_") +
                  Twine(oldFunc->getName());
@@ -401,8 +403,12 @@ public:
 
     for (auto Ret : toReplace) {
       IRBuilder<> Builder(Ret);
-      Value *retvals[2] = {Ret->getReturnValue(), trace};
-      Builder.CreateAggregateRet(retvals, 2);
+      if (Ret->getReturnValue()) {
+        Value *retvals[2] = {Ret->getReturnValue(), trace};
+        Builder.CreateAggregateRet(retvals, 2);
+      } else {
+        Builder.CreateRet(trace);
+      }
       Ret->eraseFromParent();
     }
   };

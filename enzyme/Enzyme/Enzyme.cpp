@@ -1892,9 +1892,10 @@ public:
     auto newFunc = Logic.CreateTrace(F, generativeFunctions, mode,
                                      dynamic_interface != nullptr);
 
-    Value *traceCall =
+    Value *trace =
         Builder.CreateCall(newFunc->getFunctionType(), newFunc, args);
-    Value *trace = Builder.CreateExtractValue(traceCall, {1});
+    if (!F->getReturnType()->isVoidTy())
+      trace = Builder.CreateExtractValue(trace, {1});
 
     // try to cast i8* returned from trace to CI->getRetType....
     if (CI->getType() != trace->getType())
