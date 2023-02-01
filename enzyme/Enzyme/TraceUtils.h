@@ -3,8 +3,8 @@
 
 #include <deque>
 
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
 
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/IRBuilder.h"
@@ -345,7 +345,8 @@ public:
     }
 
     if (has_dynamic_interface) {
-      dynamic_interface = newFunc->arg_end() - (1 + (mode == ProbProgMode::Condition));
+      dynamic_interface =
+          newFunc->arg_end() - (1 + (mode == ProbProgMode::Condition));
       dynamic_interface->setName("interface");
     }
 
@@ -417,7 +418,7 @@ public:
 
   CallInst *CreateTrace(IRBuilder<> &Builder) {
     auto trace = Builder.CreateCall(interface->newTraceTy(),
-                                    interface->newTrace(Builder));
+                                    interface->newTrace(Builder), {});
     trace->setName("trace");
     return trace;
   }

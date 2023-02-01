@@ -5,6 +5,9 @@
 
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Function.h"
+#if LLVM_VERSION_MAJOR >= 8
+#include "llvm/IR/InstrTypes.h"
+#endif
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
@@ -57,7 +60,11 @@ public:
       }
       case ProbProgMode::Condition: {
         Instruction *hasChoice = tutils->HasChoice(Builder, address);
+#if LLVM_VERSION_MAJOR >= 8
         Instruction *ThenTerm, *ElseTerm;
+#else
+        TerminatorInst *ThenTerm, *ElseTerm;
+#endif
         Value *ThenChoice, *ElseChoice;
         SplitBlockAndInsertIfThenElse(hasChoice, new_call, &ThenTerm,
                                       &ElseTerm);
@@ -125,7 +132,11 @@ public:
       }
       case ProbProgMode::Condition: {
         Instruction *hasCall = tutils->HasCall(Builder, address);
+#if LLVM_VERSION_MAJOR >= 8
         Instruction *ThenTerm, *ElseTerm;
+#else
+        TerminatorInst *ThenTerm, *ElseTerm;
+#endif
         Value *ElseTracecall, *ThenTracecall;
         SplitBlockAndInsertIfThenElse(hasCall, new_call, &ThenTerm, &ElseTerm);
 

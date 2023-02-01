@@ -2585,8 +2585,7 @@ public:
       for (auto &&BB : func) {
         for (auto &&Inst : BB) {
           if (auto CI = dyn_cast<CallInst>(&Inst)) {
-            Function *enzyme_sample =
-                GetFunctionFromValue(CI->getCalledOperand());
+            Function *enzyme_sample = CI->getCalledFunction();
             if (enzyme_sample &&
                 enzyme_sample->getName().startswith("__enzyme_sample")) {
               if (CI->getNumOperands() < 3) {
@@ -2597,9 +2596,12 @@ public:
               Function *samplefn = GetFunctionFromValue(CI->getOperand(0));
               unsigned expected =
                   samplefn->getFunctionType()->getNumParams() + 3;
+#if LLVM_VERSION_MAJOR >= 14
+              unsigned actual = CI->arg_size();
+#else
               unsigned actual = CI->getNumArgOperands();
-              if (CI->getNumArgOperands() - 3 !=
-                  samplefn->getFunctionType()->getNumParams()) {
+#endif
+              if (actual - 3 != samplefn->getFunctionType()->getNumParams()) {
                 EmitFailure("IllegalNumberOfArguments", CI->getDebugLoc(), CI,
                             "Illegal number of arguments passed to call to "
                             "__enzyme_sample.",
@@ -2610,8 +2612,8 @@ public:
               for (unsigned i = 0;
                    i < samplefn->getFunctionType()->getNumParams(); ++i) {
                 Value *ci_arg = CI->getArgOperand(i + 3);
-                Value *sample_arg = samplefn->getArg(i);
-                Value *pdf_arg = pdf->getArg(i);
+                Value *sample_arg = samplefn->arg_begin() + i;
+                Value *pdf_arg = pdf->arg_begin() + i;
 
                 if (ci_arg->getType() != sample_arg->getType()) {
                   EmitFailure(
@@ -2631,18 +2633,15 @@ public:
                 }
               }
 
-              if (pdf->getArg(pdf->getFunctionType()->getNumParams() - 1)
-                      ->getType() != samplefn->getReturnType()) {
+              if ((pdf->arg_end() - 1)->getType() !=
+                  samplefn->getReturnType()) {
                 EmitFailure(
                     "IllegalSampleType", CI->getDebugLoc(), CI,
                     "Return type of ", *samplefn, " (",
                     *samplefn->getReturnType(), ")",
                     " does not match the last argument type of the density "
                     "function: ",
-                    *pdf, " (",
-                    *pdf->getArg(pdf->getFunctionType()->getNumParams() - 1)
-                         ->getType(),
-                    ")");
+                    *pdf, " (", *(pdf->arg_end() - 1)->getType(), ")");
               }
               sample_calls.insert(CI);
             }
