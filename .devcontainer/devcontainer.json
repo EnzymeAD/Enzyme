@@ -1,5 +1,5 @@
-// available ubuntu versions: [18, 20]
-// available llvm versions: [7, 8, 9, 10, 11, 12, 13]
+// available ubuntu versions: [18, 20, 22]
+// available llvm versions: [7, 8, 9, 10, 11, 12, 13, 14, 15]
 {
     "name": "Enzyme",
     "image": "ghcr.io/enzymead/enzyme-dev-docker/ubuntu-22-llvm-14:latest",
