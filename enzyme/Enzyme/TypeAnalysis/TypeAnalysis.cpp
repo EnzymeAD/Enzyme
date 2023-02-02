@@ -171,6 +171,7 @@ const std::map<std::string, llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"powi", Intrinsic::powi},
     {"cabs", Intrinsic::not_intrinsic},
     {"ldexp", Intrinsic::not_intrinsic},
+    {"fmod", Intrinsic::not_intrinsic},
 #if LLVM_VERSION_MAJOR >= 9
     {"lround", Intrinsic::lround},
     {"llround", Intrinsic::llround},
@@ -5145,9 +5146,9 @@ Type *TypeResults::addingType(size_t num, Value *val) const {
     ObjSize = (fn.Function->getParent()->getDataLayout().getTypeSizeInBits(
         val->getType()) +7) / 8;
   */
-  dt.orIn(q[{-1}], /*pointerIntSame*/ false);
+  dt.orIn(q[{-1}], /*pointerIntSame*/ true);
   for (size_t i = 1; i < num; ++i) {
-    dt.orIn(q[{(int)i}], /*pointerIntSame*/ false);
+    dt.orIn(q[{(int)i}], /*pointerIntSame*/ true);
   }
 
   return dt.isFloat();
