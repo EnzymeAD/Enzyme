@@ -111,13 +111,13 @@ entry:
 ; CHECK-NEXT:   store double %call, double* %call.ptr
 ; CHECK-NEXT:   %4 = bitcast double* %call.ptr to i8**
 ; CHECK-NEXT:   %5 = load i8*, i8** %4
-; CHECK-NEXT:   call void %insert_choice(i8* %trace, i8* getelementptr inbounds ([2 x i8], [2 x i8]* @.str.1, i64 0, i64 0), double %likelihood.call, i8* %5, i64 8)
+; CHECK-NEXT:   call void %insert_choice(i8* %trace, i8* nocapture readonly getelementptr inbounds ([2 x i8], [2 x i8]* @.str.1, i64 0, i64 0), double %likelihood.call, i8* %5, i64 8)
 ; CHECK-NEXT:   %call1 = call double @normal(double 0.000000e+00, double 1.000000e+00)
 ; CHECK-NEXT:   %likelihood.call1 = call double @normal_logpdf(double 0.000000e+00, double 1.000000e+00, double %call1)
 ; CHECK-NEXT:   store double %call1, double* %call1.ptr
 ; CHECK-NEXT:   %6 = bitcast double* %call1.ptr to i8**
 ; CHECK-NEXT:   %7 = load i8*, i8** %6
-; CHECK-NEXT:   call void %insert_choice(i8* %trace, i8* getelementptr inbounds ([2 x i8], [2 x i8]* @.str.2, i64 0, i64 0), double %likelihood.call1, i8* %7, i64 8)
+; CHECK-NEXT:   call void %insert_choice(i8* %trace, i8* nocapture readonly getelementptr inbounds ([2 x i8], [2 x i8]* @.str.2, i64 0, i64 0), double %likelihood.call1, i8* %7, i64 8)
 ; CHECK-NEXT:   %cmp19.i = icmp sgt i32 %n, 0
 ; CHECK-NEXT:   br i1 %cmp19.i, label %for.body.preheader.i, label %calculate_loss.exit
 
@@ -137,7 +137,7 @@ entry:
 ; CHECK-NEXT:   store double %call.i, double* %call.i.ptr
 ; CHECK-NEXT:   %10 = bitcast double* %call.i.ptr to i8**
 ; CHECK-NEXT:   %11 = load i8*, i8** %10
-; CHECK-NEXT:   call void %insert_choice(i8* %trace, i8* getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i64 0, i64 0), double %likelihood.call.i, i8* %11, i64 8)
+; CHECK-NEXT:   call void %insert_choice(i8* %trace, i8* nocapture readonly getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i64 0, i64 0), double %likelihood.call.i, i8* %11, i64 8)
 ; CHECK-NEXT:   %arrayidx3.i = getelementptr inbounds double, double* %data, i64 %indvars.iv.i
 ; CHECK-NEXT:   %12 = load double, double* %arrayidx3.i
 ; CHECK-NEXT:   %sub.i = fsub double %call.i, %12

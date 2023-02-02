@@ -328,13 +328,13 @@ class TraceUtils {
 private:
   TraceInterface *interface = nullptr;
   Value *dynamic_interface = nullptr;
-  CallInst *trace;
+  Instruction *trace;
+  Value *observations = nullptr;
 
 public:
   ProbProgMode mode;
   Function *newFunc;
   Function *oldFunc;
-  Value *conditioning_trace;
 
 public:
   ValueToValueMapTy originalToNewFn;
@@ -400,14 +400,19 @@ public:
     }
 
     if (has_dynamic_interface) {
-      dynamic_interface =
-          newFunc->arg_end() - (1 + (mode == ProbProgMode::Condition));
-      dynamic_interface->setName("interface");
+      auto arg = newFunc->arg_end() - (1 + (mode == ProbProgMode::Condition));
+      dynamic_interface = arg;
+      arg->setName("interface");
+      arg->addAttr(Attribute::ReadOnly);
+      arg->addAttr(Attribute::NoCapture);
     }
 
     if (mode == ProbProgMode::Condition) {
-      conditioning_trace = newFunc->arg_end() - 1;
-      conditioning_trace->setName("trace");
+      auto arg = newFunc->arg_end() - 1;
+      observations = arg;
+      arg->setName("observations");
+      if (oldFunc->getReturnType()->isVoidTy())
+        arg->addAttr(Attribute::Returned);
     }
 
     SmallVector<ReturnInst *, 4> Returns;
@@ -515,25 +520,34 @@ public:
     Value *args[] = {trace, address, score, retval,
                      ConstantInt::get(size_type, size)};
 
-    return Builder.CreateCall(interface->insertChoiceTy(),
-                              interface->insertChoice(), args);
+    auto call = Builder.CreateCall(interface->insertChoiceTy(),
+                                   interface->insertChoice(), args);
+    call->addParamAttr(1, Attribute::ReadOnly);
+    call->addParamAttr(1, Attribute::NoCapture);
+    return call;
   }
 
   CallInst *InsertCall(IRBuilder<> &Builder, Value *address, Value *subtrace) {
     Value *args[] = {trace, address, subtrace};
 
-    return Builder.CreateCall(interface->insertCallTy(),
-                              interface->insertCall(), args);
+    auto call = Builder.CreateCall(interface->insertCallTy(),
+                                   interface->insertCall(), args);
+    call->addParamAttr(1, Attribute::ReadOnly);
+    call->addParamAttr(1, Attribute::NoCapture);
+    return call;
   }
 
   CallInst *GetTrace(IRBuilder<> &Builder, Value *address,
                      const Twine &Name = "") {
     assert(address->getType()->isPointerTy());
 
-    Value *args[] = {conditioning_trace, address};
+    Value *args[] = {observations, address};
 
-    return Builder.CreateCall(interface->getTraceTy(), interface->getTrace(),
-                              args, Name);
+    auto call = Builder.CreateCall(interface->getTraceTy(),
+                                   interface->getTrace(), args, Name);
+    call->addParamAttr(1, Attribute::ReadOnly);
+    call->addParamAttr(1, Attribute::NoCapture);
+    return call;
   }
 
   Instruction *GetChoice(IRBuilder<> &Builder, Value *address, Type *choiceType,
@@ -546,29 +560,37 @@ public:
     Type *size_type = interface->getChoiceTy()->getParamType(3);
 
     Value *args[] = {
-        conditioning_trace, address,
+        observations, address,
         Builder.CreatePointerCast(store_dest, Builder.getInt8PtrTy()),
         ConstantInt::get(size_type, preallocated_size)};
 
-    Builder.CreateCall(interface->getChoiceTy(), interface->getChoice(), args,
-                       Name + ".size");
+    auto call = Builder.CreateCall(
+        interface->getChoiceTy(), interface->getChoice(), args, Name + ".size");
+    call->addParamAttr(1, Attribute::ReadOnly);
+    call->addParamAttr(1, Attribute::NoCapture);
     return Builder.CreateLoad(choiceType, store_dest, "from.trace." + Name);
   }
 
   Instruction *HasChoice(IRBuilder<> &Builder, Value *address,
                          const Twine &Name = "") {
-    Value *args[]{conditioning_trace, address};
+    Value *args[]{observations, address};
 
-    return Builder.CreateCall(interface->hasChoiceTy(), interface->hasChoice(),
-                              args, Name);
+    auto call = Builder.CreateCall(interface->hasChoiceTy(),
+                                   interface->hasChoice(), args, Name);
+    call->addParamAttr(1, Attribute::ReadOnly);
+    call->addParamAttr(1, Attribute::NoCapture);
+    return call;
   }
 
   Instruction *HasCall(IRBuilder<> &Builder, Value *address,
                        const Twine &Name = "") {
-    Value *args[]{conditioning_trace, address};
+    Value *args[]{observations, address};
 
-    return Builder.CreateCall(interface->hasCallTy(), interface->hasCall(),
-                              args, Name);
+    auto call = Builder.CreateCall(interface->hasCallTy(), interface->hasCall(),
+                                   args, Name);
+    call->addParamAttr(1, Attribute::ReadOnly);
+    call->addParamAttr(1, Attribute::NoCapture);
+    return call;
   }
 };
 
