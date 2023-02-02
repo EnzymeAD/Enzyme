@@ -1,5 +1,3 @@
-#include "Interfaces/GradientUtils.h"
-#include "Interfaces/GradientUtilsReverse.h"
 #include "Dialect/Ops.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
@@ -17,21 +15,22 @@
 #include "llvm/ADT/BreadthFirstIterator.h"
 #include "mlir/IR/Dominance.h"
 
-#include "GradientUtils.h"
 #include "EnzymeLogic.h"
+#include "Interfaces/GradientUtils.h"
+#include "Interfaces/GradientUtilsReverse.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
 
-SmallVector<mlir::Block*> getDominatorToposort(MGradientUtilsReverse *gutils){
+SmallVector<mlir::Block*> MEnzymeLogic::getDominatorToposort(MGradientUtilsReverse *gutils, Region& region){
   SmallVector<mlir::Block*> dominatorToposortBlocks;
-  if (gutils->oldFunc.getFunctionBody().hasOneBlock()){
-    dominatorToposortBlocks.push_back(&*(gutils->oldFunc.getFunctionBody().begin()));
+  if (region.hasOneBlock()){
+    dominatorToposortBlocks.push_back(&*(region.begin()));
   }
   else{
     auto dInfo = mlir::detail::DominanceInfoBase<false>(nullptr);
     llvm::DominatorTreeBase<Block, false> & dt = dInfo.getDomTree(&(gutils->oldFunc.getFunctionBody()));
-    auto root = dt.getNode(&*(gutils->oldFunc.getFunctionBody().begin()));
+    auto root = dt.getNode(&*(region.begin()));
 
     for(llvm::DomTreeNodeBase<mlir::Block> * node : llvm::breadth_first(root)){
       dominatorToposortBlocks.push_back(node->getBlock());
@@ -41,7 +40,7 @@ SmallVector<mlir::Block*> getDominatorToposort(MGradientUtilsReverse *gutils){
   return dominatorToposortBlocks;
 }
 
-void mapInvertArguments(Block * oBB, Block * reverseBB, MDiffeGradientUtilsReverse * gutils){
+void MEnzymeLogic::mapInvertArguments(Block * oBB, Block * reverseBB, MGradientUtilsReverse * gutils){
   for (int i = 0; i < (int)gutils->mapBlockArguments[oBB].size(); i++){
     auto x = gutils->mapBlockArguments[oBB][i];
     OpBuilder builder(reverseBB, reverseBB->begin());
@@ -49,20 +48,35 @@ void mapInvertArguments(Block * oBB, Block * reverseBB, MDiffeGradientUtilsRever
   }
 }
 
-void handleReturns(Block * oBB, Block * newBB, Block * reverseBB, MDiffeGradientUtilsReverse * gutils){
+void MEnzymeLogic::handleReturns(Block * oBB, Block * newBB, Block * reverseBB, MGradientUtilsReverse * gutils, bool parentRegion){
   if (oBB->getNumSuccessors() == 0){
-    Operation * returnStatement = newBB->getTerminator();
-    gutils->erase(returnStatement);
+    if (parentRegion){
+      Operation * returnStatement = newBB->getTerminator();
+      gutils->erase(returnStatement);
 
-    OpBuilder forwardToBackwardBuilder(newBB, newBB->end());
-    gutils->mapInvertPointer(oBB->getTerminator()->getOperand(0), gutils->newFunc.getArgument(gutils->newFunc.getNumArguments() - 1), forwardToBackwardBuilder); //TODO handle multiple return values
-    Operation * newBranchOp = forwardToBackwardBuilder.create<cf::BranchOp>(oBB->getTerminator()->getLoc(), reverseBB);
-    
-    gutils->originalToNewFnOps[oBB->getTerminator()] = newBranchOp;
+      OpBuilder forwardToBackwardBuilder(newBB, newBB->end());
+      gutils->mapInvertPointer(oBB->getTerminator()->getOperand(0), gutils->newFunc.getArgument(gutils->newFunc.getNumArguments() - 1), forwardToBackwardBuilder); //TODO handle multiple return values
+      Operation * newBranchOp = forwardToBackwardBuilder.create<cf::BranchOp>(oBB->getTerminator()->getLoc(), reverseBB);
+      
+      gutils->originalToNewFnOps[oBB->getTerminator()] = newBranchOp;
+    }
+    else{
+      Operation * terminator = oBB->getTerminator();
+      OpBuilder builder(reverseBB, reverseBB->begin());
+
+      int i = 0;
+      for(OpOperand & operand : terminator->getOpOperands()){
+        Value val = operand.get();
+        if (auto iface = val.getType().dyn_cast<AutoDiffTypeInterface>()) {
+          gutils->mapInvertPointer(val, reverseBB->getArgument(i), builder);
+          i++;
+        }
+      }
+    }
   }
 }
 
-bool visitChildCustom(Operation * op, OpBuilder &builder, MDiffeGradientUtilsReverse * gutils){
+bool MEnzymeLogic::visitChildCustom(Operation * op, OpBuilder &builder, MGradientUtilsReverse * gutils){
   std::string nameDiffe = "diffe_" + op->getName().getDialectNamespace().str() + "_" + op->getName().stripDialect().str();
   std::string nameStore = "store_" + op->getName().getDialectNamespace().str() + "_" + op->getName().stripDialect().str();
 
@@ -128,9 +142,9 @@ bool visitChildCustom(Operation * op, OpBuilder &builder, MDiffeGradientUtilsRev
 /*
 Create reverse mode adjoint for an operation.
 */
-void visitChild(Operation * op, OpBuilder &builder, MDiffeGradientUtilsReverse * gutils){
+void MEnzymeLogic::visitChild(Operation * op, OpBuilder &builder, MGradientUtilsReverse * gutils){
   if (auto ifaceOp = dyn_cast<ReverseAutoDiffOpInterface>(op)) {
-    ValueRange caches = ifaceOp.cacheValues(gutils);
+    SmallVector<Value> caches = ifaceOp.cacheValues(gutils);
     ifaceOp.createReverseModeAdjoint(builder, gutils, caches);
 
     for (int indexResult = 0; indexResult < (int)op->getNumResults(); indexResult++){
@@ -140,7 +154,7 @@ void visitChild(Operation * op, OpBuilder &builder, MDiffeGradientUtilsReverse *
   }
 }
 
-void visitChildren(Block * oBB, Block * reverseBB, MDiffeGradientUtilsReverse * gutils){
+void MEnzymeLogic::visitChildren(Block * oBB, Block * reverseBB, MGradientUtilsReverse * gutils){
   OpBuilder revBuilder(reverseBB, reverseBB->end());
   if (!oBB->empty()){
     auto first = oBB->rbegin();
@@ -155,21 +169,22 @@ void visitChildren(Block * oBB, Block * reverseBB, MDiffeGradientUtilsReverse * 
   }
 }
 
-void handlePredecessors(Block * oBB, Block * reverseBB, MDiffeGradientUtilsReverse * gutils){
+void MEnzymeLogic::handlePredecessors(Block * oBB, Block * reverseBB, MGradientUtilsReverse * gutils, buildReturnFunction buildRetrunOp){
   OpBuilder revBuilder(reverseBB, reverseBB->end());
   if (oBB->hasNoPredecessors()){
-    SmallVector<mlir::Value, 2> retargs;
+    SmallVector<mlir::Value> retargs;
     for (Value attribute : gutils->oldFunc.getFunctionBody().getArguments()) {
       Value attributeGradient = gutils->invertPointerM(attribute, revBuilder);
       retargs.push_back(attributeGradient);
     }
-    revBuilder.create<func::ReturnOp>(oBB->rbegin()->getLoc(), retargs);
+    buildRetrunOp(revBuilder, oBB->rbegin()->getLoc(), retargs);
+    //revBuilder.create<func::ReturnOp>(oBB->rbegin()->getLoc(), retargs);
   }
   else {
     SmallVector<Block *> blocks;
     SmallVector<APInt> indices;
     SmallVector<ValueRange> arguments;
-    ValueRange defaultArguments;
+    SmallVector<Value> defaultArguments;
     Block * defaultBlock;
     int i = 1;
     for (Block * predecessor : oBB->getPredecessors()){
@@ -197,11 +212,11 @@ void handlePredecessors(Block * oBB, Block * reverseBB, MDiffeGradientUtilsRever
       if (predecessor != *(oBB->getPredecessors().begin())){
         blocks.push_back(predecessorRevMode);
         indices.push_back(APInt(32, i++));
-        arguments.push_back(ValueRange(operands));
+        arguments.push_back(operands);
       }
       else{
         defaultBlock = predecessorRevMode;
-        defaultArguments = ValueRange(operands);
+        defaultArguments = operands;
       }
     }
     //Remove Dependency to CF dialect
@@ -227,7 +242,7 @@ void handlePredecessors(Block * oBB, Block * reverseBB, MDiffeGradientUtilsRever
   }
 }
 
-void initializeShadowValues(SmallVector<mlir::Block*>& dominatorToposortBlocks, MDiffeGradientUtilsReverse * gutils){
+void MEnzymeLogic::initializeShadowValues(SmallVector<mlir::Block*>& dominatorToposortBlocks, MGradientUtilsReverse * gutils){
   for (auto it = dominatorToposortBlocks.begin(); it != dominatorToposortBlocks.end(); ++it){
     Block * oBB = *it;
 
@@ -245,19 +260,10 @@ void initializeShadowValues(SmallVector<mlir::Block*>& dominatorToposortBlocks, 
   }
 }
 
+void MEnzymeLogic::differentiate(MGradientUtilsReverse * gutils, Region & oldRegion, Region & newRegion, bool parentRegion, buildReturnFunction buildFuncRetrunOp){
+  gutils->createReverseModeBlocks(oldRegion, newRegion, parentRegion);
 
-FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(FunctionOpInterface fn, DIFFE_TYPE retType, std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA, bool returnUsed, DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType, MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented, SymbolTableCollection &symbolTable) {
-  
-  if (fn.getFunctionBody().empty()) {
-    llvm::errs() << fn << "\n";
-    llvm_unreachable("Differentiating empty function");
-  }
-
-  ReturnType returnValue = ReturnType::Tape;
-  MDiffeGradientUtilsReverse * gutils = MDiffeGradientUtilsReverse::CreateFromClone(*this, mode, width, fn, TA, type_args, retType, /*diffeReturnArg*/ true, constants, returnValue, addedType, symbolTable);
-
-  SmallVector<mlir::Block*> dominatorToposortBlocks = getDominatorToposort(gutils);
-
+  SmallVector<mlir::Block*> dominatorToposortBlocks = getDominatorToposort(gutils, oldRegion);
   initializeShadowValues(dominatorToposortBlocks, gutils);
 
   for (auto it = dominatorToposortBlocks.rbegin(); it != dominatorToposortBlocks.rend(); ++it){
@@ -266,19 +272,38 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateReverseDiff(FunctionOpInte
     Block * reverseBB = gutils->mapReverseModeBlocks.lookupOrNull(oBB);
 
     mapInvertArguments(oBB, reverseBB, gutils);
-
-    handleReturns(oBB, newBB, reverseBB, gutils);
-    
+    handleReturns(oBB, newBB, reverseBB, gutils, parentRegion);
     visitChildren(oBB, reverseBB, gutils);
-    
-    handlePredecessors(oBB, reverseBB, gutils);
+    handlePredecessors(oBB, reverseBB, gutils, buildFuncRetrunOp);
   }
+}
+
+FunctionOpInterface MEnzymeLogic::CreateReverseDiff(FunctionOpInterface fn, DIFFE_TYPE retType, std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA, bool returnUsed, DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType, MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented, SymbolTableCollection &symbolTable) {
+  
+  if (fn.getFunctionBody().empty()) {
+    llvm::errs() << fn << "\n";
+    llvm_unreachable("Differentiating empty function");
+  }
+
+  ReturnType returnValue = ReturnType::Tape;
+  MGradientUtilsReverse * gutils = MGradientUtilsReverse::CreateFromClone(*this, mode, width, fn, TA, type_args, retType, /*diffeReturnArg*/ true, constants, returnValue, addedType, symbolTable);
+
+  Region & oldRegion = gutils->oldFunc.getFunctionBody();
+  Region & newRegion = gutils->newFunc.getFunctionBody();
+
+  buildReturnFunction buildFuncRetrunOp = [](OpBuilder& builder, Location loc, SmallVector<Value> retargs){
+    builder.create<func::ReturnOp>(loc, retargs);
+    return ;
+  };
+
+  differentiate(gutils, oldRegion, newRegion, true, buildFuncRetrunOp);
 
   auto nf = gutils->newFunc;
 
-  //llvm::errs() << "nf\n";
-  //nf.dump();
-  //llvm::errs() << "nf end\n";
+  llvm::errs() << "nf\n";
+  nf.dump();
+  llvm::errs() << "nf end\n";
+
   delete gutils;
   return nf;
 }

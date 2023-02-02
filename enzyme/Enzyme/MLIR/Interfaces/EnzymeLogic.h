@@ -6,9 +6,14 @@
 // TODO: no relative includes.
 #include "../../EnzymeLogic.h"
 
+
+
 namespace mlir {
 namespace enzyme {
 
+typedef void (*buildReturnFunction) (OpBuilder&, Location, SmallVector<mlir::Value>);
+
+class MGradientUtilsReverse;
 
 class MFnTypeInfo {
 public:
@@ -100,6 +105,15 @@ public:
                     std::vector<bool> volatile_args, void *augmented);
 
   FunctionOpInterface CreateReverseDiff(FunctionOpInterface fn, DIFFE_TYPE retType, std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA, bool returnUsed, DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType, MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented, SymbolTableCollection &symbolTable);
+  void initializeShadowValues(SmallVector<mlir::Block*>& dominatorToposortBlocks, MGradientUtilsReverse * gutils);
+  void handlePredecessors(Block * oBB, Block * reverseBB, MGradientUtilsReverse * gutils, void (*buildRetrunOp) (OpBuilder&, Location, SmallVector<mlir::Value>));
+  void visitChildren(Block * oBB, Block * reverseBB, MGradientUtilsReverse * gutils);
+  void visitChild(Operation * op, OpBuilder &builder, MGradientUtilsReverse * gutils);
+  bool visitChildCustom(Operation * op, OpBuilder &builder, MGradientUtilsReverse * gutils);
+  void handleReturns(Block * oBB, Block * newBB, Block * reverseBB, MGradientUtilsReverse * gutils, bool parentRegion);
+  void mapInvertArguments(Block * oBB, Block * reverseBB, MGradientUtilsReverse * gutils);
+  SmallVector<mlir::Block*> getDominatorToposort(MGradientUtilsReverse *gutils, Region& region);
+  void differentiate(MGradientUtilsReverse * gutils, Region & oldRegion, Region & newRegion, bool parentRegion, buildReturnFunction buildFuncRetrunOp);
 };
 
 } // Namespace enzyme
