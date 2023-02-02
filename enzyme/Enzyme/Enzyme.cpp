@@ -2651,6 +2651,8 @@ public:
       }
     }
 
+    // Replace calls to __enzyme_sample with the actual sample calls after
+    // running prob prog
     for (auto call : sample_calls) {
       Function *samplefn = GetFunctionFromValue(call->getArgOperand(0));
 
@@ -2660,9 +2662,6 @@ public:
       }
       CallInst *choice =
           CallInst::Create(samplefn->getFunctionType(), samplefn, args);
-
-      choice->setDebugLoc(call->getDebugLoc());
-      choice->setName(call->getName());
 
       ReplaceInstWithInst(call, choice);
     }

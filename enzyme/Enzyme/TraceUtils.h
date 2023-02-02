@@ -26,28 +26,28 @@ public:
   virtual Function *getSampleFunction() = 0;
 
   // user implemented
-  virtual Value *getTrace(IRBuilder<> &Builder) = 0;
+  virtual Value *getTrace() = 0;
   virtual FunctionType *getTraceTy() = 0;
 
-  virtual Value *getChoice(IRBuilder<> &Builder) = 0;
+  virtual Value *getChoice() = 0;
   virtual FunctionType *getChoiceTy() = 0;
 
-  virtual Value *insertCall(IRBuilder<> &Builder) = 0;
+  virtual Value *insertCall() = 0;
   virtual FunctionType *insertCallTy() = 0;
 
-  virtual Value *insertChoice(IRBuilder<> &Builder) = 0;
+  virtual Value *insertChoice() = 0;
   virtual FunctionType *insertChoiceTy() = 0;
 
-  virtual Value *newTrace(IRBuilder<> &Builder) = 0;
+  virtual Value *newTrace() = 0;
   virtual FunctionType *newTraceTy() = 0;
 
-  virtual Value *freeTrace(IRBuilder<> &Builder) = 0;
+  virtual Value *freeTrace() = 0;
   virtual FunctionType *freeTraceTy() = 0;
 
-  virtual Value *hasCall(IRBuilder<> &Builder) = 0;
+  virtual Value *hasCall() = 0;
   virtual FunctionType *hasCallTy() = 0;
 
-  virtual Value *hasChoice(IRBuilder<> &Builder) = 0;
+  virtual Value *hasChoice() = 0;
   virtual FunctionType *hasChoiceTy() = 0;
 
   virtual ~TraceInterface() = default;
@@ -114,30 +114,30 @@ public:
   Function *getSampleFunction() { return sampleFunction; }
 
   // user implemented
-  Value *getTrace(IRBuilder<> &Builder) { return getTraceFunction; }
+  Value *getTrace() { return getTraceFunction; }
   FunctionType *getTraceTy() { return getTraceFunction->getFunctionType(); }
 
-  Value *getChoice(IRBuilder<> &Builder) { return getChoiceFunction; }
+  Value *getChoice() { return getChoiceFunction; }
   FunctionType *getChoiceTy() { return getChoiceFunction->getFunctionType(); }
 
-  Value *insertCall(IRBuilder<> &Builder) { return insertCallFunction; }
+  Value *insertCall() { return insertCallFunction; }
   FunctionType *insertCallTy() { return insertCallFunction->getFunctionType(); }
 
-  Value *insertChoice(IRBuilder<> &Builder) { return insertChoiceFunction; }
+  Value *insertChoice() { return insertChoiceFunction; }
   FunctionType *insertChoiceTy() {
     return insertChoiceFunction->getFunctionType();
   }
 
-  Value *newTrace(IRBuilder<> &Builder) { return newTraceFunction; }
+  Value *newTrace() { return newTraceFunction; }
   FunctionType *newTraceTy() { return newTraceFunction->getFunctionType(); }
 
-  Value *freeTrace(IRBuilder<> &Builder) { return freeTraceFunction; }
+  Value *freeTrace() { return freeTraceFunction; }
   FunctionType *freeTraceTy() { return freeTraceFunction->getFunctionType(); }
 
-  Value *hasCall(IRBuilder<> &Builder) { return hasCallFunction; }
+  Value *hasCall() { return hasCallFunction; }
   FunctionType *hasCallTy() { return hasCallFunction->getFunctionType(); }
 
-  Value *hasChoice(IRBuilder<> &Builder) { return hasChoiceFunction; }
+  Value *hasChoice() { return hasChoiceFunction; }
   FunctionType *hasChoiceTy() { return hasChoiceFunction->getFunctionType(); }
 };
 
@@ -145,13 +145,25 @@ class DynamicTraceInterface final : public TraceInterface {
 private:
   Function *sampleFunction;
   Value *dynamicInterface;
+  Function *F;
 
   LLVMContext &C;
 
+private:
+  Value *getTraceFunction = nullptr;
+  Value *getChoiceFunction = nullptr;
+  Value *insertCallFunction = nullptr;
+  Value *insertChoiceFunction = nullptr;
+  Value *newTraceFunction = nullptr;
+  Value *freeTraceFunction = nullptr;
+  Value *hasCallFunction = nullptr;
+  Value *hasChoiceFunction = nullptr;
+
 public:
-  DynamicTraceInterface(Function *sampleFunction, Value *dynamicInterface)
+  DynamicTraceInterface(Function *sampleFunction, Value *dynamicInterface,
+                        Function *F)
       : sampleFunction(sampleFunction), dynamicInterface(dynamicInterface),
-        C(sampleFunction->getContext()) {}
+        F(F), C(sampleFunction->getContext()) {}
 
   ~DynamicTraceInterface() = default;
 
@@ -164,26 +176,37 @@ public:
   Function *getSampleFunction() { return sampleFunction; }
 
   // user implemented
-  Value *getTrace(IRBuilder<> &Builder) {
+  Value *getTrace() {
+    if (getTraceFunction)
+      return getTraceFunction;
+
+    IRBuilder<> Builder(F->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+
     auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(),
                                          dynamicInterface, Builder.getInt32(0));
     auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
-    return Builder.CreatePointerCast(load, PointerType::getUnqual(getTraceTy()),
-                                     "get_trace");
+    return getTraceFunction = Builder.CreatePointerCast(
+               load, PointerType::getUnqual(getTraceTy()), "get_trace");
   }
+
   FunctionType *getTraceTy() {
     return FunctionType::get(PointerType::getInt8PtrTy(C),
                              {PointerType::getInt8PtrTy(C), stringType()},
                              false);
   }
 
-  Value *getChoice(IRBuilder<> &Builder) {
+  Value *getChoice() {
+    if (getChoiceFunction)
+      return getChoiceFunction;
+
+    IRBuilder<> Builder(F->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
     auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(),
                                          dynamicInterface, Builder.getInt32(1));
     auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
-    return Builder.CreatePointerCast(
-        load, PointerType::getUnqual(getChoiceTy()), "get_choice");
+    return getChoiceFunction = Builder.CreatePointerCast(
+               load, PointerType::getUnqual(getChoiceTy()), "get_choice");
   }
+
   FunctionType *getChoiceTy() {
     return FunctionType::get(sizeType(),
                              {PointerType::getInt8PtrTy(C), stringType(),
@@ -191,13 +214,18 @@ public:
                              false);
   }
 
-  Value *insertCall(IRBuilder<> &Builder) {
+  Value *insertCall() {
+    if (insertCallFunction)
+      return insertCallFunction;
+
+    IRBuilder<> Builder(F->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
     auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(),
                                          dynamicInterface, Builder.getInt32(2));
     auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
-    return Builder.CreatePointerCast(
-        load, PointerType::getUnqual(insertCallTy()), "insert_call");
+    return insertCallFunction = Builder.CreatePointerCast(
+               load, PointerType::getUnqual(insertCallTy()), "insert_call");
   }
+
   FunctionType *insertCallTy() {
     return FunctionType::get(Type::getVoidTy(C),
                              {PointerType::getInt8PtrTy(C), stringType(),
@@ -205,13 +233,18 @@ public:
                              false);
   }
 
-  Value *insertChoice(IRBuilder<> &Builder) {
+  Value *insertChoice() {
+    if (insertChoiceFunction)
+      return insertChoiceFunction;
+
+    IRBuilder<> Builder(F->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
     auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(),
                                          dynamicInterface, Builder.getInt32(3));
     auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
-    return Builder.CreatePointerCast(
-        load, PointerType::getUnqual(insertChoiceTy()), "insert_choice");
+    return insertChoiceFunction = Builder.CreatePointerCast(
+               load, PointerType::getUnqual(insertChoiceTy()), "insert_choice");
   }
+
   FunctionType *insertChoiceTy() {
     return FunctionType::get(Type::getVoidTy(C),
                              {PointerType::getInt8PtrTy(C), stringType(),
@@ -220,49 +253,69 @@ public:
                              false);
   }
 
-  Value *newTrace(IRBuilder<> &Builder) {
+  Value *newTrace() {
+    if (newTraceFunction)
+      return newTraceFunction;
+
+    IRBuilder<> Builder(F->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
     auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(),
                                          dynamicInterface, Builder.getInt32(4));
     auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
-    return Builder.CreatePointerCast(load, PointerType::getUnqual(newTraceTy()),
-                                     "new_trace");
+    return newTraceFunction = Builder.CreatePointerCast(
+               load, PointerType::getUnqual(newTraceTy()), "new_trace");
   }
+
   FunctionType *newTraceTy() {
     return FunctionType::get(PointerType::getInt8PtrTy(C), {}, false);
   }
 
-  Value *freeTrace(IRBuilder<> &Builder) {
+  Value *freeTrace() {
+    if (freeTraceFunction)
+      return freeTraceFunction;
+
+    IRBuilder<> Builder(F->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
     auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(),
                                          dynamicInterface, Builder.getInt32(5));
     auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
-    return Builder.CreatePointerCast(
-        load, PointerType::getUnqual(freeTraceTy()), "free_trace");
+    return freeTraceFunction = Builder.CreatePointerCast(
+               load, PointerType::getUnqual(freeTraceTy()), "free_trace");
   }
+
   FunctionType *freeTraceTy() {
     return FunctionType::get(Type::getVoidTy(C), {PointerType::getInt8PtrTy(C)},
                              false);
   }
 
-  Value *hasCall(IRBuilder<> &Builder) {
+  Value *hasCall() {
+    if (hasCallFunction)
+      return hasCallFunction;
+
+    IRBuilder<> Builder(F->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
     auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(),
                                          dynamicInterface, Builder.getInt32(6));
     auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
-    return Builder.CreatePointerCast(load, PointerType::getUnqual(hasCallTy()),
-                                     "has_call");
+    return hasCallFunction = Builder.CreatePointerCast(
+               load, PointerType::getUnqual(hasCallTy()), "has_call");
   }
+
   FunctionType *hasCallTy() {
     return FunctionType::get(Type::getInt1Ty(C),
                              {PointerType::getInt8PtrTy(C), stringType()},
                              false);
   }
 
-  Value *hasChoice(IRBuilder<> &Builder) {
+  Value *hasChoice() {
+    if (hasChoiceFunction)
+      return hasChoiceFunction;
+
+    IRBuilder<> Builder(F->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
     auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(),
                                          dynamicInterface, Builder.getInt32(7));
     auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
-    return Builder.CreatePointerCast(
-        load, PointerType::getUnqual(hasChoiceTy()), "has_choice");
+    return hasChoiceFunction = Builder.CreatePointerCast(
+               load, PointerType::getUnqual(hasChoiceTy()), "has_choice");
   }
+
   FunctionType *hasChoiceTy() {
     return FunctionType::get(Type::getInt1Ty(C),
                              {PointerType::getInt8PtrTy(C), stringType()},
@@ -377,7 +430,7 @@ public:
           sample = &interface_func;
         }
       }
-      interface = new DynamicTraceInterface(sample, dynamic_interface);
+      interface = new DynamicTraceInterface(sample, dynamic_interface, newFunc);
     }
 
     // Create trace for current function
@@ -413,6 +466,8 @@ public:
     }
   };
 
+  ~TraceUtils() { delete interface; }
+
 public:
   TraceInterface *getTraceInterface() { return interface; }
 
@@ -422,11 +477,9 @@ public:
 
   Value *getTrace() { return trace; }
 
-  CallInst *CreateTrace(IRBuilder<> &Builder) {
-    auto trace = Builder.CreateCall(interface->newTraceTy(),
-                                    interface->newTrace(Builder), {});
-    trace->setName("trace");
-    return trace;
+  CallInst *CreateTrace(IRBuilder<> &Builder, const Twine &Name = "trace") {
+    return Builder.CreateCall(interface->newTraceTy(), interface->newTrace(),
+                              {}, Name);
   }
 
   CallInst *InsertChoice(IRBuilder<> &Builder, Value *address, Value *score,
@@ -442,7 +495,10 @@ public:
     if (choice->getType()->isPointerTy()) {
       retval = Builder.CreatePointerCast(choice, Builder.getInt8PtrTy());
     } else {
-      auto alloca = Builder.CreateAlloca(choice->getType());
+      IRBuilder<> AllocaBuilder(
+          newFunc->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+      auto alloca = AllocaBuilder.CreateAlloca(choice->getType(), nullptr,
+                                               choice->getName() + ".ptr");
       Builder.CreateStore(choice, alloca);
       bool fitsInPointer =
           choice->getType()->getPrimitiveSizeInBits() == pointersize;
@@ -459,32 +515,33 @@ public:
     Value *args[] = {trace, address, score, retval,
                      ConstantInt::get(size_type, size)};
 
-    auto call = Builder.CreateCall(interface->insertChoiceTy(),
-                                   interface->insertChoice(Builder), args);
-    return call;
+    return Builder.CreateCall(interface->insertChoiceTy(),
+                              interface->insertChoice(), args);
   }
 
   CallInst *InsertCall(IRBuilder<> &Builder, Value *address, Value *subtrace) {
     Value *args[] = {trace, address, subtrace};
 
-    auto call = Builder.CreateCall(interface->insertCallTy(),
-                                   interface->insertCall(Builder), args);
-    return call;
+    return Builder.CreateCall(interface->insertCallTy(),
+                              interface->insertCall(), args);
   }
 
-  CallInst *GetTrace(IRBuilder<> &Builder, Value *address) {
+  CallInst *GetTrace(IRBuilder<> &Builder, Value *address,
+                     const Twine &Name = "") {
     assert(address->getType()->isPointerTy());
 
     Value *args[] = {conditioning_trace, address};
 
-    auto call = Builder.CreateCall(interface->getTraceTy(),
-                                   interface->getTrace(Builder), args);
-    return call;
+    return Builder.CreateCall(interface->getTraceTy(), interface->getTrace(),
+                              args, Name);
   }
 
-  Instruction *GetChoice(IRBuilder<> &Builder, Value *address,
-                         Type *choiceType) {
-    AllocaInst *store_dest = Builder.CreateAlloca(choiceType);
+  Instruction *GetChoice(IRBuilder<> &Builder, Value *address, Type *choiceType,
+                         const Twine &Name = "") {
+    IRBuilder<> AllocaBuilder(
+        newFunc->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+    AllocaInst *store_dest =
+        AllocaBuilder.CreateAlloca(choiceType, nullptr, Name + ".ptr");
     auto preallocated_size = choiceType->getPrimitiveSizeInBits() / 8;
     Type *size_type = interface->getChoiceTy()->getParamType(3);
 
@@ -493,26 +550,26 @@ public:
         Builder.CreatePointerCast(store_dest, Builder.getInt8PtrTy()),
         ConstantInt::get(size_type, preallocated_size)};
 
-    Builder.CreateCall(interface->getChoiceTy(), interface->getChoice(Builder),
-                       args);
-    return Builder.CreateLoad(choiceType, store_dest);
+    Builder.CreateCall(interface->getChoiceTy(), interface->getChoice(), args,
+                       Name + ".size");
+    return Builder.CreateLoad(choiceType, store_dest, "from.trace." + Name);
   }
 
-  Instruction *HasChoice(IRBuilder<> &Builder, Value *address) {
+  Instruction *HasChoice(IRBuilder<> &Builder, Value *address,
+                         const Twine &Name = "") {
     Value *args[]{conditioning_trace, address};
 
-    return Builder.CreateCall(interface->hasChoiceTy(),
-                              interface->hasChoice(Builder), args);
+    return Builder.CreateCall(interface->hasChoiceTy(), interface->hasChoice(),
+                              args, Name);
   }
 
-  Instruction *HasCall(IRBuilder<> &Builder, Value *address) {
+  Instruction *HasCall(IRBuilder<> &Builder, Value *address,
+                       const Twine &Name = "") {
     Value *args[]{conditioning_trace, address};
 
-    return Builder.CreateCall(interface->hasCallTy(),
-                              interface->hasCall(Builder), args);
+    return Builder.CreateCall(interface->hasCallTy(), interface->hasCall(),
+                              args, Name);
   }
-
-  ~TraceUtils() { delete interface; }
 };
 
 #endif /* TraceUtils_h */

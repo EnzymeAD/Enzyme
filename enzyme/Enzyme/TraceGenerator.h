@@ -55,11 +55,12 @@ public:
       switch (mode) {
       case ProbProgMode::Trace: {
         choice = Builder.CreateCall(samplefn->getFunctionType(), samplefn,
-                                    sample_args, "sample." + call.getName());
+                                    sample_args);
         break;
       }
       case ProbProgMode::Condition: {
-        Instruction *hasChoice = tutils->HasChoice(Builder, address);
+        Instruction *hasChoice =
+            tutils->HasChoice(Builder, address, "has.choice." + call.getName());
 #if LLVM_VERSION_MAJOR >= 8
         Instruction *ThenTerm, *ElseTerm;
 #else
@@ -77,7 +78,8 @@ public:
           ThenTerm->getParent()->setName("condition." + call.getName() +
                                          ".with.trace");
           ThenChoice = tutils->GetChoice(
-              Builder, address, samplefn->getFunctionType()->getReturnType());
+              Builder, address, samplefn->getFunctionType()->getReturnType(),
+              call.getName());
         }
 
         Builder.SetInsertPoint(ElseTerm);
@@ -103,6 +105,8 @@ public:
       auto score = Builder.CreateCall(loglikelihoodfn->getFunctionType(),
                                       loglikelihoodfn, loglikelihood_args,
                                       "likelihood." + call.getName());
+
+      choice->takeName(new_call);
       tutils->InsertChoice(Builder, address, score, choice);
 
       new_call->replaceAllUsesWith(choice);
@@ -123,15 +127,17 @@ public:
           call.getCalledFunction(), tutils->generativeFunctions, tutils->mode,
           tutils->hasDynamicTraceInterface());
 
-      Value *tracecall;
+      Instruction *tracecall;
       switch (mode) {
       case ProbProgMode::Trace: {
-        tracecall = Builder.CreateCall(samplefn->getFunctionType(), samplefn,
-                                       args, call.getName());
+        tracecall =
+            Builder.CreateCall(samplefn->getFunctionType(), samplefn, args,
+                               "trace." + call.getCalledOperand()->getName());
         break;
       }
       case ProbProgMode::Condition: {
-        Instruction *hasCall = tutils->HasCall(Builder, address);
+        Instruction *hasCall =
+            tutils->HasCall(Builder, address, "has.call." + call.getName());
 #if LLVM_VERSION_MAJOR >= 8
         Instruction *ThenTerm, *ElseTerm;
 #else
@@ -148,11 +154,13 @@ public:
           ThenTerm->getParent()->setName("condition." + call.getName() +
                                          ".with.trace");
           SmallVector<Value *, 2> args_and_cond = SmallVector(args);
-          auto trace = tutils->GetTrace(Builder, address);
+          auto trace = tutils->GetTrace(Builder, address,
+                                        call.getCalledOperand()->getName() +
+                                            ".subtrace");
           args_and_cond.push_back(trace);
-          ThenTracecall =
-              Builder.CreateCall(samplefn->getFunctionType(), samplefn,
-                                 args_and_cond, call.getName());
+          ThenTracecall = Builder.CreateCall(
+              samplefn->getFunctionType(), samplefn, args_and_cond,
+              "condition." + call.getCalledOperand()->getName());
         }
 
         Builder.SetInsertPoint(ElseTerm);
@@ -163,14 +171,14 @@ public:
           auto trace = ConstantPointerNull::get(cast<PointerType>(
               tutils->getTraceInterface()->newTraceTy()->getReturnType()));
           args_and_null.push_back(trace);
-          ElseTracecall =
-              Builder.CreateCall(samplefn->getFunctionType(), samplefn,
-                                 args_and_null, call.getName());
+          ElseTracecall = Builder.CreateCall(
+              samplefn->getFunctionType(), samplefn, args_and_null,
+              "trace." + call.getCalledOperand()->getName());
         }
 
         Builder.SetInsertPoint(new_call);
-        auto phi =
-            Builder.CreatePHI(samplefn->getFunctionType()->getReturnType(), 2);
+        auto phi = Builder.CreatePHI(
+            samplefn->getFunctionType()->getReturnType(), 2, call.getName());
         phi->addIncoming(ThenTracecall, ThenTerm->getParent());
         phi->addIncoming(ElseTracecall, ElseTerm->getParent());
         tracecall = phi;
@@ -178,10 +186,12 @@ public:
       }
 
       Value *ret = Builder.CreateExtractValue(tracecall, {0});
-      Value *subtrace = Builder.CreateExtractValue(tracecall, {1});
+      Value *subtrace = Builder.CreateExtractValue(
+          tracecall, {1}, "newtrace." + call.getCalledOperand()->getName());
 
       tutils->InsertCall(Builder, address, subtrace);
 
+      ret->takeName(new_call);
       new_call->replaceAllUsesWith(ret);
       new_call->eraseFromParent();
     }
