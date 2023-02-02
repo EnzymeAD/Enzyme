@@ -127,12 +127,17 @@ public:
           call.getCalledFunction(), tutils->generativeFunctions, tutils->mode,
           tutils->hasDynamicTraceInterface());
 
+#if LLVM_VERSION_MAJOR >= 11
+      Value *called = call.getCalledOperand();
+#else
+      Value *called = call.getCalledValue();
+#endif
+
       Instruction *tracecall;
       switch (mode) {
       case ProbProgMode::Trace: {
-        tracecall =
-            Builder.CreateCall(samplefn->getFunctionType(), samplefn, args,
-                               "trace." + call.getCalledOperand()->getName());
+        tracecall = Builder.CreateCall(samplefn->getFunctionType(), samplefn,
+                                       args, "trace." + called->getName());
         break;
       }
       case ProbProgMode::Condition: {
@@ -155,12 +160,11 @@ public:
                                          ".with.trace");
           SmallVector<Value *, 2> args_and_cond = SmallVector(args);
           auto trace = tutils->GetTrace(Builder, address,
-                                        call.getCalledOperand()->getName() +
-                                            ".subtrace");
+                                        called->getName() + ".subtrace");
           args_and_cond.push_back(trace);
-          ThenTracecall = Builder.CreateCall(
-              samplefn->getFunctionType(), samplefn, args_and_cond,
-              "condition." + call.getCalledOperand()->getName());
+          ThenTracecall = Builder.CreateCall(samplefn->getFunctionType(),
+                                             samplefn, args_and_cond,
+                                             "condition." + called->getName());
         }
 
         Builder.SetInsertPoint(ElseTerm);
@@ -171,9 +175,9 @@ public:
           auto trace = ConstantPointerNull::get(cast<PointerType>(
               tutils->getTraceInterface()->newTraceTy()->getReturnType()));
           args_and_null.push_back(trace);
-          ElseTracecall = Builder.CreateCall(
-              samplefn->getFunctionType(), samplefn, args_and_null,
-              "trace." + call.getCalledOperand()->getName());
+          ElseTracecall =
+              Builder.CreateCall(samplefn->getFunctionType(), samplefn,
+                                 args_and_null, "trace." + called->getName());
         }
 
         Builder.SetInsertPoint(new_call);
@@ -187,7 +191,7 @@ public:
 
       Value *ret = Builder.CreateExtractValue(tracecall, {0});
       Value *subtrace = Builder.CreateExtractValue(
-          tracecall, {1}, "newtrace." + call.getCalledOperand()->getName());
+          tracecall, {1}, "newtrace." + called->getName());
 
       tutils->InsertCall(Builder, address, subtrace);
 
