@@ -38,6 +38,7 @@ void updatePrimalFunc(FunctionOpInterface fn,
       newArgumentTypes.push_back(newType);
       arg.setType(newType);
       auto loaded = rewriter.create<LLVM::LoadOp>(arg.getLoc(), arg);
+      arg.replaceAllUsesExcept(loaded, loaded);
       rewriter.replaceUsesOfBlockArgument(arg, loaded);
     } else {
       newArgumentTypes.push_back(arg.getType());
