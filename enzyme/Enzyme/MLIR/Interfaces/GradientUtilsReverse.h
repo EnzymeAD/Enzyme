@@ -32,8 +32,6 @@ public:
                 std::map<Operation *, Operation *> &originalToNewFnOps_,
                 DerivativeMode mode_, 
                 unsigned width, 
-                BlockAndValueMapping mapReverseModeBlocks_, 
-                DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapBlockArguments_,
                 SymbolTableCollection &symbolTable_);
 
   // From CacheUtility
@@ -49,7 +47,6 @@ public:
   BlockAndValueMapping invertedPointersShadow;
   BlockAndValueMapping shadowValues;
   Block *initializationBlock;
-  SmallVector<Block *> returnBlocks;
 
   BlockAndValueMapping mapReverseModeBlocks;
   DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapBlockArguments;
@@ -103,36 +100,16 @@ public:
   bool requiresShadow(Type t);
 
   void initInitializationBlock(BlockAndValueMapping invertedPointers_);
-  void initReturnBlocks();
 
   bool onlyUsedInParentBlock(Value v);
 
   Operation *cloneWithNewOperands(OpBuilder &B, Operation *op);
   
   Value popCache(Value cache, OpBuilder& builder);
-};
 
-class MDiffeGradientUtilsReverse : public MGradientUtilsReverse {
-public:
-  MDiffeGradientUtilsReverse(MEnzymeLogic &Logic, 
-                      FunctionOpInterface newFunc_,
-                      FunctionOpInterface oldFunc_, 
-                      MTypeAnalysis &TA,
-                      MTypeResults TR, 
-                      BlockAndValueMapping invertedPointers_,
-                      const SmallPtrSetImpl<mlir::Value> &constantvalues_,
-                      const SmallPtrSetImpl<mlir::Value> &returnvals_,
-                      DIFFE_TYPE ActiveReturn,
-                      ArrayRef<DIFFE_TYPE> constant_values,
-                      BlockAndValueMapping &origToNew_,
-                      std::map<Operation *, Operation *> &origToNewOps_,
-                      DerivativeMode mode_, 
-                      unsigned width, 
-                      BlockAndValueMapping mapReverseModeBlocks_, 
-                      DenseMap<Block *, SmallVector<std::pair<Value, Value>>> mapBlockArguments_,
-                      SymbolTableCollection &symbolTable_);
+  void createReverseModeBlocks(Region & oldFunc, Region & newFunc, bool isParentRegion = false);
 
-  static MDiffeGradientUtilsReverse * CreateFromClone(MEnzymeLogic &Logic, 
+  static MGradientUtilsReverse * CreateFromClone(MEnzymeLogic &Logic, 
                   DerivativeMode mode_, 
                   unsigned width,
                   FunctionOpInterface todiff, 
