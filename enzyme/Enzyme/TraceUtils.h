@@ -20,6 +20,13 @@
 using namespace llvm;
 
 class TraceInterface {
+private:
+  LLVMContext &C;
+
+public:
+  TraceInterface(LLVMContext &C) : C(C) {}
+
+  virtual ~TraceInterface() = default;
 
 public:
   // implemented by enzyme
@@ -27,36 +34,85 @@ public:
 
   // user implemented
   virtual Value *getTrace() = 0;
-  virtual FunctionType *getTraceTy() = 0;
-
   virtual Value *getChoice() = 0;
-  virtual FunctionType *getChoiceTy() = 0;
-
   virtual Value *insertCall() = 0;
-  virtual FunctionType *insertCallTy() = 0;
-
   virtual Value *insertChoice() = 0;
-  virtual FunctionType *insertChoiceTy() = 0;
-
   virtual Value *newTrace() = 0;
-  virtual FunctionType *newTraceTy() = 0;
-
   virtual Value *freeTrace() = 0;
-  virtual FunctionType *freeTraceTy() = 0;
-
   virtual Value *hasCall() = 0;
-  virtual FunctionType *hasCallTy() = 0;
-
   virtual Value *hasChoice() = 0;
-  virtual FunctionType *hasChoiceTy() = 0;
 
-  virtual ~TraceInterface() = default;
+public:
+  static IntegerType *sizeType(LLVMContext &C) {
+    return IntegerType::getInt64Ty(C);
+  }
+  static Type *stringType(LLVMContext &C) {
+    return IntegerType::getInt8PtrTy(C);
+  }
+
+public:
+  FunctionType *getTraceTy() { return getTraceTy(C); }
+  FunctionType *getChoiceTy() { return getChoiceTy(C); }
+  FunctionType *insertCallTy() { return insertCallTy(C); }
+  FunctionType *insertChoiceTy() { return insertChoiceTy(C); }
+  FunctionType *newTraceTy() { return newTraceTy(C); }
+  FunctionType *freeTraceTy() { return freeTraceTy(C); }
+  FunctionType *hasCallTy() { return hasCallTy(C); }
+  FunctionType *hasChoiceTy() { return hasChoiceTy(C); }
+
+  static FunctionType *getTraceTy(LLVMContext &C) {
+    return FunctionType::get(PointerType::getInt8PtrTy(C),
+                             {PointerType::getInt8PtrTy(C), stringType(C)},
+                             false);
+  }
+
+  static FunctionType *getChoiceTy(LLVMContext &C) {
+    return FunctionType::get(sizeType(C),
+                             {PointerType::getInt8PtrTy(C), stringType(C),
+                              PointerType::getInt8PtrTy(C), sizeType(C)},
+                             false);
+  }
+
+  static FunctionType *insertCallTy(LLVMContext &C) {
+    return FunctionType::get(Type::getVoidTy(C),
+                             {PointerType::getInt8PtrTy(C), stringType(C),
+                              PointerType::getInt8PtrTy(C)},
+                             false);
+  }
+
+  static FunctionType *insertChoiceTy(LLVMContext &C) {
+    return FunctionType::get(Type::getVoidTy(C),
+                             {PointerType::getInt8PtrTy(C), stringType(C),
+                              Type::getDoubleTy(C),
+                              PointerType::getInt8PtrTy(C), sizeType(C)},
+                             false);
+  }
+
+  static FunctionType *newTraceTy(LLVMContext &C) {
+    return FunctionType::get(PointerType::getInt8PtrTy(C), {}, false);
+  }
+
+  static FunctionType *freeTraceTy(LLVMContext &C) {
+    return FunctionType::get(Type::getVoidTy(C), {PointerType::getInt8PtrTy(C)},
+                             false);
+  }
+
+  static FunctionType *hasCallTy(LLVMContext &C) {
+    return FunctionType::get(Type::getInt1Ty(C),
+                             {PointerType::getInt8PtrTy(C), stringType(C)},
+                             false);
+  }
+
+  static FunctionType *hasChoiceTy(LLVMContext &C) {
+    return FunctionType::get(Type::getInt1Ty(C),
+                             {PointerType::getInt8PtrTy(C), stringType(C)},
+                             false);
+  }
 };
 
 class StaticTraceInterface final : public TraceInterface {
 private:
   Function *sampleFunction;
-
   // user implemented
   Function *getTraceFunction = nullptr;
   Function *getChoiceFunction = nullptr;
@@ -68,31 +124,31 @@ private:
   Function *hasChoiceFunction = nullptr;
 
 public:
-  StaticTraceInterface(Module *M) {
+  StaticTraceInterface(Module *M) : TraceInterface(M->getContext()) {
     for (auto &&F : M->functions()) {
       if (F.getName().contains("__enzyme_newtrace")) {
-        assert(F.getFunctionType()->getNumParams() == 0);
+        assert(F.getFunctionType() == newTraceTy());
         newTraceFunction = &F;
       } else if (F.getName().contains("__enzyme_freetrace")) {
-        assert(F.getFunctionType()->getNumParams() == 1);
+        assert(F.getFunctionType() == freeTraceTy());
         freeTraceFunction = &F;
       } else if (F.getName().contains("__enzyme_get_trace")) {
-        assert(F.getFunctionType()->getNumParams() == 2);
+        assert(F.getFunctionType() == getTraceTy());
         getTraceFunction = &F;
       } else if (F.getName().contains("__enzyme_get_choice")) {
-        assert(F.getFunctionType()->getNumParams() == 4);
+        assert(F.getFunctionType() == getChoiceTy());
         getChoiceFunction = &F;
       } else if (F.getName().contains("__enzyme_insert_call")) {
-        assert(F.getFunctionType()->getNumParams() == 3);
+        assert(F.getFunctionType() == insertCallTy());
         insertCallFunction = &F;
       } else if (F.getName().contains("__enzyme_insert_choice")) {
-        assert(F.getFunctionType()->getNumParams() == 5);
+        assert(F.getFunctionType() == insertChoiceTy());
         insertChoiceFunction = &F;
       } else if (F.getName().contains("__enzyme_has_call")) {
-        assert(F.getFunctionType()->getNumParams() == 2);
+        assert(F.getFunctionType() == hasCallTy());
         hasCallFunction = &F;
       } else if (F.getName().contains("__enzyme_has_choice")) {
-        assert(F.getFunctionType()->getNumParams() == 2);
+        assert(F.getFunctionType() == hasChoiceTy());
         hasChoiceFunction = &F;
       } else if (F.getName().contains("__enzyme_sample")) {
         assert(F.getFunctionType()->getNumParams() >= 3);
@@ -115,30 +171,13 @@ public:
 
   // user implemented
   Value *getTrace() { return getTraceFunction; }
-  FunctionType *getTraceTy() { return getTraceFunction->getFunctionType(); }
-
   Value *getChoice() { return getChoiceFunction; }
-  FunctionType *getChoiceTy() { return getChoiceFunction->getFunctionType(); }
-
   Value *insertCall() { return insertCallFunction; }
-  FunctionType *insertCallTy() { return insertCallFunction->getFunctionType(); }
-
   Value *insertChoice() { return insertChoiceFunction; }
-  FunctionType *insertChoiceTy() {
-    return insertChoiceFunction->getFunctionType();
-  }
-
   Value *newTrace() { return newTraceFunction; }
-  FunctionType *newTraceTy() { return newTraceFunction->getFunctionType(); }
-
   Value *freeTrace() { return freeTraceFunction; }
-  FunctionType *freeTraceTy() { return freeTraceFunction->getFunctionType(); }
-
   Value *hasCall() { return hasCallFunction; }
-  FunctionType *hasCallTy() { return hasCallFunction->getFunctionType(); }
-
   Value *hasChoice() { return hasChoiceFunction; }
-  FunctionType *hasChoiceTy() { return hasChoiceFunction->getFunctionType(); }
 };
 
 class DynamicTraceInterface final : public TraceInterface {
@@ -146,8 +185,6 @@ private:
   Function *sampleFunction;
   Value *dynamicInterface;
   Function *F;
-
-  LLVMContext &C;
 
 private:
   Value *getTraceFunction = nullptr;
@@ -162,14 +199,10 @@ private:
 public:
   DynamicTraceInterface(Function *sampleFunction, Value *dynamicInterface,
                         Function *F)
-      : sampleFunction(sampleFunction), dynamicInterface(dynamicInterface),
-        F(F), C(sampleFunction->getContext()) {}
+      : TraceInterface(F->getContext()), sampleFunction(sampleFunction),
+        dynamicInterface(dynamicInterface), F(F) {}
 
   ~DynamicTraceInterface() = default;
-
-private:
-  IntegerType *sizeType() { return IntegerType::getInt64Ty(C); }
-  Type *stringType() { return IntegerType::getInt8PtrTy(C); }
 
 public:
   // implemented by enzyme
@@ -189,12 +222,6 @@ public:
                load, PointerType::getUnqual(getTraceTy()), "get_trace");
   }
 
-  FunctionType *getTraceTy() {
-    return FunctionType::get(PointerType::getInt8PtrTy(C),
-                             {PointerType::getInt8PtrTy(C), stringType()},
-                             false);
-  }
-
   Value *getChoice() {
     if (getChoiceFunction)
       return getChoiceFunction;
@@ -205,13 +232,6 @@ public:
     auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
     return getChoiceFunction = Builder.CreatePointerCast(
                load, PointerType::getUnqual(getChoiceTy()), "get_choice");
-  }
-
-  FunctionType *getChoiceTy() {
-    return FunctionType::get(sizeType(),
-                             {PointerType::getInt8PtrTy(C), stringType(),
-                              PointerType::getInt8PtrTy(C), sizeType()},
-                             false);
   }
 
   Value *insertCall() {
@@ -226,13 +246,6 @@ public:
                load, PointerType::getUnqual(insertCallTy()), "insert_call");
   }
 
-  FunctionType *insertCallTy() {
-    return FunctionType::get(Type::getVoidTy(C),
-                             {PointerType::getInt8PtrTy(C), stringType(),
-                              PointerType::getInt8PtrTy(C)},
-                             false);
-  }
-
   Value *insertChoice() {
     if (insertChoiceFunction)
       return insertChoiceFunction;
@@ -243,14 +256,6 @@ public:
     auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
     return insertChoiceFunction = Builder.CreatePointerCast(
                load, PointerType::getUnqual(insertChoiceTy()), "insert_choice");
-  }
-
-  FunctionType *insertChoiceTy() {
-    return FunctionType::get(Type::getVoidTy(C),
-                             {PointerType::getInt8PtrTy(C), stringType(),
-                              Type::getDoubleTy(C),
-                              PointerType::getInt8PtrTy(C), sizeType()},
-                             false);
   }
 
   Value *newTrace() {
@@ -265,10 +270,6 @@ public:
                load, PointerType::getUnqual(newTraceTy()), "new_trace");
   }
 
-  FunctionType *newTraceTy() {
-    return FunctionType::get(PointerType::getInt8PtrTy(C), {}, false);
-  }
-
   Value *freeTrace() {
     if (freeTraceFunction)
       return freeTraceFunction;
@@ -279,11 +280,6 @@ public:
     auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
     return freeTraceFunction = Builder.CreatePointerCast(
                load, PointerType::getUnqual(freeTraceTy()), "free_trace");
-  }
-
-  FunctionType *freeTraceTy() {
-    return FunctionType::get(Type::getVoidTy(C), {PointerType::getInt8PtrTy(C)},
-                             false);
   }
 
   Value *hasCall() {
@@ -298,12 +294,6 @@ public:
                load, PointerType::getUnqual(hasCallTy()), "has_call");
   }
 
-  FunctionType *hasCallTy() {
-    return FunctionType::get(Type::getInt1Ty(C),
-                             {PointerType::getInt8PtrTy(C), stringType()},
-                             false);
-  }
-
   Value *hasChoice() {
     if (hasChoiceFunction)
       return hasChoiceFunction;
@@ -315,18 +305,12 @@ public:
     return hasChoiceFunction = Builder.CreatePointerCast(
                load, PointerType::getUnqual(hasChoiceTy()), "has_choice");
   }
-
-  FunctionType *hasChoiceTy() {
-    return FunctionType::get(Type::getInt1Ty(C),
-                             {PointerType::getInt8PtrTy(C), stringType()},
-                             false);
-  }
 };
 
 class TraceUtils {
 
 private:
-  TraceInterface *interface = nullptr;
+  TraceInterface *interface;
   Value *dynamic_interface = nullptr;
   Instruction *trace;
   Value *observations = nullptr;
@@ -360,9 +344,9 @@ public:
     }
 
     FunctionType *orig_FTy = oldFunc->getFunctionType();
-    Type *traceType = !has_dynamic_interface
-                          ? interface->newTraceTy()->getReturnType()
-                          : PointerType::getInt8PtrTy(Context);
+    Type *traceType =
+        TraceInterface::getTraceTy(F->getContext())->getReturnType();
+
     SmallVector<Type *, 4> params;
 
     for (unsigned i = 0; i < orig_FTy->getNumParams(); ++i) {
