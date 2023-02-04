@@ -1893,15 +1893,86 @@ public:
 
     Value *trace =
         Builder.CreateCall(interface->newTraceTy(), interface->newTrace());
+    Value *dtrace =
+        Builder.CreateCall(interface->newTraceTy(), interface->newTrace());
+
+    // Diff
+    auto diffeMode = DerivativeMode::ReverseModeCombined;
+    DIFFE_TYPE retType = whatType(newFunc->getReturnType(), diffeMode);
+
+    auto Arch =
+        llvm::Triple(
+            CI->getParent()->getParent()->getParent()->getTargetTriple())
+            .getArch();
+
+    bool AtomicAdd = Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
+                     Arch == Triple::amdgcn;
+
+    std::vector<DIFFE_TYPE> constants;
+    constants.push_back(DIFFE_TYPE::DUP_ARG);
+
+    std::vector<bool> overwritten_args;
+    FnTypeInfo type_args(newFunc);
+    for (auto &a : type_args.Function->args()) {
+      overwritten_args.push_back(
+          !(diffeMode == DerivativeMode::ReverseModeCombined));
+      TypeTree dt;
+      if (a.getType()->isFPOrFPVectorTy()) {
+        dt = ConcreteType(a.getType()->getScalarType());
+      } else if (a.getType()->isPointerTy()) {
+#if LLVM_VERSION_MAJOR >= 15
+        if (a.getContext().supportsTypedPointers()) {
+#endif
+          auto et = a.getType()->getPointerElementType();
+          if (et->isFPOrFPVectorTy()) {
+            dt = TypeTree(ConcreteType(et->getScalarType())).Only(-1, nullptr);
+          } else if (et->isPointerTy()) {
+            dt = TypeTree(ConcreteType(BaseType::Pointer)).Only(-1, nullptr);
+          }
+#if LLVM_VERSION_MAJOR >= 15
+        }
+#endif
+        dt.insert({}, BaseType::Pointer);
+      } else if (a.getType()->isIntOrIntVectorTy()) {
+        dt = ConcreteType(BaseType::Integer);
+      }
+      type_args.Arguments.insert(
+          std::pair<Argument *, TypeTree>(&a, dt.Only(-1, nullptr)));
+      // TODO note that here we do NOT propagate constants in type info (and
+      // should consider whether we should)
+      type_args.KnownValues.insert(
+          std::pair<Argument *, std::set<int64_t>>(&a, {}));
+    }
+
+    TypeAnalysis TA(Logic.PPC.FAM);
+    type_args = TA.analyzeFunction(type_args).getAnalyzedTypeInfo();
+
+    auto diffeFunc = Logic.CreatePrimalAndGradient(
+        (ReverseCacheKey){.todiff = newFunc,
+                          .retType = retType,
+                          .constant_args = constants,
+                          .overwritten_args = overwritten_args,
+                          .returnUsed = false,
+                          .shadowReturnUsed = false,
+                          .mode = diffeMode,
+                          .width = 1,
+                          .freeMemory = true,
+                          .AtomicAdd = AtomicAdd,
+                          .additionalType = nullptr,
+                          .typeInfo = type_args},
+        TA, /*augmented*/ nullptr);
+
+    // Cleanup
 
     args.push_back(trace);
+    args.push_back(dtrace);
 
-    Builder.CreateCall(newFunc->getFunctionType(), newFunc, args);
+    Builder.CreateCall(diffeFunc, args);
 
     if (CI->getType() != trace->getType())
-      trace = Builder.CreatePointerCast(trace, CI->getType());
+      dtrace = Builder.CreatePointerCast(trace, CI->getType());
 
-    CI->replaceAllUsesWith(trace);
+    CI->replaceAllUsesWith(dtrace);
     CI->eraseFromParent();
 
     delete interface;

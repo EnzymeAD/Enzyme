@@ -56,8 +56,12 @@ public:
       Value *choice;
       switch (mode) {
       case ProbProgMode::Trace: {
-        choice = Builder.CreateCall(samplefn->getFunctionType(), samplefn,
-                                    sample_args);
+        auto sample_call = Builder.CreateCall(samplefn->getFunctionType(),
+                                              samplefn, sample_args);
+        sample_call->addAttribute(
+            AttributeList::FunctionIndex,
+            Attribute::get(sample_call->getContext(), "enzyme_sample"));
+        choice = sample_call;
         break;
       }
       case ProbProgMode::Condition: {
@@ -92,6 +96,9 @@ public:
           auto choice =
               Builder.CreateCall(samplefn->getFunctionType(), samplefn,
                                  sample_args, "sample." + call.getName());
+          choice->addAttribute(
+              AttributeList::FunctionIndex,
+              Attribute::get(choice->getContext(), "enzyme_sample"));
           ElseChoice = choice;
         }
 

@@ -474,6 +474,10 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
   if (Name == "MPI_Waitall" || Name == "PMPI_Waitall")
     return val != CI->getOperand(1);
 
+  if (Name == "__enzyme_insert_choice") {
+    //    return false;
+  }
+
   // TODO interprocedural detection
   // Before potential introprocedural detection, any function without definition
   // may to be assumed to have an active use
@@ -1257,6 +1261,10 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
   }
 
   if (auto CI = dyn_cast<CallInst>(Val)) {
+    if (CI->hasFnAttr("enzyme_sample")) {
+      ActiveValues.insert(Val);
+      return false;
+    }
     if (CI->hasFnAttr("enzyme_active")) {
       if (EnzymePrintActivity)
         llvm::errs() << "forced active val " << *Val << "\n";

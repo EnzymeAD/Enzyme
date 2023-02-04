@@ -227,6 +227,8 @@ public:
 
     auto call = Builder.CreateCall(
         interface->getChoiceTy(), interface->getChoice(), args, Name + ".size");
+    call->addAttribute(AttributeList::FunctionIndex,
+                       Attribute::get(call->getContext(), "enzyme_inactive"));
     call->addParamAttr(1, Attribute::ReadOnly);
     call->addParamAttr(1, Attribute::NoCapture);
     return Builder.CreateLoad(choiceType, store_dest, "from.trace." + Name);

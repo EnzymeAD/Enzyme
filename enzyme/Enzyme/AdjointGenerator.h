@@ -11466,6 +11466,33 @@ public:
       return;
     }
 
+    // HERE by ProbProg
+
+    if (funcName.contains("__enzyme_insert_choice")) {
+      Value *trace = call.getArgOperand(0);
+      Value *address = call.getArgOperand(1);
+      Value *likelihood = call.getArgOperand(2);
+      Value *choice_ptr = call.getArgOperand(3);
+      Value *choice_size = call.getArgOperand(4);
+
+      Value *dtrace = lookup(gutils->invertPointerM(trace, BuilderZ), BuilderZ);
+      Value *dchoice_ptr =
+          lookup(gutils->getNewFromOriginal(choice_ptr), BuilderZ);
+      Value *dchoice_size =
+          lookup(gutils->getNewFromOriginal(choice_size), BuilderZ);
+
+      Value *dlikelihood = diffe(likelihood, BuilderZ);
+
+      // insert choice with d likelihood in dtrace
+      Value *args[]{dtrace, address, dlikelihood, dchoice_ptr, dchoice_size};
+      BuilderZ.CreateCall(called, args);
+      return;
+    }
+
+    if (call.hasFnAttr("enzyme_sample")) {
+      return;
+    }
+
     if (gutils->isConstantInstruction(orig) && gutils->isConstantValue(orig)) {
       bool noFree = false;
 #if LLVM_VERSION_MAJOR >= 9
