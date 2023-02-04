@@ -4115,6 +4115,12 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
       return;
     }
     /// END MPI
+
+    // Prob Prog
+    if (funcName == "enzyme_notypeanalysis") {
+      return;
+    }
+
     if (funcName == "memcpy" || funcName == "memmove") {
       // TODO have this call common mem transfer to copy data
       visitMemTransferCommon(call);

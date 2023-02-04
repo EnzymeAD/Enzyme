@@ -4346,7 +4346,7 @@ GradientUtils *GradientUtils::CreateFromClone(
   auto res = new GradientUtils(
       Logic, newFunc, oldFunc, TLI, TA, TR, invertedPointers, constant_values,
       nonconstant_values, retType, constant_args, originalToNew,
-      DerivativeMode::ReverseModePrimal, /* width */ width, omp);
+      DerivativeMode::ReverseModePrimal, width, omp);
   return res;
 }
 
