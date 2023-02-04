@@ -80,7 +80,7 @@ struct AddFOpInterface
   }
 };
 
-Value addToGradient(Value oldGradient, Value addedGradient, OpBuilder & builder, MGradientUtilsReverse *gutils){
+void addToGradient(Value oldGradient, Value addedGradient, OpBuilder & builder, MGradientUtilsReverse *gutils){
   Value gradient = addedGradient;
   if(gutils->hasInvertPointer(oldGradient)){
     Value operandGradient = gutils->invertPointerM(oldGradient, builder);
@@ -101,7 +101,7 @@ void defaultClearGradient(Operation *op, OpBuilder &builder, MGradientUtilsRever
 }
 
 struct AddFOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalModel<AddFOpInterfaceReverse, arith::AddFOp> {
-  void createReverseModeAdjoint(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils, ValueRange caches) const {
+  void createReverseModeAdjoint(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils, SmallVector<Value> caches) const {
     // Derivative of r = a + b -> dr = da + db
     auto addOp = cast<arith::AddFOp>(op);
 
@@ -112,8 +112,8 @@ struct AddFOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalModel
     }
   }
 
-  ValueRange cacheValues(Operation *op, MGradientUtilsReverse *gutils) const {
-
+  SmallVector<Value> cacheValues(Operation *op, MGradientUtilsReverse *gutils) const {
+    return SmallVector<Value>();
   }
 
   void createShadowValues(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils) const {
@@ -122,7 +122,7 @@ struct AddFOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalModel
 };
 
 struct MulFOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalModel<MulFOpInterfaceReverse, arith::MulFOp> {
-  void createReverseModeAdjoint(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils, ValueRange caches) const {
+  void createReverseModeAdjoint(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils, SmallVector<Value> caches) const {
     auto mulOp = cast<arith::MulFOp>(op);
 
     if(gutils->hasInvertPointer(mulOp)){
@@ -139,7 +139,7 @@ struct MulFOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalModel
     }
   }
 
-  ValueRange cacheValues(Operation *op, MGradientUtilsReverse *gutils) const {
+  SmallVector<Value> cacheValues(Operation *op, MGradientUtilsReverse *gutils) const {
     auto mulOp = cast<arith::MulFOp>(op);
     if(gutils->hasInvertPointer(mulOp)){
       OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
@@ -149,9 +149,9 @@ struct MulFOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalModel
         Value cache = gutils->initAndPushCache(gutils->getNewFromOriginal(otherOperand), cacheBuilder);
         caches.push_back(cache);
       }
-      return ValueRange(ArrayRef<Value>(caches));
+      return caches;
     }
-    return ValueRange();
+    return SmallVector<Value>();
   }
 
   void createShadowValues(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils) const {

@@ -53,7 +53,7 @@ def ReverseAutoDiffOpInterface : OpInterface<"ReverseAutoDiffOpInterface"> {
     }],
     /*retTy=*/"void",
     /*methodName=*/"createReverseModeAdjoint",
-    /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::enzyme::MGradientUtilsReverse *":$gutils, "::mlir::ValueRange":$caches)
+    /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::enzyme::MGradientUtilsReverse *":$gutils, "SmallVector<Value>":$caches)
     >,
 
     InterfaceMethod<
@@ -69,7 +69,7 @@ def ReverseAutoDiffOpInterface : OpInterface<"ReverseAutoDiffOpInterface"> {
     /*desc=*/[{
       Caches values to create the adjoint.
     }],
-    /*retTy=*/"::mlir::ValueRange",
+    /*retTy=*/"SmallVector<Value>",
     /*methodName=*/"cacheValues",
     /*args=*/(ins "::mlir::enzyme::MGradientUtilsReverse *":$gutils)
     >

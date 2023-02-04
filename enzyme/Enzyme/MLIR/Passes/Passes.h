@@ -19,6 +19,8 @@ namespace enzyme {
 std::unique_ptr<Pass> createDifferentiatePass();
 
 std::unique_ptr<Pass> createEnzymeToMemRefPass();
+
+std::unique_ptr<Pass> createLowerToLLVMEnzymePass();
 } // namespace enzyme
 } // namespace mlir
 

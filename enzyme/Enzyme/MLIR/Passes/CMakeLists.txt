@@ -6,6 +6,7 @@ add_mlir_doc(Passes EnzymePasses ./ -gen-pass-doc)
 add_mlir_dialect_library(MLIREnzymeTransforms
     EnzymeMLIRPass.cpp
     EnzymeToMemRef.cpp
+    LowerToLLVMEnzyme.cpp
   
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/mlir/Dialect/Affine

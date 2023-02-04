@@ -66,7 +66,7 @@ struct StoreOpInterface
 };
 
 struct LoadOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalModel<LoadOpInterfaceReverse, memref::LoadOp> {
-  void createReverseModeAdjoint(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils, ValueRange caches) const {
+  void createReverseModeAdjoint(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils, SmallVector<Value> caches) const {
     auto loadOp = cast<memref::LoadOp>(op);
     Value memref = loadOp.getMemref();
     
@@ -88,7 +88,7 @@ struct LoadOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalModel
     }
   }
 
-  ValueRange cacheValues(Operation *op, MGradientUtilsReverse *gutils) const {
+  SmallVector<Value> cacheValues(Operation *op, MGradientUtilsReverse *gutils) const {
     auto loadOp = cast<memref::LoadOp>(op);
     Value memref = loadOp.getMemref();
     ValueRange indices = loadOp.getIndices();
@@ -99,10 +99,10 @@ struct LoadOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalModel
         for (Value v : indices){
           caches.push_back(gutils->initAndPushCache(gutils->getNewFromOriginal(v), cacheBuilder));
         }
-        return ValueRange(ArrayRef<Value>(caches));
+        return caches;
       }
     }
-    return ValueRange();
+    return SmallVector<Value>();
   }
 
   void createShadowValues(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils) const {
@@ -114,7 +114,7 @@ struct LoadOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalModel
 };
 
 struct StoreOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalModel<StoreOpInterfaceReverse, memref::StoreOp> {
-  void createReverseModeAdjoint(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils, ValueRange caches) const {
+  void createReverseModeAdjoint(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils, SmallVector<Value> caches) const {
     auto storeOp = cast<memref::StoreOp>(op);
     Value val = storeOp.getValue();
     Value memref = storeOp.getMemref();
@@ -143,7 +143,7 @@ struct StoreOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalMode
     }
   }
 
-  ValueRange cacheValues(Operation *op, MGradientUtilsReverse *gutils) const {
+  SmallVector<Value> cacheValues(Operation *op, MGradientUtilsReverse *gutils) const {
     auto storeOp = cast<memref::StoreOp>(op);
     Value memref = storeOp.getMemref();
     ValueRange indices = storeOp.getIndices();
@@ -155,10 +155,10 @@ struct StoreOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalMode
         for (Value v : indices){
           caches.push_back(gutils->initAndPushCache(gutils->getNewFromOriginal(v), cacheBuilder));
         }
-        return ValueRange(ArrayRef<Value>(caches));
+        return caches;
       }
     }
-    return ValueRange();
+    return SmallVector<Value>();
   }
 
   void createShadowValues(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils) const {
@@ -170,12 +170,12 @@ struct StoreOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalMode
 };
 
 struct AllocOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalModel<AllocOpInterfaceReverse, memref::AllocOp> {
-  void createReverseModeAdjoint(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils, ValueRange caches) const {
+  void createReverseModeAdjoint(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils, SmallVector<Value> caches) const {
     auto allocOp = cast<memref::AllocOp>(op);
     Value memref = allocOp.getMemref();
   }
 
-  ValueRange cacheValues(Operation *op, MGradientUtilsReverse *gutils) const {
+  SmallVector<Value> cacheValues(Operation *op, MGradientUtilsReverse *gutils) const {
     auto allocOp = cast<memref::AllocOp>(op);
   }
 
