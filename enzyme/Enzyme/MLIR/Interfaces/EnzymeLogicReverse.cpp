@@ -169,7 +169,7 @@ void MEnzymeLogic::visitChildren(Block * oBB, Block * reverseBB, MGradientUtilsR
   }
 }
 
-void MEnzymeLogic::handlePredecessors(Block * oBB, Block * reverseBB, MGradientUtilsReverse * gutils, buildReturnFunction buildRetrunOp){
+void MEnzymeLogic::handlePredecessors(Block * oBB, Block * newBB, Block * reverseBB, MGradientUtilsReverse * gutils, buildReturnFunction buildRetrunOp){
   OpBuilder revBuilder(reverseBB, reverseBB->end());
   if (oBB->hasNoPredecessors()){
     SmallVector<mlir::Value> retargs;
@@ -203,7 +203,7 @@ void MEnzymeLogic::handlePredecessors(Block * oBB, Block * reverseBB, MGradientU
               operands.push_back(nullValue);
             }
             else{
-              llvm_unreachable("non canonial null value found");
+              llvm_unreachable("no canonial null value found");
             }
           }
         }
@@ -219,24 +219,42 @@ void MEnzymeLogic::handlePredecessors(Block * oBB, Block * reverseBB, MGradientU
         defaultArguments = operands;
       }
     }
+    Location loc = oBB->rbegin()->getLoc();
     //Remove Dependency to CF dialect
     if (std::next(oBB->getPredecessors().begin()) == oBB->getPredecessors().end()){
       //If there is only one block we can directly create a branch for simplicity sake
-      revBuilder.create<cf::BranchOp>(gutils->getNewFromOriginal(&*(oBB->rbegin()))->getLoc(), defaultBlock, defaultArguments);
+      revBuilder.create<cf::BranchOp>(loc, defaultBlock, defaultArguments);
     }
     else{
       Value cache = gutils->insertInit(gutils->getIndexCacheType());
-      Value flag = revBuilder.create<enzyme::PopOp>(oBB->rbegin()->getLoc(), gutils->getIndexType(), cache);
+      Value flag = revBuilder.create<enzyme::PopOp>(loc, gutils->getIndexType(), cache);
 
-      revBuilder.create<cf::SwitchOp>(oBB->rbegin()->getLoc(), flag, defaultBlock, defaultArguments, ArrayRef<APInt>(indices), ArrayRef<Block *>(blocks), ArrayRef<ValueRange>(arguments));
+      revBuilder.create<cf::SwitchOp>(loc, flag, defaultBlock, defaultArguments, ArrayRef<APInt>(indices), ArrayRef<Block *>(blocks), ArrayRef<ValueRange>(arguments));
       
+      Value origin = newBB->addArgument(gutils->getIndexType(), loc);
+      
+      OpBuilder newBuilder(newBB, newBB->begin());
+      newBuilder.create<enzyme::PushOp>(loc, cache, origin);
+
       int j = 0;
       for (Block * predecessor : oBB->getPredecessors()){
         Block * newPredecessor = gutils->getNewFromOriginal(predecessor);
-        OpBuilder predecessorBuilder(newPredecessor, std::prev(newPredecessor->end()));
 
-        Value indicator = predecessorBuilder.create<arith::ConstantIntOp>(oBB->rbegin()->getLoc(), j++, 32);
-        predecessorBuilder.create<enzyme::PushOp>(oBB->rbegin()->getLoc(), cache, indicator);
+        OpBuilder predecessorBuilder(newPredecessor, std::prev(newPredecessor->end()));
+        Value indicator = predecessorBuilder.create<arith::ConstantIntOp>(loc, j++, 32);
+
+        Operation * terminator = newPredecessor->getTerminator();
+        if (auto binst = dyn_cast<BranchOpInterface>(terminator)) {
+          for (int i = 0; i < terminator->getNumSuccessors(); i++){
+            if (terminator->getSuccessor(i) == newBB){
+              SuccessorOperands sOps = binst.getSuccessorOperands(i);
+              sOps.append(indicator);
+            }
+          }
+        }
+        else{
+          llvm_unreachable("invalid terminator");
+        }
       }
     }
   }
@@ -274,7 +292,7 @@ void MEnzymeLogic::differentiate(MGradientUtilsReverse * gutils, Region & oldReg
     mapInvertArguments(oBB, reverseBB, gutils);
     handleReturns(oBB, newBB, reverseBB, gutils, parentRegion);
     visitChildren(oBB, reverseBB, gutils);
-    handlePredecessors(oBB, reverseBB, gutils, buildFuncRetrunOp);
+    handlePredecessors(oBB, newBB, reverseBB, gutils, buildFuncRetrunOp);
   }
 }
 
@@ -300,9 +318,9 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(FunctionOpInterface fn, DIFF
 
   auto nf = gutils->newFunc;
 
-  llvm::errs() << "nf\n";
-  nf.dump();
-  llvm::errs() << "nf end\n";
+  //llvm::errs() << "nf\n";
+  //nf.dump();
+  //llvm::errs() << "nf end\n";
 
   delete gutils;
   return nf;
