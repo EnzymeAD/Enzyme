@@ -93,9 +93,9 @@ public:
   Type getGradientType(Value t);
   Value insertInitGradient(mlir::Value v, OpBuilder &builder);
 
-  //ShadowGradient
-  Type getShadowGradientType(Value t);
-  Value insertInitShadowGradient(mlir::Value v, OpBuilder &builder);
+  //ShadowedGradient
+  Type getShadowedGradientType(Value t);
+  Value insertInitShadowedGradient(mlir::Value v, OpBuilder &builder);
 
   bool requiresShadow(Type t);
 

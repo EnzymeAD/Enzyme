@@ -27,6 +27,11 @@ def EnzymeOpsToMemRefPass : Pass<"convert-enzyme-to-memref"> {
   let constructor = "mlir::enzyme::createEnzymeToMemRefPass()";
 }
 
+def ShadowedGradientToCachePass : Pass<"convert-enzyme-shadowed-gradient-to-cache"> {
+  let summary = "asdf";
+  let constructor = "mlir::enzyme::createShadowedGradientToCachePass()";
+}
+
 def LowerToLLVMEnzymePass : Pass<"lower-to-llvm-enzyme"> {
   let summary = "Lower enzyme.diff ops to LLVM Enzyme-compatible calls";
   let constructor = "mlir::enzyme::createLowerToLLVMEnzymePass()";

@@ -67,7 +67,7 @@ def DiffOp : Enzyme_Op<"diff",
 }
 
 def PushOp : Enzyme_Op<"push"> {
-  let summary = "Push value to cache or ShadowGradient";
+  let summary = "Push value to cache or ShadowedGradient";
   let arguments = (ins AnyType : $cache, AnyType : $value);
   let results = (outs );
 }
@@ -79,7 +79,7 @@ def PopOp : Enzyme_Op<"pop"> {
 }
 
 def ClearOp : Enzyme_Op<"clear"> {
-  let summary = "Remove top element from ShadowGradient";
+  let summary = "Remove top element from ShadowedGradient";
   let arguments = (ins AnyType : $cache);
   let results = (outs );
 }
@@ -122,13 +122,13 @@ def Gradient : Enzyme_Type<"Gradient"> {
   let assemblyFormat = "`<` $basetype `>`";
 }
 
-def ShadowGradient : Enzyme_Type<"ShadowGradient"> {
+def ShadowedGradient : Enzyme_Type<"ShadowedGradient"> {
   let summary = "Stores gradients which need to be initialized with shadow values from the forward pass.";
   let description = [{
     "Cache for reverse pass"
   }];
   let parameters = (ins "Type":$basetype);
-  let mnemonic = "ShadowGradient";
+  let mnemonic = "ShadowedGradient";
   let assemblyFormat = "`<` $basetype `>`";
 }
 
