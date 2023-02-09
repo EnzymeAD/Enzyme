@@ -176,12 +176,13 @@ struct LoweredCache {
     Value elementsVal = b.create<memref::LoadOp>(loc, elementsField);
     Value sizeVal = b.create<memref::LoadOp>(loc, sizeField);
     Value zero = b.create<arith::ConstantIndexOp>(loc, 0);
+    Value one = b.create<arith::ConstantIndexOp>(loc, 1);
     Value pred =
         b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sgt, sizeVal, zero);
     b.create<cf::AssertOp>(loc, pred, "get on empty cache");
 
-
-    Value result = b.create<memref::LoadOp>(loc, elementsVal, sizeVal);
+    Value lastIndex = b.create<arith::SubIOp>(loc, sizeVal, one);
+    Value result = b.create<memref::LoadOp>(loc, elementsVal, lastIndex);
     b.create<func::ReturnOp>(loc, result);
     return SymbolRefAttr::get(context, funcName);
   }
@@ -199,7 +200,7 @@ struct LoweredCache {
   }
 
   FlatSymbolRefAttr getOrInsertSetFunction(Location loc, ModuleOp moduleOp,
-                                            OpBuilder &b) const {
+                                           OpBuilder &b) const {
     MLIRContext *context = b.getContext();
     std::string funcName = "__enzyme_set";
     llvm::raw_string_ostream funcStream{funcName};
@@ -259,7 +260,7 @@ struct LoweredCache {
   }
 
   void emitSet(Location loc, Value value, OpBuilder &b,
-                FlatSymbolRefAttr setFn) const {
+               FlatSymbolRefAttr setFn) const {
     b.create<func::CallOp>(
         loc, setFn, /*results=*/TypeRange{},
         /*operands=*/ValueRange{elements, size, capacity, value});
@@ -399,16 +400,14 @@ struct SetOpConversion : public OpConversionPattern<enzyme::SetOp> {
           loc, op->getParentOfType<ModuleOp>(), rewriter);
       loweredCache.value().emitSet(loc, op.getValue(), rewriter, setFn);
       rewriter.eraseOp(op);
-    }
-    else if (auto type = dyn_cast<enzyme::GradientType>(op.getGradient().getType())) {
-      auto memrefType = getTypeConverter()
-                            ->convertType(type)
-                            .cast<MemRefType>();
+    } else if (auto type =
+                   dyn_cast<enzyme::GradientType>(op.getGradient().getType())) {
+      auto memrefType =
+          getTypeConverter()->convertType(type).cast<MemRefType>();
       auto castedGradient = rewriter.create<UnrealizedConversionCastOp>(
           op.getLoc(), memrefType, op.getGradient());
       rewriter.replaceOpWithNewOp<memref::StoreOp>(op, op.getValue(),
-                                                  castedGradient.getResult(0));
-
+                                                   castedGradient.getResult(0));
     }
     return success();
   }
@@ -420,7 +419,7 @@ struct GetOpConversion : public OpConversionPattern<enzyme::GetOp> {
   LogicalResult
   matchAndRewrite(enzyme::GetOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    
+
     if (auto type = dyn_cast<enzyme::CacheType>(op.getGradient().getType())) {
       Location loc = op.getLoc();
       auto loweredCache = LoweredCache::getFromEnzymeCache(
@@ -431,12 +430,12 @@ struct GetOpConversion : public OpConversionPattern<enzyme::GetOp> {
 
       FlatSymbolRefAttr getFn = loweredCache.value().getOrInsertGetFunction(
           loc, op->getParentOfType<ModuleOp>(), rewriter);
-      rewriter.replaceOp(op, loweredCache.value().emitGet(loc, rewriter, getFn));
-    }
-    else if (auto type = dyn_cast<enzyme::GradientType>(op.getGradient().getType())) {
-      auto memrefType = getTypeConverter()
-                            ->convertType(type)
-                            .cast<MemRefType>();
+      rewriter.replaceOp(op,
+                         loweredCache.value().emitGet(loc, rewriter, getFn));
+    } else if (auto type =
+                   dyn_cast<enzyme::GradientType>(op.getGradient().getType())) {
+      auto memrefType =
+          getTypeConverter()->convertType(type).cast<MemRefType>();
       auto castedGradient = rewriter.create<UnrealizedConversionCastOp>(
           op.getLoc(), memrefType, op.getGradient());
       rewriter.replaceOpWithNewOp<memref::LoadOp>(op,
@@ -453,7 +452,9 @@ struct EnzymeToMemRefPass
     RewritePatternSet patterns(context);
     TypeConverter typeConverter;
     typeConverter.addConversion([](Type type) -> llvm::Optional<Type> {
-      return type;
+      if (type.isIntOrIndexOrFloat() || type.isa<MemRefType>())
+        return type;
+      return llvm::None;
     });
     typeConverter.addConversion(
         [](enzyme::GradientType type) -> llvm::Optional<Type> {
