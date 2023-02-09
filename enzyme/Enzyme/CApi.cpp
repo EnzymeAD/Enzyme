@@ -390,9 +390,15 @@ void EnzymeGradientUtilsGetUncacheableArgs(GradientUtils *gutils,
 
   const std::vector<bool> &overwritten_args = found->second;
 
+  if (size != overwritten_args.size()) {
+    llvm::errs() << " orig: " << *call << "\n";
+    llvm::errs() << " size: " << size
+                 << " overwritten_args.size(): " << overwritten_args.size()
+                 << "\n";
+  }
   assert(size == overwritten_args.size());
-  for (uint64_t i=0; i<size; i++) {
-      data[i] = overwritten_args[i];
+  for (uint64_t i = 0; i < size; i++) {
+    data[i] = overwritten_args[i];
   }
 }
 
@@ -436,7 +442,7 @@ LLVMValueRef EnzymeCreateForwardDiff(
                                                 constant_args_size);
   std::vector<bool> overwritten_args;
   assert(overwritten_args_size == cast<Function>(unwrap(todiff))->arg_size());
-  for (uint64_t i=0; i<overwritten_args_size; i++) {
+  for (uint64_t i = 0; i < overwritten_args_size; i++) {
     overwritten_args.push_back(_overwritten_args[i]);
   }
   return wrap(eunwrap(Logic).CreateForwardDiff(
@@ -458,7 +464,7 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
                                              constant_args_size);
   std::vector<bool> overwritten_args;
   assert(overwritten_args_size == cast<Function>(unwrap(todiff))->arg_size());
-  for (uint64_t i=0; i<overwritten_args_size; i++) {
+  for (uint64_t i = 0; i < overwritten_args_size; i++) {
     overwritten_args.push_back(_overwritten_args[i]);
   }
   return wrap(eunwrap(Logic).CreatePrimalAndGradient(
@@ -491,7 +497,7 @@ EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
                                                 constant_args_size);
   std::vector<bool> overwritten_args;
   assert(overwritten_args_size == cast<Function>(unwrap(todiff))->arg_size());
-  for (uint64_t i=0; i<overwritten_args_size; i++) {
+  for (uint64_t i = 0; i < overwritten_args_size; i++) {
     overwritten_args.push_back(_overwritten_args[i]);
   }
   return ewrap(eunwrap(Logic).CreateAugmentedPrimal(

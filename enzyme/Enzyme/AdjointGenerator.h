@@ -56,8 +56,7 @@ private:
   DIFFE_TYPE retType;
   TypeResults &TR = gutils->TR;
   std::function<unsigned(Instruction *, CacheType)> getIndex;
-  const std::map<CallInst *, const std::vector<bool>>
-      overwritten_args_map;
+  const std::map<CallInst *, const std::vector<bool>> overwritten_args_map;
   const SmallPtrSetImpl<Instruction *> *returnuses;
   AugmentedReturnType augmentedReturn;
   const std::map<ReturnInst *, StoreInst *> *replacedReturns;
@@ -73,8 +72,7 @@ public:
       DerivativeMode Mode, GradientUtils *gutils,
       ArrayRef<DIFFE_TYPE> constant_args, DIFFE_TYPE retType,
       std::function<unsigned(Instruction *, CacheType)> getIndex,
-      const std::map<CallInst *, const std::vector<bool>>
-          overwritten_args_map,
+      const std::map<CallInst *, const std::vector<bool>> overwritten_args_map,
       const SmallPtrSetImpl<Instruction *> *returnuses,
       AugmentedReturnType augmentedReturn,
       const std::map<ReturnInst *, StoreInst *> *replacedReturns,

@@ -111,8 +111,7 @@ public:
   //! returned struct
   std::map<AugmentedStruct, int> returns;
 
-  std::map<llvm::CallInst *, const std::vector<bool>>
-      overwritten_args_map;
+  std::map<llvm::CallInst *, const std::vector<bool>> overwritten_args_map;
 
   std::map<llvm::Instruction *, bool> can_modref_map;
 
@@ -124,8 +123,7 @@ public:
       llvm::Function *fn, llvm::Type *tapeType,
       std::map<std::pair<llvm::Instruction *, CacheType>, int> tapeIndices,
       std::map<AugmentedStruct, int> returns,
-      std::map<llvm::CallInst *, const std::vector<bool>>
-          overwritten_args_map,
+      std::map<llvm::CallInst *, const std::vector<bool>> overwritten_args_map,
       std::map<llvm::Instruction *, bool> can_modref_map)
       : fn(fn), tapeType(tapeType), tapeIndices(tapeIndices), returns(returns),
         overwritten_args_map(overwritten_args_map),
@@ -182,9 +180,9 @@ struct ReverseCacheKey {
             constant_args.begin(), constant_args.end()))
       return false;
 
-    if (std::lexicographical_compare(overwritten_args.begin(), overwritten_args.end(),
-                                     rhs.overwritten_args.begin(),
-                                     rhs.overwritten_args.end()))
+    if (std::lexicographical_compare(
+            overwritten_args.begin(), overwritten_args.end(),
+            rhs.overwritten_args.begin(), rhs.overwritten_args.end()))
       return true;
     if (std::lexicographical_compare(
             rhs.overwritten_args.begin(), rhs.overwritten_args.end(),
@@ -278,14 +276,14 @@ public:
               constant_args.begin(), constant_args.end()))
         return false;
 
-    if (std::lexicographical_compare(overwritten_args.begin(), overwritten_args.end(),
-                                     rhs.overwritten_args.begin(),
-                                     rhs.overwritten_args.end()))
-      return true;
-    if (std::lexicographical_compare(
-            rhs.overwritten_args.begin(), rhs.overwritten_args.end(),
-            overwritten_args.begin(), overwritten_args.end()))
-      return false;
+      if (std::lexicographical_compare(
+              overwritten_args.begin(), overwritten_args.end(),
+              rhs.overwritten_args.begin(), rhs.overwritten_args.end()))
+        return true;
+      if (std::lexicographical_compare(
+              rhs.overwritten_args.begin(), rhs.overwritten_args.end(),
+              overwritten_args.begin(), overwritten_args.end()))
+        return false;
 
       if (returnUsed < rhs.returnUsed)
         return true;
@@ -348,9 +346,8 @@ public:
       llvm::Function *todiff, DIFFE_TYPE retType,
       llvm::ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA,
       bool returnUsed, bool shadowReturnUsed, const FnTypeInfo &typeInfo,
-      const std::vector<bool> _overwritten_args,
-      bool forceAnonymousTape, unsigned width, bool AtomicAdd,
-      bool omp = false);
+      const std::vector<bool> _overwritten_args, bool forceAnonymousTape,
+      unsigned width, bool AtomicAdd, bool omp = false);
 
   std::map<ReverseCacheKey, llvm::Function *> ReverseCachedFunctions;
 
@@ -385,14 +382,14 @@ public:
               constant_args.begin(), constant_args.end()))
         return false;
 
-    if (std::lexicographical_compare(overwritten_args.begin(), overwritten_args.end(),
-                                     rhs.overwritten_args.begin(),
-                                     rhs.overwritten_args.end()))
-      return true;
-    if (std::lexicographical_compare(
-            rhs.overwritten_args.begin(), rhs.overwritten_args.end(),
-            overwritten_args.begin(), overwritten_args.end()))
-      return false;
+      if (std::lexicographical_compare(
+              overwritten_args.begin(), overwritten_args.end(),
+              rhs.overwritten_args.begin(), rhs.overwritten_args.end()))
+        return true;
+      if (std::lexicographical_compare(
+              rhs.overwritten_args.begin(), rhs.overwritten_args.end(),
+              overwritten_args.begin(), overwritten_args.end()))
+        return false;
 
       if (returnUsed < rhs.returnUsed)
         return true;
@@ -450,14 +447,15 @@ public:
                                           const AugmentedReturn *augmented,
                                           bool omp = false);
 
-  llvm::Function *
-  CreateForwardDiff(llvm::Function *todiff, DIFFE_TYPE retType,
-                    llvm::ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA,
-                    bool returnValue, DerivativeMode mode, bool freeMemory,
-                    unsigned width, llvm::Type *additionalArg,
-                    const FnTypeInfo &typeInfo,
-                    const std::vector<bool> _overwritten_args,
-                    const AugmentedReturn *augmented, bool omp = false);
+  llvm::Function *CreateForwardDiff(llvm::Function *todiff, DIFFE_TYPE retType,
+                                    llvm::ArrayRef<DIFFE_TYPE> constant_args,
+                                    TypeAnalysis &TA, bool returnValue,
+                                    DerivativeMode mode, bool freeMemory,
+                                    unsigned width, llvm::Type *additionalArg,
+                                    const FnTypeInfo &typeInfo,
+                                    const std::vector<bool> _overwritten_args,
+                                    const AugmentedReturn *augmented,
+                                    bool omp = false);
 
   llvm::Function *CreateBatch(llvm::Function *tobatch, unsigned width,
                               llvm::ArrayRef<BATCH_TYPE> arg_types,

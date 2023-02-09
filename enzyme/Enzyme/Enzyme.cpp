@@ -1426,7 +1426,8 @@ public:
     std::vector<bool> overwritten_args;
     FnTypeInfo type_args(fn);
     for (auto &a : type_args.Function->args()) {
-      overwritten_args.push_back(!(mode == DerivativeMode::ReverseModeCombined));
+      overwritten_args.push_back(
+          !(mode == DerivativeMode::ReverseModeCombined));
       TypeTree dt;
       if (a.getType()->isFPOrFPVectorTy()) {
         dt = ConcreteType(a.getType()->getScalarType());
