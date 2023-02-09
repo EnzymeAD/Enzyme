@@ -149,7 +149,7 @@ struct StoreOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalMode
     ValueRange indices = storeOp.getIndices();
     Value val = storeOp.getValue();
     if (auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType())){
-      if(gutils->hasInvertPointer(val) && gutils->hasInvertPointer(memref)){
+      if(gutils->hasInvertPointer(memref)){
         OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
         SmallVector<Value> caches;
         for (Value v : indices){
@@ -177,6 +177,8 @@ struct AllocOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalMode
 
   SmallVector<Value> cacheValues(Operation *op, MGradientUtilsReverse *gutils) const {
     auto allocOp = cast<memref::AllocOp>(op);
+
+    return SmallVector<Value>();
   }
 
   void createShadowValues(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils) const {
