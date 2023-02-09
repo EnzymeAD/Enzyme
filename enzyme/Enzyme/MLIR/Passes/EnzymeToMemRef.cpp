@@ -199,73 +199,6 @@ struct LoweredCache {
         .getResult(0);
   }
 
-  FlatSymbolRefAttr getOrInsertSetFunction(Location loc, ModuleOp moduleOp,
-                                           OpBuilder &b) const {
-    MLIRContext *context = b.getContext();
-    std::string funcName = "__enzyme_set";
-    llvm::raw_string_ostream funcStream{funcName};
-    funcStream << elementType;
-    if (moduleOp.lookupSymbol<func::FuncOp>(funcName)) {
-      return SymbolRefAttr::get(context, funcName);
-    }
-
-    OpBuilder::InsertionGuard insertionGuard(b);
-    b.setInsertionPointToStart(moduleOp.getBody());
-
-    auto setFnType = FunctionType::get(
-        context, /*inputs=*/
-        {elements.getType(), size.getType(), capacity.getType(), elementType},
-        /*outputs=*/{});
-    auto setFn = b.create<func::FuncOp>(loc, funcName, setFnType);
-    setFn.setPrivate();
-    Block *entryBlock = setFn.addEntryBlock();
-    b.setInsertionPointToStart(entryBlock);
-    BlockArgument elementsField = setFn.getArgument(0);
-    BlockArgument sizeField = setFn.getArgument(1);
-    BlockArgument capacityField = setFn.getArgument(2);
-    BlockArgument value = setFn.getArgument(3);
-
-    Value sizeVal = b.create<memref::LoadOp>(loc, sizeField);
-    Value capacityVal = b.create<memref::LoadOp>(loc, capacityField);
-
-    Value predicate = b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq,
-                                              sizeVal, capacityVal);
-    b.create<scf::IfOp>(
-        loc, predicate, [&](OpBuilder &thenBuilder, Location loc) {
-          Value two = thenBuilder.create<arith::ConstantIndexOp>(loc, 2);
-          Value newCapacity =
-              thenBuilder.create<arith::MulIOp>(loc, capacityVal, two);
-          Value oldElements =
-              thenBuilder.create<memref::LoadOp>(loc, elementsField);
-          Value newElements = thenBuilder.create<memref::AllocOp>(
-              loc, oldElements.getType().cast<MemRefType>(), newCapacity);
-          thenBuilder.create<memref::CopyOp>(loc, oldElements, newElements);
-          thenBuilder.create<memref::DeallocOp>(loc, oldElements);
-          thenBuilder.create<memref::StoreOp>(loc, newElements, elementsField);
-          thenBuilder.create<memref::StoreOp>(loc, newCapacity, capacityField);
-          thenBuilder.create<scf::YieldOp>(loc);
-        });
-
-    Value elementsVal = b.create<memref::LoadOp>(loc, elementsField);
-    b.create<memref::StoreOp>(loc, value, elementsVal,
-                              /*indices=*/sizeVal);
-
-    Value one = b.create<arith::ConstantIndexOp>(loc, 1);
-    Value newSize = b.create<arith::AddIOp>(loc, sizeVal, one);
-
-    b.create<memref::StoreOp>(loc, newSize, sizeField);
-    b.create<func::ReturnOp>(loc);
-
-    return SymbolRefAttr::get(context, funcName);
-  }
-
-  void emitSet(Location loc, Value value, OpBuilder &b,
-               FlatSymbolRefAttr setFn) const {
-    b.create<func::CallOp>(
-        loc, setFn, /*results=*/TypeRange{},
-        /*operands=*/ValueRange{elements, size, capacity, value});
-  }
-
   static llvm::Optional<LoweredCache>
   getFromEnzymeCache(Location loc, TypeConverter *typeConverter,
                      Value enzymeCache, OpBuilder &b) {
@@ -388,18 +321,9 @@ struct SetOpConversion : public OpConversionPattern<enzyme::SetOp> {
   LogicalResult
   matchAndRewrite(enzyme::SetOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-
     if (auto type = dyn_cast<enzyme::CacheType>(op.getGradient().getType())) {
-      Location loc = op.getLoc();
-      auto loweredCache = LoweredCache::getFromEnzymeCache(
-          loc, getTypeConverter(), op.getGradient(), rewriter);
-      if (!loweredCache.has_value()) {
-        return failure();
-      }
-      FlatSymbolRefAttr setFn = loweredCache.value().getOrInsertSetFunction(
-          loc, op->getParentOfType<ModuleOp>(), rewriter);
-      loweredCache.value().emitSet(loc, op.getValue(), rewriter, setFn);
-      rewriter.eraseOp(op);
+      op.emitError() << "set for CacheType not implemented";
+      return failure();
     } else if (auto type =
                    dyn_cast<enzyme::GradientType>(op.getGradient().getType())) {
       auto memrefType =
