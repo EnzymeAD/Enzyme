@@ -7,6 +7,7 @@ add_mlir_dialect_library(MLIREnzymeTransforms
     EnzymeMLIRPass.cpp
     EnzymeToMemRef.cpp
     LowerToLLVMEnzyme.cpp
+    ShadowedGradientToCache.cpp
   
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/mlir/Dialect/Affine

@@ -108,13 +108,13 @@ Value mlir::enzyme::MGradientUtilsReverse::insertInitGradient(mlir::Value v, OpB
 }
 
 //Shadow Gradient
-Type mlir::enzyme::MGradientUtilsReverse::getShadowGradientType(Value v){
+Type mlir::enzyme::MGradientUtilsReverse::getShadowedGradientType(Value v){
   Type valueType = v.getType();
-  return ShadowGradientType::get(v.getContext(), valueType);
+  return ShadowedGradientType::get(v.getContext(), valueType);
 }
 
-Value mlir::enzyme::MGradientUtilsReverse::insertInitShadowGradient(mlir::Value v, OpBuilder &builder){
-  Type gradientType = getShadowGradientType(v);
+Value mlir::enzyme::MGradientUtilsReverse::insertInitShadowedGradient(mlir::Value v, OpBuilder &builder){
+  Type gradientType = getShadowedGradientType(v);
   OpBuilder initBuilder(initializationBlock, initializationBlock->begin());
   Value gradient = initBuilder.create<enzyme::InitOp>(v.getLoc(), gradientType);
   return gradient;
@@ -206,7 +206,7 @@ Value mlir::enzyme::MGradientUtilsReverse::invertPointerM(Value v, OpBuilder &bu
     Value gradient = invertedPointersShadow.lookupOrNull(v);
     Type type = gradient.getType();
     
-    if (ShadowGradientType gType = dyn_cast<enzyme::ShadowGradientType>(type)) {
+    if (ShadowedGradientType gType = dyn_cast<enzyme::ShadowedGradientType>(type)) {
       Value ret = builder.create<enzyme::GetOp>(v.getLoc(), gType.getBasetype(), gradient);
       return ret;
     }
@@ -241,7 +241,7 @@ Value mlir::enzyme::MGradientUtilsReverse::getShadowValue(mlir::Value v){
 void mlir::enzyme::MGradientUtilsReverse::mapShadowValue(mlir::Value v, mlir::Value shadow, OpBuilder &builder){
   assert(!invertedPointersShadow.contains(v)); //Shadow Values must only be mapped exactly once
 
-  Value cache = insertInitShadowGradient(v, builder);
+  Value cache = insertInitShadowedGradient(v, builder);
   invertedPointersShadow.map(v, cache);
 
   builder.create<enzyme::PushOp>(v.getLoc(), cache, shadow);
@@ -282,7 +282,7 @@ void MGradientUtilsReverse::initInitializationBlock(BlockAndValueMapping inverte
   for (auto const& x : invertedPointers_.getValueMap()){
     if (auto iface = dyn_cast<AutoDiffTypeInterface>(x.first.getType())){
       if(iface.requiresShadow()){
-        mapShadowValue(x.first, x.second, initializationBuilder); //This may create an unnecessary ShadowGradient which could be avoidable TODO
+        mapShadowValue(x.first, x.second, initializationBuilder); //This may create an unnecessary ShadowedGradient which could be avoidable TODO
       }
       else{
         mapInvertPointer(x.first, x.second, initializationBuilder);
