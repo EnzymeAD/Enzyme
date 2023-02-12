@@ -500,19 +500,17 @@ public:
     if (choice->getType()->isPointerTy()) {
       retval = Builder.CreatePointerCast(choice, Builder.getInt8PtrTy());
     } else {
-      IRBuilder<> AllocaBuilder(
-          newFunc->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
-      auto alloca = AllocaBuilder.CreateAlloca(choice->getType(), nullptr,
-                                               choice->getName() + ".ptr");
-      Builder.CreateStore(choice, alloca);
       bool fitsInPointer =
           choice->getType()->getPrimitiveSizeInBits() == pointersize;
       if (fitsInPointer) {
-        auto dblptr =
-            PointerType::get(Builder.getInt8PtrTy(), DL.getAllocaAddrSpace());
-        retval = Builder.CreateLoad(Builder.getInt8PtrTy(),
-                                    Builder.CreatePointerCast(alloca, dblptr));
+        auto cast = Builder.CreateBitCast(choice, Builder.getInt64Ty());
+        retval = Builder.CreateIntToPtr(cast, Builder.getInt8PtrTy());
       } else {
+        IRBuilder<> AllocaBuilder(
+            newFunc->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+        auto alloca = AllocaBuilder.CreateAlloca(choice->getType(), nullptr,
+                                                 choice->getName() + ".ptr");
+        Builder.CreateStore(choice, alloca);
         retval = alloca;
       }
     }
