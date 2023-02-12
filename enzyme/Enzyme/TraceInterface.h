@@ -102,7 +102,7 @@ public:
 
 class StaticTraceInterface final : public TraceInterface {
 private:
-  Function *sampleFunction;
+  Function *sampleFunction = nullptr;
   // user implemented
   Function *getTraceFunction = nullptr;
   Function *getChoiceFunction = nullptr;
@@ -172,7 +172,7 @@ public:
 
 class DynamicTraceInterface final : public TraceInterface {
 private:
-  Function *sampleFunction;
+  Function *sampleFunction = nullptr;
   Value *dynamicInterface;
   Function *F;
 
@@ -187,10 +187,20 @@ private:
   Value *hasChoiceFunction = nullptr;
 
 public:
-  DynamicTraceInterface(Function *sampleFunction, Value *dynamicInterface,
-                        Function *F)
-      : TraceInterface(F->getContext()), sampleFunction(sampleFunction),
-        dynamicInterface(dynamicInterface), F(F) {}
+  DynamicTraceInterface(Value *dynamicInterface, Function *F)
+      : TraceInterface(F->getContext()), dynamicInterface(dynamicInterface),
+        F(F) {
+
+    for (auto &&interface_func : F->getParent()->functions()) {
+      if (interface_func.getName().contains(
+              TraceInterface::sampleFunctionName)) {
+        assert(interface_func.getFunctionType()->getNumParams() >= 3);
+        sampleFunction = &interface_func;
+      }
+    }
+
+    assert(sampleFunction);
+  }
 
   ~DynamicTraceInterface() = default;
 

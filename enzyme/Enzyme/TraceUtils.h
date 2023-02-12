@@ -53,10 +53,6 @@ public:
       : mode(mode), oldFunc(F), generativeFunctions(generativeFunctions) {
     auto &Context = oldFunc->getContext();
 
-    if (!has_dynamic_interface) {
-      interface = new StaticTraceInterface(F->getParent());
-    }
-
     FunctionType *orig_FTy = oldFunc->getFunctionType();
     Type *traceType =
         TraceInterface::getTraceTy(F->getContext())->getReturnType();
@@ -126,15 +122,9 @@ public:
     newFunc->setLinkage(Function::LinkageTypes::InternalLinkage);
 
     if (has_dynamic_interface) {
-      Function *sample = nullptr;
-      for (auto &&interface_func : F->getParent()->functions()) {
-        if (interface_func.getName().contains(
-                TraceInterface::sampleFunctionName)) {
-          assert(interface_func.getFunctionType()->getNumParams() >= 3);
-          sample = &interface_func;
-        }
-      }
-      interface = new DynamicTraceInterface(sample, dynamic_interface, newFunc);
+      interface = new DynamicTraceInterface(dynamic_interface, newFunc);
+    } else {
+      interface = new StaticTraceInterface(F->getParent());
     }
 
     // Create trace for current function

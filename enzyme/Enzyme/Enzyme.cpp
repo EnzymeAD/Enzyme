@@ -1843,17 +1843,14 @@ public:
     }
 
     // Interface
-
-    Function *sample = nullptr;
-    for (auto &&interface_func : F->getParent()->functions()) {
-      if (interface_func.getName().contains(
-              TraceInterface::sampleFunctionName)) {
-        assert(interface_func.getFunctionType()->getNumParams() >= 3);
-        sample = &interface_func;
-      }
+    bool has_dynamic_interface = dynamic_interface != nullptr;
+    TraceInterface *interface;
+    if (has_dynamic_interface) {
+      interface = new DynamicTraceInterface(dynamic_interface,
+                                            CI->getParent()->getParent());
+    } else {
+      interface = new StaticTraceInterface(F->getParent());
     }
-
-    assert(sample);
 
     if (dynamic_interface)
       args.push_back(dynamic_interface);
@@ -1864,8 +1861,8 @@ public:
     // Determine generative functions
     SmallPtrSet<Function *, 4> generativeFunctions;
     SetVector<Function *, std::deque<Function *>> workList;
-    workList.insert(sample);
-    generativeFunctions.insert(sample);
+    workList.insert(interface->getSampleFunction());
+    generativeFunctions.insert(interface->getSampleFunction());
 
     while (!workList.empty()) {
       auto todo = *workList.begin();
@@ -1891,9 +1888,8 @@ public:
       }
 #endif
     }
-
-    auto newFunc = Logic.CreateTrace(F, generativeFunctions, mode,
-                                     dynamic_interface != nullptr);
+    auto newFunc =
+        Logic.CreateTrace(F, generativeFunctions, mode, has_dynamic_interface);
 
     Value *trace =
         Builder.CreateCall(newFunc->getFunctionType(), newFunc, args);
@@ -1906,6 +1902,8 @@ public:
 
     CI->replaceAllUsesWith(trace);
     CI->eraseFromParent();
+
+    delete interface;
 
     return true;
   }
