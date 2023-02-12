@@ -62,6 +62,7 @@
 #include "ActivityAnalysis.h"
 #include "EnzymeLogic.h"
 #include "GradientUtils.h"
+#include "TraceInterface.h"
 #include "TraceUtils.h"
 #include "Utils.h"
 
