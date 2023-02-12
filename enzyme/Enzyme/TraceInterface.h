@@ -20,6 +20,7 @@ public:
 public:
   // implemented by enzyme
   virtual Function *getSampleFunction() = 0;
+  static constexpr StringRef sampleFunctionName = "__enzyme_sample";
 
   // user implemented
   virtual Value *getTrace() = 0;
@@ -139,7 +140,7 @@ public:
       } else if (F.getName().contains("__enzyme_has_choice")) {
         assert(F.getFunctionType() == hasChoiceTy());
         hasChoiceFunction = &F;
-      } else if (F.getName().contains("__enzyme_sample")) {
+      } else if (F.getName().contains(sampleFunctionName)) {
         assert(F.getFunctionType()->getNumParams() >= 3);
         sampleFunction = &F;
       }

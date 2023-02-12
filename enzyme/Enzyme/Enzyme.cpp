@@ -1846,7 +1846,8 @@ public:
 
     Function *sample = nullptr;
     for (auto &&interface_func : F->getParent()->functions()) {
-      if (interface_func.getName().contains("__enzyme_sample")) {
+      if (interface_func.getName().contains(
+              TraceInterface::sampleFunctionName)) {
         assert(interface_func.getFunctionType()->getNumParams() >= 3);
         sample = &interface_func;
       }
@@ -2589,8 +2590,8 @@ public:
         for (auto &&Inst : BB) {
           if (auto CI = dyn_cast<CallInst>(&Inst)) {
             Function *enzyme_sample = CI->getCalledFunction();
-            if (enzyme_sample &&
-                enzyme_sample->getName().contains("__enzyme_sample")) {
+            if (enzyme_sample && enzyme_sample->getName().contains(
+                                     TraceInterface::sampleFunctionName)) {
               if (CI->getNumOperands() < 3) {
                 EmitFailure(
                     "IllegalNumberOfArguments", CI->getDebugLoc(), CI,
