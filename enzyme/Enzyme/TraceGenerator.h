@@ -124,6 +124,7 @@ public:
         args.push_back(tutils->getDynamicTraceInterface());
 
       Function *called = getFunctionFromCall(&call);
+      assert(called);
 
       Function *samplefn =
           Logic.CreateTrace(called, tutils->generativeFunctions, tutils->mode,
