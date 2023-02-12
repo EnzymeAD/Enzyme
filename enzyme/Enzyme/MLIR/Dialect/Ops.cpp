@@ -30,7 +30,6 @@
 
 #include "llvm/ADT/TypeSwitch.h"
 
-
 #define DEBUG_TYPE "enzyme"
 
 using namespace mlir;
@@ -54,9 +53,7 @@ ForwardDiffOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   return success();
 }
 
-
-LogicalResult
-DiffOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+LogicalResult DiffOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // TODO: Verify that the result type is same as the type of the referenced
   // func.func op.
   auto global =

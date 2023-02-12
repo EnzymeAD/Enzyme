@@ -7,8 +7,8 @@
 //===----------------------------------------------------------------------===//
 #pragma once
 
-#include "Interfaces/EnzymeLogic.h"
 #include "Interfaces/CloneFunction.h"
+#include "Interfaces/EnzymeLogic.h"
 
 #include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/IR/FunctionInterfaces.h"
@@ -62,7 +62,7 @@ public:
   void forceAugmentedReturns();
 
   Operation *cloneWithNewOperands(OpBuilder &B, Operation *op);
-  
+
   LogicalResult visitChild(Operation *op);
 };
 
@@ -81,8 +81,7 @@ public:
       : MGradientUtils(Logic, newFunc_, oldFunc_, TA, TR, invertedPointers_,
                        constantvalues_, returnvals_, ActiveReturn,
                        constant_values, origToNew_, origToNewOps_, mode, width,
-                       omp) {
-  }
+                       omp) {}
 
   // Technically diffe constructor
   static MDiffeGradientUtils *
@@ -128,7 +127,6 @@ public:
         originalToNewOps, mode, width, omp);
   }
 };
-
 
 }; // namespace enzyme
 }; // namespace mlir

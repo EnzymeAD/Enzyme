@@ -45,7 +45,6 @@ struct LoadOpInterface
   }
 };
 
-
 struct StoreOpInterface
     : public AutoDiffOpInterface::ExternalModel<StoreOpInterface,
                                                 memref::StoreOp> {
@@ -65,39 +64,52 @@ struct StoreOpInterface
   }
 };
 
-struct LoadOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalModel<LoadOpInterfaceReverse, memref::LoadOp> {
-  void createReverseModeAdjoint(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils, SmallVector<Value> caches) const {
+struct LoadOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<LoadOpInterfaceReverse,
+                                                       memref::LoadOp> {
+  void createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                MGradientUtilsReverse *gutils,
+                                SmallVector<Value> caches) const {
     auto loadOp = cast<memref::LoadOp>(op);
     Value memref = loadOp.getMemref();
-    
-    if (auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType())){
-      if(gutils->hasInvertPointer(loadOp) && gutils->hasInvertPointer(memref)){        
+
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType())) {
+      if (gutils->hasInvertPointer(loadOp) &&
+          gutils->hasInvertPointer(memref)) {
         Value gradient = gutils->invertPointerM(loadOp, builder);
         Value memrefGradient = gutils->invertPointerM(memref, builder);
 
         SmallVector<Value> retrievedArguments;
-        for (Value cache : caches){
+        for (Value cache : caches) {
           Value retrievedValue = gutils->popCache(cache, builder);
           retrievedArguments.push_back(retrievedValue);
         }
 
-        Value loadedGradient = builder.create<memref::LoadOp>(loadOp.getLoc(), memrefGradient, ArrayRef<Value>(retrievedArguments));
-        Value addedGradient = iface.createAddOp(builder, loadOp.getLoc(), loadedGradient, gradient);
-        builder.create<memref::StoreOp>(loadOp.getLoc(), addedGradient, memrefGradient, ArrayRef<Value>(retrievedArguments));
-      }   
+        Value loadedGradient =
+            builder.create<memref::LoadOp>(loadOp.getLoc(), memrefGradient,
+                                           ArrayRef<Value>(retrievedArguments));
+        Value addedGradient = iface.createAddOp(builder, loadOp.getLoc(),
+                                                loadedGradient, gradient);
+        builder.create<memref::StoreOp>(loadOp.getLoc(), addedGradient,
+                                        memrefGradient,
+                                        ArrayRef<Value>(retrievedArguments));
+      }
     }
   }
 
-  SmallVector<Value> cacheValues(Operation *op, MGradientUtilsReverse *gutils) const {
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
     auto loadOp = cast<memref::LoadOp>(op);
     Value memref = loadOp.getMemref();
     ValueRange indices = loadOp.getIndices();
-    if (auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType())){
-      if(gutils->hasInvertPointer(loadOp) && gutils->hasInvertPointer(memref)){
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(loadOp.getType())) {
+      if (gutils->hasInvertPointer(loadOp) &&
+          gutils->hasInvertPointer(memref)) {
         OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
         SmallVector<Value> caches;
-        for (Value v : indices){
-          caches.push_back(gutils->initAndPushCache(gutils->getNewFromOriginal(v), cacheBuilder));
+        for (Value v : indices) {
+          caches.push_back(gutils->initAndPushCache(
+              gutils->getNewFromOriginal(v), cacheBuilder));
         }
         return caches;
       }
@@ -105,7 +117,8 @@ struct LoadOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalModel
     return SmallVector<Value>();
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils) const {
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {
     auto loadOp = cast<memref::LoadOp>(op);
     Value memref = loadOp.getMemref();
     Value shadow = gutils->getShadowValue(memref);
@@ -113,47 +126,56 @@ struct LoadOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalModel
   }
 };
 
-struct StoreOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalModel<StoreOpInterfaceReverse, memref::StoreOp> {
-  void createReverseModeAdjoint(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils, SmallVector<Value> caches) const {
+struct StoreOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<StoreOpInterfaceReverse,
+                                                       memref::StoreOp> {
+  void createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                MGradientUtilsReverse *gutils,
+                                SmallVector<Value> caches) const {
     auto storeOp = cast<memref::StoreOp>(op);
     Value val = storeOp.getValue();
     Value memref = storeOp.getMemref();
     ValueRange indices = storeOp.getIndices();
-    
-    if (auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType())){
-      if(gutils->hasInvertPointer(memref)){
+
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType())) {
+      if (gutils->hasInvertPointer(memref)) {
         OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
-        
+
         Value memrefGradient = gutils->invertPointerM(memref, builder);
 
         SmallVector<Value> retrievedArguments;
-        for (Value cache : caches){
+        for (Value cache : caches) {
           Value retrievedValue = gutils->popCache(cache, builder);
           retrievedArguments.push_back(retrievedValue);
         }
 
-        Value loadedGradient = builder.create<memref::LoadOp>(storeOp.getLoc(), memrefGradient, ArrayRef<Value>(retrievedArguments));
+        Value loadedGradient =
+            builder.create<memref::LoadOp>(storeOp.getLoc(), memrefGradient,
+                                           ArrayRef<Value>(retrievedArguments));
         Value addedGradient = loadedGradient;
-        if(gutils->hasInvertPointer(val)){
+        if (gutils->hasInvertPointer(val)) {
           Value gradient = gutils->invertPointerM(val, builder);
-          addedGradient = iface.createAddOp(builder, storeOp.getLoc(), gradient, loadedGradient);
+          addedGradient = iface.createAddOp(builder, storeOp.getLoc(), gradient,
+                                            loadedGradient);
         }
         gutils->mapInvertPointer(val, addedGradient, builder);
-      }   
+      }
     }
   }
 
-  SmallVector<Value> cacheValues(Operation *op, MGradientUtilsReverse *gutils) const {
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
     auto storeOp = cast<memref::StoreOp>(op);
     Value memref = storeOp.getMemref();
     ValueRange indices = storeOp.getIndices();
     Value val = storeOp.getValue();
-    if (auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType())){
-      if(gutils->hasInvertPointer(memref)){
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType())) {
+      if (gutils->hasInvertPointer(memref)) {
         OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
         SmallVector<Value> caches;
-        for (Value v : indices){
-          caches.push_back(gutils->initAndPushCache(gutils->getNewFromOriginal(v), cacheBuilder));
+        for (Value v : indices) {
+          caches.push_back(gutils->initAndPushCache(
+              gutils->getNewFromOriginal(v), cacheBuilder));
         }
         return caches;
       }
@@ -161,7 +183,8 @@ struct StoreOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalMode
     return SmallVector<Value>();
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils) const {
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {
     auto storeOp = cast<memref::StoreOp>(op);
     Value memref = storeOp.getMemref();
     Value shadow = gutils->getShadowValue(memref);
@@ -169,23 +192,30 @@ struct StoreOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalMode
   }
 };
 
-struct AllocOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalModel<AllocOpInterfaceReverse, memref::AllocOp> {
-  void createReverseModeAdjoint(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils, SmallVector<Value> caches) const {
+struct AllocOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<AllocOpInterfaceReverse,
+                                                       memref::AllocOp> {
+  void createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                MGradientUtilsReverse *gutils,
+                                SmallVector<Value> caches) const {
     auto allocOp = cast<memref::AllocOp>(op);
     Value memref = allocOp.getMemref();
   }
 
-  SmallVector<Value> cacheValues(Operation *op, MGradientUtilsReverse *gutils) const {
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
     auto allocOp = cast<memref::AllocOp>(op);
 
     return SmallVector<Value>();
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils) const {
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {
     auto allocOp = cast<memref::AllocOp>(op);
     auto newAllocOp = cast<memref::AllocOp>(gutils->getNewFromOriginal(op));
-    
-    Value shadow = builder.create<memref::AllocOp>(op->getLoc(), newAllocOp.getType(), newAllocOp.getDynamicSizes());
+
+    Value shadow = builder.create<memref::AllocOp>(
+        op->getLoc(), newAllocOp.getType(), newAllocOp.getDynamicSizes());
     gutils->mapShadowValue(allocOp, shadow, builder);
   }
 };
@@ -213,7 +243,8 @@ public:
     llvm_unreachable("Cannot create null of memref (todo polygeist null)");
   }
 
-  Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a, Value b) const {
+  Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
+                    Value b) const {
     llvm_unreachable("TODO");
   }
 
@@ -222,9 +253,7 @@ public:
     return self;
   }
 
-  bool requiresShadow(Type self) const{
-    return true;
-  }
+  bool requiresShadow(Type self) const { return true; }
 };
 } // namespace
 

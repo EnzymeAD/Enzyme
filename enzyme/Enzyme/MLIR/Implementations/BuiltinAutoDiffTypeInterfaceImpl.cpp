@@ -34,7 +34,8 @@ public:
         loc, APFloat(fltType.getFloatSemantics(), 0), fltType);
   }
 
-  Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a, Value b) const {
+  Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
+                    Value b) const {
     return builder.create<arith::AddFOp>(loc, a, b);
   }
 
@@ -43,9 +44,7 @@ public:
     return self;
   }
 
-  bool requiresShadow(Type self) const{
-    return false;
-  }
+  bool requiresShadow(Type self) const { return false; }
 };
 } // namespace
 
