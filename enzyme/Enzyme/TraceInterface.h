@@ -20,7 +20,7 @@ public:
 public:
   // implemented by enzyme
   virtual Function *getSampleFunction() = 0;
-  static constexpr StringRef sampleFunctionName = "__enzyme_sample";
+  static constexpr const char sampleFunctionName[] = "__enzyme_sample";
 
   // user implemented
   virtual Value *getTrace() = 0;
