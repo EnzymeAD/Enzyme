@@ -77,7 +77,8 @@ public:
     return builder.create<LLVM::NullOp>(loc, self);
   }
 
-  Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a, Value b) const {
+  Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
+                    Value b) const {
     llvm_unreachable("TODO");
   }
 
@@ -86,9 +87,7 @@ public:
     return self;
   }
 
-  bool requiresShadow(Type self) const{
-    return true;
-  }
+  bool requiresShadow(Type self) const { return true; }
 };
 } // namespace
 

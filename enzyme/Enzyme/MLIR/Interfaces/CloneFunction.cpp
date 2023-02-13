@@ -110,12 +110,15 @@ Operation *clone(Operation *src, BlockAndValueMapping &mapper,
   return newOp;
 }
 
-void cloneInto(Region *src, Region *dest, BlockAndValueMapping &mapper, std::map<Operation *, Operation *> &opMap) {
+void cloneInto(Region *src, Region *dest, BlockAndValueMapping &mapper,
+               std::map<Operation *, Operation *> &opMap) {
   cloneInto(src, dest, dest->end(), mapper, opMap);
 }
 
 /// Clone this region into 'dest' before the given position in 'dest'.
-void cloneInto(Region *src, Region *dest, Region::iterator destPos, BlockAndValueMapping &mapper, std::map<Operation *, Operation *> &opMap) {
+void cloneInto(Region *src, Region *dest, Region::iterator destPos,
+               BlockAndValueMapping &mapper,
+               std::map<Operation *, Operation *> &opMap) {
   assert(src);
   assert(dest && "expected valid region to clone into");
   assert(src != dest && "cannot clone region into itself");
@@ -150,7 +153,8 @@ void cloneInto(Region *src, Region *dest, Region::iterator destPos, BlockAndValu
     dest->getBlocks().insert(destPos, newBlock);
   }
 
-  auto newBlocksRange = llvm::make_range(Region::iterator(mapper.lookup(&src->front())), destPos);
+  auto newBlocksRange =
+      llvm::make_range(Region::iterator(mapper.lookup(&src->front())), destPos);
 
   // Now follow up with creating the operations, but don't yet clone their
   // regions, nor set their operands. Setting the successors is safe as all have
@@ -158,7 +162,8 @@ void cloneInto(Region *src, Region *dest, Region::iterator destPos, BlockAndValu
   // to be able to map them.
   // Cloning the operands and region as well would lead to uses of operations
   // not yet mapped.
-  auto cloneOptions = Operation::CloneOptions::all().cloneRegions(false).cloneOperands(false);
+  auto cloneOptions =
+      Operation::CloneOptions::all().cloneRegions(false).cloneOperands(false);
   for (auto zippedBlocks : llvm::zip(*src, newBlocksRange)) {
     Block &sourceBlock = std::get<0>(zippedBlocks);
     Block &clonedBlock = std::get<1>(zippedBlocks);
@@ -236,13 +241,15 @@ FunctionOpInterface CloneFunctionWithReturns(
         constants.insert(oval);
       else
         nonconstants.insert(oval);
-      if (constant_args[i] == DIFFE_TYPE::DUP_ARG || constant_args[i] == DIFFE_TYPE::DUP_NONEED) {
+      if (constant_args[i] == DIFFE_TYPE::DUP_ARG ||
+          constant_args[i] == DIFFE_TYPE::DUP_NONEED) {
         mlir::Value val = blk.getArgument(i);
         mlir::Value dval;
         if (i == constant_args.size() - 1)
           dval = blk.addArgument(val.getType(), val.getLoc());
         else
-          dval = blk.insertArgument(blk.args_begin() + i + 1, val.getType(), val.getLoc());
+          dval = blk.insertArgument(blk.args_begin() + i + 1, val.getType(),
+                                    val.getLoc());
         ptrInputs.map(oval, dval);
       }
     }

@@ -1,4 +1,5 @@
-//===- ShadowedGradientToCache.cpp - Lower Shadowed Gradient ops ------------------ //
+//===- ShadowedGradientToCache.cpp - Lower Shadowed Gradient ops
+//------------------ //
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -29,36 +30,39 @@ using namespace mlir;
 using namespace enzyme;
 using llvm::errs;
 namespace {
-    struct ShadowedGradientToCachePass
-        : public enzyme::ShadowedGradientToCachePassBase<ShadowedGradientToCachePass> {
-        void runOnOperation() override {
-            MLIRContext *context = &getContext();
-            ConversionPatternRewriter rewriter(context);
+struct ShadowedGradientToCachePass
+    : public enzyme::ShadowedGradientToCachePassBase<
+          ShadowedGradientToCachePass> {
+  void runOnOperation() override {
+    MLIRContext *context = &getContext();
+    ConversionPatternRewriter rewriter(context);
 
-            getOperation()->walk(
-                [&](Operation * op){
-                    if (auto initOp = dyn_cast<enzyme::InitOp>(op)){
-                        if (auto type = dyn_cast<enzyme::ShadowedGradientType>(initOp.getType())) {
-                            Type cacheType = CacheType::get(op->getContext(), type.getBasetype());
-                            
-                            OpBuilder builder(op);
-                            Value buffer = builder.create<InitOp>(op->getLoc(), cacheType);
-                            
-                            initOp.replaceAllUsesWith(buffer);
-                            initOp->erase();
-                        }
-                    }
-                    if (auto clearOp = dyn_cast<enzyme::ClearOp>(op)){  
-                        if (auto type = dyn_cast<enzyme::CacheType>(clearOp.getCache().getType())) {                          
-                            OpBuilder builder(op);
-                            Value buffer = builder.create<PopOp>(op->getLoc(), type.getType(), clearOp.getCache());
-                            
-                            clearOp->erase();
-                        }
-                    }
-                });
-        };
-    };
+    getOperation()->walk([&](Operation *op) {
+      if (auto initOp = dyn_cast<enzyme::InitOp>(op)) {
+        if (auto type =
+                dyn_cast<enzyme::ShadowedGradientType>(initOp.getType())) {
+          Type cacheType = CacheType::get(op->getContext(), type.getBasetype());
+
+          OpBuilder builder(op);
+          Value buffer = builder.create<InitOp>(op->getLoc(), cacheType);
+
+          initOp.replaceAllUsesWith(buffer);
+          initOp->erase();
+        }
+      }
+      if (auto clearOp = dyn_cast<enzyme::ClearOp>(op)) {
+        if (auto type =
+                dyn_cast<enzyme::CacheType>(clearOp.getCache().getType())) {
+          OpBuilder builder(op);
+          Value buffer = builder.create<PopOp>(op->getLoc(), type.getType(),
+                                               clearOp.getCache());
+
+          clearOp->erase();
+        }
+      }
+    });
+  };
+};
 } // end anonymous namespace
 
 namespace mlir {

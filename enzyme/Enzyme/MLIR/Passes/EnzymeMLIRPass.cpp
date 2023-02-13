@@ -117,7 +117,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
       truei++;
     }
 
-    //Add the return gradient
+    // Add the return gradient
     mlir::Value res = CI.getInputs()[CI.getInputs().size() - 1];
     args.push_back(res);
 
@@ -149,7 +149,6 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
                                             newFunc.getResultTypes(), args);
     CI.replaceAllUsesWith(dCI);
     CI->erase();
-    
   }
 
   void lowerEnzymeCalls(SymbolTableCollection &symbolTable,
@@ -173,7 +172,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
         }
       }
     };
-    
+
     {
       SmallVector<Operation *> toLower;
       op->walk([&](enzyme::DiffOp dop) {

@@ -96,60 +96,74 @@ struct ForOpInterface
   }
 };
 
-struct ForOpInterfaceReverse : public ReverseAutoDiffOpInterface::ExternalModel<ForOpInterfaceReverse, scf::ForOp> {
-  void createReverseModeAdjoint(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils, SmallVector<Value> caches) const {
+struct ForOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<ForOpInterfaceReverse,
+                                                       scf::ForOp> {
+  void createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                MGradientUtilsReverse *gutils,
+                                SmallVector<Value> caches) const {
     auto forOp = cast<scf::ForOp>(op);
     auto newForOp = cast<scf::ForOp>(gutils->getNewFromOriginal(op));
-    
+
     SmallVector<Value> nArgs;
-    for (Value v : forOp.getResults()){
-      if (auto iface = v.getType().dyn_cast<AutoDiffTypeInterface>()){
-        if (gutils->hasInvertPointer(v)){
+    for (Value v : forOp.getResults()) {
+      if (auto iface = v.getType().dyn_cast<AutoDiffTypeInterface>()) {
+        if (gutils->hasInvertPointer(v)) {
           nArgs.push_back(gutils->invertPointerM(v, builder));
-        }
-        else{
+        } else {
           nArgs.push_back(iface.createNullValue(builder, v.getLoc()));
         }
       }
     }
 
-    auto repFor = builder.create<scf::ForOp>(forOp.getLoc(), gutils->popCache(caches[0], builder), gutils->popCache(caches[1], builder), gutils->popCache(caches[2], builder), nArgs); // TODO
+    auto repFor = builder.create<scf::ForOp>(
+        forOp.getLoc(), gutils->popCache(caches[0], builder),
+        gutils->popCache(caches[1], builder),
+        gutils->popCache(caches[2], builder), nArgs); // TODO
     repFor.getRegion().begin()->erase();
 
-    buildReturnFunction buildFuncRetrunOp = [](OpBuilder& builder, Location loc, SmallVector<Value> retargs){
+    buildReturnFunction buildFuncRetrunOp = [](OpBuilder &builder, Location loc,
+                                               SmallVector<Value> retargs) {
       builder.create<scf::YieldOp>(loc, retargs);
-      return ;
+      return;
     };
-    
-    gutils->Logic.differentiate(gutils, forOp.getRegion(), repFor.getRegion(), false, buildFuncRetrunOp);
+
+    gutils->Logic.differentiate(gutils, forOp.getRegion(), repFor.getRegion(),
+                                false, buildFuncRetrunOp);
 
     // Insert the index which is carried by the scf for op.
-    Type indexType = mlir::IndexType::get(gutils->initializationBlock->begin()->getContext());
+    Type indexType = mlir::IndexType::get(
+        gutils->initializationBlock->begin()->getContext());
     repFor.getRegion().insertArgument((unsigned)0, indexType, forOp.getLoc());
 
     // TODO Can we do reverse iteration???
   }
 
-  SmallVector<Value> cacheValues(Operation *op, MGradientUtilsReverse *gutils) const {
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
     auto forOp = cast<scf::ForOp>(op);
 
-    Operation * newOp = gutils->getNewFromOriginal(op);
+    Operation *newOp = gutils->getNewFromOriginal(op);
     OpBuilder cacheBuilder(newOp);
     SmallVector<Value> caches;
 
-    Value cacheLB = gutils->initAndPushCache(gutils->getNewFromOriginal(forOp.getLowerBound()), cacheBuilder);
+    Value cacheLB = gutils->initAndPushCache(
+        gutils->getNewFromOriginal(forOp.getLowerBound()), cacheBuilder);
     caches.push_back(cacheLB);
 
-    Value cacheUB = gutils->initAndPushCache(gutils->getNewFromOriginal(forOp.getUpperBound()), cacheBuilder);
+    Value cacheUB = gutils->initAndPushCache(
+        gutils->getNewFromOriginal(forOp.getUpperBound()), cacheBuilder);
     caches.push_back(cacheUB);
 
-    Value cacheStep = gutils->initAndPushCache(gutils->getNewFromOriginal(forOp.getStep()), cacheBuilder);
+    Value cacheStep = gutils->initAndPushCache(
+        gutils->getNewFromOriginal(forOp.getStep()), cacheBuilder);
     caches.push_back(cacheStep);
 
     return caches;
   }
 
-  void createShadowValues(Operation *op, OpBuilder &builder, MGradientUtilsReverse *gutils) const {
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {
     auto forOp = cast<scf::ForOp>(op);
   }
 };
