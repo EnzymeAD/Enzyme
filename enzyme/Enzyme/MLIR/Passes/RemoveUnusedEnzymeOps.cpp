@@ -1,4 +1,5 @@
-//===- RemoveUnusedEnzymeOps.cpp - Remove unnecessary or unused gradient and cache ops
+//===- RemoveUnusedEnzymeOps.cpp - Remove unnecessary or unused gradient and
+//cache ops
 //------------------ //
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -24,8 +25,8 @@
 
 #include "mlir/Rewrite/PatternApplicator.h"
 
-#include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/Dominance.h"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace mlir;
 using namespace enzyme;
@@ -33,11 +34,11 @@ using llvm::errs;
 namespace {
 
 // TODO: Expand to region branches??
-bool reachable(Operation * a, Operation * b){
-  Block * aBlock = a->getBlock();
-  Block * bBlock = b->getBlock();
-  if (aBlock == bBlock){
-    if(a->isBeforeInBlock(b)){
+bool reachable(Operation *a, Operation *b) {
+  Block *aBlock = a->getBlock();
+  Block *bBlock = b->getBlock();
+  if (aBlock == bBlock) {
+    if (a->isBeforeInBlock(b)) {
       return true;
     }
   }
@@ -45,73 +46,89 @@ bool reachable(Operation * a, Operation * b){
   SmallVector<Block *> blocksToVisit;
 
   blocksToVisit.push_back(aBlock);
-  while (!blocksToVisit.empty()){
-    Block * processedBlock = blocksToVisit[blocksToVisit.size()-1];
+  while (!blocksToVisit.empty()) {
+    Block *processedBlock = blocksToVisit[blocksToVisit.size() - 1];
     blocksToVisit.pop_back();
 
-    for(Block * successor : processedBlock->getSuccessors()){
-      if (!visitedBlocks.contains(successor)){
+    for (Block *successor : processedBlock->getSuccessors()) {
+      if (!visitedBlocks.contains(successor)) {
         visitedBlocks.insert(successor);
         blocksToVisit.push_back(successor);
 
-        if (successor == bBlock) return true;
+        if (successor == bBlock)
+          return true;
       }
     }
   }
   return false;
 }
 
+template <class T>
+Operation *findNearestDominatingOpByUse(Operation *op, Value v) {
+  DominanceInfo dInfo;
+
+  Operation *closestSetOp = nullptr;
+  for (Operation *userSet : v.getUsers()) {
+    if (auto setOp = dyn_cast<T>(userSet)) {
+      if (dInfo.dominates(userSet, op)) {
+        if (closestSetOp == nullptr) {
+          closestSetOp = userSet;
+        } else if (dInfo.dominates(closestSetOp, userSet)) {
+          closestSetOp = userSet;
+        }
+      }
+    }
+  }
+  return closestSetOp;
+}
+
 struct RemoveUnusedEnzymeOpsPass
-    : public enzyme::RemoveUnusedEnzymeOpsPassBase<
-          RemoveUnusedEnzymeOpsPass> {
+    : public enzyme::RemoveUnusedEnzymeOpsPassBase<RemoveUnusedEnzymeOpsPass> {
   void runOnOperation() override {
     MLIRContext *context = &getContext();
     ConversionPatternRewriter rewriter(context);
 
     getOperation()->walk([&](Operation *op) {
-        DominanceInfo dInfo;
-        if (auto initOp = dyn_cast<enzyme::InitOp>(op)) {
-          if (auto type = dyn_cast<enzyme::GradientType>(initOp.getType())) {
-            Value v = initOp;
-            bool replaceable = true;
-            for(Operation * userSet : v.getUsers()){
-              if (auto setOp = dyn_cast<enzyme::SetOp>(userSet)) {
-                for(Operation * userGet : v.getUsers()){
-                  if (auto getOp = dyn_cast<enzyme::GetOp>(userGet)) {
-                    bool propertyA = dInfo.dominates(userSet, userGet) && !reachable(getOp, setOp);
-                    bool propertyB = !reachable(setOp, getOp);
-                    if (!propertyA && !propertyB){
-                      replaceable = false;
-                    }
-                  }
-                }
-              }
-            }
-            if(replaceable){
-              // Do replacing
-              for(Operation * userGet : v.getUsers()){
+      DominanceInfo dInfo;
+      if (auto initOp = dyn_cast<enzyme::InitOp>(op)) {
+        if (auto type = dyn_cast<enzyme::GradientType>(initOp.getType())) {
+          Value v = initOp;
+          bool replaceable = true;
+          for (Operation *userSet : v.getUsers()) {
+            if (auto setOp = dyn_cast<enzyme::SetOp>(userSet)) {
+              for (Operation *userGet : v.getUsers()) {
                 if (auto getOp = dyn_cast<enzyme::GetOp>(userGet)) {
-                  Operation * closestSetOp = nullptr;
-                  for(Operation * userSet : v.getUsers()){
-                    if (auto setOp = dyn_cast<enzyme::SetOp>(userSet)) {
-                      if (dInfo.dominates(userSet, userGet)){
-                        if (closestSetOp == nullptr){
-                          closestSetOp = userSet;
-                        }
-                        else if (dInfo.dominates(closestSetOp, userSet)){
-                          closestSetOp = userSet;
-                        }
-                      }
-                    }
+                  // We can safely delete an enzyme.gradient op if each pair of
+                  // enzyme.set and enzyme.get ops are either not reachable or
+                  // are reachable and do not exist inside a loop
+                  bool relatedButNotInLoop =
+                      dInfo.dominates(userSet, userGet) &&
+                      !reachable(getOp, setOp);
+                  bool unrelated = !reachable(setOp, getOp);
+                  if (!(relatedButNotInLoop || unrelated)) {
+                    replaceable = false;
                   }
-                  auto setOp = dyn_cast<enzyme::SetOp>(closestSetOp);
-                  getOp.replaceAllUsesWith(setOp.getValue());
                 }
-                userGet->erase();
               }
             }
           }
+          if (replaceable) {
+            // Do replacing
+            for (Operation *userGet : v.getUsers()) {
+              if (auto getOp = dyn_cast<enzyme::GetOp>(userGet)) {
+                Operation *closestSetOp =
+                    findNearestDominatingOpByUse<enzyme::SetOp>(userGet, v);
+                auto setOp = dyn_cast<enzyme::SetOp>(closestSetOp);
+                getOp.replaceAllUsesWith(setOp.getValue());
+              }
+            }
+            for (Operation *userGet : v.getUsers()) {
+              userGet->erase();
+            }
+            op->erase();
+          }
         }
+      }
     });
   };
 };
