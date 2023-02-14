@@ -1844,12 +1844,14 @@ public:
 
     // Interface
     bool has_dynamic_interface = dynamic_interface != nullptr;
-    TraceInterface *interface;
+    std::unique_ptr<TraceInterface> interface;
     if (has_dynamic_interface) {
-      interface = new DynamicTraceInterface(dynamic_interface,
-                                            CI->getParent()->getParent());
+      interface =
+          std::unique_ptr<DynamicTraceInterface>(new DynamicTraceInterface(
+              dynamic_interface, CI->getParent()->getParent()));
     } else {
-      interface = new StaticTraceInterface(F->getParent());
+      interface = std::unique_ptr<StaticTraceInterface>(
+          new StaticTraceInterface(F->getParent()));
     }
 
     if (dynamic_interface)
@@ -1902,8 +1904,6 @@ public:
 
     CI->replaceAllUsesWith(trace);
     CI->eraseFromParent();
-
-    delete interface;
 
     return true;
   }
