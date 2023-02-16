@@ -47,8 +47,9 @@ void MEnzymeLogic::mapInvertArguments(Block *oBB, Block *reverseBB,
     OpBuilder builder(reverseBB, reverseBB->begin());
     if (auto iface = x.second.getType().dyn_cast<AutoDiffTypeInterface>()) {
       Value added = reverseBB->getArgument(i);
-      if (gutils->hasInvertPointer(x.second)){
-        added = iface.createAddOp(builder, x.second.getLoc(), added, gutils->invertPointerM(x.second, builder));
+      if (gutils->hasInvertPointer(x.second)) {
+        added = iface.createAddOp(builder, x.second.getLoc(), added,
+                                  gutils->invertPointerM(x.second, builder));
       }
       gutils->mapInvertPointer(x.second, added, builder);
     }
