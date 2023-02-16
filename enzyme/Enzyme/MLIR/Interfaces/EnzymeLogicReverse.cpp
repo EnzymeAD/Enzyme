@@ -45,7 +45,14 @@ void MEnzymeLogic::mapInvertArguments(Block *oBB, Block *reverseBB,
   for (int i = 0; i < (int)gutils->mapBlockArguments[oBB].size(); i++) {
     auto x = gutils->mapBlockArguments[oBB][i];
     OpBuilder builder(reverseBB, reverseBB->begin());
-    gutils->mapInvertPointer(x.second, reverseBB->getArgument(i), builder);
+    if (auto iface = x.second.getType().dyn_cast<AutoDiffTypeInterface>()) {
+      Value added = reverseBB->getArgument(i);
+      if (gutils->hasInvertPointer(x.second)) {
+        added = iface.createAddOp(builder, x.second.getLoc(), added,
+                                  gutils->invertPointerM(x.second, builder));
+      }
+      gutils->mapInvertPointer(x.second, added, builder);
+    }
   }
 }
 
@@ -188,7 +195,7 @@ void MEnzymeLogic::visitChildren(Block *oBB, Block *reverseBB,
 void MEnzymeLogic::handlePredecessors(Block *oBB, Block *newBB,
                                       Block *reverseBB,
                                       MGradientUtilsReverse *gutils,
-                                      buildReturnFunction buildRetrunOp) {
+                                      buildReturnFunction buildReturnOp) {
   OpBuilder revBuilder(reverseBB, reverseBB->end());
   if (oBB->hasNoPredecessors()) {
     SmallVector<mlir::Value> retargs;
@@ -196,7 +203,7 @@ void MEnzymeLogic::handlePredecessors(Block *oBB, Block *newBB,
       Value attributeGradient = gutils->invertPointerM(attribute, revBuilder);
       retargs.push_back(attributeGradient);
     }
-    buildRetrunOp(revBuilder, oBB->rbegin()->getLoc(), retargs);
+    buildReturnOp(revBuilder, oBB->rbegin()->getLoc(), retargs);
     // revBuilder.create<func::ReturnOp>(oBB->rbegin()->getLoc(), retargs);
   } else {
     SmallVector<Block *> blocks;
@@ -229,7 +236,6 @@ void MEnzymeLogic::handlePredecessors(Block *oBB, Block *newBB,
           }
         }
       }
-
       if (predecessor != *(oBB->getPredecessors().begin())) {
         blocks.push_back(predecessorRevMode);
         indices.push_back(APInt(32, i++));
@@ -239,6 +245,16 @@ void MEnzymeLogic::handlePredecessors(Block *oBB, Block *newBB,
         defaultArguments = operands;
       }
     }
+
+    // Clear invert pointers of all arguments with gradient
+    for (auto argument : oBB->getArguments()) {
+      if (gutils->hasInvertPointer(argument)) {
+        auto iface = argument.getType().cast<AutoDiffTypeInterface>();
+        Value nullValue = iface.createNullValue(revBuilder, argument.getLoc());
+        gutils->mapInvertPointer(argument, nullValue, revBuilder);
+      }
+    }
+
     Location loc = oBB->rbegin()->getLoc();
     // Remove Dependency to CF dialect
     if (std::next(oBB->getPredecessors().begin()) ==
