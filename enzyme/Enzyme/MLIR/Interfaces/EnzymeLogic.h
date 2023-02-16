@@ -115,7 +115,7 @@ public:
                          MGradientUtilsReverse *gutils);
   void handlePredecessors(Block *oBB, Block *newBB, Block *reverseBB,
                           MGradientUtilsReverse *gutils,
-                          void (*buildRetrunOp)(OpBuilder &, Location,
+                          void (*buildReturnOp)(OpBuilder &, Location,
                                                 SmallVector<mlir::Value>));
   void visitChildren(Block *oBB, Block *reverseBB,
                      MGradientUtilsReverse *gutils);
