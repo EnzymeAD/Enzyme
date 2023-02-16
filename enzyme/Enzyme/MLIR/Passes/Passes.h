@@ -23,6 +23,8 @@ std::unique_ptr<Pass> createEnzymeToMemRefPass();
 std::unique_ptr<Pass> createLowerToLLVMEnzymePass();
 
 std::unique_ptr<Pass> createShadowedGradientToCachePass();
+
+std::unique_ptr<Pass> createRemoveUnusedEnzymeOpsPass();
 } // namespace enzyme
 } // namespace mlir
 
