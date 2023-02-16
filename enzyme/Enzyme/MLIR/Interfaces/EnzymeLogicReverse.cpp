@@ -224,6 +224,12 @@ void MEnzymeLogic::handlePredecessors(Block *oBB, Block *newBB,
               gutils->hasInvertPointer(operandOld.first)) {
             operands.push_back(
                 gutils->invertPointerM(operandOld.first, revBuilder));
+            auto iface =
+                operandOld.first.getType().cast<AutoDiffTypeInterface>();
+            Value nullValue =
+                iface.createNullValue(revBuilder, operandOld.first.getLoc());
+            gutils->mapInvertPointer(operandOld.first, nullValue, revBuilder);
+
           } else {
             if (auto iface = operandOld.first.getType()
                                  .dyn_cast<AutoDiffTypeInterface>()) {
