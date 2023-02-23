@@ -11464,6 +11464,29 @@ public:
       return;
     }
 
+    if (funcName == "__enzyme_print") {
+      if (Mode == DerivativeMode::ReverseModeGradient ||
+          Mode == DerivativeMode::ReverseModeCombined) {
+        IRBuilder<> Builder2(call.getParent());
+        getReverseBuilder(Builder2);
+
+        Function *prinfn = GetFunctionFromValue(call.getArgOperand(0));
+        Value *fstring = call.getArgOperand(1);
+        SmallVector<Value *, 2> args;
+        args.push_back(fstring);
+        for (int i = 2; i < call.getNumArgOperands(); ++i) {
+          auto arg = call.getArgOperand(i);
+          auto darg = diffe(arg, Builder2);
+          args.push_back(darg);
+        }
+
+        Builder2.CreateCall(prinfn->getFunctionType(), prinfn, args);
+        auto new_call = gutils->getNewFromOriginal(&call);
+        new_call->eraseFromParent();
+        return;
+      }
+    }
+
     if (gutils->isConstantInstruction(&call) &&
         gutils->isConstantValue(&call)) {
       bool noFree = false;

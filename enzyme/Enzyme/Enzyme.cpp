@@ -2715,6 +2715,24 @@ public:
       ReplaceInstWithInst(call, choice);
     }
 
+    // Remove call to __enzyme_print
+    SmallPtrSet<CallInst *, 4> toRemove;
+    for (auto &F : M) {
+      for (auto &BB : F) {
+        for (auto &I : BB) {
+          if (auto call = dyn_cast<CallInst>(&I)) {
+            auto fn = GetFunctionFromValue(call->getCalledOperand());
+            if (fn->getName().startswith("__enzyme_print"))
+              toRemove.insert(call);
+          }
+        }
+      }
+    }
+
+    for (auto rm : toRemove) {
+      rm->eraseFromParent();
+    }
+
     for (const auto &pair : Logic.PPC.cache)
       pair.second->eraseFromParent();
     Logic.clear();
