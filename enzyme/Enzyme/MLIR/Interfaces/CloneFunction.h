@@ -26,10 +26,12 @@ using namespace mlir::enzyme;
 
 Type getShadowType(Type type, unsigned width = 1);
 
-mlir::FunctionType getFunctionTypeForClone(
-    mlir::FunctionType FTy, DerivativeModeMLIR mode, unsigned width,
-    mlir::Type additionalArg, llvm::ArrayRef<DIFFE_TYPE_MLIR> constant_args,
-    bool diffeReturnArg, ReturnTypeMLIR returnValue, DIFFE_TYPE_MLIR ReturnTypeMLIR);
+mlir::FunctionType
+getFunctionTypeForClone(mlir::FunctionType FTy, DerivativeModeMLIR mode,
+                        unsigned width, mlir::Type additionalArg,
+                        llvm::ArrayRef<DIFFE_TYPE_MLIR> constant_args,
+                        bool diffeReturnArg, ReturnTypeMLIR returnValue,
+                        DIFFE_TYPE_MLIR ReturnTypeMLIR);
 
 void cloneInto(Region *src, Region *dest, Region::iterator destPos,
                BlockAndValueMapping &mapper,

@@ -32,10 +32,12 @@ mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
     FunctionOpInterface oldFunc_, MTypeAnalysis &TA_,
     BlockAndValueMapping invertedPointers_,
     const SmallPtrSetImpl<mlir::Value> &constantvalues_,
-    const SmallPtrSetImpl<mlir::Value> &activevals_, DIFFE_TYPE_MLIR ReturnActivity,
-    ArrayRef<DIFFE_TYPE_MLIR> ArgDiffeTypes_, BlockAndValueMapping &originalToNewFn_,
+    const SmallPtrSetImpl<mlir::Value> &activevals_,
+    DIFFE_TYPE_MLIR ReturnActivity, ArrayRef<DIFFE_TYPE_MLIR> ArgDiffeTypes_,
+    BlockAndValueMapping &originalToNewFn_,
     std::map<Operation *, Operation *> &originalToNewFnOps_,
-    DerivativeModeMLIR mode_, unsigned width, SymbolTableCollection &symbolTable_)
+    DerivativeModeMLIR mode_, unsigned width,
+    SymbolTableCollection &symbolTable_)
     : newFunc(newFunc_), Logic(Logic), mode(mode_), oldFunc(oldFunc_), TA(TA_),
       width(width), ArgDiffeTypes(ArgDiffeTypes_),
       originalToNewFn(originalToNewFn_),
@@ -354,9 +356,9 @@ void MGradientUtilsReverse::createReverseModeBlocks(Region &oldFunc,
 MGradientUtilsReverse *MGradientUtilsReverse::CreateFromClone(
     MEnzymeLogic &Logic, DerivativeModeMLIR mode_, unsigned width,
     FunctionOpInterface todiff, MTypeAnalysis &TA, MFnTypeInfo &oldTypeInfo,
-    DIFFE_TYPE_MLIR retType, bool diffeReturnArg, ArrayRef<DIFFE_TYPE_MLIR> constant_args,
-    ReturnTypeMLIR returnValue, mlir::Type additionalArg,
-    SymbolTableCollection &symbolTable_) {
+    DIFFE_TYPE_MLIR retType, bool diffeReturnArg,
+    ArrayRef<DIFFE_TYPE_MLIR> constant_args, ReturnTypeMLIR returnValue,
+    mlir::Type additionalArg, SymbolTableCollection &symbolTable_) {
   std::string prefix;
 
   switch (mode_) {

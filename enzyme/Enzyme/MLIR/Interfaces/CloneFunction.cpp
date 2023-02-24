@@ -7,10 +7,12 @@ Type getShadowType(Type type, unsigned width) {
   return type.cast<AutoDiffTypeInterface>().getShadowType(width);
 }
 
-mlir::FunctionType getFunctionTypeForClone(
-    mlir::FunctionType FTy, DerivativeModeMLIR mode, unsigned width,
-    mlir::Type additionalArg, llvm::ArrayRef<DIFFE_TYPE_MLIR> constant_args,
-    bool diffeReturnArg, ReturnTypeMLIR returnValue, DIFFE_TYPE_MLIR ReturnTypeMLIR) {
+mlir::FunctionType
+getFunctionTypeForClone(mlir::FunctionType FTy, DerivativeModeMLIR mode,
+                        unsigned width, mlir::Type additionalArg,
+                        llvm::ArrayRef<DIFFE_TYPE_MLIR> constant_args,
+                        bool diffeReturnArg, ReturnTypeMLIR returnValue,
+                        DIFFE_TYPE_MLIR ReturnTypeMLIR) {
   SmallVector<mlir::Type, 4> RetTypes;
   if (returnValue == ReturnTypeMLIR::ArgsWithReturn ||
       returnValue == ReturnTypeMLIR::Return) {
@@ -206,9 +208,10 @@ FunctionOpInterface CloneFunctionWithReturns(
   assert(!F.getFunctionBody().empty());
   // F = preprocessForClone(F, mode);
   // llvm::ValueToValueMapTy VMap;
-  auto FTy = getFunctionTypeForClone(
-      F.getFunctionType().cast<mlir::FunctionType>(), mode, width,
-      additionalArg, constant_args, diffeReturnArg, returnValue, ReturnTypeMLIR);
+  auto FTy =
+      getFunctionTypeForClone(F.getFunctionType().cast<mlir::FunctionType>(),
+                              mode, width, additionalArg, constant_args,
+                              diffeReturnArg, returnValue, ReturnTypeMLIR);
 
   /*
   for (Block &BB : F.getFunctionBody().getBlocks()) {

@@ -13,7 +13,6 @@
 #include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/IR/FunctionInterfaces.h"
 
-
 namespace mlir {
 namespace enzyme {
 
@@ -45,7 +44,8 @@ public:
                  BlockAndValueMapping &invertedPointers_,
                  const SmallPtrSetImpl<mlir::Value> &constantvalues_,
                  const SmallPtrSetImpl<mlir::Value> &activevals_,
-                 DIFFE_TYPE_MLIR ReturnActivity, ArrayRef<DIFFE_TYPE_MLIR> ArgDiffeTypes_,
+                 DIFFE_TYPE_MLIR ReturnActivity,
+                 ArrayRef<DIFFE_TYPE_MLIR> ArgDiffeTypes_,
                  BlockAndValueMapping &originalToNewFn_,
                  std::map<Operation *, Operation *> &originalToNewFnOps_,
                  DerivativeModeMLIR mode, unsigned width, bool omp);
@@ -86,7 +86,8 @@ public:
                   FunctionOpInterface todiff, MTypeAnalysis &TA,
                   MFnTypeInfo &oldTypeInfo, DIFFE_TYPE_MLIR retType,
                   bool diffeReturnArg, ArrayRef<DIFFE_TYPE_MLIR> constant_args,
-                  ReturnTypeMLIR returnValue, mlir::Type additionalArg, bool omp) {
+                  ReturnTypeMLIR returnValue, mlir::Type additionalArg,
+                  bool omp) {
     std::string prefix;
 
     switch (mode) {
@@ -117,10 +118,10 @@ public:
         nonconstant_values, returnvals, returnValue, retType,
         prefix + todiff.getName(), originalToNew, originalToNewOps,
         diffeReturnArg, additionalArg);
-    return new MDiffeGradientUtils(
-        Logic, newFunc, todiff, TA, invertedPointers, constant_values,
-        nonconstant_values, retType, constant_args, originalToNew,
-        originalToNewOps, mode, width, omp);
+    return new MDiffeGradientUtils(Logic, newFunc, todiff, TA, invertedPointers,
+                                   constant_values, nonconstant_values, retType,
+                                   constant_args, originalToNew,
+                                   originalToNewOps, mode, width, omp);
   }
 };
 

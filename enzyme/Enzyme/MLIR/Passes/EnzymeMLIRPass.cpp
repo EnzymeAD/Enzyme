@@ -63,8 +63,9 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
     auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
     auto fn = cast<FunctionOpInterface>(symbolOp);
 
-    DIFFE_TYPE_MLIR retType =
-        fn.getNumResults() == 0 ? DIFFE_TYPE_MLIR::CONSTANT : DIFFE_TYPE_MLIR::DUP_ARG;
+    DIFFE_TYPE_MLIR retType = fn.getNumResults() == 0
+                                  ? DIFFE_TYPE_MLIR::CONSTANT
+                                  : DIFFE_TYPE_MLIR::DUP_ARG;
 
     MTypeAnalysis TA;
     auto type_args = TA.getAnalyzedTypeInfo(fn);
@@ -74,7 +75,8 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
 
     std::vector<bool> volatile_args;
     for (auto &a : fn.getFunctionBody().getArguments()) {
-      volatile_args.push_back(!(mode == DerivativeModeMLIR::ReverseModeCombined));
+      volatile_args.push_back(
+          !(mode == DerivativeModeMLIR::ReverseModeCombined));
     }
 
     FunctionOpInterface newFunc = Logic.CreateForwardDiff(
@@ -123,8 +125,9 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
     auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
     auto fn = cast<FunctionOpInterface>(symbolOp);
 
-    DIFFE_TYPE_MLIR retType =
-        fn.getNumResults() == 0 ? DIFFE_TYPE_MLIR::CONSTANT : DIFFE_TYPE_MLIR::DUP_ARG;
+    DIFFE_TYPE_MLIR retType = fn.getNumResults() == 0
+                                  ? DIFFE_TYPE_MLIR::CONSTANT
+                                  : DIFFE_TYPE_MLIR::DUP_ARG;
 
     MTypeAnalysis TA;
     auto type_args = TA.getAnalyzedTypeInfo(fn);
@@ -134,7 +137,8 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
 
     std::vector<bool> volatile_args;
     for (auto &a : fn.getFunctionBody().getArguments()) {
-      volatile_args.push_back(!(mode == DerivativeModeMLIR::ReverseModeCombined));
+      volatile_args.push_back(
+          !(mode == DerivativeModeMLIR::ReverseModeCombined));
     }
 
     FunctionOpInterface newFunc = Logic.CreateReverseDiff(
