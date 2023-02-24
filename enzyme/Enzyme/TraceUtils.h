@@ -19,8 +19,6 @@
 
 #include "TraceInterface.h"
 
-using namespace llvm;
-
 class TraceUtils {
 
 private:
