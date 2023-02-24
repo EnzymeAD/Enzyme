@@ -22,8 +22,7 @@ using namespace mlir;
 using namespace mlir::enzyme;
 
 void createTerminator(MDiffeGradientUtils *gutils, mlir::Block *oBB,
-                      DIFFE_TYPE retType, ReturnType retVal) {
-  MTypeResults &TR = gutils->TR;
+                      DIFFE_TYPE_MLIR retType, ReturnTypeMLIR retVal) {
   auto inst = oBB->getTerminator();
 
   mlir::Block *nBB = gutils->getNewFromOriginal(inst->getBlock());
@@ -76,14 +75,13 @@ void createTerminator(MDiffeGradientUtils *gutils, mlir::Block *oBB,
   SmallVector<mlir::Value, 2> retargs;
 
   switch (retVal) {
-  case ReturnType::Return: {
+  case ReturnTypeMLIR::Return: {
     auto ret = inst->getOperand(0);
 
     mlir::Value toret;
-    if (retType == DIFFE_TYPE::CONSTANT) {
+    if (retType == DIFFE_TYPE_MLIR::CONSTANT) {
       toret = gutils->getNewFromOriginal(ret);
-    } else if (!isa<mlir::FloatType>(ret.getType()) &&
-               TR.getReturnAnalysis().Inner0().isPossiblePointer()) {
+    } else if (!isa<mlir::FloatType>(ret.getType()) && true /*type analysis*/) {
       toret = gutils->invertPointerM(ret, nBuilder);
     } else if (!gutils->isConstantValue(ret)) {
       toret = gutils->invertPointerM(ret, nBuilder);
@@ -96,18 +94,17 @@ void createTerminator(MDiffeGradientUtils *gutils, mlir::Block *oBB,
 
     break;
   }
-  case ReturnType::TwoReturns: {
-    if (retType == DIFFE_TYPE::CONSTANT)
+  case ReturnTypeMLIR::TwoReturns: {
+    if (retType == DIFFE_TYPE_MLIR::CONSTANT)
       assert(false && "Invalid return type");
     auto ret = inst->getOperand(0);
 
     retargs.push_back(gutils->getNewFromOriginal(ret));
 
     mlir::Value toret;
-    if (retType == DIFFE_TYPE::CONSTANT) {
+    if (retType == DIFFE_TYPE_MLIR::CONSTANT) {
       toret = gutils->getNewFromOriginal(ret);
-    } else if (!isa<mlir::FloatType>(ret.getType()) &&
-               TR.getReturnAnalysis().Inner0().isPossiblePointer()) {
+    } else if (!isa<mlir::FloatType>(ret.getType()) && true /*type analysis*/) {
       toret = gutils->invertPointerM(ret, nBuilder);
     } else if (!gutils->isConstantValue(ret)) {
       toret = gutils->invertPointerM(ret, nBuilder);
@@ -119,11 +116,11 @@ void createTerminator(MDiffeGradientUtils *gutils, mlir::Block *oBB,
     retargs.push_back(toret);
     break;
   }
-  case ReturnType::Void: {
+  case ReturnTypeMLIR::Void: {
     break;
   }
   default: {
-    llvm::errs() << "Invalid return type: " << to_string(retVal)
+    llvm::errs() << "Invalid return type: "
                  << "for function: \n"
                  << gutils->newFunc << "\n";
     assert(false && "Invalid return type for function");
@@ -141,11 +138,23 @@ void createTerminator(MDiffeGradientUtils *gutils, mlir::Block *oBB,
 //===----------------------------------------------------------------------===//
 //===----------------------------------------------------------------------===//
 
+/// Insert into a map
+template <typename K, typename V>
+static inline typename std::map<K, V>::iterator
+insert_or_assign2(std::map<K, V> &map, K key, V val) {
+  auto found = map.find(key);
+  if (found != map.end()) {
+    map.erase(found);
+  }
+  return map.emplace(key, val).first;
+}
+
 FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
-    FunctionOpInterface fn, DIFFE_TYPE retType,
-    std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA, bool returnUsed,
-    DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType,
-    MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented) {
+    FunctionOpInterface fn, DIFFE_TYPE_MLIR retType,
+    std::vector<DIFFE_TYPE_MLIR> constants, MTypeAnalysis &TA, bool returnUsed,
+    DerivativeModeMLIR mode, bool freeMemory, size_t width,
+    mlir::Type addedType, MFnTypeInfo type_args,
+    std::vector<bool> volatile_args, void *augmented) {
   if (fn.getFunctionBody().empty()) {
     llvm::errs() << fn << "\n";
     llvm_unreachable("Differentiating empty function");
@@ -160,10 +169,11 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
   if (ForwardCachedFunctions.find(tup) != ForwardCachedFunctions.end()) {
     return ForwardCachedFunctions.find(tup)->second;
   }
-  bool retActive = retType != DIFFE_TYPE::CONSTANT;
-  ReturnType returnValue =
-      returnUsed ? (retActive ? ReturnType::TwoReturns : ReturnType::Return)
-                 : (retActive ? ReturnType::Return : ReturnType::Void);
+  bool retActive = retType != DIFFE_TYPE_MLIR::CONSTANT;
+  ReturnTypeMLIR returnValue =
+      returnUsed
+          ? (retActive ? ReturnTypeMLIR::TwoReturns : ReturnTypeMLIR::Return)
+          : (retActive ? ReturnTypeMLIR::Return : ReturnTypeMLIR::Void);
   auto gutils = MDiffeGradientUtils::CreateFromClone(
       *this, mode, width, fn, TA, type_args, retType,
       /*diffeReturnArg*/ false, constants, returnValue, addedType,
@@ -189,7 +199,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
     for (auto &I : *BB)
       unnecessaryInstructionsTmp.insert(&I);
   }
-  if (mode == DerivativeMode::ForwardModeSplit)
+  if (mode == DerivativeModeMLIR::ForwardModeSplit)
     gutils->computeGuaranteedFrees();
 
   SmallPtrSet<const Value *, 4> unnecessaryValues;
@@ -235,7 +245,7 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
     createTerminator(gutils, &oBB, retType, returnValue);
   }
 
-  // if (mode == DerivativeMode::ForwardModeSplit && augmenteddata)
+  // if (mode == DerivativeModeMLIR::ForwardModeSplit && augmenteddata)
   //  restoreCache(gutils, augmenteddata->tapeIndices, guaranteedUnreachable);
 
   // gutils->eraseFictiousPHIs();

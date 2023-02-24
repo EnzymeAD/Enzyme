@@ -29,15 +29,17 @@ using namespace mlir::enzyme;
 
 mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
     MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
-    FunctionOpInterface oldFunc_, MTypeAnalysis &TA_, MTypeResults TR_,
+    FunctionOpInterface oldFunc_, MTypeAnalysis &TA_,
     BlockAndValueMapping invertedPointers_,
     const SmallPtrSetImpl<mlir::Value> &constantvalues_,
-    const SmallPtrSetImpl<mlir::Value> &activevals_, DIFFE_TYPE ReturnActivity,
-    ArrayRef<DIFFE_TYPE> ArgDiffeTypes_, BlockAndValueMapping &originalToNewFn_,
+    const SmallPtrSetImpl<mlir::Value> &activevals_,
+    DIFFE_TYPE_MLIR ReturnActivity, ArrayRef<DIFFE_TYPE_MLIR> ArgDiffeTypes_,
+    BlockAndValueMapping &originalToNewFn_,
     std::map<Operation *, Operation *> &originalToNewFnOps_,
-    DerivativeMode mode_, unsigned width, SymbolTableCollection &symbolTable_)
+    DerivativeModeMLIR mode_, unsigned width,
+    SymbolTableCollection &symbolTable_)
     : newFunc(newFunc_), Logic(Logic), mode(mode_), oldFunc(oldFunc_), TA(TA_),
-      TR(TR_), width(width), ArgDiffeTypes(ArgDiffeTypes_),
+      width(width), ArgDiffeTypes(ArgDiffeTypes_),
       originalToNewFn(originalToNewFn_),
       originalToNewFnOps(originalToNewFnOps_), symbolTable(symbolTable_) {
 
@@ -352,24 +354,24 @@ void MGradientUtilsReverse::createReverseModeBlocks(Region &oldFunc,
 }
 
 MGradientUtilsReverse *MGradientUtilsReverse::CreateFromClone(
-    MEnzymeLogic &Logic, DerivativeMode mode_, unsigned width,
+    MEnzymeLogic &Logic, DerivativeModeMLIR mode_, unsigned width,
     FunctionOpInterface todiff, MTypeAnalysis &TA, MFnTypeInfo &oldTypeInfo,
-    DIFFE_TYPE retType, bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
-    ReturnType returnValue, mlir::Type additionalArg,
-    SymbolTableCollection &symbolTable_) {
+    DIFFE_TYPE_MLIR retType, bool diffeReturnArg,
+    ArrayRef<DIFFE_TYPE_MLIR> constant_args, ReturnTypeMLIR returnValue,
+    mlir::Type additionalArg, SymbolTableCollection &symbolTable_) {
   std::string prefix;
 
   switch (mode_) {
-  case DerivativeMode::ForwardMode:
-  case DerivativeMode::ForwardModeSplit:
+  case DerivativeModeMLIR::ForwardMode:
+  case DerivativeModeMLIR::ForwardModeSplit:
     assert(false);
     break;
-  case DerivativeMode::ReverseModeCombined:
-  case DerivativeMode::ReverseModeGradient:
+  case DerivativeModeMLIR::ReverseModeCombined:
+  case DerivativeModeMLIR::ReverseModeGradient:
     prefix = "diffe";
     break;
-  case DerivativeMode::ReverseModePrimal:
-    llvm_unreachable("invalid DerivativeMode: ReverseModePrimal\n");
+  case DerivativeModeMLIR::ReverseModePrimal:
+    llvm_unreachable("invalid DerivativeModeMLIR: ReverseModePrimal\n");
   }
 
   if (width > 1)
@@ -388,9 +390,8 @@ MGradientUtilsReverse *MGradientUtilsReverse::CreateFromClone(
       prefix + todiff.getName(), originalToNew, originalToNewOps,
       diffeReturnArg, additionalArg);
 
-  MTypeResults TR; // TODO
   return new MGradientUtilsReverse(
-      Logic, newFunc, todiff, TA, TR, invertedPointers, constant_values,
+      Logic, newFunc, todiff, TA, invertedPointers, constant_values,
       nonconstant_values, retType, constant_args, originalToNew,
       originalToNewOps, mode_, width, symbolTable_);
 }
