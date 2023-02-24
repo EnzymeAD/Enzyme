@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <math.h>
 #include <assert.h>
+#include <stdio.h>
 
 #include "test_utils.h"
 
@@ -78,13 +79,19 @@ int main(int argc, char *argv[]) {
   assert(grad_A != 0);
   for(int i=0; i<n; i++)
    grad_A[i] = 0;
-  
+ 
+  __enzyme_autodiff((void*)invmag, A, grad_A, n);
+
+  double im = invmag(A, n);
+  im = im*im*im;
+
   for(int i=0; i<n; i++)
     printf("A[%d]=%f dA[%d]=%f\n", i, A[i], i, grad_A[i]);
 
+  fflush(0);
   
   for(int i=0; i<n; i++)
-    APPROX_EQ(grad_A[i], -1/A[i], 1e-10); 
+    APPROX_EQ(grad_A[i], -A[i]*im, 1e-3); 
 
   return 0;
 }

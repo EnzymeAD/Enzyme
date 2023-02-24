@@ -3585,6 +3585,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         if (NewF->hasFnAttribute(Attribute::NoInline)) {
           NewF->removeFnAttr(Attribute::NoInline);
         }
+        if (NewF->hasFnAttribute(Attribute::OptimizeNone)) {
+          NewF->removeFnAttr(Attribute::OptimizeNone);
+        }
         size_t argnum = 0;
         for (Argument &Arg : NewF->args()) {
           if (Arg.hasAttribute(Attribute::Returned))
