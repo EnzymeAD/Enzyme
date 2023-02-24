@@ -3,8 +3,6 @@
 #include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/IR/FunctionInterfaces.h"
 
-// TODO: no relative includes.
-#include "../../EnzymeLogic.h"
 
 namespace mlir {
 namespace enzyme {
@@ -26,21 +24,49 @@ public:
   }
 };
 
-class MTypeResults {
-public:
-  // TODO
-  TypeTree getReturnAnalysis() { return TypeTree(); }
+enum class DIFFE_TYPE_MLIR {
+  OUT_DIFF = 0,  // add differential to an output struct
+  DUP_ARG = 1,   // duplicate the argument and store differential inside
+  CONSTANT = 2,  // no differential
+  DUP_NONEED = 3 // duplicate this argument and store differential inside, but
+                 // don't need the forward
+};
+
+enum class DerivativeModeMLIR {
+  ForwardMode = 0,
+  ReverseModePrimal = 1,
+  ReverseModeGradient = 2,
+  ReverseModeCombined = 3,
+  ForwardModeSplit = 4,
+};
+
+enum class ReturnTypeMLIR {
+  /// Return is a struct of all args and the original return
+  ArgsWithReturn,
+  /// Return is a struct of all args and two of the original return
+  ArgsWithTwoReturns,
+  /// Return is a struct of all args
+  Args,
+  /// Return is a tape type and the original return
+  TapeAndReturn,
+  /// Return is a tape type and the two of the original return
+  TapeAndTwoReturns,
+  /// Return is a tape type
+  Tape,
+  TwoReturns,
+  Return,
+  Void,
 };
 
 class MEnzymeLogic {
 public:
   struct MForwardCacheKey {
     FunctionOpInterface todiff;
-    DIFFE_TYPE retType;
-    const std::vector<DIFFE_TYPE> constant_args;
+    DIFFE_TYPE_MLIR retType;
+    const std::vector<DIFFE_TYPE_MLIR> constant_args;
     // std::map<llvm::Argument *, bool> uncacheable_args;
     bool returnUsed;
-    DerivativeMode mode;
+    DerivativeModeMLIR mode;
     unsigned width;
     mlir::Type additionalType;
     const MFnTypeInfo typeInfo;
@@ -97,16 +123,16 @@ public:
   std::map<MForwardCacheKey, FunctionOpInterface> ForwardCachedFunctions;
 
   FunctionOpInterface
-  CreateForwardDiff(FunctionOpInterface fn, DIFFE_TYPE retType,
-                    std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
-                    bool returnUsed, DerivativeMode mode, bool freeMemory,
+  CreateForwardDiff(FunctionOpInterface fn, DIFFE_TYPE_MLIR retType,
+                    std::vector<DIFFE_TYPE_MLIR> constants, MTypeAnalysis &TA,
+                    bool returnUsed, DerivativeModeMLIR mode, bool freeMemory,
                     size_t width, mlir::Type addedType, MFnTypeInfo type_args,
                     std::vector<bool> volatile_args, void *augmented);
 
   FunctionOpInterface
-  CreateReverseDiff(FunctionOpInterface fn, DIFFE_TYPE retType,
-                    std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
-                    bool returnUsed, DerivativeMode mode, bool freeMemory,
+  CreateReverseDiff(FunctionOpInterface fn, DIFFE_TYPE_MLIR retType,
+                    std::vector<DIFFE_TYPE_MLIR> constants, MTypeAnalysis &TA,
+                    bool returnUsed, DerivativeModeMLIR mode, bool freeMemory,
                     size_t width, mlir::Type addedType, MFnTypeInfo type_args,
                     std::vector<bool> volatile_args, void *augmented,
                     SymbolTableCollection &symbolTable);
