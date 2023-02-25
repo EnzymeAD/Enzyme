@@ -31,21 +31,20 @@
 #include "ConcreteType.h"
 #include "TypeTree.h"
 
-
 /// isNewFormatTypeNode - Return true iff the given type node is in the new
 /// size-aware format.
 static bool isNewFormatTypeNode(const llvm::MDNode *N) {
   if (N->getNumOperands() < 3)
     return false;
   // In the old format the first operand is a string.
-  if (!isa<llvm::MDNode>(N->getOperand(0)))
+  if (!llvm::isa<llvm::MDNode>(N->getOperand(0)))
     return false;
   return true;
 }
 
-/// This is a simple wrapper around an llvm::MDNode which provides a higher-level
-/// interface by hiding the details of how alias analysis information is encoded
-/// in its operands.
+/// This is a simple wrapper around an llvm::MDNode which provides a
+/// higher-level interface by hiding the details of how alias analysis
+/// information is encoded in its operands.
 template <typename MDNodeTy> class TBAANodeImpl {
   MDNodeTy *Node = nullptr;
 
@@ -80,7 +79,8 @@ public:
   bool isTypeImmutable() const {
     if (Node->getNumOperands() < 3)
       return false;
-    llvm::ConstantInt *CI = llvm::mdconst::dyn_extract<llvm::ConstantInt>(Node->getOperand(2));
+    llvm::ConstantInt *CI =
+        llvm::mdconst::dyn_extract<llvm::ConstantInt>(Node->getOperand(2));
     if (!CI)
       return false;
     return CI->getValue()[0];
@@ -127,13 +127,15 @@ public:
   }
 
   uint64_t getOffset() const {
-    return llvm::mdconst::extract<llvm::ConstantInt>(Node->getOperand(2))->getZExtValue();
+    return llvm::mdconst::extract<llvm::ConstantInt>(Node->getOperand(2))
+        ->getZExtValue();
   }
 
   uint64_t getSize() const {
     if (!isNewFormat())
       return UINT64_MAX;
-    return llvm::mdconst::extract<llvm::ConstantInt>(Node->getOperand(3))->getZExtValue();
+    return llvm::mdconst::extract<llvm::ConstantInt>(Node->getOperand(3))
+        ->getZExtValue();
   }
 
   /// Test if this TBAAStructTagNode represents a type for objects
@@ -143,7 +145,8 @@ public:
     unsigned OpNo = isNewFormat() ? 4 : 3;
     if (Node->getNumOperands() < OpNo + 1)
       return false;
-    llvm::ConstantInt *CI = llvm::mdconst::dyn_extract<llvm::ConstantInt>(Node->getOperand(OpNo));
+    llvm::ConstantInt *CI =
+        llvm::mdconst::dyn_extract<llvm::ConstantInt>(Node->getOperand(OpNo));
     if (!CI)
       return false;
     return CI->getValue()[0];
@@ -180,7 +183,9 @@ public:
   }
 
   /// getId - Return type identifier.
-  llvm::Metadata *getId() const { return Node->getOperand(isNewFormat() ? 2 : 0); }
+  llvm::Metadata *getId() const {
+    return Node->getOperand(isNewFormat() ? 2 : 0);
+  }
 
   unsigned getNumFields() const {
     unsigned FirstFieldOpNo = isNewFormat() ? 3 : 1;
@@ -193,8 +198,9 @@ public:
     unsigned NumOpsPerField = isNewFormat() ? 3 : 2;
     unsigned OpIndex = FirstFieldOpNo + FieldIndex * NumOpsPerField;
 
-    uint64_t Cur = llvm::mdconst::extract<llvm::ConstantInt>(Node->getOperand(OpIndex + 1))
-                       ->getZExtValue();
+    uint64_t Cur =
+        llvm::mdconst::extract<llvm::ConstantInt>(Node->getOperand(OpIndex + 1))
+            ->getZExtValue();
     return Cur;
   }
 
@@ -222,12 +228,14 @@ public:
       // Fast path for a scalar type node and a struct type node with a single
       // field.
       if (Node->getNumOperands() <= 3) {
-        uint64_t Cur = Node->getNumOperands() == 2
-                           ? 0
-                           : llvm::mdconst::extract<llvm::ConstantInt>(Node->getOperand(2))
-                                 ->getZExtValue();
+        uint64_t Cur =
+            Node->getNumOperands() == 2
+                ? 0
+                : llvm::mdconst::extract<llvm::ConstantInt>(Node->getOperand(2))
+                      ->getZExtValue();
         Offset -= Cur;
-        llvm::MDNode *P = llvm::dyn_cast_or_null<llvm::MDNode>(Node->getOperand(1));
+        llvm::MDNode *P =
+            llvm::dyn_cast_or_null<llvm::MDNode>(Node->getOperand(1));
         if (!P)
           return TBAAStructTypeNode();
         return TBAAStructTypeNode(P);
@@ -241,8 +249,9 @@ public:
     unsigned TheIdx = 0;
     for (unsigned Idx = FirstFieldOpNo; Idx < Node->getNumOperands();
          Idx += NumOpsPerField) {
-      uint64_t Cur = llvm::mdconst::extract<llvm::ConstantInt>(Node->getOperand(Idx + 1))
-                         ->getZExtValue();
+      uint64_t Cur =
+          llvm::mdconst::extract<llvm::ConstantInt>(Node->getOperand(Idx + 1))
+              ->getZExtValue();
       if (Cur > Offset) {
         assert(Idx >= FirstFieldOpNo + NumOpsPerField &&
                "TBAAStructTypeNode::getField should have an offset match!");
@@ -253,58 +262,66 @@ public:
     // Move along the last field.
     if (TheIdx == 0)
       TheIdx = Node->getNumOperands() - NumOpsPerField;
-    uint64_t Cur = llvm::mdconst::extract<llvm::ConstantInt>(Node->getOperand(TheIdx + 1))
-                       ->getZExtValue();
+    uint64_t Cur =
+        llvm::mdconst::extract<llvm::ConstantInt>(Node->getOperand(TheIdx + 1))
+            ->getZExtValue();
     Offset -= Cur;
-    llvm::MDNode *P = llvm::dyn_cast_or_null<llvm::MDNode>(Node->getOperand(TheIdx));
+    llvm::MDNode *P =
+        llvm::dyn_cast_or_null<llvm::MDNode>(Node->getOperand(TheIdx));
     if (!P)
       return TBAAStructTypeNode();
     return TBAAStructTypeNode(P);
   }
 };
 
-/// Check the first operand of the tbaa tag node, if it is a llvm::MDNode, we treat
-/// it as struct-path aware TBAA format, otherwise, we treat it as scalar TBAA
-/// format.
+/// Check the first operand of the tbaa tag node, if it is a llvm::MDNode, we
+/// treat it as struct-path aware TBAA format, otherwise, we treat it as scalar
+/// TBAA format.
 static inline bool isStructPathTBAA(const llvm::MDNode *MD) {
   // Anonymous TBAA root starts with a llvm::MDNode and dragonegg uses it as
   // a TBAA tag.
-  return isa<llvm::MDNode>(MD->getOperand(0)) && MD->getNumOperands() >= 3;
+  return llvm::isa<llvm::MDNode>(MD->getOperand(0)) &&
+         MD->getNumOperands() >= 3;
 }
 
-static inline const llvm::MDNode *createAccessTag(const llvm::MDNode *AccessType) {
+static inline const llvm::MDNode *
+createAccessTag(const llvm::MDNode *AccessType) {
   // If there is no access type or the access type is the root node, then
   // we don't have any useful access tag to return.
   if (!AccessType || AccessType->getNumOperands() < 2)
     return nullptr;
 
   llvm::Type *Int64 = llvm::IntegerType::get(AccessType->getContext(), 64);
-  auto *OffsetNode = llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(Int64, 0));
+  auto *OffsetNode =
+      llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(Int64, 0));
 
   if (TBAAStructTypeNode(AccessType).isNewFormat()) {
     // TODO: Take access ranges into account when matching access tags and
     // fix this code to generate actual access sizes for generic tags.
     uint64_t AccessSize = UINT64_MAX;
-    auto *SizeNode =
-        llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(Int64, AccessSize));
+    auto *SizeNode = llvm::ConstantAsMetadata::get(
+        llvm::ConstantInt::get(Int64, AccessSize));
     llvm::Metadata *Ops[] = {const_cast<llvm::MDNode *>(AccessType),
-                       const_cast<llvm::MDNode *>(AccessType), OffsetNode, SizeNode};
+                             const_cast<llvm::MDNode *>(AccessType), OffsetNode,
+                             SizeNode};
     return llvm::MDNode::get(AccessType->getContext(), Ops);
   }
 
   llvm::Metadata *Ops[] = {const_cast<llvm::MDNode *>(AccessType),
-                     const_cast<llvm::MDNode *>(AccessType), OffsetNode};
+                           const_cast<llvm::MDNode *>(AccessType), OffsetNode};
   return llvm::MDNode::get(AccessType->getContext(), Ops);
 }
 
 // Modified from llvm::MDNode::isTBAAVtableAccess()
 
 static inline std::string
-getAccessNameTBAA(const llvm::MDNode *M, const std::set<std::string> &legalnames) {
+getAccessNameTBAA(const llvm::MDNode *M,
+                  const std::set<std::string> &legalnames) {
   if (!isStructPathTBAA(M)) {
     if (M->getNumOperands() < 1)
       return "";
-    if (const llvm::MDString *Tag1 = llvm::dyn_cast<llvm::MDString>(M->getOperand(0))) {
+    if (const llvm::MDString *Tag1 =
+            llvm::dyn_cast<llvm::MDString>(M->getOperand(0))) {
       return Tag1->getString().str();
     }
     return "";
@@ -338,10 +355,13 @@ getAccessNameTBAA(const llvm::MDNode *M, const std::set<std::string> &legalnames
 }
 
 static inline std::string
-getAccessNameTBAA(llvm::Instruction *Inst, const std::set<std::string> &legalnames) {
-  if (const llvm::MDNode *M = Inst->getMetadata(llvm::LLVMContext::MD_tbaa_struct)) {
+getAccessNameTBAA(llvm::Instruction *Inst,
+                  const std::set<std::string> &legalnames) {
+  if (const llvm::MDNode *M =
+          Inst->getMetadata(llvm::LLVMContext::MD_tbaa_struct)) {
     for (unsigned i = 2; i < M->getNumOperands(); i += 3) {
-      if (const llvm::MDNode *M2 = llvm::dyn_cast<llvm::MDNode>(M->getOperand(i))) {
+      if (const llvm::MDNode *M2 =
+              llvm::dyn_cast<llvm::MDNode>(M->getOperand(i))) {
         auto res = getAccessNameTBAA(M2, legalnames);
         if (res != "")
           return res;
@@ -393,7 +413,8 @@ static inline ConcreteType getTypeFromTBAAString(std::string TypeName,
 /// Given a TBAA access node return the corresponding TypeTree
 /// This includes recursively parsing the access nodes, with
 /// corresponding offsets in the result
-static inline TypeTree parseTBAA(TBAAStructTypeNode AccessType, llvm::Instruction &I,
+static inline TypeTree parseTBAA(TBAAStructTypeNode AccessType,
+                                 llvm::Instruction &I,
                                  const llvm::DataLayout &DL) {
 
   if (auto *Id = llvm::dyn_cast<llvm::MDString>(AccessType.getId())) {
@@ -422,7 +443,8 @@ static inline TypeTree parseTBAA(const llvm::MDNode *M, llvm::Instruction &I,
   if (!isStructPathTBAA(M)) {
     if (M->getNumOperands() < 1)
       return TypeTree();
-    if (const llvm::MDString *Tag1 = llvm::dyn_cast<llvm::MDString>(M->getOperand(0))) {
+    if (const llvm::MDString *Tag1 =
+            llvm::dyn_cast<llvm::MDString>(M->getOperand(0))) {
       return TypeTree(getTypeFromTBAAString(Tag1->getString().str(), I))
           .Only(0, &I);
     }
@@ -437,18 +459,23 @@ static inline TypeTree parseTBAA(const llvm::MDNode *M, llvm::Instruction &I,
 
 /// Given an llvm::Instruction, return a TypeTree representing any
 /// types that can be derived from TBAA metadata attached
-static inline TypeTree parseTBAA(llvm::Instruction &I, const llvm::DataLayout &DL) {
+static inline TypeTree parseTBAA(llvm::Instruction &I,
+                                 const llvm::DataLayout &DL) {
   TypeTree Result;
-  if (const llvm::MDNode *M = I.getMetadata(llvm::LLVMContext::MD_tbaa_struct)) {
+  if (const llvm::MDNode *M =
+          I.getMetadata(llvm::LLVMContext::MD_tbaa_struct)) {
     for (unsigned i = 0, size = M->getNumOperands(); i < size; i += 3) {
-      if (const llvm::MDNode *M2 = llvm::dyn_cast<llvm::MDNode>(M->getOperand(i + 2))) {
+      if (const llvm::MDNode *M2 =
+              llvm::dyn_cast<llvm::MDNode>(M->getOperand(i + 2))) {
         auto SubResult = parseTBAA(M2, I, DL);
         auto Start = llvm::cast<llvm::ConstantInt>(
-                         llvm::cast<llvm::ConstantAsMetadata>(M->getOperand(i))->getValue())
+                         llvm::cast<llvm::ConstantAsMetadata>(M->getOperand(i))
+                             ->getValue())
                          ->getLimitedValue();
         auto Len =
             llvm::cast<llvm::ConstantInt>(
-                llvm::cast<llvm::ConstantAsMetadata>(M->getOperand(i + 1))->getValue())
+                llvm::cast<llvm::ConstantAsMetadata>(M->getOperand(i + 1))
+                    ->getValue())
                 ->getLimitedValue();
         Result |=
             SubResult.ShiftIndices(DL, /*init offset*/ 0, /*max size*/ Len,
