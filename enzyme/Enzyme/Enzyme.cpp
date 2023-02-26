@@ -2571,8 +2571,8 @@ public:
 
 AnalysisKey EnzymeNewPM::Key;
 
-#ifdef ENZYME_RUNPASS
 #include "PreserveNVVM.h"
+#ifdef ENZYME_RUNPASS
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Transforms/IPO/GlobalOpt.h"
 #include "llvm/Transforms/Scalar/GVN.h"
@@ -2652,6 +2652,10 @@ llvmGetPassPluginInfo() {
                    llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
                   if (Name == "enzyme") {
                     MPM.addPass(EnzymeNewPM());
+                    return true;
+                  }
+                  if (Name == "preserve-nvvm") {
+                    MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
                     return true;
                   }
                   return false;
