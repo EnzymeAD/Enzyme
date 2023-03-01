@@ -91,7 +91,7 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
   */
 }
 
-Value mlir::enzyme::MGradientUtils::getNewFromOriginal(
+mlir::Value mlir::enzyme::MGradientUtils::getNewFromOriginal(
     const mlir::Value originst) const {
   if (!originalToNewFn.contains(originst)) {
     llvm::errs() << oldFunc << "\n";
@@ -151,8 +151,8 @@ bool mlir::enzyme::MGradientUtils::isConstantValue(Value v) const {
   return false;
 }
 
-Value mlir::enzyme::MGradientUtils::invertPointerM(Value v,
-                                                   OpBuilder &Builder2) {
+mlir::Value mlir::enzyme::MGradientUtils::invertPointerM(mlir::Value v,
+                                                         OpBuilder &Builder2) {
   // TODO
   if (invertedPointers.contains(v))
     return invertedPointers.lookupOrNull(v);

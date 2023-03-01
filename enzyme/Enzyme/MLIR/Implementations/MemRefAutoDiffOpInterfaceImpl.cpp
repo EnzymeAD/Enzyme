@@ -32,7 +32,7 @@ struct LoadOpInterface
                                          MGradientUtils *gutils) const {
     auto loadOp = cast<memref::LoadOp>(op);
     if (!gutils->isConstantValue(loadOp)) {
-      SmallVector<Value> inds;
+      SmallVector<mlir::Value> inds;
       for (auto ind : loadOp.getIndices())
         inds.push_back(gutils->getNewFromOriginal(ind));
       mlir::Value res = builder.create<memref::LoadOp>(
@@ -52,7 +52,7 @@ struct StoreOpInterface
                                          MGradientUtils *gutils) const {
     auto storeOp = cast<memref::StoreOp>(op);
     if (!gutils->isConstantValue(storeOp.getMemref())) {
-      SmallVector<Value> inds;
+      SmallVector<mlir::Value> inds;
       for (auto ind : storeOp.getIndices())
         inds.push_back(gutils->getNewFromOriginal(ind));
       builder.create<memref::StoreOp>(
@@ -239,7 +239,8 @@ class MemRefTypeInterface
     : public AutoDiffTypeInterface::ExternalModel<MemRefTypeInterface,
                                                   MemRefType> {
 public:
-  Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
+  mlir::Value createNullValue(mlir::Type self, OpBuilder &builder,
+                              Location loc) const {
     llvm_unreachable("Cannot create null of memref (todo polygeist null)");
   }
 
