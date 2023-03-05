@@ -284,7 +284,23 @@ const std::set<std::string> KnownInactiveFunctions = {
 };
 
 const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
+    Intrinsic::floor,
+    Intrinsic::ceil,
     Intrinsic::trunc,
+    Intrinsic::rint,
+#if LLVM_VERSION_MAJOR >= 9
+    Intrinsic::lrint,
+    Intrinsic::llrint,
+#endif
+    Intrinsic::nearbyint,
+    Intrinsic::round,
+#if LLVM_VERSION_MAJOR >= 11
+    Intrinsic::roundeven,
+#endif
+#if LLVM_VERSION_MAJOR >= 9
+    Intrinsic::lround,
+    Intrinsic::llround,
+#endif
     Intrinsic::nvvm_barrier0,
     Intrinsic::nvvm_barrier0_popc,
     Intrinsic::nvvm_barrier0_and,
@@ -301,6 +317,9 @@ const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
     Intrinsic::dbg_addr,
     Intrinsic::dbg_declare,
     Intrinsic::dbg_value,
+#if LLVM_VERSION_MAJOR > 6
+    Intrinsic::dbg_label,
+#endif
     Intrinsic::invariant_start,
     Intrinsic::invariant_end,
     Intrinsic::var_annotation,
