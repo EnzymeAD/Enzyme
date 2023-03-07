@@ -8787,10 +8787,10 @@ public:
     llvm_unreachable("Unhandled MPI FUNCTION");
   }
 
-  void handleUnknownFunction(CallInst &call, Function *called,
-                             const std::vector<bool> &overwritten_args,
-                             bool shadowReturnUsed, DIFFE_TYPE subretType,
-                             bool subretused) {
+  void recursivelyHandleSubfunction(CallInst &call, Function *called,
+                                    const std::vector<bool> &overwritten_args,
+                                    bool shadowReturnUsed,
+                                    DIFFE_TYPE subretType, bool subretused) {
     IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
     BuilderZ.setFastMathFlags(getFast());
 
@@ -12803,7 +12803,8 @@ public:
       return;
     }
 
-    return handleUnknownFunction(call, called, overwritten_args,
-                                 shadowReturnUsed, subretType, subretused);
+    return recursivelyHandleSubfunction(call, called, overwritten_args,
+                                        shadowReturnUsed, subretType,
+                                        subretused);
   }
 };
