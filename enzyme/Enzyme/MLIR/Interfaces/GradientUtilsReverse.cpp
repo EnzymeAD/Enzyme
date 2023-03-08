@@ -287,11 +287,12 @@ void MGradientUtilsReverse::initInitializationBlock(
 
   for (Value activeval : activevals_) {
     if (auto iface = dyn_cast<AutoDiffTypeInterface>(activeval.getType())) {
-      Location loc = activeval.getLoc();
-      Value gradient = insertInitGradient(activeval, initializationBuilder);
-      Value zero = iface.createNullValue(initializationBuilder, loc);
-      initializationBuilder.create<enzyme::SetOp>(loc, gradient, zero);
-      this->invertedPointersGlobal.map(activeval, gradient);
+      Value zero =
+          iface.createNullValue(initializationBuilder, activeval.getLoc());
+      mapInvertPointer(activeval, zero, initializationBuilder);
+    } else {
+      llvm_unreachable(
+          "Type does not have an associated AutoDiffTypeInterface");
     }
   }
   for (auto const &x : invertedPointers_.getValueMap()) {
