@@ -199,12 +199,16 @@ void MEnzymeLogic::handlePredecessors(Block *oBB, Block *newBB,
   OpBuilder revBuilder(reverseBB, reverseBB->end());
   if (oBB->hasNoPredecessors()) {
     SmallVector<mlir::Value> retargs;
-    for (Value attribute : gutils->oldFunc.getFunctionBody().getArguments()) {
-      Value attributeGradient = gutils->invertPointerM(attribute, revBuilder);
-      retargs.push_back(attributeGradient);
+    assert(gutils->ArgDiffeTypes.size() == gutils->oldFunc.getNumArguments() &&
+           "Mismatch of activity array size vs # original function args");
+    for (const auto &[diffeType, oldArg] :
+         llvm::zip(gutils->ArgDiffeTypes,
+                   gutils->oldFunc.getFunctionBody().getArguments())) {
+      if (diffeType == DIFFE_TYPE_MLIR::OUT_DIFF) {
+        retargs.push_back(gutils->invertPointerM(oldArg, revBuilder));
+      }
     }
     buildReturnOp(revBuilder, oBB->rbegin()->getLoc(), retargs);
-    // revBuilder.create<func::ReturnOp>(oBB->rbegin()->getLoc(), retargs);
   } else {
     SmallVector<Block *> blocks;
     SmallVector<APInt> indices;
