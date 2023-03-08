@@ -325,7 +325,7 @@ void MEnzymeLogic::initializeShadowValues(
 void MEnzymeLogic::differentiate(MGradientUtilsReverse *gutils,
                                  Region &oldRegion, Region &newRegion,
                                  bool parentRegion,
-                                 buildReturnFunction buildFuncRetrunOp) {
+                                 buildReturnFunction buildFuncReturnOp) {
   gutils->createReverseModeBlocks(oldRegion, newRegion, parentRegion);
 
   SmallVector<mlir::Block *> dominatorToposortBlocks =
@@ -341,7 +341,7 @@ void MEnzymeLogic::differentiate(MGradientUtilsReverse *gutils,
     mapInvertArguments(oBB, reverseBB, gutils);
     handleReturns(oBB, newBB, reverseBB, gutils, parentRegion);
     visitChildren(oBB, reverseBB, gutils);
-    handlePredecessors(oBB, newBB, reverseBB, gutils, buildFuncRetrunOp);
+    handlePredecessors(oBB, newBB, reverseBB, gutils, buildFuncReturnOp);
   }
 }
 
@@ -358,7 +358,7 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
     llvm_unreachable("Differentiating empty function");
   }
 
-  ReturnTypeMLIR returnValue = ReturnTypeMLIR::Tape;
+  ReturnTypeMLIR returnValue = ReturnTypeMLIR::Args;
   MGradientUtilsReverse *gutils = MGradientUtilsReverse::CreateFromClone(
       *this, mode, width, fn, TA, type_args, retType, /*diffeReturnArg*/ true,
       constants, returnValue, addedType, symbolTable);
@@ -366,13 +366,13 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
   Region &oldRegion = gutils->oldFunc.getFunctionBody();
   Region &newRegion = gutils->newFunc.getFunctionBody();
 
-  buildReturnFunction buildFuncRetrunOp = [](OpBuilder &builder, Location loc,
+  buildReturnFunction buildFuncReturnOp = [](OpBuilder &builder, Location loc,
                                              SmallVector<Value> retargs) {
     builder.create<func::ReturnOp>(loc, retargs);
     return;
   };
 
-  differentiate(gutils, oldRegion, newRegion, true, buildFuncRetrunOp);
+  differentiate(gutils, oldRegion, newRegion, true, buildFuncReturnOp);
 
   auto nf = gutils->newFunc;
 

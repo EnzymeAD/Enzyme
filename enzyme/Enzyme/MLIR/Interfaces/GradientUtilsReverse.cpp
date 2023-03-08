@@ -43,7 +43,7 @@ mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
       originalToNewFn(originalToNewFn_),
       originalToNewFnOps(originalToNewFnOps_), symbolTable(symbolTable_) {
 
-  initInitializationBlock(invertedPointers_);
+  initInitializationBlock(invertedPointers_, activevals_);
 }
 
 // for(auto x : v.getUsers()){x->dump();} DEBUG
@@ -277,13 +277,23 @@ bool mlir::enzyme::MGradientUtilsReverse::hasInvertPointer(mlir::Value v) {
 }
 
 void MGradientUtilsReverse::initInitializationBlock(
-    BlockAndValueMapping invertedPointers_) {
+    BlockAndValueMapping invertedPointers_,
+    const SmallPtrSetImpl<Value> &activevals_) {
   initializationBlock = &*(this->newFunc.getFunctionBody().begin());
 
   OpBuilder initializationBuilder(
       &*(this->newFunc.getFunctionBody().begin()),
       this->newFunc.getFunctionBody().begin()->begin());
 
+  for (Value activeval : activevals_) {
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(activeval.getType())) {
+      Location loc = activeval.getLoc();
+      Value gradient = insertInitGradient(activeval, initializationBuilder);
+      Value zero = iface.createNullValue(initializationBuilder, loc);
+      initializationBuilder.create<enzyme::SetOp>(loc, gradient, zero);
+      this->invertedPointersGlobal.map(activeval, gradient);
+    }
+  }
   for (auto const &x : invertedPointers_.getValueMap()) {
     if (auto iface = dyn_cast<AutoDiffTypeInterface>(x.first.getType())) {
       if (iface.requiresShadow()) {
