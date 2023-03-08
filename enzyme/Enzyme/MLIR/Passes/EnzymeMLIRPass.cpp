@@ -178,7 +178,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
 
     {
       SmallVector<Operation *> toLower;
-      op->walk([&](enzyme::DiffOp dop) {
+      op->walk([&](enzyme::AutoDiffOp dop) {
         auto *symbolOp =
             symbolTable.lookupNearestSymbolFrom(dop, dop.getFnAttr());
         auto callableOp = cast<FunctionOpInterface>(symbolOp);
@@ -188,7 +188,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
       });
 
       for (auto T : toLower) {
-        if (auto F = dyn_cast<enzyme::DiffOp>(T)) {
+        if (auto F = dyn_cast<enzyme::AutoDiffOp>(T)) {
           HandleAutoDiffReverse(symbolTable, F);
         } else {
           llvm_unreachable("Illegal type");
