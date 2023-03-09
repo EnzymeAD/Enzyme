@@ -250,4 +250,18 @@ private:
   std::map<std::pair<bool, llvm::Value *>, bool> StoredOrReturnedCache;
 };
 
+constexpr inline const char *to_string(ActivityAnalyzer::UseActivity UA) {
+  switch (UA) {
+  case ActivityAnalyzer::UseActivity::None:
+    return "None";
+  case ActivityAnalyzer::UseActivity::OnlyLoads:
+    return "OnlyLoads";
+  case ActivityAnalyzer::UseActivity::OnlyStores:
+    return "OnlyStores";
+  case ActivityAnalyzer::UseActivity::OnlyNonPointerStores:
+    return "OnlyNonPointerStores";
+  case ActivityAnalyzer::UseActivity::AllStores:
+    return "AllStores";
+  }
+}
 #endif
