@@ -3476,9 +3476,9 @@ public:
     // llvm::errs() << *gutils->oldFunc << "\n";
     // TR.dump();
     if (size == 0) {
-      llvm::errs() << MTI << "\n";
+      eraseIfUnused(MTI);
+      return;
     }
-    assert(size != 0);
 
     auto &DL = gutils->newFunc->getParent()->getDataLayout();
     auto vd = TR.query(orig_dst).Data0().ShiftIndices(DL, 0, size, 0);
