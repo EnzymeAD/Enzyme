@@ -116,7 +116,9 @@ public:
       : PPC(PPC), AA(AA_), notForAnalysis(notForAnalysis_), TLI(TLI_),
         ActiveReturns(ActiveReturns), directions(UP | DOWN),
         ConstantValues(ConstantValues.begin(), ConstantValues.end()),
-        ActiveValues(ActiveValues.begin(), ActiveValues.end()) {}
+        ActiveValues(ActiveValues.begin(), ActiveValues.end()) {
+    InsertConstValueRecursionHandler = nullptr;
+  }
 
   /// Return whether this instruction is known not to propagate adjoints
   /// Note that instructions could return an active pointer, but
@@ -137,6 +139,7 @@ private:
       ReEvaluateInstIfInactiveValue;
 
   void InsertConstantInstruction(TypeResults const &TR, llvm::Instruction *I);
+  llvm::SmallVector<llvm::Value *, 1> *InsertConstValueRecursionHandler;
   void InsertConstantValue(TypeResults const &TR, llvm::Value *V);
 
   /// Create a new analyzer starting from an existing Analyzer
@@ -152,6 +155,7 @@ private:
     assert(directions != 0);
     assert((directions & Other.directions) == directions);
     assert((directions & Other.directions) != 0);
+    InsertConstValueRecursionHandler = nullptr;
   }
 
   /// Import known constants from an existing analyzer

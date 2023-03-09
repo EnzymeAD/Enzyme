@@ -3280,32 +3280,44 @@ void ActivityAnalyzer::InsertConstantInstruction(TypeResults const &TR,
 void ActivityAnalyzer::InsertConstantValue(TypeResults const &TR,
                                            llvm::Value *V) {
   ConstantValues.insert(V);
-  auto found = ReEvaluateValueIfInactiveValue.find(V);
-  if (found != ReEvaluateValueIfInactiveValue.end()) {
-    auto set = std::move(ReEvaluateValueIfInactiveValue[V]);
-    ReEvaluateValueIfInactiveValue.erase(V);
-    for (auto toeval : set) {
-      if (!ActiveValues.count(toeval))
-        continue;
-      ActiveValues.erase(toeval);
-      if (EnzymePrintActivity)
-        llvm::errs() << " re-evaluating activity of val " << *toeval
-                     << " due to value " << *V << "\n";
-      isConstantValue(TR, toeval);
+  if (InsertConstValueRecursionHandler) {
+    InsertConstValueRecursionHandler->push_back(V);
+    return;
+  }
+  SmallVector<Value *, 1> InsertConstValueRecursionHandlerTmp;
+  InsertConstValueRecursionHandlerTmp.push_back(V);
+  InsertConstValueRecursionHandler = &InsertConstValueRecursionHandlerTmp;
+  while (InsertConstValueRecursionHandlerTmp.size()) {
+    auto V = InsertConstValueRecursionHandlerTmp.back();
+    InsertConstValueRecursionHandlerTmp.pop_back();
+    auto found = ReEvaluateValueIfInactiveValue.find(V);
+    if (found != ReEvaluateValueIfInactiveValue.end()) {
+      auto set = std::move(ReEvaluateValueIfInactiveValue[V]);
+      ReEvaluateValueIfInactiveValue.erase(V);
+      for (auto toeval : set) {
+        if (!ActiveValues.count(toeval))
+          continue;
+        ActiveValues.erase(toeval);
+        if (EnzymePrintActivity)
+          llvm::errs() << " re-evaluating activity of val " << *toeval
+                       << " due to value " << *V << "\n";
+        isConstantValue(TR, toeval);
+      }
+    }
+    auto found2 = ReEvaluateInstIfInactiveValue.find(V);
+    if (found2 != ReEvaluateInstIfInactiveValue.end()) {
+      auto set = std::move(ReEvaluateInstIfInactiveValue[V]);
+      ReEvaluateInstIfInactiveValue.erase(V);
+      for (auto toeval : set) {
+        if (!ActiveInstructions.count(toeval))
+          continue;
+        ActiveInstructions.erase(toeval);
+        if (EnzymePrintActivity)
+          llvm::errs() << " re-evaluating activity of inst " << *toeval
+                       << " due to value " << *V << "\n";
+        isConstantInstruction(TR, toeval);
+      }
     }
   }
-  auto found2 = ReEvaluateInstIfInactiveValue.find(V);
-  if (found2 != ReEvaluateInstIfInactiveValue.end()) {
-    auto set = std::move(ReEvaluateInstIfInactiveValue[V]);
-    ReEvaluateInstIfInactiveValue.erase(V);
-    for (auto toeval : set) {
-      if (!ActiveInstructions.count(toeval))
-        continue;
-      ActiveInstructions.erase(toeval);
-      if (EnzymePrintActivity)
-        llvm::errs() << " re-evaluating activity of inst " << *toeval
-                     << " due to value " << *V << "\n";
-      isConstantInstruction(TR, toeval);
-    }
-  }
+  InsertConstValueRecursionHandler = nullptr;
 }
