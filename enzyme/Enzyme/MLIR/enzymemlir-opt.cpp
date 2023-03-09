@@ -58,6 +58,7 @@ int main(int argc, char **argv) {
   registry.insert<mlir::NVVM::NVVMDialect>();
   registry.insert<mlir::omp::OpenMPDialect>();
   registry.insert<mlir::math::MathDialect>();
+  registry.insert<mlir::linalg::LinalgDialect>();
   registry.insert<DLTIDialect>();
 
   registry.insert<mlir::enzyme::EnzymeDialect>();

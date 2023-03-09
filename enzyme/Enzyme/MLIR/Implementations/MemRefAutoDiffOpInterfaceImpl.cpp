@@ -17,6 +17,9 @@
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
 
+// TODO: We need a way to zero out a memref (which linalg.fill does), but
+// ideally we wouldn't depend on the linalg dialect.
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Support/LogicalResult.h"
@@ -197,15 +200,10 @@ struct AllocOpInterfaceReverse
                                                        memref::AllocOp> {
   void createReverseModeAdjoint(Operation *op, OpBuilder &builder,
                                 MGradientUtilsReverse *gutils,
-                                SmallVector<Value> caches) const {
-    auto allocOp = cast<memref::AllocOp>(op);
-    Value memref = allocOp.getMemref();
-  }
+                                SmallVector<Value> caches) const {}
 
   SmallVector<Value> cacheValues(Operation *op,
                                  MGradientUtilsReverse *gutils) const {
-    auto allocOp = cast<memref::AllocOp>(op);
-
     return SmallVector<Value>();
   }
 
@@ -216,6 +214,15 @@ struct AllocOpInterfaceReverse
 
     Value shadow = builder.create<memref::AllocOp>(
         op->getLoc(), newAllocOp.getType(), newAllocOp.getDynamicSizes());
+    // Fill with zeros
+    if (auto iface = dyn_cast<AutoDiffTypeInterface>(
+            allocOp.getType().getElementType())) {
+      Value zero = iface.createNullValue(builder, op->getLoc());
+      builder.create<linalg::FillOp>(op->getLoc(), zero, shadow);
+    } else {
+      op->emitWarning() << "memref.alloc element type does not implement "
+                           "AutoDiffTypeInterface";
+    }
     gutils->mapShadowValue(allocOp, shadow, builder);
   }
 };

@@ -242,10 +242,10 @@ FunctionOpInterface CloneFunctionWithReturns(
       mlir::Value oval = F.getFunctionBody().front().getArgument(i);
       if (constant_args[i] == DIFFE_TYPE_MLIR::CONSTANT)
         constants.insert(oval);
-      else
+      else if (constant_args[i] == DIFFE_TYPE_MLIR::OUT_DIFF)
         nonconstants.insert(oval);
-      if (constant_args[i] == DIFFE_TYPE_MLIR::DUP_ARG ||
-          constant_args[i] == DIFFE_TYPE_MLIR::DUP_NONEED) {
+      else if (constant_args[i] == DIFFE_TYPE_MLIR::DUP_ARG ||
+               constant_args[i] == DIFFE_TYPE_MLIR::DUP_NONEED) {
         mlir::Value val = blk.getArgument(i);
         mlir::Value dval;
         if (i == constant_args.size() - 1)

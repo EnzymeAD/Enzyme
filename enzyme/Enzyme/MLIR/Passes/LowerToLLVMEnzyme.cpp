@@ -100,11 +100,11 @@ void convertMemRefArgument(Location loc, Value primal,
     operands.push_back(memrefPrimal.stride(b, loc, pos));
 }
 
-struct DiffOpLowering : public OpConversionPattern<enzyme::DiffOp> {
-  using OpConversionPattern<enzyme::DiffOp>::OpConversionPattern;
+struct DiffOpLowering : public OpConversionPattern<enzyme::AutoDiffOp> {
+  using OpConversionPattern<enzyme::AutoDiffOp>::OpConversionPattern;
 
   LogicalResult
-  matchAndRewrite(enzyme::DiffOp op, OpAdaptor adaptor,
+  matchAndRewrite(enzyme::AutoDiffOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     auto moduleOp = op->getParentOfType<ModuleOp>();
     Location loc = op.getLoc();
@@ -263,7 +263,7 @@ struct LowerToLLVMEnzymePass
     populateFuncToLLVMConversionPatterns(typeConverter, patterns);
 
     ConversionTarget target(*context);
-    target.addIllegalOp<enzyme::DiffOp>();
+    target.addIllegalOp<enzyme::AutoDiffOp>();
     target.addLegalDialect<LLVM::LLVMDialect>();
 
     if (failed(applyPartialConversion(getOperation(), target,

@@ -95,7 +95,8 @@ public:
 
   bool requiresShadow(Type t);
 
-  void initInitializationBlock(BlockAndValueMapping invertedPointers_);
+  void initInitializationBlock(BlockAndValueMapping invertedPointers_,
+                               const SmallPtrSetImpl<mlir::Value> &activevals_);
 
   bool onlyUsedInParentBlock(Value v);
 

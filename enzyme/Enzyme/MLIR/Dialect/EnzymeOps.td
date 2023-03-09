@@ -55,7 +55,7 @@ def ForwardDiffOp : Enzyme_Op<"fwddiff",
   }];
 }
 
-def DiffOp : Enzyme_Op<"diff",
+def AutoDiffOp : Enzyme_Op<"autodiff",
     [DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
   let summary = "Perform reverse mode AD on a funcop";
   let arguments = (ins FlatSymbolRefAttr:$fn, Variadic<AnyType>:$inputs, ActivityArrayAttr:$activity);
