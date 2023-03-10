@@ -1484,21 +1484,21 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                   }
                 }
               }
-            }
-            if (directions & DOWN) {
-              std::shared_ptr<ActivityAnalyzer> Hypothesis =
-                  std::shared_ptr<ActivityAnalyzer>(
-                      new ActivityAnalyzer(*this, directions));
-              Hypothesis->ActiveValues.insert(Val);
-              Instruction *LoadReval = nullptr;
-              if (Hypothesis->isValueInactiveFromUsers(
-                      TR, TmpOrig, UseActivity::OnlyStores, &LoadReval)) {
-                insertConstantsFrom(TR, *Hypothesis);
-                InsertConstantValue(TR, Val);
-                return true;
-              } else {
-                if (LoadReval) {
-                  ReEvaluateValueIfInactiveInst[LoadReval].insert(TmpOrig);
+              if (directions & DOWN) {
+                std::shared_ptr<ActivityAnalyzer> Hypothesis =
+                    std::shared_ptr<ActivityAnalyzer>(
+                        new ActivityAnalyzer(*this, directions));
+                Hypothesis->ActiveValues.insert(Val);
+                Instruction *LoadReval = nullptr;
+                if (Hypothesis->isValueInactiveFromUsers(
+                        TR, TmpOrig, UseActivity::OnlyStores, &LoadReval)) {
+                  insertConstantsFrom(TR, *Hypothesis);
+                  InsertConstantValue(TR, Val);
+                  return true;
+                } else {
+                  if (LoadReval) {
+                    ReEvaluateValueIfInactiveInst[LoadReval].insert(TmpOrig);
+                  }
                 }
               }
             }
