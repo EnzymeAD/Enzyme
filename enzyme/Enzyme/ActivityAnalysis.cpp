@@ -1443,7 +1443,11 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
               }
             }
           }
-          if (directions & DOWN) {
+          // If allocation function doesn't initialize inner pointers.
+          // For example, julia allocations initialize inner pointers, but
+          // malloc/etc just allocate the immediate memory.
+          if (directions & DOWN &&
+              (funcName == "malloc" || funcName == "calloc")) {
             std::shared_ptr<ActivityAnalyzer> Hypothesis =
                 std::shared_ptr<ActivityAnalyzer>(
                     new ActivityAnalyzer(*this, directions));
@@ -1480,23 +1484,6 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                   return true;
                 } else {
                   if (LoadReval && UA != UseActivity::AllStores) {
-                    ReEvaluateValueIfInactiveInst[LoadReval].insert(TmpOrig);
-                  }
-                }
-              }
-              if (directions & DOWN) {
-                std::shared_ptr<ActivityAnalyzer> Hypothesis =
-                    std::shared_ptr<ActivityAnalyzer>(
-                        new ActivityAnalyzer(*this, directions));
-                Hypothesis->ActiveValues.insert(Val);
-                Instruction *LoadReval = nullptr;
-                if (Hypothesis->isValueInactiveFromUsers(
-                        TR, TmpOrig, UseActivity::OnlyStores, &LoadReval)) {
-                  insertConstantsFrom(TR, *Hypothesis);
-                  InsertConstantValue(TR, Val);
-                  return true;
-                } else {
-                  if (LoadReval) {
                     ReEvaluateValueIfInactiveInst[LoadReval].insert(TmpOrig);
                   }
                 }
