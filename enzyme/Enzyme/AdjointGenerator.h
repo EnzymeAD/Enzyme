@@ -919,6 +919,8 @@ public:
         IRBuilder<> BuilderZ(&I);
         getForwardBuilder(BuilderZ);
         auto rule = [&](Value *ptr, Value *dif) -> Value * {
+          if (dif == nullptr)
+            dif = Constant::getNullValue(I.getType());
           if (!gutils->isConstantInstruction(&I)) {
             assert(ptr);
             AtomicRMWInst *rmw = nullptr;
@@ -952,7 +954,7 @@ public:
                 ? nullptr
                 : gutils->invertPointerM(I.getPointerOperand(), BuilderZ),
             gutils->isConstantValue(I.getValOperand())
-                ? Constant::getNullValue(I.getType())
+                ? nullptr
                 : gutils->invertPointerM(I.getValOperand(), BuilderZ));
         if (!gutils->isConstantValue(&I))
           setDiffe(&I, diff, BuilderZ);
