@@ -7725,7 +7725,7 @@ public:
         if (!forwardMode)
           root = lookup(root, Builder2);
 
-        Value *comm = lookup(gutils->getNewFromOriginal(orig_comm), Builder2);
+        Value *comm = gutils->getNewFromOriginal(orig_comm);
         if (!forwardMode)
           comm = lookup(comm, Builder2);
 
