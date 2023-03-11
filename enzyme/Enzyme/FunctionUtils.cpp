@@ -401,6 +401,8 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
       }
       continue;
     }
+    if (auto I = dyn_cast<Instruction>(inst))
+      llvm::errs() << *I->getParent()->getParent() << "\n";
     llvm::errs() << " rep: " << *rep << " prev: " << *prev << " inst: " << *inst
                  << "\n";
     llvm_unreachable("Illegal address space propagation");
