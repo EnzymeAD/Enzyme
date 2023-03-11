@@ -2269,7 +2269,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         if (Value *orig_oldval = ri->getReturnValue()) {
           auto newri = gutils->getNewFromOriginal(ri);
           IRBuilder<> BuilderZ(newri);
-          invertedRetPs[newri] = gutils->invertPointerM(orig_oldval, BuilderZ);
+          invertedRetPs[newri] = gutils->invertPointerM(orig_oldval, BuilderZ,
+                                                        /*nullShadow*/ true);
         }
       }
     }
