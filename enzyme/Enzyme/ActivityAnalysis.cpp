@@ -1447,7 +1447,10 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           // For example, julia allocations initialize inner pointers, but
           // malloc/etc just allocate the immediate memory.
           if (directions & DOWN &&
-              (funcName == "malloc" || funcName == "calloc")) {
+              (funcName == "malloc" || funcName == "calloc" ||
+               funcName == "_Znwm" || funcName == "julia.gc_alloc_obj" ||
+               funcName == "jl_gc_alloc_typed" ||
+               funcName == "ijl_gc_alloc_typed")) {
             std::shared_ptr<ActivityAnalyzer> Hypothesis =
                 std::shared_ptr<ActivityAnalyzer>(
                     new ActivityAnalyzer(*this, directions));
