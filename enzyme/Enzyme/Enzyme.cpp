@@ -345,14 +345,9 @@ static Optional<StringRef> getMetadataName(llvm::Value *res) {
   }
 }
 
-static Value *adaptReturnedVector(CallInst *CI, Value *diffret,
+static Value *adaptReturnedVector(Value *ret, Value *diffret,
                                   IRBuilder<> &Builder, unsigned width) {
-  /// Actual return type (including struct return)
-  Type *returnType =
-      CI->hasStructRetAttr()
-          ? dyn_cast<PointerType>(CI->getArgOperand(0)->getType())
-                ->getPointerElementType()
-          : CI->getType();
+  Type *returnType = ret->getType();
 
   if (StructType *sty = dyn_cast<StructType>(returnType)) {
     Value *agg = ConstantAggregateZero::get(sty);
@@ -377,102 +372,99 @@ static Value *adaptReturnedVector(CallInst *CI, Value *diffret,
   return diffret;
 }
 
-static bool replaceOriginalCall(CallInst *CI, Function *fn, Value *diffret,
-                                IRBuilder<> &Builder, DerivativeMode mode) {
-  StructType *CIsty = dyn_cast<StructType>(CI->getType());
-  StructType *diffretsty = dyn_cast<StructType>(diffret->getType());
-  if (!diffret->getType()->isEmptyTy() && !diffret->getType()->isVoidTy() &&
-      !CI->getType()->isEmptyTy() &&
-      (!CI->getType()->isVoidTy() || CI->hasStructRetAttr())) {
-    if (diffret->getType() == CI->getType()) {
-      CI->replaceAllUsesWith(diffret);
-    } else if (CIsty && diffretsty && CIsty->isLayoutIdentical(diffretsty)) {
-      IRBuilder<> Builder(CI);
-      Value *newStruct = UndefValue::get(CIsty);
-      for (unsigned int i = 0; i < CIsty->getStructNumElements(); i++) {
-        Value *elem = Builder.CreateExtractValue(diffret, {i});
-        newStruct = Builder.CreateInsertValue(newStruct, elem, {i});
-      }
-      CI->replaceAllUsesWith(newStruct);
-    } else if (CI->hasStructRetAttr()) {
-      Value *sret = CI->getArgOperand(0);
-      PointerType *stype = cast<PointerType>(sret->getType());
-#if LLVM_VERSION_MAJOR >= 15
-      auto sret_ty = CI->getParamStructRetType(0);
-#else
-      auto sret_ty = stype->getPointerElementType();
-#endif
-      StructType *st = dyn_cast<StructType>(sret_ty);
+static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
+                                Value *diffret, Instruction *CI,
+                                DerivativeMode mode) {
+  Type *retType = ret->getType();
+  Type *diffretType = diffret->getType();
+  auto &DL = CI->getModule()->getDataLayout();
 
-      // Assign results to struct allocated at the call site.
-      if (st && st->isLayoutIdentical(diffretsty)) {
-        for (unsigned int i = 0; i < st->getNumElements(); i++) {
-#if LLVM_VERSION_MAJOR > 7
-          Value *sgep = Builder.CreateStructGEP(
-              sret->getType()->getPointerElementType(), sret, i);
-#else
-          Value *sgep = Builder.CreateStructGEP(sret, i);
-#endif
-          Builder.CreateStore(Builder.CreateExtractValue(diffret, {i}), sgep);
-        }
-      } else {
-        auto &DL = fn->getParent()->getDataLayout();
-        if (DL.getTypeSizeInBits(sret_ty) !=
-            DL.getTypeSizeInBits(diffret->getType())) {
-          EmitFailure("IllegalReturnCast", CI->getDebugLoc(), CI,
-                      "Cannot cast return type of gradient ",
-                      *diffret->getType(), *diffret, ", to desired type ",
-                      *stype->getPointerElementType());
-          return false;
-        }
-        Builder.CreateStore(
-            diffret, Builder.CreatePointerCast(
-                         sret, PointerType::get(diffret->getType(),
-                                                stype->getAddressSpace())));
-      }
-    } else if (mode == DerivativeMode::ReverseModePrimal) {
-      auto &DL = fn->getParent()->getDataLayout();
-      if (DL.getTypeSizeInBits(CI->getType()) >=
-          DL.getTypeSizeInBits(diffret->getType())) {
-        IRBuilder<> EB(&CI->getParent()->getParent()->getEntryBlock().front());
-        auto AL = EB.CreateAlloca(CI->getType());
-        Builder.CreateStore(
-            diffret, Builder.CreatePointerCast(
-                         AL, PointerType::getUnqual(diffret->getType())));
-#if LLVM_VERSION_MAJOR > 7
-        Value *cload = Builder.CreateLoad(CI->getType(), AL);
-#else
-        Value *cload = Builder.CreateLoad(AL);
-#endif
-        CI->replaceAllUsesWith(cload);
-      } else {
-        EmitFailure("IllegalReturnCast", CI->getDebugLoc(), CI,
-                    "Cannot cast return type of gradient ", *diffret->getType(),
-                    *diffret, ", to desired type ", *CI->getType());
-        return false;
-      }
-    } else {
-
-      unsigned idxs[] = {0};
-      auto diffreti = Builder.CreateExtractValue(diffret, idxs);
-      if (diffreti->getType() == CI->getType()) {
-        CI->replaceAllUsesWith(diffreti);
-      } else if (diffret->getType() == CI->getType()) {
-        CI->replaceAllUsesWith(diffret);
-      } else {
-        EmitFailure("IllegalReturnCast", CI->getDebugLoc(), CI,
-                    "Cannot cast return type of gradient ",
-                    *diffreti->getType(), *diffreti, ", to desired type ",
-                    *CI->getType());
-        return false;
-      }
-    }
-  } else {
+  if (diffretType->isEmptyTy() || diffretType->isVoidTy() ||
+      retType->isEmptyTy() || retType->isVoidTy()) {
     CI->replaceAllUsesWith(UndefValue::get(CI->getType()));
+    CI->eraseFromParent();
+    return true;
   }
-  CI->eraseFromParent();
 
-  return true;
+  if (retType == diffretType) {
+    CI->replaceAllUsesWith(diffret);
+    CI->eraseFromParent();
+    return true;
+  }
+
+  if (auto sretType = dyn_cast<StructType>(retType),
+      diffsretType = dyn_cast<StructType>(diffretType);
+      sretType && diffsretType && sretType->isLayoutIdentical(diffsretType)) {
+    Value *newStruct = UndefValue::get(sretType);
+    for (unsigned int i = 0; i < sretType->getStructNumElements(); i++) {
+      Value *elem = Builder.CreateExtractValue(diffret, {i});
+      newStruct = Builder.CreateInsertValue(newStruct, elem, {i});
+    }
+    CI->replaceAllUsesWith(newStruct);
+    CI->eraseFromParent();
+    return true;
+  }
+
+  if (auto pretType = dyn_cast<PointerType>(retType)) {
+    retType = pretType->getPointerElementType();
+
+    if (auto sretType = dyn_cast<StructType>(retType),
+        diffsretType = dyn_cast<StructType>(diffretType);
+        sretType && diffsretType && sretType->isLayoutIdentical(diffsretType)) {
+      for (unsigned int i = 0; i < sretType->getStructNumElements(); i++) {
+#if LLVM_VERSION_MAJOR > 7
+        Value *sgep = Builder.CreateStructGEP(retType, ret, i);
+#else
+        Value *sgep = Builder.CreateStructGEP(ret, i);
+#endif
+        Builder.CreateStore(Builder.CreateExtractValue(diffret, {i}), sgep);
+      }
+      CI->eraseFromParent();
+      return true;
+    }
+
+    if (DL.getTypeSizeInBits(retType) >= DL.getTypeSizeInBits(diffretType)) {
+      Builder.CreateStore(
+          diffret,
+          Builder.CreatePointerCast(ret, PointerType::getUnqual(diffretType)));
+      CI->eraseFromParent();
+      return true;
+    }
+  }
+
+  if (mode == DerivativeMode::ReverseModePrimal &&
+      DL.getTypeSizeInBits(retType) >= DL.getTypeSizeInBits(diffretType)) {
+    IRBuilder<> EB(CI->getFunction()->getEntryBlock().getFirstNonPHI());
+    auto AL = EB.CreateAlloca(retType);
+    Builder.CreateStore(diffret, Builder.CreatePointerCast(
+                                     AL, PointerType::getUnqual(diffretType)));
+#if LLVM_VERSION_MAJOR > 7
+    Value *cload = Builder.CreateLoad(retType, AL);
+#else
+    Value *cload = Builder.CreateLoad(AL);
+#endif
+    CI->replaceAllUsesWith(cload);
+    CI->eraseFromParent();
+    return true;
+  }
+
+  if (mode != DerivativeMode::ReverseModePrimal) {
+    auto diffreti = Builder.CreateExtractValue(diffret, {0});
+    if (diffreti->getType() == retType) {
+      CI->replaceAllUsesWith(diffreti);
+      CI->eraseFromParent();
+      return true;
+    } else if (diffretType == retType) {
+      CI->replaceAllUsesWith(diffret);
+      CI->eraseFromParent();
+      return true;
+    }
+  }
+
+  EmitFailure("IllegalReturnCast", CI->getDebugLoc(), CI,
+              "Cannot cast return type of gradient ", *diffretType, *diffret,
+              ", to desired type ", *retType);
+  return false;
 }
 
 class EnzymeBase {
@@ -1231,7 +1223,9 @@ public:
 
     batch = adaptReturnedVector(CI, batch, Builder, width);
 
-    replaceOriginalCall(CI, F, batch, Builder, DerivativeMode::ForwardMode);
+    Value *ret = CI->hasStructRetAttr() ? CI->getArgOperand(0) : CI;
+
+    ReplaceOriginalCall(Builder, ret, batch, CI, DerivativeMode::ForwardMode);
 
     return true;
   }
@@ -1547,6 +1541,8 @@ public:
       }
     }
 
+    Value *ret = CI->hasStructRetAttr() ? CI->getArgOperand(0) : CI;
+
     // Adapt the returned vector type to the struct type expected by our calling
     // convention.
     if (width > 1 && !diffret->getType()->isEmptyTy() &&
@@ -1554,10 +1550,10 @@ public:
         (mode == DerivativeMode::ForwardMode ||
          mode == DerivativeMode::ForwardModeSplit)) {
 
-      diffret = adaptReturnedVector(CI, diffret, Builder, width);
+      diffret = adaptReturnedVector(ret, diffret, Builder, width);
     }
 
-    replaceOriginalCall(CI, fn, diffret, Builder, mode);
+    ReplaceOriginalCall(Builder, ret, diffret, CI, mode);
 
     if (Logic.PostOpt) {
 #if LLVM_VERSION_MAJOR >= 11
