@@ -282,7 +282,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
               } else {
                 // Note that this logic (original load must dominate or
                 // alternatively be in the reverse block) is only valid iff when
-                // applicable (here if in split mode), an uncacheable load
+                // applicable (here if in split mode), an overwritten load
                 // cannot be hoisted outside of a loop to be used as a loop
                 // limit. This optimization is currently done in the combined
                 // mode (e.g. if a load isn't modified between a prior insertion
@@ -792,8 +792,27 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       toreturn->setDebugLoc(getNewFromOriginal(load->getDebugLoc()));
     toreturn->setMetadata(LLVMContext::MD_tbaa,
                           load->getMetadata(LLVMContext::MD_tbaa));
-    toreturn->setMetadata(LLVMContext::MD_invariant_group,
-                          load->getMetadata(LLVMContext::MD_invariant_group));
+    auto invar_group = load->getMetadata(LLVMContext::MD_invariant_group);
+    if (!invar_group) {
+      bool legal = true;
+      if (load->getParent()->getParent() != newFunc)
+        legal = false;
+      else if (auto norig = isOriginal(load))
+        for (const auto &pair : rematerializableAllocations) {
+          for (auto V : pair.second.loads)
+            if (V == norig) {
+              legal = false;
+              break;
+            }
+          if (!legal)
+            break;
+        }
+      if (legal) {
+        invar_group = MDNode::getDistinct(load->getContext(), {});
+        load->setMetadata(LLVMContext::MD_invariant_group, invar_group);
+      }
+    }
+    toreturn->setMetadata(LLVMContext::MD_invariant_group, invar_group);
     // TODO adding to cache only legal if no alias of any future writes
     if (permitCache)
       unwrap_cache[BuilderM.GetInsertBlock()][idx.first][idx.second] = toreturn;
@@ -1964,35 +1983,51 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
       ret = (idx < 0) ? tape
                       : entryBuilder.CreateExtractValue(tape, {(unsigned)idx});
 
-      Type *innerType = ret->getType();
-      for (size_t i = 0,
-                  limit = getSubLimits(
-                              /*inForwardPass*/ true, nullptr,
-                              LimitContext(
-                                  /*ReverseLimit*/ reverseBlocks.size() > 0,
-                                  BuilderQ.GetInsertBlock()))
-                              .size();
-           i < limit; ++i) {
-        if (!isa<PointerType>(innerType)) {
-          llvm::errs() << "mod: "
-                       << *BuilderQ.GetInsertBlock()->getParent()->getParent()
-                       << "\n";
-          llvm::errs() << "fn: " << *BuilderQ.GetInsertBlock()->getParent()
-                       << "\n";
-          llvm::errs() << "bq insertblock: " << *BuilderQ.GetInsertBlock()
-                       << "\n";
-          llvm::errs() << "ret: " << *ret << " type: " << *ret->getType()
-                       << "\n";
-          llvm::errs() << "innerType: " << *innerType << "\n";
-          if (malloc)
-            llvm::errs() << " malloc: " << *malloc << " i=" << i
-                         << " / lim = " << limit << "\n";
-        }
-        assert(isa<PointerType>(innerType));
-        innerType = innerType->getPointerElementType();
-      }
-
       assert(malloc);
+
+      Type *innerType = nullptr;
+
+#if LLVM_VERSION_MAJOR >= 15
+      if (ret->getContext().supportsTypedPointers()) {
+#endif
+        innerType = ret->getType();
+        for (size_t i = 0,
+                    limit = getSubLimits(
+                                /*inForwardPass*/ true, nullptr,
+                                LimitContext(
+                                    /*ReverseLimit*/ reverseBlocks.size() > 0,
+                                    BuilderQ.GetInsertBlock()))
+                                .size();
+             i < limit; ++i) {
+          if (!isa<PointerType>(innerType)) {
+            llvm::errs() << "mod: "
+                         << *BuilderQ.GetInsertBlock()->getParent()->getParent()
+                         << "\n";
+            llvm::errs() << "fn: " << *BuilderQ.GetInsertBlock()->getParent()
+                         << "\n";
+            llvm::errs() << "bq insertblock: " << *BuilderQ.GetInsertBlock()
+                         << "\n";
+            llvm::errs() << "ret: " << *ret << " type: " << *ret->getType()
+                         << "\n";
+            llvm::errs() << "innerType: " << *innerType << "\n";
+            if (malloc)
+              llvm::errs() << " malloc: " << *malloc << " i=" << i
+                           << " / lim = " << limit << "\n";
+          }
+          assert(isa<PointerType>(innerType));
+          innerType = innerType->getPointerElementType();
+        }
+#if LLVM_VERSION_MAJOR >= 15
+      } else {
+        assert(!ignoreType);
+        if (EfficientBoolCache && malloc->getType()->isIntegerTy() &&
+            cast<IntegerType>(malloc->getType())->getBitWidth() == 1)
+          innerType = Type::getInt8Ty(malloc->getContext());
+        else
+          innerType = malloc->getType();
+      }
+#endif
+
       if (!ignoreType) {
         if (EfficientBoolCache && malloc->getType()->isIntegerTy() &&
             cast<IntegerType>(malloc->getType())->getBitWidth() == 1 &&
@@ -2021,7 +2056,13 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
       bool isi1 = !ignoreType && malloc->getType()->isIntegerTy() &&
                   cast<IntegerType>(malloc->getType())->getBitWidth() == 1;
       assert(isa<PointerType>(cache->getType()));
-      assert(cache->getType()->getPointerElementType() == ret->getType());
+#if LLVM_VERSION_MAJOR >= 15
+      if (cache->getContext().supportsTypedPointers()) {
+#endif
+        assert(cache->getType()->getPointerElementType() == ret->getType());
+#if LLVM_VERSION_MAJOR >= 15
+      }
+#endif
       entryBuilder.CreateStore(ret, cache);
 
       auto v =
@@ -3413,7 +3454,7 @@ bool GradientUtils::shouldRecompute(const Value *val,
         if (scopeMap.find(op) != scopeMap.end())
           continue;
 
-        // If the actually uncacheable operand is in a different loop scope
+        // If the actually overwritten operand is in a different loop scope
         // don't cache this value instead as it may require more memory
         LoopContext lc1;
         LoopContext lc2;
@@ -3566,7 +3607,7 @@ GradientUtils *GradientUtils::CreateFromClone(
       /*returnValue*/ returnValue, retType, prefix, &originalToNew,
       /*diffeReturnArg*/ false, /*additionalArg*/ nullptr);
 
-  // Convert uncacheable args from the input function to the preprocessed
+  // Convert overwritten args from the input function to the preprocessed
   // function
 
   FnTypeInfo typeInfo(oldFunc);
@@ -3725,7 +3766,7 @@ DiffeGradientUtils *DiffeGradientUtils::CreateFromClone(
       prefix + oldFunc->getName(), &originalToNew,
       /*diffeReturnArg*/ diffeReturnArg, additionalArg);
 
-  // Convert uncacheable args from the input function to the preprocessed
+  // Convert overwritten args from the input function to the preprocessed
   // function
 
   FnTypeInfo typeInfo(oldFunc);
@@ -3849,7 +3890,7 @@ Constant *GradientUtils::GetOrCreateShadowConstant(
     if (arg->isConstant() || arg->hasInternalLinkage() ||
         arg->hasPrivateLinkage() ||
         (arg->hasExternalLinkage() && arg->hasInitializer())) {
-      Type *type = arg->getType()->getPointerElementType();
+      Type *type = arg->getValueType();
       auto shadow = new GlobalVariable(
           *arg->getParent(), type, arg->isConstant(), arg->getLinkage(),
           Constant::getNullValue(type), arg->getName() + "_shadow", arg,
@@ -3921,7 +3962,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
         isRealloc = true;
     }
   }
-  std::map<Argument *, bool> uncacheable_args;
+  std::vector<bool> overwritten_args;
   FnTypeInfo type_args(fn);
   if (isRealloc) {
     llvm::errs() << "warning: assuming realloc only creates pointers\n";
@@ -3929,10 +3970,10 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
   }
 
   // conservatively assume that we can only cache existing floating types
-  // (i.e. that all args are uncacheable)
+  // (i.e. that all args are overwritten)
   std::vector<DIFFE_TYPE> types;
   for (auto &a : fn->args()) {
-    uncacheable_args[&a] = !a.getType()->isFPOrFPVectorTy();
+    overwritten_args.push_back(!a.getType()->isFPOrFPVectorTy());
     TypeTree TT;
     if (a.getType()->isFPOrFPVectorTy())
       TT.insert({-1}, ConcreteType(a.getType()->getScalarType()));
@@ -3982,7 +4023,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
   case DerivativeMode::ForwardMode: {
     Constant *newf = Logic.CreateForwardDiff(
         fn, retType, types, TA, false, mode, /*freeMemory*/ true, width,
-        nullptr, type_args, uncacheable_args, /*augmented*/ nullptr);
+        nullptr, type_args, overwritten_args, /*augmented*/ nullptr);
 
     assert(newf);
 
@@ -4008,11 +4049,11 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
         fn, retType, /*constant_args*/ types, TA,
         /*returnUsed*/ !fn->getReturnType()->isEmptyTy() &&
             !fn->getReturnType()->isVoidTy(),
-        /*shadowReturnUsed*/ false, type_args, uncacheable_args,
+        /*shadowReturnUsed*/ false, type_args, overwritten_args,
         /*forceAnonymousTape*/ true, width, AtomicAdd);
     Constant *newf = Logic.CreateForwardDiff(
         fn, retType, types, TA, false, mode, /*freeMemory*/ true, width,
-        nullptr, type_args, uncacheable_args, /*augmented*/ &augdata);
+        nullptr, type_args, overwritten_args, /*augmented*/ &augdata);
 
     assert(newf);
 
@@ -4049,13 +4090,13 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
                                            retType == DIFFE_TYPE::DUP_NONEED);
     auto &augdata = Logic.CreateAugmentedPrimal(
         fn, retType, /*constant_args*/ types, TA, returnUsed, shadowReturnUsed,
-        type_args, uncacheable_args, /*forceAnonymousTape*/ true, width,
+        type_args, overwritten_args, /*forceAnonymousTape*/ true, width,
         AtomicAdd);
     Constant *newf = Logic.CreatePrimalAndGradient(
         (ReverseCacheKey){.todiff = fn,
                           .retType = retType,
                           .constant_args = types,
-                          .uncacheable_args = uncacheable_args,
+                          .overwritten_args = overwritten_args,
                           .returnUsed = false,
                           .shadowReturnUsed = false,
                           .mode = DerivativeMode::ReverseModeGradient,
@@ -4189,6 +4230,14 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     auto ifound = invertedPointers.find(oval);
     if (ifound != invertedPointers.end()) {
       return &*ifound->second;
+    }
+  }
+
+  if (mode != DerivativeMode::ForwardMode &&
+      mode != DerivativeMode::ForwardModeSplit && nullShadow) {
+    auto CT = TR.query(oval)[{-1}];
+    if (CT.isFloat()) {
+      return Constant::getNullValue(getShadowType(oval->getType()));
     }
   }
 

@@ -462,7 +462,7 @@ static inline bool is_value_needed_in_reverse(
   if (auto CI = dyn_cast<CallInst>(inst)) {
     StringRef funcName = getFuncNameFromCall(const_cast<CallInst *>(CI));
     if (funcName == "julia.get_pgcstack" || funcName == "julia.ptls_states")
-      return true;
+      return seen[idx] = true;
   }
 
   bool inst_cv = gutils->isConstantValue(const_cast<Value *>(inst));
@@ -1143,6 +1143,13 @@ static inline void minCut(const DataLayout &DL, LoopInfo &OrigLI,
         if (ASC->getDestAddressSpace() == 11 ||
             ASC->getDestAddressSpace() == 13)
           continue;
+        if (ASC->getSrcAddressSpace() == 10 && ASC->getDestAddressSpace() == 0)
+          continue;
+      }
+      if (auto I = dyn_cast<Instruction>((*found->second.begin()).V)) {
+        if (hasMetadata(I, "enzyme_caststack")) {
+          continue;
+        }
       }
       if (moreOuterLoop == 1 ||
           (moreOuterLoop == 0 &&

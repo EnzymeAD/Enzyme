@@ -34,9 +34,6 @@
 #include <set>
 #include <utility>
 
-#include "SCEV/ScalarEvolutionExpander.h"
-#include "SCEV/TargetLibraryInfo.h"
-
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
@@ -48,6 +45,7 @@
 
 #include "ActivityAnalysis.h"
 #include "FunctionUtils.h"
+#include "TraceUtils.h"
 #include "TypeAnalysis/TypeAnalysis.h"
 #include "Utils.h"
 
@@ -110,8 +108,7 @@ public:
   //! returned struct
   std::map<AugmentedStruct, int> returns;
 
-  std::map<llvm::CallInst *, const std::map<llvm::Argument *, bool>>
-      uncacheable_args_map;
+  std::map<llvm::CallInst *, const std::vector<bool>> overwritten_args_map;
 
   std::map<llvm::Instruction *, bool> can_modref_map;
 
@@ -123,11 +120,10 @@ public:
       llvm::Function *fn, llvm::Type *tapeType,
       std::map<std::pair<llvm::Instruction *, CacheType>, int> tapeIndices,
       std::map<AugmentedStruct, int> returns,
-      std::map<llvm::CallInst *, const std::map<llvm::Argument *, bool>>
-          uncacheable_args_map,
+      std::map<llvm::CallInst *, const std::vector<bool>> overwritten_args_map,
       std::map<llvm::Instruction *, bool> can_modref_map)
       : fn(fn), tapeType(tapeType), tapeIndices(tapeIndices), returns(returns),
-        uncacheable_args_map(uncacheable_args_map),
+        overwritten_args_map(overwritten_args_map),
         can_modref_map(can_modref_map), isComplete(false) {}
 };
 
@@ -135,7 +131,7 @@ struct ReverseCacheKey {
   llvm::Function *todiff;
   DIFFE_TYPE retType;
   const std::vector<DIFFE_TYPE> constant_args;
-  std::map<llvm::Argument *, bool> uncacheable_args;
+  std::vector<bool> overwritten_args;
   bool returnUsed;
   bool shadowReturnUsed;
   DerivativeMode mode;
@@ -150,7 +146,7 @@ struct ReverseCacheKey {
       return todiff == rhs.todiff &&
              retType == rhs.retType &&
              constant_args == rhs.constant_args &&
-             uncacheable_args == rhs.uncacheable_args &&
+             overwritten_args == rhs.overwritten_args &&
              returnUsed == rhs.returnUsed &&
              shadowReturnUsed == rhs.shadowReturnUsed &&
              mode == rhs.mode &&
@@ -181,16 +177,14 @@ struct ReverseCacheKey {
             constant_args.begin(), constant_args.end()))
       return false;
 
-    for (auto &arg : todiff->args()) {
-      auto foundLHS = uncacheable_args.find(&arg);
-      assert(foundLHS != uncacheable_args.end());
-      auto foundRHS = rhs.uncacheable_args.find(&arg);
-      assert(foundRHS != rhs.uncacheable_args.end());
-      if (foundLHS->second < foundRHS->second)
-        return true;
-      if (foundRHS->second < foundLHS->second)
-        return false;
-    }
+    if (std::lexicographical_compare(
+            overwritten_args.begin(), overwritten_args.end(),
+            rhs.overwritten_args.begin(), rhs.overwritten_args.end()))
+      return true;
+    if (std::lexicographical_compare(
+            rhs.overwritten_args.begin(), rhs.overwritten_args.end(),
+            overwritten_args.begin(), overwritten_args.end()))
+      return false;
 
     if (returnUsed < rhs.returnUsed)
       return true;
@@ -250,7 +244,7 @@ public:
     llvm::Function *fn;
     DIFFE_TYPE retType;
     const std::vector<DIFFE_TYPE> constant_args;
-    std::map<llvm::Argument *, bool> uncacheable_args;
+    std::vector<bool> overwritten_args;
     bool returnUsed;
     bool shadowReturnUsed;
     const FnTypeInfo typeInfo;
@@ -279,16 +273,14 @@ public:
               constant_args.begin(), constant_args.end()))
         return false;
 
-      for (auto &arg : fn->args()) {
-        auto foundLHS = uncacheable_args.find(&arg);
-        assert(foundLHS != uncacheable_args.end());
-        auto foundRHS = rhs.uncacheable_args.find(&arg);
-        assert(foundRHS != rhs.uncacheable_args.end());
-        if (foundLHS->second < foundRHS->second)
-          return true;
-        if (foundRHS->second < foundLHS->second)
-          return false;
-      }
+      if (std::lexicographical_compare(
+              overwritten_args.begin(), overwritten_args.end(),
+              rhs.overwritten_args.begin(), rhs.overwritten_args.end()))
+        return true;
+      if (std::lexicographical_compare(
+              rhs.overwritten_args.begin(), rhs.overwritten_args.end(),
+              overwritten_args.begin(), overwritten_args.end()))
+        return false;
 
       if (returnUsed < rhs.returnUsed)
         return true;
@@ -342,7 +334,7 @@ public:
   ///  \p constant_args is the activity info of the arguments
   ///  \p returnUsed is whether the primal's return should also be returned
   ///  \p typeInfo is the type info information about the calling context
-  ///  \p _uncacheable_args marks whether an argument may be rewritten before
+  ///  \p _overwritten_args marks whether an argument may be rewritten before
   ///  loads in the generated function (and thus cannot be cached). \p
   ///  forceAnonymousTape forces the tape to be an i8* rather than the true tape
   ///  structure \p AtomicAdd is whether to perform all adjoint updates to
@@ -351,9 +343,8 @@ public:
       llvm::Function *todiff, DIFFE_TYPE retType,
       llvm::ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA,
       bool returnUsed, bool shadowReturnUsed, const FnTypeInfo &typeInfo,
-      const std::map<llvm::Argument *, bool> _uncacheable_args,
-      bool forceAnonymousTape, unsigned width, bool AtomicAdd,
-      bool omp = false);
+      const std::vector<bool> _overwritten_args, bool forceAnonymousTape,
+      unsigned width, bool AtomicAdd, bool omp = false);
 
   std::map<ReverseCacheKey, llvm::Function *> ReverseCachedFunctions;
 
@@ -361,7 +352,7 @@ public:
     llvm::Function *todiff;
     DIFFE_TYPE retType;
     const std::vector<DIFFE_TYPE> constant_args;
-    std::map<llvm::Argument *, bool> uncacheable_args;
+    std::vector<bool> overwritten_args;
     bool returnUsed;
     DerivativeMode mode;
     unsigned width;
@@ -388,14 +379,14 @@ public:
               constant_args.begin(), constant_args.end()))
         return false;
 
-      for (auto &arg : todiff->args()) {
-        auto foundLHS = uncacheable_args.find(&arg);
-        auto foundRHS = rhs.uncacheable_args.find(&arg);
-        if (foundLHS->second < foundRHS->second)
-          return true;
-        if (foundRHS->second < foundLHS->second)
-          return false;
-      }
+      if (std::lexicographical_compare(
+              overwritten_args.begin(), overwritten_args.end(),
+              rhs.overwritten_args.begin(), rhs.overwritten_args.end()))
+        return true;
+      if (std::lexicographical_compare(
+              rhs.overwritten_args.begin(), rhs.overwritten_args.end(),
+              overwritten_args.begin(), overwritten_args.end()))
+        return false;
 
       if (returnUsed < rhs.returnUsed)
         return true;
@@ -432,6 +423,9 @@ public:
                                    std::vector<BATCH_TYPE>, BATCH_TYPE>;
   std::map<BatchCacheKey, llvm::Function *> BatchCachedFunctions;
 
+  using TraceCacheKey = std::tuple<llvm::Function *, ProbProgMode, bool>;
+  std::map<TraceCacheKey, llvm::Function *> TraceCachedFunctions;
+
   /// Create the derivative function itself.
   ///  \p todiff is the function to differentiate
   ///  \p retType is the activity info of the return
@@ -440,7 +434,7 @@ public:
   ///  \p dretUsed is whether the shadow return value should also be returned
   ///  \p additionalArg is the type (or null) of an additional type in the
   ///  signature to hold the tape. \p typeInfo is the type info information
-  ///  about the calling context \p _uncacheable_args marks whether an argument
+  ///  about the calling context \p _overwritten_args marks whether an argument
   ///  may be rewritten before loads in the generated function (and thus cannot
   ///  be cached). \p augmented is the data structure created by prior call to
   ///  an augmented forward pass \p AtomicAdd is whether to perform all adjoint
@@ -450,18 +444,24 @@ public:
                                           const AugmentedReturn *augmented,
                                           bool omp = false);
 
-  llvm::Function *
-  CreateForwardDiff(llvm::Function *todiff, DIFFE_TYPE retType,
-                    llvm::ArrayRef<DIFFE_TYPE> constant_args, TypeAnalysis &TA,
-                    bool returnValue, DerivativeMode mode, bool freeMemory,
-                    unsigned width, llvm::Type *additionalArg,
-                    const FnTypeInfo &typeInfo,
-                    const std::map<llvm::Argument *, bool> _uncacheable_args,
-                    const AugmentedReturn *augmented, bool omp = false);
+  llvm::Function *CreateForwardDiff(llvm::Function *todiff, DIFFE_TYPE retType,
+                                    llvm::ArrayRef<DIFFE_TYPE> constant_args,
+                                    TypeAnalysis &TA, bool returnValue,
+                                    DerivativeMode mode, bool freeMemory,
+                                    unsigned width, llvm::Type *additionalArg,
+                                    const FnTypeInfo &typeInfo,
+                                    const std::vector<bool> _overwritten_args,
+                                    const AugmentedReturn *augmented,
+                                    bool omp = false);
 
   llvm::Function *CreateBatch(llvm::Function *tobatch, unsigned width,
                               llvm::ArrayRef<BATCH_TYPE> arg_types,
                               BATCH_TYPE ret_type);
+
+  llvm::Function *
+  CreateTrace(llvm::Function *totrace,
+              llvm::SmallPtrSetImpl<llvm::Function *> &GenerativeFunctions,
+              ProbProgMode mode, bool dynamic_interface);
 
   void clear();
 };

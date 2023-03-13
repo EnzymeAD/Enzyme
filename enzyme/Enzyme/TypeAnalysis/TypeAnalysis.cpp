@@ -55,6 +55,8 @@
 
 #include <math.h>
 
+using namespace llvm;
+
 extern "C" {
 /// Maximum offset for type trees to keep
 llvm::cl::opt<int> MaxIntOffset("enzyme-max-int-offset", cl::init(100),
@@ -171,6 +173,7 @@ const std::map<std::string, llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"powi", Intrinsic::powi},
     {"cabs", Intrinsic::not_intrinsic},
     {"ldexp", Intrinsic::not_intrinsic},
+    {"fmod", Intrinsic::not_intrinsic},
 #if LLVM_VERSION_MAJOR >= 9
     {"lround", Intrinsic::lround},
     {"llround", Intrinsic::llround},
@@ -3819,6 +3822,13 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
           } else if (GV->getName() == "ompi_mpi_float") {
             buf.insert({0}, Type::getFloatTy(C->getContext()));
           }
+        } else if (auto CI = dyn_cast<ConstantInt>(C)) {
+          // MPICH
+          if (CI->getValue() == 1275070475) {
+            buf.insert({0}, Type::getDoubleTy(C->getContext()));
+          } else if (CI->getValue() == 1275069450) {
+            buf.insert({0}, Type::getFloatTy(C->getContext()));
+          }
         }
       }
       updateAnalysis(call.getOperand(0), buf.Only(-1, &call), &call);
@@ -3842,6 +3852,13 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
           if (GV->getName() == "ompi_mpi_double") {
             buf.insert({0}, Type::getDoubleTy(C->getContext()));
           } else if (GV->getName() == "ompi_mpi_float") {
+            buf.insert({0}, Type::getFloatTy(C->getContext()));
+          }
+        } else if (auto CI = dyn_cast<ConstantInt>(C)) {
+          // MPICH
+          if (CI->getValue() == 1275070475) {
+            buf.insert({0}, Type::getDoubleTy(C->getContext()));
+          } else if (CI->getValue() == 1275069450) {
             buf.insert({0}, Type::getFloatTy(C->getContext()));
           }
         }
@@ -3899,15 +3916,34 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
       return;
     }
     if (funcName == "MPI_Reduce" || funcName == "PMPI_Reduce") {
+      TypeTree buf = TypeTree(BaseType::Pointer);
+
+      if (Constant *C = dyn_cast<Constant>(call.getOperand(3))) {
+        while (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
+          C = CE->getOperand(0);
+        }
+        if (auto GV = dyn_cast<GlobalVariable>(C)) {
+          if (GV->getName() == "ompi_mpi_double") {
+            buf.insert({0}, Type::getDoubleTy(C->getContext()));
+          } else if (GV->getName() == "ompi_mpi_float") {
+            buf.insert({0}, Type::getFloatTy(C->getContext()));
+          }
+        } else if (auto CI = dyn_cast<ConstantInt>(C)) {
+          // MPICH
+          if (CI->getValue() == 1275070475) {
+            buf.insert({0}, Type::getDoubleTy(C->getContext()));
+          } else if (CI->getValue() == 1275069450) {
+            buf.insert({0}, Type::getFloatTy(C->getContext()));
+          }
+        }
+      }
       // int MPI_Reduce(const void *sendbuf, void *recvbuf, int count,
       // MPI_Datatype datatype,
       //         MPI_Op op, int root, MPI_Comm comm)
       // sendbuf
-      updateAnalysis(call.getOperand(0),
-                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(0), buf.Only(-1, &call), &call);
       // recvbuf
-      updateAnalysis(call.getOperand(1),
-                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(1), buf.Only(-1, &call), &call);
       // count
       updateAnalysis(call.getOperand(2),
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
@@ -3919,14 +3955,33 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
       return;
     }
     if (funcName == "MPI_Allreduce") {
+      TypeTree buf = TypeTree(BaseType::Pointer);
+
+      if (Constant *C = dyn_cast<Constant>(call.getOperand(3))) {
+        while (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
+          C = CE->getOperand(0);
+        }
+        if (auto GV = dyn_cast<GlobalVariable>(C)) {
+          if (GV->getName() == "ompi_mpi_double") {
+            buf.insert({0}, Type::getDoubleTy(C->getContext()));
+          } else if (GV->getName() == "ompi_mpi_float") {
+            buf.insert({0}, Type::getFloatTy(C->getContext()));
+          }
+        } else if (auto CI = dyn_cast<ConstantInt>(C)) {
+          // MPICH
+          if (CI->getValue() == 1275070475) {
+            buf.insert({0}, Type::getDoubleTy(C->getContext()));
+          } else if (CI->getValue() == 1275069450) {
+            buf.insert({0}, Type::getFloatTy(C->getContext()));
+          }
+        }
+      }
       // int MPI_Allreduce(const void *sendbuf, void *recvbuf, int count,
       //             MPI_Datatype datatype, MPI_Op op, MPI_Comm comm)
       // sendbuf
-      updateAnalysis(call.getOperand(0),
-                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(0), buf.Only(-1, &call), &call);
       // recvbuf
-      updateAnalysis(call.getOperand(1),
-                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(1), buf.Only(-1, &call), &call);
       // count
       updateAnalysis(call.getOperand(2),
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
@@ -5145,9 +5200,9 @@ Type *TypeResults::addingType(size_t num, Value *val) const {
     ObjSize = (fn.Function->getParent()->getDataLayout().getTypeSizeInBits(
         val->getType()) +7) / 8;
   */
-  dt.orIn(q[{-1}], /*pointerIntSame*/ false);
+  dt.orIn(q[{-1}], /*pointerIntSame*/ true);
   for (size_t i = 1; i < num; ++i) {
-    dt.orIn(q[{(int)i}], /*pointerIntSame*/ false);
+    dt.orIn(q[{(int)i}], /*pointerIntSame*/ true);
   }
 
   return dt.isFloat();
