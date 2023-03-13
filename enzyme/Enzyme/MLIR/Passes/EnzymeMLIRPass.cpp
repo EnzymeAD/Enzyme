@@ -63,9 +63,8 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
     auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
     auto fn = cast<FunctionOpInterface>(symbolOp);
 
-    DIFFE_TYPE retType = fn.getNumResults() == 0
-                                  ? DIFFE_TYPE::CONSTANT
-                                  : DIFFE_TYPE::DUP_ARG;
+    DIFFE_TYPE retType =
+        fn.getNumResults() == 0 ? DIFFE_TYPE::CONSTANT : DIFFE_TYPE::DUP_ARG;
 
     MTypeAnalysis TA;
     auto type_args = TA.getAnalyzedTypeInfo(fn);
@@ -75,8 +74,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
 
     std::vector<bool> volatile_args;
     for (auto &a : fn.getFunctionBody().getArguments()) {
-      volatile_args.push_back(
-          !(mode == DerivativeMode::ReverseModeCombined));
+      volatile_args.push_back(!(mode == DerivativeMode::ReverseModeCombined));
     }
 
     FunctionOpInterface newFunc = Logic.CreateForwardDiff(
@@ -125,9 +123,8 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
     auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
     auto fn = cast<FunctionOpInterface>(symbolOp);
 
-    DIFFE_TYPE retType = fn.getNumResults() == 0
-                                  ? DIFFE_TYPE::CONSTANT
-                                  : DIFFE_TYPE::DUP_ARG;
+    DIFFE_TYPE retType =
+        fn.getNumResults() == 0 ? DIFFE_TYPE::CONSTANT : DIFFE_TYPE::DUP_ARG;
 
     MTypeAnalysis TA;
     auto type_args = TA.getAnalyzedTypeInfo(fn);
@@ -137,8 +134,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
 
     std::vector<bool> volatile_args;
     for (auto &a : fn.getFunctionBody().getArguments()) {
-      volatile_args.push_back(
-          !(mode == DerivativeMode::ReverseModeCombined));
+      volatile_args.push_back(!(mode == DerivativeMode::ReverseModeCombined));
     }
 
     FunctionOpInterface newFunc = Logic.CreateReverseDiff(

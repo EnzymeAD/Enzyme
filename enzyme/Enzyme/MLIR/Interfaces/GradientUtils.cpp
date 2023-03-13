@@ -32,9 +32,8 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
     FunctionOpInterface oldFunc_, MTypeAnalysis &TA_,
     BlockAndValueMapping &invertedPointers_,
     const SmallPtrSetImpl<mlir::Value> &constantvalues_,
-    const SmallPtrSetImpl<mlir::Value> &activevals_,
-    DIFFE_TYPE ReturnActivity, ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
-    BlockAndValueMapping &originalToNewFn_,
+    const SmallPtrSetImpl<mlir::Value> &activevals_, DIFFE_TYPE ReturnActivity,
+    ArrayRef<DIFFE_TYPE> ArgDiffeTypes_, BlockAndValueMapping &originalToNewFn_,
     std::map<Operation *, Operation *> &originalToNewFnOps_,
     DerivativeMode mode, unsigned width, bool omp)
     : newFunc(newFunc_), Logic(Logic), mode(mode), oldFunc(oldFunc_), TA(TA_),

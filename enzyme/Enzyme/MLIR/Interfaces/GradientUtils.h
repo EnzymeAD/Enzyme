@@ -44,8 +44,7 @@ public:
                  BlockAndValueMapping &invertedPointers_,
                  const SmallPtrSetImpl<mlir::Value> &constantvalues_,
                  const SmallPtrSetImpl<mlir::Value> &activevals_,
-                 DIFFE_TYPE ReturnActivity,
-                 ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
+                 DIFFE_TYPE ReturnActivity, ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
                  BlockAndValueMapping &originalToNewFn_,
                  std::map<Operation *, Operation *> &originalToNewFnOps_,
                  DerivativeMode mode, unsigned width, bool omp);
@@ -86,8 +85,7 @@ public:
                   FunctionOpInterface todiff, MTypeAnalysis &TA,
                   MFnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
                   bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
-                  ReturnType returnValue, mlir::Type additionalArg,
-                  bool omp) {
+                  ReturnType returnValue, mlir::Type additionalArg, bool omp) {
     std::string prefix;
 
     switch (mode) {

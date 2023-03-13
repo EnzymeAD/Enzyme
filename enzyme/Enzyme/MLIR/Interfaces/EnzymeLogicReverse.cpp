@@ -352,9 +352,8 @@ void MEnzymeLogic::differentiate(MGradientUtilsReverse *gutils,
 FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
     FunctionOpInterface fn, DIFFE_TYPE retType,
     std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA, bool returnUsed,
-    DerivativeMode mode, bool freeMemory, size_t width,
-    mlir::Type addedType, MFnTypeInfo type_args,
-    std::vector<bool> volatile_args, void *augmented,
+    DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType,
+    MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented,
     SymbolTableCollection &symbolTable) {
 
   if (fn.getFunctionBody().empty()) {

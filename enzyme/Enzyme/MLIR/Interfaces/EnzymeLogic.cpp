@@ -141,9 +141,8 @@ void createTerminator(MDiffeGradientUtils *gutils, mlir::Block *oBB,
 FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
     FunctionOpInterface fn, DIFFE_TYPE retType,
     std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA, bool returnUsed,
-    DerivativeMode mode, bool freeMemory, size_t width,
-    mlir::Type addedType, MFnTypeInfo type_args,
-    std::vector<bool> volatile_args, void *augmented) {
+    DerivativeMode mode, bool freeMemory, size_t width, mlir::Type addedType,
+    MFnTypeInfo type_args, std::vector<bool> volatile_args, void *augmented) {
   if (fn.getFunctionBody().empty()) {
     llvm::errs() << fn << "\n";
     llvm_unreachable("Differentiating empty function");
@@ -160,9 +159,8 @@ FunctionOpInterface mlir::enzyme::MEnzymeLogic::CreateForwardDiff(
   }
   bool retActive = retType != DIFFE_TYPE::CONSTANT;
   ReturnType returnValue =
-      returnUsed
-          ? (retActive ? ReturnType::TwoReturns : ReturnType::Return)
-          : (retActive ? ReturnType::Return : ReturnType::Void);
+      returnUsed ? (retActive ? ReturnType::TwoReturns : ReturnType::Return)
+                 : (retActive ? ReturnType::Return : ReturnType::Void);
   auto gutils = MDiffeGradientUtils::CreateFromClone(
       *this, mode, width, fn, TA, type_args, retType,
       /*diffeReturnArg*/ false, constants, returnValue, addedType,
