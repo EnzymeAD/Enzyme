@@ -33,10 +33,10 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
     BlockAndValueMapping &invertedPointers_,
     const SmallPtrSetImpl<mlir::Value> &constantvalues_,
     const SmallPtrSetImpl<mlir::Value> &activevals_,
-    DIFFE_TYPE_MLIR ReturnActivity, ArrayRef<DIFFE_TYPE_MLIR> ArgDiffeTypes_,
+    DIFFE_TYPE ReturnActivity, ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
     BlockAndValueMapping &originalToNewFn_,
     std::map<Operation *, Operation *> &originalToNewFnOps_,
-    DerivativeModeMLIR mode, unsigned width, bool omp)
+    DerivativeMode mode, unsigned width, bool omp)
     : newFunc(newFunc_), Logic(Logic), mode(mode), oldFunc(oldFunc_), TA(TA_),
       omp(omp), width(width), ArgDiffeTypes(ArgDiffeTypes_),
       originalToNewFn(originalToNewFn_),
@@ -184,8 +184,8 @@ void mlir::enzyme::MGradientUtils::setDiffe(mlir::Value val, mlir::Value toset,
     llvm::errs() << val << "\n";
   }
   assert(!isConstantValue(val));
-  if (mode == DerivativeModeMLIR::ForwardMode ||
-      mode == DerivativeModeMLIR::ForwardModeSplit) {
+  if (mode == DerivativeMode::ForwardMode ||
+      mode == DerivativeMode::ForwardModeSplit) {
     assert(getShadowType(val.getType()) == toset.getType());
     auto found = invertedPointers.lookupOrNull(val);
     assert(found != nullptr);
@@ -241,8 +241,8 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
   oldFunc.walk([&](Operation *inst) {
     if (inst == oldFunc)
       return;
-    if (mode == DerivativeModeMLIR::ForwardMode ||
-        mode == DerivativeModeMLIR::ForwardModeSplit) {
+    if (mode == DerivativeMode::ForwardMode ||
+        mode == DerivativeMode::ForwardModeSplit) {
       OpBuilder BuilderZ(getNewFromOriginal(inst));
       for (auto res : inst->getResults()) {
         if (!isConstantValue(res)) {
@@ -306,7 +306,7 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
 }
 
 LogicalResult MGradientUtils::visitChild(Operation *op) {
-  if (mode == DerivativeModeMLIR::ForwardMode) {
+  if (mode == DerivativeMode::ForwardMode) {
     if (auto iface = dyn_cast<AutoDiffOpInterface>(op)) {
       OpBuilder builder(op->getContext());
       builder.setInsertionPoint(getNewFromOriginal(op));

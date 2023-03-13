@@ -23,7 +23,7 @@ public:
 
   MEnzymeLogic &Logic;
   bool AtomicAdd;
-  DerivativeModeMLIR mode;
+  DerivativeMode mode;
   FunctionOpInterface oldFunc;
   BlockAndValueMapping invertedPointers;
   BlockAndValueMapping originalToNewFn;
@@ -33,7 +33,7 @@ public:
   bool omp;
 
   unsigned width;
-  ArrayRef<DIFFE_TYPE_MLIR> ArgDiffeTypes;
+  ArrayRef<DIFFE_TYPE> ArgDiffeTypes;
 
   mlir::Value getNewFromOriginal(const mlir::Value originst) const;
   mlir::Block *getNewFromOriginal(mlir::Block *originst) const;
@@ -44,11 +44,11 @@ public:
                  BlockAndValueMapping &invertedPointers_,
                  const SmallPtrSetImpl<mlir::Value> &constantvalues_,
                  const SmallPtrSetImpl<mlir::Value> &activevals_,
-                 DIFFE_TYPE_MLIR ReturnActivity,
-                 ArrayRef<DIFFE_TYPE_MLIR> ArgDiffeTypes_,
+                 DIFFE_TYPE ReturnActivity,
+                 ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
                  BlockAndValueMapping &originalToNewFn_,
                  std::map<Operation *, Operation *> &originalToNewFnOps_,
-                 DerivativeModeMLIR mode, unsigned width, bool omp);
+                 DerivativeMode mode, unsigned width, bool omp);
   void erase(Operation *op) { op->erase(); }
   void eraseIfUnused(Operation *op, bool erase = true, bool check = true) {
     // TODO
@@ -70,11 +70,11 @@ public:
                       BlockAndValueMapping &invertedPointers_,
                       const SmallPtrSetImpl<mlir::Value> &constantvalues_,
                       const SmallPtrSetImpl<mlir::Value> &returnvals_,
-                      DIFFE_TYPE_MLIR ActiveReturn,
-                      ArrayRef<DIFFE_TYPE_MLIR> constant_values,
+                      DIFFE_TYPE ActiveReturn,
+                      ArrayRef<DIFFE_TYPE> constant_values,
                       BlockAndValueMapping &origToNew_,
                       std::map<Operation *, Operation *> &origToNewOps_,
-                      DerivativeModeMLIR mode, unsigned width, bool omp)
+                      DerivativeMode mode, unsigned width, bool omp)
       : MGradientUtils(Logic, newFunc_, oldFunc_, TA, invertedPointers_,
                        constantvalues_, returnvals_, ActiveReturn,
                        constant_values, origToNew_, origToNewOps_, mode, width,
@@ -82,25 +82,25 @@ public:
 
   // Technically diffe constructor
   static MDiffeGradientUtils *
-  CreateFromClone(MEnzymeLogic &Logic, DerivativeModeMLIR mode, unsigned width,
+  CreateFromClone(MEnzymeLogic &Logic, DerivativeMode mode, unsigned width,
                   FunctionOpInterface todiff, MTypeAnalysis &TA,
-                  MFnTypeInfo &oldTypeInfo, DIFFE_TYPE_MLIR retType,
-                  bool diffeReturnArg, ArrayRef<DIFFE_TYPE_MLIR> constant_args,
-                  ReturnTypeMLIR returnValue, mlir::Type additionalArg,
+                  MFnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
+                  bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
+                  ReturnType returnValue, mlir::Type additionalArg,
                   bool omp) {
     std::string prefix;
 
     switch (mode) {
-    case DerivativeModeMLIR::ForwardMode:
-    case DerivativeModeMLIR::ForwardModeSplit:
+    case DerivativeMode::ForwardMode:
+    case DerivativeMode::ForwardModeSplit:
       prefix = "fwddiffe";
       break;
-    case DerivativeModeMLIR::ReverseModeCombined:
-    case DerivativeModeMLIR::ReverseModeGradient:
+    case DerivativeMode::ReverseModeCombined:
+    case DerivativeMode::ReverseModeGradient:
       prefix = "diffe";
       break;
-    case DerivativeModeMLIR::ReverseModePrimal:
-      llvm_unreachable("invalid DerivativeModeMLIR: ReverseModePrimal\n");
+    case DerivativeMode::ReverseModePrimal:
+      llvm_unreachable("invalid DerivativeMode: ReverseModePrimal\n");
     }
 
     if (width > 1)

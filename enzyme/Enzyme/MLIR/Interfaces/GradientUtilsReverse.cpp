@@ -33,10 +33,10 @@ mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
     BlockAndValueMapping invertedPointers_,
     const SmallPtrSetImpl<mlir::Value> &constantvalues_,
     const SmallPtrSetImpl<mlir::Value> &activevals_,
-    DIFFE_TYPE_MLIR ReturnActivity, ArrayRef<DIFFE_TYPE_MLIR> ArgDiffeTypes_,
+    DIFFE_TYPE ReturnActivity, ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
     BlockAndValueMapping &originalToNewFn_,
     std::map<Operation *, Operation *> &originalToNewFnOps_,
-    DerivativeModeMLIR mode_, unsigned width,
+    DerivativeMode mode_, unsigned width,
     SymbolTableCollection &symbolTable_)
     : newFunc(newFunc_), Logic(Logic), mode(mode_), oldFunc(oldFunc_), TA(TA_),
       width(width), ArgDiffeTypes(ArgDiffeTypes_),
@@ -365,24 +365,24 @@ void MGradientUtilsReverse::createReverseModeBlocks(Region &oldFunc,
 }
 
 MGradientUtilsReverse *MGradientUtilsReverse::CreateFromClone(
-    MEnzymeLogic &Logic, DerivativeModeMLIR mode_, unsigned width,
+    MEnzymeLogic &Logic, DerivativeMode mode_, unsigned width,
     FunctionOpInterface todiff, MTypeAnalysis &TA, MFnTypeInfo &oldTypeInfo,
-    DIFFE_TYPE_MLIR retType, bool diffeReturnArg,
-    ArrayRef<DIFFE_TYPE_MLIR> constant_args, ReturnTypeMLIR returnValue,
+    DIFFE_TYPE retType, bool diffeReturnArg,
+    ArrayRef<DIFFE_TYPE> constant_args, ReturnType returnValue,
     mlir::Type additionalArg, SymbolTableCollection &symbolTable_) {
   std::string prefix;
 
   switch (mode_) {
-  case DerivativeModeMLIR::ForwardMode:
-  case DerivativeModeMLIR::ForwardModeSplit:
+  case DerivativeMode::ForwardMode:
+  case DerivativeMode::ForwardModeSplit:
     assert(false);
     break;
-  case DerivativeModeMLIR::ReverseModeCombined:
-  case DerivativeModeMLIR::ReverseModeGradient:
+  case DerivativeMode::ReverseModeCombined:
+  case DerivativeMode::ReverseModeGradient:
     prefix = "diffe";
     break;
-  case DerivativeModeMLIR::ReverseModePrimal:
-    llvm_unreachable("invalid DerivativeModeMLIR: ReverseModePrimal\n");
+  case DerivativeMode::ReverseModePrimal:
+    llvm_unreachable("invalid DerivativeMode: ReverseModePrimal\n");
   }
 
   if (width > 1)

@@ -8,27 +8,27 @@ Type getShadowType(Type type, unsigned width) {
 }
 
 mlir::FunctionType
-getFunctionTypeForClone(mlir::FunctionType FTy, DerivativeModeMLIR mode,
+getFunctionTypeForClone(mlir::FunctionType FTy, DerivativeMode mode,
                         unsigned width, mlir::Type additionalArg,
-                        llvm::ArrayRef<DIFFE_TYPE_MLIR> constant_args,
-                        bool diffeReturnArg, ReturnTypeMLIR returnValue,
-                        DIFFE_TYPE_MLIR ReturnTypeMLIR) {
+                        llvm::ArrayRef<DIFFE_TYPE> constant_args,
+                        bool diffeReturnArg, ReturnType returnValue,
+                        DIFFE_TYPE ReturnType) {
   SmallVector<mlir::Type, 4> RetTypes;
-  if (returnValue == ReturnTypeMLIR::ArgsWithReturn ||
-      returnValue == ReturnTypeMLIR::Return) {
+  if (returnValue == ReturnType::ArgsWithReturn ||
+      returnValue == ReturnType::Return) {
     assert(FTy.getNumResults() == 1);
-    if (ReturnTypeMLIR != DIFFE_TYPE_MLIR::CONSTANT &&
-        ReturnTypeMLIR != DIFFE_TYPE_MLIR::OUT_DIFF) {
+    if (ReturnType != DIFFE_TYPE::CONSTANT &&
+        ReturnType != DIFFE_TYPE::OUT_DIFF) {
       RetTypes.push_back(getShadowType(FTy.getResult(0), width));
     } else {
       RetTypes.push_back(FTy.getResult(0));
     }
-  } else if (returnValue == ReturnTypeMLIR::ArgsWithTwoReturns ||
-             returnValue == ReturnTypeMLIR::TwoReturns) {
+  } else if (returnValue == ReturnType::ArgsWithTwoReturns ||
+             returnValue == ReturnType::TwoReturns) {
     assert(FTy.getNumResults() == 1);
     RetTypes.push_back(FTy.getResult(0));
-    if (ReturnTypeMLIR != DIFFE_TYPE_MLIR::CONSTANT &&
-        ReturnTypeMLIR != DIFFE_TYPE_MLIR::OUT_DIFF) {
+    if (ReturnType != DIFFE_TYPE::CONSTANT &&
+        ReturnType != DIFFE_TYPE::OUT_DIFF) {
       RetTypes.push_back(getShadowType(FTy.getResult(0), width));
     } else {
       RetTypes.push_back(FTy.getResult(0));
@@ -43,10 +43,10 @@ getFunctionTypeForClone(mlir::FunctionType FTy, DerivativeModeMLIR mode,
 
   for (auto I : FTy.getInputs()) {
     ArgTypes.push_back(I);
-    if (constant_args[argno] == DIFFE_TYPE_MLIR::DUP_ARG ||
-        constant_args[argno] == DIFFE_TYPE_MLIR::DUP_NONEED) {
+    if (constant_args[argno] == DIFFE_TYPE::DUP_ARG ||
+        constant_args[argno] == DIFFE_TYPE::DUP_NONEED) {
       ArgTypes.push_back(getShadowType(I, width));
-    } else if (constant_args[argno] == DIFFE_TYPE_MLIR::OUT_DIFF) {
+    } else if (constant_args[argno] == DIFFE_TYPE::OUT_DIFF) {
       RetTypes.push_back(getShadowType(I, width));
     }
     ++argno;
@@ -61,11 +61,11 @@ getFunctionTypeForClone(mlir::FunctionType FTy, DerivativeModeMLIR mode,
   }
 
   OpBuilder builder(FTy.getContext());
-  if (returnValue == ReturnTypeMLIR::TapeAndTwoReturns ||
-      returnValue == ReturnTypeMLIR::TapeAndReturn) {
+  if (returnValue == ReturnType::TapeAndTwoReturns ||
+      returnValue == ReturnType::TapeAndReturn) {
     RetTypes.insert(RetTypes.begin(),
                     LLVM::LLVMPointerType::get(builder.getIntegerType(8)));
-  } else if (returnValue == ReturnTypeMLIR::Tape) {
+  } else if (returnValue == ReturnType::Tape) {
     for (auto I : FTy.getInputs()) {
       RetTypes.push_back(I);
     }
@@ -197,12 +197,12 @@ void cloneInto(Region *src, Region *dest, Region::iterator destPos,
 }
 
 FunctionOpInterface CloneFunctionWithReturns(
-    DerivativeModeMLIR mode, unsigned width, FunctionOpInterface F,
-    BlockAndValueMapping &ptrInputs, ArrayRef<DIFFE_TYPE_MLIR> constant_args,
+    DerivativeMode mode, unsigned width, FunctionOpInterface F,
+    BlockAndValueMapping &ptrInputs, ArrayRef<DIFFE_TYPE> constant_args,
     SmallPtrSetImpl<mlir::Value> &constants,
     SmallPtrSetImpl<mlir::Value> &nonconstants,
-    SmallPtrSetImpl<mlir::Value> &returnvals, ReturnTypeMLIR returnValue,
-    DIFFE_TYPE_MLIR ReturnTypeMLIR, Twine name, BlockAndValueMapping &VMap,
+    SmallPtrSetImpl<mlir::Value> &returnvals, ReturnType returnValue,
+    DIFFE_TYPE ReturnType, Twine name, BlockAndValueMapping &VMap,
     std::map<Operation *, Operation *> &OpMap, bool diffeReturnArg,
     mlir::Type additionalArg) {
   assert(!F.getFunctionBody().empty());
@@ -211,7 +211,7 @@ FunctionOpInterface CloneFunctionWithReturns(
   auto FTy =
       getFunctionTypeForClone(F.getFunctionType().cast<mlir::FunctionType>(),
                               mode, width, additionalArg, constant_args,
-                              diffeReturnArg, returnValue, ReturnTypeMLIR);
+                              diffeReturnArg, returnValue, ReturnType);
 
   /*
   for (Block &BB : F.getFunctionBody().getBlocks()) {
@@ -240,12 +240,12 @@ FunctionOpInterface CloneFunctionWithReturns(
     auto &blk = NewF.getFunctionBody().front();
     for (ssize_t i = constant_args.size() - 1; i >= 0; i--) {
       mlir::Value oval = F.getFunctionBody().front().getArgument(i);
-      if (constant_args[i] == DIFFE_TYPE_MLIR::CONSTANT)
+      if (constant_args[i] == DIFFE_TYPE::CONSTANT)
         constants.insert(oval);
-      else if (constant_args[i] == DIFFE_TYPE_MLIR::OUT_DIFF)
+      else if (constant_args[i] == DIFFE_TYPE::OUT_DIFF)
         nonconstants.insert(oval);
-      else if (constant_args[i] == DIFFE_TYPE_MLIR::DUP_ARG ||
-               constant_args[i] == DIFFE_TYPE_MLIR::DUP_NONEED) {
+      else if (constant_args[i] == DIFFE_TYPE::DUP_ARG ||
+               constant_args[i] == DIFFE_TYPE::DUP_NONEED) {
         mlir::Value val = blk.getArgument(i);
         mlir::Value dval;
         if (i == constant_args.size() - 1)

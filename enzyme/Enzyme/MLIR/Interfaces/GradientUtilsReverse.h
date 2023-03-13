@@ -23,11 +23,11 @@ public:
                         BlockAndValueMapping invertedPointers_,
                         const SmallPtrSetImpl<mlir::Value> &constantvalues_,
                         const SmallPtrSetImpl<mlir::Value> &activevals_,
-                        DIFFE_TYPE_MLIR ReturnActivity,
-                        ArrayRef<DIFFE_TYPE_MLIR> ArgDiffeTypes_,
+                        DIFFE_TYPE ReturnActivity,
+                        ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
                         BlockAndValueMapping &originalToNewFn_,
                         std::map<Operation *, Operation *> &originalToNewFnOps_,
-                        DerivativeModeMLIR mode_, unsigned width,
+                        DerivativeMode mode_, unsigned width,
                         SymbolTableCollection &symbolTable_);
 
   // From CacheUtility
@@ -36,7 +36,7 @@ public:
 
   MEnzymeLogic &Logic;
   bool AtomicAdd;
-  DerivativeModeMLIR mode;
+  DerivativeMode mode;
   BlockAndValueMapping invertedPointers;
   BlockAndValueMapping invertedPointersGlobal;
   BlockAndValueMapping invertedPointersShadow;
@@ -52,7 +52,7 @@ public:
   MTypeAnalysis &TA;
 
   unsigned width;
-  ArrayRef<DIFFE_TYPE_MLIR> ArgDiffeTypes;
+  ArrayRef<DIFFE_TYPE> ArgDiffeTypes;
 
   SymbolTableCollection &symbolTable;
 
@@ -108,11 +108,11 @@ public:
                                bool isParentRegion = false);
 
   static MGradientUtilsReverse *
-  CreateFromClone(MEnzymeLogic &Logic, DerivativeModeMLIR mode_, unsigned width,
+  CreateFromClone(MEnzymeLogic &Logic, DerivativeMode mode_, unsigned width,
                   FunctionOpInterface todiff, MTypeAnalysis &TA,
-                  MFnTypeInfo &oldTypeInfo, DIFFE_TYPE_MLIR retType,
-                  bool diffeReturnArg, ArrayRef<DIFFE_TYPE_MLIR> constant_args,
-                  ReturnTypeMLIR returnValue, mlir::Type additionalArg,
+                  MFnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
+                  bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
+                  ReturnType returnValue, mlir::Type additionalArg,
                   SymbolTableCollection &symbolTable_);
 };
 

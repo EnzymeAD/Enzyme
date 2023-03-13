@@ -36,7 +36,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
 
   template <typename T>
   void HandleAutoDiff(SymbolTableCollection &symbolTable, T CI) {
-    std::vector<DIFFE_TYPE_MLIR> constants;
+    std::vector<DIFFE_TYPE> constants;
     SmallVector<mlir::Value, 2> args;
 
     size_t truei = 0;
@@ -47,11 +47,11 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
 
       auto mop = activityAttr[truei];
       auto iattr = cast<mlir::enzyme::ActivityAttr>(mop);
-      DIFFE_TYPE_MLIR ty = (DIFFE_TYPE_MLIR)(iattr.getValue());
+      DIFFE_TYPE ty = (DIFFE_TYPE)(iattr.getValue());
 
       constants.push_back(ty);
       args.push_back(res);
-      if (ty == DIFFE_TYPE_MLIR::DUP_ARG || ty == DIFFE_TYPE_MLIR::DUP_NONEED) {
+      if (ty == DIFFE_TYPE::DUP_ARG || ty == DIFFE_TYPE::DUP_NONEED) {
         ++i;
         res = CI.getInputs()[i];
         args.push_back(res);
@@ -63,20 +63,20 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
     auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
     auto fn = cast<FunctionOpInterface>(symbolOp);
 
-    DIFFE_TYPE_MLIR retType = fn.getNumResults() == 0
-                                  ? DIFFE_TYPE_MLIR::CONSTANT
-                                  : DIFFE_TYPE_MLIR::DUP_ARG;
+    DIFFE_TYPE retType = fn.getNumResults() == 0
+                                  ? DIFFE_TYPE::CONSTANT
+                                  : DIFFE_TYPE::DUP_ARG;
 
     MTypeAnalysis TA;
     auto type_args = TA.getAnalyzedTypeInfo(fn);
-    auto mode = DerivativeModeMLIR::ForwardMode;
+    auto mode = DerivativeMode::ForwardMode;
     bool freeMemory = true;
     size_t width = 1;
 
     std::vector<bool> volatile_args;
     for (auto &a : fn.getFunctionBody().getArguments()) {
       volatile_args.push_back(
-          !(mode == DerivativeModeMLIR::ReverseModeCombined));
+          !(mode == DerivativeMode::ReverseModeCombined));
     }
 
     FunctionOpInterface newFunc = Logic.CreateForwardDiff(
@@ -94,7 +94,7 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
 
   template <typename T>
   void HandleAutoDiffReverse(SymbolTableCollection &symbolTable, T CI) {
-    std::vector<DIFFE_TYPE_MLIR> constants;
+    std::vector<DIFFE_TYPE> constants;
     SmallVector<mlir::Value, 2> args;
 
     size_t truei = 0;
@@ -105,11 +105,11 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
 
       auto mop = activityAttr[truei];
       auto iattr = cast<mlir::enzyme::ActivityAttr>(mop);
-      DIFFE_TYPE_MLIR ty = (DIFFE_TYPE_MLIR)(iattr.getValue());
+      DIFFE_TYPE ty = (DIFFE_TYPE)(iattr.getValue());
 
       constants.push_back(ty);
       args.push_back(res);
-      if (ty == DIFFE_TYPE_MLIR::DUP_ARG || ty == DIFFE_TYPE_MLIR::DUP_NONEED) {
+      if (ty == DIFFE_TYPE::DUP_ARG || ty == DIFFE_TYPE::DUP_NONEED) {
         ++i;
         res = CI.getInputs()[i];
         args.push_back(res);
@@ -125,20 +125,20 @@ struct DifferentiatePass : public DifferentiatePassBase<DifferentiatePass> {
     auto *symbolOp = symbolTable.lookupNearestSymbolFrom(CI, CI.getFnAttr());
     auto fn = cast<FunctionOpInterface>(symbolOp);
 
-    DIFFE_TYPE_MLIR retType = fn.getNumResults() == 0
-                                  ? DIFFE_TYPE_MLIR::CONSTANT
-                                  : DIFFE_TYPE_MLIR::DUP_ARG;
+    DIFFE_TYPE retType = fn.getNumResults() == 0
+                                  ? DIFFE_TYPE::CONSTANT
+                                  : DIFFE_TYPE::DUP_ARG;
 
     MTypeAnalysis TA;
     auto type_args = TA.getAnalyzedTypeInfo(fn);
-    auto mode = DerivativeModeMLIR::ReverseModeGradient;
+    auto mode = DerivativeMode::ReverseModeGradient;
     bool freeMemory = true;
     size_t width = 1;
 
     std::vector<bool> volatile_args;
     for (auto &a : fn.getFunctionBody().getArguments()) {
       volatile_args.push_back(
-          !(mode == DerivativeModeMLIR::ReverseModeCombined));
+          !(mode == DerivativeMode::ReverseModeCombined));
     }
 
     FunctionOpInterface newFunc = Logic.CreateReverseDiff(
