@@ -1,4 +1,4 @@
-//===- InstructionBatcher.h
+//===- InstructionBatcher.cpp
 //--------------------------------------------------===//
 //
 //                             Enzyme Project

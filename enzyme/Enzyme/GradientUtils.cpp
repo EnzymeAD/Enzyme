@@ -4233,6 +4233,14 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     }
   }
 
+  if (mode != DerivativeMode::ForwardMode &&
+      mode != DerivativeMode::ForwardModeSplit && nullShadow) {
+    auto CT = TR.query(oval)[{-1}];
+    if (CT.isFloat()) {
+      return Constant::getNullValue(getShadowType(oval->getType()));
+    }
+  }
+
   if (isa<Argument>(oval) && cast<Argument>(oval)->hasByValAttr()) {
     IRBuilder<> bb(inversionAllocs);
 
