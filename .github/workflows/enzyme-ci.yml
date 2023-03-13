@@ -1,6 +1,10 @@
 name: Enzyme CI
 
-on: [push]
+on:
+  push:
+    branches:
+      - main
+  pull-request:
 
 jobs:
   build-linux:
