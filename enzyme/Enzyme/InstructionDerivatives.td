@@ -179,3 +179,11 @@ def : CallPattern<(Op $x, $y),
                   (FMul (DiffeRet<"">), (FNeg (Intrinsic<"copysign", [(TypeOf<""> $x)]> (Intrinsic<"floor", [(TypeOf<""> $x)]> (Intrinsic<"fabs", [(TypeOf<""> $x)]> (FDiv $x, $y))), (FDiv $x, $y))))
                   ]
                   >;
+
+def : CallPattern<(Op $x, $y),
+                  ["cpow", "cpowf", "cpowl"],
+                  [
+                  (DiffeRet<"">),
+                  (FMul (DiffeRet<"">), (FNeg (Intrinsic<"copysign", [(TypeOf<""> $x)]> (Intrinsic<"floor", [(TypeOf<""> $x)]> (Intrinsic<"fabs", [(TypeOf<""> $x)]> (FDiv $x, $y))), (FDiv $x, $y))))
+                  ]
+                  >;
