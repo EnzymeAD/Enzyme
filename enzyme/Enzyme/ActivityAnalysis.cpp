@@ -281,7 +281,16 @@ const std::set<std::string> KnownInactiveFunctions = {
     "logb",
     "logbf",
     "logbl",
-};
+    "cuCtxGetCurrent",
+    "cuDeviceGet",
+    "cuDeviceGetName",
+    "cuDriverGetVersion",
+    "cudaRuntimeGetVersion",
+    "cuDeviceGetCount",
+    "cuMemPoolGetAttribute",
+    "cuMemGetInfo_v2",
+    "cuDeviceGetAttribute",
+    "cuDevicePrimaryCtxRetain"};
 
 const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
     Intrinsic::floor,

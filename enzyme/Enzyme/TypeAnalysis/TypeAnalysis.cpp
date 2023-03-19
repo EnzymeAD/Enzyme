@@ -3776,6 +3776,54 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
       return;
     }
 
+    /// CUDA
+    if (funcName == "cuDeviceGet") {
+      // cuResult
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(0),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(1),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "cuDeviceGetName") {
+      // cuResult
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(0),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(1),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "cudaRuntimeGetVersion" ||
+        funcName == "cuDriverGetVersion" || funcName == "cuDeviceGetCount") {
+      // cuResult
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      TypeTree ptrint;
+      ptrint.insert({-1}, BaseType::Pointer);
+      ptrint.insert({-1, 0}, BaseType::Integer);
+      updateAnalysis(call.getOperand(0), ptrint, &call);
+      return;
+    }
+    if (funcName == "cuMemGetInfo_v2") {
+      // cuResult
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      TypeTree ptrint;
+      ptrint.insert({-1}, BaseType::Pointer);
+      ptrint.insert({-1, 0}, BaseType::Integer);
+      updateAnalysis(call.getOperand(0), ptrint, &call);
+      updateAnalysis(call.getOperand(1), ptrint, &call);
+      return;
+    }
+    if (funcName == "cuDevicePrimaryCtxRetain" ||
+        funcName == "cuCtxGetCurrent") {
+      // cuResult
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(0),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      return;
+    }
+
     /// MPI
     if (funcName.startswith("PMPI_"))
       funcName = funcName.substr(1);
