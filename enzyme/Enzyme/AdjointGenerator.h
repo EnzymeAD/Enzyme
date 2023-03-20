@@ -4280,7 +4280,7 @@ public:
         if (auto F = dyn_cast<Function>(PowF))
           FT = F->getFunctionType();
         else
-          PowF->getType()->getPointerElementType();
+          FT = cast<FunctionType>(PowF->getType()->getPointerElementType());
 
         if (vdiff && !gutils->isConstantValue(orig_ops[0])) {
 
