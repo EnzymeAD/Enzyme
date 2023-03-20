@@ -42,7 +42,6 @@
 #include "BaseType.h"
 #include "ConcreteType.h"
 
-
 /// Maximum offset for type trees to keep
 extern "C" {
 extern llvm::cl::opt<int> MaxTypeOffset;
