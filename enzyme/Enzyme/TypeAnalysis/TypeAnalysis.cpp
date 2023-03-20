@@ -63,6 +63,10 @@ llvm::cl::opt<int> MaxIntOffset("enzyme-max-int-offset", cl::init(100),
                                 cl::Hidden,
                                 cl::desc("Maximum type tree offset"));
 
+llvm::cl::opt<int> EnzymeMaxTypeDepth("enzyme-max-type-depth", cl::init(6),
+                                      cl::Hidden,
+                                      cl::desc("Maximum type tree depth"));
+
 llvm::cl::opt<bool> EnzymePrintType("enzyme-print-type", cl::init(false),
                                     cl::Hidden,
                                     cl::desc("Print type analysis algorithm"));
