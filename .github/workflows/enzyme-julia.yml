@@ -49,7 +49,7 @@ jobs:
         julia --project=jl/deps -e 'using Pkg; Pkg.instantiate()'
         SDKROOT=`xcrun --show-sdk-path` julia --project=jl/deps jl/deps/build_local.jl ./enzyme
     - name: Dev EnzymeCore
-      run: julia --project=jl -e 'using Pkg; Pkg.dev("lib/EnzymeCore")'
+      run: julia --project=jl -e 'using Pkg; Pkg.develop("lib/EnzymeCore")'
     - uses: julia-actions/julia-buildpkg@v1
       with:
         project: jl
