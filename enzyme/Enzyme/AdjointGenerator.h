@@ -4280,7 +4280,7 @@ public:
         if (auto F = dyn_cast<Function>(PowF))
           FT = F->getFunctionType();
         else
-          cast<FunctionType>(PowF->getType()->getPointerElementType());
+          FT = cast<FunctionType>(PowF->getType()->getPointerElementType());
 
         if (vdiff && !gutils->isConstantValue(orig_ops[0])) {
 
@@ -5900,16 +5900,6 @@ public:
         }
 
         Value *cacheval;
-        auto in_arg = call.getCalledFunction()->arg_begin();
-        Argument *countarg = in_arg;
-        in_arg++;
-        Argument *xfuncarg = in_arg;
-        in_arg++;
-        Argument *xincarg = in_arg;
-        in_arg++;
-        Argument *yfuncarg = in_arg;
-        in_arg++;
-        Argument *yincarg = in_arg;
 
         bool xcache = !gutils->isConstantValue(call.getArgOperand(3)) &&
                       Mode != DerivativeMode::ForwardMode &&

@@ -4024,9 +4024,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       auto BarrierInst = Arch == Triple::amdgcn
                              ? (llvm::Intrinsic::ID)Intrinsic::amdgcn_s_barrier
                              : (llvm::Intrinsic::ID)Intrinsic::nvvm_barrier0;
-      cast<CallInst>(instbuilder.CreateCall(
+      instbuilder.CreateCall(
           Intrinsic::getDeclaration(gutils->newFunc->getParent(), BarrierInst),
-          {}));
+          {});
       OldEntryInsts->moveAfter(entry);
       sharedBlock->moveAfter(entry);
       IRBuilder<> sbuilder(sharedBlock);
