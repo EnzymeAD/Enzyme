@@ -149,11 +149,16 @@ public:
               bool intsAreLegalSubPointer = false) {
     size_t SeqSize = Seq.size();
     if (SeqSize > EnzymeMaxTypeDepth) {
-      if (EnzymeTypeWarning)
-        llvm::errs() << "not handling more than " << EnzymeMaxTypeDepth
-                     << " pointer lookups deep dt:" << str()
-                     << " adding v: " << to_string(Seq) << ": " << CT.str()
-                     << "\n";
+      if (EnzymeTypeWarning) {
+        if (CustomErrorHandler) {
+          CustomErrorHandler("TypeAnalysisDepthLimit", nullptr,
+                             ErrorType::TypeDepthExceeded, this);
+        } else
+          llvm::errs() << "not handling more than " << EnzymeMaxTypeDepth
+                       << " pointer lookups deep dt:" << str()
+                       << " adding v: " << to_string(Seq) << ": " << CT.str()
+                       << "\n";
+      }
       return false;
     }
     if (SeqSize == 0) {
@@ -376,8 +381,7 @@ public:
         if (CustomErrorHandler) {
           CustomErrorHandler("TypeAnalysisDepthLimit", wrap(orig),
                              ErrorType::TypeDepthExceeded, this);
-        }
-        if (orig) {
+        } else if (orig) {
           EmitWarning("TypeAnalysisDepthLimit", *orig, *orig,
                       " not handling more than ", EnzymeMaxTypeDepth,
                       " pointer lookups deep dt: ", str(), " only(", Off, ")");
