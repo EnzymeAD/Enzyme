@@ -46,7 +46,7 @@
 extern "C" {
 extern llvm::cl::opt<int> MaxTypeOffset;
 extern llvm::cl::opt<bool> EnzymeTypeWarning;
-extern llvm::cl::opt<int> EnzymeMaxTypeDepth;
+extern llvm::cl::opt<uint> EnzymeMaxTypeDepth;
 }
 
 /// Helper function to print a vector of ints to a string
