@@ -42,11 +42,12 @@
 #include "BaseType.h"
 #include "ConcreteType.h"
 
+
 /// Maximum offset for type trees to keep
 extern "C" {
 extern llvm::cl::opt<int> MaxTypeOffset;
 extern llvm::cl::opt<bool> EnzymeTypeWarning;
-constexpr int EnzymeMaxTypeDepth = 6;
+extern llvm::cl::opt<int> EnzymeMaxTypeDepth;
 }
 
 /// Helper function to print a vector of ints to a string
