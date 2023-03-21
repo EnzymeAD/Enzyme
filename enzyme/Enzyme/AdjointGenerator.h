@@ -2508,6 +2508,7 @@ public:
       }
       goto def;
     }
+    case Instruction::SDiv:
     case Instruction::Shl:
     case Instruction::Mul:
     case Instruction::Sub:
