@@ -92,19 +92,6 @@ void addToGradient(Value oldGradient, Value addedGradient, OpBuilder &builder,
   gutils->mapInvertPointer(oldGradient, gradient, builder);
 }
 
-void defaultClearGradient(Operation *op, OpBuilder &builder,
-                          MGradientUtilsReverse *gutils) {
-  Value result = op->getOpResult(0);
-  if (gutils->invertedPointersGlobal.contains(result)) {
-    FloatType floatType = result.getType().cast<FloatType>();
-    APFloat apf(floatType.getFloatSemantics(), 0);
-
-    Value gradient =
-        builder.create<arith::ConstantFloatOp>(op->getLoc(), apf, floatType);
-    gutils->mapInvertPointer(result, gradient, builder);
-  }
-}
-
 struct AddFOpInterfaceReverse
     : public ReverseAutoDiffOpInterface::ExternalModel<AddFOpInterfaceReverse,
                                                        arith::AddFOp> {

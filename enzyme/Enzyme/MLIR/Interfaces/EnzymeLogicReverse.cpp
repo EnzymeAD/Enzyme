@@ -42,9 +42,9 @@ MEnzymeLogic::getDominatorToposort(MGradientUtilsReverse *gutils,
 
 void MEnzymeLogic::mapInvertArguments(Block *oBB, Block *reverseBB,
                                       MGradientUtilsReverse *gutils) {
+  OpBuilder builder(reverseBB, reverseBB->begin());
   for (int i = 0; i < (int)gutils->mapBlockArguments[oBB].size(); i++) {
     auto x = gutils->mapBlockArguments[oBB][i];
-    OpBuilder builder(reverseBB, reverseBB->begin());
     if (auto iface = x.second.getType().dyn_cast<AutoDiffTypeInterface>()) {
       Value added = reverseBB->getArgument(i);
       if (gutils->hasInvertPointer(x.second)) {

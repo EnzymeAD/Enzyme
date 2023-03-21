@@ -183,11 +183,7 @@ The value v must have an invert pointer
 */
 Value mlir::enzyme::MGradientUtilsReverse::invertPointerM(Value v,
                                                           OpBuilder &builder) {
-  if (invertedPointers.contains(v)) {
-    assert(onlyUsedInParentBlock(v));
-    return invertedPointers.lookupOrNull(v);
-  } else if (invertedPointersGlobal.contains(v)) {
-    assert(!onlyUsedInParentBlock(v));
+  if (invertedPointersGlobal.contains(v)) {
     Value gradient = invertedPointersGlobal.lookupOrNull(v);
     Type type = gradient.getType();
 
@@ -218,16 +214,12 @@ Value mlir::enzyme::MGradientUtilsReverse::invertPointerM(Value v,
 
 void mlir::enzyme::MGradientUtilsReverse::mapInvertPointer(
     mlir::Value v, mlir::Value invertValue, OpBuilder &builder) {
-  if (!invertedPointersGlobal.contains(v) && onlyUsedInParentBlock(v)) {
-    invertedPointers.map(v, invertValue);
-  } else {
-    if (!invertedPointersGlobal.contains(v)) {
-      Value g = insertInitGradient(v, builder);
-      invertedPointersGlobal.map(v, g);
-    }
-    Value gradient = invertedPointersGlobal.lookupOrNull(v);
-    builder.create<enzyme::SetOp>(v.getLoc(), gradient, invertValue);
+  if (!invertedPointersGlobal.contains(v)) {
+    Value g = insertInitGradient(v, builder);
+    invertedPointersGlobal.map(v, g);
   }
+  Value gradient = invertedPointersGlobal.lookupOrNull(v);
+  builder.create<enzyme::SetOp>(v.getLoc(), gradient, invertValue);
 }
 
 Value mlir::enzyme::MGradientUtilsReverse::getShadowValue(mlir::Value v) {
@@ -250,17 +242,17 @@ void mlir::enzyme::MGradientUtilsReverse::mapShadowValue(mlir::Value v,
 
 void mlir::enzyme::MGradientUtilsReverse::clearValue(mlir::Value v,
                                                      OpBuilder &builder) {
-  if (invertedPointers.contains(v)) {
-    // Do nothing
-  } else if (invertedPointersGlobal.contains(v)) {
-    Value gradient = invertedPointersGlobal.lookupOrNull(v);
-    Type type = cast<GradientType>(gradient.getType()).getBasetype();
-    if (auto iface = dyn_cast<AutoDiffTypeInterface>(type)) {
-      Value zero = iface.createNullValue(builder, v.getLoc());
-      builder.create<enzyme::SetOp>(v.getLoc(), gradient, zero);
-    } else {
-      llvm_unreachable(
-          "Type does not have an associated AutoDiffTypeInterface");
+  if (invertedPointersGlobal.contains(v)) {
+    if (!onlyUsedInParentBlock(v)) { // TODO is this necessary?
+      Value gradient = invertedPointersGlobal.lookupOrNull(v);
+      Type type = cast<GradientType>(gradient.getType()).getBasetype();
+      if (auto iface = dyn_cast<AutoDiffTypeInterface>(type)) {
+        Value zero = iface.createNullValue(builder, v.getLoc());
+        builder.create<enzyme::SetOp>(v.getLoc(), gradient, zero);
+      } else {
+        llvm_unreachable(
+            "Type does not have an associated AutoDiffTypeInterface");
+      }
     }
   } else if (invertedPointersShadow.contains(v)) {
     Value gradient = invertedPointersShadow.lookupOrNull(v);
@@ -269,8 +261,7 @@ void mlir::enzyme::MGradientUtilsReverse::clearValue(mlir::Value v,
 }
 
 bool mlir::enzyme::MGradientUtilsReverse::hasInvertPointer(mlir::Value v) {
-  return (invertedPointers.contains(v)) ||
-         (invertedPointersGlobal.contains(v)) ||
+  return (invertedPointersGlobal.contains(v)) ||
          (invertedPointersShadow.contains(v));
 }
 
@@ -368,20 +359,8 @@ MGradientUtilsReverse *MGradientUtilsReverse::CreateFromClone(
     DIFFE_TYPE retType, bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
     ReturnType returnValue, mlir::Type additionalArg,
     SymbolTableCollection &symbolTable_) {
-  std::string prefix;
 
-  switch (mode_) {
-  case DerivativeMode::ForwardMode:
-  case DerivativeMode::ForwardModeSplit:
-    assert(false);
-    break;
-  case DerivativeMode::ReverseModeCombined:
-  case DerivativeMode::ReverseModeGradient:
-    prefix = "diffe";
-    break;
-  case DerivativeMode::ReverseModePrimal:
-    llvm_unreachable("invalid DerivativeMode: ReverseModePrimal\n");
-  }
+  std::string prefix = "diffe";
 
   if (width > 1)
     prefix += std::to_string(width);
