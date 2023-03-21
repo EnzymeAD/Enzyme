@@ -7348,7 +7348,6 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
       case Intrinsic::lifetime_end:
         break;
       case Intrinsic::memset: {
-        bool first = true;
         stores.insert(II);
         storingOps.insert(II);
         break;
