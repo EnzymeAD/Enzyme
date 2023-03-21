@@ -4856,6 +4856,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
       "_ZNSt8ios_baseC2Ev",
       "_ZNSo9_M_insertIdEERSoT_",
       "malloc_usable_size",
+      "_ZNKSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE7compareEPKc",
       "_ZNSt13basic_filebufIcSt11char_traitsIcEEC1Ev",
       "_ZNSt15basic_streambufIcSt11char_traitsIcEE6xsputnEPKcl",
       "_ZNSt9basic_iosIcSt11char_traitsIcEE4initEPSt15basic_streambufIcS1_E",
