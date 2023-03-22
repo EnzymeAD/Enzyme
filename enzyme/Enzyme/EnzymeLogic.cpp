@@ -56,6 +56,7 @@
 
 #include "llvm/Support/AMDGPUMetadata.h"
 
+#include "DiffeGradientUtils.h"
 #include "FunctionUtils.h"
 #include "GradientUtils.h"
 #include "InstructionBatcher.h"
@@ -637,8 +638,9 @@ void calculateUnusedValuesInFunction(
     if (pair.second.size() == 0)
       continue;
 
-    bool primalNeededInReverse = is_value_needed_in_reverse<ValueType::Primal>(
-        gutils, pair.first, mode, CacheResults, oldUnreachable);
+    bool primalNeededInReverse =
+        DifferentialUseAnalysis::is_value_needed_in_reverse<ValueType::Primal>(
+            gutils, pair.first, mode, CacheResults, oldUnreachable);
     bool cacheWholeAllocation = false;
 
     if (gutils->knownRecomputeHeuristic.count(pair.first)) {
@@ -688,8 +690,8 @@ void calculateUnusedValuesInFunction(
   calculateUnusedValues(
       func, unnecessaryValues, unnecessaryInstructions, returnValue,
       [&](const Value *val) {
-        bool ivn = is_value_needed_in_reverse<ValueType::Primal>(
-            gutils, val, mode, PrimalSeen, oldUnreachable);
+        bool ivn = DifferentialUseAnalysis::is_value_needed_in_reverse<
+            ValueType::Primal>(gutils, val, mode, PrimalSeen, oldUnreachable);
         return ivn;
       },
       [&](const Instruction *inst) {
@@ -860,8 +862,9 @@ void calculateUnusedValuesInFunction(
               isa<MemSetInst>(inst) || funcName == "julia.write_barrier") {
             for (auto pair : gutils->rematerializableAllocations) {
               if (pair.second.stores.count(inst)) {
-                if (is_value_needed_in_reverse<ValueType::Primal>(
-                        gutils, pair.first, mode, PrimalSeen, oldUnreachable)) {
+                if (DifferentialUseAnalysis::is_value_needed_in_reverse<
+                        ValueType::Primal>(gutils, pair.first, mode, PrimalSeen,
+                                           oldUnreachable)) {
                   return UseReq::Need;
                 }
               }
@@ -869,8 +872,8 @@ void calculateUnusedValuesInFunction(
             return UseReq::Recur;
           }
         }
-        bool ivn = is_value_needed_in_reverse<ValueType::Primal>(
-            gutils, inst, mode, PrimalSeen, oldUnreachable);
+        bool ivn = DifferentialUseAnalysis::is_value_needed_in_reverse<
+            ValueType::Primal>(gutils, inst, mode, PrimalSeen, oldUnreachable);
         if (ivn) {
           return UseReq::Need;
         }
@@ -882,10 +885,10 @@ void calculateUnusedValuesInFunction(
                  << ": mode=" << to_string(mode) << "\n";
     for (auto &BB : func)
       for (auto &I : BB) {
-        bool ivn = is_value_needed_in_reverse<ValueType::Primal>(
-            gutils, &I, mode, PrimalSeen, oldUnreachable);
-        bool isn = is_value_needed_in_reverse<ValueType::Shadow>(
-            gutils, &I, mode, PrimalSeen, oldUnreachable);
+        bool ivn = DifferentialUseAnalysis::is_value_needed_in_reverse<
+            ValueType::Primal>(gutils, &I, mode, PrimalSeen, oldUnreachable);
+        bool isn = DifferentialUseAnalysis::is_value_needed_in_reverse<
+            ValueType::Shadow>(gutils, &I, mode, PrimalSeen, oldUnreachable);
         llvm::errs() << I << " ivn=" << (int)ivn << " isn: " << (int)isn;
         auto found = gutils->knownRecomputeHeuristic.find(&I);
         if (found != gutils->knownRecomputeHeuristic.end()) {
@@ -896,10 +899,10 @@ void calculateUnusedValuesInFunction(
     llvm::errs() << "unnecessaryValues of " << func.getName()
                  << ": mode=" << to_string(mode) << "\n";
     for (auto a : unnecessaryValues) {
-      bool ivn = is_value_needed_in_reverse<ValueType::Primal>(
-          gutils, a, mode, PrimalSeen, oldUnreachable);
-      bool isn = is_value_needed_in_reverse<ValueType::Shadow>(
-          gutils, a, mode, PrimalSeen, oldUnreachable);
+      bool ivn = DifferentialUseAnalysis::is_value_needed_in_reverse<
+          ValueType::Primal>(gutils, a, mode, PrimalSeen, oldUnreachable);
+      bool isn = DifferentialUseAnalysis::is_value_needed_in_reverse<
+          ValueType::Shadow>(gutils, a, mode, PrimalSeen, oldUnreachable);
       llvm::errs() << *a << " ivn=" << (int)ivn << " isn: " << (int)isn;
       auto found = gutils->knownRecomputeHeuristic.find(a);
       if (found != gutils->knownRecomputeHeuristic.end()) {
@@ -1182,8 +1185,8 @@ bool legalCombinedForwardReverse(
   if (isa<PointerType>(origop->getType())) {
     bool sret = subretused;
     if (!sret && !gutils->isConstantValue(origop)) {
-      sret = is_value_needed_in_reverse<ValueType::Shadow>(
-          gutils, origop, gutils->mode, oldUnreachable);
+      sret = DifferentialUseAnalysis::is_value_needed_in_reverse<
+          ValueType::Shadow>(gutils, origop, gutils->mode, oldUnreachable);
     }
 
     if (sret) {
@@ -1246,8 +1249,9 @@ bool legalCombinedForwardReverse(
     if (I != origop && unnecessaryInstructions.count(I)) {
       bool needShadow = false;
       if (!gutils->isConstantValue(I)) {
-        needShadow = is_value_needed_in_reverse<ValueType::Shadow>(
-            gutils, I, DerivativeMode::ReverseModeCombined, oldUnreachable);
+        needShadow = DifferentialUseAnalysis::is_value_needed_in_reverse<
+            ValueType::Shadow>(gutils, I, DerivativeMode::ReverseModeCombined,
+                               oldUnreachable);
       }
       if (!needShadow) {
         if (gutils->isConstantInstruction(I) || !isa<CallInst>(I)) {
@@ -1280,7 +1284,7 @@ bool legalCombinedForwardReverse(
       return;
     }
     if (!I->getType()->isVoidTy() &&
-        is_value_needed_in_reverse<ValueType::Primal>(
+        DifferentialUseAnalysis::is_value_needed_in_reverse<ValueType::Primal>(
             gutils, I, DerivativeMode::ReverseModeCombined, oldUnreachable)) {
       legal = false;
       if (EnzymePrintPerf) {
@@ -1295,7 +1299,7 @@ bool legalCombinedForwardReverse(
     }
     if (!I->getType()->isVoidTy() &&
         gutils->TR.query(I)[{-1}].isPossiblePointer() &&
-        is_value_needed_in_reverse<ValueType::Shadow>(
+        DifferentialUseAnalysis::is_value_needed_in_reverse<ValueType::Shadow>(
             gutils, I, DerivativeMode::ReverseModeCombined, oldUnreachable)) {
       legal = false;
       if (EnzymePrintPerf) {
