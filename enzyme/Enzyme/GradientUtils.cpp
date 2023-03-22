@@ -4124,6 +4124,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
     return ConstantExpr::getPointerCast(GV, fn->getType());
   }
   }
+  llvm_unreachable("Illegal state: unknown mode for GetOrCreateShadowFunction");
 }
 
 Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
@@ -7385,8 +7386,11 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
           idx++;
           continue;
         }
-        auto F = getFunctionFromCall(CI);
         auto TT = TR.query(prev)[{-1, -1}];
+
+#if LLVM_VERSION_MAJOR <= 13
+        auto F = getFunctionFromCall(CI);
+#endif
 
 #if LLVM_VERSION_MAJOR >= 8
         bool NoCapture = CI->doesNotCapture(idx);
