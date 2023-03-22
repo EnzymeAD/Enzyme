@@ -5436,6 +5436,11 @@ TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
     }
     return Out;
   }
+  // Unhandled/unknown Type
+  llvm::errs() << "Error Unknown Type: " << *ET << "\n";
+  assert(0 && "Error Unknown Type: ");
+  llvm_unreachable("Error Unknown Type: ");
+  // return TypeTree();
 }
 
 Function *TypeResults::getFunction() const {
