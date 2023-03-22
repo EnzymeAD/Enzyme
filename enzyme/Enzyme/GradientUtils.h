@@ -34,8 +34,14 @@
 
 #include <llvm/Config/llvm-config.h>
 
-#include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/SmallPtrSet.h"
+#include "ActivityAnalysis.h"
+#include "DebugUtils.h"
+#include "Enums.h"
+#include "MapUtils.h"
+#include "SCEV/ScalarEvolution.h"
+#include "SCEV/ScalarEvolutionExpander.h"
+#include "Utils.h"
+
 #include "llvm/ADT/SmallVector.h"
 
 #include "llvm/IR/BasicBlock.h"

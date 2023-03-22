@@ -38,6 +38,7 @@
 #include <string>
 #include <vector>
 
+#include "../Runtime.h"
 #include "../Utils.h"
 #include "BaseType.h"
 #include "ConcreteType.h"

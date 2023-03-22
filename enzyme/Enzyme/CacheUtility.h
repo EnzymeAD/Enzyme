@@ -38,6 +38,7 @@
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
 #include "FunctionUtils.h"
+#include "MapUtils.h"
 #include "MustExitScalarEvolution.h"
 
 extern "C" {

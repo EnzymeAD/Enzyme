@@ -54,7 +54,6 @@
 #endif
 
 #include <map>
-#include <set>
 
 #include "llvm/IR/DiagnosticInfo.h"
 
@@ -66,21 +65,9 @@ namespace llvm {
 class ScalarEvolution;
 }
 
-enum class ErrorType {
-  NoDerivative = 0,
-  NoShadow = 1,
-  IllegalTypeAnalysis = 2,
-  NoType = 3,
-  IllegalFirstPointer = 4,
-  InternalError = 5,
-  TypeDepthExceeded = 6
-};
-
 extern "C" {
 /// Print additional debug info relevant to performance
 extern llvm::cl::opt<bool> EnzymePrintPerf;
-extern void (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
-                                  const void *);
 }
 
 llvm::SmallVector<llvm::Instruction *, 2> PostCacheStore(llvm::StoreInst *SI,
@@ -194,48 +181,6 @@ template <typename T> static inline T min(T a, T b) {
   return b;
 }
 
-/// Output a set as a string
-template <typename T>
-static inline std::string to_string(const std::set<T> &us) {
-  std::string s = "{";
-  for (const auto &y : us)
-    s += std::to_string(y) + ",";
-  return s + "}";
-}
-
-/// Print a map, optionally with a shouldPrint function
-/// to decide to print a given value
-template <typename T, typename N>
-static inline void dumpMap(
-    const llvm::ValueMap<T, N> &o,
-    std::function<bool(const llvm::Value *)> shouldPrint = [](T) {
-      return true;
-    }) {
-  llvm::errs() << "<begin dump>\n";
-  for (auto a : o) {
-    if (shouldPrint(a.first))
-      llvm::errs() << "key=" << *a.first << " val=" << *a.second << "\n";
-  }
-  llvm::errs() << "</end dump>\n";
-}
-
-/// Print a set
-template <typename T>
-static inline void dumpSet(const llvm::SmallPtrSetImpl<T *> &o) {
-  llvm::errs() << "<begin dump>\n";
-  for (auto a : o)
-    llvm::errs() << *a << "\n";
-  llvm::errs() << "</end dump>\n";
-}
-
-template <typename T>
-static inline void dumpSet(const llvm::SetVector<T *> &o) {
-  llvm::errs() << "<begin dump>\n";
-  for (auto a : o)
-    llvm::errs() << *a << "\n";
-  llvm::errs() << "</end dump>\n";
-}
-
 /// Get the next non-debug instruction, if one exists
 static inline llvm::Instruction *
 getNextNonDebugInstructionOrNull(llvm::Instruction *Z) {
@@ -268,246 +213,6 @@ static inline llvm::MDNode *hasMetadata(const llvm::GlobalObject *O,
 static inline llvm::MDNode *hasMetadata(const llvm::Instruction *O,
                                         llvm::StringRef kind) {
   return O->getMetadata(kind);
-}
-
-/// Potential return type of generated functions
-enum class ReturnType {
-  /// Return is a struct of all args and the original return
-  ArgsWithReturn,
-  /// Return is a struct of all args and two of the original return
-  ArgsWithTwoReturns,
-  /// Return is a struct of all args
-  Args,
-  /// Return is a tape type and the original return
-  TapeAndReturn,
-  /// Return is a tape type and the two of the original return
-  TapeAndTwoReturns,
-  /// Return is a tape type
-  Tape,
-  TwoReturns,
-  Return,
-  Void,
-};
-
-/// Potential differentiable argument classifications
-enum class DIFFE_TYPE {
-  OUT_DIFF = 0,  // add differential to an output struct
-  DUP_ARG = 1,   // duplicate the argument and store differential inside
-  CONSTANT = 2,  // no differential
-  DUP_NONEED = 3 // duplicate this argument and store differential inside, but
-                 // don't need the forward
-};
-
-enum class BATCH_TYPE {
-  SCALAR = 0,
-  VECTOR = 1,
-};
-
-enum class DerivativeMode {
-  ForwardMode = 0,
-  ReverseModePrimal = 1,
-  ReverseModeGradient = 2,
-  ReverseModeCombined = 3,
-  ForwardModeSplit = 4,
-};
-
-enum class ProbProgMode {
-  Trace = 0,
-  Condition = 1,
-};
-
-/// Classification of value as an original program
-/// variable, a derivative variable, neither, or both.
-/// This type is used both in differential use analysis
-/// and to describe argument bundles.
-enum class ValueType {
-  // A value that is neither a value in the original
-  // program, nor the derivative.
-  None = 0,
-  // The original program value
-  Primal = 1,
-  // The derivative value
-  Shadow = 2,
-  // Both the original program value and the shadow.
-  Both = Primal | Shadow,
-};
-
-static inline std::string to_string(ValueType mode) {
-  switch (mode) {
-  case ValueType::None:
-    return "None";
-  case ValueType::Primal:
-    return "Primal";
-  case ValueType::Shadow:
-    return "Shadow";
-  case ValueType::Both:
-    return "Both";
-  }
-  llvm_unreachable("illegal valuetype");
-}
-
-typedef std::pair<const llvm::Value *, ValueType> UsageKey;
-
-static inline std::string to_string(DerivativeMode mode) {
-  switch (mode) {
-  case DerivativeMode::ForwardMode:
-    return "ForwardMode";
-  case DerivativeMode::ForwardModeSplit:
-    return "ForwardModeSplit";
-  case DerivativeMode::ReverseModePrimal:
-    return "ReverseModePrimal";
-  case DerivativeMode::ReverseModeGradient:
-    return "ReverseModeGradient";
-  case DerivativeMode::ReverseModeCombined:
-    return "ReverseModeCombined";
-  }
-  llvm_unreachable("illegal derivative mode");
-}
-
-/// Convert DIFFE_TYPE to a string
-static inline std::string to_string(DIFFE_TYPE t) {
-  switch (t) {
-  case DIFFE_TYPE::OUT_DIFF:
-    return "OUT_DIFF";
-  case DIFFE_TYPE::CONSTANT:
-    return "CONSTANT";
-  case DIFFE_TYPE::DUP_ARG:
-    return "DUP_ARG";
-  case DIFFE_TYPE::DUP_NONEED:
-    return "DUP_NONEED";
-  default:
-    assert(0 && "illegal diffetype");
-    return "";
-  }
-}
-
-/// Convert ReturnType to a string
-static inline std::string to_string(ReturnType t) {
-  switch (t) {
-  case ReturnType::ArgsWithReturn:
-    return "ArgsWithReturn";
-  case ReturnType::ArgsWithTwoReturns:
-    return "ArgsWithTwoReturns";
-  case ReturnType::Args:
-    return "Args";
-  case ReturnType::TapeAndReturn:
-    return "TapeAndReturn";
-  case ReturnType::TapeAndTwoReturns:
-    return "TapeAndTwoReturns";
-  case ReturnType::Tape:
-    return "Tape";
-  case ReturnType::TwoReturns:
-    return "TwoReturns";
-  case ReturnType::Return:
-    return "Return";
-  case ReturnType::Void:
-    return "Void";
-  }
-  llvm_unreachable("illegal ReturnType");
-}
-
-#include <set>
-
-/// Attempt to automatically detect the differentiable
-/// classification based off of a given type
-static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode,
-                                  bool integersAreConstant,
-                                  std::set<llvm::Type *> &seen) {
-  assert(arg);
-  if (seen.find(arg) != seen.end())
-    return DIFFE_TYPE::CONSTANT;
-  seen.insert(arg);
-
-  if (arg->isVoidTy() || arg->isEmptyTy()) {
-    return DIFFE_TYPE::CONSTANT;
-  }
-
-  if (arg->isPointerTy()) {
-#if LLVM_VERSION_MAJOR >= 15
-    if (!arg->getContext().supportsTypedPointers()) {
-      return DIFFE_TYPE::DUP_ARG;
-    }
-#endif
-    switch (whatType(arg->getPointerElementType(), mode, integersAreConstant,
-                     seen)) {
-    case DIFFE_TYPE::OUT_DIFF:
-      return DIFFE_TYPE::DUP_ARG;
-    case DIFFE_TYPE::CONSTANT:
-      return DIFFE_TYPE::CONSTANT;
-    case DIFFE_TYPE::DUP_ARG:
-      return DIFFE_TYPE::DUP_ARG;
-    case DIFFE_TYPE::DUP_NONEED:
-      llvm_unreachable("impossible case");
-    }
-    assert(arg);
-    llvm::errs() << "arg: " << *arg << "\n";
-    assert(0 && "Cannot handle type0");
-    return DIFFE_TYPE::CONSTANT;
-  } else if (arg->isArrayTy()) {
-    return whatType(llvm::cast<llvm::ArrayType>(arg)->getElementType(), mode,
-                    integersAreConstant, seen);
-  } else if (arg->isStructTy()) {
-    auto st = llvm::cast<llvm::StructType>(arg);
-    if (st->getNumElements() == 0)
-      return DIFFE_TYPE::CONSTANT;
-
-    auto ty = DIFFE_TYPE::CONSTANT;
-    for (unsigned i = 0; i < st->getNumElements(); ++i) {
-      auto midTy =
-          whatType(st->getElementType(i), mode, integersAreConstant, seen);
-      switch (midTy) {
-      case DIFFE_TYPE::OUT_DIFF:
-        switch (ty) {
-        case DIFFE_TYPE::OUT_DIFF:
-        case DIFFE_TYPE::CONSTANT:
-          ty = DIFFE_TYPE::OUT_DIFF;
-          break;
-        case DIFFE_TYPE::DUP_ARG:
-          ty = DIFFE_TYPE::DUP_ARG;
-          return ty;
-        case DIFFE_TYPE::DUP_NONEED:
-          llvm_unreachable("impossible case");
-        }
-        break;
-      case DIFFE_TYPE::CONSTANT:
-        switch (ty) {
-        case DIFFE_TYPE::OUT_DIFF:
-          ty = DIFFE_TYPE::OUT_DIFF;
-          break;
-        case DIFFE_TYPE::CONSTANT:
-          break;
-        case DIFFE_TYPE::DUP_ARG:
-          ty = DIFFE_TYPE::DUP_ARG;
-          return ty;
-        case DIFFE_TYPE::DUP_NONEED:
-          llvm_unreachable("impossible case");
-        }
-        break;
-      case DIFFE_TYPE::DUP_ARG:
-        return DIFFE_TYPE::DUP_ARG;
-      case DIFFE_TYPE::DUP_NONEED:
-        llvm_unreachable("impossible case");
-      }
-    }
-    return ty;
-  } else if (arg->isIntOrIntVectorTy() || arg->isFunctionTy()) {
-    return integersAreConstant ? DIFFE_TYPE::CONSTANT : DIFFE_TYPE::DUP_ARG;
-  } else if (arg->isFPOrFPVectorTy()) {
-    return (mode == DerivativeMode::ForwardMode ||
-            mode == DerivativeMode::ForwardModeSplit)
-               ? DIFFE_TYPE::DUP_ARG
-               : DIFFE_TYPE::OUT_DIFF;
-  } else {
-    assert(arg);
-    llvm::errs() << "arg: " << *arg << "\n";
-    assert(0 && "Cannot handle type");
-    return DIFFE_TYPE::CONSTANT;
-  }
-}
-
-static inline DIFFE_TYPE whatType(llvm::Type *arg, DerivativeMode mode) {
-  std::set<llvm::Type *> seen;
-  return whatType(arg, mode, /*intconst*/ true, seen);
 }
 
 /// Check whether this instruction is returned
@@ -629,37 +334,6 @@ llvm::Function *getOrInsertDifferentialMPI_Wait(llvm::Module &M,
 
 /// Create function to computer nearest power of two
 llvm::Value *nextPowerOfTwo(llvm::IRBuilder<> &B, llvm::Value *V);
-
-/// Insert into a map
-template <typename K, typename V>
-static inline typename std::map<K, V>::iterator
-insert_or_assign(std::map<K, V> &map, K &key, V &&val) {
-  auto found = map.find(key);
-  if (found != map.end()) {
-    map.erase(found);
-  }
-  return map.emplace(key, val).first;
-}
-
-/// Insert into a map
-template <typename K, typename V>
-static inline typename std::map<K, V>::iterator
-insert_or_assign2(std::map<K, V> &map, K key, V val) {
-  auto found = map.find(key);
-  if (found != map.end()) {
-    map.erase(found);
-  }
-  return map.emplace(key, val).first;
-}
-
-template <typename K, typename V>
-static inline V *findInMap(std::map<K, V> &map, K key) {
-  auto found = map.find(key);
-  if (found == map.end())
-    return nullptr;
-  V *val = &found->second;
-  return val;
-}
 
 #include "llvm/IR/CFG.h"
 #include <deque>
@@ -983,23 +657,6 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
                                    ConcreteType CT, llvm::Type *intType,
                                    llvm::IRBuilder<> &B2);
 
-class AssertingReplacingVH final : public llvm::CallbackVH {
-public:
-  AssertingReplacingVH() = default;
-
-  AssertingReplacingVH(llvm::Value *new_value) { setValPtr(new_value); }
-
-  void deleted() override final {
-    assert(0 && "attempted to delete value with remaining handle use");
-    llvm_unreachable("attempted to delete value with remaining handle use");
-  }
-
-  void allUsesReplacedWith(llvm::Value *new_value) override final {
-    setValPtr(new_value);
-  }
-  virtual ~AssertingReplacingVH() {}
-};
-
 template <typename T> static inline llvm::Function *getFunctionFromCall(T *op) {
   llvm::Function *called = nullptr;
   using namespace llvm;
@@ -1122,15 +779,6 @@ static inline std::vector<ssize_t> getDeallocationIndicesFromCall(T *op) {
   }
   return vinds;
 }
-
-llvm::Function *
-getOrInsertDifferentialWaitallSave(llvm::Module &M,
-                                   llvm::ArrayRef<llvm::Type *> T,
-                                   llvm::PointerType *reqType);
-
-void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
-                            llvm::Value *shadow, const char *Message,
-                            llvm::DebugLoc &&loc, llvm::Instruction *orig);
 
 llvm::Function *GetFunctionFromValue(llvm::Value *fn);
 

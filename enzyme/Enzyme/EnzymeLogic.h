@@ -44,6 +44,7 @@
 #include "llvm/ADT/SmallVector.h"
 
 #include "ActivityAnalysis.h"
+#include "Enums.h"
 #include "FunctionUtils.h"
 #include "TraceUtils.h"
 #include "TypeAnalysis/TypeAnalysis.h"

@@ -44,6 +44,7 @@
 
 #include "llvm/IR/InlineAsm.h"
 
+#include "../DebugUtils.h"
 #include "../Utils.h"
 #include "TypeAnalysis.h"
 

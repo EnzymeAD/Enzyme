@@ -41,6 +41,7 @@
 
 #include "llvm/IR/InstVisitor.h"
 
+#include "Enums.h"
 #include "TypeAnalysis/TypeAnalysis.h"
 #include "Utils.h"
 

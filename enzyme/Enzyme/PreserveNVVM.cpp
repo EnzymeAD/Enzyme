@@ -42,6 +42,7 @@
 
 #include <map>
 
+#include "Enums.h"
 #include "PreserveNVVM.h"
 #include "Utils.h"
 

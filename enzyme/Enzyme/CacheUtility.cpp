@@ -26,6 +26,7 @@
 
 #include "CacheUtility.h"
 #include "FunctionUtils.h"
+#include "Runtime.h"
 
 using namespace llvm;
 

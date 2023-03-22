@@ -31,6 +31,7 @@
 #include "SCEV/ScalarEvolution.h"
 #include "SCEV/ScalarEvolutionExpander.h"
 
+#include "Enums.h"
 #include "Utils.h"
 
 #include "llvm/Analysis/AliasAnalysis.h"

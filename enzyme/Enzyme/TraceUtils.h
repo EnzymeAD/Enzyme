@@ -36,6 +36,7 @@
 #include "llvm/IR/Value.h"
 #include "llvm/IR/ValueMap.h"
 
+#include "Enums.h"
 #include "TraceInterface.h"
 #include "Utils.h"
 

@@ -49,6 +49,7 @@
 
 #include "llvm/Support/CommandLine.h"
 
+#include "../DebugUtils.h"
 #include "../FunctionUtils.h"
 #include "../Utils.h"
 #include "TypeAnalysis.h"
