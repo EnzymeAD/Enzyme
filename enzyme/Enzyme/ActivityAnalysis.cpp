@@ -1041,6 +1041,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
   }
 #endif
 
+  if (auto GA = dyn_cast<GlobalAlias>(Val))
+    return isConstantValue(TR, GA->getAliasee());
+
   if (auto GI = dyn_cast<GlobalVariable>(Val)) {
     // If operating under the assumption globals are inactive unless
     // explicitly marked as active, this is inactive
