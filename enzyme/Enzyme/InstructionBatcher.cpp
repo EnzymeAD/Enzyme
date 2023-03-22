@@ -41,6 +41,7 @@
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
+#include "DiffeGradientUtils.h"
 #include "GradientUtils.h"
 
 using namespace llvm;
@@ -68,6 +69,8 @@ Value *InstructionBatcher::getNewOperand(unsigned int i, llvm::Value *op) {
   } else if (isa<Function>(op)) {
     return op;
   } else if (isa<GlobalValue>(op)) {
+    llvm::errs() << "unimplelemented GlobalValue!\n";
+    llvm_unreachable("unimplelemented GlobalValue!");
     // TODO: !!!
   } else if (toVectorize.count(op) != 0) {
     auto found = vectorizedValues.find(op);

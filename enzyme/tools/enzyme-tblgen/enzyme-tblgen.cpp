@@ -515,6 +515,10 @@ static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
   case GenDerivatives:
     emitDerivatives(records, os);
     return false;
+
+  default:
+    llvm::errs() << "unknown tablegen action!\n";
+    llvm_unreachable("unknown tablegen action!");
   }
 }
 
