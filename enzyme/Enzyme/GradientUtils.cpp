@@ -7388,10 +7388,13 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         }
         auto TT = TR.query(prev)[{-1, -1}];
 
+#if LLVM_VERSION_MAJOR >= 8 && LLVM_VERSION_MAJOR <= 13
+        auto F = getFunctionFromCall(CI);
+#endif
+
 #if LLVM_VERSION_MAJOR >= 8
         bool NoCapture = CI->doesNotCapture(idx);
 #else
-        auto F = getFunctionFromCall(CI);
         bool NoCapture =
             CI->dataOperandHasImpliedAttr(idx + 1, Attribute::NoCapture) ||
             (F && F->hasParamAttribute(idx, Attribute::NoCapture));
