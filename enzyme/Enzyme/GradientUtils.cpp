@@ -4124,9 +4124,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
     return ConstantExpr::getPointerCast(GV, fn->getType());
   }
   }
-  llvm::errs() << "unhandled mode\n";
-  llvm::errs() << to_string(mode) << "\n";
-  llvm_unreachable("unknown mode");
+  llvm_unreachable("Illegal state: unknown mode for GetOrCreateShadowFunction");
 }
 
 Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,

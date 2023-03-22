@@ -512,14 +512,13 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
 
 static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
   switch (action) {
-  case GenDerivatives: {
+  case GenDerivatives:
     emitDerivatives(records, os);
     return false;
-  }
-  default: {
+
+  default:
     llvm::errs() << "unknown tablegen action!\n";
     llvm_unreachable("unknown tablegen action!");
-  }
   }
 }
 
