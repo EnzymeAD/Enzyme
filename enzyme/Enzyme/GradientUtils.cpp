@@ -4124,6 +4124,9 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
     return ConstantExpr::getPointerCast(GV, fn->getType());
   }
   }
+  llvm::errs() << "unhandled mode\n";
+  llvm::errs() << to_string(mode) << "\n";
+  llvm_unreachable("unknown mode");
 }
 
 Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
@@ -7385,12 +7388,12 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
           idx++;
           continue;
         }
-        auto F = getFunctionFromCall(CI);
         auto TT = TR.query(prev)[{-1, -1}];
 
 #if LLVM_VERSION_MAJOR >= 8
         bool NoCapture = CI->doesNotCapture(idx);
 #else
+        auto F = getFunctionFromCall(CI);
         bool NoCapture =
             CI->dataOperandHasImpliedAttr(idx + 1, Attribute::NoCapture) ||
             (F && F->hasParamAttribute(idx, Attribute::NoCapture));
