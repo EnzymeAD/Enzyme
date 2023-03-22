@@ -7388,7 +7388,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         }
         auto TT = TR.query(prev)[{-1, -1}];
 
-#if LLVM_VERSION_MAJOR >= 8 && LLVM_VERSION_MAJOR <= 13
+#if LLVM_VERSION_MAJOR <= 13
         auto F = getFunctionFromCall(CI);
 #endif
 
