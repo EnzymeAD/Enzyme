@@ -49,6 +49,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Transforms/Scalar.h"
 
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #if LLVM_VERSION_MAJOR >= 11
 #include "llvm/Analysis/InlineAdvisor.h"
@@ -61,6 +62,7 @@
 #include "llvm/Analysis/TargetLibraryInfo.h"
 
 #include "ActivityAnalysis.h"
+#include "DiffeGradientUtils.h"
 #include "EnzymeLogic.h"
 #include "GradientUtils.h"
 #include "TraceInterface.h"

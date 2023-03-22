@@ -41,6 +41,7 @@
 #include "llvm/Transforms/Utils/Cloning.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
+#include "DiffeGradientUtils.h"
 #include "GradientUtils.h"
 
 using namespace llvm;

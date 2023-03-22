@@ -24,9 +24,12 @@
 //===----------------------------------------------------------------------===//
 #include "FunctionUtils.h"
 
+#include "DiffeGradientUtils.h"
 #include "EnzymeLogic.h"
 #include "GradientUtils.h"
 #include "LibraryFuncs.h"
+
+#include "llvm/ADT/Triple.h"
 
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DebugInfoMetadata.h"
