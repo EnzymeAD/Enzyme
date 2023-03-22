@@ -42,7 +42,12 @@
 #include "TypeAnalysis/TBAA.h"
 
 #define DEBUG_TYPE "enzyme"
+
+namespace EnzymeLLVM {
+
 using namespace llvm;
+
+namespace Enzyme {
 
 // Helper instruction visitor that generates adjoints
 template <class AugmentedReturnType = AugmentedReturn *>
@@ -12810,3 +12815,8 @@ public:
                                         subretused);
   }
 };
+
+}; // namespace Enzyme
+}; // namespace EnzymeLLVM
+
+using namespace EnzymeLLVM::Enzyme;
