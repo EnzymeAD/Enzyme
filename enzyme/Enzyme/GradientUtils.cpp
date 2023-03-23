@@ -4993,6 +4993,9 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         (const Value *)oval, InvertedPointerVH(this, antialloca)));
 
     return antialloca;
+  } else if (auto arg = dyn_cast<GlobalAlias>(oval)) {
+    Value *aliasTarget = arg->getAliasee();
+    return invertPointerM(aliasTarget, BuilderM);
   } else if (auto arg = dyn_cast<GlobalVariable>(oval)) {
     if (!hasMetadata(arg, "enzyme_shadow")) {
 
