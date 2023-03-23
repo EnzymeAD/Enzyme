@@ -195,17 +195,28 @@ void MEnzymeLogic::visitChildren(Block *oBB, Block *reverseBB,
 void MEnzymeLogic::handlePredecessors(Block *oBB, Block *newBB,
                                       Block *reverseBB,
                                       MGradientUtilsReverse *gutils,
-                                      buildReturnFunction buildReturnOp) {
+                                      buildReturnFunction buildReturnOp,
+                                      bool parentRegion) {
   OpBuilder revBuilder(reverseBB, reverseBB->end());
   if (oBB->hasNoPredecessors()) {
     SmallVector<mlir::Value> retargs;
-    assert(gutils->ArgDiffeTypes.size() == gutils->oldFunc.getNumArguments() &&
-           "Mismatch of activity array size vs # original function args");
-    for (const auto &[diffeType, oldArg] :
-         llvm::zip(gutils->ArgDiffeTypes,
-                   gutils->oldFunc.getFunctionBody().getArguments())) {
-      if (diffeType == DIFFE_TYPE::OUT_DIFF) {
-        retargs.push_back(gutils->invertPointerM(oldArg, revBuilder));
+    // We need different handling on the top level due to
+    // the presence of duplicated args since we don't yet have activity analysis
+    if (parentRegion) {
+      assert(gutils->ArgDiffeTypes.size() ==
+                 gutils->oldFunc.getNumArguments() &&
+             "Mismatch of activity array size vs # original function args");
+      for (const auto &[diffeType, oldArg] :
+           llvm::zip(gutils->ArgDiffeTypes, oBB->getArguments())) {
+        if (diffeType == DIFFE_TYPE::OUT_DIFF) {
+          retargs.push_back(gutils->invertPointerM(oldArg, revBuilder));
+        }
+      }
+    } else {
+      for (auto arg : oBB->getArguments()) {
+        if (gutils->hasInvertPointer(arg)) {
+          retargs.push_back(gutils->invertPointerM(arg, revBuilder));
+        }
       }
     }
     buildReturnOp(revBuilder, oBB->rbegin()->getLoc(), retargs);
@@ -345,7 +356,8 @@ void MEnzymeLogic::differentiate(MGradientUtilsReverse *gutils,
     mapInvertArguments(oBB, reverseBB, gutils);
     handleReturns(oBB, newBB, reverseBB, gutils, parentRegion);
     visitChildren(oBB, reverseBB, gutils);
-    handlePredecessors(oBB, newBB, reverseBB, gutils, buildFuncReturnOp);
+    handlePredecessors(oBB, newBB, reverseBB, gutils, buildFuncReturnOp,
+                       parentRegion);
   }
 }
 
