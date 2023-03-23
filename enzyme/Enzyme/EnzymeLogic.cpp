@@ -56,6 +56,8 @@
 
 #include "llvm/Support/AMDGPUMetadata.h"
 
+#include "llvm/ADT/Triple.h"
+
 #include "DiffeGradientUtils.h"
 #include "FunctionUtils.h"
 #include "GradientUtils.h"
