@@ -16,4 +16,30 @@ def DifferentiatePass : Pass<"enzyme"> {
   let constructor = "mlir::enzyme::createDifferentiatePass()";
 }
 
+def EnzymeOpsToMemRefPass : Pass<"convert-enzyme-to-memref"> {
+  let summary = "Lower custom Enzyme ops to the MemRef dialect";
+  let dependentDialects = [
+    "memref::MemRefDialect",
+    "arith::ArithDialect",
+    "scf::SCFDialect",
+    "cf::ControlFlowDialect",
+  ];
+  let constructor = "mlir::enzyme::createEnzymeToMemRefPass()";
+}
+
+def ShadowedGradientToCachePass : Pass<"convert-enzyme-shadowed-gradient-to-cache"> {
+  let summary = "Convert Enzyme Shadowed Gradient to Cache Ops";
+  let constructor = "mlir::enzyme::createShadowedGradientToCachePass()";
+}
+
+def RemoveUnusedEnzymeOpsPass : Pass<"remove-unnecessary-enzyme-ops"> {
+  let summary = "Remove Unnecessary Enzyme Ops";
+  let constructor = "mlir::enzyme::createRemoveUnusedEnzymeOpsPass()";
+}
+
+def LowerToLLVMEnzymePass : Pass<"lower-to-llvm-enzyme"> {
+  let summary = "Lower enzyme.diff ops to LLVM Enzyme-compatible calls";
+  let constructor = "mlir::enzyme::createLowerToLLVMEnzymePass()";
+}
+
 #endif // ENZYME_PASSES

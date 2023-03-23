@@ -10,6 +10,7 @@
 #define ENZYME_DIALECT
 
 include "mlir/IR/OpBase.td"
+include "mlir/IR/AttrTypeBase.td"
 
 //===----------------------------------------------------------------------===//
 // Enzyme dialect definition.
@@ -20,6 +21,7 @@ def Enzyme_Dialect : Dialect {
   let description = [{}];
   let cppNamespace = "::mlir::enzyme";
   let useDefaultAttributePrinterParser = 1;
+  let useDefaultTypePrinterParser = 1;
 }
 
 //===----------------------------------------------------------------------===//
@@ -28,5 +30,7 @@ def Enzyme_Dialect : Dialect {
 
 class Enzyme_Op<string mnemonic, list<Trait> traits = []>
     : Op<Enzyme_Dialect, mnemonic, traits>;
+
+class Enzyme_Type<string name> : TypeDef<Enzyme_Dialect, name>;
 
 #endif // ENZYME_DIALECT

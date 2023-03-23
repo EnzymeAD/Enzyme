@@ -17,6 +17,14 @@ class RewritePatternSet;
 class DominanceInfo;
 namespace enzyme {
 std::unique_ptr<Pass> createDifferentiatePass();
+
+std::unique_ptr<Pass> createEnzymeToMemRefPass();
+
+std::unique_ptr<Pass> createLowerToLLVMEnzymePass();
+
+std::unique_ptr<Pass> createShadowedGradientToCachePass();
+
+std::unique_ptr<Pass> createRemoveUnusedEnzymeOpsPass();
 } // namespace enzyme
 } // namespace mlir
 
@@ -28,6 +36,10 @@ void registerDialect(DialectRegistry &registry);
 namespace arith {
 class ArithDialect;
 } // end namespace arith
+
+namespace cf {
+class ControlFlowDialect;
+} // end namespace cf
 
 namespace scf {
 class SCFDialect;
