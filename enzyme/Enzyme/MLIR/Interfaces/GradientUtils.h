@@ -5,35 +5,16 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
+#pragma once
+
+#include "Interfaces/CloneFunction.h"
+#include "Interfaces/EnzymeLogic.h"
 
 #include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/IR/FunctionInterfaces.h"
 
-// TODO: no relative includes.
-#include "../../EnzymeLogic.h"
-
 namespace mlir {
 namespace enzyme {
-
-class MFnTypeInfo {
-public:
-  inline bool operator<(const MFnTypeInfo &rhs) const { return false; }
-};
-
-class MTypeAnalysis {
-public:
-  MFnTypeInfo getAnalyzedTypeInfo(FunctionOpInterface op) const {
-    return MFnTypeInfo();
-  }
-};
-
-class MTypeResults {
-public:
-  // TODO
-  TypeTree getReturnAnalysis() { return TypeTree(); }
-};
-
-class MEnzymeLogic;
 
 class MGradientUtils {
 public:
@@ -49,7 +30,6 @@ public:
   std::map<Operation *, Operation *> originalToNewFnOps;
 
   MTypeAnalysis &TA;
-  MTypeResults TR;
   bool omp;
 
   unsigned width;
@@ -61,7 +41,7 @@ public:
 
   MGradientUtils(MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
                  FunctionOpInterface oldFunc_, MTypeAnalysis &TA_,
-                 MTypeResults TR_, BlockAndValueMapping &invertedPointers_,
+                 BlockAndValueMapping &invertedPointers_,
                  const SmallPtrSetImpl<mlir::Value> &constantvalues_,
                  const SmallPtrSetImpl<mlir::Value> &activevals_,
                  DIFFE_TYPE ReturnActivity, ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
@@ -82,88 +62,66 @@ public:
   LogicalResult visitChild(Operation *op);
 };
 
-class MEnzymeLogic {
+class MDiffeGradientUtils : public MGradientUtils {
 public:
-  struct MForwardCacheKey {
-    FunctionOpInterface todiff;
-    DIFFE_TYPE retType;
-    const std::vector<DIFFE_TYPE> constant_args;
-    // std::map<llvm::Argument *, bool> uncacheable_args;
-    bool returnUsed;
-    DerivativeMode mode;
-    unsigned width;
-    mlir::Type additionalType;
-    const MFnTypeInfo typeInfo;
+  MDiffeGradientUtils(MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
+                      FunctionOpInterface oldFunc_, MTypeAnalysis &TA,
+                      BlockAndValueMapping &invertedPointers_,
+                      const SmallPtrSetImpl<mlir::Value> &constantvalues_,
+                      const SmallPtrSetImpl<mlir::Value> &returnvals_,
+                      DIFFE_TYPE ActiveReturn,
+                      ArrayRef<DIFFE_TYPE> constant_values,
+                      BlockAndValueMapping &origToNew_,
+                      std::map<Operation *, Operation *> &origToNewOps_,
+                      DerivativeMode mode, unsigned width, bool omp)
+      : MGradientUtils(Logic, newFunc_, oldFunc_, TA, invertedPointers_,
+                       constantvalues_, returnvals_, ActiveReturn,
+                       constant_values, origToNew_, origToNewOps_, mode, width,
+                       omp) {}
 
-    inline bool operator<(const MForwardCacheKey &rhs) const {
-      if (todiff < rhs.todiff)
-        return true;
-      if (rhs.todiff < todiff)
-        return false;
+  // Technically diffe constructor
+  static MDiffeGradientUtils *
+  CreateFromClone(MEnzymeLogic &Logic, DerivativeMode mode, unsigned width,
+                  FunctionOpInterface todiff, MTypeAnalysis &TA,
+                  MFnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
+                  bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
+                  ReturnType returnValue, mlir::Type additionalArg, bool omp) {
+    std::string prefix;
 
-      if (retType < rhs.retType)
-        return true;
-      if (rhs.retType < retType)
-        return false;
-
-      if (std::lexicographical_compare(
-              constant_args.begin(), constant_args.end(),
-              rhs.constant_args.begin(), rhs.constant_args.end()))
-        return true;
-      if (std::lexicographical_compare(
-              rhs.constant_args.begin(), rhs.constant_args.end(),
-              constant_args.begin(), constant_args.end()))
-        return false;
-
-      /*
-      for (auto &arg : todiff->args()) {
-        auto foundLHS = uncacheable_args.find(&arg);
-        auto foundRHS = rhs.uncacheable_args.find(&arg);
-        if (foundLHS->second < foundRHS->second)
-          return true;
-        if (foundRHS->second < foundLHS->second)
-          return false;
-      }
-      */
-
-      if (returnUsed < rhs.returnUsed)
-        return true;
-      if (rhs.returnUsed < returnUsed)
-        return false;
-
-      if (mode < rhs.mode)
-        return true;
-      if (rhs.mode < mode)
-        return false;
-
-      if (width < rhs.width)
-        return true;
-      if (rhs.width < width)
-        return false;
-
-      if (additionalType.getImpl() < rhs.additionalType.getImpl())
-        return true;
-      if (rhs.additionalType.getImpl() < additionalType.getImpl())
-        return false;
-
-      if (typeInfo < rhs.typeInfo)
-        return true;
-      if (rhs.typeInfo < typeInfo)
-        return false;
-      // equal
-      return false;
+    switch (mode) {
+    case DerivativeMode::ForwardMode:
+    case DerivativeMode::ForwardModeSplit:
+      prefix = "fwddiffe";
+      break;
+    case DerivativeMode::ReverseModeCombined:
+    case DerivativeMode::ReverseModeGradient:
+      prefix = "diffe";
+      break;
+    case DerivativeMode::ReverseModePrimal:
+      llvm_unreachable("invalid DerivativeMode: ReverseModePrimal\n");
     }
-  };
 
-  std::map<MForwardCacheKey, FunctionOpInterface> ForwardCachedFunctions;
+    if (width > 1)
+      prefix += std::to_string(width);
 
-  FunctionOpInterface
-  CreateForwardDiff(FunctionOpInterface fn, DIFFE_TYPE retType,
-                    std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
-                    bool returnUsed, DerivativeMode mode, bool freeMemory,
-                    size_t width, mlir::Type addedType, MFnTypeInfo type_args,
-                    std::vector<bool> volatile_args, void *augmented);
+    BlockAndValueMapping originalToNew;
+    std::map<Operation *, Operation *> originalToNewOps;
+
+    SmallPtrSet<mlir::Value, 1> returnvals;
+    SmallPtrSet<mlir::Value, 1> constant_values;
+    SmallPtrSet<mlir::Value, 1> nonconstant_values;
+    BlockAndValueMapping invertedPointers;
+    FunctionOpInterface newFunc = CloneFunctionWithReturns(
+        mode, width, todiff, invertedPointers, constant_args, constant_values,
+        nonconstant_values, returnvals, returnValue, retType,
+        prefix + todiff.getName(), originalToNew, originalToNewOps,
+        diffeReturnArg, additionalArg);
+    return new MDiffeGradientUtils(Logic, newFunc, todiff, TA, invertedPointers,
+                                   constant_values, nonconstant_values, retType,
+                                   constant_args, originalToNew,
+                                   originalToNewOps, mode, width, omp);
+  }
 };
 
-} // namespace enzyme
-} // namespace mlir
+}; // namespace enzyme
+}; // namespace mlir
