@@ -18,8 +18,7 @@ include "mlir/IR/OpBase.td"
 
 def AutoDiffOpInterface : OpInterface<"AutoDiffOpInterface"> {
   let description = [{
-    A differetiable MLIR operation that is able to emit forward and reverse
-    mode adjoints for itself.
+    A differentiable MLIR operation that is able to emit forward mode adjoints for itself.
   }];
   let cppNamespace = "::mlir::enzyme";
 
@@ -37,6 +36,42 @@ def AutoDiffOpInterface : OpInterface<"AutoDiffOpInterface"> {
     /*retTy=*/"::mlir::LogicalResult",
     /*methodName=*/"createForwardModeTangent",
     /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::enzyme::MGradientUtils *":$gutils)
+    >
+  ];
+}
+
+def ReverseAutoDiffOpInterface : OpInterface<"ReverseAutoDiffOpInterface"> {
+  let description = [{
+    A differentiable MLIR operation that is able to emit reverse mode adjoints for itself.
+  }];
+  let cppNamespace = "::mlir::enzyme";
+
+  let methods = [
+    InterfaceMethod<
+    /*desc=*/[{
+      Emits a reverse-mode adjoint of the given function.
+    }],
+    /*retTy=*/"void",
+    /*methodName=*/"createReverseModeAdjoint",
+    /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::enzyme::MGradientUtilsReverse *":$gutils, "SmallVector<Value>":$caches)
+    >,
+
+    InterfaceMethod<
+    /*desc=*/[{
+      Creates or alters shadow values.
+    }],
+    /*retTy=*/"void",
+    /*methodName=*/"createShadowValues",
+    /*args=*/(ins "::mlir::OpBuilder &":$builder, "::mlir::enzyme::MGradientUtilsReverse *":$gutils)
+    >,
+
+    InterfaceMethod<
+    /*desc=*/[{
+      Caches values to create the adjoint.
+    }],
+    /*retTy=*/"SmallVector<Value>",
+    /*methodName=*/"cacheValues",
+    /*args=*/(ins "::mlir::enzyme::MGradientUtilsReverse *":$gutils)
     >
   ];
 }

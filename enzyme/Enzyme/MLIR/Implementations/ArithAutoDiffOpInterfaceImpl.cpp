@@ -14,9 +14,14 @@
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/GradientUtils.h"
+#include "Interfaces/GradientUtilsReverse.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Support/LogicalResult.h"
+
+#include "Dialect/Ops.h"
+#include "mlir/IR/TypeSupport.h"
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -75,11 +80,108 @@ struct AddFOpInterface
     return success();
   }
 };
+
+void addToGradient(Value oldGradient, Value addedGradient, OpBuilder &builder,
+                   MGradientUtilsReverse *gutils) {
+  Value gradient = addedGradient;
+  if (gutils->hasInvertPointer(oldGradient)) {
+    Value operandGradient = gutils->invertPointerM(oldGradient, builder);
+    gradient = builder.create<arith::AddFOp>(oldGradient.getLoc(),
+                                             operandGradient, addedGradient);
+  }
+  gutils->mapInvertPointer(oldGradient, gradient, builder);
+}
+
+void defaultClearGradient(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) {
+  Value result = op->getOpResult(0);
+  if (gutils->invertedPointersGlobal.contains(result)) {
+    FloatType floatType = result.getType().cast<FloatType>();
+    APFloat apf(floatType.getFloatSemantics(), 0);
+
+    Value gradient =
+        builder.create<arith::ConstantFloatOp>(op->getLoc(), apf, floatType);
+    gutils->mapInvertPointer(result, gradient, builder);
+  }
+}
+
+struct AddFOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<AddFOpInterfaceReverse,
+                                                       arith::AddFOp> {
+  void createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                MGradientUtilsReverse *gutils,
+                                SmallVector<Value> caches) const {
+    // Derivative of r = a + b -> dr = da + db
+    auto addOp = cast<arith::AddFOp>(op);
+
+    if (gutils->hasInvertPointer(addOp)) {
+      Value addedGradient = gutils->invertPointerM(addOp, builder);
+      addToGradient(addOp.getLhs(), addedGradient, builder, gutils);
+      addToGradient(addOp.getRhs(), addedGradient, builder, gutils);
+    }
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    return SmallVector<Value>();
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {}
+};
+
+struct MulFOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<MulFOpInterfaceReverse,
+                                                       arith::MulFOp> {
+  void createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                MGradientUtilsReverse *gutils,
+                                SmallVector<Value> caches) const {
+    auto mulOp = cast<arith::MulFOp>(op);
+
+    if (gutils->hasInvertPointer(mulOp)) {
+      Value own_gradient = gutils->invertPointerM(mulOp, builder);
+      for (int i = 0; i < 2; i++) {
+        if (!gutils->isConstantValue(mulOp.getOperand(i))) {
+          Value cache = caches[i];
+          Value retrievedValue = gutils->popCache(cache, builder);
+          Value addedGradient = builder.create<arith::MulFOp>(
+              mulOp.getLoc(), own_gradient, retrievedValue);
+
+          addToGradient(mulOp.getOperand(i), addedGradient, builder, gutils);
+        }
+      }
+    }
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    auto mulOp = cast<arith::MulFOp>(op);
+    if (gutils->hasInvertPointer(mulOp)) {
+      OpBuilder cacheBuilder(gutils->getNewFromOriginal(op));
+      SmallVector<Value> caches;
+      for (int i = 0; i < 2; i++) {
+        Value otherOperand = mulOp.getOperand((i + 1) % 2);
+        Value cache = gutils->initAndPushCache(
+            gutils->getNewFromOriginal(otherOperand), cacheBuilder);
+        caches.push_back(cache);
+      }
+      return caches;
+    }
+    return SmallVector<Value>();
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {}
+};
+
 } // namespace
 
 void mlir::enzyme::registerArithDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, arith::ArithDialect *) {
+    arith::AddFOp::attachInterface<AddFOpInterfaceReverse>(*context);
+    arith::MulFOp::attachInterface<MulFOpInterfaceReverse>(*context);
+
     arith::AddFOp::attachInterface<AddFOpInterface>(*context);
     arith::MulFOp::attachInterface<MulFOpInterface>(*context);
   });

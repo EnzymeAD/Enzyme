@@ -28,8 +28,7 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Support/Debug.h"
 
-#define GET_OP_CLASSES
-#include "Dialect/EnzymeOps.cpp.inc"
+#include "llvm/ADT/TypeSwitch.h"
 
 #define DEBUG_TYPE "enzyme"
 
@@ -43,6 +42,18 @@ using namespace mlir::arith;
 
 LogicalResult
 ForwardDiffOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  // TODO: Verify that the result type is same as the type of the referenced
+  // func.func op.
+  auto global =
+      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(*this, getFnAttr());
+  if (!global)
+    return emitOpError("'")
+           << getFn() << "' does not reference a valid global funcOp";
+
+  return success();
+}
+
+LogicalResult AutoDiffOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // TODO: Verify that the result type is same as the type of the referenced
   // func.func op.
   auto global =
