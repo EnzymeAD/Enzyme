@@ -2253,6 +2253,12 @@ public:
           }
         }
       }
+      if (looseTypeAnalysis) {
+        llvm::errs() << "warning: binary operator is integer and constant: "
+                     << BO << "\n";
+        // if loose type analysis, assume this integer and is constant
+        return;
+      }
       goto def;
     }
     case Instruction::And: {
@@ -2421,6 +2427,12 @@ public:
             }
           }
         }
+      if (looseTypeAnalysis) {
+        llvm::errs() << "warning: binary operator is integer and constant: "
+                     << BO << "\n";
+        // if loose type analysis, assume this integer and is constant
+        return;
+      }
       goto def;
     }
     case Instruction::Or: {
@@ -2876,6 +2888,13 @@ public:
             }
           }
         }
+      if (looseTypeAnalysis) {
+        forwardModeInvertedPointerFallback(BO);
+        llvm::errs() << "warning: binary operator is integer and constant: "
+                     << BO << "\n";
+        // if loose type analysis, assume this integer and is constant
+        return;
+      }
       goto def;
     }
     case Instruction::Or: {
