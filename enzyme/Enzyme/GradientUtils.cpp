@@ -139,6 +139,23 @@ SmallVector<unsigned int, 9> MD_ToCopy = {
     LLVMContext::MD_dereferenceable,
     LLVMContext::MD_dereferenceable_or_null};
 
+static bool isPotentialLastLoopValue(llvm::Value *val,
+                                     const llvm::BasicBlock *loc,
+                                     const llvm::LoopInfo &LI) {
+  if (llvm::Instruction *inst = llvm::dyn_cast<llvm::Instruction>(val)) {
+    const llvm::Loop *InstLoop = LI.getLoopFor(inst->getParent());
+    if (InstLoop == nullptr) {
+      return false;
+    }
+    for (const llvm::Loop *L = LI.getLoopFor(loc); L; L = L->getParentLoop()) {
+      if (L == InstLoop)
+        return false;
+    }
+    return true;
+  }
+  return false;
+}
+
 GradientUtils::GradientUtils(EnzymeLogic &Logic, Function *newFunc_,
                              Function *oldFunc_, TargetLibraryInfo &TLI_,
                              TypeAnalysis &TA_, TypeResults TR_,

@@ -113,23 +113,6 @@ public:
   virtual ~InvertedPointerVH() {}
 };
 
-static bool isPotentialLastLoopValue(llvm::Value *val,
-                                     const llvm::BasicBlock *loc,
-                                     const llvm::LoopInfo &LI) {
-  if (llvm::Instruction *inst = llvm::dyn_cast<llvm::Instruction>(val)) {
-    const llvm::Loop *InstLoop = LI.getLoopFor(inst->getParent());
-    if (InstLoop == nullptr) {
-      return false;
-    }
-    for (const llvm::Loop *L = LI.getLoopFor(loc); L; L = L->getParentLoop()) {
-      if (L == InstLoop)
-        return false;
-    }
-    return true;
-  }
-  return false;
-}
-
 enum class AugmentedStruct;
 class GradientUtils : public CacheUtility {
 public:
