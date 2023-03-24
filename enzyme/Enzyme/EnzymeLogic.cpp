@@ -67,7 +67,6 @@
 #include "TraceGenerator.h"
 #include "Utils.h"
 
-
 #if LLVM_VERSION_MAJOR >= 14
 #define addAttribute addAttributeAtIndex
 #define removeAttribute removeAttributeAtIndex
