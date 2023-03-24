@@ -27,6 +27,7 @@
 // primal pass.
 //
 //===----------------------------------------------------------------------===//
+#include "ActivityAnalysis.h"
 #include "AdjointGenerator.h"
 
 #include "SCEV/ScalarEvolution.h"
@@ -65,6 +66,7 @@
 #include "LibraryFuncs.h"
 #include "TraceGenerator.h"
 #include "Utils.h"
+
 
 #if LLVM_VERSION_MAJOR >= 14
 #define addAttribute addAttributeAtIndex
@@ -4888,6 +4890,9 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
   }
 
   if (F->empty()) {
+    if (EnzymeEmptyFnInactive) {
+      return F;
+    }
     if (CustomErrorHandler) {
       std::string s;
       llvm::raw_string_ostream ss(s);
