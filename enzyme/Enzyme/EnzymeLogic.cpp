@@ -4851,6 +4851,17 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
       "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE12_M_constructEmc",
       "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE7reserveEm",
       "time",
+      "strlen",
+      "_ZNKSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE7compareERKS4_",
+      "_ZNKSt8__detail20_Prime_rehash_policy14_M_need_rehashEmmm",
+      "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEC1EOS4_",
+      "_ZNKSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE6lengthEv",
+      "_ZNKSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE4dataEv",
+      "_ZNKSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE4sizeEv",
+      "_ZNKSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE4dataEv"
+      "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEED1Ev",
+      "_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEED1Ev",
+      "_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6__initEPKcm",
       "_ZNSt12__basic_fileIcED1Ev",
       "__cxa_begin_catch",
       "__cxa_end_catch",
@@ -4860,6 +4871,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
       "_ZNSt8ios_baseC2Ev",
       "_ZNSo9_M_insertIdEERSoT_",
       "malloc_usable_size",
+      "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEED1Ev",
       "_ZNKSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE7compareEPKc",
       "_ZNSt13basic_filebufIcSt11char_traitsIcEEC1Ev",
       "_ZNSt15basic_streambufIcSt11char_traitsIcEE6xsputnEPKcl",
@@ -4870,7 +4882,11 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
       "_ZNSt7__cxx1115basic_stringbufIcSt11char_traitsIcESaIcEE9underflowEv",
       "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_assignERKS4_",
       "_ZNSaIcED1Ev",
-      "_ZNSaIcEC1Ev"};
+      "_ZNSaIcEC1Ev",
+      "_ZSt11_Hash_bytesPKvmm",
+      "_ZNSt3__116__do_string_hashIPKcEEmT_S3_",
+      "_ZNKSt3__14hashIPKcEclES2_",
+  };
 
   if (F->getName().startswith("_ZNSolsE") || NoFrees.count(F->getName().str()))
     return F;
@@ -4902,8 +4918,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
     llvm_unreachable("unhandled, create no free");
   }
 
-  Function *NewF = Function::Create(F->getFunctionType(),
-                                    Function::LinkageTypes::InternalLinkage,
+  Function *NewF = Function::Create(F->getFunctionType(), F->getLinkage(),
                                     "nofree_" + F->getName(), F->getParent());
   NewF->setAttributes(F->getAttributes());
 #if LLVM_VERSION_MAJOR >= 9
@@ -4932,6 +4947,9 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
 #else
   CloneFunctionInto(NewF, F, VMap, true, Returns, "", nullptr);
 #endif
+
+  NewF->setVisibility(llvm::GlobalValue::DefaultVisibility);
+  NewF->setLinkage(llvm::GlobalValue::InternalLinkage);
 
   const SmallPtrSet<BasicBlock *, 4> guaranteedUnreachable =
       getGuaranteedUnreachable(NewF);

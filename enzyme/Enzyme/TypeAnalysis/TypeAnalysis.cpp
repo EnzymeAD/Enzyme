@@ -3638,6 +3638,7 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
       }
       return;
     }
+    
     // All these are always valid => no direction check
     // CONSIDER(malloc)
     // TODO consider handling other allocation functions integer inputs
