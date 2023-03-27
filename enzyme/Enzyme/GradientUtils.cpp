@@ -2554,10 +2554,10 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
           llvm::errs() << "ret: " << *ret << "\n";
         }
         assert(inst->getType() == ret->getType());
-        if (replace)
+        if (replace) {
           inst->replaceAllUsesWith(UndefValue::get(ret->getType()));
-        if (replace)
           erase(inst);
+        }
       }
       Type *retType = ret->getType();
       if (replace)
