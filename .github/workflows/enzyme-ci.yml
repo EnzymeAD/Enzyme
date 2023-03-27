@@ -16,7 +16,7 @@ jobs:
       matrix:
         llvm: ["7", "8", "9", "10", "11", "12", "13", "14", "15"]
         build: ["Release", "Debug"] # "RelWithDebInfo"
-        os: [ubuntu-20.04, ubuntu-18.04] #self-hosted]
+        os: [ubuntu-20.04] #self-hosted]
   
         exclude:
           - os: ubuntu-20.04
@@ -122,3 +122,53 @@ jobs:
       run: |
           cd enzyme/build
           cmake .. -GXcode -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=`which lit` -DLLVM_DIR=`brew --prefix llvm@${{ matrix.llvm }}`/lib/cmake/llvm
+
+  build-container:
+    name: Enzyme CI LLVM ${{ matrix.llvm }} ${{ matrix.build }} ubuntu-18.04
+    runs-on: ubuntu-latest
+    container: ubuntu:18.04
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        llvm: ["7", "8", "9", "10", "11", "12", "13", "14", "15"]
+        build: ["Release", "Debug"]
+  
+    timeout-minutes: 30 
+    steps:
+    - name: add llvm 
+      run: |
+          apt-get -q update
+          apt-get install -y ca-certificates software-properties-common wget gnupg2 python3 python3-pip sed git ssh zlib1g-dev
+          wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key| apt-key add -
+          apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
+          apt-get install -y autoconf cmake gcc g++ libtool gfortran llvm-${{ matrix.llvm }}-dev
+          if [ ${{matrix.llvm}} -lt 9 ]; then
+            apt-get install -y llvm-7-tools;
+            echo /usr/lib/llvm-7/bin >> $GITHUB_PATH;
+          fi
+          python3 -m pip install --upgrade pip setuptools
+          python3 -m pip install lit
+          touch /usr/lib/llvm-${{ matrix.llvm }}/bin/yaml-bench
+          if [[ '${{ matrix.llvm }}' == '13' ]]; then
+            sed -i 's/add_executable(llvm-omp-device-info IMPORTED)//g' /usr/lib/llvm-${{matrix.llvm}}/lib/cmake/llvm/LLVMExports*.cmake
+            sed -i 's/llvm-omp-device-info//g' /usr/lib/llvm-${{matrix.llvm}}/lib/cmake/llvm/LLVMExports*.cmake
+          fi
+    - uses: actions/checkout@v3
+    - name: mkdir
+      run: cd enzyme && rm -rf build && mkdir build
+    - name: cmake
+      run: |
+          cd enzyme/build 
+          cmake .. -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_EXTERNAL_LIT=`which lit` -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm
+    - name: make
+      run: cd enzyme/build && make -j`nproc`
+    - name: make check-typeanalysis
+      run: cd enzyme/build && make check-typeanalysis -j`nproc`
+    - name: make check-activityanalysis
+      run: cd enzyme/build && make check-activityanalysis -j`nproc`
+    - name: make check-enzyme
+      run: cd enzyme/build && make check-enzyme-bench -j`nproc`
+    - name: graph results
+      run: python3 enzyme/test/upload-results.py enzyme/build/test/Enzyme/results.json --url https://enzyme.mit.edu/cibench/api --token ${{ secrets.GRAPH_TOKEN }}
+      if: github.event_name != 'pull_request' && matrix.build == 'Release'
