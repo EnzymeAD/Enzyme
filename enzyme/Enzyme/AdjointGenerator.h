@@ -3860,12 +3860,28 @@ public:
       return;
     }
 
-    SmallVector<Value *, 2> orig_ops(II.getNumOperands());
+#if defined(ENZYME_IFX) && LLVM_VERSION_MAJOR == 15
+    // When compiling Enzyme against standard LLVM, and not Intel's
+    // modified version of LLVM, the intrinsic `llvm.intel.subscript` is
+    // not fully understood by LLVM. One of the results of this is that the ID
+    // of the intrinsic is set to Intrinsic::not_intrinsic - hence we are
+    // handling the intrinsic here.
+    if (II.getCalledFunction() &&
+        II.getCalledFunction()->getName().startswith("llvm.intel.subscript")) {
+      if (Mode == DerivativeMode::ForwardModeSplit ||
+          Mode == DerivativeMode::ForwardMode) {
+        forwardModeInvertedPointerFallback(II);
+      }
+    } else
+#endif
+    {
+      SmallVector<Value *, 2> orig_ops(II.getNumOperands());
 
-    for (unsigned i = 0; i < II.getNumOperands(); ++i) {
-      orig_ops[i] = II.getOperand(i);
+      for (unsigned i = 0; i < II.getNumOperands(); ++i) {
+        orig_ops[i] = II.getOperand(i);
+      }
+      handleAdjointForIntrinsic(II.getIntrinsicID(), II, orig_ops);
     }
-    handleAdjointForIntrinsic(II.getIntrinsicID(), II, orig_ops);
     if (gutils->knownRecomputeHeuristic.find(&II) !=
         gutils->knownRecomputeHeuristic.end()) {
       if (!gutils->knownRecomputeHeuristic[&II]) {
@@ -10313,6 +10329,19 @@ public:
   // Return
   void visitCallInst(llvm::CallInst &call) {
     using namespace llvm;
+
+#if defined(ENZYME_IFX) && LLVM_VERSION_MAJOR == 15
+    // When compiling Enzyme against standard LLVM, and not Intel's
+    // modified version of LLVM, the intrinsic `llvm.intel.subscript` is
+    // not fully understood by LLVM. One of the results of this is that the
+    // visitor dispatches to visitCallInst, rather than visitIntrinsicInst, when
+    // presented with the intrinsic - hence why we are handling it here.
+    if (getFuncNameFromCall(&call).startswith("llvm.intel.subscript")) {
+      assert(isa<IntrinsicInst>(call));
+      visitIntrinsicInst(cast<IntrinsicInst>(call));
+      return;
+    }
+#endif
 
     CallInst *const newCall = cast<CallInst>(gutils->getNewFromOriginal(&call));
     IRBuilder<> BuilderZ(newCall);

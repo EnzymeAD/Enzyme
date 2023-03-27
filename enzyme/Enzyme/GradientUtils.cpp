@@ -5804,6 +5804,42 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
     return antialloca;
   } else if (auto II = dyn_cast<IntrinsicInst>(oval)) {
+#if defined(ENZYME_IFX) && (LLVM_VERSION_MAJOR == 15)
+    if (II->getCalledFunction() &&
+        II->getCalledFunction()->getName().contains("llvm.intel.subscript")) {
+      IRBuilder<> bb(getNewFromOriginal(II));
+
+      const std::array<size_t, 4> idxArgsIndices{{0, 1, 2, 4}};
+      const size_t ptrArgIndex = 3;
+
+      SmallVector<Value *, 5> invertArgs(5);
+      for (auto i : idxArgsIndices) {
+        Value *idx = getNewFromOriginal(II->getOperand(i));
+        invertArgs[i] = idx;
+      }
+      Value *invertPtrArg = invertPointerM(II->getOperand(ptrArgIndex), bb);
+      invertArgs[ptrArgIndex] = invertPtrArg;
+
+      auto rule = [&](Value *ip) {
+        auto shadow = bb.CreateCall(II->getCalledFunction(), invertArgs);
+        assert(isa<CallInst>(shadow));
+        auto CI = cast<CallInst>(shadow);
+        // Must copy the elementtype attribute as it is needed by the intrinsic
+        CI->addParamAttr(
+            ptrArgIndex,
+            II->getParamAttr(ptrArgIndex, Attribute::AttrKind::ElementType));
+
+        return shadow;
+      };
+
+      Value *shadow = applyChainRule(II->getType(), bb, rule, invertPtrArg);
+
+      invertedPointers.insert(
+          std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
+      return shadow;
+    }
+#endif
+
     IRBuilder<> bb(getNewFromOriginal(II));
     bb.setFastMathFlags(getFast());
     switch (II->getIntrinsicID()) {
