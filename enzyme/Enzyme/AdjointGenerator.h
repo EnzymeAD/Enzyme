@@ -10132,13 +10132,25 @@ public:
 
         Value *tape = nullptr;
 
+        Type *tapeType = nullptr;
+
         if (Mode == DerivativeMode::ReverseModePrimal ||
             Mode == DerivativeMode::ReverseModeCombined) {
           found->second.first(BuilderZ, &call, *gutils, normalReturn,
                               invertedReturn, tape);
-          if (tape)
+          if (tape) {
+            tapeType = tape->getType();
             gutils->cacheForReverse(BuilderZ, tape,
                                     getIndex(&call, CacheType::Tape));
+          }
+          if (Mode == DerivativeMode::ReverseModePrimal) {
+            assert(augmentedReturn);
+            auto subaugmentations =
+                (std::map<const llvm::CallInst *, AugmentedReturn *>
+                     *)&augmentedReturn->subaugmentations;
+            insert_or_assign2<const llvm::CallInst *, AugmentedReturn *>(
+                *subaugmentations, &call, (AugmentedReturn *)tapeType);
+          }
         }
 
         if (Mode == DerivativeMode::ReverseModeGradient ||
@@ -10147,7 +10159,15 @@ public:
               augmentedReturn->tapeIndices.find(
                   std::make_pair(&call, CacheType::Tape)) !=
                   augmentedReturn->tapeIndices.end()) {
-            tape = BuilderZ.CreatePHI(Type::getInt32Ty(call.getContext()), 0);
+            assert(augmentedReturn);
+            auto subaugmentations =
+                (std::map<const llvm::CallInst *, AugmentedReturn *>
+                     *)&augmentedReturn->subaugmentations;
+            auto fd = subaugmentations->find(&call);
+            assert(fd != subaugmentations->end());
+            tapeType = (llvm::Type *)fd->second;
+
+            tape = BuilderZ.CreatePHI(tapeType, 0);
             tape = gutils->cacheForReverse(BuilderZ, tape,
                                            getIndex(&call, CacheType::Tape),
                                            /*ignoreType*/ true);
