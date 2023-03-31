@@ -87,7 +87,7 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 
 ; CHECK: _ZNK11OuterStruct4sizeEv.exit:                    ; preds = %merge
 ; CHECK-NEXT:   %[[i0:.+]] = getelementptr inbounds i64, i64* %cond.lcssa_malloccache, i64 %iv
-; CHECK-NEXT:   store i64 %cond, i64* %[[i0]], align 8, !invariant.group !0
+; CHECK-NEXT:   store i64 %cond, i64* %[[i0]], align 8, !invariant.group ![[ig0:.+]]
 ; CHECK-NEXT:   %cmp3.not233 = icmp eq i64 %cond, 0
 ; CHECK-NEXT:   br i1 %cmp3.not233, label %for.cond.cleanup4, label %for.cond6.preheader.preheader
 
@@ -184,7 +184,7 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; CHECK-NEXT:   %"sq'de.2" = phi float [ 0.000000e+00, %for.cond.cleanup ], [ %"sq'de.0", %incinvertfor.body ]
 ; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ 9, %for.cond.cleanup ], [ %[[i5]], %incinvertfor.body ]
 ; CHECK-NEXT:   %[[i19:.+]] = getelementptr inbounds i64, i64* %cond.lcssa_malloccache, i64 %"iv'ac.0"
-; CHECK-NEXT:   %[[i22]] = load i64, i64* %[[i19]], align 8, !invariant.group !0
+; CHECK-NEXT:   %[[i22]] = load i64, i64* %[[i19]], align 8, !invariant.group ![[ig0]]
 ; CHECK-NEXT:   %cmp3.not233_unwrap = icmp eq i64 %[[i22]], 0
 ; CHECK-NEXT:   br i1 %cmp3.not233_unwrap, label %invert_ZNK11OuterStruct4sizeEv.exit, label %invertfor.cond.cleanup4.loopexit
 ; CHECK-NEXT: }
@@ -229,7 +229,7 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 
 ; BEFORE: _ZNK11OuterStruct4sizeEv.exit:                    ; preds = %merge
 ; TODO-NEXT:   %[[a0:.+]] = getelementptr inbounds i64, i64* %[[a14manual_lcssa10_malloccache]], i64 %iv
-; TODO-NEXT:   store i64 %[[a14manual_lcssa11]], i64* %[[a0]], align 8, !invariant.group !0
+; TODO-NEXT:   store i64 %[[a14manual_lcssa11]], i64* %[[a0]], align 8, !invariant.group ![[ig1:.+]]
 ; BEFORE-NEXT:   %cmp3.not233 = icmp eq i64 %cond, 0
 ; BEFORE-NEXT:   br i1 %cmp3.not233, label %for.cond.cleanup4, label %for.cond6.preheader.preheader
 
