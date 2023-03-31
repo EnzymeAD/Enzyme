@@ -1,7 +1,7 @@
-! RUN: ifx -flto -O0 -c %s | %opt - %loadEnzyme -enzyme
-! RUN: ifx -flto -O1 -c %s | %opt - %loadEnzyme -enzyme
-! RUN: ifx -flto -O2 -c %s | %opt - %loadEnzyme -enzyme
-! RUN: ifx -flto -O3 -c %s | %opt - %loadEnzyme -enzyme
+! RUN: ifx -flto -O0 -c  %s -o %t && %opt %t %loadEnzyme -enzyme -o %t1 && ifx -flto -O0 %t1 -o %t2 && %t2 | FileCheck %s
+! RUN: ifx -flto -O1 -c  %s -o %t && %opt %t %loadEnzyme -enzyme -o %t1 && ifx -flto -O1 %t1 -o %t2 && %t2 | FileCheck %s
+! RUN: ifx -flto -O2 -c  %s -o %t && %opt %t %loadEnzyme -enzyme -o %t1 && ifx -flto -O2 %t1 -o %t2 && %t2 | FileCheck %s
+! RUN: ifx -flto -O3 -c  %s -o %t && %opt %t %loadEnzyme -enzyme -o %t1 && ifx -flto -O3 %t1 -o %t2 && %t2 | FileCheck %s
 
 module math
     interface
@@ -36,3 +36,6 @@ program app
 
     print *, dx
 end program app
+
+! CHECK: 9
+! CHECK-NEXT: 6
