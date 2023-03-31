@@ -506,13 +506,13 @@ void DiffeGradientUtils::setDiffe(Value *val, Value *toset,
   BuilderM.CreateStore(toset, tostore);
 }
 
-void DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
-                                   const SubLimitType &sublimits, int i,
-                                   AllocaInst *alloc,
-                                   ConstantInt *byteSizeOfType,
-                                   Value *storeInto, MDNode *InvariantMD) {
+CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
+                                        const SubLimitType &sublimits, int i,
+                                        AllocaInst *alloc,
+                                        ConstantInt *byteSizeOfType,
+                                        Value *storeInto, MDNode *InvariantMD) {
   if (!FreeMemory)
-    return;
+    return nullptr;
   assert(reverseBlocks.find(forwardPreheader) != reverseBlocks.end());
   assert(reverseBlocks[forwardPreheader].size());
   IRBuilder<> tbuild(reverseBlocks[forwardPreheader].back());
@@ -579,6 +579,7 @@ void DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
                                       newFunc->getSubprogram(), 0));
     scopeFrees[alloc].insert(ci);
   }
+  return ci;
 }
 
 #if LLVM_VERSION_MAJOR >= 10

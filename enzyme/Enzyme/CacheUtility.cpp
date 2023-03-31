@@ -851,6 +851,8 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
     unsigned bsize = (unsigned)byteSizeOfType->getZExtValue();
     unsigned alignSize = getCacheAlignment(bsize);
 
+    CallInst *malloccall = nullptr;
+
     // Allocate and store the required memory
     if (allocateInternal) {
 
@@ -883,7 +885,6 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
       StoreInst *storealloc = nullptr;
       // Statically allocate memory for all iterations if possible
       if (sublimits[i].second.back().first.maxLimit) {
-        CallInst *malloccall = nullptr;
         Instruction *ZeroInst = nullptr;
         Value *firstallocation = CreateAllocation(
             allocationBuilder, myType, size, name + "_malloccache", &malloccall,
@@ -995,9 +996,17 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
         CachePointerInvariantGroups[std::make_pair((Value *)alloc, i)] =
             invgroup;
       }
-      freeCache(containedloops.back().first.preheader, sublimits, i, alloc,
-                byteSizeOfType, storeInto,
-                CachePointerInvariantGroups[std::make_pair((Value *)alloc, i)]);
+      auto freecall = freeCache(
+          containedloops.back().first.preheader, sublimits, i, alloc,
+          byteSizeOfType, storeInto,
+          CachePointerInvariantGroups[std::make_pair((Value *)alloc, i)]);
+      if (freecall && malloccall) {
+        auto ident = MDNode::getDistinct(malloccall->getContext(), {});
+        malloccall->setMetadata("enzyme_cache_alloc",
+                                MDNode::get(malloccall->getContext(), {ident}));
+        freecall->setMetadata("enzyme_cache_free",
+                              MDNode::get(freecall->getContext(), {ident}));
+      }
     }
 
     // If we are not the final iteration, lookup the next pointer by indexing

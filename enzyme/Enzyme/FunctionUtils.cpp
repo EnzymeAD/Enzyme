@@ -2194,22 +2194,50 @@ F->getParamAttribute(ii, Attribute::StructRet).getValueAsType())); #else
 void CoaleseTrivialMallocs(Function &F, DominatorTree &DT) {
   std::map<BasicBlock *, std::vector<std::pair<CallInst *, CallInst *>>>
       LegalMallocs;
+
+  std::map<Metadata *, std::vector<CallInst *>> frees;
+  for (BasicBlock &BB : F) {
+    for (Instruction &I : BB) {
+      if (auto CI = dyn_cast<CallInst>(&I)) {
+        if (auto F2 = CI->getCalledFunction()) {
+          if (F2->getName() == "free") {
+            if (auto MD = hasMetadata(CI, "enzyme_cache_free")) {
+              Metadata *op = MD->getOperand(0);
+              frees[op].push_back(CI);
+            }
+          }
+        }
+      }
+    }
+  }
+
   for (BasicBlock &BB : F) {
     for (Instruction &I : BB) {
       if (auto CI = dyn_cast<CallInst>(&I)) {
         if (auto F = CI->getCalledFunction()) {
           if (F->getName() == "malloc") {
+            CallInst *freeCall = nullptr;
             for (auto U : CI->users()) {
               if (auto CI2 = dyn_cast<CallInst>(U)) {
                 if (auto F2 = CI2->getCalledFunction()) {
                   if (F2->getName() == "free") {
                     if (DT.dominates(CI, CI2)) {
-                      LegalMallocs[&BB].emplace_back(CI, CI2);
+                      freeCall = CI2;
+                      break;
                     }
                   }
                 }
               }
             }
+            if (!freeCall) {
+              if (auto MD = hasMetadata(CI, "enzyme_cache_alloc")) {
+                Metadata *op = MD->getOperand(0);
+                if (frees[op].size() == 1)
+                  freeCall = frees[op][0];
+              }
+            }
+            if (freeCall)
+              LegalMallocs[&BB].emplace_back(CI, freeCall);
           }
         }
       }
@@ -2243,7 +2271,8 @@ void CoaleseTrivialMallocs(Function &F, DominatorTree &DT) {
       z.second->eraseFromParent();
       IRBuilder<> B2(z.first);
 #if LLVM_VERSION_MAJOR > 7
-      Value *gepPtr = B2.CreateInBoundsGEP(z.first->getType(), First, Size);
+      Value *gepPtr = B2.CreateInBoundsGEP(Type::getInt8Ty(First->getContext()),
+                                           First, Size);
 #else
       Value *gepPtr = B2.CreateInBoundsGEP(First, Size);
 #endif
@@ -2254,6 +2283,8 @@ void CoaleseTrivialMallocs(Function &F, DominatorTree &DT) {
     auto NewMalloc =
         cast<CallInst>(B.CreateCall(First->getCalledFunction(), Size));
     NewMalloc->copyIRFlags(First);
+    NewMalloc->setMetadata("enzyme_cache_alloc",
+                           hasMetadata(First, "enzyme_cache_alloc"));
     First->replaceAllUsesWith(NewMalloc);
     First->eraseFromParent();
   }
