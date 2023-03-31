@@ -10165,6 +10165,11 @@ public:
                      *)&augmentedReturn->subaugmentations;
             auto fd = subaugmentations->find(&call);
             assert(fd != subaugmentations->end());
+            // Note we are using the storage space here to persist
+            // the LLVM type, as storing a new augmentedReturn has issues
+            // regarding persisting the data structure, and when it will
+            // be freed, since it will no longer live in the map in
+            // EnzymeLogic.
             tapeType = (llvm::Type *)fd->second;
 
             tape = BuilderZ.CreatePHI(tapeType, 0);
