@@ -331,8 +331,7 @@ public:
       std::map<std::pair<llvm::Instruction *, CacheType>, int> &mapping);
 
   llvm::Value *cacheForReverse(llvm::IRBuilder<> &BuilderQ, llvm::Value *malloc,
-                               int idx, bool ignoreType = false,
-                               bool replace = true);
+                               int idx, bool replace = true);
 
   llvm::ArrayRef<llvm::WeakTrackingVH> getTapeValues() const {
     return addedTapeVals;
