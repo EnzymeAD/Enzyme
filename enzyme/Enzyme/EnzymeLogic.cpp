@@ -1601,9 +1601,8 @@ void restoreCache(
           BuilderZ.SetInsertPoint(
               cast<Instruction>(newi)->getParent()->getFirstNonPHI());
         }
-        Value *nexti =
-            gutils->cacheForReverse(BuilderZ, newi, m.second,
-                                    /*ignoreType*/ false, /*replace*/ false);
+        Value *nexti = gutils->cacheForReverse(BuilderZ, newi, m.second,
+                                               /*replace*/ false);
         newIToNextI.emplace_back(newi, nexti);
       } else {
         auto newi = gutils->getNewFromOriginal((Value *)m.first.first);

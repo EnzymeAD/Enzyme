@@ -139,6 +139,23 @@ SmallVector<unsigned int, 9> MD_ToCopy = {
     LLVMContext::MD_dereferenceable,
     LLVMContext::MD_dereferenceable_or_null};
 
+static bool isPotentialLastLoopValue(llvm::Value *val,
+                                     const llvm::BasicBlock *loc,
+                                     const llvm::LoopInfo &LI) {
+  if (llvm::Instruction *inst = llvm::dyn_cast<llvm::Instruction>(val)) {
+    const llvm::Loop *InstLoop = LI.getLoopFor(inst->getParent());
+    if (InstLoop == nullptr) {
+      return false;
+    }
+    for (const llvm::Loop *L = LI.getLoopFor(loc); L; L = L->getParentLoop()) {
+      if (L == InstLoop)
+        return false;
+    }
+    return true;
+  }
+  return false;
+}
+
 GradientUtils::GradientUtils(EnzymeLogic &Logic, Function *newFunc_,
                              Function *oldFunc_, TargetLibraryInfo &TLI_,
                              TypeAnalysis &TA_, TypeResults TR_,
@@ -2486,7 +2503,7 @@ Value *GradientUtils::fixLCSSA(Instruction *inst, BasicBlock *forwardBlock,
 }
 
 Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
-                                      int idx, bool ignoreType, bool replace) {
+                                      int idx, bool replace) {
   assert(malloc);
   assert(BuilderQ.GetInsertBlock()->getParent() == newFunc);
   assert(isOriginalBlock(*BuilderQ.GetInsertBlock()));
@@ -2530,19 +2547,17 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
 
     if (ret->getType()->isEmptyTy()) {
       if (auto inst = dyn_cast_or_null<Instruction>(malloc)) {
-        if (!ignoreType) {
-          if (inst->getType() != ret->getType()) {
-            llvm::errs() << "oldFunc: " << *oldFunc << "\n";
-            llvm::errs() << "newFunc: " << *newFunc << "\n";
-            llvm::errs() << "inst==malloc: " << *inst << "\n";
-            llvm::errs() << "ret: " << *ret << "\n";
-          }
-          assert(inst->getType() == ret->getType());
-          if (replace)
-            inst->replaceAllUsesWith(UndefValue::get(ret->getType()));
+        if (inst->getType() != ret->getType()) {
+          llvm::errs() << "oldFunc: " << *oldFunc << "\n";
+          llvm::errs() << "newFunc: " << *newFunc << "\n";
+          llvm::errs() << "inst==malloc: " << *inst << "\n";
+          llvm::errs() << "ret: " << *ret << "\n";
         }
-        if (replace)
+        assert(inst->getType() == ret->getType());
+        if (replace) {
+          inst->replaceAllUsesWith(UndefValue::get(ret->getType()));
           erase(inst);
+        }
       }
       Type *retType = ret->getType();
       if (replace)
@@ -2626,7 +2641,6 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
         }
 #if LLVM_VERSION_MAJOR >= 15
       } else {
-        assert(!ignoreType);
         if (EfficientBoolCache && malloc->getType()->isIntegerTy() &&
             cast<IntegerType>(malloc->getType())->getBitWidth() == 1)
           innerType = Type::getInt8Ty(malloc->getContext());
@@ -2635,22 +2649,20 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
       }
 #endif
 
-      if (!ignoreType) {
-        if (EfficientBoolCache && malloc->getType()->isIntegerTy() &&
-            cast<IntegerType>(malloc->getType())->getBitWidth() == 1 &&
-            innerType != ret->getType()) {
-          assert(innerType == Type::getInt8Ty(malloc->getContext()));
-        } else {
-          if (innerType != malloc->getType()) {
-            llvm::errs() << *oldFunc << "\n";
-            llvm::errs() << *newFunc << "\n";
-            llvm::errs() << "innerType: " << *innerType << "\n";
-            llvm::errs() << "malloc->getType(): " << *malloc->getType() << "\n";
-            llvm::errs() << "ret: " << *ret << " - " << *ret->getType() << "\n";
-            llvm::errs() << "malloc: " << *malloc << "\n";
-            assert(0 && "illegal loop cache type");
-            llvm_unreachable("illegal loop cache type");
-          }
+      if (EfficientBoolCache && malloc->getType()->isIntegerTy() &&
+          cast<IntegerType>(malloc->getType())->getBitWidth() == 1 &&
+          innerType != ret->getType()) {
+        assert(innerType == Type::getInt8Ty(malloc->getContext()));
+      } else {
+        if (innerType != malloc->getType()) {
+          llvm::errs() << *oldFunc << "\n";
+          llvm::errs() << *newFunc << "\n";
+          llvm::errs() << "innerType: " << *innerType << "\n";
+          llvm::errs() << "malloc->getType(): " << *malloc->getType() << "\n";
+          llvm::errs() << "ret: " << *ret << " - " << *ret->getType() << "\n";
+          llvm::errs() << "malloc: " << *malloc << "\n";
+          assert(0 && "illegal loop cache type");
+          llvm_unreachable("illegal loop cache type");
         }
       }
 
@@ -2660,7 +2672,7 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
           createCacheForScope(lctx, innerType, "mdyncache_fromtape",
                               ((DiffeGradientUtils *)this)->FreeMemory, false);
       assert(malloc);
-      bool isi1 = !ignoreType && malloc->getType()->isIntegerTy() &&
+      bool isi1 = malloc->getType()->isIntegerTy() &&
                   cast<IntegerType>(malloc->getType())->getBitWidth() == 1;
       assert(isa<PointerType>(cache->getType()));
 #if LLVM_VERSION_MAJOR >= 15
@@ -2675,7 +2687,7 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
       auto v =
           lookupValueFromCache(innerType, /*forwardPass*/ true, BuilderQ, lctx,
                                cache, isi1, /*available*/ ValueToValueMapTy());
-      if (!ignoreType && malloc) {
+      if (malloc) {
         assert(v->getType() == malloc->getType());
       }
       insert_or_assign(scopeMap, v,
@@ -2684,15 +2696,13 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
     }
 
     if (malloc && !isa<UndefValue>(malloc)) {
-      if (!ignoreType) {
-        if (malloc->getType() != ret->getType()) {
-          llvm::errs() << *oldFunc << "\n";
-          llvm::errs() << *newFunc << "\n";
-          llvm::errs() << *malloc << "\n";
-          llvm::errs() << *ret << "\n";
-        }
-        assert(malloc->getType() == ret->getType());
+      if (malloc->getType() != ret->getType()) {
+        llvm::errs() << *oldFunc << "\n";
+        llvm::errs() << *newFunc << "\n";
+        llvm::errs() << *malloc << "\n";
+        llvm::errs() << *ret << "\n";
       }
+      assert(malloc->getType() == ret->getType());
 
       if (replace) {
         auto found = newToOriginalFn.find(malloc);
@@ -2846,7 +2856,7 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
             erase(preerase);
         }
       }
-      if (!ignoreType && replace)
+      if (replace)
         cast<Instruction>(malloc)->replaceAllUsesWith(ret);
       ret->takeName(malloc);
       if (replace) {
@@ -2860,7 +2870,6 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
     return ret;
   } else {
     assert(malloc);
-    assert(!ignoreType);
 
     assert(idx >= 0 && (unsigned)idx == addedTapeVals.size());
 
@@ -2949,7 +2958,6 @@ Value *GradientUtils::cacheForReverse(IRBuilder<> &BuilderQ, Value *malloc,
            i < limit; ++i) {
         innerType = innerType->getPointerElementType();
       }
-      assert(!ignoreType);
       if (EfficientBoolCache && malloc->getType()->isIntegerTy() &&
           toadd->getType() != innerType &&
           cast<IntegerType>(malloc->getType())->getBitWidth() == 1) {

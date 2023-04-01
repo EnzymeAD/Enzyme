@@ -2253,6 +2253,12 @@ public:
           }
         }
       }
+      if (looseTypeAnalysis) {
+        llvm::errs() << "warning: binary operator is integer and constant: "
+                     << BO << "\n";
+        // if loose type analysis, assume this integer and is constant
+        return;
+      }
       goto def;
     }
     case Instruction::And: {
@@ -2421,6 +2427,12 @@ public:
             }
           }
         }
+      if (looseTypeAnalysis) {
+        llvm::errs() << "warning: binary operator is integer and constant: "
+                     << BO << "\n";
+        // if loose type analysis, assume this integer and is constant
+        return;
+      }
       goto def;
     }
     case Instruction::Or: {
@@ -2876,6 +2888,13 @@ public:
             }
           }
         }
+      if (looseTypeAnalysis) {
+        forwardModeInvertedPointerFallback(BO);
+        llvm::errs() << "warning: binary operator is integer and constant: "
+                     << BO << "\n";
+        // if loose type analysis, assume this integer and is constant
+        return;
+      }
       goto def;
     }
     case Instruction::Or: {
@@ -10113,13 +10132,25 @@ public:
 
         Value *tape = nullptr;
 
+        Type *tapeType = nullptr;
+
         if (Mode == DerivativeMode::ReverseModePrimal ||
             Mode == DerivativeMode::ReverseModeCombined) {
           found->second.first(BuilderZ, &call, *gutils, normalReturn,
                               invertedReturn, tape);
-          if (tape)
+          if (tape) {
+            tapeType = tape->getType();
             gutils->cacheForReverse(BuilderZ, tape,
                                     getIndex(&call, CacheType::Tape));
+          }
+          if (Mode == DerivativeMode::ReverseModePrimal) {
+            assert(augmentedReturn);
+            auto subaugmentations =
+                (std::map<const llvm::CallInst *, AugmentedReturn *>
+                     *)&augmentedReturn->subaugmentations;
+            insert_or_assign2<const llvm::CallInst *, AugmentedReturn *>(
+                *subaugmentations, &call, (AugmentedReturn *)tapeType);
+          }
         }
 
         if (Mode == DerivativeMode::ReverseModeGradient ||
@@ -10128,7 +10159,20 @@ public:
               augmentedReturn->tapeIndices.find(
                   std::make_pair(&call, CacheType::Tape)) !=
                   augmentedReturn->tapeIndices.end()) {
-            tape = BuilderZ.CreatePHI(Type::getInt32Ty(call.getContext()), 0);
+            assert(augmentedReturn);
+            auto subaugmentations =
+                (std::map<const llvm::CallInst *, AugmentedReturn *>
+                     *)&augmentedReturn->subaugmentations;
+            auto fd = subaugmentations->find(&call);
+            assert(fd != subaugmentations->end());
+            // Note we are using the storage space here to persist
+            // the LLVM type, as storing a new augmentedReturn has issues
+            // regarding persisting the data structure, and when it will
+            // be freed, since it will no longer live in the map in
+            // EnzymeLogic.
+            tapeType = (llvm::Type *)fd->second;
+
+            tape = BuilderZ.CreatePHI(tapeType, 0);
             tape = gutils->cacheForReverse(BuilderZ, tape,
                                            getIndex(&call, CacheType::Tape),
                                            /*ignoreType*/ true);

@@ -76,7 +76,7 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   %"a10'ipg" = getelementptr inbounds double, double* %"a0'", i32 %0
 ; CHECK-NEXT:   %a10 = getelementptr inbounds double, double* %a0, i32 %0
 ; CHECK-NEXT:   store double* %"a10'ipg", double** %"p3'ipc", align 8
-; CHECK-NEXT:   store double* %a10, double** %p3, align 8, !alias.scope !3, !noalias !0
+; CHECK-NEXT:   store double* %a10, double** %p3, align 8, !alias.scope !{{[0-9]+}}, !noalias !{{[0-9]+}}
 ; CHECK-NEXT:   %a4_augmented = call { double*, double*, double* } @augmented_f(double** %p3, double** %"p3'ipc")
 ; CHECK-NEXT:   %subcache = extractvalue { double*, double*, double* } %a4_augmented, 0
 ; CHECK-NEXT:   %a4 = extractvalue { double*, double*, double* } %a4_augmented, 1
