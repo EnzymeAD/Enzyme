@@ -42,7 +42,6 @@
 #include "TypeAnalysis/TBAA.h"
 
 #define DEBUG_TYPE "enzyme"
-using namespace llvm;
 
 // Helper instruction visitor that generates adjoints
 template <class AugmentedReturnType = AugmentedReturn *>
@@ -53,35 +52,39 @@ private:
   const DerivativeMode Mode;
 
   GradientUtils *const gutils;
-  ArrayRef<DIFFE_TYPE> constant_args;
+  llvm::ArrayRef<DIFFE_TYPE> constant_args;
   DIFFE_TYPE retType;
   TypeResults &TR = gutils->TR;
-  std::function<unsigned(Instruction *, CacheType)> getIndex;
-  const std::map<CallInst *, const std::vector<bool>> overwritten_args_map;
-  const SmallPtrSetImpl<Instruction *> *returnuses;
+  std::function<unsigned(llvm::Instruction *, CacheType)> getIndex;
+  const std::map<llvm::CallInst *, const std::vector<bool>>
+      overwritten_args_map;
+  const llvm::SmallPtrSetImpl<llvm::Instruction *> *returnuses;
   AugmentedReturnType augmentedReturn;
-  const std::map<ReturnInst *, StoreInst *> *replacedReturns;
+  const std::map<llvm::ReturnInst *, llvm::StoreInst *> *replacedReturns;
 
-  const SmallPtrSetImpl<const Value *> &unnecessaryValues;
-  const SmallPtrSetImpl<const Instruction *> &unnecessaryInstructions;
-  const SmallPtrSetImpl<const Instruction *> &unnecessaryStores;
-  const SmallPtrSetImpl<BasicBlock *> &oldUnreachable;
-  AllocaInst *dretAlloca;
+  const llvm::SmallPtrSetImpl<const llvm::Value *> &unnecessaryValues;
+  const llvm::SmallPtrSetImpl<const llvm::Instruction *>
+      &unnecessaryInstructions;
+  const llvm::SmallPtrSetImpl<const llvm::Instruction *> &unnecessaryStores;
+  const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &oldUnreachable;
+  llvm::AllocaInst *dretAlloca;
 
 public:
   AdjointGenerator(
       DerivativeMode Mode, GradientUtils *gutils,
-      ArrayRef<DIFFE_TYPE> constant_args, DIFFE_TYPE retType,
-      std::function<unsigned(Instruction *, CacheType)> getIndex,
-      const std::map<CallInst *, const std::vector<bool>> overwritten_args_map,
-      const SmallPtrSetImpl<Instruction *> *returnuses,
+      llvm::ArrayRef<DIFFE_TYPE> constant_args, DIFFE_TYPE retType,
+      std::function<unsigned(llvm::Instruction *, CacheType)> getIndex,
+      const std::map<llvm::CallInst *, const std::vector<bool>>
+          overwritten_args_map,
+      const llvm::SmallPtrSetImpl<llvm::Instruction *> *returnuses,
       AugmentedReturnType augmentedReturn,
-      const std::map<ReturnInst *, StoreInst *> *replacedReturns,
-      const SmallPtrSetImpl<const Value *> &unnecessaryValues,
-      const SmallPtrSetImpl<const Instruction *> &unnecessaryInstructions,
-      const SmallPtrSetImpl<const Instruction *> &unnecessaryStores,
-      const SmallPtrSetImpl<BasicBlock *> &oldUnreachable,
-      AllocaInst *dretAlloca)
+      const std::map<llvm::ReturnInst *, llvm::StoreInst *> *replacedReturns,
+      const llvm::SmallPtrSetImpl<const llvm::Value *> &unnecessaryValues,
+      const llvm::SmallPtrSetImpl<const llvm::Instruction *>
+          &unnecessaryInstructions,
+      const llvm::SmallPtrSetImpl<const llvm::Instruction *> &unnecessaryStores,
+      const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &oldUnreachable,
+      llvm::AllocaInst *dretAlloca)
       : Mode(Mode), gutils(gutils), constant_args(constant_args),
         retType(retType), getIndex(getIndex),
         overwritten_args_map(overwritten_args_map), returnuses(returnuses),
@@ -90,6 +93,7 @@ public:
         unnecessaryInstructions(unnecessaryInstructions),
         unnecessaryStores(unnecessaryStores), oldUnreachable(oldUnreachable),
         dretAlloca(dretAlloca) {
+    using namespace llvm;
 
     assert(TR.getFunction() == gutils->oldFunc);
     for (auto &pair : TR.analyzer.analysis) {
@@ -104,10 +108,12 @@ public:
     }
   }
 
-  SmallPtrSet<Instruction *, 4> erased;
+  llvm::SmallPtrSet<llvm::Instruction *, 4> erased;
 
   void eraseIfUnused(llvm::Instruction &I, bool erase = true,
                      bool check = true) {
+    using namespace llvm;
+
     bool used =
         unnecessaryInstructions.find(&I) == unnecessaryInstructions.end();
     if (!used) {
@@ -117,7 +123,7 @@ public:
       if (found != gutils->knownRecomputeHeuristic.end() && !found->second)
         used = true;
     }
-    auto iload = gutils->getNewFromOriginal((Value *)&I);
+    auto iload = gutils->getNewFromOriginal((llvm::Value *)&I);
     if (used && check)
       return;
 
@@ -139,7 +145,10 @@ public:
     }
   }
 
-  llvm::Value *MPI_TYPE_SIZE(llvm::Value *DT, IRBuilder<> &B, Type *intType) {
+  llvm::Value *MPI_TYPE_SIZE(llvm::Value *DT, llvm::IRBuilder<> &B,
+                             llvm::Type *intType) {
+    using namespace llvm;
+
     if (DT->getType()->isIntegerTy())
       DT = B.CreateIntToPtr(DT, Type::getInt8PtrTy(DT->getContext()));
 
@@ -217,7 +226,10 @@ public:
 
   // To be double-checked against the functionality needed and the respective
   // implementation in Adjoint-MPI
-  llvm::Value *MPI_COMM_RANK(llvm::Value *comm, IRBuilder<> &B, Type *rankTy) {
+  llvm::Value *MPI_COMM_RANK(llvm::Value *comm, llvm::IRBuilder<> &B,
+                             llvm::Type *rankTy) {
+    using namespace llvm;
+
     Type *pargs[] = {comm->getType(), PointerType::getUnqual(rankTy)};
     auto FT = FunctionType::get(rankTy, pargs, false);
     auto &context = comm->getContext();
@@ -265,7 +277,10 @@ public:
 #endif
   }
 
-  llvm::Value *MPI_COMM_SIZE(llvm::Value *comm, IRBuilder<> &B, Type *rankTy) {
+  llvm::Value *MPI_COMM_SIZE(llvm::Value *comm, llvm::IRBuilder<> &B,
+                             llvm::Type *rankTy) {
+    using namespace llvm;
+
     Type *pargs[] = {comm->getType(), PointerType::getUnqual(rankTy)};
     auto FT = FunctionType::get(rankTy, pargs, false);
     auto &context = comm->getContext();
@@ -315,6 +330,8 @@ public:
 
 #if LLVM_VERSION_MAJOR >= 10
   void visitFreezeInst(llvm::FreezeInst &inst) {
+    using namespace llvm;
+
     eraseIfUnused(inst);
     if (gutils->isConstantInstruction(&inst))
       return;
@@ -359,6 +376,8 @@ public:
 #endif
 
   void visitInstruction(llvm::Instruction &inst) {
+    using namespace llvm;
+
     // TODO explicitly handle all instructions rather than using the catch all
     // below
 
@@ -433,7 +452,9 @@ public:
 
   // Common function for falling back to the implementation
   // of dual propagation, as available in invertPointerM.
-  void forwardModeInvertedPointerFallback(Instruction &I) {
+  void forwardModeInvertedPointerFallback(llvm::Instruction &I) {
+    using namespace llvm;
+
     if (gutils->isConstantValue(&I))
       return;
     auto found = gutils->invertedPointers.find(&I);
@@ -478,12 +499,15 @@ public:
   void visitFCmpInst(llvm::FCmpInst &I) { eraseIfUnused(I); }
 
 #if LLVM_VERSION_MAJOR >= 10
-  void visitLoadLike(llvm::Instruction &I, MaybeAlign alignment,
+  void visitLoadLike(llvm::Instruction &I, llvm::MaybeAlign alignment,
                      bool constantval,
 #else
   void visitLoadLike(llvm::Instruction &I, unsigned alignment, bool constantval,
 #endif
-                     Value *mask = nullptr, Value *orig_maskInit = nullptr) {
+                     llvm::Value *mask = nullptr,
+                     llvm::Value *orig_maskInit = nullptr) {
+    using namespace llvm;
+
     auto &DL = gutils->newFunc->getParent()->getDataLayout();
     auto LoadSize = (DL.getTypeSizeInBits(I.getType()) + 1) / 8;
 
@@ -872,6 +896,8 @@ public:
   }
 
   void visitLoadInst(llvm::LoadInst &LI) {
+    using namespace llvm;
+
     // If a load of an omp init argument, don't cache for reverse
     // and don't do any adjoint propagation (assumed integral)
     for (auto U : LI.getPointerOperand()->users()) {
@@ -902,6 +928,7 @@ public:
   }
 
   void visitAtomicRMWInst(llvm::AtomicRMWInst &I) {
+    using namespace llvm;
 
     if (gutils->isConstantInstruction(&I) && gutils->isConstantValue(&I)) {
       if (Mode == DerivativeMode::ReverseModeGradient ||
@@ -1045,6 +1072,8 @@ public:
   }
 
   void visitStoreInst(llvm::StoreInst &SI) {
+    using namespace llvm;
+
     // If a store of an omp init argument, don't delete in reverse
     // and don't do any adjoint propagation (assumed integral)
     for (auto U : SI.getPointerOperand()->users()) {
@@ -1084,17 +1113,19 @@ public:
   }
 
 #if LLVM_VERSION_MAJOR >= 10
-  void visitCommonStore(llvm::Instruction &I, Value *orig_ptr, Value *orig_val,
-                        MaybeAlign align, bool isVolatile,
-                        AtomicOrdering ordering, SyncScope::ID syncScope,
-                        Value *mask)
+  void visitCommonStore(llvm::Instruction &I, llvm::Value *orig_ptr,
+                        llvm::Value *orig_val, llvm::MaybeAlign align,
+                        bool isVolatile, llvm::AtomicOrdering ordering,
+                        llvm::SyncScope::ID syncScope, llvm::Value *mask)
 #else
-  void visitCommonStore(llvm::Instruction &I, Value *orig_ptr, Value *orig_val,
-                        unsigned align, bool isVolatile,
-                        AtomicOrdering ordering, SyncScope::ID syncScope,
-                        Value *mask)
+  void visitCommonStore(llvm::Instruction &I, llvm::Value *orig_ptr,
+                        llvm::Value *orig_val, unsigned align, bool isVolatile,
+                        llvm::AtomicOrdering ordering,
+                        llvm::SyncScope::ID syncScope, llvm::Value *mask)
 #endif
   {
+    using namespace llvm;
+
     Value *val = gutils->getNewFromOriginal(orig_val);
     Type *valType = orig_val->getType();
 
@@ -1388,6 +1419,8 @@ public:
   }
 
   void visitCastInst(llvm::CastInst &I) {
+    using namespace llvm;
+
     eraseIfUnused(I);
 
     switch (Mode) {
@@ -1492,6 +1525,8 @@ public:
   }
 
   void createSelectInstAdjoint(llvm::SelectInst &SI) {
+    using namespace llvm;
+
     Value *op0 = gutils->getNewFromOriginal(SI.getOperand(0));
     Value *orig_op1 = SI.getOperand(1);
     Value *op1 = gutils->getNewFromOriginal(orig_op1);
@@ -1600,6 +1635,8 @@ public:
   }
 
   void visitExtractElementInst(llvm::ExtractElementInst &EEI) {
+    using namespace llvm;
+
     eraseIfUnused(EEI);
     switch (Mode) {
     case DerivativeMode::ForwardModeSplit:
@@ -1642,6 +1679,8 @@ public:
   }
 
   void visitInsertElementInst(llvm::InsertElementInst &IEI) {
+    using namespace llvm;
+
     eraseIfUnused(IEI);
 
     switch (Mode) {
@@ -1705,6 +1744,8 @@ public:
   }
 
   void visitShuffleVectorInst(llvm::ShuffleVectorInst &SVI) {
+    using namespace llvm;
+
     eraseIfUnused(SVI);
 
     switch (Mode) {
@@ -1766,6 +1807,8 @@ public:
   }
 
   void visitExtractValueInst(llvm::ExtractValueInst &EVI) {
+    using namespace llvm;
+
     eraseIfUnused(EVI);
 
     switch (Mode) {
@@ -1816,6 +1859,8 @@ public:
   }
 
   void visitInsertValueInst(llvm::InsertValueInst &IVI) {
+    using namespace llvm;
+
     eraseIfUnused(IVI);
     if (gutils->isConstantValue(&IVI))
       return;
@@ -1966,20 +2011,21 @@ public:
     }
   }
 
-  void getReverseBuilder(IRBuilder<> &Builder2, bool original = true) {
+  void getReverseBuilder(llvm::IRBuilder<> &Builder2, bool original = true) {
     ((GradientUtils *)gutils)->getReverseBuilder(Builder2, original);
   }
 
-  void getForwardBuilder(IRBuilder<> &Builder2) {
+  void getForwardBuilder(llvm::IRBuilder<> &Builder2) {
     ((GradientUtils *)gutils)->getForwardBuilder(Builder2);
   }
 
-  Value *diffe(Value *val, IRBuilder<> &Builder) {
+  llvm::Value *diffe(llvm::Value *val, llvm::IRBuilder<> &Builder) {
     assert(Mode != DerivativeMode::ReverseModePrimal);
     return ((DiffeGradientUtils *)gutils)->diffe(val, Builder);
   }
 
-  void setDiffe(Value *val, Value *dif, IRBuilder<> &Builder) {
+  void setDiffe(llvm::Value *val, llvm::Value *dif,
+                llvm::IRBuilder<> &Builder) {
     assert(Mode != DerivativeMode::ReverseModePrimal);
     ((DiffeGradientUtils *)gutils)->setDiffe(val, dif, Builder);
   }
@@ -1987,8 +2033,8 @@ public:
   /// Unwraps a vector derivative from its internal representation and applies a
   /// function f to each element. Return values of f are collected and wrapped.
   template <typename Func, typename... Args>
-  Value *applyChainRule(Type *diffType, IRBuilder<> &Builder, Func rule,
-                        Args... args) {
+  llvm::Value *applyChainRule(llvm::Type *diffType, llvm::IRBuilder<> &Builder,
+                              Func rule, Args... args) {
     return ((GradientUtils *)gutils)
         ->applyChainRule(diffType, Builder, rule, args...);
   }
@@ -1996,15 +2042,15 @@ public:
   /// Unwraps a vector derivative from its internal representation and applies a
   /// function f to each element.
   template <typename Func, typename... Args>
-  void applyChainRule(IRBuilder<> &Builder, Func rule, Args... args) {
+  void applyChainRule(llvm::IRBuilder<> &Builder, Func rule, Args... args) {
     ((GradientUtils *)gutils)->applyChainRule(Builder, rule, args...);
   }
 
   /// Unwraps an collection of constant vector derivatives from their internal
   /// representations and applies a function f to each element.
   template <typename Func>
-  void applyChainRule(ArrayRef<Value *> diffs, IRBuilder<> &Builder,
-                      Func rule) {
+  void applyChainRule(llvm::ArrayRef<llvm::Value *> diffs,
+                      llvm::IRBuilder<> &Builder, Func rule) {
     ((GradientUtils *)gutils)->applyChainRule(diffs, Builder, rule);
   }
 
@@ -2015,14 +2061,14 @@ public:
     return ((DiffeGradientUtils *)gutils)->FreeMemory;
   }
 
-  SmallVector<SelectInst *, 4> addToDiffe(Value *val, Value *dif,
-                                          IRBuilder<> &Builder, Type *T,
-                                          Value *mask = nullptr) {
+  llvm::SmallVector<llvm::SelectInst *, 4>
+  addToDiffe(llvm::Value *val, llvm::Value *dif, llvm::IRBuilder<> &Builder,
+             llvm::Type *T, llvm::Value *mask = nullptr) {
     return ((DiffeGradientUtils *)gutils)
         ->addToDiffe(val, dif, Builder, T, /*idxs*/ {}, mask);
   }
 
-  Value *lookup(Value *val, IRBuilder<> &Builder) {
+  llvm::Value *lookup(llvm::Value *val, llvm::IRBuilder<> &Builder) {
     return gutils->lookupM(val, Builder);
   }
 
@@ -2058,6 +2104,8 @@ public:
   }
 
   void createBinaryOperatorAdjoint(llvm::BinaryOperator &BO) {
+    using namespace llvm;
+
     IRBuilder<> Builder2(BO.getParent());
     getReverseBuilder(Builder2);
 
@@ -2576,6 +2624,8 @@ public:
   }
 
   void createBinaryOperatorDual(llvm::BinaryOperator &BO) {
+    using namespace llvm;
+
     if (gutils->isConstantInstruction(&BO)) {
       forwardModeInvertedPointerFallback(BO);
       return;
@@ -3030,6 +3080,8 @@ public:
   void visitMemSetInst(llvm::MemSetInst &MS) { visitMemSetCommon(MS); }
 
   void visitMemSetCommon(llvm::CallInst &MS) {
+    using namespace llvm;
+
     IRBuilder<> BuilderZ(&MS);
     getForwardBuilder(BuilderZ);
 
@@ -3406,6 +3458,8 @@ public:
   }
 
   void visitMemTransferInst(llvm::MemTransferInst &MTI) {
+    using namespace llvm;
+
 #if LLVM_VERSION_MAJOR >= 7
     Value *isVolatile = gutils->getNewFromOriginal(MTI.getOperand(3));
 #else
@@ -3425,17 +3479,19 @@ public:
   }
 
 #if LLVM_VERSION_MAJOR >= 10
-  void visitMemTransferCommon(Intrinsic::ID ID, MaybeAlign srcAlign,
-                              MaybeAlign dstAlign, llvm::CallInst &MTI,
-                              Value *orig_dst, Value *orig_src, Value *new_size,
-                              Value *isVolatile)
+  void visitMemTransferCommon(llvm::Intrinsic::ID ID, llvm::MaybeAlign srcAlign,
+                              llvm::MaybeAlign dstAlign, llvm::CallInst &MTI,
+                              llvm::Value *orig_dst, llvm::Value *orig_src,
+                              llvm::Value *new_size, llvm::Value *isVolatile)
 #else
-  void visitMemTransferCommon(Intrinsic::ID ID, unsigned srcAlign,
+  void visitMemTransferCommon(llvm::Intrinsic::ID ID, unsigned srcAlign,
                               unsigned dstAlign, llvm::CallInst &MTI,
-                              Value *orig_dst, Value *orig_src, Value *new_size,
-                              Value *isVolatile)
+                              llvm::Value *orig_dst, llvm::Value *orig_src,
+                              llvm::Value *new_size, llvm::Value *isVolatile)
 #endif
   {
+    using namespace llvm;
+
     if (gutils->isConstantValue(MTI.getOperand(0))) {
       eraseIfUnused(MTI);
       return;
@@ -3670,6 +3726,8 @@ public:
   }
 
   void visitFenceInst(llvm::FenceInst &FI) {
+    using namespace llvm;
+
     switch (Mode) {
     default:
       break;
@@ -3695,6 +3753,8 @@ public:
   }
 
   void visitIntrinsicInst(llvm::IntrinsicInst &II) {
+    using namespace llvm;
+
     if (II.getIntrinsicID() == Intrinsic::stacksave) {
       eraseIfUnused(II, /*erase*/ true, /*check*/ false);
       return;
@@ -3726,8 +3786,10 @@ public:
     eraseIfUnused(II);
   }
 
-  void handleAdjointForIntrinsic(Intrinsic::ID ID, llvm::Instruction &I,
-                                 SmallVectorImpl<Value *> &orig_ops) {
+  void
+  handleAdjointForIntrinsic(llvm::Intrinsic::ID ID, llvm::Instruction &I,
+                            llvm::SmallVectorImpl<llvm::Value *> &orig_ops) {
+    using namespace llvm;
 
     Module *M = I.getParent()->getParent()->getParent();
 
@@ -4967,6 +5029,8 @@ public:
   }
 
   void visitOMPCall(llvm::CallInst &call) {
+    using namespace llvm;
+
     Function *kmpc = call.getCalledFunction();
 
     if (overwritten_args_map.find(&call) == overwritten_args_map.end()) {
@@ -5590,10 +5654,12 @@ public:
     }
   }
 
-  void DifferentiableMemCopyFloats(CallInst &call, Value *origArg, Value *dsto,
-                                   Value *srco, Value *len_arg,
-                                   IRBuilder<> &Builder2,
-                                   ArrayRef<OperandBundleDef> ReverseDefs) {
+  void DifferentiableMemCopyFloats(
+      llvm::CallInst &call, llvm::Value *origArg, llvm::Value *dsto,
+      llvm::Value *srco, llvm::Value *len_arg, llvm::IRBuilder<> &Builder2,
+      llvm::ArrayRef<llvm::OperandBundleDef> ReverseDefs) {
+    using namespace llvm;
+
     size_t size = 1;
     if (auto ci = dyn_cast<ConstantInt>(len_arg)) {
       size = ci->getLimitedValue();
@@ -5710,8 +5776,10 @@ public:
     }
   }
 
-  std::string extractBLAS(StringRef in, std::string &prefix,
+  std::string extractBLAS(llvm::StringRef in, std::string &prefix,
                           std::string &suffix) {
+    using namespace llvm;
+
     std::string extractable[] = {"ddot", "sdot", "dnrm2", "snrm2"};
     std::string prefixes[] = {"", "cblas_", "cublas_"};
     std::string suffixes[] = {"", "_", "_64_"};
@@ -5729,9 +5797,12 @@ public:
     return "";
   }
 
-  bool handleBLAS(llvm::CallInst &call, Function *called, StringRef funcName,
-                  StringRef prefix, StringRef suffix,
+  bool handleBLAS(llvm::CallInst &call, llvm::Function *called,
+                  llvm::StringRef funcName, llvm::StringRef prefix,
+                  llvm::StringRef suffix,
                   const std::vector<bool> &overwritten_args) {
+    using namespace llvm;
+
     CallInst *const newCall = cast<CallInst>(gutils->getNewFromOriginal(&call));
     IRBuilder<> BuilderZ(newCall);
     BuilderZ.setFastMathFlags(getFast());
@@ -6431,7 +6502,10 @@ public:
     return false;
   }
 
-  void handleMPI(llvm::CallInst &call, Function *called, StringRef funcName) {
+  void handleMPI(llvm::CallInst &call, llvm::Function *called,
+                 llvm::StringRef funcName) {
+    using namespace llvm;
+
     assert(called);
     assert(gutils->getWidth() == 1);
 
@@ -8802,10 +8876,13 @@ public:
     llvm_unreachable("Unhandled MPI FUNCTION");
   }
 
-  void recursivelyHandleSubfunction(CallInst &call, Function *called,
+  void recursivelyHandleSubfunction(llvm::CallInst &call,
+                                    llvm::Function *called,
                                     const std::vector<bool> &overwritten_args,
                                     bool shadowReturnUsed,
                                     DIFFE_TYPE subretType, bool subretused) {
+    using namespace llvm;
+
     IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
     BuilderZ.setFastMathFlags(getFast());
 
@@ -10033,6 +10110,8 @@ public:
 
   // Return
   void visitCallInst(llvm::CallInst &call) {
+    using namespace llvm;
+
     CallInst *const newCall = cast<CallInst>(gutils->getNewFromOriginal(&call));
     IRBuilder<> BuilderZ(newCall);
     BuilderZ.setFastMathFlags(getFast());
