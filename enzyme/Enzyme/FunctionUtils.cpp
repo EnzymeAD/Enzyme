@@ -1067,7 +1067,7 @@ static void ForceRecursiveInlining(Function *NewF, size_t Limit) {
 }
 
 void CanonicalizeLoops(Function *F, FunctionAnalysisManager &FAM) {
-
+  LoopSimplifyPass().run(*F, FAM);
   DominatorTree &DT = FAM.getResult<DominatorTreeAnalysis>(*F);
   LoopInfo &LI = FAM.getResult<LoopAnalysis>(*F);
   AssumptionCache &AC = FAM.getResult<AssumptionAnalysis>(*F);
