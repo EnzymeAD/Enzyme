@@ -148,11 +148,10 @@ const char *KnownInactiveFunctionsStartingWith[] = {
     "_ZSt11_Hash_bytes",
     "_ZNKSt3__14hash",
     "_ZNSt3__116__do_string_hash",
-    "_ZNKSt8__detail20_Prime_rehash_policy"
-    "_ZNSt8__detail20_Prime_rehash_policy"
-    "_ZNKSt3__122__unordered_map_hasher"
+    "_ZNKSt8__detail20_Prime_rehash_policy",
+    "_ZNSt8__detail20_Prime_rehash_policy",
+    "_ZNKSt3__122__unordered_map_hasher",
     "_ZNKSt8__detail15_Hash_code_base"
-"
 #endif
 };
 

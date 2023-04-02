@@ -4861,7 +4861,8 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
       "_ZNKSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE4dataEv"
       "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEED1Ev",
       "_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEED1Ev",
-      "_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6__initEPKcm",
+      "_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6__"
+      "initEPKcm",
       "_ZNSt12__basic_fileIcED1Ev",
       "__cxa_begin_catch",
       "__cxa_end_catch",
@@ -4886,7 +4887,8 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
       "_ZSt11_Hash_bytesPKvmm",
       "_ZNSt3__116__do_string_hashIPKcEEmT_S3_",
       "_ZNKSt3__14hashIPKcEclES2_",
-  };
+      "_ZNSt3__19addressofIcEEPT_RS1_",
+      "_ZNSt3__19addressofIKcEEPT_RS2_"};
 
   if (F->getName().startswith("_ZNSolsE") || NoFrees.count(F->getName().str()))
     return F;
