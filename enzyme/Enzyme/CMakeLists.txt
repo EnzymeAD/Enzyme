@@ -295,14 +295,19 @@ set_target_properties(LLDEnzyme-${LLVM_VERSION_MAJOR} PROPERTIES
         LINK_FLAGS "-Wl,-flat_namespace -Wl,-undefined -Wl,suppress")
 endif()
 
+
 add_library(LLDEnzyme INTERFACE)
 target_compile_options(LLDEnzyme INTERFACE -flto)
 target_link_options(LLDEnzyme INTERFACE "SHELL: -fuse-ld=lld")
-if(${LLVM_VERSION_MAJOR} LESS 15) 
+
+set(LTO_LEGACY_MANAGER_VERSIONS 13 14)
+if (${LLVM_VERSION_MAJOR} IN_LIST LTO_LEGACY_MANAGER_VERSIONS)
   target_link_options(LLDEnzyme INTERFACE "SHELL: -Wl,--lto-legacy-pass-manager")
 endif()
+
 target_link_options(LLDEnzyme INTERFACE "SHELL: -Wl,-mllvm=-load=$<TARGET_FILE:LLDEnzyme-${LLVM_VERSION_MAJOR}>")
 add_dependencies(LLDEnzyme LLDEnzyme-${LLVM_VERSION_MAJOR})
+
 
 add_library(ClangEnzyme INTERFACE)
 if(${LLVM_VERSION_MAJOR} LESS 15) 
