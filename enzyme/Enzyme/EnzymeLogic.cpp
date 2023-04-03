@@ -4872,7 +4872,9 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
       "_ZNSt7__cxx1115basic_stringbufIcSt11char_traitsIcESaIcEE9underflowEv",
       "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_assignERKS4_",
       "_ZNSaIcED1Ev",
-      "_ZNSaIcEC1Ev"};
+      "_ZNSaIcEC1Ev",
+      "MPI_Type_commit",
+      "PMPI_Type_create_subarray"};
 
   if (F->getName().startswith("_ZNSolsE") || NoFrees.count(F->getName().str()))
     return F;

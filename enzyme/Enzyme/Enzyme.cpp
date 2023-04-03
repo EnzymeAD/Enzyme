@@ -182,6 +182,34 @@ static void handleKnownFunctions(llvm::Function &F) {
       F.addParamAttr(1, Attribute::NoCapture);
     }
   }
+  if (F.getName() == "MPI_Type_commit") {
+    F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
+    F.addFnAttr(Attribute::NoUnwind);
+    F.addFnAttr(Attribute::NoRecurse);
+#if LLVM_VERSION_MAJOR >= 9
+    F.addFnAttr(Attribute::WillReturn);
+    F.addFnAttr(Attribute::NoFree);
+    F.addFnAttr(Attribute::NoSync);
+#endif
+    F.addParamAttr(0, Attribute::NoCapture);
+  }
+  if (F.getName() == "PMPI_Type_create_subarray") {
+    F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
+    F.addFnAttr(Attribute::NoUnwind);
+    F.addFnAttr(Attribute::NoRecurse);
+#if LLVM_VERSION_MAJOR >= 9
+    F.addFnAttr(Attribute::WillReturn);
+    F.addFnAttr(Attribute::NoFree);
+    F.addFnAttr(Attribute::NoSync);
+#endif
+    F.addParamAttr(0, Attribute::NoCapture);
+    F.addParamAttr(1, Attribute::NoCapture);
+    F.addParamAttr(2, Attribute::NoCapture);
+    F.addParamAttr(3, Attribute::NoCapture);
+    F.addParamAttr(4, Attribute::NoCapture);
+    F.addParamAttr(5, Attribute::NoCapture);
+    F.addParamAttr(6, Attribute::NoCapture);
+  }
   if (F.getName() == "MPI_Wait" || F.getName() == "PMPI_Wait") {
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);

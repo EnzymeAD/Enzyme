@@ -255,6 +255,8 @@ const std::set<std::string> KnownInactiveFunctions = {
     "PMPI_Comm_size",
     "MPI_Comm_rank",
     "PMPI_Comm_rank",
+    "MPI_Type_commit",
+    "PMPI_Type_create_subarray",
     "MPI_Get_processor_name",
     "MPI_Finalize",
     "MPI_Test",
