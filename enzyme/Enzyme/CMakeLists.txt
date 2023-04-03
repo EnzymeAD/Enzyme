@@ -295,6 +295,29 @@ set_target_properties(LLDEnzyme-${LLVM_VERSION_MAJOR} PROPERTIES
         LINK_FLAGS "-Wl,-flat_namespace -Wl,-undefined -Wl,suppress")
 endif()
 
+add_library(LLDEnzyme INTERFACE)
+target_compile_options(LLDEnzyme INTERFACE -flto)
+target_link_options(LLDEnzyme INTERFACE "SHELL: -fuse-ld=lld")
+if(${LLVM_VERSION_MAJOR} LESS 15) 
+  target_link_options(LLDEnzyme INTERFACE "SHELL: -Wl,--lto-legacy-pass-manager")
+endif()
+target_link_options(LLDEnzyme INTERFACE "SHELL: -Wl,-mllvm=-load=$<TARGET_FILE:LLDEnzyme-${LLVM_VERSION_MAJOR}>")
+add_dependencies(LLDEnzyme LLDEnzyme-${LLVM_VERSION_MAJOR})
+
+add_library(ClangEnzyme INTERFACE)
+if(${LLVM_VERSION_MAJOR} LESS 15) 
+  # what goes here?
+  target_compile_options(ClangEnzyme INTERFACE "SHELL: -flegacy-pass-manager")
+  target_compile_options(ClangEnzyme INTERFACE "SHELL: -Xclang -load")
+  target_compile_options(ClangEnzyme INTERFACE "SHELL: -Xclang $<TARGET_FILE:ClangEnzyme-${LLVM_VERSION_MAJOR}>")
+else()
+  target_compile_options(ClangEnzyme INTERFACE "-fpass-plugin=$<TARGET_FILE:ClangEnzyme-${LLVM_VERSION_MAJOR}>")
+endif()
+add_dependencies(ClangEnzyme ClangEnzyme-${LLVM_VERSION_MAJOR})
+
+install(TARGETS LLDEnzyme EXPORT UserFacingTargets)
+install(TARGETS ClangEnzyme EXPORT UserFacingTargets)
+
 install(TARGETS LLVMEnzyme-${LLVM_VERSION_MAJOR}
     EXPORT EnzymeTargets
     LIBRARY DESTINATION lib COMPONENT shlib

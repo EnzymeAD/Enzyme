@@ -21,3 +21,8 @@ foreach(_comp ${Enzyme_FIND_COMPONENTS})
     set(Enzyme_LIBRARIES LLVMEnzyme-${Enzyme_LLVM_VERSION_MAJOR} ClangEnzyme-${Enzyme_LLVM_VERSION_MAJOR} LLDEnzyme-${LLD_LLVM_VERSION_MAJOR})
   endif()
 endforeach()
+
+if(NOT TARGET LLDEnzyme AND NOT TARGET ClangEnzyme)
+    include("${Enzyme_CMAKE_DIR}/EnzymeTargets.cmake")
+    include("${Enzyme_CMAKE_DIR}/UserFacingTargets.cmake")
+endif()

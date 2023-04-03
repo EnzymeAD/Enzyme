@@ -323,6 +323,11 @@ install(FILES
      "${PROJECT_BINARY_DIR}/EnzymeConfigVersion.cmake"
      DESTINATION "${INSTALL_CMAKE_DIR}" COMPONENT dev)
    
-install(EXPORT EnzymeTargets DESTINATION
-    "${INSTALL_CMAKE_DIR}" COMPONENT dev)
-   
+install(EXPORT EnzymeTargets 
+  DESTINATION "${INSTALL_CMAKE_DIR}" 
+  COMPONENT   dev)
+
+install(EXPORT UserFacingTargets
+  DESTINATION ${INSTALL_CMAKE_DIR}
+  FILE UserFacingTargets.cmake
+)
