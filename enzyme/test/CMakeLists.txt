@@ -20,3 +20,7 @@ add_subdirectory(BCLoader)
 if (ENZYME_MLIR)
     add_subdirectory(MLIR)
 endif()
+
+if (ENZYME_TEST_CMAKE)
+    add_subdirectory(CMAKE)
+endif()
