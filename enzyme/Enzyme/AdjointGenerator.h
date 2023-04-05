@@ -11882,6 +11882,67 @@ public:
       }
     }
 
+    if (funcName == "realloc") {
+      if (Mode == DerivativeMode::ForwardMode) {
+        if (!gutils->isConstantValue(&call)) {
+          IRBuilder<> Builder2(&call);
+          getForwardBuilder(Builder2);
+
+          SmallVector<Value *, 2> args;
+#if LLVM_VERSION_MAJOR >= 14
+          for (unsigned i = 0; i < call.arg_size(); ++i)
+#else
+          for (unsigned i = 0; i < call.getNumArgOperands(); ++i)
+#endif
+          {
+            auto arg = call.getArgOperand(i);
+            if (i == 0) {
+              assert(!gutils->isConstantValue(arg));
+              arg = gutils->invertPointerM(arg, Builder2);
+            } else {
+              arg = gutils->getNewFromOriginal(arg);
+            }
+            args.push_back(arg);
+          }
+          auto dbgLoc = gutils->getNewFromOriginal(&call)->getDebugLoc();
+
+          auto rule = [&]() {
+            SmallVector<ValueType, 2> BundleTypes(args.size(),
+                                                  ValueType::Primal);
+
+            auto Defs = gutils->getInvertedBundles(&call, BundleTypes, Builder2,
+                                                   /*lookup*/ false);
+
+#if LLVM_VERSION_MAJOR > 7
+            CallInst *CI = Builder2.CreateCall(
+                call.getFunctionType(), call.getCalledFunction(), args, Defs);
+#else
+            CallInst *CI =
+                Builder2.CreateCall(call.getCalledFunction(), args, Defs);
+#endif
+            CI->setAttributes(call.getAttributes());
+            CI->setCallingConv(call.getCallingConv());
+            CI->setTailCallKind(call.getTailCallKind());
+            CI->setDebugLoc(dbgLoc);
+            return CI;
+          };
+
+          Value *CI = applyChainRule(call.getType(), Builder2, rule);
+
+          auto found = gutils->invertedPointers.find(&call);
+          PHINode *placeholder = cast<PHINode>(&*found->second);
+
+          gutils->invertedPointers.erase(found);
+          gutils->replaceAWithB(placeholder, CI);
+          gutils->erase(placeholder);
+          gutils->invertedPointers.insert(
+              std::make_pair(&call, InvertedPointerVH(gutils, CI)));
+        }
+        eraseIfUnused(call);
+        return;
+      }
+    }
+
     if (isAllocationFunction(funcName, gutils->TLI)) {
 
       bool constval = gutils->isConstantValue(&call);
