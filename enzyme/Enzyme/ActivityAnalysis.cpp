@@ -790,11 +790,12 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
   else if (auto CI = dyn_cast<CallInst>(I)) {
     if (AA.onlyReadsMemory(CI)) {
       noActiveWrite = true;
-    } else if (auto F = CI->getCalledFunction()) {
-      if (isMemFreeLibMFunction(F->getName())) {
+    } else {
+      StringRef funcName = getFuncNameFromCall(CI);
+      if (isMemFreeLibMFunction(funcName)) {
         noActiveWrite = true;
-      } else if (F->getName() == "frexp" || F->getName() == "frexpf" ||
-                 F->getName() == "frexpl") {
+      } else if (funcName == "frexp" || funcName == "frexpf" ||
+                 funcName == "frexpl") {
         noActiveWrite = true;
       }
     }
