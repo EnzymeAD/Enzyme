@@ -627,19 +627,23 @@ public:
         // See if we can canonicalize the outermost index into a -1
         if (!legalCombine) {
           size_t chunk = 1;
-          if (auto flt = dt.isFloat()) {
-            if (flt->isFloatTy()) {
-              chunk = 4;
-            } else if (flt->isDoubleTy()) {
-              chunk = 8;
-            } else if (flt->isHalfTy()) {
-              chunk = 2;
-            } else {
-              llvm::errs() << *flt << "\n";
-              assert(0 && "unhandled float type");
-            }
-          } else if (dt == BaseType::Pointer) {
+          if (pnext.size() > 0) {
             chunk = dl.getPointerSizeInBits() / 8;
+          } else {
+            if (auto flt = dt.isFloat()) {
+              if (flt->isFloatTy()) {
+                chunk = 4;
+              } else if (flt->isDoubleTy()) {
+                chunk = 8;
+              } else if (flt->isHalfTy()) {
+                chunk = 2;
+              } else {
+                llvm::errs() << *flt << "\n";
+                assert(0 && "unhandled float type");
+              }
+            } else if (dt == BaseType::Pointer) {
+              chunk = dl.getPointerSizeInBits() / 8;
+            }
           }
 
           legalCombine = true;
