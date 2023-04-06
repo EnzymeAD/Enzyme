@@ -2214,7 +2214,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       if (!newBB->getTerminator()) {
         for (auto next : successors(&oBB)) {
           auto sucBB = cast<BasicBlock>(gutils->getNewFromOriginal(next));
-          sucBB->removePredecessor(newBB);
+          sucBB->removePredecessor(newBB, /*KeepOneInputPHIs*/ true);
         }
         IRBuilder<> builder(newBB);
         builder.CreateUnreachable();
@@ -4430,7 +4430,7 @@ Function *EnzymeLogic::CreateForwardDiff(
       }
 
       for (auto sucBB : toRemove) {
-        sucBB->removePredecessor(newBB);
+        sucBB->removePredecessor(newBB, /*KeepOneInputPHIs*/ true);
       }
 
       SmallVector<Instruction *, 4> toerase;
