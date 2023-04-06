@@ -1377,6 +1377,10 @@ Function *PreProcessCache::preprocessForClone(Function *F,
 
   SimplifyMPIQueries<CallInst>(*NewF, FAM);
   SimplifyMPIQueries<InvokeInst>(*NewF, FAM);
+  {
+    auto PA = PromotePass().run(*NewF, FAM);
+    FAM.invalidate(*NewF, PA);
+  }
 
   if (EnzymeLowerGlobals) {
     SmallVector<CallInst *, 4> Calls;
