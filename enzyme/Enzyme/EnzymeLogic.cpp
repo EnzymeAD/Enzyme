@@ -951,7 +951,7 @@ void calculateUnusedStoresInFunction(
             const_cast<MemTransferInst *>(mti), [&](Instruction *I) -> bool {
               if (!I->mayWriteToMemory())
                 return /*earlyBreak*/ false;
-              if (unnecessaryInstructions.count(I))
+              if (unnecessaryStores.count(I))
                 return /*earlyBreak*/ false;
 
               // if (I == &MTI) return;
