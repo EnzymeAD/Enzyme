@@ -1780,7 +1780,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
 
       // If we haven't already shown a potentially active load
       // check if this loads the given value and is active
-      if (!potentiallyActiveLoad && isRefSet(AARes)) {
+      if ((!potentiallyActiveLoad || !potentiallyActiveStore) &&
+          isRefSet(AARes)) {
         if (EnzymePrintActivity)
           llvm::errs() << "potential active load: " << *I << "\n";
         if (isa<LoadInst>(I) || (isa<IntrinsicInst>(I) &&
