@@ -2214,7 +2214,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       if (!newBB->getTerminator()) {
         for (auto next : successors(&oBB)) {
           auto sucBB = cast<BasicBlock>(gutils->getNewFromOriginal(next));
-          sucBB->removePredecessor(newBB);
+          sucBB->removePredecessor(newBB, /*KeepOneInputPHIs*/ true);
         }
         IRBuilder<> builder(newBB);
         builder.CreateUnreachable();
@@ -4417,33 +4417,9 @@ Function *EnzymeLogic::CreateForwardDiff(
   for (BasicBlock &oBB : *gutils->oldFunc) {
     // Don't create derivatives for code that results in termination
     if (guaranteedUnreachable.find(&oBB) != guaranteedUnreachable.end()) {
-      auto newBB = cast<BasicBlock>(gutils->getNewFromOriginal(&oBB));
-      SmallVector<BasicBlock *, 4> toRemove;
-      if (auto II = dyn_cast<InvokeInst>(oBB.getTerminator())) {
-        toRemove.push_back(
-            cast<BasicBlock>(gutils->getNewFromOriginal(II->getNormalDest())));
-      } else {
-        for (auto next : successors(&oBB)) {
-          auto sucBB = cast<BasicBlock>(gutils->getNewFromOriginal(next));
-          toRemove.push_back(sucBB);
-        }
-      }
-
-      for (auto sucBB : toRemove) {
-        sucBB->removePredecessor(newBB);
-      }
-
-      SmallVector<Instruction *, 4> toerase;
       for (auto &I : oBB) {
-        toerase.push_back(&I);
+        maker->eraseIfUnused(I, /*erase*/ true, /*check*/ true);
       }
-      for (auto I : toerase) {
-        maker->eraseIfUnused(*I, /*erase*/ true, /*check*/ true);
-      }
-      if (newBB->getTerminator())
-        newBB->getTerminator()->eraseFromParent();
-      IRBuilder<> builder(newBB);
-      builder.CreateUnreachable();
       continue;
     }
 
