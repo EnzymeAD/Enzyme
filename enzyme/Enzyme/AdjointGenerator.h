@@ -581,11 +581,17 @@ public:
           if (EnzymeRuntimeActivityCheck && vd[{-1}].isFloat()) {
             // TODO handle mask
             assert(!mask);
-            Value *shadow = BuilderZ.CreateICmpNE(
-                gutils->getNewFromOriginal(I.getOperand(0)),
-                gutils->invertPointerM(I.getOperand(0), BuilderZ));
-            newip = BuilderZ.CreateSelect(
-                shadow, newip, Constant::getNullValue(newip->getType()));
+
+            auto rule = [&](Value *inop, Value *newip) -> Value * {
+              Value *shadow = BuilderZ.CreateICmpNE(
+                  gutils->getNewFromOriginal(I.getOperand(0)), inop);
+              newip = BuilderZ.CreateSelect(
+                  shadow, newip, Constant::getNullValue(newip->getType()));
+              return newip;
+            };
+            newip = applyChainRule(
+                I.getType(), BuilderZ, rule,
+                gutils->invertPointerM(I.getOperand(0), BuilderZ), newip);
           }
           assert(newip->getType() == type);
           placeholder->replaceAllUsesWith(newip);
