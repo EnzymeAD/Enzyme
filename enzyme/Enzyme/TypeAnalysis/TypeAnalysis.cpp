@@ -55,11 +55,17 @@
 
 #include <math.h>
 
+using namespace llvm;
+
 extern "C" {
 /// Maximum offset for type trees to keep
 llvm::cl::opt<int> MaxIntOffset("enzyme-max-int-offset", cl::init(100),
                                 cl::Hidden,
                                 cl::desc("Maximum type tree offset"));
+
+llvm::cl::opt<unsigned> EnzymeMaxTypeDepth("enzyme-max-type-depth", cl::init(6),
+                                           cl::Hidden,
+                                           cl::desc("Maximum type tree depth"));
 
 llvm::cl::opt<bool> EnzymePrintType("enzyme-print-type", cl::init(false),
                                     cl::Hidden,
@@ -3295,13 +3301,15 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
     TypeTree vd = getAnalysis(I.getOperand(0)).Data0();
     vd.binopIn(getAnalysis(I.getOperand(1)).Data0(), opcode);
 
-    TypeTree overall = vd.Only(0, &I);
-
     auto &dl = I.getParent()->getParent()->getParent()->getDataLayout();
-    overall |=
-        TypeTree(BaseType::Integer)
-            .Only((dl.getTypeSizeInBits(I.getOperand(0)->getType()) + 7) / 8,
-                  &I);
+    int sz = (dl.getTypeSizeInBits(I.getOperand(0)->getType()) + 7) / 8;
+    TypeTree overall = vd.Only(-1, &I).ShiftIndices(dl, 0, sz, 0);
+
+    int sz2 = (dl.getTypeSizeInBits(I.getType()) + 7) / 8;
+    auto btree = TypeTree(BaseType::Integer)
+                     .Only(-1, &I)
+                     .ShiftIndices(dl, 0, sz2 - sz, sz);
+    overall |= btree;
 
     if (direction & DOWN)
       updateAnalysis(&I, overall, &I);
@@ -3774,6 +3782,54 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
       return;
     }
 
+    /// CUDA
+    if (funcName == "cuDeviceGet") {
+      // cuResult
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(0),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(1),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "cuDeviceGetName") {
+      // cuResult
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(0),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(1),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "cudaRuntimeGetVersion" ||
+        funcName == "cuDriverGetVersion" || funcName == "cuDeviceGetCount") {
+      // cuResult
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      TypeTree ptrint;
+      ptrint.insert({-1}, BaseType::Pointer);
+      ptrint.insert({-1, 0}, BaseType::Integer);
+      updateAnalysis(call.getOperand(0), ptrint, &call);
+      return;
+    }
+    if (funcName == "cuMemGetInfo_v2") {
+      // cuResult
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      TypeTree ptrint;
+      ptrint.insert({-1}, BaseType::Pointer);
+      ptrint.insert({-1, 0}, BaseType::Integer);
+      updateAnalysis(call.getOperand(0), ptrint, &call);
+      updateAnalysis(call.getOperand(1), ptrint, &call);
+      return;
+    }
+    if (funcName == "cuDevicePrimaryCtxRetain" ||
+        funcName == "cuCtxGetCurrent") {
+      // cuResult
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(0),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      return;
+    }
+
     /// MPI
     if (funcName.startswith("PMPI_"))
       funcName = funcName.substr(1);
@@ -3820,6 +3876,13 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
           } else if (GV->getName() == "ompi_mpi_float") {
             buf.insert({0}, Type::getFloatTy(C->getContext()));
           }
+        } else if (auto CI = dyn_cast<ConstantInt>(C)) {
+          // MPICH
+          if (CI->getValue() == 1275070475) {
+            buf.insert({0}, Type::getDoubleTy(C->getContext()));
+          } else if (CI->getValue() == 1275069450) {
+            buf.insert({0}, Type::getFloatTy(C->getContext()));
+          }
         }
       }
       updateAnalysis(call.getOperand(0), buf.Only(-1, &call), &call);
@@ -3843,6 +3906,13 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
           if (GV->getName() == "ompi_mpi_double") {
             buf.insert({0}, Type::getDoubleTy(C->getContext()));
           } else if (GV->getName() == "ompi_mpi_float") {
+            buf.insert({0}, Type::getFloatTy(C->getContext()));
+          }
+        } else if (auto CI = dyn_cast<ConstantInt>(C)) {
+          // MPICH
+          if (CI->getValue() == 1275070475) {
+            buf.insert({0}, Type::getDoubleTy(C->getContext()));
+          } else if (CI->getValue() == 1275069450) {
             buf.insert({0}, Type::getFloatTy(C->getContext()));
           }
         }
@@ -3900,15 +3970,34 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
       return;
     }
     if (funcName == "MPI_Reduce" || funcName == "PMPI_Reduce") {
+      TypeTree buf = TypeTree(BaseType::Pointer);
+
+      if (Constant *C = dyn_cast<Constant>(call.getOperand(3))) {
+        while (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
+          C = CE->getOperand(0);
+        }
+        if (auto GV = dyn_cast<GlobalVariable>(C)) {
+          if (GV->getName() == "ompi_mpi_double") {
+            buf.insert({0}, Type::getDoubleTy(C->getContext()));
+          } else if (GV->getName() == "ompi_mpi_float") {
+            buf.insert({0}, Type::getFloatTy(C->getContext()));
+          }
+        } else if (auto CI = dyn_cast<ConstantInt>(C)) {
+          // MPICH
+          if (CI->getValue() == 1275070475) {
+            buf.insert({0}, Type::getDoubleTy(C->getContext()));
+          } else if (CI->getValue() == 1275069450) {
+            buf.insert({0}, Type::getFloatTy(C->getContext()));
+          }
+        }
+      }
       // int MPI_Reduce(const void *sendbuf, void *recvbuf, int count,
       // MPI_Datatype datatype,
       //         MPI_Op op, int root, MPI_Comm comm)
       // sendbuf
-      updateAnalysis(call.getOperand(0),
-                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(0), buf.Only(-1, &call), &call);
       // recvbuf
-      updateAnalysis(call.getOperand(1),
-                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(1), buf.Only(-1, &call), &call);
       // count
       updateAnalysis(call.getOperand(2),
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
@@ -3920,14 +4009,33 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
       return;
     }
     if (funcName == "MPI_Allreduce") {
+      TypeTree buf = TypeTree(BaseType::Pointer);
+
+      if (Constant *C = dyn_cast<Constant>(call.getOperand(3))) {
+        while (ConstantExpr *CE = dyn_cast<ConstantExpr>(C)) {
+          C = CE->getOperand(0);
+        }
+        if (auto GV = dyn_cast<GlobalVariable>(C)) {
+          if (GV->getName() == "ompi_mpi_double") {
+            buf.insert({0}, Type::getDoubleTy(C->getContext()));
+          } else if (GV->getName() == "ompi_mpi_float") {
+            buf.insert({0}, Type::getFloatTy(C->getContext()));
+          }
+        } else if (auto CI = dyn_cast<ConstantInt>(C)) {
+          // MPICH
+          if (CI->getValue() == 1275070475) {
+            buf.insert({0}, Type::getDoubleTy(C->getContext()));
+          } else if (CI->getValue() == 1275069450) {
+            buf.insert({0}, Type::getFloatTy(C->getContext()));
+          }
+        }
+      }
       // int MPI_Allreduce(const void *sendbuf, void *recvbuf, int count,
       //             MPI_Datatype datatype, MPI_Op op, MPI_Comm comm)
       // sendbuf
-      updateAnalysis(call.getOperand(0),
-                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(0), buf.Only(-1, &call), &call);
       // recvbuf
-      updateAnalysis(call.getOperand(1),
-                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(1), buf.Only(-1, &call), &call);
       // count
       updateAnalysis(call.getOperand(2),
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
@@ -5330,6 +5438,11 @@ TypeTree defaultTypeTreeForLLVM(llvm::Type *ET, llvm::Instruction *I,
     }
     return Out;
   }
+  // Unhandled/unknown Type
+  llvm::errs() << "Error Unknown Type: " << *ET << "\n";
+  assert(0 && "Error Unknown Type: ");
+  llvm_unreachable("Error Unknown Type: ");
+  // return TypeTree();
 }
 
 Function *TypeResults::getFunction() const {

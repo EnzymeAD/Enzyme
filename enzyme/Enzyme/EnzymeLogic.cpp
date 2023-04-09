@@ -27,6 +27,7 @@
 // primal pass.
 //
 //===----------------------------------------------------------------------===//
+#include "ActivityAnalysis.h"
 #include "AdjointGenerator.h"
 
 #include "SCEV/ScalarEvolution.h"
@@ -56,6 +57,9 @@
 
 #include "llvm/Support/AMDGPUMetadata.h"
 
+#include "llvm/ADT/Triple.h"
+
+#include "DiffeGradientUtils.h"
 #include "FunctionUtils.h"
 #include "GradientUtils.h"
 #include "InstructionBatcher.h"
@@ -637,8 +641,9 @@ void calculateUnusedValuesInFunction(
     if (pair.second.size() == 0)
       continue;
 
-    bool primalNeededInReverse = is_value_needed_in_reverse<ValueType::Primal>(
-        gutils, pair.first, mode, CacheResults, oldUnreachable);
+    bool primalNeededInReverse =
+        DifferentialUseAnalysis::is_value_needed_in_reverse<ValueType::Primal>(
+            gutils, pair.first, mode, CacheResults, oldUnreachable);
     bool cacheWholeAllocation = false;
 
     if (gutils->knownRecomputeHeuristic.count(pair.first)) {
@@ -688,8 +693,8 @@ void calculateUnusedValuesInFunction(
   calculateUnusedValues(
       func, unnecessaryValues, unnecessaryInstructions, returnValue,
       [&](const Value *val) {
-        bool ivn = is_value_needed_in_reverse<ValueType::Primal>(
-            gutils, val, mode, PrimalSeen, oldUnreachable);
+        bool ivn = DifferentialUseAnalysis::is_value_needed_in_reverse<
+            ValueType::Primal>(gutils, val, mode, PrimalSeen, oldUnreachable);
         return ivn;
       },
       [&](const Instruction *inst) {
@@ -860,8 +865,9 @@ void calculateUnusedValuesInFunction(
               isa<MemSetInst>(inst) || funcName == "julia.write_barrier") {
             for (auto pair : gutils->rematerializableAllocations) {
               if (pair.second.stores.count(inst)) {
-                if (is_value_needed_in_reverse<ValueType::Primal>(
-                        gutils, pair.first, mode, PrimalSeen, oldUnreachable)) {
+                if (DifferentialUseAnalysis::is_value_needed_in_reverse<
+                        ValueType::Primal>(gutils, pair.first, mode, PrimalSeen,
+                                           oldUnreachable)) {
                   return UseReq::Need;
                 }
               }
@@ -869,8 +875,8 @@ void calculateUnusedValuesInFunction(
             return UseReq::Recur;
           }
         }
-        bool ivn = is_value_needed_in_reverse<ValueType::Primal>(
-            gutils, inst, mode, PrimalSeen, oldUnreachable);
+        bool ivn = DifferentialUseAnalysis::is_value_needed_in_reverse<
+            ValueType::Primal>(gutils, inst, mode, PrimalSeen, oldUnreachable);
         if (ivn) {
           return UseReq::Need;
         }
@@ -882,10 +888,10 @@ void calculateUnusedValuesInFunction(
                  << ": mode=" << to_string(mode) << "\n";
     for (auto &BB : func)
       for (auto &I : BB) {
-        bool ivn = is_value_needed_in_reverse<ValueType::Primal>(
-            gutils, &I, mode, PrimalSeen, oldUnreachable);
-        bool isn = is_value_needed_in_reverse<ValueType::Shadow>(
-            gutils, &I, mode, PrimalSeen, oldUnreachable);
+        bool ivn = DifferentialUseAnalysis::is_value_needed_in_reverse<
+            ValueType::Primal>(gutils, &I, mode, PrimalSeen, oldUnreachable);
+        bool isn = DifferentialUseAnalysis::is_value_needed_in_reverse<
+            ValueType::Shadow>(gutils, &I, mode, PrimalSeen, oldUnreachable);
         llvm::errs() << I << " ivn=" << (int)ivn << " isn: " << (int)isn;
         auto found = gutils->knownRecomputeHeuristic.find(&I);
         if (found != gutils->knownRecomputeHeuristic.end()) {
@@ -896,10 +902,10 @@ void calculateUnusedValuesInFunction(
     llvm::errs() << "unnecessaryValues of " << func.getName()
                  << ": mode=" << to_string(mode) << "\n";
     for (auto a : unnecessaryValues) {
-      bool ivn = is_value_needed_in_reverse<ValueType::Primal>(
-          gutils, a, mode, PrimalSeen, oldUnreachable);
-      bool isn = is_value_needed_in_reverse<ValueType::Shadow>(
-          gutils, a, mode, PrimalSeen, oldUnreachable);
+      bool ivn = DifferentialUseAnalysis::is_value_needed_in_reverse<
+          ValueType::Primal>(gutils, a, mode, PrimalSeen, oldUnreachable);
+      bool isn = DifferentialUseAnalysis::is_value_needed_in_reverse<
+          ValueType::Shadow>(gutils, a, mode, PrimalSeen, oldUnreachable);
       llvm::errs() << *a << " ivn=" << (int)ivn << " isn: " << (int)isn;
       auto found = gutils->knownRecomputeHeuristic.find(a);
       if (found != gutils->knownRecomputeHeuristic.end()) {
@@ -945,7 +951,7 @@ void calculateUnusedStoresInFunction(
             const_cast<MemTransferInst *>(mti), [&](Instruction *I) -> bool {
               if (!I->mayWriteToMemory())
                 return /*earlyBreak*/ false;
-              if (unnecessaryInstructions.count(I))
+              if (unnecessaryStores.count(I))
                 return /*earlyBreak*/ false;
 
               // if (I == &MTI) return;
@@ -1182,8 +1188,8 @@ bool legalCombinedForwardReverse(
   if (isa<PointerType>(origop->getType())) {
     bool sret = subretused;
     if (!sret && !gutils->isConstantValue(origop)) {
-      sret = is_value_needed_in_reverse<ValueType::Shadow>(
-          gutils, origop, gutils->mode, oldUnreachable);
+      sret = DifferentialUseAnalysis::is_value_needed_in_reverse<
+          ValueType::Shadow>(gutils, origop, gutils->mode, oldUnreachable);
     }
 
     if (sret) {
@@ -1246,8 +1252,9 @@ bool legalCombinedForwardReverse(
     if (I != origop && unnecessaryInstructions.count(I)) {
       bool needShadow = false;
       if (!gutils->isConstantValue(I)) {
-        needShadow = is_value_needed_in_reverse<ValueType::Shadow>(
-            gutils, I, DerivativeMode::ReverseModeCombined, oldUnreachable);
+        needShadow = DifferentialUseAnalysis::is_value_needed_in_reverse<
+            ValueType::Shadow>(gutils, I, DerivativeMode::ReverseModeCombined,
+                               oldUnreachable);
       }
       if (!needShadow) {
         if (gutils->isConstantInstruction(I) || !isa<CallInst>(I)) {
@@ -1280,7 +1287,7 @@ bool legalCombinedForwardReverse(
       return;
     }
     if (!I->getType()->isVoidTy() &&
-        is_value_needed_in_reverse<ValueType::Primal>(
+        DifferentialUseAnalysis::is_value_needed_in_reverse<ValueType::Primal>(
             gutils, I, DerivativeMode::ReverseModeCombined, oldUnreachable)) {
       legal = false;
       if (EnzymePrintPerf) {
@@ -1295,7 +1302,7 @@ bool legalCombinedForwardReverse(
     }
     if (!I->getType()->isVoidTy() &&
         gutils->TR.query(I)[{-1}].isPossiblePointer() &&
-        is_value_needed_in_reverse<ValueType::Shadow>(
+        DifferentialUseAnalysis::is_value_needed_in_reverse<ValueType::Shadow>(
             gutils, I, DerivativeMode::ReverseModeCombined, oldUnreachable)) {
       legal = false;
       if (EnzymePrintPerf) {
@@ -1594,9 +1601,8 @@ void restoreCache(
           BuilderZ.SetInsertPoint(
               cast<Instruction>(newi)->getParent()->getFirstNonPHI());
         }
-        Value *nexti =
-            gutils->cacheForReverse(BuilderZ, newi, m.second,
-                                    /*ignoreType*/ false, /*replace*/ false);
+        Value *nexti = gutils->cacheForReverse(BuilderZ, newi, m.second,
+                                               /*replace*/ false);
         newIToNextI.emplace_back(newi, nexti);
       } else {
         auto newi = gutils->getNewFromOriginal((Value *)m.first.first);
@@ -2061,7 +2067,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     }
 
     std::map<AugmentedStruct, int> returnMapping;
-    returnMapping[AugmentedStruct::Tape] = -1;
+    if (!foundcalled->getReturnType()->isVoidTy())
+      returnMapping[AugmentedStruct::Tape] = -1;
 
     return insert_or_assign<AugmentedCacheKey, AugmentedReturn>(
                AugmentedCachedFunctions, tup,
@@ -2207,7 +2214,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       if (!newBB->getTerminator()) {
         for (auto next : successors(&oBB)) {
           auto sucBB = cast<BasicBlock>(gutils->getNewFromOriginal(next));
-          sucBB->removePredecessor(newBB);
+          sucBB->removePredecessor(newBB, /*KeepOneInputPHIs*/ true);
         }
         IRBuilder<> builder(newBB);
         builder.CreateUnreachable();
@@ -2268,7 +2275,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         if (Value *orig_oldval = ri->getReturnValue()) {
           auto newri = gutils->getNewFromOriginal(ri);
           IRBuilder<> BuilderZ(newri);
-          invertedRetPs[newri] = gutils->invertPointerM(orig_oldval, BuilderZ);
+          invertedRetPs[newri] = gutils->invertPointerM(orig_oldval, BuilderZ,
+                                                        /*nullShadow*/ true);
         }
       }
     }
@@ -3584,6 +3592,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         if (NewF->hasFnAttribute(Attribute::NoInline)) {
           NewF->removeFnAttr(Attribute::NoInline);
         }
+        if (NewF->hasFnAttribute(Attribute::OptimizeNone)) {
+          NewF->removeFnAttr(Attribute::OptimizeNone);
+        }
         size_t argnum = 0;
         for (Argument &Arg : NewF->args()) {
           if (Arg.hasAttribute(Attribute::Returned))
@@ -4019,9 +4030,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       auto BarrierInst = Arch == Triple::amdgcn
                              ? (llvm::Intrinsic::ID)Intrinsic::amdgcn_s_barrier
                              : (llvm::Intrinsic::ID)Intrinsic::nvvm_barrier0;
-      cast<CallInst>(instbuilder.CreateCall(
+      instbuilder.CreateCall(
           Intrinsic::getDeclaration(gutils->newFunc->getParent(), BarrierInst),
-          {}));
+          {});
       OldEntryInsts->moveAfter(entry);
       sharedBlock->moveAfter(entry);
       IRBuilder<> sbuilder(sharedBlock);
@@ -4406,33 +4417,9 @@ Function *EnzymeLogic::CreateForwardDiff(
   for (BasicBlock &oBB : *gutils->oldFunc) {
     // Don't create derivatives for code that results in termination
     if (guaranteedUnreachable.find(&oBB) != guaranteedUnreachable.end()) {
-      auto newBB = cast<BasicBlock>(gutils->getNewFromOriginal(&oBB));
-      SmallVector<BasicBlock *, 4> toRemove;
-      if (auto II = dyn_cast<InvokeInst>(oBB.getTerminator())) {
-        toRemove.push_back(
-            cast<BasicBlock>(gutils->getNewFromOriginal(II->getNormalDest())));
-      } else {
-        for (auto next : successors(&oBB)) {
-          auto sucBB = cast<BasicBlock>(gutils->getNewFromOriginal(next));
-          toRemove.push_back(sucBB);
-        }
-      }
-
-      for (auto sucBB : toRemove) {
-        sucBB->removePredecessor(newBB);
-      }
-
-      SmallVector<Instruction *, 4> toerase;
       for (auto &I : oBB) {
-        toerase.push_back(&I);
+        maker->eraseIfUnused(I, /*erase*/ true, /*check*/ true);
       }
-      for (auto I : toerase) {
-        maker->eraseIfUnused(*I, /*erase*/ true, /*check*/ true);
-      }
-      if (newBB->getTerminator())
-        newBB->getTerminator()->eraseFromParent();
-      IRBuilder<> builder(newBB);
-      builder.CreateUnreachable();
       continue;
     }
 
@@ -4851,6 +4838,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
       "_ZNSt8ios_baseC2Ev",
       "_ZNSo9_M_insertIdEERSoT_",
       "malloc_usable_size",
+      "_ZNKSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE7compareEPKc",
       "_ZNSt13basic_filebufIcSt11char_traitsIcEEC1Ev",
       "_ZNSt15basic_streambufIcSt11char_traitsIcEE6xsputnEPKcl",
       "_ZNSt9basic_iosIcSt11char_traitsIcEE4initEPSt15basic_streambufIcS1_E",
@@ -4876,6 +4864,9 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
   }
 
   if (F->empty()) {
+    if (EnzymeEmptyFnInactive) {
+      return F;
+    }
     if (CustomErrorHandler) {
       std::string s;
       llvm::raw_string_ostream ss(s);
