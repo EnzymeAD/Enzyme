@@ -1422,6 +1422,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
               toreturn->setSyncScopeID(dli->getSyncScopeID());
               llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
               ToCopy2.push_back(LLVMContext::MD_noalias);
+              ToCopy2.push_back(LLVMContext::MD_alias_scope);
               toreturn->copyMetadata(*dli, ToCopy2);
               toreturn->setDebugLoc(getNewFromOriginal(dli->getDebugLoc()));
               return toreturn;
@@ -5490,6 +5491,19 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     Value *op0 = arg->getOperand(0);
     Value *ip = invertPointerM(op0, bb);
 
+    SmallVector<Metadata *, 1> prevScopes;
+    if (auto prev = arg->getMetadata(LLVMContext::MD_alias_scope)) {
+      for (auto &M : cast<MDNode>(prev)->operands()) {
+        prevScopes.push_back(M);
+      }
+    }
+    SmallVector<Metadata *, 1> prevNoAlias;
+    if (auto prev = arg->getMetadata(LLVMContext::MD_noalias)) {
+      for (auto &M : cast<MDNode>(prev)->operands()) {
+        prevNoAlias.push_back(M);
+      }
+    }
+    size_t idx = 0;
     auto rule = [&](Value *ip) {
 #if LLVM_VERSION_MAJOR > 7
       auto li = bb.CreateLoad(arg->getType(), ip, arg->getName() + "'ipl");
@@ -5497,9 +5511,27 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       auto li = bb.CreateLoad(ip, arg->getName() + "'ipl");
 #endif
       llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
-      ToCopy2.push_back(LLVMContext::MD_noalias);
       li->copyMetadata(*arg, ToCopy2);
       li->copyIRFlags(arg);
+
+      SmallVector<Metadata *, 1> scopeMD = {getDerivativeAliasScope(op0, idx)};
+      for (auto M : prevScopes)
+        scopeMD.push_back(M);
+      auto scope = MDNode::get(li->getContext(), scopeMD);
+      li->setMetadata(LLVMContext::MD_alias_scope, scope);
+
+      SmallVector<Metadata *, 1> MDs;
+      for (ssize_t j = -1; j < getWidth(); j++) {
+        if (j != (ssize_t)idx)
+          MDs.push_back(getDerivativeAliasScope(op0, j));
+      }
+      for (auto M : prevNoAlias)
+        MDs.push_back(M);
+      if (MDs.size()) {
+        auto noscope = MDNode::get(li->getContext(), MDs);
+        li->setMetadata(LLVMContext::MD_noalias, noscope);
+      }
+
 #if LLVM_VERSION_MAJOR >= 10
       li->setAlignment(arg->getAlign());
 #else
@@ -5509,6 +5541,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       li->setVolatile(arg->isVolatile());
       li->setOrdering(arg->getOrdering());
       li->setSyncScopeID(arg->getSyncScopeID());
+      idx++;
       return li;
     };
 
