@@ -34,6 +34,7 @@
 #include "llvm/ADT/Triple.h"
 #include "llvm/Analysis/CallGraph.h"
 #include "llvm/Analysis/GlobalsModRef.h"
+#include "llvm/IR/MDBuilder.h"
 
 #if LLVM_VERSION_MAJOR >= 9
 #include "llvm/IR/LegacyPassManager.h"
@@ -719,5 +720,18 @@ LLVMMetadataRef EnzymeMakeNonConstTBAA(LLVMMetadataRef MD) {
 void EnzymeCopyMetadata(LLVMValueRef inst1, LLVMValueRef inst2) {
   cast<Instruction>(unwrap(inst1))
       ->copyMetadata(*cast<Instruction>(unwrap(inst2)));
+}
+LLVMMetadataRef EnzymeAnonymousAliasScopeDomain(const char *str,
+                                                LLVMContextRef ctx) {
+  MDBuilder MDB(*unwrap(ctx));
+  MDNode *scope = MDB.createAnonymousAliasScopeDomain(str);
+  return wrap(scope);
+}
+LLVMMetadataRef EnzymeAnonymousAliasScope(LLVMMetadataRef domain,
+                                          const char *str) {
+  auto dom = cast<MDNode>(unwrap(domain));
+  MDBuilder MDB(dom->getContext());
+  MDNode *scope = MDB.createAnonymousAliasScope(dom, str);
+  return wrap(scope);
 }
 }
