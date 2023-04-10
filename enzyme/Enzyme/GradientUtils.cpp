@@ -1237,29 +1237,30 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     ToCopy2.push_back(LLVMContext::MD_alias_scope);
     toreturn->copyMetadata(*load, ToCopy2);
     toreturn->copyIRFlags(load);
-    if (auto orig = isOriginal(load)) {
-      SmallVector<Metadata *, 1> scopeMD = {
-          getDerivativeAliasScope(orig->getOperand(0), -1)};
-      if (auto prev = orig->getMetadata(LLVMContext::MD_alias_scope)) {
-        for (auto &M : cast<MDNode>(prev)->operands()) {
-          scopeMD.push_back(M);
+    if (load->getParent()->getParent() == newFunc)
+      if (auto orig = isOriginal(load)) {
+        SmallVector<Metadata *, 1> scopeMD = {
+            getDerivativeAliasScope(orig->getOperand(0), -1)};
+        if (auto prev = orig->getMetadata(LLVMContext::MD_alias_scope)) {
+          for (auto &M : cast<MDNode>(prev)->operands()) {
+            scopeMD.push_back(M);
+          }
         }
-      }
-      auto scope = MDNode::get(orig->getContext(), scopeMD);
-      toreturn->setMetadata(LLVMContext::MD_alias_scope, scope);
+        auto scope = MDNode::get(orig->getContext(), scopeMD);
+        toreturn->setMetadata(LLVMContext::MD_alias_scope, scope);
 
-      SmallVector<Metadata *, 1> MDs;
-      for (size_t j = 0; j < getWidth(); j++) {
-        MDs.push_back(getDerivativeAliasScope(orig->getOperand(0), j));
-      }
-      if (auto prev = orig->getMetadata(LLVMContext::MD_noalias)) {
-        for (auto &M : cast<MDNode>(prev)->operands()) {
-          MDs.push_back(M);
+        SmallVector<Metadata *, 1> MDs;
+        for (size_t j = 0; j < getWidth(); j++) {
+          MDs.push_back(getDerivativeAliasScope(orig->getOperand(0), j));
         }
+        if (auto prev = orig->getMetadata(LLVMContext::MD_noalias)) {
+          for (auto &M : cast<MDNode>(prev)->operands()) {
+            MDs.push_back(M);
+          }
+        }
+        auto noscope = MDNode::get(orig->getContext(), MDs);
+        toreturn->setMetadata(LLVMContext::MD_noalias, noscope);
       }
-      auto noscope = MDNode::get(orig->getContext(), MDs);
-      toreturn->setMetadata(LLVMContext::MD_noalias, noscope);
-    }
     unwrappedLoads[toreturn] = load;
     if (toreturn->getParent()->getParent() != load->getParent()->getParent())
       toreturn->setDebugLoc(nullptr);
@@ -1398,6 +1399,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         }
         assert(pidx->getType() == getShadowType(dli->getOperand(0)->getType()));
 
+        size_t s_idx = 0;
         Value *toreturn = applyChainRule(
             dli->getType(), BuilderM,
             [&](Value *pidx) {
@@ -1421,10 +1423,33 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
               toreturn->setOrdering(dli->getOrdering());
               toreturn->setSyncScopeID(dli->getSyncScopeID());
               llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
-              ToCopy2.push_back(LLVMContext::MD_noalias);
-              ToCopy2.push_back(LLVMContext::MD_alias_scope);
               toreturn->copyMetadata(*dli, ToCopy2);
+              SmallVector<Metadata *, 1> scopeMD = {
+                  getDerivativeAliasScope(dli->getOperand(0), s_idx)};
+              if (auto prev = dli->getMetadata(LLVMContext::MD_alias_scope)) {
+                for (auto &M : cast<MDNode>(prev)->operands()) {
+                  scopeMD.push_back(M);
+                }
+              }
+              auto scope = MDNode::get(dli->getContext(), scopeMD);
+              toreturn->setMetadata(LLVMContext::MD_alias_scope, scope);
+
+              SmallVector<Metadata *, 1> MDs;
+              for (ssize_t j = -1; j < getWidth(); j++) {
+                if (j != (ssize_t)s_idx)
+                  MDs.push_back(getDerivativeAliasScope(dli->getOperand(0), j));
+              }
+              if (auto prev = dli->getMetadata(LLVMContext::MD_noalias)) {
+                for (auto &M : cast<MDNode>(prev)->operands()) {
+                  MDs.push_back(M);
+                }
+              }
+              if (MDs.size()) {
+                auto noscope = MDNode::get(dli->getContext(), MDs);
+                toreturn->setMetadata(LLVMContext::MD_noalias, noscope);
+              }
               toreturn->setDebugLoc(getNewFromOriginal(dli->getDebugLoc()));
+              s_idx++;
               return toreturn;
             },
             pidx);
