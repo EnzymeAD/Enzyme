@@ -1237,6 +1237,29 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     ToCopy2.push_back(LLVMContext::MD_alias_scope);
     toreturn->copyMetadata(*load, ToCopy2);
     toreturn->copyIRFlags(load);
+    if (auto orig = isOriginal(load)) {
+      SmallVector<Metadata *, 1> scopeMD = {
+          getDerivativeAliasScope(orig->getOperand(0), -1)};
+      if (auto prev = orig->getMetadata(LLVMContext::MD_alias_scope)) {
+        for (auto &M : cast<MDNode>(prev)->operands()) {
+          scopeMD.push_back(M);
+        }
+      }
+      auto scope = MDNode::get(orig->getContext(), scopeMD);
+      toreturn->setMetadata(LLVMContext::MD_alias_scope, scope);
+
+      SmallVector<Metadata *, 1> MDs;
+      for (size_t j = 0; j < getWidth(); j++) {
+        MDs.push_back(getDerivativeAliasScope(orig->getOperand(0), j));
+      }
+      if (auto prev = orig->getMetadata(LLVMContext::MD_noalias)) {
+        for (auto &M : cast<MDNode>(prev)->operands()) {
+          MDs.push_back(M);
+        }
+      }
+      auto noscope = MDNode::get(orig->getContext(), MDs);
+      toreturn->setMetadata(LLVMContext::MD_noalias, noscope);
+    }
     unwrappedLoads[toreturn] = load;
     if (toreturn->getParent()->getParent() != load->getParent()->getParent())
       toreturn->setDebugLoc(nullptr);
@@ -4169,6 +4192,13 @@ bool GradientUtils::shouldRecompute(const Value *val,
 
 MDNode *GradientUtils::getDerivativeAliasScope(const Value *origptr,
                                                ssize_t newptr) {
+  origptr =
+#if LLVM_VERSION_MAJOR >= 12
+      getUnderlyingObject(origptr, 100);
+#else
+      GetUnderlyingObject(origptr, oldFunc->getParent()->getDataLayout(), 100);
+#endif
+
   auto found = differentialAliasScopeDomains.find(origptr);
   if (found == differentialAliasScopeDomains.end()) {
     MDBuilder MDB(oldFunc->getContext());

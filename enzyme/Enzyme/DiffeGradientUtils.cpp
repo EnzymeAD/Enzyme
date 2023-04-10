@@ -895,7 +895,13 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       Value *res = BuilderM.CreateFAdd(LI, dif);
       StoreInst *st = BuilderM.CreateStore(res, ptr);
 
-      Metadata *scopeMD[1] = {getDerivativeAliasScope(origptr, idx)};
+      SmallVector<Metadata *, 1> scopeMD = {
+          getDerivativeAliasScope(origptr, idx)};
+      if (auto MD = orig->getMetadata(LLVMContext::MD_alias_scope)) {
+        auto MDN = cast<MDNode>(MD);
+        for (auto &o : MDN->operands())
+          scopeMD.push_back(o);
+      }
       auto scope = MDNode::get(LI->getContext(), scopeMD);
       LI->setMetadata(LLVMContext::MD_alias_scope, scope);
       st->setMetadata(LLVMContext::MD_alias_scope, scope);

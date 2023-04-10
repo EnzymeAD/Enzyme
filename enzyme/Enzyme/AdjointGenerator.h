@@ -525,6 +525,28 @@ public:
 
     auto *newi = dyn_cast<Instruction>(gutils->getNewFromOriginal(&I));
 
+    SmallVector<Metadata *, 1> scopeMD = {
+        gutils->getDerivativeAliasScope(I.getOperand(0), -1)};
+    if (auto prev = I.getMetadata(LLVMContext::MD_alias_scope)) {
+      for (auto &M : cast<MDNode>(prev)->operands()) {
+        scopeMD.push_back(M);
+      }
+    }
+    auto scope = MDNode::get(I.getContext(), scopeMD);
+    newi->setMetadata(LLVMContext::MD_alias_scope, scope);
+
+    SmallVector<Metadata *, 1> MDs;
+    for (size_t j = 0; j < gutils->getWidth(); j++) {
+      MDs.push_back(gutils->getDerivativeAliasScope(I.getOperand(0), j));
+    }
+    if (auto prev = I.getMetadata(LLVMContext::MD_noalias)) {
+      for (auto &M : cast<MDNode>(prev)->operands()) {
+        MDs.push_back(M);
+      }
+    }
+    auto noscope = MDNode::get(I.getContext(), MDs);
+    newi->setMetadata(LLVMContext::MD_noalias, noscope);
+
     auto vd = TR.query(&I);
 
     if (!vd.isKnown()) {
@@ -1293,12 +1315,10 @@ public:
               for (auto M : prevNoAlias)
                 MDs.push_back(M);
 
-              if (scopeMD.size())
-                dif1->setMetadata(LLVMContext::MD_noalias,
-                                  MDNode::get(I.getContext(), scopeMD));
-              if (MDs.size())
-                dif1->setMetadata(LLVMContext::MD_noalias,
-                                  MDNode::get(I.getContext(), MDs));
+              dif1->setMetadata(LLVMContext::MD_alias_scope,
+                                MDNode::get(I.getContext(), scopeMD));
+              dif1->setMetadata(LLVMContext::MD_noalias,
+                                MDNode::get(I.getContext(), MDs));
               dif1->setMetadata(LLVMContext::MD_tbaa,
                                 I.getMetadata(LLVMContext::MD_tbaa));
               dif1->setMetadata(LLVMContext::MD_tbaa_struct,
