@@ -1147,9 +1147,12 @@ public:
 
     SmallVector<Metadata *, 1> scopeMD = {
         gutils->getDerivativeAliasScope(orig_ptr, -1)};
+    SmallVector<Metadata *, 1> prevScopes;
     if (auto prev = I.getMetadata(LLVMContext::MD_alias_scope)) {
-      for (auto &M : cast<MDNode>(prev)->operands())
+      for (auto &M : cast<MDNode>(prev)->operands()) {
         scopeMD.push_back(M);
+        prevScopes.push_back(M);
+      }
     }
     auto scope = MDNode::get(I.getContext(), scopeMD);
     auto NewI = gutils->getNewFromOriginal(&I);
@@ -1233,7 +1236,7 @@ public:
         diff = gutils->invertPointerM(orig_val, Builder2, /*nullShadow*/ true);
 
       gutils->setPtrDiffe(&I, orig_ptr, diff, Builder2, align, isVolatile,
-                          ordering, syncScope, mask, prevNoAlias);
+                          ordering, syncScope, mask, prevNoAlias, prevScopes);
       return;
     }
 
@@ -1252,7 +1255,8 @@ public:
           gutils->setPtrDiffe(
               &I, orig_ptr,
               Constant::getNullValue(gutils->getShadowType(valType)), Builder2,
-              align, isVolatile, ordering, syncScope, mask, prevNoAlias);
+              align, isVolatile, ordering, syncScope, mask, prevNoAlias,
+              prevScopes);
         } else {
           Value *diff;
           if (!mask) {
@@ -1275,8 +1279,12 @@ public:
               dif1->setOrdering(ordering);
               dif1->setSyncScopeID(syncScope);
 
-              dif1->setMetadata(LLVMContext::MD_noalias,
-                                MDNode::get(I.getContext(), prevNoAlias));
+              if (prevScopes.size())
+                dif1->setMetadata(LLVMContext::MD_noalias,
+                                  MDNode::get(I.getContext(), prevScopes));
+              if (prevNoAlias.size())
+                dif1->setMetadata(LLVMContext::MD_noalias,
+                                  MDNode::get(I.getContext(), prevNoAlias));
               dif1->setMetadata(LLVMContext::MD_tbaa,
                                 I.getMetadata(LLVMContext::MD_tbaa));
               dif1->setMetadata(LLVMContext::MD_tbaa_struct,
@@ -1314,7 +1322,8 @@ public:
           gutils->setPtrDiffe(
               &I, orig_ptr,
               Constant::getNullValue(gutils->getShadowType(valType)), Builder2,
-              align, isVolatile, ordering, syncScope, mask, prevNoAlias);
+              align, isVolatile, ordering, syncScope, mask, prevNoAlias,
+              prevScopes);
           addToDiffe(orig_val, diff, Builder2, FT, mask);
         }
         break;
@@ -1329,7 +1338,7 @@ public:
         Value *diff = constantval ? Constant::getNullValue(diffeTy)
                                   : diffe(orig_val, Builder2);
         gutils->setPtrDiffe(&I, orig_ptr, diff, Builder2, align, isVolatile,
-                            ordering, syncScope, mask, prevNoAlias);
+                            ordering, syncScope, mask, prevNoAlias, prevScopes);
 
         break;
       }
@@ -1389,7 +1398,8 @@ public:
           valueop = gutils->invertPointerM(orig_val, storeBuilder);
         }
         gutils->setPtrDiffe(&I, orig_ptr, valueop, storeBuilder, align,
-                            isVolatile, ordering, syncScope, mask, prevNoAlias);
+                            isVolatile, ordering, syncScope, mask, prevNoAlias,
+                            prevScopes);
       }
     }
   }

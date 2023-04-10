@@ -389,13 +389,15 @@ public:
                    llvm::Value *newval, llvm::IRBuilder<> &BuilderM,
                    llvm::MaybeAlign align, bool isVolatile,
                    llvm::AtomicOrdering ordering, llvm::SyncScope::ID syncScope,
-                   llvm::Value *mask, llvm::ArrayRef<llvm::Metadata *> noAlias);
+                   llvm::Value *mask, llvm::ArrayRef<llvm::Metadata *> noAlias,
+                   llvm::ArrayRef<llvm::Metadata *> scopes);
 #else
   void setPtrDiffe(llvm::Instruction *orig, llvm::Value *ptr,
                    llvm::Value *newval, llvm::IRBuilder<> &BuilderM,
                    unsigned align, bool isVolatile,
                    llvm::AtomicOrdering ordering, llvm::SyncScope::ID syncScope,
-                   llvm::Value *mask, llvm::ArrayRef<llvm::Metadata *> noAlias);
+                   llvm::Value *mask, llvm::ArrayRef<llvm::Metadata *> noAlias,
+                   llvm::ArrayRef<llvm::Metadata *> scopes);
 #endif
 
 private:

@@ -3382,6 +3382,13 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                       valueop =
                           lookupM(invertPointerM(orig_val, NB), NB, available);
                     }
+                    SmallVector<Metadata *, 1> prevScopes;
+                    if (auto prev =
+                            SI->getMetadata(LLVMContext::MD_alias_scope)) {
+                      for (auto &M : cast<MDNode>(prev)->operands()) {
+                        prevScopes.push_back(M);
+                      }
+                    }
                     SmallVector<Metadata *, 1> prevNoAlias;
                     if (auto prev = SI->getMetadata(LLVMContext::MD_noalias)) {
                       for (auto &M : cast<MDNode>(prev)->operands()) {
@@ -3396,7 +3403,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                     setPtrDiffe(SI, orig_ptr, valueop, NB, align,
                                 SI->isVolatile(), SI->getOrdering(),
                                 SI->getSyncScopeID(),
-                                /*mask*/ nullptr, prevNoAlias);
+                                /*mask*/ nullptr, prevNoAlias, prevScopes);
                   }
                   // TODO shadow memtransfer
                 } else if (auto MS = dyn_cast<MemSetInst>(&I)) {
@@ -4731,13 +4738,15 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
                                 IRBuilder<> &BuilderM, MaybeAlign align,
                                 bool isVolatile, AtomicOrdering ordering,
                                 SyncScope::ID syncScope, Value *mask,
-                                ArrayRef<Metadata *> noAlias)
+                                ArrayRef<Metadata *> noAlias,
+                                ArrayRef<Metadata *> scopes)
 #else
 void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
                                 IRBuilder<> &BuilderM, unsigned align,
                                 bool isVolatile, AtomicOrdering ordering,
                                 SyncScope::ID syncScope, Value *mask,
-                                ArrayRef<Metadata *> noAlias)
+                                ArrayRef<Metadata *> noAlias,
+                                ArrayRef<Metadata *> scopes)
 #endif
 {
   if (auto inst = dyn_cast<Instruction>(ptr)) {
@@ -4772,7 +4781,10 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
       ts->setVolatile(isVolatile);
       ts->setOrdering(ordering);
       ts->setSyncScopeID(syncScope);
-      Metadata *scopeMD[1] = {getDerivativeAliasScope(origptr, idx)};
+      SmallVector<Metadata *, 1> scopeMD = {
+          getDerivativeAliasScope(origptr, idx)};
+      for (auto M : scopes)
+        scopeMD.push_back(M);
       auto scope = MDNode::get(ts->getContext(), scopeMD);
       ts->setMetadata(LLVMContext::MD_alias_scope, scope);
 
