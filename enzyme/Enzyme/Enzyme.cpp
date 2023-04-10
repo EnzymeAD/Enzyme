@@ -2574,10 +2574,13 @@ AnalysisKey EnzymeNewPM::Key;
 #include "llvm/Transforms/Scalar/LowerConstantIntrinsics.h"
 #include "llvm/Transforms/Scalar/LowerMatrixIntrinsics.h"
 namespace llvm {
-extern cl::opt<bool> EnableMatrix;
+// extern cl::opt<bool> EnableMatrix;
+#define EnableMatrix false
 #if LLVM_VERSION_MAJOR <= 14
-extern cl::opt<bool> EnableFunctionSpecialization;
-extern cl::opt<bool> RunPartialInlining;
+// extern cl::opt<bool> EnableFunctionSpecialization;
+#define EnableFunctionSpecialization false
+// extern cl::opt<bool> RunPartialInlining;
+#define RunPartialInlining false
 #endif
 } // namespace llvm
 #if LLVM_VERSION_MAJOR <= 14
@@ -2608,10 +2611,12 @@ llvmGetPassPluginInfo() {
             using OptimizationLevel = llvm::PassBuilder::OptimizationLevel;
 #endif
 
+            auto PB0 = new llvm::PassBuilder(PB);
 #if LLVM_VERSION_MAJOR >= 12
-            auto prePass = [&](ModulePassManager &MPM, OptimizationLevel Level)
+            auto prePass =
+                [PB0](ModulePassManager &MPM, OptimizationLevel Level)
 #else
-            auto prePass = [&](ModulePassManager &MPM)
+            auto prePass = [PB0](ModulePassManager &MPM)
 #endif
             {
 
@@ -2671,10 +2676,10 @@ llvmGetPassPluginInfo() {
               ThinOrFullLTOPhase Phase = ThinOrFullLTOPhase::None;
 #if LLVM_VERSION >= 13
               if (EnableModuleInliner)
-                MPM.addPass(PB.buildModuleInlinerPipeline(Level, Phase));
+                MPM.addPass(PB0->buildModuleInlinerPipeline(Level, Phase));
               else
 #endif
-                MPM.addPass(PB.buildInlinerPipeline(Level, Phase));
+                MPM.addPass(PB0->buildInlinerPipeline(Level, Phase));
 
               FunctionPassManager CoroCleanupPM;
               CoroCleanupPM.addPass(CoroCleanupPass());
@@ -2731,14 +2736,17 @@ llvmGetPassPluginInfo() {
             };
 
 #if LLVM_VERSION_MAJOR >= 12
-            auto loadPass = [&](ModulePassManager &MPM, OptimizationLevel Level)
+            auto loadPass =
+                [prePass](ModulePassManager &MPM, OptimizationLevel Level)
 #else
-            auto loadPass = [&](ModulePassManager &MPM)
+            auto loadPass = [prePass](ModulePassManager &MPM)
 #endif
             {
               MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
+
 #if LLVM_VERSION_MAJOR >= 12
-              prePass(MPM, Level);
+              if (Level != OptimizationLevel::O0)
+                prePass(MPM, Level);
 #else
               prePass(MPM);
 #endif
