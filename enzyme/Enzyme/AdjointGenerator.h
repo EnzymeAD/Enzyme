@@ -4142,6 +4142,25 @@ public:
         }
         return;
       }
+      case Intrinsic::vector_reduce_fmax: {
+        if (vdiff && !gutils->isConstantValue(orig_ops[0])) {
+          auto prev = lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2);
+          auto lhs = Builder2.CreateExtractElement(prev, (uint64_t)0);
+          auto rhs = Builder2.CreateExtractElement(prev, 1);
+          Value *cmp = Builder2.CreateFCmpOLT(lhs, rhs);
+
+          auto rule = [&](Value *vdiff) {
+            auto nv = Constant::getNullValue(orig_ops[0]->getType());
+            auto lhs_v = Builder2.CreateInsertElement(nv, vdiff, (uint64_t)0);
+            auto rhs_v = Builder2.CreateInsertElement(nv, vdiff, 1);
+            return Builder2.CreateSelect(cmp, rhs_v, lhs_v);
+          };
+          Value *dif0 =
+              applyChainRule(orig_ops[0]->getType(), Builder2, rule, vdiff);
+          addToDiffe(orig_ops[0], dif0, Builder2, I.getType());
+        }
+        return;
+      }
 
 #if LLVM_VERSION_MAJOR < 10
       case Intrinsic::x86_sse_min_ss:
@@ -4638,6 +4657,27 @@ public:
 
         Value *dif =
             applyChainRule(I.getType(), Builder2, rule, diffe0, diffe1);
+        setDiffe(&I, dif, Builder2);
+        return;
+      }
+      case Intrinsic::vector_reduce_fmax: {
+        if (gutils->isConstantInstruction(&I))
+          return;
+        auto prev = gutils->getNewFromOriginal(orig_ops[0]);
+        auto lhs = Builder2.CreateExtractElement(prev, (uint64_t)0);
+        auto rhs = Builder2.CreateExtractElement(prev, 1);
+        Value *cmp = Builder2.CreateFCmpOLT(lhs, rhs);
+
+        auto rule = [&](Value *vdiff) {
+          auto lhs_v = Builder2.CreateExtractElement(vdiff, (uint64_t)0);
+          auto rhs_v = Builder2.CreateExtractElement(vdiff, 1);
+
+          Value *dif = Builder2.CreateSelect(cmp, rhs_v, lhs_v);
+          return dif;
+        };
+        auto vdiff = diffe(orig_ops[0], Builder2);
+
+        Value *dif = applyChainRule(I.getType(), Builder2, rule, vdiff);
         setDiffe(&I, dif, Builder2);
         return;
       }
