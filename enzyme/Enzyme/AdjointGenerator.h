@@ -1263,6 +1263,7 @@ public:
             Value *dif1Ptr =
                 lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
 
+            size_t idx = 0;
             auto rule = [&](Value *dif1Ptr) {
 #if LLVM_VERSION_MAJOR > 7
               LoadInst *dif1 =
@@ -1279,16 +1280,30 @@ public:
               dif1->setOrdering(ordering);
               dif1->setSyncScopeID(syncScope);
 
-              if (prevScopes.size())
+              SmallVector<Metadata *, 1> scopeMD = {
+                  gutils->getDerivativeAliasScope(orig_ptr, idx)};
+              for (auto M : prevScopes)
+                scopeMD.push_back(M);
+
+              SmallVector<Metadata *, 1> MDs;
+              for (ssize_t j = -1; j < gutils->getWidth(); j++) {
+                if (j != (ssize_t)idx)
+                  MDs.push_back(gutils->getDerivativeAliasScope(orig_ptr, j));
+              }
+              for (auto M : prevNoAlias)
+                MDs.push_back(M);
+
+              if (scopeMD.size())
                 dif1->setMetadata(LLVMContext::MD_noalias,
-                                  MDNode::get(I.getContext(), prevScopes));
-              if (prevNoAlias.size())
+                                  MDNode::get(I.getContext(), scopeMD));
+              if (MDs.size())
                 dif1->setMetadata(LLVMContext::MD_noalias,
-                                  MDNode::get(I.getContext(), prevNoAlias));
+                                  MDNode::get(I.getContext(), MDs));
               dif1->setMetadata(LLVMContext::MD_tbaa,
                                 I.getMetadata(LLVMContext::MD_tbaa));
               dif1->setMetadata(LLVMContext::MD_tbaa_struct,
                                 I.getMetadata(LLVMContext::MD_tbaa_struct));
+              idx++;
               return dif1;
             };
 
