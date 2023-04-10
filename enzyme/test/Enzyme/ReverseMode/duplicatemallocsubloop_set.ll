@@ -80,10 +80,10 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   %a6 = bitcast i8* %a5 to double*
 ; CHECK-NEXT:   %a10 = getelementptr inbounds double, double* %a1, i32 %0
 ; CHECK-NEXT:   %a11 = load double, double* %a10, align 8
-; CHECK-NEXT:   store double %a11, double* %a6, align 8, !alias.scope !0, !noalias !3
+; CHECK-NEXT:   store double %a11, double* %a6, align 8, !alias.scope !{{[0-9]+}}, !noalias !{{[0-9]+}}
 ; CHECK-NEXT:   %a12 = call fast double @augmented_f(double* %a6, double* undef)
 ; CHECK-NEXT:   %a13 = getelementptr inbounds double, double* %a0, i32 %0
-; CHECK-NEXT:   store double %a12, double* %a13, align 8, !alias.scope !5, !noalias !8
+; CHECK-NEXT:   store double %a12, double* %a13, align 8, !alias.scope !{{[0-9]+}}, !noalias !{{[0-9]+}}
 ; CHECK-NEXT:   %a14 = add nuw nsw i32 %0, 1
 ; CHECK-NEXT:   %a15 = icmp eq i32 %a14, 10
 ; CHECK-NEXT:   call void @free(i8* %a5)
@@ -133,8 +133,8 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   %a6_unwrap = bitcast i8* %remat_a5 to double*
 ; CHECK-NEXT:   %"a6'ipc_unwrap" = bitcast i8* %"a5'mi" to double*
 ; CHECK-NEXT:   call void @diffef(double* %a6_unwrap, double* %"a6'ipc_unwrap", double %2)
-; CHECK-NEXT:   %3 = load double, double* %"a6'ipc_unwrap", align 8, !noalias ![[scope10:[0-9]+]]
-; CHECK-NEXT:   store double 0.000000e+00, double* %"a6'ipc_unwrap", align 8, !alias.scope ![[scope16:[0-9]+]], !noalias ![[scope19:[0-9]+]]
+; CHECK-NEXT:   %3 = load double, double* %"a6'ipc_unwrap", align 8, !alias.scope ![[scope16:[0-9]+]], !noalias ![[scope10:[0-9]+]]
+; CHECK-NEXT:   store double 0.000000e+00, double* %"a6'ipc_unwrap", align 8, !alias.scope ![[scope16]], !noalias ![[scope10]]
 ; CHECK-NEXT:   %"a10'ipg_unwrap" = getelementptr inbounds double, double* %"a1'", i32 %_unwrap
 ; CHECK-NEXT:   %4 = load double, double* %"a10'ipg_unwrap", align 8, !alias.scope ![[scope21:[0-9]+]], !noalias ![[scope24:[0-9]+]]
 ; CHECK-NEXT:   %5 = fadd fast double %4, %3
