@@ -2562,9 +2562,44 @@ AnalysisKey EnzymeNewPM::Key;
 #ifdef ENZYME_RUNPASS
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Transforms/IPO/GlobalOpt.h"
+#include "llvm/Transforms/Scalar/EarlyCSE.h"
+#include "llvm/Transforms/Scalar/Float2Int.h"
 #include "llvm/Transforms/Scalar/GVN.h"
 #include "llvm/Transforms/Scalar/LoopDeletion.h"
+#include "llvm/Transforms/Scalar/LoopRotation.h"
+#include "llvm/Transforms/Scalar/LoopUnrollPass.h"
 #include "llvm/Transforms/Scalar/SROA.h"
+
+#if LLVM_VERSION_MAJOR >= 12
+#include "llvm/Transforms/Scalar/LowerConstantIntrinsics.h"
+#include "llvm/Transforms/Scalar/LowerMatrixIntrinsics.h"
+namespace llvm {
+// extern cl::opt<bool> EnableMatrix;
+#define EnableMatrix false
+#if LLVM_VERSION_MAJOR <= 14
+// extern cl::opt<bool> EnableFunctionSpecialization;
+#define EnableFunctionSpecialization false
+// extern cl::opt<bool> RunPartialInlining;
+#define RunPartialInlining false
+#endif
+} // namespace llvm
+#if LLVM_VERSION_MAJOR <= 14
+#include "llvm/Transforms/IPO/CalledValuePropagation.h"
+#include "llvm/Transforms/IPO/DeadArgumentElimination.h"
+#include "llvm/Transforms/IPO/SCCP.h"
+#include "llvm/Transforms/InstCombine/InstCombine.h"
+#include "llvm/Transforms/Scalar/SimplifyCFG.h"
+#if LLVM_VERSION_MAJOR >= 12
+#include "llvm/Transforms/Coroutines/CoroCleanup.h"
+#endif
+#include "llvm/Transforms/IPO/FunctionAttrs.h"
+#include "llvm/Transforms/IPO/GlobalDCE.h"
+#include "llvm/Transforms/IPO/PartialInlining.h"
+#if LLVM_VERSION_MAJOR <= 12
+#include "llvm/Transforms/Utils/Mem2Reg.h"
+#endif
+#endif
+#endif
 #endif
 
 extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
@@ -2575,13 +2610,146 @@ llvmGetPassPluginInfo() {
 #if LLVM_VERSION_MAJOR < 14
             using OptimizationLevel = llvm::PassBuilder::OptimizationLevel;
 #endif
+
+            auto PB0 = new llvm::PassBuilder(PB);
 #if LLVM_VERSION_MAJOR >= 12
-            auto loadPass = [](ModulePassManager &MPM, OptimizationLevel)
+            auto prePass =
+                [PB0](ModulePassManager &MPM, OptimizationLevel Level)
 #else
-            auto loadPass = [](ModulePassManager &MPM)
+            auto prePass = [PB0](ModulePassManager &MPM)
+#endif
+            {
+
+#if LLVM_VERSION_MAJOR < 12
+              llvm_unreachable(
+                  "New Pass manager pipeline unsupported at version <= 11");
+#else
+#if LLVM_VERSION_MAJOR < 15
+    ////// End of Module simplification
+    // Specialize functions with IPSCCP.
+#if LLVM_VERSION_MAJOR >= 13
+              if (EnableFunctionSpecialization &&
+                  Level == OptimizationLevel::O3)
+                MPM.addPass(FunctionSpecializationPass());
+#endif
+
+              // Interprocedural constant propagation now that basic cleanup has
+              // occurred and prior to optimizing globals.
+              // FIXME: This position in the pipeline hasn't been carefully
+              // considered in years, it should be re-analyzed.
+              MPM.addPass(IPSCCPPass());
+
+              // Attach metadata to indirect call sites indicating the set of
+              // functions they may target at run-time. This should follow
+              // IPSCCP.
+              MPM.addPass(CalledValuePropagationPass());
+
+              // Optimize globals to try and fold them into constants.
+              MPM.addPass(GlobalOptPass());
+
+              // Promote any localized globals to SSA registers.
+              // FIXME: Should this instead by a run of SROA?
+              // FIXME: We should probably run instcombine and simplifycfg
+              // afterward to delete control flows that are dead once globals
+              // have been folded to constants.
+              MPM.addPass(createModuleToFunctionPassAdaptor(PromotePass()));
+
+              // Remove any dead arguments exposed by cleanups and constant
+              // folding globals.
+              MPM.addPass(DeadArgumentEliminationPass());
+
+              // Create a small function pass pipeline to cleanup after all the
+              // global optimizations.
+              FunctionPassManager GlobalCleanupPM;
+              GlobalCleanupPM.addPass(InstCombinePass());
+
+#if LLVM_VERSION_MAJOR >= 14
+              GlobalCleanupPM.addPass(SimplifyCFGPass(
+                  SimplifyCFGOptions().convertSwitchRangeToICmp(true)));
+#else
+              GlobalCleanupPM.addPass(SimplifyCFGPass(SimplifyCFGOptions()));
+#endif
+              MPM.addPass(createModuleToFunctionPassAdaptor(
+                  std::move(GlobalCleanupPM)));
+
+              bool EnableModuleInliner = false;
+              ThinOrFullLTOPhase Phase = ThinOrFullLTOPhase::None;
+#if LLVM_VERSION >= 13
+              if (EnableModuleInliner)
+                MPM.addPass(PB0->buildModuleInlinerPipeline(Level, Phase));
+              else
+#endif
+                MPM.addPass(PB0->buildInlinerPipeline(Level, Phase));
+
+              FunctionPassManager CoroCleanupPM;
+              CoroCleanupPM.addPass(CoroCleanupPass());
+              MPM.addPass(
+                  createModuleToFunctionPassAdaptor(std::move(CoroCleanupPM)));
+
+              ////// Finished Module simplification, starting ModuleOptimization
+              //
+              // Optimize globals now that the module is fully simplified.
+              MPM.addPass(GlobalOptPass());
+              MPM.addPass(GlobalDCEPass());
+
+              // Run partial inlining pass to partially inline functions that
+              // have large bodies.
+              if (RunPartialInlining)
+                MPM.addPass(PartialInlinerPass());
+
+              // Do RPO function attribute inference across the module to
+              // forward-propagate attributes where applicable.
+              // FIXME: Is this really an optimization rather than a
+              // canonicalization?
+              MPM.addPass(ReversePostOrderFunctionAttrsPass());
+#endif
+              FunctionPassManager OptimizePM;
+              OptimizePM.addPass(Float2IntPass());
+              OptimizePM.addPass(LowerConstantIntrinsicsPass());
+
+              if (EnableMatrix) {
+                OptimizePM.addPass(LowerMatrixIntrinsicsPass());
+                OptimizePM.addPass(EarlyCSEPass());
+              }
+
+              LoopPassManager LPM;
+              bool LTOPreLink = false;
+      // First rotate loops that may have been un-rotated by prior passes.
+      // Disable header duplication at -Oz.
+#if LLVM_VERSION_MAJOR >= 11
+              LPM.addPass(
+                  LoopRotatePass(Level != OptimizationLevel::Oz, LTOPreLink));
+#endif
+              // Some loops may have become dead by now. Try to delete them.
+              // FIXME: see discussion in https://reviews.llvm.org/D112851,
+              //        this may need to be revisited once we run GVN before
+              //        loop deletion in the simplification pipeline.
+              LPM.addPass(LoopDeletionPass());
+
+              LPM.addPass(llvm::LoopFullUnrollPass());
+              OptimizePM.addPass(
+                  createFunctionToLoopPassAdaptor(std::move(LPM)));
+
+              MPM.addPass(
+                  createModuleToFunctionPassAdaptor(std::move(OptimizePM)));
+#endif
+            };
+
+#if LLVM_VERSION_MAJOR >= 12
+            auto loadPass =
+                [prePass](ModulePassManager &MPM, OptimizationLevel Level)
+#else
+            auto loadPass = [prePass](ModulePassManager &MPM)
 #endif
             {
               MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
+
+#if LLVM_VERSION_MAJOR >= 12
+              if (Level != OptimizationLevel::O0)
+                prePass(MPM, Level);
+#else
+              prePass(MPM);
+#endif
               FunctionPassManager OptimizerPM;
               FunctionPassManager OptimizerPM2;
 #if LLVM_VERSION_MAJOR >= 14
@@ -2613,7 +2781,9 @@ llvmGetPassPluginInfo() {
               MPM.addPass(GlobalOptPass());
             };
 // TODO need for perf reasons to move Enzyme pass to the pre vectorization.
-#if LLVM_VERSION_MAJOR >= 12
+#if LLVM_VERSION_MAJOR >= 15
+            PB.registerOptimizerEarlyEPCallback(loadPass);
+#elif LLVM_VERSION_MAJOR >= 12
             PB.registerPipelineEarlySimplificationEPCallback(loadPass);
 #else
             PB.registerPipelineStartEPCallback(loadPass);
