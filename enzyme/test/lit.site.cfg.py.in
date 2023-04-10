@@ -60,7 +60,7 @@ config.substitutions.append(('%loadBC', ''
                                  + ' @ENZYME_BINARY_DIR@/BCLoad/BCPass-' + config.llvm_ver + config.llvm_shlib_ext
                                  ))
 config.substitutions.append(('%BClibdir', '@ENZYME_SOURCE_DIR@/bclib/'))
-oldPM = (((" -fno-experimental-new-pass-manager" if int(config.llvm_ver) <= 14 else "-flegacy-pass-manager") if int(config.llvm_ver) >= 13 else "")
+oldPM = (((" -fno-experimental-new-pass-manager" if int(config.llvm_ver) < 14 else "-flegacy-pass-manager") if int(config.llvm_ver) >= 13 else "")
           + ' -Xclang -load -Xclang @ENZYME_BINARY_DIR@/Enzyme/ClangEnzyme-' + config.llvm_ver + config.llvm_shlib_ext)
 newPM = ((" -fexperimental-new-pass-manager" if int(config.llvm_ver) < 13 else "")
           + ' -fpass-plugin=@ENZYME_BINARY_DIR@/Enzyme/ClangEnzyme-' + config.llvm_ver + config.llvm_shlib_ext
