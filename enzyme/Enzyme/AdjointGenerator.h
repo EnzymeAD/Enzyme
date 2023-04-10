@@ -4142,6 +4142,7 @@ public:
         }
         return;
       }
+#if LLVM_VERSION_MAJOR >= 12
       case Intrinsic::vector_reduce_fmax: {
         if (vdiff && !gutils->isConstantValue(orig_ops[0])) {
           auto prev = lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2);
@@ -4161,6 +4162,7 @@ public:
         }
         return;
       }
+#endif
 
 #if LLVM_VERSION_MAJOR < 10
       case Intrinsic::x86_sse_min_ss:
@@ -4660,6 +4662,7 @@ public:
         setDiffe(&I, dif, Builder2);
         return;
       }
+#if LLVM_VERSION_MAJOR >= 12
       case Intrinsic::vector_reduce_fmax: {
         if (gutils->isConstantInstruction(&I))
           return;
@@ -4681,6 +4684,7 @@ public:
         setDiffe(&I, dif, Builder2);
         return;
       }
+#endif
 
 #if LLVM_VERSION_MAJOR < 10
       case Intrinsic::x86_sse_min_ss:

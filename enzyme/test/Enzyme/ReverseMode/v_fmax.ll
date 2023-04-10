@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instcombine -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -ge 12 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instcombine -simplifycfg -S | FileCheck %s; fi
 
 declare double @llvm.vector.reduce.fmax.v2f64(<2 x double> %v)
 
