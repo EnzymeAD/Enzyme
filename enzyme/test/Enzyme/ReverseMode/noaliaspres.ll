@@ -68,8 +68,8 @@ exit:
 ; CHECK: invertloop:  
 ; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %5, %incinvertloop ], [ 9, %loop ]
 ; CHECK-NEXT:   %"out'il_phi_unwrap" = load double*, double** %"outp'", align 8, !noalias !3
-; CHECK-NEXT:   %0 = load double, double* %"out'il_phi_unwrap", align 8, !noalias !12
-; CHECK-NEXT:   store double 0.000000e+00, double* %"out'il_phi_unwrap", align 8, !alias.scope ![[scope18:[0-9]+]], !noalias ![[scope19:[0-9]+]]
+; CHECK-NEXT:   %0 = load double, double* %"out'il_phi_unwrap", align 8, !alias.scope ![[scope18:[0-9]+]], !noalias ![[scope19:[0-9]+]]
+; CHECK-NEXT:   store double 0.000000e+00, double* %"out'il_phi_unwrap", align 8, !alias.scope ![[scope18]], !noalias ![[scope19]]
 ; CHECK-NEXT:   %in_unwrap = load double*, double** %inp, align 8, !alias.scope ![[scope7]], !noalias ![[scope8]]
 ; CHECK-NEXT:   %v_unwrap = load double, double* %in_unwrap, align 8, !alias.scope ![[scope9]], !noalias ![[scope10]]
 ; CHECK-NEXT:   %m0diffev = fmul fast double %0, %v_unwrap

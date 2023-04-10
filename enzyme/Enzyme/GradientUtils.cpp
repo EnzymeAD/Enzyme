@@ -6971,6 +6971,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
     if (auto LI1 = dyn_cast<LoadInst>(inst)) {
       llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
       ToCopy2.push_back(LLVMContext::MD_noalias);
+      ToCopy2.push_back(LLVMContext::MD_alias_scope);
       LI2->copyMetadata(*LI1, ToCopy2);
     }
   if (result->getType() != inst->getType()) {

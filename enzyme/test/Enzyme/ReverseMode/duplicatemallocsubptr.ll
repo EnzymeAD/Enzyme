@@ -56,8 +56,8 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"p2'mi", i8 0, i64 8, i1 false)
 ; CHECK-NEXT:   %"p3'ipc" = bitcast i8* %"p2'mi" to double**
 ; CHECK-NEXT:   %p3 = bitcast i8* %p2 to double**
-; CHECK-NEXT:   store double* %"a0'", double** %"p3'ipc", align 8, !alias.scope !0, !noalias !3
-; CHECK-NEXT:   store double* %a0, double** %p3, align 8, !alias.scope !3, !noalias !0
+; CHECK-NEXT:   store double* %"a0'", double** %"p3'ipc", align 8, !alias.scope ![[NA0:[0-9]+]], !noalias ![[NA1:[0-9]+]]
+; CHECK-NEXT:   store double* %a0, double** %p3, align 8, !alias.scope ![[NA1]], !noalias ![[NA0]]
 ; CHECK-NEXT:   %a4_augmented = call { double*, double* } @augmented_f(double** %p3, double** %"p3'ipc")
 ; CHECK-NEXT:   %a4 = extractvalue { double*, double* } %a4_augmented, 0
 ; CHECK-NEXT:   %"a4'ac" = extractvalue { double*, double* } %a4_augmented, 1
