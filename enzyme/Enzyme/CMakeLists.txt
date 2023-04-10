@@ -305,20 +305,33 @@ if (${LLVM_VERSION_MAJOR} IN_LIST LTO_LEGACY_MANAGER_VERSIONS)
   target_link_options(LLDEnzyme INTERFACE "SHELL: -Wl,--lto-legacy-pass-manager")
 endif()
 
-target_link_options(LLDEnzyme INTERFACE "SHELL: -Wl,-mllvm=-load=$<TARGET_FILE:LLDEnzyme-${LLVM_VERSION_MAJOR}>")
-add_dependencies(LLDEnzyme LLDEnzyme-${LLVM_VERSION_MAJOR})
+target_link_options(LLDEnzyme INTERFACE "SHELL: -Wl,-mllvm")
+target_link_options(LLDEnzyme INTERFACE "SHELL: -Wl,-load=$<TARGET_FILE:LLDEnzyme-${LLVM_VERSION_MAJOR}>")
+
+# this custom target exists to prevent CMake from incorrectly assuming that 
+# targets that link depend on LLDEnzyme-XX can be built at the same time or 
+# before LLDEnzyme-XX has finished.
+add_custom_target(LLDEnzymeDummy "" DEPENDS LLDEnzyme-${LLVM_VERSION_MAJOR})
+add_dependencies(LLDEnzyme LLDEnzymeDummy)
 
 
 add_library(ClangEnzyme INTERFACE)
-if(${LLVM_VERSION_MAJOR} LESS 15) 
   # what goes here?
-  target_compile_options(ClangEnzyme INTERFACE "SHELL: -flegacy-pass-manager")
+if(${LLVM_VERSION_MAJOR} LESS 15) 
+  if(${LLVM_VERSION_MAJOR} GREATER 12) 
+    target_compile_options(ClangEnzyme INTERFACE "SHELL: -flegacy-pass-manager")
+  endif()
   target_compile_options(ClangEnzyme INTERFACE "SHELL: -Xclang -load")
   target_compile_options(ClangEnzyme INTERFACE "SHELL: -Xclang $<TARGET_FILE:ClangEnzyme-${LLVM_VERSION_MAJOR}>")
 else()
   target_compile_options(ClangEnzyme INTERFACE "-fpass-plugin=$<TARGET_FILE:ClangEnzyme-${LLVM_VERSION_MAJOR}>")
 endif()
-add_dependencies(ClangEnzyme ClangEnzyme-${LLVM_VERSION_MAJOR})
+
+# this custom target exists to prevent CMake from incorrectly assuming that 
+# targets that link depend on ClangEnzyme-XX can be built at the same time or 
+# before ClangEnzyme-XX has finished.
+add_custom_target(ClangEnzymeDummy "" DEPENDS ClangEnzyme-${LLVM_VERSION_MAJOR})
+add_dependencies(ClangEnzyme ClangEnzymeDummy)
 
 install(TARGETS LLDEnzyme EXPORT UserFacingTargets)
 install(TARGETS ClangEnzyme EXPORT UserFacingTargets)
