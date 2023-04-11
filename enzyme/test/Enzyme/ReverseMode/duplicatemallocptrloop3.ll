@@ -61,10 +61,10 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"p2'mi", i8 0, i64 8, i1 false)
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* bitcast (i8* (i32)* @malloc to i8* (i64)*)(i64 80)
 ; CHECK-NEXT:   %r_malloccache = bitcast i8* %malloccall to double*
-; CHECK-NEXT:   %malloccall4 = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* bitcast (i8* (i32)* @malloc to i8* (i64)*)(i64 80)
-; CHECK-NEXT:   %"a4'ip_phi_malloccache" = bitcast i8* %malloccall4 to double**
-; CHECK-NEXT:   %malloccall8 = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* bitcast (i8* (i32)* @malloc to i8* (i64)*)(i64 80)
-; CHECK-NEXT:   %subcache_malloccache = bitcast i8* %malloccall8 to double**
+; CHECK-NEXT:   %[[malloccall4:.+]] = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* bitcast (i8* (i32)* @malloc to i8* (i64)*)(i64 80)
+; CHECK-NEXT:   %"a4'ip_phi_malloccache" = bitcast i8* %[[malloccall4]] to double**
+; CHECK-NEXT:   %[[malloccall8:.+]] = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* bitcast (i8* (i32)* @malloc to i8* (i64)*)(i64 80)
+; CHECK-NEXT:   %subcache_malloccache = bitcast i8* %[[malloccall8]] to double**
 ; CHECK-NEXT:   br label %loop
 
 ; CHECK: loop:                                             ; preds = %loop, %entry
@@ -99,8 +99,8 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %"p2'mi")
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %p2)
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall)
-; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall4)
-; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall8)
+; CHECK-NEXT:   tail call void @free(i8* nonnull %[[malloccall4]])
+; CHECK-NEXT:   tail call void @free(i8* nonnull %[[malloccall8]])
 ; CHECK-NEXT:   ret void
 
 ; CHECK: invertloop:                                       ; preds = %loop, %incinvertloop

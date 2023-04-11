@@ -8130,7 +8130,7 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
         if (offset != 0) {
 #if LLVM_VERSION_MAJOR > 7
           dsto = Builder2.CreateConstInBoundsGEP1_64(
-              dsto->getType()->getPointerElementType(), dsto, offset);
+              Type::getInt8Ty(dsto->getContext()), dsto, offset);
 #else
           dsto = Builder2.CreateConstInBoundsGEP1_64(dsto, offset);
 #endif
@@ -8150,7 +8150,7 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
         if (offset != 0) {
 #if LLVM_VERSION_MAJOR > 7
           srco = Builder2.CreateConstInBoundsGEP1_64(
-              srco->getType()->getPointerElementType(), srco, offset);
+              Type::getInt8Ty(srco->getContext()), srco, offset);
 #else
           srco = Builder2.CreateConstInBoundsGEP1_64(srco, offset);
 #endif
@@ -8236,7 +8236,7 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
       if (offset != 0) {
 #if LLVM_VERSION_MAJOR > 7
         dsto = BuilderZ.CreateConstInBoundsGEP1_64(
-            dsto->getType()->getPointerElementType(), dsto, offset);
+            Type::getInt8Ty(dsto->getContext()), dsto, offset);
 #else
         dsto = BuilderZ.CreateConstInBoundsGEP1_64(dsto, offset);
 #endif
@@ -8248,7 +8248,7 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
       if (offset != 0) {
 #if LLVM_VERSION_MAJOR > 7
         srco = BuilderZ.CreateConstInBoundsGEP1_64(
-            srco->getType()->getPointerElementType(), srco, offset);
+            Type::getInt8Ty(srco->getContext()), srco, offset);
 #else
         srco = BuilderZ.CreateConstInBoundsGEP1_64(srco, offset);
 #endif
