@@ -1048,7 +1048,11 @@ template <typename T> static inline llvm::StringRef getFuncNameFromCall(T *op) {
 }
 
 template <typename T>
+#if LLVM_VERSION_MAJOR >= 16
+static inline std::optional<size_t> getAllocationIndexFromCall(T *op) {
+#else
 static inline llvm::Optional<size_t> getAllocationIndexFromCall(T *op) {
+#endif
   auto AttrList =
       op->getAttributes().getAttributes(llvm::AttributeList::FunctionIndex);
   if (AttrList.hasAttribute("enzyme_allocator")) {
@@ -1057,7 +1061,11 @@ static inline llvm::Optional<size_t> getAllocationIndexFromCall(T *op) {
                  .getValueAsString()
                  .getAsInteger(10, res);
     assert(!b);
+#if LLVM_VERSION_MAJOR >= 16
+    return std::optional<size_t>(res);
+#else
     return llvm::Optional<size_t>(res);
+#endif
   }
 
   if (auto called = getFunctionFromCall(op)) {
@@ -1067,10 +1075,18 @@ static inline llvm::Optional<size_t> getAllocationIndexFromCall(T *op) {
                    .getValueAsString()
                    .getAsInteger(10, res);
       assert(!b);
+#if LLVM_VERSION_MAJOR >= 16
+      return std::optional<size_t>(res);
+#else
       return llvm::Optional<size_t>(res);
+#endif
     }
   }
+#if LLVM_VERSION_MAJOR >= 16
+  return std::optional<size_t>();
+#else
   return llvm::Optional<size_t>();
+#endif
 }
 
 template <typename T>

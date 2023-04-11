@@ -188,6 +188,23 @@ MustExitScalarEvolution::computeExitLimitFromCondImpl(
         else
           BECount =
               getUMinFromMismatchedTypes(EL0.ExactNotTaken, EL1.ExactNotTaken);
+#if LLVM_VERSION_MAJOR >= 16
+        if (EL0.ConstantMaxNotTaken == getCouldNotCompute())
+          MaxBECount = EL1.ConstantMaxNotTaken;
+        else if (EL1.ConstantMaxNotTaken == getCouldNotCompute())
+          MaxBECount = EL0.ConstantMaxNotTaken;
+        else
+          MaxBECount =
+              getUMinFromMismatchedTypes(EL0.ConstantMaxNotTaken, EL1.ConstantMaxNotTaken);
+      } else {
+        // Both conditions must be true at the same time for the loop to exit.
+        // For now, be conservative.
+        if (EL0.ConstantMaxNotTaken == EL1.ConstantMaxNotTaken)
+          MaxBECount = EL0.ConstantMaxNotTaken;
+        if (EL0.ExactNotTaken == EL1.ExactNotTaken)
+          BECount = EL0.ExactNotTaken;
+      }
+#else
         if (EL0.MaxNotTaken == getCouldNotCompute())
           MaxBECount = EL1.MaxNotTaken;
         else if (EL1.MaxNotTaken == getCouldNotCompute())
@@ -203,18 +220,23 @@ MustExitScalarEvolution::computeExitLimitFromCondImpl(
         if (EL0.ExactNotTaken == EL1.ExactNotTaken)
           BECount = EL0.ExactNotTaken;
       }
-
+#endif
       // There are cases (e.g. PR26207) where computeExitLimitFromCond is able
       // to be more aggressive when computing BECount than when computing
       // MaxBECount.  In these cases it is possible for EL0.ExactNotTaken and
-      // EL1.ExactNotTaken to match, but for EL0.MaxNotTaken and EL1.MaxNotTaken
+      // EL1.ExactNotTaken to match, but for EL0.ConstantMaxNotTaken and EL1.ConstantMaxNotTaken
       // to not.
       if (isa<SCEVCouldNotCompute>(MaxBECount) &&
           !isa<SCEVCouldNotCompute>(BECount))
         MaxBECount = getConstant(getUnsignedRangeMax(BECount));
 
+#if LLVM_VERSION_MAJOR >= 16
+      return ExitLimit(BECount, MaxBECount, MaxBECount, false,
+                       {&EL0.Predicates, &EL1.Predicates});
+#else
       return ExitLimit(BECount, MaxBECount, false,
                        {&EL0.Predicates, &EL1.Predicates});
+#endif
     }
     if (BO->getOpcode() == Instruction::Or) {
       // Recurse on the operands of the or.
@@ -236,6 +258,25 @@ MustExitScalarEvolution::computeExitLimitFromCondImpl(
         else
           BECount =
               getUMinFromMismatchedTypes(EL0.ExactNotTaken, EL1.ExactNotTaken);
+#if LLVM_VERSION_MAJOR >= 16
+        if (EL0.ConstantMaxNotTaken == getCouldNotCompute())
+          MaxBECount = EL1.ConstantMaxNotTaken;
+        else if (EL1.ConstantMaxNotTaken == getCouldNotCompute())
+          MaxBECount = EL0.ConstantMaxNotTaken;
+        else
+          MaxBECount =
+              getUMinFromMismatchedTypes(EL0.ConstantMaxNotTaken, EL1.ConstantMaxNotTaken);
+      } else {
+        // Both conditions must be false at the same time for the loop to exit.
+        // For now, be conservative.
+        if (EL0.ConstantMaxNotTaken == EL1.ConstantMaxNotTaken)
+          MaxBECount = EL0.ConstantMaxNotTaken;
+        if (EL0.ExactNotTaken == EL1.ExactNotTaken)
+          BECount = EL0.ExactNotTaken;
+      }
+      return ExitLimit(BECount, MaxBECount, MaxBECount, false,
+                       {&EL0.Predicates, &EL1.Predicates});
+#else
         if (EL0.MaxNotTaken == getCouldNotCompute())
           MaxBECount = EL1.MaxNotTaken;
         else if (EL1.MaxNotTaken == getCouldNotCompute())
@@ -251,9 +292,9 @@ MustExitScalarEvolution::computeExitLimitFromCondImpl(
         if (EL0.ExactNotTaken == EL1.ExactNotTaken)
           BECount = EL0.ExactNotTaken;
       }
-
       return ExitLimit(BECount, MaxBECount, false,
                        {&EL0.Predicates, &EL1.Predicates});
+#endif
     }
   }
 
@@ -1174,8 +1215,13 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(
   if (!isLoopInvariant(RHS, L)) {
     const SCEV *MaxBECount = computeMaxBECountForLT(
         Start, Stride, RHS, getTypeSizeInBits(LHS->getType()), IsSigned);
+#if LLVM_VERSION_MAJOR >= 16
+    return ExitLimit(getCouldNotCompute() /* ExactNotTaken */, MaxBECount,
+                     MaxBECount, false /*MaxOrZero*/, Predicates);
+#else
     return ExitLimit(getCouldNotCompute() /* ExactNotTaken */, MaxBECount,
                      false /*MaxOrZero*/, Predicates);
+#endif
   }
 
   // We use the expression (max(End,Start)-Start)/Stride to describe the
@@ -1358,8 +1404,11 @@ ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(
   if (isa<SCEVCouldNotCompute>(MaxBECount) &&
       !isa<SCEVCouldNotCompute>(BECount))
     MaxBECount = getConstant(getUnsignedRangeMax(BECount));
-
+#if LLVM_VERSION_MAJOR >= 16
+  return ExitLimit(BECount, MaxBECount, MaxBECount, MaxOrZero, Predicates);
+#else
   return ExitLimit(BECount, MaxBECount, MaxOrZero, Predicates);
+#endif
 }
 #else
 ScalarEvolution::ExitLimit MustExitScalarEvolution::howManyLessThans(

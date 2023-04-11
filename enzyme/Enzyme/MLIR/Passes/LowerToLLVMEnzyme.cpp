@@ -75,7 +75,11 @@ void updatePrimalFunc(FunctionOpInterface fn,
 }
 
 void convertMemRefArgument(Location loc, Value primal,
+#if LLVM_VERSION_MAJOR >= 16
+                           std::optional<Value> shadow,
+#else
                            llvm::Optional<Value> shadow,
+#endif
                            Value enzyme_const_addr, int64_t rank, OpBuilder &b,
                            SmallVectorImpl<Value> &operands) {
   MemRefDescriptor memrefPrimal(primal);
