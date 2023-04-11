@@ -384,9 +384,9 @@ public:
   /// pointer that can hold the underlying type being cached. This value should
   /// be computed at BuilderM. Optionally, instructions needed to generate this
   /// pointer can be stored in scopeInstructions
-  llvm::Value *getCachePointer(bool inForwardPass, llvm::IRBuilder<> &BuilderM,
-                               LimitContext ctx, llvm::Value *cache, bool isi1,
-                               bool storeInInstructionsMap,
+  llvm::Value *getCachePointer(llvm::Type *T, bool inForwardPass,
+                               llvm::IRBuilder<> &BuilderM, LimitContext ctx,
+                               llvm::Value *cache, bool storeInInstructionsMap,
                                const llvm::ValueToValueMapTy &available,
                                llvm::Value *extraSize);
 

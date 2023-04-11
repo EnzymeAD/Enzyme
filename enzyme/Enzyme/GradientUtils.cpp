@@ -6644,11 +6644,12 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 
                     v.setFastMathFlags(getFast());
                     assert(isOriginalBlock(*v.GetInsertBlock()));
-                    Value *outer = getCachePointer(
-                        /*inForwardPass*/ true, v, lctx, cache, isi1,
-                        /*storeinstorecache*/ true,
-                        /*available*/ ValueToValueMapTy(),
-                        /*extraSize*/ nullptr);
+                    Value *outer =
+                        getCachePointer(AT,
+                                        /*inForwardPass*/ true, v, lctx, cache,
+                                        /*storeinstorecache*/ true,
+                                        /*available*/ ValueToValueMapTy(),
+                                        /*extraSize*/ nullptr);
 
                     auto ld = v.CreateLoad(AT, AI);
 #if LLVM_VERSION_MAJOR >= 11
@@ -6683,7 +6684,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 
                   assert(!isOriginalBlock(*BuilderM.GetInsertBlock()));
                   Value *outer = getCachePointer(
-                      /*inForwardPass*/ false, BuilderM, lctx, cache, isi1,
+                      AT,
+                      /*inForwardPass*/ false, BuilderM, lctx, cache,
                       /*storeinstorecache*/ true, available,
                       /*extraSize*/ nullptr);
                   SmallVector<Value *, 2> idxs;
@@ -6881,7 +6883,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               v.setFastMathFlags(getFast());
               assert(isOriginalBlock(*v.GetInsertBlock()));
               Value *outer =
-                  getCachePointer(/*inForwardPass*/ true, v, lctx, cache, isi1,
+                  getCachePointer(li->getType(),
+                                  /*inForwardPass*/ true, v, lctx, cache,
                                   /*storeinstorecache*/ true,
                                   /*available*/ ValueToValueMapTy(),
                                   /*extraSize*/ lim);
