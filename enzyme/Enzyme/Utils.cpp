@@ -564,7 +564,11 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
     return F;
 
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setMemoryEffects(MemoryEffects::argMemOnly());
+#else
   F->addFnAttr(Attribute::ArgMemOnly);
+#endif
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
   F->addParamAttr(0, Attribute::NoCapture);
@@ -663,7 +667,11 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
     return F;
 
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setMemoryEffects(MemoryEffects::argMemOnly());
+#else
   F->addFnAttr(Attribute::ArgMemOnly);
+#endif
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
   F->addParamAttr(0, Attribute::NoCapture);
@@ -786,7 +794,11 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
     return F;
 
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setMemoryEffects(MemoryEffects::argMemOnly());
+#else
   F->addFnAttr(Attribute::ArgMemOnly);
+#endif
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
 
@@ -1092,7 +1104,11 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
 #endif
 
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setMemoryEffects(MemoryEffects::argMemOnly());
+#else
   F->addFnAttr(Attribute::ArgMemOnly);
+#endif
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
   F->addParamAttr(0, Attribute::NoCapture);

@@ -107,7 +107,11 @@ namespace {
 static void handleKnownFunctions(llvm::Function &F) {
   if (F.getName() == "memcmp") {
     F.addFnAttr(Attribute::ReadOnly);
+#if LLVM_VERSION_MAJOR >= 16
+    F.setMemoryEffects(MemoryEffects::argMemOnly());
+#else
     F.addFnAttr(Attribute::ArgMemOnly);
+#endif
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
 #if LLVM_VERSION_MAJOR >= 9
@@ -132,7 +136,11 @@ static void handleKnownFunctions(llvm::Function &F) {
 #endif
   }
   if (F.getName() == "MPI_Irecv" || F.getName() == "PMPI_Irecv") {
+#if LLVM_VERSION_MAJOR >= 16
+    F.setMemoryEffects(MemoryEffects::inaccessibleOrArgMemOnly());
+#else
     F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
+#endif
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
 #if LLVM_VERSION_MAJOR >= 9
@@ -148,7 +156,11 @@ static void handleKnownFunctions(llvm::Function &F) {
     F.addParamAttr(6, Attribute::WriteOnly);
   }
   if (F.getName() == "MPI_Isend" || F.getName() == "PMPI_Isend") {
+#if LLVM_VERSION_MAJOR >= 16
+    F.setMemoryEffects(MemoryEffects::inaccessibleOrArgMemOnly());
+#else
     F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
+#endif
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
 #if LLVM_VERSION_MAJOR >= 9
@@ -165,7 +177,11 @@ static void handleKnownFunctions(llvm::Function &F) {
   }
   if (F.getName() == "MPI_Comm_rank" || F.getName() == "PMPI_Comm_rank" ||
       F.getName() == "MPI_Comm_size" || F.getName() == "PMPI_Comm_size") {
+#if LLVM_VERSION_MAJOR >= 16
+    F.setMemoryEffects(MemoryEffects::inaccessibleOrArgMemOnly());
+#else
     F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
+#endif
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
 #if LLVM_VERSION_MAJOR >= 9
@@ -209,11 +225,19 @@ static void handleKnownFunctions(llvm::Function &F) {
   if (F.getName() == "omp_get_max_threads" ||
       F.getName() == "omp_get_thread_num") {
     F.addFnAttr(Attribute::ReadOnly);
+#if LLVM_VERSION_MAJOR >= 16
+    F.setMemoryEffects(MemoryEffects::inaccessibleMemOnly());
+#else
     F.addFnAttr(Attribute::InaccessibleMemOnly);
+#endif
   }
   if (F.getName() == "frexp" || F.getName() == "frexpf" ||
       F.getName() == "frexpl") {
+#if LLVM_VERSION_MAJOR >= 16
+    F.setMemoryEffects(MemoryEffects::argMemOnly());
+#else
     F.addFnAttr(Attribute::ArgMemOnly);
+#endif
     F.addParamAttr(1, Attribute::WriteOnly);
   }
   if (F.getName() == "__fd_sincos_1" || F.getName() == "__fd_cos_1" ||
@@ -1797,7 +1821,12 @@ public:
         II->getUnwindDest()->removePredecessor(&BB);
 
         // Remove the invoke instruction now.
+#if LLVM_VERSION_MAJOR >= 16
+        auto termIt = BB.end();
+        BB.erase(--termIt, BB.end());
+#else
         BB.getInstList().erase(II);
+#endif
         Changed = true;
       }
 
@@ -1889,14 +1918,24 @@ public:
             Fn->getName() == "omp_get_thread_num") {
           Fn->addFnAttr(Attribute::ReadOnly);
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadOnly);
+#if LLVM_VERSION_MAJOR >= 16
+          Fn->setMemoryEffects(MemoryEffects::inaccessibleMemOnly());
+          CI->addAttribute(AttributeList::FunctionIndex,
+                           Attribute::Memory);
+#else
           Fn->addFnAttr(Attribute::InaccessibleMemOnly);
           CI->addAttribute(AttributeList::FunctionIndex,
                            Attribute::InaccessibleMemOnly);
+#endif
         }
         if ((Fn->getName() == "cblas_ddot" || Fn->getName() == "cblas_sdot") &&
             Fn->isDeclaration()) {
           Fn->addFnAttr(Attribute::ReadOnly);
+#if LLVM_VERSION_MAJOR >= 16
+          Fn->setMemoryEffects(MemoryEffects::argMemOnly());
+#else
           Fn->addFnAttr(Attribute::ArgMemOnly);
+#endif
           CI->addParamAttr(1, Attribute::ReadOnly);
           CI->addParamAttr(1, Attribute::NoCapture);
           CI->addParamAttr(3, Attribute::ReadOnly);
@@ -1904,7 +1943,11 @@ public:
         }
         if (Fn->getName() == "frexp" || Fn->getName() == "frexpf" ||
             Fn->getName() == "frexpl") {
+#if LLVM_VERSION_MAJOR >= 16
+          CI->addAttribute(AttributeList::FunctionIndex, Attribute::Memory);
+#else
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ArgMemOnly);
+#endif
           CI->addParamAttr(1, Attribute::WriteOnly);
         }
         if (Fn->getName() == "__fd_sincos_1" || Fn->getName() == "__fd_cos_1" ||
@@ -1919,14 +1962,26 @@ public:
         }
         if (Fn->getName() == "f90io_fmtw_end" ||
             Fn->getName() == "f90io_unf_end") {
+#if LLVM_VERSION_MAJOR >= 16
+          Fn->setMemoryEffects(MemoryEffects::inaccessibleMemOnly());
+          CI->addAttribute(AttributeList::FunctionIndex,
+                           Attribute::Memory);
+#else
           Fn->addFnAttr(Attribute::InaccessibleMemOnly);
           CI->addAttribute(AttributeList::FunctionIndex,
                            Attribute::InaccessibleMemOnly);
+#endif
         }
         if (Fn->getName() == "f90io_open2003a") {
+#if LLVM_VERSION_MAJOR >= 16
+          Fn->setMemoryEffects(MemoryEffects::inaccessibleOrArgMemOnly());
+          CI->addAttribute(AttributeList::FunctionIndex,
+                           Attribute::Memory);
+#else
           Fn->addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
           CI->addAttribute(AttributeList::FunctionIndex,
                            Attribute::InaccessibleMemOrArgMemOnly);
+#endif
           for (size_t i : {0, 1, 2, 3, 4, 5, 6, 7, /*8, */ 9, 10, 11, 12, 13}) {
             if (i < num_args &&
                 CI->getArgOperand(i)->getType()->isPointerTy()) {
@@ -1942,9 +1997,15 @@ public:
           }
         }
         if (Fn->getName() == "f90io_fmtw_inita") {
+#if LLVM_VERSION_MAJOR >= 16
+          Fn->setMemoryEffects(MemoryEffects::inaccessibleOrArgMemOnly());
+          CI->addAttribute(AttributeList::FunctionIndex,
+                           Attribute::Memory);
+#else
           Fn->addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
           CI->addAttribute(AttributeList::FunctionIndex,
                            Attribute::InaccessibleMemOrArgMemOnly);
+#endif
           // todo more
           for (size_t i : {0, 2}) {
             if (i < num_args &&
@@ -1963,9 +2024,15 @@ public:
         }
 
         if (Fn->getName() == "f90io_unf_init") {
+#if LLVM_VERSION_MAJOR >= 16
+          Fn->setMemoryEffects(MemoryEffects::inaccessibleOrArgMemOnly());
+          CI->addAttribute(AttributeList::FunctionIndex,
+                           Attribute::Memory);
+#else
           Fn->addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
           CI->addAttribute(AttributeList::FunctionIndex,
                            Attribute::InaccessibleMemOrArgMemOnly);
+#endif
           // todo more
           for (size_t i : {0, 1, 2, 3}) {
             if (i < num_args &&
@@ -1984,9 +2051,15 @@ public:
         }
 
         if (Fn->getName() == "f90io_src_info03a") {
+#if LLVM_VERSION_MAJOR >= 16
+          Fn->setMemoryEffects(MemoryEffects::inaccessibleOrArgMemOnly());
+          CI->addAttribute(AttributeList::FunctionIndex,
+                           Attribute::Memory);
+#else
           Fn->addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
           CI->addAttribute(AttributeList::FunctionIndex,
                            Attribute::InaccessibleMemOrArgMemOnly);
+#endif
           // todo more
           for (size_t i : {0, 1}) {
             if (i < num_args &&
@@ -2010,9 +2083,15 @@ public:
             Fn->getName() == "f90io_fmt_writea" ||
             Fn->getName() == "f90io_unf_writea" ||
             Fn->getName() == "f90_pausea") {
+#if LLVM_VERSION_MAJOR >= 16
+          Fn->setMemoryEffects(MemoryEffects::inaccessibleOrArgMemOnly());
+          CI->addAttribute(AttributeList::FunctionIndex,
+                           Attribute::Memory);
+#else
           Fn->addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
           CI->addAttribute(AttributeList::FunctionIndex,
                            Attribute::InaccessibleMemOrArgMemOnly);
+#endif
           for (size_t i = 0; i < num_args; ++i) {
             if (CI->getArgOperand(i)->getType()->isPointerTy()) {
               CI->addParamAttr(i, Attribute::ReadOnly);
@@ -2752,7 +2831,10 @@ llvmGetPassPluginInfo() {
 #endif
               FunctionPassManager OptimizerPM;
               FunctionPassManager OptimizerPM2;
-#if LLVM_VERSION_MAJOR >= 14
+#if LLVM_VERSION_MAJOR >= 16
+              OptimizerPM.addPass(llvm::GVNPass());
+              OptimizerPM.addPass(llvm::SROAPass(llvm::SROAOptions::PreserveCFG));
+#elif LLVM_VERSION_MAJOR >= 14
               OptimizerPM.addPass(llvm::GVNPass());
               OptimizerPM.addPass(llvm::SROAPass());
 #else
@@ -2763,7 +2845,10 @@ llvmGetPassPluginInfo() {
                   createModuleToFunctionPassAdaptor(std::move(OptimizerPM)));
               MPM.addPass(EnzymeNewPM(/*PostOpt=*/true));
               MPM.addPass(PreserveNVVMNewPM(/*Begin*/ false));
-#if LLVM_VERSION_MAJOR >= 14
+#if LLVM_VERSION_MAJOR >= 16
+              OptimizerPM2.addPass(llvm::GVNPass());
+              OptimizerPM2.addPass(llvm::SROAPass(llvm::SROAOptions::PreserveCFG));
+#elif LLVM_VERSION_MAJOR >= 14
               OptimizerPM2.addPass(llvm::GVNPass());
               OptimizerPM2.addPass(llvm::SROAPass());
 #else

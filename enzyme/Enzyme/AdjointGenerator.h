@@ -189,8 +189,13 @@ public:
     AL =
         AL.addParamAttribute(DT->getContext(), 1, Attribute::AttrKind::NonNull);
 #if LLVM_VERSION_MAJOR >= 14
+  #if LLVM_VERSION_MAJOR >= 16
+    AL = AL.addAttributeAtIndex(DT->getContext(), AttributeList::FunctionIndex,
+                                Attribute::AttrKind::Memory);
+  #else
     AL = AL.addAttributeAtIndex(DT->getContext(), AttributeList::FunctionIndex,
                                 Attribute::AttrKind::ArgMemOnly);
+  #endif
     AL = AL.addAttributeAtIndex(DT->getContext(), AttributeList::FunctionIndex,
                                 Attribute::AttrKind::NoUnwind);
     AL = AL.addAttributeAtIndex(DT->getContext(), AttributeList::FunctionIndex,
@@ -5262,7 +5267,7 @@ public:
       nextTypeInfo.Return = TR.query(&call);
     }
 
-    // llvm::Optional<std::map<std::pair<Instruction*, std::string>, unsigned>>
+    // std::optional<std::map<std::pair<Instruction*, std::string>, unsigned>>
     // sub_index_map;
     // Optional<int> tapeIdx;
     // Optional<int> returnIdx;
@@ -5952,7 +5957,11 @@ public:
           if (auto F = dyn_cast<Function>(derivcall))
 #endif
           {
+#if LLVM_VERSION_MAJOR >= 16
+            F->setMemoryEffects(MemoryEffects::argMemOnly());
+#else
             F->addFnAttr(Attribute::ArgMemOnly);
+#endif
             F->addFnAttr(Attribute::ReadOnly);
             if (byRef) {
               F->addParamAttr(0, Attribute::ReadOnly);
@@ -5989,7 +5998,11 @@ public:
 #endif
 
               if (auto F = dyn_cast<Function>(callval)) {
+#if LLVM_VERSION_MAJOR >= 16
+                F->setMemoryEffects(MemoryEffects::argMemOnly());
+#else
                 F->addFnAttr(Attribute::ArgMemOnly);
+#endif
                 F->addFnAttr(Attribute::ReadOnly);
                 if (byRef) {
                   F->addParamAttr(0, Attribute::ReadOnly);
@@ -6496,7 +6509,11 @@ public:
           if (auto F = dyn_cast<Function>(derivcall))
 #endif
           {
+#if LLVM_VERSION_MAJOR >= 16
+            F->setMemoryEffects(MemoryEffects::argMemOnly());
+#else
             F->addFnAttr(Attribute::ArgMemOnly);
+#endif
             if (byRef) {
               F->addParamAttr(0, Attribute::ReadOnly);
               F->addParamAttr(0, Attribute::NoCapture);
@@ -9107,8 +9124,11 @@ public:
 
         args.push_back(gutils->invertPointerM(call.getArgOperand(i), Builder2));
       }
-
+#if LLVM_VERSION_MAJOR >= 16
+      std::optional<int> tapeIdx;
+#else
       Optional<int> tapeIdx;
+#endif
       if (subdata) {
         auto found = subdata->returns.find(AugmentedStruct::Tape);
         if (found != subdata->returns.end()) {
@@ -9116,7 +9136,11 @@ public:
         }
       }
       Value *tape = nullptr;
+#if LLVM_VERSION_MAJOR >= 16      
+      if (tapeIdx.has_value()) {
+#else
       if (tapeIdx.hasValue()) {
+#endif
 
         FunctionType *FT =
             cast<FunctionType>(subdata->fn->getType()->getPointerElementType());
@@ -9124,7 +9148,11 @@ public:
         tape = BuilderZ.CreatePHI(
             (tapeIdx == -1) ? FT->getReturnType()
                             : cast<StructType>(FT->getReturnType())
+#if LLVM_VERSION_MAJOR >= 16
+                                  ->getElementType(tapeIdx.value()),
+#else
                                   ->getElementType(tapeIdx.getValue()),
+#endif
             1, "tapeArg");
 
         assert(!tape->getType()->isEmptyTy());
@@ -9450,12 +9478,17 @@ public:
     CallInst *augmentcall = nullptr;
     Value *cachereplace = nullptr;
 
-    // llvm::Optional<std::map<std::pair<Instruction*, std::string>,
+    // std::optional<std::map<std::pair<Instruction*, std::string>,
     // unsigned>> sub_index_map;
+#if LLVM_VERSION_MAJOR >= 16
+    std::optional<int> tapeIdx;
+    std::optional<int> returnIdx;
+    std::optional<int> differetIdx;
+#else
     Optional<int> tapeIdx;
     Optional<int> returnIdx;
     Optional<int> differetIdx;
-
+#endif
     if (modifyPrimal) {
 
       Value *newcalled = nullptr;
@@ -9659,11 +9692,20 @@ public:
         if (!augmentcall->getType()->isVoidTy())
           augmentcall->setName(call.getName() + "_augmented");
 
+#if LLVM_VERSION_MAJOR >= 16
+        if (tapeIdx.has_value()) {
+          tape = (tapeIdx.value() == -1)
+#else
         if (tapeIdx.hasValue()) {
           tape = (tapeIdx.getValue() == -1)
+#endif
                      ? augmentcall
                      : BuilderZ.CreateExtractValue(
+#if LLVM_VERSION_MAJOR >= 16
+                           augmentcall, {(unsigned)tapeIdx.value()},
+#else
                            augmentcall, {(unsigned)tapeIdx.getValue()},
+#endif
                            "subcache");
           if (tape->getType()->isEmptyTy()) {
             auto tt = tape->getType();
@@ -9680,10 +9722,17 @@ public:
           Value *dcall = nullptr;
           assert(returnIdx);
           assert(augmentcall);
+#if LLVM_VERSION_MAJOR >= 16
+          dcall = (returnIdx.value() < 0)
+                      ? augmentcall
+                      : BuilderZ.CreateExtractValue(
+                            augmentcall, {(unsigned)returnIdx.value()});
+#else
           dcall = (returnIdx.getValue() < 0)
                       ? augmentcall
                       : BuilderZ.CreateExtractValue(
                             augmentcall, {(unsigned)returnIdx.getValue()});
+#endif
           gutils->originalToNewFn[&call] = dcall;
           gutils->newToOriginalFn.erase(newCall);
           gutils->newToOriginalFn[dcall] = &call;
@@ -9751,12 +9800,21 @@ public:
           // assert(!tape);
           // assert(subdata);
           if (!tape) {
+#if LLVM_VERSION_MAJOR >= 16
+            assert(tapeIdx.has_value());
+            tape = BuilderZ.CreatePHI(
+                (tapeIdx == -1) ? FT->getReturnType()
+                                : cast<StructType>(FT->getReturnType())
+                                      ->getElementType(tapeIdx.value()),
+                1, "tapeArg");
+#else
             assert(tapeIdx.hasValue());
             tape = BuilderZ.CreatePHI(
                 (tapeIdx == -1) ? FT->getReturnType()
                                 : cast<StructType>(FT->getReturnType())
                                       ->getElementType(tapeIdx.getValue()),
                 1, "tapeArg");
+#endif
           }
           tape = gutils->cacheForReverse(BuilderZ, tape,
                                          getIndex(&call, CacheType::Tape));
@@ -9808,11 +9866,19 @@ public:
           Value *newip = nullptr;
           if (Mode == DerivativeMode::ReverseModeCombined ||
               Mode == DerivativeMode::ReverseModePrimal) {
+#if LLVM_VERSION_MAJOR >= 16
+            newip = (differetIdx.value() < 0)
+                        ? augmentcall
+                        : BuilderZ.CreateExtractValue(
+                              augmentcall, {(unsigned)differetIdx.value()},
+                              call.getName() + "'ac");
+#else
             newip = (differetIdx.getValue() < 0)
                         ? augmentcall
                         : BuilderZ.CreateExtractValue(
                               augmentcall, {(unsigned)differetIdx.getValue()},
                               call.getName() + "'ac");
+#endif
             assert(newip->getType() == call.getType());
             placeholder->replaceAllUsesWith(newip);
             if (placeholder == &*BuilderZ.GetInsertPoint()) {
@@ -12796,7 +12862,11 @@ public:
                                             /*tryLegalRecompute*/ false);
             auto freeCall = cast<CallInst>(
                 CallInst::CreateFree(tofree, Builder2.GetInsertBlock()));
+#if LLVM_VERSION_MAJOR >= 16
+            freeCall->insertInto(Builder2.GetInsertBlock(), Builder2.GetInsertBlock()->end());
+#else
             Builder2.GetInsertBlock()->getInstList().push_back(freeCall);
+#endif
           }
         }
       }
@@ -12835,7 +12905,11 @@ public:
             gutils->lookupM(load, Builder2, ValueToValueMapTy(),
                             /*tryLegal*/ false),
             Builder2.GetInsertBlock()));
+#if LLVM_VERSION_MAJOR >= 16
+        freeCall->insertInto(Builder2.GetInsertBlock(), Builder2.GetInsertBlock()->end());
+#else
         Builder2.GetInsertBlock()->getInstList().push_back(freeCall);
+#endif
       }
 
       return;
