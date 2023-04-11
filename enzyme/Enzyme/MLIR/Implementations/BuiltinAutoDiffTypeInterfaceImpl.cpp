@@ -45,6 +45,9 @@ class IntegerTypeInterface
     : public AutoDiffTypeInterface::ExternalModel<IntegerTypeInterface<T>, T> {
 public:
   Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
+    if (isa<IndexType>(self)) {
+      return builder.create<arith::ConstantIndexOp>(loc, 0);
+    }
     return builder.create<arith::ConstantIntOp>(loc, 0, self);
   }
 
