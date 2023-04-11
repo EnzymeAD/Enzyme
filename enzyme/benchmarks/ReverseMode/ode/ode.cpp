@@ -25,6 +25,9 @@ static float tdiff(struct timeval *start, struct timeval *end) {
 void boost::throw_exception(std::exception const & e) {
     //do nothing
 }
+void boost::throw_exception(std::exception const & e, boost::source_location const & loc) {
+    //do nothing
+}
 
 using namespace std;
 using namespace boost::numeric::odeint;

@@ -19,7 +19,7 @@ opt.ll: raw.ll
 	opt $^ -O2 -o $@ -S
 
 library.exe: opt.ll
-	clang $^ -o $@ -lblas $(BENCHLINK)
+	clang $^ -o $@ $(BENCHLINK)
 
 results.txt: library.exe
 	./$^ 10000000 | tee $@
