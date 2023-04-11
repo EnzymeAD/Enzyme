@@ -4403,8 +4403,7 @@ public:
           auto *PowF = CI.getCalledValue();
 #endif
           assert(PowF);
-          auto FT =
-              cast<FunctionType>(PowF->getType()->getPointerElementType());
+          auto FT = CI.getFunctionType();
           auto cal = cast<CallInst>(Builder2.CreateCall(FT, PowF, args));
           cal->setCallingConv(CI.getCallingConv());
 
@@ -5307,6 +5306,7 @@ public:
           newcalled = CloneFunction(newcalled, VMap);
           auto tapeArg = newcalled->arg_end();
           tapeArg--;
+          Type *tapeElemType = subdata->tapeType;
           SmallVector<std::pair<ssize_t, Value *>, 4> geps;
           SmallPtrSet<Instruction *, 4> gepsToErase;
           for (auto a : tapeArg->users()) {
@@ -5338,7 +5338,7 @@ public:
           for (auto gep : gepsToErase)
             gep->eraseFromParent();
           IRBuilder<> ph(&*newcalled->getEntryBlock().begin());
-          tape = UndefValue::get(tapeArg->getType()->getPointerElementType());
+          tape = UndefValue::get(tapeElemType);
           ValueToValueMapTy available;
           auto subarg = newcalled->arg_begin();
           subarg++;
@@ -5382,9 +5382,7 @@ public:
                       op->getType(),
                       pair.first == -1
                           ? tapeArg
-                          : ph.CreateInBoundsGEP(
-                                tapeArg->getType()->getPointerElementType(),
-                                tapeArg, Idxs)));
+                          : ph.CreateInBoundsGEP(tapeElemType, tapeArg, Idxs)));
 #else
                   op->replaceAllUsesWith(ph.CreateLoad(
                       pair.first == -1 ? tapeArg
@@ -5406,9 +5404,7 @@ public:
                 op->getType(),
                 pair.first == -1
                     ? tapeArg
-                    : ph.CreateInBoundsGEP(
-                          tapeArg->getType()->getPointerElementType(), tapeArg,
-                          Idxs)));
+                    : ph.CreateInBoundsGEP(tapeElemType, tapeArg, Idxs)));
 #else
             op->replaceAllUsesWith(ph.CreateLoad(
                 pair.first == -1 ? tapeArg
@@ -5418,8 +5414,7 @@ public:
           }
           assert(tape);
           auto alloc =
-              IRBuilder<>(gutils->inversionAllocs)
-                  .CreateAlloca(tapeArg->getType()->getPointerElementType());
+              IRBuilder<>(gutils->inversionAllocs).CreateAlloca(tapeElemType);
           BuilderZ.CreateStore(tape, alloc);
           pre_args.push_back(alloc);
           assert(tape);
@@ -12733,8 +12728,16 @@ public:
     if (funcName == "posix_memalign") {
       bool constval = gutils->isConstantInstruction(&call);
 
+      Value *val;
+      llvm::Type *PT = Type::getInt8PtrTy(call.getContext());
+#if LLVM_VERSION_MAJOR >= 15
+      if (call.getContext().supportsTypedPointers()) {
+#endif
+        PT = call.getArgOperand(0)->getType()->getPointerElementType();
+#if LLVM_VERSION_MAJOR >= 15
+      }
+#endif
       if (!constval) {
-        Value *val;
         if (Mode == DerivativeMode::ReverseModePrimal ||
             Mode == DerivativeMode::ReverseModeCombined ||
             Mode == DerivativeMode::ForwardMode) {
@@ -12745,8 +12748,7 @@ public:
               {ptrshadow, gutils->getNewFromOriginal(call.getArgOperand(1)),
                gutils->getNewFromOriginal(call.getArgOperand(2))});
 #if LLVM_VERSION_MAJOR > 7
-          val = BuilderZ.CreateLoad(
-              ptrshadow->getType()->getPointerElementType(), ptrshadow);
+          val = BuilderZ.CreateLoad(PT, ptrshadow);
 #else
           val = BuilderZ.CreateLoad(ptrshadow);
 #endif
@@ -12780,9 +12782,8 @@ public:
           // inst->getAlignment()));
           memset->addParamAttr(0, Attribute::NonNull);
         } else if (Mode == DerivativeMode::ReverseModeGradient) {
-          PHINode *toReplace = BuilderZ.CreatePHI(
-              call.getArgOperand(0)->getType()->getPointerElementType(), 1,
-              call.getName() + "_psxtmp");
+          PHINode *toReplace =
+              BuilderZ.CreatePHI(PT, 1, call.getName() + "_psxtmp");
           val = gutils->cacheForReverse(BuilderZ, toReplace,
                                         getIndex(&call, CacheType::Shadow));
         }
@@ -12823,8 +12824,8 @@ public:
         IRBuilder<> Builder2(newCall->getNextNode());
 #if LLVM_VERSION_MAJOR > 7
         auto load = Builder2.CreateLoad(
-            call.getOperand(0)->getType()->getPointerElementType(),
-            gutils->getNewFromOriginal(call.getOperand(0)), "posix_preread");
+            PT, gutils->getNewFromOriginal(call.getOperand(0)),
+            "posix_preread");
 #else
         auto load = Builder2.CreateLoad(
             gutils->getNewFromOriginal(call.getOperand(0)), "posix_preread");

@@ -5229,7 +5229,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       if (arg->hasInternalLinkage() || arg->hasPrivateLinkage() ||
           (arg->hasExternalLinkage() && arg->hasInitializer()) ||
           arg->isConstant()) {
-        Type *elemTy = arg->getType()->getPointerElementType();
+        Type *elemTy = arg->getValueType();
         IRBuilder<> B(inversionAllocs);
 
         auto rule = [&]() {
@@ -6692,9 +6692,9 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                                            tryLegalRecomputeCheck));
                   }
 
-                  auto OT = outer->getType()->getPointerElementType();
 #if LLVM_VERSION_MAJOR > 7
-                  auto cptr = BuilderM.CreateGEP(OT, outer, idxs);
+                  auto cptr = BuilderM.CreateGEP(GEP->getSourceElementType(),
+                                                 outer, idxs);
 #else
                   auto cptr = BuilderM.CreateGEP(outer, idxs);
 #endif
