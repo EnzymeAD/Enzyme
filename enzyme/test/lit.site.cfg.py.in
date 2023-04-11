@@ -65,7 +65,7 @@ oldPM = (((" -fno-experimental-new-pass-manager" if int(config.llvm_ver) < 14 el
 newPM = ((" -fexperimental-new-pass-manager" if int(config.llvm_ver) < 13 else "")
           + ' -fpass-plugin=@ENZYME_BINARY_DIR@/Enzyme/ClangEnzyme-' + config.llvm_ver + config.llvm_shlib_ext
           + ' -Xclang -load -Xclang @ENZYME_BINARY_DIR@/Enzyme/ClangEnzyme-' + config.llvm_ver + config.llvm_shlib_ext)
-config.substitutions.append(('%loadClangEnzyme', oldPM if int(config.llvm_ver) <= 15 else newPM))
+config.substitutions.append(('%loadClangEnzyme', oldPM if int(config.llvm_ver) < 15 else newPM))
 config.substitutions.append(('%newLoadClangEnzyme', newPM))
 
 # Let the main config do the real work.
