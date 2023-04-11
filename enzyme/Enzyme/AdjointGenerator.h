@@ -191,7 +191,9 @@ public:
 #if LLVM_VERSION_MAJOR >= 14
   #if LLVM_VERSION_MAJOR >= 16
     AL = AL.addAttributeAtIndex(DT->getContext(), AttributeList::FunctionIndex,
-                                Attribute::AttrKind::Memory);
+                                Attribute::getWithMemoryEffects(
+                                  DT->getContext(),
+                                  llvm::MemoryEffects::argMemOnly()));
   #else
     AL = AL.addAttributeAtIndex(DT->getContext(), AttributeList::FunctionIndex,
                                 Attribute::AttrKind::ArgMemOnly);
