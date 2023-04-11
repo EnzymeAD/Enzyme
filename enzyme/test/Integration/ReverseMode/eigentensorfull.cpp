@@ -1,11 +1,12 @@
-// RUN: %clang++ -I/usr/include/eigen3 -Xclang -new-struct-path-tbaa -mllvm -force-vector-width=1 -ffast-math -fno-unroll-loops -fno-vectorize -fno-slp-vectorize -fno-exceptions -O3 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -S | %lli - 
-// RUN: %clang++ -I/usr/include/eigen3 -Xclang -new-struct-path-tbaa -fno-unroll-loops -fno-vectorize -fno-slp-vectorize -fno-exceptions -O2 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -S | %lli - 
-// RUN: %clang++ -I/usr/include/eigen3 -Xclang -new-struct-path-tbaa -fno-unroll-loops -fno-vectorize -fno-slp-vectorize -fno-exceptions -O1 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -S | %lli - 
-// RUN: %clang++ -I/usr/include/eigen3 -Xclang -new-struct-path-tbaa -fno-unroll-loops -fno-vectorize -fno-slp-vectorize -fno-exceptions %O0TBAA %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -S | %lli - 
-// RUN: %clang++ -I/usr/include/eigen3 -Xclang -new-struct-path-tbaa -fno-unroll-loops -fno-vectorize -fno-slp-vectorize -fno-exceptions -O3 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -enzyme-inline=1 -S | %lli - 
-// RUN: %clang++ -I/usr/include/eigen3 -Xclang -new-struct-path-tbaa -fno-unroll-loops -fno-vectorize -fno-slp-vectorize -fno-exceptions -O2 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -enzyme-inline=1 -S | %lli - 
-// RUN: %clang++ -I/usr/include/eigen3 -Xclang -new-struct-path-tbaa -fno-unroll-loops -fno-vectorize -fno-slp-vectorize -fno-exceptions -O1 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -enzyme-inline=1 -S | %lli - 
-// RUN: %clang++ -I/usr/include/eigen3 -Xclang -new-struct-path-tbaa -fno-unroll-loops -fno-vectorize -fno-slp-vectorize -fno-exceptions %O0TBAA %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -enzyme-inline=1 -S | %lli - 
+// LLVM 14 itself has a bug compiling eigen, even the original code without AD
+// RUN: if [ %llvmver -ne 14 ]; then %clang++ -I/usr/include/eigen3 -Xclang -new-struct-path-tbaa -mllvm -force-vector-width=1 -ffast-math -fno-unroll-loops -fno-vectorize -fno-slp-vectorize -fno-exceptions -O3 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -S | %lli - ; fi
+// RUN: if [ %llvmver -ne 14 ]; then %clang++ -I/usr/include/eigen3 -Xclang -new-struct-path-tbaa -fno-unroll-loops -fno-vectorize -fno-slp-vectorize -fno-exceptions -O2 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -S | %lli - ; fi
+// RUN: if [ %llvmver -ne 14 ]; then %clang++ -I/usr/include/eigen3 -Xclang -new-struct-path-tbaa -fno-unroll-loops -fno-vectorize -fno-slp-vectorize -fno-exceptions -O1 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -S | %lli - ; fi
+// RUN: if [ %llvmver -ne 14 ]; then %clang++ -I/usr/include/eigen3 -Xclang -new-struct-path-tbaa -fno-unroll-loops -fno-vectorize -fno-slp-vectorize -fno-exceptions %O0TBAA %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -S | %lli - ; fi
+// RUN: if [ %llvmver -ne 14 ]; then %clang++ -I/usr/include/eigen3 -Xclang -new-struct-path-tbaa -fno-unroll-loops -fno-vectorize -fno-slp-vectorize -fno-exceptions -O3 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -enzyme-inline=1 -S | %lli -; fi 
+// RUN: if [ %llvmver -ne 14 ]; then %clang++ -I/usr/include/eigen3 -Xclang -new-struct-path-tbaa -fno-unroll-loops -fno-vectorize -fno-slp-vectorize -fno-exceptions -O2 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -enzyme-inline=1 -S | %lli -; fi 
+// RUN: if [ %llvmver -ne 14 ]; then clang++ -I/usr/include/eigen3 -Xclang -new-struct-path-tbaa -fno-unroll-loops -fno-vectorize -fno-slp-vectorize -fno-exceptions -O1 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -enzyme-inline=1 -S | %lli - ; fi
+// RUN: if [ %llvmver -ne 14 ]; then %clang++ -I/usr/include/eigen3 -Xclang -new-struct-path-tbaa -fno-unroll-loops -fno-vectorize -fno-slp-vectorize -fno-exceptions %O0TBAA %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -enzyme-inline=1 -S | %lli - ; fi
 
 #define EIGEN_NO_AUTOMATIC_RESIZING 1
 #define EIGEN_DONT_ALIGN 1
