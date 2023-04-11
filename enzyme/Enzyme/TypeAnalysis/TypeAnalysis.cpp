@@ -3301,13 +3301,15 @@ void TypeAnalyzer::visitIntrinsicInst(llvm::IntrinsicInst &I) {
     TypeTree vd = getAnalysis(I.getOperand(0)).Data0();
     vd.binopIn(getAnalysis(I.getOperand(1)).Data0(), opcode);
 
-    TypeTree overall = vd.Only(0, &I);
-
     auto &dl = I.getParent()->getParent()->getParent()->getDataLayout();
-    overall |=
-        TypeTree(BaseType::Integer)
-            .Only((dl.getTypeSizeInBits(I.getOperand(0)->getType()) + 7) / 8,
-                  &I);
+    int sz = (dl.getTypeSizeInBits(I.getOperand(0)->getType()) + 7) / 8;
+    TypeTree overall = vd.Only(-1, &I).ShiftIndices(dl, 0, sz, 0);
+
+    int sz2 = (dl.getTypeSizeInBits(I.getType()) + 7) / 8;
+    auto btree = TypeTree(BaseType::Integer)
+                     .Only(-1, &I)
+                     .ShiftIndices(dl, 0, sz2 - sz, sz);
+    overall |= btree;
 
     if (direction & DOWN)
       updateAnalysis(&I, overall, &I);

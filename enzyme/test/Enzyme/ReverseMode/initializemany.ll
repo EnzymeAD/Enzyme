@@ -196,7 +196,7 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %[[added]] = fadd fast double %"x'de.0", %[[load]]
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %[[metaload]])
 ; CHECK-NEXT:   %[[_unwrap8:.+]] = getelementptr inbounds i8*, i8** %1, i64 %"iv'ac.0"
-; CHECK-NEXT:   %call_unwrap = load i8*, i8** %[[_unwrap8]], align 8, !invariant.group !
+; CHECK-NEXT:   %call_unwrap = load i8*, i8** %[[_unwrap8]], align 8, !alias.scope !{{[0-9]+}}, !noalias !{{[0-9]+}}, !invariant.group !
 ; CHECK-NEXT:   tail call void @free(i8* %call_unwrap)
 ; CHECK-NEXT:   %[[lcmp:.+]] = icmp eq i64 %[[sub]], 0
 ; CHECK-NEXT:   br i1 %[[lcmp]], label %invertentry, label %invertfor.body

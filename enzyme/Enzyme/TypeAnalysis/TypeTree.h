@@ -627,7 +627,7 @@ public:
         // See if we can canonicalize the outermost index into a -1
         if (!legalCombine) {
           size_t chunk = 1;
-          if (set.size() > 0) {
+          if (pnext.size() > 0) {
             chunk = dl.getPointerSizeInBits() / 8;
           } else {
             if (auto flt = dt.isFloat()) {

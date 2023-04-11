@@ -1377,6 +1377,10 @@ Function *PreProcessCache::preprocessForClone(Function *F,
 
   SimplifyMPIQueries<CallInst>(*NewF, FAM);
   SimplifyMPIQueries<InvokeInst>(*NewF, FAM);
+  {
+    auto PA = PromotePass().run(*NewF, FAM);
+    FAM.invalidate(*NewF, PA);
+  }
 
   if (EnzymeLowerGlobals) {
     SmallVector<CallInst *, 4> Calls;
@@ -1708,7 +1712,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       FAM.invalidate(*NewF, PA);
     }
 
-    ReplaceReallocs(NewF);
+    if (mode != DerivativeMode::ForwardMode)
+      ReplaceReallocs(NewF);
 
     {
 #if LLVM_VERSION_MAJOR >= 14 && !defined(FLANG)
@@ -1733,7 +1738,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
     }
   }
 
-  ReplaceReallocs(NewF);
+  if (mode != DerivativeMode::ForwardMode)
+    ReplaceReallocs(NewF);
 
   if (mode == DerivativeMode::ReverseModePrimal ||
       mode == DerivativeMode::ReverseModeGradient ||

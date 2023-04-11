@@ -525,6 +525,28 @@ public:
 
     auto *newi = dyn_cast<Instruction>(gutils->getNewFromOriginal(&I));
 
+    SmallVector<Metadata *, 1> scopeMD = {
+        gutils->getDerivativeAliasScope(I.getOperand(0), -1)};
+    if (auto prev = I.getMetadata(LLVMContext::MD_alias_scope)) {
+      for (auto &M : cast<MDNode>(prev)->operands()) {
+        scopeMD.push_back(M);
+      }
+    }
+    auto scope = MDNode::get(I.getContext(), scopeMD);
+    newi->setMetadata(LLVMContext::MD_alias_scope, scope);
+
+    SmallVector<Metadata *, 1> MDs;
+    for (size_t j = 0; j < gutils->getWidth(); j++) {
+      MDs.push_back(gutils->getDerivativeAliasScope(I.getOperand(0), j));
+    }
+    if (auto prev = I.getMetadata(LLVMContext::MD_noalias)) {
+      for (auto &M : cast<MDNode>(prev)->operands()) {
+        MDs.push_back(M);
+      }
+    }
+    auto noscope = MDNode::get(I.getContext(), MDs);
+    newi->setMetadata(LLVMContext::MD_noalias, noscope);
+
     auto vd = TR.query(&I);
 
     if (!vd.isKnown()) {
@@ -581,11 +603,17 @@ public:
           if (EnzymeRuntimeActivityCheck && vd[{-1}].isFloat()) {
             // TODO handle mask
             assert(!mask);
-            Value *shadow = BuilderZ.CreateICmpNE(
-                gutils->getNewFromOriginal(I.getOperand(0)),
-                gutils->invertPointerM(I.getOperand(0), BuilderZ));
-            newip = BuilderZ.CreateSelect(
-                shadow, newip, Constant::getNullValue(newip->getType()));
+
+            auto rule = [&](Value *inop, Value *newip) -> Value * {
+              Value *shadow = BuilderZ.CreateICmpNE(
+                  gutils->getNewFromOriginal(I.getOperand(0)), inop);
+              newip = BuilderZ.CreateSelect(
+                  shadow, newip, Constant::getNullValue(newip->getType()));
+              return newip;
+            };
+            newip = applyChainRule(
+                I.getType(), BuilderZ, rule,
+                gutils->invertPointerM(I.getOperand(0), BuilderZ), newip);
           }
           assert(newip->getType() == type);
           placeholder->replaceAllUsesWith(newip);
@@ -1141,9 +1169,12 @@ public:
 
     SmallVector<Metadata *, 1> scopeMD = {
         gutils->getDerivativeAliasScope(orig_ptr, -1)};
+    SmallVector<Metadata *, 1> prevScopes;
     if (auto prev = I.getMetadata(LLVMContext::MD_alias_scope)) {
-      for (auto &M : cast<MDNode>(prev)->operands())
+      for (auto &M : cast<MDNode>(prev)->operands()) {
         scopeMD.push_back(M);
+        prevScopes.push_back(M);
+      }
     }
     auto scope = MDNode::get(I.getContext(), scopeMD);
     auto NewI = gutils->getNewFromOriginal(&I);
@@ -1227,7 +1258,7 @@ public:
         diff = gutils->invertPointerM(orig_val, Builder2, /*nullShadow*/ true);
 
       gutils->setPtrDiffe(&I, orig_ptr, diff, Builder2, align, isVolatile,
-                          ordering, syncScope, mask, prevNoAlias);
+                          ordering, syncScope, mask, prevNoAlias, prevScopes);
       return;
     }
 
@@ -1246,13 +1277,15 @@ public:
           gutils->setPtrDiffe(
               &I, orig_ptr,
               Constant::getNullValue(gutils->getShadowType(valType)), Builder2,
-              align, isVolatile, ordering, syncScope, mask, prevNoAlias);
+              align, isVolatile, ordering, syncScope, mask, prevNoAlias,
+              prevScopes);
         } else {
           Value *diff;
           if (!mask) {
             Value *dif1Ptr =
                 lookup(gutils->invertPointerM(orig_ptr, Builder2), Builder2);
 
+            size_t idx = 0;
             auto rule = [&](Value *dif1Ptr) {
 #if LLVM_VERSION_MAJOR > 7
               LoadInst *dif1 =
@@ -1269,12 +1302,28 @@ public:
               dif1->setOrdering(ordering);
               dif1->setSyncScopeID(syncScope);
 
+              SmallVector<Metadata *, 1> scopeMD = {
+                  gutils->getDerivativeAliasScope(orig_ptr, idx)};
+              for (auto M : prevScopes)
+                scopeMD.push_back(M);
+
+              SmallVector<Metadata *, 1> MDs;
+              for (ssize_t j = -1; j < gutils->getWidth(); j++) {
+                if (j != (ssize_t)idx)
+                  MDs.push_back(gutils->getDerivativeAliasScope(orig_ptr, j));
+              }
+              for (auto M : prevNoAlias)
+                MDs.push_back(M);
+
+              dif1->setMetadata(LLVMContext::MD_alias_scope,
+                                MDNode::get(I.getContext(), scopeMD));
               dif1->setMetadata(LLVMContext::MD_noalias,
-                                MDNode::get(I.getContext(), prevNoAlias));
+                                MDNode::get(I.getContext(), MDs));
               dif1->setMetadata(LLVMContext::MD_tbaa,
                                 I.getMetadata(LLVMContext::MD_tbaa));
               dif1->setMetadata(LLVMContext::MD_tbaa_struct,
                                 I.getMetadata(LLVMContext::MD_tbaa_struct));
+              idx++;
               return dif1;
             };
 
@@ -1308,7 +1357,8 @@ public:
           gutils->setPtrDiffe(
               &I, orig_ptr,
               Constant::getNullValue(gutils->getShadowType(valType)), Builder2,
-              align, isVolatile, ordering, syncScope, mask, prevNoAlias);
+              align, isVolatile, ordering, syncScope, mask, prevNoAlias,
+              prevScopes);
           addToDiffe(orig_val, diff, Builder2, FT, mask);
         }
         break;
@@ -1323,7 +1373,7 @@ public:
         Value *diff = constantval ? Constant::getNullValue(diffeTy)
                                   : diffe(orig_val, Builder2);
         gutils->setPtrDiffe(&I, orig_ptr, diff, Builder2, align, isVolatile,
-                            ordering, syncScope, mask, prevNoAlias);
+                            ordering, syncScope, mask, prevNoAlias, prevScopes);
 
         break;
       }
@@ -1383,7 +1433,8 @@ public:
           valueop = gutils->invertPointerM(orig_val, storeBuilder);
         }
         gutils->setPtrDiffe(&I, orig_ptr, valueop, storeBuilder, align,
-                            isVolatile, ordering, syncScope, mask, prevNoAlias);
+                            isVolatile, ordering, syncScope, mask, prevNoAlias,
+                            prevScopes);
       }
     }
   }
@@ -4136,6 +4187,27 @@ public:
         }
         return;
       }
+#if LLVM_VERSION_MAJOR >= 12
+      case Intrinsic::vector_reduce_fmax: {
+        if (vdiff && !gutils->isConstantValue(orig_ops[0])) {
+          auto prev = lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2);
+          auto lhs = Builder2.CreateExtractElement(prev, (uint64_t)0);
+          auto rhs = Builder2.CreateExtractElement(prev, 1);
+          Value *cmp = Builder2.CreateFCmpOLT(lhs, rhs);
+
+          auto rule = [&](Value *vdiff) {
+            auto nv = Constant::getNullValue(orig_ops[0]->getType());
+            auto lhs_v = Builder2.CreateInsertElement(nv, vdiff, (uint64_t)0);
+            auto rhs_v = Builder2.CreateInsertElement(nv, vdiff, 1);
+            return Builder2.CreateSelect(cmp, rhs_v, lhs_v);
+          };
+          Value *dif0 =
+              applyChainRule(orig_ops[0]->getType(), Builder2, rule, vdiff);
+          addToDiffe(orig_ops[0], dif0, Builder2, I.getType());
+        }
+        return;
+      }
+#endif
 
 #if LLVM_VERSION_MAJOR < 10
       case Intrinsic::x86_sse_min_ss:
@@ -4635,6 +4707,29 @@ public:
         setDiffe(&I, dif, Builder2);
         return;
       }
+#if LLVM_VERSION_MAJOR >= 12
+      case Intrinsic::vector_reduce_fmax: {
+        if (gutils->isConstantInstruction(&I))
+          return;
+        auto prev = gutils->getNewFromOriginal(orig_ops[0]);
+        auto lhs = Builder2.CreateExtractElement(prev, (uint64_t)0);
+        auto rhs = Builder2.CreateExtractElement(prev, 1);
+        Value *cmp = Builder2.CreateFCmpOLT(lhs, rhs);
+
+        auto rule = [&](Value *vdiff) {
+          auto lhs_v = Builder2.CreateExtractElement(vdiff, (uint64_t)0);
+          auto rhs_v = Builder2.CreateExtractElement(vdiff, 1);
+
+          Value *dif = Builder2.CreateSelect(cmp, rhs_v, lhs_v);
+          return dif;
+        };
+        auto vdiff = diffe(orig_ops[0], Builder2);
+
+        Value *dif = applyChainRule(I.getType(), Builder2, rule, vdiff);
+        setDiffe(&I, dif, Builder2);
+        return;
+      }
+#endif
 
 #if LLVM_VERSION_MAJOR < 10
       case Intrinsic::x86_sse_min_ss:
@@ -11876,6 +11971,67 @@ public:
             gutils->cacheForReverse(BuilderZ, newCall,
                                     getIndex(&call, CacheType::Self));
           }
+        }
+        eraseIfUnused(call);
+        return;
+      }
+    }
+
+    if (funcName == "realloc") {
+      if (Mode == DerivativeMode::ForwardMode) {
+        if (!gutils->isConstantValue(&call)) {
+          IRBuilder<> Builder2(&call);
+          getForwardBuilder(Builder2);
+
+          SmallVector<Value *, 2> args;
+#if LLVM_VERSION_MAJOR >= 14
+          for (unsigned i = 0; i < call.arg_size(); ++i)
+#else
+          for (unsigned i = 0; i < call.getNumArgOperands(); ++i)
+#endif
+          {
+            auto arg = call.getArgOperand(i);
+            if (i == 0) {
+              assert(!gutils->isConstantValue(arg));
+              arg = gutils->invertPointerM(arg, Builder2);
+            } else {
+              arg = gutils->getNewFromOriginal(arg);
+            }
+            args.push_back(arg);
+          }
+          auto dbgLoc = gutils->getNewFromOriginal(&call)->getDebugLoc();
+
+          auto rule = [&]() {
+            SmallVector<ValueType, 2> BundleTypes(args.size(),
+                                                  ValueType::Primal);
+
+            auto Defs = gutils->getInvertedBundles(&call, BundleTypes, Builder2,
+                                                   /*lookup*/ false);
+
+#if LLVM_VERSION_MAJOR > 7
+            CallInst *CI = Builder2.CreateCall(
+                call.getFunctionType(), call.getCalledFunction(), args, Defs);
+#else
+            CallInst *CI =
+                Builder2.CreateCall(call.getCalledFunction(), args, Defs);
+#endif
+            CI->setAttributes(call.getAttributes());
+            CI->setCallingConv(call.getCallingConv());
+            CI->setTailCallKind(call.getTailCallKind());
+            CI->setDebugLoc(dbgLoc);
+            return CI;
+          };
+
+          Value *CI = applyChainRule(call.getType(), Builder2, rule);
+
+          auto found = gutils->invertedPointers.find(&call);
+          PHINode *placeholder = cast<PHINode>(&*found->second);
+
+          gutils->invertedPointers.erase(found);
+          gutils->replaceAWithB(placeholder, CI);
+          gutils->erase(placeholder);
+          gutils->invertedPointers.insert(
+              std::make_pair(&call, InvertedPointerVH(gutils, CI)));
         }
         eraseIfUnused(call);
         return;
