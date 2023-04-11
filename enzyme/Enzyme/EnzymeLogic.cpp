@@ -3766,8 +3766,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     assert(augmenteddata);
 
     // TODO VERIFY THIS
-    if (augmenteddata->tapeType &&
-        augmenteddata->tapeType != additionalValue->getType()) {
+    if (augmenteddata->tapeType) {
       IRBuilder<> BuilderZ(gutils->inversionAllocs);
       if (!augmenteddata->tapeType->isEmptyTy()) {
         auto tapep = BuilderZ.CreatePointerCast(

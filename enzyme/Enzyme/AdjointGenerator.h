@@ -5613,8 +5613,7 @@ public:
                 ConstantInt::get(Type::getInt64Ty(ST->getContext()), 0),
                 ConstantInt::get(Type::getInt32Ty(ST->getContext()), ee)};
 #if LLVM_VERSION_MAJOR > 7
-            Value *ptr = B.CreateInBoundsGEP(
-                cacheArg->getType()->getPointerElementType(), cacheArg, Idxs);
+            Value *ptr = B.CreateInBoundsGEP(ST, cacheArg, Idxs);
 #else
             Value *ptr = B.CreateInBoundsGEP(cacheArg, Idxs);
 #endif
