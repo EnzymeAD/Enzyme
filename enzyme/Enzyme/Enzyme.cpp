@@ -1051,6 +1051,11 @@ public:
       type_args.KnownValues.insert(
           std::pair<Argument *, std::set<int64_t>>(&a, {}));
     }
+    TypeTree dt;
+    if (fn->getReturnType()->isFPOrFPVectorTy()) {
+      dt = ConcreteType(fn->getReturnType()->getScalarType());
+    }
+    type_args.Return = dt.Only(-1, nullptr);
 
     type_args = TA.analyzeFunction(type_args).getAnalyzedTypeInfo();
     return type_args;
