@@ -46,14 +46,14 @@ attributes #0 = { noinline nounwind uwtable }
 ; CHECK: define internal double @fwddiffef(double* nocapture readonly %x, double* nocapture %"x'", i64 %n, i8* %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to i1**
-; CHECK-NEXT:   %truetape = load i1*, i1** %0, align 8, !enzyme_mustcache !4
+; CHECK-NEXT:   %truetape = load i1*, i1** %0, align 8, !enzyme_mustcache !{{[0-9]+}}
 ; CHECK-NEXT:   br label %for.body
 
 ; CHECK: for.body:                                         ; preds = %if.end, %entry
 ; CHECK-DAG:   %iv = phi i64 [ %iv.next, %if.end ], [ 0, %entry ]
 ; CHECK-DAG:   %[[data016:.+]] = phi {{(fast )?}}double [ %[[i5:.+]], %if.end ], [ 0.000000e+00, %entry ]
 ; CHECK-NEXT:   %[[i1:.+]] = getelementptr inbounds i1, i1* %truetape, i64 %iv
-; CHECK-NEXT:   %cmp2 = load i1, i1* %[[i1]], align 1, !invariant.group !5
+; CHECK-NEXT:   %cmp2 = load i1, i1* %[[i1]], align 1, !invariant.group !{{[0-9]+}}
 ; CHECK-NEXT:   br i1 %cmp2, label %if.then, label %if.end
 
 ; CHECK: if.then:                                          ; preds = %for.body

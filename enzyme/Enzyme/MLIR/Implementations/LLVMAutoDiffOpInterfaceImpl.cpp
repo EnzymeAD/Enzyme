@@ -73,14 +73,22 @@ class PointerTypeInterface
     : public AutoDiffTypeInterface::ExternalModel<PointerTypeInterface,
                                                   LLVM::LLVMPointerType> {
 public:
-  Value createNullValue(Type self, OpBuilder &builder, Location loc) const {
+  mlir::Value createNullValue(mlir::Type self, OpBuilder &builder,
+                              Location loc) const {
     return builder.create<LLVM::NullOp>(loc, self);
+  }
+
+  Value createAddOp(Type self, OpBuilder &builder, Location loc, Value a,
+                    Value b) const {
+    llvm_unreachable("TODO");
   }
 
   Type getShadowType(Type self, unsigned width) const {
     assert(width == 1 && "unsupported width != 1");
     return self;
   }
+
+  bool requiresShadow(Type self) const { return true; }
 };
 } // namespace
 

@@ -15,6 +15,7 @@
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
 #include "Interfaces/GradientUtils.h"
+#include "Interfaces/GradientUtilsReverse.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Support/LogicalResult.h"
@@ -29,7 +30,7 @@ struct ForOpInterface
                                          MGradientUtils *gutils) const {
     auto forOp = cast<scf::ForOp>(op);
     auto nFor = cast<scf::ForOp>(gutils->getNewFromOriginal(op));
-    SmallVector<Type> nTypes;
+    SmallVector<mlir::Type> nTypes;
     for (auto r : forOp->getResults()) {
       // TODO only if used
       nTypes.push_back(r.getType());
@@ -40,7 +41,7 @@ struct ForOpInterface
         nTypes.push_back(adTypeIface.getShadowType());
       }
     }
-    SmallVector<Value> nArgs;
+    SmallVector<mlir::Value> nArgs;
     for (auto r :
          llvm::zip(forOp.getIterOperands(), forOp.getRegionIterArgs())) {
       // TODO only if used
@@ -54,7 +55,7 @@ struct ForOpInterface
         gutils->getNewFromOriginal(forOp.getStep()), nArgs);
     repFor.getRegion().takeBody(nFor.getRegion());
 
-    SmallVector<Value> reps;
+    SmallVector<mlir::Value> reps;
     size_t idx = 0;
     for (auto r : forOp.getResults()) {
       // TODO only if used
@@ -78,7 +79,7 @@ struct ForOpInterface
     }
     auto oldYield = repFor.getBody()->getTerminator();
     builder.setInsertionPointToEnd(repFor.getBody());
-    SmallVector<Value> nYields;
+    SmallVector<mlir::Value> nYields;
     for (auto r : llvm::zip(forOp.getResults(),
                             forOp.getBody()->getTerminator()->getOperands())) {
       // TODO only if used
@@ -94,11 +95,86 @@ struct ForOpInterface
     return success();
   }
 };
+
+struct ForOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<ForOpInterfaceReverse,
+                                                       scf::ForOp> {
+  void createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                MGradientUtilsReverse *gutils,
+                                SmallVector<Value> caches) const {
+    auto forOp = cast<scf::ForOp>(op);
+    auto newForOp = cast<scf::ForOp>(gutils->getNewFromOriginal(op));
+
+    SmallVector<Value> nArgs;
+    for (Value v : forOp.getResults()) {
+      if (auto iface = v.getType().dyn_cast<AutoDiffTypeInterface>()) {
+        if (gutils->hasInvertPointer(v)) {
+          nArgs.push_back(gutils->invertPointerM(v, builder));
+        } else {
+          nArgs.push_back(iface.createNullValue(builder, v.getLoc()));
+        }
+      }
+    }
+
+    auto repFor = builder.create<scf::ForOp>(
+        forOp.getLoc(), gutils->popCache(caches[0], builder),
+        gutils->popCache(caches[1], builder),
+        gutils->popCache(caches[2], builder), nArgs); // TODO
+    repFor.getRegion().begin()->erase();
+
+    buildReturnFunction buildFuncRetrunOp = [](OpBuilder &builder, Location loc,
+                                               SmallVector<Value> retargs) {
+      builder.create<scf::YieldOp>(loc, retargs);
+      return;
+    };
+
+    gutils->Logic.differentiate(gutils, forOp.getRegion(), repFor.getRegion(),
+                                false, buildFuncRetrunOp);
+
+    // Insert the index which is carried by the scf for op.
+    Type indexType = mlir::IndexType::get(
+        gutils->initializationBlock->begin()->getContext());
+    repFor.getRegion().insertArgument((unsigned)0, indexType, forOp.getLoc());
+
+    // TODO Can we do reverse iteration???
+  }
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    auto forOp = cast<scf::ForOp>(op);
+
+    Operation *newOp = gutils->getNewFromOriginal(op);
+    OpBuilder cacheBuilder(newOp);
+    SmallVector<Value> caches;
+
+    Value cacheLB = gutils->initAndPushCache(
+        gutils->getNewFromOriginal(forOp.getLowerBound()), cacheBuilder);
+    caches.push_back(cacheLB);
+
+    Value cacheUB = gutils->initAndPushCache(
+        gutils->getNewFromOriginal(forOp.getUpperBound()), cacheBuilder);
+    caches.push_back(cacheUB);
+
+    Value cacheStep = gutils->initAndPushCache(
+        gutils->getNewFromOriginal(forOp.getStep()), cacheBuilder);
+    caches.push_back(cacheStep);
+
+    return caches;
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {
+    auto forOp = cast<scf::ForOp>(op);
+  }
+};
+
 } // namespace
 
 void mlir::enzyme::registerSCFDialectAutoDiffInterface(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, scf::SCFDialect *) {
     scf::ForOp::attachInterface<ForOpInterface>(*context);
+
+    scf::ForOp::attachInterface<ForOpInterfaceReverse>(*context);
   });
 }

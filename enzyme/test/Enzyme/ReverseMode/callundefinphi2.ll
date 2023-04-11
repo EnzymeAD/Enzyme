@@ -276,7 +276,7 @@ attributes #22 = { readnone speculatable }
 ; CHECK-NEXT:    br label %for.cond10.preheader.i
 
 ; CHECK:  for.cond10.preheader.i:                           ; preds = %for.cond.cleanup13.i, %for.cond10.preheader.i.preheader
-; CHECK-NEXT:    %iv3 = phi i64 [ %iv.next4, %for.cond.cleanup13.i ], [ 0, %for.cond10.preheader.i.preheader ] 
+; CHECK-NEXT:    %iv3 = phi i64 [ 0, %for.cond10.preheader.i.preheader ], [ %iv.next4, %for.cond.cleanup13.i ]
 ; CHECK-NEXT:    %res.i.sroa.0.1 = phi i64 [ %[[res:.+]], %for.cond.cleanup13.i ], [ 0, %for.cond10.preheader.i.preheader ]
 ; CHECK-NEXT:    %iv.next4 = add nuw nsw i64 %iv3, 1
 ; CHECK-NEXT:    %mul.i.i = mul nsw i64 4, %iv3

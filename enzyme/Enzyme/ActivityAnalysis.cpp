@@ -205,6 +205,7 @@ const std::set<std::string> KnownInactiveFunctions = {
     "abort",
     "time",
     "memcmp",
+    "memchr",
     "gettimeofday",
     "stat",
     "mkdir",
@@ -280,7 +281,69 @@ const std::set<std::string> KnownInactiveFunctions = {
     "logb",
     "logbf",
     "logbl",
-};
+    "cuCtxGetCurrent",
+    "cuDeviceGet",
+    "cuDeviceGetName",
+    "cuDriverGetVersion",
+    "cudaRuntimeGetVersion",
+    "cuDeviceGetCount",
+    "cuMemPoolGetAttribute",
+    "cuMemGetInfo_v2",
+    "cuDeviceGetAttribute",
+    "cuDevicePrimaryCtxRetain"};
+
+const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
+    Intrinsic::floor,
+    Intrinsic::ceil,
+    Intrinsic::trunc,
+    Intrinsic::rint,
+#if LLVM_VERSION_MAJOR >= 9
+    Intrinsic::lrint,
+    Intrinsic::llrint,
+#endif
+    Intrinsic::nearbyint,
+    Intrinsic::round,
+#if LLVM_VERSION_MAJOR >= 11
+    Intrinsic::roundeven,
+#endif
+#if LLVM_VERSION_MAJOR >= 9
+    Intrinsic::lround,
+    Intrinsic::llround,
+#endif
+    Intrinsic::nvvm_barrier0,
+    Intrinsic::nvvm_barrier0_popc,
+    Intrinsic::nvvm_barrier0_and,
+    Intrinsic::nvvm_barrier0_or,
+    Intrinsic::nvvm_membar_cta,
+    Intrinsic::nvvm_membar_gl,
+    Intrinsic::nvvm_membar_sys,
+    Intrinsic::amdgcn_s_barrier,
+    Intrinsic::assume,
+    Intrinsic::stacksave,
+    Intrinsic::stackrestore,
+    Intrinsic::lifetime_start,
+    Intrinsic::lifetime_end,
+    Intrinsic::dbg_addr,
+    Intrinsic::dbg_declare,
+    Intrinsic::dbg_value,
+#if LLVM_VERSION_MAJOR > 6
+    Intrinsic::dbg_label,
+#endif
+    Intrinsic::invariant_start,
+    Intrinsic::invariant_end,
+    Intrinsic::var_annotation,
+    Intrinsic::ptr_annotation,
+    Intrinsic::annotation,
+    Intrinsic::codeview_annotation,
+    Intrinsic::expect,
+    Intrinsic::type_test,
+    Intrinsic::donothing,
+    Intrinsic::prefetch,
+    Intrinsic::trap,
+#if LLVM_VERSION_MAJOR >= 8
+    Intrinsic::is_constant,
+#endif
+    Intrinsic::memset};
 
 const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     // TODO this returns allocated memory and thus can be an active value
@@ -347,8 +410,6 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
   // of arguments
   if (isAllocationFunction(Name, TLI) || isDeallocationFunction(Name, TLI))
     return true;
-  if (Name == "posix_memalign")
-    return true;
 
 #if LLVM_VERSION_MAJOR >= 9
   std::string demangledName = llvm::demangle(Name.str());
@@ -385,41 +446,8 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
       MPIInactiveCommAllocators.end()) {
     return true;
   }
-  switch (F->getIntrinsicID()) {
-  case Intrinsic::nvvm_barrier0:
-  case Intrinsic::nvvm_barrier0_popc:
-  case Intrinsic::nvvm_barrier0_and:
-  case Intrinsic::nvvm_barrier0_or:
-  case Intrinsic::nvvm_membar_cta:
-  case Intrinsic::nvvm_membar_gl:
-  case Intrinsic::nvvm_membar_sys:
-  case Intrinsic::amdgcn_s_barrier:
-  case Intrinsic::assume:
-  case Intrinsic::stacksave:
-  case Intrinsic::stackrestore:
-  case Intrinsic::lifetime_start:
-  case Intrinsic::lifetime_end:
-  case Intrinsic::dbg_addr:
-  case Intrinsic::dbg_declare:
-  case Intrinsic::dbg_value:
-  case Intrinsic::invariant_start:
-  case Intrinsic::invariant_end:
-  case Intrinsic::var_annotation:
-  case Intrinsic::ptr_annotation:
-  case Intrinsic::annotation:
-  case Intrinsic::codeview_annotation:
-  case Intrinsic::expect:
-  case Intrinsic::type_test:
-  case Intrinsic::donothing:
-  case Intrinsic::prefetch:
-  case Intrinsic::trap:
-#if LLVM_VERSION_MAJOR >= 8
-  case Intrinsic::is_constant:
-#endif
-  case Intrinsic::memset:
+  if (KnownInactiveIntrinsics.count(F->getIntrinsicID())) {
     return true;
-  default:
-    break;
   }
 
   /// Only the first argument (magnitude) of copysign is active
@@ -517,41 +545,8 @@ static inline void propagateArgumentInformation(
 
     // Certain intrinsics are inactive by definition
     // and have nothing to propagate.
-    switch (F->getIntrinsicID()) {
-    case Intrinsic::nvvm_barrier0:
-    case Intrinsic::nvvm_barrier0_popc:
-    case Intrinsic::nvvm_barrier0_and:
-    case Intrinsic::nvvm_barrier0_or:
-    case Intrinsic::nvvm_membar_cta:
-    case Intrinsic::nvvm_membar_gl:
-    case Intrinsic::nvvm_membar_sys:
-    case Intrinsic::amdgcn_s_barrier:
-    case Intrinsic::assume:
-    case Intrinsic::stacksave:
-    case Intrinsic::stackrestore:
-    case Intrinsic::lifetime_start:
-    case Intrinsic::lifetime_end:
-    case Intrinsic::dbg_addr:
-    case Intrinsic::dbg_declare:
-    case Intrinsic::dbg_value:
-    case Intrinsic::invariant_start:
-    case Intrinsic::invariant_end:
-    case Intrinsic::var_annotation:
-    case Intrinsic::ptr_annotation:
-    case Intrinsic::annotation:
-    case Intrinsic::codeview_annotation:
-    case Intrinsic::expect:
-    case Intrinsic::type_test:
-    case Intrinsic::donothing:
-    case Intrinsic::prefetch:
-    case Intrinsic::trap:
-#if LLVM_VERSION_MAJOR >= 8
-    case Intrinsic::is_constant:
-#endif
-    case Intrinsic::memset:
+    if (KnownInactiveIntrinsics.count(F->getIntrinsicID())) {
       return;
-    default:
-      break;
     }
 
     if (F->getIntrinsicID() == Intrinsic::memcpy ||
@@ -603,6 +598,30 @@ static inline void propagateArgumentInformation(
     if (propagateFromOperand(a))
       break;
   }
+}
+
+bool isPossibleFloat(const TypeResults &TR, Value *I, const DataLayout &DL) {
+  bool possibleFloat = false;
+  if (!I->getType()->isVoidTy()) {
+    auto Size = (DL.getTypeSizeInBits(I->getType()) + 7) / 8;
+    auto vd = TR.query(I);
+    auto ct0 = vd[{-1}];
+    if (ct0.isPossibleFloat() && ct0 != BaseType::Anything) {
+      for (unsigned i = 0; i < Size;) {
+        auto ct = vd[{(int)i}];
+        if (ct.isPossibleFloat() && ct != BaseType::Anything) {
+          possibleFloat = true;
+          break;
+        }
+        size_t chunk = 1;
+        // Implicit pointer
+        if (ct == BaseType::Pointer)
+          chunk = DL.getPointerSizeInBits() / 8;
+        i += chunk;
+      }
+    }
+  }
+  return possibleFloat;
 }
 
 /// Return whether this instruction is known not to propagate adjoints
@@ -748,45 +767,11 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
                  << "\n";
 
   if (auto II = dyn_cast<IntrinsicInst>(I)) {
-    switch (II->getIntrinsicID()) {
-    case Intrinsic::nvvm_barrier0:
-    case Intrinsic::nvvm_barrier0_popc:
-    case Intrinsic::nvvm_barrier0_and:
-    case Intrinsic::nvvm_barrier0_or:
-    case Intrinsic::nvvm_membar_cta:
-    case Intrinsic::nvvm_membar_gl:
-    case Intrinsic::nvvm_membar_sys:
-    case Intrinsic::amdgcn_s_barrier:
-    case Intrinsic::assume:
-    case Intrinsic::stacksave:
-    case Intrinsic::stackrestore:
-    case Intrinsic::lifetime_start:
-    case Intrinsic::lifetime_end:
-    case Intrinsic::dbg_addr:
-    case Intrinsic::dbg_declare:
-    case Intrinsic::dbg_value:
-    case Intrinsic::invariant_start:
-    case Intrinsic::invariant_end:
-    case Intrinsic::var_annotation:
-    case Intrinsic::ptr_annotation:
-    case Intrinsic::annotation:
-    case Intrinsic::codeview_annotation:
-    case Intrinsic::expect:
-    case Intrinsic::type_test:
-    case Intrinsic::donothing:
-    case Intrinsic::prefetch:
-    case Intrinsic::trap:
-#if LLVM_VERSION_MAJOR >= 8
-    case Intrinsic::is_constant:
-#endif
-    case Intrinsic::memset:
+    if (KnownInactiveIntrinsics.count(II->getIntrinsicID())) {
       if (EnzymePrintActivity)
         llvm::errs() << "known inactive intrinsic " << *I << "\n";
       InsertConstantInstruction(TR, I);
       return true;
-
-    default:
-      break;
     }
   }
 
@@ -805,20 +790,23 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
   else if (auto CI = dyn_cast<CallInst>(I)) {
     if (AA.onlyReadsMemory(CI)) {
       noActiveWrite = true;
-    } else if (auto F = CI->getCalledFunction()) {
-      if (isMemFreeLibMFunction(F->getName())) {
+    } else {
+      StringRef funcName = getFuncNameFromCall(CI);
+      if (isMemFreeLibMFunction(funcName)) {
         noActiveWrite = true;
-      } else if (F->getName() == "frexp" || F->getName() == "frexpf" ||
-                 F->getName() == "frexpl") {
+      } else if (funcName == "frexp" || funcName == "frexpf" ||
+                 funcName == "frexpl") {
         noActiveWrite = true;
       }
     }
   }
   if (noActiveWrite) {
+    auto &DL = I->getParent()->getParent()->getParent()->getDataLayout();
+    bool possibleFloat = isPossibleFloat(TR, I, DL);
     // Even if returning a pointer, this instruction is considered inactive
     // since the instruction doesn't prop gradients. Thus, so long as we don't
     // return an object containing a float, this instruction is inactive
-    if (!TR.intType(1, I, /*errifNotFound*/ false).isPossibleFloat()) {
+    if (!possibleFloat) {
       if (EnzymePrintActivity)
         llvm::errs()
             << " constant instruction from known non-float non-writing "
@@ -886,7 +874,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
         std::shared_ptr<ActivityAnalyzer>(new ActivityAnalyzer(*this, UP));
     UpHypothesis->ConstantInstructions.insert(I);
     assert(directions & UP);
-    if (UpHypothesis->isInstructionInactiveFromOrigin(TR, I)) {
+    if (UpHypothesis->isInstructionInactiveFromOrigin(TR, I, false)) {
       if (EnzymePrintActivity)
         llvm::errs() << " constant instruction from origin "
                         "instruction "
@@ -1015,40 +1003,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
   }
 
   if (auto II = dyn_cast<IntrinsicInst>(Val)) {
-    switch (II->getIntrinsicID()) {
-    case Intrinsic::nvvm_barrier0:
-    case Intrinsic::nvvm_barrier0_popc:
-    case Intrinsic::nvvm_barrier0_and:
-    case Intrinsic::nvvm_barrier0_or:
-    case Intrinsic::nvvm_membar_cta:
-    case Intrinsic::nvvm_membar_gl:
-    case Intrinsic::nvvm_membar_sys:
-    case Intrinsic::amdgcn_s_barrier:
-    case Intrinsic::assume:
-    case Intrinsic::stacksave:
-    case Intrinsic::stackrestore:
-    case Intrinsic::lifetime_start:
-    case Intrinsic::lifetime_end:
-    case Intrinsic::dbg_addr:
-    case Intrinsic::dbg_declare:
-    case Intrinsic::dbg_value:
-    case Intrinsic::invariant_start:
-    case Intrinsic::invariant_end:
-    case Intrinsic::var_annotation:
-    case Intrinsic::ptr_annotation:
-    case Intrinsic::annotation:
-    case Intrinsic::codeview_annotation:
-    case Intrinsic::expect:
-    case Intrinsic::type_test:
-    case Intrinsic::donothing:
-    case Intrinsic::prefetch:
-#if LLVM_VERSION_MAJOR >= 8
-    case Intrinsic::is_constant:
-#endif
+    if (KnownInactiveIntrinsics.count(II->getIntrinsicID())) {
       InsertConstantValue(TR, Val);
       return true;
-    default:
-      break;
     }
   }
 
@@ -1084,6 +1041,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
     return true;
   }
 #endif
+
+  if (auto GA = dyn_cast<GlobalAlias>(Val))
+    return isConstantValue(TR, GA->getAliasee());
 
   if (auto GI = dyn_cast<GlobalVariable>(Val)) {
     // If operating under the assumption globals are inactive unless
@@ -1351,6 +1311,11 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
             return true;
           }
         }
+        ReEvaluateValueIfInactiveValue[LI->getPointerOperand()].insert(Val);
+        if (TmpOrig != Val) {
+          ReEvaluateValueIfInactiveValue[LI->getPointerOperand()].insert(
+              TmpOrig);
+        }
       } else if (isa<IntrinsicInst>(TmpOrig) &&
                  (cast<IntrinsicInst>(TmpOrig)->getIntrinsicID() ==
                       Intrinsic::nvvm_ldu_global_i ||
@@ -1376,6 +1341,10 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
             insertConstantsFrom(TR, *UpHypothesis);
             return true;
           }
+        }
+        ReEvaluateValueIfInactiveValue[II->getOperand(0)].insert(Val);
+        if (TmpOrig != Val) {
+          ReEvaluateValueIfInactiveValue[II->getOperand(0)].insert(TmpOrig);
         }
       } else if (auto op = dyn_cast<CallInst>(TmpOrig)) {
         if (op->hasFnAttr("enzyme_inactive")) {
@@ -1487,6 +1456,30 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
               }
             }
           }
+          // If allocation function doesn't initialize inner pointers.
+          // For example, julia allocations initialize inner pointers, but
+          // malloc/etc just allocate the immediate memory.
+          if (directions & DOWN &&
+              (funcName == "malloc" || funcName == "calloc" ||
+               funcName == "_Znwm" || funcName == "julia.gc_alloc_obj" ||
+               funcName == "jl_gc_alloc_typed" ||
+               funcName == "ijl_gc_alloc_typed")) {
+            std::shared_ptr<ActivityAnalyzer> Hypothesis =
+                std::shared_ptr<ActivityAnalyzer>(
+                    new ActivityAnalyzer(*this, directions));
+            Hypothesis->ActiveValues.insert(Val);
+            Instruction *LoadReval = nullptr;
+            if (Hypothesis->isValueInactiveFromUsers(
+                    TR, TmpOrig, UseActivity::OnlyStores, &LoadReval)) {
+              insertConstantsFrom(TR, *Hypothesis);
+              InsertConstantValue(TR, Val);
+              return true;
+            } else {
+              if (LoadReval) {
+                ReEvaluateValueIfInactiveInst[LoadReval].insert(TmpOrig);
+              }
+            }
+          }
         }
         if (funcName == "jl_array_copy" || funcName == "ijl_array_copy") {
           // This pointer is inactive if it is either not actively stored to
@@ -1517,9 +1510,17 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       } else if (isa<AllocaInst>(Val)) {
         // This pointer is inactive if it is either not actively stored to or
         // not actively loaded from and is nonescaping by definition of being
-        // alloca OnlyStores is insufficient here since the loaded pointer can
-        // have active memory stored into it [e.g. not just top level pointer
-        // that matters]
+        // alloca.
+        //   When presuming the value is constant,
+        //     OnlyStores is insufficient. This is because one could allocate
+        //     memory, assumed inactive by definition since it is only stored
+        //     into the hypothesized inactive alloca. However, one could load
+        //     that pointer, and then use it as an active buffer.
+        //   When presuming the value is active,
+        //     OnlyStores should be fine, since any store will assume that
+        //     its use by storing to the active alloca will be active unless
+        //     the pointer being stored is otherwise guaranteed inactive (e.g.
+        //     from the argument).
         if (directions == DOWN) {
           for (auto UA :
                {UseActivity::OnlyLoads, UseActivity::OnlyNonPointerStores,
@@ -1553,6 +1554,24 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
             }
           }
         }
+
+        if (directions & DOWN) {
+          std::shared_ptr<ActivityAnalyzer> Hypothesis =
+              std::shared_ptr<ActivityAnalyzer>(
+                  new ActivityAnalyzer(*this, directions));
+          Hypothesis->ActiveValues.insert(Val);
+          Instruction *LoadReval = nullptr;
+          if (Hypothesis->isValueInactiveFromUsers(
+                  TR, TmpOrig, UseActivity::OnlyStores, &LoadReval)) {
+            insertConstantsFrom(TR, *Hypothesis);
+            InsertConstantValue(TR, Val);
+            return true;
+          } else {
+            if (LoadReval) {
+              ReEvaluateValueIfInactiveInst[LoadReval].insert(TmpOrig);
+            }
+          }
+        }
       }
 
       // otherwise if the origin is a previously derived known inactive value
@@ -1573,12 +1592,12 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       if (auto inst = dyn_cast<Instruction>(Val)) {
         if (!inst->mayReadFromMemory() && !isa<AllocaInst>(Val)) {
           if (directions == UP && !isa<PHINode>(inst)) {
-            if (isInstructionInactiveFromOrigin(TR, inst)) {
+            if (isInstructionInactiveFromOrigin(TR, inst, true)) {
               InsertConstantValue(TR, Val);
               return true;
             }
           } else {
-            if (UpHypothesis->isInstructionInactiveFromOrigin(TR, inst)) {
+            if (UpHypothesis->isInstructionInactiveFromOrigin(TR, inst, true)) {
               InsertConstantValue(TR, Val);
               insertConstantsFrom(TR, *UpHypothesis);
               return true;
@@ -1604,9 +1623,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
     // A pointer value is active if two things hold:
     //   an potentially active value is stored into the memory
     //   memory loaded from the value is used in an active way
-    bool potentiallyActiveStore = false;
+    Instruction *potentiallyActiveStore = nullptr;
     bool potentialStore = false;
-    bool potentiallyActiveLoad = false;
+    Instruction *potentiallyActiveLoad = nullptr;
 
     // Assume the value (not instruction) is itself active
     // In spite of that can we show that there are either no active stores
@@ -1616,7 +1635,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
             new ActivityAnalyzer(*this, directions));
     Hypothesis->ActiveValues.insert(Val);
     if (auto VI = dyn_cast<Instruction>(Val)) {
-      if (UpHypothesis->isInstructionInactiveFromOrigin(TR, VI)) {
+      if (UpHypothesis->isInstructionInactiveFromOrigin(TR, VI, true)) {
         Hypothesis->DeducingPointers.insert(Val);
         if (EnzymePrintActivity)
           llvm::errs() << " constant instruction hypothesis: " << *VI << "\n";
@@ -1697,40 +1716,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         }
 
         if (F) {
-          switch (F->getIntrinsicID()) {
-          case Intrinsic::nvvm_barrier0:
-          case Intrinsic::nvvm_barrier0_popc:
-          case Intrinsic::nvvm_barrier0_and:
-          case Intrinsic::nvvm_barrier0_or:
-          case Intrinsic::nvvm_membar_cta:
-          case Intrinsic::nvvm_membar_gl:
-          case Intrinsic::nvvm_membar_sys:
-          case Intrinsic::amdgcn_s_barrier:
-          case Intrinsic::assume:
-          case Intrinsic::stacksave:
-          case Intrinsic::stackrestore:
-          case Intrinsic::lifetime_start:
-          case Intrinsic::lifetime_end:
-          case Intrinsic::dbg_addr:
-          case Intrinsic::dbg_declare:
-          case Intrinsic::dbg_value:
-          case Intrinsic::invariant_start:
-          case Intrinsic::invariant_end:
-          case Intrinsic::var_annotation:
-          case Intrinsic::ptr_annotation:
-          case Intrinsic::annotation:
-          case Intrinsic::codeview_annotation:
-          case Intrinsic::expect:
-          case Intrinsic::type_test:
-          case Intrinsic::donothing:
-          case Intrinsic::prefetch:
-          case Intrinsic::trap:
-#if LLVM_VERSION_MAJOR >= 8
-          case Intrinsic::is_constant:
-#endif
+          if (KnownInactiveIntrinsics.count(F->getIntrinsicID())) {
             return false;
-          default:
-            break;
           }
         }
       }
@@ -1793,7 +1780,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
 
       // If we haven't already shown a potentially active load
       // check if this loads the given value and is active
-      if (!potentiallyActiveLoad && isRefSet(AARes)) {
+      if ((!potentiallyActiveLoad || !potentiallyActiveStore) &&
+          isRefSet(AARes)) {
         if (EnzymePrintActivity)
           llvm::errs() << "potential active load: " << *I << "\n";
         if (isa<LoadInst>(I) || (isa<IntrinsicInst>(I) &&
@@ -1812,7 +1800,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           // If the ref'ing value is a load check if the loaded value is
           // active
           if (!Hypothesis->isConstantValue(TR, I)) {
-            potentiallyActiveLoad = true;
+            potentiallyActiveLoad = I;
             // returns whether seen
             std::function<bool(Value * V, SmallPtrSetImpl<Value *> &)>
                 loadCheck = [&](Value *V, SmallPtrSetImpl<Value *> &Seen) {
@@ -1829,7 +1817,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                                             "pointer in load: "
                                          << *I << " of " << *Val << " via "
                                          << *U << "\n";
-                          potentiallyActiveStore = true;
+                          potentiallyActiveStore = U;
                           return true;
                         }
                       }
@@ -1847,13 +1835,13 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           }
         } else if (auto MTI = dyn_cast<MemTransferInst>(I)) {
           if (!Hypothesis->isConstantValue(TR, MTI->getArgOperand(0))) {
-            potentiallyActiveLoad = true;
+            potentiallyActiveLoad = MTI;
             if (TR.query(Val)[{-1, -1}].isPossiblePointer()) {
               if (EnzymePrintActivity)
                 llvm::errs()
                     << "potential active store via pointer in memcpy: " << *I
                     << " of " << *Val << "\n";
-              potentiallyActiveStore = true;
+              potentiallyActiveStore = MTI;
             }
           }
         } else {
@@ -1866,7 +1854,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           // instruction, but does have an active value
           if (!Hypothesis->isConstantInstruction(TR, I) ||
               (I != Val && !Hypothesis->isConstantValue(TR, I))) {
-            potentiallyActiveLoad = true;
+            potentiallyActiveLoad = I;
             // If this a potential pointer of pointer AND
             //     double** Val;
             //
@@ -1893,7 +1881,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                   llvm::errs() << "potential active store via pointer in "
                                   "unknown inst: "
                                << *I << " of " << *Val << "\n";
-                potentiallyActiveStore = true;
+                potentiallyActiveStore = I;
               }
             }
           }
@@ -1911,12 +1899,12 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                          << " Val=" << *Val << "\n";
           potentialStore = true;
           if (cop)
-            potentiallyActiveStore = true;
+            potentiallyActiveStore = SI;
         } else if (auto MTI = dyn_cast<MemTransferInst>(I)) {
           bool cop = !Hypothesis->isConstantValue(TR, MTI->getArgOperand(1));
           potentialStore = true;
           if (cop)
-            potentiallyActiveStore = true;
+            potentiallyActiveStore = MTI;
         } else if (isa<MemSetInst>(I)) {
           potentialStore = true;
         } else {
@@ -1930,7 +1918,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                          << " Val=" << *Val << "\n";
           potentialStore = true;
           if (cop)
-            potentiallyActiveStore = true;
+            potentiallyActiveStore = I;
         }
       }
       if (potentiallyActiveStore && potentiallyActiveLoad)
@@ -1985,10 +1973,14 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
                    << " potentiallyActiveStore=" << potentiallyActiveStore
                    << " potentialStore=" << potentialStore << "\n";
     if (potentiallyActiveLoad && potentiallyActiveStore) {
-      insertAllFrom(TR, *Hypothesis, Val);
-      // TODO have insertall dependence on this
-      if (TmpOrig != Val)
+      ReEvaluateValueIfInactiveInst[potentiallyActiveLoad].insert(Val);
+      ReEvaluateValueIfInactiveInst[potentiallyActiveStore].insert(Val);
+      insertAllFrom(TR, *Hypothesis, Val, TmpOrig);
+      if (TmpOrig != Val) {
         ReEvaluateValueIfInactiveValue[TmpOrig].insert(Val);
+        ReEvaluateValueIfInactiveInst[potentiallyActiveLoad].insert(TmpOrig);
+        ReEvaluateValueIfInactiveInst[potentiallyActiveStore].insert(TmpOrig);
+      }
       return false;
     } else {
       // We now know that there isn't a matching active load/store pair in this
@@ -2012,8 +2004,9 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       if (DeducingPointers.size() == 0)
         UpHypothesis->insertConstantsFrom(TR, *Hypothesis);
       assert(directions & UP);
-      bool ActiveUp = !isa<Argument>(Val) &&
-                      !UpHypothesis->isInstructionInactiveFromOrigin(TR, Val);
+      bool ActiveUp =
+          !isa<Argument>(Val) &&
+          !UpHypothesis->isInstructionInactiveFromOrigin(TR, Val, true);
 
       // Case b) can occur if:
       //    1) this memory is used as part of an active return
@@ -2093,7 +2086,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         ActiveValues.insert(Val);
         assert(Hypothesis->directions == directions);
         assert(Hypothesis->ActiveValues.count(Val));
-        insertAllFrom(TR, *Hypothesis, Val);
+        insertAllFrom(TR, *Hypothesis, Val, TmpOrig);
         if (TmpOrig != Val)
           ReEvaluateValueIfInactiveValue[TmpOrig].insert(Val);
         return false;
@@ -2117,7 +2110,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
   // prove, we can inductively assume this is inactive
   if (directions & UP) {
     if (directions == UP && !isa<PHINode>(Val)) {
-      if (isInstructionInactiveFromOrigin(TR, Val)) {
+      if (isInstructionInactiveFromOrigin(TR, Val, true)) {
         InsertConstantValue(TR, Val);
         return true;
       } else if (auto I = dyn_cast<Instruction>(Val)) {
@@ -2133,7 +2126,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       UpHypothesis =
           std::shared_ptr<ActivityAnalyzer>(new ActivityAnalyzer(*this, UP));
       UpHypothesis->ConstantValues.insert(Val);
-      if (UpHypothesis->isInstructionInactiveFromOrigin(TR, Val)) {
+      if (UpHypothesis->isInstructionInactiveFromOrigin(TR, Val, true)) {
         insertConstantsFrom(TR, *UpHypothesis);
         InsertConstantValue(TR, Val);
         return true;
@@ -2190,7 +2183,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
 
 /// Is the instruction guaranteed to be inactive because of its operands
 bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
-                                                       llvm::Value *val) {
+                                                       llvm::Value *val,
+                                                       bool considerValue) {
   // Must be an analyzer only searching up
   assert(directions == UP);
   assert(!isa<Argument>(val));
@@ -2233,6 +2227,69 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
         llvm::errs() << " constant instruction as store operand is inactive "
                      << *inst << "\n";
       return true;
+    }
+  }
+
+  if (!considerValue) {
+    if (auto IEI = dyn_cast<InsertElementInst>(inst)) {
+      auto &DL = IEI->getParent()->getParent()->getParent()->getDataLayout();
+      if ((!isPossibleFloat(TR, IEI->getOperand(0), DL) ||
+           isConstantValue(TR, IEI->getOperand(0))) &&
+          (!isPossibleFloat(TR, IEI->getOperand(1), DL) ||
+           isConstantValue(TR, IEI->getOperand(1)))) {
+        if (EnzymePrintActivity)
+          llvm::errs()
+              << " constant instruction as inserting known pointer or inactive"
+              << *inst << "\n";
+        return true;
+      }
+    }
+    if (auto IEI = dyn_cast<InsertValueInst>(inst)) {
+      auto &DL = IEI->getParent()->getParent()->getParent()->getDataLayout();
+      if ((!isPossibleFloat(TR, IEI->getAggregateOperand(), DL) ||
+           isConstantValue(TR, IEI->getAggregateOperand())) &&
+          (!isPossibleFloat(TR, IEI->getInsertedValueOperand(), DL) ||
+           isConstantValue(TR, IEI->getInsertedValueOperand()))) {
+        if (EnzymePrintActivity)
+          llvm::errs()
+              << " constant instruction as inserting known pointer or inactive"
+              << *inst << "\n";
+        return true;
+      }
+    }
+    if (auto PN = dyn_cast<PHINode>(inst)) {
+      std::deque<PHINode *> todo = {PN};
+      SmallPtrSet<PHINode *, 1> done;
+      SmallVector<Value *, 2> incoming;
+      while (todo.size()) {
+        auto cur = todo.back();
+        todo.pop_back();
+        if (done.count(cur))
+          continue;
+        done.insert(cur);
+        for (auto &V : cur->incoming_values()) {
+          if (auto P = dyn_cast<PHINode>(V)) {
+            todo.push_back(P);
+            continue;
+          }
+          incoming.push_back(V);
+        }
+      }
+      bool legal = true;
+      auto &DL = PN->getParent()->getParent()->getParent()->getDataLayout();
+      for (auto V : incoming) {
+        if (isPossibleFloat(TR, V, DL) && !isConstantValue(TR, V)) {
+          legal = false;
+          break;
+        }
+      }
+      if (legal) {
+        if (EnzymePrintActivity)
+          llvm::errs()
+              << " constant instruction as phi of known pointer or inactive"
+              << *inst << "\n";
+        return true;
+      }
     }
   }
 
@@ -2324,43 +2381,11 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
   }
   // Intrinsics known always to be inactive
   if (auto II = dyn_cast<IntrinsicInst>(inst)) {
-    switch (II->getIntrinsicID()) {
-    case Intrinsic::nvvm_barrier0:
-    case Intrinsic::nvvm_barrier0_popc:
-    case Intrinsic::nvvm_barrier0_and:
-    case Intrinsic::nvvm_barrier0_or:
-    case Intrinsic::nvvm_membar_cta:
-    case Intrinsic::nvvm_membar_gl:
-    case Intrinsic::nvvm_membar_sys:
-    case Intrinsic::amdgcn_s_barrier:
-    case Intrinsic::assume:
-    case Intrinsic::stacksave:
-    case Intrinsic::stackrestore:
-    case Intrinsic::lifetime_start:
-    case Intrinsic::lifetime_end:
-    case Intrinsic::dbg_addr:
-    case Intrinsic::dbg_declare:
-    case Intrinsic::dbg_value:
-    case Intrinsic::invariant_start:
-    case Intrinsic::invariant_end:
-    case Intrinsic::var_annotation:
-    case Intrinsic::ptr_annotation:
-    case Intrinsic::annotation:
-    case Intrinsic::codeview_annotation:
-    case Intrinsic::expect:
-    case Intrinsic::type_test:
-    case Intrinsic::donothing:
-    case Intrinsic::prefetch:
-#if LLVM_VERSION_MAJOR >= 8
-    case Intrinsic::is_constant:
-#endif
-    case Intrinsic::memset:
+    if (KnownInactiveIntrinsics.count(II->getIntrinsicID())) {
       if (EnzymePrintActivity)
         llvm::errs() << "constant(" << (int)directions << ") up-intrinsic "
                      << *inst << "\n";
       return true;
-    default:
-      break;
     }
   }
 
@@ -2473,7 +2498,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
 
   if (EnzymePrintActivity)
     llvm::errs() << " <Value USESEARCH" << (int)directions << ">" << *val
-                 << " UA=" << (int)PUA << "\n";
+                 << " UA=" << to_string(PUA) << "\n";
 
   bool seenuse = false;
   // user, predecessor
@@ -2755,6 +2780,59 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
     }
 
     if (auto call = dyn_cast<CallInst>(a)) {
+      bool mayWrite = false;
+      bool mayRead = false;
+      bool mayCapture = false;
+
+      Function *F = getFunctionFromCall(call);
+
+      size_t idx = 0;
+#if LLVM_VERSION_MAJOR >= 14
+      for (auto &arg : call->args())
+#else
+      for (auto &arg : call->arg_operands())
+#endif
+      {
+        if (arg != parent) {
+          idx++;
+          continue;
+        }
+
+#if LLVM_VERSION_MAJOR >= 8
+        bool NoCapture = call->doesNotCapture(idx);
+#else
+        bool NoCapture =
+            call->dataOperandHasImpliedAttr(idx + 1, Attribute::NoCapture) ||
+            (F && F->hasParamAttribute(idx, Attribute::NoCapture));
+#endif
+
+        mayCapture |= !NoCapture;
+
+#if LLVM_VERSION_MAJOR >= 8
+        bool ReadOnly = call->onlyReadsMemory(idx);
+#else
+        bool ReadOnly =
+            call->dataOperandHasImpliedAttr(idx + 1, Attribute::ReadOnly) ||
+            call->dataOperandHasImpliedAttr(idx + 1, Attribute::ReadNone) ||
+            (F && (F->hasParamAttribute(idx, Attribute::ReadOnly) ||
+                   F->hasParamAttribute(idx, Attribute::ReadNone)));
+#endif
+
+        mayWrite |= !ReadOnly;
+
+#if LLVM_VERSION_MAJOR >= 14
+        bool WriteOnly = call->onlyWritesMemory(idx);
+#else
+        bool WriteOnly =
+            call->dataOperandHasImpliedAttr(idx + 1, Attribute::WriteOnly) ||
+            call->dataOperandHasImpliedAttr(idx + 1, Attribute::ReadNone) ||
+            (F && (F->hasParamAttribute(idx, Attribute::WriteOnly) ||
+                   F->hasParamAttribute(idx, Attribute::ReadNone)));
+#endif
+
+        mayRead |= !WriteOnly;
+      }
+
       bool ConstantArg = isFunctionArgumentConstant(call, parent);
       if (ConstantArg && UA != UseActivity::AllStores) {
         if (EnzymePrintActivity) {
@@ -2764,7 +2842,35 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         continue;
       }
 
-      if (Function *F = getFunctionFromCall(call)) {
+      if (!mayCapture) {
+        if (!mayRead && UA == UseActivity::OnlyLoads) {
+          if (EnzymePrintActivity) {
+            llvm::errs() << "Value found non-loading use:" << *val << " user "
+                         << *call << "\n";
+          }
+          continue;
+        }
+        if (!mayWrite && UA == UseActivity::OnlyStores) {
+          if (EnzymePrintActivity) {
+            llvm::errs() << "Value found non-writing use:" << *val << " user "
+                         << *call << "\n";
+          }
+          continue;
+        }
+        if (!mayWrite && (UA == UseActivity::OnlyNonPointerStores ||
+                          UA == UseActivity::AllStores)) {
+          if (!mayRead || !TR.query(parent)[{-1, -1}].isPossiblePointer()) {
+            if (EnzymePrintActivity) {
+              llvm::errs()
+                  << "Value found non-writing and non pointer loading use:"
+                  << *val << " user " << *call << "\n";
+            }
+            continue;
+          }
+        }
+      }
+
+      if (F) {
         if (UA == UseActivity::AllStores &&
             F->getName() == "julia.write_barrier")
           continue;
@@ -3178,32 +3284,44 @@ void ActivityAnalyzer::InsertConstantInstruction(TypeResults const &TR,
 void ActivityAnalyzer::InsertConstantValue(TypeResults const &TR,
                                            llvm::Value *V) {
   ConstantValues.insert(V);
-  auto found = ReEvaluateValueIfInactiveValue.find(V);
-  if (found != ReEvaluateValueIfInactiveValue.end()) {
-    auto set = std::move(ReEvaluateValueIfInactiveValue[V]);
-    ReEvaluateValueIfInactiveValue.erase(V);
-    for (auto toeval : set) {
-      if (!ActiveValues.count(toeval))
-        continue;
-      ActiveValues.erase(toeval);
-      if (EnzymePrintActivity)
-        llvm::errs() << " re-evaluating activity of val " << *toeval
-                     << " due to value " << *V << "\n";
-      isConstantValue(TR, toeval);
+  if (InsertConstValueRecursionHandler) {
+    InsertConstValueRecursionHandler->push_back(V);
+    return;
+  }
+  SmallVector<Value *, 1> InsertConstValueRecursionHandlerTmp;
+  InsertConstValueRecursionHandlerTmp.push_back(V);
+  InsertConstValueRecursionHandler = &InsertConstValueRecursionHandlerTmp;
+  while (InsertConstValueRecursionHandlerTmp.size()) {
+    auto V = InsertConstValueRecursionHandlerTmp.back();
+    InsertConstValueRecursionHandlerTmp.pop_back();
+    auto found = ReEvaluateValueIfInactiveValue.find(V);
+    if (found != ReEvaluateValueIfInactiveValue.end()) {
+      auto set = std::move(ReEvaluateValueIfInactiveValue[V]);
+      ReEvaluateValueIfInactiveValue.erase(V);
+      for (auto toeval : set) {
+        if (!ActiveValues.count(toeval))
+          continue;
+        ActiveValues.erase(toeval);
+        if (EnzymePrintActivity)
+          llvm::errs() << " re-evaluating activity of val " << *toeval
+                       << " due to value " << *V << "\n";
+        isConstantValue(TR, toeval);
+      }
+    }
+    auto found2 = ReEvaluateInstIfInactiveValue.find(V);
+    if (found2 != ReEvaluateInstIfInactiveValue.end()) {
+      auto set = std::move(ReEvaluateInstIfInactiveValue[V]);
+      ReEvaluateInstIfInactiveValue.erase(V);
+      for (auto toeval : set) {
+        if (!ActiveInstructions.count(toeval))
+          continue;
+        ActiveInstructions.erase(toeval);
+        if (EnzymePrintActivity)
+          llvm::errs() << " re-evaluating activity of inst " << *toeval
+                       << " due to value " << *V << "\n";
+        isConstantInstruction(TR, toeval);
+      }
     }
   }
-  auto found2 = ReEvaluateInstIfInactiveValue.find(V);
-  if (found2 != ReEvaluateInstIfInactiveValue.end()) {
-    auto set = std::move(ReEvaluateInstIfInactiveValue[V]);
-    ReEvaluateInstIfInactiveValue.erase(V);
-    for (auto toeval : set) {
-      if (!ActiveInstructions.count(toeval))
-        continue;
-      ActiveInstructions.erase(toeval);
-      if (EnzymePrintActivity)
-        llvm::errs() << " re-evaluating activity of inst " << *toeval
-                     << " due to value " << *V << "\n";
-      isConstantInstruction(TR, toeval);
-    }
-  }
+  InsertConstValueRecursionHandler = nullptr;
 }

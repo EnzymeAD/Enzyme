@@ -5,47 +5,17 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
+#pragma once
+
+#include "Interfaces/CloneFunction.h"
+#include "Interfaces/EnzymeLogic.h"
 
 #include "Analysis/ActivityAnalysis.h"
 #include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/IR/FunctionInterfaces.h"
 
-// TODO: no relative includes.
-#include "../../EnzymeLogic.h"
-
 namespace mlir {
 namespace enzyme {
-
-class MFnTypeInfo {
-public:
-  inline bool operator<(const MFnTypeInfo &rhs) const { return false; }
-};
-
-class MTypeAnalysis {
-public:
-  MFnTypeInfo getAnalyzedTypeInfo(FunctionOpInterface op) const {
-    return MFnTypeInfo();
-  }
-};
-
-class MTypeResults {
-public:
-  // TODO
-  TypeTree getReturnAnalysis() { return TypeTree(); }
-  TypeTree query(Value) const { return TypeTree(); }
-  ConcreteType intType(size_t num, Value val, bool errIfNotFound = true,
-                       bool pointerIntSame = false) const {
-    if (val.getType().isa<IntegerType, IndexType>()) {
-      return BaseType::Integer;
-    }
-    if (errIfNotFound) {
-      llvm_unreachable("something happened");
-    }
-    return BaseType::Unknown;
-  }
-};
-
-class MEnzymeLogic;
 
 class MGradientUtils {
 public:
@@ -97,7 +67,7 @@ public:
   LogicalResult visitChild(Operation *op);
 };
 
-class MEnzymeLogic {
+class MDiffeGradientUtils : public MGradientUtils {
 public:
   MDiffeGradientUtils(MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
                       FunctionOpInterface oldFunc_, MTypeAnalysis &TA,
@@ -114,21 +84,30 @@ public:
                        constant_values, origToNew_, origToNewOps_, mode, width,
                        omp) {}
 
-      if (additionalType.getImpl() < rhs.additionalType.getImpl())
-        return true;
-      if (rhs.additionalType.getImpl() < additionalType.getImpl())
-        return false;
+  // Technically diffe constructor
+  static MDiffeGradientUtils *
+  CreateFromClone(MEnzymeLogic &Logic, DerivativeMode mode, unsigned width,
+                  FunctionOpInterface todiff, MTypeAnalysis &TA,
+                  MFnTypeInfo &oldTypeInfo, DIFFE_TYPE retType,
+                  bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
+                  ReturnType returnValue, mlir::Type additionalArg, bool omp) {
+    std::string prefix;
 
-      if (typeInfo < rhs.typeInfo)
-        return true;
-      if (rhs.typeInfo < typeInfo)
-        return false;
-      // equal
-      return false;
+    switch (mode) {
+    case DerivativeMode::ForwardMode:
+    case DerivativeMode::ForwardModeSplit:
+      prefix = "fwddiffe";
+      break;
+    case DerivativeMode::ReverseModeCombined:
+    case DerivativeMode::ReverseModeGradient:
+      prefix = "diffe";
+      break;
+    case DerivativeMode::ReverseModePrimal:
+      llvm_unreachable("invalid DerivativeMode: ReverseModePrimal\n");
     }
-  };
 
-  std::map<MForwardCacheKey, FunctionOpInterface> ForwardCachedFunctions;
+    if (width > 1)
+      prefix += std::to_string(width);
 
     BlockAndValueMapping originalToNew;
     std::map<Operation *, Operation *> originalToNewOps;
@@ -150,5 +129,5 @@ public:
   }
 };
 
-} // namespace enzyme
-} // namespace mlir
+}; // namespace enzyme
+}; // namespace mlir
