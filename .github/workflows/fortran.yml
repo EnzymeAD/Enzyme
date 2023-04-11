@@ -12,7 +12,7 @@ jobs:
     name: Fortran ${{matrix.build}} ${{matrix.os}}
     runs-on: ${{matrix.os}}
     strategy:
-      fail-fast:
+      fail-fast: false
       matrix:
         build: ["Release", "Debug"]
         os: [ubuntu-20.04]
