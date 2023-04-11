@@ -874,7 +874,9 @@ static bool isValuePotentiallyUsedAsPointer(Value val) {
       if (isa<MemoryEffectOpInterface>(user) &&
           !hasEffect<MemoryEffects::Read>(user) &&
           !hasEffect<MemoryEffects::Write>(user)) {
-        todo.insert(todo.end(), user->result_begin(), user->result_end());
+        for (Value result : user->getResults()) {
+          todo.push_back(result);
+        }
         continue;
       }
       // if (EnzymePrintActivity)
@@ -2113,7 +2115,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantValue(MTypeResults const &TR,
               //
               if ((mayWriteToMemory(op) &&
                    !Hypothesis->isConstantOperation(TR, op)) ||
-                  llvm::any_of(op->getResults(), [&](Value V) {
+                  llvm::any_of(op->getResults(), [&](Value V) -> bool {
                     return !Hypothesis->DeducingPointers.count(V) &&
                            !Hypothesis->isConstantValue(TR, V) &&
                            TR.query(V)[{-1}].isPossiblePointer();

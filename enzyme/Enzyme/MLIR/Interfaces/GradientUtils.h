@@ -99,62 +99,20 @@ public:
 
 class MEnzymeLogic {
 public:
-  struct MForwardCacheKey {
-    FunctionOpInterface todiff;
-    DIFFE_TYPE retType;
-    const std::vector<DIFFE_TYPE> constant_args;
-    // std::map<llvm::Argument *, bool> uncacheable_args;
-    bool returnUsed;
-    DerivativeMode mode;
-    unsigned width;
-    mlir::Type additionalType;
-    const MFnTypeInfo typeInfo;
-
-    inline bool operator<(const MForwardCacheKey &rhs) const {
-      if (todiff < rhs.todiff)
-        return true;
-      if (rhs.todiff < todiff)
-        return false;
-
-      if (retType < rhs.retType)
-        return true;
-      if (rhs.retType < retType)
-        return false;
-
-      if (std::lexicographical_compare(
-              constant_args.begin(), constant_args.end(),
-              rhs.constant_args.begin(), rhs.constant_args.end()))
-        return true;
-      if (std::lexicographical_compare(
-              rhs.constant_args.begin(), rhs.constant_args.end(),
-              constant_args.begin(), constant_args.end()))
-        return false;
-
-      /*
-      for (auto &arg : todiff->args()) {
-        auto foundLHS = uncacheable_args.find(&arg);
-        auto foundRHS = rhs.uncacheable_args.find(&arg);
-        if (foundLHS->second < foundRHS->second)
-          return true;
-        if (foundRHS->second < foundLHS->second)
-          return false;
-      }
-      */
-
-      if (returnUsed < rhs.returnUsed)
-        return true;
-      if (rhs.returnUsed < returnUsed)
-        return false;
-
-      if (mode < rhs.mode)
-        return true;
-      if (rhs.mode < mode)
-        return false;
-
-      if (width < rhs.width)
-        return true;
-      if (rhs.width < width)
-        return false;
+  MDiffeGradientUtils(MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
+                      FunctionOpInterface oldFunc_, MTypeAnalysis &TA,
+                      MTypeResults TR, BlockAndValueMapping &invertedPointers_,
+                      const SmallPtrSetImpl<mlir::Value> &constantvalues_,
+                      const SmallPtrSetImpl<mlir::Value> &returnvals_,
+                      DIFFE_TYPE ActiveReturn,
+                      ArrayRef<DIFFE_TYPE> constant_values,
+                      BlockAndValueMapping &origToNew_,
+                      std::map<Operation *, Operation *> &origToNewOps_,
+                      DerivativeMode mode, unsigned width, bool omp)
+      : MGradientUtils(Logic, newFunc_, oldFunc_, TA, TR, invertedPointers_,
+                       constantvalues_, returnvals_, ActiveReturn,
+                       constant_values, origToNew_, origToNewOps_, mode, width,
+                       omp) {}
 
       if (additionalType.getImpl() < rhs.additionalType.getImpl())
         return true;
@@ -172,12 +130,24 @@ public:
 
   std::map<MForwardCacheKey, FunctionOpInterface> ForwardCachedFunctions;
 
-  FunctionOpInterface
-  CreateForwardDiff(FunctionOpInterface fn, DIFFE_TYPE retType,
-                    std::vector<DIFFE_TYPE> constants, MTypeAnalysis &TA,
-                    bool returnUsed, DerivativeMode mode, bool freeMemory,
-                    size_t width, mlir::Type addedType, MFnTypeInfo type_args,
-                    std::vector<bool> volatile_args, void *augmented);
+    BlockAndValueMapping originalToNew;
+    std::map<Operation *, Operation *> originalToNewOps;
+
+    SmallPtrSet<mlir::Value, 1> returnvals;
+    SmallPtrSet<mlir::Value, 1> constant_values;
+    SmallPtrSet<mlir::Value, 1> nonconstant_values;
+    BlockAndValueMapping invertedPointers;
+    FunctionOpInterface newFunc = CloneFunctionWithReturns(
+        mode, width, todiff, invertedPointers, constant_args, constant_values,
+        nonconstant_values, returnvals, returnValue, retType,
+        prefix + todiff.getName(), originalToNew, originalToNewOps,
+        diffeReturnArg, additionalArg);
+    MTypeResults TR; // TODO
+    return new MDiffeGradientUtils(
+        Logic, newFunc, todiff, TA, TR, invertedPointers, constant_values,
+        nonconstant_values, retType, constant_args, originalToNew,
+        originalToNewOps, mode, width, omp);
+  }
 };
 
 } // namespace enzyme
