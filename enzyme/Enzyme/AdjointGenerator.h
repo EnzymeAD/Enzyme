@@ -1996,17 +1996,22 @@ public:
             8;
 
       if (!gutils->isConstantValue(orig_inserted)) {
-        auto it =
-            TR.intType(size0, orig_inserted, /*errIfFalse*/ !looseTypeAnalysis);
+        auto it = TR.intType(size0, orig_inserted, /*errIfFalse*/ false);
         Type *flt = it.isFloat();
         if (!it.isKnown()) {
-          assert(looseTypeAnalysis);
-          if (orig_inserted->getType()->isFPOrFPVectorTy())
-            flt = orig_inserted->getType()->getScalarType();
-          else if (orig_inserted->getType()->isIntOrIntVectorTy() ||
-                   orig_inserted->getType()->isPointerTy())
-            flt = nullptr;
-          else {
+          bool found = false;
+
+          if (looseTypeAnalysis) {
+            if (orig_inserted->getType()->isFPOrFPVectorTy()) {
+              flt = orig_inserted->getType()->getScalarType();
+              found = true;
+            } else if (orig_inserted->getType()->isIntOrIntVectorTy() ||
+                       orig_inserted->getType()->isPointerTy()) {
+              flt = nullptr;
+              found = true;
+            }
+          }
+          if (!found) {
             if (CustomErrorHandler) {
               std::string str;
               raw_string_ostream ss(str);
