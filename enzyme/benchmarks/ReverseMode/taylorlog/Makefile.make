@@ -15,7 +15,7 @@ clean:
 	opt $^ -O2 -o $@ -S
 	
 taylorlog.o: taylorlog-opt.ll
-	clang++ $^ -o $@ -lblas $(BENCHLINK) -lm
+	clang++ $^ -o $@ $(BENCHLINK) -lm
 
 results.txt: taylorlog.o
 	./$^ 10000000 | tee $@
