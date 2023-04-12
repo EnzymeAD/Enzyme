@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -preserve-nvvm -enzyme -enzyme-preopt=false -S | FileCheck %s 
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -preserve-nvvm -enzyme -enzyme-preopt=false -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="preserve-nvvm,enzyme" -enzyme-preopt=false -S | FileCheck %s
 
 source_filename = "exer2.c"
