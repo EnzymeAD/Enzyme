@@ -3638,6 +3638,7 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
       }
       return;
     }
+
     // All these are always valid => no direction check
     // CONSIDER(malloc)
     // TODO consider handling other allocation functions integer inputs
@@ -3763,6 +3764,17 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
       updateAnalysis(call.getOperand(0), ptrint, &call);
       return;
     }
+
+    if (funcName.startswith("_ZNKSt3__14hash")) {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
+
+    if (funcName.startswith("_ZNKSt3__112basic_stringIcNS_11char_traitsIcEENS_"
+                            "9allocatorIcEEE13__get_pointer")) {
+      return;
+    }
+
     if (funcName == "__dynamic_cast" ||
         funcName == "_ZSt18_Rb_tree_decrementPKSt18_Rb_tree_node_base" ||
         funcName == "_ZSt18_Rb_tree_incrementPKSt18_Rb_tree_node_base" ||

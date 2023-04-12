@@ -83,6 +83,7 @@ cl::opt<bool>
 #include <set>
 #include <unordered_map>
 
+// clang-format off
 const char *KnownInactiveFunctionsStartingWith[] = {
     "f90io",
     "$ss5print",
@@ -98,6 +99,7 @@ const char *KnownInactiveFunctionsStartingWith[] = {
     "_ZNSt7__cxx1112basic_string",
     "_ZNSt7__cxx1118basic_string",
     "_ZNKSt7__cxx1112basic_string",
+    "_ZNKSt3__112basic_string",
     "_ZN9__gnu_cxx12__to_xstringINSt7__cxx1112basic_string",
     "_ZNSt12__basic_file",
     "_ZNSt15basic_streambufIcSt11char_traits",
@@ -143,6 +145,13 @@ const char *KnownInactiveFunctionsStartingWith[] = {
     "_ZNSo5flush",
     "_ZSt4endl",
     "_ZNSaIcE",
+    "_ZSt11_Hash_bytes",
+    "_ZNKSt3__14hash",
+    "_ZNSt3__116__do_string_hash",
+    "_ZNKSt8__detail20_Prime_rehash_policy",
+    "_ZNSt8__detail20_Prime_rehash_policy",
+    "_ZNKSt3__122__unordered_map_hasher",
+    "_ZNKSt8__detail15_Hash_code_base"
 #endif
 };
 
@@ -151,8 +160,16 @@ const char *KnownInactiveFunctionsContains[] = {
     "__enzyme_pointer"};
 
 const std::set<std::string> InactiveGlobals = {
-    "ompi_request_null", "ompi_mpi_double", "ompi_mpi_comm_world", "stderr",
-    "stdout", "stdin", "_ZSt3cin", "_ZSt4cout", "_ZSt5wcout", "_ZSt4cerr",
+    "ompi_request_null",
+    "ompi_mpi_double",
+    "ompi_mpi_comm_world",
+    "stderr",
+    "stdout",
+    "stdin",
+    "_ZSt3cin",
+    "_ZSt4cout",
+    "_ZSt5wcout",
+    "_ZSt4cerr",
     "_ZTVNSt7__cxx1115basic_stringbufIcSt11char_traitsIcESaIcEEE",
     "_ZTVSt15basic_streambufIcSt11char_traitsIcEE",
     "_ZTVSt9basic_iosIcSt11char_traitsIcEE",
@@ -172,7 +189,8 @@ const std::set<std::string> InactiveGlobals = {
     // vtable for __cxxabiv1::__si_class_type_info
     "_ZTVN10__cxxabiv120__si_class_type_infoE",
     "_ZTVN10__cxxabiv117__class_type_infoE",
-    "_ZTVN10__cxxabiv121__vmi_class_type_infoE"};
+    "_ZTVN10__cxxabiv121__vmi_class_type_infoE"
+};
 
 const std::map<std::string, size_t> MPIInactiveCommAllocators = {
     {"MPI_Graph_create", 5},
@@ -290,7 +308,8 @@ const std::set<std::string> KnownInactiveFunctions = {
     "cuMemPoolGetAttribute",
     "cuMemGetInfo_v2",
     "cuDeviceGetAttribute",
-    "cuDevicePrimaryCtxRetain"};
+    "cuDevicePrimaryCtxRetain"
+};
 
 const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {
     Intrinsic::floor,
@@ -358,6 +377,8 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     "std::__basic_file",
     "std::__ioinit",
     "std::__basic_file",
+    "std::hash",
+    "std::_Hash_bytes",
 
     // __cxx11
     "std::__cxx11::basic_string",
@@ -385,7 +406,16 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     "std::basic_filebuf",
     "std::basic_streambuf",
 
+    // libc++
+    "std::__1::basic_string",
+    "std::__1::__do_string_hash",
+    "std::__1::hash",
+    "std::__1::__unordered_map_hasher",
+  
+    "std::__detail::_Prime_rehash_policy",
+    "std::__detail::_Hash_code_base",
 };
+// clang-format on
 
 /// Is the use of value val as an argument of call CI known to be inactive
 /// This tool can only be used when in DOWN mode
