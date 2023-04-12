@@ -3387,6 +3387,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                             .freeMemory = key.freeMemory,
                             .AtomicAdd = key.AtomicAdd,
                             .additionalType = tape ? tape->getType() : nullptr,
+                            .forceAnonymousTape = key.forceAnonymousTape,
                             .typeInfo = key.typeInfo},
           TA, &aug, omp);
 
@@ -3466,6 +3467,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                             .freeMemory = key.freeMemory,
                             .AtomicAdd = key.AtomicAdd,
                             .additionalType = nullptr,
+                            .forceAnonymousTape = key.forceAnonymousTape,
                             .typeInfo = key.typeInfo},
           TA, augmenteddata, omp);
 
@@ -3766,7 +3768,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     assert(augmenteddata);
 
     // TODO VERIFY THIS
-    if (augmenteddata->tapeType) {
+    if (augmenteddata->tapeType && (omp || key.forceAnonymousTape)) {
       IRBuilder<> BuilderZ(gutils->inversionAllocs);
       if (!augmenteddata->tapeType->isEmptyTy()) {
         auto tapep = BuilderZ.CreatePointerCast(

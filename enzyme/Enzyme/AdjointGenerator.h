@@ -5497,6 +5497,7 @@ public:
                               .additionalType =
                                   tape ? PointerType::getUnqual(tape->getType())
                                        : nullptr,
+                              .forceAnonymousTape = false,
                               .typeInfo = nextTypeInfo},
             TR.analyzer.interprocedural, subdata,
             /*omp*/ true);
@@ -9910,6 +9911,7 @@ public:
                             .freeMemory = true,
                             .AtomicAdd = gutils->AtomicAdd,
                             .additionalType = tape ? tape->getType() : nullptr,
+                            .forceAnonymousTape = false,
                             .typeInfo = nextTypeInfo},
           TR.analyzer.interprocedural, subdata);
       if (!newcalled)

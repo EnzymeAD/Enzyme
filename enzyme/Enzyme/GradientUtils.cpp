@@ -4732,6 +4732,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
                           .AtomicAdd = AtomicAdd,
                           .additionalType =
                               Type::getInt8PtrTy(fn->getContext()),
+                          .forceAnonymousTape = true,
                           .typeInfo = type_args},
         TA,
         /*map*/ &augdata);

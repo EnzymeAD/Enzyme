@@ -1365,6 +1365,7 @@ public:
                             .freeMemory = freeMemory,
                             .AtomicAdd = AtomicAdd,
                             .additionalType = nullptr,
+                            .forceAnonymousTape = false,
                             .typeInfo = type_args},
           TA, /*augmented*/ nullptr);
       break;
@@ -1424,6 +1425,7 @@ public:
                               .freeMemory = freeMemory,
                               .AtomicAdd = AtomicAdd,
                               .additionalType = tapeType,
+                              .forceAnonymousTape = forceAnonymousTape,
                               .typeInfo = type_args},
             TA, aug);
     }
