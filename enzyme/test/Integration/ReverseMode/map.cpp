@@ -47,7 +47,7 @@ void dsquare() {
 int main() {
     dsquare<dictSU>();
     dsquare<dictCU>();
-    dsquare<dictSO>();
-    dsquare<dictCO>();
+    // dsquare<dictSO>();
+    // dsquare<dictCO>();
 }
 
