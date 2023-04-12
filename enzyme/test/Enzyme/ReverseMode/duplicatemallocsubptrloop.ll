@@ -68,8 +68,8 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   %"a4'ac_malloccache" = bitcast i8* %malloccall to double**
 ; CHECK-NEXT:   %2 = getelementptr inbounds { double**, double* }, { double**, double* }* %1, i32 0, i32 0
 ; CHECK-NEXT:   store double** %"a4'ac_malloccache", double*** %2
-; CHECK-NEXT:   %malloccall4 = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* bitcast (i8* (i32)* @malloc to i8* (i64)*)(i64 80)
-; CHECK-NEXT:   %r_malloccache = bitcast i8* %malloccall4 to double*
+; CHECK-NEXT:   %[[malloccall4:.+]] = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* bitcast (i8* (i32)* @malloc to i8* (i64)*)(i64 80)
+; CHECK-NEXT:   %r_malloccache = bitcast i8* %[[malloccall4]] to double*
 ; CHECK-NEXT:   %3 = getelementptr inbounds { double**, double* }, { double**, double* }* %1, i32 0, i32 1
 ; CHECK-NEXT:   store double* %r_malloccache, double** %3
 ; CHECK-NEXT:   br label %loop
@@ -114,8 +114,8 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = extractvalue { double**, double* } %tapeArg, 0
 ; CHECK-NEXT:   %1 = extractvalue { double**, double* } %tapeArg, 1
-; CHECK-NEXT:   %malloccall8 = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* bitcast (i8* (i32)* @malloc to i8* (i64)*)(i64 80)
-; CHECK-NEXT:   %"p2'mi_malloccache" = bitcast i8* %malloccall8 to i8**
+; CHECK-NEXT:   %[[malloccall8:.+]] = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* bitcast (i8* (i32)* @malloc to i8* (i64)*)(i64 80)
+; CHECK-NEXT:   %"p2'mi_malloccache" = bitcast i8* %[[malloccall8]] to i8**
 ; CHECK-NEXT:   br label %loop
 
 ; CHECK: loop:                                             ; preds = %loop, %entry
@@ -133,7 +133,7 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   br i1 %a15, label %remat_enter, label %loop
 
 ; CHECK: invertentry:                                      ; preds = %remat_enter
-; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall8)
+; CHECK-NEXT:   tail call void @free(i8* nonnull %[[malloccall8]])
 ; CHECK-NEXT:   %4 = bitcast double** %0 to i8*
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %4)
 ; CHECK-NEXT:   %5 = bitcast double* %1 to i8*

@@ -17,7 +17,7 @@ clean:
 	#opt $^ -O2 -o $@ -S
 
 ba.o: ba-opt.ll
-	clang++ -O2 $^ -o $@ -lblas $(BENCHLINK)
+	clang++ -O2 $^ -o $@ $(BENCHLINK)
 
 results.json: ba.o
 	./$^

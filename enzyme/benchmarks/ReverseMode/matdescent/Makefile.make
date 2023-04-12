@@ -15,7 +15,7 @@ clean:
 	opt $^ -O2 -o $@ -S
 	
 matdescent.o: matdescent-opt.ll
-	clang++ $^ -o $@ -lblas $(BENCHLINK)
+	clang++ $^ -o $@ $(BENCHLINK)
 
 results.txt: matdescent.o
 	./$^ | tee $@

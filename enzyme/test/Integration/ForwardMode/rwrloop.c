@@ -13,6 +13,7 @@
 
 #include "test_utils.h"
 
+int enzyme_const, enzyme_dup;
 double __enzyme_fwddiff(void*, ...);
 
 double alldiv(double* __restrict__ a, int *__restrict__ N) {
@@ -44,7 +45,7 @@ int main(int argc, char** argv) {
     }
   }
   
-  double d_start = __enzyme_fwddiff((void*)alldiv, (double*)a, (double*)d_a, &N);
+  double d_start = __enzyme_fwddiff((void*)alldiv, enzyme_dup, (double*)a, (double*)d_a, enzyme_const, &N);
   N = 10;
 
   printf("d_start=%f\n", d_start);

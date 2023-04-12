@@ -4739,6 +4739,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
                           .AtomicAdd = AtomicAdd,
                           .additionalType =
                               Type::getInt8PtrTy(fn->getContext()),
+                          .forceAnonymousTape = true,
                           .typeInfo = type_args},
         TA,
         /*map*/ &augdata);
@@ -5236,7 +5237,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       if (arg->hasInternalLinkage() || arg->hasPrivateLinkage() ||
           (arg->hasExternalLinkage() && arg->hasInitializer()) ||
           arg->isConstant()) {
-        Type *elemTy = arg->getType()->getPointerElementType();
+        Type *elemTy = arg->getValueType();
         IRBuilder<> B(inversionAllocs);
 
         auto rule = [&]() {
@@ -6651,11 +6652,12 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 
                     v.setFastMathFlags(getFast());
                     assert(isOriginalBlock(*v.GetInsertBlock()));
-                    Value *outer = getCachePointer(
-                        /*inForwardPass*/ true, v, lctx, cache, isi1,
-                        /*storeinstorecache*/ true,
-                        /*available*/ ValueToValueMapTy(),
-                        /*extraSize*/ nullptr);
+                    Value *outer =
+                        getCachePointer(AT,
+                                        /*inForwardPass*/ true, v, lctx, cache,
+                                        /*storeinstorecache*/ true,
+                                        /*available*/ ValueToValueMapTy(),
+                                        /*extraSize*/ nullptr);
 
                     auto ld = v.CreateLoad(AT, AI);
 #if LLVM_VERSION_MAJOR >= 11
@@ -6690,7 +6692,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 
                   assert(!isOriginalBlock(*BuilderM.GetInsertBlock()));
                   Value *outer = getCachePointer(
-                      /*inForwardPass*/ false, BuilderM, lctx, cache, isi1,
+                      AT,
+                      /*inForwardPass*/ false, BuilderM, lctx, cache,
                       /*storeinstorecache*/ true, available,
                       /*extraSize*/ nullptr);
                   SmallVector<Value *, 2> idxs;
@@ -6699,9 +6702,9 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                                            tryLegalRecomputeCheck));
                   }
 
-                  auto OT = outer->getType()->getPointerElementType();
 #if LLVM_VERSION_MAJOR > 7
-                  auto cptr = BuilderM.CreateGEP(OT, outer, idxs);
+                  auto cptr = BuilderM.CreateGEP(GEP->getSourceElementType(),
+                                                 outer, idxs);
 #else
                   auto cptr = BuilderM.CreateGEP(outer, idxs);
 #endif
@@ -6888,7 +6891,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               v.setFastMathFlags(getFast());
               assert(isOriginalBlock(*v.GetInsertBlock()));
               Value *outer =
-                  getCachePointer(/*inForwardPass*/ true, v, lctx, cache, isi1,
+                  getCachePointer(li->getType(),
+                                  /*inForwardPass*/ true, v, lctx, cache,
                                   /*storeinstorecache*/ true,
                                   /*available*/ ValueToValueMapTy(),
                                   /*extraSize*/ lim);
@@ -8134,7 +8138,7 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
         if (offset != 0) {
 #if LLVM_VERSION_MAJOR > 7
           dsto = Builder2.CreateConstInBoundsGEP1_64(
-              dsto->getType()->getPointerElementType(), dsto, offset);
+              Type::getInt8Ty(dsto->getContext()), dsto, offset);
 #else
           dsto = Builder2.CreateConstInBoundsGEP1_64(dsto, offset);
 #endif
@@ -8154,7 +8158,7 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
         if (offset != 0) {
 #if LLVM_VERSION_MAJOR > 7
           srco = Builder2.CreateConstInBoundsGEP1_64(
-              srco->getType()->getPointerElementType(), srco, offset);
+              Type::getInt8Ty(srco->getContext()), srco, offset);
 #else
           srco = Builder2.CreateConstInBoundsGEP1_64(srco, offset);
 #endif
@@ -8240,7 +8244,7 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
       if (offset != 0) {
 #if LLVM_VERSION_MAJOR > 7
         dsto = BuilderZ.CreateConstInBoundsGEP1_64(
-            dsto->getType()->getPointerElementType(), dsto, offset);
+            Type::getInt8Ty(dsto->getContext()), dsto, offset);
 #else
         dsto = BuilderZ.CreateConstInBoundsGEP1_64(dsto, offset);
 #endif
@@ -8252,7 +8256,7 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
       if (offset != 0) {
 #if LLVM_VERSION_MAJOR > 7
         srco = BuilderZ.CreateConstInBoundsGEP1_64(
-            srco->getType()->getPointerElementType(), srco, offset);
+            Type::getInt8Ty(srco->getContext()), srco, offset);
 #else
         srco = BuilderZ.CreateConstInBoundsGEP1_64(srco, offset);
 #endif

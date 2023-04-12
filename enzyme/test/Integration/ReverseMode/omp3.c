@@ -27,6 +27,9 @@ void msg(double* in, int *len, unsigned int slen) {
     }
     }
 }
+
+int enzyme_dup, enzyme_const;
+
 void __enzyme_autodiff(void*, ...);
 
 int main ( int argc, char *argv[] ) {
@@ -35,6 +38,6 @@ int main ( int argc, char *argv[] ) {
   double darray[200];
   int len[10] = {20};
   int slen = 10;
-  __enzyme_autodiff((void*)msg, &array, &darray, &len, slen);
+  __enzyme_autodiff((void*)msg, enzyme_dup, &array, &darray, enzyme_const, &len, enzyme_const, slen);
      return 0;
 }
