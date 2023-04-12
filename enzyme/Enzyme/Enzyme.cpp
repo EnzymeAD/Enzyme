@@ -377,8 +377,8 @@ static Value *adaptReturnedVector(Value *ret, Value *diffret,
 }
 
 static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
-                                Value *diffret, Instruction *CI,
-                                DerivativeMode mode) {
+                                Type *retElemType, Value *diffret,
+                                Instruction *CI, DerivativeMode mode) {
   Type *retType = ret->getType();
   Type *diffretType = diffret->getType();
   auto &DL = CI->getModule()->getDataLayout();
@@ -410,7 +410,7 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
   }
 
   if (auto pretType = dyn_cast<PointerType>(retType)) {
-    retType = pretType->getPointerElementType();
+    retType = retElemType;
 
     if (auto sretType = dyn_cast<StructType>(retType),
         diffsretType = dyn_cast<StructType>(diffretType);
@@ -1051,6 +1051,11 @@ public:
       type_args.KnownValues.insert(
           std::pair<Argument *, std::set<int64_t>>(&a, {}));
     }
+    TypeTree dt;
+    if (fn->getReturnType()->isFPOrFPVectorTy()) {
+      dt = ConcreteType(fn->getReturnType()->getScalarType());
+    }
+    type_args.Return = dt.Only(-1, nullptr);
 
     type_args = TA.analyzeFunction(type_args).getAnalyzedTypeInfo();
     return type_args;
@@ -1227,9 +1232,18 @@ public:
 
     batch = adaptReturnedVector(CI, batch, Builder, width);
 
-    Value *ret = CI->hasStructRetAttr() ? CI->getArgOperand(0) : CI;
-
-    ReplaceOriginalCall(Builder, ret, batch, CI, DerivativeMode::ForwardMode);
+    Value *ret = CI;
+    Type *retElemType = nullptr;
+    if (CI->hasStructRetAttr()) {
+      ret = CI->getArgOperand(0);
+#if LLVM_VERSION_MAJOR >= 15
+      retElemType = CI->getParamStructRetType(0);
+#else
+      retElemType = ret->getType()->getPointerElementType();
+#endif
+    }
+    ReplaceOriginalCall(Builder, ret, retElemType, batch, CI,
+                        DerivativeMode::ForwardMode);
 
     return true;
   }
@@ -1351,6 +1365,7 @@ public:
                             .freeMemory = freeMemory,
                             .AtomicAdd = AtomicAdd,
                             .additionalType = nullptr,
+                            .forceAnonymousTape = false,
                             .typeInfo = type_args},
           TA, /*augmented*/ nullptr);
       break;
@@ -1410,6 +1425,7 @@ public:
                               .freeMemory = freeMemory,
                               .AtomicAdd = AtomicAdd,
                               .additionalType = tapeType,
+                              .forceAnonymousTape = forceAnonymousTape,
                               .typeInfo = type_args},
             TA, aug);
     }
@@ -1545,8 +1561,16 @@ public:
       }
     }
 
-    Value *ret = CI->hasStructRetAttr() ? CI->getArgOperand(0) : CI;
-
+    Value *ret = CI;
+    Type *retElemType = nullptr;
+    if (CI->hasStructRetAttr()) {
+      ret = CI->getArgOperand(0);
+#if LLVM_VERSION_MAJOR >= 15
+      retElemType = CI->getParamStructRetType(0);
+#else
+      retElemType = ret->getType()->getPointerElementType();
+#endif
+    }
     // Adapt the returned vector type to the struct type expected by our calling
     // convention.
     if (width > 1 && !diffret->getType()->isEmptyTy() &&
@@ -1557,7 +1581,7 @@ public:
       diffret = adaptReturnedVector(ret, diffret, Builder, width);
     }
 
-    ReplaceOriginalCall(Builder, ret, diffret, CI, mode);
+    ReplaceOriginalCall(Builder, ret, retElemType, diffret, CI, mode);
 
     if (Logic.PostOpt) {
 #if LLVM_VERSION_MAJOR >= 11
