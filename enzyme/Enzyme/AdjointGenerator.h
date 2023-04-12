@@ -10593,9 +10593,15 @@ public:
     CallInst *augmentcall = nullptr;
     Value *cachereplace = nullptr;
 
+#if LLVM_VERSION_MAJOR >= 16
+    std::optional<int> tapeIdx;
+    std::optional<int> returnIdx;
+    std::optional<int> differetIdx;
+#else
     Optional<int> tapeIdx;
     Optional<int> returnIdx;
     Optional<int> differetIdx;
+#endif
 
     if (modifyPrimal) {
       Value *newcalled = nullptr;
@@ -10712,12 +10718,21 @@ public:
         if (!augmentcall->getType()->isVoidTy())
           augmentcall->setName(call.getName() + "_augmented");
 
+#if LLVM_VERSION_MAJOR >= 16
+        if (tapeIdx.has_value()) {
+          tape = (tapeIdx.value() == -1)
+                     ? augmentcall
+                     : BuilderZ.CreateExtractValue(
+                           augmentcall, {(unsigned)tapeIdx.value()},
+                           "subcache");
+#else
         if (tapeIdx.hasValue()) {
           tape = (tapeIdx.getValue() == -1)
                      ? augmentcall
                      : BuilderZ.CreateExtractValue(
                            augmentcall, {(unsigned)tapeIdx.getValue()},
                            "subcache");
+#endif
           if (tape->getType()->isEmptyTy()) {
             auto tt = tape->getType();
             gutils->erase(cast<Instruction>(tape));
@@ -10733,10 +10748,17 @@ public:
           Value *dcall = nullptr;
           assert(returnIdx);
           assert(augmentcall);
+#if LLVM_VERSION_MAJOR >= 16
+          dcall = (returnIdx.value() < 0)
+                      ? augmentcall
+                      : BuilderZ.CreateExtractValue(
+                            augmentcall, {(unsigned)returnIdx.value()});
+#else
           dcall = (returnIdx.getValue() < 0)
                       ? augmentcall
                       : BuilderZ.CreateExtractValue(
                             augmentcall, {(unsigned)returnIdx.getValue()});
+#endif
           gutils->originalToNewFn[&call] = dcall;
           gutils->newToOriginalFn.erase(newCall);
           gutils->newToOriginalFn[dcall] = &call;
@@ -10799,12 +10821,21 @@ public:
                            subdata->returns.end()) {
         } else {
           if (!tape) {
+#if LLVM_VERSION_MAJOR >= 16
+            assert(tapeIdx.has_value());
+            tape = BuilderZ.CreatePHI(
+                (tapeIdx == -1) ? FT->getReturnType()
+                                : cast<StructType>(FT->getReturnType())
+                                      ->getElementType(tapeIdx.value()),
+                1, "tapeArg");
+#else
             assert(tapeIdx.hasValue());
             tape = BuilderZ.CreatePHI(
                 (tapeIdx == -1) ? FT->getReturnType()
                                 : cast<StructType>(FT->getReturnType())
                                       ->getElementType(tapeIdx.getValue()),
                 1, "tapeArg");
+#endif
           }
           tape = gutils->cacheForReverse(BuilderZ, tape,
                                          getIndex(&call, CacheType::Tape));
@@ -10851,11 +10882,19 @@ public:
           Value *newip = nullptr;
           if (Mode == DerivativeMode::ReverseModeCombined ||
               Mode == DerivativeMode::ReverseModePrimal) {
+#if LLVM_VERSION_MAJOR >= 16
+            newip = (differetIdx.value() < 0)
+                        ? augmentcall
+                        : BuilderZ.CreateExtractValue(
+                              augmentcall, {(unsigned)differetIdx.value()},
+                              call.getName() + "'ac");
+#else
             newip = (differetIdx.getValue() < 0)
                         ? augmentcall
                         : BuilderZ.CreateExtractValue(
                               augmentcall, {(unsigned)differetIdx.getValue()},
                               call.getName() + "'ac");
+#endif
             assert(newip->getType() == call.getType());
             placeholder->replaceAllUsesWith(newip);
             if (placeholder == &*BuilderZ.GetInsertPoint()) {

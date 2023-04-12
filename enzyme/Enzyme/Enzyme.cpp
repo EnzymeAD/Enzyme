@@ -1697,9 +1697,15 @@ public:
 #endif
     }
 
+#if LLVM_VERSION_MAJOR >= 16
+    return HandleAutoDiff(CI, CI->getCallingConv(), ret, retElemType, args,
+                          byVal, constants, fn, mode, options.value(),
+                          sizeOnly);
+#else
     return HandleAutoDiff(CI, CI->getCallingConv(), ret, retElemType, args,
                           byVal, constants, fn, mode, options.getValue(),
                           sizeOnly);
+#endif
   }
 
   bool HandleProbProg(CallInst *CI, ProbProgMode mode) {
@@ -1721,8 +1727,13 @@ public:
 
     SmallVector<Value *, 6> dargs = SmallVector(args);
 
+#if LLVM_VERSION_MAJOR >= 16
+    if (!opt.has_value())
+      return false;
+#else
     if (!opt.hasValue())
       return false;
+#endif
 
     auto dynamic_interface = opt->dynamic_interface;
     auto trace = opt->trace.first;
@@ -1813,9 +1824,14 @@ public:
 #endif
     }
 
+#if LLVM_VERSION_MAJOR >= 16
     bool status = HandleAutoDiff(
         CI, CI->getCallingConv(), ret, retElemType, dargs, byVal, constants,
+        newFunc, DerivativeMode::ReverseModeCombined, opt.value(), false);
+#else
+        CI, CI->getCallingConv(), ret, retElemType, dargs, byVal, constants,
         newFunc, DerivativeMode::ReverseModeCombined, opt.getValue(), false);
+#endif
 
     delete interface;
 
