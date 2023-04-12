@@ -2105,7 +2105,6 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   std::vector<bool> _overwritten_argsPP = _overwritten_args;
 
   gutils->forceActiveDetection();
-  gutils->forceAugmentedReturns();
 
   // TODO actually populate unnecessaryInstructions with what can be
   // derived without activity info
@@ -2130,6 +2129,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   const std::map<Instruction *, bool> can_modref_map =
       CA.compute_uncacheable_load_map();
   gutils->can_modref_map = &can_modref_map;
+  
+  gutils->forceAugmentedReturns();
 
   gutils->computeMinCache();
 
@@ -3707,7 +3708,6 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   const std::vector<bool> &_overwritten_argsPP = key.overwritten_args;
 
   gutils->forceActiveDetection();
-  gutils->forceAugmentedReturns();
 
   gutils->computeGuaranteedFrees();
 
@@ -3734,6 +3734,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       augmenteddata ? augmenteddata->can_modref_map
                     : CA.compute_uncacheable_load_map();
   gutils->can_modref_map = &can_modref_map;
+  
+  gutils->forceAugmentedReturns();
 
   std::map<std::pair<Instruction *, CacheType>, int> mapping;
   if (augmenteddata)
@@ -4306,7 +4308,6 @@ Function *EnzymeLogic::CreateForwardDiff(
       getGuaranteedUnreachable(gutils->oldFunc);
 
   gutils->forceActiveDetection();
-  gutils->forceAugmentedReturns();
 
   // TODO populate with actual unnecessaryInstructions once the dependency
   // cycle with activity analysis is removed
@@ -4349,6 +4350,8 @@ Function *EnzymeLogic::CreateForwardDiff(
     can_modref_map = std::make_unique<const std::map<Instruction *, bool>>(
         CA.compute_uncacheable_load_map());
     gutils->can_modref_map = can_modref_map.get();
+  
+    gutils->forceAugmentedReturns();
 
     auto getIndex = [&](Instruction *I, CacheType u) -> unsigned {
       assert(augmenteddata);
@@ -4406,7 +4409,7 @@ Function *EnzymeLogic::CreateForwardDiff(
       gutils->setTape(additionalValue);
     }
   } else {
-
+    gutils->forceAugmentedReturns();
     maker = new AdjointGenerator<const AugmentedReturn *>(
         mode, gutils, constant_args, retType, nullptr, {},
         /*returnuses*/ nullptr, nullptr, nullptr, unnecessaryValues,
