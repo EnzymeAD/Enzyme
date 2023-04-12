@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -early-cse -enzyme-preopt=false -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -early-cse -enzyme-preopt=false -S | FileCheck %s; fi
 ; RUN: if [ %llvmver -ge 12 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,early-cse" -enzyme-preopt=false -S | FileCheck %s ; fi
 
 declare double @fmod(double, double)
