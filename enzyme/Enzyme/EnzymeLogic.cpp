@@ -4754,19 +4754,19 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
   return BatchCachedFunctions[tup] = NewF;
 };
 
-llvm::Function *
-EnzymeLogic::CreateTrace(llvm::Function *totrace,
-                         SmallPtrSetImpl<Function *> &GenerativeFunctions,
-                         ProbProgMode mode, bool dynamic_interface) {
-  TraceCacheKey tup = std::make_tuple(totrace, mode, dynamic_interface);
+llvm::Function *EnzymeLogic::CreateTrace(
+    llvm::Function *totrace, SmallPtrSetImpl<Function *> &GenerativeFunctions,
+    ProbProgMode mode, bool autodiff, TraceInterface *interface) {
+  TraceCacheKey tup = std::make_tuple(totrace, mode);
   if (TraceCachedFunctions.find(tup) != TraceCachedFunctions.end()) {
     return TraceCachedFunctions.find(tup)->second;
   }
 
+  ValueToValueMapTy originalToNewFn;
   TraceUtils *tutils =
-      new TraceUtils(mode, dynamic_interface, totrace, GenerativeFunctions);
-
-  TraceGenerator *tracer = new TraceGenerator(*this, tutils);
+      TraceUtils::FromClone(mode, interface, totrace, originalToNewFn);
+  TraceGenerator *tracer = new TraceGenerator(
+      *this, tutils, autodiff, originalToNewFn, GenerativeFunctions);
 
   for (auto &&BB : *totrace) {
     for (auto &&Inst : BB) {
@@ -4784,6 +4784,16 @@ EnzymeLogic::CreateTrace(llvm::Function *totrace,
 
   delete tracer;
   delete tutils;
+
+  if (!autodiff) {
+    PPC.AlwaysInline(NewF);
+
+    if (PostOpt)
+      PPC.optimizeIntermediate(NewF);
+    if (EnzymePrint) {
+      llvm::errs() << *NewF << "\n";
+    }
+  }
 
   return TraceCachedFunctions[tup] = NewF;
 }

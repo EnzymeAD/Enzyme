@@ -588,6 +588,9 @@ public:
   struct Options {
     Value *differet;
     Value *tape;
+    Value *dynamic_interface;
+    std::pair<Value *, Value *> trace;
+    std::pair<Value *, Value *> observations;
     unsigned width;
     int allocatedTapeSize;
     bool freeMemory;
@@ -608,6 +611,9 @@ public:
 
     Value *differet = nullptr;
     Value *tape = nullptr;
+    Value *dynamic_interface = nullptr;
+    std::pair<Value *, Value *> trace = {nullptr, nullptr};
+    std::pair<Value *, Value *> observations = {nullptr, nullptr};
     unsigned width = 1;
     int allocatedTapeSize = -1;
     bool freeMemory = true;
@@ -800,6 +806,28 @@ public:
           continue;
         } else if (*metaString == "enzyme_width") {
           ++i;
+          continue;
+        } else if (*metaString == "enzyme_interface") {
+          ++i;
+          dynamic_interface = CI->getArgOperand(i);
+          continue;
+        } else if (*metaString == "enzyme_trace") {
+          trace.first = CI->getArgOperand(++i);
+          opt_ty = DIFFE_TYPE::CONSTANT;
+          continue;
+        } else if (*metaString == "enzyme_duptrace") {
+          trace.first = CI->getArgOperand(++i);
+          trace.second = CI->getArgOperand(++i);
+          opt_ty = DIFFE_TYPE::DUP_ARG;
+          continue;
+        } else if (*metaString == "enzyme_observations") {
+          observations.first = CI->getArgOperand(++i);
+          opt_ty = DIFFE_TYPE::CONSTANT;
+          continue;
+        } else if (*metaString == "enzyme_dupobservations") {
+          observations.first = CI->getArgOperand(++i);
+          observations.second = CI->getArgOperand(++i);
+          opt_ty = DIFFE_TYPE::DUP_ARG;
           continue;
         } else {
           EmitFailure("IllegalDiffeType", CI->getDebugLoc(), CI,
@@ -1035,7 +1063,8 @@ public:
       return {};
     }
 
-    return Optional<Options>({differet, tape, width, allocatedTapeSize,
+    return Optional<Options>({differet, tape, dynamic_interface, trace,
+                              observations, width, allocatedTapeSize,
                               freeMemory, returnUsed, tapeIsPointer,
                               differentialReturn, retType});
   }
@@ -1272,52 +1301,31 @@ public:
     return true;
   }
 
-  /// Return whether successful
-  bool HandleAutoDiff(CallInst *CI, DerivativeMode mode, bool sizeOnly) {
+  bool HandleAutoDiff(Instruction *CI, CallingConv::ID CallingConv, Value *ret,
+                      Type *retElemType, SmallVectorImpl<Value *> &args,
+                      const std::map<int, Type *> &byVal,
+                      const std::vector<DIFFE_TYPE> &constants, Function *fn,
+                      DerivativeMode mode, Options &options, bool sizeOnly) {
+    auto &differet = options.differet;
+    auto &tape = options.tape;
+    auto &width = options.width;
+    auto &allocatedTapeSize = options.allocatedTapeSize;
+    auto &freeMemory = options.freeMemory;
+    auto &returnUsed = options.returnUsed;
+    auto &tapeIsPointer = options.tapeIsPointer;
+    auto &differentialReturn = options.differentialReturn;
+    auto &retType = options.retType;
 
-    // determine function to differentiate
-    Function *fn = parseFunctionParameter(CI);
-    if (!fn)
-      return false;
-
-    IRBuilder<> Builder(CI);
-
-    if (EnzymePrint)
-      llvm::errs() << "prefn:\n" << *fn << "\n";
-
-    auto Arch =
-        llvm::Triple(
-            CI->getParent()->getParent()->getParent()->getTargetTriple())
-            .getArch();
-
+    auto Arch = Triple(CI->getModule()->getTargetTriple()).getArch();
     bool AtomicAdd = Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
                      Arch == Triple::amdgcn;
-
-    std::map<int, Type *> byVal;
-    std::vector<DIFFE_TYPE> constants;
-    SmallVector<Value *, 2> args;
-
-    auto options = handleArguments(Builder, CI, fn, mode, sizeOnly, constants,
-                                   args, byVal);
-
-    if (!options) {
-      return false;
-    }
-
-    auto differet = options->differet;
-    auto tape = options->tape;
-    auto width = options->width;
-    auto allocatedTapeSize = options->allocatedTapeSize;
-    auto freeMemory = options->freeMemory;
-    auto returnUsed = options->returnUsed;
-    auto tapeIsPointer = options->tapeIsPointer;
-    auto differentialReturn = options->differentialReturn;
-    auto retType = options->retType;
 
     TypeAnalysis TA(Logic.PPC.FAM);
     std::vector<bool> overwritten_args;
     FnTypeInfo type_args =
         populate_overwritten_args(TA, fn, mode, overwritten_args);
+
+    IRBuilder Builder(CI);
 
     // differentiate fn
     Function *newFunc = nullptr;
@@ -1537,13 +1545,12 @@ public:
     }
     assert(args.size() == newFunc->getFunctionType()->getNumParams());
     CallInst *diffretc = cast<CallInst>(Builder.CreateCall(newFunc, args));
-    diffretc->setCallingConv(CI->getCallingConv());
+    diffretc->setCallingConv(CallingConv);
     diffretc->setDebugLoc(CI->getDebugLoc());
 #if LLVM_VERSION_MAJOR >= 9
-    for (auto pair : byVal) {
+    for (auto &&[attr, ty] : byVal) {
       diffretc->addParamAttr(
-          pair.first,
-          Attribute::getWithByValType(diffretc->getContext(), pair.second));
+          attr, Attribute::getWithByValType(diffretc->getContext(), ty));
     }
 #endif
     Value *diffret = diffretc;
@@ -1572,10 +1579,8 @@ public:
           auto ST0 = StructType::get(ST->getContext(), tys);
           Value *out = UndefValue::get(ST0);
           for (unsigned i = 0; i < tys.size(); i++) {
-            unsigned in_idx[] = {i};
-            unsigned out_idx[] = {i + 1};
             out = Builder.CreateInsertValue(
-                out, Builder.CreateExtractValue(diffret, out_idx), in_idx);
+                out, Builder.CreateExtractValue(diffret, {i + 1}), {i});
           }
           diffret = out;
         } else {
@@ -1585,16 +1590,6 @@ public:
       }
     }
 
-    Value *ret = CI;
-    Type *retElemType = nullptr;
-    if (CI->hasStructRetAttr()) {
-      ret = CI->getArgOperand(0);
-#if LLVM_VERSION_MAJOR >= 15
-      retElemType = CI->getParamStructRetType(0);
-#else
-      retElemType = ret->getType()->getPointerElementType();
-#endif
-    }
     // Adapt the returned vector type to the struct type expected by our calling
     // convention.
     if (width > 1 && !diffret->getType()->isEmptyTy() &&
@@ -1666,64 +1661,104 @@ public:
     return true;
   }
 
+  /// Return whether successful
+  bool HandleAutoDiffArguments(CallInst *CI, DerivativeMode mode,
+                               bool sizeOnly) {
+
+    // determine function to differentiate
+    Function *fn = parseFunctionParameter(CI);
+    if (!fn)
+      return false;
+
+    IRBuilder<> Builder(CI);
+
+    if (EnzymePrint)
+      llvm::errs() << "prefn:\n" << *fn << "\n";
+
+    std::map<int, Type *> byVal;
+    std::vector<DIFFE_TYPE> constants;
+    SmallVector<Value *, 2> args;
+
+    auto options = handleArguments(Builder, CI, fn, mode, sizeOnly, constants,
+                                   args, byVal);
+
+    if (!options) {
+      return false;
+    }
+
+    Value *ret = CI;
+    Type *retElemType = nullptr;
+    if (CI->hasStructRetAttr()) {
+      ret = CI->getArgOperand(0);
+#if LLVM_VERSION_MAJOR >= 15
+      retElemType = CI->getParamStructRetType(0);
+#else
+      retElemType = ret->getType()->getPointerElementType();
+#endif
+    }
+
+    return HandleAutoDiff(CI, CI->getCallingConv(), ret, retElemType, args,
+                          byVal, constants, fn, mode, options.getValue(),
+                          sizeOnly);
+  }
+
   bool HandleProbProg(CallInst *CI, ProbProgMode mode) {
     IRBuilder<> Builder(CI);
     Function *F = parseFunctionParameter(CI);
     if (!F)
       return false;
 
-    bool sret = false;
+    assert(F);
+
+    std::vector<DIFFE_TYPE> constants;
+    std::map<int, Type *> byVal;
     SmallVector<Value *, 4> args;
-    Value *conditioning_trace = nullptr;
-    Value *dynamic_interface = nullptr;
 
-#if LLVM_VERSION_MAJOR >= 14
-    for (unsigned i = 1 + sret; i < CI->arg_size(); ++i)
-#else
-    for (unsigned i = 1 + sret; i < CI->getNumArgOperands(); ++i)
-#endif
-    {
-      Value *res = CI->getArgOperand(i);
-      auto metaString = getMetadataName(res);
+    auto diffeMode = DerivativeMode::ReverseModeCombined;
 
-      // handle metadata
-      if (metaString && metaString->startswith("enzyme_")) {
-        if (*metaString == "enzyme_interface") {
-          ++i;
-          dynamic_interface = CI->getArgOperand(i);
-          continue;
-        } else if (*metaString == "enzyme_condition") {
-          ++i;
-          conditioning_trace = CI->getArgOperand(i);
-          continue;
-        } else {
-          EmitFailure("IllegalDiffeType", CI->getDebugLoc(), CI,
-                      "illegal enzyme metadata classification ", *CI,
-                      *metaString);
-          return false;
-        }
-      }
+    auto opt = handleArguments(Builder, CI, F, diffeMode, false, constants,
+                               args, byVal);
 
-      args.push_back(res);
-    }
+    SmallVector<Value *, 6> dargs = SmallVector(args);
+
+    if (!opt.hasValue())
+      return false;
+
+    auto dynamic_interface = opt->dynamic_interface;
+    auto trace = opt->trace.first;
+    auto dtrace = opt->trace.second;
+    auto observations = opt->observations.first;
+    auto dobservations = opt->observations.second;
 
     // Interface
     bool has_dynamic_interface = dynamic_interface != nullptr;
-    std::unique_ptr<TraceInterface> interface;
+    TraceInterface *interface;
     if (has_dynamic_interface) {
       interface =
-          std::unique_ptr<DynamicTraceInterface>(new DynamicTraceInterface(
-              dynamic_interface, CI->getParent()->getParent()));
+          new DynamicTraceInterface(dynamic_interface, CI->getFunction());
     } else {
-      interface = std::unique_ptr<StaticTraceInterface>(
-          new StaticTraceInterface(F->getParent()));
+      interface = new StaticTraceInterface(F->getParent());
     }
 
-    if (dynamic_interface)
-      args.push_back(dynamic_interface);
+    if (mode == ProbProgMode::Condition) {
+      args.push_back(observations);
+      dargs.push_back(observations);
+      if (dobservations) {
+        dargs.push_back(dobservations);
+        constants.push_back(DIFFE_TYPE::DUP_ARG);
+      } else {
+        constants.push_back(DIFFE_TYPE::CONSTANT);
+      }
+    }
 
-    if (mode == ProbProgMode::Condition)
-      args.push_back(conditioning_trace);
+    args.push_back(trace);
+    dargs.push_back(trace);
+    if (dtrace) {
+      dargs.push_back(dtrace);
+      constants.push_back(DIFFE_TYPE::DUP_ARG);
+    } else {
+      constants.push_back(DIFFE_TYPE::CONSTANT);
+    }
 
     // Determine generative functions
     SmallPtrSet<Function *, 4> generativeFunctions;
@@ -1755,23 +1790,36 @@ public:
       }
 #endif
     }
+
+    bool autodiff = dtrace || dobservations;
+
     auto newFunc =
-        Logic.CreateTrace(F, generativeFunctions, mode, has_dynamic_interface);
+        Logic.CreateTrace(F, generativeFunctions, mode, autodiff, interface);
 
-    Value *trace =
-        Builder.CreateCall(interface->newTraceTy(), interface->newTrace(), {});
+    if (!autodiff) {
+      auto call = CallInst::Create(newFunc->getFunctionType(), newFunc, args);
+      ReplaceInstWithInst(CI, call);
+      return true;
+    }
 
-    args.push_back(trace);
+    Value *ret = CI;
+    Type *retElemType = nullptr;
+    if (CI->hasStructRetAttr()) {
+      ret = CI->getArgOperand(0);
+#if LLVM_VERSION_MAJOR >= 15
+      retElemType = CI->getParamStructRetType(0);
+#else
+      retElemType = ret->getType()->getPointerElementType();
+#endif
+    }
 
-    Builder.CreateCall(newFunc->getFunctionType(), newFunc, args);
+    bool status = HandleAutoDiff(
+        CI, CI->getCallingConv(), ret, retElemType, dargs, byVal, constants,
+        newFunc, DerivativeMode::ReverseModeCombined, opt.getValue(), false);
 
-    if (CI->getType() != trace->getType())
-      trace = Builder.CreatePointerCast(trace, CI->getType());
+    delete interface;
 
-    CI->replaceAllUsesWith(trace);
-    CI->eraseFromParent();
-
-    return true;
+    return status;
   }
 
   bool lowerEnzymeCalls(Function &F, std::set<Function *> &done) {
@@ -2255,15 +2303,15 @@ public:
 
     // Perform all the size replacements first to create constants
     for (auto pair : toSize) {
-      bool successful = HandleAutoDiff(pair.first, pair.second,
-                                       /*sizeOnly*/ true);
+      bool successful = HandleAutoDiffArguments(pair.first, pair.second,
+                                                /*sizeOnly*/ true);
       Changed = true;
       if (!successful)
         break;
     }
     for (auto pair : toLower) {
-      bool successful = HandleAutoDiff(pair.first, pair.second,
-                                       /*sizeOnly*/ false);
+      bool successful = HandleAutoDiffArguments(pair.first, pair.second,
+                                                /*sizeOnly*/ false);
       Changed = true;
       if (!successful)
         break;
