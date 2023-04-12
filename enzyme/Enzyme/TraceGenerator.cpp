@@ -49,13 +49,33 @@ using namespace llvm;
 
 TraceGenerator::TraceGenerator(
     EnzymeLogic &Logic, TraceUtils *tutils, bool autodiff,
-    llvm::ValueMap<const llvm::Value *, llvm::WeakTrackingVH> &originalToNewFn,
+    ValueMap<const Value *, WeakTrackingVH> &originalToNewFn,
     SmallPtrSetImpl<Function *> &generativeFunctions)
     : Logic(Logic), tutils(tutils), autodiff(autodiff),
       originalToNewFn(originalToNewFn),
       generativeFunctions(generativeFunctions) {
   assert(tutils);
 };
+
+void TraceGenerator::visitFunction(Function &F) {
+  auto fn = tutils->newFunc;
+  auto entry = fn->getEntryBlock().getFirstNonPHIOrDbgOrLifetime();
+
+  while (isa<AllocaInst>(entry) && entry->getNextNode()) {
+    entry = entry->getNextNode();
+  }
+
+  IRBuilder<> Builder(entry);
+
+  tutils->InsertFunction(Builder, tutils->newFunc);
+
+  auto attributes = fn->getAttributes();
+  for (int i = 0; i < fn->getFunctionType()->getNumParams(); ++i) {
+    if (!attributes.hasParamAttr(i, TraceUtils::TraceParameterAttribute) &&
+        !attributes.hasParamAttr(i, TraceUtils::ObservationsParameterAttribute))
+      tutils->InsertArgument(Builder, fn->getArg(i));
+  }
+}
 
 void TraceGenerator::handleSampleCall(CallInst &call, CallInst *new_call) {
   SmallVector<Value *, 4> Args;
@@ -284,7 +304,7 @@ void TraceGenerator::handleArbitraryCall(CallInst &call, CallInst *new_call) {
   new_call->eraseFromParent();
 }
 
-void TraceGenerator::visitCallInst(llvm::CallInst &call) {
+void TraceGenerator::visitCallInst(CallInst &call) {
 
   if (!generativeFunctions.count(call.getCalledFunction()))
     return;
@@ -297,4 +317,15 @@ void TraceGenerator::visitCallInst(llvm::CallInst &call) {
   } else {
     handleArbitraryCall(call, new_call);
   }
+}
+
+void TraceGenerator::visitReturnInst(ReturnInst &ret) {
+
+  if (!ret.getReturnValue())
+    return;
+
+  ReturnInst *new_ret = dyn_cast<ReturnInst>(originalToNewFn[&ret]);
+
+  IRBuilder<> Builder(new_ret);
+  tutils->InsertReturn(Builder, new_ret->getReturnValue());
 }
