@@ -4205,15 +4205,32 @@ public:
       case Intrinsic::vector_reduce_fmax: {
         if (vdiff && !gutils->isConstantValue(orig_ops[0])) {
           auto prev = lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2);
-          auto lhs = Builder2.CreateExtractElement(prev, (uint64_t)0);
-          auto rhs = Builder2.CreateExtractElement(prev, 1);
-          Value *cmp = Builder2.CreateFCmpOLT(lhs, rhs);
+          auto VT = cast<VectorType>(orig_ops[0]->getType());
+
+          assert(!VT->getElementCount().isScalable());
+          size_t numElems = VT->getElementCount().getKnownMinValue();
+          SmallVector<Value *> elems;
+          SmallVector<Value *> cmps;
+
+          for (size_t i = 0; i < numElems; ++i)
+            elems.push_back(Builder2.CreateExtractElement(prev, (uint64_t)i));
+
+          Value *curmax = elems[0];
+          for (size_t i = 0; i < numElems - 1; ++i) {
+            cmps.push_back(Builder2.CreateFCmpOLT(curmax, elems[i + 1]));
+            if (i + 2 != numElems)
+              curmax = Builder2.CreateSelect(cmps[i], elems[i + 1], curmax);
+          }
 
           auto rule = [&](Value *vdiff) {
             auto nv = Constant::getNullValue(orig_ops[0]->getType());
-            auto lhs_v = Builder2.CreateInsertElement(nv, vdiff, (uint64_t)0);
-            auto rhs_v = Builder2.CreateInsertElement(nv, vdiff, 1);
-            return Builder2.CreateSelect(cmp, rhs_v, lhs_v);
+            Value *res = Builder2.CreateInsertElement(nv, vdiff, (uint64_t)0);
+
+            for (size_t i = 0; i < numElems - 1; ++i) {
+              auto rhs_v = Builder2.CreateInsertElement(nv, vdiff, i + 1);
+              res = Builder2.CreateSelect(cmps[i], rhs_v, res);
+            }
+            return res;
           };
           Value *dif0 =
               applyChainRule(orig_ops[0]->getType(), Builder2, rule, vdiff);
@@ -4725,16 +4742,31 @@ public:
         if (gutils->isConstantInstruction(&I))
           return;
         auto prev = gutils->getNewFromOriginal(orig_ops[0]);
-        auto lhs = Builder2.CreateExtractElement(prev, (uint64_t)0);
-        auto rhs = Builder2.CreateExtractElement(prev, 1);
-        Value *cmp = Builder2.CreateFCmpOLT(lhs, rhs);
+        auto VT = cast<VectorType>(orig_ops[0]->getType());
+
+        assert(!VT->getElementCount().isScalable());
+        size_t numElems = VT->getElementCount().getKnownMinValue();
+        SmallVector<Value *> elems;
+        SmallVector<Value *> cmps;
+
+        for (size_t i = 0; i < numElems; ++i)
+          elems.push_back(Builder2.CreateExtractElement(prev, (uint64_t)i));
+
+        Value *curmax = elems[0];
+        for (size_t i = 0; i < numElems - 1; ++i) {
+          cmps.push_back(Builder2.CreateFCmpOLT(curmax, elems[i + 1]));
+          if (i + 2 != numElems)
+            curmax = Builder2.CreateSelect(cmps[i], elems[i + 1], curmax);
+        }
 
         auto rule = [&](Value *vdiff) {
-          auto lhs_v = Builder2.CreateExtractElement(vdiff, (uint64_t)0);
-          auto rhs_v = Builder2.CreateExtractElement(vdiff, 1);
+          Value *res = Builder2.CreateExtractElement(vdiff, (uint64_t)0);
 
-          Value *dif = Builder2.CreateSelect(cmp, rhs_v, lhs_v);
-          return dif;
+          for (size_t i = 0; i < numElems - 1; ++i) {
+            auto rhs_v = Builder2.CreateExtractElement(vdiff, i + 1);
+            res = Builder2.CreateSelect(cmps[i], rhs_v, res);
+          }
+          return res;
         };
         auto vdiff = diffe(orig_ops[0], Builder2);
 
