@@ -31,15 +31,26 @@
 
 #include "EnzymeLogic.h"
 #include "TraceUtils.h"
+#include "Utils.h"
 
 class TraceGenerator final : public llvm::InstVisitor<TraceGenerator> {
 private:
   EnzymeLogic &Logic;
   TraceUtils *const tutils;
   ProbProgMode mode = tutils->mode;
+  bool autodiff;
+  llvm::ValueMap<const llvm::Value *, llvm::WeakTrackingVH> &originalToNewFn;
+  llvm::SmallPtrSetImpl<llvm::Function *> &generativeFunctions;
 
 public:
-  TraceGenerator(EnzymeLogic &Logic, TraceUtils *const tutils);
+  TraceGenerator(EnzymeLogic &Logic, TraceUtils *tutils, bool autodiff,
+                 llvm::ValueMap<const llvm::Value *, llvm::WeakTrackingVH>
+                     &originalToNewFn,
+                 llvm::SmallPtrSetImpl<llvm::Function *> &generativeFunctions);
+
+  void handleSampleCall(llvm::CallInst &call, llvm::CallInst *new_call);
+
+  void handleArbitraryCall(llvm::CallInst &call, llvm::CallInst *new_call);
 
   void visitCallInst(llvm::CallInst &call);
 };

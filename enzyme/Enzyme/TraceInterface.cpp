@@ -34,6 +34,8 @@
 
 using namespace llvm;
 
+TraceInterface::TraceInterface(LLVMContext &C) : C(C){};
+
 IntegerType *TraceInterface::sizeType(LLVMContext &C) {
   return IntegerType::getInt64Ty(C);
 }
@@ -44,6 +46,7 @@ Type *TraceInterface::stringType(LLVMContext &C) {
 
 FunctionType *TraceInterface::getTraceTy() { return getTraceTy(C); }
 FunctionType *TraceInterface::getChoiceTy() { return getChoiceTy(C); }
+FunctionType *TraceInterface::getLikelihoodTy() { return getLikelihoodTy(C); }
 FunctionType *TraceInterface::insertCallTy() { return insertCallTy(C); }
 FunctionType *TraceInterface::insertChoiceTy() { return insertChoiceTy(C); }
 FunctionType *TraceInterface::newTraceTy() { return newTraceTy(C); }
@@ -61,6 +64,12 @@ FunctionType *TraceInterface::getChoiceTy(LLVMContext &C) {
   return FunctionType::get(sizeType(C),
                            {PointerType::getInt8PtrTy(C), stringType(C),
                             PointerType::getInt8PtrTy(C), sizeType(C)},
+                           false);
+}
+
+FunctionType *TraceInterface::getLikelihoodTy(LLVMContext &C) {
+  return FunctionType::get(Type::getDoubleTy(C),
+                           {PointerType::getInt8PtrTy(C), stringType(C)},
                            false);
 }
 
@@ -101,6 +110,8 @@ FunctionType *TraceInterface::hasChoiceTy(LLVMContext &C) {
 StaticTraceInterface::StaticTraceInterface(Module *M)
     : TraceInterface(M->getContext()) {
   for (auto &&F : M->functions()) {
+    if (F.isIntrinsic())
+      continue;
     if (F.getName().contains("__enzyme_newtrace")) {
       assert(F.getFunctionType() == newTraceTy());
       newTraceFunction = &F;
@@ -113,6 +124,9 @@ StaticTraceInterface::StaticTraceInterface(Module *M)
     } else if (F.getName().contains("__enzyme_get_choice")) {
       assert(F.getFunctionType() == getChoiceTy());
       getChoiceFunction = &F;
+    } else if (F.getName().contains("__enzyme_get_likelihood")) {
+      assert(F.getFunctionType() == getLikelihoodTy());
+      getLikelihoodFunction = &F;
     } else if (F.getName().contains("__enzyme_insert_call")) {
       assert(F.getFunctionType() == insertCallTy());
       insertCallFunction = &F;
@@ -131,31 +145,75 @@ StaticTraceInterface::StaticTraceInterface(Module *M)
     }
   }
 
-  assert(newTraceFunction != nullptr && freeTraceFunction != nullptr &&
-         getTraceFunction != nullptr && getChoiceFunction != nullptr &&
-         insertCallFunction != nullptr && insertChoiceFunction != nullptr &&
-         hasCallFunction != nullptr && hasChoiceFunction != nullptr &&
-         sampleFunction != nullptr);
+  newTraceFunction->addFnAttr("enzyme_notypeanalysis");
+  freeTraceFunction->addFnAttr("enzyme_notypeanalysis");
+  getTraceFunction->addFnAttr("enzyme_notypeanalysis");
+  getChoiceFunction->addFnAttr("enzyme_notypeanalysis");
+  getLikelihoodFunction->addFnAttr("enzyme_notypeanalysis");
+  insertCallFunction->addFnAttr("enzyme_notypeanalysis");
+  insertChoiceFunction->addFnAttr("enzyme_notypeanalysis");
+  hasCallFunction->addFnAttr("enzyme_notypeanalysis");
+  hasChoiceFunction->addFnAttr("enzyme_notypeanalysis");
+  sampleFunction->addFnAttr("enzyme_notypeanalysis");
+
+  newTraceFunction->addFnAttr("enzyme_inactive");
+  freeTraceFunction->addFnAttr("enzyme_inactive");
+  getTraceFunction->addFnAttr("enzyme_inactive");
+  getChoiceFunction->addFnAttr("enzyme_inactive");
+  getLikelihoodFunction->addFnAttr("enzyme_inactive");
+  insertCallFunction->addFnAttr("enzyme_inactive");
+  insertChoiceFunction->addFnAttr("enzyme_inactive");
+  hasCallFunction->addFnAttr("enzyme_inactive");
+  hasChoiceFunction->addFnAttr("enzyme_inactive");
+  sampleFunction->addFnAttr("enzyme_inactive");
+
+  assert(newTraceFunction);
+  assert(freeTraceFunction);
+  assert(getTraceFunction);
+  assert(getChoiceFunction);
+  assert(getLikelihoodFunction);
+  assert(insertCallFunction);
+  assert(insertChoiceFunction);
+  assert(hasCallFunction);
+  assert(hasChoiceFunction);
+  assert(sampleFunction);
 }
 
 // implemented by enzyme
 Function *StaticTraceInterface::getSampleFunction() { return sampleFunction; }
 
 // user implemented
-Value *StaticTraceInterface::getTrace() { return getTraceFunction; }
-Value *StaticTraceInterface::getChoice() { return getChoiceFunction; }
-Value *StaticTraceInterface::insertCall() { return insertCallFunction; }
-Value *StaticTraceInterface::insertChoice() { return insertChoiceFunction; }
-Value *StaticTraceInterface::newTrace() { return newTraceFunction; }
-Value *StaticTraceInterface::freeTrace() { return freeTraceFunction; }
-Value *StaticTraceInterface::hasCall() { return hasCallFunction; }
-Value *StaticTraceInterface::hasChoice() { return hasChoiceFunction; }
+Value *StaticTraceInterface::getTrace(IRBuilder<> &Builder) {
+  return getTraceFunction;
+}
+Value *StaticTraceInterface::getChoice(IRBuilder<> &Builder) {
+  return getChoiceFunction;
+}
+Value *StaticTraceInterface::getLikelihood(IRBuilder<> &Builder) {
+  return getLikelihoodFunction;
+}
+Value *StaticTraceInterface::insertCall(IRBuilder<> &Builder) {
+  return insertCallFunction;
+}
+Value *StaticTraceInterface::insertChoice(IRBuilder<> &Builder) {
+  return insertChoiceFunction;
+}
+Value *StaticTraceInterface::newTrace(IRBuilder<> &Builder) {
+  return newTraceFunction;
+}
+Value *StaticTraceInterface::freeTrace(IRBuilder<> &Builder) {
+  return freeTraceFunction;
+}
+Value *StaticTraceInterface::hasCall(IRBuilder<> &Builder) {
+  return hasCallFunction;
+}
+Value *StaticTraceInterface::hasChoice(IRBuilder<> &Builder) {
+  return hasChoiceFunction;
+}
 
 DynamicTraceInterface::DynamicTraceInterface(Value *dynamicInterface,
                                              Function *F)
-    : TraceInterface(F->getContext()), dynamicInterface(dynamicInterface),
-      F(F) {
-
+    : TraceInterface(F->getContext()) {
   for (auto &&interface_func : F->getParent()->functions()) {
     if (interface_func.getName().contains(TraceInterface::sampleFunctionName)) {
       assert(interface_func.getFunctionType()->getNumParams() >= 3);
@@ -164,105 +222,224 @@ DynamicTraceInterface::DynamicTraceInterface(Value *dynamicInterface,
   }
 
   assert(sampleFunction);
+  assert(dynamicInterface);
+
+  auto &M = *F->getParent();
+  IRBuilder<> Builder(F->getEntryBlock().getFirstNonPHIOrDbg());
+
+  getTraceFunction = MaterializeGetTrace(Builder, dynamicInterface, M);
+  getChoiceFunction = MaterializeGetChoice(Builder, dynamicInterface, M);
+  getLikelihoodFunction =
+      MaterializeGetLikelihood(Builder, dynamicInterface, M);
+  insertCallFunction = MaterializeInsertCall(Builder, dynamicInterface, M);
+  insertChoiceFunction = MaterializeInsertChoice(Builder, dynamicInterface, M);
+  newTraceFunction = MaterializeNewTrace(Builder, dynamicInterface, M);
+  freeTraceFunction = MaterializeFreeTrace(Builder, dynamicInterface, M);
+  hasCallFunction = MaterializeHasCall(Builder, dynamicInterface, M);
+  hasChoiceFunction = MaterializeHasChoice(Builder, dynamicInterface, M);
+
+  assert(getTraceFunction);
+  assert(getChoiceFunction);
+  assert(getLikelihoodFunction);
+  assert(insertCallFunction);
+  assert(insertChoiceFunction);
+  assert(newTraceFunction);
+  assert(freeTraceFunction);
+  assert(hasCallFunction);
+  assert(hasChoiceFunction);
 }
 
-// implemented by enzyme
-Function *DynamicTraceInterface::getSampleFunction() { return sampleFunction; }
-
-// user implemented
-Value *DynamicTraceInterface::getTrace() {
-  if (getTraceFunction)
-    return getTraceFunction;
-
-  IRBuilder<> Builder(F->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
-
+GlobalVariable *
+DynamicTraceInterface::MaterializeGetTrace(IRBuilder<> &Builder,
+                                           Value *dynamicInterface, Module &M) {
   auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(), dynamicInterface,
                                        Builder.getInt32(0));
   auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
-  return getTraceFunction = Builder.CreatePointerCast(
-             load, PointerType::getUnqual(getTraceTy()), "get_trace");
+  auto pty = PointerType::get(getTraceTy(), load->getPointerAddressSpace());
+  auto cast = Builder.CreatePointerCast(load, pty, "get_trace");
+
+  auto global =
+      new GlobalVariable(M, pty, false, GlobalVariable::PrivateLinkage,
+                         ConstantPointerNull::get(pty), "get_trace");
+  Builder.CreateStore(cast, global);
+
+  return global;
 }
 
-Value *DynamicTraceInterface::getChoice() {
-  if (getChoiceFunction)
-    return getChoiceFunction;
-
-  IRBuilder<> Builder(F->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+GlobalVariable *DynamicTraceInterface::MaterializeGetChoice(
+    IRBuilder<> &Builder, Value *dynamicInterface, Module &M) {
   auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(), dynamicInterface,
                                        Builder.getInt32(1));
   auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
-  return getChoiceFunction = Builder.CreatePointerCast(
-             load, PointerType::getUnqual(getChoiceTy()), "get_choice");
+  auto pty = PointerType::get(getChoiceTy(), load->getPointerAddressSpace());
+  auto cast = Builder.CreatePointerCast(load, pty, "get_choice");
+
+  auto global =
+      new GlobalVariable(M, pty, false, GlobalVariable::PrivateLinkage,
+                         ConstantPointerNull::get(pty), "get_choice");
+  Builder.CreateStore(cast, global);
+
+  return global;
 }
 
-Value *DynamicTraceInterface::insertCall() {
-  if (insertCallFunction)
-    return insertCallFunction;
-
-  IRBuilder<> Builder(F->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+GlobalVariable *DynamicTraceInterface::MaterializeGetLikelihood(
+    IRBuilder<> &Builder, Value *dynamicInterface, Module &M) {
   auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(), dynamicInterface,
-                                       Builder.getInt32(2));
+                                       Builder.getInt32(8));
   auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
-  return insertCallFunction = Builder.CreatePointerCast(
-             load, PointerType::getUnqual(insertCallTy()), "insert_call");
+  auto pty = PointerType::get(getChoiceTy(), load->getPointerAddressSpace());
+  auto cast = Builder.CreatePointerCast(load, pty, "get_likelihood");
+
+  auto global =
+      new GlobalVariable(M, pty, false, GlobalVariable::PrivateLinkage,
+                         ConstantPointerNull::get(pty), "get_likelihood");
+  Builder.CreateStore(cast, global);
+
+  return global;
 }
 
-Value *DynamicTraceInterface::insertChoice() {
-  if (insertChoiceFunction)
-    return insertChoiceFunction;
+GlobalVariable *DynamicTraceInterface::MaterializeInsertCall(
+    IRBuilder<> &Builder, Value *dynamicInterface, Module &M) {
+  auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(), dynamicInterface,
+                                       Builder.getInt32(8));
+  auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
+  auto pty = PointerType::get(insertCallTy(), load->getPointerAddressSpace());
+  auto cast = Builder.CreatePointerCast(load, pty, "get_likelihood");
 
-  IRBuilder<> Builder(F->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+  auto global =
+      new GlobalVariable(M, pty, false, GlobalVariable::PrivateLinkage,
+                         ConstantPointerNull::get(pty), "get_likelihood");
+  Builder.CreateStore(cast, global);
+
+  return global;
+}
+
+GlobalVariable *DynamicTraceInterface::MaterializeInsertChoice(
+    IRBuilder<> &Builder, Value *dynamicInterface, Module &M) {
   auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(), dynamicInterface,
                                        Builder.getInt32(3));
   auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
-  return insertChoiceFunction = Builder.CreatePointerCast(
-             load, PointerType::getUnqual(insertChoiceTy()), "insert_choice");
+  auto pty = PointerType::get(insertChoiceTy(), load->getPointerAddressSpace());
+  auto cast = Builder.CreatePointerCast(load, pty, "insert_choice");
+
+  auto global =
+      new GlobalVariable(M, pty, false, GlobalVariable::PrivateLinkage,
+                         ConstantPointerNull::get(pty), "insert_choice");
+  Builder.CreateStore(cast, global);
+
+  return global;
 }
 
-Value *DynamicTraceInterface::newTrace() {
-  if (newTraceFunction)
-    return newTraceFunction;
-
-  IRBuilder<> Builder(F->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+GlobalVariable *
+DynamicTraceInterface::MaterializeNewTrace(IRBuilder<> &Builder,
+                                           Value *dynamicInterface, Module &M) {
   auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(), dynamicInterface,
                                        Builder.getInt32(4));
   auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
-  return newTraceFunction = Builder.CreatePointerCast(
-             load, PointerType::getUnqual(newTraceTy()), "new_trace");
+  auto pty = PointerType::get(newTraceTy(), load->getPointerAddressSpace());
+  auto cast = Builder.CreatePointerCast(load, pty, "new_trace");
+
+  auto global =
+      new GlobalVariable(M, pty, false, GlobalVariable::PrivateLinkage,
+                         ConstantPointerNull::get(pty), "new_trace");
+  Builder.CreateStore(cast, global);
+
+  return global;
 }
 
-Value *DynamicTraceInterface::freeTrace() {
-  if (freeTraceFunction)
-    return freeTraceFunction;
-
-  IRBuilder<> Builder(F->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+GlobalVariable *DynamicTraceInterface::MaterializeFreeTrace(
+    IRBuilder<> &Builder, Value *dynamicInterface, Module &M) {
   auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(), dynamicInterface,
                                        Builder.getInt32(5));
   auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
-  return freeTraceFunction = Builder.CreatePointerCast(
-             load, PointerType::getUnqual(freeTraceTy()), "free_trace");
+  auto pty = PointerType::get(freeTraceTy(), load->getPointerAddressSpace());
+  auto cast = Builder.CreatePointerCast(load, pty, "free_trace");
+
+  auto global =
+      new GlobalVariable(M, pty, false, GlobalVariable::PrivateLinkage,
+                         ConstantPointerNull::get(pty), "free_trace");
+  Builder.CreateStore(cast, global);
+
+  return global;
 }
 
-Value *DynamicTraceInterface::hasCall() {
-  if (hasCallFunction)
-    return hasCallFunction;
-
-  IRBuilder<> Builder(F->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+GlobalVariable *
+DynamicTraceInterface::MaterializeHasCall(IRBuilder<> &Builder,
+                                          Value *dynamicInterface, Module &M) {
   auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(), dynamicInterface,
                                        Builder.getInt32(6));
   auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
-  return hasCallFunction = Builder.CreatePointerCast(
-             load, PointerType::getUnqual(hasCallTy()), "has_call");
+  auto pty = PointerType::get(hasCallTy(), load->getPointerAddressSpace());
+  auto cast = Builder.CreatePointerCast(load, pty, "has_call");
+
+  auto global =
+      new GlobalVariable(M, pty, false, GlobalVariable::PrivateLinkage,
+                         ConstantPointerNull::get(pty), "has_call");
+  Builder.CreateStore(cast, global);
+
+  return global;
 }
 
-Value *DynamicTraceInterface::hasChoice() {
-  if (hasChoiceFunction)
-    return hasChoiceFunction;
-
-  IRBuilder<> Builder(F->getEntryBlock().getFirstNonPHIOrDbgOrLifetime());
+GlobalVariable *DynamicTraceInterface::MaterializeHasChoice(
+    IRBuilder<> &Builder, Value *dynamicInterface, Module &M) {
   auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(), dynamicInterface,
                                        Builder.getInt32(7));
   auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
-  return hasChoiceFunction = Builder.CreatePointerCast(
-             load, PointerType::getUnqual(hasChoiceTy()), "has_choice");
+  auto pty = PointerType::get(hasChoiceTy(), load->getPointerAddressSpace());
+  auto cast = Builder.CreatePointerCast(load, pty, "has_choice");
+
+  auto global =
+      new GlobalVariable(M, pty, false, GlobalVariable::PrivateLinkage,
+                         ConstantPointerNull::get(pty), "has_choice");
+  Builder.CreateStore(cast, global);
+
+  return global;
+}
+
+Function *DynamicTraceInterface::getSampleFunction() { return sampleFunction; }
+
+// user implemented
+Value *DynamicTraceInterface::getTrace(IRBuilder<> &Builder) {
+  return Builder.CreateLoad(getTraceFunction->getValueType(), getTraceFunction,
+                            "get_trace");
+}
+
+Value *DynamicTraceInterface::getChoice(IRBuilder<> &Builder) {
+  return Builder.CreateLoad(getChoiceFunction->getValueType(),
+                            getChoiceFunction, "get_choice");
+}
+
+Value *DynamicTraceInterface::getLikelihood(IRBuilder<> &Builder) {
+  return Builder.CreateLoad(getLikelihoodFunction->getValueType(),
+                            getLikelihoodFunction, "get_likelihood");
+}
+
+Value *DynamicTraceInterface::insertCall(IRBuilder<> &Builder) {
+  return Builder.CreateLoad(insertCallFunction->getValueType(),
+                            insertCallFunction, "insert_call");
+}
+
+Value *DynamicTraceInterface::insertChoice(IRBuilder<> &Builder) {
+  return Builder.CreateLoad(insertChoiceFunction->getValueType(),
+                            insertChoiceFunction, "insert_choice");
+}
+
+Value *DynamicTraceInterface::newTrace(IRBuilder<> &Builder) {
+  return Builder.CreateLoad(newTraceFunction->getValueType(), newTraceFunction,
+                            "new_trace");
+}
+
+Value *DynamicTraceInterface::freeTrace(IRBuilder<> &Builder) {
+  return Builder.CreateLoad(freeTraceFunction->getValueType(),
+                            freeTraceFunction, "free_trace");
+}
+
+Value *DynamicTraceInterface::hasCall(IRBuilder<> &Builder) {
+  return Builder.CreateLoad(hasCallFunction->getValueType(), hasCallFunction,
+                            "has_call");
+}
+
+Value *DynamicTraceInterface::hasChoice(IRBuilder<> &Builder) {
+  return Builder.CreateLoad(hasChoiceFunction->getValueType(),
+                            hasChoiceFunction, "has_choice");
 }
