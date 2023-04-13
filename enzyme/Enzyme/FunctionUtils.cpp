@@ -876,9 +876,7 @@ Function *CreateMPIWrapper(Function *F) {
     Attribute::NoFree,
     Attribute::NoSync,
 #endif
-#if LLVM_VERSION_MAJOR >= 16
-    Attribute::Memory
-#else
+#if LLVM_VERSION_MAJOR < 16
     Attribute::InaccessibleMemOnly
 #endif
   };
@@ -889,6 +887,11 @@ Function *CreateMPIWrapper(Function *F) {
     W->addAttribute(AttributeList::FunctionIndex, attr);
 #endif
   }
+#if LLVM_VERSION_MAJOR >= 16
+    W->addFnAttr(Attribute::getWithMemoryEffects(
+                        F->getContext(),
+                        MemoryEffects::inaccessibleOrArgMemOnly()));
+#endif
 #if LLVM_VERSION_MAJOR >= 14
   W->addFnAttr(Attribute::get(F->getContext(), "enzyme_inactive"));
 #else

@@ -2010,7 +2010,9 @@ public:
 #if LLVM_VERSION_MAJOR >= 16
           Fn->setMemoryEffects(MemoryEffects::inaccessibleMemOnly());
           CI->addAttribute(AttributeList::FunctionIndex,
-                           Attribute::Memory);
+                           Attribute::getWithMemoryEffects(
+                            CI->getContext(),
+                            MemoryEffects::inaccessibleMemOnly()));
 #else
           Fn->addFnAttr(Attribute::InaccessibleMemOnly);
           CI->addAttribute(AttributeList::FunctionIndex,
@@ -2033,7 +2035,10 @@ public:
         if (Fn->getName() == "frexp" || Fn->getName() == "frexpf" ||
             Fn->getName() == "frexpl") {
 #if LLVM_VERSION_MAJOR >= 16
-          CI->addAttribute(AttributeList::FunctionIndex, Attribute::Memory);
+          CI->addAttribute(AttributeList::FunctionIndex,
+                           Attribute::getWithMemoryEffects(
+                            CI->getContext(),
+                            MemoryEffects::argMemOnly()));
 #else
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ArgMemOnly);
 #endif
@@ -2054,7 +2059,9 @@ public:
 #if LLVM_VERSION_MAJOR >= 16
           Fn->setMemoryEffects(MemoryEffects::inaccessibleMemOnly());
           CI->addAttribute(AttributeList::FunctionIndex,
-                           Attribute::Memory);
+                           Attribute::getWithMemoryEffects(
+                            CI->getContext(),
+                            MemoryEffects::inaccessibleMemOnly()));
 #else
           Fn->addFnAttr(Attribute::InaccessibleMemOnly);
           CI->addAttribute(AttributeList::FunctionIndex,
@@ -2065,7 +2072,9 @@ public:
 #if LLVM_VERSION_MAJOR >= 16
           Fn->setMemoryEffects(MemoryEffects::inaccessibleOrArgMemOnly());
           CI->addAttribute(AttributeList::FunctionIndex,
-                           Attribute::Memory);
+                           Attribute::getWithMemoryEffects(
+                            CI->getContext(),
+                            MemoryEffects::inaccessibleOrArgMemOnly()));
 #else
           Fn->addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
           CI->addAttribute(AttributeList::FunctionIndex,
@@ -2089,7 +2098,9 @@ public:
 #if LLVM_VERSION_MAJOR >= 16
           Fn->setMemoryEffects(MemoryEffects::inaccessibleOrArgMemOnly());
           CI->addAttribute(AttributeList::FunctionIndex,
-                           Attribute::Memory);
+                           Attribute::getWithMemoryEffects(
+                            CI->getContext(),
+                            MemoryEffects::inaccessibleOrArgMemOnly()));
 #else
           Fn->addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
           CI->addAttribute(AttributeList::FunctionIndex,
@@ -2116,7 +2127,9 @@ public:
 #if LLVM_VERSION_MAJOR >= 16
           Fn->setMemoryEffects(MemoryEffects::inaccessibleOrArgMemOnly());
           CI->addAttribute(AttributeList::FunctionIndex,
-                           Attribute::Memory);
+                           Attribute::getWithMemoryEffects(
+                            CI->getContext(),
+                            MemoryEffects::inaccessibleOrArgMemOnly()));
 #else
           Fn->addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
           CI->addAttribute(AttributeList::FunctionIndex,
@@ -2143,7 +2156,9 @@ public:
 #if LLVM_VERSION_MAJOR >= 16
           Fn->setMemoryEffects(MemoryEffects::inaccessibleOrArgMemOnly());
           CI->addAttribute(AttributeList::FunctionIndex,
-                           Attribute::Memory);
+                           Attribute::getWithMemoryEffects(
+                            CI->getContext(),
+                            MemoryEffects::inaccessibleOrArgMemOnly()));
 #else
           Fn->addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
           CI->addAttribute(AttributeList::FunctionIndex,
@@ -2175,7 +2190,9 @@ public:
 #if LLVM_VERSION_MAJOR >= 16
           Fn->setMemoryEffects(MemoryEffects::inaccessibleOrArgMemOnly());
           CI->addAttribute(AttributeList::FunctionIndex,
-                           Attribute::Memory);
+                           Attribute::getWithMemoryEffects(
+                            CI->getContext(),
+                            MemoryEffects::inaccessibleOrArgMemOnly()));
 #else
           Fn->addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
           CI->addAttribute(AttributeList::FunctionIndex,
