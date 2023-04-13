@@ -1,13 +1,28 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -S | FileCheck %s
+; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s
 
 @enzyme_observations = global i32 0
+@enzyme_duptrace = global i32 0
 @enzyme_trace = global i32 0
 
 @.str = private constant [3 x i8] c"mu\00"
 @.str.1 = private constant [2 x i8] c"x\00"
 
 declare double @normal(double, double)
-declare double @normal_logpdf(double, double, double)
+declare double @exp(double)
+declare double @log(double)
+
+define double @normal_logpdf(double %mean, double %var, double %x) {
+  %i = fdiv double 1.000000e+00, %var
+  %i3 = fmul double %i, 0x40040D931FF62705
+  %i4 = fdiv double %mean, %var
+  %i5 = fsub double %x, %i4
+  %i6 = fmul double %i5, %i5
+  %i7 = fmul double %i6, -5.000000e-01
+  %i8 = tail call double @exp(double %i7)
+  %i9 = fmul double %i3, %i8
+  %i10 = tail call double @log(double %i9)
+  ret double %i10
+}
 
 declare i8* @__enzyme_newtrace()
 declare void @__enzyme_freetrace(i8*)
@@ -20,7 +35,7 @@ declare i1 @__enzyme_has_call(i8*, i8*)
 declare i1 @__enzyme_has_choice(i8*, i8*)
 declare double @__enzyme_sample(double (double, double)*, double (double, double, double)*, i8*, double, double)
 declare void @__enzyme_trace(void ()*, i32, i8*)
-declare void @__enzyme_condition(void ()*, i32, i8*, i32, i8*)
+declare void @__enzyme_condition(void ()*, i32, i8*, i32, i8*, i8*)
 
 define void @test() {
 entry:
@@ -41,16 +56,22 @@ define i8* @condition(i8* %observations) {
 entry:
   %0 = load i32, i32* @enzyme_observations
   %1 = load i32, i32* @enzyme_trace
+  %2 = load i32, i32* @enzyme_duptrace
   %trace = call i8* @__enzyme_newtrace()
-  call void @__enzyme_condition(void ()* @test, i32 %0, i8* %observations, i32 %1, i8* %trace)
-  ret i8* %trace
+  %dtrace = call i8* @__enzyme_newtrace()
+  call void @__enzyme_condition(void ()* @test, i32 %0, i8* %observations, i32 %2, i8* %trace, i8* %dtrace)
+  ret i8* %dtrace
 }
 
 
-; CHECK: define internal void @condition_test(i8* "enzyme_observations" %observations, i8* "enzyme_trace" %trace)
+; CHECK: define internal void @diffecondition_test(i8* "enzyme_observations" %observations, i8* "enzyme_trace" %trace, i8* %"trace'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %x.ptr.i = alloca double
 ; CHECK-NEXT:   %mu.ptr.i = alloca double
+; CHECK-NEXT:   %"mu'de" = alloca double
+; CHECK-NEXT:   store double 0.000000e+00, double* %"mu'de"
+; CHECK-NEXT:   %.ptr1 = alloca double
+; CHECK-NEXT:   %.ptr = alloca double
 ; CHECK-NEXT:   %0 = bitcast double* %mu.ptr.i to i8*
 ; CHECK-NEXT:   call void @llvm.lifetime.start.p0i8(i64 8, i8* %0)
 ; CHECK-NEXT:   %has.choice.mu.i = call i1 @__enzyme_has_choice(i8* %observations, i8* nocapture readonly getelementptr inbounds ([3 x i8], [3 x i8]* @.str, i64 0, i64 0))
@@ -97,5 +118,32 @@ entry:
 ; CHECK-NEXT:   call void @__enzyme_insert_choice(i8* %trace, i8* nocapture readonly getelementptr inbounds ([2 x i8], [2 x i8]* @.str.1, i64 0, i64 0), double %likelihood.x.i, i8* %10, i64 8)
 ; CHECK-NEXT:   %11 = bitcast double* %x.ptr.i to i8*
 ; CHECK-NEXT:   call void @llvm.lifetime.end.p0i8(i64 8, i8* %11)
-; CHECK-NEXT:   ret
+; CHECK-NEXT:   br label %invertentry
+
+; CHECK: invertentry:                                      ; preds = %condition_x.exit
+; CHECK-NEXT:   %12 = call fast double @__enzyme_get_likelihood(i8* %observations, i8* getelementptr inbounds ([2 x i8], [2 x i8]* @.str.1, i64 0, i64 0))
+; CHECK-NEXT:   %13 = call { double, double } @diffenormal_logpdf(double %2, double 1.000000e+00, double %8, double %12)
+; CHECK-NEXT:   %14 = extractvalue { double, double } %13, 0
+; CHECK-NEXT:   %15 = load double, double* %"mu'de"
+; CHECK-NEXT:   %16 = fadd fast double %15, %14
+; CHECK-NEXT:   store double %16, double* %"mu'de"
+; CHECK-NEXT:   %17 = extractvalue { double, double } %13, 1
+; CHECK-NEXT:   %18 = bitcast double* %.ptr to i8*
+; CHECK-NEXT:   %.size = call i64 @__enzyme_get_choice(i8* %observations, i8* nocapture readonly getelementptr inbounds ([2 x i8], [2 x i8]* @.str.1, i64 0, i64 0), i8* %18, i64 8)
+; CHECK-NEXT:   %from.trace. = load double, double* %.ptr
+; CHECK-NEXT:   %19 = fadd fast double %from.trace., %8
+; CHECK-NEXT:   %20 = bitcast double %19 to i64
+; CHECK-NEXT:   %21 = inttoptr i64 %20 to i8*
+; CHECK-NEXT:   call void @__enzyme_insert_choice(i8* %observations, i8* nocapture readonly getelementptr inbounds ([2 x i8], [2 x i8]* @.str.1, i64 0, i64 0), double 0.000000e+00, i8* %21, i64 8)
+; CHECK-NEXT:   %22 = call fast double @__enzyme_get_likelihood(i8* %observations, i8* getelementptr inbounds ([3 x i8], [3 x i8]* @.str, i64 0, i64 0))
+; CHECK-NEXT:   %23 = call { double } @diffenormal_logpdf.1(double 0.000000e+00, double 1.000000e+00, double %2, double %22)
+; CHECK-NEXT:   %24 = extractvalue { double } %23, 0
+; CHECK-NEXT:   %25 = bitcast double* %.ptr1 to i8*
+; CHECK-NEXT:   %.size2 = call i64 @__enzyme_get_choice(i8* %observations, i8* nocapture readonly getelementptr inbounds ([3 x i8], [3 x i8]* @.str, i64 0, i64 0), i8* %25, i64 8)
+; CHECK-NEXT:   %from.trace.3 = load double, double* %.ptr1
+; CHECK-NEXT:   %26 = fadd fast double %from.trace.3, %2
+; CHECK-NEXT:   %27 = bitcast double %26 to i64
+; CHECK-NEXT:   %28 = inttoptr i64 %27 to i8*
+; CHECK-NEXT:   call void @__enzyme_insert_choice(i8* %observations, i8* nocapture readonly getelementptr inbounds ([3 x i8], [3 x i8]* @.str, i64 0, i64 0), double 0.000000e+00, i8* %28, i64 8)
+; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

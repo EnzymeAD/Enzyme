@@ -197,10 +197,16 @@ public:
 
   unsigned getCacheAlignment(unsigned bsize) const {
     if ((bsize & (bsize - 1)) == 0) {
-      if (bsize > 16)
-        return 16;
+      if (bsize > 8)
+        return 8;
       else
         return bsize;
+    } else if (bsize > 0 && bsize % 8 == 0) {
+      return 8;
+    } else if (bsize > 0 && bsize % 4 == 0) {
+      return 4;
+    } else if (bsize > 0 && bsize % 2 == 0) {
+      return 2;
     } else
       return 1;
   }
@@ -378,9 +384,9 @@ public:
   /// pointer that can hold the underlying type being cached. This value should
   /// be computed at BuilderM. Optionally, instructions needed to generate this
   /// pointer can be stored in scopeInstructions
-  llvm::Value *getCachePointer(bool inForwardPass, llvm::IRBuilder<> &BuilderM,
-                               LimitContext ctx, llvm::Value *cache, bool isi1,
-                               bool storeInInstructionsMap,
+  llvm::Value *getCachePointer(llvm::Type *T, bool inForwardPass,
+                               llvm::IRBuilder<> &BuilderM, LimitContext ctx,
+                               llvm::Value *cache, bool storeInInstructionsMap,
                                const llvm::ValueToValueMapTy &available,
                                llvm::Value *extraSize);
 

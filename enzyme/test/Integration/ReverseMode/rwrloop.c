@@ -27,6 +27,8 @@ double alldiv(double* __restrict__ a, int *__restrict__ N) {
   return sum;
 }
 
+int enzyme_dup, enzyme_const;
+
 int main(int argc, char** argv) {
 
   int N = 10;
@@ -40,7 +42,7 @@ int main(int argc, char** argv) {
   double d_a[N][N];
   memset((void*)d_a, 0, sizeof(d_a));
   
-  double dstart = __enzyme_autodiff((void*)alldiv, (double*)a, (double*)d_a, &N);
+  double dstart = __enzyme_autodiff((void*)alldiv, enzyme_dup, (double*)a, (double*)d_a, enzyme_const, &N);
   N = 10;
 
   for(int i=0; i<N; i++) {

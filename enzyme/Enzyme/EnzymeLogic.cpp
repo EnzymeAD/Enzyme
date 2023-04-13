@@ -2105,7 +2105,6 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   std::vector<bool> _overwritten_argsPP = _overwritten_args;
 
   gutils->forceActiveDetection();
-  gutils->forceAugmentedReturns();
 
   // TODO actually populate unnecessaryInstructions with what can be
   // derived without activity info
@@ -2130,6 +2129,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   const std::map<Instruction *, bool> can_modref_map =
       CA.compute_uncacheable_load_map();
   gutils->can_modref_map = &can_modref_map;
+
+  gutils->forceAugmentedReturns();
 
   gutils->computeMinCache();
 
@@ -3387,6 +3388,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                             .freeMemory = key.freeMemory,
                             .AtomicAdd = key.AtomicAdd,
                             .additionalType = tape ? tape->getType() : nullptr,
+                            .forceAnonymousTape = key.forceAnonymousTape,
                             .typeInfo = key.typeInfo},
           TA, &aug, omp);
 
@@ -3466,6 +3468,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
                             .freeMemory = key.freeMemory,
                             .AtomicAdd = key.AtomicAdd,
                             .additionalType = nullptr,
+                            .forceAnonymousTape = key.forceAnonymousTape,
                             .typeInfo = key.typeInfo},
           TA, augmenteddata, omp);
 
@@ -3707,7 +3710,6 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   const std::vector<bool> &_overwritten_argsPP = key.overwritten_args;
 
   gutils->forceActiveDetection();
-  gutils->forceAugmentedReturns();
 
   gutils->computeGuaranteedFrees();
 
@@ -3734,6 +3736,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
       augmenteddata ? augmenteddata->can_modref_map
                     : CA.compute_uncacheable_load_map();
   gutils->can_modref_map = &can_modref_map;
+
+  gutils->forceAugmentedReturns();
 
   std::map<std::pair<Instruction *, CacheType>, int> mapping;
   if (augmenteddata)
@@ -3766,8 +3770,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     assert(augmenteddata);
 
     // TODO VERIFY THIS
-    if (augmenteddata->tapeType &&
-        augmenteddata->tapeType != additionalValue->getType()) {
+    if (augmenteddata->tapeType && (omp || key.forceAnonymousTape)) {
       IRBuilder<> BuilderZ(gutils->inversionAllocs);
       if (!augmenteddata->tapeType->isEmptyTy()) {
         auto tapep = BuilderZ.CreatePointerCast(
@@ -4306,7 +4309,6 @@ Function *EnzymeLogic::CreateForwardDiff(
       getGuaranteedUnreachable(gutils->oldFunc);
 
   gutils->forceActiveDetection();
-  gutils->forceAugmentedReturns();
 
   // TODO populate with actual unnecessaryInstructions once the dependency
   // cycle with activity analysis is removed
@@ -4320,14 +4322,7 @@ Function *EnzymeLogic::CreateForwardDiff(
 
   SmallPtrSet<const Value *, 4> unnecessaryValues;
   SmallPtrSet<const Instruction *, 4> unnecessaryInstructions;
-  calculateUnusedValuesInFunction(
-      *gutils->oldFunc, unnecessaryValues, unnecessaryInstructions, returnUsed,
-      mode, gutils, TLI, constant_args, guaranteedUnreachable);
-  gutils->unnecessaryValuesP = &unnecessaryValues;
-
   SmallPtrSet<const Instruction *, 4> unnecessaryStores;
-  calculateUnusedStoresInFunction(*gutils->oldFunc, unnecessaryStores,
-                                  unnecessaryInstructions, gutils, TLI);
 
   AdjointGenerator<const AugmentedReturn *> *maker;
 
@@ -4350,12 +4345,22 @@ Function *EnzymeLogic::CreateForwardDiff(
         CA.compute_uncacheable_load_map());
     gutils->can_modref_map = can_modref_map.get();
 
+    gutils->forceAugmentedReturns();
+
+    gutils->computeMinCache();
+
     auto getIndex = [&](Instruction *I, CacheType u) -> unsigned {
       assert(augmenteddata);
       return gutils->getIndex(std::make_pair(I, u), augmenteddata->tapeIndices);
     };
 
-    gutils->computeMinCache();
+    calculateUnusedValuesInFunction(
+        *gutils->oldFunc, unnecessaryValues, unnecessaryInstructions,
+        returnUsed, mode, gutils, TLI, constant_args, guaranteedUnreachable);
+    gutils->unnecessaryValuesP = &unnecessaryValues;
+
+    calculateUnusedStoresInFunction(*gutils->oldFunc, unnecessaryStores,
+                                    unnecessaryInstructions, gutils, TLI);
 
     maker = new AdjointGenerator<const AugmentedReturn *>(
         mode, gutils, constant_args, retType, getIndex, overwritten_args_map,
@@ -4406,7 +4411,14 @@ Function *EnzymeLogic::CreateForwardDiff(
       gutils->setTape(additionalValue);
     }
   } else {
+    gutils->forceAugmentedReturns();
+    calculateUnusedValuesInFunction(
+        *gutils->oldFunc, unnecessaryValues, unnecessaryInstructions,
+        returnUsed, mode, gutils, TLI, constant_args, guaranteedUnreachable);
+    gutils->unnecessaryValuesP = &unnecessaryValues;
 
+    calculateUnusedStoresInFunction(*gutils->oldFunc, unnecessaryStores,
+                                    unnecessaryInstructions, gutils, TLI);
     maker = new AdjointGenerator<const AugmentedReturn *>(
         mode, gutils, constant_args, retType, nullptr, {},
         /*returnuses*/ nullptr, nullptr, nullptr, unnecessaryValues,
@@ -4739,19 +4751,19 @@ llvm::Function *EnzymeLogic::CreateBatch(Function *tobatch, unsigned width,
   return BatchCachedFunctions[tup] = NewF;
 };
 
-llvm::Function *
-EnzymeLogic::CreateTrace(llvm::Function *totrace,
-                         SmallPtrSetImpl<Function *> &GenerativeFunctions,
-                         ProbProgMode mode, bool dynamic_interface) {
-  TraceCacheKey tup = std::make_tuple(totrace, mode, dynamic_interface);
+llvm::Function *EnzymeLogic::CreateTrace(
+    llvm::Function *totrace, SmallPtrSetImpl<Function *> &GenerativeFunctions,
+    ProbProgMode mode, bool autodiff, TraceInterface *interface) {
+  TraceCacheKey tup = std::make_tuple(totrace, mode);
   if (TraceCachedFunctions.find(tup) != TraceCachedFunctions.end()) {
     return TraceCachedFunctions.find(tup)->second;
   }
 
+  ValueToValueMapTy originalToNewFn;
   TraceUtils *tutils =
-      new TraceUtils(mode, dynamic_interface, totrace, GenerativeFunctions);
-
-  TraceGenerator *tracer = new TraceGenerator(*this, tutils);
+      TraceUtils::FromClone(mode, interface, totrace, originalToNewFn);
+  TraceGenerator *tracer = new TraceGenerator(
+      *this, tutils, autodiff, originalToNewFn, GenerativeFunctions);
 
   for (auto &&BB : *totrace) {
     for (auto &&Inst : BB) {
@@ -4769,6 +4781,16 @@ EnzymeLogic::CreateTrace(llvm::Function *totrace,
 
   delete tracer;
   delete tutils;
+
+  if (!autodiff) {
+    PPC.AlwaysInline(NewF);
+
+    if (PostOpt)
+      PPC.optimizeIntermediate(NewF);
+    if (EnzymePrint) {
+      llvm::errs() << *NewF << "\n";
+    }
+  }
 
   return TraceCachedFunctions[tup] = NewF;
 }
@@ -4829,6 +4851,18 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
       "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE12_M_constructEmc",
       "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE7reserveEm",
       "time",
+      "strlen",
+      "_ZNKSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE7compareERKS4_",
+      "_ZNKSt8__detail20_Prime_rehash_policy14_M_need_rehashEmmm",
+      "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEC1EOS4_",
+      "_ZNKSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE6lengthEv",
+      "_ZNKSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE4dataEv",
+      "_ZNKSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE4sizeEv",
+      "_ZNKSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE4dataEv"
+      "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEED1Ev",
+      "_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEED1Ev",
+      "_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6__"
+      "initEPKcm",
       "_ZNSt12__basic_fileIcED1Ev",
       "__cxa_begin_catch",
       "__cxa_end_catch",
@@ -4838,6 +4872,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
       "_ZNSt8ios_baseC2Ev",
       "_ZNSo9_M_insertIdEERSoT_",
       "malloc_usable_size",
+      "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEED1Ev",
       "_ZNKSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE7compareEPKc",
       "_ZNSt13basic_filebufIcSt11char_traitsIcEEC1Ev",
       "_ZNSt15basic_streambufIcSt11char_traitsIcEE6xsputnEPKcl",
@@ -4848,7 +4883,12 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
       "_ZNSt7__cxx1115basic_stringbufIcSt11char_traitsIcESaIcEE9underflowEv",
       "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_assignERKS4_",
       "_ZNSaIcED1Ev",
-      "_ZNSaIcEC1Ev"};
+      "_ZNSaIcEC1Ev",
+      "_ZSt11_Hash_bytesPKvmm",
+      "_ZNSt3__116__do_string_hashIPKcEEmT_S3_",
+      "_ZNKSt3__14hashIPKcEclES2_",
+      "_ZNSt3__19addressofIcEEPT_RS1_",
+      "_ZNSt3__19addressofIKcEEPT_RS2_"};
 
   if (F->getName().startswith("_ZNSolsE") || NoFrees.count(F->getName().str()))
     return F;
@@ -4880,8 +4920,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
     llvm_unreachable("unhandled, create no free");
   }
 
-  Function *NewF = Function::Create(F->getFunctionType(),
-                                    Function::LinkageTypes::InternalLinkage,
+  Function *NewF = Function::Create(F->getFunctionType(), F->getLinkage(),
                                     "nofree_" + F->getName(), F->getParent());
   NewF->setAttributes(F->getAttributes());
 #if LLVM_VERSION_MAJOR >= 9
@@ -4910,6 +4949,9 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
 #else
   CloneFunctionInto(NewF, F, VMap, true, Returns, "", nullptr);
 #endif
+
+  NewF->setVisibility(llvm::GlobalValue::DefaultVisibility);
+  NewF->setLinkage(llvm::GlobalValue::InternalLinkage);
 
   const SmallPtrSet<BasicBlock *, 4> guaranteedUnreachable =
       getGuaranteedUnreachable(NewF);
