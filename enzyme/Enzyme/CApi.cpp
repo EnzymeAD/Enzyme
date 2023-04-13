@@ -30,6 +30,7 @@
 #include "GradientUtils.h"
 #include "LibraryFuncs.h"
 #include "SCEV/TargetLibraryInfo.h"
+#include "TraceInterface.h"
 
 #include "llvm/ADT/Triple.h"
 #include "llvm/Analysis/CallGraph.h"
@@ -48,6 +49,10 @@ TargetLibraryInfo eunwrap(LLVMTargetLibraryInfoRef P) {
 }
 
 EnzymeLogic &eunwrap(EnzymeLogicRef LR) { return *(EnzymeLogic *)LR; }
+
+TraceInterface *eunwrap(EnzymeTraceInterfaceRef Ref) {
+  return (TraceInterface *)Ref;
+}
 
 TypeAnalysis &eunwrap(EnzymeTypeAnalysisRef TAR) {
   return *(TypeAnalysis *)TAR;
@@ -172,6 +177,16 @@ int64_t EnzymeGetCLInteger(void *ptr) {
 
 EnzymeLogicRef CreateEnzymeLogic(uint8_t PostOpt) {
   return (EnzymeLogicRef)(new EnzymeLogic((bool)PostOpt));
+}
+
+EnzymeTraceInterfaceRef CreateEnzymeStaticTraceInterface(LLVMModuleRef M) {
+  return (EnzymeTraceInterfaceRef)(new StaticTraceInterface(unwrap(M)));
+}
+
+EnzymeTraceInterfaceRef
+CreateEnzymeDynamicTraceInterface(LLVMValueRef interface, LLVMValueRef F) {
+  return (EnzymeTraceInterfaceRef)(
+      new DynamicTraceInterface(unwrap(interface), cast<Function>(unwrap(F))));
 }
 
 void ClearEnzymeLogic(EnzymeLogicRef Ref) { eunwrap(Ref).clear(); }
@@ -508,6 +523,21 @@ EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
       eunwrap(TA), returnUsed, shadowReturnUsed,
       eunwrap(typeInfo, cast<Function>(unwrap(todiff))), overwritten_args,
       forceAnonymousTape, width, AtomicAdd));
+}
+
+LLVMValueRef CreateTrace(EnzymeLogicRef Logic, LLVMValueRef totrace,
+                         LLVMValueRef *generative_functions,
+                         size_t generative_functions_size, CProbProgMode mode,
+                         uint8_t autodiff, EnzymeTraceInterfaceRef interface) {
+
+  llvm::SmallPtrSet<Function *, 4> GenerativeFunctions;
+  for (uint64_t i = 0; i < generative_functions_size; i++) {
+    GenerativeFunctions.insert(cast<Function>(unwrap(generative_functions[i])));
+  }
+
+  return wrap(eunwrap(Logic).CreateTrace(
+      cast<Function>(unwrap(totrace)), GenerativeFunctions, (ProbProgMode)mode,
+      (bool)autodiff, eunwrap(interface)));
 }
 
 LLVMValueRef
