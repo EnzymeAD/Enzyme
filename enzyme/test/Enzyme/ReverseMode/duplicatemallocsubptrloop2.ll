@@ -78,8 +78,8 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   %"a4'ac_malloccache" = bitcast i8* %malloccall to double**
 ; CHECK-NEXT:   %2 = getelementptr inbounds { double**, double* }, { double**, double* }* %1, i32 0, i32 0
 ; CHECK-NEXT:   store double** %"a4'ac_malloccache", double*** %2
-; CHECK-NEXT:   %malloccall4 = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* bitcast (i8* (i32)* @malloc to i8* (i64)*)(i64 80)
-; CHECK-NEXT:   %r_malloccache = bitcast i8* %malloccall4 to double*
+; CHECK-NEXT:   %[[malloccall4:.+]] = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* bitcast (i8* (i32)* @malloc to i8* (i64)*)(i64 80)
+; CHECK-NEXT:   %r_malloccache = bitcast i8* %[[malloccall4]] to double*
 ; CHECK-NEXT:   %3 = getelementptr inbounds { double**, double* }, { double**, double* }* %1, i32 0, i32 1
 ; CHECK-NEXT:   store double* %r_malloccache, double** %3
 ; CHECK-NEXT:   br label %loop
@@ -160,8 +160,8 @@ attributes #9 = { nounwind }
 ; CHECK-DAG:   %[[a10_unwrap:.+]] = getelementptr inbounds double, double* %a0, i32 %[[_unwrap10]]
 ; CHECK-NEXT:   store double* %[[a10_unwrap]], double** %[[p3_unwrap9]], align 8
 ; CHECK-NEXT:   %"a10'ipg_unwrap" = getelementptr inbounds double, double* %"a0'", i32 %[[_unwrap10]]
-; CHECK-NEXT:   %"p3'ipc_unwrap11" = bitcast i8* %"p2'mi" to double**
-; CHECK-NEXT:   store double* %"a10'ipg_unwrap", double** %"p3'ipc_unwrap11"
+; CHECK-NEXT:   %[[p3ipc_unwrap11:.+]] = bitcast i8* %"p2'mi" to double**
+; CHECK-NEXT:   store double* %"a10'ipg_unwrap", double** %[[p3ipc_unwrap11]]
 ; CHECK-NEXT:   %_unwrap = trunc i64 %"iv'ac.0" to i32
 ; CHECK-NEXT:   %"a13'ipg_unwrap" = getelementptr inbounds double, double* %"out'", i32 %_unwrap
 ; CHECK-NEXT:   %[[i5:.+]] = load double, double* %"a13'ipg_unwrap", align 8

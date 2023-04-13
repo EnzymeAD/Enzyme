@@ -34,6 +34,7 @@
 #include "llvm/ADT/Triple.h"
 #include "llvm/Analysis/CallGraph.h"
 #include "llvm/Analysis/GlobalsModRef.h"
+#include "llvm/IR/MDBuilder.h"
 
 #if LLVM_VERSION_MAJOR >= 9
 #include "llvm/IR/LegacyPassManager.h"
@@ -457,9 +458,9 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
     CDIFFE_TYPE *constant_args, size_t constant_args_size,
     EnzymeTypeAnalysisRef TA, uint8_t returnValue, uint8_t dretUsed,
     CDerivativeMode mode, unsigned width, uint8_t freeMemory,
-    LLVMTypeRef additionalArg, CFnTypeInfo typeInfo, uint8_t *_overwritten_args,
-    size_t overwritten_args_size, EnzymeAugmentedReturnPtr augmented,
-    uint8_t AtomicAdd) {
+    LLVMTypeRef additionalArg, uint8_t forceAnonymousTape, CFnTypeInfo typeInfo,
+    uint8_t *_overwritten_args, size_t overwritten_args_size,
+    EnzymeAugmentedReturnPtr augmented, uint8_t AtomicAdd) {
   std::vector<DIFFE_TYPE> nconstant_args((DIFFE_TYPE *)constant_args,
                                          (DIFFE_TYPE *)constant_args +
                                              constant_args_size);
@@ -481,6 +482,7 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
           .freeMemory = (bool)freeMemory,
           .AtomicAdd = (bool)AtomicAdd,
           .additionalType = unwrap(additionalArg),
+          .forceAnonymousTape = (bool)forceAnonymousTape,
           .typeInfo = eunwrap(typeInfo, cast<Function>(unwrap(todiff))),
       },
       eunwrap(TA), eunwrap(augmented)));
@@ -719,5 +721,18 @@ LLVMMetadataRef EnzymeMakeNonConstTBAA(LLVMMetadataRef MD) {
 void EnzymeCopyMetadata(LLVMValueRef inst1, LLVMValueRef inst2) {
   cast<Instruction>(unwrap(inst1))
       ->copyMetadata(*cast<Instruction>(unwrap(inst2)));
+}
+LLVMMetadataRef EnzymeAnonymousAliasScopeDomain(const char *str,
+                                                LLVMContextRef ctx) {
+  MDBuilder MDB(*unwrap(ctx));
+  MDNode *scope = MDB.createAnonymousAliasScopeDomain(str);
+  return wrap(scope);
+}
+LLVMMetadataRef EnzymeAnonymousAliasScope(LLVMMetadataRef domain,
+                                          const char *str) {
+  auto dom = cast<MDNode>(unwrap(domain));
+  MDBuilder MDB(dom->getContext());
+  MDNode *scope = MDB.createAnonymousAliasScope(dom, str);
+  return wrap(scope);
 }
 }

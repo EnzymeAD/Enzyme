@@ -57,10 +57,10 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* bitcast (i8* (i32)* @malloc to i8* (i64)*)(i64 80)
 ; CHECK-NEXT:   %r_malloccache = bitcast i8* %malloccall to double*
-; CHECK-NEXT:   %malloccall4 = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* bitcast (i8* (i32)* @malloc to i8* (i64)*)(i64 80)
-; CHECK-NEXT:   %"a4'ip_phi_malloccache" = bitcast i8* %malloccall4 to double**
-; CHECK-NEXT:   %malloccall8 = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* bitcast (i8* (i32)* @malloc to i8* (i64)*)(i64 80)
-; CHECK-NEXT:   %"p2'mi_malloccache" = bitcast i8* %malloccall8 to i8**
+; CHECK-NEXT:   %[[malloccall4:.+]] = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* bitcast (i8* (i32)* @malloc to i8* (i64)*)(i64 80)
+; CHECK-NEXT:   %"a4'ip_phi_malloccache" = bitcast i8* %[[malloccall4]] to double**
+; CHECK-NEXT:   %[[malloccall8:.+]] = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* bitcast (i8* (i32)* @malloc to i8* (i64)*)(i64 80)
+; CHECK-NEXT:   %"p2'mi_malloccache" = bitcast i8* %[[malloccall8]] to i8**
 ; CHECK-NEXT:   br label %loop
 
 ; CHECK: loop:                                             ; preds = %loop, %entry
@@ -95,8 +95,8 @@ attributes #9 = { nounwind }
 
 ; CHECK: invertentry:                                      ; preds = %remat_enter
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall)
-; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall4)
-; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall8)
+; CHECK-NEXT:   tail call void @free(i8* nonnull %[[malloccall4]])
+; CHECK-NEXT:   tail call void @free(i8* nonnull %[[malloccall8]])
 ; CHECK-NEXT:   ret void
 
 ; CHECK: incinvertloop:                                    ; preds = %remat_enter

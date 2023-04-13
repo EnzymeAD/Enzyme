@@ -101,7 +101,7 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; CHECK-NEXT:   br label %for.cond6.preheader
 
 ; CHECK: for.cond6.preheader:                              ; preds = %for.cond6.preheader, %for.cond6.preheader.preheader
-; CHECK-NEXT:   %iv3 = phi i64 [ %iv.next4, %for.cond6.preheader ], [ 0, %for.cond6.preheader.preheader ]
+; CHECK-NEXT:   %iv3 = phi i64 [ 0, %for.cond6.preheader.preheader ], [ %iv.next4, %for.cond6.preheader ] 
 ; CHECK-NEXT:   %iv.next4 = add nuw nsw i64 %iv3, 1
 ; CHECK-NEXT:   %sq = fmul float %a17.pre, %a17.pre
 ; CHECK-NEXT:   store float %sq, float* %out, align 8
@@ -243,7 +243,7 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; BEFORE-NEXT:   br label %for.cond6.preheader
 
 ; BEFORE: for.cond6.preheader:                              ; preds = %for.cond6.preheader, %for.cond6.preheader.preheader
-; BEFORE-NEXT:   %iv3 = phi i64 [ %iv.next4, %for.cond6.preheader ], [ 0, %for.cond6.preheader.preheader ] 
+; BEFORE-NEXT:   %iv3 = phi i64 [ 0, %for.cond6.preheader.preheader ], [ %iv.next4, %for.cond6.preheader ] 
 ; BEFORE-NEXT:   %iv.next4 = add nuw nsw i64 %iv3, 1
 ; BEFORE-NEXT:   %sq = fmul float %a17.pre, %a17.pre
 ; BEFORE-NEXT:   store float %sq, float* %out, align 8

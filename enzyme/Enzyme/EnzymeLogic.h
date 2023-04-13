@@ -140,6 +140,7 @@ struct ReverseCacheKey {
   bool freeMemory;
   bool AtomicAdd;
   llvm::Type *additionalType;
+  bool forceAnonymousTape;
   const FnTypeInfo typeInfo;
 
   /*
@@ -220,6 +221,11 @@ struct ReverseCacheKey {
     if (additionalType < rhs.additionalType)
       return true;
     if (rhs.additionalType < additionalType)
+      return false;
+
+    if (forceAnonymousTape < rhs.forceAnonymousTape)
+      return true;
+    if (rhs.forceAnonymousTape < forceAnonymousTape)
       return false;
 
     if (typeInfo < rhs.typeInfo)
@@ -424,7 +430,7 @@ public:
                                    std::vector<BATCH_TYPE>, BATCH_TYPE>;
   std::map<BatchCacheKey, llvm::Function *> BatchCachedFunctions;
 
-  using TraceCacheKey = std::tuple<llvm::Function *, ProbProgMode, bool>;
+  using TraceCacheKey = std::tuple<llvm::Function *, ProbProgMode>;
   std::map<TraceCacheKey, llvm::Function *> TraceCachedFunctions;
 
   /// Create the derivative function itself.
@@ -462,7 +468,7 @@ public:
   llvm::Function *
   CreateTrace(llvm::Function *totrace,
               llvm::SmallPtrSetImpl<llvm::Function *> &GenerativeFunctions,
-              ProbProgMode mode, bool dynamic_interface);
+              ProbProgMode mode, bool autodiff, TraceInterface *interface);
 
   void clear();
 };

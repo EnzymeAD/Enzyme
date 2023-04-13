@@ -210,6 +210,16 @@ inline bool is_value_needed_in_reverse(
         if (isAllocationFunction(funcName, gutils->TLI))
           goto endShadow;
 
+        // Even though inactive, keep the shadow pointer around in forward mode
+        // to perform the same memory free behavior on the shadow.
+        if (mode == DerivativeMode::ForwardMode &&
+            isDeallocationFunction(funcName, gutils->TLI)) {
+          if (EnzymePrintDiffUse)
+            llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
+                         << " in reverse as shadow free " << *CI << "\n";
+          return seen[idx] = true;
+        }
+
         // Only need shadow request for reverse
         if (funcName == "MPI_Irecv" || funcName == "PMPI_Irecv") {
           if (gutils->isConstantInstruction(const_cast<Instruction *>(user)))

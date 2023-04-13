@@ -1237,6 +1237,30 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     ToCopy2.push_back(LLVMContext::MD_alias_scope);
     toreturn->copyMetadata(*load, ToCopy2);
     toreturn->copyIRFlags(load);
+    if (load->getParent()->getParent() == newFunc)
+      if (auto orig = isOriginal(load)) {
+        SmallVector<Metadata *, 1> scopeMD = {
+            getDerivativeAliasScope(orig->getOperand(0), -1)};
+        if (auto prev = orig->getMetadata(LLVMContext::MD_alias_scope)) {
+          for (auto &M : cast<MDNode>(prev)->operands()) {
+            scopeMD.push_back(M);
+          }
+        }
+        auto scope = MDNode::get(orig->getContext(), scopeMD);
+        toreturn->setMetadata(LLVMContext::MD_alias_scope, scope);
+
+        SmallVector<Metadata *, 1> MDs;
+        for (size_t j = 0; j < getWidth(); j++) {
+          MDs.push_back(getDerivativeAliasScope(orig->getOperand(0), j));
+        }
+        if (auto prev = orig->getMetadata(LLVMContext::MD_noalias)) {
+          for (auto &M : cast<MDNode>(prev)->operands()) {
+            MDs.push_back(M);
+          }
+        }
+        auto noscope = MDNode::get(orig->getContext(), MDs);
+        toreturn->setMetadata(LLVMContext::MD_noalias, noscope);
+      }
     unwrappedLoads[toreturn] = load;
     if (toreturn->getParent()->getParent() != load->getParent()->getParent())
       toreturn->setDebugLoc(nullptr);
@@ -1375,6 +1399,7 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
         }
         assert(pidx->getType() == getShadowType(dli->getOperand(0)->getType()));
 
+        size_t s_idx = 0;
         Value *toreturn = applyChainRule(
             dli->getType(), BuilderM,
             [&](Value *pidx) {
@@ -1398,9 +1423,33 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
               toreturn->setOrdering(dli->getOrdering());
               toreturn->setSyncScopeID(dli->getSyncScopeID());
               llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
-              ToCopy2.push_back(LLVMContext::MD_noalias);
               toreturn->copyMetadata(*dli, ToCopy2);
+              SmallVector<Metadata *, 1> scopeMD = {
+                  getDerivativeAliasScope(dli->getOperand(0), s_idx)};
+              if (auto prev = dli->getMetadata(LLVMContext::MD_alias_scope)) {
+                for (auto &M : cast<MDNode>(prev)->operands()) {
+                  scopeMD.push_back(M);
+                }
+              }
+              auto scope = MDNode::get(dli->getContext(), scopeMD);
+              toreturn->setMetadata(LLVMContext::MD_alias_scope, scope);
+
+              SmallVector<Metadata *, 1> MDs;
+              for (ssize_t j = -1; j < getWidth(); j++) {
+                if (j != (ssize_t)s_idx)
+                  MDs.push_back(getDerivativeAliasScope(dli->getOperand(0), j));
+              }
+              if (auto prev = dli->getMetadata(LLVMContext::MD_noalias)) {
+                for (auto &M : cast<MDNode>(prev)->operands()) {
+                  MDs.push_back(M);
+                }
+              }
+              if (MDs.size()) {
+                auto noscope = MDNode::get(dli->getContext(), MDs);
+                toreturn->setMetadata(LLVMContext::MD_noalias, noscope);
+              }
               toreturn->setDebugLoc(getNewFromOriginal(dli->getDebugLoc()));
+              s_idx++;
               return toreturn;
             },
             pidx);
@@ -3382,6 +3431,13 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                       valueop =
                           lookupM(invertPointerM(orig_val, NB), NB, available);
                     }
+                    SmallVector<Metadata *, 1> prevScopes;
+                    if (auto prev =
+                            SI->getMetadata(LLVMContext::MD_alias_scope)) {
+                      for (auto &M : cast<MDNode>(prev)->operands()) {
+                        prevScopes.push_back(M);
+                      }
+                    }
                     SmallVector<Metadata *, 1> prevNoAlias;
                     if (auto prev = SI->getMetadata(LLVMContext::MD_noalias)) {
                       for (auto &M : cast<MDNode>(prev)->operands()) {
@@ -3396,7 +3452,7 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                     setPtrDiffe(SI, orig_ptr, valueop, NB, align,
                                 SI->isVolatile(), SI->getOrdering(),
                                 SI->getSyncScopeID(),
-                                /*mask*/ nullptr, prevNoAlias);
+                                /*mask*/ nullptr, prevNoAlias, prevScopes);
                   }
                   // TODO shadow memtransfer
                 } else if (auto MS = dyn_cast<MemSetInst>(&I)) {
@@ -4162,6 +4218,13 @@ bool GradientUtils::shouldRecompute(const Value *val,
 
 MDNode *GradientUtils::getDerivativeAliasScope(const Value *origptr,
                                                ssize_t newptr) {
+  origptr =
+#if LLVM_VERSION_MAJOR >= 12
+      getUnderlyingObject(origptr, 100);
+#else
+      GetUnderlyingObject(origptr, oldFunc->getParent()->getDataLayout(), 100);
+#endif
+
   auto found = differentialAliasScopeDomains.find(origptr);
   if (found == differentialAliasScopeDomains.end()) {
     MDBuilder MDB(oldFunc->getContext());
@@ -4283,7 +4346,7 @@ GradientUtils *GradientUtils::CreateFromClone(
   auto res = new GradientUtils(
       Logic, newFunc, oldFunc, TLI, TA, TR, invertedPointers, constant_values,
       nonconstant_values, retType, constant_args, originalToNew,
-      DerivativeMode::ReverseModePrimal, /* width */ width, omp);
+      DerivativeMode::ReverseModePrimal, width, omp);
   return res;
 }
 
@@ -4669,6 +4732,7 @@ Constant *GradientUtils::GetOrCreateShadowFunction(
                           .AtomicAdd = AtomicAdd,
                           .additionalType =
                               Type::getInt8PtrTy(fn->getContext()),
+                          .forceAnonymousTape = true,
                           .typeInfo = type_args},
         TA,
         /*map*/ &augdata);
@@ -4731,13 +4795,15 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
                                 IRBuilder<> &BuilderM, MaybeAlign align,
                                 bool isVolatile, AtomicOrdering ordering,
                                 SyncScope::ID syncScope, Value *mask,
-                                ArrayRef<Metadata *> noAlias)
+                                ArrayRef<Metadata *> noAlias,
+                                ArrayRef<Metadata *> scopes)
 #else
 void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
                                 IRBuilder<> &BuilderM, unsigned align,
                                 bool isVolatile, AtomicOrdering ordering,
                                 SyncScope::ID syncScope, Value *mask,
-                                ArrayRef<Metadata *> noAlias)
+                                ArrayRef<Metadata *> noAlias,
+                                ArrayRef<Metadata *> scopes)
 #endif
 {
   if (auto inst = dyn_cast<Instruction>(ptr)) {
@@ -4772,7 +4838,10 @@ void GradientUtils::setPtrDiffe(Instruction *orig, Value *ptr, Value *newval,
       ts->setVolatile(isVolatile);
       ts->setOrdering(ordering);
       ts->setSyncScopeID(syncScope);
-      Metadata *scopeMD[1] = {getDerivativeAliasScope(origptr, idx)};
+      SmallVector<Metadata *, 1> scopeMD = {
+          getDerivativeAliasScope(origptr, idx)};
+      for (auto M : scopes)
+        scopeMD.push_back(M);
       auto scope = MDNode::get(ts->getContext(), scopeMD);
       ts->setMetadata(LLVMContext::MD_alias_scope, scope);
 
@@ -5161,7 +5230,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       if (arg->hasInternalLinkage() || arg->hasPrivateLinkage() ||
           (arg->hasExternalLinkage() && arg->hasInitializer()) ||
           arg->isConstant()) {
-        Type *elemTy = arg->getType()->getPointerElementType();
+        Type *elemTy = arg->getValueType();
         IRBuilder<> B(inversionAllocs);
 
         auto rule = [&]() {
@@ -5448,6 +5517,19 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     Value *op0 = arg->getOperand(0);
     Value *ip = invertPointerM(op0, bb);
 
+    SmallVector<Metadata *, 1> prevScopes;
+    if (auto prev = arg->getMetadata(LLVMContext::MD_alias_scope)) {
+      for (auto &M : cast<MDNode>(prev)->operands()) {
+        prevScopes.push_back(M);
+      }
+    }
+    SmallVector<Metadata *, 1> prevNoAlias;
+    if (auto prev = arg->getMetadata(LLVMContext::MD_noalias)) {
+      for (auto &M : cast<MDNode>(prev)->operands()) {
+        prevNoAlias.push_back(M);
+      }
+    }
+    size_t idx = 0;
     auto rule = [&](Value *ip) {
 #if LLVM_VERSION_MAJOR > 7
       auto li = bb.CreateLoad(arg->getType(), ip, arg->getName() + "'ipl");
@@ -5455,9 +5537,27 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       auto li = bb.CreateLoad(ip, arg->getName() + "'ipl");
 #endif
       llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
-      ToCopy2.push_back(LLVMContext::MD_noalias);
       li->copyMetadata(*arg, ToCopy2);
       li->copyIRFlags(arg);
+
+      SmallVector<Metadata *, 1> scopeMD = {getDerivativeAliasScope(op0, idx)};
+      for (auto M : prevScopes)
+        scopeMD.push_back(M);
+      auto scope = MDNode::get(li->getContext(), scopeMD);
+      li->setMetadata(LLVMContext::MD_alias_scope, scope);
+
+      SmallVector<Metadata *, 1> MDs;
+      for (ssize_t j = -1; j < getWidth(); j++) {
+        if (j != (ssize_t)idx)
+          MDs.push_back(getDerivativeAliasScope(op0, j));
+      }
+      for (auto M : prevNoAlias)
+        MDs.push_back(M);
+      if (MDs.size()) {
+        auto noscope = MDNode::get(li->getContext(), MDs);
+        li->setMetadata(LLVMContext::MD_noalias, noscope);
+      }
+
 #if LLVM_VERSION_MAJOR >= 10
       li->setAlignment(arg->getAlign());
 #else
@@ -5467,6 +5567,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       li->setVolatile(arg->isVolatile());
       li->setOrdering(arg->getOrdering());
       li->setSyncScopeID(arg->getSyncScopeID());
+      idx++;
       return li;
     };
 
@@ -6544,11 +6645,12 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 
                     v.setFastMathFlags(getFast());
                     assert(isOriginalBlock(*v.GetInsertBlock()));
-                    Value *outer = getCachePointer(
-                        /*inForwardPass*/ true, v, lctx, cache, isi1,
-                        /*storeinstorecache*/ true,
-                        /*available*/ ValueToValueMapTy(),
-                        /*extraSize*/ nullptr);
+                    Value *outer =
+                        getCachePointer(AT,
+                                        /*inForwardPass*/ true, v, lctx, cache,
+                                        /*storeinstorecache*/ true,
+                                        /*available*/ ValueToValueMapTy(),
+                                        /*extraSize*/ nullptr);
 
                     auto ld = v.CreateLoad(AT, AI);
 #if LLVM_VERSION_MAJOR >= 11
@@ -6583,7 +6685,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 
                   assert(!isOriginalBlock(*BuilderM.GetInsertBlock()));
                   Value *outer = getCachePointer(
-                      /*inForwardPass*/ false, BuilderM, lctx, cache, isi1,
+                      AT,
+                      /*inForwardPass*/ false, BuilderM, lctx, cache,
                       /*storeinstorecache*/ true, available,
                       /*extraSize*/ nullptr);
                   SmallVector<Value *, 2> idxs;
@@ -6592,9 +6695,9 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                                            tryLegalRecomputeCheck));
                   }
 
-                  auto OT = outer->getType()->getPointerElementType();
 #if LLVM_VERSION_MAJOR > 7
-                  auto cptr = BuilderM.CreateGEP(OT, outer, idxs);
+                  auto cptr = BuilderM.CreateGEP(GEP->getSourceElementType(),
+                                                 outer, idxs);
 #else
                   auto cptr = BuilderM.CreateGEP(outer, idxs);
 #endif
@@ -6781,7 +6884,8 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
               v.setFastMathFlags(getFast());
               assert(isOriginalBlock(*v.GetInsertBlock()));
               Value *outer =
-                  getCachePointer(/*inForwardPass*/ true, v, lctx, cache, isi1,
+                  getCachePointer(li->getType(),
+                                  /*inForwardPass*/ true, v, lctx, cache,
                                   /*storeinstorecache*/ true,
                                   /*available*/ ValueToValueMapTy(),
                                   /*extraSize*/ lim);
@@ -6929,6 +7033,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
     if (auto LI1 = dyn_cast<LoadInst>(inst)) {
       llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
       ToCopy2.push_back(LLVMContext::MD_noalias);
+      ToCopy2.push_back(LLVMContext::MD_alias_scope);
       LI2->copyMetadata(*LI1, ToCopy2);
     }
   if (result->getType() != inst->getType()) {
@@ -8026,7 +8131,7 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
         if (offset != 0) {
 #if LLVM_VERSION_MAJOR > 7
           dsto = Builder2.CreateConstInBoundsGEP1_64(
-              dsto->getType()->getPointerElementType(), dsto, offset);
+              Type::getInt8Ty(dsto->getContext()), dsto, offset);
 #else
           dsto = Builder2.CreateConstInBoundsGEP1_64(dsto, offset);
 #endif
@@ -8046,7 +8151,7 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
         if (offset != 0) {
 #if LLVM_VERSION_MAJOR > 7
           srco = Builder2.CreateConstInBoundsGEP1_64(
-              srco->getType()->getPointerElementType(), srco, offset);
+              Type::getInt8Ty(srco->getContext()), srco, offset);
 #else
           srco = Builder2.CreateConstInBoundsGEP1_64(srco, offset);
 #endif
@@ -8132,7 +8237,7 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
       if (offset != 0) {
 #if LLVM_VERSION_MAJOR > 7
         dsto = BuilderZ.CreateConstInBoundsGEP1_64(
-            dsto->getType()->getPointerElementType(), dsto, offset);
+            Type::getInt8Ty(dsto->getContext()), dsto, offset);
 #else
         dsto = BuilderZ.CreateConstInBoundsGEP1_64(dsto, offset);
 #endif
@@ -8144,7 +8249,7 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
       if (offset != 0) {
 #if LLVM_VERSION_MAJOR > 7
         srco = BuilderZ.CreateConstInBoundsGEP1_64(
-            srco->getType()->getPointerElementType(), srco, offset);
+            Type::getInt8Ty(srco->getContext()), srco, offset);
 #else
         srco = BuilderZ.CreateConstInBoundsGEP1_64(srco, offset);
 #endif
