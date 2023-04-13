@@ -1833,6 +1833,7 @@ public:
         CI, CI->getCallingConv(), ret, retElemType, dargs, byVal, constants,
         newFunc, DerivativeMode::ReverseModeCombined, opt.value(), false);
 #else
+    bool status = HandleAutoDiff(
         CI, CI->getCallingConv(), ret, retElemType, dargs, byVal, constants,
         newFunc, DerivativeMode::ReverseModeCombined, opt.getValue(), false);
 #endif
