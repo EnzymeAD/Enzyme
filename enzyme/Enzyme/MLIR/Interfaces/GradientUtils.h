@@ -10,6 +10,7 @@
 #include "Interfaces/CloneFunction.h"
 #include "Interfaces/EnzymeLogic.h"
 
+#include "Analysis/ActivityAnalysis.h"
 #include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/IR/FunctionInterfaces.h"
 
@@ -29,7 +30,11 @@ public:
   BlockAndValueMapping originalToNewFn;
   std::map<Operation *, Operation *> originalToNewFnOps;
 
+  SmallPtrSet<Block *, 4> blocksNotForAnalysis;
+  std::unique_ptr<enzyme::ActivityAnalyzer> activityAnalyzer;
+
   MTypeAnalysis &TA;
+  MTypeResults TR;
   bool omp;
 
   unsigned width;
@@ -41,7 +46,7 @@ public:
 
   MGradientUtils(MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
                  FunctionOpInterface oldFunc_, MTypeAnalysis &TA_,
-                 BlockAndValueMapping &invertedPointers_,
+                 MTypeResults TR_, BlockAndValueMapping &invertedPointers_,
                  const SmallPtrSetImpl<mlir::Value> &constantvalues_,
                  const SmallPtrSetImpl<mlir::Value> &activevals_,
                  DIFFE_TYPE ReturnActivity, ArrayRef<DIFFE_TYPE> ArgDiffeTypes_,
@@ -66,7 +71,7 @@ class MDiffeGradientUtils : public MGradientUtils {
 public:
   MDiffeGradientUtils(MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
                       FunctionOpInterface oldFunc_, MTypeAnalysis &TA,
-                      BlockAndValueMapping &invertedPointers_,
+                      MTypeResults TR, BlockAndValueMapping &invertedPointers_,
                       const SmallPtrSetImpl<mlir::Value> &constantvalues_,
                       const SmallPtrSetImpl<mlir::Value> &returnvals_,
                       DIFFE_TYPE ActiveReturn,
@@ -74,7 +79,7 @@ public:
                       BlockAndValueMapping &origToNew_,
                       std::map<Operation *, Operation *> &origToNewOps_,
                       DerivativeMode mode, unsigned width, bool omp)
-      : MGradientUtils(Logic, newFunc_, oldFunc_, TA, invertedPointers_,
+      : MGradientUtils(Logic, newFunc_, oldFunc_, TA, TR, invertedPointers_,
                        constantvalues_, returnvals_, ActiveReturn,
                        constant_values, origToNew_, origToNewOps_, mode, width,
                        omp) {}
@@ -116,10 +121,11 @@ public:
         nonconstant_values, returnvals, returnValue, retType,
         prefix + todiff.getName(), originalToNew, originalToNewOps,
         diffeReturnArg, additionalArg);
-    return new MDiffeGradientUtils(Logic, newFunc, todiff, TA, invertedPointers,
-                                   constant_values, nonconstant_values, retType,
-                                   constant_args, originalToNew,
-                                   originalToNewOps, mode, width, omp);
+    MTypeResults TR; // TODO
+    return new MDiffeGradientUtils(
+        Logic, newFunc, todiff, TA, TR, invertedPointers, constant_values,
+        nonconstant_values, retType, constant_args, originalToNew,
+        originalToNewOps, mode, width, omp);
   }
 };
 

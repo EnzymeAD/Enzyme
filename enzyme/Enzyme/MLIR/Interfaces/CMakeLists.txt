@@ -20,4 +20,5 @@ add_mlir_library(MLIREnzymeAutoDiffInterface
 
   LINK_LIBS PUBLIC
   MLIRIR
+  MLIREnzymeAnalysis
 )
