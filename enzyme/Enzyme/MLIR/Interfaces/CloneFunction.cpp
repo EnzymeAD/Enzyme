@@ -243,6 +243,7 @@ FunctionOpInterface CloneFunctionWithReturns(
         nonconstants.insert(oval);
       else if (constant_args[i] == DIFFE_TYPE::DUP_ARG ||
                constant_args[i] == DIFFE_TYPE::DUP_NONEED) {
+        nonconstants.insert(oval);
         mlir::Value val = blk.getArgument(i);
         mlir::Value dval;
         if (i == constant_args.size() - 1)

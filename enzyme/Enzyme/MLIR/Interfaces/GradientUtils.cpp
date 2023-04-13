@@ -29,7 +29,7 @@ using namespace mlir::enzyme;
 
 mlir::enzyme::MGradientUtils::MGradientUtils(
     MEnzymeLogic &Logic, FunctionOpInterface newFunc_,
-    FunctionOpInterface oldFunc_, MTypeAnalysis &TA_,
+    FunctionOpInterface oldFunc_, MTypeAnalysis &TA_, MTypeResults TR_,
     BlockAndValueMapping &invertedPointers_,
     const SmallPtrSetImpl<mlir::Value> &constantvalues_,
     const SmallPtrSetImpl<mlir::Value> &activevals_, DIFFE_TYPE ReturnActivity,
@@ -37,7 +37,10 @@ mlir::enzyme::MGradientUtils::MGradientUtils(
     std::map<Operation *, Operation *> &originalToNewFnOps_,
     DerivativeMode mode, unsigned width, bool omp)
     : newFunc(newFunc_), Logic(Logic), mode(mode), oldFunc(oldFunc_), TA(TA_),
-      omp(omp), width(width), ArgDiffeTypes(ArgDiffeTypes_),
+      TR(TR_), omp(omp), blocksNotForAnalysis(),
+      activityAnalyzer(std::make_unique<enzyme::ActivityAnalyzer>(
+          blocksNotForAnalysis, constantvalues_, activevals_, ReturnActivity)),
+      width(width), ArgDiffeTypes(ArgDiffeTypes_),
       originalToNewFn(originalToNewFn_),
       originalToNewFnOps(originalToNewFnOps_),
       invertedPointers(invertedPointers_) {
@@ -138,16 +141,7 @@ Operation *mlir::enzyme::MGradientUtils::cloneWithNewOperands(OpBuilder &B,
 }
 
 bool mlir::enzyme::MGradientUtils::isConstantValue(Value v) const {
-  if (isa<mlir::IntegerType>(v.getType()))
-    return true;
-  if (isa<mlir::IndexType>(v.getType()))
-    return true;
-
-  if (matchPattern(v, m_Constant()))
-    return true;
-
-  // TODO
-  return false;
+  return activityAnalyzer->isConstantValue(TR, v);
 }
 
 mlir::Value mlir::enzyme::MGradientUtils::invertPointerM(mlir::Value v,
@@ -157,7 +151,7 @@ mlir::Value mlir::enzyme::MGradientUtils::invertPointerM(mlir::Value v,
     return invertedPointers.lookupOrNull(v);
 
   if (isConstantValue(v)) {
-    if (auto iface = v.getType().cast<AutoDiffTypeInterface>()) {
+    if (auto iface = v.getType().dyn_cast<AutoDiffTypeInterface>()) {
       OpBuilder::InsertionGuard guard(Builder2);
       Builder2.setInsertionPoint(getNewFromOriginal(v.getDefiningOp()));
       Value dv = iface.createNullValue(Builder2, v.getLoc());
@@ -306,11 +300,20 @@ void mlir::enzyme::MGradientUtils::forceAugmentedReturns() {
 
 LogicalResult MGradientUtils::visitChild(Operation *op) {
   if (mode == DerivativeMode::ForwardMode) {
+    // In absence of a proper activity analysis, approximate it by treating any
+    // side effect-free operation producing constants as inactive.
+    // if (auto iface = dyn_cast<MemoryEffectOpInterface>(op)) {
+    if (llvm::all_of(op->getResults(),
+                     [this](Value v) { return isConstantValue(v); }) &&
+        /*iface.hasNoEffect()*/ activityAnalyzer->isConstantOperation(TR, op)) {
+      return success();
+    }
+    // }
     if (auto iface = dyn_cast<AutoDiffOpInterface>(op)) {
       OpBuilder builder(op->getContext());
       builder.setInsertionPoint(getNewFromOriginal(op));
       return iface.createForwardModeTangent(builder, this);
     }
   }
-  return failure();
+  return op->emitError() << "could not compute the adjoint for this operation";
 }
