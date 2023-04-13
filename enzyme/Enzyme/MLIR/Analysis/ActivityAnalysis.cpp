@@ -328,6 +328,10 @@ bool mlir::enzyme::ActivityAnalyzer::isFunctionArgumentConstant(
 
   StringRef Name = cast<SymbolOpInterface>(F).getName();
 
+  // TODO(PR #904): Revisit commented code. Main reason for commenting out code
+  // are lack of preprocessing (type analysis) and frontend info
+  // (TargetLibraryInformation).
+
   // Allocations, deallocations, and c++ guards don't impact the activity
   // of arguments
   // if (isAllocationFunction(Name, TLI) || isDeallocationFunction(Name, TLI))
@@ -541,6 +545,7 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantOperation(MTypeResults const &TR,
   }
 
   if (auto CI = dyn_cast<CallOpInterface>(I)) {
+    // TODO(PR #904): This needs to be put into the enzyme dialect
     if (CI->hasAttr("enzyme_active")) {
       // if (EnzymePrintActivity)
       //   llvm::errs() << "forced active " << *I << "\n";
@@ -758,6 +763,10 @@ bool mlir::enzyme::ActivityAnalyzer::isConstantOperation(MTypeResults const &TR,
       // already equal to the current direction, we don't need to induct,
       // reducing runtime.
       if (directions == DOWN /*&& !isa<PHINode>(I)*/) {
+        // TODO(PR #904): A lot of this code is written assuming LLVM IR object
+        // inheritance (phi nodes are instructions, instructions are values).
+        // More careful handling is necessary for MLIR block arguments, but this
+        // could simplify the code as a result.
         if (llvm::all_of(I->getResults(), [&](Value val) {
               return isValueInactiveFromUsers(TR, val, UseActivity::None);
             })) {
@@ -3369,6 +3378,7 @@ bool mlir::enzyme::ActivityAnalyzer::isValueInactiveFromUsers(
     // the list of users to analyze
     if (Operation *I = a) {
       if (notForAnalysis.count(I->getBlock())) {
+        // TODO(PR #904): replace the "EnzymePrintActivity" flag with LLVM_DEBUG
         // if (EnzymePrintActivity) {
         //   llvm::errs() << "Value found constant unreachable inst use:" <<
         //   *val
