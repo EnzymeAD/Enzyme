@@ -194,8 +194,8 @@ MustExitScalarEvolution::computeExitLimitFromCondImpl(
         else if (EL1.ConstantMaxNotTaken == getCouldNotCompute())
           MaxBECount = EL0.ConstantMaxNotTaken;
         else
-          MaxBECount =
-              getUMinFromMismatchedTypes(EL0.ConstantMaxNotTaken, EL1.ConstantMaxNotTaken);
+          MaxBECount = getUMinFromMismatchedTypes(EL0.ConstantMaxNotTaken,
+                                                  EL1.ConstantMaxNotTaken);
       } else {
         // Both conditions must be true at the same time for the loop to exit.
         // For now, be conservative.
@@ -224,8 +224,8 @@ MustExitScalarEvolution::computeExitLimitFromCondImpl(
       // There are cases (e.g. PR26207) where computeExitLimitFromCond is able
       // to be more aggressive when computing BECount than when computing
       // MaxBECount.  In these cases it is possible for EL0.ExactNotTaken and
-      // EL1.ExactNotTaken to match, but for EL0.ConstantMaxNotTaken and EL1.ConstantMaxNotTaken
-      // to not.
+      // EL1.ExactNotTaken to match, but for EL0.ConstantMaxNotTaken and
+      // EL1.ConstantMaxNotTaken to not.
       if (isa<SCEVCouldNotCompute>(MaxBECount) &&
           !isa<SCEVCouldNotCompute>(BECount))
         MaxBECount = getConstant(getUnsignedRangeMax(BECount));
@@ -264,8 +264,8 @@ MustExitScalarEvolution::computeExitLimitFromCondImpl(
         else if (EL1.ConstantMaxNotTaken == getCouldNotCompute())
           MaxBECount = EL0.ConstantMaxNotTaken;
         else
-          MaxBECount =
-              getUMinFromMismatchedTypes(EL0.ConstantMaxNotTaken, EL1.ConstantMaxNotTaken);
+          MaxBECount = getUMinFromMismatchedTypes(EL0.ConstantMaxNotTaken,
+                                                  EL1.ConstantMaxNotTaken);
       } else {
         // Both conditions must be false at the same time for the loop to exit.
         // For now, be conservative.

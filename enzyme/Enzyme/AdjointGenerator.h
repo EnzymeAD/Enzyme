@@ -191,15 +191,15 @@ public:
     AL =
         AL.addParamAttribute(DT->getContext(), 1, Attribute::AttrKind::NonNull);
 #if LLVM_VERSION_MAJOR >= 14
-  #if LLVM_VERSION_MAJOR >= 16
-    AL = AL.addAttributeAtIndex(DT->getContext(), AttributeList::FunctionIndex,
-                                Attribute::getWithMemoryEffects(
-                                  DT->getContext(),
-                                  llvm::MemoryEffects::argMemOnly()));
-  #else
+#if LLVM_VERSION_MAJOR >= 16
+    AL = AL.addAttributeAtIndex(
+        DT->getContext(), AttributeList::FunctionIndex,
+        Attribute::getWithMemoryEffects(DT->getContext(),
+                                        llvm::MemoryEffects::argMemOnly()));
+#else
     AL = AL.addAttributeAtIndex(DT->getContext(), AttributeList::FunctionIndex,
                                 Attribute::AttrKind::ArgMemOnly);
-  #endif
+#endif
     AL = AL.addAttributeAtIndex(DT->getContext(), AttributeList::FunctionIndex,
                                 Attribute::AttrKind::NoUnwind);
     AL = AL.addAttributeAtIndex(DT->getContext(), AttributeList::FunctionIndex,
@@ -8522,7 +8522,7 @@ public:
         }
       }
       Value *tape = nullptr;
-#if LLVM_VERSION_MAJOR >= 16      
+#if LLVM_VERSION_MAJOR >= 16
       if (tapeIdx.has_value()) {
 #else
       if (tapeIdx.hasValue()) {
@@ -8530,15 +8530,16 @@ public:
 
         FunctionType *FT = subdata->fn->getFunctionType();
 
-        tape = BuilderZ.CreatePHI(
-            (tapeIdx == -1) ? FT->getReturnType()
-                            : cast<StructType>(FT->getReturnType())
+        tape = BuilderZ.CreatePHI((tapeIdx == -1)
+                                      ? FT->getReturnType()
+                                      : cast<StructType>(FT->getReturnType())
 #if LLVM_VERSION_MAJOR >= 16
-                                  ->getElementType(tapeIdx.value()),
+                                            ->getElementType(tapeIdx.value()),
 #else
-                                  ->getElementType(tapeIdx.getValue()),
+                                            ->getElementType(
+                                                tapeIdx.getValue()),
 #endif
-            1, "tapeArg");
+                                  1, "tapeArg");
 
         assert(!tape->getType()->isEmptyTy());
         gutils->TapesToPreventRecomputation.insert(cast<Instruction>(tape));
@@ -9952,9 +9953,9 @@ public:
         if (tapeIdx.has_value()) {
           tape = (tapeIdx.value() == -1)
                      ? augmentcall
-                     : BuilderZ.CreateExtractValue(
-                           augmentcall, {(unsigned)tapeIdx.value()},
-                           "subcache");
+                     : BuilderZ.CreateExtractValue(augmentcall,
+                                                   {(unsigned)tapeIdx.value()},
+                                                   "subcache");
 #else
         if (tapeIdx.hasValue()) {
           tape = (tapeIdx.getValue() == -1)
@@ -13048,7 +13049,8 @@ public:
             auto freeCall = cast<CallInst>(
                 CallInst::CreateFree(tofree, Builder2.GetInsertBlock()));
 #if LLVM_VERSION_MAJOR >= 16
-            freeCall->insertInto(Builder2.GetInsertBlock(), Builder2.GetInsertBlock()->end());
+            freeCall->insertInto(Builder2.GetInsertBlock(),
+                                 Builder2.GetInsertBlock()->end());
 #else
             Builder2.GetInsertBlock()->getInstList().push_back(freeCall);
 #endif
@@ -13091,7 +13093,8 @@ public:
                             /*tryLegal*/ false),
             Builder2.GetInsertBlock()));
 #if LLVM_VERSION_MAJOR >= 16
-        freeCall->insertInto(Builder2.GetInsertBlock(), Builder2.GetInsertBlock()->end());
+        freeCall->insertInto(Builder2.GetInsertBlock(),
+                             Builder2.GetInsertBlock()->end());
 #else
         Builder2.GetInsertBlock()->getInstList().push_back(freeCall);
 #endif
