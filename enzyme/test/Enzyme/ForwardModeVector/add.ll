@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 16 ]; %opt < %s %loadEnzyme -passes="enzyme,function(mem2reg,instsimplify,simplifycfg)" -enzyme-preopt=false -S | FileCheck %s
 
 %struct.Gradients = type { double, double }
 

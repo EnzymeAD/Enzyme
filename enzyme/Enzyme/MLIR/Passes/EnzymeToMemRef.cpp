@@ -380,23 +380,24 @@ struct EnzymeToMemRefPass
     TypeConverter typeConverter;
     typeConverter.addConversion([](Type type) ->
 #if LLVM_VERSION_MAJOR >= 16
-                                                std::optional<Type> {
+                                std::optional<Type>
 #else
-                                                llvm::Optional<Type> {
+                                llvm::Optional<Type>
 #endif
-      if (type.isIntOrIndexOrFloat() || type.isa<MemRefType>())
-        return type;
-      return llvm::None;
-    });
+                                {
+                                  if (type.isIntOrIndexOrFloat() ||
+                                      type.isa<MemRefType>())
+                                    return type;
+                                  return llvm::None;
+                                });
     typeConverter.addConversion(
         [](enzyme::GradientType type) ->
 #if LLVM_VERSION_MAJOR >= 16
-                                                std::optional<Type> {
+        std::optional<Type>
 #else
-                                                llvm::Optional<Type> {
+        llvm::Optional<Type>
 #endif
-          return MemRefType::get({}, type.getBasetype());
-        });
+        { return MemRefType::get({}, type.getBasetype()); });
     typeConverter.addConversion(
         [](enzyme::CacheType type, SmallVectorImpl<Type> &resultTypes) {
           // Data
