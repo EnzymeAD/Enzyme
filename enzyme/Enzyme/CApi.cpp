@@ -199,6 +199,10 @@ void EnzymeLogicErasePreprocessedFunctions(EnzymeLogicRef Ref) {
 
 void FreeEnzymeLogic(EnzymeLogicRef Ref) { delete (EnzymeLogic *)Ref; }
 
+void FreeTraceInterface(EnzymeTraceInterfaceRef Ref) {
+  delete (TraceInterface *)Ref;
+}
+
 EnzymeTypeAnalysisRef CreateTypeAnalysis(EnzymeLogicRef Log,
                                          char **customRuleNames,
                                          CustomRuleType *customRules,
