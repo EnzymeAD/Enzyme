@@ -3,6 +3,7 @@
 #include "mlir/IR/BlockAndValueMapping.h"
 #include "mlir/IR/FunctionInterfaces.h"
 
+#include "../../TypeAnalysis/TypeAnalysis.h"
 #include "../../Utils.h"
 
 namespace mlir {
@@ -22,6 +23,23 @@ class MTypeAnalysis {
 public:
   MFnTypeInfo getAnalyzedTypeInfo(FunctionOpInterface op) const {
     return MFnTypeInfo();
+  }
+};
+
+class MTypeResults {
+public:
+  // TODO
+  TypeTree getReturnAnalysis() { return TypeTree(); }
+  TypeTree query(Value) const { return TypeTree(); }
+  ConcreteType intType(size_t num, Value val, bool errIfNotFound = true,
+                       bool pointerIntSame = false) const {
+    if (val.getType().isa<IntegerType, IndexType>()) {
+      return BaseType::Integer;
+    }
+    if (errIfNotFound) {
+      llvm_unreachable("something happened");
+    }
+    return BaseType::Unknown;
   }
 };
 
