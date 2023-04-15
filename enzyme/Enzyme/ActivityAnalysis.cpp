@@ -151,7 +151,8 @@ const char *KnownInactiveFunctionsStartingWith[] = {
     "_ZNKSt8__detail20_Prime_rehash_policy",
     "_ZNSt8__detail20_Prime_rehash_policy",
     "_ZNKSt3__122__unordered_map_hasher",
-    "_ZNKSt8__detail15_Hash_code_base"
+    "_ZNKSt8__detail15_Hash_code_base",
+    "_ZNSt3__19to_string"
 #endif
 };
 
@@ -395,6 +396,7 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
 
     // non __cxx11
     "std::basic_string",
+    "std::to_string",
     "std::basic_ios",
     "std::basic_ostringstream",
     "std::basic_istringstream",
@@ -411,6 +413,7 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     "std::__1::__do_string_hash",
     "std::__1::hash",
     "std::__1::__unordered_map_hasher",
+    "std::__1::to_string",
   
     "std::__detail::_Prime_rehash_policy",
     "std::__detail::_Hash_code_base",

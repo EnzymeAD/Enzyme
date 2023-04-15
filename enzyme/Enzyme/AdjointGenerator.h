@@ -10399,6 +10399,7 @@ public:
     std::vector<bool> overwritten_args = std::vector<bool>(
         overwritten_args_map.find(&call)->second.begin() + 3,
         overwritten_args_map.find(&call)->second.end() - offset);
+
     overwritten_args.push_back(false); // should correspond to &call
 
     Function *samplefn = GetFunctionFromValue(call.getArgOperand(0));

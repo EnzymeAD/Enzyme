@@ -73,7 +73,7 @@ void TraceGenerator::visitFunction(Function &F) {
   for (int i = 0; i < fn->getFunctionType()->getNumParams(); ++i) {
     if (!attributes.hasParamAttr(i, TraceUtils::TraceParameterAttribute) &&
         !attributes.hasParamAttr(i, TraceUtils::ObservationsParameterAttribute))
-      tutils->InsertArgument(Builder, fn->getArg(i));
+      tutils->InsertArgument(Builder, fn->arg_begin() + i);
   }
 }
 

@@ -201,10 +201,39 @@ StaticTraceInterface::StaticTraceInterface(Module *M)
   insertArgumentFunction->addFnAttr("enzyme_inactive");
   insertReturnFunction->addFnAttr("enzyme_inactive");
   insertFunctionFunction->addFnAttr("enzyme_inactive");
-  insertFunctionFunction->addFnAttr(Attribute::NoFree);
   hasCallFunction->addFnAttr("enzyme_inactive");
   hasChoiceFunction->addFnAttr("enzyme_inactive");
   sampleFunction->addFnAttr("enzyme_inactive");
+
+#if LLVM_VERSION_MAJOR >= 9
+  newTraceFunction->addFnAttr(Attribute::NoFree);
+  freeTraceFunction->addFnAttr(Attribute::NoFree);
+  getTraceFunction->addFnAttr(Attribute::NoFree);
+  getChoiceFunction->addFnAttr(Attribute::NoFree);
+  getLikelihoodFunction->addFnAttr(Attribute::NoFree);
+  insertCallFunction->addFnAttr(Attribute::NoFree);
+  insertChoiceFunction->addFnAttr(Attribute::NoFree);
+  insertArgumentFunction->addFnAttr(Attribute::NoFree);
+  insertReturnFunction->addFnAttr(Attribute::NoFree);
+  insertFunctionFunction->addFnAttr(Attribute::NoFree);
+  hasCallFunction->addFnAttr(Attribute::NoFree);
+  hasChoiceFunction->addFnAttr(Attribute::NoFree);
+  sampleFunction->addFnAttr(Attribute::NoFree);
+#else
+  newTraceFunction->addFnAttr("nofree");
+  freeTraceFunction->addFnAttr("nofree");
+  getTraceFunction->addFnAttr("nofree");
+  getChoiceFunction->addFnAttr("nofree");
+  getLikelihoodFunction->addFnAttr("nofree");
+  insertCallFunction->addFnAttr("nofree");
+  insertChoiceFunction->addFnAttr("nofree");
+  insertArgumentFunction->addFnAttr("nofree");
+  insertReturnFunction->addFnAttr("nofree");
+  insertFunctionFunction->addFnAttr("nofree");
+  hasCallFunction->addFnAttr("nofree");
+  hasChoiceFunction->addFnAttr("nofree");
+  sampleFunction->addFnAttr("nofree");
+#endif
 
   assert(newTraceFunction);
   assert(freeTraceFunction);
