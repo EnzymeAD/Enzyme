@@ -9084,17 +9084,25 @@ public:
           writeOnlyNoCapture = false;
         }
 #if LLVM_VERSION_MAJOR >= 14
-        if (!call.onlyWritesMemory(i))
+        if (!(call.onlyWritesMemory(i) || call.onlyWritesMemory()))
 #else
         if (!(call.dataOperandHasImpliedAttr(i + 1, Attribute::WriteOnly) ||
               call.dataOperandHasImpliedAttr(i + 1, Attribute::ReadNone) ||
+              call.hasFnAttr(Attribute::WriteOnly) ||
+              call.hasFnAttr(Attribute::ReadNone) ||
               (called && (called->hasParamAttribute(i, Attribute::WriteOnly) ||
-                          called->hasParamAttribute(i, Attribute::ReadNone)))))
+                          called->hasParamAttribute(i, Attribute::ReadNone) ||
+                          called->hasFnAttribute(Attribute::WriteOnly) ||
+                          called->hasFnAttribute(Attribute::ReadNone)))))
 #endif
         {
           writeOnlyNoCapture = false;
         }
-        if (writeOnlyNoCapture && Mode == DerivativeMode::ForwardModeSplit) {
+
+        if (call.hasFnAttr("enzyme_preserve_primal") ||
+            (called && called->hasFnAttribute("enzyme_preserve_primal")))
+          writeOnlyNoCapture = false;
+        if (writeOnlyNoCapture) {
           if (EnzymeZeroCache)
             argi = ConstantPointerNull::get(cast<PointerType>(argi->getType()));
           else
@@ -9361,16 +9369,24 @@ public:
         writeOnlyNoCapture = false;
       }
 #if LLVM_VERSION_MAJOR >= 14
-      if (!call.onlyWritesMemory(i))
+      if (!(call.onlyWritesMemory(i) || call.onlyWritesMemory()))
 #else
       if (!(call.dataOperandHasImpliedAttr(i + 1, Attribute::WriteOnly) ||
             call.dataOperandHasImpliedAttr(i + 1, Attribute::ReadNone) ||
+            call.hasFnAttr(Attribute::WriteOnly) ||
+            call.hasFnAttr(Attribute::ReadNone) ||
             (called && (called->hasParamAttribute(i, Attribute::WriteOnly) ||
-                        called->hasParamAttribute(i, Attribute::ReadNone)))))
+                        called->hasParamAttribute(i, Attribute::ReadNone) ||
+                        called->hasFnAttribute(Attribute::WriteOnly) ||
+                        called->hasFnAttribute(Attribute::ReadNone)))))
 #endif
       {
         writeOnlyNoCapture = false;
       }
+
+      if (call.hasFnAttr("enzyme_preserve_primal") ||
+          (called && called->hasFnAttribute("enzyme_preserve_primal")))
+        writeOnlyNoCapture = false;
 
       if (Mode != DerivativeMode::ReverseModePrimal) {
         IRBuilder<> Builder2(call.getParent());

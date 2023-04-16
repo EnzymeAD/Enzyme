@@ -6619,7 +6619,6 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                   tmpload->eraseFromParent();
 
                   IRBuilder<> v(ctx->getTerminator());
-                  bool isi1 = false;
 
                   AllocaInst *cache = nullptr;
 

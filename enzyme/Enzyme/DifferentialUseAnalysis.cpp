@@ -412,14 +412,24 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
           break;
         }
 #if LLVM_VERSION_MAJOR >= 14
-        if (!CI->onlyWritesMemory(i))
+        if (!(CI->onlyWritesMemory(i) || CI->onlyWritesMemory()))
 #else
         if (!(CI->dataOperandHasImpliedAttr(i + 1, Attribute::WriteOnly) ||
               CI->dataOperandHasImpliedAttr(i + 1, Attribute::ReadNone) ||
+              CI->hasFnAttr(Attribute::WriteOnly) ||
+              CI->hasFnAttr(Attribute::ReadNone) ||
               (F && (F->hasParamAttribute(i, Attribute::WriteOnly) ||
-                     F->hasParamAttribute(i, Attribute::ReadNone)))))
+                     F->hasParamAttribute(i, Attribute::ReadNone) ||
+                     F->hasFnAttribute(Attribute::WriteOnly) ||
+                     F->hasFnAttribute(Attribute::ReadNone)))))
 #endif
         {
+          writeOnlyNoCapture = false;
+          break;
+        }
+
+        if (CI->hasFnAttr("enzyme_preserve_primal") ||
+            (F && F->hasFnAttribute("enzyme_preserve_primal"))) {
           writeOnlyNoCapture = false;
           break;
         }
