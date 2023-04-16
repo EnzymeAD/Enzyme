@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %newLoadEnzyme -pases="enzyme,function(mem2reg,simplifycfg)" -enzyme-preopt=false -S | FileCheck %s; fi
 
 declare [3 x double] @__enzyme_fwddiff(i8*, ...)
 declare double @logb(double)

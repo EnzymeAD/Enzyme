@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -gvn -instsimplify -adce -correlated-propagation -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -gvn -instsimplify -adce -correlated-propagation -simplifycfg -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,function(inline,mem2reg,gvn,instsimplify,adce,correlated-propagation,simplifycfg)" -enzyme-preopt=false -S | FileCheck %s; fi
 
 ; Function Attrs: noinline norecurse nounwind uwtable
 define  double @f(double* nocapture %x, i64 %n) #0 {
