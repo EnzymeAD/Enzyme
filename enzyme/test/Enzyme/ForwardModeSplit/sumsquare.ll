@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -early-cse -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -early-cse -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,function(inline,mem2reg,instsimplify,adce,loop-deletion,correlated-propagation,simplifycfg,early-cse)" -enzyme-preopt=false -S | FileCheck %s; fi
 
 ; Function Attrs: norecurse nounwind readonly uwtable
 define dso_local double @sumsquare(double* nocapture readonly %x, i64 %n) #0 {

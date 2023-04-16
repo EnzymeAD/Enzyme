@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -early-cse -instcombine -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -early-cse -instcombine -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,simplifycfg,early-cse,instcombine)" -enzyme-preopt=false -S | FileCheck %s; fi
 
 declare {float, float, float} @__enzyme_fwdsplit({float, float, float} (<4 x float>)*, <4 x float>, <4 x float>, i8*)
 
