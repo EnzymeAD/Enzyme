@@ -19,6 +19,14 @@ def FNeg : Inst<"FNeg">;
 def Select : Inst<"Select">;
 def FCmpOEQ : Inst<"FCmpOEQ">;
 
+class ExtractValue<list<int> indices_> : Inst<"ExtractValue"> {
+  list<int> indices = indices_;
+}
+
+class InsertValue<list<int> indices_> : Inst<"InsertValue"> {
+  list<int> indices = indices_;
+}
+
 def DifR : Inst<"DifR">;
 
 // Same function as the one being called
@@ -59,9 +67,13 @@ class Call<dag mnemonic, list<Attribute> _fnattrs=[]> {
 
 def Op {
 }
+def ArrayRet {
+}
 
 class ConstantFP<string val> {
   string value = val;
+}
+class Undef {
 }
 
 class DiffeRet<string val> {
@@ -177,5 +189,25 @@ def : CallPattern<(Op $x, $y),
                   [
                   (DiffeRet<"">),
                   (FMul (DiffeRet<"">), (FNeg (Intrinsic<"copysign", [(TypeOf<""> $x)]> (Intrinsic<"floor", [(TypeOf<""> $x)]> (Intrinsic<"fabs", [(TypeOf<""> $x)]> (FDiv $x, $y))), (FDiv $x, $y))))
+                  ]
+                  >;
+
+def : CallPattern<(Op $x),
+                  ["__fd_sincos_1"],
+                  [
+                  (
+                   ArrayRet (FMul (ExtractValue<[1]> (Call<(SameFunc), [ReadNone,NoUnwind]> $x):$callset), (DiffeRet<"">) ),
+                            (FNeg (FMul (ExtractValue<[0]> $callset), (DiffeRet<"">) ) )
+                  )
+                  ]
+                  >;
+
+def : CallPattern<(Op $x),
+                  ["sincospi"],
+                  [
+                  (
+                   ArrayRet (FMul (ConstantFP<"3.1415926535897962684626433"> $x), (FMul (ExtractValue<[1]> (Call<(SameFunc), [ReadNone,NoUnwind]> $x):$callset), (DiffeRet<"">) ) ),
+                            (FMul (ConstantFP<"3.1415926535897962684626433"> $x),  (FNeg (FMul (ExtractValue<[0]> $callset), (DiffeRet<"">) ) ) )
+                  )
                   ]
                   >;

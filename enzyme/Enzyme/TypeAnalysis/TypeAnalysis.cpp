@@ -136,6 +136,9 @@ const std::map<std::string, llvm::Intrinsic::ID> LIBM_FUNCTIONS = {
     {"erfi", Intrinsic::not_intrinsic},
     {"erfc", Intrinsic::not_intrinsic},
 
+    {"__fd_sincos_1", Intrinsic::not_intrinsic},
+    {"sincospi", Intrinsic::not_intrinsic},
+
     // bessel functions
     {"j0", Intrinsic::not_intrinsic},
     {"j1", Intrinsic::not_intrinsic},
@@ -4539,7 +4542,18 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
           llvm::errs() << *T << " - " << call << "\n";
           llvm_unreachable("Unknown type for libm");
         }
-
+      } else if (auto AT = dyn_cast<ArrayType>(T)) {
+        assert(AT->getNumElements() >= 1);
+        if (AT->getElementType()->isFloatingPointTy())
+          updateAnalysis(
+              &call,
+              TypeTree(ConcreteType(AT->getElementType()->getScalarType()))
+                  .Only(-1, &call),
+              &call);
+        else {
+          llvm::errs() << *T << " - " << call << "\n";
+          llvm_unreachable("Unknown type for libm");
+        }
       } else {
         llvm::errs() << *T << " - " << call << "\n";
         llvm_unreachable("Unknown type for libm");
