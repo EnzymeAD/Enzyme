@@ -9102,6 +9102,7 @@ public:
         }
 #endif
         bool writeOnlyNoCapture = true;
+        bool readOnly = true;
 #if LLVM_VERSION_MAJOR >= 8
         if (!call.doesNotCapture(i))
 #else
@@ -9126,21 +9127,47 @@ public:
         {
           writeOnlyNoCapture = false;
         }
+#if LLVM_VERSION_MAJOR >= 14
+        if (!(call.onlyReadsMemory(i) || call.onlyReadsMemory()))
+#else
+        if (!(call.dataOperandHasImpliedAttr(i + 1, Attribute::ReadOnly) ||
+              call.dataOperandHasImpliedAttr(i + 1, Attribute::ReadNone) ||
+              call.hasFnAttr(Attribute::ReadOnly) ||
+              call.hasFnAttr(Attribute::ReadNone) ||
+              (called && (called->hasParamAttribute(i, Attribute::ReadOnly) ||
+                          called->hasParamAttribute(i, Attribute::ReadNone) ||
+                          called->hasFnAttribute(Attribute::ReadOnly) ||
+                          called->hasFnAttribute(Attribute::ReadNone)))))
+#endif
+        {
+          readOnly = false;
+        }
 
         if (call.hasFnAttr("enzyme_preserve_primal") ||
             (called && called->hasFnAttribute("enzyme_preserve_primal")))
           writeOnlyNoCapture = false;
-        if (writeOnlyNoCapture) {
-          if (EnzymeZeroCache)
-            argi = ConstantPointerNull::get(cast<PointerType>(argi->getType()));
-          else
-            argi = UndefValue::get(argi->getType());
-        }
-        args.push_back(argi);
 
         auto argTy =
             gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
+
+        if (writeOnlyNoCapture) {
+          bool replace = Mode == DerivativeMode::ForwardModeSplit;
+          if (!replace && argTy == DIFFE_TYPE::DUP_ARG) {
+            argTy = DIFFE_TYPE::DUP_NONEED;
+            replace = true;
+          } else if (readOnly)
+            replace = true;
+
+          if (replace) {
+            if (EnzymeZeroCache)
+              argi =
+                  ConstantPointerNull::get(cast<PointerType>(argi->getType()));
+            else
+              argi = UndefValue::get(argi->getType());
+          }
+        }
         argsInverted.push_back(argTy);
+        args.push_back(argi);
 
         if (argTy == DIFFE_TYPE::CONSTANT) {
           continue;
