@@ -678,12 +678,13 @@ void calculateUnusedValuesInFunction(
       [&](const llvm::Value *v) {
         if (auto C = dyn_cast<CastInst>(v))
           return isNoNeed(C->getOperand(0));
-        if (auto C = dyn_cast<GetElementPtrInst>(v))
+        else if (auto C = dyn_cast<GetElementPtrInst>(v))
           return isNoNeed(C->getOperand(0));
-        if (auto C = dyn_cast<LoadInst>(v))
+        else if (auto C = dyn_cast<LoadInst>(v))
           return isNoNeed(C->getOperand(0));
-        if (auto arg = dyn_cast<Argument>(v)) {
-          if (constant_args[arg->getArgNo()] == DIFFE_TYPE::DUP_NONEED) {
+        else if (auto arg = dyn_cast<Argument>(v)) {
+          auto act = constant_args[arg->getArgNo()];
+          if (act == DIFFE_TYPE::DUP_NONEED) {
             return true;
           }
         }
@@ -779,7 +780,7 @@ void calculateUnusedValuesInFunction(
           }
         }
 
-        bool isLibMFn = false;
+        bool mayWriteToMemory = inst->mayWriteToMemory();
         if (auto obj_op = dyn_cast<CallInst>(inst)) {
           StringRef funcName =
               getFuncNameFromCall(const_cast<CallInst *>(obj_op));
@@ -794,7 +795,7 @@ void calculateUnusedValuesInFunction(
           }
           Intrinsic::ID ID = Intrinsic::not_intrinsic;
           if (isMemFreeLibMFunction(funcName, &ID)) {
-            isLibMFn = true;
+            mayWriteToMemory = false;
           }
         }
 
@@ -850,7 +851,7 @@ void calculateUnusedValuesInFunction(
         if ((mode == DerivativeMode::ReverseModePrimal ||
              mode == DerivativeMode::ReverseModeCombined ||
              mode == DerivativeMode::ForwardMode) &&
-            inst->mayWriteToMemory() && !isLibMFn) {
+            mayWriteToMemory) {
           return UseReq::Need;
         }
         // Don't erase any store that needs to be preserved for a
@@ -875,6 +876,7 @@ void calculateUnusedValuesInFunction(
             return UseReq::Recur;
           }
         }
+
         bool ivn = DifferentialUseAnalysis::is_value_needed_in_reverse<
             ValueType::Primal>(gutils, inst, mode, PrimalSeen, oldUnreachable);
         if (ivn) {
