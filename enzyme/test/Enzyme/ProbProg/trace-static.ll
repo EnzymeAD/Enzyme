@@ -137,7 +137,7 @@ entry:
 ; CHECK-NEXT:   %13 = inttoptr i64 %12 to i8*
 ; CHECK-NEXT:   call void @__enzyme_insert_choice(i8* %trace, i8* nocapture readonly getelementptr inbounds ([11 x i8], [11 x i8]* @.str, i64 0, i64 0), double %likelihood.call.i.i, i8* %13, i64 8)
 ; CHECK-NEXT:   %arrayidx3.i = getelementptr inbounds double, double* %data, i64 %indvars.iv.i
-; CHECK-NEXT:   %14 = load double, double* %arrayidx3.i, align 8
+; CHECK-NEXT:   %14 = load double, double* %arrayidx3.i
 ; CHECK-NEXT:   %sub.i = fsub double %11, %14
 ; CHECK-NEXT:   %mul2 = fmul double %sub.i, %sub.i
 ; CHECK-NEXT:   %15 = fadd double %mul2, %loss.021.i

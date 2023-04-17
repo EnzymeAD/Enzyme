@@ -117,7 +117,7 @@ entry:
 
 ; CHECK: condition.call1.with.trace.i:                     ; preds = %condition_call.exit
 ; CHECK-NEXT:   %10 = bitcast double* %call1.ptr.i to i8*
-; CHECK-NEXT:   %call1.size.i = call i64 @__enzyme_get_choice(i8* %observations, i8* nocapture readonly getelementptr inbounds ([2 x i8], [2 x i8]* @.str.2, i64 0, i64 0), i8* %10, i64 8) #4
+; CHECK-NEXT:   %call1.size.i = call i64 @__enzyme_get_choice(i8* %observations, i8* nocapture readonly getelementptr inbounds ([2 x i8], [2 x i8]* @.str.2, i64 0, i64 0), i8* %10, i64 8)
 ; CHECK-NEXT:   %from.trace.call1.i = load double, double* %call1.ptr.i
 ; CHECK-NEXT:   br label %condition_call1.exit
 
