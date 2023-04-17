@@ -1391,22 +1391,24 @@ bool legalCombinedForwardReverse(
         return false;
       if (!post->mayWriteToMemory())
         return false;
+
       if (writesToMemoryReadBy(gutils->OrigAA, gutils->TLI,
                                /*maybeReader*/ inst,
                                /*maybeWriter*/ post)) {
         if (EnzymePrintPerf) {
           if (called)
-            llvm::errs() << " failed to replace function "
+            llvm::errs() << " [mem] failed to replace function "
                          << (called->getName()) << " due to " << *post
                          << " usetree: " << *inst << "\n";
           else
-            llvm::errs() << " failed to replace function " << (*calledValue)
-                         << " due to " << *post << " usetree: " << *inst
-                         << "\n";
+            llvm::errs() << " [mem] failed to replace function "
+                         << (*calledValue) << " due to " << *post
+                         << " usetree: " << *inst << "\n";
         }
         legal = false;
         return true;
       }
+      return false;
     });
     if (!legal)
       break;
@@ -1436,12 +1438,12 @@ bool legalCombinedForwardReverse(
       if (!noFree) {
         if (EnzymePrintPerf) {
           if (called)
-            llvm::errs() << " failed to replace function "
+            llvm::errs() << " [freeing] failed to replace function "
                          << (called->getName()) << " due to freeing " << *post
                          << " usetree: " << *origop << "\n";
           else
-            llvm::errs() << " failed to replace function " << (*calledValue)
-                         << " due to freeing " << *post
+            llvm::errs() << " [freeing] failed to replace function "
+                         << (*calledValue) << " due to freeing " << *post
                          << " usetree: " << *origop << "\n";
         }
         legal = false;
