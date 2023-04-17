@@ -1902,9 +1902,18 @@ public:
                    EVI.getType()) +
                7) /
               8;
-        ((DiffeGradientUtils *)gutils)
-            ->addToDiffe(orig_op0, prediff, Builder2, TR.addingType(size, &EVI),
-                         sv);
+        for (size_t i = 0; i < gutils->getWidth(); ++i) {
+          Value *tdiff = (gutils->getWidth() == 1)
+                             ? prediff
+                             : gutils->extractMeta(Builder2, prediff, i);
+          SmallVector<Value *, 4> sv2 = sv;
+          if (gutils->getWidth() != 1)
+            sv2.insert(sv2.begin(),
+                       ConstantInt::get(Type::getInt32Ty(EVI.getContext()), i));
+          ((DiffeGradientUtils *)gutils)
+              ->addToDiffe(orig_op0, tdiff, Builder2, TR.addingType(size, &EVI),
+                           sv2);
+        }
       }
 
       setDiffe(&EVI,
@@ -12604,93 +12613,6 @@ public:
             }
             eraseIfUnused(call);
             return;
-          }
-        }
-        if (funcName == "__fd_sincos_1") {
-          if (gutils->knownRecomputeHeuristic.find(&call) !=
-              gutils->knownRecomputeHeuristic.end()) {
-            if (!gutils->knownRecomputeHeuristic[&call]) {
-              gutils->cacheForReverse(BuilderZ, newCall,
-                                      getIndex(&call, CacheType::Self));
-            }
-          }
-          eraseIfUnused(call);
-          if (gutils->isConstantInstruction(&call)) {
-            return;
-          }
-
-          switch (Mode) {
-          case DerivativeMode::ForwardModeSplit:
-          case DerivativeMode::ForwardMode: {
-            IRBuilder<> Builder2(&call);
-            getForwardBuilder(Builder2);
-
-            Value *vdiff = diffe(call.getArgOperand(0), Builder2);
-            Value *x = gutils->getNewFromOriginal(call.getArgOperand(0));
-            Value *args[] = {x};
-
-            Type *tys[] = {call.getOperand(0)->getType()};
-            CallInst *dsin = cast<CallInst>(Builder2.CreateCall(
-                Intrinsic::getDeclaration(gutils->oldFunc->getParent(),
-                                          Intrinsic::cos, tys),
-                args));
-            CallInst *dcos = cast<CallInst>(Builder2.CreateCall(
-                Intrinsic::getDeclaration(gutils->oldFunc->getParent(),
-                                          Intrinsic::sin, tys),
-                args));
-
-            auto rule = [&](Value *vdiff) {
-              Value *res = UndefValue::get(call.getType());
-              res = Builder2.CreateInsertValue(
-                  res, Builder2.CreateFMul(vdiff, dsin), {0});
-              return Builder2.CreateInsertValue(
-                  res, Builder2.CreateFNeg(Builder2.CreateFMul(vdiff, dcos)),
-                  {1});
-            };
-
-            Value *dif0 = applyChainRule(call.getType(), Builder2, rule, vdiff);
-            setDiffe(&call, dif0, Builder2);
-            return;
-          }
-          case DerivativeMode::ReverseModeGradient:
-          case DerivativeMode::ReverseModeCombined: {
-            IRBuilder<> Builder2(call.getParent());
-            getReverseBuilder(Builder2);
-
-            Value *x = lookup(gutils->getNewFromOriginal(call.getArgOperand(0)),
-                              Builder2);
-
-            Value *args[] = {x};
-
-            Type *tys[] = {call.getOperand(0)->getType()};
-            CallInst *dsin = cast<CallInst>(Builder2.CreateCall(
-                Intrinsic::getDeclaration(gutils->oldFunc->getParent(),
-                                          Intrinsic::cos, tys),
-                args));
-            CallInst *dcos = cast<CallInst>(Builder2.CreateCall(
-                Intrinsic::getDeclaration(gutils->oldFunc->getParent(),
-                                          Intrinsic::sin, tys),
-                args));
-            auto rule = [&](Value *vdiff) {
-              return Builder2.CreateFSub(
-                  Builder2.CreateFMul(Builder2.CreateExtractValue(vdiff, {0}),
-                                      dsin),
-                  Builder2.CreateFMul(Builder2.CreateExtractValue(vdiff, {1}),
-                                      dcos));
-            };
-            Value *vdiff = diffe(&call, Builder2);
-            Value *dif0 = applyChainRule(call.getArgOperand(0)->getType(),
-                                         Builder2, rule, vdiff);
-            setDiffe(
-                &call,
-                Constant::getNullValue(gutils->getShadowType(call.getType())),
-                Builder2);
-            addToDiffe(call.getArgOperand(0), dif0, Builder2, x->getType());
-            return;
-          }
-          case DerivativeMode::ReverseModePrimal: {
-            return;
-          }
           }
         }
         if (funcName == "cabs" || funcName == "cabsf" || funcName == "cabsl") {
