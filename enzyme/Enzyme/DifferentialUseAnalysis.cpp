@@ -393,10 +393,10 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     }
 
     bool writeOnlyNoCapture = true;
+    auto F = getFunctionFromCall(const_cast<CallInst *>(CI));
 #if LLVM_VERSION_MAJOR >= 14
     for (size_t i = 0; i < CI->arg_size(); i++)
 #else
-    auto F = getFunctionFromCall(const_cast<CallInst *>(CI));
     for (size_t i = 0; i < CI->getNumArgOperands(); i++)
 #endif
     {

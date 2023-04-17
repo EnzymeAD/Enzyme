@@ -9,9 +9,9 @@ entry:
   ret double %0
 }
 
-define dso_local double @julia_f_kw__kw_6800([1 x double]* nocapture %0, double %1) {
+define dso_local double @julia_f_kw__kw_6800([1 x double]* nocapture %a0, double %a1) {
 top:
-  %a3 = fmul double %1, %1
+  %a3 = fmul double %a1, %a1
   ret double %a3
 }
 

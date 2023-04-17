@@ -367,7 +367,7 @@ public:
   DIFFE_TYPE getDiffeType(llvm::Value *v, bool foreignFunction);
 
   DIFFE_TYPE getReturnDiffeType(llvm::CallInst *orig, bool *primalReturnUsedP,
-                                bool *shadowReturnUsedP);
+                                bool *shadowReturnUsedP) const;
 
   static GradientUtils *
   CreateFromClone(EnzymeLogic &Logic, unsigned width, llvm::Function *todiff,

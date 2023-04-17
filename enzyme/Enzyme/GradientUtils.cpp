@@ -4352,7 +4352,7 @@ GradientUtils *GradientUtils::CreateFromClone(
 
 DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::CallInst *orig,
                                              bool *primalReturnUsedP,
-                                             bool *shadowReturnUsedP) {
+                                             bool *shadowReturnUsedP) const {
   bool shadowReturnUsed = false;
 
   DIFFE_TYPE subretType;
@@ -4383,8 +4383,9 @@ DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::CallInst *orig,
   if (primalReturnUsedP) {
     bool subretused =
         unnecessaryValuesP->find(orig) == unnecessaryValuesP->end();
-    if (knownRecomputeHeuristic.find(orig) != knownRecomputeHeuristic.end()) {
-      if (!knownRecomputeHeuristic[orig]) {
+    auto found = knownRecomputeHeuristic.find(orig);
+    if (found != knownRecomputeHeuristic.end()) {
+      if (!found->second) {
         subretused = true;
       }
     }
