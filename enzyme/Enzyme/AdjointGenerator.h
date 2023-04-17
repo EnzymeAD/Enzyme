@@ -10396,30 +10396,35 @@ public:
     }
 
     std::vector<bool> overwritten_args = std::vector<bool>(
-        overwritten_args_map.find(&call)->second.begin() + 3,
+        overwritten_args_map.find(&call)->second.begin() + 1,
         overwritten_args_map.find(&call)->second.end() - offset);
 
     overwritten_args.push_back(false); // should correspond to &call
 
-    Function *samplefn = GetFunctionFromValue(call.getArgOperand(0));
-    Function *likelihoodfn = GetFunctionFromValue(call.getArgOperand(1));
+    auto likelihoodfn =
+        cast<Function>(cast<ValueAsMetadata>(
+                           call.getMetadata("enzyme_pdf")->getOperand(0).get())
+                           ->getValue());
 
     auto likelihood_getter = cast<Function>(
         cast<ValueAsMetadata>(
-            call.getMetadata("likelihood_getter")->getOperand(0).get())
+            call.getMetadata("enzyme_likelihood_getter")->getOperand(0).get())
             ->getValue());
     auto choice_getter = cast<Function>(
         cast<ValueAsMetadata>(
-            call.getMetadata("choice_getter")->getOperand(0).get())
+            call.getMetadata("enzyme_choice_getter")->getOperand(0).get())
             ->getValue());
     auto choice_setter = cast<Function>(
         cast<ValueAsMetadata>(
-            call.getMetadata("choice_setter")->getOperand(0).get())
+            call.getMetadata("enzyme_choice_setter")->getOperand(0).get())
             ->getValue());
 
-    Value *address = call.getArgOperand(2);
-    Value *trace =
-        call.getArgOperand(3 + samplefn->getFunctionType()->getNumParams());
+    Value *address = call.getArgOperand(0);
+#if LLVM_VERSION_MAJOR >= 14
+    Value *trace = call.getArgOperand(call.arg_size() - offset);
+#else
+    Value *trace = call.getArgOperand(call.getNumArgOperands() - offset);
+#endif
 
     assert(likelihoodfn);
 
@@ -10431,7 +10436,7 @@ public:
       if (argnum == likelihoodfn->getFunctionType()->getNumParams() - 1) {
         origArgi = &call;
       } else {
-        origArgi = call.getArgOperand(3 + argnum);
+        origArgi = call.getArgOperand(1 + argnum);
       }
       auto ArgTR = TR.query(origArgi);
       nextTypeInfo.Arguments.insert(
@@ -10471,12 +10476,12 @@ public:
     std::map<int, Type *> gradByVal;
     std::map<int, Attribute> structAttrs;
 
-    for (unsigned i = 3;
-         i < 3 + likelihoodfn->getFunctionType()->getNumParams(); ++i) {
+    for (unsigned i = 1; i <= likelihoodfn->getFunctionType()->getNumParams();
+         ++i) {
       Value *argi;
       Value *orig_argi;
       DIFFE_TYPE argTy;
-      if (i < 3 + likelihoodfn->getFunctionType()->getNumParams() - 1) {
+      if (i < likelihoodfn->getFunctionType()->getNumParams()) {
         argi = gutils->getNewFromOriginal(call.getArgOperand(i));
         orig_argi = call.getArgOperand(i);
         argTy = gutils->getDiffeType(call.getArgOperand(i), foreignFunction);

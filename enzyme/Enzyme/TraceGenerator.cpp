@@ -80,11 +80,7 @@ void TraceGenerator::visitFunction(Function &F) {
 void TraceGenerator::handleSampleCall(CallInst &call, CallInst *new_call) {
   SmallVector<Value *, 4> Args;
   SmallVector<Type *, 4> Tys;
-#if LLVM_VERSION_MAJOR >= 14
-  for (auto &arg : new_call->args()) {
-#else
-  for (auto &arg : new_call->arg_operands()) {
-#endif
+  for (auto &arg : make_range(new_call->arg_begin() + 2, new_call->arg_end())) {
     Args.push_back(arg);
     Tys.push_back(arg->getType());
   }
@@ -129,6 +125,11 @@ void TraceGenerator::handleSampleCall(CallInst &call, CallInst *new_call) {
     new_call->replaceAllUsesWith(outline_call);
     new_call->eraseFromParent();
 
+    auto density_fn = ValueAsMetadata::get(likelihoodfn);
+    auto density_node = MDNode::get(outline_call->getContext(), {density_fn});
+
+    outline_call->setMetadata("enzyme_pdf", density_node);
+
     if (autodiff) {
       auto likelihood_getter =
           ValueAsMetadata::get(tutils->interface->getLikelihood(Builder));
@@ -145,19 +146,18 @@ void TraceGenerator::handleSampleCall(CallInst &call, CallInst *new_call) {
       auto choice_node2 =
           MDNode::get(outline_call->getContext(), {choice_setter});
 
-      outline_call->setMetadata("likelihood_getter", likelihood_node);
-      outline_call->setMetadata("choice_getter", choice_node1);
-      outline_call->setMetadata("choice_setter", choice_node2);
+      outline_call->setMetadata("enzyme_likelihood_getter", likelihood_node);
+      outline_call->setMetadata("enzyme_choice_getter", choice_node1);
+      outline_call->setMetadata("enzyme_choice_setter", choice_node2);
     }
   }
 
   IRBuilder<> OutlineBuilder(&outline->getEntryBlock());
 
-  Value *address = outline->arg_begin() + 2;
+  Value *address = outline->arg_begin();
 
   SmallVector<Value *, 2> sample_args;
-  for (unsigned i = 3; i < 3 + samplefn->getFunctionType()->getNumParams();
-       ++i) {
+  for (unsigned i = 1; i <= samplefn->getFunctionType()->getNumParams(); ++i) {
     sample_args.push_back(outline->arg_begin() + i);
   }
 
