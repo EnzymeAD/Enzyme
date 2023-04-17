@@ -1453,8 +1453,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
                 F = fn;
               }
           }
-          if (F && (isMemFreeLibMFunction(F->getName()) ||
-                    F->getName() == "__fd_sincos_1")) {
+          if (F && isMemFreeLibMFunction(F->getName())) {
             continue;
           }
           if (F && F->getName().contains("__enzyme_integer")) {
@@ -1513,8 +1512,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
                       F = fn;
                     }
                 }
-                if (F && (isMemFreeLibMFunction(F->getName()) ||
-                          F->getName() == "__fd_sincos_1")) {
+                if (F && isMemFreeLibMFunction(F->getName())) {
                   continue;
                 }
                 if (F && F->getName().contains("__enzyme_integer")) {

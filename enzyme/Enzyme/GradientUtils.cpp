@@ -4058,9 +4058,9 @@ bool GradientUtils::legalRecompute(const Value *val,
         isMemFreeLibMFunction(n, &ID) || n == "lgamma_r" || n == "lgammaf_r" ||
         n == "lgammal_r" || n == "__lgamma_r_finite" ||
         n == "__lgammaf_r_finite" || n == "__lgammal_r_finite" || n == "tanh" ||
-        n == "tanhf" || n == "__pow_finite" || n == "__fd_sincos_1" ||
-        n == "julia.pointer_from_objref" || n.startswith("enzyme_wrapmpi$$") ||
-        n == "omp_get_thread_num" || n == "omp_get_max_threads") {
+        n == "tanhf" || n == "__pow_finite" || n == "julia.pointer_from_objref" ||
+        n.startswith("enzyme_wrapmpi$$") || n == "omp_get_thread_num" ||
+        n == "omp_get_max_threads") {
       return true;
     }
   }
@@ -4199,9 +4199,9 @@ bool GradientUtils::shouldRecompute(const Value *val,
         isMemFreeLibMFunction(n, &ID) || n == "lgamma_r" || n == "lgammaf_r" ||
         n == "lgammal_r" || n == "__lgamma_r_finite" ||
         n == "__lgammaf_r_finite" || n == "__lgammal_r_finite" || n == "tanh" ||
-        n == "tanhf" || n == "__pow_finite" || n == "__fd_sincos_1" ||
-        n == "julia.pointer_from_objref" || n.startswith("enzyme_wrapmpi$$") ||
-        n == "omp_get_thread_num" || n == "omp_get_max_threads") {
+        n == "tanhf" || n == "__pow_finite" || n == "julia.pointer_from_objref" ||
+        n.startswith("enzyme_wrapmpi$$") || n == "omp_get_thread_num" ||
+        n == "omp_get_max_threads") {
       return true;
     }
   }
@@ -4905,15 +4905,47 @@ Type *GradientUtils::getShadowType(Type *ty) {
 
 Value *GradientUtils::extractMeta(IRBuilder<> &Builder, Value *Agg,
                                   unsigned off) {
-  while (auto Ins = dyn_cast<InsertValueInst>(Agg)) {
-    if (Ins->getNumIndices() != 1)
-      break;
-    if (Ins->getIndices()[0] == off)
-      return Ins->getInsertedValueOperand();
-    else
-      Agg = Ins->getAggregateOperand();
+  return extractMeta(Builder, Agg, ArrayRef<unsigned>({off}));
+}
+
+Value *GradientUtils::extractMeta(IRBuilder<> &Builder, Value *Agg,
+                                  ArrayRef<unsigned> off_init) {
+    std::vector<unsigned> off(off_init.begin(), off_init.end());
+  while (off.size() != 0) {
+    if (auto Ins = dyn_cast<InsertValueInst>(Agg)) {
+        size_t until = Ins->getNumIndices();
+        if (off.size() < until) until = off.size();
+        bool subset = true;
+        for (size_t i=0; i<until; i++) {
+            if (Ins->getIndices()[i] != off[i]) {
+                subset = false;
+                break;
+            }
+        }
+        if (!subset) {
+          Agg = Ins->getAggregateOperand();
+          continue;
+        } else if (until < Ins->getNumIndices()) {
+          break;
+        } else {
+          off.erase(off.begin(), off.begin() + until);
+          Agg = Ins->getInsertedValueOperand();
+          continue;
+        }
+    }
+    if (auto ext = dyn_cast<ExtractValueInst>(Agg)) {
+        off.insert(off.begin(), ext->getIndices().begin(), ext->getIndices().end());
+        Agg = ext->getAggregateOperand();
+        continue;
+    }
+    if (auto CA = dyn_cast<ConstantAggregateZero>(Agg)) {
+        Agg = CA->getElementValue(off[0]);
+        off.erase(off.begin(), off.begin()+1);
+    }
+    break;
   }
-  return Builder.CreateExtractValue(Agg, {off});
+  if (off.size() == 0) return Agg;
+  return Builder.CreateExtractValue(Agg, off);
 }
 
 Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
@@ -5099,8 +5131,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
               continue;
             if (!isConstantInstruction(CI)) {
               Function *F = getFunctionFromCall(CI);
-              if (F && (isMemFreeLibMFunction(F->getName()) ||
-                        F->getName() == "__fd_sincos_1")) {
+              if (F && isMemFreeLibMFunction(F->getName())) {
                 continue;
               }
               if (llvm::isModOrRefSet(OrigAA.getModRefInfo(CI, Loc))) {

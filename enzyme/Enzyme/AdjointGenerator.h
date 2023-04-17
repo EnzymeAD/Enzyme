@@ -1895,9 +1895,15 @@ public:
                    EVI.getType()) +
                7) /
               8;
-        ((DiffeGradientUtils *)gutils)
-            ->addToDiffe(orig_op0, prediff, Builder2, TR.addingType(size, &EVI),
-                         sv);
+        for (size_t i=0; i<gutils->getWidth(); ++i) {
+          Value *tdiff = (gutils->getWidth() == 1) ? prediff : gutils->extractMeta(Builder2, prediff, i);
+          SmallVector<Value *, 4> sv2 = sv;
+          if (gutils->getWidth() != 1)
+              sv2.insert(sv2.begin(), ConstantInt::get(Type::getInt32Ty(EVI.getContext()), i));
+          ((DiffeGradientUtils *)gutils)
+            ->addToDiffe(orig_op0, tdiff, Builder2, TR.addingType(size, &EVI),
+                         sv2);
+        }
       }
 
       setDiffe(&EVI,
