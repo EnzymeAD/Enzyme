@@ -2839,25 +2839,34 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         mayCapture |= !NoCapture;
 
 #if LLVM_VERSION_MAJOR >= 8
-        bool ReadOnly = call->onlyReadsMemory(idx);
+        bool ReadOnly = call->onlyReadsMemory(idx) || call->onlyReadsMemory();
 #else
         bool ReadOnly =
             call->dataOperandHasImpliedAttr(idx + 1, Attribute::ReadOnly) ||
             call->dataOperandHasImpliedAttr(idx + 1, Attribute::ReadNone) ||
+            call->hasFnAttr(Attribute::ReadOnly) ||
+            call->hasFnAttr(Attribute::ReadNone) ||
             (F && (F->hasParamAttribute(idx, Attribute::ReadOnly) ||
-                   F->hasParamAttribute(idx, Attribute::ReadNone)));
+                   F->hasParamAttribute(idx, Attribute::ReadNone) ||
+                   F->hasFnAttribute(Attribute::ReadOnly) ||
+                   F->hasFnAttribute(Attribute::ReadNone)));
 #endif
 
         mayWrite |= !ReadOnly;
 
 #if LLVM_VERSION_MAJOR >= 14
-        bool WriteOnly = call->onlyWritesMemory(idx);
+        bool WriteOnly =
+            call->onlyWritesMemory(idx) || call->onlyWritesMemory();
 #else
         bool WriteOnly =
             call->dataOperandHasImpliedAttr(idx + 1, Attribute::WriteOnly) ||
             call->dataOperandHasImpliedAttr(idx + 1, Attribute::ReadNone) ||
+            call->hasFnAttr(Attribute::WriteOnly) ||
+            call->hasFnAttr(Attribute::ReadNone) ||
             (F && (F->hasParamAttribute(idx, Attribute::WriteOnly) ||
-                   F->hasParamAttribute(idx, Attribute::ReadNone)));
+                   F->hasParamAttribute(idx, Attribute::ReadNone) ||
+                   F->hasFnAttribute(Attribute::WriteOnly) ||
+                   F->hasFnAttribute(Attribute::ReadNone)));
 #endif
 
         mayRead |= !WriteOnly;
