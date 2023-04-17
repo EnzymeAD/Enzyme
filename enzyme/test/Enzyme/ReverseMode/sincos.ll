@@ -3,13 +3,13 @@
 ; Function Attrs: nounwind readnone uwtable
 define [2 x double] @meta(double %x) {
 entry:
-  %0 = tail call fast [2 x double] @__fd_sincos_1(double %x)
+  %0 = tail call [2 x double] @__fd_sincos_1(double %x)
   ret [2 x double] %0
 }
 
 define double @tester(double %x) {
 entry:
-  %0 = tail call fast [2 x double] @meta(double %x)
+  %0 = tail call [2 x double] @meta(double %x)
   %e = extractvalue [2 x double] %0, 0
   ret double %e
 }
@@ -27,7 +27,7 @@ declare double @__enzyme_autodiff(...)
 
 ; CHECK: define internal { double } @diffemeta(double %x, [2 x double] %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call fast [2 x double] @__fd_sincos_1(double %x)
+; CHECK-NEXT:   %0 = call [2 x double] @__fd_sincos_1(double %x)
 ; CHECK-NEXT:   %1 = extractvalue [2 x double] %0, 1
 ; CHECK-NEXT:   %2 = extractvalue [2 x double] %differeturn, 0
 ; CHECK-NEXT:   %3 = fmul fast double %1, %2

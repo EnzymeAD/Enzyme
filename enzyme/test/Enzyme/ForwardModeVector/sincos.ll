@@ -4,7 +4,7 @@
 ; Function Attrs: nounwind readnone uwtable
 define [2 x double] @tester(double %x) {
 entry:
-  %0 = tail call fast [2 x double] @__fd_sincos_1(double %x)
+  %0 = tail call [2 x double] @__fd_sincos_1(double %x)
   ret [2 x double] %0
 }
 
@@ -21,7 +21,7 @@ declare [2 x [2 x double]] @__enzyme_fwddiff(...)
 
 ; CHECK: define internal [2 x [2 x double]] @fwddiffe2tester(double %x, [2 x double] %"x'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call fast [2 x double] @__fd_sincos_1(double %x)
+; CHECK-NEXT:   %0 = call [2 x double] @__fd_sincos_1(double %x)
 ; CHECK-NEXT:   %1 = extractvalue [2 x double] %0, 1
 ; CHECK-NEXT:   %2 = extractvalue [2 x double] %"x'", 0
 ; CHECK-NEXT:   %3 = fmul fast double %1, %2

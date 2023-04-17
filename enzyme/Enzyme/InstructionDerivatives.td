@@ -201,3 +201,13 @@ def : CallPattern<(Op $x),
                   )
                   ]
                   >;
+
+def : CallPattern<(Op $x),
+                  ["sincospi"],
+                  [
+                  (
+                   ArrayRet (FMul (ConstantFP<"3.1415926535897962684626433"> $x), (FMul (ExtractValue<[1]> (Call<(SameFunc), [ReadNone,NoUnwind]> $x):$callset), (DiffeRet<"">) ) ),
+                            (FMul (ConstantFP<"3.1415926535897962684626433"> $x),  (FNeg (FMul (ExtractValue<[0]> $callset), (DiffeRet<"">) ) ) )
+                  )
+                  ]
+                  >;

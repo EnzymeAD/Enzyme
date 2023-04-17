@@ -25,7 +25,7 @@ declare [2 x double] @__fd_sincos_1(double)
 ; Function Attrs: nounwind
 declare [3 x double] @__enzyme_autodiff(...)
 
-; CHECK-NEXT: define internal { [3 x double] } @diffe3meta(double %x, [3 x [2 x double]] %differeturn)
+; CHECK: define internal { [3 x double] } @diffe3meta(double %x, [3 x [2 x double]] %differeturn)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %differeturn.fca.0.0.extract = extractvalue [3 x [2 x double]] %differeturn, 0, 0
 ; CHECK-NEXT:   %differeturn.fca.0.1.extract = extractvalue [3 x [2 x double]] %differeturn, 0, 1
