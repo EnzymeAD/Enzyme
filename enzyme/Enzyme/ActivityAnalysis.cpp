@@ -1717,7 +1717,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         if (KnownInactiveFunctionInsts.count(funcName.str())) {
           return false;
         }
-        if (isMemFreeLibMFunction(funcName) || funcName == "__fd_sincos_1") {
+        if (isMemFreeLibMFunction(funcName)) {
           return false;
         }
 #if LLVM_VERSION_MAJOR >= 9
