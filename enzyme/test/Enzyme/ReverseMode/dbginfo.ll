@@ -206,13 +206,14 @@ attributes #9 = { noreturn nounwind }
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(24) dereferenceable_or_null(24) %"call'mi", i8 0, i64 24, i1 false)
 ; CHECK-NEXT:   %"'ipc2" = bitcast i8* %"call'mi" to %struct.Data*
 ; CHECK-NEXT:   %0 = bitcast i8* %call to %struct.Data*
+; CHECK-NEXT:   call void @augmented_foo(double %x, %struct.Data* %0, %struct.Data* %"'ipc2"),
 ; CHECK-NEXT:   %"res1'ipg" = getelementptr inbounds i8, i8* %"call'mi", i64 16
 ; CHECK-NEXT:   %"'ipc" = bitcast i8* %"res1'ipg" to double*
+; CHECK-NEXT:   call void @free(i8* %call)
 ; CHECK-NEXT:   %1 = load double, double* %"'ipc", align 8
 ; CHECK-NEXT:   %2 = fadd fast double %1, %differeturn
 ; CHECK-NEXT:   store double %2, double* %"'ipc", align 8
-; CHECK-NEXT:   %3 = call { double } @diffefoo(double %x, %struct.Data* %0, %struct.Data* %"'ipc2")
+; CHECK-NEXT:   %3 = call { double } @diffefoo(double %x, %struct.Data* undef, %struct.Data* %"'ipc2")
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %"call'mi"), !dbg !{{.*}}[[DBG]]
-; CHECK-NEXT:   tail call void @free(i8* nonnull %call), !dbg !{{.*}}[[DBG]]
 ; CHECK-NEXT:   ret { double } %3
 ; CHECK-NEXT: }

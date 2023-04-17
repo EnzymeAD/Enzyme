@@ -1174,7 +1174,7 @@ bool legalCombinedForwardReverse(
     CallInst *origop,
     const std::map<ReturnInst *, StoreInst *> &replacedReturns,
     SmallVectorImpl<Instruction *> &postCreate,
-    SmallVectorImpl<Instruction *> &userReplace, GradientUtils *gutils,
+    SmallVectorImpl<Instruction *> &userReplace, const GradientUtils *gutils,
     const SmallPtrSetImpl<const Instruction *> &unnecessaryInstructions,
     const SmallPtrSetImpl<BasicBlock *> &oldUnreachable,
     const bool subretused) {
@@ -1391,18 +1391,19 @@ bool legalCombinedForwardReverse(
         return false;
       if (!post->mayWriteToMemory())
         return false;
+
       if (writesToMemoryReadBy(gutils->OrigAA, gutils->TLI,
                                /*maybeReader*/ inst,
                                /*maybeWriter*/ post)) {
         if (EnzymePrintPerf) {
           if (called)
-            llvm::errs() << " failed to replace function "
+            llvm::errs() << " [mem] failed to replace function "
                          << (called->getName()) << " due to " << *post
                          << " usetree: " << *inst << "\n";
           else
-            llvm::errs() << " failed to replace function " << (*calledValue)
-                         << " due to " << *post << " usetree: " << *inst
-                         << "\n";
+            llvm::errs() << " [mem] failed to replace function "
+                         << (*calledValue) << " due to " << *post
+                         << " usetree: " << *inst << "\n";
         }
         legal = false;
         return true;
@@ -1412,6 +1413,45 @@ bool legalCombinedForwardReverse(
     if (!legal)
       break;
   }
+
+  allFollowersOf(origop, [&](Instruction *post) {
+    if (unnecessaryInstructions.count(post))
+      return false;
+    if (!origop->mayWriteToMemory() && !origop->mayReadFromMemory())
+      return false;
+    if (auto CI = dyn_cast<CallInst>(post)) {
+      bool noFree = false;
+#if LLVM_VERSION_MAJOR >= 9
+      noFree |= CI->hasFnAttr(Attribute::NoFree);
+#endif
+      noFree |= CI->hasFnAttr("nofree");
+      Function *called = getFunctionFromCall(CI);
+      StringRef funcName = getFuncNameFromCall(CI);
+      if (funcName == "llvm.trap")
+        noFree = true;
+      if (!noFree && called) {
+#if LLVM_VERSION_MAJOR >= 9
+        noFree |= called->hasFnAttribute(Attribute::NoFree);
+#endif
+        noFree |= called->hasFnAttribute("nofree");
+      }
+      if (!noFree) {
+        if (EnzymePrintPerf) {
+          if (called)
+            llvm::errs() << " [freeing] failed to replace function "
+                         << (called->getName()) << " due to freeing " << *post
+                         << " usetree: " << *origop << "\n";
+          else
+            llvm::errs() << " [freeing] failed to replace function "
+                         << (*calledValue) << " due to freeing " << *post
+                         << " usetree: " << *origop << "\n";
+        }
+        legal = false;
+        return true;
+      }
+    }
+    return false;
+  });
 
   if (!legal)
     return false;
