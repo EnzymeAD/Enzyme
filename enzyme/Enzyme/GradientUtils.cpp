@@ -4058,9 +4058,9 @@ bool GradientUtils::legalRecompute(const Value *val,
         isMemFreeLibMFunction(n, &ID) || n == "lgamma_r" || n == "lgammaf_r" ||
         n == "lgammal_r" || n == "__lgamma_r_finite" ||
         n == "__lgammaf_r_finite" || n == "__lgammal_r_finite" || n == "tanh" ||
-        n == "tanhf" || n == "__pow_finite" || n == "julia.pointer_from_objref" ||
-        n.startswith("enzyme_wrapmpi$$") || n == "omp_get_thread_num" ||
-        n == "omp_get_max_threads") {
+        n == "tanhf" || n == "__pow_finite" ||
+        n == "julia.pointer_from_objref" || n.startswith("enzyme_wrapmpi$$") ||
+        n == "omp_get_thread_num" || n == "omp_get_max_threads") {
       return true;
     }
   }
@@ -4199,9 +4199,9 @@ bool GradientUtils::shouldRecompute(const Value *val,
         isMemFreeLibMFunction(n, &ID) || n == "lgamma_r" || n == "lgammaf_r" ||
         n == "lgammal_r" || n == "__lgamma_r_finite" ||
         n == "__lgammaf_r_finite" || n == "__lgammal_r_finite" || n == "tanh" ||
-        n == "tanhf" || n == "__pow_finite" || n == "julia.pointer_from_objref" ||
-        n.startswith("enzyme_wrapmpi$$") || n == "omp_get_thread_num" ||
-        n == "omp_get_max_threads") {
+        n == "tanhf" || n == "__pow_finite" ||
+        n == "julia.pointer_from_objref" || n.startswith("enzyme_wrapmpi$$") ||
+        n == "omp_get_thread_num" || n == "omp_get_max_threads") {
       return true;
     }
   }
@@ -4910,41 +4910,44 @@ Value *GradientUtils::extractMeta(IRBuilder<> &Builder, Value *Agg,
 
 Value *GradientUtils::extractMeta(IRBuilder<> &Builder, Value *Agg,
                                   ArrayRef<unsigned> off_init) {
-    std::vector<unsigned> off(off_init.begin(), off_init.end());
+  std::vector<unsigned> off(off_init.begin(), off_init.end());
   while (off.size() != 0) {
     if (auto Ins = dyn_cast<InsertValueInst>(Agg)) {
-        size_t until = Ins->getNumIndices();
-        if (off.size() < until) until = off.size();
-        bool subset = true;
-        for (size_t i=0; i<until; i++) {
-            if (Ins->getIndices()[i] != off[i]) {
-                subset = false;
-                break;
-            }
-        }
-        if (!subset) {
-          Agg = Ins->getAggregateOperand();
-          continue;
-        } else if (until < Ins->getNumIndices()) {
+      size_t until = Ins->getNumIndices();
+      if (off.size() < until)
+        until = off.size();
+      bool subset = true;
+      for (size_t i = 0; i < until; i++) {
+        if (Ins->getIndices()[i] != off[i]) {
+          subset = false;
           break;
-        } else {
-          off.erase(off.begin(), off.begin() + until);
-          Agg = Ins->getInsertedValueOperand();
-          continue;
         }
+      }
+      if (!subset) {
+        Agg = Ins->getAggregateOperand();
+        continue;
+      } else if (until < Ins->getNumIndices()) {
+        break;
+      } else {
+        off.erase(off.begin(), off.begin() + until);
+        Agg = Ins->getInsertedValueOperand();
+        continue;
+      }
     }
     if (auto ext = dyn_cast<ExtractValueInst>(Agg)) {
-        off.insert(off.begin(), ext->getIndices().begin(), ext->getIndices().end());
-        Agg = ext->getAggregateOperand();
-        continue;
+      off.insert(off.begin(), ext->getIndices().begin(),
+                 ext->getIndices().end());
+      Agg = ext->getAggregateOperand();
+      continue;
     }
     if (auto CA = dyn_cast<ConstantAggregateZero>(Agg)) {
-        Agg = CA->getElementValue(off[0]);
-        off.erase(off.begin(), off.begin()+1);
+      Agg = CA->getElementValue(off[0]);
+      off.erase(off.begin(), off.begin() + 1);
     }
     break;
   }
-  if (off.size() == 0) return Agg;
+  if (off.size() == 0)
+    return Agg;
   return Builder.CreateExtractValue(Agg, off);
 }
 

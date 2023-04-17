@@ -110,18 +110,19 @@ llvm::raw_ostream &operator<<(raw_ostream& os, StringMap<std::string> &C) {
     return os << "}";
 }
 
-bool initializeNames(raw_ostream &os, Init *resultTree) {
+void initializeNames(raw_ostream &os, Init *resultTree) {
   if (DagInit *resultRoot = dyn_cast<DagInit>(resultTree)) {
-    for (auto zp :
-         llvm::zip(resultRoot->getArgs(), resultRoot->getArgNames())) { 
-      if (isa<UnsetInit>(std::get<0>(zp)) && std::get<1>(zp)) {
+      for (size_t i=0; i<resultRoot->arg_size(); i++) {
+        auto arg = resultRoot->getArg(i);
+        auto name = resultRoot->getArgName(i);
+      if (isa<UnsetInit>(arg) && name) {
         continue;
       }
-      if (std::get<1>(zp)) {
-        auto name = std::get<1>(zp)->getAsUnquotedString();
-        os << "llvm::Value *__tmp_" + name << " = nullptr;\n";
+      if (name) {
+        auto namev = name->getAsUnquotedString();
+        os << "llvm::Value *__tmp_" + namev << " = nullptr;\n";
       }
-      initializeNames(os, std::get<0>(zp));
+      initializeNames(os, arg);
     }
   } else if (ListInit *lst = dyn_cast<ListInit>(resultTree)) {
     for (auto elem : *lst)
@@ -175,8 +176,6 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
       if (resultRoot->getNumArgs() != 1)
         PrintFatalError(pattern->getLoc(), "only single op constant supported");
 
-      auto *argument = resultRoot->getArg(0);
-
       auto value = dyn_cast<StringInit>(Def->getValueInit("value"));
       if (!value)
         PrintFatalError(pattern->getLoc(), Twine("'value' not defined in ") +
@@ -201,8 +200,6 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
       if (resultRoot->getNumArgs() != 1)
         PrintFatalError(pattern->getLoc(), "only single op constant supported");
 
-      auto *argument = resultRoot->getArg(0);
-
       os << "UndefValue::get(";
       if (resultRoot->getArgName(0)) {
         auto name = resultRoot->getArgName(0)->getAsUnquotedString();
@@ -222,7 +219,6 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
       if (resultRoot->getNumArgs() != 1)
         PrintFatalError(pattern->getLoc(), "only single op constant supported");
 
-      auto *argument = resultRoot->getArg(0);
       if (lookup)
         os << "lookup(";
       os << "gutils->invertPointerM(" << builder << ", ";
