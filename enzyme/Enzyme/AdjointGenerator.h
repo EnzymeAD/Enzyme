@@ -10374,11 +10374,10 @@ public:
     using namespace llvm;
 
     assert(Mode == DerivativeMode::ReverseModeCombined ||
-           Mode == DerivativeMode::ReverseModeGradient);
+           Mode == DerivativeMode::ReverseModeGradient ||
+           Mode == DerivativeMode::ReverseModePrimal);
 
     CallInst *newCall = cast<CallInst>(gutils->getNewFromOriginal(&call));
-    IRBuilder<> Builder2(call.getParent());
-    getReverseBuilder(Builder2);
 
     IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
     BuilderZ.setFastMathFlags(getFast());
@@ -10421,9 +10420,6 @@ public:
     Value *address = call.getArgOperand(2);
     Value *trace =
         call.getArgOperand(3 + samplefn->getFunctionType()->getNumParams());
-
-    Value *daddress = lookup(gutils->getNewFromOriginal(address), Builder2);
-    Value *dtrace = lookup(gutils->invertPointerM(trace, Builder2), Builder2);
 
     assert(likelihoodfn);
 
@@ -10996,6 +10992,12 @@ public:
     if (Mode == DerivativeMode::ReverseModePrimal) {
       return;
     }
+
+    IRBuilder<> Builder2(call.getParent());
+    getReverseBuilder(Builder2);
+
+    Value *daddress = lookup(gutils->getNewFromOriginal(address), Builder2);
+    Value *dtrace = lookup(gutils->invertPointerM(trace, Builder2), Builder2);
 
     Value *newcalled = nullptr;
     FunctionType *FT = nullptr;
