@@ -393,10 +393,8 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     }
 
     bool writeOnlyNoCapture = true;
-    auto F = getFunctionFromCall(const_cast<CallInst *>(CI));
 
-    if (CI->hasFnAttr("enzyme_preserve_primal") ||
-        (F && F->hasFnAttribute("enzyme_preserve_primal")) || !F) {
+    if (shouldDisableNoWrite(CI)) {
       writeOnlyNoCapture = false;
     }
 #if LLVM_VERSION_MAJOR >= 14

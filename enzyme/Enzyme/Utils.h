@@ -1134,4 +1134,25 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
 
 llvm::Function *GetFunctionFromValue(llvm::Value *fn);
 
+static inline bool shouldDisableNoWrite(const llvm::CallInst *CI) {
+  auto F = getFunctionFromCall(CI);
+  auto funcName = getFuncNameFromCall(CI);
+
+  if (CI->hasFnAttr("enzyme_preserve_primal") ||
+      hasMetadata(CI, "enzyme_augment") || hasMetadata(CI, "enzyme_gradient") ||
+      hasMetadata(CI, "enzyme_derivative") ||
+      hasMetadata(CI, "enzyme_splitderivative") ||
+      (F &&
+       (F->hasFnAttribute("enzyme_preserve_primal") ||
+        hasMetadata(F, "enzyme_augment") || hasMetadata(F, "enzyme_gradient") ||
+        hasMetadata(F, "enzyme_derivative") ||
+        hasMetadata(F, "enzyme_splitderivative"))) ||
+      !F) {
+    return true;
+  }
+  if (funcName == "MPI_Wait" || funcName == "MPI_Waitall") {
+    return true;
+  }
+  return false;
+}
 #endif

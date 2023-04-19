@@ -9124,8 +9124,7 @@ public:
           readOnly = false;
         }
 
-        if (call.hasFnAttr("enzyme_preserve_primal") ||
-            (called && called->hasFnAttribute("enzyme_preserve_primal")))
+        if (shouldDisableNoWrite(&call))
           writeOnlyNoCapture = false;
 
         auto argTy =
@@ -9428,8 +9427,7 @@ public:
         readNoneNoCapture = false;
       }
 
-      if (call.hasFnAttr("enzyme_preserve_primal") ||
-          (called && called->hasFnAttribute("enzyme_preserve_primal"))) {
+      if (shouldDisableNoWrite(&call)) {
         writeOnlyNoCapture = false;
         readNoneNoCapture = false;
       }

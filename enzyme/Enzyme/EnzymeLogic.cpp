@@ -718,14 +718,8 @@ void calculateUnusedValuesInFunction(
                 if (auto CI = dyn_cast<CallInst>(u)) {
                   bool writeOnlyNoCapture = true;
                   auto F = getFunctionFromCall(CI);
-                  auto funcName = getFuncNameFromCall(CI);
 
-                  if (CI->hasFnAttr("enzyme_preserve_primal") ||
-                      (F && F->hasFnAttribute("enzyme_preserve_primal")) ||
-                      !F) {
-                    writeOnlyNoCapture = false;
-                  }
-                  if (funcName == "MPI_Wait" || funcName == "MPI_Waitall") {
+                  if (shouldDisableNoWrite(CI)) {
                     writeOnlyNoCapture = false;
                   }
 #if LLVM_VERSION_MAJOR >= 14
@@ -1003,10 +997,8 @@ void calculateUnusedValuesInFunction(
             }
 
             bool writeOnlyNoCapture = true;
-            auto F = getFunctionFromCall(CI);
 
-            if (CI->hasFnAttr("enzyme_preserve_primal") ||
-                (F && F->hasFnAttribute("enzyme_preserve_primal"))) {
+            if (shouldDisableNoWrite(CI)) {
               writeOnlyNoCapture = false;
             }
 #if LLVM_VERSION_MAJOR >= 14
