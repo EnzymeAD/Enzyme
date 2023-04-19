@@ -11160,7 +11160,7 @@ public:
             ? std::vector<bool>()
             : overwritten_args_map.find(&call)->second;
 
-    Function *called = getFunctionFromCall(&call);
+    auto called = getFunctionFromCall(&call);
     StringRef funcName = getFuncNameFromCall(&call);
 
     bool subretused = false;

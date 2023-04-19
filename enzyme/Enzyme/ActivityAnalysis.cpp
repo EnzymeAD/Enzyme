@@ -424,7 +424,7 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
   if (CI->hasFnAttr("enzyme_inactive"))
     return true;
 
-  Function *F = getFunctionFromCall(CI);
+  auto F = getFunctionFromCall(CI);
 
   // Indirect function calls may actively use the argument
   if (F == nullptr)
@@ -708,7 +708,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
       InsertConstantInstruction(TR, I);
       return true;
     }
-    Function *called = getFunctionFromCall(CI);
+    auto called = getFunctionFromCall(CI);
 
     if (called) {
       if (called->hasFnAttribute("enzyme_active")) {
@@ -1232,7 +1232,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       InsertConstantValue(TR, Val);
       return true;
     }
-    Function *called = getFunctionFromCall(CI);
+    auto called = getFunctionFromCall(CI);
 
     if (called) {
       if (called->hasFnAttribute("enzyme_active")) {
@@ -1382,7 +1382,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           insertConstantsFrom(TR, *UpHypothesis);
           return true;
         }
-        Function *called = getFunctionFromCall(op);
+        auto called = getFunctionFromCall(op);
 
         StringRef funcName = getFuncNameFromCall(op);
 
@@ -1699,7 +1699,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
             return false;
         }
 
-        Function *F = getFunctionFromCall(CI);
+        auto F = getFunctionFromCall(CI);
         StringRef funcName = getFuncNameFromCall(CI);
 
         if (F && F->hasFnAttribute("enzyme_inactive")) {
@@ -2347,7 +2347,7 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
     callVal = op->getCalledValue();
 #endif
     StringRef funcName = getFuncNameFromCall(op);
-    Function *called = getFunctionFromCall(op);
+    auto called = getFunctionFromCall(op);
 
     if (called && called->hasFnAttribute("enzyme_inactive")) {
       return true;
@@ -2814,7 +2814,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
       bool mayRead = false;
       bool mayCapture = false;
 
-      Function *F = getFunctionFromCall(call);
+      auto F = getFunctionFromCall(call);
 
       size_t idx = 0;
 #if LLVM_VERSION_MAJOR >= 14

@@ -5138,7 +5138,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             if (isa<IntrinsicInst>(CI))
               continue;
             if (!isConstantInstruction(CI)) {
-              Function *F = getFunctionFromCall(CI);
+              auto F = getFunctionFromCall(CI);
               if (F && isMemFreeLibMFunction(F->getName())) {
                 continue;
               }

@@ -407,7 +407,7 @@ struct CacheAnalysis {
 
   std::vector<bool>
   compute_overwritten_args_for_one_callsite(CallInst *callsite_op) {
-    Function *Fn = getFunctionFromCall(callsite_op);
+    auto Fn = getFunctionFromCall(callsite_op);
     if (!Fn)
       return {};
 
@@ -967,7 +967,7 @@ void calculateUnusedValuesInFunction(
         if (mode == DerivativeMode::ReverseModeGradient ||
             mode == DerivativeMode::ForwardModeSplit) {
           auto CI = dyn_cast<CallInst>(const_cast<Instruction *>(inst));
-          Function *CF = CI ? getFunctionFromCall(CI) : nullptr;
+          const Function *CF = CI ? getFunctionFromCall(CI) : nullptr;
           StringRef funcName = CF ? CF->getName() : "";
           if (isa<MemTransferInst>(inst) || isa<StoreInst>(inst) ||
               isa<MemSetInst>(inst) || funcName == "julia.write_barrier") {
@@ -1598,7 +1598,7 @@ bool legalCombinedForwardReverse(
       noFree |= CI->hasFnAttr(Attribute::NoFree);
 #endif
       noFree |= CI->hasFnAttr("nofree");
-      Function *called = getFunctionFromCall(CI);
+      auto called = getFunctionFromCall(CI);
       StringRef funcName = getFuncNameFromCall(CI);
       if (funcName == "llvm.trap")
         noFree = true;

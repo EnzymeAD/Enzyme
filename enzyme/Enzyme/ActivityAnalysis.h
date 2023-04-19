@@ -268,5 +268,6 @@ constexpr inline const char *to_string(ActivityAnalyzer::UseActivity UA) {
   case ActivityAnalyzer::UseActivity::AllStores:
     return "AllStores";
   }
+  llvm_unreachable("Illegal activity analysis UseActivity");
 }
 #endif

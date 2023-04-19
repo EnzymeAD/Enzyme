@@ -57,7 +57,7 @@ TraceUtils *TraceUtils::FromFunctionSignature(Function *newFunc,
   Argument *observations = nullptr;
 
   auto attributes = newFunc->getAttributes();
-  for (int i = 0; i < newFunc->getFunctionType()->getNumParams(); ++i) {
+  for (size_t i = 0; i < newFunc->getFunctionType()->getNumParams(); ++i) {
     if (attributes.hasParamAttr(i, TraceParameterAttribute)) {
       trace = newFunc->arg_begin() + i;
     } else if (attributes.hasParamAttr(i, ObservationsParameterAttribute)) {

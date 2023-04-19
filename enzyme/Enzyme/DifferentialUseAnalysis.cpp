@@ -394,13 +394,11 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
 
     bool writeOnlyNoCapture = true;
     auto F = getFunctionFromCall(const_cast<CallInst *>(CI));
-    bool foreignFunction = F == nullptr;
 
     if (CI->hasFnAttr("enzyme_preserve_primal") ||
-        (F && F->hasFnAttribute("enzyme_preserve_primal"))) {
+        (F && F->hasFnAttribute("enzyme_preserve_primal")) || !F) {
       writeOnlyNoCapture = false;
     }
-    bool readOnly = true;
 #if LLVM_VERSION_MAJOR >= 14
     for (size_t i = 0; i < CI->arg_size(); i++)
 #else
@@ -434,34 +432,11 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
           writeOnlyNoCapture = false;
           break;
         }
-#if LLVM_VERSION_MAJOR >= 14
-        if (!(CI->onlyReadsMemory(i) || CI->onlyReadsMemory()))
-#else
-        if (!(CI->dataOperandHasImpliedAttr(i + 1, Attribute::ReadOnly) ||
-              CI->dataOperandHasImpliedAttr(i + 1, Attribute::ReadNone) ||
-              CI->hasFnAttr(Attribute::ReadOnly) ||
-              CI->hasFnAttr(Attribute::ReadNone) ||
-              (F && (F->hasParamAttribute(i, Attribute::ReadOnly) ||
-                     F->hasParamAttribute(i, Attribute::ReadNone) ||
-                     F->hasFnAttribute(Attribute::ReadOnly) ||
-                     F->hasFnAttribute(Attribute::ReadNone)))))
-#endif
-        {
-          readOnly = false;
-          break;
-        }
       }
     }
 
     // Don't need the primal argument if it is write only and not captured
-    // if (gutils->getDiffeType(const_cast<Value*>(val), foreignFunction) ==
-    // DIFFE_TYPE::DUP_NONEED)
-    //     return false;
     if (writeOnlyNoCapture)
-      return false;
-    if (writeOnlyNoCapture &&
-        (gutils->mode == DerivativeMode::ForwardModeSplit ||
-         gutils->mode == DerivativeMode::ReverseModeGradient || readOnly))
       return false;
   }
 

@@ -1001,9 +1001,9 @@ public:
 };
 
 template <typename T> static inline llvm::Function *getFunctionFromCall(T *op) {
-  llvm::Function *called = nullptr;
+  const llvm::Function *called = nullptr;
   using namespace llvm;
-  llvm::Value *callVal;
+  const llvm::Value *callVal;
 #if LLVM_VERSION_MAJOR >= 11
   callVal = op->getCalledOperand();
 #else
@@ -1028,7 +1028,7 @@ template <typename T> static inline llvm::Function *getFunctionFromCall(T *op) {
 #endif
     break;
   }
-  return called;
+  return called ? const_cast<llvm::Function *>(called) : nullptr;
 }
 
 template <typename T> static inline llvm::StringRef getFuncNameFromCall(T *op) {
