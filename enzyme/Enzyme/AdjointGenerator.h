@@ -10998,7 +10998,7 @@ public:
       return;
     }
 
-    IRBuilder<> Builder2(call.getParent());
+    IRBuilder<> Builder2(&call);
     getReverseBuilder(Builder2);
 
     Value *daddress = lookup(gutils->getNewFromOriginal(address), Builder2);
