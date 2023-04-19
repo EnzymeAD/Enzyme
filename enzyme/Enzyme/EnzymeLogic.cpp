@@ -997,6 +997,9 @@ void calculateUnusedValuesInFunction(
             }
 
             bool writeOnlyNoCapture = true;
+#if LLVM_VERSION_MAJOR < 13
+            auto F = getFunctionFromCall(CI);
+#endif
 
             if (shouldDisableNoWrite(CI)) {
               writeOnlyNoCapture = false;

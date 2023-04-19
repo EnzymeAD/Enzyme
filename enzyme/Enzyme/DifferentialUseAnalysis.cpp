@@ -392,6 +392,10 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
       return true;
     }
 
+#if LLVM_VERSION_MAJOR < 14
+    auto F = getFunctionFromCall(CI);
+#endif
+
     bool writeOnlyNoCapture = true;
 
     if (shouldDisableNoWrite(CI)) {
