@@ -5170,6 +5170,8 @@ public:
     }
   }
 
+#include "BlasDerivatives.inc"
+
   void visitOMPCall(llvm::CallInst &call) {
     using namespace llvm;
 

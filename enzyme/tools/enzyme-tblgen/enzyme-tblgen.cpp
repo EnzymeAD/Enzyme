@@ -775,6 +775,111 @@ static void checkBlasCalls(const RecordKeeper &RK,
   }
 }
 
+void emit_handleBLAS(const std::vector<TGPattern> &blasPatterns,
+                     raw_ostream &os) {
+  std::string handledBlasFunctions = "";
+  bool first = true;
+  for (auto blasPattern : blasPatterns) {
+    auto newName =
+        Twine((first) ? "" : ", ") + "\"" + blasPattern.getName() + "\"";
+    handledBlasFunctions.append(newName.str());
+    first = false;
+  }
+  os << "struct BlasInfo {\n"
+     << "  llvm::StringRef floatType;\n"
+     << "  llvm::StringRef prefix;\n"
+     << "  llvm::StringRef suffix;\n"
+     << "  llvm::StringRef function;\n"
+     << "};\n"
+     << "\n"
+     << "llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in) {\n"
+     << "  llvm::Twine floatType[] = {\"s\", \"d\"}; // c, z\n"
+     << "  llvm::Twine extractable[] = {" << handledBlasFunctions << "};\n"
+     << "  llvm::Twine prefixes[] = {\"\", \"cblas_\", \"cublas_\"};\n"
+     << "  llvm::Twine suffixes[] = {\"\", \"_\", \"_64_\"};\n"
+     << "  for (auto t : floatType) {\n"
+     << "    for (auto f : extractable) {\n"
+     << "      for (auto p : prefixes) {\n"
+     << "        for (auto s : suffixes) {\n"
+     << "          if (in == (p + t + f + s).str()) {\n"
+     << "            return llvm::Optional<BlasInfo>(BlasInfo{\n"
+     << "                t.getSingleStringRef(),\n"
+     << "                p.getSingleStringRef(),\n"
+     << "                s.getSingleStringRef(),\n"
+     << "                f.getSingleStringRef(),\n"
+     << "            });\n"
+     << "          }\n"
+     << "        }\n"
+     << "      }\n"
+     << "    }\n"
+     << "  }\n"
+     << "  return llvm::NoneType();\n"
+     << "}\n"
+     << "\n"
+     << "bool handleBLAS(llvm::CallInst &call, llvm::Function *called, BlasInfo "
+        "blas,\n"
+     << "                const std::map<llvm::Argument *, bool> &uncacheable_args) { "
+        "\n"
+     << "  using llvm::Type;"
+     << "                                                                      "
+        "\n"
+     << "  bool result = true;                                                 "
+        "\n"
+     << "  if (!gutils->isConstantInstruction(&call)) {                        "
+        "\n"
+     << "    Type *fpType;                                             \n"
+     << "    if (blas.floatType == \"d\") {                                    "
+        "\n"
+     << "      fpType = Type::getDoubleTy(call.getContext());               \n"
+     << "    } else if (blas.floatType == \"s\") {                             "
+        "\n"
+     << "      fpType = Type::getFloatTy(call.getContext());                \n"
+     << "    } else {                                                          "
+        "\n"
+     << "      assert(false && \"Unreachable\");                               "
+        "\n"
+     << "    }                                                                 "
+        "\n";
+  first = true;
+  for (auto pattern : blasPatterns) {
+    auto name = pattern.getName();
+    os << "    " << ((first) ? "" : "} else ") << " if (blas.function == \""
+       << name << "\") {                           \n"
+       << "      result = handle_" << name
+       << "(blas, call, called, uncacheable_args, fpType);                    "
+          "\n";
+    first = false;
+  }
+  os << "    } else {                                                          "
+        "\n"
+     << "      llvm::errs() << \" fallback?\\n\";                              "
+        "\n"
+     << "      return false;                                                   "
+        "\n"
+     << "    }                                                                 "
+        "\n"
+     << "  }                                                                   "
+        "\n"
+     << "                                                                      "
+        "\n"
+     << "  if (Mode == DerivativeMode::ReverseModeGradient) {                  "
+        "\n"
+     << "    eraseIfUnused(call, /*erase*/ true, /*check*/ false);             "
+        "\n"
+     << "  } else {                                                            "
+        "\n"
+     << "    eraseIfUnused(call);                                              "
+        "\n"
+     << "  }                                                                   "
+        "\n"
+     << "                                                                      "
+        "\n"
+     << "  return result;                                                      "
+        "\n"
+     << "}                                                                     "
+        "\n";
+}
+
 // NEXT TODO: for input args (vectors) being overwritten.
 // Cache them and use the cache later
 
@@ -800,7 +905,7 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
   // TODO: type check params, as far as possible
   checkBlasCalls(RK, blasPatterns);
   // //checkBlasCalls2(newBlasPatterns);
-  // emit_handleBLAS(newBlasPatterns, os);
+  emit_handleBLAS(newBlasPatterns, os);
   // // emitEnumMatcher(blas_modes, os);
 
   for (auto newPattern : newBlasPatterns) {
