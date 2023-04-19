@@ -717,8 +717,9 @@ void calculateUnusedValuesInFunction(
                 }
                 if (auto CI = dyn_cast<CallInst>(u)) {
                   bool writeOnlyNoCapture = true;
+#if LLVM_VERSION_MAJOR < 14
                   auto F = getFunctionFromCall(CI);
-
+#endif
                   if (shouldDisableNoWrite(CI)) {
                     writeOnlyNoCapture = false;
                   }
@@ -997,7 +998,7 @@ void calculateUnusedValuesInFunction(
             }
 
             bool writeOnlyNoCapture = true;
-#if LLVM_VERSION_MAJOR < 13
+#if LLVM_VERSION_MAJOR < 14
             auto F = getFunctionFromCall(CI);
 #endif
 
