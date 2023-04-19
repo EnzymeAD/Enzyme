@@ -731,6 +731,50 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
   }
 }
 
+static void checkBlasCallsInDag(const RecordKeeper &RK,
+                                const std::vector<Record *> blasPatterns,
+                                const StringRef blasName,
+                                const DagInit *toSearch) {
+
+  // For nested FAdd, ... rules which don't directly call a blass fnc
+  for (size_t i = 0; i < toSearch->getNumArgs(); i++) {
+    if (DagInit *arg = dyn_cast<DagInit>(toSearch->getArg(i))) {
+      checkBlasCallsInDag(RK, blasPatterns, blasName, arg);
+    }
+  }
+
+  auto Def = cast<DefInit>(toSearch->getOperator())->getDef();
+  if (Def->isSubClassOf("b")) {
+    auto numArgs = toSearch->getNumArgs();
+    auto opName = Def->getValueAsString("s");
+    auto CalledBlas = RK.getDef(opName);
+    assert(CalledBlas);
+    auto expectedNumArgs =
+        CalledBlas->getValueAsDag("PatternToMatch")->getNumArgs();
+    if (expectedNumArgs != numArgs) {
+      llvm::errs() << "failed calling " << opName << " in the derivative of "
+                   << blasName << " incorrect number of params. Expected "
+                   << expectedNumArgs << " but got " << numArgs << "\n";
+      assert(expectedNumArgs == numArgs);
+    }
+  }
+}
+
+/// Here we check that all the Blas derivatives who call another
+/// blas function will use the correct amount of args
+/// Later we might check for "types" too.
+static void checkBlasCalls(const RecordKeeper &RK,
+                           std::vector<Record *> blasPatterns) {
+  for (auto pattern : blasPatterns) {
+    ListInit *argOps = pattern->getValueAsListInit("ArgDerivatives");
+    // for each possibly active parameter
+    for (auto argOp : *argOps) {
+      DagInit *resultRoot = cast<DagInit>(argOp);
+      checkBlasCallsInDag(RK, blasPatterns, pattern->getName(), resultRoot);
+    }
+  }
+}
+
 // NEXT TODO: for input args (vectors) being overwritten.
 // Cache them and use the cache later
 
@@ -754,7 +798,7 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
   // Make sure that we only call blass function b for calculating the derivative
   // of a iff we have defined b and pass the right amount of parameters.
   // TODO: type check params, as far as possible
-  // checkBlasCalls(RK, blasPatterns);
+  checkBlasCalls(RK, blasPatterns);
   // //checkBlasCalls2(newBlasPatterns);
   // emit_handleBLAS(newBlasPatterns, os);
   // // emitEnumMatcher(blas_modes, os);
