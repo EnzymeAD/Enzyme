@@ -211,3 +211,5 @@ def : CallPattern<(Op $x),
                   )
                   ]
                   >;
+
+include "targets/BlasDerivatives.td"                  

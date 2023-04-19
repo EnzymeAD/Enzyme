@@ -11,6 +11,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FormatVariadic.h"
@@ -21,12 +23,16 @@
 #include "llvm/TableGen/Record.h"
 #include "llvm/TableGen/TableGenBackend.h"
 
+#include "datastructures.h"
+
 using namespace llvm;
 
-enum ActionType { GenDerivatives };
+enum ActionType { GenDerivatives, GenBlasDerivatives };
 
 static cl::opt<ActionType>
     action(cl::desc("Action to perform:"),
+           cl::values(clEnumValN(GenBlasDerivatives, "gen-blas-derivatives",
+                                 "Generate BLAS derivatives")),
            cl::values(clEnumValN(GenDerivatives, "gen-derivatives",
                                  "Generate instruction derivative")));
 
@@ -36,6 +42,10 @@ bool hasDiffeRet(Init *resultTree) {
     auto Def = cast<DefInit>(resultRoot->getOperator())->getDef();
     if (opName == "DiffeRet" || Def->isSubClassOf("DiffeRet")) {
       return true;
+    }
+    for (auto arg : resultRoot->getArgs()) {
+      if (hasDiffeRet(arg))
+        return true;
     }
     for (auto zp :
          llvm::zip(resultRoot->getArgs(), resultRoot->getArgNames())) {
@@ -721,10 +731,61 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
   }
 }
 
+// NEXT TODO: for input args (vectors) being overwritten.
+// Cache them and use the cache later
+
+/*
+ * We create the following variables:
+ */
+void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
+  emitSourceFileHeader("Rewriters", os);
+  const auto &blasPatterns = RK.getAllDerivedDefinitions("CallBlasPattern");
+
+  std::vector<TGPattern> newBlasPatterns{};
+  StringMap<TGPattern> patternMap;
+  for (auto pattern : blasPatterns) {
+    auto parsedPattern = TGPattern(*pattern);
+    newBlasPatterns.push_back(TGPattern(*pattern));
+    auto newEntry = std::pair<std::string, TGPattern>(parsedPattern.getName(),
+                                                      parsedPattern);
+    patternMap.insert(newEntry);
+  }
+
+  // Make sure that we only call blass function b for calculating the derivative
+  // of a iff we have defined b and pass the right amount of parameters.
+  // TODO: type check params, as far as possible
+  // checkBlasCalls(RK, blasPatterns);
+  // //checkBlasCalls2(newBlasPatterns);
+  // emit_handleBLAS(newBlasPatterns, os);
+  // // emitEnumMatcher(blas_modes, os);
+
+  for (auto newPattern : newBlasPatterns) {
+
+    llvm::errs() << "\nhandling: " + newPattern.getName() + "\n";
+
+    // emit_beginning(newPattern, os);
+    // emit_helper(newPattern, os);
+    // emit_castvals(newPattern, os);
+    // emit_scalar_types(newPattern, os);
+
+    // emit_caching(newPattern, os);
+    // emit_extract_calls(newPattern, os);
+
+    // emit_fwd_rewrite_rules(newPattern, os);
+    // emit_rev_rewrite_rules(patternMap, newPattern, os);
+
+    //// writeEnums(pattern, blas_modes, os);
+    // emit_free_and_ending(newPattern, os);
+  }
+}
+
 static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
   switch (action) {
   case GenDerivatives:
     emitDerivatives(records, os);
+    return false;
+  case GenBlasDerivatives:
+    emitBlasDerivatives(records, os);
     return false;
 
   default:
