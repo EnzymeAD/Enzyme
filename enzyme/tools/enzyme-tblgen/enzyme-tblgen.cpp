@@ -1023,6 +1023,8 @@ void emit_scalar_types(TGPattern &pattern, raw_ostream &os) {
      << "  }\n\n";
 }
 
+#include "caching.h"
+
 // NEXT TODO: for input args (vectors) being overwritten.
 // Cache them and use the cache later
 
@@ -1060,7 +1062,7 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
     emit_castvals(newPattern, os);
     emit_scalar_types(newPattern, os);
 
-    // emit_caching(newPattern, os);
+    emit_caching(newPattern, os);
     // emit_extract_calls(newPattern, os);
 
     // emit_fwd_rewrite_rules(newPattern, os);
