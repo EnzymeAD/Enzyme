@@ -880,6 +880,149 @@ void emit_handleBLAS(const std::vector<TGPattern> &blasPatterns,
         "\n";
 }
 
+void emit_beginning(TGPattern &pattern, raw_ostream &os) {
+  auto name = pattern.getName();
+  os << "\nbool handle_" << name
+     << "(BlasInfo blas, llvm::CallInst &call, llvm::Function *called,\n"
+     << "    const std::map<llvm::Argument *, bool> &uncacheable_args, "
+        "llvm::Type *fpType) "
+        "{\n"
+     << "  \n"
+     << "  using namespace llvm;\n"
+     << "  CallInst *const newCall = "
+        "cast<CallInst>(gutils->getNewFromOriginal(&call));\n"
+     << "  IRBuilder<> BuilderZ(newCall);\n"
+     << "  BuilderZ.setFastMathFlags(getFast());\n"
+     << "  IRBuilder<> allocationBuilder(gutils->inversionAllocs);\n"
+     << "  allocationBuilder.setFastMathFlags(getFast());\n";
+  // not yet needed for lv-1
+  //<< "  auto &DL = gutils->oldFunc->getParent()->getDataLayout();\n";
+}
+
+void emit_free_and_ending(TGPattern &pattern, raw_ostream &os) {
+  os << "  if (Mode == DerivativeMode::ReverseModeCombined ||\n"
+     << "      Mode == DerivativeMode::ReverseModeGradient ||\n"
+     << "      Mode == DerivativeMode::ForwardModeSplit) {\n"
+     << "    if (shouldFree()) {\n";
+
+  auto nameVec = pattern.getArgNames();
+  auto typeMap = pattern.getArgTypeMap();
+  for (size_t i = 0; i < nameVec.size(); i++) {
+    if (typeMap.lookup(i) == argType::vincData) {
+      auto name = nameVec[i];
+      // TODO: next lines must be enabled once we finished rebasing onto main
+      // os << "      if (cache_" << name
+      //    << ") {\n"
+      //    << "        CreateDealloc(Builder2, data_ptr_" << name << ");\n"
+      //    << "      }\n";
+    }
+  }
+  os << "    }\n"
+     << "  }\n"
+     << "  if (gutils->knownRecomputeHeuristic.find(&call) !=\n"
+     << "    gutils->knownRecomputeHeuristic.end()) {\n"
+     << "    if (!gutils->knownRecomputeHeuristic[&call]) {\n"
+     << "    gutils->cacheForReverse(BuilderZ, newCall,\n"
+     << "     getIndex(&call, CacheType::Self));\n"
+     << "    }\n"
+     << "  }\n"
+     << "  return true;\n"
+     << "}\n\n";
+}
+
+void emit_helper(TGPattern &pattern, raw_ostream &os) {
+  std::vector<size_t> fp_pos{};
+  auto nameVec = pattern.getArgNames();
+  assert(nameVec.size() > 0);
+  auto argTypeMap = pattern.getArgTypeMap();
+
+  auto actArgs = pattern.getActiveArgs();
+  os << "  auto calledArg = called->arg_begin();\n\n";
+  for (size_t i = 0; i < nameVec.size(); i++) {
+    auto name = nameVec[i];
+    os << "  auto arg_" << name << " = call.getArgOperand(" << i << ");\n"
+       << "  auto type_" << name << " = arg_" << name << "->getType();\n"
+       << "  bool uncacheable_" << name
+       << " = uncacheable_args.find(calledArg)->second;\n"
+       << "  calledArg++;\n";
+    if (std::count(actArgs.begin(), actArgs.end(), i)) {
+      os << "  bool active_" << name << " = !gutils->isConstantValue(arg_"
+         << name << ");\n";
+    }
+    os << "\n";
+  }
+
+  os << "  int num_active_fp = 0;\n";
+  for (size_t i = 0; i < nameVec.size(); i++) {
+    argType type = argTypeMap.lookup(i);
+    if (type == argType::fp) {
+      os << "  if (active_" << nameVec[i] << ")\n"
+         << "    num_active_fp++;\n";
+    }
+  }
+
+  for (auto name : llvm::enumerate(nameVec)) {
+    assert(argTypeMap.count(name.index()) == 1);
+    auto type = argTypeMap.lookup(name.index());
+    if (type == argType::vincData) {
+      os << "  bool julia_decl = !type_" << name.value()
+         << "->isPointerTy();\n";
+      return;
+    }
+  }
+
+  PrintFatalError("Blas function without vector?");
+}
+
+void emit_castvals(TGPattern &pattern, raw_ostream &os) {
+  auto activeArgs = pattern.getActiveArgs();
+  auto nameVec = pattern.getArgNames();
+  os << "  /* beginning castvalls */\n"
+     << "  Type *castvals[" << activeArgs.size() << "];\n";
+
+  for (size_t i = 0; i < activeArgs.size(); i++) {
+    size_t argIdx = activeArgs[i];
+    auto name = nameVec[argIdx];
+    os << "  if (auto PT = dyn_cast<PointerType>(type_" << name << "))\n"
+       << "    castvals[" << i << "] = PT;\n"
+       << "  else\n"
+       << "    castvals[" << i << "] = PointerType::getUnqual(fpType);\n";
+  }
+  os << "  Value *cacheval;\n\n"
+     << "  /* ending castvalls */\n";
+}
+
+void emit_scalar_types(TGPattern &pattern, raw_ostream &os) {
+  // We only look at the type of the first integer showing up.
+  // This allows to learn if we use Fortran abi (byRef) or cabi
+  std::string name = "";
+  bool foundInt = false;
+
+  auto inputTypes = pattern.getArgTypeMap();
+  auto nameVec = pattern.getArgNames();
+
+  for (auto val : inputTypes) {
+    if (val.second == argType::len) {
+      foundInt = true;
+      name = nameVec[val.first];
+      break;
+    }
+  }
+  assert(foundInt && "no int type found in blas call");
+
+  os << "  // fpType already given by blas type (s, d, c, z) \n"
+     << "  IntegerType *intType = dyn_cast<IntegerType>(type_" << name << ");\n"
+     << "  bool byRef = false;\n" // Fortran Abi?
+     << "  if (!intType) {\n"
+     << "    auto PT = cast<PointerType>(type_" << name << ");\n"
+     << "    if (blas.suffix.contains(\"64\"))\n"
+     << "      intType = IntegerType::get(PT->getContext(), 64);\n"
+     << "    else\n"
+     << "      intType = IntegerType::get(PT->getContext(), 32);\n"
+     << "    byRef = true;\n"
+     << "  }\n\n";
+}
+
 // NEXT TODO: for input args (vectors) being overwritten.
 // Cache them and use the cache later
 
@@ -912,10 +1055,10 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
 
     llvm::errs() << "\nhandling: " + newPattern.getName() + "\n";
 
-    // emit_beginning(newPattern, os);
-    // emit_helper(newPattern, os);
-    // emit_castvals(newPattern, os);
-    // emit_scalar_types(newPattern, os);
+    emit_beginning(newPattern, os);
+    emit_helper(newPattern, os);
+    emit_castvals(newPattern, os);
+    emit_scalar_types(newPattern, os);
 
     // emit_caching(newPattern, os);
     // emit_extract_calls(newPattern, os);
@@ -924,7 +1067,7 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
     // emit_rev_rewrite_rules(patternMap, newPattern, os);
 
     //// writeEnums(pattern, blas_modes, os);
-    // emit_free_and_ending(newPattern, os);
+    emit_free_and_ending(newPattern, os);
   }
 }
 
