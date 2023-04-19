@@ -364,7 +364,7 @@ public:
                 unsigned width, bool omp);
 
 public:
-  DIFFE_TYPE getDiffeType(llvm::Value *v, bool foreignFunction);
+  DIFFE_TYPE getDiffeType(llvm::Value *v, bool foreignFunction) const;
 
   DIFFE_TYPE getReturnDiffeType(llvm::CallInst *orig, bool *primalReturnUsedP,
                                 bool *shadowReturnUsedP) const;

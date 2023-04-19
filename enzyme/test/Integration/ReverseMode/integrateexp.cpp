@@ -21,10 +21,16 @@
 
 #include <boost/numeric/odeint.hpp>
 
+#include <boost/version.hpp>
 #include <boost/throw_exception.hpp>
 void boost::throw_exception(std::exception const & e){
     //do nothing
 }
+#if BOOST_VERSION >= 107300
+void boost::throw_exception(std::exception const & e, boost::source_location const & loc) {
+    //do nothing
+}
+#endif
 
 using namespace std;
 using namespace boost::numeric::odeint;

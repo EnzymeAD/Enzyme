@@ -9124,28 +9124,22 @@ public:
           readOnly = false;
         }
 
-        if (call.hasFnAttr("enzyme_preserve_primal") ||
-            (called && called->hasFnAttribute("enzyme_preserve_primal")))
+        if (shouldDisableNoWrite(&call))
           writeOnlyNoCapture = false;
 
         auto argTy =
             gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
 
-        if (writeOnlyNoCapture) {
-          bool replace = Mode == DerivativeMode::ForwardModeSplit;
-          if (!replace && argTy == DIFFE_TYPE::DUP_ARG) {
-            argTy = DIFFE_TYPE::DUP_NONEED;
-            replace = true;
-          } else if (readOnly)
-            replace = true;
+        bool replace =
+            argTy == DIFFE_TYPE::DUP_NONEED ||
+            (writeOnlyNoCapture && Mode == DerivativeMode::ForwardModeSplit) ||
+            (writeOnlyNoCapture && readOnly);
 
-          if (replace) {
-            if (EnzymeZeroCache)
-              argi =
-                  ConstantPointerNull::get(cast<PointerType>(argi->getType()));
-            else
-              argi = UndefValue::get(argi->getType());
-          }
+        if (replace) {
+          if (EnzymeZeroCache)
+            argi = ConstantPointerNull::get(cast<PointerType>(argi->getType()));
+          else
+            argi = UndefValue::get(argi->getType());
         }
         argsInverted.push_back(argTy);
         args.push_back(argi);
@@ -9392,9 +9386,10 @@ public:
 #endif
       }
 
-      pre_args.push_back(argi);
+      auto argTy = gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
 
       bool writeOnlyNoCapture = true;
+      bool readNoneNoCapture = false;
 #if LLVM_VERSION_MAJOR >= 8
       if (!call.doesNotCapture(i))
 #else
@@ -9403,6 +9398,7 @@ public:
 #endif
       {
         writeOnlyNoCapture = false;
+        readNoneNoCapture = false;
       }
 #if LLVM_VERSION_MAJOR >= 14
       if (!(call.onlyWritesMemory(i) || call.onlyWritesMemory()))
@@ -9419,10 +9415,31 @@ public:
       {
         writeOnlyNoCapture = false;
       }
+#if LLVM_VERSION_MAJOR >= 14
+      if (!(call.doesNotAccessMemory(i) || call.doesNotAccessMemory()))
+#else
+      if (!(call.dataOperandHasImpliedAttr(i + 1, Attribute::ReadNone) ||
+            call.hasFnAttr(Attribute::ReadNone) ||
+            (called && (called->hasParamAttribute(i, Attribute::ReadNone) ||
+                        called->hasFnAttribute(Attribute::ReadNone)))))
+#endif
+      {
+        readNoneNoCapture = false;
+      }
 
-      if (call.hasFnAttr("enzyme_preserve_primal") ||
-          (called && called->hasFnAttribute("enzyme_preserve_primal")))
+      if (shouldDisableNoWrite(&call)) {
         writeOnlyNoCapture = false;
+        readNoneNoCapture = false;
+      }
+
+      Value *prearg = argi;
+      if (argTy == DIFFE_TYPE::DUP_NONEED || readNoneNoCapture) {
+        if (EnzymeZeroCache)
+          prearg = ConstantPointerNull::get(cast<PointerType>(argi->getType()));
+        else
+          prearg = UndefValue::get(argi->getType());
+      }
+      pre_args.push_back(prearg);
 
       if (Mode != DerivativeMode::ReverseModePrimal) {
         IRBuilder<> Builder2(call.getParent());
@@ -9433,7 +9450,8 @@ public:
         }
 #endif
 
-        if (writeOnlyNoCapture && !replaceFunction) {
+        if ((writeOnlyNoCapture && !replaceFunction) ||
+            argTy == DIFFE_TYPE::DUP_NONEED || readNoneNoCapture) {
           if (EnzymeZeroCache)
             argi = ConstantPointerNull::get(cast<PointerType>(argi->getType()));
           else
@@ -9441,8 +9459,6 @@ public:
         }
         args.push_back(lookup(argi, Builder2));
       }
-
-      auto argTy = gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
 
       argsInverted.push_back(argTy);
 
@@ -11142,7 +11158,7 @@ public:
             ? std::vector<bool>()
             : overwritten_args_map.find(&call)->second;
 
-    Function *called = getFunctionFromCall(&call);
+    auto called = getFunctionFromCall(&call);
     StringRef funcName = getFuncNameFromCall(&call);
 
     bool subretused = false;
@@ -13241,8 +13257,10 @@ public:
       }
 
       // Cache and rematerialization irrelevant for forward mode.
-      if (Mode == DerivativeMode::ForwardMode)
+      if (Mode == DerivativeMode::ForwardMode) {
+        eraseIfUnused(call);
         return;
+      }
 
       std::map<UsageKey, bool> Seen;
       for (auto pair : gutils->knownRecomputeHeuristic)
@@ -13358,6 +13376,7 @@ public:
           // If rematerializing (e.g. needed in reverse, but not needing
           //  the whole allocation):
           if (primalNeededInReverse && !cacheWholeAllocation) {
+            assert(!unnecessaryValues.count(&call));
             // if rematerialize, don't ever cache and downgrade to stack
             // allocation where possible.
             if (auto MD = hasMetadata(&call, "enzyme_fromstack")) {
@@ -13409,6 +13428,10 @@ public:
             if (Mode == DerivativeMode::ReverseModePrimal)
               return;
           } else if (!cacheWholeAllocation) {
+            if (unnecessaryValues.count(&call)) {
+              eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+              return;
+            }
             // If not caching allocation and not needed in the reverse, we can
             // use the original freeing behavior for the function. If in the
             // reverse pass we should not recreate this allocation.
@@ -13428,6 +13451,10 @@ public:
       // as can we can only guarantee that we don't erase those frees.
       bool hasPDFree = gutils->allocationsWithGuaranteedFree.count(&call);
       if (!primalNeededInReverse && hasPDFree) {
+        if (unnecessaryValues.count(&call)) {
+          eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+          return;
+        }
         if (Mode == DerivativeMode::ReverseModeGradient ||
             Mode == DerivativeMode::ForwardModeSplit) {
           eraseIfUnused(call, /*erase*/ true, /*check*/ false);
@@ -13448,6 +13475,10 @@ public:
           funcName == "ijl_alloc_array_3d" || funcName == "ijl_array_copy" ||
           funcName == "julia.gc_alloc_obj" || funcName == "jl_gc_alloc_typed" ||
           funcName == "ijl_gc_alloc_typed") {
+        if (unnecessaryValues.count(&call)) {
+          eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+          return;
+        }
         if (!primalNeededInReverse) {
           if (Mode == DerivativeMode::ReverseModeGradient ||
               Mode == DerivativeMode::ForwardModeSplit) {
@@ -13704,6 +13735,7 @@ public:
 
           return;
         }
+        eraseIfUnused(call);
       }
 #if LLVM_VERSION_MAJOR >= 11
       auto callval = call.getCalledOperand();
@@ -13738,10 +13770,10 @@ public:
       // If a rematerializable allocation.
       for (auto rmat : gutils->rematerializableAllocations) {
         if (rmat.second.frees.count(&call)) {
-
           // Leave the original free behavior since this won't be used
           // in the reverse pass in split mode
           if (Mode == DerivativeMode::ReverseModePrimal) {
+            eraseIfUnused(call);
             return;
           } else if (Mode == DerivativeMode::ReverseModeGradient) {
             eraseIfUnused(call, /*erase*/ true, /*check*/ false);
@@ -13765,17 +13797,12 @@ public:
             }
             // If in a loop context, maintain the same free behavior, unless
             // caching whole allocation.
-            if (!cacheWholeAllocation)
-              if (auto inst = dyn_cast<Instruction>(rmat.first))
-                if (rmat.second.LI &&
-                    rmat.second.LI->contains(inst->getParent())) {
-                  return;
-                }
-            // In combined mode, if we don't need this allocation
-            // in the reverse, we can use the original deallocation
-            // behavior.
-            if (!primalNeededInReverse)
+            if (!cacheWholeAllocation) {
+              eraseIfUnused(call);
               return;
+            }
+            assert(!unnecessaryValues.count(rmat.first));
+            assert(primalNeededInReverse);
           }
         }
       }
@@ -13783,7 +13810,8 @@ public:
       if (gutils->forwardDeallocations.count(&call)) {
         if (Mode == DerivativeMode::ReverseModeGradient) {
           eraseIfUnused(call, /*erase*/ true, /*check*/ false);
-        }
+        } else
+          eraseIfUnused(call);
         return;
       }
 

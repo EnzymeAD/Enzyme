@@ -1001,9 +1001,9 @@ public:
 };
 
 template <typename T> static inline llvm::Function *getFunctionFromCall(T *op) {
-  llvm::Function *called = nullptr;
+  const llvm::Function *called = nullptr;
   using namespace llvm;
-  llvm::Value *callVal;
+  const llvm::Value *callVal;
 #if LLVM_VERSION_MAJOR >= 11
   callVal = op->getCalledOperand();
 #else
@@ -1028,7 +1028,7 @@ template <typename T> static inline llvm::Function *getFunctionFromCall(T *op) {
 #endif
     break;
   }
-  return called;
+  return called ? const_cast<llvm::Function *>(called) : nullptr;
 }
 
 template <typename T> static inline llvm::StringRef getFuncNameFromCall(T *op) {
@@ -1134,4 +1134,25 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
 
 llvm::Function *GetFunctionFromValue(llvm::Value *fn);
 
+static inline bool shouldDisableNoWrite(const llvm::CallInst *CI) {
+  auto F = getFunctionFromCall(CI);
+  auto funcName = getFuncNameFromCall(CI);
+
+  if (CI->hasFnAttr("enzyme_preserve_primal") ||
+      hasMetadata(CI, "enzyme_augment") || hasMetadata(CI, "enzyme_gradient") ||
+      hasMetadata(CI, "enzyme_derivative") ||
+      hasMetadata(CI, "enzyme_splitderivative") ||
+      (F &&
+       (F->hasFnAttribute("enzyme_preserve_primal") ||
+        hasMetadata(F, "enzyme_augment") || hasMetadata(F, "enzyme_gradient") ||
+        hasMetadata(F, "enzyme_derivative") ||
+        hasMetadata(F, "enzyme_splitderivative"))) ||
+      !F) {
+    return true;
+  }
+  if (funcName == "MPI_Wait" || funcName == "MPI_Waitall") {
+    return true;
+  }
+  return false;
+}
 #endif

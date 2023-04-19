@@ -407,7 +407,7 @@ struct CacheAnalysis {
 
   std::vector<bool>
   compute_overwritten_args_for_one_callsite(CallInst *callsite_op) {
-    Function *Fn = getFunctionFromCall(callsite_op);
+    auto Fn = getFunctionFromCall(callsite_op);
     if (!Fn)
       return {};
 
@@ -652,13 +652,15 @@ void calculateUnusedValuesInFunction(
         cacheWholeAllocation = true;
       }
     }
-    // If rematerializing a loop-level allocation, the primal allocation
-    // is not needed in the reverse.
+    // If rematerializing a split or loop-level allocation, the primal
+    // allocation is not needed in the reverse.
     if (!cacheWholeAllocation && primalNeededInReverse) {
       auto found = gutils->rematerializableAllocations.find(
           const_cast<CallInst *>(pair.first));
       if (found != gutils->rematerializableAllocations.end()) {
-        if (auto inst = dyn_cast<Instruction>(pair.first))
+        if (mode != DerivativeMode::ReverseModeCombined)
+          primalNeededInReverse = false;
+        else if (auto inst = dyn_cast<Instruction>(pair.first))
           if (found->second.LI &&
               found->second.LI->contains(inst->getParent())) {
             primalNeededInReverse = false;
@@ -686,6 +688,100 @@ void calculateUnusedValuesInFunction(
           auto act = constant_args[arg->getArgNo()];
           if (act == DIFFE_TYPE::DUP_NONEED) {
             return true;
+          }
+        } else if (isa<AllocaInst>(v) || isAllocationCall(v, TLI)) {
+          if (!gutils->isConstantValue(const_cast<Value *>(v))) {
+            std::set<const Value *> done;
+            std::deque<const Value *> todo = {v};
+            bool legal = true;
+            while (todo.size()) {
+              const Value *cur = todo.back();
+              todo.pop_back();
+              if (done.count(cur))
+                continue;
+              done.insert(cur);
+
+              if (unnecessaryValues.count(cur))
+                continue;
+
+              for (auto u : cur->users()) {
+                if (auto SI = dyn_cast<StoreInst>(u)) {
+                  if (SI->getValueOperand() != cur)
+                    continue;
+                }
+                if (auto I = dyn_cast<Instruction>(u)) {
+                  if (unnecessaryInstructions.count(I))
+                    continue;
+                  if (isDeallocationCall(I, TLI))
+                    continue;
+                }
+                if (auto CI = dyn_cast<CallInst>(u)) {
+                  bool writeOnlyNoCapture = true;
+#if LLVM_VERSION_MAJOR < 14
+                  auto F = getFunctionFromCall(CI);
+#endif
+                  if (shouldDisableNoWrite(CI)) {
+                    writeOnlyNoCapture = false;
+                  }
+#if LLVM_VERSION_MAJOR >= 14
+                  for (size_t i = 0; i < CI->arg_size(); i++)
+#else
+                  for (size_t i = 0; i < CI->getNumArgOperands(); i++)
+#endif
+                  {
+                    if (cur == CI->getArgOperand(i)) {
+#if LLVM_VERSION_MAJOR >= 8
+                      if (!CI->doesNotCapture(i))
+#else
+                      if (!(CI->dataOperandHasImpliedAttr(
+                                i + 1, Attribute::NoCapture) ||
+                            (F &&
+                             F->hasParamAttribute(i, Attribute::NoCapture))))
+#endif
+                      {
+                        writeOnlyNoCapture = false;
+                        break;
+                      }
+#if LLVM_VERSION_MAJOR >= 14
+                      if (!(CI->onlyWritesMemory(i) || CI->onlyWritesMemory()))
+#else
+                      if (!(CI->dataOperandHasImpliedAttr(
+                                i + 1, Attribute::WriteOnly) ||
+                            CI->dataOperandHasImpliedAttr(
+                                i + 1, Attribute::ReadNone) ||
+                            CI->hasFnAttr(Attribute::WriteOnly) ||
+                            CI->hasFnAttr(Attribute::ReadNone) ||
+                            (F &&
+                             (F->hasParamAttribute(i, Attribute::WriteOnly) ||
+                              F->hasParamAttribute(i, Attribute::ReadNone) ||
+                              F->hasFnAttribute(Attribute::WriteOnly) ||
+                              F->hasFnAttribute(Attribute::ReadNone)))))
+#endif
+                      {
+                        writeOnlyNoCapture = false;
+                        break;
+                      }
+                    }
+                  }
+                  // Don't need the primal argument if it is write only and
+                  // not captured
+                  if (writeOnlyNoCapture) {
+                    continue;
+                  }
+                }
+
+                if (isa<CastInst>(u) || isa<GetElementPtrInst>(u) ||
+                    isa<PHINode>(u)) {
+                  todo.push_back(&*u);
+                } else {
+                  legal = false;
+                  break;
+                }
+              }
+            }
+            if (legal) {
+              return true;
+            }
           }
         }
         return false;
@@ -781,10 +877,16 @@ void calculateUnusedValuesInFunction(
         }
 
         bool mayWriteToMemory = inst->mayWriteToMemory();
+        if (unnecessaryValues.count(inst) && isAllocationCall(inst, TLI))
+          return UseReq::Recur;
+
         if (auto obj_op = dyn_cast<CallInst>(inst)) {
-          StringRef funcName =
-              getFuncNameFromCall(const_cast<CallInst *>(obj_op));
+          StringRef funcName = getFuncNameFromCall(obj_op);
           if (isDeallocationFunction(funcName, TLI)) {
+            if (unnecessaryValues.count(obj_op->getArgOperand(0))) {
+              return UseReq::Recur;
+            }
+
             if (mode == DerivativeMode::ForwardMode ||
                 mode == DerivativeMode::ForwardModeSplit ||
                 ((mode == DerivativeMode::ReverseModePrimal ||
@@ -860,7 +962,7 @@ void calculateUnusedValuesInFunction(
         if (mode == DerivativeMode::ReverseModeGradient ||
             mode == DerivativeMode::ForwardModeSplit) {
           auto CI = dyn_cast<CallInst>(const_cast<Instruction *>(inst));
-          Function *CF = CI ? getFunctionFromCall(CI) : nullptr;
+          const Function *CF = CI ? getFunctionFromCall(CI) : nullptr;
           StringRef funcName = CF ? CF->getName() : "";
           if (isa<MemTransferInst>(inst) || isa<StoreInst>(inst) ||
               isa<MemSetInst>(inst) || funcName == "julia.write_barrier") {
@@ -883,8 +985,73 @@ void calculateUnusedValuesInFunction(
           return UseReq::Need;
         }
         return UseReq::Recur;
-      });
+      },
+      [&](const Instruction *inst, const Value *val) {
+        if (isNoNeed(val)) {
+          if (isa<StoreInst>(inst))
+            return false;
 
+          if (auto CI = dyn_cast<CallInst>(inst)) {
+            if (isDeallocationCall(CI, TLI)) {
+              if (CI->getArgOperand(0) == val)
+                return false;
+            }
+
+            bool writeOnlyNoCapture = true;
+#if LLVM_VERSION_MAJOR < 14
+            auto F = getFunctionFromCall(CI);
+#endif
+
+            if (shouldDisableNoWrite(CI)) {
+              writeOnlyNoCapture = false;
+            }
+#if LLVM_VERSION_MAJOR >= 14
+            for (size_t i = 0; i < CI->arg_size(); i++)
+#else
+            for (size_t i = 0; i < CI->getNumArgOperands(); i++)
+#endif
+            {
+              if (val == CI->getArgOperand(i)) {
+#if LLVM_VERSION_MAJOR >= 8
+                if (!CI->doesNotCapture(i))
+#else
+                if (!(CI->dataOperandHasImpliedAttr(i + 1,
+                                                    Attribute::NoCapture) ||
+                      (F && F->hasParamAttribute(i, Attribute::NoCapture))))
+#endif
+                {
+                  writeOnlyNoCapture = false;
+                  break;
+                }
+#if LLVM_VERSION_MAJOR >= 14
+                if (!(CI->onlyWritesMemory(i) || CI->onlyWritesMemory()))
+#else
+                if (!(CI->dataOperandHasImpliedAttr(i + 1,
+                                                    Attribute::WriteOnly) ||
+                      CI->dataOperandHasImpliedAttr(i + 1,
+                                                    Attribute::ReadNone) ||
+                      CI->hasFnAttr(Attribute::WriteOnly) ||
+                      CI->hasFnAttr(Attribute::ReadNone) ||
+                      (F && (F->hasParamAttribute(i, Attribute::WriteOnly) ||
+                             F->hasParamAttribute(i, Attribute::ReadNone) ||
+                             F->hasFnAttribute(Attribute::WriteOnly) ||
+                             F->hasFnAttribute(Attribute::ReadNone)))))
+#endif
+                {
+                  writeOnlyNoCapture = false;
+                  break;
+                }
+              }
+            }
+            // Don't need the primal argument if it is write only and not
+            // captured
+            if (writeOnlyNoCapture) {
+              return false;
+            }
+          }
+        }
+        return true;
+      });
   if (EnzymePrintUnnecessary) {
     llvm::errs() << " val use analysis of " << func.getName()
                  << ": mode=" << to_string(mode) << "\n";
@@ -1427,7 +1594,7 @@ bool legalCombinedForwardReverse(
       noFree |= CI->hasFnAttr(Attribute::NoFree);
 #endif
       noFree |= CI->hasFnAttr("nofree");
-      Function *called = getFunctionFromCall(CI);
+      auto called = getFunctionFromCall(CI);
       StringRef funcName = getFuncNameFromCall(CI);
       if (funcName == "llvm.trap")
         noFree = true;
@@ -3753,6 +3920,9 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
 
   gutils->forceActiveDetection();
 
+  // requires is_value_needed_in_reverse, that needs unnecessaryValues
+  // sets backwardsOnlyShadows, rematerializableAllocations, and
+  // allocationsWithGuaranteedFrees
   gutils->computeGuaranteedFrees();
 
   // TODO populate with actual unnecessaryInstructions once the dependency
@@ -3789,6 +3959,8 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     return gutils->getIndex(std::make_pair(I, u), mapping);
   };
 
+  // requires is_value_needed_in_reverse, that needs unnecessaryValues
+  // sets knownRecomputeHeuristic
   gutils->computeMinCache();
 
   SmallPtrSet<const Value *, 4> unnecessaryValues;

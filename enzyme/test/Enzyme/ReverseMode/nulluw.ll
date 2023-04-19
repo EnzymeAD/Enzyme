@@ -99,10 +99,7 @@ declare dso_local double @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   %iv1 = phi i64 [ %iv.next2, %bb12 ], [ 0, %bb2 ]
 ; CHECK-NEXT:   %iv.next2 = add nuw nsw i64 %iv1, 1
 ; CHECK-NEXT:   %[[i6:.+]] = trunc i64 %iv1 to i32
-; CHECK-NEXT:   %i15 = tail call noalias dereferenceable_or_null(8) i8* @malloc(i64 8)
-; CHECK-NEXT:   %i16 = bitcast i8* %i15 to double*
-; CHECK-NEXT:   call fastcc void @augmented_evaluate_integrand(double* %i16, double* undef)
-; CHECK-NEXT:   tail call void @free(i8* %i15)
+; CHECK-NEXT:   call fastcc void @augmented_evaluate_integrand(double* undef, double* undef)
 ; CHECK-NEXT:   %i19 = add nuw nsw i32 %[[i6]], 1
 ; CHECK-NEXT:   %i20 = icmp eq i32 %i19, %i5
 ; CHECK-NEXT:   br i1 %i20, label %bb7, label %bb12
