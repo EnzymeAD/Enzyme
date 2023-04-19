@@ -1268,13 +1268,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
 
   if (containsPointer) {
 
-    auto TmpOrig =
-#if LLVM_VERSION_MAJOR >= 12
-        getUnderlyingObject(Val, 100);
-#else
-        GetUnderlyingObject(Val, TR.getFunction()->getParent()->getDataLayout(),
-                            100);
-#endif
+    auto TmpOrig = getBaseObject(Val);
 
     // If we know that our origin is inactive from its arguments,
     // we are definitionally inactive
@@ -2638,14 +2632,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
                 continue;
               }
             }
-            auto TmpOrig_2 =
-#if LLVM_VERSION_MAJOR >= 12
-                getUnderlyingObject(TmpOrig, 100);
-#else
-                GetUnderlyingObject(
-                    TmpOrig, TR.getFunction()->getParent()->getDataLayout(),
-                    100);
-#endif
+            auto TmpOrig_2 = getBaseObject(TmpOrig);
             if (TmpOrig != TmpOrig_2) {
               vtodo.push_back(TmpOrig_2);
               continue;
@@ -2711,13 +2698,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
               break;
             }
           }
-          auto TmpOrig_2 =
-#if LLVM_VERSION_MAJOR >= 12
-              getUnderlyingObject(TmpOrig, 100);
-#else
-              GetUnderlyingObject(
-                  TmpOrig, TR.getFunction()->getParent()->getDataLayout(), 100);
-#endif
+          auto TmpOrig_2 = getBaseObject(TmpOrig);
           if (TmpOrig != TmpOrig_2) {
             TmpOrig = TmpOrig_2;
             continue;
@@ -2732,14 +2713,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         }
       }
       if (PUA == UseActivity::OnlyLoads) {
-        auto TmpOrig =
-#if LLVM_VERSION_MAJOR >= 12
-            getUnderlyingObject(SI->getPointerOperand(), 100);
-#else
-            GetUnderlyingObject(SI->getPointerOperand(),
-                                TR.getFunction()->getParent()->getDataLayout(),
-                                100);
-#endif
+        auto TmpOrig = getBaseObject(SI->getPointerOperand());
         if (TmpOrig == val) {
           continue;
         }
@@ -2986,14 +2960,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
                       break;
                     }
                   }
-                  auto TmpOrig_2 =
-#if LLVM_VERSION_MAJOR >= 12
-                      getUnderlyingObject(TmpOrig, 100);
-#else
-                      GetUnderlyingObject(
-                          TmpOrig,
-                          TR.getFunction()->getParent()->getDataLayout(), 100);
-#endif
+                  auto TmpOrig_2 = getBaseObject(TmpOrig);
                   if (TmpOrig != TmpOrig_2) {
                     TmpOrig = TmpOrig_2;
                     continue;
@@ -3036,13 +3003,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
             Value *ptr = a;
             bool subValue = false;
             while (ptr) {
-              auto TmpOrig2 =
-#if LLVM_VERSION_MAJOR >= 12
-                  getUnderlyingObject(ptr, 100);
-#else
-                  GetUnderlyingObject(
-                      ptr, TR.getFunction()->getParent()->getDataLayout(), 100);
-#endif
+              auto TmpOrig2 = getBaseObject(ptr);
               if (AllocaSet.count(TmpOrig2)) {
                 subValue = true;
                 break;

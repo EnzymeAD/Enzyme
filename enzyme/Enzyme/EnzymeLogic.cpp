@@ -262,13 +262,7 @@ struct CacheAnalysis {
 
     // Find the underlying object for the pointer operand of the load
     // instruction.
-    auto obj =
-#if LLVM_VERSION_MAJOR >= 12
-        getUnderlyingObject(li.getOperand(0), 100);
-#else
-        GetUnderlyingObject(li.getOperand(0),
-                            oldFunc->getParent()->getDataLayout(), 100);
-#endif
+    auto obj = getBaseObject(li.getOperand(0));
 
     if (auto obj_op = dyn_cast<CallInst>(obj)) {
       auto n = getFuncNameFromCall(obj_op);
@@ -454,15 +448,9 @@ struct CacheAnalysis {
     {
       args.push_back(callsite_op->getArgOperand(i));
 
-// If the UnderlyingObject is from one of this function's arguments, then we
-// need to propagate the volatility.
-#if LLVM_VERSION_MAJOR >= 12
-      Value *obj = getUnderlyingObject(callsite_op->getArgOperand(i), 100);
-#else
-      Value *obj = GetUnderlyingObject(
-          callsite_op->getArgOperand(i),
-          callsite_op->getParent()->getModule()->getDataLayout(), 100);
-#endif
+      // If the UnderlyingObject is from one of this function's arguments, then
+      // we need to propagate the volatility.
+      Value *obj = getBaseObject(callsite_op->getArgOperand(i));
 
       objs.push_back(obj);
 
@@ -678,11 +666,10 @@ void calculateUnusedValuesInFunction(
 
   std::function<bool(const llvm::Value *)> isNoNeed =
       [&](const llvm::Value *v) {
-        if (auto C = dyn_cast<CastInst>(v))
-          return isNoNeed(C->getOperand(0));
-        else if (auto C = dyn_cast<GetElementPtrInst>(v))
-          return isNoNeed(C->getOperand(0));
-        else if (auto C = dyn_cast<LoadInst>(v))
+        auto Obj = getBaseObject(v);
+        if (Obj != v)
+          return isNoNeed(Obj);
+        if (auto C = dyn_cast<LoadInst>(v))
           return isNoNeed(C->getOperand(0));
         else if (auto arg = dyn_cast<Argument>(v)) {
           auto act = constant_args[arg->getArgNo()];
@@ -912,13 +899,7 @@ void calculateUnusedValuesInFunction(
           if (isNoNeed(mti->getArgOperand(0)))
             return UseReq::Recur;
 
-#if LLVM_VERSION_MAJOR >= 12
-          auto at = getUnderlyingObject(mti->getArgOperand(1), 100);
-#else
-          auto at = GetUnderlyingObject(
-              mti->getArgOperand(1),
-              gutils->oldFunc->getParent()->getDataLayout(), 100);
-#endif
+          auto at = getBaseObject(mti->getArgOperand(1));
 
           bool newMemory = false;
           if (isa<AllocaInst>(at))
@@ -1101,13 +1082,7 @@ void calculateUnusedStoresInFunction(
     }
 
     if (auto mti = dyn_cast<MemTransferInst>(inst)) {
-#if LLVM_VERSION_MAJOR >= 12
-      auto at = getUnderlyingObject(mti->getArgOperand(1), 100);
-#else
-      auto at = GetUnderlyingObject(
-          mti->getArgOperand(1),
-          func.getParent()->getDataLayout(), 100);
-#endif
+      auto at = getBaseObject(mti->getArgOperand(1));
       bool newMemory = false;
       if (isa<AllocaInst>(at))
         newMemory = true;

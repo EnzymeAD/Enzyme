@@ -28,6 +28,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 
 #include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicInst.h"
@@ -1154,5 +1155,53 @@ static inline bool shouldDisableNoWrite(const llvm::CallInst *CI) {
     return true;
   }
   return false;
+}
+
+static inline llvm::Value *getBaseObject(llvm::Value *V) {
+  while (true) {
+    if (auto CI = llvm::dyn_cast<llvm::CastInst>(V)) {
+      V = CI->getOperand(0);
+      continue;
+    } else if (auto CI = llvm::dyn_cast<llvm::GetElementPtrInst>(V)) {
+      V = CI->getOperand(0);
+      continue;
+    } else if (auto CI = llvm::dyn_cast<llvm::PHINode>(V)) {
+      if (CI->getNumIncomingValues() == 1) {
+        V = CI->getOperand(0);
+        continue;
+      }
+    } else if (auto *GA = llvm::dyn_cast<llvm::GlobalAlias>(V)) {
+      if (GA->isInterposable())
+        break;
+      V = GA->getAliasee();
+      continue;
+    } else if (auto *Call = llvm::dyn_cast<llvm::CallInst>(V)) {
+      auto funcName = getFuncNameFromCall(Call);
+      if (funcName == "julia.pointer_from_objref") {
+        V = Call->getArgOperand(0);
+        continue;
+      }
+
+      // CaptureTracking can know about special capturing properties of some
+      // intrinsics like launder.invariant.group, that can't be expressed with
+      // the attributes, but have properties like returning aliasing pointer.
+      // Because some analysis may assume that nocaptured pointer is not
+      // returned from some special intrinsic (because function would have to
+      // be marked with returns attribute), it is crucial to use this function
+      // because it should be in sync with CaptureTracking. Not using it may
+      // cause weird miscompilations where 2 aliasing pointers are assumed to
+      // noalias.
+      if (auto *RP = llvm::getArgumentAliasingToReturnedPointer(Call, false)) {
+        V = RP;
+        continue;
+      }
+    }
+
+    break;
+  }
+  return V;
+}
+static inline const llvm::Value *getBaseObject(const llvm::Value *V) {
+  return getBaseObject(const_cast<llvm::Value *>(V));
 }
 #endif
