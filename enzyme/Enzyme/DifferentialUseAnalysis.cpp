@@ -394,6 +394,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
 
     bool writeOnlyNoCapture = true;
     auto F = getFunctionFromCall(const_cast<CallInst *>(CI));
+    bool foreignFunction = F == nullptr;
 
     if (CI->hasFnAttr("enzyme_preserve_primal") ||
         (F && F->hasFnAttribute("enzyme_preserve_primal"))) {
@@ -451,12 +452,17 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
         }
       }
     }
+
     // Don't need the primal argument if it is write only and not captured
-    if (writeOnlyNoCapture) {
-      if (!(gutils->mode == DerivativeMode::ForwardMode &&
-            gutils->isConstantValue(const_cast<Value *>(val)) && !readOnly))
-        return false;
-    }
+    // if (gutils->getDiffeType(const_cast<Value*>(val), foreignFunction) ==
+    // DIFFE_TYPE::DUP_NONEED)
+    //     return false;
+    if (writeOnlyNoCapture)
+      return false;
+    if (writeOnlyNoCapture &&
+        (gutils->mode == DerivativeMode::ForwardModeSplit ||
+         gutils->mode == DerivativeMode::ReverseModeGradient || readOnly))
+      return false;
   }
 
   bool neededFB = !gutils->isConstantInstruction(user) ||

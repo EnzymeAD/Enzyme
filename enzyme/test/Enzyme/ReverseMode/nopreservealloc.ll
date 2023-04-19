@@ -171,28 +171,11 @@ declare dso_local noalias i8* @malloc(i64)
 !113 = !{i32 -2142609504}
 !114 = !{i32 -2142609441}
 
-; TODO completely eliminate malloc for forward since all previous loads from are unnecessary
 ; CHECK: define internal void @diffe_ZL6matvecPKN5Eigen6MatrixIdLin1ELin1ELi0ELin1ELin1EEES3_(double* noalias %W, double* %"W'", double %differeturn) 
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %call = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   %"call'mi" = tail call noalias nonnull dereferenceable(8) dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"call'mi", i8 0, i64 8, i1 false)
 ; CHECK-NEXT:   %"tmp1'ipc" = bitcast i8* %"call'mi" to double*
-; CHECK-NEXT:   %tmp1 = bitcast i8* %call to double*
-; CHECK-NEXT:   br label %for.body.i.i.i.i.i.i.i
-
-; CHECK: for.body.i.i.i.i.i.i.i:                           ; preds = %for.body.i.i.i.i.i.i.i, %entry
-; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %for.body.i.i.i.i.i.i.i ], [ 0, %entry ]
-; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
-; CHECK-NEXT:   %arrayidxOut = getelementptr inbounds double, double* %tmp1, i64 %iv
-; CHECK-NEXT:   %arrayidx.i6.i.i.i.i.i.i.i.i.i = getelementptr inbounds double, double* %W, i64 %iv
-; CHECK-NEXT:   %tmp24 = load double, double* %arrayidx.i6.i.i.i.i.i.i.i.i.i, align 8, !tbaa !2
-; CHECK-NEXT:   store double %tmp24, double* %arrayidxOut, align 8, !tbaa !2
-; CHECK-NEXT:   %exitcond.i.i.i.i.i.i.i = icmp eq i64 %iv.next, 16
-; CHECK-NEXT:   br i1 %exitcond.i.i.i.i.i.i.i, label %exit, label %for.body.i.i.i.i.i.i.i
-
-; CHECK: exit:                                             ; preds = %for.body.i.i.i.i.i.i.i
-; CHECK-NEXT:   call void @free(i8* nonnull %call)
 ; CHECK-NEXT:   br label %invertfor.body
 
 ; CHECK: invertentry:                                      ; preds = %invertfor.body.i.i.i.i.i.i.i
@@ -215,8 +198,8 @@ declare dso_local noalias i8* @malloc(i64)
 ; CHECK-NEXT:   %4 = add nsw i64 %"iv'ac.0", -1
 ; CHECK-NEXT:   br label %invertfor.body.i.i.i.i.i.i.i
 
-; CHECK: invertfor.body:                                   ; preds = %exit, %incinvertfor.body
-; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ 15, %exit ], [ %8, %incinvertfor.body ]
+; CHECK: invertfor.body: 
+; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ 15, %entry ], [ %8, %incinvertfor.body ]
 ; CHECK-NEXT:   %"arrayidxOut2'ipg_unwrap" = getelementptr inbounds double, double* %"tmp1'ipc", i64 15
 ; CHECK-NEXT:   %5 = load double, double* %"arrayidxOut2'ipg_unwrap", align 8
 ; CHECK-NEXT:   %6 = fadd fast double %5, %differeturn

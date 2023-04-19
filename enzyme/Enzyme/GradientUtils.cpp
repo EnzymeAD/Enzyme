@@ -4397,7 +4397,7 @@ DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::CallInst *orig,
   return subretType;
 }
 
-DIFFE_TYPE GradientUtils::getDiffeType(Value *v, bool foreignFunction) {
+DIFFE_TYPE GradientUtils::getDiffeType(Value *v, bool foreignFunction) const {
   if (isConstantValue(v) && !foreignFunction) {
     return DIFFE_TYPE::CONSTANT;
   }
@@ -4417,6 +4417,10 @@ DIFFE_TYPE GradientUtils::getDiffeType(Value *v, bool foreignFunction) {
         if (ArgDiffeTypes[arg->getArgNo()] == DIFFE_TYPE::DUP_NONEED) {
           return DIFFE_TYPE::DUP_NONEED;
         }
+      } else if (isa<AllocaInst>(at) || isAllocationCall(at, TLI)) {
+        assert(unnecessaryValuesP);
+        if (unnecessaryValuesP->count(at))
+          return DIFFE_TYPE::DUP_NONEED;
       }
     }
     return DIFFE_TYPE::DUP_ARG;
