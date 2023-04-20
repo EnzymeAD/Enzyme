@@ -1,5 +1,7 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instcombine -adce -S | FileCheck %s
-; ONLYLINUX: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instcombine -adce -S | %lli - 
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instcombine -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,sroa,simplifycfg,instcombine,adce)" -enzyme-preopt=false -S | FileCheck %s
+; ONLYLINUX: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instcombine -adce -S | %lli - ; fi
+; ONLYLINUX: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,sroa,simplifycfg,instcombine,adce)" -S | %lli - 
 
 source_filename = "/home/enzyme/Enzyme/enzyme/test/Integration/simpleeigen-made.cpp"
 
