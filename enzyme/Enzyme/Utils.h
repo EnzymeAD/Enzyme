@@ -1175,6 +1175,11 @@ static inline llvm::Value *getBaseObject(llvm::Value *V) {
         break;
       V = GA->getAliasee();
       continue;
+    } else if (auto CE = llvm::dyn_cast<llvm::ConstantExpr>(V)) {
+      if (CE->isCast() || CE->getOpcode() == llvm::Instruction::GetElementPtr) {
+        V = CE->getOperand(0);
+        continue;
+      }
     } else if (auto *Call = llvm::dyn_cast<llvm::CallInst>(V)) {
       auto funcName = getFuncNameFromCall(Call);
       if (funcName == "julia.pointer_from_objref") {
@@ -1212,6 +1217,18 @@ static inline llvm::Value *getBaseObject(llvm::Value *V) {
     }
 #endif
 
+    if (auto I = llvm::dyn_cast<llvm::Instruction>(V)) {
+#if LLVM_VERSION_MAJOR >= 12
+      auto V2 = llvm::getUnderlyingObject(I, 100);
+#else
+      auto V2 = llvm::GetUnderlyingObject(
+          I, I->getParent()->getParent()->getParent()->getDataLayout(), 100);
+#endif
+      if (V2 != V) {
+        V = V2;
+        break;
+      }
+    }
     break;
   }
   return V;

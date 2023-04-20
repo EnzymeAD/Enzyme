@@ -3781,7 +3781,7 @@ public:
       };
 
       auto fwd_rule = [&](Value *ddst, Value *dsrc) {
-#if LLVM_VERSION_MAJOR >= 11
+#if LLVM_VERSION_MAJOR >= 10
         MaybeAlign dalign;
         if (subdstalign)
           dalign = MaybeAlign(subdstalign);
