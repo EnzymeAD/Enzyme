@@ -1191,11 +1191,21 @@ static inline llvm::Value *getBaseObject(llvm::Value *V) {
       // because it should be in sync with CaptureTracking. Not using it may
       // cause weird miscompilations where 2 aliasing pointers are assumed to
       // noalias.
+#if LLVM_VERSION_MAJOR >= 10
       if (auto *RP = llvm::getArgumentAliasingToReturnedPointer(Call, false)) {
         V = RP;
         continue;
       }
+#endif
     }
+#if LLVM_VERSION_MAJOR < 10
+    if (auto CS = llvm::CallSite(V)) {
+      if (auto *RP = llvm::getArgumentAliasingToReturnedPointer(CS)) {
+        V = RP;
+        continue;
+      }
+    }
+#endif
 
     break;
   }

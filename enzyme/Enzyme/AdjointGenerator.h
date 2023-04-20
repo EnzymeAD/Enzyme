@@ -3577,42 +3577,6 @@ public:
       return;
     }
 
-    if (Mode == DerivativeMode::ForwardMode) {
-      IRBuilder<> Builder2(&MTI);
-      getForwardBuilder(Builder2);
-      auto ddst = gutils->invertPointerM(orig_dst, Builder2);
-      auto dsrc = gutils->invertPointerM(orig_src, Builder2);
-
-      auto rule = [&](Value *ddst, Value *dsrc) {
-        if (ddst->getType()->isIntegerTy())
-          ddst = Builder2.CreateIntToPtr(
-              ddst, Type::getInt8PtrTy(ddst->getContext()));
-        if (dsrc->getType()->isIntegerTy())
-          dsrc = Builder2.CreateIntToPtr(
-              dsrc, Type::getInt8PtrTy(dsrc->getContext()));
-        CallInst *call;
-        if (ID == Intrinsic::memmove) {
-          call =
-              Builder2.CreateMemMove(ddst, dstAlign, dsrc, srcAlign, new_size);
-        } else {
-          call =
-              Builder2.CreateMemCpy(ddst, dstAlign, dsrc, srcAlign, new_size);
-        }
-        call->setAttributes(MTI.getAttributes());
-        call->setMetadata(LLVMContext::MD_tbaa,
-                          MTI.getMetadata(LLVMContext::MD_tbaa));
-        call->setMetadata(LLVMContext::MD_tbaa_struct,
-                          MTI.getMetadata(LLVMContext::MD_tbaa_struct));
-        call->setMetadata(LLVMContext::MD_invariant_group,
-                          MTI.getMetadata(LLVMContext::MD_invariant_group));
-        call->setTailCallKind(MTI.getTailCallKind());
-      };
-
-      applyChainRule(Builder2, rule, ddst, dsrc);
-      eraseIfUnused(MTI);
-      return;
-    }
-
     size_t size = 1;
     if (auto ci = dyn_cast<ConstantInt>(new_size)) {
       size = ci->getLimitedValue();
@@ -3620,10 +3584,13 @@ public:
 
     // TODO note that we only handle memcpy/etc of ONE type (aka memcpy of {int,
     // double} not allowed)
-
-    // llvm::errs() << *gutils->oldFunc << "\n";
-    // TR.dump();
     if (size == 0) {
+      eraseIfUnused(MTI);
+      return;
+    }
+
+    if (Mode == DerivativeMode::ForwardMode &&
+        gutils->isConstantValue(orig_dst)) {
       eraseIfUnused(MTI);
       return;
     }
@@ -3632,8 +3599,11 @@ public:
     auto vd = TR.query(orig_dst).Data0().ShiftIndices(DL, 0, size, 0);
     vd |= TR.query(orig_src).Data0().ShiftIndices(DL, 0, size, 0);
 
-    // llvm::errs() << "MIT: " << MTI << "|size: " << size << " vd: " <<
-    // vd.str() << "\n";
+    bool errorIfNoType = true;
+    if (Mode == DerivativeMode::ForwardMode &&
+        (!gutils->isConstantValue(orig_src) && !EnzymeRuntimeActivityCheck)) {
+      errorIfNoType = false;
+    }
 
     if (!vd.isKnownPastPointer()) {
       if (looseTypeAnalysis) {
@@ -3677,26 +3647,34 @@ public:
             }
           }
         }
-        EmitWarning("CannotDeduceType", MTI, "failed to deduce type of copy ",
-                    MTI);
+        if (errorIfNoType)
+          EmitWarning("CannotDeduceType", MTI, "failed to deduce type of copy ",
+                      MTI);
         vd = TypeTree(BaseType::Pointer).Only(0, &MTI);
         goto known;
       }
-      if (CustomErrorHandler) {
-        std::string str;
-        raw_string_ostream ss(str);
-        ss << "Cannot deduce type of copy " << MTI;
-        CustomErrorHandler(str.c_str(), wrap(&MTI), ErrorType::NoType,
-                           &TR.analyzer);
-      }
-      EmitFailure("CannotDeduceType", MTI.getDebugLoc(), &MTI,
-                  "failed to deduce type of copy ", MTI);
+      if (errorIfNoType) {
+        if (CustomErrorHandler) {
+          std::string str;
+          raw_string_ostream ss(str);
+          ss << "Cannot deduce type of copy " << MTI;
+          CustomErrorHandler(str.c_str(), wrap(&MTI), ErrorType::NoType,
+                             &TR.analyzer);
+        }
+        EmitFailure("CannotDeduceType", MTI.getDebugLoc(), &MTI,
+                    "failed to deduce type of copy ", MTI);
 
-      TR.firstPointer(size, orig_dst, &MTI, /*errifnotfound*/ true,
-                      /*pointerIntSame*/ true);
-      llvm_unreachable("bad mti");
+        TR.firstPointer(size, orig_dst, &MTI, /*errifnotfound*/ true,
+                        /*pointerIntSame*/ true);
+        llvm_unreachable("bad mti");
+      } else {
+        vd = TypeTree(BaseType::Pointer).Only(0, &MTI);
+      }
     }
   known:;
+
+  // llvm::errs() << "MIT: " << MTI << "|size: " << size << " vd: " <<
+  // vd.str() << "\n";
 
 #if LLVM_VERSION_MAJOR >= 10
     unsigned dstalign = dstAlign.valueOrOne().value();
@@ -3729,11 +3707,31 @@ public:
       auto dt = vd[{-1}];
       for (size_t i = start; i < size; ++i) {
         bool Legal = true;
-        dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
+        auto tmp = dt;
+        tmp.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
         if (!Legal) {
-          nextStart = i;
-          break;
-        }
+          if (Mode == DerivativeMode::ForwardMode) {
+            // if both are floats (of any type), forward mode is the same.
+            //   + [potentially zero if const, otherwise copy]
+            // if both are int/pointer (of any type), also the same
+            //   + copy
+            // if known non-constant, also the same
+            //   + copy
+            if ((dt.isFloat() == nullptr) ==
+                (vd[{(int)i}].isFloat() == nullptr)) {
+              Legal = true;
+            }
+            if (!gutils->isConstantValue(orig_src) &&
+                !EnzymeRuntimeActivityCheck) {
+              Legal = true;
+            }
+          }
+          if (!Legal) {
+            nextStart = i;
+            break;
+          }
+        } else
+          dt = tmp;
       }
       if (!dt.isKnown()) {
         TR.dump();
@@ -3772,7 +3770,7 @@ public:
                               ? gutils->getNewFromOriginal(orig_src)
                               : gutils->invertPointerM(orig_src, BuilderZ);
 
-      auto rule = [&](Value *shadow_dst, Value *shadow_src) {
+      auto rev_rule = [&](Value *shadow_dst, Value *shadow_src) {
         SubTransferHelper(
             gutils, Mode, dt.isFloat(), ID, subdstalign, subsrcalign,
             /*offset*/ start, gutils->isConstantValue(orig_dst), shadow_dst,
@@ -3782,7 +3780,72 @@ public:
             /*backwardsShadow*/ backwardsShadow);
       };
 
-      applyChainRule(BuilderZ, rule, shadow_dst, shadow_src);
+      auto fwd_rule = [&](Value *ddst, Value *dsrc) {
+#if LLVM_VERSION_MAJOR >= 11
+        MaybeAlign dalign;
+        if (subdstalign)
+          dalign = MaybeAlign(subdstalign);
+        MaybeAlign salign;
+        if (subsrcalign)
+          salign = MaybeAlign(subsrcalign);
+#else
+        auto dalign = dstalign;
+        auto salign = srcalign;
+#endif
+        if (ddst->getType()->isIntegerTy())
+          ddst = BuilderZ.CreateIntToPtr(
+              ddst, Type::getInt8PtrTy(ddst->getContext()));
+        if (start != 0) {
+#if LLVM_VERSION_MAJOR > 7
+          ddst = BuilderZ.CreateConstInBoundsGEP1_64(
+              Type::getInt8Ty(ddst->getContext()), ddst, start);
+#else
+          ddst = BuilderZ.CreateConstInBoundsGEP1_64(ddst, start);
+#endif
+        }
+        CallInst *call;
+        // TODO add EnzymeRuntimeActivity (correctness)
+        if (dt.isFloat() && gutils->isConstantValue(orig_src)) {
+          call = BuilderZ.CreateMemSet(
+              ddst, ConstantInt::get(Type::getInt8Ty(ddst->getContext()), 0),
+              length, salign, isVolatile);
+        } else {
+          if (dsrc->getType()->isIntegerTy())
+            dsrc = BuilderZ.CreateIntToPtr(
+                dsrc, Type::getInt8PtrTy(dsrc->getContext()));
+          if (start != 0) {
+#if LLVM_VERSION_MAJOR > 7
+            dsrc = BuilderZ.CreateConstInBoundsGEP1_64(
+                Type::getInt8Ty(ddst->getContext()), dsrc, start);
+#else
+            dsrc = BuilderZ.CreateConstInBoundsGEP1_64(dsrc, start);
+#endif
+          }
+          if (ID == Intrinsic::memmove) {
+            call = BuilderZ.CreateMemMove(ddst, dalign, dsrc, salign, length);
+          } else {
+            call = BuilderZ.CreateMemCpy(ddst, dalign, dsrc, salign, length);
+          }
+          call->setAttributes(MTI.getAttributes());
+        }
+        // TODO shadow scope/noalias (performance)
+        call->setMetadata(LLVMContext::MD_alias_scope,
+                          MTI.getMetadata(LLVMContext::MD_alias_scope));
+        call->setMetadata(LLVMContext::MD_noalias,
+                          MTI.getMetadata(LLVMContext::MD_noalias));
+        call->setMetadata(LLVMContext::MD_tbaa,
+                          MTI.getMetadata(LLVMContext::MD_tbaa));
+        call->setMetadata(LLVMContext::MD_tbaa_struct,
+                          MTI.getMetadata(LLVMContext::MD_tbaa_struct));
+        call->setMetadata(LLVMContext::MD_invariant_group,
+                          MTI.getMetadata(LLVMContext::MD_invariant_group));
+        call->setTailCallKind(MTI.getTailCallKind());
+      };
+
+      if (Mode == DerivativeMode::ForwardMode)
+        applyChainRule(BuilderZ, fwd_rule, shadow_dst, shadow_src);
+      else
+        applyChainRule(BuilderZ, rev_rule, shadow_dst, shadow_src);
 
       if (nextStart == size)
         break;
