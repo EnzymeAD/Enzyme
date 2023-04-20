@@ -1199,7 +1199,12 @@ static inline llvm::Value *getBaseObject(llvm::Value *V) {
 #endif
     }
 #if LLVM_VERSION_MAJOR < 10
-    if (auto CS = llvm::CallSite(V)) {
+#if LLVM_VERSION_MAJOR <= 7
+    if (auto CS = llvm::CallSite(V))
+#else
+    if (auto CS = llvm::dyn_cast<llvm::CallBase>(V))
+#endif
+    {
       if (auto *RP = llvm::getArgumentAliasingToReturnedPointer(CS)) {
         V = RP;
         continue;

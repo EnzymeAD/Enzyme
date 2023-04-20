@@ -1,8 +1,8 @@
 ; RUN: %opt < %s %loadEnzyme -print-activity-analysis -activity-analysis-func=f -activity-analysis-inactive-args -o /dev/null | FileCheck %s
 
-declare nonnull i8** @julia.pointer_from_objref({} addrspace(11)*) nofree nounwind readnone
+declare nonnull i8** @julia.pointer_from_objref({} addrspace(11)*) 
 
-declare void @llvm.memmove.p0i8.p0i8.i64(i8* nocapture writeonly, i8* nocapture readonly, i64, i1 immarg)
+declare void @llvm.memmove.p0i8.p0i8.i64(i8* nocapture, i8* nocapture, i64, i1)
 
 declare i8* @malloc(i64)
 
