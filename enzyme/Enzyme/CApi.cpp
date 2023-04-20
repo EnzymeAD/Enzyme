@@ -25,14 +25,17 @@
 #include "SCEV/ScalarEvolution.h"
 #include "SCEV/ScalarEvolutionExpander.h"
 
+#include "DiffeGradientUtils.h"
 #include "EnzymeLogic.h"
 #include "GradientUtils.h"
 #include "LibraryFuncs.h"
 #include "SCEV/TargetLibraryInfo.h"
+#include "TraceInterface.h"
 
 #include "llvm/ADT/Triple.h"
 #include "llvm/Analysis/CallGraph.h"
 #include "llvm/Analysis/GlobalsModRef.h"
+#include "llvm/IR/MDBuilder.h"
 
 #if LLVM_VERSION_MAJOR >= 9
 #include "llvm/IR/LegacyPassManager.h"
@@ -46,6 +49,10 @@ TargetLibraryInfo eunwrap(LLVMTargetLibraryInfoRef P) {
 }
 
 EnzymeLogic &eunwrap(EnzymeLogicRef LR) { return *(EnzymeLogic *)LR; }
+
+TraceInterface *eunwrap(EnzymeTraceInterfaceRef Ref) {
+  return (TraceInterface *)Ref;
+}
 
 TypeAnalysis &eunwrap(EnzymeTypeAnalysisRef TAR) {
   return *(TypeAnalysis *)TAR;
@@ -172,6 +179,16 @@ EnzymeLogicRef CreateEnzymeLogic(uint8_t PostOpt) {
   return (EnzymeLogicRef)(new EnzymeLogic((bool)PostOpt));
 }
 
+EnzymeTraceInterfaceRef CreateEnzymeStaticTraceInterface(LLVMModuleRef M) {
+  return (EnzymeTraceInterfaceRef)(new StaticTraceInterface(unwrap(M)));
+}
+
+EnzymeTraceInterfaceRef
+CreateEnzymeDynamicTraceInterface(LLVMValueRef interface, LLVMValueRef F) {
+  return (EnzymeTraceInterfaceRef)(
+      new DynamicTraceInterface(unwrap(interface), cast<Function>(unwrap(F))));
+}
+
 void ClearEnzymeLogic(EnzymeLogicRef Ref) { eunwrap(Ref).clear(); }
 
 void EnzymeLogicErasePreprocessedFunctions(EnzymeLogicRef Ref) {
@@ -181,6 +198,10 @@ void EnzymeLogicErasePreprocessedFunctions(EnzymeLogicRef Ref) {
 }
 
 void FreeEnzymeLogic(EnzymeLogicRef Ref) { delete (EnzymeLogic *)Ref; }
+
+void FreeTraceInterface(EnzymeTraceInterfaceRef Ref) {
+  delete (TraceInterface *)Ref;
+}
 
 EnzymeTypeAnalysisRef CreateTypeAnalysis(EnzymeLogicRef Log,
                                          char **customRuleNames,
@@ -456,9 +477,9 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
     CDIFFE_TYPE *constant_args, size_t constant_args_size,
     EnzymeTypeAnalysisRef TA, uint8_t returnValue, uint8_t dretUsed,
     CDerivativeMode mode, unsigned width, uint8_t freeMemory,
-    LLVMTypeRef additionalArg, CFnTypeInfo typeInfo, uint8_t *_overwritten_args,
-    size_t overwritten_args_size, EnzymeAugmentedReturnPtr augmented,
-    uint8_t AtomicAdd) {
+    LLVMTypeRef additionalArg, uint8_t forceAnonymousTape, CFnTypeInfo typeInfo,
+    uint8_t *_overwritten_args, size_t overwritten_args_size,
+    EnzymeAugmentedReturnPtr augmented, uint8_t AtomicAdd) {
   std::vector<DIFFE_TYPE> nconstant_args((DIFFE_TYPE *)constant_args,
                                          (DIFFE_TYPE *)constant_args +
                                              constant_args_size);
@@ -480,6 +501,7 @@ LLVMValueRef EnzymeCreatePrimalAndGradient(
           .freeMemory = (bool)freeMemory,
           .AtomicAdd = (bool)AtomicAdd,
           .additionalType = unwrap(additionalArg),
+          .forceAnonymousTape = (bool)forceAnonymousTape,
           .typeInfo = eunwrap(typeInfo, cast<Function>(unwrap(todiff))),
       },
       eunwrap(TA), eunwrap(augmented)));
@@ -505,6 +527,21 @@ EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
       eunwrap(TA), returnUsed, shadowReturnUsed,
       eunwrap(typeInfo, cast<Function>(unwrap(todiff))), overwritten_args,
       forceAnonymousTape, width, AtomicAdd));
+}
+
+LLVMValueRef CreateTrace(EnzymeLogicRef Logic, LLVMValueRef totrace,
+                         LLVMValueRef *generative_functions,
+                         size_t generative_functions_size, CProbProgMode mode,
+                         uint8_t autodiff, EnzymeTraceInterfaceRef interface) {
+
+  llvm::SmallPtrSet<Function *, 4> GenerativeFunctions;
+  for (uint64_t i = 0; i < generative_functions_size; i++) {
+    GenerativeFunctions.insert(cast<Function>(unwrap(generative_functions[i])));
+  }
+
+  return wrap(eunwrap(Logic).CreateTrace(
+      cast<Function>(unwrap(totrace)), GenerativeFunctions, (ProbProgMode)mode,
+      (bool)autodiff, eunwrap(interface)));
 }
 
 LLVMValueRef
@@ -718,5 +755,18 @@ LLVMMetadataRef EnzymeMakeNonConstTBAA(LLVMMetadataRef MD) {
 void EnzymeCopyMetadata(LLVMValueRef inst1, LLVMValueRef inst2) {
   cast<Instruction>(unwrap(inst1))
       ->copyMetadata(*cast<Instruction>(unwrap(inst2)));
+}
+LLVMMetadataRef EnzymeAnonymousAliasScopeDomain(const char *str,
+                                                LLVMContextRef ctx) {
+  MDBuilder MDB(*unwrap(ctx));
+  MDNode *scope = MDB.createAnonymousAliasScopeDomain(str);
+  return wrap(scope);
+}
+LLVMMetadataRef EnzymeAnonymousAliasScope(LLVMMetadataRef domain,
+                                          const char *str) {
+  auto dom = cast<MDNode>(unwrap(domain));
+  MDBuilder MDB(dom->getContext());
+  MDNode *scope = MDB.createAnonymousAliasScope(dom, str);
+  return wrap(scope);
 }
 }

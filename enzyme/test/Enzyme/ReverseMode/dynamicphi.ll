@@ -67,7 +67,7 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK: for.outerbody: 
 ; CHECK-NEXT:   %[[loopLimit_cache3:.+]] = phi i64* [ null, %entry ], [ %[[loopLimit_realloccast]], %for.outerbody.loopexit ]
 ; CHECK-NEXT:   %phi_cache.0 = phi double** [ null, %entry ], [ %[[phi_realloccast:.+]], %for.outerbody.loopexit ]
-; CHECK-NEXT:   %iv = phi i64 [ 0, %entry ], [ %iv.next, %for.outerbody.loopexit ] 
+; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %for.outerbody.loopexit ], [ 0, %entry ]  
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
 ; CHECK-NEXT:   %1 = bitcast double** %phi_cache.0 to i8*
 ; CHECK-NEXT:   %2 = and i64 %iv.next, 1

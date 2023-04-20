@@ -17,7 +17,7 @@ clean:
 	#opt $^ -O2 -o $@ -S
 
 gmm.o: gmm-opt.ll
-	clang++ -O2 $^ -o $@ -lblas $(BENCHLINK) -lm
+	clang++ -O2 $^ -o $@ $(BENCHLINK) -lm
 
 results.json: gmm.o
 	./$^

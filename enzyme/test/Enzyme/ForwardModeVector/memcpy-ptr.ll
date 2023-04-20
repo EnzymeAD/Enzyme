@@ -44,9 +44,9 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:    [[TMP11:%.*]] = extractvalue [3 x double**] %"src'", 2
 ; CHECK-NEXT:    %"'ipc6" = bitcast double** [[TMP11]] to i8*
 ; CHECK-NEXT:    [[TMP13:%.*]] = bitcast double** [[SRC]] to i8*
-; CHECK-NEXT:    tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 [[TMP6]], i8* align 1 [[TMP13]], i64 [[NUM]], i1 false)
 ; CHECK-NEXT:    tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %"'ipc", i8* align 1 %"'ipc4", i64 [[NUM]], i1 false) 
 ; CHECK-NEXT:    tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %"'ipc2", i8* align 1 %"'ipc5", i64 [[NUM]], i1 false)
 ; CHECK-NEXT:    tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %"'ipc3", i8* align 1 %"'ipc6", i64 [[NUM]], i1 false) 
+; CHECK-NEXT:    tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 [[TMP6]], i8* align 1 [[TMP13]], i64 [[NUM]], i1 false)
 ; CHECK-NEXT:    ret void
 ;

@@ -85,7 +85,7 @@ declare dso_local double @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   %i4 = tail call double @llvm.ceil.f64(double %maini)
 ; CHECK-NEXT:   %i5 = fptosi double %i4 to i32
 ; CHECK-NEXT:   %1 = getelementptr inbounds i32, i32* %i5_malloccache, i64 %iv
-; CHECK-NEXT:   store i32 %i5, i32* %1, align 4, !invariant.group !6
+; CHECK-NEXT:   store i32 %i5, i32* %1, align 4, !invariant.group ![[ig6:[0-9]+]]
 ; CHECK-NEXT:   %i6 = icmp sgt i32 %i5, 0
 ; CHECK-NEXT:   br i1 %i6, label %bb12, label %bb7
 
@@ -99,10 +99,7 @@ declare dso_local double @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   %iv1 = phi i64 [ %iv.next2, %bb12 ], [ 0, %bb2 ]
 ; CHECK-NEXT:   %iv.next2 = add nuw nsw i64 %iv1, 1
 ; CHECK-NEXT:   %[[i6:.+]] = trunc i64 %iv1 to i32
-; CHECK-NEXT:   %i15 = tail call noalias dereferenceable_or_null(8) i8* @malloc(i64 8)
-; CHECK-NEXT:   %i16 = bitcast i8* %i15 to double*
-; CHECK-NEXT:   call fastcc void @augmented_evaluate_integrand(double* %i16, double* undef)
-; CHECK-NEXT:   tail call void @free(i8* %i15)
+; CHECK-NEXT:   call fastcc void @augmented_evaluate_integrand(double* undef, double* undef)
 ; CHECK-NEXT:   %i19 = add nuw nsw i32 %[[i6]], 1
 ; CHECK-NEXT:   %i20 = icmp eq i32 %i19, %i5
 ; CHECK-NEXT:   br i1 %i20, label %bb7, label %bb12
@@ -124,9 +121,9 @@ declare dso_local double @__enzyme_autodiff(i8*, ...)
 
 ; CHECK: invertbb7.loopexit:                               ; preds = %invertbb7
 ; CHECK-NEXT:   %[[i13:.+]] = getelementptr inbounds i32, i32* %i5_malloccache, i64 %"iv'ac.0"
-; CHECK-NEXT:   %[[i14:.+]] = load i32, i32* %[[i13]], align 4, !invariant.group !6
-; CHECK-NEXT:   %_unwrap1 = add i32 %[[i14]], -1
-; CHECK-NEXT:   %_unwrap2 = zext i32 %_unwrap1 to i64
+; CHECK-NEXT:   %[[i14:.+]] = load i32, i32* %[[i13]], align 4, !invariant.group ![[ig6]]
+; CHECK-NEXT:   %[[_unwrap1:.+]] = add i32 %[[i14]], -1
+; CHECK-NEXT:   %[[_unwrap2:.+]] = zext i32 %[[_unwrap1]] to i64
 ; CHECK-NEXT:   br label %remat_enter
 
 ; CHECK: invertbb7:                                        ; preds = %bb7, %incinvertbb2
@@ -136,7 +133,7 @@ declare dso_local double @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   %"i8'de.0" = phi double [ 0.000000e+00, %incinvertbb2 ], [ %differeturn, %bb7 ]
 ; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %[[i11]], %incinvertbb2 ], [ 199, %bb7 ]
 ; CHECK-NEXT:   %[[i15:.+]] = getelementptr inbounds i32, i32* %i5_malloccache, i64 %"iv'ac.0"
-; CHECK-NEXT:   %[[i16:.+]] = load i32, i32* %[[i15]], align 4, !invariant.group !6
+; CHECK-NEXT:   %[[i16:.+]] = load i32, i32* %[[i15]], align 4, !invariant.group ![[ig6]]
 ; CHECK-NEXT:   %i6_unwrap = icmp sgt i32 %[[i16]], 0
 ; CHECK-NEXT:   %[[i17:.+]] = fadd fast double %"i18'de.1", %"i8'de.0"
 ; CHECK-NEXT:   br i1 %i6_unwrap, label %invertbb7.loopexit, label %invertbb2
@@ -149,7 +146,7 @@ declare dso_local double @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   %"i18'de.2" = phi double [ %[[i17]], %invertbb7.loopexit ], [ %[[i19:.+]], %incinvertbb12 ]
 ; CHECK-NEXT:   %"i14'de.2" = phi double [ %"i14'de.1", %invertbb7.loopexit ], [ 0.000000e+00, %incinvertbb12 ]
 ; CHECK-NEXT:   %"i17'de.2" = phi double [ %"i17'de.1", %invertbb7.loopexit ], [ 0.000000e+00, %incinvertbb12 ]
-; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ %_unwrap2, %invertbb7.loopexit ], [ %[[i18]], %incinvertbb12 ]
+; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ %[[_unwrap2]], %invertbb7.loopexit ], [ %[[i18]], %incinvertbb12 ]
 ; CHECK-NEXT:   %"i15'mi" = tail call noalias nonnull dereferenceable_or_null(8) i8* @malloc(i64 8)
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"i15'mi", i8 0, i64 8, i1 false)
 ; CHECK-NEXT:   %[[i19]] = fadd fast double %"i14'de.2", %"i18'de.2"

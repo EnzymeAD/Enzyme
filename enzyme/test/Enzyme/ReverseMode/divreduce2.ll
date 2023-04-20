@@ -87,7 +87,7 @@ declare double @__enzyme_autodiff(i8*, double*, double*, i64, double)
 ; CHECK-NEXT:   %ld_unwrap = load double, double* %gep_unwrap, align 8
 ; CHECK-NEXT:   %d0differeduce = fdiv fast double %4, %ld_unwrap
 ; CHECK-NEXT:   %8 = getelementptr inbounds double, double* %reduce_malloccache, i64 %7
-; CHECK-NEXT:   %9 = load double, double* %8, align 8, !invariant.group !6
+; CHECK-NEXT:   %9 = load double, double* %8, align 8, !invariant.group !{{[0-9]+}}
 ; CHECK-NEXT:   %div_unwrap = fdiv double %9, %ld_unwrap
 ; CHECK-NEXT:   %10 = fmul fast double %div_unwrap, %d0differeduce
 ; CHECK-NEXT:   %11 = {{(fsub fast double \-?0.000000e\+00,|fneg fast double)}} %10

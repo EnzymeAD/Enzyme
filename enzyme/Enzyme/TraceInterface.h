@@ -27,6 +27,7 @@
 #ifndef TraceInterface_h
 #define TraceInterface_h
 
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
@@ -36,7 +37,7 @@ private:
   llvm::LLVMContext &C;
 
 public:
-  TraceInterface(llvm::LLVMContext &C) : C(C) {}
+  TraceInterface(llvm::LLVMContext &C);
 
   virtual ~TraceInterface() = default;
 
@@ -46,14 +47,20 @@ public:
   static constexpr const char sampleFunctionName[] = "__enzyme_sample";
 
   // user implemented
-  virtual llvm::Value *getTrace() = 0;
-  virtual llvm::Value *getChoice() = 0;
-  virtual llvm::Value *insertCall() = 0;
-  virtual llvm::Value *insertChoice() = 0;
-  virtual llvm::Value *newTrace() = 0;
-  virtual llvm::Value *freeTrace() = 0;
-  virtual llvm::Value *hasCall() = 0;
-  virtual llvm::Value *hasChoice() = 0;
+  virtual llvm::Value *getTrace(llvm::IRBuilder<> &Builder) = 0;
+  virtual llvm::Value *getChoice(llvm::IRBuilder<> &Builder) = 0;
+  virtual llvm::Value *getLikelihood(llvm::IRBuilder<> &Builder) = 0;
+  virtual llvm::Value *insertCall(llvm::IRBuilder<> &Builder) = 0;
+  virtual llvm::Value *insertChoice(llvm::IRBuilder<> &Builder) = 0;
+
+  virtual llvm::Value *insertArgument(llvm::IRBuilder<> &Builder) = 0;
+  virtual llvm::Value *insertReturn(llvm::IRBuilder<> &Builder) = 0;
+  virtual llvm::Value *insertFunction(llvm::IRBuilder<> &Builder) = 0;
+
+  virtual llvm::Value *newTrace(llvm::IRBuilder<> &Builder) = 0;
+  virtual llvm::Value *freeTrace(llvm::IRBuilder<> &Builder) = 0;
+  virtual llvm::Value *hasCall(llvm::IRBuilder<> &Builder) = 0;
+  virtual llvm::Value *hasChoice(llvm::IRBuilder<> &Builder) = 0;
 
 public:
   static llvm::IntegerType *sizeType(llvm::LLVMContext &C);
@@ -62,27 +69,32 @@ public:
 public:
   llvm::FunctionType *getTraceTy();
   llvm::FunctionType *getChoiceTy();
+  llvm::FunctionType *getLikelihoodTy();
   llvm::FunctionType *insertCallTy();
   llvm::FunctionType *insertChoiceTy();
+
+  llvm::FunctionType *insertArgumentTy();
+  llvm::FunctionType *insertReturnTy();
+  llvm::FunctionType *insertFunctionTy();
+
   llvm::FunctionType *newTraceTy();
   llvm::FunctionType *freeTraceTy();
   llvm::FunctionType *hasCallTy();
   llvm::FunctionType *hasChoiceTy();
 
   static llvm::FunctionType *getTraceTy(llvm::LLVMContext &C);
-
   static llvm::FunctionType *getChoiceTy(llvm::LLVMContext &C);
-
+  static llvm::FunctionType *getLikelihoodTy(llvm::LLVMContext &C);
   static llvm::FunctionType *insertCallTy(llvm::LLVMContext &C);
-
   static llvm::FunctionType *insertChoiceTy(llvm::LLVMContext &C);
 
+  static llvm::FunctionType *insertArgumentTy(llvm::LLVMContext &C);
+  static llvm::FunctionType *insertReturnTy(llvm::LLVMContext &C);
+  static llvm::FunctionType *insertFunctionTy(llvm::LLVMContext &C);
+
   static llvm::FunctionType *newTraceTy(llvm::LLVMContext &C);
-
   static llvm::FunctionType *freeTraceTy(llvm::LLVMContext &C);
-
   static llvm::FunctionType *hasCallTy(llvm::LLVMContext &C);
-
   static llvm::FunctionType *hasChoiceTy(llvm::LLVMContext &C);
 };
 
@@ -92,8 +104,12 @@ private:
   // user implemented
   llvm::Function *getTraceFunction = nullptr;
   llvm::Function *getChoiceFunction = nullptr;
+  llvm::Function *getLikelihoodFunction = nullptr;
   llvm::Function *insertCallFunction = nullptr;
   llvm::Function *insertChoiceFunction = nullptr;
+  llvm::Function *insertArgumentFunction = nullptr;
+  llvm::Function *insertReturnFunction = nullptr;
+  llvm::Function *insertFunctionFunction = nullptr;
   llvm::Function *newTraceFunction = nullptr;
   llvm::Function *freeTraceFunction = nullptr;
   llvm::Function *hasCallFunction = nullptr;
@@ -109,57 +125,89 @@ public:
   llvm::Function *getSampleFunction();
 
   // user implemented
-  llvm::Value *getTrace();
-  llvm::Value *getChoice();
-  llvm::Value *insertCall();
-  llvm::Value *insertChoice();
-  llvm::Value *newTrace();
-  llvm::Value *freeTrace();
-  llvm::Value *hasCall();
-  llvm::Value *hasChoice();
+  llvm::Value *getTrace(llvm::IRBuilder<> &Builder);
+  llvm::Value *getChoice(llvm::IRBuilder<> &Builder);
+  llvm::Value *getLikelihood(llvm::IRBuilder<> &Builder);
+  llvm::Value *insertCall(llvm::IRBuilder<> &Builder);
+  llvm::Value *insertChoice(llvm::IRBuilder<> &Builder);
+  llvm::Value *insertArgument(llvm::IRBuilder<> &Builder);
+  llvm::Value *insertReturn(llvm::IRBuilder<> &Builder);
+  llvm::Value *insertFunction(llvm::IRBuilder<> &Builder);
+  llvm::Value *newTrace(llvm::IRBuilder<> &Builder);
+  llvm::Value *freeTrace(llvm::IRBuilder<> &Builder);
+  llvm::Value *hasCall(llvm::IRBuilder<> &Builder);
+  llvm::Value *hasChoice(llvm::IRBuilder<> &Builder);
 };
 
 class DynamicTraceInterface final : public TraceInterface {
 private:
   llvm::Function *sampleFunction = nullptr;
-  llvm::Value *dynamicInterface;
-  llvm::Function *F;
 
 private:
-  llvm::Value *getTraceFunction = nullptr;
-  llvm::Value *getChoiceFunction = nullptr;
-  llvm::Value *insertCallFunction = nullptr;
-  llvm::Value *insertChoiceFunction = nullptr;
-  llvm::Value *newTraceFunction = nullptr;
-  llvm::Value *freeTraceFunction = nullptr;
-  llvm::Value *hasCallFunction = nullptr;
-  llvm::Value *hasChoiceFunction = nullptr;
+  llvm::GlobalVariable *getTraceFunction = nullptr;
+  llvm::GlobalVariable *getChoiceFunction = nullptr;
+  llvm::GlobalVariable *getLikelihoodFunction = nullptr;
+  llvm::GlobalVariable *insertCallFunction = nullptr;
+  llvm::GlobalVariable *insertChoiceFunction = nullptr;
+  llvm::GlobalVariable *insertArgumentFunction = nullptr;
+  llvm::GlobalVariable *insertReturnFunction = nullptr;
+  llvm::GlobalVariable *insertFunctionFunction = nullptr;
+  llvm::GlobalVariable *newTraceFunction = nullptr;
+  llvm::GlobalVariable *freeTraceFunction = nullptr;
+  llvm::GlobalVariable *hasCallFunction = nullptr;
+  llvm::GlobalVariable *hasChoiceFunction = nullptr;
 
 public:
   DynamicTraceInterface(llvm::Value *dynamicInterface, llvm::Function *F);
 
   ~DynamicTraceInterface() = default;
 
+private:
+  llvm::GlobalVariable *MaterializeGetTrace(llvm::IRBuilder<> &Builder,
+                                            llvm::Value *, llvm::Module &M);
+  llvm::GlobalVariable *MaterializeGetChoice(llvm::IRBuilder<> &Builder,
+                                             llvm::Value *, llvm::Module &M);
+  llvm::GlobalVariable *MaterializeGetLikelihood(llvm::IRBuilder<> &Builder,
+                                                 llvm::Value *,
+                                                 llvm::Module &M);
+  llvm::GlobalVariable *MaterializeInsertCall(llvm::IRBuilder<> &Builder,
+                                              llvm::Value *, llvm::Module &M);
+  llvm::GlobalVariable *MaterializeInsertChoice(llvm::IRBuilder<> &Builder,
+                                                llvm::Value *, llvm::Module &M);
+  llvm::GlobalVariable *MaterializeInsertArgument(llvm::IRBuilder<> &Builder,
+                                                  llvm::Value *,
+                                                  llvm::Module &M);
+  llvm::GlobalVariable *MaterializeInsertReturn(llvm::IRBuilder<> &Builder,
+                                                llvm::Value *, llvm::Module &M);
+  llvm::GlobalVariable *MaterializeInsertFunction(llvm::IRBuilder<> &Builder,
+                                                  llvm::Value *,
+                                                  llvm::Module &M);
+  llvm::GlobalVariable *MaterializeNewTrace(llvm::IRBuilder<> &Builder,
+                                            llvm::Value *, llvm::Module &M);
+  llvm::GlobalVariable *MaterializeFreeTrace(llvm::IRBuilder<> &Builder,
+                                             llvm::Value *, llvm::Module &M);
+  llvm::GlobalVariable *MaterializeHasCall(llvm::IRBuilder<> &Builder,
+                                           llvm::Value *, llvm::Module &M);
+  llvm::GlobalVariable *MaterializeHasChoice(llvm::IRBuilder<> &Builder,
+                                             llvm::Value *, llvm::Module &M);
+
 public:
   // implemented by enzyme
   llvm::Function *getSampleFunction();
 
   // user implemented
-  llvm::Value *getTrace();
-
-  llvm::Value *getChoice();
-
-  llvm::Value *insertCall();
-
-  llvm::Value *insertChoice();
-
-  llvm::Value *newTrace();
-
-  llvm::Value *freeTrace();
-
-  llvm::Value *hasCall();
-
-  llvm::Value *hasChoice();
+  llvm::Value *getTrace(llvm::IRBuilder<> &Builder);
+  llvm::Value *getChoice(llvm::IRBuilder<> &Builder);
+  llvm::Value *getLikelihood(llvm::IRBuilder<> &Builder);
+  llvm::Value *insertCall(llvm::IRBuilder<> &Builder);
+  llvm::Value *insertChoice(llvm::IRBuilder<> &Builder);
+  llvm::Value *insertArgument(llvm::IRBuilder<> &Builder);
+  llvm::Value *insertReturn(llvm::IRBuilder<> &Builder);
+  llvm::Value *insertFunction(llvm::IRBuilder<> &Builder);
+  llvm::Value *newTrace(llvm::IRBuilder<> &Builder);
+  llvm::Value *freeTrace(llvm::IRBuilder<> &Builder);
+  llvm::Value *hasCall(llvm::IRBuilder<> &Builder);
+  llvm::Value *hasChoice(llvm::IRBuilder<> &Builder);
 };
 
 #endif

@@ -851,6 +851,8 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
     unsigned bsize = (unsigned)byteSizeOfType->getZExtValue();
     unsigned alignSize = getCacheAlignment(bsize);
 
+    CallInst *malloccall = nullptr;
+
     // Allocate and store the required memory
     if (allocateInternal) {
 
@@ -883,7 +885,6 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
       StoreInst *storealloc = nullptr;
       // Statically allocate memory for all iterations if possible
       if (sublimits[i].second.back().first.maxLimit) {
-        CallInst *malloccall = nullptr;
         Instruction *ZeroInst = nullptr;
         Value *firstallocation = CreateAllocation(
             allocationBuilder, myType, size, name + "_malloccache", &malloccall,
@@ -995,9 +996,17 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
         CachePointerInvariantGroups[std::make_pair((Value *)alloc, i)] =
             invgroup;
       }
-      freeCache(containedloops.back().first.preheader, sublimits, i, alloc,
-                byteSizeOfType, storeInto,
-                CachePointerInvariantGroups[std::make_pair((Value *)alloc, i)]);
+      auto freecall = freeCache(
+          containedloops.back().first.preheader, sublimits, i, alloc,
+          byteSizeOfType, storeInto,
+          CachePointerInvariantGroups[std::make_pair((Value *)alloc, i)]);
+      if (freecall && malloccall) {
+        auto ident = MDNode::getDistinct(malloccall->getContext(), {});
+        malloccall->setMetadata("enzyme_cache_alloc",
+                                MDNode::get(malloccall->getContext(), {ident}));
+        freecall->setMetadata("enzyme_cache_free",
+                              MDNode::get(freecall->getContext(), {ident}));
+      }
     }
 
     // If we are not the final iteration, lookup the next pointer by indexing
@@ -1370,7 +1379,8 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
 
   bool isi1 = val->getType()->isIntegerTy() &&
               cast<IntegerType>(val->getType())->getBitWidth() == 1;
-  Value *loc = getCachePointer(/*inForwardPass*/ true, v, ctx, cache, isi1,
+  Value *loc = getCachePointer(val->getType(),
+                               /*inForwardPass*/ true, v, ctx, cache,
                                /*storeInInstructionsMap*/ true,
                                /*available*/ llvm::ValueToValueMapTy(),
                                /*extraSize*/ nullptr);
@@ -1482,9 +1492,9 @@ void CacheUtility::storeInstructionInCache(LimitContext ctx,
 /// pointer that can hold the underlying type being cached. This value should be
 /// computed at BuilderM. Optionally, instructions needed to generate this
 /// pointer can be stored in scopeInstructions
-Value *CacheUtility::getCachePointer(bool inForwardPass, IRBuilder<> &BuilderM,
-                                     LimitContext ctx, Value *cache, bool isi1,
-                                     bool storeInInstructionsMap,
+Value *CacheUtility::getCachePointer(llvm::Type *T, bool inForwardPass,
+                                     IRBuilder<> &BuilderM, LimitContext ctx,
+                                     Value *cache, bool storeInInstructionsMap,
                                      const ValueToValueMapTy &available,
                                      Value *extraSize) {
   assert(ctx.Block);
@@ -1495,24 +1505,41 @@ Value *CacheUtility::getCachePointer(bool inForwardPass, IRBuilder<> &BuilderM,
   Value *next = cache;
   assert(next->getType()->isPointerTy());
 
+  SmallVector<Type *, 4> types = {T};
+  bool isi1 = T->isIntegerTy() && cast<IntegerType>(T)->getBitWidth() == 1;
+  if (EfficientBoolCache && isi1 && sublimits.size() != 0)
+    types[0] = Type::getInt8Ty(T->getContext());
+  auto i64 = Type::getInt64Ty(T->getContext());
+  for (size_t i = 0; i < sublimits.size(); ++i) {
+    Type *allocType;
+    {
+      BasicBlock *BB =
+          BasicBlock::Create(newFunc->getContext(), "entry", newFunc);
+      IRBuilder<> B(BB);
+      auto P = B.CreatePHI(i64, 1);
+
+      CallInst *malloccall;
+      Instruction *Zero;
+      allocType = cast<PointerType>(CreateAllocation(B, types.back(), P,
+                                                     "tmpfortypecalc",
+                                                     &malloccall, &Zero)
+                                        ->getType());
+      SmallVector<Instruction *, 2> toErase;
+      for (auto &I : *BB)
+        toErase.push_back(&I);
+      for (auto I : llvm::reverse(toErase))
+        I->eraseFromParent();
+      BB->eraseFromParent();
+    }
+    types.push_back(allocType);
+  }
+
   // Iterate from outermost loop to innermost loop
   for (int i = sublimits.size() - 1; i >= 0; i--) {
     // Lookup the next allocation pointer
     {
 #if LLVM_VERSION_MAJOR > 7
-      llvm::Type *loadT;
-#if LLVM_VERSION_MAJOR >= 15
-      if (next->getContext().supportsTypedPointers()) {
-#endif
-        loadT = next->getType()->getPointerElementType();
-#if LLVM_VERSION_MAJOR >= 15
-      } else {
-        loadT = PointerType::get(
-            next->getContext(),
-            cast<PointerType>(next->getType())->getAddressSpace());
-      }
-#endif
-      next = BuilderM.CreateLoad(loadT, next);
+      next = BuilderM.CreateLoad(types[i + 1], next);
 #else
       next = BuilderM.CreateLoad(next);
 #endif
@@ -1572,19 +1599,7 @@ Value *CacheUtility::getCachePointer(bool inForwardPass, IRBuilder<> &BuilderM,
       }
       {
 #if LLVM_VERSION_MAJOR > 7
-        llvm::Type *loadT;
-#if LLVM_VERSION_MAJOR >= 15
-        if (next->getContext().supportsTypedPointers()) {
-#endif
-          loadT = next->getType()->getPointerElementType();
-#if LLVM_VERSION_MAJOR >= 15
-        } else {
-          loadT = PointerType::get(
-              next->getContext(),
-              cast<PointerType>(next->getType())->getAddressSpace());
-        }
-#endif
-        next = BuilderM.CreateGEP(loadT, next, idx);
+        next = BuilderM.CreateGEP(types[i], next, idx);
 #else
         next = BuilderM.CreateGEP(next, idx);
 #endif
@@ -1643,7 +1658,7 @@ Value *CacheUtility::lookupValueFromCache(
     Value *extraSize, Value *extraOffset) {
   // Get the underlying cache pointer
   auto cptr =
-      getCachePointer(inForwardPass, BuilderM, ctx, cache, isi1,
+      getCachePointer(T, inForwardPass, BuilderM, ctx, cache,
                       /*storeInInstructionsMap*/ false, available, extraSize);
 
   // Optionally apply the additional offset

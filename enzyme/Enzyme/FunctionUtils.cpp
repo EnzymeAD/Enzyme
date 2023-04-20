@@ -24,9 +24,12 @@
 //===----------------------------------------------------------------------===//
 #include "FunctionUtils.h"
 
+#include "DiffeGradientUtils.h"
 #include "EnzymeLogic.h"
 #include "GradientUtils.h"
 #include "LibraryFuncs.h"
+
+#include "llvm/ADT/Triple.h"
 
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DebugInfoMetadata.h"
@@ -401,6 +404,8 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
       }
       continue;
     }
+    if (auto I = dyn_cast<Instruction>(inst))
+      llvm::errs() << *I->getParent()->getParent() << "\n";
     llvm::errs() << " rep: " << *rep << " prev: " << *prev << " inst: " << *inst
                  << "\n";
     llvm_unreachable("Illegal address space propagation");
@@ -1062,7 +1067,7 @@ static void ForceRecursiveInlining(Function *NewF, size_t Limit) {
 }
 
 void CanonicalizeLoops(Function *F, FunctionAnalysisManager &FAM) {
-
+  LoopSimplifyPass().run(*F, FAM);
   DominatorTree &DT = FAM.getResult<DominatorTreeAnalysis>(*F);
   LoopInfo &LI = FAM.getResult<LoopAnalysis>(*F);
   AssumptionCache &AC = FAM.getResult<AssumptionAnalysis>(*F);
@@ -1372,6 +1377,10 @@ Function *PreProcessCache::preprocessForClone(Function *F,
 
   SimplifyMPIQueries<CallInst>(*NewF, FAM);
   SimplifyMPIQueries<InvokeInst>(*NewF, FAM);
+  {
+    auto PA = PromotePass().run(*NewF, FAM);
+    FAM.invalidate(*NewF, PA);
+  }
 
   if (EnzymeLowerGlobals) {
     SmallVector<CallInst *, 4> Calls;
@@ -1444,8 +1453,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
                 F = fn;
               }
           }
-          if (F && (isMemFreeLibMFunction(F->getName()) ||
-                    F->getName() == "__fd_sincos_1")) {
+          if (F && isMemFreeLibMFunction(F->getName())) {
             continue;
           }
           if (F && F->getName().contains("__enzyme_integer")) {
@@ -1504,8 +1512,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
                       F = fn;
                     }
                 }
-                if (F && (isMemFreeLibMFunction(F->getName()) ||
-                          F->getName() == "__fd_sincos_1")) {
+                if (F && isMemFreeLibMFunction(F->getName())) {
                   continue;
                 }
                 if (F && F->getName().contains("__enzyme_integer")) {
@@ -1703,7 +1710,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       FAM.invalidate(*NewF, PA);
     }
 
-    ReplaceReallocs(NewF);
+    if (mode != DerivativeMode::ForwardMode)
+      ReplaceReallocs(NewF);
 
     {
 #if LLVM_VERSION_MAJOR >= 14 && !defined(FLANG)
@@ -1728,7 +1736,8 @@ Function *PreProcessCache::preprocessForClone(Function *F,
     }
   }
 
-  ReplaceReallocs(NewF);
+  if (mode != DerivativeMode::ForwardMode)
+    ReplaceReallocs(NewF);
 
   if (mode == DerivativeMode::ReverseModePrimal ||
       mode == DerivativeMode::ReverseModeGradient ||
@@ -2189,22 +2198,50 @@ F->getParamAttribute(ii, Attribute::StructRet).getValueAsType())); #else
 void CoaleseTrivialMallocs(Function &F, DominatorTree &DT) {
   std::map<BasicBlock *, std::vector<std::pair<CallInst *, CallInst *>>>
       LegalMallocs;
+
+  std::map<Metadata *, std::vector<CallInst *>> frees;
+  for (BasicBlock &BB : F) {
+    for (Instruction &I : BB) {
+      if (auto CI = dyn_cast<CallInst>(&I)) {
+        if (auto F2 = CI->getCalledFunction()) {
+          if (F2->getName() == "free") {
+            if (auto MD = hasMetadata(CI, "enzyme_cache_free")) {
+              Metadata *op = MD->getOperand(0);
+              frees[op].push_back(CI);
+            }
+          }
+        }
+      }
+    }
+  }
+
   for (BasicBlock &BB : F) {
     for (Instruction &I : BB) {
       if (auto CI = dyn_cast<CallInst>(&I)) {
         if (auto F = CI->getCalledFunction()) {
           if (F->getName() == "malloc") {
+            CallInst *freeCall = nullptr;
             for (auto U : CI->users()) {
               if (auto CI2 = dyn_cast<CallInst>(U)) {
                 if (auto F2 = CI2->getCalledFunction()) {
                   if (F2->getName() == "free") {
                     if (DT.dominates(CI, CI2)) {
-                      LegalMallocs[&BB].emplace_back(CI, CI2);
+                      freeCall = CI2;
+                      break;
                     }
                   }
                 }
               }
             }
+            if (!freeCall) {
+              if (auto MD = hasMetadata(CI, "enzyme_cache_alloc")) {
+                Metadata *op = MD->getOperand(0);
+                if (frees[op].size() == 1)
+                  freeCall = frees[op][0];
+              }
+            }
+            if (freeCall)
+              LegalMallocs[&BB].emplace_back(CI, freeCall);
           }
         }
       }
@@ -2238,7 +2275,8 @@ void CoaleseTrivialMallocs(Function &F, DominatorTree &DT) {
       z.second->eraseFromParent();
       IRBuilder<> B2(z.first);
 #if LLVM_VERSION_MAJOR > 7
-      Value *gepPtr = B2.CreateInBoundsGEP(z.first->getType(), First, Size);
+      Value *gepPtr = B2.CreateInBoundsGEP(Type::getInt8Ty(First->getContext()),
+                                           First, Size);
 #else
       Value *gepPtr = B2.CreateInBoundsGEP(First, Size);
 #endif
@@ -2249,6 +2287,8 @@ void CoaleseTrivialMallocs(Function &F, DominatorTree &DT) {
     auto NewMalloc =
         cast<CallInst>(B.CreateCall(First->getCalledFunction(), Size));
     NewMalloc->copyIRFlags(First);
+    NewMalloc->setMetadata("enzyme_cache_alloc",
+                           hasMetadata(First, "enzyme_cache_alloc"));
     First->replaceAllUsesWith(NewMalloc);
     First->eraseFromParent();
   }

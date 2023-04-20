@@ -16,7 +16,4 @@
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/Operation.h"
 
-using namespace mlir;
-using namespace mlir::enzyme;
-
 #include "MLIR/Interfaces/AutoDiffOpInterface.cpp.inc"

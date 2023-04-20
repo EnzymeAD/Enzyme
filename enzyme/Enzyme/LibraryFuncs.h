@@ -279,7 +279,7 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
                                     llvm::CallInst *orig,
                                     GradientUtils *gutils);
 
-static inline bool isAllocationCall(llvm::Value *TmpOrig,
+static inline bool isAllocationCall(const llvm::Value *TmpOrig,
                                     llvm::TargetLibraryInfo &TLI) {
   if (auto *CI = llvm::dyn_cast<llvm::CallInst>(TmpOrig)) {
     return isAllocationFunction(getFuncNameFromCall(CI), TLI);
@@ -290,7 +290,7 @@ static inline bool isAllocationCall(llvm::Value *TmpOrig,
   return false;
 }
 
-static inline bool isDeallocationCall(llvm::Value *TmpOrig,
+static inline bool isDeallocationCall(const llvm::Value *TmpOrig,
                                       llvm::TargetLibraryInfo &TLI) {
   if (auto *CI = llvm::dyn_cast<llvm::CallInst>(TmpOrig)) {
     return isDeallocationFunction(getFuncNameFromCall(CI), TLI);

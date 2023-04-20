@@ -151,7 +151,7 @@ attributes #4 = { "enzyme_inactive" }
 ; SHARED: invertfor.inc30:                                  ; preds = %for.inc30, %incinvertfor.cond8.preheader
 ; SHARED-NEXT:   %"iv'ac.0" = phi i64 [ %7, %incinvertfor.cond8.preheader ], [ 12, %for.inc30 ]
 ; SHARED-NEXT:   %[[unwrap16:.+]] = getelementptr inbounds i64, i64* %[[i0]], i64 %"iv'ac.0"
-; SHARED-NEXT:   %[[unwrap17:.+]] = load i64, i64* %[[unwrap16]], align 8, !tbaa !2, !invariant.group !
+; SHARED-NEXT:   %[[unwrap17:.+]] = load i64, i64* %[[unwrap16]], align 8, !tbaa !2, !alias.scope !{{[0-9]+}}, !noalias !{{[0-9]+}}, !invariant.group !
 ; SHARED-NEXT:   %[[unwrap18]] = add i64 %[[unwrap17]], -1
 ; SHARED-NEXT:   br label %invertfor.body15
 ; SHARED-NEXT: }

@@ -61,10 +61,10 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   call void @llvm.memset.p0i8.i64(i8* nonnull dereferenceable(8) dereferenceable_or_null(8) %"p2'mi", i8 0, i64 8, i1 false)
 ; CHECK-NEXT:   %malloccall = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* bitcast (i8* (i32)* @malloc to i8* (i64)*)(i64 80)
 ; CHECK-NEXT:   %r_malloccache = bitcast i8* %malloccall to double*
-; CHECK-NEXT:   %malloccall4 = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* bitcast (i8* (i32)* @malloc to i8* (i64)*)(i64 80)
-; CHECK-NEXT:   %"a4'ip_phi_malloccache" = bitcast i8* %malloccall4 to double**
-; CHECK-NEXT:   %malloccall8 = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* bitcast (i8* (i32)* @malloc to i8* (i64)*)(i64 80)
-; CHECK-NEXT:   %subcache_malloccache = bitcast i8* %malloccall8 to double**
+; CHECK-NEXT:   %[[malloccall4:.+]] = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* bitcast (i8* (i32)* @malloc to i8* (i64)*)(i64 80)
+; CHECK-NEXT:   %"a4'ip_phi_malloccache" = bitcast i8* %[[malloccall4]] to double**
+; CHECK-NEXT:   %[[malloccall8:.+]] = tail call noalias nonnull dereferenceable(80) dereferenceable_or_null(80) i8* bitcast (i8* (i32)* @malloc to i8* (i64)*)(i64 80)
+; CHECK-NEXT:   %subcache_malloccache = bitcast i8* %[[malloccall8]] to double**
 ; CHECK-NEXT:   br label %loop
 
 ; CHECK: loop:                                             ; preds = %loop, %entry
@@ -76,7 +76,7 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   %"a10'ipg" = getelementptr inbounds double, double* %"a0'", i32 %0
 ; CHECK-NEXT:   %a10 = getelementptr inbounds double, double* %a0, i32 %0
 ; CHECK-NEXT:   store double* %"a10'ipg", double** %"p3'ipc", align 8
-; CHECK-NEXT:   store double* %a10, double** %p3, align 8, !alias.scope !3, !noalias !0
+; CHECK-NEXT:   store double* %a10, double** %p3, align 8, !alias.scope !{{[0-9]+}}, !noalias !{{[0-9]+}}
 ; CHECK-NEXT:   %a4_augmented = call { double*, double*, double* } @augmented_f(double** %p3, double** %"p3'ipc")
 ; CHECK-NEXT:   %subcache = extractvalue { double*, double*, double* } %a4_augmented, 0
 ; CHECK-NEXT:   %a4 = extractvalue { double*, double*, double* } %a4_augmented, 1
@@ -99,8 +99,8 @@ attributes #9 = { nounwind }
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %"p2'mi")
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %p2)
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall)
-; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall4)
-; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall8)
+; CHECK-NEXT:   tail call void @free(i8* nonnull %[[malloccall4]])
+; CHECK-NEXT:   tail call void @free(i8* nonnull %[[malloccall8]])
 ; CHECK-NEXT:   ret void
 
 ; CHECK: invertloop:                                       ; preds = %loop, %incinvertloop

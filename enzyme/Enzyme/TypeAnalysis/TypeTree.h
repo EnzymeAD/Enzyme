@@ -46,7 +46,7 @@
 extern "C" {
 extern llvm::cl::opt<int> MaxTypeOffset;
 extern llvm::cl::opt<bool> EnzymeTypeWarning;
-constexpr int EnzymeMaxTypeDepth = 6;
+extern llvm::cl::opt<unsigned> EnzymeMaxTypeDepth;
 }
 
 /// Helper function to print a vector of ints to a string
@@ -149,11 +149,16 @@ public:
               bool intsAreLegalSubPointer = false) {
     size_t SeqSize = Seq.size();
     if (SeqSize > EnzymeMaxTypeDepth) {
-      if (EnzymeTypeWarning)
-        llvm::errs() << "not handling more than " << EnzymeMaxTypeDepth
-                     << " pointer lookups deep dt:" << str()
-                     << " adding v: " << to_string(Seq) << ": " << CT.str()
-                     << "\n";
+      if (EnzymeTypeWarning) {
+        if (CustomErrorHandler) {
+          CustomErrorHandler("TypeAnalysisDepthLimit", nullptr,
+                             ErrorType::TypeDepthExceeded, this);
+        } else
+          llvm::errs() << "not handling more than " << EnzymeMaxTypeDepth
+                       << " pointer lookups deep dt:" << str()
+                       << " adding v: " << to_string(Seq) << ": " << CT.str()
+                       << "\n";
+      }
       return false;
     }
     if (SeqSize == 0) {
@@ -376,8 +381,7 @@ public:
         if (CustomErrorHandler) {
           CustomErrorHandler("TypeAnalysisDepthLimit", wrap(orig),
                              ErrorType::TypeDepthExceeded, this);
-        }
-        if (orig) {
+        } else if (orig) {
           EmitWarning("TypeAnalysisDepthLimit", *orig, *orig,
                       " not handling more than ", EnzymeMaxTypeDepth,
                       " pointer lookups deep dt: ", str(), " only(", Off, ")");
@@ -623,7 +627,7 @@ public:
         // See if we can canonicalize the outermost index into a -1
         if (!legalCombine) {
           size_t chunk = 1;
-          if (set.size() > 0) {
+          if (pnext.size() > 0) {
             chunk = dl.getPointerSizeInBits() / 8;
           } else {
             if (auto flt = dt.isFloat()) {
@@ -791,6 +795,8 @@ public:
           chunk = 8;
         } else if (flt->isHalfTy()) {
           chunk = 2;
+        } else if (flt->isX86_FP80Ty()) {
+          chunk = 10;
         } else {
           llvm::errs() << *flt << "\n";
           assert(0 && "unhandled float type");

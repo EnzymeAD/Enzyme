@@ -16,7 +16,7 @@ clean:
 	#opt $^ -O2 -o $@ -S
 
 hand.o: hand-opt.ll
-	clang++ $^ -o $@ -lblas $(BENCHLINK)
+	clang++ $^ -o $@ $(BENCHLINK)
 
 results.json: hand.o
 	./$^
