@@ -359,8 +359,20 @@ MGradientUtilsReverse *MGradientUtilsReverse::CreateFromClone(
     DIFFE_TYPE retType, bool diffeReturnArg, ArrayRef<DIFFE_TYPE> constant_args,
     ReturnType returnValue, mlir::Type additionalArg,
     SymbolTableCollection &symbolTable_) {
+  std::string prefix;
 
-  std::string prefix = "diffe";
+  switch (mode_) {
+  case DerivativeMode::ForwardMode:
+  case DerivativeMode::ForwardModeSplit:
+    assert(false);
+    break;
+  case DerivativeMode::ReverseModeCombined:
+  case DerivativeMode::ReverseModeGradient:
+    prefix = "diffe";
+    break;
+  case DerivativeMode::ReverseModePrimal:
+    llvm_unreachable("invalid DerivativeMode: ReverseModePrimal\n");
+  }
 
   if (width > 1)
     prefix += std::to_string(width);
