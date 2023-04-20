@@ -2473,6 +2473,19 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
                      << *inst << "\n";
       return true;
     }
+    if (II->getCalledFunction() &&
+        II->getCalledFunction()->getName().startswith("llvm.intel.subscript")) {
+      // The only argument that can make an llvm.intel.subscript intrinsic
+      // active is the pointer operand
+      const unsigned int ptrArgIdx = 3;
+      if (isConstantValue(TR, II->getOperand(ptrArgIdx))) {
+        if (EnzymePrintActivity)
+          llvm::errs() << "constant(" << (int)directions << ") up-intrinsic "
+                       << *inst << "\n";
+        return true;
+      }
+      return false;
+    }
   }
 
   if (auto gep = dyn_cast<GetElementPtrInst>(inst)) {
@@ -2842,6 +2855,15 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         continue;
       } else {
         return false;
+      }
+    }
+
+    if (auto II = dyn_cast<IntrinsicInst>(a)) {
+      if (II->getCalledFunction() &&
+          II->getCalledFunction()->getName().startswith(
+              "llvm.intel.subscript") &&
+          (II->getOperand(/*ptrArgIdx=*/3) != parent)) {
+        continue;
       }
     }
 

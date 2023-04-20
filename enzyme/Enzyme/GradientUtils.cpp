@@ -1180,6 +1180,47 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       unwrap_cache[BuilderM.GetInsertBlock()][idx.first][idx.second] = toreturn;
     assert(val->getType() == toreturn->getType());
     return toreturn;
+  } else if (auto II = dyn_cast<IntrinsicInst>(val)) {
+    if (II->getCalledFunction() &&
+        II->getCalledFunction()->getName().startswith("llvm.intel.subscript")) {
+
+      const std::array<size_t, 4> idxArgsIndices{{0, 1, 2, 4}};
+      const size_t ptrArgIndex = 3;
+
+      SmallVector<Value *, 5> args(5);
+      for (auto i : idxArgsIndices) {
+        Value *a = II->getOperand(i);
+        auto op = getOp(a);
+        if (op == nullptr)
+          goto endCheck;
+        args[i] = op;
+      }
+      auto ptr = getOp(II->getOperand(ptrArgIndex));
+      if (ptr == nullptr)
+        goto endCheck;
+      args[ptrArgIndex] = ptr;
+
+      auto toreturn = BuilderM.CreateCall(II->getCalledFunction(), args,
+                                          II->getName() + "_unwrap");
+
+      if (isa<CallInst>(toreturn)) {
+        // Must copy the elementtype attribute as it is needed by the intrinsic
+        cast<CallInst>(toreturn)->addParamAttr(
+            ptrArgIndex,
+            II->getParamAttr(ptrArgIndex, Attribute::AttrKind::ElementType));
+      }
+      if (auto newi = dyn_cast<Instruction>(toreturn)) {
+        newi->copyIRFlags(II);
+        unwrappedLoads[newi] = val;
+        if (newi->getParent()->getParent() != II->getParent()->getParent())
+          newi->setDebugLoc(nullptr);
+      }
+      if (permitCache)
+        unwrap_cache[BuilderM.GetInsertBlock()][idx.first][idx.second] =
+            toreturn;
+      assert(val->getType() == toreturn->getType());
+      return toreturn;
+    }
   } else if (auto load = dyn_cast<LoadInst>(val)) {
     if (load->getMetadata("enzyme_noneedunwrap"))
       return load;
@@ -4189,6 +4230,10 @@ bool GradientUtils::shouldRecompute(const Value *val,
   }
 
   if (auto op = dyn_cast<IntrinsicInst>(val)) {
+    if (op->getCalledFunction() &&
+        op->getCalledFunction()->getName().startswith("llvm.intel.subscript")) {
+      return true;
+    }
     if (!op->mayReadOrWriteMemory())
       return true;
     switch (op->getIntrinsicID()) {
@@ -8471,32 +8516,42 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         storingOps.insert(store);
       }
     } else if (auto II = dyn_cast<IntrinsicInst>(cur)) {
-      switch (II->getIntrinsicID()) {
-      case Intrinsic::lifetime_start:
-        LifetimeStarts.insert(II);
-        break;
-      case Intrinsic::dbg_declare:
-      case Intrinsic::dbg_value:
+      if (II->getCalledFunction() &&
+          II->getCalledFunction()->getName().startswith(
+              "llvm.intel.subscript")) {
+        for (auto u : II->users()) {
+          if (auto I = dyn_cast<Instruction>(u)) {
+            todo.push_back(std::make_pair(I, (Value *)cur));
+          }
+        }
+      } else {
+        switch (II->getIntrinsicID()) {
+        case Intrinsic::lifetime_start:
+          LifetimeStarts.insert(II);
+          break;
+        case Intrinsic::dbg_declare:
+        case Intrinsic::dbg_value:
 #if LLVM_VERSION_MAJOR > 6
-      case Intrinsic::dbg_label:
+        case Intrinsic::dbg_label:
 #endif
-      case Intrinsic::dbg_addr:
-      case Intrinsic::lifetime_end:
-        break;
-      case Intrinsic::memset: {
-        stores.insert(II);
-        storingOps.insert(II);
-        break;
-      }
-      // TODO memtransfer(cpy/move)
-      case Intrinsic::memcpy:
-      case Intrinsic::memmove:
-      default:
-        promotable = false;
-        shadowpromotable = false;
-        EmitWarning("NotPromotable", *cur, " Could not promote allocation ", *V,
-                    " due to unknown intrinsic ", *cur);
-        break;
+        case Intrinsic::dbg_addr:
+        case Intrinsic::lifetime_end:
+          break;
+        case Intrinsic::memset: {
+          stores.insert(II);
+          storingOps.insert(II);
+          break;
+        }
+        // TODO memtransfer(cpy/move)
+        case Intrinsic::memcpy:
+        case Intrinsic::memmove:
+        default:
+          promotable = false;
+          shadowpromotable = false;
+          EmitWarning("NotPromotable", *cur, " Could not promote allocation ",
+                      *V, " due to unknown intrinsic ", *cur);
+          break;
+        }
       }
     } else if (auto CI = dyn_cast<CallInst>(cur)) {
       StringRef funcName = getFuncNameFromCall(CI);

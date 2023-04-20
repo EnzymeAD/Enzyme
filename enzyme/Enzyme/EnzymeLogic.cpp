@@ -182,6 +182,16 @@ struct CacheAnalysis {
         EmitWarning("UncacheableOrigin", *gep, "origin gep may need caching ",
                     *gep);
       }
+    } else if (auto II = dyn_cast<IntrinsicInst>(obj)) {
+      if (II->getCalledFunction() &&
+          II->getCalledFunction()->getName().startswith(
+              "llvm.intel.subscript")) {
+        mustcache = is_value_mustcache_from_origin(II->getOperand(3));
+        if (mustcache) {
+          EmitWarning("UncacheableOrigin", *II,
+                      "origin llvm.intel.subscript may need caching ", *II);
+        }
+      }
     } else {
 
       // Pointer operands originating from call instructions that are not
@@ -778,6 +788,12 @@ void calculateUnusedValuesInFunction(
                 if (isa<CastInst>(u) || isa<GetElementPtrInst>(u) ||
                     isa<PHINode>(u)) {
                   todo.push_back(&*u);
+                } else if (auto II = dyn_cast<IntrinsicInst>(u)) {
+                  if (II->getCalledFunction() &&
+                      II->getCalledFunction()->getName().startswith(
+                          "llvm.intel.subscript")) {
+                    todo.push_back(&*u);
+                  }
                 } else {
                   legal = false;
                   break;
@@ -787,6 +803,13 @@ void calculateUnusedValuesInFunction(
             if (legal) {
               return true;
             }
+          }
+        } else if (auto II = dyn_cast<IntrinsicInst>(v)) {
+          if (II->getCalledFunction() &&
+              II->getCalledFunction()->getName().startswith(
+                  "llvm.intel.subscript")) {
+            unsigned int ptrArgIdx = 3;
+            return isNoNeed(II->getOperand(ptrArgIdx));
           }
         }
         return false;

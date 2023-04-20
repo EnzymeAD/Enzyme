@@ -336,6 +336,37 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
       toErase.push_back(GEP);
       continue;
     }
+    if (auto II = dyn_cast<IntrinsicInst>(inst)) {
+      if (II->getCalledFunction() &&
+          II->getCalledFunction()->getName().startswith(
+              "llvm.intel.subscript")) {
+
+        const std::array<size_t, 4> idxArgsIndices{{0, 1, 2, 4}};
+        const size_t ptrArgIndex = 3;
+
+        SmallVector<Value *, 5> args(5);
+        for (auto i : idxArgsIndices) {
+          Value *idx = II->getOperand(i);
+          args[i] = idx;
+        }
+        args[ptrArgIndex] = rep;
+
+        IRBuilder<> B(II);
+        auto nII = cast<CallInst>(B.CreateCall(II->getCalledFunction(), args));
+        // Must copy the elementtype attribute as it is needed by the intrinsic
+        nII->addParamAttr(
+            ptrArgIndex,
+            II->getParamAttr(ptrArgIndex, Attribute::AttrKind::ElementType));
+
+        nII->takeName(II);
+        for (auto U : II->users()) {
+          Todo.push_back(
+              std::make_tuple((Value *)nII, (Value *)II, cast<Instruction>(U)));
+        }
+        toErase.push_back(II);
+        continue;
+      }
+    }
     if (auto LI = dyn_cast<LoadInst>(inst)) {
       LI->setOperand(0, rep);
       continue;
@@ -1498,6 +1529,15 @@ Function *PreProcessCache::preprocessForClone(Function *F,
                   isa<CastInst>(u) || isa<LoadInst>(u)) {
                 todo.push_back(u);
                 continue;
+              }
+
+              if (auto II = dyn_cast<IntrinsicInst>(u)) {
+                if (II->getCalledFunction() &&
+                    II->getCalledFunction()->getName().startswith(
+                        "llvm.intel.subscript")) {
+                  todo.push_back(u);
+                  continue;
+                }
               }
 
               if (auto CI = dyn_cast<CallInst>(u)) {

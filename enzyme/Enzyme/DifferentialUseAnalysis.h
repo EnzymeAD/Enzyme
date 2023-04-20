@@ -360,20 +360,31 @@ inline bool is_value_needed_in_reverse(
           goto endShadow;
       }
 
-      // With certain exceptions, assume active instructions require the
-      // shadow of the operand.
-      if (mode == DerivativeMode::ForwardMode ||
-          mode == DerivativeMode::ForwardModeSplit ||
-          (!isa<ExtractValueInst>(user) && !isa<ExtractElementInst>(user) &&
-           !isa<InsertValueInst>(user) && !isa<InsertElementInst>(user) &&
-           !isPointerArithmeticInst(user, /*includephi*/ false,
-                                    /*includebin*/ false))) {
-        if (!inst_cv &&
-            !gutils->isConstantInstruction(const_cast<Instruction *>(user))) {
-          if (EnzymePrintDiffUse)
-            llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
-                         << " in reverse as shadow inst " << *user << "\n";
-          return seen[idx] = true;
+      {
+        bool isIntelSubscriptIntrinsic = [](const Instruction *v) {
+          if (auto II = dyn_cast<IntrinsicInst>(v)) {
+            return (II->getCalledFunction() &&
+                    II->getCalledFunction()->getName().startswith(
+                        "llvm.intel.subscript"));
+          }
+          return false;
+        }(user);
+        // With certain exceptions, assume active instructions require the
+        // shadow of the operand.
+        if (mode == DerivativeMode::ForwardMode ||
+            mode == DerivativeMode::ForwardModeSplit ||
+            (!isa<ExtractValueInst>(user) && !isa<ExtractElementInst>(user) &&
+             !isa<InsertValueInst>(user) && !isa<InsertElementInst>(user) &&
+             !isPointerArithmeticInst(user, /*includephi*/ false,
+                                      /*includebin*/ false) &&
+             !isIntelSubscriptIntrinsic)) {
+          if (!inst_cv &&
+              !gutils->isConstantInstruction(const_cast<Instruction *>(user))) {
+            if (EnzymePrintDiffUse)
+              llvm::errs() << " Need: " << to_string(VT) << " of " << *inst
+                           << " in reverse as shadow inst " << *user << "\n";
+            return seen[idx] = true;
+          }
         }
       }
 
@@ -517,6 +528,20 @@ inline bool is_value_needed_in_reverse(
       }
       if (!idxUsed)
         primalUsedInShadowPointer = false;
+    }
+    if (auto II = dyn_cast<IntrinsicInst>(user)) {
+      if (II->getCalledFunction() &&
+          II->getCalledFunction()->getName().startswith(
+              "llvm.intel.subscript")) {
+        const std::array<size_t, 4> idxArgsIndices{{0, 1, 2, 4}};
+        bool idxUsed = false;
+        for (auto i : idxArgsIndices) {
+          if (II->getOperand(i) == inst)
+            idxUsed = true;
+        }
+        if (!idxUsed)
+          primalUsedInShadowPointer = false;
+      }
     }
     if (auto IVI = dyn_cast<InsertValueInst>(user)) {
       bool valueIsIndex = false;
