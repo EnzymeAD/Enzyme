@@ -217,7 +217,7 @@ void InstructionBatcher::visitCallInst(llvm::CallInst &call) {
   Instruction *placeholder = cast<Instruction>(placeholders[0]);
   IRBuilder<> Builder2(placeholder);
   Builder2.SetCurrentDebugLocation(DebugLoc());
-  Function *orig_func = getFunctionFromCall(&call);
+  auto orig_func = getFunctionFromCall(&call);
 
   bool isDefined = !orig_func->isDeclaration();
 

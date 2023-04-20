@@ -1895,9 +1895,18 @@ public:
                    EVI.getType()) +
                7) /
               8;
-        ((DiffeGradientUtils *)gutils)
-            ->addToDiffe(orig_op0, prediff, Builder2, TR.addingType(size, &EVI),
-                         sv);
+        for (size_t i = 0; i < gutils->getWidth(); ++i) {
+          Value *tdiff = (gutils->getWidth() == 1)
+                             ? prediff
+                             : gutils->extractMeta(Builder2, prediff, i);
+          SmallVector<Value *, 4> sv2 = sv;
+          if (gutils->getWidth() != 1)
+            sv2.insert(sv2.begin(),
+                       ConstantInt::get(Type::getInt32Ty(EVI.getContext()), i));
+          ((DiffeGradientUtils *)gutils)
+              ->addToDiffe(orig_op0, tdiff, Builder2, TR.addingType(size, &EVI),
+                           sv2);
+        }
       }
 
       setDiffe(&EVI,
@@ -3568,42 +3577,6 @@ public:
       return;
     }
 
-    if (Mode == DerivativeMode::ForwardMode) {
-      IRBuilder<> Builder2(&MTI);
-      getForwardBuilder(Builder2);
-      auto ddst = gutils->invertPointerM(orig_dst, Builder2);
-      auto dsrc = gutils->invertPointerM(orig_src, Builder2);
-
-      auto rule = [&](Value *ddst, Value *dsrc) {
-        if (ddst->getType()->isIntegerTy())
-          ddst = Builder2.CreateIntToPtr(
-              ddst, Type::getInt8PtrTy(ddst->getContext()));
-        if (dsrc->getType()->isIntegerTy())
-          dsrc = Builder2.CreateIntToPtr(
-              dsrc, Type::getInt8PtrTy(dsrc->getContext()));
-        CallInst *call;
-        if (ID == Intrinsic::memmove) {
-          call =
-              Builder2.CreateMemMove(ddst, dstAlign, dsrc, srcAlign, new_size);
-        } else {
-          call =
-              Builder2.CreateMemCpy(ddst, dstAlign, dsrc, srcAlign, new_size);
-        }
-        call->setAttributes(MTI.getAttributes());
-        call->setMetadata(LLVMContext::MD_tbaa,
-                          MTI.getMetadata(LLVMContext::MD_tbaa));
-        call->setMetadata(LLVMContext::MD_tbaa_struct,
-                          MTI.getMetadata(LLVMContext::MD_tbaa_struct));
-        call->setMetadata(LLVMContext::MD_invariant_group,
-                          MTI.getMetadata(LLVMContext::MD_invariant_group));
-        call->setTailCallKind(MTI.getTailCallKind());
-      };
-
-      applyChainRule(Builder2, rule, ddst, dsrc);
-      eraseIfUnused(MTI);
-      return;
-    }
-
     size_t size = 1;
     if (auto ci = dyn_cast<ConstantInt>(new_size)) {
       size = ci->getLimitedValue();
@@ -3611,10 +3584,13 @@ public:
 
     // TODO note that we only handle memcpy/etc of ONE type (aka memcpy of {int,
     // double} not allowed)
-
-    // llvm::errs() << *gutils->oldFunc << "\n";
-    // TR.dump();
     if (size == 0) {
+      eraseIfUnused(MTI);
+      return;
+    }
+
+    if (Mode == DerivativeMode::ForwardMode &&
+        gutils->isConstantValue(orig_dst)) {
       eraseIfUnused(MTI);
       return;
     }
@@ -3623,8 +3599,11 @@ public:
     auto vd = TR.query(orig_dst).Data0().ShiftIndices(DL, 0, size, 0);
     vd |= TR.query(orig_src).Data0().ShiftIndices(DL, 0, size, 0);
 
-    // llvm::errs() << "MIT: " << MTI << "|size: " << size << " vd: " <<
-    // vd.str() << "\n";
+    bool errorIfNoType = true;
+    if (Mode == DerivativeMode::ForwardMode &&
+        (!gutils->isConstantValue(orig_src) && !EnzymeRuntimeActivityCheck)) {
+      errorIfNoType = false;
+    }
 
     if (!vd.isKnownPastPointer()) {
       if (looseTypeAnalysis) {
@@ -3668,26 +3647,34 @@ public:
             }
           }
         }
-        EmitWarning("CannotDeduceType", MTI, "failed to deduce type of copy ",
-                    MTI);
+        if (errorIfNoType)
+          EmitWarning("CannotDeduceType", MTI, "failed to deduce type of copy ",
+                      MTI);
         vd = TypeTree(BaseType::Pointer).Only(0, &MTI);
         goto known;
       }
-      if (CustomErrorHandler) {
-        std::string str;
-        raw_string_ostream ss(str);
-        ss << "Cannot deduce type of copy " << MTI;
-        CustomErrorHandler(str.c_str(), wrap(&MTI), ErrorType::NoType,
-                           &TR.analyzer);
-      }
-      EmitFailure("CannotDeduceType", MTI.getDebugLoc(), &MTI,
-                  "failed to deduce type of copy ", MTI);
+      if (errorIfNoType) {
+        if (CustomErrorHandler) {
+          std::string str;
+          raw_string_ostream ss(str);
+          ss << "Cannot deduce type of copy " << MTI;
+          CustomErrorHandler(str.c_str(), wrap(&MTI), ErrorType::NoType,
+                             &TR.analyzer);
+        }
+        EmitFailure("CannotDeduceType", MTI.getDebugLoc(), &MTI,
+                    "failed to deduce type of copy ", MTI);
 
-      TR.firstPointer(size, orig_dst, &MTI, /*errifnotfound*/ true,
-                      /*pointerIntSame*/ true);
-      llvm_unreachable("bad mti");
+        TR.firstPointer(size, orig_dst, &MTI, /*errifnotfound*/ true,
+                        /*pointerIntSame*/ true);
+        llvm_unreachable("bad mti");
+      } else {
+        vd = TypeTree(BaseType::Pointer).Only(0, &MTI);
+      }
     }
   known:;
+
+  // llvm::errs() << "MIT: " << MTI << "|size: " << size << " vd: " <<
+  // vd.str() << "\n";
 
 #if LLVM_VERSION_MAJOR >= 10
     unsigned dstalign = dstAlign.valueOrOne().value();
@@ -3720,11 +3707,31 @@ public:
       auto dt = vd[{-1}];
       for (size_t i = start; i < size; ++i) {
         bool Legal = true;
-        dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
+        auto tmp = dt;
+        tmp.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
         if (!Legal) {
-          nextStart = i;
-          break;
-        }
+          if (Mode == DerivativeMode::ForwardMode) {
+            // if both are floats (of any type), forward mode is the same.
+            //   + [potentially zero if const, otherwise copy]
+            // if both are int/pointer (of any type), also the same
+            //   + copy
+            // if known non-constant, also the same
+            //   + copy
+            if ((dt.isFloat() == nullptr) ==
+                (vd[{(int)i}].isFloat() == nullptr)) {
+              Legal = true;
+            }
+            if (!gutils->isConstantValue(orig_src) &&
+                !EnzymeRuntimeActivityCheck) {
+              Legal = true;
+            }
+          }
+          if (!Legal) {
+            nextStart = i;
+            break;
+          }
+        } else
+          dt = tmp;
       }
       if (!dt.isKnown()) {
         TR.dump();
@@ -3763,7 +3770,7 @@ public:
                               ? gutils->getNewFromOriginal(orig_src)
                               : gutils->invertPointerM(orig_src, BuilderZ);
 
-      auto rule = [&](Value *shadow_dst, Value *shadow_src) {
+      auto rev_rule = [&](Value *shadow_dst, Value *shadow_src) {
         SubTransferHelper(
             gutils, Mode, dt.isFloat(), ID, subdstalign, subsrcalign,
             /*offset*/ start, gutils->isConstantValue(orig_dst), shadow_dst,
@@ -3773,7 +3780,72 @@ public:
             /*backwardsShadow*/ backwardsShadow);
       };
 
-      applyChainRule(BuilderZ, rule, shadow_dst, shadow_src);
+      auto fwd_rule = [&](Value *ddst, Value *dsrc) {
+#if LLVM_VERSION_MAJOR >= 10
+        MaybeAlign dalign;
+        if (subdstalign)
+          dalign = MaybeAlign(subdstalign);
+        MaybeAlign salign;
+        if (subsrcalign)
+          salign = MaybeAlign(subsrcalign);
+#else
+        auto dalign = dstalign;
+        auto salign = srcalign;
+#endif
+        if (ddst->getType()->isIntegerTy())
+          ddst = BuilderZ.CreateIntToPtr(
+              ddst, Type::getInt8PtrTy(ddst->getContext()));
+        if (start != 0) {
+#if LLVM_VERSION_MAJOR > 7
+          ddst = BuilderZ.CreateConstInBoundsGEP1_64(
+              Type::getInt8Ty(ddst->getContext()), ddst, start);
+#else
+          ddst = BuilderZ.CreateConstInBoundsGEP1_64(ddst, start);
+#endif
+        }
+        CallInst *call;
+        // TODO add EnzymeRuntimeActivity (correctness)
+        if (dt.isFloat() && gutils->isConstantValue(orig_src)) {
+          call = BuilderZ.CreateMemSet(
+              ddst, ConstantInt::get(Type::getInt8Ty(ddst->getContext()), 0),
+              length, salign, isVolatile);
+        } else {
+          if (dsrc->getType()->isIntegerTy())
+            dsrc = BuilderZ.CreateIntToPtr(
+                dsrc, Type::getInt8PtrTy(dsrc->getContext()));
+          if (start != 0) {
+#if LLVM_VERSION_MAJOR > 7
+            dsrc = BuilderZ.CreateConstInBoundsGEP1_64(
+                Type::getInt8Ty(ddst->getContext()), dsrc, start);
+#else
+            dsrc = BuilderZ.CreateConstInBoundsGEP1_64(dsrc, start);
+#endif
+          }
+          if (ID == Intrinsic::memmove) {
+            call = BuilderZ.CreateMemMove(ddst, dalign, dsrc, salign, length);
+          } else {
+            call = BuilderZ.CreateMemCpy(ddst, dalign, dsrc, salign, length);
+          }
+          call->setAttributes(MTI.getAttributes());
+        }
+        // TODO shadow scope/noalias (performance)
+        call->setMetadata(LLVMContext::MD_alias_scope,
+                          MTI.getMetadata(LLVMContext::MD_alias_scope));
+        call->setMetadata(LLVMContext::MD_noalias,
+                          MTI.getMetadata(LLVMContext::MD_noalias));
+        call->setMetadata(LLVMContext::MD_tbaa,
+                          MTI.getMetadata(LLVMContext::MD_tbaa));
+        call->setMetadata(LLVMContext::MD_tbaa_struct,
+                          MTI.getMetadata(LLVMContext::MD_tbaa_struct));
+        call->setMetadata(LLVMContext::MD_invariant_group,
+                          MTI.getMetadata(LLVMContext::MD_invariant_group));
+        call->setTailCallKind(MTI.getTailCallKind());
+      };
+
+      if (Mode == DerivativeMode::ForwardMode)
+        applyChainRule(BuilderZ, fwd_rule, shadow_dst, shadow_src);
+      else
+        applyChainRule(BuilderZ, rev_rule, shadow_dst, shadow_src);
 
       if (nextStart == size)
         break;
@@ -9074,6 +9146,7 @@ public:
         }
 #endif
         bool writeOnlyNoCapture = true;
+        bool readOnly = true;
 #if LLVM_VERSION_MAJOR >= 8
         if (!call.doesNotCapture(i))
 #else
@@ -9084,27 +9157,55 @@ public:
           writeOnlyNoCapture = false;
         }
 #if LLVM_VERSION_MAJOR >= 14
-        if (!call.onlyWritesMemory(i))
+        if (!(call.onlyWritesMemory(i) || call.onlyWritesMemory()))
 #else
         if (!(call.dataOperandHasImpliedAttr(i + 1, Attribute::WriteOnly) ||
               call.dataOperandHasImpliedAttr(i + 1, Attribute::ReadNone) ||
+              call.hasFnAttr(Attribute::WriteOnly) ||
+              call.hasFnAttr(Attribute::ReadNone) ||
               (called && (called->hasParamAttribute(i, Attribute::WriteOnly) ||
-                          called->hasParamAttribute(i, Attribute::ReadNone)))))
+                          called->hasParamAttribute(i, Attribute::ReadNone) ||
+                          called->hasFnAttribute(Attribute::WriteOnly) ||
+                          called->hasFnAttribute(Attribute::ReadNone)))))
 #endif
         {
           writeOnlyNoCapture = false;
         }
-        if (writeOnlyNoCapture && Mode == DerivativeMode::ForwardModeSplit) {
+#if LLVM_VERSION_MAJOR >= 14
+        if (!(call.onlyReadsMemory(i) || call.onlyReadsMemory()))
+#else
+        if (!(call.dataOperandHasImpliedAttr(i + 1, Attribute::ReadOnly) ||
+              call.dataOperandHasImpliedAttr(i + 1, Attribute::ReadNone) ||
+              call.hasFnAttr(Attribute::ReadOnly) ||
+              call.hasFnAttr(Attribute::ReadNone) ||
+              (called && (called->hasParamAttribute(i, Attribute::ReadOnly) ||
+                          called->hasParamAttribute(i, Attribute::ReadNone) ||
+                          called->hasFnAttribute(Attribute::ReadOnly) ||
+                          called->hasFnAttribute(Attribute::ReadNone)))))
+#endif
+        {
+          readOnly = false;
+        }
+
+        if (shouldDisableNoWrite(&call))
+          writeOnlyNoCapture = false;
+
+        auto argTy =
+            gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
+
+        bool replace =
+            argTy == DIFFE_TYPE::DUP_NONEED ||
+            (writeOnlyNoCapture && Mode == DerivativeMode::ForwardModeSplit) ||
+            (writeOnlyNoCapture && readOnly);
+
+        if (replace) {
           if (EnzymeZeroCache)
             argi = ConstantPointerNull::get(cast<PointerType>(argi->getType()));
           else
             argi = UndefValue::get(argi->getType());
         }
-        args.push_back(argi);
-
-        auto argTy =
-            gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
         argsInverted.push_back(argTy);
+        args.push_back(argi);
 
         if (argTy == DIFFE_TYPE::CONSTANT) {
           continue;
@@ -9348,9 +9449,10 @@ public:
 #endif
       }
 
-      pre_args.push_back(argi);
+      auto argTy = gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
 
       bool writeOnlyNoCapture = true;
+      bool readNoneNoCapture = false;
 #if LLVM_VERSION_MAJOR >= 8
       if (!call.doesNotCapture(i))
 #else
@@ -9359,18 +9461,48 @@ public:
 #endif
       {
         writeOnlyNoCapture = false;
+        readNoneNoCapture = false;
       }
 #if LLVM_VERSION_MAJOR >= 14
-      if (!call.onlyWritesMemory(i))
+      if (!(call.onlyWritesMemory(i) || call.onlyWritesMemory()))
 #else
       if (!(call.dataOperandHasImpliedAttr(i + 1, Attribute::WriteOnly) ||
             call.dataOperandHasImpliedAttr(i + 1, Attribute::ReadNone) ||
+            call.hasFnAttr(Attribute::WriteOnly) ||
+            call.hasFnAttr(Attribute::ReadNone) ||
             (called && (called->hasParamAttribute(i, Attribute::WriteOnly) ||
-                        called->hasParamAttribute(i, Attribute::ReadNone)))))
+                        called->hasParamAttribute(i, Attribute::ReadNone) ||
+                        called->hasFnAttribute(Attribute::WriteOnly) ||
+                        called->hasFnAttribute(Attribute::ReadNone)))))
 #endif
       {
         writeOnlyNoCapture = false;
       }
+#if LLVM_VERSION_MAJOR >= 14
+      if (!(call.doesNotAccessMemory(i) || call.doesNotAccessMemory()))
+#else
+      if (!(call.dataOperandHasImpliedAttr(i + 1, Attribute::ReadNone) ||
+            call.hasFnAttr(Attribute::ReadNone) ||
+            (called && (called->hasParamAttribute(i, Attribute::ReadNone) ||
+                        called->hasFnAttribute(Attribute::ReadNone)))))
+#endif
+      {
+        readNoneNoCapture = false;
+      }
+
+      if (shouldDisableNoWrite(&call)) {
+        writeOnlyNoCapture = false;
+        readNoneNoCapture = false;
+      }
+
+      Value *prearg = argi;
+      if (argTy == DIFFE_TYPE::DUP_NONEED || readNoneNoCapture) {
+        if (EnzymeZeroCache)
+          prearg = ConstantPointerNull::get(cast<PointerType>(argi->getType()));
+        else
+          prearg = UndefValue::get(argi->getType());
+      }
+      pre_args.push_back(prearg);
 
       if (Mode != DerivativeMode::ReverseModePrimal) {
         IRBuilder<> Builder2(call.getParent());
@@ -9381,7 +9513,8 @@ public:
         }
 #endif
 
-        if (writeOnlyNoCapture && !replaceFunction) {
+        if ((writeOnlyNoCapture && !replaceFunction) ||
+            argTy == DIFFE_TYPE::DUP_NONEED || readNoneNoCapture) {
           if (EnzymeZeroCache)
             argi = ConstantPointerNull::get(cast<PointerType>(argi->getType()));
           else
@@ -9389,8 +9522,6 @@ public:
         }
         args.push_back(lookup(argi, Builder2));
       }
-
-      auto argTy = gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
 
       argsInverted.push_back(argTy);
 
@@ -10243,11 +10374,10 @@ public:
     using namespace llvm;
 
     assert(Mode == DerivativeMode::ReverseModeCombined ||
-           Mode == DerivativeMode::ReverseModeGradient);
+           Mode == DerivativeMode::ReverseModeGradient ||
+           Mode == DerivativeMode::ReverseModePrimal);
 
     CallInst *newCall = cast<CallInst>(gutils->getNewFromOriginal(&call));
-    IRBuilder<> Builder2(call.getParent());
-    getReverseBuilder(Builder2);
 
     IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&call));
     BuilderZ.setFastMathFlags(getFast());
@@ -10266,32 +10396,35 @@ public:
     }
 
     std::vector<bool> overwritten_args = std::vector<bool>(
-        overwritten_args_map.find(&call)->second.begin() + 3,
+        overwritten_args_map.find(&call)->second.begin() + 1,
         overwritten_args_map.find(&call)->second.end() - offset);
+
     overwritten_args.push_back(false); // should correspond to &call
 
-    Function *samplefn = GetFunctionFromValue(call.getArgOperand(0));
-    Function *likelihoodfn = GetFunctionFromValue(call.getArgOperand(1));
+    auto likelihoodfn =
+        cast<Function>(cast<ValueAsMetadata>(
+                           call.getMetadata("enzyme_pdf")->getOperand(0).get())
+                           ->getValue());
 
     auto likelihood_getter = cast<Function>(
         cast<ValueAsMetadata>(
-            call.getMetadata("likelihood_getter")->getOperand(0).get())
+            call.getMetadata("enzyme_likelihood_getter")->getOperand(0).get())
             ->getValue());
     auto choice_getter = cast<Function>(
         cast<ValueAsMetadata>(
-            call.getMetadata("choice_getter")->getOperand(0).get())
+            call.getMetadata("enzyme_choice_getter")->getOperand(0).get())
             ->getValue());
     auto choice_setter = cast<Function>(
         cast<ValueAsMetadata>(
-            call.getMetadata("choice_setter")->getOperand(0).get())
+            call.getMetadata("enzyme_choice_setter")->getOperand(0).get())
             ->getValue());
 
-    Value *address = call.getArgOperand(2);
-    Value *trace =
-        call.getArgOperand(3 + samplefn->getFunctionType()->getNumParams());
-
-    Value *daddress = lookup(gutils->getNewFromOriginal(address), Builder2);
-    Value *dtrace = lookup(gutils->invertPointerM(trace, Builder2), Builder2);
+    Value *address = call.getArgOperand(0);
+#if LLVM_VERSION_MAJOR >= 14
+    Value *trace = call.getArgOperand(call.arg_size() - offset);
+#else
+    Value *trace = call.getArgOperand(call.getNumArgOperands() - offset);
+#endif
 
     assert(likelihoodfn);
 
@@ -10303,7 +10436,7 @@ public:
       if (argnum == likelihoodfn->getFunctionType()->getNumParams() - 1) {
         origArgi = &call;
       } else {
-        origArgi = call.getArgOperand(3 + argnum);
+        origArgi = call.getArgOperand(1 + argnum);
       }
       auto ArgTR = TR.query(origArgi);
       nextTypeInfo.Arguments.insert(
@@ -10343,12 +10476,12 @@ public:
     std::map<int, Type *> gradByVal;
     std::map<int, Attribute> structAttrs;
 
-    for (unsigned i = 3;
-         i < 3 + likelihoodfn->getFunctionType()->getNumParams(); ++i) {
+    for (unsigned i = 1; i <= likelihoodfn->getFunctionType()->getNumParams();
+         ++i) {
       Value *argi;
       Value *orig_argi;
       DIFFE_TYPE argTy;
-      if (i < 3 + likelihoodfn->getFunctionType()->getNumParams() - 1) {
+      if (i < likelihoodfn->getFunctionType()->getNumParams()) {
         argi = gutils->getNewFromOriginal(call.getArgOperand(i));
         orig_argi = call.getArgOperand(i);
         argTy = gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
@@ -10865,6 +10998,12 @@ public:
       return;
     }
 
+    IRBuilder<> Builder2(&call);
+    getReverseBuilder(Builder2);
+
+    Value *daddress = lookup(gutils->getNewFromOriginal(address), Builder2);
+    Value *dtrace = lookup(gutils->invertPointerM(trace, Builder2), Builder2);
+
     Value *newcalled = nullptr;
     FunctionType *FT = nullptr;
 
@@ -11090,7 +11229,7 @@ public:
             ? std::vector<bool>()
             : overwritten_args_map.find(&call)->second;
 
-    Function *called = getFunctionFromCall(&call);
+    auto called = getFunctionFromCall(&call);
     StringRef funcName = getFuncNameFromCall(&call);
 
     bool subretused = false;
@@ -12498,93 +12637,6 @@ public:
             return;
           }
         }
-        if (funcName == "__fd_sincos_1") {
-          if (gutils->knownRecomputeHeuristic.find(&call) !=
-              gutils->knownRecomputeHeuristic.end()) {
-            if (!gutils->knownRecomputeHeuristic[&call]) {
-              gutils->cacheForReverse(BuilderZ, newCall,
-                                      getIndex(&call, CacheType::Self));
-            }
-          }
-          eraseIfUnused(call);
-          if (gutils->isConstantInstruction(&call)) {
-            return;
-          }
-
-          switch (Mode) {
-          case DerivativeMode::ForwardModeSplit:
-          case DerivativeMode::ForwardMode: {
-            IRBuilder<> Builder2(&call);
-            getForwardBuilder(Builder2);
-
-            Value *vdiff = diffe(call.getArgOperand(0), Builder2);
-            Value *x = gutils->getNewFromOriginal(call.getArgOperand(0));
-            Value *args[] = {x};
-
-            Type *tys[] = {call.getOperand(0)->getType()};
-            CallInst *dsin = cast<CallInst>(Builder2.CreateCall(
-                Intrinsic::getDeclaration(gutils->oldFunc->getParent(),
-                                          Intrinsic::cos, tys),
-                args));
-            CallInst *dcos = cast<CallInst>(Builder2.CreateCall(
-                Intrinsic::getDeclaration(gutils->oldFunc->getParent(),
-                                          Intrinsic::sin, tys),
-                args));
-
-            auto rule = [&](Value *vdiff) {
-              Value *res = UndefValue::get(call.getType());
-              res = Builder2.CreateInsertValue(
-                  res, Builder2.CreateFMul(vdiff, dsin), {0});
-              return Builder2.CreateInsertValue(
-                  res, Builder2.CreateFNeg(Builder2.CreateFMul(vdiff, dcos)),
-                  {1});
-            };
-
-            Value *dif0 = applyChainRule(call.getType(), Builder2, rule, vdiff);
-            setDiffe(&call, dif0, Builder2);
-            return;
-          }
-          case DerivativeMode::ReverseModeGradient:
-          case DerivativeMode::ReverseModeCombined: {
-            IRBuilder<> Builder2(call.getParent());
-            getReverseBuilder(Builder2);
-
-            Value *x = lookup(gutils->getNewFromOriginal(call.getArgOperand(0)),
-                              Builder2);
-
-            Value *args[] = {x};
-
-            Type *tys[] = {call.getOperand(0)->getType()};
-            CallInst *dsin = cast<CallInst>(Builder2.CreateCall(
-                Intrinsic::getDeclaration(gutils->oldFunc->getParent(),
-                                          Intrinsic::cos, tys),
-                args));
-            CallInst *dcos = cast<CallInst>(Builder2.CreateCall(
-                Intrinsic::getDeclaration(gutils->oldFunc->getParent(),
-                                          Intrinsic::sin, tys),
-                args));
-            auto rule = [&](Value *vdiff) {
-              return Builder2.CreateFSub(
-                  Builder2.CreateFMul(Builder2.CreateExtractValue(vdiff, {0}),
-                                      dsin),
-                  Builder2.CreateFMul(Builder2.CreateExtractValue(vdiff, {1}),
-                                      dcos));
-            };
-            Value *vdiff = diffe(&call, Builder2);
-            Value *dif0 = applyChainRule(call.getArgOperand(0)->getType(),
-                                         Builder2, rule, vdiff);
-            setDiffe(
-                &call,
-                Constant::getNullValue(gutils->getShadowType(call.getType())),
-                Builder2);
-            addToDiffe(call.getArgOperand(0), dif0, Builder2, x->getType());
-            return;
-          }
-          case DerivativeMode::ReverseModePrimal: {
-            return;
-          }
-          }
-        }
         if (funcName == "cabs" || funcName == "cabsf" || funcName == "cabsl") {
           if (gutils->knownRecomputeHeuristic.find(&call) !=
               gutils->knownRecomputeHeuristic.end()) {
@@ -13276,8 +13328,10 @@ public:
       }
 
       // Cache and rematerialization irrelevant for forward mode.
-      if (Mode == DerivativeMode::ForwardMode)
+      if (Mode == DerivativeMode::ForwardMode) {
+        eraseIfUnused(call);
         return;
+      }
 
       std::map<UsageKey, bool> Seen;
       for (auto pair : gutils->knownRecomputeHeuristic)
@@ -13393,6 +13447,7 @@ public:
           // If rematerializing (e.g. needed in reverse, but not needing
           //  the whole allocation):
           if (primalNeededInReverse && !cacheWholeAllocation) {
+            assert(!unnecessaryValues.count(&call));
             // if rematerialize, don't ever cache and downgrade to stack
             // allocation where possible.
             if (auto MD = hasMetadata(&call, "enzyme_fromstack")) {
@@ -13444,6 +13499,10 @@ public:
             if (Mode == DerivativeMode::ReverseModePrimal)
               return;
           } else if (!cacheWholeAllocation) {
+            if (unnecessaryValues.count(&call)) {
+              eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+              return;
+            }
             // If not caching allocation and not needed in the reverse, we can
             // use the original freeing behavior for the function. If in the
             // reverse pass we should not recreate this allocation.
@@ -13463,6 +13522,10 @@ public:
       // as can we can only guarantee that we don't erase those frees.
       bool hasPDFree = gutils->allocationsWithGuaranteedFree.count(&call);
       if (!primalNeededInReverse && hasPDFree) {
+        if (unnecessaryValues.count(&call)) {
+          eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+          return;
+        }
         if (Mode == DerivativeMode::ReverseModeGradient ||
             Mode == DerivativeMode::ForwardModeSplit) {
           eraseIfUnused(call, /*erase*/ true, /*check*/ false);
@@ -13483,6 +13546,10 @@ public:
           funcName == "ijl_alloc_array_3d" || funcName == "ijl_array_copy" ||
           funcName == "julia.gc_alloc_obj" || funcName == "jl_gc_alloc_typed" ||
           funcName == "ijl_gc_alloc_typed") {
+        if (unnecessaryValues.count(&call)) {
+          eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+          return;
+        }
         if (!primalNeededInReverse) {
           if (Mode == DerivativeMode::ReverseModeGradient ||
               Mode == DerivativeMode::ForwardModeSplit) {
@@ -13739,6 +13806,7 @@ public:
 
           return;
         }
+        eraseIfUnused(call);
       }
 #if LLVM_VERSION_MAJOR >= 11
       auto callval = call.getCalledOperand();
@@ -13773,10 +13841,10 @@ public:
       // If a rematerializable allocation.
       for (auto rmat : gutils->rematerializableAllocations) {
         if (rmat.second.frees.count(&call)) {
-
           // Leave the original free behavior since this won't be used
           // in the reverse pass in split mode
           if (Mode == DerivativeMode::ReverseModePrimal) {
+            eraseIfUnused(call);
             return;
           } else if (Mode == DerivativeMode::ReverseModeGradient) {
             eraseIfUnused(call, /*erase*/ true, /*check*/ false);
@@ -13800,17 +13868,12 @@ public:
             }
             // If in a loop context, maintain the same free behavior, unless
             // caching whole allocation.
-            if (!cacheWholeAllocation)
-              if (auto inst = dyn_cast<Instruction>(rmat.first))
-                if (rmat.second.LI &&
-                    rmat.second.LI->contains(inst->getParent())) {
-                  return;
-                }
-            // In combined mode, if we don't need this allocation
-            // in the reverse, we can use the original deallocation
-            // behavior.
-            if (!primalNeededInReverse)
+            if (!cacheWholeAllocation) {
+              eraseIfUnused(call);
               return;
+            }
+            assert(!unnecessaryValues.count(rmat.first));
+            assert(primalNeededInReverse);
           }
         }
       }
@@ -13818,7 +13881,8 @@ public:
       if (gutils->forwardDeallocations.count(&call)) {
         if (Mode == DerivativeMode::ReverseModeGradient) {
           eraseIfUnused(call, /*erase*/ true, /*check*/ false);
-        }
+        } else
+          eraseIfUnused(call);
         return;
       }
 

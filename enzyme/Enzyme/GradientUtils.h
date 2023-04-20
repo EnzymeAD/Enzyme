@@ -370,10 +370,10 @@ public:
                 unsigned width, bool omp);
 
 public:
-  DIFFE_TYPE getDiffeType(llvm::Value *v, bool foreignFunction);
+  DIFFE_TYPE getDiffeType(llvm::Value *v, bool foreignFunction) const;
 
   DIFFE_TYPE getReturnDiffeType(llvm::CallInst *orig, bool *primalReturnUsedP,
-                                bool *shadowReturnUsedP);
+                                bool *shadowReturnUsedP) const;
 
   static GradientUtils *
   CreateFromClone(EnzymeLogic &Logic, unsigned width, llvm::Function *todiff,
@@ -504,6 +504,8 @@ public:
 
   static llvm::Value *extractMeta(llvm::IRBuilder<> &Builder, llvm::Value *Agg,
                                   unsigned off);
+  static llvm::Value *extractMeta(llvm::IRBuilder<> &Builder, llvm::Value *Agg,
+                                  llvm::ArrayRef<unsigned> off);
 
   /// Unwraps a vector derivative from its internal representation and applies a
   /// function f to each element. Return values of f are collected and wrapped.

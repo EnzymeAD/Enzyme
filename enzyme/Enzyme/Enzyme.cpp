@@ -409,7 +409,7 @@ static bool ReplaceOriginalCall(IRBuilder<> &Builder, Value *ret,
     return true;
   }
 
-  if (auto pretType = dyn_cast<PointerType>(retType)) {
+  if (isa<PointerType>(retType)) {
     retType = retElemType;
 
     if (auto sretType = dyn_cast<StructType>(retType),
@@ -2628,6 +2628,7 @@ public:
   static bool isRequired() { return true; }
 };
 
+#undef DEBUG_TYPE
 AnalysisKey EnzymeNewPM::Key;
 
 #include "PreserveNVVM.h"
@@ -2744,9 +2745,9 @@ llvmGetPassPluginInfo() {
               MPM.addPass(createModuleToFunctionPassAdaptor(
                   std::move(GlobalCleanupPM)));
 
-              bool EnableModuleInliner = false;
               ThinOrFullLTOPhase Phase = ThinOrFullLTOPhase::None;
 #if LLVM_VERSION >= 13
+              bool EnableModuleInliner = false;
               if (EnableModuleInliner)
                 MPM.addPass(PB0->buildModuleInlinerPipeline(Level, Phase));
               else

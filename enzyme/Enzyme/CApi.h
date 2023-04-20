@@ -43,6 +43,9 @@ typedef struct EnzymeOpaqueLogic *EnzymeLogicRef;
 struct EnzymeOpaqueAugmentedReturn;
 typedef struct EnzymeOpaqueAugmentedReturn *EnzymeAugmentedReturnPtr;
 
+struct EnzymeOpaqueTraceInterface;
+typedef struct EnzymeOpaqueTraceInterface *EnzymeTraceInterfaceRef;
+
 struct IntList {
   int64_t *data;
   size_t size;
@@ -124,6 +127,11 @@ typedef enum {
   DEM_ForwardModeSplit = 4,
 } CDerivativeMode;
 
+typedef enum {
+  DEM_Trace = 0,
+  DEM_Condition = 1,
+} CProbProgMode;
+
 LLVMValueRef EnzymeCreateForwardDiff(
     EnzymeLogicRef, LLVMValueRef todiff, CDIFFE_TYPE retType,
     CDIFFE_TYPE *constant_args, size_t constant_args_size,
@@ -150,6 +158,11 @@ EnzymeAugmentedReturnPtr EnzymeCreateAugmentedPrimal(
     size_t uncacheable_args_size, uint8_t forceAnonymousTape, unsigned width,
     uint8_t AtomicAdd);
 
+LLVMValueRef CreateTrace(EnzymeLogicRef Logic, LLVMValueRef totrace,
+                         LLVMValueRef *generative_functions,
+                         size_t generative_functions_size, CProbProgMode mode,
+                         uint8_t autodiff, EnzymeTraceInterfaceRef interface);
+
 typedef uint8_t (*CustomRuleType)(int /*direction*/, CTypeTreeRef /*return*/,
                                   CTypeTreeRef * /*args*/,
                                   struct IntList * /*knownValues*/,
@@ -162,6 +175,9 @@ EnzymeTypeAnalysisRef CreateTypeAnalysis(EnzymeLogicRef Log,
 void ClearTypeAnalysis(EnzymeTypeAnalysisRef);
 void FreeTypeAnalysis(EnzymeTypeAnalysisRef);
 
+EnzymeTraceInterfaceRef CreateEnzymeStaticTraceInterface(LLVMModuleRef M);
+EnzymeTraceInterfaceRef
+CreateEnzymeDynamicTraceInterface(LLVMValueRef interface, LLVMValueRef F);
 EnzymeLogicRef CreateEnzymeLogic(uint8_t PostOpt);
 void ClearEnzymeLogic(EnzymeLogicRef);
 void FreeEnzymeLogic(EnzymeLogicRef);

@@ -59,9 +59,6 @@ public:
   TraceUtils(ProbProgMode mode, llvm::Function *newFunc, llvm::Argument *trace,
              llvm::Argument *observations, TraceInterface *interface);
 
-  static TraceUtils *FromFunctionSignature(llvm::Function *newFunc,
-                                           TraceInterface *interface);
-
   static TraceUtils *
   FromClone(ProbProgMode mode, TraceInterface *interface,
             llvm::Function *oldFunc,
@@ -73,6 +70,11 @@ public:
                                  const llvm::Twine &Name = "");
 
   ~TraceUtils();
+
+private:
+  static std::pair<llvm::Value *, llvm::Constant *>
+  ValueToVoidPtrAndSize(llvm::IRBuilder<> &Builder, llvm::Value *val,
+                        llvm::Type *size_type);
 
 public:
   TraceInterface *getTraceInterface();
@@ -95,6 +97,14 @@ public:
 
   llvm::CallInst *InsertCall(llvm::IRBuilder<> &Builder, llvm::Value *address,
                              llvm::Value *subtrace);
+
+  llvm::CallInst *InsertArgument(llvm::IRBuilder<> &Builder,
+                                 llvm::Argument *argument);
+
+  llvm::CallInst *InsertReturn(llvm::IRBuilder<> &Builder, llvm::Value *ret);
+
+  llvm::CallInst *InsertFunction(llvm::IRBuilder<> &Builder,
+                                 llvm::Function *function);
 
   llvm::CallInst *GetTrace(llvm::IRBuilder<> &Builder, llvm::Value *address,
                            const llvm::Twine &Name = "");

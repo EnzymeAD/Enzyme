@@ -6,7 +6,7 @@ include(CMakePackageConfigHelpers)
 
 set(ENZYME_MAJOR_VERSION 0)
 set(ENZYME_MINOR_VERSION 0)
-set(ENZYME_PATCH_VERSION 53)
+set(ENZYME_PATCH_VERSION 55)
 set(ENZYME_VERSION
   ${ENZYME_MAJOR_VERSION}.${ENZYME_MINOR_VERSION}.${ENZYME_PATCH_VERSION})
 
@@ -26,6 +26,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 option(ENZYME_CLANG "Build enzyme clang plugin" ON)
 option(ENZYME_FLANG "Build enzyme flang symlink" OFF)
 option(ENZYME_MLIR "Build enzyme mlir plugin" OFF)
+option(ENZYME_IFX "Enable enzyme support for the Intel Fortran compiler IFX" OFF)
 option(ENZYME_EXTERNAL_SHARED_LIB "Build external shared library" OFF)
 set(ENZYME_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(ENZYME_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR})
@@ -158,6 +159,11 @@ if (ENZYME_MLIR)
       endif()
       message("mlir dir from llvm ${MLIR_DIR}")
     endif()
+endif()
+
+if(ENZYME_IFX)
+    add_definitions(-DENZYME_IFX=1)
+    message("Building with support for the Intel Fortran compiler IFX")
 endif()
 
 list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")

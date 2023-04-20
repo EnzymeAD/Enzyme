@@ -225,7 +225,9 @@ static inline void calculateUnusedValues(
     llvm::SmallPtrSetImpl<const llvm::Value *> &unnecessaryValues,
     llvm::SmallPtrSetImpl<const llvm::Instruction *> &unnecessaryInstructions,
     bool returnValue, std::function<bool(const llvm::Value *)> valneeded,
-    std::function<UseReq(const llvm::Instruction *)> instneeded) {
+    std::function<UseReq(const llvm::Instruction *)> instneeded,
+    std::function<bool(const llvm::Instruction *, const llvm::Value *)>
+        useneeded) {
 
   std::deque<const llvm::Instruction *> todo;
 
@@ -234,6 +236,7 @@ static inline void calculateUnusedValues(
       if (!returnValue) {
         unnecessaryInstructions.insert(ri);
       }
+      unnecessaryValues.insert(ri);
     }
     for (auto &inst : BB) {
       if (&inst == BB.getTerminator())
@@ -251,56 +254,64 @@ static inline void calculateUnusedValues(
       continue;
     }
 
-    if (unnecessaryValues.count(inst))
-      continue;
+    if (!unnecessaryValues.count(inst)) {
 
-    if (valneeded(inst))
-      continue;
-
-    bool necessaryUse = false;
-
-    llvm::SmallPtrSet<const llvm::Instruction *, 4> seen;
-    std::deque<const llvm::Instruction *> users;
-
-    for (auto user_dtx : inst->users()) {
-      if (auto cst = llvm::dyn_cast<llvm::Instruction>(user_dtx)) {
-        users.push_back(cst);
+      if (valneeded(inst)) {
+        continue;
       }
-    }
 
-    while (users.size()) {
-      auto val = users.front();
-      users.pop_front();
+      bool necessaryUse = false;
 
-      if (seen.count(val))
-        continue;
-      seen.insert(val);
+      llvm::SmallPtrSet<const llvm::Instruction *, 4> seen;
+      std::deque<const llvm::Instruction *> users;
 
-      if (unnecessaryInstructions.count(val))
-        continue;
-
-      switch (instneeded(val)) {
-      case UseReq::Need:
-        necessaryUse = true;
-        break;
-      case UseReq::Recur:
-        for (auto user_dtx : val->users()) {
-          if (auto cst = llvm::dyn_cast<llvm::Instruction>(user_dtx)) {
+      for (auto user_dtx : inst->users()) {
+        if (auto cst = llvm::dyn_cast<llvm::Instruction>(user_dtx)) {
+          if (useneeded(cst, inst))
             users.push_back(cst);
-          }
         }
-        break;
-      case UseReq::Cached:
-        break;
       }
+
+      while (users.size()) {
+        auto val = users.front();
+        users.pop_front();
+
+        if (seen.count(val))
+          continue;
+        seen.insert(val);
+
+        if (unnecessaryInstructions.count(val))
+          continue;
+
+        switch (instneeded(val)) {
+        case UseReq::Need:
+          necessaryUse = true;
+          break;
+        case UseReq::Recur:
+          for (auto user_dtx : val->users()) {
+            if (auto cst = llvm::dyn_cast<llvm::Instruction>(user_dtx)) {
+              if (useneeded(cst, val))
+                users.push_back(cst);
+            }
+          }
+          break;
+        case UseReq::Cached:
+          break;
+        }
+        if (necessaryUse)
+          break;
+      }
+
       if (necessaryUse)
-        break;
+        continue;
+
+      unnecessaryValues.insert(inst);
+
+      for (auto user : inst->users()) {
+        if (auto usedinst = llvm::dyn_cast<llvm::Instruction>(user))
+          todo.push_back(usedinst);
+      }
     }
-
-    if (necessaryUse)
-      continue;
-
-    unnecessaryValues.insert(inst);
 
     if (instneeded(inst) == UseReq::Need)
       continue;

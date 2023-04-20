@@ -486,7 +486,7 @@ bool legalCombinedForwardReverse(
     const std::map<llvm::ReturnInst *, llvm::StoreInst *> &replacedReturns,
     llvm::SmallVectorImpl<llvm::Instruction *> &postCreate,
     llvm::SmallVectorImpl<llvm::Instruction *> &userReplace,
-    GradientUtils *gutils,
+    const GradientUtils *gutils,
     const llvm::SmallPtrSetImpl<const llvm::Instruction *>
         &unnecessaryInstructions,
     const llvm::SmallPtrSetImpl<llvm::BasicBlock *> &oldUnreachable,

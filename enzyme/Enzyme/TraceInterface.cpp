@@ -49,6 +49,9 @@ FunctionType *TraceInterface::getChoiceTy() { return getChoiceTy(C); }
 FunctionType *TraceInterface::getLikelihoodTy() { return getLikelihoodTy(C); }
 FunctionType *TraceInterface::insertCallTy() { return insertCallTy(C); }
 FunctionType *TraceInterface::insertChoiceTy() { return insertChoiceTy(C); }
+FunctionType *TraceInterface::insertArgumentTy() { return insertArgumentTy(C); }
+FunctionType *TraceInterface::insertReturnTy() { return insertReturnTy(C); }
+FunctionType *TraceInterface::insertFunctionTy() { return insertFunctionTy(C); }
 FunctionType *TraceInterface::newTraceTy() { return newTraceTy(C); }
 FunctionType *TraceInterface::freeTraceTy() { return freeTraceTy(C); }
 FunctionType *TraceInterface::hasCallTy() { return hasCallTy(C); }
@@ -86,6 +89,26 @@ FunctionType *TraceInterface::insertChoiceTy(LLVMContext &C) {
                             Type::getDoubleTy(C), PointerType::getInt8PtrTy(C),
                             sizeType(C)},
                            false);
+}
+
+FunctionType *TraceInterface::insertArgumentTy(LLVMContext &C) {
+  return FunctionType::get(Type::getVoidTy(C),
+                           {PointerType::getInt8PtrTy(C), stringType(C),
+                            PointerType::getInt8PtrTy(C), sizeType(C)},
+                           false);
+}
+
+FunctionType *TraceInterface::insertReturnTy(LLVMContext &C) {
+  return FunctionType::get(
+      Type::getVoidTy(C),
+      {PointerType::getInt8PtrTy(C), PointerType::getInt8PtrTy(C), sizeType(C)},
+      false);
+}
+
+FunctionType *TraceInterface::insertFunctionTy(LLVMContext &C) {
+  return FunctionType::get(
+      Type::getVoidTy(C),
+      {PointerType::getInt8PtrTy(C), PointerType::getInt8PtrTy(C)}, false);
 }
 
 FunctionType *TraceInterface::newTraceTy(LLVMContext &C) {
@@ -133,6 +156,15 @@ StaticTraceInterface::StaticTraceInterface(Module *M)
     } else if (F.getName().contains("__enzyme_insert_choice")) {
       assert(F.getFunctionType() == insertChoiceTy());
       insertChoiceFunction = &F;
+    } else if (F.getName().contains("__enzyme_insert_argument")) {
+      assert(F.getFunctionType() == insertArgumentTy());
+      insertArgumentFunction = &F;
+    } else if (F.getName().contains("__enzyme_insert_return")) {
+      assert(F.getFunctionType() == insertReturnTy());
+      insertReturnFunction = &F;
+    } else if (F.getName().contains("__enzyme_insert_function")) {
+      assert(F.getFunctionType() == insertFunctionTy());
+      insertFunctionFunction = &F;
     } else if (F.getName().contains("__enzyme_has_call")) {
       assert(F.getFunctionType() == hasCallTy());
       hasCallFunction = &F;
@@ -152,6 +184,9 @@ StaticTraceInterface::StaticTraceInterface(Module *M)
   getLikelihoodFunction->addFnAttr("enzyme_notypeanalysis");
   insertCallFunction->addFnAttr("enzyme_notypeanalysis");
   insertChoiceFunction->addFnAttr("enzyme_notypeanalysis");
+  insertArgumentFunction->addFnAttr("enzyme_notypeanalysis");
+  insertReturnFunction->addFnAttr("enzyme_notypeanalysis");
+  insertFunctionFunction->addFnAttr("enzyme_notypeanalysis");
   hasCallFunction->addFnAttr("enzyme_notypeanalysis");
   hasChoiceFunction->addFnAttr("enzyme_notypeanalysis");
   sampleFunction->addFnAttr("enzyme_notypeanalysis");
@@ -163,9 +198,42 @@ StaticTraceInterface::StaticTraceInterface(Module *M)
   getLikelihoodFunction->addFnAttr("enzyme_inactive");
   insertCallFunction->addFnAttr("enzyme_inactive");
   insertChoiceFunction->addFnAttr("enzyme_inactive");
+  insertArgumentFunction->addFnAttr("enzyme_inactive");
+  insertReturnFunction->addFnAttr("enzyme_inactive");
+  insertFunctionFunction->addFnAttr("enzyme_inactive");
   hasCallFunction->addFnAttr("enzyme_inactive");
   hasChoiceFunction->addFnAttr("enzyme_inactive");
   sampleFunction->addFnAttr("enzyme_inactive");
+
+#if LLVM_VERSION_MAJOR >= 9
+  newTraceFunction->addFnAttr(Attribute::NoFree);
+  freeTraceFunction->addFnAttr(Attribute::NoFree);
+  getTraceFunction->addFnAttr(Attribute::NoFree);
+  getChoiceFunction->addFnAttr(Attribute::NoFree);
+  getLikelihoodFunction->addFnAttr(Attribute::NoFree);
+  insertCallFunction->addFnAttr(Attribute::NoFree);
+  insertChoiceFunction->addFnAttr(Attribute::NoFree);
+  insertArgumentFunction->addFnAttr(Attribute::NoFree);
+  insertReturnFunction->addFnAttr(Attribute::NoFree);
+  insertFunctionFunction->addFnAttr(Attribute::NoFree);
+  hasCallFunction->addFnAttr(Attribute::NoFree);
+  hasChoiceFunction->addFnAttr(Attribute::NoFree);
+  sampleFunction->addFnAttr(Attribute::NoFree);
+#else
+  newTraceFunction->addFnAttr("nofree");
+  freeTraceFunction->addFnAttr("nofree");
+  getTraceFunction->addFnAttr("nofree");
+  getChoiceFunction->addFnAttr("nofree");
+  getLikelihoodFunction->addFnAttr("nofree");
+  insertCallFunction->addFnAttr("nofree");
+  insertChoiceFunction->addFnAttr("nofree");
+  insertArgumentFunction->addFnAttr("nofree");
+  insertReturnFunction->addFnAttr("nofree");
+  insertFunctionFunction->addFnAttr("nofree");
+  hasCallFunction->addFnAttr("nofree");
+  hasChoiceFunction->addFnAttr("nofree");
+  sampleFunction->addFnAttr("nofree");
+#endif
 
   assert(newTraceFunction);
   assert(freeTraceFunction);
@@ -174,6 +242,11 @@ StaticTraceInterface::StaticTraceInterface(Module *M)
   assert(getLikelihoodFunction);
   assert(insertCallFunction);
   assert(insertChoiceFunction);
+
+  assert(insertArgumentFunction);
+  assert(insertReturnFunction);
+  assert(insertFunctionFunction);
+
   assert(hasCallFunction);
   assert(hasChoiceFunction);
   assert(sampleFunction);
@@ -197,6 +270,15 @@ Value *StaticTraceInterface::insertCall(IRBuilder<> &Builder) {
 }
 Value *StaticTraceInterface::insertChoice(IRBuilder<> &Builder) {
   return insertChoiceFunction;
+}
+Value *StaticTraceInterface::insertArgument(IRBuilder<> &Builder) {
+  return insertArgumentFunction;
+}
+Value *StaticTraceInterface::insertReturn(IRBuilder<> &Builder) {
+  return insertReturnFunction;
+}
+Value *StaticTraceInterface::insertFunction(IRBuilder<> &Builder) {
+  return insertFunctionFunction;
 }
 Value *StaticTraceInterface::newTrace(IRBuilder<> &Builder) {
   return newTraceFunction;
@@ -233,6 +315,11 @@ DynamicTraceInterface::DynamicTraceInterface(Value *dynamicInterface,
       MaterializeGetLikelihood(Builder, dynamicInterface, M);
   insertCallFunction = MaterializeInsertCall(Builder, dynamicInterface, M);
   insertChoiceFunction = MaterializeInsertChoice(Builder, dynamicInterface, M);
+  insertArgumentFunction =
+      MaterializeInsertArgument(Builder, dynamicInterface, M);
+  insertReturnFunction = MaterializeInsertReturn(Builder, dynamicInterface, M);
+  insertFunctionFunction =
+      MaterializeInsertFunction(Builder, dynamicInterface, M);
   newTraceFunction = MaterializeNewTrace(Builder, dynamicInterface, M);
   freeTraceFunction = MaterializeFreeTrace(Builder, dynamicInterface, M);
   hasCallFunction = MaterializeHasCall(Builder, dynamicInterface, M);
@@ -243,6 +330,11 @@ DynamicTraceInterface::DynamicTraceInterface(Value *dynamicInterface,
   assert(getLikelihoodFunction);
   assert(insertCallFunction);
   assert(insertChoiceFunction);
+
+  assert(insertArgumentFunction);
+  assert(insertReturnFunction);
+  assert(insertFunctionFunction);
+
   assert(newTraceFunction);
   assert(freeTraceFunction);
   assert(hasCallFunction);
@@ -396,6 +488,56 @@ GlobalVariable *DynamicTraceInterface::MaterializeHasChoice(
   return global;
 }
 
+GlobalVariable *DynamicTraceInterface::MaterializeInsertArgument(
+    IRBuilder<> &Builder, Value *dynamicInterface, Module &M) {
+  auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(), dynamicInterface,
+                                       Builder.getInt32(8));
+  auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
+  auto pty =
+      PointerType::get(insertArgumentTy(), load->getPointerAddressSpace());
+  auto cast = Builder.CreatePointerCast(load, pty, "insert_argument");
+
+  auto global =
+      new GlobalVariable(M, pty, false, GlobalVariable::PrivateLinkage,
+                         ConstantPointerNull::get(pty), "insert_argument");
+  Builder.CreateStore(cast, global);
+
+  return global;
+}
+
+GlobalVariable *DynamicTraceInterface::MaterializeInsertReturn(
+    IRBuilder<> &Builder, Value *dynamicInterface, Module &M) {
+  auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(), dynamicInterface,
+                                       Builder.getInt32(9));
+  auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
+  auto pty = PointerType::get(insertReturnTy(), load->getPointerAddressSpace());
+  auto cast = Builder.CreatePointerCast(load, pty, "insert_argument");
+
+  auto global =
+      new GlobalVariable(M, pty, false, GlobalVariable::PrivateLinkage,
+                         ConstantPointerNull::get(pty), "insert_argument");
+  Builder.CreateStore(cast, global);
+
+  return global;
+}
+
+GlobalVariable *DynamicTraceInterface::MaterializeInsertFunction(
+    IRBuilder<> &Builder, Value *dynamicInterface, Module &M) {
+  auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(), dynamicInterface,
+                                       Builder.getInt32(10));
+  auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
+  auto pty =
+      PointerType::get(insertFunctionTy(), load->getPointerAddressSpace());
+  auto cast = Builder.CreatePointerCast(load, pty, "insert_argument");
+
+  auto global =
+      new GlobalVariable(M, pty, false, GlobalVariable::PrivateLinkage,
+                         ConstantPointerNull::get(pty), "insert_argument");
+  Builder.CreateStore(cast, global);
+
+  return global;
+}
+
 Function *DynamicTraceInterface::getSampleFunction() { return sampleFunction; }
 
 // user implemented
@@ -422,6 +564,21 @@ Value *DynamicTraceInterface::insertCall(IRBuilder<> &Builder) {
 Value *DynamicTraceInterface::insertChoice(IRBuilder<> &Builder) {
   return Builder.CreateLoad(insertChoiceFunction->getValueType(),
                             insertChoiceFunction, "insert_choice");
+}
+
+Value *DynamicTraceInterface::insertArgument(IRBuilder<> &Builder) {
+  return Builder.CreateLoad(insertArgumentFunction->getValueType(),
+                            insertArgumentFunction, "insert_argument");
+}
+
+Value *DynamicTraceInterface::insertReturn(IRBuilder<> &Builder) {
+  return Builder.CreateLoad(insertReturnFunction->getValueType(),
+                            insertReturnFunction, "insert_return");
+}
+
+Value *DynamicTraceInterface::insertFunction(IRBuilder<> &Builder) {
+  return Builder.CreateLoad(insertFunctionFunction->getValueType(),
+                            insertFunctionFunction, "insert_function");
 }
 
 Value *DynamicTraceInterface::newTrace(IRBuilder<> &Builder) {

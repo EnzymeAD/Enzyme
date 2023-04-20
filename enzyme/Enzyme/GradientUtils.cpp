@@ -4058,7 +4058,7 @@ bool GradientUtils::legalRecompute(const Value *val,
         isMemFreeLibMFunction(n, &ID) || n == "lgamma_r" || n == "lgammaf_r" ||
         n == "lgammal_r" || n == "__lgamma_r_finite" ||
         n == "__lgammaf_r_finite" || n == "__lgammal_r_finite" || n == "tanh" ||
-        n == "tanhf" || n == "__pow_finite" || n == "__fd_sincos_1" ||
+        n == "tanhf" || n == "__pow_finite" ||
         n == "julia.pointer_from_objref" || n.startswith("enzyme_wrapmpi$$") ||
         n == "omp_get_thread_num" || n == "omp_get_max_threads") {
       return true;
@@ -4199,7 +4199,7 @@ bool GradientUtils::shouldRecompute(const Value *val,
         isMemFreeLibMFunction(n, &ID) || n == "lgamma_r" || n == "lgammaf_r" ||
         n == "lgammal_r" || n == "__lgamma_r_finite" ||
         n == "__lgammaf_r_finite" || n == "__lgammal_r_finite" || n == "tanh" ||
-        n == "tanhf" || n == "__pow_finite" || n == "__fd_sincos_1" ||
+        n == "tanhf" || n == "__pow_finite" ||
         n == "julia.pointer_from_objref" || n.startswith("enzyme_wrapmpi$$") ||
         n == "omp_get_thread_num" || n == "omp_get_max_threads") {
       return true;
@@ -4218,12 +4218,7 @@ bool GradientUtils::shouldRecompute(const Value *val,
 
 MDNode *GradientUtils::getDerivativeAliasScope(const Value *origptr,
                                                ssize_t newptr) {
-  origptr =
-#if LLVM_VERSION_MAJOR >= 12
-      getUnderlyingObject(origptr, 100);
-#else
-      GetUnderlyingObject(origptr, oldFunc->getParent()->getDataLayout(), 100);
-#endif
+  origptr = getBaseObject(origptr);
 
   auto found = differentialAliasScopeDomains.find(origptr);
   if (found == differentialAliasScopeDomains.end()) {
@@ -4352,7 +4347,7 @@ GradientUtils *GradientUtils::CreateFromClone(
 
 DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::CallInst *orig,
                                              bool *primalReturnUsedP,
-                                             bool *shadowReturnUsedP) {
+                                             bool *shadowReturnUsedP) const {
   bool shadowReturnUsed = false;
 
   DIFFE_TYPE subretType;
@@ -4383,8 +4378,9 @@ DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::CallInst *orig,
   if (primalReturnUsedP) {
     bool subretused =
         unnecessaryValuesP->find(orig) == unnecessaryValuesP->end();
-    if (knownRecomputeHeuristic.find(orig) != knownRecomputeHeuristic.end()) {
-      if (!knownRecomputeHeuristic[orig]) {
+    auto found = knownRecomputeHeuristic.find(orig);
+    if (found != knownRecomputeHeuristic.end()) {
+      if (!found->second) {
         subretused = true;
       }
     }
@@ -4396,7 +4392,7 @@ DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::CallInst *orig,
   return subretType;
 }
 
-DIFFE_TYPE GradientUtils::getDiffeType(Value *v, bool foreignFunction) {
+DIFFE_TYPE GradientUtils::getDiffeType(Value *v, bool foreignFunction) const {
   if (isConstantValue(v) && !foreignFunction) {
     return DIFFE_TYPE::CONSTANT;
   }
@@ -4406,16 +4402,15 @@ DIFFE_TYPE GradientUtils::getDiffeType(Value *v, bool foreignFunction) {
   if (!argType->isFPOrFPVectorTy() &&
       (TR.query(v).Inner0().isPossiblePointer() || foreignFunction)) {
     if (argType->isPointerTy()) {
-#if LLVM_VERSION_MAJOR >= 12
-      auto at = getUnderlyingObject(v, 100);
-#else
-      auto at =
-          GetUnderlyingObject(v, oldFunc->getParent()->getDataLayout(), 100);
-#endif
+      auto at = getBaseObject(v);
       if (auto arg = dyn_cast<Argument>(at)) {
         if (ArgDiffeTypes[arg->getArgNo()] == DIFFE_TYPE::DUP_NONEED) {
           return DIFFE_TYPE::DUP_NONEED;
         }
+      } else if (isa<AllocaInst>(at) || isAllocationCall(at, TLI)) {
+        assert(unnecessaryValuesP);
+        if (unnecessaryValuesP->count(at))
+          return DIFFE_TYPE::DUP_NONEED;
       }
     }
     return DIFFE_TYPE::DUP_ARG;
@@ -4905,15 +4900,50 @@ Type *GradientUtils::getShadowType(Type *ty) {
 
 Value *GradientUtils::extractMeta(IRBuilder<> &Builder, Value *Agg,
                                   unsigned off) {
-  while (auto Ins = dyn_cast<InsertValueInst>(Agg)) {
-    if (Ins->getNumIndices() != 1)
-      break;
-    if (Ins->getIndices()[0] == off)
-      return Ins->getInsertedValueOperand();
-    else
-      Agg = Ins->getAggregateOperand();
+  return extractMeta(Builder, Agg, ArrayRef<unsigned>({off}));
+}
+
+Value *GradientUtils::extractMeta(IRBuilder<> &Builder, Value *Agg,
+                                  ArrayRef<unsigned> off_init) {
+  std::vector<unsigned> off(off_init.begin(), off_init.end());
+  while (off.size() != 0) {
+    if (auto Ins = dyn_cast<InsertValueInst>(Agg)) {
+      size_t until = Ins->getNumIndices();
+      if (off.size() < until)
+        until = off.size();
+      bool subset = true;
+      for (size_t i = 0; i < until; i++) {
+        if (Ins->getIndices()[i] != off[i]) {
+          subset = false;
+          break;
+        }
+      }
+      if (!subset) {
+        Agg = Ins->getAggregateOperand();
+        continue;
+      } else if (until < Ins->getNumIndices()) {
+        break;
+      } else {
+        off.erase(off.begin(), off.begin() + until);
+        Agg = Ins->getInsertedValueOperand();
+        continue;
+      }
+    }
+    if (auto ext = dyn_cast<ExtractValueInst>(Agg)) {
+      off.insert(off.begin(), ext->getIndices().begin(),
+                 ext->getIndices().end());
+      Agg = ext->getAggregateOperand();
+      continue;
+    }
+    if (auto CA = dyn_cast<ConstantAggregateZero>(Agg)) {
+      Agg = CA->getElementValue(off[0]);
+      off.erase(off.begin(), off.begin() + 1);
+    }
+    break;
   }
-  return Builder.CreateExtractValue(Agg, {off});
+  if (off.size() == 0)
+    return Agg;
+  return Builder.CreateExtractValue(Agg, off);
 }
 
 Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
@@ -5098,9 +5128,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             if (isa<IntrinsicInst>(CI))
               continue;
             if (!isConstantInstruction(CI)) {
-              Function *F = getFunctionFromCall(CI);
-              if (F && (isMemFreeLibMFunction(F->getName()) ||
-                        F->getName() == "__fd_sincos_1")) {
+              auto F = getFunctionFromCall(CI);
+              if (F && isMemFreeLibMFunction(F->getName())) {
                 continue;
               }
               if (llvm::isModOrRefSet(OrigAA.getModRefInfo(CI, Loc))) {
@@ -6231,32 +6260,15 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 
   if (auto li = dyn_cast<LoadInst>(inst))
     if (auto origInst = dyn_cast_or_null<LoadInst>(isOriginal(inst))) {
-#if LLVM_VERSION_MAJOR >= 12
-      auto liobj = getUnderlyingObject(li->getPointerOperand(), 100);
-#else
-      auto liobj = GetUnderlyingObject(
-          li->getPointerOperand(), oldFunc->getParent()->getDataLayout(), 100);
-#endif
+      auto liobj = getBaseObject(li->getPointerOperand());
 
-#if LLVM_VERSION_MAJOR >= 12
-      auto orig_liobj = getUnderlyingObject(origInst->getPointerOperand(), 100);
-#else
-      auto orig_liobj =
-          GetUnderlyingObject(origInst->getPointerOperand(),
-                              oldFunc->getParent()->getDataLayout(), 100);
-#endif
+      auto orig_liobj = getBaseObject(origInst->getPointerOperand());
 
       if (scopeMap.find(inst) == scopeMap.end()) {
         for (auto pair : scopeMap) {
           if (auto li2 = dyn_cast<LoadInst>(const_cast<Value *>(pair.first))) {
 
-#if LLVM_VERSION_MAJOR >= 12
-            auto li2obj = getUnderlyingObject(li2->getPointerOperand(), 100);
-#else
-            auto li2obj =
-                GetUnderlyingObject(li2->getPointerOperand(),
-                                    oldFunc->getParent()->getDataLayout(), 100);
-#endif
+            auto li2obj = getBaseObject(li2->getPointerOperand());
 
             if (liobj == li2obj && DT.dominates(li2, li)) {
               auto orig2 = isOriginal(li2);
@@ -6342,13 +6354,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
           allDomPredecessorsOf(origInst, OrigDT, [&](Instruction *pred) {
             if (auto SI = dyn_cast<StoreInst>(pred)) {
               // auto NewSI = cast<StoreInst>(getNewFromOriginal(SI));
-#if LLVM_VERSION_MAJOR >= 12
-              auto si2obj = getUnderlyingObject(SI->getPointerOperand(), 100);
-#else
-              auto si2obj =
-                GetUnderlyingObject(SI->getPointerOperand(),
-                                    oldFunc->getParent()->getDataLayout(), 100);
-#endif
+              auto si2obj = getBaseObject(SI->getPointerOperand());
 
               if (si2obj != orig_liobj)
                 return false;
@@ -6619,7 +6625,6 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
                   tmpload->eraseFromParent();
 
                   IRBuilder<> v(ctx->getTerminator());
-                  bool isi1 = false;
 
                   AllocaInst *cache = nullptr;
 
