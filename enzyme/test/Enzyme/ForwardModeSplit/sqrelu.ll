@@ -1,5 +1,5 @@
 ; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -instcombine -early-cse -adce -S | FileCheck %s; fi
-; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,function(inline,mem2reg,instcombine,early-cse,adce)" -enzyme-preopt=false -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(inline,mem2reg,instcombine,early-cse,adce)" -enzyme-preopt=false -S | FileCheck %s
 
 ; #include <math.h>
 ; 

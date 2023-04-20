@@ -870,7 +870,7 @@ void PreProcessCache::ReplaceReallocs(Function *NewF, bool mem2reg) {
 #if LLVM_VERSION_MAJOR >= 16
     next->insertInto(resize, resize->end());
 #else
-    resize->getInstList().push_back(next);
+    resize->getInstList().push_back(freeCall);
 #endif
     B.SetInsertPoint(resize);
 

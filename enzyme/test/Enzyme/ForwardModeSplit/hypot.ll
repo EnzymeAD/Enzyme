@@ -1,5 +1,5 @@
 ; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -instcombine -early-cse -simplifycfg -adce -S | FileCheck %s; fi
-; RUN: if [ %llvmver -ge 16 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,sroa,instcombine,early-cse,simplifycfg,adce)" -enzyme-preopt=false -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,sroa,instcombine,early-cse,simplifycfg,adce)" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: nounwind readnone uwtable
 define double @tester(double %x, double %y) {

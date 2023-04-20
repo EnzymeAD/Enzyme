@@ -1,4 +1,5 @@
-; RUN: if [ %llvmver -ge 9 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -adce -instsimplify -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 9 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -adce -instsimplify -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 9 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,simplifycfg,adce,instsimplify)" -enzyme-preopt=false -S | FileCheck %s; fi
 
 source_filename = "text"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"
