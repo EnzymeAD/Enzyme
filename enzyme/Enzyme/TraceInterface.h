@@ -52,6 +52,11 @@ public:
   virtual llvm::Value *getLikelihood(llvm::IRBuilder<> &Builder) = 0;
   virtual llvm::Value *insertCall(llvm::IRBuilder<> &Builder) = 0;
   virtual llvm::Value *insertChoice(llvm::IRBuilder<> &Builder) = 0;
+
+  virtual llvm::Value *insertArgument(llvm::IRBuilder<> &Builder) = 0;
+  virtual llvm::Value *insertReturn(llvm::IRBuilder<> &Builder) = 0;
+  virtual llvm::Value *insertFunction(llvm::IRBuilder<> &Builder) = 0;
+
   virtual llvm::Value *newTrace(llvm::IRBuilder<> &Builder) = 0;
   virtual llvm::Value *freeTrace(llvm::IRBuilder<> &Builder) = 0;
   virtual llvm::Value *hasCall(llvm::IRBuilder<> &Builder) = 0;
@@ -67,6 +72,11 @@ public:
   llvm::FunctionType *getLikelihoodTy();
   llvm::FunctionType *insertCallTy();
   llvm::FunctionType *insertChoiceTy();
+
+  llvm::FunctionType *insertArgumentTy();
+  llvm::FunctionType *insertReturnTy();
+  llvm::FunctionType *insertFunctionTy();
+
   llvm::FunctionType *newTraceTy();
   llvm::FunctionType *freeTraceTy();
   llvm::FunctionType *hasCallTy();
@@ -77,6 +87,11 @@ public:
   static llvm::FunctionType *getLikelihoodTy(llvm::LLVMContext &C);
   static llvm::FunctionType *insertCallTy(llvm::LLVMContext &C);
   static llvm::FunctionType *insertChoiceTy(llvm::LLVMContext &C);
+
+  static llvm::FunctionType *insertArgumentTy(llvm::LLVMContext &C);
+  static llvm::FunctionType *insertReturnTy(llvm::LLVMContext &C);
+  static llvm::FunctionType *insertFunctionTy(llvm::LLVMContext &C);
+
   static llvm::FunctionType *newTraceTy(llvm::LLVMContext &C);
   static llvm::FunctionType *freeTraceTy(llvm::LLVMContext &C);
   static llvm::FunctionType *hasCallTy(llvm::LLVMContext &C);
@@ -92,6 +107,9 @@ private:
   llvm::Function *getLikelihoodFunction = nullptr;
   llvm::Function *insertCallFunction = nullptr;
   llvm::Function *insertChoiceFunction = nullptr;
+  llvm::Function *insertArgumentFunction = nullptr;
+  llvm::Function *insertReturnFunction = nullptr;
+  llvm::Function *insertFunctionFunction = nullptr;
   llvm::Function *newTraceFunction = nullptr;
   llvm::Function *freeTraceFunction = nullptr;
   llvm::Function *hasCallFunction = nullptr;
@@ -112,6 +130,9 @@ public:
   llvm::Value *getLikelihood(llvm::IRBuilder<> &Builder);
   llvm::Value *insertCall(llvm::IRBuilder<> &Builder);
   llvm::Value *insertChoice(llvm::IRBuilder<> &Builder);
+  llvm::Value *insertArgument(llvm::IRBuilder<> &Builder);
+  llvm::Value *insertReturn(llvm::IRBuilder<> &Builder);
+  llvm::Value *insertFunction(llvm::IRBuilder<> &Builder);
   llvm::Value *newTrace(llvm::IRBuilder<> &Builder);
   llvm::Value *freeTrace(llvm::IRBuilder<> &Builder);
   llvm::Value *hasCall(llvm::IRBuilder<> &Builder);
@@ -128,6 +149,9 @@ private:
   llvm::GlobalVariable *getLikelihoodFunction = nullptr;
   llvm::GlobalVariable *insertCallFunction = nullptr;
   llvm::GlobalVariable *insertChoiceFunction = nullptr;
+  llvm::GlobalVariable *insertArgumentFunction = nullptr;
+  llvm::GlobalVariable *insertReturnFunction = nullptr;
+  llvm::GlobalVariable *insertFunctionFunction = nullptr;
   llvm::GlobalVariable *newTraceFunction = nullptr;
   llvm::GlobalVariable *freeTraceFunction = nullptr;
   llvm::GlobalVariable *hasCallFunction = nullptr;
@@ -150,6 +174,14 @@ private:
                                               llvm::Value *, llvm::Module &M);
   llvm::GlobalVariable *MaterializeInsertChoice(llvm::IRBuilder<> &Builder,
                                                 llvm::Value *, llvm::Module &M);
+  llvm::GlobalVariable *MaterializeInsertArgument(llvm::IRBuilder<> &Builder,
+                                                  llvm::Value *,
+                                                  llvm::Module &M);
+  llvm::GlobalVariable *MaterializeInsertReturn(llvm::IRBuilder<> &Builder,
+                                                llvm::Value *, llvm::Module &M);
+  llvm::GlobalVariable *MaterializeInsertFunction(llvm::IRBuilder<> &Builder,
+                                                  llvm::Value *,
+                                                  llvm::Module &M);
   llvm::GlobalVariable *MaterializeNewTrace(llvm::IRBuilder<> &Builder,
                                             llvm::Value *, llvm::Module &M);
   llvm::GlobalVariable *MaterializeFreeTrace(llvm::IRBuilder<> &Builder,
@@ -169,6 +201,9 @@ public:
   llvm::Value *getLikelihood(llvm::IRBuilder<> &Builder);
   llvm::Value *insertCall(llvm::IRBuilder<> &Builder);
   llvm::Value *insertChoice(llvm::IRBuilder<> &Builder);
+  llvm::Value *insertArgument(llvm::IRBuilder<> &Builder);
+  llvm::Value *insertReturn(llvm::IRBuilder<> &Builder);
+  llvm::Value *insertFunction(llvm::IRBuilder<> &Builder);
   llvm::Value *newTrace(llvm::IRBuilder<> &Builder);
   llvm::Value *freeTrace(llvm::IRBuilder<> &Builder);
   llvm::Value *hasCall(llvm::IRBuilder<> &Builder);

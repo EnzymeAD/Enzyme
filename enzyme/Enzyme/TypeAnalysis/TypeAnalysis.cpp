@@ -4132,7 +4132,7 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
     /// END MPI
 
     // Prob Prog
-    if (funcName == "enzyme_notypeanalysis") {
+    if (ci->hasFnAttribute("enzyme_notypeanalysis")) {
       return;
     }
 

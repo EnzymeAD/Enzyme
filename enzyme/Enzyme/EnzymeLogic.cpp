@@ -4954,11 +4954,7 @@ llvm::Function *EnzymeLogic::CreateTrace(
   TraceGenerator *tracer = new TraceGenerator(
       *this, tutils, autodiff, originalToNewFn, GenerativeFunctions);
 
-  for (auto &&BB : *totrace) {
-    for (auto &&Inst : BB) {
-      tracer->visit(Inst);
-    }
-  }
+  tracer->visit(totrace);
 
   if (llvm::verifyFunction(*tutils->newFunc, &llvm::errs())) {
     llvm::errs() << *totrace << "\n";
@@ -5052,6 +5048,8 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
       "_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEED1Ev",
       "_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6__"
       "initEPKcm",
+      "_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_"
+      "9allocatorIcEEE6appendEPKcm",
       "_ZNSt12__basic_fileIcED1Ev",
       "__cxa_begin_catch",
       "__cxa_end_catch",
