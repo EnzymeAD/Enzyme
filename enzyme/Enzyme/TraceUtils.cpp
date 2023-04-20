@@ -49,31 +49,6 @@ TraceUtils::TraceUtils(ProbProgMode mode, Function *newFunc, Argument *trace,
     : trace(trace), observations(observations), interface(interface),
       mode(mode), newFunc(newFunc){};
 
-TraceUtils *TraceUtils::FromFunctionSignature(Function *newFunc,
-                                              TraceInterface *interface) {
-  assert(interface);
-
-  Argument *trace = nullptr;
-  Argument *observations = nullptr;
-
-  auto attributes = newFunc->getAttributes();
-  for (size_t i = 0; i < newFunc->getFunctionType()->getNumParams(); ++i) {
-    if (attributes.hasParamAttr(i, TraceParameterAttribute)) {
-      trace = newFunc->arg_begin() + i;
-    } else if (attributes.hasParamAttr(i, ObservationsParameterAttribute)) {
-      observations = newFunc->arg_begin() + i;
-    }
-  }
-
-  if (!trace)
-    return nullptr;
-
-  ProbProgMode mode =
-      observations ? ProbProgMode::Condition : ProbProgMode::Trace;
-
-  return new TraceUtils(mode, newFunc, trace, observations, interface);
-}
-
 TraceUtils *TraceUtils::FromClone(ProbProgMode mode, TraceInterface *interface,
                                   Function *oldFunc,
                                   ValueToValueMapTy &originalToNewFn) {
