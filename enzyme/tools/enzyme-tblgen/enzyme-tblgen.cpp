@@ -819,20 +819,12 @@ void emit_handleBLAS(const std::vector<TGPattern> &blasPatterns,
      << "bool handleBLAS(llvm::CallInst &call, llvm::Function *called,"
         "BlasInfo blas,const std::vector<bool> &overwritten_args) {         \n"
      << "  using llvm::Type;                                                \n"
-     << "  if(overwritten_args.size() != called->arg_size()) {              \n"
-     << "       llvm::errs() << overwritten_args.size() << \" \" << "
-        "called->arg_size() << \"\\n\";\n"
-     << "       assert(overwritten_args.size() == called->arg_size());      \n"
-     << "  }                                                                \n"
+     //<< "  if(overwritten_args.size() != called->arg_size()) { \n"
+     //<< "       llvm::errs() << overwritten_args.size() << \" \" << "
+     //   "called->arg_size() << \"\\n\";\n"
+     //<< "       assert(overwritten_args.size() == called->arg_size()); \n"
+     //<< "  } \n"
      << "  bool result = true;                                              \n"
-     << "  std::map<llvm::Argument *, bool> uncacheable_args;               \n"
-     << "  for (size_t i = 0; i < called->arg_size(); i++) {                \n"
-     << "       bool overwritten = overwritten_args[i];                     \n"
-     << "       llvm::Argument *arg = called->getArg(i);                    \n"
-     << "       auto entry = std::pair<llvm::Argument *, "
-        "bool>(arg, overwritten);                         \n"
-     << "       uncacheable_args.insert(entry);                             \n"
-     << "  }                                                                \n"
      << "  if (!gutils->isConstantInstruction(&call)) {                     \n"
      << "    Type *fpType;                                                  \n"
      << "    if (blas.floatType == \"d\") {                                 \n"
@@ -848,8 +840,7 @@ void emit_handleBLAS(const std::vector<TGPattern> &blasPatterns,
     os << "    " << ((first) ? "" : "} else ") << " if (blas.function == \""
        << name << "\") {                           \n"
        << "      result = handle_" << name
-       << "(blas, call, called, uncacheable_args, fpType);                    "
-          "\n";
+       << "(blas, call, called, overwritten_args, fpType);                 \n";
     first = false;
   }
   os << "    } else {                                                       \n"
@@ -872,7 +863,7 @@ void emit_beginning(TGPattern &pattern, raw_ostream &os) {
   auto name = pattern.getName();
   os << "\nbool handle_" << name
      << "(BlasInfo blas, llvm::CallInst &call, llvm::Function *called,\n"
-     << "    const std::map<llvm::Argument *, bool> &uncacheable_args, "
+     << "    const std::vector<bool> &overwritten_args, "
         "llvm::Type *fpType) "
         "{\n"
      << "  \n"
@@ -882,7 +873,9 @@ void emit_beginning(TGPattern &pattern, raw_ostream &os) {
      << "  IRBuilder<> BuilderZ(newCall);\n"
      << "  BuilderZ.setFastMathFlags(getFast());\n"
      << "  IRBuilder<> allocationBuilder(gutils->inversionAllocs);\n"
-     << "  allocationBuilder.setFastMathFlags(getFast());\n";
+     << "  allocationBuilder.setFastMathFlags(getFast());\n"
+     << "  // never cache in Fwd Mode\n"
+     << "  bool cacheMode = (Mode != DerivativeMode::ForwardMode);\n";
   // not yet needed for lv-1
   //<< "  auto &DL = gutils->oldFunc->getParent()->getDataLayout();\n";
 }
@@ -928,8 +921,8 @@ void emit_helper(TGPattern &pattern, raw_ostream &os) {
     auto name = nameVec[i];
     os << "  auto arg_" << name << " = call.getArgOperand(" << i << ");\n"
        << "  auto type_" << name << " = arg_" << name << "->getType();\n"
-       << "  bool uncacheable_" << name
-       << " = uncacheable_args.find(calledArg)->second;\n"
+       << "  bool uncacheable_" << name << " = (cacheMode ? overwritten_args["
+       << i << "] : false);\n"
        << "  calledArg++;\n";
     if (std::count(actArgs.begin(), actArgs.end(), i)) {
       os << "  bool active_" << name << " = !gutils->isConstantValue(arg_"

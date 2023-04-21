@@ -155,13 +155,15 @@ void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
     }
   }
 
-  for (size_t i = 0; i < nameVec.size(); i++) {
-    auto typeOfArg = typeMap.lookup(i);
+  // TODO (april 2023) maybe move to ActiveArgs usage?
+  for (size_t i = 0; i < actArgs.size(); i++) {
+    size_t argIdx = actArgs[i];
+    auto typeOfArg = typeMap.lookup(argIdx);
     if (typeOfArg != argType::vincData)
       continue;
-    assert(typeMap.lookup(i+1) == argType::vincInc);
-    auto vecName = nameVec[i];
-    auto incName = nameVec[i+1];
+    assert(typeMap.lookup(argIdx+1) == argType::vincInc);
+    auto vecName = nameVec[argIdx];
+    auto incName = nameVec[argIdx+1];
     // TODO: remove last hardcoded len_n usages to support blas lv2/3 
     os
 << "    if (cache_" << vecName << ") {\n"
@@ -180,7 +182,8 @@ void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
     for (size_t j = 0; j < nameVec.size(); j++) {
       os 
 << ((j==0) ? "" : ", ")
-<< ((i == j) ? "ValueType::Shadow" : "ValueType::None");
+// TODO (april 2023) next line evtl. i instead of argIdx?
+<< ((argIdx == j) ? "ValueType::Shadow" : "ValueType::None");
     }
     os
 << "},\n"
@@ -259,6 +262,7 @@ void emit_caching(TGPattern &pattern, raw_ostream &os) {
 
   for (auto actEn : llvm::enumerate(actArgs)) {
     auto name = nameVec[actEn.value()];
+    // TODO: (april 2023) re-check castvals index
     os 
 << "  if (cache_" << name << ")\n"
 << "    cacheTypes.push_back(castvals[" << actEn.index() << "]);\n";
