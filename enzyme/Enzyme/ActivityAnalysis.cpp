@@ -829,9 +829,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
         llvm::errs() << "known inactive intrinsic " << *I << "\n";
       InsertConstantInstruction(TR, I);
       return true;
-    } else if (II->getCalledFunction() &&
-               II->getCalledFunction()->getName().startswith(
-                   "llvm.intel.subscript")) {
+    } else if (isIntelSubscriptIntrinsic(*II)) {
       // The intrinsic "llvm.intel.subscript" does not propogate deriviative
       // information directly. But its returned pointer may be active.
       InsertConstantInstruction(TR, I);
@@ -2470,8 +2468,7 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
                      << *inst << "\n";
       return true;
     }
-    if (II->getCalledFunction() &&
-        II->getCalledFunction()->getName().startswith("llvm.intel.subscript")) {
+    if (isIntelSubscriptIntrinsic(*II)) {
       // The only argument that can make an llvm.intel.subscript intrinsic
       // active is the pointer operand
       const unsigned int ptrArgIdx = 3;
@@ -2856,9 +2853,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
     }
 
     if (auto II = dyn_cast<IntrinsicInst>(a)) {
-      if (II->getCalledFunction() &&
-          II->getCalledFunction()->getName().startswith(
-              "llvm.intel.subscript") &&
+      if (isIntelSubscriptIntrinsic(*II) &&
           (II->getOperand(/*ptrArgIdx=*/3) != parent)) {
         continue;
       }

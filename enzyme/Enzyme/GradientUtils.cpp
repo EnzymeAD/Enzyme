@@ -1180,49 +1180,45 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       unwrap_cache[BuilderM.GetInsertBlock()][idx.first][idx.second] = toreturn;
     assert(val->getType() == toreturn->getType());
     return toreturn;
-  } else if (auto II = dyn_cast<IntrinsicInst>(val)) {
-    if (II->getCalledFunction() &&
-        II->getCalledFunction()->getName().startswith("llvm.intel.subscript")) {
+  } else if (auto II = dyn_cast<IntrinsicInst>(val);
+             II && isIntelSubscriptIntrinsic(*II)) {
+    const std::array<size_t, 4> idxArgsIndices{{0, 1, 2, 4}};
+    const size_t ptrArgIndex = 3;
 
-      const std::array<size_t, 4> idxArgsIndices{{0, 1, 2, 4}};
-      const size_t ptrArgIndex = 3;
-
-      SmallVector<Value *, 5> args(5);
-      for (auto i : idxArgsIndices) {
-        Value *a = II->getOperand(i);
-        auto op = getOp(a);
-        if (op == nullptr)
-          goto endCheck;
-        args[i] = op;
-      }
-      auto ptr = getOp(II->getOperand(ptrArgIndex));
-      if (ptr == nullptr)
+    SmallVector<Value *, 5> args(5);
+    for (auto i : idxArgsIndices) {
+      Value *a = II->getOperand(i);
+      auto op = getOp(a);
+      if (op == nullptr)
         goto endCheck;
-      args[ptrArgIndex] = ptr;
+      args[i] = op;
+    }
+    auto ptr = getOp(II->getOperand(ptrArgIndex));
+    if (ptr == nullptr)
+      goto endCheck;
+    args[ptrArgIndex] = ptr;
 
-      auto toreturn = BuilderM.CreateCall(II->getCalledFunction(), args,
-                                          II->getName() + "_unwrap");
+    auto toreturn = BuilderM.CreateCall(II->getCalledFunction(), args,
+                                        II->getName() + "_unwrap");
 
 #if LLVM_VERSION_MAJOR >= 13
-      if (isa<CallInst>(toreturn)) {
-        // Must copy the elementtype attribute as it is needed by the intrinsic
-        cast<CallInst>(toreturn)->addParamAttr(
-            ptrArgIndex,
-            II->getParamAttr(ptrArgIndex, Attribute::AttrKind::ElementType));
-      }
-#endif
-      if (auto newi = dyn_cast<Instruction>(toreturn)) {
-        newi->copyIRFlags(II);
-        unwrappedLoads[newi] = val;
-        if (newi->getParent()->getParent() != II->getParent()->getParent())
-          newi->setDebugLoc(nullptr);
-      }
-      if (permitCache)
-        unwrap_cache[BuilderM.GetInsertBlock()][idx.first][idx.second] =
-            toreturn;
-      assert(val->getType() == toreturn->getType());
-      return toreturn;
+    if (isa<CallInst>(toreturn)) {
+      // Must copy the elementtype attribute as it is needed by the intrinsic
+      cast<CallInst>(toreturn)->addParamAttr(
+          ptrArgIndex,
+          II->getParamAttr(ptrArgIndex, Attribute::AttrKind::ElementType));
     }
+#endif
+    if (auto newi = dyn_cast<Instruction>(toreturn)) {
+      newi->copyIRFlags(II);
+      unwrappedLoads[newi] = val;
+      if (newi->getParent()->getParent() != II->getParent()->getParent())
+        newi->setDebugLoc(nullptr);
+    }
+    if (permitCache)
+      unwrap_cache[BuilderM.GetInsertBlock()][idx.first][idx.second] = toreturn;
+    assert(val->getType() == toreturn->getType());
+    return toreturn;
   } else if (auto load = dyn_cast<LoadInst>(val)) {
     if (load->getMetadata("enzyme_noneedunwrap"))
       return load;
@@ -4232,8 +4228,7 @@ bool GradientUtils::shouldRecompute(const Value *val,
   }
 
   if (auto op = dyn_cast<IntrinsicInst>(val)) {
-    if (op->getCalledFunction() &&
-        op->getCalledFunction()->getName().startswith("llvm.intel.subscript")) {
+    if (isIntelSubscriptIntrinsic(*op)) {
       return true;
     }
     if (!op->mayReadOrWriteMemory())
@@ -5851,8 +5846,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
     return antialloca;
   } else if (auto II = dyn_cast<IntrinsicInst>(oval)) {
-    if (II->getCalledFunction() &&
-        II->getCalledFunction()->getName().contains("llvm.intel.subscript")) {
+    if (isIntelSubscriptIntrinsic(*II)) {
       IRBuilder<> bb(getNewFromOriginal(II));
 
       const std::array<size_t, 4> idxArgsIndices{{0, 1, 2, 4}};
@@ -8517,9 +8511,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         storingOps.insert(store);
       }
     } else if (auto II = dyn_cast<IntrinsicInst>(cur)) {
-      if (II->getCalledFunction() &&
-          II->getCalledFunction()->getName().startswith(
-              "llvm.intel.subscript")) {
+      if (isIntelSubscriptIntrinsic(*II)) {
         for (auto u : II->users()) {
           if (auto I = dyn_cast<Instruction>(u)) {
             todo.push_back(std::make_pair(I, (Value *)cur));

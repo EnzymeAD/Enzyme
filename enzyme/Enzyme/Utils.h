@@ -1156,6 +1156,17 @@ static inline bool shouldDisableNoWrite(const llvm::CallInst *CI) {
   return false;
 }
 
+static inline bool isIntelSubscriptIntrinsic(const llvm::IntrinsicInst &II) {
+  return getFuncNameFromCall(&II).startswith("llvm.intel.subscript");
+}
+
+static inline bool isIntelSubscriptIntrinsic(const llvm::Value *val) {
+  if (auto II = llvm::dyn_cast<llvm::IntrinsicInst>(val)) {
+    return isIntelSubscriptIntrinsic(*II);
+  }
+  return false;
+}
+
 static inline bool isPointerArithmeticInst(const llvm::Value *V,
                                            bool includephi = true,
                                            bool includebin = true) {

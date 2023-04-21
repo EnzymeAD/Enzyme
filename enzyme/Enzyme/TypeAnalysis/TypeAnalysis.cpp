@@ -3574,8 +3574,7 @@ void TypeAnalyzer::visitInvokeInst(InvokeInst &call) {
 }
 
 void analyzeIntelSubscriptIntrinsic(IntrinsicInst &II, TypeAnalyzer &TA) {
-  assert(II.getCalledFunction() &&
-         II.getCalledFunction()->getName().contains("llvm.intel.subscript"));
+  assert(isIntelSubscriptIntrinsic(II));
   assert(II.arg_size() == 5);
 
   constexpr size_t idxArgsIndices[4] = {0, 1, 2, 4};

@@ -272,8 +272,7 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
 
   Intrinsic::ID ID = Intrinsic::not_intrinsic;
   if (auto II = dyn_cast<IntrinsicInst>(user)) {
-    if (II->getCalledFunction() &&
-        II->getCalledFunction()->getName().startswith("llvm.intel.subscript")) {
+    if (isIntelSubscriptIntrinsic(*II)) {
       return false;
     }
     ID = II->getIntrinsicID();

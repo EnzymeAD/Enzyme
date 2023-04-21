@@ -182,15 +182,12 @@ struct CacheAnalysis {
         EmitWarning("UncacheableOrigin", *gep, "origin gep may need caching ",
                     *gep);
       }
-    } else if (auto II = dyn_cast<IntrinsicInst>(obj)) {
-      if (II->getCalledFunction() &&
-          II->getCalledFunction()->getName().startswith(
-              "llvm.intel.subscript")) {
-        mustcache = is_value_mustcache_from_origin(II->getOperand(3));
-        if (mustcache) {
-          EmitWarning("UncacheableOrigin", *II,
-                      "origin llvm.intel.subscript may need caching ", *II);
-        }
+    } else if (auto II = dyn_cast<IntrinsicInst>(obj);
+               II && isIntelSubscriptIntrinsic(*II)) {
+      mustcache = is_value_mustcache_from_origin(II->getOperand(3));
+      if (mustcache) {
+        EmitWarning("UncacheableOrigin", *II,
+                    "origin llvm.intel.subscript may need caching ", *II);
       }
     } else {
 
@@ -756,7 +753,10 @@ void calculateUnusedValuesInFunction(
                   if (isDeallocationCall(I, TLI))
                     continue;
                 }
-                if (auto CI = dyn_cast<CallInst>(u)) {
+                if (auto II = dyn_cast<IntrinsicInst>(u);
+                    II && isIntelSubscriptIntrinsic(*II)) {
+                  todo.push_back(&*u);
+                } else if (auto CI = dyn_cast<CallInst>(u)) {
                   bool writeOnlyNoCapture = true;
                   if (shouldDisableNoWrite(CI)) {
                     writeOnlyNoCapture = false;
@@ -784,16 +784,9 @@ void calculateUnusedValuesInFunction(
                     continue;
                   }
                 }
-
                 if (isa<CastInst>(u) || isa<GetElementPtrInst>(u) ||
                     isa<PHINode>(u)) {
                   todo.push_back(&*u);
-                } else if (auto II = dyn_cast<IntrinsicInst>(u)) {
-                  if (II->getCalledFunction() &&
-                      II->getCalledFunction()->getName().startswith(
-                          "llvm.intel.subscript")) {
-                    todo.push_back(&*u);
-                  }
                 } else {
                   legal = false;
                   break;
@@ -804,13 +797,10 @@ void calculateUnusedValuesInFunction(
               return true;
             }
           }
-        } else if (auto II = dyn_cast<IntrinsicInst>(v)) {
-          if (II->getCalledFunction() &&
-              II->getCalledFunction()->getName().startswith(
-                  "llvm.intel.subscript")) {
-            unsigned int ptrArgIdx = 3;
-            return isNoNeed(II->getOperand(ptrArgIdx));
-          }
+        } else if (auto II = dyn_cast<IntrinsicInst>(v);
+                   II && isIntelSubscriptIntrinsic(*II)) {
+          unsigned int ptrArgIdx = 3;
+          return isNoNeed(II->getOperand(ptrArgIdx));
         }
         return false;
       };

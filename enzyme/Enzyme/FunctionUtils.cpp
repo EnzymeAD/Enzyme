@@ -337,9 +337,7 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
       continue;
     }
     if (auto II = dyn_cast<IntrinsicInst>(inst)) {
-      if (II->getCalledFunction() &&
-          II->getCalledFunction()->getName().startswith(
-              "llvm.intel.subscript")) {
+      if (isIntelSubscriptIntrinsic(*II)) {
 
         const std::array<size_t, 4> idxArgsIndices{{0, 1, 2, 4}};
         const size_t ptrArgIndex = 3;
@@ -1533,9 +1531,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
               }
 
               if (auto II = dyn_cast<IntrinsicInst>(u)) {
-                if (II->getCalledFunction() &&
-                    II->getCalledFunction()->getName().startswith(
-                        "llvm.intel.subscript")) {
+                if (isIntelSubscriptIntrinsic(*II)) {
                   todo.push_back(u);
                   continue;
                 }

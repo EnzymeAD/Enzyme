@@ -3865,8 +3865,7 @@ public:
     // not fully understood by LLVM. One of the results of this is that the ID
     // of the intrinsic is set to Intrinsic::not_intrinsic - hence we are
     // handling the intrinsic here.
-    if (II.getCalledFunction() &&
-        II.getCalledFunction()->getName().startswith("llvm.intel.subscript")) {
+    if (isIntelSubscriptIntrinsic(II)) {
       if (Mode == DerivativeMode::ForwardModeSplit ||
           Mode == DerivativeMode::ForwardMode) {
         forwardModeInvertedPointerFallback(II);
@@ -5750,8 +5749,8 @@ public:
                 if (align)
                   rmw->setAlignment(align.getValue());
 #else
-              B.CreateAtomicRMW(op, vptr, vdif, AtomicOrdering::Monotonic,
-                                SyncScope::System);
+                B.CreateAtomicRMW(op, vptr, vdif, AtomicOrdering::Monotonic,
+                                  SyncScope::System);
 #endif
               }
             } else {
@@ -5764,8 +5763,8 @@ public:
               if (align)
                 rmw->setAlignment(align.getValue());
 #else
-            B.CreateAtomicRMW(op, ptr, dif, AtomicOrdering::Monotonic,
-                              SyncScope::System);
+              B.CreateAtomicRMW(op, ptr, dif, AtomicOrdering::Monotonic,
+                                SyncScope::System);
 #endif
             }
 #else
