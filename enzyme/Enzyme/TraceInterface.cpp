@@ -207,7 +207,6 @@ StaticTraceInterface::StaticTraceInterface(Module *M)
 
 #if LLVM_VERSION_MAJOR >= 9
   newTraceFunction->addFnAttr(Attribute::NoFree);
-  freeTraceFunction->addFnAttr(Attribute::NoFree);
   getTraceFunction->addFnAttr(Attribute::NoFree);
   getChoiceFunction->addFnAttr(Attribute::NoFree);
   getLikelihoodFunction->addFnAttr(Attribute::NoFree);
@@ -221,7 +220,6 @@ StaticTraceInterface::StaticTraceInterface(Module *M)
   sampleFunction->addFnAttr(Attribute::NoFree);
 #else
   newTraceFunction->addFnAttr("nofree");
-  freeTraceFunction->addFnAttr("nofree");
   getTraceFunction->addFnAttr("nofree");
   getChoiceFunction->addFnAttr("nofree");
   getLikelihoodFunction->addFnAttr("nofree");
