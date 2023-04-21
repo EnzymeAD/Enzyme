@@ -149,6 +149,10 @@ cl::opt<bool>
 
 cl::opt<bool> EnzymeSelectOpt("enzyme-select-opt", cl::init(true), cl::Hidden,
                               cl::desc("Run Enzyme select optimization"));
+
+cl::opt<int> EnzymePostOptLevel(
+    "enzyme-post-opt-level", cl::init(0), cl::Hidden,
+    cl::desc("Post optimization level within Enzyme differentiated function"));
 }
 
 /// Is the use of value val as an argument of call CI potentially captured
@@ -2399,6 +2403,35 @@ void PreProcessCache::optimizeIntermediate(Function *F) {
 
   PreservedAnalyses PA;
   FAM.invalidate(*F, PA);
+
+#if LLVM_VERSION_MAJOR < 14
+  using OptimizationLevel = llvm::PassBuilder::OptimizationLevel;
+#endif
+  OptimizationLevel Level = OptimizationLevel::O0;
+
+  switch (EnzymePostOptLevel) {
+  default:
+  case 0:
+    Level = OptimizationLevel::O0;
+    break;
+  case 1:
+    Level = OptimizationLevel::O1;
+    break;
+  case 2:
+    Level = OptimizationLevel::O2;
+    break;
+  case 3:
+    Level = OptimizationLevel::O3;
+    break;
+  }
+  if (Level != OptimizationLevel::O0) {
+    PassBuilder PB;
+    FunctionPassManager FPM =
+        PB.buildFunctionSimplificationPipeline(Level, ThinOrFullLTOPhase::None);
+    PA = FPM.run(*F, FAM);
+    FAM.invalidate(*F, PA);
+  }
+
   // TODO actually run post optimizations.
 }
 
