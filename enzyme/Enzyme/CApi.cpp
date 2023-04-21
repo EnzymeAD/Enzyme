@@ -185,8 +185,8 @@ EnzymeTraceInterfaceRef CreateEnzymeStaticTraceInterface(LLVMModuleRef M) {
 
 EnzymeTraceInterfaceRef
 CreateEnzymeDynamicTraceInterface(LLVMValueRef interface, LLVMValueRef F) {
-  return (EnzymeTraceInterfaceRef)(
-      new DynamicTraceInterface(unwrap(interface), cast<Function>(unwrap(F))));
+  return (EnzymeTraceInterfaceRef)(new DynamicTraceInterface(
+      unwrap(interface), cast<Function>(unwrap(F))));
 }
 
 void ClearEnzymeLogic(EnzymeLogicRef Ref) { eunwrap(Ref).clear(); }
@@ -379,17 +379,39 @@ void EnzymeGradientUtilsAddToDiffe(DiffeGradientUtils *gutils, LLVMValueRef val,
   gutils->addToDiffe(unwrap(val), unwrap(diffe), *unwrap(B), unwrap(T));
 }
 
-void EnzymeGradientUtilsAddToInvertedPointerDiffe(DiffeGradientUtils *gutils, LLVMValueRef orig,
-            LLVMValueRef addingType, unsigned start, unsigned size, LLVMValueRef origptr, LLVMValueRef dif,
-            LLVMBuilderRef BuilderM, unsigned align, LLVMValueRef mask) {
+void EnzymeGradientUtilsAddToInvertedPointerDiffe(
+    DiffeGradientUtils *gutils, LLVMValueRef orig, LLVMTypeRef addingType,
+    unsigned start, unsigned size, LLVMValueRef origptr, LLVMValueRef dif,
+    LLVMBuilderRef BuilderM, unsigned align, LLVMValueRef mask) {
 #if LLVM_VERSION_MAJOR >= 10
-    MaybeAlign align2;
-    if (align)
-        align2 = MaybeAlign(align);
+  MaybeAlign align2;
+  if (align)
+    align2 = MaybeAlign(align);
 #else
-    auto align2 = align
+  auto align2 =
+      align
 #endif
-  gutils->addToInvertedPtrDiffe(unwrap(orig), unwrap(uddingType), start, size, unwrap(origptr), unwrap(dif), *unwrap(BuilderM), align2, unwrap(mask));
+  gutils->addToInvertedPtrDiffe(
+      cast_or_null<Instruction>(unwrap(orig)), unwrap(addingType), start, size,
+      unwrap(origptr), unwrap(dif), *unwrap(BuilderM), align2, unwrap(mask));
+}
+
+void EnzymeGradientUtilsAddToInvertedPointerDiffeTT(
+    DiffeGradientUtils *gutils, LLVMValueRef orig, CTypeTreeRef vd,
+    unsigned LoadSize, LLVMValueRef origptr, LLVMValueRef prediff,
+    LLVMBuilderRef BuilderM, unsigned align, LLVMValueRef premask) {
+#if LLVM_VERSION_MAJOR >= 10
+  MaybeAlign align2;
+  if (align)
+    align2 = MaybeAlign(align);
+#else
+  auto align2 =
+      align
+#endif
+  gutils->addToInvertedPtrDiffe(cast_or_null<Instruction>(unwrap(orig)),
+                                *(TypeTree *)vd, LoadSize, unwrap(origptr),
+                                unwrap(prediff), *unwrap(BuilderM), align2,
+                                unwrap(premask));
 }
 
 void EnzymeGradientUtilsSetDiffe(DiffeGradientUtils *gutils, LLVMValueRef val,

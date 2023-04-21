@@ -777,112 +777,32 @@ public:
       case DerivativeMode::ReverseModeGradient:
       case DerivativeMode::ReverseModeCombined: {
 
-        unsigned start = 0;
-        unsigned size = LoadSize;
-
-        Value *prediff = nullptr;
-        Value *premask = nullptr;
-        BasicBlock *merge = nullptr;
-
         IRBuilder<> Builder2(parent);
         getReverseBuilder(Builder2);
 
-        while (1) {
-          unsigned nextStart = size;
+        Value *prediff = nullptr;
 
-          auto dt = vd[{-1}];
-          for (size_t i = start; i < size; ++i) {
-            bool Legal = true;
-            dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
-            if (!Legal) {
-              nextStart = i;
-              break;
-            }
-          }
-          if (!dt.isKnown()) {
-            TR.dump();
-            llvm::errs() << " vd:" << vd.str() << " start:" << start
-                         << " size: " << size << " dt:" << dt.str() << "\n";
-          }
-          assert(dt.isKnown());
-
-          if (Type *isfloat = dt.isFloat()) {
-
-            if (prediff == nullptr) {
-              prediff = diffe(&I, Builder2);
-            }
-
-            if (start == 0 && nextStart == LoadSize) {
-              setDiffe(&I, Constant::getNullValue(type), Builder2);
-            } else {
-              Value *tostore =
-                  ((DiffeGradientUtils *)gutils)->getDifferential(&I);
-
-              auto i8 = Type::getInt8Ty(tostore->getContext());
-              if (start != 0) {
-                tostore = Builder2.CreatePointerCast(
-                    tostore,
-                    PointerType::get(i8, cast<PointerType>(tostore->getType())
-                                             ->getAddressSpace()));
-                auto off = ConstantInt::get(
-                    Type::getInt64Ty(tostore->getContext()), start);
-#if LLVM_VERSION_MAJOR > 7
-                tostore = Builder2.CreateInBoundsGEP(i8, tostore, off);
-#else
-                tostore = Builder2.CreateInBoundsGEP(tostore, off);
-#endif
-              }
-              auto AT = ArrayType::get(i8, nextStart - start);
-              tostore = Builder2.CreatePointerCast(
-                  tostore,
-                  PointerType::get(AT, cast<PointerType>(tostore->getType())
-                                           ->getAddressSpace()));
-              Builder2.CreateStore(Constant::getNullValue(AT), tostore);
-            }
-
-            if (!premask && mask &&
-                (!gutils->isConstantValue(I.getOperand(0)) ||
-                 !gutils->isConstantValue(orig_maskInit))) {
-              premask = lookup(mask, Builder2);
-            }
-
-            if (!gutils->isConstantValue(I.getOperand(0))) {
-              if (EnzymeRuntimeActivityCheck && !merge) {
-                Value *shadow = Builder2.CreateICmpNE(
-                    lookup(gutils->getNewFromOriginal(I.getOperand(0)),
-                           Builder2),
-                    lookup(gutils->invertPointerM(I.getOperand(0), Builder2),
-                           Builder2));
-
-                BasicBlock *current = Builder2.GetInsertBlock();
-                BasicBlock *conditional = gutils->addReverseBlock(
-                    current, current->getName() + "_active");
-                merge = gutils->addReverseBlock(conditional,
-                                                current->getName() + "_amerge");
-                Builder2.CreateCondBr(shadow, conditional, merge);
-                Builder2.SetInsertPoint(conditional);
-              }
-              // Masked partial type is unhanled.
-              if (premask)
-                assert(start == 0 && nextStart == LoadSize);
-              ((DiffeGradientUtils *)gutils)
-                  ->addToInvertedPtrDiffe(&I, isfloat, start, nextStart - start,
-                                          I.getOperand(0), prediff, Builder2,
-                                          alignment, premask);
-            }
-          }
-
-          if (nextStart == size)
+        for (ssize_t i = 0; i < (ssize_t)LoadSize; ++i) {
+          if (vd[{(int)i}].isFloat()) {
+            prediff = diffe(&I, Builder2);
             break;
-          start = nextStart;
-        }
-        if (merge) {
-          Builder2.CreateBr(merge);
-          Builder2.SetInsertPoint(merge);
+          }
         }
 
-        start = 0;
-        size = LoadSize;
+        Value *premask = nullptr;
+
+        if (prediff && mask &&
+            (!gutils->isConstantValue(I.getOperand(0)) ||
+             !gutils->isConstantValue(orig_maskInit))) {
+          premask = lookup(mask, Builder2);
+        }
+
+        ((DiffeGradientUtils *)gutils)
+            ->addToInvertedPtrDiffe(&I, vd, LoadSize, I.getOperand(0), prediff,
+                                    Builder2, alignment, premask);
+
+        unsigned start = 0;
+        unsigned size = LoadSize;
 
         while (1) {
           unsigned nextStart = size;
