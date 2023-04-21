@@ -35,7 +35,6 @@ attributes #0 = { argmemonly nounwind }
 
 ; CHECK: define internal void @fwddiffe3memcpy_ptr(i8* nocapture %dst, [3 x i8*] %"dst'", i8* nocapture readonly %src, [3 x i8*] %"src'", i64 %num)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 8 %dst, i8* align 8 %src, i64 %num, i1 false)
 ; CHECK-NEXT:   %0 = extractvalue [3 x i8*] %"dst'", 0
 ; CHECK-NEXT:   %1 = extractvalue [3 x i8*] %"src'", 0
 ; CHECK-NEXT:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 8 %0, i8* align 8 %1, i64 %num, i1 false)
@@ -45,5 +44,6 @@ attributes #0 = { argmemonly nounwind }
 ; CHECK-NEXT:   %4 = extractvalue [3 x i8*] %"dst'", 2
 ; CHECK-NEXT:   %5 = extractvalue [3 x i8*] %"src'", 2
 ; CHECK-NEXT:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 8 %4, i8* align 8 %5, i64 %num, i1 false)
+; CHECK-NEXT:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 8 %dst, i8* align 8 %src, i64 %num, i1 false)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

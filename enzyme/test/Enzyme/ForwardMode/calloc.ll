@@ -29,11 +29,8 @@ declare dso_local double @__enzyme_fwddiff(i8*, ...)
 
 ; CHECK: define internal double @fwddiffef(double %x, double %"x'", i64 %arg)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %call = call noalias i8* @calloc(i64 8, i64 %arg)
 ; CHECK-NEXT:   %0 = call noalias i8* @calloc(i64 8, i64 %arg)
 ; CHECK-NEXT:   %"'ipc" = bitcast i8* %0 to double*
-; CHECK-NEXT:   %1 = bitcast i8* %call to double*
-; CHECK-NEXT:   store double %x, double* %1, align 8
 ; CHECK-NEXT:   store double %"x'", double* %"'ipc", align 8
 ; CHECK-NEXT:   %[[i2:.+]] = load double, double* %"'ipc", align 8
 ; CHECK-NEXT:   ret double %[[i2]]

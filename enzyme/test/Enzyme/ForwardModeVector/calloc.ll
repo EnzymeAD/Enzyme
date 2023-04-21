@@ -31,15 +31,12 @@ declare dso_local %struct.Gradients @__enzyme_fwddiff(i8*, ...)
 
 ; CHECK: define {{[^@]+}}@fwddiffe3f(double [[X:%.*]], [3 x double] %"x'", i64 [[ARG:%.*]])
 ; CHECK-NEXT:  entry:
-; CHECK-NEXT:    [[CALL:%.*]] = call noalias i8* @calloc(i64 8, i64 [[ARG]])
 ; CHECK-NEXT:    [[TMP0:%.*]] = call noalias i8* @calloc(i64 8, i64 [[ARG]])
 ; CHECK-NEXT:    [[TMP1:%.*]] = call noalias i8* @calloc(i64 8, i64 [[ARG]]) 
 ; CHECK-NEXT:    [[TMP2:%.*]] = call noalias i8* @calloc(i64 8, i64 [[ARG]])
 ; CHECK-NEXT:    %"'ipc" = bitcast i8* [[TMP0]] to double*
 ; CHECK-NEXT:    %"'ipc2" = bitcast i8* [[TMP1]] to double*
 ; CHECK-NEXT:    %"'ipc3" = bitcast i8* [[TMP2]] to double*
-; CHECK-NEXT:    [[TMP3:%.*]] = bitcast i8* [[CALL]] to double*
-; CHECK-NEXT:    store double [[X]], double* [[TMP3]], align 8
 ; CHECK-NEXT:    [[TMP4:%.*]] = extractvalue [3 x double] %"x'", 0
 ; CHECK-NEXT:    store double [[TMP4]], double* %"'ipc", align 8
 ; CHECK-NEXT:    [[TMP5:%.*]] = extractvalue [3 x double] %"x'", 1

@@ -729,12 +729,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
     dif = applyChainRule(addingType, BuilderM, rule, dif);
   }
 
-  auto TmpOrig =
-#if LLVM_VERSION_MAJOR >= 12
-      getUnderlyingObject(origptr, 100);
-#else
-      GetUnderlyingObject(origptr, oldFunc->getParent()->getDataLayout(), 100);
-#endif
+  auto TmpOrig = getBaseObject(origptr);
 
   // atomics
   bool Atomic = AtomicAdd;

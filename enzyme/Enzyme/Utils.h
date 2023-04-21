@@ -28,6 +28,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 
 #include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicInst.h"
@@ -1001,9 +1002,9 @@ public:
 };
 
 template <typename T> static inline llvm::Function *getFunctionFromCall(T *op) {
-  llvm::Function *called = nullptr;
+  const llvm::Function *called = nullptr;
   using namespace llvm;
-  llvm::Value *callVal;
+  const llvm::Value *callVal;
 #if LLVM_VERSION_MAJOR >= 11
   callVal = op->getCalledOperand();
 #else
@@ -1028,7 +1029,7 @@ template <typename T> static inline llvm::Function *getFunctionFromCall(T *op) {
 #endif
     break;
   }
-  return called;
+  return called ? const_cast<llvm::Function *>(called) : nullptr;
 }
 
 template <typename T> static inline llvm::StringRef getFuncNameFromCall(T *op) {
@@ -1151,4 +1152,105 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
 
 llvm::Function *GetFunctionFromValue(llvm::Value *fn);
 
+static inline bool shouldDisableNoWrite(const llvm::CallInst *CI) {
+  auto F = getFunctionFromCall(CI);
+  auto funcName = getFuncNameFromCall(CI);
+
+  if (CI->hasFnAttr("enzyme_preserve_primal") ||
+      hasMetadata(CI, "enzyme_augment") || hasMetadata(CI, "enzyme_gradient") ||
+      hasMetadata(CI, "enzyme_derivative") ||
+      hasMetadata(CI, "enzyme_splitderivative") ||
+      (F &&
+       (F->hasFnAttribute("enzyme_preserve_primal") ||
+        hasMetadata(F, "enzyme_augment") || hasMetadata(F, "enzyme_gradient") ||
+        hasMetadata(F, "enzyme_derivative") ||
+        hasMetadata(F, "enzyme_splitderivative"))) ||
+      !F) {
+    return true;
+  }
+  if (funcName == "MPI_Wait" || funcName == "MPI_Waitall") {
+    return true;
+  }
+  return false;
+}
+
+static inline llvm::Value *getBaseObject(llvm::Value *V) {
+  while (true) {
+    if (auto CI = llvm::dyn_cast<llvm::CastInst>(V)) {
+      V = CI->getOperand(0);
+      continue;
+    } else if (auto CI = llvm::dyn_cast<llvm::GetElementPtrInst>(V)) {
+      V = CI->getOperand(0);
+      continue;
+    } else if (auto CI = llvm::dyn_cast<llvm::PHINode>(V)) {
+      if (CI->getNumIncomingValues() == 1) {
+        V = CI->getOperand(0);
+        continue;
+      }
+    } else if (auto *GA = llvm::dyn_cast<llvm::GlobalAlias>(V)) {
+      if (GA->isInterposable())
+        break;
+      V = GA->getAliasee();
+      continue;
+    } else if (auto CE = llvm::dyn_cast<llvm::ConstantExpr>(V)) {
+      if (CE->isCast() || CE->getOpcode() == llvm::Instruction::GetElementPtr) {
+        V = CE->getOperand(0);
+        continue;
+      }
+    } else if (auto *Call = llvm::dyn_cast<llvm::CallInst>(V)) {
+      auto funcName = getFuncNameFromCall(Call);
+      if (funcName == "julia.pointer_from_objref") {
+        V = Call->getArgOperand(0);
+        continue;
+      }
+
+      // CaptureTracking can know about special capturing properties of some
+      // intrinsics like launder.invariant.group, that can't be expressed with
+      // the attributes, but have properties like returning aliasing pointer.
+      // Because some analysis may assume that nocaptured pointer is not
+      // returned from some special intrinsic (because function would have to
+      // be marked with returns attribute), it is crucial to use this function
+      // because it should be in sync with CaptureTracking. Not using it may
+      // cause weird miscompilations where 2 aliasing pointers are assumed to
+      // noalias.
+#if LLVM_VERSION_MAJOR >= 10
+      if (auto *RP = llvm::getArgumentAliasingToReturnedPointer(Call, false)) {
+        V = RP;
+        continue;
+      }
+#endif
+    }
+#if LLVM_VERSION_MAJOR < 10
+#if LLVM_VERSION_MAJOR <= 7
+    if (auto CS = llvm::CallSite(V))
+#else
+    if (auto CS = llvm::dyn_cast<llvm::CallBase>(V))
+#endif
+    {
+      if (auto *RP = llvm::getArgumentAliasingToReturnedPointer(CS)) {
+        V = RP;
+        continue;
+      }
+    }
+#endif
+
+    if (auto I = llvm::dyn_cast<llvm::Instruction>(V)) {
+#if LLVM_VERSION_MAJOR >= 12
+      auto V2 = llvm::getUnderlyingObject(I, 100);
+#else
+      auto V2 = llvm::GetUnderlyingObject(
+          I, I->getParent()->getParent()->getParent()->getDataLayout(), 100);
+#endif
+      if (V2 != V) {
+        V = V2;
+        break;
+      }
+    }
+    break;
+  }
+  return V;
+}
+static inline const llvm::Value *getBaseObject(const llvm::Value *V) {
+  return getBaseObject(const_cast<llvm::Value *>(V));
+}
 #endif

@@ -4225,12 +4225,7 @@ bool GradientUtils::shouldRecompute(const Value *val,
 
 MDNode *GradientUtils::getDerivativeAliasScope(const Value *origptr,
                                                ssize_t newptr) {
-  origptr =
-#if LLVM_VERSION_MAJOR >= 12
-      getUnderlyingObject(origptr, 100);
-#else
-      GetUnderlyingObject(origptr, oldFunc->getParent()->getDataLayout(), 100);
-#endif
+  origptr = getBaseObject(origptr);
 
   auto found = differentialAliasScopeDomains.find(origptr);
   if (found == differentialAliasScopeDomains.end()) {
@@ -4404,7 +4399,7 @@ DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::CallInst *orig,
   return subretType;
 }
 
-DIFFE_TYPE GradientUtils::getDiffeType(Value *v, bool foreignFunction) {
+DIFFE_TYPE GradientUtils::getDiffeType(Value *v, bool foreignFunction) const {
   if (isConstantValue(v) && !foreignFunction) {
     return DIFFE_TYPE::CONSTANT;
   }
@@ -4414,16 +4409,15 @@ DIFFE_TYPE GradientUtils::getDiffeType(Value *v, bool foreignFunction) {
   if (!argType->isFPOrFPVectorTy() &&
       (TR.query(v).Inner0().isPossiblePointer() || foreignFunction)) {
     if (argType->isPointerTy()) {
-#if LLVM_VERSION_MAJOR >= 12
-      auto at = getUnderlyingObject(v, 100);
-#else
-      auto at =
-          GetUnderlyingObject(v, oldFunc->getParent()->getDataLayout(), 100);
-#endif
+      auto at = getBaseObject(v);
       if (auto arg = dyn_cast<Argument>(at)) {
         if (ArgDiffeTypes[arg->getArgNo()] == DIFFE_TYPE::DUP_NONEED) {
           return DIFFE_TYPE::DUP_NONEED;
         }
+      } else if (isa<AllocaInst>(at) || isAllocationCall(at, TLI)) {
+        assert(unnecessaryValuesP);
+        if (unnecessaryValuesP->count(at))
+          return DIFFE_TYPE::DUP_NONEED;
       }
     }
     return DIFFE_TYPE::DUP_ARG;
@@ -5141,7 +5135,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             if (isa<IntrinsicInst>(CI))
               continue;
             if (!isConstantInstruction(CI)) {
-              Function *F = getFunctionFromCall(CI);
+              auto F = getFunctionFromCall(CI);
               if (F && isMemFreeLibMFunction(F->getName())) {
                 continue;
               }
@@ -6273,32 +6267,15 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 
   if (auto li = dyn_cast<LoadInst>(inst))
     if (auto origInst = dyn_cast_or_null<LoadInst>(isOriginal(inst))) {
-#if LLVM_VERSION_MAJOR >= 12
-      auto liobj = getUnderlyingObject(li->getPointerOperand(), 100);
-#else
-      auto liobj = GetUnderlyingObject(
-          li->getPointerOperand(), oldFunc->getParent()->getDataLayout(), 100);
-#endif
+      auto liobj = getBaseObject(li->getPointerOperand());
 
-#if LLVM_VERSION_MAJOR >= 12
-      auto orig_liobj = getUnderlyingObject(origInst->getPointerOperand(), 100);
-#else
-      auto orig_liobj =
-          GetUnderlyingObject(origInst->getPointerOperand(),
-                              oldFunc->getParent()->getDataLayout(), 100);
-#endif
+      auto orig_liobj = getBaseObject(origInst->getPointerOperand());
 
       if (scopeMap.find(inst) == scopeMap.end()) {
         for (auto pair : scopeMap) {
           if (auto li2 = dyn_cast<LoadInst>(const_cast<Value *>(pair.first))) {
 
-#if LLVM_VERSION_MAJOR >= 12
-            auto li2obj = getUnderlyingObject(li2->getPointerOperand(), 100);
-#else
-            auto li2obj =
-                GetUnderlyingObject(li2->getPointerOperand(),
-                                    oldFunc->getParent()->getDataLayout(), 100);
-#endif
+            auto li2obj = getBaseObject(li2->getPointerOperand());
 
             if (liobj == li2obj && DT.dominates(li2, li)) {
               auto orig2 = isOriginal(li2);
@@ -6384,13 +6361,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
           allDomPredecessorsOf(origInst, OrigDT, [&](Instruction *pred) {
             if (auto SI = dyn_cast<StoreInst>(pred)) {
               // auto NewSI = cast<StoreInst>(getNewFromOriginal(SI));
-#if LLVM_VERSION_MAJOR >= 12
-              auto si2obj = getUnderlyingObject(SI->getPointerOperand(), 100);
-#else
-              auto si2obj =
-                GetUnderlyingObject(SI->getPointerOperand(),
-                                    oldFunc->getParent()->getDataLayout(), 100);
-#endif
+              auto si2obj = getBaseObject(SI->getPointerOperand());
 
               if (si2obj != orig_liobj)
                 return false;

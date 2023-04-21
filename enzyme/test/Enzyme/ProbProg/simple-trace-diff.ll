@@ -30,6 +30,9 @@ declare i64 @__enzyme_get_choice(i8*, i8*, i8*, i64)
 declare double @__enzyme_get_likelihood(i8*, i8*)
 declare void @__enzyme_insert_call(i8*, i8*, i8*)
 declare void @__enzyme_insert_choice(i8* %trace, i8*, double, i8*, i64)
+declare void @__enzyme_insert_argument(i8*, i8*, i8*, i64)
+declare void @__enzyme_insert_return(i8*, i8*, i64)
+declare void @__enzyme_insert_function(i8*, i8*)
 declare i1 @__enzyme_has_call(i8*, i8*)
 declare i1 @__enzyme_has_choice(i8*, i8*)
 declare double @__enzyme_sample(double (double, double)*, double (double, double, double)*, i8*, double, double)
@@ -58,6 +61,7 @@ entry:
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"mu'de"
 ; CHECK-NEXT:   %.ptr1 = alloca double
 ; CHECK-NEXT:   %.ptr = alloca double
+; CHECK-NEXT:   call void @__enzyme_insert_function(i8* %trace, i8* bitcast (void (i8*)* @trace_test to i8*))
 ; CHECK-NEXT:   %0 = call double @normal(double 0.000000e+00, double 1.000000e+00)
 ; CHECK-NEXT:   %likelihood.mu.i = call double @normal_logpdf(double 0.000000e+00, double 1.000000e+00, double %0)
 ; CHECK-NEXT:   %1 = bitcast double %0 to i64
