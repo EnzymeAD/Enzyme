@@ -829,17 +829,14 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
         llvm::errs() << "known inactive intrinsic " << *I << "\n";
       InsertConstantInstruction(TR, I);
       return true;
-    }
-#if defined(ENZYME_IFX) && (LLVM_VERSION_MAJOR == 15)
-    else if (II->getCalledFunction() &&
-             II->getCalledFunction()->getName().startswith(
-                 "llvm.intel.subscript")) {
+    } else if (II->getCalledFunction() &&
+               II->getCalledFunction()->getName().startswith(
+                   "llvm.intel.subscript")) {
       // The intrinsic "llvm.intel.subscript" does not propogate deriviative
       // information directly. But its returned pointer may be active.
       InsertConstantInstruction(TR, I);
       return true;
     }
-#endif
   }
 
   // Analyzer for inductive assumption where we attempt to prove this is

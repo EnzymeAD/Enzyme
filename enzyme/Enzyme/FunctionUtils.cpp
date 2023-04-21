@@ -353,11 +353,12 @@ void RecursivelyReplaceAddressSpace(Value *AI, Value *rep, bool legal) {
 
         IRBuilder<> B(II);
         auto nII = cast<CallInst>(B.CreateCall(II->getCalledFunction(), args));
+#if LLVM_VERSION_MAJOR >= 13
         // Must copy the elementtype attribute as it is needed by the intrinsic
         nII->addParamAttr(
             ptrArgIndex,
             II->getParamAttr(ptrArgIndex, Attribute::AttrKind::ElementType));
-
+#endif
         nII->takeName(II);
         for (auto U : II->users()) {
           Todo.push_back(

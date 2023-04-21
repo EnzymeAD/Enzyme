@@ -3860,7 +3860,6 @@ public:
       return;
     }
 
-#if defined(ENZYME_IFX) && LLVM_VERSION_MAJOR == 15
     // When compiling Enzyme against standard LLVM, and not Intel's
     // modified version of LLVM, the intrinsic `llvm.intel.subscript` is
     // not fully understood by LLVM. One of the results of this is that the ID
@@ -3872,9 +3871,7 @@ public:
           Mode == DerivativeMode::ForwardMode) {
         forwardModeInvertedPointerFallback(II);
       }
-    } else
-#endif
-    {
+    } else {
       SmallVector<Value *, 2> orig_ops(II.getNumOperands());
 
       for (unsigned i = 0; i < II.getNumOperands(); ++i) {
@@ -5753,8 +5750,8 @@ public:
                 if (align)
                   rmw->setAlignment(align.getValue());
 #else
-                B.CreateAtomicRMW(op, vptr, vdif, AtomicOrdering::Monotonic,
-                                  SyncScope::System);
+              B.CreateAtomicRMW(op, vptr, vdif, AtomicOrdering::Monotonic,
+                                SyncScope::System);
 #endif
               }
             } else {
@@ -5767,8 +5764,8 @@ public:
               if (align)
                 rmw->setAlignment(align.getValue());
 #else
-              B.CreateAtomicRMW(op, ptr, dif, AtomicOrdering::Monotonic,
-                                SyncScope::System);
+            B.CreateAtomicRMW(op, ptr, dif, AtomicOrdering::Monotonic,
+                              SyncScope::System);
 #endif
             }
 #else
@@ -10330,7 +10327,6 @@ public:
   void visitCallInst(llvm::CallInst &call) {
     using namespace llvm;
 
-#if defined(ENZYME_IFX) && LLVM_VERSION_MAJOR == 15
     // When compiling Enzyme against standard LLVM, and not Intel's
     // modified version of LLVM, the intrinsic `llvm.intel.subscript` is
     // not fully understood by LLVM. One of the results of this is that the
@@ -10341,7 +10337,6 @@ public:
       visitIntrinsicInst(cast<IntrinsicInst>(call));
       return;
     }
-#endif
 
     CallInst *const newCall = cast<CallInst>(gutils->getNewFromOriginal(&call));
     IRBuilder<> BuilderZ(newCall);

@@ -3573,7 +3573,6 @@ void TypeAnalyzer::visitInvokeInst(InvokeInst &call) {
   tmpCall->eraseFromParent();
 }
 
-#if defined(ENZYME_IFX) && (LLVM_VERSION_MAJOR == 15)
 void analyzeIntelSubscriptIntrinsic(IntrinsicInst &II, TypeAnalyzer &TA) {
   assert(II.getCalledFunction() &&
          II.getCalledFunction()->getName().contains("llvm.intel.subscript"));
@@ -3688,7 +3687,6 @@ void analyzeIntelSubscriptIntrinsic(IntrinsicInst &II, TypeAnalyzer &TA) {
   if (TA.direction & TypeAnalyzer::UP)
     TA.updateAnalysis(II.getOperand(ptrArgIndex), upTree.Only(-1, &II), &II);
 }
-#endif
 
 void TypeAnalyzer::visitCallInst(CallInst &call) {
   assert(fntypeinfo.KnownValues.size() ==
@@ -3724,7 +3722,6 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
 #include "BlasTA.inc"
     }
 
-#if defined(ENZYME_IFX) && (LLVM_VERSION_MAJOR == 15)
     // When compiling Enzyme against standard LLVM, and not Intel's
     // modified version of LLVM, the intrinsic `llvm.intel.subscript` is
     // not fully understood by LLVM. One of the results of this is that the
@@ -3735,7 +3732,6 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
       analyzeIntelSubscriptIntrinsic(cast<IntrinsicInst>(call), *this);
       return;
     }
-#endif
 
 #define CONSIDER(fn)                                                           \
   if (funcName == #fn) {                                                       \

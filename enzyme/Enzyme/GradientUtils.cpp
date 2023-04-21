@@ -1203,12 +1203,14 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       auto toreturn = BuilderM.CreateCall(II->getCalledFunction(), args,
                                           II->getName() + "_unwrap");
 
+#if LLVM_VERSION_MAJOR >= 13
       if (isa<CallInst>(toreturn)) {
         // Must copy the elementtype attribute as it is needed by the intrinsic
         cast<CallInst>(toreturn)->addParamAttr(
             ptrArgIndex,
             II->getParamAttr(ptrArgIndex, Attribute::AttrKind::ElementType));
       }
+#endif
       if (auto newi = dyn_cast<Instruction>(toreturn)) {
         newi->copyIRFlags(II);
         unwrappedLoads[newi] = val;
@@ -5849,7 +5851,6 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
     return antialloca;
   } else if (auto II = dyn_cast<IntrinsicInst>(oval)) {
-#if defined(ENZYME_IFX) && (LLVM_VERSION_MAJOR == 15)
     if (II->getCalledFunction() &&
         II->getCalledFunction()->getName().contains("llvm.intel.subscript")) {
       IRBuilder<> bb(getNewFromOriginal(II));
@@ -5869,11 +5870,12 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
         auto shadow = bb.CreateCall(II->getCalledFunction(), invertArgs);
         assert(isa<CallInst>(shadow));
         auto CI = cast<CallInst>(shadow);
+#if LLVM_VERSION_MAJOR >= 13
         // Must copy the elementtype attribute as it is needed by the intrinsic
         CI->addParamAttr(
             ptrArgIndex,
             II->getParamAttr(ptrArgIndex, Attribute::AttrKind::ElementType));
-
+#endif
         return shadow;
       };
 
@@ -5883,7 +5885,6 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
       return shadow;
     }
-#endif
 
     IRBuilder<> bb(getNewFromOriginal(II));
     bb.setFastMathFlags(getFast());
