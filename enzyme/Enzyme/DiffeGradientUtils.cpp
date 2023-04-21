@@ -630,7 +630,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
 
   bool needsCast = false;
 #if LLVM_VERSION_MAJOR >= 15
-  if (orig->getContext().supportsTypedPointers()) {
+  if (origptr->getContext().supportsTypedPointers()) {
 #endif
     needsCast = origptr->getType()->getPointerElementType() != addingType;
 #if LLVM_VERSION_MAJOR >= 15
@@ -892,6 +892,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
 
       SmallVector<Metadata *, 1> scopeMD = {
           getDerivativeAliasScope(origptr, idx)};
+      if (orig)
       if (auto MD = orig->getMetadata(LLVMContext::MD_alias_scope)) {
         auto MDN = cast<MDNode>(MD);
         for (auto &o : MDN->operands())
@@ -906,6 +907,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
         if (j != (ssize_t)idx)
           MDs.push_back(getDerivativeAliasScope(origptr, j));
       }
+      if (orig)
       if (auto MD = orig->getMetadata(LLVMContext::MD_noalias)) {
         auto MDN = cast<MDNode>(MD);
         for (auto &o : MDN->operands())
@@ -916,7 +918,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       LI->setMetadata(LLVMContext::MD_noalias, noscope);
       st->setMetadata(LLVMContext::MD_noalias, noscope);
 
-      if (start == 0 &&
+      if (orig && start == 0 &&
           size == (DL.getTypeSizeInBits(orig->getType()) + 7) / 8) {
         LI->copyMetadata(*orig, MD_ToCopy);
         LI->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
