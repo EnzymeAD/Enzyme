@@ -60,6 +60,7 @@
 #if LLVM_VERSION_MAJOR > 6
 #include "llvm/Analysis/PhiValues.h"
 #endif
+#include "llvm/Analysis/ProfileSummaryInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScopedNoAliasAA.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
@@ -1145,16 +1146,6 @@ void RemoveRedundantPHI(Function *F, FunctionAnalysisManager &FAM) {
 }
 
 PreProcessCache::PreProcessCache() {
-  FAM.registerPass([] { return AssumptionAnalysis(); });
-  FAM.registerPass([] { return TargetLibraryAnalysis(); });
-  FAM.registerPass([] { return LoopAnalysis(); });
-  FAM.registerPass([] { return DominatorTreeAnalysis(); });
-#if LLVM_VERSION_MAJOR > 6
-  FAM.registerPass([] { return PhiValuesAnalysis(); });
-#endif
-
-  FAM.registerPass([] { return DependenceAnalysis(); });
-
   // Explicitly chose AA passes that are stateless
   // and will not be invalidated
   FAM.registerPass([] { return TypeBasedAA(); });
@@ -1175,6 +1166,9 @@ PreProcessCache::PreProcessCache() {
   MAM.registerPass([&] { return FunctionAnalysisManagerModuleProxy(FAM); });
   FAM.registerPass([&] { return ModuleAnalysisManagerFunctionProxy(MAM); });
 
+  LAM.registerPass([&] { return FunctionAnalysisManagerLoopProxy(FAM); });
+  FAM.registerPass([&] { return LoopAnalysisManagerFunctionProxy(LAM); });
+
   FAM.registerPass([] {
     auto AM = AAManager();
     AM.registerFunctionAnalysis<BasicAA>();
@@ -1189,21 +1183,10 @@ PreProcessCache::PreProcessCache() {
     return AM;
   });
 
-  // used in optimizeintermediate
-  FAM.registerPass([] { return ScalarEvolutionAnalysis(); });
-
-  FAM.registerPass([] { return TargetIRAnalysis(); });
-  FAM.registerPass([] { return MemorySSAAnalysis(); });
-  FAM.registerPass([] { return MemoryDependenceAnalysis(); });
-  FAM.registerPass([] { return OptimizationRemarkEmitterAnalysis(); });
-  FAM.registerPass([] { return LazyValueAnalysis(); });
-#if LLVM_VERSION_MAJOR >= 8
-  MAM.registerPass([] { return PassInstrumentationAnalysis(); });
-  FAM.registerPass([] { return PassInstrumentationAnalysis(); });
-#endif
-
-  // Used by GradientUtils
-  FAM.registerPass([] { return PostDominatorTreeAnalysis(); });
+  PassBuilder PB;
+  PB.registerModuleAnalyses(MAM);
+  PB.registerFunctionAnalyses(FAM);
+  PB.registerLoopAnalyses(LAM);
 }
 
 llvm::AAResults &
@@ -2441,6 +2424,7 @@ void PreProcessCache::optimizeIntermediate(Function *F) {
 }
 
 void PreProcessCache::clear() {
+  LAM.clear();
   FAM.clear();
   MAM.clear();
   cache.clear();
