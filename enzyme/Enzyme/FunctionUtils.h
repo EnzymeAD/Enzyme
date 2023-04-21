@@ -34,6 +34,7 @@
 #include "Utils.h"
 
 #include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/LoopAnalysisManager.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 
 #include "llvm/IR/Function.h"
@@ -58,6 +59,7 @@ public:
     CloneOrigin = std::move(prev.CloneOrigin);
   };
 
+  llvm::LoopAnalysisManager LAM;
   llvm::FunctionAnalysisManager FAM;
   llvm::ModuleAnalysisManager MAM;
 
