@@ -191,13 +191,8 @@ StaticTraceInterface::StaticTraceInterface(Module *M)
   hasChoiceFunction->addFnAttr("enzyme_notypeanalysis");
   sampleFunction->addFnAttr("enzyme_notypeanalysis");
 
-  newTraceFunction->addFnAttr("enzyme_inactive");
-  freeTraceFunction->addFnAttr("enzyme_inactive");
-  getTraceFunction->addFnAttr("enzyme_inactive");
   getChoiceFunction->addFnAttr("enzyme_inactive");
   getLikelihoodFunction->addFnAttr("enzyme_inactive");
-  insertCallFunction->addFnAttr("enzyme_inactive");
-  insertChoiceFunction->addFnAttr("enzyme_inactive");
   insertArgumentFunction->addFnAttr("enzyme_inactive");
   insertReturnFunction->addFnAttr("enzyme_inactive");
   insertFunctionFunction->addFnAttr("enzyme_inactive");

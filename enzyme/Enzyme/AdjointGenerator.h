@@ -13016,6 +13016,147 @@ public:
       return;
     }
 
+    if (call.hasFnAttr("enzyme_newtrace")) {
+      if (Mode != DerivativeMode::ReverseModeCombined &&
+          Mode != DerivativeMode::ReverseModeGradient)
+        return;
+
+      bool constval = gutils->isConstantValue(&call);
+
+      if (constval)
+        return;
+
+      auto dbgLoc = gutils->getNewFromOriginal(&call)->getDebugLoc();
+      auto found = gutils->invertedPointers.find(&call);
+      PHINode *placeholder = cast<PHINode>(&*found->second);
+      IRBuilder<> bb(placeholder);
+
+      auto rule = [&]() {
+#if LLVM_VERSION_MAJOR >= 11
+        Value *anti =
+            bb.CreateCall(call.getFunctionType(), call.getCalledOperand(), {},
+                          call.getName() + "'mi");
+#else
+        anti =
+            bb.CreateCall(call.getCalledValue(), args, call.getName() + "'mi");
+#endif
+        cast<CallInst>(anti)->setAttributes(call.getAttributes());
+        cast<CallInst>(anti)->setCallingConv(call.getCallingConv());
+        cast<CallInst>(anti)->setTailCallKind(call.getTailCallKind());
+        cast<CallInst>(anti)->setDebugLoc(dbgLoc);
+
+        if (anti->getType()->isPointerTy()) {
+#if LLVM_VERSION_MAJOR >= 14
+          cast<CallInst>(anti)->addAttributeAtIndex(AttributeList::ReturnIndex,
+                                                    Attribute::NoAlias);
+          cast<CallInst>(anti)->addAttributeAtIndex(AttributeList::ReturnIndex,
+                                                    Attribute::NonNull);
+#else
+          cast<CallInst>(anti)->addAttribute(AttributeList::ReturnIndex,
+                                             Attribute::NoAlias);
+          cast<CallInst>(anti)->addAttribute(AttributeList::ReturnIndex,
+                                             Attribute::NonNull);
+#endif
+        }
+        return anti;
+      };
+
+      Value *anti = applyChainRule(call.getType(), bb, rule);
+
+      gutils->invertedPointers.erase(found);
+      if (&*bb.GetInsertPoint() == placeholder)
+        bb.SetInsertPoint(placeholder->getNextNode());
+      gutils->replaceAWithB(placeholder, anti);
+      gutils->erase(placeholder);
+
+      return;
+    }
+
+    if (call.hasFnAttr("enzyme_freetrace")) {
+      if (Mode != DerivativeMode::ReverseModeCombined &&
+          Mode != DerivativeMode::ReverseModeGradient)
+        return;
+
+      bool constval = gutils->isConstantValue(&call);
+
+      if (constval)
+        return;
+
+      IRBuilder<> Builder2(&call);
+      getReverseBuilder(Builder2);
+
+      auto trace = call.getArgOperand(0);
+
+      auto new_call = dyn_cast<CallInst>(gutils->getNewFromOriginal(&call));
+      auto dtrace = lookup(gutils->invertPointerM(trace, Builder2), Builder2);
+
+      Value *args[] = {dtrace};
+
+      Builder2.CreateCall(new_call->getFunctionType(),
+                          new_call->getCalledOperand(), args);
+
+      return;
+    }
+
+    if (call.hasFnAttr("enzyme_get_trace")) {
+      if (Mode != DerivativeMode::ReverseModeCombined &&
+          Mode != DerivativeMode::ReverseModeGradient)
+        return;
+
+      bool constval = gutils->isConstantValue(&call);
+
+      if (constval)
+        return;
+
+      IRBuilder<> Builder2(&call);
+      getReverseBuilder(Builder2);
+
+      auto trace = call.getArgOperand(0);
+      auto address = call.getArgOperand(1);
+
+      auto new_call = dyn_cast<CallInst>(gutils->getNewFromOriginal(&call));
+      auto dtrace = lookup(gutils->invertPointerM(trace, Builder2), Builder2);
+      auto daddress = lookup(gutils->getNewFromOriginal(address), Builder2);
+
+      Value *args[] = {dtrace, daddress};
+
+      Builder2.CreateCall(new_call->getFunctionType(),
+                          new_call->getCalledOperand(), args);
+
+      return;
+    }
+
+    if (call.hasFnAttr("enzyme_insert_call")) {
+      if (Mode != DerivativeMode::ReverseModeCombined &&
+          Mode != DerivativeMode::ReverseModeGradient)
+        return;
+
+      bool constval = gutils->isConstantValue(&call);
+
+      if (constval)
+        return;
+
+      IRBuilder<> Builder2(&call);
+      getReverseBuilder(Builder2);
+
+      auto trace = call.getArgOperand(0);
+      auto address = call.getArgOperand(1);
+      auto subtrace = call.getArgOperand(2);
+
+      auto new_call = dyn_cast<CallInst>(gutils->getNewFromOriginal(&call));
+      auto dtrace = lookup(gutils->invertPointerM(trace, Builder2), Builder2);
+      auto daddress = lookup(gutils->getNewFromOriginal(address), Builder2);
+      auto dsubtrace =
+          lookup(gutils->invertPointerM(subtrace, Builder2), Builder2);
+
+      Value *args[] = {dtrace, daddress, dsubtrace};
+
+      Builder2.CreateCall(new_call->getFunctionType(),
+                          new_call->getCalledOperand(), args);
+
+      return;
+    }
+
     if (call.hasFnAttr("enzyme_sample")) {
       return handleProbProg(call, subretused, shadowReturnUsed, subretType);
     }

@@ -85,6 +85,8 @@ public:
   llvm::CallInst *CreateTrace(llvm::IRBuilder<> &Builder,
                               const llvm::Twine &Name = "trace");
 
+  llvm::CallInst *FreeTrace(llvm::IRBuilder<> &Builder);
+
   llvm::CallInst *InsertChoice(llvm::IRBuilder<> &Builder, llvm::Value *address,
                                llvm::Value *score, llvm::Value *choice);
 
