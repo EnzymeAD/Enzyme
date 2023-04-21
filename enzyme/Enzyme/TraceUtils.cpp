@@ -212,8 +212,33 @@ TraceUtils::ValueToVoidPtrAndSize(IRBuilder<> &Builder, Value *val,
 }
 
 CallInst *TraceUtils::CreateTrace(IRBuilder<> &Builder, const Twine &Name) {
-  return Builder.CreateCall(interface->newTraceTy(),
-                            interface->newTrace(Builder), {}, Name);
+  auto call = Builder.CreateCall(interface->newTraceTy(),
+                                 interface->newTrace(Builder), {}, Name);
+#if LLVM_VERSION_MAJOR >= 14
+  call->addAttributeAtIndex(
+      AttributeList::FunctionIndex,
+      Attribute::get(call->getContext(), "enzyme_newtrace"));
+#else
+  call->addAttribute(AttributeList::FunctionIndex,
+                     Attribute::get(call->getContext(), "enzyme_newtrace"));
+
+#endif
+  return call;
+}
+
+CallInst *TraceUtils::FreeTrace(IRBuilder<> &Builder) {
+  auto call = Builder.CreateCall(interface->freeTraceTy(),
+                                 interface->freeTrace(Builder), {trace});
+#if LLVM_VERSION_MAJOR >= 14
+  call->addAttributeAtIndex(
+      AttributeList::FunctionIndex,
+      Attribute::get(call->getContext(), "enzyme_freetrace"));
+#else
+  call->addAttribute(AttributeList::FunctionIndex,
+                     Attribute::get(call->getContext(), "enzyme_freetrace"));
+
+#endif
+  return call;
 }
 
 CallInst *TraceUtils::InsertChoice(IRBuilder<> &Builder,
@@ -246,6 +271,15 @@ CallInst *TraceUtils::InsertCall(IRBuilder<> &Builder, Value *address,
                                  interface->insertCall(Builder), args);
   call->addParamAttr(1, Attribute::ReadOnly);
   call->addParamAttr(1, Attribute::NoCapture);
+#if LLVM_VERSION_MAJOR >= 14
+  call->addAttributeAtIndex(
+      AttributeList::FunctionIndex,
+      Attribute::get(call->getContext(), "enzyme_insert_call"));
+#else
+  call->addAttribute(AttributeList::FunctionIndex,
+                     Attribute::get(call->getContext(), "enzyme_insert_call"));
+
+#endif
   return call;
 }
 
