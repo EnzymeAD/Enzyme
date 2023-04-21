@@ -10621,14 +10621,23 @@ public:
     }
 
     // TODO: BLAS re-adding
-    //if (!called || called->empty()) {
-    //  std::string prefix, suffix;
-    //  std::string found = extractBLAS(funcName, prefix, suffix);
-    //  if (found.size()) {
-    //    if (handleBLAS(call, called, found, prefix, suffix, overwritten_args))
-    //      return;
-    //  }
-    //}
+    // if (!called || called->empty()) {
+    //   std::string prefix, suffix;
+    //   std::string found = extractBLAS(funcName, prefix, suffix);
+    //   if (found.size()) {
+    //     if (handleBLAS(call, called, found, prefix, suffix,
+    //     overwritten_args))
+    //       return;
+    //   }
+    // }
+    if (!called || called->empty()) {
+      if (auto blas = extractBLAS(funcName)) {
+        if (handleBLAS(call, called, blas.getValue(), overwritten_args))
+          // if (handleBLAS(call, called, blas.getValue(), uncacheable_args))
+          return;
+        // else panic?
+      }
+    }
 
     if (funcName == "printf" || funcName == "puts" ||
         funcName.startswith("_ZN3std2io5stdio6_print") ||
