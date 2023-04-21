@@ -2426,8 +2426,13 @@ void PreProcessCache::optimizeIntermediate(Function *F) {
   }
   if (Level != OptimizationLevel::O0) {
     PassBuilder PB;
+#if LLVM_VERSION_MAJOR >= 12
     FunctionPassManager FPM =
         PB.buildFunctionSimplificationPipeline(Level, ThinOrFullLTOPhase::None);
+#else
+    FunctionPassManager FPM = PB.buildFunctionSimplificationPipeline(
+        Level, PassBuilder::ThinLTOPhase::None);
+#endif
     PA = FPM.run(*F, FAM);
     FAM.invalidate(*F, PA);
   }
