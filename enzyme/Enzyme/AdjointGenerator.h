@@ -9845,6 +9845,7 @@ public:
           Value *dcall = nullptr;
           assert(returnIdx);
           assert(augmentcall);
+          assert(returnIdx.hasValue());
           dcall = (returnIdx.getValue() < 0)
                       ? augmentcall
                       : BuilderZ.CreateExtractValue(
