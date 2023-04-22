@@ -112,6 +112,19 @@ public:
                              llvm::IRBuilder<> &BuilderM, unsigned align,
                              llvm::Value *mask = nullptr);
 #endif
+
+#if LLVM_VERSION_MAJOR >= 10
+  void addToInvertedPtrDiffe(llvm::Instruction *orig, TypeTree vd,
+                             unsigned size, llvm::Value *origptr,
+                             llvm::Value *prediff, llvm::IRBuilder<> &Builder2,
+                             llvm::MaybeAlign align,
+                             llvm::Value *premask = nullptr);
+#else
+  void addToInvertedPtrDiffe(llvm::Instruction *orig, TypeTree vd,
+                             unsigned size, llvm::Value *origptr,
+                             llvm::Value *prediff, llvm::IRBuilder<> &Builder2,
+                             unsigned align, llvm::Value *premask = nullptr);
+#endif
 };
 
 #endif
