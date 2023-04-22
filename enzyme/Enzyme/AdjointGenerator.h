@@ -797,9 +797,10 @@ public:
           premask = lookup(mask, Builder2);
         }
 
-        ((DiffeGradientUtils *)gutils)
-            ->addToInvertedPtrDiffe(&I, vd, LoadSize, I.getOperand(0), prediff,
-                                    Builder2, alignment, premask);
+        if (prediff)
+          ((DiffeGradientUtils *)gutils)
+              ->addToInvertedPtrDiffe(&I, vd, LoadSize, I.getOperand(0),
+                                      prediff, Builder2, alignment, premask);
 
         unsigned start = 0;
         unsigned size = LoadSize;

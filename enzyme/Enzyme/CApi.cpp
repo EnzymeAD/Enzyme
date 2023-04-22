@@ -185,8 +185,8 @@ EnzymeTraceInterfaceRef CreateEnzymeStaticTraceInterface(LLVMModuleRef M) {
 
 EnzymeTraceInterfaceRef
 CreateEnzymeDynamicTraceInterface(LLVMValueRef interface, LLVMValueRef F) {
-  return (EnzymeTraceInterfaceRef)(
-      new DynamicTraceInterface(unwrap(interface), cast<Function>(unwrap(F))));
+  return (EnzymeTraceInterfaceRef)(new DynamicTraceInterface(
+      unwrap(interface), cast<Function>(unwrap(F))));
 }
 
 void ClearEnzymeLogic(EnzymeLogicRef Ref) { eunwrap(Ref).clear(); }
@@ -388,8 +388,7 @@ void EnzymeGradientUtilsAddToInvertedPointerDiffe(
   if (align)
     align2 = MaybeAlign(align);
 #else
-  auto align2 =
-      align
+  auto align2 = align;
 #endif
   gutils->addToInvertedPtrDiffe(
       cast_or_null<Instruction>(unwrap(orig)), unwrap(addingType), start, size,
