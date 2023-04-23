@@ -1,3 +1,5 @@
+add_subdirectory(ReverseMode)
+
 # Run regression and unit tests
 add_lit_testsuite(check-enzymemlir "Running MLIR regression tests"
     ${CMAKE_CURRENT_BINARY_DIR}

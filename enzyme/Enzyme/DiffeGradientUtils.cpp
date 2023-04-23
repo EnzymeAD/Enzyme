@@ -630,7 +630,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
 
   bool needsCast = false;
 #if LLVM_VERSION_MAJOR >= 15
-  if (orig->getContext().supportsTypedPointers()) {
+  if (origptr->getContext().supportsTypedPointers()) {
 #endif
     needsCast = origptr->getType()->getPointerElementType() != addingType;
 #if LLVM_VERSION_MAJOR >= 15
@@ -902,11 +902,12 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
 
       SmallVector<Metadata *, 1> scopeMD = {
           getDerivativeAliasScope(origptr, idx)};
-      if (auto MD = orig->getMetadata(LLVMContext::MD_alias_scope)) {
-        auto MDN = cast<MDNode>(MD);
-        for (auto &o : MDN->operands())
-          scopeMD.push_back(o);
-      }
+      if (orig)
+        if (auto MD = orig->getMetadata(LLVMContext::MD_alias_scope)) {
+          auto MDN = cast<MDNode>(MD);
+          for (auto &o : MDN->operands())
+            scopeMD.push_back(o);
+        }
       auto scope = MDNode::get(LI->getContext(), scopeMD);
       LI->setMetadata(LLVMContext::MD_alias_scope, scope);
       st->setMetadata(LLVMContext::MD_alias_scope, scope);
@@ -916,17 +917,18 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
         if (j != (ssize_t)idx)
           MDs.push_back(getDerivativeAliasScope(origptr, j));
       }
-      if (auto MD = orig->getMetadata(LLVMContext::MD_noalias)) {
-        auto MDN = cast<MDNode>(MD);
-        for (auto &o : MDN->operands())
-          MDs.push_back(o);
-      }
+      if (orig)
+        if (auto MD = orig->getMetadata(LLVMContext::MD_noalias)) {
+          auto MDN = cast<MDNode>(MD);
+          for (auto &o : MDN->operands())
+            MDs.push_back(o);
+        }
       idx++;
       auto noscope = MDNode::get(ptr->getContext(), MDs);
       LI->setMetadata(LLVMContext::MD_noalias, noscope);
       st->setMetadata(LLVMContext::MD_noalias, noscope);
 
-      if (start == 0 &&
+      if (orig && start == 0 &&
           size == (DL.getTypeSizeInBits(orig->getType()) + 7) / 8) {
         LI->copyMetadata(*orig, MD_ToCopy);
         LI->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
@@ -992,5 +994,109 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       BuilderM.CreateCall(SF, sargs);
     };
     applyChainRule(BuilderM, rule, ptr, dif);
+  }
+}
+
+#if LLVM_VERSION_MAJOR >= 10
+void DiffeGradientUtils::addToInvertedPtrDiffe(
+    llvm::Instruction *orig, TypeTree vd, unsigned LoadSize,
+    llvm::Value *origptr, llvm::Value *prediff, llvm::IRBuilder<> &Builder2,
+    MaybeAlign alignment, llvm::Value *premask)
+#else
+void DiffeGradientUtils::addToInvertedPtrDiffe(
+    llvm::Instruction *orig, TypeTree vd, unsigned LoadSize,
+    llvm::Value *origptr, llvm::Value *prediff, llvm::IRBuilder<> &Builder2,
+    unsigned alignment, llvm::Value *premask)
+#endif
+{
+
+  unsigned start = 0;
+  unsigned size = LoadSize;
+
+  assert(prediff);
+
+  BasicBlock *merge = nullptr;
+
+  while (1) {
+    unsigned nextStart = size;
+
+    auto dt = vd[{-1}];
+    for (size_t i = start; i < size; ++i) {
+      bool Legal = true;
+      dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
+      if (!Legal) {
+        nextStart = i;
+        break;
+      }
+    }
+    if (!dt.isKnown()) {
+      TR.dump();
+      llvm::errs() << " vd:" << vd.str() << " start:" << start
+                   << " size: " << size << " dt:" << dt.str() << "\n";
+    }
+    assert(dt.isKnown());
+
+    if (Type *isfloat = dt.isFloat()) {
+
+      if (orig) {
+        if (start == 0 && nextStart == LoadSize) {
+          setDiffe(orig, Constant::getNullValue(getShadowType(orig->getType())),
+                   Builder2);
+        } else {
+          Value *tostore = getDifferential(orig);
+
+          auto i8 = Type::getInt8Ty(tostore->getContext());
+          if (start != 0) {
+            tostore = Builder2.CreatePointerCast(
+                tostore,
+                PointerType::get(
+                    i8,
+                    cast<PointerType>(tostore->getType())->getAddressSpace()));
+            auto off = ConstantInt::get(Type::getInt64Ty(tostore->getContext()),
+                                        start);
+#if LLVM_VERSION_MAJOR > 7
+            tostore = Builder2.CreateInBoundsGEP(i8, tostore, off);
+#else
+            tostore = Builder2.CreateInBoundsGEP(tostore, off);
+#endif
+          }
+          auto AT = ArrayType::get(i8, nextStart - start);
+          tostore = Builder2.CreatePointerCast(
+              tostore,
+              PointerType::get(
+                  AT,
+                  cast<PointerType>(tostore->getType())->getAddressSpace()));
+          Builder2.CreateStore(Constant::getNullValue(AT), tostore);
+        }
+      }
+
+      if (!isConstantValue(origptr)) {
+        if (EnzymeRuntimeActivityCheck && !merge) {
+          Value *shadow = Builder2.CreateICmpNE(
+              lookupM(getNewFromOriginal(origptr), Builder2),
+              lookupM(invertPointerM(origptr, Builder2), Builder2));
+
+          BasicBlock *current = Builder2.GetInsertBlock();
+          BasicBlock *conditional =
+              addReverseBlock(current, current->getName() + "_active");
+          merge = addReverseBlock(conditional, current->getName() + "_amerge");
+          Builder2.CreateCondBr(shadow, conditional, merge);
+          Builder2.SetInsertPoint(conditional);
+        }
+        // Masked partial type is unhanled.
+        if (premask)
+          assert(start == 0 && nextStart == LoadSize);
+        addToInvertedPtrDiffe(orig, isfloat, start, nextStart - start, origptr,
+                              prediff, Builder2, alignment, premask);
+      }
+    }
+
+    if (nextStart == size)
+      break;
+    start = nextStart;
+  }
+  if (merge) {
+    Builder2.CreateBr(merge);
+    Builder2.SetInsertPoint(merge);
   }
 }

@@ -4976,7 +4976,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   } else if (auto CD = dyn_cast<ConstantDataArray>(oval)) {
     SmallVector<Constant *, 1> Vals;
     for (size_t i = 0, len = CD->getNumElements(); i < len; i++) {
-      Value *val = invertPointerM(CD->getElementAsConstant(i), BuilderM);
+      Value *val =
+          invertPointerM(CD->getElementAsConstant(i), BuilderM, nullShadow);
       Vals.push_back(cast<Constant>(val));
     }
     auto rule = [&CD](ArrayRef<Constant *> Vals) {
@@ -4986,7 +4987,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   } else if (auto CD = dyn_cast<ConstantArray>(oval)) {
     SmallVector<Constant *, 1> Vals;
     for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
-      Value *val = invertPointerM(CD->getOperand(i), BuilderM);
+      Value *val = invertPointerM(CD->getOperand(i), BuilderM, nullShadow);
       Vals.push_back(cast<Constant>(val));
     }
 
@@ -4998,8 +4999,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   } else if (auto CD = dyn_cast<ConstantStruct>(oval)) {
     SmallVector<Constant *, 1> Vals;
     for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
-      Vals.push_back(
-          cast<Constant>(invertPointerM(CD->getOperand(i), BuilderM)));
+      Vals.push_back(cast<Constant>(
+          invertPointerM(CD->getOperand(i), BuilderM, nullShadow)));
     }
 
     auto rule = [&CD](ArrayRef<Constant *> Vals) {
@@ -5009,8 +5010,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   } else if (auto CD = dyn_cast<ConstantVector>(oval)) {
     SmallVector<Constant *, 1> Vals;
     for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
-      Vals.push_back(
-          cast<Constant>(invertPointerM(CD->getOperand(i), BuilderM)));
+      Vals.push_back(cast<Constant>(
+          invertPointerM(CD->getOperand(i), BuilderM, nullShadow)));
     }
 
     auto rule = [](ArrayRef<Constant *> Vals) {
@@ -5025,7 +5026,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   }
 
   if (isConstantValue(oval) && !isa<InsertValueInst>(oval) &&
-      !isa<ExtractValueInst>(oval)) {
+      !isa<ExtractValueInst>(oval) && !isa<InsertElementInst>(oval) &&
+      !isa<ExtractElementInst>(oval)) {
     // NOTE, this is legal and the correct resolution, however, our activity
     // analysis honeypot no longer exists
 
@@ -5109,7 +5111,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     return antialloca;
   } else if (auto arg = dyn_cast<GlobalAlias>(oval)) {
     Value *aliasTarget = arg->getAliasee();
-    return invertPointerM(aliasTarget, BuilderM);
+    return invertPointerM(aliasTarget, BuilderM, nullShadow);
   } else if (auto arg = dyn_cast<GlobalVariable>(oval)) {
     if (!hasMetadata(arg, "enzyme_shadow")) {
 
@@ -5366,7 +5368,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     return shadow;
   } else if (auto arg = dyn_cast<CastInst>(oval)) {
     IRBuilder<> bb(getNewFromOriginal(arg));
-    Value *invertOp = invertPointerM(arg->getOperand(0), bb);
+    Value *invertOp = invertPointerM(arg->getOperand(0), bb, nullShadow);
     Type *shadowTy = arg->getDestTy();
 
     auto rule = [&](Value *invertOp) {
@@ -5381,7 +5383,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     return shadow;
   } else if (auto arg = dyn_cast<ConstantExpr>(oval)) {
     IRBuilder<> bb(inversionAllocs);
-    auto ip = invertPointerM(arg->getOperand(0), bb);
+    auto ip = invertPointerM(arg->getOperand(0), bb, nullShadow);
 
     if (arg->isCast()) {
       if (auto PT = dyn_cast<PointerType>(arg->getType())) {
@@ -5480,7 +5482,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     return shadow;
   } else if (auto arg = dyn_cast<ExtractElementInst>(oval)) {
     IRBuilder<> bb(getNewFromOriginal(arg));
-    auto ip = invertPointerM(arg->getVectorOperand(), bb);
+    auto ip = invertPointerM(arg->getVectorOperand(), bb, nullShadow);
 
     auto rule = [&](Value *ip) {
       return bb.CreateExtractElement(ip,
@@ -5516,8 +5518,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     IRBuilder<> bb(getNewFromOriginal(arg));
     Value *op0 = arg->getOperand(0);
     Value *op1 = arg->getOperand(1);
-    auto ip0 = invertPointerM(op0, bb);
-    auto ip1 = invertPointerM(op1, bb);
+    auto ip0 = invertPointerM(op0, bb, nullShadow);
+    auto ip1 = invertPointerM(op1, bb, nullShadow);
 
     auto rule = [&bb, &arg](Value *ip0, Value *ip1) {
 #if LLVM_VERSION_MAJOR >= 11
@@ -5821,7 +5823,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     }
 
     if (false && mapped.size() == 1) {
-      return invertPointerM(phi->getIncomingValue(0), BuilderM);
+      return invertPointerM(phi->getIncomingValue(0), BuilderM, nullShadow);
     }
 #if 0
      else if (false && mapped.size() == 2) {

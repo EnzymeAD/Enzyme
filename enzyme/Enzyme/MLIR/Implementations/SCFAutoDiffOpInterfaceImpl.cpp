@@ -122,21 +122,30 @@ struct ForOpInterfaceReverse
         gutils->popCache(caches[2], builder), nArgs); // TODO
     repFor.getRegion().begin()->erase();
 
-    buildReturnFunction buildFuncRetrunOp = [](OpBuilder &builder, Location loc,
+    buildReturnFunction buildFuncReturnOp = [](OpBuilder &builder, Location loc,
                                                SmallVector<Value> retargs) {
       builder.create<scf::YieldOp>(loc, retargs);
       return;
     };
 
     gutils->Logic.differentiate(gutils, forOp.getRegion(), repFor.getRegion(),
-                                false, buildFuncRetrunOp);
+                                /*parentRegion=*/false, buildFuncReturnOp);
 
     // Insert the index which is carried by the scf for op.
     Type indexType = mlir::IndexType::get(
         gutils->initializationBlock->begin()->getContext());
     repFor.getRegion().insertArgument((unsigned)0, indexType, forOp.getLoc());
 
-    // TODO Can we do reverse iteration???
+    for (const auto &[iterOperand, adjResult] :
+         llvm::zip(forOp.getIterOperands(), repFor.getResults())) {
+      if (gutils->hasInvertPointer(iterOperand)) {
+        auto autoDiffType = cast<AutoDiffTypeInterface>(iterOperand.getType());
+        Value before = gutils->invertPointerM(iterOperand, builder);
+        Value after = autoDiffType.createAddOp(builder, forOp.getLoc(), before,
+                                               adjResult);
+        gutils->mapInvertPointer(iterOperand, after, builder);
+      }
+    }
   }
 
   SmallVector<Value> cacheValues(Operation *op,
