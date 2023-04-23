@@ -694,8 +694,10 @@ void PreProcessCache::AlwaysInline(Function *NewF) {
   for (auto &BB : *NewF) {
     for (auto &I : BB) {
       if (hasMetadata(&I, "enzyme_zerostack")) {
-        if (isa<AllocaInst>(getBaseObject(I.getOperand(0))))
+        if (isa<AllocaInst>(getBaseObject(I.getOperand(0)))) {
           ToErase.push_back(&I);
+          continue;
+        }
       }
       if (auto CI = dyn_cast<CallInst>(&I)) {
         if (!CI->getCalledFunction())
