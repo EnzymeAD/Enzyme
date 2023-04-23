@@ -603,10 +603,9 @@ static inline bool isCertainPrint(const llvm::StringRef name) {
 
 /// Create function for type that performs the derivative memcpy on floating
 /// point memory
-llvm::Function *
-getOrInsertDifferentialFloatMemcpy(llvm::Module &M, llvm::Type *T,
-                                   unsigned dstalign, unsigned srcalign,
-                                   unsigned dstaddr, unsigned srcaddr);
+llvm::Function *getOrInsertDifferentialFloatMemcpy(
+    llvm::Module &M, llvm::Type *T, unsigned dstalign, unsigned srcalign,
+    unsigned dstaddr, unsigned srcaddr, unsigned bitwidth);
 
 /// Create function for type that performs memcpy with a stride
 llvm::Function *getOrInsertMemcpyStrided(llvm::Module &M, llvm::PointerType *T,
@@ -615,10 +614,9 @@ llvm::Function *getOrInsertMemcpyStrided(llvm::Module &M, llvm::PointerType *T,
 
 /// Create function for type that performs the derivative memmove on floating
 /// point memory
-llvm::Function *
-getOrInsertDifferentialFloatMemmove(llvm::Module &M, llvm::Type *T,
-                                    unsigned dstalign, unsigned srcalign,
-                                    unsigned dstaddr, unsigned srcaddr);
+llvm::Function *getOrInsertDifferentialFloatMemmove(
+    llvm::Module &M, llvm::Type *T, unsigned dstalign, unsigned srcalign,
+    unsigned dstaddr, unsigned srcaddr, unsigned bitwidth);
 
 llvm::Function *getOrInsertCheckedFree(llvm::Module &M, llvm::CallInst *call,
                                        llvm::Type *Type, unsigned width);

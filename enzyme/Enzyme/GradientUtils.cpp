@@ -8207,7 +8207,8 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
                               ? getOrInsertDifferentialFloatMemcpy
                               : getOrInsertDifferentialFloatMemmove)(
               *MTI->getParent()->getParent()->getParent(), secretty, dstalign,
-              srcalign, dstaddr, srcaddr);
+              srcalign, dstaddr, srcaddr,
+              cast<IntegerType>(length->getType())->getBitWidth());
           Builder2.CreateCall(dmemcpy, args);
         }
       }
