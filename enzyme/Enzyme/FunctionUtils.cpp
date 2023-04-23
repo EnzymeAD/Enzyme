@@ -464,9 +464,10 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
     auto i64 = Type::getInt64Ty(NewF->getContext());
     IRBuilder<> B(insertBefore);
     CallInst *CI = nullptr;
-    auto rep = CreateAllocation(B, AI->getAllocatedType(),
-                                B.CreateZExtOrTrunc(AI->getArraySize(), i64),
-                                nam, &CI);
+    Instruction *ZeroInst = nullptr;
+    auto rep = CreateAllocation(
+        B, AI->getAllocatedType(), B.CreateZExtOrTrunc(AI->getArraySize(), i64),
+        nam, &CI, /*ZeroMem*/ EnzymeZeroCache ? &ZeroInst : nullptr);
 #if LLVM_VERSION_MAJOR > 10
     auto align = AI->getAlign().value();
 #else
