@@ -3264,6 +3264,8 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                   ts->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
                 } else if (auto CI = dyn_cast<CallInst>(&I)) {
                   StringRef funcName = getFuncNameFromCall(CI);
+                  if (funcName == "enzyme_zerotype")
+                    continue;
                   if (funcName == "julia.write_barrier" ||
                       isa<MemSetInst>(&I) || isa<MemTransferInst>(&I)) {
 
@@ -8415,6 +8417,10 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         continue;
       }
       if (funcName == "julia.write_barrier") {
+        stores.insert(CI);
+        continue;
+      }
+      if (funcName == "enzyme_zerotype") {
         stores.insert(CI);
         continue;
       }

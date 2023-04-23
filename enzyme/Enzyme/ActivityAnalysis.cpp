@@ -221,6 +221,7 @@ const std::set<std::string> KnownInactiveFunctionInsts = {
     "jl_ptr_to_array_1d"};
 
 const std::set<std::string> KnownInactiveFunctions = {
+    "enzyme_zerotype",
     "abort",
     "time",
     "memcmp",
