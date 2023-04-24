@@ -5,12 +5,14 @@
 
 #include "../../TypeAnalysis/TypeAnalysis.h"
 #include "../../Utils.h"
+#include <functional>
 
 namespace mlir {
 namespace enzyme {
 
-typedef void (*buildReturnFunction)(OpBuilder &, Location,
-                                    SmallVector<mlir::Value>);
+typedef void(buildReturnFunction)(OpBuilder &, Location,
+                                  SmallVector<mlir::Value>);
+using brf = std::function<buildReturnFunction>;
 
 class MGradientUtilsReverse;
 
@@ -125,9 +127,7 @@ public:
   initializeShadowValues(SmallVector<mlir::Block *> &dominatorToposortBlocks,
                          MGradientUtilsReverse *gutils);
   void handlePredecessors(Block *oBB, Block *newBB, Block *reverseBB,
-                          MGradientUtilsReverse *gutils,
-                          void (*buildReturnOp)(OpBuilder &, Location,
-                                                SmallVector<mlir::Value>),
+                          MGradientUtilsReverse *gutils, brf buildReturnOp,
                           bool parentRegion);
   void visitChildren(Block *oBB, Block *reverseBB,
                      MGradientUtilsReverse *gutils);
@@ -143,7 +143,8 @@ public:
                                                   Region &region);
   void differentiate(MGradientUtilsReverse *gutils, Region &oldRegion,
                      Region &newRegion, bool parentRegion,
-                     buildReturnFunction buildFuncRetrunOp);
+                     brf buildFuncRetrunOp,
+                     std::function<std::pair<Value, Value>(Type)> cacheCreator);
 };
 
 } // Namespace enzyme

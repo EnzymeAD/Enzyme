@@ -13,6 +13,8 @@
 #include "CloneFunction.h"
 #include "EnzymeLogic.h"
 
+#include <functional>
+
 namespace mlir {
 namespace enzyme {
 
@@ -78,6 +80,13 @@ public:
   void setDiffe(mlir::Value val, mlir::Value toset, OpBuilder &BuilderM);
   Type getIndexType();
   Value insertInit(Type t);
+
+  SmallVector<std::function<std::pair<Value, Value>(Type)>> cacheCreatorHook;
+  void
+  registerCacheCreatorHook(std::function<std::pair<Value, Value>(Type)> hook);
+  void
+  deregisterCacheCreatorHook(std::function<std::pair<Value, Value>(Type)> hook);
+  std::pair<Value, Value> getNewCache(Type t);
 
   // Cache
   Type getCacheType(Type t);

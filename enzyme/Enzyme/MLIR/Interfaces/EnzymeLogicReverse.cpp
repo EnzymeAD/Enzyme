@@ -195,8 +195,7 @@ void MEnzymeLogic::visitChildren(Block *oBB, Block *reverseBB,
 void MEnzymeLogic::handlePredecessors(Block *oBB, Block *newBB,
                                       Block *reverseBB,
                                       MGradientUtilsReverse *gutils,
-                                      buildReturnFunction buildReturnOp,
-                                      bool parentRegion) {
+                                      brf buildReturnOp, bool parentRegion) {
   OpBuilder revBuilder(reverseBB, reverseBB->end());
   if (oBB->hasNoPredecessors()) {
     SmallVector<mlir::Value> retargs;
@@ -337,10 +336,11 @@ void MEnzymeLogic::initializeShadowValues(
   }
 }
 
-void MEnzymeLogic::differentiate(MGradientUtilsReverse *gutils,
-                                 Region &oldRegion, Region &newRegion,
-                                 bool parentRegion,
-                                 buildReturnFunction buildFuncReturnOp) {
+void MEnzymeLogic::differentiate(
+    MGradientUtilsReverse *gutils, Region &oldRegion, Region &newRegion,
+    bool parentRegion, brf buildFuncReturnOp,
+    std::function<std::pair<Value, Value>(Type)> cacheCreator) {
+  gutils->registerCacheCreatorHook(cacheCreator);
   gutils->createReverseModeBlocks(oldRegion, newRegion, parentRegion);
 
   SmallVector<mlir::Block *> dominatorToposortBlocks =
@@ -359,6 +359,7 @@ void MEnzymeLogic::differentiate(MGradientUtilsReverse *gutils,
     handlePredecessors(oBB, newBB, reverseBB, gutils, buildFuncReturnOp,
                        parentRegion);
   }
+  gutils->deregisterCacheCreatorHook(cacheCreator);
 }
 
 FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
@@ -381,13 +382,13 @@ FunctionOpInterface MEnzymeLogic::CreateReverseDiff(
   Region &oldRegion = gutils->oldFunc.getFunctionBody();
   Region &newRegion = gutils->newFunc.getFunctionBody();
 
-  buildReturnFunction buildFuncReturnOp = [](OpBuilder &builder, Location loc,
-                                             SmallVector<Value> retargs) {
+  brf buildFuncReturnOp = [](OpBuilder &builder, Location loc,
+                             SmallVector<Value> retargs) {
     builder.create<func::ReturnOp>(loc, retargs);
     return;
   };
 
-  differentiate(gutils, oldRegion, newRegion, true, buildFuncReturnOp);
+  differentiate(gutils, oldRegion, newRegion, true, buildFuncReturnOp, nullptr);
 
   auto nf = gutils->newFunc;
 

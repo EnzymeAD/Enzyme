@@ -72,10 +72,34 @@ Type mlir::enzyme::MGradientUtilsReverse::getCacheType(Type t) {
   return cacheType;
 }
 
+void MGradientUtilsReverse::registerCacheCreatorHook(
+    std::function<std::pair<Value, Value>(Type)> hook) {
+  if (hook != nullptr) {
+    cacheCreatorHook.push_back(hook);
+  }
+}
+
+void MGradientUtilsReverse::deregisterCacheCreatorHook(
+    std::function<std::pair<Value, Value>(Type)> hook) {
+  if (hook != nullptr) {
+    cacheCreatorHook.pop_back();
+  }
+}
+
+std::pair<Value, Value> MGradientUtilsReverse::getNewCache(Type t) {
+  if (cacheCreatorHook.empty()) {
+    Value cache = insertInit(t);
+    return {cache, cache};
+  }
+  return cacheCreatorHook.back()(t);
+}
+
+// We assume that caches will only be written to at one location. The returned
+// cache is (might be) "pop only"
 Value MGradientUtilsReverse::initAndPushCache(Value v, OpBuilder &builder) {
-  Value cache = insertInit(getCacheType(v.getType()));
-  builder.create<enzyme::PushOp>(v.getLoc(), cache, v);
-  return cache;
+  std::pair<Value, Value> cache = getNewCache(getCacheType(v.getType()));
+  auto pushOp = builder.create<enzyme::PushOp>(v.getLoc(), cache.first, v);
+  return cache.second;
 }
 
 Value MGradientUtilsReverse::popCache(Value cache, OpBuilder &builder) {

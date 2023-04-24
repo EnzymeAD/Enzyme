@@ -20,6 +20,7 @@
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/NVVMDialect.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/OpenMP/OpenMPDialect.h"
@@ -32,6 +33,8 @@
 #include "Dialect/Dialect.h"
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Passes/Passes.h"
+
+#include "Dialect/Ops.h"
 
 using namespace mlir;
 
@@ -89,6 +92,8 @@ int main(int argc, char **argv) {
         PtrElementModel<LLVM::LLVMPointerType>>(*ctx);
     LLVM::LLVMArrayType::attachInterface<PtrElementModel<LLVM::LLVMArrayType>>(
         *ctx);
+    enzyme::CacheType::attachInterface<MemRefInsider>(
+        *ctx);
   });
 
   // Register the autodiff interface implementations for upstream dialects.
@@ -97,6 +102,7 @@ int main(int argc, char **argv) {
   enzyme::registerLLVMDialectAutoDiffInterface(registry);
   enzyme::registerMemRefDialectAutoDiffInterface(registry);
   enzyme::registerSCFDialectAutoDiffInterface(registry);
+  enzyme::registerLinalgDialectAutoDiffInterface(registry);
 
   return mlir::failed(
       mlir::MlirOptMain(argc, argv, "Enzyme modular optimizer driver", registry,

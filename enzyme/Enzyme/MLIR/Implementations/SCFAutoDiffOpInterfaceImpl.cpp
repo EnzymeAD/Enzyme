@@ -14,11 +14,13 @@
 #include "Implementations/CoreDialectsAutoDiffImplementations.h"
 #include "Interfaces/AutoDiffOpInterface.h"
 #include "Interfaces/AutoDiffTypeInterface.h"
+#include "Interfaces/EnzymeLogic.h"
 #include "Interfaces/GradientUtils.h"
 #include "Interfaces/GradientUtilsReverse.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Support/LogicalResult.h"
+#include <functional>
 
 using namespace mlir;
 using namespace mlir::enzyme;
@@ -122,14 +124,15 @@ struct ForOpInterfaceReverse
         gutils->popCache(caches[2], builder), nArgs); // TODO
     repFor.getRegion().begin()->erase();
 
-    buildReturnFunction buildFuncReturnOp = [](OpBuilder &builder, Location loc,
-                                               SmallVector<Value> retargs) {
-      builder.create<scf::YieldOp>(loc, retargs);
-      return;
-    };
+    std::function<buildReturnFunction> buildFuncReturnOp =
+        [](OpBuilder &builder, Location loc, SmallVector<Value> retargs) {
+          builder.create<scf::YieldOp>(loc, retargs);
+          return;
+        };
 
     gutils->Logic.differentiate(gutils, forOp.getRegion(), repFor.getRegion(),
-                                /*parentRegion=*/false, buildFuncReturnOp);
+                                /*parentRegion=*/false, buildFuncReturnOp,
+                                nullptr);
 
     // Insert the index which is carried by the scf for op.
     Type indexType = mlir::IndexType::get(
