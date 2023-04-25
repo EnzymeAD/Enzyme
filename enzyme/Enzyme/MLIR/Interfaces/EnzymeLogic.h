@@ -127,7 +127,8 @@ public:
   void handlePredecessors(Block *oBB, Block *newBB, Block *reverseBB,
                           MGradientUtilsReverse *gutils,
                           void (*buildReturnOp)(OpBuilder &, Location,
-                                                SmallVector<mlir::Value>));
+                                                SmallVector<mlir::Value>),
+                          bool parentRegion);
   void visitChildren(Block *oBB, Block *reverseBB,
                      MGradientUtilsReverse *gutils);
   void visitChild(Operation *op, OpBuilder &builder,

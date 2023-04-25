@@ -60,6 +60,7 @@
 #if LLVM_VERSION_MAJOR > 6
 #include "llvm/Analysis/PhiValues.h"
 #endif
+#include "llvm/Analysis/ProfileSummaryInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScopedNoAliasAA.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
@@ -149,6 +150,10 @@ cl::opt<bool>
 
 cl::opt<bool> EnzymeSelectOpt("enzyme-select-opt", cl::init(true), cl::Hidden,
                               cl::desc("Run Enzyme select optimization"));
+
+cl::opt<int> EnzymePostOptLevel(
+    "enzyme-post-opt-level", cl::init(0), cl::Hidden,
+    cl::desc("Post optimization level within Enzyme differentiated function"));
 }
 
 /// Is the use of value val as an argument of call CI potentially captured
@@ -459,9 +464,10 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
     auto i64 = Type::getInt64Ty(NewF->getContext());
     IRBuilder<> B(insertBefore);
     CallInst *CI = nullptr;
-    auto rep = CreateAllocation(B, AI->getAllocatedType(),
-                                B.CreateZExtOrTrunc(AI->getArraySize(), i64),
-                                nam, &CI);
+    Instruction *ZeroInst = nullptr;
+    auto rep = CreateAllocation(
+        B, AI->getAllocatedType(), B.CreateZExtOrTrunc(AI->getArraySize(), i64),
+        nam, &CI, /*ZeroMem*/ EnzymeZeroCache ? &ZeroInst : nullptr);
 #if LLVM_VERSION_MAJOR > 10
     auto align = AI->getAlign().value();
 #else
@@ -476,6 +482,10 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
     if (rep != CI) {
       cast<Instruction>(rep)->setMetadata("enzyme_caststack",
                                           MDNode::get(CI->getContext(), {}));
+    }
+    if (ZeroInst) {
+      ZeroInst->setMetadata("enzyme_zerostack",
+                            MDNode::get(CI->getContext(), {}));
     }
 
     auto PT0 = cast<PointerType>(rep->getType());
@@ -671,16 +681,24 @@ OldAllocationSize(Value *Ptr, CallInst *Loc, Function *NewF, IntegerType *T,
 }
 
 void PreProcessCache::AlwaysInline(Function *NewF) {
+
   PreservedAnalyses PA;
   PA.preserve<AssumptionAnalysis>();
   PA.preserve<TargetLibraryAnalysis>();
   FAM.invalidate(*NewF, PA);
   SmallVector<CallInst *, 2> ToInline;
+  SmallVector<Instruction *, 2> ToErase;
   // TODO this logic should be combined with the dynamic loop emission
   // to minimize the number of branches if the realloc is used for multiple
   // values with the same bound.
   for (auto &BB : *NewF) {
     for (auto &I : BB) {
+      if (hasMetadata(&I, "enzyme_zerostack")) {
+        if (isa<AllocaInst>(getBaseObject(I.getOperand(0)))) {
+          ToErase.push_back(&I);
+          continue;
+        }
+      }
       if (auto CI = dyn_cast<CallInst>(&I)) {
         if (!CI->getCalledFunction())
           continue;
@@ -688,6 +706,9 @@ void PreProcessCache::AlwaysInline(Function *NewF) {
           ToInline.push_back(CI);
       }
     }
+  }
+  for (auto I : ToErase) {
+    I->eraseFromParent();
   }
   for (auto CI : ToInline) {
     InlineFunctionInfo IFI;
@@ -1141,16 +1162,6 @@ void RemoveRedundantPHI(Function *F, FunctionAnalysisManager &FAM) {
 }
 
 PreProcessCache::PreProcessCache() {
-  FAM.registerPass([] { return AssumptionAnalysis(); });
-  FAM.registerPass([] { return TargetLibraryAnalysis(); });
-  FAM.registerPass([] { return LoopAnalysis(); });
-  FAM.registerPass([] { return DominatorTreeAnalysis(); });
-#if LLVM_VERSION_MAJOR > 6
-  FAM.registerPass([] { return PhiValuesAnalysis(); });
-#endif
-
-  FAM.registerPass([] { return DependenceAnalysis(); });
-
   // Explicitly chose AA passes that are stateless
   // and will not be invalidated
   FAM.registerPass([] { return TypeBasedAA(); });
@@ -1171,6 +1182,9 @@ PreProcessCache::PreProcessCache() {
   MAM.registerPass([&] { return FunctionAnalysisManagerModuleProxy(FAM); });
   FAM.registerPass([&] { return ModuleAnalysisManagerFunctionProxy(MAM); });
 
+  LAM.registerPass([&] { return FunctionAnalysisManagerLoopProxy(FAM); });
+  FAM.registerPass([&] { return LoopAnalysisManagerFunctionProxy(LAM); });
+
   FAM.registerPass([] {
     auto AM = AAManager();
     AM.registerFunctionAnalysis<BasicAA>();
@@ -1185,21 +1199,10 @@ PreProcessCache::PreProcessCache() {
     return AM;
   });
 
-  // used in optimizeintermediate
-  FAM.registerPass([] { return ScalarEvolutionAnalysis(); });
-
-  FAM.registerPass([] { return TargetIRAnalysis(); });
-  FAM.registerPass([] { return MemorySSAAnalysis(); });
-  FAM.registerPass([] { return MemoryDependenceAnalysis(); });
-  FAM.registerPass([] { return OptimizationRemarkEmitterAnalysis(); });
-  FAM.registerPass([] { return LazyValueAnalysis(); });
-#if LLVM_VERSION_MAJOR >= 8
-  MAM.registerPass([] { return PassInstrumentationAnalysis(); });
-  FAM.registerPass([] { return PassInstrumentationAnalysis(); });
-#endif
-
-  // Used by GradientUtils
-  FAM.registerPass([] { return PostDominatorTreeAnalysis(); });
+  PassBuilder PB;
+  PB.registerModuleAnalyses(MAM);
+  PB.registerFunctionAnalyses(FAM);
+  PB.registerLoopAnalyses(LAM);
 }
 
 llvm::AAResults &
@@ -2399,10 +2402,45 @@ void PreProcessCache::optimizeIntermediate(Function *F) {
 
   PreservedAnalyses PA;
   FAM.invalidate(*F, PA);
+
+#if LLVM_VERSION_MAJOR < 14
+  using OptimizationLevel = llvm::PassBuilder::OptimizationLevel;
+#endif
+  OptimizationLevel Level = OptimizationLevel::O0;
+
+  switch (EnzymePostOptLevel) {
+  default:
+  case 0:
+    Level = OptimizationLevel::O0;
+    break;
+  case 1:
+    Level = OptimizationLevel::O1;
+    break;
+  case 2:
+    Level = OptimizationLevel::O2;
+    break;
+  case 3:
+    Level = OptimizationLevel::O3;
+    break;
+  }
+  if (Level != OptimizationLevel::O0) {
+    PassBuilder PB;
+#if LLVM_VERSION_MAJOR >= 12
+    FunctionPassManager FPM =
+        PB.buildFunctionSimplificationPipeline(Level, ThinOrFullLTOPhase::None);
+#else
+    FunctionPassManager FPM = PB.buildFunctionSimplificationPipeline(
+        Level, PassBuilder::ThinLTOPhase::None);
+#endif
+    PA = FPM.run(*F, FAM);
+    FAM.invalidate(*F, PA);
+  }
+
   // TODO actually run post optimizations.
 }
 
 void PreProcessCache::clear() {
+  LAM.clear();
   FAM.clear();
   MAM.clear();
   cache.clear();

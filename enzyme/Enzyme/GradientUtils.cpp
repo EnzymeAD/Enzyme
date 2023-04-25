@@ -3264,6 +3264,8 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                   ts->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
                 } else if (auto CI = dyn_cast<CallInst>(&I)) {
                   StringRef funcName = getFuncNameFromCall(CI);
+                  if (funcName == "enzyme_zerotype")
+                    continue;
                   if (funcName == "julia.write_barrier" ||
                       isa<MemSetInst>(&I) || isa<MemTransferInst>(&I)) {
 
@@ -4218,12 +4220,7 @@ bool GradientUtils::shouldRecompute(const Value *val,
 
 MDNode *GradientUtils::getDerivativeAliasScope(const Value *origptr,
                                                ssize_t newptr) {
-  origptr =
-#if LLVM_VERSION_MAJOR >= 12
-      getUnderlyingObject(origptr, 100);
-#else
-      GetUnderlyingObject(origptr, oldFunc->getParent()->getDataLayout(), 100);
-#endif
+  origptr = getBaseObject(origptr);
 
   auto found = differentialAliasScopeDomains.find(origptr);
   if (found == differentialAliasScopeDomains.end()) {
@@ -4397,7 +4394,7 @@ DIFFE_TYPE GradientUtils::getReturnDiffeType(llvm::CallInst *orig,
   return subretType;
 }
 
-DIFFE_TYPE GradientUtils::getDiffeType(Value *v, bool foreignFunction) {
+DIFFE_TYPE GradientUtils::getDiffeType(Value *v, bool foreignFunction) const {
   if (isConstantValue(v) && !foreignFunction) {
     return DIFFE_TYPE::CONSTANT;
   }
@@ -4407,16 +4404,15 @@ DIFFE_TYPE GradientUtils::getDiffeType(Value *v, bool foreignFunction) {
   if (!argType->isFPOrFPVectorTy() &&
       (TR.query(v).Inner0().isPossiblePointer() || foreignFunction)) {
     if (argType->isPointerTy()) {
-#if LLVM_VERSION_MAJOR >= 12
-      auto at = getUnderlyingObject(v, 100);
-#else
-      auto at =
-          GetUnderlyingObject(v, oldFunc->getParent()->getDataLayout(), 100);
-#endif
+      auto at = getBaseObject(v);
       if (auto arg = dyn_cast<Argument>(at)) {
         if (ArgDiffeTypes[arg->getArgNo()] == DIFFE_TYPE::DUP_NONEED) {
           return DIFFE_TYPE::DUP_NONEED;
         }
+      } else if (isa<AllocaInst>(at) || isAllocationCall(at, TLI)) {
+        assert(unnecessaryValuesP);
+        if (unnecessaryValuesP->count(at))
+          return DIFFE_TYPE::DUP_NONEED;
       }
     }
     return DIFFE_TYPE::DUP_ARG;
@@ -4975,7 +4971,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   } else if (auto CD = dyn_cast<ConstantDataArray>(oval)) {
     SmallVector<Constant *, 1> Vals;
     for (size_t i = 0, len = CD->getNumElements(); i < len; i++) {
-      Value *val = invertPointerM(CD->getElementAsConstant(i), BuilderM);
+      Value *val =
+          invertPointerM(CD->getElementAsConstant(i), BuilderM, nullShadow);
       Vals.push_back(cast<Constant>(val));
     }
     auto rule = [&CD](ArrayRef<Constant *> Vals) {
@@ -4985,7 +4982,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   } else if (auto CD = dyn_cast<ConstantArray>(oval)) {
     SmallVector<Constant *, 1> Vals;
     for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
-      Value *val = invertPointerM(CD->getOperand(i), BuilderM);
+      Value *val = invertPointerM(CD->getOperand(i), BuilderM, nullShadow);
       Vals.push_back(cast<Constant>(val));
     }
 
@@ -4997,8 +4994,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   } else if (auto CD = dyn_cast<ConstantStruct>(oval)) {
     SmallVector<Constant *, 1> Vals;
     for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
-      Vals.push_back(
-          cast<Constant>(invertPointerM(CD->getOperand(i), BuilderM)));
+      Vals.push_back(cast<Constant>(
+          invertPointerM(CD->getOperand(i), BuilderM, nullShadow)));
     }
 
     auto rule = [&CD](ArrayRef<Constant *> Vals) {
@@ -5008,8 +5005,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   } else if (auto CD = dyn_cast<ConstantVector>(oval)) {
     SmallVector<Constant *, 1> Vals;
     for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
-      Vals.push_back(
-          cast<Constant>(invertPointerM(CD->getOperand(i), BuilderM)));
+      Vals.push_back(cast<Constant>(
+          invertPointerM(CD->getOperand(i), BuilderM, nullShadow)));
     }
 
     auto rule = [](ArrayRef<Constant *> Vals) {
@@ -5024,7 +5021,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   }
 
   if (isConstantValue(oval) && !isa<InsertValueInst>(oval) &&
-      !isa<ExtractValueInst>(oval)) {
+      !isa<ExtractValueInst>(oval) && !isa<InsertElementInst>(oval) &&
+      !isa<ExtractElementInst>(oval)) {
     // NOTE, this is legal and the correct resolution, however, our activity
     // analysis honeypot no longer exists
 
@@ -5108,7 +5106,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     return antialloca;
   } else if (auto arg = dyn_cast<GlobalAlias>(oval)) {
     Value *aliasTarget = arg->getAliasee();
-    return invertPointerM(aliasTarget, BuilderM);
+    return invertPointerM(aliasTarget, BuilderM, nullShadow);
   } else if (auto arg = dyn_cast<GlobalVariable>(oval)) {
     if (!hasMetadata(arg, "enzyme_shadow")) {
 
@@ -5134,7 +5132,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             if (isa<IntrinsicInst>(CI))
               continue;
             if (!isConstantInstruction(CI)) {
-              Function *F = getFunctionFromCall(CI);
+              auto F = getFunctionFromCall(CI);
               if (F && isMemFreeLibMFunction(F->getName())) {
                 continue;
               }
@@ -5365,7 +5363,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     return shadow;
   } else if (auto arg = dyn_cast<CastInst>(oval)) {
     IRBuilder<> bb(getNewFromOriginal(arg));
-    Value *invertOp = invertPointerM(arg->getOperand(0), bb);
+    Value *invertOp = invertPointerM(arg->getOperand(0), bb, nullShadow);
     Type *shadowTy = arg->getDestTy();
 
     auto rule = [&](Value *invertOp) {
@@ -5380,7 +5378,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     return shadow;
   } else if (auto arg = dyn_cast<ConstantExpr>(oval)) {
     IRBuilder<> bb(inversionAllocs);
-    auto ip = invertPointerM(arg->getOperand(0), bb);
+    auto ip = invertPointerM(arg->getOperand(0), bb, nullShadow);
 
     if (arg->isCast()) {
       if (auto PT = dyn_cast<PointerType>(arg->getType())) {
@@ -5479,7 +5477,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     return shadow;
   } else if (auto arg = dyn_cast<ExtractElementInst>(oval)) {
     IRBuilder<> bb(getNewFromOriginal(arg));
-    auto ip = invertPointerM(arg->getVectorOperand(), bb);
+    auto ip = invertPointerM(arg->getVectorOperand(), bb, nullShadow);
 
     auto rule = [&](Value *ip) {
       return bb.CreateExtractElement(ip,
@@ -5515,8 +5513,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     IRBuilder<> bb(getNewFromOriginal(arg));
     Value *op0 = arg->getOperand(0);
     Value *op1 = arg->getOperand(1);
-    auto ip0 = invertPointerM(op0, bb);
-    auto ip1 = invertPointerM(op1, bb);
+    auto ip0 = invertPointerM(op0, bb, nullShadow);
+    auto ip1 = invertPointerM(op1, bb, nullShadow);
 
     auto rule = [&bb, &arg](Value *ip0, Value *ip1) {
 #if LLVM_VERSION_MAJOR >= 11
@@ -5820,7 +5818,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     }
 
     if (false && mapped.size() == 1) {
-      return invertPointerM(phi->getIncomingValue(0), BuilderM);
+      return invertPointerM(phi->getIncomingValue(0), BuilderM, nullShadow);
     }
 #if 0
      else if (false && mapped.size() == 2) {
@@ -6266,32 +6264,15 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
 
   if (auto li = dyn_cast<LoadInst>(inst))
     if (auto origInst = dyn_cast_or_null<LoadInst>(isOriginal(inst))) {
-#if LLVM_VERSION_MAJOR >= 12
-      auto liobj = getUnderlyingObject(li->getPointerOperand(), 100);
-#else
-      auto liobj = GetUnderlyingObject(
-          li->getPointerOperand(), oldFunc->getParent()->getDataLayout(), 100);
-#endif
+      auto liobj = getBaseObject(li->getPointerOperand());
 
-#if LLVM_VERSION_MAJOR >= 12
-      auto orig_liobj = getUnderlyingObject(origInst->getPointerOperand(), 100);
-#else
-      auto orig_liobj =
-          GetUnderlyingObject(origInst->getPointerOperand(),
-                              oldFunc->getParent()->getDataLayout(), 100);
-#endif
+      auto orig_liobj = getBaseObject(origInst->getPointerOperand());
 
       if (scopeMap.find(inst) == scopeMap.end()) {
         for (auto pair : scopeMap) {
           if (auto li2 = dyn_cast<LoadInst>(const_cast<Value *>(pair.first))) {
 
-#if LLVM_VERSION_MAJOR >= 12
-            auto li2obj = getUnderlyingObject(li2->getPointerOperand(), 100);
-#else
-            auto li2obj =
-                GetUnderlyingObject(li2->getPointerOperand(),
-                                    oldFunc->getParent()->getDataLayout(), 100);
-#endif
+            auto li2obj = getBaseObject(li2->getPointerOperand());
 
             if (liobj == li2obj && DT.dominates(li2, li)) {
               auto orig2 = isOriginal(li2);
@@ -6377,13 +6358,7 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
           allDomPredecessorsOf(origInst, OrigDT, [&](Instruction *pred) {
             if (auto SI = dyn_cast<StoreInst>(pred)) {
               // auto NewSI = cast<StoreInst>(getNewFromOriginal(SI));
-#if LLVM_VERSION_MAJOR >= 12
-              auto si2obj = getUnderlyingObject(SI->getPointerOperand(), 100);
-#else
-              auto si2obj =
-                GetUnderlyingObject(SI->getPointerOperand(),
-                                    oldFunc->getParent()->getDataLayout(), 100);
-#endif
+              auto si2obj = getBaseObject(SI->getPointerOperand());
 
               if (si2obj != orig_liobj)
                 return false;
@@ -8232,7 +8207,8 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
                               ? getOrInsertDifferentialFloatMemcpy
                               : getOrInsertDifferentialFloatMemmove)(
               *MTI->getParent()->getParent()->getParent(), secretty, dstalign,
-              srcalign, dstaddr, srcaddr);
+              srcalign, dstaddr, srcaddr,
+              cast<IntegerType>(length->getType())->getBitWidth());
           Builder2.CreateCall(dmemcpy, args);
         }
       }
@@ -8442,6 +8418,10 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         continue;
       }
       if (funcName == "julia.write_barrier") {
+        stores.insert(CI);
+        continue;
+      }
+      if (funcName == "enzyme_zerotype") {
         stores.insert(CI);
         continue;
       }

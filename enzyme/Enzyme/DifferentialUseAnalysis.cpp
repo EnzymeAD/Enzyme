@@ -392,8 +392,15 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
       return true;
     }
 
+#if LLVM_VERSION_MAJOR < 14
+    auto F = getFunctionFromCall(CI);
+#endif
+
     bool writeOnlyNoCapture = true;
-    auto F = getFunctionFromCall(const_cast<CallInst *>(CI));
+
+    if (shouldDisableNoWrite(CI)) {
+      writeOnlyNoCapture = false;
+    }
 #if LLVM_VERSION_MAJOR >= 14
     for (size_t i = 0; i < CI->arg_size(); i++)
 #else
@@ -427,14 +434,9 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
           writeOnlyNoCapture = false;
           break;
         }
-
-        if (CI->hasFnAttr("enzyme_preserve_primal") ||
-            (F && F->hasFnAttribute("enzyme_preserve_primal"))) {
-          writeOnlyNoCapture = false;
-          break;
-        }
       }
     }
+
     // Don't need the primal argument if it is write only and not captured
     if (writeOnlyNoCapture)
       return false;

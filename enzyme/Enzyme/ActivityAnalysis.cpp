@@ -151,7 +151,8 @@ const char *KnownInactiveFunctionsStartingWith[] = {
     "_ZNKSt8__detail20_Prime_rehash_policy",
     "_ZNSt8__detail20_Prime_rehash_policy",
     "_ZNKSt3__122__unordered_map_hasher",
-    "_ZNKSt8__detail15_Hash_code_base"
+    "_ZNKSt8__detail15_Hash_code_base",
+    "_ZNSt3__19to_string"
 #endif
 };
 
@@ -220,6 +221,7 @@ const std::set<std::string> KnownInactiveFunctionInsts = {
     "jl_ptr_to_array_1d"};
 
 const std::set<std::string> KnownInactiveFunctions = {
+    "enzyme_zerotype",
     "abort",
     "time",
     "memcmp",
@@ -395,6 +397,7 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
 
     // non __cxx11
     "std::basic_string",
+    "std::to_string",
     "std::basic_ios",
     "std::basic_ostringstream",
     "std::basic_istringstream",
@@ -411,6 +414,7 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     "std::__1::__do_string_hash",
     "std::__1::hash",
     "std::__1::__unordered_map_hasher",
+    "std::__1::to_string",
   
     "std::__detail::_Prime_rehash_policy",
     "std::__detail::_Hash_code_base",
@@ -424,7 +428,7 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
   if (CI->hasFnAttr("enzyme_inactive"))
     return true;
 
-  Function *F = getFunctionFromCall(CI);
+  auto F = getFunctionFromCall(CI);
 
   // Indirect function calls may actively use the argument
   if (F == nullptr)
@@ -491,6 +495,10 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
     return true;
   if (F->getIntrinsicID() == Intrinsic::memmove &&
       CI->getArgOperand(0) != val && CI->getArgOperand(1) != val)
+    return true;
+
+  if ((F->hasFnAttribute("enzyme_sample") || CI->hasFnAttr("enzyme_sample")) &&
+      CI->getArgOperand(0) == val)
     return true;
 
   // only the float arg input is potentially active
@@ -708,7 +716,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
       InsertConstantInstruction(TR, I);
       return true;
     }
-    Function *called = getFunctionFromCall(CI);
+    auto called = getFunctionFromCall(CI);
 
     if (called) {
       if (called->hasFnAttribute("enzyme_active")) {
@@ -1232,7 +1240,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       InsertConstantValue(TR, Val);
       return true;
     }
-    Function *called = getFunctionFromCall(CI);
+    auto called = getFunctionFromCall(CI);
 
     if (called) {
       if (called->hasFnAttribute("enzyme_active")) {
@@ -1268,13 +1276,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
 
   if (containsPointer) {
 
-    auto TmpOrig =
-#if LLVM_VERSION_MAJOR >= 12
-        getUnderlyingObject(Val, 100);
-#else
-        GetUnderlyingObject(Val, TR.getFunction()->getParent()->getDataLayout(),
-                            100);
-#endif
+    auto TmpOrig = getBaseObject(Val);
 
     // If we know that our origin is inactive from its arguments,
     // we are definitionally inactive
@@ -1382,7 +1384,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           insertConstantsFrom(TR, *UpHypothesis);
           return true;
         }
-        Function *called = getFunctionFromCall(op);
+        auto called = getFunctionFromCall(op);
 
         StringRef funcName = getFuncNameFromCall(op);
 
@@ -1699,7 +1701,7 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
             return false;
         }
 
-        Function *F = getFunctionFromCall(CI);
+        auto F = getFunctionFromCall(CI);
         StringRef funcName = getFuncNameFromCall(CI);
 
         if (F && F->hasFnAttribute("enzyme_inactive")) {
@@ -2347,7 +2349,7 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
     callVal = op->getCalledValue();
 #endif
     StringRef funcName = getFuncNameFromCall(op);
-    Function *called = getFunctionFromCall(op);
+    auto called = getFunctionFromCall(op);
 
     if (called && called->hasFnAttribute("enzyme_inactive")) {
       return true;
@@ -2638,14 +2640,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
                 continue;
               }
             }
-            auto TmpOrig_2 =
-#if LLVM_VERSION_MAJOR >= 12
-                getUnderlyingObject(TmpOrig, 100);
-#else
-                GetUnderlyingObject(
-                    TmpOrig, TR.getFunction()->getParent()->getDataLayout(),
-                    100);
-#endif
+            auto TmpOrig_2 = getBaseObject(TmpOrig);
             if (TmpOrig != TmpOrig_2) {
               vtodo.push_back(TmpOrig_2);
               continue;
@@ -2711,13 +2706,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
               break;
             }
           }
-          auto TmpOrig_2 =
-#if LLVM_VERSION_MAJOR >= 12
-              getUnderlyingObject(TmpOrig, 100);
-#else
-              GetUnderlyingObject(
-                  TmpOrig, TR.getFunction()->getParent()->getDataLayout(), 100);
-#endif
+          auto TmpOrig_2 = getBaseObject(TmpOrig);
           if (TmpOrig != TmpOrig_2) {
             TmpOrig = TmpOrig_2;
             continue;
@@ -2732,14 +2721,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         }
       }
       if (PUA == UseActivity::OnlyLoads) {
-        auto TmpOrig =
-#if LLVM_VERSION_MAJOR >= 12
-            getUnderlyingObject(SI->getPointerOperand(), 100);
-#else
-            GetUnderlyingObject(SI->getPointerOperand(),
-                                TR.getFunction()->getParent()->getDataLayout(),
-                                100);
-#endif
+        auto TmpOrig = getBaseObject(SI->getPointerOperand());
         if (TmpOrig == val) {
           continue;
         }
@@ -2814,7 +2796,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
       bool mayRead = false;
       bool mayCapture = false;
 
-      Function *F = getFunctionFromCall(call);
+      auto F = getFunctionFromCall(call);
 
       size_t idx = 0;
 #if LLVM_VERSION_MAJOR >= 14
@@ -2986,14 +2968,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
                       break;
                     }
                   }
-                  auto TmpOrig_2 =
-#if LLVM_VERSION_MAJOR >= 12
-                      getUnderlyingObject(TmpOrig, 100);
-#else
-                      GetUnderlyingObject(
-                          TmpOrig,
-                          TR.getFunction()->getParent()->getDataLayout(), 100);
-#endif
+                  auto TmpOrig_2 = getBaseObject(TmpOrig);
                   if (TmpOrig != TmpOrig_2) {
                     TmpOrig = TmpOrig_2;
                     continue;
@@ -3036,13 +3011,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
             Value *ptr = a;
             bool subValue = false;
             while (ptr) {
-              auto TmpOrig2 =
-#if LLVM_VERSION_MAJOR >= 12
-                  getUnderlyingObject(ptr, 100);
-#else
-                  GetUnderlyingObject(
-                      ptr, TR.getFunction()->getParent()->getDataLayout(), 100);
-#endif
+              auto TmpOrig2 = getBaseObject(ptr);
               if (AllocaSet.count(TmpOrig2)) {
                 subValue = true;
                 break;

@@ -459,11 +459,7 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
 static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
   emitSourceFileHeader("Rewriters", os);
   const auto &patterns = recordKeeper.getAllDerivedDefinitions("CallPattern");
-  Record *attrClass = recordKeeper.getClass("Attr");
 
-  // Ensure unique patterns simply by appending unique suffix.
-  unsigned rewritePatternCount = 0;
-  std::string baseRewriteName = "GeneratedConvert";
   for (Record *pattern : patterns) {
     DagInit *tree = pattern->getValueAsDag("PatternToMatch");
 

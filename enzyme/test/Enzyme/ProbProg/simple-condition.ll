@@ -16,6 +16,9 @@ declare i64 @__enzyme_get_choice(i8*, i8*, i8*, i64)
 declare double @__enzyme_get_likelihood(i8*, i8*)
 declare void @__enzyme_insert_call(i8*, i8*, i8*)
 declare void @__enzyme_insert_choice(i8*, i8*, double, i8*, i64)
+declare void @__enzyme_insert_argument(i8*, i8*, i8*, i64)
+declare void @__enzyme_insert_return(i8*, i8*, i64)
+declare void @__enzyme_insert_function(i8*, i8*)
 declare i1 @__enzyme_has_call(i8*, i8*)
 declare i1 @__enzyme_has_choice(i8*, i8*)
 declare double @__enzyme_sample(double (double, double)*, double (double, double, double)*, i8*, double, double)
@@ -51,6 +54,7 @@ entry:
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %x.ptr.i = alloca double
 ; CHECK-NEXT:   %mu.ptr.i = alloca double
+; CHECK-NEXT:   call void @__enzyme_insert_function(i8* %trace, i8* bitcast (void (i8*, i8*)* @condition_test to i8*))
 ; CHECK-NEXT:   %0 = bitcast double* %mu.ptr.i to i8*
 ; CHECK-NEXT:   call void @llvm.lifetime.start.p0i8(i64 8, i8* %0)
 ; CHECK-NEXT:   %has.choice.mu.i = call i1 @__enzyme_has_choice(i8* %observations, i8* nocapture readonly getelementptr inbounds ([3 x i8], [3 x i8]* @.str, i64 0, i64 0))
@@ -97,5 +101,5 @@ entry:
 ; CHECK-NEXT:   call void @__enzyme_insert_choice(i8* %trace, i8* nocapture readonly getelementptr inbounds ([2 x i8], [2 x i8]* @.str.1, i64 0, i64 0), double %likelihood.x.i, i8* %10, i64 8)
 ; CHECK-NEXT:   %11 = bitcast double* %x.ptr.i to i8*
 ; CHECK-NEXT:   call void @llvm.lifetime.end.p0i8(i64 8, i8* %11)
-; CHECK-NEXT:   ret
+; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

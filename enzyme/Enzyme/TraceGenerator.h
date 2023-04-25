@@ -48,11 +48,15 @@ public:
                      &originalToNewFn,
                  llvm::SmallPtrSetImpl<llvm::Function *> &generativeFunctions);
 
+  void visitFunction(llvm::Function &F);
+
   void handleSampleCall(llvm::CallInst &call, llvm::CallInst *new_call);
 
   void handleArbitraryCall(llvm::CallInst &call, llvm::CallInst *new_call);
 
   void visitCallInst(llvm::CallInst &call);
+
+  void visitReturnInst(llvm::ReturnInst &ret);
 };
 
 #endif /* TraceGenerator_h */
