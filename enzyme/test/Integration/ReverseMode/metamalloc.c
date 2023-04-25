@@ -1,11 +1,11 @@
-// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O0 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -S | %lli - 
-// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -fno-unroll-loops -O1 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -S | %lli - 
-// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O2 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -S | %lli - 
-// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O3 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -S | %lli - 
-// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O0 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme --enzyme-inline=1 -S | %lli - 
-// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O1 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme --enzyme-inline=1 -S | %lli - 
-// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O2 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme --enzyme-inline=1 -S | %lli - 
-// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O3 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme --enzyme-inline=1 -S | %lli - 
+// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O0 %s -S -emit-llvm -o - | %opt - %loadEnzyme %enzyme -S | %lli - 
+// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -fno-unroll-loops -O1 %s -S -emit-llvm -o - | %opt - %loadEnzyme %enzyme -S | %lli - 
+// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O2 %s -S -emit-llvm -o - | %opt - %loadEnzyme %enzyme -S | %lli - 
+// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O3 %s -S -emit-llvm -o - | %opt - %loadEnzyme %enzyme -S | %lli - 
+// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O0 %s -S -emit-llvm -o - | %opt - %loadEnzyme %enzyme --enzyme-inline=1 -S | %lli - 
+// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O1 %s -S -emit-llvm -o - | %opt - %loadEnzyme %enzyme --enzyme-inline=1 -S | %lli - 
+// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O2 %s -S -emit-llvm -o - | %opt - %loadEnzyme %enzyme --enzyme-inline=1 -S | %lli - 
+// RUN: %clang -std=c11 -Xclang -new-struct-path-tbaa -O3 %s -S -emit-llvm -o - | %opt - %loadEnzyme %enzyme --enzyme-inline=1 -S | %lli - 
 
 #include <stdio.h>
 #include <math.h>

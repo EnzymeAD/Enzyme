@@ -2860,7 +2860,7 @@ llvmGetPassPluginInfo() {
 #if LLVM_VERSION >= 13
           bool EnableModuleInliner = false;
           if (EnableModuleInliner)
-              MPM.addPass(PB0->buildModuleInlinerPipeline(Level, Phase));
+            MPM.addPass(PB0->buildModuleInlinerPipeline(Level, Phase));
           else
 #endif
             MPM.addPass(PB0->buildInlinerPipeline(Level, Phase));

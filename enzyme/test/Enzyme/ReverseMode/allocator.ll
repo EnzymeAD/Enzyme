@@ -1,6 +1,6 @@
 ; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -instcombine -adce -S | FileCheck %s; fi
 ; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | %lli - | FileCheck %s --check-prefix=EVAL; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,simplifycfg,instcombine,adce)" -enzyme-preopt=false -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,%simplifycfg,instcombine,adce)" -enzyme-preopt=false -S | FileCheck %s
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | %lli - | FileCheck %s --check-prefix=EVAL
 
 ; EVAL: d_reduce_max(0)=1.000000

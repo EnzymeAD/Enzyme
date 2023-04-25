@@ -1,5 +1,5 @@
 ; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -early-cse -simplifycfg -instsimplify -correlated-propagation -adce -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,early-cse,simplifycfg,instsimplify,correlated-propagation,adce)" -enzyme-preopt=false -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,early-cse,%simplifycfg,instsimplify,correlated-propagation,adce)" -enzyme-preopt=false -S | FileCheck %s
 
 ; ModuleID = '../test/Integration/rwrloop.c'
 source_filename = "../test/Integration/rwrloop.c"

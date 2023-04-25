@@ -1,5 +1,5 @@
 ; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,adce,loop-deletion,correlated-propagation,simplifycfg)" -enzyme-preopt=false -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,adce,loop-deletion,correlated-propagation,%simplifycfg)" -enzyme-preopt=false -S | FileCheck %s
 
 ; ModuleID = 'ode-unopt.ll'
 source_filename = "ode.cpp"
