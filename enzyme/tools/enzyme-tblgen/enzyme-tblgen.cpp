@@ -1423,8 +1423,9 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
        << "    {\n"
        << "      F->addFnAttr(Attribute::ArgMemOnly);\n"
        << "      if (byRef) {\n";
-    for (size_t argPos = 0; argPos < usedArgStrs.size(); argPos++) {
-      auto typeOfArg = typeMap.lookup(argPos);
+    auto calledTypeMap = calledPattern.getArgTypeMap();
+    for (auto argPos = 0; argPos < calledTypeMap.size(); argPos++) {
+      auto typeOfArg = calledTypeMap.lookup(argPos);
       if (typeOfArg == argType::len || typeOfArg == argType::vincInc) {
         os << "        F->addParamAttr(" << argPos
            << ", Attribute::ReadOnly);\n"
@@ -1436,8 +1437,8 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
        << "      // Julia declares double* pointers as Int64,\n"
        << "      //  so LLVM won't let us add these Attributes.\n"
        << "      if (!julia_decl) {\n";
-    for (size_t argPos = 0; argPos < usedArgStrs.size(); argPos++) {
-      auto typeOfArg = typeMap.lookup(argPos);
+    for (auto argPos = 0; argPos < calledTypeMap.size(); argPos++) {
+      auto typeOfArg = calledTypeMap.lookup(argPos);
       if (typeOfArg == argType::vincData) {
         os << "        F->addParamAttr(" << argPos
            << ", Attribute::NoCapture);\n";
