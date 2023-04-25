@@ -466,9 +466,10 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
     auto i64 = Type::getInt64Ty(NewF->getContext());
     IRBuilder<> B(insertBefore);
     CallInst *CI = nullptr;
-    auto rep = CreateAllocation(B, AI->getAllocatedType(),
-                                B.CreateZExtOrTrunc(AI->getArraySize(), i64),
-                                nam, &CI);
+    Instruction *ZeroInst = nullptr;
+    auto rep = CreateAllocation(
+        B, AI->getAllocatedType(), B.CreateZExtOrTrunc(AI->getArraySize(), i64),
+        nam, &CI, /*ZeroMem*/ EnzymeZeroCache ? &ZeroInst : nullptr);
 #if LLVM_VERSION_MAJOR > 10
     auto align = AI->getAlign().value();
 #else
@@ -483,6 +484,10 @@ UpgradeAllocasToMallocs(Function *NewF, DerivativeMode mode,
     if (rep != CI) {
       cast<Instruction>(rep)->setMetadata("enzyme_caststack",
                                           MDNode::get(CI->getContext(), {}));
+    }
+    if (ZeroInst) {
+      ZeroInst->setMetadata("enzyme_zerostack",
+                            MDNode::get(CI->getContext(), {}));
     }
 
     auto PT0 = cast<PointerType>(rep->getType());
@@ -678,16 +683,24 @@ OldAllocationSize(Value *Ptr, CallInst *Loc, Function *NewF, IntegerType *T,
 }
 
 void PreProcessCache::AlwaysInline(Function *NewF) {
+
   PreservedAnalyses PA;
   PA.preserve<AssumptionAnalysis>();
   PA.preserve<TargetLibraryAnalysis>();
   FAM.invalidate(*NewF, PA);
   SmallVector<CallInst *, 2> ToInline;
+  SmallVector<Instruction *, 2> ToErase;
   // TODO this logic should be combined with the dynamic loop emission
   // to minimize the number of branches if the realloc is used for multiple
   // values with the same bound.
   for (auto &BB : *NewF) {
     for (auto &I : BB) {
+      if (hasMetadata(&I, "enzyme_zerostack")) {
+        if (isa<AllocaInst>(getBaseObject(I.getOperand(0)))) {
+          ToErase.push_back(&I);
+          continue;
+        }
+      }
       if (auto CI = dyn_cast<CallInst>(&I)) {
         if (!CI->getCalledFunction())
           continue;
@@ -695,6 +708,9 @@ void PreProcessCache::AlwaysInline(Function *NewF) {
           ToInline.push_back(CI);
       }
     }
+  }
+  for (auto I : ToErase) {
+    I->eraseFromParent();
   }
   for (auto CI : ToInline) {
     InlineFunctionInfo IFI;

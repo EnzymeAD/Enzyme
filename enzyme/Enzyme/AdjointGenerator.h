@@ -5894,7 +5894,8 @@ public:
 
         auto dmemcpy = getOrInsertDifferentialFloatMemcpy(
             *Builder2.GetInsertBlock()->getParent()->getParent(), secretty,
-            /*dstalign*/ 1, /*srcalign*/ 1, dstaddr, srcaddr);
+            /*dstalign*/ 1, /*srcalign*/ 1, dstaddr, srcaddr,
+            cast<IntegerType>(length->getType())->getBitWidth());
 
         Builder2.CreateCall(dmemcpy, args, ReverseDefs);
       }
@@ -13688,6 +13689,51 @@ public:
     }
     if (funcName == "memset") {
       visitMemSetCommon(call);
+      return;
+    }
+    if (funcName == "enzyme_zerotype") {
+      IRBuilder<> BuilderZ(&call);
+      getForwardBuilder(BuilderZ);
+
+      bool forceErase = Mode == DerivativeMode::ReverseModeGradient ||
+                        Mode == DerivativeMode::ForwardModeSplit;
+
+      if (forceErase)
+        eraseIfUnused(call, /*erase*/ true, /*check*/ false);
+      else
+        eraseIfUnused(call);
+
+      Value *orig_op0 = call.getArgOperand(0);
+
+      // If constant destination then no operation needs doing
+      if (gutils->isConstantValue(orig_op0)) {
+        return;
+      }
+
+      if (!forceErase) {
+        Value *op0 = gutils->invertPointerM(orig_op0, BuilderZ);
+        Value *op1 = gutils->getNewFromOriginal(call.getArgOperand(1));
+        Value *op2 = gutils->getNewFromOriginal(call.getArgOperand(2));
+        auto Defs = gutils->getInvertedBundles(
+            &call, {ValueType::Shadow, ValueType::Primal, ValueType::Primal},
+            BuilderZ, /*lookup*/ false);
+
+        applyChainRule(
+            BuilderZ,
+            [&](Value *op0) {
+              SmallVector<Value *, 4> args = {op0, op1, op2};
+              auto cal =
+                  BuilderZ.CreateCall(call.getCalledFunction(), args, Defs);
+              llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
+              ToCopy2.push_back(LLVMContext::MD_noalias);
+              cal->copyMetadata(call, ToCopy2);
+              cal->setAttributes(call.getAttributes());
+              cal->setCallingConv(call.getCallingConv());
+              cal->setTailCallKind(call.getTailCallKind());
+              cal->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
+            },
+            op0);
+      }
       return;
     }
     if (funcName == "posix_memalign") {

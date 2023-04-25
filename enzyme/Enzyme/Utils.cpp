@@ -539,20 +539,24 @@ void ErrorIfRuntimeInactive(llvm::IRBuilder<> &B, llvm::Value *primal,
 Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
                                              unsigned dstalign,
                                              unsigned srcalign,
-                                             unsigned dstaddr,
-                                             unsigned srcaddr) {
+                                             unsigned dstaddr, unsigned srcaddr,
+                                             unsigned bitwidth) {
   assert(elementType->isFloatingPointTy());
-  std::string name = "__enzyme_memcpyadd_" + tofltstr(elementType) + "da" +
-                     std::to_string(dstalign) + "sa" + std::to_string(srcalign);
+  std::string name = "__enzyme_memcpy";
+  if (bitwidth != 64)
+    name += std::to_string(bitwidth);
+  name += "add_" + tofltstr(elementType) + "da" + std::to_string(dstalign) +
+          "sa" + std::to_string(srcalign);
   if (dstaddr)
     name += "dadd" + std::to_string(dstaddr);
   if (srcaddr)
     name += "sadd" + std::to_string(srcaddr);
-  FunctionType *FT = FunctionType::get(Type::getVoidTy(M.getContext()),
-                                       {PointerType::get(elementType, dstaddr),
-                                        PointerType::get(elementType, srcaddr),
-                                        Type::getInt64Ty(M.getContext())},
-                                       false);
+  FunctionType *FT =
+      FunctionType::get(Type::getVoidTy(M.getContext()),
+                        {PointerType::get(elementType, dstaddr),
+                         PointerType::get(elementType, srcaddr),
+                         IntegerType::get(M.getContext(), bitwidth)},
+                        false);
 
 #if LLVM_VERSION_MAJOR >= 9
   Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
@@ -750,15 +754,14 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
 }
 
 // TODO implement differential memmove
-Function *getOrInsertDifferentialFloatMemmove(Module &M, Type *T,
-                                              unsigned dstalign,
-                                              unsigned srcalign,
-                                              unsigned dstaddr,
-                                              unsigned srcaddr) {
+Function *
+getOrInsertDifferentialFloatMemmove(Module &M, Type *T, unsigned dstalign,
+                                    unsigned srcalign, unsigned dstaddr,
+                                    unsigned srcaddr, unsigned bitwidth) {
   llvm::errs() << "warning: didn't implement memmove, using memcpy as fallback "
                   "which can result in errors\n";
   return getOrInsertDifferentialFloatMemcpy(M, T, dstalign, srcalign, dstaddr,
-                                            srcaddr);
+                                            srcaddr, bitwidth);
 }
 
 Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,

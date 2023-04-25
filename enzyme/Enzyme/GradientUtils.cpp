@@ -3271,6 +3271,8 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                   ts->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
                 } else if (auto CI = dyn_cast<CallInst>(&I)) {
                   StringRef funcName = getFuncNameFromCall(CI);
+                  if (funcName == "enzyme_zerotype")
+                    continue;
                   if (funcName == "julia.write_barrier" ||
                       isa<MemSetInst>(&I) || isa<MemTransferInst>(&I)) {
 
@@ -8212,7 +8214,8 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
                               ? getOrInsertDifferentialFloatMemcpy
                               : getOrInsertDifferentialFloatMemmove)(
               *MTI->getParent()->getParent()->getParent(), secretty, dstalign,
-              srcalign, dstaddr, srcaddr);
+              srcalign, dstaddr, srcaddr,
+              cast<IntegerType>(length->getType())->getBitWidth());
           Builder2.CreateCall(dmemcpy, args);
         }
       }
@@ -8422,6 +8425,10 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         continue;
       }
       if (funcName == "julia.write_barrier") {
+        stores.insert(CI);
+        continue;
+      }
+      if (funcName == "enzyme_zerotype") {
         stores.insert(CI);
         continue;
       }
