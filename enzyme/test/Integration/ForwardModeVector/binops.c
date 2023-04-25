@@ -1,11 +1,11 @@
-// RUN: %clang -O0 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -S | %lli -
-// RUN: %clang -O1 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -S | %lli -
-// RUN: %clang -O2 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -S | %lli -
-// RUN: %clang -O3 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -S | %lli -
-// RUN: %clang -O0 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -enzyme-inline=1 -S | %lli -
-// RUN: %clang -O1 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -enzyme-inline=1 -S | %lli -
-// RUN: %clang -O2 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -enzyme-inline=1 -S | %lli -
-// RUN: %clang -O3 %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -enzyme-inline=1 -S | %lli -
+// RUN: %clang -O0 %s -S -emit-llvm -o - | %opt - %loadEnzyme %enzyme -S | %lli -
+// RUN: %clang -O1 %s -S -emit-llvm -o - | %opt - %loadEnzyme %enzyme -S | %lli -
+// RUN: %clang -O2 %s -S -emit-llvm -o - | %opt - %loadEnzyme %enzyme -S | %lli -
+// RUN: %clang -O3 %s -S -emit-llvm -o - | %opt - %loadEnzyme %enzyme -S | %lli -
+// RUN: %clang -O0 %s -S -emit-llvm -o - | %opt - %loadEnzyme %enzyme -enzyme-inline=1 -S | %lli -
+// RUN: %clang -O1 %s -S -emit-llvm -o - | %opt - %loadEnzyme %enzyme -enzyme-inline=1 -S | %lli -
+// RUN: %clang -O2 %s -S -emit-llvm -o - | %opt - %loadEnzyme %enzyme -enzyme-inline=1 -S | %lli -
+// RUN: %clang -O3 %s -S -emit-llvm -o - | %opt - %loadEnzyme %enzyme -enzyme-inline=1 -S | %lli -
 
 #include <math.h>
 #include <stdbool.h>

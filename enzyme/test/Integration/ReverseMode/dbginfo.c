@@ -1,11 +1,11 @@
-// RUN: %clang -std=c11 -ffast-math -O0 %s -S -emit-llvm -o - -g | %opt - %loadEnzyme -enzyme -S | %lli - 
-// RUN: %clang -std=c11 -ffast-math -O1 %s -S -emit-llvm -o - -g | %opt - %loadEnzyme -enzyme -S | %lli - 
-// RUN: %clang -std=c11 -ffast-math -O2 %s -S -emit-llvm -o - -g | %opt - %loadEnzyme -enzyme -S | %lli - 
-// RUN: %clang -std=c11 -ffast-math -O3 %s -S -emit-llvm -o - -g | %opt - %loadEnzyme -enzyme -S | %lli - 
-// RUN: %clang -std=c11 -ffast-math -O0 %s -S -emit-llvm -o - -g | %opt - %loadEnzyme -enzyme -enzyme-inline=1 -S | %lli - 
-// RUN: %clang -std=c11 -ffast-math -O1 %s -S -emit-llvm -o - -g | %opt - %loadEnzyme -enzyme -enzyme-inline=1 -S | %lli - 
-// RUN: %clang -std=c11 -ffast-math -O2 %s -S -emit-llvm -o - -g | %opt - %loadEnzyme -enzyme -enzyme-inline=1 -S | %lli - 
-// RUN: %clang -std=c11 -ffast-math -O3 %s -S -emit-llvm -o - -g | %opt - %loadEnzyme -enzyme -enzyme-inline=1 -S | %lli - 
+// RUN: %clang -std=c11 -ffast-math -O0 %s -S -emit-llvm -o - -g | %opt - %loadEnzyme %enzyme -S | %lli - 
+// RUN: %clang -std=c11 -ffast-math -O1 %s -S -emit-llvm -o - -g | %opt - %loadEnzyme %enzyme -S | %lli - 
+// RUN: %clang -std=c11 -ffast-math -O2 %s -S -emit-llvm -o - -g | %opt - %loadEnzyme %enzyme -S | %lli - 
+// RUN: %clang -std=c11 -ffast-math -O3 %s -S -emit-llvm -o - -g | %opt - %loadEnzyme %enzyme -S | %lli - 
+// RUN: %clang -std=c11 -ffast-math -O0 %s -S -emit-llvm -o - -g | %opt - %loadEnzyme %enzyme -enzyme-inline=1 -S | %lli - 
+// RUN: %clang -std=c11 -ffast-math -O1 %s -S -emit-llvm -o - -g | %opt - %loadEnzyme %enzyme -enzyme-inline=1 -S | %lli - 
+// RUN: %clang -std=c11 -ffast-math -O2 %s -S -emit-llvm -o - -g | %opt - %loadEnzyme %enzyme -enzyme-inline=1 -S | %lli - 
+// RUN: %clang -std=c11 -ffast-math -O3 %s -S -emit-llvm -o - -g | %opt - %loadEnzyme %enzyme -enzyme-inline=1 -S | %lli - 
 
 //#include <math.h>
 
