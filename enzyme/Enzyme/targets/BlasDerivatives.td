@@ -104,7 +104,7 @@ def copy : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
                   ["y"],[len, vinc, vinc],
                   [
                   (noop),// copy moves x into y, so x is never modified.
-                  (b<"axpy"> $n, Constant<"1.0">, adj<"y">, $incy, adj<"x">, $incx),
+                  (b<"axpy"> $n, Constant<"1.0">, adj<"y">, $incy, adj<"x">, $incx)
                   ]
                   >;
 
