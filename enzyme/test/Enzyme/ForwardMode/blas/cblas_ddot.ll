@@ -46,8 +46,8 @@ entry:
 
 ; CHECK: define internal double @[[active]](i32 %len, double* noalias %m, double* %"m'", i32 %incm, double* noalias %n, double* %"n'", i32 %incn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call fast double @cblas_ddot(i32 %len, double* nocapture readonly %m, i32 %incm, double* nocapture readonly %"n'", i32 %incn)
-; CHECK-NEXT:   %1 = call fast double @cblas_ddot(i32 %len, double* nocapture readonly %n, i32 %incn, double* nocapture readonly %"m'", i32 %incm)
+; CHECK-NEXT:   %0 = call fast double @cblas_ddot(i32 %len, double* nocapture readonly %"m'", i32 %incm, double* nocapture readonly %n, i32 %incn)
+; CHECK-NEXT:   %1 = call fast double @cblas_ddot(i32 %len, double* nocapture readonly %m, i32 %incm, double* nocapture readonly %"n'", i32 %incn)
 ; CHECK-NEXT:   %2 = fadd fast double %0, %1
 ; CHECK-NEXT:   ret double %2
 ; CHECK-NEXT: }
@@ -60,6 +60,6 @@ entry:
 
 ; CHECK: define internal double @[[inactiveSecond]](i32 %len, double* noalias %m, double* %"m'", i32 %incm, double* noalias %n, i32 %incn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call fast double @cblas_ddot(i32 %len, double* nocapture readonly %n, i32 %incn, double* nocapture readonly %"m'", i32 %incm)
+; CHECK-NEXT:   %0 = call fast double @cblas_ddot(i32 %len, double* nocapture readonly %"m'", i32 %incm, double* nocapture readonly %n, i32 %incn)
 ; CHECK-NEXT:   ret double %0
 ; CHECK-NEXT: }
