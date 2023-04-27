@@ -4193,6 +4193,18 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
       return;
     }
 
+    if (funcName == "for_check_mult_overflow64") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      TypeTree IntPtr;
+      IntPtr.insert({-1, -1}, BaseType::Integer);
+      IntPtr.insert({-1}, BaseType::Pointer);
+      updateAnalysis(call.getOperand(0), IntPtr, &call);
+      for (unsigned int idx = 1; idx < call.getNumOperands(); ++idx) {
+        updateAnalysis(call.getOperand(idx),
+                       TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      }
+    }
+
     if (funcName == "memcpy" || funcName == "memmove") {
       // TODO have this call common mem transfer to copy data
       visitMemTransferCommon(call);

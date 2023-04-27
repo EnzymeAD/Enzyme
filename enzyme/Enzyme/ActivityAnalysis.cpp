@@ -257,7 +257,8 @@ const std::set<std::string> KnownInactiveFunctions = {
     "cuMemPoolGetAttribute",
     "cuMemGetInfo_v2",
     "cuDeviceGetAttribute",
-    "cuDevicePrimaryCtxRetain"
+    "cuDevicePrimaryCtxRetain",
+    "for_check_mult_overflow64"
 };
 
 const std::set<Intrinsic::ID> KnownInactiveIntrinsics = {

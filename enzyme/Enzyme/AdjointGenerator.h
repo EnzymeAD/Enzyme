@@ -9560,6 +9560,21 @@ public:
       return;
     }
 
+    if (funcName == "for_check_mult_overflow64") {
+      assert(gutils->isConstantInstruction(&call));
+      eraseIfUnused(call);
+      switch (Mode) {
+      case DerivativeMode::ReverseModePrimal:
+      case DerivativeMode::ReverseModeGradient:
+      case DerivativeMode::ReverseModeCombined:
+        return;
+      case DerivativeMode::ForwardMode:
+      case DerivativeMode::ForwardModeSplit: {
+        forwardModeInvertedPointerFallback(call);
+        return;
+      }
+      }
+    }
     // Handle lgamma, safe to recompute so no store/change to forward
     if (called) {
       if (funcName == "__kmpc_fork_call") {
