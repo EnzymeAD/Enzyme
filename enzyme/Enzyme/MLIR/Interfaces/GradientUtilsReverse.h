@@ -104,7 +104,7 @@ public:
   bool requiresShadow(Type t);
 
   void initInitializationBlock(IRMapping invertedPointers_,
-                               const SmallPtrSetImpl<mlir::Value> &activevals_);
+                               ArrayRef<DIFFE_TYPE> argDiffeTypes);
 
   bool onlyUsedInParentBlock(Value v);
 

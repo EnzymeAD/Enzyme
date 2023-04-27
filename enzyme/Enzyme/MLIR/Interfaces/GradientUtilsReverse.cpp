@@ -41,7 +41,7 @@ mlir::enzyme::MGradientUtilsReverse::MGradientUtilsReverse(
       originalToNewFn(originalToNewFn_),
       originalToNewFnOps(originalToNewFnOps_), symbolTable(symbolTable_) {
 
-  initInitializationBlock(invertedPointers_, activevals_);
+  initInitializationBlock(invertedPointers_, ArgDiffeTypes_);
 }
 
 // for(auto x : v.getUsers()){x->dump();} DEBUG
@@ -290,21 +290,23 @@ bool mlir::enzyme::MGradientUtilsReverse::hasInvertPointer(mlir::Value v) {
 }
 
 void MGradientUtilsReverse::initInitializationBlock(
-    IRMapping invertedPointers_, const SmallPtrSetImpl<Value> &activevals_) {
+    IRMapping invertedPointers_, ArrayRef<DIFFE_TYPE> argDiffeTypes) {
   initializationBlock = &*(this->newFunc.getFunctionBody().begin());
 
   OpBuilder initializationBuilder(
       &*(this->newFunc.getFunctionBody().begin()),
       this->newFunc.getFunctionBody().begin()->begin());
 
-  for (Value activeval : activevals_) {
-    if (auto iface = dyn_cast<AutoDiffTypeInterface>(activeval.getType())) {
-      Value zero =
-          iface.createNullValue(initializationBuilder, activeval.getLoc());
-      mapInvertPointer(activeval, zero, initializationBuilder);
-    } else {
-      llvm_unreachable(
-          "Type does not have an associated AutoDiffTypeInterface");
+  for (const auto &[val, diffe_type] : llvm::zip(
+           this->oldFunc.getFunctionBody().getArguments(), argDiffeTypes)) {
+    if (diffe_type == DIFFE_TYPE::OUT_DIFF) {
+      if (auto iface = dyn_cast<AutoDiffTypeInterface>(val.getType())) {
+        Value zero = iface.createNullValue(initializationBuilder, val.getLoc());
+        mapInvertPointer(val, zero, initializationBuilder);
+      } else {
+        llvm_unreachable(
+            "Type does not have an associated AutoDiffTypeInterface");
+      }
     }
   }
   for (auto const &x : invertedPointers_.getValueMap()) {
