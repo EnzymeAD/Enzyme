@@ -9116,7 +9116,9 @@ public:
             gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
 
         bool replace =
-            argTy == DIFFE_TYPE::DUP_NONEED ||
+            (argTy == DIFFE_TYPE::DUP_NONEED &&
+             (writeOnlyNoCapture ||
+              !isa<Argument>(getBaseObject(call.getArgOperand(i))))) ||
             (writeOnlyNoCapture && Mode == DerivativeMode::ForwardModeSplit) ||
             (writeOnlyNoCapture && readOnly);
 
@@ -9418,7 +9420,11 @@ public:
       }
 
       Value *prearg = argi;
-      if (argTy == DIFFE_TYPE::DUP_NONEED || readNoneNoCapture) {
+      // Keep the existing passed value if coming from outside.
+      if (readNoneNoCapture ||
+          (argTy == DIFFE_TYPE::DUP_NONEED &&
+           (writeOnlyNoCapture ||
+            !isa<Argument>(getBaseObject(call.getArgOperand(i)))))) {
         if (EnzymeZeroCache)
           prearg = ConstantPointerNull::get(cast<PointerType>(argi->getType()));
         else
@@ -9436,7 +9442,10 @@ public:
 #endif
 
         if ((writeOnlyNoCapture && !replaceFunction) ||
-            argTy == DIFFE_TYPE::DUP_NONEED || readNoneNoCapture) {
+            (readNoneNoCapture ||
+             (argTy == DIFFE_TYPE::DUP_NONEED &&
+              (writeOnlyNoCapture ||
+               !isa<Argument>(getBaseObject(call.getOperand(i))))))) {
           if (EnzymeZeroCache)
             argi = ConstantPointerNull::get(cast<PointerType>(argi->getType()));
           else
