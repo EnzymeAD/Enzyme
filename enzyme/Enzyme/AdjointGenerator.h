@@ -11170,7 +11170,9 @@ public:
 
     if (Mode == DerivativeMode::ForwardMode) {
       auto found = customFwdCallHandlers.find(funcName.str());
-      if (found != customFwdCallHandlers.end()) {
+      if (found != customFwdCallHandlers.end() &&
+          (!gutils->isConstantValue(&call) ||
+           !gutils->isConstantInstruction(&call))) {
         Value *invertedReturn = nullptr;
         auto ifound = gutils->invertedPointers.find(&call);
         if (ifound != gutils->invertedPointers.end()) {
@@ -13545,12 +13547,8 @@ public:
 
       auto placeholder = cast<PHINode>(&*ifound->second);
 
-      bool needShadow =
-          (Mode == DerivativeMode::ForwardMode ||
-           Mode == DerivativeMode::ForwardModeSplit)
-              ? true
-              : DifferentialUseAnalysis::is_value_needed_in_reverse<
-                    ValueType::Shadow>(gutils, &call, Mode, oldUnreachable);
+      bool needShadow = DifferentialUseAnalysis::is_value_needed_in_reverse<
+          ValueType::Shadow>(gutils, &call, Mode, oldUnreachable);
       if (!needShadow) {
         gutils->invertedPointers.erase(ifound);
         gutils->erase(placeholder);
@@ -13888,7 +13886,7 @@ public:
 
     if (gutils->isConstantInstruction(&call) &&
         gutils->isConstantValue(&call)) {
-      bool noFree = false;
+      bool noFree = Mode == DerivativeMode::ForwardMode;
 #if LLVM_VERSION_MAJOR >= 9
       noFree |= call.hasFnAttr(Attribute::NoFree);
 #endif

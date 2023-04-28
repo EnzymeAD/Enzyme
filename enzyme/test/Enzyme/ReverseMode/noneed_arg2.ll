@@ -24,7 +24,7 @@ entry:
 
 ; CHECK: define internal void @diffesquare(i8* %p, i8* %"p'", double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %"cl'de" = alloca double, align 8
+; CHECK-NEXT:   %"cl'de" = alloca double
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"cl'de"
 ; CHECK-NEXT:   %"x'ipc" = bitcast i8* %"p'" to double*
 ; CHECK-NEXT:   %x = bitcast i8* %p to double*
@@ -32,7 +32,7 @@ entry:
 
 ; CHECK: invertentry:                                      ; preds = %entry
 ; CHECK-NEXT:   store double %differeturn, double* %"cl'de"
-; CHECK-NEXT:   %0 = load double, double* %"cl'de", align 8
+; CHECK-NEXT:   %0 = load double, double* %"cl'de"
 ; CHECK-NEXT:   call void @diffesub(double* %x, double* %"x'ipc", double %0)
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"cl'de"
 ; CHECK-NEXT:   ret void

@@ -23,13 +23,13 @@ entry:
 
 ; CHECK: define internal void @diffesquare(double* %x, double* %"x'", double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %"cl'de" = alloca double, align 8
+; CHECK-NEXT:   %"cl'de" = alloca double
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"cl'de"
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertentry:                                      ; preds = %entry
 ; CHECK-NEXT:   store double %differeturn, double* %"cl'de"
-; CHECK-NEXT:   %0 = load double, double* %"cl'de", align 8
+; CHECK-NEXT:   %0 = load double, double* %"cl'de"
 ; CHECK-NEXT:   call void @diffesub(double* %x, double* %"x'", double %0)
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"cl'de"
 ; CHECK-NEXT:   ret void
