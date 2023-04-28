@@ -35,6 +35,7 @@
 #include "llvm/ADT/Triple.h"
 #include "llvm/Analysis/CallGraph.h"
 #include "llvm/Analysis/GlobalsModRef.h"
+#include "llvm/IR/DIBuilder.h"
 #include "llvm/IR/MDBuilder.h"
 
 #if LLVM_VERSION_MAJOR >= 9
@@ -763,6 +764,28 @@ uint8_t EnzymeHasFromStack(LLVMValueRef inst1) {
   Instruction *I1 = cast<Instruction>(unwrap(inst1));
   return hasMetadata(I1, "enzyme_fromstack") != 0;
 }
+
+#if LLVM_VERSION_MAJOR >= 8
+void EnzymeCloneFunctionDISubprogramInto(LLVMValueRef NF, LLVMValueRef F) {
+  auto &OldFunc = *cast<Function>(unwrap(F));
+  auto &NewFunc = *cast<Function>(unwrap(NF));
+  auto OldSP = OldFunc.getSubprogram();
+  if (!OldSP)
+    return;
+  DIBuilder DIB(*OldFunc.getParent(), /*AllowUnresolved=*/false,
+                OldSP->getUnit());
+  auto SPType = DIB.createSubroutineType(DIB.getOrCreateTypeArray({}));
+  DISubprogram::DISPFlags SPFlags = DISubprogram::SPFlagDefinition |
+                                    DISubprogram::SPFlagOptimized |
+                                    DISubprogram::SPFlagLocalToUnit;
+  auto NewSP = DIB.createFunction(
+      OldSP->getUnit(), NewFunc.getName(), NewFunc.getName(), OldSP->getFile(),
+      /*LineNo=*/0, SPType, /*ScopeLine=*/0, DINode::FlagZero, SPFlags);
+  NewFunc.setSubprogram(NewSP);
+  DIB.finalizeSubprogram(NewSP);
+  return;
+}
+#endif
 
 void EnzymeReplaceFunctionImplementation(LLVMModuleRef M) {
   ReplaceFunctionImplementation(*unwrap(M));
