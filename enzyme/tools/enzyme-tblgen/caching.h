@@ -9,21 +9,21 @@
 using namespace llvm;
 void emit_vec_caching(TGPattern &pattern, raw_ostream &os) {
 
-  auto argUsers = pattern.getArgUsers();
-  auto actArgs = pattern.getActiveArgs();
-  auto typeMap = pattern.getArgTypeMap();
-  auto nameVec = pattern.getArgNames();
+  const auto argUsers = pattern.getArgUsers();
+  const auto actArgs = pattern.getActiveArgs();
+  const auto typeMap = pattern.getArgTypeMap();
+  const auto nameVec = pattern.getArgNames();
 
   for (size_t i = 0; i < nameVec.size(); i++) {
     if (typeMap.lookup(i) != argType::vincData) 
       continue;
     assert(typeMap.lookup(i+1) == argType::vincInc);
-    auto vecName = nameVec[i];
-    auto vecPosition = i;
-    auto vecUsers = argUsers.lookup(vecPosition);
-    auto incName = nameVec[i + 1];
-    auto incPosition = i + 1;
-    auto incUsers = argUsers.lookup(incPosition);
+    const auto vecName = nameVec[i];
+    const auto vecPosition = i;
+    const auto vecUsers = argUsers.lookup(vecPosition);
+    const auto incName = nameVec[i + 1];
+    const auto incPosition = i + 1;
+    const auto incUsers = argUsers.lookup(incPosition);
       os 
 << "  bool cache_" << vecName
 << "  = Mode != DerivativeMode::ForwardMode &&\n"
@@ -44,7 +44,7 @@ void emit_vec_caching(TGPattern &pattern, raw_ostream &os) {
       //     b) we're not caching x and need xinc to compute the
       //     derivative of a different variable
       os 
-<< "  bool need_" << incName << " = (active_" << vecName;
+<< "  const bool need_" << incName << " = (active_" << vecName;
       if (incUsers.size() > 0) {
         os 
 << "  || (!cache_" << vecName << " && (";
@@ -137,25 +137,10 @@ void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
 << "        cacheValues.push_back(" << incName << ");\n"
 << "    }\n";
     } else if (typeOfArg == argType::fp) {
-      // TODO: verify
-//       auto name = argOps->getArgNameStr(argPosition);
-//       auto fpName = "fp_" + name;
-//       os 
-// << "    Value *" << fpName << " = gutils->getNewFromOriginal(arg_" << name <<");\n";
-//<< "    if (byRef) {\n"
-//<< "      " << fpName << " = BuilderZ.CreatePointerCast(" << fpName <<", PointerType::getUnqual(fpType));\n"
-//<< "#if LLVM_VERSION_MAJOR > 7\n"
-//<< "      " << fpName << " = BuilderZ.CreateLoad(fpType, " << fpName << ");\n"
-//<< "#else\n"
-//<< "      " << fpName << " = BuilderZ.CreateLoad(" << fpName << ");\n"
-//<< "#endif\n"
-//<< "      if (cache_" << name << ")\n"
-//<< "        cacheValues.push_back(" << fpName << ");\n"
-//<< "    }\n";
+      // TODO: for following functions
     }
   }
 
-  // TODO (april 2023) maybe move to ActiveArgs usage?
   for (size_t i = 0; i < actArgs.size(); i++) {
     size_t argIdx = actArgs[i];
     auto typeOfArg = typeMap.lookup(argIdx);
@@ -182,7 +167,7 @@ void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
     for (size_t j = 0; j < nameVec.size(); j++) {
       os 
 << ((j==0) ? "" : ", ")
-// TODO (april 2023) next line evtl. i instead of argIdx?
+// TODO write julia test to test for usage of i instead of argIdx once used?
 << ((argIdx == j) ? "ValueType::Shadow" : "ValueType::None");
     }
     os
@@ -221,7 +206,6 @@ void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
       os
 << "  Value *len_" << name << " = gutils->getNewFromOriginal(arg_" << name << ");\n";
     } else if (typeOfArg == argType::fp) {
-      //TODO: verify
       os
 << "  Value *fp_" << name << " = gutils->getNewFromOriginal(arg_" << name << ");\n"; 
     }
@@ -262,7 +246,6 @@ void emit_caching(TGPattern &pattern, raw_ostream &os) {
 
   for (auto actEn : llvm::enumerate(actArgs)) {
     auto name = nameVec[actEn.value()];
-    // TODO: (april 2023) re-check castvals index
     os 
 << "  if (cache_" << name << ")\n"
 << "    cacheTypes.push_back(castvals[" << actEn.index() << "]);\n";
