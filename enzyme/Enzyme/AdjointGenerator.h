@@ -4102,8 +4102,8 @@ public:
           auto *SqrtF = CI.getCalledValue();
 #endif
           assert(SqrtF);
-          auto FT =
-              cast<FunctionType>(SqrtF->getType()->getPointerElementType());
+
+          auto FT = CI.getFunctionType();
 
           auto cal = cast<CallInst>(Builder2.CreateCall(FT, SqrtF, args));
           cal->setCallingConv(CI.getCallingConv());
@@ -4451,11 +4451,7 @@ public:
         auto *PowF = CI.getCalledValue();
 #endif
         assert(PowF);
-        FunctionType *FT = nullptr;
-        if (auto F = dyn_cast<Function>(PowF))
-          FT = F->getFunctionType();
-        else
-          FT = cast<FunctionType>(PowF->getType()->getPointerElementType());
+        auto FT = CI.getFunctionType();
 
         if (vdiff && !gutils->isConstantValue(orig_ops[0])) {
 
@@ -4643,8 +4639,7 @@ public:
 #else
         auto *SqrtF = CI.getCalledValue();
 #endif
-        assert(SqrtF);
-        auto FT = cast<FunctionType>(SqrtF->getType()->getPointerElementType());
+        auto FT = CI.getFunctionType();
 
         auto rule = [&](Value *op) {
           CallInst *cal = cast<CallInst>(Builder2.CreateCall(FT, SqrtF, args));
@@ -4968,8 +4963,7 @@ public:
           auto *PowF = CI.getCalledValue();
 #endif
           assert(PowF);
-          auto FT =
-              cast<FunctionType>(PowF->getType()->getPointerElementType());
+          auto FT = CI.getFunctionType();
           auto cal = cast<CallInst>(Builder2.CreateCall(FT, PowF, args));
           cal->setCallingConv(CI.getCallingConv());
           cal->setDebugLoc(gutils->getNewFromOriginal(I.getDebugLoc()));
@@ -5002,7 +4996,7 @@ public:
         auto *PowF = CI.getCalledValue();
 #endif
         assert(PowF);
-        auto FT = cast<FunctionType>(PowF->getType()->getPointerElementType());
+        auto FT = CI.getFunctionType();
 
         Value *op0 = gutils->getNewFromOriginal(orig_ops[0]);
         Value *op1 = gutils->getNewFromOriginal(orig_ops[1]);
@@ -9177,8 +9171,7 @@ public:
       Value *tape = nullptr;
       if (tapeIdx.hasValue()) {
 
-        FunctionType *FT =
-            cast<FunctionType>(subdata->fn->getType()->getPointerElementType());
+        FunctionType *FT = subdata->fn->getFunctionType();
 
         tape = BuilderZ.CreatePHI(
             (tapeIdx == -1) ? FT->getReturnType()
@@ -9222,8 +9215,7 @@ public:
             "whose runtime value is inactive",
             gutils->getNewFromOriginal(call.getDebugLoc()), &call);
 
-        auto ft =
-            cast<FunctionType>(callval->getType()->getPointerElementType());
+        auto ft = call.getFunctionType();
         bool retActive = subretType != DIFFE_TYPE::CONSTANT;
 
         ReturnType subretVal =
@@ -9594,21 +9586,7 @@ public:
               "whose runtime value is inactive",
               gutils->getNewFromOriginal(call.getDebugLoc()), &call);
 
-        FunctionType *ft = nullptr;
-        if (auto F = dyn_cast<Function>(callval))
-          ft = F->getFunctionType();
-        else {
-#if LLVM_VERSION_MAJOR >= 15
-          if (call.getContext().supportsTypedPointers()) {
-#endif
-            ft =
-                cast<FunctionType>(callval->getType()->getPointerElementType());
-#if LLVM_VERSION_MAJOR >= 15
-          } else {
-            ft = call.getFunctionType();
-          }
-#endif
-        }
+        FunctionType *ft = call.getFunctionType();
 
         std::set<llvm::Type *> seen;
         DIFFE_TYPE subretType = whatType(call.getType(), Mode,
@@ -10036,7 +10014,6 @@ public:
       newcalled = lookup(gutils->invertPointerM(callval, Builder2), Builder2);
 
       auto ft = call.getFunctionType();
-      // cast<FunctionType>(callval->getType()->getPointerElementType());
 
       auto res =
           getDefaultFunctionTypeForGradient(ft, /*subretType*/ subretType);
