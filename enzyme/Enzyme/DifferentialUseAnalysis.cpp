@@ -357,6 +357,9 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
   if (auto CI = dyn_cast<CallInst>(user)) {
     auto funcName = getFuncNameFromCall(const_cast<CallInst *>(CI));
 
+    if (funcName == "julia.pointer_from_objref")
+      return false;
+
     // Only need primal (and shadow) request for reverse
     if (funcName == "MPI_Isend" || funcName == "MPI_Irecv" ||
         funcName == "PMPI_Isend" || funcName == "PMPI_Irecv") {

@@ -9116,7 +9116,9 @@ public:
             gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
 
         bool replace =
-            argTy == DIFFE_TYPE::DUP_NONEED ||
+            (argTy == DIFFE_TYPE::DUP_NONEED &&
+             (writeOnlyNoCapture ||
+              !isa<Argument>(getBaseObject(call.getArgOperand(i))))) ||
             (writeOnlyNoCapture && Mode == DerivativeMode::ForwardModeSplit) ||
             (writeOnlyNoCapture && readOnly);
 
@@ -9418,7 +9420,11 @@ public:
       }
 
       Value *prearg = argi;
-      if (argTy == DIFFE_TYPE::DUP_NONEED || readNoneNoCapture) {
+      // Keep the existing passed value if coming from outside.
+      if (readNoneNoCapture ||
+          (argTy == DIFFE_TYPE::DUP_NONEED &&
+           (writeOnlyNoCapture ||
+            !isa<Argument>(getBaseObject(call.getArgOperand(i)))))) {
         if (EnzymeZeroCache)
           prearg = ConstantPointerNull::get(cast<PointerType>(argi->getType()));
         else
@@ -9436,7 +9442,10 @@ public:
 #endif
 
         if ((writeOnlyNoCapture && !replaceFunction) ||
-            argTy == DIFFE_TYPE::DUP_NONEED || readNoneNoCapture) {
+            (readNoneNoCapture ||
+             (argTy == DIFFE_TYPE::DUP_NONEED &&
+              (writeOnlyNoCapture ||
+               !isa<Argument>(getBaseObject(call.getOperand(i))))))) {
           if (EnzymeZeroCache)
             argi = ConstantPointerNull::get(cast<PointerType>(argi->getType()));
           else
@@ -11161,7 +11170,9 @@ public:
 
     if (Mode == DerivativeMode::ForwardMode) {
       auto found = customFwdCallHandlers.find(funcName.str());
-      if (found != customFwdCallHandlers.end()) {
+      if (found != customFwdCallHandlers.end() &&
+          (!gutils->isConstantValue(&call) ||
+           !gutils->isConstantInstruction(&call))) {
         Value *invertedReturn = nullptr;
         auto ifound = gutils->invertedPointers.find(&call);
         if (ifound != gutils->invertedPointers.end()) {
@@ -13536,12 +13547,8 @@ public:
 
       auto placeholder = cast<PHINode>(&*ifound->second);
 
-      bool needShadow =
-          (Mode == DerivativeMode::ForwardMode ||
-           Mode == DerivativeMode::ForwardModeSplit)
-              ? true
-              : DifferentialUseAnalysis::is_value_needed_in_reverse<
-                    ValueType::Shadow>(gutils, &call, Mode, oldUnreachable);
+      bool needShadow = DifferentialUseAnalysis::is_value_needed_in_reverse<
+          ValueType::Shadow>(gutils, &call, Mode, oldUnreachable);
       if (!needShadow) {
         gutils->invertedPointers.erase(ifound);
         gutils->erase(placeholder);
@@ -13879,7 +13886,7 @@ public:
 
     if (gutils->isConstantInstruction(&call) &&
         gutils->isConstantValue(&call)) {
-      bool noFree = false;
+      bool noFree = Mode == DerivativeMode::ForwardMode;
 #if LLVM_VERSION_MAJOR >= 9
       noFree |= call.hasFnAttr(Attribute::NoFree);
 #endif
