@@ -13546,6 +13546,60 @@ public:
       eraseIfUnused(call);
       return;
     }
+    if (funcName.contains("__enzyme_fromdense")) {
+      if (gutils->isConstantValue(&call)) {
+        eraseIfUnused(call);
+        return;
+      }
+
+      auto ifound = gutils->invertedPointers.find(&call);
+      assert(ifound != gutils->invertedPointers.end());
+
+      auto placeholder = cast<PHINode>(&*ifound->second);
+
+      bool needShadow = DifferentialUseAnalysis::is_value_needed_in_reverse<
+          ValueType::Shadow>(gutils, &call, Mode, oldUnreachable);
+      if (!needShadow) {
+        gutils->invertedPointers.erase(ifound);
+        gutils->erase(placeholder);
+        eraseIfUnused(call);
+        return;
+      }
+
+      SmallVector<Value *, 3> args;
+      for (size_t i = 0; i < 2; i++)
+        args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
+#if LLVM_VERSION_MAJOR >= 14
+      for (size_t i = 2; i < call.arg_size(); ++i)
+#else
+      for (size_t i = 2; i < call.getNumArgOperands(); ++i)
+#endif
+        args.push_back(gutils->invertPointerM(call.getArgOperand(0), BuilderZ));
+
+      Value *res = UndefValue::get(gutils->getShadowType(call.getType()));
+      if (gutils->getWidth() == 1) {
+        res = BuilderZ.CreateCall(called, args);
+      } else {
+        for (size_t w = 0; w < gutils->getWidth(); ++w) {
+          SmallVector<Value *, 3> targs = {args[0], args[1]};
+#if LLVM_VERSION_MAJOR >= 14
+          for (size_t i = 2; i < call.arg_size(); ++i)
+#else
+          for (size_t i = 2; i < call.getNumArgOperands(); ++i)
+#endif
+            targs.push_back(GradientUtils::extractMeta(BuilderZ, args[i], w));
+
+          auto tres = BuilderZ.CreateCall(called, targs);
+          res = BuilderZ.CreateInsertValue(res, tres, w);
+        }
+      }
+
+      gutils->replaceAWithB(placeholder, res);
+      gutils->erase(placeholder);
+      eraseIfUnused(call);
+      return;
+    }
+
     if (funcName == "memcpy" || funcName == "memmove") {
       auto ID = (funcName == "memcpy") ? Intrinsic::memcpy : Intrinsic::memmove;
 #if LLVM_VERSION_MAJOR >= 10

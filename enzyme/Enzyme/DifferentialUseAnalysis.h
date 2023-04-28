@@ -385,7 +385,8 @@ inline bool is_value_needed_in_reverse(
           mode == DerivativeMode::ForwardModeSplit ||
           (!isa<ExtractValueInst>(user) && !isa<ExtractElementInst>(user) &&
            !isa<InsertValueInst>(user) && !isa<InsertElementInst>(user) &&
-           !isa<CastInst>(user) && !isa<GetElementPtrInst>(user))) {
+           !isPointerArithmeticInst(user, /*includephi*/ false,
+                                    /*includebin*/ false))) {
         if (!inst_cv &&
             !gutils->isConstantInstruction(const_cast<Instruction *>(user))) {
           if (EnzymePrintDiffUse)
@@ -518,6 +519,15 @@ inline bool is_value_needed_in_reverse(
     bool primalUsedInShadowPointer = true;
     if (isa<CastInst>(user) || isa<LoadInst>(user))
       primalUsedInShadowPointer = false;
+    if (auto CI = dyn_cast<CallInst>(user)) {
+      auto funcName = getFuncNameFromCall(CI);
+      if (funcName == "julia.pointer_from_objref") {
+        primalUsedInShadowPointer = false;
+      }
+      if (funcName.contains("__enzyme_todense")) {
+        primalUsedInShadowPointer = false;
+      }
+    }
     if (auto GEP = dyn_cast<GetElementPtrInst>(user)) {
       bool idxUsed = false;
       for (auto &idx : GEP->indices()) {
