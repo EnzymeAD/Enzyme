@@ -32,6 +32,19 @@ entry:
   ret double %call
 }
 
+define double @inactive(i32 %len, double* noalias %m, double* %dm, i32 %incm, double* noalias %n, double* %dn, i32 %incn) {
+entry:
+  %r = call double (...) @__enzyme_fwddiff(double (i32, double*, i32, double*, i32)* @f2, i32 %len, double* noalias %m, double* %dm, i32 %incm, double* noalias %n, double* %dn, i32 %incn)
+  ret double %r
+}
+
+define double @f2(i32 %len, double* noalias %m, i32 %incm, double* noalias %n, i32 %incn) {
+entry:
+  %call = call double @cblas_ddot(i32 %len, double* %m, i32 %incm, double* %n, i32 %incn)
+  ret double 1.0
+}
+
+
 ; CHECK: define double @active
 ; CHECK-NEXT: entry
 ; CHECK-NEXT: call fast double @[[active:.+]](
@@ -43,6 +56,10 @@ entry:
 ; CHECK: define double @inactiveSecond
 ; CHECK-NEXT: entry
 ; CHECK-NEXT: call fast double @[[inactiveSecond:.+]](
+
+; CHECK: define double @inactive
+; CHECK-NEXT: entry
+; CHECK-NEXT: call fast double @[[inactive:.+]](
 
 ; CHECK: define internal double @[[active]](i32 %len, double* noalias %m, double* %"m'", i32 %incm, double* noalias %n, double* %"n'", i32 %incn)
 ; CHECK-NEXT: entry:
@@ -62,4 +79,9 @@ entry:
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = call fast double @cblas_ddot(i32 %len, double* nocapture readonly %"m'", i32 %incm, double* nocapture readonly %n, i32 %incn)
 ; CHECK-NEXT:   ret double %0
+; CHECK-NEXT: }
+
+; CHECK: define internal double @[[inactive]](i32 %len, double* noalias %m, double* %"m'", i32 %incm, double* noalias %n, double* %"n'", i32 %incn)
+; CHECK-NEXT: entry
+; CHECK-NEXT:   ret double 0.000000e+00
 ; CHECK-NEXT: }
