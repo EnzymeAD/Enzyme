@@ -54,7 +54,7 @@ set_target_properties(openblas PROPERTIES EXCLUDE_FROM_ALL TRUE)
 
 ExternalProject_Add(fblas
     GIT_REPOSITORY https://github.com/EnzymeAD/clapack
-    GIT_TAG 42603bf49ac2b27a7c00c53f92fa648748476510
+    GIT_TAG ed072bc828c88cdbbc6477f6559dabad0065c1b3
     PREFIX fblas
     BUILD_IN_SOURCE 1
     INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/openblas/install
