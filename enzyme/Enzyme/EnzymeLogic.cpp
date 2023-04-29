@@ -667,6 +667,42 @@ void calculateUnusedValuesInFunction(
         gutils->postDominatingFrees.insert(freeCall);
     }
   }
+  // Consider allocations which are being rematerialized, but do not
+  // have a guaranteed free.
+  for (const auto &rmat : gutils->rematerializableAllocations) {
+    if (isa<CallInst>(rmat.first) &&
+        gutils->allocationsWithGuaranteedFree.count(cast<CallInst>(rmat.first)))
+      continue;
+    if (rmat.second.frees.size() == 0)
+      continue;
+
+    bool primalNeededInReverse =
+        DifferentialUseAnalysis::is_value_needed_in_reverse<ValueType::Primal>(
+            gutils, rmat.first, mode, CacheResults, oldUnreachable);
+    bool cacheWholeAllocation = false;
+
+    if (gutils->knownRecomputeHeuristic.count(rmat.first)) {
+      if (!gutils->knownRecomputeHeuristic[rmat.first]) {
+        primalNeededInReverse = true;
+        cacheWholeAllocation = true;
+      }
+    }
+    // If rematerializing a split or loop-level allocation, the primal
+    // allocation is not needed in the reverse.
+    if (!cacheWholeAllocation && primalNeededInReverse) {
+      if (mode != DerivativeMode::ReverseModeCombined)
+        primalNeededInReverse = false;
+      else if (auto inst = dyn_cast<Instruction>(rmat.first))
+        if (rmat.second.LI && rmat.second.LI->contains(inst->getParent())) {
+          primalNeededInReverse = false;
+        }
+    }
+
+    for (auto freeCall : rmat.second.frees) {
+      if (!primalNeededInReverse)
+        gutils->forwardDeallocations.insert(cast<CallInst>(freeCall));
+    }
+  }
 
   std::function<bool(const llvm::Value *)> isNoNeed =
       [&](const llvm::Value *v) {

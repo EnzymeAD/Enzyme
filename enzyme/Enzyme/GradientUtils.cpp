@@ -8368,6 +8368,8 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
     if (seen.count(tup))
       continue;
     seen.insert(tup);
+    if (notForAnalysis.count(cur->getParent()))
+      continue;
     if (isPointerArithmeticInst(cur)) {
       for (auto u : cur->users()) {
         if (auto I = dyn_cast<Instruction>(u))
