@@ -2516,10 +2516,11 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
         for (auto U : CI->users()) {
           users.push_back(std::make_pair(cast<Instruction>(U), CI));
         }
-        llvm::errs() << " CI: " << *CI << " rep: " << *replacements[val]
-                     << "\n";
-        replacements[CI] =
+        auto rep =
             B.CreateCast(CI->getOpcode(), replacements[val], CI->getDestTy());
+        if (auto I = dyn_cast<Instruction>(rep))
+          I->setDebugLoc(CI->getDebugLoc());
+        replacements[CI] = rep;
         continue;
       }
       /*
@@ -2529,16 +2530,36 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
         }
         continue;
       }
+      */
       if (auto CI = dyn_cast<CallInst>(U)) {
         auto funcName = getFuncNameFromCall(CI);
         if (funcName == "julia.pointer_from_objref") {
           for (auto U : CI->users()) {
             users.push_back(std::make_pair(cast<Instruction>(U), CI));
           }
+#if LLVM_VERSION_MAJOR >= 11
+          auto *F = CI->getCalledOperand();
+#else
+          auto *F = CI->getCalledValue();
+#endif
+
+          SmallVector<Value *, 1> args;
+#if LLVM_VERSION_MAJOR >= 14
+          for (auto &arg : CI->.args())
+#else
+          for (auto &arg : CI->arg_operands())
+#endif
+            args.push_back(replacements[arg]);
+
+          auto FT = CI->getFunctionType();
+
+          auto cal = cast<CallInst>(B.CreateCall(FT, F, args));
+          cal->setCallingConv(CI->getCallingConv());
+          cal->setDebugLoc(CI->getDebugLoc());
+          replacements[CI] = cal;
           continue;
         }
       }
-      */
       if (auto CI = dyn_cast<GetElementPtrInst>(U)) {
         for (auto U : CI->users()) {
           users.push_back(std::make_pair(cast<Instruction>(U), CI));
@@ -2576,6 +2597,8 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
           CI->accumulateConstantOffset(DL, ai);
           gep = B.CreateIntToPtr(ConstantInt::get(intTy, ai), CI->getType());
         }
+        if (auto I = dyn_cast<Instruction>(gep))
+          I->setDebugLoc(CI->getDebugLoc());
         replacements[CI] = gep;
         continue;
       }
@@ -2598,6 +2621,7 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
           }
         }
         CallInst *call = B.CreateCall(load_fn, args);
+        call->setDebugLoc(LI->getDebugLoc());
         Value *tmp = call;
         if (tmp->getType() != LI->getType())
           tmp = B.CreateBitCast(tmp, LI->getType());
@@ -2626,6 +2650,7 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
         for (size_t i = argstart; i < num_args; i++)
           args.push_back(CI->getArgOperand(i));
         auto call = B.CreateCall(store_fn, args);
+        call->setDebugLoc(SI->getDebugLoc());
         if (load_fn->hasFnAttribute(Attribute::AlwaysInline)) {
           InlineFunctionInfo IFI;
 #if LLVM_VERSION_MAJOR >= 11
