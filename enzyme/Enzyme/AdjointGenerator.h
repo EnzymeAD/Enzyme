@@ -13546,7 +13546,7 @@ public:
       eraseIfUnused(call);
       return;
     }
-    if (funcName.contains("__enzyme_fromdense")) {
+    if (funcName.contains("__enzyme_todense")) {
       if (gutils->isConstantValue(&call)) {
         eraseIfUnused(call);
         return;

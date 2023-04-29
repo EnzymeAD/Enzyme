@@ -2446,7 +2446,8 @@ void PreProcessCache::clear() {
   cache.clear();
 }
 
-bool LowerSparsification(llvm::Function *F) {
+bool LowerSparsification(llvm::Function *F, bool replaceAll) {
+  auto &DL = F->getParent()->getDataLayout();
   bool changed = false;
   SmallVector<CallInst *, 1> todo;
   for (auto &BB : *F) {
@@ -2498,17 +2499,30 @@ bool LowerSparsification(llvm::Function *F) {
       return B.CreateZExtOrTrunc(V, intTy);
     };
     SmallVector<Instruction *, 1> toErase;
+
+    ValueToValueMapTy replacements;
+    replacements[CI] = Constant::getNullValue(CI->getType());
+    Instruction *remaining = nullptr;
     while (users.size()) {
       auto pair = users.back();
       users.pop_back();
       auto U = pair.first;
       auto val = pair.second;
+      if (replacements.count(U))
+        continue;
+
+      IRBuilder B(U);
       if (auto CI = dyn_cast<CastInst>(U)) {
         for (auto U : CI->users()) {
           users.push_back(std::make_pair(cast<Instruction>(U), CI));
         }
+        llvm::errs() << " CI: " << *CI << " rep: " << *replacements[val]
+                     << "\n";
+        replacements[CI] =
+            B.CreateCast(CI->getOpcode(), replacements[val], CI->getDestTy());
         continue;
       }
+      /*
       if (auto CI = dyn_cast<PHINode>(U)) {
         for (auto U : CI->users()) {
           users.push_back(std::make_pair(cast<Instruction>(U), CI));
@@ -2524,30 +2538,82 @@ bool LowerSparsification(llvm::Function *F) {
           continue;
         }
       }
+      */
       if (auto CI = dyn_cast<GetElementPtrInst>(U)) {
         for (auto U : CI->users()) {
           users.push_back(std::make_pair(cast<Instruction>(U), CI));
         }
+        SmallVector<Value *> inds;
+        bool allconst = true;
+        for (auto &ind : CI->indices()) {
+          if (!isa<ConstantInt>(ind)) {
+            allconst = false;
+          }
+          inds.push_back(ind);
+        }
+        Value *gep;
+
+        if (inds.size() == 1) {
+          gep = ConstantInt::get(
+              intTy,
+              (DL.getTypeSizeInBits(CI->getSourceElementType()) + 7) / 8);
+          gep = B.CreateMul(intTy == inds[0]->getType()
+                                ? inds[0]
+                                : B.CreateZExtOrTrunc(inds[0], intTy),
+                            gep, "", true, true);
+          gep = B.CreateIntToPtr(gep, CI->getType());
+        } else if (!allconst) {
+          gep =
+              B.CreateGEP(CI->getSourceElementType(), replacements[val], inds);
+
+          if (auto ge = cast<GetElementPtrInst>(gep))
+            ge->setIsInBounds(CI->isInBounds());
+        } else {
+          APInt ai(64, 0);
+          CI->accumulateConstantOffset(DL, ai);
+          gep = B.CreateIntToPtr(ConstantInt::get(intTy, ai), CI->getType());
+        }
+        replacements[CI] = gep;
         continue;
       }
       if (auto LI = dyn_cast<LoadInst>(U)) {
-        IRBuilder B(U);
-        auto diff = toInt(B, LI->getPointerOperand());
+        auto diff = toInt(B, replacements[LI->getPointerOperand()]);
         SmallVector<Value *, 2> args;
         args.push_back(diff);
         for (size_t i = argstart; i < num_args; i++)
           args.push_back(CI->getArgOperand(i));
-        Value *tmp = B.CreateCall(load_fn, args);
+        if (load_fn->getFunctionType()->getNumParams() != args.size()) {
+          llvm::errs() << *load_fn << "\n";
+        } else {
+          for (size_t i = 0; i < args.size(); i++) {
+            if (load_fn->getFunctionType()->getParamType(i) !=
+                args[i]->getType()) {
+              llvm::errs() << "i: " << i << " lfn: " << *load_fn
+                           << " arg[i]: " << *args[i] << "\n";
+              break;
+            }
+          }
+        }
+        CallInst *call = B.CreateCall(load_fn, args);
+        Value *tmp = call;
         if (tmp->getType() != LI->getType())
           tmp = B.CreateBitCast(tmp, LI->getType());
         LI->replaceAllUsesWith(tmp);
+
+        if (load_fn->hasFnAttribute(Attribute::AlwaysInline)) {
+          InlineFunctionInfo IFI;
+#if LLVM_VERSION_MAJOR >= 11
+          InlineFunction(*call, IFI);
+#else
+          InlineFunction(call, IFI);
+#endif
+        }
         toErase.push_back(LI);
         continue;
       }
       if (auto SI = dyn_cast<StoreInst>(U)) {
         assert(SI->getValueOperand() != val);
-        IRBuilder B(U);
-        auto diff = toInt(B, SI->getPointerOperand());
+        auto diff = toInt(B, replacements[SI->getPointerOperand()]);
         SmallVector<Value *, 2> args;
         args.push_back(SI->getValueOperand());
         if (args[0]->getType() != store_fn->getFunctionType()->getParamType(0))
@@ -2556,17 +2622,30 @@ bool LowerSparsification(llvm::Function *F) {
         args.push_back(diff);
         for (size_t i = argstart; i < num_args; i++)
           args.push_back(CI->getArgOperand(i));
-        B.CreateCall(store_fn, args);
+        auto call = B.CreateCall(store_fn, args);
+        if (load_fn->hasFnAttribute(Attribute::AlwaysInline)) {
+          InlineFunctionInfo IFI;
+#if LLVM_VERSION_MAJOR >= 11
+          InlineFunction(*call, IFI);
+#else
+          InlineFunction(call, IFI);
+#endif
+        }
         toErase.push_back(SI);
         continue;
       }
-      llvm::errs() << " U: " << *U << " of " << *CI << "\n";
-      llvm_unreachable("Illegal replacement use of enzyme sparisification");
+      remaining = U;
     }
     for (auto U : toErase)
       U->eraseFromParent();
-    CI->replaceAllUsesWith(Constant::getNullValue(CI->getType()));
-    CI->eraseFromParent();
+
+    if (!remaining) {
+      CI->replaceAllUsesWith(Constant::getNullValue(CI->getType()));
+      CI->eraseFromParent();
+    } else if (replaceAll) {
+      llvm::errs() << " U: " << *remaining << " of " << *CI << "\n";
+      llvm_unreachable("Illegal replacement use of enzyme sparisification");
+    }
   }
   return changed;
 }
