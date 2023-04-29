@@ -829,7 +829,7 @@ LLVMMetadataRef EnzymeAnonymousAliasScope(LLVMMetadataRef domain,
   MDNode *scope = MDB.createAnonymousAliasScope(dom, str);
   return wrap(scope);
 }
-uint8_t EnzymeLowerSparsification(LLVMValueRef F) {
-  return LowerSparsification(cast<Function>(unwrap(F)));
+uint8_t EnzymeLowerSparsification(LLVMValueRef F, uint8_t replaceAll) {
+  return LowerSparsification(cast<Function>(unwrap(F)), replaceAll != 0);
 }
 }

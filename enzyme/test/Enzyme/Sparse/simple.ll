@@ -19,9 +19,7 @@ entry:
 ; CHECK: define double @tester(i8* %data) {
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %gep = getelementptr double, double* null, i32 7
-; CHECK-NEXT:   %0 = ptrtoint double* %gep to i64
-; CHECK-NEXT:   %1 = call double @loadSparse(i64 %0, i8* %data)
-; CHECK-NEXT:   %2 = ptrtoint double* null to i64
-; CHECK-NEXT:   call void @storeSparse(double %1, i64 %2, i8* %data)
-; CHECK-NEXT:   ret double %1
+; CHECK-NEXT:   %0 = call double @loadSparse(i64 56, i8* %data)
+; CHECK-NEXT:   call void @storeSparse(double %0, i64 0, i8* %data)
+; CHECK-NEXT:   ret double %0
 ; CHECK-NEXT: }
