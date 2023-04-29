@@ -1155,6 +1155,47 @@ static inline bool shouldDisableNoWrite(const llvm::CallInst *CI) {
   return false;
 }
 
+static inline bool isPointerArithmeticInst(const llvm::Value *V,
+                                           bool includephi = true,
+                                           bool includebin = true) {
+  if (llvm::isa<llvm::CastInst>(V) || llvm::isa<llvm::GetElementPtrInst>(V) ||
+      (includephi && llvm::isa<llvm::PHINode>(V)))
+    return true;
+
+  if (includebin)
+    if (auto BI = llvm::dyn_cast<llvm::BinaryOperator>(V)) {
+      switch (BI->getOpcode()) {
+      case llvm::BinaryOperator::Add:
+      case llvm::BinaryOperator::Sub:
+      case llvm::BinaryOperator::Mul:
+      case llvm::BinaryOperator::SDiv:
+      case llvm::BinaryOperator::UDiv:
+      case llvm::BinaryOperator::SRem:
+      case llvm::BinaryOperator::URem:
+      case llvm::BinaryOperator::Or:
+      case llvm::BinaryOperator::And:
+      case llvm::BinaryOperator::Shl:
+      case llvm::BinaryOperator::LShr:
+      case llvm::BinaryOperator::AShr:
+        return true;
+      default:
+        break;
+      }
+    }
+
+  if (auto *Call = llvm::dyn_cast<llvm::CallInst>(V)) {
+    auto funcName = getFuncNameFromCall(Call);
+    if (funcName == "julia.pointer_from_objref") {
+      return true;
+    }
+    if (funcName.contains("__enzyme_todense")) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 static inline llvm::Value *getBaseObject(llvm::Value *V) {
   while (true) {
     if (auto CI = llvm::dyn_cast<llvm::CastInst>(V)) {
@@ -1183,6 +1224,17 @@ static inline llvm::Value *getBaseObject(llvm::Value *V) {
       if (funcName == "julia.pointer_from_objref") {
         V = Call->getArgOperand(0);
         continue;
+      }
+      if (funcName.contains("__enzyme_todense")) {
+#if LLVM_VERSION_MAJOR >= 14
+        size_t numargs = Call->arg_size();
+#else
+        size_t numargs = Call->getNumArgOperands();
+#endif
+        if (numargs == 3) {
+          V = Call->getArgOperand(2);
+          continue;
+        }
       }
 
       // CaptureTracking can know about special capturing properties of some

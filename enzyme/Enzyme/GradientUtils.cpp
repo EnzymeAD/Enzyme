@@ -4065,6 +4065,15 @@ bool GradientUtils::legalRecompute(const Value *val,
         n == "omp_get_thread_num" || n == "omp_get_max_threads") {
       return true;
     }
+#if LLVM_VERSION_MAJOR >= 14
+    if (ci->doesNotAccessMemory())
+#else
+    if (ci->hasFnAttr(Attribute::ReadNone) ||
+        (called && called->hasFnAttribute(Attribute::ReadNone)))
+#endif
+      return true;
+    if (isPointerArithmeticInst(ci))
+      return true;
   }
 
   if (auto inst = dyn_cast<Instruction>(val)) {
@@ -4206,6 +4215,8 @@ bool GradientUtils::shouldRecompute(const Value *val,
         n == "omp_get_thread_num" || n == "omp_get_max_threads") {
       return true;
     }
+    if (isPointerArithmeticInst(ci))
+      return true;
   }
 
   // cache a call, assuming its longer to run that
@@ -8357,7 +8368,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
     if (seen.count(tup))
       continue;
     seen.insert(tup);
-    if (isa<CastInst>(cur) || isa<GetElementPtrInst>(cur)) {
+    if (isPointerArithmeticInst(cur)) {
       for (auto u : cur->users()) {
         if (auto I = dyn_cast<Instruction>(u))
           todo.push_back(std::make_pair(I, (Value *)cur));
@@ -8802,10 +8813,7 @@ void GradientUtils::computeGuaranteedFrees() {
       StringRef funcName = getFuncNameFromCall(CI);
 
       if (isDeallocationFunction(funcName, TLI)) {
-
-        llvm::Value *val = CI->getArgOperand(0);
-        while (auto cast = dyn_cast<CastInst>(val))
-          val = cast->getOperand(0);
+        llvm::Value *val = getBaseObject(CI->getArgOperand(0));
 
         if (auto dc = dyn_cast<CallInst>(val)) {
           StringRef sfuncName = getFuncNameFromCall(dc);

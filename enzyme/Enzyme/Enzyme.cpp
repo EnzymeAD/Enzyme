@@ -223,6 +223,9 @@ static void handleKnownFunctions(llvm::Function &F) {
 }
 
 static void handleAnnotations(llvm::Function &F) {
+  if (F.getName().contains("__enzyme_todense"))
+    F.addFnAttr(Attribute::ReadNone);
+
   if (F.getName().contains("__enzyme_float") ||
       F.getName().contains("__enzyme_double") ||
       F.getName().contains("__enzyme_integer") ||
@@ -1910,6 +1913,9 @@ public:
         size_t num_args = CI->getNumArgOperands();
 #endif
 
+        if (Fn->getName().contains("__enzyme_todense")) {
+          CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
+        }
         if (Fn->getName().contains("__enzyme_float")) {
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
           for (size_t i = 0; i < num_args; ++i) {
@@ -2567,6 +2573,11 @@ public:
             PromotePass().run(F, FAM);
       }
 #endif
+    }
+
+    for (auto &F : M) {
+      if (!F.empty())
+        changed |= LowerSparsification(&F);
     }
     return changed;
   }

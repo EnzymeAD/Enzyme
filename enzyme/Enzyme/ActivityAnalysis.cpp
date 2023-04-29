@@ -3088,8 +3088,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         UseActivity NU = UA;
         if (UA == UseActivity::OnlyLoads || UA == UseActivity::OnlyStores ||
             UA == UseActivity::OnlyNonPointerStores) {
-          if (!isa<PHINode>(I) && !isa<CastInst>(I) &&
-              !isa<GetElementPtrInst>(I) && !isa<BinaryOperator>(I))
+          if (!isPointerArithmeticInst(I))
             NU = UseActivity::None;
         }
 
@@ -3105,8 +3104,7 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         UseActivity NU = UA;
         if (UA == UseActivity::OnlyLoads || UA == UseActivity::OnlyStores ||
             UA == UseActivity::OnlyNonPointerStores) {
-          if (!isa<PHINode>(I) && !isa<CastInst>(I) &&
-              !isa<GetElementPtrInst>(I) && !isa<BinaryOperator>(I))
+          if (!isPointerArithmeticInst(I))
             NU = UseActivity::None;
         }
 

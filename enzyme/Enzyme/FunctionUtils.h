@@ -382,4 +382,7 @@ llvm::FunctionType *getFunctionTypeForClone(
     llvm::Type *additionalArg, llvm::ArrayRef<DIFFE_TYPE> constant_args,
     bool diffeReturnArg, ReturnType returnValue, DIFFE_TYPE returnType);
 
+/// Lower __enzyme_todense, returning if changed.
+bool LowerSparsification(llvm::Function *F);
+
 #endif
