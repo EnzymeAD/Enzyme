@@ -814,13 +814,20 @@ void TypeAnalyzer::considerTBAA() {
           assert(num_args == 1 || num_args == 2);
           assert(call->getArgOperand(0)->getType()->isPointerTy());
           TypeTree TT;
-          size_t num = 1;
+          ssize_t num = 1;
           if (num_args == 2) {
             assert(isa<ConstantInt>(call->getArgOperand(1)));
-            num = cast<ConstantInt>(call->getArgOperand(1))->getLimitedValue();
+            auto CI = cast<ConstantInt>(call->getArgOperand(1));
+            if (CI->isNegative())
+              num = -1;
+            else
+              num = CI->getLimitedValue();
           }
-          for (size_t i = 0; i < num; i += 4)
-            TT.insert({(int)i}, Type::getFloatTy(call->getContext()));
+          if (num == -1)
+            TT.insert({(int)num}, Type::getFloatTy(call->getContext()));
+          else
+            for (size_t i = 0; i < (size_t)num; i += 4)
+              TT.insert({(int)i}, Type::getFloatTy(call->getContext()));
           TT.insert({}, BaseType::Pointer);
           updateAnalysis(call->getOperand(0), TT.Only(-1, call), call);
         }
