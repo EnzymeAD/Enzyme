@@ -2543,7 +2543,7 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
         for (auto U : CI->users()) {
           users.push_back(std::make_pair(cast<Instruction>(U), CI));
         }
-        SmallVector<Value *> inds;
+        SmallVector<Value *, 1> inds;
         bool allconst = true;
         for (auto &ind : CI->indices()) {
           if (!isa<ConstantInt>(ind)) {
@@ -2563,9 +2563,12 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
                             gep, "", true, true);
           gep = B.CreateIntToPtr(gep, CI->getType());
         } else if (!allconst) {
+#if LLVM_VERSION_MAJOR > 7
           gep =
               B.CreateGEP(CI->getSourceElementType(), replacements[val], inds);
-
+#else
+          gep = B.CreateGEP(replacements[val], inds);
+#endif
           if (auto ge = cast<GetElementPtrInst>(gep))
             ge->setIsInBounds(CI->isInBounds());
         } else {
