@@ -2545,7 +2545,7 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
 
           SmallVector<Value *, 1> args;
 #if LLVM_VERSION_MAJOR >= 14
-          for (auto &arg : CI->.args())
+          for (auto &arg : CI->args())
 #else
           for (auto &arg : CI->arg_operands())
 #endif
