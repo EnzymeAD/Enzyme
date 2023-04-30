@@ -636,17 +636,12 @@ void calculateUnusedValuesInFunction(
     bool primalNeededInReverse =
         DifferentialUseAnalysis::is_value_needed_in_reverse<ValueType::Primal>(
             gutils, pair.first, mode, CacheResults, oldUnreachable);
-    bool cacheWholeAllocation = false;
 
-    if (gutils->knownRecomputeHeuristic.count(pair.first)) {
-      if (!gutils->knownRecomputeHeuristic[pair.first]) {
-        primalNeededInReverse = true;
-        cacheWholeAllocation = true;
-      }
-    }
     // If rematerializing a split or loop-level allocation, the primal
     // allocation is not needed in the reverse.
-    if (!cacheWholeAllocation && primalNeededInReverse) {
+    if (gutils->needsCacheWholeAllocation(pair.first)) {
+      primalNeededInReverse = true;
+    } else if (primalNeededInReverse) {
       auto found = gutils->rematerializableAllocations.find(
           const_cast<CallInst *>(pair.first));
       if (found != gutils->rematerializableAllocations.end()) {
@@ -679,17 +674,11 @@ void calculateUnusedValuesInFunction(
     bool primalNeededInReverse =
         DifferentialUseAnalysis::is_value_needed_in_reverse<ValueType::Primal>(
             gutils, rmat.first, mode, CacheResults, oldUnreachable);
-    bool cacheWholeAllocation = false;
-
-    if (gutils->knownRecomputeHeuristic.count(rmat.first)) {
-      if (!gutils->knownRecomputeHeuristic[rmat.first]) {
-        primalNeededInReverse = true;
-        cacheWholeAllocation = true;
-      }
-    }
     // If rematerializing a split or loop-level allocation, the primal
     // allocation is not needed in the reverse.
-    if (!cacheWholeAllocation && primalNeededInReverse) {
+    if (gutils->needsCacheWholeAllocation(rmat.first)) {
+      primalNeededInReverse = true;
+    } else if (primalNeededInReverse) {
       if (mode != DerivativeMode::ReverseModeCombined)
         primalNeededInReverse = false;
       else if (auto inst = dyn_cast<Instruction>(rmat.first))

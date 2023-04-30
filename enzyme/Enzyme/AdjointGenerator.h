@@ -13254,12 +13254,9 @@ public:
                     ValueType::Primal>(gutils, &call, Mode, Seen,
                                        oldUnreachable);
 
-      bool cacheWholeAllocation = false;
-      if (gutils->knownRecomputeHeuristic.count(&call)) {
-        if (!gutils->knownRecomputeHeuristic[&call]) {
-          cacheWholeAllocation = true;
-          primalNeededInReverse = true;
-        }
+      bool cacheWholeAllocation = gutils->needsCacheWholeAllocation(&call);
+      if (cacheWholeAllocation) {
+        primalNeededInReverse = true;
       }
 
       std::function<void(MDNode *)> restoreFromStack = [&](MDNode *MD) {
@@ -13864,12 +13861,10 @@ public:
                 DifferentialUseAnalysis::is_value_needed_in_reverse<
                     ValueType::Primal>(gutils, rmat.first, Mode, Seen,
                                        oldUnreachable);
-            bool cacheWholeAllocation = false;
-            if (gutils->knownRecomputeHeuristic.count(rmat.first)) {
-              if (!gutils->knownRecomputeHeuristic[rmat.first]) {
-                cacheWholeAllocation = true;
-                primalNeededInReverse = true;
-              }
+            bool cacheWholeAllocation =
+                gutils->needsCacheWholeAllocation(rmat.first);
+            if (cacheWholeAllocation) {
+              primalNeededInReverse = true;
             }
             // If in a loop context, maintain the same free behavior, unless
             // caching whole allocation.
@@ -13896,9 +13891,7 @@ public:
         return;
       }
 
-      llvm::Value *val = call.getArgOperand(0);
-      while (auto cast = dyn_cast<CastInst>(val))
-        val = cast->getOperand(0);
+      llvm::Value *val = getBaseObject(call.getArgOperand(0));
       if (isa<ConstantPointerNull>(val)) {
         llvm::errs() << "removing free of null pointer\n";
         eraseIfUnused(call, /*erase*/ true, /*check*/ false);
