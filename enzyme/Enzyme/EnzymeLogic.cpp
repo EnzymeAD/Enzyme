@@ -112,7 +112,7 @@ struct CacheAnalysis {
   LoopInfo &OrigLI;
   DominatorTree &OrigDT;
   TargetLibraryInfo &TLI;
-  const SmallPtrSetImpl<const Instruction *> &unnecessaryInstructions;
+  const SmallPtrSetImpl<BasicBlock *> &unnecessaryBlocks;
   const std::vector<bool> &overwritten_args;
   DerivativeMode mode;
   std::map<Value *, bool> seen;
@@ -124,12 +124,12 @@ struct CacheAnalysis {
           &rematerializableAllocations,
       TypeResults &TR, AAResults &AA, Function *oldFunc, ScalarEvolution &SE,
       LoopInfo &OrigLI, DominatorTree &OrigDT, TargetLibraryInfo &TLI,
-      const SmallPtrSetImpl<const Instruction *> &unnecessaryInstructions,
+      const SmallPtrSetImpl<BasicBlock *> &unnecessaryBlocks,
       const std::vector<bool> &overwritten_args, DerivativeMode mode, bool omp)
       : allocationsWithGuaranteedFree(allocationsWithGuaranteedFree),
         rematerializableAllocations(rematerializableAllocations), TR(TR),
         AA(AA), oldFunc(oldFunc), SE(SE), OrigLI(OrigLI), OrigDT(OrigDT),
-        TLI(TLI), unnecessaryInstructions(unnecessaryInstructions),
+        TLI(TLI), unnecessaryBlocks(unnecessaryBlocks),
         overwritten_args(overwritten_args), mode(mode), omp(omp) {}
 
   bool is_value_mustcache_from_origin(Value *obj) {
@@ -298,7 +298,7 @@ struct CacheAnalysis {
         if (!inst2->mayWriteToMemory())
           return false;
 
-        if (unnecessaryInstructions.count(inst2)) {
+        if (unnecessaryBlocks.count(inst2->getParent())) {
           return false;
         }
         if (auto CI = dyn_cast<CallInst>(inst2)) {
@@ -323,7 +323,7 @@ struct CacheAnalysis {
                   if (!mid->mayWriteToMemory())
                     return false;
 
-                  if (unnecessaryInstructions.count(mid)) {
+                  if (unnecessaryBlocks.count(mid->getParent())) {
                     return false;
                   }
 
@@ -371,28 +371,30 @@ struct CacheAnalysis {
   //   location can be modified after the load instruction.
   std::map<Instruction *, bool> compute_uncacheable_load_map() {
     std::map<Instruction *, bool> can_modref_map;
-    for (inst_iterator I = inst_begin(*oldFunc), E = inst_end(*oldFunc); I != E;
-         ++I) {
-      Instruction *inst = &*I;
-      // For each load instruction, determine if it is uncacheable.
-      if (auto op = dyn_cast<LoadInst>(inst)) {
-        can_modref_map[inst] = is_load_uncacheable(*op);
-      }
-      if (auto II = dyn_cast<IntrinsicInst>(inst)) {
-        switch (II->getIntrinsicID()) {
-        case Intrinsic::nvvm_ldu_global_i:
-        case Intrinsic::nvvm_ldu_global_p:
-        case Intrinsic::nvvm_ldu_global_f:
-        case Intrinsic::nvvm_ldg_global_i:
-        case Intrinsic::nvvm_ldg_global_p:
-        case Intrinsic::nvvm_ldg_global_f:
-          can_modref_map[inst] = false;
-          break;
-        case Intrinsic::masked_load:
-          can_modref_map[inst] = is_load_uncacheable(*II);
-          break;
-        default:
-          break;
+    for (auto &B : *oldFunc) {
+      if (unnecessaryBlocks.count(&B))
+        continue;
+      for (auto &inst : B) {
+        // For each load instruction, determine if it is uncacheable.
+        if (auto op = dyn_cast<LoadInst>(&inst)) {
+          can_modref_map[op] = is_load_uncacheable(*op);
+        }
+        if (auto II = dyn_cast<IntrinsicInst>(&inst)) {
+          switch (II->getIntrinsicID()) {
+          case Intrinsic::nvvm_ldu_global_i:
+          case Intrinsic::nvvm_ldu_global_p:
+          case Intrinsic::nvvm_ldu_global_f:
+          case Intrinsic::nvvm_ldg_global_i:
+          case Intrinsic::nvvm_ldg_global_p:
+          case Intrinsic::nvvm_ldg_global_f:
+            can_modref_map[II] = false;
+            break;
+          case Intrinsic::masked_load:
+            can_modref_map[II] = is_load_uncacheable(*II);
+            break;
+          default:
+            break;
+          }
         }
       }
     }
@@ -505,7 +507,7 @@ struct CacheAnalysis {
         }
       }
 
-      if (unnecessaryInstructions.count(inst2))
+      if (unnecessaryBlocks.count(inst2->getParent()))
         return false;
 
       if (!inst2->mayWriteToMemory())
@@ -585,23 +587,25 @@ struct CacheAnalysis {
   compute_overwritten_args_for_callsites() {
     std::map<CallInst *, const std::vector<bool>> overwritten_args_map;
 
-    for (inst_iterator I = inst_begin(*oldFunc), E = inst_end(*oldFunc); I != E;
-         ++I) {
-      Instruction &inst = *I;
-      if (auto op = dyn_cast<CallInst>(&inst)) {
+    for (auto &B : *oldFunc) {
+      if (unnecessaryBlocks.count(&B))
+        continue;
+      for (auto &inst : B) {
+        if (auto op = dyn_cast<CallInst>(&inst)) {
 
-        // We do not need uncacheable args for intrinsic functions. So skip such
-        // callsites.
-        if (auto II = dyn_cast<IntrinsicInst>(&inst)) {
-          if (!II->getCalledFunction()->getName().startswith("llvm.julia"))
-            continue;
+          // We do not need uncacheable args for intrinsic functions. So skip
+          // such callsites.
+          if (auto II = dyn_cast<IntrinsicInst>(&inst)) {
+            if (!II->getCalledFunction()->getName().startswith("llvm.julia"))
+              continue;
+          }
+
+          // For all other calls, we compute the uncacheable args for this
+          // callsite.
+          overwritten_args_map.insert(
+              std::pair<CallInst *, const std::vector<bool>>(
+                  op, compute_overwritten_args_for_one_callsite(op)));
         }
-
-        // For all other calls, we compute the uncacheable args for this
-        // callsite.
-        overwritten_args_map.insert(
-            std::pair<CallInst *, const std::vector<bool>>(
-                op, compute_overwritten_args_for_one_callsite(op)));
       }
     }
     return overwritten_args_map;
@@ -2289,23 +2293,14 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   std::vector<bool> _overwritten_argsPP = _overwritten_args;
 
   gutils->forceActiveDetection();
-
-  // TODO actually populate unnecessaryInstructions with what can be
-  // derived without activity info
-  SmallPtrSet<const Instruction *, 4> unnecessaryInstructionsTmp;
-  for (auto BB : guaranteedUnreachable) {
-    for (auto &I : *BB)
-      unnecessaryInstructionsTmp.insert(&I);
-  }
   gutils->computeGuaranteedFrees();
 
   CacheAnalysis CA(gutils->allocationsWithGuaranteedFree,
                    gutils->rematerializableAllocations, gutils->TR,
                    gutils->OrigAA, gutils->oldFunc,
                    PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
-                   gutils->OrigLI, gutils->OrigDT, TLI,
-                   unnecessaryInstructionsTmp, _overwritten_argsPP,
-                   DerivativeMode::ReverseModePrimal, omp);
+                   gutils->OrigLI, gutils->OrigDT, TLI, guaranteedUnreachable,
+                   _overwritten_argsPP, DerivativeMode::ReverseModePrimal, omp);
   const std::map<CallInst *, const std::vector<bool>> overwritten_args_map =
       CA.compute_overwritten_args_for_callsites();
   gutils->overwritten_args_map_ptr = &overwritten_args_map;
@@ -3899,21 +3894,12 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   // sets backwardsOnlyShadows, rematerializableAllocations, and
   // allocationsWithGuaranteedFrees
   gutils->computeGuaranteedFrees();
-
-  // TODO populate with actual unnecessaryInstructions once the dependency
-  // cycle with activity analysis is removed
-  SmallPtrSet<const Instruction *, 4> unnecessaryInstructionsTmp;
-  for (auto BB : guaranteedUnreachable) {
-    for (auto &I : *BB)
-      unnecessaryInstructionsTmp.insert(&I);
-  }
   CacheAnalysis CA(gutils->allocationsWithGuaranteedFree,
                    gutils->rematerializableAllocations, gutils->TR,
                    gutils->OrigAA, gutils->oldFunc,
                    PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
-                   gutils->OrigLI, gutils->OrigDT, TLI,
-                   unnecessaryInstructionsTmp, _overwritten_argsPP, key.mode,
-                   omp);
+                   gutils->OrigLI, gutils->OrigDT, TLI, guaranteedUnreachable,
+                   _overwritten_argsPP, key.mode, omp);
   const std::map<CallInst *, const std::vector<bool>> overwritten_args_map =
       (augmenteddata) ? augmenteddata->overwritten_args_map
                       : CA.compute_overwritten_args_for_callsites();
@@ -4525,7 +4511,7 @@ Function *EnzymeLogic::CreateForwardDiff(
         gutils->rematerializableAllocations, gutils->TR, gutils->OrigAA,
         gutils->oldFunc,
         PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
-        gutils->OrigLI, gutils->OrigDT, TLI, unnecessaryInstructionsTmp,
+        gutils->OrigLI, gutils->OrigDT, TLI, guaranteedUnreachable,
         _overwritten_argsPP, mode, omp);
     const std::map<CallInst *, const std::vector<bool>> overwritten_args_map =
         CA.compute_overwritten_args_for_callsites();
