@@ -511,6 +511,10 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
       CI->getArgOperand(0) == val)
     return true;
 
+  if ((F->hasFnAttribute("enzyme_trace") || CI->hasFnAttr("enzyme_trace")) &&
+      CI->getArgOperand(1) == val)
+    return true;
+
   if ((F->hasFnAttribute("enzyme_insert_call") ||
        CI->hasFnAttr("enzyme_insert_call")) &&
       CI->getArgOperand(1) == val)
