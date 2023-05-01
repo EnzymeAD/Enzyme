@@ -1786,6 +1786,28 @@ public:
       interface = new StaticTraceInterface(F->getParent());
     }
 
+    bool autodiff = dtrace || dobservations;
+
+    IRBuilder<> AllocaBuilder(CI->getParent()->getFirstNonPHI());
+
+    auto likelihood = AllocaBuilder.CreateAlloca(AllocaBuilder.getDoubleTy(),
+                                                 nullptr, "likelihood");
+    Builder.CreateStore(ConstantFP::getNullValue(Builder.getDoubleTy()),
+                        likelihood);
+    args.push_back(likelihood);
+
+    if (autodiff) {
+      auto dlikelihood = AllocaBuilder.CreateAlloca(AllocaBuilder.getDoubleTy(),
+                                                    nullptr, "dlikelihood");
+      Builder.CreateStore(ConstantFP::get(Builder.getDoubleTy(), 1.0),
+                          dlikelihood);
+      dargs.push_back(likelihood);
+      dargs.push_back(dlikelihood);
+      constants.push_back(DIFFE_TYPE::DUP_ARG);
+    } else {
+      constants.push_back(DIFFE_TYPE::CONSTANT);
+    }
+
     if (mode == ProbProgMode::Condition) {
       args.push_back(observations);
       dargs.push_back(observations);
@@ -1836,8 +1858,6 @@ public:
       }
 #endif
     }
-
-    bool autodiff = dtrace || dobservations;
 
     auto newFunc =
         Logic.CreateTrace(F, generativeFunctions, mode, autodiff, interface);
