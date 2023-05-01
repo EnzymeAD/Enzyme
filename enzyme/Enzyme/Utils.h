@@ -1236,6 +1236,17 @@ static inline llvm::Value *getBaseObject(llvm::Value *V) {
           continue;
         }
       }
+      if (auto fn = getFunctionFromCall(Call)) {
+        bool found = false;
+        for (auto &arg : fn->args()) {
+          if (arg.hasAttribute(llvm::Attribute::Returned)) {
+            found = true;
+            V = Call->getArgOperand(arg.getArgNo());
+          }
+        }
+        if (found)
+          continue;
+      }
 
       // CaptureTracking can know about special capturing properties of some
       // intrinsics like launder.invariant.group, that can't be expressed with

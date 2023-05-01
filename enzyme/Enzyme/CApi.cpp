@@ -37,6 +37,7 @@
 #include "llvm/Analysis/GlobalsModRef.h"
 #include "llvm/IR/DIBuilder.h"
 #include "llvm/IR/MDBuilder.h"
+#include "llvm/Transforms/Utils/Cloning.h"
 
 #if LLVM_VERSION_MAJOR >= 9
 #include "llvm/IR/LegacyPassManager.h"
@@ -832,7 +833,78 @@ LLVMMetadataRef EnzymeAnonymousAliasScope(LLVMMetadataRef domain,
 uint8_t EnzymeLowerSparsification(LLVMValueRef F, uint8_t replaceAll) {
   return LowerSparsification(cast<Function>(unwrap(F)), replaceAll != 0);
 }
-void EnzymeSetCalledFunction(LLVMValueRef CI, LLVMValueRef F) {
-  cast<CallInst>(unwrap(CI))->setCalledFunction(cast<Function>(unwrap(F)));
+void EnzymeSetCalledFunction(LLVMValueRef C_CI, LLVMValueRef C_F) {
+  auto CI = cast<CallInst>(unwrap(C_CI));
+  auto F = cast<Function>(unwrap(C_F));
+  CI->mutateFunctionType(F->getFunctionType());
+  CI->setCalledFunction(F);
+  auto Attrs = CI->getAttributes();
+#if LLVM_VERSION_MAJOR >= 14
+  Attrs = Attrs.removeAttributesAtIndex(CI->getContext(),
+                                        AttributeList::ReturnIndex);
+#else
+  Attrs.removeAttributes(CI->getContext(), AttributeList::ReturnIndex);
+#endif
+  CI->setAttributes(Attrs);
+}
+// clones a function to now miss the return
+LLVMValueRef EnzymeCloneFunctionWithoutReturn(LLVMValueRef FC) {
+  auto F = cast<Function>(unwrap(FC));
+
+  FunctionType *FTy = FunctionType::get(Type::getVoidTy(F->getContext()),
+                                        F->getFunctionType()->params(),
+                                        F->getFunctionType()->isVarArg());
+
+  // Create the new function...
+#if LLVM_VERSION_MAJOR >= 8
+  Function *NewF = Function::Create(FTy, F->getLinkage(), F->getAddressSpace(),
+                                    F->getName(), F->getParent());
+#else
+  Function *NewF =
+      Function::Create(FTy, F->getLinkage(), F->getName(), F->getParent());
+#endif
+
+  ValueToValueMapTy VMap;
+  // Loop over the arguments, copying the names of the mapped arguments over...
+  Function::arg_iterator DestI = NewF->arg_begin();
+  for (const Argument &I : F->args()) {
+    DestI->setName(I.getName()); // Copy the name over...
+    VMap[&I] = &*DestI++;        // Add mapping to VMap
+  }
+
+  SmallVector<ReturnInst *, 8> Returns; // Ignore returns cloned.
+#if LLVM_VERSION_MAJOR >= 13
+  CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
+                    Returns, "", nullptr);
+#else
+  CloneFunctionInto(NewF, F, VMap, F->getSubprogram() != nullptr, Returns, "",
+                    nullptr);
+#endif
+
+  for (auto &B : *NewF) {
+    if (auto RI = dyn_cast<ReturnInst>(B.getTerminator())) {
+      IRBuilder<> B(RI);
+      auto NRI = B.CreateRetVoid();
+      NRI->copyMetadata(*RI);
+      RI->eraseFromParent();
+    }
+  }
+  auto Attrs = F->getAttributes();
+#if LLVM_VERSION_MAJOR >= 14
+  Attrs = Attrs.removeAttributesAtIndex(F->getContext(),
+                                        AttributeList::ReturnIndex);
+#else
+  Attrs.removeAttributes(F->getContext(), AttributeList::ReturnIndex);
+#endif
+  NewF->setAttributes(Attrs);
+  for (auto &Arg : NewF->args())
+    Arg.removeAttr(Attribute::Returned);
+  SmallVector<std::pair<unsigned, MDNode *>, 1> MD;
+  for (auto pair : MD)
+    NewF->addMetadata(pair.first, *pair.second);
+  NewF->takeName(F);
+  NewF->setCallingConv(F->getCallingConv());
+  NewF->addFnAttr("enzyme_retremove", "");
+  return wrap(NewF);
 }
 }
