@@ -580,6 +580,8 @@ public:
       return rule(diffs);
     }
   }
+
+  bool needsCacheWholeAllocation(const llvm::Value *V) const;
 };
 
 void SubTransferHelper(GradientUtils *gutils, DerivativeMode Mode,

@@ -636,17 +636,12 @@ void calculateUnusedValuesInFunction(
     bool primalNeededInReverse =
         DifferentialUseAnalysis::is_value_needed_in_reverse<ValueType::Primal>(
             gutils, pair.first, mode, CacheResults, oldUnreachable);
-    bool cacheWholeAllocation = false;
 
-    if (gutils->knownRecomputeHeuristic.count(pair.first)) {
-      if (!gutils->knownRecomputeHeuristic[pair.first]) {
-        primalNeededInReverse = true;
-        cacheWholeAllocation = true;
-      }
-    }
     // If rematerializing a split or loop-level allocation, the primal
     // allocation is not needed in the reverse.
-    if (!cacheWholeAllocation && primalNeededInReverse) {
+    if (gutils->needsCacheWholeAllocation(pair.first)) {
+      primalNeededInReverse = true;
+    } else if (primalNeededInReverse) {
       auto found = gutils->rematerializableAllocations.find(
           const_cast<CallInst *>(pair.first));
       if (found != gutils->rematerializableAllocations.end()) {
@@ -665,6 +660,36 @@ void calculateUnusedValuesInFunction(
         gutils->forwardDeallocations.insert(freeCall);
       else
         gutils->postDominatingFrees.insert(freeCall);
+    }
+  }
+  // Consider allocations which are being rematerialized, but do not
+  // have a guaranteed free.
+  for (const auto &rmat : gutils->rematerializableAllocations) {
+    if (isa<CallInst>(rmat.first) &&
+        gutils->allocationsWithGuaranteedFree.count(cast<CallInst>(rmat.first)))
+      continue;
+    if (rmat.second.frees.size() == 0)
+      continue;
+
+    bool primalNeededInReverse =
+        DifferentialUseAnalysis::is_value_needed_in_reverse<ValueType::Primal>(
+            gutils, rmat.first, mode, CacheResults, oldUnreachable);
+    // If rematerializing a split or loop-level allocation, the primal
+    // allocation is not needed in the reverse.
+    if (gutils->needsCacheWholeAllocation(rmat.first)) {
+      primalNeededInReverse = true;
+    } else if (primalNeededInReverse) {
+      if (mode != DerivativeMode::ReverseModeCombined)
+        primalNeededInReverse = false;
+      else if (auto inst = dyn_cast<Instruction>(rmat.first))
+        if (rmat.second.LI && rmat.second.LI->contains(inst->getParent())) {
+          primalNeededInReverse = false;
+        }
+    }
+
+    for (auto freeCall : rmat.second.frees) {
+      if (!primalNeededInReverse)
+        gutils->forwardDeallocations.insert(cast<CallInst>(freeCall));
     }
   }
 
