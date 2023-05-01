@@ -421,6 +421,12 @@ struct CacheAnalysis {
     if (funcName == "julia.pointer_from_objref")
       return {};
 
+    if (funcName == "julia.write_barrier")
+      return {};
+
+    if (funcName == "enzyme_zerotype")
+      return {};
+
     if (isMemFreeLibMFunction(funcName)) {
       return {};
     }
