@@ -832,4 +832,7 @@ LLVMMetadataRef EnzymeAnonymousAliasScope(LLVMMetadataRef domain,
 uint8_t EnzymeLowerSparsification(LLVMValueRef F, uint8_t replaceAll) {
   return LowerSparsification(cast<Function>(unwrap(F)), replaceAll != 0);
 }
+void EnzymeSetCalledFunction(LLVMValueRef CI, LLVMValueRef F) {
+  cast<CallInst>(unwrap(CI))->setCalledFunction(cast<Function>(unwrap(F)));
+}
 }
