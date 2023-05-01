@@ -412,6 +412,15 @@ struct CacheAnalysis {
     if (funcName == "")
       return {};
 
+    if (funcName == "llvm.julia.gc_preserve_begin")
+      return {};
+
+    if (funcName == "llvm.julia.gc_preserve_end")
+      return {};
+
+    if (funcName == "julia.pointer_from_objref")
+      return {};
+
     if (isMemFreeLibMFunction(funcName)) {
       return {};
     }
