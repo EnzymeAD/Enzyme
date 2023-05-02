@@ -272,9 +272,6 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
 
   Intrinsic::ID ID = Intrinsic::not_intrinsic;
   if (auto II = dyn_cast<IntrinsicInst>(user)) {
-    if (isIntelSubscriptIntrinsic(*II)) {
-      return false;
-    }
     ID = II->getIntrinsicID();
   } else if (auto CI = dyn_cast<CallInst>(user)) {
     StringRef funcName = getFuncNameFromCall(const_cast<CallInst *>(CI));

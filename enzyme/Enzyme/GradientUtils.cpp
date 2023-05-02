@@ -8511,40 +8511,32 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         storingOps.insert(store);
       }
     } else if (auto II = dyn_cast<IntrinsicInst>(cur)) {
-      if (isIntelSubscriptIntrinsic(*II)) {
-        for (auto u : II->users()) {
-          if (auto I = dyn_cast<Instruction>(u)) {
-            todo.push_back(std::make_pair(I, (Value *)cur));
-          }
-        }
-      } else {
-        switch (II->getIntrinsicID()) {
-        case Intrinsic::lifetime_start:
-          LifetimeStarts.insert(II);
-          break;
-        case Intrinsic::dbg_declare:
-        case Intrinsic::dbg_value:
+      switch (II->getIntrinsicID()) {
+      case Intrinsic::lifetime_start:
+        LifetimeStarts.insert(II);
+        break;
+      case Intrinsic::dbg_declare:
+      case Intrinsic::dbg_value:
 #if LLVM_VERSION_MAJOR > 6
-        case Intrinsic::dbg_label:
+      case Intrinsic::dbg_label:
 #endif
-        case Intrinsic::dbg_addr:
-        case Intrinsic::lifetime_end:
-          break;
-        case Intrinsic::memset: {
-          stores.insert(II);
-          storingOps.insert(II);
-          break;
-        }
-        // TODO memtransfer(cpy/move)
-        case Intrinsic::memcpy:
-        case Intrinsic::memmove:
-        default:
-          promotable = false;
-          shadowpromotable = false;
-          EmitWarning("NotPromotable", *cur, " Could not promote allocation ",
-                      *V, " due to unknown intrinsic ", *cur);
-          break;
-        }
+      case Intrinsic::dbg_addr:
+      case Intrinsic::lifetime_end:
+        break;
+      case Intrinsic::memset: {
+        stores.insert(II);
+        storingOps.insert(II);
+        break;
+      }
+      // TODO memtransfer(cpy/move)
+      case Intrinsic::memcpy:
+      case Intrinsic::memmove:
+      default:
+        promotable = false;
+        shadowpromotable = false;
+        EmitWarning("NotPromotable", *cur, " Could not promote allocation ", *V,
+                    " due to unknown intrinsic ", *cur);
+        break;
       }
     } else if (auto CI = dyn_cast<CallInst>(cur)) {
       StringRef funcName = getFuncNameFromCall(CI);

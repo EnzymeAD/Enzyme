@@ -367,8 +367,7 @@ inline bool is_value_needed_in_reverse(
           (!isa<ExtractValueInst>(user) && !isa<ExtractElementInst>(user) &&
            !isa<InsertValueInst>(user) && !isa<InsertElementInst>(user) &&
            !isPointerArithmeticInst(user, /*includephi*/ false,
-                                    /*includebin*/ false) &&
-           !isIntelSubscriptIntrinsic(user))) {
+                                    /*includebin*/ false))) {
         if (!inst_cv &&
             !gutils->isConstantInstruction(const_cast<Instruction *>(user))) {
           if (EnzymePrintDiffUse)

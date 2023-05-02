@@ -1195,6 +1195,10 @@ static inline bool isPointerArithmeticInst(const llvm::Value *V,
       }
     }
 
+  if (isIntelSubscriptIntrinsic(V)) {
+    return true;
+  }
+
   if (auto *Call = llvm::dyn_cast<llvm::CallInst>(V)) {
     auto funcName = getFuncNameFromCall(Call);
     if (funcName == "julia.pointer_from_objref") {
