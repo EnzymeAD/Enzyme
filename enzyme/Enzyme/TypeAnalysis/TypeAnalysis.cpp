@@ -3575,7 +3575,11 @@ void TypeAnalyzer::visitInvokeInst(InvokeInst &call) {
 
 void analyzeIntelSubscriptIntrinsic(IntrinsicInst &II, TypeAnalyzer &TA) {
   assert(isIntelSubscriptIntrinsic(II));
+#if LLVM_VERSION_MAJOR >= 14
   assert(II.arg_size() == 5);
+#else
+  assert(II.getNumArgOperands() == 5);
+#endif
 
   constexpr size_t idxArgsIndices[4] = {0, 1, 2, 4};
   constexpr size_t ptrArgIndex = 3;
