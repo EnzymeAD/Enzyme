@@ -1220,6 +1220,10 @@ static inline llvm::Value *getBaseObject(llvm::Value *V) {
     } else if (auto CI = llvm::dyn_cast<llvm::GetElementPtrInst>(V)) {
       V = CI->getOperand(0);
       continue;
+    } else if (auto II = llvm::dyn_cast<llvm::IntrinsicInst>(V);
+               II && isIntelSubscriptIntrinsic(*II)) {
+      V = II->getOperand(3);
+      continue;
     } else if (auto CI = llvm::dyn_cast<llvm::PHINode>(V)) {
       if (CI->getNumIncomingValues() == 1) {
         V = CI->getOperand(0);

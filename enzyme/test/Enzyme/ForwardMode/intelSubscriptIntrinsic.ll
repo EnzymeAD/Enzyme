@@ -44,9 +44,9 @@ declare void @__enzyme_fwddiff(float (...)* noalias, %"QNCA_a0$float*$rank1$"* n
 ; CHECK-NEXT:   %"X.addr_a0$_fetch.29" = load float*, float** %"X.addr_a0$", align 1, !tbaa !0, !alias.scope !13, !noalias !10
 ; CHECK-NEXT:   %"X.dim_info$.lower_bound$" = getelementptr inbounds %"QNCA_a0$float*$rank1$", %"QNCA_a0$float*$rank1$"* %X, i64 0, i32 6, i64 0, i32 2
 ; CHECK-NEXT:   %"X.dim_info$.lower_bound$[]" = tail call i64* @llvm.intel.subscript.p0i64.i64.i32.p0i64.i32(i8 0, i64 0, i32 24, i64* nonnull elementtype(i64) %"X.dim_info$.lower_bound$", i32 0) #0
-; CHECK-NEXT:   %"X.dim_info$.lower_bound$[]_fetch.30" = load i64, i64* %"X.dim_info$.lower_bound$[]", align 1, !tbaa !6, !alias.scope !15, !noalias !18
+; CHECK-NEXT:   %"X.dim_info$.lower_bound$[]_fetch.30" = load i64, i64* %"X.dim_info$.lower_bound$[]", align 1, !tbaa !6, !alias.scope !13, !noalias !10
 ; CHECK-NEXT:   %0 = call float* @llvm.intel.subscript.p0f32.i64.i64.p0f32.i64(i8 0, i64 %"X.dim_info$.lower_bound$[]_fetch.30", i64 4, float* elementtype(float) %"X.addr_a0$_fetch.29'ipl", i64 1)
 ; CHECK-NEXT:   %"X.addr_a0$_fetch.29[]" = tail call float* @llvm.intel.subscript.p0f32.i64.i64.p0f32.i64(i8 0, i64 %"X.dim_info$.lower_bound$[]_fetch.30", i64 4, float* elementtype(float) %"X.addr_a0$_fetch.29", i64 1) #0
-; CHECK-NEXT:   %"X.addr_a0$_fetch.29[]_fetch.32'ipl" = load float, float* %0, align 1, !tbaa !7, !alias.scope !20, !noalias !23
+; CHECK-NEXT:   %"X.addr_a0$_fetch.29[]_fetch.32'ipl" = load float, float* %0, align 1, !tbaa !7, !alias.scope !15, !noalias !18
 ; CHECK-NEXT:   ret float %"X.addr_a0$_fetch.29[]_fetch.32'ipl"
 ; CHECK-NEXT: }
