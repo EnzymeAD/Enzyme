@@ -27,11 +27,20 @@ bool provideDefinitions(Module &M) {
     int index = 0;
     for (auto postfix : {"", "_", "_64_"}) {
       std::string str;
-      if (strlen(postfix) == 0)
+      if (strlen(postfix) == 0) {
         str = F.getName().str();
-      else if (F.getName().endswith(postfix)) {
-        str = "cblas_" +
-              F.getName().substr(0, F.getName().size() - strlen(postfix)).str();
+        if (str == "sdot" || str == "ddot") {
+          llvm::errs() << "SKIPPING DOT \n\n\n\n";
+          continue; // don't handle tablegen'd ones
+        }
+      } else if (F.getName().endswith(postfix)) {
+        auto blasName =
+            F.getName().substr(0, F.getName().size() - strlen(postfix)).str();
+        if (blasName == "sdot" || blasName == "ddot") {
+          llvm::errs() << "SKIPPING DOT \n\n\n\n";
+          continue; // don't handle tablegen'd ones
+        }
+        str = "cblas_" + blasName;
       }
 
       auto found = EnzymeBlasBC.find(str);
