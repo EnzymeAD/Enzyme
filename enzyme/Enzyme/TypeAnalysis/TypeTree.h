@@ -61,6 +61,8 @@ static inline std::string to_string(const std::vector<int> x) {
   return out;
 }
 
+#include "Trie.h"
+
 class TypeTree;
 
 typedef std::shared_ptr<const TypeTree> TypeResult;
