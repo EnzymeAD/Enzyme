@@ -4065,6 +4065,15 @@ bool GradientUtils::legalRecompute(const Value *val,
         n == "omp_get_thread_num" || n == "omp_get_max_threads") {
       return true;
     }
+#if LLVM_VERSION_MAJOR >= 14
+    if (ci->doesNotAccessMemory())
+#else
+    if (ci->hasFnAttr(Attribute::ReadNone) ||
+        (called && called->hasFnAttribute(Attribute::ReadNone)))
+#endif
+      return true;
+    if (isPointerArithmeticInst(ci))
+      return true;
   }
 
   if (auto inst = dyn_cast<Instruction>(val)) {
@@ -4206,6 +4215,8 @@ bool GradientUtils::shouldRecompute(const Value *val,
         n == "omp_get_thread_num" || n == "omp_get_max_threads") {
       return true;
     }
+    if (isPointerArithmeticInst(ci))
+      return true;
   }
 
   // cache a call, assuming its longer to run that
@@ -6989,16 +7000,10 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
     auto found = rematerializableAllocations.find(origInst);
     if (found != rematerializableAllocations.end())
       if (found->second.LI && found->second.LI->contains(origInst)) {
-        bool cacheWholeAllocation = false;
-        if (knownRecomputeHeuristic.count(origInst)) {
-          if (!knownRecomputeHeuristic[origInst]) {
-            cacheWholeAllocation = true;
-          }
-        }
         // If not caching whole allocation and rematerializing the allocation
         // within the loop, force an entry-level scope so there is no need
         // to cache.
-        if (!cacheWholeAllocation)
+        if (!needsCacheWholeAllocation(origInst))
           scopeI = &newFunc->getEntryBlock();
       }
   } else {
@@ -8357,7 +8362,9 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
     if (seen.count(tup))
       continue;
     seen.insert(tup);
-    if (isa<CastInst>(cur) || isa<GetElementPtrInst>(cur)) {
+    if (notForAnalysis.count(cur->getParent()))
+      continue;
+    if (isPointerArithmeticInst(cur)) {
       for (auto u : cur->users()) {
         if (auto I = dyn_cast<Instruction>(u))
           todo.push_back(std::make_pair(I, (Value *)cur));
@@ -8802,10 +8809,7 @@ void GradientUtils::computeGuaranteedFrees() {
       StringRef funcName = getFuncNameFromCall(CI);
 
       if (isDeallocationFunction(funcName, TLI)) {
-
-        llvm::Value *val = CI->getArgOperand(0);
-        while (auto cast = dyn_cast<CastInst>(val))
-          val = cast->getOperand(0);
+        llvm::Value *val = getBaseObject(CI->getArgOperand(0));
 
         if (auto dc = dyn_cast<CallInst>(val)) {
           StringRef sfuncName = getFuncNameFromCall(dc);
@@ -9071,4 +9075,55 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
   if (freecall->getParent() == nullptr)
     builder.Insert(freecall);
   return freecall;
+}
+
+bool GradientUtils::needsCacheWholeAllocation(
+    const llvm::Value *origInst) const {
+  auto found = knownRecomputeHeuristic.find(origInst);
+  if (found == knownRecomputeHeuristic.end())
+    return false;
+  if (!found->second)
+    return true;
+  SmallVector<const Instruction *, 1> todo;
+  for (auto user : origInst->users())
+    todo.push_back(cast<Instruction>(user));
+  SmallPtrSet<const Instruction *, 1> seen;
+  while (todo.size()) {
+    auto cur = todo.back();
+    todo.pop_back();
+    if (seen.count(cur))
+      continue;
+    seen.insert(cur);
+    // Loads are always fine
+    if (isa<LoadInst>(cur))
+      continue;
+
+    if (auto II = dyn_cast<IntrinsicInst>(cur))
+      if (II->getIntrinsicID() == Intrinsic::nvvm_ldu_global_i ||
+          II->getIntrinsicID() == Intrinsic::nvvm_ldu_global_p ||
+          II->getIntrinsicID() == Intrinsic::nvvm_ldu_global_f ||
+          II->getIntrinsicID() == Intrinsic::nvvm_ldg_global_i ||
+          II->getIntrinsicID() == Intrinsic::nvvm_ldg_global_p ||
+          II->getIntrinsicID() == Intrinsic::nvvm_ldg_global_f ||
+          II->getIntrinsicID() == Intrinsic::masked_load)
+        continue;
+
+    found = knownRecomputeHeuristic.find(cur);
+    if (found == knownRecomputeHeuristic.end())
+      continue;
+
+    // If caching this user, it cannot be a gep/cast of original
+    if (!found->second) {
+      assert(isPointerArithmeticInst(cur, /*includephi*/ true,
+                                     /*includebin*/ true));
+      // if return may alias the input, then force it to be saved
+      return true;
+    } else {
+      // if not caching this user, it is legal to recompute, consider its users
+      for (auto user : cur->users()) {
+        todo.push_back(cast<Instruction>(user));
+      }
+    }
+  }
+  return false;
 }

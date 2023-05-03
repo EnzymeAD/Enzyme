@@ -5847,7 +5847,7 @@ public:
         if (offset != 0) {
 #if LLVM_VERSION_MAJOR > 7
           dsto = Builder2.CreateConstInBoundsGEP1_64(
-              dsto->getType()->getPointerElementType(), dsto, offset);
+              Type::getInt8Ty(dsto->getContext()), dsto, offset);
 #else
           dsto = Builder2.CreateConstInBoundsGEP1_64(dsto, offset);
 #endif
@@ -5862,7 +5862,7 @@ public:
         if (offset != 0) {
 #if LLVM_VERSION_MAJOR > 7
           srco = Builder2.CreateConstInBoundsGEP1_64(
-              srco->getType()->getPointerElementType(), srco, offset);
+              Type::getInt8Ty(srco->getContext()), srco, offset);
 #else
           srco = Builder2.CreateConstInBoundsGEP1_64(srco, offset);
 #endif
@@ -12540,12 +12540,9 @@ public:
                     ValueType::Primal>(gutils, &call, Mode, Seen,
                                        oldUnreachable);
 
-      bool cacheWholeAllocation = false;
-      if (gutils->knownRecomputeHeuristic.count(&call)) {
-        if (!gutils->knownRecomputeHeuristic[&call]) {
-          cacheWholeAllocation = true;
-          primalNeededInReverse = true;
-        }
+      bool cacheWholeAllocation = gutils->needsCacheWholeAllocation(&call);
+      if (cacheWholeAllocation) {
+        primalNeededInReverse = true;
       }
 
       std::function<void(MDNode *)> restoreFromStack = [&](MDNode *MD) {
@@ -12832,6 +12829,60 @@ public:
       eraseIfUnused(call);
       return;
     }
+    if (funcName.contains("__enzyme_todense")) {
+      if (gutils->isConstantValue(&call)) {
+        eraseIfUnused(call);
+        return;
+      }
+
+      auto ifound = gutils->invertedPointers.find(&call);
+      assert(ifound != gutils->invertedPointers.end());
+
+      auto placeholder = cast<PHINode>(&*ifound->second);
+
+      bool needShadow = DifferentialUseAnalysis::is_value_needed_in_reverse<
+          ValueType::Shadow>(gutils, &call, Mode, oldUnreachable);
+      if (!needShadow) {
+        gutils->invertedPointers.erase(ifound);
+        gutils->erase(placeholder);
+        eraseIfUnused(call);
+        return;
+      }
+
+      SmallVector<Value *, 3> args;
+      for (size_t i = 0; i < 2; i++)
+        args.push_back(gutils->getNewFromOriginal(call.getArgOperand(i)));
+#if LLVM_VERSION_MAJOR >= 14
+      for (size_t i = 2; i < call.arg_size(); ++i)
+#else
+      for (size_t i = 2; i < call.getNumArgOperands(); ++i)
+#endif
+        args.push_back(gutils->invertPointerM(call.getArgOperand(0), BuilderZ));
+
+      Value *res = UndefValue::get(gutils->getShadowType(call.getType()));
+      if (gutils->getWidth() == 1) {
+        res = BuilderZ.CreateCall(called, args);
+      } else {
+        for (size_t w = 0; w < gutils->getWidth(); ++w) {
+          SmallVector<Value *, 3> targs = {args[0], args[1]};
+#if LLVM_VERSION_MAJOR >= 14
+          for (size_t i = 2; i < call.arg_size(); ++i)
+#else
+          for (size_t i = 2; i < call.getNumArgOperands(); ++i)
+#endif
+            targs.push_back(GradientUtils::extractMeta(BuilderZ, args[i], w));
+
+          auto tres = BuilderZ.CreateCall(called, targs);
+          res = BuilderZ.CreateInsertValue(res, tres, w);
+        }
+      }
+
+      gutils->replaceAWithB(placeholder, res);
+      gutils->erase(placeholder);
+      eraseIfUnused(call);
+      return;
+    }
+
     if (funcName == "memcpy" || funcName == "memmove") {
       auto ID = (funcName == "memcpy") ? Intrinsic::memcpy : Intrinsic::memmove;
 #if LLVM_VERSION_MAJOR >= 10
@@ -13096,12 +13147,10 @@ public:
                 DifferentialUseAnalysis::is_value_needed_in_reverse<
                     ValueType::Primal>(gutils, rmat.first, Mode, Seen,
                                        oldUnreachable);
-            bool cacheWholeAllocation = false;
-            if (gutils->knownRecomputeHeuristic.count(rmat.first)) {
-              if (!gutils->knownRecomputeHeuristic[rmat.first]) {
-                cacheWholeAllocation = true;
-                primalNeededInReverse = true;
-              }
+            bool cacheWholeAllocation =
+                gutils->needsCacheWholeAllocation(rmat.first);
+            if (cacheWholeAllocation) {
+              primalNeededInReverse = true;
             }
             // If in a loop context, maintain the same free behavior, unless
             // caching whole allocation.
@@ -13128,9 +13177,7 @@ public:
         return;
       }
 
-      llvm::Value *val = call.getArgOperand(0);
-      while (auto cast = dyn_cast<CastInst>(val))
-        val = cast->getOperand(0);
+      llvm::Value *val = getBaseObject(call.getArgOperand(0));
       if (isa<ConstantPointerNull>(val)) {
         llvm::errs() << "removing free of null pointer\n";
         eraseIfUnused(call, /*erase*/ true, /*check*/ false);

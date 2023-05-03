@@ -223,6 +223,9 @@ static void handleKnownFunctions(llvm::Function &F) {
 }
 
 static void handleAnnotations(llvm::Function &F) {
+  if (F.getName().contains("__enzyme_todense"))
+    F.addFnAttr(Attribute::ReadNone);
+
   if (F.getName().contains("__enzyme_float") ||
       F.getName().contains("__enzyme_double") ||
       F.getName().contains("__enzyme_integer") ||
@@ -582,7 +585,6 @@ public:
                                            std::vector<DIFFE_TYPE> &constants,
                                            SmallVectorImpl<Value *> &args,
                                            std::map<int, Type *> &byVal) {
-    std::map<unsigned, Value *> batchOffset;
     FunctionType *FT = fn->getFunctionType();
 
     Value *differet = nullptr;
@@ -690,6 +692,7 @@ public:
       Value *res = CI->getArgOperand(i);
       Optional<DIFFE_TYPE> opt_ty;
       auto metaString = getMetadataName(res);
+      Optional<Value *> batchOffset;
 
       // handle metadata
       if (metaString && metaString->startswith("enzyme_")) {
@@ -712,7 +715,7 @@ public:
           ++i;
           Value *offset_arg = CI->getArgOperand(i);
           if (offset_arg->getType()->isIntegerTy()) {
-            batchOffset[i + 1] = offset_arg;
+            batchOffset = offset_arg;
           } else {
             EmitFailure("IllegalVectorOffset", CI->getDebugLoc(), CI,
                         "enzyme_batch must be followd by an integer "
@@ -720,21 +723,6 @@ public:
                         *CI->getArgOperand(i), " in", *CI);
             return {};
           }
-          continue;
-        } else if (*metaString == "enzyme_dupnoneedv") {
-          opt_ty = DIFFE_TYPE::DUP_NONEED;
-          ++i;
-          Value *offset_arg = CI->getArgOperand(i);
-          if (offset_arg->getType()->isIntegerTy()) {
-            batchOffset[i + 1] = offset_arg;
-          } else {
-            EmitFailure("IllegalVectorOffset", CI->getDebugLoc(), CI,
-                        "enzyme_batch must be followd by an integer "
-                        "offset.",
-                        *CI->getArgOperand(i), " in", *CI);
-            return {};
-          }
-          continue;
         } else if (*metaString == "enzyme_dupnoneed") {
           opt_ty = DIFFE_TYPE::DUP_NONEED;
         } else if (*metaString == "enzyme_dupnoneedv") {
@@ -742,7 +730,7 @@ public:
           ++i;
           Value *offset_arg = CI->getArgOperand(i);
           if (offset_arg->getType()->isIntegerTy()) {
-            batchOffset[i + 1] = offset_arg;
+            batchOffset = offset_arg;
           } else {
             EmitFailure("IllegalVectorOffset", CI->getDebugLoc(), CI,
                         "enzyme_batch must be followd by an integer "
@@ -750,7 +738,6 @@ public:
                         *CI->getArgOperand(i), " in", *CI);
             return {};
           }
-          continue;
         } else if (*metaString == "enzyme_out") {
           opt_ty = DIFFE_TYPE::OUT_DIFF;
         } else if (*metaString == "enzyme_const") {
@@ -952,7 +939,7 @@ public:
         ++i;
 
         Value *res = nullptr;
-        bool batch = batchOffset.count(i - 1) != 0;
+        bool batch = batchOffset.hasValue();
 
         for (unsigned v = 0; v < width; ++v) {
 #if LLVM_VERSION_MAJOR >= 14
@@ -980,8 +967,8 @@ public:
               element = Builder.CreateGEP(
                   Type::getInt8Ty(CI->getContext()), element,
                   Builder.CreateMul(
-                      batchOffset[i - 1],
-                      ConstantInt::get(batchOffset[i - 1]->getType(), v)));
+                      *batchOffset,
+                      ConstantInt::get((*batchOffset)->getType(), v)));
 #else
               element = Builder.CreateGEP(
 #if LLVM_VERSION_MAJOR >= 14
@@ -989,8 +976,8 @@ public:
 #endif
                   element,
                   Builder.CreateMul(
-                      batchOffset[i - 1],
-                      ConstantInt::get(batchOffset[i - 1]->getType(), v)));
+                      *batchOffset,
+                      ConstantInt::get((*batchOffset)->getType(), v)));
 #endif
               element = Builder.CreateBitCast(element, elementPtrTy);
             } else {
@@ -1617,6 +1604,7 @@ public:
                   InlineFunction(cur, IFI);
 #endif
               if (IR.isSuccess()) {
+                LowerSparsification(outerFunc, /*replaceAll*/ false);
                 for (auto U : outerFunc->users()) {
                   if (auto CI = dyn_cast<CallInst>(U)) {
                     if (CI->getCalledFunction() == outerFunc) {
@@ -1910,6 +1898,9 @@ public:
         size_t num_args = CI->getNumArgOperands();
 #endif
 
+        if (Fn->getName().contains("__enzyme_todense")) {
+          CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
+        }
         if (Fn->getName().contains("__enzyme_float")) {
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
           for (size_t i = 0; i < num_args; ++i) {
@@ -2567,6 +2558,11 @@ public:
             PromotePass().run(F, FAM);
       }
 #endif
+    }
+
+    for (auto &F : M) {
+      if (!F.empty())
+        changed |= LowerSparsification(&F);
     }
     return changed;
   }

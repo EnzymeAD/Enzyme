@@ -19,7 +19,7 @@
    %0 = load i32, i32* @enzyme_width, align 4
    %1 = load i32, i32* @enzyme_dupv, align 4
    %2 = load i32, i32* @enzyme_dupnoneedv, align 4
-   call void (i8*, ...) @__enzyme_fwddiff(i8* bitcast (void (double*, double*)* @square to i8*), i32 %0, i32 3, i32 %1, i64 16, double* %x, double* %dx, i32 %1, i64 16, i32 %2, i32 16, double* %out, double* %dout)
+   call void (i8*, ...) @__enzyme_fwddiff(i8* bitcast (void (double*, double*)* @square to i8*), i32 %0, i32 3, i32 %1, i64 16, double* %x, double* %dx, i32 %2, i32 16, double* %out, double* %dout)
    ret void
  }
 
@@ -37,7 +37,6 @@
 ; CHECK-NEXT:    %"'ipl2" = load double, double* [[TMP4]], align 8
 ; CHECK-NEXT:    [[TMP5:%.*]] = insertvalue [3 x double] [[TMP3]], double %"'ipl2", 2
 ; CHECK-NEXT:    [[TMP6:%.*]] = load double, double* [[X]], align 8
-; CHECK-NEXT:    [[MUL:%.*]] = fmul double [[TMP6]], [[TMP6]]
 ; CHECK-NEXT:    [[TMP9:%.*]] = fmul fast double %"'ipl", [[TMP6]]
 ; CHECK-NEXT:    [[TMP10:%.*]] = fmul fast double %"'ipl", [[TMP6]]
 ; CHECK-NEXT:    [[TMP11:%.*]] = fadd fast double [[TMP9]], [[TMP10]]
@@ -50,7 +49,6 @@
 ; CHECK-NEXT:    [[TMP22:%.*]] = fmul fast double %"'ipl2", [[TMP6]]
 ; CHECK-NEXT:    [[TMP23:%.*]] = fadd fast double [[TMP21]], [[TMP22]]
 ; CHECK-NEXT:    [[TMP24:%.*]] = insertvalue [3 x double] [[TMP18]], double [[TMP23]], 2
-; CHECK-NEXT:    store double [[MUL]], double* [[OUT]], align 8
 ; CHECK-NEXT:    [[TMP25:%.*]] = extractvalue [3 x double*] %"out'", 0
 ; CHECK-NEXT:    store double [[TMP11]], double* [[TMP25]], align 8
 ; CHECK-NEXT:    [[TMP27:%.*]] = extractvalue [3 x double*] %"out'", 1
