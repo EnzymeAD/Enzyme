@@ -1002,7 +1002,7 @@ LLVMValueRef EnzymeCloneFunctionWithoutReturnOrArgs(LLVMValueRef FC,
       for (auto s : sub) {
         uint64_t ival;
         bool b = s.getAsInteger(10, ival);
-        assert(b);
+        assert(!b);
         previdx.push_back(ival);
       }
     }
