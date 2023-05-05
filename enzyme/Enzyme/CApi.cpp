@@ -46,6 +46,7 @@
 
 #if LLVM_VERSION_MAJOR >= 14
 #define addAttribute addAttributeAtIndex
+#define getAttribute getAttributeAtIndex
 #define hasAttribute hasAttributeAtIndex
 #endif
 
@@ -987,17 +988,65 @@ LLVMValueRef EnzymeCloneFunctionWithoutReturnOrArgs(LLVMValueRef FC,
     NewF->addMetadata(pair.first, *pair.second);
   NewF->takeName(F);
   NewF->setCallingConv(F->getCallingConv());
-  std::string remstr;
   if (!keepReturn)
-    remstr += "-1";
-  for (size_t i = 0; i < num_argrem; i++) {
-    if (remstr.size())
-      remstr += ",";
-    remstr += std::to_string(argrem[i]);
+    NewF->addFnAttr("enzyme_retremove", "");
+
+  if (num_argrem) {
+    SmallVector<uint64_t, 1> previdx;
+    if (Attrs.hasAttribute(AttributeList::FunctionIndex, "enzyme_parmremove")) {
+      auto attr =
+          Attrs.getAttribute(AttributeList::FunctionIndex, "enzyme_parmremove");
+      auto prevstr = attr.getValueAsString();
+      SmallVector<StringRef, 1> sub;
+      prevstr.split(sub, ",");
+      for (auto s : sub) {
+        uint64_t ival;
+        bool b = s.getAsInteger(10, ival);
+        assert(b);
+        previdx.push_back(ival);
+      }
+    }
+    SmallVector<uint64_t, 1> nextidx;
+    for (size_t i = 0; i < num_argrem; i++) {
+      auto val = argrem[i];
+      size_t cnt = 0;
+      for (auto idx : previdx) {
+        if (idx <= val + cnt)
+          cnt++;
+      }
+      nextidx.push_back(val);
+    }
+
+    size_t prevcnt = 0;
+    size_t nextcnt = 0;
+    SmallVector<uint64_t, 1> out;
+    while (prevcnt < previdx.size() && nextcnt < nextidx.size()) {
+      if (previdx[prevcnt] < nextidx[nextcnt]) {
+        out.push_back(previdx[prevcnt]);
+        prevcnt++;
+      } else {
+        out.push_back(nextidx[nextcnt]);
+        nextcnt++;
+      }
+    }
+    while (prevcnt < previdx.size()) {
+      out.push_back(previdx[prevcnt]);
+      prevcnt++;
+    }
+    while (nextcnt < nextidx.size()) {
+      out.push_back(nextidx[nextcnt]);
+      nextcnt++;
+    }
+
+    std::string remstr;
+    for (auto arg : out) {
+      if (remstr.size())
+        remstr += ",";
+      remstr += std::to_string(arg);
+    }
+
+    NewF->addFnAttr("enzyme_parmremove", remstr);
   }
-  assert(
-      !Attrs.hasAttribute(AttributeList::FunctionIndex, "enzyme_parmremove"));
-  NewF->addFnAttr("enzyme_parmremove", remstr);
   return wrap(NewF);
 }
 }
