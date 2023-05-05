@@ -4222,6 +4222,25 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
                      TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
+    if (funcName == "for_allocate" || funcName == "for_allocate_handle" ||
+        funcName == "for_alloc_allocatable" ||
+        funcName == "for_alloc_allocatable_handle") {
+      TypeTree ptrptr;
+      ptrptr.insert({-1}, BaseType::Pointer);
+      ptrptr.insert({-1, 0}, BaseType::Pointer);
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(0),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(1), ptrptr, &call);
+      updateAnalysis(call.getOperand(2),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (funcName == "for_allocate_handle" ||
+          funcName == "for_alloc_allocatable_handle") {
+        updateAnalysis(call.getOperand(3),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      }
+      return;
+    }
     if (funcName == "calloc") {
       updateAnalysis(&call, TypeTree(BaseType::Pointer).Only(-1, &call), &call);
       updateAnalysis(call.getOperand(0),
@@ -4370,6 +4389,19 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       updateAnalysis(call.getOperand(0),
                      TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      return;
+    }
+    if (funcName == "for_dealloc_allocatable" ||
+        funcName == "for_dealloc_allocatable_handle") {
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(0),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(1),
+                     TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      if (funcName == "for_dealloc_allocatable_handle") {
+        updateAnalysis(call.getOperand(2),
+                       TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      }
       return;
     }
     if (isDeallocationFunction(funcName, TLI)) {

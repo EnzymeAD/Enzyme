@@ -1392,6 +1392,10 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           insertConstantsFrom(TR, *UpHypothesis);
           return true;
         }
+        if (funcName == "for_dealloc_allocatable" ||
+            funcName == "for_dealloc_allocatable_handle") {
+          return true;
+        }
 
         auto dName = demangle(funcName.str());
         for (auto FuncName : DemangledKnownInactiveFunctionsStartingWith) {
@@ -1741,6 +1745,12 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
             funcName == "cuMemAlloc_v2" || funcName == "cudaMallocAsync" ||
             funcName == "cudaMallocHost" ||
             funcName == "cudaMallocFromPoolAsync") {
+          return false;
+        }
+
+        if (funcName == "for_allocate" || funcName == "for_allocate_handle" ||
+            funcName == "for_alloc_allocatable" ||
+            funcName == "for_alloc_allocatable_handle") {
           return false;
         }
 
@@ -2368,6 +2378,10 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
     }
     if (funcName == "free" || funcName == "_ZdlPv" || funcName == "_ZdlPvm" ||
         funcName == "munmap") {
+      return true;
+    }
+    if (funcName == "for_dealloc_allocatable" ||
+        funcName == "for_dealloc_allocatable_handle") {
       return true;
     }
 
