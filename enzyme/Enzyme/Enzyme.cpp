@@ -615,14 +615,15 @@ public:
     Value *differet;
     Value *tape;
     Value *dynamic_interface;
-    std::pair<Value *, Value *> trace;
-    std::pair<Value *, Value *> observations;
+    Value *trace;
+    Value *observations;
     unsigned width;
     int allocatedTapeSize;
     bool freeMemory;
     bool returnUsed;
     bool tapeIsPointer;
     bool differentialReturn;
+    bool diffeTrace;
     DIFFE_TYPE retType;
     bool primalReturn;
   };
@@ -638,12 +639,13 @@ public:
     Value *differet = nullptr;
     Value *tape = nullptr;
     Value *dynamic_interface = nullptr;
-    std::pair<Value *, Value *> trace = {nullptr, nullptr};
-    std::pair<Value *, Value *> observations = {nullptr, nullptr};
+    Value *trace = nullptr;
+    Value *observations = nullptr;
     unsigned width = 1;
     int allocatedTapeSize = -1;
     bool freeMemory = true;
     bool tapeIsPointer = false;
+    bool diffeTrace = false;
     unsigned truei = 0;
     unsigned byRefSize = 0;
     bool primalReturn = false;
@@ -832,22 +834,17 @@ public:
           dynamic_interface = CI->getArgOperand(i);
           continue;
         } else if (*metaString == "enzyme_trace") {
-          trace.first = CI->getArgOperand(++i);
+          trace = CI->getArgOperand(++i);
           opt_ty = DIFFE_TYPE::CONSTANT;
           continue;
         } else if (*metaString == "enzyme_duptrace") {
-          trace.first = CI->getArgOperand(++i);
-          trace.second = CI->getArgOperand(++i);
-          opt_ty = DIFFE_TYPE::DUP_ARG;
-          continue;
-        } else if (*metaString == "enzyme_observations") {
-          observations.first = CI->getArgOperand(++i);
+          trace = CI->getArgOperand(++i);
+          diffeTrace = true;
           opt_ty = DIFFE_TYPE::CONSTANT;
           continue;
-        } else if (*metaString == "enzyme_dupobservations") {
-          observations.first = CI->getArgOperand(++i);
-          observations.second = CI->getArgOperand(++i);
-          opt_ty = DIFFE_TYPE::DUP_ARG;
+        } else if (*metaString == "enzyme_observations") {
+          observations = CI->getArgOperand(++i);
+          opt_ty = DIFFE_TYPE::CONSTANT;
           continue;
         } else {
           EmitFailure("IllegalDiffeType", CI->getDebugLoc(), CI,
@@ -1090,7 +1087,7 @@ public:
     return Optional<Options>({differet, tape, dynamic_interface, trace,
                               observations, width, allocatedTapeSize,
                               freeMemory, returnUsed, tapeIsPointer,
-                              differentialReturn, retType, primalReturn});
+                              differentialReturn, diffeTrace, retType. primalReturn});
   }
 
   static FnTypeInfo
@@ -1771,10 +1768,9 @@ public:
 #endif
 
     auto dynamic_interface = opt->dynamic_interface;
-    auto trace = opt->trace.first;
-    auto dtrace = opt->trace.second;
-    auto observations = opt->observations.first;
-    auto dobservations = opt->observations.second;
+    auto trace = opt->trace;
+    auto dtrace = opt->diffeTrace;
+    auto observations = opt->observations;
 
     // Interface
     bool has_dynamic_interface = dynamic_interface != nullptr;
@@ -1786,7 +1782,7 @@ public:
       interface = new StaticTraceInterface(F->getParent());
     }
 
-    bool autodiff = dtrace || dobservations;
+    bool autodiff = dtrace;
 
     IRBuilder<> AllocaBuilder(CI->getParent()->getFirstNonPHI());
 
@@ -1811,22 +1807,12 @@ public:
     if (mode == ProbProgMode::Condition) {
       args.push_back(observations);
       dargs.push_back(observations);
-      if (dobservations) {
-        dargs.push_back(dobservations);
-        constants.push_back(DIFFE_TYPE::DUP_ARG);
-      } else {
-        constants.push_back(DIFFE_TYPE::CONSTANT);
-      }
+      constants.push_back(DIFFE_TYPE::CONSTANT);
     }
 
     args.push_back(trace);
     dargs.push_back(trace);
-    if (dtrace) {
-      dargs.push_back(dtrace);
-      constants.push_back(DIFFE_TYPE::DUP_ARG);
-    } else {
-      constants.push_back(DIFFE_TYPE::CONSTANT);
-    }
+    constants.push_back(DIFFE_TYPE::CONSTANT);
 
     // Determine generative functions
     SmallPtrSet<Function *, 4> generativeFunctions;
