@@ -1297,4 +1297,85 @@ static inline llvm::Value *getBaseObject(llvm::Value *V) {
 static inline const llvm::Value *getBaseObject(const llvm::Value *V) {
   return getBaseObject(const_cast<llvm::Value *>(V));
 }
+
+static inline bool isReadOnly(const llvm::CallInst *call, ssize_t arg = -1) {
+#if LLVM_VERSION_MAJOR >= 8
+  if (call->onlyReadsMemory())
+    return true;
+  if (arg != -1 && call->onlyReadsMemory(arg))
+    return true;
+#else
+  if (call->hasFnAttr(llvm::Attribute::ReadOnly) ||
+      call->hasFnAttr(llvm::Attribute::ReadNone))
+    return true;
+  if (arg != -1) {
+    if (call->dataOperandHasImpliedAttr(arg + 1, llvm::Attribute::ReadOnly) ||
+        call->dataOperandHasImpliedAttr(arg + 1, llvm::Attribute::ReadNone))
+      return true;
+  }
+#endif
+
+  auto F = getFunctionFromCall(call);
+  if (F) {
+    if (F->hasFnAttribute(llvm::Attribute::ReadOnly) ||
+        F->hasFnAttribute(llvm::Attribute::ReadNone))
+      return true;
+    if (arg != -1) {
+      if (F->hasParamAttribute(arg, llvm::Attribute::ReadOnly) ||
+          F->hasParamAttribute(arg, llvm::Attribute::ReadNone))
+        return true;
+    }
+  }
+  return false;
+}
+
+static inline bool isWriteOnly(const llvm::CallInst *call, ssize_t arg = -1) {
+#if LLVM_VERSION_MAJOR >= 14
+  if (call->onlyWritesMemory())
+    return true;
+  if (arg != -1 && call->onlyWritesMemory(arg))
+    return true;
+#else
+  if (call->hasFnAttr(llvm::Attribute::WriteOnly) ||
+      call->hasFnAttr(llvm::Attribute::ReadNone))
+    return true;
+  if (arg != -1) {
+    if (call->dataOperandHasImpliedAttr(arg + 1, llvm::Attribute::WriteOnly) ||
+        call->dataOperandHasImpliedAttr(arg + 1, llvm::Attribute::ReadNone))
+      return true;
+  }
+#endif
+
+  auto F = getFunctionFromCall(call);
+  if (F) {
+    if (F->hasFnAttribute(llvm::Attribute::WriteOnly) ||
+        F->hasFnAttribute(llvm::Attribute::ReadNone))
+      return true;
+    if (arg != -1) {
+      if (F->hasParamAttribute(arg, llvm::Attribute::WriteOnly) ||
+          F->hasParamAttribute(arg, llvm::Attribute::ReadNone))
+        return true;
+    }
+  }
+  return false;
+}
+
+static inline bool isNoCapture(const llvm::CallInst *call, size_t idx) {
+
+#if LLVM_VERSION_MAJOR >= 8
+  if (call->doesNotCapture(idx))
+    return true;
+#else
+  if (call->dataOperandHasImpliedAttr(idx + 1, llvm::Attribute::NoCapture))
+    return true;
+
+#endif
+
+  auto F = getFunctionFromCall(call);
+  if (F) {
+    if (F->hasParamAttribute(idx, llvm::Attribute::NoCapture))
+      return true;
+  }
+  return false;
+}
 #endif

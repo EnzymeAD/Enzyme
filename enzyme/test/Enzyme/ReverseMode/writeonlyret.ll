@@ -65,7 +65,6 @@ entry:
 ; CHECK-NEXT:   store double %2, double* %"r'ai", align 8
 ; UNDEF-NEXT:   %3 = call { double } @diffesubsq(double* undef, double* %"r'ai", double %x)
 ; ZERO-NEXT:   %3 = call { double } @diffesubsq(double* null, double* %"r'ai", double %x)
-; ZERO-NEXT:   call void @llvm.memset.p0i8.i64(i8* %0, i8 0, i64 8, i1 false)
 ; CHECK-NEXT:   ret { double } %3
 ; CHECK-NEXT: }
 

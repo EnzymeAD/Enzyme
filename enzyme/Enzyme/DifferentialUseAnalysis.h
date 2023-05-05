@@ -308,34 +308,15 @@ inline bool is_value_needed_in_reverse(
 #if LLVM_VERSION_MAJOR >= 14
         for (size_t i = 0; i < CI->arg_size(); i++)
 #else
-        auto F = getFunctionFromCall(CI);
         for (size_t i = 0; i < CI->getNumArgOperands(); i++)
 #endif
         {
           if (inst == CI->getArgOperand(i)) {
-#if LLVM_VERSION_MAJOR >= 8
-            if (!CI->doesNotCapture(i))
-#else
-            if (!(CI->dataOperandHasImpliedAttr(i + 1, Attribute::NoCapture) ||
-                  (F && F->hasParamAttribute(i, Attribute::NoCapture))))
-#endif
-            {
+            if (!isNoCapture(CI, i)) {
               writeOnlyNoCapture = false;
               break;
             }
-#if LLVM_VERSION_MAJOR >= 14
-            if (!(CI->onlyWritesMemory(i) || CI->onlyWritesMemory()))
-#else
-            if (!(CI->dataOperandHasImpliedAttr(i + 1, Attribute::WriteOnly) ||
-                  CI->dataOperandHasImpliedAttr(i + 1, Attribute::ReadNone) ||
-                  CI->hasFnAttr(Attribute::WriteOnly) ||
-                  CI->hasFnAttr(Attribute::ReadNone) ||
-                  (F && (F->hasParamAttribute(i, Attribute::WriteOnly) ||
-                         F->hasParamAttribute(i, Attribute::ReadNone) ||
-                         F->hasFnAttribute(Attribute::WriteOnly) ||
-                         F->hasFnAttribute(Attribute::ReadNone)))))
-#endif
-            {
+            if (!isWriteOnly(CI, i)) {
               writeOnlyNoCapture = false;
               break;
             }

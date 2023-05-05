@@ -826,7 +826,7 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
   if (!I->mayWriteToMemory())
     noActiveWrite = true;
   else if (auto CI = dyn_cast<CallInst>(I)) {
-    if (AA.onlyReadsMemory(CI)) {
+    if (AA.onlyReadsMemory(CI) || isReadOnly(CI)) {
       noActiveWrite = true;
     } else {
       StringRef funcName = getFuncNameFromCall(CI);
@@ -1804,6 +1804,22 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       if (auto CB = dyn_cast<CallInst>(I)) {
         if (CB->onlyAccessesInaccessibleMemory())
           AARes = ModRefInfo::NoModRef;
+
+        bool ReadOnly = isReadOnly(CB);
+
+        bool WriteOnly = isWriteOnly(CB);
+
+        if (ReadOnly && WriteOnly)
+          AARes = ModRefInfo::NoModRef;
+        else if (WriteOnly) {
+          if (isRefSet(AARes)) {
+            AARes = isModSet(AARes) ? ModRefInfo::Mod : ModRefInfo::NoModRef;
+          }
+        } else if (ReadOnly) {
+          if (isModSet(AARes)) {
+            AARes = isRefSet(AARes) ? ModRefInfo::Ref : ModRefInfo::NoModRef;
+          }
+        }
       }
 
       // TODO this aliasing information is too conservative, the question
@@ -2810,46 +2826,15 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
           continue;
         }
 
-#if LLVM_VERSION_MAJOR >= 8
-        bool NoCapture = call->doesNotCapture(idx);
-#else
-        bool NoCapture =
-            call->dataOperandHasImpliedAttr(idx + 1, Attribute::NoCapture) ||
-            (F && F->hasParamAttribute(idx, Attribute::NoCapture));
-#endif
+        bool NoCapture = isNoCapture(call, idx);
 
         mayCapture |= !NoCapture;
 
-#if LLVM_VERSION_MAJOR >= 8
-        bool ReadOnly = call->onlyReadsMemory(idx) || call->onlyReadsMemory();
-#else
-        bool ReadOnly =
-            call->dataOperandHasImpliedAttr(idx + 1, Attribute::ReadOnly) ||
-            call->dataOperandHasImpliedAttr(idx + 1, Attribute::ReadNone) ||
-            call->hasFnAttr(Attribute::ReadOnly) ||
-            call->hasFnAttr(Attribute::ReadNone) ||
-            (F && (F->hasParamAttribute(idx, Attribute::ReadOnly) ||
-                   F->hasParamAttribute(idx, Attribute::ReadNone) ||
-                   F->hasFnAttribute(Attribute::ReadOnly) ||
-                   F->hasFnAttribute(Attribute::ReadNone)));
-#endif
+        bool ReadOnly = isReadOnly(call, idx);
 
         mayWrite |= !ReadOnly;
 
-#if LLVM_VERSION_MAJOR >= 14
-        bool WriteOnly =
-            call->onlyWritesMemory(idx) || call->onlyWritesMemory();
-#else
-        bool WriteOnly =
-            call->dataOperandHasImpliedAttr(idx + 1, Attribute::WriteOnly) ||
-            call->dataOperandHasImpliedAttr(idx + 1, Attribute::ReadNone) ||
-            call->hasFnAttr(Attribute::WriteOnly) ||
-            call->hasFnAttr(Attribute::ReadNone) ||
-            (F && (F->hasParamAttribute(idx, Attribute::WriteOnly) ||
-                   F->hasParamAttribute(idx, Attribute::ReadNone) ||
-                   F->hasFnAttribute(Attribute::WriteOnly) ||
-                   F->hasFnAttribute(Attribute::ReadNone)));
-#endif
+        bool WriteOnly = isWriteOnly(call, idx);
 
         mayRead |= !WriteOnly;
       }
@@ -3217,7 +3202,8 @@ bool ActivityAnalyzer::isValueActivelyStoredOrReturned(TypeResults const &TR,
 
     if (auto inst = dyn_cast<Instruction>(a)) {
       if (!inst->mayWriteToMemory() ||
-          (isa<CallInst>(inst) && AA.onlyReadsMemory(cast<CallInst>(inst)))) {
+          (isa<CallInst>(inst) && (AA.onlyReadsMemory(cast<CallInst>(inst)) ||
+                                   isReadOnly(cast<CallInst>(inst))))) {
         // if not written to memory and returning a known constant, this
         // cannot be actively returned/stored
         if (inst->getParent()->getParent() == TR.getFunction() &&
