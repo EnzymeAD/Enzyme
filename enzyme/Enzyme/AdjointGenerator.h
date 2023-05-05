@@ -3143,6 +3143,8 @@ public:
             llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
             ToCopy2.push_back(LLVMContext::MD_noalias);
             cal->copyMetadata(MS, ToCopy2);
+            if (auto m = hasMetadata(&MS, "enzyme_zerostack"))
+              cal->setMetadata("enzyme_zerostack", m);
             cal->setAttributes(MS.getAttributes());
             cal->setCallingConv(MS.getCallingConv());
             cal->setTailCallKind(MS.getTailCallKind());
@@ -3390,6 +3392,8 @@ public:
           auto cal = BuilderZ.CreateCall(MS.getCalledFunction(), args, Defs);
           llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
           ToCopy2.push_back(LLVMContext::MD_noalias);
+          if (auto m = hasMetadata(&MS, "enzyme_zerostack"))
+            cal->setMetadata("enzyme_zerostack", m);
           cal->copyMetadata(MS, ToCopy2);
           cal->setAttributes(MS.getAttributes());
           cal->setCallingConv(MS.getCallingConv());
@@ -3430,6 +3434,8 @@ public:
           llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
           ToCopy2.push_back(LLVMContext::MD_noalias);
           cal->copyMetadata(MS, ToCopy2);
+          if (auto m = hasMetadata(&MS, "enzyme_zerostack"))
+            cal->setMetadata("enzyme_zerostack", m);
           cal->setAttributes(MS.getAttributes());
           cal->setCallingConv(MS.getCallingConv());
           cal->setTailCallKind(MS.getTailCallKind());
@@ -13655,6 +13661,8 @@ public:
               ToCopy2.push_back(LLVMContext::MD_noalias);
               cal->copyMetadata(call, ToCopy2);
               cal->setAttributes(call.getAttributes());
+              if (auto m = hasMetadata(&call, "enzyme_zerostack"))
+                cal->setMetadata("enzyme_zerostack", m);
               cal->setCallingConv(call.getCallingConv());
               cal->setTailCallKind(call.getTailCallKind());
               cal->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));
