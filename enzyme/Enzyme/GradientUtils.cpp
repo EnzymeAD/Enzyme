@@ -8447,37 +8447,11 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         }
         auto TT = TR.query(prev)[{-1, -1}];
 
-#if LLVM_VERSION_MAJOR <= 13
-        auto F = getFunctionFromCall(CI);
-#endif
+        bool NoCapture = isNoCapture(CI, idx);
 
-#if LLVM_VERSION_MAJOR >= 8
-        bool NoCapture = CI->doesNotCapture(idx);
-#else
-        bool NoCapture =
-            CI->dataOperandHasImpliedAttr(idx + 1, Attribute::NoCapture) ||
-            (F && F->hasParamAttribute(idx, Attribute::NoCapture));
-#endif
+        bool ReadOnly = isReadOnly(CI, idx);
 
-#if LLVM_VERSION_MAJOR >= 8
-        bool ReadOnly = CI->onlyReadsMemory(idx);
-#else
-        bool ReadOnly =
-            CI->dataOperandHasImpliedAttr(idx + 1, Attribute::ReadOnly) ||
-            CI->dataOperandHasImpliedAttr(idx + 1, Attribute::ReadNone) ||
-            (F && (F->hasParamAttribute(idx, Attribute::ReadOnly) ||
-                   F->hasParamAttribute(idx, Attribute::ReadNone)));
-#endif
-
-#if LLVM_VERSION_MAJOR >= 14
-        bool WriteOnly = CI->onlyWritesMemory(idx);
-#else
-        bool WriteOnly =
-            CI->dataOperandHasImpliedAttr(idx + 1, Attribute::WriteOnly) ||
-            CI->dataOperandHasImpliedAttr(idx + 1, Attribute::ReadNone) ||
-            (F && (F->hasParamAttribute(idx, Attribute::WriteOnly) ||
-                   F->hasParamAttribute(idx, Attribute::ReadNone)));
-#endif
+        bool WriteOnly = isWriteOnly(CI, idx);
 
         // If the pointer is captured, conservatively assume it is used in
         // nontrivial ways that make both the primal and shadow not promotable.

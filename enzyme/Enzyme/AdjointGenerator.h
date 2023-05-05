@@ -3143,6 +3143,8 @@ public:
             llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
             ToCopy2.push_back(LLVMContext::MD_noalias);
             cal->copyMetadata(MS, ToCopy2);
+            if (auto m = hasMetadata(&MS, "enzyme_zerostack"))
+              cal->setMetadata("enzyme_zerostack", m);
             cal->setAttributes(MS.getAttributes());
             cal->setCallingConv(MS.getCallingConv());
             cal->setTailCallKind(MS.getTailCallKind());
@@ -3390,6 +3392,8 @@ public:
           auto cal = BuilderZ.CreateCall(MS.getCalledFunction(), args, Defs);
           llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
           ToCopy2.push_back(LLVMContext::MD_noalias);
+          if (auto m = hasMetadata(&MS, "enzyme_zerostack"))
+            cal->setMetadata("enzyme_zerostack", m);
           cal->copyMetadata(MS, ToCopy2);
           cal->setAttributes(MS.getAttributes());
           cal->setCallingConv(MS.getCallingConv());
@@ -3430,6 +3434,8 @@ public:
           llvm::SmallVector<unsigned int, 9> ToCopy2(MD_ToCopy);
           ToCopy2.push_back(LLVMContext::MD_noalias);
           cal->copyMetadata(MS, ToCopy2);
+          if (auto m = hasMetadata(&MS, "enzyme_zerostack"))
+            cal->setMetadata("enzyme_zerostack", m);
           cal->setAttributes(MS.getAttributes());
           cal->setCallingConv(MS.getCallingConv());
           cal->setTailCallKind(MS.getTailCallKind());
@@ -8339,43 +8345,13 @@ public:
 #endif
         bool writeOnlyNoCapture = true;
         bool readOnly = true;
-#if LLVM_VERSION_MAJOR >= 8
-        if (!call.doesNotCapture(i))
-#else
-        if (!(call.dataOperandHasImpliedAttr(i + 1, Attribute::NoCapture) ||
-              (called && called->hasParamAttribute(i, Attribute::NoCapture))))
-#endif
-        {
+        if (!isNoCapture(&call, i)) {
           writeOnlyNoCapture = false;
         }
-#if LLVM_VERSION_MAJOR >= 14
-        if (!(call.onlyWritesMemory(i) || call.onlyWritesMemory()))
-#else
-        if (!(call.dataOperandHasImpliedAttr(i + 1, Attribute::WriteOnly) ||
-              call.dataOperandHasImpliedAttr(i + 1, Attribute::ReadNone) ||
-              call.hasFnAttr(Attribute::WriteOnly) ||
-              call.hasFnAttr(Attribute::ReadNone) ||
-              (called && (called->hasParamAttribute(i, Attribute::WriteOnly) ||
-                          called->hasParamAttribute(i, Attribute::ReadNone) ||
-                          called->hasFnAttribute(Attribute::WriteOnly) ||
-                          called->hasFnAttribute(Attribute::ReadNone)))))
-#endif
-        {
+        if (!isWriteOnly(&call, i)) {
           writeOnlyNoCapture = false;
         }
-#if LLVM_VERSION_MAJOR >= 14
-        if (!(call.onlyReadsMemory(i) || call.onlyReadsMemory()))
-#else
-        if (!(call.dataOperandHasImpliedAttr(i + 1, Attribute::ReadOnly) ||
-              call.dataOperandHasImpliedAttr(i + 1, Attribute::ReadNone) ||
-              call.hasFnAttr(Attribute::ReadOnly) ||
-              call.hasFnAttr(Attribute::ReadNone) ||
-              (called && (called->hasParamAttribute(i, Attribute::ReadOnly) ||
-                          called->hasParamAttribute(i, Attribute::ReadNone) ||
-                          called->hasFnAttribute(Attribute::ReadOnly) ||
-                          called->hasFnAttribute(Attribute::ReadNone)))))
-#endif
-        {
+        if (!isReadOnly(&call, i)) {
           readOnly = false;
         }
 
@@ -8645,40 +8621,14 @@ public:
 
       bool writeOnlyNoCapture = true;
       bool readNoneNoCapture = false;
-#if LLVM_VERSION_MAJOR >= 8
-      if (!call.doesNotCapture(i))
-#else
-      if (!(call.dataOperandHasImpliedAttr(i + 1, Attribute::NoCapture) ||
-            (called && called->hasParamAttribute(i, Attribute::NoCapture))))
-#endif
-      {
+      if (!isNoCapture(&call, i)) {
         writeOnlyNoCapture = false;
         readNoneNoCapture = false;
       }
-#if LLVM_VERSION_MAJOR >= 14
-      if (!(call.onlyWritesMemory(i) || call.onlyWritesMemory()))
-#else
-      if (!(call.dataOperandHasImpliedAttr(i + 1, Attribute::WriteOnly) ||
-            call.dataOperandHasImpliedAttr(i + 1, Attribute::ReadNone) ||
-            call.hasFnAttr(Attribute::WriteOnly) ||
-            call.hasFnAttr(Attribute::ReadNone) ||
-            (called && (called->hasParamAttribute(i, Attribute::WriteOnly) ||
-                        called->hasParamAttribute(i, Attribute::ReadNone) ||
-                        called->hasFnAttribute(Attribute::WriteOnly) ||
-                        called->hasFnAttribute(Attribute::ReadNone)))))
-#endif
-      {
+      if (!isWriteOnly(&call, i)) {
         writeOnlyNoCapture = false;
       }
-#if LLVM_VERSION_MAJOR >= 14
-      if (!(call.doesNotAccessMemory(i) || call.doesNotAccessMemory()))
-#else
-      if (!(call.dataOperandHasImpliedAttr(i + 1, Attribute::ReadNone) ||
-            call.hasFnAttr(Attribute::ReadNone) ||
-            (called && (called->hasParamAttribute(i, Attribute::ReadNone) ||
-                        called->hasFnAttribute(Attribute::ReadNone)))))
-#endif
-      {
+      if (!(isReadOnly(&call, i) && isWriteOnly(&call, i))) {
         readNoneNoCapture = false;
       }
 
@@ -12941,6 +12891,8 @@ public:
               ToCopy2.push_back(LLVMContext::MD_noalias);
               cal->copyMetadata(call, ToCopy2);
               cal->setAttributes(call.getAttributes());
+              if (auto m = hasMetadata(&call, "enzyme_zerostack"))
+                cal->setMetadata("enzyme_zerostack", m);
               cal->setCallingConv(call.getCallingConv());
               cal->setTailCallKind(call.getTailCallKind());
               cal->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));

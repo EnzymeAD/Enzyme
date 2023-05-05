@@ -37,10 +37,17 @@
 #include "llvm/Analysis/GlobalsModRef.h"
 #include "llvm/IR/DIBuilder.h"
 #include "llvm/IR/MDBuilder.h"
+#include "llvm/Transforms/Utils/Cloning.h"
 
 #if LLVM_VERSION_MAJOR >= 9
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Transforms/IPO/Attributor.h"
+#endif
+
+#if LLVM_VERSION_MAJOR >= 14
+#define addAttribute addAttributeAtIndex
+#define getAttribute getAttributeAtIndex
+#define hasAttribute hasAttributeAtIndex
 #endif
 
 using namespace llvm;
@@ -831,5 +838,215 @@ LLVMMetadataRef EnzymeAnonymousAliasScope(LLVMMetadataRef domain,
 }
 uint8_t EnzymeLowerSparsification(LLVMValueRef F, uint8_t replaceAll) {
   return LowerSparsification(cast<Function>(unwrap(F)), replaceAll != 0);
+}
+void EnzymeSetCalledFunction(LLVMValueRef C_CI, LLVMValueRef C_F,
+                             uint64_t *argrem, uint64_t num_argrem) {
+  auto CI = cast<CallInst>(unwrap(C_CI));
+  auto F = cast<Function>(unwrap(C_F));
+  auto Attrs = CI->getAttributes();
+  AttributeList NewAttrs;
+
+  if (CI->getType() == F->getReturnType()) {
+    for (auto attr : Attrs.getAttributes(AttributeList::ReturnIndex))
+      NewAttrs = NewAttrs.addAttribute(F->getContext(),
+                                       AttributeList::ReturnIndex, attr);
+  }
+  for (auto attr : Attrs.getAttributes(AttributeList::FunctionIndex))
+    NewAttrs = NewAttrs.addAttribute(F->getContext(),
+                                     AttributeList::FunctionIndex, attr);
+
+  size_t argremsz = 0;
+  size_t nexti = 0;
+  SmallVector<Value *, 1> vals;
+#if LLVM_VERSION_MAJOR >= 14
+  for (size_t i = 0, end = CI->arg_size(); i < end; i++)
+#else
+  for (size_t i = 0, end = CI->getNumArgOperands(); i < end; i++)
+#endif
+  {
+    if (argremsz < num_argrem) {
+      if (i == argrem[argremsz]) {
+        argremsz++;
+        continue;
+      }
+    }
+    for (auto attr : Attrs.getAttributes(AttributeList::FirstArgIndex + i))
+      NewAttrs = NewAttrs.addAttribute(
+          F->getContext(), AttributeList::FirstArgIndex + nexti, attr);
+    vals.push_back(CI->getArgOperand(i));
+    nexti++;
+  }
+  assert(argremsz == num_argrem);
+
+  IRBuilder<> B(CI);
+  SmallVector<OperandBundleDef, 1> Bundles;
+  for (unsigned I = 0, E = CI->getNumOperandBundles(); I != E; ++I)
+    Bundles.emplace_back(CI->getOperandBundleAt(I));
+  auto NC = B.CreateCall(F, vals, Bundles);
+  NC->setAttributes(NewAttrs);
+  NC->copyMetadata(*CI);
+
+  if (CI->getType() == F->getReturnType())
+    CI->replaceAllUsesWith(NC);
+
+  NC->takeName(CI);
+  NC->setCallingConv(CI->getCallingConv());
+  CI->eraseFromParent();
+}
+
+// clones a function to now miss the return or args
+LLVMValueRef EnzymeCloneFunctionWithoutReturnOrArgs(LLVMValueRef FC,
+                                                    uint8_t keepReturnU,
+                                                    uint64_t *argrem,
+                                                    uint64_t num_argrem) {
+  auto F = cast<Function>(unwrap(FC));
+  auto FT = F->getFunctionType();
+  bool keepReturn = keepReturnU != 0;
+
+  size_t argremsz = 0;
+  size_t nexti = 0;
+  SmallVector<Type *, 1> types;
+  auto Attrs = F->getAttributes();
+  AttributeList NewAttrs;
+  for (size_t i = 0, end = FT->getNumParams(); i < end; i++) {
+    if (argremsz < num_argrem) {
+      if (i == argrem[argremsz]) {
+        argremsz++;
+        continue;
+      }
+    }
+    for (auto attr : Attrs.getAttributes(AttributeList::FirstArgIndex + i))
+      NewAttrs = NewAttrs.addAttribute(
+          F->getContext(), AttributeList::FirstArgIndex + nexti, attr);
+    types.push_back(F->getFunctionType()->getParamType(i));
+    nexti++;
+  }
+  if (keepReturn) {
+    for (auto attr : Attrs.getAttributes(AttributeList::ReturnIndex))
+      NewAttrs = NewAttrs.addAttribute(F->getContext(),
+                                       AttributeList::ReturnIndex, attr);
+  }
+  for (auto attr : Attrs.getAttributes(AttributeList::FunctionIndex))
+    NewAttrs = NewAttrs.addAttribute(F->getContext(),
+                                     AttributeList::FunctionIndex, attr);
+
+  FunctionType *FTy = FunctionType::get(
+      keepReturn ? F->getReturnType() : Type::getVoidTy(F->getContext()), types,
+      FT->isVarArg());
+
+  // Create the new function
+#if LLVM_VERSION_MAJOR >= 8
+  Function *NewF = Function::Create(FTy, F->getLinkage(), F->getAddressSpace(),
+                                    F->getName(), F->getParent());
+#else
+  Function *NewF =
+      Function::Create(FTy, F->getLinkage(), F->getName(), F->getParent());
+#endif
+
+  ValueToValueMapTy VMap;
+  // Loop over the arguments, copying the names of the mapped arguments over...
+  nexti = 0;
+  argremsz = 0;
+  Function::arg_iterator DestI = NewF->arg_begin();
+  for (const Argument &I : F->args()) {
+    if (argremsz < num_argrem) {
+      if (I.getArgNo() == argrem[argremsz]) {
+        VMap[&I] = UndefValue::get(I.getType());
+        argremsz++;
+        continue;
+      }
+    }
+    DestI->setName(I.getName()); // Copy the name over...
+    VMap[&I] = &*DestI++;        // Add mapping to VMap
+  }
+
+  SmallVector<ReturnInst *, 8> Returns; // Ignore returns cloned.
+#if LLVM_VERSION_MAJOR >= 13
+  CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
+                    Returns, "", nullptr);
+#else
+  CloneFunctionInto(NewF, F, VMap, F->getSubprogram() != nullptr, Returns, "",
+                    nullptr);
+#endif
+
+  if (!keepReturn) {
+    for (auto &B : *NewF) {
+      if (auto RI = dyn_cast<ReturnInst>(B.getTerminator())) {
+        IRBuilder<> B(RI);
+        auto NRI = B.CreateRetVoid();
+        NRI->copyMetadata(*RI);
+        RI->eraseFromParent();
+      }
+    }
+  }
+  NewF->setAttributes(NewAttrs);
+  if (!keepReturn)
+    for (auto &Arg : NewF->args())
+      Arg.removeAttr(Attribute::Returned);
+  SmallVector<std::pair<unsigned, MDNode *>, 1> MD;
+  for (auto pair : MD)
+    NewF->addMetadata(pair.first, *pair.second);
+  NewF->takeName(F);
+  NewF->setCallingConv(F->getCallingConv());
+  if (!keepReturn)
+    NewF->addFnAttr("enzyme_retremove", "");
+
+  if (num_argrem) {
+    SmallVector<uint64_t, 1> previdx;
+    if (Attrs.hasAttribute(AttributeList::FunctionIndex, "enzyme_parmremove")) {
+      auto attr =
+          Attrs.getAttribute(AttributeList::FunctionIndex, "enzyme_parmremove");
+      auto prevstr = attr.getValueAsString();
+      SmallVector<StringRef, 1> sub;
+      prevstr.split(sub, ",");
+      for (auto s : sub) {
+        uint64_t ival;
+        bool b = s.getAsInteger(10, ival);
+        assert(!b);
+        previdx.push_back(ival);
+      }
+    }
+    SmallVector<uint64_t, 1> nextidx;
+    for (size_t i = 0; i < num_argrem; i++) {
+      auto val = argrem[i];
+      size_t cnt = 0;
+      for (auto idx : previdx) {
+        if (idx <= val + cnt)
+          cnt++;
+      }
+      nextidx.push_back(val);
+    }
+
+    size_t prevcnt = 0;
+    size_t nextcnt = 0;
+    SmallVector<uint64_t, 1> out;
+    while (prevcnt < previdx.size() && nextcnt < nextidx.size()) {
+      if (previdx[prevcnt] < nextidx[nextcnt]) {
+        out.push_back(previdx[prevcnt]);
+        prevcnt++;
+      } else {
+        out.push_back(nextidx[nextcnt]);
+        nextcnt++;
+      }
+    }
+    while (prevcnt < previdx.size()) {
+      out.push_back(previdx[prevcnt]);
+      prevcnt++;
+    }
+    while (nextcnt < nextidx.size()) {
+      out.push_back(nextidx[nextcnt]);
+      nextcnt++;
+    }
+
+    std::string remstr;
+    for (auto arg : out) {
+      if (remstr.size())
+        remstr += ",";
+      remstr += std::to_string(arg);
+    }
+
+    NewF->addFnAttr("enzyme_parmremove", remstr);
+  }
+  return wrap(NewF);
 }
 }

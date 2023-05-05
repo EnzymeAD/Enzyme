@@ -748,9 +748,6 @@ void calculateUnusedValuesInFunction(
                 }
                 if (auto CI = dyn_cast<CallInst>(u)) {
                   bool writeOnlyNoCapture = true;
-#if LLVM_VERSION_MAJOR < 14
-                  auto F = getFunctionFromCall(CI);
-#endif
                   if (shouldDisableNoWrite(CI)) {
                     writeOnlyNoCapture = false;
                   }
@@ -761,34 +758,11 @@ void calculateUnusedValuesInFunction(
 #endif
                   {
                     if (cur == CI->getArgOperand(i)) {
-#if LLVM_VERSION_MAJOR >= 8
-                      if (!CI->doesNotCapture(i))
-#else
-                      if (!(CI->dataOperandHasImpliedAttr(
-                                i + 1, Attribute::NoCapture) ||
-                            (F &&
-                             F->hasParamAttribute(i, Attribute::NoCapture))))
-#endif
-                      {
+                      if (!isNoCapture(CI, i)) {
                         writeOnlyNoCapture = false;
                         break;
                       }
-#if LLVM_VERSION_MAJOR >= 14
-                      if (!(CI->onlyWritesMemory(i) || CI->onlyWritesMemory()))
-#else
-                      if (!(CI->dataOperandHasImpliedAttr(
-                                i + 1, Attribute::WriteOnly) ||
-                            CI->dataOperandHasImpliedAttr(
-                                i + 1, Attribute::ReadNone) ||
-                            CI->hasFnAttr(Attribute::WriteOnly) ||
-                            CI->hasFnAttr(Attribute::ReadNone) ||
-                            (F &&
-                             (F->hasParamAttribute(i, Attribute::WriteOnly) ||
-                              F->hasParamAttribute(i, Attribute::ReadNone) ||
-                              F->hasFnAttribute(Attribute::WriteOnly) ||
-                              F->hasFnAttribute(Attribute::ReadNone)))))
-#endif
-                      {
+                      if (!isWriteOnly(CI, i)) {
                         writeOnlyNoCapture = false;
                         break;
                       }
@@ -926,6 +900,12 @@ void calculateUnusedValuesInFunction(
               return UseReq::Need;
             return UseReq::Recur;
           }
+          if (hasMetadata(obj_op, "enzyme_zerostack")) {
+            if (unnecessaryValues.count(
+                    getBaseObject(obj_op->getArgOperand(0)))) {
+              return UseReq::Recur;
+            }
+          }
           Intrinsic::ID ID = Intrinsic::not_intrinsic;
           if (isMemFreeLibMFunction(funcName, &ID)) {
             mayWriteToMemory = false;
@@ -1023,10 +1003,6 @@ void calculateUnusedValuesInFunction(
             }
 
             bool writeOnlyNoCapture = true;
-#if LLVM_VERSION_MAJOR < 14
-            auto F = getFunctionFromCall(CI);
-#endif
-
             if (shouldDisableNoWrite(CI)) {
               writeOnlyNoCapture = false;
             }
@@ -1037,32 +1013,11 @@ void calculateUnusedValuesInFunction(
 #endif
             {
               if (val == CI->getArgOperand(i)) {
-#if LLVM_VERSION_MAJOR >= 8
-                if (!CI->doesNotCapture(i))
-#else
-                if (!(CI->dataOperandHasImpliedAttr(i + 1,
-                                                    Attribute::NoCapture) ||
-                      (F && F->hasParamAttribute(i, Attribute::NoCapture))))
-#endif
-                {
+                if (!isNoCapture(CI, i)) {
                   writeOnlyNoCapture = false;
                   break;
                 }
-#if LLVM_VERSION_MAJOR >= 14
-                if (!(CI->onlyWritesMemory(i) || CI->onlyWritesMemory()))
-#else
-                if (!(CI->dataOperandHasImpliedAttr(i + 1,
-                                                    Attribute::WriteOnly) ||
-                      CI->dataOperandHasImpliedAttr(i + 1,
-                                                    Attribute::ReadNone) ||
-                      CI->hasFnAttr(Attribute::WriteOnly) ||
-                      CI->hasFnAttr(Attribute::ReadNone) ||
-                      (F && (F->hasParamAttribute(i, Attribute::WriteOnly) ||
-                             F->hasParamAttribute(i, Attribute::ReadNone) ||
-                             F->hasFnAttribute(Attribute::WriteOnly) ||
-                             F->hasFnAttribute(Attribute::ReadNone)))))
-#endif
-                {
+                if (!isWriteOnly(CI, i)) {
                   writeOnlyNoCapture = false;
                   break;
                 }
