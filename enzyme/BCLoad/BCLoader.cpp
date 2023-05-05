@@ -16,7 +16,7 @@ using namespace llvm;
 #include "blas_headers.h"
 #undef DATA
 
-bool provideDefinitions(Module &M) {
+bool provideDefinitions(Module &M, std::set<std::string> ignoreFunctions = {}) {
   std::vector<StringRef> todo;
   bool seen32 = false;
   bool seen64 = false;
@@ -29,16 +29,20 @@ bool provideDefinitions(Module &M) {
       std::string str;
       if (strlen(postfix) == 0) {
         str = F.getName().str();
-        if (str == "sdot" || str == "ddot") {
-          llvm::errs() << "SKIPPING DOT \n\n\n\n";
-          continue; // don't handle tablegen'd ones
+        for (auto ignoreFnc : ignoreFunctions) {
+          if (str == ignoreFnc) {
+            llvm::errs() << "SKIPPING: " << str << "\n\n\n\n";
+            continue; // don't handle tablegen'd ones
+          }
         }
       } else if (F.getName().endswith(postfix)) {
         auto blasName =
             F.getName().substr(0, F.getName().size() - strlen(postfix)).str();
-        if (blasName == "sdot" || blasName == "ddot") {
-          llvm::errs() << "SKIPPING DOT \n\n\n\n";
-          continue; // don't handle tablegen'd ones
+        for (auto ignoreFnc : ignoreFunctions) {
+          if (blasName == ignoreFnc) {
+            llvm::errs() << "SKIPPING: " << str << "\n\n\n\n";
+            continue; // don't handle tablegen'd ones
+          }
         }
         str = "cblas_" + blasName;
       }
@@ -105,8 +109,13 @@ bool provideDefinitions(Module &M) {
 }
 
 extern "C" {
-uint8_t EnzymeBitcodeReplacement(LLVMModuleRef M) {
-  return provideDefinitions(*unwrap(M));
+uint8_t EnzymeBitcodeReplacement(LLVMModuleRef M, char **FncsNamesToIgnore,
+                                 size_t numFncNames) {
+  std::set<std::string> ignoreFunctions = {};
+  for (size_t i = 0; i < numFncNames; i++) {
+    ignoreFunctions.insert(std::string(FncsNamesToIgnore[i]));
+  }
+  return provideDefinitions(*unwrap(M), ignoreFunctions);
 }
 }
 
@@ -116,7 +125,7 @@ public:
   static char ID;
   BCLoader() : ModulePass(ID) {}
 
-  bool runOnModule(Module &M) override { return provideDefinitions(M); }
+  bool runOnModule(Module &M) override { return provideDefinitions(M, {}); }
 };
 } // namespace
 
