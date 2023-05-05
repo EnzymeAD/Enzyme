@@ -31,7 +31,6 @@ bool provideDefinitions(Module &M, std::set<std::string> ignoreFunctions = {}) {
         str = F.getName().str();
         for (auto ignoreFnc : ignoreFunctions) {
           if (str == ignoreFnc) {
-            llvm::errs() << "SKIPPING: " << str << "\n\n\n\n";
             continue; // don't handle tablegen'd ones
           }
         }
@@ -40,7 +39,6 @@ bool provideDefinitions(Module &M, std::set<std::string> ignoreFunctions = {}) {
             F.getName().substr(0, F.getName().size() - strlen(postfix)).str();
         for (auto ignoreFnc : ignoreFunctions) {
           if (blasName == ignoreFnc) {
-            llvm::errs() << "SKIPPING: " << str << "\n\n\n\n";
             continue; // don't handle tablegen'd ones
           }
         }
