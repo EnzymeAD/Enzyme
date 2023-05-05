@@ -247,7 +247,7 @@ StaticTraceInterface::StaticTraceInterface(Module *M)
   insertReturnFunction->addFnAttr("nofree");
   insertFunctionFunction->addFnAttr("nofree");
   insertChoiceGradientFunction->addFnAttr("nofree");
-  insertArugmentGradientFunction->addFnAttr("nofree");
+  insertArgumentGradientFunction->addFnAttr("nofree");
   hasCallFunction->addFnAttr("nofree");
   hasChoiceFunction->addFnAttr("nofree");
   sampleFunction->addFnAttr("nofree");

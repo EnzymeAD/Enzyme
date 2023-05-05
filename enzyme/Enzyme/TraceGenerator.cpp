@@ -249,8 +249,8 @@ void TraceGenerator::handleSampleCall(CallInst &call, CallInst *new_call) {
   TraceUtils::InsertChoice(
       TraceBuilder, tutils->getTraceInterface()->insertChoiceTy(),
       tutils->getTraceInterface()->insertChoice(TraceBuilder),
-      outlinedTrace->getArg(1), outlinedTrace->getArg(2),
-      outlinedTrace->getArg(3), outlinedTrace->getArg(0));
+      outlinedTrace->arg_begin() + 1, outlinedTrace->arg_begin() + 2,
+      outlinedTrace->arg_begin() + 3, outlinedTrace->arg_begin() + 0);
 
   TraceBuilder.CreateRetVoid();
 

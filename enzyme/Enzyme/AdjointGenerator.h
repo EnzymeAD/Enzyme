@@ -12251,7 +12251,11 @@ public:
       IRBuilder<> Builder2(&call);
       getReverseBuilder(Builder2);
 
+#if LLVM_VERSION_MAJOR >= 14
+      auto trace = call.getArgOperand(call.arg_size() - 1);
+#else
       auto trace = call.getArgOperand(call.getNumArgOperands() - 1);
+#endif
       auto address = call.getArgOperand(0);
 
       auto dtrace = lookup(gutils->getNewFromOriginal(trace), Builder2);
