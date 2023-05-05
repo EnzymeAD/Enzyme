@@ -54,6 +54,9 @@ FunctionType *TraceInterface::insertFunctionTy() { return insertFunctionTy(C); }
 FunctionType *TraceInterface::insertChoiceGradientTy() {
   return insertChoiceGradientTy(C);
 }
+FunctionType *TraceInterface::insertArgumentGradientTy() {
+  return insertArgumentGradientTy(C);
+}
 FunctionType *TraceInterface::newTraceTy() { return newTraceTy(C); }
 FunctionType *TraceInterface::freeTraceTy() { return freeTraceTy(C); }
 FunctionType *TraceInterface::hasCallTy() { return hasCallTy(C); }
@@ -114,6 +117,13 @@ FunctionType *TraceInterface::insertChoiceGradientTy(LLVMContext &C) {
                            false);
 }
 
+FunctionType *TraceInterface::insertArgumentGradientTy(LLVMContext &C) {
+  return FunctionType::get(Type::getVoidTy(C),
+                           {PointerType::getInt8PtrTy(C), stringType(C),
+                            PointerType::getInt8PtrTy(C), sizeType(C)},
+                           false);
+}
+
 FunctionType *TraceInterface::newTraceTy(LLVMContext &C) {
   return FunctionType::get(PointerType::getInt8PtrTy(C), {}, false);
 }
@@ -168,6 +178,9 @@ StaticTraceInterface::StaticTraceInterface(Module *M)
     } else if (F.getName().contains("__enzyme_insert_gradient_choice")) {
       assert(F.getFunctionType() == insertChoiceGradientTy());
       insertChoiceGradientFunction = &F;
+    } else if (F.getName().contains("__enzyme_insert_gradient_argument")) {
+      assert(F.getFunctionType() == insertArgumentGradientTy());
+      insertArgumentGradientFunction = &F;
     } else if (F.getName().contains("__enzyme_has_call")) {
       assert(F.getFunctionType() == hasCallTy());
       hasCallFunction = &F;
@@ -190,6 +203,7 @@ StaticTraceInterface::StaticTraceInterface(Module *M)
   insertReturnFunction->addFnAttr("enzyme_notypeanalysis");
   insertFunctionFunction->addFnAttr("enzyme_notypeanalysis");
   insertChoiceGradientFunction->addFnAttr("enzyme_notypeanalysis");
+  insertArgumentGradientFunction->addFnAttr("enzyme_notypeanalysis");
   hasCallFunction->addFnAttr("enzyme_notypeanalysis");
   hasChoiceFunction->addFnAttr("enzyme_notypeanalysis");
   sampleFunction->addFnAttr("enzyme_notypeanalysis");
@@ -204,6 +218,7 @@ StaticTraceInterface::StaticTraceInterface(Module *M)
   insertReturnFunction->addFnAttr("enzyme_inactive");
   insertFunctionFunction->addFnAttr("enzyme_inactive");
   insertChoiceGradientFunction->addFnAttr("enzyme_inactive");
+  insertArgumentGradientFunction->addFnAttr("enzyme_inactive");
   hasCallFunction->addFnAttr("enzyme_inactive");
   hasChoiceFunction->addFnAttr("enzyme_inactive");
   sampleFunction->addFnAttr("enzyme_inactive");
@@ -218,6 +233,7 @@ StaticTraceInterface::StaticTraceInterface(Module *M)
   insertReturnFunction->addFnAttr(Attribute::NoFree);
   insertFunctionFunction->addFnAttr(Attribute::NoFree);
   insertChoiceGradientFunction->addFnAttr(Attribute::NoFree);
+  insertArgumentGradientFunction->addFnAttr(Attribute::NoFree);
   hasCallFunction->addFnAttr(Attribute::NoFree);
   hasChoiceFunction->addFnAttr(Attribute::NoFree);
   sampleFunction->addFnAttr(Attribute::NoFree);
@@ -231,6 +247,7 @@ StaticTraceInterface::StaticTraceInterface(Module *M)
   insertReturnFunction->addFnAttr("nofree");
   insertFunctionFunction->addFnAttr("nofree");
   insertChoiceGradientFunction->addFnAttr("nofree");
+  insertArugmentGradientFunction->addFnAttr("nofree");
   hasCallFunction->addFnAttr("nofree");
   hasChoiceFunction->addFnAttr("nofree");
   sampleFunction->addFnAttr("nofree");
@@ -246,7 +263,10 @@ StaticTraceInterface::StaticTraceInterface(Module *M)
   assert(insertArgumentFunction);
   assert(insertReturnFunction);
   assert(insertFunctionFunction);
+
   assert(insertChoiceGradientFunction);
+  assert(insertArgumentGradientFunction);
+
   assert(hasCallFunction);
   assert(hasChoiceFunction);
   assert(sampleFunction);
@@ -279,6 +299,9 @@ Value *StaticTraceInterface::insertFunction(IRBuilder<> &Builder) {
 }
 Value *StaticTraceInterface::insertChoiceGradient(IRBuilder<> &Builder) {
   return insertChoiceGradientFunction;
+}
+Value *StaticTraceInterface::insertArgumentGradient(IRBuilder<> &Builder) {
+  return insertArgumentGradientFunction;
 }
 Value *StaticTraceInterface::newTrace(IRBuilder<> &Builder) {
   return newTraceFunction;
@@ -325,15 +348,19 @@ DynamicTraceInterface::DynamicTraceInterface(Value *dynamicInterface,
       Builder, dynamicInterface, 6, M, "insert_function");
   insertChoiceGradientFunction = MaterializeInterfaceFunction(
       Builder, dynamicInterface, 7, M, "insert_choice_gradient");
-  newTraceFunction = MaterializeInterfaceFunction(Builder, dynamicInterface, 8,
+  insertArgumentGradientFunction =
+      MaterializeInterfaceFunction(Builder, dynamicInterface, 8, M);
+  newTraceFunction = MaterializeInterfaceFunction(Builder, dynamicInterface, 9,
                                                   M, "new_trace");
-  freeTraceFunction = MaterializeInterfaceFunction(Builder, dynamicInterface, 9,
-                                                   M, "free_trace");
-  hasCallFunction = MaterializeInterfaceFunction(Builder, dynamicInterface, 10,
+  freeTraceFunction = MaterializeInterfaceFunction(Builder, dynamicInterface,
+                                                   10, M, "free_trace");
+  hasCallFunction = MaterializeInterfaceFunction(Builder, dynamicInterface, 11,
                                                  M, "has_call");
   hasChoiceFunction = MaterializeInterfaceFunction(Builder, dynamicInterface,
-                                                   11, M, "has_choice");
+                                                   12, M, "has_choice");
 
+  assert(newTraceFunction);
+  assert(freeTraceFunction);
   assert(getTraceFunction);
   assert(getChoiceFunction);
   assert(insertCallFunction);
@@ -342,12 +369,13 @@ DynamicTraceInterface::DynamicTraceInterface(Value *dynamicInterface,
   assert(insertArgumentFunction);
   assert(insertReturnFunction);
   assert(insertFunctionFunction);
-  assert(insertChoiceGradientFunction);
 
-  assert(newTraceFunction);
-  assert(freeTraceFunction);
+  assert(insertChoiceGradientFunction);
+  assert(insertArgumentGradientFunction);
+
   assert(hasCallFunction);
   assert(hasChoiceFunction);
+  assert(sampleFunction);
 }
 
 GlobalVariable *DynamicTraceInterface::MaterializeInterfaceFunction(
@@ -407,8 +435,15 @@ Value *DynamicTraceInterface::insertFunction(IRBuilder<> &Builder) {
 }
 
 Value *DynamicTraceInterface::insertChoiceGradient(IRBuilder<> &Builder) {
-  return Builder.CreateLoad(insertFunctionFunction->getValueType(),
-                            insertFunctionFunction, "insert_choice_gradient");
+  return Builder.CreateLoad(insertChoiceGradientFunction->getValueType(),
+                            insertChoiceGradientFunction,
+                            "insert_choice_gradient");
+}
+
+Value *DynamicTraceInterface::insertArgumentGradient(IRBuilder<> &Builder) {
+  return Builder.CreateLoad(insertArgumentGradientFunction->getValueType(),
+                            insertArgumentGradientFunction,
+                            "insert_argument_gradient");
 }
 
 Value *DynamicTraceInterface::newTrace(IRBuilder<> &Builder) {

@@ -56,6 +56,7 @@ public:
   virtual llvm::Value *insertReturn(llvm::IRBuilder<> &Builder) = 0;
   virtual llvm::Value *insertFunction(llvm::IRBuilder<> &Builder) = 0;
   virtual llvm::Value *insertChoiceGradient(llvm::IRBuilder<> &Builder) = 0;
+  virtual llvm::Value *insertArgumentGradient(llvm::IRBuilder<> &Builder) = 0;
 
   virtual llvm::Value *newTrace(llvm::IRBuilder<> &Builder) = 0;
   virtual llvm::Value *freeTrace(llvm::IRBuilder<> &Builder) = 0;
@@ -76,6 +77,7 @@ public:
   llvm::FunctionType *insertReturnTy();
   llvm::FunctionType *insertFunctionTy();
   llvm::FunctionType *insertChoiceGradientTy();
+  llvm::FunctionType *insertArgumentGradientTy();
 
   llvm::FunctionType *newTraceTy();
   llvm::FunctionType *freeTraceTy();
@@ -91,6 +93,7 @@ public:
   static llvm::FunctionType *insertReturnTy(llvm::LLVMContext &C);
   static llvm::FunctionType *insertFunctionTy(llvm::LLVMContext &C);
   static llvm::FunctionType *insertChoiceGradientTy(llvm::LLVMContext &C);
+  static llvm::FunctionType *insertArgumentGradientTy(llvm::LLVMContext &C);
 
   static llvm::FunctionType *newTraceTy(llvm::LLVMContext &C);
   static llvm::FunctionType *freeTraceTy(llvm::LLVMContext &C);
@@ -110,6 +113,7 @@ private:
   llvm::Function *insertReturnFunction = nullptr;
   llvm::Function *insertFunctionFunction = nullptr;
   llvm::Function *insertChoiceGradientFunction = nullptr;
+  llvm::Function *insertArgumentGradientFunction = nullptr;
   llvm::Function *newTraceFunction = nullptr;
   llvm::Function *freeTraceFunction = nullptr;
   llvm::Function *hasCallFunction = nullptr;
@@ -133,6 +137,7 @@ public:
   llvm::Value *insertReturn(llvm::IRBuilder<> &Builder);
   llvm::Value *insertFunction(llvm::IRBuilder<> &Builder);
   llvm::Value *insertChoiceGradient(llvm::IRBuilder<> &Builder);
+  llvm::Value *insertArgumentGradient(llvm::IRBuilder<> &Builder);
   llvm::Value *newTrace(llvm::IRBuilder<> &Builder);
   llvm::Value *freeTrace(llvm::IRBuilder<> &Builder);
   llvm::Value *hasCall(llvm::IRBuilder<> &Builder);
@@ -152,6 +157,7 @@ private:
   llvm::GlobalVariable *insertReturnFunction = nullptr;
   llvm::GlobalVariable *insertFunctionFunction = nullptr;
   llvm::GlobalVariable *insertChoiceGradientFunction = nullptr;
+  llvm::GlobalVariable *insertArgumentGradientFunction = nullptr;
   llvm::GlobalVariable *newTraceFunction = nullptr;
   llvm::GlobalVariable *freeTraceFunction = nullptr;
   llvm::GlobalVariable *hasCallFunction = nullptr;
@@ -181,6 +187,7 @@ public:
   llvm::Value *insertReturn(llvm::IRBuilder<> &Builder);
   llvm::Value *insertFunction(llvm::IRBuilder<> &Builder);
   llvm::Value *insertChoiceGradient(llvm::IRBuilder<> &Builder);
+  llvm::Value *insertArgumentGradient(llvm::IRBuilder<> &Builder);
   llvm::Value *newTrace(llvm::IRBuilder<> &Builder);
   llvm::Value *freeTrace(llvm::IRBuilder<> &Builder);
   llvm::Value *hasCall(llvm::IRBuilder<> &Builder);
