@@ -302,6 +302,25 @@ CallInst *TraceUtils::InsertChoiceGradient(IRBuilder<> &Builder,
   return call;
 }
 
+CallInst *TraceUtils::InsertArgumentGradient(IRBuilder<> &Builder,
+                                             FunctionType *interface_type,
+                                             Value *interface_function,
+                                             Value *name, Value *argument,
+                                             Value *trace) {
+  Type *size_type = interface_type->getParamType(3);
+  auto &&[retval, sizeval] =
+      ValueToVoidPtrAndSize(Builder, argument, size_type);
+
+  auto Name = Builder.CreateGlobalStringPtr(argument->getName());
+
+  Value *args[] = {trace, Name, retval, sizeval};
+
+  auto call = Builder.CreateCall(interface_type, interface_function, args);
+  call->addParamAttr(1, Attribute::ReadOnly);
+  call->addParamAttr(1, Attribute::NoCapture);
+  return call;
+}
+
 CallInst *TraceUtils::GetTrace(IRBuilder<> &Builder, Value *address,
                                const Twine &Name) {
   assert(address->getType()->isPointerTy());

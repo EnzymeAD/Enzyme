@@ -115,6 +115,12 @@ public:
                        llvm::Value *interface_function, llvm::Value *address,
                        llvm::Value *choice, llvm::Value *trace);
 
+  static llvm::CallInst *
+  InsertArgumentGradient(llvm::IRBuilder<> &Builder,
+                         llvm::FunctionType *interface_type,
+                         llvm::Value *interface_function, llvm::Value *name,
+                         llvm::Value *argument, llvm::Value *trace);
+
   llvm::CallInst *GetTrace(llvm::IRBuilder<> &Builder, llvm::Value *address,
                            const llvm::Twine &Name = "");
 
