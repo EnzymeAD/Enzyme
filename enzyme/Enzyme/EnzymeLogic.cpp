@@ -926,6 +926,12 @@ void calculateUnusedValuesInFunction(
               return UseReq::Need;
             return UseReq::Recur;
           }
+          if (hasMetadata(obj_op, "enzyme_zerostack")) {
+            if (unnecessaryValues.count(
+                    getBaseObject(obj_op->getArgOperand(0)))) {
+              return UseReq::Recur;
+            }
+          }
           Intrinsic::ID ID = Intrinsic::not_intrinsic;
           if (isMemFreeLibMFunction(funcName, &ID)) {
             mayWriteToMemory = false;
