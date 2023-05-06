@@ -72,8 +72,34 @@ void TraceGenerator::visitFunction(Function &F) {
   auto attributes = fn->getAttributes();
   for (size_t i = 0; i < fn->getFunctionType()->getNumParams(); ++i) {
     if (!attributes.hasParamAttr(i, TraceUtils::TraceParameterAttribute) &&
-        !attributes.hasParamAttr(i, TraceUtils::ObservationsParameterAttribute))
-      tutils->InsertArgument(Builder, fn->arg_begin() + i);
+        !attributes.hasParamAttr(i,
+                                 TraceUtils::ObservationsParameterAttribute) &&
+        !attributes.hasParamAttr(i, TraceUtils::LikelihoodParameterAttribute)) {
+      auto arg = fn->arg_begin() + i;
+      auto call = tutils->InsertArgument(Builder, arg);
+#if LLVM_VERSION_MAJOR >= 14
+      call->addAttributeAtIndex(
+          AttributeList::FunctionIndex,
+          Attribute::get(F.getContext(), "enzyme_insert_argument"));
+      call->addAttributeAtIndex(
+          AttributeList::FunctionIndex,
+          Attribute::get(F.getContext(), "enzyme_active"));
+#else
+      call->addAttribute(
+          AttributeList::FunctionIndex,
+          Attribute::get(F.getContext(), "enzyme_insert_argument"));
+      call->addAttribute(AttributeList::FunctionIndex,
+                         Attribute::get(F.getContext(), "enzyme_active"));
+#endif
+      if (autodiff) {
+        auto gradient_setter = ValueAsMetadata::get(
+            tutils->interface->insertChoiceGradient(Builder));
+        auto gradient_setter_node = MDNode::get(
+            F.getContext(), {gradient_setter, ValueAsMetadata::get(arg)});
+
+        call->setMetadata("enzyme_gradient_setter", gradient_setter_node);
+      }
+    }
   }
 }
 
