@@ -12274,6 +12274,32 @@ public:
       return;
     }
 
+    if (call.hasFnAttr("enzyme_insert_argument")) {
+      IRBuilder<> Builder2(&call);
+      getReverseBuilder(Builder2);
+
+      auto trace = call.getArgOperand(0);
+      auto name = call.getArgOperand(1);
+
+      auto gradient_setter = cast<Function>(
+          cast<ValueAsMetadata>(
+              call.getMetadata("enzyme_gradient_setter")->getOperand(0).get())
+              ->getValue());
+      auto arg = cast<Function>(
+          cast<ValueAsMetadata>(
+              call.getMetadata("enzyme_gradient_setter")->getOperand(1).get())
+              ->getValue());
+
+      auto dtrace = lookup(gutils->getNewFromOriginal(trace), Builder2);
+      auto dname = lookup(gutils->getNewFromOriginal(name), Builder2);
+      auto darg = diffe(arg, Builder2);
+
+      TraceUtils::InsertArgumentGradient(Builder2,
+                                         gradient_setter->getFunctionType(),
+                                         gradient_setter, dname, darg, dtrace);
+      return;
+    }
+
     if (gutils->isConstantInstruction(&call) &&
         gutils->isConstantValue(&call)) {
       bool noFree = Mode == DerivativeMode::ForwardMode;
