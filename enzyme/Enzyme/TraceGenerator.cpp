@@ -214,8 +214,10 @@ void TraceGenerator::handleSampleCall(CallInst &call, CallInst *new_call) {
 
   // calculate and accumulate log likelihood
 
+  unsigned offset = mode == ProbProgMode::Condition ? 2 : 1;
+
   SmallVector<Value *, 3> likelihood_args;
-  for (auto &&arg : make_range(Args.begin() + 1, Args.end() - 1)) {
+  for (auto &&arg : make_range(Args.begin() + 1, Args.end() - offset)) {
     likelihood_args.push_back(arg);
   }
   likelihood_args.push_back(sample_call);
