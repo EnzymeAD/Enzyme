@@ -171,7 +171,7 @@ public:
 private:
   llvm::GlobalVariable *
   MaterializeInterfaceFunction(llvm::IRBuilder<> &Builder, llvm::Value *,
-                               unsigned index, llvm::Module &M,
+                               llvm::Type *, unsigned index, llvm::Module &M,
                                const llvm::Twine &Name = "");
 
 public:

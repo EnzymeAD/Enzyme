@@ -332,32 +332,33 @@ DynamicTraceInterface::DynamicTraceInterface(Value *dynamicInterface,
   auto &M = *F->getParent();
   IRBuilder<> Builder(F->getEntryBlock().getFirstNonPHIOrDbg());
 
-  getTraceFunction = MaterializeInterfaceFunction(Builder, dynamicInterface, 0,
-                                                  M, "get_trace");
-  getChoiceFunction = MaterializeInterfaceFunction(Builder, dynamicInterface, 1,
-                                                   M, "get_choice");
-  insertCallFunction = MaterializeInterfaceFunction(Builder, dynamicInterface,
-                                                    2, M, "insert_call");
-  insertChoiceFunction = MaterializeInterfaceFunction(Builder, dynamicInterface,
-                                                      3, M, "insert_choice");
+  getTraceFunction = MaterializeInterfaceFunction(
+      Builder, dynamicInterface, getTraceTy(), 0, M, "get_trace");
+  getChoiceFunction = MaterializeInterfaceFunction(
+      Builder, dynamicInterface, getChoiceTy(), 1, M, "get_choice");
+  insertCallFunction = MaterializeInterfaceFunction(
+      Builder, dynamicInterface, insertCallTy(), 2, M, "insert_call");
+  insertChoiceFunction = MaterializeInterfaceFunction(
+      Builder, dynamicInterface, insertChoiceTy(), 3, M, "insert_choice");
   insertArgumentFunction = MaterializeInterfaceFunction(
-      Builder, dynamicInterface, 4, M, "insert_argument");
-  insertReturnFunction = MaterializeInterfaceFunction(Builder, dynamicInterface,
-                                                      5, M, "insert_return");
+      Builder, dynamicInterface, insertArgumentTy(), 4, M, "insert_argument");
+  insertReturnFunction = MaterializeInterfaceFunction(
+      Builder, dynamicInterface, insertReturnTy(), 5, M, "insert_return");
   insertFunctionFunction = MaterializeInterfaceFunction(
-      Builder, dynamicInterface, 6, M, "insert_function");
+      Builder, dynamicInterface, insertFunctionTy(), 6, M, "insert_function");
   insertChoiceGradientFunction = MaterializeInterfaceFunction(
-      Builder, dynamicInterface, 7, M, "insert_choice_gradient");
-  insertArgumentGradientFunction =
-      MaterializeInterfaceFunction(Builder, dynamicInterface, 8, M);
-  newTraceFunction = MaterializeInterfaceFunction(Builder, dynamicInterface, 9,
-                                                  M, "new_trace");
-  freeTraceFunction = MaterializeInterfaceFunction(Builder, dynamicInterface,
-                                                   10, M, "free_trace");
-  hasCallFunction = MaterializeInterfaceFunction(Builder, dynamicInterface, 11,
-                                                 M, "has_call");
-  hasChoiceFunction = MaterializeInterfaceFunction(Builder, dynamicInterface,
-                                                   12, M, "has_choice");
+      Builder, dynamicInterface, insertChoiceGradientTy(), 7, M,
+      "insert_choice_gradient");
+  insertArgumentGradientFunction = MaterializeInterfaceFunction(
+      Builder, dynamicInterface, insertArgumentGradientTy(), 8, M);
+  newTraceFunction = MaterializeInterfaceFunction(
+      Builder, dynamicInterface, newTraceTy(), 9, M, "new_trace");
+  freeTraceFunction = MaterializeInterfaceFunction(
+      Builder, dynamicInterface, freeTraceTy(), 10, M, "free_trace");
+  hasCallFunction = MaterializeInterfaceFunction(
+      Builder, dynamicInterface, hasCallTy(), 11, M, "has_call");
+  hasChoiceFunction = MaterializeInterfaceFunction(
+      Builder, dynamicInterface, hasChoiceTy(), 12, M, "has_choice");
 
   assert(newTraceFunction);
   assert(freeTraceFunction);
@@ -379,13 +380,12 @@ DynamicTraceInterface::DynamicTraceInterface(Value *dynamicInterface,
 }
 
 GlobalVariable *DynamicTraceInterface::MaterializeInterfaceFunction(
-    IRBuilder<> &Builder, Value *dynamicInterface, unsigned index, Module &M,
-    const Twine &Name) {
+    IRBuilder<> &Builder, Value *dynamicInterface, Type *ty, unsigned index,
+    Module &M, const Twine &Name) {
   auto ptr = Builder.CreateInBoundsGEP(Builder.getInt8PtrTy(), dynamicInterface,
                                        Builder.getInt32(index));
   auto load = Builder.CreateLoad(Builder.getInt8PtrTy(), ptr);
-  auto pty =
-      PointerType::get(insertFunctionTy(), load->getPointerAddressSpace());
+  auto pty = PointerType::get(ty, load->getPointerAddressSpace());
   auto cast = Builder.CreatePointerCast(load, pty, Name);
 
   auto global =
