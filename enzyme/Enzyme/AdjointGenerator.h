@@ -9039,7 +9039,7 @@ public:
       SmallVector<Value *, 8> args;
       std::vector<DIFFE_TYPE> argsInverted;
       std::map<int, Type *> gradByVal;
-      std::map<int, Attribute> structAttrs;
+      std::map<int, std::vector<Attribute>> structAttrs;
 
 #if LLVM_VERSION_MAJOR >= 14
       for (unsigned i = 0; i < call.arg_size(); ++i)
@@ -9049,15 +9049,20 @@ public:
       {
 
         if (call.paramHasAttr(i, Attribute::StructRet)) {
-          structAttrs[args.size()] =
+          structAttrs[args.size()].push_back(
 #if LLVM_VERSION_MAJOR >= 12
               // TODO persist types
-              Attribute::get(call.getContext(), "enzyme_sret");
+              Attribute::get(call.getContext(), "enzyme_sret")
           // Attribute::get(orig->getContext(), "enzyme_sret",
           // orig->getParamAttr(i, Attribute::StructRet).getValueAsType());
 #else
-              Attribute::get(call.getContext(), "enzyme_sret");
+              Attribute::get(call.getContext(), "enzyme_sret")
 #endif
+          );
+        }
+        if (call.getAttributes().hasParamAttr(i, "enzymejl_returnRoots")) {
+          structAttrs[args.size()].push_back(
+              call.getParamAttr(i, "enzymejl_returnRoots"));
         }
 
         auto argi = gutils->getNewFromOriginal(call.getArgOperand(i));
@@ -9105,30 +9110,39 @@ public:
           continue;
         }
 
-        if (call.paramHasAttr(i, Attribute::StructRet)) {
-          structAttrs[args.size()] =
-              Attribute::get(call.getContext(), "enzyme_sret");
+        if (call.getAttributes().hasParamAttr(i, "enzymejl_returnRoots")) {
           if (gutils->getWidth() == 1) {
-            structAttrs[args.size()] =
+            structAttrs[args.size()].push_back(
+                call.getParamAttr(i, "enzymejl_returnRoots"));
+          } else {
+            structAttrs[args.size()].push_back(
+                Attribute::get(call.getContext(), "enzyme_sret_v"));
+          }
+        }
+        if (call.paramHasAttr(i, Attribute::StructRet)) {
+          if (gutils->getWidth() == 1) {
+            structAttrs[args.size()].push_back(
 #if LLVM_VERSION_MAJOR >= 12
                 // TODO persist types
-                Attribute::get(call.getContext(), "enzyme_sret");
+                Attribute::get(call.getContext(), "enzyme_sret")
             // Attribute::get(orig->getContext(), "enzyme_sret",
             // orig->getParamAttr(i, Attribute::StructRet).getValueAsType());
 #else
-                Attribute::get(call.getContext(), "enzyme_sret");
+                Attribute::get(call.getContext(), "enzyme_sret")
 #endif
+            );
           } else {
-            structAttrs[args.size()] =
+            structAttrs[args.size()].push_back(
 #if LLVM_VERSION_MAJOR >= 12
                 // TODO persist types
-                Attribute::get(call.getContext(), "enzyme_sret");
+                Attribute::get(call.getContext(), "enzyme_sret")
             // Attribute::get(orig->getContext(), "enzyme_sret_v",
             // gutils->getShadowType(orig->getParamAttr(ii,
             // Attribute::StructRet).getValueAsType()));
 #else
-                Attribute::get(call.getContext(), "enzyme_sret_v");
+                Attribute::get(call.getContext(), "enzyme_sret_v")
 #endif
+            );
           }
         }
 
@@ -9239,8 +9253,9 @@ public:
             Attribute::getWithByValType(diffes->getContext(), pair.second));
       }
 #endif
-      for (auto pair : structAttrs) {
-        diffes->addParamAttr(pair.first, pair.second);
+      for (auto &pair : structAttrs) {
+        for (auto val : pair.second)
+          diffes->addParamAttr(pair.first, val);
       }
 
       auto newcall = gutils->getNewFromOriginal(&call);
@@ -9301,7 +9316,7 @@ public:
     SmallVector<Instruction *, 4> userReplace;
     std::map<int, Type *> preByVal;
     std::map<int, Type *> gradByVal;
-    std::map<int, Attribute> structAttrs;
+    std::map<int, std::vector<Attribute>> structAttrs;
 
     bool replaceFunction = false;
 
@@ -9327,18 +9342,23 @@ public:
         preByVal[pre_args.size()] = call.getParamByValType(i);
       }
 #endif
+      if (call.getAttributes().hasParamAttr(i, "enzymejl_returnRoots")) {
+        structAttrs[pre_args.size()].push_back(
+            call.getParamAttr(i, "enzymejl_returnRoots"));
+      }
       if (call.paramHasAttr(i, Attribute::StructRet)) {
-        structAttrs[pre_args.size()] =
+        structAttrs[pre_args.size()].push_back(
 #if LLVM_VERSION_MAJOR >= 12
             // TODO persist types
-            Attribute::get(call.getContext(), "enzyme_sret");
+            Attribute::get(call.getContext(), "enzyme_sret")
         // Attribute::get(orig->getContext(), "enzyme_sret",
         // orig->getParamAttr(ii, Attribute::StructRet).getValueAsType());
 #else
             // TODO persist types
-            Attribute::get(call.getContext(), "enzyme_sret");
+            Attribute::get(call.getContext(), "enzyme_sret")
         // Attribute::get(orig->getContext(), "enzyme_sret");
 #endif
+        );
       }
 
       auto argTy = gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
@@ -9405,28 +9425,39 @@ public:
       auto argType = argi->getType();
 
       if (argTy == DIFFE_TYPE::DUP_ARG || argTy == DIFFE_TYPE::DUP_NONEED) {
+        if (call.getAttributes().hasParamAttr(i, "enzymejl_returnRoots")) {
+          if (gutils->getWidth() == 1) {
+            structAttrs[pre_args.size()].push_back(
+                call.getParamAttr(i, "enzymejl_returnRoots"));
+          } else {
+            structAttrs[pre_args.size()].push_back(
+                Attribute::get(call.getContext(), "enzymejl_returnRoots_v"));
+          }
+        }
         if (call.paramHasAttr(i, Attribute::StructRet)) {
           if (gutils->getWidth() == 1) {
-            structAttrs[pre_args.size()] =
+            structAttrs[pre_args.size()].push_back(
 #if LLVM_VERSION_MAJOR >= 12
                 // TODO persist types
-                Attribute::get(call.getContext(), "enzyme_sret");
+                Attribute::get(call.getContext(), "enzyme_sret")
             // Attribute::get(orig->getContext(), "enzyme_sret",
             // orig->getParamAttr(ii, Attribute::StructRet).getValueAsType());
 #else
-                Attribute::get(call.getContext(), "enzyme_sret");
+                Attribute::get(call.getContext(), "enzyme_sret")
 #endif
+            );
           } else {
-            structAttrs[pre_args.size()] =
+            structAttrs[pre_args.size()].push_back(
 #if LLVM_VERSION_MAJOR >= 12
                 // TODO persist types
-                Attribute::get(call.getContext(), "enzyme_sret_v");
+                Attribute::get(call.getContext(), "enzyme_sret_v")
             // Attribute::get(orig->getContext(), "enzyme_sret_v",
             // gutils->getShadowType(orig->getParamAttr(ii,
             // Attribute::StructRet).getValueAsType()));
 #else
-                Attribute::get(call.getContext(), "enzyme_sret_v");
+                Attribute::get(call.getContext(), "enzyme_sret_v")
 #endif
+            );
           }
         }
         if (Mode != DerivativeMode::ReverseModePrimal) {
@@ -9676,8 +9707,9 @@ public:
                                                       pair.second));
         }
 #endif
-        for (auto pair : structAttrs) {
-          augmentcall->addParamAttr(pair.first, pair.second);
+        for (auto &pair : structAttrs) {
+          for (auto val : pair.second)
+            augmentcall->addParamAttr(pair.first, val);
         }
 
         if (!augmentcall->getType()->isVoidTy())
@@ -10050,8 +10082,9 @@ public:
                                            diffes->getContext(), pair.second));
     }
 #endif
-    for (auto pair : structAttrs) {
-      diffes->addParamAttr(pair.first, pair.second);
+    for (auto &pair : structAttrs) {
+      for (auto val : pair.second)
+        diffes->addParamAttr(pair.first, val);
     }
 
     unsigned structidx = 0;
@@ -10351,72 +10384,16 @@ public:
 
       orig_args.push_back(orig_argi);
 
-      // #if LLVM_VERSION_MAJOR >= 9
-      //         if (call.isByValArgument(i)) {
-      //           preByVal[pre_args.size()] = call.getParamByValType(i);
-      //         }
-      // #endif
-      //         if (call.paramHasAttr(i, Attribute::StructRet)) {
-      //           structAttrs[pre_args.size()] =
-      // #if LLVM_VERSION_MAJOR >= 12
-      //           // TODO persist types
-      //           Attribute::get(call.getContext(), "enzyme_sret");
-      //           // Attribute::get(orig->getContext(), "enzyme_sret",
-      //           // orig->getParamAttr(ii,
-      //           Attribute::StructRet).getValueAsType());
-      // #else
-      //           // TODO persist types
-      //           Attribute::get(call.getContext(), "enzyme_sret");
-      //           // Attribute::get(orig->getContext(), "enzyme_sret");
-      // #endif
-      //         }
+      // TODO sret
 
       pre_args.push_back(argi);
 
-      //        bool writeOnlyNoCapture = true;
-      // #if LLVM_VERSION_MAJOR >= 8
-      //        if (!call.doesNotCapture(i))
-      // #else
-      //          if (!(call.dataOperandHasImpliedAttr(i + 1,
-      //          Attribute::NoCapture) ||
-      //                (called && called->hasParamAttribute(i,
-      //                Attribute::NoCapture))))
-      // #endif
-      //          {
-      //            writeOnlyNoCapture = false;
-      //          }
-      // #if LLVM_VERSION_MAJOR >= 14
-      //        if (!call.onlyWritesMemory(i))
-      // #else
-      //          if (!(call.dataOperandHasImpliedAttr(i + 1,
-      //          Attribute::WriteOnly) ||
-      //                call.dataOperandHasImpliedAttr(i + 1,
-      //                Attribute::ReadNone) || (likelihoodfn &&
-      //                (likelihoodfn->hasParamAttribute(i,
-      //                Attribute::WriteOnly) ||
-      //                                  likelihoodfn->hasParamAttribute(i,
-      //                                  Attribute::ReadNone)))))
-      // #endif
-      //          {
-      //            writeOnlyNoCapture = false;
-      //          }
+      // TODO writeOnly
 
       if (Mode != DerivativeMode::ReverseModePrimal) {
         IRBuilder<> Builder2(call.getParent());
         getReverseBuilder(Builder2);
-        // #if LLVM_VERSION_MAJOR >= 9
-        //           if (call.isByValArgument(i)) {
-        //             gradByVal[args.size()] = call.getParamByValType(i);
-        //           }
-        // #endif
-
-        //          if (writeOnlyNoCapture && !replaceFunction) {
-        //            if (EnzymeZeroCache)
-        //              argi =
-        //              ConstantPointerNull::get(cast<PointerType>(argi->getType()));
-        //            else
-        //              argi = UndefValue::get(argi->getType());
-        //          }
+        // TODO byVal
         args.push_back(lookup(argi, Builder2));
       }
 
@@ -10429,47 +10406,15 @@ public:
       auto argType = argi->getType();
 
       if (argTy == DIFFE_TYPE::DUP_ARG || argTy == DIFFE_TYPE::DUP_NONEED) {
-        //          if (call.paramHasAttr(i, Attribute::StructRet)) {
-        //            if (gutils->getWidth() == 1) {
-        //              structAttrs[pre_args.size()] =
-        // #if LLVM_VERSION_MAJOR >= 12
-        //              // TODO persist types
-        //              Attribute::get(call.getContext(), "enzyme_sret");
-        //              // Attribute::get(orig->getContext(), "enzyme_sret",
-        //              // orig->getParamAttr(ii,
-        //              Attribute::StructRet).getValueAsType());
-        // #else
-        //              Attribute::get(call.getContext(), "enzyme_sret");
-        // #endif
-        //            } else {
-        //              structAttrs[pre_args.size()] =
-        // #if LLVM_VERSION_MAJOR >= 12
-        //              // TODO persist types
-        //              Attribute::get(call.getContext(), "enzyme_sret_v");
-        //              // Attribute::get(orig->getContext(), "enzyme_sret_v",
-        //              // gutils->getShadowType(orig->getParamAttr(ii,
-        //              // Attribute::StructRet).getValueAsType()));
-        // #else
-        //              Attribute::get(call.getContext(), "enzyme_sret_v");
-        // #endif
-        //            }
-        //          }
+        // TODO sret
         if (Mode != DerivativeMode::ReverseModePrimal) {
           IRBuilder<> Builder2(call.getParent());
           getReverseBuilder(Builder2);
 
           Value *darg = nullptr;
 
-          //            if (writeOnlyNoCapture && !replaceFunction &&
-          //                TR.query(origArgi)[{-1, -1}] == BaseType::Pointer) {
-          //              if (EnzymeZeroCache)
-          //                darg =
-          //                ConstantPointerNull::get(cast<PointerType>(argi->getType()));
-          //              else
-          //                darg = UndefValue::get(argi->getType());
-          //            } else {
+          // TODO writeOnly
           darg = gutils->invertPointerM(orig_argi, Builder2);
-          //            }
           args.push_back(lookup(darg, Builder2));
         }
         pre_args.push_back(gutils->invertPointerM(orig_argi, BuilderZ));
