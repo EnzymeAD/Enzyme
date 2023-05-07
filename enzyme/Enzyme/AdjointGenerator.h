@@ -1182,6 +1182,21 @@ public:
 
       gutils->setPtrDiffe(&I, orig_ptr, diff, Builder2, align, isVolatile,
                           ordering, syncScope, mask, prevNoAlias, prevScopes);
+
+      if (!EnzymeRuntimeActivityCheck && CustomErrorHandler && constantval) {
+        if (dt.isPossiblePointer()) {
+          if (!isa<UndefValue>(orig_val) &&
+              !isa<ConstantPointerNull>(orig_val)) {
+            std::string str;
+            raw_string_ostream ss(str);
+            ss << "Mismatched activity for: " << I
+               << " const val: " << *orig_val;
+            CustomErrorHandler(str.c_str(), wrap(&I),
+                               ErrorType::MixedActivityError, gutils);
+          }
+        }
+      }
+
       return;
     }
 
@@ -1358,6 +1373,19 @@ public:
         gutils->setPtrDiffe(&I, orig_ptr, valueop, storeBuilder, align,
                             isVolatile, ordering, syncScope, mask, prevNoAlias,
                             prevScopes);
+        if (!EnzymeRuntimeActivityCheck && CustomErrorHandler && constantval) {
+          if (dt.isPossiblePointer()) {
+            if (!isa<UndefValue>(orig_val) &&
+                !isa<ConstantPointerNull>(orig_val)) {
+              std::string str;
+              raw_string_ostream ss(str);
+              ss << "Mismatched activity for: " << I
+                 << " const val: " << *orig_val;
+              CustomErrorHandler(str.c_str(), wrap(&I),
+                                 ErrorType::MixedActivityError, gutils);
+            }
+          }
+        }
       }
     }
   }
