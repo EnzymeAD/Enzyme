@@ -1016,7 +1016,7 @@ LLVMValueRef EnzymeCloneFunctionWithoutReturnOrArgs(LLVMValueRef FC,
     size_t nextcnt = 0;
     SmallVector<uint64_t, 1> out;
     while (prevcnt < previdx.size() && nextcnt < nextidx.size()) {
-      if (previdx[prevcnt] < nextidx[nextcnt] + prevcnt) {
+      if (previdx[prevcnt] <= nextidx[nextcnt] + prevcnt) {
         out.push_back(previdx[prevcnt]);
         prevcnt++;
       } else {
