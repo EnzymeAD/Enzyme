@@ -71,7 +71,7 @@ extern std::map<std::string,
 class DiffeGradientUtils;
 extern std::map<
     std::string,
-    std::pair<std::function<void(llvm::IRBuilder<> &, llvm::CallInst *,
+    std::pair<std::function<bool(llvm::IRBuilder<> &, llvm::CallInst *,
                                  GradientUtils &, llvm::Value *&,
                                  llvm::Value *&, llvm::Value *&)>,
               std::function<void(llvm::IRBuilder<> &, llvm::CallInst *,
@@ -80,7 +80,7 @@ extern std::map<
 
 extern std::map<
     std::string,
-    std::function<void(llvm::IRBuilder<> &, llvm::CallInst *, GradientUtils &,
+    std::function<bool(llvm::IRBuilder<> &, llvm::CallInst *, GradientUtils &,
                        llvm::Value *&, llvm::Value *&)>>
     customFwdCallHandlers;
 

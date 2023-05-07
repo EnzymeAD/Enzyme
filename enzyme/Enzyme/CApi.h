@@ -200,13 +200,15 @@ typedef LLVMValueRef (*CustomShadowFree)(LLVMBuilderRef, LLVMValueRef);
 void EnzymeRegisterAllocationHandler(char *Name, CustomShadowAlloc AHandle,
                                      CustomShadowFree FHandle);
 
-typedef void (*CustomFunctionForward)(LLVMBuilderRef, LLVMValueRef,
-                                      GradientUtils *, LLVMValueRef *,
-                                      LLVMValueRef *);
+typedef uint8_t (*CustomFunctionForward)(LLVMBuilderRef, LLVMValueRef,
+                                         GradientUtils *, LLVMValueRef *,
+                                         LLVMValueRef *);
 
-typedef void (*CustomAugmentedFunctionForward)(LLVMBuilderRef, LLVMValueRef,
-                                               GradientUtils *, LLVMValueRef *,
-                                               LLVMValueRef *, LLVMValueRef *);
+typedef uint8_t (*CustomAugmentedFunctionForward)(LLVMBuilderRef, LLVMValueRef,
+                                                  GradientUtils *,
+                                                  LLVMValueRef *,
+                                                  LLVMValueRef *,
+                                                  LLVMValueRef *);
 
 typedef void (*CustomFunctionReverse)(LLVMBuilderRef, LLVMValueRef,
                                       DiffeGradientUtils *, LLVMValueRef);

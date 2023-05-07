@@ -287,14 +287,17 @@ void EnzymeRegisterCallHandler(char *Name,
                                CustomFunctionReverse RevHandle) {
   auto &pair = customCallHandlers[std::string(Name)];
   pair.first = [=](IRBuilder<> &B, CallInst *CI, GradientUtils &gutils,
-                   Value *&normalReturn, Value *&shadowReturn, Value *&tape) {
+                   Value *&normalReturn, Value *&shadowReturn,
+                   Value *&tape) -> bool {
     LLVMValueRef normalR = wrap(normalReturn);
     LLVMValueRef shadowR = wrap(shadowReturn);
     LLVMValueRef tapeR = wrap(tape);
-    FwdHandle(wrap(&B), wrap(CI), &gutils, &normalR, &shadowR, &tapeR);
+    uint8_t noMod =
+        FwdHandle(wrap(&B), wrap(CI), &gutils, &normalR, &shadowR, &tapeR);
     normalReturn = unwrap(normalR);
     shadowReturn = unwrap(shadowR);
     tape = unwrap(tapeR);
+    return noMod != 0;
   };
   pair.second = [=](IRBuilder<> &B, CallInst *CI, DiffeGradientUtils &gutils,
                     Value *tape) {
@@ -305,12 +308,13 @@ void EnzymeRegisterCallHandler(char *Name,
 void EnzymeRegisterFwdCallHandler(char *Name, CustomFunctionForward FwdHandle) {
   auto &pair = customFwdCallHandlers[std::string(Name)];
   pair = [=](IRBuilder<> &B, CallInst *CI, GradientUtils &gutils,
-             Value *&normalReturn, Value *&shadowReturn) {
+             Value *&normalReturn, Value *&shadowReturn) -> bool {
     LLVMValueRef normalR = wrap(normalReturn);
     LLVMValueRef shadowR = wrap(shadowReturn);
-    FwdHandle(wrap(&B), wrap(CI), &gutils, &normalR, &shadowR);
+    uint8_t noMod = FwdHandle(wrap(&B), wrap(CI), &gutils, &normalR, &shadowR);
     normalReturn = unwrap(normalR);
     shadowReturn = unwrap(shadowR);
+    return noMod != 0;
   };
 }
 
