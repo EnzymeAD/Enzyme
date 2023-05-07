@@ -74,7 +74,8 @@ enum class ErrorType {
   NoType = 3,
   IllegalFirstPointer = 4,
   InternalError = 5,
-  TypeDepthExceeded = 6
+  TypeDepthExceeded = 6,
+  MixedActivityError = 7,
 };
 
 extern "C" {

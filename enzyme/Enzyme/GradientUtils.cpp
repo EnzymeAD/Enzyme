@@ -5545,6 +5545,26 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   } else if (auto arg = dyn_cast<SelectInst>(oval)) {
     IRBuilder<> bb(getNewFromOriginal(arg));
     bb.setFastMathFlags(getFast());
+    if (!EnzymeRuntimeActivityCheck && CustomErrorHandler) {
+      auto tval = arg->getTrueValue();
+      if (!isa<UndefValue>(tval) && !isa<ConstantPointerNull>(tval) &&
+          !isConstantValue(tval)) {
+        std::string str;
+        raw_string_ostream ss(str);
+        ss << "Mismatched activity for: " << *arg << " const val: " << *tval;
+        CustomErrorHandler(str.c_str(), wrap(arg),
+                           ErrorType::MixedActivityError, this);
+      }
+      auto fval = arg->getFalseValue();
+      if (!isa<UndefValue>(fval) && !isa<ConstantPointerNull>(fval) &&
+          !isConstantValue(fval)) {
+        std::string str;
+        raw_string_ostream ss(str);
+        ss << "Mismatched activity for: " << *arg << " const val: " << *fval;
+        CustomErrorHandler(str.c_str(), wrap(arg),
+                           ErrorType::MixedActivityError, this);
+      }
+    }
     Value *shadow = applyChainRule(
         arg->getType(), bb,
         [&](Value *tv, Value *fv) {
@@ -5864,6 +5884,23 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       if (!isa<PHINode>(NewV) ||
           cast<PHINode>(NewV)->getNumIncomingValues() == 0) {
         bb.SetInsertPoint(bb.GetInsertBlock(), bb.GetInsertBlock()->begin());
+      }
+
+      if (!EnzymeRuntimeActivityCheck && CustomErrorHandler) {
+        for (unsigned int j = 0; j < phi->getNumIncomingValues(); ++j) {
+          auto val = phi->getIncomingValue(j);
+          if (isa<UndefValue>(val))
+            continue;
+          if (isa<ConstantPointerNull>(val))
+            continue;
+          if (!isConstantValue(val))
+            continue;
+          std::string str;
+          raw_string_ostream ss(str);
+          ss << "Mismatched activity for: " << *phi << " const val: " << *val;
+          CustomErrorHandler(str.c_str(), wrap(phi),
+                             ErrorType::MixedActivityError, this);
+        }
       }
 
       if (EnzymeVectorSplitPhi && width > 1) {
