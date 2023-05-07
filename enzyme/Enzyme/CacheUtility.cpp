@@ -77,7 +77,7 @@ void CacheUtility::erase(Instruction *I) {
       ss << *newFunc << "\n";
       ss << *I << "\n";
       CustomErrorHandler(str.c_str(), wrap(I), ErrorType::InternalError,
-                         nullptr);
+                         nullptr, nullptr);
     }
     llvm::errs() << *newFunc->getParent() << "\n";
     llvm::errs() << *newFunc << "\n";

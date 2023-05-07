@@ -5554,7 +5554,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           raw_string_ostream ss(str);
           ss << "Mismatched activity for: " << *arg << " const val: " << *tval;
           CustomErrorHandler(str.c_str(), wrap(arg),
-                             ErrorType::MixedActivityError, this);
+                             ErrorType::MixedActivityError, this, wrap(tval));
         }
         auto fval = arg->getFalseValue();
         if (!isa<UndefValue>(fval) && !isa<ConstantPointerNull>(fval) &&
@@ -5563,7 +5563,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
           raw_string_ostream ss(str);
           ss << "Mismatched activity for: " << *arg << " const val: " << *fval;
           CustomErrorHandler(str.c_str(), wrap(arg),
-                             ErrorType::MixedActivityError, this);
+                             ErrorType::MixedActivityError, this, wrap(fval));
         }
       }
     }
@@ -5902,7 +5902,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
             raw_string_ostream ss(str);
             ss << "Mismatched activity for: " << *phi << " const val: " << *val;
             CustomErrorHandler(str.c_str(), wrap(phi),
-                               ErrorType::MixedActivityError, this);
+                               ErrorType::MixedActivityError, this, wrap(val));
           }
         }
       }
@@ -5976,7 +5976,8 @@ end:;
     std::string str;
     raw_string_ostream ss(str);
     ss << "cannot find shadow for " << *oval;
-    CustomErrorHandler(str.c_str(), wrap(oval), ErrorType::NoShadow, this);
+    CustomErrorHandler(str.c_str(), wrap(oval), ErrorType::NoShadow, this,
+                       nullptr);
   }
 
   llvm::errs() << *newFunc->getParent() << "\n";

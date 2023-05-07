@@ -82,7 +82,7 @@ extern "C" {
 /// Print additional debug info relevant to performance
 extern llvm::cl::opt<bool> EnzymePrintPerf;
 extern void (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
-                                  const void *);
+                                  const void *, LLVMValueRef);
 }
 
 llvm::SmallVector<llvm::Instruction *, 2> PostCacheStore(llvm::StoreInst *SI,

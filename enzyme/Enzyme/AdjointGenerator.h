@@ -446,7 +446,7 @@ public:
     ss << "cannot handle unknown instruction\n" << inst;
     if (CustomErrorHandler) {
       CustomErrorHandler(ss.str().c_str(), wrap(&inst), ErrorType::NoDerivative,
-                         nullptr);
+                         nullptr, nullptr);
     }
     llvm::errs() << ss.str() << "\n";
     report_fatal_error("unknown instruction");
@@ -563,7 +563,7 @@ public:
         raw_string_ostream ss(str);
         ss << "Cannot deduce type of load " << I;
         CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
-                           &TR.analyzer);
+                           &TR.analyzer, nullptr);
       }
       EmitFailure("CannotDeduceType", I.getDebugLoc(), &I,
                   "failed to deduce type of load ", I);
@@ -1138,7 +1138,7 @@ public:
         raw_string_ostream ss(str);
         ss << "Cannot deduce type of store " << I;
         CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
-                           &TR.analyzer);
+                           &TR.analyzer, nullptr);
       }
       EmitFailure("CannotDeduceType", I.getDebugLoc(), &I,
                   "failed to deduce type of store ", I);
@@ -1159,7 +1159,7 @@ public:
           raw_string_ostream ss(str);
           ss << "Cannot deduce single type of store " << I;
           CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
-                             &TR.analyzer);
+                             &TR.analyzer, nullptr);
         }
         EmitFailure("CannotDeduceType", I.getDebugLoc(), &I,
                     "failed to deduce single type of store ", I);
@@ -1192,7 +1192,8 @@ public:
             ss << "Mismatched activity for: " << I
                << " const val: " << *orig_val;
             CustomErrorHandler(str.c_str(), wrap(&I),
-                               ErrorType::MixedActivityError, gutils);
+                               ErrorType::MixedActivityError, gutils,
+                               wrap(orig_val));
           }
         }
       }
@@ -1382,7 +1383,8 @@ public:
               ss << "Mismatched activity for: " << I
                  << " const val: " << *orig_val;
               CustomErrorHandler(str.c_str(), wrap(&I),
-                                 ErrorType::MixedActivityError, gutils);
+                                 ErrorType::MixedActivityError, gutils,
+                                 wrap(orig_val));
             }
           }
         }
@@ -1476,7 +1478,7 @@ public:
             ss << "cannot handle above cast " << I << "\n";
             if (CustomErrorHandler) {
               CustomErrorHandler(ss.str().c_str(), wrap(&I),
-                                 ErrorType::NoDerivative, nullptr);
+                                 ErrorType::NoDerivative, nullptr, nullptr);
             }
             TR.dump();
             llvm::errs() << ss.str() << "\n";
@@ -1977,7 +1979,7 @@ public:
               raw_string_ostream ss(str);
               ss << "Cannot deduce type of insertvalue " << IVI;
               CustomErrorHandler(str.c_str(), wrap(&IVI), ErrorType::NoType,
-                                 &TR.analyzer);
+                                 &TR.analyzer, nullptr);
             }
             EmitFailure("CannotDeduceType", IVI.getDebugLoc(), &IVI,
                         "failed to deduce type of insertvalue ", IVI);
@@ -2623,7 +2625,7 @@ public:
       ss << "cannot handle unknown binary operator: " << BO << "\n";
       if (CustomErrorHandler) {
         CustomErrorHandler(ss.str().c_str(), wrap(&BO), ErrorType::NoDerivative,
-                           nullptr);
+                           nullptr, nullptr);
       }
       llvm::errs() << ss.str() << "\n";
       report_fatal_error("unknown binary operator");
@@ -3085,7 +3087,7 @@ public:
       ss << "cannot handle unknown binary operator: " << BO << "\n";
       if (CustomErrorHandler) {
         CustomErrorHandler(ss.str().c_str(), wrap(&BO), ErrorType::NoDerivative,
-                           nullptr);
+                           nullptr, nullptr);
       }
       llvm::errs() << ss.str() << "\n";
       report_fatal_error("unknown binary operator");
@@ -3135,7 +3137,7 @@ public:
          << MS;
       if (CustomErrorHandler) {
         CustomErrorHandler(ss.str().c_str(), wrap(&MS), ErrorType::NoDerivative,
-                           nullptr);
+                           nullptr, nullptr);
       }
       llvm::errs() << ss.str() << "\n";
       report_fatal_error("non constant in memset");
@@ -3310,7 +3312,7 @@ public:
         raw_string_ostream ss(str);
         ss << "Cannot deduce type of memset " << MS;
         CustomErrorHandler(str.c_str(), wrap(&MS), ErrorType::NoType,
-                           &TR.analyzer);
+                           &TR.analyzer, nullptr);
       }
       EmitFailure("CannotDeduceType", MS.getDebugLoc(), &MS,
                   "failed to deduce type of memset ", MS);
@@ -3614,7 +3616,7 @@ public:
           raw_string_ostream ss(str);
           ss << "Cannot deduce type of copy " << MTI;
           CustomErrorHandler(str.c_str(), wrap(&MTI), ErrorType::NoType,
-                             &TR.analyzer);
+                             &TR.analyzer, nullptr);
         }
         EmitFailure("CannotDeduceType", MTI.getDebugLoc(), &MTI,
                     "failed to deduce type of copy ", MTI);
@@ -4007,7 +4009,7 @@ public:
         ss << "cannot handle (augmented) unknown intrinsic\n" << I;
         if (CustomErrorHandler) {
           CustomErrorHandler(ss.str().c_str(), wrap(&I),
-                             ErrorType::NoDerivative, nullptr);
+                             ErrorType::NoDerivative, nullptr, nullptr);
         }
         llvm::errs() << ss.str() << "\n";
         report_fatal_error("(augmented) unknown intrinsic");
@@ -4602,7 +4604,7 @@ public:
              << I;
         if (CustomErrorHandler) {
           CustomErrorHandler(ss.str().c_str(), wrap(&I),
-                             ErrorType::NoDerivative, nullptr);
+                             ErrorType::NoDerivative, nullptr, nullptr);
         }
         llvm::errs() << ss.str() << "\n";
         report_fatal_error("(reverse) unknown intrinsic");
@@ -5172,7 +5174,7 @@ public:
              << I;
         if (CustomErrorHandler) {
           CustomErrorHandler(ss.str().c_str(), wrap(&I),
-                             ErrorType::NoDerivative, nullptr);
+                             ErrorType::NoDerivative, nullptr, nullptr);
         }
         llvm::errs() << ss.str() << "\n";
         report_fatal_error("(forward) unknown intrinsic");
@@ -7921,7 +7923,7 @@ public:
           ss << " unhandled mpi_allreduce op: " << *orig_op << "\n";
           if (CustomErrorHandler) {
             CustomErrorHandler(ss.str().c_str(), wrap(&call),
-                               ErrorType::NoDerivative, nullptr);
+                               ErrorType::NoDerivative, nullptr, nullptr);
           }
           llvm::errs() << ss.str() << "\n";
           report_fatal_error("unhandled mpi_allreduce op");
@@ -8176,7 +8178,7 @@ public:
           ss << " unhandled mpi_allreduce op: " << *orig_op << "\n";
           if (CustomErrorHandler) {
             CustomErrorHandler(ss.str().c_str(), wrap(&call),
-                               ErrorType::NoDerivative, nullptr);
+                               ErrorType::NoDerivative, nullptr, nullptr);
           }
           llvm::errs() << ss.str() << "\n";
           report_fatal_error("unhandled mpi_allreduce op");
@@ -9579,7 +9581,7 @@ public:
           ss << "cannot find shadow for " << *callval;
           if (CustomErrorHandler) {
             CustomErrorHandler(ss.str().c_str(), wrap(&call),
-                               ErrorType::NoDerivative, nullptr);
+                               ErrorType::NoDerivative, nullptr, nullptr);
           }
 
           llvm::errs() << *gutils->oldFunc << "\n";
