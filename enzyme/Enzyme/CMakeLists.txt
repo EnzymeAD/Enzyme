@@ -149,9 +149,11 @@ function(tablegenSubstitute project ofn)
 endfunction()
 
 
-set(LLVM_TARGET_DEFINITIONS InstructionDerivatives.td)
+set(LLVM_TARGET_DEFINITIONS targets/InstructionDerivatives.td)
 enzyme_tablegen(InstructionDerivatives.inc -gen-derivatives)
+enzyme_tablegen(BlasDerivatives.inc -gen-blas-derivatives)
 add_public_tablegen_target(InstructionDerivativesIncGen)
+add_public_tablegen_target(BlasDerivativesIncGen)
 
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
@@ -263,6 +265,7 @@ if (${ENZYME_EXTERNAL_SHARED_LIB})
     )
     add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} intrinsics_gen)
     add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} InstructionDerivativesIncGen)
+    add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasDerivativesIncGen)
     target_link_libraries(Enzyme-${LLVM_VERSION_MAJOR} LLVM)
     install(TARGETS Enzyme-${LLVM_VERSION_MAJOR}
         EXPORT EnzymeTargets
