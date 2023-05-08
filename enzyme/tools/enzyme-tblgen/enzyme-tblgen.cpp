@@ -27,12 +27,14 @@
 
 using namespace llvm;
 
-enum ActionType { GenDerivatives, GenBlasDerivatives };
+enum ActionType { GenDerivatives, GenBlasDerivatives, UpdateBlasDecl };
 
 static cl::opt<ActionType>
     action(cl::desc("Action to perform:"),
            cl::values(clEnumValN(GenBlasDerivatives, "gen-blas-derivatives",
                                  "Generate BLAS derivatives")),
+           cl::values(clEnumValN(UpdateBlasDecl, "update-blas-declarations",
+                                 "Update BLAS declarations")),
            cl::values(clEnumValN(GenDerivatives, "gen-derivatives",
                                  "Generate instruction derivative")));
 
@@ -808,10 +810,10 @@ static void checkBlasCalls(const RecordKeeper &RK,
   }
 }
 
-// handleBLAS is called in the AdjointGenerator.h
-// We therefore use an allowlist to be able to implement more rules,
+// recognizeBLAS is called in the AdjointGenerator.h and Enzyme.cpp
+// We therefore use an allowlist to be able to implement more rules, 
 // but only expose those that are sufficiently tested.
-void emit_handleBLAS(const std::vector<TGPattern> &blasPatterns,
+void emit_recognizeBLAS(const std::vector<TGPattern> &blasPatterns,
                      raw_ostream &os) {
   std::string handledBlasFunctions = "";
   bool first = true;
@@ -851,8 +853,12 @@ void emit_handleBLAS(const std::vector<TGPattern> &blasPatterns,
      << "  }\n"
      << "  return llvm::NoneType();\n"
      << "}\n"
-     << "\n"
-     << "bool handleBLAS(llvm::CallInst &call, llvm::Function *called,"
+     << "\n";
+}
+// handleBLAS is called in the AdjointGenerator.h 
+void emit_handleBLAS(const std::vector<TGPattern> &blasPatterns,
+                     raw_ostream &os) {
+  os << "bool handleBLAS(llvm::CallInst &call, llvm::Function *called,"
         "BlasInfo blas,const std::vector<bool> &overwritten_args) {         \n"
      << "  using llvm::Type;                                                \n"
      << "  bool result = true;                                              \n"
@@ -865,7 +871,7 @@ void emit_handleBLAS(const std::vector<TGPattern> &blasPatterns,
      << "    } else {                                                       \n"
      << "      assert(false && \"Unreachable\");                            \n"
      << "    }                                                              \n";
-  first = true;
+  bool first = true;
   for (auto pattern : blasPatterns) {
     auto name = pattern.getName();
     // only one which we expose right now.
@@ -1782,6 +1788,7 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
   // TODO: type check params, as far as possible
   checkBlasCalls(RK, blasPatterns);
   // //checkBlasCalls2(newBlasPatterns);
+  emit_recognizeBLAS(newBlasPatterns, os);
   emit_handleBLAS(newBlasPatterns, os);
   // // emitEnumMatcher(blas_modes, os);
 
@@ -1803,6 +1810,83 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
   }
 }
 
+void emit_attributeBLASCaller(const std::vector<TGPattern> &blasPatterns,
+                     raw_ostream &os) {
+  os << "void attributeBLAS(BlasInfo blas, llvm::Function *F) {             \n";
+  for (auto pattern : blasPatterns) {
+    auto name = pattern.getName();
+    // only one which we expose right now.
+    if (name != "dot")
+      continue;
+    os << "  if (blas.function == \"" << name << "\") {                     \n"
+       << "      attribute_" << name << "(blas, F);                         \n";
+    first = false;
+  }
+  os << "    } else {                                                       \n"
+     << "      return;                                                      \n"
+     << "    }                                                              \n"
+     << "}                                                                  \n";
+}
+
+void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
+  auto name = pattern.getName();
+  os << "void attribute_" << name << "(BlasInfo blas, llvm::Function *F) {\n"
+     << "  auto name = F.getName();\n"
+     << "  llvm::Optional<BlasInfo> blasName = extractBLAS(name)\n"
+     << "  if (blasName == llvm::NoneType) return;\n"
+     << "  F->addFnAttr(Attribute::ArgMemOnly);\n";
+
+
+       << "      if (byRef) {\n";
+    const auto calledTypeMap = calledPattern.getArgTypeMap();
+    for (size_t argPos = 0; argPos < calledTypeMap.size(); argPos++) {
+      const auto typeOfArg = calledTypeMap.lookup(argPos);
+      if (typeOfArg == argType::len || typeOfArg == argType::vincInc) {
+        os << "        F->addParamAttr(" << argPos
+           << ", Attribute::ReadOnly);\n"
+           << "        F->addParamAttr(" << argPos
+           << ", Attribute::NoCapture);\n";
+      }
+    }
+    os << "      }\n"
+       << "      // Julia declares double* pointers as Int64,\n"
+       << "      //  so LLVM won't let us add these Attributes.\n"
+       << "      if (!julia_decl) {\n";
+    for (size_t argPos = 0; argPos < calledTypeMap.size(); argPos++) {
+      auto typeOfArg = calledTypeMap.lookup(argPos);
+      if (typeOfArg == argType::vincData) {
+        os << "        F->addParamAttr(" << argPos
+           << ", Attribute::NoCapture);\n";
+        if (mutableArgs.count(argPos) == 0) {
+          // Only emit ReadOnly if the arg isn't mutable
+          os << "        F->addParamAttr(" << argPos
+             << ", Attribute::ReadOnly);\n";
+        }
+      }
+    }
+}
+
+void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
+  emitSourceFileHeader("Rewriters", os);
+  const auto &blasPatterns = RK.getAllDerivedDefinitions("CallBlasPattern");
+  
+  std::vector<TGPattern> newBlasPatterns{};
+  StringMap<TGPattern> patternMap;
+  for (auto pattern : blasPatterns) {
+    auto parsedPattern = TGPattern(*pattern);
+    newBlasPatterns.push_back(TGPattern(*pattern));
+    auto newEntry = std::pair<std::string, TGPattern>(parsedPattern.getName(),
+                                                      parsedPattern);
+    patternMap.insert(newEntry);
+  }
+
+  emit_recognizeBLAS(newBlasPatterns, os);
+  emit_attributeBLASCaller(newBlasPatterns, os);
+  for (auto newPattern : newBlasPatterns) {
+    emit_attributeBLAS(newBlasPattern, os);
+  }
+}
+
 static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
   switch (action) {
   case GenDerivatives:
@@ -1810,6 +1894,9 @@ static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
     return false;
   case GenBlasDerivatives:
     emitBlasDerivatives(records, os);
+    return false;
+  case UpdateBlasDecl:
+    emitBlasDeclUpdater(records, os);
     return false;
 
   default:

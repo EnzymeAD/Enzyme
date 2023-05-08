@@ -3595,6 +3595,12 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
       }
     }
   }
+    
+  StringRef funcName = getFuncNameFromCall(&call);
+  if (funcName == "sdot_64_" || funcName == "sdot_" || funcName == "sdot") {
+      llvm::errs() << "TA fun for dot!\n\n\n\n";
+      TypeTree buf = TypeTree(BaseType::Pointer);
+  }
 
   Function *ci = getFunctionFromCall(&call);
 
