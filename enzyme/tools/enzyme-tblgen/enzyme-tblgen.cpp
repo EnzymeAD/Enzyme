@@ -1820,50 +1820,50 @@ void emit_attributeBLASCaller(const std::vector<TGPattern> &blasPatterns,
       continue;
     os << "  if (blas.function == \"" << name << "\") {                     \n"
        << "      attribute_" << name << "(blas, F);                         \n";
-    first = false;
   }
-  os << "    } else {                                                       \n"
-     << "      return;                                                      \n"
-     << "    }                                                              \n"
-     << "}                                                                  \n";
+  os << "  } else {                                                       \n"
+     << "    return;                                                      \n"
+     << "  }                                                              \n"
+     << "}                                                                \n";
 }
 
 void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
   auto name = pattern.getName();
   os << "void attribute_" << name << "(BlasInfo blas, llvm::Function *F) {\n"
-     << "  auto name = F.getName();\n"
-     << "  llvm::Optional<BlasInfo> blasName = extractBLAS(name)\n"
-     << "  if (blasName == llvm::NoneType) return;\n"
-     << "  F->addFnAttr(Attribute::ArgMemOnly);\n";
+     << "  auto name = F->getName();\n"
+     << "  llvm::Optional<BlasInfo> blasName = extractBLAS(name);\n"
+     << "  if (!blasName.hasValue()) return;\n"
+     << "  F->addFnAttr(llvm::Attribute::ArgMemOnly);\n";
 
 
-       << "      if (byRef) {\n";
-    const auto calledTypeMap = calledPattern.getArgTypeMap();
-    for (size_t argPos = 0; argPos < calledTypeMap.size(); argPos++) {
-      const auto typeOfArg = calledTypeMap.lookup(argPos);
-      if (typeOfArg == argType::len || typeOfArg == argType::vincInc) {
-        os << "        F->addParamAttr(" << argPos
-           << ", Attribute::ReadOnly);\n"
-           << "        F->addParamAttr(" << argPos
-           << ", Attribute::NoCapture);\n";
-      }
-    }
-    os << "      }\n"
-       << "      // Julia declares double* pointers as Int64,\n"
-       << "      //  so LLVM won't let us add these Attributes.\n"
-       << "      if (!julia_decl) {\n";
-    for (size_t argPos = 0; argPos < calledTypeMap.size(); argPos++) {
-      auto typeOfArg = calledTypeMap.lookup(argPos);
-      if (typeOfArg == argType::vincData) {
-        os << "        F->addParamAttr(" << argPos
-           << ", Attribute::NoCapture);\n";
-        if (mutableArgs.count(argPos) == 0) {
-          // Only emit ReadOnly if the arg isn't mutable
-          os << "        F->addParamAttr(" << argPos
-             << ", Attribute::ReadOnly);\n";
-        }
-      }
-    }
+    //   << "      if (byRef) {\n";
+    //const auto calledTypeMap = calledPattern.getArgTypeMap();
+    //for (size_t argPos = 0; argPos < calledTypeMap.size(); argPos++) {
+    //  const auto typeOfArg = calledTypeMap.lookup(argPos);
+    //  if (typeOfArg == argType::len || typeOfArg == argType::vincInc) {
+    //    os << "        F->addParamAttr(" << argPos
+    //       << ", Attribute::ReadOnly);\n"
+    //       << "        F->addParamAttr(" << argPos
+    //       << ", Attribute::NoCapture);\n";
+    //  }
+    //}
+    //os << "      }\n"
+    //   << "      // Julia declares double* pointers as Int64,\n"
+    //   << "      //  so LLVM won't let us add these Attributes.\n"
+    //   << "      if (!julia_decl) {\n";
+    //for (size_t argPos = 0; argPos < calledTypeMap.size(); argPos++) {
+    //  auto typeOfArg = calledTypeMap.lookup(argPos);
+    //  if (typeOfArg == argType::vincData) {
+    //    os << "        F->addParamAttr(" << argPos
+    //       << ", Attribute::NoCapture);\n";
+    //    if (mutableArgs.count(argPos) == 0) {
+    //      // Only emit ReadOnly if the arg isn't mutable
+    //      os << "        F->addParamAttr(" << argPos
+    //         << ", Attribute::ReadOnly);\n";
+    //    }
+    //  }
+    //}
+  os << "}\n";
 }
 
 void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
@@ -1881,10 +1881,10 @@ void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
   }
 
   emit_recognizeBLAS(newBlasPatterns, os);
-  emit_attributeBLASCaller(newBlasPatterns, os);
   for (auto newPattern : newBlasPatterns) {
-    emit_attributeBLAS(newBlasPattern, os);
+    emit_attributeBLAS(newPattern, os);
   }
+  emit_attributeBLASCaller(newBlasPatterns, os);
 }
 
 static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
