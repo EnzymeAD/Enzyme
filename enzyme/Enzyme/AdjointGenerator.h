@@ -446,7 +446,7 @@ public:
     ss << "cannot handle unknown instruction\n" << inst;
     if (CustomErrorHandler) {
       CustomErrorHandler(ss.str().c_str(), wrap(&inst), ErrorType::NoDerivative,
-                         nullptr);
+                         nullptr, nullptr);
     }
     llvm::errs() << ss.str() << "\n";
     report_fatal_error("unknown instruction");
@@ -563,7 +563,7 @@ public:
         raw_string_ostream ss(str);
         ss << "Cannot deduce type of load " << I;
         CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
-                           &TR.analyzer);
+                           &TR.analyzer, nullptr);
       }
       EmitFailure("CannotDeduceType", I.getDebugLoc(), &I,
                   "failed to deduce type of load ", I);
@@ -1138,7 +1138,7 @@ public:
         raw_string_ostream ss(str);
         ss << "Cannot deduce type of store " << I;
         CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
-                           &TR.analyzer);
+                           &TR.analyzer, nullptr);
       }
       EmitFailure("CannotDeduceType", I.getDebugLoc(), &I,
                   "failed to deduce type of store ", I);
@@ -1159,7 +1159,7 @@ public:
           raw_string_ostream ss(str);
           ss << "Cannot deduce single type of store " << I;
           CustomErrorHandler(str.c_str(), wrap(&I), ErrorType::NoType,
-                             &TR.analyzer);
+                             &TR.analyzer, nullptr);
         }
         EmitFailure("CannotDeduceType", I.getDebugLoc(), &I,
                     "failed to deduce single type of store ", I);
@@ -1182,6 +1182,22 @@ public:
 
       gutils->setPtrDiffe(&I, orig_ptr, diff, Builder2, align, isVolatile,
                           ordering, syncScope, mask, prevNoAlias, prevScopes);
+
+      if (!EnzymeRuntimeActivityCheck && CustomErrorHandler && constantval) {
+        if (dt.isPossiblePointer()) {
+          if (!isa<UndefValue>(orig_val) &&
+              !isa<ConstantPointerNull>(orig_val)) {
+            std::string str;
+            raw_string_ostream ss(str);
+            ss << "Mismatched activity for: " << I
+               << " const val: " << *orig_val;
+            CustomErrorHandler(str.c_str(), wrap(&I),
+                               ErrorType::MixedActivityError, gutils,
+                               wrap(orig_val));
+          }
+        }
+      }
+
       return;
     }
 
@@ -1358,6 +1374,20 @@ public:
         gutils->setPtrDiffe(&I, orig_ptr, valueop, storeBuilder, align,
                             isVolatile, ordering, syncScope, mask, prevNoAlias,
                             prevScopes);
+        if (!EnzymeRuntimeActivityCheck && CustomErrorHandler && constantval) {
+          if (dt.isPossiblePointer()) {
+            if (!isa<UndefValue>(orig_val) &&
+                !isa<ConstantPointerNull>(orig_val)) {
+              std::string str;
+              raw_string_ostream ss(str);
+              ss << "Mismatched activity for: " << I
+                 << " const val: " << *orig_val;
+              CustomErrorHandler(str.c_str(), wrap(&I),
+                                 ErrorType::MixedActivityError, gutils,
+                                 wrap(orig_val));
+            }
+          }
+        }
       }
     }
   }
@@ -1448,7 +1478,7 @@ public:
             ss << "cannot handle above cast " << I << "\n";
             if (CustomErrorHandler) {
               CustomErrorHandler(ss.str().c_str(), wrap(&I),
-                                 ErrorType::NoDerivative, nullptr);
+                                 ErrorType::NoDerivative, nullptr, nullptr);
             }
             TR.dump();
             llvm::errs() << ss.str() << "\n";
@@ -1949,7 +1979,7 @@ public:
               raw_string_ostream ss(str);
               ss << "Cannot deduce type of insertvalue " << IVI;
               CustomErrorHandler(str.c_str(), wrap(&IVI), ErrorType::NoType,
-                                 &TR.analyzer);
+                                 &TR.analyzer, nullptr);
             }
             EmitFailure("CannotDeduceType", IVI.getDebugLoc(), &IVI,
                         "failed to deduce type of insertvalue ", IVI);
@@ -2595,7 +2625,7 @@ public:
       ss << "cannot handle unknown binary operator: " << BO << "\n";
       if (CustomErrorHandler) {
         CustomErrorHandler(ss.str().c_str(), wrap(&BO), ErrorType::NoDerivative,
-                           nullptr);
+                           nullptr, nullptr);
       }
       llvm::errs() << ss.str() << "\n";
       report_fatal_error("unknown binary operator");
@@ -3057,7 +3087,7 @@ public:
       ss << "cannot handle unknown binary operator: " << BO << "\n";
       if (CustomErrorHandler) {
         CustomErrorHandler(ss.str().c_str(), wrap(&BO), ErrorType::NoDerivative,
-                           nullptr);
+                           nullptr, nullptr);
       }
       llvm::errs() << ss.str() << "\n";
       report_fatal_error("unknown binary operator");
@@ -3107,7 +3137,7 @@ public:
          << MS;
       if (CustomErrorHandler) {
         CustomErrorHandler(ss.str().c_str(), wrap(&MS), ErrorType::NoDerivative,
-                           nullptr);
+                           nullptr, nullptr);
       }
       llvm::errs() << ss.str() << "\n";
       report_fatal_error("non constant in memset");
@@ -3282,7 +3312,7 @@ public:
         raw_string_ostream ss(str);
         ss << "Cannot deduce type of memset " << MS;
         CustomErrorHandler(str.c_str(), wrap(&MS), ErrorType::NoType,
-                           &TR.analyzer);
+                           &TR.analyzer, nullptr);
       }
       EmitFailure("CannotDeduceType", MS.getDebugLoc(), &MS,
                   "failed to deduce type of memset ", MS);
@@ -3586,7 +3616,7 @@ public:
           raw_string_ostream ss(str);
           ss << "Cannot deduce type of copy " << MTI;
           CustomErrorHandler(str.c_str(), wrap(&MTI), ErrorType::NoType,
-                             &TR.analyzer);
+                             &TR.analyzer, nullptr);
         }
         EmitFailure("CannotDeduceType", MTI.getDebugLoc(), &MTI,
                     "failed to deduce type of copy ", MTI);
@@ -3979,7 +4009,7 @@ public:
         ss << "cannot handle (augmented) unknown intrinsic\n" << I;
         if (CustomErrorHandler) {
           CustomErrorHandler(ss.str().c_str(), wrap(&I),
-                             ErrorType::NoDerivative, nullptr);
+                             ErrorType::NoDerivative, nullptr, nullptr);
         }
         llvm::errs() << ss.str() << "\n";
         report_fatal_error("(augmented) unknown intrinsic");
@@ -4574,7 +4604,7 @@ public:
              << I;
         if (CustomErrorHandler) {
           CustomErrorHandler(ss.str().c_str(), wrap(&I),
-                             ErrorType::NoDerivative, nullptr);
+                             ErrorType::NoDerivative, nullptr, nullptr);
         }
         llvm::errs() << ss.str() << "\n";
         report_fatal_error("(reverse) unknown intrinsic");
@@ -5144,7 +5174,7 @@ public:
              << I;
         if (CustomErrorHandler) {
           CustomErrorHandler(ss.str().c_str(), wrap(&I),
-                             ErrorType::NoDerivative, nullptr);
+                             ErrorType::NoDerivative, nullptr, nullptr);
         }
         llvm::errs() << ss.str() << "\n";
         report_fatal_error("(forward) unknown intrinsic");
@@ -7169,7 +7199,7 @@ public:
           ss << " unhandled mpi_allreduce op: " << *orig_op << "\n";
           if (CustomErrorHandler) {
             CustomErrorHandler(ss.str().c_str(), wrap(&call),
-                               ErrorType::NoDerivative, nullptr);
+                               ErrorType::NoDerivative, nullptr, nullptr);
           }
           llvm::errs() << ss.str() << "\n";
           report_fatal_error("unhandled mpi_allreduce op");
@@ -7424,7 +7454,7 @@ public:
           ss << " unhandled mpi_allreduce op: " << *orig_op << "\n";
           if (CustomErrorHandler) {
             CustomErrorHandler(ss.str().c_str(), wrap(&call),
-                               ErrorType::NoDerivative, nullptr);
+                               ErrorType::NoDerivative, nullptr, nullptr);
           }
           llvm::errs() << ss.str() << "\n";
           report_fatal_error("unhandled mpi_allreduce op");
@@ -8315,7 +8345,7 @@ public:
       SmallVector<Value *, 8> args;
       std::vector<DIFFE_TYPE> argsInverted;
       std::map<int, Type *> gradByVal;
-      std::map<int, Attribute> structAttrs;
+      std::map<int, std::vector<Attribute>> structAttrs;
 
 #if LLVM_VERSION_MAJOR >= 14
       for (unsigned i = 0; i < call.arg_size(); ++i)
@@ -8325,15 +8355,20 @@ public:
       {
 
         if (call.paramHasAttr(i, Attribute::StructRet)) {
-          structAttrs[args.size()] =
+          structAttrs[args.size()].push_back(
 #if LLVM_VERSION_MAJOR >= 12
               // TODO persist types
-              Attribute::get(call.getContext(), "enzyme_sret");
+              Attribute::get(call.getContext(), "enzyme_sret")
           // Attribute::get(orig->getContext(), "enzyme_sret",
           // orig->getParamAttr(i, Attribute::StructRet).getValueAsType());
 #else
-              Attribute::get(call.getContext(), "enzyme_sret");
+              Attribute::get(call.getContext(), "enzyme_sret")
 #endif
+          );
+        }
+        if (call.getAttributes().hasParamAttr(i, "enzymejl_returnRoots")) {
+          structAttrs[args.size()].push_back(
+              call.getParamAttr(i, "enzymejl_returnRoots"));
         }
 
         auto argi = gutils->getNewFromOriginal(call.getArgOperand(i));
@@ -8381,30 +8416,39 @@ public:
           continue;
         }
 
-        if (call.paramHasAttr(i, Attribute::StructRet)) {
-          structAttrs[args.size()] =
-              Attribute::get(call.getContext(), "enzyme_sret");
+        if (call.getAttributes().hasParamAttr(i, "enzymejl_returnRoots")) {
           if (gutils->getWidth() == 1) {
-            structAttrs[args.size()] =
+            structAttrs[args.size()].push_back(
+                call.getParamAttr(i, "enzymejl_returnRoots"));
+          } else {
+            structAttrs[args.size()].push_back(
+                Attribute::get(call.getContext(), "enzyme_sret_v"));
+          }
+        }
+        if (call.paramHasAttr(i, Attribute::StructRet)) {
+          if (gutils->getWidth() == 1) {
+            structAttrs[args.size()].push_back(
 #if LLVM_VERSION_MAJOR >= 12
                 // TODO persist types
-                Attribute::get(call.getContext(), "enzyme_sret");
+                Attribute::get(call.getContext(), "enzyme_sret")
             // Attribute::get(orig->getContext(), "enzyme_sret",
             // orig->getParamAttr(i, Attribute::StructRet).getValueAsType());
 #else
-                Attribute::get(call.getContext(), "enzyme_sret");
+                Attribute::get(call.getContext(), "enzyme_sret")
 #endif
+            );
           } else {
-            structAttrs[args.size()] =
+            structAttrs[args.size()].push_back(
 #if LLVM_VERSION_MAJOR >= 12
                 // TODO persist types
-                Attribute::get(call.getContext(), "enzyme_sret");
+                Attribute::get(call.getContext(), "enzyme_sret")
             // Attribute::get(orig->getContext(), "enzyme_sret_v",
             // gutils->getShadowType(orig->getParamAttr(ii,
             // Attribute::StructRet).getValueAsType()));
 #else
-                Attribute::get(call.getContext(), "enzyme_sret_v");
+                Attribute::get(call.getContext(), "enzyme_sret_v")
 #endif
+            );
           }
         }
 
@@ -8515,8 +8559,9 @@ public:
             Attribute::getWithByValType(diffes->getContext(), pair.second));
       }
 #endif
-      for (auto pair : structAttrs) {
-        diffes->addParamAttr(pair.first, pair.second);
+      for (auto &pair : structAttrs) {
+        for (auto val : pair.second)
+          diffes->addParamAttr(pair.first, val);
       }
 
       auto newcall = gutils->getNewFromOriginal(&call);
@@ -8577,7 +8622,7 @@ public:
     SmallVector<Instruction *, 4> userReplace;
     std::map<int, Type *> preByVal;
     std::map<int, Type *> gradByVal;
-    std::map<int, Attribute> structAttrs;
+    std::map<int, std::vector<Attribute>> structAttrs;
 
     bool replaceFunction = false;
 
@@ -8603,18 +8648,23 @@ public:
         preByVal[pre_args.size()] = call.getParamByValType(i);
       }
 #endif
+      if (call.getAttributes().hasParamAttr(i, "enzymejl_returnRoots")) {
+        structAttrs[pre_args.size()].push_back(
+            call.getParamAttr(i, "enzymejl_returnRoots"));
+      }
       if (call.paramHasAttr(i, Attribute::StructRet)) {
-        structAttrs[pre_args.size()] =
+        structAttrs[pre_args.size()].push_back(
 #if LLVM_VERSION_MAJOR >= 12
             // TODO persist types
-            Attribute::get(call.getContext(), "enzyme_sret");
+            Attribute::get(call.getContext(), "enzyme_sret")
         // Attribute::get(orig->getContext(), "enzyme_sret",
         // orig->getParamAttr(ii, Attribute::StructRet).getValueAsType());
 #else
             // TODO persist types
-            Attribute::get(call.getContext(), "enzyme_sret");
+            Attribute::get(call.getContext(), "enzyme_sret")
         // Attribute::get(orig->getContext(), "enzyme_sret");
 #endif
+        );
       }
 
       auto argTy = gutils->getDiffeType(call.getArgOperand(i), foreignFunction);
@@ -8681,28 +8731,39 @@ public:
       auto argType = argi->getType();
 
       if (argTy == DIFFE_TYPE::DUP_ARG || argTy == DIFFE_TYPE::DUP_NONEED) {
+        if (call.getAttributes().hasParamAttr(i, "enzymejl_returnRoots")) {
+          if (gutils->getWidth() == 1) {
+            structAttrs[pre_args.size()].push_back(
+                call.getParamAttr(i, "enzymejl_returnRoots"));
+          } else {
+            structAttrs[pre_args.size()].push_back(
+                Attribute::get(call.getContext(), "enzymejl_returnRoots_v"));
+          }
+        }
         if (call.paramHasAttr(i, Attribute::StructRet)) {
           if (gutils->getWidth() == 1) {
-            structAttrs[pre_args.size()] =
+            structAttrs[pre_args.size()].push_back(
 #if LLVM_VERSION_MAJOR >= 12
                 // TODO persist types
-                Attribute::get(call.getContext(), "enzyme_sret");
+                Attribute::get(call.getContext(), "enzyme_sret")
             // Attribute::get(orig->getContext(), "enzyme_sret",
             // orig->getParamAttr(ii, Attribute::StructRet).getValueAsType());
 #else
-                Attribute::get(call.getContext(), "enzyme_sret");
+                Attribute::get(call.getContext(), "enzyme_sret")
 #endif
+            );
           } else {
-            structAttrs[pre_args.size()] =
+            structAttrs[pre_args.size()].push_back(
 #if LLVM_VERSION_MAJOR >= 12
                 // TODO persist types
-                Attribute::get(call.getContext(), "enzyme_sret_v");
+                Attribute::get(call.getContext(), "enzyme_sret_v")
             // Attribute::get(orig->getContext(), "enzyme_sret_v",
             // gutils->getShadowType(orig->getParamAttr(ii,
             // Attribute::StructRet).getValueAsType()));
 #else
-                Attribute::get(call.getContext(), "enzyme_sret_v");
+                Attribute::get(call.getContext(), "enzyme_sret_v")
 #endif
+            );
           }
         }
         if (Mode != DerivativeMode::ReverseModePrimal) {
@@ -8796,7 +8857,7 @@ public:
           ss << "cannot find shadow for " << *callval;
           if (CustomErrorHandler) {
             CustomErrorHandler(ss.str().c_str(), wrap(&call),
-                               ErrorType::NoDerivative, nullptr);
+                               ErrorType::NoDerivative, nullptr, nullptr);
           }
 
           llvm::errs() << *gutils->oldFunc << "\n";
@@ -8952,8 +9013,9 @@ public:
                                                       pair.second));
         }
 #endif
-        for (auto pair : structAttrs) {
-          augmentcall->addParamAttr(pair.first, pair.second);
+        for (auto &pair : structAttrs) {
+          for (auto val : pair.second)
+            augmentcall->addParamAttr(pair.first, val);
         }
 
         if (!augmentcall->getType()->isVoidTy())
@@ -9326,8 +9388,9 @@ public:
                                            diffes->getContext(), pair.second));
     }
 #endif
-    for (auto pair : structAttrs) {
-      diffes->addParamAttr(pair.first, pair.second);
+    for (auto &pair : structAttrs) {
+      for (auto val : pair.second)
+        diffes->addParamAttr(pair.first, val);
     }
 
     unsigned structidx = 0;
@@ -9627,72 +9690,16 @@ public:
 
       orig_args.push_back(orig_argi);
 
-      // #if LLVM_VERSION_MAJOR >= 9
-      //         if (call.isByValArgument(i)) {
-      //           preByVal[pre_args.size()] = call.getParamByValType(i);
-      //         }
-      // #endif
-      //         if (call.paramHasAttr(i, Attribute::StructRet)) {
-      //           structAttrs[pre_args.size()] =
-      // #if LLVM_VERSION_MAJOR >= 12
-      //           // TODO persist types
-      //           Attribute::get(call.getContext(), "enzyme_sret");
-      //           // Attribute::get(orig->getContext(), "enzyme_sret",
-      //           // orig->getParamAttr(ii,
-      //           Attribute::StructRet).getValueAsType());
-      // #else
-      //           // TODO persist types
-      //           Attribute::get(call.getContext(), "enzyme_sret");
-      //           // Attribute::get(orig->getContext(), "enzyme_sret");
-      // #endif
-      //         }
+      // TODO sret
 
       pre_args.push_back(argi);
 
-      //        bool writeOnlyNoCapture = true;
-      // #if LLVM_VERSION_MAJOR >= 8
-      //        if (!call.doesNotCapture(i))
-      // #else
-      //          if (!(call.dataOperandHasImpliedAttr(i + 1,
-      //          Attribute::NoCapture) ||
-      //                (called && called->hasParamAttribute(i,
-      //                Attribute::NoCapture))))
-      // #endif
-      //          {
-      //            writeOnlyNoCapture = false;
-      //          }
-      // #if LLVM_VERSION_MAJOR >= 14
-      //        if (!call.onlyWritesMemory(i))
-      // #else
-      //          if (!(call.dataOperandHasImpliedAttr(i + 1,
-      //          Attribute::WriteOnly) ||
-      //                call.dataOperandHasImpliedAttr(i + 1,
-      //                Attribute::ReadNone) || (likelihoodfn &&
-      //                (likelihoodfn->hasParamAttribute(i,
-      //                Attribute::WriteOnly) ||
-      //                                  likelihoodfn->hasParamAttribute(i,
-      //                                  Attribute::ReadNone)))))
-      // #endif
-      //          {
-      //            writeOnlyNoCapture = false;
-      //          }
+      // TODO writeOnly
 
       if (Mode != DerivativeMode::ReverseModePrimal) {
         IRBuilder<> Builder2(call.getParent());
         getReverseBuilder(Builder2);
-        // #if LLVM_VERSION_MAJOR >= 9
-        //           if (call.isByValArgument(i)) {
-        //             gradByVal[args.size()] = call.getParamByValType(i);
-        //           }
-        // #endif
-
-        //          if (writeOnlyNoCapture && !replaceFunction) {
-        //            if (EnzymeZeroCache)
-        //              argi =
-        //              ConstantPointerNull::get(cast<PointerType>(argi->getType()));
-        //            else
-        //              argi = UndefValue::get(argi->getType());
-        //          }
+        // TODO byVal
         args.push_back(lookup(argi, Builder2));
       }
 
@@ -9705,47 +9712,15 @@ public:
       auto argType = argi->getType();
 
       if (argTy == DIFFE_TYPE::DUP_ARG || argTy == DIFFE_TYPE::DUP_NONEED) {
-        //          if (call.paramHasAttr(i, Attribute::StructRet)) {
-        //            if (gutils->getWidth() == 1) {
-        //              structAttrs[pre_args.size()] =
-        // #if LLVM_VERSION_MAJOR >= 12
-        //              // TODO persist types
-        //              Attribute::get(call.getContext(), "enzyme_sret");
-        //              // Attribute::get(orig->getContext(), "enzyme_sret",
-        //              // orig->getParamAttr(ii,
-        //              Attribute::StructRet).getValueAsType());
-        // #else
-        //              Attribute::get(call.getContext(), "enzyme_sret");
-        // #endif
-        //            } else {
-        //              structAttrs[pre_args.size()] =
-        // #if LLVM_VERSION_MAJOR >= 12
-        //              // TODO persist types
-        //              Attribute::get(call.getContext(), "enzyme_sret_v");
-        //              // Attribute::get(orig->getContext(), "enzyme_sret_v",
-        //              // gutils->getShadowType(orig->getParamAttr(ii,
-        //              // Attribute::StructRet).getValueAsType()));
-        // #else
-        //              Attribute::get(call.getContext(), "enzyme_sret_v");
-        // #endif
-        //            }
-        //          }
+        // TODO sret
         if (Mode != DerivativeMode::ReverseModePrimal) {
           IRBuilder<> Builder2(call.getParent());
           getReverseBuilder(Builder2);
 
           Value *darg = nullptr;
 
-          //            if (writeOnlyNoCapture && !replaceFunction &&
-          //                TR.query(origArgi)[{-1, -1}] == BaseType::Pointer) {
-          //              if (EnzymeZeroCache)
-          //                darg =
-          //                ConstantPointerNull::get(cast<PointerType>(argi->getType()));
-          //              else
-          //                darg = UndefValue::get(argi->getType());
-          //            } else {
+          // TODO writeOnly
           darg = gutils->invertPointerM(orig_argi, Builder2);
-          //            }
           args.push_back(lookup(darg, Builder2));
         }
         pre_args.push_back(gutils->invertPointerM(orig_argi, BuilderZ));

@@ -2115,6 +2115,10 @@ F->getParamAttribute(ii, Attribute::StructRet).getValueAsType())); #else
 #endif
       */
     }
+    if (F->getAttributes().hasParamAttr(ii, "enzymejl_returnRoots")) {
+      NewF->addParamAttr(
+          jj, F->getAttributes().getParamAttr(ii, "enzymejl_returnRoots"));
+    }
     if (constant_args[ii] == DIFFE_TYPE::CONSTANT) {
       if (!i->hasByValAttr())
         constants.insert(i);
@@ -2139,6 +2143,10 @@ F->getParamAttribute(ii, Attribute::StructRet).getValueAsType())); #else
       // TODO: find a way to keep sret for shadow
       if (F->hasParamAttribute(ii, Attribute::StructRet)) {
         if (width == 1) {
+          if (F->getAttributes().hasParamAttr(ii, "enzymejl_returnRoots")) {
+            NewF->addParamAttr(jj, F->getAttributes().getParamAttr(
+                                       ii, "enzymejl_returnRoots"));
+          }
 #if LLVM_VERSION_MAJOR >= 12
           // TODO persist types
           NewF->addParamAttr(jj + 1,
@@ -2151,6 +2159,10 @@ F->getParamAttribute(ii, Attribute::StructRet).getValueAsType())); #else
                              Attribute::get(F->getContext(), "enzyme_sret"));
 #endif
         } else {
+          if (F->getAttributes().hasParamAttr(ii, "enzymejl_returnRoots")) {
+            NewF->addParamAttr(
+                jj, Attribute::get(F->getContext(), "enzymejl_returnRoots_v"));
+          }
 #if LLVM_VERSION_MAJOR >= 12
           // TODO persist types
           NewF->addParamAttr(jj + 1,

@@ -2266,7 +2266,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       ss << "No augmented forward pass found for " + todiff->getName() << "\n";
       ss << *todiff << "\n";
       CustomErrorHandler(ss.str().c_str(), wrap(todiff),
-                         ErrorType::NoDerivative, nullptr);
+                         ErrorType::NoDerivative, nullptr, nullptr);
     }
     llvm::errs() << "mod: " << *todiff->getParent() << "\n";
     llvm::errs() << *todiff << "\n";
@@ -2642,7 +2642,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     if (nf->hasParamAttribute(attrIndex, Attribute::NoAlias)) {
       NewF->addParamAttr(attrIndex, Attribute::NoAlias);
     }
-    for (auto name : {"enzyme_sret", "enzyme_sret_v"})
+    for (auto name : {"enzyme_sret", "enzyme_sret_v", "enzymejl_returnRoots",
+                      "enzymejl_returnRoots_v"})
       if (nf->getAttributes().hasParamAttr(attrIndex, name)) {
         NewF->addParamAttr(attrIndex,
                            nf->getAttributes().getParamAttr(attrIndex, name));
@@ -3154,7 +3155,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
         raw_string_ostream ss(str);
         ss << "Cannot deduce type of phi " << *orig;
         CustomErrorHandler(str.c_str(), wrap(orig), ErrorType::NoType,
-                           &gutils->TR.analyzer);
+                           &gutils->TR.analyzer, nullptr);
       }
       llvm::errs() << *gutils->oldFunc->getParent() << "\n";
       llvm::errs() << *gutils->oldFunc << "\n";
@@ -3844,7 +3845,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     ss << *key.todiff << "\n";
     if (CustomErrorHandler) {
       CustomErrorHandler(ss.str().c_str(), wrap(key.todiff),
-                         ErrorType::NoDerivative, nullptr);
+                         ErrorType::NoDerivative, nullptr, nullptr);
     } else {
       llvm_unreachable(ss.str().c_str());
     }
@@ -4452,7 +4453,7 @@ Function *EnzymeLogic::CreateForwardDiff(
     ss << "No forward derivative found for " + todiff->getName() << "\n";
     ss << *todiff << "\n";
     CustomErrorHandler(s.c_str(), wrap(todiff), ErrorType::NoDerivative,
-                       nullptr);
+                       nullptr, nullptr);
   }
   if (todiff->empty())
     llvm::errs() << *todiff << "\n";
@@ -4976,7 +4977,7 @@ llvm::Value *EnzymeLogic::CreateNoFree(llvm::Value *todiff) {
     ss << "No create nofree of unknown value\n";
     ss << *todiff << "\n";
     CustomErrorHandler(ss.str().c_str(), wrap(todiff), ErrorType::NoDerivative,
-                       nullptr);
+                       nullptr, nullptr);
   }
   llvm::errs() << " unhandled, create no free of: " << *todiff << "\n";
   llvm_unreachable("unhandled, create no free");
@@ -5081,7 +5082,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
       ss << "No create nofree of empty function " << F->getName() << "\n";
       ss << *F << "\n";
       CustomErrorHandler(ss.str().c_str(), wrap(F), ErrorType::NoDerivative,
-                         nullptr);
+                         nullptr, nullptr);
     }
     llvm::errs() << " unhandled, create no free of empty function: " << *F
                  << "\n";

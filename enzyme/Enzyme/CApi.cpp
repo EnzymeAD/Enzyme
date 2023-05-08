@@ -839,6 +839,11 @@ LLVMMetadataRef EnzymeAnonymousAliasScope(LLVMMetadataRef domain,
 uint8_t EnzymeLowerSparsification(LLVMValueRef F, uint8_t replaceAll) {
   return LowerSparsification(cast<Function>(unwrap(F)), replaceAll != 0);
 }
+
+void EnzymeAttributeKnownFunctions(LLVMValueRef FC) {
+  attributeKnownFunctions(*cast<Function>(unwrap(FC)));
+}
+
 void EnzymeSetCalledFunction(LLVMValueRef C_CI, LLVMValueRef C_F,
                              uint64_t *argrem, uint64_t num_argrem) {
   auto CI = cast<CallInst>(unwrap(C_CI));
@@ -1009,11 +1014,6 @@ LLVMValueRef EnzymeCloneFunctionWithoutReturnOrArgs(LLVMValueRef FC,
     SmallVector<uint64_t, 1> nextidx;
     for (size_t i = 0; i < num_argrem; i++) {
       auto val = argrem[i];
-      size_t cnt = 0;
-      for (auto idx : previdx) {
-        if (idx <= val + cnt)
-          cnt++;
-      }
       nextidx.push_back(val);
     }
 
@@ -1021,11 +1021,11 @@ LLVMValueRef EnzymeCloneFunctionWithoutReturnOrArgs(LLVMValueRef FC,
     size_t nextcnt = 0;
     SmallVector<uint64_t, 1> out;
     while (prevcnt < previdx.size() && nextcnt < nextidx.size()) {
-      if (previdx[prevcnt] < nextidx[nextcnt]) {
+      if (previdx[prevcnt] <= nextidx[nextcnt] + prevcnt) {
         out.push_back(previdx[prevcnt]);
         prevcnt++;
       } else {
-        out.push_back(nextidx[nextcnt]);
+        out.push_back(nextidx[nextcnt] + prevcnt);
         nextcnt++;
       }
     }
@@ -1034,7 +1034,7 @@ LLVMValueRef EnzymeCloneFunctionWithoutReturnOrArgs(LLVMValueRef FC,
       prevcnt++;
     }
     while (nextcnt < nextidx.size()) {
-      out.push_back(nextidx[nextcnt]);
+      out.push_back(nextidx[nextcnt] + prevcnt);
       nextcnt++;
     }
 
