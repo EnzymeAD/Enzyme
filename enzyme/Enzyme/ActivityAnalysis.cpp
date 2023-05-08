@@ -438,7 +438,11 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
     return true;
   }
 
-  auto Name = F->getName();
+  auto Name = getFuncNameFromCall(CI);
+
+  // Only the 1-th arg impacts activity
+  if (Name == "jl_reshape_array" || Name == "ijl_reshape_array")
+    return val != CI->getArgOperand(1);
 
   // Allocations, deallocations, and c++ guards don't impact the activity
   // of arguments
@@ -556,24 +560,60 @@ static inline void propagateArgumentInformation(
     TargetLibraryInfo &TLI, CallInst &CI,
     std::function<bool(Value *)> propagateFromOperand) {
 
-  if (auto F = CI.getCalledFunction()) {
-    // These functions are known to only have the first argument impact
-    // the activity of the call instruction
-    auto Name = F->getName();
-    if (Name == "lgamma" || Name == "lgammaf" || Name == "lgammal" ||
-        Name == "lgamma_r" || Name == "lgammaf_r" || Name == "lgammal_r" ||
-        Name == "__lgamma_r_finite" || Name == "__lgammaf_r_finite" ||
-        Name == "__lgammal_r_finite") {
+  // These functions are known to only have the first argument impact
+  // the activity of the call instruction
+  auto Name = getFuncNameFromCall(&CI);
+  if (Name == "lgamma" || Name == "lgammaf" || Name == "lgammal" ||
+      Name == "lgamma_r" || Name == "lgammaf_r" || Name == "lgammal_r" ||
+      Name == "__lgamma_r_finite" || Name == "__lgammaf_r_finite" ||
+      Name == "__lgammal_r_finite") {
 
-      propagateFromOperand(CI.getArgOperand(0));
-      return;
+    propagateFromOperand(CI.getArgOperand(0));
+    return;
+  }
+  if (Name == "frexp" || Name == "frexpf" || Name == "frexpl") {
+    propagateFromOperand(CI.getOperand(0));
+    return;
+  }
+  if (Name == "Faddeeva_erf" || Name == "Faddeeva_erfc" ||
+      Name == "Faddeeva_erfcx" || Name == "Faddeeva_erfi" ||
+      Name == "Faddeeva_dawson") {
+#if LLVM_VERSION_MAJOR >= 14
+    for (size_t i = 0; i < CI.arg_size() - 1; i++)
+#else
+    for (size_t i = 0; i < CI.getNumArgOperands() - 1; i++)
+#endif
+    {
+      propagateFromOperand(CI.getOperand(i));
     }
+    return;
+  }
 
-    // Allocations, deallocations, and c++ guards are fully inactive
-    if (isAllocationFunction(Name, TLI) || isDeallocationFunction(Name, TLI) ||
-        Name == "__cxa_guard_acquire" || Name == "__cxa_guard_release" ||
-        Name == "__cxa_guard_abort")
-      return;
+  if (Name == "julia.call" || Name == "julia.call2") {
+#if LLVM_VERSION_MAJOR >= 14
+    for (size_t i = 1; i < CI.arg_size(); i++)
+#else
+    for (size_t i = 1; i < CI.getNumArgOperands(); i++)
+#endif
+    {
+      propagateFromOperand(CI.getOperand(i));
+    }
+    return;
+  }
+
+  // Only the 1-th arg impacts activity
+  if (Name == "jl_reshape_array" || Name == "ijl_reshape_array") {
+    propagateFromOperand(CI.getArgOperand(1));
+    return;
+  }
+
+  // Allocations, deallocations, and c++ guards are fully inactive
+  if (isAllocationFunction(Name, TLI) || isDeallocationFunction(Name, TLI) ||
+      Name == "__cxa_guard_acquire" || Name == "__cxa_guard_release" ||
+      Name == "__cxa_guard_abort")
+    return;
+
+  if (auto F = getFunctionFromCall(&CI)) {
 
     /// Only the first argument (magnitude) of copysign is active
     if (F->getIntrinsicID() == Intrinsic::copysign) {
@@ -591,36 +631,6 @@ static inline void propagateArgumentInformation(
         F->getIntrinsicID() == Intrinsic::memmove) {
       propagateFromOperand(CI.getOperand(0));
       propagateFromOperand(CI.getOperand(1));
-      return;
-    }
-
-    if (Name == "frexp" || Name == "frexpf" || Name == "frexpl") {
-      propagateFromOperand(CI.getOperand(0));
-      return;
-    }
-    if (Name == "Faddeeva_erf" || Name == "Faddeeva_erfc" ||
-        Name == "Faddeeva_erfcx" || Name == "Faddeeva_erfi" ||
-        Name == "Faddeeva_dawson") {
-#if LLVM_VERSION_MAJOR >= 14
-      for (size_t i = 0; i < CI.arg_size() - 1; i++)
-#else
-      for (size_t i = 0; i < CI.getNumArgOperands() - 1; i++)
-#endif
-      {
-        propagateFromOperand(CI.getOperand(i));
-      }
-      return;
-    }
-
-    if (Name == "julia.call" || Name == "julia.call2") {
-#if LLVM_VERSION_MAJOR >= 14
-      for (size_t i = 1; i < CI.arg_size(); i++)
-#else
-      for (size_t i = 1; i < CI.getNumArgOperands(); i++)
-#endif
-      {
-        propagateFromOperand(CI.getOperand(i));
-      }
       return;
     }
   }
@@ -704,13 +714,14 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
   }
 
   if (auto CI = dyn_cast<CallInst>(I)) {
-    if (CI->hasFnAttr("enzyme_active")) {
+    if (CI->hasFnAttr("enzyme_active") || CI->hasFnAttr("enzyme_active_inst")) {
       if (EnzymePrintActivity)
         llvm::errs() << "forced active " << *I << "\n";
       ActiveInstructions.insert(I);
       return false;
     }
-    if (CI->hasFnAttr("enzyme_inactive")) {
+    if (CI->hasFnAttr("enzyme_inactive") ||
+        CI->hasFnAttr("enzyme_inactive_inst")) {
       if (EnzymePrintActivity)
         llvm::errs() << "forced inactive " << *I << "\n";
       InsertConstantInstruction(TR, I);
@@ -719,13 +730,15 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
     auto called = getFunctionFromCall(CI);
 
     if (called) {
-      if (called->hasFnAttribute("enzyme_active")) {
+      if (called->hasFnAttribute("enzyme_active") ||
+          called->hasFnAttribute("enzyme_active_inst")) {
         if (EnzymePrintActivity)
           llvm::errs() << "forced active " << *I << "\n";
         ActiveInstructions.insert(I);
         return false;
       }
-      if (called->hasFnAttribute("enzyme_inactive")) {
+      if (called->hasFnAttribute("enzyme_inactive") ||
+          called->hasFnAttribute("enzyme_inactive_inst")) {
         if (EnzymePrintActivity)
           llvm::errs() << "forced inactive " << *I << "\n";
         InsertConstantInstruction(TR, I);
@@ -1228,13 +1241,14 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
   }
 
   if (auto CI = dyn_cast<CallInst>(Val)) {
-    if (CI->hasFnAttr("enzyme_active")) {
+    if (CI->hasFnAttr("enzyme_active") || CI->hasFnAttr("enzyme_active_val")) {
       if (EnzymePrintActivity)
         llvm::errs() << "forced active val " << *Val << "\n";
       ActiveValues.insert(Val);
       return false;
     }
-    if (CI->hasFnAttr("enzyme_inactive")) {
+    if (CI->hasFnAttr("enzyme_inactive") ||
+        CI->hasFnAttr("enzyme_inactive_val")) {
       if (EnzymePrintActivity)
         llvm::errs() << "forced inactive val " << *Val << "\n";
       InsertConstantValue(TR, Val);
@@ -1243,13 +1257,15 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
     auto called = getFunctionFromCall(CI);
 
     if (called) {
-      if (called->hasFnAttribute("enzyme_active")) {
+      if (called->hasFnAttribute("enzyme_active") ||
+          called->hasFnAttribute("enzyme_active_val")) {
         if (EnzymePrintActivity)
           llvm::errs() << "forced active val " << *Val << "\n";
         ActiveValues.insert(Val);
         return false;
       }
-      if (called->hasFnAttribute("enzyme_inactive")) {
+      if (called->hasFnAttribute("enzyme_inactive") ||
+          called->hasFnAttribute("enzyme_inactive_val")) {
         if (EnzymePrintActivity)
           llvm::errs() << "forced inactive val " << *Val << "\n";
         InsertConstantValue(TR, Val);
@@ -1379,7 +1395,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
           ReEvaluateValueIfInactiveValue[II->getOperand(0)].insert(TmpOrig);
         }
       } else if (auto op = dyn_cast<CallInst>(TmpOrig)) {
-        if (op->hasFnAttr("enzyme_inactive")) {
+        if (op->hasFnAttr("enzyme_inactive") ||
+            op->hasFnAttr("enzyme_inactive_val")) {
           InsertConstantValue(TR, Val);
           insertConstantsFrom(TR, *UpHypothesis);
           return true;
@@ -1388,7 +1405,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
 
         StringRef funcName = getFuncNameFromCall(op);
 
-        if (called && called->hasFnAttribute("enzyme_inactive")) {
+        if (called && (called->hasFnAttribute("enzyme_inactive") ||
+                       called->hasFnAttribute("enzyme_inactive_val"))) {
           InsertConstantValue(TR, Val);
           insertConstantsFrom(TR, *UpHypothesis);
           return true;
@@ -1687,7 +1705,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
 
       // If this is a malloc or free, this doesn't impact the activity
       if (auto CI = dyn_cast<CallInst>(I)) {
-        if (CI->hasFnAttr("enzyme_inactive"))
+        if (CI->hasFnAttr("enzyme_inactive") ||
+            CI->hasFnAttr("enzyme_inactive_inst"))
           return false;
 
 #if LLVM_VERSION_MAJOR >= 11
@@ -1704,7 +1723,8 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
         auto F = getFunctionFromCall(CI);
         StringRef funcName = getFuncNameFromCall(CI);
 
-        if (F && F->hasFnAttribute("enzyme_inactive")) {
+        if (F && (F->hasFnAttribute("enzyme_inactive") ||
+                  F->hasFnAttribute("enzyme_inactive_inst"))) {
           return false;
         }
         if (isAllocationFunction(funcName, TLI) ||
@@ -2354,7 +2374,8 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
   }
 
   if (auto op = dyn_cast<CallInst>(inst)) {
-    if (op->hasFnAttr("enzyme_inactive")) {
+    if (op->hasFnAttr("enzyme_inactive") ||
+        op->hasFnAttr("enzyme_inactive_val")) {
       return true;
     }
     // Calls to print/assert/cxa guard are definitionally inactive
@@ -2367,7 +2388,8 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
     StringRef funcName = getFuncNameFromCall(op);
     auto called = getFunctionFromCall(op);
 
-    if (called && called->hasFnAttribute("enzyme_inactive")) {
+    if (called && (called->hasFnAttribute("enzyme_inactive") ||
+                   called->hasFnAttribute("enzyme_inactive_val"))) {
       return true;
     }
     if (funcName == "free" || funcName == "_ZdlPv" || funcName == "_ZdlPvm" ||
