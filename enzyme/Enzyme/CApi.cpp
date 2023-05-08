@@ -1049,4 +1049,7 @@ LLVMValueRef EnzymeCloneFunctionWithoutReturnOrArgs(LLVMValueRef FC,
   }
   return wrap(NewF);
 }
+LLVMTypeRef EnzymeAllocaType(LLVMValueRef V) {
+  return wrap(cast<AllocaInst>(unwrap(V))->getAllocatedType());
+}
 }
