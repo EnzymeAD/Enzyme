@@ -69,13 +69,13 @@ std::map<std::string, std::function<llvm::CallInst *(IRBuilder<> &, Value *)>>
 
 std::map<
     std::string,
-    std::pair<std::function<void(IRBuilder<> &, CallInst *, GradientUtils &,
+    std::pair<std::function<bool(IRBuilder<> &, CallInst *, GradientUtils &,
                                  Value *&, Value *&, Value *&)>,
               std::function<void(IRBuilder<> &, CallInst *,
                                  DiffeGradientUtils &, Value *)>>>
     customCallHandlers;
 
-std::map<std::string, std::function<void(IRBuilder<> &, CallInst *,
+std::map<std::string, std::function<bool(IRBuilder<> &, CallInst *,
                                          GradientUtils &, Value *&, Value *&)>>
     customFwdCallHandlers;
 

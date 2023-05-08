@@ -11072,9 +11072,7 @@ public:
 
     if (Mode == DerivativeMode::ForwardMode) {
       auto found = customFwdCallHandlers.find(funcName.str());
-      if (found != customFwdCallHandlers.end() &&
-          (!gutils->isConstantValue(&call) ||
-           !gutils->isConstantInstruction(&call))) {
+      if (found != customFwdCallHandlers.end()) {
         Value *invertedReturn = nullptr;
         auto ifound = gutils->invertedPointers.find(&call);
         if (ifound != gutils->invertedPointers.end()) {
@@ -11083,7 +11081,13 @@ public:
 
         Value *normalReturn = subretused ? newCall : nullptr;
 
-        found->second(BuilderZ, &call, *gutils, normalReturn, invertedReturn);
+        bool noMod = found->second(BuilderZ, &call, *gutils, normalReturn,
+                                   invertedReturn);
+        if (noMod) {
+          if (subretused)
+            assert(normalReturn == newCall);
+          eraseIfUnused(call);
+        }
 
         if (ifound != gutils->invertedPointers.end()) {
           auto placeholder = cast<PHINode>(&*ifound->second);
@@ -11148,8 +11152,13 @@ public:
 
         if (Mode == DerivativeMode::ReverseModePrimal ||
             Mode == DerivativeMode::ReverseModeCombined) {
-          found->second.first(BuilderZ, &call, *gutils, normalReturn,
-                              invertedReturn, tape);
+          bool noMod = found->second.first(BuilderZ, &call, *gutils,
+                                           normalReturn, invertedReturn, tape);
+          if (noMod) {
+            if (subretused)
+              assert(normalReturn == newCall);
+            eraseIfUnused(call);
+          }
           if (tape) {
             tapeType = tape->getType();
             gutils->cacheForReverse(BuilderZ, tape,
