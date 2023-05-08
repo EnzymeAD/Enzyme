@@ -1222,8 +1222,23 @@ static inline llvm::Value *getBaseObject(llvm::Value *V) {
       }
     } else if (auto *Call = llvm::dyn_cast<llvm::CallInst>(V)) {
       auto funcName = getFuncNameFromCall(Call);
+      auto AttrList = Call->getAttributes().getAttributes(
+          llvm::AttributeList::FunctionIndex);
+      if (AttrList.hasAttribute("enzyme_pointermath")) {
+        size_t res;
+        bool failed = AttrList.getAttribute("enzyme_pointermath")
+                          .getValueAsString()
+                          .getAsInteger(10, res);
+        assert(!failed);
+        V = Call->getArgOperand(res);
+        continue;
+      }
       if (funcName == "julia.pointer_from_objref") {
         V = Call->getArgOperand(0);
+        continue;
+      }
+      if (funcName == "jl_reshape_array" || funcName == "ijl_reshape_array") {
+        V = Call->getArgOperand(1);
         continue;
       }
       if (funcName.contains("__enzyme_todense")) {
@@ -1238,6 +1253,17 @@ static inline llvm::Value *getBaseObject(llvm::Value *V) {
         }
       }
       if (auto fn = getFunctionFromCall(Call)) {
+        auto AttrList = fn->getAttributes().getAttributes(
+            llvm::AttributeList::FunctionIndex);
+        if (AttrList.hasAttribute("enzyme_pointermath")) {
+          size_t res;
+          bool failed = AttrList.getAttribute("enzyme_pointermath")
+                            .getValueAsString()
+                            .getAsInteger(10, res);
+          assert(!failed);
+          V = Call->getArgOperand(res);
+          continue;
+        }
         bool found = false;
         for (auto &arg : fn->args()) {
           if (arg.hasAttribute(llvm::Attribute::Returned)) {
