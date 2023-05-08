@@ -12,8 +12,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/ADT/SmallSet.h"
-#include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/PrettyStackTrace.h"
@@ -109,22 +109,23 @@ void getIntrinsic(raw_ostream &os, std::string callval, std::string FT,
   os << "  auto " << cconv << " = call.getCallingConv();\n";
 }
 
-llvm::raw_ostream &operator<<(raw_ostream& os, StringMap<std::string> &C) {
-    os << "{";
-    bool first = true;
-    for (auto &pair : C) {
-        if (!first) os << ", ";
-        os << pair.first() << ":" << pair.second;
-        first = false;
-    }
-    return os << "}";
+llvm::raw_ostream &operator<<(raw_ostream &os, StringMap<std::string> &C) {
+  os << "{";
+  bool first = true;
+  for (auto &pair : C) {
+    if (!first)
+      os << ", ";
+    os << pair.first() << ":" << pair.second;
+    first = false;
+  }
+  return os << "}";
 }
 
 void initializeNames(raw_ostream &os, Init *resultTree) {
   if (DagInit *resultRoot = dyn_cast<DagInit>(resultTree)) {
-      for (size_t i=0; i<resultRoot->arg_size(); i++) {
-        auto arg = resultRoot->getArg(i);
-        auto name = resultRoot->getArgName(i);
+    for (size_t i = 0; i < resultRoot->arg_size(); i++) {
+      auto arg = resultRoot->getArg(i);
+      auto name = resultRoot->getArgName(i);
       if (isa<UnsetInit>(arg) && name) {
         continue;
       }
@@ -136,7 +137,7 @@ void initializeNames(raw_ostream &os, Init *resultTree) {
     }
   } else if (ListInit *lst = dyn_cast<ListInit>(resultTree)) {
     for (auto elem : *lst)
-        initializeNames(os, elem);
+      initializeNames(os, elem);
   }
 }
 
@@ -154,32 +155,40 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
         os << "({  \n";
         os << "    Type* T = call.getType();\n";
         for (auto i : retidx) {
-            os << "if (auto AT = dyn_cast<ArrayType>(T)) T = AT->getElementType();\n";
-            os << "else if (auto AT = dyn_cast<VectorType>(T)) T = AT->getElementType();\n";
-            os << "else if (auto AT = dyn_cast<StructType>(T)) T = AT->getElementType((unsigned)" << i << ");\n";
+          os << "if (auto AT = dyn_cast<ArrayType>(T)) T = "
+                "AT->getElementType();\n";
+          os << "else if (auto AT = dyn_cast<VectorType>(T)) T = "
+                "AT->getElementType();\n";
+          os << "else if (auto AT = dyn_cast<StructType>(T)) T = "
+                "AT->getElementType((unsigned)"
+             << i << ");\n";
         }
-            os << "Value *out = UndefValue::get(gutils->getShadowType(T));\n";
+        os << "Value *out = UndefValue::get(gutils->getShadowType(T));\n";
 
-            os << "            for(unsigned int idx=0, W=gutils->getWidth(); idx<W; idx++) {\n";
+        os << "            for(unsigned int idx=0, W=gutils->getWidth(); "
+              "idx<W; idx++) {\n";
 
-            os << " Value *prev = (gutils->getWidth() == 1) ? gutils->extractMeta(" << builder << ", dif, ArrayRef<unsigned>({";
-      bool first = true;
-      for (auto ind : retidx) {
-        if (!first)
-        os << ", ";
-        os << ind;
-        first = false;
-      }
-      os << "})) : gutils->extractMeta(" << builder << ", dif, ArrayRef<unsigned>({idx";
-      for (auto ind : retidx) {
-        os << ", ";
-        os << ind;
-        first = false;
-      }
-      os << "}));\n";
-            os << "              out = (gutils->getWidth() > 1) ? Builder2.CreateInsertValue(out, prev, idx) : prev;\n";
-            os << "            }\n";
-            os << "            out; })\n";
+        os << " Value *prev = (gutils->getWidth() == 1) ? gutils->extractMeta("
+           << builder << ", dif, ArrayRef<unsigned>({";
+        bool first = true;
+        for (auto ind : retidx) {
+          if (!first)
+            os << ", ";
+          os << ind;
+          first = false;
+        }
+        os << "})) : gutils->extractMeta(" << builder
+           << ", dif, ArrayRef<unsigned>({idx";
+        for (auto ind : retidx) {
+          os << ", ";
+          os << ind;
+          first = false;
+        }
+        os << "}));\n";
+        os << "              out = (gutils->getWidth() > 1) ? "
+              "Builder2.CreateInsertValue(out, prev, idx) : prev;\n";
+        os << "            }\n";
+        os << "            out; })\n";
       }
       return true;
     } else if (opName == "ConstantFP" || Def->isSubClassOf("ConstantFP")) {
@@ -286,14 +295,15 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
         vectorValued.push_back(false);
         continue;
       }
-      vectorValued.push_back(
-          handle(os, pattern, std::get<0>(zp), builder, nameToOrdinal, lookup, retidx));
+      vectorValued.push_back(handle(os, pattern, std::get<0>(zp), builder,
+                                    nameToOrdinal, lookup, retidx));
       os << " ;\n";
       if (std::get<1>(zp)) {
         auto name = std::get<1>(zp)->getAsUnquotedString();
         if (vectorValued.back())
-        PrintFatalError(pattern->getLoc(), Twine("Cannot have vector valued saved arg '") +
-                                                 name + "'" + std::get<0>(zp)->getAsString());
+          PrintFatalError(pattern->getLoc(),
+                          Twine("Cannot have vector valued saved arg '") +
+                              name + "'" + std::get<0>(zp)->getAsString());
         oldMaps.try_emplace(name, nameToOrdinal[name]);
         nameToOrdinal[name] = "__tmp_" + name;
         os << " __tmp_" << name << " = args[" << (idx - 1) << "];\n";
@@ -309,9 +319,9 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
     }
 
     if (Def->isSubClassOf("InsertValue"))
-        opName = "InsertValue";
+      opName = "InsertValue";
     if (Def->isSubClassOf("ExtractValue"))
-        opName = "ExtractValue";
+      opName = "ExtractValue";
 
     bool isCall = opName == "Call" || Def->isSubClassOf("Call");
     bool isIntr = opName == "Intrinsic" || Def->isSubClassOf("Intrinsic");
@@ -347,7 +357,7 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
       bool first = true;
       for (auto *ind : *cast<ListInit>(Def->getValueAsListInit("indices"))) {
         if (!first)
-        os << ", ";
+          os << ", ";
         os << "(unsigned)(" << cast<IntInit>(ind)->getValue() << ")";
         first = false;
       }
@@ -396,21 +406,22 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
         if (i > 0)
           os << ", ";
         if (vectorValued[i])
-          os << "gutils->extractMeta(" << builder << ", args[" << i << "], idx)";
+          os << "gutils->extractMeta(" << builder << ", args[" << i
+             << "], idx)";
         else
           os << "args[" << i << "]";
       }
-        if (opName == "ExtractValue" || opName == "InsertValue") {
-          os << ", ArrayRef<unsigned>({";
-          bool first = true;
-          for (auto *ind : *cast<ListInit>(Def->getValueAsListInit("indices"))) {
-            if (!first)
+      if (opName == "ExtractValue" || opName == "InsertValue") {
+        os << ", ArrayRef<unsigned>({";
+        bool first = true;
+        for (auto *ind : *cast<ListInit>(Def->getValueAsListInit("indices"))) {
+          if (!first)
             os << ", ";
-            os << "(unsigned)(" << cast<IntInit>(ind)->getValue() << ")";
-            first = false;
-          }
-          os << "})";
+          os << "(unsigned)(" << cast<IntInit>(ind)->getValue() << ")";
+          first = false;
         }
+        os << "})";
+      }
       if (isCall || isIntr)
         os << "})";
       os << ")";
@@ -468,31 +479,33 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
     if (tree->getNameStr().str().size())
       nameToOrdinal[tree->getNameStr().str()] = "&call";
 
-    std::function<void(DagInit*, std::vector<unsigned>)>
-        insert = [&](DagInit *ptree, std::vector<unsigned> prev) {
-            unsigned i=0;
-            for (auto tree : ptree->getArgs()) {
-                std::vector<unsigned> next = prev;
-                next.push_back(i);
-                if (auto dg = dyn_cast<DagInit>(tree))
-                    insert(dg, next);
+    std::function<void(DagInit *, std::vector<unsigned>)> insert =
+        [&](DagInit *ptree, std::vector<unsigned> prev) {
+          unsigned i = 0;
+          for (auto tree : ptree->getArgs()) {
+            std::vector<unsigned> next = prev;
+            next.push_back(i);
+            if (auto dg = dyn_cast<DagInit>(tree))
+              insert(dg, next);
 
-                if (ptree->getArgNameStr(i).size()) {
-                    auto op = "call.getOperand(" + std::to_string(next[0]) + ")";
-                    if (prev.size() > 0) {
-                      op = "gutils->extractMeta(Builder2, " + op + ", ArrayRef<unsigned>({";
-                      bool first = true;
-                      for (unsigned i=1; i<next.size(); i++) {
-                        if (!first) op += ", ";
-                        op += std::to_string(next[i]);
-                      }
-                      op += "}))";
-                    }
-                    nameToOrdinal[ptree->getArgNameStr(i)] = op;
+            if (ptree->getArgNameStr(i).size()) {
+              auto op = "call.getOperand(" + std::to_string(next[0]) + ")";
+              if (prev.size() > 0) {
+                op = "gutils->extractMeta(Builder2, " + op +
+                     ", ArrayRef<unsigned>({";
+                bool first = true;
+                for (unsigned i = 1; i < next.size(); i++) {
+                  if (!first)
+                    op += ", ";
+                  op += std::to_string(next[i]);
                 }
-                i++;
+                op += "}))";
+              }
+              nameToOrdinal[ptree->getArgNameStr(i)] = op;
             }
-    };
+            i++;
+          }
+        };
 
     insert(tree, {});
 
@@ -533,85 +546,103 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
 
     for (auto argOpEn : llvm::enumerate(*argOps)) {
       size_t argIdx = argOpEn.index();
-      os << "        if (!gutils->isConstantValue(call.getArgOperand("
-         << argIdx << "))) {\n";
+      os << "        if (!gutils->isConstantValue(call.getArgOperand(" << argIdx
+         << "))) {\n";
       os << "          Value *dif = diffe(call.getArgOperand(" << argIdx
          << "), Builder2);\n";
 
       initializeNames(os, argOpEn.value());
-      std::function<void(std::vector<unsigned>, Init*)> fwdres = [&](std::vector<unsigned> idx, Init* ival) {
-        if (DagInit *resultTree = dyn_cast<DagInit>(ival)) {
-            if ("ArrayRet" == resultTree->getOperator()->getAsString()) {
-                unsigned i=0;
+      std::function<void(std::vector<unsigned>, Init *)> fwdres =
+          [&](std::vector<unsigned> idx, Init *ival) {
+            if (DagInit *resultTree = dyn_cast<DagInit>(ival)) {
+              if ("ArrayRet" == resultTree->getOperator()->getAsString()) {
+                unsigned i = 0;
                 for (auto r : resultTree->getArgs()) {
-                    std::vector<unsigned> next = idx;
-                    next.push_back(i);
-                    i++;
-                    fwdres(next, r);
+                  std::vector<unsigned> next = idx;
+                  next.push_back(i);
+                  i++;
+                  fwdres(next, r);
                 }
                 return;
-            }
-            os << "          {\n";
-            os << "            Value *itmp = ";
-            bool vectorValued = handle(os, pattern, resultTree, "Builder2",
-                                 nameToOrdinal, /*lookup*/ false, {});
-            os << ";\n";
-            if (idx.size() == 0)
-            os << "                Value *out = UndefValue::get(gutils->getShadowType(call.getType()));\n";
-            else
-            os << "                Value *out = res ? res : Constant::getNullValue(gutils->getShadowType(call.getType()));\n";
-            os << "                for(unsigned int idx=0, W=gutils->getWidth(); idx<W; idx++) {\n";
-            
-            os << "                  Value *prev = res;\n";
+              }
+              os << "          {\n";
+              os << "            Value *itmp = ";
+              bool vectorValued = handle(os, pattern, resultTree, "Builder2",
+                                         nameToOrdinal, /*lookup*/ false, {});
+              os << ";\n";
+              if (idx.size() == 0)
+                os << "                Value *out = "
+                      "UndefValue::get(gutils->getShadowType(call.getType()));"
+                      "\n";
+              else
+                os << "                Value *out = res ? res : "
+                      "Constant::getNullValue(gutils->getShadowType(call."
+                      "getType()));\n";
+              os << "                for(unsigned int idx=0, "
+                    "W=gutils->getWidth(); idx<W; idx++) {\n";
 
-            os << "                  if (prev) prev = gutils->getWidth() == 1 ? prev : gutils->extractMeta(Builder2, prev, idx);\n";
-            if (idx.size() != 0) {
-            os << "                  if (prev) prev = gutils->extractMeta(Builder2, prev, ArrayRef<unsigned>({";
-            bool first = true;
-            for (auto v : idx) {
-                if (!first) os << ", ";
-                first = true;
-                os << v;
-            }
-            os << "}));\n";
-            }
-            
-            os << "                  Value *next = itmp;\n";
-           
-            if (vectorValued)
-            os << "                  if (gutils->getWidth() != 1) next = gutils->extractMeta(Builder2, next, idx);\n";
-            os << "                  if (prev) next = Builder2.CreateFAdd(prev, next);\n";
-            
-            if (idx.size() == 0) {
-            os << "                  out = (gutils->getWidth() == 1) ? next : Builder2.CreateInsertValue(out, next, {idx});\n";
-            } else {
-            os << "                  out = (gutils->getWidth() == 1) ? Builder2.CreateInsertValue(out, next, ArrayRef<unsigned>({";
-            bool first = true;
-            for (auto v : idx) {
-                if (!first) os << ", ";
-                first = false;
-                os << v;
-            }
-            os << "})) : Builder2.CreateInsertValue(out, next, ArrayRef<unsigned>({idx,";
-            for (auto v : idx) {
-                os << v;
-            }
-            os << "}));\n";
-            }
-            os << "                }\n";
-            os << "                res = out;\n";
-            os << "           }\n";
-        } else if (ListInit *lst = dyn_cast<ListInit>(ival)) {
-                unsigned i=0;
-                for (auto r : *lst) {
-                    std::vector<unsigned> next = idx;
-                    next.push_back(i);
-                    i++;
-                    fwdres(next, r);
+              os << "                  Value *prev = res;\n";
+
+              os << "                  if (prev) prev = gutils->getWidth() == "
+                    "1 ? prev : gutils->extractMeta(Builder2, prev, idx);\n";
+              if (idx.size() != 0) {
+                os << "                  if (prev) prev = "
+                      "gutils->extractMeta(Builder2, prev, "
+                      "ArrayRef<unsigned>({";
+                bool first = true;
+                for (auto v : idx) {
+                  if (!first)
+                    os << ", ";
+                  first = true;
+                  os << v;
                 }
-        } else 
-          PrintFatalError(pattern->getLoc(), Twine("Unknown subinitialization"));
-      };
+                os << "}));\n";
+              }
+
+              os << "                  Value *next = itmp;\n";
+
+              if (vectorValued)
+                os << "                  if (gutils->getWidth() != 1) next = "
+                      "gutils->extractMeta(Builder2, next, idx);\n";
+              os << "                  if (prev) next = "
+                    "Builder2.CreateFAdd(prev, next);\n";
+
+              if (idx.size() == 0) {
+                os << "                  out = (gutils->getWidth() == 1) ? "
+                      "next : Builder2.CreateInsertValue(out, next, {idx});\n";
+              } else {
+                os << "                  out = (gutils->getWidth() == 1) ? "
+                      "Builder2.CreateInsertValue(out, next, "
+                      "ArrayRef<unsigned>({";
+                bool first = true;
+                for (auto v : idx) {
+                  if (!first)
+                    os << ", ";
+                  first = false;
+                  os << v;
+                }
+                os << "})) : Builder2.CreateInsertValue(out, next, "
+                      "ArrayRef<unsigned>({idx,";
+                for (auto v : idx) {
+                  os << v;
+                }
+                os << "}));\n";
+              }
+              os << "                }\n";
+              os << "                res = out;\n";
+              os << "           }\n";
+            } else if (ListInit *lst = dyn_cast<ListInit>(ival)) {
+              unsigned i = 0;
+              for (auto r : *lst) {
+                std::vector<unsigned> next = idx;
+                next.push_back(i);
+                i++;
+                fwdres(next, r);
+              }
+            } else
+              PrintFatalError(pattern->getLoc(),
+                              Twine("Unknown subinitialization"));
+          };
       fwdres({}, argOpEn.value());
       os << "        }\n";
     }
@@ -636,8 +667,8 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
       if (seen)
         os << "} else ";
       seen = true;
-      os << "if (!dif && !gutils->isConstantValue(call.getArgOperand("
-         << argIdx << "))) {\n";
+      os << "if (!dif && !gutils->isConstantValue(call.getArgOperand(" << argIdx
+         << "))) {\n";
       DagInit *resultTree = cast<DagInit>(argOpEn.value());
       if (hasDiffeRet(resultTree)) {
         os << "          dif = diffe(&call, Builder2);\n";
@@ -649,67 +680,73 @@ static void emitDerivatives(const RecordKeeper &recordKeeper, raw_ostream &os) {
     if (seen)
       os << "        }\n";
 
-    std::function<void(size_t, std::vector<unsigned>, Init*)> revres = [&](size_t argIdx, std::vector<unsigned> idx, Init* ival) {
-      if (DagInit *resultTree = dyn_cast<DagInit>(ival)) {
-        if ("ArrayRet" == resultTree->getOperator()->getAsString()) {
-            unsigned i=0;
-                for (auto r : resultTree->getArgs()) {
-            auto next = idx;
-            next.push_back(i);
-                    revres(argIdx, next, r);
-                    i++;
-                }
-                return;
-        }
-        os << "          {\n";
-        os << "          Value *tmp = ";
-        bool vectorValued = handle(os, pattern, resultTree, "Builder2",
-                                 nameToOrdinal, /*lookup*/ true, idx);
-        os << ";\n";
+    std::function<void(size_t, std::vector<unsigned>, Init *)> revres =
+        [&](size_t argIdx, std::vector<unsigned> idx, Init *ival) {
+          if (DagInit *resultTree = dyn_cast<DagInit>(ival)) {
+            if ("ArrayRet" == resultTree->getOperator()->getAsString()) {
+              unsigned i = 0;
+              for (auto r : resultTree->getArgs()) {
+                auto next = idx;
+                next.push_back(i);
+                revres(argIdx, next, r);
+                i++;
+              }
+              return;
+            }
+            os << "          {\n";
+            os << "          Value *tmp = ";
+            bool vectorValued = handle(os, pattern, resultTree, "Builder2",
+                                       nameToOrdinal, /*lookup*/ true, idx);
+            os << ";\n";
 
-            os << "                Value *out = UndefValue::get(gutils->getShadowType(call.getArgOperand(" << argIdx << ")->getType()));\n";
+            os << "                Value *out = "
+                  "UndefValue::get(gutils->getShadowType(call.getArgOperand("
+               << argIdx << ")->getType()));\n";
 
-            os << "            for(unsigned int idx=0, W=gutils->getWidth(); idx<W; idx++) {\n";
+            os << "            for(unsigned int idx=0, W=gutils->getWidth(); "
+                  "idx<W; idx++) {\n";
 
-            os << "              Value *prev = toadd ? (gutils->getWidth() == 1 ? toadd : gutils->extractMeta(Builder2, toadd, idx)) : nullptr;\n";
+            os << "              Value *prev = toadd ? (gutils->getWidth() == "
+                  "1 ? toadd : gutils->extractMeta(Builder2, toadd, idx)) : "
+                  "nullptr;\n";
             os << "              Value *next = tmp;\n";
             if (vectorValued)
-            os << "              if (gutils->getWidth() > 1) next = gutils->extractMeta(Builder2, next, idx);\n";
-            os << "              if (prev) next = Builder2.CreateFAdd(prev, next);\n";
-            os << "              out = (gutils->getWidth() > 1) ? Builder2.CreateInsertValue(out, next, idx) : next;\n";
+              os << "              if (gutils->getWidth() > 1) next = "
+                    "gutils->extractMeta(Builder2, next, idx);\n";
+            os << "              if (prev) next = Builder2.CreateFAdd(prev, "
+                  "next);\n";
+            os << "              out = (gutils->getWidth() > 1) ? "
+                  "Builder2.CreateInsertValue(out, next, idx) : next;\n";
             os << "            }\n";
             os << "            toadd = out;\n";
 
-        os << "          }\n";
+            os << "          }\n";
 
-
-
-
-
-      } else if (ListInit* lst = dyn_cast<ListInit>(ival)) {
-        unsigned i=0;
-        for (auto elem: *lst) {
-            auto next = idx;
-            next.push_back(i);
-            revres(argIdx, next, elem);
-            i++;
-        }
-      } else assert(0);
-    };
-
+          } else if (ListInit *lst = dyn_cast<ListInit>(ival)) {
+            unsigned i = 0;
+            for (auto elem : *lst) {
+              auto next = idx;
+              next.push_back(i);
+              revres(argIdx, next, elem);
+              i++;
+            }
+          } else
+            assert(0);
+        };
 
     for (auto argOpEn : llvm::enumerate(*argOps)) {
       size_t argIdx = argOpEn.index();
 
-      os << "        if (!gutils->isConstantValue(call.getArgOperand("
-         << argIdx << "))) {\n";
+      os << "        if (!gutils->isConstantValue(call.getArgOperand(" << argIdx
+         << "))) {\n";
       initializeNames(os, argOpEn.value());
       os << ";\n";
 
       os << "          Value *toadd = nullptr;\n";
       revres(argIdx, {}, argOpEn.value());
 
-      os << "          if (toadd) addToDiffe(call.getArgOperand(" << argIdx << "), toadd";
+      os << "          if (toadd) addToDiffe(call.getArgOperand(" << argIdx
+         << "), toadd";
       os << ", Builder2, call.getArgOperand(" << argIdx << ")->getType());\n";
       os << "        }\n";
     }
@@ -771,8 +808,8 @@ static void checkBlasCalls(const RecordKeeper &RK,
   }
 }
 
-// handleBLAS is called in the AdjointGenerator.h 
-// We therefore use an allowlist to be able to implement more rules, 
+// handleBLAS is called in the AdjointGenerator.h
+// We therefore use an allowlist to be able to implement more rules,
 // but only expose those that are sufficiently tested.
 void emit_handleBLAS(const std::vector<TGPattern> &blasPatterns,
                      raw_ostream &os) {
@@ -918,8 +955,8 @@ void emit_helper(TGPattern &pattern, raw_ostream &os) {
     auto name = nameVec[i];
     os << "  const auto arg_" << name << " = call.getArgOperand(" << i << ");\n"
        << "  const auto type_" << name << " = arg_" << name << "->getType();\n"
-       << "  const bool uncacheable_" << name << " = (cacheMode ? overwritten_args["
-       << i << "] : false);\n"
+       << "  const bool uncacheable_" << name
+       << " = (cacheMode ? overwritten_args[" << i << "] : false);\n"
        << "  calledArg++;\n";
     if (std::count(actArgs.begin(), actArgs.end(), i)) {
       os << "  const bool active_" << name << " = !gutils->isConstantValue(arg_"
@@ -928,12 +965,22 @@ void emit_helper(TGPattern &pattern, raw_ostream &os) {
     os << "\n";
   }
 
-  os << "  int num_active_fp = 0;\n";
+  bool anyActive = false;
   for (size_t i = 0; i < nameVec.size(); i++) {
     argType type = argTypeMap.lookup(i);
     if (type == argType::fp) {
-      os << "  if (active_" << nameVec[i] << ")\n"
-         << "    num_active_fp++;\n";
+      anyActive = true;
+    }
+  }
+
+  if (anyActive) {
+    os << "  int num_active_fp = 0;\n";
+    for (size_t i = 0; i < nameVec.size(); i++) {
+      argType type = argTypeMap.lookup(i);
+      if (type == argType::fp) {
+        os << "  if (active_" << nameVec[i] << ")\n"
+           << "    num_active_fp++;\n";
+      }
     }
   }
 
@@ -1114,8 +1161,8 @@ void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
     if (vecUsers.size() > 0) {
       os << "   else if (";
       bool first = true;
-      // TODO: for higher lv: verify x isn't user from data_x (as only adjoint of x will be
-      // used)
+      // TODO: for higher lv: verify x isn't user from data_x (as only adjoint
+      // of x will be used)
       for (auto user : vecUsers) {
         auto name = nameVec[user];
         if (vecName == name)
@@ -1197,7 +1244,7 @@ llvm::SmallString<80> ValueType_helper(TGPattern &pattern, size_t actPos) {
 // another BLAS fnc.
 
 size_t fwd_call_args(TGPattern &pattern, size_t actArg,
-                         llvm::SmallString<40> &result) {
+                     llvm::SmallString<40> &result) {
   const auto nameVec = pattern.getArgNames();
   const auto nameMap = pattern.getArgNameMap();
   const auto typeMap = pattern.getArgTypeMap();
@@ -1417,7 +1464,7 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
        << "      F->addFnAttr(Attribute::ArgMemOnly);\n"
        << "      if (byRef) {\n";
     const auto calledTypeMap = calledPattern.getArgTypeMap();
-    for (auto argPos = 0; argPos < calledTypeMap.size(); argPos++) {
+    for (size_t argPos = 0; argPos < calledTypeMap.size(); argPos++) {
       const auto typeOfArg = calledTypeMap.lookup(argPos);
       if (typeOfArg == argType::len || typeOfArg == argType::vincInc) {
         os << "        F->addParamAttr(" << argPos
@@ -1430,7 +1477,7 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
        << "      // Julia declares double* pointers as Int64,\n"
        << "      //  so LLVM won't let us add these Attributes.\n"
        << "      if (!julia_decl) {\n";
-    for (auto argPos = 0; argPos < calledTypeMap.size(); argPos++) {
+    for (size_t argPos = 0; argPos < calledTypeMap.size(); argPos++) {
       auto typeOfArg = calledTypeMap.lookup(argPos);
       if (typeOfArg == argType::vincData) {
         os << "        F->addParamAttr(" << argPos
@@ -1457,8 +1504,7 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
 }
 
 // fill the result string and return the number of added args
-size_t rev_call_args(Rule &rule, size_t actArg,
-                      llvm::SmallString<40> &result) {
+size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
 
   const auto nameMap = rule.getArgNameMap();
   const auto typeMap = rule.getArgTypeMap();
@@ -1557,7 +1603,6 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
         if (Def->isSubClassOf("DiffeRet")) {
           hasDiffeRetVal = true;
         }
-        llvm::errs() << "\n differetValue: " << pattern.getName() << "pos: " << pos << " " << hasDiffeRetVal << "\n\n";
       }
     }
     auto opName = resultRoot->getOperator()->getAsString();
@@ -1583,7 +1628,7 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
 
   // We only emit one derivcall per blass call type.
   // This verifies that we don't end up with multiple declarations.
-  llvm::StringSet handled{}; 
+  llvm::StringSet handled{};
   for (auto rule : rules) {
     emit_deriv_fnc(patternMap, rule, handled, os);
   }
@@ -1622,11 +1667,9 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
        << "        if (byRef) {\n"
        << "          Builder2.CreateStore(dif, alloc);\n"
        << "          dif = alloc;\n"
-       << "        }\n"
-       << "        unsigned int idx = 0;\n";
+       << "        }\n";
   } else {
-    os << ") {\n"
-       << "        unsigned int idx = 0;\n";
+    os << ") {\n";
   }
 
   for (Rule rule : rules) {
@@ -1674,7 +1717,6 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
            << dfnc_name << ", args1, Defs));\n"
            << "        addToDiffe(arg_" << name
            << ", cubcall, Builder2, fpType);\n"
-           << "        idx++;\n"
            << "      }\n";
       } else {
         os << "        Builder2.CreateCall(derivcall_" << dfnc_name
@@ -1744,8 +1786,6 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
   // // emitEnumMatcher(blas_modes, os);
 
   for (auto newPattern : newBlasPatterns) {
-
-    llvm::errs() << "\nhandling: " + newPattern.getName() + "\n";
 
     emit_beginning(newPattern, os);
     emit_helper(newPattern, os);
