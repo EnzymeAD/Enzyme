@@ -141,7 +141,7 @@ void attributeKnownFunctions(llvm::Function &F) {
   }
 
   llvm::Optional<BlasInfo> blasMetaData = extractBLAS(F.getName());
-  if (blasMetaData.hasValue()) 
+  if (blasMetaData.hasValue())
     attributeBLAS(blasMetaData.getValue(), &F);
 
   if (F.getName() ==
