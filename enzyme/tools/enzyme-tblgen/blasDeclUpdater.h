@@ -8,7 +8,7 @@ void emit_attributeBLASCaller(const std::vector<TGPattern> &blasPatterns,
     if (name != "dot")
       continue;
     os << "  if (blas.function == \"" << name << "\") {                     \n"
-       << "      attribute_" << name << "(blas, F);                         \n";
+       << "      attribute_" << name << "(F);                             \n";
   }
   os << "  } else {                                                       \n"
      << "    return;                                                      \n"
@@ -18,10 +18,7 @@ void emit_attributeBLASCaller(const std::vector<TGPattern> &blasPatterns,
 
 void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
   auto name = pattern.getName();
-  os << "void attribute_" << name << "(BlasInfo blas, llvm::Function *F) {\n"
-     << "  auto name = F->getName();\n"
-     << "  llvm::Optional<BlasInfo> blasName = extractBLAS(name);\n"
-     << "  if (!blasName.hasValue()) return;\n"
+  os << "void attribute_" << name << "(llvm::Function *F) {\n"
      << "  F->addFnAttr(llvm::Attribute::ArgMemOnly);\n";
   
   auto argTypeMap = pattern.getArgTypeMap();
