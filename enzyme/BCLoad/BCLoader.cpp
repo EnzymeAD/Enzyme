@@ -29,19 +29,11 @@ bool provideDefinitions(Module &M, std::set<std::string> ignoreFunctions = {}) {
       std::string str;
       if (strlen(postfix) == 0) {
         str = F.getName().str();
-        for (auto ignoreFnc : ignoreFunctions) {
-          if (str == ignoreFnc) {
-            continue; // don't handle tablegen'd ones
-          }
-        }
+        if (ignoreFunctions.count(str)) continue;
       } else if (F.getName().endswith(postfix)) {
         auto blasName =
             F.getName().substr(0, F.getName().size() - strlen(postfix)).str();
-        for (auto ignoreFnc : ignoreFunctions) {
-          if (blasName == ignoreFnc) {
-            continue; // don't handle tablegen'd ones
-          }
-        }
+        if (ignoreFunctions.count(blasName)) continue;
         str = "cblas_" + blasName;
       }
 
