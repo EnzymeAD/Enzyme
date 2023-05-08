@@ -102,9 +102,23 @@ llvm::cl::opt<bool> EnzymeOMPOpt("enzyme-omp-opt", cl::init(false), cl::Hidden,
 #if LLVM_VERSION_MAJOR >= 14
 #define addAttribute addAttributeAtIndex
 #endif
-namespace {
+void attributeKnownFunctions(llvm::Function &F) {
+  if (F.getName().contains("__enzyme_todense"))
+    F.addFnAttr(Attribute::ReadNone);
 
-static void handleKnownFunctions(llvm::Function &F) {
+  if (F.getName().contains("__enzyme_float") ||
+      F.getName().contains("__enzyme_double") ||
+      F.getName().contains("__enzyme_integer") ||
+      F.getName().contains("__enzyme_pointer") ||
+      F.getName().contains("__enzyme_virtualreverse")) {
+    F.addFnAttr(Attribute::ReadNone);
+    for (auto &arg : F.args()) {
+      if (arg.getType()->isPointerTy()) {
+        arg.addAttr(Attribute::ReadNone);
+        arg.addAttr(Attribute::NoCapture);
+      }
+    }
+  }
   if (F.getName() == "memcmp") {
     F.addFnAttr(Attribute::ReadOnly);
     F.addFnAttr(Attribute::ArgMemOnly);
@@ -222,25 +236,7 @@ static void handleKnownFunctions(llvm::Function &F) {
   }
 }
 
-static void handleAnnotations(llvm::Function &F) {
-  if (F.getName().contains("__enzyme_todense"))
-    F.addFnAttr(Attribute::ReadNone);
-
-  if (F.getName().contains("__enzyme_float") ||
-      F.getName().contains("__enzyme_double") ||
-      F.getName().contains("__enzyme_integer") ||
-      F.getName().contains("__enzyme_pointer") ||
-      F.getName().contains("__enzyme_virtualreverse")) {
-    F.addFnAttr(Attribute::ReadNone);
-    for (auto &arg : F.args()) {
-      if (arg.getType()->isPointerTy()) {
-        arg.addAttr(Attribute::ReadNone);
-        arg.addAttr(Attribute::NoCapture);
-      }
-    }
-  }
-}
-
+namespace {
 static Value *
 castToDiffeFunctionArgType(IRBuilder<> &Builder, llvm::CallInst *CI,
                            llvm::FunctionType *FT, llvm::Type *destType,
@@ -2326,8 +2322,7 @@ public:
 
     bool changed = false;
     for (Function &F : M) {
-      handleAnnotations(F);
-      handleKnownFunctions(F);
+      attributeKnownFunctions(F);
       if (F.empty())
         continue;
       SmallVector<Instruction *, 4> toErase;

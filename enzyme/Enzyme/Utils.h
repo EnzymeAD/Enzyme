@@ -1379,4 +1379,6 @@ static inline bool isNoCapture(const llvm::CallInst *call, size_t idx) {
   }
   return false;
 }
+
+void attributeKnownFunctions(llvm::Function &F);
 #endif
