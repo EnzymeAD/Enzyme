@@ -5,15 +5,14 @@ void emit_attributeBLASCaller(const std::vector<TGPattern> &blasPatterns,
   for (auto pattern : blasPatterns) {
     auto name = pattern.getName();
     // only one which we expose right now.
-    if (name != "dot")
+    //if (name != "dot")
       continue;
-    os << "  if (blas.function == \"" << name << "\") {                     \n"
-       << "      attribute_" << name << "(F);                             \n";
+    os << "  if (blas.function == \"" << name << "\") {                   \n"
+       << "    attribute_" << name << "(F);                               \n"
+       << "    return;                                                    \n"
+       << "  }                                                            \n";
   }
-  os << "  } else {                                                       \n"
-     << "    return;                                                      \n"
-     << "  }                                                              \n"
-     << "}                                                                \n";
+  os << "}                                                                \n";
 }
 
 void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
