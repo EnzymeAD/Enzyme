@@ -3721,13 +3721,17 @@ public:
       }
       IRBuilder<> BuilderZ(gutils->getNewFromOriginal(&MTI));
       Value *shadow_dst = gutils->isConstantValue(orig_dst)
-                              ? gutils->getNewFromOriginal(orig_dst)
+                              ? nullptr
                               : gutils->invertPointerM(orig_dst, BuilderZ);
       Value *shadow_src = gutils->isConstantValue(orig_src)
-                              ? gutils->getNewFromOriginal(orig_src)
+                              ? nullptr
                               : gutils->invertPointerM(orig_src, BuilderZ);
 
       auto rev_rule = [&](Value *shadow_dst, Value *shadow_src) {
+        if (shadow_dst == nullptr)
+          shadow_dst = gutils->getNewFromOriginal(orig_dst);
+        if (shadow_src == nullptr)
+          shadow_src = gutils->getNewFromOriginal(orig_src);
         SubTransferHelper(
             gutils, Mode, dt.isFloat(), ID, subdstalign, subsrcalign,
             /*offset*/ start, gutils->isConstantValue(orig_dst), shadow_dst,
@@ -3738,6 +3742,10 @@ public:
       };
 
       auto fwd_rule = [&](Value *ddst, Value *dsrc) {
+        if (ddst == nullptr)
+          ddst = gutils->getNewFromOriginal(orig_dst);
+        if (dsrc == nullptr)
+          dsrc = gutils->getNewFromOriginal(orig_src);
 #if LLVM_VERSION_MAJOR >= 10
         MaybeAlign dalign;
         if (subdstalign)
