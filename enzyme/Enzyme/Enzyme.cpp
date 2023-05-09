@@ -81,6 +81,8 @@
 #include "llvm/Transforms/Utils/Mem2Reg.h"
 #endif
 
+#include "BlasAttributor.inc"
+
 #include "CApi.h"
 using namespace llvm;
 #ifdef DEBUG_TYPE
@@ -137,6 +139,11 @@ void attributeKnownFunctions(llvm::Function &F) {
         F.addParamAttr(i, Attribute::WriteOnly);
       }
   }
+
+  llvm::Optional<BlasInfo> blasMetaData = extractBLAS(F.getName());
+  if (blasMetaData.hasValue())
+    attributeBLAS(blasMetaData.getValue(), &F);
+
   if (F.getName() ==
       "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_createERmm") {
 #if LLVM_VERSION_MAJOR >= 9
