@@ -3573,7 +3573,6 @@ void TypeAnalyzer::visitInvokeInst(InvokeInst &call) {
   tmpCall->eraseFromParent();
 }
 
-
 void TypeAnalyzer::visitCallInst(CallInst &call) {
   assert(fntypeinfo.KnownValues.size() ==
          fntypeinfo.Function->getFunctionType()->getNumParams());
@@ -3601,7 +3600,6 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
 
   if (ci) {
     StringRef funcName = getFuncNameFromCall(&call);
-
 
     llvm::Optional<BlasInfo> blasMetaData = extractBLAS(funcName);
     if (blasMetaData.hasValue()) {
