@@ -835,7 +835,7 @@ void emit_recognizeBLAS(const std::vector<TGPattern> &blasPatterns,
      << "  llvm::Twine extractable[] = {" << handledBlasFunctions << "};\n"
      << "  llvm::Twine prefixes[] = {\"\" /*Fortran*/, \"cblas_\", "
         "\"cublas_\"};\n"
-     << "  llvm::Twine suffixes[] = {\"\", \"_\", \"_64_\"};\n"
+     << "  llvm::Twine suffixes[] = {\"\", \"_\", \"64_\", \"_64_\"};\n"
      << "  for (auto t : floatType) {\n"
      << "    for (auto f : extractable) {\n"
      << "      for (auto p : prefixes) {\n"
