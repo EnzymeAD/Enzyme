@@ -2136,9 +2136,11 @@ F->getParamAttribute(ii, Attribute::StructRet).getValueAsType())); #else
       if (F->hasParamAttribute(ii, Attribute::NonNull)) {
         NewF->removeParamAttr(jj, Attribute::NonNull);
       }
+#if LLVM_VERSION_MAJOR >= 11
       if (F->hasParamAttribute(ii, Attribute::NoUndef)) {
         NewF->removeParamAttr(jj, Attribute::NoUndef);
       }
+#endif
     }
 
     if (constant_args[ii] == DIFFE_TYPE::DUP_ARG ||
