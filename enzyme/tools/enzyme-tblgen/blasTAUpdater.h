@@ -11,11 +11,13 @@ void emit_BLASTypes(raw_ostream &os) {
      << "#endif\n";
 
   os << "TypeTree ttFloat;\n"
+     << "llvm::Type *floatType; \n"
      << "if (blas.floatType == \"s\") {\n"
-     << "  ttFloat.insert({-1},Type::getFloatTy(call.getContext()));\n"
+     << "  floatType = Type::getFloatTy(call.getContext());\n"
      << "} else {\n"
-     << "  ttFloat.insert({-1},Type::getDoubleTy(call.getContext()));\n"
-     << "}\n";
+     << "  floatType = Type::getDoubleTy(call.getContext());\n"
+     << "}\n"
+     << "ttFloat.insert({-1},floatType);\n";
 
   os << "TypeTree ttInt;\n"
      << "if (byRef) {\n"
@@ -47,23 +49,6 @@ void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
   auto argTypeMap = pattern.getArgTypeMap();
   DenseSet<size_t> mutableArgs = pattern.getMutableArgs();
 
-  // next calls to have byRef available
-  for (size_t i = 0; i < argTypeMap.size(); i++) {
-    if (argTypeMap.lookup(i) == argType::len) {
-      os << "#if LLVM_VERSION_MAJOR >= 10\n"
-         << "  const bool byRef = !call.getArgOperand(" << i
-         << ")->getType()->isIntegerTy() && blas.prefix == \"\";\n"
-         << "#else\n"
-         << "  const bool byRef = !call.getOperand(" << i
-         << ")->getType()->isIntegerTy() && blas.prefix == \"\";\n"
-         << "#endif\n";
-      break;
-    }
-    if (i + 1 == argTypeMap.size()) {
-      llvm::errs() << "Tablegen bug: BLAS fnc without vector length!\n";
-      llvm_unreachable("Tablegen bug: BLAS fnc without vector length!");
-    }
-  }
   // Now we can build TypeTrees
   for (size_t i = 0; i < argTypeMap.size(); i++) {
     auto currentType = argTypeMap.lookup(i);
@@ -76,10 +61,10 @@ void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
     os << "  updateAnalysis(call.getArgOperand(" << i << "), ttFloat, &call);\n";
     }
   }
-  os << "  Type *T = call.getType();\n"
-     << "  if (T->isFloatingPointTy()) {\n"
-     << "    updateAnalysis(&call, ttFloat, &call);\n"
-     << "  }\n";
+  if (name == "dot" || name == "asum" || name == "nrm2") {
+    os << "  assert(call.getType()->isFloatingPointTy());\n"
+       << "  updateAnalysis(&call, ttFloat, &call);\n";
+  }
 
   os << "}\n";
 }
