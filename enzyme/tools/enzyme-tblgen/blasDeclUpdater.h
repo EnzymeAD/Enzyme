@@ -18,10 +18,24 @@ void emit_attributeBLASCaller(const std::vector<TGPattern> &blasPatterns,
 void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
   auto name = pattern.getName();
   os << "void attribute_" << name << "(BlasInfo blas, llvm::Function *F) {\n"
-     << "  F->addFnAttr(llvm::Attribute::ArgMemOnly);\n";
-  
+     << "  F->addFnAttr(llvm::Attribute::ArgMemOnly);\n"
+     << "  F->addFnAttr(llvm::Attribute::NoUnwind);\n"
+     << "  F->addFnAttr(llvm::Attribute::NoRecurse);\n"
+     << "#if LLVM_VERSION_MAJOR >= 9\n"
+     << "  F->addFnAttr(llvm::Attribute::MustProgress);\n"
+     << "  F->addFnAttr(llvm::Attribute::NoFree);\n"
+     << "  F->addFnAttr(llvm::Attribute::WillReturn);\n"
+     << "  F->addFnAttr(llvm::Attribute::NoFree);\n"
+     << "  F->addFnAttr(llvm::Attribute::NoSync);\n"
+     << "#else\n"
+     << "    F->addFnAttr(\"nofree\");\n"
+     << "#endif\n";
+
   auto argTypeMap = pattern.getArgTypeMap();
   DenseSet<size_t> mutableArgs = pattern.getMutableArgs();
+
+  if (mutableArgs.size() == 0)
+    os << "  F->addFnAttr(llvm::Attribute::ReadOnly);\n";
 
   for (size_t i = 0; i < argTypeMap.size(); i++) {
     if (argTypeMap.lookup(i) == argType::vincData) {
