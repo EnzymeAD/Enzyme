@@ -1407,4 +1407,15 @@ static inline bool isNoCapture(const llvm::CallInst *call, size_t idx) {
 }
 
 void attributeKnownFunctions(llvm::Function &F);
+
+struct BlasInfo {
+  llvm::StringRef floatType;
+  llvm::StringRef prefix;
+  llvm::StringRef suffix;
+  llvm::StringRef function;
+};
+
+size_t getFirstLenOrIncPosition(BlasInfo blas);
+llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in);
+
 #endif

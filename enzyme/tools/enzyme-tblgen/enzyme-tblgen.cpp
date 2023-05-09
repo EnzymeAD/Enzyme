@@ -27,7 +27,12 @@
 
 using namespace llvm;
 
-enum ActionType { GenDerivatives, GenBlasDerivatives, UpdateBlasDecl };
+enum ActionType {
+  GenDerivatives,
+  GenBlasDerivatives,
+  UpdateBlasDecl,
+  UpdateBlasTA
+};
 
 static cl::opt<ActionType>
     action(cl::desc("Action to perform:"),
@@ -35,6 +40,8 @@ static cl::opt<ActionType>
                                  "Generate BLAS derivatives")),
            cl::values(clEnumValN(UpdateBlasDecl, "update-blas-declarations",
                                  "Update BLAS declarations")),
+           cl::values(clEnumValN(UpdateBlasTA, "gen-blas-typeanalysis",
+                                 "Update BLAS TypeAnalysis")),
            cl::values(clEnumValN(GenDerivatives, "gen-derivatives",
                                  "Generate instruction derivative")));
 
@@ -810,52 +817,6 @@ static void checkBlasCalls(const RecordKeeper &RK,
   }
 }
 
-// recognizeBLAS is called in the AdjointGenerator.h and Enzyme.cpp
-// We therefore use an allowlist to be able to implement more rules, 
-// but only expose those that are sufficiently tested.
-void emit_recognizeBLAS(const std::vector<TGPattern> &blasPatterns,
-                     raw_ostream &os) {
-  std::string handledBlasFunctions = "";
-  bool first = true;
-  for (auto blasPattern : blasPatterns) {
-    auto newName =
-        Twine((first) ? "" : ", ") + "\"" + blasPattern.getName() + "\"";
-    handledBlasFunctions.append(newName.str());
-    first = false;
-  }
-  os << "struct BlasInfo {\n"
-     << "  llvm::StringRef floatType;\n"
-     << "  llvm::StringRef prefix;\n"
-     << "  llvm::StringRef suffix;\n"
-     << "  llvm::StringRef function;\n"
-     << "};\n"
-     << "\n"
-     << "llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in) {\n"
-     << "  llvm::Twine floatType[] = {\"s\", \"d\"}; // c, z\n"
-     << "  llvm::Twine extractable[] = {" << handledBlasFunctions << "};\n"
-     << "  llvm::Twine prefixes[] = {\"\" /*Fortran*/, \"cblas_\", "
-        "\"cublas_\"};\n"
-     << "  llvm::Twine suffixes[] = {\"\", \"_\", \"_64_\"};\n"
-     << "  for (auto t : floatType) {\n"
-     << "    for (auto f : extractable) {\n"
-     << "      for (auto p : prefixes) {\n"
-     << "        for (auto s : suffixes) {\n"
-     << "          if (in == (p + t + f + s).str()) {\n"
-     << "            return llvm::Optional<BlasInfo>(BlasInfo{\n"
-     << "                t.getSingleStringRef(),\n"
-     << "                p.getSingleStringRef(),\n"
-     << "                s.getSingleStringRef(),\n"
-     << "                f.getSingleStringRef(),\n"
-     << "            });\n"
-     << "          }\n"
-     << "        }\n"
-     << "      }\n"
-     << "    }\n"
-     << "  }\n"
-     << "  return llvm::NoneType();\n"
-     << "}\n"
-     << "\n";
-}
 // handleBLAS is called in the AdjointGenerator.h 
 void emit_handleBLAS(const std::vector<TGPattern> &blasPatterns,
                      raw_ostream &os) {
@@ -1789,7 +1750,6 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
   // TODO: type check params, as far as possible
   checkBlasCalls(RK, blasPatterns);
   // //checkBlasCalls2(newBlasPatterns);
-  emit_recognizeBLAS(newBlasPatterns, os);
   emit_handleBLAS(newBlasPatterns, os);
   // // emitEnumMatcher(blas_modes, os);
 
@@ -1812,6 +1772,7 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
 }
 
 #include "blasDeclUpdater.h"
+#include "blasTAUpdater.h"
 
 static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
   switch (action) {
@@ -1823,6 +1784,9 @@ static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
     return false;
   case UpdateBlasDecl:
     emitBlasDeclUpdater(records, os);
+    return false;
+  case UpdateBlasTA:
+    emitBlasTAUpdater(records, os);
     return false;
 
   default:
