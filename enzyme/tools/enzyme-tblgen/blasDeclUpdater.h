@@ -25,7 +25,11 @@ void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
 
   for (size_t i = 0; i < argTypeMap.size(); i++) {
     if (argTypeMap.lookup(i) == argType::vincData) {
-      os << "  const bool julia_decl = !F->getArg(" << i << ")->getType()->isPointerTy();\n";
+      os << "#if LLVM_VERSION_MAJOR >= 10\n"
+         << "  const bool julia_decl = !F->getArg(" << i << ")->getType()->isPointerTy();\n"
+         << "#else\n"
+         << "  const bool julia_decl = !F->getOperand(" << i << ")->getType()->isPointerTy();\n"
+         << "#endif\n";
       break;
     }
     if (i+1 == argTypeMap.size()) {
@@ -35,7 +39,11 @@ void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
   }
   for (size_t i = 0; i < argTypeMap.size(); i++) {
     if (argTypeMap.lookup(i) == argType::len) {
-      os << "  const bool byRef = !F->getArg(" << i << ")->getType()->isIntegerTy();\n";
+      os << "#if LLVM_VERSION_MAJOR >= 10\n"
+         << "  const bool byRef = !F->getArg(" << i << ")->getType()->isIntegerTy();\n"
+         << "#else\n"
+         << "  const bool byRef = !F->getOperand(" << i << ")->getType()->isIntegerTy();\n"
+         << "#endif\n";
       break;
     }
     if (i+1 == argTypeMap.size()) {
