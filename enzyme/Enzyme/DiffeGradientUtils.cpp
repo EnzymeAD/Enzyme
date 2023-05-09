@@ -343,7 +343,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       }
     }
     if (!addingType) {
-      llvm::errs() << "module: " << *oldFunc->getParent() << "\n";
+      TR.dump();
       llvm::errs() << "oldFunc: " << *oldFunc << "\n";
       llvm::errs() << "newFunc: " << *newFunc << "\n";
       llvm::errs() << "val: " << *val << " old: " << *old << "\n";
