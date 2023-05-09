@@ -1839,3 +1839,36 @@ Function *GetFunctionFromValue(Value *fn) {
 
   return cast<Function>(fn);
 }
+
+size_t getFirstLenOrIncPosition(BlasInfo blas) {
+  if (blas.function == "dot") {
+    return 0;
+  } else {
+    llvm::errs() << "unsuported BLAS fnc\n";
+    llvm_unreachable("unsuported BLAS fnc");
+  }
+}
+
+llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in) {
+  llvm::Twine floatType[] = {"s", "d"}; // c, z
+  llvm::Twine extractable[] = {"dot"};
+  llvm::Twine prefixes[] = {"" /*Fortran*/, "cblas_", "cublas_"};
+  llvm::Twine suffixes[] = {"", "_", "64_", "_64_"};
+  for (auto t : floatType) {
+    for (auto f : extractable) {
+      for (auto p : prefixes) {
+        for (auto s : suffixes) {
+          if (in == (p + t + f + s).str()) {
+            return llvm::Optional<BlasInfo>(BlasInfo{
+                t.getSingleStringRef(),
+                p.getSingleStringRef(),
+                s.getSingleStringRef(),
+                f.getSingleStringRef(),
+            });
+          }
+        }
+      }
+    }
+  }
+  return llvm::NoneType();
+}

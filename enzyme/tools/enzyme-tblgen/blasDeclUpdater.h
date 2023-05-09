@@ -118,7 +118,6 @@ void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
     patternMap.insert(newEntry);
   }
 
-  emit_recognizeBLAS(newBlasPatterns, os);
   for (auto newPattern : newBlasPatterns) {
     emit_attributeBLAS(newPattern, os);
   }

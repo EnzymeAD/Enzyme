@@ -3601,6 +3601,12 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
   if (ci) {
     StringRef funcName = getFuncNameFromCall(&call);
 
+    llvm::Optional<BlasInfo> blasMetaData = extractBLAS(funcName);
+    if (blasMetaData.hasValue()) {
+      BlasInfo blas = blasMetaData.getValue();
+#include "BlasTA.inc"
+    }
+
 #define CONSIDER(fn)                                                           \
   if (funcName == #fn) {                                                       \
     analyzeFuncTypes(::fn, call, *this);                                       \
