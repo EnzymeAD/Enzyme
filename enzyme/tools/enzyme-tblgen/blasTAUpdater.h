@@ -37,7 +37,8 @@ void emit_BLASTypes(raw_ostream &os) {
      << "}\n";
 
   os << "TypeTree ttPtr;\n"
-     << "ttPtr.insert({-1},BaseType::Pointer);\n";
+     << "ttPtr.insert({-1},BaseType::Pointer);\n"
+     << "ttPtr.insert({-1,0},floatType);\n";
 }
      
 void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
@@ -55,9 +56,21 @@ void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
     if (currentType == argType::len || currentType == argType::vincInc) {
       os << "  updateAnalysis(call.getArgOperand(" << i << "), ttInt, &call);\n";
     } else if (currentType == argType::vincData) {
-    os << "  updateAnalysis(call.getArgOperand(" << i << "), ttPtr, &call);\n";
+      assert(argTypeMap.lookup(i+1) == argType::vincInc);
+      os << "  if (auto n = dyn_cast<ConstantInt>(call.getArgOperand(0))) {\n"
+         << "    if (auto inc = dyn_cast<ConstantInt>(call.getArgOperand(" << i << "))) {\n"
+         << "      assert(!inc->isNegative());\n"
+         << "      TypeTree ttData = ttPtr;\n"
+         << "      for (size_t i = 1; i < n->getZExtValue(); i++)\n"
+         << "          ttData.insert({-1, int(i * inc->getZExtValue())}, floatType);\n"
+         << "      updateAnalysis(call.getArgOperand(" << i << "), ttData, &call);\n"
+         << "    } else {\n"
+         << "      updateAnalysis(call.getArgOperand(" << i << "), ttPtr, &call);\n"
+         << "    }\n"
+         << "  } else {\n"
+         << "    updateAnalysis(call.getArgOperand(" << i << "), ttPtr, &call);\n"
+         << "  }\n";
     } else if (currentType == argType::fp) {
-      // TODO: check if byRef will pass this by Reference
     os << "  updateAnalysis(call.getArgOperand(" << i << "), ttFloat, &call);\n";
     }
   }
