@@ -2132,6 +2132,15 @@ F->getParamAttribute(ii, Attribute::StructRet).getValueAsType())); #else
                      << " nonconstant arg " << *j << "\n";
     }
 
+    if (constant_args[ii] == DIFFE_TYPE::DUP_NONEED) {
+      if (F->hasParamAttribute(ii, Attribute::NonNull)) {
+        NewF->removeParamAttr(jj, Attribute::NonNull);
+      }
+      if (F->hasParamAttribute(ii, Attribute::NoUndef)) {
+        NewF->removeParamAttr(jj, Attribute::NoUndef);
+      }
+    }
+
     if (constant_args[ii] == DIFFE_TYPE::DUP_ARG ||
         constant_args[ii] == DIFFE_TYPE::DUP_NONEED) {
       hasPtrInput = true;
