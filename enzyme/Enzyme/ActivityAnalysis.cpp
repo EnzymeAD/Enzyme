@@ -421,7 +421,6 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     "std::__1::to_string",
     "std::__1::basic_ostream",
     "std::__1::cout",
-
   
     "std::__detail::_Prime_rehash_policy",
     "std::__detail::_Hash_code_base",
