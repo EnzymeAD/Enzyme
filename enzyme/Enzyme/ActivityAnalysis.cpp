@@ -138,6 +138,8 @@ const char *KnownInactiveFunctionsStartingWith[] = {
     "_ZStL8__ioinit"
     "_ZNSt9basic_ios",
     "_ZSt4cout",
+    "_ZNSt3__14coutE",
+    "_ZNSt3__113basic_ostreamIcNS_11char_traitsIcEEE6sentryC1ERS3_",
     "_ZSt3cin",
     "_ZNSi10_M_extract",
     "_ZNSolsE",
@@ -169,6 +171,8 @@ const std::set<std::string> InactiveGlobals = {
     "stdin",
     "_ZSt3cin",
     "_ZSt4cout",
+    "_ZNSt3__14coutE",
+    "_ZNSt3__113basic_ostreamIcNS_11char_traitsIcEEE6sentryC1ERS3_",
     "_ZSt5wcout",
     "_ZSt4cerr",
     "_ZTVNSt7__cxx1115basic_stringbufIcSt11char_traitsIcESaIcEEE",
@@ -415,6 +419,9 @@ const char *DemangledKnownInactiveFunctionsStartingWith[] = {
     "std::__1::hash",
     "std::__1::__unordered_map_hasher",
     "std::__1::to_string",
+    "std::__1::basic_ostream",
+    "std::__1::cout",
+
   
     "std::__detail::_Prime_rehash_policy",
     "std::__detail::_Hash_code_base",
