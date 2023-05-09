@@ -8,7 +8,7 @@ void emit_attributeBLASCaller(const std::vector<TGPattern> &blasPatterns,
     //if (name != "dot")
       continue;
     os << "  if (blas.function == \"" << name << "\") {                   \n"
-       << "    attribute_" << name << "(F);                               \n"
+       << "    attribute_" << name << "(blas, F);                         \n"
        << "    return;                                                    \n"
        << "  }                                                            \n";
   }
@@ -17,7 +17,7 @@ void emit_attributeBLASCaller(const std::vector<TGPattern> &blasPatterns,
 
 void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
   auto name = pattern.getName();
-  os << "void attribute_" << name << "(llvm::Function *F) {\n"
+  os << "void attribute_" << name << "(BlasInfo blas, llvm::Function *F) {\n"
      << "  F->addFnAttr(llvm::Attribute::ArgMemOnly);\n";
   
   auto argTypeMap = pattern.getArgTypeMap();
@@ -26,9 +26,11 @@ void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
   for (size_t i = 0; i < argTypeMap.size(); i++) {
     if (argTypeMap.lookup(i) == argType::vincData) {
       os << "#if LLVM_VERSION_MAJOR >= 10\n"
-         << "  const bool julia_decl = !F->getArg(" << i << ")->getType()->isPointerTy();\n"
+         << "  const bool julia_decl = !F->getArg(" << i
+         << ")->getType()->isPointerTy();\n"
          << "#else\n"
-         << "  const bool julia_decl = !F->getOperand(" << i << ")->getType()->isPointerTy();\n"
+         << "  const bool julia_decl = !F->getOperand(" << i
+         << ")->getType()->isPointerTy();\n"
          << "#endif\n";
       break;
     }
@@ -40,9 +42,11 @@ void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
   for (size_t i = 0; i < argTypeMap.size(); i++) {
     if (argTypeMap.lookup(i) == argType::len) {
       os << "#if LLVM_VERSION_MAJOR >= 10\n"
-         << "  const bool byRef = !F->getArg(" << i << ")->getType()->isIntegerTy();\n"
+         << "  const bool byRef = !F->getArg(" << i
+         << ")->getType()->isIntegerTy() && blas.prefix == \"\";\n"
          << "#else\n"
-         << "  const bool byRef = !F->getOperand(" << i << ")->getType()->isIntegerTy();\n"
+         << "  const bool byRef = !F->getOperand(" << i
+         << ")->getType()->isIntegerTy() && blas.prefix == \"\";\n"
          << "#endif\n";
       break;
     }
