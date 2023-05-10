@@ -1551,6 +1551,12 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     }
     for (auto &val : phi->incoming_values()) {
       if (isPotentialLastLoopValue(val, parent, LLI)) {
+        if (unwrapMode == UnwrapMode::LegalFullUnwrap) {
+          llvm::errs() << " module: " << *newFunc->getParent() << "\n";
+          llvm::errs() << " newFunc: " << *newFunc << "\n";
+          llvm::errs() << " parent: " << *parent << "\n";
+          llvm::errs() << " val: " << *val << "\n";
+        }
         assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
         goto endCheck;
       }

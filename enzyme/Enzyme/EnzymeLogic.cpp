@@ -907,7 +907,7 @@ void calculateUnusedValuesInFunction(
             }
           }
           Intrinsic::ID ID = Intrinsic::not_intrinsic;
-          if (isMemFreeLibMFunction(funcName, &ID)) {
+          if (isMemFreeLibMFunction(funcName, &ID) || isReadOnly(obj_op)) {
             mayWriteToMemory = false;
           }
         }
@@ -940,6 +940,10 @@ void calculateUnusedValuesInFunction(
                     return /*earlyBreak*/ false;
                   if (unnecessaryInstructions.count(I))
                     return /*earlyBreak*/ false;
+                  if (auto CI = dyn_cast<CallInst>(I)) {
+                    if (isReadOnly(CI))
+                      return /*earlyBreak*/ false;
+                  }
 
                   if (writesToMemoryReadBy(
                           gutils->OrigAA, TLI,
