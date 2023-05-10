@@ -3604,7 +3604,7 @@ void analyzeIntelSubscriptIntrinsic(IntrinsicInst &II, TypeAnalyzer &TA) {
     if (!legal) {
       if (CustomErrorHandler)
         CustomErrorHandler("Could not keep minus one", wrap(&II),
-                           ErrorType::IllegalTypeAnalysis, &TA);
+                           ErrorType::IllegalTypeAnalysis, &TA, nullptr);
       else {
         TA.dump();
         llvm::errs()
