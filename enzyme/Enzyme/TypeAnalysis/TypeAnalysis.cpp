@@ -3623,19 +3623,19 @@ void analyzeIntelSubscriptIntrinsic(IntrinsicInst &II, TypeAnalyzer &TA) {
                       &II);
   }
 
-  SmallVector<std::set<Value *>, 4> idnext;
+  SmallVector<std::set<int64_t>, 4> idnext;
   // The first operand is used to denote the axis of a multidimensional array,
   // but it is not used for address calculation, and so we skip it here.
   constexpr size_t offsetCalculationIndices[3] = {1, 2, 4};
   for (auto i : offsetCalculationIndices) {
     auto idx = II.getOperand(i);
     auto iset = TA.knownIntegralValues(idx);
-    std::set<Value *> vset;
+    std::set<int64_t> vset;
     for (auto i : iset) {
       // Don't consider negative indices of llvm.intel.subscript
       if (i < 0)
         continue;
-      vset.insert(ConstantInt::get(idx->getType(), i));
+      vset.insert(i);
     }
     idnext.push_back(vset);
     if (idnext.back().size() == 0)
@@ -3655,10 +3655,10 @@ void analyzeIntelSubscriptIntrinsic(IntrinsicInst &II, TypeAnalyzer &TA) {
 
   bool firstLoop = true;
 
-  for (auto vec : getSet<Value *>(idnext, idnext.size() - 1)) {
-    auto baseIndex = cast<ConstantInt>(vec[0])->getLimitedValue();
-    auto stride = cast<ConstantInt>(vec[1])->getLimitedValue();
-    auto index = cast<ConstantInt>(vec[2])->getLimitedValue();
+  for (auto vec : getSet<int64_t>(idnext, idnext.size() - 1)) {
+    auto baseIndex = vec[0];
+    auto stride = vec[1];
+    auto index = vec[2];
 
     int offset = static_cast<int>(stride * (index - baseIndex));
     if (offset < 0) {
