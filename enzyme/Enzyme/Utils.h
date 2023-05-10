@@ -1406,6 +1406,10 @@ static inline bool isWriteOnly(const llvm::CallInst *call, ssize_t arg = -1) {
   return false;
 }
 
+static inline bool isReadNone(const llvm::CallInst *call, ssize_t arg = -1) {
+  return !isReadOnly(call, arg) && !isWriteOnly(call, arg);
+}
+
 static inline bool isNoCapture(const llvm::CallInst *call, size_t idx) {
 
 #if LLVM_VERSION_MAJOR >= 8
