@@ -1418,6 +1418,6 @@ struct BlasInfo {
 size_t getFirstLenOrIncPosition(BlasInfo blas);
 llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in);
 
-llvm::Constant *getUndefinedValueForType(llvm::Type *T);
+llvm::Constant *getUndefinedValueForType(llvm::Type *T, bool forceZero = false);
 
 #endif

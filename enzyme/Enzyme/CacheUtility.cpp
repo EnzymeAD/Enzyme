@@ -937,8 +937,9 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
 
         // Reallocate memory dynamically as a fallback
         // TODO change this to a power-of-two allocation strategy
+
         auto zerostore = allocationBuilder.CreateStore(
-            ConstantPointerNull::get(allocType), storeInto);
+            getUndefinedValueForType(allocType, /*forceZero*/ true), storeInto);
         scopeInstructions[alloc].push_back(zerostore);
 
         IRBuilder<> build(containedloops.back().first.incvar->getNextNode());
