@@ -1537,27 +1537,41 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
             }
           }
         }
-        if (funcName == "jl_array_copy" || funcName == "ijl_array_copy") {
-          // This pointer is inactive if it is either not actively stored to
-          // and not actively loaded from.
-          if (directions & DOWN && directions & UP) {
-            if (UpHypothesis->isConstantValue(TR, op->getOperand(0))) {
-              auto DownHypothesis = std::shared_ptr<ActivityAnalyzer>(
-                  new ActivityAnalyzer(*this, DOWN));
-              DownHypothesis->ConstantValues.insert(TmpOrig);
-              for (auto UA :
-                   {UseActivity::OnlyLoads, UseActivity::OnlyNonPointerStores,
-                    UseActivity::AllStores, UseActivity::None}) {
-                Instruction *LoadReval = nullptr;
-                if (DownHypothesis->isValueInactiveFromUsers(TR, TmpOrig, UA,
-                                                             &LoadReval)) {
-                  insertConstantsFrom(TR, *DownHypothesis);
-                  InsertConstantValue(TR, Val);
-                  return true;
-                } else {
-                  if (LoadReval && UA != UseActivity::AllStores) {
-                    ReEvaluateValueIfInactiveInst[LoadReval].insert(TmpOrig);
-                  }
+        if (directions & DOWN && directions & UP) {
+          bool allInactiveArgs = true;
+#if LLVM_VERSION_MAJOR >= 14
+          for (unsigned i = 0; i < op->arg_size(); ++i)
+#else
+          for (unsigned i = 0; i < op->getNumArgOperands(); ++i)
+#endif
+          {
+            // todo could also add isFunctionArgumentConstant(CallInst *CI,
+            // Value *val);
+            if (!UpHypothesis->isConstantValue(TR, op->getOperand(i))) {
+              allInactiveArgs = false;
+              llvm::errs() << " not constant val: " << *op << " - " << *op->getOperand(i) << "\n";
+              break;
+            }
+          }
+
+          if (allInactiveArgs) {
+            // This pointer is inactive if it is either not actively stored to
+            // and not actively loaded from.
+            auto DownHypothesis = std::shared_ptr<ActivityAnalyzer>(
+                new ActivityAnalyzer(*this, DOWN));
+            DownHypothesis->ConstantValues.insert(TmpOrig);
+            for (auto UA :
+                 {UseActivity::OnlyLoads, UseActivity::OnlyNonPointerStores,
+                  UseActivity::AllStores, UseActivity::None}) {
+              Instruction *LoadReval = nullptr;
+              if (DownHypothesis->isValueInactiveFromUsers(TR, TmpOrig, UA,
+                                                           &LoadReval)) {
+                insertConstantsFrom(TR, *DownHypothesis);
+                InsertConstantValue(TR, Val);
+                return true;
+              } else {
+                if (LoadReval && UA != UseActivity::AllStores) {
+                  ReEvaluateValueIfInactiveInst[LoadReval].insert(TmpOrig);
                 }
               }
             }
