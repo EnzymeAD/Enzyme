@@ -1180,42 +1180,6 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
       unwrap_cache[BuilderM.GetInsertBlock()][idx.first][idx.second] = toreturn;
     assert(val->getType() == toreturn->getType());
     return toreturn;
-  } else if (auto II = dyn_cast<IntrinsicInst>(val);
-             II && isIntelSubscriptIntrinsic(*II)) {
-    const std::array<size_t, 4> idxArgsIndices{{0, 1, 2, 4}};
-    const size_t ptrArgIndex = 3;
-
-    SmallVector<Value *, 5> args(5);
-    for (auto i : idxArgsIndices) {
-      Value *a = II->getOperand(i);
-      auto op = getOp(a);
-      if (op == nullptr)
-        goto endCheck;
-      args[i] = op;
-    }
-    auto ptr = getOp(II->getOperand(ptrArgIndex));
-    if (ptr == nullptr)
-      goto endCheck;
-    args[ptrArgIndex] = ptr;
-
-    auto toreturn = BuilderM.CreateCall(II->getCalledFunction(), args,
-                                        II->getName() + "_unwrap");
-
-#if LLVM_VERSION_MAJOR >= 13
-    if (auto CI = dyn_cast<CallInst>(toreturn)) {
-      CI->setAttributes(CI->getAttributes());
-    }
-#endif
-    if (auto newi = dyn_cast<Instruction>(toreturn)) {
-      newi->copyIRFlags(II);
-      unwrappedLoads[newi] = val;
-      if (newi->getParent()->getParent() != II->getParent()->getParent())
-        newi->setDebugLoc(nullptr);
-    }
-    if (permitCache)
-      unwrap_cache[BuilderM.GetInsertBlock()][idx.first][idx.second] = toreturn;
-    assert(val->getType() == toreturn->getType());
-    return toreturn;
   } else if (auto load = dyn_cast<LoadInst>(val)) {
     if (load->getMetadata("enzyme_noneedunwrap"))
       return load;
