@@ -357,6 +357,13 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
   if (auto CI = dyn_cast<CallInst>(user)) {
     auto funcName = getFuncNameFromCall(const_cast<CallInst *>(CI));
 
+    llvm::Optional<BlasInfo> blasMetaData = extractBLAS(funcName);
+    if (blasMetaData.hasValue()) {
+      BlasInfo blas = blasMetaData.getValue();
+#include "BlasDiffUse.inc"
+    }
+
+
     // Only need primal (and shadow) request for reverse
     if (funcName == "MPI_Isend" || funcName == "MPI_Irecv" ||
         funcName == "PMPI_Isend" || funcName == "PMPI_Irecv") {
