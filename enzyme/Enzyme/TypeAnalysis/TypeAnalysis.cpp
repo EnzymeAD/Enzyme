@@ -4306,6 +4306,21 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
       updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
       return;
     }
+    if (funcName == "MPI_Alltoallv") {
+      TypeTree IntPtr;
+      IntPtr.insert({-1, -1}, BaseType::Integer);
+      IntPtr.insert({-1}, BaseType::Pointer);
+      updateAnalysis(call.getOperand(0),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(1), IntPtr, &call);
+      updateAnalysis(call.getOperand(2), IntPtr, &call);
+      updateAnalysis(call.getOperand(4),
+                     TypeTree(BaseType::Pointer).Only(-1, &call), &call);
+      updateAnalysis(call.getOperand(5), IntPtr, &call);
+      updateAnalysis(call.getOperand(6), IntPtr, &call);
+      updateAnalysis(&call, TypeTree(BaseType::Integer).Only(-1, &call), &call);
+      return;
+    }
     /// END MPI
 
     // Prob Prog
