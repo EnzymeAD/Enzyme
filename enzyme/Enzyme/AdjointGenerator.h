@@ -8412,10 +8412,7 @@ public:
             (writeOnlyNoCapture && readOnly);
 
         if (replace) {
-          if (EnzymeZeroCache)
-            argi = ConstantPointerNull::get(cast<PointerType>(argi->getType()));
-          else
-            argi = UndefValue::get(argi->getType());
+          argi = getUndefinedValueForType(argi->getType());
         }
         argsInverted.push_back(argTy);
         args.push_back(argi);
@@ -8701,10 +8698,7 @@ public:
           (argTy == DIFFE_TYPE::DUP_NONEED &&
            (writeOnlyNoCapture ||
             !isa<Argument>(getBaseObject(call.getArgOperand(i)))))) {
-        if (EnzymeZeroCache)
-          prearg = ConstantPointerNull::get(cast<PointerType>(argi->getType()));
-        else
-          prearg = UndefValue::get(argi->getType());
+        prearg = getUndefinedValueForType(argi->getType());
       }
       pre_args.push_back(prearg);
 
@@ -8722,10 +8716,7 @@ public:
              (argTy == DIFFE_TYPE::DUP_NONEED &&
               (writeOnlyNoCapture ||
                !isa<Argument>(getBaseObject(call.getOperand(i))))))) {
-          if (EnzymeZeroCache)
-            argi = ConstantPointerNull::get(cast<PointerType>(argi->getType()));
-          else
-            argi = UndefValue::get(argi->getType());
+          argi = getUndefinedValueForType(argi->getType());
         }
         args.push_back(lookup(argi, Builder2));
       }
@@ -8782,11 +8773,7 @@ public:
 
           if (writeOnlyNoCapture && !replaceFunction &&
               TR.query(call.getArgOperand(i))[{-1, -1}] == BaseType::Pointer) {
-            if (EnzymeZeroCache)
-              darg =
-                  ConstantPointerNull::get(cast<PointerType>(argi->getType()));
-            else
-              darg = UndefValue::get(argi->getType());
+            darg = getUndefinedValueForType(argi->getType());
           } else {
             darg = gutils->invertPointerM(call.getArgOperand(i), Builder2);
           }
@@ -12132,12 +12119,8 @@ public:
             if (!forwardsShadow) {
               if (Mode == DerivativeMode::ReverseModePrimal) {
                 // Needs a stronger replacement check/assertion.
-                Value *replacement;
-                if (EnzymeZeroCache)
-                  replacement = ConstantPointerNull::get(
-                      cast<PointerType>(placeholder->getType()));
-                else
-                  replacement = UndefValue::get(placeholder->getType());
+                Value *replacement =
+                    getUndefinedValueForType(placeholder->getType());
                 gutils->replaceAWithB(placeholder, replacement);
                 gutils->invertedPointers.erase(found);
                 gutils->invertedPointers.insert(std::make_pair(

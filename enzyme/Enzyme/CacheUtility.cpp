@@ -829,9 +829,11 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
     alloc->setAlignment(align);
 #endif
   }
-  if (EnzymeZeroCache && sublimits.size() == 0)
-    scopeInstructions[alloc].push_back(
-        entryBuilder.CreateStore(Constant::getNullValue(types.back()), alloc));
+  if (sublimits.size() == 0) {
+    auto val = getUndefinedValueForType(types.back());
+    if (!isa<UndefValue>(val))
+      scopeInstructions[alloc].push_back(entryBuilder.CreateStore(val, alloc));
+  }
 
   Value *storeInto = alloc;
 

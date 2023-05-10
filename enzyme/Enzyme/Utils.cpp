@@ -58,6 +58,9 @@ void (*CustomRuntimeInactiveError)(LLVMBuilderRef, LLVMValueRef,
 LLVMValueRef *(*EnzymePostCacheStore)(LLVMValueRef, LLVMBuilderRef,
                                       uint64_t *size) = nullptr;
 LLVMTypeRef (*EnzymeDefaultTapeType)(LLVMContextRef) = nullptr;
+LLVMValueRef (*EnzymeUndefinedValueForType)(LLVMTypeRef) = nullptr;
+
+extern llvm::cl::opt<bool> EnzymeZeroCache;
 }
 
 void ZeroMemory(llvm::IRBuilder<> &Builder, llvm::Type *T, llvm::Value *obj,
@@ -1871,4 +1874,13 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in) {
     }
   }
   return llvm::NoneType();
+}
+
+llvm::Constant *getUndefinedValueForType(llvm::Type *T) {
+  if (EnzymeUndefinedValueForType)
+    return cast<Constant>(unwrap(EnzymeUndefinedValueForType(wrap(T))));
+  else if (EnzymeZeroCache)
+    return Constant::getNullValue(T);
+  else
+    return UndefValue::get(T);
 }

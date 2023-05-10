@@ -7931,11 +7931,7 @@ bool GradientUtils::isOriginalBlock(const BasicBlock &BB) const {
 void GradientUtils::eraseFictiousPHIs() {
   {
     for (auto P : rematerializedPrimalOrShadowAllocations) {
-      Value *replacement;
-      if (EnzymeZeroCache)
-        replacement = ConstantPointerNull::get(cast<PointerType>(P->getType()));
-      else
-        replacement = UndefValue::get(P->getType());
+      Value *replacement = getUndefinedValueForType(P->getType());
       P->replaceAllUsesWith(replacement);
       erase(P);
     }
