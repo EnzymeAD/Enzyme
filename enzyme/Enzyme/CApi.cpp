@@ -899,7 +899,8 @@ void EnzymeSetCalledFunction(LLVMValueRef C_CI, LLVMValueRef C_F,
   if (CI->getType() == F->getReturnType())
     CI->replaceAllUsesWith(NC);
 
-  NC->takeName(CI);
+  if (!NC->getType()->isVoidTy())
+    NC->takeName(CI);
   NC->setCallingConv(CI->getCallingConv());
   CI->eraseFromParent();
 }
@@ -994,8 +995,10 @@ LLVMValueRef EnzymeCloneFunctionWithoutReturnOrArgs(LLVMValueRef FC,
     for (auto &Arg : NewF->args())
       Arg.removeAttr(Attribute::Returned);
   SmallVector<std::pair<unsigned, MDNode *>, 1> MD;
+  F->getAllMetadata(MD);
   for (auto pair : MD)
-    NewF->addMetadata(pair.first, *pair.second);
+    if (pair.first != LLVMContext::MD_dbg)
+      NewF->addMetadata(pair.first, *pair.second);
   NewF->takeName(F);
   NewF->setCallingConv(F->getCallingConv());
   if (!keepReturn)
@@ -1101,8 +1104,11 @@ CountTrackedPointers::CountTrackedPointers(Type *T) {
     if (isa<ArrayType>(T))
       count *= cast<ArrayType>(T)->getNumElements();
     else if (isa<VectorType>(T)) {
-      ElementCount EC = cast<VectorType>(T)->getElementCount();
-      count *= EC.getKnownMinValue();
+#if LLVM_VERSION_MAJOR >= 12
+      count *= cast<VectorType>(T)->getElementCount().getKnownMinValue();
+#else
+      count *= cast<VectorType>(T)->getNumElements();
+#endif
     }
   }
   if (count == 0)
@@ -1118,10 +1124,12 @@ static size_t num_rooting(llvm::Type *T) {
 }
 
 extern "C" {
+#if LLVM_VERSION_MAJOR >= 10
 void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   auto F = cast<Function>(unwrap(F_C));
   if (F->empty())
     return;
+  auto RT = F->getReturnType();
   std::set<size_t> srets;
   std::set<size_t> enzyme_srets;
   std::set<size_t> enzyme_srets_v;
@@ -1171,11 +1179,12 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     auto CI = dyn_cast<CallInst>(U);
     assert(CI);
     assert(CI->getCalledFunction() == F);
+    callers.push_back(CI);
   }
 
   // Can upgrade in place.
   if (enzyme_srets.size() == 1 && enzyme_srets_v.size() == 0 &&
-      rroots_v.size() == 0 && rroots.size() <= 1) {
+      rroots_v.size() == 0 && rroots.size() <= 1 && RT->isVoidTy()) {
     assert(*enzyme_srets.begin() == 0);
     if (rroots.size()) {
       assert(rroots.size() == 1);
@@ -1192,18 +1201,20 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       } else {
         T = FT->getParamType(0)->getPointerElementType();
       }
-      auto attr = Attribute::getWithStructRetType(F->getContext(), T);
+      auto attr = Attribute::get(F->getContext(), Attribute::StructRet, T);
       CI->addAttribute(AttributeList::FirstArgIndex, attr);
       CI->removeAttribute(AttributeList::FirstArgIndex, "enzyme_sret");
     }
+    if (callers.size() == 0) {
+      T = FT->getParamType(0)->getPointerElementType();
+    }
     assert(T);
-    auto attr = Attribute::getWithStructRetType(F->getContext(), T);
+    auto attr = Attribute::get(F->getContext(), Attribute::StructRet, T);
     F->addAttribute(AttributeList::FirstArgIndex, attr);
     F->removeAttribute(AttributeList::FirstArgIndex, "enzyme_sret");
     return;
   }
   SmallVector<Type *, 1> Types;
-  auto RT = F->getReturnType();
   if (!RT->isVoidTy()) {
     Types.push_back(RT);
   }
@@ -1233,7 +1244,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   types.push_back(PointerType::getUnqual(ST));
   NewAttrs = NewAttrs.addAttribute(
       F->getContext(), AttributeList::FirstArgIndex + nexti,
-      Attribute::getWithStructRetType(F->getContext(), ST));
+      Attribute::get(F->getContext(), Attribute::StructRet, ST));
   nexti++;
   if (AT) {
     NewAttrs = NewAttrs.addAttribute(F->getContext(),
@@ -1287,7 +1298,9 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     if (enzyme_srets.count(i) || enzyme_srets_v.count(i) || rroots.count(i) ||
         rroots_v.count(i)) {
       VMap[&I] = &I;
+      continue;
     }
+    assert(DestI != NewF->arg_end());
     DestI->setName(I.getName()); // Copy the name over...
     VMap[&I] = &*DestI++;        // Add mapping to VMap
   }
@@ -1323,7 +1336,11 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       }
       return offset;
     } else if (auto VT = dyn_cast<VectorType>(T)) {
+#if LLVM_VERSION_MAJOR >= 12
       size_t count = VT->getElementCount().getKnownMinValue();
+#else
+      size_t count = VT->getNumElements();
+#endif
       for (size_t i = 0; i < count; i++) {
         offset = recur(B, B.CreateExtractElement(V, {i}), offset);
       }
@@ -1447,7 +1464,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     vals.push_back(sret);
     NewAttrs = NewAttrs.addAttribute(
         F->getContext(), AttributeList::FirstArgIndex + nexti,
-        Attribute::getWithStructRetType(F->getContext(), ST));
+        Attribute::get(F->getContext(), Attribute::StructRet, ST));
     nexti++;
     AllocaInst *roots = nullptr;
     if (AT) {
@@ -1516,7 +1533,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     SmallVector<OperandBundleDef, 1> Bundles;
     for (unsigned I = 0, E = CI->getNumOperandBundles(); I != E; ++I)
       Bundles.emplace_back(CI->getOperandBundleAt(I));
-    auto NC = B.CreateCall(F, vals, Bundles);
+    auto NC = B.CreateCall(NewF, vals, Bundles);
     NC->setAttributes(NewAttrs);
     NC->copyMetadata(*CI);
 
@@ -1524,6 +1541,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     if (!RT->isVoidTy()) {
       auto gep = B.CreateConstInBoundsGEP2_32(ST, sret, 0, 0);
       auto ld = B.CreateLoad(RT, gep);
+      ld->takeName(CI);
       CI->replaceAllUsesWith(ld);
       sretCount++;
     }
@@ -1545,10 +1563,18 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       sretCount += AT->getNumElements();
     }
 
-    NC->takeName(CI);
     NC->setCallingConv(CI->getCallingConv());
     CI->eraseFromParent();
   }
+  NewF->setAttributes(NewAttrs);
+  SmallVector<std::pair<unsigned, MDNode *>, 1> MD;
+  F->getAllMetadata(MD);
+  for (auto pair : MD)
+    if (pair.first != LLVMContext::MD_dbg)
+      NewF->addMetadata(pair.first, *pair.second);
+  NewF->takeName(F);
+  NewF->setCallingConv(F->getCallingConv());
   F->eraseFromParent();
 }
+#endif
 }
