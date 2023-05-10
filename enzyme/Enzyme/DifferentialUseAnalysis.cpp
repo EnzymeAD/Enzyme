@@ -363,7 +363,6 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
 #include "BlasDiffUse.inc"
     }
 
-
     // Only need primal (and shadow) request for reverse
     if (funcName == "MPI_Isend" || funcName == "MPI_Irecv" ||
         funcName == "PMPI_Isend" || funcName == "PMPI_Irecv") {
