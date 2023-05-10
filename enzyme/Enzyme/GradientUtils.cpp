@@ -1202,11 +1202,8 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
                                         II->getName() + "_unwrap");
 
 #if LLVM_VERSION_MAJOR >= 13
-    if (isa<CallInst>(toreturn)) {
-      // Must copy the elementtype attribute as it is needed by the intrinsic
-      cast<CallInst>(toreturn)->addParamAttr(
-          ptrArgIndex,
-          II->getParamAttr(ptrArgIndex, Attribute::AttrKind::ElementType));
+    if (auto CI = dyn_cast<CallInst>(toreturn)) {
+      CI->setAttributes(CI->getAttributes());
     }
 #endif
     if (auto newi = dyn_cast<Instruction>(toreturn)) {
