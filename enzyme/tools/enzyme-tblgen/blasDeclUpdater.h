@@ -42,13 +42,8 @@ void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
 
   for (size_t i = 0; i < argTypeMap.size(); i++) {
     if (argTypeMap.lookup(i) == argType::vincData) {
-      os << "#if LLVM_VERSION_MAJOR >= 10\n"
-         << "  const bool julia_decl = !F->getArg(" << i
-         << ")->getType()->isPointerTy();\n"
-         << "#else\n"
-         << "  const bool julia_decl = !F->getOperand(" << i
-         << ")->getType()->isPointerTy();\n"
-         << "#endif\n";
+      os << "const bool julia_decl = !F->getFunctionType()->getParamType(" << i
+         << ")->isPointerTy();\n";
       break;
     }
     if (i+1 == argTypeMap.size()) {
@@ -58,13 +53,8 @@ void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
   }
   for (size_t i = 0; i < argTypeMap.size(); i++) {
     if (argTypeMap.lookup(i) == argType::len) {
-      os << "#if LLVM_VERSION_MAJOR >= 10\n"
-         << "  const bool byRef = !F->getArg(" << i
-         << ")->getType()->isIntegerTy() && blas.prefix == \"\";\n"
-         << "#else\n"
-         << "  const bool byRef = !F->getOperand(" << i
-         << ")->getType()->isIntegerTy() && blas.prefix == \"\";\n"
-         << "#endif\n";
+      os << "const bool byRef = !F->getFunctionType()->getParamType(" << i
+         << ")->isIntegerTy() && blas.prefix == \"\";\n";
       break;
     }
     if (i+1 == argTypeMap.size()) {
