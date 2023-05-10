@@ -4,9 +4,6 @@ void emit_attributeBLASCaller(const std::vector<TGPattern> &blasPatterns,
   os << "void attributeBLAS(BlasInfo blas, llvm::Function *F) {             \n";
   for (auto pattern : blasPatterns) {
     auto name = pattern.getName();
-    // only one which we expose right now.
-    //if (name != "dot")
-      continue;
     os << "  if (blas.function == \"" << name << "\") {                   \n"
        << "    attribute_" << name << "(blas, F);                         \n"
        << "    return;                                                    \n"
