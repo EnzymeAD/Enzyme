@@ -4225,10 +4225,7 @@ bool GradientUtils::shouldRecompute(const Value *val,
   }
 
   if (auto op = dyn_cast<IntrinsicInst>(val)) {
-    if (isIntelSubscriptIntrinsic(*op)) {
-      return true;
-    }
-    if (!op->mayReadOrWriteMemory())
+    if (!op->mayReadOrWriteMemory() || isReadNone(op))
       return true;
     switch (op->getIntrinsicID()) {
     case Intrinsic::sin:
