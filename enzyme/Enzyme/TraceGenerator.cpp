@@ -131,13 +131,14 @@ void TraceGenerator::handleSampleCall(CallInst &call, CallInst *new_call) {
   Type *RetTy = orig_FTy->getReturnType();
   FunctionType *FTy = FunctionType::get(RetTy, params, orig_FTy->isVarArg());
 
-  Twine prefixed_name =
-      (mode == ProbProgMode::Condition ? "condition_" : "sample_") +
-      call.getName();
+  std::string name_prefix =
+      mode == ProbProgMode::Condition ? "condition_" : "sample_";
+  if (call.hasName())
+    name_prefix += call.getName();
 
   Function *outlinedSample =
       Function::Create(FTy, Function::LinkageTypes::InternalLinkage,
-                       prefixed_name, call.getModule());
+                       name_prefix, call.getModule());
   BasicBlock *entry = BasicBlock::Create(call.getContext());
   entry->insertInto(outlinedSample);
 
