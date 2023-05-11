@@ -3573,6 +3573,124 @@ void TypeAnalyzer::visitInvokeInst(InvokeInst &call) {
   tmpCall->eraseFromParent();
 }
 
+void analyzeIntelSubscriptIntrinsic(IntrinsicInst &II, TypeAnalyzer &TA) {
+  assert(isIntelSubscriptIntrinsic(II));
+#if LLVM_VERSION_MAJOR >= 14
+  assert(II.arg_size() == 5);
+#else
+  assert(II.getNumArgOperands() == 5);
+#endif
+
+  constexpr size_t idxArgsIndices[4] = {0, 1, 2, 4};
+  constexpr size_t ptrArgIndex = 3;
+
+  // Update analysis of index parameters
+
+  if (TA.direction & TypeAnalyzer::UP) {
+    for (auto i : idxArgsIndices) {
+      auto idx = II.getOperand(i);
+      TA.updateAnalysis(idx, TypeTree(BaseType::Integer).Only(-1, &II), &II);
+    }
+  }
+
+  // Update analysis of ptr parameter
+
+  auto &DL = TA.fntypeinfo.Function->getParent()->getDataLayout();
+  auto pointerAnalysis = TA.getAnalysis(II.getOperand(ptrArgIndex));
+
+  if (TA.direction & TypeAnalyzer::DOWN) {
+    bool legal = true;
+    auto keepMinus = pointerAnalysis.KeepMinusOne(legal);
+    if (!legal) {
+      if (CustomErrorHandler)
+        CustomErrorHandler("Could not keep minus one", wrap(&II),
+                           ErrorType::IllegalTypeAnalysis, &TA, nullptr);
+      else {
+        TA.dump();
+        llvm::errs()
+            << " could not perform minus one for llvm.intel.subscript'd: " << II
+            << "\n";
+      }
+    }
+    TA.updateAnalysis(&II, keepMinus, &II);
+    TA.updateAnalysis(&II, TypeTree(pointerAnalysis.Inner0()).Only(-1, &II),
+                      &II);
+  }
+
+  if (TA.direction & TypeAnalyzer::UP) {
+    TA.updateAnalysis(II.getOperand(ptrArgIndex),
+                      TypeTree(TA.getAnalysis(&II).Inner0()).Only(-1, &II),
+                      &II);
+  }
+
+  SmallVector<std::set<int64_t>, 4> idnext;
+  // The first operand is used to denote the axis of a multidimensional array,
+  // but it is not used for address calculation, and so we skip it here.
+  constexpr size_t offsetCalculationIndices[3] = {1, 2, 4};
+  for (auto i : offsetCalculationIndices) {
+    auto idx = II.getOperand(i);
+    auto iset = TA.knownIntegralValues(idx);
+    std::set<int64_t> vset;
+    for (auto i : iset) {
+      // Don't consider negative indices of llvm.intel.subscript
+      if (i < 0)
+        continue;
+      vset.insert(i);
+    }
+    idnext.push_back(vset);
+    if (idnext.back().size() == 0)
+      return;
+  }
+  assert(idnext.size() != 0);
+
+  TypeTree upTree;
+  TypeTree downTree;
+
+  TypeTree intrinsicData0;
+  TypeTree pointerData0;
+  if (TA.direction & TypeAnalyzer::UP)
+    intrinsicData0 = TA.getAnalysis(&II).Data0();
+  if (TA.direction & TypeAnalyzer::DOWN)
+    pointerData0 = pointerAnalysis.Data0();
+
+  bool firstLoop = true;
+
+  for (auto vec : getSet<int64_t>(idnext, idnext.size() - 1)) {
+    auto baseIndex = vec[0];
+    auto stride = vec[1];
+    auto index = vec[2];
+
+    int offset = static_cast<int>(stride * (index - baseIndex));
+    if (offset < 0) {
+      continue; // The intrinsic doesn't handle negative offsets
+    }
+
+    if (TA.direction & TypeAnalyzer::DOWN) {
+      auto shft = pointerData0.ShiftIndices(DL, /*init offset*/ offset,
+                                            /*max size*/ -1, /*newoffset*/ 0);
+      if (firstLoop)
+        downTree = shft;
+      else
+        downTree &= shft;
+    }
+
+    if (TA.direction & TypeAnalyzer::UP) {
+      auto shft =
+          intrinsicData0.ShiftIndices(DL, /*init offset*/ 0, /*max size*/ -1,
+                                      /*new offset*/ offset);
+      if (firstLoop)
+        upTree = shft;
+      else
+        upTree |= shft;
+    }
+    firstLoop = false;
+  }
+  if (TA.direction & TypeAnalyzer::DOWN)
+    TA.updateAnalysis(&II, downTree.Only(-1, &II), &II);
+  if (TA.direction & TypeAnalyzer::UP)
+    TA.updateAnalysis(II.getOperand(ptrArgIndex), upTree.Only(-1, &II), &II);
+}
+
 void TypeAnalyzer::visitCallInst(CallInst &call) {
   assert(fntypeinfo.KnownValues.size() ==
          fntypeinfo.Function->getFunctionType()->getNumParams());
@@ -3605,6 +3723,17 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
     if (blasMetaData.hasValue()) {
       BlasInfo blas = blasMetaData.getValue();
 #include "BlasTA.inc"
+    }
+
+    // When compiling Enzyme against standard LLVM, and not Intel's
+    // modified version of LLVM, the intrinsic `llvm.intel.subscript` is
+    // not fully understood by LLVM. One of the results of this is that the
+    // visitor dispatches to visitCallInst, rather than visitIntrinsicInst, when
+    // presented with the intrinsic - hence why we are handling it here.
+    if (funcName.startswith("llvm.intel.subscript")) {
+      assert(isa<IntrinsicInst>(call));
+      analyzeIntelSubscriptIntrinsic(cast<IntrinsicInst>(call), *this);
+      return;
     }
 
 #define CONSIDER(fn)                                                           \

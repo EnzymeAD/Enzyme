@@ -1156,6 +1156,17 @@ static inline bool shouldDisableNoWrite(const llvm::CallInst *CI) {
   return false;
 }
 
+static inline bool isIntelSubscriptIntrinsic(const llvm::IntrinsicInst &II) {
+  return getFuncNameFromCall(&II).startswith("llvm.intel.subscript");
+}
+
+static inline bool isIntelSubscriptIntrinsic(const llvm::Value *val) {
+  if (auto II = llvm::dyn_cast<llvm::IntrinsicInst>(val)) {
+    return isIntelSubscriptIntrinsic(*II);
+  }
+  return false;
+}
+
 static inline bool isPointerArithmeticInst(const llvm::Value *V,
                                            bool includephi = true,
                                            bool includebin = true) {
@@ -1184,6 +1195,10 @@ static inline bool isPointerArithmeticInst(const llvm::Value *V,
       }
     }
 
+  if (isIntelSubscriptIntrinsic(V)) {
+    return true;
+  }
+
   if (auto *Call = llvm::dyn_cast<llvm::CallInst>(V)) {
     auto funcName = getFuncNameFromCall(Call);
     if (funcName == "julia.pointer_from_objref") {
@@ -1204,6 +1219,10 @@ static inline llvm::Value *getBaseObject(llvm::Value *V) {
       continue;
     } else if (auto CI = llvm::dyn_cast<llvm::GetElementPtrInst>(V)) {
       V = CI->getOperand(0);
+      continue;
+    } else if (auto II = llvm::dyn_cast<llvm::IntrinsicInst>(V);
+               II && isIntelSubscriptIntrinsic(*II)) {
+      V = II->getOperand(3);
       continue;
     } else if (auto CI = llvm::dyn_cast<llvm::PHINode>(V)) {
       if (CI->getNumIncomingValues() == 1) {
@@ -1385,6 +1404,10 @@ static inline bool isWriteOnly(const llvm::CallInst *call, ssize_t arg = -1) {
     }
   }
   return false;
+}
+
+static inline bool isReadNone(const llvm::CallInst *call, ssize_t arg = -1) {
+  return !isReadOnly(call, arg) && !isWriteOnly(call, arg);
 }
 
 static inline bool isNoCapture(const llvm::CallInst *call, size_t idx) {

@@ -4189,7 +4189,7 @@ bool GradientUtils::shouldRecompute(const Value *val,
   }
 
   if (auto op = dyn_cast<IntrinsicInst>(val)) {
-    if (!op->mayReadOrWriteMemory())
+    if (!op->mayReadOrWriteMemory() || isReadNone(op))
       return true;
     switch (op->getIntrinsicID()) {
     case Intrinsic::sin:
@@ -5804,6 +5804,40 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
     return antialloca;
   } else if (auto II = dyn_cast<IntrinsicInst>(oval)) {
+    if (isIntelSubscriptIntrinsic(*II)) {
+      IRBuilder<> bb(getNewFromOriginal(II));
+
+      const std::array<size_t, 4> idxArgsIndices{{0, 1, 2, 4}};
+      const size_t ptrArgIndex = 3;
+
+      SmallVector<Value *, 5> invertArgs(5);
+      for (auto i : idxArgsIndices) {
+        Value *idx = getNewFromOriginal(II->getOperand(i));
+        invertArgs[i] = idx;
+      }
+      Value *invertPtrArg = invertPointerM(II->getOperand(ptrArgIndex), bb);
+      invertArgs[ptrArgIndex] = invertPtrArg;
+
+      auto rule = [&](Value *ip) {
+        auto shadow = bb.CreateCall(II->getCalledFunction(), invertArgs);
+        assert(isa<CallInst>(shadow));
+        auto CI = cast<CallInst>(shadow);
+#if LLVM_VERSION_MAJOR >= 13
+        // Must copy the elementtype attribute as it is needed by the intrinsic
+        CI->addParamAttr(
+            ptrArgIndex,
+            II->getParamAttr(ptrArgIndex, Attribute::AttrKind::ElementType));
+#endif
+        return shadow;
+      };
+
+      Value *shadow = applyChainRule(II->getType(), bb, rule, invertPtrArg);
+
+      invertedPointers.insert(
+          std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
+      return shadow;
+    }
+
     IRBuilder<> bb(getNewFromOriginal(II));
     bb.setFastMathFlags(getFast());
     switch (II->getIntrinsicID()) {

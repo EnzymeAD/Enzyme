@@ -829,6 +829,11 @@ bool ActivityAnalyzer::isConstantInstruction(TypeResults const &TR,
         llvm::errs() << "known inactive intrinsic " << *I << "\n";
       InsertConstantInstruction(TR, I);
       return true;
+    } else if (isIntelSubscriptIntrinsic(*II)) {
+      // The intrinsic "llvm.intel.subscript" does not propogate deriviative
+      // information directly. But its returned pointer may be active.
+      InsertConstantInstruction(TR, I);
+      return true;
     }
   }
 
@@ -2463,6 +2468,18 @@ bool ActivityAnalyzer::isInstructionInactiveFromOrigin(TypeResults const &TR,
                      << *inst << "\n";
       return true;
     }
+    if (isIntelSubscriptIntrinsic(*II)) {
+      // The only argument that can make an llvm.intel.subscript intrinsic
+      // active is the pointer operand
+      const unsigned int ptrArgIdx = 3;
+      if (isConstantValue(TR, II->getOperand(ptrArgIdx))) {
+        if (EnzymePrintActivity)
+          llvm::errs() << "constant(" << (int)directions << ") up-intrinsic "
+                       << *inst << "\n";
+        return true;
+      }
+      return false;
+    }
   }
 
   if (auto gep = dyn_cast<GetElementPtrInst>(inst)) {
@@ -2832,6 +2849,13 @@ bool ActivityAnalyzer::isValueInactiveFromUsers(TypeResults const &TR,
         continue;
       } else {
         return false;
+      }
+    }
+
+    if (auto II = dyn_cast<IntrinsicInst>(a)) {
+      if (isIntelSubscriptIntrinsic(*II) &&
+          (II->getOperand(/*ptrArgIdx=*/3) != parent)) {
+        continue;
       }
     }
 
