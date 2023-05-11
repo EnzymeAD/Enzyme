@@ -99,17 +99,17 @@ public:
 
 /// align is the alignment that should be specified for load/store to pointer
 #if LLVM_VERSION_MAJOR >= 10
-  void addToInvertedPtrDiffe(llvm::Instruction *orig, llvm::Type *addingType,
+  void addToInvertedPtrDiffe(llvm::Instruction *orig, llvm::Type *addingType, llvm::Type *loadingType,
                              unsigned start, unsigned size,
                              llvm::Value *origptr, llvm::Value *dif,
                              llvm::IRBuilder<> &BuilderM,
-                             llvm::MaybeAlign align,
+                             llvm::MaybeAlign align = llvm::MaybeAlign(),
                              llvm::Value *mask = nullptr);
 #else
-  void addToInvertedPtrDiffe(llvm::Instruction *orig, llvm::Type *addingType,
+  void addToInvertedPtrDiffe(llvm::Instruction *orig, llvm::Type *addingType, llvm::Type *loadingType,
                              unsigned start, unsigned size,
                              llvm::Value *origptr, llvm::Value *dif,
-                             llvm::IRBuilder<> &BuilderM, unsigned align,
+                             llvm::IRBuilder<> &BuilderM, unsigned align = 0,
                              llvm::Value *mask = nullptr);
 #endif
 
@@ -117,13 +117,13 @@ public:
   void addToInvertedPtrDiffe(llvm::Instruction *orig, TypeTree vd,
                              unsigned size, llvm::Value *origptr,
                              llvm::Value *prediff, llvm::IRBuilder<> &Builder2,
-                             llvm::MaybeAlign align,
+                             llvm::MaybeAlign align = llvm::MaybeAlign(),
                              llvm::Value *premask = nullptr);
 #else
   void addToInvertedPtrDiffe(llvm::Instruction *orig, TypeTree vd,
                              unsigned size, llvm::Value *origptr,
                              llvm::Value *prediff, llvm::IRBuilder<> &Builder2,
-                             unsigned align, llvm::Value *premask = nullptr);
+                             unsigned align = 0, llvm::Value *premask = nullptr);
 #endif
 };
 

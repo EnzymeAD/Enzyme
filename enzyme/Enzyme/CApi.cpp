@@ -403,8 +403,10 @@ void EnzymeGradientUtilsAddToInvertedPointerDiffe(
 #else
   auto align2 = align;
 #endif
+  auto inst = cast_or_null<Instruction>(orig);
   gutils->addToInvertedPtrDiffe(
-      cast_or_null<Instruction>(unwrap(orig)), unwrap(addingType), start, size,
+      cast_or_null<Instruction>(unwrap(orig)),
+      inst ? inst->getType() : nullptr, unwrap(addingType), start, size,
       unwrap(origptr), unwrap(dif), *unwrap(BuilderM), align2, unwrap(mask));
 }
 

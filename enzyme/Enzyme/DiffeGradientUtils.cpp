@@ -583,14 +583,14 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
 }
 
 #if LLVM_VERSION_MAJOR >= 10
-void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
+void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig, Type* origLoadedType,
                                                Type *addingType, unsigned start,
                                                unsigned size, Value *origptr,
                                                Value *dif,
                                                IRBuilder<> &BuilderM,
                                                MaybeAlign align, Value *mask)
 #else
-void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
+void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig, Type* origLoadedType,
                                                Type *addingType, unsigned start,
                                                unsigned size, Value *origptr,
                                                Value *dif,
@@ -919,7 +919,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       st->setMetadata(LLVMContext::MD_noalias, noscope);
 
       if (orig && start == 0 &&
-          size == (DL.getTypeSizeInBits(orig->getType()) + 7) / 8) {
+          size == (DL.getTypeSizeInBits(origLoadedType) + 7) / 8) {
         LI->copyMetadata(*orig, MD_ToCopy);
         LI->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
         unsigned int StoreData[] = {LLVMContext::MD_tbaa,

@@ -72,7 +72,8 @@ class Constant<string _value> {
 def scal : CallBlasPattern<(Op $n, $alpha, $x, $incx),
                   ["x"],[len, fp, vinc],
                   [
-                  (b<"asum"> $n, input<"x">, $incx),
+                  // dot must proceed scal, because scal modifies adj<"x">
+                  (b<"dot"> $n, $x, $incx, adj<"x">, $incx),
                   (b<"scal"> $n, $alpha, adj<"x">, $incx)
                   ]
                   >;

@@ -1844,7 +1844,7 @@ Function *GetFunctionFromValue(Value *fn) {
 }
 
 size_t getFirstLenOrIncPosition(BlasInfo blas) {
-  if (blas.function == "dot") {
+  if (blas.function == "dot" || blas.function == "scal") {
     return 0;
   } else {
     llvm::errs() << "unsuported BLAS fnc\n";
@@ -1854,7 +1854,7 @@ size_t getFirstLenOrIncPosition(BlasInfo blas) {
 
 llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in) {
   llvm::Twine floatType[] = {"s", "d"}; // c, z
-  llvm::Twine extractable[] = {"dot"};
+  llvm::Twine extractable[] = {"dot", "scal"};
   llvm::Twine prefixes[] = {"" /*Fortran*/, "cblas_", "cublas_"};
   llvm::Twine suffixes[] = {"", "_", "64_", "_64_"};
   for (auto t : floatType) {
