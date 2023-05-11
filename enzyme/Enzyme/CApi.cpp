@@ -1250,7 +1250,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     NewAttrs = NewAttrs.addAttribute(F->getContext(),
                                      AttributeList::FirstArgIndex + nexti,
                                      "enzymejl_returnRoots");
-    types.push_back(roots_AT);
+    types.push_back(PointerType::getUnqual(roots_AT));
     nexti++;
   }
   for (size_t i = 0, end = FT->getNumParams(); i < end; i++) {
