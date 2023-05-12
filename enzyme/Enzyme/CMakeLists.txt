@@ -306,7 +306,11 @@ if (${LLVM_VERSION_MAJOR} IN_LIST LTO_LEGACY_MANAGER_VERSIONS)
 endif()
 
 target_link_options(LLDEnzyme INTERFACE "SHELL: -Wl,-mllvm")
-target_link_options(LLDEnzyme INTERFACE "SHELL: -Wl,-load=$<TARGET_FILE:LLDEnzyme-${LLVM_VERSION_MAJOR}>")
+if (${LLVM_VERSION_MAJOR} GREATER 14)
+  target_link_options(LLDEnzyme INTERFACE "SHELL: -Wl,-load-pass-manager=$<TARGET_FILE:LLDEnzyme-${LLVM_VERSION_MAJOR}>")
+else()
+  target_link_options(LLDEnzyme INTERFACE "SHELL: -Wl,-load=$<TARGET_FILE:LLDEnzyme-${LLVM_VERSION_MAJOR}>")
+endif()
 
 # this custom target exists to prevent CMake from incorrectly assuming that 
 # targets that link depend on LLDEnzyme-XX can be built at the same time or 
