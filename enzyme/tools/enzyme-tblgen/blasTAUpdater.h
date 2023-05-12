@@ -1,8 +1,6 @@
 void emit_BLASTypes(raw_ostream &os) {
 
-  os << "size_t firstIntPos = getFirstLenOrIncPosition(blas);\n";
-
-  os << "  const bool byRef = blas.prefix == \"\";\n";
+  os << "const bool byRef = blas.prefix == \"\";\n";
 
   os << "TypeTree ttFloat;\n"
      << "llvm::Type *floatType; \n"
@@ -17,6 +15,9 @@ void emit_BLASTypes(raw_ostream &os) {
      << "} else { \n"
      << "  ttFloat.insert({-1},floatType);\n"
      << "}\n";
+  
+  os << "TypeTree ttFloatRet;\n"
+     << "ttFloatRet.insert({-1},floatType);\n";
 
   os << "TypeTree ttInt;\n"
      << "if (byRef) {\n"
@@ -75,7 +76,7 @@ void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
   }
   if (name == "dot" || name == "asum" || name == "nrm2") {
     os << "  assert(call.getType()->isFloatingPointTy());\n"
-       << "  updateAnalysis(&call, ttFloat, &call);\n";
+       << "  updateAnalysis(&call, ttFloatRet, &call);\n";
   }
 
   os << "}\n";
