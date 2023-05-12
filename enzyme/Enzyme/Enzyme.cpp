@@ -493,12 +493,14 @@ public:
       fn = CI->getArgOperand(1);
     }
 
+    Value *ofn = fn;
     fn = GetFunctionFromValue(fn);
 
     if (!fn || !isa<Function>(fn)) {
+      assert(ofn);
       EmitFailure("NoFunctionToDifferentiate", CI->getDebugLoc(), CI,
                   "failed to find fn to differentiate", *CI, " - found - ",
-                  *fn);
+                  *ofn);
       return nullptr;
     }
     if (cast<Function>(fn)->empty()) {
