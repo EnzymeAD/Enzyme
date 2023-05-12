@@ -1843,15 +1843,6 @@ Function *GetFunctionFromValue(Value *fn) {
   return cast<Function>(fn);
 }
 
-size_t getFirstLenOrIncPosition(BlasInfo blas) {
-  if (blas.function == "dot" || blas.function == "scal") {
-    return 0;
-  } else {
-    llvm::errs() << "unsuported BLAS fnc\n";
-    llvm_unreachable("unsuported BLAS fnc");
-  }
-}
-
 llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in) {
   llvm::Twine floatType[] = {"s", "d"}; // c, z
   llvm::Twine extractable[] = {"dot", "scal"};
