@@ -2467,6 +2467,21 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         if (Value *orig_oldval = ri->getReturnValue()) {
           auto newri = gutils->getNewFromOriginal(ri);
           IRBuilder<> BuilderZ(newri);
+          if (gutils->isConstantValue(orig_oldval)) {
+            if (!EnzymeRuntimeActivityCheck && CustomErrorHandler &&
+                gutils->TR.query(orig_oldval)[{-1}].isPossiblePointer()) {
+              if (!isa<UndefValue>(orig_oldval) &&
+                  !isa<ConstantPointerNull>(orig_oldval)) {
+                std::string str;
+                raw_string_ostream ss(str);
+                ss << "Mismatched activity for: " << *ri
+                   << " const val: " << *orig_oldval;
+                CustomErrorHandler(str.c_str(), wrap(ri),
+                                   ErrorType::MixedActivityError, gutils,
+                                   wrap(orig_oldval));
+              }
+            }
+          }
           invertedRetPs[newri] = gutils->invertPointerM(orig_oldval, BuilderZ,
                                                         /*nullShadow*/ true);
         }
@@ -2975,6 +2990,26 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
   if (inst == nullptr)
     return;
 
+  if (retType != DIFFE_TYPE::CONSTANT) {
+    auto ret = inst->getOperand(0);
+    if (!ret->getType()->isFPOrFPVectorTy() &&
+        TR.getReturnAnalysis().Inner0().isPossiblePointer()) {
+      if (gutils->isConstantValue(ret)) {
+        if (!EnzymeRuntimeActivityCheck && CustomErrorHandler &&
+            TR.query(ret)[{-1}].isPossiblePointer()) {
+          if (!isa<UndefValue>(ret) && !isa<ConstantPointerNull>(ret)) {
+            std::string str;
+            raw_string_ostream ss(str);
+            ss << "Mismatched activity for: " << *inst
+               << " const val: " << *ret;
+            CustomErrorHandler(str.c_str(), wrap(inst),
+                               ErrorType::MixedActivityError, gutils,
+                               wrap(ret));
+          }
+        }
+      }
+    }
+  }
   ReturnInst *newInst = cast<ReturnInst>(gutils->getNewFromOriginal(inst));
   BasicBlock *nBB = newInst->getParent();
   assert(nBB);
