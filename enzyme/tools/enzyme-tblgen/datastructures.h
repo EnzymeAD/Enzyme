@@ -143,6 +143,7 @@ void fillArgTypes(const Record *pattern, DenseMap<size_t, argType> &argTypes) {
       argTypes.insert(std::make_pair(pos, argType::vincData));
       argTypes.insert(std::make_pair(pos + 1, argType::vincInc));
     } else {
+      llvm::errs() << "val->getName: " << val->getName() << "\n";
       PrintFatalError("Unknown type!");
     }
     pos += val->getValueAsInt("nelem");
