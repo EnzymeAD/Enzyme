@@ -81,9 +81,10 @@ def scal : CallBlasPattern<(Op $n, $alpha, $x, $incx),
 def axpy : CallBlasPattern<(Op $n, $alpha, $x, $incx, $y, $incy),
                   ["y"],[len, fp, vinc, vinc],
                   [
-                  (b<"asum"> $n, $x, $incx),
+                  // dot must proceed scal, because scal modifies adj<"x">
+                  (b<"axpy"> $n, $alpha, adj<"x">, $incx, adj<"y">, $incy),
                   (b<"scal"> $n, $alpha, adj<"x">, $incy),
-                  (noop)
+                  (noop) // y = (Ax) + y, so nothing to do here
                   ]
                   >;
 
@@ -101,13 +102,13 @@ def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
 //                   >;
 
 
-def copy : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
-                  ["y"],[len, vinc, vinc],
-                  [
-                  (noop),// copy moves x into y, so x is never modified.
-                  (b<"axpy"> $n, Constant<"1.0">, adj<"y">, $incy, adj<"x">, $incx)
-                  ]
-                  >;
+// def copy : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
+//                   ["y"],[len, vinc, vinc],
+//                   [
+//                   (noop),// copy moves x into y, so x is never modified.
+//                   (b<"axpy"> $n, Constant<"1.0">, adj<"y">, $incy, adj<"x">, $incx)
+//                   ]
+//                   >;
 
 // def swap : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
 //                   ["x","y"],[len, vinc, vinc],
@@ -117,21 +118,21 @@ def copy : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
 //                   ]
 //                   >;
 
-def asum : CallBlasPattern<(Op $n, $x, $incx),
-                  [],[len, vinc],
-                  [(noop)]// sum(abs(x))
-                  >;
-
+// def asum : CallBlasPattern<(Op $n, $x, $incx),
+//                   [],[len, vinc],
+//                   [(noop)]// sum(abs(x))
+//                   >;
+// 
 
 // Lv 2
 
 // y = alpha Ax + beta y
 // def gemv : CallBlasPattern<(Op $layout, $transa, $m, $n, $alpha, $A, $lda, $x, $incx, $beta, $y, $incy),
-//                   [cblas_layout, trans, len, len, fp, mld, vinc, fp, vinc],
+//                   [],[cblas_layout, trans, len, len, fp, mld, vinc, fp, vinc],
 //                   [
 //                   /* alpha  */  (b<"dot"> DiffeRet<"">, (b<"gemv"> $A, $x)),
-//                   /* A      */  //(),
-//                   /* x      */  //(),
+//                   /* A      */  (noop),
+//                   /* x      */  (noop),
 //                   /* beta   */  (b<"dot"> $y, DiffeRet<"">),
 //                   /* y      */  (b<"scal"> $beta, DiffeRet<"">),
 //                   ]

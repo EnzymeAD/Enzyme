@@ -1989,7 +1989,7 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
 #endif
 {
   llvm::Twine floatType[] = {"s", "d"}; // c, z
-  llvm::Twine extractable[] = {"dot", "scal"};
+  llvm::Twine extractable[] = {"dot", "scal", "axpy"};
   llvm::Twine prefixes[] = {"" /*Fortran*/, "cblas_", "cublas_"};
   llvm::Twine suffixes[] = {"", "_", "64_", "_64_"};
   for (auto t : floatType) {
