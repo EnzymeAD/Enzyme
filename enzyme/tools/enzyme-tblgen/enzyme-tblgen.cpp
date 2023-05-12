@@ -1417,10 +1417,6 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
       first = false;
     }
     os << ");\n";
-    if (dfnc_name == "dot") {
-      os << "    assert(derivcall_dot.getFunctionType()->getReturnType() == "
-            "fpType);\n";
-    }
     os << "#if LLVM_VERSION_MAJOR >= 9\n"
        << "    if (auto F = dyn_cast<Function>(derivcall_" << dfnc_name
        << ".getCallee()))\n"
