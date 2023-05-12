@@ -83,8 +83,6 @@ Operation *findNearestDominatingOpByUse(Operation *op, Value v) {
 struct RemoveUnusedEnzymeOpsPass
     : public enzyme::RemoveUnusedEnzymeOpsPassBase<RemoveUnusedEnzymeOpsPass> {
   void runOnOperation() override {
-    MLIRContext *context = &getContext();
-    ConversionPatternRewriter rewriter(context);
 
     getOperation()->walk([&](Operation *op) {
       DominanceInfo dInfo;
