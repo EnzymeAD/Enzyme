@@ -518,6 +518,18 @@ inline bool is_value_needed_in_reverse(
       if (!idxUsed)
         primalUsedInShadowPointer = false;
     }
+    if (auto II = dyn_cast<IntrinsicInst>(user)) {
+      if (isIntelSubscriptIntrinsic(*II)) {
+        const std::array<size_t, 4> idxArgsIndices{{0, 1, 2, 4}};
+        bool idxUsed = false;
+        for (auto i : idxArgsIndices) {
+          if (II->getOperand(i) == inst)
+            idxUsed = true;
+        }
+        if (!idxUsed)
+          primalUsedInShadowPointer = false;
+      }
+    }
     if (auto IVI = dyn_cast<InsertValueInst>(user)) {
       bool valueIsIndex = false;
       for (unsigned i = 2; i < IVI->getNumOperands(); ++i) {

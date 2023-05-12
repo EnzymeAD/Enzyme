@@ -1237,7 +1237,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
 
   auto T_jlvalue = StructType::get(F->getContext(), {});
   auto T_prjlvalue = PointerType::get(T_jlvalue, AddressSpace::Tracked);
-  ArrayType *AT =
+  ArrayType *roots_AT =
       numRooting ? ArrayType::get(T_prjlvalue, numRooting) : nullptr;
 
   AttributeList NewAttrs;
@@ -1248,11 +1248,11 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       F->getContext(), AttributeList::FirstArgIndex + nexti,
       Attribute::get(F->getContext(), Attribute::StructRet, ST));
   nexti++;
-  if (AT) {
+  if (roots_AT) {
     NewAttrs = NewAttrs.addAttribute(F->getContext(),
                                      AttributeList::FirstArgIndex + nexti,
                                      "enzymejl_returnRoots");
-    types.push_back(AT);
+    types.push_back(PointerType::getUnqual(roots_AT));
     nexti++;
   }
   for (size_t i = 0, end = FT->getNumParams(); i < end; i++) {
@@ -1287,14 +1287,13 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   Function::arg_iterator DestI = NewF->arg_begin();
   Argument *sret = &*DestI;
   DestI++;
+  nexti = 1;
   Argument *roots = nullptr;
-  if (AT) {
+  if (roots_AT) {
     roots = &*DestI;
     DestI++;
-  }
-  nexti = 1;
-  if (AT)
     nexti++;
+  }
   for (Argument &I : F->args()) {
     auto i = I.getArgNo();
     if (enzyme_srets.count(i) || enzyme_srets_v.count(i) || rroots.count(i) ||
@@ -1322,7 +1321,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     auto T = V->getType();
     if (isa<PointerType>(T)) {
       if (isSpecialPtr(T)) {
-        auto gep = B.CreateConstInBoundsGEP2_32(ST, roots, 0, offset);
+        auto gep = B.CreateConstInBoundsGEP2_32(roots_AT, roots, 0, offset);
         B.CreateStore(V, gep);
         offset++;
       }
@@ -1421,7 +1420,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     }
     for (size_t i = 0; i < uses.size(); i++) {
       IRBuilder<> B(uses[i]);
-      Value *gep = B.CreateConstInBoundsGEP2_32(ST, roots, 0, curOffset);
+      Value *gep = B.CreateConstInBoundsGEP2_32(roots_AT, roots, 0, curOffset);
       gep = B.CreatePointerCast(gep, PointerType::getUnqual(AT2));
       uses[i]->setOperand(op[i], gep);
     }
@@ -1444,7 +1443,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       Value *val = UndefValue::get(AT);
       for (size_t j = 0; j < AT->getNumElements(); j++) {
         Value *gep = B.CreateConstInBoundsGEP2_32(
-            ST, roots, 0, curOffset + j * AT2->getNumElements());
+            roots_AT, roots, 0, curOffset + j * AT2->getNumElements());
         gep = B.CreatePointerCast(gep, PointerType::getUnqual(AT2));
         val = B.CreateInsertValue(val, gep, j);
       }
@@ -1469,8 +1468,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
         Attribute::get(F->getContext(), Attribute::StructRet, ST));
     nexti++;
     AllocaInst *roots = nullptr;
-    if (AT) {
-      roots = EB.CreateAlloca(AT);
+    if (roots_AT) {
+      roots = EB.CreateAlloca(roots_AT);
       vals.push_back(roots);
       NewAttrs = NewAttrs.addAttribute(
 
