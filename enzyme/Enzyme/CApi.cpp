@@ -1390,15 +1390,15 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       uses.push_back(I);
       op.push_back(U.getOperandNo());
     }
+    IRBuilder<> EB(&NewF->getEntryBlock().front());
+    auto gep =
+        ST ? EB.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount) : sret;
     for (size_t i = 0; i < uses.size(); i++) {
-      IRBuilder<> B(uses[i]);
-      auto gep =
-          ST ? B.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount) : sret;
       uses[i]->setOperand(op[i], gep);
     }
     for (auto &RT : Returns) {
       IRBuilder<> B(RT);
-      auto val = B.CreateLoad(Types[sretCount], arg);
+      auto val = B.CreateLoad(Types[sretCount], gep);
       recur(B, val, curOffset);
     }
     curOffset += CountTrackedPointers(Types[sretCount]).count;
@@ -1415,22 +1415,22 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
         continue;
       op.push_back(U.getOperandNo());
     }
+    IRBuilder<> EB(&NewF->getEntryBlock().front());
+    Value *val = UndefValue::get(AT);
+    for (size_t j = 0; j < AT->getNumElements(); j++) {
+      auto gep =
+          ST ? EB.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount + j) : sret;
+      val = EB.CreateInsertValue(val, gep, j);
+    }
     for (size_t i = 0; i < uses.size(); i++) {
-      IRBuilder<> B(uses[i]);
-      Value *val = UndefValue::get(AT);
-      for (size_t j = 0; j < AT->getNumElements(); j++) {
-        auto gep = ST ? B.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount + j)
-                      : sret;
-        val = B.CreateInsertValue(val, gep, j);
-      }
       uses[i]->setOperand(op[i], val);
     }
     for (auto &RT : Returns) {
       IRBuilder<> B(RT);
       for (size_t j = 0; j < AT->getNumElements(); j++) {
-        Value *val = GradientUtils::extractMeta(B, arg, j);
-        val = B.CreateLoad(Types[sretCount + j], val);
-        recur(B, val, curOffset);
+        Value *em = GradientUtils::extractMeta(B, val, j);
+        em = B.CreateLoad(Types[sretCount + j], em);
+        recur(B, em, curOffset);
       }
     }
     curOffset +=
