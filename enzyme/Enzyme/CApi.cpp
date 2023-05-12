@@ -393,9 +393,10 @@ void EnzymeGradientUtilsAddToDiffe(DiffeGradientUtils *gutils, LLVMValueRef val,
 }
 
 void EnzymeGradientUtilsAddToInvertedPointerDiffe(
-    DiffeGradientUtils *gutils, LLVMValueRef orig, LLVMTypeRef addingType,
-    unsigned start, unsigned size, LLVMValueRef origptr, LLVMValueRef dif,
-    LLVMBuilderRef BuilderM, unsigned align, LLVMValueRef mask) {
+    DiffeGradientUtils *gutils, LLVMValueRef orig, LLVMValueRef origVal,
+    LLVMTypeRef addingType, unsigned start, unsigned size, LLVMValueRef origptr,
+    LLVMValueRef dif, LLVMBuilderRef BuilderM, unsigned align,
+    LLVMValueRef mask) {
 #if LLVM_VERSION_MAJOR >= 10
   MaybeAlign align2;
   if (align)
@@ -403,15 +404,17 @@ void EnzymeGradientUtilsAddToInvertedPointerDiffe(
 #else
   auto align2 = align;
 #endif
-  gutils->addToInvertedPtrDiffe(
-      cast_or_null<Instruction>(unwrap(orig)), unwrap(addingType), start, size,
-      unwrap(origptr), unwrap(dif), *unwrap(BuilderM), align2, unwrap(mask));
+  auto inst = cast_or_null<Instruction>(unwrap(orig));
+  gutils->addToInvertedPtrDiffe(inst, unwrap(origVal), unwrap(addingType),
+                                start, size, unwrap(origptr), unwrap(dif),
+                                *unwrap(BuilderM), align2, unwrap(mask));
 }
 
 void EnzymeGradientUtilsAddToInvertedPointerDiffeTT(
-    DiffeGradientUtils *gutils, LLVMValueRef orig, CTypeTreeRef vd,
-    unsigned LoadSize, LLVMValueRef origptr, LLVMValueRef prediff,
-    LLVMBuilderRef BuilderM, unsigned align, LLVMValueRef premask) {
+    DiffeGradientUtils *gutils, LLVMValueRef orig, LLVMValueRef origVal,
+    CTypeTreeRef vd, unsigned LoadSize, LLVMValueRef origptr,
+    LLVMValueRef prediff, LLVMBuilderRef BuilderM, unsigned align,
+    LLVMValueRef premask) {
 #if LLVM_VERSION_MAJOR >= 10
   MaybeAlign align2;
   if (align)
@@ -419,10 +422,10 @@ void EnzymeGradientUtilsAddToInvertedPointerDiffeTT(
 #else
   auto align2 = align;
 #endif
-  gutils->addToInvertedPtrDiffe(cast_or_null<Instruction>(unwrap(orig)),
-                                *(TypeTree *)vd, LoadSize, unwrap(origptr),
-                                unwrap(prediff), *unwrap(BuilderM), align2,
-                                unwrap(premask));
+  auto inst = cast_or_null<Instruction>(unwrap(orig));
+  gutils->addToInvertedPtrDiffe(inst, unwrap(origVal), *(TypeTree *)vd,
+                                LoadSize, unwrap(origptr), unwrap(prediff),
+                                *unwrap(BuilderM), align2, unwrap(premask));
 }
 
 void EnzymeGradientUtilsSetDiffe(DiffeGradientUtils *gutils, LLVMValueRef val,

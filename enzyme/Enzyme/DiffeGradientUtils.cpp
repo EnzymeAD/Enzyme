@@ -584,16 +584,16 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
 
 #if LLVM_VERSION_MAJOR >= 10
 void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
-                                               Type *addingType, unsigned start,
-                                               unsigned size, Value *origptr,
-                                               Value *dif,
+                                               Value *origVal, Type *addingType,
+                                               unsigned start, unsigned size,
+                                               Value *origptr, Value *dif,
                                                IRBuilder<> &BuilderM,
                                                MaybeAlign align, Value *mask)
 #else
 void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
-                                               Type *addingType, unsigned start,
-                                               unsigned size, Value *origptr,
-                                               Value *dif,
+                                               Value *origVal, Type *addingType,
+                                               unsigned start, unsigned size,
+                                               Value *origptr, Value *dif,
                                                IRBuilder<> &BuilderM,
                                                unsigned align, Value *mask)
 #endif
@@ -892,8 +892,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
 
       SmallVector<Metadata *, 1> scopeMD = {
           getDerivativeAliasScope(origptr, idx)};
-      if (orig)
-        if (auto MD = orig->getMetadata(LLVMContext::MD_alias_scope)) {
+      if (auto origValI = dyn_cast_or_null<Instruction>(origVal))
+        if (auto MD = origValI->getMetadata(LLVMContext::MD_alias_scope)) {
           auto MDN = cast<MDNode>(MD);
           for (auto &o : MDN->operands())
             scopeMD.push_back(o);
@@ -907,8 +907,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
         if (j != (ssize_t)idx)
           MDs.push_back(getDerivativeAliasScope(origptr, j));
       }
-      if (orig)
-        if (auto MD = orig->getMetadata(LLVMContext::MD_noalias)) {
+      if (auto origValI = dyn_cast_or_null<Instruction>(origVal))
+        if (auto MD = origValI->getMetadata(LLVMContext::MD_noalias)) {
           auto MDN = cast<MDNode>(MD);
           for (auto &o : MDN->operands())
             MDs.push_back(o);
@@ -918,16 +918,18 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       LI->setMetadata(LLVMContext::MD_noalias, noscope);
       st->setMetadata(LLVMContext::MD_noalias, noscope);
 
-      if (orig && start == 0 &&
-          size == (DL.getTypeSizeInBits(orig->getType()) + 7) / 8) {
-        LI->copyMetadata(*orig, MD_ToCopy);
-        LI->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
+      if (origVal && isa<Instruction>(origVal) && start == 0 &&
+          size == (DL.getTypeSizeInBits(origVal->getType()) + 7) / 8) {
+        auto origValI = cast<Instruction>(origVal);
+        LI->copyMetadata(*origValI, MD_ToCopy);
         unsigned int StoreData[] = {LLVMContext::MD_tbaa,
                                     LLVMContext::MD_tbaa_struct};
         for (auto MD : StoreData)
-          st->setMetadata(MD, orig->getMetadata(MD));
-        st->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
+          st->setMetadata(MD, origValI->getMetadata(MD));
       }
+
+      LI->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
+      st->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
 
       if (align) {
 #if LLVM_VERSION_MAJOR >= 10
@@ -987,14 +989,14 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
 
 #if LLVM_VERSION_MAJOR >= 10
 void DiffeGradientUtils::addToInvertedPtrDiffe(
-    llvm::Instruction *orig, TypeTree vd, unsigned LoadSize,
-    llvm::Value *origptr, llvm::Value *prediff, llvm::IRBuilder<> &Builder2,
-    MaybeAlign alignment, llvm::Value *premask)
+    llvm::Instruction *orig, llvm::Value *origVal, TypeTree vd,
+    unsigned LoadSize, llvm::Value *origptr, llvm::Value *prediff,
+    llvm::IRBuilder<> &Builder2, MaybeAlign alignment, llvm::Value *premask)
 #else
 void DiffeGradientUtils::addToInvertedPtrDiffe(
-    llvm::Instruction *orig, TypeTree vd, unsigned LoadSize,
-    llvm::Value *origptr, llvm::Value *prediff, llvm::IRBuilder<> &Builder2,
-    unsigned alignment, llvm::Value *premask)
+    llvm::Instruction *orig, llvm::Value *origVal, TypeTree vd,
+    unsigned LoadSize, llvm::Value *origptr, llvm::Value *prediff,
+    llvm::IRBuilder<> &Builder2, unsigned alignment, llvm::Value *premask)
 #endif
 {
 
@@ -1026,12 +1028,13 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(
 
     if (Type *isfloat = dt.isFloat()) {
 
-      if (orig) {
+      if (origVal) {
         if (start == 0 && nextStart == LoadSize) {
-          setDiffe(orig, Constant::getNullValue(getShadowType(orig->getType())),
+          setDiffe(origVal,
+                   Constant::getNullValue(getShadowType(origVal->getType())),
                    Builder2);
         } else {
-          Value *tostore = getDifferential(orig);
+          Value *tostore = getDifferential(origVal);
 
           auto i8 = Type::getInt8Ty(tostore->getContext());
           if (start != 0) {
@@ -1074,8 +1077,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(
         // Masked partial type is unhanled.
         if (premask)
           assert(start == 0 && nextStart == LoadSize);
-        addToInvertedPtrDiffe(orig, isfloat, start, nextStart - start, origptr,
-                              prediff, Builder2, alignment, premask);
+        addToInvertedPtrDiffe(orig, origVal, isfloat, start, nextStart - start,
+                              origptr, prediff, Builder2, alignment, premask);
       }
     }
 
