@@ -39,7 +39,6 @@
 #include "EnzymeLogic.h"
 #include "FunctionUtils.h"
 #include "GradientUtils.h"
-#include "DiffeGradientUtils.h"
 #include "LibraryFuncs.h"
 #include "TraceUtils.h"
 #include "TypeAnalysis/TBAA.h"

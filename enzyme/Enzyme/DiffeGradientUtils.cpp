@@ -583,17 +583,17 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
 }
 
 #if LLVM_VERSION_MAJOR >= 10
-void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig, Value* origVal,
-                                               Type *addingType, unsigned start,
-                                               unsigned size, Value *origptr,
-                                               Value *dif,
+void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
+                                               Value *origVal, Type *addingType,
+                                               unsigned start, unsigned size,
+                                               Value *origptr, Value *dif,
                                                IRBuilder<> &BuilderM,
                                                MaybeAlign align, Value *mask)
 #else
-void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig, Value* origVal,
-                                               Type *addingType, unsigned start,
-                                               unsigned size, Value *origptr,
-                                               Value *dif,
+void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
+                                               Value *origVal, Type *addingType,
+                                               unsigned start, unsigned size,
+                                               Value *origptr, Value *dif,
                                                IRBuilder<> &BuilderM,
                                                unsigned align, Value *mask)
 #endif
@@ -917,7 +917,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig, Value* origVal
       auto noscope = MDNode::get(ptr->getContext(), MDs);
       LI->setMetadata(LLVMContext::MD_noalias, noscope);
       st->setMetadata(LLVMContext::MD_noalias, noscope);
-      
+
       if (origVal && isa<Instruction>(origVal) && start == 0 &&
           size == (DL.getTypeSizeInBits(origVal->getType()) + 7) / 8) {
         auto origValI = cast<Instruction>(origVal);
@@ -927,7 +927,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig, Value* origVal
         for (auto MD : StoreData)
           st->setMetadata(MD, origValI->getMetadata(MD));
       }
-      
+
       LI->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
       st->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
 
@@ -989,14 +989,14 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig, Value* origVal
 
 #if LLVM_VERSION_MAJOR >= 10
 void DiffeGradientUtils::addToInvertedPtrDiffe(
-    llvm::Instruction *orig, llvm::Value *origVal, TypeTree vd, unsigned LoadSize,
-    llvm::Value *origptr, llvm::Value *prediff, llvm::IRBuilder<> &Builder2,
-    MaybeAlign alignment, llvm::Value *premask)
+    llvm::Instruction *orig, llvm::Value *origVal, TypeTree vd,
+    unsigned LoadSize, llvm::Value *origptr, llvm::Value *prediff,
+    llvm::IRBuilder<> &Builder2, MaybeAlign alignment, llvm::Value *premask)
 #else
 void DiffeGradientUtils::addToInvertedPtrDiffe(
-    llvm::Instruction *orig, llvm::Value *origVal, TypeTree vd, unsigned LoadSize,
-    llvm::Value *origptr, llvm::Value *prediff, llvm::IRBuilder<> &Builder2,
-    unsigned alignment, llvm::Value *premask)
+    llvm::Instruction *orig, llvm::Value *origVal, TypeTree vd,
+    unsigned LoadSize, llvm::Value *origptr, llvm::Value *prediff,
+    llvm::IRBuilder<> &Builder2, unsigned alignment, llvm::Value *premask)
 #endif
 {
 
@@ -1030,7 +1030,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(
 
       if (origVal) {
         if (start == 0 && nextStart == LoadSize) {
-          setDiffe(origVal, Constant::getNullValue(getShadowType(origVal->getType())),
+          setDiffe(origVal,
+                   Constant::getNullValue(getShadowType(origVal->getType())),
                    Builder2);
         } else {
           Value *tostore = getDifferential(origVal);
@@ -1076,8 +1077,8 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(
         // Masked partial type is unhanled.
         if (premask)
           assert(start == 0 && nextStart == LoadSize);
-        addToInvertedPtrDiffe(orig, origVal, isfloat, start, nextStart - start, origptr,
-                              prediff, Builder2, alignment, premask);
+        addToInvertedPtrDiffe(orig, origVal, isfloat, start, nextStart - start,
+                              origptr, prediff, Builder2, alignment, premask);
       }
     }
 
