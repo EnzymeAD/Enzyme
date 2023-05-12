@@ -800,7 +800,7 @@ public:
 
         if (prediff)
           ((DiffeGradientUtils *)gutils)
-              ->addToInvertedPtrDiffe(&I, vd, LoadSize, I.getOperand(0),
+              ->addToInvertedPtrDiffe(&I, &I, vd, LoadSize, I.getOperand(0),
                                       prediff, Builder2, alignment, premask);
 
         unsigned start = 0;

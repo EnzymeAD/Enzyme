@@ -1684,11 +1684,9 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
         os << "        CallInst *cubcall = "
               "cast<CallInst>(Builder2.CreateCall(derivcall_"
            << dfnc_name << ", args1, Defs));\n"
-
            << "        if (byRef) {\n"
-           << "          llvm::errs() << \n\n\n\"AAAAAA\" << *fpType;\n"
            << "          ((DiffeGradientUtils *)gutils)"
-           << "          ->addToInvertedPtrDiffe(&call, fpType, fpType, 0,"
+           << "          ->addToInvertedPtrDiffe(&call, nullptr, fpType, 0,"
            << "(blas.suffix.contains(\"64\") ? 8 : 4), arg_" << name 
            << ", cubcall, Builder2);\n"
            << "        } else {"
