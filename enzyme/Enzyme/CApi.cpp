@@ -1335,8 +1335,17 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     auto T = V->getType();
     if (CountTrackedPointers(T).count == 0)
       return offset;
+    if (roots_AT == nullptr)
+      return offset;
     if (isa<PointerType>(T)) {
       if (isSpecialPtr(T)) {
+        if (!roots_AT) {
+          llvm::errs() << *V << " \n";
+          llvm::errs() << *cast<Instruction>(V)->getParent()->getParent()
+                       << " \n";
+        }
+        assert(roots_AT);
+        assert(roots);
         auto gep = B.CreateConstInBoundsGEP2_32(roots_AT, roots, 0, offset);
         B.CreateStore(V, gep);
         offset++;
@@ -1378,7 +1387,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       RT->eraseFromParent();
       RT = NR;
     }
-    curOffset = CountTrackedPointers(RT).count;
+    if (roots_AT)
+      curOffset = CountTrackedPointers(RT).count;
     sretCount++;
   }
 
@@ -1404,7 +1414,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       auto val = B.CreateLoad(Types[sretCount], gep);
       recur(B, val, curOffset);
     }
-    curOffset += CountTrackedPointers(Types[sretCount]).count;
+    if (roots_AT)
+      curOffset += CountTrackedPointers(Types[sretCount]).count;
     sretCount++;
   }
   for (auto i : enzyme_srets_v) {
@@ -1436,8 +1447,9 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
         recur(B, em, curOffset);
       }
     }
-    curOffset +=
-        CountTrackedPointers(Types[sretCount]).count * AT->getNumElements();
+    if (roots_AT)
+      curOffset +=
+          CountTrackedPointers(Types[sretCount]).count * AT->getNumElements();
     sretCount += AT->getNumElements();
   }
 
