@@ -1401,8 +1401,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       auto val = B.CreateLoad(Types[sretCount], arg);
       recur(B, val, curOffset);
     }
-    sretCount++;
     curOffset += CountTrackedPointers(Types[sretCount]).count;
+    sretCount++;
   }
   for (auto i : enzyme_srets_v) {
     auto AT = cast<ArrayType>(FT->getParamType(i));
