@@ -582,6 +582,7 @@ public:
     bool tapeIsPointer;
     bool differentialReturn;
     DIFFE_TYPE retType;
+    bool primalReturn;
   };
 
   static Optional<Options> handleArguments(IRBuilder<> &Builder, CallInst *CI,
@@ -603,6 +604,7 @@ public:
     bool tapeIsPointer = false;
     unsigned truei = 0;
     unsigned byRefSize = 0;
+    bool primalReturn = false;
 
     DIFFE_TYPE retType = whatType(fn->getReturnType(), mode);
 
@@ -771,6 +773,9 @@ public:
         } else if (*metaString == "enzyme_nofree") {
           assert(!sizeOnly);
           freeMemory = false;
+          continue;
+        } else if (*metaString == "enzyme_primalreturn") {
+          primalReturn = true;
           continue;
         } else if (*metaString == "enzyme_width") {
           ++i;
@@ -1283,6 +1288,7 @@ public:
     auto &tapeIsPointer = options.tapeIsPointer;
     auto &differentialReturn = options.differentialReturn;
     auto &retType = options.retType;
+    auto primalReturn = options.primalReturn;
 
     auto Arch = Triple(CI->getModule()->getTargetTriple()).getArch();
     bool AtomicAdd = Arch == Triple::nvptx || Arch == Triple::nvptx64 ||
@@ -1303,7 +1309,7 @@ public:
     case DerivativeMode::ForwardMode:
       newFunc = Logic.CreateForwardDiff(
           fn, retType, constants, TA,
-          /*should return*/ false, mode, freeMemory, width,
+          /*should return*/ primalReturn, mode, freeMemory, width,
           /*addedType*/ nullptr, type_args, overwritten_args,
           /*augmented*/ nullptr);
       break;
@@ -1347,7 +1353,7 @@ public:
       }
       newFunc = Logic.CreateForwardDiff(
           fn, retType, constants, TA,
-          /*should return*/ false, mode, freeMemory, width,
+          /*should return*/ primalReturn, mode, freeMemory, width,
           /*addedType*/ tapeType, type_args, overwritten_args, aug);
       break;
     }
@@ -1358,7 +1364,7 @@ public:
                             .retType = retType,
                             .constant_args = constants,
                             .overwritten_args = overwritten_args,
-                            .returnUsed = false,
+                            .returnUsed = primalReturn,
                             .shadowReturnUsed = false,
                             .mode = mode,
                             .width = width,
@@ -1371,6 +1377,10 @@ public:
       break;
     case DerivativeMode::ReverseModePrimal:
     case DerivativeMode::ReverseModeGradient: {
+      if (primalReturn) {
+        EmitFailure("enzyme_primal_return not available in reverse split mode",
+                    CI->getDebugLoc());
+      }
       bool forceAnonymousTape = !sizeOnly && allocatedTapeSize == -1;
       bool shadowReturnUsed = returnUsed && (retType == DIFFE_TYPE::DUP_ARG ||
                                              retType == DIFFE_TYPE::DUP_NONEED);
