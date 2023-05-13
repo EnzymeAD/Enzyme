@@ -5821,8 +5821,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       auto rule = [&](Value *ip) {
         auto shadow = bb.CreateCall(II->getCalledFunction(), invertArgs);
         assert(isa<CallInst>(shadow));
-        auto CI = cast<CallInst>(shadow);
 #if LLVM_VERSION_MAJOR >= 13
+        auto CI = cast<CallInst>(shadow);
         // Must copy the elementtype attribute as it is needed by the intrinsic
         CI->addParamAttr(
             ptrArgIndex,
@@ -9178,4 +9178,25 @@ bool GradientUtils::needsCacheWholeAllocation(
     }
   }
   return false;
+}
+
+void GradientUtils::replaceAndRemoveUnwrapCacheFor(llvm::Value *A,
+                                                   llvm::Value *B) {
+  SmallVector<Instruction *, 1> toErase;
+  for (auto &pair : unwrap_cache) {
+    auto found = pair.second.find(A);
+    if (found != pair.second.end()) {
+      for (auto &p : found->second) {
+        Value *pre = p.second;
+        replaceAWithB(pre, B);
+        if (auto I = dyn_cast<Instruction>(pre)) {
+          toErase.push_back(I);
+        }
+      }
+      pair.second.erase(A);
+    }
+  }
+  for (auto I : toErase) {
+    erase(I);
+  }
 }
