@@ -8647,8 +8647,9 @@ public:
       replaceFunction = legalCombinedForwardReverse(
           &call, *replacedReturns, postCreate, userReplace, gutils,
           unnecessaryInstructions, oldUnreachable, subretused);
-      if (replaceFunction)
+      if (replaceFunction) {
         modifyPrimal = false;
+      }
     }
 
 #if LLVM_VERSION_MAJOR >= 14
@@ -9473,61 +9474,23 @@ public:
 
       Instruction *retval = nullptr;
 
-      ValueToValueMapTy mapp;
       if (subretused) {
         retval = cast<Instruction>(Builder2.CreateExtractValue(diffes, {0}));
+        if (retval) {
+          gutils->replaceAndRemoveUnwrapCacheFor(newCall, retval);
+        }
         gutils->replaceAWithB(newCall, retval, /*storeInCache*/ true);
-        mapp[newCall] = retval;
       } else {
         eraseIfUnused(call, /*erase*/ false, /*check*/ false);
       }
 
-      for (auto &a : *gutils
-                          ->reverseBlocks[cast<BasicBlock>(
-                              gutils->getNewFromOriginal(call.getParent()))]
-                          .back()) {
-        mapp[&a] = &a;
-      }
-
-      std::reverse(postCreate.begin(), postCreate.end());
       for (auto a : postCreate) {
-
-        // If is the store to return handle manually since no original inst
-        // for
-        bool fromStore = false;
-        for (auto &pair : *replacedReturns) {
-          if (pair.second == a) {
-            for (unsigned i = 0; i < a->getNumOperands(); ++i) {
-              a->setOperand(i, gutils->unwrapM(a->getOperand(i), Builder2, mapp,
-                                               UnwrapMode::LegalFullUnwrap));
-            }
-            a->moveBefore(*Builder2.GetInsertBlock(),
-                          Builder2.GetInsertPoint());
-            fromStore = true;
-            break;
-          }
-        }
-        if (fromStore)
-          continue;
-
-        auto orig_a = gutils->isOriginal(a);
-        if (orig_a) {
-          for (unsigned i = 0; i < a->getNumOperands(); ++i) {
-            a->setOperand(i,
-                          gutils->unwrapM(
-                              gutils->getNewFromOriginal(orig_a->getOperand(i)),
-                              Builder2, mapp, UnwrapMode::LegalFullUnwrap));
-          }
-        }
         a->moveBefore(*Builder2.GetInsertBlock(), Builder2.GetInsertPoint());
-        mapp[a] = a;
       }
 
       gutils->originalToNewFn[&call] = retval ? retval : diffes;
       gutils->newToOriginalFn.erase(newCall);
       gutils->newToOriginalFn[retval ? retval : diffes] = &call;
-
-      // llvm::errs() << "newFunc postrep: " << *gutils->newFunc << "\n";
 
       erased.insert(&call);
       gutils->erase(newCall);

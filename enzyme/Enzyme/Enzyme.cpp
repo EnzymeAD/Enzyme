@@ -774,7 +774,7 @@ public:
           assert(!sizeOnly);
           freeMemory = false;
           continue;
-        } else if (*metaString == "enzyme_primalreturn") {
+        } else if (*metaString == "enzyme_primal_return") {
           primalReturn = true;
           continue;
         } else if (*metaString == "enzyme_width") {
@@ -1039,7 +1039,7 @@ public:
     return Optional<Options>({differet, tape, dynamic_interface, trace,
                               observations, width, allocatedTapeSize,
                               freeMemory, returnUsed, tapeIsPointer,
-                              differentialReturn, retType});
+                              differentialReturn, retType, primalReturn});
   }
 
   static FnTypeInfo
@@ -1378,8 +1378,9 @@ public:
     case DerivativeMode::ReverseModePrimal:
     case DerivativeMode::ReverseModeGradient: {
       if (primalReturn) {
-        EmitFailure("enzyme_primal_return not available in reverse split mode",
-                    CI->getDebugLoc());
+        EmitFailure(
+            "SplitPrimalRet", CI->getDebugLoc(), CI,
+            "Option enzyme_primal_return not available in reverse split mode");
       }
       bool forceAnonymousTape = !sizeOnly && allocatedTapeSize == -1;
       bool shadowReturnUsed = returnUsed && (retType == DIFFE_TYPE::DUP_ARG ||

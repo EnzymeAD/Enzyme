@@ -294,6 +294,8 @@ private:
       lookup_cache;
 
 public:
+  void replaceAndRemoveUnwrapCacheFor(llvm::Value *A, llvm::Value *B);
+
   llvm::BasicBlock *addReverseBlock(llvm::BasicBlock *currentBlock,
                                     llvm::Twine const &name,
                                     bool forkCache = true, bool push = true);
