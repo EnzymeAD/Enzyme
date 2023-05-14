@@ -1442,4 +1442,8 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in);
 
 llvm::Constant *getUndefinedValueForType(llvm::Type *T, bool forceZero = false);
 
+llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
+                                 llvm::IRBuilder<> &BuilderM,
+                                 llvm::Value *mask = nullptr);
+
 #endif
