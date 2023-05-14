@@ -177,11 +177,7 @@ static inline llvm::Function *isCalledFunction(llvm::Value *val) {
 }
 
 /// Get LLVM fast math flags
-static inline llvm::FastMathFlags getFast() {
-  llvm::FastMathFlags f;
-  f.set();
-  return f;
-}
+llvm::FastMathFlags getFast();
 
 /// Pick the maximum value
 template <typename T> static inline T max(T a, T b) {

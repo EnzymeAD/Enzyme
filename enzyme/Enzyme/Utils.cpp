@@ -65,6 +65,9 @@ LLVMValueRef (*EnzymeSanitizeDerivatives)(LLVMValueRef, LLVMValueRef toset,
                                           LLVMValueRef) = nullptr;
 
 extern llvm::cl::opt<bool> EnzymeZeroCache;
+llvm::cl::opt<bool>
+    EnzymeFastMath("enzyme-fast-math", cl::init(true), cl::Hidden,
+                   cl::desc("Use fast math on derivative compuation"));
 }
 
 void ZeroMemory(llvm::IRBuilder<> &Builder, llvm::Type *T, llvm::Value *obj,
@@ -1888,4 +1891,11 @@ llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
     return unwrap(EnzymeSanitizeDerivatives(wrap(val), wrap(toset),
                                             wrap(&BuilderM), wrap(mask)));
   return toset;
+}
+
+llvm::FastMathFlags getFast() {
+  llvm::FastMathFlags f;
+  if (EnzymeFastMath)
+    f.set();
+  return f;
 }
