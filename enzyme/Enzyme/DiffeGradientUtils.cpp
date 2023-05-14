@@ -237,11 +237,15 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
     if (auto bi = dyn_cast<BinaryOperator>(inc)) {
       if (auto ci = dyn_cast<ConstantFP>(bi->getOperand(0))) {
         if (bi->getOpcode() == BinaryOperator::FSub && ci->isZero()) {
-          return BuilderM.CreateFSub(old, bi->getOperand(1));
+          Value *res = BuilderM.CreateFSub(old, bi->getOperand(1));
+          res = SanitizeDerivatives(val, res, BuilderM, mask);
+          return res;
         }
       }
     }
-    return BuilderM.CreateFAdd(old, inc);
+    Value *res = BuilderM.CreateFAdd(old, inc);
+    res = SanitizeDerivatives(val, res, BuilderM, mask);
+    return res;
   };
 
   auto faddForSelect = [&](Value *old, Value *dif) -> Value * {
@@ -476,6 +480,7 @@ void DiffeGradientUtils::setDiffe(Value *val, Value *toset,
     llvm::errs() << *val << "\n";
   }
   assert(!isConstantValue(val));
+  toset = SanitizeDerivatives(val, toset, BuilderM);
   if (mode == DerivativeMode::ForwardMode ||
       mode == DerivativeMode::ForwardModeSplit) {
     assert(getShadowType(val->getType()) == toset->getType());
@@ -790,6 +795,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       auto rule = [&](Value *dif, Value *ptr) {
         for (size_t i = 0; i < numElems; ++i) {
           auto vdif = BuilderM.CreateExtractElement(dif, i);
+          vdif = SanitizeDerivatives(orig, vdif, BuilderM);
           Value *Idxs[] = {
               ConstantInt::get(Type::getInt64Ty(vt->getContext()), 0),
               ConstantInt::get(Type::getInt32Ty(vt->getContext()), i)};
@@ -835,6 +841,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       applyChainRule(BuilderM, rule, dif, ptr);
     } else {
       auto rule = [&](Value *dif, Value *ptr) {
+        dif = SanitizeDerivatives(orig, dif, BuilderM);
 #if LLVM_VERSION_MAJOR >= 13
         MaybeAlign alignv = align;
         if (alignv) {
@@ -888,6 +895,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
 #endif
 
       Value *res = BuilderM.CreateFAdd(LI, dif);
+      res = SanitizeDerivatives(orig, res, BuilderM);
       StoreInst *st = BuilderM.CreateStore(res, ptr);
 
       SmallVector<Metadata *, 1> scopeMD = {
@@ -980,6 +988,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
                         Constant::getNullValue(dif->getType())};
       Value *LI = BuilderM.CreateCall(LF, largs);
       Value *res = BuilderM.CreateFAdd(LI, dif);
+      res = SanitizeDerivatives(orig, res, BuilderM, mask);
       Value *sargs[] = {res, ptr, alignv, mask};
       BuilderM.CreateCall(SF, sargs);
     };

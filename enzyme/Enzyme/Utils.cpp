@@ -60,7 +60,14 @@ LLVMValueRef *(*EnzymePostCacheStore)(LLVMValueRef, LLVMBuilderRef,
 LLVMTypeRef (*EnzymeDefaultTapeType)(LLVMContextRef) = nullptr;
 LLVMValueRef (*EnzymeUndefinedValueForType)(LLVMTypeRef, uint8_t) = nullptr;
 
+LLVMValueRef (*EnzymeSanitizeDerivatives)(LLVMValueRef, LLVMValueRef toset,
+                                          LLVMBuilderRef,
+                                          LLVMValueRef) = nullptr;
+
 extern llvm::cl::opt<bool> EnzymeZeroCache;
+llvm::cl::opt<bool>
+    EnzymeFastMath("enzyme-fast-math", cl::init(true), cl::Hidden,
+                   cl::desc("Use fast math on derivative compuation"));
 }
 
 void ZeroMemory(llvm::IRBuilder<> &Builder, llvm::Type *T, llvm::Value *obj,
@@ -1875,4 +1882,20 @@ llvm::Constant *getUndefinedValueForType(llvm::Type *T, bool forceZero) {
     return Constant::getNullValue(T);
   else
     return UndefValue::get(T);
+}
+
+llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
+                                 llvm::IRBuilder<> &BuilderM,
+                                 llvm::Value *mask) {
+  if (EnzymeSanitizeDerivatives)
+    return unwrap(EnzymeSanitizeDerivatives(wrap(val), wrap(toset),
+                                            wrap(&BuilderM), wrap(mask)));
+  return toset;
+}
+
+llvm::FastMathFlags getFast() {
+  llvm::FastMathFlags f;
+  if (EnzymeFastMath)
+    f.set();
+  return f;
 }
