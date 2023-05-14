@@ -233,18 +233,20 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
 
   SmallVector<SelectInst *, 4> addedSelects;
 
-  auto faddForNeg = [&](Value *old, Value *inc) {
+  auto faddForNeg = [&](Value *old, Value *inc, bool san) {
     if (auto bi = dyn_cast<BinaryOperator>(inc)) {
       if (auto ci = dyn_cast<ConstantFP>(bi->getOperand(0))) {
         if (bi->getOpcode() == BinaryOperator::FSub && ci->isZero()) {
           Value *res = BuilderM.CreateFSub(old, bi->getOperand(1));
-          res = SanitizeDerivatives(val, res, BuilderM, mask);
+          if (san)
+            res = SanitizeDerivatives(val, res, BuilderM, mask);
           return res;
         }
       }
     }
     Value *res = BuilderM.CreateFAdd(old, inc);
-    res = SanitizeDerivatives(val, res, BuilderM, mask);
+    if (san)
+      res = SanitizeDerivatives(val, res, BuilderM, mask);
     return res;
   };
 
@@ -253,20 +255,20 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
     if (SelectInst *select = dyn_cast<SelectInst>(dif)) {
       if (Constant *ci = dyn_cast<Constant>(select->getTrueValue())) {
         if (ci->isZeroValue()) {
-          SelectInst *res = cast<SelectInst>(
-              BuilderM.CreateSelect(select->getCondition(), old,
-                                    faddForNeg(old, select->getFalseValue())));
+          SelectInst *res = cast<SelectInst>(BuilderM.CreateSelect(
+              select->getCondition(), old,
+              faddForNeg(old, select->getFalseValue(), false)));
           addedSelects.emplace_back(res);
-          return res;
+          return SanitizeDerivatives(val, res, BuilderM, mask);
         }
       }
       if (Constant *ci = dyn_cast<Constant>(select->getFalseValue())) {
         if (ci->isZeroValue()) {
           SelectInst *res = cast<SelectInst>(BuilderM.CreateSelect(
-              select->getCondition(), faddForNeg(old, select->getTrueValue()),
-              old));
+              select->getCondition(),
+              faddForNeg(old, select->getTrueValue(), false), old));
           addedSelects.emplace_back(res);
-          return res;
+          return SanitizeDerivatives(val, res, BuilderM, mask);
         }
       }
     }
@@ -278,30 +280,34 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
           if (ci->isZeroValue()) {
             SelectInst *res = cast<SelectInst>(BuilderM.CreateSelect(
                 select->getCondition(), old,
-                faddForNeg(old, BuilderM.CreateCast(bc->getOpcode(),
-                                                    select->getFalseValue(),
-                                                    bc->getDestTy()))));
+                faddForNeg(old,
+                           BuilderM.CreateCast(bc->getOpcode(),
+                                               select->getFalseValue(),
+                                               bc->getDestTy()),
+                           false)));
             addedSelects.emplace_back(res);
-            return res;
+            return SanitizeDerivatives(val, res, BuilderM, mask);
           }
         }
         if (Constant *ci = dyn_cast<Constant>(select->getFalseValue())) {
           if (ci->isZeroValue()) {
             SelectInst *res = cast<SelectInst>(BuilderM.CreateSelect(
                 select->getCondition(),
-                faddForNeg(old, BuilderM.CreateCast(bc->getOpcode(),
-                                                    select->getTrueValue(),
-                                                    bc->getDestTy())),
+                faddForNeg(old,
+                           BuilderM.CreateCast(bc->getOpcode(),
+                                               select->getTrueValue(),
+                                               bc->getDestTy()),
+                           false),
                 old));
             addedSelects.emplace_back(res);
-            return res;
+            return SanitizeDerivatives(val, res, BuilderM, mask);
           }
         }
       }
     }
 
     // fallback
-    return faddForNeg(old, dif);
+    return faddForNeg(old, dif, true);
   };
 
   if (val->getType()->isPointerTy()) {
