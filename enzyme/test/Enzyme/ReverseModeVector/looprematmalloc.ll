@@ -134,57 +134,46 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %"i1'mi1")
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %"i1'mi2")
 ; CHECK-NEXT:   tail call void @free(i8* %remat_i1)
-; CHECK-NEXT:   %.fca.0.insert116 = insertvalue [3 x double] {{(undef|poison)}}, double %"i10'de.sroa.0.0", 0
-; CHECK-NEXT:   %.fca.1.insert118 = insertvalue [3 x double] %.fca.0.insert116, double %"i10'de.sroa.7.0", 1
-; CHECK-NEXT:   %.fca.2.insert120 = insertvalue [3 x double] %.fca.1.insert118, double %"i10'de.sroa.14.0", 2
 ; CHECK-NEXT:   %1 = icmp eq i64 %"iv'ac.0", 0
-; CHECK-NEXT:   %2 = xor i1 %1, true
-; CHECK-NEXT:   %3 = select {{(fast )?}}i1 %2, [3 x double] %.fca.2.insert120, [3 x double] zeroinitializer
-; CHECK-NEXT:   %4 = extractvalue [3 x double] %3, 0
-; CHECK-NEXT:   %5 = extractvalue [3 x double] %3, 1
-; CHECK-NEXT:   %6 = extractvalue [3 x double] %3, 2
+; CHECK-NEXT:   %[[i4:.+]] = select {{(fast )?}}i1 %1, double 0.000000e+00, double %"i10'de.sroa.0.0"
+; CHECK-NEXT:   %[[i5:.+]] = select {{(fast )?}}i1 %1, double 0.000000e+00, double %"i10'de.sroa.7.0"
+; CHECK-NEXT:   %[[i6:.+]] = select {{(fast )?}}i1 %1, double 0.000000e+00, double %"i10'de.sroa.14.0"
 ; CHECK-NEXT:   br i1 %1, label %invertentry, label %incinvertloop
 
 ; CHECK: incinvertloop:                                    ; preds = %invertloop
-; CHECK-NEXT:   %7 = add nsw i64 %"iv'ac.0", -1
+; CHECK-NEXT:   %[[i7:.+]] = add nsw i64 %"iv'ac.0", -1
 ; CHECK-NEXT:   br label %remat_enter
 
 ; CHECK: invertsetLoop:                                    ; preds = %invertsetExit, %invertif.true
-; CHECK-NEXT:   %"arg'de.sroa.10.0" = phi double [ %29, %invertif.true ], [ %"arg'de.sroa.10.1", %invertsetExit ]
-; CHECK-NEXT:   %"arg'de.sroa.5.0" = phi double [ %27, %invertif.true ], [ %"arg'de.sroa.5.1", %invertsetExit ]
-; CHECK-NEXT:   %"arg'de.sroa.0.0" = phi double [ %25, %invertif.true ], [ %"arg'de.sroa.0.1", %invertsetExit ]
-; CHECK-NEXT:   %"i18'de.sroa.12.0" = phi double [ 0.000000e+00, %invertif.true ], [ %39, %invertsetExit ]
-; CHECK-NEXT:   %"i18'de.sroa.6.0" = phi double [ 0.000000e+00, %invertif.true ], [ %37, %invertsetExit ]
-; CHECK-NEXT:   %"i18'de.sroa.0.0" = phi double [ 0.000000e+00, %invertif.true ], [ %35, %invertsetExit ]
-; CHECK-NEXT:   %8 = icmp eq i64 %"iv1'ac.0", 0
-; CHECK-NEXT:   br i1 %8, label %invertloop, label %incinvertsetLoop
+; CHECK-NEXT:   %"arg'de.sroa.10.0" = phi double [ %[[i29:.+]], %invertif.true ], [ %"arg'de.sroa.10.1", %invertsetExit ]
+; CHECK-NEXT:   %"arg'de.sroa.5.0" = phi double [ %[[i27:.+]], %invertif.true ], [ %"arg'de.sroa.5.1", %invertsetExit ]
+; CHECK-NEXT:   %"arg'de.sroa.0.0" = phi double [ %[[i25:.+]], %invertif.true ], [ %"arg'de.sroa.0.1", %invertsetExit ]
+; CHECK-NEXT:   %"i18'de.sroa.12.0" = phi double [ 0.000000e+00, %invertif.true ], [ %[[i39:.+]], %invertsetExit ]
+; CHECK-NEXT:   %"i18'de.sroa.6.0" = phi double [ 0.000000e+00, %invertif.true ], [ %[[i37:.+]], %invertsetExit ]
+; CHECK-NEXT:   %"i18'de.sroa.0.0" = phi double [ 0.000000e+00, %invertif.true ], [ %[[i35:.+]], %invertsetExit ]
+; CHECK-NEXT:   %[[i8:.+]] = icmp eq i64 %"iv1'ac.0", 0
+; CHECK-NEXT:   br i1 %[[i8]], label %invertloop, label %incinvertsetLoop
 
 ; CHECK: incinvertsetLoop:                                 ; preds = %invertsetLoop
-; CHECK-NEXT:   %9 = add nsw i64 %"iv1'ac.0", -1
+; CHECK-NEXT:   %[[i9:.+]] = add nsw i64 %"iv1'ac.0", -1
 ; CHECK-NEXT:   br label %invertsetExit
 
 ; CHECK: invertif.true:                                    ; preds = %invertsetExit
 ; CHECK-NEXT:   %i17_unwrap6 = trunc i64 %"iv1'ac.0" to i32
-; CHECK-NEXT:   %10 = sub i32 %i17_unwrap6, 1
-; CHECK-NEXT:   %11 = call fast double @llvm.powi.f64{{(.i32)?}}(double %arg, i32 %10)
-; CHECK-DAG:    %[[i12:.+]] = fmul fast double %35, %11
-; CHECK-DAG:    %[[i13:.+]] = sitofp i32 %i17_unwrap6 to double
-; CHECK-NEXT:   %14 = fmul fast double %[[i12]], %[[i13]]
-; CHECK-NEXT:   %15 = insertvalue [3 x double] undef, double %14, 0
-; CHECK-NEXT:   %16 = fmul fast double %37, %11
-; CHECK-NEXT:   %17 = fmul fast double %16, %[[i12:.+]]
-; CHECK-NEXT:   %18 = insertvalue [3 x double] %15, double %17, 1
-; CHECK-NEXT:   %19 = fmul fast double %39, %11
-; CHECK-NEXT:   %20 = fmul fast double %19, %[[i13]]
-; CHECK-NEXT:   %21 = insertvalue [3 x double] %18, double %20, 2
-; CHECK-NEXT:   %22 = icmp eq i32 0, %i17_unwrap6
-; CHECK-NEXT:   %23 = select {{(fast )?}}i1 %22, [3 x double] zeroinitializer, [3 x double] %21
-; CHECK-NEXT:   %24 = extractvalue [3 x double] %23, 0
-; CHECK-NEXT:   %25 = fadd fast double %"arg'de.sroa.0.1", %24
-; CHECK-NEXT:   %26 = extractvalue [3 x double] %23, 1
-; CHECK-NEXT:   %27 = fadd fast double %"arg'de.sroa.5.1", %26
-; CHECK-NEXT:   %28 = extractvalue [3 x double] %23, 2
-; CHECK-NEXT:   %29 = fadd fast double %"arg'de.sroa.10.1", %28
+; CHECK-NEXT:   %[[i10:.+]] = sub i32 %i17_unwrap6, 1
+; CHECK-NEXT:   %[[i11:.+]] = call fast double @llvm.powi.f64{{(.i32)?}}(double %arg, i32 %[[i10]])
+; CHECK-NEXT:    %[[i13:.+]] = sitofp i32 %i17_unwrap6 to double
+; CHECK-NEXT:    %[[i12:.+]] = fmul fast double %[[i11]], %[[i13]] 
+; CHECK-NEXT:   %[[i22:.+]] = icmp eq i32 0, %i17_unwrap6
+; CHECK-NEXT:   %[[i14:.+]] = fmul fast double %[[i35]], %[[i12]]
+; CHECK-NEXT:   %[[i17:.+]] = fmul fast double %[[i37]], %[[i12]]
+; CHECK-NEXT:   %[[i20:.+]] = fmul fast double %[[i39]], %[[i12]]
+; CHECK-NEXT:   %[[m25:.+]] = fadd fast double %"arg'de.sroa.0.1", %[[i14]]
+; CHECK-NEXT:   %[[i25]] = select {{(fast )?}}i1 %[[i22]], double %"arg'de.sroa.0.1", double %[[m25]]
+; CHECK-NEXT:   %[[m27:.+]] = fadd fast double %"arg'de.sroa.5.1", %[[i17]]
+; CHECK-NEXT:   %[[i27]] = select {{(fast )?}}i1 %[[i22]], double %"arg'de.sroa.5.1", double %[[m27]]
+; CHECK-NEXT:   %[[m29:.+]] = fadd fast double %"arg'de.sroa.10.1", %[[i20]]
+; CHECK-NEXT:   %[[i29]] = select {{(fast )?}}i1 %[[i22]], double %"arg'de.sroa.10.1", double %[[m29]]
 ; CHECK-NEXT:   br label %invertsetLoop
 
 ; CHECK: invertsetExit:                                    ; preds = %remat_loop_loopExit, %incinvertsetLoop
@@ -194,28 +183,25 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %"i18'de.sroa.12.1" = phi double [ %"i18'de.sroa.12.2", %remat_loop_loopExit ], [ %"i18'de.sroa.12.0", %incinvertsetLoop ]
 ; CHECK-NEXT:   %"i18'de.sroa.6.1" = phi double [ %"i18'de.sroa.6.2", %remat_loop_loopExit ], [ %"i18'de.sroa.6.0", %incinvertsetLoop ]
 ; CHECK-NEXT:   %"i18'de.sroa.0.1" = phi double [ %"i18'de.sroa.0.2", %remat_loop_loopExit ], [ %"i18'de.sroa.0.0", %incinvertsetLoop ]
-; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ 29, %remat_loop_loopExit ], [ %9, %incinvertsetLoop ]
+; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ 29, %remat_loop_loopExit ], [ %[[i9]], %incinvertsetLoop ]
 ; CHECK-NEXT:   %"i20'ipg10_unwrap" = getelementptr inbounds [30 x double], [30 x double]* %"i'ipc8_unwrap26", i64 0, i64 %"iv1'ac.0"
 ; CHECK-NEXT:   %"i20'ipg9_unwrap" = getelementptr inbounds [30 x double], [30 x double]* %"i'ipc7_unwrap28", i64 0, i64 %"iv1'ac.0"
 ; CHECK-NEXT:   %"i20'ipg_unwrap" = getelementptr inbounds [30 x double], [30 x double]* %"i'ipc_unwrap30", i64 0, i64 %"iv1'ac.0"
-; CHECK-NEXT:   %30 = load double, double* %"i20'ipg_unwrap"
-; CHECK-NEXT:   %31 = load double, double* %"i20'ipg9_unwrap"
-; CHECK-NEXT:   %32 = load double, double* %"i20'ipg10_unwrap"
+; CHECK-NEXT:   %[[i30:.+]] = load double, double* %"i20'ipg_unwrap"
+; CHECK-NEXT:   %[[i31:.+]] = load double, double* %"i20'ipg9_unwrap"
+; CHECK-NEXT:   %[[i32:.+]] = load double, double* %"i20'ipg10_unwrap"
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"i20'ipg_unwrap"
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"i20'ipg9_unwrap"
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"i20'ipg10_unwrap"
-; CHECK-NEXT:   %.fca.0.insert87 = insertvalue [3 x double] {{(undef|poison)}}, double %30, 0
-; CHECK-NEXT:   %.fca.1.insert90 = insertvalue [3 x double] %.fca.0.insert87, double %31, 1
-; CHECK-NEXT:   %.fca.2.insert93 = insertvalue [3 x double] %.fca.1.insert90, double %32, 2
+
 ; CHECK-NEXT:   %i15_unwrap16 = and i64 %"iv1'ac.0", 1
 ; CHECK-NEXT:   %i16_unwrap17 = icmp eq i64 %i15_unwrap16, 0
-; CHECK-NEXT:   %33 = select {{(fast )?}}i1 %i16_unwrap17, [3 x double] %.fca.2.insert93, [3 x double] zeroinitializer
-; CHECK-NEXT:   %34 = extractvalue [3 x double] %33, 0
-; CHECK-NEXT:   %35 = fadd fast double %"i18'de.sroa.0.1", %34
-; CHECK-NEXT:   %36 = extractvalue [3 x double] %33, 1
-; CHECK-NEXT:   %37 = fadd fast double %"i18'de.sroa.6.1", %36
-; CHECK-NEXT:   %38 = extractvalue [3 x double] %33, 2
-; CHECK-NEXT:   %39 = fadd fast double %"i18'de.sroa.12.1", %38
+; CHECK-NEXT:   %[[q25:.+]] = fadd fast double %"i18'de.sroa.0.1", %[[i30]]
+; CHECK-NEXT:   %[[i35]] = select {{(fast )?}}i1 %i16_unwrap17, double %[[q25]], double %"i18'de.sroa.0.1"
+; CHECK-NEXT:   %[[q27:.+]] = fadd fast double %"i18'de.sroa.6.1", %[[i31]]
+; CHECK-NEXT:   %[[i37]] = select {{(fast )?}}i1 %i16_unwrap17, double %[[q27]], double %"i18'de.sroa.6.1"
+; CHECK-NEXT:   %[[q29:.+]] = fadd fast double %"i18'de.sroa.12.1", %[[i32]]
+; CHECK-NEXT:   %[[i39]] = select {{(fast )?}}i1 %i16_unwrap17, double %[[q29]], double %"i18'de.sroa.12.1"
 ; CHECK-NEXT:   br i1 %i16_unwrap17, label %invertif.true, label %invertsetLoop
 
 ; CHECK: invertexit:                                       ; preds = %loopExit
@@ -225,16 +211,16 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   br label %remat_enter
 
 ; CHECK: remat_enter:                                      ; preds = %invertexit, %incinvertloop
-; CHECK-NEXT:   %"i10'de.sroa.14.0" = phi double [ %differeturn.fca.2.extract, %invertexit ], [ %6, %incinvertloop ]
-; CHECK-NEXT:   %"i10'de.sroa.7.0" = phi double [ %differeturn.fca.1.extract, %invertexit ], [ %5, %incinvertloop ]
-; CHECK-NEXT:   %"i10'de.sroa.0.0" = phi double [ %differeturn.fca.0.extract, %invertexit ], [ %4, %incinvertloop ]
+; CHECK-NEXT:   %"i10'de.sroa.14.0" = phi double [ %differeturn.fca.2.extract, %invertexit ], [ %[[i6]], %incinvertloop ]
+; CHECK-NEXT:   %"i10'de.sroa.7.0" = phi double [ %differeturn.fca.1.extract, %invertexit ], [ %[[i5]], %incinvertloop ]
+; CHECK-NEXT:   %"i10'de.sroa.0.0" = phi double [ %differeturn.fca.0.extract, %invertexit ], [ %[[i4]], %incinvertloop ]
 ; CHECK-NEXT:   %"arg'de.sroa.10.2" = phi double [ 0.000000e+00, %invertexit ], [ %"arg'de.sroa.10.0", %incinvertloop ]
 ; CHECK-NEXT:   %"arg'de.sroa.5.2" = phi double [ 0.000000e+00, %invertexit ], [ %"arg'de.sroa.5.0", %incinvertloop ]
 ; CHECK-NEXT:   %"arg'de.sroa.0.2" = phi double [ 0.000000e+00, %invertexit ], [ %"arg'de.sroa.0.0", %incinvertloop ]
 ; CHECK-NEXT:   %"i18'de.sroa.12.2" = phi double [ 0.000000e+00, %invertexit ], [ %"i18'de.sroa.12.0", %incinvertloop ]
 ; CHECK-NEXT:   %"i18'de.sroa.6.2" = phi double [ 0.000000e+00, %invertexit ], [ %"i18'de.sroa.6.0", %incinvertloop ]
 ; CHECK-NEXT:   %"i18'de.sroa.0.2" = phi double [ 0.000000e+00, %invertexit ], [ %"i18'de.sroa.0.0", %incinvertloop ]
-; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ 19, %invertexit ], [ %7, %incinvertloop ]
+; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ 19, %invertexit ], [ %[[i7]], %incinvertloop ]
 ; CHECK-NEXT:   %remat_i1 = call i8* @malloc(i64 240)
 ; CHECK-NEXT:   %"i1'mi" = call noalias nonnull i8* @malloc(i64 240)
 ; CHECK-NEXT:   %"i1'mi1" = call noalias nonnull i8* @malloc(i64 240)
@@ -245,17 +231,17 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   br label %remat_loop_setLoop
 
 ; CHECK: remat_loop_setLoop:                               ; preds = %remat_loop_setLoop, %remat_enter
-; CHECK-NEXT:   %fiv = phi i64 [ %40, %remat_loop_setLoop ], [ 0, %remat_enter ]
-; CHECK-NEXT:   %40 = add i64 %fiv, 1
+; CHECK-NEXT:   %fiv = phi i64 [ %[[i40:.+]], %remat_loop_setLoop ], [ 0, %remat_enter ]
+; CHECK-NEXT:   %[[i40]] = add i64 %fiv, 1
 ; CHECK-DAG:   %i15_unwrap3 = and i64 %fiv, 1
 ; CHECK-DAG:   %i16_unwrap4 = icmp eq i64 %i15_unwrap3, 0
 ; CHECK-DAG:   %i17_unwrap = trunc i64 %fiv to i32
-; CHECK-DAG:   %41 = call fast double @llvm.powi.f64{{(.i32)?}}(double %arg, i32 %i17_unwrap)
-; CHECK-DAG:   %42 = select i1 %i16_unwrap4, double %41, double 0.000000e+00
+; CHECK-DAG:   %[[i41:.+]] = call fast double @llvm.powi.f64{{(.i32)?}}(double %arg, i32 %i17_unwrap)
+; CHECK-DAG:   %[[i42:.+]] = select i1 %i16_unwrap4, double %[[i41]], double 0.000000e+00
 ; CHECK-DAG:   %i_unwrap = bitcast i8* %remat_i1 to [30 x double]*
 ; CHECK-DAG:   %i20_unwrap = getelementptr inbounds [30 x double], [30 x double]* %i_unwrap, i64 0, i64 %fiv
-; CHECK-NEXT:   store double %42, double* %i20_unwrap
-; CHECK-NEXT:   %i22_unwrap = icmp eq i64 %40, 30
+; CHECK-NEXT:   store double %[[i42:.+]], double* %i20_unwrap
+; CHECK-NEXT:   %i22_unwrap = icmp eq i64 %[[i40]], 30
 ; CHECK-NEXT:   br i1 %i22_unwrap, label %remat_loop_loopExit, label %remat_loop_setLoop
 
 ; CHECK: remat_loop_loopExit:                              ; preds = %remat_loop_setLoop

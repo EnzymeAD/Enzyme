@@ -26,7 +26,7 @@ declare %struct.Gradients @__enzyme_fwddiff(double (double)*, ...)
 ; CHECK-NEXT: entry
 ; CHECK-NEXT:   %0 = tail call fast double @llvm.sqrt.f64(double %x)
 ; CHECK-NEXT:   %1 = fdiv fast double 5.000000e-01, %0
-; CHECK-NEXT:   %2 = fcmp fast oeq double %x, 0.000000e+00
+; CHECK-NEXT:   %2 = fcmp fast ueq double %x, 0.000000e+00
 ; CHECK-NEXT:   %3 = select {{(fast )?}}i1 %2, double 0.000000e+00, double %1
 ; CHECK-NEXT:   %4 = fdiv fast double 1.000000e+00, %0
 ; CHECK-NEXT:   %5 = select {{(fast )?}}i1 %2, double 0.000000e+00, double %4

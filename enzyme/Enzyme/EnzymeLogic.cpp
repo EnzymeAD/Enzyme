@@ -3077,6 +3077,22 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
   return;
 }
 
+Value *selectByWidth(IRBuilder<> &B, DiffeGradientUtils *gutils, Value *cond,
+                     Value *tval, Value *fval) {
+  auto width = gutils->getWidth();
+  if (width == 1) {
+    return B.CreateSelect(cond, tval, fval);
+  }
+  Value *res = UndefValue::get(tval->getType());
+
+  for (unsigned int i = 0; i < width; ++i) {
+    auto ntval = GradientUtils::extractMeta(B, tval, i);
+    auto nfval = GradientUtils::extractMeta(B, fval, i);
+    res = B.CreateInsertValue(res, B.CreateSelect(cond, ntval, nfval), {i});
+  }
+  return res;
+}
+
 void createInvertedTerminator(DiffeGradientUtils *gutils,
                               ArrayRef<DIFFE_TYPE> argTypes, BasicBlock *oBB,
                               AllocaInst *retAlloca, AllocaInst *dretAlloca,
@@ -3258,12 +3274,12 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
               }
 
               auto ddiff = gutils->diffe(SI, Builder);
-              gutils->setDiffe(SI,
-                               Builder.CreateSelect(
-                                   replacePHIs[pred],
-                                   Constant::getNullValue(prediff->getType()),
-                                   ddiff),
-                               Builder);
+              gutils->setDiffe(
+                  SI,
+                  selectByWidth(Builder, gutils, replacePHIs[pred],
+                                Constant::getNullValue(prediff->getType()),
+                                ddiff),
+                  Builder);
               handled = true;
               if (!gutils->isConstantValue(oval)) {
                 BasicBlock *REB =
@@ -3276,15 +3292,16 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
                 auto index = gutils->getOrInsertConditionalIndex(
                     gutils->getNewFromOriginal(SI->getOperand(0)), loopContext,
                     i == 1);
-                Value *sdif = Builder.CreateSelect(
+                Value *sdif = selectByWidth(
+                    Builder, gutils,
                     Builder.CreateICmpEQ(
                         gutils->lookupM(index, EB),
                         Constant::getNullValue(index->getType())),
                     ddiff, Constant::getNullValue(ddiff->getType()));
 
-                SelectInst *dif = cast<SelectInst>(Builder.CreateSelect(
-                    replacePHIs[pred], sdif,
-                    Constant::getNullValue(prediff->getType())));
+                auto dif =
+                    selectByWidth(Builder, gutils, replacePHIs[pred], sdif,
+                                  Constant::getNullValue(prediff->getType()));
                 auto addedSelects =
                     gutils->addToDiffe(oval, dif, Builder, PNfloatType);
 
@@ -3315,9 +3332,9 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
             auto ddiff = gutils->diffe(BO, Builder);
             gutils->setDiffe(
                 BO,
-                Builder.CreateSelect(replacePHIs[pred],
-                                     Constant::getNullValue(prediff->getType()),
-                                     ddiff),
+                selectByWidth(Builder, gutils, replacePHIs[pred],
+                              Constant::getNullValue(prediff->getType()),
+                              ddiff),
                 Builder);
             handled = true;
 
@@ -3332,10 +3349,10 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
               auto product = gutils->getOrInsertTotalMultiplicativeProduct(
                   gutils->getNewFromOriginal(BO->getOperand(1)), loopContext);
 
-              SelectInst *dif = cast<SelectInst>(Builder.CreateSelect(
-                  replacePHIs[pred],
+              auto dif = selectByWidth(
+                  Builder, gutils, replacePHIs[pred],
                   Builder.CreateFDiv(ddiff, gutils->lookupM(product, EB)),
-                  Constant::getNullValue(prediff->getType())));
+                  Constant::getNullValue(prediff->getType()));
               auto addedSelects =
                   gutils->addToDiffe(oval, dif, Builder, PNfloatType);
 
@@ -3371,9 +3388,8 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
               setphi = true;
             }
           }
-          SelectInst *dif = cast<SelectInst>(
-              Builder.CreateSelect(replacePHIs[pred], prediff,
-                                   Constant::getNullValue(prediff->getType())));
+          auto dif = selectByWidth(Builder, gutils, replacePHIs[pred], prediff,
+                                   Constant::getNullValue(prediff->getType()));
           auto addedSelects =
               gutils->addToDiffe(oval, dif, Builder, PNfloatType);
 

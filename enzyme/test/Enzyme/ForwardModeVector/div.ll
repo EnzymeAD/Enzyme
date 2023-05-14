@@ -24,12 +24,12 @@ entry:
 ; CHECK-NEXT:   %0 = extractvalue [2 x double] %"x'", 0
 ; CHECK-NEXT:   %1 = extractvalue [2 x double] %"y'", 0
 ; CHECK-NEXT:   %2 = fmul fast double %0, %y
-; CHECK-NEXT:   %3 = fmul fast double %x, %1
+; CHECK-NEXT:   %3 = fmul fast double %1, %x
 ; CHECK-NEXT:   %4 = fsub fast double %2, %3
 ; CHECK-NEXT:   %5 = extractvalue [2 x double] %"x'", 1
 ; CHECK-NEXT:   %6 = extractvalue [2 x double] %"y'", 1
 ; CHECK-NEXT:   %7 = fmul fast double %5, %y
-; CHECK-NEXT:   %8 = fmul fast double %x, %6
+; CHECK-NEXT:   %8 = fmul fast double %6, %x
 ; CHECK-NEXT:   %9 = fsub fast double %7, %8
 ; CHECK-NEXT:   %10 = fmul fast double %y, %y
 ; CHECK-NEXT:   %11 = fdiv fast double %4, %10
