@@ -1177,48 +1177,6 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
 
   assert(srets.size() == 0);
 
-  SmallVector<CallInst *, 1> callers;
-  for (auto U : F->users()) {
-    auto CI = dyn_cast<CallInst>(U);
-    assert(CI);
-    assert(CI->getCalledFunction() == F);
-    callers.push_back(CI);
-  }
-
-  // Can upgrade in place.
-  /*
-  if (enzyme_srets.size() == 1 && enzyme_srets_v.size() == 0 &&
-      rroots_v.size() == 0 && rroots.size() <= 1 && RT->isVoidTy()) {
-    assert(*enzyme_srets.begin() == 0);
-    if (rroots.size()) {
-      assert(rroots.size() == 1);
-      assert(*rroots.begin() == 1);
-    }
-    Type *T = nullptr;
-    for (auto CI : callers) {
-      auto AI = dyn_cast<AllocaInst>(CI->getArgOperand(0));
-      if (AI) {
-        if (!T)
-          T = AI->getAllocatedType();
-        else
-          assert(T == AI->getAllocatedType());
-      } else {
-        T = FT->getParamType(0)->getPointerElementType();
-      }
-      auto attr = Attribute::get(F->getContext(), Attribute::StructRet, T);
-      CI->addAttribute(AttributeList::FirstArgIndex, attr);
-      CI->removeAttribute(AttributeList::FirstArgIndex, "enzyme_sret");
-    }
-    if (callers.size() == 0) {
-      T = FT->getParamType(0)->getPointerElementType();
-    }
-    assert(T);
-    auto attr = Attribute::get(F->getContext(), Attribute::StructRet, T);
-    F->addAttribute(AttributeList::FirstArgIndex, attr);
-    F->removeAttribute(AttributeList::FirstArgIndex, "enzyme_sret");
-    return;
-  }
-  */
   SmallVector<Type *, 1> Types;
   if (!RT->isVoidTy()) {
     Types.push_back(RT);
@@ -1328,6 +1286,15 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   CloneFunctionInto(NewF, F, VMap, F->getSubprogram() != nullptr, Returns, "",
                     nullptr);
 #endif
+
+  SmallVector<CallInst *, 1> callers;
+  for (auto U : F->users()) {
+    auto CI = dyn_cast<CallInst>(U);
+    assert(CI);
+    assert(CI->getCalledFunction() == F);
+    callers.push_back(CI);
+  }
+
   size_t curOffset = 0;
 
   std::function<size_t(IRBuilder<> &, Value *, size_t)> recur =
@@ -1347,6 +1314,8 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
         assert(roots_AT);
         assert(roots);
         auto gep = B.CreateConstInBoundsGEP2_32(roots_AT, roots, 0, offset);
+        if (T != T_prjlvalue)
+          V = B.CreatePointerCast(V, T_prjlvalue);
         B.CreateStore(V, gep);
         offset++;
       }
