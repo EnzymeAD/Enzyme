@@ -69,7 +69,7 @@ declare double @__enzyme_fwdsplit(...)
 ; TODO this should keep tbaa
 ; CHECK-NEXT:   %ld = load double, double* %[[i4]], align 8
 ; CHECK-NEXT:   %[[i6:.+]] = fmul fast double %[[dreduce]], %ld
-; CHECK-NEXT:   %[[i7:.+]] = fmul fast double %reduce, %[[i5]]
+; CHECK-NEXT:   %[[i7:.+]] = fmul fast double %[[i5]], %reduce
 ; CHECK-NEXT:   %[[i8:.+]] = fsub fast double %[[i6]], %[[i7]]
 ; CHECK-NEXT:   %[[i9:.+]] = fmul fast double %ld, %ld
 ; CHECK-NEXT:   %[[i10]] = fdiv fast double %[[i8]], %[[i9]]

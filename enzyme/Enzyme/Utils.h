@@ -81,6 +81,7 @@ enum class ErrorType {
 extern "C" {
 /// Print additional debug info relevant to performance
 extern llvm::cl::opt<bool> EnzymePrintPerf;
+extern llvm::cl::opt<bool> EnzymeStrongZero;
 extern void (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
                                   const void *, LLVMValueRef);
 }
@@ -1441,5 +1442,32 @@ llvm::Constant *getUndefinedValueForType(llvm::Type *T, bool forceZero = false);
 llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
                                  llvm::IRBuilder<> &BuilderM,
                                  llvm::Value *mask = nullptr);
+
+static inline llvm::Value *checkedMul(llvm::IRBuilder<> &Builder2,
+                                      llvm::Value *idiff, llvm::Value *pres,
+                                      llvm::Twine Name = "") {
+  llvm::Value *res = Builder2.CreateFMul(idiff, pres, Name);
+  if (EnzymeStrongZero) {
+    llvm::Value *zero = llvm::Constant::getNullValue(idiff->getType());
+    if (auto C = llvm::dyn_cast<llvm::ConstantFP>(pres))
+      if (!C->isInfinity() && !C->isNaN())
+        return res;
+    res = Builder2.CreateSelect(Builder2.CreateFCmpOEQ(idiff, zero), zero, res);
+  }
+  return res;
+}
+static inline llvm::Value *checkedDiv(llvm::IRBuilder<> &Builder2,
+                                      llvm::Value *idiff, llvm::Value *pres,
+                                      llvm::Twine Name = "") {
+  llvm::Value *res = Builder2.CreateFDiv(idiff, pres, Name);
+  if (EnzymeStrongZero) {
+    llvm::Value *zero = llvm::Constant::getNullValue(idiff->getType());
+    if (auto C = llvm::dyn_cast<llvm::ConstantFP>(pres))
+      if (!C->isZero() && !C->isNaN())
+        return res;
+    res = Builder2.CreateSelect(Builder2.CreateFCmpOEQ(idiff, zero), zero, res);
+  }
+  return res;
+}
 
 #endif

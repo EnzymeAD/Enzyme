@@ -68,6 +68,10 @@ extern llvm::cl::opt<bool> EnzymeZeroCache;
 llvm::cl::opt<bool>
     EnzymeFastMath("enzyme-fast-math", cl::init(true), cl::Hidden,
                    cl::desc("Use fast math on derivative compuation"));
+llvm::cl::opt<bool>
+    EnzymeStrongZero("enzyme-strong-zero", cl::init(false), cl::Hidden,
+                     cl::desc("Use additional checks to ensure correct "
+                              "behavior when handling functions with inf"));
 }
 
 void ZeroMemory(llvm::IRBuilder<> &Builder, llvm::Type *T, llvm::Value *obj,
