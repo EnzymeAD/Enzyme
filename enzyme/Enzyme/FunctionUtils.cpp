@@ -2642,6 +2642,7 @@ bool LowerSparsification(llvm::Function *F, bool replaceAll) {
                                 ? inds[0]
                                 : B.CreateZExtOrTrunc(inds[0], intTy),
                             gep, "", true, true);
+          gep = B.CreateAdd(B.CreatePtrToInt(replacements[val], intTy), gep);
           gep = B.CreateIntToPtr(gep, CI->getType());
         } else if (!allconst) {
 #if LLVM_VERSION_MAJOR > 7
