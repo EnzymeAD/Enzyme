@@ -4028,6 +4028,9 @@ public:
 #elif LLVM_VERSION_MAJOR >= 9
       case Intrinsic::experimental_vector_reduce_v2_fadd:
       case Intrinsic::experimental_vector_reduce_v2_fmul:
+#elif LLVM_VERSION_MAJOR >= 15
+      case Intrinsic::minimum:
+      case Intrinsic::maximum:
 #endif
       case Intrinsic::sin:
       case Intrinsic::cos:
