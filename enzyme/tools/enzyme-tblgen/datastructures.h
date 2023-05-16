@@ -86,6 +86,13 @@ class Rule {
     size_t getHandledArgIdx() { return activeArg; }
     StringMap<size_t> getArgNameMap() { return argNameToPos; }
     DenseMap<size_t, argType> getArgTypeMap() { return argTypes; }
+    //std::string to_string(Rule const&r) {
+    //  std::string res = "function: " + r.blasName + "\n";
+    //  res += "handling
+
+    //  for (auto rule : r.rules) {
+    //  }
+    //}
 };
 
 void fillActiveArgSet(const Record *pattern,
@@ -197,6 +204,11 @@ private:
 public:
   TGPattern(Record &r) {
     blasName = r.getNameInitAsString();
+    // if (blasName != "scal") {
+    //   llvm::errs() << blasName << " skipped!\n";
+    //   return;
+    // }
+    // llvm::errs() << blasName << "\n";
 
     args = llvm::SmallVector<std::string, 6>();
     argNameToPos = StringMap<size_t>{};
@@ -216,6 +228,7 @@ public:
       rules = llvm::SmallVector<Rule, 3>{};
       ListInit *derivOps = r.getValueAsListInit("ArgDerivatives");
       for (auto derivOp : llvm::enumerate(*derivOps)) {
+        // llvm::errs() << derivOp.index() << ": \n";
         DagInit *derivRule = cast<DagInit>(derivOp.value());
         size_t actIdx = posActArgs[derivOp.index()];
         rules.push_back(
@@ -225,6 +238,14 @@ public:
 
     argUsers = DenseMap<size_t, DenseSet<size_t>>();
     fillArgUserMap(rules, args, posActArgs, argUsers);
+    // for (auto key : argUsers) {
+    //   DenseSet<size_t> users = key.second; // argUsers.lookup(key);
+    //   llvm::errs() << "\nKey " << key.first << ": ";
+    //   for (auto user: users) {
+    //     llvm::errs() << user << " ";
+    //   }
+    //   llvm::errs() << "\n";
+    // }
   }
   DenseMap<size_t, DenseSet<size_t>> getArgUsers() { return argUsers; }
   std::string getName() { return blasName; }

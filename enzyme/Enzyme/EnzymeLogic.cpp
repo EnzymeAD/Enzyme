@@ -182,6 +182,13 @@ struct CacheAnalysis {
         EmitWarning("UncacheableOrigin", *gep, "origin gep may need caching ",
                     *gep);
       }
+    } else if (auto II = dyn_cast<IntrinsicInst>(obj);
+               II && isIntelSubscriptIntrinsic(*II)) {
+      mustcache = is_value_mustcache_from_origin(II->getOperand(3));
+      if (mustcache) {
+        EmitWarning("UncacheableOrigin", *II,
+                    "origin llvm.intel.subscript may need caching ", *II);
+      }
     } else {
 
       // Pointer operands originating from call instructions that are not
@@ -746,7 +753,10 @@ void calculateUnusedValuesInFunction(
                   if (isDeallocationCall(I, TLI))
                     continue;
                 }
-                if (auto CI = dyn_cast<CallInst>(u)) {
+                if (auto II = dyn_cast<IntrinsicInst>(u);
+                    II && isIntelSubscriptIntrinsic(*II)) {
+                  todo.push_back(&*u);
+                } else if (auto CI = dyn_cast<CallInst>(u)) {
                   bool writeOnlyNoCapture = true;
                   if (shouldDisableNoWrite(CI)) {
                     writeOnlyNoCapture = false;
@@ -774,7 +784,6 @@ void calculateUnusedValuesInFunction(
                     continue;
                   }
                 }
-
                 if (isa<CastInst>(u) || isa<GetElementPtrInst>(u) ||
                     isa<PHINode>(u)) {
                   todo.push_back(&*u);
@@ -788,6 +797,10 @@ void calculateUnusedValuesInFunction(
               return true;
             }
           }
+        } else if (auto II = dyn_cast<IntrinsicInst>(v);
+                   II && isIntelSubscriptIntrinsic(*II)) {
+          unsigned int ptrArgIdx = 3;
+          return isNoNeed(II->getOperand(ptrArgIdx));
         }
         return false;
       };
@@ -2454,6 +2467,21 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         if (Value *orig_oldval = ri->getReturnValue()) {
           auto newri = gutils->getNewFromOriginal(ri);
           IRBuilder<> BuilderZ(newri);
+          if (gutils->isConstantValue(orig_oldval)) {
+            if (!EnzymeRuntimeActivityCheck && CustomErrorHandler &&
+                gutils->TR.query(orig_oldval)[{-1}].isPossiblePointer()) {
+              if (!isa<UndefValue>(orig_oldval) &&
+                  !isa<ConstantPointerNull>(orig_oldval)) {
+                std::string str;
+                raw_string_ostream ss(str);
+                ss << "Mismatched activity for: " << *ri
+                   << " const val: " << *orig_oldval;
+                CustomErrorHandler(str.c_str(), wrap(ri),
+                                   ErrorType::MixedActivityError, gutils,
+                                   wrap(orig_oldval));
+              }
+            }
+          }
           invertedRetPs[newri] = gutils->invertPointerM(orig_oldval, BuilderZ,
                                                         /*nullShadow*/ true);
         }
@@ -2962,6 +2990,26 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
   if (inst == nullptr)
     return;
 
+  if (retType != DIFFE_TYPE::CONSTANT) {
+    auto ret = inst->getOperand(0);
+    if (!ret->getType()->isFPOrFPVectorTy() &&
+        TR.getReturnAnalysis().Inner0().isPossiblePointer()) {
+      if (gutils->isConstantValue(ret)) {
+        if (!EnzymeRuntimeActivityCheck && CustomErrorHandler &&
+            TR.query(ret)[{-1}].isPossiblePointer()) {
+          if (!isa<UndefValue>(ret) && !isa<ConstantPointerNull>(ret)) {
+            std::string str;
+            raw_string_ostream ss(str);
+            ss << "Mismatched activity for: " << *inst
+               << " const val: " << *ret;
+            CustomErrorHandler(str.c_str(), wrap(inst),
+                               ErrorType::MixedActivityError, gutils,
+                               wrap(ret));
+          }
+        }
+      }
+    }
+  }
   ReturnInst *newInst = cast<ReturnInst>(gutils->getNewFromOriginal(inst));
   BasicBlock *nBB = newInst->getParent();
   assert(nBB);
@@ -3027,6 +3075,22 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
   gutils->erase(newInst);
   nBuilder.CreateRet(toret);
   return;
+}
+
+Value *selectByWidth(IRBuilder<> &B, DiffeGradientUtils *gutils, Value *cond,
+                     Value *tval, Value *fval) {
+  auto width = gutils->getWidth();
+  if (width == 1) {
+    return B.CreateSelect(cond, tval, fval);
+  }
+  Value *res = UndefValue::get(tval->getType());
+
+  for (unsigned int i = 0; i < width; ++i) {
+    auto ntval = GradientUtils::extractMeta(B, tval, i);
+    auto nfval = GradientUtils::extractMeta(B, fval, i);
+    res = B.CreateInsertValue(res, B.CreateSelect(cond, ntval, nfval), {i});
+  }
+  return res;
 }
 
 void createInvertedTerminator(DiffeGradientUtils *gutils,
@@ -3210,12 +3274,12 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
               }
 
               auto ddiff = gutils->diffe(SI, Builder);
-              gutils->setDiffe(SI,
-                               Builder.CreateSelect(
-                                   replacePHIs[pred],
-                                   Constant::getNullValue(prediff->getType()),
-                                   ddiff),
-                               Builder);
+              gutils->setDiffe(
+                  SI,
+                  selectByWidth(Builder, gutils, replacePHIs[pred],
+                                Constant::getNullValue(prediff->getType()),
+                                ddiff),
+                  Builder);
               handled = true;
               if (!gutils->isConstantValue(oval)) {
                 BasicBlock *REB =
@@ -3228,15 +3292,16 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
                 auto index = gutils->getOrInsertConditionalIndex(
                     gutils->getNewFromOriginal(SI->getOperand(0)), loopContext,
                     i == 1);
-                Value *sdif = Builder.CreateSelect(
+                Value *sdif = selectByWidth(
+                    Builder, gutils,
                     Builder.CreateICmpEQ(
                         gutils->lookupM(index, EB),
                         Constant::getNullValue(index->getType())),
                     ddiff, Constant::getNullValue(ddiff->getType()));
 
-                SelectInst *dif = cast<SelectInst>(Builder.CreateSelect(
-                    replacePHIs[pred], sdif,
-                    Constant::getNullValue(prediff->getType())));
+                auto dif =
+                    selectByWidth(Builder, gutils, replacePHIs[pred], sdif,
+                                  Constant::getNullValue(prediff->getType()));
                 auto addedSelects =
                     gutils->addToDiffe(oval, dif, Builder, PNfloatType);
 
@@ -3267,9 +3332,9 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
             auto ddiff = gutils->diffe(BO, Builder);
             gutils->setDiffe(
                 BO,
-                Builder.CreateSelect(replacePHIs[pred],
-                                     Constant::getNullValue(prediff->getType()),
-                                     ddiff),
+                selectByWidth(Builder, gutils, replacePHIs[pred],
+                              Constant::getNullValue(prediff->getType()),
+                              ddiff),
                 Builder);
             handled = true;
 
@@ -3284,10 +3349,10 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
               auto product = gutils->getOrInsertTotalMultiplicativeProduct(
                   gutils->getNewFromOriginal(BO->getOperand(1)), loopContext);
 
-              SelectInst *dif = cast<SelectInst>(Builder.CreateSelect(
-                  replacePHIs[pred],
+              auto dif = selectByWidth(
+                  Builder, gutils, replacePHIs[pred],
                   Builder.CreateFDiv(ddiff, gutils->lookupM(product, EB)),
-                  Constant::getNullValue(prediff->getType())));
+                  Constant::getNullValue(prediff->getType()));
               auto addedSelects =
                   gutils->addToDiffe(oval, dif, Builder, PNfloatType);
 
@@ -3323,9 +3388,8 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
               setphi = true;
             }
           }
-          SelectInst *dif = cast<SelectInst>(
-              Builder.CreateSelect(replacePHIs[pred], prediff,
-                                   Constant::getNullValue(prediff->getType())));
+          auto dif = selectByWidth(Builder, gutils, replacePHIs[pred], prediff,
+                                   Constant::getNullValue(prediff->getType()));
           auto addedSelects =
               gutils->addToDiffe(oval, dif, Builder, PNfloatType);
 

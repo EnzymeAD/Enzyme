@@ -58,6 +58,20 @@ void (*CustomRuntimeInactiveError)(LLVMBuilderRef, LLVMValueRef,
 LLVMValueRef *(*EnzymePostCacheStore)(LLVMValueRef, LLVMBuilderRef,
                                       uint64_t *size) = nullptr;
 LLVMTypeRef (*EnzymeDefaultTapeType)(LLVMContextRef) = nullptr;
+LLVMValueRef (*EnzymeUndefinedValueForType)(LLVMTypeRef, uint8_t) = nullptr;
+
+LLVMValueRef (*EnzymeSanitizeDerivatives)(LLVMValueRef, LLVMValueRef toset,
+                                          LLVMBuilderRef,
+                                          LLVMValueRef) = nullptr;
+
+extern llvm::cl::opt<bool> EnzymeZeroCache;
+llvm::cl::opt<bool>
+    EnzymeFastMath("enzyme-fast-math", cl::init(true), cl::Hidden,
+                   cl::desc("Use fast math on derivative compuation"));
+llvm::cl::opt<bool>
+    EnzymeStrongZero("enzyme-strong-zero", cl::init(false), cl::Hidden,
+                     cl::desc("Use additional checks to ensure correct "
+                              "behavior when handling functions with inf"));
 }
 
 void ZeroMemory(llvm::IRBuilder<> &Builder, llvm::Type *T, llvm::Value *obj,
@@ -1840,18 +1854,9 @@ Function *GetFunctionFromValue(Value *fn) {
   return cast<Function>(fn);
 }
 
-size_t getFirstLenOrIncPosition(BlasInfo blas) {
-  if (blas.function == "dot") {
-    return 0;
-  } else {
-    llvm::errs() << "unsuported BLAS fnc\n";
-    llvm_unreachable("unsuported BLAS fnc");
-  }
-}
-
 llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in) {
   llvm::Twine floatType[] = {"s", "d"}; // c, z
-  llvm::Twine extractable[] = {"dot"};
+  llvm::Twine extractable[] = {"dot", "scal"};
   llvm::Twine prefixes[] = {"" /*Fortran*/, "cblas_", "cublas_"};
   llvm::Twine suffixes[] = {"", "_", "64_", "_64_"};
   for (auto t : floatType) {
@@ -1871,4 +1876,30 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in) {
     }
   }
   return llvm::NoneType();
+}
+
+llvm::Constant *getUndefinedValueForType(llvm::Type *T, bool forceZero) {
+  if (EnzymeUndefinedValueForType)
+    return cast<Constant>(
+        unwrap(EnzymeUndefinedValueForType(wrap(T), forceZero)));
+  else if (EnzymeZeroCache || forceZero)
+    return Constant::getNullValue(T);
+  else
+    return UndefValue::get(T);
+}
+
+llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
+                                 llvm::IRBuilder<> &BuilderM,
+                                 llvm::Value *mask) {
+  if (EnzymeSanitizeDerivatives)
+    return unwrap(EnzymeSanitizeDerivatives(wrap(val), wrap(toset),
+                                            wrap(&BuilderM), wrap(mask)));
+  return toset;
+}
+
+llvm::FastMathFlags getFast() {
+  llvm::FastMathFlags f;
+  if (EnzymeFastMath)
+    f.set();
+  return f;
 }

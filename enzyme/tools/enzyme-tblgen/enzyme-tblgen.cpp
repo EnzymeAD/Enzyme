@@ -31,7 +31,8 @@ enum ActionType {
   GenDerivatives,
   GenBlasDerivatives,
   UpdateBlasDecl,
-  UpdateBlasTA
+  UpdateBlasTA,
+  GenBlasDiffUse,
 };
 
 static cl::opt<ActionType>
@@ -42,6 +43,8 @@ static cl::opt<ActionType>
                                  "Update BLAS declarations")),
            cl::values(clEnumValN(UpdateBlasTA, "gen-blas-typeanalysis",
                                  "Update BLAS TypeAnalysis")),
+           cl::values(clEnumValN(GenBlasDiffUse, "gen-blas-diffuseanalysis",
+                                 "Update BLAS DiffUseAnalysis")),
            cl::values(clEnumValN(GenDerivatives, "gen-derivatives",
                                  "Generate instruction derivative")));
 
@@ -836,9 +839,6 @@ void emit_handleBLAS(const std::vector<TGPattern> &blasPatterns,
   bool first = true;
   for (auto pattern : blasPatterns) {
     auto name = pattern.getName();
-    // only one which we expose right now.
-    if (name != "dot")
-      continue;
     os << "    " << ((first) ? "" : "} else ") << " if (blas.function == \""
        << name << "\") {                           \n"
        << "      result = handle_" << name
@@ -1003,14 +1003,14 @@ void emit_scalar_types(TGPattern &pattern, raw_ostream &os) {
 
   os << "  // fpType already given by blas type (s, d, c, z) \n"
      << "  IntegerType *intType = dyn_cast<IntegerType>(type_" << name << ");\n"
-     << "  bool byRef = false;\n" // TODO: add Fortran testcases for Fortran ABI
+     << "  // TODO: add Fortran testcases for Fortran ABI\n"
+     << "  const bool byRef = blas.prefix == \"\";\n"
      << "  if (!intType) {\n"
      << "    const auto PT = cast<PointerType>(type_" << name << ");\n"
      << "    if (blas.suffix.contains(\"64\"))\n"
      << "      intType = IntegerType::get(PT->getContext(), 64);\n"
      << "    else\n"
      << "      intType = IntegerType::get(PT->getContext(), 32);\n"
-     << "    byRef = true;\n"
      << "  }\n\n";
 }
 
@@ -1417,10 +1417,6 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
       first = false;
     }
     os << ");\n";
-    if (dfnc_name == "dot") {
-      os << "    assert(derivcall_dot.getFunctionType()->getReturnType() == "
-            "fpType);\n";
-    }
     os << "#if LLVM_VERSION_MAJOR >= 9\n"
        << "    if (auto F = dyn_cast<Function>(derivcall_" << dfnc_name
        << ".getCallee()))\n"
@@ -1465,6 +1461,7 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
     // nothing to prepare
   } else if (Def->isSubClassOf("Inst")) {
     // TODO:
+    return;
     PrintFatalError("Unhandled Inst Rule!");
   } else {
     PrintFatalError("Unhandled deriv Rule!");
@@ -1683,9 +1680,18 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
         os << "        CallInst *cubcall = "
               "cast<CallInst>(Builder2.CreateCall(derivcall_"
            << dfnc_name << ", args1, Defs));\n"
+           << "        if (byRef) {\n"
+           << "          ((DiffeGradientUtils *)gutils)"
+           << "          ->addToInvertedPtrDiffe(&call, nullptr, fpType, 0,"
+           << "(blas.suffix.contains(\"64\") ? 8 : 4), arg_" << name 
+           << ", cubcall, Builder2);\n"
+           << "        } else {"
            << "        addToDiffe(arg_" << name
            << ", cubcall, Builder2, fpType);\n"
+           << "        }"
            << "      }\n";
+
+
       } else {
         os << "        Builder2.CreateCall(derivcall_" << dfnc_name
            << ", args1, Defs);\n"
@@ -1773,6 +1779,7 @@ void emitBlasDerivatives(const RecordKeeper &RK, raw_ostream &os) {
 
 #include "blasDeclUpdater.h"
 #include "blasTAUpdater.h"
+#include "blasDiffUseUpdater.h"
 
 static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
   switch (action) {
@@ -1784,6 +1791,9 @@ static bool EnzymeTableGenMain(raw_ostream &os, RecordKeeper &records) {
     return false;
   case UpdateBlasDecl:
     emitBlasDeclUpdater(records, os);
+    return false;
+  case GenBlasDiffUse:
+    emitBlasDiffUse(records, os);
     return false;
   case UpdateBlasTA:
     emitBlasTAUpdater(records, os);

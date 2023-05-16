@@ -222,7 +222,7 @@ void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
 << "    case DerivativeMode::ForwardModeSplit:\n"
 << "      Builder2.SetInsertPoint(BuilderZ.GetInsertBlock(),\n"
 << "                              BuilderZ.GetInsertPoint());\n"
-<< "      Builder2.setFastMathFlags(BuilderZ.getFastMathFlags());\n"
+<< "      Builder2.setFastMathFlags(getFast());\n"
 << "      break;\n"
 << "    case DerivativeMode::ReverseModePrimal:\n"
 << "      break;\n"

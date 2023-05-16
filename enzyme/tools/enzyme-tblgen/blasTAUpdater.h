@@ -1,14 +1,6 @@
 void emit_BLASTypes(raw_ostream &os) {
 
-  os << "size_t firstIntPos = getFirstLenOrIncPosition(blas);\n";
-
-  os << "#if LLVM_VERSION_MAJOR >= 10\n"
-     << "  const bool byRef = !call.getArgOperand(firstIntPos\n"
-     << ")->getType()->isIntegerTy() && blas.prefix == \"\";\n"
-     << "#else\n"
-     << "  const bool byRef = !call.getOperand(firstIntPos\n"
-     << ")->getType()->isIntegerTy() && blas.prefix == \"\";\n"
-     << "#endif\n";
+  os << "const bool byRef = blas.prefix == \"\";\n";
 
   os << "TypeTree ttFloat;\n"
      << "llvm::Type *floatType; \n"
@@ -17,7 +9,15 @@ void emit_BLASTypes(raw_ostream &os) {
      << "} else {\n"
      << "  floatType = Type::getDoubleTy(call.getContext());\n"
      << "}\n"
-     << "ttFloat.insert({-1},floatType);\n";
+     << "if (byRef) {\n"
+     << "  ttFloat.insert({-1},BaseType::Pointer);\n"
+     << "  ttFloat.insert({-1,0},floatType);\n"
+     << "} else { \n"
+     << "  ttFloat.insert({-1},floatType);\n"
+     << "}\n";
+  
+  os << "TypeTree ttFloatRet;\n"
+     << "ttFloatRet.insert({-1},floatType);\n";
 
   os << "TypeTree ttInt;\n"
      << "if (byRef) {\n"
@@ -76,7 +76,7 @@ void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
   }
   if (name == "dot" || name == "asum" || name == "nrm2") {
     os << "  assert(call.getType()->isFloatingPointTy());\n"
-       << "  updateAnalysis(&call, ttFloat, &call);\n";
+       << "  updateAnalysis(&call, ttFloatRet, &call);\n";
   }
 
   os << "}\n";
