@@ -57,8 +57,9 @@ entry:
   ret double %call
 }
 
-; CHECK: ; Function Attrs: argmemonly mustprogress nofree norecurse nosync nounwind readonly willreturn
-; CHECK-NEXT: declare double @cblas_ddot64_(i32, double* nocapture readonly, i32, double* nocapture readonly, i32) #0
+; COM: Can't check the attrs since number and order depends on llvm version
+; COM: ; Function Attrs: argmemonly mustprogress nofree norecurse nosync nounwind readonly willreturn
+; CHECK: declare double @cblas_ddot64_(i32, double* nocapture readonly, i32, double* nocapture readonly, i32)
 
 ; CHECK: define void @active
 ; CHECK-NEXT: entry
@@ -92,8 +93,9 @@ entry:
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
-; CHECK: ; Function Attrs: argmemonly mustprogress nofree norecurse nosync nounwind willreturn
-; CHECK-NEXT: declare void @cblas_daxpy64_(i32, double, double* nocapture readonly, i32, double* nocapture, i32) #2
+; COM: Can't check the attrs since number and order depends on llvm version
+; COM: ; Function Attrs: argmemonly mustprogress nofree norecurse nosync nounwind willreturn
+; CHECK: declare void @cblas_daxpy64_(i32, double, double* nocapture readonly, i32, double* nocapture, i32)
 
 ; CHECK: define internal void @[[inactiveFirst]](i32 %len, double* noalias %m, i32 %incm, double* noalias %n, double* %"n'", i32 %incn, double %differeturn)
 ; CHECK-NEXT: entry:
