@@ -782,7 +782,7 @@ public:
 
         Value *prediff = nullptr;
 
-        for (ssize_t i = 0; i < (ssize_t)LoadSize; ++i) {
+        for (ssize_t i = -1; i < (ssize_t)LoadSize; ++i) {
           if (vd[{(int)i}].isFloat()) {
             prediff = diffe(&I, Builder2);
             break;
