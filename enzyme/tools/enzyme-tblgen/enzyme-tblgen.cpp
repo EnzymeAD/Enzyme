@@ -918,14 +918,12 @@ void emit_helper(TGPattern &pattern, raw_ostream &os) {
   auto argTypeMap = pattern.getArgTypeMap();
 
   auto actArgs = pattern.getActiveArgs();
-  os << "  auto calledArg = called->arg_begin();\n\n";
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto name = nameVec[i];
     os << "  const auto arg_" << name << " = call.getArgOperand(" << i << ");\n"
        << "  const auto type_" << name << " = arg_" << name << "->getType();\n"
        << "  const bool uncacheable_" << name
-       << " = (cacheMode ? overwritten_args[" << i << "] : false);\n"
-       << "  calledArg++;\n";
+       << " = (cacheMode ? overwritten_args[" << i << "] : false);\n";
     if (std::count(actArgs.begin(), actArgs.end(), i)) {
       os << "  const bool active_" << name << " = !gutils->isConstantValue(arg_"
          << name << ");\n";
@@ -1425,7 +1423,7 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
        << "))\n"
        << "#endif\n"
        << "    {\n"
-       << "      F->addFnAttr(Attribute::ArgMemOnly);\n"
+       << "      attribute_" << dfnc_name << "(blas, F);\n"
        << "      if (byRef) {\n";
     const auto calledTypeMap = calledPattern.getArgTypeMap();
     for (size_t argPos = 0; argPos < calledTypeMap.size(); argPos++) {
