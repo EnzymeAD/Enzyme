@@ -1084,10 +1084,10 @@ public:
       return {};
     }
 
-    return Optional<Options>({differet, tape, dynamic_interface, trace,
-                              observations, width, allocatedTapeSize,
-                              freeMemory, returnUsed, tapeIsPointer,
-                              differentialReturn, diffeTrace, retType. primalReturn});
+    return Optional<Options>(
+        {differet, tape, dynamic_interface, trace, observations, width,
+         allocatedTapeSize, freeMemory, returnUsed, tapeIsPointer,
+         differentialReturn, diffeTrace, retType, primalReturn});
   }
 
   static FnTypeInfo
