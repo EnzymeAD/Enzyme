@@ -5232,6 +5232,8 @@ public:
     }
   }
 
+// first one allows adding attributes to blas functions declared in the second
+#include "BlasAttributor.inc"
 #include "BlasDerivatives.inc"
 
   void visitOMPCall(llvm::CallInst &call) {
