@@ -17,7 +17,7 @@ entry:
 
 declare void @__enzyme_autodiff(void (double*)*, ...)
 
-; CHECK: define internal void @diffe3addOneMem(double* nocapture %x, [3 x double*] %"x'") {
+; CHECK: define internal void @diffe3addOneMem(double* nocapture %x, [3 x double*] %"x'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"add'de" = alloca [3 x double]
 ; CHECK-NEXT:   store [3 x double] zeroinitializer, [3 x double]* %"add'de"

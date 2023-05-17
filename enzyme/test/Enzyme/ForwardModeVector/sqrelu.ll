@@ -65,15 +65,15 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:    [[TMP15:%.*]] = fmul fast double 5.000000e-01, [[TMP9]]
 ; CHECK-NEXT:    [[TMP16:%.*]] = fdiv fast double [[TMP15]], [[TMP14]]
 ; CHECK-NEXT:    [[TMP17:%.*]] = fcmp fast ueq double [[MUL]], 0.000000e+00
-; CHECK-NEXT:    [[TMP18:%.*]] = select i1 [[TMP17]], double 0.000000e+00, double [[TMP16]]
+; CHECK-NEXT:    [[TMP18:%.*]] = select {{(fast )?}}i1 [[TMP17]], double 0.000000e+00, double [[TMP16]]
 ; CHECK-NEXT:    [[TMP19:%.*]] = insertvalue [2 x double] undef, double [[TMP18]], 0
 ; CHECK-NEXT:    [[TMP20:%.*]] = fmul fast double 5.000000e-01, [[TMP13]]
 ; CHECK-NEXT:    [[TMP21:%.*]] = fdiv fast double [[TMP20]], [[TMP14]]
-; CHECK-NEXT:    [[TMP22:%.*]] = select i1 [[TMP17]], double 0.000000e+00, double [[TMP21]]
+; CHECK-NEXT:    [[TMP22:%.*]] = select {{(fast )?}}i1 [[TMP17]], double 0.000000e+00, double [[TMP21]]
 ; CHECK-NEXT:    br label [[COND_END]]
 ; CHECK:       cond.end:
-; CHECK-NEXT:    [[TMP23:%.*]] = phi double [ [[TMP18]], [[COND_TRUE]] ], [ 0.000000e+00, [[ENTRY:%.*]] ]
-; CHECK-NEXT:    [[TMP24:%.*]] = phi double [ [[TMP22]], [[COND_TRUE]] ], [ 0.000000e+00, [[ENTRY]] ]
+; CHECK-NEXT:    [[TMP23:%.*]] = phi {{(fast )?}}double [ [[TMP18]], [[COND_TRUE]] ], [ 0.000000e+00, [[ENTRY:%.*]] ]
+; CHECK-NEXT:    [[TMP24:%.*]] = phi {{(fast )?}}double [ [[TMP22]], [[COND_TRUE]] ], [ 0.000000e+00, [[ENTRY]] ]
 ; CHECK-NEXT:    [[TMP25:%.*]] = insertvalue [2 x double] undef, double [[TMP23]], 0
 ; CHECK-NEXT:    [[TMP26:%.*]] = insertvalue [2 x double] [[TMP25]], double [[TMP24]], 1
 ; CHECK-NEXT:    ret [2 x double] [[TMP26]]

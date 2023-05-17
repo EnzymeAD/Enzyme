@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -gvn -instsimplify -correlated-propagation -adce -simplifycfg -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,gvn,instsimplify,correlated-propagation,adce,%simplifycfg)" -enzyme-preopt=false -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -correlated-propagation -adce -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,correlated-propagation,adce,%simplifycfg)" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: noinline norecurse nounwind uwtable
 define  double @f(double* nocapture %x, i64 %n) #0 {
@@ -55,15 +55,15 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK-DAG:   %iv = phi i64 [ %iv.next, %end ], [ 0, %entry ]
 ; CHECK-DAG:   %[[dsum:.+]] = phi {{(fast )?}}double [ %[[i4:.+]], %end ], [ 0.000000e+00, %entry ]
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
-; CHECK-NEXT:   %[[i1:.+]] = getelementptr inbounds i1*, i1** %truetape, i64 %iv
-; CHECK-NEXT:   %.pre = load i1*, i1** %[[i1]], align 8, !invariant.group !1
 ; CHECK-NEXT:   br label %body
 
 ; CHECK: body:                                             ; preds = %body, %loop
 ; CHECK-NEXT:   %iv1 = phi i64 [ %iv.next2, %body ], [ 0, %loop ]
 ; CHECK-NEXT:   %iv.next2 = add nuw nsw i64 %iv1, 1
-; CHECK-NEXT:   %[[i2:.+]] = getelementptr inbounds i1, i1* %.pre, i64 %iv1
-; CHECK-NEXT:   %cmp = load i1, i1* %[[i2]], align 1, !invariant.group !2
+; CHECK-NEXT:   %[[i1:.+]] = getelementptr inbounds i1*, i1** %truetape, i64 %iv
+; CHECK-NEXT:   %[[pre:.+]] = load i1*, i1** %[[i1]], align 8
+; CHECK-NEXT:   %[[i2:.+]] = getelementptr inbounds i1, i1* %[[pre]], i64 %iv1
+; CHECK-NEXT:   %cmp = load i1, i1* %[[i2]], align 1, !invariant.group !
 ; CHECK-NEXT:   br i1 %cmp, label %body, label %end
 
 ; CHECK: end:                                              ; preds = %body

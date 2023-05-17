@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -early-cse -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,adce,loop-deletion,correlated-propagation,%simplifycfg,early-cse)" -enzyme-preopt=false -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -correlated-propagation -simplifycfg -early-cse -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,adce,correlated-propagation,%simplifycfg,early-cse)" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: norecurse nounwind readonly uwtable
 define dso_local double @sumsquare(double* nocapture readonly %x, i64 %n) #0 {
@@ -36,26 +36,26 @@ attributes #1 = { nounwind uwtable }
 attributes #2 = { nounwind }
 
 
-; CHECK: define {{(dso_local )?}}double @dsumsquare(double* %x, double* %xp, i64 %n, i8* %tapeArg)
+; CHECK: define internal double @fwddiffesumsquare(double* nocapture readonly %x, double* nocapture %"x'", i64 %n, i8* %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = bitcast i8* %tapeArg to double**
-; CHECK-NEXT:   %truetape.i = load double*, double** %0
-; CHECK-NEXT:   br label %for.body.i
+; CHECK-NEXT:   %truetape = load double*, double** %0
+; CHECK-NEXT:   br label %for.body
 
-; CHECK: for.body.i:                                       ; preds = %for.body.i, %entry
-; CHECK-DAG:   %iv.i = phi i64 [ %iv.next.i, %for.body.i ], [ 0, %entry ]
-; CHECK-DAG:   %[[total011:.+]] = phi {{(fast )?}}double [ 0.000000e+00, %entry ], [ %[[i6:.+]], %for.body.i ]
-; CHECK-NEXT:   %iv.next.i = add nuw nsw i64 %iv.i, 1
-; CHECK-NEXT:   %"arrayidx'ipg.i" = getelementptr inbounds double, double* %xp, i64 %iv.i
-; CHECK-NEXT:   %[[i3:.+]] = load double, double* %"arrayidx'ipg.i", align 8
-; CHECK-NEXT:   %[[i1:.+]] = getelementptr inbounds double, double* %truetape.i, i64 %iv.i
+; CHECK: for.cond.cleanup:
+; CHECK-NEXT:   ret double %[[i6:.+]]
+
+; CHECK: for.body:
+; CHECK-DAG:   %iv = phi i64 [ %iv.next, %for.body ], [ 0, %entry ]
+; CHECK-DAG:   %[[total011:.+]] = phi {{(fast )?}}double [ 0.000000e+00, %entry ], [ %[[i6]], %for.body ]
+; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
+; CHECK-NEXT:   %"arrayidx'ipg" = getelementptr inbounds double, double* %"x'", i64 %iv
+; CHECK-NEXT:   %[[i3:.+]] = load double, double* %"arrayidx'ipg", align 8
+; CHECK-NEXT:   %[[i1:.+]] = getelementptr inbounds double, double* %truetape, i64 %iv
 ; CHECK-NEXT:   %[[i2:.+]] = load double, double* %[[i1]], align 8, !invariant.group !{{[0-9]+}}
 ; CHECK-NEXT:   %[[i4:.+]] = fmul fast double %[[i3]], %[[i2]]
 ; CHECK-NEXT:   %[[i5:.+]] = fadd fast double %[[i4]], %[[i4]]
 ; CHECK-NEXT:   %[[i6]] = fadd fast double %[[i5]], %[[total011]]
-; CHECK-NEXT:   %exitcond.i = icmp eq i64 %iv.i, %n
-; CHECK-NEXT:   br i1 %exitcond.i, label %fwddiffesumsquare.exit, label %for.body.i
+; CHECK-NEXT:   %exitcond = icmp eq i64 %iv, %n
+; CHECK-NEXT:   br i1 %exitcond, label %for.cond.cleanup, label %for.body
 
-; CHECK: fwddiffesumsquare.exit:                              ; preds = %for.body.i
-; CHECK-NEXT:   ret double %[[i6]]
-; CHECK-NEXT: }
