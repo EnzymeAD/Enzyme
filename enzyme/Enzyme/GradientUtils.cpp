@@ -5092,9 +5092,17 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   if (isa<Argument>(oval) && cast<Argument>(oval)->hasByValAttr()) {
     IRBuilder<> bb(inversionAllocs);
 
+    auto attr = cast<Argument>(oval)->getAttribute(Attribute::ByVal);
+
+    Type *subType = nullptr;
+#if LLVM_VERSION_MAJOR >= 9
+    subType = attr.getValueAsType();
+#else
+    subType = oval->getType()->getPointerElementType();
+#endif
+
     auto rule1 = [&]() {
-      AllocaInst *antialloca = bb.CreateAlloca(
-          oval->getType()->getPointerElementType(),
+      AllocaInst *antialloca = bb.CreateAlloca(subType,
           cast<PointerType>(oval->getType())->getPointerAddressSpace(), nullptr,
           oval->getName() + "'ipa");
 
@@ -5104,7 +5112,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       auto len_arg =
           ConstantInt::get(Type::getInt64Ty(oval->getContext()),
                            M->getDataLayout().getTypeAllocSizeInBits(
-                               oval->getType()->getPointerElementType()) /
+                               subType) /
                                8);
       auto volatile_arg = ConstantInt::getFalse(oval->getContext());
 
