@@ -15,7 +15,11 @@ void emit_attributeBLASCaller(const std::vector<TGPattern> &blasPatterns,
 void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
   auto name = pattern.getName();
   os << "void attribute_" << name << "(BlasInfo blas, llvm::Function *F) {\n"
-     << "  F->addFnAttr(llvm::Attribute::ArgMemOnly);\n"
+     << "#if LLVM_VERSION_MAJOR >= 16\n"
+     << "  F->setOnlyAccessesArgMemory();\n"
+     << "#else\n"
+     << "  F->addFnAttr(Attribute::ArgMemOnly);\n"
+     << "#endif\n"
      << "  F->addFnAttr(llvm::Attribute::NoUnwind);\n"
      << "  F->addFnAttr(llvm::Attribute::NoRecurse);\n"
      << "#if LLVM_VERSION_MAJOR >= 14\n"

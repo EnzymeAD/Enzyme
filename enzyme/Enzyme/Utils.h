@@ -1452,7 +1452,11 @@ struct BlasInfo {
   llvm::StringRef function;
 };
 
+#if LLVM_VERSION_MAJOR >= 16
+std::optional<BlasInfo> extractBLAS(llvm::StringRef in);
+#else
 llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in);
+#endif
 
 llvm::Constant *getUndefinedValueForType(llvm::Type *T, bool forceZero = false);
 

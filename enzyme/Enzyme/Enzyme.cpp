@@ -145,8 +145,13 @@ void attributeKnownFunctions(llvm::Function &F) {
   }
 
   llvm::Optional<BlasInfo> blasMetaData = extractBLAS(F.getName());
+#if LLVM_VERSION_MAJOR >= 16
+  if (blasMetaData.has_value())
+    attributeBLAS(blasMetaData.value(), &F);
+#else
   if (blasMetaData.hasValue())
     attributeBLAS(blasMetaData.getValue(), &F);
+#endif
 
   if (F.getName() ==
       "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE9_M_createERmm") {
@@ -973,7 +978,11 @@ public:
         ++i;
 
         Value *res = nullptr;
+#if LLVM_VERSION_MAJOR >= 16
+        bool batch = batchOffset.has_value();
+#else
         bool batch = batchOffset.hasValue();
+#endif
 
         for (unsigned v = 0; v < width; ++v) {
 #if LLVM_VERSION_MAJOR >= 14

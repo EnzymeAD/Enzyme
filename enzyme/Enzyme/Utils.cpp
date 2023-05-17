@@ -1885,7 +1885,12 @@ Function *GetFunctionFromValue(Value *fn) {
   return cast<Function>(fn);
 }
 
-llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in) {
+#if LLVM_VERSION_MAJOR >= 16
+std::optional<BlasInfo> extractBLAS(llvm::StringRef in)
+#else
+llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
+#endif
+{
   llvm::Twine floatType[] = {"s", "d"}; // c, z
   llvm::Twine extractable[] = {"dot", "scal"};
   llvm::Twine prefixes[] = {"" /*Fortran*/, "cblas_", "cublas_"};
@@ -1895,18 +1900,18 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in) {
       for (auto p : prefixes) {
         for (auto s : suffixes) {
           if (in == (p + t + f + s).str()) {
-            return llvm::Optional<BlasInfo>(BlasInfo{
+            return BlasInfo{
                 t.getSingleStringRef(),
                 p.getSingleStringRef(),
                 s.getSingleStringRef(),
                 f.getSingleStringRef(),
-            });
+            };
           }
         }
       }
     }
   }
-  return llvm::NoneType();
+  return {};
 }
 
 llvm::Constant *getUndefinedValueForType(llvm::Type *T, bool forceZero) {
