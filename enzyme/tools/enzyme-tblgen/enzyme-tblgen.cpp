@@ -1173,14 +1173,14 @@ llvm::SmallString<80> ValueType_helper(TGPattern &pattern, size_t actPos) {
     }
 
     if (type == argType::len) {
-      valueTypes.append("ValueType::None");
+      valueTypes.append("ValueType::Both");
     } else if (type == argType::fp) {
       auto floatName = nameVec[pos];
       if (pos == actPos) {
-        valueTypes.append("ValueType::Shadow");
+        valueTypes.append("ValueType::Both");
       } else {
         valueTypes.append((Twine("cache_") + floatName +
-                           " ? ValueType::None : ValueType::Primal")
+                           " ? ValueType::Both : ValueType::Both")
                               .str());
       }
     } else if (type == argType::vincData) {
@@ -1189,11 +1189,11 @@ llvm::SmallString<80> ValueType_helper(TGPattern &pattern, size_t actPos) {
       assert(nextType == argType::vincInc);
       const auto vecName = nameVec[pos];
       if (pos == actPos) {
-        valueTypes.append("ValueType::Shadow, ValueType::None");
+        valueTypes.append("ValueType::Both, ValueType::Both");
       } else {
         valueTypes.append(
             (Twine("cache_") + vecName +
-             " ? ValueType::None : ValueType::Primal, ValueType::None")
+             " ? ValueType::Both : ValueType::Both, ValueType::Both")
                 .str());
       }
       pos++; // extra inc, since vector cover two args (vincInc+vincData)
