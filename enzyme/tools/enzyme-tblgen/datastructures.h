@@ -12,7 +12,20 @@
 
 using namespace llvm;
 
-enum argType { fp, len, vincData, vincInc };
+enum argType {
+  fp,
+  len,
+  vincData,
+  vincInc,
+  cblas_layout, // is special (no non-blas equivalent)
+  // following for lv2 only
+  mldData,
+  mldLD,
+  uplo,
+  trans,
+  diag,
+  side
+};
 
 class Arg {
   public:
@@ -142,6 +155,18 @@ void fillArgTypes(const Record *pattern, DenseMap<size_t, argType> &argTypes) {
     } else if (val->getName() == "vinc") {
       argTypes.insert(std::make_pair(pos, argType::vincData));
       argTypes.insert(std::make_pair(pos + 1, argType::vincInc));
+    } else if (val->getName() == "cblas_layout") {
+      assert(pos == 0);
+      argTypes.insert(std::make_pair(pos, argType::cblas_layout));
+    } else if (val->getName() == "trans") {
+      argTypes.insert(std::make_pair(pos, argType::trans));
+    } else if (val->getName() == "diag") {
+      argTypes.insert(std::make_pair(pos, argType::diag));
+    } else if (val->getName() == "side") {
+      argTypes.insert(std::make_pair(pos, argType::side));
+    } else if (val->getName() == "mld") {
+      argTypes.insert(std::make_pair(pos, argType::mldData));
+      argTypes.insert(std::make_pair(pos + 1, argType::mldLD));
     } else {
       llvm::errs() << "val->getName: " << val->getName() << "\n";
       PrintFatalError("Unknown type!");

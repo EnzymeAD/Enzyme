@@ -14,7 +14,7 @@ def fp    : BLASType<1, 1>;  // floating point
 def ap    : BLASType<1, 1>;  // packed array, alternative to vld
 def vinc  : BLASType<2, 1>;  // {vector, increment}
 def vld   : BLASType<2, 1>;  // {vector, leading dim}
-def mld   : BLASType<2, 1>;  // {matrix, leading dim}
+def mld   : BLASType<2, 1>;  // {matrix, leading dim}, assumes m, n as existing args
 
 class blas_modes<list<string> _modes> : BLASType<1, 0> {
   list<string> modes = _modes;
@@ -120,79 +120,76 @@ def dot : CallBlasPattern<(Op $n, $x, $incx, $y, $incy),
 
 // def asum : CallBlasPattern<(Op $n, $x, $incx),
 //                   [],[len, vinc],
-//                   [(noop)]// sum(abs(x))
+//                   [(b<"axpy"> DiffeRet<"">, sign(<input<"x">), $y)]
 //                   >;
 // 
 
 // Lv 2
 
 // y = alpha Ax + beta y
-// def gemv : CallBlasPattern<(Op $layout, $transa, $m, $n, $alpha, $A, $lda, $x, $incx, $beta, $y, $incy),
-//                   [],[cblas_layout, trans, len, len, fp, mld, vinc, fp, vinc],
-//                   [
-//                   /* alpha  */  (b<"dot"> DiffeRet<"">, (b<"gemv"> $A, $x)),
-//                   /* A      */  (noop),
-//                   /* x      */  (noop),
-//                   /* beta   */  (b<"dot"> $y, DiffeRet<"">),
-//                   /* y      */  (b<"scal"> $beta, DiffeRet<"">),
-//                   ]
-//                   >;
+def gemv : CallBlasPattern<(Op $layout, $transa, $m, $n, $alpha, $A, $lda, $x, $incx, $beta, $y, $incy),
+                  ["y"], [cblas_layout, trans,  len, len,  fp,   mld,      vinc,      fp,    vinc],
+                  [
+                  /* alpha  */  (noop), //(b<"dot"> $y, (b<"gemv"> $A, $x)),
+                  /* A      */  (b<"ger">  $layout, $m, $n, $alpha, adj<"y">, $incy, $x, $incx, $A, $lda),
+                  /* x      */  (noop), //(b<"gemv"> $layout, $m, $n, $alpha, $A, $lda, $y, $incy, $x),
+                  /* beta   */  (noop),//(b<"dot"> $y, DiffeRet<"">),
+                  /* y      */  (noop)//(b<"scal"> $beta, DiffeRet<"">),
+                  ]
+                  >;
 // 
-// def ger : CallBlasPattern<(Op $layout, $m, $n, $alpha, $x, $incx, $y, $incy, $v, $ld),
-//                   [cblas_layout, len, len, fp, vinc, vinc, vld],
-//                   []
-//                   >;
+def ger : CallBlasPattern<(Op $layout, $m, $n, $alpha, $x, $incx, $y, $incy, $A, $ld),
+                  ["A"],[cblas_layout, len, len, fp, vinc, vinc, mld],
+                  [
+                  (noop),
+                  (noop),
+                  (noop),
+                  (noop)
+                  ]
+                  >;
 
-// def : CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $v, $ld, $x, $incx, $beta, $y, $incy),
+// def spmv : CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $v, $ld, $x, $incx, $beta, $y, $incy),
 //                   ["spmv"],
 //                   [cblas_layout, uplo, len, fp, vld, vinc, fp, vinc],
 //                   []
 //                   >;
 // 
-// def : CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $x, $incx, $v, $ld),
-//                   ["spr"],
+// def spr : CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $x, $incx, $v, $ld),
 //                   [cblas_layout, uplo, len, fp, vinc, vld],
 //                   []
 //                   >;
 // 
-// def : CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $x, $incx, $y, $incy, $v, $ld),
-//                   ["spr2"],
+// def spr2 : CallBlasPattern<(Op $layout, $uplo, $n, $alpha, $x, $incx, $y, $incy, $v, $ld),
 //                   [cblas_layout, uplo, len, fp, vinc, vinc, vld],
 //                   []
 //                   >;
 // 
-// def : CallBlasPattern<(Op $layout, $transa, $m, $n, $ml, $mu, $alpha, $v, $ld, $x, $incx, $beta, $y, $incy),
-//                   ["gbmv"],
+// def gbmv : CallBlasPattern<(Op $layout, $transa, $m, $n, $ml, $mu, $alpha, $v, $ld, $x, $incx, $beta, $y, $incy),
 //                   [cblas_layout, trans, len, len, bw, bw, fp, vld, vinc, fp, vinc],
 //                   []
 //                   >;
 // 
-// def : CallBlasPattern<(Op $layout, $uplo, $n, $k, $alpha, $v, $ld, $x, $incx, $beta, $y, $incy),
-//                   ["sbmv"],
+// def sbmv : CallBlasPattern<(Op $layout, $uplo, $n, $k, $alpha, $v, $ld, $x, $incx, $beta, $y, $incy),
 //                   [cblas_layout, uplo, len, hbw, fp, vld, vinc, fp, vinc],
 //                   []
 //                   >;
 // 
-// def : CallBlasPattern<(Op $layout, $uplo, $transa, $diag, $n, $v, $ld, $x, $incx),
-//                   ["trmv"],
+// def trmv : CallBlasPattern<(Op $layout, $uplo, $transa, $diag, $n, $v, $ld, $x, $incx),
 //                   [cblas_layout, uplo, trans, diag, len, vld, vinc],
 //                   []
 //                   >;
 // 
-// def : CallBlasPattern<(Op $layout, $uplo, $transa, $diag, $n, $v, $ld, $x, $incx),
-//                   ["trsv"],
+// def trsv : CallBlasPattern<(Op $layout, $uplo, $transa, $diag, $n, $v, $ld, $x, $incx),
 //                   [cblas_layout, uplo, trans, diag, len, vld, vinc],
 //                   []
 //                   >;
 // 
-// def : CallBlasPattern<(Op $layout, $uplo, $transa, $diag, $n, $k, $v, $ld, $x, $incx),
-//                   ["tbmv"],
+// def tbmv : CallBlasPattern<(Op $layout, $uplo, $transa, $diag, $n, $k, $v, $ld, $x, $incx),
 //                   [cblas_layout, uplo, trans, diag, len, bw, vld, vinc],
 //                   []
 //                   >;
 // 
-// def : CallBlasPattern<(Op $layout, $uplo, $transa, $diag, $n, $k, $v, $ld, $x, $incx),
-//                   ["tbsv"],
+// def tbsv : CallBlasPattern<(Op $layout, $uplo, $transa, $diag, $n, $k, $v, $ld, $x, $incx),
 //                   [cblas_layout, uplo, trans, diag, len, bw, vld, vinc],
 //                   []
 //                   >;
