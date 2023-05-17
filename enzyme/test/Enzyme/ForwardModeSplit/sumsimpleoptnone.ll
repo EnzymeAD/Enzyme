@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S -early-cse | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,inline,function(mem2reg,instsimplify,adce,loop-deletion,correlated-propagation,%simplifycfg, -early-cse)" -enzyme-preopt=false -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S -early-cse | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,adce,loop-deletion,correlated-propagation,%simplifycfg, -early-cse)" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: noinline nounwind uwtable
 define dso_local void @f(double* %x, double** %y, i64 %n) #0 {

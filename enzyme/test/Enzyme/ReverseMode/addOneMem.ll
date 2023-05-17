@@ -1,5 +1,5 @@
-; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -instsimplify -gvn -dse -dse -S | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,inline,function(mem2reg,instsimplify,gvn,dse,dse)" -enzyme-preopt=false -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -gvn -dse -dse -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,gvn,dse,dse)" -enzyme-preopt=false -S | FileCheck %s
 
 ; __attribute__((noinline))
 ; void addOneMem(double *x) {
@@ -40,7 +40,7 @@ declare double @__enzyme_autodiff(void (double*)*, ...)
 !5 = !{!"Simple C/C++ TBAA"}
 
 
-; CHECK: define dso_local void @test_derivative(double* %x, double* %xp) 
+; CHECK: define internal void @diffeaddOneMem(double* nocapture %x, double* nocapture %"x'")
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = load double, double* %x, align 8, !tbaa !2
 ; CHECK-NEXT:   %[[plus1:.+]] = fadd fast double %0, 1.000000e+00
