@@ -129,8 +129,8 @@ entry:
 ; CHECK-NEXT:   %sidx.i = phi i32 [ %startidx.i, %init.idx.i ], [ %sidx.next.i, %for.body.i ]
 ; CHECK-NEXT:   %dst.i.i = getelementptr inbounds float, float* %0, i32 %idx.i
 ; CHECK-NEXT:   %src.i.i = getelementptr inbounds float, float* %m, i32 %sidx.i
-; CHECK-NEXT:   %src.i.l.i = load float, float* %src.i.i, align 4
-; CHECK-NEXT:   store float %src.i.l.i, float* %dst.i.i, align 4
+; CHECK-NEXT:   %src.i.l.i = load float, float* %src.i.i
+; CHECK-NEXT:   store float %src.i.l.i, float* %dst.i.i
 ; CHECK-NEXT:   %idx.next.i = add nsw i32 %idx.i, 1
 ; CHECK-NEXT:   %sidx.next.i = add nsw i32 %sidx.i, %incm
 ; CHECK-NEXT:   %2 = icmp eq i32 %len, %idx.next.i
@@ -155,8 +155,8 @@ entry:
 ; CHECK-NEXT:   %sidx.i7 = phi i32 [ %startidx.i4, %init.idx.i5 ], [ %sidx.next.i12, %for.body.i13 ]
 ; CHECK-NEXT:   %dst.i.i8 = getelementptr inbounds float, float* %3, i32 %idx.i6
 ; CHECK-NEXT:   %src.i.i9 = getelementptr inbounds float, float* %n, i32 %sidx.i7
-; CHECK-NEXT:   %src.i.l.i10 = load float, float* %src.i.i9, align 4
-; CHECK-NEXT:   store float %src.i.l.i10, float* %dst.i.i8, align 4
+; CHECK-NEXT:   %src.i.l.i10 = load float, float* %src.i.i9
+; CHECK-NEXT:   store float %src.i.l.i10, float* %dst.i.i8
 ; CHECK-NEXT:   %idx.next.i11 = add nsw i32 %idx.i6, 1
 ; CHECK-NEXT:   %sidx.next.i12 = add nsw i32 %sidx.i7, %incn
 ; CHECK-NEXT:   %5 = icmp eq i32 %len, %idx.next.i11
@@ -208,8 +208,8 @@ entry:
 ; CHECK-NEXT:   %sidx.i = phi i32 [ %startidx.i, %init.idx.i ], [ %sidx.next.i, %for.body.i ]
 ; CHECK-NEXT:   %dst.i.i = getelementptr inbounds float, float* %0, i32 %idx.i
 ; CHECK-NEXT:   %src.i.i = getelementptr inbounds float, float* %m, i32 %sidx.i
-; CHECK-NEXT:   %src.i.l.i = load float, float* %src.i.i, align 4
-; CHECK-NEXT:   store float %src.i.l.i, float* %dst.i.i, align 4
+; CHECK-NEXT:   %src.i.l.i = load float, float* %src.i.i
+; CHECK-NEXT:   store float %src.i.l.i, float* %dst.i.i
 ; CHECK-NEXT:   %idx.next.i = add nsw i32 %idx.i, 1
 ; CHECK-NEXT:   %sidx.next.i = add nsw i32 %sidx.i, %incm
 ; CHECK-NEXT:   %2 = icmp eq i32 %len, %idx.next.i
@@ -254,8 +254,8 @@ entry:
 ; CHECK-NEXT:   %sidx.i = phi i32 [ %startidx.i, %init.idx.i ], [ %sidx.next.i, %for.body.i ]
 ; CHECK-NEXT:   %dst.i.i = getelementptr inbounds float, float* %0, i32 %idx.i
 ; CHECK-NEXT:   %src.i.i = getelementptr inbounds float, float* %n, i32 %sidx.i
-; CHECK-NEXT:   %src.i.l.i = load float, float* %src.i.i, align 4
-; CHECK-NEXT:   store float %src.i.l.i, float* %dst.i.i, align 4
+; CHECK-NEXT:   %src.i.l.i = load float, float* %src.i.i
+; CHECK-NEXT:   store float %src.i.l.i, float* %dst.i.i
 ; CHECK-NEXT:   %idx.next.i = add nsw i32 %idx.i, 1
 ; CHECK-NEXT:   %sidx.next.i = add nsw i32 %sidx.i, %incn
 ; CHECK-NEXT:   %2 = icmp eq i32 %len, %idx.next.i

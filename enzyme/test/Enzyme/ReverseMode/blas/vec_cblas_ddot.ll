@@ -148,8 +148,8 @@ entry:
 ; CHECK-NEXT:   %sidx.i = phi i32 [ %startidx.i, %init.idx.i ], [ %sidx.next.i, %for.body.i ]
 ; CHECK-NEXT:   %dst.i.i = getelementptr inbounds double, double* %0, i32 %idx.i
 ; CHECK-NEXT:   %src.i.i = getelementptr inbounds double, double* %m, i32 %sidx.i
-; CHECK-NEXT:   %src.i.l.i = load double, double* %src.i.i, align 8
-; CHECK-NEXT:   store double %src.i.l.i, double* %dst.i.i, align 8
+; CHECK-NEXT:   %src.i.l.i = load double, double* %src.i.i
+; CHECK-NEXT:   store double %src.i.l.i, double* %dst.i.i
 ; CHECK-NEXT:   %idx.next.i = add nsw i32 %idx.i, 1
 ; CHECK-NEXT:   %sidx.next.i = add nsw i32 %sidx.i, %incm
 ; CHECK-NEXT:   %2 = icmp eq i32 %len, %idx.next.i
@@ -174,8 +174,8 @@ entry:
 ; CHECK-NEXT:   %sidx.i7 = phi i32 [ %startidx.i4, %init.idx.i5 ], [ %sidx.next.i12, %for.body.i13 ]
 ; CHECK-NEXT:   %dst.i.i8 = getelementptr inbounds double, double* %3, i32 %idx.i6
 ; CHECK-NEXT:   %src.i.i9 = getelementptr inbounds double, double* %n, i32 %sidx.i7
-; CHECK-NEXT:   %src.i.l.i10 = load double, double* %src.i.i9, align 8
-; CHECK-NEXT:   store double %src.i.l.i10, double* %dst.i.i8, align 8
+; CHECK-NEXT:   %src.i.l.i10 = load double, double* %src.i.i9
+; CHECK-NEXT:   store double %src.i.l.i10, double* %dst.i.i8
 ; CHECK-NEXT:   %idx.next.i11 = add nsw i32 %idx.i6, 1
 ; CHECK-NEXT:   %sidx.next.i12 = add nsw i32 %sidx.i7, %incn
 ; CHECK-NEXT:   %5 = icmp eq i32 %len, %idx.next.i11
@@ -214,8 +214,8 @@ entry:
 ; CHECK-NEXT:   %sidx.i = phi i32 [ %startidx.i, %init.idx.i ], [ %sidx.next.i, %for.body.i ]
 ; CHECK-NEXT:   %dst.i.i = getelementptr inbounds double, double* %0, i32 %idx.i
 ; CHECK-NEXT:   %src.i.i = getelementptr inbounds double, double* %m, i32 %sidx.i
-; CHECK-NEXT:   %src.i.l.i = load double, double* %src.i.i, align 8
-; CHECK-NEXT:   store double %src.i.l.i, double* %dst.i.i, align 8
+; CHECK-NEXT:   %src.i.l.i = load double, double* %src.i.i
+; CHECK-NEXT:   store double %src.i.l.i, double* %dst.i.i
 ; CHECK-NEXT:   %idx.next.i = add nsw i32 %idx.i, 1
 ; CHECK-NEXT:   %sidx.next.i = add nsw i32 %sidx.i, %incm
 ; CHECK-NEXT:   %2 = icmp eq i32 %len, %idx.next.i
@@ -265,8 +265,8 @@ entry:
 ; CHECK-NEXT:   %sidx.i = phi i32 [ %startidx.i, %init.idx.i ], [ %sidx.next.i, %for.body.i ]
 ; CHECK-NEXT:   %dst.i.i = getelementptr inbounds double, double* %0, i32 %idx.i
 ; CHECK-NEXT:   %src.i.i = getelementptr inbounds double, double* %n, i32 %sidx.i
-; CHECK-NEXT:   %src.i.l.i = load double, double* %src.i.i, align 8
-; CHECK-NEXT:   store double %src.i.l.i, double* %dst.i.i, align 8
+; CHECK-NEXT:   %src.i.l.i = load double, double* %src.i.i
+; CHECK-NEXT:   store double %src.i.l.i, double* %dst.i.i
 ; CHECK-NEXT:   %idx.next.i = add nsw i32 %idx.i, 1
 ; CHECK-NEXT:   %sidx.next.i = add nsw i32 %sidx.i, %incn
 ; CHECK-NEXT:   %2 = icmp eq i32 %len, %idx.next.i
