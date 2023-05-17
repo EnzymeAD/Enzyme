@@ -8523,22 +8523,23 @@ public:
       }
       Value *tape = nullptr;
 #if LLVM_VERSION_MAJOR >= 16
-      if (tapeIdx.has_value()) {
+      if (tapeIdx.has_value())
 #else
-      if (tapeIdx.hasValue()) {
+      if (tapeIdx.hasValue())
 #endif
+      {
 
+#if LLVM_VERSION_MAJOR >= 16
+          auto idx = tapeIdx.value();
+#else
+          auto idx = tapeIdx.getValue();
+#endif
         FunctionType *FT = subdata->fn->getFunctionType();
 
         tape = BuilderZ.CreatePHI((tapeIdx == -1)
                                       ? FT->getReturnType()
                                       : cast<StructType>(FT->getReturnType())
-#if LLVM_VERSION_MAJOR >= 16
-                                            ->getElementType(tapeIdx.value()),
-#else
-                                            ->getElementType(
-                                                tapeIdx.getValue()),
-#endif
+                                            ->getElementType(idx),
                                   1, "tapeArg");
 
         assert(!tape->getType()->isEmptyTy());
@@ -9084,19 +9085,20 @@ public:
           augmentcall->setName(call.getName() + "_augmented");
 
 #if LLVM_VERSION_MAJOR >= 16
-        if (tapeIdx.has_value()) {
-          tape = (tapeIdx.value() == -1)
+        if (tapeIdx.has_value())
 #else
-        if (tapeIdx.hasValue()) {
-          tape = (tapeIdx.getValue() == -1)
+        if (tapeIdx.hasValue())
 #endif
+        {
+#if LLVM_VERSION_MAJOR >= 16
+            auto tval = tapeIdx.value();
+#else
+            auto tval = tapeIdx.getValue();
+#endif
+          tape = (tval == -1)
                      ? augmentcall
                      : BuilderZ.CreateExtractValue(
-#if LLVM_VERSION_MAJOR >= 16
-                           augmentcall, {(unsigned)tapeIdx.value()},
-#else
-                           augmentcall, {(unsigned)tapeIdx.getValue()},
-#endif
+                           augmentcall, {(unsigned)tval},
                            "subcache");
           if (tape->getType()->isEmptyTy()) {
             auto tt = tape->getType();
@@ -9114,16 +9116,14 @@ public:
           assert(returnIdx);
           assert(augmentcall);
 #if LLVM_VERSION_MAJOR >= 16
-          dcall = (returnIdx.value() < 0)
-                      ? augmentcall
-                      : BuilderZ.CreateExtractValue(
-                            augmentcall, {(unsigned)returnIdx.value()});
+          auto rval = returnIdx.value();
 #else
-          dcall = (returnIdx.getValue() < 0)
+          auto rval = returnIdx.getValue();
+#endif
+          dcall = rval
                       ? augmentcall
                       : BuilderZ.CreateExtractValue(
-                            augmentcall, {(unsigned)returnIdx.getValue()});
-#endif
+                            augmentcall, {(unsigned)rval});
           gutils->originalToNewFn[&call] = dcall;
           gutils->newToOriginalFn.erase(newCall);
           gutils->newToOriginalFn[dcall] = &call;
@@ -9193,19 +9193,16 @@ public:
           if (!tape) {
 #if LLVM_VERSION_MAJOR >= 16
             assert(tapeIdx.has_value());
-            tape = BuilderZ.CreatePHI(
-                (tapeIdx == -1) ? FT->getReturnType()
-                                : cast<StructType>(FT->getReturnType())
-                                      ->getElementType(tapeIdx.value()),
-                1, "tapeArg");
+            auto tval = tapeIdx.value();
 #else
             assert(tapeIdx.hasValue());
+            auto tval = tapeIdx.getValue();
+#endif
             tape = BuilderZ.CreatePHI(
                 (tapeIdx == -1) ? FT->getReturnType()
                                 : cast<StructType>(FT->getReturnType())
-                                      ->getElementType(tapeIdx.getValue()),
+                                      ->getElementType(tval),
                 1, "tapeArg");
-#endif
           }
           tape = gutils->cacheForReverse(BuilderZ, tape,
                                          getIndex(&call, CacheType::Tape));
@@ -9257,19 +9254,17 @@ public:
           Value *newip = nullptr;
           if (Mode == DerivativeMode::ReverseModeCombined ||
               Mode == DerivativeMode::ReverseModePrimal) {
+
 #if LLVM_VERSION_MAJOR >= 16
-            newip = (differetIdx.value() < 0)
-                        ? augmentcall
-                        : BuilderZ.CreateExtractValue(
-                              augmentcall, {(unsigned)differetIdx.value()},
-                              call.getName() + "'ac");
+              auto drval = differetIdx.value();
 #else
-            newip = (differetIdx.getValue() < 0)
+              auto drval = differetIdx.getValue();
+#endif
+            newip = drval
                         ? augmentcall
                         : BuilderZ.CreateExtractValue(
-                              augmentcall, {(unsigned)differetIdx.getValue()},
+                              augmentcall, {(unsigned)drval},
                               call.getName() + "'ac");
-#endif
             assert(newip->getType() == call.getType());
             placeholder->replaceAllUsesWith(newip);
             if (placeholder == &*BuilderZ.GetInsertPoint()) {
@@ -9950,20 +9945,21 @@ public:
           augmentcall->setName(call.getName() + "_augmented");
 
 #if LLVM_VERSION_MAJOR >= 16
-        if (tapeIdx.has_value()) {
-          tape = (tapeIdx.value() == -1)
+        if (tapeIdx.has_value())
+#else
+        if (tapeIdx.hasValue())
+#endif
+        {
+#if LLVM_VERSION_MAJOR >= 16
+            auto tval = tapeIdx.value();
+#else
+            auto tval = tapeIdx.getValue();
+#endif
+          tape = (tval == -1)
                      ? augmentcall
                      : BuilderZ.CreateExtractValue(augmentcall,
-                                                   {(unsigned)tapeIdx.value()},
+                                                   {(unsigned)tval},
                                                    "subcache");
-#else
-        if (tapeIdx.hasValue()) {
-          tape = (tapeIdx.getValue() == -1)
-                     ? augmentcall
-                     : BuilderZ.CreateExtractValue(
-                           augmentcall, {(unsigned)tapeIdx.getValue()},
-                           "subcache");
-#endif
           if (tape->getType()->isEmptyTy()) {
             auto tt = tape->getType();
             gutils->erase(cast<Instruction>(tape));
@@ -10054,19 +10050,16 @@ public:
           if (!tape) {
 #if LLVM_VERSION_MAJOR >= 16
             assert(tapeIdx.has_value());
-            tape = BuilderZ.CreatePHI(
-                (tapeIdx == -1) ? FT->getReturnType()
-                                : cast<StructType>(FT->getReturnType())
-                                      ->getElementType(tapeIdx.value()),
-                1, "tapeArg");
+            auto tval = tapeIdx.value();
 #else
             assert(tapeIdx.hasValue());
+            auto tval = tapeIdx.getValue();
+#endif
             tape = BuilderZ.CreatePHI(
                 (tapeIdx == -1) ? FT->getReturnType()
                                 : cast<StructType>(FT->getReturnType())
-                                      ->getElementType(tapeIdx.getValue()),
+                                      ->getElementType(tval),
                 1, "tapeArg");
-#endif
           }
           tape = gutils->cacheForReverse(BuilderZ, tape,
                                          getIndex(&call, CacheType::Tape));
