@@ -416,9 +416,6 @@ struct CacheAnalysis {
 
     StringRef funcName = getFuncNameFromCall(callsite_op);
 
-    if (funcName == "")
-      return {};
-
     if (funcName == "llvm.julia.gc_preserve_begin")
       return {};
 
