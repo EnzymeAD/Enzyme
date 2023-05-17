@@ -690,6 +690,7 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
   F->addParamAttr(1, Attribute::ReadOnly);
 
   BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
+  BasicBlock *init = BasicBlock::Create(M.getContext(), "init.idx", F);
   BasicBlock *body = BasicBlock::Create(M.getContext(), "for.body", F);
   BasicBlock *end = BasicBlock::Create(M.getContext(), "for.end", F);
 
@@ -705,16 +706,30 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
   {
     IRBuilder<> B(entry);
     B.CreateCondBr(B.CreateICmpEQ(num, ConstantInt::get(num->getType(), 0)),
-                   end, body);
+                   end, init);
   }
 
   {
+    IRBuilder<> B2(init);
+    B2.setFastMathFlags(getFast());
+    Value *a = B2.CreateNSWSub(ConstantInt::get(num->getType(), 1), num, "a");
+    Value *negidx = B2.CreateNSWMul(a, stride, "negidx");
+    // Value *negidx =
+    //     B2.CreateNSWAdd(b, ConstantInt::get(num->getType(), 1), "negidx");
+    Value *isneg =
+        B2.CreateICmpSLT(stride, ConstantInt::get(num->getType(), 0), "is.neg");
+    Value *startidx = B2.CreateSelect(
+        isneg, negidx, ConstantInt::get(num->getType(), 0), "startidx");
+    B2.CreateBr(body);
+    //}
+
+    //{
     IRBuilder<> B(body);
     B.setFastMathFlags(getFast());
     PHINode *idx = B.CreatePHI(num->getType(), 2, "idx");
     PHINode *sidx = B.CreatePHI(num->getType(), 2, "sidx");
-    idx->addIncoming(ConstantInt::get(num->getType(), 0), entry);
-    sidx->addIncoming(ConstantInt::get(num->getType(), 0), entry);
+    idx->addIncoming(ConstantInt::get(num->getType(), 0), init);
+    sidx->addIncoming(startidx, init);
 
 #if LLVM_VERSION_MAJOR > 7
     Value *dsti = B.CreateInBoundsGEP(elementType, dst, idx, "dst.i");
@@ -744,8 +759,8 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
     }
 
     Value *next =
-        B.CreateNUWAdd(idx, ConstantInt::get(num->getType(), 1), "idx.next");
-    Value *snext = B.CreateNUWAdd(sidx, stride, "sidx.next");
+        B.CreateNSWAdd(idx, ConstantInt::get(num->getType(), 1), "idx.next");
+    Value *snext = B.CreateNSWAdd(sidx, stride, "sidx.next");
     idx->addIncoming(next, body);
     sidx->addIncoming(snext, body);
     B.CreateCondBr(B.CreateICmpEQ(num, next), end, body);
