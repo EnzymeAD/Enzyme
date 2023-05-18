@@ -2945,17 +2945,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     GV->setName("_tmp");
     auto R = gutils->GetOrCreateShadowFunction(
         *this, TLI, TA, todiff, pair.second, width, gutils->AtomicAdd);
-    SmallVector<ConstantExpr *, 1> users;
-    for (auto U : GV->users()) {
-      if (auto CE = dyn_cast<ConstantExpr>(U)) {
-        if (CE->isCast()) {
-          users.push_back(CE);
-        }
-      }
-    }
-    for (auto U : users) {
-      U->replaceAllUsesWith(ConstantExpr::getPointerCast(R, U->getType()));
-    }
+    SmallVector<std::pair<ConstantExpr *, bool>, 1> users;
+    GV->replaceAllUsesWith(ConstantExpr::getPointerCast(R, GV->getType()));
     GV->eraseFromParent();
   }
 
