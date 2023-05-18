@@ -387,14 +387,27 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
       os << " cubcall->setCallingConv(cconv);\n";
       for (auto *attr : *cast<ListInit>(Def->getValueAsListInit("fnattrs"))) {
         auto attrDef = cast<DefInit>(attr)->getDef();
+        auto attrName = attrDef->getValueInit("name")->getAsUnquotedString();
+#if LLVM_VERSION_MAJOR >= 16
+        if (attrName == "ReadNone") {
+            os << " cubcall->setOnlyReadsMemory();\n";
+            os << " cubcall->setOnlyWritesMemory();\n";
+            continue;
+        }
+        if (attrName == "ReadOnly") {
+            os << " cubcall->setOnlyReadsMemory();\n";
+            continue;
+        }
+#endif
+
         os << "#if LLVM_VERSION_MAJOR >= 14\n"
            << " cubcall->addAttributeAtIndex(AttributeList::FunctionIndex, "
            << "Attribute::"
-           << attrDef->getValueInit("name")->getAsUnquotedString() << ");\n";
+           << attrName << ");\n";
         os << "#else\n"
            << " cubcall->addAttribute(AttributeList::FunctionIndex, "
            << "Attribute::"
-           << attrDef->getValueInit("name")->getAsUnquotedString() << ");\n";
+           << attrName << ");\n";
         os << "#endif\n";
       }
       os << " res = cubcall;\n";
