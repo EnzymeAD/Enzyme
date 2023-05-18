@@ -18,7 +18,7 @@ void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
      << "#if LLVM_VERSION_MAJOR >= 16\n"
      << "  F->setOnlyAccessesArgMemory();\n"
      << "#else\n"
-     << "  F->addFnAttr(Attribute::ArgMemOnly);\n"
+     << "  F->addFnAttr(llvm::Attribute::ArgMemOnly);\n"
      << "#endif\n"
      << "  F->addFnAttr(llvm::Attribute::NoUnwind);\n"
      << "  F->addFnAttr(llvm::Attribute::NoRecurse);\n"

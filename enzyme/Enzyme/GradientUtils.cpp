@@ -5092,10 +5092,10 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   if (isa<Argument>(oval) && cast<Argument>(oval)->hasByValAttr()) {
     IRBuilder<> bb(inversionAllocs);
 
-    auto attr = cast<Argument>(oval)->getAttribute(Attribute::ByVal);
 
     Type *subType = nullptr;
 #if LLVM_VERSION_MAJOR >= 9
+    auto attr = cast<Argument>(oval)->getAttribute(Attribute::ByVal);
     subType = attr.getValueAsType();
 #else
     subType = oval->getType()->getPointerElementType();

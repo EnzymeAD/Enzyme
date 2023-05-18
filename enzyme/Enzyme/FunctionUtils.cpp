@@ -1015,10 +1015,16 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
     B.SetInsertPoint(res);
 
     if (auto PT = dyn_cast<PointerType>(storePointer->getType())) {
-      if (PT->getPointerElementType() != res->getType())
-        storePointer = B.CreateBitCast(
-            storePointer,
-            PointerType::get(res->getType(), PT->getAddressSpace()));
+#if LLVM_VERSION_MAJOR >= 15
+      if (PT->getContext().supportsTypedPointers()) {
+#endif
+        if (PT->getPointerElementType() != res->getType())
+          storePointer = B.CreateBitCast(
+              storePointer,
+              PointerType::get(res->getType(), PT->getAddressSpace()));
+#if LLVM_VERSION_MAJOR >= 15
+      }
+#endif
     } else {
       assert(isa<IntegerType>(storePointer->getType()));
       storePointer = B.CreateIntToPtr(storePointer,

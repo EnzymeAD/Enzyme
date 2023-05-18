@@ -119,12 +119,12 @@ void attributeKnownFunctions(llvm::Function &F) {
     F.addFnAttr(Attribute::ReadNone);
 #endif
     if (!F.getName().contains("__enzyme_todense"))
-    for (auto &arg : F.args()) {
-      if (arg.getType()->isPointerTy()) {
-        arg.addAttr(Attribute::ReadNone);
-        arg.addAttr(Attribute::NoCapture);
+      for (auto &arg : F.args()) {
+        if (arg.getType()->isPointerTy()) {
+          arg.addAttr(Attribute::ReadNone);
+          arg.addAttr(Attribute::NoCapture);
+        }
       }
-    }
   }
   if (F.getName() == "memcmp") {
 #if LLVM_VERSION_MAJOR >= 16
@@ -2069,7 +2069,12 @@ public:
         }
         if (Fn->getName() == "__fd_sincos_1" || Fn->getName() == "__fd_cos_1" ||
             Fn->getName() == "__mth_i_ipowi") {
+#if LLVM_VERSION_MAJOR >= 16
+          CI->setOnlyReadsMemory();
+          CI->setOnlyWritesMemory();
+#else
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
+#endif
         }
         if (Fn->getName().contains("strcmp")) {
           Fn->addParamAttr(0, Attribute::ReadOnly);
