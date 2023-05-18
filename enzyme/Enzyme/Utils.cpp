@@ -583,7 +583,7 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
 
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
 #if LLVM_VERSION_MAJOR >= 16
-  F->setMemoryEffects(MemoryEffects::argMemOnly());
+  F->setOnlyAccessesArgMemory();
 #else
   F->addFnAttr(Attribute::ArgMemOnly);
 #endif
@@ -686,7 +686,7 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
 
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
 #if LLVM_VERSION_MAJOR >= 16
-  F->setMemoryEffects(MemoryEffects::argMemOnly());
+  F->setOnlyAccessesArgMemory();
 #else
   F->addFnAttr(Attribute::ArgMemOnly);
 #endif
@@ -827,7 +827,7 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
 
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
 #if LLVM_VERSION_MAJOR >= 16
-  F->setMemoryEffects(MemoryEffects::argMemOnly());
+  F->setOnlyAccessesArgMemory();
 #else
   F->addFnAttr(Attribute::ArgMemOnly);
 #endif
@@ -1137,7 +1137,7 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
 
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
 #if LLVM_VERSION_MAJOR >= 16
-  F->setMemoryEffects(MemoryEffects::argMemOnly());
+  F->setOnlyAccessesArgMemory();
 #else
   F->addFnAttr(Attribute::ArgMemOnly);
 #endif

@@ -41,8 +41,13 @@ void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
   auto argTypeMap = pattern.getArgTypeMap();
   DenseSet<size_t> mutableArgs = pattern.getMutableArgs();
 
-  if (mutableArgs.size() == 0)
+  if (mutableArgs.size() == 0) {
+    os << "#if LLVM_VERSION_MAJOR >= 16\n";
+    os << "  F->setOnlyReadsMemory();\n";
+    os << "#else\n";
     os << "  F->addFnAttr(llvm::Attribute::ReadOnly);\n";
+    os << "#endif\n";
+  }
 
   for (size_t i = 0; i < argTypeMap.size(); i++) {
     if (argTypeMap.lookup(i) == argType::vincData) {

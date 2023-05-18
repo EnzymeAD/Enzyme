@@ -817,11 +817,12 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
               // todo make better alignment calculation
 #if LLVM_VERSION_MAJOR >= 16
               assert(alignv.value().value() != 0);
-              if (start % alignv.value().value() != 0) {
+              if (start % alignv.value().value() != 0) 
 #else
               assert(alignv.getValue().value() != 0);
-              if (start % alignv.getValue().value() != 0) {
+              if (start % alignv.getValue().value() != 0)
 #endif
+              {
                 alignv = Align(1);
               }
             }

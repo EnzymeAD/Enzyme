@@ -5102,18 +5102,16 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 #endif
 
     auto rule1 = [&]() {
-      AllocaInst *antialloca = bb.CreateAlloca(subType,
-          cast<PointerType>(oval->getType())->getPointerAddressSpace(), nullptr,
-          oval->getName() + "'ipa");
+      AllocaInst *antialloca = bb.CreateAlloca(
+          subType, cast<PointerType>(oval->getType())->getPointerAddressSpace(),
+          nullptr, oval->getName() + "'ipa");
 
       auto dst_arg =
           bb.CreateBitCast(antialloca, Type::getInt8PtrTy(oval->getContext()));
       auto val_arg = ConstantInt::get(Type::getInt8Ty(oval->getContext()), 0);
-      auto len_arg =
-          ConstantInt::get(Type::getInt64Ty(oval->getContext()),
-                           M->getDataLayout().getTypeAllocSizeInBits(
-                               subType) /
-                               8);
+      auto len_arg = ConstantInt::get(
+          Type::getInt64Ty(oval->getContext()),
+          M->getDataLayout().getTypeAllocSizeInBits(subType) / 8);
       auto volatile_arg = ConstantInt::getFalse(oval->getContext());
 
 #if LLVM_VERSION_MAJOR == 6

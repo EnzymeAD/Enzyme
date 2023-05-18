@@ -6751,18 +6751,24 @@ public:
               shadow, Type::getInt8PtrTy(call.getContext()));
 
         Type *statusType = nullptr;
-        if (Function *recvfn = called->getParent()->getFunction("MPI_Recv")) {
-          auto statusArg = recvfn->arg_end();
-          statusArg--;
-          if (auto PT = dyn_cast<PointerType>(statusArg->getType()))
-            statusType = PT->getPointerElementType();
-        } else if (Function *recvfn =
-                       called->getParent()->getFunction("PMPI_Recv")) {
-          auto statusArg = recvfn->arg_end();
-          statusArg--;
-          if (auto PT = dyn_cast<PointerType>(statusArg->getType()))
-            statusType = PT->getPointerElementType();
+#if LLVM_VERSION_MAJOR >= 15
+        if (called->getContext().supportsTypedPointers()) {
+#endif
+          if (Function *recvfn = called->getParent()->getFunction("MPI_Recv")) {
+            auto statusArg = recvfn->arg_end();
+            statusArg--;
+            if (auto PT = dyn_cast<PointerType>(statusArg->getType()))
+              statusType = PT->getPointerElementType();
+          } else if (Function *recvfn =
+                         called->getParent()->getFunction("PMPI_Recv")) {
+            auto statusArg = recvfn->arg_end();
+            statusArg--;
+            if (auto PT = dyn_cast<PointerType>(statusArg->getType()))
+              statusType = PT->getPointerElementType();
+          }
+#if LLVM_VERSION_MAJOR >= 15
         }
+#endif
         if (statusType == nullptr) {
           statusType = ArrayType::get(Type::getInt8Ty(call.getContext()), 24);
           llvm::errs() << " warning could not automatically determine mpi "
@@ -8530,17 +8536,17 @@ public:
       {
 
 #if LLVM_VERSION_MAJOR >= 16
-          auto idx = tapeIdx.value();
+        auto idx = tapeIdx.value();
 #else
-          auto idx = tapeIdx.getValue();
+        auto idx = tapeIdx.getValue();
 #endif
         FunctionType *FT = subdata->fn->getFunctionType();
 
-        tape = BuilderZ.CreatePHI((tapeIdx == -1)
-                                      ? FT->getReturnType()
-                                      : cast<StructType>(FT->getReturnType())
-                                            ->getElementType(idx),
-                                  1, "tapeArg");
+        tape = BuilderZ.CreatePHI(
+            (tapeIdx == -1)
+                ? FT->getReturnType()
+                : cast<StructType>(FT->getReturnType())->getElementType(idx),
+            1, "tapeArg");
 
         assert(!tape->getType()->isEmptyTy());
         gutils->TapesToPreventRecomputation.insert(cast<Instruction>(tape));
@@ -9091,15 +9097,13 @@ public:
 #endif
         {
 #if LLVM_VERSION_MAJOR >= 16
-            auto tval = tapeIdx.value();
+          auto tval = tapeIdx.value();
 #else
-            auto tval = tapeIdx.getValue();
+          auto tval = tapeIdx.getValue();
 #endif
-          tape = (tval == -1)
-                     ? augmentcall
-                     : BuilderZ.CreateExtractValue(
-                           augmentcall, {(unsigned)tval},
-                           "subcache");
+          tape = (tval == -1) ? augmentcall
+                              : BuilderZ.CreateExtractValue(
+                                    augmentcall, {(unsigned)tval}, "subcache");
           if (tape->getType()->isEmptyTy()) {
             auto tt = tape->getType();
             gutils->erase(cast<Instruction>(tape));
@@ -9120,10 +9124,9 @@ public:
 #else
           auto rval = returnIdx.getValue();
 #endif
-          dcall = rval
-                      ? augmentcall
-                      : BuilderZ.CreateExtractValue(
-                            augmentcall, {(unsigned)rval});
+          dcall = (rval < 0) ? augmentcall
+                             : BuilderZ.CreateExtractValue(augmentcall,
+                                                           {(unsigned)rval});
           gutils->originalToNewFn[&call] = dcall;
           gutils->newToOriginalFn.erase(newCall);
           gutils->newToOriginalFn[dcall] = &call;
@@ -9256,15 +9259,15 @@ public:
               Mode == DerivativeMode::ReverseModePrimal) {
 
 #if LLVM_VERSION_MAJOR >= 16
-              auto drval = differetIdx.value();
+            auto drval = differetIdx.value();
 #else
-              auto drval = differetIdx.getValue();
+            auto drval = differetIdx.getValue();
 #endif
-            newip = drval
+            newip = (drval < 0)
                         ? augmentcall
-                        : BuilderZ.CreateExtractValue(
-                              augmentcall, {(unsigned)drval},
-                              call.getName() + "'ac");
+                        : BuilderZ.CreateExtractValue(augmentcall,
+                                                      {(unsigned)drval},
+                                                      call.getName() + "'ac");
             assert(newip->getType() == call.getType());
             placeholder->replaceAllUsesWith(newip);
             if (placeholder == &*BuilderZ.GetInsertPoint()) {
@@ -9951,15 +9954,13 @@ public:
 #endif
         {
 #if LLVM_VERSION_MAJOR >= 16
-            auto tval = tapeIdx.value();
+          auto tval = tapeIdx.value();
 #else
-            auto tval = tapeIdx.getValue();
+          auto tval = tapeIdx.getValue();
 #endif
-          tape = (tval == -1)
-                     ? augmentcall
-                     : BuilderZ.CreateExtractValue(augmentcall,
-                                                   {(unsigned)tval},
-                                                   "subcache");
+          tape = (tval == -1) ? augmentcall
+                              : BuilderZ.CreateExtractValue(
+                                    augmentcall, {(unsigned)tval}, "subcache");
           if (tape->getType()->isEmptyTy()) {
             auto tt = tape->getType();
             gutils->erase(cast<Instruction>(tape));
@@ -9976,16 +9977,13 @@ public:
           assert(returnIdx);
           assert(augmentcall);
 #if LLVM_VERSION_MAJOR >= 16
-          dcall = (returnIdx.value() < 0)
-                      ? augmentcall
-                      : BuilderZ.CreateExtractValue(
-                            augmentcall, {(unsigned)returnIdx.value()});
+          auto rval = returnIdx.value();
 #else
-          dcall = (returnIdx.getValue() < 0)
-                      ? augmentcall
-                      : BuilderZ.CreateExtractValue(
-                            augmentcall, {(unsigned)returnIdx.getValue()});
+          auto rval = returnIdx.getValue();
 #endif
+          dcall = (rval < 0) ? augmentcall
+                             : BuilderZ.CreateExtractValue(augmentcall,
+                                                           {(unsigned)rval});
           gutils->originalToNewFn[&call] = dcall;
           gutils->newToOriginalFn.erase(newCall);
           gutils->newToOriginalFn[dcall] = &call;
@@ -10107,18 +10105,15 @@ public:
           if (Mode == DerivativeMode::ReverseModeCombined ||
               Mode == DerivativeMode::ReverseModePrimal) {
 #if LLVM_VERSION_MAJOR >= 16
-            newip = (differetIdx.value() < 0)
-                        ? augmentcall
-                        : BuilderZ.CreateExtractValue(
-                              augmentcall, {(unsigned)differetIdx.value()},
-                              call.getName() + "'ac");
+            auto drval = differetIdx.value();
 #else
-            newip = (differetIdx.getValue() < 0)
-                        ? augmentcall
-                        : BuilderZ.CreateExtractValue(
-                              augmentcall, {(unsigned)differetIdx.getValue()},
-                              call.getName() + "'ac");
+            auto drval = differetIdx.getValue();
 #endif
+            newip = (drval < 0)
+                        ? augmentcall
+                        : BuilderZ.CreateExtractValue(augmentcall,
+                                                      {(unsigned)drval},
+                                                      call.getName() + "'ac");
             assert(newip->getType() == call.getType());
             placeholder->replaceAllUsesWith(newip);
             if (placeholder == &*BuilderZ.GetInsertPoint()) {

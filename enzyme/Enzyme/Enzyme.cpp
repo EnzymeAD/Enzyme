@@ -105,15 +105,20 @@ llvm::cl::opt<bool> EnzymeOMPOpt("enzyme-omp-opt", cl::init(false), cl::Hidden,
 #define addAttribute addAttributeAtIndex
 #endif
 void attributeKnownFunctions(llvm::Function &F) {
-  if (F.getName().contains("__enzyme_todense"))
-    F.addFnAttr(Attribute::ReadNone);
-
   if (F.getName().contains("__enzyme_float") ||
       F.getName().contains("__enzyme_double") ||
       F.getName().contains("__enzyme_integer") ||
       F.getName().contains("__enzyme_pointer") ||
+      F.getName().contains("__enzyme_todense") ||
+      F.getName().contains("__enzyme_iter") ||
       F.getName().contains("__enzyme_virtualreverse")) {
+#if LLVM_VERSION_MAJOR >= 16
+    F.setOnlyReadsMemory();
+    F.setOnlyWritesMemory();
+#else
     F.addFnAttr(Attribute::ReadNone);
+#endif
+    if (!F.getName().contains("__enzyme_todense"))
     for (auto &arg : F.args()) {
       if (arg.getType()->isPointerTy()) {
         arg.addAttr(Attribute::ReadNone);
@@ -122,11 +127,12 @@ void attributeKnownFunctions(llvm::Function &F) {
     }
   }
   if (F.getName() == "memcmp") {
-    F.addFnAttr(Attribute::ReadOnly);
 #if LLVM_VERSION_MAJOR >= 16
-    F.setMemoryEffects(MemoryEffects::argMemOnly());
+    F.setOnlyAccessesArgMemory();
+    F.setOnlyReadsMemory();
 #else
     F.addFnAttr(Attribute::ArgMemOnly);
+    F.addFnAttr(Attribute::ReadOnly);
 #endif
     F.addFnAttr(Attribute::NoUnwind);
     F.addFnAttr(Attribute::NoRecurse);
@@ -163,7 +169,7 @@ void attributeKnownFunctions(llvm::Function &F) {
   }
   if (F.getName() == "MPI_Irecv" || F.getName() == "PMPI_Irecv") {
 #if LLVM_VERSION_MAJOR >= 16
-    F.setMemoryEffects(MemoryEffects::inaccessibleOrArgMemOnly());
+    F.setOnlyAccessesInaccessibleMemOrArgMem();
 #else
     F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
 #endif
@@ -183,7 +189,7 @@ void attributeKnownFunctions(llvm::Function &F) {
   }
   if (F.getName() == "MPI_Isend" || F.getName() == "PMPI_Isend") {
 #if LLVM_VERSION_MAJOR >= 16
-    F.setMemoryEffects(MemoryEffects::inaccessibleOrArgMemOnly());
+    F.setOnlyAccessesInaccessibleMemOrArgMem();
 #else
     F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
 #endif
@@ -204,7 +210,7 @@ void attributeKnownFunctions(llvm::Function &F) {
   if (F.getName() == "MPI_Comm_rank" || F.getName() == "PMPI_Comm_rank" ||
       F.getName() == "MPI_Comm_size" || F.getName() == "PMPI_Comm_size") {
 #if LLVM_VERSION_MAJOR >= 16
-    F.setMemoryEffects(MemoryEffects::inaccessibleOrArgMemOnly());
+    F.setOnlyAccessesInaccessibleMemOrArgMem();
 #else
     F.addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
 #endif
@@ -252,7 +258,7 @@ void attributeKnownFunctions(llvm::Function &F) {
       F.getName() == "omp_get_thread_num") {
     F.addFnAttr(Attribute::ReadOnly);
 #if LLVM_VERSION_MAJOR >= 16
-    F.setMemoryEffects(MemoryEffects::inaccessibleMemOnly());
+    F.setOnlyAccessesInaccessibleMemory();
 #else
     F.addFnAttr(Attribute::InaccessibleMemOnly);
 #endif
@@ -260,7 +266,7 @@ void attributeKnownFunctions(llvm::Function &F) {
   if (F.getName() == "frexp" || F.getName() == "frexpf" ||
       F.getName() == "frexpl") {
 #if LLVM_VERSION_MAJOR >= 16
-    F.setMemoryEffects(MemoryEffects::argMemOnly());
+    F.setOnlyAccessesArgMemory();
 #else
     F.addFnAttr(Attribute::ArgMemOnly);
 #endif
@@ -268,7 +274,12 @@ void attributeKnownFunctions(llvm::Function &F) {
   }
   if (F.getName() == "__fd_sincos_1" || F.getName() == "__fd_cos_1" ||
       F.getName() == "__mth_i_ipowi") {
+#if LLVM_VERSION_MAJOR >= 16
+    F.setOnlyReadsMemory();
+    F.setOnlyWritesMemory();
+#else
     F.addFnAttr(Attribute::ReadNone);
+#endif
   }
 }
 
@@ -661,7 +672,12 @@ public:
       truei = 1;
 
       const DataLayout &DL = CI->getParent()->getModule()->getDataLayout();
-      Type *Ty = fnsrety->getPointerElementType();
+      Type *Ty = nullptr;
+#if LLVM_VERSION_MAJOR >= 9
+      Ty = fn->getParamAttribute(0, Attribute::StructRet).getValueAsType();
+#else
+      Ty = fnsrety->getPointerElementType();
+#endif
 #if LLVM_VERSION_MAJOR >= 11
       AllocaInst *primal = new AllocaInst(Ty, DL.getAllocaAddrSpace(), nullptr,
                                           DL.getPrefTypeAlign(Ty));
@@ -1922,13 +1938,7 @@ public:
         // Remove any PHI node entries from the exception destination.
         II->getUnwindDest()->removePredecessor(&BB);
 
-        // Remove the invoke instruction now.
-#if LLVM_VERSION_MAJOR >= 16
-        auto termIt = BB.end();
-        BB.erase(--termIt, BB.end());
-#else
-        BB.getInstList().erase(II);
-#endif
+        II->eraseFromParent();
         Changed = true;
       }
 
@@ -2009,11 +2019,9 @@ public:
           }
         }
         if (Fn->getName().contains("__enzyme_virtualreverse")) {
-          Fn->addFnAttr(Attribute::ReadNone);
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
         }
         if (Fn->getName().contains("__enzyme_iter")) {
-          Fn->addFnAttr(Attribute::ReadNone);
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
         }
         if (Fn->getName().contains("__enzyme_call_inactive")) {
@@ -2024,7 +2032,7 @@ public:
           Fn->addFnAttr(Attribute::ReadOnly);
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadOnly);
 #if LLVM_VERSION_MAJOR >= 16
-          Fn->setMemoryEffects(MemoryEffects::inaccessibleMemOnly());
+          Fn->setOnlyAccessesInaccessibleMemory();
           CI->addAttribute(
               AttributeList::FunctionIndex,
               Attribute::getWithMemoryEffects(
@@ -2039,7 +2047,7 @@ public:
             Fn->isDeclaration()) {
           Fn->addFnAttr(Attribute::ReadOnly);
 #if LLVM_VERSION_MAJOR >= 16
-          Fn->setMemoryEffects(MemoryEffects::argMemOnly());
+          Fn->setOnlyAccessesArgMemory();
 #else
           Fn->addFnAttr(Attribute::ArgMemOnly);
 #endif
@@ -2072,7 +2080,7 @@ public:
         if (Fn->getName() == "f90io_fmtw_end" ||
             Fn->getName() == "f90io_unf_end") {
 #if LLVM_VERSION_MAJOR >= 16
-          Fn->setMemoryEffects(MemoryEffects::inaccessibleMemOnly());
+          Fn->setOnlyAccessesInaccessibleMemory();
           CI->addAttribute(
               AttributeList::FunctionIndex,
               Attribute::getWithMemoryEffects(
@@ -2085,7 +2093,7 @@ public:
         }
         if (Fn->getName() == "f90io_open2003a") {
 #if LLVM_VERSION_MAJOR >= 16
-          Fn->setMemoryEffects(MemoryEffects::inaccessibleOrArgMemOnly());
+          Fn->setOnlyAccessesInaccessibleMemOrArgMem();
           CI->addAttribute(
               AttributeList::FunctionIndex,
               Attribute::getWithMemoryEffects(
@@ -2111,7 +2119,7 @@ public:
         }
         if (Fn->getName() == "f90io_fmtw_inita") {
 #if LLVM_VERSION_MAJOR >= 16
-          Fn->setMemoryEffects(MemoryEffects::inaccessibleOrArgMemOnly());
+          Fn->setOnlyAccessesInaccessibleMemOrArgMem();
           CI->addAttribute(
               AttributeList::FunctionIndex,
               Attribute::getWithMemoryEffects(
@@ -2140,7 +2148,7 @@ public:
 
         if (Fn->getName() == "f90io_unf_init") {
 #if LLVM_VERSION_MAJOR >= 16
-          Fn->setMemoryEffects(MemoryEffects::inaccessibleOrArgMemOnly());
+          Fn->setOnlyAccessesInaccessibleMemOrArgMem();
           CI->addAttribute(
               AttributeList::FunctionIndex,
               Attribute::getWithMemoryEffects(
@@ -2169,7 +2177,7 @@ public:
 
         if (Fn->getName() == "f90io_src_info03a") {
 #if LLVM_VERSION_MAJOR >= 16
-          Fn->setMemoryEffects(MemoryEffects::inaccessibleOrArgMemOnly());
+          Fn->setOnlyAccessesInaccessibleMemOrArgMem();
           CI->addAttribute(
               AttributeList::FunctionIndex,
               Attribute::getWithMemoryEffects(
@@ -2203,7 +2211,7 @@ public:
             Fn->getName() == "f90io_unf_writea" ||
             Fn->getName() == "f90_pausea") {
 #if LLVM_VERSION_MAJOR >= 16
-          Fn->setMemoryEffects(MemoryEffects::inaccessibleOrArgMemOnly());
+          Fn->setOnlyAccessesInaccessibleMemOrArgMem();
           CI->addAttribute(
               AttributeList::FunctionIndex,
               Attribute::getWithMemoryEffects(
@@ -2876,12 +2884,12 @@ llvmGetPassPluginInfo() {
           MPM.addPass(
               createModuleToFunctionPassAdaptor(std::move(GlobalCleanupPM)));
 
-              ThinOrFullLTOPhase Phase = ThinOrFullLTOPhase::None;
+          ThinOrFullLTOPhase Phase = ThinOrFullLTOPhase::None;
 #if LLVM_VERSION >= 13
-              bool EnableModuleInliner = false;
-              if (EnableModuleInliner)
-                MPM.addPass(PB0->buildModuleInlinerPipeline(Level, Phase));
-              else
+          bool EnableModuleInliner = false;
+          if (EnableModuleInliner)
+            MPM.addPass(PB0->buildModuleInlinerPipeline(Level, Phase));
+          else
 #endif
             MPM.addPass(PB0->buildInlinerPipeline(Level, Phase));
 
