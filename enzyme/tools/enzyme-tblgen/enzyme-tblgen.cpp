@@ -929,14 +929,23 @@ void emit_helper(TGPattern &pattern, raw_ostream &os) {
   auto nameVec = pattern.getArgNames();
   assert(nameVec.size() > 0);
   auto argTypeMap = pattern.getArgTypeMap();
+  bool lv23 = pattern.isBLASLevel2or3();
+
+  os << "  const bool byRef = blas.prefix == \"\";\n";
+  // lv 2 or 3 functions have an extra arg under the cblas_ abi
+  if (lv23)
+    os << "  const int offset = (byRef ? 0 : 1);\n";
 
   auto actArgs = pattern.getActiveArgs();
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto name = nameVec[i];
-    os << "  const auto arg_" << name << " = call.getArgOperand(" << i << ");\n"
+    os << "  const int pos_" << name << " = " << i << (lv23 ? " + offset" : "")
+       << ";\n";
+    os << "  const auto arg_" << name << " = call.getArgOperand(pos_" << name
+       << ");\n"
        << "  const auto type_" << name << " = arg_" << name << "->getType();\n"
        << "  const bool uncacheable_" << name
-       << " = (cacheMode ? overwritten_args[" << i << "] : false);\n";
+       << " = (cacheMode ? overwritten_args[pos_" << name << "] : false);\n";
     if (std::count(actArgs.begin(), actArgs.end(), i)) {
       os << "  const bool active_" << name << " = !gutils->isConstantValue(arg_"
          << name << ");\n";
@@ -972,7 +981,6 @@ void emit_helper(TGPattern &pattern, raw_ostream &os) {
       return;
     }
   }
-
   PrintFatalError("Blas function without vector?");
 }
 
@@ -1015,7 +1023,6 @@ void emit_scalar_types(TGPattern &pattern, raw_ostream &os) {
   os << "  // fpType already given by blas type (s, d, c, z) \n"
      << "  IntegerType *intType = dyn_cast<IntegerType>(type_" << name << ");\n"
      << "  // TODO: add Fortran testcases for Fortran ABI\n"
-     << "  const bool byRef = blas.prefix == \"\";\n"
      << "  if (!intType) {\n"
      << "    const auto PT = cast<PointerType>(type_" << name << ");\n"
      << "    if (blas.suffix.contains(\"64\"))\n"
@@ -1033,7 +1040,6 @@ void emit_extract_calls(TGPattern &pattern, raw_ostream &os) {
   auto nameVec = pattern.getArgNames();
   auto argUsers = pattern.getArgUsers();
 
-  // TODO: adjust count / getArgOperand(0) based on first int?
   os << "  if (Mode == DerivativeMode::ReverseModeCombined ||\n"
      << "      Mode == DerivativeMode::ReverseModeGradient ||\n"
      << "      Mode == DerivativeMode::ForwardModeSplit) {\n"
@@ -1177,11 +1183,12 @@ llvm::SmallString<80> ValueType_helper(TGPattern &pattern, size_t actPos) {
   const auto typeMap = pattern.getArgTypeMap();
   llvm::SmallString<80> valueTypes{};
 
-  for (size_t pos = 0; pos < nameVec.size();) {
+  // start with 1 since layout is only used for cblas (!byRef)
+  for (size_t pos = 1; pos < nameVec.size();) {
     auto name = nameVec[pos];
     auto type = typeMap.lookup(pos);
 
-    if (pos > 0) {
+    if (pos > 1) {
       valueTypes.append(", ");
     }
 
@@ -1211,8 +1218,10 @@ llvm::SmallString<80> ValueType_helper(TGPattern &pattern, size_t actPos) {
       }
       pos++; // extra inc, since vector cover two args (vincInc+vincData)
     } else {
-      llvm::errs() << "type: " << type << "\n";
-      PrintFatalError("Unhandled type!");
+      // TODO
+      valueTypes.append("ValueType::Both");
+      // llvm::errs() << "type: " << type << "\n";
+      // PrintFatalError("Unhandled type!");
     }
     pos++;
   }
@@ -1229,8 +1238,10 @@ size_t fwd_call_args(TGPattern &pattern, size_t actArg,
   const auto typeMap = pattern.getArgTypeMap();
 
   // just replace argOps with rule
-  for (size_t pos = 0; pos < nameVec.size();) {
-    if (pos > 0) {
+  // We start with 1 and conditionally add the cblas only first arg
+  // only in the !byRef case
+  for (size_t pos = 1; pos < nameVec.size();) {
+    if (pos > 1) {
       result.append(", ");
     }
 
@@ -1264,18 +1275,48 @@ size_t fwd_call_args(TGPattern &pattern, size_t actArg,
     } else if (typeOfArg == argType::vincInc) {
       // might come without vincData, e.g. after DiffeRet
       result.append(name);
+    } else if (typeOfArg == argType::mldData) {
+      auto nextName = nameVec[pos + 1];
+      // get the position of the argument in the primary blas call
+      auto nextArgPosition = nameMap.lookup(nextName);
+      // and based on that get the fp/int + scalar/vector type
+      auto typeOfNextArg = typeMap.lookup(nextArgPosition);
+      assert(typeOfNextArg == argType::mldLD);
+      if (pos == actArg) {
+        result.append((Twine("d_") + name + ", true_" + nextName).str());
+      } else {
+        result.append((Twine("data_") + name + ", " + nextName).str());
+      }
+      pos++; // extra ++ due to also handling vincInc
+    } else if (typeOfArg == argType::mldLD) {
+        // might come without mldData, e.g. after DiffeRet
+        // coppied from vincInc, but should verify if actually needed 
+        result.append((Twine("arg_") + name).str());
+    } else if (typeOfArg == argType::cblas_layout) {
+      // TODO: based on byRef
+    } else if (typeOfArg == argType::trans){
+        result.append((Twine("arg_") + name).str());
+    } else if (typeOfArg == argType::diag){
+        result.append((Twine("arg_") + name).str());
+    } else if (typeOfArg == argType::uplo){
+        result.append((Twine("arg_") + name).str());
+    } else if (typeOfArg == argType::side){
+        result.append((Twine("arg_") + name).str());
     } else {
-      llvm::errs() << "name: " << name << " typename: " << typeOfArg << "\n";
-      llvm_unreachable("unimplemented input type!");
+      // TODO: impl
+      // llvm::errs() << "name: " << name << " typename: " << typeOfArg << "\n";
+      // llvm_unreachable("unimplemented input type!");
     }
     pos++;
   }
 
-  return nameVec.size();
+  // return the size - 1 due to only using the cblas_layout in the !byRef case
+  return nameVec.size() - 1;
 }
 
 void emit_fwd_rewrite_rules(TGPattern &pattern, raw_ostream &os) {
   auto rules = pattern.getRules();
+  bool lv23 = pattern.isBLASLevel2or3();
   os << "  /* fwd-rewrite */                                 \n"
      << "  if (Mode == DerivativeMode::ForwardMode ||        \n"
      << "      Mode == DerivativeMode::ForwardModeSplit) {   \n"
@@ -1290,13 +1331,14 @@ void emit_fwd_rewrite_rules(TGPattern &pattern, raw_ostream &os) {
   const auto inputTypes = pattern.getArgTypeMap();
   const auto activeArgs = pattern.getActiveArgs();
   for (auto inputType : inputTypes) {
-    if (inputType.second == argType::vincData) {
+    auto newType = inputType.second;
+    if (newType == argType::vincData || newType == argType::mldData) {
       const auto name = nameVec[inputType.first];
       os << "    Value *d_" << name << " = active_" << name << "\n"
          << "     ? gutils->invertPointerM(arg_" << name << ", Builder2)\n"
          << "     : nullptr;\n";
     }
-    if (inputType.second == argType::fp) {
+    if (newType == argType::fp) {
       const auto name = nameVec[inputType.first];
       os << "    Value *d_" << name
          << " = llvm::ConstantFP::get(fpType, 0.0);\n";
@@ -1322,31 +1364,53 @@ void emit_fwd_rewrite_rules(TGPattern &pattern, raw_ostream &os) {
     auto dcallArgs = llvm::SmallString<40>();
     const size_t numArgs = fwd_call_args(pattern, activeArg, dcallArgs);
     const auto valueTypes = ValueType_helper(pattern, activeArg);
-    os << "      if(active_" << actName << ") {\n"
-       << "        Value *args1[" << numArgs << "] = {" << dcallArgs << "};\n\n"
-       << "        auto Defs = gutils->getInvertedBundles(\n"
+    os << "      if(active_" << actName << ") {\n";
+
+    if (lv23) {
+      // add extra cblas_arg for the !byRef case
+      os << "        Value *args1_cblas[" << numArgs + 1 << "] = "
+         << " {arg_cblas_layout, " << dcallArgs << "};\n";
+      os << "        auto Defs_cblas = gutils->getInvertedBundles(\n"
+         << "          &call, {ValueType::Both, " << valueTypes
+         << "}, Builder2, /* lookup */ false);\n";
+    }
+    os << "        Value *args1[" << numArgs << "] = {" << dcallArgs << "};\n";
+    os << "        auto Defs = gutils->getInvertedBundles(\n"
        << "          &call, {" << valueTypes
        << "}, Builder2, /* lookup */ false);\n";
     if (i == 0) {
-      os << "#if LLVM_VERSION_MAJOR > 7\n"
-         << "          dres = Builder2.CreateCall(call.getFunctionType(), "
-            "callval, args1, Defs);\n"
-         << "#else\n"
-         << "          dres = Builder2.CreateCall(callval, args1, Defs);\n"
-         << "#endif\n";
+      if (lv23) {
+        os << "          if (byRef) {\n"
+           << "          dres = Builder2.CreateCall(call.getFunctionType(), "
+              "callval, args1, Defs);\n"
+           << "          } else /*cblas*/ {\n"
+           << "          dres = Builder2.CreateCall(call.getFunctionType(), "
+              "callval, args1_cblas, Defs_cblas);\n"
+           << "          };\n";
+      } else {
+        os << "          dres = Builder2.CreateCall(call.getFunctionType(), "
+              "callval, args1, Defs);\n";
+      }
     } else {
-      os << "#if LLVM_VERSION_MAJOR > 7\n"
-         << "        Value *nextCall = Builder2.CreateCall(\n"
-         << "          call.getFunctionType(), callval, args1, Defs);\n"
-         << "#else\n"
-         << "        Value *nextCall = Builder2.CreateCall(callval, args1, "
-            "Defs);\n"
-         << "#endif\n"
-         << "        if (dres)\n"
+      os << "          Value *nextCall;\n";
+      if (lv23) {
+        os << "          if (byRef) {\n"
+           << "        nextCall = Builder2.CreateCall(\n"
+           << "          call.getFunctionType(), callval, args1, Defs);\n"
+           << "          } else {\n"
+           << "        nextCall = Builder2.CreateCall(\n"
+           << "          call.getFunctionType(), callval, args1_cblas, "
+              "Defs_cblas);\n"
+           << "          }\n";
+      } else {
+        os << "        nextCall = Builder2.CreateCall(\n"
+           << "          call.getFunctionType(), callval, args1, Defs);\n";
+      }
+      os << "        if (dres)\n"
          << "          dres = Builder2.CreateFAdd(dres, nextCall);\n"
          << "        else\n"
          << "          dres = nextCall;\n";
-    }
+      }
     os << "      }\n";
   }
   os << "      return dres;\n"
@@ -1437,34 +1501,6 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
        << "#endif\n"
        << "    {\n"
        << "      attribute_" << dfnc_name << "(blas, F);\n"
-       << "      if (byRef) {\n";
-    const auto calledTypeMap = calledPattern.getArgTypeMap();
-    for (size_t argPos = 0; argPos < calledTypeMap.size(); argPos++) {
-      const auto typeOfArg = calledTypeMap.lookup(argPos);
-      if (typeOfArg == argType::len || typeOfArg == argType::vincInc) {
-        os << "        F->addParamAttr(" << argPos
-           << ", Attribute::ReadOnly);\n"
-           << "        F->addParamAttr(" << argPos
-           << ", Attribute::NoCapture);\n";
-      }
-    }
-    os << "      }\n"
-       << "      // Julia declares double* pointers as Int64,\n"
-       << "      //  so LLVM won't let us add these Attributes.\n"
-       << "      if (!julia_decl) {\n";
-    for (size_t argPos = 0; argPos < calledTypeMap.size(); argPos++) {
-      auto typeOfArg = calledTypeMap.lookup(argPos);
-      if (typeOfArg == argType::vincData) {
-        os << "        F->addParamAttr(" << argPos
-           << ", Attribute::NoCapture);\n";
-        if (mutableArgs.count(argPos) == 0) {
-          // Only emit ReadOnly if the arg isn't mutable
-          os << "        F->addParamAttr(" << argPos
-             << ", Attribute::ReadOnly);\n";
-        }
-      }
-    }
-    os << "      }\n"
        << "    }\n\n";
   } else if (Def->isSubClassOf("MagicInst") && Def->getName() == "noop") {
     // nothing to prepare
@@ -1549,8 +1585,9 @@ size_t rev_call_args(Rule &rule, size_t actArg, llvm::SmallString<40> &result) {
         // might come without vincData, e.g. after DiffeRet
         result.append(name);
       } else {
-        llvm::errs() << "name: " << name << " typename: " << typeOfArg << "\n";
-        llvm_unreachable("unimplemented input type!");
+        // TODO
+        // llvm::errs() << "name: " << name << " typename: " << typeOfArg <<
+        // "\n"; llvm_unreachable("unimplemented input type!");
       }
     }
     pos++;
@@ -1612,7 +1649,7 @@ void emit_rev_rewrite_rules(StringMap<TGPattern> patternMap, TGPattern &pattern,
   for (size_t i = 0; i < nameVec.size(); i++) {
     const auto name = nameVec[i];
     const auto typeOfArg = typeMap.lookup(i);
-    if (typeOfArg == argType::vincData) {
+    if (typeOfArg == argType::vincData || typeOfArg == argType::mldData) {
       os << "    Value *d_" << name << " = active_" << name << "\n"
          << "     ? lookup(gutils->invertPointerM(arg_" << name
          << ", Builder2), Builder2)\n"

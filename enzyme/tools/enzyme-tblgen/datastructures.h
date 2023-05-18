@@ -212,18 +212,26 @@ void fillArgUserMap(SmallVector<Rule, 3> &rules,
 class TGPattern {
 private:
   std::string blasName;
+  bool BLASLevel2or3;
+
   // All args from the primary blas function
   SmallVector<std::string, 6> args;
+
   // Map arg name to their position (in primary fnc)
   StringMap<size_t> argNameToPos;
+
   // Type of these args, e.g. FP-scalar, int, FP-vec, ..
   DenseMap<size_t, argType> argTypes;
+
   // Args that could be set to active (thus fp based)
   SmallVector<size_t, 4> posActArgs;
+
   // Args that will be modified by primary function (e.g. x in scal)
   DenseSet<size_t> mutables;
+
   // One rule for each possibly active arg
   SmallVector<Rule, 3> rules;
+
   // Based on an argument name, which rules use this argument?
   DenseMap<size_t, DenseSet<size_t>> argUsers;
 
@@ -242,6 +250,11 @@ public:
 
     argTypes = DenseMap<size_t, argType>();
     fillArgTypes(&r, argTypes);
+    if (argTypes.lookup(0) == argType::cblas_layout) {
+      BLASLevel2or3 = true;
+    } else {
+      BLASLevel2or3 = false;
+    }
 
     posActArgs = SmallVector<size_t, 4>();
     fillActiveArgSet(&r, posActArgs);
@@ -278,6 +291,7 @@ public:
     assert(argTypes.lookup(arg) == argType::vincData);
     return {0};
   }
+  bool isBLASLevel2or3() { return BLASLevel2or3; }
   DenseMap<size_t, DenseSet<size_t>> getArgUsers() { return argUsers; }
   std::string getName() { return blasName; }
   SmallVector<std::string, 6> getArgNames() { return args; }

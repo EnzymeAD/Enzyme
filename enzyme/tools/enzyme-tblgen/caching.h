@@ -2,6 +2,66 @@
 //
 
 using namespace llvm;
+void emit_mat_caching(TGPattern &pattern, raw_ostream &os) {
+
+  const auto argUsers = pattern.getArgUsers();
+  const auto actArgs = pattern.getActiveArgs();
+  const auto typeMap = pattern.getArgTypeMap();
+  const auto nameVec = pattern.getArgNames();
+
+  for (size_t i = 0; i < nameVec.size(); i++) {
+    if (typeMap.lookup(i) != argType::mldData) 
+      continue;
+    assert(typeMap.lookup(i+1) == argType::mldLD);
+    const auto matName = nameVec[i];
+    const auto matPosition = i;
+    const auto matUsers = argUsers.lookup(matPosition);
+    const auto ldName = nameVec[i + 1];
+    const auto ldPosition = i + 1;
+    const auto ldUsers = argUsers.lookup(ldPosition);
+      os 
+<< "  bool cache_" << matName
+<< "  = (cacheMode &&\n"
+<< "          uncacheable_" << matName;
+      for (size_t user: matUsers) {
+        auto name = nameVec[user];
+        if (name == matName)
+          continue; // adjoint of x won't need x
+        os 
+<< " && active_" << name;
+      }
+      os 
+<< ");\n"
+<< "  bool cache_" << ldName << " = false;\n";
+      // xinc is needed to be preserved if
+      // 1) it is potentially overwritten AND EITHER
+      //     a) x is active (for performing the shadow increment) or
+      //     b) we're not caching x and need xinc to compute the
+      //     derivative of a different variable
+      os 
+<< "  const bool need_" << ldName << " = (active_" << matName;
+      if (ldUsers.size() > 0) {
+        os 
+<< "  || (!cache_" << matName << " && (";
+        bool first = true;
+        for (size_t user: ldUsers) {
+          auto name = nameVec[user];
+          os 
+<< ((first) ? "" : " || ") << "active_" << name;
+          first = false;
+        }
+        os 
+<< "))";
+      }
+      os 
+<< ");\n"
+<< "  if (byRef && uncacheable_" << ldName << " && need_" << ldName << ") {\n"
+<< "    cacheTypes.push_back(intType);\n"
+<< "    cache_" << ldName << " = true;\n "
+<< "  }\n\n";
+  }
+}
+
 void emit_vec_caching(TGPattern &pattern, raw_ostream &os) {
 
   const auto argUsers = pattern.getArgUsers();
@@ -21,7 +81,7 @@ void emit_vec_caching(TGPattern &pattern, raw_ostream &os) {
     const auto incUsers = argUsers.lookup(incPosition);
       os 
 << "  bool cache_" << vecName
-<< "  = Mode != DerivativeMode::ForwardMode &&\n"
+<< "  = (cacheMode &&\n"
 << "          uncacheable_" << vecName;
       for (size_t user: vecUsers) {
         auto name = nameVec[user];
@@ -31,7 +91,7 @@ void emit_vec_caching(TGPattern &pattern, raw_ostream &os) {
 << " && active_" << name;
       }
       os 
-<< ";\n"
+<< ");\n"
 << "  bool cache_" << incName << " = false;\n";
       // xinc is needed to be preserved if
       // 1) it is potentially overwritten AND EITHER
@@ -270,6 +330,7 @@ void emit_caching(TGPattern &pattern, raw_ostream &os) {
 
   emit_scalar_caching(pattern, os);
   emit_vec_caching(pattern, os);
+  emit_mat_caching(pattern, os);
 
   for (auto actEn : llvm::enumerate(actArgs)) {
     auto name = nameVec[actEn.value()];
