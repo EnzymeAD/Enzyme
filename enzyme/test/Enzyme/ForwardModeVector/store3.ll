@@ -45,13 +45,13 @@ attributes #1 = { noinline nounwind uwtable }
 ; CHECK-NEXT:   %8 = extractvalue [3 x double*] %"out'", 2
 ; CHECK-NEXT:   store double 0.000000e+00, double* %8, align 8
 ; CHECK-NEXT:   %9 = extractvalue [3 x double*] %"out'", 0
-; CHECK-NEXT:   %"res'ipl" = load double, double* %9, align 8
+; CHECK-NEXT:   %"res'ipl" = load double, double* %9
 ; CHECK-NEXT:   %10 = insertvalue [3 x double] undef, double %"res'ipl", 0
 ; CHECK-NEXT:   %11 = extractvalue [3 x double*] %"out'", 1
-; CHECK-NEXT:   %"res'ipl1" = load double, double* %11, align 8
+; CHECK-NEXT:   %"res'ipl1" = load double, double* %11
 ; CHECK-NEXT:   %12 = insertvalue [3 x double] %10, double %"res'ipl1", 1
 ; CHECK-NEXT:   %13 = extractvalue [3 x double*] %"out'", 2
-; CHECK-NEXT:   %"res'ipl2" = load double, double* %13, align 8
+; CHECK-NEXT:   %"res'ipl2" = load double, double* %13
 ; CHECK-NEXT:   %14 = insertvalue [3 x double] %12, double %"res'ipl2", 2
 ; CHECK-NEXT:   ret [3 x double] %14
 ;

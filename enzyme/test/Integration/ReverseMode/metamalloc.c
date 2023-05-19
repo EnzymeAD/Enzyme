@@ -17,7 +17,7 @@ double __enzyme_autodiff(void*, ...);
 
 struct {
     int count;
-void* (*allocfn)(unsigned long int);
+void* (*allocfn)(unsigned long);
 } tup = {0, malloc};
 __attribute__((noinline))
 void* metamalloc(long int size) {
@@ -38,7 +38,7 @@ double alldiv(double x) {
 }
 
 
-static void* (*sallocfn)(int) = malloc;
+static void* (*sallocfn)(unsigned long) = malloc;
 __attribute__((noinline))
 void* smetamalloc(int size) {
     return sallocfn(size);

@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <math.h>
 #include <assert.h>
+#include <string.h>
 
 #include "test_utils.h"
 

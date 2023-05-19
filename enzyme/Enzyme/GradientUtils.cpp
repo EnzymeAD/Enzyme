@@ -310,16 +310,26 @@ Value *GradientUtils::ompThreadId() {
 
   auto FT = FunctionType::get(Type::getInt64Ty(B.getContext()),
                               ArrayRef<Type *>(), false);
-  AttributeList AL;
-#if LLVM_VERSION_MAJOR >= 14
-  AL = AL.addAttributeAtIndex(B.getContext(), AttributeList::FunctionIndex,
-                              Attribute::AttrKind::ReadOnly);
+  auto FN = newFunc->getParent()->getOrInsertFunction("omp_get_thread_num", FT);
+  auto CI = B.CreateCall(FN);
+  if (auto F = getFunctionFromCall(CI)) {
+#if LLVM_VERSION_MAJOR >= 16
+    F->setOnlyAccessesInaccessibleMemory();
+    F->setOnlyReadsMemory();
 #else
-  AL = AL.addAttribute(B.getContext(), AttributeList::FunctionIndex,
-                       Attribute::AttrKind::ReadOnly);
+    F->addFnAttr(Attribute::InaccessibleMemOnly);
+    F->addFnAttr(Attribute::ReadOnly);
 #endif
-  return tid = B.CreateCall(newFunc->getParent()->getOrInsertFunction(
-             "omp_get_thread_num", FT, AL));
+  }
+#if LLVM_VERSION_MAJOR >= 16
+  CI->setOnlyAccessesInaccessibleMemory();
+  CI->setOnlyReadsMemory();
+#else
+  CI->addAttribute(AttributeList::FunctionIndex,
+                   Attribute::InaccessibleMemOnly);
+  CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadOnly);
+#endif
+  return tid = CI;
 }
 
 Value *GradientUtils::ompNumThreads() {
@@ -329,16 +339,27 @@ Value *GradientUtils::ompNumThreads() {
 
   auto FT = FunctionType::get(Type::getInt64Ty(B.getContext()),
                               ArrayRef<Type *>(), false);
-  AttributeList AL;
-#if LLVM_VERSION_MAJOR >= 14
-  AL = AL.addAttributeAtIndex(B.getContext(), AttributeList::FunctionIndex,
-                              Attribute::AttrKind::ReadOnly);
+  auto FN =
+      newFunc->getParent()->getOrInsertFunction("omp_get_max_threads", FT);
+  auto CI = B.CreateCall(FN);
+  if (auto F = getFunctionFromCall(CI)) {
+#if LLVM_VERSION_MAJOR >= 16
+    F->setOnlyAccessesInaccessibleMemory();
+    F->setOnlyReadsMemory();
 #else
-  AL = AL.addAttribute(B.getContext(), AttributeList::FunctionIndex,
-                       Attribute::AttrKind::ReadOnly);
+    F->addFnAttr(Attribute::InaccessibleMemOnly);
+    F->addFnAttr(Attribute::ReadOnly);
 #endif
-  return numThreads = B.CreateCall(newFunc->getParent()->getOrInsertFunction(
-             "omp_get_max_threads", FT, AL));
+  }
+#if LLVM_VERSION_MAJOR >= 16
+  CI->setOnlyAccessesInaccessibleMemory();
+  CI->setOnlyReadsMemory();
+#else
+  CI->addAttribute(AttributeList::FunctionIndex,
+                   Attribute::InaccessibleMemOnly);
+  CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadOnly);
+#endif
+  return numThreads = CI;
 }
 
 Value *GradientUtils::getOrInsertTotalMultiplicativeProduct(Value *val,

@@ -256,11 +256,12 @@ void attributeKnownFunctions(llvm::Function &F) {
   }
   if (F.getName() == "omp_get_max_threads" ||
       F.getName() == "omp_get_thread_num") {
-    F.addFnAttr(Attribute::ReadOnly);
 #if LLVM_VERSION_MAJOR >= 16
     F.setOnlyAccessesInaccessibleMemory();
+    F.setOnlyReadsMemory();
 #else
     F.addFnAttr(Attribute::InaccessibleMemOnly);
+    F.addFnAttr(Attribute::ReadOnly);
 #endif
   }
   if (F.getName() == "frexp" || F.getName() == "frexpf" ||
@@ -2064,24 +2065,29 @@ public:
         }
         if (Fn->getName() == "omp_get_max_threads" ||
             Fn->getName() == "omp_get_thread_num") {
-          Fn->addFnAttr(Attribute::ReadOnly);
-          CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadOnly);
 #if LLVM_VERSION_MAJOR >= 16
           Fn->setOnlyAccessesInaccessibleMemory();
           CI->setOnlyAccessesInaccessibleMemory();
+          Fn->setOnlyReadsMemory();
+          CI->setOnlyReadsMemory();
 #else
           Fn->addFnAttr(Attribute::InaccessibleMemOnly);
           CI->addAttribute(AttributeList::FunctionIndex,
                            Attribute::InaccessibleMemOnly);
+          Fn->addFnAttr(Attribute::ReadOnly);
+          CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadOnly);
 #endif
         }
         if ((Fn->getName() == "cblas_ddot" || Fn->getName() == "cblas_sdot") &&
             Fn->isDeclaration()) {
-          Fn->addFnAttr(Attribute::ReadOnly);
 #if LLVM_VERSION_MAJOR >= 16
           Fn->setOnlyAccessesArgMemory();
+          Fn->setOnlyReadsMemory();
+          CI->setOnlyReadsMemory();
 #else
           Fn->addFnAttr(Attribute::ArgMemOnly);
+          Fn->addFnAttr(Attribute::ReadOnly);
+          CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadOnly);
 #endif
           CI->addParamAttr(1, Attribute::ReadOnly);
           CI->addParamAttr(1, Attribute::NoCapture);
@@ -2109,8 +2115,13 @@ public:
         if (Fn->getName().contains("strcmp")) {
           Fn->addParamAttr(0, Attribute::ReadOnly);
           Fn->addParamAttr(1, Attribute::ReadOnly);
+#if LLVM_VERSION_MAJOR >= 16
+          Fn->setOnlyReadsMemory();
+          CI->setOnlyReadsMemory();
+#else
           Fn->addFnAttr(Attribute::ReadOnly);
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadOnly);
+#endif
         }
         if (Fn->getName() == "f90io_fmtw_end" ||
             Fn->getName() == "f90io_unf_end") {
