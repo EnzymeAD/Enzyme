@@ -103,6 +103,7 @@ llvm::cl::opt<bool> EnzymeOMPOpt("enzyme-omp-opt", cl::init(false), cl::Hidden,
 
 #if LLVM_VERSION_MAJOR >= 14
 #define addAttribute addAttributeAtIndex
+#define getAttribute getAttributeAtIndex
 #endif
 void attributeKnownFunctions(llvm::Function &F) {
   if (F.getName().contains("__enzyme_float") ||
