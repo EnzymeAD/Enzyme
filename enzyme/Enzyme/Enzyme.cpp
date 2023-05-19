@@ -674,7 +674,7 @@ public:
 
       const DataLayout &DL = CI->getParent()->getModule()->getDataLayout();
       Type *Ty = nullptr;
-#if LLVM_VERSION_MAJOR >= 9
+#if LLVM_VERSION_MAJOR >= 12
       Ty = fn->getParamAttribute(0, Attribute::StructRet).getValueAsType();
 #else
       Ty = fnsrety->getPointerElementType();
@@ -1312,8 +1312,10 @@ public:
     Type *retElemType = nullptr;
     if (CI->hasStructRetAttr()) {
       ret = CI->getArgOperand(0);
-#if LLVM_VERSION_MAJOR >= 15
-      retElemType = CI->getParamStructRetType(0);
+#if LLVM_VERSION_MAJOR >= 12
+      retElemType =
+          CI->getAttribute(AttributeList::FirstArgIndex, Attribute::StructRet)
+              .getValueAsType();
 #else
       retElemType = ret->getType()->getPointerElementType();
 #endif
@@ -1720,8 +1722,10 @@ public:
     Type *retElemType = nullptr;
     if (CI->hasStructRetAttr()) {
       ret = CI->getArgOperand(0);
-#if LLVM_VERSION_MAJOR >= 15
-      retElemType = CI->getParamStructRetType(0);
+#if LLVM_VERSION_MAJOR >= 12
+      retElemType =
+          CI->getAttribute(AttributeList::FirstArgIndex, Attribute::StructRet)
+              .getValueAsType();
 #else
       retElemType = ret->getType()->getPointerElementType();
 #endif
@@ -1847,8 +1851,10 @@ public:
     Type *retElemType = nullptr;
     if (CI->hasStructRetAttr()) {
       ret = CI->getArgOperand(0);
-#if LLVM_VERSION_MAJOR >= 15
-      retElemType = CI->getParamStructRetType(0);
+#if LLVM_VERSION_MAJOR >= 12
+      retElemType =
+          CI->getAttribute(AttributeList::FirstArgIndex, Attribute::StructRet)
+              .getValueAsType();
 #else
       retElemType = ret->getType()->getPointerElementType();
 #endif

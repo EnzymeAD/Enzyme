@@ -2076,8 +2076,12 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
           if (!foundcalled->hasParamAttribute(i, Attribute::StructRet))
             args.push_back(arg.getType());
           else {
+#if LLVM_VERSION_MAJOR >= 12
+            sretTy = foundcalled->getParamAttribute(0, Attribute::StructRet)
+                         .getValueAsType();
+#else
             sretTy = arg.getType()->getPointerElementType();
-            //  sretTy = foundcalled->getParamStructRetType(i);
+#endif
           }
           i++;
         }
