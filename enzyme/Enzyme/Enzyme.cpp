@@ -1980,10 +1980,20 @@ public:
 #endif
 
         if (Fn->getName().contains("__enzyme_todense")) {
+#if LLVM_VERSION_MAJOR >= 16
+          CI->setOnlyReadsMemory();
+          CI->setOnlyWritesMemory();
+#else
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
+#endif
         }
         if (Fn->getName().contains("__enzyme_float")) {
+#if LLVM_VERSION_MAJOR >= 16
+          CI->setOnlyReadsMemory();
+          CI->setOnlyWritesMemory();
+#else
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
+#endif
           for (size_t i = 0; i < num_args; ++i) {
             if (CI->getArgOperand(i)->getType()->isPointerTy()) {
               CI->addParamAttr(i, Attribute::ReadNone);
@@ -1992,7 +2002,12 @@ public:
           }
         }
         if (Fn->getName().contains("__enzyme_integer")) {
+#if LLVM_VERSION_MAJOR >= 16
+          CI->setOnlyReadsMemory();
+          CI->setOnlyWritesMemory();
+#else
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
+#endif
           for (size_t i = 0; i < num_args; ++i) {
             if (CI->getArgOperand(i)->getType()->isPointerTy()) {
               CI->addParamAttr(i, Attribute::ReadNone);
@@ -2001,7 +2016,12 @@ public:
           }
         }
         if (Fn->getName().contains("__enzyme_double")) {
+#if LLVM_VERSION_MAJOR >= 16
+          CI->setOnlyReadsMemory();
+          CI->setOnlyWritesMemory();
+#else
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
+#endif
           for (size_t i = 0; i < num_args; ++i) {
             if (CI->getArgOperand(i)->getType()->isPointerTy()) {
               CI->addParamAttr(i, Attribute::ReadNone);
@@ -2010,7 +2030,12 @@ public:
           }
         }
         if (Fn->getName().contains("__enzyme_pointer")) {
+#if LLVM_VERSION_MAJOR >= 16
+          CI->setOnlyReadsMemory();
+          CI->setOnlyWritesMemory();
+#else
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
+#endif
           for (size_t i = 0; i < num_args; ++i) {
             if (CI->getArgOperand(i)->getType()->isPointerTy()) {
               CI->addParamAttr(i, Attribute::ReadNone);
@@ -2019,10 +2044,20 @@ public:
           }
         }
         if (Fn->getName().contains("__enzyme_virtualreverse")) {
+#if LLVM_VERSION_MAJOR >= 16
+          CI->setOnlyReadsMemory();
+          CI->setOnlyWritesMemory();
+#else
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
+#endif
         }
         if (Fn->getName().contains("__enzyme_iter")) {
+#if LLVM_VERSION_MAJOR >= 16
+          CI->setOnlyReadsMemory();
+          CI->setOnlyWritesMemory();
+#else
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadNone);
+#endif
         }
         if (Fn->getName().contains("__enzyme_call_inactive")) {
           InactiveCalls.insert(CI);
@@ -2039,19 +2074,6 @@ public:
           CI->addAttribute(AttributeList::FunctionIndex,
                            Attribute::InaccessibleMemOnly);
 #endif
-        }
-        if ((Fn->getName() == "cblas_ddot" || Fn->getName() == "cblas_sdot") &&
-            Fn->isDeclaration()) {
-          Fn->addFnAttr(Attribute::ReadOnly);
-#if LLVM_VERSION_MAJOR >= 16
-          Fn->setOnlyAccessesArgMemory();
-#else
-          Fn->addFnAttr(Attribute::ArgMemOnly);
-#endif
-          CI->addParamAttr(1, Attribute::ReadOnly);
-          CI->addParamAttr(1, Attribute::NoCapture);
-          CI->addParamAttr(3, Attribute::ReadOnly);
-          CI->addParamAttr(3, Attribute::NoCapture);
         }
         if (Fn->getName() == "frexp" || Fn->getName() == "frexpf" ||
             Fn->getName() == "frexpl") {
