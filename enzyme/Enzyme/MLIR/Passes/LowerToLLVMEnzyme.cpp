@@ -18,7 +18,9 @@
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Transforms/DialectConversion.h"
-
+#if LLVM_VERSION_MAJOR >= 16
+#include <optional>
+#endif
 using namespace mlir;
 using llvm::errs;
 

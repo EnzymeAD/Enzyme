@@ -5092,7 +5092,6 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   if (isa<Argument>(oval) && cast<Argument>(oval)->hasByValAttr()) {
     IRBuilder<> bb(inversionAllocs);
 
-
     Type *subType = nullptr;
 #if LLVM_VERSION_MAJOR >= 9
     auto attr = cast<Argument>(oval)->getAttribute(Attribute::ByVal);

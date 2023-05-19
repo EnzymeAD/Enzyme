@@ -57,6 +57,10 @@
 #include <map>
 #include <set>
 
+#if LLVM_VERSION_MAJOR >= 16
+#include <optional>
+#endif
+
 #include "llvm/IR/DiagnosticInfo.h"
 
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"

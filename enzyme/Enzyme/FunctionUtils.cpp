@@ -844,14 +844,12 @@ void PreProcessCache::ReplaceReallocs(Function *NewF, bool mem2reg) {
     //    return { next, newsize };
 
     Value *newsize = nextPowerOfTwo(B, req);
-    CallInst *next = cast<CallInst>(CallInst::CreateMalloc(
-        resize, newsize->getType(), Type::getInt8Ty(CI->getContext()), newsize,
-        nullptr, (Function *)nullptr, ""));
-#if LLVM_VERSION_MAJOR >= 16
-    next->insertInto(resize, resize->end());
-#else
-    resize->getInstList().push_back(next);
-#endif
+
+    Module *M = NewF->getParent();
+    Type *BPTy = Type::getInt8PtrTy(NewF->getContext());
+    auto MallocFunc =
+        M->getOrInsertFunction("malloc", BPTy, newsize->getType());
+    auto next = B.CreateCall(MallocFunc, newsize);
     B.SetInsertPoint(resize);
 
     auto volatile_arg = ConstantInt::getFalse(CI->getContext());
@@ -866,12 +864,9 @@ void PreProcessCache::ReplaceReallocs(Function *NewF, bool mem2reg) {
     auto mem = cast<CallInst>(B.CreateCall(memcpyF, nargs));
     mem->setCallingConv(memcpyF->getCallingConv());
 
-    CallInst *freeCall = cast<CallInst>(CallInst::CreateFree(p, resize));
-#if LLVM_VERSION_MAJOR >= 16
-    next->insertInto(resize, resize->end());
-#else
-    resize->getInstList().push_back(freeCall);
-#endif
+    Type *VoidTy = Type::getVoidTy(M->getContext());
+    auto FreeFunc = M->getOrInsertFunction("free", VoidTy, BPTy);
+    B.CreateCall(FreeFunc, p);
     B.SetInsertPoint(resize);
 
     B.CreateBr(nextBlock);
@@ -1770,7 +1765,7 @@ Function *PreProcessCache::preprocessForClone(Function *F,
 
     {
 #if LLVM_VERSION_MAJOR >= 16 && !defined(FLANG)
-      auto PA = SROAPass(llvm::SROAOptions::PreserveCFG).run(*NewF, FAM);
+      auto PA = SROAPass(llvm::SROAOptions::ModifyCFG).run(*NewF, FAM);
 #elif LLVM_VERSION_MAJOR >= 14 && !defined(FLANG)
       auto PA = SROAPass().run(*NewF, FAM);
 #else

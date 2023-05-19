@@ -191,15 +191,6 @@ public:
     AL =
         AL.addParamAttribute(DT->getContext(), 1, Attribute::AttrKind::NonNull);
 #if LLVM_VERSION_MAJOR >= 14
-#if LLVM_VERSION_MAJOR >= 16
-    AL = AL.addAttributeAtIndex(
-        DT->getContext(), AttributeList::FunctionIndex,
-        Attribute::getWithMemoryEffects(DT->getContext(),
-                                        llvm::MemoryEffects::argMemOnly()));
-#else
-    AL = AL.addAttributeAtIndex(DT->getContext(), AttributeList::FunctionIndex,
-                                Attribute::AttrKind::ArgMemOnly);
-#endif
     AL = AL.addAttributeAtIndex(DT->getContext(), AttributeList::FunctionIndex,
                                 Attribute::AttrKind::NoUnwind);
     AL = AL.addAttributeAtIndex(DT->getContext(), AttributeList::FunctionIndex,
@@ -222,10 +213,20 @@ public:
     AL = AL.addAttribute(DT->getContext(), AttributeList::FunctionIndex,
                          Attribute::AttrKind::NoUnwind);
 #endif
-    B.CreateCall(
+    auto CI = B.CreateCall(
         B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
             "MPI_Type_size", FT, AL),
         args);
+#if LLVM_VERSION_MAJOR >= 16
+    CI->setOnlyAccessesArgMemory();
+#else
+#if LLVM_VERSION_MAJOR >= 14
+    CI->addAttributeAtIndex(AttributeList::FunctionIndex,
+                            Attribute::ArgMemOnly);
+#else
+    CI->addAttribute(AttributeList::FunctionIndex, Attribute::ArgMemOnly);
+#endif
+#endif
 #if LLVM_VERSION_MAJOR > 7
     return B.CreateLoad(intType, alloc);
 #else
@@ -13038,14 +13039,11 @@ public:
             getReverseBuilder(Builder2);
             Value *tofree = gutils->lookupM(val, Builder2, ValueToValueMapTy(),
                                             /*tryLegalRecompute*/ false);
-            auto freeCall = cast<CallInst>(
-                CallInst::CreateFree(tofree, Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 16
-            freeCall->insertInto(Builder2.GetInsertBlock(),
-                                 Builder2.GetInsertBlock()->end());
-#else
-            Builder2.GetInsertBlock()->getInstList().push_back(freeCall);
-#endif
+            auto M = gutils->newFunc->getParent();
+            Type *VoidTy = Type::getVoidTy(M->getContext());
+            Type *IntPtrTy = Type::getInt8PtrTy(M->getContext());
+            auto FreeFunc = M->getOrInsertFunction("free", VoidTy, IntPtrTy);
+            Builder2.CreateCall(FreeFunc, tofree);
           }
         }
       }
@@ -13080,16 +13078,13 @@ public:
 #endif
         Builder2.SetInsertPoint(&call);
         getReverseBuilder(Builder2);
-        auto freeCall = cast<CallInst>(CallInst::CreateFree(
-            gutils->lookupM(load, Builder2, ValueToValueMapTy(),
-                            /*tryLegal*/ false),
-            Builder2.GetInsertBlock()));
-#if LLVM_VERSION_MAJOR >= 16
-        freeCall->insertInto(Builder2.GetInsertBlock(),
-                             Builder2.GetInsertBlock()->end());
-#else
-        Builder2.GetInsertBlock()->getInstList().push_back(freeCall);
-#endif
+        auto load2 = gutils->lookupM(load, Builder2, ValueToValueMapTy(),
+                                     /*tryLegal*/ false);
+        auto M = gutils->newFunc->getParent();
+        Type *VoidTy = Type::getVoidTy(M->getContext());
+        Type *IntPtrTy = Type::getInt8PtrTy(M->getContext());
+        auto FreeFunc = M->getOrInsertFunction("free", VoidTy, IntPtrTy);
+        Builder2.CreateCall(FreeFunc, load2);
       }
 
       return;

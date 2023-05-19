@@ -20,7 +20,6 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Transforms/DialectConversion.h"
-
 #include "llvm/Support/raw_ostream.h"
 
 using namespace mlir;
@@ -198,18 +197,14 @@ struct LoweredCache {
                               ValueRange{elements, size, capacity})
         .getResult(0);
   }
-#if LLVM_VERSION_MAJOR >= 16
-  static std::optional<LoweredCache>
-#else
   static llvm::Optional<LoweredCache>
-#endif
   getFromEnzymeCache(Location loc, TypeConverter *typeConverter,
                      Value enzymeCache, OpBuilder &b) {
     assert(enzymeCache.getType().isa<enzyme::CacheType>());
     auto cacheType = enzymeCache.getType().cast<enzyme::CacheType>();
     SmallVector<Type> resultTypes;
     if (failed(typeConverter->convertType(cacheType, resultTypes))) {
-      return llvm::None;
+      return {};
     }
     auto unpackedCache =
         b.create<UnrealizedConversionCastOp>(loc, resultTypes, enzymeCache);
@@ -378,26 +373,15 @@ struct EnzymeToMemRefPass
     MLIRContext *context = &getContext();
     RewritePatternSet patterns(context);
     TypeConverter typeConverter;
-    typeConverter.addConversion([](Type type) ->
-#if LLVM_VERSION_MAJOR >= 16
-                                std::optional<Type>
-#else
-                                llvm::Optional<Type>
-#endif
-                                {
-                                  if (type.isIntOrIndexOrFloat() ||
-                                      type.isa<MemRefType>())
-                                    return type;
-                                  return llvm::None;
-                                });
+    typeConverter.addConversion([](Type type) -> llvm::Optional<Type> {
+      if (type.isIntOrIndexOrFloat() || type.isa<MemRefType>())
+        return type;
+      return {};
+    });
     typeConverter.addConversion(
-        [](enzyme::GradientType type) ->
-#if LLVM_VERSION_MAJOR >= 16
-        std::optional<Type>
-#else
-        llvm::Optional<Type>
-#endif
-        { return MemRefType::get({}, type.getBasetype()); });
+        [](enzyme::GradientType type) -> llvm::Optional<Type> {
+          return MemRefType::get({}, type.getBasetype());
+        });
     typeConverter.addConversion(
         [](enzyme::CacheType type, SmallVectorImpl<Type> &resultTypes) {
           // Data

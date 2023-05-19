@@ -150,7 +150,7 @@ void attributeKnownFunctions(llvm::Function &F) {
       }
   }
 
-  llvm::Optional<BlasInfo> blasMetaData = extractBLAS(F.getName());
+  auto blasMetaData = extractBLAS(F.getName());
 #if LLVM_VERSION_MAJOR >= 16
   if (blasMetaData.has_value())
     attributeBLAS(blasMetaData.value(), &F);
@@ -2033,10 +2033,7 @@ public:
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadOnly);
 #if LLVM_VERSION_MAJOR >= 16
           Fn->setOnlyAccessesInaccessibleMemory();
-          CI->addAttribute(
-              AttributeList::FunctionIndex,
-              Attribute::getWithMemoryEffects(
-                  CI->getContext(), MemoryEffects::inaccessibleMemOnly()));
+          CI->setOnlyAccessesInaccessibleMemory();
 #else
           Fn->addFnAttr(Attribute::InaccessibleMemOnly);
           CI->addAttribute(AttributeList::FunctionIndex,
@@ -2059,9 +2056,7 @@ public:
         if (Fn->getName() == "frexp" || Fn->getName() == "frexpf" ||
             Fn->getName() == "frexpl") {
 #if LLVM_VERSION_MAJOR >= 16
-          CI->addAttribute(AttributeList::FunctionIndex,
-                           Attribute::getWithMemoryEffects(
-                               CI->getContext(), MemoryEffects::argMemOnly()));
+          CI->setOnlyAccessesArgMemory();
 #else
           CI->addAttribute(AttributeList::FunctionIndex, Attribute::ArgMemOnly);
 #endif
@@ -2086,10 +2081,7 @@ public:
             Fn->getName() == "f90io_unf_end") {
 #if LLVM_VERSION_MAJOR >= 16
           Fn->setOnlyAccessesInaccessibleMemory();
-          CI->addAttribute(
-              AttributeList::FunctionIndex,
-              Attribute::getWithMemoryEffects(
-                  CI->getContext(), MemoryEffects::inaccessibleMemOnly()));
+          CI->setOnlyAccessesInaccessibleMemory();
 #else
           Fn->addFnAttr(Attribute::InaccessibleMemOnly);
           CI->addAttribute(AttributeList::FunctionIndex,
@@ -2099,10 +2091,7 @@ public:
         if (Fn->getName() == "f90io_open2003a") {
 #if LLVM_VERSION_MAJOR >= 16
           Fn->setOnlyAccessesInaccessibleMemOrArgMem();
-          CI->addAttribute(
-              AttributeList::FunctionIndex,
-              Attribute::getWithMemoryEffects(
-                  CI->getContext(), MemoryEffects::inaccessibleOrArgMemOnly()));
+          CI->setOnlyAccessesInaccessibleMemOrArgMem();
 #else
           Fn->addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
           CI->addAttribute(AttributeList::FunctionIndex,
@@ -2125,10 +2114,7 @@ public:
         if (Fn->getName() == "f90io_fmtw_inita") {
 #if LLVM_VERSION_MAJOR >= 16
           Fn->setOnlyAccessesInaccessibleMemOrArgMem();
-          CI->addAttribute(
-              AttributeList::FunctionIndex,
-              Attribute::getWithMemoryEffects(
-                  CI->getContext(), MemoryEffects::inaccessibleOrArgMemOnly()));
+          CI->setOnlyAccessesInaccessibleMemOrArgMem();
 #else
           Fn->addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
           CI->addAttribute(AttributeList::FunctionIndex,
@@ -2154,10 +2140,7 @@ public:
         if (Fn->getName() == "f90io_unf_init") {
 #if LLVM_VERSION_MAJOR >= 16
           Fn->setOnlyAccessesInaccessibleMemOrArgMem();
-          CI->addAttribute(
-              AttributeList::FunctionIndex,
-              Attribute::getWithMemoryEffects(
-                  CI->getContext(), MemoryEffects::inaccessibleOrArgMemOnly()));
+          CI->setOnlyAccessesInaccessibleMemOrArgMem();
 #else
           Fn->addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
           CI->addAttribute(AttributeList::FunctionIndex,
@@ -2183,10 +2166,7 @@ public:
         if (Fn->getName() == "f90io_src_info03a") {
 #if LLVM_VERSION_MAJOR >= 16
           Fn->setOnlyAccessesInaccessibleMemOrArgMem();
-          CI->addAttribute(
-              AttributeList::FunctionIndex,
-              Attribute::getWithMemoryEffects(
-                  CI->getContext(), MemoryEffects::inaccessibleOrArgMemOnly()));
+          CI->setOnlyAccessesInaccessibleMemOrArgMem();
 #else
           Fn->addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
           CI->addAttribute(AttributeList::FunctionIndex,
@@ -2217,10 +2197,7 @@ public:
             Fn->getName() == "f90_pausea") {
 #if LLVM_VERSION_MAJOR >= 16
           Fn->setOnlyAccessesInaccessibleMemOrArgMem();
-          CI->addAttribute(
-              AttributeList::FunctionIndex,
-              Attribute::getWithMemoryEffects(
-                  CI->getContext(), MemoryEffects::inaccessibleOrArgMemOnly()));
+          CI->setOnlyAccessesInaccessibleMemOrArgMem();
 #else
           Fn->addFnAttr(Attribute::InaccessibleMemOrArgMemOnly);
           CI->addAttribute(AttributeList::FunctionIndex,
