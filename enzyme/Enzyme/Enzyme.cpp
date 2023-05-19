@@ -2075,6 +2075,19 @@ public:
                            Attribute::InaccessibleMemOnly);
 #endif
         }
+        if ((Fn->getName() == "cblas_ddot" || Fn->getName() == "cblas_sdot") &&
+            Fn->isDeclaration()) {
+          Fn->addFnAttr(Attribute::ReadOnly);
+#if LLVM_VERSION_MAJOR >= 16
+          Fn->setOnlyAccessesArgMemory();
+#else
+          Fn->addFnAttr(Attribute::ArgMemOnly);
+#endif
+          CI->addParamAttr(1, Attribute::ReadOnly);
+          CI->addParamAttr(1, Attribute::NoCapture);
+          CI->addParamAttr(3, Attribute::ReadOnly);
+          CI->addParamAttr(3, Attribute::NoCapture);
+        }
         if (Fn->getName() == "frexp" || Fn->getName() == "frexpf" ||
             Fn->getName() == "frexpl") {
 #if LLVM_VERSION_MAJOR >= 16
