@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instcombine -adce -instsimplify -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -sroa -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,sroa,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 declare dso_local double @__enzyme_autodiff(i8*, double)
 
@@ -42,7 +43,7 @@ entry:
 
 ; CHECK: define internal { double } @diffefoobard(double %init, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = call { double } @diffesubfn(double %init, void (double*, double*, double)* nonnull @indirect, void (double*, double*, double)* bitcast ({ i8* (double*, double*, double*, double*, double)*, { double } (double*, double*, double*, double*, double, i8*)* }* @"_enzyme_reverse_indirect'" to void (double*, double*, double)*), double %differeturn)
+; CHECK-NEXT:   %0 = call { double } @diffesubfn(double %init, void (double*, double*, double)* @indirect, void (double*, double*, double)* bitcast ({ i8* (double*, double*, double*, double*, double)*, { double } (double*, double*, double*, double*, double, i8*)* }* @"_enzyme_reverse_indirect'" to void (double*, double*, double)*), double %differeturn)
 ; CHECK-NEXT:   ret { double } %0
 ; CHECK-NEXT: }
 

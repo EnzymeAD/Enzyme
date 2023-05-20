@@ -1,5 +1,8 @@
-; RUN: if [ %llvmver -lt 15 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -gvn -simplifycfg -loop-deletion -simplifycfg -instsimplify -correlated-propagation -early-cse-memssa  -adce -S | FileCheck %s -check-prefixes LL14,CHECK; fi
-; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -gvn -simplifycfg -loop-deletion -simplifycfg -instsimplify -correlated-propagation -early-cse-memssa  -adce -S | FileCheck %s -check-prefixes LL15,CHECK; fi
+; RUN: if [ %llvmver -lt 15 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -gvn -simplifycfg -loop-deletion -simplifycfg -instsimplify -correlated-propagation -early-cse -adce -S | FileCheck %s -check-prefixes LL14,CHECK; fi
+; RUN: if [ %llvmver -ge 15 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -gvn -simplifycfg -loop-deletion -simplifycfg -instsimplify -correlated-propagation -early-cse -adce -S | FileCheck %s -check-prefixes LL15,CHECK; fi
+
+; RUN: if [ %llvmver -lt 15 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,gvn,%simplifycfg,loop(loop-deletion),%simplifycfg,instsimplify,correlated-propagation,early-cse,adce)" -S | FileCheck %s -check-prefixes LL14,CHECK; fi
+; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,gvn,%simplifycfg,loop(loop-deletion),%simplifycfg,instsimplify,correlated-propagation,early-cse,adce)" -S | FileCheck %s -check-prefixes LL15,CHECK; fi
 
 source_filename = "mem.c"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"

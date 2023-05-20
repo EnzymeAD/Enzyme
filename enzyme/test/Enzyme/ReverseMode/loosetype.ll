@@ -1,5 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -mem2reg -instsimplify -simplifycfg -S -enzyme-loose-types | FileCheck %s
-
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -simplifycfg -S -enzyme-loose-types | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S -enzyme-loose-types | FileCheck %s
 
 %struct.tensor2 = type { %struct.tensor1 }
 %struct.tensor1 = type { [3 x double] }
