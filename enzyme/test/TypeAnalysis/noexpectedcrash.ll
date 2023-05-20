@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -print-type-analysis -type-analysis-func=matvec -o /dev/null | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -print-type-analysis -type-analysis-func=matvec -o /dev/null | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="print-type-analysis" -type-analysis-func=matvec -S | FileCheck %s
 
 define internal void @matvec(i64* %a, i64* %b) {
 entry:

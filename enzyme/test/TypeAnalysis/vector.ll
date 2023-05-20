@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -print-type-analysis -type-analysis-func=reduce_max -o /dev/null | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -print-type-analysis -type-analysis-func=reduce_max -o /dev/null | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="print-type-analysis" -type-analysis-func=reduce_max -S | FileCheck %s
 
 ; ModuleID = 'test.c'
 source_filename = "test.c"

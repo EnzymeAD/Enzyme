@@ -53,6 +53,10 @@ newPM = ((" --enable-new-pm=1" if int(config.llvm_ver) in (12,13) else "")
                                  + ' -load-pass-plugin=@ENZYME_BINARY_DIR@/Enzyme/LLVMEnzyme-' + config.llvm_ver + config.llvm_shlib_ext 
                                  + ' -load=@ENZYME_BINARY_DIR@/Enzyme/LLVMEnzyme-' + config.llvm_ver + config.llvm_shlib_ext 
                                  + (" --enzyme-attributor=0" if int(config.llvm_ver) >= 13 else ""))
+if int(config.llvm_ver) >= 16:
+  newPM += " -opaque-pointers=0"
+  oldPM += " -opaque-pointers=0"
+
 config.substitutions.append(('%loadEnzyme', oldPM if int(config.llvm_ver) < 16 else newPM))
 config.substitutions.append(('%newLoadEnzyme', newPM))
 config.substitutions.append(('%enzyme', ('-enzyme' if int(config.llvm_ver) < 16 else '-passes="enzyme"')))

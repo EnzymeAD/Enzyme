@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -print-type-analysis -type-analysis-func=callee -o /dev/null | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -print-type-analysis -type-analysis-func=callee -o /dev/null | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="print-type-analysis" -type-analysis-func=callee -S | FileCheck %s
 
 @ptr = internal constant [4 x double] [double 3.14000e+00, double 3.14000e+00, double 3.14000e+00, double 3.14000e+00], align 8
 

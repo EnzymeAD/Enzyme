@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -print-type-analysis -type-analysis-func=foo -o /dev/null | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -print-type-analysis -type-analysis-func=foo -o /dev/null | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="print-type-analysis" -type-analysis-func=foo -S | FileCheck %s
 
 source_filename = "subdoublestore.c"
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"

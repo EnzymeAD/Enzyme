@@ -2806,7 +2806,9 @@ public:
 #undef DEBUG_TYPE
 AnalysisKey EnzymeNewPM::Key;
 
+#include "ActivityAnalysisPrinter.h"
 #include "PreserveNVVM.h"
+#include "TypeAnalysis/TypeAnalysisPrinter.h"
 #ifdef ENZYME_RUNPASS
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Transforms/IPO/GlobalOpt.h"
@@ -3064,6 +3066,19 @@ llvmGetPassPluginInfo() {
               }
               if (Name == "preserve-nvvm") {
                 MPM.addPass(PreserveNVVMNewPM(/*Begin*/ true));
+                return true;
+              }
+              if (Name == "print-type-analysis") {
+                MPM.addPass(TypeAnalysisPrinterNewPM());
+                return true;
+              }
+              return false;
+            });
+        PB.registerPipelineParsingCallback(
+            [](llvm::StringRef Name, llvm::FunctionPassManager &FPM,
+               llvm::ArrayRef<llvm::PassBuilder::PipelineElement>) {
+              if (Name == "print-activity-analysis") {
+                FPM.addPass(ActivityAnalysisPrinterNewPM());
                 return true;
               }
               return false;
