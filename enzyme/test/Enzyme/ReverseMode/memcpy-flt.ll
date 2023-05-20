@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -dce -instcombine -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 ; Function Attrs: nounwind uwtable
 define dso_local void @memcpy_float(double* nocapture %dst, double* nocapture readonly %src, i64 %num) #0 {
@@ -55,7 +56,7 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   %0 = bitcast double* %dst to i8*
 ; CHECK-NEXT:   %1 = bitcast double* %src to i8*
 ; CHECK-NEXT:   tail call void @llvm.memcpy.p0i8.p0i8.i64(i8* align 1 %0, i8* align 1 %1, i64 %num, i1 false)
-; CHECK-NEXT:   %2 = lshr i64 %num, 3
+; CHECK-NEXT:   %2 = udiv i64 %num, 8
 ; CHECK-NEXT:   %3 = {{(icmp eq i64 %2, 0|icmp ult i64 %num, 8)}}
 ; CHECK-NEXT:   br i1 %3, label %__enzyme_memcpyadd_doubleda1sa1.exit, label %for.body.i
 
@@ -91,7 +92,7 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   %1 = fadd fast double %src.i.l, %dst.i.l
 ; CHECK-NEXT:   store double %1, double* %src.i
 ; CHECK-NEXT:   %idx.next = add nuw i64 %idx, 1
-; CHECK-NEXT:   %2 = icmp eq i64 %idx.next, %num
+; CHECK-NEXT:   %2 = icmp eq i64 %num, %idx.next
 ; CHECK-NEXT:   br i1 %2, label %for.end, label %for.body
 
 ; CHECK: for.end:                                         
@@ -117,7 +118,7 @@ attributes #3 = { nounwind }
 
 ; CHECK: define internal {{(dso_local )?}}void @diffesubmemcpy_float(double* nocapture %smdst, double* nocapture %"smdst'", double* nocapture readonly %smsrc, double* nocapture %"smsrc'", i64 %num)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = lshr i64 %num, 3
+; CHECK-NEXT:   %0 = udiv i64 %num, 8
 ; CHECK-NEXT:   %1 = {{(icmp eq i64 %0, 0|icmp ult i64 %num, 8)}}
 ; CHECK-NEXT:   br i1 %1, label %__enzyme_memcpyadd_doubleda1sa1.exit, label %for.body.i
 

@@ -1,5 +1,3 @@
-; ZZR: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -gvn -sroa -adce -instcombine -instsimplify -correlated-propagation -early-cse-memssa -instcombine -loop-deletion -simplifycfg -S | FileCheck %s
-
 ; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -sroa -early-cse -instsimplify -loop-deletion -simplifycfg -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,sroa,early-cse,instsimplify,loop(loop-deletion),%simplifycfg)" -S | FileCheck %s
 

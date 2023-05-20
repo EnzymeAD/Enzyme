@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -correlated-propagation -early-cse -instsimplify -adce -loop-deletion -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -correlated-propagation -early-cse -instsimplify -adce -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,correlated-propagation,early-cse,instsimplify,adce,%simplifycfg)" -S | FileCheck %s
 
 ; Function Attrs: nounwind readnone speculatable
 declare double @llvm.fabs.f64(double) #1
