@@ -1,11 +1,11 @@
-// RUN: if [ %llvmver -le 11 ]; then %clang -std=c11 -ffast-math -O0 %s -S -emit-llvm -o - | %opt - %loadEnzyme %enzyme -S | %lli - ; fi
-// RUN: if [ %llvmver -le 9 ]; then %clang -std=c11 -ffast-math -O1 %s -S -emit-llvm -o - | %opt - %loadEnzyme %enzyme -S | %lli - ; fi
-// RUN: if [ %llvmver -le 8 ]; then %clang -std=c11 -ffast-math -O2 %s -S -emit-llvm -o - | %opt - %loadEnzyme %enzyme -S | %lli - ; fi
-// RUN: if [ %llvmver -le 8 ]; then %clang -std=c11 -ffast-math -O3 %s -S -emit-llvm -o - | %opt - %loadEnzyme %enzyme -S | %lli - ; fi
-// RUN: if [ %llvmver -le 11 ]; then %clang -std=c11 -ffast-math -O0 %s -S -emit-llvm -o - | %opt - %loadEnzyme %enzyme -enzyme-inline=1 -S | %lli - ; fi
-// RUN: if [ %llvmver -le 9 ]; then %clang -std=c11 -ffast-math -O1 %s -S -emit-llvm -o - | %opt - %loadEnzyme %enzyme -enzyme-inline=1 -S | %lli - ; fi
-// RUN: if [ %llvmver -le 8 ]; then %clang -std=c11 -ffast-math -O2 %s -S -emit-llvm -o - | %opt - %loadEnzyme %enzyme -enzyme-inline=1 -S | %lli - ; fi
-// RUN: if [ %llvmver -le 8 ]; then %clang -std=c11 -ffast-math -O3 %s -S -emit-llvm -o - | %opt - %loadEnzyme %enzyme -enzyme-inline=1 -S | %lli -; fi
+// RUN: if [ %llvmver -le 11 ]; then %clang -std=c11 -ffast-math -O0 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli - ; fi
+// RUN: if [ %llvmver -le 9 ]; then %clang -std=c11 -ffast-math -O1 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli - ; fi
+// RUN: if [ %llvmver -le 8 ]; then %clang -std=c11 -ffast-math -O2 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli - ; fi
+// RUN: if [ %llvmver -le 8 ]; then %clang -std=c11 -ffast-math -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli - ; fi
+// RUN: if [ %llvmver -le 11 ]; then %clang -std=c11 -ffast-math -O0 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli - ; fi
+// RUN: if [ %llvmver -le 9 ]; then %clang -std=c11 -ffast-math -O1 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli - ; fi
+// RUN: if [ %llvmver -le 8 ]; then %clang -std=c11 -ffast-math -O2 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli - ; fi
+// RUN: if [ %llvmver -le 8 ]; then %clang -std=c11 -ffast-math -O3 %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli -; fi
 
 #include <stdio.h>
 #include <math.h>
