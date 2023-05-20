@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -inline -early-cse -instcombine -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 ; __attribute__((noinline))
 ; double f(double x) {
@@ -43,18 +44,21 @@ declare double @__enzyme_autodiff(double (double)*, ...) #0
 attributes #0 = { nounwind }
 attributes #1 = { nounwind readnone noinline }
 
-; CHECK: define dso_local double @drelu(double %x)
+; CHECK: define internal { double } @differelu(double %x, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %cmp.i = fcmp fast ogt double %x, 0.000000e+00
-; CHECK-NEXT:   br i1 %cmp.i, label %invertcond.true.i, label %differelu.exit
-; CHECK: invertcond.true.i:                                ; preds = %entry
-; CHECK-NEXT:   %[[diffef:.+]] = call { double } @diffef(double %x, double 1.000000e+00)
-; CHECK-NEXT:   %[[result:.+]] = extractvalue { double } %[[diffef]], 0
-; CHECK-NEXT:   br label %differelu.exit
-; CHECK: differelu.exit:                                   ; preds = %entry, %invertcond.true.i
-; CHECK-NEXT:   %"x'de.0.i" = phi double [ %[[result]], %invertcond.true.i ], [ 0.000000e+00, %entry ]
-; CHECK-NEXT:   ret double %"x'de.0.i"
-; CHECK-NEXT: }
+; CHECK-NEXT:   %cmp = fcmp fast ogt double %x, 0.000000e+00
+; CHECK-NEXT:   %0 = select fast i1 %cmp, double %differeturn, double 0.000000e+00
+; CHECK-NEXT:   br i1 %cmp, label %invertcond.true, label %invertentry
+
+; CHECK: invertentry: 
+; CHECK-NEXT:   %"x'de.0" = phi double [ %3, %invertcond.true ], [ 0.000000e+00, %entry ]
+; CHECK-NEXT:   %1 = insertvalue { double } undef, double %"x'de.0", 0
+; CHECK-NEXT:   ret { double } %1
+
+; CHECK: invertcond.true: 
+; CHECK-NEXT:   %2 = call { double } @diffef(double %x, double %0)
+; CHECK-NEXT:   %3 = extractvalue { double } %2, 0
+; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: define internal {{(dso_local )?}}{ double } @diffef(double %x, double %[[differet:.+]])
 ; CHECK-NEXT: entry:
