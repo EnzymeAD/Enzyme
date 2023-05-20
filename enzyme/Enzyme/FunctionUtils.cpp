@@ -914,7 +914,9 @@ Function *CreateMPIWrapper(Function *F) {
 #if LLVM_VERSION_MAJOR >= 12
     Attribute::MustProgress,
 #endif
+#if LLVM_VERSION_MAJOR < 16
     Attribute::ReadOnly,
+#endif
     Attribute::Speculatable,
     Attribute::NoUnwind,
     Attribute::AlwaysInline,
@@ -935,6 +937,7 @@ Function *CreateMPIWrapper(Function *F) {
   }
 #if LLVM_VERSION_MAJOR >= 16
   W->setOnlyAccessesInaccessibleMemory();
+  W->setOnlyReadsMemory();
 #endif
 #if LLVM_VERSION_MAJOR >= 14
   W->addFnAttr(Attribute::get(F->getContext(), "enzyme_inactive"));
@@ -1730,15 +1733,22 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       }
     }
 
-    PassManagerBuilder Builder;
-    Builder.OptLevel = 2;
-    legacy::FunctionPassManager PM(NewF->getParent());
-    Builder.populateFunctionPassManager(PM);
-    PM.run(*NewF);
-    {
-      PreservedAnalyses PA;
-      FAM.invalidate(*NewF, PA);
-    }
+#if LLVM_VERSION_MAJOR < 14
+    using OptimizationLevel = llvm::PassBuilder::OptimizationLevel;
+#endif
+
+    auto Level = OptimizationLevel::O2;
+
+    PassBuilder PB;
+#if LLVM_VERSION_MAJOR >= 12
+    FunctionPassManager FPM =
+        PB.buildFunctionSimplificationPipeline(Level, ThinOrFullLTOPhase::None);
+#else
+    FunctionPassManager FPM = PB.buildFunctionSimplificationPipeline(
+        Level, PassBuilder::ThinLTOPhase::None);
+#endif
+    auto PA = FPM.run(*F, FAM);
+    FAM.invalidate(*F, PA);
   }
 
   if (EnzymePreopt) {
