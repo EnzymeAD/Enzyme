@@ -1,4 +1,6 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -enzyme-loose-types -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -enzyme-loose-types -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme" -enzyme-loose-types -S | FileCheck %s
+
 
 source_filename = "ld-temp.o"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
