@@ -1,5 +1,5 @@
 ; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -print-type-analysis -type-analysis-func=_Z4axpyfPfS_ -o /dev/null | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="print-type-analysis" -type-analysis-func=_Z4axpyfPfS_ -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="print-type-analysis" -type-analysis-func=_Z4axpyfPfS_ -S -o /dev/null | FileCheck %s
 
 ; ModuleID = 'cuda.cu'
 source_filename = "cuda.cu"

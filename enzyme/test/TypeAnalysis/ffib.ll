@@ -1,5 +1,5 @@
 ; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -print-type-analysis -type-analysis-func=ffib -o /dev/null | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="print-type-analysis" -type-analysis-func=ffib -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="print-type-analysis" -type-analysis-func=ffib -S -o /dev/null | FileCheck %s
 
 @.str = private unnamed_addr constant [21 x i8] c"ffib'(n=%d, i=1)=%f\0A\00", align 1
 

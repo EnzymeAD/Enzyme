@@ -1,5 +1,5 @@
 ; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -print-type-analysis -type-analysis-func=matvec -enzyme-strict-aliasing=0 -o /dev/null | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="print-type-analysis" -type-analysis-func=matvec -enzyme-strict-aliasing=0 -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="print-type-analysis" -type-analysis-func=matvec -enzyme-strict-aliasing=0 -S -o /dev/null | FileCheck %s
 
 define internal void @matvec(i32* %mptr, i1 %cmp) {
 entry:

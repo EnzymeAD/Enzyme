@@ -1,5 +1,5 @@
 ; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -print-type-analysis -type-analysis-func=d -o /dev/null | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -passes="print-type-analysis" -type-analysis-func=d -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -passes="print-type-analysis" -type-analysis-func=d -S -o /dev/null | FileCheck %s
 
 define dso_local double @m(double %div) {
 entry:

@@ -1,5 +1,5 @@
 ; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-rust-type -print-type-analysis -type-analysis-func=callee -o /dev/null | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -enzyme-rust-type -passes="print-type-analysis" -type-analysis-func=callee -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -enzyme-rust-type -passes="print-type-analysis" -type-analysis-func=callee -S -o /dev/null | FileCheck %s
 
 %"std::vec::Vec<f32>" = type { { i32*, i64 }, i64 }
 

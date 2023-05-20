@@ -1,5 +1,5 @@
 ; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-rust-type -print-type-analysis -type-analysis-func=callee -o /dev/null | FileCheck %s; fi
-; RUN: %opt < %s %newLoadEnzyme -enzyme-rust-type -passes="print-type-analysis" -type-analysis-func=callee -S | FileCheck %s
+; RUN: %opt < %s %newLoadEnzyme -enzyme-rust-type -passes="print-type-analysis" -type-analysis-func=callee -S -o /dev/null | FileCheck %s
 
 declare void @llvm.dbg.declare(metadata, metadata, metadata) #4
 
