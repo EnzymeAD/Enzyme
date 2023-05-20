@@ -2280,13 +2280,24 @@ F->getParamAttribute(ii, Attribute::StructRet).getValueAsType())); #else
     ++ii;
   }
 
-  if (hasPtrInput) {
-    if (NewF->hasFnAttribute(Attribute::ReadNone)) {
-      NewF->removeFnAttr(Attribute::ReadNone);
-    }
+  if (hasPtrInput && (mode == DerivativeMode::ReverseModeCombined ||
+                      mode == DerivativeMode::ReverseModeGradient)) {
     if (NewF->hasFnAttribute(Attribute::ReadOnly)) {
       NewF->removeFnAttr(Attribute::ReadOnly);
     }
+#if LLVM_VERSION_MAJOR >= 16
+    auto eff = NewF->getMemoryEffects();
+    for (auto loc : MemoryEffects::locations()) {
+      if (loc == MemoryEffects::Location::InaccessibleMem)
+        continue;
+      auto mr = eff.getModRef(loc);
+      if (isModSet(mr))
+        eff |= MemoryEffects(loc, ModRefInfo::Ref);
+      if (isRefSet(mr))
+        eff |= MemoryEffects(loc, ModRefInfo::Mod);
+    }
+    NewF->setMemoryEffects(eff);
+#endif
   }
   NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
   assert(NewF->hasLocalLinkage());

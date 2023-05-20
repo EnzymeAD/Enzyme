@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -instsimplify -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -instsimplify -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(instsimplify)" -S | FileCheck %s
 
 declare dso_local double @_Z5loadel(i64 %l)
