@@ -377,9 +377,18 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
   if (auto CI = dyn_cast<CallInst>(user)) {
     auto funcName = getFuncNameFromCall(const_cast<CallInst *>(CI));
 
-    llvm::Optional<BlasInfo> blasMetaData = extractBLAS(funcName);
-    if (blasMetaData.hasValue()) {
+    auto blasMetaData = extractBLAS(funcName);
+#if LLVM_VERSION_MAJOR >= 16
+    if (blasMetaData.has_value())
+#else
+    if (blasMetaData.hasValue())
+#endif
+    {
+#if LLVM_VERSION_MAJOR >= 16
+      BlasInfo blas = blasMetaData.value();
+#else
       BlasInfo blas = blasMetaData.getValue();
+#endif
 #include "BlasDiffUse.inc"
     }
 

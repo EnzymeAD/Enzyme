@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -instcombine -simplifycfg -S -jump-threading -instsimplify -simplifycfg -adce -loop-deletion -simplifycfg | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -loop-deletion -correlated-propagation -adce -simplifycfg -correlated-propagation -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,loop(loop-deletion),correlated-propagation,adce,%simplifycfg,correlated-propagation)" -S | FileCheck %s
 
 ; Function Attrs: norecurse nounwind readonly uwtable
 define dso_local double @sum(double* nocapture readonly %x, i64 %n) #0 {
@@ -39,28 +40,28 @@ attributes #1 = { nounwind uwtable }
 attributes #2 = { nounwind }
 
 
-; CHECK: define dso_local void @dsum(double* %x, double* %xp, i64 %n) 
+; CHECK: define internal void @diffesum(double* nocapture readonly %x, double* nocapture %"x'", i64 %n, double %differeturn)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   br label %[[antiloop:.+]]
 
+; CHECK:  invertentry:
+; CHECK-NEXT:  ret void
+
 ; CHECK: [[antiloop]]: 
-; CHECK-NEXT:   %[[dadd:.+]] = phi double [ 1.000000e+00, %entry ], [ %[[m0dadd:.+]], %[[incantiloop:.+]] ]
+; CHECK-NEXT:   %[[dadd:.+]] = phi double [ %differeturn, %entry ], [ %[[m0dadd:.+]], %[[incantiloop:.+]] ]
 ; CHECK-NEXT:   %[[antivar:.+]] = phi i64 [ %n, %entry ], [ %[[sub:.+]], %[[incantiloop]] ] 
-; CHECK-NEXT:   %[[arrayidxipgi:.+]] = getelementptr inbounds double, double* %xp, i64 %[[antivar]]
+; CHECK-NEXT:   %[[arrayidxipgi:.+]] = getelementptr inbounds double, double* %"x'", i64 %[[antivar]]
 ; CHECK-NEXT:   %[[toload:.+]] = load double, double* %[[arrayidxipgi]], align 8
 ; CHECK-NEXT:   %[[tostore:.+]] = fadd fast double %[[toload]], %[[dadd]]
 ; CHECK-NEXT:   store double %[[tostore]], double* %[[arrayidxipgi]], align 8
 ; CHECK-NEXT:   %[[itercmp:.+]] = icmp eq i64 %[[antivar]], 0
-; CHECK-NEXT:   br i1 %[[itercmp]], label %diffesum.exit, label %[[incantiloop]]
+; CHECK-NEXT:   %[[sel:.+]] = select{{( fast)?}} i1 %[[itercmp]], double 0.000000e+00, double %[[dadd]]
+; CHECK-NEXT:   br i1 %[[itercmp]], label %invertentry, label %[[incantiloop]]
 
 ; CHECK: [[incantiloop]]: 
 ; CHECK-NEXT:   %[[sub]] = add nsw i64 %[[antivar]], -1
-; CHECK-NEXT:   %res_unwrap.i = uitofp i64 %[[sub]] to double
-; CHECK-NEXT:   %[[m0dadd]] = fmul fast double %[[dadd]], %res_unwrap.i
+; CHECK-NEXT:   %res_unwrap = uitofp i64 %[[sub]] to double
+; CHECK-NEXT:   %[[m0dadd]] = fmul fast double %[[sel]], %res_unwrap
 ; CHECK-NEXT:   br label %[[antiloop]]
-
-; CHECK: diffesum.exit: 
-; CHECK-NEXT:   ret void
-; CHECK-NEXT: }
 
 

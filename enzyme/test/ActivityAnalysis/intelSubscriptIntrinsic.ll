@@ -1,4 +1,5 @@
-; RUN: if [ %llvmver -ge 13 ]; then %opt < %s %loadEnzyme -print-activity-analysis -activity-analysis-func=selectfirst -o /dev/null | FileCheck %s; fi
+; RUN: if [ %llvmver -lt 16 ] && [ %llvmver -ge 13 ]; then %opt < %s %loadEnzyme -print-activity-analysis -activity-analysis-func=selectfirst -o /dev/null | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 13 ]; then %opt < %s %newLoadEnzyme -passes="print-activity-analysis" -activity-analysis-func=selectfirst -S | FileCheck %s; fi
 
 %"QNCA_a0$float*$rank1$" = type { float*, i64, i64, i64, i64, i64, [1 x { i64, i64, i64 }] }
 

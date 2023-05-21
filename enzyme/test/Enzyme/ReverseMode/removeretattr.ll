@@ -1,4 +1,5 @@
-; RUN: if [ %llvmver -ge 11 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instcombine -adce -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 11 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -sroa -simplifycfg -instcombine -adce -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 11 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,sroa,%simplifycfg,instcombine,adce)" -S | FileCheck %s; fi
 
 ; this test should ensure that the alignment on the <2 x double> load is kept
 

@@ -58,6 +58,11 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 
+#if LLVM_VERSION_MAJOR >= 14
+#define addAttribute addAttributeAtIndex
+#define hasAttribute hasAttributeAtIndex
+#endif
+
 using namespace llvm;
 
 std::map<std::string,
@@ -310,16 +315,26 @@ Value *GradientUtils::ompThreadId() {
 
   auto FT = FunctionType::get(Type::getInt64Ty(B.getContext()),
                               ArrayRef<Type *>(), false);
-  AttributeList AL;
-#if LLVM_VERSION_MAJOR >= 14
-  AL = AL.addAttributeAtIndex(B.getContext(), AttributeList::FunctionIndex,
-                              Attribute::AttrKind::ReadOnly);
+  auto FN = newFunc->getParent()->getOrInsertFunction("omp_get_thread_num", FT);
+  auto CI = B.CreateCall(FN);
+  if (auto F = getFunctionFromCall(CI)) {
+#if LLVM_VERSION_MAJOR >= 16
+    F->setOnlyAccessesInaccessibleMemory();
+    F->setOnlyReadsMemory();
 #else
-  AL = AL.addAttribute(B.getContext(), AttributeList::FunctionIndex,
-                       Attribute::AttrKind::ReadOnly);
+    F->addFnAttr(Attribute::InaccessibleMemOnly);
+    F->addFnAttr(Attribute::ReadOnly);
 #endif
-  return tid = B.CreateCall(newFunc->getParent()->getOrInsertFunction(
-             "omp_get_thread_num", FT, AL));
+  }
+#if LLVM_VERSION_MAJOR >= 16
+  CI->setOnlyAccessesInaccessibleMemory();
+  CI->setOnlyReadsMemory();
+#else
+  CI->addAttribute(AttributeList::FunctionIndex,
+                   Attribute::InaccessibleMemOnly);
+  CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadOnly);
+#endif
+  return tid = CI;
 }
 
 Value *GradientUtils::ompNumThreads() {
@@ -329,16 +344,27 @@ Value *GradientUtils::ompNumThreads() {
 
   auto FT = FunctionType::get(Type::getInt64Ty(B.getContext()),
                               ArrayRef<Type *>(), false);
-  AttributeList AL;
-#if LLVM_VERSION_MAJOR >= 14
-  AL = AL.addAttributeAtIndex(B.getContext(), AttributeList::FunctionIndex,
-                              Attribute::AttrKind::ReadOnly);
+  auto FN =
+      newFunc->getParent()->getOrInsertFunction("omp_get_max_threads", FT);
+  auto CI = B.CreateCall(FN);
+  if (auto F = getFunctionFromCall(CI)) {
+#if LLVM_VERSION_MAJOR >= 16
+    F->setOnlyAccessesInaccessibleMemory();
+    F->setOnlyReadsMemory();
 #else
-  AL = AL.addAttribute(B.getContext(), AttributeList::FunctionIndex,
-                       Attribute::AttrKind::ReadOnly);
+    F->addFnAttr(Attribute::InaccessibleMemOnly);
+    F->addFnAttr(Attribute::ReadOnly);
 #endif
-  return numThreads = B.CreateCall(newFunc->getParent()->getOrInsertFunction(
-             "omp_get_max_threads", FT, AL));
+  }
+#if LLVM_VERSION_MAJOR >= 16
+  CI->setOnlyAccessesInaccessibleMemory();
+  CI->setOnlyReadsMemory();
+#else
+  CI->addAttribute(AttributeList::FunctionIndex,
+                   Attribute::InaccessibleMemOnly);
+  CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadOnly);
+#endif
+  return numThreads = CI;
 }
 
 Value *GradientUtils::getOrInsertTotalMultiplicativeProduct(Value *val,
@@ -496,10 +522,17 @@ DebugLoc GradientUtils::getNewFromOriginal(const DebugLoc L) const {
     return L;
   assert(originalToNewFn.hasMD());
   auto opt = originalToNewFn.getMappedMD(L.getAsMDNode());
+#if LLVM_VERSION_MAJOR >= 16
+  if (!opt.has_value())
+    return L;
+  assert(opt.has_value());
+  return DebugLoc(cast<MDNode>(opt.value()));
+#else
   if (!opt.hasValue())
     return L;
   assert(opt.hasValue());
   return DebugLoc(cast<MDNode>(*opt.getPointer()));
+#endif
 }
 
 Value *GradientUtils::getNewFromOriginal(const Value *originst) const {
@@ -3596,17 +3629,10 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                       cast<CallInst>(anti)->setDebugLoc(
                           getNewFromOriginal(I.getDebugLoc()));
 
-#if LLVM_VERSION_MAJOR >= 14
-                      cast<CallInst>(anti)->addAttributeAtIndex(
-                          AttributeList::ReturnIndex, Attribute::NoAlias);
-                      cast<CallInst>(anti)->addAttributeAtIndex(
-                          AttributeList::ReturnIndex, Attribute::NonNull);
-#else
                       cast<CallInst>(anti)->addAttribute(
                           AttributeList::ReturnIndex, Attribute::NoAlias);
                       cast<CallInst>(anti)->addAttribute(
                           AttributeList::ReturnIndex, Attribute::NonNull);
-#endif
                       return anti;
                     };
 
@@ -5085,20 +5111,25 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   if (isa<Argument>(oval) && cast<Argument>(oval)->hasByValAttr()) {
     IRBuilder<> bb(inversionAllocs);
 
+    Type *subType = nullptr;
+#if LLVM_VERSION_MAJOR >= 9
+    auto attr = cast<Argument>(oval)->getAttribute(Attribute::ByVal);
+    subType = attr.getValueAsType();
+#else
+    subType = oval->getType()->getPointerElementType();
+#endif
+
     auto rule1 = [&]() {
       AllocaInst *antialloca = bb.CreateAlloca(
-          oval->getType()->getPointerElementType(),
-          cast<PointerType>(oval->getType())->getPointerAddressSpace(), nullptr,
-          oval->getName() + "'ipa");
+          subType, cast<PointerType>(oval->getType())->getPointerAddressSpace(),
+          nullptr, oval->getName() + "'ipa");
 
       auto dst_arg =
           bb.CreateBitCast(antialloca, Type::getInt8PtrTy(oval->getContext()));
       auto val_arg = ConstantInt::get(Type::getInt8Ty(oval->getContext()), 0);
-      auto len_arg =
-          ConstantInt::get(Type::getInt64Ty(oval->getContext()),
-                           M->getDataLayout().getTypeAllocSizeInBits(
-                               oval->getType()->getPointerElementType()) /
-                               8);
+      auto len_arg = ConstantInt::get(
+          Type::getInt64Ty(oval->getContext()),
+          M->getDataLayout().getTypeAllocSizeInBits(subType) / 8);
       auto volatile_arg = ConstantInt::getFalse(oval->getContext());
 
 #if LLVM_VERSION_MAJOR == 6
@@ -8977,20 +9008,9 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
     freecall->setDebugLoc(debuglocation);
     freecall->setTailCall();
     if (isa<CallInst>(tofree) &&
-#if LLVM_VERSION_MAJOR >= 14
-        cast<CallInst>(tofree)->getAttributes().hasAttributeAtIndex(
-            AttributeList::ReturnIndex, Attribute::NonNull)
-#else
         cast<CallInst>(tofree)->getAttributes().hasAttribute(
-            AttributeList::ReturnIndex, Attribute::NonNull)
-#endif
-    ) {
-#if LLVM_VERSION_MAJOR >= 14
-      freecall->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                    Attribute::NonNull);
-#else
+            AttributeList::ReturnIndex, Attribute::NonNull)) {
       freecall->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
-#endif
     }
     if (Function *F = dyn_cast<Function>(freevalue))
       freecall->setCallingConv(F->getCallingConv());
@@ -9107,20 +9127,9 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
   freecall->setTailCall();
   freecall->setDebugLoc(debuglocation);
   if (isa<CallInst>(tofree) &&
-#if LLVM_VERSION_MAJOR >= 14
-      cast<CallInst>(tofree)->getAttributes().hasAttributeAtIndex(
-          AttributeList::ReturnIndex, Attribute::NonNull)
-#else
       cast<CallInst>(tofree)->getAttributes().hasAttribute(
-          AttributeList::ReturnIndex, Attribute::NonNull)
-#endif
-  ) {
-#if LLVM_VERSION_MAJOR >= 14
-    freecall->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                  Attribute::NonNull);
-#else
+          AttributeList::ReturnIndex, Attribute::NonNull)) {
     freecall->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
-#endif
   }
   if (Function *F = dyn_cast<Function>(freevalue))
     freecall->setCallingConv(F->getCallingConv());

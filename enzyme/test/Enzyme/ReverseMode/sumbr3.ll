@@ -1,5 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -S | FileCheck %s
-; note this should be the result but for some reason SE can't find loop iterations
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -loop-deletion -correlated-propagation -adce -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,loop(loop-deletion),correlated-propagation,adce,%simplifycfg)" -S | FileCheck %s
 
 ; Function Attrs: norecurse nounwind readonly uwtable
 define dso_local double @sum(double* nocapture readonly %x, i64 %n) #0 {
@@ -38,23 +38,22 @@ attributes #1 = { nounwind uwtable }
 attributes #2 = { nounwind }
 
 
-; CHECK: define dso_local void @dsum(double* %x, double* %xp, i64 %n)
+; CHECK: define internal void @diffesum(double* nocapture readonly %x, double* nocapture %"x'", i64 %n, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   br label %invertfor.body.i
+; CHECK-NEXT:   br label %invertfor.body
 
-; CHECK: invertfor.body.i:
-; CHECK-NEXT:   %[[antivar:.+]] = phi i64 [ %n, %entry ], [ %[[sub:.+]], %incinvertfor.body.i ]
-; CHECK-NEXT:   %[[arrayidxipgi:.+]] = getelementptr inbounds double, double* %xp, i64 %[[antivar]]
+; CHECK:  invertentry:
+; CHECK-NEXT:  ret void
+
+; CHECK: invertfor.body:
+; CHECK-NEXT:   %[[antivar:.+]] = phi i64 [ %n, %entry ], [ %[[sub:.+]], %incinvertfor.body ]
+; CHECK-NEXT:   %[[arrayidxipgi:.+]] = getelementptr inbounds double, double* %"x'", i64 %[[antivar]]
 ; CHECK-NEXT:   %[[toload:.+]] = load double, double* %[[arrayidxipgi]]
-; CHECK-NEXT:   %[[tostore:.+]] = fadd fast double %[[toload]], 1.000000e+00
+; CHECK-NEXT:   %[[tostore:.+]] = fadd fast double %[[toload]], %differeturn
 ; CHECK-NEXT:   store double %[[tostore]], double* %[[arrayidxipgi]]
 ; CHECK-NEXT:   %[[cmp:.+]] = icmp eq i64 %[[antivar]], 0
-; CHECK-NEXT:   br i1 %[[cmp]], label %diffesum.exit, label %incinvertfor.body.i
+; CHECK-NEXT:   br i1 %[[cmp]], label %invertentry, label %incinvertfor.body
 
-; CHECK: incinvertfor.body.i:
+; CHECK: incinvertfor.body:
 ; CHECK-NEXT:   %[[sub]] = add nsw i64 %[[antivar]], -1
-; CHECK-NEXT:   br label %invertfor.body.i
-
-; CHECK: diffesum.exit:
-; CHECK-NEXT:   ret void
-; CHECK-NEXT: }
+; CHECK-NEXT:   br label %invertfor.body

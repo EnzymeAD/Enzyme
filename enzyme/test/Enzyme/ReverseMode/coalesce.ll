@@ -1,4 +1,5 @@
-; RUN: if [ %llvmver -ge 12 ]; then opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -enzyme-coalese=1 -enzyme-postopt=1 -S | FileCheck %s; fi
+; RUN: if [ %llvmver -lt 16 ] && [ %llvmver -ge 12 ]; then %opt < %s %loadEnzyme -enzyme -mem2reg -instsimplify -simplifycfg -enzyme-coalese=1 -enzyme-postopt=1 -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 12 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -enzyme-coalese=1 -enzyme-postopt=1 -S | FileCheck %s; fi
 
 define double @square(double* noalias nocapture %arg, double* noalias nocapture %arg1) {
 bb:

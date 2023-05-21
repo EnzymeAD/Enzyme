@@ -192,8 +192,6 @@ public:
         AL.addParamAttribute(DT->getContext(), 1, Attribute::AttrKind::NonNull);
 #if LLVM_VERSION_MAJOR >= 14
     AL = AL.addAttributeAtIndex(DT->getContext(), AttributeList::FunctionIndex,
-                                Attribute::AttrKind::ArgMemOnly);
-    AL = AL.addAttributeAtIndex(DT->getContext(), AttributeList::FunctionIndex,
                                 Attribute::AttrKind::NoUnwind);
     AL = AL.addAttributeAtIndex(DT->getContext(), AttributeList::FunctionIndex,
                                 Attribute::AttrKind::NoFree);
@@ -215,10 +213,20 @@ public:
     AL = AL.addAttribute(DT->getContext(), AttributeList::FunctionIndex,
                          Attribute::AttrKind::NoUnwind);
 #endif
-    B.CreateCall(
+    auto CI = B.CreateCall(
         B.GetInsertBlock()->getParent()->getParent()->getOrInsertFunction(
             "MPI_Type_size", FT, AL),
         args);
+#if LLVM_VERSION_MAJOR >= 16
+    CI->setOnlyAccessesArgMemory();
+#else
+#if LLVM_VERSION_MAJOR >= 14
+    CI->addAttributeAtIndex(AttributeList::FunctionIndex,
+                            Attribute::ArgMemOnly);
+#else
+    CI->addAttribute(AttributeList::FunctionIndex, Attribute::ArgMemOnly);
+#endif
+#endif
 #if LLVM_VERSION_MAJOR > 7
     return B.CreateLoad(intType, alloc);
 #else
@@ -5375,7 +5383,7 @@ public:
       nextTypeInfo.Return = TR.query(&call);
     }
 
-    // llvm::Optional<std::map<std::pair<Instruction*, std::string>, unsigned>>
+    // std::optional<std::map<std::pair<Instruction*, std::string>, unsigned>>
     // sub_index_map;
     // Optional<int> tapeIdx;
     // Optional<int> returnIdx;
@@ -6744,18 +6752,24 @@ public:
               shadow, Type::getInt8PtrTy(call.getContext()));
 
         Type *statusType = nullptr;
-        if (Function *recvfn = called->getParent()->getFunction("MPI_Recv")) {
-          auto statusArg = recvfn->arg_end();
-          statusArg--;
-          if (auto PT = dyn_cast<PointerType>(statusArg->getType()))
-            statusType = PT->getPointerElementType();
-        } else if (Function *recvfn =
-                       called->getParent()->getFunction("PMPI_Recv")) {
-          auto statusArg = recvfn->arg_end();
-          statusArg--;
-          if (auto PT = dyn_cast<PointerType>(statusArg->getType()))
-            statusType = PT->getPointerElementType();
+#if LLVM_VERSION_MAJOR >= 15
+        if (called->getContext().supportsTypedPointers()) {
+#endif
+          if (Function *recvfn = called->getParent()->getFunction("MPI_Recv")) {
+            auto statusArg = recvfn->arg_end();
+            statusArg--;
+            if (auto PT = dyn_cast<PointerType>(statusArg->getType()))
+              statusType = PT->getPointerElementType();
+          } else if (Function *recvfn =
+                         called->getParent()->getFunction("PMPI_Recv")) {
+            auto statusArg = recvfn->arg_end();
+            statusArg--;
+            if (auto PT = dyn_cast<PointerType>(statusArg->getType()))
+              statusType = PT->getPointerElementType();
+          }
+#if LLVM_VERSION_MAJOR >= 15
         }
+#endif
         if (statusType == nullptr) {
           statusType = ArrayType::get(Type::getInt8Ty(call.getContext()), 24);
           llvm::errs() << " warning could not automatically determine mpi "
@@ -8503,8 +8517,11 @@ public:
 
         args.push_back(gutils->invertPointerM(call.getArgOperand(i), Builder2));
       }
-
+#if LLVM_VERSION_MAJOR >= 16
+      std::optional<int> tapeIdx;
+#else
       Optional<int> tapeIdx;
+#endif
       if (subdata) {
         auto found = subdata->returns.find(AugmentedStruct::Tape);
         if (found != subdata->returns.end()) {
@@ -8512,14 +8529,24 @@ public:
         }
       }
       Value *tape = nullptr;
-      if (tapeIdx.hasValue()) {
+#if LLVM_VERSION_MAJOR >= 16
+      if (tapeIdx.has_value())
+#else
+      if (tapeIdx.hasValue())
+#endif
+      {
 
+#if LLVM_VERSION_MAJOR >= 16
+        auto idx = tapeIdx.value();
+#else
+        auto idx = tapeIdx.getValue();
+#endif
         FunctionType *FT = subdata->fn->getFunctionType();
 
         tape = BuilderZ.CreatePHI(
-            (tapeIdx == -1) ? FT->getReturnType()
-                            : cast<StructType>(FT->getReturnType())
-                                  ->getElementType(tapeIdx.getValue()),
+            (tapeIdx == -1)
+                ? FT->getReturnType()
+                : cast<StructType>(FT->getReturnType())->getElementType(idx),
             1, "tapeArg");
 
         assert(!tape->getType()->isEmptyTy());
@@ -8863,12 +8890,17 @@ public:
     CallInst *augmentcall = nullptr;
     Value *cachereplace = nullptr;
 
-    // llvm::Optional<std::map<std::pair<Instruction*, std::string>,
+    // std::optional<std::map<std::pair<Instruction*, std::string>,
     // unsigned>> sub_index_map;
+#if LLVM_VERSION_MAJOR >= 16
+    std::optional<int> tapeIdx;
+    std::optional<int> returnIdx;
+    std::optional<int> differetIdx;
+#else
     Optional<int> tapeIdx;
     Optional<int> returnIdx;
     Optional<int> differetIdx;
-
+#endif
     if (modifyPrimal) {
 
       Value *newcalled = nullptr;
@@ -9059,12 +9091,20 @@ public:
         if (!augmentcall->getType()->isVoidTy())
           augmentcall->setName(call.getName() + "_augmented");
 
-        if (tapeIdx.hasValue()) {
-          tape = (tapeIdx.getValue() == -1)
-                     ? augmentcall
-                     : BuilderZ.CreateExtractValue(
-                           augmentcall, {(unsigned)tapeIdx.getValue()},
-                           "subcache");
+#if LLVM_VERSION_MAJOR >= 16
+        if (tapeIdx.has_value())
+#else
+        if (tapeIdx.hasValue())
+#endif
+        {
+#if LLVM_VERSION_MAJOR >= 16
+          auto tval = tapeIdx.value();
+#else
+          auto tval = tapeIdx.getValue();
+#endif
+          tape = (tval == -1) ? augmentcall
+                              : BuilderZ.CreateExtractValue(
+                                    augmentcall, {(unsigned)tval}, "subcache");
           if (tape->getType()->isEmptyTy()) {
             auto tt = tape->getType();
             gutils->erase(cast<Instruction>(tape));
@@ -9080,10 +9120,14 @@ public:
           Value *dcall = nullptr;
           assert(returnIdx);
           assert(augmentcall);
-          dcall = (returnIdx.getValue() < 0)
-                      ? augmentcall
-                      : BuilderZ.CreateExtractValue(
-                            augmentcall, {(unsigned)returnIdx.getValue()});
+#if LLVM_VERSION_MAJOR >= 16
+          auto rval = returnIdx.value();
+#else
+          auto rval = returnIdx.getValue();
+#endif
+          dcall = (rval < 0) ? augmentcall
+                             : BuilderZ.CreateExtractValue(augmentcall,
+                                                           {(unsigned)rval});
           gutils->originalToNewFn[&call] = dcall;
           gutils->newToOriginalFn.erase(newCall);
           gutils->newToOriginalFn[dcall] = &call;
@@ -9151,11 +9195,17 @@ public:
           // assert(!tape);
           // assert(subdata);
           if (!tape) {
+#if LLVM_VERSION_MAJOR >= 16
+            assert(tapeIdx.has_value());
+            auto tval = tapeIdx.value();
+#else
             assert(tapeIdx.hasValue());
+            auto tval = tapeIdx.getValue();
+#endif
             tape = BuilderZ.CreatePHI(
                 (tapeIdx == -1) ? FT->getReturnType()
                                 : cast<StructType>(FT->getReturnType())
-                                      ->getElementType(tapeIdx.getValue()),
+                                      ->getElementType(tval),
                 1, "tapeArg");
           }
           tape = gutils->cacheForReverse(BuilderZ, tape,
@@ -9208,11 +9258,17 @@ public:
           Value *newip = nullptr;
           if (Mode == DerivativeMode::ReverseModeCombined ||
               Mode == DerivativeMode::ReverseModePrimal) {
-            newip = (differetIdx.getValue() < 0)
+
+#if LLVM_VERSION_MAJOR >= 16
+            auto drval = differetIdx.value();
+#else
+            auto drval = differetIdx.getValue();
+#endif
+            newip = (drval < 0)
                         ? augmentcall
-                        : BuilderZ.CreateExtractValue(
-                              augmentcall, {(unsigned)differetIdx.getValue()},
-                              call.getName() + "'ac");
+                        : BuilderZ.CreateExtractValue(augmentcall,
+                                                      {(unsigned)drval},
+                                                      call.getName() + "'ac");
             assert(newip->getType() == call.getType());
             placeholder->replaceAllUsesWith(newip);
             if (placeholder == &*BuilderZ.GetInsertPoint()) {
@@ -9767,9 +9823,15 @@ public:
     CallInst *augmentcall = nullptr;
     Value *cachereplace = nullptr;
 
+#if LLVM_VERSION_MAJOR >= 16
+    std::optional<int> tapeIdx;
+    std::optional<int> returnIdx;
+    std::optional<int> differetIdx;
+#else
     Optional<int> tapeIdx;
     Optional<int> returnIdx;
     Optional<int> differetIdx;
+#endif
 
     if (modifyPrimal) {
       Value *newcalled = nullptr;
@@ -9886,12 +9948,20 @@ public:
         if (!augmentcall->getType()->isVoidTy())
           augmentcall->setName(call.getName() + "_augmented");
 
-        if (tapeIdx.hasValue()) {
-          tape = (tapeIdx.getValue() == -1)
-                     ? augmentcall
-                     : BuilderZ.CreateExtractValue(
-                           augmentcall, {(unsigned)tapeIdx.getValue()},
-                           "subcache");
+#if LLVM_VERSION_MAJOR >= 16
+        if (tapeIdx.has_value())
+#else
+        if (tapeIdx.hasValue())
+#endif
+        {
+#if LLVM_VERSION_MAJOR >= 16
+          auto tval = tapeIdx.value();
+#else
+          auto tval = tapeIdx.getValue();
+#endif
+          tape = (tval == -1) ? augmentcall
+                              : BuilderZ.CreateExtractValue(
+                                    augmentcall, {(unsigned)tval}, "subcache");
           if (tape->getType()->isEmptyTy()) {
             auto tt = tape->getType();
             gutils->erase(cast<Instruction>(tape));
@@ -9907,10 +9977,14 @@ public:
           Value *dcall = nullptr;
           assert(returnIdx);
           assert(augmentcall);
-          dcall = (returnIdx.getValue() < 0)
-                      ? augmentcall
-                      : BuilderZ.CreateExtractValue(
-                            augmentcall, {(unsigned)returnIdx.getValue()});
+#if LLVM_VERSION_MAJOR >= 16
+          auto rval = returnIdx.value();
+#else
+          auto rval = returnIdx.getValue();
+#endif
+          dcall = (rval < 0) ? augmentcall
+                             : BuilderZ.CreateExtractValue(augmentcall,
+                                                           {(unsigned)rval});
           gutils->originalToNewFn[&call] = dcall;
           gutils->newToOriginalFn.erase(newCall);
           gutils->newToOriginalFn[dcall] = &call;
@@ -9973,11 +10047,17 @@ public:
                            subdata->returns.end()) {
         } else {
           if (!tape) {
+#if LLVM_VERSION_MAJOR >= 16
+            assert(tapeIdx.has_value());
+            auto tval = tapeIdx.value();
+#else
             assert(tapeIdx.hasValue());
+            auto tval = tapeIdx.getValue();
+#endif
             tape = BuilderZ.CreatePHI(
                 (tapeIdx == -1) ? FT->getReturnType()
                                 : cast<StructType>(FT->getReturnType())
-                                      ->getElementType(tapeIdx.getValue()),
+                                      ->getElementType(tval),
                 1, "tapeArg");
           }
           tape = gutils->cacheForReverse(BuilderZ, tape,
@@ -10025,11 +10105,16 @@ public:
           Value *newip = nullptr;
           if (Mode == DerivativeMode::ReverseModeCombined ||
               Mode == DerivativeMode::ReverseModePrimal) {
-            newip = (differetIdx.getValue() < 0)
+#if LLVM_VERSION_MAJOR >= 16
+            auto drval = differetIdx.value();
+#else
+            auto drval = differetIdx.getValue();
+#endif
+            newip = (drval < 0)
                         ? augmentcall
-                        : BuilderZ.CreateExtractValue(
-                              augmentcall, {(unsigned)differetIdx.getValue()},
-                              call.getName() + "'ac");
+                        : BuilderZ.CreateExtractValue(augmentcall,
+                                                      {(unsigned)drval},
+                                                      call.getName() + "'ac");
             assert(newip->getType() == call.getType());
             placeholder->replaceAllUsesWith(newip);
             if (placeholder == &*BuilderZ.GetInsertPoint()) {
@@ -10591,7 +10676,11 @@ public:
 
     if (!called || called->empty()) {
       if (auto blas = extractBLAS(funcName)) {
+#if LLVM_VERSION_MAJOR >= 16
+        if (handleBLAS(call, called, blas.value(), overwritten_args))
+#else
         if (handleBLAS(call, called, blas.getValue(), overwritten_args))
+#endif
           return;
       }
     }
@@ -12950,9 +13039,11 @@ public:
             getReverseBuilder(Builder2);
             Value *tofree = gutils->lookupM(val, Builder2, ValueToValueMapTy(),
                                             /*tryLegalRecompute*/ false);
-            auto freeCall = cast<CallInst>(
-                CallInst::CreateFree(tofree, Builder2.GetInsertBlock()));
-            Builder2.GetInsertBlock()->getInstList().push_back(freeCall);
+            auto M = gutils->newFunc->getParent();
+            Type *VoidTy = Type::getVoidTy(M->getContext());
+            Type *IntPtrTy = Type::getInt8PtrTy(M->getContext());
+            auto FreeFunc = M->getOrInsertFunction("free", VoidTy, IntPtrTy);
+            Builder2.CreateCall(FreeFunc, tofree);
           }
         }
       }
@@ -12987,11 +13078,13 @@ public:
 #endif
         Builder2.SetInsertPoint(&call);
         getReverseBuilder(Builder2);
-        auto freeCall = cast<CallInst>(CallInst::CreateFree(
-            gutils->lookupM(load, Builder2, ValueToValueMapTy(),
-                            /*tryLegal*/ false),
-            Builder2.GetInsertBlock()));
-        Builder2.GetInsertBlock()->getInstList().push_back(freeCall);
+        auto load2 = gutils->lookupM(load, Builder2, ValueToValueMapTy(),
+                                     /*tryLegal*/ false);
+        auto M = gutils->newFunc->getParent();
+        Type *VoidTy = Type::getVoidTy(M->getContext());
+        Type *IntPtrTy = Type::getInt8PtrTy(M->getContext());
+        auto FreeFunc = M->getOrInsertFunction("free", VoidTy, IntPtrTy);
+        Builder2.CreateCall(FreeFunc, load2);
       }
 
       return;

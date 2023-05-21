@@ -582,7 +582,11 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
     return F;
 
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setOnlyAccessesArgMemory();
+#else
   F->addFnAttr(Attribute::ArgMemOnly);
+#endif
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
   F->addParamAttr(0, Attribute::NoCapture);
@@ -681,7 +685,11 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
     return F;
 
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setOnlyAccessesArgMemory();
+#else
   F->addFnAttr(Attribute::ArgMemOnly);
+#endif
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
   F->addParamAttr(0, Attribute::NoCapture);
@@ -818,7 +826,11 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
     return F;
 
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setOnlyAccessesArgMemory();
+#else
   F->addFnAttr(Attribute::ArgMemOnly);
+#endif
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
 
@@ -1124,7 +1136,11 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
 #endif
 
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setOnlyAccessesArgMemory();
+#else
   F->addFnAttr(Attribute::ArgMemOnly);
+#endif
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
   F->addParamAttr(0, Attribute::NoCapture);
@@ -1869,7 +1885,12 @@ Function *GetFunctionFromValue(Value *fn) {
   return cast<Function>(fn);
 }
 
-llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in) {
+#if LLVM_VERSION_MAJOR >= 16
+std::optional<BlasInfo> extractBLAS(llvm::StringRef in)
+#else
+llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
+#endif
+{
   llvm::Twine floatType[] = {"s", "d"}; // c, z
   llvm::Twine extractable[] = {"dot", "scal"};
   llvm::Twine prefixes[] = {"" /*Fortran*/, "cblas_", "cublas_"};
@@ -1879,18 +1900,18 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in) {
       for (auto p : prefixes) {
         for (auto s : suffixes) {
           if (in == (p + t + f + s).str()) {
-            return llvm::Optional<BlasInfo>(BlasInfo{
+            return BlasInfo{
                 t.getSingleStringRef(),
                 p.getSingleStringRef(),
                 s.getSingleStringRef(),
                 f.getSingleStringRef(),
-            });
+            };
           }
         }
       }
     }
   }
-  return llvm::NoneType();
+  return {};
 }
 
 llvm::Constant *getUndefinedValueForType(llvm::Type *T, bool forceZero) {

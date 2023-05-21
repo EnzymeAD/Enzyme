@@ -52,7 +52,9 @@
 #include "llvm/Analysis/MemorySSA.h"
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"
 
+#if LLVM_VERSION_MAJOR < 16
 #include "llvm/Analysis/CFLSteensAliasAnalysis.h"
+#endif
 #include "llvm/Analysis/DependenceAnalysis.h"
 #include "llvm/Analysis/TypeBasedAliasAnalysis.h"
 #include "llvm/CodeGen/UnreachableBlockElim.h"
@@ -120,11 +122,11 @@ cl::opt<bool> EnzymeInline("enzyme-inline", cl::init(false), cl::Hidden,
 
 cl::opt<bool> EnzymeNoAlias("enzyme-noalias", cl::init(false), cl::Hidden,
                             cl::desc("Force noalias of autodiff"));
-
+#if LLVM_VERSION_MAJOR < 16
 cl::opt<bool>
     EnzymeAggressiveAA("enzyme-aggressive-aa", cl::init(false), cl::Hidden,
                        cl::desc("Use more unstable but aggressive LLVM AA"));
-
+#endif
 cl::opt<bool> EnzymeLowerGlobals(
     "enzyme-lower-globals", cl::init(false), cl::Hidden,
     cl::desc("Lower globals to locals assuming the global values are not "
@@ -842,10 +844,12 @@ void PreProcessCache::ReplaceReallocs(Function *NewF, bool mem2reg) {
     //    return { next, newsize };
 
     Value *newsize = nextPowerOfTwo(B, req);
-    CallInst *next = cast<CallInst>(CallInst::CreateMalloc(
-        resize, newsize->getType(), Type::getInt8Ty(CI->getContext()), newsize,
-        nullptr, (Function *)nullptr, ""));
-    resize->getInstList().push_back(next);
+
+    Module *M = NewF->getParent();
+    Type *BPTy = Type::getInt8PtrTy(NewF->getContext());
+    auto MallocFunc =
+        M->getOrInsertFunction("malloc", BPTy, newsize->getType());
+    auto next = B.CreateCall(MallocFunc, newsize);
     B.SetInsertPoint(resize);
 
     auto volatile_arg = ConstantInt::getFalse(CI->getContext());
@@ -860,8 +864,9 @@ void PreProcessCache::ReplaceReallocs(Function *NewF, bool mem2reg) {
     auto mem = cast<CallInst>(B.CreateCall(memcpyF, nargs));
     mem->setCallingConv(memcpyF->getCallingConv());
 
-    CallInst *freeCall = cast<CallInst>(CallInst::CreateFree(p, resize));
-    resize->getInstList().push_back(freeCall);
+    Type *VoidTy = Type::getVoidTy(M->getContext());
+    auto FreeFunc = M->getOrInsertFunction("free", VoidTy, BPTy);
+    B.CreateCall(FreeFunc, p);
     B.SetInsertPoint(resize);
 
     B.CreateBr(nextBlock);
@@ -909,7 +914,9 @@ Function *CreateMPIWrapper(Function *F) {
 #if LLVM_VERSION_MAJOR >= 12
     Attribute::MustProgress,
 #endif
+#if LLVM_VERSION_MAJOR < 16
     Attribute::ReadOnly,
+#endif
     Attribute::Speculatable,
     Attribute::NoUnwind,
     Attribute::AlwaysInline,
@@ -917,7 +924,9 @@ Function *CreateMPIWrapper(Function *F) {
     Attribute::NoFree,
     Attribute::NoSync,
 #endif
+#if LLVM_VERSION_MAJOR < 16
     Attribute::InaccessibleMemOnly
+#endif
   };
   for (auto attr : attrs) {
 #if LLVM_VERSION_MAJOR >= 14
@@ -926,6 +935,10 @@ Function *CreateMPIWrapper(Function *F) {
     W->addAttribute(AttributeList::FunctionIndex, attr);
 #endif
   }
+#if LLVM_VERSION_MAJOR >= 16
+  W->setOnlyAccessesInaccessibleMemory();
+  W->setOnlyReadsMemory();
+#endif
 #if LLVM_VERSION_MAJOR >= 14
   W->addFnAttr(Attribute::get(F->getContext(), "enzyme_inactive"));
 #else
@@ -1000,10 +1013,16 @@ static void SimplifyMPIQueries(Function &NewF, FunctionAnalysisManager &FAM) {
     B.SetInsertPoint(res);
 
     if (auto PT = dyn_cast<PointerType>(storePointer->getType())) {
-      if (PT->getPointerElementType() != res->getType())
-        storePointer = B.CreateBitCast(
-            storePointer,
-            PointerType::get(res->getType(), PT->getAddressSpace()));
+#if LLVM_VERSION_MAJOR >= 15
+      if (PT->getContext().supportsTypedPointers()) {
+#endif
+        if (PT->getPointerElementType() != res->getType())
+          storePointer = B.CreateBitCast(
+              storePointer,
+              PointerType::get(res->getType(), PT->getAddressSpace()));
+#if LLVM_VERSION_MAJOR >= 15
+      }
+#endif
     } else {
       assert(isa<IntegerType>(storePointer->getType()));
       storePointer = B.CreateIntToPtr(storePointer,
@@ -1206,8 +1225,10 @@ PreProcessCache::PreProcessCache() {
   // disable for now, consider enabling in future
   // FAM.registerPass([] { return SCEVAA(); });
 
+#if LLVM_VERSION_MAJOR < 16
   if (EnzymeAggressiveAA)
     FAM.registerPass([] { return CFLSteensAA(); });
+#endif
 
   MAM.registerPass([&] { return FunctionAnalysisManagerModuleProxy(FAM); });
   FAM.registerPass([&] { return ModuleAnalysisManagerFunctionProxy(MAM); });
@@ -1224,8 +1245,12 @@ PreProcessCache::PreProcessCache() {
 
     // broken for different reasons
     // AM.registerFunctionAnalysis<SCEVAA>();
+
+#if LLVM_VERSION_MAJOR < 16
     if (EnzymeAggressiveAA)
       AM.registerFunctionAnalysis<CFLSteensAA>();
+#endif
+
     return AM;
   });
 
@@ -1708,15 +1733,22 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       }
     }
 
-    PassManagerBuilder Builder;
-    Builder.OptLevel = 2;
-    legacy::FunctionPassManager PM(NewF->getParent());
-    Builder.populateFunctionPassManager(PM);
-    PM.run(*NewF);
-    {
-      PreservedAnalyses PA;
-      FAM.invalidate(*NewF, PA);
-    }
+#if LLVM_VERSION_MAJOR < 14
+    using OptimizationLevel = llvm::PassBuilder::OptimizationLevel;
+#endif
+
+    auto Level = OptimizationLevel::O2;
+
+    PassBuilder PB;
+#if LLVM_VERSION_MAJOR >= 12
+    FunctionPassManager FPM =
+        PB.buildFunctionSimplificationPipeline(Level, ThinOrFullLTOPhase::None);
+#else
+    FunctionPassManager FPM = PB.buildFunctionSimplificationPipeline(
+        Level, PassBuilder::ThinLTOPhase::None);
+#endif
+    auto PA = FPM.run(*F, FAM);
+    FAM.invalidate(*F, PA);
   }
 
   if (EnzymePreopt) {
@@ -1742,7 +1774,9 @@ Function *PreProcessCache::preprocessForClone(Function *F,
     }
 
     {
-#if LLVM_VERSION_MAJOR >= 14 && !defined(FLANG)
+#if LLVM_VERSION_MAJOR >= 16 && !defined(FLANG)
+      auto PA = SROAPass(llvm::SROAOptions::ModifyCFG).run(*NewF, FAM);
+#elif LLVM_VERSION_MAJOR >= 14 && !defined(FLANG)
       auto PA = SROAPass().run(*NewF, FAM);
 #else
       auto PA = SROA().run(*NewF, FAM);
@@ -1754,7 +1788,9 @@ Function *PreProcessCache::preprocessForClone(Function *F,
       ReplaceReallocs(NewF);
 
     {
-#if LLVM_VERSION_MAJOR >= 14 && !defined(FLANG)
+#if LLVM_VERSION_MAJOR >= 16 && !defined(FLANG)
+      auto PA = SROAPass(llvm::SROAOptions::PreserveCFG).run(*NewF, FAM);
+#elif LLVM_VERSION_MAJOR >= 14 && !defined(FLANG)
       auto PA = SROAPass().run(*NewF, FAM);
 #else
       auto PA = SROA().run(*NewF, FAM);
@@ -2244,13 +2280,24 @@ F->getParamAttribute(ii, Attribute::StructRet).getValueAsType())); #else
     ++ii;
   }
 
-  if (hasPtrInput) {
-    if (NewF->hasFnAttribute(Attribute::ReadNone)) {
-      NewF->removeFnAttr(Attribute::ReadNone);
-    }
+  if (hasPtrInput && (mode == DerivativeMode::ReverseModeCombined ||
+                      mode == DerivativeMode::ReverseModeGradient)) {
     if (NewF->hasFnAttribute(Attribute::ReadOnly)) {
       NewF->removeFnAttr(Attribute::ReadOnly);
     }
+#if LLVM_VERSION_MAJOR >= 16
+    auto eff = NewF->getMemoryEffects();
+    for (auto loc : MemoryEffects::locations()) {
+      if (loc == MemoryEffects::Location::InaccessibleMem)
+        continue;
+      auto mr = eff.getModRef(loc);
+      if (isModSet(mr))
+        eff |= MemoryEffects(loc, ModRefInfo::Ref);
+      if (isRefSet(mr))
+        eff |= MemoryEffects(loc, ModRefInfo::Mod);
+    }
+    NewF->setMemoryEffects(eff);
+#endif
   }
   NewF->setLinkage(Function::LinkageTypes::InternalLinkage);
   assert(NewF->hasLocalLinkage());
@@ -2434,7 +2481,9 @@ void PreProcessCache::optimizeIntermediate(Function *F) {
 #else
   GVN().run(*F, FAM);
 #endif
-#if LLVM_VERSION_MAJOR >= 14 && !defined(FLANG)
+#if LLVM_VERSION_MAJOR >= 16 && !defined(FLANG)
+  SROAPass(llvm::SROAOptions::PreserveCFG).run(*F, FAM);
+#elif LLVM_VERSION_MAJOR >= 14 && !defined(FLANG)
   SROAPass().run(*F, FAM);
 #else
   SROA().run(*F, FAM);

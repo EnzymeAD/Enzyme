@@ -576,7 +576,8 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
                                    ArrayRef<Metadata *>(ConstantAsMetadata::get(
                                        byteSizeOfType))));
   forfree->setName("forfree");
-  unsigned align = getCacheAlignment((unsigned)byteSizeOfType->getZExtValue());
+  unsigned align = getCacheAlignment(
+      (unsigned)newFunc->getParent()->getDataLayout().getPointerSize());
 #if LLVM_VERSION_MAJOR >= 10
   forfree->setAlignment(Align(align));
 #else
@@ -814,9 +815,15 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
           MaybeAlign alignv = align;
           if (alignv) {
             if (start != 0) {
-              assert(alignv.getValue().value() != 0);
               // todo make better alignment calculation
-              if (start % alignv.getValue().value() != 0) {
+#if LLVM_VERSION_MAJOR >= 16
+              assert(alignv.value().value() != 0);
+              if (start % alignv.value().value() != 0)
+#else
+              assert(alignv.getValue().value() != 0);
+              if (start % alignv.getValue().value() != 0)
+#endif
+              {
                 alignv = Align(1);
               }
             }
@@ -852,9 +859,14 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
         MaybeAlign alignv = align;
         if (alignv) {
           if (start != 0) {
-            assert(alignv.getValue().value() != 0);
             // todo make better alignment calculation
+#if LLVM_VERSION_MAJOR >= 16
+            assert(alignv.value().value() != 0);
+            if (start % alignv.value().value() != 0) {
+#else
+            assert(alignv.getValue().value() != 0);
             if (start % alignv.getValue().value() != 0) {
+#endif
               alignv = Align(1);
             }
           }
@@ -946,7 +958,9 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       st->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
 
       if (align) {
-#if LLVM_VERSION_MAJOR >= 10
+#if LLVM_VERSION_MAJOR >= 16
+        auto alignv = align ? align.value().value() : 0;
+#elif LLVM_VERSION_MAJOR >= 10
         auto alignv = align ? align.getValue().value() : 0;
 #else
         auto alignv = align;
