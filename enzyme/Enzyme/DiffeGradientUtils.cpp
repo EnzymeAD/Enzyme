@@ -576,7 +576,8 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
                                    ArrayRef<Metadata *>(ConstantAsMetadata::get(
                                        byteSizeOfType))));
   forfree->setName("forfree");
-  unsigned align = getCacheAlignment((unsigned)newFunc->getParent()->getDataLayout().getPointerSize());
+  unsigned align = getCacheAlignment(
+      (unsigned)newFunc->getParent()->getDataLayout().getPointerSize());
 #if LLVM_VERSION_MAJOR >= 10
   forfree->setAlignment(Align(align));
 #else
