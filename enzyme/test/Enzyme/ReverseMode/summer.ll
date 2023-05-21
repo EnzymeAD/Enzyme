@@ -1,5 +1,9 @@
-; RUN: if [ %llvmver -le 12 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -adce -S | FileCheck %s ; fi
-; RUN: if [ %llvmver -ge 13 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -adce -S | FileCheck %s --check-prefix=POST ; fi
+; RUN: if [ %llvmver -le 12 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -adce -S | FileCheck %s ; fi
+; RUN: if [ %llvmver -ge 13 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -adce -S | FileCheck %s --check-prefix=POST ; fi
+
+; RUN: if [ %llvmver -le 12 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg,adce)" -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 13 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg,adce)" -S | FileCheck %s --check-prefix=POST ; fi
+
 
 @.str = private unnamed_addr constant [25 x i8] c"xs[%d] = %f xp[%d] = %f\0A\00", align 1
 @.str.1 = private unnamed_addr constant [7 x i8] c"n != 0\00", align 1

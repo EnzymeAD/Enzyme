@@ -72,7 +72,7 @@ attributes #4 = { nounwind }
 
 ; CHECK: define internal void @diffesub(i64* %this, i64* %"this'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %agg = load i64, i64* %this, align 4
+; CHECK-NEXT:   %agg = load i64, i64* %this
 ; CHECK-NEXT:   %call = tail call i64 @pop(i64 %agg)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

@@ -130,7 +130,7 @@ attributes #1 = { argmemonly }
 ; CHECK-NEXT:   store i64 0, i64* %.omp.lb_smpl
 ; CHECK-NEXT:   store i64 %sub4, i64* %.omp.ub_smpl
 ; CHECK-NEXT:   store i64 1, i64* %.omp.stride_smpl
-; CHECK-NEXT:   call void @__kmpc_for_static_init_8u(%struct.ident_t* nonnull @1, i32 %0, i32 34, i32* nonnull %.omp.is_last, i64* nocapture nonnull %.omp.lb_smpl, i64* nocapture nonnull %.omp.ub_smpl, i64* nocapture nonnull %.omp.stride_smpl, i64 1, i64 1) #0
+; CHECK-NEXT:   call void @__kmpc_for_static_init_8u(%struct.ident_t* nonnull @1, i32 %0, i32 34, i32* nonnull %.omp.is_last, i64* nocapture nonnull %.omp.lb_smpl, i64* nocapture nonnull %.omp.ub_smpl, i64* nocapture nonnull %.omp.stride_smpl, i64 1, i64 1)
 ; CHECK-NEXT:   %_unwrap8 = load i64, i64* %.omp.lb_smpl
 ; CHECK-NEXT:   %_unwrap9 = load i64, i64* %.omp.ub_smpl
 ; CHECK-NEXT:   %cmp6_unwrap10 = icmp ugt i64 %_unwrap9, %sub4

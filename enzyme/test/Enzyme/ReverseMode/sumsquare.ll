@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -early-cse -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -early-cse -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg,early-cse)" -S | FileCheck %s
 
 ; Function Attrs: norecurse nounwind readonly uwtable
 define dso_local double @sumsquare(double* nocapture readonly %x, i64 %n) #0 {
@@ -35,26 +36,26 @@ attributes #1 = { nounwind uwtable }
 attributes #2 = { nounwind }
 
 
-; CHECK: define dso_local void @dsumsquare(double* %x, double* %xp, i64 %n)
+; CHECK: define internal void @diffesumsquare(double* nocapture readonly %x, double* nocapture %"x'", i64 %n, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   br label %invertfor.body.i
+; CHECK-NEXT:   br label %invertfor.body
 
-; CHECK: invertfor.body.i:
-; CHECK-NEXT:   %[[antiiv:.+]] = phi i64 [ %n, %entry ], [ %[[antiivnext:.+]], %incinvertfor.body.i ]
+; CHECK: invertentry:
+; CHECK-NEXT:   ret void
+
+; CHECK: invertfor.body:
+; CHECK-NEXT:   %[[antiiv:.+]] = phi i64 [ %n, %entry ], [ %[[antiivnext:.+]], %incinvertfor.body ]
 ; CHECK-NEXT:   %[[ptr:.+]] = getelementptr inbounds double, double* %x, i64 %[[antiiv]]
 ; CHECK-NEXT:   %[[prev:.+]] = load double, double* %[[ptr]]
-; CHECK-NEXT:   %[[times2:.+]] = fadd fast double %[[prev]], %[[prev]]
-; CHECK-NEXT:   %[[arrayidxipgi:.+]] = getelementptr inbounds double, double* %xp, i64 %[[antiiv]]
+; CHECK-NEXT:   %[[m0diffe:.+]] = fmul fast double %differeturn, %[[prev]]
+; CHECK-NEXT:   %[[times2:.+]] = fadd fast double %[[m0diffe]], %[[m0diffe]]
+; CHECK-NEXT:   %[[arrayidxipgi:.+]] = getelementptr inbounds double, double* %"x'", i64 %[[antiiv]]
 ; CHECK-NEXT:   %[[loaded:.+]] = load double, double* %[[arrayidxipgi]]
 ; CHECK-NEXT:   %[[tostore:.+]] = fadd fast double %[[loaded:.+]], %[[times2]]
 ; CHECK-NEXT:   store double %[[tostore]], double* %[[arrayidxipgi]]
 ; CHECK-NEXT:   %[[cmp:.+]] = icmp eq i64 %[[antiiv]], 0
-; CHECK-NEXT:   br i1 %[[cmp]], label %diffesumsquare.exit, label %incinvertfor.body.i
+; CHECK-NEXT:   br i1 %[[cmp]], label %invertentry, label %incinvertfor.body
 
-; CHECK: incinvertfor.body.i:
+; CHECK: incinvertfor.body:
 ; CHECK-NEXT:   %[[antiivnext]] = add nsw i64 %[[antiiv]], -1
-; CHECK-NEXT:   br label %invertfor.body.i
-
-; CHECK: diffesumsquare.exit:                                    ; preds = %invertfor.body.i
-; CHECK-NEXT:   ret void
-; CHECK-NEXT: }
+; CHECK-NEXT:   br label %invertfor.body

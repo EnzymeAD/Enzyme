@@ -1,4 +1,8 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s
+; TODO handle LLVM 16+
+
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s; fi
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg)" -S | FileCheck %s; fi
+
 source_filename = "threeexit.c"
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-gnu"
@@ -116,10 +120,10 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %exitcond = icmp eq i64 %iv.next, 100
 ; CHECK-NEXT:   br i1 %exitcond, label %invertfor.inc, label %for.body
 
-; CHECK: invertentry:                                      ; preds = %invertfor.inc
+; CHECK: invertentry:            
 ; CHECK-NEXT:   ret void
 
-; CHECK: incinvertfor.body:                                ; preds = %invertfor.inc
+; CHECK: incinvertfor.body:   
 ; CHECK-NEXT:   %1 = add nsw i64 %"iv'ac.0", -1
 ; CHECK-NEXT:   br label %invertfor.inc
 

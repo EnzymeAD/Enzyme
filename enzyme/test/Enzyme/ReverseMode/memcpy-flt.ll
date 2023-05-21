@@ -139,4 +139,4 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
-; CHECK: attributes #[[mymemattrs]] = { alwaysinline argmemonly nounwind }
+; CHECK: attributes #[[mymemattrs]] = { alwaysinline {{(argmemonly nounwind|nounwind memory\(argmem: readwrite\))}} }

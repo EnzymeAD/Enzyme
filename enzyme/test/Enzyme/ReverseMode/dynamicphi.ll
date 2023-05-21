@@ -1,7 +1,7 @@
 ; RUN: if [ %llvmver -lt 15 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -gvn -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -licm -early-cse -simplifycfg -instsimplify -S | FileCheck %s -check-prefixes LL14,CHECK; fi
 ; RUN: if [ %llvmver -ge 15 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -gvn -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -licm -early-cse -simplifycfg -instsimplify -S | FileCheck %s -check-prefixes LL15,CHECK; fi
-; RUN: if [ %llvmver -lt 15 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,gvn,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg,loop-mssa(licm),early-cse,%simplifycfg,instsimplify)" -S | FileCheck %s -check-prefixes LL14,CHECK; fi
-; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,gvn,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg,loop-mssa(licm),early-cse,%simplifycfg,instsimplify)" -S | FileCheck %s -check-prefixes LL15,CHECK; fi
+; RUN: if [ %llvmver -lt 15 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,gvn,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg,%loopmssa(licm),early-cse,%simplifycfg,instsimplify)" -S | FileCheck %s -check-prefixes LL14,CHECK; fi
+; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,gvn,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg,%loopmssa(licm),early-cse,%simplifycfg,instsimplify)" -S | FileCheck %s -check-prefixes LL15,CHECK; fi
 
 ; Function Attrs: noinline norecurse nounwind uwtable
 define dso_local double @get(double* nocapture %x, i64 %i) local_unnamed_addr #0 {

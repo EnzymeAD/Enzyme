@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -simplifycfg -S -early-cse -enzyme-runtime-activity -enzyme-loose-types | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme-runtime-activity -enzyme-loose-types -enzyme -mem2reg -instsimplify -adce -simplifycfg -early-cse -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-runtime-activity -enzyme-loose-types -passes="enzyme,function(mem2reg,instsimplify,adce,%simplifycfg,early-cse)" -S | FileCheck %s
 
 declare void @__enzyme_autodiff(...)
 

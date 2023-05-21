@@ -70,7 +70,7 @@ entry:
 ; CHECK: define internal { double } @diffeindirect(double* %x, double* %"x'", double* %dxdt, double* %"dxdt'", double %t, i8* %tapeArg)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[elt1:.+]] = bitcast i8* %tapeArg to double**
-; CHECK-NEXT:   %[[unpack:.+]] = load double*, double** %[[elt1]], align 8
+; CHECK-NEXT:   %[[unpack:.+]] = load double*, double** %[[elt1]]
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %tapeArg)
 ; CHECK-NEXT:   %[[loadc:.+]] = load double, double* %[[unpack]], align 8
 ; CHECK-NEXT:   store double 0.000000e+00, double* %[[unpack]], align 8

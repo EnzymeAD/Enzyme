@@ -173,7 +173,7 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %1 = extractvalue { i8**, i8** } %tapeArg, 1
 ; CHECK-NEXT:   %[[n1:.+]] = add i32 %n, 1
 ; CHECK-NEXT:   %wide.trip.count = zext i32 %[[n1]] to i64
-; CHECK-NEXT:   %3 = add nsw i64 %wide.trip.count, -1
+; CHECK-NEXT:   %3 = add {{(nsw )?}}i64 %wide.trip.count, -1
 ; CHECK-NEXT:   br label %invertfor.body
 
 ; CHECK: invertentry:                                      ; preds = %invertfor.body

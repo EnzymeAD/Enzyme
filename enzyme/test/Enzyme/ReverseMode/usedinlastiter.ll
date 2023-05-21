@@ -1,5 +1,8 @@
-; RUN: if [ %llvmver -ge 12 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -gvn -early-cse -instsimplify -simplifycfg -adce -S | FileCheck %s; fi
-; RUN: if [ %llvmver -lt 12 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -gvn -early-cse -instsimplify -simplifycfg -adce -S | FileCheck %s --check-prefix=BEFORE; fi
+; RUN: if [ %llvmver -ge 12 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -adce -S | FileCheck %s; fi
+; RUN: if [ %llvmver -lt 12 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -adce -S | FileCheck %s --check-prefix=BEFORE; fi
+
+; RUN: if [ %llvmver -ge 12 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg,adce)" -S | FileCheck %s; fi
+; RUN: if [ %llvmver -lt 12 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg,adce)" -S | FileCheck %s --check-prefix=BEFORE; fi
 
 define void @foo(float* noalias %out, float* noalias %in, i64* %x2.i.i, i1 %a9) {
 entry:
@@ -97,16 +100,18 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; CHECK-NEXT:   %[[malloccall5:.+]] = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
 ; CHECK-NEXT:   %[[a17_malloccache6:.+]] = bitcast i8* %[[malloccall5]] to float*
 ; CHECK-NEXT:   store float* %[[a17_malloccache6]], float** %[[i2]], align 4, !invariant.group ![[g1:[0-9]+]]
-; CHECK-NEXT:   %a17.pre = load float, float* %in, align 8
 ; CHECK-NEXT:   br label %for.cond6.preheader
 
 ; CHECK: for.cond6.preheader:                              ; preds = %for.cond6.preheader, %for.cond6.preheader.preheader
 ; CHECK-NEXT:   %iv3 = phi i64 [ 0, %for.cond6.preheader.preheader ], [ %iv.next4, %for.cond6.preheader ] 
 ; CHECK-NEXT:   %iv.next4 = add nuw nsw i64 %iv3, 1
-; CHECK-NEXT:   %sq = fmul float %a17.pre, %a17.pre
+; CHECK-NEXT:   %a17 = load float, float* %in
+; CHECK-NEXT:   %sq = fmul float %a17, %a17
 ; CHECK-NEXT:   store float %sq, float* %out, align 8
-; CHECK-NEXT:   %[[i3:.+]] = getelementptr inbounds float, float* %[[a17_malloccache6]], i64 %iv3
-; CHECK-NEXT:   store float %a17.pre, float* %[[i3]], align 4, !invariant.group ![[g2:[0-9]+]]
+; CHECK-NEXT:   %[[ai2:.+]] = getelementptr inbounds float*, float** %a17_malloccache, i64 %iv
+; CHECK-NEXT:   %[[ppl:.+]] = load float*, float** %[[ai2]]
+; CHECK-NEXT:   %[[i3:.+]] = getelementptr inbounds float, float* %[[ppl]], i64 %iv3
+; CHECK-NEXT:   store float %a17, float* %[[i3]], align 4, !invariant.group ![[g2:[0-9]+]]
 ; CHECK-NEXT:   %cmp3.not = icmp eq i64 %iv.next4, %cond
 ; CHECK-NEXT:   br i1 %cmp3.not, label %for.cond.cleanup4, label %for.cond6.preheader
 
@@ -136,20 +141,22 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; CHECK-NEXT:   %[[i6:.+]] = add nsw i64 %"iv1'ac.0", -1
 ; CHECK-NEXT:   br label %invertmerge
 
-; CHECK: invertmerge:                                      ; preds = %invert_ZNK11OuterStruct4sizeEv.exit, %incinvertfor.body2
-; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ 6, %invert_ZNK11OuterStruct4sizeEv.exit ], [ %[[i6]], %incinvertfor.body2 ]
+; CHECK: invertmerge:
+; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ 6, %mergeinvertfor.body2__ZNK11OuterStruct4sizeEv.exit ], [ %[[i6]], %incinvertfor.body2 ]
 ; CHECK-NEXT:   %[[i7:.+]] = icmp eq i64 %"iv1'ac.0", 0
 ; CHECK-NEXT:   br i1 %[[i7]], label %invertfor.body, label %incinvertfor.body2
 
-; CHECK: invert_ZNK11OuterStruct4sizeEv.exit:              ; preds = %invertfor.cond.cleanup4, %invertfor.cond6.preheader.preheader
+; CHECK: mergeinvertfor.body2__ZNK11OuterStruct4sizeEv.exit:
 ; CHECK-NEXT:   %"a17'de.0" = phi float [ %"a17'de.2", %invertfor.cond.cleanup4 ], [ 0.000000e+00, %invertfor.cond6.preheader.preheader ]
 ; CHECK-NEXT:   %"sq'de.0" = phi float [ %"sq'de.2", %invertfor.cond.cleanup4 ], [ 0.000000e+00, %invertfor.cond6.preheader.preheader ]
 ; CHECK-NEXT:   br label %invertmerge
 
 ; CHECK: invertfor.cond6.preheader.preheader:              ; preds = %invertfor.cond6.preheader
-; CHECK-NEXT:   %[[i8:.+]] = bitcast float* %.pre to i8*
+; CHECK-NEXT:   %[[qi2:.+]] = getelementptr inbounds float*, float** %a17_malloccache, i64 %"iv'ac.0"
+; CHECK-NEXT:   %[[a13:.+]] = load float*, float** %[[qi2:.+]], align 8, !dereferenceable !{{[0-9]+}}, !invariant.group ![[g1]]
+; CHECK-NEXT:   %[[i8:.+]] = bitcast float* %[[a13]] to i8*
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %[[i8]])
-; CHECK-NEXT:   br label %invert_ZNK11OuterStruct4sizeEv.exit
+; CHECK-NEXT:   br label %mergeinvertfor.body2__ZNK11OuterStruct4sizeEv.exit
 
 ; CHECK: invertfor.cond6.preheader:                        ; preds = %invertfor.cond.cleanup4.loopexit, %incinvertfor.cond6.preheader
 ; CHECK-NEXT:   %"a17'de.1" = phi float [ %"a17'de.2", %invertfor.cond.cleanup4.loopexit ], [ 0.000000e+00, %incinvertfor.cond6.preheader ]
@@ -158,11 +165,14 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; CHECK-NEXT:   %[[i9:.+]] = load float, float* %"out'", align 8
 ; CHECK-NEXT:   store float 0.000000e+00, float* %"out'", align 8
 ; CHECK-NEXT:   %[[i10:.+]] = fadd fast float %"sq'de.1", %[[i9]]
-; CHECK-NEXT:   %[[i11:.+]] = getelementptr inbounds float, float* %.pre, i64 %"iv3'ac.0"
+; CHECK-NEXT:   %[[z12:.+]] = getelementptr inbounds float*, float** %a17_malloccache, i64 %"iv'ac.0"
+; CHECK-NEXT:   %[[r13:.+]] = load float*, float** %[[z12]], align 8
+; CHECK-NEXT:   %[[i11:.+]] = getelementptr inbounds float, float* %[[r13]], i64 %"iv3'ac.0"
 ; CHECK-NEXT:   %[[i12:.+]] = load float, float* %[[i11]], align 4, !invariant.group ![[g2]]
 ; CHECK-NEXT:   %m0diffea17 = fmul fast float %[[i10]], %[[i12]]
+; CHECK-NEXT:   %m1diffea17 = fmul fast float %[[i10]], %[[i12]]
 ; CHECK-NEXT:   %[[i13:.+]] = fadd fast float %"a17'de.1", %m0diffea17
-; CHECK-NEXT:   %[[i14:.+]] = fadd fast float %[[i13]], %m0diffea17
+; CHECK-NEXT:   %[[i14:.+]] = fadd fast float %[[i13]], %m1diffea17
 ; CHECK-NEXT:   %[[i15:.+]] = load float, float* %"in'", align 8
 ; CHECK-NEXT:   %[[i16:.+]] = fadd fast float %[[i15]], %[[i14]]
 ; CHECK-NEXT:   store float %[[i16:.+]], float* %"in'", align 8
@@ -174,19 +184,19 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; CHECK-NEXT:   br label %invertfor.cond6.preheader
 
 ; CHECK: invertfor.cond.cleanup4.loopexit:                 ; preds = %invertfor.cond.cleanup4
-; CHECK-NEXT:   %[[_unwrap12]] = add i64 %[[i22:.+]], -1
-; CHECK-NEXT:   %.phi.trans.insert = getelementptr inbounds float*, float** %a17_malloccache, i64 %"iv'ac.0"
-; CHECK-NEXT:   %.pre = load float*, float** %.phi.trans.insert, align 8, !invariant.group ![[g1]]
+; CHECK-NEXT:   %[[i19:.+]] = getelementptr inbounds i64, i64* %cond.lcssa_malloccache, i64 %"iv'ac.0"
+; CHECK-NEXT:   %[[i22:.+]] = load i64, i64* %[[i19]], align 8, !invariant.group ![[ig0]]
+; CHECK-NEXT:   %[[_unwrap12]] = add i64 %[[i22]], -1
 ; CHECK-NEXT:   br label %invertfor.cond6.preheader
 
 ; CHECK: invertfor.cond.cleanup4:                          ; preds = %for.cond.cleanup, %incinvertfor.body
 ; CHECK-NEXT:   %"a17'de.2" = phi float [ 0.000000e+00, %for.cond.cleanup ], [ %"a17'de.0", %incinvertfor.body ]
 ; CHECK-NEXT:   %"sq'de.2" = phi float [ 0.000000e+00, %for.cond.cleanup ], [ %"sq'de.0", %incinvertfor.body ]
 ; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ 9, %for.cond.cleanup ], [ %[[i5]], %incinvertfor.body ]
-; CHECK-NEXT:   %[[i19:.+]] = getelementptr inbounds i64, i64* %cond.lcssa_malloccache, i64 %"iv'ac.0"
-; CHECK-NEXT:   %[[i22]] = load i64, i64* %[[i19]], align 8, !invariant.group ![[ig0]]
-; CHECK-NEXT:   %cmp3.not233_unwrap = icmp eq i64 %[[i22]], 0
-; CHECK-NEXT:   br i1 %cmp3.not233_unwrap, label %invert_ZNK11OuterStruct4sizeEv.exit, label %invertfor.cond.cleanup4.loopexit
+; CHECK-NEXT:   %[[qi19:.+]] = getelementptr inbounds i64, i64* %cond.lcssa_malloccache, i64 %"iv'ac.0"
+; CHECK-NEXT:   %[[qi22:.+]] = load i64, i64* %[[qi19]], align 8, !invariant.group ![[ig0]]
+; CHECK-NEXT:   %cmp3.not233_unwrap = icmp eq i64 %[[qi22]], 0
+; CHECK-NEXT:   br i1 %cmp3.not233_unwrap, label %mergeinvertfor.body2__ZNK11OuterStruct4sizeEv.exit, label %invertfor.cond.cleanup4.loopexit
 ; CHECK-NEXT: }
 
 ; BEFORE: define internal void @diffefoo(float* noalias %out, float* %"out'", float* noalias %in, float* %"in'", i64* %x2.i.i, i1 %a9)
@@ -239,16 +249,18 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; BEFORE-NEXT:   %[[malloccall5:.+]] = tail call noalias nonnull i8* @malloc(i64 %mallocsize)
 ; BEFORE-NEXT:   %[[a17_malloccache6:.+]] = bitcast i8* %[[malloccall5]] to float*
 ; BEFORE-NEXT:   store float* %[[a17_malloccache6]], float** %[[i2]], align 4, !invariant.group ![[g1:[0-9]+]]
-; BEFORE-NEXT:   %a17.pre = load float, float* %in, align 8
 ; BEFORE-NEXT:   br label %for.cond6.preheader
 
 ; BEFORE: for.cond6.preheader:                              ; preds = %for.cond6.preheader, %for.cond6.preheader.preheader
 ; BEFORE-NEXT:   %iv3 = phi i64 [ 0, %for.cond6.preheader.preheader ], [ %iv.next4, %for.cond6.preheader ] 
 ; BEFORE-NEXT:   %iv.next4 = add nuw nsw i64 %iv3, 1
-; BEFORE-NEXT:   %sq = fmul float %a17.pre, %a17.pre
+; BEFORE-NEXT:   %a17 = load float, float* %in, align 8
+; BEFORE-NEXT:   %sq = fmul float %a17, %a17
 ; BEFORE-NEXT:   store float %sq, float* %out, align 8
-; BEFORE-NEXT:   %[[i3:.+]] = getelementptr inbounds float, float* %[[a17_malloccache6]], i64 %iv3
-; BEFORE-NEXT:   store float %a17.pre, float* %[[i3]], align 4, !invariant.group ![[g2:[0-9]+]]
+; BEFORE-NEXT:   %[[iq:.+]] = getelementptr inbounds float*, float** %a17_malloccache, i64 %iv
+; BEFORE-NEXT:   %[[a17_mc:.+]] = load float*, float** %[[iq]]
+; BEFORE-NEXT:   %[[i3:.+]] = getelementptr inbounds float, float* %[[a17_mc]], i64 %iv3
+; BEFORE-NEXT:   store float %a17, float* %[[i3]], align 4, !invariant.group ![[g2:[0-9]+]]
 ; BEFORE-NEXT:   %cmp3.not = icmp eq i64 %iv.next4, %cond
 ; BEFORE-NEXT:   br i1 %cmp3.not, label %for.cond.cleanup4.loopexit, label %for.cond6.preheader
 
@@ -258,9 +270,8 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; BEFORE-NEXT:   br label %for.cond.cleanup4
 
 ; BEFORE: for.cond.cleanup4:                                ; preds = %for.cond.cleanup4.loopexit, %_ZNK11OuterStruct4sizeEv.exit
-; BEFORE-NEXT:   %[[cond_lcssa17:.+]] = phi i64 [ %cond, %for.cond.cleanup4.loopexit ], [ 0, %_ZNK11OuterStruct4sizeEv.exit ]
 ; BEFORE-NEXT:   %[[ii1:.+]] = getelementptr inbounds i64, i64* %[[s0lcssa]], i64 %iv
-; BEFORE-NEXT:   store i64 %[[cond_lcssa17]], i64* %[[ii1]], align 8, !invariant.group ![[g4:[0-9]+]]
+; BEFORE-NEXT:   store i64 %cond, i64* %[[ii1]], align 8, !invariant.group ![[g4:[0-9]+]]
 ; BEFORE-NEXT:   %cmp.not = icmp eq i64 %iv.next, 10
 ; BEFORE-NEXT:   br i1 %cmp.not, label %for.cond.cleanup, label %for.body
 
@@ -288,20 +299,22 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; BEFORE-NEXT:   %[[a7:.+]] = add nsw i64 %"iv1'ac.0", -1
 ; BEFORE-NEXT:   br label %invertmerge
 
-; BEFORE: invertmerge:                                      ; preds = %invert_ZNK11OuterStruct4sizeEv.exit, %incinvertfor.body2
-; BEFORE-NEXT:   %"iv1'ac.0" = phi i64 [ 6, %invert_ZNK11OuterStruct4sizeEv.exit ], [ %[[a7]], %incinvertfor.body2 ]
+; BEFORE: invertmerge:
+; BEFORE-NEXT:   %"iv1'ac.0" = phi i64 [ 6, %mergeinvertfor.body2__ZNK11OuterStruct4sizeEv.exit ], [ %[[a7]], %incinvertfor.body2 ]
 ; BEFORE-NEXT:   %[[a8:.+]] = icmp eq i64 %"iv1'ac.0", 0
 ; BEFORE-NEXT:   br i1 %[[a8]], label %invertfor.body, label %incinvertfor.body2
 
-; BEFORE: invert_ZNK11OuterStruct4sizeEv.exit:              ; preds = %invertfor.cond.cleanup4, %invertfor.cond6.preheader.preheader
+; BEFORE: mergeinvertfor.body2__ZNK11OuterStruct4sizeEv.exit: 
 ; BEFORE-NEXT:   %"a17'de.0" = phi float [ %"a17'de.2", %invertfor.cond.cleanup4 ], [ 0.000000e+00, %invertfor.cond6.preheader.preheader ]
 ; BEFORE-NEXT:   %"sq'de.0" = phi float [ %"sq'de.2", %invertfor.cond.cleanup4 ], [ 0.000000e+00, %invertfor.cond6.preheader.preheader ]
 ; BEFORE-NEXT:   br label %invertmerge
 
 ; BEFORE: invertfor.cond6.preheader.preheader:              ; preds = %invertfor.cond6.preheader
-; BEFORE-NEXT:   %[[a9:.+]] = bitcast float* %[[a13:.+]] to i8*
+; BEFORE-NEXT:   %[[qi2:.+]] = getelementptr inbounds float*, float** %a17_malloccache, i64 %"iv'ac.0"
+; BEFORE-NEXT:   %[[a13:.+]] = load float*, float** %[[qi2:.+]], align 8, !dereferenceable !{{[0-9]+}}, !invariant.group ![[g1]]
+; BEFORE-NEXT:   %[[a9:.+]] = bitcast float* %[[a13]] to i8*
 ; BEFORE-NEXT:   tail call void @free(i8* nonnull %[[a9]])
-; BEFORE-NEXT:   br label %invert_ZNK11OuterStruct4sizeEv.exit
+; BEFORE-NEXT:   br label %mergeinvertfor.body2__ZNK11OuterStruct4sizeEv.exit
 
 ; BEFORE: invertfor.cond6.preheader:                        ; preds = %invertfor.cond.cleanup4.loopexit, %incinvertfor.cond6.preheader
 ; BEFORE-NEXT:   %"a17'de.1" = phi float [ %"a17'de.2", %invertfor.cond.cleanup4.loopexit ], [ 0.000000e+00, %incinvertfor.cond6.preheader ]
@@ -311,12 +324,13 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; BEFORE-NEXT:   store float 0.000000e+00, float* %"out'", align 8
 ; BEFORE-NEXT:   %[[a11:.+]] = fadd fast float %"sq'de.1", %[[a10]]
 ; BEFORE-NEXT:   %[[a12:.+]] = getelementptr inbounds float*, float** %a17_malloccache, i64 %"iv'ac.0"
-; BEFORE-NEXT:   %[[a13]] = load float*, float** %[[a12]], align 8, !dereferenceable !{{[0-9]+}}, !invariant.group ![[g1]]
-; BEFORE-NEXT:   %[[a14:.+]] = getelementptr inbounds float, float* %[[a13]], i64 %"iv3'ac.0"
+; BEFORE-NEXT:   %[[a13_2:.+]] = load float*, float** %[[a12]], align 8, !dereferenceable !{{[0-9]+}}, !invariant.group ![[g1]]
+; BEFORE-NEXT:   %[[a14:.+]] = getelementptr inbounds float, float* %[[a13_2]], i64 %"iv3'ac.0"
 ; BEFORE-NEXT:   %[[a15:.+]] = load float, float* %[[a14]], align 4, !invariant.group ![[g2]]
 ; BEFORE-NEXT:   %m0diffea17 = fmul fast float %[[a11]], %[[a15]]
+; BEFORE-NEXT:   %m1diffea17 = fmul fast float %[[a11]], %[[a15]]
 ; BEFORE-NEXT:   %[[a16:.+]] = fadd fast float %"a17'de.1", %m0diffea17
-; BEFORE-NEXT:   %[[a17:.+]] = fadd fast float %[[a16]], %m0diffea17
+; BEFORE-NEXT:   %[[a17:.+]] = fadd fast float %[[a16]], %m1diffea17
 ; BEFORE-NEXT:   %[[a18:.+]] = load float, float* %"in'", align 8
 ; BEFORE-NEXT:   %[[a19:.+]] = fadd fast float %[[a18]], %[[a17]]
 ; BEFORE-NEXT:   store float %[[a19]], float* %"in'", align 8
@@ -340,5 +354,5 @@ declare void @__enzyme_autodiff(i8*, float*, float*, float*, float*, i64* %l, i1
 ; BEFORE-NEXT:   %[[a24:.+]] = getelementptr inbounds i64, i64* %[[s0lcssa]], i64 %"iv'ac.0"
 ; BEFORE-NEXT:   %[[a25:.+]] = load i64, i64* %[[a24]], align 8, !invariant.group ![[g4]]
 ; BEFORE-NEXT:   %cmp3.not233_unwrap = icmp eq i64 %[[a25]], 0
-; BEFORE-NEXT:   br i1 %cmp3.not233_unwrap, label %invert_ZNK11OuterStruct4sizeEv.exit, label %invertfor.cond.cleanup4.loopexit
+; BEFORE-NEXT:   br i1 %cmp3.not233_unwrap, label %mergeinvertfor.body2__ZNK11OuterStruct4sizeEv.exit, label %invertfor.cond.cleanup4.loopexit
 ; BEFORE-NEXT: }

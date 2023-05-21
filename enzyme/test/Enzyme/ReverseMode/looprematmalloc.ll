@@ -187,11 +187,11 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %17 = add i64 %fiv, 1
 ; CHECK-DAG:   %i_unwrap = bitcast i8* %remat_i1 to [30 x double]*
 ; CHECK-DAG:   %i20_unwrap = getelementptr inbounds [30 x double], [30 x double]* %i_unwrap, i64 0, i64 %fiv
-; CHECK-DAG:   %i15_unwrap1 = and i64 %fiv, 1
-; CHECK-DAG:   %i16_unwrap2 = icmp eq i64 %i15_unwrap1, 0
+; CHECK-DAG:   %[[i15_unwrap1:.+]] = and i64 %fiv, 1
+; CHECK-DAG:   %[[i16_unwrap2:.+]] = icmp eq i64 %[[i15_unwrap1]], 0
 ; CHECK-DAG:   %i17_unwrap = trunc i64 %fiv to i32
 ; CHECK-DAG:   %18 = call fast double @llvm.powi.f64{{(\.i32)?}}(double %arg, i32 %i17_unwrap) 
-; CHECK-DAG:   %19 = select i1 %i16_unwrap2, double %18, double 0.000000e+00
+; CHECK-DAG:   %19 = select i1 %[[i16_unwrap2]], double %18, double 0.000000e+00
 ; CHECK-NEXT:   store double %19, double* %i20_unwrap, align 8
 ; CHECK-NEXT:   %i22_unwrap = icmp eq i64 %17, 30
 ; CHECK-NEXT:   br i1 %i22_unwrap, label %remat_loop_loopExit, label %remat_loop_setLoop

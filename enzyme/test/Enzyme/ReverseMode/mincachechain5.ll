@@ -1,6 +1,6 @@
 ; TODO handle llvm 13 +
-; RUN: if [ %llvmver -lt 13 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -sroa -simplifycfg -S | FileCheck %s; fi
-; RUN: if [ %llvmver -lt 13 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,sroa,%simplifycfg)" -S | FileCheck %s; fi
+; RUN: if [ %llvmver -lt 13 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -sroa -simplifycfg -early-cse -adce -S | FileCheck %s; fi
+; RUN: if [ %llvmver -lt 13 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,sroa,%simplifycfg,early-cse,adce)" -S | FileCheck %s; fi
 
 declare dso_local void @_Z17__enzyme_autodiffPvPdS0_i(i8*, double*, double*, i64*) local_unnamed_addr #4
 define dso_local void @outer(double* %m, double* %m2, i64* %n) local_unnamed_addr #2 {

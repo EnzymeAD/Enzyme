@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S -enzyme-zero-cache=1 | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S -enzyme-zero-cache=1 | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-zero-cache=1 -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 declare dso_local double @__enzyme_autodiff(...)
 

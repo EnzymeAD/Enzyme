@@ -1227,7 +1227,7 @@ bool shouldAugmentCall(CallInst *op, const GradientUtils *gutils) {
 
   Function *called = op->getCalledFunction();
 
-  bool modifyPrimal = !called || !called->hasFnAttribute(Attribute::ReadNone);
+  bool modifyPrimal = !called || !isReadNone(op);
 
   if (modifyPrimal) {
 #ifdef PRINT_AUGCALL
@@ -1277,8 +1277,7 @@ bool shouldAugmentCall(CallInst *op, const GradientUtils *gutils) {
     if (!argType->isFPOrFPVectorTy() &&
         !gutils->isConstantValue(op->getArgOperand(i)) &&
         gutils->TR.query(op->getArgOperand(i)).Inner0().isPossiblePointer()) {
-      if (called && !(called->hasParamAttribute(i, Attribute::ReadOnly) ||
-                      called->hasParamAttribute(i, Attribute::ReadNone))) {
+      if (!isReadOnly(op, i)) {
         modifyPrimal = true;
 #ifdef PRINT_AUGCALL
         if (called)

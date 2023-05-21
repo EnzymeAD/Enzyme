@@ -47,7 +47,7 @@ attributes #1 = { nounwind readnone noinline }
 ; CHECK: define internal { double } @differelu(double %x, double %differeturn)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %cmp = fcmp fast ogt double %x, 0.000000e+00
-; CHECK-NEXT:   %0 = select fast i1 %cmp, double %differeturn, double 0.000000e+00
+; CHECK-NEXT:   %0 = select{{( fast)?}} i1 %cmp, double %differeturn, double 0.000000e+00
 ; CHECK-NEXT:   br i1 %cmp, label %invertcond.true, label %invertentry
 
 ; CHECK: invertentry: 
