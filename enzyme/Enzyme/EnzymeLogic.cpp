@@ -920,12 +920,22 @@ void calculateUnusedValuesInFunction(
           if (isMemFreeLibMFunction(funcName, &ID) || isReadOnly(obj_op)) {
             mayWriteToMemory = false;
           }
+          if (funcName == "memset" || funcName == "memcpy" ||
+              funcName == "memmove") {
+            if (isNoNeed(obj_op->getArgOperand(0)))
+              return UseReq::Recur;
+          }
         }
 
         if (auto si = dyn_cast<StoreInst>(inst)) {
           if (isa<UndefValue>(si->getValueOperand()))
             return UseReq::Recur;
           if (isNoNeed(si->getPointerOperand()))
+            return UseReq::Recur;
+        }
+
+        if (auto msi = dyn_cast<MemSetInst>(inst)) {
+          if (isNoNeed(msi->getArgOperand(0)))
             return UseReq::Recur;
         }
 
