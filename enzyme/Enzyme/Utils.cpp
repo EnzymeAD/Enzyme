@@ -1869,20 +1869,71 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
 }
 
 Function *GetFunctionFromValue(Value *fn) {
-  while (auto ci = dyn_cast<CastInst>(fn)) {
-    fn = ci->getOperand(0);
-  }
-  while (auto ci = dyn_cast<BlockAddress>(fn)) {
-    fn = ci->getFunction();
-  }
-  while (auto ci = dyn_cast<ConstantExpr>(fn)) {
-    fn = ci->getOperand(0);
-  }
-  if (!isa<Function>(fn)) {
-    return nullptr;
+  while (!isa<Function>(fn)) {
+    if (auto ci = dyn_cast<CastInst>(fn)) {
+      fn = ci->getOperand(0);
+      continue;
+    }
+    if (auto ci = dyn_cast<ConstantExpr>(fn)) {
+      if (ci->isCast()) {
+        fn = ci->getOperand(0);
+        continue;
+      }
+    }
+    if (auto ci = dyn_cast<BlockAddress>(fn)) {
+      fn = ci->getFunction();
+      continue;
+    }
+    if (auto *GA = dyn_cast<GlobalAlias>(fn)) {
+      fn = GA->getAliasee();
+      continue;
+    }
+    if (auto *Call = dyn_cast<CallInst>(fn)) {
+      if (auto F = Call->getCalledFunction()) {
+        SmallPtrSet<Value *, 1> ret;
+        for (auto &BB : *F) {
+          if (auto RI = dyn_cast<ReturnInst>(BB.getTerminator())) {
+            ret.insert(RI->getReturnValue());
+          }
+        }
+        if (ret.size() == 1) {
+          auto val = *ret.begin();
+          if (isa<Constant>(val)) {
+            fn = val;
+            continue;
+          }
+          if (auto arg = dyn_cast<Argument>(val)) {
+            fn = Call->getArgOperand(arg->getArgNo());
+            continue;
+          }
+        }
+      }
+    }
+    if (auto *Call = dyn_cast<InvokeInst>(fn)) {
+      if (auto F = Call->getCalledFunction()) {
+        SmallPtrSet<Value *, 1> ret;
+        for (auto &BB : *F) {
+          if (auto RI = dyn_cast<ReturnInst>(BB.getTerminator())) {
+            ret.insert(RI->getReturnValue());
+          }
+        }
+        if (ret.size() == 1) {
+          auto val = *ret.begin();
+          if (isa<Constant>(val)) {
+            fn = val;
+            continue;
+          }
+          if (auto arg = dyn_cast<Argument>(val)) {
+            fn = Call->getArgOperand(arg->getArgNo());
+            continue;
+          }
+        }
+      }
+    }
+    break;
   }
 
-  return cast<Function>(fn);
+  return dyn_cast<Function>(fn);
 }
 
 #if LLVM_VERSION_MAJOR >= 16
