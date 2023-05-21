@@ -212,4 +212,13 @@ def : CallPattern<(Op $x),
                   ]
                   >;
 
+def : CallPattern<(Op $x),
+                  ["sinpi", "sinpif", "sinpil", "cospi", "cospif", "cospil"],
+                  [
+                  (
+                   FMul (ConstantFP<"3.1415926535897962684626433"> $x), (FMul (Call<(SameFunc), [ReadNone,NoUnwind]> (FAdd $x, (ConstantFP<"0.5"> $x))), (DiffeRet<"">) )
+                  )
+                  ]
+                  >;
+
 include "targets/BlasDerivatives.td"                  
