@@ -2406,39 +2406,8 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
           Type *FT = nullptr;
           if (!(FT = Ret.IsAllFloat(size)))
             continue;
-          // If & against 0b10000000000, the result is a float
-          bool validXor = false;
-          if (auto CI = dyn_cast_or_null<ConstantInt>(Args[i])) {
-            if (dl.getTypeSizeInBits(FT) != dl.getTypeSizeInBits(CI->getType()))
-              continue;
-            if (CI->isZero()) {
-              validXor = true;
-            } else if (CI->isNegative() && CI->isMinValue(/*signed*/ true)) {
-              validXor = true;
-            }
-          } else if (auto CV = dyn_cast_or_null<ConstantVector>(Args[i])) {
-            validXor = true;
-            if (dl.getTypeSizeInBits(FT) !=
-                dl.getTypeSizeInBits(CV->getOperand(i)->getType()))
-              continue;
-            for (size_t i = 0, end = CV->getNumOperands(); i < end; ++i) {
-              auto CI = dyn_cast<ConstantInt>(CV->getOperand(i))->getValue();
-              if (!(CI.isNullValue() || CI.isMinSignedValue())) {
-                validXor = false;
-              }
-            }
-          } else if (auto CV = dyn_cast_or_null<ConstantDataVector>(Args[i])) {
-            validXor = true;
-            if (dl.getTypeSizeInBits(FT) !=
-                dl.getTypeSizeInBits(CV->getElementType()))
-              continue;
-            for (size_t i = 0, end = CV->getNumElements(); i < end; ++i) {
-              auto CI = CV->getElementAsAPInt(i);
-              if (!(CI.isNullValue() || CI.isMinSignedValue())) {
-                validXor = false;
-              }
-            }
-          }
+          // If ^ against 0b10000000000, the result is a float
+          bool validXor = containsOnlyAtMostTopBit(Args[i], FT, dl);
           if (validXor) {
             ((i == 0) ? RHS : LHS) |= TypeTree(FT).Only(-1, nullptr);
           }
@@ -2578,39 +2547,8 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
           Type *FT;
           if (!(FT = (i == 0 ? RHS : LHS).IsAllFloat(size)))
             continue;
-          // If & against 0b10000000000, the result is a float
-          bool validXor = false;
-          if (auto CI = dyn_cast_or_null<ConstantInt>(Args[i])) {
-            if (dl.getTypeSizeInBits(FT) != dl.getTypeSizeInBits(CI->getType()))
-              continue;
-            if (CI->isZero()) {
-              validXor = true;
-            } else if (CI->isNegative() && CI->isMinValue(/*signed*/ true)) {
-              validXor = true;
-            }
-          } else if (auto CV = dyn_cast_or_null<ConstantVector>(Args[i])) {
-            validXor = true;
-            if (dl.getTypeSizeInBits(FT) !=
-                dl.getTypeSizeInBits(CV->getOperand(i)->getType()))
-              continue;
-            for (size_t i = 0, end = CV->getNumOperands(); i < end; ++i) {
-              auto CI = dyn_cast<ConstantInt>(CV->getOperand(i))->getValue();
-              if (!(CI.isNullValue() || CI.isMinSignedValue())) {
-                validXor = false;
-              }
-            }
-          } else if (auto CV = dyn_cast_or_null<ConstantDataVector>(Args[i])) {
-            validXor = true;
-            if (dl.getTypeSizeInBits(FT) !=
-                dl.getTypeSizeInBits(CV->getElementType()))
-              continue;
-            for (size_t i = 0, end = CV->getNumElements(); i < end; ++i) {
-              auto CI = CV->getElementAsAPInt(i);
-              if (!(CI.isNullValue() || CI.isMinSignedValue())) {
-                validXor = false;
-              }
-            }
-          }
+          // If ^ against 0b10000000000, the result is a float
+          bool validXor = containsOnlyAtMostTopBit(Args[i], FT, dl);
           if (validXor) {
             Result = ConcreteType(FT);
           }

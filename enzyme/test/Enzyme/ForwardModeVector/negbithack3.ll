@@ -25,38 +25,16 @@ declare %struct.Gradients @__enzyme_fwddiff(<2 x double> (<2 x double>)*, ...)
 
 ; CHECK: define {{[^@]+}}@fwddiffe3tester(<2 x double> [[X:%.*]], [3 x <2 x double>] %"x'")
 ; CHECK-NEXT:  entry:
-; CHECK-NEXT:    [[TMP0:%.*]] = extractvalue [3 x <2 x double>] %"x'", 0
-; CHECK-NEXT:    %"cstx'ipc" = bitcast <2 x double> [[TMP0]] to <2 x i64>
-; CHECK-NEXT:    [[TMP1:%.*]] = extractvalue [3 x <2 x double>] %"x'", 1
-; CHECK-NEXT:    %"cstx'ipc1" = bitcast <2 x double> [[TMP1]] to <2 x i64>
-; CHECK-NEXT:    [[TMP2:%.*]] = extractvalue [3 x <2 x double>] %"x'", 2
-; CHECK-NEXT:    %"cstx'ipc2" = bitcast <2 x double> [[TMP2]] to <2 x i64>
-; CHECK-NEXT:    [[TMP3:%.*]] = extractelement <2 x i64> %"cstx'ipc", i64 0
-; CHECK-NEXT:    [[TMP4:%.*]] = bitcast i64 [[TMP3]] to double
-; CHECK-NEXT:    [[TMP5:%.*]] = {{(fsub fast double \-0.000000e\+00,|fneg fast double)}} [[TMP4]]
-; CHECK-NEXT:    [[TMP6:%.*]] = bitcast double [[TMP5]] to i64
-; CHECK-NEXT:    [[TMP7:%.*]] = insertelement <2 x i64> undef, i64 [[TMP6]], i64 0
-; CHECK-NEXT:    [[TMP8:%.*]] = extractelement <2 x i64> %"cstx'ipc", i64 1
-; CHECK-NEXT:    [[TMP9:%.*]] = insertelement <2 x i64> [[TMP7]], i64 [[TMP8]], i64 1
-; CHECK-NEXT:    [[TMP10:%.*]] = extractelement <2 x i64> %"cstx'ipc1", i64 0
-; CHECK-NEXT:    [[TMP11:%.*]] = bitcast i64 [[TMP10]] to double
-; CHECK-NEXT:    [[TMP12:%.*]] = {{(fsub fast double \-0.000000e\+00,|fneg fast double)}} [[TMP11]]
-; CHECK-NEXT:    [[TMP13:%.*]] = bitcast double [[TMP12]] to i64
-; CHECK-NEXT:    [[TMP14:%.*]] = insertelement <2 x i64> undef, i64 [[TMP13]], i64 0
-; CHECK-NEXT:    [[TMP15:%.*]] = extractelement <2 x i64> %"cstx'ipc1", i64 1
-; CHECK-NEXT:    [[TMP16:%.*]] = insertelement <2 x i64> [[TMP14]], i64 [[TMP15]], i64 1
-; CHECK-NEXT:    [[TMP17:%.*]] = extractelement <2 x i64> %"cstx'ipc2", i64 0
-; CHECK-NEXT:    [[TMP18:%.*]] = bitcast i64 [[TMP17]] to double
-; CHECK-NEXT:    [[TMP19:%.*]] = {{(fsub fast double \-0.000000e\+00,|fneg fast double)}} [[TMP18]]
-; CHECK-NEXT:    [[TMP20:%.*]] = bitcast double [[TMP19]] to i64
-; CHECK-NEXT:    [[TMP21:%.*]] = insertelement <2 x i64> undef, i64 [[TMP20]], i64 0
-; CHECK-NEXT:    [[TMP22:%.*]] = extractelement <2 x i64> %"cstx'ipc2", i64 1
-; CHECK-NEXT:    [[TMP23:%.*]] = insertelement <2 x i64> [[TMP21]], i64 [[TMP22]], i64 1
-; CHECK-NEXT:    %"csty'ipc" = bitcast <2 x i64> [[TMP9]] to <2 x double>
-; CHECK-NEXT:    [[TMP24:%.*]] = insertvalue [3 x <2 x double>] undef, <2 x double> %"csty'ipc", 0
-; CHECK-NEXT:    %"csty'ipc3" = bitcast <2 x i64> [[TMP16]] to <2 x double>
-; CHECK-NEXT:    [[TMP25:%.*]] = insertvalue [3 x <2 x double>] [[TMP24]], <2 x double> %"csty'ipc3", 1
-; CHECK-NEXT:    %"csty'ipc4" = bitcast <2 x i64> [[TMP23]] to <2 x double>
-; CHECK-NEXT:    [[TMP26:%.*]] = insertvalue [3 x <2 x double>] [[TMP25]], <2 x double> %"csty'ipc4", 2
-; CHECK-NEXT:    ret [3 x <2 x double>] [[TMP26]]
-;
+; CHECK-NEXT:    %0 = extractvalue [3 x <2 x double>] %"x'", 0
+; CHECK-NEXT:    %1 = extractvalue [3 x <2 x double>] %"x'", 1
+; CHECK-NEXT:    %2 = extractvalue [3 x <2 x double>] %"x'", 2
+; CHECK-NEXT:    %3 = {{(fsub fast <2 x double> <double \-0.000000e\+00, double \-0.000000e\+00>,|fneg fast <2 x double>)}} %0
+; CHECK-NEXT:    %4 = select{{( fast)?}} <2 x i1> <i1 false, i1 true>, <2 x double> %0, <2 x double> %3
+; CHECK-NEXT:    %5 = {{(fsub fast <2 x double> <double \-0.000000e\+00, double \-0.000000e\+00>,|fneg fast <2 x double>)}} %1
+; CHECK-NEXT:    %6 = select{{( fast)?}} <2 x i1> <i1 false, i1 true>, <2 x double> %1, <2 x double> %5
+; CHECK-NEXT:    %7 = {{(fsub fast <2 x double> <double \-0.000000e\+00, double \-0.000000e\+00>,|fneg fast <2 x double>)}} %2
+; CHECK-NEXT:    %8 = select{{( fast)?}} <2 x i1> <i1 false, i1 true>, <2 x double> %2, <2 x double> %7
+; CHECK-NEXT:    %9 = insertvalue [3 x <2 x double>] undef, <2 x double> %4, 0
+; CHECK-NEXT:    %10 = insertvalue [3 x <2 x double>] %9, <2 x double> %6, 1
+; CHECK-NEXT:    %11 = insertvalue [3 x <2 x double>] %10, <2 x double> %8, 2
+; CHECK-NEXT:    ret [3 x <2 x double>] %11

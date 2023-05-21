@@ -617,8 +617,8 @@ public:
             auto rule = [&](Value *inop, Value *newip) -> Value * {
               Value *shadow = BuilderZ.CreateICmpNE(
                   gutils->getNewFromOriginal(I.getOperand(0)), inop);
-              newip = BuilderZ.CreateSelect(
-                  shadow, newip, Constant::getNullValue(newip->getType()));
+              newip = CreateSelect(BuilderZ, shadow, newip,
+                                   Constant::getNullValue(newip->getType()));
               return newip;
             };
             newip = applyChainRule(
@@ -1604,7 +1604,8 @@ public:
                   inc = Builder2.CreateVectorSplat(VTy->getNumElements(), inc);
 #endif
                 }
-                Value *dif = Builder2.CreateSelect(
+                Value *dif = CreateSelect(
+                    Builder2,
                     Builder2.CreateICmpEQ(gutils->lookupM(index, EB), inc),
                     diffe(&SI, Builder2),
                     Constant::getNullValue(
@@ -1618,13 +1619,13 @@ public:
       }
 
     if (!gutils->isConstantValue(orig_op1))
-      dif1 = Builder2.CreateSelect(
-          lookup(op0, Builder2), diffe(&SI, Builder2),
+      dif1 = CreateSelect(
+          Builder2, lookup(op0, Builder2), diffe(&SI, Builder2),
           Constant::getNullValue(gutils->getShadowType(op1->getType())),
           "diffe" + op1->getName());
     if (!gutils->isConstantValue(orig_op2))
-      dif2 = Builder2.CreateSelect(
-          lookup(op0, Builder2),
+      dif2 = CreateSelect(
+          Builder2, lookup(op0, Builder2),
           Constant::getNullValue(gutils->getShadowType(op2->getType())),
           diffe(&SI, Builder2), "diffe" + op2->getName());
 
@@ -2227,7 +2228,8 @@ public:
                       Builder2.CreateFNeg(Builder2.CreateFMul(idiff, lop0)),
                       lop1);
                   if (EnzymeStrongZero) {
-                    res = Builder2.CreateSelect(
+                    res = CreateSelect(
+                        Builder2,
                         Builder2.CreateFCmpOEQ(
                             idiff, Constant::getNullValue(idiff->getType())),
                         idiff, res);
@@ -2251,7 +2253,8 @@ public:
                           s, Builder2.CreateFDiv(idiff, lop0))),
                       lop1);
                   if (EnzymeStrongZero) {
-                    res = Builder2.CreateSelect(
+                    res = CreateSelect(
+                        Builder2,
                         Builder2.CreateFCmpOEQ(
                             idiff, Constant::getNullValue(idiff->getType())),
                         idiff, res);
@@ -2283,7 +2286,8 @@ public:
           auto res = Builder2.CreateFNeg(
               Builder2.CreateFMul(lastdiv, Builder2.CreateFDiv(idiff, lop1)));
           if (EnzymeStrongZero) {
-            res = Builder2.CreateSelect(
+            res = CreateSelect(
+                Builder2,
                 Builder2.CreateFCmpOEQ(
                     idiff, Constant::getNullValue(idiff->getType())),
                 idiff, res);
@@ -2369,14 +2373,6 @@ public:
           auto CI = dyn_cast<ConstantInt>(BO.getOperand(i));
           if (CI && dl.getTypeSizeInBits(eFT) ==
                         dl.getTypeSizeInBits(CI->getType())) {
-            if (CI->isNegative() && CI->isMinValue(/*signed*/ true)) {
-              setDiffe(
-                  &BO,
-                  Constant::getNullValue(gutils->getShadowType(BO.getType())),
-                  Builder2);
-              // Derivative is zero, no update
-              return;
-            }
             if (eFT->isDoubleTy() && CI->getValue() == -134217728) {
               setDiffe(
                   &BO,
@@ -2405,122 +2401,25 @@ public:
       // If ^ against 0b10000000000 and a float the result is a float
       if (FT)
         for (int i = 0; i < 2; ++i) {
-          auto CI = dyn_cast<ConstantInt>(BO.getOperand(i));
-          if (auto CV = dyn_cast<ConstantVector>(BO.getOperand(i))) {
-            CI = dyn_cast_or_null<ConstantInt>(CV->getSplatValue());
-#if LLVM_VERSION_MAJOR >= 12
-            FT = VectorType::get(FT, CV->getType()->getElementCount());
-#else
-            FT = VectorType::get(FT, CV->getType()->getNumElements());
-#endif
-          }
-          if (auto CV = dyn_cast<ConstantDataVector>(BO.getOperand(i))) {
-            CI = dyn_cast_or_null<ConstantInt>(CV->getSplatValue());
-#if LLVM_VERSION_MAJOR >= 12
-            FT = VectorType::get(FT, CV->getType()->getElementCount());
-#else
-            FT = VectorType::get(FT, CV->getType()->getNumElements());
-#endif
-          }
-          if (CI && dl.getTypeSizeInBits(eFT) ==
-                        dl.getTypeSizeInBits(CI->getType())) {
-            if (CI->isNegative() && CI->isMinValue(/*signed*/ true)) {
-              setDiffe(
-                  &BO,
-                  Constant::getNullValue(gutils->getShadowType(BO.getType())),
-                  Builder2);
-              auto rule = [&](Value *idiff) {
-                auto neg =
-                    Builder2.CreateFNeg(Builder2.CreateBitCast(idiff, FT));
-                return Builder2.CreateBitCast(neg, BO.getType());
-              };
-              auto bc = applyChainRule(BO.getOperand(1 - i)->getType(),
-                                       Builder2, rule, idiff);
-              addToDiffe(BO.getOperand(1 - i), bc, Builder2, FT);
-              return;
-            }
-          }
-
-          if (auto CV = dyn_cast<ConstantVector>(BO.getOperand(i))) {
-            bool validXor = true;
-            if (dl.getTypeSizeInBits(eFT) !=
-                dl.getTypeSizeInBits(CV->getOperand(0)->getType()))
-              validXor = false;
-            for (size_t i = 0, end = CV->getNumOperands(); i < end; ++i) {
-              auto CI = dyn_cast<ConstantInt>(CV->getOperand(i))->getValue();
-              if (!(CI.isNullValue() || CI.isMinSignedValue())) {
-                validXor = false;
-              }
-            }
-            if (validXor) {
-              setDiffe(
-                  &BO,
-                  Constant::getNullValue(gutils->getShadowType(BO.getType())),
-                  Builder2);
-              auto rule = [&](Value *idiff) {
-                Value *V = UndefValue::get(CV->getType());
-                for (size_t i = 0, end = CV->getNumOperands(); i < end; ++i) {
-                  auto CI =
-                      dyn_cast<ConstantInt>(CV->getOperand(i))->getValue();
-                  if (CI.isNullValue())
-                    V = Builder2.CreateInsertElement(
-                        V, Builder2.CreateExtractElement(idiff, i), i);
-                  if (CI.isMinSignedValue())
-                    V = Builder2.CreateInsertElement(
-                        V,
-                        Builder2.CreateBitCast(
-                            Builder2.CreateFNeg(Builder2.CreateBitCast(
-                                Builder2.CreateExtractElement(idiff, i), eFT)),
-                            CV->getOperand(i)->getType()),
-                        i);
-                }
-                return V;
-              };
-              Value *V = applyChainRule(BO.getOperand(1 - i)->getType(),
-                                        Builder2, rule, idiff);
-              addToDiffe(BO.getOperand(1 - i), V, Builder2, FT);
-              return;
-            }
-          } else if (auto CV = dyn_cast<ConstantDataVector>(BO.getOperand(i))) {
-            bool validXor = true;
-            if (dl.getTypeSizeInBits(eFT) !=
-                dl.getTypeSizeInBits(CV->getElementType()))
-              validXor = false;
-            for (size_t i = 0, end = CV->getNumElements(); i < end; ++i) {
-              auto CI = CV->getElementAsAPInt(i);
-              if (!(CI.isNullValue() || CI.isMinSignedValue())) {
-                validXor = false;
-              }
-            }
-            if (validXor) {
-              setDiffe(
-                  &BO,
-                  Constant::getNullValue(gutils->getShadowType(BO.getType())),
-                  Builder2);
-
-              auto rule = [&](Value *idiff) {
-                Value *V = UndefValue::get(CV->getType());
-                for (size_t i = 0, end = CV->getNumElements(); i < end; ++i) {
-                  auto CI = CV->getElementAsAPInt(i);
-                  if (CI.isNullValue())
-                    V = Builder2.CreateInsertElement(
-                        V, Builder2.CreateExtractElement(idiff, i), i);
-                  if (CI.isMinSignedValue())
-                    V = Builder2.CreateInsertElement(
-                        V,
-                        Builder2.CreateBitCast(
-                            Builder2.CreateFNeg(Builder2.CreateBitCast(
-                                Builder2.CreateExtractElement(idiff, i), eFT)),
-                            CV->getElementType()),
-                        i);
-                }
-                return V;
-              };
-              Value *V = applyChainRule(BO.getOperand(1 - i)->getType(),
-                                        Builder2, rule, idiff);
-              addToDiffe(BO.getOperand(1 - i), V, Builder2, FT);
-              return;
-            }
+          if (containsOnlyAtMostTopBit(BO.getOperand(i), eFT, dl, &FT)) {
+            setDiffe(
+                &BO,
+                Constant::getNullValue(gutils->getShadowType(BO.getType())),
+                Builder2);
+            auto isZero = Builder2.CreateICmpEQ(
+                gutils->getNewFromOriginal(BO.getOperand(i)),
+                Constant::getNullValue(BO.getType()));
+            auto rule = [&](Value *idiff) {
+              auto ext = Builder2.CreateBitCast(idiff, FT);
+              auto neg = Builder2.CreateFNeg(ext);
+              neg = CreateSelect(Builder2, isZero, ext, neg);
+              neg = Builder2.CreateBitCast(neg, BO.getType());
+              return neg;
+            };
+            auto bc = applyChainRule(BO.getOperand(1 - i)->getType(), Builder2,
+                                     rule, idiff);
+            addToDiffe(BO.getOperand(1 - i), bc, Builder2, FT);
+            return;
           }
         }
       if (looseTypeAnalysis) {
@@ -2844,11 +2743,6 @@ public:
           auto CI = dyn_cast<ConstantInt>(BO.getOperand(i));
           if (CI && dl.getTypeSizeInBits(eFT) ==
                         dl.getTypeSizeInBits(CI->getType())) {
-            if (CI->isNegative() && CI->isMinValue(/*signed*/ true)) {
-              setDiffe(&BO, Constant::getNullValue(diffTy), Builder2);
-              // Derivative is zero, no update
-              return;
-            }
             if (eFT->isDoubleTy() && CI->getValue() == -134217728) {
               setDiffe(&BO, Constant::getNullValue(diffTy), Builder2);
               // Derivative is zero (equivalent to rounding as just chopping off
@@ -2870,123 +2764,31 @@ public:
       auto &dl = gutils->oldFunc->getParent()->getDataLayout();
       auto size = dl.getTypeSizeInBits(BO.getType()) / 8;
 
+      auto FT = TR.query(&BO).IsAllFloat(size);
+      auto eFT = FT;
+
       Value *dif[2] = {constantval0 ? nullptr : diffe(orig_op0, Builder2),
                        constantval1 ? nullptr : diffe(orig_op1, Builder2)};
 
-      auto FT = TR.query(&BO).IsAllFloat(size);
-      auto eFT = FT;
-      // If ^ against 0b10000000000 and a float the result is a float
-      if (FT)
-        for (int i = 0; i < 2; ++i) {
-          auto CI = dyn_cast<ConstantInt>(BO.getOperand(i));
-          if (auto CV = dyn_cast<ConstantVector>(BO.getOperand(i))) {
-            CI = dyn_cast_or_null<ConstantInt>(CV->getSplatValue());
-#if LLVM_VERSION_MAJOR >= 12
-            FT = VectorType::get(FT, CV->getType()->getElementCount());
-#else
-            FT = VectorType::get(FT, CV->getType()->getNumElements());
-#endif
-          }
-          if (auto CV = dyn_cast<ConstantDataVector>(BO.getOperand(i))) {
-            CI = dyn_cast_or_null<ConstantInt>(CV->getSplatValue());
-#if LLVM_VERSION_MAJOR >= 12
-            FT = VectorType::get(FT, CV->getType()->getElementCount());
-#else
-            FT = VectorType::get(FT, CV->getType()->getNumElements());
-#endif
-          }
-          if (CI && dl.getTypeSizeInBits(eFT) ==
-                        dl.getTypeSizeInBits(CI->getType())) {
-            if (CI->isNegative() && CI->isMinValue(/*signed*/ true)) {
-              assert(dif[1 - i]);
-              auto rule = [&](Value *difi) {
-                auto neg =
-                    Builder2.CreateFNeg(Builder2.CreateBitCast(difi, FT));
-                return Builder2.CreateBitCast(neg, BO.getType());
-              };
-
-              auto diffe =
-                  applyChainRule(BO.getType(), Builder2, rule, dif[1 - i]);
-              setDiffe(&BO, diffe, Builder2);
-              return;
-            }
-          }
-
-          if (auto CV = dyn_cast<ConstantVector>(BO.getOperand(i))) {
-            bool validXor = true;
-            if (dl.getTypeSizeInBits(eFT) !=
-                dl.getTypeSizeInBits(CV->getOperand(0)->getType()))
-              validXor = false;
-            for (size_t i = 0, end = CV->getNumOperands(); i < end; ++i) {
-              auto CI = dyn_cast<ConstantInt>(CV->getOperand(i))->getValue();
-              if (!(CI.isNullValue() || CI.isMinSignedValue())) {
-                validXor = false;
-              }
-            }
-            if (validXor) {
-              auto rule = [&](Value *difi) {
-                Value *V = UndefValue::get(CV->getType());
-                for (size_t j = 0, end = CV->getNumOperands(); j < end; ++j) {
-                  auto CI =
-                      dyn_cast<ConstantInt>(CV->getOperand(j))->getValue();
-                  if (CI.isNullValue())
-                    V = Builder2.CreateInsertElement(
-                        V, Builder2.CreateExtractElement(difi, j), j);
-                  if (CI.isMinSignedValue())
-                    V = Builder2.CreateInsertElement(
-                        V,
-                        Builder2.CreateBitCast(
-                            Builder2.CreateFNeg(Builder2.CreateBitCast(
-                                Builder2.CreateExtractElement(difi, j), eFT)),
-                            CV->getOperand(j)->getType()),
-                        j);
-                }
-                return V;
-              };
-
-              auto diffe =
-                  applyChainRule(BO.getType(), Builder2, rule, dif[1 - i]);
-              setDiffe(&BO, diffe, Builder2);
-              return;
-            }
-          } else if (auto CV = dyn_cast<ConstantDataVector>(BO.getOperand(i))) {
-            bool validXor = true;
-            if (dl.getTypeSizeInBits(eFT) !=
-                dl.getTypeSizeInBits(CV->getElementType()))
-              validXor = false;
-            for (size_t i = 0, end = CV->getNumElements(); i < end; ++i) {
-              auto CI = CV->getElementAsAPInt(i);
-              if (!(CI.isNullValue() || CI.isMinSignedValue())) {
-                validXor = false;
-              }
-            }
-            if (validXor) {
-              auto rule = [&](Value *difi) {
-                Value *V = UndefValue::get(CV->getType());
-                for (size_t j = 0, end = CV->getNumElements(); j < end; ++j) {
-                  auto CI = CV->getElementAsAPInt(j);
-                  if (CI.isNullValue())
-                    V = Builder2.CreateInsertElement(
-                        V, Builder2.CreateExtractElement(difi, j), j);
-                  if (CI.isMinSignedValue())
-                    V = Builder2.CreateInsertElement(
-                        V,
-                        Builder2.CreateBitCast(
-                            Builder2.CreateFNeg(Builder2.CreateBitCast(
-                                Builder2.CreateExtractElement(difi, j), eFT)),
-                            CV->getElementType()),
-                        j);
-                }
-                return V;
-              };
-
-              auto diffe =
-                  applyChainRule(BO.getType(), Builder2, rule, dif[1 - i]);
-              setDiffe(&BO, diffe, Builder2);
-              return;
-            }
-          }
+      for (int i = 0; i < 2; ++i) {
+        if (containsOnlyAtMostTopBit(BO.getOperand(i), eFT, dl, &FT) &&
+            dif[1 - i] && !dif[i]) {
+          auto isZero = Builder2.CreateICmpEQ(
+              gutils->getNewFromOriginal(BO.getOperand(i)),
+              Constant::getNullValue(BO.getType()));
+          auto rule = [&](Value *idiff) {
+            auto ext = Builder2.CreateBitCast(idiff, FT);
+            auto neg = Builder2.CreateFNeg(ext);
+            neg = CreateSelect(Builder2, isZero, ext, neg);
+            neg = Builder2.CreateBitCast(neg, BO.getType());
+            return neg;
+          };
+          auto bc = applyChainRule(BO.getOperand(1 - i)->getType(), Builder2,
+                                   rule, dif[1 - i]);
+          setDiffe(&BO, bc, Builder2);
+          return;
         }
+      }
       if (looseTypeAnalysis) {
         forwardModeInvertedPointerFallback(BO);
         llvm::errs() << "warning: binary operator is integer and constant: "
@@ -4207,11 +4009,10 @@ public:
           Value *cmp = Builder2.CreateFCmpUEQ(
               args[0], Constant::getNullValue(
                            gutils->getShadowType(orig_ops[0]->getType())));
-          dif0 = Builder2.CreateSelect(
-              cmp,
-              Constant::getNullValue(
-                  gutils->getShadowType(orig_ops[0]->getType())),
-              dif0);
+          dif0 = CreateSelect(Builder2, cmp,
+                              Constant::getNullValue(gutils->getShadowType(
+                                  orig_ops[0]->getType())),
+                              dif0);
 
           addToDiffe(orig_ops[0], dif0, Builder2, I.getType());
         }
@@ -4229,9 +4030,9 @@ public:
 
           auto rule = [&](Value *vdiff) {
             return Builder2.CreateFMul(
-                Builder2.CreateSelect(
-                    cmp, ConstantFP::get(orig_ops[0]->getType(), -1),
-                    ConstantFP::get(orig_ops[0]->getType(), 1)),
+                CreateSelect(Builder2, cmp,
+                             ConstantFP::get(orig_ops[0]->getType(), -1),
+                             ConstantFP::get(orig_ops[0]->getType(), 1)),
                 vdiff);
           };
           Value *dif0 =
@@ -4254,11 +4055,11 @@ public:
               lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2),
               lookup(gutils->getNewFromOriginal(orig_ops[1]), Builder2));
 
-          Value *dif0 = Builder2.CreateSelect(
-              cmp,
-              Constant::getNullValue(
-                  gutils->getShadowType(orig_ops[0]->getType())),
-              vdiff);
+          Value *dif0 =
+              CreateSelect(Builder2, cmp,
+                           Constant::getNullValue(
+                               gutils->getShadowType(orig_ops[0]->getType())),
+                           vdiff);
           addToDiffe(orig_ops[0], dif0, Builder2, I.getType());
         }
         if (vdiff && !gutils->isConstantValue(orig_ops[1])) {
@@ -4266,10 +4067,10 @@ public:
               lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2),
               lookup(gutils->getNewFromOriginal(orig_ops[1]), Builder2));
 
-          Value *dif1 = Builder2.CreateSelect(
-              cmp, vdiff,
-              Constant::getNullValue(
-                  gutils->getShadowType(orig_ops[1]->getType())));
+          Value *dif1 =
+              CreateSelect(Builder2, cmp, vdiff,
+                           Constant::getNullValue(
+                               gutils->getShadowType(orig_ops[1]->getType())));
           addToDiffe(orig_ops[1], dif1, Builder2, I.getType());
         }
         return;
@@ -4292,7 +4093,7 @@ public:
           for (size_t i = 0; i < numElems - 1; ++i) {
             cmps.push_back(Builder2.CreateFCmpOLT(curmax, elems[i + 1]));
             if (i + 2 != numElems)
-              curmax = Builder2.CreateSelect(cmps[i], elems[i + 1], curmax);
+              curmax = CreateSelect(Builder2, cmps[i], elems[i + 1], curmax);
           }
 
           auto rule = [&](Value *vdiff) {
@@ -4301,7 +4102,7 @@ public:
 
             for (size_t i = 0; i < numElems - 1; ++i) {
               auto rhs_v = Builder2.CreateInsertElement(nv, vdiff, i + 1);
-              res = Builder2.CreateSelect(cmps[i], rhs_v, res);
+              res = CreateSelect(Builder2, cmps[i], rhs_v, res);
             }
             return res;
           };
@@ -4326,10 +4127,10 @@ public:
               lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2),
               lookup(gutils->getNewFromOriginal(orig_ops[1]), Builder2));
 
-          Value *dif0 = Builder2.CreateSelect(
-              cmp, vdiff,
-              Constant::getNullValue(
-                  gutils->getShadowType(orig_ops[0]->getType())));
+          Value *dif0 =
+              CreateSelect(Builder2, cmp, vdiff,
+                           Constant::getNullValue(
+                               gutils->getShadowType(orig_ops[0]->getType())));
           addToDiffe(orig_ops[0], dif0, Builder2, I.getType());
         }
         if (vdiff && !gutils->isConstantValue(orig_ops[1])) {
@@ -4337,11 +4138,11 @@ public:
               lookup(gutils->getNewFromOriginal(orig_ops[0]), Builder2),
               lookup(gutils->getNewFromOriginal(orig_ops[1]), Builder2));
 
-          Value *dif1 = Builder2.CreateSelect(
-              cmp,
-              Constant::getNullValue(
-                  gutils->getShadowType(orig_ops[1]->getType())),
-              vdiff);
+          Value *dif1 =
+              CreateSelect(Builder2, cmp,
+                           Constant::getNullValue(
+                               gutils->getShadowType(orig_ops[1]->getType())),
+                           vdiff);
           addToDiffe(orig_ops[1], dif1, Builder2, I.getType());
         }
         return;
@@ -4525,9 +4326,9 @@ public:
               cmp0 =
                   Builder2.CreateOr(cmp0, Builder2.CreateFCmpOEQ(vdiff, zero));
             }
-            return Builder2.CreateSelect(
-                cmp0, Constant::getNullValue(vdiff->getType()),
-                Builder2.CreateFMul(vdiff, constV));
+            return CreateSelect(Builder2, cmp0,
+                                Constant::getNullValue(vdiff->getType()),
+                                Builder2.CreateFMul(vdiff, constV));
           };
           Value *dif0 =
               applyChainRule(orig_ops[0]->getType(), Builder2, rule, vdiff);
@@ -4738,8 +4539,8 @@ public:
 
           Value *cmp =
               Builder2.CreateFCmpUEQ(args[0], Constant::getNullValue(tys[0]));
-          return Builder2.CreateSelect(cmp, Constant::getNullValue(opType),
-                                       dif0);
+          return CreateSelect(Builder2, cmp, Constant::getNullValue(opType),
+                              dif0);
         };
 
         Value *dif0 = applyChainRule(I.getType(), Builder2, rule, op);
@@ -4761,8 +4562,8 @@ public:
           Value *cmp =
               Builder2.CreateFCmpOLT(gutils->getNewFromOriginal(orig_ops[0]),
                                      Constant::getNullValue(ty));
-          Value *select = Builder2.CreateSelect(cmp, ConstantFP::get(ty, -1),
-                                                ConstantFP::get(ty, 1));
+          Value *select = CreateSelect(Builder2, cmp, ConstantFP::get(ty, -1),
+                                       ConstantFP::get(ty, 1));
           return Builder2.CreateFMul(select, op);
         };
 
@@ -4797,7 +4598,7 @@ public:
                             : diffe(orig_ops[1], Builder2);
 
         auto rule = [&](Value *diffe0, Value *diffe1) {
-          return Builder2.CreateSelect(cmp, diffe0, diffe1);
+          return CreateSelect(Builder2, cmp, diffe0, diffe1);
         };
 
         Value *dif =
@@ -4824,7 +4625,7 @@ public:
         for (size_t i = 0; i < numElems - 1; ++i) {
           cmps.push_back(Builder2.CreateFCmpOLT(curmax, elems[i + 1]));
           if (i + 2 != numElems)
-            curmax = Builder2.CreateSelect(cmps[i], elems[i + 1], curmax);
+            curmax = CreateSelect(Builder2, cmps[i], elems[i + 1], curmax);
         }
 
         auto rule = [&](Value *vdiff) {
@@ -4832,7 +4633,7 @@ public:
 
           for (size_t i = 0; i < numElems - 1; ++i) {
             auto rhs_v = Builder2.CreateExtractElement(vdiff, i + 1);
-            res = Builder2.CreateSelect(cmps[i], rhs_v, res);
+            res = CreateSelect(Builder2, cmps[i], rhs_v, res);
           }
           return res;
         };
@@ -4869,7 +4670,7 @@ public:
                             : diffe(orig_ops[1], Builder2);
 
         auto rule = [&](Value *diffe0, Value *diffe1) {
-          return Builder2.CreateSelect(cmp, diffe0, diffe1);
+          return CreateSelect(Builder2, cmp, diffe0, diffe1);
         };
 
         Value *dif =
@@ -5067,8 +4868,8 @@ public:
               Value *zero = Constant::getNullValue(op->getType());
               cmp0 = Builder2.CreateOr(cmp0, Builder2.CreateFCmpOEQ(op, zero));
             }
-            return Builder2.CreateSelect(
-                cmp0, Constant::getNullValue(op->getType()),
+            return CreateSelect(
+                Builder2, cmp0, Constant::getNullValue(op->getType()),
                 Builder2.CreateFMul(Builder2.CreateFMul(op, cal), cast));
           };
 
@@ -6398,8 +6199,9 @@ public:
             d_req, PointerType::getUnqual(PointerType::getUnqual(impi))));
 #endif
         if (isNull)
-          d_reqp = BuilderZ.CreateSelect(
-              isNull, Constant::getNullValue(d_reqp->getType()), d_reqp);
+          d_reqp =
+              CreateSelect(BuilderZ, isNull,
+                           Constant::getNullValue(d_reqp->getType()), d_reqp);
         if (auto I = dyn_cast<Instruction>(d_reqp))
           gutils->TapesToPreventRecomputation.insert(I);
         d_reqp = gutils->cacheForReverse(BuilderZ, d_reqp,
