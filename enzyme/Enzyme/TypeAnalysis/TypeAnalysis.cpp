@@ -4724,7 +4724,8 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
               .Only(-1, &call),
           &call);
     }
-    if (funcName == "__fd_sincos_1") {
+    if (funcName == "__fd_sincos_1" || funcName == "__fd_sincos_1f" ||
+        funcName == "__fd_sincos_1l") {
       updateAnalysis(call.getArgOperand(0),
                      TypeTree(ConcreteType(call.getArgOperand(0)->getType()))
                          .Only(-1, &call),

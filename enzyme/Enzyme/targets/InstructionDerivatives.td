@@ -193,7 +193,7 @@ def : CallPattern<(Op $x, $y),
                   >;
 
 def : CallPattern<(Op $x),
-                  ["__fd_sincos_1"],
+                  ["__fd_sincos_1", "__fd_sincos_1f", "__fd_sincos_1l"],
                   [
                   (
                    ArrayRet (FMul (ExtractValue<[1]> (Call<(SameFunc), [ReadNone,NoUnwind]> $x):$callset), (DiffeRet<"">) ),
@@ -203,7 +203,7 @@ def : CallPattern<(Op $x),
                   >;
 
 def : CallPattern<(Op $x),
-                  ["sincospi"],
+                  ["sincospi", "sincospif", "sincospil"],
                   [
                   (
                    ArrayRet (FMul (ConstantFP<"3.1415926535897962684626433"> $x), (FMul (ExtractValue<[1]> (Call<(SameFunc), [ReadNone,NoUnwind]> $x):$callset), (DiffeRet<"">) ) ),
