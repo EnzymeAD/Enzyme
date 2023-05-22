@@ -12269,8 +12269,9 @@ public:
 #else
           val = BuilderZ.CreateLoad(ptrshadow);
 #endif
-          val = gutils->cacheForReverse(BuilderZ, val,
-                                        getIndex(&call, CacheType::Shadow));
+          // TODO: figure out way getIndex isn't populated work in Forward Mode
+          // val = gutils->cacheForReverse(BuilderZ, val,
+          //                              getIndex(&call, CacheType::Shadow));
 
           auto dst_arg = BuilderZ.CreateBitCast(
               val, Type::getInt8PtrTy(call.getContext()));
