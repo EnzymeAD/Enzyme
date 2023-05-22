@@ -331,7 +331,9 @@ target_compile_options(ClangEnzymeFlags INTERFACE "SHELL: -Xclang $<TARGET_FILE:
 add_custom_target(ClangEnzymeDummy "" DEPENDS ClangEnzyme-${LLVM_VERSION_MAJOR})
 add_dependencies(ClangEnzymeFlags ClangEnzymeDummy)
 
+if (${LLVM_VERSION_MAJOR} GREATER 10)
 install(TARGETS LLDEnzymeFlags EXPORT EnzymeTargets)
+endif()
 install(TARGETS ClangEnzymeFlags EXPORT EnzymeTargets)
 
 install(TARGETS LLVMEnzyme-${LLVM_VERSION_MAJOR}
