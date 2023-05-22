@@ -3,7 +3,8 @@
 ! RUN: if [ %llvmver -ge 13 ]; then ifx -flto -O2 -c  %s -o /dev/stdout | %opt %loadEnzyme -enzyme -o %t && ifx -flto -O2 %t -o %t1 && %t1 | FileCheck %s; fi
 ! RUN: if [ %llvmver -ge 13 ]; then ifx -flto -O3 -c  %s -o /dev/stdout | %opt %loadEnzyme -enzyme -o %t && ifx -flto -O3 %t -o %t1 && %t1 | FileCheck %s; fi
 
-module math
+program app
+    implicit none
     interface
         subroutine square__enzyme_autodiff(fn, x, dx)
         interface
@@ -16,16 +17,7 @@ module math
         real, intent(inout) :: dx
         end subroutine
     end interface
-contains
-    real function square( x )
-        real, intent(in) :: x
-        square = x**2
-    end function
-end module math
 
-program app
-    use math
-    implicit none
     real :: x, dx
 
     x = 3
@@ -35,6 +27,13 @@ program app
     call square__enzyme_autodiff(square, x, dx);
 
     print *, dx
+
+    contains
+
+    real function square( x )
+        real, intent(in) :: x
+        square = x**2
+    end function
 end program app
 
 ! CHECK: 9
