@@ -834,10 +834,10 @@ static bool runAttributorOnFunctions(InformationCache &InfoCache,
 
   return Changed == ChangeStatus::CHANGED;
 }
-struct AttributorLegacyPass : public ModulePass {
+struct MyAttributorLegacyPass : public ModulePass {
   static char ID;
 
-  AttributorLegacyPass() : ModulePass(ID) {}
+  MyAttributorLegacyPass() : ModulePass(ID) {}
 
   bool runOnModule(Module &M) override {
     if (skipModule(M))
@@ -861,8 +861,9 @@ struct AttributorLegacyPass : public ModulePass {
     AU.addRequired<TargetLibraryInfoWrapperPass>();
   }
 };
+extern "C++" char MyAttributorLegacyPass::ID = 0;
 void EnzymeAddAttributorLegacyPass(LLVMPassManagerRef PM) {
-  unwrap(PM)->add(new AttributorLegacyPass());
+  unwrap(PM)->add(new MyAttributorLegacyPass());
 }
 #elif LLVM_VERSION_MAJOR >= 9
 void EnzymeAddAttributorLegacyPass(LLVMPassManagerRef PM) {
