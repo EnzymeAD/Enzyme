@@ -27,6 +27,6 @@ declare double @__enzyme_fwddiff(double (double, double)*, ...)
 ; CHECK-NEXT:   %andy = and i64 %csty, -9223372036854775808
 ; CHECK-NEXT:   %0 = icmp eq i64 %andy, 0
 ; CHECK-NEXT:   %1 = {{(fsub fast double \-?0.000000e\+00,|fneg fast double)}} %"x'"
-; CHECK-NEXT:   %2 = select fast i1 %0, double %"x'", double %1
+; CHECK-NEXT:   %2 = select{{( fast)?}} i1 %0, double %"x'", double %1
 ; CHECK-NEXT:   ret double %2
 ; CHECK-NEXT: }
