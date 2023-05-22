@@ -2811,6 +2811,7 @@ AnalysisKey EnzymeNewPM::Key;
 #include "TypeAnalysis/TypeAnalysisPrinter.h"
 #ifdef ENZYME_RUNPASS
 #include "llvm/Passes/PassBuilder.h"
+#if LLVM_VERSION_MAJOR >= 15
 #include "llvm/Transforms/AggressiveInstCombine/AggressiveInstCombine.h"
 #include "llvm/Transforms/IPO/CalledValuePropagation.h"
 #include "llvm/Transforms/IPO/ConstantMerge.h"
@@ -2818,12 +2819,15 @@ AnalysisKey EnzymeNewPM::Key;
 #include "llvm/Transforms/IPO/DeadArgumentElimination.h"
 #include "llvm/Transforms/IPO/FunctionAttrs.h"
 #include "llvm/Transforms/IPO/GlobalDCE.h"
+#endif
 #include "llvm/Transforms/IPO/GlobalOpt.h"
+#if LLVM_VERSION_MAJOR >= 15
 #include "llvm/Transforms/IPO/GlobalSplit.h"
 #include "llvm/Transforms/IPO/InferFunctionAttrs.h"
 #include "llvm/Transforms/IPO/SCCP.h"
 #include "llvm/Transforms/InstCombine/InstCombine.h"
 #include "llvm/Transforms/Scalar/CallSiteSplitting.h"
+#endif
 #include "llvm/Transforms/Scalar/EarlyCSE.h"
 #include "llvm/Transforms/Scalar/Float2Int.h"
 #include "llvm/Transforms/Scalar/GVN.h"
@@ -2831,6 +2835,7 @@ AnalysisKey EnzymeNewPM::Key;
 #include "llvm/Transforms/Scalar/LoopRotation.h"
 #include "llvm/Transforms/Scalar/LoopUnrollPass.h"
 #include "llvm/Transforms/Scalar/SROA.h"
+#if LLVM_VERSION_MAJOR >= 15
 // #include "llvm/Transforms/IPO/MemProfContextDisambiguation.h"
 #include "llvm/Transforms/IPO/ArgumentPromotion.h"
 #include "llvm/Transforms/Scalar/ConstraintElimination.h"
@@ -2850,6 +2855,7 @@ AnalysisKey EnzymeNewPM::Key;
 static InlineParams getInlineParamsFromOptLevel(OptimizationLevel Level) {
   return getInlineParams(Level.getSpeedupLevel(), Level.getSizeLevel());
 }
+#endif
 
 #if LLVM_VERSION_MAJOR >= 12
 #include "llvm/Transforms/Scalar/LowerConstantIntrinsics.h"
@@ -3128,7 +3134,7 @@ llvmGetPassPluginInfo() {
             // here.
             // MPM.addPass(PGOIndirectCallPromotion(
             //	true /* InLTO */, PGOOpt && PGOOpt->Action ==
-            //PGOOptions::SampleUse));
+            // PGOOptions::SampleUse));
 
             // Propagate constants at call sites into the functions they call.
             // This opens opportunities for globalopt (and inlining) by
