@@ -1489,6 +1489,19 @@ llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
                                  llvm::IRBuilder<> &BuilderM,
                                  llvm::Value *mask = nullptr);
 
+static inline llvm::Value *CreateSelect(llvm::IRBuilder<> &Builder2,
+                                        llvm::Value *cmp, llvm::Value *tval,
+                                        llvm::Value *fval,
+                                        llvm::Twine Name = "") {
+  if (auto cmpi = llvm::dyn_cast<llvm::ConstantInt>(cmp)) {
+    if (cmpi->isZero())
+      return fval;
+    else
+      return tval;
+  }
+  return Builder2.CreateSelect(cmp, tval, fval, Name);
+}
+
 static inline llvm::Value *checkedMul(llvm::IRBuilder<> &Builder2,
                                       llvm::Value *idiff, llvm::Value *pres,
                                       llvm::Twine Name = "") {
@@ -1514,6 +1527,77 @@ static inline llvm::Value *checkedDiv(llvm::IRBuilder<> &Builder2,
     res = Builder2.CreateSelect(Builder2.CreateFCmpOEQ(idiff, zero), zero, res);
   }
   return res;
+}
+
+static inline bool containsOnlyAtMostTopBit(const llvm::Value *V,
+                                            llvm::Type *FT,
+                                            const llvm::DataLayout &dl,
+                                            llvm::Type **vFT = nullptr) {
+  using namespace llvm;
+  if (auto CI = dyn_cast_or_null<ConstantInt>(V)) {
+    if (CI->isZero()) {
+      if (vFT)
+        *vFT = FT;
+      return true;
+    }
+    if (dl.getTypeSizeInBits(FT) == dl.getTypeSizeInBits(CI->getType())) {
+      if (CI->isNegative() && CI->isMinValue(/*signed*/ true)) {
+        if (vFT)
+          *vFT = FT;
+        return true;
+      }
+    }
+  }
+  if (auto CV = dyn_cast_or_null<ConstantVector>(V)) {
+    bool legal = true;
+    for (size_t i = 0, end = CV->getNumOperands(); i < end; ++i) {
+      legal &= containsOnlyAtMostTopBit(CV->getOperand(i), FT, dl);
+    }
+    if (legal && vFT) {
+#if LLVM_VERSION_MAJOR >= 12
+      *vFT = VectorType::get(FT, CV->getType()->getElementCount());
+#else
+      *vFT = VectorType::get(FT, CV->getType()->getNumElements());
+#endif
+    }
+    return legal;
+  }
+
+  if (auto CV = dyn_cast_or_null<ConstantDataVector>(V)) {
+    bool legal = true;
+    for (size_t i = 0, end = CV->getNumElements(); i < end; ++i) {
+      auto CI = CV->getElementAsAPInt(i);
+      if (CI.isNullValue())
+        continue;
+      if (dl.getTypeSizeInBits(FT) !=
+          dl.getTypeSizeInBits(CV->getElementType())) {
+        legal = false;
+        break;
+      }
+      if (!CI.isMinSignedValue()) {
+        legal = false;
+        break;
+      }
+    }
+    if (legal && vFT) {
+#if LLVM_VERSION_MAJOR >= 12
+      *vFT = VectorType::get(FT, CV->getType()->getElementCount());
+#else
+      *vFT = VectorType::get(FT, CV->getType()->getNumElements());
+#endif
+    }
+    return legal;
+  }
+  if (auto BO = dyn_cast<BinaryOperator>(V)) {
+    if (BO->getOpcode() == Instruction::And) {
+      for (size_t i = 0; i < 2; i++) {
+        if (containsOnlyAtMostTopBit(BO->getOperand(i), FT, dl))
+          return true;
+      }
+      return false;
+    }
+  }
+  return false;
 }
 
 #endif

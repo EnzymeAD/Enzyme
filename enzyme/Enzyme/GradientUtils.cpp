@@ -4988,6 +4988,9 @@ Value *GradientUtils::extractMeta(IRBuilder<> &Builder, Value *Agg,
   }
   if (off.size() == 0)
     return Agg;
+  if (Agg->getType()->isVectorTy() && off.size() == 1)
+    return Builder.CreateExtractElement(Agg, off[0]);
+
   return Builder.CreateExtractValue(Agg, off);
 }
 

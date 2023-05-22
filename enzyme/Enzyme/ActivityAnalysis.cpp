@@ -1284,6 +1284,27 @@ bool ActivityAnalyzer::isConstantValue(TypeResults const &TR, Value *Val) {
       }
     }
   }
+  if (auto BO = dyn_cast<BinaryOperator>(Val)) {
+    // x & 0b100000 is definitionally inactive
+    //  + if floating point, this returns either +/- 0
+    //  if int/pointer, this contains no info
+    if (BO->getOpcode() == Instruction::And) {
+      auto &DL = BO->getParent()->getParent()->getParent()->getDataLayout();
+      for (int i = 0; i < 2; ++i) {
+        auto FT =
+            TR.query(BO->getOperand(1 - i))
+                .IsAllFloat((DL.getTypeSizeInBits(BO->getType()) + 7) / 8);
+        // If ^ against 0b10000000000 and a float the result is a float
+        if (FT)
+          if (containsOnlyAtMostTopBit(BO->getOperand(i), FT, DL)) {
+            if (EnzymePrintActivity)
+              llvm::errs() << " inactive bithack " << *Val << "\n";
+            InsertConstantValue(TR, Val);
+            return true;
+          }
+      }
+    }
+  }
 
   std::shared_ptr<ActivityAnalyzer> UpHypothesis;
 
