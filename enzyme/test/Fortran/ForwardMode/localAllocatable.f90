@@ -5,8 +5,9 @@
 
 program app
     implicit none
+
     interface
-        subroutine fort__enzyme_autodiff(fnc, x, dx)
+        real function fort__enzyme_fwddiff(fnc, x, dx)
             interface
                 real function fnc_decal(a)
                 real, intent(in) :: a
@@ -15,7 +16,7 @@ program app
             procedure(fnc_decal) :: fnc
             real, intent(in) :: x
             real, intent(inout) :: dx
-        end subroutine
+        end function
     end interface
 
     print *, square(3.0)
@@ -35,12 +36,12 @@ program app
         deallocate(x_ptr) !<--- for_dealloc_allocatable
     end function
 
-    real function grad_square(x)
+    function grad_square(x) result(dy)
         real, intent(in) :: x
-
-        grad_square = 0
-        call fort__enzyme_autodiff(square, x, grad_square);
-    end function grad_square
+        real :: dx, dy
+        dx = 1
+        dy = fort__enzyme_fwddiff(square, x, dx);
+    end function
 
 end program app
 
