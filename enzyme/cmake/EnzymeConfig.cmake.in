@@ -9,8 +9,6 @@ set(Enzyme_LLVM_DIR "@CONF_LLVM_DIR@")
 set(Enzyme_LLVM_BINARY_DIR "@CONF_LLVM_BINARY_DIR@")
 set(Enzyme_TABLEGEN_EXE "@Enzyme_CONFIG_TABLEGEN_EXE@")
 
-set(_supported_components LLVMEnzyme ClangEnzyme LLDEnzyme LLVM ClangEnzymeFlags LLDEnzymeFlags)
-
 # Our library dependencies (contains definitions for IMPORTED targets)
 if(NOT TARGET ClangEnzymeFlags AND NOT TARGET LLDEnzymeFlags AND NOT TARGET LLVMEnzyme-${Enzyme_LLVM_VERSION_MAJOR} AND NOT TARGET ClangEnzyme-${Enzyme_LLVM_VERSION_MAJOR} AND NOT TARGET LLDEnzyme-${Enzyme_LLVM_VERSION_MAJOR} AND NOT Enzyme_BINARY_DIR)
     include("${Enzyme_CMAKE_DIR}/EnzymeTargets.cmake")
