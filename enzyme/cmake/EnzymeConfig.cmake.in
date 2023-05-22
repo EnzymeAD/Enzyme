@@ -7,6 +7,7 @@ set(Enzyme_LLVM_VERSION_MINOR "@CONF_LLVM_VERSION_MINOR@")
 set(Enzyme_LLVM_VERSION_PATCH "@CONF_LLVM_VERSION_PATCH@")
 set(Enzyme_LLVM_DIR "@CONF_LLVM_DIR@")
 set(Enzyme_LLVM_BINARY_DIR "@CONF_LLVM_BINARY_DIR@")
+set(Enzyme_CLANG_EXE "@CONF_CLANG_EXE@")
 set(Enzyme_TABLEGEN_EXE "@Enzyme_CONFIG_TABLEGEN_EXE@")
 
 # Our library dependencies (contains definitions for IMPORTED targets)

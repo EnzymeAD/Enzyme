@@ -313,6 +313,11 @@ set(CONF_LLVM_VERSION_MINOR ${LLVM_VERSION_MINOR})
 set(CONF_LLVM_VERSION_PATCH ${LLVM_VERSION_PATCH})
 set(CONF_LLVM_DIR ${LLVM_DIR})
 set(CONF_LLVM_BINARY_DIR ${LLVM_BINARY_DIR})
+if (${Clang_FOUND})
+    get_property(CONF_CLANG_EXE TARGET clang PROPERTY LOCATION)
+else()
+    set(CONF_CLANG_EXE "")
+endif()
 
 set(CONF_INCLUDE_DIRS lib)
 configure_file(cmake/EnzymeConfig.cmake.in
