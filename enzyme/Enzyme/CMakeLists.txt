@@ -296,6 +296,7 @@ set_target_properties(LLDEnzyme-${LLVM_VERSION_MAJOR} PROPERTIES
 endif()
 
 
+if (${LLVM_VERSION_MAJOR} GREATER 10)
 add_library(LLDEnzymeFlags INTERFACE)
 target_compile_options(LLDEnzymeFlags INTERFACE -flto)
 target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -fuse-ld=lld")
@@ -306,7 +307,7 @@ if (${LLVM_VERSION_MAJOR} IN_LIST LTO_LEGACY_MANAGER_VERSIONS)
 endif()
 
 target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -Wl,-mllvm -Wl,-load=$<TARGET_FILE:LLDEnzyme-${LLVM_VERSION_MAJOR}>")
-if (${LLVM_VERSION_MAJOR} GREATER 12)
+if (${LLVM_VERSION_MAJOR} GREATER 14)
     target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -Wl,--load-pass-plugin=$<TARGET_FILE:LLDEnzyme-${LLVM_VERSION_MAJOR}>")
 endif()
 
@@ -315,7 +316,7 @@ endif()
 # before LLDEnzyme-XX has finished.
 add_custom_target(LLDEnzymeDummy "" DEPENDS LLDEnzyme-${LLVM_VERSION_MAJOR})
 add_dependencies(LLDEnzymeFlags LLDEnzymeDummy)
-
+endif()
 
 add_library(ClangEnzymeFlags INTERFACE)
 if(${LLVM_VERSION_MAJOR} GREATER 12) 
