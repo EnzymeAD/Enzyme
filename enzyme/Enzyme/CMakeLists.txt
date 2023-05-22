@@ -302,7 +302,7 @@ target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -fuse-ld=lld")
 
 set(LTO_LEGACY_MANAGER_VERSIONS 13 14)
 if (${LLVM_VERSION_MAJOR} IN_LIST LTO_LEGACY_MANAGER_VERSIONS)
-  target_link_options(LLDEnzyme INTERFACE "SHELL: -Wl,--lto-legacy-pass-manager")
+    target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -Wl,--lto-legacy-pass-manager")
 endif()
 
 target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -Wl,-mllvm -Wl,-load=$<TARGET_FILE:LLDEnzyme-${LLVM_VERSION_MAJOR}>")
