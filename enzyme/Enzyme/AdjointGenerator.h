@@ -12371,8 +12371,9 @@ public:
           auto newfree = gutils->getNewFromOriginal(call.getArgOperand(0));
           auto tofree = gutils->invertPointerM(origfree, Builder2);
 
-          Function *free = getOrInsertCheckedFree(
-              *call.getModule(), &call, newfree->getType(), gutils->getWidth());
+          Function *free = getOrInsertCheckedFree(*call.getModule(), &call,
+                                                  newfree->getType(), {},
+                                                  gutils->getWidth());
 
           SmallVector<Value *, 3> args;
           args.push_back(newfree);
@@ -12495,21 +12496,25 @@ public:
           auto tofree = gutils->invertPointerM(origfree, Builder2);
           auto flags = gutils->getNewFromOriginal(call.getArgOperand(1));
 
+          SmallVector<Type *, 3> otherArgTys{call.getArgOperand(1)->getType()};
+          if (funcName == "for_dealloc_allocatable_handle") {
+            otherArgTys.push_back(call.getArgOperand(2)->getType());
+          }
+
           Function *free = getOrInsertCheckedFree(
-              *call.getModule(), &call, newfree->getType(), gutils->getWidth());
+              *call.getModule(), &call, newfree->getType(), otherArgTys,
+              gutils->getWidth());
 
           SmallVector<Value *, 3> args;
           args.push_back(newfree);
 
-          auto rule = [&args, &flags, funcName](Value *tofree) {
-            args.push_back(tofree);
-            args.push_back(flags);
-            if (funcName == "for_dealloc_allocatable_handle") {
-              args.push_back(ConstantPointerNull::get(
-                  cast<PointerType>(Type::getInt8PtrTy(flags->getContext()))));
-            }
-          };
+          auto rule = [&args](Value *tofree) { args.push_back(tofree); };
           applyChainRule(Builder2, rule, tofree);
+          args.push_back(flags);
+          if (funcName == "for_dealloc_allocatable_handle") {
+            args.push_back(ConstantPointerNull::get(
+                cast<PointerType>(Type::getInt8PtrTy(flags->getContext()))));
+          }
 
           auto frees = Builder2.CreateCall(free->getFunctionType(), free, args);
           frees->setDebugLoc(gutils->getNewFromOriginal(call.getDebugLoc()));

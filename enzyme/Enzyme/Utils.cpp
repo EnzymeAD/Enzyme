@@ -766,7 +766,8 @@ getOrInsertDifferentialFloatMemmove(Module &M, Type *T, unsigned dstalign,
                                             srcaddr, bitwidth);
 }
 
-Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
+Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *PtrTy,
+                                 SmallVector<Type *, 3> OtherArgTys,
                                  unsigned width) {
   FunctionType *FreeTy = call->getFunctionType();
 #if LLVM_VERSION_MAJOR >= 11
@@ -781,10 +782,11 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
   std::string name = "__enzyme_checked_free_" + std::to_string(width);
 
   SmallVector<Type *, 3> types;
-  types.push_back(Ty);
+  types.push_back(PtrTy);
   for (unsigned i = 0; i < width; i++) {
-    types.push_back(Ty);
+    types.push_back(PtrTy);
   }
+  types.append(OtherArgTys);
 
   FunctionType *FT =
       FunctionType::get(Type::getVoidTy(M.getContext()), types, false);
@@ -815,11 +817,18 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
   Argument *first_shadow = F->arg_begin() + 1;
   F->addParamAttr(0, Attribute::NoCapture);
   F->addParamAttr(1, Attribute::NoCapture);
+  SmallVector<Argument *, 3> otherArgs;
+  for (int i = F->arg_size() - OtherArgTys.size(); i < F->arg_size(); ++i) {
+    otherArgs.push_back(F->getArg(i));
+  }
 
   Value *isNotEqual = EntryBuilder.CreateICmpNE(primal, first_shadow);
   EntryBuilder.CreateCondBr(isNotEqual, free0, end);
 
-  CallInst *CI = Free0Builder.CreateCall(FreeTy, Free, {first_shadow});
+  SmallVector<Value *, 3> first_shadow_args{first_shadow};
+  first_shadow_args.append(otherArgs.begin(), otherArgs.end());
+
+  CallInst *CI = Free0Builder.CreateCall(FreeTy, Free, first_shadow_args);
   CI->setAttributes(FreeAttributes);
   CI->setCallingConv(CallingConvention);
   CI->setDebugLoc(DebugLoc);
@@ -840,7 +849,9 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
                           ? Free0Builder.CreateAnd(isNotEqual, checkResult)
                           : isNotEqual;
 
-        CallInst *CI = Free1Builder.CreateCall(FreeTy, Free, {nextShadow});
+        SmallVector<Value *, 3> next_shadow_args{nextShadow};
+        next_shadow_args.append(otherArgs.begin(), otherArgs.end());
+        CallInst *CI = Free1Builder.CreateCall(FreeTy, Free, next_shadow_args);
         CI->setAttributes(FreeAttributes);
         CI->setCallingConv(CallingConvention);
         CI->setDebugLoc(DebugLoc);
