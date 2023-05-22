@@ -806,11 +806,70 @@ void EnzymeReplaceFunctionImplementation(LLVMModuleRef M) {
   ReplaceFunctionImplementation(*unwrap(M));
 }
 
-#if LLVM_VERSION_MAJOR >= 9
+#if LLVM_VERSION_MAJOR >= 15
+
+static bool runAttributorOnFunctions(InformationCache &InfoCache,
+                                     SetVector<Function *> &Functions,
+                                     AnalysisGetter &AG,
+                                     CallGraphUpdater &CGUpdater,
+                                     bool DeleteFns, bool IsModulePass) {
+  if (Functions.empty())
+    return false;
+
+  // Create an Attributor and initially empty information cache that is filled
+  // while we identify default attribute opportunities.
+  AttributorConfig AC(CGUpdater);
+  AC.RewriteSignatures = false;
+  AC.IsModulePass = IsModulePass;
+  AC.DeleteFns = DeleteFns;
+  Attributor A(Functions, InfoCache, AC);
+
+  for (Function *F : Functions) {
+    // Populate the Attributor with abstract attribute opportunities in the
+    // function and the information cache with IR information.
+    A.identifyDefaultAbstractAttributes(*F);
+  }
+
+  ChangeStatus Changed = A.run();
+
+  return Changed == ChangeStatus::CHANGED;
+}
+struct AttributorLegacyPass : public ModulePass {
+  static char ID;
+
+  AttributorLegacyPass() : ModulePass(ID) {}
+
+  bool runOnModule(Module &M) override {
+    if (skipModule(M))
+      return false;
+
+    AnalysisGetter AG;
+    SetVector<Function *> Functions;
+    for (Function &F : M)
+      Functions.insert(&F);
+
+    CallGraphUpdater CGUpdater;
+    BumpPtrAllocator Allocator;
+    InformationCache InfoCache(M, AG, Allocator, /* CGSCC */ nullptr);
+    return runAttributorOnFunctions(InfoCache, Functions, AG, CGUpdater,
+                                    /* DeleteFns*/ true,
+                                    /* IsModulePass */ true);
+  }
+
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
+    // FIXME: Think about passes we will preserve and add them here.
+    AU.addRequired<TargetLibraryInfoWrapperPass>();
+  }
+};
+void EnzymeAddAttributorLegacyPass(LLVMPassManagerRef PM) {
+  unwrap(PM)->add(new AttributorLegacyPass());
+}
+#elif LLVM_VERSION_MAJOR >= 9
 void EnzymeAddAttributorLegacyPass(LLVMPassManagerRef PM) {
   unwrap(PM)->add(createAttributorLegacyPass());
 }
 #endif
+
 LLVMMetadataRef EnzymeMakeNonConstTBAA(LLVMMetadataRef MD) {
   auto M = cast<MDNode>(unwrap(MD));
   if (M->getNumOperands() != 4)
