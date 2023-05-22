@@ -1,4 +1,4 @@
-#include <iostream>
+#include <stdio.h>
 
 extern double __enzyme_autodiff(void*, double);
 
@@ -12,6 +12,6 @@ double dsquare(double x) {
 
 int main() {
   for(double i=1; i<5; i++) {
-    std::cout << square(i) << " " << dsquare(i) << std::endl;
+    printf("%f %f\n", square(i), dsquare(i));
   }
 }

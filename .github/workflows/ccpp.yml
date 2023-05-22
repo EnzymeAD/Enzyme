@@ -26,7 +26,7 @@ jobs:
       run: |
           wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|sudo apt-key add -
           sudo apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
-          sudo apt-get install -y autoconf cmake gcc g++ libtool gfortran llvm-${{ matrix.llvm }}-dev libomp-${{ matrix.llvm }}-dev clang-${{ matrix.llvm }} libclang-${{ matrix.llvm }}-dev libeigen3-dev libboost-dev
+          sudo apt-get install -y autoconf cmake gcc g++ libtool gfortran llvm-${{ matrix.llvm }}-dev libomp-${{ matrix.llvm }}-dev lld-${{ matrix.llvm }} clang-${{ matrix.llvm }} libclang-${{ matrix.llvm }}-dev libeigen3-dev libboost-dev
           sudo python3 -m pip install --upgrade pip setuptools
           sudo python3 -m pip install lit
           sudo touch /usr/lib/llvm-${{ matrix.llvm }}/bin/yaml-bench
@@ -42,7 +42,9 @@ jobs:
           cd enzyme/build 
           cmake .. -DLLVM_EXTERNAL_LIT=`which lit` -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm
     - name: make
-      run: cd enzyme/build && make -j`nproc` LLVMEnzyme-${{ matrix.llvm }}
+      run: cd enzyme/build && make -j`nproc` LLVMEnzyme-${{ matrix.llvm }} ClangEnzyme-${{ matrix.llvm }} LLDEnzyme-${{ matrix.llvm }}  
+    - name: make test-cmake
+      run: cd enzyme/build && make test-cmake -j`nproc`
     - name: make check-enzyme-integration
       run: cd enzyme/build && make check-enzyme-integration -j`nproc`
 
@@ -65,7 +67,7 @@ jobs:
           apt-get install -y ca-certificates software-properties-common wget gnupg2 python3 python3-pip sed git ssh zlib1g-dev
           wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key| apt-key add -
           apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
-          apt-get install -y autoconf cmake gcc g++ libtool gfortran llvm-${{ matrix.llvm }}-dev libomp-${{ matrix.llvm }}-dev clang-${{ matrix.llvm }} libclang-${{ matrix.llvm }}-dev libeigen3-dev libboost-dev
+          apt-get install -y autoconf cmake gcc g++ libtool gfortran llvm-${{ matrix.llvm }}-dev libomp-${{ matrix.llvm }}-dev lld-${{ matrix.llvm }} clang-${{ matrix.llvm }} libclang-${{ matrix.llvm }}-dev libeigen3-dev libboost-dev
           python3 -m pip install --upgrade pip setuptools
           python3 -m pip install lit
           touch /usr/lib/llvm-${{ matrix.llvm }}/bin/yaml-bench
@@ -81,6 +83,8 @@ jobs:
           cd enzyme/build 
           cmake .. -DLLVM_EXTERNAL_LIT=`which lit` -DCMAKE_BUILD_TYPE=${{ matrix.build }} -DLLVM_DIR=/usr/lib/llvm-${{ matrix.llvm }}/lib/cmake/llvm
     - name: make
-      run: cd enzyme/build && make -j`nproc` LLVMEnzyme-${{ matrix.llvm }}
+      run: cd enzyme/build && make -j`nproc` LLVMEnzyme-${{ matrix.llvm }} ClangEnzyme-${{ matrix.llvm }} LLDEnzyme-${{ matrix.llvm }}  
+    - name: make test-cmake
+      run: cd enzyme/build && make test-cmake -j`nproc`
     - name: make check-enzyme-integration
       run: cd enzyme/build && make check-enzyme-integration -j`nproc`

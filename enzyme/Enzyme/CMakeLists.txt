@@ -296,49 +296,42 @@ set_target_properties(LLDEnzyme-${LLVM_VERSION_MAJOR} PROPERTIES
 endif()
 
 
-add_library(LLDEnzyme INTERFACE)
-target_compile_options(LLDEnzyme INTERFACE -flto)
-target_link_options(LLDEnzyme INTERFACE "SHELL: -fuse-ld=lld")
+add_library(LLDEnzymeFlags INTERFACE)
+target_compile_options(LLDEnzymeFlags INTERFACE -flto)
+target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -fuse-ld=lld")
 
 set(LTO_LEGACY_MANAGER_VERSIONS 13 14)
 if (${LLVM_VERSION_MAJOR} IN_LIST LTO_LEGACY_MANAGER_VERSIONS)
   target_link_options(LLDEnzyme INTERFACE "SHELL: -Wl,--lto-legacy-pass-manager")
 endif()
 
-target_link_options(LLDEnzyme INTERFACE "SHELL: -Wl,-mllvm")
-if (${LLVM_VERSION_MAJOR} GREATER 14)
-  target_link_options(LLDEnzyme INTERFACE "SHELL: -Wl,-load-pass-manager=$<TARGET_FILE:LLDEnzyme-${LLVM_VERSION_MAJOR}>")
-else()
-  target_link_options(LLDEnzyme INTERFACE "SHELL: -Wl,-load=$<TARGET_FILE:LLDEnzyme-${LLVM_VERSION_MAJOR}>")
+target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -Wl,-mllvm -Wl,-load=$<TARGET_FILE:LLDEnzyme-${LLVM_VERSION_MAJOR}>")
+if (${LLVM_VERSION_MAJOR} GREATER 12)
+    target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -Wl,--load-pass-plugin=$<TARGET_FILE:LLDEnzyme-${LLVM_VERSION_MAJOR}>")
 endif()
 
 # this custom target exists to prevent CMake from incorrectly assuming that 
 # targets that link depend on LLDEnzyme-XX can be built at the same time or 
 # before LLDEnzyme-XX has finished.
 add_custom_target(LLDEnzymeDummy "" DEPENDS LLDEnzyme-${LLVM_VERSION_MAJOR})
-add_dependencies(LLDEnzyme LLDEnzymeDummy)
+add_dependencies(LLDEnzymeFlags LLDEnzymeDummy)
 
 
-add_library(ClangEnzyme INTERFACE)
-  # what goes here?
-if(${LLVM_VERSION_MAJOR} LESS 15) 
-  if(${LLVM_VERSION_MAJOR} GREATER 12) 
-    target_compile_options(ClangEnzyme INTERFACE "SHELL: -flegacy-pass-manager")
-  endif()
-  target_compile_options(ClangEnzyme INTERFACE "SHELL: -Xclang -load")
-  target_compile_options(ClangEnzyme INTERFACE "SHELL: -Xclang $<TARGET_FILE:ClangEnzyme-${LLVM_VERSION_MAJOR}>")
-else()
-  target_compile_options(ClangEnzyme INTERFACE "-fpass-plugin=$<TARGET_FILE:ClangEnzyme-${LLVM_VERSION_MAJOR}>")
+add_library(ClangEnzymeFlags INTERFACE)
+if(${LLVM_VERSION_MAJOR} GREATER 12) 
+    target_compile_options(ClangEnzymeFlags INTERFACE "-fpass-plugin=$<TARGET_FILE:ClangEnzyme-${LLVM_VERSION_MAJOR}>")
 endif()
+target_compile_options(ClangEnzymeFlags INTERFACE "SHELL: -Xclang -load")
+target_compile_options(ClangEnzymeFlags INTERFACE "SHELL: -Xclang $<TARGET_FILE:ClangEnzyme-${LLVM_VERSION_MAJOR}>")
 
 # this custom target exists to prevent CMake from incorrectly assuming that 
 # targets that link depend on ClangEnzyme-XX can be built at the same time or 
 # before ClangEnzyme-XX has finished.
 add_custom_target(ClangEnzymeDummy "" DEPENDS ClangEnzyme-${LLVM_VERSION_MAJOR})
-add_dependencies(ClangEnzyme ClangEnzymeDummy)
+add_dependencies(ClangEnzymeFlags ClangEnzymeDummy)
 
-install(TARGETS LLDEnzyme EXPORT UserFacingTargets)
-install(TARGETS ClangEnzyme EXPORT UserFacingTargets)
+install(TARGETS LLDEnzymeFlags EXPORT EnzymeTargets)
+install(TARGETS ClangEnzymeFlags EXPORT EnzymeTargets)
 
 install(TARGETS LLVMEnzyme-${LLVM_VERSION_MAJOR}
     EXPORT EnzymeTargets

@@ -286,6 +286,8 @@ export(TARGETS LLVMEnzyme-${LLVM_VERSION_MAJOR}
 if (${Clang_FOUND})
 export(TARGETS ClangEnzyme-${LLVM_VERSION_MAJOR}
     APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
+export(TARGETS ClangEnzymeFlags
+    APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
 endif()
 
 if (${ENZYME_FLANG} AND ${Clang_FOUND})
@@ -297,6 +299,8 @@ if (${ENZYME_FLANG} AND ${Clang_FOUND})
 endif()
 
 export(TARGETS LLDEnzyme-${LLVM_VERSION_MAJOR}
+    APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
+export(TARGETS LLDEnzymeFlags
     APPEND FILE "${PROJECT_BINARY_DIR}/EnzymeTargets.cmake")
 
 export(PACKAGE Enzyme)
@@ -326,8 +330,3 @@ install(FILES
 install(EXPORT EnzymeTargets 
   DESTINATION "${INSTALL_CMAKE_DIR}" 
   COMPONENT   dev)
-
-install(EXPORT UserFacingTargets
-  DESTINATION ${INSTALL_CMAKE_DIR}
-  FILE UserFacingTargets.cmake
-)
