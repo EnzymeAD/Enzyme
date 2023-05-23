@@ -5588,8 +5588,8 @@ public:
                 if (align)
                   rmw->setAlignment(align.getValue());
 #else
-                B.CreateAtomicRMW(op, vptr, vdif, AtomicOrdering::Monotonic,
-                                  SyncScope::System);
+              B.CreateAtomicRMW(op, vptr, vdif, AtomicOrdering::Monotonic,
+                                SyncScope::System);
 #endif
               }
             } else {
@@ -5602,8 +5602,8 @@ public:
               if (align)
                 rmw->setAlignment(align.getValue());
 #else
-              B.CreateAtomicRMW(op, ptr, dif, AtomicOrdering::Monotonic,
-                                SyncScope::System);
+            B.CreateAtomicRMW(op, ptr, dif, AtomicOrdering::Monotonic,
+                              SyncScope::System);
 #endif
             }
 #else
