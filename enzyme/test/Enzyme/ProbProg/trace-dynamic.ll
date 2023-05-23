@@ -98,11 +98,11 @@ entry:
 ; CHECK-NEXT:   call void %insert_function(i8* %trace, i8* bitcast (double (double*, i32, double*, i8*)* @trace_loss to i8*))
 ; CHECK-NEXT:   %0 = bitcast double* %data to i8*
 ; CHECK-NEXT:   %insert_argument = load void (i8*, i8*, i8*, i64)*, void (i8*, i8*, i8*, i64)** @insert_argument
-; CHECK-NEXT:   call void %insert_argument(i8* %trace, i8* nocapture readonly getelementptr inbounds ([5 x i8], [5 x i8]* @1, i32 0, i32 0), i8* %0, i64 0)
+; CHECK-NEXT:   call void %insert_argument(i8* %trace, i8* nocapture readonly getelementptr inbounds ([5 x i8], [5 x i8]* @0, i32 0, i32 0), i8* %0, i64 0)
 ; CHECK-NEXT:   %1 = zext i32 %n to i64
 ; CHECK-NEXT:   %2 = inttoptr i64 %1 to i8*
 ; CHECK-NEXT:   %insert_argument1 = load void (i8*, i8*, i8*, i64)*, void (i8*, i8*, i8*, i64)** @insert_argument
-; CHECK-NEXT:   call void %insert_argument1(i8* %trace, i8* nocapture readonly getelementptr inbounds ([2 x i8], [2 x i8]* @2, i32 0, i32 0), i8* %2, i64 4)
+; CHECK-NEXT:   call void %insert_argument1(i8* %trace, i8* nocapture readonly getelementptr inbounds ([2 x i8], [2 x i8]* @1, i32 0, i32 0), i8* %2, i64 4)
 ; CHECK-NEXT:   %3 = call double @normal(double 0.000000e+00, double 1.000000e+00)
 ; CHECK-NEXT:   %likelihood.call = call double @normal_logpdf(double 0.000000e+00, double 1.000000e+00, double %3)
 ; CHECK-NEXT:   %log_prob_sum = load double, double* %likelihood
