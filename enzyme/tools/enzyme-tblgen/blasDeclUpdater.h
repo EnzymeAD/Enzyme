@@ -1,6 +1,6 @@
 
 void emit_attributeBLASCaller(const std::vector<TGPattern> &blasPatterns,
-                     raw_ostream &os) {
+                              raw_ostream &os) {
   os << "void attributeBLAS(BlasInfo blas, llvm::Function *F) {             \n";
   for (auto pattern : blasPatterns) {
     auto name = pattern.getName();
@@ -55,7 +55,7 @@ void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
          << ")->isPointerTy();\n";
       break;
     }
-    if (i+1 == argTypeMap.size()) {
+    if (i + 1 == argTypeMap.size()) {
       llvm::errs() << "Tablegen bug: BLAS fnc without vector!\n";
       llvm_unreachable("Tablegen bug: BLAS fnc without vector!");
     }
@@ -66,13 +66,13 @@ void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
          << ")->isIntegerTy() && blas.prefix == \"\";\n";
       break;
     }
-    if (i+1 == argTypeMap.size()) {
+    if (i + 1 == argTypeMap.size()) {
       llvm::errs() << "Tablegen bug: BLAS fnc without vector length!\n";
       llvm_unreachable("Tablegen bug: BLAS fnc without vector length!");
     }
   }
 
-  os   << "  if (byRef) {\n";
+  os << "  if (byRef) {\n";
   for (size_t argPos = 0; argPos < argTypeMap.size(); argPos++) {
     const auto typeOfArg = argTypeMap.lookup(argPos);
     if (typeOfArg == argType::len || typeOfArg == argType::vincInc) {
@@ -89,10 +89,12 @@ void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
   for (size_t argPos = 0; argPos < argTypeMap.size(); argPos++) {
     auto typeOfArg = argTypeMap.lookup(argPos);
     if (typeOfArg == argType::vincData) {
-      os << "    F->addParamAttr(" << argPos << ", llvm::Attribute::NoCapture);\n";
+      os << "    F->addParamAttr(" << argPos
+         << ", llvm::Attribute::NoCapture);\n";
       if (mutableArgs.count(argPos) == 0) {
         // Only emit ReadOnly if the arg isn't mutable
-        os << "    F->addParamAttr(" << argPos << ", llvm::Attribute::ReadOnly);\n";
+        os << "    F->addParamAttr(" << argPos
+           << ", llvm::Attribute::ReadOnly);\n";
       }
     }
   }
@@ -103,7 +105,7 @@ void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
 void emitBlasDeclUpdater(const RecordKeeper &RK, raw_ostream &os) {
   emitSourceFileHeader("Rewriters", os);
   const auto &blasPatterns = RK.getAllDerivedDefinitions("CallBlasPattern");
-  
+
   std::vector<TGPattern> newBlasPatterns{};
   StringMap<TGPattern> patternMap;
   for (auto pattern : blasPatterns) {

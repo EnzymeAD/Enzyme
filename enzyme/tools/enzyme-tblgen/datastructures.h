@@ -15,9 +15,9 @@ using namespace llvm;
 enum argType { fp, len, vincData, vincInc };
 
 class Arg {
-  public:
-    size_t pos;
-    std::string name;
+public:
+  size_t pos;
+  std::string name;
 };
 
 bool isArgUsed(const StringRef toFind, const DagInit *toSearch) {
@@ -36,63 +36,63 @@ bool isArgUsed(const StringRef toFind, const DagInit *toSearch) {
   return false;
 }
 
-// Subset of the general pattern info, 
+// Subset of the general pattern info,
 // but only the part that affects the specific argument being active.
 class Rule {
-  private: 
-    DagInit *rewriteRule;
-    // which argument from the primary function do we handle here?
-    size_t activeArg;
-    StringMap<size_t> argNameToPos;
-    DenseMap<size_t, argType> argTypes;
-    DenseSet<size_t> mutables;
+private:
+  DagInit *rewriteRule;
+  // which argument from the primary function do we handle here?
+  size_t activeArg;
+  StringMap<size_t> argNameToPos;
+  DenseMap<size_t, argType> argTypes;
+  DenseSet<size_t> mutables;
 
-  public:
-    Rule(DagInit *dag, size_t activeArgIdx, StringMap<size_t> &patternArgs,
-         DenseMap<size_t, argType> &patternTypes,
-         DenseSet<size_t> &patternMutables) {
+public:
+  Rule(DagInit *dag, size_t activeArgIdx, StringMap<size_t> &patternArgs,
+       DenseMap<size_t, argType> &patternTypes,
+       DenseSet<size_t> &patternMutables) {
 
-      rewriteRule = dag;
-      activeArg = activeArgIdx;
+    rewriteRule = dag;
+    activeArg = activeArgIdx;
 
-      argNameToPos = StringMap<size_t>();
-      argTypes = DenseMap<size_t, argType>();
-      mutables = DenseSet<size_t>();
+    argNameToPos = StringMap<size_t>();
+    argTypes = DenseMap<size_t, argType>();
+    mutables = DenseSet<size_t>();
 
-      // For each arg found in the dag: 
-      //        1) copy patternArgs to ruleArgs if arg shows up in this rule
-      for (auto argName : patternArgs.keys()) {
-        assert(patternArgs.count(argName) == 1);
-        size_t argPos = patternArgs.lookup(argName);
-        bool argUsedInRule = isArgUsed(argName, rewriteRule);
-        if (argUsedInRule) {
-          argNameToPos.insert(std::pair<std::string, size_t>(argName, argPos));
-          //        2) look up and copy the corresponding argType
-          assert(patternTypes.find(argPos) != patternTypes.end() &&
-                 "arg without corresponding type");
-          argTypes.insert(*patternTypes.find(argPos));
-        }
-      }
-
-      for (auto ruleArgKey : argNameToPos.keys()) {
-        //        3) look up and eventually copy mutable
-        auto val = argNameToPos.lookup(ruleArgKey);
-        if (patternMutables.find(val) != patternMutables.end()) {
-          mutables.insert(*patternMutables.find(val));
-        }
+    // For each arg found in the dag:
+    //        1) copy patternArgs to ruleArgs if arg shows up in this rule
+    for (auto argName : patternArgs.keys()) {
+      assert(patternArgs.count(argName) == 1);
+      size_t argPos = patternArgs.lookup(argName);
+      bool argUsedInRule = isArgUsed(argName, rewriteRule);
+      if (argUsedInRule) {
+        argNameToPos.insert(std::pair<std::string, size_t>(argName, argPos));
+        //        2) look up and copy the corresponding argType
+        assert(patternTypes.find(argPos) != patternTypes.end() &&
+               "arg without corresponding type");
+        argTypes.insert(*patternTypes.find(argPos));
       }
     }
-    DagInit *getRuleDag() { return rewriteRule; }
-    size_t getHandledArgIdx() { return activeArg; }
-    StringMap<size_t> getArgNameMap() { return argNameToPos; }
-    DenseMap<size_t, argType> getArgTypeMap() { return argTypes; }
-    //std::string to_string(Rule const&r) {
-    //  std::string res = "function: " + r.blasName + "\n";
-    //  res += "handling
 
-    //  for (auto rule : r.rules) {
-    //  }
-    //}
+    for (auto ruleArgKey : argNameToPos.keys()) {
+      //        3) look up and eventually copy mutable
+      auto val = argNameToPos.lookup(ruleArgKey);
+      if (patternMutables.find(val) != patternMutables.end()) {
+        mutables.insert(*patternMutables.find(val));
+      }
+    }
+  }
+  DagInit *getRuleDag() { return rewriteRule; }
+  size_t getHandledArgIdx() { return activeArg; }
+  StringMap<size_t> getArgNameMap() { return argNameToPos; }
+  DenseMap<size_t, argType> getArgTypeMap() { return argTypes; }
+  // std::string to_string(Rule const&r) {
+  //  std::string res = "function: " + r.blasName + "\n";
+  //  res += "handling
+
+  //  for (auto rule : r.rules) {
+  //  }
+  //}
 };
 
 void fillActiveArgSet(const Record *pattern,
@@ -109,8 +109,7 @@ void fillActiveArgSet(const Record *pattern,
   }
 }
 
-void fillMutableArgSet(const Record *pattern,
-                       DenseSet<size_t> &mutables) {
+void fillMutableArgSet(const Record *pattern, DenseSet<size_t> &mutables) {
 
   auto args = pattern->getValueAsDag("PatternToMatch");
   auto mutableArgs = pattern->getValueAsListOfStrings("mutable");
@@ -132,7 +131,7 @@ void fillMutableArgSet(const Record *pattern,
 void fillArgTypes(const Record *pattern, DenseMap<size_t, argType> &argTypes) {
 
   std::vector<Record *> inputTypes =
-    pattern->getValueAsListOfDefs("inputTypes");
+      pattern->getValueAsListOfDefs("inputTypes");
   size_t pos = 0;
   for (auto val : inputTypes) {
     if (val->getName() == "len") {

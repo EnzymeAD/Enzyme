@@ -15,7 +15,7 @@ void emit_BLASTypes(raw_ostream &os) {
      << "} else { \n"
      << "  ttFloat.insert({-1},floatType);\n"
      << "}\n";
-  
+
   os << "TypeTree ttFloatRet;\n"
      << "ttFloatRet.insert({-1},floatType);\n";
 
@@ -40,10 +40,9 @@ void emit_BLASTypes(raw_ostream &os) {
      << "ttPtr.insert({-1},BaseType::Pointer);\n"
      << "ttPtr.insert({-1,0},floatType);\n";
 }
-     
+
 void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
   auto name = pattern.getName();
-
 
   os << "if (blas.function == \"" << name << "\") {\n";
 
@@ -54,24 +53,31 @@ void emit_BLASTA(TGPattern &pattern, raw_ostream &os) {
   for (size_t i = 0; i < argTypeMap.size(); i++) {
     auto currentType = argTypeMap.lookup(i);
     if (currentType == argType::len || currentType == argType::vincInc) {
-      os << "  updateAnalysis(call.getArgOperand(" << i << "), ttInt, &call);\n";
+      os << "  updateAnalysis(call.getArgOperand(" << i
+         << "), ttInt, &call);\n";
     } else if (currentType == argType::vincData) {
-      assert(argTypeMap.lookup(i+1) == argType::vincInc);
+      assert(argTypeMap.lookup(i + 1) == argType::vincInc);
       os << "  if (auto n = dyn_cast<ConstantInt>(call.getArgOperand(0))) {\n"
-         << "    if (auto inc = dyn_cast<ConstantInt>(call.getArgOperand(" << i << "))) {\n"
+         << "    if (auto inc = dyn_cast<ConstantInt>(call.getArgOperand(" << i
+         << "))) {\n"
          << "      assert(!inc->isNegative());\n"
          << "      TypeTree ttData = ttPtr;\n"
          << "      for (size_t i = 1; i < n->getZExtValue(); i++)\n"
-         << "          ttData.insert({-1, int(i * inc->getZExtValue())}, floatType);\n"
-         << "      updateAnalysis(call.getArgOperand(" << i << "), ttData, &call);\n"
+         << "          ttData.insert({-1, int(i * inc->getZExtValue())}, "
+            "floatType);\n"
+         << "      updateAnalysis(call.getArgOperand(" << i
+         << "), ttData, &call);\n"
          << "    } else {\n"
-         << "      updateAnalysis(call.getArgOperand(" << i << "), ttPtr, &call);\n"
+         << "      updateAnalysis(call.getArgOperand(" << i
+         << "), ttPtr, &call);\n"
          << "    }\n"
          << "  } else {\n"
-         << "    updateAnalysis(call.getArgOperand(" << i << "), ttPtr, &call);\n"
+         << "    updateAnalysis(call.getArgOperand(" << i
+         << "), ttPtr, &call);\n"
          << "  }\n";
     } else if (currentType == argType::fp) {
-    os << "  updateAnalysis(call.getArgOperand(" << i << "), ttFloat, &call);\n";
+      os << "  updateAnalysis(call.getArgOperand(" << i
+         << "), ttFloat, &call);\n";
     }
   }
   if (name == "dot" || name == "asum" || name == "nrm2") {
