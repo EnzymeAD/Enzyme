@@ -81,11 +81,11 @@ entry:
 ; CHECK-NEXT:   call void %insert_function(i8* %trace, i8* bitcast (double (double*, i32, double*, i8*, i8*)* @condition_loss to i8*))
 ; CHECK-NEXT:   %0 = bitcast double* %data to i8*
 ; CHECK-NEXT:   %insert_argument = load void (i8*, i8*, i8*, i64)*, void (i8*, i8*, i8*, i64)** @insert_argument
-; CHECK-NEXT:   call void %insert_argument(i8* %trace, i8* nocapture readonly getelementptr inbounds ([5 x i8], [5 x i8]* @1, i32 0, i32 0), i8* %0, i64 0)
+; CHECK-NEXT:   call void %insert_argument(i8* %trace, i8* nocapture readonly getelementptr inbounds ([5 x i8], [5 x i8]* @0, i32 0, i32 0), i8* %0, i64 0)
 ; CHECK-NEXT:   %1 = zext i32 %n to i64
 ; CHECK-NEXT:   %2 = inttoptr i64 %1 to i8*
 ; CHECK-NEXT:   %insert_argument1 = load void (i8*, i8*, i8*, i64)*, void (i8*, i8*, i8*, i64)** @insert_argument
-; CHECK-NEXT:   call void %insert_argument1(i8* %trace, i8* nocapture readonly getelementptr inbounds ([2 x i8], [2 x i8]* @2, i32 0, i32 0), i8* %2, i64 4)
+; CHECK-NEXT:   call void %insert_argument1(i8* %trace, i8* nocapture readonly getelementptr inbounds ([2 x i8], [2 x i8]* @1, i32 0, i32 0), i8* %2, i64 4)
 ; CHECK-NEXT:   %3 = bitcast double* %call.ptr.i to i8*
 ; CHECK-NEXT:   call void @llvm.lifetime.start.p0i8(i64 8, i8* %3)
 ; CHECK-NEXT:   %has_choice.i = load i1 (i8*, i8*)*, i1 (i8*, i8*)** @has_choice
@@ -147,12 +147,12 @@ entry:
 ; CHECK-NEXT:   %new_trace = load i8* ()*, i8* ()** @new_trace
 ; CHECK-NEXT:   %trace3 = call i8* %new_trace()
 ; CHECK-NEXT:   %has_call = load i1 (i8*, i8*)*, i1 (i8*, i8*)** @has_call
-; CHECK-NEXT:   %has.call.call2 = call i1 %has_call(i8* %observations, i8* nocapture readonly getelementptr inbounds ([21 x i8], [21 x i8]* @3, i32 0, i32 0))
+; CHECK-NEXT:   %has.call.call2 = call i1 %has_call(i8* %observations, i8* nocapture readonly getelementptr inbounds ([21 x i8], [21 x i8]* @2, i32 0, i32 0))
 ; CHECK-NEXT:   br i1 %has.call.call2, label %condition.call2.with.trace, label %condition.call2.without.trace
 
 ; CHECK: condition.call2.with.trace:                       ; preds = %condition_call1.exit
 ; CHECK-NEXT:   %get_trace = load i8* (i8*, i8*)*, i8* (i8*, i8*)** @get_trace
-; CHECK-NEXT:   %calculate_loss.subtrace = call i8* %get_trace(i8* %observations, i8* nocapture readonly getelementptr inbounds ([21 x i8], [21 x i8]* @3, i32 0, i32 0))
+; CHECK-NEXT:   %calculate_loss.subtrace = call i8* %get_trace(i8* %observations, i8* nocapture readonly getelementptr inbounds ([21 x i8], [21 x i8]* @2, i32 0, i32 0))
 ; CHECK-NEXT:   %condition.calculate_loss = call double @condition_calculate_loss(double %5, double %12, double* %data, i32 %n, double* %likelihood, i8* %calculate_loss.subtrace, i8* %trace3)
 ; CHECK-NEXT:   br label %entry.cntd
 
@@ -163,7 +163,7 @@ entry:
 ; CHECK: entry.cntd:                                       ; preds = %condition.call2.without.trace, %condition.call2.with.trace
 ; CHECK-NEXT:   %call2 = phi double [ %condition.calculate_loss, %condition.call2.with.trace ], [ %trace.calculate_loss, %condition.call2.without.trace ]
 ; CHECK-NEXT:   %insert_call = load void (i8*, i8*, i8*)*, void (i8*, i8*, i8*)** @insert_call
-; CHECK-NEXT:   call void %insert_call(i8* %trace, i8* nocapture readonly getelementptr inbounds ([21 x i8], [21 x i8]* @3, i32 0, i32 0), i8* %trace3)
+; CHECK-NEXT:   call void %insert_call(i8* %trace, i8* nocapture readonly getelementptr inbounds ([21 x i8], [21 x i8]* @2, i32 0, i32 0), i8* %trace3)
 ; CHECK-NEXT:   %17 = bitcast double %call2 to i64
 ; CHECK-NEXT:   %18 = inttoptr i64 %17 to i8*
 ; CHECK-NEXT:   %insert_return = load void (i8*, i8*, i64)*, void (i8*, i8*, i64)** @insert_return
@@ -180,18 +180,18 @@ entry:
 ; CHECK-NEXT:   %0 = bitcast double %m to i64
 ; CHECK-NEXT:   %1 = inttoptr i64 %0 to i8*
 ; CHECK-NEXT:   %insert_argument = load void (i8*, i8*, i8*, i64)*, void (i8*, i8*, i8*, i64)** @insert_argument
-; CHECK-NEXT:   call void %insert_argument(i8* %trace, i8* nocapture readonly getelementptr inbounds ([2 x i8], [2 x i8]* @4, i32 0, i32 0), i8* %1, i64 8)
+; CHECK-NEXT:   call void %insert_argument(i8* %trace, i8* nocapture readonly getelementptr inbounds ([2 x i8], [2 x i8]* @3, i32 0, i32 0), i8* %1, i64 8)
 ; CHECK-NEXT:   %2 = bitcast double %b to i64
 ; CHECK-NEXT:   %3 = inttoptr i64 %2 to i8*
 ; CHECK-NEXT:   %insert_argument1 = load void (i8*, i8*, i8*, i64)*, void (i8*, i8*, i8*, i64)** @insert_argument
-; CHECK-NEXT:   call void %insert_argument1(i8* %trace, i8* nocapture readonly getelementptr inbounds ([2 x i8], [2 x i8]* @5, i32 0, i32 0), i8* %3, i64 8)
+; CHECK-NEXT:   call void %insert_argument1(i8* %trace, i8* nocapture readonly getelementptr inbounds ([2 x i8], [2 x i8]* @4, i32 0, i32 0), i8* %3, i64 8)
 ; CHECK-NEXT:   %4 = bitcast double* %data to i8*
 ; CHECK-NEXT:   %insert_argument2 = load void (i8*, i8*, i8*, i64)*, void (i8*, i8*, i8*, i64)** @insert_argument
-; CHECK-NEXT:   call void %insert_argument2(i8* %trace, i8* nocapture readonly getelementptr inbounds ([5 x i8], [5 x i8]* @6, i32 0, i32 0), i8* %4, i64 0)
+; CHECK-NEXT:   call void %insert_argument2(i8* %trace, i8* nocapture readonly getelementptr inbounds ([5 x i8], [5 x i8]* @5, i32 0, i32 0), i8* %4, i64 0)
 ; CHECK-NEXT:   %5 = zext i32 %n to i64
 ; CHECK-NEXT:   %6 = inttoptr i64 %5 to i8*
 ; CHECK-NEXT:   %insert_argument3 = load void (i8*, i8*, i8*, i64)*, void (i8*, i8*, i8*, i64)** @insert_argument
-; CHECK-NEXT:   call void %insert_argument3(i8* %trace, i8* nocapture readonly getelementptr inbounds ([2 x i8], [2 x i8]* @7, i32 0, i32 0), i8* %6, i64 4)
+; CHECK-NEXT:   call void %insert_argument3(i8* %trace, i8* nocapture readonly getelementptr inbounds ([2 x i8], [2 x i8]* @6, i32 0, i32 0), i8* %6, i64 4)
 ; CHECK-NEXT:   %cmp19 = icmp sgt i32 %n, 0
 ; CHECK-NEXT:   br i1 %cmp19, label %for.body.preheader, label %for.cond.cleanup
 
