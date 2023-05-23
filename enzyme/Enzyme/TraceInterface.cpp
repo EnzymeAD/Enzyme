@@ -350,7 +350,8 @@ DynamicTraceInterface::DynamicTraceInterface(Value *dynamicInterface,
       Builder, dynamicInterface, insertChoiceGradientTy(), 7, M,
       "insert_choice_gradient");
   insertArgumentGradientFunction = MaterializeInterfaceFunction(
-      Builder, dynamicInterface, insertArgumentGradientTy(), 8, M, "insert_argument_gradient");
+      Builder, dynamicInterface, insertArgumentGradientTy(), 8, M,
+      "insert_argument_gradient");
   newTraceFunction = MaterializeInterfaceFunction(
       Builder, dynamicInterface, newTraceTy(), 9, M, "new_trace");
   freeTraceFunction = MaterializeInterfaceFunction(
