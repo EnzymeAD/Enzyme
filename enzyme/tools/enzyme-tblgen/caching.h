@@ -149,29 +149,28 @@ void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
     assert(typeMap.lookup(argIdx+1) == argType::vincInc);
     auto vecName = nameVec[argIdx];
     auto incName = nameVec[argIdx+1];
+    auto copy_call = gutils->oldFunc->getParent()->getOrInsertFunction(
+       name, fpType,
+  type_n, type_x, type_incx, type_x, type_incx);
     // TODO: remove last hardcoded len_n usages to support blas lv2/3 
     os
 << "    if (cache_" << vecName << ") {\n"
-<< "      auto dmemcpy = getOrInsertMemcpyStrided(\n"
-<< "          *gutils->oldFunc->getParent(), cast<PointerType>(castvals[" << i << "]),\n"
-<< "          intType, 0, 0);\n"
+<< "      std::string copy_name = (blas.prefix + blas.floatType + \"copy\" + blas.suffix).str();\n"
+<< "      auto dmemcpy = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
+<< "            copy_name, Builder2.getVoidTy(), intType, type_x, intType, type_x, intType);\n"
+//<< "      auto dmemcpy = getOrInsertMemcpyStrided(\n"
+//<< "          *gutils->oldFunc->getParent(), cast<PointerType>(castvals[" << i << "]),\n"
+//<< "          intType, 0, 0);\n"
 << "      auto malins = CreateAllocation(BuilderZ, fpType, len_n);\n"
 << "      Value *arg = BuilderZ.CreateBitCast(malins, castvals[" << i << "]);\n"
-<< "      Value *args[4] = {arg,\n"
-<< "                         gutils->getNewFromOriginal(arg_" << vecName << "),\n"
-<< "                         len_n, " << incName << "};\n"
+<< "      Value *args[5] = {len_n, arg_" << vecName << ", " << incName << "arg, 1};\n"
+//<< "                         gutils->getNewFromOriginal(arg_" << vecName << "),\n"
+//<< "                         len_n, " << incName << "};\n"
 << "      if (args[1]->getType()->isIntegerTy())\n"
 << "        args[1] = BuilderZ.CreateIntToPtr(args[1], castvals[" << i << "]);\n"
 << "      BuilderZ.CreateCall(dmemcpy, args,\n"
-<< "          gutils->getInvertedBundles(&call,{\n";
-    for (size_t j = 0; j < nameVec.size(); j++) {
-      os 
-<< ((j==0) ? "" : ", ")
-// TODO write julia test to test for usage of i instead of argIdx once used?
-<< ((argIdx == j) ? "ValueType::Shadow" : "ValueType::None");
-    }
-    os
-<< "},\n"
+<< "          gutils->getInvertedBundles(&call,\n"
+<< " {ValueType::Both, ValueType::Both, ValueType::Both, ValueType::Both, ValueType::Both},\n"
 << "          BuilderZ, /*lookup*/ false));\n"
 << "      cacheValues.push_back(arg);\n"
 << "    }\n";
