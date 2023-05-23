@@ -147,33 +147,34 @@ TraceUtils::ValueToVoidPtrAndSize(IRBuilder<> &Builder, Value *val,
                                   Type *size_type) {
   auto valsize = val->getType()->getPrimitiveSizeInBits();
 
-  Value *retval;
   if (val->getType()->isPointerTy()) {
-    retval = Builder.CreatePointerCast(val, Builder.getInt8PtrTy());
-  } else {
-    auto M = Builder.GetInsertBlock()->getModule();
-    auto &DL = M->getDataLayout();
-    auto pointersize = DL.getPointerSizeInBits();
-    if (valsize <= pointersize) {
-      auto cast = Builder.CreateBitCast(
-          val, IntegerType::get(M->getContext(), valsize));
-      cast = valsize == pointersize
-                 ? cast
-                 : Builder.CreateZExt(cast, Builder.getIntPtrTy(DL));
-      retval = Builder.CreateIntToPtr(cast, Builder.getInt8PtrTy());
-    } else {
-      IRBuilder<> AllocaBuilder(Builder.GetInsertBlock()
-                                    ->getParent()
-                                    ->getEntryBlock()
-                                    .getFirstNonPHIOrDbgOrLifetime());
-      auto alloca = AllocaBuilder.CreateAlloca(val->getType(), nullptr,
-                                               val->getName() + ".ptr");
-      Builder.CreateStore(val, alloca);
-      retval = alloca;
-    }
+    Value *retval = Builder.CreatePointerCast(val, Builder.getInt8PtrTy());
+    return {retval, ConstantInt::get(size_type, valsize / 8)};
   }
 
-  return {retval, ConstantInt::get(size_type, valsize / 8)};
+  auto M = Builder.GetInsertBlock()->getModule();
+  auto &DL = M->getDataLayout();
+  auto pointersize = DL.getPointerSizeInBits();
+
+  if (valsize <= pointersize) {
+    auto cast =
+        Builder.CreateBitCast(val, IntegerType::get(M->getContext(), valsize));
+    if (valsize != pointersize)
+      cast = Builder.CreateZExt(cast, Builder.getIntPtrTy(DL));
+
+    Value *retval = Builder.CreateIntToPtr(cast, Builder.getInt8PtrTy());
+    return {retval, ConstantInt::get(size_type, valsize / 8)};
+  } else {
+    auto insertPoint = Builder.GetInsertBlock()
+                           ->getParent()
+                           ->getEntryBlock()
+                           .getFirstNonPHIOrDbgOrLifetime();
+    IRBuilder<> AllocaBuilder(insertPoint);
+    auto alloca = AllocaBuilder.CreateAlloca(val->getType(), nullptr,
+                                             val->getName() + ".ptr");
+    Builder.CreateStore(val, alloca);
+    return {alloca, ConstantInt::get(size_type, valsize / 8)};
+  }
 }
 
 CallInst *TraceUtils::CreateTrace(IRBuilder<> &Builder, const Twine &Name) {
