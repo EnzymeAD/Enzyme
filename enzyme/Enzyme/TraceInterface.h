@@ -122,6 +122,18 @@ private:
 public:
   StaticTraceInterface(llvm::Module *M);
 
+  StaticTraceInterface(
+      llvm::LLVMContext &C, llvm::Function *sampleFunction,
+      llvm::Function *getTraceFunction, llvm::Function *getChoiceFunction,
+      llvm::Function *insertCallFunction, llvm::Function *insertChoiceFunction,
+      llvm::Function *insertArgumentFunction,
+      llvm::Function *insertReturnFunction,
+      llvm::Function *insertFunctionFunction,
+      llvm::Function *insertChoiceGradientFunction,
+      llvm::Function *insertArgumentGradientFunction,
+      llvm::Function *newTraceFunction, llvm::Function *freeTraceFunction,
+      llvm::Function *hasCallFunction, llvm::Function *hasChoiceFunction);
+
   ~StaticTraceInterface() = default;
 
 public:

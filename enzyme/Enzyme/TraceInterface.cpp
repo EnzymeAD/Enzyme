@@ -272,6 +272,27 @@ StaticTraceInterface::StaticTraceInterface(Module *M)
 #endif
 }
 
+StaticTraceInterface::StaticTraceInterface(
+    LLVMContext &C, Function *sampleFunction, Function *getTraceFunction,
+    Function *getChoiceFunction, Function *insertCallFunction,
+    Function *insertChoiceFunction, Function *insertArgumentFunction,
+    Function *insertReturnFunction, Function *insertFunctionFunction,
+    Function *insertChoiceGradientFunction,
+    Function *insertArgumentGradientFunction, Function *newTraceFunction,
+    Function *freeTraceFunction, Function *hasCallFunction,
+    Function *hasChoiceFunction)
+    : TraceInterface(C), sampleFunction(sampleFunction),
+      getTraceFunction(getTraceFunction), getChoiceFunction(getChoiceFunction),
+      insertCallFunction(insertCallFunction),
+      insertChoiceFunction(insertChoiceFunction),
+      insertArgumentFunction(insertArgumentFunction),
+      insertReturnFunction(insertReturnFunction),
+      insertFunctionFunction(insertFunctionFunction),
+      insertChoiceGradientFunction(insertChoiceGradientFunction),
+      insertArgumentGradientFunction(insertArgumentGradientFunction),
+      newTraceFunction(newTraceFunction), freeTraceFunction(freeTraceFunction),
+      hasCallFunction(hasCallFunction), hasChoiceFunction(hasChoiceFunction){};
+
 // implemented by enzyme
 Function *StaticTraceInterface::getSampleFunction() { return sampleFunction; }
 
