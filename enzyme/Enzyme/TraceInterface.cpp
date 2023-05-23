@@ -193,6 +193,24 @@ StaticTraceInterface::StaticTraceInterface(Module *M)
     }
   }
 
+  assert(newTraceFunction);
+  assert(freeTraceFunction);
+  assert(getTraceFunction);
+  assert(getChoiceFunction);
+  assert(insertCallFunction);
+  assert(insertChoiceFunction);
+
+  assert(insertArgumentFunction);
+  assert(insertReturnFunction);
+  assert(insertFunctionFunction);
+
+  assert(insertChoiceGradientFunction);
+  assert(insertArgumentGradientFunction);
+
+  assert(hasCallFunction);
+  assert(hasChoiceFunction);
+  assert(sampleFunction);
+
   newTraceFunction->addFnAttr("enzyme_notypeanalysis");
   freeTraceFunction->addFnAttr("enzyme_notypeanalysis");
   getTraceFunction->addFnAttr("enzyme_notypeanalysis");
@@ -252,24 +270,6 @@ StaticTraceInterface::StaticTraceInterface(Module *M)
   hasChoiceFunction->addFnAttr("nofree");
   sampleFunction->addFnAttr("nofree");
 #endif
-
-  assert(newTraceFunction);
-  assert(freeTraceFunction);
-  assert(getTraceFunction);
-  assert(getChoiceFunction);
-  assert(insertCallFunction);
-  assert(insertChoiceFunction);
-
-  assert(insertArgumentFunction);
-  assert(insertReturnFunction);
-  assert(insertFunctionFunction);
-
-  assert(insertChoiceGradientFunction);
-  assert(insertArgumentGradientFunction);
-
-  assert(hasCallFunction);
-  assert(hasChoiceFunction);
-  assert(sampleFunction);
 }
 
 // implemented by enzyme
