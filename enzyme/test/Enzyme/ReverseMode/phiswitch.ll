@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -early-cse -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -early-cse -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,early-cse,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 declare double @llvm.pow.f64(double, double)
 
@@ -72,8 +73,8 @@ bb13:                                             ; preds = %bb12, %bb9, %bb8, %
 ; CHECK-NEXT:   %ti5_unwrap = uitofp i64 %i5 to double
 ; CHECK-NEXT:   %9 = fsub fast double %ti5_unwrap, 1.000000e+00
 ; CHECK-NEXT:   %10 = call fast double @llvm.pow.f64(double %arg, double %9)
-; CHECK-NEXT:   %11 = fmul fast double %4, %10
-; CHECK-NEXT:   %12 = fmul fast double %11, %ti5_unwrap
+; CHECK-NEXT:   %11 = fmul fast double %10, %ti5_unwrap
+; CHECK-NEXT:   %12 = fmul fast double %4, %11
 ; CHECK-NEXT:   %13 = fadd fast double %3, %12
 ; CHECK-NEXT:   br label %invertbb
 ; CHECK-NEXT: }

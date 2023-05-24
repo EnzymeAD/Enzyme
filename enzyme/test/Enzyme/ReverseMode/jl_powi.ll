@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 source_filename = "text"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
@@ -63,11 +64,11 @@ entry:
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %0 = sub i64 %y1, 1
 ; CHECK-NEXT:   %1 = call fast fastcc double @julia___2797(double %y0, i64 %0)
-; CHECK-DAG:    %[[a2:.+]]  = fmul fast double %differeturn, %1
 ; CHECK-DAG:    %[[a3:.+]]  = sitofp i64 %y1 to double
-; CHECK-NEXT:   %4 = fmul fast double %[[a2]], %[[a3]]
-; CHECK-NEXT:   %5 = icmp eq i64 0, %y1
-; CHECK-NEXT:   %6 = select {{(fast )?}}i1 %5, double 0.000000e+00, double %4
+; CHECK-DAG:    %[[a2:.+]]  = fmul fast double %1, %[[a3]]
+; CHECK-NEXT:   %[[a5:.+]] = icmp eq i64 0, %y1
+; CHECK-NEXT:   %[[a4:.+]] = fmul fast double %differeturn, %[[a2]]
+; CHECK-NEXT:   %6 = select {{(fast )?}}i1 %[[a5]], double 0.000000e+00, double %[[a4]]
 ; CHECK-NEXT:   %7 = insertvalue { double } undef, double %6, 0
 ; CHECK-NEXT:   ret { double } %7
 ; CHECK-NEXT: }

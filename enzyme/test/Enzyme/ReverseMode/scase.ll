@@ -1,4 +1,6 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg)" -S | FileCheck %s
+
 source_filename = "/mnt/Data/git/Enzyme/enzyme/test/Integration/taylorlog.c"
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-gnu"
@@ -120,8 +122,8 @@ attributes #8 = { noreturn nounwind }
 ; CHECK-NEXT:   %d0diffez = fdiv fast double %1, %conv_unwrap
 ; CHECK-NEXT:   %3 = fsub fast double %conv_unwrap, 1.000000e+00
 ; CHECK-NEXT:   %4 = call fast double @llvm.pow.f64(double %x, double %3)
-; CHECK-NEXT:   %5 = fmul fast double %d0diffez, %4
-; CHECK-NEXT:   %6 = fmul fast double %5, %conv_unwrap
+; CHECK-NEXT:   %5 = fmul fast double %4, %conv_unwrap
+; CHECK-NEXT:   %6 = fmul fast double %d0diffez, %5
 ; CHECK-NEXT:   %7 = fadd fast double %"x'de.1", %6
 ; CHECK-NEXT:   %8 = icmp eq i64 %"iv'ac.0", 0
 ; CHECK-NEXT:   %9 = select{{( fast)?}} i1 %8, double 0.000000e+00, double %1

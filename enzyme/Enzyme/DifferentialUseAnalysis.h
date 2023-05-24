@@ -308,34 +308,15 @@ inline bool is_value_needed_in_reverse(
 #if LLVM_VERSION_MAJOR >= 14
         for (size_t i = 0; i < CI->arg_size(); i++)
 #else
-        auto F = getFunctionFromCall(CI);
         for (size_t i = 0; i < CI->getNumArgOperands(); i++)
 #endif
         {
           if (inst == CI->getArgOperand(i)) {
-#if LLVM_VERSION_MAJOR >= 8
-            if (!CI->doesNotCapture(i))
-#else
-            if (!(CI->dataOperandHasImpliedAttr(i + 1, Attribute::NoCapture) ||
-                  (F && F->hasParamAttribute(i, Attribute::NoCapture))))
-#endif
-            {
+            if (!isNoCapture(CI, i)) {
               writeOnlyNoCapture = false;
               break;
             }
-#if LLVM_VERSION_MAJOR >= 14
-            if (!(CI->onlyWritesMemory(i) || CI->onlyWritesMemory()))
-#else
-            if (!(CI->dataOperandHasImpliedAttr(i + 1, Attribute::WriteOnly) ||
-                  CI->dataOperandHasImpliedAttr(i + 1, Attribute::ReadNone) ||
-                  CI->hasFnAttr(Attribute::WriteOnly) ||
-                  CI->hasFnAttr(Attribute::ReadNone) ||
-                  (F && (F->hasParamAttribute(i, Attribute::WriteOnly) ||
-                         F->hasParamAttribute(i, Attribute::ReadNone) ||
-                         F->hasFnAttribute(Attribute::WriteOnly) ||
-                         F->hasFnAttribute(Attribute::ReadNone)))))
-#endif
-            {
+            if (!isWriteOnly(CI, i)) {
               writeOnlyNoCapture = false;
               break;
             }
@@ -385,7 +366,8 @@ inline bool is_value_needed_in_reverse(
           mode == DerivativeMode::ForwardModeSplit ||
           (!isa<ExtractValueInst>(user) && !isa<ExtractElementInst>(user) &&
            !isa<InsertValueInst>(user) && !isa<InsertElementInst>(user) &&
-           !isa<CastInst>(user) && !isa<GetElementPtrInst>(user))) {
+           !isPointerArithmeticInst(user, /*includephi*/ false,
+                                    /*includebin*/ false))) {
         if (!inst_cv &&
             !gutils->isConstantInstruction(const_cast<Instruction *>(user))) {
           if (EnzymePrintDiffUse)
@@ -518,6 +500,15 @@ inline bool is_value_needed_in_reverse(
     bool primalUsedInShadowPointer = true;
     if (isa<CastInst>(user) || isa<LoadInst>(user))
       primalUsedInShadowPointer = false;
+    if (auto CI = dyn_cast<CallInst>(user)) {
+      auto funcName = getFuncNameFromCall(CI);
+      if (funcName == "julia.pointer_from_objref") {
+        primalUsedInShadowPointer = false;
+      }
+      if (funcName.contains("__enzyme_todense")) {
+        primalUsedInShadowPointer = false;
+      }
+    }
     if (auto GEP = dyn_cast<GetElementPtrInst>(user)) {
       bool idxUsed = false;
       for (auto &idx : GEP->indices()) {
@@ -526,6 +517,18 @@ inline bool is_value_needed_in_reverse(
       }
       if (!idxUsed)
         primalUsedInShadowPointer = false;
+    }
+    if (auto II = dyn_cast<IntrinsicInst>(user)) {
+      if (isIntelSubscriptIntrinsic(*II)) {
+        const std::array<size_t, 4> idxArgsIndices{{0, 1, 2, 4}};
+        bool idxUsed = false;
+        for (auto i : idxArgsIndices) {
+          if (II->getOperand(i) == inst)
+            idxUsed = true;
+        }
+        if (!idxUsed)
+          primalUsedInShadowPointer = false;
+      }
     }
     if (auto IVI = dyn_cast<InsertValueInst>(user)) {
       bool valueIsIndex = false;

@@ -37,7 +37,6 @@ public:
   MEnzymeLogic &Logic;
   bool AtomicAdd;
   DerivativeMode mode;
-  BlockAndValueMapping invertedPointers;
   BlockAndValueMapping invertedPointersGlobal;
   BlockAndValueMapping invertedPointersShadow;
   BlockAndValueMapping shadowValues;

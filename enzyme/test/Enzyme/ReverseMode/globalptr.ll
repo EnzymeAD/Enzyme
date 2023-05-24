@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -dce -correlated-propagation -simplifycfg -S -enzyme-global-activity | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -simplifycfg -S -enzyme-global-activity | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S -enzyme-global-activity | FileCheck %s
 
 ; a function returning a ptr with no arguments is mistakenly marked as constant in spite of accessing a global
 

@@ -35,11 +35,20 @@
 #include "llvm/ADT/Triple.h"
 #include "llvm/Analysis/CallGraph.h"
 #include "llvm/Analysis/GlobalsModRef.h"
+#include "llvm/IR/DIBuilder.h"
 #include "llvm/IR/MDBuilder.h"
+#include "llvm/Transforms/Utils/Cloning.h"
 
 #if LLVM_VERSION_MAJOR >= 9
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Transforms/IPO/Attributor.h"
+#endif
+
+#if LLVM_VERSION_MAJOR >= 14
+#define addAttribute addAttributeAtIndex
+#define removeAttribute removeAttributeAtIndex
+#define getAttribute getAttributeAtIndex
+#define hasAttribute hasAttributeAtIndex
 #endif
 
 using namespace llvm;
@@ -179,14 +188,41 @@ EnzymeLogicRef CreateEnzymeLogic(uint8_t PostOpt) {
   return (EnzymeLogicRef)(new EnzymeLogic((bool)PostOpt));
 }
 
-EnzymeTraceInterfaceRef CreateEnzymeStaticTraceInterface(LLVMModuleRef M) {
+EnzymeTraceInterfaceRef FindEnzymeStaticTraceInterface(LLVMModuleRef M) {
   return (EnzymeTraceInterfaceRef)(new StaticTraceInterface(unwrap(M)));
 }
 
+EnzymeTraceInterfaceRef CreateEnzymeStaticTraceInterface(
+    LLVMContextRef C, LLVMValueRef sampleFunction,
+    LLVMValueRef getTraceFunction, LLVMValueRef getChoiceFunction,
+    LLVMValueRef insertCallFunction, LLVMValueRef insertChoiceFunction,
+    LLVMValueRef insertArgumentFunction, LLVMValueRef insertReturnFunction,
+    LLVMValueRef insertFunctionFunction,
+    LLVMValueRef insertChoiceGradientFunction,
+    LLVMValueRef insertArgumentGradientFunction, LLVMValueRef newTraceFunction,
+    LLVMValueRef freeTraceFunction, LLVMValueRef hasCallFunction,
+    LLVMValueRef hasChoiceFunction) {
+  return (EnzymeTraceInterfaceRef)(new StaticTraceInterface(
+      *unwrap(C), cast<Function>(unwrap(sampleFunction)),
+      cast<Function>(unwrap(getTraceFunction)),
+      cast<Function>(unwrap(getChoiceFunction)),
+      cast<Function>(unwrap(insertCallFunction)),
+      cast<Function>(unwrap(insertChoiceFunction)),
+      cast<Function>(unwrap(insertArgumentFunction)),
+      cast<Function>(unwrap(insertReturnFunction)),
+      cast<Function>(unwrap(insertFunctionFunction)),
+      cast<Function>(unwrap(insertChoiceGradientFunction)),
+      cast<Function>(unwrap(insertArgumentGradientFunction)),
+      cast<Function>(unwrap(newTraceFunction)),
+      cast<Function>(unwrap(freeTraceFunction)),
+      cast<Function>(unwrap(hasCallFunction)),
+      cast<Function>(unwrap(hasChoiceFunction))));
+};
+
 EnzymeTraceInterfaceRef
 CreateEnzymeDynamicTraceInterface(LLVMValueRef interface, LLVMValueRef F) {
-  return (EnzymeTraceInterfaceRef)(
-      new DynamicTraceInterface(unwrap(interface), cast<Function>(unwrap(F))));
+  return (EnzymeTraceInterfaceRef)(new DynamicTraceInterface(
+      unwrap(interface), cast<Function>(unwrap(F))));
 }
 
 void ClearEnzymeLogic(EnzymeLogicRef Ref) { eunwrap(Ref).clear(); }
@@ -279,14 +315,17 @@ void EnzymeRegisterCallHandler(char *Name,
                                CustomFunctionReverse RevHandle) {
   auto &pair = customCallHandlers[std::string(Name)];
   pair.first = [=](IRBuilder<> &B, CallInst *CI, GradientUtils &gutils,
-                   Value *&normalReturn, Value *&shadowReturn, Value *&tape) {
+                   Value *&normalReturn, Value *&shadowReturn,
+                   Value *&tape) -> bool {
     LLVMValueRef normalR = wrap(normalReturn);
     LLVMValueRef shadowR = wrap(shadowReturn);
     LLVMValueRef tapeR = wrap(tape);
-    FwdHandle(wrap(&B), wrap(CI), &gutils, &normalR, &shadowR, &tapeR);
+    uint8_t noMod =
+        FwdHandle(wrap(&B), wrap(CI), &gutils, &normalR, &shadowR, &tapeR);
     normalReturn = unwrap(normalR);
     shadowReturn = unwrap(shadowR);
     tape = unwrap(tapeR);
+    return noMod != 0;
   };
   pair.second = [=](IRBuilder<> &B, CallInst *CI, DiffeGradientUtils &gutils,
                     Value *tape) {
@@ -297,12 +336,13 @@ void EnzymeRegisterCallHandler(char *Name,
 void EnzymeRegisterFwdCallHandler(char *Name, CustomFunctionForward FwdHandle) {
   auto &pair = customFwdCallHandlers[std::string(Name)];
   pair = [=](IRBuilder<> &B, CallInst *CI, GradientUtils &gutils,
-             Value *&normalReturn, Value *&shadowReturn) {
+             Value *&normalReturn, Value *&shadowReturn) -> bool {
     LLVMValueRef normalR = wrap(normalReturn);
     LLVMValueRef shadowR = wrap(shadowReturn);
-    FwdHandle(wrap(&B), wrap(CI), &gutils, &normalR, &shadowR);
+    uint8_t noMod = FwdHandle(wrap(&B), wrap(CI), &gutils, &normalR, &shadowR);
     normalReturn = unwrap(normalR);
     shadowReturn = unwrap(shadowR);
+    return noMod != 0;
   };
 }
 
@@ -377,6 +417,42 @@ void EnzymeGradientUtilsAddToDiffe(DiffeGradientUtils *gutils, LLVMValueRef val,
                                    LLVMValueRef diffe, LLVMBuilderRef B,
                                    LLVMTypeRef T) {
   gutils->addToDiffe(unwrap(val), unwrap(diffe), *unwrap(B), unwrap(T));
+}
+
+void EnzymeGradientUtilsAddToInvertedPointerDiffe(
+    DiffeGradientUtils *gutils, LLVMValueRef orig, LLVMValueRef origVal,
+    LLVMTypeRef addingType, unsigned start, unsigned size, LLVMValueRef origptr,
+    LLVMValueRef dif, LLVMBuilderRef BuilderM, unsigned align,
+    LLVMValueRef mask) {
+#if LLVM_VERSION_MAJOR >= 10
+  MaybeAlign align2;
+  if (align)
+    align2 = MaybeAlign(align);
+#else
+  auto align2 = align;
+#endif
+  auto inst = cast_or_null<Instruction>(unwrap(orig));
+  gutils->addToInvertedPtrDiffe(inst, unwrap(origVal), unwrap(addingType),
+                                start, size, unwrap(origptr), unwrap(dif),
+                                *unwrap(BuilderM), align2, unwrap(mask));
+}
+
+void EnzymeGradientUtilsAddToInvertedPointerDiffeTT(
+    DiffeGradientUtils *gutils, LLVMValueRef orig, LLVMValueRef origVal,
+    CTypeTreeRef vd, unsigned LoadSize, LLVMValueRef origptr,
+    LLVMValueRef prediff, LLVMBuilderRef BuilderM, unsigned align,
+    LLVMValueRef premask) {
+#if LLVM_VERSION_MAJOR >= 10
+  MaybeAlign align2;
+  if (align)
+    align2 = MaybeAlign(align);
+#else
+  auto align2 = align;
+#endif
+  auto inst = cast_or_null<Instruction>(unwrap(orig));
+  gutils->addToInvertedPtrDiffe(inst, unwrap(origVal), *(TypeTree *)vd,
+                                LoadSize, unwrap(origptr), unwrap(prediff),
+                                *unwrap(BuilderM), align2, unwrap(premask));
 }
 
 void EnzymeGradientUtilsSetDiffe(DiffeGradientUtils *gutils, LLVMValueRef val,
@@ -621,6 +697,10 @@ void EnzymeTypeTreeData0Eq(CTypeTreeRef CTT) {
 void EnzymeTypeTreeLookupEq(CTypeTreeRef CTT, int64_t size, const char *dl) {
   *(TypeTree *)CTT = ((TypeTree *)CTT)->Lookup(size, DataLayout(dl));
 }
+void EnzymeTypeTreeCanonicalizeInPlace(CTypeTreeRef CTT, int64_t size,
+                                       const char *dl) {
+  ((TypeTree *)CTT)->CanonicalizeInPlace(size, DataLayout(dl));
+}
 
 CConcreteType EnzymeTypeTreeInner0(CTypeTreeRef CTT) {
   return ewrap(((TypeTree *)CTT)->Inner0());
@@ -727,15 +807,97 @@ uint8_t EnzymeHasFromStack(LLVMValueRef inst1) {
   return hasMetadata(I1, "enzyme_fromstack") != 0;
 }
 
+#if LLVM_VERSION_MAJOR >= 8
+void EnzymeCloneFunctionDISubprogramInto(LLVMValueRef NF, LLVMValueRef F) {
+  auto &OldFunc = *cast<Function>(unwrap(F));
+  auto &NewFunc = *cast<Function>(unwrap(NF));
+  auto OldSP = OldFunc.getSubprogram();
+  if (!OldSP)
+    return;
+  DIBuilder DIB(*OldFunc.getParent(), /*AllowUnresolved=*/false,
+                OldSP->getUnit());
+  auto SPType = DIB.createSubroutineType(DIB.getOrCreateTypeArray({}));
+  DISubprogram::DISPFlags SPFlags = DISubprogram::SPFlagDefinition |
+                                    DISubprogram::SPFlagOptimized |
+                                    DISubprogram::SPFlagLocalToUnit;
+  auto NewSP = DIB.createFunction(
+      OldSP->getUnit(), NewFunc.getName(), NewFunc.getName(), OldSP->getFile(),
+      /*LineNo=*/0, SPType, /*ScopeLine=*/0, DINode::FlagZero, SPFlags);
+  NewFunc.setSubprogram(NewSP);
+  DIB.finalizeSubprogram(NewSP);
+  return;
+}
+#endif
+
 void EnzymeReplaceFunctionImplementation(LLVMModuleRef M) {
   ReplaceFunctionImplementation(*unwrap(M));
 }
 
-#if LLVM_VERSION_MAJOR >= 9
+#if LLVM_VERSION_MAJOR >= 15
+
+static bool runAttributorOnFunctions(InformationCache &InfoCache,
+                                     SetVector<Function *> &Functions,
+                                     AnalysisGetter &AG,
+                                     CallGraphUpdater &CGUpdater,
+                                     bool DeleteFns, bool IsModulePass) {
+  if (Functions.empty())
+    return false;
+
+  // Create an Attributor and initially empty information cache that is filled
+  // while we identify default attribute opportunities.
+  AttributorConfig AC(CGUpdater);
+  AC.RewriteSignatures = false;
+  AC.IsModulePass = IsModulePass;
+  AC.DeleteFns = DeleteFns;
+  Attributor A(Functions, InfoCache, AC);
+
+  for (Function *F : Functions) {
+    // Populate the Attributor with abstract attribute opportunities in the
+    // function and the information cache with IR information.
+    A.identifyDefaultAbstractAttributes(*F);
+  }
+
+  ChangeStatus Changed = A.run();
+
+  return Changed == ChangeStatus::CHANGED;
+}
+struct MyAttributorLegacyPass : public ModulePass {
+  static char ID;
+
+  MyAttributorLegacyPass() : ModulePass(ID) {}
+
+  bool runOnModule(Module &M) override {
+    if (skipModule(M))
+      return false;
+
+    AnalysisGetter AG;
+    SetVector<Function *> Functions;
+    for (Function &F : M)
+      Functions.insert(&F);
+
+    CallGraphUpdater CGUpdater;
+    BumpPtrAllocator Allocator;
+    InformationCache InfoCache(M, AG, Allocator, /* CGSCC */ nullptr);
+    return runAttributorOnFunctions(InfoCache, Functions, AG, CGUpdater,
+                                    /* DeleteFns*/ true,
+                                    /* IsModulePass */ true);
+  }
+
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
+    // FIXME: Think about passes we will preserve and add them here.
+    AU.addRequired<TargetLibraryInfoWrapperPass>();
+  }
+};
+extern "C++" char MyAttributorLegacyPass::ID = 0;
+void EnzymeAddAttributorLegacyPass(LLVMPassManagerRef PM) {
+  unwrap(PM)->add(new MyAttributorLegacyPass());
+}
+#elif LLVM_VERSION_MAJOR >= 9
 void EnzymeAddAttributorLegacyPass(LLVMPassManagerRef PM) {
   unwrap(PM)->add(createAttributorLegacyPass());
 }
 #endif
+
 LLVMMetadataRef EnzymeMakeNonConstTBAA(LLVMMetadataRef MD) {
   auto M = cast<MDNode>(unwrap(MD));
   if (M->getNumOperands() != 4)
@@ -769,4 +931,737 @@ LLVMMetadataRef EnzymeAnonymousAliasScope(LLVMMetadataRef domain,
   MDNode *scope = MDB.createAnonymousAliasScope(dom, str);
   return wrap(scope);
 }
+uint8_t EnzymeLowerSparsification(LLVMValueRef F, uint8_t replaceAll) {
+  return LowerSparsification(cast<Function>(unwrap(F)), replaceAll != 0);
+}
+
+void EnzymeAttributeKnownFunctions(LLVMValueRef FC) {
+  attributeKnownFunctions(*cast<Function>(unwrap(FC)));
+}
+
+void EnzymeSetCalledFunction(LLVMValueRef C_CI, LLVMValueRef C_F,
+                             uint64_t *argrem, uint64_t num_argrem) {
+  auto CI = cast<CallInst>(unwrap(C_CI));
+  auto F = cast<Function>(unwrap(C_F));
+  auto Attrs = CI->getAttributes();
+  AttributeList NewAttrs;
+
+  if (CI->getType() == F->getReturnType()) {
+    for (auto attr : Attrs.getAttributes(AttributeList::ReturnIndex))
+      NewAttrs = NewAttrs.addAttribute(F->getContext(),
+                                       AttributeList::ReturnIndex, attr);
+  }
+  for (auto attr : Attrs.getAttributes(AttributeList::FunctionIndex))
+    NewAttrs = NewAttrs.addAttribute(F->getContext(),
+                                     AttributeList::FunctionIndex, attr);
+
+  size_t argremsz = 0;
+  size_t nexti = 0;
+  SmallVector<Value *, 1> vals;
+#if LLVM_VERSION_MAJOR >= 14
+  for (size_t i = 0, end = CI->arg_size(); i < end; i++)
+#else
+  for (size_t i = 0, end = CI->getNumArgOperands(); i < end; i++)
+#endif
+  {
+    if (argremsz < num_argrem) {
+      if (i == argrem[argremsz]) {
+        argremsz++;
+        continue;
+      }
+    }
+    for (auto attr : Attrs.getAttributes(AttributeList::FirstArgIndex + i))
+      NewAttrs = NewAttrs.addAttribute(
+          F->getContext(), AttributeList::FirstArgIndex + nexti, attr);
+    vals.push_back(CI->getArgOperand(i));
+    nexti++;
+  }
+  assert(argremsz == num_argrem);
+
+  IRBuilder<> B(CI);
+  SmallVector<OperandBundleDef, 1> Bundles;
+  for (unsigned I = 0, E = CI->getNumOperandBundles(); I != E; ++I)
+    Bundles.emplace_back(CI->getOperandBundleAt(I));
+  auto NC = B.CreateCall(F, vals, Bundles);
+  NC->setAttributes(NewAttrs);
+  NC->copyMetadata(*CI);
+
+  if (CI->getType() == F->getReturnType())
+    CI->replaceAllUsesWith(NC);
+
+  if (!NC->getType()->isVoidTy())
+    NC->takeName(CI);
+  NC->setCallingConv(CI->getCallingConv());
+  CI->eraseFromParent();
+}
+
+// clones a function to now miss the return or args
+LLVMValueRef EnzymeCloneFunctionWithoutReturnOrArgs(LLVMValueRef FC,
+                                                    uint8_t keepReturnU,
+                                                    uint64_t *argrem,
+                                                    uint64_t num_argrem) {
+  auto F = cast<Function>(unwrap(FC));
+  auto FT = F->getFunctionType();
+  bool keepReturn = keepReturnU != 0;
+
+  size_t argremsz = 0;
+  size_t nexti = 0;
+  SmallVector<Type *, 1> types;
+  auto Attrs = F->getAttributes();
+  AttributeList NewAttrs;
+  for (size_t i = 0, end = FT->getNumParams(); i < end; i++) {
+    if (argremsz < num_argrem) {
+      if (i == argrem[argremsz]) {
+        argremsz++;
+        continue;
+      }
+    }
+    for (auto attr : Attrs.getAttributes(AttributeList::FirstArgIndex + i))
+      NewAttrs = NewAttrs.addAttribute(
+          F->getContext(), AttributeList::FirstArgIndex + nexti, attr);
+    types.push_back(F->getFunctionType()->getParamType(i));
+    nexti++;
+  }
+  if (keepReturn) {
+    for (auto attr : Attrs.getAttributes(AttributeList::ReturnIndex))
+      NewAttrs = NewAttrs.addAttribute(F->getContext(),
+                                       AttributeList::ReturnIndex, attr);
+  }
+  for (auto attr : Attrs.getAttributes(AttributeList::FunctionIndex))
+    NewAttrs = NewAttrs.addAttribute(F->getContext(),
+                                     AttributeList::FunctionIndex, attr);
+
+  FunctionType *FTy = FunctionType::get(
+      keepReturn ? F->getReturnType() : Type::getVoidTy(F->getContext()), types,
+      FT->isVarArg());
+
+  // Create the new function
+#if LLVM_VERSION_MAJOR >= 8
+  Function *NewF = Function::Create(FTy, F->getLinkage(), F->getAddressSpace(),
+                                    F->getName(), F->getParent());
+#else
+  Function *NewF =
+      Function::Create(FTy, F->getLinkage(), F->getName(), F->getParent());
+#endif
+
+  ValueToValueMapTy VMap;
+  // Loop over the arguments, copying the names of the mapped arguments over...
+  nexti = 0;
+  argremsz = 0;
+  Function::arg_iterator DestI = NewF->arg_begin();
+  for (const Argument &I : F->args()) {
+    if (argremsz < num_argrem) {
+      if (I.getArgNo() == argrem[argremsz]) {
+        VMap[&I] = UndefValue::get(I.getType());
+        argremsz++;
+        continue;
+      }
+    }
+    DestI->setName(I.getName()); // Copy the name over...
+    VMap[&I] = &*DestI++;        // Add mapping to VMap
+  }
+
+  SmallVector<ReturnInst *, 8> Returns; // Ignore returns cloned.
+#if LLVM_VERSION_MAJOR >= 13
+  CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
+                    Returns, "", nullptr);
+#else
+  CloneFunctionInto(NewF, F, VMap, F->getSubprogram() != nullptr, Returns, "",
+                    nullptr);
+#endif
+
+  if (!keepReturn) {
+    for (auto &B : *NewF) {
+      if (auto RI = dyn_cast<ReturnInst>(B.getTerminator())) {
+        IRBuilder<> B(RI);
+        auto NRI = B.CreateRetVoid();
+        NRI->copyMetadata(*RI);
+        RI->eraseFromParent();
+      }
+    }
+  }
+  NewF->setAttributes(NewAttrs);
+  if (!keepReturn)
+    for (auto &Arg : NewF->args())
+      Arg.removeAttr(Attribute::Returned);
+  SmallVector<std::pair<unsigned, MDNode *>, 1> MD;
+  F->getAllMetadata(MD);
+  for (auto pair : MD)
+    if (pair.first != LLVMContext::MD_dbg)
+      NewF->addMetadata(pair.first, *pair.second);
+  NewF->takeName(F);
+  NewF->setCallingConv(F->getCallingConv());
+  if (!keepReturn)
+    NewF->addFnAttr("enzyme_retremove", "");
+
+  if (num_argrem) {
+    SmallVector<uint64_t, 1> previdx;
+    if (Attrs.hasAttribute(AttributeList::FunctionIndex, "enzyme_parmremove")) {
+      auto attr =
+          Attrs.getAttribute(AttributeList::FunctionIndex, "enzyme_parmremove");
+      auto prevstr = attr.getValueAsString();
+      SmallVector<StringRef, 1> sub;
+      prevstr.split(sub, ",");
+      for (auto s : sub) {
+        uint64_t ival;
+        bool b = s.getAsInteger(10, ival);
+        assert(!b);
+        previdx.push_back(ival);
+      }
+    }
+    SmallVector<uint64_t, 1> nextidx;
+    for (size_t i = 0; i < num_argrem; i++) {
+      auto val = argrem[i];
+      nextidx.push_back(val);
+    }
+
+    size_t prevcnt = 0;
+    size_t nextcnt = 0;
+    SmallVector<uint64_t, 1> out;
+    while (prevcnt < previdx.size() && nextcnt < nextidx.size()) {
+      if (previdx[prevcnt] <= nextidx[nextcnt] + prevcnt) {
+        out.push_back(previdx[prevcnt]);
+        prevcnt++;
+      } else {
+        out.push_back(nextidx[nextcnt] + prevcnt);
+        nextcnt++;
+      }
+    }
+    while (prevcnt < previdx.size()) {
+      out.push_back(previdx[prevcnt]);
+      prevcnt++;
+    }
+    while (nextcnt < nextidx.size()) {
+      out.push_back(nextidx[nextcnt] + prevcnt);
+      nextcnt++;
+    }
+
+    std::string remstr;
+    for (auto arg : out) {
+      if (remstr.size())
+        remstr += ",";
+      remstr += std::to_string(arg);
+    }
+
+    NewF->addFnAttr("enzyme_parmremove", remstr);
+  }
+  return wrap(NewF);
+}
+LLVMTypeRef EnzymeAllocaType(LLVMValueRef V) {
+  return wrap(cast<AllocaInst>(unwrap(V))->getAllocatedType());
+}
+}
+
+enum AddressSpace {
+  Generic = 0,
+  Tracked = 10,
+  Derived = 11,
+  CalleeRooted = 12,
+  Loaded = 13,
+  FirstSpecial = Tracked,
+  LastSpecial = Loaded,
+};
+struct CountTrackedPointers {
+  unsigned count = 0;
+  bool all = true;
+  bool derived = false;
+  CountTrackedPointers(llvm::Type *T);
+};
+static bool isSpecialPtr(Type *Ty) {
+  PointerType *PTy = dyn_cast<PointerType>(Ty);
+  if (!PTy)
+    return false;
+  unsigned AS = PTy->getAddressSpace();
+  return AddressSpace::FirstSpecial <= AS && AS <= AddressSpace::LastSpecial;
+}
+
+// return how many Special pointers are in T (count > 0),
+// and if there is anything else in T (all == false)
+CountTrackedPointers::CountTrackedPointers(Type *T) {
+  if (isa<PointerType>(T)) {
+    if (isSpecialPtr(T)) {
+      count++;
+      if (T->getPointerAddressSpace() != AddressSpace::Tracked)
+        derived = true;
+    }
+  } else if (isa<StructType>(T) || isa<ArrayType>(T) || isa<VectorType>(T)) {
+    for (Type *ElT : T->subtypes()) {
+      auto sub = CountTrackedPointers(ElT);
+      count += sub.count;
+      all &= sub.all;
+      derived |= sub.derived;
+    }
+    if (isa<ArrayType>(T))
+      count *= cast<ArrayType>(T)->getNumElements();
+    else if (isa<VectorType>(T)) {
+#if LLVM_VERSION_MAJOR >= 12
+      count *= cast<VectorType>(T)->getElementCount().getKnownMinValue();
+#else
+      count *= cast<VectorType>(T)->getNumElements();
+#endif
+    }
+  }
+  if (count == 0)
+    all = false;
+}
+
+static size_t num_rooting(llvm::Type *T) {
+  CountTrackedPointers tracked(T);
+  assert(!tracked.derived);
+  if (tracked.count != 0 && !tracked.all)
+    return tracked.count;
+  return 0;
+}
+
+extern "C" {
+#if LLVM_VERSION_MAJOR >= 10
+void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
+  auto F = cast<Function>(unwrap(F_C));
+  if (F->empty())
+    return;
+  auto RT = F->getReturnType();
+  std::set<size_t> srets;
+  std::set<size_t> enzyme_srets;
+  std::set<size_t> enzyme_srets_v;
+  std::set<size_t> rroots;
+  std::set<size_t> rroots_v;
+
+  auto FT = F->getFunctionType();
+  auto Attrs = F->getAttributes();
+  for (size_t i = 0, end = FT->getNumParams(); i < end; i++) {
+    if (Attrs.hasAttribute(AttributeList::FirstArgIndex + i,
+                           Attribute::StructRet))
+      srets.insert(i);
+    if (Attrs.hasAttribute(AttributeList::FirstArgIndex + i, "enzyme_sret"))
+      enzyme_srets.insert(i);
+    if (Attrs.hasAttribute(AttributeList::FirstArgIndex + i, "enzyme_sret_v"))
+      enzyme_srets_v.insert(i);
+    if (Attrs.hasAttribute(AttributeList::FirstArgIndex + i,
+                           "enzymejl_returnRoots"))
+      rroots.insert(i);
+    if (Attrs.hasAttribute(AttributeList::FirstArgIndex + i,
+                           "enzymejl_returnRoots_v"))
+      rroots_v.insert(i);
+  }
+  // Regular julia function, needing no intervention
+  if (srets.size() == 1) {
+    assert(*srets.begin() == 0);
+    assert(enzyme_srets.size() == 0);
+    assert(enzyme_srets_v.size() == 0);
+    assert(rroots_v.size() == 0);
+    if (rroots.size()) {
+      assert(rroots.size() == 1);
+      assert(*rroots.begin() == 1);
+    }
+    return;
+  }
+  // No sret/rooting, no intervention needed.
+  if (srets.size() == 0 && enzyme_srets.size() == 0 &&
+      enzyme_srets_v.size() == 0 && rroots.size() == 0 &&
+      rroots_v.size() == 0) {
+    return;
+  }
+
+  assert(srets.size() == 0);
+
+  SmallVector<Type *, 1> Types;
+  if (!RT->isVoidTy()) {
+    Types.push_back(RT);
+  }
+
+  for (auto idx : enzyme_srets) {
+    Types.push_back(FT->getParamType(idx)->getPointerElementType());
+  }
+  for (auto idx : enzyme_srets_v) {
+    auto AT = cast<ArrayType>(FT->getParamType(idx));
+    auto ET = AT->getElementType()->getPointerElementType();
+    for (size_t i = 0; i < AT->getNumElements(); i++)
+      Types.push_back(ET);
+  }
+
+  StructType *ST =
+      Types.size() <= 1 ? nullptr : StructType::get(F->getContext(), Types);
+  Type *sretTy = nullptr;
+  if (Types.size())
+    sretTy = Types.size() == 1 ? Types[0] : ST;
+  size_t numRooting = sretTy ? num_rooting(sretTy) : 0;
+
+  auto T_jlvalue = StructType::get(F->getContext(), {});
+  auto T_prjlvalue = PointerType::get(T_jlvalue, AddressSpace::Tracked);
+  ArrayType *roots_AT =
+      numRooting ? ArrayType::get(T_prjlvalue, numRooting) : nullptr;
+
+  AttributeList NewAttrs;
+  SmallVector<Type *, 1> types;
+  size_t nexti = 0;
+  if (sretTy) {
+    types.push_back(PointerType::getUnqual(sretTy));
+    NewAttrs = NewAttrs.addAttribute(
+        F->getContext(), AttributeList::FirstArgIndex + nexti,
+        Attribute::get(F->getContext(), Attribute::StructRet, sretTy));
+    NewAttrs = NewAttrs.addAttribute(F->getContext(),
+                                     AttributeList::FirstArgIndex + nexti,
+                                     Attribute::NoAlias);
+    nexti++;
+  }
+  if (roots_AT) {
+    NewAttrs = NewAttrs.addAttribute(F->getContext(),
+                                     AttributeList::FirstArgIndex + nexti,
+                                     "enzymejl_returnRoots");
+    NewAttrs = NewAttrs.addAttribute(F->getContext(),
+                                     AttributeList::FirstArgIndex + nexti,
+                                     Attribute::NoAlias);
+    NewAttrs = NewAttrs.addAttribute(F->getContext(),
+                                     AttributeList::FirstArgIndex + nexti,
+                                     Attribute::WriteOnly);
+    types.push_back(PointerType::getUnqual(roots_AT));
+    nexti++;
+  }
+  for (size_t i = 0, end = FT->getNumParams(); i < end; i++) {
+    if (enzyme_srets.count(i) || enzyme_srets_v.count(i) || rroots.count(i) ||
+        rroots_v.count(i))
+      continue;
+
+    for (auto attr : Attrs.getAttributes(AttributeList::FirstArgIndex + i))
+      NewAttrs = NewAttrs.addAttribute(
+          F->getContext(), AttributeList::FirstArgIndex + nexti, attr);
+    types.push_back(F->getFunctionType()->getParamType(i));
+    nexti++;
+  }
+  for (auto attr : Attrs.getAttributes(AttributeList::FunctionIndex))
+    NewAttrs = NewAttrs.addAttribute(F->getContext(),
+                                     AttributeList::FunctionIndex, attr);
+
+  FunctionType *FTy = FunctionType::get(Type::getVoidTy(F->getContext()), types,
+                                        FT->isVarArg());
+
+  // Create the new function
+#if LLVM_VERSION_MAJOR >= 8
+  Function *NewF = Function::Create(FTy, F->getLinkage(), F->getAddressSpace(),
+                                    F->getName(), F->getParent());
+#else
+  Function *NewF =
+      Function::Create(FTy, F->getLinkage(), F->getName(), F->getParent());
+#endif
+
+  ValueToValueMapTy VMap;
+  // Loop over the arguments, copying the names of the mapped arguments over...
+  Function::arg_iterator DestI = NewF->arg_begin();
+  Argument *sret = nullptr;
+  if (sretTy) {
+    sret = &*DestI;
+    DestI++;
+  }
+  Argument *roots = nullptr;
+  if (roots_AT) {
+    roots = &*DestI;
+    DestI++;
+  }
+  for (Argument &I : F->args()) {
+    auto i = I.getArgNo();
+    if (enzyme_srets.count(i) || enzyme_srets_v.count(i) || rroots.count(i) ||
+        rroots_v.count(i)) {
+      VMap[&I] = &I;
+      continue;
+    }
+    assert(DestI != NewF->arg_end());
+    DestI->setName(I.getName()); // Copy the name over...
+    VMap[&I] = &*DestI++;        // Add mapping to VMap
+  }
+
+  SmallVector<ReturnInst *, 8> Returns; // Ignore returns cloned.
+#if LLVM_VERSION_MAJOR >= 13
+  CloneFunctionInto(NewF, F, VMap, CloneFunctionChangeType::LocalChangesOnly,
+                    Returns, "", nullptr);
+#else
+  CloneFunctionInto(NewF, F, VMap, F->getSubprogram() != nullptr, Returns, "",
+                    nullptr);
+#endif
+
+  SmallVector<CallInst *, 1> callers;
+  for (auto U : F->users()) {
+    auto CI = dyn_cast<CallInst>(U);
+    assert(CI);
+    assert(CI->getCalledFunction() == F);
+    callers.push_back(CI);
+  }
+
+  size_t curOffset = 0;
+
+  std::function<size_t(IRBuilder<> &, Value *, size_t)> recur =
+      [&](IRBuilder<> &B, Value *V, size_t offset) -> size_t {
+    auto T = V->getType();
+    if (CountTrackedPointers(T).count == 0)
+      return offset;
+    if (roots_AT == nullptr)
+      return offset;
+    if (isa<PointerType>(T)) {
+      if (isSpecialPtr(T)) {
+        if (!roots_AT) {
+          llvm::errs() << *V << " \n";
+          llvm::errs() << *cast<Instruction>(V)->getParent()->getParent()
+                       << " \n";
+        }
+        assert(roots_AT);
+        assert(roots);
+        auto gep = B.CreateConstInBoundsGEP2_32(roots_AT, roots, 0, offset);
+        if (T != T_prjlvalue)
+          V = B.CreatePointerCast(V, T_prjlvalue);
+        B.CreateStore(V, gep);
+        offset++;
+      }
+      return offset;
+    } else if (auto ST = dyn_cast<StructType>(T)) {
+      for (size_t i = 0; i < ST->getNumElements(); i++) {
+        offset = recur(B, GradientUtils::extractMeta(B, V, i), offset);
+      }
+      return offset;
+    } else if (auto AT = dyn_cast<ArrayType>(T)) {
+      for (size_t i = 0; i < AT->getNumElements(); i++) {
+        offset = recur(B, GradientUtils::extractMeta(B, V, i), offset);
+      }
+      return offset;
+    } else if (auto VT = dyn_cast<VectorType>(T)) {
+#if LLVM_VERSION_MAJOR >= 12
+      size_t count = VT->getElementCount().getKnownMinValue();
+#else
+      size_t count = VT->getNumElements();
+#endif
+      for (size_t i = 0; i < count; i++) {
+        offset = recur(B, B.CreateExtractElement(V, {i}), offset);
+      }
+      return offset;
+    }
+    return offset;
+  };
+
+  size_t sretCount = 0;
+  if (!RT->isVoidTy()) {
+    for (auto &RT : Returns) {
+      IRBuilder<> B(RT);
+      Value *gep = ST ? B.CreateConstInBoundsGEP2_32(ST, sret, 0, 0) : sret;
+      Value *rval = RT->getReturnValue();
+      B.CreateStore(rval, gep);
+      recur(B, rval, 0);
+      auto NR = B.CreateRetVoid();
+      RT->eraseFromParent();
+      RT = NR;
+    }
+    if (roots_AT)
+      curOffset = CountTrackedPointers(RT).count;
+    sretCount++;
+  }
+
+  for (auto i : enzyme_srets) {
+    auto arg = F->getArg(i);
+    SmallVector<Instruction *, 1> uses;
+    SmallVector<unsigned, 1> op;
+    for (auto &U : arg->uses()) {
+      auto I = cast<Instruction>(U.getUser());
+      if (I->getParent()->getParent() == F)
+        continue;
+      uses.push_back(I);
+      op.push_back(U.getOperandNo());
+    }
+    IRBuilder<> EB(&NewF->getEntryBlock().front());
+    auto gep =
+        ST ? EB.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount) : sret;
+    for (size_t i = 0; i < uses.size(); i++) {
+      uses[i]->setOperand(op[i], gep);
+    }
+    for (auto &RT : Returns) {
+      IRBuilder<> B(RT);
+      auto val = B.CreateLoad(Types[sretCount], gep);
+      recur(B, val, curOffset);
+    }
+    if (roots_AT)
+      curOffset += CountTrackedPointers(Types[sretCount]).count;
+    sretCount++;
+  }
+  for (auto i : enzyme_srets_v) {
+    auto AT = cast<ArrayType>(FT->getParamType(i));
+    auto arg = F->getArg(i);
+    SmallVector<Instruction *, 1> uses;
+    SmallVector<unsigned, 1> op;
+    for (auto &U : arg->uses()) {
+      auto I = cast<Instruction>(U.getUser());
+      if (I->getParent()->getParent() == F)
+        continue;
+      op.push_back(U.getOperandNo());
+    }
+    IRBuilder<> EB(&NewF->getEntryBlock().front());
+    Value *val = UndefValue::get(AT);
+    for (size_t j = 0; j < AT->getNumElements(); j++) {
+      auto gep =
+          ST ? EB.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount + j) : sret;
+      val = EB.CreateInsertValue(val, gep, j);
+    }
+    for (size_t i = 0; i < uses.size(); i++) {
+      uses[i]->setOperand(op[i], val);
+    }
+    for (auto &RT : Returns) {
+      IRBuilder<> B(RT);
+      for (size_t j = 0; j < AT->getNumElements(); j++) {
+        Value *em = GradientUtils::extractMeta(B, val, j);
+        em = B.CreateLoad(Types[sretCount + j], em);
+        recur(B, em, curOffset);
+      }
+    }
+    if (roots_AT)
+      curOffset +=
+          CountTrackedPointers(Types[sretCount]).count * AT->getNumElements();
+    sretCount += AT->getNumElements();
+  }
+
+  for (auto i : rroots) {
+    auto arg = F->getArg(i);
+    auto AT2 = cast<ArrayType>(FT->getParamType(i)->getPointerElementType());
+    IRBuilder<> EB(&NewF->getEntryBlock().front());
+    arg->replaceAllUsesWith(EB.CreateAlloca(AT2));
+  }
+  for (auto i : rroots_v) {
+    auto arg = F->getArg(i);
+    auto AT = cast<ArrayType>(FT->getParamType(i));
+    auto AT2 = cast<ArrayType>(AT->getElementType()->getPointerElementType());
+    IRBuilder<> EB(&NewF->getEntryBlock().front());
+    Value *val = UndefValue::get(AT);
+    for (size_t j = 0; j < AT->getNumElements(); j++) {
+      val = EB.CreateInsertValue(val, EB.CreateAlloca(AT2), j);
+    }
+    arg->replaceAllUsesWith(val);
+  }
+  assert(curOffset == numRooting);
+  assert(sretCount == Types.size());
+
+  for (auto CI : callers) {
+    auto Attrs = CI->getAttributes();
+    AttributeList NewAttrs;
+    IRBuilder<> B(CI);
+    IRBuilder<> EB(&CI->getParent()->getParent()->getEntryBlock().front());
+    SmallVector<Value *, 1> vals;
+    size_t nexti = 0;
+    Value *sret = nullptr;
+    if (sretTy) {
+      sret = EB.CreateAlloca(sretTy);
+      vals.push_back(sret);
+      NewAttrs = NewAttrs.addAttribute(
+          F->getContext(), AttributeList::FirstArgIndex + nexti,
+          Attribute::get(F->getContext(), Attribute::StructRet, sretTy));
+      nexti++;
+    }
+    AllocaInst *roots = nullptr;
+    if (roots_AT) {
+      roots = EB.CreateAlloca(roots_AT);
+      vals.push_back(roots);
+      NewAttrs = NewAttrs.addAttribute(
+
+          F->getContext(), AttributeList::FirstArgIndex + nexti,
+          "enzymejl_returnRoots");
+      nexti++;
+    }
+
+    for (auto attr : Attrs.getAttributes(AttributeList::FunctionIndex))
+      NewAttrs = NewAttrs.addAttribute(F->getContext(),
+                                       AttributeList::FunctionIndex, attr);
+
+    SmallVector<Value *, 1> sret_vals;
+    SmallVector<Value *, 1> sretv_vals;
+#if LLVM_VERSION_MAJOR >= 14
+    for (size_t i = 0, end = CI->arg_size(); i < end; i++)
+#else
+    for (size_t i = 0, end = CI->getNumArgOperands(); i < end; i++)
+#endif
+    {
+      if (rroots.count(i) || rroots_v.count(i)) {
+        continue;
+      }
+      if (enzyme_srets.count(i)) {
+        sret_vals.push_back(CI->getArgOperand(i));
+        continue;
+      }
+      if (enzyme_srets_v.count(i)) {
+        sretv_vals.push_back(CI->getArgOperand(i));
+        continue;
+      }
+
+      for (auto attr : Attrs.getAttributes(AttributeList::FirstArgIndex + i))
+        NewAttrs = NewAttrs.addAttribute(
+            F->getContext(), AttributeList::FirstArgIndex + nexti, attr);
+      vals.push_back(CI->getArgOperand(i));
+      nexti++;
+    }
+
+    sretCount = 0;
+    if (!RT->isVoidTy()) {
+      sretCount++;
+    }
+
+    for (Value *ptr : sret_vals) {
+      auto gep =
+          ST ? B.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount) : sret;
+      auto ld = B.CreateLoad(Types[sretCount], ptr);
+      B.CreateStore(ld, gep);
+      sretCount++;
+    }
+    for (Value *ptr_v : sretv_vals) {
+      auto AT = cast<ArrayType>(ptr_v->getType());
+      for (size_t j = 0; j < AT->getNumElements(); j++) {
+        auto gep = ST ? B.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount + j)
+                      : sret;
+        auto ptr = GradientUtils::extractMeta(B, ptr_v, j);
+        auto ld = B.CreateLoad(Types[sretCount], ptr);
+        B.CreateStore(ld, gep);
+      }
+      sretCount += AT->getNumElements();
+    }
+
+    SmallVector<OperandBundleDef, 1> Bundles;
+    for (unsigned I = 0, E = CI->getNumOperandBundles(); I != E; ++I)
+      Bundles.emplace_back(CI->getOperandBundleAt(I));
+    auto NC = B.CreateCall(NewF, vals, Bundles);
+    NC->setAttributes(NewAttrs);
+    NC->copyMetadata(*CI);
+
+    sretCount = 0;
+    if (!RT->isVoidTy()) {
+      auto gep = ST ? B.CreateConstInBoundsGEP2_32(ST, sret, 0, 0) : sret;
+      auto ld = B.CreateLoad(RT, gep);
+      ld->takeName(CI);
+      CI->replaceAllUsesWith(ld);
+      sretCount++;
+    }
+
+    for (auto ptr : sret_vals) {
+      auto gep =
+          ST ? B.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount) : sret;
+      auto ld = B.CreateLoad(Types[sretCount], gep);
+      B.CreateStore(ld, ptr);
+      sretCount++;
+    }
+    for (auto ptr_v : sretv_vals) {
+      auto AT = cast<ArrayType>(ptr_v->getType());
+      for (size_t j = 0; j < AT->getNumElements(); j++) {
+        auto gep = ST ? B.CreateConstInBoundsGEP2_32(ST, sret, 0, sretCount + j)
+                      : sret;
+        auto ptr = GradientUtils::extractMeta(B, ptr_v, j);
+        auto ld = B.CreateLoad(Types[sretCount], gep);
+        B.CreateStore(ld, ptr);
+      }
+      sretCount += AT->getNumElements();
+    }
+
+    NC->setCallingConv(CI->getCallingConv());
+    CI->eraseFromParent();
+  }
+  NewF->setAttributes(NewAttrs);
+  SmallVector<std::pair<unsigned, MDNode *>, 1> MD;
+  F->getAllMetadata(MD);
+  for (auto pair : MD)
+    if (pair.first != LLVMContext::MD_dbg)
+      NewF->addMetadata(pair.first, *pair.second);
+  NewF->takeName(F);
+  NewF->setCallingConv(F->getCallingConv());
+  F->eraseFromParent();
+}
+#endif
 }

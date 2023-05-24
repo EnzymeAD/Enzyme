@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -correlated-propagation -simplifycfg -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,instsimplify,adce,correlated-propagation,%simplifycfg,adce)" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: inlinehint nounwind uwtable
 define double @f(double %x, i32* %z) {
@@ -57,8 +58,8 @@ declare double @__enzyme_autodiff(double (double, i32*)*, ...)
 ; CHECK-NEXT:   %val_malloccache = bitcast i8* %malloccall to [2 x double]*
 ; CHECK-NEXT:   br label %loop1
 
-; CHECK: loop1:                                            ; preds = %loop1, %entry
-; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %loop1 ], [ 0, %entry ]
+; CHECK: loop1:   
+; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %cleanup ], [ 0, %entry ]
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
 ; CHECK-NEXT:   %g0 = getelementptr [2 x double], [2 x double]* %a, i64 0, i32 0
 ; CHECK-NEXT:   %fp = uitofp i64 %iv to double
@@ -69,15 +70,25 @@ declare double @__enzyme_autodiff(double (double, i32*)*, ...)
 ; CHECK-NEXT:   %0 = getelementptr inbounds [2 x double], [2 x double]* %val_malloccache, i64 %iv
 ; CHECK-NEXT:   %1 = load [2 x double], [2 x double]* %a, align 32
 ; CHECK-NEXT:   store [2 x double] %1, [2 x double]* %0, align 16
-; CHECK-NEXT:   %exit1 = icmp eq i64 %iv.next, 4
-; CHECK-NEXT:   br i1 %exit1, label %mergeinvertloop1_exit, label %loop1
+; CHECK-NEXT:   br label %loop2
 
-; CHECK: invertentry:                                      ; preds = %invertloop1
+; CHECK: loop2:
+; CHECK-NEXT:   %iv1 = phi i64 [ %iv.next2, %loop2 ], [ 0, %loop1 ]
+; CHECK-NEXT:   %iv.next2 = add nuw nsw i64 %iv1, 1
+; CHECK-NEXT:   %exit2 = icmp eq i64 %iv.next2, 400
+; CHECK-NEXT:   br i1 %exit2, label %cleanup, label %loop2
+
+; CHECK: cleanup:
+; CHECK-NEXT:   %exit1 = icmp eq i64 %iv.next, 4
+; CHECK-NEXT:   br i1 %exit1, label %invertcleanup, label %loop1
+
+; CHECK: invertentry: 
 ; CHECK-NEXT:   %2 = insertvalue { double } undef, double %6, 0
 ; CHECK-NEXT:   tail call void @free(i8* nonnull %malloccall)
 ; CHECK-NEXT:   ret { double } %2
 
-; CHECK: invertloop1:                                      ; preds = %invertloop2
+; CHECK: invertloop1: 
+; CHECK-NEXT:   %"g1'ipg_unwrap" = getelementptr [2 x double], [2 x double]* %"a'ipa", i64 0, i32 1
 ; CHECK-NEXT:   %3 = load double, double* %"g1'ipg_unwrap"
 ; CHECK-NEXT:   store double 0.000000e+00, double* %"g1'ipg_unwrap"
 ; CHECK-NEXT:   %4 = fadd fast double %"x'de.0", %3
@@ -88,11 +99,11 @@ declare double @__enzyme_autodiff(double (double, i32*)*, ...)
 ; CHECK-NEXT:   %7 = icmp eq i64 %"iv'ac.0", 0
 ; CHECK-NEXT:   br i1 %7, label %invertentry, label %incinvertloop1
 
-; CHECK: incinvertloop1:                                   ; preds = %invertloop1
+; CHECK: incinvertloop1: 
 ; CHECK-NEXT:   %8 = add nsw i64 %"iv'ac.0", -1
 ; CHECK-NEXT:   br label %invertcleanup
 
-; CHECK: invertloop2:                                      ; preds = %invertcleanup, %incinvertloop2
+; CHECK: invertloop2:  
 ; CHECK-NEXT:   %"iv1'ac.0" = phi i64 [ 399, %invertcleanup ], [ %16, %incinvertloop2 ]
 ; CHECK-NEXT:   %9 = getelementptr inbounds [2 x double], [2 x double]* %val_malloccache, i64 %"iv'ac.0"
 ; CHECK-NEXT:   %idx_unwrap = add i64 %"iv'ac.0", %"iv1'ac.0"
@@ -114,13 +125,9 @@ declare double @__enzyme_autodiff(double (double, i32*)*, ...)
 ; CHECK-NEXT:   %16 = add nsw i64 %"iv1'ac.0", -1
 ; CHECK-NEXT:   br label %invertloop2
 
-; CHECK: invertcleanup:                                    ; preds = %mergeinvertloop1_exit, %incinvertloop1
-; CHECK-NEXT:   %"x'de.0" = phi double [ 0.000000e+00, %mergeinvertloop1_exit ], [ %6, %incinvertloop1 ]
-; CHECK-NEXT:   %"add'de.1" = phi double [ %differeturn, %mergeinvertloop1_exit ], [ 0.000000e+00, %incinvertloop1 ]
-; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ 3, %mergeinvertloop1_exit ], [ %8, %incinvertloop1 ]
+; CHECK: invertcleanup: 
+; CHECK-NEXT:   %"x'de.0" = phi double [ %6, %incinvertloop1 ], [ 0.000000e+00, %cleanup ] 
+; CHECK-NEXT:   %"add'de.1" = phi double [ 0.000000e+00, %incinvertloop1 ], [ %differeturn, %cleanup ]
+; CHECK-NEXT:   %"iv'ac.0" = phi i64 [ %8, %incinvertloop1 ], [ 3, %cleanup ]
 ; CHECK-NEXT:   br label %invertloop2
-
-; CHECK: mergeinvertloop1_exit:                            ; preds = %loop1
-; CHECK-NEXT:   %"g1'ipg_unwrap" = getelementptr [2 x double], [2 x double]* %"a'ipa", i64 0, i32 1
-; CHECK-NEXT:   br label %invertcleanup
 ; CHECK-NEXT: }

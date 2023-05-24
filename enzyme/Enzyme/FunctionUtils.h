@@ -34,6 +34,7 @@
 #include "Utils.h"
 
 #include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/LoopAnalysisManager.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 
 #include "llvm/IR/Function.h"
@@ -58,6 +59,7 @@ public:
     CloneOrigin = std::move(prev.CloneOrigin);
   };
 
+  llvm::LoopAnalysisManager LAM;
   llvm::FunctionAnalysisManager FAM;
   llvm::ModuleAnalysisManager MAM;
 
@@ -379,5 +381,8 @@ llvm::FunctionType *getFunctionTypeForClone(
     llvm::FunctionType *FTy, DerivativeMode mode, unsigned width,
     llvm::Type *additionalArg, llvm::ArrayRef<DIFFE_TYPE> constant_args,
     bool diffeReturnArg, ReturnType returnValue, DIFFE_TYPE returnType);
+
+/// Lower __enzyme_todense, returning if changed.
+bool LowerSparsification(llvm::Function *F, bool replaceAll = true);
 
 #endif

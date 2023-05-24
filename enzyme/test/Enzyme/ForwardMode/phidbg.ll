@@ -1,4 +1,4 @@
-; RUN: if [ %llvmver -ge 8 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 8 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s; fi
 ; RUN: if [ %llvmver -ge 8 ]; then %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s; fi
 
 source_filename = "examples/solids/problems/finite-strain-neo-hookean-initial-ad.c"

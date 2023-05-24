@@ -58,6 +58,11 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 
+#if LLVM_VERSION_MAJOR >= 14
+#define addAttribute addAttributeAtIndex
+#define hasAttribute hasAttributeAtIndex
+#endif
+
 using namespace llvm;
 
 std::map<std::string,
@@ -69,13 +74,13 @@ std::map<std::string, std::function<llvm::CallInst *(IRBuilder<> &, Value *)>>
 
 std::map<
     std::string,
-    std::pair<std::function<void(IRBuilder<> &, CallInst *, GradientUtils &,
+    std::pair<std::function<bool(IRBuilder<> &, CallInst *, GradientUtils &,
                                  Value *&, Value *&, Value *&)>,
               std::function<void(IRBuilder<> &, CallInst *,
                                  DiffeGradientUtils &, Value *)>>>
     customCallHandlers;
 
-std::map<std::string, std::function<void(IRBuilder<> &, CallInst *,
+std::map<std::string, std::function<bool(IRBuilder<> &, CallInst *,
                                          GradientUtils &, Value *&, Value *&)>>
     customFwdCallHandlers;
 
@@ -310,16 +315,26 @@ Value *GradientUtils::ompThreadId() {
 
   auto FT = FunctionType::get(Type::getInt64Ty(B.getContext()),
                               ArrayRef<Type *>(), false);
-  AttributeList AL;
-#if LLVM_VERSION_MAJOR >= 14
-  AL = AL.addAttributeAtIndex(B.getContext(), AttributeList::FunctionIndex,
-                              Attribute::AttrKind::ReadOnly);
+  auto FN = newFunc->getParent()->getOrInsertFunction("omp_get_thread_num", FT);
+  auto CI = B.CreateCall(FN);
+  if (auto F = getFunctionFromCall(CI)) {
+#if LLVM_VERSION_MAJOR >= 16
+    F->setOnlyAccessesInaccessibleMemory();
+    F->setOnlyReadsMemory();
 #else
-  AL = AL.addAttribute(B.getContext(), AttributeList::FunctionIndex,
-                       Attribute::AttrKind::ReadOnly);
+    F->addFnAttr(Attribute::InaccessibleMemOnly);
+    F->addFnAttr(Attribute::ReadOnly);
 #endif
-  return tid = B.CreateCall(newFunc->getParent()->getOrInsertFunction(
-             "omp_get_thread_num", FT, AL));
+  }
+#if LLVM_VERSION_MAJOR >= 16
+  CI->setOnlyAccessesInaccessibleMemory();
+  CI->setOnlyReadsMemory();
+#else
+  CI->addAttribute(AttributeList::FunctionIndex,
+                   Attribute::InaccessibleMemOnly);
+  CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadOnly);
+#endif
+  return tid = CI;
 }
 
 Value *GradientUtils::ompNumThreads() {
@@ -329,16 +344,27 @@ Value *GradientUtils::ompNumThreads() {
 
   auto FT = FunctionType::get(Type::getInt64Ty(B.getContext()),
                               ArrayRef<Type *>(), false);
-  AttributeList AL;
-#if LLVM_VERSION_MAJOR >= 14
-  AL = AL.addAttributeAtIndex(B.getContext(), AttributeList::FunctionIndex,
-                              Attribute::AttrKind::ReadOnly);
+  auto FN =
+      newFunc->getParent()->getOrInsertFunction("omp_get_max_threads", FT);
+  auto CI = B.CreateCall(FN);
+  if (auto F = getFunctionFromCall(CI)) {
+#if LLVM_VERSION_MAJOR >= 16
+    F->setOnlyAccessesInaccessibleMemory();
+    F->setOnlyReadsMemory();
 #else
-  AL = AL.addAttribute(B.getContext(), AttributeList::FunctionIndex,
-                       Attribute::AttrKind::ReadOnly);
+    F->addFnAttr(Attribute::InaccessibleMemOnly);
+    F->addFnAttr(Attribute::ReadOnly);
 #endif
-  return numThreads = B.CreateCall(newFunc->getParent()->getOrInsertFunction(
-             "omp_get_max_threads", FT, AL));
+  }
+#if LLVM_VERSION_MAJOR >= 16
+  CI->setOnlyAccessesInaccessibleMemory();
+  CI->setOnlyReadsMemory();
+#else
+  CI->addAttribute(AttributeList::FunctionIndex,
+                   Attribute::InaccessibleMemOnly);
+  CI->addAttribute(AttributeList::FunctionIndex, Attribute::ReadOnly);
+#endif
+  return numThreads = CI;
 }
 
 Value *GradientUtils::getOrInsertTotalMultiplicativeProduct(Value *val,
@@ -496,10 +522,17 @@ DebugLoc GradientUtils::getNewFromOriginal(const DebugLoc L) const {
     return L;
   assert(originalToNewFn.hasMD());
   auto opt = originalToNewFn.getMappedMD(L.getAsMDNode());
+#if LLVM_VERSION_MAJOR >= 16
+  if (!opt.has_value())
+    return L;
+  assert(opt.has_value());
+  return DebugLoc(cast<MDNode>(opt.value()));
+#else
   if (!opt.hasValue())
     return L;
   assert(opt.hasValue());
   return DebugLoc(cast<MDNode>(*opt.getPointer()));
+#endif
 }
 
 Value *GradientUtils::getNewFromOriginal(const Value *originst) const {
@@ -1551,6 +1584,12 @@ Value *GradientUtils::unwrapM(Value *const val, IRBuilder<> &BuilderM,
     }
     for (auto &val : phi->incoming_values()) {
       if (isPotentialLastLoopValue(val, parent, LLI)) {
+        if (unwrapMode == UnwrapMode::LegalFullUnwrap) {
+          llvm::errs() << " module: " << *newFunc->getParent() << "\n";
+          llvm::errs() << " newFunc: " << *newFunc << "\n";
+          llvm::errs() << " parent: " << *parent << "\n";
+          llvm::errs() << " val: " << *val << "\n";
+        }
         assert(unwrapMode != UnwrapMode::LegalFullUnwrap);
         goto endCheck;
       }
@@ -3264,6 +3303,8 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                   ts->setDebugLoc(getNewFromOriginal(I.getDebugLoc()));
                 } else if (auto CI = dyn_cast<CallInst>(&I)) {
                   StringRef funcName = getFuncNameFromCall(CI);
+                  if (funcName == "enzyme_zerotype")
+                    continue;
                   if (funcName == "julia.write_barrier" ||
                       isa<MemSetInst>(&I) || isa<MemTransferInst>(&I)) {
 
@@ -3588,17 +3629,10 @@ BasicBlock *GradientUtils::getReverseOrLatchMerge(BasicBlock *BB,
                       cast<CallInst>(anti)->setDebugLoc(
                           getNewFromOriginal(I.getDebugLoc()));
 
-#if LLVM_VERSION_MAJOR >= 14
-                      cast<CallInst>(anti)->addAttributeAtIndex(
-                          AttributeList::ReturnIndex, Attribute::NoAlias);
-                      cast<CallInst>(anti)->addAttributeAtIndex(
-                          AttributeList::ReturnIndex, Attribute::NonNull);
-#else
                       cast<CallInst>(anti)->addAttribute(
                           AttributeList::ReturnIndex, Attribute::NoAlias);
                       cast<CallInst>(anti)->addAttribute(
                           AttributeList::ReturnIndex, Attribute::NonNull);
-#endif
                       return anti;
                     };
 
@@ -4063,6 +4097,15 @@ bool GradientUtils::legalRecompute(const Value *val,
         n == "omp_get_thread_num" || n == "omp_get_max_threads") {
       return true;
     }
+#if LLVM_VERSION_MAJOR >= 14
+    if (ci->doesNotAccessMemory())
+#else
+    if (ci->hasFnAttr(Attribute::ReadNone) ||
+        (called && called->hasFnAttribute(Attribute::ReadNone)))
+#endif
+      return true;
+    if (isPointerArithmeticInst(ci))
+      return true;
   }
 
   if (auto inst = dyn_cast<Instruction>(val)) {
@@ -4172,7 +4215,7 @@ bool GradientUtils::shouldRecompute(const Value *val,
   }
 
   if (auto op = dyn_cast<IntrinsicInst>(val)) {
-    if (!op->mayReadOrWriteMemory())
+    if (!op->mayReadOrWriteMemory() || isReadNone(op))
       return true;
     switch (op->getIntrinsicID()) {
     case Intrinsic::sin:
@@ -4204,6 +4247,8 @@ bool GradientUtils::shouldRecompute(const Value *val,
         n == "omp_get_thread_num" || n == "omp_get_max_threads") {
       return true;
     }
+    if (isPointerArithmeticInst(ci))
+      return true;
   }
 
   // cache a call, assuming its longer to run that
@@ -4943,6 +4988,9 @@ Value *GradientUtils::extractMeta(IRBuilder<> &Builder, Value *Agg,
   }
   if (off.size() == 0)
     return Agg;
+  if (Agg->getType()->isVectorTy() && off.size() == 1)
+    return Builder.CreateExtractElement(Agg, off[0]);
+
   return Builder.CreateExtractValue(Agg, off);
 }
 
@@ -4969,7 +5017,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   } else if (auto CD = dyn_cast<ConstantDataArray>(oval)) {
     SmallVector<Constant *, 1> Vals;
     for (size_t i = 0, len = CD->getNumElements(); i < len; i++) {
-      Value *val = invertPointerM(CD->getElementAsConstant(i), BuilderM);
+      Value *val =
+          invertPointerM(CD->getElementAsConstant(i), BuilderM, nullShadow);
       Vals.push_back(cast<Constant>(val));
     }
     auto rule = [&CD](ArrayRef<Constant *> Vals) {
@@ -4979,7 +5028,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   } else if (auto CD = dyn_cast<ConstantArray>(oval)) {
     SmallVector<Constant *, 1> Vals;
     for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
-      Value *val = invertPointerM(CD->getOperand(i), BuilderM);
+      Value *val = invertPointerM(CD->getOperand(i), BuilderM, nullShadow);
       Vals.push_back(cast<Constant>(val));
     }
 
@@ -4991,8 +5040,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   } else if (auto CD = dyn_cast<ConstantStruct>(oval)) {
     SmallVector<Constant *, 1> Vals;
     for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
-      Vals.push_back(
-          cast<Constant>(invertPointerM(CD->getOperand(i), BuilderM)));
+      Vals.push_back(cast<Constant>(
+          invertPointerM(CD->getOperand(i), BuilderM, nullShadow)));
     }
 
     auto rule = [&CD](ArrayRef<Constant *> Vals) {
@@ -5002,8 +5051,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   } else if (auto CD = dyn_cast<ConstantVector>(oval)) {
     SmallVector<Constant *, 1> Vals;
     for (size_t i = 0, len = CD->getNumOperands(); i < len; i++) {
-      Vals.push_back(
-          cast<Constant>(invertPointerM(CD->getOperand(i), BuilderM)));
+      Vals.push_back(cast<Constant>(
+          invertPointerM(CD->getOperand(i), BuilderM, nullShadow)));
     }
 
     auto rule = [](ArrayRef<Constant *> Vals) {
@@ -5018,7 +5067,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   }
 
   if (isConstantValue(oval) && !isa<InsertValueInst>(oval) &&
-      !isa<ExtractValueInst>(oval)) {
+      !isa<ExtractValueInst>(oval) && !isa<InsertElementInst>(oval) &&
+      !isa<ExtractElementInst>(oval)) {
     // NOTE, this is legal and the correct resolution, however, our activity
     // analysis honeypot no longer exists
 
@@ -5064,20 +5114,25 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   if (isa<Argument>(oval) && cast<Argument>(oval)->hasByValAttr()) {
     IRBuilder<> bb(inversionAllocs);
 
+    Type *subType = nullptr;
+#if LLVM_VERSION_MAJOR >= 9
+    auto attr = cast<Argument>(oval)->getAttribute(Attribute::ByVal);
+    subType = attr.getValueAsType();
+#else
+    subType = oval->getType()->getPointerElementType();
+#endif
+
     auto rule1 = [&]() {
       AllocaInst *antialloca = bb.CreateAlloca(
-          oval->getType()->getPointerElementType(),
-          cast<PointerType>(oval->getType())->getPointerAddressSpace(), nullptr,
-          oval->getName() + "'ipa");
+          subType, cast<PointerType>(oval->getType())->getPointerAddressSpace(),
+          nullptr, oval->getName() + "'ipa");
 
       auto dst_arg =
           bb.CreateBitCast(antialloca, Type::getInt8PtrTy(oval->getContext()));
       auto val_arg = ConstantInt::get(Type::getInt8Ty(oval->getContext()), 0);
-      auto len_arg =
-          ConstantInt::get(Type::getInt64Ty(oval->getContext()),
-                           M->getDataLayout().getTypeAllocSizeInBits(
-                               oval->getType()->getPointerElementType()) /
-                               8);
+      auto len_arg = ConstantInt::get(
+          Type::getInt64Ty(oval->getContext()),
+          M->getDataLayout().getTypeAllocSizeInBits(subType) / 8);
       auto volatile_arg = ConstantInt::getFalse(oval->getContext());
 
 #if LLVM_VERSION_MAJOR == 6
@@ -5102,7 +5157,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     return antialloca;
   } else if (auto arg = dyn_cast<GlobalAlias>(oval)) {
     Value *aliasTarget = arg->getAliasee();
-    return invertPointerM(aliasTarget, BuilderM);
+    return invertPointerM(aliasTarget, BuilderM, nullShadow);
   } else if (auto arg = dyn_cast<GlobalVariable>(oval)) {
     if (!hasMetadata(arg, "enzyme_shadow")) {
 
@@ -5359,7 +5414,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     return shadow;
   } else if (auto arg = dyn_cast<CastInst>(oval)) {
     IRBuilder<> bb(getNewFromOriginal(arg));
-    Value *invertOp = invertPointerM(arg->getOperand(0), bb);
+    Value *invertOp = invertPointerM(arg->getOperand(0), bb, nullShadow);
     Type *shadowTy = arg->getDestTy();
 
     auto rule = [&](Value *invertOp) {
@@ -5374,7 +5429,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     return shadow;
   } else if (auto arg = dyn_cast<ConstantExpr>(oval)) {
     IRBuilder<> bb(inversionAllocs);
-    auto ip = invertPointerM(arg->getOperand(0), bb);
+    auto ip = invertPointerM(arg->getOperand(0), bb, nullShadow);
 
     if (arg->isCast()) {
       if (auto PT = dyn_cast<PointerType>(arg->getType())) {
@@ -5473,7 +5528,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     return shadow;
   } else if (auto arg = dyn_cast<ExtractElementInst>(oval)) {
     IRBuilder<> bb(getNewFromOriginal(arg));
-    auto ip = invertPointerM(arg->getVectorOperand(), bb);
+    auto ip = invertPointerM(arg->getVectorOperand(), bb, nullShadow);
 
     auto rule = [&](Value *ip) {
       return bb.CreateExtractElement(ip,
@@ -5509,8 +5564,8 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     IRBuilder<> bb(getNewFromOriginal(arg));
     Value *op0 = arg->getOperand(0);
     Value *op1 = arg->getOperand(1);
-    auto ip0 = invertPointerM(op0, bb);
-    auto ip1 = invertPointerM(op1, bb);
+    auto ip0 = invertPointerM(op0, bb, nullShadow);
+    auto ip1 = invertPointerM(op1, bb, nullShadow);
 
     auto rule = [&bb, &arg](Value *ip0, Value *ip1) {
 #if LLVM_VERSION_MAJOR >= 11
@@ -5530,6 +5585,28 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
   } else if (auto arg = dyn_cast<SelectInst>(oval)) {
     IRBuilder<> bb(getNewFromOriginal(arg));
     bb.setFastMathFlags(getFast());
+    if (!EnzymeRuntimeActivityCheck && CustomErrorHandler) {
+      if (TR.query(arg)[{-1}].isPossiblePointer()) {
+        auto tval = arg->getTrueValue();
+        if (!isa<UndefValue>(tval) && !isa<ConstantPointerNull>(tval) &&
+            !isConstantValue(tval)) {
+          std::string str;
+          raw_string_ostream ss(str);
+          ss << "Mismatched activity for: " << *arg << " const val: " << *tval;
+          CustomErrorHandler(str.c_str(), wrap(arg),
+                             ErrorType::MixedActivityError, this, wrap(tval));
+        }
+        auto fval = arg->getFalseValue();
+        if (!isa<UndefValue>(fval) && !isa<ConstantPointerNull>(fval) &&
+            !isConstantValue(fval)) {
+          std::string str;
+          raw_string_ostream ss(str);
+          ss << "Mismatched activity for: " << *arg << " const val: " << *fval;
+          CustomErrorHandler(str.c_str(), wrap(arg),
+                             ErrorType::MixedActivityError, this, wrap(fval));
+        }
+      }
+    }
     Value *shadow = applyChainRule(
         arg->getType(), bb,
         [&](Value *tv, Value *fv) {
@@ -5761,6 +5838,40 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
 
     return antialloca;
   } else if (auto II = dyn_cast<IntrinsicInst>(oval)) {
+    if (isIntelSubscriptIntrinsic(*II)) {
+      IRBuilder<> bb(getNewFromOriginal(II));
+
+      const std::array<size_t, 4> idxArgsIndices{{0, 1, 2, 4}};
+      const size_t ptrArgIndex = 3;
+
+      SmallVector<Value *, 5> invertArgs(5);
+      for (auto i : idxArgsIndices) {
+        Value *idx = getNewFromOriginal(II->getOperand(i));
+        invertArgs[i] = idx;
+      }
+      Value *invertPtrArg = invertPointerM(II->getOperand(ptrArgIndex), bb);
+      invertArgs[ptrArgIndex] = invertPtrArg;
+
+      auto rule = [&](Value *ip) {
+        auto shadow = bb.CreateCall(II->getCalledFunction(), invertArgs);
+        assert(isa<CallInst>(shadow));
+#if LLVM_VERSION_MAJOR >= 13
+        auto CI = cast<CallInst>(shadow);
+        // Must copy the elementtype attribute as it is needed by the intrinsic
+        CI->addParamAttr(
+            ptrArgIndex,
+            II->getParamAttr(ptrArgIndex, Attribute::AttrKind::ElementType));
+#endif
+        return shadow;
+      };
+
+      Value *shadow = applyChainRule(II->getType(), bb, rule, invertPtrArg);
+
+      invertedPointers.insert(
+          std::make_pair((const Value *)oval, InvertedPointerVH(this, shadow)));
+      return shadow;
+    }
+
     IRBuilder<> bb(getNewFromOriginal(II));
     bb.setFastMathFlags(getFast());
     switch (II->getIntrinsicID()) {
@@ -5814,7 +5925,7 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
     }
 
     if (false && mapped.size() == 1) {
-      return invertPointerM(phi->getIncomingValue(0), BuilderM);
+      return invertPointerM(phi->getIncomingValue(0), BuilderM, nullShadow);
     }
 #if 0
      else if (false && mapped.size() == 2) {
@@ -5849,6 +5960,25 @@ Value *GradientUtils::invertPointerM(Value *const oval, IRBuilder<> &BuilderM,
       if (!isa<PHINode>(NewV) ||
           cast<PHINode>(NewV)->getNumIncomingValues() == 0) {
         bb.SetInsertPoint(bb.GetInsertBlock(), bb.GetInsertBlock()->begin());
+      }
+
+      if (!EnzymeRuntimeActivityCheck && CustomErrorHandler) {
+        if (TR.query(phi)[{-1}].isPossiblePointer()) {
+          for (unsigned int j = 0; j < phi->getNumIncomingValues(); ++j) {
+            auto val = phi->getIncomingValue(j);
+            if (isa<UndefValue>(val))
+              continue;
+            if (isa<ConstantPointerNull>(val))
+              continue;
+            if (!isConstantValue(val))
+              continue;
+            std::string str;
+            raw_string_ostream ss(str);
+            ss << "Mismatched activity for: " << *phi << " const val: " << *val;
+            CustomErrorHandler(str.c_str(), wrap(phi),
+                               ErrorType::MixedActivityError, this, wrap(val));
+          }
+        }
       }
 
       if (EnzymeVectorSplitPhi && width > 1) {
@@ -5920,7 +6050,8 @@ end:;
     std::string str;
     raw_string_ostream ss(str);
     ss << "cannot find shadow for " << *oval;
-    CustomErrorHandler(str.c_str(), wrap(oval), ErrorType::NoShadow, this);
+    CustomErrorHandler(str.c_str(), wrap(oval), ErrorType::NoShadow, this,
+                       nullptr);
   }
 
   llvm::errs() << *newFunc->getParent() << "\n";
@@ -6985,16 +7116,10 @@ Value *GradientUtils::lookupM(Value *val, IRBuilder<> &BuilderM,
     auto found = rematerializableAllocations.find(origInst);
     if (found != rematerializableAllocations.end())
       if (found->second.LI && found->second.LI->contains(origInst)) {
-        bool cacheWholeAllocation = false;
-        if (knownRecomputeHeuristic.count(origInst)) {
-          if (!knownRecomputeHeuristic[origInst]) {
-            cacheWholeAllocation = true;
-          }
-        }
         // If not caching whole allocation and rematerializing the allocation
         // within the loop, force an entry-level scope so there is no need
         // to cache.
-        if (!cacheWholeAllocation)
+        if (!needsCacheWholeAllocation(origInst))
           scopeI = &newFunc->getEntryBlock();
       }
   } else {
@@ -7874,11 +7999,7 @@ bool GradientUtils::isOriginalBlock(const BasicBlock &BB) const {
 void GradientUtils::eraseFictiousPHIs() {
   {
     for (auto P : rematerializedPrimalOrShadowAllocations) {
-      Value *replacement;
-      if (EnzymeZeroCache)
-        replacement = ConstantPointerNull::get(cast<PointerType>(P->getType()));
-      else
-        replacement = UndefValue::get(P->getType());
+      Value *replacement = getUndefinedValueForType(P->getType());
       P->replaceAllUsesWith(replacement);
       erase(P);
     }
@@ -8203,7 +8324,8 @@ void SubTransferHelper(GradientUtils *gutils, DerivativeMode mode,
                               ? getOrInsertDifferentialFloatMemcpy
                               : getOrInsertDifferentialFloatMemmove)(
               *MTI->getParent()->getParent()->getParent(), secretty, dstalign,
-              srcalign, dstaddr, srcaddr);
+              srcalign, dstaddr, srcaddr,
+              cast<IntegerType>(length->getType())->getBitWidth());
           Builder2.CreateCall(dmemcpy, args);
         }
       }
@@ -8352,7 +8474,9 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
     if (seen.count(tup))
       continue;
     seen.insert(tup);
-    if (isa<CastInst>(cur) || isa<GetElementPtrInst>(cur)) {
+    if (notForAnalysis.count(cur->getParent()))
+      continue;
+    if (isPointerArithmeticInst(cur)) {
       for (auto u : cur->users()) {
         if (auto I = dyn_cast<Instruction>(u))
           todo.push_back(std::make_pair(I, (Value *)cur));
@@ -8416,6 +8540,10 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         stores.insert(CI);
         continue;
       }
+      if (funcName == "enzyme_zerotype") {
+        stores.insert(CI);
+        continue;
+      }
 
       size_t idx = 0;
       bool seenLoadLikeCall = false;
@@ -8431,37 +8559,11 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
         }
         auto TT = TR.query(prev)[{-1, -1}];
 
-#if LLVM_VERSION_MAJOR <= 13
-        auto F = getFunctionFromCall(CI);
-#endif
+        bool NoCapture = isNoCapture(CI, idx);
 
-#if LLVM_VERSION_MAJOR >= 8
-        bool NoCapture = CI->doesNotCapture(idx);
-#else
-        bool NoCapture =
-            CI->dataOperandHasImpliedAttr(idx + 1, Attribute::NoCapture) ||
-            (F && F->hasParamAttribute(idx, Attribute::NoCapture));
-#endif
+        bool ReadOnly = isReadOnly(CI, idx);
 
-#if LLVM_VERSION_MAJOR >= 8
-        bool ReadOnly = CI->onlyReadsMemory(idx);
-#else
-        bool ReadOnly =
-            CI->dataOperandHasImpliedAttr(idx + 1, Attribute::ReadOnly) ||
-            CI->dataOperandHasImpliedAttr(idx + 1, Attribute::ReadNone) ||
-            (F && (F->hasParamAttribute(idx, Attribute::ReadOnly) ||
-                   F->hasParamAttribute(idx, Attribute::ReadNone)));
-#endif
-
-#if LLVM_VERSION_MAJOR >= 14
-        bool WriteOnly = CI->onlyWritesMemory(idx);
-#else
-        bool WriteOnly =
-            CI->dataOperandHasImpliedAttr(idx + 1, Attribute::WriteOnly) ||
-            CI->dataOperandHasImpliedAttr(idx + 1, Attribute::ReadNone) ||
-            (F && (F->hasParamAttribute(idx, Attribute::WriteOnly) ||
-                   F->hasParamAttribute(idx, Attribute::ReadNone)));
-#endif
+        bool WriteOnly = isWriteOnly(CI, idx);
 
         // If the pointer is captured, conservatively assume it is used in
         // nontrivial ways that make both the primal and shadow not promotable.
@@ -8793,10 +8895,7 @@ void GradientUtils::computeGuaranteedFrees() {
       StringRef funcName = getFuncNameFromCall(CI);
 
       if (isDeallocationFunction(funcName, TLI)) {
-
-        llvm::Value *val = CI->getArgOperand(0);
-        while (auto cast = dyn_cast<CastInst>(val))
-          val = cast->getOperand(0);
+        llvm::Value *val = getBaseObject(CI->getArgOperand(0));
 
         if (auto dc = dyn_cast<CallInst>(val)) {
           StringRef sfuncName = getFuncNameFromCall(dc);
@@ -8912,20 +9011,9 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
     freecall->setDebugLoc(debuglocation);
     freecall->setTailCall();
     if (isa<CallInst>(tofree) &&
-#if LLVM_VERSION_MAJOR >= 14
-        cast<CallInst>(tofree)->getAttributes().hasAttributeAtIndex(
-            AttributeList::ReturnIndex, Attribute::NonNull)
-#else
         cast<CallInst>(tofree)->getAttributes().hasAttribute(
-            AttributeList::ReturnIndex, Attribute::NonNull)
-#endif
-    ) {
-#if LLVM_VERSION_MAJOR >= 14
-      freecall->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                    Attribute::NonNull);
-#else
+            AttributeList::ReturnIndex, Attribute::NonNull)) {
       freecall->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
-#endif
     }
     if (Function *F = dyn_cast<Function>(freevalue))
       freecall->setCallingConv(F->getCallingConv());
@@ -9042,24 +9130,85 @@ llvm::CallInst *freeKnownAllocation(llvm::IRBuilder<> &builder,
   freecall->setTailCall();
   freecall->setDebugLoc(debuglocation);
   if (isa<CallInst>(tofree) &&
-#if LLVM_VERSION_MAJOR >= 14
-      cast<CallInst>(tofree)->getAttributes().hasAttributeAtIndex(
-          AttributeList::ReturnIndex, Attribute::NonNull)
-#else
       cast<CallInst>(tofree)->getAttributes().hasAttribute(
-          AttributeList::ReturnIndex, Attribute::NonNull)
-#endif
-  ) {
-#if LLVM_VERSION_MAJOR >= 14
-    freecall->addAttributeAtIndex(AttributeList::FirstArgIndex,
-                                  Attribute::NonNull);
-#else
+          AttributeList::ReturnIndex, Attribute::NonNull)) {
     freecall->addAttribute(AttributeList::FirstArgIndex, Attribute::NonNull);
-#endif
   }
   if (Function *F = dyn_cast<Function>(freevalue))
     freecall->setCallingConv(F->getCallingConv());
   if (freecall->getParent() == nullptr)
     builder.Insert(freecall);
   return freecall;
+}
+
+bool GradientUtils::needsCacheWholeAllocation(
+    const llvm::Value *origInst) const {
+  auto found = knownRecomputeHeuristic.find(origInst);
+  if (found == knownRecomputeHeuristic.end())
+    return false;
+  if (!found->second)
+    return true;
+  SmallVector<const Instruction *, 1> todo;
+  for (auto user : origInst->users())
+    todo.push_back(cast<Instruction>(user));
+  SmallPtrSet<const Instruction *, 1> seen;
+  while (todo.size()) {
+    auto cur = todo.back();
+    todo.pop_back();
+    if (seen.count(cur))
+      continue;
+    seen.insert(cur);
+    // Loads are always fine
+    if (isa<LoadInst>(cur))
+      continue;
+
+    if (auto II = dyn_cast<IntrinsicInst>(cur))
+      if (II->getIntrinsicID() == Intrinsic::nvvm_ldu_global_i ||
+          II->getIntrinsicID() == Intrinsic::nvvm_ldu_global_p ||
+          II->getIntrinsicID() == Intrinsic::nvvm_ldu_global_f ||
+          II->getIntrinsicID() == Intrinsic::nvvm_ldg_global_i ||
+          II->getIntrinsicID() == Intrinsic::nvvm_ldg_global_p ||
+          II->getIntrinsicID() == Intrinsic::nvvm_ldg_global_f ||
+          II->getIntrinsicID() == Intrinsic::masked_load)
+        continue;
+
+    found = knownRecomputeHeuristic.find(cur);
+    if (found == knownRecomputeHeuristic.end())
+      continue;
+
+    // If caching this user, it cannot be a gep/cast of original
+    if (!found->second) {
+      assert(isPointerArithmeticInst(cur, /*includephi*/ true,
+                                     /*includebin*/ true));
+      // if return may alias the input, then force it to be saved
+      return true;
+    } else {
+      // if not caching this user, it is legal to recompute, consider its users
+      for (auto user : cur->users()) {
+        todo.push_back(cast<Instruction>(user));
+      }
+    }
+  }
+  return false;
+}
+
+void GradientUtils::replaceAndRemoveUnwrapCacheFor(llvm::Value *A,
+                                                   llvm::Value *B) {
+  SmallVector<Instruction *, 1> toErase;
+  for (auto &pair : unwrap_cache) {
+    auto found = pair.second.find(A);
+    if (found != pair.second.end()) {
+      for (auto &p : found->second) {
+        Value *pre = p.second;
+        replaceAWithB(pre, B);
+        if (auto I = dyn_cast<Instruction>(pre)) {
+          toErase.push_back(I);
+        }
+      }
+      pair.second.erase(A);
+    }
+  }
+  for (auto I : toErase) {
+    erase(I);
+  }
 }

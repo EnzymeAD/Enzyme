@@ -112,7 +112,7 @@ struct CacheAnalysis {
   LoopInfo &OrigLI;
   DominatorTree &OrigDT;
   TargetLibraryInfo &TLI;
-  const SmallPtrSetImpl<const Instruction *> &unnecessaryInstructions;
+  const SmallPtrSetImpl<BasicBlock *> &unnecessaryBlocks;
   const std::vector<bool> &overwritten_args;
   DerivativeMode mode;
   std::map<Value *, bool> seen;
@@ -124,12 +124,12 @@ struct CacheAnalysis {
           &rematerializableAllocations,
       TypeResults &TR, AAResults &AA, Function *oldFunc, ScalarEvolution &SE,
       LoopInfo &OrigLI, DominatorTree &OrigDT, TargetLibraryInfo &TLI,
-      const SmallPtrSetImpl<const Instruction *> &unnecessaryInstructions,
+      const SmallPtrSetImpl<BasicBlock *> &unnecessaryBlocks,
       const std::vector<bool> &overwritten_args, DerivativeMode mode, bool omp)
       : allocationsWithGuaranteedFree(allocationsWithGuaranteedFree),
         rematerializableAllocations(rematerializableAllocations), TR(TR),
         AA(AA), oldFunc(oldFunc), SE(SE), OrigLI(OrigLI), OrigDT(OrigDT),
-        TLI(TLI), unnecessaryInstructions(unnecessaryInstructions),
+        TLI(TLI), unnecessaryBlocks(unnecessaryBlocks),
         overwritten_args(overwritten_args), mode(mode), omp(omp) {}
 
   bool is_value_mustcache_from_origin(Value *obj) {
@@ -181,6 +181,13 @@ struct CacheAnalysis {
       if (mustcache) {
         EmitWarning("UncacheableOrigin", *gep, "origin gep may need caching ",
                     *gep);
+      }
+    } else if (auto II = dyn_cast<IntrinsicInst>(obj);
+               II && isIntelSubscriptIntrinsic(*II)) {
+      mustcache = is_value_mustcache_from_origin(II->getOperand(3));
+      if (mustcache) {
+        EmitWarning("UncacheableOrigin", *II,
+                    "origin llvm.intel.subscript may need caching ", *II);
       }
     } else {
 
@@ -298,7 +305,7 @@ struct CacheAnalysis {
         if (!inst2->mayWriteToMemory())
           return false;
 
-        if (unnecessaryInstructions.count(inst2)) {
+        if (unnecessaryBlocks.count(inst2->getParent())) {
           return false;
         }
         if (auto CI = dyn_cast<CallInst>(inst2)) {
@@ -323,7 +330,7 @@ struct CacheAnalysis {
                   if (!mid->mayWriteToMemory())
                     return false;
 
-                  if (unnecessaryInstructions.count(mid)) {
+                  if (unnecessaryBlocks.count(mid->getParent())) {
                     return false;
                   }
 
@@ -371,28 +378,30 @@ struct CacheAnalysis {
   //   location can be modified after the load instruction.
   std::map<Instruction *, bool> compute_uncacheable_load_map() {
     std::map<Instruction *, bool> can_modref_map;
-    for (inst_iterator I = inst_begin(*oldFunc), E = inst_end(*oldFunc); I != E;
-         ++I) {
-      Instruction *inst = &*I;
-      // For each load instruction, determine if it is uncacheable.
-      if (auto op = dyn_cast<LoadInst>(inst)) {
-        can_modref_map[inst] = is_load_uncacheable(*op);
-      }
-      if (auto II = dyn_cast<IntrinsicInst>(inst)) {
-        switch (II->getIntrinsicID()) {
-        case Intrinsic::nvvm_ldu_global_i:
-        case Intrinsic::nvvm_ldu_global_p:
-        case Intrinsic::nvvm_ldu_global_f:
-        case Intrinsic::nvvm_ldg_global_i:
-        case Intrinsic::nvvm_ldg_global_p:
-        case Intrinsic::nvvm_ldg_global_f:
-          can_modref_map[inst] = false;
-          break;
-        case Intrinsic::masked_load:
-          can_modref_map[inst] = is_load_uncacheable(*II);
-          break;
-        default:
-          break;
+    for (auto &B : *oldFunc) {
+      if (unnecessaryBlocks.count(&B))
+        continue;
+      for (auto &inst : B) {
+        // For each load instruction, determine if it is uncacheable.
+        if (auto op = dyn_cast<LoadInst>(&inst)) {
+          can_modref_map[op] = is_load_uncacheable(*op);
+        }
+        if (auto II = dyn_cast<IntrinsicInst>(&inst)) {
+          switch (II->getIntrinsicID()) {
+          case Intrinsic::nvvm_ldu_global_i:
+          case Intrinsic::nvvm_ldu_global_p:
+          case Intrinsic::nvvm_ldu_global_f:
+          case Intrinsic::nvvm_ldg_global_i:
+          case Intrinsic::nvvm_ldg_global_p:
+          case Intrinsic::nvvm_ldg_global_f:
+            can_modref_map[II] = false;
+            break;
+          case Intrinsic::masked_load:
+            can_modref_map[II] = is_load_uncacheable(*II);
+            break;
+          default:
+            break;
+          }
         }
       }
     }
@@ -407,7 +416,19 @@ struct CacheAnalysis {
 
     StringRef funcName = getFuncNameFromCall(callsite_op);
 
-    if (funcName == "")
+    if (funcName == "llvm.julia.gc_preserve_begin")
+      return {};
+
+    if (funcName == "llvm.julia.gc_preserve_end")
+      return {};
+
+    if (funcName == "julia.pointer_from_objref")
+      return {};
+
+    if (funcName == "julia.write_barrier")
+      return {};
+
+    if (funcName == "enzyme_zerotype")
       return {};
 
     if (isMemFreeLibMFunction(funcName)) {
@@ -505,7 +526,7 @@ struct CacheAnalysis {
         }
       }
 
-      if (unnecessaryInstructions.count(inst2))
+      if (unnecessaryBlocks.count(inst2->getParent()))
         return false;
 
       if (!inst2->mayWriteToMemory())
@@ -585,23 +606,25 @@ struct CacheAnalysis {
   compute_overwritten_args_for_callsites() {
     std::map<CallInst *, const std::vector<bool>> overwritten_args_map;
 
-    for (inst_iterator I = inst_begin(*oldFunc), E = inst_end(*oldFunc); I != E;
-         ++I) {
-      Instruction &inst = *I;
-      if (auto op = dyn_cast<CallInst>(&inst)) {
+    for (auto &B : *oldFunc) {
+      if (unnecessaryBlocks.count(&B))
+        continue;
+      for (auto &inst : B) {
+        if (auto op = dyn_cast<CallInst>(&inst)) {
 
-        // We do not need uncacheable args for intrinsic functions. So skip such
-        // callsites.
-        if (auto II = dyn_cast<IntrinsicInst>(&inst)) {
-          if (!II->getCalledFunction()->getName().startswith("llvm.julia"))
-            continue;
+          // We do not need uncacheable args for intrinsic functions. So skip
+          // such callsites.
+          if (auto II = dyn_cast<IntrinsicInst>(&inst)) {
+            if (!II->getCalledFunction()->getName().startswith("llvm.julia"))
+              continue;
+          }
+
+          // For all other calls, we compute the uncacheable args for this
+          // callsite.
+          overwritten_args_map.insert(
+              std::pair<CallInst *, const std::vector<bool>>(
+                  op, compute_overwritten_args_for_one_callsite(op)));
         }
-
-        // For all other calls, we compute the uncacheable args for this
-        // callsite.
-        overwritten_args_map.insert(
-            std::pair<CallInst *, const std::vector<bool>>(
-                op, compute_overwritten_args_for_one_callsite(op)));
       }
     }
     return overwritten_args_map;
@@ -632,17 +655,12 @@ void calculateUnusedValuesInFunction(
     bool primalNeededInReverse =
         DifferentialUseAnalysis::is_value_needed_in_reverse<ValueType::Primal>(
             gutils, pair.first, mode, CacheResults, oldUnreachable);
-    bool cacheWholeAllocation = false;
 
-    if (gutils->knownRecomputeHeuristic.count(pair.first)) {
-      if (!gutils->knownRecomputeHeuristic[pair.first]) {
-        primalNeededInReverse = true;
-        cacheWholeAllocation = true;
-      }
-    }
     // If rematerializing a split or loop-level allocation, the primal
     // allocation is not needed in the reverse.
-    if (!cacheWholeAllocation && primalNeededInReverse) {
+    if (gutils->needsCacheWholeAllocation(pair.first)) {
+      primalNeededInReverse = true;
+    } else if (primalNeededInReverse) {
       auto found = gutils->rematerializableAllocations.find(
           const_cast<CallInst *>(pair.first));
       if (found != gutils->rematerializableAllocations.end()) {
@@ -661,6 +679,36 @@ void calculateUnusedValuesInFunction(
         gutils->forwardDeallocations.insert(freeCall);
       else
         gutils->postDominatingFrees.insert(freeCall);
+    }
+  }
+  // Consider allocations which are being rematerialized, but do not
+  // have a guaranteed free.
+  for (const auto &rmat : gutils->rematerializableAllocations) {
+    if (isa<CallInst>(rmat.first) &&
+        gutils->allocationsWithGuaranteedFree.count(cast<CallInst>(rmat.first)))
+      continue;
+    if (rmat.second.frees.size() == 0)
+      continue;
+
+    bool primalNeededInReverse =
+        DifferentialUseAnalysis::is_value_needed_in_reverse<ValueType::Primal>(
+            gutils, rmat.first, mode, CacheResults, oldUnreachable);
+    // If rematerializing a split or loop-level allocation, the primal
+    // allocation is not needed in the reverse.
+    if (gutils->needsCacheWholeAllocation(rmat.first)) {
+      primalNeededInReverse = true;
+    } else if (primalNeededInReverse) {
+      if (mode != DerivativeMode::ReverseModeCombined)
+        primalNeededInReverse = false;
+      else if (auto inst = dyn_cast<Instruction>(rmat.first))
+        if (rmat.second.LI && rmat.second.LI->contains(inst->getParent())) {
+          primalNeededInReverse = false;
+        }
+    }
+
+    for (auto freeCall : rmat.second.frees) {
+      if (!primalNeededInReverse)
+        gutils->forwardDeallocations.insert(cast<CallInst>(freeCall));
     }
   }
 
@@ -702,11 +750,11 @@ void calculateUnusedValuesInFunction(
                   if (isDeallocationCall(I, TLI))
                     continue;
                 }
-                if (auto CI = dyn_cast<CallInst>(u)) {
+                if (auto II = dyn_cast<IntrinsicInst>(u);
+                    II && isIntelSubscriptIntrinsic(*II)) {
+                  todo.push_back(&*u);
+                } else if (auto CI = dyn_cast<CallInst>(u)) {
                   bool writeOnlyNoCapture = true;
-#if LLVM_VERSION_MAJOR < 14
-                  auto F = getFunctionFromCall(CI);
-#endif
                   if (shouldDisableNoWrite(CI)) {
                     writeOnlyNoCapture = false;
                   }
@@ -717,34 +765,11 @@ void calculateUnusedValuesInFunction(
 #endif
                   {
                     if (cur == CI->getArgOperand(i)) {
-#if LLVM_VERSION_MAJOR >= 8
-                      if (!CI->doesNotCapture(i))
-#else
-                      if (!(CI->dataOperandHasImpliedAttr(
-                                i + 1, Attribute::NoCapture) ||
-                            (F &&
-                             F->hasParamAttribute(i, Attribute::NoCapture))))
-#endif
-                      {
+                      if (!isNoCapture(CI, i)) {
                         writeOnlyNoCapture = false;
                         break;
                       }
-#if LLVM_VERSION_MAJOR >= 14
-                      if (!(CI->onlyWritesMemory(i) || CI->onlyWritesMemory()))
-#else
-                      if (!(CI->dataOperandHasImpliedAttr(
-                                i + 1, Attribute::WriteOnly) ||
-                            CI->dataOperandHasImpliedAttr(
-                                i + 1, Attribute::ReadNone) ||
-                            CI->hasFnAttr(Attribute::WriteOnly) ||
-                            CI->hasFnAttr(Attribute::ReadNone) ||
-                            (F &&
-                             (F->hasParamAttribute(i, Attribute::WriteOnly) ||
-                              F->hasParamAttribute(i, Attribute::ReadNone) ||
-                              F->hasFnAttribute(Attribute::WriteOnly) ||
-                              F->hasFnAttribute(Attribute::ReadNone)))))
-#endif
-                      {
+                      if (!isWriteOnly(CI, i)) {
                         writeOnlyNoCapture = false;
                         break;
                       }
@@ -756,7 +781,6 @@ void calculateUnusedValuesInFunction(
                     continue;
                   }
                 }
-
                 if (isa<CastInst>(u) || isa<GetElementPtrInst>(u) ||
                     isa<PHINode>(u)) {
                   todo.push_back(&*u);
@@ -770,6 +794,10 @@ void calculateUnusedValuesInFunction(
               return true;
             }
           }
+        } else if (auto II = dyn_cast<IntrinsicInst>(v);
+                   II && isIntelSubscriptIntrinsic(*II)) {
+          unsigned int ptrArgIdx = 3;
+          return isNoNeed(II->getOperand(ptrArgIdx));
         }
         return false;
       };
@@ -882,9 +910,20 @@ void calculateUnusedValuesInFunction(
               return UseReq::Need;
             return UseReq::Recur;
           }
+          if (hasMetadata(obj_op, "enzyme_zerostack")) {
+            if (unnecessaryValues.count(
+                    getBaseObject(obj_op->getArgOperand(0)))) {
+              return UseReq::Recur;
+            }
+          }
           Intrinsic::ID ID = Intrinsic::not_intrinsic;
-          if (isMemFreeLibMFunction(funcName, &ID)) {
+          if (isMemFreeLibMFunction(funcName, &ID) || isReadOnly(obj_op)) {
             mayWriteToMemory = false;
+          }
+          if (funcName == "memset" || funcName == "memcpy" ||
+              funcName == "memmove") {
+            if (isNoNeed(obj_op->getArgOperand(0)))
+              return UseReq::Recur;
           }
         }
 
@@ -892,6 +931,11 @@ void calculateUnusedValuesInFunction(
           if (isa<UndefValue>(si->getValueOperand()))
             return UseReq::Recur;
           if (isNoNeed(si->getPointerOperand()))
+            return UseReq::Recur;
+        }
+
+        if (auto msi = dyn_cast<MemSetInst>(inst)) {
+          if (isNoNeed(msi->getArgOperand(0)))
             return UseReq::Recur;
         }
 
@@ -916,6 +960,10 @@ void calculateUnusedValuesInFunction(
                     return /*earlyBreak*/ false;
                   if (unnecessaryInstructions.count(I))
                     return /*earlyBreak*/ false;
+                  if (auto CI = dyn_cast<CallInst>(I)) {
+                    if (isReadOnly(CI))
+                      return /*earlyBreak*/ false;
+                  }
 
                   if (writesToMemoryReadBy(
                           gutils->OrigAA, TLI,
@@ -979,10 +1027,6 @@ void calculateUnusedValuesInFunction(
             }
 
             bool writeOnlyNoCapture = true;
-#if LLVM_VERSION_MAJOR < 14
-            auto F = getFunctionFromCall(CI);
-#endif
-
             if (shouldDisableNoWrite(CI)) {
               writeOnlyNoCapture = false;
             }
@@ -993,32 +1037,11 @@ void calculateUnusedValuesInFunction(
 #endif
             {
               if (val == CI->getArgOperand(i)) {
-#if LLVM_VERSION_MAJOR >= 8
-                if (!CI->doesNotCapture(i))
-#else
-                if (!(CI->dataOperandHasImpliedAttr(i + 1,
-                                                    Attribute::NoCapture) ||
-                      (F && F->hasParamAttribute(i, Attribute::NoCapture))))
-#endif
-                {
+                if (!isNoCapture(CI, i)) {
                   writeOnlyNoCapture = false;
                   break;
                 }
-#if LLVM_VERSION_MAJOR >= 14
-                if (!(CI->onlyWritesMemory(i) || CI->onlyWritesMemory()))
-#else
-                if (!(CI->dataOperandHasImpliedAttr(i + 1,
-                                                    Attribute::WriteOnly) ||
-                      CI->dataOperandHasImpliedAttr(i + 1,
-                                                    Attribute::ReadNone) ||
-                      CI->hasFnAttr(Attribute::WriteOnly) ||
-                      CI->hasFnAttr(Attribute::ReadNone) ||
-                      (F && (F->hasParamAttribute(i, Attribute::WriteOnly) ||
-                             F->hasParamAttribute(i, Attribute::ReadNone) ||
-                             F->hasFnAttribute(Attribute::WriteOnly) ||
-                             F->hasFnAttribute(Attribute::ReadNone)))))
-#endif
-                {
+                if (!isWriteOnly(CI, i)) {
                   writeOnlyNoCapture = false;
                   break;
                 }
@@ -1214,7 +1237,7 @@ bool shouldAugmentCall(CallInst *op, const GradientUtils *gutils) {
 
   Function *called = op->getCalledFunction();
 
-  bool modifyPrimal = !called || !called->hasFnAttribute(Attribute::ReadNone);
+  bool modifyPrimal = !called || !isReadNone(op);
 
   if (modifyPrimal) {
 #ifdef PRINT_AUGCALL
@@ -1264,8 +1287,7 @@ bool shouldAugmentCall(CallInst *op, const GradientUtils *gutils) {
     if (!argType->isFPOrFPVectorTy() &&
         !gutils->isConstantValue(op->getArgOperand(i)) &&
         gutils->TR.query(op->getArgOperand(i)).Inner0().isPossiblePointer()) {
-      if (called && !(called->hasParamAttribute(i, Attribute::ReadOnly) ||
-                      called->hasParamAttribute(i, Attribute::ReadNone))) {
+      if (!isReadOnly(op, i)) {
         modifyPrimal = true;
 #ifdef PRINT_AUGCALL
         if (called)
@@ -2063,8 +2085,12 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
           if (!foundcalled->hasParamAttribute(i, Attribute::StructRet))
             args.push_back(arg.getType());
           else {
+#if LLVM_VERSION_MAJOR >= 12
+            sretTy = foundcalled->getParamAttribute(0, Attribute::StructRet)
+                         .getValueAsType();
+#else
             sretTy = arg.getType()->getPointerElementType();
-            //  sretTy = foundcalled->getParamStructRetType(i);
+#endif
           }
           i++;
         }
@@ -2267,7 +2293,7 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
       ss << "No augmented forward pass found for " + todiff->getName() << "\n";
       ss << *todiff << "\n";
       CustomErrorHandler(ss.str().c_str(), wrap(todiff),
-                         ErrorType::NoDerivative, nullptr);
+                         ErrorType::NoDerivative, nullptr, nullptr);
     }
     llvm::errs() << "mod: " << *todiff->getParent() << "\n";
     llvm::errs() << *todiff << "\n";
@@ -2289,23 +2315,14 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
   std::vector<bool> _overwritten_argsPP = _overwritten_args;
 
   gutils->forceActiveDetection();
-
-  // TODO actually populate unnecessaryInstructions with what can be
-  // derived without activity info
-  SmallPtrSet<const Instruction *, 4> unnecessaryInstructionsTmp;
-  for (auto BB : guaranteedUnreachable) {
-    for (auto &I : *BB)
-      unnecessaryInstructionsTmp.insert(&I);
-  }
   gutils->computeGuaranteedFrees();
 
   CacheAnalysis CA(gutils->allocationsWithGuaranteedFree,
                    gutils->rematerializableAllocations, gutils->TR,
                    gutils->OrigAA, gutils->oldFunc,
                    PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
-                   gutils->OrigLI, gutils->OrigDT, TLI,
-                   unnecessaryInstructionsTmp, _overwritten_argsPP,
-                   DerivativeMode::ReverseModePrimal, omp);
+                   gutils->OrigLI, gutils->OrigDT, TLI, guaranteedUnreachable,
+                   _overwritten_argsPP, DerivativeMode::ReverseModePrimal, omp);
   const std::map<CallInst *, const std::vector<bool>> overwritten_args_map =
       CA.compute_overwritten_args_for_callsites();
   gutils->overwritten_args_map_ptr = &overwritten_args_map;
@@ -2460,6 +2477,21 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
         if (Value *orig_oldval = ri->getReturnValue()) {
           auto newri = gutils->getNewFromOriginal(ri);
           IRBuilder<> BuilderZ(newri);
+          if (gutils->isConstantValue(orig_oldval)) {
+            if (!EnzymeRuntimeActivityCheck && CustomErrorHandler &&
+                gutils->TR.query(orig_oldval)[{-1}].isPossiblePointer()) {
+              if (!isa<UndefValue>(orig_oldval) &&
+                  !isa<ConstantPointerNull>(orig_oldval)) {
+                std::string str;
+                raw_string_ostream ss(str);
+                ss << "Mismatched activity for: " << *ri
+                   << " const val: " << *orig_oldval;
+                CustomErrorHandler(str.c_str(), wrap(ri),
+                                   ErrorType::MixedActivityError, gutils,
+                                   wrap(orig_oldval));
+              }
+            }
+          }
           invertedRetPs[newri] = gutils->invertPointerM(orig_oldval, BuilderZ,
                                                         /*nullShadow*/ true);
         }
@@ -2652,7 +2684,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     if (nf->hasParamAttribute(attrIndex, Attribute::NoAlias)) {
       NewF->addParamAttr(attrIndex, Attribute::NoAlias);
     }
-    for (auto name : {"enzyme_sret", "enzyme_sret_v"})
+    for (auto name : {"enzyme_sret", "enzyme_sret_v", "enzymejl_returnRoots",
+                      "enzymejl_returnRoots_v"})
       if (nf->getAttributes().hasParamAttr(attrIndex, name)) {
         NewF->addParamAttr(attrIndex,
                            nf->getAttributes().getParamAttr(attrIndex, name));
@@ -2925,17 +2958,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     GV->setName("_tmp");
     auto R = gutils->GetOrCreateShadowFunction(
         *this, TLI, TA, todiff, pair.second, width, gutils->AtomicAdd);
-    SmallVector<ConstantExpr *, 1> users;
-    for (auto U : GV->users()) {
-      if (auto CE = dyn_cast<ConstantExpr>(U)) {
-        if (CE->isCast()) {
-          users.push_back(CE);
-        }
-      }
-    }
-    for (auto U : users) {
-      U->replaceAllUsesWith(ConstantExpr::getPointerCast(R, U->getType()));
-    }
+    SmallVector<std::pair<ConstantExpr *, bool>, 1> users;
+    GV->replaceAllUsesWith(ConstantExpr::getPointerCast(R, GV->getType()));
     GV->eraseFromParent();
   }
 
@@ -2967,6 +2991,26 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
   if (inst == nullptr)
     return;
 
+  if (retType != DIFFE_TYPE::CONSTANT) {
+    auto ret = inst->getOperand(0);
+    if (!ret->getType()->isFPOrFPVectorTy() &&
+        TR.getReturnAnalysis().Inner0().isPossiblePointer()) {
+      if (gutils->isConstantValue(ret)) {
+        if (!EnzymeRuntimeActivityCheck && CustomErrorHandler &&
+            TR.query(ret)[{-1}].isPossiblePointer()) {
+          if (!isa<UndefValue>(ret) && !isa<ConstantPointerNull>(ret)) {
+            std::string str;
+            raw_string_ostream ss(str);
+            ss << "Mismatched activity for: " << *inst
+               << " const val: " << *ret;
+            CustomErrorHandler(str.c_str(), wrap(inst),
+                               ErrorType::MixedActivityError, gutils,
+                               wrap(ret));
+          }
+        }
+      }
+    }
+  }
   ReturnInst *newInst = cast<ReturnInst>(gutils->getNewFromOriginal(inst));
   BasicBlock *nBB = newInst->getParent();
   assert(nBB);
@@ -3032,6 +3076,22 @@ void createTerminator(DiffeGradientUtils *gutils, BasicBlock *oBB,
   gutils->erase(newInst);
   nBuilder.CreateRet(toret);
   return;
+}
+
+Value *selectByWidth(IRBuilder<> &B, DiffeGradientUtils *gutils, Value *cond,
+                     Value *tval, Value *fval) {
+  auto width = gutils->getWidth();
+  if (width == 1) {
+    return B.CreateSelect(cond, tval, fval);
+  }
+  Value *res = UndefValue::get(tval->getType());
+
+  for (unsigned int i = 0; i < width; ++i) {
+    auto ntval = GradientUtils::extractMeta(B, tval, i);
+    auto nfval = GradientUtils::extractMeta(B, fval, i);
+    res = B.CreateInsertValue(res, B.CreateSelect(cond, ntval, nfval), {i});
+  }
+  return res;
 }
 
 void createInvertedTerminator(DiffeGradientUtils *gutils,
@@ -3164,7 +3224,7 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
         raw_string_ostream ss(str);
         ss << "Cannot deduce type of phi " << *orig;
         CustomErrorHandler(str.c_str(), wrap(orig), ErrorType::NoType,
-                           &gutils->TR.analyzer);
+                           &gutils->TR.analyzer, nullptr);
       }
       llvm::errs() << *gutils->oldFunc->getParent() << "\n";
       llvm::errs() << *gutils->oldFunc << "\n";
@@ -3215,12 +3275,12 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
               }
 
               auto ddiff = gutils->diffe(SI, Builder);
-              gutils->setDiffe(SI,
-                               Builder.CreateSelect(
-                                   replacePHIs[pred],
-                                   Constant::getNullValue(prediff->getType()),
-                                   ddiff),
-                               Builder);
+              gutils->setDiffe(
+                  SI,
+                  selectByWidth(Builder, gutils, replacePHIs[pred],
+                                Constant::getNullValue(prediff->getType()),
+                                ddiff),
+                  Builder);
               handled = true;
               if (!gutils->isConstantValue(oval)) {
                 BasicBlock *REB =
@@ -3233,15 +3293,16 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
                 auto index = gutils->getOrInsertConditionalIndex(
                     gutils->getNewFromOriginal(SI->getOperand(0)), loopContext,
                     i == 1);
-                Value *sdif = Builder.CreateSelect(
+                Value *sdif = selectByWidth(
+                    Builder, gutils,
                     Builder.CreateICmpEQ(
                         gutils->lookupM(index, EB),
                         Constant::getNullValue(index->getType())),
                     ddiff, Constant::getNullValue(ddiff->getType()));
 
-                SelectInst *dif = cast<SelectInst>(Builder.CreateSelect(
-                    replacePHIs[pred], sdif,
-                    Constant::getNullValue(prediff->getType())));
+                auto dif =
+                    selectByWidth(Builder, gutils, replacePHIs[pred], sdif,
+                                  Constant::getNullValue(prediff->getType()));
                 auto addedSelects =
                     gutils->addToDiffe(oval, dif, Builder, PNfloatType);
 
@@ -3272,9 +3333,9 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
             auto ddiff = gutils->diffe(BO, Builder);
             gutils->setDiffe(
                 BO,
-                Builder.CreateSelect(replacePHIs[pred],
-                                     Constant::getNullValue(prediff->getType()),
-                                     ddiff),
+                selectByWidth(Builder, gutils, replacePHIs[pred],
+                              Constant::getNullValue(prediff->getType()),
+                              ddiff),
                 Builder);
             handled = true;
 
@@ -3289,10 +3350,10 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
               auto product = gutils->getOrInsertTotalMultiplicativeProduct(
                   gutils->getNewFromOriginal(BO->getOperand(1)), loopContext);
 
-              SelectInst *dif = cast<SelectInst>(Builder.CreateSelect(
-                  replacePHIs[pred],
+              auto dif = selectByWidth(
+                  Builder, gutils, replacePHIs[pred],
                   Builder.CreateFDiv(ddiff, gutils->lookupM(product, EB)),
-                  Constant::getNullValue(prediff->getType())));
+                  Constant::getNullValue(prediff->getType()));
               auto addedSelects =
                   gutils->addToDiffe(oval, dif, Builder, PNfloatType);
 
@@ -3328,9 +3389,8 @@ void createInvertedTerminator(DiffeGradientUtils *gutils,
               setphi = true;
             }
           }
-          SelectInst *dif = cast<SelectInst>(
-              Builder.CreateSelect(replacePHIs[pred], prediff,
-                                   Constant::getNullValue(prediff->getType())));
+          auto dif = selectByWidth(Builder, gutils, replacePHIs[pred], prediff,
+                                   Constant::getNullValue(prediff->getType()));
           auto addedSelects =
               gutils->addToDiffe(oval, dif, Builder, PNfloatType);
 
@@ -3854,7 +3914,7 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
     ss << *key.todiff << "\n";
     if (CustomErrorHandler) {
       CustomErrorHandler(ss.str().c_str(), wrap(key.todiff),
-                         ErrorType::NoDerivative, nullptr);
+                         ErrorType::NoDerivative, nullptr, nullptr);
     } else {
       llvm_unreachable(ss.str().c_str());
     }
@@ -3899,21 +3959,12 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
   // sets backwardsOnlyShadows, rematerializableAllocations, and
   // allocationsWithGuaranteedFrees
   gutils->computeGuaranteedFrees();
-
-  // TODO populate with actual unnecessaryInstructions once the dependency
-  // cycle with activity analysis is removed
-  SmallPtrSet<const Instruction *, 4> unnecessaryInstructionsTmp;
-  for (auto BB : guaranteedUnreachable) {
-    for (auto &I : *BB)
-      unnecessaryInstructionsTmp.insert(&I);
-  }
   CacheAnalysis CA(gutils->allocationsWithGuaranteedFree,
                    gutils->rematerializableAllocations, gutils->TR,
                    gutils->OrigAA, gutils->oldFunc,
                    PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
-                   gutils->OrigLI, gutils->OrigDT, TLI,
-                   unnecessaryInstructionsTmp, _overwritten_argsPP, key.mode,
-                   omp);
+                   gutils->OrigLI, gutils->OrigDT, TLI, guaranteedUnreachable,
+                   _overwritten_argsPP, key.mode, omp);
   const std::map<CallInst *, const std::vector<bool>> overwritten_args_map =
       (augmenteddata) ? augmenteddata->overwritten_args_map
                       : CA.compute_overwritten_args_for_callsites();
@@ -4178,7 +4229,10 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         }
         auto store = entryBuilder.CreateStore(
             Constant::getNullValue(g.getValueType()), &g);
-#if LLVM_VERSION_MAJOR >= 11
+#if LLVM_VERSION_MAJOR >= 16
+        if (g.getAlign())
+          store->setAlignment(g.getAlign().value());
+#elif LLVM_VERSION_MAJOR >= 11
         if (g.getAlign())
           store->setAlignment(g.getAlign().getValue());
 #elif LLVM_VERSION_MAJOR >= 10
@@ -4471,7 +4525,7 @@ Function *EnzymeLogic::CreateForwardDiff(
     ss << "No forward derivative found for " + todiff->getName() << "\n";
     ss << *todiff << "\n";
     CustomErrorHandler(s.c_str(), wrap(todiff), ErrorType::NoDerivative,
-                       nullptr);
+                       nullptr, nullptr);
   }
   if (todiff->empty())
     llvm::errs() << *todiff << "\n";
@@ -4525,7 +4579,7 @@ Function *EnzymeLogic::CreateForwardDiff(
         gutils->rematerializableAllocations, gutils->TR, gutils->OrigAA,
         gutils->oldFunc,
         PPC.FAM.getResult<ScalarEvolutionAnalysis>(*gutils->oldFunc),
-        gutils->OrigLI, gutils->OrigDT, TLI, unnecessaryInstructionsTmp,
+        gutils->OrigLI, gutils->OrigDT, TLI, guaranteedUnreachable,
         _overwritten_argsPP, mode, omp);
     const std::map<CallInst *, const std::vector<bool>> overwritten_args_map =
         CA.compute_overwritten_args_for_callsites();
@@ -4995,7 +5049,7 @@ llvm::Value *EnzymeLogic::CreateNoFree(llvm::Value *todiff) {
     ss << "No create nofree of unknown value\n";
     ss << *todiff << "\n";
     CustomErrorHandler(ss.str().c_str(), wrap(todiff), ErrorType::NoDerivative,
-                       nullptr);
+                       nullptr, nullptr);
   }
   llvm::errs() << " unhandled, create no free of: " << *todiff << "\n";
   llvm_unreachable("unhandled, create no free");
@@ -5048,6 +5102,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
       "_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEED1Ev",
       "_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEE6__"
       "initEPKcm",
+      "_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_9allocatorIcEEEC1ERKS5_",
       "_ZNSt3__112basic_stringIcNS_11char_traitsIcEENS_"
       "9allocatorIcEEE6appendEPKcm",
       "_ZNSt12__basic_fileIcED1Ev",
@@ -5100,7 +5155,7 @@ llvm::Function *EnzymeLogic::CreateNoFree(Function *F) {
       ss << "No create nofree of empty function " << F->getName() << "\n";
       ss << *F << "\n";
       CustomErrorHandler(ss.str().c_str(), wrap(F), ErrorType::NoDerivative,
-                         nullptr);
+                         nullptr, nullptr);
     }
     llvm::errs() << " unhandled, create no free of empty function: " << *F
                  << "\n";

@@ -1,17 +1,19 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instcombine -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -simplifycfg -instsimplify -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,%simplifycfg,instsimplify,adce)" -S | FileCheck %s
+
 ; This test ensures that the index of gep doesn't lead to a collision where it is mistaken as both a double and a i64 pointer
 ; - in other words, not crashing makes this a success!
 define void @sub(i64* %inp, i64 %idx) {
 entry:
   %gep = getelementptr inbounds i64, i64* %inp, i64 %idx
   %cst = bitcast i64* %gep to double*
-  store double 0.000000e+00, double* %cst, !tbaa !6
+  store double 0.000000e+00, double* %cst, align 8, !tbaa !6
   ret void
 }
 
 define void @foo(i64* %inp, i64* %out) {
 entry:
-  store i64 3, i64* %inp, !tbaa !3
+  store i64 3, i64* %inp, align 4, !tbaa !3
   call void @sub(i64* %inp, i64 1)
   ret void
 }
@@ -51,6 +53,6 @@ declare dso_local void @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   %[[cstp:.+]] = bitcast i64* %[[gepp]] to double*
 ; CHECK-NEXT:   %cst = bitcast i64* %gep to double*
 ; CHECK-NEXT:   store double 0.000000e+00, double* %cst, align 8, !tbaa !2
-; CHECK-NEXT:   store double 0.000000e+00, double* %[[cstp]], align 8
+; CHECK-NEXT:   store double 0.000000e+00, double* %[[cstp]], align 8, !tbaa !2
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

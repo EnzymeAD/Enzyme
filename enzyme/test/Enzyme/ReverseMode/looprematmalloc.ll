@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instsimplify -gvn -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -simplifycfg -gvn -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg,gvn,adce)" -S | FileCheck %s
 
 source_filename = "/app/example.c"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
@@ -151,11 +152,11 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %6 = sub i32 %i17_unwrap4, 1
 ; CHECK-NEXT:   %7 = call fast double @llvm.powi.f64{{(\.i32)?}}(double %arg, i32 %6)
 ; CHECK-DAG:    %[[a8:.+]] = sitofp i32 %i17_unwrap4 to double
-; CHECK-DAG:    %[[a9:.+]] = fmul fast double %16, %7
-; CHECK-NEXT:   %10 = fmul fast double %[[a9]], %[[a8]]
-; CHECK-NEXT:   %11 = icmp eq i32 0, %i17_unwrap4
-; CHECK-NEXT:   %12 = fadd fast double %"arg'de.1", %10
-; CHECK-NEXT:   %13 = select {{(fast )?}}i1 %11, double %"arg'de.1", double %12
+; CHECK-DAG:    %[[a9:.+]] = fmul fast double %7, %[[a8]]
+; CHECK-NEXT:   %[[i11:.+]] = icmp eq i32 0, %i17_unwrap4
+; CHECK-NEXT:   %[[i10:.+]] = fmul fast double %16, %[[a9]]
+; CHECK-NEXT:   %12 = fadd fast double %"arg'de.1", %[[i10]]
+; CHECK-NEXT:   %13 = select {{(fast )?}}i1 %[[i11]], double %"arg'de.1", double %12
 ; CHECK-NEXT:   br label %invertsetLoop
 
 ; CHECK: invertsetExit:                                    ; preds = %remat_loop_loopExit, %incinvertsetLoop
@@ -186,11 +187,11 @@ attributes #4 = { nounwind }
 ; CHECK-NEXT:   %17 = add i64 %fiv, 1
 ; CHECK-DAG:   %i_unwrap = bitcast i8* %remat_i1 to [30 x double]*
 ; CHECK-DAG:   %i20_unwrap = getelementptr inbounds [30 x double], [30 x double]* %i_unwrap, i64 0, i64 %fiv
-; CHECK-DAG:   %i15_unwrap1 = and i64 %fiv, 1
-; CHECK-DAG:   %i16_unwrap2 = icmp eq i64 %i15_unwrap1, 0
+; CHECK-DAG:   %[[i15_unwrap1:.+]] = and i64 %fiv, 1
+; CHECK-DAG:   %[[i16_unwrap2:.+]] = icmp eq i64 %[[i15_unwrap1]], 0
 ; CHECK-DAG:   %i17_unwrap = trunc i64 %fiv to i32
 ; CHECK-DAG:   %18 = call fast double @llvm.powi.f64{{(\.i32)?}}(double %arg, i32 %i17_unwrap) 
-; CHECK-DAG:   %19 = select i1 %i16_unwrap2, double %18, double 0.000000e+00
+; CHECK-DAG:   %19 = select i1 %[[i16_unwrap2]], double %18, double 0.000000e+00
 ; CHECK-NEXT:   store double %19, double* %i20_unwrap, align 8
 ; CHECK-NEXT:   %i22_unwrap = icmp eq i64 %17, 30
 ; CHECK-NEXT:   br i1 %i22_unwrap, label %remat_loop_loopExit, label %remat_loop_setLoop

@@ -57,6 +57,10 @@
 #include <map>
 #include <set>
 
+#if LLVM_VERSION_MAJOR >= 16
+#include <optional>
+#endif
+
 #include "llvm/IR/DiagnosticInfo.h"
 
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"
@@ -74,14 +78,16 @@ enum class ErrorType {
   NoType = 3,
   IllegalFirstPointer = 4,
   InternalError = 5,
-  TypeDepthExceeded = 6
+  TypeDepthExceeded = 6,
+  MixedActivityError = 7,
 };
 
 extern "C" {
 /// Print additional debug info relevant to performance
 extern llvm::cl::opt<bool> EnzymePrintPerf;
+extern llvm::cl::opt<bool> EnzymeStrongZero;
 extern void (*CustomErrorHandler)(const char *, LLVMValueRef, ErrorType,
-                                  const void *);
+                                  const void *, LLVMValueRef);
 }
 
 llvm::SmallVector<llvm::Instruction *, 2> PostCacheStore(llvm::StoreInst *SI,
@@ -176,11 +182,7 @@ static inline llvm::Function *isCalledFunction(llvm::Value *val) {
 }
 
 /// Get LLVM fast math flags
-static inline llvm::FastMathFlags getFast() {
-  llvm::FastMathFlags f;
-  f.set();
-  return f;
-}
+llvm::FastMathFlags getFast();
 
 /// Pick the maximum value
 template <typename T> static inline T max(T a, T b) {
@@ -603,10 +605,9 @@ static inline bool isCertainPrint(const llvm::StringRef name) {
 
 /// Create function for type that performs the derivative memcpy on floating
 /// point memory
-llvm::Function *
-getOrInsertDifferentialFloatMemcpy(llvm::Module &M, llvm::Type *T,
-                                   unsigned dstalign, unsigned srcalign,
-                                   unsigned dstaddr, unsigned srcaddr);
+llvm::Function *getOrInsertDifferentialFloatMemcpy(
+    llvm::Module &M, llvm::Type *T, unsigned dstalign, unsigned srcalign,
+    unsigned dstaddr, unsigned srcaddr, unsigned bitwidth);
 
 /// Create function for type that performs memcpy with a stride
 llvm::Function *getOrInsertMemcpyStrided(llvm::Module &M, llvm::PointerType *T,
@@ -615,10 +616,9 @@ llvm::Function *getOrInsertMemcpyStrided(llvm::Module &M, llvm::PointerType *T,
 
 /// Create function for type that performs the derivative memmove on floating
 /// point memory
-llvm::Function *
-getOrInsertDifferentialFloatMemmove(llvm::Module &M, llvm::Type *T,
-                                    unsigned dstalign, unsigned srcalign,
-                                    unsigned dstaddr, unsigned srcaddr);
+llvm::Function *getOrInsertDifferentialFloatMemmove(
+    llvm::Module &M, llvm::Type *T, unsigned dstalign, unsigned srcalign,
+    unsigned dstaddr, unsigned srcaddr, unsigned bitwidth);
 
 llvm::Function *getOrInsertCheckedFree(llvm::Module &M, llvm::CallInst *call,
                                        llvm::Type *Type, unsigned width);
@@ -1052,7 +1052,12 @@ template <typename T> static inline llvm::StringRef getFuncNameFromCall(T *op) {
 }
 
 template <typename T>
-static inline llvm::Optional<size_t> getAllocationIndexFromCall(T *op) {
+#if LLVM_VERSION_MAJOR >= 16
+static inline std::optional<size_t> getAllocationIndexFromCall(T *op)
+#else
+static inline llvm::Optional<size_t> getAllocationIndexFromCall(T *op)
+#endif
+{
   auto AttrList =
       op->getAttributes().getAttributes(llvm::AttributeList::FunctionIndex);
   if (AttrList.hasAttribute("enzyme_allocator")) {
@@ -1061,7 +1066,11 @@ static inline llvm::Optional<size_t> getAllocationIndexFromCall(T *op) {
                  .getValueAsString()
                  .getAsInteger(10, res);
     assert(!b);
+#if LLVM_VERSION_MAJOR >= 16
+    return std::optional<size_t>(res);
+#else
     return llvm::Optional<size_t>(res);
+#endif
   }
 
   if (auto called = getFunctionFromCall(op)) {
@@ -1071,10 +1080,18 @@ static inline llvm::Optional<size_t> getAllocationIndexFromCall(T *op) {
                    .getValueAsString()
                    .getAsInteger(10, res);
       assert(!b);
+#if LLVM_VERSION_MAJOR >= 16
+      return std::optional<size_t>(res);
+#else
       return llvm::Optional<size_t>(res);
+#endif
     }
   }
+#if LLVM_VERSION_MAJOR >= 16
+  return std::optional<size_t>();
+#else
   return llvm::Optional<size_t>();
+#endif
 }
 
 template <typename T>
@@ -1157,6 +1174,62 @@ static inline bool shouldDisableNoWrite(const llvm::CallInst *CI) {
   return false;
 }
 
+static inline bool isIntelSubscriptIntrinsic(const llvm::IntrinsicInst &II) {
+  return getFuncNameFromCall(&II).startswith("llvm.intel.subscript");
+}
+
+static inline bool isIntelSubscriptIntrinsic(const llvm::Value *val) {
+  if (auto II = llvm::dyn_cast<llvm::IntrinsicInst>(val)) {
+    return isIntelSubscriptIntrinsic(*II);
+  }
+  return false;
+}
+
+static inline bool isPointerArithmeticInst(const llvm::Value *V,
+                                           bool includephi = true,
+                                           bool includebin = true) {
+  if (llvm::isa<llvm::CastInst>(V) || llvm::isa<llvm::GetElementPtrInst>(V) ||
+      (includephi && llvm::isa<llvm::PHINode>(V)))
+    return true;
+
+  if (includebin)
+    if (auto BI = llvm::dyn_cast<llvm::BinaryOperator>(V)) {
+      switch (BI->getOpcode()) {
+      case llvm::BinaryOperator::Add:
+      case llvm::BinaryOperator::Sub:
+      case llvm::BinaryOperator::Mul:
+      case llvm::BinaryOperator::SDiv:
+      case llvm::BinaryOperator::UDiv:
+      case llvm::BinaryOperator::SRem:
+      case llvm::BinaryOperator::URem:
+      case llvm::BinaryOperator::Or:
+      case llvm::BinaryOperator::And:
+      case llvm::BinaryOperator::Shl:
+      case llvm::BinaryOperator::LShr:
+      case llvm::BinaryOperator::AShr:
+        return true;
+      default:
+        break;
+      }
+    }
+
+  if (isIntelSubscriptIntrinsic(V)) {
+    return true;
+  }
+
+  if (auto *Call = llvm::dyn_cast<llvm::CallInst>(V)) {
+    auto funcName = getFuncNameFromCall(Call);
+    if (funcName == "julia.pointer_from_objref") {
+      return true;
+    }
+    if (funcName.contains("__enzyme_todense")) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 static inline llvm::Value *getBaseObject(llvm::Value *V) {
   while (true) {
     if (auto CI = llvm::dyn_cast<llvm::CastInst>(V)) {
@@ -1164,6 +1237,10 @@ static inline llvm::Value *getBaseObject(llvm::Value *V) {
       continue;
     } else if (auto CI = llvm::dyn_cast<llvm::GetElementPtrInst>(V)) {
       V = CI->getOperand(0);
+      continue;
+    } else if (auto II = llvm::dyn_cast<llvm::IntrinsicInst>(V);
+               II && isIntelSubscriptIntrinsic(*II)) {
+      V = II->getOperand(3);
       continue;
     } else if (auto CI = llvm::dyn_cast<llvm::PHINode>(V)) {
       if (CI->getNumIncomingValues() == 1) {
@@ -1182,9 +1259,57 @@ static inline llvm::Value *getBaseObject(llvm::Value *V) {
       }
     } else if (auto *Call = llvm::dyn_cast<llvm::CallInst>(V)) {
       auto funcName = getFuncNameFromCall(Call);
+      auto AttrList = Call->getAttributes().getAttributes(
+          llvm::AttributeList::FunctionIndex);
+      if (AttrList.hasAttribute("enzyme_pointermath")) {
+        size_t res;
+        bool failed = AttrList.getAttribute("enzyme_pointermath")
+                          .getValueAsString()
+                          .getAsInteger(10, res);
+        assert(!failed);
+        V = Call->getArgOperand(res);
+        continue;
+      }
       if (funcName == "julia.pointer_from_objref") {
         V = Call->getArgOperand(0);
         continue;
+      }
+      if (funcName == "jl_reshape_array" || funcName == "ijl_reshape_array") {
+        V = Call->getArgOperand(1);
+        continue;
+      }
+      if (funcName.contains("__enzyme_todense")) {
+#if LLVM_VERSION_MAJOR >= 14
+        size_t numargs = Call->arg_size();
+#else
+        size_t numargs = Call->getNumArgOperands();
+#endif
+        if (numargs == 3) {
+          V = Call->getArgOperand(2);
+          continue;
+        }
+      }
+      if (auto fn = getFunctionFromCall(Call)) {
+        auto AttrList = fn->getAttributes().getAttributes(
+            llvm::AttributeList::FunctionIndex);
+        if (AttrList.hasAttribute("enzyme_pointermath")) {
+          size_t res;
+          bool failed = AttrList.getAttribute("enzyme_pointermath")
+                            .getValueAsString()
+                            .getAsInteger(10, res);
+          assert(!failed);
+          V = Call->getArgOperand(res);
+          continue;
+        }
+        bool found = false;
+        for (auto &arg : fn->args()) {
+          if (arg.hasAttribute(llvm::Attribute::Returned)) {
+            found = true;
+            V = Call->getArgOperand(arg.getArgNo());
+          }
+        }
+        if (found)
+          continue;
       }
 
       // CaptureTracking can know about special capturing properties of some
@@ -1236,4 +1361,243 @@ static inline llvm::Value *getBaseObject(llvm::Value *V) {
 static inline const llvm::Value *getBaseObject(const llvm::Value *V) {
   return getBaseObject(const_cast<llvm::Value *>(V));
 }
+
+static inline bool isReadOnly(const llvm::Function *F, ssize_t arg = -1) {
+#if LLVM_VERSION_MAJOR >= 8
+  if (F->onlyReadsMemory())
+    return true;
+#endif
+  if (F->hasFnAttribute(llvm::Attribute::ReadOnly) ||
+      F->hasFnAttribute(llvm::Attribute::ReadNone))
+    return true;
+  if (arg != -1) {
+    if (F->hasParamAttribute(arg, llvm::Attribute::ReadOnly) ||
+        F->hasParamAttribute(arg, llvm::Attribute::ReadNone))
+      return true;
+  }
+  return false;
+}
+
+static inline bool isReadOnly(const llvm::CallInst *call, ssize_t arg = -1) {
+#if LLVM_VERSION_MAJOR >= 8
+  if (call->onlyReadsMemory())
+    return true;
+  if (arg != -1 && call->onlyReadsMemory(arg))
+    return true;
+#else
+  if (call->hasFnAttr(llvm::Attribute::ReadOnly) ||
+      call->hasFnAttr(llvm::Attribute::ReadNone))
+    return true;
+  if (arg != -1) {
+    if (call->dataOperandHasImpliedAttr(arg + 1, llvm::Attribute::ReadOnly) ||
+        call->dataOperandHasImpliedAttr(arg + 1, llvm::Attribute::ReadNone))
+      return true;
+  }
+#endif
+
+  if (auto F = getFunctionFromCall(call)) {
+    if (isReadOnly(F, arg))
+      return true;
+  }
+  return false;
+}
+
+static inline bool isWriteOnly(const llvm::Function *F, ssize_t arg = -1) {
+#if LLVM_VERSION_MAJOR >= 14
+  if (F->onlyWritesMemory())
+    return true;
+#endif
+  if (F->hasFnAttribute(llvm::Attribute::WriteOnly) ||
+      F->hasFnAttribute(llvm::Attribute::ReadNone))
+    return true;
+  if (arg != -1) {
+    if (F->hasParamAttribute(arg, llvm::Attribute::WriteOnly) ||
+        F->hasParamAttribute(arg, llvm::Attribute::ReadNone))
+      return true;
+  }
+  return false;
+}
+
+static inline bool isWriteOnly(const llvm::CallInst *call, ssize_t arg = -1) {
+#if LLVM_VERSION_MAJOR >= 14
+  if (call->onlyWritesMemory())
+    return true;
+  if (arg != -1 && call->onlyWritesMemory(arg))
+    return true;
+#else
+  if (call->hasFnAttr(llvm::Attribute::WriteOnly) ||
+      call->hasFnAttr(llvm::Attribute::ReadNone))
+    return true;
+  if (arg != -1) {
+    if (call->dataOperandHasImpliedAttr(arg + 1, llvm::Attribute::WriteOnly) ||
+        call->dataOperandHasImpliedAttr(arg + 1, llvm::Attribute::ReadNone))
+      return true;
+  }
+#endif
+
+  if (auto F = getFunctionFromCall(call)) {
+    return isWriteOnly(F, arg);
+  }
+  return false;
+}
+
+static inline bool isReadNone(const llvm::CallInst *call, ssize_t arg = -1) {
+  return isReadOnly(call, arg) && isWriteOnly(call, arg);
+}
+
+static inline bool isReadNone(const llvm::Function *F, ssize_t arg = -1) {
+  return isReadOnly(F, arg) && isWriteOnly(F, arg);
+}
+
+static inline bool isNoCapture(const llvm::CallInst *call, size_t idx) {
+
+#if LLVM_VERSION_MAJOR >= 8
+  if (call->doesNotCapture(idx))
+    return true;
+#else
+  if (call->dataOperandHasImpliedAttr(idx + 1, llvm::Attribute::NoCapture))
+    return true;
+
+#endif
+
+  auto F = getFunctionFromCall(call);
+  if (F) {
+    if (F->hasParamAttribute(idx, llvm::Attribute::NoCapture))
+      return true;
+  }
+  return false;
+}
+
+void attributeKnownFunctions(llvm::Function &F);
+
+struct BlasInfo {
+  llvm::StringRef floatType;
+  llvm::StringRef prefix;
+  llvm::StringRef suffix;
+  llvm::StringRef function;
+};
+
+#if LLVM_VERSION_MAJOR >= 16
+std::optional<BlasInfo> extractBLAS(llvm::StringRef in);
+#else
+llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in);
+#endif
+
+llvm::Constant *getUndefinedValueForType(llvm::Type *T, bool forceZero = false);
+
+llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
+                                 llvm::IRBuilder<> &BuilderM,
+                                 llvm::Value *mask = nullptr);
+
+static inline llvm::Value *CreateSelect(llvm::IRBuilder<> &Builder2,
+                                        llvm::Value *cmp, llvm::Value *tval,
+                                        llvm::Value *fval,
+                                        llvm::Twine Name = "") {
+  if (auto cmpi = llvm::dyn_cast<llvm::ConstantInt>(cmp)) {
+    if (cmpi->isZero())
+      return fval;
+    else
+      return tval;
+  }
+  return Builder2.CreateSelect(cmp, tval, fval, Name);
+}
+
+static inline llvm::Value *checkedMul(llvm::IRBuilder<> &Builder2,
+                                      llvm::Value *idiff, llvm::Value *pres,
+                                      llvm::Twine Name = "") {
+  llvm::Value *res = Builder2.CreateFMul(idiff, pres, Name);
+  if (EnzymeStrongZero) {
+    llvm::Value *zero = llvm::Constant::getNullValue(idiff->getType());
+    if (auto C = llvm::dyn_cast<llvm::ConstantFP>(pres))
+      if (!C->isInfinity() && !C->isNaN())
+        return res;
+    res = Builder2.CreateSelect(Builder2.CreateFCmpOEQ(idiff, zero), zero, res);
+  }
+  return res;
+}
+static inline llvm::Value *checkedDiv(llvm::IRBuilder<> &Builder2,
+                                      llvm::Value *idiff, llvm::Value *pres,
+                                      llvm::Twine Name = "") {
+  llvm::Value *res = Builder2.CreateFDiv(idiff, pres, Name);
+  if (EnzymeStrongZero) {
+    llvm::Value *zero = llvm::Constant::getNullValue(idiff->getType());
+    if (auto C = llvm::dyn_cast<llvm::ConstantFP>(pres))
+      if (!C->isZero() && !C->isNaN())
+        return res;
+    res = Builder2.CreateSelect(Builder2.CreateFCmpOEQ(idiff, zero), zero, res);
+  }
+  return res;
+}
+
+static inline bool containsOnlyAtMostTopBit(const llvm::Value *V,
+                                            llvm::Type *FT,
+                                            const llvm::DataLayout &dl,
+                                            llvm::Type **vFT = nullptr) {
+  using namespace llvm;
+  if (auto CI = dyn_cast_or_null<ConstantInt>(V)) {
+    if (CI->isZero()) {
+      if (vFT)
+        *vFT = FT;
+      return true;
+    }
+    if (dl.getTypeSizeInBits(FT) == dl.getTypeSizeInBits(CI->getType())) {
+      if (CI->isNegative() && CI->isMinValue(/*signed*/ true)) {
+        if (vFT)
+          *vFT = FT;
+        return true;
+      }
+    }
+  }
+  if (auto CV = dyn_cast_or_null<ConstantVector>(V)) {
+    bool legal = true;
+    for (size_t i = 0, end = CV->getNumOperands(); i < end; ++i) {
+      legal &= containsOnlyAtMostTopBit(CV->getOperand(i), FT, dl);
+    }
+    if (legal && vFT) {
+#if LLVM_VERSION_MAJOR >= 12
+      *vFT = VectorType::get(FT, CV->getType()->getElementCount());
+#else
+      *vFT = VectorType::get(FT, CV->getType()->getNumElements());
+#endif
+    }
+    return legal;
+  }
+
+  if (auto CV = dyn_cast_or_null<ConstantDataVector>(V)) {
+    bool legal = true;
+    for (size_t i = 0, end = CV->getNumElements(); i < end; ++i) {
+      auto CI = CV->getElementAsAPInt(i);
+      if (CI.isNullValue())
+        continue;
+      if (dl.getTypeSizeInBits(FT) !=
+          dl.getTypeSizeInBits(CV->getElementType())) {
+        legal = false;
+        break;
+      }
+      if (!CI.isMinSignedValue()) {
+        legal = false;
+        break;
+      }
+    }
+    if (legal && vFT) {
+#if LLVM_VERSION_MAJOR >= 12
+      *vFT = VectorType::get(FT, CV->getType()->getElementCount());
+#else
+      *vFT = VectorType::get(FT, CV->getType()->getNumElements());
+#endif
+    }
+    return legal;
+  }
+  if (auto BO = dyn_cast<BinaryOperator>(V)) {
+    if (BO->getOpcode() == Instruction::And) {
+      for (size_t i = 0; i < 2; i++) {
+        if (containsOnlyAtMostTopBit(BO->getOperand(i), FT, dl))
+          return true;
+      }
+      return false;
+    }
+  }
+  return false;
+}
+
 #endif

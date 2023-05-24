@@ -1,4 +1,5 @@
-; RUN: if [ %llvmver -le 11 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instcombine -early-cse -adce -S | FileCheck %s; fi
+; RUN: if [ %llvmver -le 11 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -sroa -simplifycfg -instcombine -early-cse -adce -S | FileCheck %s; fi
+; RUN: if [ %llvmver -le 11 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,sroa,%simplifycfg,instcombine,early-cse,adce)" -S | FileCheck %s; fi
 
 %Type = type { float, double }
 
@@ -49,7 +50,7 @@ attributes #3 = { readnone }
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[dimsipge:.+]] = getelementptr inbounds %Type, %Type* %"evaluator.i.i'", i64 0, i32 1
 ; CHECK-NEXT:   %dims = getelementptr inbounds %Type, %Type* %evaluator.i.i, i64 0, i32 1
-; CHECK-NEXT:   %call = call fast double @augmented_total(double* nonnull %dims, double* nonnull %[[dimsipge]])
+; CHECK-NEXT:   %call = call fast double @augmented_total(double* {{(nonnull )?}}%dims, double* {{(nonnull )?}}%[[dimsipge]])
 ; CHECK-NEXT:   %flt = fptrunc double %call to float
 ; CHECK-NEXT:   %[[dataipge:.+]] = getelementptr inbounds %Type, %Type* %"evaluator.i.i'", i64 0, i32 0
 ; CHECK-NEXT:   %data = getelementptr inbounds %Type, %Type* %evaluator.i.i, i64 0, i32 0
@@ -57,37 +58,37 @@ attributes #3 = { readnone }
 ; CHECK-NEXT:   %0 = load float, float* %[[dataipge:.+]], align 4
 ; CHECK-NEXT:   store float 0.000000e+00, float* %[[dataipge:.+]], align 4
 ; CHECK-NEXT:   %1 = fpext float %0 to double
-; CHECK-NEXT:   call void @diffetotal(double* nonnull %dims, double* nonnull %[[dimsipge]], double %1)
+; CHECK-NEXT:   call void @diffetotal(double* {{(nonnull )?}}%dims, double* {{(nonnull )?}}%[[dimsipge]], double %1)
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
 ; CHECK: define internal double @augmented_total(double* %this, double* %"this'")
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %loaded = load double, double* %this, align 8
+; CHECK-NEXT:   %loaded = load double, double* %this
 ; CHECK-NEXT:   %mcall = tail call double @meta(double %loaded)
 ; CHECK-NEXT:   ret double %mcall
 ; CHECK-NEXT: }
 
 ; CHECK: define internal void @diffetotal(double* %this, double* %"this'", double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %[[loaded:.+]] = load double, double* %this, align 8
+; CHECK-NEXT:   %[[loaded:.+]] = load double, double* %this
 ; CHECK-NEXT:   %[[dmetastruct:.+]] = call { double } @diffemeta(double %[[loaded]], double %differeturn)
 ; CHECK-NEXT:   %[[dmeta:.+]] = extractvalue { double } %[[dmetastruct]], 0
-; CHECK-NEXT:   %[[prethis:.+]] = load double, double* %"this'", align 8
+; CHECK-NEXT:   %[[prethis:.+]] = load double, double* %"this'"
 ; CHECK-NEXT:   %[[postthis:.+]] = fadd fast double %[[prethis]], %[[dmeta]]
-; CHECK-NEXT:   store double %[[postthis:.+]], double* %"this'", align 8
+; CHECK-NEXT:   store double %[[postthis:.+]], double* %"this'"
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }
 
 ; CHECK: define internal { double } @diffemeta(double %inp, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %"arr'ipa" = alloca double, align 8
-; CHECK-NEXT:   store double 0.000000e+00, double* %"arr'ipa", align 8
-; CHECK-NEXT:   %arr = alloca double, align 8
-; CHECK-NEXT:   store double %inp, double* %arr, align 8
+; CHECK-NEXT:   %"arr'ipa" = alloca double
+; CHECK-NEXT:   store double 0.000000e+00, double* %"arr'ipa"
+; CHECK-NEXT:   %arr = alloca double
+; CHECK-NEXT:   store double %inp, double* %arr
 ; CHECK-NEXT:   call void @diffesub(double*{{( nonnull)?}} %arr, double*{{( nonnull)?}} %"arr'ipa")
-; CHECK-NEXT:   %[[prevv:.+]] = load double, double* %"arr'ipa", align 8
-; CHECK-NEXT:   store double 0.000000e+00, double* %"arr'ipa", align 8
+; CHECK-NEXT:   %[[prevv:.+]] = load double, double* %"arr'ipa"
+; CHECK-NEXT:   store double 0.000000e+00, double* %"arr'ipa"
 ; CHECK-NEXT:   %[[add:.+]] = fadd fast double %[[prevv]], %differeturn
 ; CHECK-NEXT:   %[[res:.+]] = insertvalue { double } undef, double %[[add]], 0
 ; CHECK-NEXT:   ret { double } %[[res]]

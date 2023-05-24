@@ -71,7 +71,7 @@ extern std::map<std::string,
 class DiffeGradientUtils;
 extern std::map<
     std::string,
-    std::pair<std::function<void(llvm::IRBuilder<> &, llvm::CallInst *,
+    std::pair<std::function<bool(llvm::IRBuilder<> &, llvm::CallInst *,
                                  GradientUtils &, llvm::Value *&,
                                  llvm::Value *&, llvm::Value *&)>,
               std::function<void(llvm::IRBuilder<> &, llvm::CallInst *,
@@ -80,7 +80,7 @@ extern std::map<
 
 extern std::map<
     std::string,
-    std::function<void(llvm::IRBuilder<> &, llvm::CallInst *, GradientUtils &,
+    std::function<bool(llvm::IRBuilder<> &, llvm::CallInst *, GradientUtils &,
                        llvm::Value *&, llvm::Value *&)>>
     customFwdCallHandlers;
 
@@ -294,6 +294,8 @@ private:
       lookup_cache;
 
 public:
+  void replaceAndRemoveUnwrapCacheFor(llvm::Value *A, llvm::Value *B);
+
   llvm::BasicBlock *addReverseBlock(llvm::BasicBlock *currentBlock,
                                     llvm::Twine const &name,
                                     bool forkCache = true, bool push = true);
@@ -580,6 +582,8 @@ public:
       return rule(diffs);
     }
   }
+
+  bool needsCacheWholeAllocation(const llvm::Value *V) const;
 };
 
 void SubTransferHelper(GradientUtils *gutils, DerivativeMode Mode,

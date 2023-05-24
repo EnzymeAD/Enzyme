@@ -59,20 +59,40 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
   if (oldUnreachable.count(user->getParent()))
     return false;
 
-  if (isa<CastInst>(user) || isa<PHINode>(user) ||
-      isa<GetElementPtrInst>(user)) {
+  if (isPointerArithmeticInst(user, /*includephi*/ true,
+                              /*includebin*/ false)) {
     return false;
   }
 
-  if (isa<LoadInst>(user)) {
-    if (EnzymeRuntimeActivityCheck &&
-        TR.query(const_cast<llvm::Instruction *>(user))[{-1}].isFloat() &&
-        !gutils->isConstantInstruction(const_cast<llvm::Instruction *>(user))) {
-      if (EnzymePrintDiffUse)
-        llvm::errs() << " Need direct primal of " << *val
-                     << " in reverse from runtime active load " << *user
-                     << "\n";
-      return true;
+  if (auto LI = dyn_cast<LoadInst>(user)) {
+    if (EnzymeRuntimeActivityCheck) {
+      auto vd = TR.query(const_cast<llvm::Instruction *>(user));
+      if (!vd.isKnown()) {
+        auto ET = LI->getType();
+        // It verbatim needs to replicate the same behavior as adjointgenerator.
+        // From reverse mode type analysis
+        // (https://github.com/EnzymeAD/Enzyme/blob/194875cbccd73d63cacfefbfa85c1f583c2fa1fe/enzyme/Enzyme/AdjointGenerator.h#L556)
+        if (looseTypeAnalysis || true) {
+          vd = defaultTypeTreeForLLVM(ET, const_cast<LoadInst *>(LI));
+        }
+      }
+      auto &DL = gutils->newFunc->getParent()->getDataLayout();
+      auto LoadSize = (DL.getTypeSizeInBits(LI->getType()) + 1) / 8;
+      bool hasFloat = true;
+      for (ssize_t i = -1; i < (ssize_t)LoadSize; ++i) {
+        if (vd[{(int)i}].isFloat()) {
+          hasFloat = true;
+          break;
+        }
+      }
+      if (hasFloat && !gutils->isConstantInstruction(
+                          const_cast<llvm::Instruction *>(user))) {
+        if (EnzymePrintDiffUse)
+          llvm::errs() << " Need direct primal of " << *val
+                       << " in reverse from runtime active load " << *user
+                       << "\n";
+        return true;
+      }
     }
     return false;
   }
@@ -357,6 +377,21 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
   if (auto CI = dyn_cast<CallInst>(user)) {
     auto funcName = getFuncNameFromCall(const_cast<CallInst *>(CI));
 
+    auto blasMetaData = extractBLAS(funcName);
+#if LLVM_VERSION_MAJOR >= 16
+    if (blasMetaData.has_value())
+#else
+    if (blasMetaData.hasValue())
+#endif
+    {
+#if LLVM_VERSION_MAJOR >= 16
+      BlasInfo blas = blasMetaData.value();
+#else
+      BlasInfo blas = blasMetaData.getValue();
+#endif
+#include "BlasDiffUse.inc"
+    }
+
     // Only need primal (and shadow) request for reverse
     if (funcName == "MPI_Isend" || funcName == "MPI_Irecv" ||
         funcName == "PMPI_Isend" || funcName == "PMPI_Irecv") {
@@ -392,10 +427,6 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
       return true;
     }
 
-#if LLVM_VERSION_MAJOR < 14
-    auto F = getFunctionFromCall(CI);
-#endif
-
     bool writeOnlyNoCapture = true;
 
     if (shouldDisableNoWrite(CI)) {
@@ -408,29 +439,11 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
 #endif
     {
       if (val == CI->getArgOperand(i)) {
-#if LLVM_VERSION_MAJOR >= 8
-        if (!CI->doesNotCapture(i))
-#else
-        if (!(CI->dataOperandHasImpliedAttr(i + 1, Attribute::NoCapture) ||
-              (F && F->hasParamAttribute(i, Attribute::NoCapture))))
-#endif
-        {
+        if (!isNoCapture(CI, i)) {
           writeOnlyNoCapture = false;
           break;
         }
-#if LLVM_VERSION_MAJOR >= 14
-        if (!(CI->onlyWritesMemory(i) || CI->onlyWritesMemory()))
-#else
-        if (!(CI->dataOperandHasImpliedAttr(i + 1, Attribute::WriteOnly) ||
-              CI->dataOperandHasImpliedAttr(i + 1, Attribute::ReadNone) ||
-              CI->hasFnAttr(Attribute::WriteOnly) ||
-              CI->hasFnAttr(Attribute::ReadNone) ||
-              (F && (F->hasParamAttribute(i, Attribute::WriteOnly) ||
-                     F->hasParamAttribute(i, Attribute::ReadNone) ||
-                     F->hasFnAttribute(Attribute::WriteOnly) ||
-                     F->hasFnAttribute(Attribute::ReadNone)))))
-#endif
-        {
+        if (!isWriteOnly(CI, i)) {
           writeOnlyNoCapture = false;
           break;
         }

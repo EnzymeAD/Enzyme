@@ -77,7 +77,7 @@ void CacheUtility::erase(Instruction *I) {
       ss << *newFunc << "\n";
       ss << *I << "\n";
       CustomErrorHandler(str.c_str(), wrap(I), ErrorType::InternalError,
-                         nullptr);
+                         nullptr, nullptr);
     }
     llvm::errs() << *newFunc->getParent() << "\n";
     llvm::errs() << *newFunc << "\n";
@@ -829,9 +829,11 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
     alloc->setAlignment(align);
 #endif
   }
-  if (EnzymeZeroCache && sublimits.size() == 0)
-    scopeInstructions[alloc].push_back(
-        entryBuilder.CreateStore(Constant::getNullValue(types.back()), alloc));
+  if (sublimits.size() == 0) {
+    auto val = getUndefinedValueForType(types.back());
+    if (!isa<UndefValue>(val))
+      scopeInstructions[alloc].push_back(entryBuilder.CreateStore(val, alloc));
+  }
 
   Value *storeInto = alloc;
 
@@ -935,8 +937,9 @@ AllocaInst *CacheUtility::createCacheForScope(LimitContext ctx, Type *T,
 
         // Reallocate memory dynamically as a fallback
         // TODO change this to a power-of-two allocation strategy
+
         auto zerostore = allocationBuilder.CreateStore(
-            ConstantPointerNull::get(allocType), storeInto);
+            getUndefinedValueForType(allocType, /*forceZero*/ true), storeInto);
         scopeInstructions[alloc].push_back(zerostore);
 
         IRBuilder<> build(containedloops.back().first.incvar->getNextNode());

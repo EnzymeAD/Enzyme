@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -early-cse-memssa -instsimplify -correlated-propagation -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -early-cse -instsimplify -correlated-propagation -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,%simplifycfg,early-cse,instsimplify,correlated-propagation,adce)" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: norecurse nounwind readonly uwtable
 define double @alldiv(double* nocapture readonly %A, i64 %N, double %start) {
@@ -79,7 +80,7 @@ declare double @__enzyme_fwdsplit2(...)
 ; CHECK-NEXT:   %[[i4:.+]] = getelementptr inbounds double, double* %[[i2]], i64 %iv
 ; CHECK-NEXT:   %ld = load double, double* %[[i4]], align 8, !invariant.group !{{[0-9]+}}
 ; CHECK-NEXT:   %[[i6:.+]] = fmul fast double %[[dreduce]], %ld
-; CHECK-NEXT:   %[[i7:.+]] = fmul fast double %reduce, %[[i5]]
+; CHECK-NEXT:   %[[i7:.+]] = fmul fast double %[[i5]], %reduce 
 ; CHECK-NEXT:   %[[i8:.+]] = fsub fast double %[[i6]], %[[i7]]
 ; CHECK-NEXT:   %[[i9:.+]] = fmul fast double %ld, %ld
 ; CHECK-NEXT:   %[[i10]] = fdiv fast double %[[i8]], %[[i9]]
@@ -110,7 +111,7 @@ declare double @__enzyme_fwdsplit2(...)
 ; CHECK-NEXT:   %[[i4:.+]] = getelementptr inbounds double, double* %[[i2]], i64 %iv
 ; CHECK-NEXT:   %ld = load double, double* %[[i4]], align 8, !invariant.group !{{[0-9]+}}
 ; CHECK-NEXT:   %[[i6:.+]] = fmul fast double %[[dreduce]], %ld
-; CHECK-NEXT:   %[[i7:.+]] = fmul fast double %reduce, %[[i5]]
+; CHECK-NEXT:   %[[i7:.+]] = fmul fast double %[[i5]], %reduce 
 ; CHECK-NEXT:   %[[i8:.+]] = fsub fast double %[[i6]], %[[i7]]
 ; CHECK-NEXT:   %[[i9:.+]] = fmul fast double %ld, %ld
 ; CHECK-NEXT:   %[[i10]] = fdiv fast double %[[i8]], %[[i9]]

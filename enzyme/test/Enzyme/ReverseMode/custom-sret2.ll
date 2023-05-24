@@ -1,4 +1,5 @@
-; RUN: if [ %llvmver -ge 12 ]; then %opt < %s %loadEnzyme -preserve-nvvm -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: if [ %llvmver -lt 16 ] && [ %llvmver -ge 12 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -preserve-nvvm -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 12 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="preserve-nvvm,enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s; fi
 
 %struct.complex = type { double, double }
 %struct.TapeAndComplex = type { i8*, %struct.complex }

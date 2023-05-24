@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 ; Function Attrs: noinline nounwind readnone uwtable
 define double @tester(double %x, double %y) {
@@ -23,12 +24,12 @@ declare double @__enzyme_autodiff(double (double, double)*, ...)
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %[[ym1:.+]] = fsub fast double %y, 1.000000e+00
 ; CHECK-NEXT:   %[[newpow:.+]] = call fast double @llvm.pow.f64(double %x, double %[[ym1]])
-; CHECK-NEXT:   %[[newpowdret:.+]] = fmul fast double %differeturn, %[[newpow]]
-; CHECK-NEXT:   %[[dx:.+]] = fmul fast double %[[newpowdret]], %y
+; CHECK-NEXT:   %[[newpowdret:.+]] = fmul fast double %[[newpow]], %y
+; CHECK-NEXT:   %[[dx:.+]] = fmul fast double %differeturn, %[[newpowdret]]
 ; CHECK-NEXT:   %[[origpow:.+]] = call fast double @llvm.pow.f64(double %x, double %y)
 ; CHECK-DAG:    %[[logy:.+]] = call fast double @llvm.log.f64(double %x)
-; CHECK-DAG:    %[[origpowdret:.+]] = fmul fast double %differeturn, %[[origpow]]
-; CHECK-NEXT:   %[[dy:.+]] = fmul fast double %[[origpowdret]], %[[logy]]
+; CHECK-DAG:    %[[origpowdret:.+]] = fmul fast double %[[origpow]], %[[logy]]
+; CHECK-NEXT:   %[[dy:.+]] = fmul fast double %differeturn, %[[origpowdret]]
 ; CHECK-NEXT:   %[[interres:.+]] = insertvalue { double, double } undef, double %[[dx:.+]], 0
 ; CHECK-NEXT:   %[[finalres:.+]] = insertvalue { double, double } %[[interres]], double %[[dy:.+]], 1
 ; CHECK-NEXT:   ret { double, double } %[[finalres]]

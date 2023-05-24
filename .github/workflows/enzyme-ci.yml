@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llvm: ["7", "8", "9", "10", "11", "12", "13", "14", "15"]
+        llvm: ["7", "8", "9", "10", "11", "12", "13", "14", "15", "16"]
         build: ["Release", "Debug"] # "RelWithDebInfo"
         os: [ubuntu-20.04] #self-hosted]
   
@@ -67,7 +67,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        llvm: ["8", "9", "11", "12", "13", "14", "15"]
+        llvm: ["8", "9", "11", "12", "13", "14", "15", "16"]
         build: ["Release", "Debug"] # "RelWithDebInfo"
   
     timeout-minutes: 30 
@@ -140,8 +140,10 @@ jobs:
       run: |
           apt-get -q update
           apt-get install -y ca-certificates software-properties-common wget gnupg2 python3 python3-pip sed git ssh zlib1g-dev
+          wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | tee /etc/apt/trusted.gpg.d/kitware.gpg >/dev/null
           wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key| apt-key add -
           apt-add-repository "deb http://apt.llvm.org/`lsb_release -c | cut -f2`/ llvm-toolchain-`lsb_release -c | cut -f2`-${{ matrix.llvm }} main" || true
+          apt-add-repository "deb https://apt.kitware.com/ubuntu/ $(lsb_release -cs) main"
           apt-get install -y autoconf cmake gcc g++ libtool gfortran llvm-${{ matrix.llvm }}-dev
           if [ ${{matrix.llvm}} -lt 9 ]; then
             apt-get install -y llvm-7-tools;

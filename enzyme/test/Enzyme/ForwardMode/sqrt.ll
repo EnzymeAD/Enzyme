@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s
 
 ; Function Attrs: nounwind readnone uwtable
@@ -25,7 +25,7 @@ declare double @__enzyme_fwddiff(double (double)*, ...)
 ; CHECK-NEXT:   %0 = call fast double @llvm.sqrt.f64(double %x)
 ; CHECK-NEXT:   %1 = fmul fast double 5.000000e-01, %"x'"
 ; CHECK-NEXT:   %2 = fdiv fast double %1, %0
-; CHECK-NEXT:   %3 = fcmp fast oeq double %x, 0.000000e+00
+; CHECK-NEXT:   %3 = fcmp fast ueq double %x, 0.000000e+00
 ; CHECK-NEXT:   %4 = select{{( fast)?}} i1 %3, double 0.000000e+00, double %2
 ; CHECK-NEXT:   ret double %4
 ; CHECK-NEXT: }

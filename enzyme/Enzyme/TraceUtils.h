@@ -44,6 +44,7 @@ class TraceUtils {
 private:
   llvm::Value *trace;
   llvm::Value *observations = nullptr;
+  llvm::Value *likelihood = nullptr;
 
 public:
   TraceInterface *interface;
@@ -53,20 +54,19 @@ public:
   constexpr static const char TraceParameterAttribute[] = "enzyme_trace";
   constexpr static const char ObservationsParameterAttribute[] =
       "enzyme_observations";
+  constexpr static const char LikelihoodParameterAttribute[] =
+      "enzyme_likelihood";
 
 public:
   TraceUtils(ProbProgMode mode, llvm::Function *newFunc, llvm::Argument *trace,
-             llvm::Argument *observations, TraceInterface *interface);
+             llvm::Argument *observations, llvm::Argument *likelihood,
+             TraceInterface *interface);
 
   static TraceUtils *
   FromClone(ProbProgMode mode, TraceInterface *interface,
             llvm::Function *oldFunc,
             llvm::ValueMap<const llvm::Value *, llvm::WeakTrackingVH>
                 &originalToNewFn);
-
-  static TraceUtils *CreateEmpty(ProbProgMode mode, TraceInterface *interface,
-                                 llvm::FunctionType *orig_FTy, llvm::Module *M,
-                                 const llvm::Twine &Name = "");
 
   ~TraceUtils();
 
@@ -82,8 +82,12 @@ public:
 
   llvm::Value *getObservations();
 
+  llvm::Value *getLikelihood();
+
   llvm::CallInst *CreateTrace(llvm::IRBuilder<> &Builder,
                               const llvm::Twine &Name = "trace");
+
+  llvm::CallInst *FreeTrace(llvm::IRBuilder<> &Builder);
 
   llvm::CallInst *InsertChoice(llvm::IRBuilder<> &Builder, llvm::Value *address,
                                llvm::Value *score, llvm::Value *choice);
@@ -105,6 +109,18 @@ public:
   llvm::CallInst *InsertFunction(llvm::IRBuilder<> &Builder,
                                  llvm::Function *function);
 
+  static llvm::CallInst *
+  InsertChoiceGradient(llvm::IRBuilder<> &Builder,
+                       llvm::FunctionType *interface_type,
+                       llvm::Value *interface_function, llvm::Value *address,
+                       llvm::Value *choice, llvm::Value *trace);
+
+  static llvm::CallInst *
+  InsertArgumentGradient(llvm::IRBuilder<> &Builder,
+                         llvm::FunctionType *interface_type,
+                         llvm::Value *interface_function, llvm::Value *name,
+                         llvm::Value *argument, llvm::Value *trace);
+
   llvm::CallInst *GetTrace(llvm::IRBuilder<> &Builder, llvm::Value *address,
                            const llvm::Twine &Name = "");
 
@@ -118,20 +134,22 @@ public:
             llvm::Type *choiceType, llvm::Value *trace,
             const llvm::Twine &Name = "");
 
-  llvm::Instruction *GetLikelihood(llvm::IRBuilder<> &Builder,
-                                   llvm::Value *address,
-                                   const llvm::Twine &Name = "");
-
   static llvm::Instruction *
-  GetLikelihood(llvm::IRBuilder<> &Builder, llvm::FunctionType *interface_type,
-                llvm::Value *interface_function, llvm::Value *address,
-                llvm::Value *trace, const llvm::Twine &Name = "");
+  HasChoice(llvm::IRBuilder<> &Builder, llvm::FunctionType *interface_type,
+            llvm::Value *interface_function, llvm::Value *address,
+            llvm::Value *observations, const llvm::Twine &Name = "");
 
   llvm::Instruction *HasChoice(llvm::IRBuilder<> &Builder, llvm::Value *address,
                                const llvm::Twine &Name = "");
 
   llvm::Instruction *HasCall(llvm::IRBuilder<> &Builder, llvm::Value *address,
                              const llvm::Twine &Name = "");
+
+  llvm::Instruction *
+  SampleOrCondition(llvm::IRBuilder<> &Builder, llvm::Function *sample_fn,
+                    llvm::ArrayRef<llvm::Value *> sample_args,
+                    llvm::Value *trace, llvm::Value *observations,
+                    llvm::Value *address, const llvm::Twine &Name = "");
 };
 
 #endif /* TraceUtils_h */

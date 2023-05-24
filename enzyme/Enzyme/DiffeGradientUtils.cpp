@@ -233,15 +233,21 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
 
   SmallVector<SelectInst *, 4> addedSelects;
 
-  auto faddForNeg = [&](Value *old, Value *inc) {
+  auto faddForNeg = [&](Value *old, Value *inc, bool san) {
     if (auto bi = dyn_cast<BinaryOperator>(inc)) {
       if (auto ci = dyn_cast<ConstantFP>(bi->getOperand(0))) {
         if (bi->getOpcode() == BinaryOperator::FSub && ci->isZero()) {
-          return BuilderM.CreateFSub(old, bi->getOperand(1));
+          Value *res = BuilderM.CreateFSub(old, bi->getOperand(1));
+          if (san)
+            res = SanitizeDerivatives(val, res, BuilderM, mask);
+          return res;
         }
       }
     }
-    return BuilderM.CreateFAdd(old, inc);
+    Value *res = BuilderM.CreateFAdd(old, inc);
+    if (san)
+      res = SanitizeDerivatives(val, res, BuilderM, mask);
+    return res;
   };
 
   auto faddForSelect = [&](Value *old, Value *dif) -> Value * {
@@ -249,20 +255,20 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
     if (SelectInst *select = dyn_cast<SelectInst>(dif)) {
       if (Constant *ci = dyn_cast<Constant>(select->getTrueValue())) {
         if (ci->isZeroValue()) {
-          SelectInst *res = cast<SelectInst>(
-              BuilderM.CreateSelect(select->getCondition(), old,
-                                    faddForNeg(old, select->getFalseValue())));
+          SelectInst *res = cast<SelectInst>(BuilderM.CreateSelect(
+              select->getCondition(), old,
+              faddForNeg(old, select->getFalseValue(), false)));
           addedSelects.emplace_back(res);
-          return res;
+          return SanitizeDerivatives(val, res, BuilderM, mask);
         }
       }
       if (Constant *ci = dyn_cast<Constant>(select->getFalseValue())) {
         if (ci->isZeroValue()) {
           SelectInst *res = cast<SelectInst>(BuilderM.CreateSelect(
-              select->getCondition(), faddForNeg(old, select->getTrueValue()),
-              old));
+              select->getCondition(),
+              faddForNeg(old, select->getTrueValue(), false), old));
           addedSelects.emplace_back(res);
-          return res;
+          return SanitizeDerivatives(val, res, BuilderM, mask);
         }
       }
     }
@@ -274,30 +280,34 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
           if (ci->isZeroValue()) {
             SelectInst *res = cast<SelectInst>(BuilderM.CreateSelect(
                 select->getCondition(), old,
-                faddForNeg(old, BuilderM.CreateCast(bc->getOpcode(),
-                                                    select->getFalseValue(),
-                                                    bc->getDestTy()))));
+                faddForNeg(old,
+                           BuilderM.CreateCast(bc->getOpcode(),
+                                               select->getFalseValue(),
+                                               bc->getDestTy()),
+                           false)));
             addedSelects.emplace_back(res);
-            return res;
+            return SanitizeDerivatives(val, res, BuilderM, mask);
           }
         }
         if (Constant *ci = dyn_cast<Constant>(select->getFalseValue())) {
           if (ci->isZeroValue()) {
             SelectInst *res = cast<SelectInst>(BuilderM.CreateSelect(
                 select->getCondition(),
-                faddForNeg(old, BuilderM.CreateCast(bc->getOpcode(),
-                                                    select->getTrueValue(),
-                                                    bc->getDestTy())),
+                faddForNeg(old,
+                           BuilderM.CreateCast(bc->getOpcode(),
+                                               select->getTrueValue(),
+                                               bc->getDestTy()),
+                           false),
                 old));
             addedSelects.emplace_back(res);
-            return res;
+            return SanitizeDerivatives(val, res, BuilderM, mask);
           }
         }
       }
     }
 
     // fallback
-    return faddForNeg(old, dif);
+    return faddForNeg(old, dif, true);
   };
 
   if (val->getType()->isPointerTy()) {
@@ -343,7 +353,7 @@ DiffeGradientUtils::addToDiffe(Value *val, Value *dif, IRBuilder<> &BuilderM,
       }
     }
     if (!addingType) {
-      llvm::errs() << "module: " << *oldFunc->getParent() << "\n";
+      TR.dump();
       llvm::errs() << "oldFunc: " << *oldFunc << "\n";
       llvm::errs() << "newFunc: " << *newFunc << "\n";
       llvm::errs() << "val: " << *val << " old: " << *old << "\n";
@@ -476,6 +486,7 @@ void DiffeGradientUtils::setDiffe(Value *val, Value *toset,
     llvm::errs() << *val << "\n";
   }
   assert(!isConstantValue(val));
+  toset = SanitizeDerivatives(val, toset, BuilderM);
   if (mode == DerivativeMode::ForwardMode ||
       mode == DerivativeMode::ForwardModeSplit) {
     assert(getShadowType(val->getType()) == toset->getType());
@@ -565,7 +576,8 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
                                    ArrayRef<Metadata *>(ConstantAsMetadata::get(
                                        byteSizeOfType))));
   forfree->setName("forfree");
-  unsigned align = getCacheAlignment((unsigned)byteSizeOfType->getZExtValue());
+  unsigned align = getCacheAlignment(
+      (unsigned)newFunc->getParent()->getDataLayout().getPointerSize());
 #if LLVM_VERSION_MAJOR >= 10
   forfree->setAlignment(Align(align));
 #else
@@ -584,16 +596,16 @@ CallInst *DiffeGradientUtils::freeCache(BasicBlock *forwardPreheader,
 
 #if LLVM_VERSION_MAJOR >= 10
 void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
-                                               Type *addingType, unsigned start,
-                                               unsigned size, Value *origptr,
-                                               Value *dif,
+                                               Value *origVal, Type *addingType,
+                                               unsigned start, unsigned size,
+                                               Value *origptr, Value *dif,
                                                IRBuilder<> &BuilderM,
                                                MaybeAlign align, Value *mask)
 #else
 void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
-                                               Type *addingType, unsigned start,
-                                               unsigned size, Value *origptr,
-                                               Value *dif,
+                                               Value *origVal, Type *addingType,
+                                               unsigned start, unsigned size,
+                                               Value *origptr, Value *dif,
                                                IRBuilder<> &BuilderM,
                                                unsigned align, Value *mask)
 #endif
@@ -630,7 +642,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
 
   bool needsCast = false;
 #if LLVM_VERSION_MAJOR >= 15
-  if (orig->getContext().supportsTypedPointers()) {
+  if (origptr->getContext().supportsTypedPointers()) {
 #endif
     needsCast = origptr->getType()->getPointerElementType() != addingType;
 #if LLVM_VERSION_MAJOR >= 15
@@ -790,6 +802,7 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       auto rule = [&](Value *dif, Value *ptr) {
         for (size_t i = 0; i < numElems; ++i) {
           auto vdif = BuilderM.CreateExtractElement(dif, i);
+          vdif = SanitizeDerivatives(orig, vdif, BuilderM);
           Value *Idxs[] = {
               ConstantInt::get(Type::getInt64Ty(vt->getContext()), 0),
               ConstantInt::get(Type::getInt32Ty(vt->getContext()), i)};
@@ -802,9 +815,15 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
           MaybeAlign alignv = align;
           if (alignv) {
             if (start != 0) {
-              assert(alignv.getValue().value() != 0);
               // todo make better alignment calculation
-              if (start % alignv.getValue().value() != 0) {
+#if LLVM_VERSION_MAJOR >= 16
+              assert(alignv.value().value() != 0);
+              if (start % alignv.value().value() != 0)
+#else
+              assert(alignv.getValue().value() != 0);
+              if (start % alignv.getValue().value() != 0)
+#endif
+              {
                 alignv = Align(1);
               }
             }
@@ -835,13 +854,19 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
       applyChainRule(BuilderM, rule, dif, ptr);
     } else {
       auto rule = [&](Value *dif, Value *ptr) {
+        dif = SanitizeDerivatives(orig, dif, BuilderM);
 #if LLVM_VERSION_MAJOR >= 13
         MaybeAlign alignv = align;
         if (alignv) {
           if (start != 0) {
-            assert(alignv.getValue().value() != 0);
             // todo make better alignment calculation
+#if LLVM_VERSION_MAJOR >= 16
+            assert(alignv.value().value() != 0);
+            if (start % alignv.value().value() != 0) {
+#else
+            assert(alignv.getValue().value() != 0);
             if (start % alignv.getValue().value() != 0) {
+#endif
               alignv = Align(1);
             }
           }
@@ -888,15 +913,17 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
 #endif
 
       Value *res = BuilderM.CreateFAdd(LI, dif);
+      res = SanitizeDerivatives(orig, res, BuilderM);
       StoreInst *st = BuilderM.CreateStore(res, ptr);
 
       SmallVector<Metadata *, 1> scopeMD = {
           getDerivativeAliasScope(origptr, idx)};
-      if (auto MD = orig->getMetadata(LLVMContext::MD_alias_scope)) {
-        auto MDN = cast<MDNode>(MD);
-        for (auto &o : MDN->operands())
-          scopeMD.push_back(o);
-      }
+      if (auto origValI = dyn_cast_or_null<Instruction>(origVal))
+        if (auto MD = origValI->getMetadata(LLVMContext::MD_alias_scope)) {
+          auto MDN = cast<MDNode>(MD);
+          for (auto &o : MDN->operands())
+            scopeMD.push_back(o);
+        }
       auto scope = MDNode::get(LI->getContext(), scopeMD);
       LI->setMetadata(LLVMContext::MD_alias_scope, scope);
       st->setMetadata(LLVMContext::MD_alias_scope, scope);
@@ -906,29 +933,34 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
         if (j != (ssize_t)idx)
           MDs.push_back(getDerivativeAliasScope(origptr, j));
       }
-      if (auto MD = orig->getMetadata(LLVMContext::MD_noalias)) {
-        auto MDN = cast<MDNode>(MD);
-        for (auto &o : MDN->operands())
-          MDs.push_back(o);
-      }
+      if (auto origValI = dyn_cast_or_null<Instruction>(origVal))
+        if (auto MD = origValI->getMetadata(LLVMContext::MD_noalias)) {
+          auto MDN = cast<MDNode>(MD);
+          for (auto &o : MDN->operands())
+            MDs.push_back(o);
+        }
       idx++;
       auto noscope = MDNode::get(ptr->getContext(), MDs);
       LI->setMetadata(LLVMContext::MD_noalias, noscope);
       st->setMetadata(LLVMContext::MD_noalias, noscope);
 
-      if (start == 0 &&
-          size == (DL.getTypeSizeInBits(orig->getType()) + 7) / 8) {
-        LI->copyMetadata(*orig, MD_ToCopy);
-        LI->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
+      if (origVal && isa<Instruction>(origVal) && start == 0 &&
+          size == (DL.getTypeSizeInBits(origVal->getType()) + 7) / 8) {
+        auto origValI = cast<Instruction>(origVal);
+        LI->copyMetadata(*origValI, MD_ToCopy);
         unsigned int StoreData[] = {LLVMContext::MD_tbaa,
                                     LLVMContext::MD_tbaa_struct};
         for (auto MD : StoreData)
-          st->setMetadata(MD, orig->getMetadata(MD));
-        st->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
+          st->setMetadata(MD, origValI->getMetadata(MD));
       }
 
+      LI->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
+      st->setDebugLoc(getNewFromOriginal(orig->getDebugLoc()));
+
       if (align) {
-#if LLVM_VERSION_MAJOR >= 10
+#if LLVM_VERSION_MAJOR >= 16
+        auto alignv = align ? align.value().value() : 0;
+#elif LLVM_VERSION_MAJOR >= 10
         auto alignv = align ? align.getValue().value() : 0;
 #else
         auto alignv = align;
@@ -976,9 +1008,115 @@ void DiffeGradientUtils::addToInvertedPtrDiffe(Instruction *orig,
                         Constant::getNullValue(dif->getType())};
       Value *LI = BuilderM.CreateCall(LF, largs);
       Value *res = BuilderM.CreateFAdd(LI, dif);
+      res = SanitizeDerivatives(orig, res, BuilderM, mask);
       Value *sargs[] = {res, ptr, alignv, mask};
       BuilderM.CreateCall(SF, sargs);
     };
     applyChainRule(BuilderM, rule, ptr, dif);
+  }
+}
+
+#if LLVM_VERSION_MAJOR >= 10
+void DiffeGradientUtils::addToInvertedPtrDiffe(
+    llvm::Instruction *orig, llvm::Value *origVal, TypeTree vd,
+    unsigned LoadSize, llvm::Value *origptr, llvm::Value *prediff,
+    llvm::IRBuilder<> &Builder2, MaybeAlign alignment, llvm::Value *premask)
+#else
+void DiffeGradientUtils::addToInvertedPtrDiffe(
+    llvm::Instruction *orig, llvm::Value *origVal, TypeTree vd,
+    unsigned LoadSize, llvm::Value *origptr, llvm::Value *prediff,
+    llvm::IRBuilder<> &Builder2, unsigned alignment, llvm::Value *premask)
+#endif
+{
+
+  unsigned start = 0;
+  unsigned size = LoadSize;
+
+  assert(prediff);
+
+  BasicBlock *merge = nullptr;
+
+  while (1) {
+    unsigned nextStart = size;
+
+    auto dt = vd[{-1}];
+    for (size_t i = start; i < size; ++i) {
+      bool Legal = true;
+      dt.checkedOrIn(vd[{(int)i}], /*PointerIntSame*/ true, Legal);
+      if (!Legal) {
+        nextStart = i;
+        break;
+      }
+    }
+    if (!dt.isKnown()) {
+      TR.dump();
+      llvm::errs() << " vd:" << vd.str() << " start:" << start
+                   << " size: " << size << " dt:" << dt.str() << "\n";
+    }
+    assert(dt.isKnown());
+
+    if (Type *isfloat = dt.isFloat()) {
+
+      if (origVal) {
+        if (start == 0 && nextStart == LoadSize) {
+          setDiffe(origVal,
+                   Constant::getNullValue(getShadowType(origVal->getType())),
+                   Builder2);
+        } else {
+          Value *tostore = getDifferential(origVal);
+
+          auto i8 = Type::getInt8Ty(tostore->getContext());
+          if (start != 0) {
+            tostore = Builder2.CreatePointerCast(
+                tostore,
+                PointerType::get(
+                    i8,
+                    cast<PointerType>(tostore->getType())->getAddressSpace()));
+            auto off = ConstantInt::get(Type::getInt64Ty(tostore->getContext()),
+                                        start);
+#if LLVM_VERSION_MAJOR > 7
+            tostore = Builder2.CreateInBoundsGEP(i8, tostore, off);
+#else
+            tostore = Builder2.CreateInBoundsGEP(tostore, off);
+#endif
+          }
+          auto AT = ArrayType::get(i8, nextStart - start);
+          tostore = Builder2.CreatePointerCast(
+              tostore,
+              PointerType::get(
+                  AT,
+                  cast<PointerType>(tostore->getType())->getAddressSpace()));
+          Builder2.CreateStore(Constant::getNullValue(AT), tostore);
+        }
+      }
+
+      if (!isConstantValue(origptr)) {
+        if (EnzymeRuntimeActivityCheck && !merge) {
+          Value *shadow = Builder2.CreateICmpNE(
+              lookupM(getNewFromOriginal(origptr), Builder2),
+              lookupM(invertPointerM(origptr, Builder2), Builder2));
+
+          BasicBlock *current = Builder2.GetInsertBlock();
+          BasicBlock *conditional =
+              addReverseBlock(current, current->getName() + "_active");
+          merge = addReverseBlock(conditional, current->getName() + "_amerge");
+          Builder2.CreateCondBr(shadow, conditional, merge);
+          Builder2.SetInsertPoint(conditional);
+        }
+        // Masked partial type is unhanled.
+        if (premask)
+          assert(start == 0 && nextStart == LoadSize);
+        addToInvertedPtrDiffe(orig, origVal, isfloat, start, nextStart - start,
+                              origptr, prediff, Builder2, alignment, premask);
+      }
+    }
+
+    if (nextStart == size)
+      break;
+    start = nextStart;
+  }
+  if (merge) {
+    Builder2.CreateBr(merge);
+    Builder2.SetInsertPoint(merge);
   }
 }

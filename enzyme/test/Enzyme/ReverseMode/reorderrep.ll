@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg)" -S | FileCheck %s
 
 define void @outer(i8* %tmp71, i8* %tmp72, i8* %tmp73, i8* %tmp74) {
 bb:
@@ -95,7 +96,7 @@ attributes #3 = { nounwind }
 ; CHECK: bb377:                                            ; preds = %bb381, %bexit
 ; CHECK-NEXT:   %iv = phi i64 [ %iv.next, %bb381 ], [ 0, %bexit ]
 ; CHECK-NEXT:   %iv.next = add nuw nsw i64 %iv, 1
-; CHECK-NEXT:   %[[a4:.+]] = add i64 %.020, %iv
+; CHECK-NEXT:   %[[a4:.+]] = add i64 {{(%iv, %.020|%.020, %iv)}}
 ; CHECK-NEXT:   %tmp378 = icmp slt i64 %[[a4]], 10
 ; CHECK-NEXT:   br i1 %tmp378, label %bb381, label %bb450
 

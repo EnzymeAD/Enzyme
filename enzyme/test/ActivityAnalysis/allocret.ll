@@ -1,5 +1,7 @@
-; RUN: %opt < %s %loadEnzyme -print-activity-analysis -activity-analysis-func=kernel_main -activity-analysis-duplicated-ret=1 -o /dev/null | FileCheck %s
-; RUN: %opt < %s %loadEnzyme -print-activity-analysis -activity-analysis-func=kernel_main -activity-analysis-duplicated-ret=0 -o /dev/null | FileCheck %s --check-prefix=INCHECK
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -print-activity-analysis -activity-analysis-func=kernel_main -activity-analysis-duplicated-ret=1 -o /dev/null | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="print-activity-analysis" -activity-analysis-func=kernel_main -activity-analysis-duplicated-ret=1 -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -print-activity-analysis -activity-analysis-func=kernel_main -activity-analysis-duplicated-ret=0 -o /dev/null | FileCheck %s --check-prefix=INCHECK; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="print-activity-analysis" -activity-analysis-func=kernel_main -activity-analysis-duplicated-ret=0 -S | FileCheck %s --check-prefix=INCHECK
 
 declare i8* @malloc(i64)
 

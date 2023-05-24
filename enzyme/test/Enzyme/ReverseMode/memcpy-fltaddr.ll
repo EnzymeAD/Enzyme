@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -dce -instcombine -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 ; Function Attrs: nounwind uwtable
 define dso_local void @memcpy_float(double addrspace(13)* nocapture %dst, double addrspace(10)* nocapture readonly %src, i64 %num) #0 {
@@ -31,7 +32,7 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   %0 = bitcast double addrspace(13)* %dst to i8 addrspace(13)*
 ; CHECK-NEXT:   %1 = bitcast double addrspace(10)* %src to i8 addrspace(10)*
 ; CHECK-NEXT:   tail call void @llvm.memcpy.p13i8.p10i8.i64(i8 addrspace(13)* {{(align 1 )?}}%0, i8 addrspace(10)* {{(align 1 )?}}%1, i64 %num, i1 false)
-; CHECK-NEXT:   %2 = lshr i64 %num, 3
+; CHECK-NEXT:   %2 = udiv i64 %num, 8
 ; CHECK-NEXT:   %3 = {{(icmp eq i64 %2, 0|icmp ult i64 %num, 8)}}
 ; CHECK-NEXT:   br i1 %3, label %__enzyme_memcpyadd_doubleda1sa1dadd13sadd10.exit, label %for.body.i
 

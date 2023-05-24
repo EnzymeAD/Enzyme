@@ -149,9 +149,17 @@ function(tablegenSubstitute project ofn)
 endfunction()
 
 
-set(LLVM_TARGET_DEFINITIONS InstructionDerivatives.td)
+set(LLVM_TARGET_DEFINITIONS targets/InstructionDerivatives.td)
 enzyme_tablegen(InstructionDerivatives.inc -gen-derivatives)
+enzyme_tablegen(BlasDerivatives.inc -gen-blas-derivatives)
+enzyme_tablegen(BlasAttributor.inc -update-blas-declarations)
+enzyme_tablegen(BlasTA.inc -gen-blas-typeanalysis)
+enzyme_tablegen(BlasDiffUse.inc -gen-blas-diffuseanalysis)
 add_public_tablegen_target(InstructionDerivativesIncGen)
+add_public_tablegen_target(BlasDerivativesIncGen)
+add_public_tablegen_target(BlasDeclarationsIncGen)
+add_public_tablegen_target(BlasTAIncGen)
+add_public_tablegen_target(BlasDiffUseIncGen)
 
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
@@ -263,6 +271,10 @@ if (${ENZYME_EXTERNAL_SHARED_LIB})
     )
     add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} intrinsics_gen)
     add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} InstructionDerivativesIncGen)
+    add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasDerivativesIncGen)
+    add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasDeclarationsIncGen)
+    add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasTAIncGen)
+    add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasDiffUseIncGen)
     target_link_libraries(Enzyme-${LLVM_VERSION_MAJOR} LLVM)
     install(TARGETS Enzyme-${LLVM_VERSION_MAJOR}
         EXPORT EnzymeTargets
@@ -282,6 +294,47 @@ endif()
 set_target_properties(LLDEnzyme-${LLVM_VERSION_MAJOR} PROPERTIES
         LINK_FLAGS "-Wl,-flat_namespace -Wl,-undefined -Wl,suppress")
 endif()
+
+
+if (${LLVM_VERSION_MAJOR} GREATER 10)
+add_library(LLDEnzymeFlags INTERFACE)
+target_compile_options(LLDEnzymeFlags INTERFACE -flto)
+target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -fuse-ld=lld")
+
+set(LTO_LEGACY_MANAGER_VERSIONS 13 14)
+if (${LLVM_VERSION_MAJOR} IN_LIST LTO_LEGACY_MANAGER_VERSIONS)
+    target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -Wl,--lto-legacy-pass-manager")
+endif()
+
+target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -Wl,-mllvm -Wl,-load=$<TARGET_FILE:LLDEnzyme-${LLVM_VERSION_MAJOR}>")
+if (${LLVM_VERSION_MAJOR} GREATER 14)
+    target_link_options(LLDEnzymeFlags INTERFACE "SHELL: -Wl,--load-pass-plugin=$<TARGET_FILE:LLDEnzyme-${LLVM_VERSION_MAJOR}>")
+endif()
+
+# this custom target exists to prevent CMake from incorrectly assuming that 
+# targets that link depend on LLDEnzyme-XX can be built at the same time or 
+# before LLDEnzyme-XX has finished.
+add_custom_target(LLDEnzymeDummy "" DEPENDS LLDEnzyme-${LLVM_VERSION_MAJOR})
+add_dependencies(LLDEnzymeFlags LLDEnzymeDummy)
+endif()
+
+add_library(ClangEnzymeFlags INTERFACE)
+if(${LLVM_VERSION_MAJOR} GREATER 12) 
+    target_compile_options(ClangEnzymeFlags INTERFACE "-fpass-plugin=$<TARGET_FILE:ClangEnzyme-${LLVM_VERSION_MAJOR}>")
+endif()
+target_compile_options(ClangEnzymeFlags INTERFACE "SHELL: -Xclang -load")
+target_compile_options(ClangEnzymeFlags INTERFACE "SHELL: -Xclang $<TARGET_FILE:ClangEnzyme-${LLVM_VERSION_MAJOR}>")
+
+# this custom target exists to prevent CMake from incorrectly assuming that 
+# targets that link depend on ClangEnzyme-XX can be built at the same time or 
+# before ClangEnzyme-XX has finished.
+add_custom_target(ClangEnzymeDummy "" DEPENDS ClangEnzyme-${LLVM_VERSION_MAJOR})
+add_dependencies(ClangEnzymeFlags ClangEnzymeDummy)
+
+if (${LLVM_VERSION_MAJOR} GREATER 10)
+install(TARGETS LLDEnzymeFlags EXPORT EnzymeTargets)
+endif()
+install(TARGETS ClangEnzymeFlags EXPORT EnzymeTargets)
 
 install(TARGETS LLVMEnzyme-${LLVM_VERSION_MAJOR}
     EXPORT EnzymeTargets

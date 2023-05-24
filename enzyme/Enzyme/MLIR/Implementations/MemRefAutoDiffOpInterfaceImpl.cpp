@@ -227,6 +227,33 @@ struct AllocOpInterfaceReverse
   }
 };
 
+struct SubViewOpInterfaceReverse
+    : public ReverseAutoDiffOpInterface::ExternalModel<
+          SubViewOpInterfaceReverse, memref::SubViewOp> {
+  void createReverseModeAdjoint(Operation *op, OpBuilder &builder,
+                                MGradientUtilsReverse *gutils,
+                                SmallVector<Value> caches) const {}
+
+  SmallVector<Value> cacheValues(Operation *op,
+                                 MGradientUtilsReverse *gutils) const {
+    return SmallVector<Value>();
+  }
+
+  void createShadowValues(Operation *op, OpBuilder &builder,
+                          MGradientUtilsReverse *gutils) const {
+    auto subviewOp = cast<memref::SubViewOp>(op);
+    auto newSubviewOp = cast<memref::SubViewOp>(gutils->getNewFromOriginal(op));
+    if (gutils->hasInvertPointer(subviewOp.getSource())) {
+      Value shadow = builder.create<memref::SubViewOp>(
+          op->getLoc(), newSubviewOp.getType(),
+          gutils->invertPointerM(subviewOp.getSource(), builder),
+          newSubviewOp.getMixedOffsets(), newSubviewOp.getMixedSizes(),
+          newSubviewOp.getMixedStrides());
+      gutils->mapShadowValue(subviewOp, shadow, builder);
+    }
+  }
+};
+
 struct AllocOpInterface
     : public AutoDiffOpInterface::ExternalModel<AllocOpInterface,
                                                 memref::AllocOp> {
@@ -276,5 +303,6 @@ void mlir::enzyme::registerMemRefDialectAutoDiffInterface(
     memref::LoadOp::attachInterface<LoadOpInterfaceReverse>(*context);
     memref::StoreOp::attachInterface<StoreOpInterfaceReverse>(*context);
     memref::AllocOp::attachInterface<AllocOpInterfaceReverse>(*context);
+    memref::SubViewOp::attachInterface<SubViewOpInterfaceReverse>(*context);
   });
 }

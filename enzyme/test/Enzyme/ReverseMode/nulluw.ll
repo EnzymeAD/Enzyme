@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -correlated-propagation -simplifycfg -adce -S | FileCheck %s
+; RUN: if [ %llvmver -ge 11 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -adce -correlated-propagation -simplifycfg -adce -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 11 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,adce,correlated-propagation,%simplifycfg,adce)" -S | FileCheck %s; fi
 
 source_filename = "<source>"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
@@ -29,7 +30,7 @@ bb12:                                             ; preds = %bb12, %bb2
   %i14 = phi double [ %i18, %bb12 ], [ 0.000000e+00, %bb2 ]
   %i15 = tail call noalias dereferenceable_or_null(8) i8* @malloc(i64 8)
   %i16 = bitcast i8* %i15 to double*
-  tail call fastcc void @evaluate_integrand(double* %i16)
+  tail call fastcc void @evaluate_integrand(double* nonnull noundef %i16)
   %i17 = load double, double* %i16, align 8
   %i18 = fadd double %i14, %i17
   tail call void @free(i8* %i15)
@@ -45,7 +46,7 @@ declare double @llvm.ceil.f64(double)
 
 declare dso_local noalias i8* @malloc(i64)
 
-define internal fastcc void @evaluate_integrand(double* nocapture writeonly %a0) {
+define internal fastcc void @evaluate_integrand(double* nonnull noundef nocapture writeonly %a0) {
 bb:
   store double 0.000000e+00, double* %a0, align 8, !tbaa !2
   ret void
@@ -161,3 +162,8 @@ declare dso_local double @__enzyme_autodiff(i8*, ...)
 ; CHECK-NEXT:   br i1 %[[i27]], label %invertbb2, label %incinvertbb12
 ; CHECK-NEXT: }
 
+; should not contain nonnull/noundef on primal
+; CHECK: define internal fastcc void @augmented_evaluate_integrand(double* nocapture writeonly %a0, double* nocapture %"a0'") 
+
+; should not contain nonnull/noundef on primal
+; CHECK: define internal fastcc void @diffeevaluate_integrand(double* nocapture writeonly %a0, double* nocapture %"a0'")

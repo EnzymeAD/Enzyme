@@ -1,5 +1,9 @@
-; RUN: if [ %llvmver -lt 14 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s -check-prefixes LLVM13,SHARED; fi
-; RUN: if [ %llvmver -ge 14 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s -check-prefixes LLVM14,SHARED; fi
+; RUN: if [ %llvmver -lt 14 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s -check-prefixes LLVM13,SHARED; fi
+; RUN: if [ %llvmver -ge 14 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s -check-prefixes LLVM14,SHARED; fi
+
+; RUN: if [ %llvmver -lt 14 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg)" -S | FileCheck %s -check-prefixes LLVM13,SHARED; fi
+; RUN: if [ %llvmver -ge 14 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg)" -S | FileCheck %s -check-prefixes LLVM14,SHARED; fi
+
 
 source_filename = "/mnt/Data/git/Enzyme/enzyme/test/Integration/taylorlog.c"
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
@@ -132,8 +136,8 @@ attributes #8 = { noreturn nounwind }
 ; SHARED-NEXT:   %d0diffea2 = fdiv fast double %4, %conv_unwrap
 ; SHARED-NEXT:   %7 = fsub fast double %conv_unwrap, 1.000000e+00
 ; SHARED-NEXT:   %8 = call fast double @llvm.pow.f64(double %x, double %7)
-; SHARED-NEXT:   %9 = fmul fast double %d0diffea2, %8
-; SHARED-NEXT:   %10 = fmul fast double %9, %conv_unwrap
+; SHARED-NEXT:   %9 = fmul fast double %8, %conv_unwrap
+; SHARED-NEXT:   %10 = fmul fast double %d0diffea2, %9
 ; SHARED-NEXT:   %11 = fadd fast double %"x'de.1", %10
 ; SHARED-NEXT:   %12 = icmp eq i64 %"iv'ac.0", 0
 ; SHARED-NEXT:   %13 = select{{( fast)?}} i1 %12, double 0.000000e+00, double %4

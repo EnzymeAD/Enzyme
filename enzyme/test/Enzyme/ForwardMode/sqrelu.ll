@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme" -enzyme-preopt=false -S | FileCheck %s
 
 ; #include <math.h>
@@ -65,7 +65,7 @@ attributes #3 = { nounwind }
 ; CHECK-NEXT:   %6 = call fast double @llvm.sqrt.f64(double %mul)
 ; CHECK-NEXT:   %7 = fmul fast double 5.000000e-01, %5
 ; CHECK-NEXT:   %8 = fdiv fast double %7, %6
-; CHECK-NEXT:   %9 = fcmp fast oeq double %mul, 0.000000e+00
+; CHECK-NEXT:   %9 = fcmp fast ueq double %mul, 0.000000e+00
 ; CHECK-NEXT:   %10 = select  {{(fast )?}}i1 %9, double 0.000000e+00, double %8
 ; CHECK-NEXT:   br label %cond.end
 

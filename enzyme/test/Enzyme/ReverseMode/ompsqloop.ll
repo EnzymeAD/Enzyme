@@ -1,4 +1,5 @@
-; RUN: if [ %llvmver -ge 9 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -adce -simplifycfg -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 9 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -adce -simplifycfg -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 9 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,adce,loop(loop-deletion),correlated-propagation,%simplifycfg,adce,%simplifycfg)" -S | FileCheck %s; fi
 
 source_filename = "lulesh.cc"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
@@ -213,7 +214,7 @@ attributes #1 = { argmemonly }
 ; CHECK-NEXT:   %[[i12:.+]] = call fast double @sqrt(double %[[i11]])
 ; CHECK-NEXT:   %[[i13:.+]] = fmul fast double 5.000000e-01, %[[i8]]
 ; CHECK-NEXT:   %[[i14:.+]] = fdiv fast double %[[i13]], %[[i12]]
-; CHECK-NEXT:   %[[i15:.+]] = fcmp fast oeq double %[[i11]], 0.000000e+00
+; CHECK-NEXT:   %[[i15:.+]] = fcmp fast ueq double %[[i11]], 0.000000e+00
 ; CHECK-NEXT:   %[[i16:.+]] = select fast i1 %[[i15]], double 0.000000e+00, double %[[i14]]
 ; CHECK-NEXT:   %[[i17:.+]] = atomicrmw fadd double* %"arrayidx'ipg_unwrap", double %[[i16]] monotonic
 ; CHECK-NEXT:   %[[i18:.+]] = icmp eq i64 %"iv'ac.0", 0

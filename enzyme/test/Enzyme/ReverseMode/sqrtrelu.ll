@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -instcombine -early-cse -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 ; #include <math.h>
 ; 
@@ -48,28 +49,31 @@ attributes #1 = { nounwind readnone speculatable }
 attributes #2 = { nounwind uwtable }
 attributes #3 = { nounwind }
 
-; CHECK: define dso_local double @dsqrelu(double %x) local_unnamed_addr
+
+; CHECK: define internal { double } @diffesqrelu(double %x, double %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %cmp.i = fcmp fast ogt double %x, 0.000000e+00
-; CHECK-NEXT:   br i1 %cmp.i, label %invertcond.true.i, label %diffesqrelu.exit
+; CHECK-NEXT:   %cmp = fcmp fast ogt double %x, 0.000000e+00
+; CHECK-NEXT:   %0 = select{{( fast)?}} i1 %cmp, double %differeturn, double 0.000000e+00
+; CHECK-NEXT:   br i1 %cmp, label %invertcond.true, label %invertentry
 
-; CHECK: invertcond.true.i:
-; CHECK-NEXT:   %[[dsin:.+]] = call fast double @llvm.sin.f64(double %x)
-; CHECK-NEXT:   %[[mul:.+]] = fmul fast double %0, %x
+; CHECK: invertentry: 
+; CHECK-NEXT:   %"x'de.0" = phi double [ %[[res:.+]], %invertcond.true ], [ 0.000000e+00, %entry ]
+; CHECK-NEXT:   %[[rv:.+]] = insertvalue { double } {{(undef|poison)}}, double %"x'de.0", 0
+; CHECK-NEXT:   ret { double } %[[rv]]
+
+; CHECK: invertcond.true:
+; CHECK-NEXT:   %[[dsin:.+]] = tail call fast double @llvm.sin.f64(double %x)
+; CHECK-NEXT:   %[[mul:.+]] = fmul fast double %[[dsin]], %x
 ; CHECK-NEXT:   %[[sqrt:.+]] = call fast double @llvm.sqrt.f64(double %[[mul]])
-; CHECK-NEXT:   %[[div:.+]] = fdiv fast double 5.000000e-01, %[[sqrt]]
+; CHECK-NEXT:   %[[tsq:.+]] = fmul fast double 5.000000e-01, %0
+; CHECK-NEXT:   %[[div:.+]] = fdiv fast double %[[tsq]], %[[sqrt]]
 
-; CHECK-NEXT:   %[[sqrtzero:.+]] = fcmp fast oeq double %mul_unwrap.i, 0.000000e+00
+; CHECK-NEXT:   %[[sqrtzero:.+]] = fcmp fast ueq double %mul_unwrap, 0.000000e+00
 ; CHECK-NEXT:   %[[dsqrt:.+]] = select{{( fast)?}} i1 %[[sqrtzero]], double 0.000000e+00, double %[[div]]
 
 ; CHECK-NEXT:   %[[dmul0:.+]] = fmul fast double %[[dsqrt]], %x
 ; CHECK-NEXT:   %[[dmul1:.+]] = fmul fast double %[[dsqrt]], %[[dsin]]
 ; CHECK-NEXT:   %[[dcos:.+]] = call fast double @llvm.cos.f64(double %x)
 ; CHECK-NEXT:   %[[fmul:.+]] = fmul fast double %[[dmul0]], %[[dcos]]
-; CHECK-NEXT:   %[[res:.+]] = fadd fast double %[[dmul1]], %[[fmul]]
-; CHECK-NEXT:   br label %diffesqrelu.exit
-
-; CHECK: diffesqrelu.exit: 
-; CHECK-NEXT:   %"x'de.0.i" = phi double [ %[[res]], %invertcond.true.i ], [ 0.000000e+00, %entry ]
-; CHECK-NEXT:   ret double %"x'de.0.i"
-; CHECK-NEXT: }
+; CHECK-NEXT:   %[[res]] = fadd fast double %[[dmul1]], %[[fmul]]
+; CHECK-NEXT:   br label %invertentry

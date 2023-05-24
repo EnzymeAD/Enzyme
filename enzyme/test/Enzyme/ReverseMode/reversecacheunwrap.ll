@@ -1,6 +1,5 @@
-; RUN: if [ %llvmver -lt 14 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -correlated-propagation -adce -instsimplify -early-cse-memssa -simplifycfg -correlated-propagation -adce -jump-threading -instsimplify -early-cse -simplifycfg -S | FileCheck %s -check-prefixes LLVM13,SHARED; fi
-; RUN: if [ %llvmver -ge 14 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -correlated-propagation -adce -instsimplify -early-cse-memssa -simplifycfg -correlated-propagation -adce -jump-threading -instsimplify -early-cse -simplifycfg -S | FileCheck %s -check-prefixes LLVM14,SHARED; fi
-
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -correlated-propagation -adce -instsimplify -early-cse -simplifycfg -correlated-propagation -adce -jump-threading -instsimplify -early-cse -simplifycfg -S | FileCheck %s -check-prefixes LLVM13,SHARED ; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,correlated-propagation,adce,instsimplify,early-cse,%simplifycfg,correlated-propagation,adce,jump-threading,instsimplify,early-cse,%simplifycfg)" -S | FileCheck %s -check-prefixes LLVM13,SHARED
 
 ; ModuleID = 'orig.ll'
 source_filename = "../benchmarks/hand/hand.cpp"
@@ -121,7 +120,6 @@ attributes #4 = { "enzyme_inactive" }
 ; SHARED-NEXT:   %5 = icmp eq i64 %"iv'ac.0", 0
 ; LLVM13-NEXT:   %[[forfree15:.+]] = load double*, double** %9, align 8
 ; LLVM13-NEXT:   %6 = bitcast double* %[[forfree15]] to i8*
-; LLVM14-NEXT:   %6 = bitcast double* %10 to i8*
 ; SHARED-NEXT:   tail call void @free(i8* nonnull %6)
 ; SHARED-NEXT:   br i1 %5, label %invertentry, label %incinvertfor.cond8.preheader
 

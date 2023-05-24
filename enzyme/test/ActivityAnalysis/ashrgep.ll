@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -print-activity-analysis -activity-analysis-func=f -enzyme-strict-aliasing=0 -o /dev/null | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -print-activity-analysis -activity-analysis-func=f -enzyme-strict-aliasing=0 -o /dev/null | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="print-activity-analysis" -activity-analysis-func=f -enzyme-strict-aliasing=0 -S | FileCheck %s
 
 declare i64 @getint(double* %x)
 
