@@ -188,9 +188,36 @@ EnzymeLogicRef CreateEnzymeLogic(uint8_t PostOpt) {
   return (EnzymeLogicRef)(new EnzymeLogic((bool)PostOpt));
 }
 
-EnzymeTraceInterfaceRef CreateEnzymeStaticTraceInterface(LLVMModuleRef M) {
+EnzymeTraceInterfaceRef FindEnzymeStaticTraceInterface(LLVMModuleRef M) {
   return (EnzymeTraceInterfaceRef)(new StaticTraceInterface(unwrap(M)));
 }
+
+EnzymeTraceInterfaceRef CreateEnzymeStaticTraceInterface(
+    LLVMContextRef C, LLVMValueRef sampleFunction,
+    LLVMValueRef getTraceFunction, LLVMValueRef getChoiceFunction,
+    LLVMValueRef insertCallFunction, LLVMValueRef insertChoiceFunction,
+    LLVMValueRef insertArgumentFunction, LLVMValueRef insertReturnFunction,
+    LLVMValueRef insertFunctionFunction,
+    LLVMValueRef insertChoiceGradientFunction,
+    LLVMValueRef insertArgumentGradientFunction, LLVMValueRef newTraceFunction,
+    LLVMValueRef freeTraceFunction, LLVMValueRef hasCallFunction,
+    LLVMValueRef hasChoiceFunction) {
+  return (EnzymeTraceInterfaceRef)(new StaticTraceInterface(
+      *unwrap(C), cast<Function>(unwrap(sampleFunction)),
+      cast<Function>(unwrap(getTraceFunction)),
+      cast<Function>(unwrap(getChoiceFunction)),
+      cast<Function>(unwrap(insertCallFunction)),
+      cast<Function>(unwrap(insertChoiceFunction)),
+      cast<Function>(unwrap(insertArgumentFunction)),
+      cast<Function>(unwrap(insertReturnFunction)),
+      cast<Function>(unwrap(insertFunctionFunction)),
+      cast<Function>(unwrap(insertChoiceGradientFunction)),
+      cast<Function>(unwrap(insertArgumentGradientFunction)),
+      cast<Function>(unwrap(newTraceFunction)),
+      cast<Function>(unwrap(freeTraceFunction)),
+      cast<Function>(unwrap(hasCallFunction)),
+      cast<Function>(unwrap(hasChoiceFunction))));
+};
 
 EnzymeTraceInterfaceRef
 CreateEnzymeDynamicTraceInterface(LLVMValueRef interface, LLVMValueRef F) {
