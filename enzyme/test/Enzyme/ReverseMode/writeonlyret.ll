@@ -1,5 +1,7 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S -enzyme-zero-cache=0 | FileCheck -check-prefixes CHECK,UNDEF %s
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S -enzyme-zero-cache=1 | FileCheck -check-prefixes CHECK,ZERO %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S -enzyme-zero-cache=0 | FileCheck -check-prefixes CHECK,UNDEF %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-zero-cache=0 -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck -check-prefixes CHECK,UNDEF %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S -enzyme-zero-cache=1 | FileCheck -check-prefixes CHECK,ZERO %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -enzyme-zero-cache=1 -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck -check-prefixes CHECK,ZERO %s
 
 declare dso_local double @__enzyme_autodiff(i8*, double)
 

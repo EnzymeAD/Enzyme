@@ -1,5 +1,9 @@
-; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -correlated-propagation -adce -instsimplify -early-cse-memssa -simplifycfg -correlated-propagation -adce -instsimplify -early-cse -simplifycfg -S | FileCheck -check-prefixes LL14,CHECK %s; fi
-; RUN: if [ %llvmver -ge 10 ] && [ %llvmver -lt 14 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -correlated-propagation -adce -instsimplify -early-cse-memssa -simplifycfg -correlated-propagation -adce -instsimplify -early-cse -simplifycfg -S | FileCheck -check-prefixes LL13,CHECK %s; fi
+; RUN: if [ %llvmver -ge 15 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -correlated-propagation -adce -instsimplify -early-cse -simplifycfg -correlated-propagation -adce -instsimplify -early-cse -simplifycfg -S | FileCheck -check-prefixes LL14,CHECK %s; fi
+; RUN: if [ %llvmver -ge 10 ] && [ %llvmver -lt 14 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -correlated-propagation -adce -instsimplify -early-cse -simplifycfg -correlated-propagation -adce -instsimplify -early-cse -simplifycfg -S | FileCheck -check-prefixes LL13,CHECK %s; fi
+
+; RUN: if [ %llvmver -ge 15 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,correlated-propagation,adce,instsimplify,early-cse,%simplifycfg,correlated-propagation,adce,instsimplify,early-cse,%simplifycfg)" -S | FileCheck -check-prefixes LL14,CHECK %s; fi
+; RUN: if [ %llvmver -ge 10 ] && [ %llvmver -lt 14 ]; then %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,correlated-propagation,adce,instsimplify,early-cse,%simplifycfg,correlated-propagation,adce,instsimplify,early-cse,%simplifycfg)" -S | FileCheck -check-prefixes LL13,CHECK %s; fi
+
 
 ; ModuleID = 'q2.ll'
 source_filename = "text"

@@ -416,9 +416,6 @@ struct CacheAnalysis {
 
     StringRef funcName = getFuncNameFromCall(callsite_op);
 
-    if (funcName == "")
-      return {};
-
     if (funcName == "llvm.julia.gc_preserve_begin")
       return {};
 
@@ -923,12 +920,22 @@ void calculateUnusedValuesInFunction(
           if (isMemFreeLibMFunction(funcName, &ID) || isReadOnly(obj_op)) {
             mayWriteToMemory = false;
           }
+          if (funcName == "memset" || funcName == "memcpy" ||
+              funcName == "memmove") {
+            if (isNoNeed(obj_op->getArgOperand(0)))
+              return UseReq::Recur;
+          }
         }
 
         if (auto si = dyn_cast<StoreInst>(inst)) {
           if (isa<UndefValue>(si->getValueOperand()))
             return UseReq::Recur;
           if (isNoNeed(si->getPointerOperand()))
+            return UseReq::Recur;
+        }
+
+        if (auto msi = dyn_cast<MemSetInst>(inst)) {
+          if (isNoNeed(msi->getArgOperand(0)))
             return UseReq::Recur;
         }
 
@@ -1230,7 +1237,7 @@ bool shouldAugmentCall(CallInst *op, const GradientUtils *gutils) {
 
   Function *called = op->getCalledFunction();
 
-  bool modifyPrimal = !called || !called->hasFnAttribute(Attribute::ReadNone);
+  bool modifyPrimal = !called || !isReadNone(op);
 
   if (modifyPrimal) {
 #ifdef PRINT_AUGCALL
@@ -1280,8 +1287,7 @@ bool shouldAugmentCall(CallInst *op, const GradientUtils *gutils) {
     if (!argType->isFPOrFPVectorTy() &&
         !gutils->isConstantValue(op->getArgOperand(i)) &&
         gutils->TR.query(op->getArgOperand(i)).Inner0().isPossiblePointer()) {
-      if (called && !(called->hasParamAttribute(i, Attribute::ReadOnly) ||
-                      called->hasParamAttribute(i, Attribute::ReadNone))) {
+      if (!isReadOnly(op, i)) {
         modifyPrimal = true;
 #ifdef PRINT_AUGCALL
         if (called)
@@ -2079,8 +2085,12 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
           if (!foundcalled->hasParamAttribute(i, Attribute::StructRet))
             args.push_back(arg.getType());
           else {
+#if LLVM_VERSION_MAJOR >= 12
+            sretTy = foundcalled->getParamAttribute(0, Attribute::StructRet)
+                         .getValueAsType();
+#else
             sretTy = arg.getType()->getPointerElementType();
-            //  sretTy = foundcalled->getParamStructRetType(i);
+#endif
           }
           i++;
         }
@@ -2948,17 +2958,8 @@ const AugmentedReturn &EnzymeLogic::CreateAugmentedPrimal(
     GV->setName("_tmp");
     auto R = gutils->GetOrCreateShadowFunction(
         *this, TLI, TA, todiff, pair.second, width, gutils->AtomicAdd);
-    SmallVector<ConstantExpr *, 1> users;
-    for (auto U : GV->users()) {
-      if (auto CE = dyn_cast<ConstantExpr>(U)) {
-        if (CE->isCast()) {
-          users.push_back(CE);
-        }
-      }
-    }
-    for (auto U : users) {
-      U->replaceAllUsesWith(ConstantExpr::getPointerCast(R, U->getType()));
-    }
+    SmallVector<std::pair<ConstantExpr *, bool>, 1> users;
+    GV->replaceAllUsesWith(ConstantExpr::getPointerCast(R, GV->getType()));
     GV->eraseFromParent();
   }
 
@@ -4228,7 +4229,10 @@ Function *EnzymeLogic::CreatePrimalAndGradient(
         }
         auto store = entryBuilder.CreateStore(
             Constant::getNullValue(g.getValueType()), &g);
-#if LLVM_VERSION_MAJOR >= 11
+#if LLVM_VERSION_MAJOR >= 16
+        if (g.getAlign())
+          store->setAlignment(g.getAlign().value());
+#elif LLVM_VERSION_MAJOR >= 11
         if (g.getAlign())
           store->setAlignment(g.getAlign().getValue());
 #elif LLVM_VERSION_MAJOR >= 10

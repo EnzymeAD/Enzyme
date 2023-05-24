@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -S -early-cse -adce | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -mem2reg -sroa -simplifycfg -early-cse -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,sroa,%simplifycfg,early-cse,adce)" -S | FileCheck %s
 
 ; Function Attrs: norecurse nounwind readnone uwtable
 define dso_local double @square(double %x) #0 {

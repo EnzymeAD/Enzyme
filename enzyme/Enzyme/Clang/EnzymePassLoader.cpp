@@ -23,6 +23,10 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/Config/llvm-config.h"
+
+#if LLVM_VERSION_MAJOR < 16
+
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Transforms/IPO.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
@@ -85,4 +89,7 @@ static void loadLTOPass(const PassManagerBuilder &Builder,
 static RegisterStandardPasses
     clangtoolLoader_LTO(PassManagerBuilder::EP_FullLinkTimeOptimizationEarly,
                         loadLTOPass);
-#endif
+
+#endif // LLVM_VERSION_MAJOR >= 9
+
+#endif // LLVM_VERSION_MAJOR < 16

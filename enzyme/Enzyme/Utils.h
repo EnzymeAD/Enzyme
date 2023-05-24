@@ -57,6 +57,10 @@
 #include <map>
 #include <set>
 
+#if LLVM_VERSION_MAJOR >= 16
+#include <optional>
+#endif
+
 #include "llvm/IR/DiagnosticInfo.h"
 
 #include "llvm/Analysis/OptimizationRemarkEmitter.h"
@@ -1048,7 +1052,12 @@ template <typename T> static inline llvm::StringRef getFuncNameFromCall(T *op) {
 }
 
 template <typename T>
-static inline llvm::Optional<size_t> getAllocationIndexFromCall(T *op) {
+#if LLVM_VERSION_MAJOR >= 16
+static inline std::optional<size_t> getAllocationIndexFromCall(T *op)
+#else
+static inline llvm::Optional<size_t> getAllocationIndexFromCall(T *op)
+#endif
+{
   auto AttrList =
       op->getAttributes().getAttributes(llvm::AttributeList::FunctionIndex);
   if (AttrList.hasAttribute("enzyme_allocator")) {
@@ -1057,7 +1066,11 @@ static inline llvm::Optional<size_t> getAllocationIndexFromCall(T *op) {
                  .getValueAsString()
                  .getAsInteger(10, res);
     assert(!b);
+#if LLVM_VERSION_MAJOR >= 16
+    return std::optional<size_t>(res);
+#else
     return llvm::Optional<size_t>(res);
+#endif
   }
 
   if (auto called = getFunctionFromCall(op)) {
@@ -1067,10 +1080,18 @@ static inline llvm::Optional<size_t> getAllocationIndexFromCall(T *op) {
                    .getValueAsString()
                    .getAsInteger(10, res);
       assert(!b);
+#if LLVM_VERSION_MAJOR >= 16
+      return std::optional<size_t>(res);
+#else
       return llvm::Optional<size_t>(res);
+#endif
     }
   }
+#if LLVM_VERSION_MAJOR >= 16
+  return std::optional<size_t>();
+#else
   return llvm::Optional<size_t>();
+#endif
 }
 
 template <typename T>
@@ -1341,6 +1362,22 @@ static inline const llvm::Value *getBaseObject(const llvm::Value *V) {
   return getBaseObject(const_cast<llvm::Value *>(V));
 }
 
+static inline bool isReadOnly(const llvm::Function *F, ssize_t arg = -1) {
+#if LLVM_VERSION_MAJOR >= 8
+  if (F->onlyReadsMemory())
+    return true;
+#endif
+  if (F->hasFnAttribute(llvm::Attribute::ReadOnly) ||
+      F->hasFnAttribute(llvm::Attribute::ReadNone))
+    return true;
+  if (arg != -1) {
+    if (F->hasParamAttribute(arg, llvm::Attribute::ReadOnly) ||
+        F->hasParamAttribute(arg, llvm::Attribute::ReadNone))
+      return true;
+  }
+  return false;
+}
+
 static inline bool isReadOnly(const llvm::CallInst *call, ssize_t arg = -1) {
 #if LLVM_VERSION_MAJOR >= 8
   if (call->onlyReadsMemory())
@@ -1358,16 +1395,25 @@ static inline bool isReadOnly(const llvm::CallInst *call, ssize_t arg = -1) {
   }
 #endif
 
-  auto F = getFunctionFromCall(call);
-  if (F) {
-    if (F->hasFnAttribute(llvm::Attribute::ReadOnly) ||
-        F->hasFnAttribute(llvm::Attribute::ReadNone))
+  if (auto F = getFunctionFromCall(call)) {
+    if (isReadOnly(F, arg))
       return true;
-    if (arg != -1) {
-      if (F->hasParamAttribute(arg, llvm::Attribute::ReadOnly) ||
-          F->hasParamAttribute(arg, llvm::Attribute::ReadNone))
-        return true;
-    }
+  }
+  return false;
+}
+
+static inline bool isWriteOnly(const llvm::Function *F, ssize_t arg = -1) {
+#if LLVM_VERSION_MAJOR >= 14
+  if (F->onlyWritesMemory())
+    return true;
+#endif
+  if (F->hasFnAttribute(llvm::Attribute::WriteOnly) ||
+      F->hasFnAttribute(llvm::Attribute::ReadNone))
+    return true;
+  if (arg != -1) {
+    if (F->hasParamAttribute(arg, llvm::Attribute::WriteOnly) ||
+        F->hasParamAttribute(arg, llvm::Attribute::ReadNone))
+      return true;
   }
   return false;
 }
@@ -1389,22 +1435,18 @@ static inline bool isWriteOnly(const llvm::CallInst *call, ssize_t arg = -1) {
   }
 #endif
 
-  auto F = getFunctionFromCall(call);
-  if (F) {
-    if (F->hasFnAttribute(llvm::Attribute::WriteOnly) ||
-        F->hasFnAttribute(llvm::Attribute::ReadNone))
-      return true;
-    if (arg != -1) {
-      if (F->hasParamAttribute(arg, llvm::Attribute::WriteOnly) ||
-          F->hasParamAttribute(arg, llvm::Attribute::ReadNone))
-        return true;
-    }
+  if (auto F = getFunctionFromCall(call)) {
+    return isWriteOnly(F, arg);
   }
   return false;
 }
 
 static inline bool isReadNone(const llvm::CallInst *call, ssize_t arg = -1) {
-  return !isReadOnly(call, arg) && !isWriteOnly(call, arg);
+  return isReadOnly(call, arg) && isWriteOnly(call, arg);
+}
+
+static inline bool isReadNone(const llvm::Function *F, ssize_t arg = -1) {
+  return isReadOnly(F, arg) && isWriteOnly(F, arg);
 }
 
 static inline bool isNoCapture(const llvm::CallInst *call, size_t idx) {
@@ -1435,13 +1477,30 @@ struct BlasInfo {
   llvm::StringRef function;
 };
 
+#if LLVM_VERSION_MAJOR >= 16
+std::optional<BlasInfo> extractBLAS(llvm::StringRef in);
+#else
 llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in);
+#endif
 
 llvm::Constant *getUndefinedValueForType(llvm::Type *T, bool forceZero = false);
 
 llvm::Value *SanitizeDerivatives(llvm::Value *val, llvm::Value *toset,
                                  llvm::IRBuilder<> &BuilderM,
                                  llvm::Value *mask = nullptr);
+
+static inline llvm::Value *CreateSelect(llvm::IRBuilder<> &Builder2,
+                                        llvm::Value *cmp, llvm::Value *tval,
+                                        llvm::Value *fval,
+                                        llvm::Twine Name = "") {
+  if (auto cmpi = llvm::dyn_cast<llvm::ConstantInt>(cmp)) {
+    if (cmpi->isZero())
+      return fval;
+    else
+      return tval;
+  }
+  return Builder2.CreateSelect(cmp, tval, fval, Name);
+}
 
 static inline llvm::Value *checkedMul(llvm::IRBuilder<> &Builder2,
                                       llvm::Value *idiff, llvm::Value *pres,
@@ -1468,6 +1527,77 @@ static inline llvm::Value *checkedDiv(llvm::IRBuilder<> &Builder2,
     res = Builder2.CreateSelect(Builder2.CreateFCmpOEQ(idiff, zero), zero, res);
   }
   return res;
+}
+
+static inline bool containsOnlyAtMostTopBit(const llvm::Value *V,
+                                            llvm::Type *FT,
+                                            const llvm::DataLayout &dl,
+                                            llvm::Type **vFT = nullptr) {
+  using namespace llvm;
+  if (auto CI = dyn_cast_or_null<ConstantInt>(V)) {
+    if (CI->isZero()) {
+      if (vFT)
+        *vFT = FT;
+      return true;
+    }
+    if (dl.getTypeSizeInBits(FT) == dl.getTypeSizeInBits(CI->getType())) {
+      if (CI->isNegative() && CI->isMinValue(/*signed*/ true)) {
+        if (vFT)
+          *vFT = FT;
+        return true;
+      }
+    }
+  }
+  if (auto CV = dyn_cast_or_null<ConstantVector>(V)) {
+    bool legal = true;
+    for (size_t i = 0, end = CV->getNumOperands(); i < end; ++i) {
+      legal &= containsOnlyAtMostTopBit(CV->getOperand(i), FT, dl);
+    }
+    if (legal && vFT) {
+#if LLVM_VERSION_MAJOR >= 12
+      *vFT = VectorType::get(FT, CV->getType()->getElementCount());
+#else
+      *vFT = VectorType::get(FT, CV->getType()->getNumElements());
+#endif
+    }
+    return legal;
+  }
+
+  if (auto CV = dyn_cast_or_null<ConstantDataVector>(V)) {
+    bool legal = true;
+    for (size_t i = 0, end = CV->getNumElements(); i < end; ++i) {
+      auto CI = CV->getElementAsAPInt(i);
+      if (CI.isNullValue())
+        continue;
+      if (dl.getTypeSizeInBits(FT) !=
+          dl.getTypeSizeInBits(CV->getElementType())) {
+        legal = false;
+        break;
+      }
+      if (!CI.isMinSignedValue()) {
+        legal = false;
+        break;
+      }
+    }
+    if (legal && vFT) {
+#if LLVM_VERSION_MAJOR >= 12
+      *vFT = VectorType::get(FT, CV->getType()->getElementCount());
+#else
+      *vFT = VectorType::get(FT, CV->getType()->getNumElements());
+#endif
+    }
+    return legal;
+  }
+  if (auto BO = dyn_cast<BinaryOperator>(V)) {
+    if (BO->getOpcode() == Instruction::And) {
+      for (size_t i = 0; i < 2; i++) {
+        if (containsOnlyAtMostTopBit(BO->getOperand(i), FT, dl))
+          return true;
+      }
+      return false;
+    }
+  }
+  return false;
 }
 
 #endif

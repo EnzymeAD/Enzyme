@@ -1,4 +1,5 @@
-; RUN: if [ %llvmver -ge 9 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -gvn -adce -instsimplify -early-cse-memssa -simplifycfg -S | FileCheck %s; fi
+; RUN: if [ %llvmver -lt 16 ] && [ %llvmver -ge 9 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -gvn -adce -instsimplify -early-cse -simplifycfg -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 9 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,gvn,adce,instsimplify,early-cse)" -S | FileCheck %s; fi
 
 ; ModuleID = 'cuda.cu'
 source_filename = "cuda.cu"

@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -adce -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(mem2reg,adce)" -enzyme-preopt=false -S | FileCheck %s
 
 ; #include <stdlib.h>

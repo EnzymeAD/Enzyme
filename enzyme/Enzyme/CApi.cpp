@@ -806,11 +806,71 @@ void EnzymeReplaceFunctionImplementation(LLVMModuleRef M) {
   ReplaceFunctionImplementation(*unwrap(M));
 }
 
-#if LLVM_VERSION_MAJOR >= 9
+#if LLVM_VERSION_MAJOR >= 15
+
+static bool runAttributorOnFunctions(InformationCache &InfoCache,
+                                     SetVector<Function *> &Functions,
+                                     AnalysisGetter &AG,
+                                     CallGraphUpdater &CGUpdater,
+                                     bool DeleteFns, bool IsModulePass) {
+  if (Functions.empty())
+    return false;
+
+  // Create an Attributor and initially empty information cache that is filled
+  // while we identify default attribute opportunities.
+  AttributorConfig AC(CGUpdater);
+  AC.RewriteSignatures = false;
+  AC.IsModulePass = IsModulePass;
+  AC.DeleteFns = DeleteFns;
+  Attributor A(Functions, InfoCache, AC);
+
+  for (Function *F : Functions) {
+    // Populate the Attributor with abstract attribute opportunities in the
+    // function and the information cache with IR information.
+    A.identifyDefaultAbstractAttributes(*F);
+  }
+
+  ChangeStatus Changed = A.run();
+
+  return Changed == ChangeStatus::CHANGED;
+}
+struct MyAttributorLegacyPass : public ModulePass {
+  static char ID;
+
+  MyAttributorLegacyPass() : ModulePass(ID) {}
+
+  bool runOnModule(Module &M) override {
+    if (skipModule(M))
+      return false;
+
+    AnalysisGetter AG;
+    SetVector<Function *> Functions;
+    for (Function &F : M)
+      Functions.insert(&F);
+
+    CallGraphUpdater CGUpdater;
+    BumpPtrAllocator Allocator;
+    InformationCache InfoCache(M, AG, Allocator, /* CGSCC */ nullptr);
+    return runAttributorOnFunctions(InfoCache, Functions, AG, CGUpdater,
+                                    /* DeleteFns*/ true,
+                                    /* IsModulePass */ true);
+  }
+
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
+    // FIXME: Think about passes we will preserve and add them here.
+    AU.addRequired<TargetLibraryInfoWrapperPass>();
+  }
+};
+extern "C++" char MyAttributorLegacyPass::ID = 0;
+void EnzymeAddAttributorLegacyPass(LLVMPassManagerRef PM) {
+  unwrap(PM)->add(new MyAttributorLegacyPass());
+}
+#elif LLVM_VERSION_MAJOR >= 9
 void EnzymeAddAttributorLegacyPass(LLVMPassManagerRef PM) {
   unwrap(PM)->add(createAttributorLegacyPass());
 }
 #endif
+
 LLVMMetadataRef EnzymeMakeNonConstTBAA(LLVMMetadataRef MD) {
   auto M = cast<MDNode>(unwrap(MD));
   if (M->getNumOperands() != 4)
@@ -1192,11 +1252,12 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       Types.push_back(ET);
   }
 
-  assert(Types.size());
   StructType *ST =
-      Types.size() == 1 ? nullptr : StructType::get(F->getContext(), Types);
-  Type *sretTy = Types.size() == 1 ? Types[0] : ST;
-  size_t numRooting = num_rooting(sretTy);
+      Types.size() <= 1 ? nullptr : StructType::get(F->getContext(), Types);
+  Type *sretTy = nullptr;
+  if (Types.size())
+    sretTy = Types.size() == 1 ? Types[0] : ST;
+  size_t numRooting = sretTy ? num_rooting(sretTy) : 0;
 
   auto T_jlvalue = StructType::get(F->getContext(), {});
   auto T_prjlvalue = PointerType::get(T_jlvalue, AddressSpace::Tracked);
@@ -1206,14 +1267,16 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   AttributeList NewAttrs;
   SmallVector<Type *, 1> types;
   size_t nexti = 0;
-  types.push_back(PointerType::getUnqual(sretTy));
-  NewAttrs = NewAttrs.addAttribute(
-      F->getContext(), AttributeList::FirstArgIndex + nexti,
-      Attribute::get(F->getContext(), Attribute::StructRet, sretTy));
-  NewAttrs = NewAttrs.addAttribute(F->getContext(),
-                                   AttributeList::FirstArgIndex + nexti,
-                                   Attribute::NoAlias);
-  nexti++;
+  if (sretTy) {
+    types.push_back(PointerType::getUnqual(sretTy));
+    NewAttrs = NewAttrs.addAttribute(
+        F->getContext(), AttributeList::FirstArgIndex + nexti,
+        Attribute::get(F->getContext(), Attribute::StructRet, sretTy));
+    NewAttrs = NewAttrs.addAttribute(F->getContext(),
+                                     AttributeList::FirstArgIndex + nexti,
+                                     Attribute::NoAlias);
+    nexti++;
+  }
   if (roots_AT) {
     NewAttrs = NewAttrs.addAttribute(F->getContext(),
                                      AttributeList::FirstArgIndex + nexti,
@@ -1257,14 +1320,15 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
   ValueToValueMapTy VMap;
   // Loop over the arguments, copying the names of the mapped arguments over...
   Function::arg_iterator DestI = NewF->arg_begin();
-  Argument *sret = &*DestI;
-  DestI++;
-  nexti = 1;
+  Argument *sret = nullptr;
+  if (sretTy) {
+    sret = &*DestI;
+    DestI++;
+  }
   Argument *roots = nullptr;
   if (roots_AT) {
     roots = &*DestI;
     DestI++;
-    nexti++;
   }
   for (Argument &I : F->args()) {
     auto i = I.getArgNo();
@@ -1449,12 +1513,15 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
     IRBuilder<> EB(&CI->getParent()->getParent()->getEntryBlock().front());
     SmallVector<Value *, 1> vals;
     size_t nexti = 0;
-    auto sret = EB.CreateAlloca(sretTy);
-    vals.push_back(sret);
-    NewAttrs = NewAttrs.addAttribute(
-        F->getContext(), AttributeList::FirstArgIndex + nexti,
-        Attribute::get(F->getContext(), Attribute::StructRet, sretTy));
-    nexti++;
+    Value *sret = nullptr;
+    if (sretTy) {
+      sret = EB.CreateAlloca(sretTy);
+      vals.push_back(sret);
+      NewAttrs = NewAttrs.addAttribute(
+          F->getContext(), AttributeList::FirstArgIndex + nexti,
+          Attribute::get(F->getContext(), Attribute::StructRet, sretTy));
+      nexti++;
+    }
     AllocaInst *roots = nullptr;
     if (roots_AT) {
       roots = EB.CreateAlloca(roots_AT);

@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -adce -loop-deletion -correlated-propagation -simplifycfg -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,adce,%loopmssa(loop-deletion),correlated-propagation,%simplifycfg,adce)" -S | FileCheck %s
 
 define void @sum(i64* %x, i64 %n) {
 entry:
@@ -35,24 +36,24 @@ attributes #0 = { norecurse nounwind readonly uwtable }
 attributes #1 = { nounwind uwtable } 
 attributes #2 = { nounwind }
 
-; CHECK: define dso_local void @dsum(i64* %x, i64* %xp, i64 %n) local_unnamed_addr #0 {
+; CHECK: define internal void @diffesum(i64* %x, i64* %"x'", i64 %n)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %cmp.i = icmp eq i64 %n, 0
-; CHECK-NEXT:   br i1 %cmp.i, label %one.i, label %two.i
+; CHECK-NEXT:   %cmp = icmp eq i64 %n, 0
+; CHECK-NEXT:   br i1 %cmp, label %one, label %two
 
-; CHECK: one.i:                                            ; preds = %two.i, %entry
-; CHECK:   %phi1.i = phi i64 [ 0, %entry ], [ %phi2.i, %two.i ]
-; CHECK-NEXT:   %cmp1.i = icmp eq i64 %n, 1
-; CHECK-NEXT:   br i1 %cmp1.i, label %diffesum.exit, label %two.i
+; CHECK: one:
+; CHECK:   %phi1 = phi i64 [ 0, %entry ], [ %phi2, %two ]
+; CHECK-NEXT:   %cmp1 = icmp eq i64 %n, 1
+; CHECK-NEXT:   br i1 %cmp1, label %end, label %two
 
-; CHECK: two.i:                                            ; preds = %one.i, %entry
-; CHECK:   %phi2.i = phi i64 [ 12, %entry ], [ %phi1.i, %one.i ]
-; CHECK-NEXT:   %cmp2.i = icmp eq i64 %n, 2
-; CHECK-NEXT:   br i1 %cmp2.i, label %diffesum.exit, label %one.i
+; CHECK: two:
+; CHECK:   %phi2 = phi i64 [ 12, %entry ], [ %phi1, %one ]
+; CHECK-NEXT:   %cmp2 = icmp eq i64 %n, 2
+; CHECK-NEXT:   br i1 %cmp2, label %end, label %one
 
-; CHECK: diffesum.exit:
-; CHECK-NEXT:   %phi3.i = phi i64 [ %phi1.i, %one.i ], [ %phi2.i, %two.i ]
-; CHECK-NEXT:   store i64 %phi3.i, i64* %xp
-; CHECK-NEXT:   store i64 %phi3.i, i64* %x
+; CHECK: end:
+; CHECK-NEXT:   %phi3 = phi i64 [ %phi1, %one ], [ %phi2, %two ]
+; CHECK-NEXT:   store i64 %phi3, i64* %"x'"
+; CHECK-NEXT:   store i64 %phi3, i64* %x
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

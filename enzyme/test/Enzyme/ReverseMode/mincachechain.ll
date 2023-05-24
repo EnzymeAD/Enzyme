@@ -1,5 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -adce -early-cse -S | FileCheck %s
-; ModuleID = 'inp.ll'
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -sroa -instsimplify -early-cse -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,sroa,instsimplify,early-cse,%simplifycfg)" -S | FileCheck %s
 
 declare dso_local void @_Z17__enzyme_autodiffPvPdS0_i(i8*, double*, double*) local_unnamed_addr #4
 define dso_local void @outer(double* %m, double* %m2) local_unnamed_addr #2 {

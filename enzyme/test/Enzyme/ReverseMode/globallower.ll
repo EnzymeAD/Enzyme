@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-lower-globals -mem2reg -sroa -simplifycfg -instsimplify -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-lower-globals -enzyme -mem2reg -sroa -simplifycfg -instsimplify -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-lower-globals -passes="enzyme,function(mem2reg,sroa,%simplifycfg,instsimplify)" -S | FileCheck %s
 
 @global = external dso_local local_unnamed_addr global double, align 8
 

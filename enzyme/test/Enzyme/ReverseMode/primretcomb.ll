@@ -1,4 +1,5 @@
-; RUN: if [ %llvmver -ge 11 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -simplifycfg -instcombine -S | FileCheck %s ; fi
+; RUN: if [ %llvmver -ge 11 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instcombine -simplifycfg -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 11 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instcombine,%simplifycfg)" -S | FileCheck %s ; fi
 
 source_filename = "primretcomb.ll"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128-ni:10:11:12:13"

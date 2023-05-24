@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -instsimplify -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instcombine -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instcombine,%simplifycfg)" -S | FileCheck %s
 
 ; Function Attrs: noinline nounwind readnone uwtable
 define <2 x double> @tester(<2 x double> %x) {
@@ -20,15 +21,8 @@ declare <2 x double> @__enzyme_autodiff(<2 x double> (<2 x double>)*, ...)
 
 ; CHECK: define internal { <2 x double> } @diffetester(<2 x double> %x, <2 x double> %differeturn)
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = bitcast <2 x double> %differeturn to <2 x i64>
-; CHECK-NEXT:   %1 = extractelement <2 x i64> %0, i64 0
-; CHECK-NEXT:   %2 = bitcast i64 %1 to double
-; CHECK-NEXT:   %3 = {{(fsub fast double -?0.000000e\+00,|fneg fast double)}} %2
-; CHECK-NEXT:   %4 = bitcast double %3 to i64
-; CHECK-NEXT:   %5 = insertelement <2 x i64> undef, i64 %4, i64 0
-; CHECK-NEXT:   %6 = extractelement <2 x i64> %0, i64 1
-; CHECK-NEXT:   %7 = insertelement <2 x i64> %5, i64 %6, i64 1
-; CHECK-NEXT:   %8 = bitcast <2 x i64> %7 to <2 x double>
-; CHECK-NEXT:   %9 = insertvalue { <2 x double> } undef, <2 x double> %8, 0
-; CHECK-NEXT:   ret { <2 x double> } %9
+; CHECK-NEXT:   %0 = {{(fsub fast <2 x double> <double \-0.000000e\+00, double (\-0.000000e\+00|undef)>,|fneg fast <2 x double>)}} %differeturn
+; CHECK-NEXT:   %1 = shufflevector <2 x double> {{(%differeturn, <2 x double> %0, <2 x i32> <i32 2, i32 1>|%0, <2 x double> %differeturn, <2 x i32> <i32 0, i32 3>)}}
+; CHECK-NEXT:   %2 = insertvalue { <2 x double> } undef, <2 x double> %1, 0
+; CHECK-NEXT:   ret { <2 x double> } %2
 ; CHECK-NEXT: }

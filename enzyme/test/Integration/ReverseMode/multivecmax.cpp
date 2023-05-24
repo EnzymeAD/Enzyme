@@ -1,14 +1,14 @@
-// RUN: %clang++ -ffast-math %O0TBAA -fno-vectorize -fno-slp-vectorize -fno-unroll-loops -fno-exceptions %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -enzyme-loose-types -S | %lli - 
-// RUN: %clang++ -ffast-math -O1 -fno-vectorize -fno-slp-vectorize -fno-unroll-loops -fno-exceptions %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -S | %lli - 
+// RUN: %clang++ -ffast-math %O0TBAA -fno-vectorize -fno-slp-vectorize -fno-unroll-loops -fno-exceptions %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-loose-types -S | %lli - 
+// RUN: %clang++ -ffast-math -O1 -fno-vectorize -fno-slp-vectorize -fno-unroll-loops -fno-exceptions %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli - 
 
-// RUN: if [ %llvmver -ge 8 ]; then %clang++ -ffast-math -O2 -fno-vectorize -fno-slp-vectorize -fno-unroll-loops -fno-exceptions %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -S; fi
+// RUN: if [ %llvmver -ge 8 ]; then %clang++ -ffast-math -O2 -fno-vectorize -fno-slp-vectorize -fno-unroll-loops -fno-exceptions %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S; fi
 
-// RUN: %clang++ -ffast-math -O2 -fno-vectorize -fno-slp-vectorize -fno-unroll-loops -fno-exceptions %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -S | %lli - 
-// RUN: if [ %llvmver -ge 8 ]; then %clang++ -ffast-math -O3 -fno-vectorize -fno-slp-vectorize -fno-unroll-loops -fno-exceptions %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -S | %lli - ; fi
-// RUN: if [ %llvmver -ge 8 ]; then %clang++ -ffast-math %O0TBAA -fno-vectorize -fno-slp-vectorize -fno-unroll-loops -fno-exceptions %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -enzyme-inline=1 -S | %lli - ; fi
-// RUN: if [ %llvmver -ge 8 ]; then %clang++ -ffast-math -O1 -fno-vectorize -fno-slp-vectorize -fno-unroll-loops -fno-exceptions %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -enzyme-inline=1 -S | %lli - ; fi
-// RUN: if [ %llvmver -ge 8 ]; then %clang++ -ffast-math -O2 -fno-vectorize -fno-slp-vectorize -fno-unroll-loops -fno-exceptions %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -enzyme-inline=1 -S | %lli - ; fi
-// RUN: if [ %llvmver -ge 8 ]; then %clang++ -ffast-math -O3 -fno-vectorize -fno-slp-vectorize -fno-unroll-loops -fno-exceptions %s -S -emit-llvm -o - | %opt - %loadEnzyme -enzyme -enzyme-inline=1 -S | %lli - ; fi
+// RUN: %clang++ -ffast-math -O2 -fno-vectorize -fno-slp-vectorize -fno-unroll-loops -fno-exceptions %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli - 
+// RUN: if [ %llvmver -ge 8 ]; then %clang++ -ffast-math -O3 -fno-vectorize -fno-slp-vectorize -fno-unroll-loops -fno-exceptions %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -S | %lli - ; fi
+// RUN: if [ %llvmver -ge 8 ]; then %clang++ -ffast-math %O0TBAA -fno-vectorize -fno-slp-vectorize -fno-unroll-loops -fno-exceptions %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli - ; fi
+// RUN: if [ %llvmver -ge 8 ]; then %clang++ -ffast-math -O1 -fno-vectorize -fno-slp-vectorize -fno-unroll-loops -fno-exceptions %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli - ; fi
+// RUN: if [ %llvmver -ge 8 ]; then %clang++ -ffast-math -O2 -fno-vectorize -fno-slp-vectorize -fno-unroll-loops -fno-exceptions %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli - ; fi
+// RUN: if [ %llvmver -ge 8 ]; then %clang++ -ffast-math -O3 -fno-vectorize -fno-slp-vectorize -fno-unroll-loops -fno-exceptions %s -S -emit-llvm -o - | %opt - %OPloadEnzyme %enzyme -enzyme-inline=1 -S | %lli - ; fi
 
 #include <stdio.h>
 #include <math.h>

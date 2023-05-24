@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -inline -mem2reg -correlated-propagation -adce -instcombine -instsimplify -early-cse-memssa -simplifycfg -correlated-propagation -adce -jump-threading -instsimplify -early-cse -simplifycfg -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -correlated-propagation -adce -instcombine -instsimplify -early-cse -simplifycfg -correlated-propagation -adce -jump-threading -instsimplify -early-cse -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,correlated-propagation,adce,instcombine,instsimplify,early-cse,%simplifycfg,correlated-propagation,adce,jump-threading,instsimplify,early-cse,%simplifycfg)" -S | FileCheck %s
 
 ; #include <math.h>
 ; #include <stdio.h>

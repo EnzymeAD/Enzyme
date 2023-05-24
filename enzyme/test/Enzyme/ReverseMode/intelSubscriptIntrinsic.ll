@@ -1,4 +1,5 @@
-; RUN: if [ %llvmver -ge 13 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -sroa -simplifycfg -instcombine -adce -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 13 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 13 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s; fi
 
 %"QNCA_a0$float*$rank1$" = type { float*, i64, i64, i64, i64, i64, [1 x { i64, i64, i64 }] }
 
@@ -40,15 +41,15 @@ declare void @__enzyme_autodiff(float (...)* noalias, %"QNCA_a0$float*$rank1$"* 
 ; CHECK-NEXT: entry:
 ; CHECK-NEXT:   %"X.addr_a0$'ipg" = getelementptr inbounds %"QNCA_a0$float*$rank1$", %"QNCA_a0$float*$rank1$"* %"X'", i64 0, i32 0
 ; CHECK-NEXT:   %"X.addr_a0$" = getelementptr inbounds %"QNCA_a0$float*$rank1$", %"QNCA_a0$float*$rank1$"* %X, i64 0, i32 0
-; CHECK-NEXT:   %"X.addr_a0$_fetch.29'ipl" = load float*, float** %"X.addr_a0$'ipg", align 1, !tbaa !0, !alias.scope !10, !noalias !13
-; CHECK-NEXT:   %"X.addr_a0$_fetch.29" = load float*, float** %"X.addr_a0$", align 1, !tbaa !0, !alias.scope !13, !noalias !10
+; CHECK-NEXT:   %"X.addr_a0$_fetch.29'ipl" = load float*, float** %"X.addr_a0$'ipg", align 1, !tbaa !0
+; CHECK-NEXT:   %"X.addr_a0$_fetch.29" = load float*, float** %"X.addr_a0$", align 1, !tbaa !0
 ; CHECK-NEXT:   %"X.dim_info$.lower_bound$" = getelementptr inbounds %"QNCA_a0$float*$rank1$", %"QNCA_a0$float*$rank1$"* %X, i64 0, i32 6, i64 0, i32 2
-; CHECK-NEXT:   %"X.dim_info$.lower_bound$[]" = tail call i64* @llvm.intel.subscript.p0i64.i64.i32.p0i64.i32(i8 0, i64 0, i32 24, i64* nonnull elementtype(i64) %"X.dim_info$.lower_bound$", i32 0) #0
-; CHECK-NEXT:   %"X.dim_info$.lower_bound$[]_fetch.30" = load i64, i64* %"X.dim_info$.lower_bound$[]", align 1, !tbaa !6, !alias.scope !13, !noalias !10
+; CHECK-NEXT:   %"X.dim_info$.lower_bound$[]" = tail call i64* @llvm.intel.subscript.p0i64.i64.i32.p0i64.i32(i8 0, i64 0, i32 24, i64* nonnull elementtype(i64) %"X.dim_info$.lower_bound$", i32 0)
+; CHECK-NEXT:   %"X.dim_info$.lower_bound$[]_fetch.30" = load i64, i64* %"X.dim_info$.lower_bound$[]", align 1, !tbaa !6
 ; CHECK-NEXT:   %0 = call float* @llvm.intel.subscript.p0f32.i64.i64.p0f32.i64(i8 0, i64 %"X.dim_info$.lower_bound$[]_fetch.30", i64 4, float* elementtype(float) %"X.addr_a0$_fetch.29'ipl", i64 1)
-; CHECK-NEXT:   %"X.addr_a0$_fetch.29[]" = tail call float* @llvm.intel.subscript.p0f32.i64.i64.p0f32.i64(i8 0, i64 %"X.dim_info$.lower_bound$[]_fetch.30", i64 4, float* elementtype(float) %"X.addr_a0$_fetch.29", i64 1) #0
-; CHECK-NEXT:   %1 = load float, float* %0, align 1, !tbaa !7, !alias.scope !15, !noalias !18
+; CHECK-NEXT:   %"X.addr_a0$_fetch.29[]" = tail call float* @llvm.intel.subscript.p0f32.i64.i64.p0f32.i64(i8 0, i64 %"X.dim_info$.lower_bound$[]_fetch.30", i64 4, float* elementtype(float) %"X.addr_a0$_fetch.29", i64 1)
+; CHECK-NEXT:   %1 = load float, float* %0, align 1, !tbaa !7
 ; CHECK-NEXT:   %2 = fadd fast float %1, %differeturn
-; CHECK-NEXT:   store float %2, float* %0, align 1, !tbaa !7, !alias.scope !15, !noalias !18
+; CHECK-NEXT:   store float %2, float* %0, align 1, !tbaa !7
 ; CHECK-NEXT:   ret void
 ; CHECK-NEXT: }

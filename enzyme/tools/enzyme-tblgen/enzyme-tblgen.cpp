@@ -387,14 +387,27 @@ bool handle(raw_ostream &os, Record *pattern, Init *resultTree,
       os << " cubcall->setCallingConv(cconv);\n";
       for (auto *attr : *cast<ListInit>(Def->getValueAsListInit("fnattrs"))) {
         auto attrDef = cast<DefInit>(attr)->getDef();
+        auto attrName = attrDef->getValueInit("name")->getAsUnquotedString();
+#if LLVM_VERSION_MAJOR >= 16
+        if (attrName == "ReadNone") {
+            os << " cubcall->setOnlyReadsMemory();\n";
+            os << " cubcall->setOnlyWritesMemory();\n";
+            continue;
+        }
+        if (attrName == "ReadOnly") {
+            os << " cubcall->setOnlyReadsMemory();\n";
+            continue;
+        }
+#endif
+
         os << "#if LLVM_VERSION_MAJOR >= 14\n"
            << " cubcall->addAttributeAtIndex(AttributeList::FunctionIndex, "
            << "Attribute::"
-           << attrDef->getValueInit("name")->getAsUnquotedString() << ");\n";
+           << attrName << ");\n";
         os << "#else\n"
            << " cubcall->addAttribute(AttributeList::FunctionIndex, "
            << "Attribute::"
-           << attrDef->getValueInit("name")->getAsUnquotedString() << ");\n";
+           << attrName << ");\n";
         os << "#endif\n";
       }
       os << " res = cubcall;\n";
@@ -918,14 +931,12 @@ void emit_helper(TGPattern &pattern, raw_ostream &os) {
   auto argTypeMap = pattern.getArgTypeMap();
 
   auto actArgs = pattern.getActiveArgs();
-  os << "  auto calledArg = called->arg_begin();\n\n";
   for (size_t i = 0; i < nameVec.size(); i++) {
     auto name = nameVec[i];
     os << "  const auto arg_" << name << " = call.getArgOperand(" << i << ");\n"
        << "  const auto type_" << name << " = arg_" << name << "->getType();\n"
        << "  const bool uncacheable_" << name
-       << " = (cacheMode ? overwritten_args[" << i << "] : false);\n"
-       << "  calledArg++;\n";
+       << " = (cacheMode ? overwritten_args[" << i << "] : false);\n";
     if (std::count(actArgs.begin(), actArgs.end(), i)) {
       os << "  const bool active_" << name << " = !gutils->isConstantValue(arg_"
          << name << ");\n";
@@ -1175,14 +1186,14 @@ llvm::SmallString<80> ValueType_helper(TGPattern &pattern, size_t actPos) {
     }
 
     if (type == argType::len) {
-      valueTypes.append("ValueType::None");
+      valueTypes.append("ValueType::Both");
     } else if (type == argType::fp) {
       auto floatName = nameVec[pos];
       if (pos == actPos) {
-        valueTypes.append("ValueType::Shadow");
+        valueTypes.append("ValueType::Both");
       } else {
         valueTypes.append((Twine("cache_") + floatName +
-                           " ? ValueType::None : ValueType::Primal")
+                           " ? ValueType::Both : ValueType::Both")
                               .str());
       }
     } else if (type == argType::vincData) {
@@ -1191,11 +1202,11 @@ llvm::SmallString<80> ValueType_helper(TGPattern &pattern, size_t actPos) {
       assert(nextType == argType::vincInc);
       const auto vecName = nameVec[pos];
       if (pos == actPos) {
-        valueTypes.append("ValueType::Shadow, ValueType::None");
+        valueTypes.append("ValueType::Both, ValueType::Both");
       } else {
         valueTypes.append(
             (Twine("cache_") + vecName +
-             " ? ValueType::None : ValueType::Primal, ValueType::None")
+             " ? ValueType::Both : ValueType::Both, ValueType::Both")
                 .str());
       }
       pos++; // extra inc, since vector cover two args (vincInc+vincData)
@@ -1425,7 +1436,7 @@ void emit_deriv_fnc(StringMap<TGPattern> &patternMap, Rule &rule,
        << "))\n"
        << "#endif\n"
        << "    {\n"
-       << "      F->addFnAttr(Attribute::ArgMemOnly);\n"
+       << "      attribute_" << dfnc_name << "(blas, F);\n"
        << "      if (byRef) {\n";
     const auto calledTypeMap = calledPattern.getArgTypeMap();
     for (size_t argPos = 0; argPos < calledTypeMap.size(); argPos++) {

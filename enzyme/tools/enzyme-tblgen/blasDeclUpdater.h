@@ -15,7 +15,11 @@ void emit_attributeBLASCaller(const std::vector<TGPattern> &blasPatterns,
 void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
   auto name = pattern.getName();
   os << "void attribute_" << name << "(BlasInfo blas, llvm::Function *F) {\n"
+     << "#if LLVM_VERSION_MAJOR >= 16\n"
+     << "  F->setOnlyAccessesArgMemory();\n"
+     << "#else\n"
      << "  F->addFnAttr(llvm::Attribute::ArgMemOnly);\n"
+     << "#endif\n"
      << "  F->addFnAttr(llvm::Attribute::NoUnwind);\n"
      << "  F->addFnAttr(llvm::Attribute::NoRecurse);\n"
      << "#if LLVM_VERSION_MAJOR >= 14\n"
@@ -37,8 +41,13 @@ void emit_attributeBLAS(TGPattern &pattern, raw_ostream &os) {
   auto argTypeMap = pattern.getArgTypeMap();
   DenseSet<size_t> mutableArgs = pattern.getMutableArgs();
 
-  if (mutableArgs.size() == 0)
+  if (mutableArgs.size() == 0) {
+    os << "#if LLVM_VERSION_MAJOR >= 16\n";
+    os << "  F->setOnlyReadsMemory();\n";
+    os << "#else\n";
     os << "  F->addFnAttr(llvm::Attribute::ReadOnly);\n";
+    os << "#endif\n";
+  }
 
   for (size_t i = 0; i < argTypeMap.size(); i++) {
     if (argTypeMap.lookup(i) == argType::vincData) {

@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -mem2reg -early-cse -simplifycfg -instsimplify -correlated-propagation -simplifycfg -adce -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=0 -enzyme -mem2reg -early-cse -simplifycfg -instsimplify -correlated-propagation -simplifycfg -adce -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=0  -passes="enzyme,function(mem2reg,early-cse,%simplifycfg,instsimplify,correlated-propagation,%simplifycfg,adce)" -S | FileCheck %s
 
 declare double @__enzyme_autodiff(i8*, ...)
 
@@ -57,21 +58,21 @@ entry:
 ; CHECK: invertb1:
 ; CHECK-NEXT:   %"g1'ipg_unwrap" = getelementptr inbounds double, double* %"a'", i32 32
 ; CHECK-NEXT:   %1 = load double, double* %"g1'ipg_unwrap", align 8
-; CHECK-NEXT:   %2 = fadd fast double %1, %11
+; CHECK-NEXT:   %2 = fadd fast double %1, %[[a11:.+]]
 ; CHECK-NEXT:   store double %2, double* %"g1'ipg_unwrap", align 8
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertb2: 
 ; CHECK-NEXT:   %"g2'ipg_unwrap" = getelementptr inbounds double, double* %"a'", i32 64
 ; CHECK-NEXT:   %3 = load double, double* %"g2'ipg_unwrap", align 8
-; CHECK-NEXT:   %4 = fadd fast double %3, %10
+; CHECK-NEXT:   %4 = fadd fast double %3, %[[a10:.+]]
 ; CHECK-NEXT:   store double %4, double* %"g2'ipg_unwrap", align 8
 ; CHECK-NEXT:   br label %invertentry
 
 ; CHECK: invertbdef:
 ; CHECK-NEXT:   %"g3'ipg_unwrap" = getelementptr inbounds double, double* %"a'", i32 128
 ; CHECK-NEXT:   %5 = load double, double* %"g3'ipg_unwrap", align 8
-; CHECK-NEXT:   %6 = fadd fast double %5, %9
+; CHECK-NEXT:   %6 = fadd fast double %5, %[[a9:.+]]
 ; CHECK-NEXT:   store double %6, double* %"g3'ipg_unwrap", align 8
 ; CHECK-NEXT:   br label %invertentry
 
@@ -105,9 +106,9 @@ entry:
 ; CHECK-NEXT:   %anot1_ = xor i1 %c1_unwrap, true
 ; CHECK-NEXT:   %bnot1_ = xor i1 %c2_unwrap, true
 ; CHECK-NEXT:   %andVal1 = and i1 %bnot1_, %anot1_
-; CHECK-NEXT:   %9 = select {{(fast )?}}i1 %c1_unwrap, double %8, double 0.000000e+00
-; CHECK-NEXT:   %10 = select {{(fast )?}}i1 %andVal1, double %8, double 0.000000e+00
-; CHECK-NEXT:   %11 = select {{(fast )?}}i1 %c2_unwrap, double %8, double 0.000000e+00
+; CHECK-NEXT:   %[[a9]] = select {{(fast )?}}i1 %c1_unwrap, double %8, double 0.000000e+00
+; CHECK-NEXT:   %[[a10]] = select {{(fast )?}}i1 %andVal1, double %8, double 0.000000e+00
+; CHECK-NEXT:   %[[a11]] = select {{(fast )?}}i1 %c2_unwrap, double %8, double 0.000000e+00
 ; CHECK-NEXT:   br i1 %c1_unwrap, label %invertbdef, label %staging
 
 ; CHECK: staging:

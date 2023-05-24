@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -print-activity-analysis -activity-analysis-func=f -activity-analysis-inactive-args -o /dev/null | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -print-activity-analysis -activity-analysis-func=f -activity-analysis-inactive-args -o /dev/null | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="print-activity-analysis" -activity-analysis-func=f -activity-analysis-inactive-args -S | FileCheck %s
 
 source_filename = "/mnt/pci4/wmdata/Enzyme/enzyme/test/ActivityAnalysis/ptr2.ll"
 

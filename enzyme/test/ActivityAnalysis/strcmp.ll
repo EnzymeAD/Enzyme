@@ -1,5 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -print-activity-analysis -activity-analysis-func=matvec -activity-analysis-inactive-args -o /dev/null | FileCheck %s
-
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -print-activity-analysis -activity-analysis-func=matvec -activity-analysis-inactive-args -o /dev/null | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -passes="print-activity-analysis" -activity-analysis-func=matvec -activity-analysis-inactive-args -S | FileCheck %s
 
 %"class.std::__cxx11::basic_string" = type { %"struct.std::__cxx11::basic_string<char>::_Alloc_hider", i64, %union.anon }
 %"struct.std::__cxx11::basic_string<char>::_Alloc_hider" = type { i8* }

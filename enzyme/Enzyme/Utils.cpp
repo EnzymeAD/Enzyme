@@ -582,7 +582,11 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
     return F;
 
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setOnlyAccessesArgMemory();
+#else
   F->addFnAttr(Attribute::ArgMemOnly);
+#endif
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
   F->addParamAttr(0, Attribute::NoCapture);
@@ -681,7 +685,11 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
     return F;
 
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setOnlyAccessesArgMemory();
+#else
   F->addFnAttr(Attribute::ArgMemOnly);
+#endif
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
   F->addParamAttr(0, Attribute::NoCapture);
@@ -690,6 +698,7 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
   F->addParamAttr(1, Attribute::ReadOnly);
 
   BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
+  BasicBlock *init = BasicBlock::Create(M.getContext(), "init.idx", F);
   BasicBlock *body = BasicBlock::Create(M.getContext(), "for.body", F);
   BasicBlock *end = BasicBlock::Create(M.getContext(), "for.end", F);
 
@@ -705,16 +714,30 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
   {
     IRBuilder<> B(entry);
     B.CreateCondBr(B.CreateICmpEQ(num, ConstantInt::get(num->getType(), 0)),
-                   end, body);
+                   end, init);
   }
 
   {
+    IRBuilder<> B2(init);
+    B2.setFastMathFlags(getFast());
+    Value *a = B2.CreateNSWSub(ConstantInt::get(num->getType(), 1), num, "a");
+    Value *negidx = B2.CreateNSWMul(a, stride, "negidx");
+    // Value *negidx =
+    //     B2.CreateNSWAdd(b, ConstantInt::get(num->getType(), 1), "negidx");
+    Value *isneg =
+        B2.CreateICmpSLT(stride, ConstantInt::get(num->getType(), 0), "is.neg");
+    Value *startidx = B2.CreateSelect(
+        isneg, negidx, ConstantInt::get(num->getType(), 0), "startidx");
+    B2.CreateBr(body);
+    //}
+
+    //{
     IRBuilder<> B(body);
     B.setFastMathFlags(getFast());
     PHINode *idx = B.CreatePHI(num->getType(), 2, "idx");
     PHINode *sidx = B.CreatePHI(num->getType(), 2, "sidx");
-    idx->addIncoming(ConstantInt::get(num->getType(), 0), entry);
-    sidx->addIncoming(ConstantInt::get(num->getType(), 0), entry);
+    idx->addIncoming(ConstantInt::get(num->getType(), 0), init);
+    sidx->addIncoming(startidx, init);
 
 #if LLVM_VERSION_MAJOR > 7
     Value *dsti = B.CreateInBoundsGEP(elementType, dst, idx, "dst.i");
@@ -744,8 +767,8 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
     }
 
     Value *next =
-        B.CreateNUWAdd(idx, ConstantInt::get(num->getType(), 1), "idx.next");
-    Value *snext = B.CreateNUWAdd(sidx, stride, "sidx.next");
+        B.CreateNSWAdd(idx, ConstantInt::get(num->getType(), 1), "idx.next");
+    Value *snext = B.CreateNSWAdd(sidx, stride, "sidx.next");
     idx->addIncoming(next, body);
     sidx->addIncoming(snext, body);
     B.CreateCondBr(B.CreateICmpEQ(num, next), end, body);
@@ -803,7 +826,11 @@ Function *getOrInsertCheckedFree(Module &M, CallInst *call, Type *Ty,
     return F;
 
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setOnlyAccessesArgMemory();
+#else
   F->addFnAttr(Attribute::ArgMemOnly);
+#endif
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
 
@@ -1109,7 +1136,11 @@ llvm::Value *getOrInsertOpFloatSum(llvm::Module &M, llvm::Type *OpPtr,
 #endif
 
   F->setLinkage(Function::LinkageTypes::InternalLinkage);
+#if LLVM_VERSION_MAJOR >= 16
+  F->setOnlyAccessesArgMemory();
+#else
   F->addFnAttr(Attribute::ArgMemOnly);
+#endif
   F->addFnAttr(Attribute::NoUnwind);
   F->addFnAttr(Attribute::AlwaysInline);
   F->addParamAttr(0, Attribute::NoCapture);
@@ -1838,23 +1869,79 @@ bool writesToMemoryReadBy(llvm::AAResults &AA, llvm::TargetLibraryInfo &TLI,
 }
 
 Function *GetFunctionFromValue(Value *fn) {
-  while (auto ci = dyn_cast<CastInst>(fn)) {
-    fn = ci->getOperand(0);
-  }
-  while (auto ci = dyn_cast<BlockAddress>(fn)) {
-    fn = ci->getFunction();
-  }
-  while (auto ci = dyn_cast<ConstantExpr>(fn)) {
-    fn = ci->getOperand(0);
-  }
-  if (!isa<Function>(fn)) {
-    return nullptr;
+  while (!isa<Function>(fn)) {
+    if (auto ci = dyn_cast<CastInst>(fn)) {
+      fn = ci->getOperand(0);
+      continue;
+    }
+    if (auto ci = dyn_cast<ConstantExpr>(fn)) {
+      if (ci->isCast()) {
+        fn = ci->getOperand(0);
+        continue;
+      }
+    }
+    if (auto ci = dyn_cast<BlockAddress>(fn)) {
+      fn = ci->getFunction();
+      continue;
+    }
+    if (auto *GA = dyn_cast<GlobalAlias>(fn)) {
+      fn = GA->getAliasee();
+      continue;
+    }
+    if (auto *Call = dyn_cast<CallInst>(fn)) {
+      if (auto F = Call->getCalledFunction()) {
+        SmallPtrSet<Value *, 1> ret;
+        for (auto &BB : *F) {
+          if (auto RI = dyn_cast<ReturnInst>(BB.getTerminator())) {
+            ret.insert(RI->getReturnValue());
+          }
+        }
+        if (ret.size() == 1) {
+          auto val = *ret.begin();
+          if (isa<Constant>(val)) {
+            fn = val;
+            continue;
+          }
+          if (auto arg = dyn_cast<Argument>(val)) {
+            fn = Call->getArgOperand(arg->getArgNo());
+            continue;
+          }
+        }
+      }
+    }
+    if (auto *Call = dyn_cast<InvokeInst>(fn)) {
+      if (auto F = Call->getCalledFunction()) {
+        SmallPtrSet<Value *, 1> ret;
+        for (auto &BB : *F) {
+          if (auto RI = dyn_cast<ReturnInst>(BB.getTerminator())) {
+            ret.insert(RI->getReturnValue());
+          }
+        }
+        if (ret.size() == 1) {
+          auto val = *ret.begin();
+          if (isa<Constant>(val)) {
+            fn = val;
+            continue;
+          }
+          if (auto arg = dyn_cast<Argument>(val)) {
+            fn = Call->getArgOperand(arg->getArgNo());
+            continue;
+          }
+        }
+      }
+    }
+    break;
   }
 
-  return cast<Function>(fn);
+  return dyn_cast<Function>(fn);
 }
 
-llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in) {
+#if LLVM_VERSION_MAJOR >= 16
+std::optional<BlasInfo> extractBLAS(llvm::StringRef in)
+#else
+llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in)
+#endif
+{
   llvm::Twine floatType[] = {"s", "d"}; // c, z
   llvm::Twine extractable[] = {"dot", "scal"};
   llvm::Twine prefixes[] = {"" /*Fortran*/, "cblas_", "cublas_"};
@@ -1864,18 +1951,18 @@ llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in) {
       for (auto p : prefixes) {
         for (auto s : suffixes) {
           if (in == (p + t + f + s).str()) {
-            return llvm::Optional<BlasInfo>(BlasInfo{
+            return BlasInfo{
                 t.getSingleStringRef(),
                 p.getSingleStringRef(),
                 s.getSingleStringRef(),
                 f.getSingleStringRef(),
-            });
+            };
           }
         }
       }
     }
   }
-  return llvm::NoneType();
+  return {};
 }
 
 llvm::Constant *getUndefinedValueForType(llvm::Type *T, bool forceZero) {

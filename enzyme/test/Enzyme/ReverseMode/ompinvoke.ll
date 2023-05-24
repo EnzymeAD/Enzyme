@@ -1,4 +1,5 @@
-; RUN: if [ %llvmver -ge 11 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=1 -mem2reg -instsimplify -adce -simplifycfg -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 11 ] && [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=1 -enzyme -S | FileCheck %s; fi
+; RUN: if [ %llvmver -ge 11 ]; then %opt < %s %newLoadEnzyme -enzyme-preopt=1 -passes="enzyme" -S | FileCheck %s; fi
 
 source_filename = "/home/ubuntu/LULESH-MPI-RAJA/lulesh-v2.0/RAJA/lulesh.cpp"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"

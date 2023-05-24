@@ -18,7 +18,9 @@
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Transforms/DialectConversion.h"
-
+#if LLVM_VERSION_MAJOR >= 16
+#include <optional>
+#endif
 using namespace mlir;
 using llvm::errs;
 
@@ -75,7 +77,11 @@ void updatePrimalFunc(FunctionOpInterface fn,
 }
 
 void convertMemRefArgument(Location loc, Value primal,
+#if LLVM_VERSION_MAJOR >= 16
+                           std::optional<Value> shadow,
+#else
                            llvm::Optional<Value> shadow,
+#endif
                            Value enzyme_const_addr, int64_t rank, OpBuilder &b,
                            SmallVectorImpl<Value> &operands) {
   MemRefDescriptor memrefPrimal(primal);

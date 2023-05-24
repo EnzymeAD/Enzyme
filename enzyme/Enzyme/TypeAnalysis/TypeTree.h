@@ -906,8 +906,8 @@ public:
 
     if (SeqSize > 0) {
       // check pointer abilities from before
-      {
-        std::vector<int> tmp(Seq.begin(), Seq.end() - 1);
+      for (size_t i = 0; i < SeqSize; ++i) {
+        std::vector<int> tmp(Seq.begin(), Seq.end() - 1 - i);
         auto found = mapping.find(tmp);
         if (found != mapping.end()) {
           if (!(found->second == BaseType::Pointer ||

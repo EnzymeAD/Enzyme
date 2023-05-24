@@ -1,4 +1,4 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -early-cse -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -early-cse -S | FileCheck %s; fi
 ; RUN: %opt < %s %newLoadEnzyme -passes="enzyme,function(early-cse)" -enzyme-preopt=false -S | FileCheck %s
 
 define { double, double } @squared(double %x) {

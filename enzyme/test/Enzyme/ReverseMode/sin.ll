@@ -1,4 +1,5 @@
-; RUN: %opt < %s %loadEnzyme -enzyme -enzyme-preopt=false -O3 -S | FileCheck %s
+; RUN: if [ %llvmver -lt 16 ]; then %opt < %s %loadEnzyme -enzyme-preopt=false -enzyme -mem2reg -instsimplify -simplifycfg -S | FileCheck %s; fi
+; RUN: %opt < %s %newLoadEnzyme -enzyme-preopt=false -passes="enzyme,function(mem2reg,instsimplify,%simplifycfg)" -S | FileCheck %s
 
 ; Function Attrs: nounwind readnone uwtable
 define double @tester(double %x) {
@@ -22,8 +23,9 @@ declare double @llvm.sin.f64(double)
 ; Function Attrs: nounwind
 declare double @__enzyme_autodiff(double (double)*, ...)
 
-; CHECK: define double @test_derivative(double %x)
+; CHECK: define internal { double } @diffetester(double %x, double %differeturn) 
 ; CHECK-NEXT: entry:
-; CHECK-NEXT:   %0 = tail call fast double @llvm.cos.f64(double %x)
-; CHECK-NEXT:   ret double %0
-; CHECK-NEXT: }
+; CHECK-NEXT:   %0 = call fast double @llvm.cos.f64(double %x)
+; CHECK-NEXT:   %1 = fmul fast double %differeturn, %0
+; CHECK-NEXT:   %2 = insertvalue { double } undef, double %1, 0
+; CHECK-NEXT:   ret { double } %2

@@ -64,15 +64,35 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
     return false;
   }
 
-  if (isa<LoadInst>(user)) {
-    if (EnzymeRuntimeActivityCheck &&
-        TR.query(const_cast<llvm::Instruction *>(user))[{-1}].isFloat() &&
-        !gutils->isConstantInstruction(const_cast<llvm::Instruction *>(user))) {
-      if (EnzymePrintDiffUse)
-        llvm::errs() << " Need direct primal of " << *val
-                     << " in reverse from runtime active load " << *user
-                     << "\n";
-      return true;
+  if (auto LI = dyn_cast<LoadInst>(user)) {
+    if (EnzymeRuntimeActivityCheck) {
+      auto vd = TR.query(const_cast<llvm::Instruction *>(user));
+      if (!vd.isKnown()) {
+        auto ET = LI->getType();
+        // It verbatim needs to replicate the same behavior as adjointgenerator.
+        // From reverse mode type analysis
+        // (https://github.com/EnzymeAD/Enzyme/blob/194875cbccd73d63cacfefbfa85c1f583c2fa1fe/enzyme/Enzyme/AdjointGenerator.h#L556)
+        if (looseTypeAnalysis || true) {
+          vd = defaultTypeTreeForLLVM(ET, const_cast<LoadInst *>(LI));
+        }
+      }
+      auto &DL = gutils->newFunc->getParent()->getDataLayout();
+      auto LoadSize = (DL.getTypeSizeInBits(LI->getType()) + 1) / 8;
+      bool hasFloat = true;
+      for (ssize_t i = -1; i < (ssize_t)LoadSize; ++i) {
+        if (vd[{(int)i}].isFloat()) {
+          hasFloat = true;
+          break;
+        }
+      }
+      if (hasFloat && !gutils->isConstantInstruction(
+                          const_cast<llvm::Instruction *>(user))) {
+        if (EnzymePrintDiffUse)
+          llvm::errs() << " Need direct primal of " << *val
+                       << " in reverse from runtime active load " << *user
+                       << "\n";
+        return true;
+      }
     }
     return false;
   }
@@ -357,9 +377,18 @@ bool DifferentialUseAnalysis::is_use_directly_needed_in_reverse(
   if (auto CI = dyn_cast<CallInst>(user)) {
     auto funcName = getFuncNameFromCall(const_cast<CallInst *>(CI));
 
-    llvm::Optional<BlasInfo> blasMetaData = extractBLAS(funcName);
-    if (blasMetaData.hasValue()) {
+    auto blasMetaData = extractBLAS(funcName);
+#if LLVM_VERSION_MAJOR >= 16
+    if (blasMetaData.has_value())
+#else
+    if (blasMetaData.hasValue())
+#endif
+    {
+#if LLVM_VERSION_MAJOR >= 16
+      BlasInfo blas = blasMetaData.value();
+#else
       BlasInfo blas = blasMetaData.getValue();
+#endif
 #include "BlasDiffUse.inc"
     }
 

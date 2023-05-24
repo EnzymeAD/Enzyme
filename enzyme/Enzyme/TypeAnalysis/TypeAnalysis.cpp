@@ -2406,39 +2406,8 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
           Type *FT = nullptr;
           if (!(FT = Ret.IsAllFloat(size)))
             continue;
-          // If & against 0b10000000000, the result is a float
-          bool validXor = false;
-          if (auto CI = dyn_cast_or_null<ConstantInt>(Args[i])) {
-            if (dl.getTypeSizeInBits(FT) != dl.getTypeSizeInBits(CI->getType()))
-              continue;
-            if (CI->isZero()) {
-              validXor = true;
-            } else if (CI->isNegative() && CI->isMinValue(/*signed*/ true)) {
-              validXor = true;
-            }
-          } else if (auto CV = dyn_cast_or_null<ConstantVector>(Args[i])) {
-            validXor = true;
-            if (dl.getTypeSizeInBits(FT) !=
-                dl.getTypeSizeInBits(CV->getOperand(i)->getType()))
-              continue;
-            for (size_t i = 0, end = CV->getNumOperands(); i < end; ++i) {
-              auto CI = dyn_cast<ConstantInt>(CV->getOperand(i))->getValue();
-              if (!(CI.isNullValue() || CI.isMinSignedValue())) {
-                validXor = false;
-              }
-            }
-          } else if (auto CV = dyn_cast_or_null<ConstantDataVector>(Args[i])) {
-            validXor = true;
-            if (dl.getTypeSizeInBits(FT) !=
-                dl.getTypeSizeInBits(CV->getElementType()))
-              continue;
-            for (size_t i = 0, end = CV->getNumElements(); i < end; ++i) {
-              auto CI = CV->getElementAsAPInt(i);
-              if (!(CI.isNullValue() || CI.isMinSignedValue())) {
-                validXor = false;
-              }
-            }
-          }
+          // If ^ against 0b10000000000, the result is a float
+          bool validXor = containsOnlyAtMostTopBit(Args[i], FT, dl);
           if (validXor) {
             ((i == 0) ? RHS : LHS) |= TypeTree(FT).Only(-1, nullptr);
           }
@@ -2578,39 +2547,8 @@ void TypeAnalyzer::visitBinaryOperation(const DataLayout &dl, llvm::Type *T,
           Type *FT;
           if (!(FT = (i == 0 ? RHS : LHS).IsAllFloat(size)))
             continue;
-          // If & against 0b10000000000, the result is a float
-          bool validXor = false;
-          if (auto CI = dyn_cast_or_null<ConstantInt>(Args[i])) {
-            if (dl.getTypeSizeInBits(FT) != dl.getTypeSizeInBits(CI->getType()))
-              continue;
-            if (CI->isZero()) {
-              validXor = true;
-            } else if (CI->isNegative() && CI->isMinValue(/*signed*/ true)) {
-              validXor = true;
-            }
-          } else if (auto CV = dyn_cast_or_null<ConstantVector>(Args[i])) {
-            validXor = true;
-            if (dl.getTypeSizeInBits(FT) !=
-                dl.getTypeSizeInBits(CV->getOperand(i)->getType()))
-              continue;
-            for (size_t i = 0, end = CV->getNumOperands(); i < end; ++i) {
-              auto CI = dyn_cast<ConstantInt>(CV->getOperand(i))->getValue();
-              if (!(CI.isNullValue() || CI.isMinSignedValue())) {
-                validXor = false;
-              }
-            }
-          } else if (auto CV = dyn_cast_or_null<ConstantDataVector>(Args[i])) {
-            validXor = true;
-            if (dl.getTypeSizeInBits(FT) !=
-                dl.getTypeSizeInBits(CV->getElementType()))
-              continue;
-            for (size_t i = 0, end = CV->getNumElements(); i < end; ++i) {
-              auto CI = CV->getElementAsAPInt(i);
-              if (!(CI.isNullValue() || CI.isMinSignedValue())) {
-                validXor = false;
-              }
-            }
-          }
+          // If ^ against 0b10000000000, the result is a float
+          bool validXor = containsOnlyAtMostTopBit(Args[i], FT, dl);
           if (validXor) {
             Result = ConcreteType(FT);
           }
@@ -3719,11 +3657,18 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
   if (ci) {
     StringRef funcName = getFuncNameFromCall(&call);
 
-    llvm::Optional<BlasInfo> blasMetaData = extractBLAS(funcName);
+    auto blasMetaData = extractBLAS(funcName);
+#if LLVM_VERSION_MAJOR >= 16
+    if (blasMetaData.has_value()) {
+      BlasInfo blas = blasMetaData.value();
+#include "BlasTA.inc"
+    }
+#else
     if (blasMetaData.hasValue()) {
       BlasInfo blas = blasMetaData.getValue();
 #include "BlasTA.inc"
     }
+#endif
 
     // When compiling Enzyme against standard LLVM, and not Intel's
     // modified version of LLVM, the intrinsic `llvm.intel.subscript` is
@@ -4717,7 +4662,8 @@ void TypeAnalyzer::visitCallInst(CallInst &call) {
               .Only(-1, &call),
           &call);
     }
-    if (funcName == "__fd_sincos_1") {
+    if (funcName == "__fd_sincos_1" || funcName == "__fd_sincos_1f" ||
+        funcName == "__fd_sincos_1l") {
       updateAnalysis(call.getArgOperand(0),
                      TypeTree(ConcreteType(call.getArgOperand(0)->getType()))
                          .Only(-1, &call),
