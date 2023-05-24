@@ -673,8 +673,12 @@ Function *getOrInsertMemcpyStridedBlas(Module &M, PointerType *T, Type *IT,
       (blas.prefix + blas.floatType + "copy" + blas.suffix).str();
   FunctionType *FT = FunctionType::get(Type::getVoidTy(M.getContext()),
                                        {IT, T, IT, T, IT}, false);
+#if LLVM_VERSION_MAJOR >= 9
   Function *dmemcpy =
       cast<Function>(M.getOrInsertFunction(copy_name, FT).getCallee());
+#else
+  Function *dmemcpy = cast<Function>(M.getOrInsertFunction(copy_name, FT));
+#endif
   return dmemcpy;
 }
 
