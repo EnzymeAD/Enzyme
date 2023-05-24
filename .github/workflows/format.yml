@@ -9,8 +9,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
-    - uses: DoozyX/clang-format-lint-action@v0.15
+    - uses: DoozyX/clang-format-lint-action@v0.16.2
       with:
         source: 'enzyme'
         exclude: 'enzyme/Enzyme/SCEV enzyme/BCLoad enzyme/benchmarks enzyme/test'
-        clangFormatVersion: 12
+        clangFormatVersion: 16
