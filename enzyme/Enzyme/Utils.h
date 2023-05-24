@@ -603,12 +603,29 @@ static inline bool isCertainPrint(const llvm::StringRef name) {
   return false;
 }
 
+struct BlasInfo {
+  llvm::StringRef floatType;
+  llvm::StringRef prefix;
+  llvm::StringRef suffix;
+  llvm::StringRef function;
+};
+
+#if LLVM_VERSION_MAJOR >= 16
+std::optional<BlasInfo> extractBLAS(llvm::StringRef in);
+#else
+llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in);
+#endif
+
 /// Create function for type that performs the derivative memcpy on floating
 /// point memory
 llvm::Function *getOrInsertDifferentialFloatMemcpy(
     llvm::Module &M, llvm::Type *T, unsigned dstalign, unsigned srcalign,
     unsigned dstaddr, unsigned srcaddr, unsigned bitwidth);
 
+/// Create function for type that performs memcpy with a stride using blas copy
+llvm::Function *getOrInsertMemcpyStridedBlas(llvm::Module &M,
+                                             llvm::PointerType *T,
+                                             llvm::Type *IT, BlasInfo blas);
 /// Create function for type that performs memcpy with a stride
 llvm::Function *getOrInsertMemcpyStrided(llvm::Module &M, llvm::PointerType *T,
                                          llvm::Type *IT, unsigned dstalign,
@@ -1469,19 +1486,6 @@ static inline bool isNoCapture(const llvm::CallInst *call, size_t idx) {
 }
 
 void attributeKnownFunctions(llvm::Function &F);
-
-struct BlasInfo {
-  llvm::StringRef floatType;
-  llvm::StringRef prefix;
-  llvm::StringRef suffix;
-  llvm::StringRef function;
-};
-
-#if LLVM_VERSION_MAJOR >= 16
-std::optional<BlasInfo> extractBLAS(llvm::StringRef in);
-#else
-llvm::Optional<BlasInfo> extractBLAS(llvm::StringRef in);
-#endif
 
 llvm::Constant *getUndefinedValueForType(llvm::Type *T, bool forceZero = false);
 

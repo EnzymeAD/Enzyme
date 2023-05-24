@@ -149,23 +149,14 @@ void emit_cache_for_reverse(TGPattern &pattern, raw_ostream &os) {
     assert(typeMap.lookup(argIdx+1) == argType::vincInc);
     auto vecName = nameVec[argIdx];
     auto incName = nameVec[argIdx+1];
-//    auto copy_call = gutils->oldFunc->getParent()->getOrInsertFunction(
-//       name, fpType,
-//  type_n, type_x, type_incx, type_x, type_incx);
     // TODO: remove last hardcoded len_n usages to support blas lv2/3 
     os
 << "    if (cache_" << vecName << ") {\n"
-<< "      std::string copy_name = (blas.prefix + blas.floatType + \"copy\" + blas.suffix).str();\n"
-<< "      auto dmemcpy = gutils->oldFunc->getParent()->getOrInsertFunction(\n"
-<< "            copy_name, BuilderZ.getVoidTy(), intType, type_x, intType, type_x, intType);\n"
-//<< "      auto dmemcpy = getOrInsertMemcpyStrided(\n"
-//<< "          *gutils->oldFunc->getParent(), cast<PointerType>(castvals[" << i << "]),\n"
-//<< "          intType, 0, 0);\n"
+<< "      Function *dmemcpy = getOrInsertMemcpyStridedBlas(*gutils->oldFunc->getParent(), cast<PointerType>(castvals[" << i << "]),\n"
+<< "          intType, blas);\n"
 << "      auto malins = CreateAllocation(BuilderZ, fpType, len_n);\n"
 << "      Value *arg = BuilderZ.CreateBitCast(malins, castvals[" << i << "]);\n"
-<< "      Value *args[5] = {len_n, arg_" << vecName << ", " << incName << ", arg, ConstantInt::get(intType, 1)};\n"
-//<< "                         gutils->getNewFromOriginal(arg_" << vecName << "),\n"
-//<< "                         len_n, " << incName << "};\n"
+<< "      Value *args[5] = {len_n, gutils->getNewFromOriginal(arg_" << vecName << "), " << incName << ", arg, ConstantInt::get(intType, 1)};\n"
 << "      if (args[1]->getType()->isIntegerTy())\n"
 << "        args[1] = BuilderZ.CreateIntToPtr(args[1], castvals[" << i << "]);\n"
 << "      BuilderZ.CreateCall(dmemcpy, args,\n"

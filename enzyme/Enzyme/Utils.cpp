@@ -664,6 +664,17 @@ Function *getOrInsertDifferentialFloatMemcpy(Module &M, Type *elementType,
   return F;
 }
 
+Function *getOrInsertMemcpyStridedBlas(Module &M, PointerType *T, Type *IT,
+                                       BlasInfo blas) {
+  std::string copy_name =
+      (blas.prefix + blas.floatType + "copy" + blas.suffix).str();
+  FunctionType *FT = FunctionType::get(Type::getVoidTy(M.getContext()),
+                                       {IT, T, IT, T, IT}, false);
+  Function *dmemcpy =
+      cast<Function>(M.getOrInsertFunction(copy_name, FT).getCallee());
+  return dmemcpy;
+}
+
 Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
                                    unsigned dstalign, unsigned srcalign) {
   Type *elementType = T->getPointerElementType();
