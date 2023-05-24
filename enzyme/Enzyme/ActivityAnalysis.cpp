@@ -507,10 +507,6 @@ bool ActivityAnalyzer::isFunctionArgumentConstant(CallInst *CI, Value *val) {
       CI->getArgOperand(0) != val && CI->getArgOperand(1) != val)
     return true;
 
-  if ((F->hasFnAttribute("enzyme_sample") || CI->hasFnAttr("enzyme_sample")) &&
-      CI->getArgOperand(0) == val)
-    return true;
-
   // only the float arg input is potentially active
   if (Name == "frexp" || Name == "frexpf" || Name == "frexpl") {
     return val != CI->getOperand(0);
