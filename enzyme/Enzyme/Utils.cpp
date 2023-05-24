@@ -66,7 +66,7 @@ LLVMValueRef (*EnzymeSanitizeDerivatives)(LLVMValueRef, LLVMValueRef toset,
 
 extern llvm::cl::opt<bool> EnzymeZeroCache;
 llvm::cl::opt<bool>
-    EnzymeBlasCopy("enzyme-blas-copy", cl::init(false), cl::Hidden,
+    EnzymeBlasCopy("enzyme-blas-copy", cl::init(true), cl::Hidden,
                    cl::desc("Use blas copy calls to cache vectors"));
 llvm::cl::opt<bool>
     EnzymeFastMath("enzyme-fast-math", cl::init(true), cl::Hidden,
