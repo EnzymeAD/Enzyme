@@ -29,8 +29,6 @@
 #include "GradientUtils.h"
 #include "LibraryFuncs.h"
 
-#include "llvm/ADT/Triple.h"
-
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -104,8 +102,9 @@
 #include "llvm/Transforms/Utils/Local.h"
 
 #include "llvm/IR/LegacyPassManager.h"
+#if LLVM_VERSION_MAJOR <= 16
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
-
+#endif
 #include "llvm/Analysis/ScalarEvolutionAliasAnalysis.h"
 
 #include "CacheUtility.h"

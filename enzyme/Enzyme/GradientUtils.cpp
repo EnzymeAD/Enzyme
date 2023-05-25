@@ -32,8 +32,6 @@
 
 #include "GradientUtils.h"
 #include "MustExitScalarEvolution.h"
-#include "SCEV/ScalarEvolution.h"
-#include "SCEV/ScalarEvolutionExpander.h"
 #include "Utils.h"
 
 #include "DifferentialUseAnalysis.h"
@@ -52,7 +50,6 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/Triple.h"
 
 #include "llvm/Support/AMDGPUMetadata.h"
 #include "llvm/Support/Casting.h"
@@ -8512,7 +8509,9 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
 #if LLVM_VERSION_MAJOR > 6
       case Intrinsic::dbg_label:
 #endif
-      case Intrinsic::dbg_addr:
+#if LLVM_VERSION_MAJOR <= 16
+  case llvm::Intrinsic::dbg_addr:
+#endif
       case Intrinsic::lifetime_end:
         break;
       case Intrinsic::memset: {

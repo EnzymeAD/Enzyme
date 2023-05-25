@@ -29,8 +29,10 @@
 #include <set>
 
 #if LLVM_VERSION_MAJOR >= 16
+#define private public
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
+#undef private
 #else
 #include "SCEV/ScalarEvolution.h"
 #include "SCEV/ScalarEvolutionExpander.h"

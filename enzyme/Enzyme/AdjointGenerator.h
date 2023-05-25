@@ -3800,7 +3800,9 @@ public:
 #if LLVM_VERSION_MAJOR > 6
       case Intrinsic::dbg_label:
 #endif
-      case Intrinsic::dbg_addr:
+#if LLVM_VERSION_MAJOR <= 16
+      case llvm::Intrinsic::dbg_addr:
+#endif
       case Intrinsic::lifetime_start:
       case Intrinsic::assume:
       case Intrinsic::fabs:
@@ -3918,7 +3920,9 @@ public:
 #if LLVM_VERSION_MAJOR > 6
       case Intrinsic::dbg_label:
 #endif
-      case Intrinsic::dbg_addr:
+#if LLVM_VERSION_MAJOR <= 16
+      case llvm::Intrinsic::dbg_addr:
+#endif
       case Intrinsic::floor:
       case Intrinsic::ceil:
       case Intrinsic::trunc:
