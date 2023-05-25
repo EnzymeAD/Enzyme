@@ -2911,12 +2911,7 @@ extern cl::opt<unsigned> SetLicmMssaOptCap;
 #endif
 #endif
 
-extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
-llvmGetPassPluginInfo() {
-  return {
-      LLVM_PLUGIN_API_VERSION, "EnzymeNewPM", "v0.1",
-      [](llvm::PassBuilder &PB) {
-#ifdef ENZYME_RUNPASS
+void augmentPassBuilder(llvm::PassBuilder &PB) {
 #if LLVM_VERSION_MAJOR < 14
         using OptimizationLevel = llvm::PassBuilder::OptimizationLevel;
 #endif
@@ -3354,6 +3349,15 @@ llvmGetPassPluginInfo() {
         };
         PB.registerFullLinkTimeOptimizationEarlyEPCallback(loadLTO);
 #endif
+}
+
+extern "C" ::llvm::PassPluginLibraryInfo LLVM_ATTRIBUTE_WEAK
+llvmGetPassPluginInfo() {
+  return {
+      LLVM_PLUGIN_API_VERSION, "EnzymeNewPM", "v0.1",
+      [](llvm::PassBuilder &PB) {
+#ifdef ENZYME_RUNPASS
+        augmentPassBuilder(PB);
 #endif
         PB.registerPipelineParsingCallback(
             [](llvm::StringRef Name, llvm::ModulePassManager &MPM,
