@@ -10,8 +10,7 @@ package(
 
 cc_binary(
     name="enzyme-tblgen",
-    srcs=["tools/enzyme-tblgen/enzyme-tblgen.cpp"]
-    hdrs = glob(["tools/enzyme-tblgen/*.h"]),
+    srcs=["tools/enzyme-tblgen/enzyme-tblgen.cpp"],
 )
 gentbl(
     name = "derivatives",
@@ -21,21 +20,18 @@ gentbl(
     )],
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/targets/InstructionDerivatives.td",
+    td_srcs = [],
     deps = [
         "@llvm-project//llvm:TableGen",
     ]
 )
 
-
-
-
-
 cc_library(
-    name = "Enzyme",
+    name = "EnzymeStatic",
     srcs = glob(["Enzyme/*.cpp", "Enzyme/TypeAnalysis/*.cpp", "Enzyme/Clang/EnzymeClang.cpp"]),
     hdrs = glob(["Enzyme/*.h", "Enzyme/TypeAnalysis/*.h"]),
     data = ["@llvm-project//clang:builtin_headers_gen"],
-    copts = ["-DENZYME_RUNPASS=1"]
+    copts = ["-DENZYME_RUNPASS=1"],
     deps = [
         "@llvm-project//clang:ast",
         "@llvm-project//clang:basic",
