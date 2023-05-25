@@ -11,6 +11,9 @@ package(
 cc_binary(
     name="enzyme-tblgen",
     srcs=["tools/enzyme-tblgen/enzyme-tblgen.cpp"],
+    deps = [
+        "@llvm-project//llvm:Core",
+    ]
 )
 gentbl(
     name = "derivatives",
