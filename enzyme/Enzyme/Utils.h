@@ -627,6 +627,10 @@ llvm::Function *getOrInsertDifferentialFloatMemcpy(
     unsigned dstaddr, unsigned srcaddr, unsigned bitwidth);
 
 /// Create function for type that performs memcpy with a stride using blas copy
+llvm::Function *getOrInsertMemcpyStridedLapack(llvm::Module &M,
+                                             llvm::PointerType *T,
+                                             llvm::Type *IT, BlasInfo blas);
+/// Create function for type that performs memcpy with a stride using blas copy
 llvm::Function *getOrInsertMemcpyStridedBlas(llvm::Module &M,
                                              llvm::PointerType *T,
                                              llvm::Type *IT, BlasInfo blas,
@@ -635,10 +639,10 @@ llvm::Function *getOrInsertMemcpyStridedBlas(llvm::Module &M,
 llvm::Function *getOrInsertMemcpyStrided(llvm::Module &M, llvm::PointerType *T,
                                          llvm::Type *IT, unsigned dstalign,
                                          unsigned srcalign);
-/// Create function for type that performs memcpy with a stride
-llvm::Function *getOrInsertMemcpyMat(llvm::Module &M, llvm::PointerType *T,
-                                     llvm::Type *IT, unsigned M, unsigned N,
-                                     unsigned LDA);
+///// Create function for type that performs memcpy with a stride
+//llvm::Function *getOrInsertMemcpyMat(llvm::Module &M, llvm::PointerType *T,
+//                                     llvm::Type *IT, unsigned M, unsigned N,
+//                                     unsigned LDA);
 
 /// Create function for type that performs the derivative memmove on floating
 /// point memory
