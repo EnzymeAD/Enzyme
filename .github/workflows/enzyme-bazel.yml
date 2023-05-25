@@ -1,0 +1,55 @@
+name: Bazel
+
+on:
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+
+jobs:
+  build-linux:
+    name: Bazel ${{ matrix.build }} ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        build: ["Release"]
+        llbuild: ["Release"]
+        os: [openstack22]
+  
+    timeout-minutes: 500 
+    steps:
+    - name: add llvm 
+      run: |
+          sudo rm -f /etc/apt/sources.list.d/*llvm*.list
+          sudo apt-get update
+          sudo apt-get install -y ninja-build git autoconf cmake gcc g++ libtool gfortran python3 python3-dev 
+    - uses: actions/checkout@v3
+    - uses: actions/checkout@v3
+      with:
+        repository: 'llvm/llvm-project'
+        path: 'llvm'
+        submodules: true
+
+    - name: Cache LLVM
+      id: cache-llvm
+      uses: actions/cache@v2
+      with:
+        path: llvm-build
+        key: ${{ matrix.llbuild }}-${{ matrix.os }}-llvm-${{ hashFiles('llvm/.git/HEAD') }}
+    
+    - name: LLVM build
+      if: steps.llvm-mlir.outputs.cache-hit != 'true'
+      run: |
+        mkdir llvm-build
+        cd llvm-build
+        cmake ../llvm/llvm -GNinja -DLLVM_ENABLE_PROJECTS="llvm;clang;openmp" -DCMAKE_BUILD_TYPE=${{ matrix.llbuild }} -DLLVM_ENABLE_ASSERTIONS=ON -DLLVM_TARGETS_TO_BUILD=X86 -DLLVM_PARALLEL_LINK_JOBS=2
+        ninja -j2
+    
+    - name: cmake
+      run: |
+          cd enzyme
+          bazel build 
