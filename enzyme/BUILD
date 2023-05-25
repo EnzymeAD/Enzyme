@@ -35,6 +35,58 @@ gentbl(
         ":enzyme-tblgen",
     ],
 )
+gentbl(
+    name = "blas-derivatives",
+    tbl_outs = [(
+        "-gen-blas-derivatives",
+        "BlasDerivatives.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/targets/InstructionDerivatives.td",
+    td_srcs = ["Enzyme/targets/BlasDerivatives.td"],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+gentbl(
+    name = "blas-attributor",
+    tbl_outs = [(
+        "-update-blas-declarations",
+        "BlasAttributor.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/targets/InstructionDerivatives.td",
+    td_srcs = ["Enzyme/targets/BlasDerivatives.td"],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+gentbl(
+    name = "blas-typeanalysis",
+    tbl_outs = [(
+        "-gen-blas-typeanalysis",
+        "BlasTA.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/targets/InstructionDerivatives.td",
+    td_srcs = ["Enzyme/targets/BlasDerivatives.td"],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
+gentbl(
+    name = "blas-diffuseanalysis",
+    tbl_outs = [(
+        "-gen-blas-diffuseanalysis",
+        "BlasDiffUse.inc",
+    )],
+    tblgen = ":enzyme-tblgen",
+    td_file = "Enzyme/targets/InstructionDerivatives.td",
+    td_srcs = ["Enzyme/targets/BlasDerivatives.td"],
+    deps = [
+        ":enzyme-tblgen",
+    ],
+)
 
 cc_library(
     name = "EnzymeStatic",
@@ -53,7 +105,11 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:IRReader",
-        ":derivatives"
+        ":derivatives",
+        ":blas-derivatives",
+        ":blas-attributor",
+        ":blas-typeanalysis",
+        ":blas-diffuseanalysis"
     ],
     visibility = ["//visibility:public"],
 )

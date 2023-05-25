@@ -610,7 +610,7 @@ bool preserveNVVM(bool Begin, Function &F) {
             GlobalVariable *NGV = new GlobalVariable(
                 CA->getType(), V->isConstant(), V->getLinkage(), CA, "",
                 V->getThreadLocalMode());
-            V->getParent()->getGlobalList().insert(V->getIterator(), NGV);
+            V->getParent()->insertGlobalVariable(V->getIterator(), NGV);
             NGV->takeName(V);
 
             // Nuke the old list, replacing any uses with the new one.
