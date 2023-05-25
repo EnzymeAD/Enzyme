@@ -40,7 +40,6 @@
 #include "SCEV/ScalarEvolutionExpander.h"
 #endif
 
-
 #include "llvm/Analysis/DependenceAnalysis.h"
 #include <deque>
 

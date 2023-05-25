@@ -8510,7 +8510,7 @@ void GradientUtils::computeForwardingProperties(Instruction *V) {
       case Intrinsic::dbg_label:
 #endif
 #if LLVM_VERSION_MAJOR <= 16
-  case llvm::Intrinsic::dbg_addr:
+      case llvm::Intrinsic::dbg_addr:
 #endif
       case Intrinsic::lifetime_end:
         break;

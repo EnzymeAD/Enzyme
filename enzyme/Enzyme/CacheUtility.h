@@ -38,7 +38,6 @@
 #include "SCEV/ScalarEvolutionExpander.h"
 #endif
 
-
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/Instructions.h"
