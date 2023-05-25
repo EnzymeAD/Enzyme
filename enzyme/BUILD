@@ -8,11 +8,18 @@ package(
     default_visibility = ["//:__subpackages__"],
 )
 
+cc_library(
+    name="enzyme-tblgen-hdrs",
+    hdrs=glob(["tools/enzyme-tblgen/*.h"])
+)
 cc_binary(
     name="enzyme-tblgen",
     srcs=["tools/enzyme-tblgen/enzyme-tblgen.cpp"],
     deps = [
-        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:TableGen",
+        "@llvm-project//llvm:config",
+        ":enzyme-tblgen-hdrs"
     ]
 )
 gentbl(
@@ -23,10 +30,10 @@ gentbl(
     )],
     tblgen = ":enzyme-tblgen",
     td_file = "Enzyme/targets/InstructionDerivatives.td",
-    td_srcs = [],
+    td_srcs = ["Enzyme/targets/BlasDerivatives.td"],
     deps = [
-        "@llvm-project//llvm:TableGen",
-    ]
+        ":enzyme-tblgen",
+    ],
 )
 
 cc_library(
@@ -48,4 +55,5 @@ cc_library(
         "@llvm-project//llvm:IRReader",
         ":derivatives"
     ],
+    visibility = ["//visibility:public"],
 )
