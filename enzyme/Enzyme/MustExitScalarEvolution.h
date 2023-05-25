@@ -27,8 +27,13 @@
 #ifndef ENZYME_MUST_EXIT_SCALAR_EVOLUTION_H_
 #define ENZYME_MUST_EXIT_SCALAR_EVOLUTION_H_
 
+#if LLVM_VERSION_MAJOR >= 16
+#include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
+#else
 #include "SCEV/ScalarEvolution.h"
 #include "SCEV/ScalarEvolutionExpander.h"
+#endif
 
 #include "llvm/IR/Dominators.h"
 

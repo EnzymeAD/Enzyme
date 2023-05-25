@@ -23,10 +23,16 @@
 // the function passed as the first argument.
 //
 //===----------------------------------------------------------------------===//
+#include <llvm/Config/llvm-config.h>
+
+#if LLVM_VERSION_MAJOR >= 16
+#include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
+#else
 #include "SCEV/ScalarEvolution.h"
 #include "SCEV/ScalarEvolutionExpander.h"
+#endif
 
-#include <llvm/Config/llvm-config.h>
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/MapVector.h"
