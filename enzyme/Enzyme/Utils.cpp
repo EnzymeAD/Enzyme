@@ -709,6 +709,23 @@ Function *getOrInsertMemcpyStridedBlas(Module &M, PointerType *T, Type *IT,
 #endif
   return dmemcpy;
 }
+
+Function *getOrInsertMemcpyStridedLapack(Module &M, PointerType *T, Type *IT,
+                                       BlasInfo blas) {
+	CharacterType CT;
+  std::string copy_name =
+      (blas.floatType + "lacpy" + blas.suffix).str();
+  FunctionType *FT = FunctionType::get(Type::getVoidTy(M.getContext()),
+                                       {CT, IT, IT, T, IT, T, IT}, false);
+#if LLVM_VERSION_MAJOR >= 9
+  Function *dmemcpy =
+      cast<Function>(M.getOrInsertFunction(copy_name, FT).getCallee());
+#else
+  Function *dmemcpy = cast<Function>(M.getOrInsertFunction(copy_name, FT));
+#endif
+  return dmemcpy;
+}
+
 Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
                                    unsigned dstalign, unsigned srcalign) {
   Type *elementType = T->getPointerElementType();
@@ -817,114 +834,114 @@ Function *getOrInsertMemcpyStrided(Module &M, PointerType *T, Type *IT,
 
   return F;
 }
-Function *getOrInsertMemcpyMat(Module &M, PointerType *T, Type *IT,
-                               llvm::Type *IT, unsigned M, unsigned N,
-                               unsigned LDA) {
-  Type *elementType = T->getPointerElementType();
-  assert(elementType->isFloatingPointTy());
-  std::string name = "__enzyme_memcpy_" + tofltstr(elementType) + "_mat_" +
-                     std::to_string(cast<IntegerType>(IT)->getBitWidth());
-  //"_da" + std::to_string(dstalign) + "sa" +
-  // std::to_string(srcalign) + "stride";
-  FunctionType *FT = FunctionType::get(Type::getVoidTy(M.getContext()),
-                                       {T, T, IT, IT, IT}, false);
-
-  Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
-
-  if (!F->empty())
-    return F;
-
-  F->setLinkage(Function::LinkageTypes::InternalLinkage);
-  F->addFnAttr(Attribute::ArgMemOnly);
-  F->addFnAttr(Attribute::NoUnwind);
-  F->addFnAttr(Attribute::AlwaysInline);
-  F->addParamAttr(0, Attribute::NoCapture);
-  F->addParamAttr(1, Attribute::NoCapture);
-  F->addParamAttr(0, Attribute::WriteOnly);
-  F->addParamAttr(1, Attribute::ReadOnly);
-
-  BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
-  BasicBlock *init = BasicBlock::Create(M.getContext(), "init.idx", F);
-  BasicBlock *body = BasicBlock::Create(M.getContext(), "for.body", F);
-  BasicBlock *end = BasicBlock::Create(M.getContext(), "for.end", F);
-
-  auto dst = F->arg_begin();
-  dst->setName("dst");
-  auto src = dst + 1;
-  src->setName("src");
-  auto M = src + 1;
-  num->setName("m");
-  auto N = M + 1;
-  num->setName("n");
-  auto LDA = N + 1;
-  num->setName("lda");
-
-  {
-    IRBuilder<> B(entry);
-    Value *l = B2.CreateNUWAdd(M, N, "l");
-    // Don't copy a 0*0 matrix
-    B.CreateCondBr(B.CreateICmpEQ(l, ConstantInt::get(num->getType(), 0)), end,
-                   init);
-  }
-
-  {
-    IRBuilder<> B2(init);
-    B2.setFastMathFlags(getFast());
-    Value *a = B2.CreateNSWSub(ConstantInt::get(num->getType(), 1), num, "a");
-    Value *negidx = B2.CreateNSWMul(a, stride, "negidx");
-    // Value *negidx =
-    //     B2.CreateNSWAdd(b, ConstantInt::get(num->getType(), 1), "negidx");
-    Value *isneg =
-        B2.CreateICmpSLT(stride, ConstantInt::get(num->getType(), 0), "is.neg");
-    Value *startidx = B2.CreateSelect(
-        isneg, negidx, ConstantInt::get(num->getType(), 0), "startidx");
-    B2.CreateBr(body);
-    //}
-
-    //{
-    IRBuilder<> B(body);
-    B.setFastMathFlags(getFast());
-    PHINode *idx = B.CreatePHI(num->getType(), 2, "idx");
-    PHINode *sidx = B.CreatePHI(num->getType(), 2, "sidx");
-    idx->addIncoming(ConstantInt::get(num->getType(), 0), init);
-    sidx->addIncoming(ConstantInt::get(num->getType(), 0), init);
-
-    Value *dsti = B.CreateInBoundsGEP(elementType, dst, idx, "dst.i");
-    Value *srci = B.CreateInBoundsGEP(elementType, src, sidx, "src.i");
-    LoadInst *srcl = B.CreateLoad(elementType, srci, "src.i.l");
-
-    StoreInst *dsts = B.CreateStore(srcl, dsti);
-
-    if (dstalign) {
-#if LLVM_VERSION_MAJOR >= 10
-      dsts->setAlignment(Align(dstalign));
-#else
-      dsts->setAlignment(dstalign);
-#endif
-    }
-    if (srcalign) {
-#if LLVM_VERSION_MAJOR >= 10
-      srcl->setAlignment(Align(srcalign));
-#else
-      srcl->setAlignment(srcalign);
-#endif
-    }
-
-    Value *next =
-        B.CreateNSWAdd(idx, ConstantInt::get(num->getType(), 1), "idx.next");
-    Value *snext = B.CreateNSWAdd(sidx, stride, "sidx.next");
-    idx->addIncoming(next, body);
-    sidx->addIncoming(snext, body);
-    B.CreateCondBr(B.CreateICmpEQ(num, next), end, body);
-  }
-
-  {
-    IRBuilder<> B(end);
-    B.CreateRetVoid();
-  }
-
-  return F;
-}
+// Function *getOrInsertMemcpyMat(Module &M, PointerType *T, Type *IT,
+//                                llvm::Type *IT, unsigned M, unsigned N,
+//                                unsigned LDA) {
+//   Type *elementType = T->getPointerElementType();
+//   assert(elementType->isFloatingPointTy());
+//   std::string name = "__enzyme_memcpy_" + tofltstr(elementType) + "_mat_" +
+//                      std::to_string(cast<IntegerType>(IT)->getBitWidth());
+//   //"_da" + std::to_string(dstalign) + "sa" +
+//   // std::to_string(srcalign) + "stride";
+//   FunctionType *FT = FunctionType::get(Type::getVoidTy(M.getContext()),
+//                                        {T, T, IT, IT, IT}, false);
+// 
+//   Function *F = cast<Function>(M.getOrInsertFunction(name, FT).getCallee());
+// 
+//   if (!F->empty())
+//     return F;
+// 
+//   F->setLinkage(Function::LinkageTypes::InternalLinkage);
+//   F->addFnAttr(Attribute::ArgMemOnly);
+//   F->addFnAttr(Attribute::NoUnwind);
+//   F->addFnAttr(Attribute::AlwaysInline);
+//   F->addParamAttr(0, Attribute::NoCapture);
+//   F->addParamAttr(1, Attribute::NoCapture);
+//   F->addParamAttr(0, Attribute::WriteOnly);
+//   F->addParamAttr(1, Attribute::ReadOnly);
+// 
+//   BasicBlock *entry = BasicBlock::Create(M.getContext(), "entry", F);
+//   BasicBlock *init = BasicBlock::Create(M.getContext(), "init.idx", F);
+//   BasicBlock *body = BasicBlock::Create(M.getContext(), "for.body", F);
+//   BasicBlock *end = BasicBlock::Create(M.getContext(), "for.end", F);
+// 
+//   auto dst = F->arg_begin();
+//   dst->setName("dst");
+//   auto src = dst + 1;
+//   src->setName("src");
+//   auto M = src + 1;
+//   num->setName("m");
+//   auto N = M + 1;
+//   num->setName("n");
+//   auto LDA = N + 1;
+//   num->setName("lda");
+// 
+//   {
+//     IRBuilder<> B(entry);
+//     Value *l = B2.CreateNUWAdd(M, N, "l");
+//     // Don't copy a 0*0 matrix
+//     B.CreateCondBr(B.CreateICmpEQ(l, ConstantInt::get(num->getType(), 0)), end,
+//                    init);
+//   }
+// 
+//   {
+//     IRBuilder<> B2(init);
+//     B2.setFastMathFlags(getFast());
+//     Value *a = B2.CreateNSWSub(ConstantInt::get(num->getType(), 1), num, "a");
+//     Value *negidx = B2.CreateNSWMul(a, stride, "negidx");
+//     // Value *negidx =
+//     //     B2.CreateNSWAdd(b, ConstantInt::get(num->getType(), 1), "negidx");
+//     Value *isneg =
+//         B2.CreateICmpSLT(stride, ConstantInt::get(num->getType(), 0), "is.neg");
+//     Value *startidx = B2.CreateSelect(
+//         isneg, negidx, ConstantInt::get(num->getType(), 0), "startidx");
+//     B2.CreateBr(body);
+//     //}
+// 
+//     //{
+//     IRBuilder<> B(body);
+//     B.setFastMathFlags(getFast());
+//     PHINode *idx = B.CreatePHI(num->getType(), 2, "idx");
+//     PHINode *sidx = B.CreatePHI(num->getType(), 2, "sidx");
+//     idx->addIncoming(ConstantInt::get(num->getType(), 0), init);
+//     sidx->addIncoming(ConstantInt::get(num->getType(), 0), init);
+// 
+//     Value *dsti = B.CreateInBoundsGEP(elementType, dst, idx, "dst.i");
+//     Value *srci = B.CreateInBoundsGEP(elementType, src, sidx, "src.i");
+//     LoadInst *srcl = B.CreateLoad(elementType, srci, "src.i.l");
+// 
+//     StoreInst *dsts = B.CreateStore(srcl, dsti);
+// 
+//     if (dstalign) {
+// #if LLVM_VERSION_MAJOR >= 10
+//       dsts->setAlignment(Align(dstalign));
+// #else
+//       dsts->setAlignment(dstalign);
+// #endif
+//     }
+//     if (srcalign) {
+// #if LLVM_VERSION_MAJOR >= 10
+//       srcl->setAlignment(Align(srcalign));
+// #else
+//       srcl->setAlignment(srcalign);
+// #endif
+//     }
+// 
+//     Value *next =
+//         B.CreateNSWAdd(idx, ConstantInt::get(num->getType(), 1), "idx.next");
+//     Value *snext = B.CreateNSWAdd(sidx, stride, "sidx.next");
+//     idx->addIncoming(next, body);
+//     sidx->addIncoming(snext, body);
+//     B.CreateCondBr(B.CreateICmpEQ(num, next), end, body);
+//   }
+// 
+//   {
+//     IRBuilder<> B(end);
+//     B.CreateRetVoid();
+//   }
+// 
+//   return F;
+// }
 
 // TODO implement differential memmove
 Function *
