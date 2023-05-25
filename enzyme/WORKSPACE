@@ -1,0 +1,11 @@
+
+new_local_repository(
+    name = "llvm-raw",
+    build_file = "llvm_dummy.BUILD",
+    path = "../../llvm-project",
+)
+
+load("@llvm-raw//utils/bazel:configure.bzl", "llvm_configure", "llvm_disable_optional_support_deps")
+
+llvm_disable_optional_support_deps()
+llvm_configure(name = "llvm-project", targets = ["X86"])

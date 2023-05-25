@@ -282,6 +282,24 @@ if (${ENZYME_EXTERNAL_SHARED_LIB})
         PUBLIC_HEADER DESTINATION "${INSTALL_INCLUDE_DIR}/Enzyme"
         COMPONENT dev)
 endif()
+if (${ENZYME_EXTERNAL_STATIC_LIB})
+    add_library( Enzyme-${LLVM_VERSION_MAJOR}
+        STATIC
+        ${ENZYME_SRC}
+    )
+    add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} intrinsics_gen)
+    add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} InstructionDerivativesIncGen)
+    add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasDerivativesIncGen)
+    add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasDeclarationsIncGen)
+    add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasTAIncGen)
+    add_dependencies(Enzyme-${LLVM_VERSION_MAJOR} BlasDiffUseIncGen)
+    target_link_libraries(Enzyme-${LLVM_VERSION_MAJOR} LLVM)
+    install(TARGETS Enzyme-${LLVM_VERSION_MAJOR}
+        EXPORT EnzymeTargets
+        LIBRARY DESTINATION lib COMPONENT shlib
+        PUBLIC_HEADER DESTINATION "${INSTALL_INCLUDE_DIR}/Enzyme"
+        COMPONENT dev)
+endif()
 
 if (APPLE)
 # Darwin-specific linker flags for loadable modules.
