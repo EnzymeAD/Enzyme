@@ -1487,6 +1487,7 @@ void EnzymeFixupJuliaCallingConvention(LLVMValueRef F_C) {
       auto I = cast<Instruction>(U.getUser());
       if (I->getParent()->getParent() == F)
         continue;
+      uses.push_back(I);
       op.push_back(U.getOperandNo());
     }
     IRBuilder<> EB(&NewF->getEntryBlock().front());
